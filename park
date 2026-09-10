@@ -767,7 +767,14 @@ $(estates_or_none)
         # ONE LINE, AND NOTHING RUNS HERE (#92's ruling). The block still
         # gets its `=== park <Name> ===` heading, because a root left out of
         # the run silently is a root a person has to go and look for.
-        if [ "$ESTATE_KIND" != "family" ] && ! has_speckit_overlay "$ESTATE_ROOT"; then
+        #
+        # `= standalone` AND NOT `!= family`, though `estate_here` sets only
+        # those two today: the kinds are matched POSITIVELY so that a kind
+        # nobody has invented yet is RUN and answered by its own Makefile,
+        # rather than silently skipped by a test written before it existed.
+        # Skipping is the answer for the one shape whose Makefile we have
+        # read (Copilot's review of #7).
+        if [ "$ESTATE_KIND" = "standalone" ] && ! has_speckit_overlay "$ESTATE_ROOT"; then
             if [ "$DRY_RUN" -eq 1 ]; then
                 say "  would skip (no Speckit overlay; install it with: setup-openspeckit)"
             else
