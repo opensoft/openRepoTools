@@ -589,29 +589,162 @@ def test_nearest_wins_so_a_member_parks_itself(home):
     assert f"PROBE park in {member}" in result.stdout
 
 
-# --- #91: bare `park` with no estate around parks every estate -------------
+# --- the bare form outside every estate ASKS; `--all` / `-a` is the sweep ----
 #
 # THIS IS WHERE `park` AND `resume` STOP SHARING THE ANSWER. Ruling 3 of #82
 # ("no <Name> and no estate around the cwd REFUSES and lists what it found")
-# is superseded for `park`'s bare form by Brett Heap's RULING of 2026-09-10
-# (#91); `resume`'s own bare form keeps it, and
+# was superseded for `park`'s bare form by Brett Heap's RULING of 2026-09-10
+# on openRepoShape #91 (the bare form PARKED EVERY ESTATE, unasked), and that
+# was superseded the same day by his RULING in this repository, verbatim:
+# "lets change that so it parks the current repo. if not in a repo, then asks
+# if want to park all. and park all should be park -a or park --all." The
+# sweep itself is #91's; HOW IT IS REACHED is what these tests hold: the
+# walk-up first, then a question at a terminal, a refusal naming `--all`
+# without one, and `--all` / `-a` as the sweep with no question, from
+# anywhere. `resume`'s own bare form keeps ruling 3, and
 # `test_resume_with_no_name_and_no_estate_refuses`, at the end of this file,
 # is what holds that half still.
 
-def test_bare_park_with_no_estate_parks_every_estate_in_name_order(home):
-    """#91: the discovery is the SAME ONE the old refusal used to only list
-    by — a family folder and a standalone root, one level under the projects
-    directory — and now every one of them gets `park`'s own procedure, in
-    name order, with the list printed first."""
+#: The one line `park` asks with. On STDERR, where a prompt belongs, so a
+#: `park > log` still shows it; the tests read it there and nowhere else.
+QUESTION = "park every estate above? [y/N]"
+
+
+def run_at_a_terminal(command: Path, *args: str, answer: str, home: Path,
+                      cwd: Path | None = None) -> subprocess.CompletedProcess:
+    """`run`, except stdin is a PSEUDO-TERMINAL and `answer` is what the
+    person types at it.
+
+    `[ -t 0 ]` is how `park` decides whether it may ask, and the pipe `run`
+    hands it is the honest way to reach the OTHER branch — so the question
+    path needs a real tty on stdin, which `pty.openpty` is. stdout and stderr
+    stay pipes: the question (stderr) and the report (stdout) are captured
+    apart, exactly as a person's `park > log` would split them. `pty` is
+    imported here and not at the top because the module does not exist on
+    Windows, and this file has to IMPORT there in order to skip.
+    """
+    import pty
+    master, slave = pty.openpty()
+    try:
+        proc = subprocess.Popen(
+            ["bash", str(command), *args], stdin=slave,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            cwd=str(cwd) if cwd else str(home), env=command_env(home))
+        os.close(slave)
+        slave = -1
+        # Typed before `park` reads it: the line discipline holds the line,
+        # exactly as a terminal holds one typed ahead of the prompt.
+        os.write(master, (answer + "\n").encode())
+        out, err = proc.communicate(timeout=120)
+    finally:
+        if slave != -1:
+            os.close(slave)
+        os.close(master)
+    return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
+
+
+@pytest.mark.parametrize("answer", ["y", "Y", "yes", "YES"])
+def test_bare_park_outside_every_estate_asks_and_a_yes_parks_them_all(home,
+                                                                     answer):
+    """The question, then #91's sweep: the list first, every estate in NAME
+    order, one summary — reached by an answer, not by default."""
     projects = home / "projects"
     holder = probe_family(projects, "TestFam")
     root = sweepable_project(projects, "Atlas")
-    result = run(PARK, home=home, cwd=home)
+    result = run_at_a_terminal(PARK, answer=answer, home=home, cwd=home)
     assert result.returncode == 0, result.stdout + result.stderr
+    assert QUESTION in result.stderr, "the question, on stderr"
     assert "no estate around" in result.stdout
-    assert "parking every estate under" in result.stdout
     assert "family   TestFam" in result.stdout
     assert "project  Atlas" in result.stdout
+
+    list_at = result.stdout.index("Every estate under")
+    atlas_at = result.stdout.index("=== park Atlas ===")
+    testfam_at = result.stdout.index("=== park TestFam ===")
+    assert list_at < atlas_at < testfam_at, (
+        "the list must print first, and the estates must run in NAME order")
+
+    assert f"PROBE park in {root} ARGS=[]" in result.stdout
+    assert f"PROBE park in {holder} ARGS=[]" in result.stdout
+    assert "  parked     Atlas" in result.stdout
+    assert "  parked     TestFam" in result.stdout
+    assert "park: 2 estate(s) parked, 0 refused or with findings" \
+        in result.stdout
+
+
+@pytest.mark.parametrize("answer", ["", "n", "no", "yep"],
+                         ids=["enter", "n", "no", "yep"])
+def test_bare_park_outside_every_estate_parks_nothing_unless_the_answer_is_yes(
+        home, answer):
+    """Enter is a no. So is anything that is not `y` or `yes`: parking every
+    estate on a workstation is an answer a person has to GIVE."""
+    projects = home / "projects"
+    probe_family(projects, "TestFam")
+    sweepable_project(projects, "Atlas")
+    result = run_at_a_terminal(PARK, answer=answer, home=home, cwd=home)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert QUESTION in result.stderr
+    assert "family   TestFam" in result.stdout, "the list comes before the question"
+    assert "project  Atlas" in result.stdout
+    assert "nothing was parked" in result.stderr
+    assert "park --all" in result.stderr, "the refusal names the unasked form"
+    assert "PROBE park in" not in result.stdout, "nothing ran"
+    assert "=== park" not in result.stdout
+
+
+def test_bare_park_outside_every_estate_with_no_terminal_refuses_and_names_all(
+        home):
+    """`run` hands `park` a PIPE for stdin — what a script, a cron job or an
+    assistant's tool call hands it. Nothing can be asked, so nothing is
+    parked, and the refusal says how a script asks for the sweep: `--all`."""
+    projects = home / "projects"
+    probe_family(projects, "TestFam")
+    sweepable_project(projects, "Atlas")
+    result = run(PARK, home=home, cwd=home)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "no estate around" in result.stderr
+    assert "not a terminal" in result.stderr
+    assert "park --all" in result.stderr
+    assert "family   TestFam" in result.stderr, (
+        "ruling 3's list, so the person can name one")
+    assert "project  Atlas" in result.stderr
+    assert QUESTION not in result.stderr, "nothing was asked"
+    assert "PROBE park in" not in result.stdout
+
+
+def test_bare_park_inside_an_estate_still_parks_only_that_one(home):
+    """THE WALK-UP WINS FIRST — "it parks the current repo": standing inside
+    an estate parks that estate, asks nothing, and never parks the
+    workstation."""
+    projects = home / "projects"
+    holder = probe_family(projects, "TestFam")
+    root = probe_project(projects, "Atlas")
+    result = run(PARK, home=home, cwd=holder)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"the family holder at {holder}" in result.stdout
+    assert "parking every estate" not in result.stdout
+    assert QUESTION not in result.stderr
+    assert f"PROBE park in {root}" not in result.stdout, (
+        "the OTHER estate must not have been parked")
+
+
+@pytest.mark.parametrize("flag", ["--all", "-a"])
+def test_park_all_parks_every_estate_in_name_order_and_asks_nothing(home,
+                                                                    flag):
+    """#91's sweep, asked for by name: the list under its own heading, every
+    estate in NAME order, one summary, and no question — at a pipe, which is
+    what `run` gives it, exactly as at a terminal."""
+    projects = home / "projects"
+    holder = probe_family(projects, "TestFam")
+    root = sweepable_project(projects, "Atlas")
+    result = run(PARK, flag, home=home, cwd=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "park --all: parking every estate under" in result.stdout
+    assert "family   TestFam" in result.stdout
+    assert "project  Atlas" in result.stdout
+    assert QUESTION not in result.stderr
+    assert "no estate around" not in result.stdout + result.stderr, (
+        "--all is not a fallback; it is the ask")
 
     list_at = result.stdout.index("parking every estate under")
     atlas_at = result.stdout.index("=== park Atlas ===")
@@ -627,7 +760,21 @@ def test_bare_park_with_no_estate_parks_every_estate_in_name_order(home):
         in result.stdout
 
 
-def test_bare_park_continues_past_a_refused_estate_and_still_parks_the_rest(
+def test_park_all_from_inside_an_estate_still_parks_every_estate(home):
+    """A flag that says every one is not narrowed by where you stand."""
+    projects = home / "projects"
+    holder = probe_family(projects, "TestFam")
+    root = sweepable_project(projects, "Atlas")
+    result = run(PARK, "--all", home=home, cwd=holder)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "park --all: parking every estate under" in result.stdout
+    assert f"PROBE park in {root} ARGS=[]" in result.stdout
+    assert f"PROBE park in {holder} ARGS=[]" in result.stdout
+    assert "park: 2 estate(s) parked, 0 refused or with findings" \
+        in result.stdout
+
+
+def test_park_all_continues_past_a_refused_estate_and_still_parks_the_rest(
         home):
     """A skip is not a pass (#80's rule): one estate's own `make park`
     exiting non-zero must not stop the others, and the overall run must not
@@ -638,7 +785,7 @@ def test_bare_park_continues_past_a_refused_estate_and_still_parks_the_rest(
     (root / "Makefile").write_text(FAILING_PARK_PROBE_MAKEFILE,
                                    encoding="utf-8")
 
-    result = run(PARK, home=home, cwd=home)
+    result = run(PARK, "--all", home=home, cwd=home)
     assert result.returncode == 1, result.stdout + result.stderr
     assert f"PROBE park in {root} ARGS=[]" in result.stdout, (
         "the refused estate still ran; it is refused by its OWN exit code")
@@ -652,25 +799,11 @@ def test_bare_park_continues_past_a_refused_estate_and_still_parks_the_rest(
         in result.stdout
 
 
-def test_bare_park_inside_an_estate_still_parks_only_that_one(home):
-    """The walk-up wins over park-everything: standing inside an estate must
-    never park the whole workstation (#91's own words)."""
-    projects = home / "projects"
-    holder = probe_family(projects, "TestFam")
-    root = probe_project(projects, "Atlas")
-    result = run(PARK, home=home, cwd=holder)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert f"the family holder at {holder}" in result.stdout
-    assert "parking every estate" not in result.stdout
-    assert f"PROBE park in {root}" not in result.stdout, (
-        "the OTHER estate must not have been parked")
-
-
-def test_bare_park_dry_run_lane_and_passthrough_args_reach_every_estate(home):
+def test_park_all_dry_run_lane_and_passthrough_args_reach_every_estate(home):
     projects = home / "projects"
     holder = probe_family(projects, "TestFam")
     root = sweepable_project(projects, "Atlas")
-    result = run(PARK, "--dry-run", "--lane", "xfactory-2", "--",
+    result = run(PARK, "--all", "--dry-run", "--lane", "xfactory-2", "--",
                  "--feature", "001-a", home=home, cwd=home)
     assert result.returncode == 0, result.stdout + result.stderr
     expected = "ARGS=[--dry-run --lane xfactory-2 --feature 001-a]"
@@ -680,15 +813,39 @@ def test_bare_park_dry_run_lane_and_passthrough_args_reach_every_estate(home):
         "--dry-run: nothing was committed, pushed or recorded.") == 2
 
 
+def test_park_all_with_a_name_or_a_repo_refuses(home):
+    """One estate or every estate, never both spelled at once."""
+    projects = home / "projects"
+    root = sweepable_project(projects, "Atlas")
+    named = run(PARK, "Atlas", "--all", home=home)
+    assert named.returncode == 2, named.stdout + named.stderr
+    assert "both <Name> ('Atlas') and --all" in named.stderr
+    by_repo = run(PARK, "--all", "--repo", "TestOrg/Atlas", home=home)
+    assert by_repo.returncode == 2, by_repo.stdout + by_repo.stderr
+    assert "both --repo 'TestOrg/Atlas' and --all" in by_repo.stderr
+    for result in (named, by_repo):
+        assert f"PROBE park in {root}" not in result.stdout, "nothing ran"
+
+
+def test_park_all_with_no_estate_anywhere_refuses(home):
+    result = run(PARK, "--all", home=home)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "--all found no estate under" in result.stderr
+    assert "resume <Name>" in result.stderr
+    assert "PROBE park in" not in result.stdout
+
+
 # --- #6: the sweep SKIPS a root that has no Speckit overlay ----------------
 #
 # Brett Heap's RULING of 2026-09-10 on openRepoShape #92, verbatim: "rule on
 # the #92 open item: skip roots without the overlay." A root whose
 # `.specify/extensions/git/scripts/bash/park.sh` is not there is one whose
 # own `make park` can only refuse (exit 2), so counting it as a refusal made
-# a real workstation's bare `park` exit 1 for ever. THE SWEEP skips it; the
-# person who NAMES it still gets the refusal, which is the pair of tests
-# below.
+# a real workstation's sweep exit 1 for ever. THE SWEEP skips it; the person
+# who NAMES it still gets the refusal, which is the pair of tests below. The
+# sweep is driven with `--all` here, which is the form that asks nothing;
+# the bare form's YES runs the identical `park_every_estate`, and the tests
+# above hold that.
 
 def test_the_sweep_skips_a_root_without_the_overlay_and_parks_the_rest(home):
     """Both answers in one run: the roots that CAN park do, the ones that
@@ -699,7 +856,7 @@ def test_the_sweep_skips_a_root_without_the_overlay_and_parks_the_rest(home):
     bare = {name: probe_project(projects, name)
             for name in ("MedxEHR", "openDox")}
 
-    result = run(PARK, home=home, cwd=home)
+    result = run(PARK, "--all", home=home, cwd=home)
     assert result.returncode == 0, result.stdout + result.stderr
     for name, root in parkable.items():
         assert f"PROBE park in {root} ARGS=[]" in result.stdout
@@ -726,7 +883,7 @@ def test_every_estate_skipped_is_exit_zero_and_says_so(home):
     for name in ("MedxEHR", "openDox"):
         probe_project(projects, name)
 
-    result = run(PARK, home=home, cwd=home)
+    result = run(PARK, "--all", home=home, cwd=home)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "PROBE park in" not in result.stdout
     assert ("park: 0 estate(s) parked, 0 refused or with findings, "
@@ -746,7 +903,7 @@ def test_a_skipped_root_never_hides_a_real_refusal(home):
     probe_project(projects, "MedxEHR")
     holder = probe_family(projects, "TestFam")
 
-    result = run(PARK, home=home, cwd=home)
+    result = run(PARK, "--all", home=home, cwd=home)
     assert result.returncode == 1, result.stdout + result.stderr
     assert "  refused    Atlas (exit 2)" in result.stdout
     assert "  skipped    MedxEHR (no Speckit overlay)" in result.stdout
@@ -762,7 +919,7 @@ def test_the_sweep_dry_run_says_it_would_skip_and_creates_nothing(home):
     root = probe_project(projects, "MedxEHR")
     before = sorted(p.name for p in root.iterdir())
 
-    result = run(PARK, "--dry-run", home=home, cwd=home)
+    result = run(PARK, "--all", "--dry-run", home=home, cwd=home)
     assert result.returncode == 0, result.stdout + result.stderr
     assert ("would skip (no Speckit overlay; install it with: "
             "setup-openspeckit)") in result.stdout
@@ -792,7 +949,7 @@ def test_naming_an_overlay_less_root_still_relays_the_makefiles_refusal(home):
     shutil.copy2(UPSTREAM / "templates" / "assembly-root" / "Makefile",
                  root / "Makefile")
 
-    swept = run(PARK, home=home, cwd=home)
+    swept = run(PARK, "--all", home=home, cwd=home)
     assert swept.returncode == 0, swept.stdout + swept.stderr
     assert "  skipped    MedxEHR (no Speckit overlay)" in swept.stdout
 
@@ -816,7 +973,7 @@ def test_a_family_holder_in_the_sweep_is_never_pre_checked(home):
     assert not (holder / OVERLAY / "park.sh").exists(), (
         "the fixture must NOT carry the overlay, or this proves nothing")
 
-    result = run(PARK, home=home, cwd=home)
+    result = run(PARK, "--all", home=home, cwd=home)
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"PROBE park in {holder} ARGS=[]" in result.stdout
     assert "  parked     TestFam" in result.stdout
@@ -826,12 +983,19 @@ def test_a_family_holder_in_the_sweep_is_never_pre_checked(home):
         in result.stdout
 
 
-def test_no_name_and_no_estates_at_all_says_none(tmp_path):
-    fake_home = tmp_path / "home"
-    (fake_home / "projects").mkdir(parents=True)
-    result = run(PARK, home=fake_home)
-    assert result.returncode == 2, result.stdout + result.stderr
-    assert "(none)" in result.stderr
+def test_no_name_and_no_estate_anywhere_refuses_without_asking(home):
+    """Nothing to list and nothing to ask about: not the question, and not
+    the no-terminal refusal either — there is no sweep here to say yes to.
+    At a pipe and at a terminal alike."""
+    piped = run(PARK, home=home)
+    typed = run_at_a_terminal(PARK, answer="y", home=home)
+    for result in (piped, typed):
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "no estate around" in result.stderr
+        assert "nothing to park" in result.stderr
+        assert "resume <Name>" in result.stderr
+        assert QUESTION not in result.stderr
+        assert "--all" not in result.stderr, "--all would find nothing either"
 
 
 def test_a_name_that_is_not_an_estate_refuses_and_names_resume(home):

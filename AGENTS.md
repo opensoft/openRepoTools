@@ -23,19 +23,23 @@ current directory — and run its own `make park` / `make resume`. `resume` also
 clones and fast-forwards what is not current. Prefer them to a hand-built
 sequence, and relay their per-repository lines rather than summarising them.
 
-1. **`park` CREATES NOTHING and `resume` RESETS NOTHING.** With no `<Name>` and
-   no estate around the current directory, `park` now PARKS EVERY ESTATE it
-   finds under the projects directory, in name order, continuing past a
-   refusal (Brett Heap's RULING of 2026-09-10, openRepoShape #91, superseding
-   ruling 3 of its #82 for this one case) — it is no longer a refusal, so do
-   not tell somebody to name one estate when the bare form's whole point is
-   that it needs none. In that sweep a root with NO Speckit git overlay is
-   SKIPPED and named, never failed (his RULING of the same day, openRepoShape
-   #92) — a sweep ending `…, 4 skipped (no overlay)` and exiting 0 is a CLEAN
-   run, and what those four want is `setup-openspeckit` in each, not a rerun.
-   `park <Name>` on one of them still refuses; relay that refusal.
-   `resume`'s OWN bare form still refuses with no `<Name>`
-   and no estate around it, deliberately: rebuilding every estate on a fresh
+1. **`park` CREATES NOTHING and `resume` RESETS NOTHING.** With no `<Name>`,
+   `park` parks the estate around the current directory. With no estate
+   around it either, it lists every estate under the projects directory and
+   ASKS whether to park them all; `park --all` (`-a`) is that sweep without
+   the question, in name order, continuing past a refusal (Brett Heap's RULING
+   of 2026-09-10, superseding his openRepoShape #91 ruling of the same day,
+   under which the bare form swept unasked). YOUR STDIN IS NOT A TERMINAL, so
+   in your hands a bare `park` outside every estate refuses and names `--all`:
+   when the person wants everything parked, run `park --all`; when they named
+   one estate, or you stand in one, never reach for it. In the sweep a root
+   with NO Speckit git overlay is SKIPPED and named, never failed (his RULING
+   of the same day, openRepoShape #92) — a sweep that ends with
+   `…, 4 skipped (no overlay)` and exits 0 is a CLEAN run, and what those four
+   want is `setup-openspeckit` in each, not a rerun. `park <Name>` on one of
+   them still refuses; relay that refusal.
+   `resume`'s OWN bare form still refuses with no `<Name>` and no estate around
+   it, deliberately, and it has no `--all`: rebuilding every estate on a fresh
    machine by accident is the opposite risk, so relay that refusal rather than
    naming one estate on the person's behalf. `resume` fast-forwards a working
    clone with `--ff-only` and REFUSES BY NAME one that is dirty or on a feature

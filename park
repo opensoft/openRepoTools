@@ -15,23 +15,31 @@
 # creates nothing, commits nothing and pushes nothing of its own.
 #
 # openRepoShape #82, under Brett Heap's RULING of 2026-09-09: `--repo` matches
-# a LOCAL clone (ruling 1); the command is `park` (ruling 4). Ruling 3 of #82
-# ("with no <Name> and no estate around the cwd this REFUSES and lists what
-# it found") is SUPERSEDED for that one case by Brett Heap's RULING of
-# 2026-09-10 (#91): with no <Name> and no estate around the cwd, `park` now
-# discovers and PARKS EVERY ESTATE under the projects directory, in name
-# order, continuing past a refusal, instead of refusing. `park <Name>`,
-# `park --repo` and the walk-up inside an estate are unchanged either way.
-# IN THAT SWEEP ONLY, a standalone root carrying no Speckit git overlay is
-# SKIPPED and named instead of being run and counted as a refusal — Brett
-# Heap's RULING of 2026-09-10 on openRepoShape #92, "skip roots without the
-# overlay": a root nobody ever installed the overlay in is not a park that
-# FAILED. Naming that same root still relays its own `make park` refusal.
-# `resume` deliberately KEEPS ruling 3's refusal for its own bare form (see
-# its header) — rebuilding every estate on a fresh machine by accident is the
+# a LOCAL clone (ruling 1); the command is `park` (ruling 4). WITH NO <Name>
+# the estate around the current directory is parked — the walk-up, unchanged
+# since #82. WITH NO ESTATE AROUND IT EITHER, `park` lists every estate under
+# the projects directory and ASKS whether to park them all; `park --all` (or
+# `-a`) is the same sweep without the question, from anywhere. That is Brett
+# Heap's RULING of 2026-09-10 in this repository, verbatim: "lets change that
+# so it parks the current repo. if not in a repo, then asks if want to park
+# all. and park all should be park -a or park --all" — and it supersedes his
+# #91 ruling of the same day ("so just park will do park-all"), under which
+# the bare form PARKED EVERY ESTATE unasked, which had itself superseded
+# ruling 3 of #82 (the bare form REFUSES and lists what it found). With no
+# terminal on stdin nothing can be asked, so the bare form refuses and names
+# `--all`: a script that wants the sweep says so. THE SWEEP ITSELF is #91's —
+# every estate in name order, continuing past a refusal, one summary. IN THAT
+# SWEEP ONLY, a standalone root carrying no Speckit git overlay is SKIPPED and
+# named instead of being run and counted as a refusal — Brett Heap's RULING
+# of 2026-09-10 on openRepoShape #92, "skip roots without the overlay": a
+# root nobody ever installed the overlay in is not a park that FAILED. Naming
+# that same root still relays its own `make park` refusal. `resume` has no
+# sweep and no `--all`: its bare form KEEPS ruling 3's refusal (see its
+# header) — rebuilding every estate on a fresh machine by accident is the
 # opposite risk from failing to park the one you meant.
 # openRepoShape #82 wrote this, its #91 and #93 changed it, its #92 moved it
-# here, and this repository's #6 last changed it.
+# here, this repository's #6 changed it, and the `--all` ruling of 2026-09-10
+# last changed it.
 
 set -euo pipefail
 
@@ -43,10 +51,14 @@ REPO_ARG=""
 DRY_RUN=0
 LANE=""
 PASSTHROUGH=()
-#: Set only in the bare, no-<Name>, no-estate-around-the-cwd case (#91): the
-#: walk-up found nothing, so every estate under the projects directory gets
-#: parked instead of one refusal. Every other path leaves this 0.
+#: 1 when EVERY estate under the projects directory is to be parked: set by
+#: `--all` / `-a` on the command line, or by a YES to the question the bare
+#: form asks when the walk-up found no estate around the cwd. Every other
+#: path leaves this 0. `ALL_ROWS` is what the sweep will run, `<name><TAB>
+#: <dir>` per estate, discovered ONCE by whichever of the two set it — so what
+#: was listed, or asked about, is exactly what runs.
 PARK_ALL=0
+ALL_ROWS=""
 
 say() { printf '%s\n' "$*"; }
 # THE SAME STDERR SHAPE AS `die`, BUT IT RETURNS: a park-everything run (#91)
@@ -59,6 +71,7 @@ die() { refuse "$1"; exit "${2:-2}"; }
 usage() {
     cat <<'USAGE'
 park [<Name>] [--repo <owner/name>] [--dry-run] [--lane <name>] [-- ARGS...]
+park --all | -a [--dry-run] [--lane <name>] [-- ARGS...]
 park --help
 
 Commit, push and RECORD every open feature of one estate, so another
@@ -66,22 +79,25 @@ workstation can take the work up with `resume <Name>`.
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
 (<Name>/<Name>/family.yaml) or a standalone project root (<Name>/project.yaml).
-With no <Name> the estate around the current directory is used. With NO
-estate around it either, `park` PARKS EVERY ESTATE under your projects
-directory instead of refusing (Brett Heap's RULING of 2026-09-10, #91,
-superseding ruling 3 of #82 for this one case): it lists what it found, then
-runs this same procedure on each one in name order, continuing past a
-refusal or a non-zero `make park`, and ends with a summary. A root with NO
-Speckit git overlay is SKIPPED there and counted apart rather than failed
-(the RULING of the same day on #92); naming that root still relays its own
-refusal, which names `setup-openspeckit`, exactly as it does today. `resume`
-deliberately keeps the old refusal for its own bare form: rebuilding every
-estate on a fresh machine by accident is a worse mistake than failing to park
-the one you meant. `--repo <owner/name>` names the estate by the origin of a
-clone you ALREADY HAVE - in any spelling: the slug, the slug with `.git`, or
-the whole https or ssh url. It never clones (`resume` is the command that
-clones).
+With no <Name> the estate around the current directory is parked. With NO
+estate around it either, `park` lists every estate under your projects
+directory and ASKS whether to park them all; anything but `y` parks nothing.
+`park --all` (or `-a`) is that same sweep WITHOUT the question, from anywhere:
+every estate in name order, continuing past a refusal or a non-zero `make
+park`, then one summary. Where stdin is not a terminal the bare form cannot
+ask, so it refuses and names `--all` - a script that wants the sweep says so.
+(Brett Heap's RULING of 2026-09-10, superseding his #91 ruling of the same
+day, under which the bare form swept unasked.) In the sweep a root with NO
+Speckit git overlay is SKIPPED and counted apart rather than failed (his
+RULING of the same day on #92); naming that root still relays its own
+refusal, which names `setup-openspeckit`. `resume` has no `--all`: rebuilding
+every estate on a fresh machine by accident is a worse mistake than failing
+to park the one you meant. `--repo <owner/name>` names the estate by the
+origin of a clone you ALREADY HAVE - in any spelling: the slug, the slug with
+`.git`, or the whole https or ssh url. It never clones (`resume` is the
+command that clones).
 
+  --all, -a           park EVERY estate under your projects directory, unasked
   --project <Name>    the positional under a flag (also --name)
   --dry-run           rehearse: `make park ARGS=--dry-run`, which writes nothing
   --lane <name>       the lane recorded in the WIP commit subject
@@ -659,17 +675,26 @@ run_one_estate() {
     return "$one_status"
 }
 
-# --- park-everything (#91), and what it SKIPS (#92) --------------------------
+# --- park-everything (#91): asked for with --all, or asked about; and what it
+# --- SKIPS (#92) -------------------------------------------------------------
 #
-# Brett Heap's RULING, 2026-09-10, verbatim: "for the park-all, lets make
-# that be park with no estate option. so just park will do park-all." This
-# SUPERSEDES ruling 3 of #82 for THIS CASE ONLY: bare `park`, with no <Name>
-# and no estate around the cwd, no longer refuses. `park <Name>`, `park
-# --repo` and the walk-up above (NEAREST STILL WINS - standing inside an
-# estate parks THAT estate, never the workstation) are exactly as they were.
-# `resume` deliberately keeps ruling 3's refusal for its own bare form - see
-# the note in its header - because rebuilding every estate on a fresh machine
-# by accident is the opposite risk from failing to park the one you meant.
+# THE SWEEP is #91's - Brett Heap's RULING of 2026-09-10, verbatim: "for the
+# park-all, lets make that be park with no estate option. so just park will
+# do park-all." HOW IT IS REACHED changed the same day, under his later
+# RULING in this repository, verbatim: "lets change that so it parks the
+# current repo. if not in a repo, then asks if want to park all. and park all
+# should be park -a or park --all." So: `park --all` / `park -a` runs the
+# sweep from anywhere, unasked. Bare `park` with no <Name> and no estate
+# around the cwd LISTS the estates and ASKS (`ask_before_parking_every_estate`,
+# below); a YES runs the same sweep, anything else parks nothing, and with no
+# terminal on stdin nothing is asked - the bare form refuses and names
+# `--all`, because a sweep a script did not spell out is a sweep nobody
+# chose. `park <Name>`, `park --repo` and the walk-up above (NEAREST STILL
+# WINS - standing inside an estate parks THAT estate, never the workstation)
+# are exactly as they were under #82. `resume` has no sweep and no `--all`:
+# its bare form keeps ruling 3 of #82's refusal - see the note in its header
+# - because rebuilding every estate on a fresh machine by accident is the
+# opposite risk from failing to park the one you meant.
 #
 # Brett Heap's SECOND RULING of that day, on openRepoShape #92, verbatim:
 # "rule on the #92 open item: skip roots without the overlay." The sweep on
@@ -723,12 +748,17 @@ has_speckit_overlay() {
     [ -x "$1/.specify/extensions/git/scripts/bash/park.sh" ]
 }
 
-# Discover every estate and run `run_one_estate` for each, in name order,
-# CONTINUING PAST A REFUSAL OR A NON-ZERO `make park`: one estate's trouble is
-# not a reason to leave the others unparked. A SKIP IS NOT A PASS (#80's
-# rule), so an estate whose own report is not clean - a non-zero `make park`,
-# or a zero one that still left something behind - counts against the
-# overall exit code exactly as a refusal does.
+# Run `run_one_estate` for every estate in `$1` (`all_estate_dirs`'s rows),
+# in name order, CONTINUING PAST A REFUSAL OR A NON-ZERO `make park`: one
+# estate's trouble is not a reason to leave the others unparked. A SKIP IS
+# NOT A PASS (#80's rule), so an estate whose own report is not clean - a
+# non-zero `make park`, or a zero one that still left something behind -
+# counts against the overall exit code exactly as a refusal does.
+#
+# THE CALLER HAS ALREADY LISTED THE ROWS - `--all` under its own heading, the
+# bare form above its question - so nothing prints here before the first
+# `=== park <Name> ===`, and the rows are passed in rather than discovered
+# again: what was listed is exactly what runs.
 #
 # A ROOT WITHOUT THE OVERLAY IS THE ONE THING THAT COUNTS NEITHER WAY (#92's
 # ruling, above): nothing ran in it, so there is no report to be clean or
@@ -736,29 +766,8 @@ has_speckit_overlay() {
 # is not #80's rule bent - #80 is about a verb that was asked and did not
 # answer; this is a verb that was never askable.
 park_every_estate() {
-    local rows name dir estate_status total=0 bad=0 skipped=0 skipped_clause=""
+    local rows="$1" name dir estate_status total=0 bad=0 skipped=0 skipped_clause=""
     local -a summary=()
-
-    rows="$(all_estate_dirs)"
-    if [ -z "$rows" ]; then
-        # NO ESTATES ANYWHERE ON THIS MACHINE: there is no "every estate" to
-        # park, so this is not park-everything's case to change - the
-        # refusal ruling 3 always printed here stands untouched.
-        die "no estate around $PWD, and no <Name> was given, so nothing was parked.
-    \`park\` never guesses which estate you meant, and it never parks all of
-    them. Name one of these:
-
-$(estates_or_none)
-    ...or \`park --repo <owner/name>\`, for the clone whose origin is that
-    repository."
-    fi
-
-    require_make
-
-    say "park: no estate around $PWD; parking every estate under ${PROJECTS_DIRS[*]}:"
-    say ""
-    say "$(estates_or_none)"
-    say ""
 
     while IFS=$'\t' read -r name dir; do
         [ -n "$name" ] || continue
@@ -819,11 +828,61 @@ $(estates_or_none)
     [ "$bad" -eq 0 ]
 }
 
+# The bare form, standing outside every estate: LIST, then ASK. Brett Heap's
+# RULING of 2026-09-10 in this repository (quoted at the section head): "if
+# not in a repo, then asks if want to park all." ONLY A TERMINAL CAN ANSWER,
+# so with anything else on stdin - a pipe, /dev/null, a cron job, an
+# assistant's tool call - nothing is asked and nothing is parked: the refusal
+# names `--all`, which is how a script says it meant the sweep. Anything but
+# y/yes is a no, in either case: parking every estate on a workstation is an
+# answer a person has to give, not one they get by pressing Enter. Sets
+# PARK_ALL and ALL_ROWS on a yes; every other way out is a `die`.
+ask_before_parking_every_estate() {
+    local answer
+    ALL_ROWS="$(all_estate_dirs)"
+    [ -n "$ALL_ROWS" ] ||
+        die "no estate around $PWD, no <Name> was given, and there is no estate under
+    ${PROJECTS_DIRS[*]} at all, so there is nothing to park. An estate is a
+    FAMILY folder (<Name>/<Name>/family.yaml) or a standalone project root
+    (<Name>/project.yaml), one level under your projects directory;
+    \`resume <Name>\` brings one back."
+    [ -t 0 ] ||
+        die "no estate around $PWD, and no <Name> was given. Outside every estate
+    \`$SELF_NAME\` ASKS before parking them all, and stdin is not a terminal
+    here, so nobody could answer: nothing was parked. \`$SELF_NAME --all\`
+    parks every estate below without asking; \`$SELF_NAME <Name>\` parks one:
+
+$(estates_or_none)"
+    require_make
+    say "park: no estate around $PWD, and no <Name> was given. Every estate under ${PROJECTS_DIRS[*]}:"
+    say ""
+    say "$(estates_or_none)"
+    say ""
+    # THE QUESTION GOES TO STDERR, where a prompt belongs: with stdout sent to
+    # a file the question still reaches the terminal rather than the file,
+    # and a run hung on a question nobody can see is the one shape this must
+    # never take. `read` fails on end-of-file (Ctrl-D), which is a no.
+    printf 'park every estate above? [y/N] ' >&2
+    IFS= read -r answer || answer=""
+    case "$answer" in
+    [Yy] | [Yy][Ee][Ss]) PARK_ALL=1 ;;
+    *)
+        die "nothing was parked: the answer was not yes. \`$SELF_NAME <Name>\` parks one of
+    the estates above, \`$SELF_NAME --all\` parks every one of them without
+    asking, and \`$SELF_NAME\` from inside an estate parks that one."
+        ;;
+    esac
+}
+
 # --- arguments -------------------------------------------------------------
 while [ $# -gt 0 ]; do
     case "$1" in
     -h | --help) usage; exit 0 ;;
     --dry-run) DRY_RUN=1; shift ;;
+    # THE SWEEP, ASKED FOR: every estate under the projects directory, from
+    # anywhere, with no question (the RULING of 2026-09-10 at the sweep's
+    # section head: "park all should be park -a or park --all").
+    -a | --all) PARK_ALL=1; shift ;;
     --lane) LANE="${2:?--lane needs a value}"; shift 2 ;;
     --repo) REPO_SLUG="${2:?--repo needs a value}"; REPO_ARG="$REPO_SLUG"; shift 2 ;;
     # `--project <Name>` and `--name <Name>` are the positional under a flag,
@@ -854,9 +913,33 @@ done
 [ -z "$NAME" ] || [ -z "$REPO_SLUG" ] ||
     die "both <Name> ('$NAME') and --repo '$REPO_SLUG'. One estate per run: name it
     either way, not both."
+if [ "$PARK_ALL" -eq 1 ]; then
+    [ -z "$NAME" ] ||
+        die "both <Name> ('$NAME') and --all. \`--all\` parks EVERY estate under your
+    projects directory; <Name> parks one. Drop one of them."
+    [ -z "$REPO_SLUG" ] ||
+        die "both --repo '$REPO_ARG' and --all. \`--all\` parks EVERY estate under your
+    projects directory; \`--repo\` parks the one that clone belongs to. Drop one
+    of them."
+fi
 
 # --- resolve ---------------------------------------------------------------
-if [ -n "$REPO_SLUG" ]; then
+if [ "$PARK_ALL" -eq 1 ]; then
+    # `--all`: nothing to resolve, and nothing to ask. The sweep discovers for
+    # itself, and it runs from ANYWHERE - standing inside an estate does not
+    # narrow a flag that says every one of them.
+    ALL_ROWS="$(all_estate_dirs)"
+    [ -n "$ALL_ROWS" ] ||
+        die "--all found no estate under ${PROJECTS_DIRS[*]}, so nothing was parked.
+    An estate is a FAMILY folder (<Name>/<Name>/family.yaml) or a standalone
+    project root (<Name>/project.yaml), one level under your projects
+    directory; \`resume <Name>\` brings one back."
+    require_make
+    say "park --all: parking every estate under ${PROJECTS_DIRS[*]}:"
+    say ""
+    say "$(estates_or_none)"
+    say ""
+elif [ -n "$REPO_SLUG" ]; then
     # ANY SPELLING A PERSON MIGHT PASTE, through the same reader that reads a
     # clone's `origin`: `TestOrg/Atlas`, `TestOrg/Atlas.git`, a trailing
     # slash, or the whole https url they copied out of the browser. Both
@@ -898,17 +981,17 @@ elif [ -n "$NAME" ]; then
 
 $(estates_or_none)"
 else
-    # RULING #91 (Brett Heap, 2026-09-10) SUPERSEDES ruling 3 of #82 for THIS
-    # CASE ONLY: with no <Name> and no estate around the cwd, `park` no
-    # longer refuses — it parks every estate it can find (park_every_estate,
-    # above). The walk-up still wins first: standing inside an estate parks
-    # THAT estate, never the whole workstation.
-    estate_walk_up "$PWD" || PARK_ALL=1
+    # THE WALK-UP WINS FIRST: standing inside an estate parks THAT estate,
+    # never the whole workstation — "it parks the current repo" (the RULING
+    # of 2026-09-10 quoted at the sweep's section head). With no estate
+    # around the cwd the estates are listed and the question is asked;
+    # `--all` is the way past the question, not a folder to stand in.
+    estate_walk_up "$PWD" || ask_before_parking_every_estate
 fi
 
 if [ "$PARK_ALL" -eq 1 ]; then
     STATUS=0
-    park_every_estate || STATUS=$?
+    park_every_estate "$ALL_ROWS" || STATUS=$?
     exit "$STATUS"
 fi
 

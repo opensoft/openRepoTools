@@ -21,12 +21,15 @@
 #
 # BARE `resume`, WITH NO <Name> AND NO ESTATE AROUND THE CWD, STILL REFUSES —
 # deliberately NOT changed by Brett Heap's RULING of 2026-09-10 (#91), which
-# supersedes ruling 3 of #82 for `park`'s own bare form only. Rebuilding every
-# estate this machine has a record of, by accident, from one bare `resume` in
-# the wrong folder, is the opposite risk from `park` failing to park the one
-# estate you meant: a clone or a fast-forward per estate is real network and
-# real disk, and undoing an accidental one is not as simple as re-running the
-# command. Ruling #91 names `park` only; this refusal stands.
+# supersedes ruling 3 of #82 for `park`'s own bare form only, nor by his later
+# RULING of the same day in openRepoTools, under which `park` ASKS there and
+# sweeps on a yes or a `--all`. `resume` has no `--all` and asks nothing:
+# rebuilding every estate this machine has a record of, by accident, from one
+# bare `resume` in the wrong folder, is the opposite risk from `park` failing
+# to park the one estate you meant — a clone or a fast-forward per estate is
+# real network and real disk, and undoing an accidental one is not as simple
+# as re-running the command. Both rulings name `park` only; this refusal
+# stands.
 # openRepoShape #82 wrote this, its #93 last changed it, its #92 moved it here.
 #
 # THE ONLY FILE THIS STANDARD EVER WRITES OUTSIDE A REPOSITORY is the two-line
@@ -759,6 +762,13 @@ while [ $# -gt 0 ]; do
     --workspace) WORKSPACE_SLUG="${2:?--workspace needs a value}"; shift 2 ;;
     --org) ORG_WANTED="${2:?--org needs a value}"; shift 2 ;;
     --name | --project) NAME="${2:?$1 needs a value}"; shift 2 ;;
+    # `park --all` exists; `resume --all` deliberately does not (see the
+    # header). Said here in so many words, because the generic answer below
+    # - "put it after `--`" - would hand the extension a flag it does not
+    # have and nobody meant.
+    -a | --all) die "\`$SELF_NAME\` has no \`--all\`, deliberately: rebuilding every estate on this
+    machine from one command is the accident its own bare-form refusal exists
+    to prevent. Name the one you want: \`$SELF_NAME <Name>\`." ;;
     # EVERYTHING AFTER `--` IS THE EXTENSION'S, verbatim: `resume.sh` has
     # flags this command has no opinion about (--feature, --keep-staged), and
     # a command that ate them would be a command people stop using the moment
