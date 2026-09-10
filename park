@@ -38,8 +38,7 @@
 # header) — rebuilding every estate on a fresh machine by accident is the
 # opposite risk from failing to park the one you meant.
 # openRepoShape #82 wrote this, its #91 and #93 changed it, its #92 moved it
-# here, this repository's #6 changed it, and the `--all` ruling of 2026-09-10
-# last changed it.
+# here, and this repository's #6 and then its #8 last changed it.
 
 set -euo pipefail
 
