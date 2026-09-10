@@ -241,8 +241,12 @@ the subtree merge. Both halves are one command each, in
 
 ```sh
 git log --oneline -- lanes/LANES.md              # since the move
-git log --oneline pre-move/lanes -- LANES.md     # the 1242 before it
-git log --oneline --full-history -- LANES.md     # the same, without the tag
+git log --oneline pre-move/lanes -- LANES.md     # the 1242 up to the import
+git log --oneline --full-history -- LANES.md     # 1256: those, plus the 12 the
+                                                 # orphan branch took while the
+                                                 # move was in flight, which came
+                                                 # in on a later sync and are not
+                                                 # under the tag
 git show <sha>:LANES.md                          # a lost row, pre-move
 git show <sha>:lanes/LANES.md                    # a lost row, since
 ```
