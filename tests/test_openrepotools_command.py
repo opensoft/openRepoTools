@@ -371,10 +371,15 @@ def test_install_places_all_three_or_none(tmp_path):
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    # Something already installed, so "nothing was replaced" is a claim with
-    # a witness rather than an empty directory.
+    # TWO older copies, so "nothing was replaced" is a claim with witnesses
+    # rather than an empty directory: the file the fetch COULD have served
+    # (`openRepoTools`) and the WORKING COMMAND whose absence upstream is what
+    # aborted the run (`park`). A person whose `park` still works must have it
+    # afterwards.
     (bin_dir / "openRepoTools").write_text("# an older copy\n",
                                            encoding="utf-8")
+    (bin_dir / "park").write_text("# an older park that still works\n",
+                                  encoding="utf-8")
     withheld = fake_github(tmp_path, [n for n in INSTALLED if n != "park"])
     result = subprocess.run(
         ["bash", "-s", "--", "--install"], capture_output=True, text=True,
@@ -389,7 +394,9 @@ def test_install_places_all_three_or_none(tmp_path):
     assert "nothing already installed was replaced" in result.stderr
     assert (bin_dir / "openRepoTools").read_text(encoding="utf-8") == \
         "# an older copy\n", "the older copy was replaced by a half-install"
-    assert not (bin_dir / "park").exists()
+    assert (bin_dir / "park").read_text(encoding="utf-8") == \
+        "# an older park that still works\n", (
+        "a working `park` was overwritten by a run that could not fetch one")
     assert not (bin_dir / "resume").exists()
     assert "placed" not in result.stdout
 
