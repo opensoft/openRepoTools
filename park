@@ -22,10 +22,16 @@
 # discovers and PARKS EVERY ESTATE under the projects directory, in name
 # order, continuing past a refusal, instead of refusing. `park <Name>`,
 # `park --repo` and the walk-up inside an estate are unchanged either way.
+# IN THAT SWEEP ONLY, a standalone root carrying no Speckit git overlay is
+# SKIPPED and named instead of being run and counted as a refusal — Brett
+# Heap's RULING of 2026-09-10 on openRepoShape #92, "skip roots without the
+# overlay": a root nobody ever installed the overlay in is not a park that
+# FAILED. Naming that same root still relays its own `make park` refusal.
 # `resume` deliberately KEEPS ruling 3's refusal for its own bare form (see
 # its header) — rebuilding every estate on a fresh machine by accident is the
 # opposite risk from failing to park the one you meant.
-# openRepoShape #82 wrote this, its #93 last changed it, its #92 moved it here.
+# openRepoShape #82 wrote this, its #91 and #93 changed it, its #92 moved it
+# here, and this repository's #6 last changed it.
 
 set -euo pipefail
 
@@ -65,7 +71,10 @@ estate around it either, `park` PARKS EVERY ESTATE under your projects
 directory instead of refusing (Brett Heap's RULING of 2026-09-10, #91,
 superseding ruling 3 of #82 for this one case): it lists what it found, then
 runs this same procedure on each one in name order, continuing past a
-refusal or a non-zero `make park`, and ends with a summary. `resume`
+refusal or a non-zero `make park`, and ends with a summary. A root with NO
+Speckit git overlay is SKIPPED there and counted apart rather than failed
+(the RULING of the same day on #92); naming that root still relays its own
+refusal, which names `setup-openspeckit`, exactly as it does today. `resume`
 deliberately keeps the old refusal for its own bare form: rebuilding every
 estate on a fresh machine by accident is a worse mistake than failing to park
 the one you meant. `--repo <owner/name>` names the estate by the origin of a
@@ -650,7 +659,7 @@ run_one_estate() {
     return "$one_status"
 }
 
-# --- park-everything (#91) ---------------------------------------------------
+# --- park-everything (#91), and what it SKIPS (#92) --------------------------
 #
 # Brett Heap's RULING, 2026-09-10, verbatim: "for the park-all, lets make
 # that be park with no estate option. so just park will do park-all." This
@@ -661,6 +670,17 @@ run_one_estate() {
 # `resume` deliberately keeps ruling 3's refusal for its own bare form - see
 # the note in its header - because rebuilding every estate on a fresh machine
 # by accident is the opposite risk from failing to park the one you meant.
+#
+# Brett Heap's SECOND RULING of that day, on openRepoShape #92, verbatim:
+# "rule on the #92 open item: skip roots without the overlay." The sweep on
+# a real workstation found four roots with no Speckit git overlay, whose own
+# `make park` refuses with exit 2 - so a bare `park` there could only ever
+# exit 1, and the one summary line that matters was four false failures deep.
+# A root nobody installed the overlay in is not a park that FAILED; it is a
+# park there was never anything to run. So THE SWEEP skips it, names it, and
+# counts it apart. ONLY THE SWEEP: `park <Name>` and `park --repo` named a
+# root, and a person who named one gets its refusal, which names the
+# installer.
 
 # Every estate under the projects directory, `<name><TAB><dir>` per row, in
 # NAME order rather than discovery order: `~/projects` and `~/Projects` can
@@ -684,14 +704,39 @@ all_estate_dirs() {
     done | LC_ALL=C sort -t $'\t' -k1,1
 }
 
+# Does this root carry the Speckit git overlay its own `make park` requires?
+# THE SAME TEST THE MAKEFILE MAKES, spelled the same way: `templates/
+# assembly-root/Makefile` opens the target with `test -x $(PARK) || { echo
+# 'make park $(OVERLAY_MISSING)' >&2; exit 2; }`, where `$(PARK)` is
+# `.specify/extensions/git/scripts/bash/park.sh`. Asking the question the
+# target's own way is what keeps the sweep's answer and the target's answer
+# from ever disagreeing - a probe that tested for the DIRECTORY, say, would
+# skip a root the target would have run, or run one it would refuse.
+#
+# ONLY A STANDALONE ROOT IS ASKED. A family holder's Makefile makes no such
+# test: it fans out with `scripts/siblings.py --make park`, and each member's
+# own root refuses for itself and is REPORTED BY THE HOLDER. Pre-checking a
+# holder here would skip a whole family for want of a file its own Makefile
+# never reads, and pre-checking its members would answer, worse and earlier,
+# a question the holder already answers per member.
+has_speckit_overlay() {
+    [ -x "$1/.specify/extensions/git/scripts/bash/park.sh" ]
+}
+
 # Discover every estate and run `run_one_estate` for each, in name order,
 # CONTINUING PAST A REFUSAL OR A NON-ZERO `make park`: one estate's trouble is
 # not a reason to leave the others unparked. A SKIP IS NOT A PASS (#80's
 # rule), so an estate whose own report is not clean - a non-zero `make park`,
 # or a zero one that still left something behind - counts against the
 # overall exit code exactly as a refusal does.
+#
+# A ROOT WITHOUT THE OVERLAY IS THE ONE THING THAT COUNTS NEITHER WAY (#92's
+# ruling, above): nothing ran in it, so there is no report to be clean or
+# unclean, and the exit code is computed over the estates that DID run. That
+# is not #80's rule bent - #80 is about a verb that was asked and did not
+# answer; this is a verb that was never askable.
 park_every_estate() {
-    local rows name dir estate_status total=0 bad=0
+    local rows name dir estate_status total=0 bad=0 skipped=0 skipped_clause=""
     local -a summary=()
 
     rows="$(all_estate_dirs)"
@@ -718,8 +763,29 @@ $(estates_or_none)
     while IFS=$'\t' read -r name dir; do
         [ -n "$name" ] || continue
         estate_here "$dir" || continue
-        total=$((total + 1))
         say "=== park $ESTATE_NAME ==="
+        # ONE LINE, AND NOTHING RUNS HERE (#92's ruling). The block still
+        # gets its `=== park <Name> ===` heading, because a root left out of
+        # the run silently is a root a person has to go and look for.
+        #
+        # `= standalone` AND NOT `!= family`, though `estate_here` sets only
+        # those two today: the kinds are matched POSITIVELY so that a kind
+        # nobody has invented yet is RUN and answered by its own Makefile,
+        # rather than silently skipped by a test written before it existed.
+        # Skipping is the answer for the one shape whose Makefile we have
+        # read (Copilot's review of #7).
+        if [ "$ESTATE_KIND" = "standalone" ] && ! has_speckit_overlay "$ESTATE_ROOT"; then
+            if [ "$DRY_RUN" -eq 1 ]; then
+                say "  would skip (no Speckit overlay; install it with: setup-openspeckit)"
+            else
+                say "  SKIPPED (no Speckit overlay; install it with: setup-openspeckit)"
+            fi
+            summary+=("  skipped    $ESTATE_NAME (no Speckit overlay)")
+            skipped=$((skipped + 1))
+            say ""
+            continue
+        fi
+        total=$((total + 1))
         estate_status=0
         run_one_estate || estate_status=$?
         if [ "$estate_status" -ne 0 ]; then
@@ -739,7 +805,17 @@ $(estates_or_none)
     for line in "${summary[@]}"; do
         say "$line"
     done
-    say "park: $((total - bad)) estate(s) parked, $bad refused or with findings"
+    # THE #91 LINE, UNCHANGED, when nothing was skipped - which is every
+    # workstation whose roots all carry the overlay. The clause appears only
+    # when there is something to say, and it says what was NOT run rather
+    # than padding the line with a zero.
+    [ "$skipped" -eq 0 ] || skipped_clause=", $skipped skipped (no overlay)"
+    say "park: $((total - bad)) estate(s) parked, $bad refused or with findings$skipped_clause"
+    if [ "$total" -eq 0 ] && [ "$skipped" -ne 0 ]; then
+        say "park: nothing here was park-able: every estate found is without the"
+        say "      Speckit git overlay, so nothing ran and nothing failed. Install"
+        say "      it where you want park to work: setup-openspeckit"
+    fi
     [ "$bad" -eq 0 ]
 }
 

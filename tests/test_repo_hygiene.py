@@ -222,6 +222,36 @@ def test_the_documents_say_what_bare_park_does_now():
         "the `park` in this repository predates #91; re-take it from the pin")
 
 
+def test_the_documents_say_the_sweep_skips_a_root_without_the_overlay():
+    """#6, under Brett Heap's RULING of 2026-09-10 on openRepoShape #92
+    ("skip roots without the overlay"): in the SWEEP, a root with no Speckit
+    git overlay is SKIPPED and named, counted apart, and left out of the exit
+    code — while `park <Name>` on that same root still relays the Makefile's
+    refusal.
+
+    Held in both documents and in the command's own header for the reason the
+    test above is: the wrong half of this is the half that reads fine. A
+    document that says only "continuing past a refusal" is not obviously
+    stale, and an assistant reading it tells somebody a clean sweep failed —
+    or, worse, treats four never-installed roots as four things to fix before
+    the park can be trusted.
+    """
+    for name in ("README.md", "AGENTS.md", "park"):
+        text = (REPO / name).read_text(encoding="utf-8")
+        assert "SKIPPED" in text, (
+            f"{name} does not say the sweep SKIPS a root without the overlay")
+        assert "Speckit git overlay" in text, (
+            f"{name} does not name WHAT is missing from such a root")
+        assert "#92" in text, f"{name} does not cite the ruling"
+        assert "setup-openspeckit" in text, (
+            f"{name} does not name the installer, which is the whole of what "
+            f"the person reading a skipped line has to do next")
+    for name in ("README.md", "AGENTS.md"):
+        assert "skipped (no overlay)" in (REPO / name).read_text(
+            encoding="utf-8"), (
+            f"{name} does not show the summary clause a person actually sees")
+
+
 def test_agents_md_names_the_pin_rules():
     """The three rules an agent touching the submodule has to have read, and
     the reason they are in AGENTS.md rather than only in the pin's header: an
@@ -255,9 +285,19 @@ def test_agents_md_is_short_enough_to_be_read():
     The six lines are both halves of that, because `resume`'s own bare form
     deliberately keeps the refusal and an assistant is never to name one
     estate on the person's behalf to route around it.
+
+    90 -> 95 on 2026-09-10, for #6 (Brett Heap's RULING of that day on
+    openRepoShape #92, "skip roots without the overlay"). Rule 1 now says
+    that a sweep ending `…, 4 skipped (no overlay)` and exiting 0 is a CLEAN
+    run and that what those four want is `setup-openspeckit`, because the
+    reading an assistant reaches for unaided is the opposite one — four
+    estates that "did not park" look like four things to chase, and chasing
+    them means rerunning a park that was never going to run there. The fifth
+    line is the other half: naming such a root still refuses, and relaying
+    that refusal is the answer.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 90, f"AGENTS.md is {len(lines)} lines; the cap is 90"
+    assert len(lines) <= 95, f"AGENTS.md is {len(lines)} lines; the cap is 95"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -289,9 +329,19 @@ def test_readme_is_short_enough_to_be_read():
     put the edit inside the block and say why the order is the order; a
     procedure that is wrong in the one document a first-time bumper reads is
     worth more than seven lines.
+
+    172 -> 178 the same day, for #6 (Brett Heap's RULING of 2026-09-10 on
+    openRepoShape #92, "skip roots without the overlay"). Six lines finish
+    the "How the estate is found" paragraph #91 rewrote: the sweep SKIPS a
+    root with no Speckit git overlay rather than failing on it, shows the
+    `…, 4 skipped (no overlay)` clause a person actually sees, names
+    `setup-openspeckit` as what such a root wants, and says that naming that
+    same root still relays its refusal. Both halves in one paragraph, for the
+    reason the #91 lines are: a reader who gets one of them and not the other
+    reads a clean sweep as a failed one.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 172, f"README.md is {len(lines)} lines; the cap is 172"
+    assert len(lines) <= 178, f"README.md is {len(lines)} lines; the cap is 178"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

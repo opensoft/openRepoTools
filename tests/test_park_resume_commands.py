@@ -210,6 +210,23 @@ def probe_project(projects: Path, name: str, *, at: Path | None = None) -> Path:
     return root
 
 
+def sweepable_project(projects: Path, name: str, *, at: Path | None = None) -> Path:
+    """A standalone root THE SWEEP WILL RUN: a probe root plus the overlay.
+
+    Since #6 the no-estate sweep asks a standalone root for the Speckit git
+    overlay before running anything in it, the way
+    `templates/assembly-root/Makefile` asks — `test -x
+    .specify/extensions/git/scripts/bash/park.sh`. The stub is never
+    EXECUTED by these tests, because the probe Makefile echoes instead of
+    running it; its presence is the whole point, and a `probe_project`
+    without it is now a root the sweep skips, which is what
+    `probe_project` is left meaning.
+    """
+    root = probe_project(projects, name, at=at)
+    write_stub(root, "park")
+    return root
+
+
 # --- the offline remotes, built once ---------------------------------------
 
 def commit_all(path: Path, message: str) -> None:
@@ -588,7 +605,7 @@ def test_bare_park_with_no_estate_parks_every_estate_in_name_order(home):
     name order, with the list printed first."""
     projects = home / "projects"
     holder = probe_family(projects, "TestFam")
-    root = probe_project(projects, "Atlas")
+    root = sweepable_project(projects, "Atlas")
     result = run(PARK, home=home, cwd=home)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "no estate around" in result.stdout
@@ -617,7 +634,7 @@ def test_bare_park_continues_past_a_refused_estate_and_still_parks_the_rest(
     read as clean either."""
     projects = home / "projects"
     holder = probe_family(projects, "TestFam")
-    root = probe_project(projects, "Atlas")
+    root = sweepable_project(projects, "Atlas")
     (root / "Makefile").write_text(FAILING_PARK_PROBE_MAKEFILE,
                                    encoding="utf-8")
 
@@ -652,7 +669,7 @@ def test_bare_park_inside_an_estate_still_parks_only_that_one(home):
 def test_bare_park_dry_run_lane_and_passthrough_args_reach_every_estate(home):
     projects = home / "projects"
     holder = probe_family(projects, "TestFam")
-    root = probe_project(projects, "Atlas")
+    root = sweepable_project(projects, "Atlas")
     result = run(PARK, "--dry-run", "--lane", "xfactory-2", "--",
                  "--feature", "001-a", home=home, cwd=home)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -661,6 +678,152 @@ def test_bare_park_dry_run_lane_and_passthrough_args_reach_every_estate(home):
     assert f"PROBE park in {holder} {expected}" in result.stdout
     assert result.stdout.count(
         "--dry-run: nothing was committed, pushed or recorded.") == 2
+
+
+# --- #6: the sweep SKIPS a root that has no Speckit overlay ----------------
+#
+# Brett Heap's RULING of 2026-09-10 on openRepoShape #92, verbatim: "rule on
+# the #92 open item: skip roots without the overlay." A root whose
+# `.specify/extensions/git/scripts/bash/park.sh` is not there is one whose
+# own `make park` can only refuse (exit 2), so counting it as a refusal made
+# a real workstation's bare `park` exit 1 for ever. THE SWEEP skips it; the
+# person who NAMES it still gets the refusal, which is the pair of tests
+# below.
+
+def test_the_sweep_skips_a_root_without_the_overlay_and_parks_the_rest(home):
+    """Both answers in one run: the roots that CAN park do, the ones that
+    cannot are named and counted apart, and the run is clean."""
+    projects = home / "projects"
+    parkable = {name: sweepable_project(projects, name)
+                for name in ("Atlas", "Borealis")}
+    bare = {name: probe_project(projects, name)
+            for name in ("MedxEHR", "openDox")}
+
+    result = run(PARK, home=home, cwd=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    for name, root in parkable.items():
+        assert f"PROBE park in {root} ARGS=[]" in result.stdout
+        assert f"  parked     {name}" in result.stdout
+    for name, root in bare.items():
+        assert f"=== park {name} ===" in result.stdout, (
+            "a root left out of the run silently is one a person has to go "
+            "and look for; the heading is how they see it was considered")
+        assert f"PROBE park in {root}" not in result.stdout, (
+            f"nothing may run in {name}: it was skipped, not parked")
+        assert f"  skipped    {name} (no Speckit overlay)" in result.stdout
+    assert result.stdout.count(
+        "SKIPPED (no Speckit overlay; install it with: setup-openspeckit)") \
+        == 2, "one line per skipped root, and it names the installer"
+    assert ("park: 2 estate(s) parked, 0 refused or with findings, "
+            "2 skipped (no overlay)") in result.stdout
+
+
+def test_every_estate_skipped_is_exit_zero_and_says_so(home):
+    """Nothing ran, so nothing failed. A workstation whose roots have never
+    been given the overlay must not be told its park failed — it must be
+    told what to install."""
+    projects = home / "projects"
+    for name in ("MedxEHR", "openDox"):
+        probe_project(projects, name)
+
+    result = run(PARK, home=home, cwd=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PROBE park in" not in result.stdout
+    assert ("park: 0 estate(s) parked, 0 refused or with findings, "
+            "2 skipped (no overlay)") in result.stdout
+    assert "nothing here was park-able" in result.stdout
+    assert "setup-openspeckit" in result.stdout
+
+
+def test_a_skipped_root_never_hides_a_real_refusal(home):
+    """The exit code is computed over the estates that RAN. One that refused
+    still fails the run, and both lines are on screen — which is the whole
+    reason the skipped ones are counted apart rather than not printed."""
+    projects = home / "projects"
+    refuser = sweepable_project(projects, "Atlas")
+    (refuser / "Makefile").write_text(FAILING_PARK_PROBE_MAKEFILE,
+                                      encoding="utf-8")
+    probe_project(projects, "MedxEHR")
+    holder = probe_family(projects, "TestFam")
+
+    result = run(PARK, home=home, cwd=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "  refused    Atlas (exit 2)" in result.stdout
+    assert "  skipped    MedxEHR (no Speckit overlay)" in result.stdout
+    assert "  parked     TestFam" in result.stdout
+    assert f"PROBE park in {holder} ARGS=[]" in result.stdout, (
+        "the estate after the skipped one must still be parked")
+    assert ("park: 1 estate(s) parked, 1 refused or with findings, "
+            "1 skipped (no overlay)") in result.stdout
+
+
+def test_the_sweep_dry_run_says_it_would_skip_and_creates_nothing(home):
+    projects = home / "projects"
+    root = probe_project(projects, "MedxEHR")
+    before = sorted(p.name for p in root.iterdir())
+
+    result = run(PARK, "--dry-run", home=home, cwd=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ("would skip (no Speckit overlay; install it with: "
+            "setup-openspeckit)") in result.stdout
+    assert "SKIPPED (" not in result.stdout, (
+        "a rehearsal reports what it WOULD do; only a real run skips")
+    assert sorted(p.name for p in root.iterdir()) == before
+    assert not (root / OVERLAY).exists(), "park installs nothing, ever"
+
+
+def test_naming_an_overlay_less_root_still_relays_the_makefiles_refusal(home):
+    """ONLY THE SWEEP SKIPS. `park <Name>` named a root, and a person who
+    named one gets its own `make park` refusal — the Makefile's, verbatim,
+    naming the installer.
+
+    Against the REAL `templates/assembly-root/Makefile`, because the refusal
+    under test is that file's `test -x $(PARK) || … exit 2` and a probe
+    Makefile could only fake it. The same root is swept first, to show the
+    two answers coming apart on one directory: skipped when nobody named it,
+    refused when somebody did.
+    """
+    projects = home / "projects"
+    root = projects / "MedxEHR"
+    root.mkdir(parents=True)
+    (root / "project.yaml").write_text(
+        PROJECT_YAML.format(id="medxehr", name="MedxEHR", org=ORG),
+        encoding="utf-8")
+    shutil.copy2(UPSTREAM / "templates" / "assembly-root" / "Makefile",
+                 root / "Makefile")
+
+    swept = run(PARK, home=home, cwd=home)
+    assert swept.returncode == 0, swept.stdout + swept.stderr
+    assert "  skipped    MedxEHR (no Speckit overlay)" in swept.stdout
+
+    named = run(PARK, "MedxEHR", home=home)
+    assert named.returncode == 2, named.stdout + named.stderr
+    assert ("make park needs the Speckit worktree overlay; install it with: "
+            "setup-openspeckit") in named.stderr, (
+        "the Makefile's own refusal, relayed rather than replaced")
+    assert "`make park` exited 2" in named.stdout
+    assert "SKIPPED" not in named.stdout + named.stderr, (
+        "naming a root must never skip it")
+
+
+def test_a_family_holder_in_the_sweep_is_never_pre_checked(home):
+    """A holder's Makefile makes no overlay test: it fans out with
+    `siblings.py --make park`, and a member's own refusal is the holder's to
+    report. Pre-checking the holder would skip a whole family for want of a
+    file its Makefile never reads."""
+    projects = home / "projects"
+    holder = probe_family(projects, "TestFam")
+    assert not (holder / OVERLAY / "park.sh").exists(), (
+        "the fixture must NOT carry the overlay, or this proves nothing")
+
+    result = run(PARK, home=home, cwd=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"PROBE park in {holder} ARGS=[]" in result.stdout
+    assert "  parked     TestFam" in result.stdout
+    assert "skipped (no overlay)" not in result.stdout, (
+        "with nothing skipped the summary is #91's line, unchanged")
+    assert "park: 1 estate(s) parked, 0 refused or with findings" \
+        in result.stdout
 
 
 def test_no_name_and_no_estates_at_all_says_none(tmp_path):

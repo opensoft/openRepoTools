@@ -29,7 +29,12 @@ sequence, and relay their per-repository lines rather than summarising them.
    refusal (Brett Heap's RULING of 2026-09-10, openRepoShape #91, superseding
    ruling 3 of its #82 for this one case) — it is no longer a refusal, so do
    not tell somebody to name one estate when the bare form's whole point is
-   that it needs none. `resume`'s OWN bare form still refuses with no `<Name>`
+   that it needs none. In that sweep a root with NO Speckit git overlay is
+   SKIPPED and named, never failed (his RULING of the same day, openRepoShape
+   #92) — a sweep ending `…, 4 skipped (no overlay)` and exiting 0 is a CLEAN
+   run, and what those four want is `setup-openspeckit` in each, not a rerun.
+   `park <Name>` on one of them still refuses; relay that refusal.
+   `resume`'s OWN bare form still refuses with no `<Name>`
    and no estate around it, deliberately: rebuilding every estate on a fresh
    machine by accident is the opposite risk, so relay that refusal rather than
    naming one estate on the person's behalf. `resume` fast-forwards a working

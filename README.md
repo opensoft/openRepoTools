@@ -85,9 +85,15 @@ used. With no estate around it either, `park` PARKS EVERY ESTATE it finds under
 your projects directory instead of refusing (Brett Heap's RULING of 2026-09-10,
 openRepoShape #91, superseding ruling 3 of its #82 for this one case): it lists
 what it found, then runs itself on each one in name order, continuing past a
-refusal. `resume` deliberately keeps that old refusal for its own bare form —
-rebuilding every estate on a fresh machine by accident is the opposite risk
-from failing to park the one you meant.
+refusal. A root with no Speckit git overlay is SKIPPED in that sweep rather
+than run and failed: it is named, counted apart (`…, 4 skipped (no overlay)`)
+and left out of the exit code, under Brett Heap's RULING of the same day on
+openRepoShape #92 — a root nobody installed the overlay in is not a park that
+FAILED. `park <Name>` on that same root still relays its own `make park`
+refusal, which names `setup-openspeckit`. `resume` deliberately
+keeps that old refusal for its own bare form — rebuilding every estate on a
+fresh machine by accident is the opposite risk from failing to park the one
+you meant.
 
 `resume --workspace <owner>/<repo>` is the only thing in this toolset that
 writes a file outside a repository (`~/.agents/workspace.yaml`), and it writes
