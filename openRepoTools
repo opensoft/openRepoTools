@@ -47,8 +47,8 @@ openRepoTools --install            install (or update) park, resume and this
 openRepoTools --help | --version
 
 This command installs the estate commands and does nothing else. It has no
-verb of its own: `openRepoShape` is the standard's front door, and the two
-verbs `--install` places beside this file are
+verb of its own: `openRepoShape` is the standard's front door. `--install`
+places three files beside each other — this command and the two verbs:
 
   park [<Name>]                    commit, push and RECORD an estate's open
                                    features, so another workstation can take
