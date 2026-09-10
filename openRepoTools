@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# openRepoTools — the short way to put the estate commands on your PATH.
+#
+# Install them once, from anywhere, with no checkout and no clone:
+#
+#   gh api repos/opensoft/openRepoTools/contents/openRepoTools \
+#       -H 'Accept: application/vnd.github.raw' | bash -s -- --install
+#
+# (or the raw-URL twin, `curl -fsSL …/main/openRepoTools | bash -s -- --install`).
+#
+# IT INSTALLS AND IT DOES NOTHING ELSE. There is no verb here and no scaffold
+# role: `openRepoShape` is the standard's front door and stays there, and the
+# two verbs are `park` and `resume`, which add no mechanics of their own — they
+# find the estate under your projects directory and run its own `make park` /
+# `make resume`.
+#
+# `--install` PLACES THREE COMMANDS, not one: this file, `park` and `resume`
+# (openRepoShape #82). One install line for the whole toolset, so a second
+# engineer gets the estate verbs from the README's one line and nothing depends
+# on anyone's dotfiles.
+#
+# openRepoShape #82 wrote the two verbs and these install semantics; its #92
+# carved them out into this repository.
+
+set -euo pipefail
+
+# $OPENREPOTOOLS_REPO is an owner/name slug: it is an API path and a raw-URL
+# path, and nothing here clones. Name a fork or a mirror once and both fetch
+# forms follow it.
+REPO="${OPENREPOTOOLS_REPO:-opensoft/openRepoTools}"
+REF="${OPENREPOTOOLS_REF:-main}"
+SELF="${BASH_SOURCE[0]:-$0}"
+
+MODE=""
+WORKDIR=""
+STAGED=""
+
+say() { printf '%s\n' "$*"; }
+die() { printf '\nREFUSED: %s\n' "$1" >&2; exit "${2:-2}"; }
+
+usage() {
+	cat <<'USAGE'
+openRepoTools --install            install (or update) park, resume and this
+                                   command into ~/.local/bin
+openRepoTools --help | --version
+
+This command installs the estate commands and does nothing else. It has no
+verb of its own: `openRepoShape` is the standard's front door, and the two
+verbs `--install` places beside this file are
+
+  park [<Name>]                    commit, push and RECORD an estate's open
+                                   features, so another workstation can take
+                                   the work up
+  resume [<Name>]                  clone or fast-forward that estate here and
+                                   recreate those features
+
+`park --help` and `resume --help` say the rest. Neither implements any of the
+mechanics: they find the estate under your projects directory and run its own
+`make park` / `make resume`, which run the Speckit git extension's scripts.
+
+  $OPENREPOTOOLS_REPO       owner/name to fetch from (default opensoft/openRepoTools)
+  $OPENREPOTOOLS_REF        the ref to fetch it at   (default main)
+  $OPENREPOTOOLS_BIN_DIR    where --install puts them (default ~/.local/bin)
+USAGE
+}
+
+# THE TRAP BELONGS TO THE SHELL THAT DOES THE WRITING, so this makes the
+# directory and takes no output. A `$(workdir)` would be a COMMAND
+# SUBSTITUTION — a subshell, whose `trap … EXIT` fires the instant the
+# substitution closes, so `rm -rf` would run before a single fetched byte had
+# landed and $WORKDIR out here would still be empty (openRepoShape #74). A trap
+# only ever fires in the shell that set it. Callers read $WORKDIR.
+workdir() {
+	if [ -z "$WORKDIR" ]; then
+		WORKDIR="$(mktemp -d)"
+		trap 'rm -rf -- "$WORKDIR"' EXIT
+	fi
+}
+
+# THE API FIRST, the raw URL second. `gh api` is authenticated, so it still
+# works inside an organisation whose policy blocks raw.githubusercontent.com;
+# curl is the fallback for a machine with no `gh`. Each attempt writes to a
+# file and is checked before its bytes are used, so a half-written first
+# attempt is never mistaken for a fetch.
+#
+# THESE FORTY LINES ARE A DELIBERATE COPY of openRepoShape's own shim, and the
+# duplication is the cheaper of the two mistakes: a shared `orp-fetch.sh` would
+# be a FOURTH FILE for `--install` to place, and a broken installer the first
+# time somebody copied only three of them. It is the same argument the estate
+# resolver inside `park` and `resume` already carries, for the same reason —
+# each of these files is one file a person has on PATH. Two installers that
+# fetch the same way is a claim `tests/test_openrepotools_command.py` and
+# openRepoShape's own suite each assert against their own script's text.
+fetch_from_repo() {
+	local path="$1" dest="$2"
+	if command -v gh >/dev/null 2>&1 &&
+		gh api "repos/$REPO/contents/$path?ref=$REF" \
+			-H 'Accept: application/vnd.github.raw' >"$dest" 2>/dev/null &&
+		[ -s "$dest" ]; then
+		return 0
+	fi
+	if command -v curl >/dev/null 2>&1 &&
+		curl -fsSL "https://raw.githubusercontent.com/$REPO/$REF/$path" \
+			>"$dest" 2>/dev/null && [ -s "$dest" ]; then
+		return 0
+	fi
+	# RETURNS rather than dying, so a caller fetching SEVERAL files can report
+	# the whole set instead of stopping mid-way through an install
+	# (openRepoShape #82, F10 of the review on its #83).
+	return 1
+}
+
+# THE THREE COMMANDS `--install` PLACES. One list, so the installer, the fetch
+# fallback and the tests cannot disagree about what a complete install is.
+# `openRepoTools` is first because it is the one a person types to get the
+# other two.
+INSTALLABLES=(openRepoTools park resume)
+
+# ALL THREE IN HAND BEFORE ANY OF THEM IS PLACED (openRepoShape #82, F10 of the
+# review on its #83). One file at a time, dying on the first fetch that failed,
+# leaves a person with a NEW `openRepoTools` and no `park` — a half-install that
+# says `installed at` and is not one — and nothing on screen to say which of the
+# three were missing. Every one is collected into the temporary directory first:
+# a failure there replaces NOTHING, names what was not fetched, and exits.
+collect_commands() {
+	local name selfdir="" missing=""
+	# Run from a file, install THOSE bytes: `--install` then needs no network
+	# and no `gh` at all — and `park` and `resume` sit BESIDE this file, in the
+	# checkout and in the repository alike, so the siblings that are there are
+	# copied and only a missing one is fetched. Run from stdin (`curl … | bash
+	# -s -- --install`) there is no file to copy from at all, so each of the
+	# three is fetched at this same ref.
+	if [ -f "$SELF" ]; then
+		selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
+	fi
+	workdir
+	STAGED="$WORKDIR/staged"
+	mkdir -p "$STAGED"
+	for name in "${INSTALLABLES[@]}"; do
+		if [ -n "$selfdir" ] && [ -f "$selfdir/$name" ]; then
+			cp -- "$selfdir/$name" "$STAGED/$name"
+			continue
+		fi
+		fetch_from_repo "$name" "$STAGED/$name" ||
+			missing="${missing:+$missing }$name"
+	done
+	[ -z "$missing" ] || die "could not fetch $missing from $REPO at $REF, so NOTHING was installed
+    and nothing already installed was replaced. \`--install\` places all
+    ${#INSTALLABLES[@]} commands or none: a new openRepoTools beside a missing park is
+    a half-install that reads like a whole one. Both ways were tried:
+    gh api repos/$REPO/contents/<file>?ref=$REF
+    curl -fsSL https://raw.githubusercontent.com/$REPO/$REF/<file>"
+}
+
+install_commands() {
+	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
+	local name target source verb placed=0
+	collect_commands
+	mkdir -p "$dir"
+	for name in "${INSTALLABLES[@]}"; do
+		source="$STAGED/$name"
+		target="$dir/$name"
+		if [ -e "$target" ] && cmp -s "$source" "$target"; then
+			verb="already installed at $target (unchanged)"
+		else
+			if [ -e "$target" ]; then verb="updated at $target"; else verb="installed at $target"; fi
+			cp -- "$source" "$target"
+		fi
+		# Stamped every time: a copy that is not executable is not a command.
+		chmod 755 "$target"
+		placed=$((placed + 1))
+		say "$name: $verb"
+	done
+	# THE COUNT, out loud: a person reading three lines cannot tell whether a
+	# fourth was meant to be there.
+	say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir"
+	# ONE PATH NOTE for the three of them: the directory is the same one.
+	case ":${PATH:-}:" in
+	*":$dir:"*) ;;
+	*)
+		say "  $dir is not on \$PATH. Add it:"
+		say "    export PATH=\"$dir:\$PATH\""
+		;;
+	esac
+}
+
+# --- arguments ------------------------------------------------------------
+#
+# THREE ARGUMENTS AND NO OTHERS, and the refusal names the verbs rather than
+# repeating the usage: somebody typing `openRepoTools park` wants `park`, and
+# the shortest true answer is where it is.
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-h | --help) usage; exit 0 ;;
+	--version) say "openRepoTools ($REPO @ $REF)"; exit 0 ;;
+	--install) MODE="install"; shift ;;
+	*)
+		die "openRepoTools installs the estate commands and does nothing else. It takes --install,
+    --help or --version. The verbs themselves: \`park --help\`, \`resume --help\`."
+		;;
+	esac
+done
+
+if [ "$MODE" = "install" ]; then
+	install_commands
+	exit 0
+fi
+
+# NO ARGUMENT AT ALL is the usage, on stdout and exit 0: a person who typed the
+# name to see what it is has asked a question, not made a mistake.
+usage
+exit 0
