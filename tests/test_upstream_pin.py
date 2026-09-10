@@ -165,7 +165,6 @@ def test_the_checked_out_submodule_is_at_the_recorded_commit():
 
 @NEEDS_UPSTREAM
 @pytest.mark.parametrize("rel", [
-    "park",
     "scripts/repo_shape.py",
     "templates/assembly-root/Makefile",
     "templates/assembly-root/.gitignore",
@@ -176,7 +175,7 @@ def test_the_checked_out_submodule_is_at_the_recorded_commit():
     "templates/family-root/scripts/siblings.py",
 ])
 def test_the_pinned_commit_carries_what_this_suite_reads(rel):
-    """The eight files `test_park_resume_commands.py` copies, plus `park`.
+    """The eight files `test_park_resume_commands.py` copies.
 
     EIGHT, not the seven openRepoShape #92 counted: the two root Makefiles, the
     two `.gitignore`s, the two `bootstrap.py`s, `siblings.py` and
@@ -187,14 +186,8 @@ def test_the_pinned_commit_carries_what_this_suite_reads(rel):
     a rename would otherwise fail deep inside a fixture with a `FileNotFound`
     naming a path nobody was looking for.
 
-    `park` IS THE PRE-CARVE WITNESS and is here for a different reason: it is
-    the file the reviewer of this carve diffs this repository's copy against,
-    so the pin has to name a commit whose tree still carries it. When
-    openRepoShape's own half of the carve lands and deletes it, the exit is to
-    DELETE THIS ONE ENTRY in the same commit that bumps the pin past that
-    deletion — a decision made out loud, rather than a red test somebody
-    discovers and works around. This row is not a claim that the standard must
-    keep the file.
+    `park`, the pre-carve witness, leaves this list in THIS commit: the one
+    that bumps the pin past openRepoShape#94, which deleted it from the tree.
     """
     assert (UPSTREAM / rel).is_file(), (
         f"the pinned openRepoShape has no {rel}")
