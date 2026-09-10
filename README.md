@@ -123,11 +123,18 @@ check bites in a clone that never materialized it.
 git -C upstream/openRepoShape fetch origin
 git -C upstream/openRepoShape checkout <40 hex on openRepoShape's main>
 python3 -c "import sys; sys.path.insert(0, 'upstream/openRepoShape/scripts'); from repo_shape import tree_digest; print(tree_digest('upstream/openRepoShape', 'HEAD'))"
+# NOW EDIT contracts/openreposhape-pin.yaml: that number into
+# `digests.tree_sha256`, the commit into `commit:`. Only then:
 git add contracts/openreposhape-pin.yaml upstream/openRepoShape
+git commit
 ```
 
-Write that number into `digests.tree_sha256` and the commit into `commit:`, and
-commit the pin and the gitlink TOGETHER — they are one fact in two places. The
+**The edit comes before the `git add`, and the block is in that order for a
+reason.** Staging first and editing after stages the moved gitlink with the OLD
+pin file — and that is invisible where you are standing, because
+`tests/test_upstream_pin.py` reads the pin out of the WORKING TREE and the
+gitlink out of `git ls-tree HEAD`: green in your checkout, red in CI, which is
+the wrong way round. The pin and the gitlink are one fact in two places. The
 digest is recomputed with the PINNED CHECKOUT'S OWN `scripts/repo_shape.py`
 (`sorted-ls-tree-r-v1`), so this repository carries no copy of the standard's
 code and the number is checked against the pinned commit's own definition of

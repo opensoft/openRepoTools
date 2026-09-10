@@ -279,9 +279,19 @@ def test_readme_is_short_enough_to_be_read():
     deliberately keeps the old refusal — so a reader of one paragraph gets
     both halves rather than one turning stale next to the other. It tracks
     openRepoShape's own README, which moved 1219 -> 1225 for the same rule.
+
+    165 -> 172 the same day, for the pin-bump procedure's ORDER. The fenced
+    block staged `contracts/openreposhape-pin.yaml` on the line ABOVE the
+    sentence telling the reader to edit it, so run literally it committed the
+    moved gitlink with the old pin — and that is invisible where you are
+    standing, because this suite reads the pin out of the working tree and the
+    gitlink out of `git ls-tree HEAD`. Green locally, red in CI. Seven lines
+    put the edit inside the block and say why the order is the order; a
+    procedure that is wrong in the one document a first-time bumper reads is
+    worth more than seven lines.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 165, f"README.md is {len(lines)} lines; the cap is 165"
+    assert len(lines) <= 172, f"README.md is {len(lines)} lines; the cap is 172"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
@@ -299,8 +309,10 @@ def test_readme_is_short_enough_to_be_read():
 #:     this repository has none today and the exclusion costs nothing.
 #:   - .github/workflows/tests.yml would otherwise be flagged for the
 #:     GitHub-hosted Windows runner's own fixed account - a shared,
-#:     nobody's-machine-in-particular login - so it is excluded by name rather
-#:     than matched.
+#:     nobody's-machine-in-particular login. THE FILE IS SCANNED LIKE EVERY
+#:     OTHER: it is that ACCOUNT that is exempted, by the `(?!runneradmin\\)`
+#:     lookahead in the pattern below, so a real user's path in that same
+#:     workflow is still a finding.
 #:   - This definition would otherwise flag ITSELF: the Claude-scratchpad
 #:     tmp-directory prefix this guard exists to catch is therefore spelled
 #:     as two concatenated pieces, not written out contiguously.
