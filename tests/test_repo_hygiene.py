@@ -189,6 +189,39 @@ def test_claude_md_points_at_agents_md():
     assert "AGENTS.md" in (REPO / "CLAUDE.md").read_text()
 
 
+def test_the_documents_say_what_bare_park_does_now():
+    """openRepoShape #91 (RULING 2026-09-10, its #93) SUPERSEDED ruling 3 of
+    its #82 for one case: bare `park`, with no `<Name>` and no estate around
+    the cwd, PARKS EVERY ESTATE instead of refusing — and `resume` keeps the
+    refusal for its own bare form.
+
+    Both halves, in both documents. This is the sentence most likely to go
+    stale here, because these two files are the only place the installed
+    commands are written down once openRepoShape's own carve removes its
+    paragraph, and because the OLD text reads perfectly well — a document
+    that says `park` refuses is not obviously broken, it is just wrong, and
+    an assistant reading it tells somebody to name an estate the bare form
+    does not need.
+    """
+    for name in ("README.md", "AGENTS.md"):
+        text = (REPO / name).read_text(encoding="utf-8")
+        assert "PARKS EVERY ESTATE" in text, (
+            f"{name} does not say what bare `park` does since #91")
+        assert "#91" in text, f"{name} does not cite the ruling"
+        assert "in name order" in text, (
+            f"{name} does not say the order, which is the whole of what a "
+            f"person watching a park-everything run sees")
+    assert "keeps that old refusal for its own bare form" in \
+        (REPO / "README.md").read_text(encoding="utf-8"), (
+        "README.md does not say resume's own bare form still refuses")
+    assert "`resume`'s OWN bare form still refuses" in \
+        (REPO / "AGENTS.md").read_text(encoding="utf-8"), (
+        "AGENTS.md does not say resume's own bare form still refuses")
+    park = (REPO / "park").read_text(encoding="utf-8")
+    assert "PARKS EVERY ESTATE" in park, (
+        "the `park` in this repository predates #91; re-take it from the pin")
+
+
 def test_agents_md_names_the_pin_rules():
     """The three rules an agent touching the submodule has to have read, and
     the reason they are in AGENTS.md rather than only in the pin's header: an
@@ -212,9 +245,19 @@ def test_agents_md_is_short_enough_to_be_read():
     this docstring, which RULE the new lines bought — never for prose. That is
     the form openRepoShape's own two caps are kept in, and it is the form that
     makes a cap worth having.
+
+    84 -> 90 the same day, for park-everything (openRepoShape #91, RULING
+    2026-09-10, landed there as its #93). Rule 1's opening sentence is the
+    part an assistant gets wrong if it is inferred rather than read: bare
+    `park` with no `<Name>` and no estate around the cwd no longer REFUSES —
+    it parks every estate in name order, continuing past a refusal — so
+    telling somebody to name one estate is now stale advice, not a courtesy.
+    The six lines are both halves of that, because `resume`'s own bare form
+    deliberately keeps the refusal and an assistant is never to name one
+    estate on the person's behalf to route around it.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 84, f"AGENTS.md is {len(lines)} lines; the cap is 84"
+    assert len(lines) <= 90, f"AGENTS.md is {len(lines)} lines; the cap is 90"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -227,9 +270,18 @@ def test_readme_is_short_enough_to_be_read():
     `resume --help` and openRepoShape's README, which this one links rather
     than restates. A cap raised for prose is not a cap; a cap raised in a dated
     entry naming the rule it bought is.
+
+    160 -> 165 the same day, for park-everything (openRepoShape #91, RULING
+    2026-09-10, landed there as its #93). Five lines rewrite the "How the
+    estate is found" sentence that used to say bare `park` REFUSES with no
+    estate around the cwd: it now parks every estate it finds, in name order,
+    continuing past a refusal, and the same sentence says `resume`
+    deliberately keeps the old refusal — so a reader of one paragraph gets
+    both halves rather than one turning stale next to the other. It tracks
+    openRepoShape's own README, which moved 1219 -> 1225 for the same rule.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 160, f"README.md is {len(lines)} lines; the cap is 160"
+    assert len(lines) <= 165, f"README.md is {len(lines)} lines; the cap is 165"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

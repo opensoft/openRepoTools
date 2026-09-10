@@ -81,8 +81,13 @@ resume InkRouter -- --feature 001-a-thing              # flags for the extension
 points. A FAMILY folder (`<Name>/<Name>/family.yaml`) wins over a standalone
 root (`<Name>/project.yaml`) of the same name, because the holder is what
 drives the members. With no `<Name>` the estate around the current directory is
-used; with no estate around it either, `park` REFUSES and lists the estates it
-found — nothing is parked by guess.
+used. With no estate around it either, `park` PARKS EVERY ESTATE it finds under
+your projects directory instead of refusing (Brett Heap's RULING of 2026-09-10,
+openRepoShape #91, superseding ruling 3 of its #82 for this one case): it lists
+what it found, then runs itself on each one in name order, continuing past a
+refusal. `resume` deliberately keeps that old refusal for its own bare form —
+rebuilding every estate on a fresh machine by accident is the opposite risk
+from failing to park the one you meant.
 
 `resume --workspace <owner>/<repo>` is the only thing in this toolset that
 writes a file outside a repository (`~/.agents/workspace.yaml`), and it writes

@@ -24,17 +24,23 @@ clones and fast-forwards what is not current. Prefer them to a hand-built
 sequence, and relay their per-repository lines rather than summarising them.
 
 1. **`park` CREATES NOTHING and `resume` RESETS NOTHING.** With no `<Name>` and
-   no estate around the current directory, `park` refuses and lists what it
-   found: it does not park every estate, and that refusal is not a cue for you
-   to pick one. `resume` fast-forwards a working clone with `--ff-only` and
-   REFUSES BY NAME one that is dirty or on a feature branch, skipping it and
-   leaving it exactly as it is — and not running the verb in it either. It
-   also refuses a root whose LEG sits on a feature branch, because that root's
-   own `make bootstrap` would walk the leg back onto its tracking branch; the
-   superproject looks clean in that state, which is why the refusal names the
-   leg. Never `git reset`, `git stash` or `git checkout -f` — and never
-   `git checkout main` in a leg — to make the next run succeed: that is the
-   work the refusal exists to protect.
+   no estate around the current directory, `park` now PARKS EVERY ESTATE it
+   finds under the projects directory, in name order, continuing past a
+   refusal (Brett Heap's RULING of 2026-09-10, openRepoShape #91, superseding
+   ruling 3 of its #82 for this one case) — it is no longer a refusal, so do
+   not tell somebody to name one estate when the bare form's whole point is
+   that it needs none. `resume`'s OWN bare form still refuses with no `<Name>`
+   and no estate around it, deliberately: rebuilding every estate on a fresh
+   machine by accident is the opposite risk, so relay that refusal rather than
+   naming one estate on the person's behalf. `resume` fast-forwards a working
+   clone with `--ff-only` and REFUSES BY NAME one that is dirty or on a feature
+   branch, skipping it and leaving it exactly as it is — and not running the
+   verb in it either. It also refuses a root whose LEG sits on a feature
+   branch, because that root's own `make bootstrap` would walk the leg back
+   onto its tracking branch; the superproject looks clean in that state, which
+   is why the refusal names the leg. Never `git reset`, `git stash` or
+   `git checkout -f` — and never `git checkout main` in a leg — to make the
+   next run succeed: that is the work the refusal exists to protect.
 2. **`resume --workspace <owner>/<repo>` is the only writer of
    `~/.agents/workspace.yaml`**, and only on a machine that has none. Do not
    write that file yourself, and do not pass that flag on your own initiative:
