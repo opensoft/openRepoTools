@@ -41,6 +41,8 @@
 #   lanes-edit.sh [--no-sweep|--sweep] append-row-status  <lane> "<text>"
 #   lanes-edit.sh [--no-sweep|--sweep] replace-in-row     <lane> "<old>" "<new>" ["<why>"]
 #   lanes-edit.sh [--no-sweep|--sweep] append-line        "<text>"            # LANDING/LANDED lines
+#                                        (attribution: $LANES_LANE, else the
+#                                         "lane <name>" the text itself names)
 #   lanes-edit.sh [--no-sweep|--sweep] add-row            "<full | row |>"
 #   lanes-edit.sh                      commit             "<message>"         # commit a hand edit
 #
@@ -189,6 +191,31 @@ count_occurrences() { # $1=haystack $2=needle
 }
 
 rstrip_spaces() { s="$1"; while [ "${s% }" != "$s" ]; do s="${s% }"; done; printf '%s' "$s"; }
+
+# A Rule 6 line names its own lane in its text — "LANDING — lane <name>, …",
+# "LANDED — lane <name> (<Window>), …". `append-line` takes no lane argument,
+# so with LANES_LANE unset it used to commit as LANES(unknown@<ws>) and the
+# line's author was lost from the log (this predates Amendment 5: the same
+# `${LANES_LANE:-unknown}` is in the pre-move script). Read the name out of
+# the text instead, and fall back to unknown only when there is nothing to
+# read. Anything outside [A-Za-z0-9._-] is rejected rather than sanitised,
+# and the caller checks the candidate against the register's own rows before
+# trusting it — "…names no lane at all" must not be attributed to a lane
+# called "at".
+lane_from_text() {
+  t="$1"; l=""
+  case "$t" in
+    *"lane "*)
+      l="${t#*lane }"
+      l="${l%%[ ,;:)]*}"
+      l="${l//\`/}"
+      ;;
+  esac
+  case "$l" in
+    "" | *[!A-Za-z0-9._-]*) printf '' ;;
+    *) printf '%s' "$l" ;;
+  esac
+}
 
 # --------------------------------------------------------------- file writes
 
@@ -430,9 +457,14 @@ case "$cmd" in
 
   append-line)
     text="${1-}"; [ -n "$text" ] || die "usage: append-line \"<text>\"" 2
+    lane_tag="${LANES_LANE:-}"
+    if [ -z "$lane_tag" ]; then
+      cand="$(lane_from_text "$text")"
+      if [ -n "$cand" ] && row_line "$cand" >/dev/null 2>&1; then lane_tag="$cand"; fi
+    fi
     acquire_lock; handle_preexisting
     append_text_line "$text"
-    msg="LANES(${LANES_LANE:-unknown}@$WS): append line — $(printf '%s' "$text" | cut -c1-72)"
+    msg="LANES(${lane_tag:-unknown}@$WS): append line — $(printf '%s' "$text" | cut -c1-72)"
     [ -n "$PRE_DIRTY_LANES" ] && msg="$msg + sweeps uncommitted edit to row $PRE_DIRTY_LANES"
     commit_push "$msg"
     ;;
