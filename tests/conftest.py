@@ -8,7 +8,7 @@ a `curl` that refuses. Nothing in this suite may create a real repository; if a
 test ever needs a real `gh`, it is the wrong test.
 
 THE STANDARD IS MOUNTED, NOT COPIED. `tests/test_park_resume_commands.py`
-builds estates out of seven of openRepoShape's own files, and it reads them out
+builds estates out of eight of openRepoShape's own files, and it reads them out
 of the `upstream/openRepoShape` submodule this repository pins in
 `contracts/openreposhape-pin.yaml`. A clone made WITHOUT `--recurse-submodules`
 therefore has no template bytes to copy — so those tests SKIP, naming the one

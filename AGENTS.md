@@ -48,7 +48,7 @@ sequence, and relay their per-repository lines rather than summarising them.
 
 ## The pinned standard at `upstream/openRepoShape`
 
-The suite builds real estates out of seven of openRepoShape's own files, and it
+The suite builds real estates out of eight of openRepoShape's own files, and it
 reads them out of a submodule pinned by `contracts/openreposhape-pin.yaml`.
 Three rules, and none of them is negotiable:
 

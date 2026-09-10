@@ -176,9 +176,14 @@ def test_the_checked_out_submodule_is_at_the_recorded_commit():
     "templates/family-root/scripts/siblings.py",
 ])
 def test_the_pinned_commit_carries_what_this_suite_reads(rel):
-    """The seven files `test_park_resume_commands.py` copies, plus `park`.
+    """The eight files `test_park_resume_commands.py` copies, plus `park`.
 
-    The seven are what makes the submodule worth having, and a pin bumped past
+    EIGHT, not the seven openRepoShape #92 counted: the two root Makefiles, the
+    two `.gitignore`s, the two `bootstrap.py`s, `siblings.py` and
+    `scripts/repo_shape.py`. The issue's prose miscounted its own list; this
+    parametrization is the list, so it cannot.
+
+    They are what makes the submodule worth having, and a pin bumped past
     a rename would otherwise fail deep inside a fixture with a `FileNotFound`
     naming a path nobody was looking for.
 

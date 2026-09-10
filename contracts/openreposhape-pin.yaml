@@ -7,8 +7,8 @@ kind: pinned_contract_manifest
 #
 # MOUNTED, NOT COPIED, and the difference is the whole reason there is a
 # submodule here. `tests/test_park_resume_commands.py` builds real estates out
-# of seven of the standard's own files — the assembly-root and family-root
-# Makefiles, their `.gitignore`s, the two `bootstrap.py`s, `siblings.py` and
+# of EIGHT of the standard's own files — the assembly-root and family-root
+# Makefiles, their two `.gitignore`s, the two `bootstrap.py`s, `siblings.py` and
 # `scripts/repo_shape.py` — and a submodule hands those tests THE STANDARD'S
 # REAL BYTES at the commit below, rather than copies in this tree that could
 # have been edited into agreeing with a broken expectation. `shape-pin.yaml` in

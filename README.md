@@ -101,7 +101,7 @@ pointer line its own `--install` prints — text, not a fetch. The reverse would
 make the standard unbuildable without its tools.
 
 MOUNTED, NOT COPIED. `tests/test_park_resume_commands.py` builds real estates
-out of seven of the standard's own files — the two root Makefiles, their
+out of EIGHT of the standard's own files — the two root Makefiles, their two
 `.gitignore`s, the two `bootstrap.py`s, `siblings.py` and
 `scripts/repo_shape.py` — and a submodule hands those tests the standard's real
 bytes at the pinned commit rather than copies here that could have been edited
