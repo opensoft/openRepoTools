@@ -1,15 +1,28 @@
-# The `lanes` branch — how the estate lane registry is stored
+# `lanes/LANES.md` — how the estate lane register is stored
 
-Status: in force — ratified by Brett Heap 2026-09-09 (in-session, verbatim
+**Moved 2026-09-10 (Amendment 5).** The register lived on the orphan `lanes`
+branch of `opensoft/xFactory` from 2026-09-09; it now lives HERE, on `main` of
+`opensoft/brett-wip`, the person's workspace repository — ratified by Brett
+Heap 2026-09-10 ("since we now have the user-wip repo this is a better place
+to store our lanes", "create opensoft/brett-wip and move it all there"),
+implemented by lane `openRepoShape-2`, session
+`8fa66b30-4cf5-4b80-b40c-ac3640cf45ab`, on workstation **Eagle**. All 1242
+register commits came across with it as a `git subtree`; the orphan branch is
+retired behind a pointer. Rules 9 and 10 are unchanged in every mechanic:
+every write is still one commit, made by `lanes-edit.sh`, and every row still
+names its workstation.
+
+Status of the original ruling: in force — ratified by Brett Heap 2026-09-09 (in-session, verbatim
 "track LANES.md in git. but we need to make sure we have a workstation
 designation too in the rows right? so that Raven/opsXfactory-2 and
 Eagle/opsXfactory-2 are not confused."). Implemented by lane
 `provenance-autonomous-merge`, session `f1356e27-665d-4119-b47e-a5e66efdce00`,
 window `codeXfactory-3`, on workstation **Eagle**.
 
-Governing protocol:
-`/home/brett/.agents/protocols/lane-collision-protocol.md` — Rule 9 (registry
-in git) and Rule 10 (workstation designation), Amendment 3, 2026-09-09.
+Governing protocol: `~/.agents/protocols/lane-collision-protocol.md` — Rule 9
+(register in git) and Rule 10 (workstation designation), Amendment 3,
+2026-09-09; **Amendment 5, 2026-09-10** (the register lives in the person's
+workspace repository).
 
 ## Why
 
@@ -31,19 +44,33 @@ workstation**.
 
 | what | where |
 |---|---|
-| branch | `lanes` — an **orphan** branch of `opensoft/xFactory` (no shared history with `main`, never merged into it) |
-| worktree | `/home/brett/projects/xFactory/.lanes/` (gitignored on `main`) |
-| the registry | `/home/brett/projects/xFactory/.lanes/LANES.md` |
-| the path every lane already uses | `/home/brett/projects/xFactory/LANES.md` — a **symlink** to `.lanes/LANES.md` |
-| the writer | `/home/brett/projects/xFactory/.lanes/lanes-edit.sh` (symlinked as `/home/brett/projects/xFactory/lanes-edit.sh`) |
+| repository | `opensoft/brett-wip` — Brett's workspace repository, private, org-owned (the `<user>-wip` form, `openRepoShape#81`) |
+| branch | `main`. Direct commits are the norm there **by design**: the repository is excluded from the organisation's PR-only ruleset precisely so a per-edit register commit can land |
+| checkout | `~/projects/brett-wip/` |
+| the register | `~/projects/brett-wip/lanes/LANES.md` |
+| the path every lane already uses | `~/projects/xFactory/LANES.md` — a **symlink** to `~/projects/brett-wip/lanes/LANES.md` |
+| the writer | `~/projects/brett-wip/lanes/lanes-edit.sh` (symlinked as `~/projects/xFactory/lanes-edit.sh`) |
+| who places the symlinks | `~/projects/brett-wip/scripts/link-estates` (idempotent, `--dry-run`) |
 
-Why an orphan branch and not `main`: the aggregation repo's `main` is PR-only
-(org rulesets `xFactory Tier-1 main protection`, `required-checks-main`,
-`Require Code Owner Review`, all scoped to `~DEFAULT_BRANCH`), so a per-edit
-commit cannot land there. `lanes` is covered only by rulesets that forbid
-**force-pushes** (`non_fast_forward`), which this workflow never does. The
-branch carries no product code, so it never enters a release, a pin, or a
-sweep.
+Why `main` of the workspace repository and not the aggregation's: the
+aggregation repo's `main` is PR-only (org rulesets `xFactory Tier-1 main
+protection`, `required-checks-main`, `Require Code Owner Review`, all scoped
+to `~DEFAULT_BRANCH`), so a per-edit commit cannot land there — which is why
+the register spent 2026-09-09 to 2026-09-10 on an **orphan `lanes` branch** of
+that repo instead. The workspace repository has no such gate and no product
+code at all, so the register can sit on its `main` next to the handoffs it
+cross-references. Nothing here is ever released, pinned, swept or bumped.
+
+**The register no longer owns its whole checkout.** `~/projects/brett-wip/`
+also holds `handoffs/` and `workspaces/`, which other lanes write. That is why
+the writer now (a) uses a pathspec on every `git add` and `git commit`, so a
+peer's half-written handoff can never ride along in a register commit, and (b)
+SKIPS `pull --rebase` when the checkout has unstaged changes to other tracked
+files — `pull --rebase` refuses outright on any unstaged tracked change — and
+pushes straight out instead, warning and naming the files. If the push is also
+rejected (the remote moved), it stops with exit 3, leaves your edit as a local
+commit, and prints the recovery: the owner of that file commits it, then you
+re-run `lanes-edit.sh commit`.
 
 ## THE ONE HAZARD — `sed -i` DESTROYS THE SYMLINK
 
@@ -81,7 +108,7 @@ your content into `.lanes/LANES.md`, then commit with `lanes-edit.sh commit`.
 ## How to write to the registry
 
 ```bash
-cd /home/brett/projects/xFactory
+cd ~/projects/xFactory
 
 # read (unchanged — every existing path and habit still works)
 grep -n 'my-lane' LANES.md
@@ -123,15 +150,22 @@ Every mutating subcommand does the same five things:
    `git diff --numstat` says more than one line moved;
 4. commits as `LANES(<lane>@<workstation>): <what>` — workstation from
    `hostname -s`;
-5. `git pull --rebase origin lanes` then `git push`, retrying a lost push race
-   up to six times.
+5. `git pull --rebase origin main` then `git push`, retrying a lost push race
+   up to six times — or, if a peer has uncommitted changes to other files in
+   this checkout, a warning naming them and a straight push (see the Layout
+   note above).
 
 **On a rebase conflict it aborts**, leaves the worktree clean and not
 mid-rebase, prints the conflicting lines and prints the recovery commands. Your
 edit survives as a local commit; read it back with
-`git -C .lanes diff origin/lanes..HEAD -- LANES.md`, then
-`git -C .lanes reset --hard origin/lanes` and redo it on top of the peer's
-version.
+`git -C ~/projects/brett-wip diff origin/main..HEAD -- lanes/LANES.md`, then
+`git -C ~/projects/brett-wip reset --hard origin/main` and redo it on top of
+the peer's version.
+
+The script spells no path of its own: it finds the checkout root with `git
+rev-parse --show-toplevel` from its own directory and derives the pathspec
+`lanes/LANES.md` with `--show-prefix`, so the clone may live anywhere. The
+overrides `LANES_REPO`, `LANES_PATH` and `LANES_BRANCH` exist for tests.
 
 ## Hand edits
 
@@ -161,8 +195,13 @@ touches a row other than the one named by `$LANES_LANE`.
   find yourself about to write out all ~110 lines, stop: the rows you did not
   read are the rows you are about to delete.
 - **`git add -A`, a bare `git commit`, `git stash`, `force-push`** — estate
-  rules, and this worktree is shared.
-- **Committing `LANES.md` to `main`** of any repo. It stays on `lanes`.
+  rules, and this checkout is shared with `handoffs/` and `workspaces/` and
+  with every other lane on this workstation.
+- **Committing `LANES.md` to a governed or product repository.** It lives on
+  `main` of the workspace repository and nowhere else — never in an
+  aggregation, a member, or any repo that is released, pinned or swept.
+  (Before Amendment 5 this line read "it stays on `lanes`"; the branch that
+  named is retired.)
 
 ## Snapshots
 
@@ -170,12 +209,44 @@ touches a row other than the one named by `$LANES_LANE`.
 backup habit. They are no longer required — git history is the backup — and
 they are gitignored on `main`, so leaving them is harmless. The last pre-git
 snapshot is kept deliberately:
-`/home/brett/projects/xFactory/LANES.md.snap-20260909T002735Z-pre-git`.
+`~/projects/xFactory/LANES.md.snap-20260909T002735Z-pre-git`.
 
-## Adopting this branch on another workstation (Raven)
+## Adopting this on another workstation (Raven)
 
-See the "Raven setup (operator, Brett)" block in Amendment 3 of
-`/home/brett/.agents/protocols/lane-collision-protocol.md`. The short version:
-**diff Raven's local `LANES.md` against the branch and append its missing rows
-with `lanes-edit.sh add-row` BEFORE replacing the local file with the symlink.**
-Raven's file may hold rows this branch has never seen.
+```sh
+git clone git@github.com:opensoft/brett-wip.git ~/projects/brett-wip
+~/projects/brett-wip/scripts/link-estates --dry-run   # rehearse
+~/projects/brett-wip/scripts/link-estates             # place the symlinks
+```
+
+The warning from Amendment 3's "Raven setup (operator, Brett)" block still
+stands and the linker does not do it for you: **diff Raven's local `LANES.md`
+against this one and append its missing rows with `lanes-edit.sh add-row`
+BEFORE the local file becomes the symlink.** Raven's file may hold rows this
+register has never seen. `link-estates` never deletes a real file — it moves
+one aside as `<path>.pre-link-estates-<UTC>` — so the content survives either
+way, but a row nobody re-appends is a row nobody reads.
+
+Also drop the retired worktree if this workstation still has one:
+`git -C ~/projects/xFactory worktree remove .lanes` (Eagle did this on
+2026-09-10).
+
+## Reading the history from before the move
+
+`git subtree add` imports commits unchanged, so the 1242 register commits made
+between 2026-09-09 and the move carry their pre-move path (`LANES.md`, at the
+root of the orphan branch), and git's default history simplification stops at
+the subtree merge. Both halves are one command each, in
+`~/projects/brett-wip`:
+
+```sh
+git log --oneline -- lanes/LANES.md              # since the move
+git log --oneline pre-move/lanes -- LANES.md     # the 1242 before it
+git log --oneline --full-history -- LANES.md     # the same, without the tag
+git show <sha>:LANES.md                          # a lost row, pre-move
+git show <sha>:lanes/LANES.md                    # a lost row, since
+```
+
+`pre-move/lanes` is an annotated tag on the last commit the orphan branch ever
+took. The same shape applies to `pre-move/handoffs` and
+`pre-move/workspaces`.

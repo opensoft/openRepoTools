@@ -3,7 +3,23 @@
 # lanes-edit.sh — the sanctioned writer for the estate lane registry (LANES.md).
 #
 # Protocol: ~/.agents/protocols/lane-collision-protocol.md, Rule 9 (registry in
-# git) and Rule 10 (workstation designation), Amendment 3, 2026-09-09.
+# git) and Rule 10 (workstation designation), Amendment 3, 2026-09-09 — moved
+# to the person's workspace repository by Amendment 5, 2026-09-10.
+#
+# WHERE THE REGISTER LIVES (Amendment 5, 2026-09-10)
+#   `lanes/LANES.md` in `opensoft/brett-wip`, on `main`. Direct commits to
+#   `main` are the norm THERE by design: the repository is excluded from the
+#   organisation's PR-only ruleset precisely so that a per-edit registry
+#   commit can land, which is what Rule 9 requires and what the orphan
+#   `lanes` branch of `opensoft/xFactory` used to be for. That branch is
+#   RETIRED, and its history came across whole with this file.
+#
+#   Every path a lane already uses keeps resolving:
+#   `~/projects/xFactory/LANES.md` and `~/projects/xFactory/lanes-edit.sh`
+#   are symlinks into the checkout, placed by its `scripts/link-estates`.
+#   This script never spells the checkout's own path — it discovers the
+#   repository root with `git rev-parse --show-toplevel` from its own
+#   directory, so the clone may live wherever a workstation likes.
 #
 # WHY THIS EXISTS
 #   LANES.md is edited by many concurrent lanes on more than one workstation.
@@ -49,7 +65,14 @@
 #
 # ENVIRONMENT
 #   LANES_FILE         registry path        (default: <script dir>/LANES.md)
-#   LANES_DIR          git worktree dir     (default: dir of the resolved script)
+#   LANES_DIR          dir holding it       (default: dir of the resolved script)
+#   LANES_REPO         checkout root        (default: `git rev-parse --show-toplevel`
+#                                            from LANES_DIR — one level up from
+#                                            `lanes/`; never a literal path)
+#   LANES_PATH         pathspec of the register RELATIVE to LANES_REPO
+#                                           (default: `lanes/LANES.md`, derived
+#                                            with `git rev-parse --show-prefix`)
+#   LANES_BRANCH       branch to commit on  (default: main)
 #   LANES_LANE         lane name for the commit subject when no lane argument
 #   LANES_WORKSTATION  workstation name     (default: `hostname -s`)
 #   LANES_NO_GIT=1     edit only, no commit/push (used by the test harness)
@@ -74,6 +97,17 @@ WS="${LANES_WORKSTATION:-$(hostname -s)}"
 NO_GIT="${LANES_NO_GIT:-0}"
 LOCK="$LANES_DIR/.lanes-edit.lock"
 LOCK_HELD=0
+
+# The register is no longer the whole of its own worktree: since Amendment 5
+# it is one file, `lanes/LANES.md`, inside the workspace repository. So every
+# git call needs the checkout ROOT and a pathspec RELATIVE to it, both
+# DISCOVERED from this script's own directory — never spelled — because the
+# clone's path is a workstation's business. `--show-prefix` prints `lanes/`
+# from here; outside a repository both fall back to the pre-Amendment-5
+# behaviour, which is what the LANES_NO_GIT=1 test harness runs on.
+LANES_REPO="${LANES_REPO:-$(git -C "$LANES_DIR" rev-parse --show-toplevel 2>/dev/null || :)}"
+: "${LANES_REPO:=$LANES_DIR}"
+LANES_PATH="${LANES_PATH:-$(git -C "$LANES_DIR" rev-parse --show-prefix 2>/dev/null || :)${LANES_FILE##*/}}"
 
 # --no-sweep (default) / --sweep — see USAGE above. Consumed here, ahead of
 # subcommand dispatch, so either flag may appear anywhere before the
@@ -195,55 +229,89 @@ append_text_line() {
 
 # ------------------------------------------------------------------ git side
 
-remote_has_lanes() { git -C "$LANES_DIR" ls-remote --exit-code --heads origin lanes >/dev/null 2>&1; }
+LANES_BRANCH="${LANES_BRANCH:-main}"
+
+remote_has_branch() { git -C "$LANES_REPO" ls-remote --exit-code --heads origin "$LANES_BRANCH" >/dev/null 2>&1; }
+
+# Unstaged changes to TRACKED files OTHER than the register. New in Amendment
+# 5 and unavoidable: the register shares its checkout with handoffs/ and
+# workspaces/, which other lanes write. `git pull --rebase` refuses outright
+# on ANY unstaged tracked change, so without this the refusal would surface as
+# a bogus "REBASE CONFLICT" and the writer would be sent to a recovery that
+# does not apply. Prints the offending paths, one per line.
+dirty_elsewhere() {
+  git -C "$LANES_REPO" --no-pager diff --name-only 2>/dev/null | grep -v -x -F -- "$LANES_PATH" || :
+}
 
 commit_push() {
   msg="$1"
   [ "$NO_GIT" = 1 ] && { note "LANES_NO_GIT=1 — not committing"; return 0; }
-  git -C "$LANES_DIR" add -- LANES.md || die "git add failed" 6
-  if git -C "$LANES_DIR" diff --cached --quiet -- LANES.md; then
+  git -C "$LANES_REPO" add -- "$LANES_PATH" || die "git add failed" 6
+  if git -C "$LANES_REPO" diff --cached --quiet -- "$LANES_PATH"; then
     note "nothing staged for LANES.md — no commit made"
     return 0
   fi
-  git -C "$LANES_DIR" commit -q -m "$msg" -- LANES.md || die "git commit failed" 6
+  git -C "$LANES_REPO" commit -q -m "$msg" -- "$LANES_PATH" || die "git commit failed" 6
   note "committed: $msg"
-  if ! remote_has_lanes; then
-    git -C "$LANES_DIR" push -q -u origin lanes || die "initial push of 'lanes' failed" 6
-    note "pushed (created origin/lanes)"
+  if ! remote_has_branch; then
+    git -C "$LANES_REPO" push -q -u origin "$LANES_BRANCH" || die "initial push of '$LANES_BRANCH' failed" 6
+    note "pushed (created origin/$LANES_BRANCH)"
     return 0
   fi
   attempt=1
   while [ "$attempt" -le 6 ]; do
     # A peer may have written LANES.md between our commit and this pull.
-    if ! git -C "$LANES_DIR" diff --quiet -- LANES.md; then
-      cap="$(git -C "$LANES_DIR" --no-pager diff --numstat -- LANES.md | cut -f1,2 | tr '\t' '/')"
-      git -C "$LANES_DIR" commit -q -m "LANES(concurrent@$WS): capture an uncommitted registry edit ($cap lines +/-) made by whoever else is writing right now — its author should follow up with a commit that says what it was" -- LANES.md || :
+    if ! git -C "$LANES_REPO" diff --quiet -- "$LANES_PATH"; then
+      cap="$(git -C "$LANES_REPO" --no-pager diff --numstat -- "$LANES_PATH" | cut -f1,2 | tr '\t' '/')"
+      git -C "$LANES_REPO" commit -q -m "LANES(concurrent@$WS): capture an uncommitted registry edit ($cap lines +/-) made by whoever else is writing right now — its author should follow up with a commit that says what it was" -- "$LANES_PATH" || :
       note "captured a concurrent uncommitted edit ($cap lines +/-) as its own commit"
     fi
-    if git -C "$LANES_DIR" pull --rebase -q origin lanes; then
-      if git -C "$LANES_DIR" push -q origin lanes; then
-        note "pushed origin/lanes (attempt $attempt)"
+    others="$(dirty_elsewhere)"
+    if [ -n "$others" ]; then
+      # Someone else's uncommitted file in this shared checkout. Pulling is
+      # impossible until they commit it, and it is NOT ours to commit — a
+      # handoff mid-write is exactly the content Amendment 4(d) says its own
+      # author commits. So skip the pull and try the push: it succeeds unless
+      # the remote moved, and the register edit is already a local commit
+      # either way.
+      note "WARNING: this checkout has uncommitted changes to files OTHER than the register — not this invocation's:"
+      printf '  %s\n' $others >&2
+      note "skipping 'pull --rebase' (it refuses on any unstaged tracked change) and pushing straight out"
+      if git -C "$LANES_REPO" push -q origin "$LANES_BRANCH"; then
+        note "pushed origin/$LANES_BRANCH (attempt $attempt, no pull — see the warning above)"
+        return 0
+      fi
+      note "push rejected and the pull is blocked by the files above (attempt $attempt)"
+      if [ "$attempt" -ge 6 ]; then
+        note "RECOVERY: their author commits those files (a handoff: handoff(<lane>@<workstation>): <what>),"
+        note "  then re-run: LANES_LANE=<lane> lanes-edit.sh commit \"<what you wrote>\"  — your edit is already"
+        note "  a local commit here: git -C $LANES_REPO log --oneline origin/$LANES_BRANCH..HEAD"
+        die "could not push origin/$LANES_BRANCH: behind the remote, and a peer's uncommitted file blocks the rebase. Nothing was lost — your commit is local." 3
+      fi
+    elif git -C "$LANES_REPO" pull --rebase -q origin "$LANES_BRANCH"; then
+      if git -C "$LANES_REPO" push -q origin "$LANES_BRANCH"; then
+        note "pushed origin/$LANES_BRANCH (attempt $attempt)"
         return 0
       fi
       note "push raced (attempt $attempt) — retrying"
     else
-      note "REBASE CONFLICT on origin/lanes — conflicting lines follow:"
-      grep -n -e '^<<<<<<<' -e '^=======' -e '^>>>>>>>' -- "$LANES_DIR/LANES.md" 2>/dev/null | head -n 40 >&2 || :
-      grep -n -A2 -e '^<<<<<<<' -- "$LANES_DIR/LANES.md" 2>/dev/null | head -n 40 >&2 || :
-      git -C "$LANES_DIR" rebase --abort 2>/dev/null || :
+      note "REBASE CONFLICT on origin/$LANES_BRANCH — conflicting lines follow:"
+      grep -n -e '^<<<<<<<' -e '^=======' -e '^>>>>>>>' -- "$LANES_FILE" 2>/dev/null | head -n 40 >&2 || :
+      grep -n -A2 -e '^<<<<<<<' -- "$LANES_FILE" 2>/dev/null | head -n 40 >&2 || :
+      git -C "$LANES_REPO" rebase --abort 2>/dev/null || :
       note "rebase ABORTED — the worktree is clean and NOT mid-rebase. Your edit is safe in these local commits:"
-      git -C "$LANES_DIR" --no-pager log --oneline origin/lanes..HEAD 2>/dev/null | head -n 10 >&2 || :
+      git -C "$LANES_REPO" --no-pager log --oneline "origin/$LANES_BRANCH..HEAD" 2>/dev/null | head -n 10 >&2 || :
       note "RECOVERY (in that order):"
-      note "  git -C $LANES_DIR diff origin/lanes..HEAD -- LANES.md   # read back exactly what you wrote"
-      note "  git -C $LANES_DIR reset --hard origin/lanes             # drop the local commits (NOTE: also drops any"
-      note "                                                          # uncommitted peer edit in this worktree)"
+      note "  git -C $LANES_REPO diff origin/$LANES_BRANCH..HEAD -- $LANES_PATH   # read back exactly what you wrote"
+      note "  git -C $LANES_REPO reset --hard origin/$LANES_BRANCH                # drop the local commits (NOTE: also drops any"
+      note "                                                          # uncommitted peer edit in this checkout)"
       note "  then re-read LANES.md and redo the edit with lanes-edit.sh, on top of the peer's version."
-      die "rebase conflict on origin/lanes — nothing was pushed." 3
+      die "rebase conflict on origin/$LANES_BRANCH — nothing was pushed." 3
     fi
     attempt=$((attempt + 1))
     sleep 3
   done
-  die "could not push origin/lanes after 6 attempts; your commit is local — retry later" 6
+  die "could not push origin/$LANES_BRANCH after 6 attempts; your commit is local — retry later" 6
 }
 
 # Prints, to stdout, a comma-joined, de-duplicated list of the lane(s) whose
@@ -252,7 +320,7 @@ commit_push() {
 # changed line that is not a `| ... |` row (e.g. a Rule 6 LANDING/LANDED
 # line, which names no row of its own).
 identify_changed_lanes() {
-  git -C "$LANES_DIR" --no-pager diff -- LANES.md 2>/dev/null | awk '
+  git -C "$LANES_REPO" --no-pager diff -- "$LANES_PATH" 2>/dev/null | awk '
     /^[+-][^+-]/ {
       line = substr($0, 2)
       lane = "append"
@@ -273,8 +341,8 @@ identify_changed_lanes() {
 # Prints the standard WARNING block (diff --stat + first 200 chars of every
 # changed line) to stderr. Takes no action beyond warning.
 warn_dirty() {
-  git -C "$LANES_DIR" --no-pager diff --stat -- LANES.md >&2
-  git -C "$LANES_DIR" --no-pager diff -- LANES.md 2>/dev/null | awk '/^[+-][^+-]/ {print substr($0,1,200)}' >&2
+  git -C "$LANES_REPO" --no-pager diff --stat -- "$LANES_PATH" >&2
+  git -C "$LANES_REPO" --no-pager diff -- "$LANES_PATH" 2>/dev/null | awk '/^[+-][^+-]/ {print substr($0,1,200)}' >&2
 }
 
 # Called by every mutating subcommand BEFORE it makes its own edit. If
@@ -293,7 +361,7 @@ warn_dirty() {
 handle_preexisting() {
   PRE_DIRTY_LANES=""
   [ "$NO_GIT" = 1 ] && return 0
-  git -C "$LANES_DIR" diff --quiet -- LANES.md 2>/dev/null && return 0
+  git -C "$LANES_REPO" diff --quiet -- "$LANES_PATH" 2>/dev/null && return 0
   lanes="$(identify_changed_lanes)"; lanes="${lanes:-unknown}"
   note "WARNING: LANES.md already has uncommitted changes before this edit (row: $lanes) — not this invocation's"
   warn_dirty
@@ -301,8 +369,8 @@ handle_preexisting() {
     PRE_DIRTY_LANES="$lanes"
     note "SWEEP_MODE=sweep — leaving it staged; it will land inside this invocation's own commit, annotated"
   else
-    git -C "$LANES_DIR" add -- LANES.md
-    git -C "$LANES_DIR" commit -q -m "LANES(pre-existing@$WS): capture an uncommitted registry edit (row $lanes)" -- LANES.md || :
+    git -C "$LANES_REPO" add -- "$LANES_PATH"
+    git -C "$LANES_REPO" commit -q -m "LANES(pre-existing@$WS): capture an uncommitted registry edit (row $lanes)" -- "$LANES_PATH" || :
     note "captured pre-existing edit (row $lanes) as its own commit"
   fi
   return 0
@@ -311,7 +379,10 @@ handle_preexisting() {
 # ---------------------------------------------------------------- subcommands
 
 cmd="${1-}"
-[ -n "$cmd" ] || { sed -n '3,59p' -- "$RESOLVED" | sed 's/^# \{0,1\}//'; exit 2; }
+# The usage block is this file's own header: print from line 3 until the first
+# line that is not a comment. (It used to be a hard-coded `3,59p`, which went
+# stale the moment the header grew — as it did under Amendment 5.)
+[ -n "$cmd" ] || { sed -n '3,${/^#/!q;s/^# \{0,1\}//;p}' -- "$RESOLVED"; exit 2; }
 shift || :
 [ -f "$LANES_FILE" ] || die "registry not found: $LANES_FILE"
 
@@ -402,7 +473,7 @@ case "$cmd" in
     # Rule 6 LANDING/LANDED line) is excluded from "other" — it is the
     # normal, expected shape of exactly what `commit` is for, and flagging
     # it would warn on every ordinary use.
-    if [ "$NO_GIT" != 1 ] && ! git -C "$LANES_DIR" diff --quiet -- LANES.md 2>/dev/null; then
+    if [ "$NO_GIT" != 1 ] && ! git -C "$LANES_REPO" diff --quiet -- "$LANES_PATH" 2>/dev/null; then
       touched="$(identify_changed_lanes)"
       other="$(printf '%s\n' "$touched" | tr ',' '\n' | grep -v -x -e "${LANES_LANE:-}" -e '' -e 'append' | paste -sd, - 2>/dev/null || :)"
       if [ -n "$other" ]; then
