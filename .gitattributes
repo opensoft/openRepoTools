@@ -1,0 +1,32 @@
+# THIS REPOSITORY'S OWN INSTALLER COMPARES ITS BYTES, so the bytes have to be
+# the same bytes on every platform.
+#
+# `openRepoTools --install` decides between `installed at`, `updated at` and
+# `already installed … (unchanged)` with `cmp -s`, and
+# `tests/test_openrepotools_command.py` compares an installed copy to this
+# checkout's file BYTE FOR BYTE. Git for Windows' installer default is
+# `core.autocrlf=true`; a checkout of THIS repository made under it turns every
+# `\n` in `openRepoTools`, `park` and `resume` into `\r\n`, and then every one
+# of those comparisons is about line endings rather than about content — a
+# second `--install` reporting three files `updated at` on a machine where
+# nothing changed, and a colleague whose only sin was cloning on a stock
+# Windows laptop watching the suite fail on lines nobody touched. CI never sees
+# it: the Linux and macOS jobs check out LF by default and the Windows job pins
+# `core.autocrlf=false`.
+#
+# The same rule for a second reason. `tests/test_park_resume_commands.py`
+# asserts that `park` and `resume` carry the shared estate resolver BYTE FOR
+# BYTE — that is what makes the deliberate duplication safe — and a CRLF
+# checkout would either break the claim or hide a real drift behind it.
+#
+# NO PATH IS LISTED BY NAME. Every file this repository ships is text — bash,
+# Python, YAML, Markdown, a workflow — so there is nothing for git's binary
+# heuristic to misjudge, and `text=auto` leaves that detection where it
+# belongs: with git. The pinned `upstream/openRepoShape` is a gitlink and
+# carries its own copy of this rule.
+#
+# openRepoShape #63 wrote this rule for the standard's own root, and its #51
+# (2026-09-05) wrote it for every scaffolded project; this is the same rule
+# retold for the repository that ships the two commands.
+
+* text=auto eol=lf

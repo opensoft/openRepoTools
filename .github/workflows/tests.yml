@@ -1,0 +1,218 @@
+name: tests
+
+# The suite builds estates out of BARE REPOSITORIES IN A TEMPORARY DIRECTORY
+# and clones them over the filesystem. It never calls `gh`, never touches the
+# network, and must never create a real repository.
+#
+# EVERY CHECKOUT TAKES `submodules: true`. The estate tests read eight of
+# openRepoShape's own files out of `upstream/openRepoShape`, pinned by
+# `contracts/openreposhape-pin.yaml`. Without them those tests SKIP rather than
+# fail — which is what the `tests-no-submodule` job below proves on purpose,
+# and what every other job must not be quietly doing.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      # PINNED BY COMMIT, not by tag — openRepoShape's own rule, and the same
+      # two commits every job here pins. A tag can be moved and a commit
+      # cannot, and three jobs resolving three versions of one action is
+      # exactly the drift a pin exists to prevent.
+      #
+      # `fetch-depth: 1` is enough: nothing in this repository compares a
+      # working-tree file against an older commit, which is what made
+      # openRepoShape's own jobs need full history.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          submodules: true
+          fetch-depth: 1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.x'
+
+      # pytest is the TEST RUNNER and is the only thing installed here.
+      # Nothing this repository ships is Python at all — three bash files —
+      # and the suite itself imports only the standard library.
+      # PINNED. A CI job that resolves "latest" on every run is a job whose
+      # result depends on the day it ran, which is the same objection this
+      # family makes to pinning a tag instead of a commit.
+      - name: install the test runner
+        run: python3 -m pip install --disable-pip-version-check pytest==8.3.4
+
+      # Per-invocation identity, never `git config --global`: a lane that
+      # mirrors this step on a workstation must not be able to rewrite the
+      # operator's ~/.gitconfig. The fixtures commit into throwaway
+      # repositories and honour these variables.
+      - name: git identity for the fixture commits (env, not global config)
+        run: |
+          {
+            echo "GIT_AUTHOR_NAME=openRepoTools CI"
+            echo "GIT_AUTHOR_EMAIL=ci@openrepotools.invalid"
+            echo "GIT_COMMITTER_NAME=openRepoTools CI"
+            echo "GIT_COMMITTER_EMAIL=ci@openrepotools.invalid"
+          } >> "$GITHUB_ENV"
+
+      - name: tests
+        run: python3 -m pytest tests -q
+
+  # THE SKIP PATH, PROVED. A fork's first command is `git clone` without
+  # `--recurse-submodules` and then `pytest`, and if that goes RED the fork is
+  # one nobody finishes. So one job checks out with NO submodules and asserts
+  # the suite still exits 0: the estate tests skip, naming
+  # `git submodule update --init upstream/openRepoShape`, and the hygiene and
+  # installer tests — which need nothing but this repository — still run.
+  #
+  # `pytest -q` exits 0 on skips and 1 on failures, so the job's own status IS
+  # the assertion; `-rs` prints the skip reasons, which is what a person
+  # reading this job wants to see.
+  tests-no-submodule:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          submodules: false
+          fetch-depth: 1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.x'
+
+      - name: install the test runner
+        run: python3 -m pip install --disable-pip-version-check pytest==8.3.4
+
+      - name: the submodule really is not materialized
+        run: |
+          set -euo pipefail
+          if [ -f upstream/openRepoShape/scripts/repo_shape.py ]; then
+            echo "the submodule IS checked out; this job proves nothing" >&2
+            exit 1
+          fi
+
+      - name: the suite skips rather than fails
+        run: python3 -m pytest tests -q -rs
+
+  # THE SAME SUITE ON WINDOWS, because a person on Windows still CLONES this
+  # repository and reads it. What this job proves is the checkout — that the
+  # `.gitattributes` rule holds and the three bash files are LF in the index —
+  # and the hygiene tests, which need no shell. The estate and installer tests
+  # carry `WINDOWS_SKIP` in `tests/conftest.py`: these files are bash, there is
+  # no PowerShell twin to run instead, and on Windows the way in is WSL2.
+  tests-windows:
+    runs-on: windows-latest
+    env:
+      # PER-INVOCATION GIT CONFIG, never `git config --global` — the same rule
+      # the identity step follows, and the reason a lane mirroring these steps
+      # on a workstation cannot rewrite the operator's ~/.gitconfig.
+      #
+      # core.autocrlf=false: this repository's whole claim about its own bytes
+      # is that an installed copy is byte-identical to the checkout's file and
+      # that `park` and `resume` carry the shared resolver byte for byte.
+      # Line-ending translation on checkout makes both false on this platform
+      # and only this platform.
+      #
+      # core.longpaths=true: MAX_PATH is 260 characters, and the suite nests a
+      # temp directory, a clone, a submodule and that submodule's own git dir.
+      #
+      # PYTHONUTF8=1 (PEP 540): the `read_text()` calls in this suite pass no
+      # `encoding=`, so they take the locale's — cp1252 here — and the files
+      # they read are full of the arrows and em dashes this family is written
+      # in. UTF-8 mode is one variable instead of many edits.
+      PYTHONUTF8: '1'
+      GIT_CONFIG_COUNT: '2'
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: 'false'
+      GIT_CONFIG_KEY_1: core.longpaths
+      GIT_CONFIG_VALUE_1: 'true'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          submodules: true
+          fetch-depth: 1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.x'
+
+      # `python`, not `python3`. There is no `python3` on a Windows install.
+      - name: install the test runner
+        run: python -m pip install --disable-pip-version-check pytest==8.3.4
+
+      # Per-invocation identity, never `git config --global`. PowerShell is the
+      # default shell on this runner, so the append is `>> $env:GITHUB_ENV`
+      # rather than the `{ echo ... } >> "$GITHUB_ENV"` block above.
+      - name: git identity for the fixture commits (env, not global config)
+        run: |
+          "GIT_AUTHOR_NAME=openRepoTools CI" >> $env:GITHUB_ENV
+          "GIT_AUTHOR_EMAIL=ci@openrepotools.invalid" >> $env:GITHUB_ENV
+          "GIT_COMMITTER_NAME=openRepoTools CI" >> $env:GITHUB_ENV
+          "GIT_COMMITTER_EMAIL=ci@openrepotools.invalid" >> $env:GITHUB_ENV
+
+      # THE WHOLE SUITE, not a Windows-shaped subset. A subset is a claim about
+      # which tests are platform-dependent, made by whoever wrote the subset;
+      # the suite itself already carries that claim, as the `WINDOWS_SKIP`
+      # marks in `tests/conftest.py`, next to the code they are about. Running
+      # everything is what keeps those marks honest.
+      #
+      # `--basetemp` puts pytest's temp root as near the drive root as a path
+      # the runner guarantees allows. The default (a profile path under
+      # `C:\Users\runneradmin\AppData\Local\Temp\`) is ~50 characters before
+      # the suite's own nesting starts, and MAX_PATH is 260. `runner.temp` is
+      # short — `D:\a\_temp` or `C:\a\_temp`, depending on the image — and it
+      # already exists; a bare drive letter is an assumption about which drives
+      # a future image has, made by a workflow that cannot check.
+      - name: tests
+        run: python -m pytest tests -q --basetemp=${{ runner.temp }}\t
+
+  # THE SAME SUITE ON macOS, because these three files are what a Mac runs.
+  # This is the job openRepoShape's own macOS `/bin/bash -n` step existed for,
+  # and it moves here with the files: the README tells a Mac reader that the
+  # stock `/bin/bash` — 3.2, the last GPLv2 release, and what Apple still
+  # ships — is enough for every bash file this repository ships.
+  tests-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          submodules: true
+          fetch-depth: 1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.x'
+
+      - name: install the test runner
+        run: python3 -m pip install --disable-pip-version-check pytest==8.3.4
+
+      - name: git identity for the fixture commits (env, not global config)
+        run: |
+          {
+            echo "GIT_AUTHOR_NAME=openRepoTools CI"
+            echo "GIT_AUTHOR_EMAIL=ci@openrepotools.invalid"
+            echo "GIT_COMMITTER_NAME=openRepoTools CI"
+            echo "GIT_COMMITTER_EMAIL=ci@openrepotools.invalid"
+          } >> "$GITHUB_ENV"
+
+      # THE ONE CLAIM THE SUITE CANNOT MAKE. The suite runs these files under
+      # whatever `bash` PATH resolves to on this runner, which is not
+      # necessarily `/bin/bash`, so name that one explicitly and PARSE each
+      # file with it: `-n` reads the whole file and executes none of it, so
+      # bash-4-only GRAMMAR (`${x,,}`, `${x^^}`, `|&`, `;;&`, `coproc`) is a
+      # syntax error here, and the README's sentence — which claims SYNTAX and
+      # nothing wider — stays true. A bash-4 BUILTIN is a different thing and
+      # `-n` does NOT catch it: `mapfile`, `declare -A` and `local -n` parse
+      # cleanly under any bash and fail only when run, which is what the
+      # suite's own runs of these files are for. ONE COMMAND PER FILE:
+      # `bash -n a b` parses `a` and hands `b` to it as $1, so a second file
+      # named on the same line is never read at all. `--version` prints what
+      # answered, because this job cannot assert on its own which bash
+      # `/bin/bash` is.
+      - name: /bin/bash parses every bash file this repository ships
+        run: |
+          /bin/bash --version
+          /bin/bash -n openRepoTools
+          /bin/bash -n park
+          /bin/bash -n resume
+
+      - name: tests
+        run: python3 -m pytest tests -q

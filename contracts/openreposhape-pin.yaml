@@ -1,0 +1,62 @@
+schema_version: 1
+kind: pinned_contract_manifest
+
+# ===========================================================================
+# openreposhape-pin.yaml — the openRepoShape revision this repository's tests
+# were verified against, MOUNTED as a git submodule at upstream/openRepoShape.
+#
+# MOUNTED, NOT COPIED, and the difference is the whole reason there is a
+# submodule here. `tests/test_park_resume_commands.py` builds real estates out
+# of EIGHT of the standard's own files — the assembly-root and family-root
+# Makefiles, their two `.gitignore`s, the two `bootstrap.py`s, `siblings.py` and
+# `scripts/repo_shape.py` — and a submodule hands those tests THE STANDARD'S
+# REAL BYTES at the commit below, rather than copies in this tree that could
+# have been edited into agreeing with a broken expectation. `shape-pin.yaml` in
+# a scaffolded project is the other half of the same grammar, for bytes a
+# consumer HOLDS; this is the half for bytes it MOUNTS.
+#
+# THE DEPENDENCY RUNS ONE WAY. Tools depend on the shape; the shape depends on
+# nothing. openRepoShape pins this repository nowhere and knows of it only
+# through one pointer line in its own `--install`. The reverse would make the
+# standard unbuildable without its tools, which is the arrangement
+# `shape-pin.yaml`'s own header spends a paragraph refusing.
+#
+# THIS FILE AND THE GITLINK ARE ONE INVARIANT, and they move in ONE COMMIT.
+# `tests/test_upstream_pin.py` is what says they still agree: it reads the
+# gitlink out of `git ls-tree HEAD` with no import from the submodule, so it
+# bites in a clone that never materialized it, and then — only where the
+# checkout IS there — recomputes `digests.tree_sha256` with the PINNED
+# CHECKOUT'S OWN `scripts/repo_shape.py`. So this repository carries no copy of
+# the standard's code, and the number is checked against the pinned commit's
+# own definition of what the number means.
+#
+# TO BUMP THE PIN, on purpose, from this repository's root:
+#
+#   git -C upstream/openRepoShape fetch origin
+#   git -C upstream/openRepoShape checkout <40 hex on that repository's main>
+#   python3 -c "import sys; sys.path.insert(0, 'upstream/openRepoShape/scripts'); from repo_shape import tree_digest; print(tree_digest('upstream/openRepoShape', 'HEAD'))"
+#   # then write that number into `digests.tree_sha256` and the commit into
+#   # `commit:`, and stage BOTH the pin and the gitlink together:
+#   git add contracts/openreposhape-pin.yaml upstream/openRepoShape
+#
+# THE DIGEST IS RECOMPUTED, NEVER ADJUSTED. A number edited to make the test
+# pass records this checkout as the upstream, which is the one thing the row is
+# for. A commit that is not on openRepoShape's `main` is not a pin either: that
+# repository squash-merges, so a branch commit is orphaned and the next
+# person's fetch of it 404s.
+# ===========================================================================
+
+pin_role: upstream-standard
+source_repository: opensoft/openRepoShape
+submodule_path: upstream/openRepoShape
+materialization: mounted
+
+commit: "d090a7a141048b214f0420a8c7afbfff62472d1a"
+revision_kind: commit
+
+digest_algorithm: sha256
+digest_definition: sorted-ls-tree-r-v1
+digests:
+  tree_sha256: "87260095119241499e347f61a9642fc0879e3a44d0cc1d436c67501526dafb39"
+
+verify_pin: tests/test_upstream_pin.py

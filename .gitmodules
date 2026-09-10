@@ -1,0 +1,3 @@
+[submodule "upstream/openRepoShape"]
+	path = upstream/openRepoShape
+	url = https://github.com/opensoft/openRepoShape.git
