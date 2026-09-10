@@ -192,6 +192,22 @@ count_occurrences() { # $1=haystack $2=needle
 
 rstrip_spaces() { s="$1"; while [ "${s% }" != "$s" ]; do s="${s% }"; done; printf '%s' "$s"; }
 
+# Prints the row's OWN spelling of a lane name that matches $1 ignoring case,
+# when exactly one row does. Attribution only — never used to pick the line an
+# edit rewrites, which stays exact-match. Rule 10's wire form is lowercase
+# (`Lane: openxfactory-2`) while the row's token may be camel (`openXfactory-2`),
+# so an exact lookup alone loses the author of a Rule 6 line.
+row_lane_ci() {
+  awk -v want="$1" '
+    substr($0,1,1) == "|" {
+      p1 = index($0, "`"); if (p1 == 0) next
+      rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
+      t = substr(rest, 1, p2 - 1)
+      if (tolower(t) == tolower(want)) { n++; hit = t }
+    }
+    END { if (n == 1) print hit }' "$LANES_FILE"
+}
+
 # A Rule 6 line names its own lane in its text — "LANDING — lane <name>, …",
 # "LANDED — lane <name> (<Window>), …". `append-line` takes no lane argument,
 # so with LANES_LANE unset it used to commit as LANES(unknown@<ws>) and the
@@ -460,7 +476,13 @@ case "$cmd" in
     lane_tag="${LANES_LANE:-}"
     if [ -z "$lane_tag" ]; then
       cand="$(lane_from_text "$text")"
-      if [ -n "$cand" ] && row_line "$cand" >/dev/null 2>&1; then lane_tag="$cand"; fi
+      if [ -n "$cand" ]; then
+        if row_line "$cand" >/dev/null 2>&1; then
+          lane_tag="$cand"
+        else
+          lane_tag="$(row_lane_ci "$cand")"
+        fi
+      fi
     fi
     acquire_lock; handle_preexisting
     append_text_line "$text"
