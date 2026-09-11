@@ -190,27 +190,37 @@ def test_claude_md_points_at_agents_md():
 
 
 def test_the_documents_say_what_bare_park_does_now():
-    """openRepoShape #91 (RULING 2026-09-10, its #93) SUPERSEDED ruling 3 of
-    its #82 for one case: bare `park`, with no `<Name>` and no estate around
-    the cwd, PARKS EVERY ESTATE instead of refusing — and `resume` keeps the
-    refusal for its own bare form.
+    """Brett Heap's RULING of 2026-09-10 in this repository, verbatim: "lets
+    change that so it parks the current repo. if not in a repo, then asks if
+    want to park all. and park all should be park -a or park --all." It
+    supersedes his openRepoShape #91 ruling of the same day (its #93), under
+    which the bare form with no estate around the cwd PARKED EVERY ESTATE
+    unasked — which had itself superseded ruling 3 of its #82, REFUSE and
+    list. So, now: the estate around the cwd; outside every estate, list and
+    ASK; `--all` / `-a` as the sweep without the question; and `resume`
+    keeping the refusal for its own bare form, with no `--all` of its own.
 
-    Both halves, in both documents. This is the sentence most likely to go
-    stale here, because these two files are the only place the installed
-    commands are written down once openRepoShape's own carve removes its
-    paragraph, and because the OLD text reads perfectly well — a document
-    that says `park` refuses is not obviously broken, it is just wrong, and
-    an assistant reading it tells somebody to name an estate the bare form
-    does not need.
+    All of it, in both documents and the command's own header. This is the
+    sentence most likely to go stale here, because these two files are the
+    only place the installed commands are written down, and because every
+    text this sentence has had reads perfectly well — a document that says
+    `park` refuses, or that it sweeps unasked, is not obviously broken, it is
+    just wrong, and an assistant reading it either tells somebody to name an
+    estate the bare form does not need or, worse, treats a bare `park` in the
+    wrong folder as a one-keystroke sweep of the workstation.
     """
-    for name in ("README.md", "AGENTS.md"):
+    for name in ("README.md", "AGENTS.md", "park"):
         text = (REPO / name).read_text(encoding="utf-8")
-        assert "PARKS EVERY ESTATE" in text, (
-            f"{name} does not say what bare `park` does since #91")
-        assert "#91" in text, f"{name} does not cite the ruling"
+        assert "--all" in text, f"{name} does not name the sweep's flag"
+        assert re.search(r"(?<![\w-])-a(?![\w-])", text), (
+            f"{name} does not name the short form, -a")
+        assert "ASKS" in text, (
+            f"{name} does not say the bare form ASKS outside every estate")
+        assert "#91" in text, (
+            f"{name} does not cite the ruling this one supersedes")
         assert "in name order" in text, (
             f"{name} does not say the order, which is the whole of what a "
-            f"person watching a park-everything run sees")
+            f"person watching a sweep sees")
     assert "keeps that old refusal for its own bare form" in \
         (REPO / "README.md").read_text(encoding="utf-8"), (
         "README.md does not say resume's own bare form still refuses")
@@ -218,8 +228,9 @@ def test_the_documents_say_what_bare_park_does_now():
         (REPO / "AGENTS.md").read_text(encoding="utf-8"), (
         "AGENTS.md does not say resume's own bare form still refuses")
     park = (REPO / "park").read_text(encoding="utf-8")
-    assert "PARKS EVERY ESTATE" in park, (
-        "the `park` in this repository predates #91; re-take it from the pin")
+    assert "PARKED EVERY ESTATE unasked" in park, (
+        "the `park` header no longer says what #91's bare form did and that "
+        "it is superseded; a reader of the ruling trail needs both")
 
 
 def test_the_documents_say_the_sweep_skips_a_root_without_the_overlay():
@@ -295,9 +306,20 @@ def test_agents_md_is_short_enough_to_be_read():
     them means rerunning a park that was never going to run there. The fifth
     line is the other half: naming such a root still refuses, and relaying
     that refusal is the answer.
+
+    95 -> 99 on 2026-09-10, for the `--all` ruling (Brett Heap, that day, in
+    this repository: "lets change that so it parks the current repo. if not
+    in a repo, then asks if want to park all. and park all should be park -a
+    or park --all"). Rule 1's opening now says the three things an assistant
+    gets wrong unaided: the bare form parks the estate around the cwd;
+    outside every estate it ASKS, and the assistant's stdin is not a
+    terminal, so in its hands that is a refusal naming `--all`; and `--all`
+    is for when the person wants everything, never a way past naming the one
+    estate they meant. The fourth line says `resume` has no `--all`, so
+    nobody invents one.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 95, f"AGENTS.md is {len(lines)} lines; the cap is 95"
+    assert len(lines) <= 99, f"AGENTS.md is {len(lines)} lines; the cap is 99"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -339,9 +361,18 @@ def test_readme_is_short_enough_to_be_read():
     same root still relays its refusal. Both halves in one paragraph, for the
     reason the #91 lines are: a reader who gets one of them and not the other
     reads a clean sweep as a failed one.
+
+    178 -> 182 on 2026-09-10, for the `--all` ruling (Brett Heap, that day,
+    in this repository). One line in the code block for `park --all`, and
+    three in the "How the estate is found" paragraph, which now says what the
+    bare form does outside every estate — list, ASK, and refuse naming
+    `--all` where there is no terminal — and that `--all` / `-a` is the sweep
+    without the question, from anywhere. The #91 sentence it replaces said
+    the bare form swept unasked, which is the reading this paragraph now
+    exists to correct.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 178, f"README.md is {len(lines)} lines; the cap is 178"
+    assert len(lines) <= 182, f"README.md is {len(lines)} lines; the cap is 182"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

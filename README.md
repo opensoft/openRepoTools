@@ -70,6 +70,7 @@ has the whole of "Carrying in-flight work to another workstation". In short:
 ```sh
 park                            # the estate around the current directory
 park InkRouter                  # a folder under your projects directory
+park --all                      # every estate under it, unasked (also -a)
 park --repo <owner>/<name>      # the estate of a clone you ALREADY have
 park InkRouter --dry-run        # rehearse; writes nothing
 resume InkRouter --workspace <owner>/<your-wip-repo>   # the FIRST time here
@@ -81,19 +82,22 @@ resume InkRouter -- --feature 001-a-thing              # flags for the extension
 points. A FAMILY folder (`<Name>/<Name>/family.yaml`) wins over a standalone
 root (`<Name>/project.yaml`) of the same name, because the holder is what
 drives the members. With no `<Name>` the estate around the current directory is
-used. With no estate around it either, `park` PARKS EVERY ESTATE it finds under
-your projects directory instead of refusing (Brett Heap's RULING of 2026-09-10,
-openRepoShape #91, superseding ruling 3 of its #82 for this one case): it lists
-what it found, then runs itself on each one in name order, continuing past a
-refusal. A root with no Speckit git overlay is SKIPPED in that sweep rather
-than run and failed: it is named, counted apart (`…, 4 skipped (no overlay)`)
-and left out of the exit code, under Brett Heap's RULING of the same day on
-openRepoShape #92 — a root nobody installed the overlay in is not a park that
-FAILED. `park <Name>` on that same root still relays its own `make park`
-refusal, which names `setup-openspeckit`. `resume` deliberately
-keeps that old refusal for its own bare form — rebuilding every estate on a
-fresh machine by accident is the opposite risk from failing to park the one
-you meant.
+parked. With no estate around it either, `park` lists every estate it finds
+under your projects directory and ASKS whether to park them all — `y` runs the
+sweep, anything else parks nothing, and where stdin is not a terminal nothing
+is asked: it refuses and names `--all`. `park --all` (or `park -a`) is that
+same sweep without the question, from anywhere: each estate in name order,
+continuing past a refusal, then one summary (Brett Heap's RULING of
+2026-09-10, superseding his openRepoShape #91 ruling of the same day, under
+which the bare form swept unasked). A root with no Speckit git overlay is
+SKIPPED in that sweep rather than run and failed: it is named, counted apart
+(`…, 4 skipped (no overlay)`) and left out of the exit code, under Brett
+Heap's RULING of the same day on openRepoShape #92 — a root nobody installed
+the overlay in is not a park that FAILED. `park <Name>` on that same root
+still relays its own `make park` refusal, which names `setup-openspeckit`.
+`resume` has no `--all`, and keeps that old refusal for its own bare form —
+rebuilding every estate on a fresh machine by accident is the opposite risk
+from failing to park the one you meant.
 
 `resume --workspace <owner>/<repo>` is the only thing in this toolset that
 writes a file outside a repository (`~/.agents/workspace.yaml`), and it writes
