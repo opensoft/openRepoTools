@@ -183,6 +183,60 @@ def test_the_estate_commands_name_no_runtime_dependency_on_the_standard():
                 f"{name} calls the API; the verbs fetch nothing")
 
 
+#: THE VALUE-TAKING ARMS ACROSS THE THREE COMMANDS: `park`'s three (--lane,
+#: --repo, --name | --project), `resume`'s four (--repo, --workspace, --org,
+#: --name | --project) and `status`'s two (--repo, --name | --project). Kept
+#: by hand so that a TENTH is read rather than merely guarded — see the test.
+VALUE_TAKING_ARMS = 9
+
+
+def test_every_value_taking_arm_refuses_an_empty_value():
+    """A FLAG GIVEN AN EMPTY VALUE IS REFUSED, in all three commands.
+
+    `[ $# -ge 2 ]` checks only that an argument slot exists; the `${2:?…}`
+    it replaced rejected an unset OR NULL one. The difference is silent every
+    time, because every one of these values is read further down as "was this
+    given at all?": `park --lane ""` parked with the lane dropped out of the
+    WIP commit subject, and `--repo ""` in any of the three fell past the
+    `--repo` branch of the resolver into the walk-up and acted on the estate
+    around the current directory — the one thing naming a clone's origin was
+    there to prevent.
+
+    THIS SHIPPED TWICE, AND AN OUTSIDE REVIEWER CAUGHT IT BOTH TIMES. Into
+    `park` and `resume` at 83a1601, which swapped `${2:?…}` for the arity
+    check; and into `status` at fbf6f11, its first commit, where the arm was
+    written that way from the start and so was never in front of the review
+    that caught the other two. Nothing in this suite could see either one,
+    because each command's own tests ask what a REFUSAL says, and an arm that
+    does not refuse says nothing for them to read. So it is asked here, of the
+    text: every line that takes `$2` into a variable carries the whole guard
+    within the three lines above it.
+
+    THE COUNT IS ASSERTED TOO, and it is hand-kept on purpose. That the guard
+    is right on nine arms is what the loop proves; the number is what makes a
+    TENTH — a value-taking flag somebody adds next year — arrive as a failure
+    to be read rather than as a silent pass. Move it in the same commit that
+    adds the arm.
+
+    Whole-line comments are dropped first, by `code_lines`, so the three
+    comment lines that QUOTE `[ $# -ge 2 ]` in order to explain why it was not
+    enough on its own cannot stand in for the guard they describe.
+    """
+    found = 0
+    for name in ESTATE_COMMANDS:
+        lines = code_lines(REPO / name).splitlines()
+        for i, line in enumerate(lines):
+            if re.match(r'\s*[A-Z_]+="\$2"', line):
+                found += 1
+                guard = "\n".join(lines[max(0, i - 3):i])
+                assert '[ $# -ge 2 ] && [ -n "$2" ]' in guard, (
+                    f"{name}: {line.strip()} takes $2 without refusing an "
+                    f"empty one")
+    assert found == VALUE_TAKING_ARMS, (
+        f"{found} lines take $2, not {VALUE_TAKING_ARMS}: a value-taking flag "
+        f"was added or removed. Read the new arm, then move the number.")
+
+
 def test_the_installer_reaches_only_this_repository():
     """The installer fetches from `$OPENREPOTOOLS_REPO` and from nowhere else.
 

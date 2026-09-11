@@ -1392,11 +1392,24 @@ def test_a_name_that_is_a_path_is_refused_by_name(home, command, bad):
     assert bad in result.stderr
 
 
-@pytest.mark.parametrize("command, flag", [
+#: EVERY VALUE-TAKING FLAG THE TWO COMMANDS HAVE, and nothing else is one.
+#: The two tests below are the two halves of ONE rule — a flag given no value
+#: and a flag given an empty one are the same refusal, in the command's own
+#: words — so they read one list rather than two that can drift apart the next
+#: time a flag is added.
+VALUE_TAKING_FLAGS = [
     (PARK, "--lane"), (PARK, "--repo"), (PARK, "--name"), (PARK, "--project"),
     (RESUME, "--repo"), (RESUME, "--workspace"), (RESUME, "--org"),
     (RESUME, "--name"), (RESUME, "--project"),
-], ids=lambda v: v.name if isinstance(v, Path) else v)
+]
+
+
+def flag_id(value):
+    """`park---lane` in the test id, rather than `command0-flag0`."""
+    return value.name if isinstance(value, Path) else value
+
+
+@pytest.mark.parametrize("command, flag", VALUE_TAKING_FLAGS, ids=flag_id)
 def test_a_flag_without_its_value_is_refused_in_the_commands_own_words(
         home, command, flag):
     """`${2:?…}` was bash's message and bash's exit 1 — a status neither verb
@@ -1409,6 +1422,41 @@ def test_a_flag_without_its_value_is_refused_in_the_commands_own_words(
     assert f"REFUSED: {flag} needs a value:" in result.stderr
     assert "line " not in result.stderr, "bash's own message leaked"
     assert "PROBE" not in result.stdout, "the estate must not have been touched"
+    assert not (home / ".agents").exists(), "nothing may be written before a refusal"
+
+
+@pytest.mark.parametrize("command, flag", VALUE_TAKING_FLAGS, ids=flag_id)
+def test_a_flag_given_an_empty_value_is_refused_the_same_way(
+        home, command, flag):
+    """AN EMPTY VALUE IS NOT A VALUE, and it never was: `${2:?…}` rejected
+    unset AND null, and the `[ $# -ge 2 ]` that replaced it rejects only the
+    unset half (Copilot's review of #14, posted a minute after it merged).
+    Every one of these values is read further down as "was this given at
+    all?", so the half that was let through was the silent one — `--lane ""`
+    parks with the lane dropped from the WIP commit subject, and `--repo ""`
+    resolves the estate from the current directory, which is the one thing
+    naming a clone's origin was there to prevent.
+
+    RUN FROM INSIDE AN ESTATE, which is what makes this bite. The walk-up
+    finds `Atlas` from there, so before the fix every one of these carried on
+    — `park` all the way into `make park`, `resume` as far as the workspace
+    record — and only the flag a person typed went missing. NOTHING IS
+    PRINTED AT ALL now: the refusal is raised in the argument loop, before the
+    estate is resolved and before the first `say`, so an empty stdout is the
+    proof that neither the fallback nor the verb was reached.
+    """
+    root = probe_project(home / "projects", "Atlas")
+    result = run(command, flag, "", home=home, cwd=root)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"REFUSED: {flag} needs a value:" in result.stderr
+    # BASH'S OWN MESSAGE, in either of the shapes it takes: `${2:?…}` prints
+    # the file and line and "parameter null or not set", and exits 1.
+    assert "${2:?" not in result.stderr
+    assert "parameter null or not set" not in result.stderr
+    assert "line " not in result.stderr, "bash's own message leaked"
+    assert result.stdout == "", (
+        "nothing may be resolved, said or run before an empty value is "
+        f"refused; stdout was {result.stdout!r}")
     assert not (home / ".agents").exists(), "nothing may be written before a refusal"
 
 
