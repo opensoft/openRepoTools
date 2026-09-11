@@ -18,6 +18,15 @@
 #   Rule 9 + Amendment 5 — every register write is one commit, made by
 #     lanes-edit.sh, in the person's workspace repository.
 #   Rule 10 — every row names its workstation.
+#   Amendment 6 (DRAFT 2026-09-11, awaiting Brett Heap's word) — A LANE IS
+#     RESUMED BY THE SESSION ID ITS ROW RECORDS, NEVER BY ITS TITLE. Titles are
+#     not unique: `claude --help` says `-r, --resume [value]` is "Resume a
+#     conversation by session ID, or open interactive picker with optional
+#     search term", so only a session id is an exact resume — a title merely
+#     filters the picker. On 2026-09-11 four transcripts in one working
+#     directory carried the title `codeXfactory-1` and eight more carried
+#     `codeXfactory-1 (2)` / `(4)`, while the session Brett was actually
+#     driving carried no title at all.
 #
 # USAGE
 #   lane-start [options] <repo> <n>      # lane-start openRepoShape 2
@@ -56,11 +65,57 @@
 #      command the window runs;
 #   5. the row: `lanes-edit.sh add-row` when there is none, otherwise
 #      `append-row-status`. Never a hand edit and never a whole-file write;
-#   6. `exec claude --resume <LANE>` when a transcript for this directory
-#      already carries the custom title <LANE> and nothing live holds it —
-#      RESUME BEATS NEW, because a rename into a title that is still held mints
-#      `<LANE> (2)` and the lane loses its address. Otherwise
-#      `exec claude --name <LANE>`.
+#   6. the launch. It is DECIDED in step 5a, before the row is written, because
+#      a brand-new session's id is minted there and step 5 must record it.
+#      RESUME BEATS NEW throughout — a rename into a title that is still held
+#      mints `<LANE> (2)` and the lane loses its address. Three cases, in order:
+#        a. `exec claude --resume <id>`, where <id> is THE LAST session id in
+#           the row's session cell and `<projects state>/<cwd key>/<id>.jsonl`
+#           exists. Exact: that conversation and no other.
+#        b. `exec claude --resume <LANE>` when no recorded id resolves but a
+#           transcript here carries the custom title <LANE> — or `<LANE> (N)`,
+#           which is the same lane: that suffix is what a rename into a title
+#           something else still holds mints, and the liveness check has always
+#           read it that way. THE FALLBACK, not the rule — it opens the picker
+#           filtered by the title, and several transcripts can share one title.
+#           A suffix found here is reported: it means a stale holder was live,
+#           and the cure is to retire the holders, not to live with `(4)`.
+#        c. `exec claude --name <LANE> --session-id <fresh uuid>` for a lane
+#           with no history here. The uuid is minted so the row can carry it,
+#           which is what makes (a) work on the next start.
+#
+# THE RESUME TARGET — WHY THE LAST ID
+#   The session cell is a HISTORY, written left to right: a lane's row reads
+#   `<first> → <after the first /clear> → <after the profile switch>`, oldest
+#   first, because each succeeding session appends itself. So the LAST session
+#   id in the cell is the lane's current one, and that is the only id this
+#   script will resume. Earlier ids are the lane's past and are never resumed
+#   (a stale lineage is precisely what went wrong on 2026-09-11).
+#
+# KEEPING THE ROW CURRENT
+#   Resuming by a recorded id only works if the row is current, so this script
+#   makes it current where it can:
+#     * case (c), NEW ROW — the row is created with the minted id already in
+#       its session cell, instead of `pending — set by the session's first act`;
+#     * case (c), EXISTING ROW — `lanes-edit.sh replace-in-row` appends
+#       `→ harness <minted id>` after the cell's last id. When the cell has no
+#       id to append to (some rows record only `session_…` footer ids, which
+#       are not transcript ids), it prints the command and leaves the act to
+#       the session — it never guesses at the cell's text;
+#     * case (a) — nothing to do: the row already names the session being
+#       resumed;
+#     * case (b) — the id cannot be known before the picker runs, so the
+#       session stamps its own row as its first act (Amendment 6(c)).
+#   `--session-id` is set to LANE_START_SESSION_ID=0 to turn the minting off;
+#   the row then reads `pending — set by the session's first act` as before.
+#
+# WHAT COUNTS AS A SESSION ID IN THE CELL
+#   The TRANSCRIPT uuid — the name of the session's `<uuid>.jsonl` — and only
+#   that, because it is the only id `--resume` takes and the only one the
+#   liveness records key on. Some rows record a PR-FOOTER id (`session_01…`)
+#   instead; those cannot be resumed or checked, so the script names them and
+#   says the row needs the transcript uuid rather than treating the cell as
+#   empty. Every RESUMED / handoff / takeover stamp writes the transcript uuid.
 #
 # OUTPUT  every step and every refusal goes to stderr; the ONLY thing written
 #   to stdout is `--no-launch`'s command line, so `--no-launch` composes.
@@ -78,6 +133,8 @@
 #   CLAUDE_CONFIG_DIR    the profile whose sessions/ and projects/ are read
 #   CLAUDE_PROJECTS_DIR  default $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects
 #   CLAUDE_BIN           default `claude` from PATH
+#   LANE_START_SESSION_ID  0 turns off minting a uuid for a new session (and
+#                        therefore turns off writing it into the row)
 #
 # It spells no absolute path of its own: the register and its writer are found
 # beside this script's own REAL path (so the `~/.local/bin` symlink works), and
@@ -208,11 +265,26 @@ cell() { printf '%s\n' "$row" | awk -F'|' -v i="$1" '{print $i}'; }
 # Only the SESSION-ID CELL is read for ids. State cells quote other lanes'
 # session ids all the time ("RESUMED by <id>", "handed off to <id>"), and a
 # live one of those is not this lane's holder.
+# Two readings of the same cell. The liveness check below wants the SET, so it
+# sorts; the resume target wants the ORDER, because the cell is a history and
+# its LAST id is the lane's current session (see THE RESUME TARGET above).
 session_ids=""
+session_ids_ordered=""
 if [ "$row_count" = 1 ]; then
-  session_ids="$(cell 3 | grep -oiE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tr 'A-F' 'a-f' | sort -u || :)"
+  session_ids_ordered="$(cell 3 | grep -oiE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tr 'A-F' 'a-f' || :)"
+  [ -n "$session_ids_ordered" ] && session_ids="$(printf '%s\n' "$session_ids_ordered" | sort -u)"
   id_count=0; [ -n "$session_ids" ] && id_count="$(printf '%s\n' "$session_ids" | grep -c . || :)"
   step "the register already has a row for $LANE; its session cell names $id_count session id(s)"
+  # A row may record only `session_01…` FOOTER ids. Those are not transcript
+  # ids: a transcript is `<uuid>.jsonl`, so a footer id can neither be checked
+  # for liveness nor resumed. Name the gap rather than behave as if the cell
+  # were empty — that silence is what made 2026-09-11 hard to diagnose.
+  if [ "$id_count" = 0 ]; then
+    footer_ids="$(cell 3 | grep -oE 'session_[A-Za-z0-9]{10,}' | sort -u || :)"
+    if [ -n "$footer_ids" ]; then
+      note "the cell records only PR-footer ids ($(printf '%s' "$footer_ids" | tr '\n' ' ')), which are not transcript ids — so this lane has no liveness check and no resume target. Its session must stamp its TRANSCRIPT uuid (the name of its <uuid>.jsonl) on the row."
+    fi
+  fi
 else
   step "the register has no row for $LANE yet"
 fi
@@ -298,6 +370,94 @@ else
   step "window renamed to $LANE (automatic-rename is now off for it)"
 fi
 
+# ------------------------------------------------- 5a. what will be launched
+#
+# Decided BEFORE the row is written: a brand-new session's id is minted here
+# and step 5 has to record it.
+
+# Claude keeps one transcript directory per working directory, named by that
+# path with every non-alphanumeric character turned into '-'. A lane reached
+# through a symlink has two spellings, so both are searched.
+sanitize() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '-'; }
+
+transcript_dirs() {
+  printf '%s\n' "$PROJECTS_STATE/$(sanitize "$DIR")"
+  [ "$DIR_REAL" = "$DIR" ] || printf '%s\n' "$PROJECTS_STATE/$(sanitize "$DIR_REAL")"
+}
+
+# The transcript of ONE recorded session id, in this directory.
+recorded_transcript() {
+  local id="$1" d
+  [ -n "$id" ] || return 1
+  while IFS= read -r d; do
+    if [ -f "$d/$id.jsonl" ]; then printf '%s\n' "$d/$id.jsonl"; return 0; fi
+  done < <(transcript_dirs)
+  return 1
+}
+
+# A `/rename` is a `{"type":"custom-title",…}` record inside the transcript,
+# and the LAST one wins — a session renamed away from this lane must not be
+# resumed by it. Several transcripts can still carry one title; that is why
+# this is only the fallback.
+# `<LANE> (2)` is the SAME lane: that suffix is exactly what a rename into a
+# title something else still holds mints, and live_holder() already reads it
+# that way. A matcher that insisted on the bare string would hide a lane from
+# itself — this orchestrator's own title on 2026-09-11 was `codeXfactory-1 (4)`.
+titled_transcript() {
+  local d f last title base
+  while IFS= read -r d; do
+    [ -d "$d" ] || continue
+    for f in "$d"/*.jsonl; do
+      [ -e "$f" ] || continue
+      last="$(grep '^{"type":"custom-title"' -- "$f" 2>/dev/null | tail -n1 || :)"
+      [ -n "$last" ] || continue
+      title="$(printf '%s' "$last" | sed 's/.*"customTitle":"//; s/".*//')"
+      base="${title% (*)}"
+      if [ "$base" = "$LANE" ]; then printf '%s\t%s\n' "$f" "$title"; return 0; fi
+    done
+  done < <(transcript_dirs)
+  return 1
+}
+
+new_uuid() {
+  if [ -r /proc/sys/kernel/random/uuid ]; then cat /proc/sys/kernel/random/uuid
+  elif command -v uuidgen >/dev/null 2>&1; then uuidgen | tr 'A-F' 'a-f'
+  else return 1
+  fi
+}
+
+row_sid=""
+[ -n "$session_ids_ordered" ] && row_sid="$(printf '%s\n' "$session_ids_ordered" | tail -n1)"
+
+new_sid=""
+if [ -n "$row_sid" ] && rec_file="$(recorded_transcript "$row_sid")"; then
+  step "the row's current session is $row_sid and its transcript is here ($(basename -- "$rec_file")) — resuming it by id"
+  (( holder_here )) && step "  (it is the session live in this window; --resume attaches to the same conversation)"
+  cmd=("$CLAUDE_BIN" --resume "$row_sid")
+elif titled="$(titled_transcript)"; then
+  transcript="${titled%%$'\t'*}"; found_title="${titled#*$'\t'}"
+  [ -n "$row_sid" ] && note "the row's last session id $row_sid has no transcript for this directory — falling back to the title"
+  step "a transcript here carries the title '$found_title' ($(basename -- "$transcript")) — resume beats new"
+  [ "$found_title" = "$LANE" ] || note "  that title carries a dedupe suffix, so another holder of '$LANE' was live when it was renamed: retire the stale holders (lane-end --retire, or retitle them '<lane> · retired <date>') and end idle background sessions still holding the name"
+  note "  '--resume $LANE' FILTERS THE PICKER, it does not resume exactly: pick the lane's own session, then put its id in the row's session cell"
+  (( holder_here )) && step "  (that session is the one live in this window; --resume attaches to the same conversation)"
+  cmd=("$CLAUDE_BIN" --resume "$LANE")
+else
+  step "nothing here to resume for $LANE — a new session takes the name"
+  cmd=("$CLAUDE_BIN" --name "$LANE")
+  if [ "${LANE_START_SESSION_ID:-1}" != 0 ]; then
+    if new_sid="$(new_uuid)"; then
+      while recorded_transcript "$new_sid" >/dev/null 2>&1; do new_sid="$(new_uuid)"; done
+      cmd+=(--session-id "$new_sid")
+      step "minted session id $new_sid — the row will carry it, so the next $prog resumes it by id"
+    else
+      new_sid=""
+      note "no uuid source (/proc/sys/kernel/random/uuid, uuidgen): the new session's own first act must stamp its id on the row"
+    fi
+  fi
+fi
+cmd+=(${pass[@]+"${pass[@]}"})
+
 # ------------------------------------------------------------- 5. the row
 
 utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -309,8 +469,16 @@ case "$env_name" in .claude|claude) env_name=default ;; esac
 user="$(id -un)"
 handoff="handoffs/$estate/session-handoff-$today-lane-$LANE.md"
 
+# The session cell of a NEW row names the session that is about to run,
+# whenever one was minted — that is the whole point of minting it.
+if [ -n "$new_sid" ]; then
+  session_cell="harness \`$new_sid\` (minted by $prog, $utc)"
+else
+  session_cell="pending — set by the session's first act"
+fi
+
 if [ "$row_count" = 0 ]; then
-  new_row="| \`$LANE\` | pending — set by the session's first act | $ws / $env_name / $user | $started | none | $handoff | STARTING |"
+  new_row="| \`$LANE\` | $session_cell | $ws / $env_name / $user | $started | none | $handoff | STARTING |"
   if (( dry_run )); then
     plan "lanes-edit.sh add-row"
     plan "  $new_row"
@@ -319,46 +487,38 @@ if [ "$row_count" = 0 ]; then
     step "row added"
   fi
 else
-  status_text="$utc lane-start on $ws: window renamed, launching claude"
+  status_text="$utc lane-start on $ws: window renamed, launching $(quoted "${cmd[@]}")"
   if (( dry_run )); then
     plan "lanes-edit.sh append-row-status $LANE \"$status_text\""
   else
     LANES_LANE="$LANE" "$LANES_EDIT" append-row-status "$LANE" "$status_text"
     step "row status appended"
   fi
+
+  # An EXISTING row that is about to run a NEW session: append the minted id
+  # after the cell's last id, so the next start resumes by id instead of by
+  # title. The append is `replace-in-row`, which refuses unless its anchor
+  # occurs exactly once in the row — so a failure here is a refusal, never a
+  # corruption, and it never fails the launch.
+  if [ -n "$new_sid" ]; then
+    stamp_hint="LANES_LANE=$LANE $LANES_EDIT replace-in-row $LANE \"<the session cell's text>\" \"<that text> → harness \\\`$new_sid\\\`\""
+    if [ -z "$row_sid" ]; then
+      note "the row's session cell records no session id this script can read (some rows carry only \`session_…\` footer ids). STAMP IT AS THIS SESSION'S FIRST ACT:"
+      note "  $stamp_hint"
+    elif (( dry_run )); then
+      plan "lanes-edit.sh replace-in-row $LANE '$row_sid' '$row_sid → harness \`$new_sid\`'"
+    elif LANES_LANE="$LANE" "$LANES_EDIT" replace-in-row "$LANE" "$row_sid" "$row_sid → harness \`$new_sid\`" "session cell: $prog minted $new_sid for this window"; then
+      step "session cell updated: $row_sid → $new_sid"
+    else
+      note "the session cell was NOT stamped ($row_sid is not unique in the row). STAMP IT AS THIS SESSION'S FIRST ACT:"
+      note "  $stamp_hint"
+    fi
+  fi
 fi
 
 # ---------------------------------------------------------------- 6. launch
-
-# Claude keeps one transcript directory per working directory, named by that
-# path with every non-alphanumeric character turned into '-'. A `/rename` is a
-# `{"type":"custom-title",…}` record inside the transcript, and the LAST one
-# wins — a session renamed away from this lane must not be resumed by it.
-sanitize() { printf '%s' "$1" | tr -c 'A-Za-z0-9' '-'; }
-
-titled_transcript() {
-  local d f last
-  for d in "$PROJECTS_STATE/$(sanitize "$DIR")" "$PROJECTS_STATE/$(sanitize "$DIR_REAL")"; do
-    [ -d "$d" ] || continue
-    for f in "$d"/*.jsonl; do
-      [ -e "$f" ] || continue
-      last="$(grep '^{"type":"custom-title"' -- "$f" 2>/dev/null | tail -n1 || :)"
-      [ -n "$last" ] || continue
-      case "$last" in *"\"customTitle\":\"$LANE\""*) printf '%s\n' "$f"; return 0 ;; esac
-    done
-  done
-  return 1
-}
-
-if transcript="$(titled_transcript)"; then
-  step "a transcript here already carries the title $LANE ($(basename -- "$transcript")) — resume beats new"
-  (( holder_here )) && step "  (that session is the one live in this window; --resume attaches to the same conversation)"
-  cmd=("$CLAUDE_BIN" --resume "$LANE")
-else
-  step "no transcript here carries the title $LANE — a new session takes the name"
-  cmd=("$CLAUDE_BIN" --name "$LANE")
-fi
-cmd+=(${pass[@]+"${pass[@]}"})
+#
+# `cmd` was decided in 5a, before the row was written.
 
 if (( no_launch )); then
   quoted "${cmd[@]}"; printf '\n'
