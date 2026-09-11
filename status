@@ -145,12 +145,12 @@ pin that has fallen behind is named with the exit, `update-shape.py check
 workspace repository; `workspaces/<org>/<id>.yaml` in it) is read against the
 worktrees on disk: a recorded feature with no worktree here (`resume <Name>`
 brings it back — unless the record says `--no-push`, when only the
-workstation that has the WIP commit can park it again; and where the worktree
-is gone but `git worktree list` still holds its registration, that is cleared
-with `worktree prune`, after a `worktree unlock` if it is locked, before
-`resume` can recreate anything), a worktree whose tip is not the parked
-commit, a leg parked with `--no-push`, and a worktree the record does not
-know (never parked).
+workstation that has the WIP commit can park it again; and where `git
+worktree list` still holds a registration that is no longer a worktree, that
+is cleared with `worktree prune`, after a `worktree unlock` if it is locked
+and with any leftover directory moved aside, before `resume` can recreate
+anything), a worktree whose tip is not the parked commit, a leg parked with
+`--no-push`, and a worktree the record does not know (never parked).
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
 (<Name>/<Name>/family.yaml) or a standalone project root (<Name>/project.yaml).
@@ -1520,10 +1520,12 @@ read_shape() {
 #    resumed on this machine. `resume <Name>` is the exit; nothing here adds
 #    a worktree. Unless the record is a `--no-push` one (3): then there is
 #    nothing here to resume FROM, and the exit is the workstation that has it.
-#    And where the porcelain still holds a REGISTRATION for that branch whose
-#    directory is gone, what clears it is named first — a prune, after an
-#    unlock where the registration is locked: `resume` cannot recreate a
-#    worktree git still believes it has.
+#    And where the porcelain still holds a REGISTRATION for that branch that
+#    is no longer a worktree — its directory gone, or git's own `prunable`
+#    with the directory left behind — what clears it is named first: a prune,
+#    after an unlock where the registration is locked, and a move of any
+#    leftover directory. `resume` cannot recreate a worktree git still
+#    believes it has, nor write over a directory it did not create.
 # 2. A WORKTREE WHOSE BRANCH TIP IS NOT THE PARKED COMMIT: moved on since it
 #    was parked (park again before leaving); or BEHIND it — the record is
 #    newer, parked later on another workstation, which `resume` refuses to
@@ -1802,54 +1804,71 @@ leg_repo_for_role() {
 
 # The path of the worktree checked out on `<branch>` in `<repo>`, main or
 # linked. FOUR ANSWERS, because the porcelain has four: 0 and the path when a
-# worktree is there; 2 AND THE PATH when the only block for that branch is a
-# REGISTRATION WITHOUT A DIRECTORY; 3 and the path when that registration is
-# also LOCKED; 1 and nothing when there is no block at all.
+# worktree is really there; 2 AND THE PATH when the only block for that
+# branch is a REGISTRATION WITHOUT A WORKTREE; 3 and the path when such a
+# registration is also LOCKED; 1 and nothing when there is no block at all.
 #
-# THE PATH HAS TO BE ON DISK. `worktree list --porcelain` keeps the block of a
-# linked worktree whose directory was deleted until somebody runs `git
-# worktree prune` — and keeps a `locked` one, which it never even marks
-# prunable — so a recorded feature whose directory is gone would otherwise be
-# read as present, and at the parked commit, as CLEAN: the one answer that
-# hides the case this layer exists for. `read_worktrees` checks the path
-# before reading it for the same reason.
+# GIT'S OWN VERDICT FIRST, THEN THE DIRECTORY. `worktree list --porcelain`
+# keeps the block of a linked worktree that is no longer one until somebody
+# prunes it, and says so with `prunable <reason>` — which it prints whether or
+# not the DIRECTORY is still there: delete only the worktree's `.git` file and
+# the directory stays, the block says "prunable gitdir file points to
+# non-existent location", and a `-d` test alone would call that live and the
+# recorded feature CLEAN (Copilot on #18). So a `prunable` block is stale
+# whatever is on disk. The `-d` test still decides the blocks git has NOT
+# judged: it does not compute `prunable` for a `locked` one, which is exactly
+# the case whose directory can be gone with nothing said about it.
 #
 # AND A STALE BLOCK IS NOT "NOTHING HERE" EITHER, which is why it comes back
 # as 2 or 3 rather than as 1: it is the thing that STOPS the exit this layer
 # would otherwise name — see `check_parked_leg`. The two are told apart
 # because THE EXIT IS NOT THE SAME: `worktree prune` clears an unlocked
-# registration and SKIPS a locked one (verified against git 2.43: `prune -v`
-# prints nothing for it, `unlock` then `prune` removes it, and `worktree
-# remove --force` refuses with "cannot remove a locked working tree; use
-# 'remove -f -f' to override or unlock first"). Naming a prune that cannot
-# clear it would leave `resume` blocked by the very thing the finding said to
-# clear.
+# registration — even one whose directory is still on disk, leaving the
+# directory — and SKIPS a locked one (verified against git 2.43: `prune -v`
+# prints nothing for a locked block, `unlock` then `prune` removes it, and
+# `worktree remove` refuses both a locked one, "cannot remove a locked
+# working tree; use 'remove -f -f' to override or unlock first", and one
+# whose `.git` is gone, "validation failed, cannot remove working tree:
+# '…/.git' does not exist"). Naming a prune that cannot clear it would leave
+# `resume` blocked by the very thing the finding said to clear.
 #
-# THE `locked` LINE COMES AFTER `branch` IN THE SAME BLOCK, so the block is
-# read to its blank line before the answer is settled. The scan goes on past
-# it rather than answering with the first block, so a live worktree on the
-# branch wins over a stale one for it; git makes that pair only under
-# `worktree add --force`, having refused the plain `add` over a registration
-# it still holds.
+# TWO STALE REGISTRATIONS FOR ONE BRANCH is a state `worktree add --force`
+# makes, and the LOCKED one is the one to name: `prune` takes every unlocked
+# one in the repository with it, so an `unlock` of the locked path plus that
+# prune clears both, while naming the unlocked path alone would leave the
+# locked registration standing and `resume` still blocked.
+#
+# `locked` AND `prunable` COME AFTER `branch` IN THE BLOCK, so every block is
+# read to its blank line before it is judged, and the whole list is read
+# before the answer is chosen: a live worktree on the branch wins over any
+# stale registration for it, and a locked stale registration wins over an
+# unlocked one.
 worktree_on_branch() {
-    local repo="$1" want="$2" line path="" hit=0 stale="" locked=0
+    local repo="$1" want="$2" line path="" hit=0 prunable=0 locked=0
+    local live="" stale="" stale_locked=""
     while IFS= read -r line; do
         case "$line" in
-        "worktree "*) path="${line#worktree }"; hit=0 ;;
-        "branch refs/heads/$want")
-            if [ -d "$path" ]; then printf '%s\n' "$path"; return 0; fi
-            hit=1
-            ;;
-        locked | "locked "*)
-            if [ "$hit" -eq 1 ] && [ -z "$stale" ]; then locked=1; fi
-            ;;
+        "worktree "*) path="${line#worktree }"; hit=0; prunable=0; locked=0 ;;
+        "branch refs/heads/$want") hit=1 ;;
+        locked | "locked "*) locked=1 ;;
+        prunable | "prunable "*) prunable=1 ;;
         "")
-            if [ "$hit" -eq 1 ] && [ -z "$stale" ]; then stale="$path"; fi
-            hit=0
+            if [ "$hit" -eq 1 ]; then
+                if [ "$prunable" -eq 0 ] && [ -d "$path" ]; then
+                    [ -n "$live" ] || live="$path"
+                elif [ "$locked" -eq 1 ]; then
+                    [ -n "$stale_locked" ] || stale_locked="$path"
+                else
+                    [ -n "$stale" ] || stale="$path"
+                fi
+            fi
+            hit=0; prunable=0; locked=0; path=""
             ;;
         esac
     done < <(g "$repo" worktree list --porcelain 2>/dev/null; printf '\n')
-    [ -z "$stale" ] || { printf '%s\n' "$stale"; [ "$locked" -eq 0 ] || return 3; return 2; }
+    [ -z "$live" ] || { printf '%s\n' "$live"; return 0; }
+    [ -z "$stale_locked" ] || { printf '%s\n' "$stale_locked"; return 3; }
+    [ -z "$stale" ] || { printf '%s\n' "$stale"; return 2; }
     return 1
 }
 
@@ -1903,6 +1922,16 @@ check_parked_leg() {
         clear="\`git -C $repo worktree unlock $ghost\`, then \`git -C $repo worktree prune\`"
         ;;
     esac
+    # THE DIRECTORY THE PRUNE LEAVES BEHIND is the second half of that exit
+    # where git called the registration stale with the directory still on
+    # disk: the prune clears the registration and touches nothing on disk, and
+    # `git worktree add` then refuses the path in its own words, "already
+    # exists". That directory holds whatever the worktree held, so it is moved
+    # aside rather than deleted here or anywhere else.
+    if [ -n "$ghost" ] && [ -d "$ghost" ]; then
+        ghost_is="$ghost_is, whose directory is still on disk and is no longer a worktree"
+        clear="$clear and a move of that directory aside (\`git worktree add\` refuses a path that \"already exists\")"
+    fi
     # A STALE REGISTRATION IS NAMED BEFORE THE EXIT IT BLOCKS, and what
     # clears it before that, because this layer reads the record THE WAY
     # `resume.sh` WILL JUDGE IT and `resume.sh` judges this one badly: its
@@ -1991,8 +2020,12 @@ check_parked_leg() {
 # deleted worktree's block until `git worktree prune` runs, and telling
 # somebody that a directory which is not there was never parked is a finding
 # about nothing. `read_worktrees` checks the same path before reading it.
+# GIT'S `prunable` IS READ HERE TOO, and for the same reason: a registration
+# git itself calls stale is not a worktree `park` could carry, whatever is
+# left in its directory — that leftover is the person's to move aside, and
+# `park` would no more see it than `resume` could write to it.
 unrecorded_worktrees() {
-    local root="$1" recorded="$2" repo where line path="" branch="" first=1 state leg
+    local root="$1" recorded="$2" repo where line path="" branch="" first=1 state leg prunable=0
     local -a repos=("$root")
     while IFS=$'\t' read -r state leg; do
         [ "$state" = mounted ] || continue
@@ -2005,18 +2038,19 @@ unrecorded_worktrees() {
         first=1; path=""; branch=""
         while IFS= read -r line; do
             case "$line" in
-            "worktree "*) path="${line#worktree }"; branch="" ;;
+            "worktree "*) path="${line#worktree }"; branch=""; prunable=0 ;;
             "branch "*) branch="${line#branch refs/heads/}" ;;
+            prunable | "prunable "*) prunable=1 ;;
             "")
                 if [ "$first" -eq 1 ]; then
                     first=0
-                elif [ -n "$branch" ] && [ -d "$path" ]; then
+                elif [ -n "$branch" ] && [ -d "$path" ] && [ "$prunable" -eq 0 ]; then
                     case "$recorded" in
                     *"$NL$branch$NL"*) ;;
                     *) finding "worktree on $branch ($where): not in the parked record — never parked; \`park\` carries the features under this root's worktree root, anything else is yours to keep or remove" ;;
                     esac
                 fi
-                path=""; branch=""
+                path=""; branch=""; prunable=0
                 ;;
             esac
         done < <(g "$repo" worktree list --porcelain 2>/dev/null; printf '\n')

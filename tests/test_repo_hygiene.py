@@ -533,9 +533,17 @@ def test_agents_md_is_short_enough_to_be_read():
     front of it and say the finding names which kind it is — without them an
     assistant follows the prune, watches nothing change, and reaches for the
     two deletes the same sentence forbids.
+
+    147 -> 149 on 2026-09-11, for the round after that: a registration git
+    calls prunable can have its DIRECTORY still on disk, and the prune clears
+    the registration without touching it, so `git worktree add` then refuses
+    the path in its own words, "already exists". Two lines say that directory
+    is moved aside and not deleted — it holds whatever the worktree held, and
+    an assistant that deletes it to make `resume` run has thrown away the one
+    copy of somebody's work.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 147, f"AGENTS.md is {len(lines)} lines; the cap is 147"
+    assert len(lines) <= 149, f"AGENTS.md is {len(lines)} lines; the cap is 149"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -636,9 +644,15 @@ def test_readme_is_short_enough_to_be_read():
     prune — after an unlock if it is locked — BEFORE `resume <Name>` can do
     anything, because the paragraph otherwise promises a recovery the
     command's own finding contradicts.
+
+    244 -> 245 on 2026-09-11, for the round after that: the registration can
+    be stale with its DIRECTORY still on disk, which the prune leaves behind
+    and `git worktree add` then refuses. One line says that directory is
+    moved aside, so the recovery the README describes is the whole of the one
+    `status` prints.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 244, f"README.md is {len(lines)} lines; the cap is 244"
+    assert len(lines) <= 245, f"README.md is {len(lines)} lines; the cap is 245"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

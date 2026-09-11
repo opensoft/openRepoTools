@@ -1629,6 +1629,59 @@ def test_a_leg_parked_with_no_push_is_a_finding(atlas, home):
             "refuses it") in result.stdout
 
 
+def test_a_registration_git_calls_prunable_is_stale_with_its_directory_there(
+        atlas, home):
+    """Delete only the worktree's `.git` file: the DIRECTORY stays, and git
+    calls the registration "prunable gitdir file points to non-existent
+    location". A `-d` test alone read that as a live worktree and, sitting at
+    the parked commit, said nothing at all — while `resume` still saw the
+    registration. Git's own verdict is the one to trust, and the exit is both
+    halves: the prune clears the registration and leaves the directory, which
+    `git worktree add` then refuses ("already exists")."""
+    checkout = workspace_config(home)
+    where = home / "Atlas-wt" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    (where / ".git").unlink()       # the directory stays; the worktree does not
+    porcelain = git("worktree", "list", "--porcelain", cwd=atlas).stdout
+    assert "prunable" in porcelain, "git no longer says prunable; the test is moot"
+    assert where.is_dir(), "the directory is what makes this case"
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
+            "branch here, but a stale worktree registration for it is still "
+            f"recorded at {where}, whose directory is still on disk and is no "
+            f"longer a worktree — clear it with `git -C {atlas} worktree prune`"
+            " and a move of that directory aside (`git worktree add` refuses a "
+            'path that "already exists"), then `resume Atlas` brings it back'
+            ) in result.stdout
+
+
+def test_the_locked_one_of_two_stale_registrations_is_the_one_named(atlas, home):
+    """`worktree add --force` is how one branch ends up with two
+    registrations. `prune` takes every UNLOCKED one with it, so the locked
+    one is what has to be named: naming the unlocked path would leave the
+    locked registration standing and `resume` still blocked, which is the
+    state the first draft's "first stale block wins" produced."""
+    checkout = workspace_config(home)
+    first = home / "Atlas-wt" / "001-a-thing"
+    second = home / "Atlas-wt2" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", first)
+    git("worktree", "add", "--force", "-q", str(second), "001-a-thing", cwd=atlas)
+    git("worktree", "lock", str(second), cwd=atlas)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    rmtree(first)
+    rmtree(second)          # both gone, and NO `git worktree prune`
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"recorded at {second} and LOCKED, which `worktree prune` skips — "
+            f"clear it with `git -C {atlas} worktree unlock {second}`, then "
+            f"`git -C {atlas} worktree prune`") in result.stdout
+    assert f"recorded at {first}" not in result.stdout, (
+        "the unlocked path, whose prune would leave the locked one standing")
+    assert f"worktree unlock {first}" not in result.stdout
+
+
 def test_a_locked_stale_registration_names_the_unlock_before_the_prune(
         atlas, home):
     """`git worktree prune` SKIPS a locked registration — against git 2.43,
@@ -1701,10 +1754,10 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     assert ("a recorded feature with no worktree here (`resume <Name>` brings "
             "it back — unless the record says `--no-push`, when only the "
             "workstation that has the WIP commit can park it again; and where "
-            "the worktree is gone but `git worktree list` still holds its "
-            "registration, that is cleared with `worktree prune`, after a "
-            "`worktree unlock` if it is locked, before `resume` can recreate "
-            "anything)") in helptext
+            "`git worktree list` still holds a registration that is no longer "
+            "a worktree, that is cleared with `worktree prune`, after a "
+            "`worktree unlock` if it is locked and with any leftover directory "
+            "moved aside, before `resume` can recreate anything)") in helptext
 
 
 def test_a_missing_parked_commit_is_read_against_what_the_record_claims(
