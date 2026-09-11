@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""`status` — the read-only view of an estate, the LOCAL layer.
+"""`status` — the read-only view of an estate: the LOCAL layer, and `--fetch`.
 
 Brett Heap's RULING of 2026-09-10 in this repository, verbatim: "lets go with
 a fourth file. start with the local status layer." So this file asserts what
@@ -10,7 +10,15 @@ this machine already knows without a fetch: ahead/behind the tracking
 branch's origin AS OF THE LAST FETCH, dirty and stashed, feature branches
 never pushed or whose remote branch is gone, dirty feature worktrees, and a
 leg checked out away from its pin or pinned behind its origin. And the two
-things it never does: fetch, and change anything.
+things it never does without being asked: fetch, and change anything.
+
+His RULING of 2026-09-11, verbatim: "next layer: --fetch". With the flag,
+`git fetch --prune origin` runs in every repository before it is read — the
+ONE write this command makes, to remote-tracking refs and nothing else — and
+the second section of this file holds exactly that: what moved is said, a
+deleted remote branch reads as gone, a fetch that fails is a finding and the
+read goes on, the leg is fetched too, and local branches, HEAD, index,
+working tree and stash are untouched.
 
 OFFLINE, LIKE THE REST OF THIS SUITE. Every remote is a BARE REPOSITORY IN A
 TEMPORARY DIRECTORY and every `$HOME` is a temporary directory. Nothing here
@@ -177,7 +185,8 @@ def test_help_prints_the_first_usage_line_and_the_exit_codes():
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines()[0].startswith("status [<Name>]")
     assert "EXIT 0" in result.stdout and "EXIT 1" in result.stdout
-    assert "FETCHES NOTHING" in result.stdout
+    assert "FETCHES NOTHING unless you say `--fetch`" in result.stdout
+    assert "  --fetch " in result.stdout
 
 
 # --- the root against its origin -------------------------------------------
@@ -461,10 +470,6 @@ def test_refusals_read_nothing(home, status_remotes):
     atlas = clone_root(home, status_remotes["Atlas"], "Atlas")
     both = run(STATUS, "Atlas", "--all", home=home)
     assert both.returncode == 2 and "both <Name> ('Atlas') and --all" in both.stderr
-    fetch = run(STATUS, "--fetch", home=home)
-    assert fetch.returncode == 2
-    assert "--fetch is not here yet" in fetch.stderr
-    assert "LOCAL layer" in fetch.stderr
     unknown = run(STATUS, "--dry-run", home=home)
     assert unknown.returncode == 2 and "does not know --dry-run" in unknown.stderr
     assert "-- --dry-run" not in unknown.stderr, "there is no extension to pass to"
@@ -475,7 +480,7 @@ def test_refusals_read_nothing(home, status_remotes):
     valueless = run(STATUS, "--repo", home=home)
     assert valueless.returncode == 2, valueless.stdout + valueless.stderr
     assert "REFUSED: --repo needs a value" in valueless.stderr
-    for result in (both, fetch, unknown, nope, valueless):
+    for result in (both, unknown, nope, valueless):
         assert str(atlas) not in result.stdout, "a refusal read nothing"
 
 
@@ -505,6 +510,227 @@ def test_no_estate_anywhere_refuses(home):
     assert everything.returncode == 2
     assert "--all found no estate under" in everything.stderr
 
+
+# --- --fetch: the second layer ------------------------------------------------
+#
+# Brett Heap's RULING of 2026-09-11, verbatim: "next layer: --fetch".
+
+FETCHED = ("fetched first (--fetch): origin is asked in every repository "
+           "below, then it is read.")
+FETCH_CLAUSE = "only remote-tracking refs and fetched objects were changed (--fetch)."
+
+
+def local_state(repo: Path) -> str:
+    """Everything `--fetch` must leave alone: local branches, HEAD, the
+    porcelain and the stash list. NOT the remote-tracking refs — moving those
+    is the one thing a fetch is for."""
+    heads = git("for-each-ref", "refs/heads", cwd=repo).stdout
+    head = git("rev-parse", "HEAD", cwd=repo).stdout
+    porcelain = git("status", "--porcelain", "--ignore-submodules=none",
+                    cwd=repo).stdout
+    stash = git("stash", "list", cwd=repo).stdout
+    return heads + head + porcelain + stash
+
+
+def test_fetch_makes_behind_visible_and_says_what_moved(atlas, home,
+                                                        status_remotes):
+    """The caveat's other half: with `--fetch`, the commit that landed on
+    origin from another workstation is seen in one run, the report says which
+    ref moved and from where, and the footer says what was changed."""
+    push_from_elsewhere(status_remotes["base"], status_remotes["Atlas"]["bare"],
+                        "fetchme")
+    was = git("rev-parse", "origin/main", cwd=atlas).stdout.strip()[:7]
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert FETCHED in result.stdout
+    assert CAVEAT not in result.stdout
+    assert f"    fetched origin: origin/main moved {was} -> " in result.stdout
+    assert ("    - behind origin/main by 1 commit(s), as of the last fetch"
+            in result.stdout)
+    assert "    fetched origin: nothing new on origin/main" in result.stdout, (
+        "the leg was fetched too, and had nothing new")
+    assert FETCH_CLAUSE in result.stdout
+    assert "nothing was changed." not in result.stdout
+
+    plain = run(STATUS, "Atlas", home=home)
+    assert plain.returncode == 1, "the fetch persisted: a plain run knows too"
+    assert "- behind origin/main by 1 commit(s)" in plain.stdout
+
+
+def test_fetch_changes_remote_tracking_refs_and_nothing_else(atlas, home,
+                                                             status_remotes):
+    """THE ONE WRITE, bounded: origin/main moves; no local branch, HEAD,
+    index entry, working-tree path or stash does — in the root or the leg."""
+    leg = atlas / "spec"
+    push_from_elsewhere(status_remotes["base"], status_remotes["Atlas"]["bare"],
+                        "moveorigin")
+    (atlas / "dirty.txt").write_text("x\n", encoding="utf-8")
+    (atlas / "README.md").write_text("changed\n", encoding="utf-8")
+    git("stash", "-q", cwd=atlas)
+    git("branch", "001-a-thing", cwd=atlas)
+    before = local_state(atlas) + local_state(leg)
+    remote_was = git("rev-parse", "origin/main", cwd=atlas).stdout
+
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert local_state(atlas) + local_state(leg) == before
+    assert git("rev-parse", "origin/main", cwd=atlas).stdout != remote_was, (
+        "the remote-tracking ref is what a fetch moves")
+    assert not (atlas / ".git" / "index.lock").exists()
+    # The leg's `.git` is a GITFILE; its real git dir is under the root's
+    # `.git/modules/`, which is where a lock would be.
+    leg_gitdir = Path(git("rev-parse", "--absolute-git-dir", cwd=leg).stdout.strip())
+    assert leg_gitdir.is_dir()
+    assert not (leg_gitdir / "index.lock").exists()
+
+
+def test_fetch_prunes_so_a_branch_deleted_elsewhere_reads_as_gone(
+        atlas, home, status_remotes):
+    """A merged pull request deletes the remote branch UNDER a local feature.
+    Deleted from another clone, this clone's `origin/001-a-thing` is stale
+    and a plain read sees nothing wrong; `--fetch` prunes, and the branch
+    reads as gone — which is the finding that says the worktree can go."""
+    git("checkout", "-q", "-b", "001-a-thing", cwd=atlas)
+    (atlas / "feature.md").write_text("wip\n", encoding="utf-8")
+    commit_all(atlas, "feature work")
+    git("push", "-q", "-u", "origin", "001-a-thing", cwd=atlas)
+    git("checkout", "-q", "main", cwd=atlas)
+
+    other = status_remotes["base"] / "elsewhere-delete"
+    git("clone", "-q", str(status_remotes["Atlas"]["bare"]), str(other),
+        cwd=status_remotes["base"])
+    git("push", "-q", "origin", "--delete", "001-a-thing", cwd=other)
+    rmtree(other)
+
+    plain = run(STATUS, "Atlas", home=home)
+    assert plain.returncode == 0, plain.stdout + plain.stderr
+    assert "gone" not in plain.stdout, "a stale remote-tracking ref hides it"
+
+    fetched = run(STATUS, "--fetch", "Atlas", home=home)
+    assert fetched.returncode == 1, fetched.stdout + fetched.stderr
+    assert ("    - branch 001-a-thing: its remote branch origin/001-a-thing is "
+            "gone (merged, or deleted)") in fetched.stdout
+
+
+def test_a_failed_fetch_is_a_finding_and_the_read_goes_on(atlas, home):
+    """No network, a dead URL, a password prompt nobody is there for: the
+    row says the fetch failed and is read as of the last fetch that worked;
+    the leg, whose origin is fine, is still fetched and still read."""
+    git("remote", "set-url", "origin", str(home / "nowhere" / "Atlas.git"),
+        cwd=atlas)
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "    - fetch failed: " in result.stdout
+    assert "as of the last fetch that worked" in result.stdout
+    assert "    fetched origin: nothing new on origin/main" in result.stdout, (
+        "the leg's fetch still ran")
+    assert ("at its pin, which is origin/main's tip as of the last fetch; "
+            "clean") in result.stdout
+    assert "1 finding(s) in 2 repositories" in result.stdout
+    assert FETCH_CLAUSE in result.stdout
+
+
+def test_fetch_reaches_the_leg(atlas, home, status_remotes):
+    push_from_elsewhere(status_remotes["base"],
+                        status_remotes["Atlas"]["leg_bare"], "legmove")
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "    fetched origin: origin/main moved " in result.stdout
+    assert " is 1 commit(s) behind origin/main, as of the last fetch" \
+        in result.stdout
+    assert "moved but not pinned" not in result.stdout
+
+
+def test_fetch_prune_never_touches_a_local_branch_or_tag_whatever_the_config_says(
+        atlas, home, status_remotes):
+    """THE REFSPEC IS PINNED, and this is why. A leg whose `remote.origin.fetch`
+    maps heads onto LOCAL branches (a `--mirror` clone, or a hand-edited
+    config) plus `--prune` would delete a local branch that origin no longer
+    has; `fetch.pruneTags` set anywhere would delete a local tag the same way.
+    The review of this layer did exactly that through the configured form.
+    With the refspec named on the command line, neither can happen — and
+    `origin/main` still moves, so the fetch itself still did its job."""
+    leg = atlas / "spec"
+    git("config", "remote.origin.fetch", "+refs/heads/*:refs/heads/*", cwd=leg)
+    git("config", "fetch.pruneTags", "true", cwd=leg)
+    git("branch", "doomed", cwd=leg)
+    git("tag", "keepme", cwd=leg)
+    git("config", "fetch.pruneTags", "true", cwd=atlas)
+    git("tag", "keepme-too", cwd=atlas)
+    push_from_elsewhere(status_remotes["base"],
+                        status_remotes["Atlas"]["leg_bare"], "legmoved")
+
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    branches = git("for-each-ref", "--format=%(refname:short)", "refs/heads",
+                   cwd=leg).stdout.split()
+    assert "doomed" in branches, "--prune deleted a LOCAL branch"
+    assert "main" in branches
+    assert git("tag", cwd=leg).stdout.split() == ["keepme"], "a local tag went"
+    assert git("tag", cwd=atlas).stdout.split() == ["keepme-too"]
+    assert "    fetched origin: origin/main moved " in result.stdout, (
+        "the pinned refspec must still move the remote-tracking ref")
+    assert " is 1 commit(s) behind origin/main" in result.stdout
+
+
+def test_fetch_says_when_the_tracking_branch_is_gone_from_origin(
+        atlas, home, status_remotes):
+    """A default-branch rename on origin: `--prune` removes `origin/main`,
+    which is the right thing to do and the wrong thing to describe as
+    "nothing new". The fetch line says GONE and from what, and the finding
+    below it says origin has no such branch — not "never fetched", which
+    the line above would contradict."""
+    bare = status_remotes["Atlas"]["bare"]
+    git("branch", "-m", "main", "main2", cwd=bare)
+    git("symbolic-ref", "HEAD", "refs/heads/main2", cwd=bare)
+
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "    fetched origin: origin/main is GONE (was " in result.stdout
+    assert "): deleted or renamed on origin" in result.stdout
+    assert ("    - no origin/main after the fetch: origin has no branch main "
+            "(deleted or renamed there)") in result.stdout
+    assert "never fetched" not in result.stdout
+    assert "nothing new on origin/main" in result.stdout, "the leg, untouched"
+
+
+def test_fetch_on_a_leg_whose_gitdir_is_gone_says_so(atlas, home):
+    """A gitfile pointing at a `.git/modules/<leg>` that was deleted: the
+    leg is still "mounted" by the `.git` test, every git call in it fails,
+    and the diagnosis must be the broken repository — not "add a remote"."""
+    rmtree(atlas / ".git" / "modules" / "spec")
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - fetch: not a readable git repository (a gitfile whose gitdir "
+            "is gone?), so nothing could be fetched") in result.stdout
+    assert "no remote named origin, so nothing could be fetched" \
+        not in result.stdout
+    plain = run(STATUS, "Atlas", home=home)
+    assert plain.returncode == 1, "and without --fetch it still does not crash"
+
+
+def test_fetch_with_no_origin_is_a_finding(atlas, home):
+    leg = atlas / "spec"
+    git("remote", "remove", "origin", cwd=leg)
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - fetch: no remote named origin, so nothing could be fetched"
+            in result.stdout)
+
+
+def test_fetch_with_all_fetches_every_estate(home, status_remotes):
+    clone_root(home, status_remotes["Atlas"], "Borealis")
+    clone_root(home, status_remotes["Atlas"], "Atlas")
+    result = run(STATUS, "--all", "--fetch", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.count("    fetched origin: nothing new on origin/main") == 4, (
+        "two roots and two legs, each fetched")
+    assert result.stdout.count(FETCHED) == 2
+    assert f"status: 2 estate(s) in sync, 0 with findings; {FETCH_CLAUSE}" \
+        in result.stdout
+
+
+# --- the one promise ----------------------------------------------------------
 
 def test_status_changes_nothing_and_takes_no_lock(atlas, home, status_remotes):
     """THE ONE PROMISE, against a repository in every state this file knows:

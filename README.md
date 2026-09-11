@@ -27,10 +27,16 @@ theirs to touch.
 each member's working clone and every mounted leg, what is ahead of or behind
 its origin, dirty or stashed, on a feature branch that was never pushed or
 whose remote branch is gone, or checked out away from its pin. It changes
-nothing and fetches nothing, so every answer is as of the last fetch, and it
-says so. It is the LOCAL layer (Brett Heap's RULING of 2026-09-10, "start with
-the local status layer"); `--fetch`, the fork against its upstream, shape-pin
-drift and the parked record against disk are the layers still to come.
+nothing and fetches nothing unless you say `--fetch`, so every answer is as of
+the last fetch — the one it just made, or the one before — and it says which.
+`status --fetch` runs `git fetch --prune origin` in every repository first:
+the one write it ever makes — remote-tracking refs, the objects behind them
+and `FETCH_HEAD`, never a local branch, tag, HEAD, index or working tree,
+because the refspec is pinned on the command line rather than trusted from
+config (Brett Heap's RULING of 2026-09-11, "next layer: --fetch", on top of
+his RULING of 2026-09-10, "start with the local status layer"). Those two are
+the local layer and `--fetch`; the fork against its upstream, shape-pin drift
+and the parked record against disk are the layers still to come.
 
 `openRepoTools` itself installs and does nothing else. It has no verb: the
 standard's front door is `openRepoShape`, which scaffolds projects and stays
@@ -88,6 +94,7 @@ resume InkRouter --workspace <owner>/<your-wip-repo>   # the FIRST time here
 resume InkRouter -- --feature 001-a-thing              # flags for the extension
 status                          # the estate around you; outside one, every estate
 status InkRouter                # one estate, read-only, as of the last fetch
+status --fetch InkRouter        # ask origin first: the one write status makes
 ```
 
 `<Name>` is a folder under your projects directory: `~/projects/<Name>`, then
@@ -121,8 +128,12 @@ means every repository read is in sync and clean as of the last fetch; exit 1
 means findings were printed — read them, one line per repository, as you
 would `park`'s report — and exit 2 is a refusal. Its bare form outside every
 estate reads them all WITHOUT asking, because nothing here writes; `status
---all` (or `-a`) says the same from anywhere. `status --fetch` refuses by
-name: fetching is the next layer, not a thing this one does quietly.
+--all` (or `-a`) says the same from anywhere. `status --fetch` asks origin in
+every repository first and says what moved; a fetch that fails is a finding
+on that row, and the row is then read as of the last fetch that worked. An
+https credential prompt fails and is reported; an ssh host-key or passphrase
+prompt is ssh's own and still blocks, so run `--fetch` where ssh is already
+non-interactive.
 
 Windows: all four files are bash, and there is no PowerShell twin. On Windows
 the way in is WSL2, exactly as it is for openRepoShape's `setup.sh`.
