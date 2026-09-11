@@ -1887,6 +1887,36 @@ def test_an_unreadable_pushed_with_no_worktree_here_never_names_resume(
     assert "`resume Atlas`" not in result.stdout
 
 
+def test_a_comment_after_pushed_is_read_as_the_loader_reads_it(atlas, home):
+    """The extension's `workspace_load_project` strips a `#` comment from
+    EVERY line before it reads the value, so `resume.sh` sees `pushed: true #
+    note` as `true` and RECREATES the leg. Read whole here it was "neither
+    true nor false", and the finding named a refusal `resume` would not make
+    — the independent review of this follow-up, 2026-09-11. `pushed:` is the
+    field this layer JUDGES rather than matches or prints, so it is read the
+    way the judge reads it: with no worktree here, `true # note` names
+    `resume <Name>` and says nothing about the value."""
+    checkout = workspace_config(home)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA,
+           pushed="true # hand-written note", parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "`resume Atlas` brings it back" in result.stdout
+    assert "neither true nor false" not in result.stdout, (
+        "a value `resume.sh` reads as `true`, called unreadable")
+
+    # And `false # note` is the `--no-push` record it says it is — which
+    # against a2c8521 read as `true`, the only other thing `= false` misses.
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA,
+           pushed="false # hand-written note", parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("parked with --no-push on Falcon and no worktree on that branch "
+            "here") in result.stdout
+    assert "neither true nor false" not in result.stdout
+    assert "`resume Atlas`" not in result.stdout
+
+
 def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     """`status --help` is the other place this rule is stated, and a help
     text that sends somebody to `resume` for a record `resume` refuses is the
@@ -1903,12 +1933,17 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     assert ("a recorded feature with no worktree here (`resume <Name>` brings "
             "it back — unless the record says `--no-push`, or its `pushed:` "
             "is neither true nor false, which `resume` refuses the same way: "
-            "then only the workstation that has the WIP commit can park it "
-            "again; and where `git worktree list` still holds a registration "
-            "that is no longer a worktree, that is cleared with `worktree "
-            "prune`, after a `worktree unlock` if it is locked and with any "
-            "leftover directory moved aside, before `resume` can recreate "
+            "then only the workstation that parked it can park it again; and "
+            "where `git worktree list` still holds a registration that is no "
+            "longer a worktree, that is cleared with `worktree prune`, after "
+            "a `worktree unlock` if it is locked and with any leftover "
+            "directory moved aside, before `resume` can recreate "
             "anything)") in helptext
+    # And the LIST of findings beside it names the new one, as the README's
+    # does: the two texts say the same things or one of them is wrong.
+    assert ("a leg parked with `--no-push` or whose `pushed:` is neither true "
+            "nor false, and a worktree the record does not know (never "
+            "parked)") in helptext
 
 
 def test_a_missing_parked_commit_is_read_against_what_the_record_claims(

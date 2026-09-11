@@ -146,12 +146,13 @@ workspace repository; `workspaces/<org>/<id>.yaml` in it) is read against the
 worktrees on disk: a recorded feature with no worktree here (`resume <Name>`
 brings it back — unless the record says `--no-push`, or its `pushed:` is
 neither true nor false, which `resume` refuses the same way: then only the
-workstation that has the WIP commit can park it again; and where `git
+workstation that parked it can park it again; and where `git
 worktree list` still holds a registration that is no longer a worktree, that
 is cleared with `worktree prune`, after a `worktree unlock` if it is locked
 and with any leftover directory moved aside, before `resume` can recreate
 anything), a worktree whose tip is not the parked commit, a leg parked with
-`--no-push`, and a worktree the record does not know (never parked).
+`--no-push` or whose `pushed:` is neither true nor false, and a worktree the
+record does not know (never parked).
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
 (<Name>/<Name>/family.yaml) or a standalone project root (<Name>/project.yaml).
@@ -1552,9 +1553,10 @@ read_shape() {
 #    AND A `pushed:` THAT IS NEITHER `true` NOR `false` — a bare `pushed:`,
 #    `pushed: ""`, `pushed: yes` — IS A THIRD READING OF THAT FIELD, not a
 #    fourth spelling of one of the two (the second independent review of #18,
-#    2026-09-11, note (d)). `park.sh` writes one of those two words and
-#    nothing else, so a value that is neither came from a hand-edit or a bad
-#    merge of the record; every arm below used to fall through the `= false`
+#    2026-09-11, note (d)). `park.sh` writes one of those two words for
+#    every leg it parks and carries an existing entry forward untouched for
+#    one it refuses, so a value that is neither came from a hand-edit or a
+#    bad merge of the record; every arm below used to fall through the `= false`
 #    tests and say "the record says it was pushed", which is a claim the
 #    record does not make. It is named for what it is instead — a `pushed:`
 #    that cannot be read — and what `resume` will do with it is said with it:
@@ -1787,7 +1789,16 @@ record_rows() {
         '            parked_commit:'*) commit="$(trim_unquote "${line#*:}")" ;;
         '            wip_depth:'*) depth="$(trim_unquote "${line#*:}")" ;;
         '            pushed:'*)
-            pushed="$(trim_unquote "${line#*:}")"
+            # `workspace_load_project` strips a `#` comment from EVERY line
+            # (`content="${raw%%#*}"`) before it reads a value, so this field
+            # — the one this layer JUDGES rather than matches or prints —
+            # loses one here too: read whole, `pushed: true # note` was
+            # "neither true nor false" here and `true` there, and the finding
+            # named a refusal `resume` will not make (the independent review
+            # of this follow-up, 2026-09-11).
+            value="${line#*:}"
+            case "$value" in *'#'*) value="${value%%#*}" ;; esac
+            pushed="$(trim_unquote "$value")"
             if [ "$matched" -eq 1 ] && [ -n "$branch" ] && [ -n "$role" ]; then
                 printf 'leg\037%s\037%s\037%s\037%s\037%s\n' "$branch" "$role" "$commit" "$pushed" "$depth"
             fi
@@ -1990,8 +2001,9 @@ check_parked_leg() {
     #
     # THE RECORD'S `pushed:` HAS THREE READINGS, NOT TWO (the second
     # independent review of #18, 2026-09-11, note (d)). `park.sh` writes
-    # `true` or `false` and nothing else — `workspace_write_manifest` drops a
-    # key whose value is empty, so it never even writes `pushed:` bare — and
+    # `true` or `false` for every leg it parks and carries an existing entry
+    # forward untouched for one it refuses — `workspace_write_manifest` drops
+    # a key whose value is empty, so it never writes `pushed:` bare — and
     # anything else is a hand-edit or a bad merge of the record. Read as
     # `false` it would be a `--no-push` claim nobody made; read as `true`,
     # which is what every arm below did with it, `pushed: maybe` and a bare
