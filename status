@@ -1831,6 +1831,24 @@ locate_record() {
 # readers agree about that one already: the loader's `[ "$key" = "role" ] ||
 # continue` starts no leg for it, and with no `- role:` line there is nothing
 # to open one here either, so neither reader has a leg to read.
+# EVERY VALUE THIS PARSER READS LOSES A `#` COMMENT FIRST, because
+# `workspace_load_project` takes `#` and everything after it off EVERY line
+# (`content="${raw%%#*}"`) before it splits key from value: `- role: repo # the
+# leg` is `repo` there, and `- role: # note` is a leg with no role there. Read
+# whole here, the first was a role this root does not mount and the second was
+# not empty at all, so both went to `leg_repo_for_role` and drew "the record
+# names a leg this root does not mount here" — the mounting arm's true words
+# about a record `resume` refuses for a different reason entirely (Copilot on
+# #21, after #19 had closed the same gap for `pushed:` alone). The parity is
+# per LINE, as the loader's is: a value that itself contains a `#` is cut
+# there too, exactly as `resume.sh` will cut it — this layer reads the record
+# the way `resume.sh` will judge it, and not the way YAML would.
+record_scalar() {
+    local value="$1"
+    case "$value" in *'#'*) value="${value%%#*}" ;; esac
+    trim_unquote "$value"
+}
+
 record_rows() {
     local file="$1" sel="$2" line matched=0 value open=0
     local parked_at="" parked_on="" lane="" active="" branch="" role="" commit="" pushed="" depth="" seen=""
@@ -1870,46 +1888,41 @@ record_rows() {
         '  - id:'*)
             matched=0
             parked_at=""; parked_on=""; lane=""; active=""; branch=""; role=""; open=0
-            value="$(trim_unquote "${line#*:}")"
+            value="$(record_scalar "${line#*:}")"
             case "$sel" in
             id=*) [ "$(lower "$value")" != "$(lower "${sel#id=}")" ] || matched=1 ;;
             esac
             ;;
         '    root:'*)
-            value="$(trim_unquote "${line#*:}")"
+            value="$(record_scalar "${line#*:}")"
             case "$sel" in
             root=*) [ "$(lower "$value")" != "$(lower "${sel#root=}")" ] || matched=1 ;;
             esac
             ;;
-        '    parked_at:'*) parked_at="$(trim_unquote "${line#*:}")" ;;
-        '    parked_on:'*) parked_on="$(trim_unquote "${line#*:}")" ;;
-        '    parked_by_lane:'*) lane="$(trim_unquote "${line#*:}")" ;;
-        '    active_feature:'*) active="$(trim_unquote "${line#*:}")" ;;
+        '    parked_at:'*) parked_at="$(record_scalar "${line#*:}")" ;;
+        '    parked_on:'*) parked_on="$(record_scalar "${line#*:}")" ;;
+        '    parked_by_lane:'*) lane="$(record_scalar "${line#*:}")" ;;
+        '    active_feature:'*) active="$(record_scalar "${line#*:}")" ;;
         '    features:'*)
             if [ "$matched" -eq 1 ]; then
                 printf 'project\037%s\037%s\037%s\037%s\n' "$parked_at" "$parked_on" "$lane" "$active"
             fi
             ;;
         '      - branch:'*)
-            branch="$(trim_unquote "${line#*:}")"
+            branch="$(record_scalar "${line#*:}")"
             if [ "$matched" -eq 1 ] && [ -n "$branch" ]; then
                 printf 'branch\037%s\n' "$branch"
             fi
             ;;
-        '          - role:'*) role="$(trim_unquote "${line#*:}")"; open=1; commit=""; pushed=""; depth=""; seen="" ;;
-        '            parked_commit:'*) commit="$(trim_unquote "${line#*:}")" ;;
-        '            wip_depth:'*) depth="$(trim_unquote "${line#*:}")" ;;
+        '          - role:'*) role="$(record_scalar "${line#*:}")"; open=1; commit=""; pushed=""; depth=""; seen="" ;;
+        '            parked_commit:'*) commit="$(record_scalar "${line#*:}")" ;;
+        '            wip_depth:'*) depth="$(record_scalar "${line#*:}")" ;;
         '            pushed:'*)
-            # `workspace_load_project` strips a `#` comment from EVERY line
-            # (`content="${raw%%#*}"`) before it reads a value, so this field
-            # — the one this layer JUDGES rather than matches or prints —
-            # loses one here too: read whole, `pushed: true # note` was
-            # "neither true nor false" here and `true` there, and the finding
-            # named a refusal `resume` will not make (the independent review
-            # of this follow-up, 2026-09-11).
-            value="${line#*:}"
-            case "$value" in *'#'*) value="${value%%#*}" ;; esac
-            pushed="$(trim_unquote "$value")"
+            # The first value to lose its `#` comment here, in #19 — read
+            # whole, `pushed: true # note` was "neither true nor false" here
+            # and `true` to `resume.sh`; `record_scalar` above now does it for
+            # every value this parser reads, for the same reason.
+            pushed="$(record_scalar "${line#*:}")"
             seen=pushed
             ;;
         esac

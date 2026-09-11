@@ -2316,6 +2316,53 @@ def test_a_comment_after_pushed_is_read_as_the_loader_reads_it(atlas, home):
     assert "`resume Atlas`" not in result.stdout
 
 
+def test_a_comment_after_any_records_value_is_read_as_the_loader_reads_it(
+        atlas, home):
+    """Copilot on #21: `role:` was read with `trim_unquote` alone, so
+    `- role: # note` was NOT empty here — it was `# note` — while the
+    extension's loader takes `#` and everything after it off every line before
+    it reads a value, and so treats that leg as roleless and refuses the whole
+    feature. Here the leg went to `leg_repo_for_role` and drew "the record
+    names a leg this root does not mount here" instead. #19 closed this gap
+    for `pushed:` alone; `record_scalar` now closes it for every value this
+    parser reads — `role:`, `parked_commit:` and the rest — because a reader
+    that judges a value must read it the way the judge will."""
+    checkout = workspace_config(home)
+    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    assert text.count("          - role: repo\n") == 1
+    assert text.count(f"            parked_commit: {FAKE_SHA}\n") == 1
+    path.write_text(text
+                    .replace("          - role: repo\n",
+                             "          - role: repo # the leg that holds the code\n")
+                    .replace(f"            parked_commit: {FAKE_SHA}\n",
+                             f"            parked_commit: {FAKE_SHA} # hand-written\n"),
+                    encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    # The role read as `repo` (not "does not mount here") and the commit as
+    # the sha alone: the missing-commit line names it by its first seven.
+    assert "does not mount here" not in result.stdout
+    assert f"its parked commit {FAKE_SHA[:7]} is not here" in result.stdout
+
+    # A role that is EMPTY under a comment is roleless to the loader, and so
+    # the whole-feature finding, never the mounting arm's.
+    for spelling in ("          - role: # note\n", '          - role: "" # note\n'):
+        text = path.read_text(encoding="utf-8")
+        text = text.replace("          - role: repo # the leg that holds the code\n",
+                            spelling)
+        text = text.replace("          - role: # note\n", spelling)
+        text = text.replace('          - role: "" # note\n', spelling)
+        path.write_text(text, encoding="utf-8")
+        result = run(STATUS, "Atlas", home=home)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert ("    - parked feature 001-a-thing: a leg of it in the record "
+                "has no role;") in result.stdout, spelling
+        assert "does not mount here" not in result.stdout, spelling
+
+
 def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     """`status --help` is the other place this rule is stated, and a help
     text that sends somebody to `resume` for a record `resume` refuses is the
