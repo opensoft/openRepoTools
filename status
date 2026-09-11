@@ -563,15 +563,17 @@ has_ref() { g "$1" rev-parse --verify -q "$2" >/dev/null 2>&1; }
 # mounted is itself one of its findings. `git config --get-regexp` prints
 # `key value`, so the value is everything after the first space.
 declared_legs() {
-    local root="$1" line path
+    local root="$1" record path
     [ -f "$root/.gitmodules" ] || return 0
-    while IFS= read -r line; do
-        [ -n "$line" ] || continue
-        # A key with NO value prints bare, with no space, and `${line#* }`
-        # would then hand back the key itself as a path — a leg that does
-        # not exist, reported as declared and not mounted.
-        case "$line" in
-        *' '*) path="${line#* }" ;;
+    # `-z`, so the key and the value cannot be confused: a submodule NAME may
+    # carry a space (`[submodule "sp ace"]`), and splitting the plain output
+    # at its first space would hand back `ace.path spec` and miss the leg;
+    # with `-z` each entry is `key<LF>value<NUL>`, and a key with NO value has
+    # no LF at all and is not a path — not a phantom leg declared and never
+    # mounted. `park`'s `submodule_paths` reads the same way.
+    while IFS= read -r -d '' record; do
+        case "$record" in
+        *$'\n'*) path="${record#*$'\n'}" ;;
         *) continue ;;
         esac
         [ -n "$path" ] || continue
@@ -580,7 +582,7 @@ declared_legs() {
         else
             printf 'unmounted\t%s\n' "$path"
         fi
-    done < <(g "$root" config --file .gitmodules \
+    done < <(g "$root" config --file .gitmodules -z \
         --get-regexp '^submodule\..*\.path$' 2>/dev/null || true)
 }
 

@@ -1412,6 +1412,40 @@ def test_a_flag_without_its_value_is_refused_in_the_commands_own_words(
     assert not (home / ".agents").exists(), "nothing may be written before a refusal"
 
 
+def test_a_leg_whose_submodule_name_carries_a_space_is_still_reported(home,
+                                                                       tmp_path):
+    """`.gitmodules` is read with `git config -z`: a submodule NAME with a
+    space (`[submodule "sp ace"]`) prints as `submodule.sp ace.path spec` in
+    the plain form, and splitting that at its first space handed back
+    `ace.path spec` — a path that does not exist — so the leg was silently
+    left out of the not-carried report. A valueless key beside it prints
+    bare and is not a path either."""
+    projects = home / "projects"
+    root = probe_project(projects, "Atlas")
+    git("init", "-q", "-b", "main", ".", cwd=root)
+    leg_seed = tmp_path / "leg-seed"
+    leg_seed.mkdir()
+    (leg_seed / "spec.md").write_text("# spec\n", encoding="utf-8")
+    git("init", "-q", "-b", "main", ".", cwd=leg_seed)
+    commit_all(leg_seed, "the leg")
+    leg_bare = tmp_path / "leg.git"
+    git("clone", "-q", "--bare", str(leg_seed), str(leg_bare), cwd=tmp_path)
+    git("-c", "protocol.file.allow=always", "submodule", "add", "-q",
+        "--name", "sp ace", str(leg_bare), "spec", cwd=root)
+    with (root / ".gitmodules").open("a", encoding="utf-8") as handle:
+        handle.write('[submodule "empty"]\n\tpath\n')
+    commit_all(root, "the leg, pinned, under a spaced name")
+    (root / "spec" / "more.md").write_text("unpushed\n", encoding="utf-8")
+    commit_all(root / "spec", "an unpushed leg commit")
+
+    result = run(PARK, "Atlas", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"unpushed main   leg     {root / 'spec'}" in result.stdout, (
+        "the leg under the spaced submodule name was left out of the report")
+    assert "ace.path" not in result.stdout
+    assert "submodule.empty.path" not in result.stdout
+
+
 # --- F5: --repo takes any spelling -----------------------------------------
 
 REPO_FLAG_SPELLINGS = [

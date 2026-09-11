@@ -421,6 +421,24 @@ def test_a_leg_declared_and_not_mounted_is_a_finding(home, status_remotes):
             "places it)") in result.stdout
 
 
+def test_a_leg_whose_submodule_name_carries_a_space_is_one_leg_and_a_valueless_key_none(
+        atlas, home):
+    """`.gitmodules` read with `git config -z`: the leg under
+    `[submodule "sp ace"]` is still the one leg at `spec`, and a key with no
+    value beside it is not a phantom leg declared and never mounted."""
+    git("config", "--file", ".gitmodules", "--rename-section",
+        "submodule.spec", "submodule.sp ace", cwd=atlas)
+    with (atlas / ".gitmodules").open("a", encoding="utf-8") as handle:
+        handle.write('[submodule "empty"]\n\tpath\n')
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr  # .gitmodules is dirty
+    assert result.stdout.count("  leg    main   ") == 1, result.stdout
+    assert f"  leg    main   {atlas / 'spec'}" in result.stdout
+    assert "ace.path" not in result.stdout
+    assert "submodule.empty.path" not in result.stdout
+    assert "declared in .gitmodules and not mounted" not in result.stdout
+
+
 # --- a family ---------------------------------------------------------------
 
 @NEEDS_UPSTREAM

@@ -484,16 +484,23 @@ legs_of() {
 # commit, so a leg mounted somewhere unusual, or one whose manifest row was
 # hand-edited away, still has to be asked. `git config --get-regexp` prints
 # `key value`, so the value is everything after the first space.
+# `-z`, so the key and the value cannot be confused: a submodule NAME may
+# carry a space (`[submodule "sp ace"]`), and splitting the plain output at
+# its first space would hand back `ace.path spec` and miss the leg; with `-z`
+# each entry is `key<LF>value<NUL>`, and a key with no value has no LF at all
+# and is not a path.
 submodule_paths() {
-    local root="$1" line path
+    local root="$1" record path
     [ -f "$root/.gitmodules" ] || return 0
-    while IFS= read -r line; do
-        [ -n "$line" ] || continue
-        path="${line#* }"
+    while IFS= read -r -d '' record; do
+        case "$record" in
+        *$'\n'*) path="${record#*$'\n'}" ;;
+        *) continue ;;
+        esac
         [ -n "$path" ] || continue
         [ -e "$root/$path/.git" ] || continue
         printf '%s\n' "$path"
-    done < <(git -C "$root" config --file .gitmodules \
+    done < <(git -C "$root" config --file .gitmodules -z \
         --get-regexp '^submodule\..*\.path$' 2>/dev/null || true)
 }
 
