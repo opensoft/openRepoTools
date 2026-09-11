@@ -1657,6 +1657,53 @@ def test_a_registration_git_calls_prunable_is_stale_with_its_directory_there(
             ) in result.stdout
 
 
+def test_a_locked_registration_whose_git_file_is_gone_is_stale_too(atlas, home):
+    """Git computes no `prunable` for a LOCKED block, so a locked worktree
+    whose `.git` file is deleted says only `locked` while its directory sits
+    there: nothing in the porcelain calls it stale, and a directory test
+    alone called it live and the recorded feature clean. What a worktree has
+    is its own `.git`, and without it this is a leftover directory plus a
+    registration `resume` still trips on — cleared by unlock, then prune,
+    then moving the directory aside."""
+    checkout = workspace_config(home)
+    where = home / "Atlas-wt" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    git("worktree", "lock", str(where), cwd=atlas)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    (where / ".git").unlink()       # locked, directory kept, worktree gone
+    porcelain = git("worktree", "list", "--porcelain", cwd=atlas).stdout
+    assert "\nlocked" in porcelain, "not locked; the test is moot"
+    assert "prunable" not in porcelain, "git judges a locked block now"
+    assert where.is_dir()
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
+            "branch here, but a stale worktree registration for it is still "
+            f"recorded at {where} and LOCKED, which `worktree prune` skips, "
+            "whose directory is still on disk and is no longer a worktree — "
+            f"clear it with `git -C {atlas} worktree unlock {where}`, then "
+            f"`git -C {atlas} worktree prune` and a move of that directory "
+            'aside (`git worktree add` refuses a path that "already exists"), '
+            "then `resume Atlas` brings it back") in result.stdout
+
+
+def test_a_locked_registration_that_is_not_a_worktree_is_not_unparked_work(
+        atlas, home):
+    """The sweep's twin of the same case: a directory with no `.git` in it is
+    not a worktree, so it was never parked work either — and `park` would
+    carry nothing if somebody ran it."""
+    checkout = workspace_config(home)
+    tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    gone = home / "Atlas-wt" / "002-unparked"
+    feature_worktree(atlas, "002-unparked", gone)
+    git("worktree", "lock", str(gone), cwd=atlas)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    (gone / ".git").unlink()        # locked, directory kept, worktree gone
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "002-unparked" not in result.stdout
+
+
 def test_the_locked_one_of_two_stale_registrations_is_the_one_named(atlas, home):
     """`worktree add --force` is how one branch ends up with two
     registrations. `prune` takes every UNLOCKED one with it, so the locked

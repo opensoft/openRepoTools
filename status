@@ -1802,22 +1802,36 @@ leg_repo_for_role() {
     return 1
 }
 
+# A REGISTERED PATH IS A WORKTREE ONLY WHILE ITS OWN `.git` IS THERE. A linked
+# worktree's is a FILE holding `gitdir: <repo>/.git/worktrees/<name>`; the main
+# worktree's is a DIRECTORY; a path with neither is a leftover directory git
+# will not resume into. Git says as much itself for an unlocked registration
+# — `prunable gitdir file points to non-existent location` — but it computes
+# no `prunable` for a LOCKED one (verified against git 2.43: lock a worktree,
+# delete its `.git` file, and the block says only `locked`), and that pair is
+# what this test catches: the directory is there, the worktree is not, and
+# `resume` is blocked by a registration nothing had reported (Copilot on #18).
+worktree_is_usable() {
+    [ -d "$1" ] && [ -e "$1/.git" ]
+}
+
 # The path of the worktree checked out on `<branch>` in `<repo>`, main or
 # linked. FOUR ANSWERS, because the porcelain has four: 0 and the path when a
 # worktree is really there; 2 AND THE PATH when the only block for that
 # branch is a REGISTRATION WITHOUT A WORKTREE; 3 and the path when such a
 # registration is also LOCKED; 1 and nothing when there is no block at all.
 #
-# GIT'S OWN VERDICT FIRST, THEN THE DIRECTORY. `worktree list --porcelain`
-# keeps the block of a linked worktree that is no longer one until somebody
-# prunes it, and says so with `prunable <reason>` — which it prints whether or
-# not the DIRECTORY is still there: delete only the worktree's `.git` file and
-# the directory stays, the block says "prunable gitdir file points to
-# non-existent location", and a `-d` test alone would call that live and the
-# recorded feature CLEAN (Copilot on #18). So a `prunable` block is stale
-# whatever is on disk. The `-d` test still decides the blocks git has NOT
-# judged: it does not compute `prunable` for a `locked` one, which is exactly
-# the case whose directory can be gone with nothing said about it.
+# GIT'S OWN VERDICT FIRST, THEN THE WORKTREE ITSELF. `worktree list
+# --porcelain` keeps the block of a linked worktree that is no longer one
+# until somebody prunes it, and says so with `prunable <reason>` — which it
+# prints whether or not the DIRECTORY is still there: delete only the
+# worktree's `.git` file and the directory stays, the block says "prunable
+# gitdir file points to non-existent location", and a `-d` test alone would
+# call that live and the recorded feature CLEAN (Copilot on #18). So a
+# `prunable` block is stale whatever is on disk, and what decides the rest is
+# `worktree_is_usable` rather than the directory alone — because git computes
+# no `prunable` for a `locked` block, and a locked one can have a directory
+# with no `.git` in it, or no directory at all, with nothing said either way.
 #
 # AND A STALE BLOCK IS NOT "NOTHING HERE" EITHER, which is why it comes back
 # as 2 or 3 rather than as 1: it is the thing that STOPS the exit this layer
@@ -1854,7 +1868,7 @@ worktree_on_branch() {
         prunable | "prunable "*) prunable=1 ;;
         "")
             if [ "$hit" -eq 1 ]; then
-                if [ "$prunable" -eq 0 ] && [ -d "$path" ]; then
+                if [ "$prunable" -eq 0 ] && worktree_is_usable "$path"; then
                     [ -n "$live" ] || live="$path"
                 elif [ "$locked" -eq 1 ]; then
                     [ -n "$stale_locked" ] || stale_locked="$path"
@@ -2023,7 +2037,10 @@ check_parked_leg() {
 # GIT'S `prunable` IS READ HERE TOO, and for the same reason: a registration
 # git itself calls stale is not a worktree `park` could carry, whatever is
 # left in its directory — that leftover is the person's to move aside, and
-# `park` would no more see it than `resume` could write to it.
+# `park` would no more see it than `resume` could write to it. And where git
+# says nothing because the block is `locked`, `worktree_is_usable` is what
+# says it: a directory with no `.git` in it is not a worktree either, and
+# accusing it of never having been parked is the same finding about nothing.
 unrecorded_worktrees() {
     local root="$1" recorded="$2" repo where line path="" branch="" first=1 state leg prunable=0
     local -a repos=("$root")
@@ -2044,7 +2061,8 @@ unrecorded_worktrees() {
             "")
                 if [ "$first" -eq 1 ]; then
                     first=0
-                elif [ -n "$branch" ] && [ -d "$path" ] && [ "$prunable" -eq 0 ]; then
+                elif [ -n "$branch" ] && [ "$prunable" -eq 0 ] &&
+                    worktree_is_usable "$path"; then
                     case "$recorded" in
                     *"$NL$branch$NL"*) ;;
                     *) finding "worktree on $branch ($where): not in the parked record — never parked; \`park\` carries the features under this root's worktree root, anything else is yours to keep or remove" ;;
