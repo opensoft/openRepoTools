@@ -106,6 +106,19 @@ def test_the_estate_commands_carry_the_same_estate_resolver_byte_for_byte():
     assert len(reference.splitlines()) > 100, "the marker moved, not the block"
 
 
+def test_status_carries_resumes_expand_home_byte_for_byte():
+    """`expand_home` reads the `~` a person writes in `~/.agents/workspace.yaml`
+    the same way in both commands that read that file. It sits OUTSIDE the
+    shared resolver block — `park` has no use for it — so the resolver test
+    does not hold the two copies together; this does."""
+    def function(path: Path) -> str:
+        text = path.read_text(encoding="utf-8")
+        start = text.index("expand_home() {")
+        return text[start:text.index("\n}\n", start)]
+    assert function(REPO / "status") == function(REPO / "resume"), (
+        "status and resume have drifted apart in expand_home")
+
+
 def code_lines(path: Path) -> str:
     """The file with its whole-line comments dropped.
 
@@ -297,6 +310,8 @@ def test_the_documents_say_what_status_is_and_is_not():
             f"{name} does not say the shape pin is read")
         assert "update-shape.py" in text, (
             f"{name} does not name the exit for a shape pin that is behind")
+        assert "workspace.yaml" in text, (
+            f"{name} does not say the parked record is read against disk")
         assert "gh api" in text, (
             f"{name} does not say the fork check may ask gh, and only under "
             f"--fetch")
@@ -431,9 +446,17 @@ def test_agents_md_is_short_enough_to_be_read():
     must never do about a drift finding — re-digest the copy or edit the pin
     — and what it must not read into "currency not read": that the pin is
     current. Both are the readings reached for unaided.
+
+    133 -> 140 on 2026-09-11, for the parked-record layer (Brett Heap's RULING
+    of that day, "next layer: parked record against disk"). Eight lines in
+    rule 4 say the three things an assistant reaches for and must not: a
+    `git worktree add` for a feature the record has and disk does not
+    (`resume <Name>` is the exit), a reset for a worktree behind a newer
+    record (rule 1 stands), and a hand-edit of the record for a worktree it
+    does not know (`park` is the exit).
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 133, f"AGENTS.md is {len(lines)} lines; the cap is 133"
+    assert len(lines) <= 140, f"AGENTS.md is {len(lines)} lines; the cap is 140"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -514,9 +537,15 @@ def test_readme_is_short_enough_to_be_read():
     paragraph say what the pin is, the three things read against it, where
     currency comes from and the exit named; the list of layers still to come
     loses another.
+
+    232 -> 241 on 2026-09-11, for the parked-record layer (Brett Heap's RULING
+    of that day, "next layer: parked record against disk"). Seven lines in
+    the `status` paragraph say what the record is, where it is found, the
+    four ways record and disk drift apart, and that no config or no record
+    is a note; the list of layers still to come is gone, because none is.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 232, f"README.md is {len(lines)} lines; the cap is 232"
+    assert len(lines) <= 241, f"README.md is {len(lines)} lines; the cap is 241"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
