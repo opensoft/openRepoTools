@@ -333,6 +333,25 @@ def test_a_dirty_feature_worktree_is_a_finding(atlas, home):
         "is not `0 commit(s) never pushed`")
 
 
+def test_a_leftover_directory_under_the_root_is_not_read_as_a_worktree(
+        atlas, home):
+    """The extension puts feature worktrees UNDER the root, so a registered
+    path whose `.git` is gone is a plain directory inside the root's own
+    working tree. `git status` there finds no repository, walks UP, and hands
+    back the ROOT's dirty paths — which this layer would print on that
+    worktree's row, under a branch that has nothing to do with them. A
+    worktree is a directory with its own `.git`, the rule the record layer
+    and its sweep apply, and this reader applies it too."""
+    where = atlas / "worktrees" / "001-a-thing"
+    feature_worktree(atlas, "001-a-thing", where)
+    (where / ".git").unlink()       # the directory stays, inside the root
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "dirty" in result.stdout, "the root itself is dirty: the leftover"
+    assert "on 001-a-thing: dirty" not in result.stdout, (
+        "the root's own dirty paths, reported on the worktree's row")
+
+
 # --- the leg against its pin -------------------------------------------------
 
 def test_a_leg_checked_out_away_from_its_pin_is_reported_once(atlas, home):

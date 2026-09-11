@@ -782,6 +782,15 @@ read_branches() {
 # so the first block is skipped rather than compared by path (a Mac's
 # `/tmp` is `/private/tmp`, and two spellings of one path would compare
 # unequal).
+#
+# WHAT IS ON DISK IS `worktree_is_usable`'s ANSWER, below, the same rule the
+# record layer and its sweep now apply — so the three readers of this
+# porcelain agree about what a worktree on disk IS: a directory with its own
+# `.git`. A leftover directory without one is not a worktree to read, and
+# reading it is worse than useless where the feature worktrees live UNDER the
+# root, which is where the extension puts them: `git status` there finds no
+# repository, walks UP, and reports the ROOT's dirty paths on the worktree's
+# row, under a branch that has nothing to do with them.
 read_worktrees() {
     local repo="$1" line path="" branch="" first=1 out n
     while IFS= read -r line; do
@@ -791,7 +800,7 @@ read_worktrees() {
         "")
             if [ "$first" -eq 1 ]; then
                 first=0
-            elif [ -n "$path" ] && [ -d "$path" ]; then
+            elif [ -n "$path" ] && worktree_is_usable "$path"; then
                 out="$(g "$path" status --porcelain --ignore-submodules=all 2>/dev/null || true)"
                 if [ -n "$out" ]; then
                     n="$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
