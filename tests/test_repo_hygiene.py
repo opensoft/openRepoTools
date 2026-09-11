@@ -106,6 +106,19 @@ def test_the_estate_commands_carry_the_same_estate_resolver_byte_for_byte():
     assert len(reference.splitlines()) > 100, "the marker moved, not the block"
 
 
+def test_status_carries_resumes_expand_home_byte_for_byte():
+    """`expand_home` reads the `~` a person writes in `~/.agents/workspace.yaml`
+    the same way in both commands that read that file. It sits OUTSIDE the
+    shared resolver block — `park` has no use for it — so the resolver test
+    does not hold the two copies together; this does."""
+    def function(path: Path) -> str:
+        text = path.read_text(encoding="utf-8")
+        start = text.index("expand_home() {")
+        return text[start:text.index("\n}\n", start)]
+    assert function(REPO / "status") == function(REPO / "resume"), (
+        "status and resume have drifted apart in expand_home")
+
+
 def code_lines(path: Path) -> str:
     """The file with its whole-line comments dropped.
 
@@ -525,14 +538,14 @@ def test_readme_is_short_enough_to_be_read():
     currency comes from and the exit named; the list of layers still to come
     loses another.
 
-    232 -> 239 on 2026-09-11, for the parked-record layer (Brett Heap's RULING
+    232 -> 241 on 2026-09-11, for the parked-record layer (Brett Heap's RULING
     of that day, "next layer: parked record against disk"). Seven lines in
     the `status` paragraph say what the record is, where it is found, the
     four ways record and disk drift apart, and that no config or no record
     is a note; the list of layers still to come is gone, because none is.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 239, f"README.md is {len(lines)} lines; the cap is 239"
+    assert len(lines) <= 241, f"README.md is {len(lines)} lines; the cap is 241"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

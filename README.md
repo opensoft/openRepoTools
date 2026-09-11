@@ -55,11 +55,13 @@ Those two questions to GitHub, the fork and the pin, are the only uses of `gh`
 in the three estate commands; the installer has its own. THE PARKED RECORD is
 read against disk too (his RULING of the same day, "next layer: parked record
 against disk"): the record `park` wrote into the workspace repository that
-`~/.agents/workspace.yaml` names, found the way `resume` finds it, gives a
-finding for a recorded feature with no worktree here (`resume <Name>` brings
-it back), a worktree whose tip moved on from, fell behind, or diverged from
-the parked commit, a leg parked with `--no-push`, and a worktree the record
-does not know, which was never parked. No config, or no record, is a note.
+`~/.agents/workspace.yaml` names, found by the estate's id as `park` files it
+and then by its folder name as `resume` looks it up, gives a finding for a
+recorded feature with no worktree here (`resume <Name>` brings it back), a
+worktree whose tip moved on from, fell behind (by more than the WIP commits
+`resume` itself un-committed), or diverged from the parked commit, a leg
+parked with `--no-push`, and a worktree the record does not know, which was
+never parked. No config, or no record, is a note.
 That is all five layers: the local layer, `--fetch`, the fork, the pin and
 the record.
 

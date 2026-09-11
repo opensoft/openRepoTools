@@ -81,9 +81,10 @@
 # `resume` later refuses, and this reads them beforehand: a recorded feature
 # with no worktree here (parked, not resumed — `resume <Name>` is the exit), a
 # worktree whose branch tip is not the parked commit (moved on, or BEHIND a
-# newer record, or diverged), a leg parked with `--no-push`, and a worktree on
-# disk the record does not know (never parked). See "the parked record
-# against disk", below. Nothing is left on the list.
+# newer record by more than the WIP commits `resume` itself un-committed, or
+# diverged), a leg parked with `--no-push`, and a worktree on disk the record
+# does not know (never parked). See "the parked record against disk", below.
+# Nothing is left on the list.
 #
 # READ THE LINES, NOT THE EXIT CODE — the rule `park` and `resume` carry.
 # Exit 0: every repository read is in sync and clean, as of the last fetch.
@@ -1387,23 +1388,31 @@ read_shape() {
 #    was parked (park again before leaving); or BEHIND it — the record is
 #    newer, parked later on another workstation, which `resume` refuses to
 #    reset; or diverged from it; or a parked commit this machine never
-#    fetched.
+#    fetched. ONE GAP IS NOT A FINDING: `resume` recreates the worktree at the
+#    parked commit and SOFT-RESETS the WIP commits `park` made, so a resumed
+#    feature's tip is legitimately `<parked>~<wip_depth>` with the work back
+#    in the working tree — `resume.sh`'s `wip_gap_is_ours` is what keeps it
+#    from refusing that, and the same test is made here.
 # 3. A LEG PARKED WITH `--no-push`: the record says `pushed: false`, only the
 #    workstation that parked it has the WIP commit, and `resume` refuses it.
 # 4. A WORKTREE ON DISK THAT THE RECORD DOES NOT KNOW: a feature that was
 #    never parked, which is the one thing `park` exists to carry.
 #
-# THE RECORD IS FOUND THE WAY `resume` FINDS IT: `${AGENT_PROTOCOL_ROOT:-
-# ~/.agents}/workspace.yaml` names the workspace repository and its checkout
-# (`path:`), plus per-org overrides under `orgs:`; every checkout's
-# `workspaces/<org>/*.yaml` is scanned for the estate's id — a standalone
-# project's `project.yaml` `id:`, a family's `family.yaml` `id:` — with the
-# basename compared case-insensitively, as `resume` compares it. No config,
-# or no record for this estate, is a NOTE, not a finding: a machine that never
-# parked has nothing to be out of sync with. Two orgs recording the same id
-# is a note too, unless one of them is the org this root's origin names.
-# Nothing here reads the workspace repository's remote: the record is as of
-# its last pull, and the estate's line says so.
+# THE RECORD IS FOUND WHERE `park` FILES IT AND `resume` LOOKS FOR IT:
+# `${AGENT_PROTOCOL_ROOT:-~/.agents}/workspace.yaml` names the workspace
+# repository and its checkout (`path:`), plus per-org overrides under
+# `orgs:`, each checkout counted ONCE by physical path (an override pointing
+# at the default's clone is one clone, not two orgs); every checkout's
+# `workspaces/<org>/*.yaml` is scanned for the estate's ID — a standalone
+# project's `project.yaml` `id:`, a family's `family.yaml` `id:`, which is
+# the name `park` files under — and then, if none, for the estate's FOLDER
+# name, which is what `resume <Name>` looks up; basenames are compared
+# case-insensitively, as `resume` compares them. No config, a checkout that
+# is not on this machine, or no record for this estate, is a NOTE, not a
+# finding: a machine that never parked has nothing to be out of sync with.
+# Two orgs recording the same id is a note too, unless one of them is the org
+# this root's origin names. Nothing here reads the workspace repository's
+# remote: the record is as of its last pull, and the estate's line says so.
 #
 # A FAMILY's record has one block per MEMBER, matched by its `root:` —
 # `<family folder>/<member folder>`, the casing `workspace_manifest_root_value`
@@ -1431,7 +1440,7 @@ expand_home() {
 # `    path:` under `orgs:`. Read only; a malformed block is a block not found.
 workspace_checkouts() {
     local file="$1" line
-    [ -f "$file" ] || return 0
+    [ -r "$file" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
         line="${line%$'\r'}"
         case "$line" in
@@ -1467,7 +1476,7 @@ record_candidates() {
 # why there is none to read. RECORD_ID is what a standalone block is matched
 # by.
 locate_record() {
-    local manifest checkouts candidates count org file owner url line
+    local manifest checkouts candidates count org file owner url line physical seen missing=""
     local -a dirs=()
     RECORD_FILE=""
     RECORD_NOTE=""
@@ -1483,16 +1492,39 @@ locate_record() {
         RECORD_NOTE="parked record: no $WORKSPACE_CONFIG on this machine, so parked features are not read (\`resume --workspace <owner>/<repo>\` writes it)"
         return 0
     fi
+    if [ ! -r "$WORKSPACE_CONFIG" ]; then
+        RECORD_NOTE="parked record: $WORKSPACE_CONFIG cannot be read (permissions), so parked features are not read"
+        return 0
+    fi
     checkouts="$(workspace_checkouts "$WORKSPACE_CONFIG")"
     if [ -z "$checkouts" ]; then
         RECORD_NOTE="parked record: $WORKSPACE_CONFIG names no \`path:\`, so parked features are not read"
         return 0
     fi
+    # ONE ENTRY PER DIRECTORY, by PHYSICAL path — `resume`'s `add_workspace`,
+    # for its reason (F4 of the review on openRepoShape #83): an `orgs:`
+    # override pointing at the default's clone would otherwise be scanned
+    # twice and every record in it counted twice, which reads as "two orgs
+    # record this id". A checkout the config names and this machine does not
+    # have is skipped and, if none is left, said.
     while IFS= read -r line; do
         [ -n "$line" ] || continue
-        dirs+=("$line")
+        [ -d "$line" ] || { missing="${missing:+$missing }$line"; continue; }
+        physical="$(cd "$line" 2>/dev/null && pwd -P)" || physical="$line"
+        for seen in ${dirs[@]+"${dirs[@]}"}; do
+            [ "$seen" != "$physical" ] || continue 2
+        done
+        dirs+=("$physical")
     done <<<"$checkouts"
+    if [ ${#dirs[@]} -eq 0 ]; then
+        RECORD_NOTE="parked record: the workspace checkout $WORKSPACE_CONFIG names is not on this machine ($missing), so parked features are not read (\`resume\` clones it)"
+        return 0
+    fi
     candidates="$(record_candidates "$RECORD_ID" "${dirs[@]}")"
+    if [ -z "$candidates" ] && [ "$(lower "$ESTATE_NAME")" != "$(lower "$RECORD_ID")" ]; then
+        # Filed under the id by `park`; looked up by folder by `resume <Name>`.
+        candidates="$(record_candidates "$ESTATE_NAME" "${dirs[@]}")"
+    fi
     if [ -z "$candidates" ]; then
         RECORD_NOTE="parked record: none for '$RECORD_ID' under ${dirs[*]} — nothing of this estate has been parked, or not into this workspace"
         return 0
@@ -1516,16 +1548,20 @@ locate_record() {
     RECORD_NOTE="parked record: $count records for '$RECORD_ID' in different orgs, and none is the org this root's origin names; not read (\`resume --org\` is how one is chosen)"
 }
 
-# One project block of a record as rows: `project<TAB>parked_at<TAB>parked_on
-# <TAB>lane<TAB>active` once, then `leg<TAB>branch<TAB>role<TAB>parked_commit
-# <TAB>pushed` per leg. The block is the one whose `id:` (a standalone) or
-# `root:` (a family member) is the selector's. The layout is the fixed one
-# `workspace_write_manifest` emits — two spaces per level, `pushed:` the last
-# key of a leg, which is where the leg's row is emitted — so a hand-edited leg
-# without `pushed:` is dropped, and the note counts what was read.
+# One project block of a record as rows, fields joined by 0x1F (a tab is IFS
+# whitespace, and an absent optional key — `park` writes no key for an empty
+# value — would shift every later field left, the hazard `read_branches`
+# names): `project` with parked_at, parked_on, lane and active, once; `branch`
+# with the branch, per feature; `leg` with branch, role, parked_commit,
+# pushed and wip_depth, per leg. The block is the one whose `id:` (a
+# standalone) or `root:` (a family member) is the selector's. The layout is
+# the fixed one `workspace_write_manifest` emits — two spaces per level,
+# `pushed:` the last key of a leg, which is where the leg's row is emitted —
+# so a hand-edited leg without `pushed:` is dropped; its branch is still
+# known from the `branch` row, so it is never accused of being unparked.
 record_rows() {
     local file="$1" sel="$2" line matched=0 value
-    local parked_at="" parked_on="" lane="" active="" branch="" role="" commit="" pushed=""
+    local parked_at="" parked_on="" lane="" active="" branch="" role="" commit="" pushed="" depth=""
     [ -f "$file" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
         line="${line%$'\r'}"
@@ -1550,16 +1586,22 @@ record_rows() {
         '    active_feature:'*) active="$(trim_unquote "${line#*:}")" ;;
         '    features:'*)
             if [ "$matched" -eq 1 ]; then
-                printf 'project\t%s\t%s\t%s\t%s\n' "$parked_at" "$parked_on" "$lane" "$active"
+                printf 'project\037%s\037%s\037%s\037%s\n' "$parked_at" "$parked_on" "$lane" "$active"
             fi
             ;;
-        '      - branch:'*) branch="$(trim_unquote "${line#*:}")" ;;
-        '          - role:'*) role="$(trim_unquote "${line#*:}")"; commit=""; pushed="" ;;
+        '      - branch:'*)
+            branch="$(trim_unquote "${line#*:}")"
+            if [ "$matched" -eq 1 ] && [ -n "$branch" ]; then
+                printf 'branch\037%s\n' "$branch"
+            fi
+            ;;
+        '          - role:'*) role="$(trim_unquote "${line#*:}")"; commit=""; pushed=""; depth="" ;;
         '            parked_commit:'*) commit="$(trim_unquote "${line#*:}")" ;;
+        '            wip_depth:'*) depth="$(trim_unquote "${line#*:}")" ;;
         '            pushed:'*)
             pushed="$(trim_unquote "${line#*:}")"
             if [ "$matched" -eq 1 ] && [ -n "$branch" ] && [ -n "$role" ]; then
-                printf 'leg\t%s\t%s\t%s\t%s\n' "$branch" "$role" "$commit" "$pushed"
+                printf 'leg\037%s\037%s\037%s\037%s\037%s\n' "$branch" "$role" "$commit" "$pushed" "$depth"
             fi
             ;;
         esac
@@ -1610,10 +1652,36 @@ worktree_on_branch() {
     return 1
 }
 
+# THE GAP A RESUME ITSELF LEAVES. `park` commits the WIP under a fixed subject
+# prefix and records how many such commits sit on the tip (`wip_depth`);
+# `resume` recreates the worktree at the parked commit and SOFT-RESETS exactly
+# those commits away, so a resumed feature's tip is legitimately `<parked>~
+# <wip_depth>` with the work back in the working tree. `resume.sh`'s
+# `wip_gap_is_ours` is what keeps it from refusing that state, and this is
+# the same test: the gap is exactly `wip_depth` commits, every one of them a
+# `wip: park …` commit. Read-only (`log -1 --format=%s`).
+WIP_PREFIX='wip: park '
+wip_gap_is_ours() {
+    local repo="$1" from="$2" to="$3" depth="$4" count subject step=0
+    is_count "$depth" || return 1
+    [ "$depth" -gt 0 ] || return 1
+    count="$(g "$repo" rev-list --count "$from..$to" 2>/dev/null || printf 0)"
+    [ "$count" = "$depth" ] || return 1
+    while [ "$step" -lt "$depth" ]; do
+        subject="$(g "$repo" log -1 --format=%s "$to~$step" 2>/dev/null || true)"
+        case "$subject" in
+        "$WIP_PREFIX"*) ;;
+        *) return 1 ;;
+        esac
+        step=$((step + 1))
+    done
+    return 0
+}
+
 # One recorded leg against disk: the four states above, read in the leg's own
 # repository.
 check_parked_leg() {
-    local root="$1" branch="$2" role="$3" commit="$4" pushed="$5" parked_at="$6" parked_on="$7"
+    local root="$1" branch="$2" role="$3" commit="$4" pushed="$5" parked_at="$6" parked_on="$7" depth="$8"
     local repo tree tip n
     repo="$(leg_repo_for_role "$root" "$role" || true)"
     if [ -z "$repo" ] || [ ! -e "$repo/.git" ]; then
@@ -1638,9 +1706,13 @@ check_parked_leg() {
         n="$(g "$repo" rev-list --count "$commit..$tip" 2>/dev/null || true)"
         finding "parked feature $branch ($role leg): moved on since it was parked, ${n:-?} commit(s) after $(short "$commit") — park again before leaving"
     elif g "$repo" merge-base --is-ancestor "$tip" "$commit" 2>/dev/null; then
+        # RESUMED HERE, not behind: the gap is the WIP `resume` un-committed.
+        if wip_gap_is_ours "$repo" "$tip" "$commit" "$depth"; then
+            return 0
+        fi
         finding "parked feature $branch ($role leg): this worktree is BEHIND the parked commit $(short "$commit"), parked ${parked_at:-?} on ${parked_on:-?} — the record is newer, and \`resume\` refuses to reset it"
     else
-        finding "parked feature $branch ($role leg): diverged from the parked commit $(short "$commit"), parked ${parked_at:-?} on ${parked_on:-?}"
+        finding "parked feature $branch ($role leg): diverged from the parked commit $(short "$commit"), parked ${parked_at:-?} on ${parked_on:-?} — reconcile by hand: \`git -C $repo log --oneline $(short "$commit")..$branch\`"
     fi
     return 0
 }
@@ -1669,7 +1741,7 @@ unrecorded_worktrees() {
                 elif [ -n "$branch" ]; then
                     case "$recorded" in
                     *"$NL$branch$NL"*) ;;
-                    *) finding "worktree on $branch ($where): not in the parked record — never parked, and \`park\` is what carries it" ;;
+                    *) finding "worktree on $branch ($where): not in the parked record — never parked; \`park\` carries the features under this root's worktree root, anything else is yours to keep or remove" ;;
                     esac
                 fi
                 path=""; branch=""
@@ -1681,31 +1753,37 @@ unrecorded_worktrees() {
 
 # A root's block of the record against its disk: the note line, one finding
 # per leg that is out of step, and the worktrees the record does not know.
+# The selectors are tried in order until one names a block: a standalone root
+# by its `id:` first, then by its folder as `root:` — the block a record found
+# by folder name carries — and a family member by its `root:` alone.
 read_record() {
-    local root="$1" sel="$2" kind a b c d have_block=0 n_features=0
+    local root="$1" sel rows="" kind a b c d e n_features=0
     local parked_at="" parked_on="" lane="" active="" recorded="$NL"
+    shift
     [ -n "$RECORD_FILE" ] || return 0
-    while IFS=$'\t' read -r kind a b c d; do
-        case "$kind" in
-        project)
-            have_block=1
-            parked_at="$a"; parked_on="$b"; lane="$c"; active="$d"
-            ;;
-        leg)
-            have_block=1
-            case "$recorded" in
-            *"$NL$a$NL"*) ;;
-            *) recorded="$recorded$a$NL"; n_features=$((n_features + 1)) ;;
-            esac
-            check_parked_leg "$root" "$a" "$b" "$c" "$d" "$parked_at" "$parked_on"
-            ;;
-        esac
-    done < <(record_rows "$RECORD_FILE" "$sel")
-    if [ "$have_block" -eq 0 ]; then
+    for sel in "$@"; do
+        rows="$(record_rows "$RECORD_FILE" "$sel")"
+        [ -z "$rows" ] || break
+    done
+    if [ -z "$rows" ]; then
+        # A root the record does not mention: every worktree here is unparked,
+        # which is the one thing worth saying about it.
         say "    parked record: no block for this root in ${RECORD_FILE##*/}"
-        return 0
+    else
+        while IFS=$'\037' read -r kind a b c d e; do
+            case "$kind" in
+            project) parked_at="$a"; parked_on="$b"; lane="$c"; active="$d" ;;
+            branch)
+                case "$recorded" in
+                *"$NL$a$NL"*) ;;
+                *) recorded="$recorded$a$NL"; n_features=$((n_features + 1)) ;;
+                esac
+                ;;
+            leg) check_parked_leg "$root" "$a" "$b" "$c" "$d" "$parked_at" "$parked_on" "$e" ;;
+            esac
+        done <<<"$rows"
+        say "    parked record: $n_features feature(s), parked ${parked_at:-?} on ${parked_on:-?}${lane:+ (lane $lane)}${active:+; active $active}"
     fi
-    say "    parked record: $n_features feature(s), parked ${parked_at:-?} on ${parked_on:-?}${lane:+ (lane $lane)}${active:+; active $active}"
     unrecorded_worktrees "$root" "$recorded"
 }
 
@@ -1769,7 +1847,7 @@ read_one_estate() {
                 read_record "$path" "root=$ESTATE_NAME/${path##*/}"
             else
                 read_shape "$path" project.yaml
-                read_record "$path" "id=$RECORD_ID"
+                read_record "$path" "id=$RECORD_ID" "root=$ESTATE_NAME"
             fi
             read_worktree_state "$path"
             read_branches "$path" "$branch"

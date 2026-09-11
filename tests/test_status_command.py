@@ -1416,10 +1416,12 @@ def workspace_config(home: Path) -> Path:
 
 def record(checkout: Path, project_id: str, *, branch: str, role: str,
            commit: str, pushed: str = "true", parked_on: str = "Eagle",
-           root: str | None = None, org: str = ORG) -> Path:
+           root: str | None = None, org: str = ORG, wip_depth: int = 1) -> Path:
     """One standalone record as `park.sh` writes one: one project, one
-    feature, one leg."""
+    feature, one leg. `commit=""` leaves the `parked_commit:` key out, as
+    `park.sh` leaves out any key whose value is empty."""
     root = root or project_id.capitalize()
+    commit_line = f"            parked_commit: {commit}\n" if commit else ""
     text = f"""\
 schema_version: 1
 kind: workspace-manifest
@@ -1442,9 +1444,8 @@ projects:
         legs:
           - role: {role}
             remote: origin
-            parked_commit: {commit}
-            wip: true
-            wip_depth: 1
+{commit_line}            wip: true
+            wip_depth: {wip_depth}
             pushed: {pushed}
 """
     (checkout / "workspaces" / org).mkdir(parents=True, exist_ok=True)
@@ -1563,7 +1564,9 @@ def test_a_worktree_the_record_does_not_know_was_never_parked(atlas, home):
     result = run(STATUS, "Atlas", home=home)
     assert result.returncode == 1, result.stdout + result.stderr
     assert ("    - worktree on 002-unparked (root): not in the parked record — "
-            "never parked, and `park` is what carries it") in result.stdout
+            "never parked; `park` carries the features under this root's "
+            "worktree root, anything else is yours to keep or remove"
+            ) in result.stdout
     assert "worktree on 001-a-thing" not in result.stdout
 
 
@@ -1596,6 +1599,174 @@ def test_two_orgs_recording_the_same_id_is_a_note(atlas, home):
     assert result.returncode == 0, result.stdout + result.stderr
     assert ("  parked record: 2 records for 'atlas' in different orgs, and none "
             "is the org this root's origin names; not read") in result.stdout
+
+
+def test_the_state_a_resume_leaves_is_not_behind(atlas, home):
+    """`park` commits the WIP under `wip: park …` and records its depth;
+    `resume` recreates the worktree at the parked commit and soft-resets
+    exactly those commits away. That tip — `<parked>~<wip_depth>`, with the
+    work back in the tree — is the state every resumed machine is in, and
+    `resume.sh`'s `wip_gap_is_ours` is why it does not refuse it. So neither
+    does this: the first draft called it BEHIND, forever, on every run."""
+    checkout = workspace_config(home)
+    where = home / "Atlas-wt" / "001-a-thing"
+    feature_worktree(atlas, "001-a-thing", where)
+    (where / "half-done.md").write_text("half done\n", encoding="utf-8")
+    git("add", "-A", cwd=where)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm",
+        "wip: park 2026-09-10T20:00:00Z — lane xfactory-2", cwd=where)
+    git("push", "-q", "origin", "001-a-thing", cwd=where)
+    parked = git("rev-parse", "HEAD", cwd=where).stdout.strip()
+    git("reset", "-q", "--soft", "HEAD~1", cwd=where)   # what resume.sh does
+    git("reset", "-q", cwd=where)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=parked,
+           wip_depth=1)
+    result = run(STATUS, "Atlas", home=home)
+    assert "BEHIND" not in result.stdout, result.stdout
+    assert "parked feature" not in result.stdout, result.stdout
+    assert result.returncode == 1, "the un-committed WIP is a dirty worktree, and read as one"
+    assert "on 001-a-thing: dirty, 1 path(s)" in result.stdout
+
+    # The same gap with a commit that is NOT the parked WIP is genuinely behind.
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=parked,
+           wip_depth=0)
+    result = run(STATUS, "Atlas", home=home)
+    assert "this worktree is BEHIND the parked commit" in result.stdout
+
+
+def test_an_absent_optional_key_does_not_shift_the_fields(atlas, home):
+    """`park.sh` writes no key for an empty value. A leg with no
+    `parked_commit:` and `pushed: false` must still report the --no-push
+    finding, not a parked commit called `false`."""
+    checkout = workspace_config(home)
+    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit="",
+           pushed="false", parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): parked with --no-push "
+            "on Falcon") in result.stdout
+    assert "parked commit false" not in result.stdout
+
+
+def test_a_diverged_worktree_names_the_log_to_read(atlas, home):
+    checkout = workspace_config(home)
+    where = home / "Atlas-wt" / "001-a-thing"
+    base = feature_worktree(atlas, "001-a-thing", where)
+    (where / "theirs.md").write_text("theirs\n", encoding="utf-8")
+    commit_all(where, "parked elsewhere")
+    git("push", "-q", "origin", "001-a-thing", cwd=where)
+    theirs = git("rev-parse", "HEAD", cwd=where).stdout.strip()
+    git("reset", "-q", "--hard", base, cwd=where)
+    (where / "mine.md").write_text("mine\n", encoding="utf-8")
+    commit_all(where, "mine")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=theirs)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (repo leg): diverged from the "
+            f"parked commit {theirs[:7]}, parked 2026-09-10T20:00:00Z on Eagle "
+            f"— reconcile by hand: `git -C {atlas} log --oneline {theirs[:7]}"
+            "..001-a-thing`") in result.stdout
+
+
+def test_a_root_the_record_does_not_mention_still_has_its_worktrees_swept(
+        atlas, home):
+    checkout = workspace_config(home)
+    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    record(checkout, "atlas", branch="001-x", role="repo", commit=FAKE_SHA)
+    # the file is atlas.yaml, but its one block is somebody else's — by id
+    # AND by root, since a block whose `root:` is this folder is this root's
+    path = checkout / "workspaces" / ORG / "atlas.yaml"
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        "  - id: atlas\n", "  - id: somethingelse\n").replace(
+        "    root: Atlas\n", "    root: Somethingelse\n"), encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "    parked record: no block for this root in atlas.yaml" in result.stdout
+    assert ("    - worktree on 001-a-thing (root): not in the parked record"
+            in result.stdout)
+
+
+def test_an_unparked_worktree_in_a_leg_is_named_with_the_leg(atlas, home):
+    checkout = workspace_config(home)
+    leg = atlas / "spec"
+    git("checkout", "-q", "main", cwd=leg)
+    feature_worktree(leg, "001-s-thing", home / "Atlas-wt" / "001-s-thing" / "spec")
+    record(checkout, "atlas", branch="001-other", role="repo", commit=FAKE_SHA)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "    - worktree on 001-s-thing (spec): not in the parked record" in result.stdout
+
+
+def test_two_orgs_are_settled_by_the_origins_owner(atlas, home, status_remotes):
+    github_origin(atlas, status_remotes["Atlas"]["bare"], "testorg/Atlas")
+    checkout = workspace_config(home)
+    record(checkout, "atlas", branch="001-a", role="repo", commit=FAKE_SHA)
+    record(checkout, "atlas", branch="001-a", role="repo", commit=FAKE_SHA,
+           org="otherorg", parked_on="Nowhere")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"  parked record: {checkout}/workspaces/{ORG}/atlas.yaml" in result.stdout
+    assert "on Eagle" in result.stdout and "Nowhere" not in result.stdout
+
+
+def test_an_override_pointing_at_the_same_checkout_is_one_checkout(atlas, home):
+    """An `orgs:` override whose `path:` is the default's clone is one clone,
+    not two orgs recording the same id — `resume` dedupes by physical path
+    (F4 of the review on openRepoShape #83), and so does this."""
+    checkout = workspace_config(home)
+    (home / ".agents" / "workspace.yaml").write_text(
+        f"repository: tester/wip\npath: {checkout}\norgs:\n  {ORG}:\n"
+        f"    repository: tester/wip\n    path: {checkout}/\n", encoding="utf-8")
+    record(checkout, "atlas", branch="001-a", role="repo", commit=FAKE_SHA)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "2 records for 'atlas'" not in result.stdout
+    assert f"  parked record: {checkout}/workspaces/{ORG}/atlas.yaml" in result.stdout
+
+
+def test_a_checkout_not_on_this_machine_is_said(atlas, home):
+    (home / ".agents").mkdir(exist_ok=True)
+    (home / ".agents" / "workspace.yaml").write_text(
+        f"repository: tester/wip\npath: {home}/not-cloned-yet\n", encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (f"  parked record: the workspace checkout {home}/.agents/workspace.yaml "
+            f"names is not on this machine ({home}/not-cloned-yet), so parked "
+            "features are not read (`resume` clones it)") in result.stdout
+
+
+def test_a_record_filed_under_the_folder_name_is_found_too(atlas, home):
+    """`park` files under the id; `resume <Name>` looks up the folder. Where an
+    `id:` is not the folder's own name, both are tried."""
+    checkout = workspace_config(home)
+    manifest = atlas / "project.yaml"
+    manifest.write_text(manifest.read_text(encoding="utf-8").replace(
+        "id: atlas\n", "id: atlas-core\n"), encoding="utf-8")
+    record(checkout, "Atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA,
+           root="Atlas")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"  parked record: {checkout}/workspaces/{ORG}/Atlas.yaml" in result.stdout
+    assert "no worktree on that branch here" in result.stdout
+
+
+def test_the_record_layer_under_all_is_located_per_estate(home, status_remotes):
+    """`locate_record` runs once per estate and starts clean: Atlas finds its
+    record, Borealis (whose `id:` is made its own) finds none, and neither
+    leaks into the other."""
+    checkout = workspace_config(home)
+    clone_root(home, status_remotes["Atlas"], "Atlas")
+    borealis = clone_root(home, status_remotes["Atlas"], "Borealis")
+    manifest = borealis / "project.yaml"
+    manifest.write_text(manifest.read_text(encoding="utf-8").replace(
+        "id: atlas\n", "id: borealis\n"), encoding="utf-8")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA)
+    result = run(STATUS, "--all", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert result.stdout.count("`resume Atlas` brings it back") == 1
+    assert "`resume Borealis`" not in result.stdout
+    assert "  parked record: none for 'borealis' under" in result.stdout
 
 
 @NEEDS_UPSTREAM
