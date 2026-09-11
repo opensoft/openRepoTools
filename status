@@ -818,7 +818,14 @@ read_leg() {
 # `+refs/heads/*:refs/remotes/origin/*` here means the only refs that can
 # move or go are under `refs/remotes/origin/`, whatever the config says (the
 # review of this layer deleted a local branch through the configured form to
-# prove it).
+# prove it). AND `--refmap`, WITH THE SAME REFSPEC: a refspec on the command
+# line bounds what is fetched and pruned, but git still maps every ref it
+# fetched through the CONFIGURED refspecs as well — "opportunistic
+# remote-tracking updates" — so under a mirror-style config the pinned fetch
+# alone would still move `refs/heads/main` in a detached leg, and refuse
+# outright in a checked-out root. `--refmap` (git 2.1) replaces the
+# configured mapping for this one fetch, so nothing outside
+# `refs/remotes/<remote>/` is written by either route.
 FETCHED_OK=0
 fetch_origin() {
     local repo="$1" branch="$2" before after err
@@ -833,7 +840,8 @@ fetch_origin() {
     fi
     before="$(g "$repo" rev-parse -q --verify "refs/remotes/origin/$branch" 2>/dev/null || true)"
     if err="$(GIT_TERMINAL_PROMPT=0 git --no-optional-locks -C "$repo" fetch --quiet \
-            --prune --recurse-submodules=no origin \
+            --prune --recurse-submodules=no \
+            --refmap='+refs/heads/*:refs/remotes/origin/*' origin \
             '+refs/heads/*:refs/remotes/origin/*' 2>&1)"; then
         FETCHED_OK=1
         after="$(g "$repo" rev-parse -q --verify "refs/remotes/origin/$branch" 2>/dev/null || true)"

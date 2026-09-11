@@ -659,6 +659,7 @@ def test_fetch_prune_never_touches_a_local_branch_or_tag_whatever_the_config_say
     git("tag", "keepme-too", cwd=atlas)
     push_from_elsewhere(status_remotes["base"],
                         status_remotes["Atlas"]["leg_bare"], "legmoved")
+    leg_main_was = git("rev-parse", "refs/heads/main", cwd=leg).stdout
 
     result = run(STATUS, "--fetch", "Atlas", home=home)
     assert result.returncode == 1, result.stdout + result.stderr
@@ -666,6 +667,13 @@ def test_fetch_prune_never_touches_a_local_branch_or_tag_whatever_the_config_say
                    cwd=leg).stdout.split()
     assert "doomed" in branches, "--prune deleted a LOCAL branch"
     assert "main" in branches
+    # THE OTHER ROUTE: git maps every fetched ref through the CONFIGURED
+    # refspecs too ("opportunistic remote-tracking updates"), so a pinned
+    # refspec alone still moved a detached leg's local `main` under a mirror
+    # config; `--refmap` is what stops it, and this is the line that proves it.
+    assert git("rev-parse", "refs/heads/main", cwd=leg).stdout == leg_main_was, (
+        "the pinned fetch moved the leg's LOCAL main through the configured "
+        "refspec")
     assert git("tag", cwd=leg).stdout.split() == ["keepme"], "a local tag went"
     assert git("tag", cwd=atlas).stdout.split() == ["keepme-too"]
     assert "    fetched origin: origin/main moved " in result.stdout, (
