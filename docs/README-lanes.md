@@ -50,6 +50,8 @@ workstation**.
 | the register | `~/projects/brett-wip/lanes/LANES.md` |
 | the path every lane already uses | `~/projects/xFactory/LANES.md` — a **symlink** to `~/projects/brett-wip/lanes/LANES.md` |
 | the writer | `~/projects/brett-wip/lanes/lanes-edit.sh` (symlinked as `~/projects/xFactory/lanes-edit.sh`) |
+| the two ends of a lane | `lanes/lane-start` and `lanes/lane-end` (symlinked as `~/.local/bin/lane-start` and `~/.local/bin/lane-end`) |
+| their tests | `lanes/test_lane_helpers.sh` — run it from anywhere; it touches nothing real |
 | who places the symlinks | `~/projects/brett-wip/scripts/link-estates` (idempotent, `--dry-run`) |
 
 Why `main` of the workspace repository and not the aggregation's: the
@@ -167,6 +169,119 @@ rev-parse --show-toplevel` from its own directory and derives the pathspec
 `lanes/LANES.md` with `--show-prefix`, so the clone may live anywhere. The
 overrides `LANES_REPO`, `LANES_PATH` and `LANES_BRANCH` exist for tests.
 
+## Starting and ending a lane
+
+The lane rule, ruled by Brett Heap 2026-09-10: **lane = tmux window name =
+Claude session name**, in the form `<repo>-<position across, left to right>`.
+The working directory confers NO lane — two lanes may share one; a window
+still called `claude` has no lane at all; and whether a name is free is
+decided by whether the row's recorded session id is **live**, never by whether
+a row exists.
+
+Honouring that by hand is five acts at one end of a lane and one at the other,
+and this register records where they get dropped: rows added hours late (`ROW
+ADDED LATE 2026-09-09T18:05Z — the lane worked from 00:10Z without a row, a
+Rule 4 gap this row closes`), windows left named `claude`, `(2)`-suffixed
+session names minted when a rename collided with a title that was still held,
+and lanes that stopped without ever updating their row. `lane-start` and
+`lane-end` are those acts, one command at each boundary — never mid-session,
+because renaming a running window's session is exactly what mints the `(2)`.
+
+```sh
+lane-start openRepoShape 2          # in the tmux window that will carry the lane
+lane-start openRepoShape-2          # the full lane name works too
+lane-start 2                        # <repo> from the cwd's git root
+
+lane-end openRepoShape-2            # the window is closing
+lane-end openRepoShape-2 --retire   # …and the lane is not coming back
+```
+
+Both print every step to **stderr** and refuse with a message that names the
+fix. Exit codes: **0** done, **1** environment, **2** refusal. `--help` prints
+the file's own header, which is the whole manual.
+
+### `lane-start <repo> <n>`
+
+1. derives `LANE=<repo>-<n>` and the lane's directory — `~/projects/<repo>`,
+   or `--dir <path>`;
+2. **refuses unless it is already inside tmux.** It renames the window it is
+   run in and never creates a tmux session: the window is the lane;
+3. **liveness check, before it takes the name.** If the register already has a
+   row for the lane it reads the session id(s) out of that row's *session
+   cell* — not the whole row, which quotes other lanes' ids all the time — and
+   looks for a live record in every profile's `sessions/*.json`. A record is
+   live when its pid is alive **and** `/proc/<pid>/stat`'s start time still
+   matches what the record wrote down, so a recycled pid cannot lock a name.
+   A live holder in **another** tmux window is a refusal that names the next
+   position; a row whose recorded sessions have all ended is a lane you are
+   **resuming**, which is allowed and expected. A record whose session *name*
+   is some other lane is not a holder either: this register carries rows whose
+   session retired from the lane and was renamed, and refusing on those would
+   lock free names forever;
+4. `tmux rename-window <LANE>` — which also turns automatic-rename **off** for
+   that window, so the name survives the next command it runs;
+5. the row, through `lanes-edit.sh`: `add-row` when there is none — state
+   `STARTING`, session id `pending — set by the session's first act`,
+   `<workstation> / <profile> / <user>` per Rule 10, handoff path
+   `handoffs/<estate>/session-handoff-<date>-lane-<LANE>.md` — and
+   `append-row-status` when there is one. Never a hand edit;
+6. `exec claude --resume <LANE>` when a transcript for that directory already
+   carries the custom title `<LANE>` and nothing live holds it, otherwise
+   `exec claude --name <LANE>`. **Resume beats new**, because a rename into a
+   title that is still held is exactly what mints `<LANE> (2)` and costs the
+   lane its address (Amendment 2: the session name *is* the messaging
+   address). Anything after `--` is passed through to `claude`.
+
+`--dry-run` prints all six and writes nothing. `--no-launch` does the first
+five and prints the `claude` command on **stdout** instead of running it —
+that is the hook a launcher uses, and it is the only thing either script ever
+writes to stdout.
+
+The env column records the Claude **profile** (`team-05b`), which is the thing
+that actually varies between lanes on one workstation; `WSL2` in the older
+rows is the same column.
+
+### `lane-end <lane>`
+
+Appends `<UTC> lane-end on <workstation>: window closing; NOTHING IN FLIGHT`
+to the row, and **refuses (exit 2) while the row says something is still
+open**: if the last `LANDING` or `CLAIMED` in the state cell has no `LANDED`
+or `RELEASED` after it, the lane still owns something and Rule 6 is holding
+other lanes' merges. It prints the offending excerpt and the two ways out —
+post the `LANDED`/`RELEASED` first, or `--force`, which ends the lane and says
+in the register that it did.
+
+The phrases that *say* nothing is open — `NOTHING CLAIMED`, `no LANDING open`,
+`LANDING WITHDRAWN`, `UNCLAIMED` and their kin — are removed
+case-insensitively before that scan. Without that, a substring match on
+`CLAIMED` inside `NOTHING CLAIMED` would refuse on every healthy lane in the
+register.
+
+`--retire` also marks the cell `RETIRED <UTC>`, by replacing the **state word
+the cell opens with** — never the whole cell, which is the row's history and
+the reason the register exists. `replace-in-row` requires that word to be
+unique in the row; when it is not, the refusal prints the exact
+`--state-was "<text>"` re-run.
+
+It **never renames the window.** The name is the lane's history until the next
+`lane-start` takes that window, and a window renamed back to `claude` is a
+window nobody can attribute.
+
+One argument is taken verbatim, so a lane named before the `<repo>-<n>` rule
+(`browser-ui-repair`, `hermes-wallet-exercise`) can be ended by its own name.
+
+### The tests
+
+```sh
+./lanes/test_lane_helpers.sh        # 58 assertions, ~6s, touches nothing real
+```
+
+A temp `HOME`, a bare repo and a clone seeded with a header and eight rows, a
+fake `tmux` that logs its renames and a fake `claude` that logs its argv.
+`lanes-edit.sh` runs **for real** against the sandbox register, so the commit,
+pull and push path is covered rather than stubbed, and liveness is a real
+`sleep` process and a reaped pid rather than a mocked `/proc`.
+
 ## Hand edits
 
 After **any** hand edit made with an allowed tool (python read/write, `sed -i
@@ -226,6 +341,11 @@ BEFORE the local file becomes the symlink.** Raven's file may hold rows this
 register has never seen. `link-estates` never deletes a real file — it moves
 one aside as `<path>.pre-link-estates-<UTC>` — so the content survives either
 way, but a row nobody re-appends is a row nobody reads.
+
+`link-estates` also places `~/.local/bin/lane-start` and
+`~/.local/bin/lane-end` (creating that directory if it is missing, and saying
+so when it is not on your PATH). The helpers resolve the register and its
+writer from their own real path, so the symlink is all they need.
 
 Also drop the retired worktree if this workstation still has one:
 `git -C ~/projects/xFactory worktree remove .lanes` (Eagle did this on
