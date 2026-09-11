@@ -1776,9 +1776,11 @@ locate_record() {
 # SHALLOWER indent (a project-level `features:` or `root:`, the next project
 # block's `- id:`, a top-level key), or the end of the file. `role` is
 # cleared as the row goes out, so two enders in a row emit once and a block
-# with no leg emits nothing. For a leg whose `pushed:` IS there this is the
-# same line and the same order as before, which is what keeps a well-formed
-# record's rows byte-identical.
+# with no leg emits nothing. For a leg whose `pushed:` is there AND LAST —
+# which is every leg `workspace_write_manifest` emits — this is the same
+# line and the same order as before, which is what keeps a well-formed
+# record's rows byte-identical; where a hand-edit moved the key, the row now
+# carries the keys AFTER it too, which is what the loader reads.
 #
 # AND THE SIXTH FIELD IS HOW `absent` IS TOLD FROM `empty`, which are two
 # states and not one: a bare `pushed:` is PRESENT and unreadable (note (d) of
@@ -1797,15 +1799,30 @@ record_rows() {
         # THE LEG ENDS WHERE THE NEXT THING STARTS. Every alternative here is
         # a line whose first non-space character sits SHALLOWER than a leg's
         # own keys (which the layout puts at twelve spaces), plus the next
-        # leg's own `- role:` at ten. A blank line is none of them: a record
-        # with a blank line between two keys still has one leg, not two.
-        case "$line" in
-        [![:space:]]* | '  '[![:space:]]* | '    '[![:space:]]* | \
-            '      '[![:space:]]* | '        '[![:space:]]* | '          - role:'*)
-            if [ "$matched" -eq 1 ] && [ -n "$branch" ] && [ -n "$role" ]; then
-                printf 'leg\037%s\037%s\037%s\037%s\037%s\037%s\n' "$branch" "$role" "$commit" "$pushed" "$depth" "$seen"
-            fi
-            role=""
+        # leg's own `- role:` at ten. A blank line is none of them, AND NOR IS
+        # A FULL-LINE COMMENT at any indent: `workspace_load_project` takes
+        # `#` and everything after it off every line before it reads one
+        # (`content="${raw%%#*}"`), so a `# note` a hand left at column 0
+        # between two of a leg's keys is nothing to the loader — and read as
+        # an ender here it closed the leg before its `pushed:`, and the leg
+        # went out as if the record had none (the review of this follow-up,
+        # 2026-09-11). A record with a blank line or a comment between two
+        # keys still has one leg, not two. An indent-10 line that is NOT
+        # `- role:` is deliberately not an ender either: `workspace_load_project`
+        # starts no leg there, and its twelve-space keys keep landing on the
+        # leg above — so the two readers agree.
+        case "${line#"${line%%[![:space:]]*}"}" in
+        '#'*) ;;
+        *)
+            case "$line" in
+            [![:space:]]* | '  '[![:space:]]* | '    '[![:space:]]* | \
+                '      '[![:space:]]* | '        '[![:space:]]* | '          - role:'*)
+                if [ "$matched" -eq 1 ] && [ -n "$branch" ] && [ -n "$role" ]; then
+                    printf 'leg\037%s\037%s\037%s\037%s\037%s\037%s\n' "$branch" "$role" "$commit" "$pushed" "$depth" "$seen"
+                fi
+                role=""
+                ;;
+            esac
             ;;
         esac
         case "$line" in

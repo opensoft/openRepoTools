@@ -2012,12 +2012,14 @@ def test_every_leg_of_a_record_is_read_once_and_in_order(atlas, home):
     row per leg, in the order the record lists them, and no row for a block
     that is not this root's.
 
-    Three features in one block exercise all four enders at once: the second
+    Three features in one block exercise three of the four enders at once: the second
     feature's first leg is closed by its own second `- role:`, its second leg
     by the third feature's `- branch:`, and the third feature's leg by the
     NEXT PROJECT's `- id:` — and the leg that carries no `pushed:` sits in
     the middle, where a dropped row would have been invisible in a count of
-    two."""
+    two. The fourth ender, the end of the file, closes the last leg of every
+    record `record()` writes, whose last line is a leg's last key — every
+    other record-layer test holds that one."""
     checkout = workspace_config(home)
     (checkout / "workspaces" / ORG).mkdir(parents=True, exist_ok=True)
     (checkout / "workspaces" / ORG / "atlas.yaml").write_text("""\
@@ -2216,6 +2218,31 @@ def test_a_missing_parked_commit_under_an_unreadable_pushed_rules_nothing_out(
             "never have left Falcon, or this repository has never fetched it, "
             "or origin no longer has it") in result.stdout
     assert "the record says it was pushed" not in result.stdout
+
+
+def test_a_full_line_comment_inside_a_leg_does_not_end_the_leg(atlas, home):
+    """`workspace_load_project` takes `#` and everything after it off every
+    line before it reads one, so a `# note` a hand left at column 0 between
+    two of a leg's keys is nothing to the loader, and `resume.sh` reads the
+    `pushed: true` below it. Read as a leg-ender here — its first character
+    sits shallower than a leg's keys — it closed the leg before its `pushed:`,
+    and the leg went out as if the record had none: a false "has no `pushed:`"
+    finding, and `resume <Name>`, the exit that works, withheld (the review of
+    this follow-up, 2026-09-11)."""
+    checkout = workspace_config(home)
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, pushed="true", parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    assert text.count("            pushed: true\n") == 1
+    path.write_text(text.replace(
+        "            pushed: true\n",
+        "# a note a hand left here, at column 0\n            pushed: true\n"),
+        encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "`resume Atlas` brings it back" in result.stdout
+    assert "has no `pushed:`" not in result.stdout, (
+        "a comment line read as the end of the leg")
 
 
 def test_a_missing_parked_commit_with_no_pushed_key_rules_nothing_out(
