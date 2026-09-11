@@ -1553,10 +1553,11 @@ read_shape() {
 #    AND A `pushed:` THAT IS NEITHER `true` NOR `false` — a bare `pushed:`,
 #    `pushed: ""`, `pushed: yes` — IS A THIRD READING OF THAT FIELD, not a
 #    fourth spelling of one of the two (the second independent review of #18,
-#    2026-09-11, note (d)). `park.sh` writes one of those two words for
-#    every leg it parks and carries an existing entry forward untouched for
-#    one it refuses, so a value that is neither came from a hand-edit or a
-#    bad merge of the record; every arm below used to fall through the `= false`
+#    2026-09-11, note (d); this repository's #19). `park.sh` writes one of
+#    those two words for every leg it parks and carries an existing entry
+#    forward untouched for one it refuses, so a value that is neither came
+#    from a hand-edit or a bad merge of the record; every arm below used to
+#    fall through the `= false`
 #    tests and say "the record says it was pushed", which is a claim the
 #    record does not make. It is named for what it is instead — a `pushed:`
 #    that cannot be read — and what `resume` will do with it is said with it:
