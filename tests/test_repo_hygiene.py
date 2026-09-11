@@ -541,9 +541,17 @@ def test_agents_md_is_short_enough_to_be_read():
     is moved aside and not deleted — it holds whatever the worktree held, and
     an assistant that deletes it to make `resume` run has thrown away the one
     copy of somebody's work.
+
+    149 -> 150 on 2026-09-11, for note (d) of the second independent review of
+    #18: a record whose `pushed:` is neither `true` nor `false` is one
+    `resume` refuses exactly as it refuses `--no-push` — `resume.sh`'s RR6 is
+    `[ "$pushed" != true ]` — and rule 4 gave `resume <Name>` as the exit for
+    it. One line puts it in the same exception, because an assistant that
+    reads the rule rather than the finding beside it reaches for the one
+    command that cannot answer that record.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 149, f"AGENTS.md is {len(lines)} lines; the cap is 149"
+    assert len(lines) <= 150, f"AGENTS.md is {len(lines)} lines; the cap is 150"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -650,9 +658,16 @@ def test_readme_is_short_enough_to_be_read():
     and `git worktree add` then refuses. One line says that directory is
     moved aside, so the recovery the README describes is the whole of the one
     `status` prints.
+
+    245 -> 246 on 2026-09-11, for note (d) of the second independent review of
+    #18: the same exception in this paragraph's own words — a `pushed:` that
+    is neither true nor false is a record `resume` refuses just as flatly as a
+    `--no-push` one, and the paragraph otherwise promises a recovery the
+    command's own finding rules out. One line, and the finding list beside it
+    names that record too.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 245, f"README.md is {len(lines)} lines; the cap is 245"
+    assert len(lines) <= 246, f"README.md is {len(lines)} lines; the cap is 246"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
