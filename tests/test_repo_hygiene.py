@@ -462,9 +462,19 @@ def test_agents_md_is_short_enough_to_be_read():
     clause rules out — the exit is the workstation that has the commit. Two
     lines, because an assistant handed that finding otherwise reaches for the
     one command the finding beside it has just refused.
+
+    142 -> 145 on 2026-09-11, for the review of #18: a STALE WORKTREE
+    REGISTRATION — the block `worktree list` keeps for a directory that is
+    gone — is `git worktree prune`'s to clear, and `resume` cannot work
+    around it, because the extension matches a leg on the registered path
+    alone. Three lines, for the two reaches an assistant makes when `resume`
+    says "already registered" or `git` says "already used by worktree at":
+    `worktree add --force`, which builds the pair git refused to build, and a
+    delete under `.git/worktrees/`, which is the record of the registration
+    and not a scratch directory.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 142, f"AGENTS.md is {len(lines)} lines; the cap is 142"
+    assert len(lines) <= 145, f"AGENTS.md is {len(lines)} lines; the cap is 145"
 
 
 def test_readme_is_short_enough_to_be_read():

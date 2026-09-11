@@ -1528,14 +1528,18 @@ def test_a_worktree_at_the_parked_commit_is_in_sync(atlas, home):
     assert "parked feature" not in result.stdout
 
 
-def test_a_recorded_features_deleted_worktree_reads_as_no_worktree_here(
+def test_a_recorded_features_deleted_worktree_names_the_prune_then_the_resume(
         atlas, home):
     """`worktree list --porcelain` keeps the block of a linked worktree whose
     directory was deleted until somebody runs `git worktree prune`. Read as a
     worktree, the recorded feature sat at the parked commit and was therefore
     reported CLEAN — the one answer that hides the case this layer exists for.
-    `read_worktrees` has checked the path since the local layer; so does the
-    lookup the record uses."""
+
+    And the registration that is left is not nothing: `resume.sh` matches a
+    leg on the registered PATH alone, so it reads that block as already done
+    and recreates nothing, or has its `git worktree add` refused for a path
+    git still holds. So the prune comes first and the `resume` second, and
+    the bare line — which names an exit that cannot run — never appears."""
     checkout = workspace_config(home)
     where = home / "Atlas-wt" / "001-a-thing"
     tip = feature_worktree(atlas, "001-a-thing", where)
@@ -1546,8 +1550,10 @@ def test_a_recorded_features_deleted_worktree_reads_as_no_worktree_here(
     result = run(STATUS, "Atlas", home=home)
     assert result.returncode == 1, result.stdout + result.stderr
     assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
-            "branch here; parked 2026-09-10T20:00:00Z on Eagle — `resume Atlas` "
-            "brings it back") in result.stdout
+            f"branch here, but a stale worktree registration for it is still "
+            f"recorded at {where} — clear it with `git -C {atlas} worktree "
+            "prune`, then `resume Atlas` brings it back") in result.stdout
+    assert "no worktree on that branch here; parked" not in result.stdout
 
 
 def test_a_worktree_that_moved_on_since_it_was_parked(atlas, home):
@@ -1611,6 +1617,21 @@ def test_a_no_push_record_with_no_worktree_here_never_names_resume(atlas, home):
             "workstation has the WIP commit, so nothing here brings it back — "
             "park it again from there") in result.stdout
     assert "`resume Atlas` brings it back" not in result.stdout
+
+    # The same record with a stale registration left behind: the prune is
+    # named, and `resume` still is not — there is nothing here to resume.
+    where = home / "Atlas-wt" / "001-a-thing"
+    feature_worktree(atlas, "001-a-thing", where)
+    rmtree(where)           # and NO `git worktree prune`
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): parked with --no-push "
+            "on Falcon and no worktree on that branch here, only a stale "
+            f"worktree registration at {where} — clear it with `git -C {atlas} "
+            "worktree prune`; only that workstation has the WIP commit, so "
+            "nothing here brings it back — park it again from there"
+            ) in result.stdout
+    assert "brings it back" in result.stdout and "`resume Atlas`" not in result.stdout
 
 
 def test_the_help_carries_the_no_push_exception_its_findings_do(home):

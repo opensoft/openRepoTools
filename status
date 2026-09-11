@@ -1390,6 +1390,9 @@ read_shape() {
 #    resumed on this machine. `resume <Name>` is the exit; nothing here adds
 #    a worktree. Unless the record is a `--no-push` one (3): then there is
 #    nothing here to resume FROM, and the exit is the workstation that has it.
+#    And where the porcelain still holds a REGISTRATION for that branch whose
+#    directory is gone, the prune that clears it is named first: `resume`
+#    cannot recreate a worktree git still believes it has.
 # 2. A WORKTREE WHOSE BRANCH TIP IS NOT THE PARKED COMMIT: moved on since it
 #    was parked (park again before leaving); or BEHIND it — the record is
 #    newer, parked later on another workstation, which `resume` refuses to
@@ -1664,26 +1667,37 @@ leg_repo_for_role() {
 }
 
 # The path of the worktree checked out on `<branch>` in `<repo>`, main or
-# linked, or nothing.
+# linked. THREE ANSWERS, because the porcelain has three: 0 and the path when
+# a worktree is there; 2 AND THE PATH when the only block for that branch is a
+# REGISTRATION WITHOUT A DIRECTORY; 1 and nothing when there is no block at
+# all.
 #
 # THE PATH HAS TO BE ON DISK. `worktree list --porcelain` keeps the block of a
 # linked worktree whose directory was deleted until somebody runs `git
-# worktree prune` — that block is metadata, not a worktree — so a recorded
-# feature whose directory is gone would otherwise be read as present, and at
-# the parked commit, as CLEAN: the one answer that hides the case this layer
-# exists for. `read_worktrees` checks the path before reading it for the same
-# reason. The scan goes on rather than giving up, so a live worktree on the
-# branch still wins over a stale block for it.
+# worktree prune` — and keeps a `locked` one, which it never even marks
+# prunable — so a recorded feature whose directory is gone would otherwise be
+# read as present, and at the parked commit, as CLEAN: the one answer that
+# hides the case this layer exists for. `read_worktrees` checks the path
+# before reading it for the same reason.
+#
+# AND A STALE BLOCK IS NOT "NOTHING HERE" EITHER, which is why it comes back
+# as 2 rather than as 1: it is the thing that STOPS the exit this layer would
+# otherwise name — see `check_parked_leg`. The scan goes on rather than
+# answering with the first block, so a live worktree on the branch wins over a
+# stale one for it; git makes that pair only under `worktree add --force`,
+# having refused the plain `add` over a registration it still holds.
 worktree_on_branch() {
-    local repo="$1" want="$2" line path=""
+    local repo="$1" want="$2" line path="" stale=""
     while IFS= read -r line; do
         case "$line" in
         "worktree "*) path="${line#worktree }" ;;
         "branch refs/heads/$want")
             if [ -d "$path" ]; then printf '%s\n' "$path"; return 0; fi
+            [ -n "$stale" ] || stale="$path"
             ;;
         esac
     done < <(g "$repo" worktree list --porcelain 2>/dev/null || true)
+    [ -z "$stale" ] || { printf '%s\n' "$stale"; return 2; }
     return 1
 }
 
@@ -1717,13 +1731,34 @@ wip_gap_is_ours() {
 # repository.
 check_parked_leg() {
     local root="$1" branch="$2" role="$3" commit="$4" pushed="$5" parked_at="$6" parked_on="$7" depth="$8"
-    local repo tree tip n
+    local repo tree="" ghost="" out rc=0 tip n
     repo="$(leg_repo_for_role "$root" "$role" || true)"
     if [ -z "$repo" ] || [ ! -e "$repo/.git" ]; then
         finding "parked feature $branch ($role leg): the record names a leg this root does not mount here"
         return 0
     fi
-    tree="$(worktree_on_branch "$repo" "$branch" || true)"
+    out="$(worktree_on_branch "$repo" "$branch")" || rc=$?
+    case "$rc" in
+    0) tree="$out" ;;
+    2) ghost="$out" ;;
+    esac
+    # A STALE REGISTRATION IS NAMED BEFORE THE EXIT IT BLOCKS, and the prune
+    # that clears it first, because this layer reads the record THE WAY
+    # `resume.sh` WILL JUDGE IT and `resume.sh` judges this one badly: its
+    # `leg_registered_at` matches on the registered PATH alone — fed by
+    # `git-common.sh`'s `load_git_worktrees`, which takes `worktree list
+    # --porcelain -z` raw, with no test that the directory is there — so a
+    # stale block AT the path it computes reads as already done ("worktree
+    # already registered at …; left as it is") and nothing is recreated,
+    # while a stale block at ANOTHER path leaves its plain `git worktree add`
+    # to be refused ("already used by worktree at …"). `resume.sh` names the
+    # hazard itself, where it rolls back what it created: "a phantom
+    # registration a later resume reads as 'already registered' for a path
+    # that is not there". Naming `resume` alone would be naming an exit that
+    # does not work — and the house rule is that the exit named is one that
+    # does. (`worktree prune` skips a `locked` block, which is why the finding
+    # gives the path: `git worktree list` says which kind it is.)
+    #
     # `--no-push` IS THE ONE RECORD `resume` CANNOT ANSWER, so no line under
     # it offers `resume` as the exit: the WIP commit is on the workstation
     # that parked it and nowhere else, which is exactly what `resume.sh`
@@ -1732,14 +1767,22 @@ check_parked_leg() {
     # had just ruled out, so where both states hold they are ONE line, and it
     # names the only exit there is: park it again, with the push, from there.
     if [ "$pushed" = false ] && [ -z "$tree" ]; then
-        finding "parked feature $branch ($role leg): parked with --no-push on ${parked_on:-another workstation} and no worktree on that branch here; only that workstation has the WIP commit, so nothing here brings it back — park it again from there"
+        if [ -n "$ghost" ]; then
+            finding "parked feature $branch ($role leg): parked with --no-push on ${parked_on:-another workstation} and no worktree on that branch here, only a stale worktree registration at $ghost — clear it with \`git -C $repo worktree prune\`; only that workstation has the WIP commit, so nothing here brings it back — park it again from there"
+        else
+            finding "parked feature $branch ($role leg): parked with --no-push on ${parked_on:-another workstation} and no worktree on that branch here; only that workstation has the WIP commit, so nothing here brings it back — park it again from there"
+        fi
         return 0
     fi
     if [ "$pushed" = false ]; then
         finding "parked feature $branch ($role leg): parked with --no-push on ${parked_on:-another workstation}; only that workstation has the WIP commit, and \`resume\` refuses it"
     fi
     if [ -z "$tree" ]; then
-        finding "parked feature $branch ($role leg): no worktree on that branch here; parked ${parked_at:-?} on ${parked_on:-?} — \`resume $ESTATE_NAME\` brings it back"
+        if [ -n "$ghost" ]; then
+            finding "parked feature $branch ($role leg): no worktree on that branch here, but a stale worktree registration for it is still recorded at $ghost — clear it with \`git -C $repo worktree prune\`, then \`resume $ESTATE_NAME\` brings it back"
+        else
+            finding "parked feature $branch ($role leg): no worktree on that branch here; parked ${parked_at:-?} on ${parked_on:-?} — \`resume $ESTATE_NAME\` brings it back"
+        fi
         return 0
     fi
     [ -n "$commit" ] || return 0
