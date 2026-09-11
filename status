@@ -27,8 +27,9 @@
 #
 # THIS IS THE LOCAL LAYER PLUS `--fetch`: what this machine already knows,
 # and — only when asked — what origin knows right now. `--fetch` is the
-# second layer, under Brett Heap's RULING of 2026-09-11, verbatim: "next
-# layer: --fetch". It runs `git fetch --prune origin` in every repository
+# second layer, under Brett Heap's RULING of 2026-09-11 (this repository's
+# #10), verbatim: "next layer: --fetch". It runs `git fetch --prune origin`
+# in every repository
 # about to be read, so the ahead/behind answers are current and a remote
 # branch deleted under a feature reads as gone; that fetch is THE ONE WRITE
 # this command ever makes — remote-tracking refs (`refs/remotes/origin/*`),
