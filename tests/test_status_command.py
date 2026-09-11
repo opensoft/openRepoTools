@@ -781,13 +781,16 @@ def github_origin(repo: Path, bare: Path, slug: str) -> None:
 
 
 def fake_gh(tmp_path: Path, *, failing: bool = False,
-            not_found: str | None = None) -> tuple[dict, Path]:
+            not_found: str | None = None,
+            not_found_prefix: str | None = None) -> tuple[dict, Path]:
     """A fake `gh` first on PATH that answers the two calls `status` makes —
     `api repos/<slug>` (Atlas is a fork of opensoft/Atlas, its leg is not) and
     the compare (3 behind, 1 ahead) — printing what the `--jq` filter would,
     fields joined by 0x1F, and logging every call. `failing` answers as a
     `gh` nobody logged in to (exit 4, true of every repository);
-    `not_found=<slug>` answers 404 (exit 1) for THAT repository only."""
+    `not_found=<slug>` answers 404 (exit 1) for THAT repository's own call
+    only, and `not_found_prefix=<slug>` for every call under it (its compare
+    too)."""
     shim = tmp_path / "gh-shim"
     shim.mkdir(parents=True, exist_ok=True)
     log = tmp_path / "gh-calls.log"
@@ -800,8 +803,12 @@ def fake_gh(tmp_path: Path, *, failing: bool = False,
         if not_found:
             body += (f"*\"repos/{not_found} \"*) printf 'gh: Not Found (HTTP 404)"
                      "\\n' >&2; exit 1 ;;\n")
+        if not_found_prefix:
+            body += (f"*\"repos/{not_found_prefix}\"*) printf 'gh: Not Found (HTTP 404)"
+                     "\\n' >&2; exit 1 ;;\n")
         body += (
             "*\"repos/opensoft/openRepoShape/compare/\"*) printf '0\\0374\\n' ;;\n"
+            "*\"repos/opensoft/openRepoShape \"*) printf 'main\\n' ;;\n"
             "*\"/compare/\"*) printf '3\\0371\\n' ;;\n"
             "*\"repos/testorg/Atlas-spec \"*) printf 'false\\037\\037\\n' ;;\n"
             "*\"repos/testorg/Atlas \"*) printf 'true\\037opensoft/Atlas\\037main\\n' ;;\n"
@@ -1131,8 +1138,8 @@ def test_a_pinned_root_with_matching_copies_says_so_and_names_what_it_did_not_re
     assert result.returncode == 0, result.stdout + result.stderr
     assert (f"    shape: pinned at {standard['shas'][-1][:7]} of {SHAPE_SOURCE}; "
             f"2/2 copies match their digests; currency not read (no clone of "
-            f"{SHAPE_SOURCE} under the projects directory; --fetch asks GitHub)"
-            ) in result.stdout
+            f"{SHAPE_SOURCE} with its default branch fetched under the projects "
+            f"directory; --fetch asks GitHub)") in result.stdout
     assert "in sync with origin/main; clean" in result.stdout
 
 
@@ -1212,14 +1219,162 @@ def test_under_fetch_with_no_clone_github_is_asked_once_about_the_pin(
     assert fetched.returncode == 1, fetched.stdout + fetched.stderr
     calls = log.read_text(encoding="utf-8").splitlines()
     assert calls == [
+        f"api repos/{SHAPE_SOURCE} --hostname github.com "
+        "--jq .default_branch // \"main\"",
         f"api repos/{SHAPE_SOURCE}/compare/{standard['shas'][0]}...main?per_page=1 "
         "--hostname github.com "
-        "--jq [(.behind_by|tostring), (.ahead_by|tostring)] | join(\"\\u001f\")"
+        "--jq [(.behind_by|tostring), (.ahead_by|tostring)] | join(\"\\u001f\")",
     ], calls
     assert (f"    - shape pin {standard['shas'][0][:7]} is 4 commit(s) behind "
             f"{SHAPE_SOURCE} main (per GitHub): update-shape.py check --root "
             f"{atlas}") in fetched.stdout
     assert f"against {SHAPE_SOURCE} main per GitHub" in fetched.stdout
+
+
+def test_a_clone_of_the_standard_is_read_before_github_even_under_fetch(
+        atlas, home, status_remotes, tmp_path):
+    """The documents promise the clone first and GitHub only when no clone
+    answered — and the first draft did the reverse under `--fetch`, spending
+    a round-trip, and a strike against gh's budget, on a question the clone
+    beside it could answer for free."""
+    standard = fake_standard(status_remotes["base"])
+    standard_clone(home, standard["bare"])
+    pin_shape(atlas, standard["shas"][0], COPIES)
+    env, log = fake_gh(tmp_path)
+    result = run(STATUS, "--fetch", "Atlas", home=home, env=env)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert not log.exists(), "the clone answered; GitHub must not be asked"
+    assert "per a clone under the projects directory" in result.stdout
+    assert " is 2 commit(s) behind " in result.stdout
+
+
+def test_one_pin_on_two_roots_is_one_question_to_github(home, status_remotes,
+                                                         tmp_path):
+    """A family's holder and members are cut from the same commit. Asking
+    GitHub once per root would be N round-trips and N strikes against the
+    budget the fork check shares; the answer about a pin serves every root
+    that carries it, while each root still names its own `--root`."""
+    standard = fake_standard(status_remotes["base"])
+    atlas = clone_root(home, status_remotes["Atlas"], "Atlas")
+    borealis = clone_root(home, status_remotes["Atlas"], "Borealis")
+    pin_shape(atlas, standard["shas"][0], COPIES)
+    pin_shape(borealis, standard["shas"][0], COPIES, push=False)
+    env, log = fake_gh(tmp_path)
+    result = run(STATUS, "--all", "--fetch", home=home, env=env)
+    assert result.returncode == 1, result.stdout + result.stderr
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert len(calls) == 2, calls
+    assert calls[0].startswith(f"api repos/{SHAPE_SOURCE} --hostname")
+    assert "/compare/" in calls[1]
+    for root in (atlas, borealis):
+        assert (f"is 4 commit(s) behind {SHAPE_SOURCE} main (per GitHub): "
+                f"update-shape.py check --root {root}") in result.stdout
+
+
+def test_a_404_on_the_shape_question_leaves_the_fork_check_asked(
+        atlas, home, status_remotes, tmp_path):
+    """The shape check's own failure is said on its row, and the leg's fork
+    check beside it is still asked — one failure is not a settled run."""
+    standard = fake_standard(status_remotes["base"])
+    pin_shape(atlas, standard["shas"][0], COPIES)
+    github_origin(atlas / "spec", status_remotes["Atlas"]["leg_bare"],
+                  "testorg/Atlas-spec")
+    env, log = fake_gh(tmp_path, not_found_prefix=SHAPE_SOURCE)
+    result = run(STATUS, "--fetch", "Atlas", home=home, env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (f"    shape check: `gh api repos/{SHAPE_SOURCE}` failed (gh: Not Found "
+            "(HTTP 404)); the other repositories are still asked") in result.stdout
+    assert ("currency NOT read: no clone of opensoft/openRepoShape with its "
+            "default branch fetched under the projects directory, and GitHub "
+            "did not answer (an earlier line says why)") in result.stdout
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert len(calls) == 2, calls
+    assert calls[1].startswith("api repos/testorg/Atlas-spec "), (
+        "the leg's fork check was still asked")
+
+
+def test_a_manifest_without_a_shape_mirror_is_out_of_step(atlas, home,
+                                                          status_remotes):
+    """`update-shape.py` refuses a manifest with no `shape:` block, so a pin
+    beside one is the same half-done state as two different commits."""
+    standard = fake_standard(status_remotes["base"])
+    pin_shape(atlas, standard["shas"][-1], COPIES)
+    manifest = atlas / "project.yaml"
+    text = manifest.read_text(encoding="utf-8")
+    manifest.write_text(text[:text.index("\nshape:\n") + 1], encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - shape: project.yaml carries no `shape:` commit beside "
+            "contracts/shape-pin.yaml (update-shape.py moves both together)"
+            ) in result.stdout
+
+
+@NEEDS_UPSTREAM
+def test_a_family_holder_reads_its_pin_and_the_mirror_in_family_yaml(estate,
+                                                                    home):
+    """The holder arm: the same pin, the mirror read out of `family.yaml`
+    rather than `project.yaml`. The holder here is the real family-root
+    template's clone, which carries no pin; one is written with a mirror
+    naming another commit, and the out-of-step finding names family.yaml."""
+    import hashlib
+    holder = estate["holder"]
+    (holder / "contracts").mkdir(exist_ok=True)
+    copy = holder / "scripts" / "validate-family.py"
+    copy.write_text("#!/usr/bin/env python3\nprint('ok')\n", encoding="utf-8")
+    digest = hashlib.sha256(copy.read_bytes()).hexdigest()
+    pinned, mirrored = "1" * 40, "2" * 40
+    (holder / "contracts" / "shape-pin.yaml").write_text(
+        SHAPE_PIN_YAML.format(source=SHAPE_SOURCE, commit=pinned, tree="0" * 64,
+                              rows=f"  - path: scripts/validate-family.py\n"
+                                   f"    sha256: \"{digest}\""),
+        encoding="utf-8")
+    family_yaml = holder / "family.yaml"
+    family_yaml.write_text(
+        family_yaml.read_text(encoding="utf-8") + SHAPE_MIRROR_YAML.format(
+            source=SHAPE_SOURCE, commit=mirrored, tree="0" * 64),
+        encoding="utf-8")
+    result = run(STATUS, FAMILY, home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    shape: pinned at {pinned[:7]} of {SHAPE_SOURCE}; 1/1 copies "
+            "match their digests") in result.stdout
+    assert (f"    - shape: family.yaml mirrors {mirrored[:7]} but "
+            f"contracts/shape-pin.yaml pins {pinned[:7]}: out of step "
+            "(update-shape.py moves both together)") in result.stdout
+    assert result.stdout.count("    shape:") == 1, (
+        "the members carry no pin and say nothing about one")
+
+
+def test_a_tracking_branch_no_remote_has_is_named_after_the_fetch(
+        atlas, home, status_remotes):
+    """Three lines the first draft could print wrongly: a fetch of a remote
+    with no such branch says so rather than "nothing new"; and with upstream
+    fetched and lacking it, the fork line says "after the fetch", not "never
+    fetched (--fetch asks it)"."""
+    parent = parent_ahead(status_remotes["base"], status_remotes["Atlas"],
+                          "nodevelop")
+    git("remote", "add", "upstream", str(parent), cwd=atlas)
+    manifest = atlas / "project.yaml"
+    manifest.write_text(manifest.read_text(encoding="utf-8").replace(
+        "tracking_branch: main", "tracking_branch: develop"), encoding="utf-8")
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "    fetched origin: there is no origin/develop" in result.stdout
+    assert "    fetched upstream: there is no upstream/develop" in result.stdout
+    assert ("    - fork: no upstream/develop after the fetch: upstream has no "
+            "branch develop") in result.stdout
+    assert "nothing new on origin/develop" not in result.stdout
+    assert "never fetched" not in result.stdout
+
+
+def test_a_failed_upstream_fetch_is_not_blamed_on_the_person(atlas, home):
+    git("remote", "add", "upstream", str(home / "nowhere" / "parent.git"),
+        cwd=atlas)
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "    - fetch upstream failed: " in result.stdout
+    assert ("    - fork: no upstream/main here, and the fetch of upstream above "
+            "did not bring one") in result.stdout
+    assert "--fetch` asks it" not in result.stdout
 
 
 def test_a_root_without_a_shape_pin_says_nothing_about_one(atlas, home):

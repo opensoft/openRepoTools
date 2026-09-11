@@ -85,9 +85,11 @@ sequence, and relay their per-repository lines rather than summarising them.
    differs is DRIFT, and the exit is upstream — never re-digest it, never edit
    the pin; a pin behind the standard's `main` names `update-shape.py check
    --root <root>`, which is the person's to run. Currency comes from a clone
-   of openRepoShape under the projects directory or, under `--fetch`, from
-   GitHub; "currency not read" in the note means neither was there, not that
-   the pin is current. The parked record against disk is the one layer left.
+   of the source under the projects directory (found by its origin, never by
+   folder name), else under `--fetch` from GitHub, once per pin; "currency
+   not read" in the note means neither answered — a clone missing or never
+   fetched, GitHub not asked or refusing — never that the pin is current.
+   The parked record against disk is the one layer left.
    Its
    bare form outside every estate reads them all WITHOUT asking, because a
    read — fetched or not — moves nothing of yours; `status --all` from

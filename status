@@ -61,11 +61,14 @@
 # copied shape files were cut from, and a sha256 per copy. The copies are
 # re-hashed here and one that differs is DRIFT — a copy edited in place, whose
 # exit is upstream, never a re-digest; a `shape:` mirror in `project.yaml` /
-# `family.yaml` that names another commit is out of step; and the pin is read
-# against the standard's `main` — from a clone of openRepoShape under the
-# projects directory when there is one, as of its last fetch, or under
-# `--fetch` from GitHub, once — so a pin that has fallen behind, or sits on a
-# commit `main` never had, is named with `update-shape.py check` as the exit.
+# `family.yaml` that names another commit, or is missing, is out of step; and
+# the pin is read against the source's default branch (`main` for
+# openRepoShape, read from the clone's `origin/HEAD` or from GitHub) — from a
+# clone of the source under the projects directory when there is one, found
+# by its origin's slug the way `--repo` finds an estate, as of its last fetch;
+# else under `--fetch` from GitHub, once per pin per run — so a pin that has
+# fallen behind, or sits on a commit the branch never had, is named with
+# `update-shape.py check` as the exit.
 # See "the shape pin", below. What it does NOT do yet, by design: the parked
 # record in `~/.agents/workspace.yaml` against the worktrees on disk. That is
 # the one layer left to add HERE.
@@ -120,10 +123,11 @@ with `gh api`, and a fork is a finding naming the parent and the `git remote
 add upstream …` to run. Not a fork: nothing to say. THE SHAPE PIN
 (`contracts/shape-pin.yaml`) is read too: a copied shape file whose sha256 is
 not the one recorded is drift, a `shape:` mirror naming another commit is out
-of step, and the pinned openRepoShape commit is compared with the standard's
-`main` — from a clone of it under your projects directory, or under `--fetch`
-from GitHub — so a pin that has fallen behind is named with the exit,
-`update-shape.py check --root <root>`.
+of step, and the pinned commit is compared with the source's default branch
+— from a clone of the source under your projects directory, found by its
+origin like `--repo` finds an estate, or under `--fetch` from GitHub — so a
+pin that has fallen behind is named with the exit, `update-shape.py check
+--root <root>`.
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
 (<Name>/<Name>/family.yaml) or a standalone project root (<Name>/project.yaml).
@@ -1106,44 +1110,56 @@ ask_github_fork() {
 # 2. THE MIRROR. `project.yaml` (or `family.yaml`) carries a `shape:` block
 #    that mirrors the pin's commit; `update-shape.py` moves both together, so
 #    two different commits there is a half-done update.
-# 3. THE PIN AGAINST THE STANDARD'S `main`. From a clone of openRepoShape
-#    under the projects directory when there is one — found by its origin, the
-#    way `--repo` finds an estate — read from local refs, as of that clone's
-#    last fetch; else, under `--fetch`, from GitHub's compare endpoint, once.
-#    Behind is a finding whose exit is `update-shape.py check --root <root>`;
-#    a pin `main` does not contain is a finding too, because the standard
-#    squash-merges and a branch commit is orphaned the moment its pull request
-#    lands. With no clone and no `--fetch` the note says currency was not
-#    read, so nobody mistakes "no finding" for "current".
+# 3. THE PIN AGAINST THE SOURCE'S DEFAULT BRANCH. From a clone of the source
+#    under the projects directory when there is one — found by its origin's
+#    slug, the way `--repo` finds an estate, never by folder name — read from
+#    local refs, as of that clone's last fetch; else, under `--fetch`, from
+#    GitHub's compare endpoint, once per pin per run. Behind is a finding
+#    whose exit is `update-shape.py check --root <root>`; a pin the branch
+#    does not contain is a finding too, because the standard squash-merges
+#    and a branch commit is orphaned the moment its pull request lands. When
+#    neither source answered, the note says currency was NOT read and why,
+#    so nobody mistakes "no finding" for "current".
 #
 # A root with no `contracts/shape-pin.yaml` says nothing here: a root adopted
 # before the pin existed, or a probe, is not out of sync with a pin it never
 # had.
 
 SHA_TOOL=""
+# Which sha256 this machine has: GNU `sha256sum`, the `shasum` a Mac ships, or
+# `openssl`. Chosen ONCE, here, and not inside `file_sha256`, whose caller runs
+# it in a command substitution — a subshell, where nothing chosen would
+# survive to the next file.
+choose_sha_tool() {
+    [ -z "$SHA_TOOL" ] || return 0
+    if command -v sha256sum >/dev/null 2>&1; then SHA_TOOL=sha256sum
+    elif command -v shasum >/dev/null 2>&1; then SHA_TOOL=shasum
+    elif command -v openssl >/dev/null 2>&1; then SHA_TOOL=openssl
+    else SHA_TOOL=none
+    fi
+}
+
 # sha256 of one file's bytes, as `file_sha256` in the standard's
-# `scripts/repo_shape.py` computes it. The tool is chosen once; empty when
-# none of the three is here, and the caller says so rather than guessing.
+# `scripts/repo_shape.py` computes it. Empty when the tool could not read the
+# file. GNU `sha256sum` and `shasum` mark a name holding a backslash or a
+# newline by prefixing the whole line with `\`; that is about the name, not
+# the digest, and is dropped.
 file_sha256() {
     local file="$1" out=""
-    if [ -z "$SHA_TOOL" ]; then
-        if command -v sha256sum >/dev/null 2>&1; then SHA_TOOL=sha256sum
-        elif command -v shasum >/dev/null 2>&1; then SHA_TOOL=shasum
-        elif command -v openssl >/dev/null 2>&1; then SHA_TOOL=openssl
-        else SHA_TOOL=none
-        fi
-    fi
     case "$SHA_TOOL" in
     sha256sum) out="$(sha256sum -- "$file" 2>/dev/null || true)" ;;
     shasum) out="$(shasum -a 256 -- "$file" 2>/dev/null || true)" ;;
     openssl) out="$(openssl dgst -sha256 -r -- "$file" 2>/dev/null || true)" ;;
     esac
-    printf '%s' "${out%% *}"
+    out="${out%% *}"
+    printf '%s' "${out#\\}"
 }
 
 # `path<TAB>sha256` per row of the pin's `files:` block — the rows
-# `update-shape.py` writes as `  - path: <p>` / `    sha256: "<hex>"`. A new
-# top-level key ends the block.
+# `update-shape.py` writes as `  - path: <p>` / `    sha256: "<hex>"`, in
+# that order; a hand-edited row the other way round is dropped, which is one
+# reason the note counts rows. A trailing comment on a path is not part of
+# it. A new top-level key ends the block.
 shape_pin_rows() {
     local file="$1" line path="" digest in_files=0
     [ -f "$file" ] || return 0
@@ -1156,7 +1172,12 @@ shape_pin_rows() {
         esac
         [ "$in_files" -eq 1 ] || continue
         case "$line" in
-        '  - path:'*) path="$(trim_unquote "${line#*:}")" ;;
+        '  - path:'*)
+            path="$(trim_unquote "${line#*:}")"
+            case "$path" in
+            *' #'*) path="$(trim_unquote "${path%% #*}")" ;;
+            esac
+            ;;
         '    sha256:'*)
             digest="$(trim_unquote "${line#*:}")"
             [ -z "$path" ] || printf '%s\t%s\n' "$path" "$digest"
@@ -1185,51 +1206,93 @@ nested_scalar() {
     done <"$file"
 }
 
-# The pin's commit against the standard's `main`, from a clone of the standard
-# under the projects directory: `merge-base --is-ancestor` says whether `main`
-# contains it, `rev-list --count` says how far behind. Returns 0 when it could
-# answer (finding or not), 1 when there is no such clone or it has never
-# fetched, so the caller can try GitHub or say "not read".
+# THE SOURCE'S DEFAULT BRANCH is what a pin is measured against. openRepoShape's
+# is `main`, but `source_repository:` is whatever a fork of the standard was
+# named, so it is READ where it can be — the clone's `origin/HEAD`, or GitHub's
+# `default_branch` — and remembered per source for the run; `main` when
+# neither says. And the answer about ONE pin serves every root that carries
+# it: a family's holder and members are cut from the same commit, and N
+# identical questions would be N round-trips and N strikes against
+# `gh_api_line`'s budget, which the fork check shares.
+SHAPE_DEFAULT_SOURCE=""
+SHAPE_DEFAULT_BRANCH=""
+SHAPE_ASKED=""
+SHAPE_ASKED_BEHIND=""
+SHAPE_ASKED_AHEAD=""
+
+# The pin's commit against the source's default branch, from a clone of the
+# source under the projects directory — found by its origin's slug, the way
+# `--repo` finds an estate, never by folder name. `merge-base --is-ancestor`
+# says whether the branch contains it, `rev-list --count` says how far behind.
+# Returns 0 when it could answer (finding or not), 1 when there is no such
+# clone or it has never fetched its default branch, so the caller can try
+# GitHub or say "not read".
 shape_currency_from_clone() {
-    local root="$1" commit="$2" source="$3" clone n
+    local root="$1" commit="$2" source="$3" clone n default
     clone="$(clone_with_origin "$source" || true)"
     [ -n "$clone" ] || return 1
-    has_ref "$clone" refs/remotes/origin/main || return 1
+    default="$(g "$clone" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+    default="${default#origin/}"
+    [ -n "$default" ] || default=main
+    has_ref "$clone" "refs/remotes/origin/$default" || return 1
+    SHAPE_DEFAULT_SOURCE="$source"
+    SHAPE_DEFAULT_BRANCH="$default"
     if ! g "$clone" cat-file -e "$commit^{commit}" 2>/dev/null; then
         finding "shape pin $(short "$commit") is not in the clone of $source at $clone, as of its last fetch: fetch it, or the pin is on a commit that was squash-merged away"
         return 0
     fi
-    if g "$clone" merge-base --is-ancestor "$commit" origin/main 2>/dev/null; then
-        n="$(g "$clone" rev-list --count "$commit..origin/main" 2>/dev/null || true)"
+    if g "$clone" merge-base --is-ancestor "$commit" "origin/$default" 2>/dev/null; then
+        n="$(g "$clone" rev-list --count "$commit..origin/$default" 2>/dev/null || true)"
         [ -z "$n" ] || [ "$n" = 0 ] ||
-            finding "shape pin $(short "$commit") is $n commit(s) behind $source main (per the clone at $clone, as of its last fetch): update-shape.py check --root $root"
+            finding "shape pin $(short "$commit") is $n commit(s) behind $source $default (per the clone at $clone, as of its last fetch): update-shape.py check --root $root"
     else
-        finding "shape pin $(short "$commit") is not on $source main (per the clone at $clone): a branch commit, which the standard's squash-merge orphans"
+        finding "shape pin $(short "$commit") is not on $source $default (per the clone at $clone): a branch commit, which the standard's squash-merge orphans"
     fi
     return 0
 }
 
-# The same question put to GitHub, under `--fetch` only: `compare/<pin>...main`
-# with the pin as base, so `ahead_by` is what `main` has since the pin and
-# `behind_by` is what the pin has that `main` never did.
+# The same question put to GitHub, under `--fetch` only and only when no clone
+# answered: the source's default branch once per source, then `compare/<pin>
+# ...<default>` once per pin, with the pin as base so `ahead_by` is what the
+# branch has since the pin and `behind_by` is what the pin has that the
+# branch never did. Returns 1 when GitHub did not answer (`gh_api_line` has
+# said why, or an earlier failure settled the run).
 ask_github_shape_pin() {
-    local root="$1" commit="$2" source="$3" behind ahead
-    gh_api_line "shape check" "repos/$source/compare/$commit...main?per_page=1" \
-        '[(.behind_by|tostring), (.ahead_by|tostring)] | join("\u001f")' || return 1
-    IFS=$'\037' read -r behind ahead <<<"$GH_LINE"
+    local root="$1" commit="$2" source="$3" behind ahead default
+    if [ "$SHAPE_DEFAULT_SOURCE" = "$source" ] && [ -n "$SHAPE_DEFAULT_BRANCH" ]; then
+        default="$SHAPE_DEFAULT_BRANCH"
+    else
+        gh_api_line "shape check" "repos/$source" '.default_branch // "main"' || return 1
+        default="$GH_LINE"
+        [ -n "$default" ] || default=main
+        SHAPE_DEFAULT_SOURCE="$source"
+        SHAPE_DEFAULT_BRANCH="$default"
+    fi
+    if [ "$SHAPE_ASKED" = "$source $commit" ]; then
+        behind="$SHAPE_ASKED_BEHIND"
+        ahead="$SHAPE_ASKED_AHEAD"
+    else
+        gh_api_line "shape check" "repos/$source/compare/$commit...$default?per_page=1" \
+            '[(.behind_by|tostring), (.ahead_by|tostring)] | join("\u001f")' || return 1
+        IFS=$'\037' read -r behind ahead <<<"$GH_LINE"
+        SHAPE_ASKED="$source $commit"
+        SHAPE_ASKED_BEHIND="$behind"
+        SHAPE_ASKED_AHEAD="$ahead"
+    fi
     if ! is_count "$behind" || ! is_count "$ahead"; then
-        finding "shape: GitHub's compare of pin $(short "$commit") with $source main was not two counts; not read"
+        finding "shape: GitHub's compare of pin $(short "$commit") with $source $default was not two counts; not read"
         return 0
     fi
     [ "$behind" = 0 ] ||
-        finding "shape pin $(short "$commit") is not on $source main: $behind commit(s) of it are not there (per GitHub) — a branch commit, which the standard's squash-merge orphans"
+        finding "shape pin $(short "$commit") is not on $source $default: $behind commit(s) of it are not there (per GitHub) — a branch commit, which the standard's squash-merge orphans"
     [ "$ahead" = 0 ] ||
-        finding "shape pin $(short "$commit") is $ahead commit(s) behind $source main (per GitHub): update-shape.py check --root $root"
+        finding "shape pin $(short "$commit") is $ahead commit(s) behind $source $default (per GitHub): update-shape.py check --root $root"
     return 0
 }
 
 # A root's or holder's shape pin, all three reads, and one note line saying
-# what was pinned, how many copies matched, and whether currency was read.
+# what was pinned, how many copies matched, and where currency came from — or
+# that it was NOT read, and why, so silence is never mistaken for current.
 read_shape() {
     local root="$1" manifest="$2" pin commit source mirror path digest actual
     local ok=0 total=0 currency=""
@@ -1241,6 +1304,7 @@ read_shape() {
         finding "shape: contracts/shape-pin.yaml records no commit"
         return 0
     fi
+    choose_sha_tool
     while IFS=$'\t' read -r path digest; do
         [ -n "$path" ] || continue
         total=$((total + 1))
@@ -1248,26 +1312,41 @@ read_shape() {
             finding "shape copy $path is missing; contracts/shape-pin.yaml names it (update-shape.py check --root $root)"
             continue
         fi
+        if [ "$SHA_TOOL" = none ]; then
+            finding "shape copy $path not checked: no sha256sum, shasum or openssl on PATH"
+            continue
+        fi
         actual="$(file_sha256 "$root/$path")"
         if [ -z "$actual" ]; then
-            finding "shape copy $path not checked: no sha256sum, shasum or openssl on PATH"
+            finding "shape copy $path not checked: \`$SHA_TOOL\` could not read it"
         elif [ "$actual" != "$digest" ]; then
             finding "shape copy $path edited in place: its sha256 is not the one contracts/shape-pin.yaml records (drift: carry the change upstream, never re-digest)"
         else
             ok=$((ok + 1))
         fi
     done < <(shape_pin_rows "$pin")
+    # THE MIRROR. `update-shape.py` moves the pin and the manifest's `shape:`
+    # block together, and refuses a manifest that has no such block — so a
+    # pin beside a manifest without one is the same half-done state as two
+    # different commits.
     mirror="$(nested_scalar "$root/$manifest" shape commit)"
-    if [ -n "$mirror" ] && [ "$mirror" != "$commit" ]; then
+    if [ -z "$mirror" ]; then
+        finding "shape: $manifest carries no \`shape:\` commit beside contracts/shape-pin.yaml (update-shape.py moves both together)"
+    elif [ "$mirror" != "$commit" ]; then
         finding "shape: $manifest mirrors $(short "$mirror") but contracts/shape-pin.yaml pins $(short "$commit"): out of step (update-shape.py moves both together)"
     fi
+    # CURRENCY: the clone first, because it is local and free, and reading it
+    # before asking GitHub is what the documents promise; GitHub only under
+    # `--fetch`, and only when no clone answered.
     if [ -n "$source" ]; then
-        if [ "$FETCH" -eq 1 ] && ask_github_shape_pin "$root" "$commit" "$source"; then
-            currency="; against $source main per GitHub"
-        elif shape_currency_from_clone "$root" "$commit" "$source"; then
-            currency="; against $source main per a clone under the projects directory"
+        if shape_currency_from_clone "$root" "$commit" "$source"; then
+            currency="; against $source $SHAPE_DEFAULT_BRANCH per a clone under the projects directory"
+        elif [ "$FETCH" -eq 1 ] && ask_github_shape_pin "$root" "$commit" "$source"; then
+            currency="; against $source $SHAPE_DEFAULT_BRANCH per GitHub"
+        elif [ "$FETCH" -eq 1 ]; then
+            currency="; currency NOT read: no clone of $source with its default branch fetched under the projects directory, and GitHub did not answer (an earlier line says why)"
         else
-            currency="; currency not read (no clone of $source under the projects directory; --fetch asks GitHub)"
+            currency="; currency not read (no clone of $source with its default branch fetched under the projects directory; --fetch asks GitHub)"
         fi
     fi
     say "    shape: pinned at $(short "$commit") of ${source:-an unnamed source}; $ok/$total copies match their digests$currency"

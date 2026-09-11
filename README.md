@@ -45,10 +45,12 @@ here. THE SHAPE PIN is read too (his RULING of the same day, "next layer:
 shape-pin drift"): every root and holder carries `contracts/shape-pin.yaml`,
 the openRepoShape commit its copied shape files came from and a sha256 per
 copy; a copy whose digest differs is drift, whose exit is upstream and never a
-re-digest, a `shape:` mirror naming another commit is out of step, and the pin
-is compared with the standard's `main` — from a clone of openRepoShape under
-your projects directory, or under `--fetch` from GitHub — naming
-`update-shape.py check --root <root>` as the exit when it has fallen behind.
+re-digest, a `shape:` mirror naming another commit (or missing) is out of
+step, and the pin is compared with the source's default branch — from a clone
+of the source under your projects directory, found by its origin the way
+`--repo` finds an estate, or else under `--fetch` from GitHub, once per pin —
+naming `update-shape.py check --root <root>` as the exit when it has fallen
+behind; "currency not read" in the note means neither source answered.
 Those two questions to GitHub, the fork and the pin, are the only uses of `gh`
 in the three estate commands; the installer has its own. Four layers so far:
 the local layer, `--fetch`, the fork and the pin; the parked record against

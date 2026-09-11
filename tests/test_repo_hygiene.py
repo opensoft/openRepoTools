@@ -426,14 +426,14 @@ def test_agents_md_is_short_enough_to_be_read():
     ONE use of `gh` in these commands and it is read-only, and that the
     `git remote add upstream …` a finding names is the person's to run.
 
-    122 -> 131 on 2026-09-11, for the shape-pin layer (Brett Heap's RULING of
+    122 -> 133 on 2026-09-11, for the shape-pin layer (Brett Heap's RULING of
     that day, "next layer: shape-pin drift"). Rule 4 says what an assistant
     must never do about a drift finding — re-digest the copy or edit the pin
     — and what it must not read into "currency not read": that the pin is
     current. Both are the readings reached for unaided.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 131, f"AGENTS.md is {len(lines)} lines; the cap is 131"
+    assert len(lines) <= 133, f"AGENTS.md is {len(lines)} lines; the cap is 133"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -509,14 +509,14 @@ def test_readme_is_short_enough_to_be_read():
     this is the one use of `gh` in these commands; the list of layers still
     to come loses one.
 
-    221 -> 230 on 2026-09-11, for the shape-pin layer (Brett Heap's RULING of
+    221 -> 232 on 2026-09-11, for the shape-pin layer (Brett Heap's RULING of
     that day, "next layer: shape-pin drift"). Seven lines in the `status`
     paragraph say what the pin is, the three things read against it, where
     currency comes from and the exit named; the list of layers still to come
     loses another.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 230, f"README.md is {len(lines)} lines; the cap is 230"
+    assert len(lines) <= 232, f"README.md is {len(lines)} lines; the cap is 232"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
