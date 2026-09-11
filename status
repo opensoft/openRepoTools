@@ -1552,7 +1552,7 @@ read_shape() {
 #    from refusing that, and the same test is made here.
 #    AND A RECORD THAT NAMES NO PARKED COMMIT FOR THE LEG is a state of this
 #    field, not a leg to pass over (the independent review of #20,
-#    2026-09-11, note 7, recorded there as out of scope). There is nothing
+#    2026-09-11, note 7; this repository's #21, recorded there as out of scope). There is nothing
 #    for a tip to be compared WITH, so none of those arms can run; and with
 #    no worktree here `resume` does not bring it back either — its RR1
 #    refuses a leg whose parked commit is not origin's tip, and an absent
@@ -1597,7 +1597,7 @@ read_shape() {
 #    disk, and read here because `resume` refuses the WHOLE FEATURE for it —
 #    `collect_legs` maps each leg's role onto this checkout and its `*)
 #    return 1` takes every other leg of that feature with it (the independent
-#    review of #20, 2026-09-11, note 8, recorded there as out of scope). It is
+#    review of #20, 2026-09-11, note 8; this repository's #21, recorded there as out of scope). It is
 #    the ROOT's finding, since no leg repository can be found for a leg that
 #    names no role, and the exit is a park that parks the feature through.
 #
