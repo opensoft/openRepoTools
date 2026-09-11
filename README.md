@@ -41,9 +41,20 @@ layer: fork against upstream"): with a remote named `upstream`,
 fetches upstream too; with none, and only under `--fetch`, an origin on
 github.com is asked about once with `gh api`, and a fork is a finding naming
 the parent and the `git remote add upstream …` that makes the drift readable
-here — the one use of `gh` in these commands. Those three are the
-local layer, `--fetch` and the fork; shape-pin drift and the parked record
-against disk are the layers still to come.
+here. THE SHAPE PIN is read too (his RULING of the same day, "next layer:
+shape-pin drift"): every root and holder carries `contracts/shape-pin.yaml`,
+the openRepoShape commit its copied shape files came from and a sha256 per
+copy; a copy whose digest differs is drift, whose exit is upstream and never a
+re-digest, a `shape:` mirror naming another commit (or missing) is out of
+step, and the pin is compared with the source's default branch — from a clone
+of the source under your projects directory, found by its origin the way
+`--repo` finds an estate, or else under `--fetch` from GitHub, once per pin —
+naming `update-shape.py check --root <root>` as the exit when it has fallen
+behind; "currency not read" in the note means neither source answered.
+Those two questions to GitHub, the fork and the pin, are the only uses of `gh`
+in the three estate commands; the installer has its own. Four layers so far:
+the local layer, `--fetch`, the fork and the pin; the parked record against
+disk is the layer still to come.
 
 `openRepoTools` itself installs and does nothing else. It has no verb: the
 standard's front door is `openRepoShape`, which scaffolds projects and stays
