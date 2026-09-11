@@ -671,8 +671,13 @@ def test_a_failed_fetch_is_a_finding_and_the_read_goes_on(atlas, home):
     assert result.returncode == 1, result.stdout + result.stderr
     assert "    - fetch failed: " in result.stdout
     assert "as of the last fetch that worked" in result.stdout
-    assert "    fetched origin: nothing new on origin/main" in result.stdout, (
-        "the leg's fetch still ran")
+    # EVERY FETCH IS MADE BEFORE ANY ROW IS PRINTED, and each row still
+    # carries its own fetch's line and its own fetch's finding: the failure
+    # belongs to the root, the "nothing new" to the leg.
+    root_block, _, leg_block = result.stdout.partition("  leg    main")
+    assert "    - fetch failed: " in root_block
+    assert "    fetched origin: nothing new on origin/main" in leg_block, (
+        "the leg's fetch still ran, and its line is on the leg's row")
     assert ("at its pin, which is origin/main's tip as of the last fetch; "
             "clean") in result.stdout
     assert "1 finding(s) in 2 repositories" in result.stdout
@@ -1673,6 +1678,56 @@ def test_a_missing_parked_commit_is_read_against_what_the_record_claims(
             f"{FAKE_SHA[:7]} is not here, which is what --no-push means — "
             "Falcon is the only place it is") in result.stdout
     assert "never fetched" not in result.stdout
+
+
+def test_a_parked_commit_still_missing_after_this_runs_fetch_says_so(atlas, home):
+    """After a fetch that WORKED in this repository, "never fetched" is ruled
+    out, and saying it would contradict the `fetched origin:` line printed a
+    moment earlier — `no_origin_branch_finding`'s rule, and this layer's too
+    now that every repository is fetched before any row is read."""
+    checkout = workspace_config(home)
+    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA)
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (repo leg): its parked commit "
+            f"{FAKE_SHA[:7]} is not here after this run's fetch — the record "
+            "says it was pushed, so origin has not got it either"
+            ) in result.stdout
+    assert "never fetched it" not in result.stdout
+
+
+def test_under_fetch_the_legs_own_fetch_comes_before_the_record_is_read(
+        atlas, home, status_remotes):
+    """`--fetch` says it asks origin in EVERY repository FIRST, and then
+    reads. The record layer is read on the ROOT's row while the legs are rows
+    of their own, so a parked commit that had only ever been pushed to the
+    SPEC LEG's origin was read as "not here" by the very run that fetched it
+    a moment later — a finding that vanished on a second run. With every
+    fetch made before any row is read, what is left is the true one: this
+    worktree is behind a record that is newer."""
+    checkout = workspace_config(home)
+    leg = atlas / "spec"
+    git("checkout", "-q", "main", cwd=leg)
+    feature_worktree(leg, "001-s-thing", home / "Atlas-wt" / "001-s-thing" / "spec")
+    # The parked commit: made and pushed to the LEG's origin from another
+    # workstation, so nothing here knows it until this run's fetch.
+    other = status_remotes["base"] / "elsewhere-spec"
+    git("clone", "-q", str(status_remotes["Atlas"]["leg_bare"]), str(other),
+        cwd=status_remotes["base"])
+    git("checkout", "-q", "001-s-thing", cwd=other)
+    (other / "more.md").write_text("parked over there\n", encoding="utf-8")
+    commit_all(other, "parked from the other workstation")
+    parked = git("rev-parse", "HEAD", cwd=other).stdout.strip()
+    git("push", "-q", "origin", "001-s-thing", cwd=other)
+    rmtree(other)
+    record(checkout, "atlas", branch="001-s-thing", role="spec", commit=parked)
+
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "is not here" not in result.stdout, "read before its own fetch"
+    assert (f"    - parked feature 001-s-thing (spec leg): this worktree is "
+            f"BEHIND the parked commit {parked[:7]}") in result.stdout
 
 
 def test_a_worktree_the_record_does_not_know_was_never_parked(atlas, home):

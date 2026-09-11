@@ -912,22 +912,120 @@ fetch_remote() {
         if [ "$remote" = origin ]; then FETCHED_OK=1; else UPSTREAM_FETCHED_OK=1; fi
         after="$(g "$repo" rev-parse -q --verify "refs/remotes/$remote/$branch" 2>/dev/null || true)"
         if [ -n "$before" ] && [ -z "$after" ]; then
-            say "    fetched $remote: $remote/$branch is GONE (was $(short "$before")): deleted or renamed on $remote"
+            fetch_say "    fetched $remote: $remote/$branch is GONE (was $(short "$before")): deleted or renamed on $remote"
         elif [ -n "$after" ] && [ "$before" != "$after" ]; then
             if [ -n "$before" ]; then
-                say "    fetched $remote: $remote/$branch moved $(short "$before") -> $(short "$after")"
+                fetch_say "    fetched $remote: $remote/$branch moved $(short "$before") -> $(short "$after")"
             else
-                say "    fetched $remote: $remote/$branch is here now, at $(short "$after")"
+                fetch_say "    fetched $remote: $remote/$branch is here now, at $(short "$after")"
             fi
         elif [ -z "$after" ]; then
-            say "    fetched $remote: there is no $remote/$branch"
+            fetch_say "    fetched $remote: there is no $remote/$branch"
         else
-            say "    fetched $remote: nothing new on $remote/$branch"
+            fetch_say "    fetched $remote: nothing new on $remote/$branch"
         fi
     else
         err="${err%%$'\n'*}"
         finding "$what failed: ${err:-git said nothing}; what follows is as of the last fetch that worked"
     fi
+}
+
+#: WHAT THE PRE-PASS BELOW STORES, one entry per repository row of the estate
+#: in row order: the path it is keyed by, the lines its fetch printed, the
+#: findings its fetch made, and the two flags the reads branch on. Parallel
+#: arrays and a linear scan, because bash 3.2 has no associative array and an
+#: estate holds a handful of repositories. `FETCH_SAY` is where `fetch_remote`
+#: puts a line instead of printing it.
+FETCH_KEYS=()
+FETCH_SAID=()
+FETCH_FOUND=()
+FETCH_OK_AT=()
+FETCH_UP_OK_AT=()
+FETCH_SAY=""
+fetch_say() { FETCH_SAY="$FETCH_SAY$1"$'\n'; }
+
+# EVERY REPOSITORY IS FETCHED BEFORE ANY ROW IS READ, which is what `--fetch`
+# has said since it landed — "in every repository first, so the answers are
+# current" — and what it did not quite do: the fetches ran row by row, and THE
+# RECORD LAYER IS READ ON THE ROOT'S ROW, before the legs, whose own origins
+# hold the commits it compares the record against. A feature parked from
+# another workstation into a LEG's origin was therefore reported as a parked
+# commit that "is not here" by the very run that fetched it a moment later,
+# and the finding vanished on the second run (the review of #18). Nothing
+# else moves: each row still prints its own fetch's lines, carries its own
+# fetch's findings and reads its own fetch's flags — `replay_fetch` puts them
+# back where the row-by-row version printed and counted them — so the report
+# reads exactly as it did.
+fetch_estate_first() {
+    local label branch path
+    FETCH_KEYS=()
+    FETCH_SAID=()
+    FETCH_FOUND=()
+    FETCH_OK_AT=()
+    FETCH_UP_OK_AT=()
+    while IFS=$'\t' read -r label branch path; do
+        [ -n "${path:-}" ] || continue
+        case "$label" in
+        holder | root | mounted) ;;
+        *) continue ;;
+        esac
+        FETCH_SAY=""
+        FINDINGS=()
+        fetch_remote "$path" "$branch" origin
+        if has_upstream "$path"; then
+            fetch_remote "$path" "$branch" upstream
+        fi
+        FETCH_KEYS+=("$path")
+        FETCH_SAID+=("$FETCH_SAY")
+        FETCH_FOUND+=("$(printf '%s\n' ${FINDINGS[@]+"${FINDINGS[@]}"})")
+        FETCH_OK_AT+=("$FETCHED_OK")
+        FETCH_UP_OK_AT+=("$UPSTREAM_FETCHED_OK")
+    done <<<"$1"
+    FINDINGS=()
+}
+
+# One row's stored fetch, put back: its lines where they were printed before,
+# its findings in this row's list, its flags in the two the reads branch on.
+# A row the pre-pass skipped — an unmounted leg, a member with no clone — and
+# every row of a run without `--fetch` leaves the flags at 0, which is what
+# "as of the last fetch" means there.
+replay_fetch() {
+    local path="$1" i=0 line
+    FETCHED_OK=0
+    UPSTREAM_FETCHED_OK=0
+    while [ "$i" -lt "${#FETCH_KEYS[@]}" ]; do
+        if [ "${FETCH_KEYS[$i]}" = "$path" ]; then
+            [ -z "${FETCH_SAID[$i]}" ] || printf '%s' "${FETCH_SAID[$i]}"
+            if [ -n "${FETCH_FOUND[$i]}" ]; then
+                while IFS= read -r line; do
+                    [ -z "$line" ] || finding "$line"
+                done <<<"${FETCH_FOUND[$i]}"
+            fi
+            FETCHED_OK="${FETCH_OK_AT[$i]}"
+            UPSTREAM_FETCHED_OK="${FETCH_UP_OK_AT[$i]}"
+            return 0
+        fi
+        i=$((i + 1))
+    done
+    return 0
+}
+
+# Whether the fetch THIS RUN made in `<repo>` worked — the store's answer for
+# any repository of the estate, not only the row being read, which is what
+# lets the record layer tell "never fetched here" from "origin has not got
+# it" for a leg it reads from the root's row. False without `--fetch`, and
+# false for a repository the pre-pass never saw.
+fetched_ok_at() {
+    local path="$1" i=0
+    [ "$FETCH" -eq 1 ] || return 1
+    while [ "$i" -lt "${#FETCH_KEYS[@]}" ]; do
+        if [ "${FETCH_KEYS[$i]}" = "$path" ]; then
+            [ "${FETCH_OK_AT[$i]}" = 1 ] || return 1
+            return 0
+        fi
+        i=$((i + 1))
+    done
+    return 1
 }
 
 # --- the fork against its upstream --------------------------------------------
@@ -1797,11 +1895,18 @@ check_parked_leg() {
         # `pushed: true` the commit left that workstation, so what is left is
         # this repository never fetching it, or origin not having it any more;
         # `pushed: false` is the other case, has its own line above, and here
-        # only says where the commit is. Neither line names `--fetch` as the
-        # exit: this runs in the ROOT's row, and a leg's own repository is
-        # fetched after it, so `FETCHED_OK` is not this repository's answer.
+        # only says where the commit is. AND AFTER A FETCH THAT WORKED IN THIS
+        # REPOSITORY the first of those is ruled out too, so the line says so
+        # — the way `no_origin_branch_finding` does for a missing
+        # `origin/<branch>`, and for the same reason: contradicting the
+        # `fetched origin:` line printed a moment earlier is worse than saying
+        # nothing. `fetched_ok_at` is the pre-pass's answer for THIS
+        # repository, root or leg, because every one of them is fetched before
+        # any row is read.
         if [ "$pushed" = false ]; then
             finding "parked feature $branch ($role leg): its parked commit $(short "$commit") is not here, which is what --no-push means — ${parked_on:-that workstation} is the only place it is"
+        elif fetched_ok_at "$repo"; then
+            finding "parked feature $branch ($role leg): its parked commit $(short "$commit") is not here after this run's fetch — the record says it was pushed, so origin has not got it either: rewritten there, or pushed somewhere this clone is not looking"
         else
             finding "parked feature $branch ($role leg): its parked commit $(short "$commit") is not here — the record says it was pushed, so this repository has never fetched it, or origin no longer has it"
         fi
@@ -1907,7 +2012,7 @@ CHANGED_CLAUSE="nothing was changed."
 # anything was found and 0 when nothing was, so the sweep can carry on and
 # the single-estate call site can turn that straight into its exit code.
 read_one_estate() {
-    local label branch path current_root="" rel line
+    local label branch path current_root="" rel line rows
     ESTATE_FINDINGS=0
     ESTATE_REPOS=0
     if [ "$ESTATE_KIND" = "family" ]; then
@@ -1921,6 +2026,12 @@ read_one_estate() {
     else
         say "  as of the last fetch: status reads local refs only and fetches nothing."
     fi
+    # THE ROWS ARE READ ONCE and fetched in full before any of them is
+    # printed, so "then it is read" above is the order this runs in — the
+    # record layer included, which is read on the root's row and compares
+    # against commits the LEGS' origins hold.
+    rows="$(estate_repos)"
+    [ "$FETCH" -eq 0 ] || fetch_estate_first "$rows"
     locate_record
     if [ -n "$RECORD_FILE" ]; then
         say "  parked record: $RECORD_FILE, as of its last pull"
@@ -1938,12 +2049,7 @@ read_one_estate() {
         holder | root)
             current_root="$path"
             printf '  %-6s %-6s %s\n' "$label" "$branch" "$path"
-            if [ "$FETCH" -eq 1 ]; then
-                fetch_remote "$path" "$branch" origin
-                if has_upstream "$path"; then
-                    fetch_remote "$path" "$branch" upstream
-                fi
-            fi
+            replay_fetch "$path"
             read_head "$path" "$branch"
             read_tracking "$path" "$branch"
             read_fork "$path" "$branch"
@@ -1962,12 +2068,7 @@ read_one_estate() {
             ;;
         mounted)
             printf '  %-6s %-6s %s\n' "leg" "$branch" "$path"
-            if [ "$FETCH" -eq 1 ]; then
-                fetch_remote "$path" "$branch" origin
-                if has_upstream "$path"; then
-                    fetch_remote "$path" "$branch" upstream
-                fi
-            fi
+            replay_fetch "$path"
             rel="${path#"$current_root"/}"
             read_leg "$current_root" "$rel" "$branch"
             read_fork "$path" "$branch"
@@ -1993,7 +2094,7 @@ read_one_estate() {
             done
             ESTATE_FINDINGS=$((ESTATE_FINDINGS + ${#FINDINGS[@]}))
         fi
-    done < <(estate_repos)
+    done <<<"$rows"
     say ""
     if [ "$ESTATE_REPOS" -eq 1 ]; then
         say "status: $ESTATE_NAME - $ESTATE_FINDINGS finding(s) in 1 repository; $CHANGED_CLAUSE"
