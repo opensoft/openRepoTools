@@ -12,6 +12,15 @@ never pushed or whose remote branch is gone, dirty feature worktrees, and a
 leg checked out away from its pin or pinned behind its origin. And the two
 things it never does without being asked: fetch, and change anything.
 
+His RULING of 2026-09-11, verbatim: "next layer: fork against upstream". A
+remote named `upstream` is read from local refs, `origin/<branch>` against
+`upstream/<branch>`, and `--fetch` fetches it too; with no such remote, and
+only under `--fetch`, an origin on github.com is asked about once with `gh
+api` — a FAKE `gh` on PATH here, answering the two calls the command makes,
+and a `url.<base>.insteadOf` rewrite so an origin that LOOKS like github.com
+still fetches from a bare repository on disk. Nothing here reaches the
+network. The third section holds that layer.
+
 His RULING of 2026-09-11, verbatim: "next layer: --fetch". With the flag,
 `git fetch --prune origin` runs in every repository before it is read — the
 ONE write this command makes, to remote-tracking refs and nothing else — and
@@ -736,6 +745,188 @@ def test_fetch_with_all_fetches_every_estate(home, status_remotes):
     assert result.stdout.count(FETCHED) == 2
     assert f"status: 2 estate(s) in sync, 0 with findings; {FETCH_CLAUSE}" \
         in result.stdout
+
+
+# --- the fork against its upstream --------------------------------------------
+#
+# Brett Heap's RULING of 2026-09-11, verbatim: "next layer: fork against
+# upstream".
+
+def parent_ahead(base: Path, remote: dict, tag: str) -> Path:
+    """The PARENT the fork's origin was forked from, one commit ahead of it:
+    a bare copy of origin's bare, then a push to it from elsewhere."""
+    parent = base / "remotes" / f"{tag}-parent.git"
+    git("clone", "-q", "--bare", str(remote["bare"]), str(parent), cwd=base)
+    push_from_elsewhere(base, parent, tag, stem="parent-elsewhere")
+    return parent
+
+
+def github_origin(repo: Path, bare: Path, slug: str) -> None:
+    """Make `origin` LOOK like github.com while every byte still comes from
+    the bare on disk: `url.<base>.insteadOf` rewrites it for the fetch, and
+    `status` reads the CONFIGURED url to decide whom to ask about."""
+    url = f"https://github.com/{slug}.git"
+    git("config", f"url.{bare}.insteadOf", url, cwd=repo)
+    git("remote", "set-url", "origin", url, cwd=repo)
+
+
+def fake_gh(tmp_path: Path, *, failing: bool = False) -> tuple[dict, Path]:
+    """A fake `gh` first on PATH that answers the two calls `status` makes —
+    `api repos/<slug>` (Atlas is a fork of opensoft/Atlas, its leg is not) and
+    the compare (3 behind, 1 ahead) — printing what the `--jq` filter would,
+    fields joined by 0x1F, and logging every call. `failing` answers as a
+    `gh` nobody logged in to."""
+    shim = tmp_path / "gh-shim"
+    shim.mkdir(parents=True, exist_ok=True)
+    log = tmp_path / "gh-calls.log"
+    body = f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "{log}"\n'
+    if failing:
+        body += ("printf 'To get started with GitHub CLI, please run:  gh auth "
+                 "login\\n' >&2\nexit 4\n")
+    else:
+        body += (
+            'case "$*" in\n'
+            "*\"/compare/\"*) printf '3\\0371\\n' ;;\n"
+            "*\"repos/testorg/Atlas-spec \"*) printf 'false\\037\\037\\n' ;;\n"
+            "*\"repos/testorg/Atlas \"*) printf 'true\\037opensoft/Atlas\\037main\\n' ;;\n"
+            "*) printf 'fake gh: unexpected: %s\\n' \"$*\" >&2; exit 1 ;;\n"
+            "esac\n")
+    (shim / "gh").write_text(body, encoding="utf-8")
+    (shim / "gh").chmod(0o755)
+    return {"PATH": f"{shim}{os.pathsep}{os.environ['PATH']}"}, log
+
+
+def test_a_fork_behind_its_upstream_remote_reads_from_local_refs(
+        atlas, home, status_remotes):
+    """The convention every fork guide teaches: a remote named `upstream`.
+    Before it has ever been fetched there is nothing to compare, and the
+    finding says so and names `--fetch`; after one fetch of it the drift is
+    read from local refs, as of that fetch, with no network at all."""
+    parent = parent_ahead(status_remotes["base"], status_remotes["Atlas"],
+                          "forkbehind")
+    git("remote", "add", "upstream", str(parent), cwd=atlas)
+    unfetched = run(STATUS, "Atlas", home=home)
+    assert unfetched.returncode == 1, unfetched.stdout + unfetched.stderr
+    assert ("    - fork: no upstream/main here: the upstream remote was never "
+            "fetched (`--fetch` asks it)") in unfetched.stdout
+
+    git("fetch", "-q", "upstream", cwd=atlas)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - fork: origin/main is 1 commit(s) behind upstream/main, as of "
+            "the last fetch") in result.stdout
+    assert "in sync with origin/main" not in result.stdout.split("leg    main")[0], (
+        "the root row has a finding, so no in-sync line")
+    assert "1 finding(s) in 2 repositories" in result.stdout
+
+
+def test_fetch_fetches_the_upstream_remote_under_the_pinned_refspec(
+        atlas, home, status_remotes):
+    """`--fetch` asks upstream as well as origin, says so on its own line,
+    and the pinned refspec bounds that write too: a mirror-style refspec in
+    `remote.upstream.fetch` cannot make `--prune` delete a local branch."""
+    parent = parent_ahead(status_remotes["base"], status_remotes["Atlas"],
+                          "forkfetch")
+    git("remote", "add", "upstream", str(parent), cwd=atlas)
+    git("config", "remote.upstream.fetch", "+refs/heads/*:refs/heads/*",
+        cwd=atlas)
+    git("branch", "doomed", cwd=atlas)
+    main_was = git("rev-parse", "refs/heads/main", cwd=atlas).stdout
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "    fetched origin: nothing new on origin/main" in result.stdout
+    assert "    fetched upstream: upstream/main is here now, at " in result.stdout, (
+        "with a mirror-style refspec configured, git would map the fetched main "
+        "onto the CHECKED-OUT local main and refuse; --refmap is what makes "
+        "this line appear")
+    assert git("rev-parse", "refs/heads/main", cwd=atlas).stdout == main_was
+    assert ("    - fork: origin/main is 1 commit(s) behind upstream/main, as of "
+            "the last fetch") in result.stdout
+    branches = git("for-each-ref", "--format=%(refname:short)", "refs/heads",
+                   cwd=atlas).stdout.split()
+    assert "doomed" in branches, "--prune on the upstream fetch deleted a LOCAL branch"
+    assert git("rev-parse", "-q", "--verify", "refs/remotes/upstream/main",
+               cwd=atlas, check=False).returncode == 0
+
+
+def test_a_fork_pushed_ahead_of_its_upstream_is_a_finding(atlas, home,
+                                                          status_remotes):
+    """The other direction: commits on the fork's `main` that the parent
+    does not have — somebody pushed to the fork's main instead of opening a
+    pull request upstream."""
+    base = status_remotes["base"]
+    parent = base / "remotes" / "forkahead-parent.git"
+    git("clone", "-q", "--bare", str(status_remotes["Atlas"]["bare"]),
+        str(parent), cwd=base)
+    push_from_elsewhere(base, status_remotes["Atlas"]["bare"], "forkahead")
+    git("remote", "add", "upstream", str(parent), cwd=atlas)
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - fork: origin/main has 1 commit(s) upstream/main does not"
+            in result.stdout)
+    assert "    - behind origin/main by 1 commit(s)" in result.stdout, (
+        "the local main is behind the fork's main too, and that is read as before")
+
+
+def test_a_github_origin_with_no_upstream_remote_is_asked_only_under_fetch(
+        atlas, home, status_remotes, tmp_path):
+    """No `upstream` remote, an origin on github.com: without `--fetch`
+    nothing is asked and nothing is said; with it, `gh api` is asked once
+    per repository, a fork is a finding naming the parent and the remote to
+    add, the compare gives the counts, and a repository GitHub says is NOT a
+    fork says nothing."""
+    github_origin(atlas, status_remotes["Atlas"]["bare"], "testorg/Atlas")
+    github_origin(atlas / "spec", status_remotes["Atlas"]["leg_bare"],
+                  "testorg/Atlas-spec")
+    env, log = fake_gh(tmp_path)
+
+    plain = run(STATUS, "Atlas", home=home, env=env)
+    assert plain.returncode == 0, plain.stdout + plain.stderr
+    assert not log.exists(), "without --fetch, gh must not be asked"
+    assert "fork" not in plain.stdout
+
+    fetched = run(STATUS, "--fetch", "Atlas", home=home, env=env)
+    assert fetched.returncode == 1, fetched.stdout + fetched.stderr
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert len(calls) == 3, calls
+    assert calls[0].startswith("api repos/testorg/Atlas ")
+    assert calls[1].startswith(
+        "api repos/opensoft/Atlas/compare/main...testorg:main?per_page=1 ")
+    assert calls[2].startswith("api repos/testorg/Atlas-spec ")
+    assert ("    - fork of opensoft/Atlas (per GitHub), and no remote named "
+            "upstream here: `git remote add upstream "
+            "https://github.com/opensoft/Atlas.git` reads the drift locally"
+            ) in fetched.stdout
+    assert ("    - fork: origin/main is 3 commit(s) behind opensoft/Atlas's main "
+            "(per GitHub)") in fetched.stdout
+    assert ("    - fork: origin/main has 1 commit(s) opensoft/Atlas's main does "
+            "not (per GitHub)") in fetched.stdout
+    assert fetched.stdout.count("fork of") == 1, "the leg is not a fork"
+    assert "    fetched origin: nothing new on origin/main" in fetched.stdout, (
+        "the insteadOf rewrite still fetched from the bare on disk")
+    assert "3 finding(s) in 2 repositories" in fetched.stdout
+
+
+def test_a_failing_gh_is_said_once_and_a_local_origin_is_never_asked(
+        atlas, home, status_remotes, tmp_path):
+    github_origin(atlas, status_remotes["Atlas"]["bare"], "testorg/Atlas")
+    github_origin(atlas / "spec", status_remotes["Atlas"]["leg_bare"],
+                  "testorg/Atlas-spec")
+    env, log = fake_gh(tmp_path, failing=True)
+    result = run(STATUS, "--fetch", "Atlas", home=home, env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.count("    fork check: `gh api repos/testorg/Atlas` "
+                               "failed (") == 1
+    assert "gh auth login); not asked again this run" in result.stdout
+    assert result.stdout.count("fork check:") == 1, "said once, not per row"
+    assert len(log.read_text(encoding="utf-8").splitlines()) == 1
+
+    plain_origin = clone_root(home, status_remotes["Atlas"], "Borealis")
+    env2, log2 = fake_gh(tmp_path / "second")
+    result = run(STATUS, "--fetch", "Borealis", home=home, env=env2)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not log2.exists(), "an origin that is not on github.com is never asked"
+    assert str(plain_origin) in result.stdout
 
 
 # --- the one promise ----------------------------------------------------------

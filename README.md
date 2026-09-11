@@ -34,9 +34,16 @@ the one write it ever makes — remote-tracking refs, the objects behind them
 and `FETCH_HEAD`, never a local branch, tag, HEAD, index or working tree,
 because the refspec is pinned on the command line rather than trusted from
 config (Brett Heap's RULING of 2026-09-11, "next layer: --fetch", on top of
-his RULING of 2026-09-10, "start with the local status layer"). Those two are
-the local layer and `--fetch`; the fork against its upstream, shape-pin drift
-and the parked record against disk are the layers still to come.
+his RULING of 2026-09-10, "start with the local status layer"). A FORK is
+read against what it was forked from (his RULING of the same day, "next
+layer: fork against upstream"): with a remote named `upstream`,
+`origin/<branch>` against `upstream/<branch>` from local refs, and `--fetch`
+fetches upstream too; with none, and only under `--fetch`, an origin on
+github.com is asked about once with `gh api`, and a fork is a finding naming
+the parent and the `git remote add upstream …` that makes the drift readable
+here — the one use of `gh` in these commands. Those three are the
+local layer, `--fetch` and the fork; shape-pin drift and the parked record
+against disk are the layers still to come.
 
 `openRepoTools` itself installs and does nothing else. It has no verb: the
 standard's front door is `openRepoShape`, which scaffolds projects and stays
