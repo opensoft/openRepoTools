@@ -1472,7 +1472,10 @@ workspace_checkouts() {
 # in `locate_record`; this is the other half of the same rule, for two clones
 # that really are two directories. Without it they counted as two, which read
 # as "two orgs record this id" and, where origin names no owner to settle it,
-# SKIPPED a record that was never ambiguous.
+# SKIPPED a record that was never ambiguous. BOTH HALVES OF THE KEY ARE
+# LOWERED, because both were MATCHED that way — the basename two lines above,
+# the org as `resume` folds it — so `Atlas.yaml` in one checkout and
+# `atlas.yaml` in another are one record here too (Copilot on #18).
 record_candidates() {
     local want checkout dir file base key seen
     local -a keys=()
@@ -1487,7 +1490,7 @@ record_candidates() {
                 [ -f "$file" ] || continue
                 base="${file##*/}"
                 [ "$(lower "${base%.yaml}")" = "$want" ] || continue
-                key="$(lower "${dir##*/}")/$base"
+                key="$(lower "${dir##*/}")/$(lower "$base")"
                 for seen in ${keys[@]+"${keys[@]}"}; do
                     [ "$seen" != "$key" ] || continue 2
                 done

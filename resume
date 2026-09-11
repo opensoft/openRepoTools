@@ -1005,16 +1005,21 @@ else
     # checkouts of one workspace repository is ONE record, and `--org` could
     # not have told them apart; two DISTINCT orgs is the case `--org` exists
     # for. So the pairs are deduped on `<org>` plus the file's basename and
-    # the refusal counts the orgs that are left.
+    # the refusal counts the orgs that are left. BOTH HALVES OF THAT KEY ARE
+    # LOWERED, because both were MATCHED that way: `manifest_candidates`
+    # compares the basename case-insensitively, so `Atlas.yaml` in one
+    # checkout and `atlas.yaml` in another are one record — a key that folded
+    # only the org counted them as two and refused, naming one org twice
+    # (Copilot on openRepoTools #18).
     while IFS=$'\t' read -r org file _; do
         [ -n "${file:-}" ] || continue
         if [ -n "$ORG_WANTED" ] && [ "$(lower "$org")" != "$(lower "$ORG_WANTED")" ]; then
             continue
         fi
         case " $FOUND_ORGS " in
-        *" $(lower "$org")/${file##*/} "*) continue ;;
+        *" $(lower "$org")/$(lower "${file##*/}") "*) continue ;;
         esac
-        FOUND_ORGS="$FOUND_ORGS $(lower "$org")/${file##*/}"
+        FOUND_ORGS="$FOUND_ORGS $(lower "$org")/$(lower "${file##*/}")"
         FOUND=$((FOUND + 1))
         FOUND_ROWS="$FOUND_ROWS  $org/${file##*/}   $file
 "

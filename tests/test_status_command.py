@@ -1882,6 +1882,30 @@ def test_two_checkouts_of_one_workspace_repository_are_one_record(atlas, home):
     assert "no worktree on that branch here" in result.stdout
 
 
+def test_two_checkouts_that_spell_the_record_differently_are_one_record(
+        atlas, home):
+    """The basename is MATCHED case-insensitively — `park` files under the id
+    and `resume <Name>` looks up the folder — so the key that decides whether
+    two rows are two records folds it the same way, as it already folds the
+    org. `atlas.yaml` in one checkout and `Atlas.yaml` in another are one
+    record of one org; keyed on the raw basename they were two, and a record
+    of one org was reported as two orgs' and skipped."""
+    checkout = workspace_config(home)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA)
+    other = home / "wip-2"
+    shutil.copytree(checkout, other)
+    (other / "workspaces" / ORG / "atlas.yaml").rename(
+        other / "workspaces" / ORG / "Atlas.yaml")
+    (home / ".agents" / "workspace.yaml").write_text(
+        f"repository: tester/wip\npath: {checkout}\norgs:\n  {ORG}:\n"
+        f"    repository: tester/wip\n    path: {other}\n", encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "2 records for 'atlas'" not in result.stdout
+    assert f"  parked record: {checkout}/workspaces/{ORG}/atlas.yaml" in result.stdout
+    assert "no worktree on that branch here" in result.stdout
+
+
 def test_a_checkout_not_on_this_machine_is_said(atlas, home):
     (home / ".agents").mkdir(exist_ok=True)
     (home / ".agents" / "workspace.yaml").write_text(

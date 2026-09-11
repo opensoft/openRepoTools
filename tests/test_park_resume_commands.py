@@ -1676,6 +1676,34 @@ def test_two_checkouts_of_one_workspace_are_not_two_orgs(remotes, home):
     assert (home / "projects" / FAMILY / FAMILY / "family.yaml").is_file()
 
 
+def test_two_checkouts_that_spell_the_manifest_differently_are_one_record(
+        remotes, home):
+    """`manifest_candidates` compares the basename CASE-INSENSITIVELY, so the
+    key that decides whether two rows are two records has to fold it too:
+    `testfam.yaml` in one checkout and `TestFam.yaml` in another are one
+    record of one org. Keyed on the raw basename they were two, and `resume`
+    refused with `--org` for an answer — naming the same org twice."""
+    config = home / ".agents" / "workspace.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        f"repository: {WORKSPACE_SLUG}\npath: ~/projects/wip\n"
+        "orgs:\n"
+        f"  {ORG}:\n"
+        f"    repository: {WORKSPACE_SLUG}\n"
+        "    path: ~/projects/wip-again\n", encoding="utf-8")
+    for name in ("wip", "wip-again"):
+        git("clone", "-q", str(remotes["workspace"]),
+            str(home / "projects" / name), cwd=home)
+    spelt = (home / "projects" / "wip-again" / "workspaces" / ORG
+             / f"{FAMILY.lower()}.yaml")
+    spelt.rename(spelt.with_name(f"{FAMILY}.yaml"))
+
+    result = run(RESUME, FAMILY, home=home, env=offline(remotes))
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "workspace manifests record" not in result.stderr
+    assert (home / "projects" / FAMILY / FAMILY / "family.yaml").is_file()
+
+
 # --- F7: a `root:` that walks out of the projects directory ----------------
 
 def test_a_manifest_root_that_escapes_the_projects_directory_is_refused(
