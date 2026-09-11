@@ -37,10 +37,11 @@ His RULING of 2026-09-11, verbatim: "next layer: parked record against disk".
 fifth section holds the ways record and disk drift apart, read the way
 `resume.sh` will judge them: a recorded feature with no worktree here, a
 worktree whose tip moved on from, fell behind, or diverged from the parked
-commit, a leg parked with `--no-push`, a worktree the record does not know,
-and a family's record matched to each member by its `root:`. The config and
-the workspace checkout are plain files under the fake home; nothing is
-pulled.
+commit, a leg parked with `--no-push` — or one whose `pushed:` is neither
+true nor false, which `resume` refuses just as flatly — a worktree the record
+does not know, and a family's record matched to each member by its `root:`.
+The config and the workspace checkout are plain files under the fake home;
+nothing is pulled.
 
 His RULING of 2026-09-11, verbatim: "next layer: --fetch". With the flag,
 `git fetch --prune origin` runs in every repository before it is read — the
@@ -1648,6 +1649,44 @@ def test_a_leg_parked_with_no_push_is_a_finding(atlas, home):
             "refuses it") in result.stdout
 
 
+def test_an_unreadable_pushed_is_a_finding_where_the_worktree_is_in_sync(
+        atlas, home):
+    """The second independent review of #18, 2026-09-11, note (d): a `pushed:`
+    that is neither `true` nor `false` was read as `true` everywhere, because
+    only `= false` was ever tested. `park.sh` writes one of those two words
+    and nothing else, so this record is a hand-edit — and `resume.sh`'s RR6,
+    `[ "$pushed" != true ]`, refuses the leg for it exactly as it refuses a
+    `--no-push` one. So it is a finding of its own, as `--no-push` is, even
+    where the worktree here sits at the parked commit; and the line NAMES the
+    value rather than deciding what it must have meant."""
+    checkout = workspace_config(home)
+    tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           pushed="maybe", parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): its `pushed:` says "
+            "'maybe', which is neither true nor false, so whether its parked "
+            "commit ever left Falcon cannot be read; `resume` refuses a leg "
+            "whose `pushed:` is not true, so park it again from there to write "
+            "the record afresh") in result.stdout
+    assert "--no-push" not in result.stdout, (
+        "a --no-push claim the record does not make")
+
+    # `pushed: ""` is the empty value in quotes — `trim_unquote` takes the
+    # pair off, so it reads as the bare `pushed:` it is rather than as a
+    # value spelled with two quote characters.
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           pushed='""', parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): its `pushed:` has no "
+            "value, which is neither true nor false, so whether its parked "
+            "commit ever left Falcon cannot be read; `resume` refuses a leg "
+            "whose `pushed:` is not true, so park it again from there to write "
+            "the record afresh") in result.stdout
+
+
 def test_a_registration_git_calls_prunable_is_stale_with_its_directory_there(
         atlas, home):
     """Delete only the worktree's `.git` file: the DIRECTORY stays, and git
@@ -1809,21 +1848,102 @@ def test_a_no_push_record_with_no_worktree_here_never_names_resume(atlas, home):
     assert "brings it back" in result.stdout and "`resume Atlas`" not in result.stdout
 
 
+def test_an_unreadable_pushed_with_no_worktree_here_never_names_resume(
+        atlas, home):
+    """The same note, on the arm above: with no worktree here, `pushed:`
+    valueless fell past the `= false` test into "`resume Atlas` brings it
+    back" — the exit `resume.sh` refuses this record for. Whether the parked
+    commit ever left that workstation cannot be read either, so the line says
+    that instead of asserting it, and the exit is the one that works: park it
+    again from there, which writes the record afresh."""
+    checkout = workspace_config(home)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA,
+           pushed="", parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): its `pushed:` has no "
+            "value, which is neither true nor false, and no worktree on that "
+            "branch here; whether its parked commit ever left Falcon cannot be "
+            "read, and `resume` refuses a leg whose `pushed:` is not true, so "
+            "nothing here brings it back — park it again from there, which "
+            "writes the record afresh") in result.stdout
+    assert "`resume Atlas` brings it back" not in result.stdout
+
+    # And with a stale registration left behind: the prune is named first,
+    # exactly as it is for a `--no-push` record, and `resume` still is not.
+    where = home / "Atlas-wt" / "001-a-thing"
+    feature_worktree(atlas, "001-a-thing", where)
+    rmtree(where)           # and NO `git worktree prune`
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): its `pushed:` has no "
+            "value, which is neither true nor false, and no worktree on that "
+            "branch here, but a stale worktree registration for it is still "
+            f"recorded at {where} — clear it with `git -C {atlas} worktree "
+            "prune`; whether its parked commit ever left Falcon cannot be "
+            "read, and `resume` refuses a leg whose `pushed:` is not true, so "
+            "nothing here brings it back — park it again from there, which "
+            "writes the record afresh") in result.stdout
+    assert "`resume Atlas`" not in result.stdout
+
+
+def test_a_comment_after_pushed_is_read_as_the_loader_reads_it(atlas, home):
+    """The extension's `workspace_load_project` strips a `#` comment from
+    EVERY line before it reads the value, so `resume.sh` sees `pushed: true #
+    note` as `true` and RECREATES the leg. Read whole here it was "neither
+    true nor false", and the finding named a refusal `resume` would not make
+    — the independent review of this follow-up, 2026-09-11. `pushed:` is the
+    field this layer JUDGES rather than matches or prints, so it is read the
+    way the judge reads it: with no worktree here, `true # note` names
+    `resume <Name>` and says nothing about the value."""
+    checkout = workspace_config(home)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA,
+           pushed="true # hand-written note", parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "`resume Atlas` brings it back" in result.stdout
+    assert "neither true nor false" not in result.stdout, (
+        "a value `resume.sh` reads as `true`, called unreadable")
+
+    # And `false # note` is the `--no-push` record it says it is — which
+    # against a2c8521 read as `true`, the only other thing `= false` misses.
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA,
+           pushed="false # hand-written note", parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("parked with --no-push on Falcon and no worktree on that branch "
+            "here") in result.stdout
+    assert "neither true nor false" not in result.stdout
+    assert "`resume Atlas`" not in result.stdout
+
+
 def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     """`status --help` is the other place this rule is stated, and a help
     text that sends somebody to `resume` for a record `resume` refuses is the
     same contradiction the two findings had. Read with the wrapping
-    normalised, so the paragraph can be re-wrapped and not the sentence."""
+    normalised, so the paragraph can be re-wrapped and not the sentence.
+
+    It carries BOTH records `resume` refuses since the second independent
+    review of #18, 2026-09-11, note (d): `--no-push`, and a `pushed:` that is
+    neither true nor false, which `resume.sh`'s `[ "$pushed" != true ]`
+    refuses in exactly the same breath."""
     result = run(STATUS, "--help", home=home)
     assert result.returncode == 0, result.stdout + result.stderr
     helptext = " ".join(result.stdout.split())
     assert ("a recorded feature with no worktree here (`resume <Name>` brings "
-            "it back — unless the record says `--no-push`, when only the "
-            "workstation that has the WIP commit can park it again; and where "
-            "`git worktree list` still holds a registration that is no longer "
-            "a worktree, that is cleared with `worktree prune`, after a "
-            "`worktree unlock` if it is locked and with any leftover directory "
-            "moved aside, before `resume` can recreate anything)") in helptext
+            "it back — unless the record says `--no-push`, or its `pushed:` "
+            "is neither true nor false, which `resume` refuses the same way: "
+            "then only the workstation that parked it can park it again; and "
+            "where `git worktree list` still holds a registration that is no "
+            "longer a worktree, that is cleared with `worktree prune`, after "
+            "a `worktree unlock` if it is locked and with any leftover "
+            "directory moved aside, before `resume` can recreate "
+            "anything)") in helptext
+    # And the LIST of findings beside it names the new one, as the README's
+    # does: the two texts say the same things or one of them is wrong.
+    assert ("a leg parked with `--no-push` or whose `pushed:` is neither true "
+            "nor false, and a worktree the record does not know (never "
+            "parked)") in helptext
 
 
 def test_a_missing_parked_commit_is_read_against_what_the_record_claims(
@@ -1853,6 +1973,43 @@ def test_a_missing_parked_commit_is_read_against_what_the_record_claims(
     assert "never fetched" not in result.stdout
 
 
+def test_a_missing_parked_commit_under_an_unreadable_pushed_rules_nothing_out(
+        atlas, home):
+    """The line the second independent review of #18 named on 2026-09-11, note
+    (d): with `pushed:` valueless the arm below fired and said "the record
+    says it was pushed" — a claim the record does not make, and the one
+    reading that rules out the commit never having left that workstation. A
+    `pushed:` that rules nothing out rules nothing out in the line: every
+    reason still standing is named, and the VALUE is named too, because a
+    reader who is told the record cannot be read can go and look at it."""
+    checkout = workspace_config(home)
+    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA,
+           pushed="", parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (repo leg): its parked commit "
+            f"{FAKE_SHA[:7]} is not here, and its `pushed:` has no value, "
+            "which is neither true nor false — so no reason is ruled out: it "
+            "may never have left Falcon, or this repository has never fetched "
+            "it, or origin no longer has it") in result.stdout
+    assert "the record says it was pushed" not in result.stdout
+    assert "--no-push" not in result.stdout, (
+        "the other reading, and just as much a guess")
+
+    # A value that is not empty is named as itself, for the same reason.
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA,
+           pushed="yes", parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (repo leg): its parked commit "
+            f"{FAKE_SHA[:7]} is not here, and its `pushed:` says 'yes', which "
+            "is neither true nor false — so no reason is ruled out: it may "
+            "never have left Falcon, or this repository has never fetched it, "
+            "or origin no longer has it") in result.stdout
+    assert "the record says it was pushed" not in result.stdout
+
+
 def test_a_parked_commit_still_missing_after_this_runs_fetch_says_so(atlas, home):
     """After a fetch that WORKED in this repository, "never fetched" is ruled
     out, and saying it would contradict the `fetched origin:` line printed a
@@ -1868,6 +2025,29 @@ def test_a_parked_commit_still_missing_after_this_runs_fetch_says_so(atlas, home
             "says it was pushed, so origin has not got it either"
             ) in result.stdout
     assert "never fetched it" not in result.stdout
+
+
+def test_an_unreadable_pushed_after_this_runs_fetch_drops_the_fetch_reason(
+        atlas, home):
+    """The fetched twin of the unreadable missing-commit arm, and
+    `no_origin_branch_finding`'s rule: after a fetch that WORKED in this
+    repository, "never fetched it" is ruled out, and saying it would
+    contradict the `fetched origin:` line printed a moment earlier. What an
+    unreadable `pushed:` leaves standing is the other two, and the line names
+    those and no more."""
+    checkout = workspace_config(home)
+    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA,
+           pushed="maybe", parked_on="Falcon")
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (repo leg): its parked commit "
+            f"{FAKE_SHA[:7]} is not here after this run's fetch, and its "
+            "`pushed:` says 'maybe', which is neither true nor false — so "
+            "neither reason is ruled out: it may never have left Falcon, and "
+            "origin may not have it either") in result.stdout
+    assert "never fetched it" not in result.stdout
+    assert "the record says it was pushed" not in result.stdout
 
 
 def test_under_fetch_the_legs_own_fetch_comes_before_the_record_is_read(
