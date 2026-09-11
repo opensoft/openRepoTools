@@ -758,21 +758,45 @@ while [ $# -gt 0 ]; do
     case "$1" in
     -h | --help) usage; exit 0 ;;
     --dry-run) DRY_RUN=1; shift ;;
-    # A MISSING VALUE IS THIS COMMAND'S REFUSAL, exit 2, in its own words:
-    # `${2:?…}` would be bash's message and bash's exit 1 — and a `resume`
-    # that exits non-zero is read as "something was refused", so the refusal
-    # has to be one this command wrote and a person can act on.
+    # A MISSING OR EMPTY VALUE IS THIS COMMAND'S REFUSAL, exit 2, in its own
+    # words: `${2:?…}` would be bash's message and bash's exit 1 — and a
+    # `resume` that exits non-zero is read as "something was refused", so the
+    # refusal has to be one this command wrote and a person can act on.
+    # EMPTY IS REFUSED THE SAME WAY, which is why every arm below asks for a
+    # NON-EMPTY `$2` and not only for a second argument. `${2:?…}` rejected
+    # unset AND null; `[ $# -ge 2 ]` alone rejects only the first, and every
+    # value here is read later as "was this given at all?" — so
+    # `resume --repo ""` would fall past the `--repo` branch of the resolver
+    # into the walk-up and resume the estate around the cwd, which is the one
+    # thing naming a clone's origin was there to prevent, and `--org ""` would
+    # stop narrowing the very manifests it was passed to choose between.
+    # `--workspace ""` GOES TWO WAYS, and neither is the one that was typed.
+    # WITH A CONFIG ALREADY HERE, the empty slug slips past the refusal below
+    # that never silently replaces an existing config — that comparison is
+    # `[ -n "$WORKSPACE_SLUG" ]`-guarded — and this machine's own config is
+    # used, unchecked, in place of the repository named on the command line.
+    # WITH NO CONFIG, the run reaches the refusal that says no workspace
+    # record is configured: true about the machine, and a lie about the
+    # command line, which named one. That second branch is the one the tests
+    # exercise, their `$HOME` having no `~/.agents` in it.
+    # A value that came out empty is a flag that was typed and lost, never one
+    # that was never typed, and the two must not do different things
+    # (Copilot's review of #14).
     --repo)
-        [ $# -ge 2 ] || die "--repo needs a value: <owner>/<name>, or any url spelling of one."
+        [ $# -ge 2 ] && [ -n "$2" ] ||
+            die "--repo needs a value: <owner>/<name>, or any url spelling of one."
         REPO_SLUG="$2"; REPO_ARG="$REPO_SLUG"; shift 2 ;;
     --workspace)
-        [ $# -ge 2 ] || die "--workspace needs a value: <owner>/<name> of your private workspace repository."
+        [ $# -ge 2 ] && [ -n "$2" ] ||
+            die "--workspace needs a value: <owner>/<name> of your private workspace repository."
         WORKSPACE_SLUG="$2"; shift 2 ;;
     --org)
-        [ $# -ge 2 ] || die "--org needs a value: the organisation whose manifest to read."
+        [ $# -ge 2 ] && [ -n "$2" ] ||
+            die "--org needs a value: the organisation whose manifest to read."
         ORG_WANTED="$2"; shift 2 ;;
     --name | --project)
-        [ $# -ge 2 ] || die "$1 needs a value: one estate folder name under your projects directory."
+        [ $# -ge 2 ] && [ -n "$2" ] ||
+            die "$1 needs a value: one estate folder name under your projects directory."
         NAME="$2"; shift 2 ;;
     # `park --all` exists; `resume --all` deliberately does not (see the
     # header). Said here in so many words, because the generic answer below

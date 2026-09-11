@@ -889,16 +889,30 @@ while [ $# -gt 0 ]; do
     # anywhere, with no question (the RULING of 2026-09-10 at the sweep's
     # section head: "park all should be park -a or park --all").
     -a | --all) PARK_ALL=1; shift ;;
-    # A MISSING VALUE IS THIS COMMAND'S REFUSAL, exit 2, in its own words:
-    # `${2:?…}` would be bash's message and bash's exit 1, which is not a
-    # status this command means anything by (`status` gave the reason first:
+    # A MISSING OR EMPTY VALUE IS THIS COMMAND'S REFUSAL, exit 2, in its own
+    # words: `${2:?…}` would be bash's message and bash's exit 1, which is not
+    # a status this command means anything by (`status` gave the reason first:
     # its 1 is "findings"; here, a typo must not read like `make park`'s own
     # exit).
+    # EMPTY IS REFUSED THE SAME WAY, which is why every arm below asks for a
+    # NON-EMPTY `$2` and not only for a second argument. `${2:?…}` rejected
+    # unset AND null; `[ $# -ge 2 ]` alone rejects only the first, and what it
+    # lets through is read later as "was this given at all?" — so
+    # `park --lane ""` would carry on with `LANE` empty, the lane is then left
+    # out of the `make park` invocation, and the WIP commit subject a person
+    # asked to be labelled comes back unlabelled. `park --repo ""` is the same
+    # silence with more behind it: an empty slug falls past the `--repo` branch
+    # of the resolver into the walk-up, which is the one thing naming a clone's
+    # origin was there to prevent. A value that came out empty is a flag that
+    # was typed and lost, never one that was never typed, and the two must not
+    # do different things (Copilot's review of #14).
     --lane)
-        [ $# -ge 2 ] || die "--lane needs a value: the lane recorded in the WIP commit subject."
+        [ $# -ge 2 ] && [ -n "$2" ] ||
+            die "--lane needs a value: the lane recorded in the WIP commit subject."
         LANE="$2"; shift 2 ;;
     --repo)
-        [ $# -ge 2 ] || die "--repo needs a value: <owner>/<name>, or any url spelling of one."
+        [ $# -ge 2 ] && [ -n "$2" ] ||
+            die "--repo needs a value: <owner>/<name>, or any url spelling of one."
         REPO_SLUG="$2"; REPO_ARG="$REPO_SLUG"; shift 2 ;;
     # `--project <Name>` and `--name <Name>` are the positional under a flag,
     # because the issue's own words are "park --project <project> or park
@@ -906,7 +920,8 @@ while [ $# -gt 0 ]; do
     # value is never mistaken for the positional this way, which is the same
     # reason `openRepoShape` names its value-taking flags.
     --name | --project)
-        [ $# -ge 2 ] || die "$1 needs a value: one estate folder name under your projects directory."
+        [ $# -ge 2 ] && [ -n "$2" ] ||
+            die "$1 needs a value: one estate folder name under your projects directory."
         NAME="$2"; shift 2 ;;
     # EVERYTHING AFTER `--` IS THE EXTENSION'S, verbatim. `park.sh` has flags
     # this command has no opinion about (--feature, --message, --no-push,

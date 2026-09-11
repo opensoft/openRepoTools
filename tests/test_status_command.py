@@ -529,7 +529,29 @@ def test_refusals_read_nothing(home, status_remotes):
     valueless = run(STATUS, "--repo", home=home)
     assert valueless.returncode == 2, valueless.stdout + valueless.stderr
     assert "REFUSED: --repo needs a value" in valueless.stderr
-    for result in (both, unknown, nope, valueless):
+    # AN EMPTY VALUE IS THE SAME REFUSAL, and these two arms never went
+    # through `${2:?…}` at all: they have been arity-only since this file's
+    # first commit, so Copilot's review of #14 — which caught exactly this in
+    # `park` and `resume`, where `[ $# -ge 2 ]` had just replaced `${2:?…}` —
+    # never had `status` in front of it. RUN FROM INSIDE THE ESTATE, which is
+    # what makes it bite: before the fix the empty slug fell past the
+    # `--repo` branch of the resolver into the walk-up, and Atlas was read
+    # and reported as though `--repo` had never been typed. Nothing is
+    # printed at all now — the refusal is raised in the argument loop, before
+    # the estate is resolved and before the first `say` — so an empty stdout
+    # is the proof that the fallback was never reached.
+    empty = [(flag, run(STATUS, flag, "", home=home, cwd=atlas))
+             for flag in ("--repo", "--name", "--project")]
+    for flag, result in empty:
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert f"REFUSED: {flag} needs a value" in result.stderr
+        assert "${2:?" not in result.stderr
+        assert "parameter null or not set" not in result.stderr
+        assert "line " not in result.stderr, "bash's own message leaked"
+        assert result.stdout == "", (
+            "nothing may be resolved, said or read before an empty value is "
+            f"refused; stdout was {result.stdout!r}")
+    for result in (both, unknown, nope, valueless, *(r for _, r in empty)):
         assert str(atlas) not in result.stdout, "a refusal read nothing"
 
 

@@ -1955,15 +1955,30 @@ while [ $# -gt 0 ]; do
     case "$1" in
     -h | --help) usage; exit 0 ;;
     -a | --all) STATUS_ALL=1; shift ;;
-    # A MISSING VALUE IS A REFUSAL, exit 2, in this command's own words:
-    # `${2:?…}` would be bash's message and bash's exit 1 — and 1 is what
-    # this command means by "findings were printed", so a typo must not be
-    # able to read as a report.
+    # A MISSING OR EMPTY VALUE IS A REFUSAL, exit 2, in this command's own
+    # words: `${2:?…}` would be bash's message and bash's exit 1 — and 1 is
+    # what this command means by "findings were printed", so a typo must not
+    # be able to read as a report.
+    # EMPTY IS REFUSED THE SAME WAY, which is why both arms below ask for a
+    # NON-EMPTY `$2` and not only for a second argument. THESE TWO WERE NEVER
+    # `${2:?…}`: they have been arity-only since this file's first commit, so
+    # when Copilot's review of #14 said that `[ $# -ge 2 ]` checks only that
+    # an argument slot exists — said of `park` and `resume`, which had just
+    # swapped `${2:?…}` for exactly that — `status` was not in front of it,
+    # and it kept the hole the other two then closed. It is the same hole:
+    # every value here is read further down as "was this given at all?", so
+    # `status --repo ""` fell past the `--repo` branch of the resolver into
+    # the walk-up and reported the estate around the cwd as though `--repo`
+    # had never been typed. A wrong answer is worse here than in either verb,
+    # not better: nothing was changed, so there is nothing to undo and no
+    # reason for anybody to look twice.
     --repo)
-        [ $# -ge 2 ] || die "--repo needs a value: <owner>/<name>, or any url spelling of one."
+        [ $# -ge 2 ] && [ -n "$2" ] ||
+            die "--repo needs a value: <owner>/<name>, or any url spelling of one."
         REPO_SLUG="$2"; REPO_ARG="$REPO_SLUG"; shift 2 ;;
     --name | --project)
-        [ $# -ge 2 ] || die "$1 needs a value: one estate folder name under your projects directory."
+        [ $# -ge 2 ] && [ -n "$2" ] ||
+            die "$1 needs a value: one estate folder name under your projects directory."
         NAME="$2"; shift 2 ;;
     # THE SECOND LAYER (Brett Heap's RULING of 2026-09-11, "next layer:
     # --fetch"): ask origin in every repository first. See `fetch_remote`.
