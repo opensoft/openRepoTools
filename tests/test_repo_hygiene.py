@@ -526,9 +526,16 @@ def test_agents_md_is_short_enough_to_be_read():
     `worktree add --force`, which builds the pair git refused to build, and a
     delete under `.git/worktrees/`, which is the record of the registration
     and not a scratch directory.
+
+    145 -> 147 on 2026-09-11, for the same review's next round: `git worktree
+    prune` SKIPS a LOCKED registration, so the rule above was an exit that
+    does not work for that one. Two lines put `git worktree unlock <path>` in
+    front of it and say the finding names which kind it is — without them an
+    assistant follows the prune, watches nothing change, and reaches for the
+    two deletes the same sentence forbids.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 145, f"AGENTS.md is {len(lines)} lines; the cap is 145"
+    assert len(lines) <= 147, f"AGENTS.md is {len(lines)} lines; the cap is 147"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -622,9 +629,16 @@ def test_readme_is_short_enough_to_be_read():
     workstation that parked it can. It was left to be inferred from the
     `--no-push` finding two clauses later, and `status` itself now says the
     two states in one line rather than in two that contradicted each other.
+
+    242 -> 244 on 2026-09-11, for the review of #18: the STALE REGISTRATION
+    state, which the paragraph did not have. Two lines say that a worktree
+    which is gone while `git worktree list` still holds its registration is a
+    prune — after an unlock if it is locked — BEFORE `resume <Name>` can do
+    anything, because the paragraph otherwise promises a recovery the
+    command's own finding contradicts.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 242, f"README.md is {len(lines)} lines; the cap is 242"
+    assert len(lines) <= 244, f"README.md is {len(lines)} lines; the cap is 244"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

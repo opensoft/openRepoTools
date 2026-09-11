@@ -58,11 +58,13 @@ against disk"): the record `park` wrote into the workspace repository that
 `~/.agents/workspace.yaml` names, found by the estate's id as `park` files it
 and then by its folder name as `resume` looks it up, gives a finding for a
 recorded feature with no worktree here (`resume <Name>` brings it back; with
-`--no-push` only the workstation that parked it can), a worktree whose tip
-moved on from, fell behind (by more than the WIP commits `resume` itself
-un-committed), or diverged from the parked commit, a leg parked with
-`--no-push`, and a worktree the record does not know, which was never
-parked. No config, or no record, is a note.
+`--no-push` only the workstation that parked it can; and where `git worktree
+list` still holds the registration of a worktree that is gone, a `worktree
+prune` — after a `worktree unlock` if it is locked — has to clear it first),
+a worktree whose tip moved on from, fell behind (by more than the WIP commits
+`resume` itself un-committed), or diverged from the parked commit, a leg
+parked with `--no-push`, and a worktree the record does not know, which was
+never parked. No config, or no record, is a note.
 That is all five layers: the local layer, `--fetch`, the fork, the pin and
 the record.
 

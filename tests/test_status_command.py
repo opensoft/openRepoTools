@@ -1629,6 +1629,35 @@ def test_a_leg_parked_with_no_push_is_a_finding(atlas, home):
             "refuses it") in result.stdout
 
 
+def test_a_locked_stale_registration_names_the_unlock_before_the_prune(
+        atlas, home):
+    """`git worktree prune` SKIPS a locked registration — against git 2.43,
+    `prune -v` prints nothing for one, `unlock` then `prune` removes it, and
+    `worktree remove --force` refuses it ("cannot remove a locked working
+    tree; use 'remove -f -f' to override or unlock first"). So the finding
+    that named the prune alone would have left `resume` blocked by the very
+    thing it said to clear."""
+    checkout = workspace_config(home)
+    where = home / "Atlas-wt" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    git("worktree", "lock", str(where), cwd=atlas)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    rmtree(where)           # locked, and NO `git worktree prune`
+    porcelain = git("worktree", "list", "--porcelain", cwd=atlas).stdout
+    assert "\nlocked" in porcelain, "the registration is not locked; the test is moot"
+    assert "prunable" not in porcelain, "git marks a locked one prunable now"
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
+            "branch here, but a stale worktree registration for it is still "
+            f"recorded at {where} and LOCKED, which `worktree prune` skips — "
+            f"clear it with `git -C {atlas} worktree unlock {where}`, then "
+            f"`git -C {atlas} worktree prune`, then `resume Atlas` brings it "
+            "back") in result.stdout
+    assert f"recorded at {where} — clear it with" not in result.stdout, (
+        "the prune-only line, which cannot clear a locked registration")
+
+
 def test_a_no_push_record_with_no_worktree_here_never_names_resume(atlas, home):
     """The two lines contradicted each other: `resume` refuses this record,
     and then `resume Atlas` brings it back. Only the workstation that parked
@@ -1653,11 +1682,11 @@ def test_a_no_push_record_with_no_worktree_here_never_names_resume(atlas, home):
     result = run(STATUS, "Atlas", home=home)
     assert result.returncode == 1, result.stdout + result.stderr
     assert ("    - parked feature 001-a-thing (repo leg): parked with --no-push "
-            "on Falcon and no worktree on that branch here, only a stale "
-            f"worktree registration at {where} — clear it with `git -C {atlas} "
-            "worktree prune`; only that workstation has the WIP commit, so "
-            "nothing here brings it back — park it again from there"
-            ) in result.stdout
+            "on Falcon and no worktree on that branch here, but a stale "
+            f"worktree registration for it is still recorded at {where} — "
+            f"clear it with `git -C {atlas} worktree prune`; only that "
+            "workstation has the WIP commit, so nothing here brings it back — "
+            "park it again from there") in result.stdout
     assert "brings it back" in result.stdout and "`resume Atlas`" not in result.stdout
 
 
@@ -1671,8 +1700,11 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     helptext = " ".join(result.stdout.split())
     assert ("a recorded feature with no worktree here (`resume <Name>` brings "
             "it back — unless the record says `--no-push`, when only the "
-            "workstation that has the WIP commit can park it again)"
-            ) in helptext
+            "workstation that has the WIP commit can park it again; and where "
+            "the worktree is gone but `git worktree list` still holds its "
+            "registration, that is cleared with `worktree prune`, after a "
+            "`worktree unlock` if it is locked, before `resume` can recreate "
+            "anything)") in helptext
 
 
 def test_a_missing_parked_commit_is_read_against_what_the_record_claims(
@@ -1750,6 +1782,29 @@ def test_under_fetch_the_legs_own_fetch_comes_before_the_record_is_read(
     assert "is not here" not in result.stdout, "read before its own fetch"
     assert (f"    - parked feature 001-s-thing (spec leg): this worktree is "
             f"BEHIND the parked commit {parked[:7]}") in result.stdout
+
+
+def test_two_spellings_of_one_leg_are_one_repository_in_the_fetch_store(
+        atlas, home):
+    """`estate_repos` builds a leg's path out of `.gitmodules` and the record
+    layer asks about the path `project.yaml` gives that role: `./spec` and
+    `spec` are one leg and two strings. Keyed on the spelling, the store
+    missed and the finding told the person this repository had never fetched
+    a leg the same run had fetched two rows below."""
+    checkout = workspace_config(home)
+    manifest = atlas / "project.yaml"
+    manifest.write_text(manifest.read_text(encoding="utf-8").replace(
+        "    path: spec\n", "    path: ./spec\n"), encoding="utf-8")
+    leg = atlas / "spec"
+    git("checkout", "-q", "main", cwd=leg)
+    feature_worktree(leg, "001-s-thing", home / "Atlas-wt" / "001-s-thing" / "spec")
+    record(checkout, "atlas", branch="001-s-thing", role="spec", commit=FAKE_SHA)
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-s-thing (spec leg): its parked commit "
+            f"{FAKE_SHA[:7]} is not here after this run's fetch"
+            ) in result.stdout
+    assert "never fetched it" not in result.stdout
 
 
 def test_a_worktree_the_record_does_not_know_was_never_parked(atlas, home):

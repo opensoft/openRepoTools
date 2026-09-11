@@ -145,9 +145,12 @@ pin that has fallen behind is named with the exit, `update-shape.py check
 workspace repository; `workspaces/<org>/<id>.yaml` in it) is read against the
 worktrees on disk: a recorded feature with no worktree here (`resume <Name>`
 brings it back — unless the record says `--no-push`, when only the
-workstation that has the WIP commit can park it again), a worktree whose tip
-is not the parked commit, a leg parked with `--no-push`, and a worktree the
-record does not know (never parked).
+workstation that has the WIP commit can park it again; and where the worktree
+is gone but `git worktree list` still holds its registration, that is cleared
+with `worktree prune`, after a `worktree unlock` if it is locked, before
+`resume` can recreate anything), a worktree whose tip is not the parked
+commit, a leg parked with `--no-push`, and a worktree the record does not
+know (never parked).
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
 (<Name>/<Name>/family.yaml) or a standalone project root (<Name>/project.yaml).
@@ -162,9 +165,13 @@ a clone you ALREADY HAVE, in any spelling git accepts.
                       are current: THE ONE WRITE this command makes, to
                       remote-tracking refs, the objects behind them and
                       FETCH_HEAD; never a local branch, tag, HEAD, index or
-                      working tree, because the refspec is pinned. A fetch that
-                      fails is a finding on that row, read as of the last fetch
-                      that worked. An ssh prompt is ssh's own and still blocks.
+                      working tree, because the refspec is pinned. EVERY
+                      repository is fetched before the FIRST ROW is printed,
+                      so the report appears after them; a fetch that fails is
+                      a finding on its own row, read as of the last fetch that
+                      worked. An ssh prompt is ssh's own, still blocks, and
+                      blocks with no row in front of it: it belongs to a
+                      fetch, not to the row you are looking at.
   --all, -a           read EVERY estate under your projects directory
   --project <Name>    the positional under a flag (also --name)
 
@@ -930,8 +937,8 @@ fetch_remote() {
     fi
 }
 
-#: WHAT THE PRE-PASS BELOW STORES, one entry per repository row of the estate
-#: in row order: the path it is keyed by, the lines its fetch printed, the
+#: WHAT THE PRE-PASS BELOW STORES, one entry per REPOSITORY of the estate in
+#: row order: the path it is keyed by, the lines its fetch printed, the
 #: findings its fetch made, and the two flags the reads branch on. Parallel
 #: arrays and a linear scan, because bash 3.2 has no associative array and an
 #: estate holds a handful of repositories. `FETCH_SAY` is where `fetch_remote`
@@ -943,6 +950,20 @@ FETCH_OK_AT=()
 FETCH_UP_OK_AT=()
 FETCH_SAY=""
 fetch_say() { FETCH_SAY="$FETCH_SAY$1"$'\n'; }
+
+# THE KEY IS THE PHYSICAL PATH, the idiom `locate_record` uses on the
+# workspace checkouts and for the same reason: ONE DIRECTORY HAS MORE THAN ONE
+# SPELLING. The rows come from `estate_repos`, which builds a leg's path out
+# of `.gitmodules`; the record layer asks about the path `project.yaml` gives
+# that role — `./spec` against `spec` is the same leg and two strings — and a
+# symlinked projects directory, or a Mac's `/tmp` beside `/private/tmp`, does
+# the same to a root. A key that is a spelling would have said "never fetched"
+# about a repository fetched two rows below.
+physical_path() {
+    local resolved
+    resolved="$(cd "$1" 2>/dev/null && pwd -P)" || resolved="$1"
+    printf '%s\n' "$resolved"
+}
 
 # EVERY REPOSITORY IS FETCHED BEFORE ANY ROW IS READ, which is what `--fetch`
 # has said since it landed — "in every repository first, so the answers are
@@ -957,7 +978,7 @@ fetch_say() { FETCH_SAY="$FETCH_SAY$1"$'\n'; }
 # back where the row-by-row version printed and counted them — so the report
 # reads exactly as it did.
 fetch_estate_first() {
-    local label branch path
+    local label branch path key seen
     FETCH_KEYS=()
     FETCH_SAID=()
     FETCH_FOUND=()
@@ -969,13 +990,22 @@ fetch_estate_first() {
         holder | root | mounted) ;;
         *) continue ;;
         esac
+        key="$(physical_path "$path")"
+        # ONE FETCH PER REPOSITORY, not per row. `family.yaml` is a file
+        # people edit, and a member listed twice is one repository: fetching
+        # it twice would make the second fetch report "nothing new" about
+        # what the first had just moved, and the row that replays the one
+        # entry says what was really done.
+        for seen in ${FETCH_KEYS[@]+"${FETCH_KEYS[@]}"}; do
+            [ "$seen" != "$key" ] || continue 2
+        done
         FETCH_SAY=""
         FINDINGS=()
         fetch_remote "$path" "$branch" origin
         if has_upstream "$path"; then
             fetch_remote "$path" "$branch" upstream
         fi
-        FETCH_KEYS+=("$path")
+        FETCH_KEYS+=("$key")
         FETCH_SAID+=("$FETCH_SAY")
         FETCH_FOUND+=("$(printf '%s\n' ${FINDINGS[@]+"${FINDINGS[@]}"})")
         FETCH_OK_AT+=("$FETCHED_OK")
@@ -990,7 +1020,8 @@ fetch_estate_first() {
 # every row of a run without `--fetch` leaves the flags at 0, which is what
 # "as of the last fetch" means there.
 replay_fetch() {
-    local path="$1" i=0 line
+    local path i=0 line
+    path="$(physical_path "$1")"
     FETCHED_OK=0
     UPSTREAM_FETCHED_OK=0
     while [ "$i" -lt "${#FETCH_KEYS[@]}" ]; do
@@ -1016,8 +1047,9 @@ replay_fetch() {
 # it" for a leg it reads from the root's row. False without `--fetch`, and
 # false for a repository the pre-pass never saw.
 fetched_ok_at() {
-    local path="$1" i=0
+    local path i=0
     [ "$FETCH" -eq 1 ] || return 1
+    path="$(physical_path "$1")"
     while [ "$i" -lt "${#FETCH_KEYS[@]}" ]; do
         if [ "${FETCH_KEYS[$i]}" = "$path" ]; then
             [ "${FETCH_OK_AT[$i]}" = 1 ] || return 1
@@ -1489,8 +1521,9 @@ read_shape() {
 #    a worktree. Unless the record is a `--no-push` one (3): then there is
 #    nothing here to resume FROM, and the exit is the workstation that has it.
 #    And where the porcelain still holds a REGISTRATION for that branch whose
-#    directory is gone, the prune that clears it is named first: `resume`
-#    cannot recreate a worktree git still believes it has.
+#    directory is gone, what clears it is named first — a prune, after an
+#    unlock where the registration is locked: `resume` cannot recreate a
+#    worktree git still believes it has.
 # 2. A WORKTREE WHOSE BRANCH TIP IS NOT THE PARKED COMMIT: moved on since it
 #    was parked (park again before leaving); or BEHIND it — the record is
 #    newer, parked later on another workstation, which `resume` refuses to
@@ -1768,10 +1801,10 @@ leg_repo_for_role() {
 }
 
 # The path of the worktree checked out on `<branch>` in `<repo>`, main or
-# linked. THREE ANSWERS, because the porcelain has three: 0 and the path when
-# a worktree is there; 2 AND THE PATH when the only block for that branch is a
-# REGISTRATION WITHOUT A DIRECTORY; 1 and nothing when there is no block at
-# all.
+# linked. FOUR ANSWERS, because the porcelain has four: 0 and the path when a
+# worktree is there; 2 AND THE PATH when the only block for that branch is a
+# REGISTRATION WITHOUT A DIRECTORY; 3 and the path when that registration is
+# also LOCKED; 1 and nothing when there is no block at all.
 #
 # THE PATH HAS TO BE ON DISK. `worktree list --porcelain` keeps the block of a
 # linked worktree whose directory was deleted until somebody runs `git
@@ -1782,23 +1815,41 @@ leg_repo_for_role() {
 # before reading it for the same reason.
 #
 # AND A STALE BLOCK IS NOT "NOTHING HERE" EITHER, which is why it comes back
-# as 2 rather than as 1: it is the thing that STOPS the exit this layer would
-# otherwise name — see `check_parked_leg`. The scan goes on rather than
-# answering with the first block, so a live worktree on the branch wins over a
-# stale one for it; git makes that pair only under `worktree add --force`,
-# having refused the plain `add` over a registration it still holds.
+# as 2 or 3 rather than as 1: it is the thing that STOPS the exit this layer
+# would otherwise name — see `check_parked_leg`. The two are told apart
+# because THE EXIT IS NOT THE SAME: `worktree prune` clears an unlocked
+# registration and SKIPS a locked one (verified against git 2.43: `prune -v`
+# prints nothing for it, `unlock` then `prune` removes it, and `worktree
+# remove --force` refuses with "cannot remove a locked working tree; use
+# 'remove -f -f' to override or unlock first"). Naming a prune that cannot
+# clear it would leave `resume` blocked by the very thing the finding said to
+# clear.
+#
+# THE `locked` LINE COMES AFTER `branch` IN THE SAME BLOCK, so the block is
+# read to its blank line before the answer is settled. The scan goes on past
+# it rather than answering with the first block, so a live worktree on the
+# branch wins over a stale one for it; git makes that pair only under
+# `worktree add --force`, having refused the plain `add` over a registration
+# it still holds.
 worktree_on_branch() {
-    local repo="$1" want="$2" line path="" stale=""
+    local repo="$1" want="$2" line path="" hit=0 stale="" locked=0
     while IFS= read -r line; do
         case "$line" in
-        "worktree "*) path="${line#worktree }" ;;
+        "worktree "*) path="${line#worktree }"; hit=0 ;;
         "branch refs/heads/$want")
             if [ -d "$path" ]; then printf '%s\n' "$path"; return 0; fi
-            [ -n "$stale" ] || stale="$path"
+            hit=1
+            ;;
+        locked | "locked "*)
+            if [ "$hit" -eq 1 ] && [ -z "$stale" ]; then locked=1; fi
+            ;;
+        "")
+            if [ "$hit" -eq 1 ] && [ -z "$stale" ]; then stale="$path"; fi
+            hit=0
             ;;
         esac
-    done < <(g "$repo" worktree list --porcelain 2>/dev/null || true)
-    [ -z "$stale" ] || { printf '%s\n' "$stale"; return 2; }
+    done < <(g "$repo" worktree list --porcelain 2>/dev/null; printf '\n')
+    [ -z "$stale" ] || { printf '%s\n' "$stale"; [ "$locked" -eq 0 ] || return 3; return 2; }
     return 1
 }
 
@@ -1832,7 +1883,7 @@ wip_gap_is_ours() {
 # repository.
 check_parked_leg() {
     local root="$1" branch="$2" role="$3" commit="$4" pushed="$5" parked_at="$6" parked_on="$7" depth="$8"
-    local repo tree="" ghost="" out rc=0 tip n
+    local repo tree="" ghost="" ghost_is="" clear="" out rc=0 tip n
     repo="$(leg_repo_for_role "$root" "$role" || true)"
     if [ -z "$repo" ] || [ ! -e "$repo/.git" ]; then
         finding "parked feature $branch ($role leg): the record names a leg this root does not mount here"
@@ -1841,10 +1892,19 @@ check_parked_leg() {
     out="$(worktree_on_branch "$repo" "$branch")" || rc=$?
     case "$rc" in
     0) tree="$out" ;;
-    2) ghost="$out" ;;
+    2)
+        ghost="$out"
+        ghost_is="a stale worktree registration for it is still recorded at $ghost"
+        clear="\`git -C $repo worktree prune\`"
+        ;;
+    3)
+        ghost="$out"
+        ghost_is="a stale worktree registration for it is still recorded at $ghost and LOCKED, which \`worktree prune\` skips"
+        clear="\`git -C $repo worktree unlock $ghost\`, then \`git -C $repo worktree prune\`"
+        ;;
     esac
-    # A STALE REGISTRATION IS NAMED BEFORE THE EXIT IT BLOCKS, and the prune
-    # that clears it first, because this layer reads the record THE WAY
+    # A STALE REGISTRATION IS NAMED BEFORE THE EXIT IT BLOCKS, and what
+    # clears it before that, because this layer reads the record THE WAY
     # `resume.sh` WILL JUDGE IT and `resume.sh` judges this one badly: its
     # `leg_registered_at` matches on the registered PATH alone — fed by
     # `git-common.sh`'s `load_git_worktrees`, which takes `worktree list
@@ -1857,8 +1917,8 @@ check_parked_leg() {
     # registration a later resume reads as 'already registered' for a path
     # that is not there". Naming `resume` alone would be naming an exit that
     # does not work — and the house rule is that the exit named is one that
-    # does. (`worktree prune` skips a `locked` block, which is why the finding
-    # gives the path: `git worktree list` says which kind it is.)
+    # does, which is also why the LOCKED registration gets the `unlock` in
+    # front of the prune that would otherwise skip it (Copilot on #18).
     #
     # `--no-push` IS THE ONE RECORD `resume` CANNOT ANSWER, so no line under
     # it offers `resume` as the exit: the WIP commit is on the workstation
@@ -1869,7 +1929,7 @@ check_parked_leg() {
     # names the only exit there is: park it again, with the push, from there.
     if [ "$pushed" = false ] && [ -z "$tree" ]; then
         if [ -n "$ghost" ]; then
-            finding "parked feature $branch ($role leg): parked with --no-push on ${parked_on:-another workstation} and no worktree on that branch here, only a stale worktree registration at $ghost — clear it with \`git -C $repo worktree prune\`; only that workstation has the WIP commit, so nothing here brings it back — park it again from there"
+            finding "parked feature $branch ($role leg): parked with --no-push on ${parked_on:-another workstation} and no worktree on that branch here, but $ghost_is — clear it with $clear; only that workstation has the WIP commit, so nothing here brings it back — park it again from there"
         else
             finding "parked feature $branch ($role leg): parked with --no-push on ${parked_on:-another workstation} and no worktree on that branch here; only that workstation has the WIP commit, so nothing here brings it back — park it again from there"
         fi
@@ -1880,7 +1940,7 @@ check_parked_leg() {
     fi
     if [ -z "$tree" ]; then
         if [ -n "$ghost" ]; then
-            finding "parked feature $branch ($role leg): no worktree on that branch here, but a stale worktree registration for it is still recorded at $ghost — clear it with \`git -C $repo worktree prune\`, then \`resume $ESTATE_NAME\` brings it back"
+            finding "parked feature $branch ($role leg): no worktree on that branch here, but $ghost_is — clear it with $clear, then \`resume $ESTATE_NAME\` brings it back"
         else
             finding "parked feature $branch ($role leg): no worktree on that branch here; parked ${parked_at:-?} on ${parked_on:-?} — \`resume $ESTATE_NAME\` brings it back"
         fi
