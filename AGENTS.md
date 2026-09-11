@@ -74,12 +74,21 @@ sequence, and relay their per-repository lines rather than summarising them.
    own and still blocks. So when the person wants a CURRENT answer, run
    `status --fetch`, never `git fetch` by hand on its behalf.
    That is the local layer and `--fetch`. A FORK is read against a remote
-   named `upstream` from local refs, and, with no such remote and only under
-   `--fetch`, an origin on github.com is asked about once with `gh api` (his
-   RULING of the same day, "next layer: fork against upstream") — the one use
-   of `gh` in these commands, read-only; a fork is a finding naming the
+   named `upstream` from local refs (`--fetch` fetches it too), and, with no
+   such remote and only under `--fetch`, an origin whose host is github.com
+   is asked about with `gh api` (his RULING of the same day, "next layer:
+   fork against upstream") — read-only, and with the shape check below the
+   estate commands' only use of `gh`; a fork is a finding naming the
    parent and the `git remote add upstream …` to run, which is theirs to run.
-   Shape-pin drift and the parked record against disk are later layers. Its
+   THE SHAPE PIN (`contracts/shape-pin.yaml`) is read too (his RULING of the
+   same day, "next layer: shape-pin drift"): a copied shape file whose sha256
+   differs is DRIFT, and the exit is upstream — never re-digest it, never edit
+   the pin; a pin behind the standard's `main` names `update-shape.py check
+   --root <root>`, which is the person's to run. Currency comes from a clone
+   of openRepoShape under the projects directory or, under `--fetch`, from
+   GitHub; "currency not read" in the note means neither was there, not that
+   the pin is current. The parked record against disk is the one layer left.
+   Its
    bare form outside every estate reads them all WITHOUT asking, because a
    read — fetched or not — moves nothing of yours; `status --all` from
    anywhere says the same thing.

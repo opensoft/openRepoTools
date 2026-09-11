@@ -21,6 +21,16 @@ and a `url.<base>.insteadOf` rewrite so an origin that LOOKS like github.com
 still fetches from a bare repository on disk. Nothing here reaches the
 network. The third section holds that layer.
 
+His RULING of 2026-09-11, verbatim: "next layer: shape-pin drift". Every
+root and holder carries `contracts/shape-pin.yaml`, a COPY PIN: the
+openRepoShape commit its copied shape files came from and a sha256 per copy.
+The fourth section holds that layer: a copy edited in place is drift, a
+missing copy is named, a `shape:` mirror naming another commit is out of
+step, and the pin is read against the standard's `main` — from a clone of it
+under the projects directory (a bare repository on disk here, its origin
+spelled as github.com so the clone is found by slug and never fetched), or
+under `--fetch` from a fake `gh`'s compare answer.
+
 His RULING of 2026-09-11, verbatim: "next layer: --fetch". With the flag,
 `git fetch --prune origin` runs in every repository before it is read — the
 ONE write this command makes, to remote-tracking refs and nothing else — and
@@ -524,8 +534,8 @@ def test_no_estate_anywhere_refuses(home):
 #
 # Brett Heap's RULING of 2026-09-11, verbatim: "next layer: --fetch".
 
-FETCHED = ("fetched first (--fetch): origin is asked in every repository "
-           "below, then it is read.")
+FETCHED = ("fetched first (--fetch): origin — and upstream, where a fork has "
+           "one — is asked in every repository below, then it is read.")
 FETCH_CLAUSE = "only remote-tracking refs and fetched objects were changed (--fetch)."
 
 
@@ -770,12 +780,14 @@ def github_origin(repo: Path, bare: Path, slug: str) -> None:
     git("remote", "set-url", "origin", url, cwd=repo)
 
 
-def fake_gh(tmp_path: Path, *, failing: bool = False) -> tuple[dict, Path]:
+def fake_gh(tmp_path: Path, *, failing: bool = False,
+            not_found: str | None = None) -> tuple[dict, Path]:
     """A fake `gh` first on PATH that answers the two calls `status` makes —
     `api repos/<slug>` (Atlas is a fork of opensoft/Atlas, its leg is not) and
     the compare (3 behind, 1 ahead) — printing what the `--jq` filter would,
     fields joined by 0x1F, and logging every call. `failing` answers as a
-    `gh` nobody logged in to."""
+    `gh` nobody logged in to (exit 4, true of every repository);
+    `not_found=<slug>` answers 404 (exit 1) for THAT repository only."""
     shim = tmp_path / "gh-shim"
     shim.mkdir(parents=True, exist_ok=True)
     log = tmp_path / "gh-calls.log"
@@ -784,8 +796,12 @@ def fake_gh(tmp_path: Path, *, failing: bool = False) -> tuple[dict, Path]:
         body += ("printf 'To get started with GitHub CLI, please run:  gh auth "
                  "login\\n' >&2\nexit 4\n")
     else:
+        body += 'case "$*" in\n'
+        if not_found:
+            body += (f"*\"repos/{not_found} \"*) printf 'gh: Not Found (HTTP 404)"
+                     "\\n' >&2; exit 1 ;;\n")
         body += (
-            'case "$*" in\n'
+            "*\"repos/opensoft/openRepoShape/compare/\"*) printf '0\\0374\\n' ;;\n"
             "*\"/compare/\"*) printf '3\\0371\\n' ;;\n"
             "*\"repos/testorg/Atlas-spec \"*) printf 'false\\037\\037\\n' ;;\n"
             "*\"repos/testorg/Atlas \"*) printf 'true\\037opensoft/Atlas\\037main\\n' ;;\n"
@@ -889,10 +905,11 @@ def test_a_github_origin_with_no_upstream_remote_is_asked_only_under_fetch(
     assert fetched.returncode == 1, fetched.stdout + fetched.stderr
     calls = log.read_text(encoding="utf-8").splitlines()
     assert len(calls) == 3, calls
-    assert calls[0].startswith("api repos/testorg/Atlas ")
+    assert calls[0].startswith("api repos/testorg/Atlas --hostname github.com ")
     assert calls[1].startswith(
-        "api repos/opensoft/Atlas/compare/main...testorg:main?per_page=1 ")
-    assert calls[2].startswith("api repos/testorg/Atlas-spec ")
+        "api repos/opensoft/Atlas/compare/main...testorg:main?per_page=1 "
+        "--hostname github.com ")
+    assert calls[2].startswith("api repos/testorg/Atlas-spec --hostname github.com ")
     assert ("    - fork of opensoft/Atlas (per GitHub), and no remote named "
             "upstream here: `git remote add upstream "
             "https://github.com/opensoft/Atlas.git` reads the drift locally"
@@ -927,6 +944,290 @@ def test_a_failing_gh_is_said_once_and_a_local_origin_is_never_asked(
     assert result.returncode == 0, result.stdout + result.stderr
     assert not log2.exists(), "an origin that is not on github.com is never asked"
     assert str(plain_origin) in result.stdout
+
+
+def test_a_404_on_one_repository_does_not_silence_the_others(
+        atlas, home, status_remotes, tmp_path):
+    """Not logged in (gh exit 4) is true of every repository and settles the
+    run; a 404 is true of ONE — a repository this token cannot see — and the
+    leg beside it must still be asked, or a fork nobody asked about reads as
+    clean with the one trace under a different row."""
+    github_origin(atlas, status_remotes["Atlas"]["bare"], "testorg/Atlas")
+    github_origin(atlas / "spec", status_remotes["Atlas"]["leg_bare"],
+                  "testorg/Atlas-spec")
+    env, log = fake_gh(tmp_path, not_found="testorg/Atlas")
+    result = run(STATUS, "--fetch", "Atlas", home=home, env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ("    fork check: `gh api repos/testorg/Atlas` failed (gh: Not Found "
+            "(HTTP 404)); the other repositories are still asked") in result.stdout
+    assert "not asked again this run" not in result.stdout
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert len(calls) == 2, calls
+    assert calls[1].startswith("api repos/testorg/Atlas-spec ")
+
+
+def test_only_an_origin_whose_host_is_github_dot_com_is_asked(
+        atlas, home, status_remotes, tmp_path):
+    """`github.company.com` is somebody's GitHub Enterprise and `notgithub.com`
+    somebody else's server; the question goes to github.com, so neither is
+    asked — a match on the substring would send a private repository's name,
+    with the person's token, to a server that never had it."""
+    bare = status_remotes["Atlas"]["bare"]
+    for i, url in enumerate((
+            "https://github.company.com/testorg/Atlas.git",
+            "https://notgithub.com/testorg/Atlas.git",
+            "https://github.com.evil.example/testorg/Atlas.git",
+            "https://gitlab.com/testorg/github.com-mirror.git")):
+        git("config", "--add", f"url.{bare}.insteadOf", url, cwd=atlas)
+        git("remote", "set-url", "origin", url, cwd=atlas)
+        env, log = fake_gh(tmp_path / f"host{i}")
+        result = run(STATUS, "--fetch", "Atlas", home=home, env=env)
+        assert result.returncode == 0, url + result.stdout + result.stderr
+        assert not log.exists(), f"{url} was asked about on github.com"
+    for url in ("git@github.com:testorg/Atlas.git",
+                "ssh://git@github.com:22/testorg/Atlas.git",
+                "https://token@GitHub.com/testorg/Atlas.git"):
+        git("config", "--add", f"url.{bare}.insteadOf", url, cwd=atlas)
+        git("remote", "set-url", "origin", url, cwd=atlas)
+        env, log = fake_gh(tmp_path / url.replace("/", "_").replace(":", "_"))
+        result = run(STATUS, "--fetch", "Atlas", home=home, env=env)
+        assert log.exists(), f"{url} IS github.com and must be asked"
+        assert "fork of opensoft/Atlas" in result.stdout, url
+
+
+def test_a_github_origin_with_an_upstream_remote_is_read_locally_not_asked(
+        atlas, home, status_remotes, tmp_path):
+    github_origin(atlas, status_remotes["Atlas"]["bare"], "testorg/Atlas")
+    parent = parent_ahead(status_remotes["base"], status_remotes["Atlas"],
+                          "localfirst")
+    git("remote", "add", "upstream", str(parent), cwd=atlas)
+    env, log = fake_gh(tmp_path)
+    result = run(STATUS, "--fetch", "Atlas", home=home, env=env)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - fork: origin/main is 1 commit(s) behind upstream/main, as of "
+            "the last fetch") in result.stdout
+    assert not log.exists(), "with an upstream remote the answer is local"
+
+
+# --- the shape pin --------------------------------------------------------------
+#
+# Brett Heap's RULING of 2026-09-11, verbatim: "next layer: shape-pin drift".
+
+SHAPE_SOURCE = "opensoft/openRepoShape"
+
+SHAPE_PIN_YAML = """\
+schema_version: 1
+kind: pinned_contract_manifest
+
+# shape-pin.yaml — the openRepoShape revision this project was cut from.
+# A COPY PIN, NOT A SUBMODULE PIN. EDITING A COPIED FILE IS DRIFT.
+
+pin_role: shape
+source_repository: {source}
+materialization: copied
+
+commit: "{commit}"
+revision_kind: commit
+
+digest_algorithm: sha256
+digest_definition: sorted-ls-tree-r-v1
+digests:
+  tree_sha256: "{tree}"
+
+verify_pin: scripts/validate-pins.py
+
+files:
+{rows}
+"""
+
+SHAPE_MIRROR_YAML = """\
+shape:
+  repository: {source}
+  revision_kind: commit
+  commit: "{commit}"
+  digest_algorithm: sha256
+  digest_definition: sorted-ls-tree-r-v1
+  digests:
+    tree_sha256: "{tree}"
+"""
+
+
+def fake_standard(base: Path, commits: int = 3) -> dict:
+    """A bare repository standing in for opensoft/openRepoShape, `commits`
+    commits deep on `main`, plus one commit on a branch `main` never had.
+    Returns the bare and the shas, oldest first."""
+    seed = base / "seed" / "openRepoShape"
+    seed.mkdir(parents=True)
+    git("init", "-q", "-b", "main", ".", cwd=seed)
+    shas = []
+    for i in range(commits):
+        (seed / f"shape-{i}.md").write_text(f"shape {i}\n", encoding="utf-8")
+        commit_all(seed, f"shape commit {i}")
+        shas.append(git("rev-parse", "HEAD", cwd=seed).stdout.strip())
+    git("checkout", "-q", "-b", "orphan-branch", shas[0], cwd=seed)
+    (seed / "branch.md").write_text("never on main\n", encoding="utf-8")
+    commit_all(seed, "a branch commit")
+    branch_sha = git("rev-parse", "HEAD", cwd=seed).stdout.strip()
+    git("checkout", "-q", "main", cwd=seed)
+    bare = base / "remotes" / "openRepoShape.git"
+    git("clone", "-q", "--bare", str(seed), str(bare), cwd=base)
+    return {"bare": bare, "shas": shas, "branch_sha": branch_sha}
+
+
+def standard_clone(home: Path, bare: Path) -> Path:
+    """A clone of the fake standard under the projects directory whose origin
+    is SPELLED as github.com, so `clone_with_origin` finds it by slug — with
+    the remote-tracking refs the clone made from the bare, and never fetched
+    again (the url is only a name)."""
+    clone = home / "projects" / "openRepoShape"
+    git("clone", "-q", str(bare), str(clone), cwd=home / "projects")
+    git("remote", "set-url", "origin", f"https://github.com/{SHAPE_SOURCE}.git",
+        cwd=clone)
+    return clone
+
+
+def pin_shape(root: Path, commit: str, copies: dict, *, mirror: str | None = None,
+              push: bool = True) -> None:
+    """Write the copies, the pin with their real digests, and the mirror in
+    project.yaml; commit, and push so the clone stays in sync with origin."""
+    import hashlib
+    rows = []
+    for rel, body in copies.items():
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        rows.append(f"  - path: {rel}\n    sha256: \"{digest}\"")
+    tree = "0" * 64
+    (root / "contracts").mkdir(exist_ok=True)
+    (root / "contracts" / "shape-pin.yaml").write_text(
+        SHAPE_PIN_YAML.format(source=SHAPE_SOURCE, commit=commit, tree=tree,
+                              rows="\n".join(rows)), encoding="utf-8")
+    manifest = root / "project.yaml"
+    text = manifest.read_text(encoding="utf-8")
+    cut = text.find("\nshape:\n")
+    if cut >= 0:
+        text = text[:cut + 1]
+    manifest.write_text(text + SHAPE_MIRROR_YAML.format(
+        source=SHAPE_SOURCE, commit=mirror or commit, tree=tree),
+        encoding="utf-8")
+    commit_all(root, "pin the shape")
+    if push:
+        git("push", "-q", "origin", "main", cwd=root)
+
+
+COPIES = {"Makefile": ".PHONY: park\npark:\n\t@echo park\n",
+          "scripts/validate-pins.py": "#!/usr/bin/env python3\nprint('ok')\n"}
+
+
+def test_a_pinned_root_with_matching_copies_says_so_and_names_what_it_did_not_read(
+        atlas, home, status_remotes):
+    """The note line every pinned root gets: what is pinned, how many copies
+    match, and — with no clone of the standard here and no `--fetch` — that
+    currency was NOT read, so "no finding" is never mistaken for "current"."""
+    standard = fake_standard(status_remotes["base"])
+    pin_shape(atlas, standard["shas"][-1], COPIES)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (f"    shape: pinned at {standard['shas'][-1][:7]} of {SHAPE_SOURCE}; "
+            f"2/2 copies match their digests; currency not read (no clone of "
+            f"{SHAPE_SOURCE} under the projects directory; --fetch asks GitHub)"
+            ) in result.stdout
+    assert "in sync with origin/main; clean" in result.stdout
+
+
+def test_an_edited_or_missing_copy_is_drift(atlas, home, status_remotes):
+    standard = fake_standard(status_remotes["base"])
+    pin_shape(atlas, standard["shas"][-1], COPIES)
+    (atlas / "Makefile").write_text("# edited in place\n", encoding="utf-8")
+    (atlas / "scripts" / "validate-pins.py").unlink()
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - shape copy Makefile edited in place: its sha256 is not the one "
+            "contracts/shape-pin.yaml records (drift: carry the change upstream, "
+            "never re-digest)") in result.stdout
+    assert ("    - shape copy scripts/validate-pins.py is missing; "
+            "contracts/shape-pin.yaml names it (update-shape.py check --root "
+            f"{atlas})") in result.stdout
+    assert "0/2 copies match their digests" in result.stdout
+    assert "dirty: 2 path(s)" in result.stdout, "the edits are dirty paths too, read as before"
+
+
+def test_a_mirror_naming_another_commit_is_out_of_step(atlas, home,
+                                                        status_remotes):
+    standard = fake_standard(status_remotes["base"])
+    pin_shape(atlas, standard["shas"][-1], COPIES, mirror=standard["shas"][0])
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - shape: project.yaml mirrors {standard['shas'][0][:7]} but "
+            f"contracts/shape-pin.yaml pins {standard['shas'][-1][:7]}: out of "
+            "step (update-shape.py moves both together)") in result.stdout
+
+
+def test_the_pin_is_read_against_a_clone_of_the_standard_under_projects(
+        atlas, home, status_remotes):
+    """Local refs, no network: a clone of the standard under the projects
+    directory, found by its origin's slug, says the pin is behind — or not on
+    `main` at all."""
+    standard = fake_standard(status_remotes["base"])
+    clone = standard_clone(home, standard["bare"])
+    pin_shape(atlas, standard["shas"][0], COPIES)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - shape pin {standard['shas'][0][:7]} is 2 commit(s) behind "
+            f"{SHAPE_SOURCE} main (per the clone at {clone}, as of its last "
+            f"fetch): update-shape.py check --root {atlas}") in result.stdout
+    assert f"against {SHAPE_SOURCE} main per a clone under the projects directory" \
+        in result.stdout
+    assert "currency not read" not in result.stdout
+
+    git("checkout", "-q", "main", cwd=atlas)
+    pin_shape(atlas, standard["shas"][-1], COPIES)
+    current = run(STATUS, "Atlas", home=home)
+    assert current.returncode == 0, current.stdout + current.stderr
+    assert "shape pin" not in current.stdout, "at main's tip there is nothing to say"
+
+    pin_shape(atlas, standard["branch_sha"], COPIES)
+    orphan = run(STATUS, "Atlas", home=home)
+    assert orphan.returncode == 1, orphan.stdout + orphan.stderr
+    assert (f"    - shape pin {standard['branch_sha'][:7]} is not on {SHAPE_SOURCE} "
+            f"main (per the clone at {clone}): a branch commit, which the "
+            "standard's squash-merge orphans") in orphan.stdout
+
+
+def test_under_fetch_with_no_clone_github_is_asked_once_about_the_pin(
+        atlas, home, status_remotes, tmp_path):
+    """No clone of the standard here: under `--fetch` the fake `gh` answers
+    the compare (0 behind, 4 ahead of the pin), the finding names the exit,
+    and without `--fetch` nothing is asked."""
+    standard = fake_standard(status_remotes["base"])
+    pin_shape(atlas, standard["shas"][0], COPIES)
+    env, log = fake_gh(tmp_path)
+    plain = run(STATUS, "Atlas", home=home, env=env)
+    assert plain.returncode == 0, plain.stdout + plain.stderr
+    assert not log.exists(), "without --fetch, gh must not be asked"
+    assert "currency not read" in plain.stdout
+
+    fetched = run(STATUS, "--fetch", "Atlas", home=home, env=env)
+    assert fetched.returncode == 1, fetched.stdout + fetched.stderr
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert calls == [
+        f"api repos/{SHAPE_SOURCE}/compare/{standard['shas'][0]}...main?per_page=1 "
+        "--hostname github.com "
+        "--jq [(.behind_by|tostring), (.ahead_by|tostring)] | join(\"\\u001f\")"
+    ], calls
+    assert (f"    - shape pin {standard['shas'][0][:7]} is 4 commit(s) behind "
+            f"{SHAPE_SOURCE} main (per GitHub): update-shape.py check --root "
+            f"{atlas}") in fetched.stdout
+    assert f"against {SHAPE_SOURCE} main per GitHub" in fetched.stdout
+
+
+def test_a_root_without_a_shape_pin_says_nothing_about_one(atlas, home):
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "    shape:" not in result.stdout
+    assert "shape pin" not in result.stdout
+    assert "shape copy" not in result.stdout
 
 
 # --- the one promise ----------------------------------------------------------

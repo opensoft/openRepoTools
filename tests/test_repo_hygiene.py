@@ -135,13 +135,15 @@ def test_the_estate_commands_name_no_runtime_dependency_on_the_standard():
     offline path and still exists there; that is a cross-reference, not a call,
     which is why this test reads code and not comments.
 
-    THE ONE `gh api` IN THESE THREE FILES is `status`'s fork check (Brett
-    Heap's RULING of 2026-09-11, "next layer: fork against upstream"): only
-    under `--fetch`, only about an origin on github.com with no `upstream`
-    remote, read-only, and only inside `ask_github_fork`. The verbs still
-    call no API at all, and `status` calls it nowhere else — a second call
-    site would be a second place the network is reached, which is what this
-    rule is for.
+    THE ONE `gh api` IN THESE THREE FILES is inside `status`'s `gh_api_line`,
+    which every question `status` puts to GitHub goes through — the fork
+    check (Brett Heap's RULING of 2026-09-11, "next layer: fork against
+    upstream") and the shape pin against the standard's main (his RULING of
+    the same day, "next layer: shape-pin drift") — under `--fetch` only,
+    read-only, host pinned. The only other `gh` in `status` is `gh_ready`'s
+    `command -v gh`. The verbs run no `gh` at all. A second call site would
+    be a second place the network is reached and a second place the failure
+    policy would have to be right, which is what this rule is for.
     """
     for name in ESTATE_COMMANDS:
         code = code_lines(REPO / name)
@@ -155,10 +157,14 @@ def test_the_estate_commands_name_no_runtime_dependency_on_the_standard():
             # prose in a heredoc, not a call, and is set aside here.
             head, rest = code.split("cat <<'USAGE'", 1)
             calls = head + rest.split("\nUSAGE\n", 1)[1]
-            body = calls.split("ask_github_fork() {", 1)[1].split("\n}", 1)[0]
-            assert "gh api" in body, "status's fork check no longer asks gh"
-            assert "gh api" not in calls.replace(body, ""), (
-                "status calls the API outside ask_github_fork")
+            api = calls.split("gh_api_line() {", 1)[1].split("\n}", 1)[0]
+            ready = calls.split("gh_ready() {", 1)[1].split("\n}", 1)[0]
+            assert "gh api" in api, "status's gh_api_line no longer asks gh"
+            assert "--hostname github.com" in api, (
+                "the one gh call no longer pins the host it asks")
+            elsewhere = calls.replace(api, "").replace(ready, "")
+            assert not re.search(r"(?<![\w-])gh\s", elsewhere), (
+                "status runs gh outside gh_api_line / gh_ready")
         else:
             assert "gh api" not in code, (
                 f"{name} calls the API; the verbs fetch nothing")
@@ -287,6 +293,10 @@ def test_the_documents_say_what_status_is_and_is_not():
             f"{name} does not bound the one write --fetch makes")
         assert "`upstream`" in text, (
             f"{name} does not say how a fork is read: a remote named upstream")
+        assert "shape-pin.yaml" in text, (
+            f"{name} does not say the shape pin is read")
+        assert "update-shape.py" in text, (
+            f"{name} does not name the exit for a shape pin that is behind")
         assert "gh api" in text, (
             f"{name} does not say the fork check may ask gh, and only under "
             f"--fetch")
@@ -415,9 +425,15 @@ def test_agents_md_is_short_enough_to_be_read():
     — and the two things an assistant gets wrong unaided: that this is the
     ONE use of `gh` in these commands and it is read-only, and that the
     `git remote add upstream …` a finding names is the person's to run.
+
+    122 -> 131 on 2026-09-11, for the shape-pin layer (Brett Heap's RULING of
+    that day, "next layer: shape-pin drift"). Rule 4 says what an assistant
+    must never do about a drift finding — re-digest the copy or edit the pin
+    — and what it must not read into "currency not read": that the pin is
+    current. Both are the readings reached for unaided.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 122, f"AGENTS.md is {len(lines)} lines; the cap is 122"
+    assert len(lines) <= 131, f"AGENTS.md is {len(lines)} lines; the cap is 131"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -492,9 +508,15 @@ def test_readme_is_short_enough_to_be_read():
     a fork is a finding naming the parent and the remote to add, and that
     this is the one use of `gh` in these commands; the list of layers still
     to come loses one.
+
+    221 -> 230 on 2026-09-11, for the shape-pin layer (Brett Heap's RULING of
+    that day, "next layer: shape-pin drift"). Seven lines in the `status`
+    paragraph say what the pin is, the three things read against it, where
+    currency comes from and the exit named; the list of layers still to come
+    loses another.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 221, f"README.md is {len(lines)} lines; the cap is 221"
+    assert len(lines) <= 230, f"README.md is {len(lines)} lines; the cap is 230"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
