@@ -350,7 +350,8 @@ def test_the_estate_commands_name_no_runtime_dependency_on_the_standard():
 #: THE VALUE-TAKING ARMS ACROSS THE THREE COMMANDS: `park`'s three (--lane,
 #: --repo, --name | --project), `resume`'s four (--repo, --workspace, --org,
 #: --name | --project) and `status`'s two (--repo, --name | --project). Kept
-#: by hand so that a TENTH is read rather than merely guarded — see the test.
+#: by hand so that a TENTH is read through `flag_value` rather than straight
+#: from `$2` — the test names one that is not, and counts one that is.
 VALUE_TAKING_ARMS = 9
 
 
@@ -402,6 +403,18 @@ def test_every_value_taking_arm_reads_its_value_through_flag_value():
     for name in ESTATE_COMMANDS:
         lines = code_lines(REPO / name).splitlines()
         for i, line in enumerate(lines):
+            # A TENTH ARM WRITTEN THE OLD WAY — `X="$2"` — must be caught, not
+            # missed: the count below sees only arms that read `$FLAG_VALUE`,
+            # so an arm that bypasses `flag_value` would leave it at nine and
+            # pass (the independent review of this branch, 2026-09-11). The
+            # one legitimate `="$2"` left in the three files is the read
+            # inside `flag_value` itself.
+            if re.match(r'\s*[A-Z_]+="\$2"', line):
+                assert line.strip() == 'FLAG_VALUE="$2"', (
+                    f"{name}: {line.strip()} takes $2 straight from the "
+                    f"command line; every value-taking arm reads its value "
+                    f"through flag_value")
+                continue
             if not re.match(r'\s*[A-Z_]+="\$FLAG_VALUE"', line):
                 continue
             found += 1

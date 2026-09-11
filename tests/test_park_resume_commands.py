@@ -1564,9 +1564,12 @@ def test_park_takes_a_lane_beginning_with_a_dash_through_the_equals_form(home):
     And said with an `=` it is a lane again: `--lane=--dry-run --dry-run` puts
     BOTH through, so `ARGS` carries the rehearsal flag once from `--dry-run`
     and once as the lane's value. That second `--dry-run` is what proves the
-    value survived: a lane is passed to the extension as `--lane <value>`, and
-    a value beginning with `-` is exactly what this repository could not say
-    before.
+    value reached `LANE` and went out in `ARGS` — which is as far as this
+    command can carry it: the recipe word-splits `$(ARGS)`, so the extension
+    receives the same two words from `--lane=--dry-run` as it did from the
+    accident, and the `=` form buys `park`'s own parsing, not the extension's
+    (the independent review of this branch, 2026-09-11). For `--repo`,
+    `--name` and `--project`, which never leave the command, it buys the value.
     """
     root = probe_project(home / "projects", "Atlas")
     refused = run(PARK, "Atlas", "--lane", "--dry-run", home=home)

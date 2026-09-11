@@ -47,6 +47,13 @@ WORKSPACE_SLUG=""
 ORG_WANTED=""
 DRY_RUN=0
 PASSTHROUGH=()
+#: `flag_value`'s three answers, declared with the other globals so that a
+#: `die` reaching `$FLAG_HINT` before any arm has asked is an empty hint under
+#: `set -u`, never "unbound variable" at exit 1 — the one exit these arms must
+#: not produce (the independent review of this branch, 2026-09-11).
+FLAG_VALUE=""
+FLAG_SHIFT=2
+FLAG_HINT=""
 
 say() { printf '%s\n' "$*"; }
 die() { printf '\nREFUSED: %s\n' "$1" >&2; exit "${2:-2}"; }

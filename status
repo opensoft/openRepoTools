@@ -102,6 +102,13 @@ SELF_NAME="status"
 NAME=""
 REPO_SLUG=""
 REPO_ARG=""
+#: `flag_value`'s three answers, declared with the other globals so that a
+#: `die` reaching `$FLAG_HINT` before any arm has asked is an empty hint under
+#: `set -u`, never "unbound variable" at exit 1 — the one exit these arms must
+#: not produce (the independent review of this branch, 2026-09-11).
+FLAG_VALUE=""
+FLAG_SHIFT=2
+FLAG_HINT=""
 #: 1 when EVERY estate under the projects directory is to be read: `--all` /
 #: `-a`, or the bare form standing outside every estate — which SWEEPS WITHOUT
 #: ASKING, unlike `park`'s, because nothing here writes and a question before
@@ -216,8 +223,8 @@ a clone you ALREADY HAVE, in any spelling git accepts.
   --all, -a           read EVERY estate under your projects directory
   --project <Name>    the positional under a flag (also --name)
   --flag=<value>      every flag that takes a value takes it after an `=` too
-                      (`--repo=<owner/name>`): the one way to give a value
-                      that begins with `-`, which the spaced spelling refuses
+                      (`--project=<Name>`): the one way to give a value that
+                      begins with `-`, which the spaced spelling refuses
 
   $PROJECTS_DIR       your projects directory (default: ~/projects, then
                       ~/Projects - people spell it both ways)
