@@ -560,9 +560,17 @@ def test_agents_md_is_short_enough_to_be_read():
     the rule and not the finding beside it reaches for `resume <Name>`
     again, and this is the record that answers it with "has moved since it
     was parked".
+
+    152 -> 153 on 2026-09-11, for note 8 of the same review: a record that
+    gives a leg NO ROLE, which `resume` refuses the WHOLE feature for — its
+    `collect_legs` maps each role onto the checkout and its `*) return 1`
+    takes every other leg of that feature with it — in words about the
+    project's SHAPE that say nothing about the role. One line, in the same
+    exception and with the same re-park, because "`resume <Name>` brings it
+    back" is the sentence it falsifies too.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 152, f"AGENTS.md is {len(lines)} lines; the cap is 152"
+    assert len(lines) <= 153, f"AGENTS.md is {len(lines)} lines; the cap is 153"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -686,9 +694,15 @@ def test_readme_is_short_enough_to_be_read():
     none to compare the tip with. Both halves for the reason the note (d)
     line was written: the paragraph otherwise promises a recovery the
     command's own finding rules out.
+
+    248 -> 249 on 2026-09-11, for note 8 of the same review: a leg the record
+    gives no role. The same two places — the exception, because `resume`
+    refuses the whole feature for such a leg and only a re-park writes the
+    roles back, and the finding list, because this is a finding on the root's
+    row and not on any leg's.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 248, f"README.md is {len(lines)} lines; the cap is 248"
+    assert len(lines) <= 249, f"README.md is {len(lines)} lines; the cap is 249"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

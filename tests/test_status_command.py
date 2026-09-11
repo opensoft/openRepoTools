@@ -2086,6 +2086,108 @@ def test_a_record_that_names_no_parked_commit_still_reads_the_worktree_here(
             assert guess not in result.stdout, result.stdout
 
 
+def test_a_leg_the_record_gives_no_role_is_a_finding_not_silence(atlas, home):
+    """Note 8 of the independent review of #20, 2026-09-11, recorded there as
+    out of scope: an empty `- role:` value. `record_rows` dropped such a leg —
+    `[ -n "$role" ]` at both emit sites — so the record layer said nothing
+    about it, while `workspace_load_project` CREATES that leg (its indent-10
+    arm keys on `role` and assigns whatever the scalar is, empty or not) and
+    `resume.sh`'s `collect_legs` then hits its `*) return 1`, refusing the
+    WHOLE feature: "Error: 001-a-thing was parked from a single project and
+    this checkout is single; that feature was NOT recreated", exit 2, verified
+    against the extension the same day — a sentence about the SHAPE that says
+    nothing about the role, which is what this line explains in advance.
+
+    It is the ROOT's row, because no leg repository can be found for a leg
+    with no role, and it is NOT the "does not mount here" arm: those words are
+    true of `role: nope` and misleading here, where the record names no role
+    to mount and the refusal is of the whole feature. It is answered before
+    `leg_repo_for_role` is asked, too, because that function's last test for
+    an empty role is `[ -d "$root/" ]` — always true — and it would hand back
+    the root, reading the leg as if the record had named `repo`."""
+    checkout = workspace_config(home)
+    tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    path = record(checkout, "atlas", branch="001-a-thing", role="", commit=tip,
+                  parked_on="Falcon")
+    for extra in ([], ["--fetch"]):
+        result = run(STATUS, *extra, "Atlas", home=home)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert ("    - parked feature 001-a-thing: a leg of it in the record "
+                "has no role; `resume` maps each leg's role onto this checkout "
+                "and refuses the WHOLE feature — the other legs with it — "
+                "where one does not map, reporting it as a shape mismatch, so "
+                "nothing here brings it back — park it again from Falcon, "
+                "which writes the record afresh") in result.stdout
+        assert "does not mount here" not in result.stdout
+        assert "( leg)" not in result.stdout
+
+    # The same record as a park that REFUSED the feature rewrites it —
+    # `workspace_write_manifest` keeps `role:` when its value is empty, the
+    # one leg key it does not drop — and it is the same empty role.
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        "          - role: \n", '          - role: ""\n'), encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing: a leg of it in the record has "
+            "no role;") in result.stdout
+
+    # AND A LEG WITH NO `- role:` LINE AT ALL is not a leg in either reader:
+    # the loader's `[ "$key" = "role" ] || continue` starts none, and nothing
+    # opens one here. Silence about it is the two readers agreeing.
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        '          - role: ""\n', "          - nickname: x\n"), encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "parked feature" not in result.stdout
+
+
+def test_a_leg_with_no_role_does_not_take_the_legs_around_it_with_it(
+        atlas, home):
+    """The row goes out where the leg ENDS and `$open` — not the role's value
+    — is what says a leg is open, so an empty role costs the record neither a
+    leg before it nor one after it. Both of the others are read as they were,
+    and the roleless one is read too."""
+    checkout = workspace_config(home)
+    leg = atlas / "spec"
+    git("checkout", "-q", "main", cwd=leg)
+    spec_tip = feature_worktree(leg, "001-a-thing", home / "Atlas-wt" /
+                                "001-a-thing" / "spec")
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    text = text.replace(
+        "            pushed: true\n",
+        "            pushed: true\n"
+        "          - role: \n"
+        "            remote: origin\n"
+        f"            parked_commit: {FAKE_SHA}\n"
+        "            wip: true\n"
+        "            wip_depth: 1\n"
+        "            pushed: true\n"
+        "          - role: spec\n"
+        "            remote: origin\n"
+        f"            parked_commit: {spec_tip}\n"
+        "            wip: true\n"
+        "            wip_depth: 1\n"
+        "            pushed: false\n")
+    path.write_text(text, encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 3, findings
+    assert findings[0] == (
+        "- parked feature 001-a-thing (repo leg): no worktree on that branch "
+        "here; parked 2026-09-10T20:00:00Z on Falcon — `resume Atlas` brings "
+        "it back"), findings[0]
+    assert findings[1].startswith(
+        "- parked feature 001-a-thing: a leg of it in the record has no role;"
+        ), findings[1]
+    assert findings[2].startswith(
+        "- parked feature 001-a-thing (spec leg): parked with --no-push on "
+        "Falcon"), findings[2]
+
+
 def test_every_leg_of_a_record_is_read_once_and_in_order(atlas, home):
     """THE STRUCTURAL HALF of the same review note, held on its own. The leg
     row used to go out at the leg's `pushed:` line; it now goes out where the
@@ -2226,7 +2328,13 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     for the leg is refused by a different test — RR1, origin's tip against a
     parked commit that is absent and so never matches — and "which `resume`
     refuses the same way" would be a claim about the extension that is not
-    true. Its own half-sentence, and the same re-park at the end of both."""
+    true. Its own half-sentence, and the same re-park at the end of both.
+
+    Note 8 of that review adds the fifth, and it is a half-sentence of its
+    own for the same reason: a leg the record gives NO ROLE is refused by
+    `collect_legs`, which takes the WHOLE FEATURE with it, so neither "the
+    same way" nor "as moved-on" describes it. The list beside the paragraph
+    names it too, as a finding on the root's row."""
     result = run(STATUS, "--help", home=home)
     assert result.returncode == 0, result.stdout + result.stderr
     helptext = " ".join(result.stdout.split())
@@ -2234,8 +2342,10 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
             "it back — unless the record says `--no-push`, or its `pushed:` "
             "is missing or neither true nor false, which `resume` refuses the "
             "same way, or it names no parked commit for that leg, which "
-            "`resume` refuses as moved-on: then only the workstation that "
-            "parked it can park it again; and where `git worktree list` still "
+            "`resume` refuses as moved-on, or it gives a leg no role at "
+            "all, which `resume` refuses the whole feature for: then only the "
+            "workstation that parked it can park it again; and where `git "
+            "worktree list` still "
             "holds a registration that is no longer a worktree, that is "
             "cleared with `worktree prune`, after a `worktree unlock` if it "
             "is locked and with any leftover directory moved aside, before "
@@ -2245,8 +2355,8 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     assert ("a worktree whose tip is not the parked commit or a record that "
             "names no parked commit to compare it with, a leg parked with "
             "`--no-push` or whose `pushed:` is missing or neither true nor "
-            "false, and a worktree the record does not know (never parked)"
-            ) in helptext
+            "false, a leg the record gives no role, and a worktree the record "
+            "does not know (never parked)") in helptext
 
 
 def test_a_missing_parked_commit_is_read_against_what_the_record_claims(

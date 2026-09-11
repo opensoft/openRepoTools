@@ -99,17 +99,18 @@ sequence, and relay their per-repository lines rather than summarising them.
    neither true nor false, which `resume` refuses the same way and the same
    re-park settles, or unless it names NO PARKED COMMIT for that leg, which
    `resume` refuses as moved-on and that same re-park settles, or unless a
-   STALE WORKTREE REGISTRATION is named, which is `git worktree prune`'s to
-   clear before `resume` can do anything — a LOCKED one `git worktree unlock
-   <path>` first, because prune SKIPS it, and a DIRECTORY the prune leaves
-   behind yours to MOVE ASIDE rather than delete: it still holds that
-   worktree's files, and `git worktree add` refuses a path that exists.
-   Never `worktree add --force`, never a delete under `.git/worktrees/`; a
-   worktree BEHIND a newer record — behind by more than the WIP commits
-   `resume` itself un-committed — is what `resume` refuses, and rule 1
-   stands, no reset to make it pass; a worktree the record does not know
-   wants `park`, not a hand-edit of the record. No config, or no record for
-   the estate, is a note, not a finding.
+   leg of it has NO ROLE, which `resume` refuses the whole feature for and
+   that re-park settles too, or unless a STALE WORKTREE REGISTRATION is
+   named, which is `git worktree prune`'s to clear before `resume` can do
+   anything — a LOCKED one `git worktree unlock <path>` first, because prune
+   SKIPS it, and a DIRECTORY the prune leaves behind yours to MOVE ASIDE
+   rather than delete: it still holds that worktree's files, and `git
+   worktree add` refuses a path that exists. Never `worktree add --force`,
+   never a delete under `.git/worktrees/`; a worktree BEHIND a newer record
+   — behind by more than the WIP commits `resume` itself un-committed — is
+   what `resume` refuses, and rule 1 stands, no reset to make it pass; a
+   worktree the record does not know wants `park`, not a hand-edit of the
+   record. No config, or no record for the estate, is a note, not a finding.
    `status`'s bare form outside every estate reads them all WITHOUT asking, because a
    read — fetched or not — moves nothing of yours; `status --all` from
    anywhere says the same thing.

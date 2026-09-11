@@ -146,15 +146,16 @@ workspace repository; `workspaces/<org>/<id>.yaml` in it) is read against the
 worktrees on disk: a recorded feature with no worktree here (`resume <Name>`
 brings it back — unless the record says `--no-push`, or its `pushed:` is
 missing or neither true nor false, which `resume` refuses the same way, or it
-names no parked commit for that leg, which `resume` refuses as moved-on: then
+names no parked commit for that leg, which `resume` refuses as moved-on, or it
+gives a leg no role at all, which `resume` refuses the whole feature for: then
 only the workstation that parked it can park it again; and where `git worktree
 list` still holds a registration that is no longer a worktree, that is cleared
 with `worktree prune`, after a `worktree unlock` if it is locked and with any
 leftover directory moved aside, before `resume` can recreate anything), a
 worktree whose tip is not the parked commit or a record that names no parked
 commit to compare it with, a leg parked with `--no-push` or whose `pushed:` is
-missing or neither true nor false, and a worktree the record does not know
-(never parked).
+missing or neither true nor false, a leg the record gives no role, and a
+worktree the record does not know (never parked).
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
 (<Name>/<Name>/family.yaml) or a standalone project root (<Name>/project.yaml).
@@ -1592,6 +1593,13 @@ read_shape() {
 #    say, what `resume` makes of that, and the one exit that works.
 # 4. A WORKTREE ON DISK THAT THE RECORD DOES NOT KNOW: a feature that was
 #    never parked, which is the one thing `park` exists to carry.
+# 5. A LEG THE RECORD GIVES NO ROLE: a state of the RECORD rather than of the
+#    disk, and read here because `resume` refuses the WHOLE FEATURE for it —
+#    `collect_legs` maps each leg's role onto this checkout and its `*)
+#    return 1` takes every other leg of that feature with it (the independent
+#    review of #20, 2026-09-11, note 8, recorded there as out of scope). It is
+#    the ROOT's finding, since no leg repository can be found for a leg that
+#    names no role, and the exit is a park that parks the feature through.
 #
 # THE RECORD IS FOUND WHERE `park` FILES IT AND `resume` LOOKS FOR IT:
 # `${AGENT_PROTOCOL_ROOT:-~/.agents}/workspace.yaml` names the workspace
@@ -1804,8 +1812,27 @@ locate_record() {
 # be spelled by the hand-edit that produced the record and read back as the
 # sentinel. The sixth field is written by THIS function and never from the
 # file: the word `pushed` where the key was seen, empty where it was not.
+#
+# AND A LEG IS OPEN FROM ITS `- role:` LINE, WHATEVER THAT LINE SAYS (the
+# independent review of #20, 2026-09-11, note 8, recorded there as out of
+# scope). `[ -n "$role" ]` was doing two jobs at both emit sites — "a leg is
+# open" and "the leg has a role" — and the second DROPPED the row for a leg
+# whose `- role:` value is EMPTY, while `workspace_load_project` creates that
+# leg exactly as it creates any other: its indent-10 arm takes the `- ` item,
+# reads `role` as the key, and assigns whatever `_SHAPE_SCALAR` holds, empty
+# or not. A leg the loader has and this reader has not is a leg `resume`
+# refuses the WHOLE FEATURE for while this layer says nothing — the shape of
+# hole the two notes before it closed. `$open` does the first job now, set at
+# the `- role:` line and cleared where the leg ends, so the role's value is
+# left to mean only what it says and the row goes out with an EMPTY role
+# field for `check_parked_leg` to read; the row's SIX FIELDS are unchanged,
+# because an empty field between two 0x1F separators shifts nothing.
+# A LEG WITH NO `- role:` LINE AT ALL is a different thing, and the two
+# readers agree about that one already: the loader's `[ "$key" = "role" ] ||
+# continue` starts no leg for it, and with no `- role:` line there is nothing
+# to open one here either, so neither reader has a leg to read.
 record_rows() {
-    local file="$1" sel="$2" line matched=0 value
+    local file="$1" sel="$2" line matched=0 value open=0
     local parked_at="" parked_on="" lane="" active="" branch="" role="" commit="" pushed="" depth="" seen=""
     [ -f "$file" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
@@ -1831,10 +1858,10 @@ record_rows() {
             case "$line" in
             [![:space:]]* | '  '[![:space:]]* | '    '[![:space:]]* | \
                 '      '[![:space:]]* | '        '[![:space:]]* | '          - role:'*)
-                if [ "$matched" -eq 1 ] && [ -n "$branch" ] && [ -n "$role" ]; then
+                if [ "$matched" -eq 1 ] && [ -n "$branch" ] && [ "$open" -eq 1 ]; then
                     printf 'leg\037%s\037%s\037%s\037%s\037%s\037%s\n' "$branch" "$role" "$commit" "$pushed" "$depth" "$seen"
                 fi
-                role=""
+                role=""; open=0
                 ;;
             esac
             ;;
@@ -1842,7 +1869,7 @@ record_rows() {
         case "$line" in
         '  - id:'*)
             matched=0
-            parked_at=""; parked_on=""; lane=""; active=""; branch=""; role=""
+            parked_at=""; parked_on=""; lane=""; active=""; branch=""; role=""; open=0
             value="$(trim_unquote "${line#*:}")"
             case "$sel" in
             id=*) [ "$(lower "$value")" != "$(lower "${sel#id=}")" ] || matched=1 ;;
@@ -1869,7 +1896,7 @@ record_rows() {
                 printf 'branch\037%s\n' "$branch"
             fi
             ;;
-        '          - role:'*) role="$(trim_unquote "${line#*:}")"; commit=""; pushed=""; depth=""; seen="" ;;
+        '          - role:'*) role="$(trim_unquote "${line#*:}")"; open=1; commit=""; pushed=""; depth=""; seen="" ;;
         '            parked_commit:'*) commit="$(trim_unquote "${line#*:}")" ;;
         '            wip_depth:'*) depth="$(trim_unquote "${line#*:}")" ;;
         '            pushed:'*)
@@ -1891,7 +1918,7 @@ record_rows() {
     # rather than shared with the arm above, because the alternative is a
     # helper reading this function's locals by dynamic scope — five lines
     # twice against an idiom this file uses nowhere else.
-    if [ "$matched" -eq 1 ] && [ -n "$branch" ] && [ -n "$role" ]; then
+    if [ "$matched" -eq 1 ] && [ -n "$branch" ] && [ "$open" -eq 1 ]; then
         printf 'leg\037%s\037%s\037%s\037%s\037%s\037%s\n' "$branch" "$role" "$commit" "$pushed" "$depth" "$seen"
     fi
     return 0
@@ -2045,6 +2072,44 @@ wip_gap_is_ours() {
 check_parked_leg() {
     local root="$1" branch="$2" role="$3" commit="$4" pushed="$5" parked_at="$6" parked_on="$7" depth="$8" seen="$9"
     local repo tree="" ghost="" ghost_is="" clear="" out rc=0 tip n unread="" refuses=""
+    # A LEG THE RECORD GIVES NO ROLE IS ANSWERED BEFORE THE ROOT IS ASKED
+    # ABOUT IT, and it is not the arm below (the independent review of #20,
+    # 2026-09-11, note 8, recorded there as out of scope). `record_rows` used
+    # to drop such a leg — `[ -n "$role" ]` at both emit sites — so this layer
+    # said NOTHING about it, and the other end refuses the whole feature for
+    # it: `resume.sh`'s `collect_legs` maps every leg's role onto this
+    # checkout, `spec`, `code` and `repo` being all it knows, and its `*)
+    # return 1` takes the FEATURE with it — every other leg of that feature
+    # included, verified the same day against a record whose good `repo` leg
+    # sat beside an empty-role one. The words it refuses in are about the
+    # SHAPE, which is not what is wrong: "Error: 001-a-thing was parked from a
+    # single project and this checkout is single; that feature was NOT
+    # recreated", a sentence that contradicts itself, and this line is what
+    # explains it in advance.
+    #
+    # IT IS ANSWERED FIRST BECAUSE `leg_repo_for_role` WOULD ANSWER IT WRONG:
+    # asked for the empty role it falls past the `repo | assembly` case and
+    # past every `project.yaml` role, to `[ -d "$root/$want" ]` — which for an
+    # empty `$want` is `[ -d "$root/" ]`, always true — and hands back the
+    # ROOT. The leg would then be read as if the record had named the `repo`
+    # leg, which is a claim about a leg the record does not name. And it is
+    # not the "does not mount here" arm either: those words say this root has
+    # no such leg, which is a true thing to say about `role: nope` and a
+    # misleading thing to say about a record that names no role at all — the
+    # fix is not to mount anything, and the refusal is of the whole feature.
+    #
+    # THE EXIT IS A PARK THAT PARKS IT, as it is for the states above, and for
+    # the same reason at the same end: `emit_recorded_feature` carries a
+    # REFUSED feature's legs forward out of the loaded manifest, and `role` is
+    # the ONE leg key `workspace_write_manifest` does not drop when its value
+    # is empty (`if value == "" and out_key != "role": continue`), so a park
+    # that refuses this feature writes the leg back as `- role: ""` — which
+    # both readers unquote to the empty string again. Only a park that parks
+    # the feature THROUGH writes the roles this checkout's own shape has.
+    if [ -z "$role" ]; then
+        finding "parked feature $branch: a leg of it in the record has no role; \`resume\` maps each leg's role onto this checkout and refuses the WHOLE feature — the other legs with it — where one does not map, reporting it as a shape mismatch, so nothing here brings it back — park it again from ${parked_on:-the workstation that has it}, which writes the record afresh"
+        return 0
+    fi
     repo="$(leg_repo_for_role "$root" "$role" || true)"
     if [ -z "$repo" ] || [ ! -e "$repo/.git" ]; then
         finding "parked feature $branch ($role leg): the record names a leg this root does not mount here"
