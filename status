@@ -16,8 +16,9 @@
 # CURRENT with its remotes, and whether anything here has moved and not
 # travelled.
 #
-# THE FOURTH FILE, under Brett Heap's RULING of 2026-09-10 in this repository,
-# verbatim: "lets go with a fourth file. start with the local status layer."
+# THE FOURTH FILE, under Brett Heap's RULING of 2026-09-10 in this repository
+# (its #9), verbatim: "lets go with a fourth file. start with the local status
+# layer."
 # A flag on `park` would have put a read-only report under a verb whose name
 # means commit-and-push; a fourth file costs the shared estate resolver a
 # third copy, which the suite holds byte-identical, and the install story one
