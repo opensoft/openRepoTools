@@ -144,8 +144,10 @@ pin that has fallen behind is named with the exit, `update-shape.py check
 --root <root>`. THE PARKED RECORD (`~/.agents/workspace.yaml` names the
 workspace repository; `workspaces/<org>/<id>.yaml` in it) is read against the
 worktrees on disk: a recorded feature with no worktree here (`resume <Name>`
-brings it back), a worktree whose tip is not the parked commit, a leg parked
-with `--no-push`, and a worktree the record does not know (never parked).
+brings it back — unless the record says `--no-push`, when only the
+workstation that has the WIP commit can park it again), a worktree whose tip
+is not the parked commit, a leg parked with `--no-push`, and a worktree the
+record does not know (never parked).
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
 (<Name>/<Name>/family.yaml) or a standalone project root (<Name>/project.yaml).

@@ -1613,6 +1613,20 @@ def test_a_no_push_record_with_no_worktree_here_never_names_resume(atlas, home):
     assert "`resume Atlas` brings it back" not in result.stdout
 
 
+def test_the_help_carries_the_no_push_exception_its_findings_do(home):
+    """`status --help` is the other place this rule is stated, and a help
+    text that sends somebody to `resume` for a record `resume` refuses is the
+    same contradiction the two findings had. Read with the wrapping
+    normalised, so the paragraph can be re-wrapped and not the sentence."""
+    result = run(STATUS, "--help", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    helptext = " ".join(result.stdout.split())
+    assert ("a recorded feature with no worktree here (`resume <Name>` brings "
+            "it back — unless the record says `--no-push`, when only the "
+            "workstation that has the WIP commit can park it again)"
+            ) in helptext
+
+
 def test_a_missing_parked_commit_is_read_against_what_the_record_claims(
         atlas, home):
     """`pushed: true` RULES OUT `--no-push`, so what is left is a fetch this
