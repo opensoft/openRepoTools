@@ -61,17 +61,23 @@ sequence, and relay their per-repository lines rather than summarising them.
    anything was refused, even when `make resume` exited 0 — a skip is not a
    pass. A member that REFUSED is not resumed, and one SKIPPED for want of a
    working clone was never asked.
-4. **`status` READS AND CHANGES NOTHING, and fetches nothing**: every
-   ahead/behind line is AS OF THE LAST FETCH, and it says so. Exit 1 means
-   findings were printed, not that anything failed — relay them per
-   repository, as you would `park`'s report. It is the LOCAL layer only
-   (Brett Heap's RULING of 2026-09-10: "start with the local status layer");
-   `--fetch`, the fork against its upstream, shape-pin drift and the parked
-   record against disk are later layers, so never `git fetch` on its behalf
-   to make an answer current unless the person asked for a fetch. Its bare
-   form outside every estate reads them all WITHOUT asking, because nothing
-   here writes — the question is `park`'s — and `status --all` from anywhere
-   says the same thing.
+4. **`status` READS AND CHANGES NOTHING, and fetches nothing unless told to**:
+   every ahead/behind line is AS OF THE LAST FETCH, and it says which. Exit 1
+   means findings were printed, not that anything failed — relay them per
+   repository, as you would `park`'s report. `status --fetch` is the ONE way
+   it reaches the network (Brett Heap's RULING of 2026-09-11, "next layer:
+   --fetch", on his RULING of 2026-09-10, "start with the local status
+   layer"): `git fetch --prune origin` in every repository first, the one
+   write it makes — remote-tracking refs, the objects behind them and
+   `FETCH_HEAD`, never a local branch or tag, because the refspec is pinned;
+   a fetch that fails is a finding on that row, and an ssh prompt is ssh's
+   own and still blocks. So when the person wants a CURRENT answer, run
+   `status --fetch`, never `git fetch` by hand on its behalf.
+   That is the local layer and `--fetch`; the fork against its upstream,
+   shape-pin drift and the parked record against disk are later layers. Its
+   bare form outside every estate reads them all WITHOUT asking, because a
+   read — fetched or not — moves nothing of yours; `status --all` from
+   anywhere says the same thing.
 
 ## The pinned standard at `upstream/openRepoShape`
 

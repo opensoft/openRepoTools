@@ -247,20 +247,26 @@ def test_the_documents_say_what_status_is_and_is_not():
     """Brett Heap's RULING of 2026-09-10 in this repository, verbatim: "lets go
     with a fourth file. start with the local status layer." `status` is the
     read-only view of an estate — what is in and out of sync — and the LOCAL
-    layer only: it fetches nothing, so every answer is as of the last fetch.
+    layer: it fetches nothing unless told to, so every answer is as of the
+    last fetch. His RULING of 2026-09-11, verbatim: "next layer: --fetch" —
+    the flag asks origin first, the one write the command makes, to
+    remote-tracking refs and nothing else.
 
-    Both facts in both documents and in the command's own header, for the
+    All of it in both documents and in the command's own header, for the
     reason the other document tests give: the wrong reading is the one an
     assistant reaches for unaided. A `status` that "checks the remote" is one
-    somebody runs `git fetch` on behalf of to make current, and a report of
-    findings with exit 1 is one somebody calls a failure. The four-file count
-    is held too, because the install story is the sentence a first-time
-    reader trusts.
+    somebody runs `git fetch` on behalf of to make current — when the flag
+    is what they should reach for — and a report of findings with exit 1 is
+    one somebody calls a failure. The four-file count is held too, because
+    the install story is the sentence a first-time reader trusts.
     """
     for name in ("README.md", "AGENTS.md", "status"):
         text = (REPO / name).read_text(encoding="utf-8")
         assert "fetches nothing" in text, (
-            f"{name} does not say status fetches nothing")
+            f"{name} does not say status fetches nothing without the flag")
+        assert "--fetch" in text, f"{name} does not name the flag"
+        assert "remote-tracking refs" in text, (
+            f"{name} does not bound the one write --fetch makes")
         assert "as of the last fetch" in text.lower(), (
             f"{name} does not say every answer is as of the last fetch")
         assert "local layer" in text.lower(), (
@@ -372,9 +378,16 @@ def test_agents_md_is_short_enough_to_be_read():
     so relay the lines. The rule also says the bare form outside every
     estate reads them all WITHOUT asking, so nobody waits for a question
     `status` never asks.
+
+    111 -> 117 on 2026-09-11, for `--fetch` (Brett Heap's RULING of that day,
+    "next layer: --fetch"). Rule 4 now says the flag is the ONE way `status`
+    reaches the network and the one write it makes, bounded to
+    remote-tracking refs — so an assistant asked for a current answer runs
+    `status --fetch` rather than fetching by hand, and knows a failed fetch
+    is a finding on that row, not a reason to retry the whole report.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 111, f"AGENTS.md is {len(lines)} lines; the cap is 111"
+    assert len(lines) <= 117, f"AGENTS.md is {len(lines)} lines; the cap is 117"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -434,9 +447,16 @@ def test_readme_is_short_enough_to_be_read():
     paragraph gives the exit codes and the bare-form rule — read them all,
     without asking — because a read-only report that "checks the remote" is
     the reading a first-time user brings, and this is where it is corrected.
+
+    203 -> 214 on 2026-09-11, for `--fetch` (Brett Heap's RULING of that day,
+    "next layer: --fetch"). Four lines in the `status` paragraph name the
+    flag, what it runs and the one write it makes; one line in the "Using
+    them" block shows it; one sentence in the exit-code paragraph says a
+    failed fetch is a finding on its row. The sentence that said `--fetch`
+    refuses by name is gone, because it no longer does.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 203, f"README.md is {len(lines)} lines; the cap is 203"
+    assert len(lines) <= 214, f"README.md is {len(lines)} lines; the cap is 214"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

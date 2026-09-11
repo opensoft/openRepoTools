@@ -9,8 +9,9 @@
 # IT CHANGES NOTHING. It finds the estate exactly as `park` and `resume` do,
 # and then only READS — git's refs, index and working tree — for the family
 # holder or the assembly root, each member's working clone beside the holder,
-# and every mounted leg. It fetches nothing, so every ahead/behind answer is
-# AS OF THE LAST FETCH, and it says so on every run. `make validate` and
+# and every mounted leg. It fetches nothing unless told to (`--fetch`), so
+# every ahead/behind answer is AS OF THE LAST FETCH — the one it just made,
+# or the one before — and it says which on every run. `make validate` and
 # `make pins` say whether an estate is CONSISTENT with itself (naming,
 # manifests, lockstep pins); this is the view neither gives — whether it is
 # CURRENT with its remotes, and whether anything here has moved and not
@@ -24,13 +25,28 @@
 # third copy, which the suite holds byte-identical, and the install story one
 # more line.
 #
-# THIS IS THE LOCAL LAYER, and only that: what this machine already knows.
-# What it does NOT do yet, by design and in this order: `--fetch`, so the
-# ahead/behind answers are current; the fork's origin against its upstream
-# (`gh`); the estate's copied shape files against `contracts/shape-pin.yaml`,
-# and the pinned openRepoShape against openRepoShape's main; and the parked
-# record in `~/.agents/workspace.yaml` against the worktrees on disk. Each is
-# a layer to add HERE, not a reason to reach for `git fetch` in this one.
+# THIS IS THE LOCAL LAYER PLUS `--fetch`: what this machine already knows,
+# and — only when asked — what origin knows right now. `--fetch` is the
+# second layer, under Brett Heap's RULING of 2026-09-11 (this repository's
+# #10), verbatim: "next layer: --fetch". It runs `git fetch --prune origin`
+# in every repository
+# about to be read, so the ahead/behind answers are current and a remote
+# branch deleted under a feature reads as gone; that fetch is THE ONE WRITE
+# this command ever makes — remote-tracking refs (`refs/remotes/origin/*`),
+# the objects behind them and `FETCH_HEAD`, and nothing else: no branch, no
+# tag, no HEAD, no index, no working tree, because the refspec is pinned on
+# the command line rather than trusted from config (see `fetch_origin`).
+# What it cannot do is answer a prompt: `GIT_TERMINAL_PROMPT=0` makes an
+# https credential prompt FAIL and be reported, but an ssh host-key or
+# passphrase prompt is ssh's own and blocks exactly as `git fetch` would —
+# so run `--fetch` where ssh is already non-interactive (an agent, a
+# known_hosts entry). Without the flag it fetches nothing, as before. What
+# it does NOT do yet, by design and in this order:
+# the fork's origin against its upstream (`gh`); the estate's copied shape
+# files against `contracts/shape-pin.yaml`, and the pinned openRepoShape
+# against openRepoShape's main; and the parked record in
+# `~/.agents/workspace.yaml` against the worktrees on disk. Each is a layer
+# to add HERE.
 #
 # READ THE LINES, NOT THE EXIT CODE — the rule `park` and `resume` carry.
 # Exit 0: every repository read is in sync and clean, as of the last fetch.
@@ -52,6 +68,9 @@ REPO_ARG=""
 #: <dir>` per estate.
 STATUS_ALL=0
 ALL_ROWS=""
+#: 1 with `--fetch`: `git fetch --prune origin` in every repository before it
+#: is read — the one write this command makes. See `fetch_origin`.
+FETCH=0
 
 say() { printf '%s\n' "$*"; }
 refuse() { printf '\nREFUSED: %s\n' "$1" >&2; }
@@ -59,8 +78,8 @@ die() { refuse "$1"; exit "${2:-2}"; }
 
 usage() {
     cat <<'USAGE'
-status [<Name>] [--repo <owner/name>]
-status --all | -a
+status [<Name>] [--repo <owner/name>] [--fetch]
+status --all | -a [--fetch]
 status --help
 
 What is in and out of sync across ONE estate, read-only. For the family
@@ -69,9 +88,9 @@ leg: whether the tracking branch is ahead of or behind its origin; what is
 dirty or stashed; which feature branches carry commits origin has not seen,
 or point at a remote branch that is gone; whether a feature worktree is
 dirty; and whether a leg is checked out away from its pin, or its pin has
-fallen behind its origin. IT FETCHES NOTHING: every answer is AS OF THE LAST
-FETCH, and the report says so. This is the local layer; `--fetch` is not
-here yet.
+fallen behind its origin. It FETCHES NOTHING unless you say `--fetch`, so
+every answer is AS OF THE LAST FETCH — the one it just made, or the one
+before — and the report says which.
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
 (<Name>/<Name>/family.yaml) or a standalone project root (<Name>/project.yaml).
@@ -81,6 +100,13 @@ without asking, because nothing here writes; `--all` (or `-a`) says the same
 thing from anywhere. `--repo <owner/name>` names the estate by the origin of
 a clone you ALREADY HAVE, in any spelling git accepts.
 
+  --fetch             `git fetch --prune origin` in every repository first, so
+                      the answers are current: THE ONE WRITE this command
+                      makes — remote-tracking refs, the objects behind them and
+                      FETCH_HEAD; never a local branch, tag, HEAD, index or
+                      working tree, because the refspec is pinned. A fetch that
+                      fails is a finding on that row, read as of the last fetch
+                      that worked. An ssh prompt is ssh's own and still blocks.
   --all, -a           read EVERY estate under your projects directory
   --project <Name>    the positional under a flag (also --name)
 
@@ -89,8 +115,9 @@ a clone you ALREADY HAVE, in any spelling git accepts.
 
 EXIT 0: every repository read is in sync and clean, as of the last fetch.
 EXIT 1: at least one finding was printed. EXIT 2: refused; nothing was read.
-WHAT STATUS NEVER DOES: fetch, pull, commit, push, reset, or move anything.
-It takes no lock on any repository (`git --no-optional-locks`).
+WHAT STATUS NEVER DOES: pull, commit, push, reset, or move anything — and it
+fetches only with `--fetch`. It takes no lock while it reads (`git
+--no-optional-locks`); `--fetch` takes the ref locks a fetch takes.
 USAGE
 }
 
@@ -584,6 +611,18 @@ read_head() {
     esac
 }
 
+# No `origin/<branch>` locally. Without a fetch that is "never fetched, or no
+# remote named origin"; right after one that WORKED it means origin has no
+# such branch — deleted or renamed there — and saying "never fetched" would
+# contradict the `fetched origin:` line printed just above it.
+no_origin_branch_finding() {
+    if [ "$FETCHED_OK" -eq 1 ]; then
+        finding "no origin/$1 after the fetch: origin has no branch $1 (deleted or renamed there)"
+    else
+        finding "no origin/$1 here: never fetched, or no remote named origin"
+    fi
+}
+
 # The tracking branch against origin's copy of it, AS OF THE LAST FETCH: park
 # fetches nothing and neither does this. BOTH refs must exist locally or there
 # is no question to ask, and each absence is its own finding, because a clone
@@ -598,7 +637,7 @@ read_tracking() {
         return 0
     fi
     if ! has_ref "$repo" "refs/remotes/origin/$branch"; then
-        finding "no origin/$branch here: never fetched, or no remote named origin"
+        no_origin_branch_finding "$branch"
         return 0
     fi
     counts="$(g "$repo" rev-list --left-right --count \
@@ -741,15 +780,92 @@ read_leg() {
                     finding "pin $(short "$gitlink") is not on origin/$branch: $n commit(s) unpushed in the leg"
             fi
         else
-            finding "no origin/$branch here: never fetched, or no remote named origin"
+            no_origin_branch_finding "$branch"
         fi
     fi
     read_worktree_state "$leg"
     read_branches "$leg" "$branch"
 }
 
+# --- `--fetch`: ask origin first ---------------------------------------------
+#
+# THE ONE WRITE THIS COMMAND MAKES, and only when asked: `git fetch --prune
+# origin` in the repository about to be read. A fetch moves remote-tracking
+# refs (`refs/remotes/origin/*`) and writes objects; it touches no branch, no
+# HEAD, no index and no working tree, which is why it is the one write a
+# read-only report can make and still be one. `--prune` is part of it because
+# a remote branch deleted under a feature is exactly the `[gone]` this report
+# looks for, and a fetch without prune would keep the stale ref that hides
+# it. `--recurse-submodules=no`, because the legs are rows of their own and
+# are fetched as such; git's on-demand default would fetch them again from
+# the root. `GIT_TERMINAL_PROMPT=0` so a fetch that wants an https password
+# FAILS and is reported, rather than stopping the whole report at a prompt
+# nobody is watching; an ssh host-key or passphrase prompt is ssh's own and
+# is NOT stopped by it — that blocks exactly as `git fetch` would. The
+# outcome is one line under the repository's row — not a finding when it
+# worked, a finding when it did not, in which case what follows is as of the
+# last fetch that did work. `FETCHED_OK` tells the reads below whether a
+# missing `origin/<branch>` means "never fetched" or "origin has no such
+# branch".
+#
+# THE REFSPEC IS PINNED ON THE COMMAND LINE, and that is what bounds the
+# write. `--prune` deletes whatever the refspec's destination side no longer
+# has a source for — and a repository whose `remote.origin.fetch` was
+# hand-edited, or made with `--mirror`, maps heads onto LOCAL branches, so a
+# configured refspec plus `--prune` would delete a local branch and this
+# report would then call the repository clean; `fetch.pruneTags` set
+# globally would prune local tags the same way. Naming
+# `+refs/heads/*:refs/remotes/origin/*` here means the only refs that can
+# move or go are under `refs/remotes/origin/`, whatever the config says (the
+# review of this layer deleted a local branch through the configured form to
+# prove it). AND `--refmap`, WITH THE SAME REFSPEC: a refspec on the command
+# line bounds what is fetched and pruned, but git still maps every ref it
+# fetched through the CONFIGURED refspecs as well — "opportunistic
+# remote-tracking updates" — so under a mirror-style config the pinned fetch
+# alone would still move `refs/heads/main` in a detached leg, and refuse
+# outright in a checked-out root. `--refmap` (git 2.1) replaces the
+# configured mapping for this one fetch, so nothing outside
+# `refs/remotes/<remote>/` is written by either route.
+FETCHED_OK=0
+fetch_origin() {
+    local repo="$1" branch="$2" before after err
+    FETCHED_OK=0
+    if ! g "$repo" rev-parse --git-dir >/dev/null 2>&1; then
+        finding "fetch: not a readable git repository (a gitfile whose gitdir is gone?), so nothing could be fetched"
+        return 0
+    fi
+    if ! g "$repo" remote get-url origin >/dev/null 2>&1; then
+        finding "fetch: no remote named origin, so nothing could be fetched"
+        return 0
+    fi
+    before="$(g "$repo" rev-parse -q --verify "refs/remotes/origin/$branch" 2>/dev/null || true)"
+    if err="$(GIT_TERMINAL_PROMPT=0 git --no-optional-locks -C "$repo" fetch --quiet \
+            --prune --recurse-submodules=no \
+            --refmap='+refs/heads/*:refs/remotes/origin/*' origin \
+            '+refs/heads/*:refs/remotes/origin/*' 2>&1)"; then
+        FETCHED_OK=1
+        after="$(g "$repo" rev-parse -q --verify "refs/remotes/origin/$branch" 2>/dev/null || true)"
+        if [ -n "$before" ] && [ -z "$after" ]; then
+            say "    fetched origin: origin/$branch is GONE (was $(short "$before")): deleted or renamed on origin"
+        elif [ -n "$after" ] && [ "$before" != "$after" ]; then
+            if [ -n "$before" ]; then
+                say "    fetched origin: origin/$branch moved $(short "$before") -> $(short "$after")"
+            else
+                say "    fetched origin: origin/$branch is here now, at $(short "$after")"
+            fi
+        else
+            say "    fetched origin: nothing new on origin/$branch"
+        fi
+    else
+        err="${err%%$'\n'*}"
+        finding "fetch failed: ${err:-git said nothing}; what follows is as of the last fetch that worked"
+    fi
+}
+
 ESTATE_FINDINGS=0
 ESTATE_REPOS=0
+#: The footer's last clause, decided once by `--fetch`: what this run changed.
+CHANGED_CLAUSE="nothing was changed."
 
 # --- one estate -------------------------------------------------------------
 #
@@ -768,16 +884,22 @@ read_one_estate() {
     else
         say "status: $ESTATE_NAME - the assembly root at $ESTATE_ROOT"
     fi
-    say "  as of the last fetch: status reads local refs only and fetches nothing."
+    if [ "$FETCH" -eq 1 ]; then
+        say "  fetched first (--fetch): origin is asked in every repository below, then it is read."
+    else
+        say "  as of the last fetch: status reads local refs only and fetches nothing."
+    fi
     say ""
     while IFS=$'\t' read -r label branch path; do
         [ -n "${path:-}" ] || continue
         FINDINGS=()
+        FETCHED_OK=0
         ESTATE_REPOS=$((ESTATE_REPOS + 1))
         case "$label" in
         holder | root)
             current_root="$path"
             printf '  %-6s %-6s %s\n' "$label" "$branch" "$path"
+            [ "$FETCH" -eq 0 ] || fetch_origin "$path" "$branch"
             read_head "$path" "$branch"
             read_tracking "$path" "$branch"
             read_worktree_state "$path"
@@ -786,6 +908,7 @@ read_one_estate() {
             ;;
         mounted)
             printf '  %-6s %-6s %s\n' "leg" "$branch" "$path"
+            [ "$FETCH" -eq 0 ] || fetch_origin "$path" "$branch"
             rel="${path#"$current_root"/}"
             read_leg "$current_root" "$rel" "$branch"
             ;;
@@ -813,9 +936,9 @@ read_one_estate() {
     done < <(estate_repos)
     say ""
     if [ "$ESTATE_REPOS" -eq 1 ]; then
-        say "status: $ESTATE_NAME - $ESTATE_FINDINGS finding(s) in 1 repository; nothing was changed."
+        say "status: $ESTATE_NAME - $ESTATE_FINDINGS finding(s) in 1 repository; $CHANGED_CLAUSE"
     else
-        say "status: $ESTATE_NAME - $ESTATE_FINDINGS finding(s) in $ESTATE_REPOS repositories; nothing was changed."
+        say "status: $ESTATE_NAME - $ESTATE_FINDINGS finding(s) in $ESTATE_REPOS repositories; $CHANGED_CLAUSE"
     fi
     [ "$ESTATE_FINDINGS" -eq 0 ]
 }
@@ -868,7 +991,7 @@ status_every_estate() {
             say "$line"
         done
     fi
-    say "status: $((total - bad)) estate(s) in sync, $bad with findings; nothing was changed."
+    say "status: $((total - bad)) estate(s) in sync, $bad with findings; $CHANGED_CLAUSE"
     [ "$bad" -eq 0 ]
 }
 
@@ -887,13 +1010,9 @@ while [ $# -gt 0 ]; do
     --name | --project)
         [ $# -ge 2 ] || die "$1 needs a value: one estate folder name under your projects directory."
         NAME="$2"; shift 2 ;;
-    # NAMED SO THE ANSWER IS THE TRUE ONE: this is the local layer, and a
-    # person who typed `--fetch` has asked for the next one.
-    --fetch)
-        die "--fetch is not here yet: this is the LOCAL layer, and it reads what the
-    last fetch left behind. Run \`git fetch\` yourself where you want a current
-    answer; fetching across an estate is the next layer of this command."
-        ;;
+    # THE SECOND LAYER (Brett Heap's RULING of 2026-09-11, "next layer:
+    # --fetch"): ask origin in every repository first. See `fetch_origin`.
+    --fetch) FETCH=1; CHANGED_CLAUSE="only remote-tracking refs and fetched objects were changed (--fetch)."; shift ;;
     -*)
         usage >&2
         die "$SELF_NAME does not know $1. Its flags are listed above; it takes nothing for
