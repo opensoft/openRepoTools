@@ -39,6 +39,7 @@ from conftest import NEEDS_UPSTREAM, REPO, UPSTREAM, WINDOWS_SKIP, git, rmtree
 
 PARK = REPO / "park"
 RESUME = REPO / "resume"
+STATUS = REPO / "status"
 MAKE = shutil.which("make")
 
 #: Both reasons this whole file needs a POSIX machine: the commands are bash,
@@ -1358,14 +1359,14 @@ def test_resume_rebuilds_a_standalone_project(remotes, home):
 # the review on #83 — every finding, reproduced then held
 # ===========================================================================
 
-def test_the_two_commands_carry_the_same_resolver_byte_for_byte():
+def test_the_three_commands_carry_the_same_resolver_byte_for_byte():
     """The duplication is deliberate and the claim has to stay true.
 
-    `park` and `resume` are each ONE file a person has on PATH, so the estate
-    resolver is copied rather than sourced. A copy that has drifted is two
-    answers to "which estate is this", which is the one thing the block exists
-    to prevent — so the two are compared here rather than asserted in a PR
-    body nobody re-reads.
+    `park`, `resume` and `status` are each ONE file a person has on PATH, so
+    the estate resolver is copied rather than sourced. A copy that has drifted
+    is two answers to "which estate is this", which is the one thing the block
+    exists to prevent — so the three are compared here rather than asserted in
+    a PR body nobody re-reads.
     """
     def block(path: Path) -> str:
         text = path.read_text(encoding="utf-8")
@@ -1375,6 +1376,8 @@ def test_the_two_commands_carry_the_same_resolver_byte_for_byte():
 
     assert block(PARK) == block(RESUME), (
         "park and resume have drifted apart in the shared estate resolver")
+    assert block(PARK) == block(STATUS), (
+        "park and status have drifted apart in the shared estate resolver")
     assert len(block(PARK).splitlines()) > 100, "the marker moved, not the block"
 
 

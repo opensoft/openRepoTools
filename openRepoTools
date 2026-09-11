@@ -11,18 +11,19 @@
 # (or the raw-URL twin, `curl -fsSL …/main/openRepoTools | bash -s -- --install`).
 #
 # IT INSTALLS AND IT DOES NOTHING ELSE. There is no verb here and no scaffold
-# role: `openRepoShape` is the standard's front door and stays there, and the
-# two verbs are `park` and `resume`, which add no mechanics of their own — they
+# role: `openRepoShape` is the standard's front door and stays there. The two
+# verbs are `park` and `resume`, which add no mechanics of their own — they
 # find the estate under your projects directory and run its own `make park` /
-# `make resume`.
+# `make resume` — and `status` is the read-only view of the same estate.
 #
-# `--install` PLACES THREE COMMANDS, not one: this file, `park` and `resume`
-# (openRepoShape #82). One install line for the whole toolset, so a second
-# engineer gets the estate verbs from the README's one line and nothing depends
-# on anyone's dotfiles.
+# `--install` PLACES FOUR COMMANDS, not one: this file, `park`, `resume` and
+# `status` (openRepoShape #82; the fourth under Brett Heap's RULING of
+# 2026-09-10 in this repository, "lets go with a fourth file"). One install
+# line for the whole toolset, so a second engineer gets the estate commands
+# from the README's one line and nothing depends on anyone's dotfiles.
 #
 # openRepoShape #82 wrote the two verbs and these install semantics; its #92
-# carved them out into this repository.
+# carved them out into this repository, which added `status`.
 
 set -euo pipefail
 
@@ -42,23 +43,27 @@ die() { printf '\nREFUSED: %s\n' "$1" >&2; exit "${2:-2}"; }
 
 usage() {
 	cat <<'USAGE'
-openRepoTools --install            install (or update) park, resume and this
-                                   command into ~/.local/bin
+openRepoTools --install            install (or update) park, resume, status and
+                                   this command into ~/.local/bin
 openRepoTools --help | --version
 
 This command installs the estate commands and does nothing else. It has no
 verb of its own: `openRepoShape` is the standard's front door. `--install`
-places three files beside each other — this command and the two verbs:
+places four files beside each other — this command, the two verbs, and the
+read-only view:
 
   park [<Name>]                    commit, push and RECORD an estate's open
                                    features, so another workstation can take
                                    the work up
   resume [<Name>]                  clone or fast-forward that estate here and
                                    recreate those features
+  status [<Name>]                  what is in and out of sync across that
+                                   estate, as of the last fetch; changes nothing
 
-`park --help` and `resume --help` say the rest. Neither implements any of the
-mechanics: they find the estate under your projects directory and run its own
-`make park` / `make resume`, which run the Speckit git extension's scripts.
+`park --help`, `resume --help` and `status --help` say the rest. The verbs
+implement none of the mechanics: they find the estate under your projects
+directory and run its own `make park` / `make resume`, which run the Speckit
+git extension's scripts. `status` only reads.
 
   $OPENREPOTOOLS_REPO       owner/name to fetch from (default opensoft/openRepoTools)
   $OPENREPOTOOLS_REF        the ref to fetch it at   (default main)
@@ -87,10 +92,10 @@ workdir() {
 #
 # THESE FORTY LINES ARE A DELIBERATE COPY of openRepoShape's own shim, and the
 # duplication is the cheaper of the two mistakes: a shared `orp-fetch.sh` would
-# be a FOURTH FILE for `--install` to place, and a broken installer the first
-# time somebody copied only three of them. It is the same argument the estate
-# resolver inside `park` and `resume` already carries, for the same reason —
-# each of these files is one file a person has on PATH. Two installers that
+# be a FIFTH FILE for `--install` to place, and a broken installer the first
+# time somebody copied only some of them. It is the same argument the estate
+# resolver inside `park`, `resume` and `status` already carries, for the same
+# reason — each of these files is one file a person has on PATH. Two installers that
 # fetch the same way is a claim `tests/test_openrepotools_command.py` and
 # openRepoShape's own suite each assert against their own script's text.
 fetch_from_repo() {
@@ -112,26 +117,26 @@ fetch_from_repo() {
 	return 1
 }
 
-# THE THREE COMMANDS `--install` PLACES. One list, so the installer, the fetch
+# THE FOUR COMMANDS `--install` PLACES. One list, so the installer, the fetch
 # fallback and the tests cannot disagree about what a complete install is.
 # `openRepoTools` is first because it is the one a person types to get the
-# other two.
-INSTALLABLES=(openRepoTools park resume)
+# other three.
+INSTALLABLES=(openRepoTools park resume status)
 
-# ALL THREE IN HAND BEFORE ANY OF THEM IS PLACED (openRepoShape #82, F10 of the
+# ALL FOUR IN HAND BEFORE ANY OF THEM IS PLACED (openRepoShape #82, F10 of the
 # review on its #83). One file at a time, dying on the first fetch that failed,
 # leaves a person with a NEW `openRepoTools` and no `park` — a half-install that
 # says `installed at` and is not one — and nothing on screen to say which of the
-# three were missing. Every one is collected into the temporary directory first:
+# four were missing. Every one is collected into the temporary directory first:
 # a failure there replaces NOTHING, names what was not fetched, and exits.
 collect_commands() {
 	local name selfdir="" missing=""
 	# Run from a file, install THOSE bytes: `--install` then needs no network
-	# and no `gh` at all — and `park` and `resume` sit BESIDE this file, in the
-	# checkout and in the repository alike, so the siblings that are there are
-	# copied and only a missing one is fetched. Run from stdin (`curl … | bash
-	# -s -- --install`) there is no file to copy from at all, so each of the
-	# three is fetched at this same ref.
+	# and no `gh` at all — and `park`, `resume` and `status` sit BESIDE this
+	# file, in the checkout and in the repository alike, so the siblings that
+	# are there are copied and only a missing one is fetched. Run from stdin
+	# (`curl … | bash -s -- --install`) there is no file to copy from at all,
+	# so each of the four is fetched at this same ref.
 	if [ -f "$SELF" ]; then
 		selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 	fi
@@ -173,10 +178,10 @@ install_commands() {
 		placed=$((placed + 1))
 		say "$name: $verb"
 	done
-	# THE COUNT, out loud: a person reading three lines cannot tell whether a
-	# fourth was meant to be there.
+	# THE COUNT, out loud: a person reading four lines cannot tell whether a
+	# fifth was meant to be there.
 	say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir"
-	# ONE PATH NOTE for the three of them: the directory is the same one.
+	# ONE PATH NOTE for the four of them: the directory is the same one.
 	case ":${PATH:-}:" in
 	*":$dir:"*) ;;
 	*)
@@ -198,7 +203,8 @@ while [ $# -gt 0 ]; do
 	--install) MODE="install"; shift ;;
 	*)
 		die "openRepoTools installs the estate commands and does nothing else. It takes --install,
-    --help or --version. The verbs themselves: \`park --help\`, \`resume --help\`."
+    --help or --version. The commands themselves: \`park --help\`, \`resume --help\`,
+    \`status --help\`."
 		;;
 	esac
 done

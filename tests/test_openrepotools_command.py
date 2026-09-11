@@ -6,9 +6,9 @@ bytes beside it and reaches nothing at all; the tests that exercise the
 FETCHING path put a fake `gh` first on `$PATH` — `fetch_from_repo` tries the
 API before the raw URL, so answering that one call is the whole of the server
 they need — and shadow `curl` with a script that refuses, so a run cannot fall
-through to the network even if the fake `gh` stops matching. There are THREE
-files to answer for (`openRepoTools`, `park`, `resume`), because `--install`
-places all three or none.
+through to the network even if the fake `gh` stops matching. There are FOUR
+files to answer for (`openRepoTools`, `park`, `resume`, `status`), because
+`--install` places all four or none.
 
 What a fake `gh` cannot show is which way round the real two are tried, so THAT
 rule — the authenticated call first, because an organisation can block
@@ -40,12 +40,12 @@ COMMAND = REPO / "openRepoTools"
 #: EVERY FILE `--install` PLACES. One install line for the whole toolset: a
 #: second engineer gets the estate verbs from the README's one line and nothing
 #: depends on anyone's dotfiles. `openRepoTools` is first because it is the one
-#: a person types to get the other two.
-INSTALLED = ("openRepoTools", "park", "resume")
+#: a person types to get the other three.
+INSTALLED = ("openRepoTools", "park", "resume", "status")
 
 USAGE_LINES = (
-    "openRepoTools --install            install (or update) park, resume and this",
-    "                                   command into ~/.local/bin",
+    "openRepoTools --install            install (or update) park, resume, status and",
+    "                                   this command into ~/.local/bin",
     "openRepoTools --help | --version",
 )
 
@@ -97,8 +97,8 @@ def test_help_prints_every_usage_line():
         assert line in lines, f"--help never printed:\n    {line}"
 
 
-def test_help_names_the_two_verbs_and_the_standards_front_door():
-    """`--install` places three files, and two of them are verbs this command
+def test_help_names_the_three_commands_and_the_standards_front_door():
+    """`--install` places four files, and three of them are commands this one
     knows nothing about — so `--help` has to say what they are and where the
     rest is written down. A command a person has on PATH and cannot find
     written down is a command they will not use.
@@ -112,7 +112,8 @@ def test_help_names_the_two_verbs_and_the_standards_front_door():
     assert "installs the estate commands and does nothing else" in result.stdout
     assert "park [<Name>]" in result.stdout
     assert "resume [<Name>]" in result.stdout
-    assert "`park --help` and `resume --help`" in result.stdout
+    assert "status [<Name>]" in result.stdout
+    assert "`park --help`, `resume --help` and `status --help`" in result.stdout
     assert "`openRepoShape` is the standard's front door" in result.stdout
 
 
@@ -163,7 +164,7 @@ def test_version_follows_the_repository_it_would_fetch():
 #: take: a verb (which is a separate file on their PATH), a project name (which
 #: is `openRepoShape`'s), a flag from either, and a second argument to
 #: `--install`.
-NOT_ITS_ARGUMENTS = ["park", "resume", "Atlas", "--doctor", "--org",
+NOT_ITS_ARGUMENTS = ["park", "resume", "status", "Atlas", "--doctor", "--org",
                      "--dry-run", "-x"]
 
 
@@ -180,6 +181,7 @@ def test_anything_else_is_refused_and_names_the_verbs(argument):
     assert "--help or --version" in result.stderr
     assert "`park --help`" in result.stderr
     assert "`resume --help`" in result.stderr
+    assert "`status --help`" in result.stderr
 
 
 def test_install_refuses_a_second_argument_and_installs_nothing(tmp_path):
@@ -197,7 +199,7 @@ def test_install_refuses_a_second_argument_and_installs_nothing(tmp_path):
 # --- --install --------------------------------------------------------------
 
 def test_install_writes_an_executable_copy(tmp_path):
-    """All THREE commands, each 755 and byte-identical to this checkout's.
+    """All FOUR commands, each 755 and byte-identical to this checkout's.
 
     A `park` that is not executable is not a command, and a `park` that is a
     near-copy is a command whose refusals nobody reviewed — so the bytes are
@@ -213,7 +215,7 @@ def test_install_writes_an_executable_copy(tmp_path):
         assert f"{name}: installed at" in result.stdout
     assert f"openRepoTools: {len(INSTALLED)} of {len(INSTALLED)} placed" \
         in result.stdout, (
-        "a person reading three lines cannot tell whether a fourth was meant "
+        "a person reading four lines cannot tell whether a fifth was meant "
         "to be there; the count says so")
 
 
@@ -233,7 +235,7 @@ def test_installing_twice_changes_nothing(tmp_path):
 @pytest.mark.parametrize("name", INSTALLED)
 def test_install_replaces_a_copy_that_has_drifted(tmp_path, name):
     """Per file, and only the one that drifted: an install that rewrote all
-    three every time would have nothing to say about which one was stale."""
+    four every time would have nothing to say about which one was stale."""
     assert run_cmd("--install", home=tmp_path).returncode == 0
     target = tmp_path / ".local" / "bin" / name
     target.write_text(target.read_text(encoding="utf-8") + "# drift\n",
@@ -257,8 +259,8 @@ def test_bin_dir_overrides_where_it_lands(tmp_path):
 
 
 def test_install_says_how_to_put_it_on_path(tmp_path):
-    """ONE path note for the three of them: the directory is the same one, and
-    three copies of the same `export` line reads as three problems."""
+    """ONE path note for the four of them: the directory is the same one, and
+    four copies of the same `export` line reads as four problems."""
     result = run_cmd("--install", home=tmp_path)
     assert f'export PATH="{tmp_path}/.local/bin:$PATH"' in result.stdout
     assert result.stdout.count("export PATH=") == 1
@@ -303,11 +305,11 @@ def test_the_api_is_tried_before_the_raw_url():
 def test_the_duplicated_fetch_logic_says_so_out_loud():
     """The forty lines this command shares with openRepoShape's shim are a
     DELIBERATE copy, and the reason has to be in the file: a shared library
-    would be a fourth file for `--install` to place. A duplication nobody wrote
+    would be a fifth file for `--install` to place. A duplication nobody wrote
     down is a duplication the next person removes."""
     text = COMMAND.read_text(encoding="utf-8")
     assert "DELIBERATE COPY" in text
-    assert "FOURTH FILE" in text
+    assert "FIFTH FILE" in text
 
 
 # --- the fetch path, offline, through a fake `gh` ---------------------------
@@ -316,7 +318,7 @@ def fake_github(tmp_path, served_names) -> dict:
     """A fake `gh` serving exactly `served_names`, and a `curl` that refuses.
 
     Factored out of the fixture so one test can WITHHOLD a file: `--install`
-    places all three or none, and the only way to prove "or none" is a server
+    places all four or none, and the only way to prove "or none" is a server
     that cannot answer for one of them.
     """
     served = tmp_path / "served"
@@ -352,19 +354,19 @@ def offline_github(tmp_path):
     `fetch_from_repo` tries `gh api` before the raw URL, so a `gh` that
     answers the calls the command makes is the whole of the server these tests
     need: `contents/<command>` comes back as this checkout's own bytes for each
-    of the three files `--install` places. `curl` is shadowed by a script that
+    of the four files `--install` places. `curl` is shadowed by a script that
     exits 1 — belt and braces, so that a fake `gh` which stopped matching could
     never quietly become a real request to raw.githubusercontent.com.
     """
     return fake_github(tmp_path, INSTALLED)
 
 
-def test_install_places_all_three_or_none(tmp_path):
+def test_install_places_all_four_or_none(tmp_path):
     """ALL IN HAND BEFORE ANY IS PLACED (openRepoShape #82, F10 of the review
     on its #83). One file at a time, dying on the first fetch that failed,
     leaves a person with a NEW `openRepoTools` and no `park` — a half-install
     that prints `installed at` and is not one — with nothing on screen to say
-    which of the three were missing.
+    which of the four were missing.
 
     Run from stdin with `park` withheld: NOTHING is placed, nothing already
     there is replaced, and the refusal names the file it could not fetch.
@@ -398,6 +400,7 @@ def test_install_places_all_three_or_none(tmp_path):
         "# an older park that still works\n", (
         "a working `park` was overwritten by a run that could not fetch one")
     assert not (bin_dir / "resume").exists()
+    assert not (bin_dir / "status").exists()
     assert "placed" not in result.stdout
 
 
@@ -407,7 +410,7 @@ def test_install_from_stdin_fetches_itself_into_a_live_workdir(offline_github,
     bash -s -- --install`.
 
     Run from stdin there is no file to copy from — not for this command and not
-    for its two siblings — so `install_commands` fetches each of the three at
+    for its three siblings — so `install_commands` fetches each of the four at
     this ref into a temporary directory. THAT DIRECTORY HAS TO STILL BE THERE:
     `workdir()` sets its EXIT trap in the main shell rather than inside a
     `$(...)` subshell, whose trap would fire the instant the substitution

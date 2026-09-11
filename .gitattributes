@@ -6,7 +6,7 @@
 # `tests/test_openrepotools_command.py` compares an installed copy to this
 # checkout's file BYTE FOR BYTE. Git for Windows' installer default is
 # `core.autocrlf=true`; a checkout of THIS repository made under it turns every
-# `\n` in `openRepoTools`, `park` and `resume` into `\r\n`, and then every one
+# `\n` in `openRepoTools`, `park`, `resume` and `status` into `\r\n`, and every one
 # of those comparisons is about line endings rather than about content — a
 # second `--install` reporting three files `updated at` on a machine where
 # nothing changed, and a colleague whose only sin was cloning on a stock
@@ -15,8 +15,8 @@
 # `core.autocrlf=false`.
 #
 # The same rule for a second reason. `tests/test_park_resume_commands.py`
-# asserts that `park` and `resume` carry the shared estate resolver BYTE FOR
-# BYTE — that is what makes the deliberate duplication safe — and a CRLF
+# asserts that `park`, `resume` and `status` carry the shared estate resolver
+# BYTE FOR BYTE — that is what makes the deliberate duplication safe — and a CRLF
 # checkout would either break the claim or hide a real drift behind it.
 #
 # NO PATH IS LISTED BY NAME. Every file this repository ships is text — bash,

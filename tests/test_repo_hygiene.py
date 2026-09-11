@@ -3,7 +3,7 @@
 
 Adapted from openRepoShape's `tests/test_repo_hygiene.py` — the rules travel
 with the files. NOTHING HERE NEEDS THE SUBMODULE, on purpose: these are facts
-about the three bash files and the four documents this repository ships, so
+about the four bash files and the four documents this repository ships, so
 they run in a clone made without `--recurse-submodules` and they run on
 Windows, which is what the Windows job is for.
 """
@@ -21,11 +21,16 @@ import pytest
 from conftest import REPO, WINDOWS_SKIP
 
 #: EVERY BASH FILE THIS REPOSITORY SHIPS, and nothing else is one. Each is a
-#: file a person has on their PATH — the installer and the two estate verbs —
-#: so each is held to the same shebang, mode bit and `set -euo pipefail` rule.
-#: The macOS job parses these same three with `/bin/bash -n`, one command per
-#: file, which is what keeps the bash-3.2 claim true.
-SHIPPED_BASH = ["openRepoTools", "park", "resume"]
+#: file a person has on their PATH — the installer, the two estate verbs and
+#: the read-only `status` — so each is held to the same shebang, mode bit and
+#: `set -euo pipefail` rule. The macOS job parses these same four with
+#: `/bin/bash -n`, one command per file, which is what keeps the bash-3.2
+#: claim true.
+SHIPPED_BASH = ["openRepoTools", "park", "resume", "status"]
+
+#: THE COMMANDS THAT CARRY THE SHARED ESTATE RESOLVER, byte for byte. Every
+#: estate command is one; the installer is not, it finds no estate.
+ESTATE_COMMANDS = ["park", "resume", "status"]
 
 #: The install line this repository documents, and openRepoShape's `--install`
 #: PRINTS as its pointer. Byte-identical in both places or a person following
@@ -51,7 +56,7 @@ def test_shipped_bash_is_executable_and_fails_loudly(name):
 @WINDOWS_SKIP
 @pytest.mark.parametrize("name", SHIPPED_BASH)
 def test_shipped_bash_parses_under_bash(name):
-    """`bash -n` on all three shipped bash files, everywhere there is a bash.
+    """`bash -n` on all four shipped bash files, everywhere there is a bash.
 
     SKIPPED ON WINDOWS, AND `shutil.which` IS NOT ENOUGH TO SEE WHY. The
     `bash` a stock Windows install puts on PATH is
@@ -70,19 +75,21 @@ def test_shipped_bash_parses_under_bash(name):
     assert proc.returncode == 0, proc.stderr
 
 
-def test_the_two_verbs_carry_the_same_estate_resolver_byte_for_byte():
+def test_the_estate_commands_carry_the_same_estate_resolver_byte_for_byte():
     """THE DUPLICATION IS DELIBERATE AND THE CLAIM HAS TO STAY TRUE.
 
-    `park` and `resume` are each ONE file a person has on PATH, so the estate
-    resolver is copied rather than sourced: a shared `orp-estate.sh` would be a
-    fourth file for `--install` to place and a broken command the first time
-    somebody copied only one of them. A copy that has drifted is two answers to
-    "which estate is this", which is the one thing the block exists to prevent.
+    `park`, `resume` and `status` are each ONE file a person has on PATH, so
+    the estate resolver is copied rather than sourced: a shared `orp-estate.sh`
+    would be a fifth file for `--install` to place and a broken command the
+    first time somebody copied only one of them. A copy that has drifted is two
+    answers to "which estate is this", which is the one thing the block exists
+    to prevent. Three copies since `status` (Brett Heap's RULING of 2026-09-10,
+    "lets go with a fourth file"): the cost that ruling accepted, held here.
 
     ASSERTED HERE AS WELL AS IN `test_park_resume_commands.py`, on purpose.
     That file carries `NEEDS_UPSTREAM` and a `bash` guard, so in a clone made
     without `--recurse-submodules` — or on Windows — its copy of this check
-    SKIPS. This invariant is about two files in this repository and needs
+    SKIPS. This invariant is about three files in this repository and needs
     neither the submodule nor a shell, so it also lives where it always runs.
     """
     def block(path: Path) -> str:
@@ -91,10 +98,12 @@ def test_the_two_verbs_carry_the_same_estate_resolver_byte_for_byte():
         end = text.index("# --- END shared estate resolver")
         return text[start:end]
 
-    park, resume = block(REPO / "park"), block(REPO / "resume")
-    assert park == resume, (
-        "park and resume have drifted apart in the shared estate resolver")
-    assert len(park.splitlines()) > 100, "the marker moved, not the block"
+    blocks = {name: block(REPO / name) for name in ESTATE_COMMANDS}
+    reference = blocks["park"]
+    for name, text in blocks.items():
+        assert text == reference, (
+            f"park and {name} have drifted apart in the shared estate resolver")
+    assert len(reference.splitlines()) > 100, "the marker moved, not the block"
 
 
 def code_lines(path: Path) -> str:
@@ -126,14 +135,15 @@ def test_the_verbs_name_no_runtime_dependency_on_the_standard():
     offline path and still exists there; that is a cross-reference, not a call,
     which is why this test reads code and not comments.
     """
-    for name in ("park", "resume"):
+    for name in ESTATE_COMMANDS:
         code = code_lines(REPO / name)
         assert "OPENREPOSHAPE" not in code, (
             f"{name} reads an $OPENREPOSHAPE_* variable; the estate commands "
             f"take no environment from the standard")
         assert "raw.githubusercontent.com" not in code, (
-            f"{name} names a raw URL; the verbs fetch nothing")
-        assert "gh api" not in code, f"{name} calls the API; the verbs fetch nothing"
+            f"{name} names a raw URL; the estate commands fetch nothing")
+        assert "gh api" not in code, (
+            f"{name} calls the API; the estate commands fetch nothing")
 
 
 def test_the_installer_reaches_only_this_repository():
@@ -233,6 +243,41 @@ def test_the_documents_say_what_bare_park_does_now():
         "it is superseded; a reader of the ruling trail needs both")
 
 
+def test_the_documents_say_what_status_is_and_is_not():
+    """Brett Heap's RULING of 2026-09-10 in this repository, verbatim: "lets go
+    with a fourth file. start with the local status layer." `status` is the
+    read-only view of an estate — what is in and out of sync — and the LOCAL
+    layer only: it fetches nothing, so every answer is as of the last fetch.
+
+    Both facts in both documents and in the command's own header, for the
+    reason the other document tests give: the wrong reading is the one an
+    assistant reaches for unaided. A `status` that "checks the remote" is one
+    somebody runs `git fetch` on behalf of to make current, and a report of
+    findings with exit 1 is one somebody calls a failure. The four-file count
+    is held too, because the install story is the sentence a first-time
+    reader trusts.
+    """
+    for name in ("README.md", "AGENTS.md", "status"):
+        text = (REPO / name).read_text(encoding="utf-8")
+        assert "fetches nothing" in text, (
+            f"{name} does not say status fetches nothing")
+        assert "as of the last fetch" in text.lower(), (
+            f"{name} does not say every answer is as of the last fetch")
+        assert "local layer" in text.lower(), (
+            f"{name} does not say this is the local layer, with more to come")
+    for name in ("README.md", "AGENTS.md"):
+        text = (REPO / name).read_text(encoding="utf-8")
+        assert "`status`" in text, f"{name} never names the fourth command"
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    assert "FOUR files" in readme, "README.md does not count the four files"
+    assert "4 of 4 placed" in readme, (
+        "README.md does not show the count line `--install` actually prints")
+    status = (REPO / "status").read_text(encoding="utf-8")
+    assert "--no-optional-locks" in status, (
+        "status takes locks: a read-only command beside an editor must not be "
+        "the thing that says index.lock exists")
+
+
 def test_the_documents_say_the_sweep_skips_a_root_without_the_overlay():
     """#6, under Brett Heap's RULING of 2026-09-10 on openRepoShape #92
     ("skip roots without the overlay"): in the SWEEP, a root with no Speckit
@@ -317,9 +362,19 @@ def test_agents_md_is_short_enough_to_be_read():
     is for when the person wants everything, never a way past naming the one
     estate they meant. The fourth line says `resume` has no `--all`, so
     nobody invents one.
+
+    99 -> 111 on 2026-09-10, for `status` (Brett Heap's RULING of that day,
+    "lets go with a fourth file. start with the local status layer"). One
+    line in the opening for the third command, and rule 4 — the one an
+    assistant gets wrong unaided in both directions: `status` fetches
+    nothing, so a stale answer is not a bug to fetch around but the local
+    layer doing what it says; and exit 1 is findings printed, not a failure,
+    so relay the lines. The rule also says the bare form outside every
+    estate reads them all WITHOUT asking, so nobody waits for a question
+    `status` never asks.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 99, f"AGENTS.md is {len(lines)} lines; the cap is 99"
+    assert len(lines) <= 111, f"AGENTS.md is {len(lines)} lines; the cap is 111"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -370,9 +425,18 @@ def test_readme_is_short_enough_to_be_read():
     without the question, from anywhere. The #91 sentence it replaces said
     the bare form swept unasked, which is the reading this paragraph now
     exists to correct.
+
+    182 -> 203 on 2026-09-10, for `status` (Brett Heap's RULING of that day,
+    "lets go with a fourth file. start with the local status layer"). The
+    install story moves from three files to four in every sentence that
+    counted them; one paragraph says what `status` reads and that it fetches
+    nothing; two lines in the "Using them" block show its two forms; and one
+    paragraph gives the exit codes and the bare-form rule — read them all,
+    without asking — because a read-only report that "checks the remote" is
+    the reading a first-time user brings, and this is where it is corrected.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 182, f"README.md is {len(lines)} lines; the cap is 182"
+    assert len(lines) <= 203, f"README.md is {len(lines)} lines; the cap is 203"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
@@ -444,7 +508,7 @@ def test_the_root_carries_the_line_ending_rule():
     place against the bytes already there with `cmp`, and its own tests compare
     an installed copy to this checkout's file byte for byte. Git for Windows'
     installer default is `core.autocrlf=true`; a checkout made under it turns
-    every `\\n` in these three bash files into `\\r\\n`, and the comparison is
+    every `\\n` in these four bash files into `\\r\\n`, and the comparison is
     then about line endings rather than about content. The rule normalises text
     to LF in the object store on check-in and checks it out as LF on every
     platform, whatever `core.autocrlf` says — so nobody has to be told a git
