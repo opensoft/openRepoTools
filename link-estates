@@ -13,6 +13,10 @@
 #                                     cloned gets no link.
 #   ~/projects/xFactory/LANES.md   -> <repo>/lanes/LANES.md
 #   ~/projects/xFactory/lanes-edit.sh -> <repo>/lanes/lanes-edit.sh
+#   ~/.local/bin/lane-start        -> <repo>/lanes/lane-start
+#   ~/.local/bin/lane-end          -> <repo>/lanes/lane-end
+#                                     the two ends of a lane are typed as
+#                                     commands, so they go on PATH.
 #
 # Why: lane-collision-protocol Rule 4 / Amendment 4 (handoffs live in the
 # person's workspace repository, reached through the estate-folder path) and
@@ -22,11 +26,13 @@
 #
 # Adopting this repository on a new workstation is: clone, then run this.
 #
-# Environment: PROJECTS_ROOT overrides ~/projects (used by tests).
+# Environment: PROJECTS_ROOT overrides ~/projects, BIN_DIR overrides
+# ~/.local/bin (both used by tests).
 set -euo pipefail
 
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 projects_root="${PROJECTS_ROOT:-$HOME/projects}"
+bin_dir="${BIN_DIR:-$HOME/.local/bin}"
 dry_run=0
 
 case "${1:-}" in
@@ -118,6 +124,32 @@ if [[ -d "$projects_root/xFactory" ]]; then
 else
   printf 'SKIP  the lane register — no %s on this workstation\n' "$projects_root/xFactory"
   skipped=$((skipped + 1))
+fi
+
+# ---- the two ends of a lane, on PATH --------------------------------------
+# `lane-start` names the tmux window after the lane, registers the row and
+# launches the session under the same name; `lane-end` closes the row. They
+# are typed by a person at the boundary of a lane, so they belong on PATH —
+# and they resolve the register from their own REAL path, so the symlink is
+# all they need.
+if [[ ! -d "$bin_dir" ]]; then
+  if (( dry_run )); then
+    printf 'PLAN  mkdir -p   %s\n' "$bin_dir"
+  else
+    mkdir -p -- "$bin_dir"
+    printf 'MKDIR %s\n' "$bin_dir"
+  fi
+fi
+if [[ -d "$bin_dir" ]]; then
+  link "$repo_dir/lanes/lane-start" "$bin_dir/lane-start"
+  link "$repo_dir/lanes/lane-end"   "$bin_dir/lane-end"
+  case ":${PATH:-}:" in
+    *":$bin_dir:"*) : ;;
+    *) printf 'NOTE  %s is not on this shell'"'"'s PATH — add it, or call the helpers by path\n' "$bin_dir" ;;
+  esac
+else
+  printf 'PLAN  link       %s -> %s\n' "$bin_dir/lane-start" "$repo_dir/lanes/lane-start"
+  printf 'PLAN  link       %s -> %s\n' "$bin_dir/lane-end" "$repo_dir/lanes/lane-end"
 fi
 
 printf -- '----\n%s linked, %s already right, %s skipped, %s moved aside%s\n' \
