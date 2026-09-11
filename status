@@ -79,7 +79,8 @@
 # `~/.agents/workspace.yaml` names — and `resume` rebuilds the worktrees from
 # it; between the two, record and disk drift apart in exactly the ways
 # `resume` later refuses, and this reads them beforehand: a recorded feature
-# with no worktree here (parked, not resumed — `resume <Name>` is the exit), a
+# with no worktree here (parked, not resumed — `resume <Name>` is the exit,
+# unless `--no-push` left the commit on the workstation that parked it), a
 # worktree whose branch tip is not the parked commit (moved on, or BEHIND a
 # newer record by more than the WIP commits `resume` itself un-committed, or
 # diverged), a leg parked with `--no-push`, and a worktree on disk the record
@@ -1385,7 +1386,8 @@ read_shape() {
 #
 # 1. A RECORDED FEATURE WITH NO WORKTREE HERE on its branch: parked, and not
 #    resumed on this machine. `resume <Name>` is the exit; nothing here adds
-#    a worktree.
+#    a worktree. Unless the record is a `--no-push` one (3): then there is
+#    nothing here to resume FROM, and the exit is the workstation that has it.
 # 2. A WORKTREE WHOSE BRANCH TIP IS NOT THE PARKED COMMIT: moved on since it
 #    was parked (park again before leaving); or BEHIND it — the record is
 #    newer, parked later on another workstation, which `resume` refuses to
@@ -1396,7 +1398,9 @@ read_shape() {
 #    in the working tree — `resume.sh`'s `wip_gap_is_ours` is what keeps it
 #    from refusing that, and the same test is made here.
 # 3. A LEG PARKED WITH `--no-push`: the record says `pushed: false`, only the
-#    workstation that parked it has the WIP commit, and `resume` refuses it.
+#    workstation that parked it has the WIP commit, and `resume` refuses it —
+#    so no line under this state names `resume` as the exit, and none blames
+#    a missing parked commit on a fetch that never had one to make.
 # 4. A WORKTREE ON DISK THAT THE RECORD DOES NOT KNOW: a feature that was
 #    never parked, which is the one thing `park` exists to carry.
 #
@@ -1454,8 +1458,19 @@ workspace_checkouts() {
 
 # `<org><TAB><file>` for every `workspaces/<org>/<id>.yaml` in every checkout,
 # basename compared case-insensitively — `resume`'s `manifest_candidates`.
+#
+# ONE ROW PER `<org>/<basename>`, because that is what `resume` counts as one
+# record (F4 of the review on openRepoShape #83): the same `<org>/<id>.yaml`
+# reached through TWO CHECKOUTS of one workspace repository — a second clone
+# of it named by an `orgs:` override — is ONE record, and `--org` could not
+# have told the two apart. The checkouts are already deduped by physical path
+# in `locate_record`; this is the other half of the same rule, for two clones
+# that really are two directories. Without it they counted as two, which read
+# as "two orgs record this id" and, where origin names no owner to settle it,
+# SKIPPED a record that was never ambiguous.
 record_candidates() {
-    local want checkout dir file base
+    local want checkout dir file base key seen
+    local -a keys=()
     want="$(lower "$1")"
     shift
     for checkout in "$@"; do
@@ -1466,8 +1481,12 @@ record_candidates() {
             for file in "$dir"/*.yaml; do
                 [ -f "$file" ] || continue
                 base="${file##*/}"
-                base="${base%.yaml}"
-                [ "$(lower "$base")" = "$want" ] || continue
+                [ "$(lower "${base%.yaml}")" = "$want" ] || continue
+                key="$(lower "${dir##*/}")/$base"
+                for seen in ${keys[@]+"${keys[@]}"}; do
+                    [ "$seen" != "$key" ] || continue 2
+                done
+                keys+=("$key")
                 printf '%s\t%s\n' "${dir##*/}" "$file"
             done
         done
@@ -1536,7 +1555,8 @@ locate_record() {
         RECORD_FILE="${candidates#*	}"
         return 0
     fi
-    # Two orgs record this id: the one this root's origin belongs to, if any.
+    # Two orgs record this id — genuinely two, the rows being one per
+    # `<org>/<basename>`: the one this root's origin belongs to, if any.
     url="$(g "$ESTATE_ROOT" config --get remote.origin.url 2>/dev/null || true)"
     owner="$(repo_slug_of "$url" || true)"
     owner="${owner%%/*}"
@@ -1643,12 +1663,23 @@ leg_repo_for_role() {
 
 # The path of the worktree checked out on `<branch>` in `<repo>`, main or
 # linked, or nothing.
+#
+# THE PATH HAS TO BE ON DISK. `worktree list --porcelain` keeps the block of a
+# linked worktree whose directory was deleted until somebody runs `git
+# worktree prune` — that block is metadata, not a worktree — so a recorded
+# feature whose directory is gone would otherwise be read as present, and at
+# the parked commit, as CLEAN: the one answer that hides the case this layer
+# exists for. `read_worktrees` checks the path before reading it for the same
+# reason. The scan goes on rather than giving up, so a live worktree on the
+# branch still wins over a stale block for it.
 worktree_on_branch() {
     local repo="$1" want="$2" line path=""
     while IFS= read -r line; do
         case "$line" in
         "worktree "*) path="${line#worktree }" ;;
-        "branch refs/heads/$want") printf '%s\n' "$path"; return 0 ;;
+        "branch refs/heads/$want")
+            if [ -d "$path" ]; then printf '%s\n' "$path"; return 0; fi
+            ;;
         esac
     done < <(g "$repo" worktree list --porcelain 2>/dev/null || true)
     return 1
@@ -1690,10 +1721,21 @@ check_parked_leg() {
         finding "parked feature $branch ($role leg): the record names a leg this root does not mount here"
         return 0
     fi
+    tree="$(worktree_on_branch "$repo" "$branch" || true)"
+    # `--no-push` IS THE ONE RECORD `resume` CANNOT ANSWER, so no line under
+    # it offers `resume` as the exit: the WIP commit is on the workstation
+    # that parked it and nowhere else, which is exactly what `resume.sh`
+    # refuses the leg for. Saying "`resume` refuses it" and then "`resume
+    # <Name>` brings it back" sent the person to the command the line above
+    # had just ruled out, so where both states hold they are ONE line, and it
+    # names the only exit there is: park it again, with the push, from there.
+    if [ "$pushed" = false ] && [ -z "$tree" ]; then
+        finding "parked feature $branch ($role leg): parked with --no-push on ${parked_on:-another workstation} and no worktree on that branch here; only that workstation has the WIP commit, so nothing here brings it back — park it again from there"
+        return 0
+    fi
     if [ "$pushed" = false ]; then
         finding "parked feature $branch ($role leg): parked with --no-push on ${parked_on:-another workstation}; only that workstation has the WIP commit, and \`resume\` refuses it"
     fi
-    tree="$(worktree_on_branch "$repo" "$branch" || true)"
     if [ -z "$tree" ]; then
         finding "parked feature $branch ($role leg): no worktree on that branch here; parked ${parked_at:-?} on ${parked_on:-?} — \`resume $ESTATE_NAME\` brings it back"
         return 0
@@ -1703,7 +1745,18 @@ check_parked_leg() {
     [ -n "$tip" ] || return 0
     [ "$tip" != "$commit" ] || return 0
     if ! g "$repo" cat-file -e "$commit^{commit}" 2>/dev/null; then
-        finding "parked feature $branch ($role leg): its parked commit $(short "$commit") is not here — never fetched, or parked with --no-push on ${parked_on:-another workstation}"
+        # WHAT THE RECORD ITSELF RULES OUT IS NOT OFFERED AS A REASON. With
+        # `pushed: true` the commit left that workstation, so what is left is
+        # this repository never fetching it, or origin not having it any more;
+        # `pushed: false` is the other case, has its own line above, and here
+        # only says where the commit is. Neither line names `--fetch` as the
+        # exit: this runs in the ROOT's row, and a leg's own repository is
+        # fetched after it, so `FETCHED_OK` is not this repository's answer.
+        if [ "$pushed" = false ]; then
+            finding "parked feature $branch ($role leg): its parked commit $(short "$commit") is not here, which is what --no-push means — ${parked_on:-that workstation} is the only place it is"
+        else
+            finding "parked feature $branch ($role leg): its parked commit $(short "$commit") is not here — the record says it was pushed, so this repository has never fetched it, or origin no longer has it"
+        fi
     elif g "$repo" merge-base --is-ancestor "$commit" "$tip" 2>/dev/null; then
         n="$(g "$repo" rev-list --count "$commit..$tip" 2>/dev/null || true)"
         finding "parked feature $branch ($role leg): moved on since it was parked, ${n:-?} commit(s) after $(short "$commit") — park again before leaving"
@@ -1720,7 +1773,11 @@ check_parked_leg() {
 }
 
 # Linked worktrees on disk — in the root and in each mounted leg — whose
-# branch the record does not know: work that was never parked.
+# branch the record does not know: work that was never parked. ON DISK is
+# meant literally, for `worktree_on_branch`'s reason: the porcelain keeps a
+# deleted worktree's block until `git worktree prune` runs, and telling
+# somebody that a directory which is not there was never parked is a finding
+# about nothing. `read_worktrees` checks the same path before reading it.
 unrecorded_worktrees() {
     local root="$1" recorded="$2" repo where line path="" branch="" first=1 state leg
     local -a repos=("$root")
@@ -1740,7 +1797,7 @@ unrecorded_worktrees() {
             "")
                 if [ "$first" -eq 1 ]; then
                     first=0
-                elif [ -n "$branch" ]; then
+                elif [ -n "$branch" ] && [ -d "$path" ]; then
                     case "$recorded" in
                     *"$NL$branch$NL"*) ;;
                     *) finding "worktree on $branch ($where): not in the parked record — never parked; \`park\` carries the features under this root's worktree root, anything else is yours to keep or remove" ;;

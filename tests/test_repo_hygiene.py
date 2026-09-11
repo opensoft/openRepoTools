@@ -454,9 +454,17 @@ def test_agents_md_is_short_enough_to_be_read():
     (`resume <Name>` is the exit), a reset for a worktree behind a newer
     record (rule 1 stands), and a hand-edit of the record for a worktree it
     does not know (`park` is the exit).
+
+    140 -> 142 on 2026-09-11, for the record layer's review (Copilot on #13).
+    Rule 4 now carries the one exception to "`resume <Name>` is the exit": a
+    record parked with `--no-push` never sent the WIP commit anywhere, so
+    `resume` refuses it and reaching for it is the advice the rule's own next
+    clause rules out — the exit is the workstation that has the commit. Two
+    lines, because an assistant handed that finding otherwise reaches for the
+    one command the finding beside it has just refused.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 140, f"AGENTS.md is {len(lines)} lines; the cap is 140"
+    assert len(lines) <= 142, f"AGENTS.md is {len(lines)} lines; the cap is 142"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -543,9 +551,16 @@ def test_readme_is_short_enough_to_be_read():
     the `status` paragraph say what the record is, where it is found, the
     four ways record and disk drift apart, and that no config or no record
     is a note; the list of layers still to come is gone, because none is.
+
+    241 -> 242 on 2026-09-11, for the record layer's review (Copilot on #13).
+    One line in the `status` paragraph gives the exception to "`resume
+    <Name>` brings it back": where the record says `--no-push`, only the
+    workstation that parked it can. It was left to be inferred from the
+    `--no-push` finding two clauses later, and `status` itself now says the
+    two states in one line rather than in two that contradicted each other.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 241, f"README.md is {len(lines)} lines; the cap is 241"
+    assert len(lines) <= 242, f"README.md is {len(lines)} lines; the cap is 242"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

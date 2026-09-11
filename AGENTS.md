@@ -93,11 +93,13 @@ sequence, and relay their per-repository lines rather than summarising them.
    against disk") is read from the workspace repository `~/.agents/
    workspace.yaml` names, as of its last pull: a recorded feature with no
    worktree here is `resume <Name>`'s to bring back, never a `git worktree
-   add` of yours; a worktree BEHIND a newer record — behind by more than the
-   WIP commits `resume` itself un-committed — is what `resume` refuses, and
-   rule 1 stands, no reset to make it pass; a worktree the record does not
-   know wants `park`, not a hand-edit of the record. No config, or no record
-   for the estate, is a note, not a finding.
+   add` of yours — unless the record says `--no-push`, when the WIP commit
+   never left the workstation that parked it, `resume` refuses it, and the
+   exit is to park it again from there; a worktree BEHIND a newer record —
+   behind by more than the WIP commits `resume` itself un-committed — is
+   what `resume` refuses, and rule 1 stands, no reset to make it pass; a
+   worktree the record does not know wants `park`, not a hand-edit of the
+   record. No config, or no record for the estate, is a note, not a finding.
    `status`'s bare form outside every estate reads them all WITHOUT asking, because a
    read — fetched or not — moves nothing of yours; `status --all` from
    anywhere says the same thing.

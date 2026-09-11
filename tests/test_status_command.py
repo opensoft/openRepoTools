@@ -1528,6 +1528,28 @@ def test_a_worktree_at_the_parked_commit_is_in_sync(atlas, home):
     assert "parked feature" not in result.stdout
 
 
+def test_a_recorded_features_deleted_worktree_reads_as_no_worktree_here(
+        atlas, home):
+    """`worktree list --porcelain` keeps the block of a linked worktree whose
+    directory was deleted until somebody runs `git worktree prune`. Read as a
+    worktree, the recorded feature sat at the parked commit and was therefore
+    reported CLEAN — the one answer that hides the case this layer exists for.
+    `read_worktrees` has checked the path since the local layer; so does the
+    lookup the record uses."""
+    checkout = workspace_config(home)
+    where = home / "Atlas-wt" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    rmtree(where)           # and NO `git worktree prune`
+    porcelain = git("worktree", "list", "--porcelain", cwd=atlas).stdout
+    assert "001-a-thing" in porcelain, "git pruned it for us; the test is moot"
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
+            "branch here; parked 2026-09-10T20:00:00Z on Eagle — `resume Atlas` "
+            "brings it back") in result.stdout
+
+
 def test_a_worktree_that_moved_on_since_it_was_parked(atlas, home):
     checkout = workspace_config(home)
     where = home / "Atlas-wt" / "001-a-thing"
@@ -1574,6 +1596,50 @@ def test_a_leg_parked_with_no_push_is_a_finding(atlas, home):
             "refuses it") in result.stdout
 
 
+def test_a_no_push_record_with_no_worktree_here_never_names_resume(atlas, home):
+    """The two lines contradicted each other: `resume` refuses this record,
+    and then `resume Atlas` brings it back. Only the workstation that parked
+    it has the WIP commit — which is what `resume.sh` refuses the leg for — so
+    the two states are one line, and the exit is that workstation."""
+    checkout = workspace_config(home)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA,
+           pushed="false", parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): parked with --no-push "
+            "on Falcon and no worktree on that branch here; only that "
+            "workstation has the WIP commit, so nothing here brings it back — "
+            "park it again from there") in result.stdout
+    assert "`resume Atlas` brings it back" not in result.stdout
+
+
+def test_a_missing_parked_commit_is_read_against_what_the_record_claims(
+        atlas, home):
+    """`pushed: true` RULES OUT `--no-push`, so what is left is a fetch this
+    repository never made or a commit origin no longer has; `pushed: false` is
+    the other case, already a finding of its own, and here only says where the
+    commit is. The first draft offered both reasons under either record."""
+    checkout = workspace_config(home)
+    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (repo leg): its parked commit "
+            f"{FAKE_SHA[:7]} is not here — the record says it was pushed, so "
+            "this repository has never fetched it, or origin no longer has it"
+            ) in result.stdout
+    assert "--no-push" not in result.stdout
+
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA,
+           pushed="false", parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (repo leg): its parked commit "
+            f"{FAKE_SHA[:7]} is not here, which is what --no-push means — "
+            "Falcon is the only place it is") in result.stdout
+    assert "never fetched" not in result.stdout
+
+
 def test_a_worktree_the_record_does_not_know_was_never_parked(atlas, home):
     checkout = workspace_config(home)
     tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
@@ -1586,6 +1652,21 @@ def test_a_worktree_the_record_does_not_know_was_never_parked(atlas, home):
             "worktree root, anything else is yours to keep or remove"
             ) in result.stdout
     assert "worktree on 001-a-thing" not in result.stdout
+
+
+def test_a_deleted_worktrees_stale_entry_is_not_an_unparked_worktree(atlas, home):
+    """The other half of the porcelain's stale block: telling somebody that a
+    directory which is not there was never parked is a finding about nothing,
+    and `park` would carry nothing when they ran it."""
+    checkout = workspace_config(home)
+    tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    gone = home / "Atlas-wt" / "002-unparked"
+    feature_worktree(atlas, "002-unparked", gone)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    rmtree(gone)            # and NO `git worktree prune`
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "002-unparked" not in result.stdout
 
 
 def test_a_spec_leg_is_read_in_the_legs_own_repository(atlas, home):
@@ -1604,8 +1685,9 @@ def test_a_spec_leg_is_read_in_the_legs_own_repository(atlas, home):
     result = run(STATUS, "Atlas", home=home)
     assert result.returncode == 1, result.stdout + result.stderr
     assert (f"    - parked feature 001-s-thing (spec leg): its parked commit "
-            f"{FAKE_SHA[:7]} is not here — never fetched, or parked with "
-            "--no-push on Eagle") in result.stdout
+            f"{FAKE_SHA[:7]} is not here — the record says it was pushed, so "
+            "this repository has never fetched it, or origin no longer has it"
+            ) in result.stdout
 
 
 def test_two_orgs_recording_the_same_id_is_a_note(atlas, home):
@@ -1741,6 +1823,28 @@ def test_an_override_pointing_at_the_same_checkout_is_one_checkout(atlas, home):
     assert result.returncode == 1, result.stdout + result.stderr
     assert "2 records for 'atlas'" not in result.stdout
     assert f"  parked record: {checkout}/workspaces/{ORG}/atlas.yaml" in result.stdout
+
+
+def test_two_checkouts_of_one_workspace_repository_are_one_record(atlas, home):
+    """Two CLONES of one workspace repository — the default `path:` and an
+    `orgs:` override that is a second checkout of it — hold the same
+    `<org>/<id>.yaml`. `resume` counts that as ONE record, by org and
+    basename (F4 of the review on openRepoShape #83), because `--org` could
+    not have told the two apart. Counted as two it read as "two orgs record
+    this id", and a local-path origin names no owner to settle it with, so a
+    record that was never ambiguous was skipped unread."""
+    checkout = workspace_config(home)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA)
+    other = home / "wip-2"
+    shutil.copytree(checkout, other)
+    (home / ".agents" / "workspace.yaml").write_text(
+        f"repository: tester/wip\npath: {checkout}\norgs:\n  {ORG}:\n"
+        f"    repository: tester/wip\n    path: {other}\n", encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "2 records for 'atlas'" not in result.stdout
+    assert f"  parked record: {checkout}/workspaces/{ORG}/atlas.yaml" in result.stdout
+    assert "no worktree on that branch here" in result.stdout
 
 
 def test_a_checkout_not_on_this_machine_is_said(atlas, home):
