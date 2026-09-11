@@ -1,11 +1,12 @@
 # Working in openRepoTools
 
-Two installed commands, `park` and `resume`, and the `openRepoTools --install`
-that places them. **They add no mechanics.** They find the estate and run its
-own `make park` / `make resume`, which run the Speckit git extension's scripts —
-one implementation, ruled 2026-09-09 (openRepoShape #77, ruling 1). Never
-hand-roll the WIP commit, the push, the `git worktree add` or the soft reset
-because something refused: relay the refusal.
+Three installed commands, `park`, `resume` and `status`, and the
+`openRepoTools --install` that places them. **The verbs add no mechanics.**
+They find the estate and run its own `make park` / `make resume`, which run
+the Speckit git extension's scripts — one implementation, ruled 2026-09-09
+(openRepoShape #77, ruling 1). Never hand-roll the WIP commit, the push, the
+`git worktree add` or the soft reset because something refused: relay the
+refusal. `status` is the read-only view of the same estate, and runs nothing.
 
 The shape itself is [openRepoShape](https://github.com/opensoft/openRepoShape),
 and this repository pins the commit its tests were verified against. Read that
@@ -13,7 +14,7 @@ repository's `AGENTS.md` for the Make targets (`make park`, `make resume`) and
 everything about a project's layout; what follows is only what changes when a
 person is driving the two INSTALLED commands.
 
-## Driving `park <Name>` and `resume <Name>`
+## Driving `park <Name>`, `resume <Name>` and `status <Name>`
 
 `park <Name>` and `resume <Name>` are the estate verbs as commands on a PATH,
 placed by `openRepoTools --install`. They find the estate — `$PROJECTS_DIR`,
@@ -60,6 +61,17 @@ sequence, and relay their per-repository lines rather than summarising them.
    anything was refused, even when `make resume` exited 0 — a skip is not a
    pass. A member that REFUSED is not resumed, and one SKIPPED for want of a
    working clone was never asked.
+4. **`status` READS AND CHANGES NOTHING, and fetches nothing**: every
+   ahead/behind line is AS OF THE LAST FETCH, and it says so. Exit 1 means
+   findings were printed, not that anything failed — relay them per
+   repository, as you would `park`'s report. It is the LOCAL layer only
+   (Brett Heap's RULING of 2026-09-10: "start with the local status layer");
+   `--fetch`, the fork against its upstream, shape-pin drift and the parked
+   record against disk are later layers, so never `git fetch` on its behalf
+   to make an answer current unless the person asked for a fetch. Its bare
+   form outside every estate reads them all WITHOUT asking, because nothing
+   here writes — the question is `park`'s — and `status --all` from anywhere
+   says the same thing.
 
 ## The pinned standard at `upstream/openRepoShape`
 

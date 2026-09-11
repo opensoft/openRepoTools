@@ -165,7 +165,7 @@ jobs:
       - name: tests
         run: python -m pytest tests -q --basetemp=${{ runner.temp }}\t
 
-  # THE SAME SUITE ON macOS, because these three files are what a Mac runs.
+  # THE SAME SUITE ON macOS, because these four files are what a Mac runs.
   # This is the job openRepoShape's own macOS `/bin/bash -n` step existed for,
   # and it moves here with the files: the README tells a Mac reader that the
   # stock `/bin/bash` — 3.2, the last GPLv2 release, and what Apple still
@@ -213,6 +213,7 @@ jobs:
           /bin/bash -n openRepoTools
           /bin/bash -n park
           /bin/bash -n resume
+          /bin/bash -n status
 
       - name: tests
         run: python3 -m pytest tests -q

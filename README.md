@@ -1,11 +1,12 @@
 # openRepoTools
 
-Two commands for the estates [openRepoShape](https://github.com/opensoft/openRepoShape)
+Three commands for the estates [openRepoShape](https://github.com/opensoft/openRepoShape)
 scaffolds, and the installer that places them:
 
 ```sh
 park InkRouter                  # on workstation A, from any folder
 resume InkRouter                # on workstation B, and the estate is back
+status InkRouter                # what is in and out of sync, and changes nothing
 ```
 
 `park` commits, pushes and RECORDS every open feature of one estate, so another
@@ -21,6 +22,15 @@ the record, the `git worktree add` and the soft reset (ruled 2026-09-09,
 openRepoShape #77). What these two files add is finding the estate, rebuilding
 what is not here, and saying out loud what did NOT travel and why none of it is
 theirs to touch.
+
+`status` is the read-only view of the same estate: for the holder or root,
+each member's working clone and every mounted leg, what is ahead of or behind
+its origin, dirty or stashed, on a feature branch that was never pushed or
+whose remote branch is gone, or checked out away from its pin. It changes
+nothing and fetches nothing, so every answer is as of the last fetch, and it
+says so. It is the LOCAL layer (Brett Heap's RULING of 2026-09-10, "start with
+the local status layer"); `--fetch`, the fork against its upstream, shape-pin
+drift and the parked record against disk are the layers still to come.
 
 `openRepoTools` itself installs and does nothing else. It has no verb: the
 standard's front door is `openRepoShape`, which scaffolds projects and stays
@@ -40,15 +50,15 @@ gh api repos/opensoft/openRepoTools/contents/openRepoTools \
     -H 'Accept: application/vnd.github.raw' | bash -s -- --install
 ```
 
-It places THREE files into `~/.local/bin` — `openRepoTools`, `park` and
-`resume` — 755, idempotently: a second run prints `already installed …
+It places FOUR files into `~/.local/bin` — `openRepoTools`, `park`, `resume`
+and `status` — 755, idempotently: a second run prints `already installed …
 (unchanged)` per file, and one whose bytes have drifted prints `updated at`.
-ALL THREE ARE IN HAND BEFORE ANY IS PLACED, so a fetch that failed replaces
-nothing and names the file it could not get. Then a `3 of 3 placed in <dir>`
+ALL FOUR ARE IN HAND BEFORE ANY IS PLACED, so a fetch that failed replaces
+nothing and names the file it could not get. Then a `4 of 4 placed in <dir>`
 line, and the `export PATH=…` line if that directory is not on your `PATH`.
 
 Run from a checkout it copies the files beside it and needs no network and no
-`gh` at all; run from stdin, as above, it fetches all three at the same ref.
+`gh` at all; run from stdin, as above, it fetches all four at the same ref.
 The API is tried before the raw URL, because `gh` is authenticated and works
 where `raw.githubusercontent.com` is blocked.
 
@@ -56,7 +66,7 @@ where `raw.githubusercontent.com` is blocked.
 |---|---|---|
 | `$OPENREPOTOOLS_REPO` | `opensoft/openRepoTools` | the `owner/name` to fetch from — a fork or a mirror, named once |
 | `$OPENREPOTOOLS_REF` | `main` | the ref to fetch it at |
-| `$OPENREPOTOOLS_BIN_DIR` | `~/.local/bin` | where `--install` puts the three |
+| `$OPENREPOTOOLS_BIN_DIR` | `~/.local/bin` | where `--install` puts the four |
 
 `openRepoTools --version` prints `openRepoTools (<repo> @ <ref>)`. There is no
 version number here, for the reason openRepoShape has none: the identity is a
@@ -64,8 +74,9 @@ commit.
 
 ## Using them
 
-`park --help` and `resume --help` are the reference, and openRepoShape's README
-has the whole of "Carrying in-flight work to another workstation". In short:
+`park --help`, `resume --help` and `status --help` are the reference, and
+openRepoShape's README has the whole of "Carrying in-flight work to another
+workstation". In short:
 
 ```sh
 park                            # the estate around the current directory
@@ -75,6 +86,8 @@ park --repo <owner>/<name>      # the estate of a clone you ALREADY have
 park InkRouter --dry-run        # rehearse; writes nothing
 resume InkRouter --workspace <owner>/<your-wip-repo>   # the FIRST time here
 resume InkRouter -- --feature 001-a-thing              # flags for the extension
+status                          # the estate around you; outside one, every estate
+status InkRouter                # one estate, read-only, as of the last fetch
 ```
 
 `<Name>` is a folder under your projects directory: `~/projects/<Name>`, then
@@ -103,7 +116,15 @@ from failing to park the one you meant.
 writes a file outside a repository (`~/.agents/workspace.yaml`), and it writes
 it only on a machine that has none and only because you named the repository.
 
-Windows: all three files are bash, and there is no PowerShell twin. On Windows
+`status` reads and changes nothing, and takes no lock while it reads. Exit 0
+means every repository read is in sync and clean as of the last fetch; exit 1
+means findings were printed — read them, one line per repository, as you
+would `park`'s report — and exit 2 is a refusal. Its bare form outside every
+estate reads them all WITHOUT asking, because nothing here writes; `status
+--all` (or `-a`) says the same from anywhere. `status --fetch` refuses by
+name: fetching is the next layer, not a thing this one does quietly.
+
+Windows: all four files are bash, and there is no PowerShell twin. On Windows
 the way in is WSL2, exactly as it is for openRepoShape's `setup.sh`.
 
 ## The dependency direction
@@ -173,7 +194,7 @@ refuses.
 
 CI runs the suite on ubuntu, windows and macOS, plus one ubuntu job that checks
 out WITHOUT submodules to prove the skip path exits 0. The macOS job parses
-each of the three bash files with `/bin/bash -n` — bash 3.2, the last GPLv2
+each of the four bash files with `/bin/bash -n` — bash 3.2, the last GPLv2
 release and what Apple still ships — because that is the claim the suite itself
 cannot make.
 

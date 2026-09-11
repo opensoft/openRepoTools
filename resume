@@ -3,7 +3,7 @@
 #
 # resume — arrive at a workstation and get the estate back: `resume InkRouter`.
 #
-# Installed with the other two by `openRepoTools --install`.
+# Installed with the other three by `openRepoTools --install`.
 #
 # IT ADDS NO MECHANICS, exactly as the `openRepoShape` command adds none. It
 # REBUILDS OR REFRESHES the estate with the tools that already exist — `git
@@ -94,12 +94,12 @@ estate still comes back.
 USAGE
 }
 
-# --- BEGIN shared estate resolver (park and resume carry it byte for byte) --
+# --- BEGIN shared estate resolver (park, resume, status: byte for byte) -----
 #
-# THIS BLOCK IS DUPLICATED IN THE OTHER COMMAND, DELIBERATELY, and
-# `tests/test_park_resume_commands.py` asserts the two copies are IDENTICAL.
+# THIS BLOCK IS DUPLICATED IN THE OTHER COMMANDS, DELIBERATELY, and
+# `tests/test_park_resume_commands.py` asserts the three copies are IDENTICAL.
 # Each of these is one file a person has on PATH: a shared `orp-estate.sh`
-# would be a fourth file for `--install` to place and a broken command the
+# would be a fifth file for `--install` to place and a broken command the
 # first time somebody copied only one of them. The rules themselves are NOT
 # new: `<dir>/<Name>/family.yaml` carrying `kind: family-manifest` and naming
 # `<Name>` is `setup-project.py`'s `family_folder_here`, doubled-name layout
@@ -127,9 +127,9 @@ fi
 # Where a NEW clone would go: the first spelling that already exists, else the
 # first named.
 #
-# shellcheck disable=SC2329  # `park` creates nothing and never calls this. The
-# block is byte-identical in both commands BY DESIGN, so each carries a couple
-# of functions only the other one asks.
+# shellcheck disable=SC2329  # `park` and `status` create nothing and never
+# call this. The block is byte-identical in all three commands BY DESIGN, so
+# each carries a couple of functions only another one asks.
 projects_dir_for_new() {
     local dir
     for dir in "${PROJECTS_DIRS[@]}"; do
