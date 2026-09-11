@@ -1566,8 +1566,9 @@ read_shape() {
 #    `resume` as the exit either.
 #    AND NO `pushed:` KEY AT ALL IS A FOURTH STATE OF THE FIELD, not a
 #    quieter spelling of the third (the independent review of #19,
-#    2026-09-11, recorded there as out of scope). It reads WORSE than the
-#    third did: `record_rows` emitted a leg's row at its `pushed:` line, so a
+#    2026-09-11, recorded there as out of scope; this repository's #20). It
+#    reads WORSE than the third did: `record_rows` emitted a leg's row at its
+#    `pushed:` line, so a
 #    leg without one had no row, and this layer said nothing whatever about
 #    the record — no finding, exit 0 — while `workspace-common.sh` seeds
 #    every leg's pushed with `false` and RR6 refuses that leg in the
