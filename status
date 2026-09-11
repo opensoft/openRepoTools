@@ -35,16 +35,25 @@
 # this command ever makes — remote-tracking refs (`refs/remotes/origin/*`),
 # the objects behind them and `FETCH_HEAD`, and nothing else: no branch, no
 # tag, no HEAD, no index, no working tree, because the refspec is pinned on
-# the command line rather than trusted from config (see `fetch_origin`).
+# the command line rather than trusted from config (see `fetch_remote`).
 # What it cannot do is answer a prompt: `GIT_TERMINAL_PROMPT=0` makes an
 # https credential prompt FAIL and be reported, but an ssh host-key or
 # passphrase prompt is ssh's own and blocks exactly as `git fetch` would —
 # so run `--fetch` where ssh is already non-interactive (an agent, a
-# known_hosts entry). Without the flag it fetches nothing, as before. What
-# it does NOT do yet, by design and in this order:
-# the fork's origin against its upstream (`gh`); the estate's copied shape
-# files against `contracts/shape-pin.yaml`, and the pinned openRepoShape
-# against openRepoShape's main; and the parked record in
+# known_hosts entry). Without the flag it fetches nothing, as before.
+#
+# THE THIRD LAYER is the FORK against what it was forked from, under Brett
+# Heap's RULING of 2026-09-11 (this repository's #11), verbatim: "next layer:
+# fork against upstream".
+# A remote named `upstream` is read from local refs — `origin/<branch>`
+# against `upstream/<branch>`, as of the last fetch — and `--fetch` fetches
+# it too, under the same pinned refspec. With no such remote, and only under
+# `--fetch`, an origin on github.com is asked about with `gh api`, once: a
+# fork is a finding that names the parent and the `git remote add upstream …`
+# that makes the drift readable here. See "the fork against its upstream",
+# below. What it does NOT do yet, by design and in this order: the estate's
+# copied shape files against `contracts/shape-pin.yaml`, and the pinned
+# openRepoShape against openRepoShape's main; and the parked record in
 # `~/.agents/workspace.yaml` against the worktrees on disk. Each is a layer
 # to add HERE.
 #
@@ -69,7 +78,7 @@ REPO_ARG=""
 STATUS_ALL=0
 ALL_ROWS=""
 #: 1 with `--fetch`: `git fetch --prune origin` in every repository before it
-#: is read — the one write this command makes. See `fetch_origin`.
+#: is read — the one write this command makes. See `fetch_remote`.
 FETCH=0
 
 say() { printf '%s\n' "$*"; }
@@ -90,7 +99,12 @@ or point at a remote branch that is gone; whether a feature worktree is
 dirty; and whether a leg is checked out away from its pin, or its pin has
 fallen behind its origin. It FETCHES NOTHING unless you say `--fetch`, so
 every answer is AS OF THE LAST FETCH — the one it just made, or the one
-before — and the report says which.
+before — and the report says which. A FORK is read against what it was
+forked from: with a remote named `upstream`, `origin/<branch>` against
+`upstream/<branch>` from local refs, and `--fetch` fetches upstream too; with
+none, and only under `--fetch`, an origin on github.com is asked about once
+with `gh api`, and a fork is a finding naming the parent and the `git remote
+add upstream …` to run. Not a fork: nothing to say.
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
 (<Name>/<Name>/family.yaml) or a standalone project root (<Name>/project.yaml).
@@ -826,39 +840,154 @@ read_leg() {
 # outright in a checked-out root. `--refmap` (git 2.1) replaces the
 # configured mapping for this one fetch, so nothing outside
 # `refs/remotes/<remote>/` is written by either route.
+# ONE FUNCTION FOR BOTH REMOTES: `origin` always, `upstream` when a fork has
+# one (the third layer, below). The remote's name is in every line it prints,
+# and in the refspec, so `--prune` on the upstream fetch can only touch
+# `refs/remotes/upstream/*`.
 FETCHED_OK=0
-fetch_origin() {
-    local repo="$1" branch="$2" before after err
-    FETCHED_OK=0
+UPSTREAM_FETCHED_OK=0
+fetch_remote() {
+    local repo="$1" branch="$2" remote="$3" before after err what="fetch"
+    [ "$remote" = origin ] || what="fetch $remote"
+    if [ "$remote" = origin ]; then FETCHED_OK=0; else UPSTREAM_FETCHED_OK=0; fi
     if ! g "$repo" rev-parse --git-dir >/dev/null 2>&1; then
         finding "fetch: not a readable git repository (a gitfile whose gitdir is gone?), so nothing could be fetched"
         return 0
     fi
-    if ! g "$repo" remote get-url origin >/dev/null 2>&1; then
-        finding "fetch: no remote named origin, so nothing could be fetched"
+    if ! g "$repo" remote get-url "$remote" >/dev/null 2>&1; then
+        finding "fetch: no remote named $remote, so nothing could be fetched"
         return 0
     fi
-    before="$(g "$repo" rev-parse -q --verify "refs/remotes/origin/$branch" 2>/dev/null || true)"
+    before="$(g "$repo" rev-parse -q --verify "refs/remotes/$remote/$branch" 2>/dev/null || true)"
     if err="$(GIT_TERMINAL_PROMPT=0 git --no-optional-locks -C "$repo" fetch --quiet \
             --prune --recurse-submodules=no \
-            --refmap='+refs/heads/*:refs/remotes/origin/*' origin \
-            '+refs/heads/*:refs/remotes/origin/*' 2>&1)"; then
-        FETCHED_OK=1
-        after="$(g "$repo" rev-parse -q --verify "refs/remotes/origin/$branch" 2>/dev/null || true)"
+            --refmap="+refs/heads/*:refs/remotes/$remote/*" "$remote" \
+            "+refs/heads/*:refs/remotes/$remote/*" 2>&1)"; then
+        if [ "$remote" = origin ]; then FETCHED_OK=1; else UPSTREAM_FETCHED_OK=1; fi
+        after="$(g "$repo" rev-parse -q --verify "refs/remotes/$remote/$branch" 2>/dev/null || true)"
         if [ -n "$before" ] && [ -z "$after" ]; then
-            say "    fetched origin: origin/$branch is GONE (was $(short "$before")): deleted or renamed on origin"
+            say "    fetched $remote: $remote/$branch is GONE (was $(short "$before")): deleted or renamed on $remote"
         elif [ -n "$after" ] && [ "$before" != "$after" ]; then
             if [ -n "$before" ]; then
-                say "    fetched origin: origin/$branch moved $(short "$before") -> $(short "$after")"
+                say "    fetched $remote: $remote/$branch moved $(short "$before") -> $(short "$after")"
             else
-                say "    fetched origin: origin/$branch is here now, at $(short "$after")"
+                say "    fetched $remote: $remote/$branch is here now, at $(short "$after")"
             fi
         else
-            say "    fetched origin: nothing new on origin/$branch"
+            say "    fetched $remote: nothing new on $remote/$branch"
         fi
     else
         err="${err%%$'\n'*}"
-        finding "fetch failed: ${err:-git said nothing}; what follows is as of the last fetch that worked"
+        finding "$what failed: ${err:-git said nothing}; what follows is as of the last fetch that worked"
+    fi
+}
+
+# --- the fork against its upstream --------------------------------------------
+#
+# THE THIRD LAYER, under Brett Heap's RULING of 2026-09-11, verbatim: "next
+# layer: fork against upstream". When origin is a FORK, the one question a
+# clone cannot answer about itself is whether the fork has kept up with what
+# it was forked from: a fork's `main` falls behind quietly, and a feature cut
+# from it is a feature cut from stale ground. Two ways to know, in order:
+#
+# 1. A REMOTE NAMED `upstream` — the convention every fork guide teaches — is
+#    read from LOCAL refs: `origin/<branch>` against `upstream/<branch>`, as
+#    of the last fetch. With `--fetch` the upstream remote is fetched too,
+#    under the pinned refspec, so the write stays under `refs/remotes/`.
+# 2. WITH NO SUCH REMOTE, and only under `--fetch` — the one flag that
+#    reaches the network — an origin on github.com is asked about with
+#    `gh api repos/<owner>/<name>`. If GitHub says it is a fork, that is a
+#    finding naming the parent and the `git remote add upstream …` that makes
+#    the drift readable locally from then on, and GitHub's compare endpoint
+#    gives the counts once. `gh` is READ ONLY here, and its own state is
+#    settled once per run: not on PATH, or failing (not logged in, a private
+#    parent), is said once and not repeated for every repository. Without
+#    `--fetch` nothing is asked, and a fork with no upstream remote reads
+#    exactly as it did before this layer.
+#
+# An origin that is NOT a fork says nothing here: most estates are the
+# organisation's own repositories, and "not a fork" is not a finding. The
+# origin URL is read from config, not `remote get-url`, because a
+# `url.<base>.insteadOf` rewrite must not hide whose repository it is.
+GH_STATE=""
+
+has_upstream() { g "$1" config --get remote.upstream.url >/dev/null 2>&1; }
+
+read_fork() {
+    local repo="$1" branch="$2" counts behind ahead
+    if ! has_upstream "$repo"; then
+        [ "$FETCH" -eq 0 ] || ask_github_fork "$repo" "$branch"
+        return 0
+    fi
+    if ! has_ref "$repo" "refs/remotes/upstream/$branch"; then
+        if [ "$UPSTREAM_FETCHED_OK" -eq 1 ]; then
+            finding "fork: no upstream/$branch after the fetch: upstream has no branch $branch"
+        else
+            finding "fork: no upstream/$branch here: the upstream remote was never fetched (\`--fetch\` asks it)"
+        fi
+        return 0
+    fi
+    # No `origin/<branch>` is already a finding above; nothing to compare.
+    has_ref "$repo" "refs/remotes/origin/$branch" || return 0
+    counts="$(g "$repo" rev-list --left-right --count \
+        "upstream/$branch...origin/$branch" 2>/dev/null || true)"
+    [ -n "$counts" ] || return 0
+    behind="${counts%%[[:space:]]*}"
+    ahead="${counts##*[[:space:]]}"
+    [ "$behind" = 0 ] ||
+        finding "fork: origin/$branch is $behind commit(s) behind upstream/$branch, as of the last fetch"
+    [ "$ahead" = 0 ] ||
+        finding "fork: origin/$branch has $ahead commit(s) upstream/$branch does not"
+}
+
+# `gh api`, read-only, twice at most per repository: is origin a fork, and
+# if so how far is its <branch> from the parent's default branch. The fields
+# come back joined by 0x1F for the reason `read_branches` gives: an empty
+# middle field must stay where it was printed.
+ask_github_fork() {
+    local repo="$1" branch="$2" url slug owner info is_fork parent parent_default cmp behind ahead
+    url="$(g "$repo" config --get remote.origin.url 2>/dev/null || true)"
+    case "$url" in
+    *github.com*) ;;
+    *) return 0 ;;
+    esac
+    slug="$(repo_slug_of "$url" || true)"
+    [ -n "$slug" ] || return 0
+    owner="${slug%%/*}"
+    if [ -z "$GH_STATE" ]; then
+        if command -v gh >/dev/null 2>&1; then
+            GH_STATE=ok
+        else
+            GH_STATE=none
+            say "    fork check: no \`gh\` on PATH, so whether origin is a fork was not asked (said once per run)"
+        fi
+    fi
+    [ "$GH_STATE" = ok ] || return 0
+    if ! info="$(GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 gh api "repos/$slug" \
+            --jq '[(.fork|tostring), (.parent.full_name // ""), (.parent.default_branch // "")] | join("\u001f")' 2>&1)"; then
+        GH_STATE=failed
+        info="${info%%$'\n'*}"
+        say "    fork check: \`gh api repos/$slug\` failed (${info:-no message}); not asked again this run"
+        return 0
+    fi
+    IFS=$'\037' read -r is_fork parent parent_default <<<"$info"
+    [ "$is_fork" = true ] || return 0
+    if [ -z "$parent" ]; then
+        finding "fork of a repository GitHub does not show (deleted, or private to you?), and no remote named upstream here"
+        return 0
+    fi
+    finding "fork of $parent (per GitHub), and no remote named upstream here: \`git remote add upstream https://github.com/$parent.git\` reads the drift locally"
+    if cmp="$(GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 gh api \
+            "repos/$parent/compare/$parent_default...$owner:$branch?per_page=1" \
+            --jq '[(.behind_by|tostring), (.ahead_by|tostring)] | join("\u001f")' 2>&1)"; then
+        IFS=$'\037' read -r behind ahead <<<"$cmp"
+        [ "$behind" = 0 ] ||
+            finding "fork: origin/$branch is $behind commit(s) behind $parent's $parent_default (per GitHub)"
+        [ "$ahead" = 0 ] ||
+            finding "fork: origin/$branch has $ahead commit(s) $parent's $parent_default does not (per GitHub)"
+    else
+        cmp="${cmp%%$'\n'*}"
+        finding "fork: could not compare origin/$branch with $parent's $parent_default: ${cmp:-no message}"
     fi
 }
 
@@ -894,23 +1023,36 @@ read_one_estate() {
         [ -n "${path:-}" ] || continue
         FINDINGS=()
         FETCHED_OK=0
+        UPSTREAM_FETCHED_OK=0
         ESTATE_REPOS=$((ESTATE_REPOS + 1))
         case "$label" in
         holder | root)
             current_root="$path"
             printf '  %-6s %-6s %s\n' "$label" "$branch" "$path"
-            [ "$FETCH" -eq 0 ] || fetch_origin "$path" "$branch"
+            if [ "$FETCH" -eq 1 ]; then
+                fetch_remote "$path" "$branch" origin
+                if has_upstream "$path"; then
+                    fetch_remote "$path" "$branch" upstream
+                fi
+            fi
             read_head "$path" "$branch"
             read_tracking "$path" "$branch"
+            read_fork "$path" "$branch"
             read_worktree_state "$path"
             read_branches "$path" "$branch"
             read_worktrees "$path"
             ;;
         mounted)
             printf '  %-6s %-6s %s\n' "leg" "$branch" "$path"
-            [ "$FETCH" -eq 0 ] || fetch_origin "$path" "$branch"
+            if [ "$FETCH" -eq 1 ]; then
+                fetch_remote "$path" "$branch" origin
+                if has_upstream "$path"; then
+                    fetch_remote "$path" "$branch" upstream
+                fi
+            fi
             rel="${path#"$current_root"/}"
             read_leg "$current_root" "$rel" "$branch"
+            read_fork "$path" "$branch"
             ;;
         unmounted)
             printf '  %-6s %-6s %s\n' "leg" "$branch" "$path"
@@ -1011,7 +1153,7 @@ while [ $# -gt 0 ]; do
         [ $# -ge 2 ] || die "$1 needs a value: one estate folder name under your projects directory."
         NAME="$2"; shift 2 ;;
     # THE SECOND LAYER (Brett Heap's RULING of 2026-09-11, "next layer:
-    # --fetch"): ask origin in every repository first. See `fetch_origin`.
+    # --fetch"): ask origin in every repository first. See `fetch_remote`.
     --fetch) FETCH=1; CHANGED_CLAUSE="only remote-tracking refs and fetched objects were changed (--fetch)."; shift ;;
     -*)
         usage >&2

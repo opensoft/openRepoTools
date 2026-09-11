@@ -73,8 +73,13 @@ sequence, and relay their per-repository lines rather than summarising them.
    a fetch that fails is a finding on that row, and an ssh prompt is ssh's
    own and still blocks. So when the person wants a CURRENT answer, run
    `status --fetch`, never `git fetch` by hand on its behalf.
-   That is the local layer and `--fetch`; the fork against its upstream,
-   shape-pin drift and the parked record against disk are later layers. Its
+   That is the local layer and `--fetch`. A FORK is read against a remote
+   named `upstream` from local refs, and, with no such remote and only under
+   `--fetch`, an origin on github.com is asked about once with `gh api` (his
+   RULING of the same day, "next layer: fork against upstream") — the one use
+   of `gh` in these commands, read-only; a fork is a finding naming the
+   parent and the `git remote add upstream …` to run, which is theirs to run.
+   Shape-pin drift and the parked record against disk are later layers. Its
    bare form outside every estate reads them all WITHOUT asking, because a
    read — fetched or not — moves nothing of yours; `status --all` from
    anywhere says the same thing.

@@ -118,8 +118,8 @@ def code_lines(path: Path) -> str:
                      if not line.lstrip().startswith("#"))
 
 
-def test_the_verbs_name_no_runtime_dependency_on_the_standard():
-    """`park` and `resume` depend on the ESTATE, never on openRepoShape.
+def test_the_estate_commands_name_no_runtime_dependency_on_the_standard():
+    """`park`, `resume` and `status` depend on the ESTATE, never on openRepoShape.
 
     They run the estate's own `make park` / `make resume`; nothing in either
     reaches for a checkout of the standard, fetches from it, or reads an
@@ -134,6 +134,14 @@ def test_the_verbs_name_no_runtime_dependency_on_the_standard():
     `$OPENREPOSHAPE_SETUP_SH`, which is openRepoShape's own shim's documented
     offline path and still exists there; that is a cross-reference, not a call,
     which is why this test reads code and not comments.
+
+    THE ONE `gh api` IN THESE THREE FILES is `status`'s fork check (Brett
+    Heap's RULING of 2026-09-11, "next layer: fork against upstream"): only
+    under `--fetch`, only about an origin on github.com with no `upstream`
+    remote, read-only, and only inside `ask_github_fork`. The verbs still
+    call no API at all, and `status` calls it nowhere else — a second call
+    site would be a second place the network is reached, which is what this
+    rule is for.
     """
     for name in ESTATE_COMMANDS:
         code = code_lines(REPO / name)
@@ -142,8 +150,18 @@ def test_the_verbs_name_no_runtime_dependency_on_the_standard():
             f"take no environment from the standard")
         assert "raw.githubusercontent.com" not in code, (
             f"{name} names a raw URL; the estate commands fetch nothing")
-        assert "gh api" not in code, (
-            f"{name} calls the API; the estate commands fetch nothing")
+        if name == "status":
+            # The usage text NAMES `gh api` to say when it is asked; that is
+            # prose in a heredoc, not a call, and is set aside here.
+            head, rest = code.split("cat <<'USAGE'", 1)
+            calls = head + rest.split("\nUSAGE\n", 1)[1]
+            body = calls.split("ask_github_fork() {", 1)[1].split("\n}", 1)[0]
+            assert "gh api" in body, "status's fork check no longer asks gh"
+            assert "gh api" not in calls.replace(body, ""), (
+                "status calls the API outside ask_github_fork")
+        else:
+            assert "gh api" not in code, (
+                f"{name} calls the API; the verbs fetch nothing")
 
 
 def test_the_installer_reaches_only_this_repository():
@@ -267,6 +285,11 @@ def test_the_documents_say_what_status_is_and_is_not():
         assert "--fetch" in text, f"{name} does not name the flag"
         assert "remote-tracking refs" in text, (
             f"{name} does not bound the one write --fetch makes")
+        assert "`upstream`" in text, (
+            f"{name} does not say how a fork is read: a remote named upstream")
+        assert "gh api" in text, (
+            f"{name} does not say the fork check may ask gh, and only under "
+            f"--fetch")
         assert "as of the last fetch" in text.lower(), (
             f"{name} does not say every answer is as of the last fetch")
         assert "local layer" in text.lower(), (
@@ -385,9 +408,16 @@ def test_agents_md_is_short_enough_to_be_read():
     remote-tracking refs — so an assistant asked for a current answer runs
     `status --fetch` rather than fetching by hand, and knows a failed fetch
     is a finding on that row, not a reason to retry the whole report.
+
+    117 -> 122 on 2026-09-11, for the fork layer (Brett Heap's RULING of that
+    day, "next layer: fork against upstream"). Five lines in rule 4 say how a
+    fork is read — a remote named `upstream`, or `gh api` once under `--fetch`
+    — and the two things an assistant gets wrong unaided: that this is the
+    ONE use of `gh` in these commands and it is read-only, and that the
+    `git remote add upstream …` a finding names is the person's to run.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 117, f"AGENTS.md is {len(lines)} lines; the cap is 117"
+    assert len(lines) <= 122, f"AGENTS.md is {len(lines)} lines; the cap is 122"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -454,9 +484,17 @@ def test_readme_is_short_enough_to_be_read():
     them" block shows it; one sentence in the exit-code paragraph says a
     failed fetch is a finding on its row. The sentence that said `--fetch`
     refuses by name is gone, because it no longer does.
+
+    214 -> 221 on 2026-09-11, for the fork layer (Brett Heap's RULING of that
+    day, "next layer: fork against upstream"). Seven lines in the `status`
+    paragraph say how a fork is read — a remote named `upstream` from local
+    refs, or `gh api` once under `--fetch` for an origin on github.com — that
+    a fork is a finding naming the parent and the remote to add, and that
+    this is the one use of `gh` in these commands; the list of layers still
+    to come loses one.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 214, f"README.md is {len(lines)} lines; the cap is 214"
+    assert len(lines) <= 221, f"README.md is {len(lines)} lines; the cap is 221"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
