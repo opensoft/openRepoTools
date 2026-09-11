@@ -1601,6 +1601,19 @@ read_shape() {
 #    the ROOT's finding, since no leg repository can be found for a leg that
 #    names no role, and the exit is a park that parks the feature through.
 #
+# WHAT THE OTHER END'S LOADER DOES WITH AN ABSENT `pushed:` IS CHANGING, AND
+# NO LINE HERE DEPENDS ON IT (the independent review of workBenches #60,
+# 2026-09-11). Paragraph 3's account of the fourth state is workBenches'
+# main: `workspace_load_project` seeds every leg's pushed with `false`, so
+# `resume` reads a missing key as `false` and RR6 refuses the leg in the
+# `--no-push` words. workBenches #60 stops that invention — the seed is the
+# empty string, a new `MANIFEST_LEG_PUSHED_SEEN[]` keeps absent apart from
+# bare, and RR6 refuses the leg in words of its own, "the record has no
+# `pushed:` for this leg" (both run on 2026-09-11, exit 2 each). THE OUTCOME
+# IS THE SAME UNDER BOTH — the leg is not recreated, and only a park that
+# parks the feature through writes a record that reads — so that is what the
+# findings say, and none of them says how the loader reached it.
+#
 # THE RECORD IS FOUND WHERE `park` FILES IT AND `resume` LOOKS FOR IT:
 # `${AGENT_PROTOCOL_ROOT:-~/.agents}/workspace.yaml` names the workspace
 # repository and its checkout (`path:`), plus per-org overrides under
@@ -1787,9 +1800,13 @@ locate_record() {
 # position for every record `park` writes, because that key is always last
 # and always there — until it is NOT there, and then the leg had no row and
 # VANISHED from this layer: no finding, exit 0, silence about a record
-# `resume.sh` refuses, because `workspace-common.sh` defaults a leg's pushed
-# to `false` at the `- role:` line when no `pushed:` follows (the review cited
-# its line 777) and RR6 is `[ "$pushed" != true ]`. The comment that stood here called the dropped leg harmless —
+# `resume.sh` refuses: RR6 is `[ "$pushed" != true ]`, and no loader of that
+# record makes an absent key `true` — on workBenches' main
+# `workspace-common.sh` defaults the leg's pushed to `false` at the `- role:`
+# line when no `pushed:` follows (the review cited its line 777), and under
+# workBenches #60 the seed is the empty string with the key's absence carried
+# in a field of its own, so the leg is refused either way. The comment that
+# stood here called the dropped leg harmless —
 # its branch is still known from the `branch` row, so it is never accused of
 # being unparked — which is true and beside the point: not being accused is
 # not the same as being read, and this layer exists to read the record the
@@ -2201,13 +2218,15 @@ check_parked_leg() {
     # 2026-09-11). Not a fourth spelling of the third — `record_rows` keeps
     # the two apart in `$seen`, because the record is not saying something
     # that cannot be read, it is saying NOTHING — and what makes it a finding
-    # rather than a shrug is the other end. `workspace_load_project` seeds
-    # every leg's `MANIFEST_LEG_PUSHED` with `false` AT THE `- role:` LINE
-    # and overwrites it only where a `pushed:` key follows, so `resume.sh`
-    # reads a missing one as `false` and RR6 refuses the leg in the
-    # `--no-push` words: run against a record with no `pushed:` on
-    # 2026-09-11, the extension answered "Error: 001-a-thing (repo leg) was
-    # parked with --no-push; that feature was NOT recreated", exit 2. Until
+    # rather than a shrug is the other end. On workBenches' main
+    # `workspace_load_project` seeds every leg's `MANIFEST_LEG_PUSHED` with
+    # `false` AT THE `- role:` LINE and overwrites it only where a `pushed:`
+    # key follows, so `resume.sh` reads a missing one as `false` and RR6
+    # refuses the leg in the `--no-push` words: run against a record with no
+    # `pushed:` on 2026-09-11, the extension answered "Error: 001-a-thing
+    # (repo leg) was parked with --no-push; that feature was NOT recreated",
+    # exit 2 — and the paragraph after next is what workBenches #60 changes
+    # about that, which is the words and not the refusal. Until
     # this change `status` was SILENT about that record — no row, no finding,
     # exit 0 — which is the worse half of note (d): a wrong line can be
     # argued with, a missing one cannot. So it is read exactly as the
@@ -2218,9 +2237,13 @@ check_parked_leg() {
     # AND THE EXIT IS A PARK THAT PARKS IT, which is why every arm says from
     # THERE. `park.sh`'s `emit_recorded_feature` carries a REFUSED feature's
     # entry forward out of the loaded manifest untouched — `pushed` included,
-    # which for an absent key is the loader's defaulted `false` — so a park
-    # that refuses this feature rewrites the record as `pushed: false`, a
-    # `--no-push` claim nobody made, and `resume` refuses it still. Only the
+    # which for an absent key is whatever that loader seeded: on workBenches'
+    # main the defaulted `false`, so a park that refuses this feature
+    # rewrites the record as `pushed: false`, a `--no-push` claim nobody
+    # made; under workBenches #60 the empty string, which
+    # `workspace_write_manifest` drops rather than writes, so the same park
+    # carries the hole forward as a hole. Neither is a record that reads, and
+    # `resume` refuses it after either. Only the
     # workstation that has the worktree parks it through, and that path
     # writes `true` or `false` from the push it just made. It is also where
     # this state comes from WITHOUT a hand-edit: a bare `pushed:` loads as
@@ -2228,9 +2251,35 @@ check_parked_leg() {
     # forward, and `workspace_write_manifest` drops any key whose value is
     # empty — so one park that refuses a note-(d) record degrades it into
     # this one (both halves verified against those functions the same day).
+    #
+    # AND WHICH LOADER IT IS DECIDES THE WORDS AND NOTHING ELSE, WHICH IS WHY
+    # THE CLAUSE BELOW NAMES NEITHER (the independent review of workBenches
+    # #60, 2026-09-11). That pull request stops `workspace_load_project`
+    # inventing `pushed: false` for a key the record does not carry: the seed
+    # becomes the empty string, and a new `MANIFEST_LEG_PUSHED_SEEN[]` keeps
+    # absent apart from bare exactly as `$seen` does here. So under it
+    # `resume` does not READ a missing one as not pushed — it reads it as
+    # nothing and says so: run against the same record on 2026-09-11 with
+    # #60's scripts, the extension answered "Error: 001-a-thing (repo leg):
+    # the record has no `pushed:` for this leg; that feature was NOT
+    # recreated. / Whether its parked commit <sha> ever left Falcon cannot be
+    # read from the record. / Park it again from there, which writes the
+    # record afresh", exit 2, and its REFUSED line read "the record has no
+    # `pushed:` for the repo leg" where main's read "parked with --no-push".
+    # The clause that stood here — "`resume` reads a missing one as not
+    # pushed and refuses it" — was main's MECHANISM copied into this
+    # command's output, and it would have gone stale the day #60 landed: a
+    # line about the other end that the other end had stopped agreeing with.
+    # WHAT IS TRUE UNDER BOTH is the refusal and the exit, and this layer
+    # only ever needed those: RR6 is `[ "$pushed" != true ]` in both, an
+    # absent key loads as `false` in one and as the empty string in the
+    # other and neither is `true`, so the leg is not recreated either way;
+    # and either way the record is written afresh only by a park that parks
+    # the feature THROUGH, as the paragraph above says. The clause says that
+    # much and stops.
     if [ -z "$seen" ]; then
         unread="the record has no \`pushed:\` for that leg"
-        refuses="\`resume\` reads a missing one as not pushed and refuses it"
+        refuses="\`resume\` refuses a leg whose record has no \`pushed:\`"
     else
         case "$pushed" in
         true | false) ;;

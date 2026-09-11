@@ -1709,6 +1709,13 @@ def test_a_record_with_no_pushed_key_at_all_is_a_finding_not_silence(
     resume, which is the same family as note (d) and strictly worse: a wrong
     line can be argued with, a missing one cannot.
 
+    That paragraph is workBenches' MAIN. Its #60 stops the loader inventing
+    `pushed: false` for an absent key and RR6 then refuses the leg in words
+    of its own — "the record has no `pushed:` for this leg", exit 2, run the
+    same day against that branch's scripts. What the line below asserts is
+    what is true under both: the record does not say, `resume` refuses the
+    leg for that, and the exit is a park from the workstation that has it.
+
     So it is a finding of its own, as `--no-push` and the unreadable value
     are, even where the worktree here sits at the parked commit; and it names
     what the record does not say rather than deciding what it must have
@@ -1723,8 +1730,8 @@ def test_a_record_with_no_pushed_key_at_all_is_a_finding_not_silence(
     assert result.returncode == 1, result.stdout + result.stderr
     assert ("    - parked feature 001-a-thing (repo leg): the record has no "
             "`pushed:` for that leg, so whether its parked commit ever left "
-            "Falcon cannot be read; `resume` reads a missing one as not pushed "
-            "and refuses it, so park it again from there to write the record "
+            "Falcon cannot be read; `resume` refuses a leg whose record has no "
+            "`pushed:`, so park it again from there to write the record "
             "afresh") in result.stdout
     assert "--no-push" not in result.stdout, (
         "a --no-push claim the record does not make")
@@ -1758,6 +1765,42 @@ def test_an_absent_pushed_key_and_a_bare_one_are_not_the_same_finding(
     assert ("its `pushed:` has no value, which is neither true nor false"
             in bare.stdout)
     assert "the record has no `pushed:`" not in bare.stdout
+
+
+def test_the_absent_pushed_clause_says_the_refusal_not_the_loader(atlas, home):
+    """The independent review of workBenches #60, 2026-09-11. The clause this
+    layer carried for an absent `pushed:` — "`resume` reads a missing one as
+    not pushed and refuses it" — was the MECHANISM of one loader written into
+    this command's output: `workspace_load_project` seeded every leg's pushed
+    with `false`, so a missing key reached RR6 as `false`. #60 stops that
+    invention (the seed is the empty string, and a new
+    `MANIFEST_LEG_PUSHED_SEEN[]` keeps absent apart from bare, which is what
+    `record_rows`'s sixth field does here), and `resume` then reads a missing
+    key as NOTHING and refuses it for that, in words of its own.
+
+    A line that says HOW the other end reads the record goes stale the day
+    the other end changes; a line that says WHAT IT DOES does not. Both
+    loaders refuse the leg at the same test, `[ "$pushed" != true ]`, and
+    both leave the same exit — verified against both on 2026-09-11: main
+    answered "Error: 001-a-thing (repo leg) was parked with --no-push; that
+    feature was NOT recreated", #60's scripts "Error: 001-a-thing (repo leg):
+    the record has no `pushed:` for this leg; that feature was NOT
+    recreated", exit 2 each. So the clause names the refusal and the exit and
+    nothing else, and it must not say either loader's reading — not "as not
+    pushed", which is main's, and not `--no-push`, which is the claim the
+    record does not make."""
+    checkout = workspace_config(home)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA,
+           pushed=None, parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "`resume` refuses a leg whose record has no `pushed:`" in result.stdout
+    assert "reads a missing one as not pushed" not in result.stdout, (
+        "one loader's reading of the absent key, in a line about both")
+    assert "not pushed" not in result.stdout, (
+        "the record says nothing about the push; only the refusal is shared")
+    assert "--no-push" not in result.stdout, (
+        "a --no-push claim the record does not make")
 
 
 def test_a_registration_git_calls_prunable_is_stale_with_its_directory_there(
@@ -1965,8 +2008,10 @@ def test_no_pushed_key_with_no_worktree_here_never_names_resume(atlas, home):
     named on 2026-09-11: with no `pushed:` key and no worktree here, the leg
     had no row at all, so `status` said nothing — not even the `resume
     <Name>` line the missing key would otherwise have fallen into. Now it is
-    read the way `resume.sh` judges it, which is as `false`: nothing here
-    brings it back, and the exit is the workstation that parked it.
+    read the way `resume.sh` judges it — RR6 is `[ "$pushed" != true ]`, and
+    an absent key is `false` to workBenches' main and the empty string under
+    its #60, neither of them `true`: nothing here brings it back either way,
+    and the exit is the workstation that parked it.
 
     And where a stale registration is left behind, the prune is named FIRST,
     exactly as it is for a `--no-push` record and for an unreadable value —
@@ -1980,7 +2025,7 @@ def test_no_pushed_key_with_no_worktree_here_never_names_resume(atlas, home):
     assert ("    - parked feature 001-a-thing (repo leg): the record has no "
             "`pushed:` for that leg, and no worktree on that branch here; "
             "whether its parked commit ever left Falcon cannot be read, and "
-            "`resume` reads a missing one as not pushed and refuses it, so "
+            "`resume` refuses a leg whose record has no `pushed:`, so "
             "nothing here brings it back — park it again from there, which "
             "writes the record afresh") in result.stdout
     assert "`resume Atlas` brings it back" not in result.stdout
@@ -1997,7 +2042,7 @@ def test_no_pushed_key_with_no_worktree_here_never_names_resume(atlas, home):
             "a stale worktree registration for it is still recorded at "
             f"{where} — clear it with `git -C {atlas} worktree prune`; whether "
             "its parked commit ever left Falcon cannot be read, and `resume` "
-            "reads a missing one as not pushed and refuses it, so nothing here "
+            "refuses a leg whose record has no `pushed:`, so nothing here "
             "brings it back — park it again from there, which writes the "
             "record afresh") in result.stdout
     assert "`resume Atlas`" not in result.stdout
