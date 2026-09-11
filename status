@@ -54,8 +54,9 @@
 # that makes the drift readable here. See "the fork against its upstream",
 # below.
 #
-# THE FOURTH LAYER is the SHAPE PIN, under Brett Heap's RULING of 2026-09-11,
-# verbatim: "next layer: shape-pin drift". Every assembly root and family
+# THE FOURTH LAYER is the SHAPE PIN, under Brett Heap's RULING of 2026-09-11
+# (this repository's #12), verbatim: "next layer: shape-pin drift". Every
+# assembly root and family
 # holder carries `contracts/shape-pin.yaml`: the openRepoShape commit its
 # copied shape files were cut from, and a sha256 per copy. The copies are
 # re-hashed here and one that differs is DRIFT — a copy edited in place, whose
