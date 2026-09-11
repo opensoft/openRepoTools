@@ -72,8 +72,9 @@
 # See "the shape pin", below.
 #
 # THE FIFTH LAYER, the last of the five named when this file landed, is THE
-# PARKED RECORD AGAINST DISK, under Brett Heap's RULING of 2026-09-11,
-# verbatim: "next layer: parked record against disk". `park` records every
+# PARKED RECORD AGAINST DISK, under Brett Heap's RULING of 2026-09-11 (this
+# repository's #13), verbatim: "next layer: parked record against disk".
+# `park` records every
 # open feature in the person's private workspace repository — the one
 # `~/.agents/workspace.yaml` names — and `resume` rebuilds the worktrees from
 # it; between the two, record and disk drift apart in exactly the ways
