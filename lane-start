@@ -275,13 +275,13 @@ holder_here=0
 if [ -n "$session_ids" ]; then
   if holder="$(live_holder)"; then
     IFS=$'\t' read -r h_id h_target h_name h_pid <<<"$holder"
-    if [ "${h_target%%.*}" = "$this_window" ]; then
+    if [ "${h_target%.*}" = "$this_window" ]; then
       holder_here=1
       step "this window's own session $h_id (pid $h_pid, name '${h_name:-none}') already holds $LANE — carrying on"
     else
       note "lane $LANE is live in session $h_id (tmux ${h_target:-unknown}); take $repo-$next_n or resume that window"
       note "  $prog $repo $next_n"
-      note "  tmux switch-client -t ${h_target%%.*}     # or go to the window that holds it"
+      note "  tmux switch-client -t ${h_target%.*}     # or go to the window that holds it"
       exit 2
     fi
   else
