@@ -508,9 +508,42 @@ def test_agents_md_is_short_enough_to_be_read():
     (`resume <Name>` is the exit), a reset for a worktree behind a newer
     record (rule 1 stands), and a hand-edit of the record for a worktree it
     does not know (`park` is the exit).
+
+    140 -> 142 on 2026-09-11, for the record layer's review (Copilot on #13).
+    Rule 4 now carries the one exception to "`resume <Name>` is the exit": a
+    record parked with `--no-push` never sent the WIP commit anywhere, so
+    `resume` refuses it and reaching for it is the advice the rule's own next
+    clause rules out — the exit is the workstation that has the commit. Two
+    lines, because an assistant handed that finding otherwise reaches for the
+    one command the finding beside it has just refused.
+
+    142 -> 145 on 2026-09-11, for the review of #18: a STALE WORKTREE
+    REGISTRATION — the block `worktree list` keeps for a directory that is
+    gone — is `git worktree prune`'s to clear, and `resume` cannot work
+    around it, because the extension matches a leg on the registered path
+    alone. Three lines, for the two reaches an assistant makes when `resume`
+    says "already registered" or `git` says "already used by worktree at":
+    `worktree add --force`, which builds the pair git refused to build, and a
+    delete under `.git/worktrees/`, which is the record of the registration
+    and not a scratch directory.
+
+    145 -> 147 on 2026-09-11, for the same review's next round: `git worktree
+    prune` SKIPS a LOCKED registration, so the rule above was an exit that
+    does not work for that one. Two lines put `git worktree unlock <path>` in
+    front of it and say the finding names which kind it is — without them an
+    assistant follows the prune, watches nothing change, and reaches for the
+    two deletes the same sentence forbids.
+
+    147 -> 149 on 2026-09-11, for the round after that: a registration git
+    calls prunable can have its DIRECTORY still on disk, and the prune clears
+    the registration without touching it, so `git worktree add` then refuses
+    the path in its own words, "already exists". Two lines say that directory
+    is moved aside and not deleted — it holds whatever the worktree held, and
+    an assistant that deletes it to make `resume` run has thrown away the one
+    copy of somebody's work.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 140, f"AGENTS.md is {len(lines)} lines; the cap is 140"
+    assert len(lines) <= 149, f"AGENTS.md is {len(lines)} lines; the cap is 149"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -597,9 +630,29 @@ def test_readme_is_short_enough_to_be_read():
     the `status` paragraph say what the record is, where it is found, the
     four ways record and disk drift apart, and that no config or no record
     is a note; the list of layers still to come is gone, because none is.
+
+    241 -> 242 on 2026-09-11, for the record layer's review (Copilot on #13).
+    One line in the `status` paragraph gives the exception to "`resume
+    <Name>` brings it back": where the record says `--no-push`, only the
+    workstation that parked it can. It was left to be inferred from the
+    `--no-push` finding two clauses later, and `status` itself now says the
+    two states in one line rather than in two that contradicted each other.
+
+    242 -> 244 on 2026-09-11, for the review of #18: the STALE REGISTRATION
+    state, which the paragraph did not have. Two lines say that a worktree
+    which is gone while `git worktree list` still holds its registration is a
+    prune — after an unlock if it is locked — BEFORE `resume <Name>` can do
+    anything, because the paragraph otherwise promises a recovery the
+    command's own finding contradicts.
+
+    244 -> 245 on 2026-09-11, for the round after that: the registration can
+    be stale with its DIRECTORY still on disk, which the prune leaves behind
+    and `git worktree add` then refuses. One line says that directory is
+    moved aside, so the recovery the README describes is the whole of the one
+    `status` prints.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 241, f"README.md is {len(lines)} lines; the cap is 241"
+    assert len(lines) <= 245, f"README.md is {len(lines)} lines; the cap is 245"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
