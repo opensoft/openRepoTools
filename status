@@ -145,14 +145,16 @@ pin that has fallen behind is named with the exit, `update-shape.py check
 workspace repository; `workspaces/<org>/<id>.yaml` in it) is read against the
 worktrees on disk: a recorded feature with no worktree here (`resume <Name>`
 brings it back — unless the record says `--no-push`, or its `pushed:` is
-missing or neither true nor false, which `resume` refuses the same way: then
+missing or neither true nor false, which `resume` refuses the same way, or it
+names no parked commit for that leg, which `resume` refuses as moved-on: then
 only the workstation that parked it can park it again; and where `git worktree
 list` still holds a registration that is no longer a worktree, that is cleared
 with `worktree prune`, after a `worktree unlock` if it is locked and with any
 leftover directory moved aside, before `resume` can recreate anything), a
-worktree whose tip is not the parked commit, a leg parked with `--no-push` or
-whose `pushed:` is missing or neither true nor false, and a worktree the
-record does not know (never parked).
+worktree whose tip is not the parked commit or a record that names no parked
+commit to compare it with, a leg parked with `--no-push` or whose `pushed:` is
+missing or neither true nor false, and a worktree the record does not know
+(never parked).
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
 (<Name>/<Name>/family.yaml) or a standalone project root (<Name>/project.yaml).
@@ -1529,8 +1531,9 @@ read_shape() {
 #
 # 1. A RECORDED FEATURE WITH NO WORKTREE HERE on its branch: parked, and not
 #    resumed on this machine. `resume <Name>` is the exit; nothing here adds
-#    a worktree. Unless the record is a `--no-push` one (3): then there is
-#    nothing here to resume FROM, and the exit is the workstation that has it.
+#    a worktree. Unless the record is a `--no-push` one (3), or names no
+#    parked commit for that leg (2): then there is nothing here to resume
+#    FROM, and the exit is the workstation that has it.
 #    And where the porcelain still holds a REGISTRATION for that branch that
 #    is no longer a worktree — its directory gone, or git's own `prunable`
 #    with the directory left behind — what clears it is named first: a prune,
@@ -1546,6 +1549,16 @@ read_shape() {
 #    feature's tip is legitimately `<parked>~<wip_depth>` with the work back
 #    in the working tree — `resume.sh`'s `wip_gap_is_ours` is what keeps it
 #    from refusing that, and the same test is made here.
+#    AND A RECORD THAT NAMES NO PARKED COMMIT FOR THE LEG is a state of this
+#    field, not a leg to pass over (the independent review of #20,
+#    2026-09-11, note 7, recorded there as out of scope). There is nothing
+#    for a tip to be compared WITH, so none of those arms can run; and with
+#    no worktree here `resume` does not bring it back either — its RR1
+#    refuses a leg whose parked commit is not origin's tip, and an absent
+#    one never is — so the line that named `resume <Name>` there named an
+#    exit that cannot work rather than merely staying quiet. Both halves say
+#    what the record does not say, and the exit is a park that parks the
+#    feature THROUGH: a park that refuses it carries the hole forward.
 # 3. A LEG PARKED WITH `--no-push`: the record says `pushed: false`, only the
 #    workstation that parked it has the WIP commit, and `resume` refuses it —
 #    so no line under this state names `resume` as the exit, and none blames
@@ -2178,6 +2191,66 @@ check_parked_leg() {
     if [ -n "$unread" ]; then
         finding "parked feature $branch ($role leg): $unread, so whether its parked commit ever left ${parked_on:-that workstation} cannot be read; $refuses, so park it again from there to write the record afresh"
     fi
+    # THE RECORD'S `parked_commit:` HAS TWO READINGS, PRESENT AND ABSENT, and
+    # the second was read as neither (the independent review of #20,
+    # 2026-09-11, note 7, recorded there as out of scope). `park.sh` records
+    # the commit it parked each leg at, and `workspace_write_manifest` drops
+    # any key whose value is empty — so a leg it could name none for is
+    # written with no `parked_commit:` line at all. ABSENT AND BARE ARE ONE
+    # STATE HERE, unlike `pushed:`, and the sixth field's argument does not
+    # apply: `workspace_load_project` leaves `MANIFEST_LEG_COMMIT` at the
+    # empty string either way and `trim_unquote` gives the empty string
+    # either way, so the two readers make one state of them and so does this.
+    #
+    # IT IS NOT A LEG LIKE ANY OTHER, BECAUSE `resume.sh` WILL NOT RECREATE
+    # IT. RR6 passes (`pushed: true` is the only way through the arms above),
+    # RR4 finds no worktree to call already-done, RR3 nothing in the way, RR2
+    # the branch on origin, and RR1 — `[ "$remote_tip" != "$parked_commit" ]`
+    # — refuses it, because an absent parked commit never equals a tip: run
+    # against such a record on 2026-09-11 the extension answered "Error:
+    # 001-a-thing (repo leg) has moved since it was parked; that feature was
+    # NOT recreated. / parked commit     (parked 2026-09-10T20:00:00Z on
+    # Falcon) / current tip    050d1ee…   (origin/001-a-thing)", exit 2.
+    # Until this change the `[ -n "$commit" ] || return 0` that stood here
+    # sat AFTER the arm below, so the line a person got was "no worktree on
+    # that branch here; parked … — `resume Atlas` brings it back": the layer
+    # did not merely stay silent about a record `resume` refuses, it NAMED
+    # AN EXIT THAT CANNOT WORK, which is the one thing the rule at the top
+    # of this function forbids.
+    #
+    # AND WITH A WORKTREE HERE IT WAS SILENT, the same hole from its other
+    # side: that `return 0` skipped the three tip arms below, which are the
+    # only thing this layer says about a worktree that IS here. They cannot
+    # run — there is no parked commit to compare the tip with, and comparing
+    # against the empty string would fail `merge-base --is-ancestor` its way
+    # into "diverged", a finding about nothing. So the line says what cannot
+    # be compared instead of guessing at one of them, and it names no
+    # refusal: with the worktree at the path it computes, `resume.sh`'s RR4
+    # calls that leg already recreated and only warns — "HEAD is 7b4773d…,
+    # not the parked commit ; the parked WIP was NOT un-committed" (verified
+    # the same day) — so the exit is the moved-on arm's, park again, and the
+    # workstation to park from is the one the worktree is on, which is this.
+    #
+    # THE EXIT IS A PARK THAT PARKS IT, for the reason the paragraph above
+    # gives for an absent `pushed:`: `emit_recorded_feature` carries a
+    # REFUSED feature's entry forward out of the loaded manifest untouched —
+    # the empty commit with it — and `workspace_write_manifest` drops the
+    # empty key again, so a park that refuses this feature writes the hole
+    # back unchanged. Only a park that parks the feature THROUGH records a
+    # commit for it, which is why the no-worktree arm sends the person to the
+    # workstation that has the feature rather than saying "park again" here.
+    if [ -z "$commit" ]; then
+        if [ -z "$tree" ]; then
+            if [ -n "$ghost" ]; then
+                finding "parked feature $branch ($role leg): the record names no parked commit for that leg, and no worktree on that branch here, but $ghost_is — clear it with $clear; \`resume\` matches origin's tip against the parked commit before it recreates anything, an absent one never matches, and it refuses the leg as having moved on since it was parked, so nothing here brings it back — park it again from ${parked_on:-the workstation that has it}, which writes the record afresh"
+            else
+                finding "parked feature $branch ($role leg): the record names no parked commit for that leg, and no worktree on that branch here; \`resume\` matches origin's tip against the parked commit before it recreates anything, an absent one never matches, and it refuses the leg as having moved on since it was parked, so nothing here brings it back — park it again from ${parked_on:-the workstation that has it}, which writes the record afresh"
+            fi
+        else
+            finding "parked feature $branch ($role leg): the record names no parked commit for that leg, so there is nothing to read this worktree's tip against; whether it moved on, fell behind or diverged since it was parked cannot be told here — park again before leaving, which writes that leg's parked commit"
+        fi
+        return 0
+    fi
     if [ -z "$tree" ]; then
         if [ -n "$ghost" ]; then
             finding "parked feature $branch ($role leg): no worktree on that branch here, but $ghost_is — clear it with $clear, then \`resume $ESTATE_NAME\` brings it back"
@@ -2186,7 +2259,6 @@ check_parked_leg() {
         fi
         return 0
     fi
-    [ -n "$commit" ] || return 0
     tip="$(g "$repo" rev-parse -q --verify "refs/heads/$branch" 2>/dev/null || true)"
     [ -n "$tip" ] || return 0
     [ "$tip" != "$commit" ] || return 0

@@ -549,9 +549,20 @@ def test_agents_md_is_short_enough_to_be_read():
     it. One line puts it in the same exception, because an assistant that
     reads the rule rather than the finding beside it reaches for the one
     command that cannot answer that record.
+
+    150 -> 152 on 2026-09-11, for note 7 of the independent review of #20: a
+    record that names NO PARKED COMMIT for a leg is a THIRD record `resume`
+    refuses, and rule 4 gave `resume <Name>` as the exit for it. It is not
+    the `pushed:` exception in other words — `resume.sh` refuses this one at
+    RR1, comparing origin's tip with a parked commit that is absent and so
+    never matches, not at RR6 — so the two lines are its own clause and its
+    own reason, with the same re-park as the exit. An assistant that reads
+    the rule and not the finding beside it reaches for `resume <Name>`
+    again, and this is the record that answers it with "has moved since it
+    was parked".
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 150, f"AGENTS.md is {len(lines)} lines; the cap is 150"
+    assert len(lines) <= 152, f"AGENTS.md is {len(lines)} lines; the cap is 152"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -665,9 +676,19 @@ def test_readme_is_short_enough_to_be_read():
     `--no-push` one, and the paragraph otherwise promises a recovery the
     command's own finding rules out. One line, and the finding list beside it
     names that record too.
+
+    246 -> 248 on 2026-09-11, for note 7 of the independent review of #20: a
+    record that names no parked commit for a leg. One line puts it in the
+    paragraph's own exception — with it, only the workstation that parked it
+    can park it again, because `resume` refuses such a leg as moved-on — and
+    one puts it in the finding list beside "a worktree whose tip is not the
+    parked commit", which is the arm that CANNOT RUN when the record names
+    none to compare the tip with. Both halves for the reason the note (d)
+    line was written: the paragraph otherwise promises a recovery the
+    command's own finding rules out.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 246, f"README.md is {len(lines)} lines; the cap is 246"
+    assert len(lines) <= 248, f"README.md is {len(lines)} lines; the cap is 248"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

@@ -2003,6 +2003,89 @@ def test_no_pushed_key_with_no_worktree_here_never_names_resume(atlas, home):
     assert "`resume Atlas`" not in result.stdout
 
 
+def test_a_record_that_names_no_parked_commit_never_names_resume(atlas, home):
+    """Note 7 of the independent review of #20, 2026-09-11, recorded there as
+    out of scope: with `pushed: true` and NO `parked_commit:` for the leg,
+    `check_parked_leg`'s `[ -n "$commit" ] || return 0` sat AFTER the
+    no-worktree arm, so the line was "no worktree on that branch here; parked
+    … — `resume Atlas` brings it back" — and the real `resume.sh` refuses that
+    record: RR6 passes on `pushed: true`, RR4 and RR3 find nothing already
+    there, RR2 finds the branch on origin, and RR1 compares origin's tip with
+    the parked commit, which an absent one never equals ("has moved since it
+    was parked", exit 2, verified against the extension the same day, with
+    the empty commit printing as a gap in its own report). Naming an exit
+    that cannot work is the one
+    thing this layer's rule forbids, so the state gets a line of its own, and
+    the exit is the park that writes the record afresh.
+
+    And where a stale registration is left behind, the prune is named FIRST,
+    exactly as it is for `--no-push` and for an unreadable `pushed:`."""
+    checkout = workspace_config(home)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit="",
+           parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): the record names no "
+            "parked commit for that leg, and no worktree on that branch here; "
+            "`resume` matches origin's tip against the parked commit before it "
+            "recreates anything, an absent one never matches, and it refuses "
+            "the leg as having moved on since it was parked, so nothing here "
+            "brings it back — park it again from Falcon, which writes the "
+            "record afresh") in result.stdout
+    assert "`resume Atlas` brings it back" not in result.stdout
+
+    where = home / "Atlas-wt" / "001-a-thing"
+    feature_worktree(atlas, "001-a-thing", where)
+    rmtree(where)           # and NO `git worktree prune`
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): the record names no "
+            "parked commit for that leg, and no worktree on that branch here, "
+            "but a stale worktree registration for it is still recorded at "
+            f"{where} — clear it with `git -C {atlas} worktree prune`; "
+            "`resume` matches origin's tip against the parked commit before it "
+            "recreates anything, an absent one never matches, and it refuses "
+            "the leg as having moved on since it was parked, so nothing here "
+            "brings it back — park it again from Falcon, which writes the "
+            "record afresh") in result.stdout
+    assert "`resume Atlas`" not in result.stdout
+
+
+def test_a_record_that_names_no_parked_commit_still_reads_the_worktree_here(
+        atlas, home):
+    """The same hole from its other side, and the half that was pure silence:
+    with a worktree on that branch here, the `return 0` skipped the three tip
+    arms — the only thing this layer says about a worktree that IS here — and
+    `status` exited 0 with nothing said about the record at all.
+
+    Those arms cannot run: there is nothing to compare the tip WITH, and
+    comparing against the empty string would fail `merge-base --is-ancestor`
+    its way into "diverged", a finding about nothing. So the line says what
+    cannot be compared and names no refusal — `resume.sh`'s RR4 calls a leg
+    whose worktree is already at the path it computes recreated and only
+    warns, "the parked WIP was NOT un-committed" — and the exit is the
+    moved-on arm's: park again, from the workstation the worktree is on.
+
+    Under `--fetch` it says the same thing, because no fetch can bring back a
+    commit the record does not name."""
+    checkout = workspace_config(home)
+    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit="",
+           parked_on="Falcon")
+    for extra in ([], ["--fetch"]):
+        result = run(STATUS, *extra, "Atlas", home=home)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert ("    - parked feature 001-a-thing (repo leg): the record names "
+                "no parked commit for that leg, so there is nothing to read "
+                "this worktree's tip against; whether it moved on, fell behind "
+                "or diverged since it was parked cannot be told here — park "
+                "again before leaving, which writes that leg's parked commit"
+                ) in result.stdout
+        for guess in ("moved on since it was parked", "is BEHIND the parked",
+                      "diverged from the parked commit", "is not here"):
+            assert guess not in result.stdout, result.stdout
+
+
 def test_every_leg_of_a_record_is_read_once_and_in_order(atlas, home):
     """THE STRUCTURAL HALF of the same review note, held on its own. The leg
     row used to go out at the leg's `pushed:` line; it now goes out where the
@@ -2136,24 +2219,34 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     its own: a `pushed:` that is MISSING is refused by that same test — the
     extension's loader seeds an absent one with `false` — and settled by the
     same re-park, so splitting it out would be two sentences saying one
-    thing."""
+    thing.
+
+    Note 7 of the independent review of #20, the same day, adds the fourth,
+    and it is NOT that same clause: a record that names no `parked_commit:`
+    for the leg is refused by a different test — RR1, origin's tip against a
+    parked commit that is absent and so never matches — and "which `resume`
+    refuses the same way" would be a claim about the extension that is not
+    true. Its own half-sentence, and the same re-park at the end of both."""
     result = run(STATUS, "--help", home=home)
     assert result.returncode == 0, result.stdout + result.stderr
     helptext = " ".join(result.stdout.split())
     assert ("a recorded feature with no worktree here (`resume <Name>` brings "
             "it back — unless the record says `--no-push`, or its `pushed:` "
             "is missing or neither true nor false, which `resume` refuses the "
-            "same way: then only the workstation that parked it can park it "
-            "again; and where `git worktree list` still holds a registration "
-            "that is no longer a worktree, that is cleared with `worktree "
-            "prune`, after a `worktree unlock` if it is locked and with any "
-            "leftover directory moved aside, before `resume` can recreate "
-            "anything)") in helptext
+            "same way, or it names no parked commit for that leg, which "
+            "`resume` refuses as moved-on: then only the workstation that "
+            "parked it can park it again; and where `git worktree list` still "
+            "holds a registration that is no longer a worktree, that is "
+            "cleared with `worktree prune`, after a `worktree unlock` if it "
+            "is locked and with any leftover directory moved aside, before "
+            "`resume` can recreate anything)") in helptext
     # And the LIST of findings beside it names the new one, as the README's
     # does: the two texts say the same things or one of them is wrong.
-    assert ("a leg parked with `--no-push` or whose `pushed:` is missing or "
-            "neither true nor false, and a worktree the record does not know "
-            "(never parked)") in helptext
+    assert ("a worktree whose tip is not the parked commit or a record that "
+            "names no parked commit to compare it with, a leg parked with "
+            "`--no-push` or whose `pushed:` is missing or neither true nor "
+            "false, and a worktree the record does not know (never parked)"
+            ) in helptext
 
 
 def test_a_missing_parked_commit_is_read_against_what_the_record_claims(
