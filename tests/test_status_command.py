@@ -31,6 +31,17 @@ under the projects directory (a bare repository on disk here, its origin
 spelled as github.com so the clone is found by slug and never fetched), or
 under `--fetch` from a fake `gh`'s compare answer.
 
+His RULING of 2026-09-11, verbatim: "next layer: parked record against disk".
+`park` records every open feature in the private workspace repository that
+`~/.agents/workspace.yaml` names, and `resume` rebuilds worktrees from it; the
+fifth section holds the ways record and disk drift apart, read the way
+`resume.sh` will judge them: a recorded feature with no worktree here, a
+worktree whose tip moved on from, fell behind, or diverged from the parked
+commit, a leg parked with `--no-push`, a worktree the record does not know,
+and a family's record matched to each member by its `root:`. The config and
+the workspace checkout are plain files under the fake home; nothing is
+pulled.
+
 His RULING of 2026-09-11, verbatim: "next layer: --fetch". With the flag,
 `git fetch --prune origin` runs in every repository before it is read — the
 ONE write this command makes, to remote-tracking refs and nothing else — and
@@ -58,7 +69,8 @@ import pytest
 
 from conftest import NEEDS_UPSTREAM, REPO, WINDOWS_SKIP, git, rmtree
 from test_park_resume_commands import (  # noqa: F401  (fixtures by name)
-    ORG, MEMBERS, FAMILY, commit_all, estate, remotes, run, probe_project,
+    ORG, MEMBERS, FAMILY, FAKE_SHA, commit_all, estate, family_manifest,
+    remotes, run, probe_project,
 )
 
 STATUS = REPO / "status"
@@ -1383,6 +1395,228 @@ def test_a_root_without_a_shape_pin_says_nothing_about_one(atlas, home):
     assert "    shape:" not in result.stdout
     assert "shape pin" not in result.stdout
     assert "shape copy" not in result.stdout
+
+
+# --- the parked record against disk ---------------------------------------------
+#
+# Brett Heap's RULING of 2026-09-11, verbatim: "next layer: parked record
+# against disk".
+
+def workspace_config(home: Path) -> Path:
+    """`~/.agents/workspace.yaml` naming a workspace checkout under the fake
+    home — a plain directory: `status` reads it and never pulls it."""
+    checkout = home / "wip"
+    (checkout / "workspaces" / ORG).mkdir(parents=True, exist_ok=True)
+    agents = home / ".agents"
+    agents.mkdir(exist_ok=True)
+    (agents / "workspace.yaml").write_text(
+        f"repository: tester/wip\npath: {checkout}\n", encoding="utf-8")
+    return checkout
+
+
+def record(checkout: Path, project_id: str, *, branch: str, role: str,
+           commit: str, pushed: str = "true", parked_on: str = "Eagle",
+           root: str | None = None, org: str = ORG) -> Path:
+    """One standalone record as `park.sh` writes one: one project, one
+    feature, one leg."""
+    root = root or project_id.capitalize()
+    text = f"""\
+schema_version: 1
+kind: workspace-manifest
+written_by: speckit park
+projects:
+  - id: {project_id}
+    repository: {org}/{root}
+    shape: three-leg
+    root: {root}
+    tracking_branch: main
+    worktree_root: worktrees
+    parked_at: 2026-09-10T20:00:00Z
+    parked_on: {parked_on}
+    parked_by_lane: xfactory-2
+    active_feature: {branch}
+    active_feature_source: state_file
+    features:
+      - branch: {branch}
+        feature_directory: worktrees/{branch}
+        legs:
+          - role: {role}
+            remote: origin
+            parked_commit: {commit}
+            wip: true
+            wip_depth: 1
+            pushed: {pushed}
+"""
+    (checkout / "workspaces" / org).mkdir(parents=True, exist_ok=True)
+    path = checkout / "workspaces" / org / f"{project_id}.yaml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def feature_worktree(repo: Path, branch: str, where: Path, *, push: bool = True) -> str:
+    """A linked worktree on a new branch with one commit, pushed so the branch
+    itself is not a finding; returns the tip sha."""
+    where.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", "-b", branch, str(where), cwd=repo)
+    (where / "feature.md").write_text("wip\n", encoding="utf-8")
+    commit_all(where, "feature work")
+    if push:
+        git("push", "-q", "-u", "origin", branch, cwd=where)
+    return git("rev-parse", "HEAD", cwd=where).stdout.strip()
+
+
+RECORD_NOTE_NONE = "parked record: none for 'atlas' under"
+
+
+def test_no_workspace_config_is_a_note_not_a_finding(atlas, home):
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (f"  parked record: no {home}/.agents/workspace.yaml on this machine, "
+            "so parked features are not read (`resume --workspace "
+            "<owner>/<repo>` writes it)") in result.stdout
+
+
+def test_no_record_for_the_estate_is_a_note(atlas, home):
+    checkout = workspace_config(home)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"  {RECORD_NOTE_NONE} {checkout}" in result.stdout
+    assert "nothing of this estate has been parked" in result.stdout
+
+
+def test_a_recorded_feature_with_no_worktree_here_names_resume(atlas, home):
+    checkout = workspace_config(home)
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"  parked record: {path}, as of its last pull" in result.stdout
+    assert ("    parked record: 1 feature(s), parked 2026-09-10T20:00:00Z on "
+            "Eagle (lane xfactory-2); active 001-a-thing") in result.stdout
+    assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
+            "branch here; parked 2026-09-10T20:00:00Z on Eagle — `resume Atlas` "
+            "brings it back") in result.stdout
+    assert "1 finding(s) in 2 repositories" in result.stdout
+
+
+def test_a_worktree_at_the_parked_commit_is_in_sync(atlas, home):
+    checkout = workspace_config(home)
+    tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "    parked record: 1 feature(s)" in result.stdout
+    assert "parked feature" not in result.stdout
+
+
+def test_a_worktree_that_moved_on_since_it_was_parked(atlas, home):
+    checkout = workspace_config(home)
+    where = home / "Atlas-wt" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    (where / "more.md").write_text("more\n", encoding="utf-8")
+    commit_all(where, "more work")
+    git("push", "-q", "origin", "001-a-thing", cwd=where)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (repo leg): moved on since it was "
+            f"parked, 1 commit(s) after {tip[:7]} — park again before leaving"
+            ) in result.stdout
+
+
+def test_a_worktree_behind_a_newer_record_is_what_resume_refuses(atlas, home):
+    checkout = workspace_config(home)
+    where = home / "Atlas-wt" / "001-a-thing"
+    feature_worktree(atlas, "001-a-thing", where)
+    (where / "more.md").write_text("more\n", encoding="utf-8")
+    commit_all(where, "parked elsewhere, later")
+    git("push", "-q", "origin", "001-a-thing", cwd=where)
+    newer = git("rev-parse", "HEAD", cwd=where).stdout.strip()
+    git("reset", "-q", "--hard", "HEAD~1", cwd=where)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=newer,
+           parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (repo leg): this worktree is BEHIND "
+            f"the parked commit {newer[:7]}, parked 2026-09-10T20:00:00Z on "
+            "Falcon — the record is newer, and `resume` refuses to reset it"
+            ) in result.stdout
+
+
+def test_a_leg_parked_with_no_push_is_a_finding(atlas, home):
+    checkout = workspace_config(home)
+    tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           pushed="false", parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): parked with --no-push "
+            "on Falcon; only that workstation has the WIP commit, and `resume` "
+            "refuses it") in result.stdout
+
+
+def test_a_worktree_the_record_does_not_know_was_never_parked(atlas, home):
+    checkout = workspace_config(home)
+    tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    feature_worktree(atlas, "002-unparked", home / "Atlas-wt" / "002-unparked")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - worktree on 002-unparked (root): not in the parked record — "
+            "never parked, and `park` is what carries it") in result.stdout
+    assert "worktree on 001-a-thing" not in result.stdout
+
+
+def test_a_spec_leg_is_read_in_the_legs_own_repository(atlas, home):
+    """The role is mapped to a path through `project.yaml`'s legs, so the
+    worktree is looked for in `spec/`, not in the root."""
+    checkout = workspace_config(home)
+    leg = atlas / "spec"
+    git("checkout", "-q", "main", cwd=leg)
+    tip = feature_worktree(leg, "001-s-thing", home / "Atlas-wt" / "001-s-thing" / "spec")
+    record(checkout, "atlas", branch="001-s-thing", role="spec", commit=tip)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "parked feature" not in result.stdout
+
+    record(checkout, "atlas", branch="001-s-thing", role="spec", commit=FAKE_SHA)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-s-thing (spec leg): its parked commit "
+            f"{FAKE_SHA[:7]} is not here — never fetched, or parked with "
+            "--no-push on Eagle") in result.stdout
+
+
+def test_two_orgs_recording_the_same_id_is_a_note(atlas, home):
+    checkout = workspace_config(home)
+    record(checkout, "atlas", branch="001-a", role="repo", commit=FAKE_SHA)
+    record(checkout, "atlas", branch="001-a", role="repo", commit=FAKE_SHA,
+           org="otherorg")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ("  parked record: 2 records for 'atlas' in different orgs, and none "
+            "is the org this root's origin names; not read") in result.stdout
+
+
+@NEEDS_UPSTREAM
+def test_a_family_record_is_matched_to_each_member_by_its_root(estate, home):
+    """One block per MEMBER, matched by `root: <family folder>/<member>`; the
+    holder has none. The fixture's members mount no spec leg, so the recorded
+    spec leg is named as one this root does not mount — which is the match
+    working, per member, and the holder row staying silent."""
+    checkout = workspace_config(home)
+    (checkout / "workspaces" / ORG / f"{FAMILY.lower()}.yaml").write_text(
+        family_manifest(), encoding="utf-8")
+    result = run(STATUS, FAMILY, home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"  parked record: {checkout}/workspaces/{ORG}/{FAMILY.lower()}.yaml" \
+        in result.stdout
+    for name in MEMBERS:
+        assert (f"    - parked feature 001-{name.lower()}-thing (spec leg): the "
+                "record names a leg this root does not mount here") in result.stdout
+    assert result.stdout.count("    parked record: 1 feature(s)") == 2
+    holder_block = result.stdout.split("  root   main")[0]
+    assert "    parked record:" not in holder_block, "the holder has no block"
 
 
 # --- the one promise ----------------------------------------------------------

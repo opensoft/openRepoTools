@@ -52,9 +52,16 @@ of the source under your projects directory, found by its origin the way
 naming `update-shape.py check --root <root>` as the exit when it has fallen
 behind; "currency not read" in the note means neither source answered.
 Those two questions to GitHub, the fork and the pin, are the only uses of `gh`
-in the three estate commands; the installer has its own. Four layers so far:
-the local layer, `--fetch`, the fork and the pin; the parked record against
-disk is the layer still to come.
+in the three estate commands; the installer has its own. THE PARKED RECORD is
+read against disk too (his RULING of the same day, "next layer: parked record
+against disk"): the record `park` wrote into the workspace repository that
+`~/.agents/workspace.yaml` names, found the way `resume` finds it, gives a
+finding for a recorded feature with no worktree here (`resume <Name>` brings
+it back), a worktree whose tip moved on from, fell behind, or diverged from
+the parked commit, a leg parked with `--no-push`, and a worktree the record
+does not know, which was never parked. No config, or no record, is a note.
+That is all five layers: the local layer, `--fetch`, the fork, the pin and
+the record.
 
 `openRepoTools` itself installs and does nothing else. It has no verb: the
 standard's front door is `openRepoShape`, which scaffolds projects and stays
