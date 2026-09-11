@@ -882,14 +882,25 @@ while [ $# -gt 0 ]; do
     # anywhere, with no question (the RULING of 2026-09-10 at the sweep's
     # section head: "park all should be park -a or park --all").
     -a | --all) PARK_ALL=1; shift ;;
-    --lane) LANE="${2:?--lane needs a value}"; shift 2 ;;
-    --repo) REPO_SLUG="${2:?--repo needs a value}"; REPO_ARG="$REPO_SLUG"; shift 2 ;;
+    # A MISSING VALUE IS THIS COMMAND'S REFUSAL, exit 2, in its own words:
+    # `${2:?…}` would be bash's message and bash's exit 1, which is not a
+    # status this command means anything by (`status` gave the reason first:
+    # its 1 is "findings"; here, a typo must not read like `make park`'s own
+    # exit).
+    --lane)
+        [ $# -ge 2 ] || die "--lane needs a value: the lane recorded in the WIP commit subject."
+        LANE="$2"; shift 2 ;;
+    --repo)
+        [ $# -ge 2 ] || die "--repo needs a value: <owner>/<name>, or any url spelling of one."
+        REPO_SLUG="$2"; REPO_ARG="$REPO_SLUG"; shift 2 ;;
     # `--project <Name>` and `--name <Name>` are the positional under a flag,
     # because the issue's own words are "park --project <project> or park
     # --repo <repo> and it defaults to project" (Brett Heap, 2026-09-09). The
     # value is never mistaken for the positional this way, which is the same
     # reason `openRepoShape` names its value-taking flags.
-    --name | --project) NAME="${2:?$1 needs a value}"; shift 2 ;;
+    --name | --project)
+        [ $# -ge 2 ] || die "$1 needs a value: one estate folder name under your projects directory."
+        NAME="$2"; shift 2 ;;
     # EVERYTHING AFTER `--` IS THE EXTENSION'S, verbatim. `park.sh` has flags
     # this command has no opinion about (--feature, --message, --no-push,
     # --retire-parked-wip) and a command that ate them would be a command

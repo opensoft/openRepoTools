@@ -1392,6 +1392,26 @@ def test_a_name_that_is_a_path_is_refused_by_name(home, command, bad):
     assert bad in result.stderr
 
 
+@pytest.mark.parametrize("command, flag", [
+    (PARK, "--lane"), (PARK, "--repo"), (PARK, "--name"), (PARK, "--project"),
+    (RESUME, "--repo"), (RESUME, "--workspace"), (RESUME, "--org"),
+    (RESUME, "--name"), (RESUME, "--project"),
+], ids=lambda v: v.name if isinstance(v, Path) else v)
+def test_a_flag_without_its_value_is_refused_in_the_commands_own_words(
+        home, command, flag):
+    """`${2:?…}` was bash's message and bash's exit 1 — a status neither verb
+    means anything by, and one a wrapper reads as `make`'s. Now the refusal
+    is the command's own, exit 2, and it says what the value is; and nothing
+    ran, cloned or was placed before it was raised."""
+    probe_project(home / "projects", "Atlas")
+    result = run(command, flag, home=home)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"REFUSED: {flag} needs a value:" in result.stderr
+    assert "line " not in result.stderr, "bash's own message leaked"
+    assert "PROBE" not in result.stdout, "the estate must not have been touched"
+    assert not (home / ".agents").exists(), "nothing may be written before a refusal"
+
+
 # --- F5: --repo takes any spelling -----------------------------------------
 
 REPO_FLAG_SPELLINGS = [
