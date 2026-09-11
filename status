@@ -145,13 +145,13 @@ pin that has fallen behind is named with the exit, `update-shape.py check
 workspace repository; `workspaces/<org>/<id>.yaml` in it) is read against the
 worktrees on disk: a recorded feature with no worktree here (`resume <Name>`
 brings it back — unless the record says `--no-push`, or its `pushed:` is
-neither true nor false, which `resume` refuses the same way: then only the
-workstation that parked it can park it again; and where `git
-worktree list` still holds a registration that is no longer a worktree, that
-is cleared with `worktree prune`, after a `worktree unlock` if it is locked
-and with any leftover directory moved aside, before `resume` can recreate
-anything), a worktree whose tip is not the parked commit, a leg parked with
-`--no-push` or whose `pushed:` is neither true nor false, and a worktree the
+missing or neither true nor false, which `resume` refuses the same way: then
+only the workstation that parked it can park it again; and where `git worktree
+list` still holds a registration that is no longer a worktree, that is cleared
+with `worktree prune`, after a `worktree unlock` if it is locked and with any
+leftover directory moved aside, before `resume` can recreate anything), a
+worktree whose tip is not the parked commit, a leg parked with `--no-push` or
+whose `pushed:` is missing or neither true nor false, and a worktree the
 record does not know (never parked).
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
@@ -1564,6 +1564,19 @@ read_shape() {
 #    `resume.sh`'s RR6 is `[ "$pushed" != true ]`, so it refuses such a leg
 #    exactly as it refuses a `--no-push` one, and no line here offers
 #    `resume` as the exit either.
+#    AND NO `pushed:` KEY AT ALL IS A FOURTH STATE OF THE FIELD, not a
+#    quieter spelling of the third (the independent review of #19,
+#    2026-09-11, recorded there as out of scope; this repository's #20). It
+#    reads WORSE than the third did: `record_rows` emitted a leg's row at its
+#    `pushed:` line, so a
+#    leg without one had no row, and this layer said nothing whatever about
+#    the record — no finding, exit 0 — while `workspace-common.sh` seeds
+#    every leg's pushed with `false` and RR6 refuses that leg in the
+#    `--no-push` words. A wrong line can be argued with; a missing one
+#    cannot. The row now goes out where the LEG ENDS, a field of its own
+#    keeps `absent` apart from the bare `pushed:` that is `empty`, and the
+#    state gets a finding shaped like the third's: what the record does not
+#    say, what `resume` makes of that, and the one exit that works.
 # 4. A WORKTREE ON DISK THAT THE RECORD DOES NOT KNOW: a feature that was
 #    never parked, which is the one thing `park` exists to carry.
 #
@@ -1741,21 +1754,78 @@ locate_record() {
 # value — would shift every later field left, the hazard `read_branches`
 # names): `project` with parked_at, parked_on, lane and active, once; `branch`
 # with the branch, per feature; `leg` with branch, role, parked_commit,
-# pushed and wip_depth, per leg. The block is the one whose `id:` (a
-# standalone) or `root:` (a family member) is the selector's. The layout is
-# the fixed one `workspace_write_manifest` emits — two spaces per level,
-# `pushed:` the last key of a leg, which is where the leg's row is emitted —
-# so a hand-edited leg without `pushed:` is dropped; its branch is still
-# known from the `branch` row, so it is never accused of being unparked. A
-# `pushed:` with no VALUE is a different case and is NOT dropped: the row is
-# emitted carrying the empty string, and `check_parked_leg` reads it for what
-# it is rather than as either of the two words.
+# pushed, wip_depth and whether the record carried a `pushed:` KEY at all,
+# per leg. The block is the one whose `id:` (a standalone) or `root:` (a
+# family member) is the selector's. The layout is the fixed one
+# `workspace_write_manifest` emits — two spaces per level, `pushed:` the last
+# key of a leg. A `pushed:` with no VALUE is read for what it is rather than
+# as either of the two words, which is `check_parked_leg`'s business.
+#
+# THE LEG'S ROW GOES OUT WHERE THE LEG ENDS, NOT AT ITS `pushed:` LINE (the
+# independent review of #19, 2026-09-11). Emitting at `pushed:` was the same
+# position for every record `park` writes, because that key is always last
+# and always there — until it is NOT there, and then the leg had no row and
+# VANISHED from this layer: no finding, exit 0, silence about a record
+# `resume.sh` refuses, because `workspace-common.sh` defaults a leg's pushed
+# to `false` at the `- role:` line when no `pushed:` follows (the review cited
+# its line 777) and RR6 is `[ "$pushed" != true ]`. The comment that stood here called the dropped leg harmless —
+# its branch is still known from the `branch` row, so it is never accused of
+# being unparked — which is true and beside the point: not being accused is
+# not the same as being read, and this layer exists to read the record the
+# way `resume` will judge it. So the row is emitted when the leg ENDS: the
+# next `- role:`, the next feature's `- branch:`, the next key at any
+# SHALLOWER indent (a project-level `features:` or `root:`, the next project
+# block's `- id:`, a top-level key), or the end of the file. `role` is
+# cleared as the row goes out, so two enders in a row emit once and a block
+# with no leg emits nothing. For a leg whose `pushed:` is there AND LAST —
+# which is every leg `workspace_write_manifest` emits — this is the same
+# line and the same order as before, which is what keeps a well-formed
+# record's rows byte-identical; where a hand-edit moved the key, the row now
+# carries the keys AFTER it too, which is what the loader reads.
+#
+# AND THE SIXTH FIELD IS HOW `absent` IS TOLD FROM `empty`, which are two
+# states and not one: a bare `pushed:` is PRESENT and unreadable (note (d) of
+# the second independent review of #18), and no `pushed:` at all is the
+# record saying nothing about that leg. Both leave the `pushed` field empty,
+# so the difference cannot live in it — and a sentinel word put there could
+# be spelled by the hand-edit that produced the record and read back as the
+# sentinel. The sixth field is written by THIS function and never from the
+# file: the word `pushed` where the key was seen, empty where it was not.
 record_rows() {
     local file="$1" sel="$2" line matched=0 value
-    local parked_at="" parked_on="" lane="" active="" branch="" role="" commit="" pushed="" depth=""
+    local parked_at="" parked_on="" lane="" active="" branch="" role="" commit="" pushed="" depth="" seen=""
     [ -f "$file" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
         line="${line%$'\r'}"
+        # THE LEG ENDS WHERE THE NEXT THING STARTS. Every alternative here is
+        # a line whose first non-space character sits SHALLOWER than a leg's
+        # own keys (which the layout puts at twelve spaces), plus the next
+        # leg's own `- role:` at ten. A blank line is none of them, AND NOR IS
+        # A FULL-LINE COMMENT at any indent: `workspace_load_project` takes
+        # `#` and everything after it off every line before it reads one
+        # (`content="${raw%%#*}"`), so a `# note` a hand left at column 0
+        # between two of a leg's keys is nothing to the loader — and read as
+        # an ender here it closed the leg before its `pushed:`, and the leg
+        # went out as if the record had none (the review of this follow-up,
+        # 2026-09-11). A record with a blank line or a comment between two
+        # keys still has one leg, not two. An indent-10 line that is NOT
+        # `- role:` is deliberately not an ender either: `workspace_load_project`
+        # starts no leg there, and its twelve-space keys keep landing on the
+        # leg above — so the two readers agree.
+        case "${line#"${line%%[![:space:]]*}"}" in
+        '#'*) ;;
+        *)
+            case "$line" in
+            [![:space:]]* | '  '[![:space:]]* | '    '[![:space:]]* | \
+                '      '[![:space:]]* | '        '[![:space:]]* | '          - role:'*)
+                if [ "$matched" -eq 1 ] && [ -n "$branch" ] && [ -n "$role" ]; then
+                    printf 'leg\037%s\037%s\037%s\037%s\037%s\037%s\n' "$branch" "$role" "$commit" "$pushed" "$depth" "$seen"
+                fi
+                role=""
+                ;;
+            esac
+            ;;
+        esac
         case "$line" in
         '  - id:'*)
             matched=0
@@ -1786,7 +1856,7 @@ record_rows() {
                 printf 'branch\037%s\n' "$branch"
             fi
             ;;
-        '          - role:'*) role="$(trim_unquote "${line#*:}")"; commit=""; pushed=""; depth="" ;;
+        '          - role:'*) role="$(trim_unquote "${line#*:}")"; commit=""; pushed=""; depth=""; seen="" ;;
         '            parked_commit:'*) commit="$(trim_unquote "${line#*:}")" ;;
         '            wip_depth:'*) depth="$(trim_unquote "${line#*:}")" ;;
         '            pushed:'*)
@@ -1800,12 +1870,17 @@ record_rows() {
             value="${line#*:}"
             case "$value" in *'#'*) value="${value%%#*}" ;; esac
             pushed="$(trim_unquote "$value")"
-            if [ "$matched" -eq 1 ] && [ -n "$branch" ] && [ -n "$role" ]; then
-                printf 'leg\037%s\037%s\037%s\037%s\037%s\n' "$branch" "$role" "$commit" "$pushed" "$depth"
-            fi
+            seen=pushed
             ;;
         esac
     done <"$file"
+    # THE LAST LEG OF THE BLOCK, which no later line closes. Spelled out
+    # rather than shared with the arm above, because the alternative is a
+    # helper reading this function's locals by dynamic scope — five lines
+    # twice against an idiom this file uses nowhere else.
+    if [ "$matched" -eq 1 ] && [ -n "$branch" ] && [ -n "$role" ]; then
+        printf 'leg\037%s\037%s\037%s\037%s\037%s\037%s\n' "$branch" "$role" "$commit" "$pushed" "$depth" "$seen"
+    fi
     return 0
 }
 
@@ -1950,10 +2025,13 @@ wip_gap_is_ours() {
 }
 
 # One recorded leg against disk: the four states above, read in the leg's own
-# repository.
+# repository. `$9` is `record_rows`'s sixth field — the word `pushed` where
+# the record carried that key for this leg, empty where it did not — and it
+# is the only thing that tells an ABSENT `pushed:` from a bare one, since
+# both leave `$pushed` empty.
 check_parked_leg() {
-    local root="$1" branch="$2" role="$3" commit="$4" pushed="$5" parked_at="$6" parked_on="$7" depth="$8"
-    local repo tree="" ghost="" ghost_is="" clear="" out rc=0 tip n unread=""
+    local root="$1" branch="$2" role="$3" commit="$4" pushed="$5" parked_at="$6" parked_on="$7" depth="$8" seen="$9"
+    local repo tree="" ghost="" ghost_is="" clear="" out rc=0 tip n unread="" refuses=""
     repo="$(leg_repo_for_role "$root" "$role" || true)"
     if [ -z "$repo" ] || [ ! -e "$repo/.git" ]; then
         finding "parked feature $branch ($role leg): the record names a leg this root does not mount here"
@@ -2011,9 +2089,11 @@ check_parked_leg() {
     # `pushed:` alike falling through the `= false` tests, it became "the
     # record says it was pushed". A READER NEVER GUESSES, so it is named for
     # what it is, and `$unread` non-empty is that state, in the words each
-    # finding needs. THE KEY MISSING ALTOGETHER is not this case: `record_rows`
-    # emits a leg's row AT its `pushed:` line, so a leg without one never
-    # reaches here at all.
+    # finding needs. THE KEY MISSING ALTOGETHER is not this case, and when
+    # these lines were written it reached this function not at all:
+    # `record_rows` emitted a leg's row AT its `pushed:` line, so a leg
+    # without one had no row. It does now, and the paragraph after next is
+    # what it means.
     #
     # AND `resume` IS NOT SILENT ABOUT IT, which these lines have to say
     # because this layer reads the record THE WAY `resume.sh` WILL JUDGE IT:
@@ -2023,11 +2103,49 @@ check_parked_leg() {
     # work, the thing the rule above exists to prevent. The exit that does is
     # the workstation that parked it: parking there again writes the record
     # afresh, with a `pushed:` that reads.
-    case "$pushed" in
-    true | false) ;;
-    '') unread="its \`pushed:\` has no value, which is neither true nor false" ;;
-    *) unread="its \`pushed:\` says '$pushed', which is neither true nor false" ;;
-    esac
+    #
+    # A FOURTH STATE: NO `pushed:` KEY AT ALL (the independent review of #19,
+    # 2026-09-11). Not a fourth spelling of the third — `record_rows` keeps
+    # the two apart in `$seen`, because the record is not saying something
+    # that cannot be read, it is saying NOTHING — and what makes it a finding
+    # rather than a shrug is the other end. `workspace_load_project` seeds
+    # every leg's `MANIFEST_LEG_PUSHED` with `false` AT THE `- role:` LINE
+    # and overwrites it only where a `pushed:` key follows, so `resume.sh`
+    # reads a missing one as `false` and RR6 refuses the leg in the
+    # `--no-push` words: run against a record with no `pushed:` on
+    # 2026-09-11, the extension answered "Error: 001-a-thing (repo leg) was
+    # parked with --no-push; that feature was NOT recreated", exit 2. Until
+    # this change `status` was SILENT about that record — no row, no finding,
+    # exit 0 — which is the worse half of note (d): a wrong line can be
+    # argued with, a missing one cannot. So it is read exactly as the
+    # unreadable one is and rules out exactly as little; only the words
+    # differ, because what is wrong with the record differs, and `$refuses`
+    # is the clause that carries the difference into each arm.
+    #
+    # AND THE EXIT IS A PARK THAT PARKS IT, which is why every arm says from
+    # THERE. `park.sh`'s `emit_recorded_feature` carries a REFUSED feature's
+    # entry forward out of the loaded manifest untouched — `pushed` included,
+    # which for an absent key is the loader's defaulted `false` — so a park
+    # that refuses this feature rewrites the record as `pushed: false`, a
+    # `--no-push` claim nobody made, and `resume` refuses it still. Only the
+    # workstation that has the worktree parks it through, and that path
+    # writes `true` or `false` from the push it just made. It is also where
+    # this state comes from WITHOUT a hand-edit: a bare `pushed:` loads as
+    # the empty string, `emit_recorded_feature` carries the empty string
+    # forward, and `workspace_write_manifest` drops any key whose value is
+    # empty — so one park that refuses a note-(d) record degrades it into
+    # this one (both halves verified against those functions the same day).
+    if [ -z "$seen" ]; then
+        unread="the record has no \`pushed:\` for that leg"
+        refuses="\`resume\` reads a missing one as not pushed and refuses it"
+    else
+        case "$pushed" in
+        true | false) ;;
+        '') unread="its \`pushed:\` has no value, which is neither true nor false" ;;
+        *) unread="its \`pushed:\` says '$pushed', which is neither true nor false" ;;
+        esac
+        [ -z "$unread" ] || refuses="\`resume\` refuses a leg whose \`pushed:\` is not true"
+    fi
     # `--no-push` IS THE ONE RECORD `park` WRITES THAT `resume` CANNOT
     # ANSWER, so no line under it offers `resume` as the exit: the WIP commit
     # is on the workstation that parked it and nowhere else, which is exactly
@@ -2048,9 +2166,9 @@ check_parked_leg() {
     fi
     if [ -n "$unread" ] && [ -z "$tree" ]; then
         if [ -n "$ghost" ]; then
-            finding "parked feature $branch ($role leg): $unread, and no worktree on that branch here, but $ghost_is — clear it with $clear; whether its parked commit ever left ${parked_on:-that workstation} cannot be read, and \`resume\` refuses a leg whose \`pushed:\` is not true, so nothing here brings it back — park it again from there, which writes the record afresh"
+            finding "parked feature $branch ($role leg): $unread, and no worktree on that branch here, but $ghost_is — clear it with $clear; whether its parked commit ever left ${parked_on:-that workstation} cannot be read, and $refuses, so nothing here brings it back — park it again from there, which writes the record afresh"
         else
-            finding "parked feature $branch ($role leg): $unread, and no worktree on that branch here; whether its parked commit ever left ${parked_on:-that workstation} cannot be read, and \`resume\` refuses a leg whose \`pushed:\` is not true, so nothing here brings it back — park it again from there, which writes the record afresh"
+            finding "parked feature $branch ($role leg): $unread, and no worktree on that branch here; whether its parked commit ever left ${parked_on:-that workstation} cannot be read, and $refuses, so nothing here brings it back — park it again from there, which writes the record afresh"
         fi
         return 0
     fi
@@ -2058,7 +2176,7 @@ check_parked_leg() {
         finding "parked feature $branch ($role leg): parked with --no-push on ${parked_on:-another workstation}; only that workstation has the WIP commit, and \`resume\` refuses it"
     fi
     if [ -n "$unread" ]; then
-        finding "parked feature $branch ($role leg): $unread, so whether its parked commit ever left ${parked_on:-that workstation} cannot be read; \`resume\` refuses a leg whose \`pushed:\` is not true, so park it again from there to write the record afresh"
+        finding "parked feature $branch ($role leg): $unread, so whether its parked commit ever left ${parked_on:-that workstation} cannot be read; $refuses, so park it again from there to write the record afresh"
     fi
     if [ -z "$tree" ]; then
         if [ -n "$ghost" ]; then
@@ -2167,7 +2285,7 @@ unrecorded_worktrees() {
 # by its `id:` first, then by its folder as `root:` — the block a record found
 # by folder name carries — and a family member by its `root:` alone.
 read_record() {
-    local root="$1" sel rows="" kind a b c d e n_features=0
+    local root="$1" sel rows="" kind a b c d e f n_features=0
     local parked_at="" parked_on="" lane="" active="" recorded="$NL"
     shift
     [ -n "$RECORD_FILE" ] || return 0
@@ -2180,7 +2298,7 @@ read_record() {
         # which is the one thing worth saying about it.
         say "    parked record: no block for this root in ${RECORD_FILE##*/}"
     else
-        while IFS=$'\037' read -r kind a b c d e; do
+        while IFS=$'\037' read -r kind a b c d e f; do
             case "$kind" in
             project) parked_at="$a"; parked_on="$b"; lane="$c"; active="$d" ;;
             branch)
@@ -2189,7 +2307,7 @@ read_record() {
                 *) recorded="$recorded$a$NL"; n_features=$((n_features + 1)) ;;
                 esac
                 ;;
-            leg) check_parked_leg "$root" "$a" "$b" "$c" "$d" "$parked_at" "$parked_on" "$e" ;;
+            leg) check_parked_leg "$root" "$a" "$b" "$c" "$d" "$parked_at" "$parked_on" "$e" "$f" ;;
             esac
         done <<<"$rows"
         say "    parked record: $n_features feature(s), parked ${parked_at:-?} on ${parked_on:-?}${lane:+ (lane $lane)}${active:+; active $active}"
