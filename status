@@ -43,7 +43,8 @@
 # known_hosts entry). Without the flag it fetches nothing, as before.
 #
 # THE THIRD LAYER is the FORK against what it was forked from, under Brett
-# Heap's RULING of 2026-09-11, verbatim: "next layer: fork against upstream".
+# Heap's RULING of 2026-09-11 (this repository's #11), verbatim: "next layer:
+# fork against upstream".
 # A remote named `upstream` is read from local refs — `origin/<branch>`
 # against `upstream/<branch>`, as of the last fetch — and `--fetch` fetches
 # it too, under the same pinned refspec. With no such remote, and only under
