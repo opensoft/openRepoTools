@@ -547,6 +547,7 @@ def test_refusals_read_nothing(home, status_remotes):
         assert f"REFUSED: {flag} needs a value" in result.stderr
         assert "${2:?" not in result.stderr
         assert "parameter null or not set" not in result.stderr
+        assert "line " not in result.stderr, "bash's own message leaked"
         assert result.stdout == "", (
             "nothing may be resolved, said or read before an empty value is "
             f"refused; stdout was {result.stdout!r}")

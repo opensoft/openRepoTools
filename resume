@@ -768,13 +768,20 @@ while [ $# -gt 0 ]; do
     # value here is read later as "was this given at all?" — so
     # `resume --repo ""` would fall past the `--repo` branch of the resolver
     # into the walk-up and resume the estate around the cwd, which is the one
-    # thing naming a clone's origin was there to prevent; `--workspace ""`
-    # would read as a machine nobody has named a workspace to, so the config
-    # already here is used unchecked instead of the one that was typed; and
-    # `--org ""` would stop narrowing the very manifests it was passed to
-    # choose between. A value that came out empty is a flag that was typed and
-    # lost, never one that was never typed, and the two must not do different
-    # things (Copilot's review of #14).
+    # thing naming a clone's origin was there to prevent, and `--org ""` would
+    # stop narrowing the very manifests it was passed to choose between.
+    # `--workspace ""` GOES TWO WAYS, and neither is the one that was typed.
+    # WITH A CONFIG ALREADY HERE, the empty slug slips past the refusal below
+    # that never silently replaces an existing config — that comparison is
+    # `[ -n "$WORKSPACE_SLUG" ]`-guarded — and this machine's own config is
+    # used, unchecked, in place of the repository named on the command line.
+    # WITH NO CONFIG, the run reaches the refusal that says no workspace
+    # record is configured: true about the machine, and a lie about the
+    # command line, which named one. That second branch is the one the tests
+    # exercise, their `$HOME` having no `~/.agents` in it.
+    # A value that came out empty is a flag that was typed and lost, never one
+    # that was never typed, and the two must not do different things
+    # (Copilot's review of #14).
     --repo)
         [ $# -ge 2 ] && [ -n "$2" ] ||
             die "--repo needs a value: <owner>/<name>, or any url spelling of one."
