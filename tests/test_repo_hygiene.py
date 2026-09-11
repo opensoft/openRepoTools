@@ -245,6 +245,44 @@ def test_status_carries_resumes_expand_home_byte_for_byte():
         "status and resume have drifted apart in expand_home")
 
 
+def test_the_estate_commands_carry_the_same_flag_value_byte_for_byte():
+    """`flag_value` reads `--flag value` and `--flag=value` the same way in
+    all three, and the comment above it is held too.
+
+    It sits OUTSIDE the shared estate resolver on purpose: that block answers
+    "which estate is this", and this answers "did this flag get a value" —
+    naming one the other would make the resolver's own header a lie. So it is
+    held here, the way `expand_home` is, and for the same reason: three files
+    a person has on PATH, and one answer.
+
+    THE QUESTIONS IT ASKS ARE ASSERTED TOO, because byte-identity alone is
+    satisfied by three copies of a function that asks none of them. Each is
+    the whole of one refusal: the arity check #14 wrote (`park --lane` at the
+    end of the line), the emptiness check `${2:?…}` used to make and #17 put
+    back (`--lane ""`), and the `-*` check (`--lane --dry-run`, which parked
+    with the lane set to the flag a person typed). The `=` split is the
+    fourth, and it is what keeps a value that really does begin with `-`
+    sayable at all.
+    """
+    def block(path: Path) -> str:
+        text = path.read_text(encoding="utf-8")
+        start = text.index("# THE VALUE OF A VALUE-TAKING FLAG")
+        return text[start:text.index("\n}\n", start)]
+
+    blocks = {name: block(REPO / name) for name in ESTATE_COMMANDS}
+    reference = blocks["park"]
+    for name, text in blocks.items():
+        assert text == reference, (
+            f"park and {name} have drifted apart in flag_value")
+    for asked in ('[ $# -ge 2 ] && [ -n "$2" ] || return 1',
+                  '[ -n "$FLAG_VALUE" ] || return 1',
+                  'FLAG_VALUE="${1#*=}"'):
+        assert asked in reference, f"flag_value no longer asks: {asked}"
+    dash = reference.split('case "$2" in', 1)[1]
+    assert dash.lstrip().startswith("-*)"), (
+        "flag_value no longer refuses a value that begins with `-`")
+
+
 def code_lines(path: Path) -> str:
     """The file with its whole-line comments dropped.
 
@@ -316,27 +354,40 @@ def test_the_estate_commands_name_no_runtime_dependency_on_the_standard():
 VALUE_TAKING_ARMS = 9
 
 
-def test_every_value_taking_arm_refuses_an_empty_value():
-    """A FLAG GIVEN AN EMPTY VALUE IS REFUSED, in all three commands.
+def test_every_value_taking_arm_reads_its_value_through_flag_value():
+    """A FLAG GIVEN NO VALUE, AN EMPTY ONE, OR A FLAG is refused, in all three
+    commands, and every arm can also be given its value after an `=`.
 
-    `[ $# -ge 2 ]` checks only that an argument slot exists; the `${2:?…}`
-    it replaced rejected an unset OR NULL one. The difference is silent every
-    time, because every one of these values is read further down as "was this
-    given at all?": `park --lane ""` parked with the lane dropped out of the
-    WIP commit subject, and `--repo ""` in any of the three fell past the
-    `--repo` branch of the resolver into the walk-up and acted on the estate
-    around the current directory — the one thing naming a clone's origin was
-    there to prevent.
+    `[ $# -ge 2 ]` checks only that an argument slot exists; the `${2:?…}` it
+    replaced rejected an unset OR NULL one; and neither ever asked what the
+    slot HELD. The difference is silent every time, because every one of these
+    values is read further down as "was this given at all?": `park --lane ""`
+    parked with the lane dropped out of the WIP commit subject, `--repo ""` in
+    any of the three fell past the `--repo` branch of the resolver into the
+    walk-up and acted on the estate around the current directory, and `park
+    Atlas --lane --dry-run` ran a REAL park whose lane was `--dry-run` — the
+    flag a person typed, swallowed as a value, with nothing but the commit
+    subject to say so.
 
-    THIS SHIPPED TWICE, AND AN OUTSIDE REVIEWER CAUGHT IT BOTH TIMES. Into
-    `park` and `resume` at 83a1601, which swapped `${2:?…}` for the arity
-    check; and into `status` at fbf6f11, its first commit, where the arm was
-    written that way from the start and so was never in front of the review
-    that caught the other two. Nothing in this suite could see either one,
-    because each command's own tests ask what a REFUSAL says, and an arm that
-    does not refuse says nothing for them to read. So it is asked here, of the
-    text: every line that takes `$2` into a variable carries the whole guard
-    within the three lines above it.
+    THE EMPTY HALF SHIPPED TWICE, AND AN OUTSIDE REVIEWER CAUGHT IT BOTH
+    TIMES. Into `park` and `resume` at 83a1601, which swapped `${2:?…}` for
+    the arity check; and into `status` at fbf6f11, its first commit, where the
+    arm was written that way from the start and so was never in front of the
+    review that caught the other two. Nothing in this suite could see either
+    one, because each command's own tests ask what a REFUSAL says, and an arm
+    that does not refuse says nothing for them to read. So it is asked here,
+    of the text.
+
+    ONE QUESTION PER ARM NOW, not three: `flag_value` (held byte-identical
+    above) asks all of them, and each arm supplies its own words and its own
+    `die`. So what this reads is that every line taking a value into a
+    variable goes through it, within the three lines above; that the arm's
+    refusal carries both its own sentence and `$FLAG_HINT`, which is where the
+    `-`-led value's own line comes from; and that the case label above it
+    carries BOTH spellings of every flag it names — `--lane` and `--lane=*` —
+    because the `=` form is the only way left to pass a value beginning with
+    `-`, and an arm that had only the spaced spelling would have taken one
+    away without giving it back.
 
     THE COUNT IS ASSERTED TOO, and it is hand-kept on purpose. That the guard
     is right on nine arms is what the loop proves; the number is what makes a
@@ -344,23 +395,38 @@ def test_every_value_taking_arm_refuses_an_empty_value():
     to be read rather than as a silent pass. Move it in the same commit that
     adds the arm.
 
-    Whole-line comments are dropped first, by `code_lines`, so the three
-    comment lines that QUOTE `[ $# -ge 2 ]` in order to explain why it was not
-    enough on its own cannot stand in for the guard they describe.
+    Whole-line comments are dropped first, by `code_lines`, so a comment that
+    QUOTES an arm in order to explain it cannot stand in for the arm.
     """
     found = 0
     for name in ESTATE_COMMANDS:
         lines = code_lines(REPO / name).splitlines()
         for i, line in enumerate(lines):
-            if re.match(r'\s*[A-Z_]+="\$2"', line):
-                found += 1
-                guard = "\n".join(lines[max(0, i - 3):i])
-                assert '[ $# -ge 2 ] && [ -n "$2" ]' in guard, (
-                    f"{name}: {line.strip()} takes $2 without refusing an "
-                    f"empty one")
+            if not re.match(r'\s*[A-Z_]+="\$FLAG_VALUE"', line):
+                continue
+            found += 1
+            where = f"{name}: {line.strip()}"
+            guard = "\n".join(lines[max(0, i - 3):i])
+            assert 'flag_value "$@" ||' in guard, (
+                f"{where} takes a value without asking flag_value for it")
+            assert "needs a value:" in guard and "$FLAG_HINT" in guard, (
+                f"{where} refuses in words that are not this arm's, or drops "
+                f"the line that names the `=` spelling")
+            head = i - 1
+            while head >= 0 and not re.match(r"\s*-.*\)$", lines[head]):
+                head -= 1
+            assert head >= 0, f"{where} is not inside a case arm at all"
+            spellings = [s.strip()
+                         for s in lines[head].strip()[:-1].split("|")]
+            spaced = [s for s in spellings if not s.endswith("=*")]
+            assert sorted(spellings) == sorted(
+                spaced + [s + "=*" for s in spaced]), (
+                f"{where}: the arm matches {spellings}, which is not every "
+                f"flag it names in both spellings")
     assert found == VALUE_TAKING_ARMS, (
-        f"{found} lines take $2, not {VALUE_TAKING_ARMS}: a value-taking flag "
-        f"was added or removed. Read the new arm, then move the number.")
+        f"{found} lines take a flag's value, not {VALUE_TAKING_ARMS}: a "
+        f"value-taking flag was added or removed. Read the new arm, then move "
+        f"the number.")
 
 
 #: `--flag <value>` and `--flag=<value>` are two spellings of ONE flag. The
