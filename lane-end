@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+#
+# lane-end — the LAST act of a lane: say in the register that the window is
+# closing and that nothing is in flight, and refuse to say it while something
+# still is.
+#
+# It NEVER renames the tmux window. The name is the lane's history until the
+# next `lane-start` takes that window, and a window renamed back to `claude`
+# is a window nobody can attribute.
+#
+# PROTOCOL  ~/.agents/protocols/lane-collision-protocol.md
+#   Rule 4 — a lane appends its row when it starts and UPDATES THAT ROW WHEN
+#     IT STOPS; the register is the last file a lane writes.
+#   Rule 6 — a row reads LANDING from the moment the lane posts LANDING on a
+#     PR until it posts LANDED. Other lanes hold their merges while it does,
+#     so a lane that ends without closing its landing window stalls the
+#     estate. That is what this script's refusal is for.
+#   Rule 9 + Amendment 5 — the write is one commit, made by lanes-edit.sh.
+#
+# USAGE
+#   lane-end [options] <lane>            # lane-end openRepoShape-2
+#   lane-end [options] <repo> <n>        # the split form works too
+#   lane-end [options] <n>               # <repo> = basename of the cwd's git root
+#
+# One argument is taken VERBATIM as the lane name, so the rows named before
+# the `<repo>-<n>` rule (`browser-ui-repair`, `hermes-wallet-exercise`) can be
+# ended too — their last act is exactly what this is for.
+#
+# OPTIONS
+#   --retire            also mark the state cell RETIRED <UTC> — the lane is
+#                       not coming back, as opposed to a window that is only
+#                       closing for the night
+#   --state-was <text>  the exact text --retire should replace, for a row whose
+#                       state cell does not open with a single state word
+#   --force             end the lane even though its state cell still shows an
+#                       open LANDING or CLAIMED, and say so in the line written
+#   --dry-run           print what would be written; write nothing
+#   -h, --help
+#
+# THE REFUSAL
+#   The state cell is scanned for the protocol's own words. If the LAST
+#   LANDING or CLAIMED in it is not followed by a LANDED or a RELEASED, the
+#   lane still owns something and this exits 2 naming the fix. Phrases that
+#   SAY there is nothing open — `NOTHING CLAIMED`, `NO LANDING OPEN`,
+#   `LANDING WITHDRAWN`, `UNCLAIMED` and their kin — are removed before the
+#   scan, because rows are full of them and a substring match on CLAIMED
+#   inside NOTHING CLAIMED would refuse on every healthy lane.
+#
+# EXIT
+#   0  done
+#   1  environment — no register, no writer
+#   2  refusal — bad arguments, no row (or two), or something still in flight
+#
+# ENVIRONMENT
+#   LANES_FILE  default <script dir>/LANES.md
+#   LANES_EDIT  default <script dir>/lanes-edit.sh
+#
+# It spells no absolute path of its own: the register and its writer are found
+# beside this script's own REAL path, so the `~/.local/bin` symlink works.
+
+set -euo pipefail
+
+prog=lane-end
+
+SELF="${BASH_SOURCE[0]}"
+RESOLVED="$(readlink -f -- "$SELF" 2>/dev/null || printf '%s' "$SELF")"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$RESOLVED")" && pwd)"
+
+LANES_FILE="${LANES_FILE:-$SCRIPT_DIR/LANES.md}"
+LANES_EDIT="${LANES_EDIT:-$SCRIPT_DIR/lanes-edit.sh}"
+
+note() { printf '%s: %s\n' "$prog" "$*" >&2; }
+step() { printf '%s: %s\n' "$prog" "$*" >&2; }
+plan() { printf '%s: PLAN %s\n' "$prog" "$*" >&2; }
+die()  { printf '%s: %s\n' "$prog" "$1" >&2; exit "${2:-1}"; }
+usage() { sed -n '3,${/^#/!q;s/^# \{0,1\}//;p}' -- "$RESOLVED"; }
+
+# ------------------------------------------------------------------ arguments
+
+retire=0; force=0; dry_run=0; state_was=""
+positional=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --retire)      retire=1; shift ;;
+    --force)       force=1; shift ;;
+    --dry-run)     dry_run=1; shift ;;
+    --state-was)   state_was="${2-}"; [ -n "$state_was" ] || die "--state-was needs the exact text to replace" 2; shift 2 ;;
+    --state-was=*) state_was="${1#--state-was=}"; shift ;;
+    -h|--help)     usage; exit 0 ;;
+    --)            shift ;;
+    -*)            die "unknown option '$1' — see $prog --help" 2 ;;
+    *)             positional+=("$1"); shift ;;
+  esac
+done
+
+# A lane name is taken VERBATIM when one argument is given: the register
+# still carries lanes named before the `<repo>-<n>` rule (browser-ui-repair,
+# hermes-wallet-exercise), and their last act is exactly what this is for.
+LANE=""
+case "${#positional[@]}" in
+  2) LANE="${positional[0]}-${positional[1]}" ;;
+  1)
+    arg="${positional[0]}"
+    if [[ "$arg" =~ ^[0-9]+[A-Za-z]?$ ]]; then
+      top="$(git rev-parse --show-toplevel 2>/dev/null || :)"
+      [ -n "$top" ] || die "no <repo> given and this directory is not a git checkout — run: $prog <repo> $arg" 1
+      LANE="$(basename -- "$top")-$arg"
+    else
+      LANE="$arg"
+    fi
+    ;;
+  0) usage >&2; die "which lane? $prog <lane>" 2 ;;
+  *) die "too many arguments: $prog <lane>" 2 ;;
+esac
+[[ "$LANE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "'$LANE' is not a lane name (allowed: letters, digits, . _ -)" 2
+
+[ -f "$LANES_FILE" ] || die "no register at $LANES_FILE — this script must sit beside LANES.md (or set LANES_FILE)" 1
+[ -x "$LANES_EDIT" ] || die "no register writer at $LANES_EDIT — it must sit beside LANES.md (or set LANES_EDIT)" 1
+
+# ---------------------------------------------------------------- the row
+
+rows_for_lane() {
+  awk -v lane="$1" '
+    substr($0,1,1) == "|" {
+      p1 = index($0, "`"); if (p1 == 0) next
+      rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
+      if (substr(rest, 1, p2 - 1) == lane) print
+    }' "$LANES_FILE"
+}
+
+row="$(rows_for_lane "$LANE" || :)"
+row_count=0
+[ -n "$row" ] && row_count="$(printf '%s\n' "$row" | grep -c . || :)"
+
+case "$row_count" in
+  0) die "the register has no row for lane $LANE — nothing to end. If the lane predates the helpers, add its row first: lanes-edit.sh add-row \"| \`$LANE\` | … |\"" 2 ;;
+  1) : ;;
+  *) die "the register has $row_count rows for lane $LANE, and lanes-edit.sh can edit neither. Merge them into one row by hand in $LANES_FILE, then re-run" 2 ;;
+esac
+
+state_cell="$(printf '%s\n' "$row" | awk -F'|' '{print $(NF-1)}')"
+state_cell="${state_cell#"${state_cell%%[![:space:]]*}"}"   # ltrim
+state_cell="${state_cell%"${state_cell##*[![:space:]]}"}"   # rtrim
+
+# ------------------------------------------------------- the in-flight guard
+
+# Everything here is CASE-SENSITIVE on purpose: the protocol's words are
+# LANDING, CLAIMED, LANDED, RELEASED in capitals, and a row's ordinary prose
+# ("nothing claimed tonight") is not a claim.
+haystack="$(printf '%s' "$state_cell" | sed -E 's/(NOTHING IS CLAIMED|NOTHING CLAIMED|NONE CLAIMED|NOT CLAIMED|UNCLAIMED|NO CLAIM|NO LANDING OPEN|NO LANDING|LANDING WITHDRAWN|LANDING CLOSED|NOT LANDING|LANDING WINDOW|NOTHING IN FLIGHT)//Ig')"
+
+# Start index of the LAST occurrence of $2 in $1, or -1.
+last_index() {
+  local h="$1" needle="$2" rest="${1##*"$2"}"
+  [ "$rest" = "$h" ] && { printf -- '-1'; return 0; }
+  printf '%s' "$(( ${#h} - ${#rest} - ${#needle} ))"
+}
+
+open_at=-1; open_word=""
+for w in LANDING CLAIMED; do
+  i="$(last_index "$haystack" "$w")"
+  if [ "$i" -gt "$open_at" ]; then open_at="$i"; open_word="$w"; fi
+done
+close_at=-1
+for w in LANDED RELEASED; do
+  i="$(last_index "$haystack" "$w")"
+  if [ "$i" -gt "$close_at" ]; then close_at="$i"; fi
+done
+
+in_flight=0
+if [ "$open_at" -ge 0 ] && [ "$close_at" -lt "$open_at" ]; then in_flight=1; fi
+
+rflag=""; (( retire )) && rflag=" --retire"
+
+if [ "$in_flight" = 1 ]; then
+  # Bash substring, not `cut -c`: ${#s} counts characters and GNU cut counts
+  # bytes, and these cells are full of · — → , so the two disagree.
+  from=$(( open_at > 40 ? open_at - 40 : 0 ))
+  excerpt="${haystack:from:160}"
+  if [ "$force" = 0 ]; then
+    note "lane $LANE still has something in flight — the last $open_word in its state cell has no LANDED or RELEASED after it:"
+    note "  …$excerpt…"
+    note "the fix, in the order the protocol wants it:"
+    note "  lanes-edit.sh append-row-status $LANE \"LANDED — PR #<n> → <merge sha> (<UTC>)\"      # or RELEASED — …"
+    note "  $prog $LANE$rflag"
+    note "or end it anyway and record that you did: $prog $LANE --force$rflag"
+    exit 2
+  fi
+  step "--force: ending with an open $open_word in the state cell; the line written says so"
+fi
+
+# --------------------------------------------------------------- the write
+
+utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+ws="$(hostname)"
+status_text="$utc lane-end on $ws: window closing; NOTHING IN FLIGHT"
+if [ "$in_flight" = 1 ]; then
+  status_text="$utc lane-end on $ws: window closing; ENDED WITH --force while the state cell still showed an open $open_word — read the cell above this line before trusting it"
+fi
+
+if (( dry_run )); then
+  plan "lanes-edit.sh append-row-status $LANE \"$status_text\""
+else
+  LANES_LANE="$LANE" "$LANES_EDIT" append-row-status "$LANE" "$status_text"
+  step "row closed"
+fi
+
+# ------------------------------------------------------------------ --retire
+
+# `--retire` marks the cell RETIRED, and does it by REPLACING THE STATE WORD
+# the cell opens with, not the whole cell: the cell is the row's history and
+# the register exists to keep it. A row written by lane-start opens with
+# `STARTING`, which is unique in the row by construction; anything else may
+# not be, and `replace-in-row` refuses unless the old text occurs exactly
+# once — which is why `--state-was` exists.
+if (( retire )); then
+  old="$state_was"
+  if [ -z "$old" ]; then
+    head_seg="${state_cell%% · *}"
+    old="${head_seg%% *}"
+    old="${old%[,;:.]}"
+  fi
+  [ -n "$old" ] || die "the state cell is empty, so there is no state word to replace — pass --state-was \"<exact text>\"" 2
+  new="RETIRED $utc"
+  if (( dry_run )); then
+    plan "lanes-edit.sh replace-in-row $LANE \"$old\" \"$new\" \"retired by lane-end on $ws\""
+  elif LANES_LANE="$LANE" "$LANES_EDIT" replace-in-row "$LANE" "$old" "$new" "retired by lane-end on $ws"; then
+    step "state cell now opens with $new"
+  else
+    note "the register refused to replace '$old' — it is not unique in that row."
+    note "pick an exact, unique opening text from the cell and re-run:"
+    note "  $prog $LANE --retire --state-was \"<exact text>\""
+    note "(the closing status line above was written; only the RETIRED mark is missing)"
+    exit 2
+  fi
+fi
+
+(( dry_run )) && step "--dry-run: nothing was written"
+exit 0
