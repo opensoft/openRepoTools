@@ -147,15 +147,18 @@ worktrees on disk: a recorded feature with no worktree here (`resume <Name>`
 brings it back — unless the record says `--no-push`, or its `pushed:` is
 missing or neither true nor false, which `resume` refuses the same way, or it
 names no parked commit for that leg, which `resume` refuses as moved-on, or it
-gives a leg no role at all, which `resume` refuses the whole feature for: then
-only the workstation that parked it can park it again; and where `git worktree
+gives a leg no role at all, or a role this checkout's shape does not mount,
+which `resume` refuses the whole feature for: then only the workstation that
+parked it can park it again — and where the role is really another shape's,
+only a checkout of that shape; and where `git worktree
 list` still holds a registration that is no longer a worktree, that is cleared
 with `worktree prune`, after a `worktree unlock` if it is locked and with any
 leftover directory moved aside, before `resume` can recreate anything), a
 worktree whose tip is not the parked commit or a record that names no parked
 commit to compare it with, a leg parked with `--no-push` or whose `pushed:` is
-missing or neither true nor false, a leg the record gives no role, and a
-worktree the record does not know (never parked).
+missing or neither true nor false, a leg the record gives no role or a role
+this shape does not mount, and a worktree the record does not know (never
+parked).
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
 (<Name>/<Name>/family.yaml) or a standalone project root (<Name>/project.yaml).
@@ -1600,6 +1603,14 @@ read_shape() {
 #    review of #20, 2026-09-11, note 8; this repository's #21, recorded there as out of scope). It is
 #    the ROOT's finding, since no leg repository can be found for a leg that
 #    names no role, and the exit is a park that parks the feature through.
+# 6. A LEG WHOSE ROLE THIS CHECKOUT'S SHAPE DOES NOT HAVE — a misspelling, or
+#    another shape's role — which `resume` refuses the WHOLE FEATURE for in
+#    the same breath and the same "shape mismatch" words as 5 (the
+#    independent review of #21, 2026-09-11). The line for it named neither
+#    the refusal nor an exit; it does both now, and it is worded for a role
+#    that is genuinely another shape's as well as for a typo, because this
+#    layer cannot tell those apart and a park cannot make this root mount
+#    what its shape has not got.
 #
 # WHAT THE OTHER END'S LOADER DOES WITH AN ABSENT `pushed:` IS CHANGING, AND
 # NO LINE HERE DEPENDS ON IT (the independent review of workBenches #60,
@@ -2142,8 +2153,76 @@ check_parked_leg() {
         finding "parked feature $branch: a leg of it in the record has no role; \`resume\` maps each leg's role onto this checkout and refuses the WHOLE feature — the other legs with it — where one does not map, reporting it as a shape mismatch, so nothing here brings it back — park that feature again from the workstation that has it ($where), which writes the roles this checkout's own shape has"
         return 0
     fi
+    # AND A ROLE THIS CHECKOUT'S SHAPE DOES NOT HAVE COSTS THE WHOLE FEATURE
+    # TOO, WHICH THE LINE BELOW LEFT OUT ALONG WITH THE EXIT (the independent
+    # review of #21, 2026-09-11, recorded there as nobody's ruling). "The
+    # record names a leg this root does not mount here" is true and stops
+    # there, and it reads as ONE leg going unread — while `resume.sh`'s
+    # `collect_legs` maps EVERY leg's role onto this checkout (`spec` and
+    # `code` only where `REPO_SHAPE` is three-leg, `repo` only where it is
+    # single, `*) return 1` for every other word) and one that does not map
+    # takes the feature with it, its good legs included. Run on 2026-09-11
+    # against a scratch single-shape estate, `role: nope` answered "Error:
+    # 001-a-thing was parked from a single project and this checkout is
+    # single; that feature was NOT recreated", "REFUSED: 001-a-thing — shape
+    # mismatch", exit 2 — the same sentence about the SHAPE that says nothing
+    # about the role, and the same answer with a good `repo` leg beside it.
+    # That is the refusal the empty-role arm above explains in advance, so
+    # this arm explains it in the same words and the same order.
+    #
+    # WHICH ROLES ARE CERTAINLY REFUSED, AND WHICH ARE ONLY UNMOUNTED. The
+    # arm below fired on two different states and now says the refusal for
+    # only one of them, because only one of them is one `collect_legs`
+    # certainly refuses. `leg_repo_for_role` answers the root for `repo` and
+    # `assembly`, else the path `project.yaml` gives the role, else a folder
+    # named for it, else NOTHING — and nothing is the state that proves it:
+    # `git-common.sh`'s `load_repo_shape` only calls a checkout `three-leg`
+    # when `project.yaml` declares BOTH a `spec` and a `code` leg path (with
+    # `kind: project-manifest` and `schema: project-repo-schema`), so a role
+    # this root has no repository for is a role `collect_legs` cannot map —
+    # `spec` or `code` against a shape that is not three-leg, or any other
+    # word at its `*) return 1` — whether it is a misspelling (`nope`) or
+    # another shape's role (`code` here, `spec` in the family fixture's
+    # members, which declare an `assembly` leg and no other). Both were
+    # verified on 2026-09-11 against a scratch single-shape estate: "shape
+    # mismatch", exit 2, the whole feature.
+    #
+    # THE OTHER STATE IS A LEG THIS ROOT MOUNTS THAT IS NOT A CHECKOUT — a
+    # submodule that was never fetched, which is a directory with no `.git`
+    # in it, the state `git-common.sh`'s own `shape_leg_is_checkout` guards.
+    # `collect_legs` maps that role by NAME onto paths `load_repo_shape`
+    # computed from `project.yaml`, and never looks at the directory, so in a
+    # genuinely three-leg root it maps `spec` and moves on and the feature is
+    # NOT refused for the shape. Claiming the refusal there would be this
+    # layer inventing a `resume.sh` line, so those words keep the sentence
+    # they had: what is true of that state is that the leg is not mounted
+    # here, and it is `make bootstrap`'s to mount.
+    #
+    # THE EXIT IS WORDED FOR BOTH KINDS OF UNMAPPABLE ROLE: a park from the
+    # workstation that has the feature writes the roles ITS shape has, which
+    # is what settles a misspelling; where the role really is another
+    # shape's, the record is right and this checkout is not where that
+    # feature comes back, so the line says so rather than promising that a
+    # re-park will make this root mount it.
+    #
+    # WHAT THIS ARM DOES NOT SEE, and what is therefore still unsaid: a role
+    # this root DOES mount that `collect_legs` refuses anyway — `assembly`,
+    # or `spec` in a root whose `project.yaml` declares no `code` leg, which
+    # `load_repo_shape` therefore calls `single` — for which
+    # `leg_repo_for_role` hands back a repository, so the leg is read against
+    # disk and nothing here mentions the refusal (`role: assembly` in that
+    # same scratch estate: "shape mismatch", exit 2, the same day). Reading
+    # that one means computing this root's shape the way `load_repo_shape`
+    # does and holding the record's `shape:` against it, which is a reading
+    # of its own and is recorded in this commit's message, not taken here.
     repo="$(leg_repo_for_role "$root" "$role" || true)"
-    if [ -z "$repo" ] || [ ! -e "$repo/.git" ]; then
+    if [ -z "$repo" ]; then
+        where="the record does not say where"
+        [ -z "$parked_on" ] || where="the record says $parked_on"
+        finding "parked feature $branch ($role leg): the record names a leg this root does not mount here; \`resume\` maps each leg's role onto this checkout and refuses the WHOLE feature — the other legs with it — where one does not map, reporting it as a shape mismatch, so nothing here brings it back — park that feature again from the workstation that has it ($where), which writes the roles its own shape has; where that shape is not this checkout's, the feature comes back in a checkout of that shape, not here"
+        return 0
+    fi
+    if [ ! -e "$repo/.git" ]; then
         finding "parked feature $branch ($role leg): the record names a leg this root does not mount here"
         return 0
     fi
