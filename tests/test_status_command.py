@@ -2058,9 +2058,10 @@ def test_a_record_that_names_no_parked_commit_still_reads_the_worktree_here(
     arms — the only thing this layer says about a worktree that IS here — and
     `status` exited 0 with nothing said about the record at all.
 
-    Those arms cannot run: there is nothing to compare the tip WITH, and
-    comparing against the empty string would fail `merge-base --is-ancestor`
-    its way into "diverged", a finding about nothing. So the line says what
+    Those arms cannot run: there is nothing to compare the tip WITH, and the
+    empty string is not a commit — `cat-file -e "^{commit}"` fails on it, so
+    without this arm the layer would print "its parked commit  is not here",
+    a reason invented for a commit the record never named. So the line says what
     cannot be compared and names no refusal — `resume.sh`'s RR4 calls a leg
     whose worktree is already at the path it computes recreated and only
     warns, "the parked WIP was NOT un-committed" — and the exit is the
@@ -2116,8 +2117,9 @@ def test_a_leg_the_record_gives_no_role_is_a_finding_not_silence(atlas, home):
                 "has no role; `resume` maps each leg's role onto this checkout "
                 "and refuses the WHOLE feature — the other legs with it — "
                 "where one does not map, reporting it as a shape mismatch, so "
-                "nothing here brings it back — park it again from Falcon, "
-                "which writes the record afresh") in result.stdout
+                "nothing here brings it back — park that feature again from "
+                "the workstation that has it (the record says Falcon), which "
+                "writes the roles this checkout's own shape has") in result.stdout
         assert "does not mount here" not in result.stdout
         assert "( leg)" not in result.stdout
 
@@ -2131,9 +2133,16 @@ def test_a_leg_the_record_gives_no_role_is_a_finding_not_silence(atlas, home):
     assert ("    - parked feature 001-a-thing: a leg of it in the record has "
             "no role;") in result.stdout
 
-    # AND A LEG WITH NO `- role:` LINE AT ALL is not a leg in either reader:
+    # AND A LEG WITH NO `- role:` LINE AT ALL is not a LEG in either reader:
     # the loader's `[ "$key" = "role" ] || continue` starts none, and nothing
-    # opens one here. Silence about it is the two readers agreeing.
+    # opens one here — that much the two readers agree about. They do NOT
+    # agree about the FEATURE: this record leaves 001-a-thing with no legs at
+    # all, and `collect_legs`'s closing `[ "${#LEG_ROLES[@]}" -gt 0 ]` refuses
+    # the whole feature for that ("REFUSED: 001-a-thing — shape mismatch",
+    # exit 2, verified against the extension 2026-09-11) while this layer says
+    # nothing. That is the per-FEATURE reading this layer does not do yet,
+    # recorded in this commit's message and taken nowhere; what is held here
+    # is only that the roleless LINE draws no LEG-level finding.
     path.write_text(path.read_text(encoding="utf-8").replace(
         '          - role: ""\n', "          - nickname: x\n"), encoding="utf-8")
     result = run(STATUS, "Atlas", home=home)

@@ -2071,7 +2071,7 @@ wip_gap_is_ours() {
 # both leave `$pushed` empty.
 check_parked_leg() {
     local root="$1" branch="$2" role="$3" commit="$4" pushed="$5" parked_at="$6" parked_on="$7" depth="$8" seen="$9"
-    local repo tree="" ghost="" ghost_is="" clear="" out rc=0 tip n unread="" refuses=""
+    local repo tree="" ghost="" ghost_is="" clear="" out rc=0 tip n unread="" refuses="" where=""
     # A LEG THE RECORD GIVES NO ROLE IS ANSWERED BEFORE THE ROOT IS ASKED
     # ABOUT IT, and it is not the arm below (the independent review of #20,
     # 2026-09-11, note 8, recorded there as out of scope). `record_rows` used
@@ -2107,7 +2107,9 @@ check_parked_leg() {
     # both readers unquote to the empty string again. Only a park that parks
     # the feature THROUGH writes the roles this checkout's own shape has.
     if [ -z "$role" ]; then
-        finding "parked feature $branch: a leg of it in the record has no role; \`resume\` maps each leg's role onto this checkout and refuses the WHOLE feature — the other legs with it — where one does not map, reporting it as a shape mismatch, so nothing here brings it back — park it again from ${parked_on:-the workstation that has it}, which writes the record afresh"
+        where="the record does not say where"
+        [ -z "$parked_on" ] || where="the record says $parked_on"
+        finding "parked feature $branch: a leg of it in the record has no role; \`resume\` maps each leg's role onto this checkout and refuses the WHOLE feature — the other legs with it — where one does not map, reporting it as a shape mismatch, so nothing here brings it back — park that feature again from the workstation that has it ($where), which writes the roles this checkout's own shape has"
         return 0
     fi
     repo="$(leg_repo_for_role "$root" "$role" || true)"
@@ -2268,7 +2270,9 @@ check_parked_leg() {
     # either way, so the two readers make one state of them and so does this.
     #
     # IT IS NOT A LEG LIKE ANY OTHER, BECAUSE `resume.sh` WILL NOT RECREATE
-    # IT. RR6 passes (`pushed: true` is the only way through the arms above),
+    # IT. With no worktree here: RR6 passes (`pushed: true` is the only way
+    # through the arms above on that path — with a worktree here the RR6
+    # states fall through to the arm below and it is a second finding),
     # RR4 finds no worktree to call already-done, RR3 nothing in the way, RR2
     # the branch on origin, and RR1 — `[ "$remote_tip" != "$parked_commit" ]`
     # — refuses it, because an absent parked commit never equals a tip: run
@@ -2286,10 +2290,14 @@ check_parked_leg() {
     # AND WITH A WORKTREE HERE IT WAS SILENT, the same hole from its other
     # side: that `return 0` skipped the three tip arms below, which are the
     # only thing this layer says about a worktree that IS here. They cannot
-    # run — there is no parked commit to compare the tip with, and comparing
-    # against the empty string would fail `merge-base --is-ancestor` its way
-    # into "diverged", a finding about nothing. So the line says what cannot
-    # be compared instead of guessing at one of them, and it names no
+    # run — there is no parked commit to compare the tip with, and the empty
+    # string is not one: the FIRST of them, `cat-file -e "$commit^{commit}"`,
+    # fails on it, so what would fire is "its parked commit  is not here —
+    # the record says it was pushed, so this repository has never fetched it,
+    # or origin no longer has it" — a blank sha and a reason invented for a
+    # commit the record never named (the independent review of this branch,
+    # 2026-09-11, proved it by removing this arm). So the line says what
+    # cannot be compared instead of guessing at one of them, and it names no
     # refusal: with the worktree at the path it computes, `resume.sh`'s RR4
     # calls that leg already recreated and only warns — "HEAD is 7b4773d…,
     # not the parked commit ; the parked WIP was NOT un-committed" (verified
