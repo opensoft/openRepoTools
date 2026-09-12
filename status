@@ -1901,7 +1901,7 @@ record_scalar() {
 }
 
 record_rows() {
-    local file="$1" sel="$2" line matched=0 value open=0 named=0
+    local file="$1" sel="$2" line matched=0 value open=0 named=0 held=""
     local parked_at="" parked_on="" lane="" active="" branch="" role="" commit="" pushed="" depth="" seen=""
     [ -f "$file" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
@@ -1927,14 +1927,50 @@ record_rows() {
             case "$line" in
             [![:space:]]* | '  '[![:space:]]* | '    '[![:space:]]* | \
                 '      '[![:space:]]* | '        '[![:space:]]* | '          - role:'*)
-                if [ "$matched" -eq 1 ] && [ "$named" -eq 1 ] && [ "$open" -eq 1 ]; then
-                    printf 'leg\037%s\037%s\037%s\037%s\037%s\037%s\n' "$branch" "$role" "$commit" "$pushed" "$depth" "$seen"
+                if [ "$named" -eq 1 ] && [ "$open" -eq 1 ]; then
+                    held="$held$(printf 'leg\037%s\037%s\037%s\037%s\037%s\037%s' "$branch" "$role" "$commit" "$pushed" "$depth" "$seen")$NL"
                 fi
                 role=""; open=0
                 ;;
             esac
             ;;
         esac
+        # A ROW BELONGS TO ITS BLOCK, AND A BLOCK IS NOT KNOWN TO BE THE
+        # SELECTED ONE UNTIL THE KEY THAT SELECTS IT IS READ (Copilot's second
+        # round on #22). An `id=` selector is answered by the block's FIRST
+        # line, so every row after it knew where it stood; a `root=` selector
+        # — the one a family member is matched by, and the one a record found
+        # under the folder name falls back to — is answered at the `root:`
+        # key, which `workspace_write_manifest` writes above `features:` and a
+        # hand-edit or a bad merge can leave below it. Every row emitted
+        # before that line was then thrown away for a block that DID match:
+        # the `project` row, each feature's `branch` row, and every leg that
+        # ended above it. For the layout `park` writes — `features:` last —
+        # that is the whole block, so this function returned nothing and the
+        # layer said "no block for this root" about a record it had just
+        # matched; for a `root:` left INSIDE the feature it was the mangling
+        # Copilot named, a blank `- branch:` row suppressed while the leg row
+        # under it went out, reaching `read_record` with no branch row before
+        # it, taking no feature's verdict and drawing "`resume <Name>` brings
+        # it back" for a feature `resume` refuses at RR2 under a blank name.
+        # `workspace_load_project` has no such order: it matches at the
+        # `- id:` line and reads a block's keys by their INDENT, wherever they
+        # sit in it.
+        #
+        # SO THE ROWS ARE HELD AND FLUSHED, NOT EMITTED AND HOPED FOR. Every
+        # arm below appends to `$held`, the buffer goes out whole as soon as
+        # the block is known to match — in the record's own order, which is
+        # the order it was appended in — and a block that never matches is
+        # dropped at the next `- id:`, which is the only line that starts
+        # another. THE EMITTED BYTES ARE UNCHANGED for every record `park`
+        # writes: `matched` is 1 at the `root:` line above `features:`, so
+        # each row is flushed on the line after the one that appended it, in
+        # the same order and with the same fields.
+        if [ "$matched" -eq 1 ]; then
+            [ -z "$held" ] || { printf '%s' "$held"; held=""; }
+        else
+            case "$line" in '  - id:'*) held="" ;; esac
+        fi
         case "$line" in
         '  - id:'*)
             matched=0
@@ -1955,9 +1991,7 @@ record_rows() {
         '    parked_by_lane:'*) lane="$(record_scalar "${line#*:}")" ;;
         '    active_feature:'*) active="$(record_scalar "${line#*:}")" ;;
         '    features:'*)
-            if [ "$matched" -eq 1 ]; then
-                printf 'project\037%s\037%s\037%s\037%s\n' "$parked_at" "$parked_on" "$lane" "$active"
-            fi
+            held="$held$(printf 'project\037%s\037%s\037%s\037%s' "$parked_at" "$parked_on" "$lane" "$active")$NL"
             ;;
         '      - branch:'*)
             # A `- branch:` WITH NO VALUE IS STILL A FEATURE TO THE LOADER:
@@ -1971,14 +2005,13 @@ record_rows() {
             # feature vanished from this layer (Copilot on #22). The row goes
             # out with the empty name, and `$named` — not the name — is what
             # lets a leg row out: a leg before any `- branch:` line at all
-            # still has no feature to belong to and is still dropped, while a
-            # `- branch:` seen before the block MATCHED (a `root:` selector
-            # below it) still lets its legs out, as the name always did.
+            # still has no feature to belong to and is still dropped. A
+            # `- branch:` READ BEFORE THE BLOCK WAS KNOWN TO MATCH — a `root:`
+            # selector answered below it — goes out with the rest of the held
+            # rows and in the record's order, which is the flush above.
             branch="$(record_scalar "${line#*:}")"
             named=1
-            if [ "$matched" -eq 1 ]; then
-                printf 'branch\037%s\n' "$branch"
-            fi
+            held="$held$(printf 'branch\037%s' "$branch")$NL"
             ;;
         '          - role:'*) role="$(record_scalar "${line#*:}")"; open=1; commit=""; pushed=""; depth=""; seen="" ;;
         '            parked_commit:'*) commit="$(record_scalar "${line#*:}")" ;;
@@ -1996,10 +2029,14 @@ record_rows() {
     # THE LAST LEG OF THE BLOCK, which no later line closes. Spelled out
     # rather than shared with the arm above, because the alternative is a
     # helper reading this function's locals by dynamic scope — five lines
-    # twice against an idiom this file uses nowhere else.
-    if [ "$matched" -eq 1 ] && [ "$named" -eq 1 ] && [ "$open" -eq 1 ]; then
-        printf 'leg\037%s\037%s\037%s\037%s\037%s\037%s\n' "$branch" "$role" "$commit" "$pushed" "$depth" "$seen"
+    # twice against an idiom this file uses nowhere else. AND THE LAST FLUSH
+    # WITH IT: the end of the file is the last chance the block has to be the
+    # matched one, and a `root:` that sits at the very bottom of it is
+    # answered on the line after which there is none.
+    if [ "$named" -eq 1 ] && [ "$open" -eq 1 ]; then
+        held="$held$(printf 'leg\037%s\037%s\037%s\037%s\037%s\037%s' "$branch" "$role" "$commit" "$pushed" "$depth" "$seen")$NL"
     fi
+    [ "$matched" -eq 0 ] || printf '%s' "$held"
     return 0
 }
 
@@ -2051,6 +2088,30 @@ leg_repo_for_role() {
                     return 0
                 fi
                 ;;
+            # AND A FULL-LINE `#` COMMENT AT COLUMN 0 IS NO KEY EITHER, which
+            # the arm below read as one (Copilot's second round on #22). The
+            # round before taught these values to lose a `#` the way
+            # `load_repo_shape` loses one; the LINE was still read whole, so a
+            # `# note` a hand left at column 0 inside the legs list matched
+            # `[![:space:]]*` and closed the item — and a `path:` under it
+            # went to no role, leaving `spec` and `code` on
+            # `_shape_record_leg`'s default, the role's own name, and every
+            # other role with nothing. `load_repo_shape` takes `#` and
+            # everything after it off every line before it reads one and
+            # SKIPS what is left when it is empty (`[ -n "$trimmed" ] ||
+            # continue`), so that line closes nothing there and the `path:`
+            # below it still belongs to the leg above: run against the
+            # extension on 2026-09-12, a `- role: code` whose `path: spec`
+            # sits under such a comment loaded as `_SHAPE_LEG_CODE_PATH=spec`
+            # and `CODE_LEG=<root>/spec`, where this reader answered
+            # `<root>/code` and the leg drew "the record names a leg this root
+            # does not mount here" for a leg `resume` mounts and resumes. The
+            # same cut `record_rows` was given for the same line in #20
+            # (a2c8521, "a full-line `#` comment at column 0 inside a leg is
+            # no leg-ender"), for the same reason. An INDENTED comment needed
+            # no arm at either end: it matches no key here and trims to
+            # nothing there.
+            '#'*) ;;
             [![:space:]]*) role="" ;;
             esac
         done <"$root/project.yaml"
@@ -2828,6 +2889,15 @@ read_record() {
                 # subscript" on bash 3.2 and the LAST feature's verdict on
                 # bash 5 — a clause about a feature this leg is no leg of
                 # (the independent review of this branch, 2026-09-12).
+                # THE RECORD THAT REACHED IT WAS THE ROW `record_rows` WAS
+                # DROPPING, and it drops it no longer: a leg row goes out only
+                # while a branch is open, `$named` is set by the very line
+                # that appends that branch's row, and the two are flushed in
+                # the record's order — so no record builds this shape now
+                # (Copilot's second round on #22). The guard stays as the belt
+                # to that brace, matching the first pass's, because an index
+                # this reader invents is a claim about a feature the record
+                # does not make.
                 refused=""
                 [ "$seen_branches" -eq 0 ] ||
                     refused="${feature_why[seen_branches - 1]:-}"

@@ -2672,27 +2672,35 @@ def test_the_verdict_reaches_only_the_feature_it_belongs_to(atlas, home):
         "it back"), findings[2]
 
 
-def test_a_leg_row_before_any_branch_row_takes_no_feature_s_verdict(
+def test_a_root_key_between_a_branch_and_its_legs_still_reads_that_feature(
         atlas, home):
-    """The independent review of this branch, 2026-09-12: the second pass read
-    `${feature_why[seen_branches - 1]:-}` unguarded, where the first pass's
-    lookup is guarded by `[ "$legs" -gt 0 ]` — and `$seen_branches` CAN be 0
-    at a `leg` row. `record_rows` emits a `branch` row only where `$matched`
-    is 1 AT the `- branch:` line, and a record selected by `root=` — one filed
-    under the folder name, and every family member — has `$matched` set by its
-    `root:` line, which, unlike `- id:`, does not clear `$branch`. Put that
-    key between a feature's `- branch:` line and its legs and the block yields
-    a leg row with no branch row before it. The subscript is then -1: "bad
-    array subscript" on bash 3.2, whatever the array holds, and on bash 4.2
-    and later, with a non-empty one, the LAST feature's verdict — printed
-    about a feature it is no verdict of.
+    """THIS RECORD WAS THE CRASH FIRST AND THE MISREADING SECOND, and the two
+    reviews are worth keeping together.
 
-    Against 5cb123b, the commit this fix sits on, the first record below dies
-    mid-report — exit 1 with no footer, and under `--all` it takes the sweep
-    with it — and the second prints the other feature's refusal on this one's
-    leg. A leg with no
-    feature to take a verdict from takes none, which is the line the base of
-    this branch printed for it, and the report is whole."""
+    The independent review of this branch, 2026-09-12: the second pass read
+    `${feature_why[seen_branches - 1]:-}` unguarded, where the first pass's
+    lookup is guarded by `[ "$legs" -gt 0 ]` — and `$seen_branches` COULD be 0
+    at a `leg` row, because `record_rows` emitted a `branch` row only where
+    `$matched` was 1 AT the `- branch:` line, while a record selected by
+    `root=` — one filed under the folder name, and every family member — has
+    `$matched` set by its `root:` line. Put that key between a feature's
+    `- branch:` line and its legs and the block yielded a leg row with no
+    branch row before it: subscript -1, "bad array subscript" on bash 3.2 and,
+    on bash 4.2 and later with a non-empty array, the LAST feature's verdict
+    printed about a feature it is no verdict of. Against 5cb123b the first
+    record below died mid-report — exit 1 with no footer, and under `--all` it
+    took the sweep with it.
+
+    Copilot's second round on #22 then named the row that was missing rather
+    than the subscript it made: a block is not known to be the selected one
+    until the key that selects it is read, and every row above that key was
+    being thrown away for a block that DID match. So this record is read whole
+    now — the `project` row with it, which is why the line below names the
+    workstation and the date instead of `? on ?`, and why the feature is
+    COUNTED. `record_rows` can no longer hand out a leg row with no branch row
+    before it, `$named` being set by the same line that appends the branch
+    row; the guard in `read_record` stays as the belt to that brace, and this
+    test is what proves the record it was written for now reads."""
     checkout = workspace_config(home)
     manifest = atlas / "project.yaml"
     manifest.write_text(manifest.read_text(encoding="utf-8").replace(
@@ -2712,19 +2720,20 @@ def test_a_leg_row_before_any_branch_row_takes_no_feature_s_verdict(
     result = run(STATUS, "Atlas", home=home)
     assert result.returncode == 1, result.stdout + result.stderr
     assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
-            "branch here; parked ? on ? — `resume Atlas` brings it back"
-            ) in result.stdout
-    assert "    parked record: 0 feature(s), parked ? on ?" in result.stdout, (
-        "the block matched on `root:` and the branch row was never emitted")
+            "branch here; parked 2026-09-10T20:00:00Z on Eagle — `resume "
+            "Atlas` brings it back") in result.stdout
+    assert ("    parked record: 1 feature(s), parked 2026-09-10T20:00:00Z on "
+            "Eagle (lane xfactory-2); active 001-a-thing") in result.stdout, (
+        "the block matched on `root:` and the rows above it were held, not "
+        "dropped")
     assert result.stdout.splitlines()[-1] == (
         "status: Atlas - 1 finding(s) in 2 repositories; nothing was changed."
         ), "the footer, which a report that died mid-run never reaches"
     assert "refuses the WHOLE feature" not in result.stdout
 
-    # AND WITH A FEATURE AFTER IT, the verdict that is not this leg's: the
-    # first pass makes an entry for the feature whose branch row DID go out,
-    # so on bash 5 `${feature_why[-1]}` was its refusal, on the line of a leg
-    # the record files under another feature entirely.
+    # AND WITH A FEATURE AFTER IT, the verdict that is not this leg's: on bash
+    # 5 `${feature_why[-1]}` was the OTHER feature's refusal, on the line of a
+    # leg the record files under this one. Each feature keeps its own now.
     path.write_text(mangled + "      - branch: 002-another\n"
                     "        legs:\n" + leg_block("nope", FAKE_SHA),
                     encoding="utf-8")
@@ -2735,11 +2744,13 @@ def test_a_leg_row_before_any_branch_row_takes_no_feature_s_verdict(
     assert len(findings) == 2, findings
     assert findings[0] == (
         "- parked feature 001-a-thing (repo leg): no worktree on that branch "
-        "here; parked ? on ? — `resume Atlas` brings it back"), findings[0]
+        "here; parked 2026-09-10T20:00:00Z on Eagle — `resume Atlas` brings "
+        "it back"), findings[0]
     assert findings[1].startswith(
         "- parked feature 002-another (nope leg): the record names a leg this "
         "root does not mount here; `resume` maps each leg's role onto this "
         "checkout and refuses the WHOLE feature"), findings[1]
+    assert "    parked record: 2 feature(s)" in result.stdout
 
 
 def test_every_leg_of_a_record_is_read_once_and_in_order(atlas, home):
@@ -2947,6 +2958,53 @@ def test_a_comment_after_a_project_yaml_leg_value_is_read_as_the_loader_reads_it
         "root does not mount here"), findings
     assert "refuses the WHOLE feature" not in result.stdout, (
         "a comment after the role read as a role this root cannot mount")
+
+
+def test_a_full_line_comment_inside_a_project_yaml_leg_does_not_end_the_leg(
+        atlas, home):
+    """Copilot's second round on #22: `leg_repo_for_role` lost the `#` after a
+    value in the round before, and kept reading a full-line comment at COLUMN
+    0 as the indent-zero key that closes the leg — `[![:space:]]*) role=""`.
+    `load_repo_shape` takes `#` and everything after it off every line before
+    it reads one, so that line is nothing to the loader and the `path:` below
+    it still belongs to the leg above. Read as a leg-ender here, the `path:`
+    was dropped and the role fell to `_shape_record_leg`'s default — the
+    role's own name — so a `code` leg this manifest maps onto a directory of
+    another name was reported as a leg this root does not mount, where
+    `resume` maps it and brings the feature back. The same treatment #20 gave
+    the record's own parser (a2c8521's `record_rows`), for the same reason.
+
+    THE PATH HAS TO DIFFER FROM THE ROLE'S OWN NAME, which is why the `code`
+    leg is declared onto the checkout this fixture already mounts: where the
+    path IS the role's name the two readings agree, and there is nothing to
+    tell apart."""
+    checkout = workspace_config(home)
+    manifest = atlas / "project.yaml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8")
+        .replace("kind: project-manifest\n",
+                 "kind: project-manifest\nschema: project-repo-schema\n")
+        .replace("  - role: spec\n"
+                 f"    repository: {ORG}/Atlas-spec\n"
+                 "    path: spec\n",
+                 "  - role: spec\n"
+                 f"    repository: {ORG}/Atlas-spec\n"
+                 "    path: spec\n"
+                 "  - role: code\n"
+                 f"    repository: {ORG}/Atlas-code\n"
+                 "# a note a hand left here, at column 0\n"
+                 "    path: spec\n"),
+        encoding="utf-8")
+    record(checkout, "atlas", branch="001-a-thing", role="code",
+           commit=FAKE_SHA, parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (code leg): no worktree on that "
+            "branch here; parked 2026-09-10T20:00:00Z on Falcon — `resume "
+            "Atlas` brings it back") in result.stdout
+    assert "does not mount here" not in result.stdout, (
+        "a comment line read as the end of the leg, and the `path:` under it "
+        "dropped")
 
 
 def test_a_feature_the_record_gives_no_branch_name_is_a_finding_not_silence(
@@ -3555,6 +3613,85 @@ def test_a_record_filed_under_the_folder_name_is_found_too(atlas, home):
     assert result.returncode == 1, result.stdout + result.stderr
     assert f"  parked record: {checkout}/workspaces/{ORG}/Atlas.yaml" in result.stdout
     assert "no worktree on that branch here" in result.stdout
+
+
+def folder_matched_record(atlas: Path, checkout: Path) -> Path:
+    """A record whose block is reached by its `root:` and not by its `id:` —
+    the selector a FAMILY member is matched by, and the one a record filed
+    under the folder name carries. The project's `id:` is made its own so the
+    `id=` selector finds nothing and `root=Atlas` is what selects the block."""
+    manifest = atlas / "project.yaml"
+    manifest.write_text(manifest.read_text(encoding="utf-8").replace(
+        "id: atlas\n", "id: atlas-core\n"), encoding="utf-8")
+    return record(checkout, "Atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon", root="Atlas")
+
+
+def test_a_root_key_below_the_features_still_selects_the_whole_block(
+        atlas, home):
+    """Copilot's second round on #22: `record_rows` decides whether a row goes
+    out AT the line it reads it from, and a block selected by `root=` is not
+    known to be the selected one until its `root:` line — which
+    `workspace_write_manifest` writes above `features:` and a hand-edit or a
+    bad merge can move below it. Every row above that line was then dropped:
+    the `project` row, each feature's `branch` row and every leg that ended
+    before it, which for the layout `park` writes is the WHOLE BLOCK — so this
+    layer said "no block for this root" about a record it had just found and
+    matched, while `workspace_load_project` matches at the `- id:` line and
+    reads the keys of a block by their indent, in any order."""
+    checkout = workspace_config(home)
+    path = folder_matched_record(atlas, checkout)
+    text = path.read_text(encoding="utf-8")
+    assert text.count("    root: Atlas\n") == 1
+    path.write_text(text.replace("    root: Atlas\n", "") + "    root: Atlas\n",
+                    encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "parked record: no block for this root" not in result.stdout, (
+        "the block was matched at its `root:` and read from there on")
+    assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
+            "branch here; parked 2026-09-10T20:00:00Z on Falcon — `resume "
+            "Atlas` brings it back") in result.stdout
+    assert ("    parked record: 1 feature(s), parked 2026-09-10T20:00:00Z on "
+            "Falcon (lane xfactory-2); active 001-a-thing") in result.stdout
+    assert "lists no leg for it" not in result.stdout, (
+        "the branch row kept and its leg dropped is a feature with no legs")
+
+
+def test_a_blank_branch_above_the_root_key_is_still_the_feature_resume_refuses(
+        atlas, home):
+    """Copilot's second round on #22, its own scenario: with the `root:` key
+    between an empty `- branch:` and that feature's legs, the branch row was
+    suppressed — `matched` was still false at the branch — and the leg row was
+    not, so it reached `read_record` with no branch row before it, took no
+    feature's verdict, and was offered `resume Atlas` under a blank name. The
+    loader makes a feature of every `- branch:` line whatever sits above or
+    below it, and `resume` refuses the one named nothing at RR2 ("Error:  is
+    no longer on origin in the repo leg", exit 2) — so the feature's own line
+    is what this record gets, and no leg line under it."""
+    checkout = workspace_config(home)
+    path = folder_matched_record(atlas, checkout)
+    text = path.read_text(encoding="utf-8")
+    assert text.count("        legs:\n") == 1
+    path.write_text(text.replace("    root: Atlas\n", "")
+                    .replace("      - branch: 001-a-thing\n", "      - branch:\n")
+                    .replace("        legs:\n", "    root: Atlas\n        legs:\n"),
+                    encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature with no branch name: a `- branch:` in the "
+            "record has no value; `resume` reads it as a feature named nothing "
+            "and refuses it as a branch origin has not got (\"is no longer on "
+            "origin\", the name blank), so nothing here brings it back — if "
+            "that feature landed, remove its `- branch:` block from Atlas.yaml; "
+            "if it was parked, park it again from the workstation that has it "
+            "(the record says Falcon), which writes the branch it parks"
+            ) in result.stdout
+    assert "(repo leg)" not in result.stdout
+    assert "`resume Atlas`" not in result.stdout, (
+        "a feature named nothing was offered the command that refuses it")
+    assert ("    parked record: 1 feature(s), parked 2026-09-10T20:00:00Z on "
+            "Falcon (lane xfactory-2); active 001-a-thing") in result.stdout
 
 
 def test_the_record_layer_under_all_is_located_per_estate(home, status_remotes):
