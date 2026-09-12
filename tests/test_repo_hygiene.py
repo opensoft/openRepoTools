@@ -716,9 +716,16 @@ def test_readme_is_short_enough_to_be_read():
     `resume` refuses the whole feature for it, and the finding list — and
     one line, because the paragraph repacked as it took the words. The
     second exit is in it for the reason the AGENTS.md entry gives.
+
+    250 -> 251 on 2026-09-11, for note 1 of that review: a FEATURE the record
+    lists no leg for, which `collect_legs` refuses whole at its closing
+    `[ "${#LEG_ROLES[@]}" -gt 0 ]`. One line, and it buys the one word that
+    keeps the list honest — "feature", where every other entry beside it is a
+    leg. AGENTS.md takes the same state in the words it already had and
+    repacks, so its cap does not move.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 250, f"README.md is {len(lines)} lines; the cap is 250"
+    assert len(lines) <= 251, f"README.md is {len(lines)} lines; the cap is 251"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

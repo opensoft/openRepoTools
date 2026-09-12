@@ -147,18 +147,18 @@ worktrees on disk: a recorded feature with no worktree here (`resume <Name>`
 brings it back — unless the record says `--no-push`, or its `pushed:` is
 missing or neither true nor false, which `resume` refuses the same way, or it
 names no parked commit for that leg, which `resume` refuses as moved-on, or it
-gives a leg no role at all, or a role this checkout's shape does not mount,
-which `resume` refuses the whole feature for: then only the workstation that
-parked it can park it again — and where the role is really another shape's,
-only a checkout of that shape; and where `git worktree
+gives a leg no role at all, or a role this checkout's shape does not mount, or
+lists no leg for it at all, which `resume` refuses the whole feature for: then
+only the workstation that parked it can park it again — and where the role is
+really another shape's, only a checkout of that shape; and where `git worktree
 list` still holds a registration that is no longer a worktree, that is cleared
 with `worktree prune`, after a `worktree unlock` if it is locked and with any
 leftover directory moved aside, before `resume` can recreate anything), a
 worktree whose tip is not the parked commit or a record that names no parked
 commit to compare it with, a leg parked with `--no-push` or whose `pushed:` is
 missing or neither true nor false, a leg the record gives no role or a role
-this shape does not mount, and a worktree the record does not know (never
-parked).
+this shape does not mount, a feature the record lists no leg for, and a
+worktree the record does not know (never parked).
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
 (<Name>/<Name>/family.yaml) or a standalone project root (<Name>/project.yaml).
@@ -1611,6 +1611,15 @@ read_shape() {
 #    that is genuinely another shape's as well as for a typo, because this
 #    layer cannot tell those apart and a park cannot make this root mount
 #    what its shape has not got.
+# 7. A FEATURE THE RECORD LISTS NO LEG FOR — an empty `legs:`, the `legs: []`
+#    `workspace_write_manifest` writes for a feature it has no legs for, or
+#    leg items with no `- role:` line — which `collect_legs` refuses whole at
+#    its closing `[ "${#LEG_ROLES[@]}" -gt 0 ]`, in the same "shape mismatch"
+#    words again (note 1 of the independent review of #21, 2026-09-11, and
+#    the note-8 commit's own "recorded for later"). The first of these states
+#    that is not a LEG's: there is no leg to hang a reading on, so it is read
+#    per FEATURE, in `read_record`, where the comment above that function
+#    says how and why the features are judged before their legs are read.
 #
 # WHAT THE OTHER END'S LOADER DOES WITH AN ABSENT `pushed:` IS CHANGING, AND
 # NO LINE HERE DEPENDS ON IT (the independent review of workBenches #60,
@@ -2566,13 +2575,43 @@ unrecorded_worktrees() {
 }
 
 # A root's block of the record against its disk: the note line, one finding
-# per leg that is out of step, and the worktrees the record does not know.
-# The selectors are tried in order until one names a block: a standalone root
-# by its `id:` first, then by its folder as `root:` — the block a record found
-# by folder name carries — and a family member by its `root:` alone.
+# per leg that is out of step, one per FEATURE the record leaves with no legs
+# at all, and the worktrees the record does not know. The selectors are tried
+# in order until one names a block: a standalone root by its `id:` first, then
+# by its folder as `root:` — the block a record found by folder name carries —
+# and a family member by its `root:` alone.
+#
+# A FEATURE THE RECORD LISTS NO LEG FOR IS A READING THIS LAYER OWES, AND IT
+# IS PER FEATURE, NOT PER LEG (the independent review of #21, 2026-09-11,
+# note 1, and the note-8 commit's own "recorded for later"; nobody has ruled
+# on it). `collect_legs` ends `[ "${#LEG_ROLES[@]}" -gt 0 ]`, so a feature
+# whose `legs:` is empty — the key with nothing under it, `legs: []`, or leg
+# items with no `- role:` line, which start no leg in either reader — is
+# refused WHOLE, in the shape words again: run on 2026-09-11 against a
+# scratch single-shape estate, each of those three spellings answered "Error:
+# 001-a-thing was parked from a single project and this checkout is single;
+# that feature was NOT recreated", "REFUSED: 001-a-thing — shape mismatch",
+# exit 2. This layer said NOTHING about any of them — no finding, exit 0 —
+# because every reading it had was a LEG's, and there is no leg here to hang
+# one on. That is the hole the last three notes closed for legs, in its
+# per-feature shape.
+#
+# SO THE FEATURES ARE JUDGED BEFORE THE LEGS ARE READ. `record_rows` emits a
+# `branch` row per feature and a `leg` row per leg, in the record's order, so
+# a first pass counts each feature's legs and the main loop reads the count
+# back at that feature's `branch` row — before any of its legs' arms run,
+# which is where the next note needs it too. ONE ENTRY PER `branch` ROW, NOT
+# PER BRANCH NAME: `workspace_load_project` makes a new feature of every
+# `- branch:` line it reads, so a name that appears twice is two features to
+# the loader and `collect_legs` judges each on its own legs; `$recorded` and
+# the feature COUNT still fold the duplicates, because those answer "is this
+# branch in the record", which is one question however many entries there
+# are.
 read_record() {
     local root="$1" sel rows="" kind a b c d e f n_features=0
     local parked_at="" parked_on="" lane="" active="" recorded="$NL"
+    local seen_branches=0 legs where=""
+    local -a feature_legs=()
     shift
     [ -n "$RECORD_FILE" ] || return 0
     for sel in "$@"; do
@@ -2584,14 +2623,45 @@ read_record() {
         # which is the one thing worth saying about it.
         say "    parked record: no block for this root in ${RECORD_FILE##*/}"
     else
+        # THE FIRST PASS: how many legs each feature entry has, in order. A
+        # `leg` row belongs to the `branch` row before it — `record_rows`
+        # emits one only while a branch is open — so the count goes onto the
+        # last entry; the `-gt 0` guard is for a record so mangled that a leg
+        # row arrives with no branch row before it, which is a row this pass
+        # then ignores rather than an index it invents.
+        while IFS=$'\037' read -r kind a b c d e f; do
+            case "$kind" in
+            branch) feature_legs+=(0) ;;
+            leg)
+                legs=${#feature_legs[@]}
+                [ "$legs" -eq 0 ] ||
+                    feature_legs[legs - 1]=$((feature_legs[legs - 1] + 1))
+                ;;
+            esac
+        done <<<"$rows"
         while IFS=$'\037' read -r kind a b c d e f; do
             case "$kind" in
             project) parked_at="$a"; parked_on="$b"; lane="$c"; active="$d" ;;
             branch)
+                seen_branches=$((seen_branches + 1))
                 case "$recorded" in
                 *"$NL$a$NL"*) ;;
                 *) recorded="$recorded$a$NL"; n_features=$((n_features + 1)) ;;
                 esac
+                # NO LEGS, NO LEG TO SAY IT ON: the finding is the feature's,
+                # printed where the feature is, and the exit is the exit the
+                # roleless arm names — a park that parks the feature THROUGH.
+                # `workspace_write_manifest` writes `legs: []` for a feature
+                # it has no legs for, and `emit_recorded_feature` carries a
+                # REFUSED feature's legs forward out of the loaded manifest,
+                # which for this one is none: a park that refuses it writes
+                # the hole back as a hole (read off those two functions the
+                # same day).
+                if [ "${feature_legs[seen_branches - 1]:-0}" -eq 0 ]; then
+                    where="the record does not say where"
+                    [ -z "$parked_on" ] || where="the record says $parked_on"
+                    finding "parked feature $a: the record lists no leg for it; \`resume\` collects a feature's legs before it recreates anything and refuses the WHOLE feature where it finds none, reporting it as a shape mismatch, so nothing here brings it back — park that feature again from the workstation that has it ($where), which writes the record afresh with the legs it parks"
+                fi
                 ;;
             leg) check_parked_leg "$root" "$a" "$b" "$c" "$d" "$parked_at" "$parked_on" "$e" "$f" ;;
             esac

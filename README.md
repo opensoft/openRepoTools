@@ -59,18 +59,19 @@ against disk"): the record `park` wrote into the workspace repository that
 and then by its folder name as `resume` looks it up, gives a finding for a
 recorded feature with no worktree here (`resume <Name>` brings it back; with
 `--no-push`, a `pushed:` that is missing or neither true nor false, no parked
-commit named for that leg, a leg given no role at all, or a role this shape
-does not mount, only the workstation that parked it can — and where that role
-is really another shape's, only a checkout of that shape; and where `git
-worktree list` still holds a registration that is no longer a worktree, a
-`worktree prune` — after a `worktree unlock` if it is locked, with any
-directory it leaves behind moved aside — has to clear it first), a worktree
-whose tip moved on from, fell behind (by more than the WIP commits `resume`
-itself un-committed), or diverged from the parked commit — or a record naming
-no parked commit to compare it with — a leg parked with `--no-push` or with a
-`pushed:` that is missing or unreadable, a leg the record gives no role or a
-role this shape does not mount, and a worktree the record does not know, which
-was never parked. No config, or no record, is a note.
+commit named for that leg, a leg given no role at all, a role this shape does
+not mount, or no leg at all, only the workstation that parked it can — and
+where that role is really another shape's, only a checkout of that shape; and
+where `git worktree list` still holds a registration that is no longer a
+worktree, a `worktree prune` — after a `worktree unlock` if it is locked, with
+any directory it leaves behind moved aside — has to clear it first), a
+worktree whose tip moved on from, fell behind (by more than the WIP commits
+`resume` itself un-committed), or diverged from the parked commit — or a
+record naming no parked commit to compare it with — a leg parked with
+`--no-push` or with a `pushed:` that is missing or unreadable, a leg the
+record gives no role or a role this shape does not mount, a feature the record
+lists no leg for, and a worktree the record does not know, which was never
+parked. No config, or no record, is a note.
 That is all five layers: the local layer, `--fetch`, the fork, the pin and
 the record.
 

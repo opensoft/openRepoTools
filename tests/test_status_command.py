@@ -2180,19 +2180,23 @@ def test_a_leg_the_record_gives_no_role_is_a_finding_not_silence(atlas, home):
 
     # AND A LEG WITH NO `- role:` LINE AT ALL is not a LEG in either reader:
     # the loader's `[ "$key" = "role" ] || continue` starts none, and nothing
-    # opens one here — that much the two readers agree about. They do NOT
-    # agree about the FEATURE: this record leaves 001-a-thing with no legs at
-    # all, and `collect_legs`'s closing `[ "${#LEG_ROLES[@]}" -gt 0 ]` refuses
-    # the whole feature for that ("REFUSED: 001-a-thing — shape mismatch",
-    # exit 2, verified against the extension 2026-09-11) while this layer says
-    # nothing. That is the per-FEATURE reading this layer does not do yet,
-    # recorded in this commit's message and taken nowhere; what is held here
-    # is only that the roleless LINE draws no LEG-level finding.
+    # opens one here — that much the two readers agree about, and it is still
+    # all that is held about the LINE: no leg-level finding names it. What
+    # they did NOT agree about was the FEATURE, which this record leaves with
+    # no legs at all and `collect_legs`'s closing `[ "${#LEG_ROLES[@]}" -gt
+    # 0 ]` refuses whole for that ("REFUSED: 001-a-thing — shape mismatch",
+    # exit 2, verified against the extension 2026-09-11) while this layer said
+    # nothing. That per-FEATURE reading is done now, so the finding here is
+    # the feature's — no leg named, because there is no leg to name.
     path.write_text(path.read_text(encoding="utf-8").replace(
         '          - role: ""\n', "          - nickname: x\n"), encoding="utf-8")
     result = run(STATUS, "Atlas", home=home)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "parked feature" not in result.stdout
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing: the record lists no leg for it;"
+            ) in result.stdout
+    assert "a leg of it in the record has no role" not in result.stdout, (
+        "the LEG-level reading, for a line that is no leg to either reader")
+    assert "does not mount here" not in result.stdout
 
 
 def test_a_leg_with_no_role_does_not_take_the_legs_around_it_with_it(
@@ -2359,6 +2363,126 @@ def test_an_unmountable_role_is_read_beside_the_legs_it_refuses_with(
         "- parked feature 001-a-thing (nope leg): the record names a leg this "
         "root does not mount here; `resume` maps each leg's role onto this "
         "checkout and refuses the WHOLE feature"), findings[1]
+
+
+def test_a_feature_the_record_lists_no_leg_for_is_a_finding_not_silence(
+        atlas, home):
+    """Note 1 of the independent review of #21, 2026-09-11, and the note-8
+    commit's own "recorded for later"; nobody has ruled on it. A feature the
+    record leaves with NO LEGS AT ALL — an empty `legs:`, `legs: []`, or leg
+    items with no `- role:` line — drew nothing whatever: no finding, exit 0,
+    the parked-record note counting the feature and saying no more. Every
+    reading this layer had was a LEG's, and there is no leg here to hang one
+    on.
+
+    `resume.sh` is not silent about it. `collect_legs` ends
+    `[ "${#LEG_ROLES[@]}" -gt 0 ]`, so it refuses the WHOLE feature in the
+    shape words: run on 2026-09-11 against a scratch single-shape estate —
+    bare remote in a temp dir, fake `$HOME`, the extension's own scripts —
+    each of the three spellings answered "Error: 001-a-thing was parked from
+    a single project and this checkout is single; that feature was NOT
+    recreated", "REFUSED: 001-a-thing — shape mismatch", exit 2. So the
+    finding is the FEATURE's, printed where the feature is, and the exit is
+    the one the roleless arm names: only a park that parks the feature
+    THROUGH writes legs for it — `workspace_write_manifest` writes `legs: []`
+    for a feature it has none for, and `emit_recorded_feature` carries a
+    REFUSED feature's legs forward out of the loaded manifest, which for this
+    one is none."""
+    checkout = workspace_config(home)
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    head = path.read_text(encoding="utf-8").split("        legs:\n")[0]
+    for legs in ("        legs:\n",
+                 "        legs: []\n",
+                 "        legs:\n"
+                 "          - remote: origin\n"
+                 f"            parked_commit: {FAKE_SHA}\n"
+                 "            wip: true\n"
+                 "            wip_depth: 1\n"
+                 "            pushed: true\n"):
+        path.write_text(head + legs, encoding="utf-8")
+        for extra in ([], ["--fetch"]):
+            result = run(STATUS, *extra, "Atlas", home=home)
+            assert result.returncode == 1, result.stdout + result.stderr
+            assert ("    - parked feature 001-a-thing: the record lists no leg "
+                    "for it; `resume` collects a feature's legs before it "
+                    "recreates anything and refuses the WHOLE feature where it "
+                    "finds none, reporting it as a shape mismatch, so nothing "
+                    "here brings it back — park that feature again from the "
+                    "workstation that has it (the record says Falcon), which "
+                    "writes the record afresh with the legs it parks"
+                    ) in result.stdout, legs
+            assert "( leg)" not in result.stdout, legs
+            assert "`resume Atlas`" not in result.stdout, legs
+
+
+def test_a_feature_with_no_legs_is_still_a_feature_the_record_knows(
+        atlas, home):
+    """The unrecorded-worktree sweep reads the branch, not the legs: a
+    feature the record lists no leg for is still IN the record, so a worktree
+    on that branch was parked and must not be called unparked. `record_rows`
+    emits the `branch` row wherever the branch line is, legs or none, and
+    `$recorded` is built from those rows — so this holds without a line of
+    its own, and the test is what keeps it holding.
+
+    The feature COUNT on the record's own row counts it too, for the same
+    reason: it is a feature of this estate that was parked, and a count that
+    skipped it would disagree with the finding printed under it."""
+    checkout = workspace_config(home)
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    head = path.read_text(encoding="utf-8").split("        legs:\n")[0]
+    path.write_text(head + "        legs:\n", encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "    parked record: 1 feature(s)" in result.stdout
+    assert ("    - parked feature 001-a-thing: the record lists no leg for it;"
+            ) in result.stdout
+    assert "never parked" not in result.stdout, (
+        "a worktree whose branch the record names is not unparked work")
+
+
+def test_a_feature_with_no_legs_is_read_in_the_record_s_own_order(
+        atlas, home):
+    """One feature with legs, one with none, one with legs: the feature-level
+    finding prints where its feature is, between the legs of the features
+    around it, because the judgement is made in a first pass and read back at
+    the `branch` row. A finding printed after everything else would read as a
+    fourth feature."""
+    checkout = workspace_config(home)
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    text = text.replace(
+        "            pushed: true\n",
+        "            pushed: true\n"
+        "      - branch: 002-b-thing\n"
+        "        legs:\n"
+        "      - branch: 003-c-thing\n"
+        "        legs:\n"
+        "          - role: repo\n"
+        "            remote: origin\n"
+        f"            parked_commit: {FAKE_SHA}\n"
+        "            wip: true\n"
+        "            wip_depth: 1\n"
+        "            pushed: false\n")
+    path.write_text(text, encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "    parked record: 3 feature(s)" in result.stdout
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 3, findings
+    assert findings[0].startswith(
+        "- parked feature 001-a-thing (repo leg): no worktree on that branch "
+        "here"), findings[0]
+    assert findings[1].startswith(
+        "- parked feature 002-b-thing: the record lists no leg for it;"
+        ), findings[1]
+    assert findings[2].startswith(
+        "- parked feature 003-c-thing (repo leg): parked with --no-push on "
+        "Falcon"), findings[2]
 
 
 def test_every_leg_of_a_record_is_read_once_and_in_order(atlas, home):
@@ -2562,7 +2686,14 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     same "shape mismatch" words. What it adds is the second exit, because
     the two are not one — a misspelt role is a record to write afresh, and a
     role that is really another shape's is a record that is right about a
-    checkout this is not."""
+    checkout this is not.
+
+    Note 1 of that review is the sixth, and the first that is not a leg's at
+    all: a FEATURE the record lists no leg for, refused whole by the same
+    `collect_legs` at its closing `[ "${#LEG_ROLES[@]}" -gt 0 ]`. It goes in
+    the same exception because the same re-park settles it, and in the list
+    as a feature rather than a leg, because that is where the finding
+    prints."""
     result = run(STATUS, "--help", home=home)
     assert result.returncode == 0, result.stdout + result.stderr
     helptext = " ".join(result.stdout.split())
@@ -2571,7 +2702,8 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
             "is missing or neither true nor false, which `resume` refuses the "
             "same way, or it names no parked commit for that leg, which "
             "`resume` refuses as moved-on, or it gives a leg no role at "
-            "all, or a role this checkout's shape does not mount, which "
+            "all, or a role this checkout's shape does not mount, or lists "
+            "no leg for it at all, which "
             "`resume` refuses the whole feature for: then only the "
             "workstation that parked it can park it again — and where the "
             "role is really another shape's, only a checkout of that shape; "
@@ -2586,8 +2718,8 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
             "names no parked commit to compare it with, a leg parked with "
             "`--no-push` or whose `pushed:` is missing or neither true nor "
             "false, a leg the record gives no role or a role this shape does "
-            "not mount, and a worktree the record does not know (never "
-            "parked)") in helptext
+            "not mount, a feature the record lists no leg for, and a worktree "
+            "the record does not know (never parked)") in helptext
 
 
 def test_a_missing_parked_commit_is_read_against_what_the_record_claims(
