@@ -2960,25 +2960,19 @@ def test_a_comment_after_a_project_yaml_leg_value_is_read_as_the_loader_reads_it
         "a comment after the role read as a role this root cannot mount")
 
 
-def test_a_full_line_comment_inside_a_project_yaml_leg_does_not_end_the_leg(
-        atlas, home):
-    """Copilot's second round on #22: `leg_repo_for_role` lost the `#` after a
-    value in the round before, and kept reading a full-line comment at COLUMN
-    0 as the indent-zero key that closes the leg — `[![:space:]]*) role=""`.
-    `load_repo_shape` takes `#` and everything after it off every line before
-    it reads one, so that line is nothing to the loader and the `path:` below
-    it still belongs to the leg above. Read as a leg-ender here, the `path:`
-    was dropped and the role fell to `_shape_record_leg`'s default — the
-    role's own name — so a `code` leg this manifest maps onto a directory of
-    another name was reported as a leg this root does not mount, where
-    `resume` maps it and brings the feature back. The same treatment #20 gave
-    the record's own parser (a2c8521's `record_rows`), for the same reason.
+def code_leg_onto_the_spec_checkout(atlas: Path, *, path_line: str,
+                                    above_path: str = "") -> None:
+    """The Atlas manifest made genuinely three-leg — `kind:`, `schema:`, a
+    `spec` leg and a `code` one — with the CODE leg declared onto the
+    directory this fixture already mounts, and `$above_path` put between that
+    leg's `- role:` line and its `$path_line`.
 
-    THE PATH HAS TO DIFFER FROM THE ROLE'S OWN NAME, which is why the `code`
-    leg is declared onto the checkout this fixture already mounts: where the
-    path IS the role's name the two readings agree, and there is nothing to
-    tell apart."""
-    checkout = workspace_config(home)
+    THE PATH HAS TO DIFFER FROM THE ROLE'S OWN NAME for a reading of it to be
+    provable at all: where the path IS `code`, `_shape_record_leg`'s default
+    and a `path:` this reader lost are the same answer, and there is nothing
+    to tell apart. `spec/` is the one checkout under this root, so the `code`
+    leg is declared onto it and the assertion is that the leg is read THERE.
+    """
     manifest = atlas / "project.yaml"
     manifest.write_text(
         manifest.read_text(encoding="utf-8")
@@ -2992,16 +2986,72 @@ def test_a_full_line_comment_inside_a_project_yaml_leg_does_not_end_the_leg(
                  "    path: spec\n"
                  "  - role: code\n"
                  f"    repository: {ORG}/Atlas-code\n"
-                 "# a note a hand left here, at column 0\n"
-                 "    path: spec\n"),
+                 + above_path + path_line),
         encoding="utf-8")
+
+
+#: What a `code` leg mounted at `spec/` reads as when this root is read the
+#: way `load_repo_shape` reads it: the leg is found, and the only thing out of
+#: step is that nothing here is on that branch.
+CODE_LEG_AT_SPEC = ("    - parked feature 001-a-thing (code leg): no worktree "
+                    "on that branch here; parked 2026-09-10T20:00:00Z on "
+                    "Falcon — `resume Atlas` brings it back")
+
+
+def test_a_comment_after_a_project_yaml_leg_path_is_cut_where_the_loader_cuts_it(
+        atlas, home):
+    """Copilot's THIRD round on #22: the `path:` half of the `#` cut #22 gave
+    `leg_repo_for_role` had no test of its own. The round before it proves the
+    `role:` half — `- role: spec # the spec leg`, declared with no `path:` —
+    and the round after it proves a FULL-LINE comment; neither reads a `path:`
+    whose own value carries a `#`, so the one line that does could have been
+    dropped and the suite stayed green.
+
+    `load_repo_shape` takes `#` and everything after it off every line before
+    it splits key from value, so `path: spec # the checkout it is mounted at`
+    is `spec` there and the leg is `CODE_LEG=<root>/spec`. Read whole here it
+    was `<root>/spec # the checkout it is mounted at`, a path with no `.git`
+    in it, and the leg drew "the record names a leg this root does not mount
+    here" for a leg `resume` mounts and resumes — and it did NOT fall back to
+    `_shape_record_leg`'s default either, because the `path:` arm answers
+    before the default does."""
+    checkout = workspace_config(home)
+    code_leg_onto_the_spec_checkout(
+        atlas, path_line="    path: spec # the checkout it is mounted at\n")
+    assert "path: spec # the checkout it is mounted at" in \
+        (atlas / "project.yaml").read_text(encoding="utf-8")
     record(checkout, "atlas", branch="001-a-thing", role="code",
            commit=FAKE_SHA, parked_on="Falcon")
     result = run(STATUS, "Atlas", home=home)
     assert result.returncode == 1, result.stdout + result.stderr
-    assert ("    - parked feature 001-a-thing (code leg): no worktree on that "
-            "branch here; parked 2026-09-10T20:00:00Z on Falcon — `resume "
-            "Atlas` brings it back") in result.stdout
+    assert CODE_LEG_AT_SPEC in result.stdout
+    assert "does not mount here" not in result.stdout, (
+        "the comment read as part of the path, so the leg was looked for at a "
+        "directory no manifest names")
+
+
+def test_a_full_line_comment_inside_a_project_yaml_leg_does_not_end_the_leg(
+        atlas, home):
+    """Copilot's second round on #22: `leg_repo_for_role` lost the `#` after a
+    value in the round before, and kept reading a full-line comment at COLUMN
+    0 as the indent-zero key that closes the leg — `[![:space:]]*) role=""`.
+    `load_repo_shape` takes `#` and everything after it off every line before
+    it reads one, so that line is nothing to the loader and the `path:` below
+    it still belongs to the leg above. Read as a leg-ender here, the `path:`
+    was dropped and the role fell to `_shape_record_leg`'s default — the
+    role's own name — so a `code` leg this manifest maps onto a directory of
+    another name was reported as a leg this root does not mount, where
+    `resume` maps it and brings the feature back. The same treatment #20 gave
+    the record's own parser (a2c8521's `record_rows`), for the same reason."""
+    checkout = workspace_config(home)
+    code_leg_onto_the_spec_checkout(
+        atlas, above_path="# a note a hand left here, at column 0\n",
+        path_line="    path: spec\n")
+    record(checkout, "atlas", branch="001-a-thing", role="code",
+           commit=FAKE_SHA, parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert CODE_LEG_AT_SPEC in result.stdout
     assert "does not mount here" not in result.stdout, (
         "a comment line read as the end of the leg, and the `path:` under it "
         "dropped")
