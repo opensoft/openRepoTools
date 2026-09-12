@@ -1901,7 +1901,7 @@ record_scalar() {
 }
 
 record_rows() {
-    local file="$1" sel="$2" line matched=0 value open=0
+    local file="$1" sel="$2" line matched=0 value open=0 named=0
     local parked_at="" parked_on="" lane="" active="" branch="" role="" commit="" pushed="" depth="" seen=""
     [ -f "$file" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
@@ -1927,7 +1927,7 @@ record_rows() {
             case "$line" in
             [![:space:]]* | '  '[![:space:]]* | '    '[![:space:]]* | \
                 '      '[![:space:]]* | '        '[![:space:]]* | '          - role:'*)
-                if [ "$matched" -eq 1 ] && [ -n "$branch" ] && [ "$open" -eq 1 ]; then
+                if [ "$matched" -eq 1 ] && [ "$named" -eq 1 ] && [ "$open" -eq 1 ]; then
                     printf 'leg\037%s\037%s\037%s\037%s\037%s\037%s\n' "$branch" "$role" "$commit" "$pushed" "$depth" "$seen"
                 fi
                 role=""; open=0
@@ -1938,7 +1938,7 @@ record_rows() {
         case "$line" in
         '  - id:'*)
             matched=0
-            parked_at=""; parked_on=""; lane=""; active=""; branch=""; role=""; open=0
+            parked_at=""; parked_on=""; lane=""; active=""; branch=""; role=""; open=0; named=0
             value="$(record_scalar "${line#*:}")"
             case "$sel" in
             id=*) [ "$(lower "$value")" != "$(lower "${sel#id=}")" ] || matched=1 ;;
@@ -1960,8 +1960,23 @@ record_rows() {
             fi
             ;;
         '      - branch:'*)
+            # A `- branch:` WITH NO VALUE IS STILL A FEATURE TO THE LOADER:
+            # `workspace_load_project` appends `MANIFEST_FEATURE_BRANCHES`
+            # at every `- branch:` line, empty or not, and `resume.sh` then
+            # reads a feature named nothing — refusing it at RR2 in RR2's
+            # words with the name blank ("Error:  is no longer on origin in
+            # the repo leg", exit 2, run against the extension 2026-09-12)
+            # where it has legs, and as a shape mismatch where it has none.
+            # Read whole this row was dropped and its legs with it, and the
+            # feature vanished from this layer (Copilot on #22). The row goes
+            # out with the empty name, and `$named` — not the name — is what
+            # lets a leg row out: a leg before any `- branch:` line at all
+            # still has no feature to belong to and is still dropped, while a
+            # `- branch:` seen before the block MATCHED (a `root:` selector
+            # below it) still lets its legs out, as the name always did.
             branch="$(record_scalar "${line#*:}")"
-            if [ "$matched" -eq 1 ] && [ -n "$branch" ]; then
+            named=1
+            if [ "$matched" -eq 1 ]; then
                 printf 'branch\037%s\n' "$branch"
             fi
             ;;
@@ -1982,7 +1997,7 @@ record_rows() {
     # rather than shared with the arm above, because the alternative is a
     # helper reading this function's locals by dynamic scope — five lines
     # twice against an idiom this file uses nowhere else.
-    if [ "$matched" -eq 1 ] && [ -n "$branch" ] && [ "$open" -eq 1 ]; then
+    if [ "$matched" -eq 1 ] && [ "$named" -eq 1 ] && [ "$open" -eq 1 ]; then
         printf 'leg\037%s\037%s\037%s\037%s\037%s\037%s\n' "$branch" "$role" "$commit" "$pushed" "$depth" "$seen"
     fi
     return 0
@@ -2017,12 +2032,20 @@ leg_repo_for_role() {
         while IFS= read -r line || [ -n "$line" ]; do
             line="${line%$'\r'}"
             case "$line" in
+            # `load_repo_shape` takes `#` and everything after it off EVERY
+            # line of `project.yaml` before it reads a key (`git-common.sh`,
+            # `content="${raw%%#*}"`), so `- role: spec # the spec leg` is
+            # `spec` there and its `path: spec # here` is `spec`. Read whole
+            # here, the role never matched and the leg fell to the arm that
+            # calls it a role this root cannot mount and `resume` refuses —
+            # a refusal `resume` would not make (Copilot on #22). The same
+            # cut `record_rows` makes, for the same reason.
             '  - role:'*)
-                role="$(trim_unquote "${line#*:}")"; path=""
+                role="$(record_scalar "${line#*:}")"; path=""
                 [ "$role" != "$want" ] || declared=1
                 ;;
             '    path:'*)
-                path="$(trim_unquote "${line#*:}")"
+                path="$(record_scalar "${line#*:}")"
                 if [ "$role" = "$want" ] && [ -n "$path" ] && [ "$path" != "." ]; then
                     printf '%s\n' "$root/$path"
                     return 0
@@ -2704,7 +2727,7 @@ unrecorded_worktrees() {
 read_record() {
     local root="$1" sel rows="" kind a b c d e f n_features=0
     local parked_at="" parked_on="" lane="" active="" recorded="$NL"
-    local seen_branches=0 legs where="" refused=""
+    local seen_branches=0 legs where="" refused="" unnamed=0
     local -a feature_legs=() feature_why=()
     shift
     [ -n "$RECORD_FILE" ] || return 0
@@ -2751,6 +2774,31 @@ read_record() {
             project) parked_at="$a"; parked_on="$b"; lane="$c"; active="$d" ;;
             branch)
                 seen_branches=$((seen_branches + 1))
+                # A FEATURE THE RECORD GIVES NO BRANCH NAME (Copilot on #22)
+                # is one to the loader and is refused by `resume` whatever its
+                # legs say — with legs, at RR2 with the name blank, "Error:  is
+                # no longer on origin in the repo leg", because no branch is
+                # named nothing on origin; with none, as a shape mismatch
+                # before any leg is read (both run against the extension
+                # 2026-09-12). It is counted as the loader counts it, its
+                # name is not added to the recorded set (an empty name would
+                # match every sweep), and its legs are not read one by one:
+                # there is no branch to find a worktree for, and each would
+                # only print the refusal again with the name blank. One line,
+                # on the root's row, with RR2's own two exits.
+                if [ -z "$a" ]; then
+                    unnamed=1
+                    n_features=$((n_features + 1))
+                    where="the record does not say where"
+                    [ -z "$parked_on" ] || where="the record says $parked_on"
+                    if [ "${feature_legs[seen_branches - 1]:-0}" -eq 0 ]; then
+                        finding "parked feature with no branch name: a \`- branch:\` in the record has no value and lists no leg; \`resume\` reads it as a feature named nothing and refuses it whole as a shape mismatch before it reads a leg, so nothing here brings it back — if that feature landed, remove its \`- branch:\` block from ${RECORD_FILE##*/}; if it was parked, park it again from the workstation that has it ($where), which writes the branch it parks"
+                    else
+                        finding "parked feature with no branch name: a \`- branch:\` in the record has no value; \`resume\` reads it as a feature named nothing and refuses it as a branch origin has not got (\"is no longer on origin\", the name blank), so nothing here brings it back — if that feature landed, remove its \`- branch:\` block from ${RECORD_FILE##*/}; if it was parked, park it again from the workstation that has it ($where), which writes the branch it parks"
+                    fi
+                    continue
+                fi
+                unnamed=0
                 case "$recorded" in
                 *"$NL$a$NL"*) ;;
                 *) recorded="$recorded$a$NL"; n_features=$((n_features + 1)) ;;
@@ -2771,6 +2819,9 @@ read_record() {
                 fi
                 ;;
             leg)
+                # The legs of a feature with no branch name were answered on
+                # the feature's own line, above.
+                [ "$unnamed" -eq 0 ] || continue
                 # THE SAME GUARD THE FIRST PASS MAKES, for the same mangled
                 # record: a leg row before any branch row has no feature to
                 # take a verdict from, and `${feature_why[-1]}` is "bad array

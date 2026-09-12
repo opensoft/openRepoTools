@@ -1699,10 +1699,12 @@ def test_a_record_with_no_pushed_key_at_all_is_a_finding_not_silence(
     the parked-record note and no finding — because `record_rows` emitted a
     leg's row AT its `pushed:` line and a leg without one had no row at all.
 
-    Meanwhile `workspace-common.sh`'s `workspace_load_project` seeds every
-    leg's `MANIFEST_LEG_PUSHED` with `false` at the `- role:` line and
-    overwrites it only where a `pushed:` follows, so `resume.sh`'s RR6,
-    `[ "$pushed" != true ]`, REFUSES that leg in the `--no-push` words — run
+    Meanwhile `workspace-common.sh`'s `workspace_load_project` — before
+    workBenches #60 (ec2b450) — seeded every leg's `MANIFEST_LEG_PUSHED` with
+    `false` at the `- role:` line and overwrote it only where a `pushed:`
+    followed (since #60 it seeds nothing and refuses a missing key for being
+    missing; the refusal and the exit are the same), so `resume.sh`'s RR6,
+    `[ "$pushed" != true ]`, REFUSED that leg in the `--no-push` words — run
     against such a record on 2026-09-11 the extension answered "Error:
     001-a-thing (repo leg) was parked with --no-push; that feature was NOT
     recreated", exit 2. `status` was silent about a record `resume` will not
@@ -2906,6 +2908,97 @@ def test_a_comment_after_any_records_value_is_read_as_the_loader_reads_it(
         assert "does not mount here" not in result.stdout, spelling
 
 
+def test_a_comment_after_a_project_yaml_leg_value_is_read_as_the_loader_reads_it(
+        atlas, home):
+    """Copilot on #22: `leg_repo_for_role` read `project.yaml`'s `role:` and
+    `path:` with `trim_unquote` alone, while `load_repo_shape` takes `#` and
+    everything after it off every line before it reads a key. So `- role:
+    spec # the spec leg`, declared with no `path:` and not checked out here,
+    never matched the role this reader wanted, and the leg fell to the arm
+    that calls it a role this root cannot mount and `resume` refuses whole —
+    where `resume` maps `spec` fine and refuses the whole ESTATE for the
+    missing checkout instead. The values lose their comments the way the
+    loader loses them, and the short line comes back."""
+    checkout = workspace_config(home)
+    manifest = atlas / "project.yaml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8")
+        .replace("kind: project-manifest\n",
+                 "kind: project-manifest\nschema: project-repo-schema\n")
+        .replace("  - role: spec\n"
+                 f"    repository: {ORG}/Atlas-spec\n"
+                 "    path: spec\n",
+                 "  - role: spec # the spec leg\n"
+                 f"    repository: {ORG}/Atlas-spec\n"
+                 "  - role: code # the code leg\n"
+                 f"    repository: {ORG}/Atlas-code\n"),
+        encoding="utf-8")
+    assert "role: spec # the spec leg" in manifest.read_text(encoding="utf-8")
+    rmtree(atlas / "spec")
+    record(checkout, "atlas", branch="001-a-thing", role="spec",
+           commit=FAKE_SHA, parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 1, findings
+    assert findings[0].startswith(
+        "- parked feature 001-a-thing (spec leg): the record names a leg this "
+        "root does not mount here"), findings
+    assert "refuses the WHOLE feature" not in result.stdout, (
+        "a comment after the role read as a role this root cannot mount")
+
+
+def test_a_feature_the_record_gives_no_branch_name_is_a_finding_not_silence(
+        atlas, home):
+    """Copilot on #22: `record_rows` dropped a `- branch:` whose value is
+    empty, and its legs with it, so the feature vanished from this layer —
+    while `workspace_load_project` makes a feature of every `- branch:` line
+    and `resume.sh` refuses the one named nothing: with legs, at RR2 with the
+    name blank ("Error:  is no longer on origin in the repo leg", exit 2);
+    with none, as a shape mismatch. Both run against the extension on
+    2026-09-12. One line on the root's row, RR2's two exits, and no per-leg
+    line for a feature whose legs have no branch to be found by."""
+    checkout = workspace_config(home)
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    assert text.count("      - branch: 001-a-thing\n") == 1
+    for spelling in ("      - branch:\n", "      - branch: # a note\n"):
+        path.write_text(text.replace("      - branch: 001-a-thing\n", spelling),
+                        encoding="utf-8")
+        result = run(STATUS, "Atlas", home=home)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert ("    - parked feature with no branch name: a `- branch:` in the "
+                "record has no value; `resume` reads it as a feature named "
+                "nothing and refuses it as a branch origin has not got (\"is no "
+                "longer on origin\", the name blank), so nothing here brings it "
+                "back — if that feature landed, remove its `- branch:` block "
+                "from atlas.yaml; if it was parked, park it again from the "
+                "workstation that has it (the record says Falcon), which writes "
+                "the branch it parks") in result.stdout, spelling
+        assert "(repo leg)" not in result.stdout, spelling
+        assert "`resume Atlas`" not in result.stdout, spelling
+        assert "parked record: 1 feature(s)" in result.stdout, spelling
+
+    # And with no legs under it, the refusal `resume` makes is the shape one.
+    legless = text.replace("      - branch: 001-a-thing\n", "      - branch:\n")
+    legless = legless[:legless.index("        legs:\n") + len("        legs:\n")]
+    path.write_text(legless, encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature with no branch name: a `- branch:` in the "
+            "record has no value and lists no leg; `resume` reads it as a "
+            "feature named nothing and refuses it whole as a shape mismatch "
+            "before it reads a leg, so nothing here brings it back — if that "
+            "feature landed, remove its `- branch:` block from atlas.yaml; if "
+            "it was parked, park it again from the workstation that has it "
+            "(the record says Falcon), which writes the branch it parks"
+            ) in result.stdout
+    assert "lists no leg for it" not in result.stdout, (
+        "the named-feature no-legs line, for a feature with no name")
+
+
 def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     """`status --help` is the other place this rule is stated, and a help
     text that sends somebody to `resume` for a record `resume` refuses is the
@@ -2918,7 +3011,7 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     refuses in exactly the same breath. The independent review of #19 that
     day added the third, and it is the same clause rather than a sentence of
     its own: a `pushed:` that is MISSING is refused by that same test — the
-    extension's loader seeds an absent one with `false` — and settled by the
+    extension's loader, before workBenches #60, seeded an absent one with `false`, and since #60 refuses it for being absent — and settled by the
     same re-park, so splitting it out would be two sentences saying one
     thing.
 
