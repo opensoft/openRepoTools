@@ -594,9 +594,22 @@ def test_agents_md_is_short_enough_to_be_read():
     elsewhere since this clone last fetched, which `resume` fetches and
     brings back, so the finding still names `resume` and the flag is what
     settles the two apart.
+
+    159 -> 162 on 2026-09-12, for the follow-up's own note on A ROLE THIS
+    CHECKOUT'S SHAPE HAS NO PLACE FOR, which the rule had as "a ROLE THIS
+    SHAPE DOES NOT MOUNT". Mounting is not the test `resume` makes:
+    `collect_legs` maps `spec` and `code` only onto a three-leg checkout and
+    `repo` only onto a single one, so a role this root mounts perfectly well
+    — `assembly`, which the three-leg shape HAS, or the other shape's role in
+    a root that happens to have the directory — is refused with the rest. The
+    three lines buy the widened rule and A THIRD EXIT: an assistant told
+    "re-park, or a checkout of that shape" has nowhere to send a record whose
+    role belongs to NEITHER shape, and would send somebody round the re-park
+    loop for ever, which is the loop the entry above this one bought its two
+    lines to stop.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 159, f"AGENTS.md is {len(lines)} lines; the cap is 159"
+    assert len(lines) <= 162, f"AGENTS.md is {len(lines)} lines; the cap is 162"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -750,9 +763,17 @@ def test_readme_is_short_enough_to_be_read():
     The `--fetch` clause is in the exception for the reason the AGENTS.md
     entry gives: without it the two readings of a missing ref are not one
     the command may choose between.
+
+    255 -> 256 on 2026-09-12, for the same widening: "a role this shape does
+    not mount" becomes "a role this shape has no place for", with what that
+    covers and the third exit, in the exception and in the finding list. One
+    line, because the paragraph repacked as it took the words — and it is a
+    line about the RULE and not about the wording: a reader who takes
+    "mount" literally reads `assembly`, which this repository's own fixtures
+    mount at `.`, as a role that is fine.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 255, f"README.md is {len(lines)} lines; the cap is 255"
+    assert len(lines) <= 256, f"README.md is {len(lines)} lines; the cap is 256"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

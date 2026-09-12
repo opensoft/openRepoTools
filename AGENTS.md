@@ -103,10 +103,13 @@ sequence, and relay their per-repository lines rather than summarising them.
    which `resume` refuses as GONE FROM ORIGIN: delete the record's entry
    where the feature landed, or push the branch again from the workstation
    that parked it, never a re-park, or
-   unless a leg of it has NO ROLE, or a ROLE THIS SHAPE DOES NOT MOUNT, or
-   NO LEG AT ALL, which `resume` refuses the whole feature for — that
-   re-park settles a misspelling, another shape's role wants a checkout of
-   that shape — or unless a STALE WORKTREE REGISTRATION is named, which is
+   unless a leg of it has NO ROLE, or a ROLE THIS SHAPE HAS NO PLACE FOR —
+   one it does not mount, or one `resume` maps only in the other shape, or
+   in neither, as it maps `assembly` — or NO LEG AT ALL, which `resume`
+   refuses the whole feature for: that re-park settles a misspelling,
+   another shape's role wants a checkout of that shape, and a role of
+   NEITHER shape is a record no checkout resumes. Or unless a STALE
+   WORKTREE REGISTRATION is named, which is
    `git worktree prune`'s to clear before `resume` can do anything — a
    LOCKED one `git worktree unlock <path>` first, because prune SKIPS it,
    and a DIRECTORY the prune leaves behind yours to MOVE ASIDE rather than
