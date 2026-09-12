@@ -1538,6 +1538,26 @@ def feature_worktree(repo: Path, branch: str, where: Path, *, push: bool = True)
 RECORD_NOTE_NONE = "parked record: none for 'atlas' under"
 
 
+def origin_has_branch(repo: Path, branch: str, at: str = "main") -> None:
+    """The branch ON ORIGIN, with a remote-tracking ref for it here and no
+    worktree and no local branch: what a `park` on another workstation leaves
+    behind for this one, and what `resume.sh`'s RR2 looks for before it
+    recreates anything. Every record whose feature is meant to be RESUMABLE
+    here needs it — since the reading below, a leg whose repository has no
+    `origin/<branch>` is a leg `resume` may refuse instead."""
+    git("push", "-q", "origin", f"{at}:refs/heads/{branch}", cwd=repo)
+    git("fetch", "-q", "origin", cwd=repo)
+
+
+def drop_from_origin(repo: Path, branch: str) -> None:
+    """The branch deleted where origin keeps it — a feature that landed, or a
+    branch deleted by mistake — and pruned here, which is the state `resume`
+    refuses at RR2."""
+    git("push", "-q", "origin", "--delete", branch, cwd=repo)
+    git("fetch", "-q", "--prune", "origin", cwd=repo)
+
+
+
 def test_no_workspace_config_is_a_note_not_a_finding(atlas, home):
     result = run(STATUS, "Atlas", home=home)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -2135,6 +2155,216 @@ def test_a_record_that_names_no_parked_commit_still_reads_the_worktree_here(
             assert guess not in result.stdout, result.stdout
 
 
+def test_a_branch_this_clone_has_no_origin_ref_for_is_named_beside_resume(
+        atlas, home):
+    """The independent review of #21, 2026-09-11, recorded there as out of
+    scope: "if origin has lost the branch, `resume.sh` refuses first at RR2 —
+    'Error: `<branch>` is no longer on origin in the `<role>` leg' — with a
+    different remedy paragraph; `check_parked_leg` never reads
+    `origin/<branch>` for this leg, so it cannot tell."
+
+    IT STILL CANNOT TELL WITHOUT A FETCH, and that is the whole of what this
+    line says. RR2's test is a REF in the leg's repository — it fetches
+    `+refs/heads/<branch>:refs/remotes/origin/<branch>` first and then reads
+    it — so the question here is the local layer's own `has_ref`, AS OF THE
+    LAST FETCH, and a missing ref reads two ways: a branch origin has lost,
+    or a branch pushed on another workstation since this clone last fetched,
+    which is the ORDINARY state of a feature parked elsewhere and one
+    `resume` fetches and brings back. So the exit stays and the other reading
+    is named beside it, with the one flag that settles them.
+
+    With the branch really on origin the line is the one it always was, byte
+    for byte: that is the state the promise belongs to."""
+    checkout = workspace_config(home)
+    origin_has_branch(atlas, "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo",
+           commit=FAKE_SHA, parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert findings == [
+        "- parked feature 001-a-thing (repo leg): no worktree on that branch "
+        "here; parked 2026-09-10T20:00:00Z on Falcon — `resume Atlas` brings "
+        "it back"], findings
+
+    # And with no `origin/001-a-thing` here, the same line plus the reading
+    # it cannot rule out — RR2's own sentence, and the flag that settles it.
+    drop_from_origin(atlas, "001-a-thing")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert findings == [
+        "- parked feature 001-a-thing (repo leg): no worktree on that branch "
+        "here; parked 2026-09-10T20:00:00Z on Falcon — `resume Atlas` brings "
+        "it back, unless origin has lost that branch: there is no "
+        "`origin/001-a-thing` here as of the last fetch, and `resume` "
+        "refuses a leg whose branch is not on origin, taking the WHOLE "
+        "feature with it (\"001-a-thing is no longer on origin in the repo "
+        "leg\") — `status --fetch` settles which"], findings
+
+
+def test_under_fetch_a_branch_origin_has_lost_names_rr2_and_not_resume(
+        atlas, home):
+    """After a fetch that WORKED in that repository there is nothing left to
+    settle: origin has not got the branch, and `resume` refuses the WHOLE
+    feature at RR2 before it compares any commit. Verified against the
+    extension on 2026-09-12 — a scratch single-shape estate, the branch
+    deleted in the bare and pruned in the clone — which answered "Error:
+    001-a-thing is no longer on origin in the repo leg; that feature was NOT
+    recreated", then the manifest's recorded commit, "If the feature landed,
+    delete its entry: … remove the `- branch: 001-a-thing` block", "If it was
+    deleted by mistake, push it again from the workstation that parked it",
+    "REFUSED: 001-a-thing — gone from origin", exit 2.
+
+    BOTH ITS EXITS ARE THE LINE'S, because they are not one and neither is
+    the re-park every other exception in this layer ends in: a feature that
+    landed is a record entry to delete, and a branch deleted by mistake is a
+    branch to push again."""
+    checkout = workspace_config(home)
+    where = home / "Atlas-wt" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           parked_on="Falcon")
+    git("worktree", "remove", str(where), cwd=atlas)
+    git("branch", "-q", "-D", "001-a-thing", cwd=atlas)
+    git("push", "-q", "origin", "--delete", "001-a-thing", cwd=atlas)
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
+            "branch here, parked 2026-09-10T20:00:00Z on Falcon, and no "
+            "`origin/001-a-thing` here after this run's fetch: origin has not "
+            "got that branch, so `resume` refuses the WHOLE feature for it, "
+            "\"001-a-thing is no longer on origin in the repo leg\", and "
+            "nothing here brings it back — the exits are to delete its "
+            "`- branch: 001-a-thing` block from the record where the feature "
+            "landed, or to push the branch again from Falcon where it went "
+            "by mistake") in result.stdout
+    assert "`resume Atlas`" not in result.stdout
+    assert "status --fetch` settles which" not in result.stdout, (
+        "the fetch settled it; there is nothing left for the flag to answer")
+
+
+def test_a_gone_branch_names_the_stale_registration_that_blocks_it_too(
+        atlas, home):
+    """The prune is still the person's to run — the registration is a state
+    of this disk, and `resume` is blocked by it whatever origin has — so it
+    is named first and the refusal after it, exactly as the `--no-push` and
+    absent-commit arms name it."""
+    checkout = workspace_config(home)
+    where = home / "Atlas-wt" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           parked_on="Falcon")
+    rmtree(where)                        # and NO `git worktree prune`
+    git("push", "-q", "origin", "--delete", "001-a-thing", cwd=atlas)
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
+            f"branch here, but a stale worktree registration for it is still "
+            f"recorded at {where} — clear it with `git -C {atlas} worktree "
+            "prune`; and no `origin/001-a-thing` here after this run's fetch, "
+            "so origin has not got that branch and `resume` refuses the WHOLE "
+            "feature for it, \"001-a-thing is no longer on origin in the repo "
+            "leg\" — nothing here brings it back: the exits are to delete its "
+            "`- branch: 001-a-thing` block from the record where the feature "
+            "landed, or to push the branch again from Falcon where it went by "
+            "mistake") in result.stdout
+    assert "`resume Atlas`" not in result.stdout
+
+
+def test_under_fetch_a_gone_branch_outranks_the_absent_parked_commit(
+        atlas, home):
+    """RR2 IS BEFORE RR1, so a record that names no parked commit AND whose
+    branch origin has lost is refused for the branch, not for the commit.
+    Verified against the extension on 2026-09-12 on that same scratch estate:
+    with the parked commit left out and the branch deleted on origin, it
+    answered "Error: 001-a-thing is no longer on origin in the repo leg" —
+    "The manifest recorded it at , parked …" — and not "has moved since it
+    was parked", which is what it answers when origin still has the branch.
+
+    Without a fetch the two readings of the missing ref are not settled, so
+    the absent-commit arm keeps the line it had: that one is true whenever
+    origin does still have the branch, and this layer does not choose."""
+    checkout = workspace_config(home)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit="",
+           parked_on="Falcon")
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("no `origin/001-a-thing` here after this run's fetch: origin has "
+            "not got that branch, so `resume` refuses the WHOLE feature for "
+            "it") in result.stdout
+    assert "an absent one never matches" not in result.stdout, result.stdout
+
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): the record names no "
+            "parked commit for that leg, and no worktree on that branch here; "
+            "`resume` matches origin's tip against the parked commit before "
+            "it recreates anything, an absent one never matches") in \
+        result.stdout
+
+
+def test_the_gone_branch_reading_stops_where_resume_s_own_order_does(
+        atlas, home):
+    """`resume.sh` reads RR6, then RR4, RR3, RR2 — and `collect_legs` before
+    all of them — so this reading is the fourth thing to speak, not the
+    first, and three states of the same missing ref keep the lines they had.
+
+    A WORKTREE HERE is RR4's, not RR2's: with the worktree at the path it
+    computes, the extension answered "[specify] 001-a-thing (repo): worktree
+    already registered at …; left as it is" and exited 0 with the branch gone
+    from origin (verified 2026-09-12), so the tip arms go on saying what they
+    said and nothing here mentions origin. A FEATURE `collect_legs` REFUSES
+    WHOLE never reaches RR2 at all. And a leg RR6 refuses — `--no-push` — is
+    refused before origin is read."""
+    checkout = workspace_config(home)
+    # The reading itself, so this test bites: no worktree, branch gone.
+    record(checkout, "atlas", branch="001-a-thing", role="repo",
+           commit=FAKE_SHA, parked_on="Falcon")
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert "is no longer on origin in the repo leg" in result.stdout
+
+    # RR4: a worktree here, and the tip arms' line alone.
+    where = home / "Atlas-wt" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    (where / "more.md").write_text("more\n", encoding="utf-8")
+    commit_all(where, "more work")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           parked_on="Falcon")
+    git("push", "-q", "origin", "--delete", "001-a-thing", cwd=atlas)
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): moved on since it "
+            f"was parked, 1 commit(s) after {tip[:7]} — park again before "
+            "leaving") in result.stdout
+    assert "is no longer on origin" not in result.stdout, result.stdout
+    assert "`resume Atlas`" not in result.stdout
+
+    # `collect_legs`: a role this root does not mount, and no worktree.
+    git("worktree", "remove", "--force", str(where), cwd=atlas)
+    git("branch", "-q", "-D", "001-a-thing", cwd=atlas)
+    record(checkout, "atlas", branch="001-a-thing", role="nope",
+           commit=FAKE_SHA, parked_on="Falcon")
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (nope leg): the record names a "
+            "leg this root does not mount here;") in result.stdout
+    assert "is no longer on origin" not in result.stdout, result.stdout
+
+    # RR6: `--no-push`, refused before origin is read.
+    record(checkout, "atlas", branch="001-a-thing", role="repo",
+           commit=FAKE_SHA, parked_on="Falcon", pushed="false")
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): parked with "
+            "--no-push on Falcon and no worktree on that branch here; only "
+            "that workstation has the WIP commit, so nothing here brings it "
+            "back — park it again from there") in result.stdout
+    assert "is no longer on origin" not in result.stdout, result.stdout
+
+
 def test_a_leg_the_record_gives_no_role_is_a_finding_not_silence(atlas, home):
     """Note 8 of the independent review of #20, 2026-09-11, recorded there as
     out of scope: an empty `- role:` value. `record_rows` dropped such a leg —
@@ -2654,6 +2884,12 @@ def test_the_verdict_reaches_only_the_feature_it_belongs_to(atlas, home):
     text = path.read_text(encoding="utf-8")
     path.write_text(text + "      - branch: 002-b-thing\n        legs:\n"
                     + leg_block("repo", FAKE_SHA), encoding="utf-8")
+    # THE SECOND FEATURE'S BRANCH IS ON ORIGIN, which is what "the line it
+    # always had" now needs: since the gone-from-origin reading, a leg whose
+    # repository has no `origin/<branch>` carries that reading beside the
+    # `resume`, and the line under test here is the one with nothing wrong
+    # with it at all.
+    origin_has_branch(atlas, "002-b-thing")
     result = run(STATUS, "Atlas", home=home)
     assert result.returncode == 1, result.stdout + result.stderr
     findings = [line.strip() for line in result.stdout.splitlines()
@@ -2721,7 +2957,12 @@ def test_a_root_key_between_a_branch_and_its_legs_still_reads_that_feature(
     assert result.returncode == 1, result.stdout + result.stderr
     assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
             "branch here; parked 2026-09-10T20:00:00Z on Eagle — `resume "
-            "Atlas` brings it back") in result.stdout
+            "Atlas` brings it back, unless origin has lost that branch: there is no "
+            "`origin/001-a-thing` here as of the last fetch, and `resume` "
+            "refuses a leg whose branch is not on origin, taking the WHOLE "
+            "feature with it (\"001-a-thing is no longer on origin in the "
+            "repo leg\") — `status --fetch` settles which"
+            ) in result.stdout
     assert ("    parked record: 1 feature(s), parked 2026-09-10T20:00:00Z on "
             "Eagle (lane xfactory-2); active 001-a-thing") in result.stdout, (
         "the block matched on `root:` and the rows above it were held, not "
@@ -2730,6 +2971,10 @@ def test_a_root_key_between_a_branch_and_its_legs_still_reads_that_feature(
         "status: Atlas - 1 finding(s) in 2 repositories; nothing was changed."
         ), "the footer, which a report that died mid-run never reaches"
     assert "refuses the WHOLE feature" not in result.stdout
+    # (On this branch the leg line carries the RR2 clause as well: the
+    # branch was never pushed, so origin has not got it — the commit that
+    # reads a branch origin has lost. The verdict this test guards is the
+    # feature one, still absent.)
 
     # AND WITH A FEATURE AFTER IT, the verdict that is not this leg's: on bash
     # 5 `${feature_why[-1]}` was the OTHER feature's refusal, on the line of a
@@ -2745,7 +2990,11 @@ def test_a_root_key_between_a_branch_and_its_legs_still_reads_that_feature(
     assert findings[0] == (
         "- parked feature 001-a-thing (repo leg): no worktree on that branch "
         "here; parked 2026-09-10T20:00:00Z on Eagle — `resume Atlas` brings "
-        "it back"), findings[0]
+        "it back, unless origin has lost that branch: there is no "
+        "`origin/001-a-thing` here as of the last fetch, and `resume` "
+        "refuses a leg whose branch is not on origin, taking the WHOLE "
+        "feature with it (\"001-a-thing is no longer on origin in the "
+        "repo leg\") — `status --fetch` settles which"), findings[0]
     assert findings[1].startswith(
         "- parked feature 002-another (nope leg): the record names a leg this "
         "root does not mount here; `resume` maps each leg's role onto this "
@@ -3149,7 +3398,16 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     `collect_legs` at its closing `[ "${#LEG_ROLES[@]}" -gt 0 ]`. It goes in
     the same exception because the same re-park settles it, and in the list
     as a feature rather than a leg, because that is where the finding
-    prints."""
+    prints.
+
+    The seventh is that review's note on a BRANCH GONE FROM ORIGIN, and it is
+    the first exception whose exits are NOT the re-park: `resume` refuses
+    such a record at RR2, and what answers it is the record's own entry where
+    the feature landed or a push of the branch from the workstation that
+    parked it. It carries the flag with it, because the two readings of a
+    missing `origin/<branch>` are only settled by `--fetch` — without one the
+    line still names `resume`, which is what brings back the branch this
+    clone has merely not fetched yet."""
     result = run(STATUS, "--help", home=home)
     assert result.returncode == 0, result.stdout + result.stderr
     helptext = " ".join(result.stdout.split())
@@ -3163,7 +3421,14 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
             "`resume` refuses the whole feature for: then only the "
             "workstation that parked it can park it again — and where the "
             "role is really another shape's, only a checkout of that shape; "
-            "and where `git worktree list` still "
+            "and unless origin has lost the branch, which `resume` refuses "
+            "as gone from origin — under `--fetch`, which is the only way "
+            "that is settled, a missing `origin/<branch>` here is origin's "
+            "answer and the exits are the record's own entry where the "
+            "feature landed or a push of the branch from the workstation "
+            "that parked it, and without one it is named beside the `resume` "
+            "that still brings back a branch this clone has merely not "
+            "fetched; and where `git worktree list` still "
             "holds a registration that is no longer a worktree, that is "
             "cleared with `worktree prune`, after a `worktree unlock` if it "
             "is locked and with any leftover directory moved aside, before "
@@ -3171,7 +3436,8 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     # And the LIST of findings beside it names the new one, as the README's
     # does: the two texts say the same things or one of them is wrong.
     assert ("a worktree whose tip is not the parked commit or a record that "
-            "names no parked commit to compare it with, a leg parked with "
+            "names no parked commit to compare it with, a recorded branch "
+            "this repository has no `origin/<branch>` for, a leg parked with "
             "`--no-push` or whose `pushed:` is missing or neither true nor "
             "false, a leg the record gives no role or a role this shape does "
             "not mount, a feature the record lists no leg for, and a worktree "

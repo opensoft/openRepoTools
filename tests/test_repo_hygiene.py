@@ -578,9 +578,25 @@ def test_agents_md_is_short_enough_to_be_read():
     shape's is a record that is RIGHT, and the feature comes back in a
     checkout of that shape — an assistant told only "re-park" would send
     somebody round that loop for ever.
+
+    155 -> 159 on 2026-09-12, for the same review's note on a BRANCH GONE
+    FROM ORIGIN: `resume` refuses that record at RR2 — "<branch> is no longer
+    on origin in the <role> leg" — before it compares any commit, and rule 4
+    gave `resume <Name>` as the exit for it. The four lines are the two exits
+    RR2 actually gives and the flag that reaches them. NEITHER IS A RE-PARK,
+    which is why this is not one more clause on the exception above it: a
+    feature that LANDED wants its record entry deleted, and a branch deleted
+    by mistake wants pushing again from the workstation that parked it, and
+    an assistant that reaches for the re-park it has read four times by now
+    writes a record `resume` refuses again for the same reason. The
+    `--fetch` half is the other thing it would get wrong unaided: without
+    that flag a missing `origin/<branch>` here is USUALLY a branch parked
+    elsewhere since this clone last fetched, which `resume` fetches and
+    brings back, so the finding still names `resume` and the flag is what
+    settles the two apart.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 155, f"AGENTS.md is {len(lines)} lines; the cap is 155"
+    assert len(lines) <= 159, f"AGENTS.md is {len(lines)} lines; the cap is 159"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -723,9 +739,20 @@ def test_readme_is_short_enough_to_be_read():
     keeps the list honest — "feature", where every other entry beside it is a
     leg. AGENTS.md takes the same state in the words it already had and
     repacks, so its cap does not move.
+
+    251 -> 255 on 2026-09-12, for the same review's note on a BRANCH GONE
+    FROM ORIGIN. The same two places once more: three lines put it in the
+    exception, because the exits are the record's own entry and a push from
+    the workstation that parked it rather than the re-park every other
+    exception ends in, and one puts it in the finding list, because a
+    recorded branch this repository has no `origin/<branch>` for is a state
+    of the RECORD against origin that no other entry in that list covers.
+    The `--fetch` clause is in the exception for the reason the AGENTS.md
+    entry gives: without it the two readings of a missing ref are not one
+    the command may choose between.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 251, f"README.md is {len(lines)} lines; the cap is 251"
+    assert len(lines) <= 255, f"README.md is {len(lines)} lines; the cap is 255"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

@@ -61,13 +61,17 @@ recorded feature with no worktree here (`resume <Name>` brings it back; with
 `--no-push`, a `pushed:` that is missing or neither true nor false, no parked
 commit named for that leg, a leg given no role at all, a role this shape does
 not mount, or no leg at all, only the workstation that parked it can — and
-where that role is really another shape's, only a checkout of that shape; and
-where `git worktree list` still holds a registration that is no longer a
-worktree, a `worktree prune` — after a `worktree unlock` if it is locked, with
-any directory it leaves behind moved aside — has to clear it first), a
-worktree whose tip moved on from, fell behind (by more than the WIP commits
-`resume` itself un-committed), or diverged from the parked commit — or a
-record naming no parked commit to compare it with — a leg parked with
+where that role is really another shape's, only a checkout of that shape; with
+the branch gone from origin, which only `--fetch` settles, `resume` refuses it
+as gone from origin and the exits are the record's own entry where the feature
+landed or a push from the workstation that parked it; and where `git worktree
+list` still holds a registration that is no longer a worktree, a `worktree
+prune` — after a `worktree unlock` if it is locked, with any directory it
+leaves behind moved aside — has to clear it first), a worktree whose tip moved
+on from, fell behind (by more than the WIP commits `resume` itself
+un-committed), or diverged from the parked commit — or a record naming no
+parked commit to compare it with — a recorded branch this repository has no
+`origin/<branch>` for, a leg parked with
 `--no-push` or with a `pushed:` that is missing or unreadable, a leg the
 record gives no role or a role this shape does not mount, a feature the record
 lists no leg for, and a worktree the record does not know, which was never
