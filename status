@@ -926,15 +926,31 @@ read_leg() {
 # `refs/remotes/upstream/*`.
 FETCHED_OK=0
 UPSTREAM_FETCHED_OK=0
+#: WHAT THIS RUN'S `origin` FETCH IN THIS REPOSITORY DID, in one word, because
+#: `FETCHED_OK=0` IS FOUR STATES AND ONE OF THEM IS NOT A FETCH AT ALL
+#: (Copilot's second round on #23). Two of the three returns above the fetch
+#: are reached without running one — a repository git cannot read, and one
+#: with no `origin` remote — and both are STORED by the pre-pass like any
+#: other, so "did the pre-pass enter this repository" answered yes for a
+#: repository nothing was fetched in and the record layer's caveat said "the
+#: fetch this run made there failed" two lines under a row that said "no
+#: remote named origin, so nothing could be fetched". `ok`, `failed`,
+#: `no-remote`, `unreadable` — and `none` for a repository no fetch reached,
+#: which is what the store's absence means and what a run without `--fetch`
+#: is. The word is the ORIGIN remote's alone: `upstream` has its own flag and
+#: its own line, and no reading branches on why its fetch did not happen.
+FETCH_ORIGIN_STATE=none
 fetch_remote() {
     local repo="$1" branch="$2" remote="$3" before after err what="fetch"
     [ "$remote" = origin ] || what="fetch $remote"
     if [ "$remote" = origin ]; then FETCHED_OK=0; else UPSTREAM_FETCHED_OK=0; fi
     if ! g "$repo" rev-parse --git-dir >/dev/null 2>&1; then
+        [ "$remote" != origin ] || FETCH_ORIGIN_STATE=unreadable
         finding "fetch: not a readable git repository (a gitfile whose gitdir is gone?), so nothing could be fetched"
         return 0
     fi
     if ! g "$repo" remote get-url "$remote" >/dev/null 2>&1; then
+        [ "$remote" != origin ] || FETCH_ORIGIN_STATE=no-remote
         finding "fetch: no remote named $remote, so nothing could be fetched"
         return 0
     fi
@@ -943,7 +959,7 @@ fetch_remote() {
             --prune --recurse-submodules=no \
             --refmap="+refs/heads/*:refs/remotes/$remote/*" "$remote" \
             "+refs/heads/*:refs/remotes/$remote/*" 2>&1)"; then
-        if [ "$remote" = origin ]; then FETCHED_OK=1; else UPSTREAM_FETCHED_OK=1; fi
+        if [ "$remote" = origin ]; then FETCHED_OK=1; FETCH_ORIGIN_STATE=ok; else UPSTREAM_FETCHED_OK=1; fi
         after="$(g "$repo" rev-parse -q --verify "refs/remotes/$remote/$branch" 2>/dev/null || true)"
         if [ -n "$before" ] && [ -z "$after" ]; then
             fetch_say "    fetched $remote: $remote/$branch is GONE (was $(short "$before")): deleted or renamed on $remote"
@@ -959,6 +975,7 @@ fetch_remote() {
             fetch_say "    fetched $remote: nothing new on $remote/$branch"
         fi
     else
+        [ "$remote" != origin ] || FETCH_ORIGIN_STATE=failed
         err="${err%%$'\n'*}"
         finding "$what failed: ${err:-git said nothing}; what follows is as of the last fetch that worked"
     fi
@@ -966,15 +983,17 @@ fetch_remote() {
 
 #: WHAT THE PRE-PASS BELOW STORES, one entry per REPOSITORY of the estate in
 #: row order: the path it is keyed by, the lines its fetch printed, the
-#: findings its fetch made, and the two flags the reads branch on. Parallel
-#: arrays and a linear scan, because bash 3.2 has no associative array and an
-#: estate holds a handful of repositories. `FETCH_SAY` is where `fetch_remote`
-#: puts a line instead of printing it.
+#: findings its fetch made, the two flags the reads branch on, and WHAT THE
+#: ORIGIN FETCH DID in `fetch_remote`'s one word. Parallel arrays and a linear
+#: scan, because bash 3.2 has no associative array and an estate holds a
+#: handful of repositories. `FETCH_SAY` is where `fetch_remote` puts a line
+#: instead of printing it.
 FETCH_KEYS=()
 FETCH_SAID=()
 FETCH_FOUND=()
 FETCH_OK_AT=()
 FETCH_UP_OK_AT=()
+FETCH_STATE_AT=()
 FETCH_SAY=""
 fetch_say() { FETCH_SAY="$FETCH_SAY$1"$'\n'; }
 
@@ -1011,6 +1030,7 @@ fetch_estate_first() {
     FETCH_FOUND=()
     FETCH_OK_AT=()
     FETCH_UP_OK_AT=()
+    FETCH_STATE_AT=()
     while IFS=$'\t' read -r label branch path; do
         [ -n "${path:-}" ] || continue
         case "$label" in
@@ -1028,6 +1048,7 @@ fetch_estate_first() {
         done
         FETCH_SAY=""
         FINDINGS=()
+        FETCH_ORIGIN_STATE=none
         fetch_remote "$path" "$branch" origin
         if has_upstream "$path"; then
             fetch_remote "$path" "$branch" upstream
@@ -1037,6 +1058,7 @@ fetch_estate_first() {
         FETCH_FOUND+=("$(printf '%s\n' ${FINDINGS[@]+"${FINDINGS[@]}"})")
         FETCH_OK_AT+=("$FETCHED_OK")
         FETCH_UP_OK_AT+=("$UPSTREAM_FETCHED_OK")
+        FETCH_STATE_AT+=("$FETCH_ORIGIN_STATE")
     done <<<"$1"
     FINDINGS=()
 }
@@ -1087,22 +1109,42 @@ fetched_ok_at() {
     return 1
 }
 
-# Whether the pre-pass FETCHED IN `<repo>` AT ALL this run, which is what
-# tells a fetch that failed there from a repository no fetch reached: the
-# store holds one entry per repository of the estate as `estate_repos` lists
-# them, and the record layer asks about the path `project.yaml` gives a role,
-# which is usually one of them and need not be. A line that says a fetch
-# failed where none was made is as wrong as the one this distinction fixes
-# (the independent review of this branch, 2026-09-12, S1).
-fetch_tried_at() {
+# WHAT THIS RUN'S `origin` FETCH IN `<repo>` DID, in `fetch_remote`'s one
+# word, for the same reason `fetched_ok_at` exists: the store holds one entry
+# per repository of the estate as `estate_repos` lists them, and the record
+# layer asks about the path `project.yaml` gives a role, which is usually one
+# of them and need not be. `none` where the store has no entry — a repository
+# no fetch reached, and every repository of a run without `--fetch` — so a
+# caller that only wants "did a fetch happen here" tests for `ok` or `failed`.
+#
+# IT REPLACED A `fetch_tried_at` THAT ANSWERED THE PRESENCE OF THE ENTRY
+# (Copilot's second round on #23), verbatim: "`fetch_tried_at` is true for
+# every repository entered by the pre-pass, including a readable repository
+# where `fetch_remote` returned early because no `origin` remote exists. In
+# that case this message says "the fetch this run made there failed" even
+# though no fetch was attempted, which makes the new diagnostic inaccurate".
+# Run against e18ec53 on 2026-09-12, with `--fetch` and a `pushed: true`
+# record whose branch has no `origin/<branch>` here: a root with its `origin`
+# removed, a `spec` leg with its `origin` removed in the three-leg fixture,
+# and a leg whose gitdir was deleted all drew "the fetch this run made there
+# failed, so nothing has settled it" — in the last two, on the same report as
+# "fetch: no remote named origin, so nothing could be fetched" and "fetch: not
+# a readable git repository …, so nothing could be fetched". A line that says
+# a fetch failed where none was MADE is as wrong as the one S1 fixed, which
+# said a fetch was still to be made where one had just failed.
+fetch_state_at() {
     local path i=0
-    [ "$FETCH" -eq 1 ] || return 1
+    if [ "$FETCH" -ne 1 ]; then printf 'none\n'; return 0; fi
     path="$(physical_path "$1")"
     while [ "$i" -lt "${#FETCH_KEYS[@]}" ]; do
-        [ "${FETCH_KEYS[$i]}" != "$path" ] || return 0
+        if [ "${FETCH_KEYS[$i]}" = "$path" ]; then
+            printf '%s\n' "${FETCH_STATE_AT[$i]}"
+            return 0
+        fi
         i=$((i + 1))
     done
-    return 1
+    printf 'none\n'
+    return 0
 }
 
 # --- the fork against its upstream --------------------------------------------
@@ -3155,19 +3197,30 @@ check_parked_leg() {
         fi
         # AND A FETCH THAT FAILED HERE SETTLED NOTHING, so the caveat does not
         # send the person to the flag they have just run (the same review,
-        # S1). `fetched_ok_at` is false for three different runs — one without
-        # the flag, one whose fetch in THIS repository failed, and one that
-        # never fetched here at all — and only the first of them is answered
-        # by `status --fetch`. The second is answered by the row above, which
-        # has already printed why the fetch failed there and that what follows
-        # is as of the last fetch that worked; this clause says that the
-        # reading below is one of those things.
+        # S1). `fetched_ok_at` is false for FOUR different runs — one without
+        # the flag, one whose fetch in THIS repository failed, one whose fetch
+        # never ran there because the repository has no `origin` remote or
+        # could not be read at all, and one that never fetched there at all —
+        # and only the first and the last are answered by `status --fetch`.
+        # The middle two are answered by the row above, which has already
+        # printed why nothing was fetched there and that what follows is as of
+        # the last fetch that worked; this clause says that the reading below
+        # is one of those things, IN THE WORDS OF WHAT ACTUALLY HAPPENED
+        # (Copilot's second round on #23): the first version of it read the
+        # presence of the store's entry and called all three of them a fetch
+        # that failed, which for the two that never ran is a claim about this
+        # run that the row two lines above contradicts.
         if [ -z "$refused" ]; then
-            if fetch_tried_at "$repo"; then
-                settles="the fetch this run made there failed, so nothing has settled it"
-            else
-                settles="\`status --fetch\` settles which"
-            fi
+            case "$(fetch_state_at "$repo")" in
+            failed) settles="the fetch this run made there failed, so nothing has settled it" ;;
+            no-remote) settles="that repository has no \`origin\` remote for this run's fetch to have asked, so nothing has settled it" ;;
+            unreadable) settles="that repository could not be read this run, so no fetch was made there and nothing has settled it" ;;
+            # `ok` cannot reach here — `fetched_ok_at` answered it above and
+            # returned — so what is left is `none`: no fetch reached that
+            # repository this run, which is every repository of a run made
+            # without the flag and any the pre-pass did not list.
+            *) settles="\`status --fetch\` settles which" ;;
+            esac
             gone_caveat=", unless origin has lost that branch: there is no \`origin/$branch\` here as of the last fetch, and \`resume\` refuses a leg whose branch is not on origin, taking the WHOLE feature with it (\"$branch is no longer on origin in the $role leg\") — $settles"
         fi
     fi

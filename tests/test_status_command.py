@@ -2474,6 +2474,79 @@ def test_a_caveat_after_a_fetch_that_failed_here_does_not_name_the_flag(
     assert "the fetch this run made there failed" not in result.stdout
 
 
+CAVEAT_HEAD = ("no worktree on that branch here; parked 2026-09-10T20:00:00Z "
+               "on Falcon — `resume {name}` brings it back, unless origin has "
+               "lost that branch: there is no `origin/001-a-thing` here as of "
+               "the last fetch, and `resume` refuses a leg whose branch is not "
+               "on origin, taking the WHOLE feature with it (\"001-a-thing is "
+               "no longer on origin in the {role} leg\") — ")
+
+
+def test_a_caveat_where_no_fetch_could_be_made_says_so_and_not_that_one_failed(
+        atlas, trio, home):
+    """Copilot's second round on #23, verbatim: "`fetch_tried_at` is true for
+    every repository entered by the pre-pass, including a readable repository
+    where `fetch_remote` returned early because no `origin` remote exists. In
+    that case this message says "the fetch this run made there failed" even
+    though no fetch was attempted, which makes the new diagnostic inaccurate."
+
+    THE STORE HELD FOUR STATES IN ONE FLAG. `fetch_remote` returns before it
+    runs anything for a repository git cannot read and for one with no
+    `origin` remote, and the pre-pass stores an entry for both — so "is there
+    an entry" said yes about a repository nothing was fetched in, and this
+    caveat contradicted the row two lines above it on the same report, which
+    had just said "no remote named origin, so nothing could be fetched".
+    `FETCH_STATE_AT` carries `fetch_remote`'s own word now, and the clause is
+    the one that is true of this run: a fetch that failed, a repository with
+    no remote to ask, one that could not be read, or — the flag's own case —
+    no fetch there at all."""
+    checkout = workspace_config(home)
+    record(checkout, "atlas", branch="001-a-thing", role="repo",
+           commit=FAKE_SHA, parked_on="Falcon")
+    git("remote", "remove", "origin", cwd=atlas)
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - fetch: no remote named origin, so nothing could be fetched"
+            ) in result.stdout
+    assert ("    - parked feature 001-a-thing (repo leg): "
+            + CAVEAT_HEAD.format(name="Atlas", role="repo")
+            + "that repository has no `origin` remote for this run's fetch to "
+            "have asked, so nothing has settled it") in result.stdout
+    assert "the fetch this run made there failed" not in result.stdout, (
+        "a fetch that never ran was reported as one that failed")
+    assert "settles which" not in result.stdout, (
+        "the flag was run, and there is no remote for it to ask")
+
+    # A LEG, WHICH IS THE SHAPE THE COMMENT NAMES, in the checkout whose shape
+    # maps `spec`: the record layer asks the store about the path
+    # `project.yaml` gives the role, and the answer is that leg's own.
+    record(checkout, "trio", branch="001-a-thing", role="spec",
+           commit=FAKE_SHA, parked_on="Falcon", root="Trio")
+    git("remote", "remove", "origin", cwd=trio / "spec")
+    result = run(STATUS, "--fetch", "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (spec leg): "
+            + CAVEAT_HEAD.format(name="Trio", role="spec")
+            + "that repository has no `origin` remote for this run's fetch to "
+            "have asked, so nothing has settled it") in result.stdout
+    assert "the fetch this run made there failed" not in result.stdout
+
+    # AND A REPOSITORY GIT CANNOT READ AT ALL is the other early return, and
+    # not the same sentence: nothing is wrong with its remotes, and the row
+    # above it says what is.
+    git("remote", "add", "origin", str(trio / "spec"), cwd=trio / "spec")
+    rmtree(trio / ".git" / "modules" / "spec")
+    result = run(STATUS, "--fetch", "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - fetch: not a readable git repository (a gitfile whose "
+            "gitdir is gone?), so nothing could be fetched") in result.stdout
+    assert ("    - parked feature 001-a-thing (spec leg): "
+            + CAVEAT_HEAD.format(name="Trio", role="spec")
+            + "that repository could not be read this run, so no fetch was "
+            "made there and nothing has settled it") in result.stdout
+    assert "the fetch this run made there failed" not in result.stdout
+
+
 def test_a_leg_the_record_gives_no_role_is_a_finding_not_silence(atlas, home):
     """Note 8 of the independent review of #20, 2026-09-11, recorded there as
     out of scope: an empty `- role:` value. `record_rows` dropped such a leg —
