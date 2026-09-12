@@ -18,6 +18,17 @@
 #   Rule 9 + Amendment 5 — every register write is one commit, made by
 #     lanes-edit.sh, in the person's workspace repository.
 #   Rule 10 — every row names its workstation.
+#   Amendment 7 (DRAFT 2026-09-11) — after the row is written, the lane's own
+#     object log records that the lane is here. Every line has an object, and
+#     a lane-kind line's object is the lane itself:
+#       STARTED — lane X, session <uuid>@<ws>, <UTC>, lane:X → home owner/repo; estate <estate>
+#     `RESUMED` for a session that is being resumed rather than started. The
+#     home repo comes from `git remote get-url origin` of the lane's OWN
+#     directory: `<repo>-<n>` is a label, not a scope, and this line is the
+#     only thing that says where a lane actually lives. It is resolved through
+#     `lanes/repos.tsv` before it is written (R20), because a home is inherited
+#     by every `#n` that lane writes and a legacy org spelling would key those
+#     against a repository nothing else can reconcile them with.
 #   Amendment 6 (DRAFT 2026-09-11, awaiting Brett Heap's word) — A LANE IS
 #     RESUMED BY THE SESSION ID ITS ROW RECORDS, NEVER BY ITS TITLE. Titles are
 #     not unique: `claude --help` says `-r, --resume [value]` is "Resume a
@@ -55,11 +66,13 @@
 #   2. refuses unless it is already inside tmux: it renames the window it is
 #      run in and never creates a session;
 #   3. LIVENESS CHECK, before it takes the name. If the register already has a
-#      row for LANE it reads the session id(s) out of that row's session cell
-#      and looks for a LIVE record (pid alive, start time still matching, a
-#      status that is not `ended`) in every profile's `sessions/*.json`. A live
-#      holder in ANOTHER tmux window is a refusal. A row whose recorded
-#      sessions are all dead is a lane you are RESUMING, and that is allowed;
+#      row for LANE it reads the session id(s) out of THE PUBLISHED row's
+#      session cell — `lanes-edit.sh register-row`, which fetches and reads
+#      `origin/<branch>` — and looks for a LIVE record (pid alive, start time
+#      still matching, a status that is not `ended`) in every profile's
+#      `sessions/*.json`. A live holder in ANOTHER tmux window is a refusal. A
+#      row whose recorded sessions are all dead is a lane you are RESUMING, and
+#      that is allowed;
 #   4. `tmux rename-window <LANE>` — which also turns automatic-rename OFF for
 #      that window (tmux(1) rename-window), so the name survives the next
 #      command the window runs;
@@ -70,8 +83,9 @@
 #      RESUME BEATS NEW throughout — a rename into a title that is still held
 #      mints `<LANE> (2)` and the lane loses its address. Three cases, in order:
 #        a. `exec claude --resume <id>`, where <id> is THE LAST session id in
-#           the row's session cell and `<projects state>/<cwd key>/<id>.jsonl`
-#           exists. Exact: that conversation and no other.
+#           the PUBLISHED row's session cell and
+#           `<projects state>/<cwd key>/<id>.jsonl` exists. Exact: that
+#           conversation and no other.
 #        b. `exec claude --resume <LANE>` when no recorded id resolves but a
 #           transcript here carries the custom title <LANE> — or `<LANE> (N)`,
 #           which is the same lane: that suffix is what a rename into a title
@@ -84,13 +98,27 @@
 #           with no history here. The uuid is minted so the row can carry it,
 #           which is what makes (a) work on the next start.
 #
-# THE RESUME TARGET — WHY THE LAST ID
+# THE RESUME TARGET — WHY THE LAST ID, AND WHY THE PUBLISHED CELL
 #   The session cell is a HISTORY, written left to right: a lane's row reads
 #   `<first> → <after the first /clear> → <after the profile switch>`, oldest
 #   first, because each succeeding session appends itself. So the LAST session
 #   id in the cell is the lane's current one, and that is the only id this
 #   script will resume. Earlier ids are the lane's past and are never resumed
 #   (a stale lineage is precisely what went wrong on 2026-09-11).
+#
+#   AND THE CELL IS THE PUBLISHED ONE. `$LANES_FILE` is this checkout's working
+#   tree, and a `git fetch` does not move a working tree: a uuid a peer stamped
+#   from another clone and pushed is simply absent here until something pulls.
+#   Read from there, a row published as `<U1> → <U2>` still reads `<U1>` — so
+#   the operator lands in the lane's PREVIOUS conversation, the status appended
+#   to the row names the wrong id, and the RESUMED line goes into
+#   `lanes/log/<lane>.md` carrying a session uuid that is not the lane's
+#   current one, in a file nothing ever rewrites. Every other state read in
+#   this tooling goes through `origin/<branch>` after a fetch; this one does
+#   too, through the same `register-row` this script already asks before it
+#   adds a row. `live-holder`'s id set stays a UNION of both (R25) and is the
+#   one exception, for the opposite reason: liveness fails CLOSED, so an id
+#   only this checkout knows is one more reason to refuse a rename.
 #
 # KEEPING THE ROW CURRENT
 #   Resuming by a recorded id only works if the row is current, so this script
@@ -122,7 +150,9 @@
 #
 # EXIT
 #   0  done
-#   1  environment — not inside tmux, no tmux, no such directory, no register
+#   1  environment — not inside tmux, no tmux, no such directory, no register,
+#      or `lanes-edit.sh live-holder` failed (which is NOT the same as its
+#      answering 8, "no live session holds this lane")
 #   2  refusal — bad arguments, a duplicated row, or the lane is live in
 #      another window
 #
@@ -154,6 +184,10 @@ PROJECTS_ROOT="${PROJECTS_ROOT:-$HOME/projects}"
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 PROJECTS_STATE="${CLAUDE_PROJECTS_DIR:-$CLAUDE_HOME/projects}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+
+LS_TMP=""
+cleanup() { [ -n "${LS_TMP:-}" ] && rm -f -- "$LS_TMP"; return 0; }
+trap cleanup EXIT INT TERM
 
 note() { printf '%s: %s\n' "$prog" "$*" >&2; }
 step() { printf '%s: %s\n' "$prog" "$*" >&2; }
@@ -258,9 +292,67 @@ if [ "$row_count" -gt 1 ]; then
   die "the register has $row_count rows for lane $LANE, and lanes-edit.sh can edit neither. Merge them into one row by hand in $LANES_FILE (one line each), commit with 'LANES_LANE=$LANE lanes-edit.sh commit \"merged duplicate rows\"', then re-run" 2
 fi
 
+# AND EVERYTHING THIS SCRIPT DECIDES FROM THE ROW IS DECIDED AGAINST WHAT HAS
+# LANDED, not against this checkout. `$LANES_FILE` is the working tree, and a
+# `git fetch` does not move it: a row another workstation added and pushed, or a
+# uuid it stamped on an existing row, is simply absent here until something
+# pulls. Two decisions turn on that row and BOTH used to read the working tree.
+#   "IS THIS LANE NEW" — reaching `add-row` on that reading appends a SECOND row
+#     (`add-row` checks the working tree too, and `commit_push`'s rebase then
+#     brings the peer's row in underneath it), and two rows for one lane is a
+#     register no helper can edit at all, because `row_line` requires exactly one.
+#   "WHICH SESSION IS THIS LANE'S" — the resume target, the id in the status
+#     appended to the row, and the uuid stamped on the RESUMED / STARTED line
+#     (see THE RESUME TARGET above).
+# So: ask for the PUBLISHED row ONCE, here, for both. 0 and 8 are the answers;
+# anything else is the helper failing, and this script decides nothing about a
+# row on an answer it did not get. LANES_NO_FETCH=1 is honoured inside the
+# helper, for an offline start.
+pub_rc=0
+pub_row="$("$LANES_EDIT" register-row "$LANE" 2>/dev/null)" || pub_rc=$?
+if [ "$row_count" = 0 ]; then
+  case "$pub_rc" in
+    8) : ;;                        # no published row either: the lane really is new
+    0)
+      note "the register on origin/main ALREADY has a row for $LANE, and this checkout does not:"
+      printf '  %s\n' "$(printf '%s\n' "$pub_row" | head -n1 | cut -c1-200)" >&2
+      note "adding a row here would make two, and two rows for one lane is a register lanes-edit.sh cannot edit."
+      note "RECOVERY — bring this checkout up to date, then re-run this command:"
+      note "  git -C \"$(cd -- "$(dirname -- "$LANES_FILE")/.." && pwd)\" pull --rebase origin main"
+      die "refusing to add a second row for $LANE" 2 ;;
+    *)
+      note "the helper's own output is above."
+      die "$LANES_EDIT register-row $LANE failed (exit $pub_rc). That is NOT 'the register has no row for $LANE', and this script will not add a row on an answer it did not get — a duplicate row is a register no helper can edit. Fix the helper (or run it by hand: $LANES_EDIT register-row $LANE), then re-run." 1 ;;
+  esac
+else
+  case "$pub_rc" in
+    0) : ;;
+    8)
+      # A row HERE and none on `origin/main`: it is in a commit this checkout
+      # has not pushed, or on another branch. There is then no published cell,
+      # so there is no recorded session to resume — and this script does not
+      # fall back to the working tree, because falling back is the fault. The
+      # ids below are named as DIAGNOSTICS, never as a target: nothing outside
+      # this checkout can see them. `lane-end`'s refusal reads `origin/<branch>`
+      # for the same reason and cannot see an unpushed line either — what has
+      # landed is what other lanes can see.
+      note "this checkout has a row for $LANE and the register on origin/main has none — so there is no PUBLISHED session cell, and no recorded session to resume."
+      unpub_ids="$(printf '%s\n' "$row" | awk -F'|' '{print $3}' | grep -oiE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tr 'A-F' 'a-f' | tr '\n' ' ' || :)"
+      [ -n "$unpub_ids" ] && note "  the id(s) only this checkout's copy carries, which nothing else can see: ${unpub_ids% }"
+      note "  RECOVERY — push the register from here, then re-run: git -C \"$(cd -- "$(dirname -- "$LANES_FILE")/.." && pwd)\" push origin main" ;;
+    *)
+      note "the helper's own output is above."
+      die "$LANES_EDIT register-row $LANE failed (exit $pub_rc). That is NOT 'the register has no row for $LANE', and this script will not pick a resume target on an answer it did not get: resuming the working tree's id lands the operator in the lane's previous conversation and stamps that uuid on an append-only line. Fix the helper (or run it by hand: $LANES_EDIT register-row $LANE), then re-run." 1 ;;
+  esac
+fi
+
 # Every field of a `| … |` row by position: 1 is empty (before the leading
 # pipe), 2 the lane cell, 3 the session-id cell, NF-1 the state cell.
-cell() { printf '%s\n' "$row" | awk -F'|' -v i="$1" '{print $i}'; }
+# OF THE PUBLISHED ROW. `$row` above is this checkout's, and it is read for
+# exactly one thing: whether adding a row would make two. Every id this script
+# acts on comes from `$pub_row`, which is empty when the published register has
+# no row for the lane — the case the `8` branch above has already reported.
+cell() { printf '%s\n' "$pub_row" | awk -F'|' -v i="$1" '{print $i}'; }
 
 # Only the SESSION-ID CELL is read for ids. State cells quote other lanes'
 # session ids all the time ("RESUMED by <id>", "handed off to <id>"), and a
@@ -274,7 +366,7 @@ if [ "$row_count" = 1 ]; then
   session_ids_ordered="$(cell 3 | grep -oiE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tr 'A-F' 'a-f' || :)"
   [ -n "$session_ids_ordered" ] && session_ids="$(printf '%s\n' "$session_ids_ordered" | sort -u)"
   id_count=0; [ -n "$session_ids" ] && id_count="$(printf '%s\n' "$session_ids" | grep -c . || :)"
-  step "the register already has a row for $LANE; its session cell names $id_count session id(s)"
+  step "the register already has a row for $LANE; its session cell on origin/main names $id_count session id(s)"
   # A row may record only `session_01…` FOOTER ids. Those are not transcript
   # ids: a transcript is `<uuid>.jsonl`, so a footer id can neither be checked
   # for liveness nor resumed. Name the gap rather than behave as if the cell
@@ -289,64 +381,43 @@ else
   step "the register has no row for $LANE yet"
 fi
 
-session_files() {
-  find "$HOME/.claude-profiles/profiles" -path '*/sessions/*.json' -type f 2>/dev/null || :
-  find "$HOME/.claude/sessions" -maxdepth 1 -name '*.json' -type f 2>/dev/null || :
-}
+# LIVENESS IS ONE IMPLEMENTATION, and it lives in `lanes-edit.sh`, because
+# `who` asks exactly this question about exactly these rows and two copies
+# would drift. It reads the row's session cell itself and tries EVERY
+# transcript uuid recorded there, not merely the last one — a lane whose
+# earlier lineage is still running is still held.
+#
+# It also carries the `nameSource` fix: a session record's `name` is evidence
+# about some OTHER lane only when a person or a peer set it. `nameSource:
+# derived` is the harness naming a window after its working directory, and
+# treating that as a denial reported "no live session holds <lane>" for
+# sessions that plainly did (2026-09-11, the orchestrator's own window).
+# ONLY 0 AND 8 ARE ANSWERS: 0 is "this record holds the lane", 8 is "no live
+# record does". Any other exit is the helper FAILING, and this script must not
+# read a failure as "the name is free" — renaming a running session into a
+# title something else still holds is exactly what mints `<lane> (2)` and costs
+# the lane its address (AGENTS.md rule 7). The first version swallowed the
+# helper's stderr and treated every non-zero exit as "no holder", so a helper
+# that could not run at all produced a confident "no live session holds <lane>"
+# about a session that was live in another window.
+live_holder() { "$LANES_EDIT" live-holder "$LANE"; }
 
-jstr() { printf '%s' "$1" | grep -o "\"$2\":\"[^\"]*\"" | head -n1 | sed 's/^.*":"//; s/"$//'; }
-jnum() { printf '%s' "$1" | grep -o "\"$2\":[0-9][0-9]*" | head -n1 | sed 's/^.*://'; }
-
-# Alive, and still the SAME process: /proc/<pid>/stat field 22 is the start
-# time the record wrote down, so a recycled pid does not read as a live lane.
-# The comm field can hold spaces and parentheses, so fields are counted from
-# after the last ')' — field 22 overall is field 20 of what remains.
-pid_alive() {
-  local pid="$1" want="$2" statline rest
-  [ -n "$pid" ] || return 1
-  kill -0 "$pid" 2>/dev/null || return 1
-  [ -n "$want" ] || return 0
-  [ -r "/proc/$pid/stat" ] || return 0
-  statline="$(cat "/proc/$pid/stat" 2>/dev/null || :)"
-  rest="${statline##*) }"
-  # shellcheck disable=SC2086
-  set -- $rest
-  [ "$#" -ge 20 ] || return 0
-  [ "${20}" = "$want" ]
-}
-
-# Prints "<id>\t<tmux target>\t<name>\t<pid>" for the first LIVE session that
-# holds this lane, or nothing. A record whose session NAME is some other lane
-# is NOT a holder: a session that retired from a lane and was renamed is still
-# recorded in the old row (this register has such rows today), and refusing on
-# it would lock a free name forever. `<lane> (2)` counts as the lane — that
-# suffix is exactly what a collided rename mints.
-live_holder() {
-  local pats=() id f blob pid name status target base sid
-  for id in $session_ids; do pats+=(-e "\"sessionId\":\"$id\""); done
-  [ "${#pats[@]}" -gt 0 ] || return 1
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    blob="$(cat -- "$f" 2>/dev/null || :)"
-    sid="$(jstr "$blob" sessionId)"
-    status="$(jstr "$blob" status)"
-    case "$status" in ended|exited|dead|stopped) continue ;; esac
-    pid="$(jnum "$blob" pid)"
-    pid_alive "$pid" "$(jstr "$blob" procStart)" || continue
-    name="$(jstr "$blob" name)"
-    base="${name% (*)}"
-    if [ -n "$base" ] && [ "${base,,}" != "${LANE,,}" ]; then continue; fi
-    target="$(jstr "$blob" tmux)"
-    printf '%s\t%s\t%s\t%s\n' "$sid" "$target" "$name" "$pid"
-    return 0
-  done < <(session_files | tr '\n' '\0' | xargs -0 -r grep -l -F "${pats[@]}" 2>/dev/null || :)
-  return 1
-}
-
+# AND IT IS ASKED UNCONDITIONALLY. This used to run only when the row THIS
+# CHECKOUT has already named a session id, which is the wrong gate twice over:
+# the ids came from the working tree, which no fetch moves, so a row (or a newly
+# stamped uuid) that another workstation had already published was read as "no
+# ids, nothing to check"; and a lane with no row here at all skipped the check
+# entirely. Both skip exactly when the answer matters — the helper owns the row
+# lookup, fetches first, and unions the published ids with this checkout's (R25),
+# so asking it costs one fetch and can only ever ADD a reason to refuse.
 holder_here=0
-if [ -n "$session_ids" ]; then
-  if holder="$(live_holder)"; then
-    IFS=$'\t' read -r h_id h_target h_name h_pid <<<"$holder"
+LS_TMP="$(mktemp)"
+holder=""; lh_rc=0
+holder="$(live_holder 2>"$LS_TMP")" || lh_rc=$?
+[ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
+case "$lh_rc" in
+  0)
+    IFS=$'\037' read -r h_id h_target h_name h_pid <<<"$holder"
     if [ "${h_target%.*}" = "$this_window" ]; then
       holder_here=1
       step "this window's own session $h_id (pid $h_pid, name '${h_name:-none}') already holds $LANE — carrying on"
@@ -355,11 +426,17 @@ if [ -n "$session_ids" ]; then
       note "  $prog $repo $next_n"
       note "  tmux switch-client -t ${h_target%.*}     # or go to the window that holds it"
       exit 2
-    fi
-  else
-    step "no live session holds $LANE — this is a resume of a lane whose sessions have all ended"
-  fi
-fi
+    fi ;;
+  8)
+    if [ "$row_count" = 1 ]; then
+      step "no live session holds $LANE — this is a resume of a lane whose sessions have all ended"
+    else
+      step "no live session holds $LANE — the register records no session for it at all, here or on origin/main"
+    fi ;;
+  *)
+    note "the helper's own output is above."
+    die "$LANES_EDIT live-holder $LANE failed (exit $lh_rc). That is NOT 'no live session holds $LANE', and this script will not rename the window on an answer it did not get: a rename into a name something still holds is what mints '$LANE (2)'. Fix the helper (or run it by hand: $LANES_EDIT live-holder $LANE), then re-run." 1 ;;
+esac
 
 # ------------------------------------------------------- 4. name the window
 
@@ -429,11 +506,17 @@ new_uuid() {
 row_sid=""
 [ -n "$session_ids_ordered" ] && row_sid="$(printf '%s\n' "$session_ids_ordered" | tail -n1)"
 
+# Amendment 7's lane verb follows the LAUNCH decision, which is the honest
+# reading of it: a resume is a RESUMED and a new session is a STARTED.
+lane_verb=STARTED
+lane_sid=""
+
 new_sid=""
 if [ -n "$row_sid" ] && rec_file="$(recorded_transcript "$row_sid")"; then
   step "the row's current session is $row_sid and its transcript is here ($(basename -- "$rec_file")) — resuming it by id"
   (( holder_here )) && step "  (it is the session live in this window; --resume attaches to the same conversation)"
   cmd=("$CLAUDE_BIN" --resume "$row_sid")
+  lane_verb=RESUMED; lane_sid="$row_sid"
 elif titled="$(titled_transcript)"; then
   transcript="${titled%%$'\t'*}"; found_title="${titled#*$'\t'}"
   [ -n "$row_sid" ] && note "the row's last session id $row_sid has no transcript for this directory — falling back to the title"
@@ -442,13 +525,29 @@ elif titled="$(titled_transcript)"; then
   note "  '--resume $LANE' FILTERS THE PICKER, it does not resume exactly: pick the lane's own session, then put its id in the row's session cell"
   (( holder_here )) && step "  (that session is the one live in this window; --resume attaches to the same conversation)"
   cmd=("$CLAUDE_BIN" --resume "$LANE")
+  # The picker decides which transcript this is, so the id is NOT KNOWABLE
+  # here — and the line says so rather than naming the row's last id, which is
+  # an id whose transcript this directory does not even have (that is why this
+  # branch was reached). Writing it would put a session uuid on a RESUMED that
+  # belongs to a different conversation, in a file nothing rewrites. `unknown`
+  # is the grammar's own word for an id nobody has; the session stamps the row
+  # with its real one as its first act (Amendment 6(c)).
+  lane_verb=RESUMED; lane_sid=unknown
 else
   step "nothing here to resume for $LANE — a new session takes the name"
   cmd=("$CLAUDE_BIN" --name "$LANE")
+  # A NEW SESSION IS NEVER ATTRIBUTED TO THE OLD ONE. With minting turned off
+  # (LANE_START_SESSION_ID=0), or with no uuid source at all, there is no id to
+  # write — and an empty LANES_SESSION makes the helper fall back to the LAST id
+  # in the row's cell, which is the session that has ENDED. The row itself is
+  # left reading `pending — set by the session's first act` in that case, so the
+  # log said one thing and the row another about the same act.
+  lane_sid=unknown
   if [ "${LANE_START_SESSION_ID:-1}" != 0 ]; then
     if new_sid="$(new_uuid)"; then
       while recorded_transcript "$new_sid" >/dev/null 2>&1; do new_sid="$(new_uuid)"; done
       cmd+=(--session-id "$new_sid")
+      lane_sid="$new_sid"
       step "minted session id $new_sid — the row will carry it, so the next $prog resumes it by id"
     else
       new_sid=""
@@ -500,6 +599,13 @@ else
   # title. The append is `replace-in-row`, which refuses unless its anchor
   # occurs exactly once in the row — so a failure here is a refusal, never a
   # corruption, and it never fails the launch.
+  #
+  # THE ANCHOR IS THE PUBLISHED ID AND THE FILE IS THIS CHECKOUT'S, which is a
+  # refusal exactly when the two disagree — a stale copy of the row, the case
+  # the read above exists for. That is the right way round: appending after the
+  # id THIS copy ends on would write a cell that no longer matches the one that
+  # landed, and `commit_push`'s rebase would then conflict on the same line. The
+  # refusal prints the act instead, and the launch is unaffected.
   if [ -n "$new_sid" ]; then
     stamp_hint="LANES_LANE=$LANE $LANES_EDIT replace-in-row $LANE \"<the session cell's text>\" \"<that text> → harness \\\`$new_sid\\\`\""
     if [ -z "$row_sid" ]; then
@@ -510,9 +616,79 @@ else
     elif LANES_LANE="$LANE" "$LANES_EDIT" replace-in-row "$LANE" "$row_sid" "$row_sid → harness \`$new_sid\`" "session cell: $prog minted $new_sid for this window"; then
       step "session cell updated: $row_sid → $new_sid"
     else
-      note "the session cell was NOT stamped ($row_sid is not unique in the row). STAMP IT AS THIS SESSION'S FIRST ACT:"
+      note "the session cell was NOT stamped (this checkout's copy of the row does not carry $row_sid exactly once — it may be older than the published one). STAMP IT AS THIS SESSION'S FIRST ACT:"
       note "  $stamp_hint"
     fi
+  fi
+fi
+
+# ------------------------------------------- 5b. the lane's own object log
+#
+# Amendment 7. AFTER the row, because the row is what `who` reads the lane's
+# liveness and handoff path out of, and a log line that named a lane with no
+# row would point at nothing. It never fails the launch: a lane that cannot
+# write its log still starts, and says that it could not.
+
+# `owner/repo` out of the lane's own origin. Every URL form the estate uses:
+# `git@github.com:owner/repo.git`, `https://github.com/owner/repo`, `ssh://…`.
+# It CHECKS its own answer. A remote that is a local path, a mirror or any
+# non-GitHub URL does not reduce to `owner/repo`, and recording one as the
+# lane's home would be inherited by every `#n` that lane ever writes — and a
+# home containing a space writes an event line the log's own parser cannot
+# read back. `unknown` is the honest answer and the helper already refuses to
+# expand `#n` against it.
+origin_nwo() {
+  local url nwo
+  url="$(git -C "$1" remote get-url origin 2>/dev/null || :)"
+  [ -n "$url" ] || return 1
+  nwo="$(printf '%s\n' "$url" | sed -E 's#\.git$##; s#^git@[^:]+:##; s#^ssh://[^/]+/##; s#^https?://[^/]+/##')"
+  [[ "$nwo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+  printf '%s\n' "$nwo"
+}
+
+origin_url="$(git -C "$DIR" remote get-url origin 2>/dev/null || :)"
+home_nwo="$(origin_nwo "$DIR" || :)"
+if [ -z "$home_nwo" ]; then
+  home_nwo=unknown
+  if [ -z "$origin_url" ]; then
+    note "$DIR has no 'origin' remote, so the lane's home repo is recorded as 'unknown' — its cross-repo checks will not run until it is known"
+  else
+    note "$DIR's origin ('$origin_url') does not resolve to a GitHub owner/repo, so the lane's home repo is recorded as 'unknown' rather than as something every '#n' in this lane would inherit"
+  fi
+else
+  # THE HOME IS CANONICAL (Amendment 7, R20). A checkout keeps whatever spelling
+  # its `origin` had on the day it was cloned, and this estate has moved a
+  # repository between orgs while the register was live: a lane homed on
+  # `opensoft/codexFactory` wrote `#5` as an object key that could never collide
+  # with another lane's `codeXfactory/codexFactory#5`, so two lanes held one
+  # GitHub issue and nothing detected it. `lanes/repos.tsv` is what says the two
+  # spellings are one repository, and every OTHER spelling in the tooling goes
+  # through it — so this one does too, BEFORE the STARTED line is written, since
+  # a home is inherited by every `#n` that lane ever writes.
+  home_canon=""; hr_rc=0
+  home_canon="$("$LANES_EDIT" resolve-repo "$home_nwo" 2>/dev/null)" || hr_rc=$?
+  case "$hr_rc" in
+    0)
+      if [ -n "$home_canon" ] && [ "$home_canon" != "$home_nwo" ]; then
+        step "home $home_nwo resolves through lanes/repos.tsv to $home_canon — recording the canonical spelling"
+        home_nwo="$home_canon"
+      fi ;;
+    8)
+      note "lanes/repos.tsv has no row for '$home_nwo', so the lane's home is recorded exactly as its origin spells it. If this repository has ever moved org or is spelled more than one way in the register, add a row to lanes/repos.tsv so every lane keys the same object the same way." ;;
+    *)
+      note "$LANES_EDIT resolve-repo '$home_nwo' failed (exit $hr_rc) — recording the spelling derived from origin" ;;
+  esac
+fi
+lane_payload="home $home_nwo; estate $estate"
+
+if (( dry_run )); then
+  plan "lanes-edit.sh log $lane_verb lane:$LANE → \"$lane_payload\""
+else
+  if LANES_LANE="$LANE" LANES_SESSION="$lane_sid" "$LANES_EDIT" log "$lane_verb" "lane:$LANE" '→' "$lane_payload"; then
+    step "object log: $lane_verb lane:$LANE, home $home_nwo"
+  else
+    note "the lane's object log was NOT written ($lane_verb, home $home_nwo). Write it as this session's first act:"
+    note "  LANES_LANE=$LANE $LANES_EDIT log $lane_verb lane:$LANE '→' \"$lane_payload\""
   fi
 fi
 

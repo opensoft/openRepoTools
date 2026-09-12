@@ -1,0 +1,57 @@
+# lanes/repos.tsv — repo alias table (lane-collision-protocol Amendment 7)
+#
+# alias<TAB>owner/repo. Consulted by lanes-edit.sh when an object key omits
+# the owner, and when the spelling a lane typed is not the canonical GitHub
+# nameWithOwner. Lookup is CASE-INSENSITIVE, so one row covers `OpsxFactory`,
+# `opsXfactory` and `opsxfactory` — all three of which the register uses.
+#
+# An alias that is NOT here is REFUSED, with the hint to spell owner/repo. That
+# is deliberate: guessing is how `opensoft/codexFactory` became a fifth
+# spelling of one repository. Spellings the register uses but that could not be
+# resolved to a repository are therefore LEFT OUT rather than guessed at —
+# `oxF`, `xF`, `OMI`, `OWI`, `CloudPC`, `LedgerxFactory`, `MedxEHR`,
+# `MedxFactory`, `MedxGlass`, and the bare `InkRouter` and `IRSS`, which are
+# ambiguous between the `opensoft` org and the separate `InkRouter` org.
+#
+# Seeded 2026-09-11 from the register's own LANDING lines
+#   grep -oE 'into [A-Za-z0-9/._-]+ main' lanes/LANES.md | sort -u
+# and from the estate-wide spelling survey, each resolved against GitHub with
+# `gh repo view <r> --json nameWithOwner`. All four codexFactory spellings map
+# to `codeXfactory/codexFactory`: the repository moved org while the register
+# was live, and that is the redirect GitHub itself answers with today.
+#
+# Add a row when a new repo first appears in a LANDING line. Keep it sorted.
+
+AdxFactory	opensoft/AdxFactory
+CloudPC-Install	opensoft/CloudPC-Install
+Hermes-Install	opensoft/Hermes-Install
+IRRS	InkRouter/IRRS
+IRRS-code	InkRouter/IRRS-code
+IRRS-spec	InkRouter/IRRS-spec
+IRSS-code	InkRouter/IRSS-code
+IRSS-spec	InkRouter/IRSS-spec
+InkRouter/IRRS	InkRouter/IRRS
+InkRouter/IRRS-code	InkRouter/IRRS-code
+InkRouter/IRRS-spec	InkRouter/IRRS-spec
+InkRouter/IRSS	InkRouter/IRSS
+InkRouter/IRSS-code	InkRouter/IRSS-code
+InkRouter/IRSS-spec	InkRouter/IRSS-spec
+InkRouter/InkRouter	InkRouter/InkRouter
+Keycloak-Install	opensoft/Keycloak-Install
+OmniWorker-Install	opensoft/OmniWorker-Install
+Omnigent-Install	opensoft/Omnigent-Install
+OpenSpec	brettheap/OpenSpec
+Opensoft-Tenant	opensoft/Opensoft-Tenant
+OpsxFactory	opensoft/OpsxFactory
+brett-wip	opensoft/brett-wip
+codeXfactory	codeXfactory/codexFactory
+codeXfactory/codexFactory	codeXfactory/codexFactory
+new-workstation	brettheap/new-workstation
+openRepoProject	opensoft/openRepoProject
+openRepoShape	opensoft/openRepoShape
+openRepoTools	opensoft/openRepoTools
+opensoft/codexFactory	codeXfactory/codexFactory
+openxFactory	opensoft/openxFactory
+workBenches	opensoft/workBenches
+xFactory	opensoft/xFactory
+xFactory-Hermes-Install	opensoft/xFactory-Hermes-Install
