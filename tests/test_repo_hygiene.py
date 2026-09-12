@@ -568,9 +568,19 @@ def test_agents_md_is_short_enough_to_be_read():
     project's SHAPE that say nothing about the role. One line, in the same
     exception and with the same re-park, because "`resume <Name>` brings it
     back" is the sentence it falsifies too.
+
+    153 -> 155 on 2026-09-11, for the independent review of #21 and its note
+    on a ROLE THIS CHECKOUT'S SHAPE DOES NOT MOUNT: the same `collect_legs`
+    refusal of the WHOLE feature as a leg with no role, reached by a
+    different line of it, and the two lines the clause buys are the two
+    exits, which are not one. A misspelt role is a record to write afresh
+    from the workstation that has the feature; a role that is really another
+    shape's is a record that is RIGHT, and the feature comes back in a
+    checkout of that shape — an assistant told only "re-park" would send
+    somebody round that loop for ever.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 153, f"AGENTS.md is {len(lines)} lines; the cap is 153"
+    assert len(lines) <= 155, f"AGENTS.md is {len(lines)} lines; the cap is 155"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -700,9 +710,22 @@ def test_readme_is_short_enough_to_be_read():
     refuses the whole feature for such a leg and only a re-park writes the
     roles back, and the finding list, because this is a finding on the root's
     row and not on any leg's.
+
+    249 -> 250 on 2026-09-11, for the review of #21's note on a role this
+    shape does not mount: the same two places again — the exception, because
+    `resume` refuses the whole feature for it, and the finding list — and
+    one line, because the paragraph repacked as it took the words. The
+    second exit is in it for the reason the AGENTS.md entry gives.
+
+    250 -> 251 on 2026-09-12, for note 1 of that review: a FEATURE the record
+    lists no leg for, which `collect_legs` refuses whole at its closing
+    `[ "${#LEG_ROLES[@]}" -gt 0 ]`. One line, and it buys the one word that
+    keeps the list honest — "feature", where every other entry beside it is a
+    leg. AGENTS.md takes the same state in the words it already had and
+    repacks, so its cap does not move.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 249, f"README.md is {len(lines)} lines; the cap is 249"
+    assert len(lines) <= 251, f"README.md is {len(lines)} lines; the cap is 251"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
