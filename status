@@ -1615,7 +1615,7 @@ read_shape() {
 #    `workspace_write_manifest` writes for a feature it has no legs for, or
 #    leg items with no `- role:` line — which `collect_legs` refuses whole at
 #    its closing `[ "${#LEG_ROLES[@]}" -gt 0 ]`, in the same "shape mismatch"
-#    words again (note 1 of the independent review of #21, 2026-09-11, and
+#    words again (note 1 of the independent review of #21, 2026-09-11; this repository's #22, and
 #    the note-8 commit's own "recorded for later"). The first of these states
 #    that is not a LEG's: there is no leg to hang a reading on, so it is read
 #    per FEATURE, in `read_record`, where the comment above that function
