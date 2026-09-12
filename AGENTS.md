@@ -117,12 +117,19 @@ sequence, and relay their per-repository lines rather than summarising them.
    refuses a path that exists. Never `worktree add --force`, never a delete
    under `.git/worktrees/`; a worktree BEHIND a newer record — behind by
    more than the WIP commits `resume` itself un-committed — is what `resume`
-   refuses, and rule 1 stands, no reset to make it pass; a worktree the
-   record does not know wants `park`, not a hand-edit of the record. No
-   config, or no record for the estate, is a note, not a finding. `status`'s
-   bare form outside every estate reads them all WITHOUT asking, because a
-   read — fetched or not — moves nothing of yours; `status --all` from
-   anywhere says the same thing.
+   refuses, and rule 1 stands, no reset to make it pass. A WORKTREE ON A
+   RECORDED BRANCH AT ANOTHER PATH IS NOT THAT FEATURE'S WORKTREE: both
+   verbs compute `<worktree_root>/<branch>` — the leg's own mount under it
+   in a three-leg root — out of THIS checkout's `git-config.yml`, and read
+   no other, so `resume` refuses the WHOLE feature (its `git worktree add`
+   cannot take a branch another worktree holds) and `park` never parks it;
+   the exit is a `git worktree move` to that path, which is the PERSON'S to
+   run, and where the path found is the leg's own checkout there is nothing
+   to move at all. A worktree the record does not know wants `park`, not a
+   hand-edit of the record. No config, or no record for the estate, is a
+   note, not a finding. `status`'s bare form outside every estate reads them
+   all WITHOUT asking, because a read — fetched or not — moves nothing of
+   yours; `status --all` from anywhere says the same thing.
 
 ## The pinned standard at `upstream/openRepoShape`
 

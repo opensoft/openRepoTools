@@ -83,8 +83,10 @@
 # unless `--no-push` left the commit on the workstation that parked it), a
 # worktree whose branch tip is not the parked commit (moved on, or BEHIND a
 # newer record by more than the WIP commits `resume` itself un-committed, or
-# diverged), a leg parked with `--no-push`, and a worktree on disk the record
-# does not know (never parked). See "the parked record against disk", below.
+# diverged), a leg parked with `--no-push`, a worktree on a recorded branch
+# that is NOT at the path both verbs compute for it, and a worktree on disk
+# the record does not know (never parked). See "the parked record against
+# disk", below.
 # Nothing is left on the list.
 #
 # READ THE LINES, NOT THE EXIT CODE — the rule `park` and `resume` carry.
@@ -167,7 +169,13 @@ whose tip is not the parked commit or a record that names no parked commit to
 compare it with, a recorded branch this repository has no `origin/<branch>`
 for, a leg parked with `--no-push` or whose `pushed:` is missing or neither
 true nor false, a leg the record gives no role or a role this shape has no
-place for, a feature the record lists no leg for, and a worktree the record
+place for, a feature the record lists no leg for, a worktree on a recorded
+branch that is not at the path BOTH VERBS compute for that leg —
+<worktree_root>/<branch>, with the leg's own mount under it in a three-leg
+root, out of this checkout's git-config.yml and not out of the record — which
+is the only worktree `resume` reads as that feature's and the only one `park`
+carries, so the exit is a `git worktree move` of yours, and where that path
+is the leg's own checkout there is nothing to move, and a worktree the record
 does not know (never parked).
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
@@ -195,6 +203,11 @@ a clone you ALREADY HAVE, in any spelling git accepts.
 
   $PROJECTS_DIR       your projects directory (default: ~/projects, then
                       ~/Projects - people spell it both ways)
+  $SPECKIT_GIT_WORKTREE_ROOT
+                      the extension's own override of `worktree_root`, read
+                      here because `park` and `resume` read it first of all
+                      three: it moves the path a parked feature's worktree
+                      belongs at, and so what this reports about one
 
 EXIT 0: every repository read is in sync and clean, as of the last fetch.
 EXIT 1: at least one finding was printed. EXIT 2: refused; nothing was read.
@@ -2563,6 +2576,123 @@ leg_repo_for_role() {
     return 1
 }
 
+# THE MOUNT `collect_legs` HANGS THE LEG ON UNDER THE FEATURE DIRECTORY, which
+# is a different question from the one above and gives a different answer for
+# one manifest in every hundred. `collect_legs` builds `LEG_TREES` out of
+# `$SHAPE_SPEC_PATH` / `$SHAPE_CODE_PATH` — `_shape_record_leg`'s
+# `"${path:-spec}"` and `"${path:-code}"`, so the DECLARED path wherever the
+# manifest gives one and the role's own name where it does not — and out of
+# NOTHING for a `repo` leg, whose tree is `$WORKTREE_ROOT/$branch` with no
+# mount under it at all.
+#
+# SUBTRACTING THE LEG'S REPOSITORY FROM THE ROOT ANSWERS THE SAME STRING for
+# every path but one, and the exception is the one `path: "."` makes: that leg
+# IS the root repository at both ends, so there is nothing left to subtract,
+# while `collect_legs` still computes `$WORKTREE_ROOT/$branch/.` for it — a
+# string `leg_registered_at` matches nothing against, because git spells no
+# registered path with a trailing `/.`. Verified against the extension on
+# 2026-09-12 on a three-leg estate whose `code` leg carried `path: "."`, the
+# `spec` leg a real submodule: with nothing at that path `resume.sh` RESUMED
+# the feature, "code  worktrees/001-a-thing/.", exit 0; with the feature's own
+# worktree on the recorded branch AT `worktrees/001-a-thing` it REFUSED —
+# "Error: 'worktrees/001-a-thing/.' exists and is not a registered worktree of
+# the code leg", "REFUSED: 001-a-thing — an unrelated path is in the way",
+# exit 2 — so such a leg has no already-recreated state at all, and reading
+# the mount any other way would call that feature present and clean.
+leg_mount_for_role() {
+    local want="$1" i=0 path=""
+    case "$want" in
+    repo | assembly) return 0 ;;
+    esac
+    while [ "$i" -lt "${#ROOT_LEG_ROLES[@]}" ]; do
+        if [ "${ROOT_LEG_ROLES[$i]}" = "$want" ]; then
+            path="${ROOT_LEG_PATHS[$i]}"
+        fi
+        i=$((i + 1))
+    done
+    printf '%s\n' "${path:-$want}"
+}
+
+# `get_config_value`'s scalar, WHICH IS NOT `record_scalar`'s. The record is
+# read the way `workspace_load_project` reads it — a `#` cut wherever it
+# stands — and `.specify/extensions/git/git-config.yml` is read by a different
+# function with a different rule: `git-common.sh`'s `get_config_value` takes
+# everything after the first colon and runs `sed -E 's/[[:space:]]+#.*$//;
+# s/^[[:space:]]+//; s/[[:space:]]+$//; s/^['\''"]//; s/['\''"]$//'` over it.
+# So a `#` is a comment there only where whitespace comes in front of it —
+# `worktree_root: a#b` is the directory `a#b` to the other end — and ONE
+# leading and ONE trailing quote character come off whether or not they pair.
+# Reading it the other way would compute a path `resume` does not.
+config_scalar() {
+    local value="$1"
+    value="${value%$'\r'}"
+    case "$value" in
+    *[[:space:]]'#'*) value="${value%%[[:space:]]'#'*}" ;;
+    esac
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    case "$value" in '"'* | "'"*) value="${value#?}" ;; esac
+    case "$value" in *'"' | *"'") value="${value%?}" ;; esac
+    printf '%s' "$value"
+}
+
+# `os.path.abspath`'s normalisation, in bash: `.` dropped, `..` popped, empty
+# segments collapsed, and no `readlink` anywhere — which is the point, because
+# `resolve_path_from_repo_root` is `os.path.abspath(os.path.join(REPO_ROOT,
+# raw))` and that function resolves no symlink either. A path normalised any
+# harder than the other end normalises it would not compare equal to the one
+# the other end computes, which is the whole use this has.
+lexical_path() {
+    local rest="$1" part out=""
+    while [ -n "$rest" ]; do
+        part="${rest%%/*}"
+        if [ "$part" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
+        case "$part" in
+        '' | .) ;;
+        ..) out="${out%/*}" ;;
+        *) out="$out/$part" ;;
+        esac
+    done
+    printf '%s\n' "${out:-/}"
+}
+
+# WHERE THIS CHECKOUT'S FEATURE WORKTREES BELONG, computed the way `park.sh`
+# and `resume.sh` compute it and out of the same three sources in the same
+# order: `$SPECKIT_GIT_WORKTREE_ROOT` if it carries a value, else a
+# `worktree_root:` in `.specify/extensions/git/git-config.yml` — the LAST one
+# in the file, at any indent, which is `grep … | tail -n 1` — else the
+# default, and THE DEFAULT IS THE SHAPE'S: `worktrees` under the root for a
+# three-leg checkout, `../<root folder>-worktrees` BESIDE it for a single one.
+# An absolute value is taken as it stands, because `resolve_path_from_repo_root`
+# takes it as it stands.
+#
+# IT IS NOT READ OUT OF THE RECORD, although the record carries a
+# `worktree_root:` of its own: `resume.sh` loads that key into
+# `MANIFEST_WORKTREE_ROOT` and never reads it again, computing the path from
+# THIS checkout's config, and `park.sh` records the value it computed the same
+# way. So the record's copy says where the feature lived on the workstation
+# that parked it, and this says where it goes here; where they differ, this is
+# the one both verbs will use.
+record_worktree_root() {
+    local root="$1" file="$1/.specify/extensions/git/git-config.yml" raw line
+    raw="${SPECKIT_GIT_WORKTREE_ROOT:-}"
+    if [ -z "$raw" ] && [ -f "$file" ]; then
+        line="$(grep -E '^[[:space:]]*worktree_root:[[:space:]]*' "$file" 2>/dev/null | tail -n 1 || true)"
+        [ -z "$line" ] || raw="$(config_scalar "${line#*:}")"
+    fi
+    if [ -z "$raw" ]; then
+        if [ "$ROOT_SHAPE" = three-leg ]; then
+            raw="worktrees"
+        else
+            raw="../${root##*/}-worktrees"
+        fi
+    fi
+    case "$raw" in
+    /*) printf '%s\n' "$raw" ;;
+    *) lexical_path "$root/$raw" ;;
+    esac
+}
+
 # A REGISTERED PATH IS A WORKTREE ONLY WHILE ITS OWN `.git` IS THERE. A linked
 # worktree's is a FILE holding `gitdir: <repo>/.git/worktrees/<name>`; the main
 # worktree's is a DIRECTORY; a path with neither is a leftover directory git
@@ -2781,6 +2911,7 @@ check_parked_leg() {
     local refused="${10:-}" refused_kind="${11:-}"
     local repo tree="" ghost="" ghost_is="" clear="" out rc=0 tip n unread="" refuses="" where=""
     local gone_exits="" gone_caveat="" shape_line="" shape_says="" settles="" exits=""
+    local wtroot="" want="" mount="" move=""
     # A LEG THE RECORD GIVES NO ROLE IS ANSWERED BEFORE THE ROOT IS ASKED
     # ABOUT IT, and it is not the arm below (the independent review of #20,
     # 2026-09-11, note 8, recorded there as out of scope). `record_rows` used
@@ -3174,6 +3305,111 @@ check_parked_leg() {
     fi
     if [ -n "$unread" ]; then
         finding "parked feature $branch ($role leg): $unread, so whether its parked commit ever left ${parked_on:-that workstation} cannot be read; $refuses, so park it again from there to write the record afresh"
+    fi
+    # A WORKTREE ON THE BRANCH IS NOT THIS FEATURE'S WORKTREE UNLESS IT IS AT
+    # THE PATH `resume` COMPUTES (the independent reviewer's note of
+    # 2026-09-12: "`worktree_on_branch` matches any path while RR4 matches
+    # only the computed one"). `worktree_on_branch` above answers with the
+    # worktree checked out on that branch WHEREVER IT SITS, and every arm
+    # below reads "there is one" as "the feature is here". `resume.sh`'s RR4
+    # is `leg_registered_at "$leg_repo" "$tree"`, which walks
+    # `load_git_worktrees`' registered paths looking for ONE string:
+    # `collect_legs` computes `$WORKTREE_ROOT/$branch` for a `repo` leg and
+    # `$WORKTREE_ROOT/$branch/$SHAPE_SPEC_PATH` (or `…CODE…`) for a three-leg
+    # one, out of THIS checkout's `worktree_root` and never out of the
+    # record's. A worktree anywhere else is not that string, so RR4 misses,
+    # RR3 finds nothing in the way, and the run ends at a `git worktree add`
+    # that cannot take a branch another worktree already holds.
+    #
+    # VERIFIED AGAINST THE EXTENSION on 2026-09-12, on a scratch single-shape
+    # estate — a bare remote in a temp dir, a fake `$HOME`, the extension's own
+    # scripts — whose record carried `pushed: true` and a parked commit that
+    # was origin's tip, with the worktree on the branch at
+    # `$HOME/elsewhere/001-a-thing`: "Error: could not add the repo leg
+    # worktree 'worktrees/001-a-thing' for '001-a-thing'; that feature was NOT
+    # recreated. / fatal: '001-a-thing' is already used by worktree at
+    # '…/elsewhere/001-a-thing'", "REFUSED: 001-a-thing — git worktree add
+    # failed", exit 2. `status` at this branch's base answered "0 finding(s)
+    # in 1 repository", exit 0 — the feature read as CLEAN AND PRESENT where
+    # the command this layer exists to predict refuses it whole. With that one
+    # worktree instead at `worktrees/001-a-thing` the extension answered
+    # "[specify] 001-a-thing (repo): worktree already registered at
+    # worktrees/001-a-thing; left as it is", exit 0, and answered the same
+    # after a `git worktree move` between the two runs — which is where the
+    # exit below comes from, and it is a command that works. The `mkdir -p` in
+    # front of it is not decoration: `worktree move` creates no parent
+    # directory, and with the worktree root not yet on disk — which is the
+    # ordinary state where nothing has been resumed here — it answers "fatal:
+    # failed to move '…' to '…': No such file or directory", exit 128
+    # (git 2.43, the same day). `resume.sh` makes that directory itself,
+    # `mkdir -p "$WORKTREE_ROOT/$branch"`, before it adds anything.
+    #
+    # THE LEG ENDS HERE BECAUSE `park` IS BLIND TO IT TOO. Every arm below
+    # exits through "park again" — moved on, and a record naming no parked
+    # commit to read the tip against — and `park.sh` collects a single
+    # checkout's features through `verify_git_worktree_candidate "$REPO_ROOT"
+    # "$WORKTREE_ROOT" …` and a three-leg one's through `shape_load_features
+    # "$WORKTREE_ROOT"`, each of which drops every worktree outside that root.
+    # On the same estate `park --dry-run` answered "[specify] No open features
+    # under 'worktrees'; nothing to park.", and answered "PARKED: 001-a-thing"
+    # with the worktree at the computed path. So those arms would name an exit
+    # that cannot run, which is the one thing the rule at the top of this
+    # function forbids; the move is the exit that can, and after it the next
+    # run says whatever they would have said.
+    #
+    # NOT FOR A FEATURE `resume` REFUSES WHOLE, whose verdict is made before
+    # any RR runs and is the arm below's to say, and not for a role this
+    # checkout's shape has no place for, which never reaches RR4 either. AND
+    # NOT WITH A `worktree move` WHERE THE PATH FOUND IS THE LEG'S OWN
+    # CHECKOUT: git refuses that in its own words, "'…' is a main working
+    # tree" (git 2.43, verified the same day), so that spelling names no
+    # command — `resume` refuses a root on a feature branch in any case, which
+    # is the local layer's own line on the row this one is printed under.
+    #
+    # AND THE VERDICT THAT SILENCES IT IS NOT EVERY VERDICT, which is what
+    # this reading meets on `main`: the whole-feature verdict `read_record`
+    # hands down used to be `collect_legs`' or RR2's and is now RR6's and
+    # RR1's as well (Copilot's third round on #23). Those two are readings of
+    # the RECORD's OWN FIELDS — a leg never pushed, a leg with no parked
+    # commit — and neither of them reads a path or moves anything here, so
+    # the worktree is still sitting where neither verb looks after either is
+    # settled and this line is still the only one that says so. That is the
+    # paragraph above said against a verdict instead of against a field: RR6
+    # comes before the path and refuses those legs without reading it, and
+    # this line is printed AFTER the `pushed:` arms and NOT INSTEAD OF THEM.
+    # A `collect_legs` verdict and RR2's do silence it, and for reasons of
+    # their own: `collect_legs` throws the feature out before any leg is read,
+    # so there is no leg-level reading to make, and a branch origin has lost
+    # is a feature no move here brings back — its exits are in the record or
+    # on the workstation that parked it, and this layer makes that verdict
+    # only after a fetch that worked, which is the only run that knows RR2
+    # fires. The `$pushed` test is what keeps an RR6 verdict from speaking
+    # for a LATER leg: `resume` breaks at the first refusing leg in the
+    # record's order, so a leg whose own `pushed:` is `true` sitting behind
+    # one that is not is a leg the run never reaches.
+    if [ -n "$tree" ] && role_maps_here "$role" &&
+        { [ -z "$refused" ] ||
+            { [ "$refused_kind" = pushed ] && [ "$pushed" != true ]; }; }; then
+        wtroot="$(record_worktree_root "$root")"
+        mount="$(leg_mount_for_role "$role")"
+        want="$wtroot/$branch${mount:+/$mount}"
+        if [ "$tree" != "$want" ]; then
+            # A LINKED worktree's `.git` is a FILE and a main one's is a
+            # DIRECTORY — `worktree_is_usable`'s own distinction — but a
+            # MOUNTED LEG's checkout carries a `.git` file too, pointing into
+            # the superproject's `modules/`, so the directory test alone would
+            # call a submodule leg's own checkout movable. The path test
+            # answers that one and the directory test answers a root reached
+            # by a spelling git canonicalises differently; either way what is
+            # found is the leg's own checkout and not a worktree of it.
+            if [ "$tree" = "$repo" ] || [ -d "$tree/.git" ]; then
+                move="$tree is the $role leg's OWN checkout rather than a worktree of it, and no \`worktree move\` moves a main working tree, so there is nothing here to move: neither verb sees this feature while that checkout is on that branch"
+            else
+                move="move it where both look: \`mkdir -p ${want%/*} && git -C $repo worktree move $tree $want\`, which is yours to run — \`worktree move\` creates no parent directory of its own"
+            fi
+            finding "parked feature $branch ($role leg): its worktree is at $tree, which is not the $want \`resume\` computes for it — \`resume\` matches a leg's worktree on that path alone, so it does not read this one as already recreated, and the \`git worktree add\` it makes there cannot take the branch this worktree holds (\"already used by worktree at $tree\"), which refuses the WHOLE feature; \`park\` does not carry it either, because it parks the features under $wtroot and no others — $move"
+            return 0
+        fi
     fi
     # A BRANCH ORIGIN HAS LOST IS A RECORD `resume` REFUSES BEFORE IT COMPARES
     # ANY COMMIT, and this layer never asked (the independent review of #21,

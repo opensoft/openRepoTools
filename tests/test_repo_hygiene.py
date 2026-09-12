@@ -607,9 +607,25 @@ def test_agents_md_is_short_enough_to_be_read():
     role belongs to NEITHER shape, and would send somebody round the re-park
     loop for ever, which is the loop the entry above this one bought its two
     lines to stop.
+
+    162 -> 169 on 2026-09-12, for the independent reviewer's note that
+    `worktree_on_branch` matches ANY path while RR4 matches only the COMPUTED
+    one. Seven lines, and every one buys a thing an assistant gets wrong
+    unaided. That the path is computed HERE — `<worktree_root>/<branch>` out
+    of this checkout's `git-config.yml`, the leg's own mount under it — and
+    not read out of the record, which carries a `worktree_root:` of its own
+    that `resume.sh` loads and never uses. That a worktree on the branch
+    somewhere else is not merely unseen but a WHOLE-FEATURE refusal, because
+    `git worktree add` cannot take a branch another worktree holds. That
+    `park` is blind to it too, which is what rules out the "park it again"
+    every other exception in this rule ends in. And that the exit is a `git
+    worktree move`, the PERSON'S to run, with no such command for a leg's own
+    checkout. Without them "a recorded feature with no worktree here" reads as
+    "a worktree on the branch is a worktree here", which is the reading this
+    layer had.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 162, f"AGENTS.md is {len(lines)} lines; the cap is 162"
+    assert len(lines) <= 169, f"AGENTS.md is {len(lines)} lines; the cap is 169"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -771,9 +787,19 @@ def test_readme_is_short_enough_to_be_read():
     line about the RULE and not about the wording: a reader who takes
     "mount" literally reads `assembly`, which this repository's own fixtures
     mount at `.`, as a role that is fine.
+
+    256 -> 261 on 2026-09-12, for the same reviewer's note on the PATH a
+    worktree is at. Five lines, and all five in the finding list rather than
+    in the exception above it, because this is not an exception to `resume
+    <Name>`: nothing is being brought back — the work is already here, and
+    neither verb can see it. What they buy is the path itself, said to be
+    computed in THIS checkout and not carried by the record, and the exit,
+    which is a `git worktree move` and not the re-park every other entry
+    beside it ends in: `park` collects the features under that root and no
+    others, so a re-park writes nothing about this one.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 256, f"README.md is {len(lines)} lines; the cap is 256"
+    assert len(lines) <= 261, f"README.md is {len(lines)} lines; the cap is 261"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

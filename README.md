@@ -75,8 +75,13 @@ diverged from the parked commit — or a record naming no parked commit to
 compare it with — a recorded branch this repository has no `origin/<branch>`
 for, a leg parked with `--no-push` or with a `pushed:` that is missing or
 unreadable, a leg the record gives no role or a role this shape has no place
-for, a feature the record lists no leg for, and a worktree the record does not
-know, which was never parked. No config, or no record, is a note.
+for, a feature the record lists no leg for, a worktree on a recorded branch
+that is not at the path BOTH verbs compute for that leg —
+`<worktree_root>/<branch>`, the leg's own mount under it in a three-leg root,
+read out of this checkout's `git-config.yml` — which `resume` refuses the
+whole feature for and `park` never parks, leaving a `git worktree move` of
+yours as the exit, and a worktree the record does not know, which was never
+parked. No config, or no record, is a note.
 That is all five layers: the local layer, `--fetch`, the fork, the pin and
 the record.
 
