@@ -641,9 +641,26 @@ def test_agents_md_is_short_enough_to_be_read():
     already names above it, and both are exits that were RUN: `worktree
     move` refuses a locked worktree and `worktree add` refuses a path a dead
     registration still names, so neither command clears the path alone.
+    177 -> 181 on 2026-09-12, for the independent review's should-fixes on
+    this same paragraph. Four lines, and every one of them a sentence the
+    rule had wrong rather than one it was missing. That the root is read out
+    of `$SPECKIT_GIT_WORKTREE_ROOT` FIRST — the variable both verbs read
+    before any file, which "out of THIS checkout's `git-config.yml`, and
+    read no other" actively denied, sending an agent that has it set to the
+    wrong path with the rule's own authority behind it. That the refusal is
+    made at whichever check the leg reaches first, the `git worktree add`
+    being only the one it reaches with the branch still AT the parked
+    commit: moved on it is the divergence, behind it the behind-ness, gone
+    from origin the gone-ness, all four run against the extension that day,
+    and a rule that quotes the wrong mechanism teaches an assistant to
+    disbelieve the refusal when the words do not match. And that a `worktree
+    prune` goes in front of the move where git still holds the destination
+    registered with nothing on disk, because `worktree move` refuses such a
+    destination in the same sentence `worktree add` does — an exit that was
+    run and did not work is worse than no exit at all.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 177, f"AGENTS.md is {len(lines)} lines; the cap is 177"
+    assert len(lines) <= 181, f"AGENTS.md is {len(lines)} lines; the cap is 181"
 
 
 def test_readme_is_short_enough_to_be_read():
