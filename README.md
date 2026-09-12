@@ -69,7 +69,14 @@ and the exits are the record's own entry where the feature landed or a push
 from the workstation that parked it; and where `git worktree list` still holds a
 registration that is no longer a worktree, a `worktree prune` — after a
 `worktree unlock` if it is locked, with any directory it leaves behind moved
-aside — has to clear it first), a worktree whose tip moved on from, fell
+aside — has to clear it first; and where anything else sits at the path both
+verbs compute for that leg — a directory, a file, a worktree of another
+branch — `resume` refuses the whole feature for it, before it reads origin
+and without overwriting a path it did not create, so moving that aside is
+yours first: a `git worktree move` where git holds it as a worktree and a
+plain `mv` where it does not, with the `unlock` a locked registration wants
+in front of either and the `prune` a dead one wants beside the `mv`), a
+worktree whose tip moved on from, fell
 behind (by more than the WIP commits `resume` itself un-committed), or
 diverged from the parked commit — or a record naming no parked commit to
 compare it with — a recorded branch this repository has no `origin/<branch>`

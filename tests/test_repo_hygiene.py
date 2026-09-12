@@ -623,9 +623,27 @@ def test_agents_md_is_short_enough_to_be_read():
     checkout. Without them "a recorded feature with no worktree here" reads as
     "a worktree on the branch is a worktree here", which is the reading this
     layer had.
+
+    169 -> 177 on 2026-09-12, for that reviewer's second and third notes —
+    RR3, a path that merely EXISTS at the computed path, and RR4's second
+    arm, a worktree REGISTERED there on another branch. Eight lines, and the
+    entry above is why they are not free: it taught the rule that the
+    computed path is the only one either verb reads, and an assistant that
+    knows only that reads "nothing of ours is there" as "`resume` will make
+    it". What these buy is that the refusal comes BEFORE origin is read — so
+    neither RR2's exits nor the re-park below them is what answers it — and
+    that the exit turns on one thing only, WHAT GIT HOLDS at that path: a
+    `git worktree move` where it holds a worktree, because `mv` on a
+    registered one leaves git holding the path it was at, and a plain `mv`
+    where it holds none, because `git worktree move` is no command for a
+    directory git never made. The `unlock` and the `prune` ride in one
+    clause rather than a sentence each, because they are the pair this rule
+    already names above it, and both are exits that were RUN: `worktree
+    move` refuses a locked worktree and `worktree add` refuses a path a dead
+    registration still names, so neither command clears the path alone.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 169, f"AGENTS.md is {len(lines)} lines; the cap is 169"
+    assert len(lines) <= 177, f"AGENTS.md is {len(lines)} lines; the cap is 177"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -797,9 +815,23 @@ def test_readme_is_short_enough_to_be_read():
     which is a `git worktree move` and not the re-park every other entry
     beside it ends in: `park` collects the features under that root and no
     others, so a re-park writes nothing about this one.
+
+    261 -> 268 on 2026-09-12, for the same reviewer's second and third notes
+    on WHAT IS AT that path. Seven lines, and all seven in the EXCEPTION
+    above the finding list rather than in the list itself, which is where the
+    entry above put its own: this IS a record `resume <Name>` brings back —
+    the work is not here, and nothing of the person's is at that path — and
+    all that stands between the two is a directory, a file or somebody else's
+    worktree. So it is an exception to the promise, and the promise is what
+    it falsifies; and the exit is neither the re-park every other exception
+    ends in nor the prune the one above it names, but a move whose command
+    depends on what git holds at that path — two of the seven lines, because
+    a `worktree move` that names no `unlock` in front of a locked worktree,
+    or an `mv` that leaves a dead registration standing, is an exit that was
+    run and did not work.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 261, f"README.md is {len(lines)} lines; the cap is 261"
+    assert len(lines) <= 268, f"README.md is {len(lines)} lines; the cap is 268"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

@@ -164,7 +164,13 @@ the `resume` that still brings back a branch this clone has merely not fetched;
 and where `git worktree list` still holds a registration that is no longer a
 worktree, that is cleared with `worktree prune`, after a `worktree unlock` if
 it is locked and with any leftover directory moved aside, before `resume` can
-recreate anything), a worktree
+recreate anything; and where ANYTHING ELSE is at the path both verbs compute
+for that leg — a directory, a file, a worktree of another branch — `resume`
+refuses the WHOLE feature rather than overwrite a path it did not create, and
+moving that aside first is yours: a `git worktree move` where git holds it as
+a worktree and a plain `mv` where it does not, with the `worktree unlock` a
+LOCKED registration wants in front of either and the `worktree prune` a dead
+one wants beside the `mv`), a worktree
 whose tip is not the parked commit or a record that names no parked commit to
 compare it with, a recorded branch this repository has no `origin/<branch>`
 for, a leg parked with `--no-push` or whose `pushed:` is missing or neither
@@ -175,7 +181,9 @@ branch that is not at the path BOTH VERBS compute for that leg —
 root, out of this checkout's git-config.yml and not out of the record — which
 is the only worktree `resume` reads as that feature's and the only one `park`
 carries, so the exit is a `git worktree move` of yours, and where that path
-is the leg's own checkout there is nothing to move, and a worktree the record
+is the leg's own checkout there is nothing to move, anything at that same
+path that is not that leg's worktree, which `resume` refuses the whole
+feature for before it reads origin, and a worktree the record
 does not know (never parked).
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
@@ -1816,6 +1824,12 @@ RECORD_ID=""
 #: `check_parked_leg` looks at. Declared here because `set -u` is on and a
 #: record with no project row leaves it as it was.
 RECORD_SHAPE=""
+#: WHERE THIS CHECKOUT'S FEATURE WORKTREES BELONG, computed once per root by
+#: `read_record` — `record_worktree_root` reads a config file and the answer is
+#: the ROOT's, not the leg's, so asking it per leg read the same file over
+#: again. Declared here because `set -u` is on and the record layer is entered
+#: for a root whose block the record may not carry.
+RECORD_WORKTREE_ROOT=""
 NL=$'\n'
 
 # shellcheck disable=SC2088  # a literal leading ~ is what is matched here
@@ -2693,6 +2707,18 @@ record_worktree_root() {
     esac
 }
 
+# THE PATH `collect_legs` COMPUTES FOR ONE LEG, which is the only path either
+# verb looks at for it: `$WORKTREE_ROOT/$branch` for a `repo` leg, whose tree
+# carries no mount at all, and `$WORKTREE_ROOT/$branch/$SHAPE_SPEC_PATH` (or
+# `…CODE…`) for a mounted one — the mount being `leg_mount_for_role`'s answer
+# and not the leg repository's own name under the root, which is the same
+# string for every manifest but the one that declares `path: "."`.
+leg_tree_path() {
+    local root="$1" role="$2" branch="$3" mount
+    mount="$(leg_mount_for_role "$role")"
+    printf '%s\n' "$RECORD_WORKTREE_ROOT/$branch${mount:+/$mount}"
+}
+
 # A REGISTERED PATH IS A WORKTREE ONLY WHILE ITS OWN `.git` IS THERE. A linked
 # worktree's is a FILE holding `gitdir: <repo>/.git/worktrees/<name>`; the main
 # worktree's is a DIRECTORY; a path with neither is a leftover directory git
@@ -2775,6 +2801,194 @@ worktree_on_branch() {
     [ -z "$stale_locked" ] || { printf '%s\n' "$stale_locked"; return 3; }
     [ -z "$stale" ] || { printf '%s\n' "$stale"; return 2; }
     return 1
+}
+
+# WHAT IS REGISTERED AT ONE PATH, read the way `resume.sh`'s
+# `leg_registered_at` reads it: an EXACT STRING match against the paths
+# `load_git_worktrees` staged, and NOTHING ABOUT THE BRANCH until the path has
+# matched. That order is the whole point — RR4 asks "is a worktree registered
+# AT this path", and `worktree_on_branch` above asks "where is the worktree on
+# this branch", which is a different question with a different answer whenever
+# the two are not the same path.
+#
+# THREE ANSWERS: 0 for a block `resume` WILL see; 2 for one git calls
+# `prunable`, which `_git_worktree_finalize_record` DROPS before that walk
+# ever starts (`if [ "$prunable" = false ]` around its four `+=` lines), so
+# the other end is blind to it whatever is on disk; 1 where there is no block
+# for that path at all. `REGISTERED_BRANCH` is the branch on the block — the
+# empty string for a detached head, exactly as
+# `"${GIT_WORKTREE_BRANCH_REFS[$index]#refs/heads/}"` is — and
+# `REGISTERED_LOCKED` is 1 where git called it `locked`, which changes no
+# verdict and decides an EXIT: `git worktree move` REFUSES a locked worktree
+# ("fatal: cannot move a locked working tree; use 'move -f -f' to override or
+# unlock first") and `worktree prune` SKIPS a locked registration, so the
+# `unlock` goes in front of either (git 2.43, 2026-09-12).
+#
+# GLOBALS AND NOT A PRINTED STRING, because the caller wants all three and a
+# `$(…)` would take the other two down with the subshell; the `while` reads a
+# process substitution, which bash runs in THIS shell.
+REGISTERED_BRANCH=""
+REGISTERED_LOCKED=0
+registered_at() {
+    local repo="$1" want="$2" line path="" hit=0 prunable=0 locked=0 ref=""
+    REGISTERED_BRANCH=""; REGISTERED_LOCKED=0
+    while IFS= read -r line; do
+        case "$line" in
+        "worktree "*)
+            path="${line#worktree }"; prunable=0; locked=0; ref=""; hit=0
+            [ "$path" != "$want" ] || hit=1
+            ;;
+        "branch refs/heads/"*) ref="${line#branch refs/heads/}" ;;
+        locked | "locked "*) locked=1 ;;
+        prunable | "prunable "*) prunable=1 ;;
+        "")
+            if [ "$hit" -eq 1 ]; then
+                REGISTERED_BRANCH="$ref"; REGISTERED_LOCKED="$locked"
+                [ "$prunable" -eq 0 ] || return 2
+                return 0
+            fi
+            hit=0; prunable=0; locked=0; ref=""; path=""
+            ;;
+        esac
+    done < <(g "$repo" worktree list --porcelain 2>/dev/null; printf '\n')
+    return 1
+}
+
+# WHAT IS IN THE WAY AT THE PATH `resume` COMPUTES, and the one exit, which is
+# the PERSON'S. `IN_THE_WAY_WHAT` is what sits there, `IN_THE_WAY_EXIT` is the
+# clause both the culprit leg's own finding and every sibling leg's carry; 1
+# and all three empty where nothing is in the way.
+#
+# THE TWO REFUSALS ARE ONE STATE READ FROM TWO SIDES, and `resume.sh` words
+# them identically down to the `look:` — "'<path>' exists and is not a
+# registered worktree of the <role> leg … Nothing here overwrites a directory
+# it did not create … Move it aside" — differing only in the REFUSED line's
+# reason. RR4's second arm is `leg_registered_at` matching the path and
+# `[ "$LEG_REGISTERED_BRANCH" = "$branch" ]` failing: "an unrelated worktree
+# is in the way". RR3 is the `[ -e "$tree" ]` under it: "an unrelated path is
+# in the way". Both `break` the leg loop, so BOTH TAKE THE WHOLE FEATURE, its
+# other legs included — and both are reached before RR2 reads origin and
+# before RR1 compares any commit.
+#
+# VERIFIED AGAINST THE EXTENSION on 2026-09-12, on scratch single-shape
+# estates — a bare remote in a temp dir, a fake `$HOME`, workBenches' own
+# `resume.sh`, `park.sh`, `git-common.sh` and `workspace-common.sh` — whose
+# record carried `pushed: true`, `worktree_root: worktrees` and a parked
+# commit that was origin's tip, the feature having no worktree here: a plain
+# DIRECTORY at `worktrees/001-a-thing` answered "REFUSED: 001-a-thing — an
+# unrelated path is in the way", exit 2, and a plain FILE answered the same;
+# a worktree of `002-other` registered there answered "REFUSED: 001-a-thing —
+# an unrelated worktree is in the way", exit 2, and so did one with a DETACHED
+# head, one git held LOCKED, and one locked whose `.git` had been deleted. A
+# PRUNABLE block there — same worktree, `.git` deleted, no lock — answered
+# "an unrelated path is in the way" instead, because `resume` never sees the
+# block and what refuses it is the directory. With nothing at that path at
+# all the same estate RESUMED the feature, exit 0.
+#
+# WHAT IS NOT IN THE WAY. A block `resume` SEES at that path on the RECORDED
+# branch is RR4's FIRST arm — the leg is already recreated, which is not a
+# refusal at all — whether or not the worktree is really there, because a
+# LOCKED block git calls no prunable is one `leg_registered_at` matches and
+# reads as already done, and whether or not a worktree of that branch sits
+# somewhere else too. And a PRUNABLE block on the recorded branch is the
+# stale-registration arms' own state, WHERE THOSE ARMS NAME IT: the prune, the
+# unlock in front of it and the leftover directory behind it are already one
+# line there, ending in the `resume` that follows them, and naming the path
+# twice would be two findings about it. `worktree_on_branch` is asked which
+# block it answered with, because it is the one that decides whether that line
+# is printed at all — with a live worktree on the branch somewhere else it
+# answers with THAT, nothing names this path, and the reading below is the
+# only one that does.
+IN_THE_WAY_WHAT=""
+IN_THE_WAY_WHY=""
+IN_THE_WAY_EXIT=""
+path_in_the_way() {
+    local repo="$1" want="$2" branch="$3" role="$4" rc=0 ghost=""
+    IN_THE_WAY_WHAT=""; IN_THE_WAY_WHY=""; IN_THE_WAY_EXIT=""
+    registered_at "$repo" "$want" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        # RR4's FIRST arm, which is no refusal: the header's "what is not in
+        # the way", and the branch is the only thing asked after the path.
+        [ "$REGISTERED_BRANCH" != "$branch" ] || return 1
+        if [ -n "$REGISTERED_BRANCH" ]; then
+            IN_THE_WAY_WHAT="a worktree on \`$REGISTERED_BRANCH\`"
+        else
+            IN_THE_WAY_WHAT="a worktree with a detached head"
+        fi
+        IN_THE_WAY_WHY="an unrelated worktree is in the way"
+        # A LINKED worktree's `.git` is a FILE and a main one's is a
+        # DIRECTORY, and a mounted leg's own checkout carries a `.git` file
+        # too — the path test answers that one and the directory test answers
+        # a root reached by a spelling git canonicalises differently. Either
+        # way what is registered there is the leg's own checkout, and `git
+        # worktree move` refuses one: "'…' is a main working tree" (git 2.43,
+        # 2026-09-12). Naming it would be naming an exit that does not work.
+        if [ "$want" = "$repo" ] || [ -d "$want/.git" ]; then
+            IN_THE_WAY_EXIT="$want is the $role leg's OWN checkout rather than a worktree of it, and no \`worktree move\` moves a main working tree, so there is nothing here to move aside: while the worktree root this checkout computes puts this feature on top of that checkout, neither verb can do anything with it"
+        elif worktree_is_usable "$want"; then
+            IN_THE_WAY_EXIT="move it aside with \`git -C $repo worktree move $want <a path of your choosing>\`, which is yours to run — a registered worktree moved with \`mv\` leaves git holding the path it was at"
+            [ "$REGISTERED_LOCKED" -eq 0 ] ||
+                IN_THE_WAY_EXIT="git holds that worktree LOCKED and \`worktree move\` refuses a locked one (\"cannot move a locked working tree\"), so the unlock comes first: \`git -C $repo worktree unlock $want\`, then \`git -C $repo worktree move $want <a path of your choosing>\`, both yours to run — a registered worktree moved with \`mv\` leaves git holding the path it was at"
+        else
+            # NOT PRUNABLE AND NOT A WORKTREE IS LOCKED, and only locked: git
+            # computes `prunable` for every other broken registration, and a
+            # prunable one is answered 2 above and never reaches here. `prune`
+            # is what clears this one once the lock is off — the same pair the
+            # stale-registration arms name, for the same reason, and the same
+            # leftover DIRECTORY behind it, because the prune clears the
+            # registration and touches nothing on disk.
+            IN_THE_WAY_EXIT="the worktree it registers is not there and git holds the registration LOCKED, which is why it calls it no \`prunable\` — clear it with \`git -C $repo worktree unlock $want\`, then \`git -C $repo worktree prune\`, which is yours to run"
+            [ ! -d "$want" ] ||
+                IN_THE_WAY_EXIT="$IN_THE_WAY_EXIT, and move aside the directory the prune leaves behind, which \`resume\` refuses for existing whatever git holds"
+        fi
+        return 0
+    fi
+    # AND THE STALE-REGISTRATION ARMS' OWN PATH IS THEIRS, where they name it
+    # — the other half of "what is not in the way" above, and the only place
+    # this function asks anything of `worktree_on_branch`.
+    if [ "$rc" -eq 2 ] && [ "$REGISTERED_BRANCH" = "$branch" ]; then
+        ghost="$(worktree_on_branch "$repo" "$branch" || true)"
+        [ "$ghost" != "$want" ] || return 1
+    fi
+    [ -e "$want" ] || return 1
+    if [ -d "$want" ]; then
+        IN_THE_WAY_WHAT="a directory"
+    else
+        IN_THE_WAY_WHAT="a file"
+    fi
+    IN_THE_WAY_WHY="an unrelated path is in the way"
+    # AND THE MOVE IS THE WHOLE EXIT ONLY WHERE GIT HOLDS NOTHING THERE. With
+    # a PRUNABLE registration still on that path the `mv` clears RR3 and the
+    # `git worktree add` at the end of the run dies on the registration
+    # instead — "is a missing but already registered worktree; use 'add -f'
+    # to override, or 'prune' or 'remove' to clear" — whether or not the
+    # directory was moved first (git 2.43, 2026-09-12, both spellings run).
+    # So the prune is named with it, and neither half is optional.
+    IN_THE_WAY_EXIT="move it aside with \`mv $want <a path of your choosing>\`, which is yours to run — nothing here moves or deletes a path it did not create"
+    [ "$rc" -ne 2 ] ||
+        IN_THE_WAY_EXIT="move it aside with \`mv $want <a path of your choosing>\` and clear the stale registration git still holds for that path with \`git -C $repo worktree prune\`, both yours to run — nothing here moves or deletes a path it did not create, and \`git worktree add\` refuses a path it is still registered at (\"a missing but already registered worktree\")"
+    return 0
+}
+
+# THE SAME QUESTION ASKED OF A RECORD ROW, which is how `read_record`'s first
+# pass asks it — one call in a chain of RRs, where the arms around it are one
+# test each. It works the leg's repository and the path `collect_legs` computes
+# out of the ROLE, leaves that path in `LEG_TREE` for the verdict to name, and
+# answers 1 — nothing in the way — for the three states that are not this
+# reading's to judge: a role this checkout's shape has no place for, which
+# `collect_legs` has already refused the feature for on the line above; a leg
+# whose repository is not a checkout here, which `resume` refuses the whole
+# ESTATE for before it reads a feature; and a path with nothing at it.
+LEG_TREE=""
+leg_path_in_the_way() {
+    local root="$1" role="$2" branch="$3" repo
+    LEG_TREE=""
+    role_maps_here "$role" || return 1
+    repo="$(leg_repo_for_role "$root" "$role" 2>/dev/null || true)"
+    [ -n "$repo" ] || return 1
+    [ -e "$repo/.git" ] || return 1
+    LEG_TREE="$(leg_tree_path "$root" "$role" "$branch")"
+    path_in_the_way "$repo" "$LEG_TREE" "$branch" "$role"
 }
 
 # THE GAP A RESUME ITSELF LEAVES. `park` commits the WIP under a fixed subject
@@ -2903,15 +3117,25 @@ check_parked_leg() {
     # already the widest in this file; `:-` because `set -u` is on and the
     # verdict is the one argument a caller may leave off. `${11}` says WHICH
     # refusal that verdict is — empty for the ones `collect_legs` makes
-    # before any RR runs, and `gone`, `pushed` or `moved` for the RR that
-    # refuses first in the record's order — because they differ in both
+    # before any RR runs, and `pushed`, `inway`, `gone` or `moved` for the RR
+    # that refuses first in the record's order — because they differ in both
     # directions: RR2's exits are its own, and the leg RR2 refuses for still
     # says so in RR2's words, where a leg `collect_legs` throws out has said
     # everything it has to say on the line above this one.
-    local refused="${10:-}" refused_kind="${11:-}"
+    #
+    # AND `${12}` IS AN EXIT THE CALLER ALREADY HAS, for the one verdict this
+    # function cannot word for itself. Every `collect_legs` verdict is settled
+    # by a park that parks the feature THROUGH, RR6's and RR1's by the same
+    # park, and RR2's by one of its own two, all of which this function can
+    # say from the leg in front of it; a verdict about a PATH IN THE WAY turns
+    # on what git holds AT that path in ANOTHER leg's repository, which the
+    # first pass has already looked at and this function has not — a park
+    # somewhere else moves none of it, so the leg that costs the feature and
+    # every sibling leg carry the same exit, and it is the one that works.
+    local refused="${10:-}" refused_kind="${11:-}" refused_exit="${12:-}"
     local repo tree="" ghost="" ghost_is="" clear="" out rc=0 tip n unread="" refuses="" where=""
     local gone_exits="" gone_caveat="" shape_line="" shape_says="" settles="" exits=""
-    local wtroot="" want="" mount="" move=""
+    local want="" move="" held=0
     # A LEG THE RECORD GIVES NO ROLE IS ANSWERED BEFORE THE ROOT IS ASKED
     # ABOUT IT, and it is not the arm below (the independent review of #20,
     # 2026-09-11, note 8, recorded there as out of scope). `record_rows` used
@@ -3306,6 +3530,67 @@ check_parked_leg() {
     if [ -n "$unread" ]; then
         finding "parked feature $branch ($role leg): $unread, so whether its parked commit ever left ${parked_on:-that workstation} cannot be read; $refuses, so park it again from there to write the record afresh"
     fi
+    # AND WHAT IS AT THAT PATH DECIDES THE FEATURE BEFORE ANYTHING BELOW IT
+    # (the two readings the commit above verified and recorded rather than
+    # took: "`resume.sh`'s RR3 is the same question from the other side — a
+    # path that EXISTS at `<worktree_root>/<branch>` and is not a registered
+    # worktree of that leg refuses the feature … and this layer still says
+    # "`resume <Name>` brings it back" for a record whose feature has no
+    # worktree here and a stray directory in the way"). The arm above asks
+    # where this leg's worktree IS; this one asks what is AT the one path the
+    # other end will look at, which is a question with an answer even where
+    # the feature has no worktree here at all — the ordinary state of a
+    # feature parked on another workstation, and the state where this layer
+    # offered `resume` for a run that cannot get past RR3.
+    #
+    # IT IS BOTH ARMS OF ONE REFUSAL. `resume.sh` reaches `leg_registered_at
+    # "$leg_repo" "$tree"` first: a registration AT that path whose branch is
+    # not this feature's is its second arm, "an unrelated worktree is in the
+    # way", and a path that merely EXISTS there is the `[ -e "$tree" ]` under
+    # it, "an unrelated path is in the way". The stderr they refuse in is the
+    # same sentence, they `break` the same leg loop, and each takes the WHOLE
+    # feature — every other leg of it included — before RR2 reads origin and
+    # before RR1 compares any commit. `path_in_the_way` is where the two are
+    # told apart and where what is NOT in the way is ruled out.
+    #
+    # WHERE IT SITS IS `resume.sh`'s OWN ORDER, and the order decides more
+    # than tidiness here. After the `pushed:` arms, because RR6 is first. In
+    # FRONT of the path-parity arm below, because RR4 and RR3 are reached
+    # before the `git worktree add` that arm predicts: verified on 2026-09-12
+    # on a scratch estate carrying BOTH states — the feature's own worktree at
+    # `$HOME/elsewhere/001-a-thing` and a stray directory at
+    # `worktrees/001-a-thing` — where the extension answered "REFUSED:
+    # 001-a-thing — an unrelated path is in the way", exit 2, and the arm
+    # below named a `git worktree move` INTO that directory. `git worktree
+    # move` into a path that exists does not fail: it behaves like `mv` and
+    # puts the worktree INSIDE it, leaving it at `worktrees/001-a-thing/
+    # 001-a-thing` — still not where either verb looks, and now with the stray
+    # directory on top of it (git 2.43, the same day). An exit that quietly
+    # misfiles the work is worse than one that refuses, which is why this
+    # reading comes first and ends the leg.
+    #
+    # AND IT ENDS THE LEG for the reason every reading in this function ends
+    # it: the arms below name exits that cannot run past this one. RR2's two
+    # exits and the absent-parked-commit arm's re-park are both reached only
+    # after RR3, and `resume` never gets there; the no-worktree arm's `resume
+    # <Name>` is the sentence this reading exists to withdraw. What they would
+    # have said is said on the run after the path is clear.
+    #
+    # AND NOT FOR A LEG RR6 REFUSES, whose `pushed:` is anything but `true`:
+    # `resume.sh` tests that at the top of the leg loop and `break`s there, so
+    # no path is ever looked at for it and the REFUSED line this one quotes is
+    # a line the other end does not print. The two arms above say what that
+    # record is and what settles it — a park from the workstation that has the
+    # WIP commit — and they answer it whatever is at the path; this gate is
+    # the same one `read_record`'s first pass closes the walk on.
+    if [ "$pushed" = true ] && role_maps_here "$role" &&
+        { [ -z "$refused" ] || [ -n "$refused_exit" ]; }; then
+        want="$(leg_tree_path "$root" "$role" "$branch")"
+        if path_in_the_way "$repo" "$want" "$branch" "$role"; then
+            finding "parked feature $branch ($role leg): $IN_THE_WAY_WHAT is at $want, which is the path \`resume\` computes for this leg and is not this branch's worktree — \`resume\` reads that path and no other, overwrites nothing it did not create, and refuses the WHOLE feature, the other legs with it (\"… exists and is not a registered worktree of the $role leg\", refused as \"$IN_THE_WAY_WHY\"), so nothing here brings it back while that is there — $IN_THE_WAY_EXIT"
+            return 0
+        fi
+    fi
     # A WORKTREE ON THE BRANCH IS NOT THIS FEATURE'S WORKTREE UNLESS IT IS AT
     # THE PATH `resume` COMPUTES (the independent reviewer's note of
     # 2026-09-12: "`worktree_on_branch` matches any path while RR4 matches
@@ -3387,13 +3672,38 @@ check_parked_leg() {
     # for a LATER leg: `resume` breaks at the first refusing leg in the
     # record's order, so a leg whose own `pushed:` is `true` sitting behind
     # one that is not is a leg the run never reaches.
+    #
+    # AND ONLY WHERE THE COMPUTED PATH HOLDS NOTHING, because RR4's question
+    # is about that PATH and this arm's exit is a `worktree move` ONTO it (the
+    # independent review of this commit's base, 2026-09-12, blocker 2). A
+    # block `resume` SEES there on the recorded branch is RR4's first arm: the
+    # leg is already recreated and the feature RESUMES, whatever worktree of
+    # that branch sits elsewhere — run against the extension the same day with
+    # a second worktree force-added on the branch outside the root, "[specify]
+    # 001-a-thing (repo): worktree already registered at worktrees/
+    # 001-a-thing; left as it is", exit 0, while this arm at the base refused
+    # the feature whole and named a move onto the worktree that had resumed
+    # it. A block `resume` does NOT see there — a prunable one — is the arm
+    # above's or the stale-registration arms', and it is not a destination
+    # either: `git worktree move` onto a path git still holds registered dies
+    # ("is a missing but already registered worktree"), and onto a path that
+    # EXISTS it exits 0 and puts the worktree INSIDE it, leaving it at
+    # `<want>/<branch>` — still where neither verb looks (git 2.43, the same
+    # day). And a path that merely EXISTS is the same hazard from the other
+    # side — that is the nesting one — so this arm wants BOTH: git holding
+    # nothing there, and nothing on disk there. The arm above answers both
+    # for every leg whose `pushed:` is `true` and returns; RR6 keeps it from
+    # running for the rest, and those are the legs the two conditions below
+    # are here for. The question is therefore asked in its own right rather
+    # than read back off that arm: `registered_at` answers 1, and only 1, for
+    # a path git holds nothing at.
     if [ -n "$tree" ] && role_maps_here "$role" &&
         { [ -z "$refused" ] ||
             { [ "$refused_kind" = pushed ] && [ "$pushed" != true ]; }; }; then
-        wtroot="$(record_worktree_root "$root")"
-        mount="$(leg_mount_for_role "$role")"
-        want="$wtroot/$branch${mount:+/$mount}"
-        if [ "$tree" != "$want" ]; then
+        want="$(leg_tree_path "$root" "$role" "$branch")"
+        held=0
+        registered_at "$repo" "$want" || held=$?
+        if [ "$tree" != "$want" ] && [ "$held" -eq 1 ] && [ ! -e "$want" ]; then
             # A LINKED worktree's `.git` is a FILE and a main one's is a
             # DIRECTORY — `worktree_is_usable`'s own distinction — but a
             # MOUNTED LEG's checkout carries a `.git` file too, pointing into
@@ -3407,7 +3717,7 @@ check_parked_leg() {
             else
                 move="move it where both look: \`mkdir -p ${want%/*} && git -C $repo worktree move $tree $want\`, which is yours to run — \`worktree move\` creates no parent directory of its own"
             fi
-            finding "parked feature $branch ($role leg): its worktree is at $tree, which is not the $want \`resume\` computes for it — \`resume\` matches a leg's worktree on that path alone, so it does not read this one as already recreated, and the \`git worktree add\` it makes there cannot take the branch this worktree holds (\"already used by worktree at $tree\"), which refuses the WHOLE feature; \`park\` does not carry it either, because it parks the features under $wtroot and no others — $move"
+            finding "parked feature $branch ($role leg): its worktree is at $tree, which is not the $want \`resume\` computes for it — \`resume\` matches a leg's worktree on that path alone, so it does not read this one as already recreated, and the \`git worktree add\` it makes there cannot take the branch this worktree holds (\"already used by worktree at $tree\"), which refuses the WHOLE feature; \`park\` does not carry it either, because it parks the features under $RECORD_WORKTREE_ROOT and no others — $move"
             return 0
         fi
     fi
@@ -3648,7 +3958,15 @@ check_parked_leg() {
             # feature THROUGH writes it afresh: with the push RR6 wants, and
             # with the commit RR1 matches against origin's tip — so those two
             # say it in the words their own culprit lines end in.
+            #
+            # AND A PATH IN THE WAY CARRIES AN EXIT THE FIRST PASS BUILT: a
+            # park somewhere else moves nothing out of this checkout's way,
+            # so neither the re-park nor RR2's two answer it, and the command
+            # that does turns on what git holds at a path in ANOTHER leg's
+            # repository. `read_record` hands down one verdict and the kind it
+            # is, and `inway` is the kind whose exit travels with it.
             case "$refused_kind" in
+            inway) exits="$refused_exit" ;;
             gone) exits="$(origin_gone_exits "$branch" "$parked_on")" ;;
             pushed | moved)
                 exits="park that feature again from ${parked_on:-the workstation that has it}, which writes the record afresh"
@@ -3810,13 +4128,20 @@ read_record() {
     local root="$1" sel rows="" kind a b c d e f n_features=0
     local parked_at="" parked_on="" lane="" active="" recorded="$NL"
     local seen_branches=0 legs where="" refused="" refused_kind="" unnamed=0
+    local refused_exit=""
     local -a feature_legs=() feature_why=() feature_rr=() feature_rr_kind=()
+    local -a feature_exit=()
     shift
     RECORD_SHAPE=""
     [ -n "$RECORD_FILE" ] || return 0
     # THIS ROOT'S SHAPE IS READ ONCE, HERE, because every leg of every feature
     # is judged against it and `load_repo_shape` reads a whole file to answer.
     read_root_shape "$root"
+    # AND THE WORKTREE ROOT WITH IT, for the same reason and in the same
+    # place: it is the ROOT's answer, not the leg's — `$SPECKIT_GIT_WORKTREE_ROOT`,
+    # else this checkout's `git-config.yml`, else the shape's default — and
+    # both passes below want it for every leg of every feature.
+    RECORD_WORKTREE_ROOT="$(record_worktree_root "$root")"
     for sel in "$@"; do
         rows="$(record_rows "$RECORD_FILE" "$sel")"
         [ -z "$rows" ] || break
@@ -3836,7 +4161,7 @@ read_record() {
             case "$kind" in
             branch)
                 feature_legs+=(0); feature_why+=("")
-                feature_rr+=(""); feature_rr_kind+=("")
+                feature_rr+=(""); feature_rr_kind+=(""); feature_exit+=("")
                 ;;
             leg)
                 legs=${#feature_legs[@]}
@@ -3911,18 +4236,45 @@ read_record() {
                     # "REFUSED: 001-a-thing — gone from origin". All exit 2.
                     #
                     # SO ONE ARRAY HOLDS THE FIRST REFUSAL AND ITS KIND, and
-                    # the arms under it are RR6, RR2 and RR1 in that order,
-                    # which is the order one leg is tested in. RR6 is the
-                    # record alone and is certain — it is the FIRST test of
-                    # the loop, before RR4, so a worktree here does not save
-                    # the leg. RR1 is asked of an absent `parked_commit:`,
-                    # which is the one reading of RR1 this layer makes, and
-                    # only after RR2 has been asked of the same leg, because
-                    # that is where `resume.sh` asks it. What this cannot see
-                    # is RR3, RR5, and RR4 by the PATH `resume` computes —
-                    # recorded by the commits below and the stacked branch's
-                    # subject — so a feature refused there is one this layer
-                    # still reads as resumable.
+                    # the arms under it are RR6, RR4 and RR3, RR2 and RR1 in
+                    # that order, which is the order one leg is tested in.
+                    # RR6 is the record alone and is certain — it is the
+                    # FIRST test of the loop, before RR4, so a worktree here
+                    # does not save the leg. RR1 is asked of an absent
+                    # `parked_commit:`, which is the one reading of RR1 this
+                    # layer makes, and only after RR2 has been asked of the
+                    # same leg, because that is where `resume.sh` asks it.
+                    # What this still cannot see is RR5 and the divergence
+                    # half of RR1, which would be `check_parked_leg`'s whole
+                    # job done a second time for every leg of every feature.
+                    #
+                    # AND RR4 AND RR3 ARE THE PATH'S, WHICH IS A REFUSAL OF
+                    # THE WHOLE FEATURE MADE ONE LEG AT A TIME. `collect_legs`
+                    # is answered before any leg is read and the three
+                    # questions above this chain are its; RR3 and RR4's second
+                    # arm are per leg, inside the loop that `break`s — so the
+                    # feature is gone the moment ONE leg's computed path is
+                    # obstructed, and every other leg of it goes with it,
+                    # whatever its own path holds. It sits between RR6 and RR2
+                    # because that is where `resume.sh` asks it: after the
+                    # `pushed:` test at the top of the loop, and before origin
+                    # is read — so a leg whose `pushed:` is not `true` refuses
+                    # the feature with no path looked at for it, and a leg
+                    # whose path is obstructed refuses it with origin never
+                    # read. A leg the record gives no branch name is not asked
+                    # either: there is no branch to compute a path from, and
+                    # `resume` refuses that feature at RR2 under a blank name,
+                    # which `read_record` says once on the feature's own line.
+                    #
+                    # THE ORDER BETWEEN LEGS IS THE ARRAY'S OWN GATE: `[ -z
+                    # "${feature_rr[legs - 1]}" ]` is "no earlier leg has
+                    # refused", so the walk stops at the first refusing leg
+                    # whichever RR refuses it, and one reading never overtakes
+                    # another by being read back in a different order. That is
+                    # the round above extended to the two readings the stacked
+                    # commits add: an in-the-way leg BEFORE a gone-origin one
+                    # is the in-the-way refusal, and a gone-origin leg before
+                    # an in-the-way one is the gone one.
                     if [ -z "${feature_why[legs - 1]}" ]; then
                         if [ -z "$b" ]; then
                             feature_why[legs - 1]="a leg of it in the record has no role"
@@ -3934,6 +4286,10 @@ read_record() {
                             if [ "$d" != true ]; then
                                 feature_rr[legs - 1]="$(pushed_verdict "$b" "$d" "$f")"
                                 feature_rr_kind[legs - 1]=pushed
+                            elif [ -n "$a" ] && leg_path_in_the_way "$root" "$b" "$a"; then
+                                feature_rr[legs - 1]="$IN_THE_WAY_WHAT is at the $LEG_TREE it computes for its \`$b\` leg"
+                                feature_rr_kind[legs - 1]=inway
+                                feature_exit[legs - 1]="$IN_THE_WAY_EXIT"
                             elif [ "$FETCH" -eq 1 ] && origin_lost_leg "$root" "$b" "$a"; then
                                 feature_rr[legs - 1]="there is no \`origin/$a\` in its \`$b\` leg after this run's fetch"
                                 feature_rr_kind[legs - 1]=gone
@@ -4015,24 +4371,27 @@ read_record() {
                 # to that brace, matching the first pass's, because an index
                 # this reader invents is a claim about a feature the record
                 # does not make.
-                refused=""
-                refused_kind=""
+                refused=""; refused_kind=""; refused_exit=""
                 if [ "$seen_branches" -gt 0 ]; then
                     refused="${feature_why[seen_branches - 1]:-}"
                     # `collect_legs` BEFORE THE RRs, in the reading as in the
                     # extension: it runs to the end before any RR does, so a
                     # feature it refuses is refused for THAT whatever the legs
                     # go on to say, and the RR verdict is read back only where
-                    # it found nothing. Which RR that verdict is, and which
-                    # leg it belongs to, was decided in the pass above, in the
-                    # record's order.
+                    # it found nothing. Which RR that verdict is, which leg it
+                    # belongs to and the exit that travels with it were all
+                    # decided in the pass above, in the record's order and in
+                    # `resume.sh`'s — RR6, then RR4 and RR3, then RR2, then
+                    # RR1 — so there is one verdict here and no priority left
+                    # to settle between readings.
                     if [ -z "$refused" ] &&
                         [ -n "${feature_rr[seen_branches - 1]:-}" ]; then
                         refused="${feature_rr[seen_branches - 1]}"
                         refused_kind="${feature_rr_kind[seen_branches - 1]}"
+                        refused_exit="${feature_exit[seen_branches - 1]}"
                     fi
                 fi
-                check_parked_leg "$root" "$a" "$b" "$c" "$d" "$parked_at" "$parked_on" "$e" "$f" "$refused" "$refused_kind"
+                check_parked_leg "$root" "$a" "$b" "$c" "$d" "$parked_at" "$parked_on" "$e" "$f" "$refused" "$refused_kind" "$refused_exit"
                 ;;
             esac
         done <<<"$rows"

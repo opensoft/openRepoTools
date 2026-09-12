@@ -114,7 +114,15 @@ sequence, and relay their per-repository lines rather than summarising them.
    LOCKED one `git worktree unlock <path>` first, because prune SKIPS it,
    and a DIRECTORY the prune leaves behind yours to MOVE ASIDE rather than
    delete: it still holds that worktree's files, and `git worktree add`
-   refuses a path that exists. Never `worktree add --force`, never a delete
+   refuses a path that exists. OR UNLESS ANYTHING ELSE SITS AT THE PATH
+   BOTH VERBS COMPUTE for that leg — a directory, a file, or a worktree of
+   ANOTHER BRANCH — which `resume` refuses the WHOLE feature for before it
+   reads origin, overwriting nothing it did not create ("'…' exists and is
+   not a registered worktree of the <role> leg … Move it aside"); moving it
+   aside FIRST is the person's, a `git worktree move` where git holds it as
+   a worktree and a plain `mv` where it does not, with the `worktree unlock`
+   a LOCKED registration wants in front of either and the `worktree prune` a
+   dead one wants beside the `mv`. Never `worktree add --force`, never a delete
    under `.git/worktrees/`; a worktree BEHIND a newer record — behind by
    more than the WIP commits `resume` itself un-committed — is what `resume`
    refuses, and rule 1 stands, no reset to make it pass. A WORKTREE ON A
