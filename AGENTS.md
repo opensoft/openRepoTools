@@ -100,9 +100,9 @@ sequence, and relay their per-repository lines rather than summarising them.
    same re-park settles, or unless it names NO PARKED COMMIT for that leg,
    which `resume` refuses as moved-on and that same re-park settles, or
    unless ORIGIN HAS LOST THE BRANCH — only `status --fetch` settles that —
-   which `resume` refuses as GONE FROM ORIGIN: delete the record's entry
-   where the feature landed, or push the branch again from the workstation
-   that parked it, never a re-park, or
+   which `resume` refuses as GONE FROM ORIGIN, the WHOLE feature with it:
+   delete the record's entry where the feature landed, or push the branch
+   again from the workstation that parked it, never a re-park, or
    unless a leg of it has NO ROLE, or a ROLE THIS SHAPE HAS NO PLACE FOR —
    one it does not mount, or one `resume` maps only in the other shape, or
    in neither, as it maps `assembly` — or NO LEG AT ALL, which `resume`

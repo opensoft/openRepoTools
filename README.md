@@ -64,9 +64,9 @@ place for — unmounted, or one `resume` maps only in the other shape or in
 neither — or no leg at all, only the workstation that parked it can — and
 where that role is really another shape's, only a checkout of that shape,
 where it is neither shape's, none; with the branch gone from origin, which
-only `--fetch` settles, `resume` refuses it as gone from origin and the exits
-are the record's own entry where the feature landed or a push from the
-workstation that parked it; and where `git worktree list` still holds a
+only `--fetch` settles, `resume` refuses the WHOLE feature as gone from origin
+and the exits are the record's own entry where the feature landed or a push
+from the workstation that parked it; and where `git worktree list` still holds a
 registration that is no longer a worktree, a `worktree prune` — after a
 `worktree unlock` if it is locked, with any directory it leaves behind moved
 aside — has to clear it first), a worktree whose tip moved on from, fell
