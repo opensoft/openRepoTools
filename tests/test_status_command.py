@@ -2622,16 +2622,20 @@ def test_a_role_this_shape_does_not_mount_names_the_whole_feature_refusal(
     words about the SHAPE, that the empty-role arm above explains in
     advance.
 
-    ONE WORDING FOR BOTH KINDS OF ROLE, because this layer cannot tell them
+    ONE REFUSAL FOR BOTH KINDS OF ROLE, because this arm cannot tell them
     apart: `leg_repo_for_role` returns nothing for a MISSPELLING (`nope`) and
     nothing for ANOTHER SHAPE'S ROLE (`code` here, `spec` in the family
     fixture's members), and `collect_legs` refuses both as a shape mismatch —
     the first at its `*) return 1`, the second at its own `[ "$REPO_SHAPE" =
-    … ] || return 1`, both verified the same day. So the exit is worded for
-    both: a park from the workstation that has the feature writes the roles
-    ITS shape has, and where that shape is not this checkout's, the feature
-    comes back in a checkout of that shape. Promising a re-park would send
-    somebody round the second loop for ever.
+    … ] || return 1`, both verified the same day. THE EXIT IS NOT ONE
+    WORDING, though it was when this test was written (Copilot's first round
+    on #23): a park from the workstation that has the feature writes the
+    roles ITS shape has, and for `code` — a role the OTHER shape maps — that
+    is the whole answer, the feature coming back in a checkout of that shape.
+    For `nope` no checkout of either shape maps it, so the line says that
+    first; the test for that split is its own, beside the `assembly` one.
+    Promising a re-park alone would send somebody round the second loop for
+    ever either way.
 
     AND ONLY FOR A ROLE THIS ROOT HAS NO REPOSITORY FOR, which is what
     proved the refusal before this checkout's SHAPE was read: `load_repo_shape`
@@ -2644,7 +2648,20 @@ def test_a_role_this_shape_does_not_mount_names_the_whole_feature_refusal(
     why."""
     checkout = workspace_config(home)
     tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
-    for role in ("nope", "code"):
+    for role, exits in (
+            ("nope", "nor does any other checkout, of either shape, so the "
+                     "one exit is to park that feature again from the "
+                     "workstation that has it (the record says Falcon), which "
+                     "writes the roles its own shape has — `park` writes "
+                     "`spec` and `code` in a three-leg project and `repo` in "
+                     "a single one, and never this word — and the feature "
+                     "comes back in a checkout of that shape, which is this "
+                     "one only where the two agree"),
+            ("code", "park that feature again from the workstation that has "
+                     "it (the record says Falcon), which writes the roles its "
+                     "own shape has; where that shape is not this checkout's, "
+                     "the feature comes back in a checkout of that shape, not "
+                     "here")):
         record(checkout, "atlas", branch="001-a-thing", role=role, commit=tip,
                parked_on="Falcon")
         for extra in ([], ["--fetch"]):
@@ -2655,11 +2672,7 @@ def test_a_role_this_shape_does_not_mount_names_the_whole_feature_refusal(
                     "each leg's role onto this checkout and refuses the WHOLE "
                     "feature — the other legs with it — where one does not map, "
                     "reporting it as a shape mismatch, so nothing here brings it "
-                    "back — park that feature again from the workstation that "
-                    "has it (the record says Falcon), which writes the roles its "
-                    "own shape has; where that shape is not this checkout's, the "
-                    "feature comes back in a checkout of that shape, not here"
-                    ) in result.stdout
+                    "back — " + exits) in result.stdout
 
     # With no `parked_on:` the exit still names the workstation, and says the
     # record does not say which — the empty-role arm's words for the same gap.
@@ -2822,6 +2835,20 @@ EXIT = (
     "is not this checkout's, the feature comes back in a checkout of that "
     "shape, not here")
 
+#: AND THE EXIT FOR A ROLE OF NEITHER SHAPE IS NOT THAT ONE (Copilot's first
+#: round on #23): `EXIT` above ends by naming the checkout the feature comes
+#: back in, which is the right thing to say about `spec` in a single root and
+#: the wrong thing to leave a person with about `assembly`, where no checkout
+#: of either shape resumes the record as it stands. So the `*)` roles get
+#: their own, which says that first and then the one thing that changes it.
+EXIT_NEITHER = (
+    " — nor does any other checkout, of either shape, so the one exit is to "
+    "park that feature again from the workstation that has it (the record "
+    "says Falcon), which writes the roles its own shape has — `park` writes "
+    "`spec` and `code` in a three-leg project and `repo` in a single one, and "
+    "never this word — and the feature comes back in a checkout of that "
+    "shape, which is this one only where the two agree")
+
 
 def test_a_role_resume_maps_in_no_shape_costs_the_whole_feature(atlas, home):
     """The reading the feature-level commit recorded and did not take: "a
@@ -2854,7 +2881,7 @@ def test_a_role_resume_maps_in_no_shape_costs_the_whole_feature(atlas, home):
     assert result.returncode == 1, result.stdout + result.stderr
     findings = [line.strip() for line in result.stdout.splitlines()
                 if line.strip().startswith("- parked feature")]
-    assert findings == [ASSEMBLY + DISAGREE + EXIT], findings
+    assert findings == [ASSEMBLY + DISAGREE + EXIT_NEITHER], findings
     assert "`resume Atlas`" not in result.stdout
 
     # AND WHERE THE RECORD AGREES WITH THIS CHECKOUT there is nothing to hold
@@ -2867,7 +2894,7 @@ def test_a_role_resume_maps_in_no_shape_costs_the_whole_feature(atlas, home):
     assert result.returncode == 1, result.stdout + result.stderr
     findings = [line.strip() for line in result.stdout.splitlines()
                 if line.strip().startswith("- parked feature")]
-    assert findings == [ASSEMBLY + EXIT], findings
+    assert findings == [ASSEMBLY + EXIT_NEITHER], findings
 
     # AND A WORD THAT MERELY MATCHES A DIRECTORY reaches the same arm by the
     # other route: `leg_repo_for_role`'s last case answers `docs` with
@@ -2887,6 +2914,84 @@ def test_a_role_resume_maps_in_no_shape_costs_the_whole_feature(atlas, home):
             "project-repo-schema` and no `code` leg), so it refuses the WHOLE "
             "feature") in result.stdout
     assert "does not mount here" not in result.stdout, result.stdout
+
+
+def test_a_role_of_neither_shape_is_offered_no_checkout_of_the_other(
+        atlas, trio, home):
+    """Copilot's first round on #23, verbatim: "for roles such as `assembly`
+    or `docs`, `role_shape_long` correctly says that `resume` maps the role
+    onto no checkout of either shape, but this common suffix still says the
+    feature can come back in a checkout of the other shape … contradicts the
+    new help/README wording that a role of neither shape has no resumable
+    checkout."
+
+    THE RE-PARK IS NOT IMPOSSIBLE, which is the half of that note to
+    disagree with: the suffix's "that shape" is the WORKSTATION's, named two
+    clauses earlier, and `park.sh`'s `build_legs` is `LEG_ROLES=("spec"
+    "code")` in a three-leg root and `("repo")` in a single one — so the park
+    it names does write a role some checkout maps, and this suite's own
+    end-to-end run of `resume.sh` on a `code` leg brought the feature back,
+    exit 0. WHAT WAS MISSING IS THE OTHER HALF OF WHAT THE HELP AND THE
+    README ALREADY SAY: "where the role is really another shape's, only a
+    checkout of that shape, and where it is NEITHER shape's, no checkout at
+    all". The suffix said the first of those to both kinds, so a person
+    reading `assembly` was left with a checkout somewhere that resumes this
+    record, and there is none: run against the extension on 2026-09-12, both
+    `role: assembly` and `role: docs` in a real three-leg root — both legs
+    mounted, the four conditions met — answered "Error: 001-a-thing was
+    parked from a three-leg project and this checkout is three-leg; that
+    feature was NOT recreated", "REFUSED: 001-a-thing — shape mismatch",
+    exit 2, which is the refusal both words already draw in a single root.
+    Refused in BOTH shapes is a record no checkout brings back.
+
+    IT REACHES THE "DOES NOT MOUNT HERE" ARM TOO, because a role of neither
+    shape gets there whenever it matches no directory (`nope`) — while a
+    `spec` or a `code` that arm sees IS another shape's role and keeps the
+    suffix it had, byte for byte."""
+    checkout = workspace_config(home)
+    for role in ("assembly", "docs", "nope"):
+        if role == "docs":
+            (atlas / "docs").mkdir()
+        record(checkout, "atlas", branch="001-a-thing", role=role,
+               commit=FAKE_SHA, parked_on="Falcon")
+        result = run(STATUS, "Atlas", home=home)
+        assert result.returncode == 1, result.stdout + result.stderr
+        findings = [line.strip() for line in result.stdout.splitlines()
+                    if line.strip().startswith("- parked feature")]
+        assert len(findings) == 1, findings
+        assert findings[0].endswith(EXIT_NEITHER[3:]), findings[0]
+        assert "comes back in a checkout of that shape, not here" not in \
+            result.stdout, (
+                "a role no shape maps was still offered the other shape")
+        assert "`resume Atlas`" not in result.stdout
+
+    # ANOTHER SHAPE'S ROLE KEEPS THE EXIT IT HAD, which is the line this one
+    # is not: `spec` reaches the shape arm and `code` the mount arm, and both
+    # really do come back in a checkout of the shape that maps them.
+    for role in ("spec", "code"):
+        record(checkout, "atlas", branch="001-a-thing", role=role,
+               commit=FAKE_SHA, parked_on="Falcon")
+        result = run(STATUS, "Atlas", home=home)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert ("park that feature again from the workstation that has it "
+                "(the record says Falcon), which writes the roles its own "
+                "shape has; where that shape is not this checkout's, the "
+                "feature comes back in a checkout of that shape, not here"
+                ) in result.stdout
+        assert "nor does any other checkout" not in result.stdout
+
+    # AND THE SHAPE IT IS REFUSED IN CHANGES NOTHING: `assembly` is the
+    # three-leg shape's own root, and `resume` maps it there no better.
+    checkout = workspace_config(home)
+    record(checkout, "trio", branch="001-a-thing", role="assembly",
+           commit=FAKE_SHA, parked_on="Falcon", root="Trio")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 1, findings
+    assert findings[0].endswith(EXIT_NEITHER[3:]), findings[0]
+    assert "`resume Trio`" not in result.stdout
 
 
 def test_a_spec_leg_this_single_root_mounts_is_still_the_shape_refusal(
@@ -3881,6 +3986,57 @@ def test_a_legs_list_indented_deeper_is_read_the_way_the_loader_reads_it(
     assert "does not mount here" not in result.stdout
 
 
+def test_a_leg_declared_at_the_root_is_read_at_the_root(atlas, home):
+    """Copilot's first round on #23, verbatim: "this special-cases `path: "."`
+    as if the path were omitted, but the extension's `_shape_record_leg`
+    preserves any non-empty path and builds `SPEC_LEG`/`CODE_LEG` as
+    `$root/$SHAPE_*_PATH`; therefore a declared `spec` or `code` leg with
+    `path: "."` is mapped to the root repository. Status will instead inspect
+    `$root/spec` or `$root/code` (or report it missing), so its
+    worktree/origin findings disagree with `resume`."
+
+    IT DOES, AND EVERY SPELLING OF IT DOES. Run against the extension on
+    2026-09-12 on a manifest whose `code` leg carries `path: "."`, `path: .`
+    and `path: '.'` in turn: `load_repo_shape` answered `REPO_SHAPE=three-leg`,
+    `SHAPE_CODE_PATH=.` and `CODE_LEG=<root>/.` for all three — `.` is not
+    empty, so `"${path:-code}"` keeps it — and an EMPTY `path:` was the one
+    spelling that fell to the default `code`. `collect_legs` hands `$CODE_LEG`
+    straight to `LEG_REPOS`, so the leg `resume` reads is the ROOT: end to end
+    on a scratch estate the same day, that manifest and a record parking a
+    `code` leg RESUMED, "code  worktrees/001-a-thing/.  <sha>  clean", exit 0,
+    with the worktree registered in the ROOT's own `git worktree list`. This
+    reader skipped the declared `.`, found no `code/` and answered the default
+    `<root>/code`, so the same estate drew "the record names a leg this root
+    does not mount here" — a whole-feature refusal `resume` does not make.
+
+    THE PROOF IS THE ROOT'S OWN HISTORY, not the absence of that line: a
+    worktree on the branch AT the parked commit is in sync, and one commit
+    past it is "moved on", and both of those are readings of the repository
+    this leg is declared into."""
+    checkout = workspace_config(home)
+    where = home / "Atlas-wt" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    record(checkout, "atlas", branch="001-a-thing", role="code", commit=tip,
+           parked_on="Falcon")
+    pristine = (atlas / "project.yaml").read_text(encoding="utf-8")
+    for spelling in ('    path: "."\n', "    path: .\n"):
+        (atlas / "project.yaml").write_text(pristine, encoding="utf-8")
+        code_leg_onto_the_spec_checkout(atlas, path_line=spelling)
+        result = run(STATUS, "Atlas", home=home)
+        assert result.returncode == 1, result.stdout + result.stderr  # dirty
+        assert "parked feature" not in result.stdout, (
+            "the `code` leg was read anywhere but the root `path: .` names")
+        assert "does not mount here" not in result.stdout
+
+    (where / "more.md").write_text("more\n", encoding="utf-8")
+    commit_all(where, "more work")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (code leg): moved on since it "
+            f"was parked, 1 commit(s) after {tip[:7]} — park again before "
+            "leaving") in result.stdout
+
+
 def test_a_feature_the_record_gives_no_branch_name_is_a_finding_not_silence(
         atlas, home):
     """Copilot on #22: `record_rows` dropped a `- branch:` whose value is
@@ -4575,6 +4731,51 @@ def test_a_root_key_below_the_features_still_selects_the_whole_block(
             "Falcon (lane xfactory-2); active 001-a-thing") in result.stdout
     assert "lists no leg for it" not in result.stdout, (
         "the branch row kept and its leg dropped is a feature with no legs")
+
+
+def test_a_project_key_below_the_features_is_read_as_the_loader_reads_it(
+        atlas, home):
+    """Copilot's first round on #23, verbatim: "the project row is serialized
+    when `features:` is encountered, but `workspace_load_project` accepts the
+    other project-level keys at the same indent in any order. If a
+    hand-edited or merged manifest places `shape:` after the feature list,
+    this assignment updates the local variable after the `project` row has
+    already been buffered, so `RECORD_SHAPE` remains empty and the new
+    shape-disagreement diagnostic is silently omitted even though `resume`
+    reads the field."
+
+    AND IT HOLDS FOR ALL FIVE OF THEM. The loader's indent-4 arm is one
+    `case` over `shape`, `root`, `parked_at`, `parked_on`, `parked_by_lane`,
+    `active_feature` and the rest, reached by INDENT and not by position: run
+    against the extension on 2026-09-12 on this record, `workspace_load_project`
+    returned `MANIFEST_SHAPE=three-leg`, `MANIFEST_PARKED_AT=2026-09-10T20:00:00Z`,
+    `MANIFEST_PARKED_ON=Falcon`, the lane and the active feature, with the
+    feature and its leg intact. Read here at the `features:` line, every one
+    of them was empty: the root's note line said "parked ? on ?", the finding
+    lost the clause that holds the record's `shape:` against this checkout,
+    and its exit said "the record does not say where" about a record that
+    says Falcon. The row is built at the flush now, from what the whole block
+    left behind."""
+    checkout = workspace_config(home)
+    keys = ("    shape: three-leg\n",
+            "    parked_at: 2026-09-10T20:00:00Z\n",
+            "    parked_on: Falcon\n",
+            "    parked_by_lane: xfactory-2\n",
+            "    active_feature: 001-a-thing\n")
+    path = record(checkout, "atlas", branch="001-a-thing", role="assembly",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    for key in keys:
+        assert text.count(key) == 1, key
+        text = text.replace(key, "")
+    path.write_text(text + "".join(keys), encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    parked record: 1 feature(s), parked 2026-09-10T20:00:00Z on "
+            "Falcon (lane xfactory-2); active 001-a-thing") in result.stdout
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert findings == [ASSEMBLY + DISAGREE + EXIT_NEITHER], findings
 
 
 def test_a_blank_branch_above_the_root_key_is_still_the_feature_resume_refuses(

@@ -1925,6 +1925,34 @@ locate_record() {
 # record's rows byte-identical; where a hand-edit moved the key, the row now
 # carries the keys AFTER it too, which is what the loader reads.
 #
+# AND THE PROJECT ROW CARRIES WHAT THE LOADER WOULD HAVE READ, WHICH MEANS
+# EMITTING IT WHERE THE BLOCK ENDS (Copilot's first round on #23): "the
+# project row is serialized when `features:` is encountered, but
+# `workspace_load_project` accepts the other project-level keys at the same
+# indent in any order. If a hand-edited or merged manifest places `shape:`
+# after the feature list … `RECORD_SHAPE` remains empty and the new
+# shape-disagreement diagnostic is silently omitted even though `resume` reads
+# the field." It holds for all five of them — the loader's indent-4 arm is one
+# `case` over `shape`, `root`, `parked_at`, `parked_on`, `parked_by_lane`,
+# `active_feature` and the rest, reached by INDENT and not by position. Run
+# against the extension on 2026-09-12 on a record whose `shape:`, `parked_at:`,
+# `parked_on:`, `parked_by_lane:` and `active_feature:` all sit BELOW its
+# feature list: `workspace_load_project` returned every one of them
+# (`MANIFEST_SHAPE=three-leg`, `MANIFEST_PARKED_AT=2026-09-10T20:00:00Z`,
+# `MANIFEST_PARKED_ON=Falcon`, the lane and the active feature), with the
+# feature and its leg intact — while this reader, emitting at `features:`,
+# read them as absent: the root's note line said "parked ? on ?", the
+# unmappable-role finding lost its "the record calls the project three-leg
+# where this checkout is single" clause, and its re-park exit said "the record
+# does not say where" about a record that says Falcon. So the row is built at
+# the FLUSH, from the values the whole block left behind, and `$has_features`
+# — set by the `features:` key and nothing else — is what decides whether
+# there is a row at all, exactly as the key did before. A block with no
+# `features:` key still emits none, and a record `park` wrote is byte for byte
+# the rows it always was: one block matches, `features:` is the last
+# project-level key in it, and the row goes out in front of the branch and leg
+# rows it sat in front of.
+#
 # AND THE SIXTH FIELD IS HOW `absent` IS TOLD FROM `empty`, which are two
 # states and not one: a bare `pushed:` is PRESENT and unreadable (note (d) of
 # the second independent review of #18), and no `pushed:` at all is the
@@ -1971,7 +1999,7 @@ record_scalar() {
 }
 
 record_rows() {
-    local file="$1" sel="$2" line matched=0 value open=0 named=0 held=""
+    local file="$1" sel="$2" line matched=0 value open=0 named=0 held="" has_features=0
     local parked_at="" parked_on="" lane="" active="" branch="" role="" commit="" pushed="" depth="" seen="" shape=""
     [ -f "$file" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
@@ -2028,21 +2056,24 @@ record_rows() {
         # sit in it.
         #
         # SO THE ROWS ARE HELD AND FLUSHED, NOT EMITTED AND HOPED FOR. Every
-        # arm below appends to `$held`, the buffer goes out whole as soon as
-        # the block is known to match — in the record's own order, which is
-        # the order it was appended in — and a block that never matches is
-        # dropped at the next `- id:`, which is the only line that starts
-        # another. THE EMITTED BYTES ARE UNCHANGED for every record `park`
-        # writes: `matched` is 1 at the `root:` line above `features:`, so
-        # each row is flushed on the line after the one that appended it, in
-        # the same order and with the same fields.
-        if [ "$matched" -eq 1 ]; then
-            [ -z "$held" ] || { printf '%s' "$held"; held=""; }
-        else
-            case "$line" in '  - id:'*) held="" ;; esac
-        fi
+        # arm below appends to `$held`, the buffer goes out whole where the
+        # block ENDS — in the record's own order, which is the order it was
+        # appended in — and a block that never matched is dropped there
+        # instead. THE EMITTED BYTES ARE UNCHANGED for every record `park`
+        # writes: one block matches, its rows go out in the order they were
+        # appended, with the same fields, and the caller reads this
+        # function's whole output in a `$(…)` either way.
         case "$line" in
         '  - id:'*)
+            # THE BLOCK ABOVE ENDS HERE. Its `project` row goes out in front
+            # of the rows it was gathered beside, which is where it has
+            # always been read — see the note above the row itself.
+            if [ "$matched" -eq 1 ]; then
+                [ "$has_features" -eq 0 ] ||
+                    printf 'project\037%s\037%s\037%s\037%s\037%s\n' "$parked_at" "$parked_on" "$lane" "$active" "$shape"
+                [ -z "$held" ] || printf '%s' "$held"
+            fi
+            held=""; has_features=0
             matched=0
             parked_at=""; parked_on=""; lane=""; active=""; branch=""; role=""; open=0; named=0; shape=""
             value="$(record_scalar "${line#*:}")"
@@ -2072,9 +2103,7 @@ record_rows() {
         '    parked_on:'*) parked_on="$(record_scalar "${line#*:}")" ;;
         '    parked_by_lane:'*) lane="$(record_scalar "${line#*:}")" ;;
         '    active_feature:'*) active="$(record_scalar "${line#*:}")" ;;
-        '    features:'*)
-            held="$held$(printf 'project\037%s\037%s\037%s\037%s\037%s' "$parked_at" "$parked_on" "$lane" "$active" "$shape")$NL"
-            ;;
+        '    features:'*) has_features=1 ;;
         '      - branch:'*)
             # A `- branch:` WITH NO VALUE IS STILL A FEATURE TO THE LOADER:
             # `workspace_load_project` appends `MANIFEST_FEATURE_BRANCHES`
@@ -2118,7 +2147,11 @@ record_rows() {
     if [ "$named" -eq 1 ] && [ "$open" -eq 1 ]; then
         held="$held$(printf 'leg\037%s\037%s\037%s\037%s\037%s\037%s' "$branch" "$role" "$commit" "$pushed" "$depth" "$seen")$NL"
     fi
-    [ "$matched" -eq 0 ] || printf '%s' "$held"
+    if [ "$matched" -eq 1 ]; then
+        [ "$has_features" -eq 0 ] ||
+            printf 'project\037%s\037%s\037%s\037%s\037%s\n' "$parked_at" "$parked_on" "$lane" "$active" "$shape"
+        [ -z "$held" ] || printf '%s' "$held"
+    fi
     return 0
 }
 
@@ -2328,6 +2361,44 @@ role_shape_long() {
     esac
 }
 
+# AND THE EXITS ARE NOT THE SAME FOR THE TWO KINDS OF UNMAPPABLE ROLE, which
+# is what the one tail both arms below carried said (Copilot's first round on
+# #23): "for roles such as `assembly` or `docs`, `role_shape_long` correctly
+# says that `resume` maps the role onto no checkout of either shape, but this
+# common suffix still says the feature can come back in a checkout of the
+# other shape … contradicts the new help/README wording that a role of neither
+# shape has no resumable checkout." THE REMEDIATION IS NOT IMPOSSIBLE, which
+# is the half of that to disagree with: the tail's "that shape" is the
+# WORKSTATION's, named two clauses earlier, and a park from a three-leg
+# workstation writes `spec` and `code` — `park.sh`'s `build_legs` is
+# `LEG_ROLES=("spec" "code")` in a three-leg root and `("repo")` in a single
+# one, and it writes no other word in either — so the re-park does produce a
+# record some checkout resumes, and this suite's own end-to-end run of
+# `resume.sh` on a `code` leg brought the feature back, exit 0. WHAT IS
+# MISSING IS WHAT THE HELP AND THE README ALREADY SAY: "where the role is
+# really another shape's, only a checkout of that shape, and where it is
+# NEITHER shape's, no checkout at all". The tail said the first of those to
+# both kinds, so a person reading `assembly` was left to think some checkout
+# somewhere resumes this record as it stands, and none does: run against the
+# extension on 2026-09-12, `role: assembly` and `role: docs` in a real
+# three-leg root — both legs mounted, the four conditions met — answered
+# "Error: 001-a-thing was parked from a three-leg project and this checkout is
+# three-leg; that feature was NOT recreated", "REFUSED: 001-a-thing — shape
+# mismatch", exit 2, which is the same refusal both words draw in a single
+# root (the commit before this one, the same estates). Refused in BOTH shapes
+# is a record no checkout brings back, so the `*)` exit says that first and
+# then the one thing that changes it.
+role_shape_exits() {
+    case "$1" in
+    spec | code | repo)
+        printf "park that feature again from the workstation that has it (%s), which writes the roles its own shape has; where that shape is not this checkout's, the feature comes back in a checkout of that shape, not here" "$2"
+        ;;
+    *)
+        printf "nor does any other checkout, of either shape, so the one exit is to park that feature again from the workstation that has it (%s), which writes the roles its own shape has — \`park\` writes \`spec\` and \`code\` in a three-leg project and \`repo\` in a single one, and never this word — and the feature comes back in a checkout of that shape, which is this one only where the two agree" "$2"
+        ;;
+    esac
+}
+
 # The repository a leg role lives in: the root for `repo` and `assembly`, else
 # the path `project.yaml` gives that role, else a folder named for the role,
 # else — for a `spec` or a `code` leg the manifest DECLARES — the role's own
@@ -2377,9 +2448,29 @@ role_shape_long() {
 # WHERE A ROLE IS DECLARED TWICE THE LAST ONE WINS, which is
 # `_shape_record_leg` again — it assigns, it does not test for empty — and
 # where the last one gives no `path:` the arms below default it exactly as
-# that function's `${path:-spec}` does. `path: .` is the one thing not taken
-# literally: the root is the `repo` and `assembly` case above, and a `spec`
-# leg that claims it is read as a leg with no path of its own.
+# that function's `${path:-spec}` does.
+#
+# AND `path: .` IS A PATH LIKE ANY OTHER — THE ROOT (Copilot's first round on
+# #23): "a declared `spec` or `code` leg with `path: "."` is mapped to the
+# root repository. Status will instead inspect `$root/spec` or `$root/code`
+# (or report it missing), so its worktree/origin findings disagree with
+# `resume`." `_shape_record_leg` stores `"${path:-spec}"`, and `.` is not
+# empty, so `load_repo_shape` keeps it and builds `SPEC_LEG`/`CODE_LEG` as
+# `$root/$SHAPE_*_PATH` — `$root/.`, which `collect_legs` hands straight to
+# `LEG_REPOS`. Run against the extension on 2026-09-12 on a manifest whose
+# `code` leg carries `path: "."`, `path: .` and `path: '.'` in turn:
+# `REPO_SHAPE=three-leg`, `SHAPE_CODE_PATH=.`, `CODE_LEG=<root>/.` in all
+# three, and an EMPTY `path:` the only spelling that falls to the default
+# `code`. End to end on a scratch estate the same day, that manifest and a
+# record parking a `code` leg: `resume.sh` RESUMED it out of the root —
+# "code  worktrees/001-a-thing/.  <sha>  clean", exit 0, the worktree
+# registered in the ROOT's `git worktree list` — while this reader skipped
+# the declared `.`, found no `code/`, answered the default `$root/code` and
+# drew "the record names a leg this root does not mount here", a whole-feature
+# refusal `resume` does not make. So the declared path is taken whatever it
+# says, and `.` is answered as `$root` rather than as `$root/.`: they are one
+# directory, and `$root` is the spelling `estate_repos` uses, which is what
+# `fetched_ok_at` keys the run's fetches by.
 leg_repo_for_role() {
     local root="$1" want="$2" i=0 path="" declared=0
     case "$want" in
@@ -2392,8 +2483,11 @@ leg_repo_for_role() {
         fi
         i=$((i + 1))
     done
-    if [ -n "$path" ] && [ "$path" != "." ]; then
-        printf '%s\n' "$root/$path"
+    if [ -n "$path" ]; then
+        case "$path" in
+        .) printf '%s\n' "$root" ;;
+        *) printf '%s\n' "$root/$path" ;;
+        esac
         return 0
     fi
     if [ -d "$root/$want" ]; then
@@ -2679,7 +2773,11 @@ check_parked_leg() {
     # is what settles a misspelling; where the role really is another
     # shape's, the record is right and this checkout is not where that
     # feature comes back, so the line says so rather than promising that a
-    # re-park will make this root mount it.
+    # re-park will make this root mount it. It is `role_shape_exits` that
+    # words it, because a role of NEITHER shape needs the other half of what
+    # the help and the README say and this arm reaches those words too — a
+    # `spec` or a `code` this manifest declares no leg for is another shape's
+    # role, and any other word that matches no directory here is neither's.
     #
     # WHAT THIS ARM DOES NOT SEE, and what is therefore still unsaid: a role
     # this root DOES mount that `collect_legs` refuses anyway — `assembly`,
@@ -2697,7 +2795,7 @@ check_parked_leg() {
     if [ -z "$repo" ]; then
         where="the record does not say where"
         [ -z "$parked_on" ] || where="the record says $parked_on"
-        finding "parked feature $branch ($role leg): the record names a leg this root does not mount here; \`resume\` maps each leg's role onto this checkout and refuses the WHOLE feature — the other legs with it — where one does not map, reporting it as a shape mismatch, so nothing here brings it back — park that feature again from the workstation that has it ($where), which writes the roles its own shape has; where that shape is not this checkout's, the feature comes back in a checkout of that shape, not here"
+        finding "parked feature $branch ($role leg): the record names a leg this root does not mount here; \`resume\` maps each leg's role onto this checkout and refuses the WHOLE feature — the other legs with it — where one does not map, reporting it as a shape mismatch, so nothing here brings it back — $(role_shape_exits "$role" "$where")"
         return 0
     fi
     # AND A ROLE THIS ROOT MOUNTS THAT `collect_legs` REFUSES ANYWAY IS THE
@@ -2757,7 +2855,7 @@ check_parked_leg() {
         if [ -n "$RECORD_SHAPE" ] && [ "$RECORD_SHAPE" != "$ROOT_SHAPE" ]; then
             shape_says="; the record calls the project $RECORD_SHAPE where this checkout is $ROOT_SHAPE, which is the disagreement \`resume\` reports and not one this layer can settle"
         fi
-        shape_line="parked feature $branch ($role leg): $(role_shape_long "$role"), so it refuses the WHOLE feature — the other legs with it — reporting it as a shape mismatch, and nothing here brings it back$shape_says — park that feature again from the workstation that has it ($where), which writes the roles its own shape has; where that shape is not this checkout's, the feature comes back in a checkout of that shape, not here"
+        shape_line="parked feature $branch ($role leg): $(role_shape_long "$role"), so it refuses the WHOLE feature — the other legs with it — reporting it as a shape mismatch, and nothing here brings it back$shape_says — $(role_shape_exits "$role" "$where")"
         # SAID HERE FOR A LEG THAT IS NOT A CHECKOUT, because the arm below
         # would say the smaller thing instead and there is nothing left to
         # read in a directory with no `.git` in it; said after the worktree
