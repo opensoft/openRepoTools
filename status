@@ -1636,10 +1636,11 @@ read_shape() {
 #
 # WHAT THE OTHER END'S LOADER DOES WITH AN ABSENT `pushed:` IS CHANGING, AND
 # NO LINE HERE DEPENDS ON IT (the independent review of workBenches #60,
-# 2026-09-11). Paragraph 3's account of the fourth state is workBenches'
-# main: `workspace_load_project` seeds every leg's pushed with `false`, so
-# `resume` reads a missing key as `false` and RR6 refuses the leg in the
-# `--no-push` words. workBenches #60 stops that invention — the seed is the
+# 2026-09-11). Paragraph 3's account of the fourth state is workBenches
+# before #60 (ec2b450): `workspace_load_project` seeds every leg's pushed
+# with `false`, so `resume` reads a missing key as `false` and RR6 refuses
+# the leg in the `--no-push` words. workBenches #60, merged as 98b8bd1 and
+# that repository's main since, stops that invention — the seed is the
 # empty string, a new `MANIFEST_LEG_PUSHED_SEEN[]` keeps absent apart from
 # bare, and RR6 refuses the leg in words of its own, "the record has no
 # `pushed:` for this leg" (both run on 2026-09-11, exit 2 each). THE OUTCOME
@@ -1834,7 +1835,7 @@ locate_record() {
 # and always there — until it is NOT there, and then the leg had no row and
 # VANISHED from this layer: no finding, exit 0, silence about a record
 # `resume.sh` refuses: RR6 is `[ "$pushed" != true ]`, and no loader of that
-# record makes an absent key `true` — on workBenches' main
+# record makes an absent key `true` — on workBenches before #60 (ec2b450)
 # `workspace-common.sh` defaults the leg's pushed to `false` at the `- role:`
 # line when no `pushed:` follows (the review cited its line 777), and under
 # workBenches #60 the seed is the empty string with the key's absence carried
@@ -1988,9 +1989,27 @@ record_rows() {
 }
 
 # The repository a leg role lives in: the root for `repo` and `assembly`, else
-# the path `project.yaml` gives that role, else a folder named for the role.
+# the path `project.yaml` gives that role, else a folder named for the role,
+# else — for a `spec` or a `code` leg the manifest DECLARES — the role's own
+# name, because that is the path the other end computes for it.
+#
+# THE LOADER DEFAULTS THOSE TWO PATHS, AND ANSWERING NOTHING FOR THEM NAMED A
+# REFUSAL THAT IS NOT THE ONE MADE (the independent review of this branch,
+# 2026-09-12). `git-common.sh`'s `_shape_record_leg` is `spec)
+# _SHAPE_LEG_SPEC_PATH="${path:-spec}"` and `code) … "${path:-code}"`, so a
+# `- role: spec` with no `path:` mounts at `spec/` to `load_repo_shape`, and
+# `collect_legs` maps the role onto that path without ever looking at the
+# directory. Answering NOTHING for such a leg sent a genuinely three-leg root
+# whose `spec/` is not checked out to the whole-feature refusal below — while
+# what `resume` does there is refuse the whole ESTATE before it reads a
+# feature at all: "Error: the spec leg 'spec' is not an initialised Git
+# checkout at '…/spec'. / Run 'git submodule update --init' (or 'make
+# bootstrap') in the project root first.", exit 1 — neither the refusal that
+# line claims nor the exits it offers. Answering the default path returns that
+# state to the short line under it — the leg is not mounted here — which is
+# what this layer can prove.
 leg_repo_for_role() {
-    local root="$1" want="$2" line role="" path=""
+    local root="$1" want="$2" line role="" path="" declared=0
     case "$want" in
     repo | assembly) printf '%s\n' "$root"; return 0 ;;
     esac
@@ -1998,7 +2017,10 @@ leg_repo_for_role() {
         while IFS= read -r line || [ -n "$line" ]; do
             line="${line%$'\r'}"
             case "$line" in
-            '  - role:'*) role="$(trim_unquote "${line#*:}")"; path="" ;;
+            '  - role:'*)
+                role="$(trim_unquote "${line#*:}")"; path=""
+                [ "$role" != "$want" ] || declared=1
+                ;;
             '    path:'*)
                 path="$(trim_unquote "${line#*:}")"
                 if [ "$role" = "$want" ] && [ -n "$path" ] && [ "$path" != "." ]; then
@@ -2014,6 +2036,13 @@ leg_repo_for_role() {
         printf '%s\n' "$root/$want"
         return 0
     fi
+    # AND THE DEFAULT IS THE ROLE'S OWN NAME, for the two roles
+    # `_shape_record_leg` defaults a path for and no others: every other word
+    # is one `collect_legs` refuses at its `*) return 1` however this root is
+    # laid out, and inventing a path for it would hide that.
+    case "$want" in
+    spec | code) [ "$declared" -eq 0 ] || { printf '%s\n' "$root/$want"; return 0; } ;;
+    esac
     return 1
 }
 
@@ -2201,21 +2230,27 @@ check_parked_leg() {
     # only one of them, because only one of them is one `collect_legs`
     # certainly refuses. `leg_repo_for_role` answers the root for `repo` and
     # `assembly`, else the path `project.yaml` gives the role, else a folder
-    # named for it, else NOTHING — and nothing is the state that proves it:
-    # `git-common.sh`'s `load_repo_shape` only calls a checkout `three-leg`
-    # when `project.yaml` declares BOTH a `spec` and a `code` leg path (with
-    # `kind: project-manifest` and `schema: project-repo-schema`), so a role
-    # this root has no repository for is a role `collect_legs` cannot map —
-    # `spec` or `code` against a shape that is not three-leg, or any other
-    # word at its `*) return 1` — whether it is a misspelling (`nope`) or
-    # another shape's role (`code` here, `spec` in the family fixture's
-    # members, which declare an `assembly` leg and no other). Both were
-    # verified on 2026-09-11 against a scratch single-shape estate: "shape
-    # mismatch", exit 2, the whole feature.
+    # named for it, else the role's own name where the manifest declares a
+    # `spec` or a `code` leg and gives it no `path:` — the default
+    # `_shape_record_leg` gives it — else NOTHING, and nothing is the state
+    # that proves it: `git-common.sh`'s `load_repo_shape` calls a checkout
+    # `three-leg` only where `project.yaml` says `kind: project-manifest`
+    # AND `schema: project-repo-schema` AND declares BOTH a `spec` and a
+    # `code` LEG — the leg, not its `path:`, which `_shape_record_leg`
+    # defaults to the role's own name. So a role this root has no repository
+    # for is a role `collect_legs` cannot map: a `spec` or a `code` this
+    # manifest declares no leg for, which is a manifest that cannot be
+    # three-leg, or any other word at its `*) return 1` — whether it is a
+    # misspelling (`nope`) or another shape's role (`code` here, `spec` in
+    # the family fixture's members, which declare an `assembly` leg and no
+    # other). Both were verified on 2026-09-11 against a scratch
+    # single-shape estate: "shape mismatch", exit 2, the whole feature.
     #
     # THE OTHER STATE IS A LEG THIS ROOT MOUNTS THAT IS NOT A CHECKOUT — a
     # submodule that was never fetched, which is a directory with no `.git`
-    # in it, the state `git-common.sh`'s own `shape_leg_is_checkout` guards.
+    # in it, the state `git-common.sh`'s own `shape_leg_is_checkout` guards,
+    # and, since `leg_repo_for_role` learned the loader's default, a `spec`
+    # or a `code` this manifest declares whose path is not on disk at all.
     # `collect_legs` maps that role by NAME onto paths `load_repo_shape`
     # computed from `project.yaml`, and never looks at the directory, so in a
     # genuinely three-leg root it maps `spec` and moves on and the feature is
@@ -2233,14 +2268,16 @@ check_parked_leg() {
     #
     # WHAT THIS ARM DOES NOT SEE, and what is therefore still unsaid: a role
     # this root DOES mount that `collect_legs` refuses anyway — `assembly`,
-    # or `spec` in a root whose `project.yaml` declares no `code` leg, which
-    # `load_repo_shape` therefore calls `single` — for which
-    # `leg_repo_for_role` hands back a repository, so the leg is read against
-    # disk and nothing here mentions the refusal (`role: assembly` in that
-    # same scratch estate: "shape mismatch", exit 2, the same day). Reading
-    # that one means computing this root's shape the way `load_repo_shape`
-    # does and holding the record's `shape:` against it, which is a reading
-    # of its own and is recorded in this commit's message, not taken here.
+    # `repo` in a root `load_repo_shape` calls three-leg (one project checked
+    # out at two shapes, the commonest mismatch there is), `spec` in a root
+    # whose `project.yaml` declares no `code` leg, or any other word that
+    # matches a directory under the root — for which `leg_repo_for_role`
+    # hands back a repository, so the leg is read against disk and nothing
+    # here mentions the refusal (`role: assembly` in that same scratch
+    # estate: "shape mismatch", exit 2, the same day). Reading that one
+    # means computing this root's shape the way `load_repo_shape` does and
+    # holding the record's `shape:` against it, which is a reading of its
+    # own and is recorded in this commit's message, not taken here.
     repo="$(leg_repo_for_role "$root" "$role" || true)"
     if [ -z "$repo" ]; then
         where="the record does not say where"
@@ -2323,12 +2360,13 @@ check_parked_leg() {
     # 2026-09-11). Not a fourth spelling of the third — `record_rows` keeps
     # the two apart in `$seen`, because the record is not saying something
     # that cannot be read, it is saying NOTHING — and what makes it a finding
-    # rather than a shrug is the other end. On workBenches' main
-    # `workspace_load_project` seeds every leg's `MANIFEST_LEG_PUSHED` with
-    # `false` AT THE `- role:` LINE and overwrites it only where a `pushed:`
-    # key follows, so `resume.sh` reads a missing one as `false` and RR6
-    # refuses the leg in the `--no-push` words: run against a record with no
-    # `pushed:` on 2026-09-11, the extension answered "Error: 001-a-thing
+    # rather than a shrug is the other end. On workBenches before #60
+    # (ec2b450) `workspace_load_project` seeds every leg's
+    # `MANIFEST_LEG_PUSHED` with `false` AT THE `- role:` LINE and overwrites
+    # it only where a `pushed:` key follows, so `resume.sh` reads a missing
+    # one as `false` and RR6 refuses the leg in the `--no-push` words: run
+    # against a record with no `pushed:` on 2026-09-11, the extension
+    # answered "Error: 001-a-thing
     # (repo leg) was parked with --no-push; that feature was NOT recreated",
     # exit 2 — and the paragraph after next is what workBenches #60 changes
     # about that, which is the words and not the refusal. Until
@@ -2342,14 +2380,14 @@ check_parked_leg() {
     # AND THE EXIT IS A PARK THAT PARKS IT, which is why every arm says from
     # THERE. `park.sh`'s `emit_recorded_feature` carries a REFUSED feature's
     # entry forward out of the loaded manifest untouched — `pushed` included,
-    # which for an absent key is whatever that loader seeded: on workBenches'
-    # main the defaulted `false`, so a park that refuses this feature
-    # rewrites the record as `pushed: false`, a `--no-push` claim nobody
-    # made; under workBenches #60 the empty string, which
+    # which for an absent key is whatever that loader seeded: on workBenches
+    # before #60 (ec2b450) the defaulted `false`, so a park that refuses this
+    # feature rewrites the record as `pushed: false`, a `--no-push` claim
+    # nobody made; under workBenches #60 the empty string, which
     # `workspace_write_manifest` drops rather than writes, so the same park
-    # carries the hole forward as a hole. Neither is a record that reads, and
-    # `resume` refuses it after either. Only the
-    # workstation that has the worktree parks it through, and that path
+    # carries the hole forward as a hole. Neither is a record that says what
+    # happened, and `resume` refuses it after either. Only the workstation
+    # that has the worktree parks it through, and that path
     # writes `true` or `false` from the push it just made. It is also where
     # this state comes from WITHOUT a hand-edit: a bare `pushed:` loads as
     # the empty string, `emit_recorded_feature` carries the empty string
@@ -2666,7 +2704,7 @@ unrecorded_worktrees() {
 read_record() {
     local root="$1" sel rows="" kind a b c d e f n_features=0
     local parked_at="" parked_on="" lane="" active="" recorded="$NL"
-    local seen_branches=0 legs where=""
+    local seen_branches=0 legs where="" refused=""
     local -a feature_legs=() feature_why=()
     shift
     [ -n "$RECORD_FILE" ] || return 0
@@ -2732,7 +2770,18 @@ read_record() {
                     finding "parked feature $a: the record lists no leg for it; \`resume\` collects a feature's legs before it recreates anything and refuses the WHOLE feature where it finds none, reporting it as a shape mismatch, so nothing here brings it back — park that feature again from the workstation that has it ($where), which writes the record afresh with the legs it parks"
                 fi
                 ;;
-            leg) check_parked_leg "$root" "$a" "$b" "$c" "$d" "$parked_at" "$parked_on" "$e" "$f" "${feature_why[seen_branches - 1]:-}" ;;
+            leg)
+                # THE SAME GUARD THE FIRST PASS MAKES, for the same mangled
+                # record: a leg row before any branch row has no feature to
+                # take a verdict from, and `${feature_why[-1]}` is "bad array
+                # subscript" on bash 3.2 and the LAST feature's verdict on
+                # bash 5 — a clause about a feature this leg is no leg of
+                # (the independent review of this branch, 2026-09-12).
+                refused=""
+                [ "$seen_branches" -eq 0 ] ||
+                    refused="${feature_why[seen_branches - 1]:-}"
+                check_parked_leg "$root" "$a" "$b" "$c" "$d" "$parked_at" "$parked_on" "$e" "$f" "$refused"
+                ;;
             esac
         done <<<"$rows"
         say "    parked record: $n_features feature(s), parked ${parked_at:-?} on ${parked_on:-?}${lane:+ (lane $lane)}${active:+; active $active}"

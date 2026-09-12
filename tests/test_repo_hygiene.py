@@ -717,7 +717,7 @@ def test_readme_is_short_enough_to_be_read():
     one line, because the paragraph repacked as it took the words. The
     second exit is in it for the reason the AGENTS.md entry gives.
 
-    250 -> 251 on 2026-09-11, for note 1 of that review: a FEATURE the record
+    250 -> 251 on 2026-09-12, for note 1 of that review: a FEATURE the record
     lists no leg for, which `collect_legs` refuses whole at its closing
     `[ "${#LEG_ROLES[@]}" -gt 0 ]`. One line, and it buys the one word that
     keeps the list honest — "feature", where every other entry beside it is a
