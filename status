@@ -1621,6 +1621,19 @@ read_shape() {
 #    per FEATURE, in `read_record`, where the comment above that function
 #    says how and why the features are judged before their legs are read.
 #
+# 5, 6 AND 7 ARE REFUSALS OF THE WHOLE FEATURE, SO NO LINE OF THAT FEATURE
+# NAMES `resume` (Copilot on #21, second round, 2026-09-11). A leg of such a
+# feature that is otherwise perfectly resumable — parked, pushed, no worktree
+# here — used to draw "`resume <Name>` brings it back" two lines under the
+# one that says `resume` refuses the whole feature, and a person reads the
+# REPORT, not one line of it: the two together name an exit that cannot work,
+# which is the rule at the top of `check_parked_leg`. `read_record`'s first
+# pass makes the verdict for every feature before any of its legs is read and
+# hands it down, so those lines say what `collect_legs` will do and end at
+# the one exit there is. Everything else a sibling can say — dirty, moved on,
+# behind, a commit that is not here — is unchanged: it was never `resume`
+# that answered those.
+#
 # WHAT THE OTHER END'S LOADER DOES WITH AN ABSENT `pushed:` IS CHANGING, AND
 # NO LINE HERE DEPENDS ON IT (the independent review of workBenches #60,
 # 2026-09-11). Paragraph 3's account of the fourth state is workBenches'
@@ -2121,6 +2134,10 @@ wip_gap_is_ours() {
 # both leave `$pushed` empty.
 check_parked_leg() {
     local root="$1" branch="$2" role="$3" commit="$4" pushed="$5" parked_at="$6" parked_on="$7" depth="$8" seen="$9"
+    # `${10}` and not a tenth name in the line above, because that line is
+    # already the widest in this file; `:-` because `set -u` is on and the
+    # verdict is the one argument a caller may leave off.
+    local refused="${10:-}"
     local repo tree="" ghost="" ghost_is="" clear="" out rc=0 tip n unread="" refuses="" where=""
     # A LEG THE RECORD GIVES NO ROLE IS ANSWERED BEFORE THE ROOT IS ASKED
     # ABOUT IT, and it is not the arm below (the independent review of #20,
@@ -2474,7 +2491,38 @@ check_parked_leg() {
         fi
         return 0
     fi
+    # NO LINE OF A FEATURE `resume` REFUSES WHOLE MAY NAME `resume` (Copilot
+    # on #21, second round, 2026-09-11). These two arms are the only ones in
+    # this function that offer it — the `--no-push`, unreadable-`pushed:` and
+    # absent-parked-commit arms all rule it out for themselves — and they
+    # offered it to a leg whose FEATURE `collect_legs` throws out: a record
+    # with a roleless leg beside a good `repo` leg drew "the record has no
+    # role … `resume` refuses the WHOLE feature" on one line and "`resume
+    # Atlas` brings it back" on the next, and the two together recommend a
+    # command that cannot recreate it. The leg that costs the feature says so
+    # on its own line, but a person reads the REPORT, not one line of it.
+    #
+    # THE VERDICT IS THE FEATURE'S, SO IT IS MADE WHERE THE FEATURES ARE:
+    # `read_record`'s first pass — the one that counts each feature's legs
+    # for state 7 — also asks of each leg the two questions `collect_legs`
+    # asks, has it a role and can this root answer that role, and hands the
+    # answer down as `$refused`, a clause naming the leg that costs the
+    # feature. Empty for every feature `resume` does not refuse whole, which
+    # is what keeps every other record's lines exactly as they were. It is
+    # not computed HERE because by the time this function has the leg in
+    # front of it the sibling that spoils the feature may not have been read
+    # yet: the record's order is the loader's, not the reader's convenience.
     if [ -z "$tree" ]; then
+        if [ -n "$refused" ]; then
+            where="the record does not say where"
+            [ -z "$parked_on" ] || where="the record says $parked_on"
+            if [ -n "$ghost" ]; then
+                finding "parked feature $branch ($role leg): no worktree on that branch here, but $ghost_is — clear it with $clear; and \`resume\` refuses the WHOLE feature in any case, because $refused, so it does not bring this leg back either — park that feature again from the workstation that has it ($where)"
+            else
+                finding "parked feature $branch ($role leg): no worktree on that branch here, parked ${parked_at:-?} on ${parked_on:-?}; \`resume\` refuses the WHOLE feature, because $refused, so it does not bring this leg back — park that feature again from the workstation that has it ($where)"
+            fi
+            return 0
+        fi
         if [ -n "$ghost" ]; then
             finding "parked feature $branch ($role leg): no worktree on that branch here, but $ghost_is — clear it with $clear, then \`resume $ESTATE_NAME\` brings it back"
         else
@@ -2600,7 +2648,15 @@ unrecorded_worktrees() {
 # `branch` row per feature and a `leg` row per leg, in the record's order, so
 # a first pass counts each feature's legs and the main loop reads the count
 # back at that feature's `branch` row — before any of its legs' arms run,
-# which is where the next note needs it too. ONE ENTRY PER `branch` ROW, NOT
+# which is where the second job needs it. THE SECOND JOB IS THE VERDICT
+# (Copilot on #21, second round, 2026-09-11): the same pass asks of each leg
+# the two questions `collect_legs` asks — has it a role, and can this root
+# answer that role — and keeps the first clause that costs the feature, so
+# `check_parked_leg` can be told that the feature its leg belongs to is one
+# `resume` throws out whole and stop offering `resume` for it. It cannot be
+# asked of a leg as the leg arrives: the leg that spoils the feature may come
+# after the one being read, and the record's order is the loader's, not the
+# reader's convenience. ONE ENTRY PER `branch` ROW, NOT
 # PER BRANCH NAME: `workspace_load_project` makes a new feature of every
 # `- branch:` line it reads, so a name that appears twice is two features to
 # the loader and `collect_legs` judges each on its own legs; `$recorded` and
@@ -2611,7 +2667,7 @@ read_record() {
     local root="$1" sel rows="" kind a b c d e f n_features=0
     local parked_at="" parked_on="" lane="" active="" recorded="$NL"
     local seen_branches=0 legs where=""
-    local -a feature_legs=()
+    local -a feature_legs=() feature_why=()
     shift
     [ -n "$RECORD_FILE" ] || return 0
     for sel in "$@"; do
@@ -2631,11 +2687,24 @@ read_record() {
         # then ignores rather than an index it invents.
         while IFS=$'\037' read -r kind a b c d e f; do
             case "$kind" in
-            branch) feature_legs+=(0) ;;
+            branch) feature_legs+=(0); feature_why+=("") ;;
             leg)
                 legs=${#feature_legs[@]}
-                [ "$legs" -eq 0 ] ||
+                if [ "$legs" -gt 0 ]; then
                     feature_legs[legs - 1]=$((feature_legs[legs - 1] + 1))
+                    # THE FIRST LEG THAT COSTS THE FEATURE IS THE ONE NAMED:
+                    # `collect_legs` walks the legs in the record's order and
+                    # returns at the first role it cannot map, so that is the
+                    # one `resume`'s refusal is about, and a second would only
+                    # lengthen a line about a feature that is already gone.
+                    if [ -z "${feature_why[legs - 1]}" ]; then
+                        if [ -z "$b" ]; then
+                            feature_why[legs - 1]="a leg of it in the record has no role"
+                        elif ! leg_repo_for_role "$root" "$b" >/dev/null 2>&1; then
+                            feature_why[legs - 1]="its \`$b\` leg names a role this root does not mount"
+                        fi
+                    fi
+                fi
                 ;;
             esac
         done <<<"$rows"
@@ -2663,7 +2732,7 @@ read_record() {
                     finding "parked feature $a: the record lists no leg for it; \`resume\` collects a feature's legs before it recreates anything and refuses the WHOLE feature where it finds none, reporting it as a shape mismatch, so nothing here brings it back — park that feature again from the workstation that has it ($where), which writes the record afresh with the legs it parks"
                 fi
                 ;;
-            leg) check_parked_leg "$root" "$a" "$b" "$c" "$d" "$parked_at" "$parked_on" "$e" "$f" ;;
+            leg) check_parked_leg "$root" "$a" "$b" "$c" "$d" "$parked_at" "$parked_on" "$e" "$f" "${feature_why[seen_branches - 1]:-}" ;;
             esac
         done <<<"$rows"
         say "    parked record: $n_features feature(s), parked ${parked_at:-?} on ${parked_on:-?}${lane:+ (lane $lane)}${active:+; active $active}"

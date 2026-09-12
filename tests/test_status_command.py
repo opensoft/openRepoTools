@@ -2204,7 +2204,15 @@ def test_a_leg_with_no_role_does_not_take_the_legs_around_it_with_it(
     """The row goes out where the leg ENDS and `$open` — not the role's value
     — is what says a leg is open, so an empty role costs the record neither a
     leg before it nor one after it. Both of the others are read as they were,
-    and the roleless one is read too."""
+    and the roleless one is read too.
+
+    "As they were" is now "as they are": the `repo` leg with no worktree here
+    is still READ and still first, and what its line says has changed —
+    Copilot on #21, second round, 2026-09-11 — because `resume` refuses this
+    whole feature and the line used to offer `resume Atlas` for it two lines
+    under the one that says so. The `spec` leg's `--no-push` line is
+    untouched, which is the other half of the same rule: an arm that already
+    rules `resume` out needs no verdict to do it."""
     checkout = workspace_config(home)
     leg = atlas / "spec"
     git("checkout", "-q", "main", cwd=leg)
@@ -2236,8 +2244,10 @@ def test_a_leg_with_no_role_does_not_take_the_legs_around_it_with_it(
     assert len(findings) == 3, findings
     assert findings[0] == (
         "- parked feature 001-a-thing (repo leg): no worktree on that branch "
-        "here; parked 2026-09-10T20:00:00Z on Falcon — `resume Atlas` brings "
-        "it back"), findings[0]
+        "here, parked 2026-09-10T20:00:00Z on Falcon; `resume` refuses the "
+        "WHOLE feature, because a leg of it in the record has no role, so it "
+        "does not bring this leg back — park that feature again from the "
+        "workstation that has it (the record says Falcon)"), findings[0]
     assert findings[1].startswith(
         "- parked feature 001-a-thing: a leg of it in the record has no role;"
         ), findings[1]
@@ -2337,7 +2347,9 @@ def test_an_unmountable_role_is_read_beside_the_legs_it_refuses_with(
         atlas, home):
     """The refusal is of the FEATURE, so the good leg beside it is read too
     and both lines print — the leg's own state, and the whole-feature refusal
-    the record's other leg costs it. The order is the record's."""
+    the record's other leg costs it. The order is the record's, and the good
+    leg's line says what the feature's verdict makes of it rather than
+    offering `resume` for a feature `resume` throws out."""
     checkout = workspace_config(home)
     path = record(checkout, "atlas", branch="001-a-thing", role="repo",
                   commit=FAKE_SHA, parked_on="Falcon")
@@ -2357,12 +2369,16 @@ def test_an_unmountable_role_is_read_beside_the_legs_it_refuses_with(
     assert len(findings) == 2, findings
     assert findings[0] == (
         "- parked feature 001-a-thing (repo leg): no worktree on that branch "
-        "here; parked 2026-09-10T20:00:00Z on Falcon — `resume Atlas` brings "
-        "it back"), findings[0]
+        "here, parked 2026-09-10T20:00:00Z on Falcon; `resume` refuses the "
+        "WHOLE feature, because its `nope` leg names a role this root does "
+        "not mount, so it does not bring this leg back — park that feature "
+        "again from the workstation that has it (the record says Falcon)"
+        ), findings[0]
     assert findings[1].startswith(
         "- parked feature 001-a-thing (nope leg): the record names a leg this "
         "root does not mount here; `resume` maps each leg's role onto this "
         "checkout and refuses the WHOLE feature"), findings[1]
+    assert "`resume Atlas`" not in result.stdout
 
 
 def test_a_feature_the_record_lists_no_leg_for_is_a_finding_not_silence(
@@ -2483,6 +2499,118 @@ def test_a_feature_with_no_legs_is_read_in_the_record_s_own_order(
     assert findings[2].startswith(
         "- parked feature 003-c-thing (repo leg): parked with --no-push on "
         "Falcon"), findings[2]
+
+
+def leg_block(role: str, commit: str, *, pushed: str = "true") -> str:
+    """One more leg under the feature `record()` wrote, in its layout."""
+    return (f"          - role: {role}\n"
+            "            remote: origin\n"
+            f"            parked_commit: {commit}\n"
+            "            wip: true\n"
+            "            wip_depth: 1\n"
+            f"            pushed: {pushed}\n")
+
+
+def two_leg_record(checkout, *, second: str, first_commit: str,
+                   second_commit: str, order: str = "good-first"):
+    """A one-feature record with two legs: a good `repo` leg with no worktree
+    here, and `second` — the leg that costs the feature."""
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=first_commit, parked_on="Falcon")
+    good = leg_block("repo", first_commit)
+    spoiler = leg_block(second, second_commit)
+    text = path.read_text(encoding="utf-8")
+    assert text.count(good) == 1, text
+    path.write_text(text.replace(
+        good, good + spoiler if order == "good-first" else spoiler + good),
+        encoding="utf-8")
+    return path
+
+
+def test_no_line_of_a_feature_resume_refuses_whole_offers_resume(atlas, home):
+    """Copilot on #21, second round, 2026-09-11, verbatim: "This finding is
+    emitted per leg, but `read_record` still invokes `check_parked_leg` for
+    every sibling. Thus a feature with one roleless leg also prints the normal
+    `resume <Name> brings it back` advice for another leg, even though this
+    message says `resume` refuses the whole feature; the combined report
+    recommends a command that cannot recreate it."
+
+    True of both whole-feature refusals a leg can cause — a leg with no role,
+    and a role this root cannot answer — and in both orders, which is the
+    reason the verdict is made in a pass of its own: with the spoiling leg
+    LAST, no reader that judges a leg as it arrives can know. `resume` will
+    not recreate any of it, so no line of it may name `resume`; the sibling's
+    line says what `collect_legs` will do and why, and ends at the one exit
+    there is."""
+    checkout = workspace_config(home)
+    tip = feature_worktree(atlas, "001-b-other", home / "Atlas-wt" / "001-b-other")
+    for second, why in (
+            ("", "a leg of it in the record has no role"),
+            ("nope", "its `nope` leg names a role this root does not mount")):
+        for order in ("good-first", "spoiler-first"):
+            two_leg_record(checkout, second=second, first_commit=FAKE_SHA,
+                           second_commit=tip, order=order)
+            result = run(STATUS, "Atlas", home=home)
+            assert result.returncode == 1, result.stdout + result.stderr
+            assert ("    - parked feature 001-a-thing (repo leg): no worktree "
+                    "on that branch here, parked 2026-09-10T20:00:00Z on "
+                    f"Falcon; `resume` refuses the WHOLE feature, because {why}"
+                    ", so it does not bring this leg back — park that feature "
+                    "again from the workstation that has it (the record says "
+                    "Falcon)") in result.stdout, (second, order)
+            assert "`resume Atlas`" not in result.stdout, (second, order)
+
+
+def test_a_refused_feature_still_names_the_prune_that_blocks_it(atlas, home):
+    """A stale registration is still the person's to clear — `resume` cannot
+    recreate a worktree git believes it has, whatever else it refuses — so
+    the prune keeps its place at the front of the line, and only the `resume`
+    at the end of it goes."""
+    checkout = workspace_config(home)
+    where = home / "Atlas-wt" / "001-a-thing"
+    feature_worktree(atlas, "001-a-thing", where)
+    rmtree(where)               # and NO `git worktree prune`
+    two_leg_record(checkout, second="", first_commit=FAKE_SHA,
+                   second_commit=FAKE_SHA)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
+            "branch here, but a stale worktree registration for it is still "
+            f"recorded at {where} — clear it with `git -C {atlas} worktree "
+            "prune`; and `resume` refuses the WHOLE feature in any case, "
+            "because a leg of it in the record has no role, so it does not "
+            "bring this leg back either — park that feature again from the "
+            "workstation that has it (the record says Falcon)") in result.stdout
+    assert "`resume Atlas`" not in result.stdout
+
+
+def test_the_verdict_reaches_only_the_feature_it_belongs_to(atlas, home):
+    """Per FEATURE, not per record: a second feature in the same block, with
+    every leg mappable, keeps the line it always had. The verdict is read
+    back at each feature's own `branch` row, and a record where one feature
+    is refused and another is not is the test of that."""
+    checkout = workspace_config(home)
+    path = two_leg_record(checkout, second="", first_commit=FAKE_SHA,
+                          second_commit=FAKE_SHA)
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text + "      - branch: 002-b-thing\n        legs:\n"
+                    + leg_block("repo", FAKE_SHA), encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 3, findings
+    assert findings[0].startswith(
+        "- parked feature 001-a-thing (repo leg): no worktree on that branch "
+        "here, parked 2026-09-10T20:00:00Z on Falcon; `resume` refuses the "
+        "WHOLE feature"), findings[0]
+    assert findings[1].startswith(
+        "- parked feature 001-a-thing: a leg of it in the record has no role;"
+        ), findings[1]
+    assert findings[2] == (
+        "- parked feature 002-b-thing (repo leg): no worktree on that branch "
+        "here; parked 2026-09-10T20:00:00Z on Falcon — `resume Atlas` brings "
+        "it back"), findings[2]
 
 
 def test_every_leg_of_a_record_is_read_once_and_in_order(atlas, home):
