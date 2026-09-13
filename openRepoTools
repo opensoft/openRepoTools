@@ -625,7 +625,7 @@ wip_projects_dir() {
 
 wip_yaml_field() {
 	local v
-	v="$(sed -n "s/^$1:[[:space:]]*//p" -- "$2" 2>/dev/null | head -n 1 |
+	v="$(sed -n -e "s/^$1:[[:space:]]*//p" "$2" 2>/dev/null | head -n 1 |
 		sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//')"
 	v="${v%\"}"; v="${v#\"}"
 	v="${v%\'}"; v="${v#\'}"
@@ -810,7 +810,7 @@ wip_substitute() {
 		-e "s#{{ORG}}#$WIP_ORG#g" \
 		-e "s#{{SHAPE_REPOSITORY}}#$SHAPE_REPOSITORY#g" \
 		-- "$file" >"$file.subst" || die "could not substitute the template file $file"
-	left="$(grep -o '{{[A-Z_]*}}' -- "$file.subst" 2>/dev/null | sort -u | tr '\n' ' ' || :)"
+	left="$(grep -o -e '{{[A-Z_]*}}' "$file.subst" 2>/dev/null | sort -u | tr '\n' ' ' || :)"
 	if [ -n "$left" ]; then
 		rm -f -- "$file.subst"
 		die "the template carries a placeholder this command has no value for: $left
@@ -831,13 +831,13 @@ wip_shape_ref() {
 	local pin selfdir=""
 	[ -f "$SELF" ] && selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 	if [ -n "$selfdir" ] && [ -f "$selfdir/contracts/openreposhape-pin.yaml" ]; then
-		pin="$(sed -n 's/^commit:[[:space:]]*//p' -- "$selfdir/contracts/openreposhape-pin.yaml" | head -n 1)"
+		pin="$(sed -n -e 's/^commit:[[:space:]]*//p' "$selfdir/contracts/openreposhape-pin.yaml" | head -n 1)"
 		pin="${pin%\"}"; pin="${pin#\"}"
 		[ -n "$pin" ] && { printf '%s\n' "$pin"; return 0; }
 	fi
 	workdir
 	if fetch_from_repo "contracts/openreposhape-pin.yaml" "$WORKDIR/pin.yaml"; then
-		pin="$(sed -n 's/^commit:[[:space:]]*//p' -- "$WORKDIR/pin.yaml" | head -n 1)"
+		pin="$(sed -n -e 's/^commit:[[:space:]]*//p' "$WORKDIR/pin.yaml" | head -n 1)"
 		pin="${pin%\"}"; pin="${pin#\"}"
 		[ -n "$pin" ] && { printf '%s\n' "$pin"; return 0; }
 	fi

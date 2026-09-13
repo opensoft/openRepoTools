@@ -69,7 +69,7 @@ real_ws_path() {
   local y p
   y="$REAL_HOME/.agents/workspace.yaml"
   [ -r "$y" ] || return 1
-  p="$(sed -n 's/^path:[[:space:]]*//p' -- "$y" 2>/dev/null | head -n1)"
+  p="$(sed -n -e 's/^path:[[:space:]]*//p' "$y" 2>/dev/null | head -n1)"
   p="${p%\"}"; p="${p#\"}"; p="${p%\'}"; p="${p#\'}"
   case "$p" in '~') p="$REAL_HOME" ;; '~/'*) p="$REAL_HOME/${p#'~/'}" ;; esac
   [ -n "$p" ] && [ -d "$p" ] || return 1
@@ -119,8 +119,14 @@ pass=0; fail=0
 ok()  { pass=$((pass + 1)); printf 'ok   %s\n' "$1"; }
 bad() { fail=$((fail + 1)); printf 'FAIL %s\n       %s\n' "$1" "${2-}"; }
 is()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected [$3], got [$2]"; fi; }
-has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "expected to contain [$3]; got: $(printf '%s' "$2" | tr '\n' '~' | cut -c1-400)" ;; esac; }
-hasnt() { case "$2" in *"$3"*) bad "$1" "did NOT expect [$3]; got: $(printf '%s' "$2" | tr '\n' '~' | cut -c1-400)" ;; *) ok "$1" ;; esac; }
+# `LC_ALL=C tr`, because BSD `tr` is not multibyte-aware: on macOS, in a UTF-8
+# locale, it answers `Illegal byte sequence` and prints NOTHING for exactly the
+# messages this estate is written in — every one of them carries an em dash. A
+# failure whose `got:` is empty is a failure nobody can read, and these two
+# lines are the only place a failure is ever rendered (R-A9-11). Bytes are all
+# a newline-to-`~` swap ever wanted.
+has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "expected to contain [$3]; got: $(printf '%s' "$2" | LC_ALL=C tr '\n' '~' | cut -c1-400)" ;; esac; }
+hasnt() { case "$2" in *"$3"*) bad "$1" "did NOT expect [$3]; got: $(printf '%s' "$2" | LC_ALL=C tr '\n' '~' | cut -c1-400)" ;; *) ok "$1" ;; esac; }
 # lane-start mints a fresh uuid for a NEW session, so its launch line carries a
 # value no test can predict. `launch_of` removes just that pair, leaving the
 # rest of the command line exactly comparable; `minted_of` returns the uuid.
@@ -130,6 +136,36 @@ minted_of() { printf '%s' "$1" | grep -oE -- "--session-id $UUID_RE" | head -n1 
 
 rc=0; out=""; err=""
 run() { out="$("$@" 2>"$SANDBOX/stderr")"; rc=$?; err="$(cat "$SANDBOX/stderr")"; }
+
+# THIS SUITE'S CLOCK, AND IT IS PORTABLE (A9 Addendum 4, R-A9-11). Ten fixture
+# stamps below are written relative to now, and `date -u -d '-5 hours'` is
+# GNU-only: BSD `date` — macOS's, and this file RUNS on the macOS job, because
+# obligation 4's gate is a run gate by design — answers `illegal option -- d`
+# and prints its usage, which is what every one of those ten used to get. BSD
+# spells the same arithmetic `-v-5H`, so the adjustments are written HERE in
+# that spelling, once, and translated for GNU: `utc_at -3H -26S` is three hours
+# and twenty-six seconds ago on either. GNU is asked first, because it is what
+# every lane workstation runs.
+#
+# `ua_bsd` is declared and assigned on separate lines because `local x=()` is
+# not something bash 3.2 — the bash this file is parsed by on that runner — can
+# be relied on to take.
+utc_at() {   # <+|-><n><H|M|S> …
+  local ua_a ua_n ua_unit ua_gnu=""
+  local ua_bsd; ua_bsd=()
+  [ $# -gt 0 ] || { echo "utc_at: needs at least one <+|-><n><H|M|S>" >&2; return 1; }
+  for ua_a in "$@"; do
+    ua_n="${ua_a%?}"; ua_unit="${ua_a#"$ua_n"}"
+    case "$ua_unit" in
+    H) ua_unit=hours ;; M) ua_unit=minutes ;; S) ua_unit=seconds ;;
+    *) echo "utc_at: '$ua_a' is not <+|-><n><H|M|S>" >&2; return 1 ;;
+    esac
+    ua_gnu="${ua_gnu:+$ua_gnu }$ua_n $ua_unit"
+    ua_bsd+=("-v$ua_a")
+  done
+  date -u -d "$ua_gnu" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
+    date -u "${ua_bsd[@]}" +%Y-%m-%dT%H:%M:%SZ
+}
 
 # ---------------------------------------------------------------- the fakes
 
@@ -429,8 +465,8 @@ printf '{"type":"custom-title","customTitle":"repoA-16 (2)","sessionId":"titled-
 
 # Seeded object logs, committed so the sandbox worktree stays clean. These are
 # fixtures, not writes: everything else below goes through lanes-edit.sh.
-OLD_UTC="$(date -u -d '-5 hours' +%Y-%m-%dT%H:%M:%SZ)"
-MID_UTC="$(date -u -d '-4 hours -30 minutes' +%Y-%m-%dT%H:%M:%SZ)"
+OLD_UTC="$(utc_at -5H)"
+MID_UTC="$(utc_at -4H -30M)"
 mkdir -p "$WIP/lanes/log"
 { printf '# lane repoF-1 — object log (lane-collision-protocol Amendment 7)\n'
   printf 'STARTED — lane repoF-1, session %s@Eagle, %s, lane:repoF-1 → home opensoft/repoF; estate repoF\n' "$F_ID" "$OLD_UTC"
@@ -1031,7 +1067,7 @@ git -C "$CLONE2" config user.email "peer@example.invalid"
 git -C "$CLONE2" config user.name  "the other workstation"
 mkdir -p "$CLONE2/lanes/log"
 { printf '# lane repoH-2 — object log (lane-collision-protocol Amendment 7)\n'
-  printf 'CLAIMED — lane repoH-2, session %s@Raven, %s, opensoft/repoH#4\n' "$DEAD_ID" "$(date -u -d '-2 minutes' +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'CLAIMED — lane repoH-2, session %s@Raven, %s, opensoft/repoH#4\n' "$DEAD_ID" "$(utc_at -2M)"
 } > "$CLONE2/lanes/log/repoH-2.md"
 git -C "$CLONE2" add -- lanes/log/repoH-2.md
 git -C "$CLONE2" commit -q -m "LOG(repoH-2@Raven): CLAIMED opensoft/repoH#4"
@@ -1050,8 +1086,8 @@ is   "…and the loser holds nothing" "$(printf '%s\n' "$out" | grep -c '^HOLDS'
 # The winner is whichever rival is ALREADY on the rebased history — the one
 # that LANDED first — and never the earliest timestamp. Two rivals land during
 # one rebase window: repoH-2 lands FIRST carrying the LATER UTC.
-LATE_UTC="$(date -u -d '+10 minutes' +%Y-%m-%dT%H:%M:%SZ)"
-EARLY_UTC="$(date -u -d '+5 minutes' +%Y-%m-%dT%H:%M:%SZ)"
+LATE_UTC="$(utc_at +10M)"
+EARLY_UTC="$(utc_at +5M)"
 git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
 printf 'CLAIMED — lane repoH-2, session %s@Raven, %s, opensoft/repoH#60\n' "$DEAD_ID" "$LATE_UTC" >> "$CLONE2/lanes/log/repoH-2.md"
 git -C "$CLONE2" add -- lanes/log/repoH-2.md
@@ -1226,10 +1262,10 @@ git -C "$WIP" push -q origin main
 # still take the newest LINE. Two of these are the exact shapes that made the
 # suite fail intermittently at 08e8b05: a LANDED invisible behind the LANDING
 # it closed, and a RELEASED still reported as superseded by a TAKEOVER.
-JUMP_LATE="$(date -u -d '-3 hours' +%Y-%m-%dT%H:%M:%SZ)"
-JUMP_BACK="$(date -u -d '-3 hours -26 seconds' +%Y-%m-%dT%H:%M:%SZ)"
-JUMP_OLD="$(date -u -d '-5 hours' +%Y-%m-%dT%H:%M:%SZ)"
-JUMP_OLDER="$(date -u -d '-5 hours -26 seconds' +%Y-%m-%dT%H:%M:%SZ)"
+JUMP_LATE="$(utc_at -3H)"
+JUMP_BACK="$(utc_at -3H -26S)"
+JUMP_OLD="$(utc_at -5H)"
+JUMP_OLDER="$(utc_at -5H -26S)"
 { printf '# lane repoJ-1 — object log (lane-collision-protocol Amendment 7)\n'
   printf 'STARTED — lane repoJ-1, session %s@Eagle, %s, lane:repoJ-1 → home opensoft/repoJ; estate repoJ\n' "$DEAD_ID" "$JUMP_LATE"
   # #5 — a RELEASED that closes a CLAIMED, stamped 26s in the claim's past.
@@ -2631,15 +2667,31 @@ chmod +x "$NONET/git"
 # issue `AaCXxOSfi2WmFx-_lncg`, this file, this line, 2026-09-12T22:37Z. A test
 # file is not the place to argue an exception, and a `# NOSONAR` marker would
 # hide the finding rather than answer it. `sha256sum` costs nothing here.
+#
+# AND IT IS SPELLED TWO WAYS, because neither spelling is everywhere (A9
+# Addendum 4, R-A9-11). A stock macOS has `shasum -a 256` and no `sha256sum` at
+# all; this runner image happens to carry both, which is exactly the kind of
+# fact a test must not depend on — with the digest missing, this function
+# prints NOTHING and the two comparisons below compare the empty string with
+# itself: green, and asserting no fact. `sort -z`'s `-z` is GNU-only and goes
+# the same way — sorting the DIGEST LINES needs no NUL and is as deterministic.
+# `xargs -r` goes because it is GNU-only and this `find` always names a file.
+if command -v sha256sum >/dev/null 2>&1; then SHA256=(sha256sum); else SHA256=(shasum -a 256); fi
 tree_of() {   # <checkout>
   local to_dir="$1"
-  ( cd "$to_dir" && find . -path ./.git -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum | sha256sum )
+  ( cd "$to_dir" && find . -path ./.git -prune -o -type f -print0 \
+      | xargs -0 "${SHA256[@]}" | LC_ALL=C sort | "${SHA256[@]}" )
   return 0
 }
+# `stat -c` is GNU and `stat -f` is BSD, the same two-spelling rule, and
+# `lanes-edit.sh:2969` already reads FETCH_HEAD's mtime both ways. Spelled `-c`
+# only, this answered `none` on BOTH sides of the call on macOS and the
+# assertion compared `none` with `none`.
+mtime_of() { stat -c %Y -- "$1" 2>/dev/null || stat -f %m -- "$1" 2>/dev/null || printf 'none'; }
 ss_tree_before="$(tree_of "$WIP")"
 ss_refs_before="$(git -C "$WIP" for-each-ref --format='%(refname) %(objectname)')"
 ss_head2_before="$(git -C "$WIP" rev-parse HEAD)"
-ss_fh_before="$(stat -c %Y "$WIP/.git/FETCH_HEAD" 2>/dev/null || printf 'none')"
+ss_fh_before="$(mtime_of "$WIP/.git/FETCH_HEAD")"
 export FAKE_TMUX_WINDOW_NAME=repoSS-1
 out="$(printf "$ss_hook" "$SS_CUR" resume | PATH="$NONET:$PATH" "$E" session-start 2>"$SANDBOX/stderr")"; rc=$?
 err="$(cat "$SANDBOX/stderr")"
@@ -2649,7 +2701,7 @@ has  "…and still printing the whole block, from the checkout as it last stood"
 is   "…the working tree byte-identical either side of it" "$(tree_of "$WIP")" "$ss_tree_before"
 is   "…every ref where it was, origin/main included" "$(git -C "$WIP" for-each-ref --format='%(refname) %(objectname)')" "$ss_refs_before"
 is   "…HEAD where it was" "$(git -C "$WIP" rev-parse HEAD)" "$ss_head2_before"
-is   "…and .git/FETCH_HEAD not even touched, which is what a fetch would move" "$(stat -c %Y "$WIP/.git/FETCH_HEAD" 2>/dev/null || printf 'none')" "$ss_fh_before"
+is   "…and .git/FETCH_HEAD not even touched, which is what a fetch would move" "$(mtime_of "$WIP/.git/FETCH_HEAD")" "$ss_fh_before"
 unset FAKE_TMUX_WINDOW_NAME
 
 # R-A8-7 — the block stops asking for a stamp `lane-start` has already written.

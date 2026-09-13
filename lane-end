@@ -171,7 +171,7 @@ lanes_ws_yaml() { printf '%s\n' "${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace
 # not a dependency any of these files will take for one scalar.
 lanes_ws_field() {
   local v
-  v="$(sed -n "s/^$1:[[:space:]]*//p" -- "$2" 2>/dev/null | head -n 1 |
+  v="$(sed -n -e "s/^$1:[[:space:]]*//p" "$2" 2>/dev/null | head -n 1 |
     sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//')"
   v="${v%\"}"; v="${v#\"}"
   v="${v%\'}"; v="${v#\'}"
@@ -313,7 +313,7 @@ note() { printf '%s: %s\n' "$prog" "$*" >&2; }
 step() { printf '%s: %s\n' "$prog" "$*" >&2; }
 plan() { printf '%s: PLAN %s\n' "$prog" "$*" >&2; }
 die()  { printf '%s: %s\n' "$prog" "$1" >&2; exit "${2:-1}"; }
-usage() { sed -n '3,${/^#/!q;s/^# \{0,1\}//;p}' -- "$RESOLVED"; }
+usage() { sed -n -e '1,2d' -e '/^#/!q' -e 's/^# \{0,1\}//' -e p "$RESOLVED"; }
 
 # ------------------------------------------------------------------ arguments
 

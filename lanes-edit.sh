@@ -300,7 +300,7 @@ lanes_ws_yaml() { printf '%s\n' "${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace
 # not a dependency any of these files will take for one scalar.
 lanes_ws_field() {
   local v
-  v="$(sed -n "s/^$1:[[:space:]]*//p" -- "$2" 2>/dev/null | head -n 1 |
+  v="$(sed -n -e "s/^$1:[[:space:]]*//p" "$2" 2>/dev/null | head -n 1 |
     sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//')"
   v="${v%\"}"; v="${v#\"}"
   v="${v%\'}"; v="${v#\'}"
@@ -1582,7 +1582,25 @@ EOF
 
 # ---------------------------------------------------------- age and staleness
 
-epoch_of() { date -u -d "$1" +%s 2>/dev/null || printf ''; }
+# `date -u -d <stamp>` IS GNU-ONLY, AND THIS FUNCTION IS WHAT STALENESS IS MADE
+# OF (A9 Addendum 4, R-A9-11). BSD `date` — macOS's — answers `illegal option
+# -- d`, and `2>/dev/null || printf ''` turned that refusal into an EMPTY
+# ANSWER rather than an error: `age_of` printed `age unknown` beside every row,
+# `older_than_minutes` and `older_than_threshold` returned false for every
+# stamp, and the whole of `who`'s idle and stale reporting was silently off on
+# a platform this repository's own CI runs. BSD spells the same question
+# `-j -f <format> <stamp>`, so both are asked, GNU first because it is what
+# every lane workstation runs. TWO FORMATS, because this estate writes two:
+# `utc_now`, `lane-end`'s RELEASED and every log line carry SECONDS, and a
+# row's `Started` cell carries MINUTES. GNU reads either from one call; BSD
+# must be told which, so it is asked twice. A stamp none of the three can read
+# is still the empty string every caller here already tests for.
+epoch_of() {
+  date -u -d "$1" +%s 2>/dev/null ||
+    date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null ||
+    date -u -j -f '%Y-%m-%dT%H:%MZ' "$1" +%s 2>/dev/null ||
+    printf ''
+}
 
 age_of() {
   ao_t="$(epoch_of "$1")"
@@ -1884,9 +1902,16 @@ live_holder() {
     rm -f -- "$lh_files" "$lh_match" "$lh_err"
     return 8                       # this workstation keeps no records at all
   fi
-  tr '\n' '\0' < "$lh_files" | xargs -0 -r grep -l -F "${pats[@]}" > "$lh_match" 2>"$lh_err" || :
+  # `xargs -r` IS GNU-ONLY and was dead weight: the `[ ! -s ]` guard above
+  # returns before this line when there is no record to search at all, which
+  # is the only thing `-r` would have caught (A9 Addendum 4, R-A9-11). The
+  # `tr`s read arbitrary bytes — a path, and grep's own words about it — so
+  # they read them as bytes: BSD `tr` answers `Illegal byte sequence` for a
+  # multibyte character in a UTF-8 locale and prints NOTHING, which would turn
+  # a record that cannot be read into a reason nobody can read either.
+  LC_ALL=C tr '\n' '\0' < "$lh_files" | xargs -0 grep -l -F "${pats[@]}" > "$lh_match" 2>"$lh_err" || :
   if [ -s "$lh_err" ]; then        # a record that exists and cannot be read
-    SESSION_FILES_ERR="$(tr '\n' ';' < "$lh_err" | cut -c1-300)"
+    SESSION_FILES_ERR="$(LC_ALL=C tr '\n' ';' < "$lh_err" | cut -c1-300)"
     rm -f -- "$lh_files" "$lh_match" "$lh_err"
     return 1
   fi
@@ -2007,9 +2032,10 @@ idle_holders() {   # <lane>
   fi
   ih_pats=()
   for ih_sid in $ih_earlier; do ih_pats+=(-e "\"sessionId\":\"$ih_sid\""); done
-  tr '\n' '\0' < "$ih_files" | xargs -0 -r grep -l -F "${ih_pats[@]}" > "$ih_match" 2>"$ih_err" || :
+  # `xargs -r` and the locale, for the reason `live_holder` gives above.
+  LC_ALL=C tr '\n' '\0' < "$ih_files" | xargs -0 grep -l -F "${ih_pats[@]}" > "$ih_match" 2>"$ih_err" || :
   if [ -s "$ih_err" ]; then
-    SESSION_FILES_ERR="$(tr '\n' ';' < "$ih_err" | cut -c1-300)"
+    SESSION_FILES_ERR="$(LC_ALL=C tr '\n' ';' < "$ih_err" | cut -c1-300)"
     rm -f -- "$ih_files" "$ih_match" "$ih_err"
     return 1
   fi
@@ -2177,7 +2203,7 @@ row_of_lane()       { register_text | awk -v lane="$1" "$ROW_AWK"; }
 # subcommand, which unions these ids with the published ones because liveness
 # fails CLOSED — an id this checkout knows and `origin/main` does not yet is one
 # more reason to refuse a rename, never a reason to allow one (AGENTS.md rule 7).
-row_of_lane_local() { awk -v lane="$1" "$ROW_AWK" -- "$LANES_FILE"; }
+row_of_lane_local() { awk -v lane="$1" "$ROW_AWK" "$LANES_FILE"; }
 row_cell() { printf '%s\n' "$1" | awk -F'|' -v i="$2" '{print $i}'; }
 
 uuids_in_cell() { grep -oiE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tr 'A-F' 'a-f' || :; }
@@ -3039,7 +3065,7 @@ row_stamp_is_unknown() {   # <lane>
   [ -n "$rsu_lane" ] || return 1
   rsu_n="$(row_line "$rsu_lane" 2>/dev/null)" || return 1
   case "$rsu_n" in ''|*[!0-9]*) return 1 ;; esac
-  rsu_row="$(sed -n "${rsu_n}p" -- "$LANES_FILE" 2>/dev/null || :)"
+  rsu_row="$(sed -n -e "${rsu_n}p" "$LANES_FILE" 2>/dev/null || :)"
   [ -n "$rsu_row" ] || return 1
   rsu_last="$(printf '%s' "$rsu_row" | grep -o '[A-Z][A-Z]* by [^ |]*' | tail -n1 || :)"
   case "$rsu_last" in *" by unknown") return 0 ;; esac
@@ -3219,7 +3245,7 @@ sibling_filter() {   # <object> [pr|branch]; candidate lines on stdin
         split($0, f, sep); if (f[1] == n) print }'
     return 0
   fi
-  sed -E 's/^[0-9a-fA-F]{40}[ \t]+//' \
+  sed -E 's/^[0-9a-fA-F]{40}[[:space:]]+//' \
     | grep -E -- "(^|[^0-9A-Za-z])$sfl_q([^0-9A-Za-z]|\$)" || :
 }
 
@@ -3235,7 +3261,7 @@ gh_reads() {
   command -v gh >/dev/null 2>&1 || { note "gh is not on PATH — rerun with --no-github, or install it"; return 1; }
   printf '1. existing `CLAIMED —` comments on %s:\n' "$gr_obj"
   if [ -n "$gr_n" ]; then
-    gr_c="$( { gh issue view "$gr_n" --repo "$gr_repo" --comments 2>/dev/null || gh pr view "$gr_n" --repo "$gr_repo" --comments 2>/dev/null; } | grep -n 'CLAIMED —\|TAKEOVER —\|RELEASED —' || : )"
+    gr_c="$( { gh issue view "$gr_n" --repo "$gr_repo" --comments 2>/dev/null || gh pr view "$gr_n" --repo "$gr_repo" --comments 2>/dev/null; } | grep -n -e 'CLAIMED —' -e 'TAKEOVER —' -e 'RELEASED —' || : )"
   else
     gr_c=""
   fi
@@ -3333,7 +3359,7 @@ cmd="${1-}"
 # The usage block is this file's own header: print from line 3 until the first
 # line that is not a comment. (It used to be a hard-coded `3,59p`, which went
 # stale the moment the header grew — as it did under Amendment 5.)
-[ -n "$cmd" ] || { sed -n '3,${/^#/!q;s/^# \{0,1\}//;p}' -- "$RESOLVED"; exit 2; }
+[ -n "$cmd" ] || { sed -n -e '1,2d' -e '/^#/!q' -e 's/^# \{0,1\}//' -e p "$RESOLVED"; exit 2; }
 shift || :
 # `session-start` is EXEMPT. It is a hook: it never writes, and it must exit 0
 # even where there is no register to read at all — a hook that dies is a hook
@@ -3355,7 +3381,7 @@ case "$cmd" in
   verify-row)
     lane="${1-}"; [ -n "$lane" ] || die "usage: verify-row <lane>" 2
     n="$(row_line "$lane")" || exit 2
-    row="$(sed -n "${n}p" -- "$LANES_FILE")"
+    row="$(sed -n -e "${n}p" "$LANES_FILE")"
     printf 'lane   : %s\nline   : %s\nlength : %s chars\nfirst200: %s\nlast200 : %s\n' \
       "$lane" "$n" "${#row}" "$(printf '%s' "$row" | cut -c1-200)" \
       "$(printf '%s' "$row" | rev | cut -c1-200 | rev)"
@@ -3366,7 +3392,7 @@ case "$cmd" in
     [ -n "$lane" ] && [ -n "$text" ] || die "usage: append-row-status <lane> \"<text>\"" 2
     acquire_lock; handle_preexisting
     n="$(row_line "$lane")" || exit 2
-    row="$(sed -n "${n}p" -- "$LANES_FILE")"
+    row="$(sed -n -e "${n}p" "$LANES_FILE")"
     trimmed="$(rstrip_spaces "$row")"
     case "$trimmed" in
       *"|") : ;;
@@ -3384,7 +3410,7 @@ case "$cmd" in
     [ -n "$lane" ] && [ -n "$old" ] || die "usage: replace-in-row <lane> \"<old>\" \"<new>\" [\"<why>\"]" 2
     acquire_lock; handle_preexisting
     n="$(row_line "$lane")" || exit 2
-    row="$(sed -n "${n}p" -- "$LANES_FILE")"
+    row="$(sed -n -e "${n}p" "$LANES_FILE")"
     c="$(count_occurrences "$row" "$old")" || exit 2
     [ "$c" = 1 ] || die "'$old' occurs $c times in lane $lane's row (line $n); exactly 1 required" 2
     replace_line "$n" "${row/"$old"/"$new"}"
@@ -3431,7 +3457,7 @@ case "$cmd" in
     esac
     acquire_lock; handle_preexisting
     n="$(row_line "$lane")" || exit 2
-    row="$(sed -n "${n}p" -- "$LANES_FILE")"
+    row="$(sed -n -e "${n}p" "$LANES_FILE")"
     row_split_session_cell "$row" || die "lane $lane's row (line $n) does not have three '|' before its session cell ends; refusing to touch it" 2
     c="$(count_occurrences "$RSC_CELL" "$old")" || exit 2
     if [ "$c" != 1 ]; then

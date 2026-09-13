@@ -311,7 +311,7 @@ lanes_ws_yaml() { printf '%s\n' "${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace
 # not a dependency any of these files will take for one scalar.
 lanes_ws_field() {
   local v
-  v="$(sed -n "s/^$1:[[:space:]]*//p" -- "$2" 2>/dev/null | head -n 1 |
+  v="$(sed -n -e "s/^$1:[[:space:]]*//p" "$2" 2>/dev/null | head -n 1 |
     sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//')"
   v="${v%\"}"; v="${v#\"}"
   v="${v%\'}"; v="${v#\'}"
@@ -457,7 +457,7 @@ note() { printf '%s: %s\n' "$prog" "$*" >&2; }
 step() { printf '%s: %s\n' "$prog" "$*" >&2; }
 plan() { printf '%s: PLAN %s\n' "$prog" "$*" >&2; }
 die()  { printf '%s: %s\n' "$prog" "$1" >&2; exit "${2:-1}"; }
-usage() { sed -n '3,${/^#/!q;s/^# \{0,1\}//;p}' -- "$RESOLVED"; }
+usage() { sed -n -e '1,2d' -e '/^#/!q' -e 's/^# \{0,1\}//' -e p "$RESOLVED"; }
 quoted() { printf '%q ' "$@" | sed 's/ $//'; }
 
 # ------------------------------------------------------------------ arguments
@@ -961,7 +961,7 @@ titled_transcript() {
     [ -d "$d" ] || continue
     for f in "$d"/*.jsonl; do
       [ -e "$f" ] || continue
-      last="$(grep '^{"type":"custom-title"' -- "$f" 2>/dev/null | tail -n1 || :)"
+      last="$(grep -e '^{"type":"custom-title"' "$f" 2>/dev/null | tail -n1 || :)"
       [ -n "$last" ] || continue
       title="$(printf '%s' "$last" | sed 's/.*"customTitle":"//; s/".*//')"
       base="${title% (*)}"
@@ -1457,7 +1457,7 @@ if [ "$lane_verb" = RESUMED ] && [ "$row_count" = 1 ] && (( lane_sid_known )); t
           printf '%s\n' "$hs_stamp"
           tail -n "+$((hs_at + 1))" -- "$hs_pre"
         } > "$hs_out"
-        if [ "$(sed -n "$((hs_at + 1))p" -- "$hs_out")" = "$hs_stamp" ] &&
+        if [ "$(sed -n -e "$((hs_at + 1))p" "$hs_out")" = "$hs_stamp" ] &&
            { head -n "$hs_at" -- "$hs_out"; tail -n "+$((hs_at + 2))" -- "$hs_out"; } | cmp -s - "$hs_pre"
         then
           cat -- "$hs_out" > "$hs_real"     # the redirect FOLLOWS the symlink
