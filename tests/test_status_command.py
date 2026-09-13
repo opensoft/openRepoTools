@@ -4530,7 +4530,27 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     feature out with every other leg of it, and the findings said so while
     this paragraph did not. It is the same widening the fifth got, and the
     line is pinned here because a help text that describes a narrower refusal
-    than the code makes is the drift these tests exist to catch."""
+    than the code makes is the drift these tests exist to catch.
+
+    AND IT SETTLES ON A FETCH THAT WORKED THERE, NOT ON THE FLAG, which is
+    Copilot's FOURTH round on #23 (2026-09-13), verbatim: "This help text
+    says that `--fetch` settles a missing `origin/<branch>` unconditionally,
+    but the implementation distinguishes failed, no-remote, unreadable, and
+    unlisted repositories and leaves those readings unresolved. Qualify this
+    with a successful fetch that actually reached the repository, otherwise
+    the help contradicts the row-level guidance." IT IS RIGHT, and it is this
+    branch's own rule turned on its help: the gone verdict is made under
+    `fetched_ok_at` and nowhere else, and the four states the two rounds
+    before it named — a fetch that FAILED there, no `origin` remote, a
+    repository git cannot read, and a path this run's fetch never listed —
+    are every one of them a run made WITH the flag that settles nothing. So
+    the clause names the fetch that settles it rather than the flag that asks
+    for it, and "without one" covers those four exactly as it already covered
+    a run made without the flag. THE SAME ROUND'S OTHER TWO ARE NOT THIS:
+    AGENTS.md rule 4's "only `status --fetch` settles that" and the README's
+    "which only `--fetch` settles" are claims of EXCLUSIVITY — that nothing
+    else settles it — which is true of every one of those four states and
+    stays as it is."""
     result = run(STATUS, "--help", home=home)
     assert result.returncode == 0, result.stdout + result.stderr
     helptext = " ".join(result.stdout.split())
@@ -4548,9 +4568,9 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
             "role is really another shape's, only a checkout of that shape, "
             "and where it is neither shape's, no checkout at all; "
             "and unless origin has lost the branch, which `resume` refuses "
-            "as gone from origin, the WHOLE feature with it — under "
-            "`--fetch`, which is the only way "
-            "that is settled, a missing `origin/<branch>` here is origin's "
+            "as gone from origin, the WHOLE feature with it — after a fetch "
+            "that WORKED in that repository, which is the only way "
+            "it is settled, a missing `origin/<branch>` is origin's "
             "answer and the exits are the record's own entry where the "
             "feature landed or a push of the branch from the workstation "
             "that parked it, and without one it is named beside the `resume` "

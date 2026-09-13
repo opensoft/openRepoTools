@@ -154,11 +154,11 @@ refuses the whole feature for: then only the workstation that parked it can
 park it again — and where the role is really another shape's, only a checkout
 of that shape, and where it is neither shape's, no checkout at all; and unless
 origin has lost the branch, which `resume` refuses as gone from origin, the
-WHOLE feature with it — under `--fetch`, which is the only way that is
-settled, a missing `origin/<branch>` here is origin's answer and the exits are
-the record's own entry where the feature landed or a push of the branch from
-the workstation that parked it, and without one it is named beside the
-`resume` that still brings back a branch this clone has merely not fetched;
+WHOLE feature with it — after a fetch that WORKED in that repository, which is
+the only way it is settled, a missing `origin/<branch>` is origin's answer and
+the exits are the record's own entry where the feature landed or a push of the
+branch from the workstation that parked it, and without one it is named beside
+the `resume` that still brings back a branch this clone has merely not fetched;
 and where `git worktree list` still holds a registration that is no longer a
 worktree, that is cleared with `worktree prune`, after a `worktree unlock` if
 it is locked and with any leftover directory moved aside, before `resume` can
