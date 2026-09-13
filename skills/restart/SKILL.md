@@ -135,6 +135,21 @@ directory loses the repository's `CLAUDE.md` and the lane's memory, silently (Ev
 
 ```sh
 row="$(LANES_NO_FETCH=1 "$L" register-row "$lane")"
+# `last-session` AND NOT `register-row` ALONE, AND THAT IS RULED RATHER THAN
+# ASSUMED (A11 Addendum 4 ruling 14, ratified "a11 addendum 4 yes": *"`/restart`'s
+# step 4 may read `last-session` (the cell, then the log) rather than clause
+# (f)'s `register-row`, and clause (f) is corrected to say so."*).
+#
+# WHAT IT CHANGES, said rather than left to be found (F-X15). Clause (f) step 4
+# named the last uuid in the PUBLISHED SESSION CELL. `last-session` reads that
+# cell first and falls through to the LANE'S OWN LOG where the cell names none
+# — the session field of its last `PAUSED`/`RESUMED` — so outcome 4(a)'s *"or
+# the cell names no uuid"* stops being reachable for a lane whose log carries
+# one, and 4(b) or 4(c) fires there instead. That is the better answer: a lane
+# whose row was never stamped but whose log records the session it paused in
+# HAS a resume target, and 4(a) would have walked past it into a bind that
+# silently orphaned the transcript. The cost is that two sources answer where
+# the clause named one, which is why it is a ruling and not a preference.
 cell_last="$(LANES_NO_FETCH=1 "$L" last-session "$lane" 2>/dev/null)" || cell_last=""
 ```
 
