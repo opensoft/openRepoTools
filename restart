@@ -286,7 +286,7 @@ profile=""
 if [ -z "$profile" ]; then
 	# The log's own `profile` sub-field, for a lane whose last line is not a
 	# swap — a lane that has STARTED under Amendment 11 and not yet paused.
-	profile="$("$LANES_EDIT" lanes --lane "$lane" 2>/dev/null | awk -F'\t' '{ print $4; exit }' || :)"
+	profile="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-profile "$lane" 2>/dev/null || :)"
 	case "$profile" in none | '') profile="" ;; esac
 fi
 
@@ -303,7 +303,7 @@ if [ -z "$profile" ]; then
 	# expansion, which bash parses as a quote and not as prose, and the whole
 	# file then fails to parse. A refusal that cannot be read is not a refusal.
 	dir_for_hint="$lane_dir"
-	[ -n "$dir_for_hint" ] || dir_for_hint="<the lane checkout>"
+	[ -n "$dir_for_hint" ] || dir_for_hint="<the lane's checkout>"
 	die "lane $lane's record does not name a profile yet, and this command will not guess one:
     a wrong profile is a launch into another account. It is recorded by
     \`lane-start\` at the lane's next start and by \`/lane-swap\` at its next swap

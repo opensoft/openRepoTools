@@ -3467,6 +3467,20 @@ is   "…and prints no path a caller could mistake for one" "$out" ""
 run "$E" lane-dir repoA11-4
 is   "lane-dir exits 0 for a path written QUOTED because it contains a space" "$rc" 0
 is   "…and hands it back whole, quotes stripped, rather than truncated at the space" "$out" "$HOME/my projects/x"
+# `lane-profile` IS `lane-dir` ONE SUB-FIELD ALONG, and it exists so that
+# `restart <lane>` can learn a profile with ONE `git show` rather than through
+# the listing, which must read every log on the workstation for its held-objects
+# column — seventeen seconds on the live register, to answer one question about
+# one lane, on the path a person types to get back to work.
+run "$E" lane-profile repoA11-1
+is   "lane-profile exits 0 for a lane whose log records one" "$rc" 0
+is   "…and prints it" "$out" "team-05a"
+run "$E" lane-profile repoA11-2
+is   "lane-profile exits 8 for a lane started before clause (c)" "$rc" 8
+is   "…printing nothing a caller could launch with" "$out" ""
+run "$E" lane-profile
+is   "lane-profile with no lane exits 64, like its sibling" "$rc" 64
+
 run "$E" lane-dir
 is   "lane-dir with no lane exits 64, its own usage code and never the dispatcher's 2" "$rc" 64
 run "$E" lane-dir repoA11-1 repoA11-2
@@ -3752,7 +3766,13 @@ has "a window named claude vetoes nothing, so step 3b still stamps the cell" "$e
 FAKE_TMUX_WINDOW="vtsess:@31" FAKE_TMUX_WINDOW_INDEX=0 FAKE_TMUX_WINDOW_NAME="repoVT-1" \
   run "$START" --dry-run --dir "$HOME/projects/repoVT" repoVT-2
 has "…while the very same uuid IS vetoed from a window named for another lane" "$err" "which is another lane the register has a row for"
-hasnt "…so nothing of it reaches repoVT-2's cell" "$err" "append-session-id repoVT-2 "
+# THE ASSERTION IS ON THE PAYLOAD, NOT ON THE VERB. A vetoed run still prints
+# `lane-start`'s own "stamp it as this session's first act" hint for the FRESH
+# session it is about to mint, and that hint names `append-session-id` — which
+# is the legitimate act, not the cross-lane write. What must never appear is the
+# OTHER lane's uuid inside that cell edit, which is step 3b's own `→ harness
+# <uuid>` payload.
+hasnt "…so the other session's uuid reaches no cell edit of repoVT-2's row" "$err" "→ harness $VT_FRESH"
 rm -f "$sessions_dir/live-vt2.json"
 rm -f "$sessions_dir/live-vt.json"
 unset FAKE_TMUX_WINDOWS

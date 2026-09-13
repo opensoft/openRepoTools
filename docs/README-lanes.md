@@ -1310,11 +1310,12 @@ falls to its next rung there rather than refusing.
 | read | what it answers |
 |---|---|
 | `lanes-edit.sh lane-dir <lane>` | the `dir ` of the lane's **last** lane-kind line carrying one, unquoted where it was written quoted |
+| `lanes-edit.sh lane-profile <lane>` | the same read one sub-field along — the `profile ` of that last line. An addition to the amendment's own table, so that `restart <lane>` can learn a profile with one `git show` instead of a listing that reads every log on the workstation |
 | `lanes-edit.sh window-lane [<ws>] <@id>\|<session>:<index>` | the lane bound to a window **of the asking workstation** — the register row whose name is the window's name, else that workstation's swap record naming that ref |
 | `lanes-edit.sh session-lane <uuid>` | the lane whose register row's **session cell** names that transcript uuid. Adoption act 0's; it is the read the `SessionStart` hook already made |
 | `lanes-edit.sh last-session <lane>` | the lane's resume target: the last uuid in the published cell **whatever shape it is in**, and failing that the session of its last `PAUSED`/`RESUMED` |
 | `lanes-edit.sh forks <lane>` | the **live forks** of the lane's transcript — never holders, and a defect to retire |
-| `lanes-edit.sh lanes [--repo\|--dir\|--ws\|--all\|--fetch]` | every lane, newest write first, as the ten columns `lanes` and `restart` render. **The one read whose default is local** |
+| `lanes-edit.sh lanes [--repo\|--dir\|--ws\|--lane\|--all\|--fetch]` | every lane, newest write first, as the ten columns `lanes` and `restart` render. **The one read whose default is local**, and `--lane <lane>` answers about one without walking the estate |
 | `lanes-edit.sh workstation` | `<name><TAB><source>` — `seam`, `hostname`, or `container-unset` |
 | `lanes-edit.sh fetch-age` | how old this checkout's answer is |
 

@@ -3109,21 +3109,86 @@ payload_subfield() {   # <payload> <name> [all]
 # payload at all, and its directory has not stopped being true. Amendment 7(i)'s
 # cutover rule is the same shape: a line written before this clause carries
 # none, and a reader that finds none SAYS SO rather than assuming one.
-# THE SAME ANSWER FROM A LIST OF PAYLOADS ALREADY IN HAND. `lane_payload_field`
-# reads the lane's log to get them; a caller that has read that log once for
-# other reasons passes them here instead, and the two cannot disagree because
-# the rule — the LAST payload that carries the sub-field wins — is written once.
-payload_field_from() {   # <payload lines> <name> [all]
-  pff_v=""
-  while IFS= read -r pff_p; do
-    [ -n "$pff_p" ] || continue
-    pff_this="$(payload_subfield "$pff_p" "$2" "${3-}")"
-    [ -n "$pff_this" ] && pff_v="$pff_this"
-  done <<EOF
-$1
-EOF
-  [ -n "$pff_v" ] || return 8
-  printf '%s\n' "$pff_v"
+# THE SIX FACTS A LISTING ROW NEEDS, FROM ONE PASS OVER ONE LANE'S EVENTS.
+# `<verb><US><utc><US><dir><US><profile><US><window><US><home>` on one line.
+# It is `payload_subfield`'s two rules and `home_of_lane`'s one, written once in
+# awk instead of a dozen forks per lane — and the rules are restated here rather
+# than referred to because a reader comparing the two must be able to see both:
+#   * the LAST lane-kind line that carries a sub-field wins, in FILE ORDER;
+#   * a value opening with `"` runs to its closing `"`, quotes stripped, and any
+#     other value ends at its first space — except `window`, which is two
+#     space-separated refs in ONE sub-field and is taken whole.
+lane_row_facts() {   # events on stdin, ONE LINE PER LANE
+  awk -v sep="$US" '
+    function field(pay, want, whole,   n, i, sf, v, q) {
+      want = want " "
+      n = split(pay, sf, "; ")
+      for (i = 1; i <= n; i++) {
+        if (substr(sf[i], 1, length(want)) != want) continue
+        v = substr(sf[i], length(want) + 1)
+        sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v)
+        if (substr(v, 1, 1) == "\"") {
+          q = index(substr(v, 2), "\"")
+          if (q > 0) return substr(v, 2, q - 1)
+        }
+        if (!whole) sub(/ .*$/, "", v)
+        return v
+      }
+      return ""
+    }
+    function pos(pf2, pn) { return pf2 "\034" sprintf("%09d", pn) }
+    BEGIN { FS = sep }
+    $3 == "STARTED" || $3 == "PAUSED" || $3 == "RESUMED" || $3 == "ENDED" || $3 == "RETIRED" {
+      l = $2
+      if (!(l in seen)) { seen[l] = ++n; byn[n] = l }
+      # FILE ORDER decides which line is a lane-s LAST (R14), exactly as
+      # `swapped_candidates` decides it: a lane-s log is append-only and
+      # single-writer, so a line further down the file is a line written later
+      # whatever the two UTC fields say.
+      p = pos($10, $11)
+      if (!(l in mp) || p >= mp[l]) { mp[l] = p; verb[l] = $3; utc[l] = $1; ws[l] = $5 }
+      v = field($8, "dir", 0);     if (v != "") d[l] = v
+      v = field($8, "profile", 0); if (v != "") pf[l] = v
+      v = field($8, "window", 1);  if (v != "") w[l] = v
+      if ($3 == "STARTED" || $3 == "RESUMED") {
+        v = field($8, "home", 0); if (v != "" && v != "unknown") h[l] = v
+      }
+      # Clause (d) rule 3-s second source, out of the same pass: the session
+      # field of the lane-s last PAUSED or RESUMED, which is the resume target
+      # where the published cell names none.
+      if (($3 == "PAUSED" || $3 == "RESUMED") && $4 ~ /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/) sid[l] = tolower($4)
+      next
+    }
+    # THE OBJECTS EACH LANE HOLDS, from the same pass. A lane HOLDS an object
+    # when its own LAST line on that object carries an OPEN verb — Amendment
+    # 7(b)-s partition, and the one `lane-end` refuses on.
+    #
+    # IT CARRIES NO TAKEN-OVER ANNOTATION, AND THAT IS A DELIBERATE NARROWING.
+    # `lane_objects` adds one by asking `superseded_by` per object, which is a
+    # full pass over this stream per object per lane: on the suite-s own
+    # register that turned a listing into eighteen minutes and counting. A
+    # listing says WHAT A LANE HOLDS; `who --lane <lane>` is the authority that
+    # says whether somebody has taken it over, and the listing points at it.
+    $6 !~ /^lane:/ {
+      l = $2; k = l "\034" $6
+      p = pos($10, $11)
+      if (!(k in omp) || p >= omp[k]) { omp[k] = p; overb[k] = $3; oobj[k] = $6; olane[k] = l
+        if (!(k in okseen)) { okseen[k] = ++okn; okbyn[okn] = k } }
+      if (!(l in seen)) { seen[l] = ++n; byn[n] = l }
+    }
+    END {
+      for (i = 1; i <= okn; i++) {
+        k = okbyn[i]
+        if (overb[k] != "CLAIMED" && overb[k] != "TAKEOVER" && overb[k] != "OPENED" && overb[k] != "LANDING" && overb[k] != "WITHDRAWN") continue
+        l = olane[k]
+        if (l in have) obj[l] = obj[l] "; " overb[k] " " oobj[k]
+        else { obj[l] = overb[k] " " oobj[k]; have[l] = 1 }
+      }
+      for (i = 1; i <= n; i++) {
+        l = byn[i]
+        printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s\n", l, 31, verb[l], 31, utc[l], 31, ws[l], 31, d[l], 31, pf[l], 31, w[l], 31, h[l], 31, sid[l], 31, obj[l]
+      }
+    }'
 }
 
 lane_payload_field() {   # <lane> <name> [all]
@@ -3494,28 +3559,38 @@ lanes_rows() {
     lr_names="$( { known_lanes 2>/dev/null || :; register_lanes 2>/dev/null || :; } | awk 'NF && !seen[tolower($0)]++')"
   fi
   [ -n "$lr_names" ] || return 8
+  # ONE PASS OVER EVERY LANE'S EVENTS, NOT ONE READ PER LANE PER FIELD.
+  # `lanes` asks about every lane the register and the logs know, and this loop
+  # used to make a `git show` of each lane's log — and then a fork per sub-field
+  # on top. Measured on the live register: 24 s for a listing that shows ONE
+  # row, because the cost was the 74 lanes it filtered OUT. `state_events` is
+  # the stream every other state read in this file is built on, it is already
+  # cached for the life of the process, and `lane_row_facts` turns it into one
+  # line per lane carrying the six facts a row needs — `payload_subfield`'s two
+  # rules and `home_of_lane`'s one, applied in the same awk that parses.
+  # `--lane` READS ONE LOG, NOT THE ESTATE'S. `restart <lane>` asks for one
+  # lane's profile and nothing else, and `state_events` is a `git show` per log
+  # file — nine seconds on the live register. The same parser over the same
+  # grammar either way, so the two answers cannot differ.
+  if [ -n "$lr_one" ]; then
+    lr_facts="$(lane_log_events "$lr_one" 2>/dev/null | lane_row_facts)"
+  else
+    lr_facts="$(state_events 2>/dev/null | lane_row_facts)"
+  fi
   lr_out=""
   while IFS= read -r lr_l; do
     [ -n "$lr_l" ] || continue
-    lr_row="$(row_of_lane "$lr_l" 2>/dev/null || :)"
-    lr_w="$(lane_workstation "$lr_l" 2>/dev/null || :)"
-    [ -n "$lr_w" ] || lr_w="$(lane_log_events "$lr_l" 2>/dev/null | awk -F"$US" 'is_lane($3) { w = $5 } function is_lane(v) { return v == "STARTED" || v == "PAUSED" || v == "RESUMED" || v == "ENDED" || v == "RETIRED" } END { print w }')"
+    lr_verb=""; lr_utc=""; lr_w=""; lr_d=""; lr_pf=""; lr_win=""; lr_home=""; lr_logsid=""; lr_obj=""
+    IFS="$US" read -r lr_fl lr_verb lr_utc lr_w lr_d lr_pf lr_win lr_home lr_logsid lr_obj <<EOF2
+$(printf '%s\n' "$lr_facts" | awk -F"$US" -v l="$lr_l" '$1 == l { print; exit }')
+EOF2
+    # THE REGISTER'S OWN WORKSTATION COLUMN WINS where the row has one: it is
+    # what every other read in this file compares, and a lane may have a row
+    # here and its last log line from another machine.
+    lr_rw="$(lane_workstation "$lr_l" 2>/dev/null || :)"
+    [ -n "$lr_rw" ] && lr_w="$lr_rw"
     if [ "$lr_all" = 0 ] && [ -n "$lr_w" ] && [ "$(short_ws "$lr_w")" != "$(short_ws "$lr_ws")" ]; then continue; fi
-    # ONE READ OF THE LANE'S LOG, NOT SIX. `lane_log_events` is a `git show`
-    # plus a parse, and this loop used to make one for the directory, one for
-    # the profile, one for the window, one for the verb and the UTC, and one
-    # more inside `last_session_of` — six per lane, across a register with
-    # dozens of them, for a command a person is waiting on. The events are read
-    # ONCE here and every sub-field is taken from that one copy.
-    lr_ev="$(lane_log_events "$lr_l" 2>/dev/null || :)"
-    lr_pays="$(printf '%s\n' "$lr_ev" | awk -F"$US" '
-      $3 == "STARTED" || $3 == "PAUSED" || $3 == "RESUMED" || $3 == "ENDED" || $3 == "RETIRED" { print $8 }')"
-    lr_d="$(payload_field_from "$lr_pays" dir 2>/dev/null || :)"
-    # The home out of the SAME events, through the same alias table
-    # `home_of_lane` uses — one read, not a second one of the same log.
-    lr_home="$(printf '%s\n' "$lr_ev" | awk -F"$US" '
-      $3 == "STARTED" || $3 == "RESUMED" { if (match($8, /home [^ ;]+/)) h = substr($8, RSTART + 5, RLENGTH - 5) }
-      END { if (h != "" && h != "unknown") print h }')"
+    lr_row="$(row_of_lane "$lr_l" 2>/dev/null || :)"
     if [ -n "$lr_home" ]; then
       lr_hc="$(alias_lookup "$lr_home" 2>/dev/null || :)"
       [ -n "$lr_hc" ] && lr_home="$lr_hc"
@@ -3526,18 +3601,10 @@ lanes_rows() {
       [ -n "$lr_dir" ]  && [ -n "$lr_d" ]    && [ "$lr_d" = "$lr_dir" ] && lr_keep=1
       [ "$lr_keep" = 1 ] || continue
     fi
-    lr_verb=""; lr_utc=""
-    eval "$(printf '%s\n' "$lr_ev" | awk -F"$US" '
-      $3 == "STARTED" || $3 == "PAUSED" || $3 == "RESUMED" || $3 == "ENDED" || $3 == "RETIRED" { v = $3; u = $1 }
-      END { printf "lr_verb=%s; lr_utc=%s\n", (v == "" ? "\"\"" : "\"" v "\""), (u == "" ? "\"\"" : "\"" u "\"") }')"
+    # FAILING THE CELL, THE LANE'S OWN LOG — clause (d) rule 3, out of the same
+    # one pass rather than a second read of the same stream.
     lr_sid="$(session_ids_of_lane "$lr_l" 2>/dev/null | tail -n1 || :)"
-    if [ -z "$lr_sid" ]; then
-      lr_sid="$(printf '%s\n' "$lr_ev" | awk -F"$US" '
-        ($3 == "PAUSED" || $3 == "RESUMED") && $4 ~ /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/ { id = $4 }
-        END { if (id != "") print tolower(id) }')"
-    fi
-    lr_pf="$(payload_field_from "$lr_pays" profile 2>/dev/null || :)"
-    lr_win="$(payload_field_from "$lr_pays" window all 2>/dev/null || :)"
+    [ -n "$lr_sid" ] || lr_sid="$lr_logsid"
     # THE STATE. A live record naming one of the lane-s ids beats the log-s
     # own last verb, because a lane whose session is running is LIVE whatever
     # its last written line says; otherwise the verb answers.
@@ -3574,7 +3641,7 @@ EOF2
         *)       lr_state="$([ -n "$lr_row" ] && printf 'NO LOG' || printf 'UNKNOWN')" ;;
       esac
     fi
-    lr_obj="$(lane_open_summary "$lr_l" 2>/dev/null | head -n1 || :)"
+    [ -n "$lr_obj" ] || lr_obj="none open"
     lr_age="$([ -n "$lr_utc" ] && age_of "$lr_utc" || printf 'age unknown')"
     lr_fk="$(lane_forks "$lr_l" 2>/dev/null | grep -c . || :)"
     case "$lr_fk" in ''|*[!0-9]*) lr_fk=0 ;; esac
@@ -4789,6 +4856,33 @@ EOF
     printf '%s\n' "$ld_out"
     ;;
 
+  # THE LANE'S RECORDED PROFILE — `lane-dir`'s sibling, and the same read one
+  # sub-field along: the `profile ` of its log's LAST lane-kind line carrying
+  # one, unquoted where it was written quoted.
+  #
+  # IT IS AN ADDITION TO SPEC §11's TABLE AND IS NAMED AS ONE. `restart <lane>`
+  # needs exactly two facts about a lane it is not standing in — its directory
+  # and its profile — and the directory already had a read of its own. Without
+  # this the profile came out of the `lanes` listing, which must consult
+  # `state_events` for the held-objects column and so reads EVERY log on the
+  # workstation: measured at seventeen seconds on the live register, to answer
+  # one question about one lane, on the path a person types to get back to work.
+  # One `git show` instead, through the same `lane_payload_field` `lane-dir`
+  # uses, so the two cannot disagree about which line is a lane's last.
+  #
+  # 8 IS THE ANSWER FOR EVERY LANE THAT HAS NOT STARTED UNDER THIS AMENDMENT,
+  # and `restart` refuses on it rather than guessing: a wrong profile is a
+  # launch into another account.
+  lane-profile)
+    lane="${1-}"; [ -n "$lane" ] || die "usage: lane-profile <lane>" 64
+    [ "$#" -le 1 ] || die "lane-profile takes one lane: lane-profile <lane>" 64
+    check_lane_name "$lane"
+    log_sync
+    lp_out="$(lane_payload_field "$lane" profile 2>/dev/null || :)"
+    [ -n "$lp_out" ] || exit 8
+    printf '%s\n' "$lp_out"
+    ;;
+
   # The lane's RESUME TARGET, read robustly (Amendment 11 clause (d) rules 3
   # and 4): the last uuid in the published row's session cell WHATEVER SHAPE
   # THAT CELL IS IN, and failing that the session field of the lane's last
@@ -4989,6 +5083,6 @@ EOF
     ;;
 
   *)
-    die "unknown subcommand '$cmd' (verify-row|append-row-status|replace-in-row|append-session-id|append-line|add-row|commit|log|claim|release|who|swapped|session-start|idle-holders|live-holder|window-session|session-lane|window-lane|lane-dir|last-session|forks|workstation|lanes|sibling-filter|resolve-repo|lane-objects|register-row|resolve-home)" 2
+    die "unknown subcommand '$cmd' (verify-row|append-row-status|replace-in-row|append-session-id|append-line|add-row|commit|log|claim|release|who|swapped|session-start|idle-holders|live-holder|window-session|session-lane|window-lane|lane-dir|lane-profile|last-session|forks|workstation|lanes|sibling-filter|resolve-repo|lane-objects|register-row|resolve-home)" 2
     ;;
 esac
