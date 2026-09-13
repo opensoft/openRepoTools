@@ -2578,6 +2578,100 @@ def test_rr6_is_read_first_so_a_no_push_record_says_what_it_always_said(
     assert "which is not the" not in result.stdout
 
 
+def test_an_rr6_leg_still_says_where_its_own_worktree_sits(atlas, home):
+    """AFTER THE `pushed:` ARMS, AND NOT INSTEAD OF THEM — the claim the first
+    commit of this branch makes, met on `main` by a verdict that had not
+    existed when it was written. Since Copilot's third round on #23 a leg
+    whose `pushed:` is not `true` is RR6's refusal OF THE WHOLE FEATURE and
+    `read_record` hands that verdict down to every leg, so the test that
+    silences this arm for a feature `resume` refuses whole would have silenced
+    it here too.
+
+    IT MUST NOT. `resume.sh` tests `[ "$pushed" != true ]` at the TOP of the
+    leg loop, so RR6 IS "whichever of its own checks this leg reaches first",
+    and what this line says is true of THIS workstation whatever the record
+    says: a worktree on the recorded branch sitting where neither verb looks,
+    which `park` here does not collect either, and a `git worktree move` that
+    RUNS. The two lines answer different things and neither is the other's
+    second reading.
+
+    AND AN EARLIER LEG'S RR6 DOES SILENCE IT, which is the other half and is
+    the round's own rule: `resume` breaks at the first refusing leg in the
+    record's order, so a later leg is one the run never reaches and a line
+    about the check it would have reached first is a refusal this layer would
+    be inventing. RUN AGAINST THE EXTENSION on 2026-09-13, on a scratch
+    three-leg estate with the `code` leg recorded FIRST as `pushed: false` and
+    the `spec` leg's worktree at `$HOME/elsewhere/001-a-thing`: "Error:
+    001-a-thing (code leg) was parked with --no-push; that feature was NOT
+    recreated", "REFUSED: 001-a-thing — parked with --no-push", exit 2 — and
+    the same estate with that leg's `pushed: true`, which is the control,
+    "Error: could not add the spec leg worktree 'worktrees/001-a-thing/spec'
+    for '001-a-thing'", "REFUSED: 001-a-thing — git worktree add failed",
+    exit 2."""
+    checkout = workspace_config(home)
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", elsewhere)
+    want = parked_worktree(atlas, "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           pushed="false", parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): parked with "
+            "--no-push on Falcon; only that workstation has the WIP commit, "
+            "and `resume` refuses it") in result.stdout
+    assert (f"    - parked feature 001-a-thing (repo leg): its worktree is at "
+            f"{elsewhere}, which is not the {want} `resume` computes for it"
+            ) in result.stdout
+    assert f"git -C {atlas} worktree move {elsewhere} {want}" in result.stdout
+
+
+def test_a_later_leg_says_nothing_about_a_path_an_rr6_leg_beat_it_to(
+        trio, home):
+    """The other half of the test above, in the shape that needs two legs: the
+    `code` leg recorded FIRST and parked `--no-push`, the `spec` leg's worktree
+    off the path. `resume` breaks at RR6 on the first leg and never reads the
+    second, so the second says nothing about its path — the run above is the
+    proof, and so is its `pushed: true` control, which reaches the add."""
+    checkout = workspace_config(home)
+    spec, code = trio / "spec", trio / "code"
+    for leg in (spec, code):
+        git("checkout", "-q", "main", cwd=leg)
+        origin_has_branch(leg, "001-a-thing")
+    spec_tip = git("rev-parse", "origin/001-a-thing", cwd=spec).stdout.strip()
+    code_tip = git("rev-parse", "origin/001-a-thing", cwd=code).stdout.strip()
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    elsewhere.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", str(elsewhere), "001-a-thing", cwd=spec)
+    path = record(checkout, "trio", branch="001-a-thing", role="code",
+                  commit=code_tip, pushed="false", parked_on="Falcon",
+                  root="Trio")
+    path.write_text(path.read_text(encoding="utf-8")
+                    + leg_block("spec", spec_tip), encoding="utf-8")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert findings == [
+        "- parked feature 001-a-thing (code leg): parked with --no-push on "
+        "Falcon and no worktree on that branch here; only that workstation "
+        "has the WIP commit, so nothing here brings it back — park it again "
+        "from there"], findings
+    assert "worktree move" not in result.stdout, (
+        "RR6 on the first leg breaks the loop before the second leg's path "
+        "is read at all")
+
+    # AND WITH THAT LEG'S `pushed: true` — the control — the run reaches the
+    # add, and this layer says so on the leg whose worktree is off the path.
+    path = record(checkout, "trio", branch="001-a-thing", role="code",
+                  commit=code_tip, parked_on="Falcon", root="Trio")
+    path.write_text(path.read_text(encoding="utf-8")
+                    + leg_block("spec", spec_tip), encoding="utf-8")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"its `spec` leg's worktree is at {elsewhere}") in result.stdout
+    assert "`resume Trio`" not in result.stdout
+
+
 def test_no_line_of_a_feature_a_path_in_the_way_refuses_offers_resume(
         trio, home):
     """THE VERDICT IS THE FEATURE'S, because the refusal is. RR3 and RR4 are
@@ -4772,6 +4866,157 @@ def test_the_features_verdict_is_the_first_leg_resume_refuses_at(trio, home):
     assert "is no longer on origin" not in result.stdout, (
         "RR6 breaks the loop with the worktree standing, and RR2 is never "
         "reached for the leg origin has lost")
+    assert "`resume Trio`" not in result.stdout
+
+
+def test_the_path_takes_its_place_in_that_order_and_the_add_does_not(
+        trio, home):
+    """THE SAME ORDER, WITH THE TWO READINGS THIS BRANCH ADDS IN IT. The test
+    above settled that the feature's verdict is the FIRST leg `resume`
+    refuses in the RECORD's order; this branch teaches that pass two more
+    refusals — RR4's second arm and RR3, which are the PATH, and the `git
+    worktree add` that is the LAST thing the run does — and where each of
+    them goes is not a matter of taste. `resume.sh`'s leg loop is RR6 -> RR4
+    -> RR3 -> RR2 -> RR1 -> RR5, every one of them `refused=true; break`, and
+    the loop that creates the worktrees runs only after every leg has passed
+    all six.
+
+    COPILOT'S FIFTH ROUND ON #23 (2026-09-13, suppressed), verbatim: "A
+    stale-registration leg before a later gone-origin leg is not represented
+    in this verdict pass … `resume` stops at RR3 first." FIVE ESTATES WERE
+    BUILT TO SETTLE IT, on 2026-09-13, against workBenches' own `resume.sh`,
+    `park.sh`, `git-common.sh` and `workspace-common.sh` — a three-leg estate
+    with bare remotes in a temp dir and a fake `$HOME`, the `spec` leg
+    recorded FIRST and the `code` leg second with `code`'s branch deleted on
+    its origin:
+
+      (a) a stray DIRECTORY at the `spec` leg's computed path
+          "Error: 'worktrees/001-a-thing/spec' exists and is not a registered
+          worktree of the spec leg", "REFUSED: 001-a-thing — an unrelated
+          path is in the way", exit 2 — RR3 on the EARLIER leg, and origin
+          never read for the later one. THE ROUND IS RIGHT ABOUT THIS SHAPE.
+      (b) a PRUNABLE registration at that path with nothing on disk
+          "Error: 001-a-thing is no longer on origin in the code leg",
+          "REFUSED: 001-a-thing — gone from origin", exit 2 — in BOTH
+          spellings, the registration for ANOTHER branch and the one for the
+          RECORDED branch: `load_git_worktrees` drops a prunable block so RR4
+          never sees it, `[ -e "$tree" ]` finds nothing so RR3 passes, and
+          the LATER leg's RR2 is the refusal the person gets. THE ROUND'S
+          PREMISE IS WRONG FOR A STALE REGISTRATION.
+      (c) the `spec` leg's WORKTREE on the branch, off the computed path
+          "Error: 001-a-thing is no longer on origin in the code leg",
+          "REFUSED: 001-a-thing — gone from origin", exit 2 — the add is the
+          last thing the run does and every RR of every leg comes first, so
+          the later leg's RR2 takes it. THE ROUND'S PREMISE IS WRONG HERE
+          TOO, and this reading never claimed otherwise.
+
+    And the control that tells (a) from (b): a LOCKED registration for
+    another branch at that path with nothing on disk — which git computes no
+    `prunable` for, so `leg_registered_at` DOES match it — answered "REFUSED:
+    001-a-thing — an unrelated worktree is in the way", exit 2, RR4's second
+    arm on the earlier leg in front of the later leg's RR2.
+
+    So the round is REAL for a path in the way and WRONG for a stale
+    registration, which is the distinction `path_in_the_way` already makes;
+    what this pins is that the VERDICT PASS makes it too, in one array, so
+    that no reading overtakes another by being read back in a different
+    order."""
+    checkout = workspace_config(home)
+    spec, code = trio / "spec", trio / "code"
+    for leg in (spec, code):
+        git("checkout", "-q", "main", cwd=leg)
+        origin_has_branch(leg, "001-a-thing")
+    spec_tip = git("rev-parse", "origin/001-a-thing", cwd=spec).stdout.strip()
+    code_tip = git("rev-parse", "origin/001-a-thing", cwd=code).stdout.strip()
+    drop_from_origin(code, "001-a-thing")
+
+    def two_legs():
+        path = record(checkout, "trio", branch="001-a-thing", role="spec",
+                      commit=spec_tip, parked_on="Falcon", root="Trio")
+        path.write_text(path.read_text(encoding="utf-8")
+                        + leg_block("code", code_tip), encoding="utf-8")
+
+    def findings(*args):
+        result = run(STATUS, *args, home=home)
+        assert result.returncode == 1, result.stdout + result.stderr
+        return result, [line.strip() for line in result.stdout.splitlines()
+                        if line.strip().startswith("- parked feature")]
+
+    want = parked_worktree(trio, "001-a-thing", "spec")
+
+    # (a) RR3 ON THE EARLIER LEG BEATS RR2 ON THE LATER ONE.
+    want.mkdir(parents=True)
+    (want / "stray.txt").write_text("not ours\n", encoding="utf-8")
+    two_legs()
+    result, lines = findings("--fetch", "Trio")
+    assert len(lines) == 2, lines
+    assert lines[0].startswith(
+        f"- parked feature 001-a-thing (spec leg): a directory is at {want}, "
+        "which is the path `resume` computes for this leg"), lines[0]
+    assert lines[1] == (
+        "- parked feature 001-a-thing (code leg): no worktree on that branch "
+        "here, parked 2026-09-10T20:00:00Z on Falcon; `resume` refuses the "
+        f"WHOLE feature, because a directory is at the {want} it computes for "
+        "its `spec` leg, so it does not bring this leg back — move it aside "
+        f"with `mv {want} <a path of your choosing>`, which is yours to run — "
+        "nothing here moves or deletes a path it did not create"), lines[1]
+    assert "is no longer on origin" not in result.stdout, (
+        "RR3 breaks the loop on the earlier leg and origin is never read")
+    assert "delete its `- branch:" not in result.stdout, (
+        "RR2's exits are the wrong thing to name for a path in the way")
+    rmtree(want)
+
+    # (b) A STALE REGISTRATION IS NOT RR3's, AND THE LATER LEG'S RR2 TAKES IT
+    # — in both spellings, the one for another branch and the one for the
+    # recorded branch, because `load_git_worktrees` drops a prunable block
+    # whichever branch it names.
+    for other in ("002-other", "001-a-thing"):
+        want.parent.mkdir(parents=True, exist_ok=True)
+        if other == "001-a-thing":
+            git("worktree", "add", "-q", str(want), "001-a-thing", cwd=spec)
+        else:
+            git("worktree", "add", "-q", "-b", other, str(want), cwd=spec)
+        rmtree(want)            # and NO `git worktree prune`
+        porcelain = git("worktree", "list", "--porcelain", cwd=spec).stdout
+        assert "prunable" in porcelain, "git pruned it for us; the test is moot"
+        two_legs()
+        result, lines = findings("--fetch", "Trio")
+        assert len(lines) == 2, lines
+        assert "worktree prune`" in lines[0], lines[0]
+        assert ("`resume` refuses the WHOLE feature in any case, because there "
+                "is no `origin/001-a-thing` in its `code` leg after this run's "
+                "fetch") in lines[0], lines[0]
+        assert lines[1].endswith(
+            "the exits are to delete its `- branch: 001-a-thing` block from "
+            "the record where the feature landed, or to push the branch again "
+            "from Falcon where it went by mistake"), lines[1]
+        assert "is in the way" not in result.stdout, (
+            "RR4 never sees a prunable block and RR3 finds nothing on disk")
+        git("worktree", "prune", cwd=spec)
+
+    # (c) THE ADD RUNS LAST, so the later leg's RR2 beats it — while WITHOUT
+    # the flag, which is the only run that reads RR2 here, the off-path
+    # worktree is the verdict and the move is the exit.
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    elsewhere.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", str(elsewhere), "001-a-thing", cwd=spec)
+    two_legs()
+    result, lines = findings("--fetch", "Trio")
+    assert len(lines) == 1, lines
+    assert lines[0].startswith(
+        "- parked feature 001-a-thing (code leg): no worktree on that branch "
+        "here, parked 2026-09-10T20:00:00Z on Falcon, and no "
+        "`origin/001-a-thing` here after this run's fetch"), lines[0]
+    assert "worktree move" not in result.stdout, (
+        "every RR of every leg is asked before the first worktree is added")
+    result, lines = findings("Trio")
+    assert len(lines) == 2, lines
+    assert lines[0].startswith(
+        "- parked feature 001-a-thing (spec leg): its worktree is at "
+        f"{elsewhere}, which is not the {want} `resume` computes for it"
+        ), lines[0]
+    assert (f"`resume` refuses the WHOLE feature, because its `spec` leg's "
+            f"worktree is at {elsewhere}") in lines[1], lines[1]
     assert "`resume Trio`" not in result.stdout
 
 

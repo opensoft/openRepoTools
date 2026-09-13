@@ -167,24 +167,23 @@ it is locked and with any leftover directory moved aside, before `resume` can
 recreate anything; and where ANYTHING ELSE is at the path both verbs compute
 for that leg — a directory, a file, a worktree of another branch — `resume`
 refuses the WHOLE feature rather than overwrite a path it did not create, and
-moving that aside first is yours: a `git worktree move` where git holds it as
-a worktree and a plain `mv` where it does not, with the `worktree unlock` a
+moving that aside first is yours: a `git worktree move` where git holds it as a
+worktree and a plain `mv` where it does not, with the `worktree unlock` a
 LOCKED registration wants in front of either and the `worktree prune` a dead
-one wants beside the `mv`), a worktree
-whose tip is not the parked commit or a record that names no parked commit to
-compare it with, a recorded branch this repository has no `origin/<branch>`
-for, a leg parked with `--no-push` or whose `pushed:` is missing or neither
-true nor false, a leg the record gives no role or a role this shape has no
-place for, a feature the record lists no leg for, a worktree on a recorded
-branch that is not at the path BOTH VERBS compute for that leg —
-<worktree_root>/<branch>, with the leg's own mount under it in a three-leg
-root, out of this checkout's git-config.yml and not out of the record — which
-is the only worktree `resume` reads as that feature's and the only one `park`
-carries, so the exit is a `git worktree move` of yours, and where that path
-is the leg's own checkout there is nothing to move, anything at that same
-path that is not that leg's worktree, which `resume` refuses the whole
-feature for before it reads origin, and a worktree the record
-does not know (never parked).
+one wants beside the `mv`), a worktree whose tip is not the parked commit or a
+record that names no parked commit to compare it with, a recorded branch this
+repository has no `origin/<branch>` for, a leg parked with `--no-push` or whose
+`pushed:` is missing or neither true nor false, a leg the record gives no role
+or a role this shape has no place for, a feature the record lists no leg for, a
+worktree on a recorded branch that is not at the path BOTH VERBS compute for
+that leg — <worktree_root>/<branch>, with the leg's own mount under it in a
+three-leg root, out of this checkout's git-config.yml and not out of the record
+— which is the only worktree `resume` reads as that feature's and the only one
+`park` carries, so the exit is a `git worktree move` of yours, and where that
+path is the leg's own checkout there is nothing to move, anything at that same
+path that is not that leg's worktree, which `resume` refuses the whole feature
+for before it reads origin, and a worktree the record does not know (never
+parked).
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
 (<Name>/<Name>/family.yaml) or a standalone project root (<Name>/project.yaml).
@@ -3067,6 +3066,25 @@ pushed_verdict() {
 # whole ESTATE for that, before it reads a feature — and a leg with a worktree
 # on the branch here is RR4's, which calls it already recreated. RR2 is not
 # tested here: the caller asks it first, in `resume.sh`'s order.
+#
+# AND `worktree_here` IS A WIDER QUESTION THAN RR4's, WHICH THIS BRANCH IS
+# WHAT SAYS SO: RR4 matches the path `collect_legs` computes and no other, so
+# a worktree on the branch sitting ANYWHERE ELSE leaves RR1 reached and this
+# answer 1 where `resume` refuses. Run on 2026-09-13 against the extension on
+# a scratch three-leg estate, the `spec` leg's `parked_commit:` left out and
+# its worktree at `$HOME/elsewhere/001-a-thing`: "Error: 001-a-thing (spec
+# leg) has moved since it was parked", "REFUSED: 001-a-thing — divergence",
+# exit 2, while the same estate with that worktree AT
+# `worktrees/001-a-thing/spec` RESUMED, exit 0 — RR4's first arm skipping the
+# leg before RR1 is reached. THE READING IS NOT NARROWED HERE, because the
+# state is one the arms below already answer and answer with an exit that
+# WORKS: the off-path arm names that leg's worktree and the `git worktree
+# move` to the computed path, and after that move RR4 skips the leg and the
+# feature resumes — the second half of the run above. Narrowing it would
+# trade a line about THIS workstation for RR1's re-park, which is a park on
+# another one. It is recorded rather than taken, and the line the off-path
+# arm prints hedges for exactly this: "at whichever of its own checks this
+# leg reaches first".
 moved_on_leg() {
     local root="$1" role="$2" branch="$3" commit="$4" repo
     [ -z "$commit" ] || return 1

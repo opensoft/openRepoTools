@@ -833,8 +833,8 @@ def test_readme_is_short_enough_to_be_read():
     beside it ends in: `park` collects the features under that root and no
     others, so a re-park writes nothing about this one.
 
-    261 -> 268 on 2026-09-12, for the same reviewer's second and third notes
-    on WHAT IS AT that path. Seven lines, and all seven in the EXCEPTION
+    261 -> 267 on 2026-09-12, for the same reviewer's second and third notes
+    on WHAT IS AT that path. Six lines, and all six in the EXCEPTION
     above the finding list rather than in the list itself, which is where the
     entry above put its own: this IS a record `resume <Name>` brings back —
     the work is not here, and nothing of the person's is at that path — and
@@ -842,13 +842,13 @@ def test_readme_is_short_enough_to_be_read():
     worktree. So it is an exception to the promise, and the promise is what
     it falsifies; and the exit is neither the re-park every other exception
     ends in nor the prune the one above it names, but a move whose command
-    depends on what git holds at that path — two of the seven lines, because
+    depends on what git holds at that path — two of the six lines, because
     a `worktree move` that names no `unlock` in front of a locked worktree,
     or an `mv` that leaves a dead registration standing, is an exit that was
     run and did not work.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 268, f"README.md is {len(lines)} lines; the cap is 268"
+    assert len(lines) <= 267, f"README.md is {len(lines)} lines; the cap is 267"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
