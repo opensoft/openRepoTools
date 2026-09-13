@@ -1209,6 +1209,12 @@ canon_object() {
 # cannot read back, in a log nothing ever rewrites.
 valid_nwo() { [[ "${1-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; }
 
+# A TRANSCRIPT UUID, and nothing else — the shape `claude --resume` takes
+# exactly and the one every event line's `session` field carries (Amendment
+# 7(b), Definitions sense 1). Not a PR-footer `session_01…`, not a session
+# NAME, and not the literal `unknown`: `write_event` refuses all three.
+valid_uuid() { [[ "${1-}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; }
+
 # The home repo for this invocation. `--home` is for a PRE-CUTOVER lane — one
 # whose log has no STARTED line — and is REFUSED where the log already answers
 # the question, so the flag and the log can never disagree. It is resolved
@@ -2249,11 +2255,20 @@ lane_is_elsewhere() {
 }
 
 # The session id an event line carries: what the caller says it is, else the
-# lane's current one (Amendment 6(b): the LAST id in the cell), else unknown.
+# lane's current one (Amendment 6(b): the LAST id in the cell), else NOTHING.
+#
+# R-A11 (e) — IT NO LONGER SUBSTITUTES THE LITERAL `unknown`. It did, and that
+# literal is in the append-only log four times already, in two lanes
+# (`lanes/log/codeXfactory-1.md` ×3, `lanes/log/openxfactory-4-opendox-extraction.md`
+# ×1 on `origin/main`) — written by `log PAUSED` from a swap skill that had the
+# uuid in hand and did not pass it, and by `release`. Amendment 7(b) makes that
+# field a transcript uuid and ONLY that. Returning empty hands the decision to
+# `write_event`, which refuses the write and names the act that supplies the
+# uuid; the four lines already written stay exactly where they are (Amendment
+# 7(b) forbids editing them, 7(i)'s cutover rule governs).
 session_for() {
   if [ -n "${LANES_SESSION:-}" ]; then printf '%s\n' "$LANES_SESSION"; return 0; fi
-  sf_id="$(last_session_id_of_lane "$1" 2>/dev/null || :)"
-  printf '%s\n' "${sf_id:-unknown}"
+  last_session_id_of_lane "$1" 2>/dev/null || :
 }
 
 # ----------------------------------------------------- project.yaml legs
@@ -2395,6 +2410,33 @@ rule6_line() {
 # register and the log can never disagree about a merge hold.
 write_event() {
   we_lane="$1"; we_verb="$2"; we_obj="$3"; we_ref="$4"; we_pay="$5"; we_txt="$6"; we_utc="$7"; we_uuid="$8"
+  # R-A11 (e) — THE `session` FIELD IS A TRANSCRIPT UUID AND ONLY THAT, AND THE
+  # WRITER ITSELF IS WHERE THAT IS ENFORCED. Amendment 7(b) says so of the
+  # grammar; nothing checked it, and the literal `unknown` is in the append-only
+  # log four times already, in two lanes — three from `log PAUSED` (a swap skill
+  # holding the uuid and not passing it) and one from `release`. The log is
+  # append-only, so a line written wrong there is wrong for ever and no later
+  # line can correct it. Refused HERE rather than in the `log` arm because the
+  # same field is written by `claim` and `release` too, and one of the four came
+  # from `release`: this is the writer, so this is the gate.
+  #
+  # It is the FIRST test in the function, before the lock, before the capture
+  # and before the log file is created, so a refusal leaves the checkout exactly
+  # as it found it — and it names the act that supplies the uuid rather than the
+  # rule it broke, because the caller's next move is that act.
+  #
+  # This composes with `R-A8-2` rather than repeating it: `R-A8-2` stopped
+  # `lane-start` WRITING `unknown` (its title-fallback path defers the line
+  # instead); this stops the writer ACCEPTING it, from any caller.
+  if ! valid_uuid "$we_uuid"; then
+    we_bad="${we_uuid:-<empty>}"
+    case "$we_uuid" in
+      unknown) we_why="'unknown' is the one value this field must never carry: it is in this append-only log four times already, and no later line can correct any of them" ;;
+      session_*) we_why="'$we_bad' is a PR-footer id, which is neither resumable nor liveness-checkable (Amendment 6(b))" ;;
+      *) we_why="'$we_bad' is not a transcript uuid" ;;
+    esac
+    die "an event's session field is the TRANSCRIPT UUID and only that (Amendment 7(b)): $we_why. Nothing was written — not the $we_verb line, not the log file, not a commit. Name the session taking the act: LANES_SESSION=\"\$CLAUDE_CODE_SESSION_ID\" LANES_LANE=$we_lane lanes-edit.sh <subcommand> …   If lane $we_lane has no transcript uuid recorded at all, the act that gives it one is Amendment 6(c)'s session-cell append: run 'lane-start --no-launch <repo> <n>' in the lane's own window first" 2
+  fi
   # THE WRITER REFUSES A FIELD THAT WOULD MAKE THE LINE UNREADABLE (R21).
   # ` — ` divides a line into its three parts, and the grammar guarantees it
   # occurs AT MOST TWICE — once after the verb, once before the free text — so
@@ -3984,6 +4026,28 @@ EOF
     rr_row="$(row_of_lane "$lane")"
     [ -n "$rr_row" ] || exit 8
     printf '%s\n' "$rr_row"
+    ;;
+
+  # R-A11-7 — THE HOOK'S OWN uuid → lane READ, EXPOSED. `lane_of_session` has
+  # answered "which lane's row's SESSION CELL names this uuid" since Amendment
+  # 8(e), for a window that carries no lane name; nothing else could reach it.
+  # `lane-start` step 3b needs the same answer to keep R-A11-1's fence — a live
+  # session that belongs to ANOTHER row is never taken — so it is one read with
+  # two callers rather than a second implementation of the same question.
+  #
+  # ONLY the session cell is read, exactly as the hook reads it: state cells
+  # quote other lanes' ids all the time (`RESUMED by <id>`, `handed off to
+  # <id>`), and one of those is not that session's lane.
+  #
+  # Read-only. 0 with the lane, 8 when no row's session cell names it —
+  # Amendment 7(d)'s fail-closed convention, so a caller can tell *none* from
+  # *could not read*.
+  session-lane)
+    sl_id="${1-}"; [ -n "$sl_id" ] || die "usage: session-lane <transcript-uuid>" 2
+    log_sync
+    sl_lane="$(lane_of_session "$sl_id")"
+    [ -n "$sl_lane" ] || exit 8
+    printf '%s\n' "$sl_lane"
     ;;
 
   # `--home`'s validation, WITHOUT a write — the same `resolve_home` the writers

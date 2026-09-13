@@ -532,7 +532,7 @@ run "$START" --estate xFactory --dir "$HOME/projects/repoB" repoA 8 --no-launch
 has  "--estate names the handoff directory" "$(grep '^| `repoA-8`' "$LANES")" "handoffs/xFactory/session-handoff-"
 
 run "$START" repoA 1 --no-launch
-is    "a free lane resumes THE ROW'S RECORDED SESSION, by id" "$out" "claude --resume $DEAD_ID"
+is    "a free lane resumes THE ROW'S RECORDED SESSION, by id" "$out" "claude --name repoA-1 --resume $DEAD_ID"
 hasnt "…and never by the ambiguous title" "$out" "--resume repoA-1"
 has   "…saying it is the row's own transcript" "$err" "the row's current session is $DEAD_ID and its transcript is here"
 has   "…having taken live-holder's 8 as the ANSWER it is: this lane is parked" "$err" "no live session holds repoA-1"
@@ -577,13 +577,13 @@ echo "== lane-start: Amendment 6 — resume the row's recorded session =="
 # The fallback, unchanged in shape: the row names an id this directory has no
 # transcript for, so the title is all that is left — and lane-start says so.
 run "$START" repoA 11 --no-launch
-is   "a recorded id with no transcript here falls back to the title" "$out" "claude --resume repoA-11"
+is   "a recorded id with no transcript here falls back to the title" "$out" "claude --name repoA-11 --resume repoA-11"
 has  "…naming the id it could not resolve" "$err" "$GHOST_ID has no transcript for this directory"
 has  "…and warning that a title only filters the picker" "$err" "FILTERS THE PICKER"
 
 # The cell is a history, oldest first, so the LAST id is the lane's current one.
 run "$START" repoA 12 --no-launch
-is    "the LAST id in the session cell is the one resumed" "$out" "claude --resume $NEW12_ID"
+is    "the LAST id in the session cell is the one resumed" "$out" "claude --name repoA-12 --resume $NEW12_ID"
 hasnt "…never an earlier id in the same cell" "$out" "$OLD12_ID"
 
 # The codeXfactory-1 shape of 2026-09-11: a cell of `session_…` footer ids and
@@ -599,7 +599,7 @@ has  "…and it names the footer ids as the reason it has no target" "$err" "the
 # A dedupe-suffixed title is the SAME lane — live_holder() already reads it
 # that way, and a matcher that disagreed would hide a lane from itself.
 run "$START" repoA 16 --no-launch
-is   "a transcript titled '<lane> (2)' is still the lane's" "$out" "claude --resume repoA-16"
+is   "a transcript titled '<lane> (2)' is still the lane's" "$out" "claude --name repoA-16 --resume repoA-16"
 has  "…and the suffix is reported, not silently accepted" "$err" "that title carries a dedupe suffix"
 has  "…with the retire act named" "$err" "retire the stale holders"
 
@@ -615,7 +615,7 @@ has  "…in its own register commit" "$(git -C "$WIP" log --oneline -1 -- lanes/
 # And the loop closes: run it again, and the id just written is resumed by id.
 printf '{"type":"user"}\n' > "$tdir/$REPOA14_SID.jsonl"
 run "$START" repoA 14 --no-launch
-is   "the next start resumes exactly what the previous one recorded" "$out" "claude --resume $REPOA14_SID"
+is   "the next start resumes exactly what the previous one recorded" "$out" "claude --name repoA-14 --resume $REPOA14_SID"
 
 # The minting is switchable, and switching it off restores the old row text.
 LANE_START_SESSION_ID=0 run "$START" repoA 15 --no-launch
@@ -630,7 +630,7 @@ run "$START" --dry-run repoA 12
 is   "--dry-run on a resume-by-id lane exits 0" "$rc" 0
 is   "--dry-run writes no register commit" "$(git -C "$WIP" rev-parse HEAD)" "$before_rev"
 is   "--dry-run leaves LANES.md byte-identical" "$(cksum < "$LANES")" "$before_sum"
-has  "--dry-run plans the exact resume" "$err" "PLAN exec claude --resume $NEW12_ID"
+has  "--dry-run plans the exact resume" "$err" "PLAN exec claude --name repoA-12 --resume $NEW12_ID"
 
 echo "== lane-end =="
 
@@ -699,7 +699,7 @@ has  "a lane whose checkout has no origin still starts, and says the home is unk
 has  "…recording it as unknown rather than guessing" "$(cat "$LOGD/repoQ-1.md")" "lane:repoQ-1 → home unknown; estate repoB"
 
 run "$START" repoA 1 --no-launch
-is   "a resumed lane still resumes by id" "$out" "claude --resume $DEAD_ID"
+is   "a resumed lane still resumes by id" "$out" "claude --name repoA-1 --resume $DEAD_ID"
 has  "…and its log line is a RESUMED, not a STARTED" "$(cat "$LOGD/repoA-1.md")" "RESUMED — lane repoA-1, session "
 has  "…carrying the same lane: object" "$(cat "$LOGD/repoA-1.md")" ", lane:repoA-1 → home opensoft/repoA; estate repoA"
 
@@ -1548,9 +1548,15 @@ has  "…naming the lane that holds it" "$err" "lane repoW-1 holds codeXfactory/
 git -C "$WIP" add -- lanes/log/repoW-3.md
 git -C "$WIP" commit -q -m "a STARTED line carrying the pre-move spelling"
 git -C "$WIP" push -q origin main
-run env LANES_LANE=repoW-3 "$E" claim "#6" --no-github
+# `LANES_SESSION` because repoW-3 has a LOG and no register ROW, so nothing else
+# can answer what its transcript uuid is — and under R-A11 (e) a write with no
+# uuid is refused rather than stamped `unknown`. Before that rule this scenario
+# passed while appending `session unknown@Eagle` to an append-only log, which is
+# the defect, uncaught, inside the suite that was meant to catch it.
+run env LANES_LANE=repoW-3 LANES_SESSION="$DEAD_ID" "$E" claim "#6" --no-github
 is   "a legacy home already on record is resolved when it is read" "$rc" 0
 has  "…so its shorthand keys canonically too" "$(cat "$LOGD/repoW-3.md")" ", codeXfactory/codexFactory#6"
+hasnt "…and the line it wrote carries a real uuid, never \`unknown\`" "$(cat "$LOGD/repoW-3.md")" "session unknown@"
 
 # ------------------------- R21: lane-end's recovery text and its --force line
 "$E" add-row "| \`repoX-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoX/x.md | ACTIVE |" >/dev/null 2>&1
@@ -1760,7 +1766,7 @@ hasnt "…never the uuid of the session that has ended" "$(grep '^| `repoZN-1`' 
 printf '{"type":"custom-title","customTitle":"repoZT-1","sessionId":"titled-zt"}\n' > "$tdir/titled-zt.jsonl"
 "$E" add-row "| \`repoZT-1\` | harness \`$GHOST_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoZT/x.md | ACTIVE |" >/dev/null 2>&1
 run   "$START" --dir "$HOME/projects/repoA" repoZT-1 --no-launch
-is    "the title fallback resumes by title" "$out" "claude --resume repoZT-1"
+is    "the title fallback resumes by title" "$out" "claude --name repoZT-1 --resume repoZT-1"
 is    "…and writes NO object-log line, because \`unknown\` is not a transcript uuid (R-A8-2)" "$([ -f "$LOGD/repoZT-1.md" ] && printf present || printf absent)" absent
 has   "…nor Rule 3's handoff stamp, which is the other deferred record" "$err" "Nor is the handoff's Rule 3 stamp"
 has   "…naming the one act that writes both, at the first instant either can be right" "$err" "--no-launch repoZT 1"
@@ -1915,7 +1921,10 @@ is    "…and so does release" "$rc" 2
 has   "…with the same refusal" "$err" "already records its home: opensoft/repoZR"
 
 git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
-run env LANES_LANE=repoZR-1 "$E" claim "#3" --no-github
+# `LANES_SESSION` for the same reason as repoW-3 above: a peer lane has a log on
+# origin/main and no row here, so R-A11 (e) refuses a write that cannot name a
+# transcript uuid instead of writing `unknown` into a file nothing rewrites.
+run env LANES_LANE=repoZR-1 LANES_SESSION="$ZR_ID" "$E" claim "#3" --no-github
 is    "…while the claim itself uses the home the peer recorded" "$rc" 0
 has   "…expanding '#3' against it" "$(cat "$LOGD/repoZR-1.md")" ", opensoft/repoZR#3"
 
@@ -1950,9 +1959,9 @@ run   "$START" --dry-run --dir "$HOME/projects/repoA" repoZC-1
 is    "lane-start on a stale copy of the row exits 0" "$rc" 0
 has   "…reading the session cell from origin/main, which names BOTH ids" "$err" "its session cell on origin/main names 2 session id(s)"
 has   "…so the row's current session is the one that LANDED" "$err" "the row's current session is $ZC2"
-has   "…and that is what it plans to resume" "$err" "PLAN exec claude --resume $ZC2"
+has   "…and that is what it plans to resume" "$err" "PLAN exec claude --name repoZC-1 --resume $ZC2"
 hasnt "…never the id this checkout's copy ends on" "$err" "$ZC1"
-has   "…and the status it plans to append names the same id" "$err" "launching claude --resume $ZC2"
+has   "…and the status it plans to append names the same id" "$err" "launching claude --name repoZC-1 --resume $ZC2"
 is    "…while --dry-run still writes nothing" "$(git -C "$WIP" rev-parse HEAD)" "$before_rev"
 
 # And the durable half: the same divergence with HEAD already current, so the
@@ -1969,7 +1978,7 @@ is    "…while origin/main still names both ids" \
       "$(git -C "$WIP" show origin/main:lanes/LANES.md | grep '^| `repoZC-1`' | grep -c "$ZC2" || :)" 1
 run   "$START" --no-launch --dir "$HOME/projects/repoA" repoZC-1
 is    "lane-start exits 0" "$rc" 0
-is    "…resuming the id the PUBLISHED cell ends on" "$out" "claude --resume $ZC2"
+is    "…resuming the id the PUBLISHED cell ends on" "$out" "claude --name repoZC-1 --resume $ZC2"
 has   "…and the RESUMED line carries THAT uuid, in a file nothing rewrites" \
       "$(cat "$LOGD/repoZC-1.md")" "RESUMED — lane repoZC-1, session $ZC2@"
 hasnt "…never the stale one, which no later line could correct" "$(cat "$LOGD/repoZC-1.md")" "$ZC1"
@@ -2184,7 +2193,7 @@ has   "…and said the published cell does not name it" "$err" "the PUBLISHED se
 has   "…the cell is EXTENDED with it, after the id it already ended on" \
       "$(grep '^| `repoHU-1`' "$LANES")" "harness \`$HW_OLD\` → harness $HW_NEW (transcript uuid; profile t1)"
 has   "…in its own register commit that says why" "$(git -C "$WIP" log --format=%s -- lanes/LANES.md | head -n2 | tail -n1)" "the harness minted $HW_NEW for this window"
-is    "…and the launch resumes the NEW id, not the one the cell used to end on" "$out" "claude --resume $HW_NEW"
+is    "…and the launch resumes the NEW id, not the one the cell used to end on" "$out" "claude --name repoHU-1 --resume $HW_NEW"
 has   "…while the row's status is Amendment 6(c)'s stamp, naming that uuid" \
       "$(grep '^| `repoHU-1`' "$LANES")" "RESUMED by $HW_NEW (lane repoHU-1) — lane-start on"
 has   "…and the object log's RESUMED carries it too" "$(cat "$LOGD/repoHU-1.md")" "RESUMED — lane repoHU-1, session $HW_NEW@"
@@ -2234,9 +2243,149 @@ has   "…the session cell now ends on the third transcript" \
 is    "…the previous uuid's three occurrences are untouched, stamp included" \
       "$(grep '^| `repoHU-1`' "$LANES" | grep -o "$HW_NEW" | grep -c .)" 3
 is    "…the row is still one line" "$(grep -c '^| `repoHU-1`' "$LANES")" 1
-is    "…and the launch resumes the id the cell now ends on" "$out" "claude --resume $HW_NEW2"
+is    "…and the launch resumes the id the cell now ends on" "$out" "claude --name repoHU-1 --resume $HW_NEW2"
 unset FAKE_TMUX_WINDOW
 rm -f "$sessions_dir/live-harness2.json"
+
+echo "== Amendment 11 hotfix: R-A11-1, --name on every branch, unknown refused =="
+
+# ---- R-A11-1: A LIVE SESSION THAT BELONGS TO ANOTHER ROW IS NEVER TAKEN ----
+#
+# Evidence 2(b) on `brettheap/new-workstation#20`: `lane-start openXfactory-5`
+# typed in lane `openRepoProject-1`'s window planned to resume openRepoProject-1's
+# transcript AS openXfactory-5, and to put openRepoProject-1's uuid into
+# openXfactory-5's session cell — the cell Amendment 6(b) resumes from, in a row
+# every later reader trusts, through an append nothing rewrites. Step 3b fired on
+# ANY live session in the typing window; WHOSE it was was never asked. Ratified
+# as R-A11-1 (corrected, ownership alone) by Brett Heap 2026-09-13T18:05:29Z,
+# verbatim "Ratify all four".
+#
+# THE FENCE IS THE REGISTER, NOT THE WINDOW'S NAME, and that is the correction's
+# whole point. The three cases step 3b exists for — a `/clear`, a usage reset, a
+# profile switch — all happen in a window the launcher has just made and still
+# calls `claude` (step 4 renames it AFTERWARDS), carrying a uuid the harness has
+# just minted, which no row names at all. Fencing on the name would refuse
+# exactly those three and leave the cell-stamping dead, which is `RV-T1`'s
+# finding against the withdrawn "and the row carries no transcript yet" conjunct.
+# An id that some OTHER row already names is the one thing provably not this
+# lane's, and that is what is refused.
+XL_X="aaaa0011-1111-4000-8000-aaaa00111111"     # lane X's own recorded session
+XL_Y="aaaa0011-2222-4000-8000-aaaa00112222"     # lane Y's session, live in the window
+XL_FREE="aaaa0011-3333-4000-8000-aaaa00113333"  # a harness mint, in no row at all
+printf '{"type":"user"}\n' > "$tdir/$XL_X.jsonl"
+"$E" add-row "| \`repoXL-1\` | harness \`$XL_X\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoXL/x.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoXL-2\` | harness \`$XL_Y\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoXL/y.md | ACTIVE |" >/dev/null 2>&1
+write_record_ns "$sessions_dir/live-xl.json" "$XL_Y" "$LIVE_PID" "$live_start" "xlsess:@11.%11" "repoXL-2" "user" "busy"
+xl_y_row_before="$(grep '^| `repoXL-2`' "$LANES")"
+export FAKE_TMUX_WINDOW="xlsess:@11"
+run   "$START" --dir "$HOME/projects/repoA" repoXL-1 --no-launch
+is    "lane-start X typed in lane Y's window exits 0" "$rc" 0
+has   "…having read Y's live session out of the window it was typed in" "$err" "this window's live session is $XL_Y"
+has   "…and answering WHOSE it is from the register, not from the window's name" "$err" "the register says it is lane repoXL-2's, not repoXL-1's"
+hasnt "…so Y's uuid reaches no cell of X's row at all" "$(grep '^| `repoXL-1`' "$LANES")" "$XL_Y"
+is    "…the resume target stays X's OWN row uuid, never Y's transcript" "$out" "claude --name repoXL-1 --resume $XL_X"
+is    "…and Y's row is left exactly as it was" "$(grep '^| `repoXL-2`' "$LANES")" "$xl_y_row_before"
+hasnt "…with no line of X's log naming Y's session either" "$(cat "$LOGD/repoXL-1.md")" "$XL_Y"
+
+# The POSITIVE case, and the one the correction rescued: the same window, the
+# same script, but the live session's uuid is in NO row — the harness minted it
+# at a /clear, a usage reset or a profile switch. Nothing contradicts ownership,
+# so it IS taken and the cell is extended (Amendment 6(c)'s stamp).
+rm -f "$sessions_dir/live-xl.json"
+printf '{"type":"user"}\n' > "$tdir/$XL_FREE.jsonl"
+write_record_ns "$sessions_dir/live-xl2.json" "$XL_FREE" "$LIVE_PID" "$live_start" "xlsess:@11.%11" "repoxl-42" "derived" "busy"
+run   "$START" --dir "$HOME/projects/repoA" repoXL-1 --no-launch
+is    "a live session NO row names is the harness's own mint, and is taken" "$rc" 0
+has   "…the cell extended from the id it ended on, not replaced" \
+      "$(grep '^| `repoXL-1`' "$LANES")" "harness \`$XL_X\` → harness $XL_FREE (transcript uuid; profile t1)"
+is    "…and the launch resumes it, not the id the cell used to end on" "$out" "claude --name repoXL-1 --resume $XL_FREE"
+unset FAKE_TMUX_WINDOW
+rm -f "$sessions_dir/live-xl2.json"
+
+# `session-lane` is the read that answers it — the hook's own `lane_of_session`,
+# exposed for a second caller rather than implemented twice (R-A11-7).
+run "$E" session-lane "$XL_Y"
+is   "session-lane names the lane whose row's session cell carries the uuid" "$out" "repoXL-2"
+is   "…exiting 0" "$rc" 0
+run "$E" session-lane "aaaa0011-4444-4000-8000-aaaa00114444"
+is   "…and 8 when no row's session cell names it, so a caller can tell none from could-not-read" "$rc" 8
+run "$E" session-lane
+is   "…2 on a usage error, which is not an answer" "$rc" 2
+is   "…and it writes nothing: no commit is made by a read" "$(git -C "$WIP" status --porcelain | wc -l | tr -d ' ')" 0
+
+# ---- EVIDENCE 4: `--name <lane>` IS ON EVERY LAUNCH BRANCH, NOT ONE ---------
+#
+# The session NAME is the lane's messaging address (Amendment 2): `ListAgents`,
+# `SendMessage`, `@<lane>` and the statusline all read the harness record's
+# name. Measured on lane openRepoProject-1 2026-09-13 — the transcript carried
+# `customTitle: openRepoProject-1`, set once by `/rename`, while every process
+# that resumed it that day carried a DERIVED name (`openrepoproject-b9`, `-1e`,
+# `-27`, `-45`), because only the new-session branch passed the flag. There are
+# three launch branches and the rule is one: a launch names its session after
+# the lane, or the lane has no address for the life of that session, and there
+# is no API to rename a running one from inside.
+NM_ID="aaaa0013-1111-4000-8000-aaaa00131111"
+NM_GONE="aaaa0013-2222-4000-8000-aaaa00132222"
+printf '{"type":"user"}\n' > "$tdir/$NM_ID.jsonl"
+printf '{"type":"custom-title","customTitle":"repoNM-2","sessionId":"titled-nm"}\n' > "$tdir/titled-nm.jsonl"
+"$E" add-row "| \`repoNM-1\` | harness \`$NM_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoNM/x.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoNM-2\` | harness \`$NM_GONE\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoNM/y.md | ACTIVE |" >/dev/null 2>&1
+run   "$START" --dir "$HOME/projects/repoA" repoNM-1 --no-launch
+has   "branch 1, resume by id: the launch carries --name <lane>" "$(launch_of "$out")" "--name repoNM-1"
+is    "…and it is the whole command, in the order lane-start builds it" "$(launch_of "$out")" "claude --name repoNM-1 --resume $NM_ID"
+run   "$START" --dir "$HOME/projects/repoA" repoNM-2 --no-launch
+has   "branch 2, the title fallback: it carries --name <lane> too" "$(launch_of "$out")" "--name repoNM-2"
+is    "…beside the title that filters the picker" "$(launch_of "$out")" "claude --name repoNM-2 --resume repoNM-2"
+run   "$START" --dir "$HOME/projects/repoA" repoNM-3 --no-launch
+has   "branch 3, a new session: it always did, and still does" "$(launch_of "$out")" "--name repoNM-3"
+is    "…which is the branch the other two were measured against" "$(launch_of "$out")" "claude --name repoNM-3"
+
+# ---- R-A11 (e): `unknown` IS REFUSED BY THE WRITER, FROM ANY CALLER --------
+#
+# Amendment 7(b) makes an event's `session` field the transcript uuid and only
+# that. Nothing checked it, and the literal is on `origin/main` in the
+# append-only log four times, in two lanes — `lanes/log/codeXfactory-1.md` ×3 and
+# `lanes/log/openxfactory-4-opendox-extraction.md` ×1. Three came from
+# `log PAUSED` (a swap skill holding the uuid and not passing it) and ONE FROM
+# `release`, which is why the gate is in `write_event` — the writer every one of
+# `log`, `claim` and `release` goes through — and not in the `log` arm alone. It
+# is the first test in that function, before the lock and before the log file is
+# created, so a refusal leaves the checkout as it found it. The four lines
+# already written are not rewritten and not deleted (Amendment 7(b), 7(i)).
+UK_ID="aaaa0012-1111-4000-8000-aaaa00121111"
+"$E" add-row "| \`repoUK-1\` | harness \`$UK_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoUK/x.md | ACTIVE |" >/dev/null 2>&1
+env LANES_LANE=repoUK-1 LANES_SESSION="$UK_ID" "$E" log STARTED "lane:repoUK-1" '→' "home opensoft/repoUK; estate repoUK" >/dev/null 2>&1
+un_before="$(cat "$LOGD/repoUK-1.md")"
+un_head="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_LANE=repoUK-1 LANES_SESSION=unknown "$E" log OPENED "opensoft/repoUK#9"
+is   "log refuses the literal \`unknown\` as a session" "$rc" 2
+has  "…naming the field and the rule it answers to" "$err" "session field is the TRANSCRIPT UUID and only that (Amendment 7(b))"
+has  "…saying why this value in particular" "$err" "no later line can correct any of them"
+has  "…and naming the act that supplies a uuid" "$err" "lane-start --no-launch"
+is   "…while writing nothing to the log" "$(cat "$LOGD/repoUK-1.md")" "$un_before"
+is   "…and making no commit" "$(git -C "$WIP" rev-parse HEAD)" "$un_head"
+run env LANES_LANE=repoUK-1 LANES_SESSION="session_015byFrZSopmRbUWNMYt1zEA" "$E" log OPENED "opensoft/repoUK#9"
+is   "a PR-footer id is refused too: neither resumable nor liveness-checkable" "$rc" 2
+has  "…and the refusal says which kind of id it was handed" "$err" "PR-footer id"
+run env LANES_LANE=repoUK-1 LANES_SESSION="$UK_ID" "$E" log OPENED "opensoft/repoUK#9"
+is   "…while a real transcript uuid writes the line" "$rc" 0
+has  "…carrying that uuid in the session field" "$(cat "$LOGD/repoUK-1.md")" "session $UK_ID@"
+hasnt "…and the lane's log carries no \`session unknown@\` anywhere" "$(cat "$LOGD/repoUK-1.md")" "session unknown@"
+
+# `release` is the other half of the same defect, and one of the four lines on
+# origin/main is a RELEASED. The gate is the writer, so it answers here too.
+run env LANES_LANE=repoUK-1 LANES_SESSION=unknown "$E" release "opensoft/repoUK#9" "not mine after all"
+is   "release refuses it as well — the gate is the writer, not the subcommand" "$rc" 2
+hasnt "…leaving no RELEASED line behind" "$(cat "$LOGD/repoUK-1.md")" "RELEASED"
+
+# And the second rung: with no LANES_SESSION at all, `session_for` no longer
+# substitutes the literal — a row that records no uuid yields none, and the
+# write is refused rather than stamped `unknown` for ever.
+"$E" add-row "| \`repoUK-2\` | pending — set by the session's first act | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoUK/y.md | ACTIVE |" >/dev/null 2>&1
+run env LANES_LANE=repoUK-2 "$E" log STARTED "lane:repoUK-2" '→' "home opensoft/repoUK; estate repoUK"
+is   "a lane whose cell records no uuid is refused too, with no LANES_SESSION to save it" "$rc" 2
+is   "…and no log file is created for it: the guard runs before the file does" \
+     "$([ -f "$LOGD/repoUK-2.md" ] && printf present || printf absent)" absent
 
 # ---- append-session-id, held to account directly --------------------------
 AS_ID="aaaa000d-1111-4000-8000-aaaa000d1111"
@@ -2305,7 +2454,7 @@ git -C "$WIP" push -q origin main
 printf '{"type":"custom-title","customTitle":"repoDW-1","sessionId":"titled-dw"}\n' > "$tdir/titled-dw.jsonl"
 
 run   "$START" --dir "$HOME/projects/repoA" repoDW-1 --no-launch
-is    "the title fallback resumes by title, the picker not yet run" "$out" "claude --resume repoDW-1"
+is    "the title fallback resumes by title, the picker not yet run" "$out" "claude --name repoDW-1 --resume repoDW-1"
 is    "…and writes NO object-log line: \`unknown\` is not a transcript uuid (A7(b))" \
       "$([ -f "$LOGD/repoDW-1.md" ] && printf present || printf absent)" absent
 hasnt "…nor Rule 3's stamp on the handoff the row names" "$(cat "$WIP/handoffs/repoDW/x.md")" "RESUMED by"
@@ -2524,7 +2673,7 @@ run "$START" --confirm --yes --dir "$HOME/projects/repoA" repoCF-3 --no-launch -
 is    "--yes answers it without a terminal and without the seam" "$rc" 0
 has   "…saying which of the two answered" "$err" "(--yes)"
 is    "…with the flags BEFORE the lane and -- passing through to claude" \
-      "$(launch_of "$out")" "claude --resume $DEAD_ID --dangerously-skip-permissions"
+      "$(launch_of "$out")" "claude --name repoCF-3 --resume $DEAD_ID --dangerously-skip-permissions"
 
 export FAKE_TMUX_WINDOW_NAME=repoCF-1
 run env LANE_START_ANSWER=n "$START" --confirm --dir "$HOME/projects/repoA" repoCF-1 --no-launch

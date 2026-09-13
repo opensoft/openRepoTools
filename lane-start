@@ -821,10 +821,42 @@ if [ -n "$win_sid" ] && [ "$holder_here" = 0 ]; then
   elif printf '%s\n' "$session_ids" | grep -qx -F -- "$win_sid"; then
     step "  its uuid is already in the row's session cell — nothing to append"
   else
-    harness_sid="$win_sid"
-    cell_anchor="$row_sid"
-    row_sid="$harness_sid"
-    note "the session live in THIS window is $harness_sid and the PUBLISHED session cell does not name it: the harness minted a new transcript (a /clear, a usage reset, a profile switch). It is this lane's current session, and the cell is stamped with it before the row's status."
+    # R-A11-1 (corrected; A11 Addendum 2, ratified 2026-09-13T18:05:29Z "Ratify
+    # all four") — OWNERSHIP DECIDES, AND A LIVE SESSION THAT BELONGS TO ANOTHER
+    # ROW IS NEVER TAKEN. Until this test, the branch above fired on ANY live
+    # session in the typing window, so `lane-start X` typed from lane Y's window
+    # resumed Y's transcript and appended Y's uuid to X's row — cross-lane
+    # contamination, reproduced as Evidence 2(b) on `brettheap/new-workstation#20`
+    # (the same run planned to write this lane's uuid into `openXfactory-5`'s row).
+    #
+    # THE TEST IS THE REGISTER, NOT THE WINDOW'S NAME. The two legitimate cases
+    # this step exists for — a `/clear`, a usage reset, a profile switch — all
+    # happen in a window the launcher has just made and named `claude`, BEFORE
+    # step 4 renames it, and their uuid is one the harness has just minted, so it
+    # is in NO row at all. Fencing on the window's name instead would refuse
+    # exactly those three and leave step 3b dead, which is the failure `RV-T1`
+    # raised against the withdrawn "and the row carries no transcript yet"
+    # conjunct. An id that some OTHER lane's row already names is the one thing
+    # that is provably not this lane's, and that is the fence.
+    #
+    # IT FAILS CLOSED (R22). Only 0 (a lane) and 8 (no row names it) are answers;
+    # any other code is a read that did not happen — an older `lanes-edit.sh` with
+    # no `session-lane` exits 2 — and a read that could not be made must never be
+    # read as "the session is free", because an empty answer is what PERMITS the
+    # take here. The cost of refusing is one printed act; the cost of permitting
+    # is another lane's uuid on an append-only line.
+    win_owner=""; wo_rc=0
+    win_owner="$("$LANES_EDIT" session-lane "$win_sid" 2>/dev/null)" || wo_rc=$?
+    if [ "$wo_rc" != 0 ] && [ "$wo_rc" != 8 ]; then
+      note "$LANES_EDIT session-lane $win_sid failed (exit $wo_rc), so whose session is live in this window is NOT known — leaving $LANE's session cell and resume target alone. A helper with no 'session-lane' exits 2; install the one beside this script."
+    elif [ "$wo_rc" = 0 ] && [ -n "$win_owner" ] && [ "$win_owner" != "$LANE" ]; then
+      note "the session live in THIS window is $win_sid, and the register says it is lane $win_owner's, not $LANE's. A live session that belongs to another row is NEVER taken (R-A11-1): $LANE's session cell and resume target are left exactly as they are. Start $LANE in its own window, or take $win_owner here."
+    else
+      harness_sid="$win_sid"
+      cell_anchor="$row_sid"
+      row_sid="$harness_sid"
+      note "the session live in THIS window is $harness_sid and the PUBLISHED session cell does not name it: the harness minted a new transcript (a /clear, a usage reset, a profile switch). No other row names it either, so it is this lane's current session, and the cell is stamped with it before the row's status."
+    fi
   fi
 elif [ -n "$win_sid" ]; then
   step "  it is the session step 3 already found holding $LANE in this window — the cell is current"
@@ -985,11 +1017,22 @@ new_uuid() {
 lane_verb=STARTED
 lane_sid=""
 
+# AMENDMENT 11, EVIDENCE 4 — `--name "$LANE"` IS ON EVERY LAUNCH BRANCH, NOT
+# ONLY THE NEW-SESSION ONE. The session NAME is the lane's messaging address
+# (Amendment 2): `ListAgents`, `SendMessage`, `@<lane>` and the statusline all
+# read the harness record's name, and a resume that passes no `--name` gets a
+# DERIVED one. Measured on this lane 2026-09-13: the transcript carried
+# `customTitle: openRepoProject-1`, set once by `/rename`, while every process
+# that resumed it that day carried `openrepoproject-b9`, `-1e`, `-27`, `-45` —
+# four derived names for one lane, because only the new-session branch below
+# passed the flag. A resume is a launch; a launch names its window's session
+# after the lane, or the lane loses its address for the life of that session,
+# and there is no API to rename a running one from inside.
 new_sid=""
 if [ -n "$row_sid" ] && rec_file="$(recorded_transcript "$row_sid")"; then
   step "the row's current session is $row_sid and its transcript is here ($(basename -- "$rec_file")) — resuming it by id"
   (( holder_here )) && step "  (it is the session live in this window; --resume attaches to the same conversation)"
-  cmd=("$CLAUDE_BIN" --resume "$row_sid")
+  cmd=("$CLAUDE_BIN" --name "$LANE" --resume "$row_sid")
   lane_verb=RESUMED; lane_sid="$row_sid"
 elif titled="$(titled_transcript)"; then
   transcript="${titled%%$'\t'*}"; found_title="${titled#*$'\t'}"
@@ -998,7 +1041,7 @@ elif titled="$(titled_transcript)"; then
   [ "$found_title" = "$LANE" ] || note "  that title carries a dedupe suffix, so another holder of '$LANE' was live when it was renamed: retire the stale holders (lane-end --retire, or retitle them '<lane> · retired <date>') and end idle background sessions still holding the name"
   note "  '--resume $LANE' FILTERS THE PICKER, it does not resume exactly: pick the lane's own session, then put its id in the row's session cell"
   (( holder_here )) && step "  (that session is the one live in this window; --resume attaches to the same conversation)"
-  cmd=("$CLAUDE_BIN" --resume "$LANE")
+  cmd=("$CLAUDE_BIN" --name "$LANE" --resume "$LANE")
   # The picker decides which transcript this is, so the id is NOT KNOWABLE
   # here — and the line says so rather than naming the row's last id, which is
   # an id whose transcript this directory does not even have (that is why this
