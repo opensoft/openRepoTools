@@ -1027,9 +1027,22 @@ def test_readme_is_short_enough_to_be_read():
     this toolset that writes a file outside a repository" is now two things
     writing one file, `resume --workspace` and `wip init`, both only on a
     machine that has none (Amendment 9(c) step 9, act 3 obligation 3).
+
+    353 -> 358 on 2026-09-13, for A9 Addendum 4's R-A9-12 and R-A9-14, ratified
+    the same day on the adversarial review of act 3's PR. Five lines, all in
+    § "Install", and every one of them behaviour a person MEETS rather than
+    prose about it: that `--install` refuses a target that is not a regular
+    file, naming each one and the `rm` that clears it, because `cp` follows a
+    symlink and the thing on the other end of the two this estate actually has
+    is the workspace checkout every lane writes — the review measured
+    `9 of 9 placed` and exit 0 while the two commands stayed uninstalled and
+    `brett-wip`'s worktree went dirty. The other two words are corrections
+    rather than additions: the conflict arm keys on `session-start` and not on
+    `lanes-edit.sh` (R-A9-14), and the merge WRITES the file back at mode 600
+    where this said it preserved a mode it in fact sets.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 353, f"README.md is {len(lines)} lines; the cap is 353"
+    assert len(lines) <= 358, f"README.md is {len(lines)} lines; the cap is 358"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

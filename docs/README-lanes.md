@@ -1281,6 +1281,16 @@ openRepoTools --install                               # places them as regular f
 link-estates                                          # repoints ~/projects/xFactory/lanes-edit.sh
 ```
 
+**You are not asked to remember it: `--install` refuses** (A9 Addendum 4,
+R-A9-12). In its planning phase, before any of the twelve artifacts is placed,
+it walks all nine targets and dies naming every one that is not a regular file,
+what it is, and the one `rm` that clears them. `cp` FOLLOWS A SYMLINK, so an
+install over these would leave the two commands UNINSTALLED — the targets stay
+links — and would write the post-move bytes into `opensoft/brett-wip`'s working
+tree, which is the repository every lane writes: `lanes-edit.sh`'s
+`refuse_dirty_checkout` then refuses `log`, `claim` and `release` on that
+workstation until somebody runs `git checkout -- lanes/`.
+
 It is not tidiness. workBenches' `setup-estate-commands.sh` refuses the WHOLE
 estate install when any target "already exists as a symlink", and `setup.sh`
 swallows that exit into one `⚠` line — so a host that skips this looks set up
