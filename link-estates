@@ -1,0 +1,371 @@
+#!/usr/bin/env bash
+#
+# link-estates — place the symlinks that let every path a lane already uses
+# resolve into this repository. Idempotent; rehearses with --dry-run; never
+# deletes a real file.
+#
+# What it links:
+#   ~/projects/<estate>/handoffs   -> <workspace>/handoffs/<estate>
+#                                     for every handoffs/<estate>/ there whose
+#                                     ~/projects/<estate> exists on this
+#                                     workstation. The rest are reported and
+#                                     skipped: an estate this machine has not
+#                                     cloned gets no link.
+#   ~/projects/xFactory/LANES.md   -> <workspace>/lanes/LANES.md
+#   ~/projects/xFactory/lanes-edit.sh -> <the installed lanes-edit.sh>
+#
+# WHAT IT NO LONGER LINKS, and why (Amendment 9(f)(5)). It used to place
+# `~/.local/bin/lane-start` and `~/.local/bin/lane-end` as symlinks into the
+# workspace repository. Those two are INSTALLED COMMANDS now — regular files
+# `openRepoTools --install` places — and this script places neither. It is not
+# only redundancy: workBenches' `setup-estate-commands.sh` refuses the whole
+# estate install (exit 1) when any target "already exists as a symlink", and
+# `setup.sh` swallows that exit into one ⚠ line, so a host still carrying the
+# old symlinks looks set up and has no estate commands on it.
+#
+# The `lanes-edit.sh` link is KEPT AND REPOINTED at the installed command
+# rather than removed, because Amendment 8(e)'s SessionStart hook names
+# `~/projects/xFactory/lanes-edit.sh` as its command string and that string has
+# to keep working across the move.
+#
+# Why: lane-collision-protocol Rule 4 / Amendment 4 (handoffs live in the
+# person's workspace repository, reached through the estate-folder path) and
+# Rule 9 / Amendment 5 (the lane register lives there too). Every existing
+# path in every protocol, memory and habit keeps working because of these
+# links — nothing else has to be rewritten.
+#
+# Adopting a workspace repository on a new workstation is ONE command, and it
+# is not this one: `openRepoTools wip init` creates or clones it, writes the
+# pointer file and then runs this (Amendment 9(c) step 10). This is safe to run
+# by hand any time afterwards.
+#
+# TWO POINTERS, TWO QUESTIONS — and Amendment 9(f)(5) is careful about the
+# difference. `$AGENT_PROTOCOL_ROOT/workspace.yaml` answers *where the person's
+# data is*; `$OPENREPOTOOLS_BIN_DIR` answers *where the commands were
+# installed*. What Amendment 9(a) refuses is two answers to the SAME question,
+# which is exactly what deriving the workspace from this script's own location
+# was.
+#
+# Environment: PROJECTS_ROOT overrides ~/projects; OPENREPOTOOLS_BIN_DIR
+# overrides ~/.local/bin (where lanes-edit.sh was installed);
+# AGENT_PROTOCOL_ROOT overrides ~/.agents; LANES_WORKSPACE_ROOT overrides the
+# workspace checkout itself (the test seam).
+set -euo pipefail
+
+# --- THE WORKSPACE REPOSITORY (lane-collision-protocol Amendment 9(a)) -------
+#
+# The person's data — the register `lanes/LANES.md`, the object logs
+# `lanes/log/`, the handoffs, the manifests `park` writes, and a
+# `lanes/repos.tsv` override — is found through
+# `$AGENT_PROTOCOL_ROOT/workspace.yaml`, and NEVER from this file's own
+# location. `resume:466` and `status:1673` already read that same file under
+# that same name, and Amendment 9(a) mints no second one: a second way to find
+# it is a second answer.
+#
+# Deriving it from here stopped being POSSIBLE the moment this became an
+# installed regular file in `~/.local/bin` with no register anywhere near it,
+# and it stopped being WANTED for a subtler reason: a file's location on disk
+# is evidence about the file, not about a person's data.
+#
+# THESE FOUR FUNCTIONS ARE A DELIBERATE COPY, byte for byte, across
+# `lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates` — the same trade
+# openRepoTools already makes for its own fetch shim (`openRepoTools:93-100`).
+# A shared `lanes-common.sh` would be a TENTH file for `--install` to place and
+# a broken helper the first time somebody copied only some of them. Each of
+# these is one file a person has on PATH.
+#
+# FAILING TO FIND IT IS A REFUSAL, NEVER A GUESS. No file, no `path:`, no
+# `repository:`, or a `path:` that is not the root of a checkout of the
+# `repository:` named beside it → the caller refuses, exit 1 — the code
+# `lanes-edit.sh` has always used for *registry not found* — with the fix
+# named: `openRepoTools wip init`. Nothing here ever creates that file, writes
+# a register, or falls back to a path derived from its own location. THE
+# CHECKOUT TEST IS NEW: nothing validated it before this, so a `path:` pointing
+# at some other repository used to be accepted and now is not.
+#
+# `LANES_WORKSPACE_ROOT` is the test seam and the only override — the seam
+# `lane-start` already spelled for handoff resolution, widened to the whole
+# question so `test_lane_helpers.sh` can point every helper at one sandbox.
+# --- BEGIN shared workspace resolver (Amendment 9(a)) ----------------------
+# BYTE-IDENTICAL IN ALL FOUR LANE HELPERS, and held there by
+# `tests/test_repo_hygiene.py`. The estate commands carry the same discipline
+# for their own estate resolver and for the same reason its guard gives: a
+# drifted copy is TWO ANSWERS to one question, and "where is this person's
+# workspace" is exactly the question Amendment 9(a) exists to give one answer
+# to. Edit it in one file and the test names the other three.
+LANES_WS_WHY=""
+
+lanes_ws_yaml() { printf '%s\n' "${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace.yaml"; }
+
+# `key: value` at the TOP LEVEL only, first occurrence, with an inline `#`
+# comment and surrounding quotes stripped and a leading `~` expanded against
+# $HOME (nothing expands a bare `~` inside a file). The anchored `^key:` never
+# reaches into the INDENTED `orgs:` map, which Amendment 9(a) puts out of
+# scope: these helpers read `repository:` and `path:` and nothing else, because
+# one register in the first workspace repository is the whole rule — the
+# register never follows that map. Two lines of sed, because a YAML parser is
+# not a dependency any of these files will take for one scalar.
+lanes_ws_field() {
+  local v
+  v="$(sed -n -e "s/^$1:[[:space:]]*//p" "$2" 2>/dev/null | head -n 1 |
+    sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//')"
+  v="${v%\"}"; v="${v#\"}"
+  v="${v%\'}"; v="${v#\'}"
+  case "$v" in
+  '~') v="$HOME" ;;
+  '~/'*) v="$HOME/${v#'~/'}" ;;
+  esac
+  printf '%s\n' "$v"
+}
+
+# One of the spellings `git remote get-url origin` prints for one GitHub
+# repository, reduced to a bare lowercased `<owner>/<name>` so it can be
+# compared against workspace.yaml's own `<owner>/<name>`. A URL that is not
+# GitHub's is compared as it stands, lowercased — which is what lets a sandbox
+# name a bare local origin and still be checked.
+lanes_ws_norm() {
+  local u="${1%.git}"
+  case "$u" in
+  https://github.com/*) u="${u#https://github.com/}" ;;
+  ssh://git@github.com/*) u="${u#ssh://git@github.com/}" ;;
+  git@github.com:*) u="${u#git@github.com:}" ;;
+  esac
+  printf '%s' "$u" | tr '[:upper:]' '[:lower:]'
+}
+
+# Do these two name one repository? Equal after normalisation, OR the origin's
+# path ENDS in the `<owner>/<name>` the pointer file spells — which is how a
+# GitHub Enterprise host, an ssh alias and a local bare mirror laid out by
+# owner and name all say the same thing as `https://github.com/<owner>/<name>`.
+# The pointer file spells `<owner>/<name>` because that is what a person types;
+# `git remote get-url` spells a URL because that is what git stores.
+lanes_ws_same_repo() {
+  local a b
+  a="$(lanes_ws_norm "$1")"
+  b="$(lanes_ws_norm "$2")"
+  [ -n "$a" ] && [ -n "$b" ] || return 1
+  [ "$a" = "$b" ] && return 0
+  case "$a" in */"$b") return 0 ;; esac
+  return 1
+}
+
+# Prints the workspace checkout's real root, or returns 1 having set
+# $LANES_WS_WHY to the one sentence that says which of the five ways it failed.
+# ROOT-NESS IS ITS OWN CHECK: `rev-parse --is-inside-work-tree` and
+# `remote get-url origin` both succeed from any SUBDIRECTORY of a work tree, so
+# a `path:` naming a subdirectory would otherwise be accepted and resolve
+# `<path>/lanes/LANES.md` inside the wrong directory.
+lanes_workspace_root() {
+  local yaml repo path origin toplevel real
+  LANES_WS_WHY=""
+  if [ -n "${LANES_WORKSPACE_ROOT:-}" ]; then
+    printf '%s\n' "$LANES_WORKSPACE_ROOT"
+    return 0
+  fi
+  yaml="$(lanes_ws_yaml)"
+  if [ ! -r "$yaml" ]; then
+    LANES_WS_WHY="there is no $yaml"
+    return 1
+  fi
+  repo="$(lanes_ws_field repository "$yaml")"
+  path="$(lanes_ws_field path "$yaml")"
+  if [ -z "$repo" ]; then
+    LANES_WS_WHY="$yaml names no \`repository:\`"
+    return 1
+  fi
+  if [ -z "$path" ]; then
+    LANES_WS_WHY="$yaml names no \`path:\`"
+    return 1
+  fi
+  if ! git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    LANES_WS_WHY="$yaml names path: $path, which is not a git checkout"
+    return 1
+  fi
+  origin="$(git -C "$path" remote get-url origin 2>/dev/null || :)"
+  if ! lanes_ws_same_repo "$origin" "$repo"; then
+    LANES_WS_WHY="$yaml names repository: $repo, but $path is a checkout of ${origin:-no origin at all}"
+    return 1
+  fi
+  toplevel="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null || :)"
+  real="$(cd -- "$path" 2>/dev/null && pwd -P)" || real=""
+  if [ -z "$real" ] || [ "$toplevel" != "$real" ]; then
+    LANES_WS_WHY="$yaml names path: $path, which is not the ROOT of that checkout (${toplevel:-unknown} is)"
+    return 1
+  fi
+  printf '%s\n' "$real"
+}
+
+# The refusal's body, so all four helpers say the same thing in the same words.
+#
+# THE REASON IS RE-DERIVED HERE, IN THE PARENT SHELL, and that is the whole
+# point of this line. Every caller reaches the resolver through a command
+# substitution — `LANES_WS_ROOT="$(lanes_workspace_root || :)"` — which runs it
+# in a SUBSHELL, so the $LANES_WS_WHY it set died with that subshell and the
+# parent still holds the empty string it started with. Six distinct diagnoses
+# were being computed and all six were being thrown away; every one of the
+# refusals Amendment 9(a) enumerates printed the same "no reason recorded".
+# The resolver is read-only and cheap — two `sed`s and three `git` reads — and
+# it is reached on the refusal path only, so running it again HERE is the one
+# place its answer survives to be printed.
+lanes_workspace_why() {
+  [ -n "$LANES_WS_WHY" ] || lanes_workspace_root >/dev/null 2>&1 || :
+  printf '%s' "the workspace repository could not be found — ${LANES_WS_WHY:-no reason recorded}.
+    Amendment 9(a): every lane helper reads \`repository:\` and \`path:\` from
+    $(lanes_ws_yaml), never from its own location. One command writes that
+    file, creates or clones the repository and places the symlinks:
+        openRepoTools wip init"
+}
+# --- END shared workspace resolver ------------------------------------------
+
+projects_root="${PROJECTS_ROOT:-$HOME/projects}"
+bin_dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
+dry_run=0
+
+case "${1:-}" in
+  "") ;;
+  --dry-run) dry_run=1 ;;
+  -h|--help)
+    echo "Usage: link-estates [--dry-run]"
+    exit 0
+    ;;
+  *) echo "Unknown option: $1" >&2; exit 2 ;;
+esac
+
+# THE WORKSPACE, not this file's parent. `:33` used to be
+# `repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"`, and it
+# did not even `readlink -f` first, unlike its two siblings — so as an
+# installed command in `~/.local/bin` that resolved to `$HOME/.local` and it
+# died at the handoffs check. Amendment 9(a) answers the question properly.
+repo_dir="$(lanes_workspace_root || :)"
+if [[ -z "$repo_dir" ]]; then
+  printf 'Error: %s\n' "$(lanes_workspace_why)" >&2
+  exit 1
+fi
+
+# THE LINK TARGET FOR `lanes-edit.sh` IS THE INSTALLED COMMAND, and its absence
+# is a refusal that places NOTHING (Amendment 9(f)(5)). Linking to a file that
+# is not there would leave `~/projects/xFactory/lanes-edit.sh` dangling — which
+# is also the hook's command string, so the failure would be met at every
+# session start rather than here.
+lanes_edit_cmd="$bin_dir/lanes-edit.sh"
+if [[ ! -x "$lanes_edit_cmd" ]]; then
+  echo "Error: no lanes-edit.sh at $lanes_edit_cmd, so the register's writer cannot be linked." >&2
+  echo "       It is placed there by \`openRepoTools --install\`. Run that first; nothing was linked." >&2
+  exit 1
+fi
+
+[[ -d "$repo_dir/handoffs" ]] || { echo "Error: no handoffs/ in $repo_dir" >&2; exit 1; }
+[[ -d "$repo_dir/lanes" ]]    || { echo "Error: no lanes/ in $repo_dir" >&2; exit 1; }
+[[ -d "$projects_root" ]]     || { echo "Error: no projects root: $projects_root" >&2; exit 1; }
+
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+linked=0; kept=0; skipped=0; aside=0; stale_links=0
+
+# Never delete a real file, a real directory, or anything whose bytes differ
+# from what is tracked here. Move it out of the way with a stamped suffix so
+# the previous state stays recoverable by hand — the habit scripts/link-home
+# established in brettheap/new-workstation, and the one Amendment 4(f) names.
+move_aside() {
+  local live=$1
+  local target="$live.pre-link-estates-$stamp"
+  if (( dry_run )); then
+    printf 'PLAN  move aside  %s -> %s\n' "$live" "$target"
+  else
+    mv -- "$live" "$target"
+    printf 'ASIDE %s -> %s\n' "$live" "$target"
+  fi
+  aside=$((aside + 1))
+}
+
+link() {
+  local target=$1 live=$2
+  if [[ -L "$live" ]]; then
+    if [[ -e "$live" && "$(readlink -f -- "$live")" == "$(readlink -f -- "$target")" ]]; then
+      printf 'KEEP  %s -> %s\n' "$live" "$target"
+      kept=$((kept + 1))
+      return
+    fi
+    # A symlink pointing somewhere else, or a dangling one. Relinking loses
+    # nothing: the bytes are wherever it pointed, and this prints where.
+    printf 'RELINK %s (was -> %s)\n' "$live" "$(readlink -- "$live")"
+    if (( dry_run )); then
+      printf 'PLAN  relink     %s -> %s\n' "$live" "$target"
+      return
+    fi
+    rm -- "$live"
+  elif [[ -e "$live" ]]; then
+    if [[ -f "$live" && -f "$target" ]] && cmp -s -- "$live" "$target"; then
+      if (( dry_run )); then
+        printf 'PLAN  replace identical file with link  %s\n' "$live"
+        return
+      fi
+      rm -- "$live"
+    else
+      move_aside "$live"
+      (( dry_run )) && { printf 'PLAN  link       %s -> %s\n' "$live" "$target"; return; }
+    fi
+  elif (( dry_run )); then
+    printf 'PLAN  link       %s -> %s\n' "$live" "$target"
+    return
+  fi
+  ln -s -- "$target" "$live"
+  printf 'LINK  %s -> %s\n' "$live" "$target"
+  linked=$((linked + 1))
+}
+
+# ---- handoffs: one link per estate this workstation actually has ----------
+# A GLOB, not `find … -print0 | sort -z` (A9 Addendum 4, R-A9-11): `sort -z` is
+# GNU-only and there is no portable NUL sort to swap it for, while a glob is
+# ordered by the shell itself, needs no second process, and carries a name with
+# a newline in it — which is the only thing the NUL was ever protecting. An
+# empty or absent `handoffs/` leaves the pattern unexpanded and `-d` refuses it.
+for estate_dir in "$repo_dir"/handoffs/*/; do
+  [[ -d "$estate_dir" ]] || continue
+  estate_dir="${estate_dir%/}"
+  estate="$(basename -- "$estate_dir")"
+  if [[ ! -d "$projects_root/$estate" ]]; then
+    printf 'SKIP  %s — no %s on this workstation\n' "$estate" "$projects_root/$estate"
+    skipped=$((skipped + 1))
+    continue
+  fi
+  link "$estate_dir" "$projects_root/$estate/handoffs"
+done
+
+# ---- the lane register, reached from the aggregation folder ---------------
+# Rule 9's paths, unchanged since 2026-09-09 and unchanged by Amendment 5 —
+# only what they point AT changed.
+if [[ -d "$projects_root/xFactory" ]]; then
+  link "$repo_dir/lanes/LANES.md" "$projects_root/xFactory/LANES.md"
+  # THE WRITER'S LINK NOW CROSSES THE SEAM: the register is data in the
+  # workspace repository, its writer is a command in the bin directory, and
+  # this one link is what keeps Amendment 8(e)'s hook string
+  # `~/projects/xFactory/lanes-edit.sh session-start || true` working after
+  # the move.
+  link "$lanes_edit_cmd" "$projects_root/xFactory/lanes-edit.sh"
+else
+  printf 'SKIP  the lane register — no %s on this workstation\n' "$projects_root/xFactory"
+  skipped=$((skipped + 1))
+fi
+
+# ---- the two ends of a lane are NOT linked any more ------------------------
+# `openRepoTools --install` places `lane-start` and `lane-end` as regular files
+# in the bin directory. A host upgrading from the pre-move world still carries
+# this script's old symlinks at those paths; they are reported here, with the
+# one command that replaces them, because leaving them is what makes
+# workBenches' estate install refuse the whole set (Amendment 9(f)(3)).
+for stale in lane-start lane-end; do
+  if [[ -L "$bin_dir/$stale" ]]; then
+    printf 'STALE %s is still a symlink -> %s\n' "$bin_dir/$stale" "$(readlink -- "$bin_dir/$stale")"
+    printf '      It is an installed command now. Remove it and run `openRepoTools --install`:\n'
+    printf '        rm %s && openRepoTools --install\n' "$bin_dir/$stale"
+    stale_links=$((stale_links + 1))
+  fi
+done
+case ":${PATH:-}:" in
+  *":$bin_dir:"*) : ;;
+  *) printf 'NOTE  %s is not on this shell'"'"'s PATH — add it, or call the commands by path\n' "$bin_dir" ;;
+esac
+
+printf -- '----\n%s linked, %s already right, %s skipped, %s moved aside, %s stale%s\n' \
+  "$linked" "$kept" "$skipped" "$aside" "$stale_links" \
+  "$( (( dry_run )) && printf ' (PLAN only — nothing was written)' )"

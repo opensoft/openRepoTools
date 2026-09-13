@@ -5,10 +5,19 @@ name: tests
 # network, and must never create a real repository.
 #
 # EVERY CHECKOUT TAKES `submodules: true`. The estate tests read eight of
-# openRepoShape's own files out of `upstream/openRepoShape`, pinned by
+# openRepoShape's own files out of `upstream/openRepoShape`, and `wip init`'s
+# tests read the nine of `templates/workspace-root/`, all pinned by
 # `contracts/openreposhape-pin.yaml`. Without them those tests SKIP rather than
 # fail — which is what the `tests-no-submodule` job below proves on purpose,
 # and what every other job must not be quietly doing.
+#
+# THE LANE HELPERS' OWN SUITE RUNS IN THESE JOBS TOO, and it runs because
+# `tests/test_lane_helpers_suite.py` calls it: this repository's CI is
+# pytest-only, so 196 KB of bash arriving at `tests/test_lane_helpers.sh` under
+# lane-collision-protocol Amendment 9's move would otherwise have run in NO
+# job. A suite nothing runs is not a suite (act 3, obligation 6). It is bash
+# and it skips on Windows, like every other bash claim here; the macOS
+# `/bin/bash -n` step below parses it under bash 3.2 whatever it does.
 
 on:
   pull_request:
@@ -214,6 +223,61 @@ jobs:
           /bin/bash -n park
           /bin/bash -n resume
           /bin/bash -n status
+          /bin/bash -n lanes-edit.sh
+          /bin/bash -n lane-start
+          /bin/bash -n lane-end
+          /bin/bash -n link-estates
+          /bin/bash -n tests/test_lane_helpers.sh
+
+      # THE FACTS THE LAST THREE ROUNDS WERE SPENT GUESSING AT, printed once,
+      # in seconds, in the job that is the only place they can be read (A9
+      # Addendum 4, R-A9-11). Every macOS defect this branch fixed was a
+      # difference between two `bash`es or two userlands that no Linux runner
+      # and no hand-written shim reproduced, and each cost a ~20-minute round
+      # to find. `continue-on-error` because a diagnostic must never be the
+      # thing that reddens a job: what it prints is evidence, not an assertion.
+      #
+      # The `wc` line is not decoration. BSD `wc` right-aligns its counts and
+      # GNU's does not, and one unstripped count in `lanes-edit.sh` was the
+      # largest single cause of the 438 failures at `d3d59b5` — the brackets
+      # are there so the padding is VISIBLE rather than swallowed by the log.
+      # It printed `[       2]` on its first run, which is the whole defect in
+      # nine characters. That run also made the point twice over: the line
+      # after it was `cat -A`, which is GNU, and macOS answered `cat: illegal
+      # option -- A` and, under `bash -e`, took the rest of this step with it.
+      # Every command here is POSIX now.
+      #
+      # The two `awk` lines are the last round's answer, kept where the next
+      # round can read it without asking again. This runner's awk is
+      # one-true-awk, and a `-v name=value` there is processed AS A STRING
+      # LITERAL: a literal newline in one is fatal — `awk: newline in string
+      # ... at source line 1`, exit 2, no output at all. gawk and mawk take it
+      # without a word, which is why fourteen `who --landing` assertions were
+      # red on this job alone and green everywhere else. `TAKEN` here means
+      # this runner's awk is the permissive kind; the refusal message means it
+      # is not, and `lanes-edit.sh` must keep handing that table through
+      # `ENVIRON`.
+      - name: what this runner actually is
+        continue-on-error: true
+        run: |
+          sw_vers || :
+          echo "bash on PATH : $(command -v bash)"; bash --version | head -n1
+          echo "/bin/bash    : $(/bin/bash --version | head -n1)"
+          echo "LANG=[${LANG-}] LC_ALL=[${LC_ALL-}] LC_CTYPE=[${LC_CTYPE-}]"
+          locale || :
+          printf 'wc -l pads?  : ['; printf 'a\nb\n' | wc -l | tr -d '\n'; printf ']\n'
+          echo "/proc exists : $( [ -d /proc ] && echo yes || echo no )"
+          for t in timeout gtimeout tmux realpath greadlink gsed shasum sha256sum; do
+            echo "  $t -> $(command -v "$t" || echo '(absent)')"
+          done
+          echo "cmp -n taken : $(printf x > /tmp/.a; printf x > /tmp/.b; \
+            cmp -s -n 1 /tmp/.a /tmp/.b >/dev/null 2>&1 && echo yes || echo no)"
+          echo "head -c 0 ok : $(head -c 0 /tmp/.a >/dev/null 2>&1 && echo yes || echo no)"
+          printf 'awk          : '; awk --version 2>&1 | head -n1 \
+            || awk -Wversion 2>&1 | head -n1 || :
+          printf 'awk -v \\n    : '; awk -v t="$(printf 'a\nb')" \
+            'BEGIN { print "TAKEN" }' 2>&1 | head -n1
+          git --version; python3 --version
 
       - name: tests
         run: python3 -m pytest tests -q

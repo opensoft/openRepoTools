@@ -28,6 +28,23 @@ from conftest import REPO, WINDOWS_SKIP
 #: claim true.
 SHIPPED_BASH = ["openRepoTools", "park", "resume", "status"]
 
+#: THE LANE HELPERS, which arrived here from `opensoft/brett-wip` with their
+#: history under lane-collision-protocol Amendment 9(b). They are shipped bash
+#: and `--install` places them, so they are held to the same shebang, the same
+#: executable bit, the same LF index and the same bash-3.2 parse — but NOT to
+#: `set -euo pipefail`, and the exception is deliberate rather than an
+#: oversight. `lanes-edit.sh` runs `set -u` alone, because it is the register's
+#: only writer and a failing command inside a lock-holding write must reach its
+#: own refusal and release the lock rather than exiting where it stands.
+LANE_BASH = ["lanes-edit.sh", "lane-start", "lane-end", "link-estates"]
+
+#: Every bash file this repository ships, for the claims that are about BASH
+#: and not about a command's failure discipline: the parse gate and the LF
+#: index. The moved suite is 196 KB of it and is in this list for the reason
+#: Amendment 9's act-3 obligation 4 gives — the macOS job parses it with bash
+#: 3.2, where a `${x,,}` that nobody ran is still a syntax error.
+ALL_BASH = SHIPPED_BASH + LANE_BASH + ["tests/test_lane_helpers.sh"]
+
 #: THE COMMANDS THAT CARRY THE SHARED ESTATE RESOLVER, byte for byte. Every
 #: estate command is one; the installer is not, it finds no estate.
 ESTATE_COMMANDS = ["park", "resume", "status"]
@@ -53,10 +70,31 @@ def test_shipped_bash_is_executable_and_fails_loudly(name):
         "carry on with an unset variable")
 
 
+@pytest.mark.parametrize("name", LANE_BASH)
+def test_the_lane_helpers_are_executable_and_declare_their_discipline(name):
+    """The lane helpers, held to what they are rather than to what the estate
+    commands are (Amendment 9(b)).
+
+    Same shebang and same executable bit — `--install` stamps 755 on everything
+    it places, and a copy that is not executable is not a command. `set -u` is
+    the floor all four share; `set -e` is NOT required of `lanes-edit.sh`,
+    whose whole job is to hold a lock, reach its own refusal and release it.
+    """
+    script = REPO / name
+    assert script.is_file()
+    assert os.access(script, os.X_OK), f"{name} must be executable: chmod +x"
+    text = script.read_text(encoding="utf-8")
+    assert text.startswith("#!/usr/bin/env bash\n")
+    assert ("set -u" in text or "set -euo pipefail" in text), (
+        f"{name} must at least `set -u`: an installed command that reads an "
+        "unset variable as the empty string writes somewhere nobody named")
+
+
 @WINDOWS_SKIP
-@pytest.mark.parametrize("name", SHIPPED_BASH)
+@pytest.mark.parametrize("name", ALL_BASH)
 def test_shipped_bash_parses_under_bash(name):
-    """`bash -n` on all four shipped bash files, everywhere there is a bash.
+    """`bash -n` on every bash file this repository ships, everywhere there is
+    a bash.
 
     SKIPPED ON WINDOWS, AND `shutil.which` IS NOT ENOUGH TO SEE WHY. The
     `bash` a stock Windows install puts on PATH is
@@ -104,6 +142,84 @@ def test_the_estate_commands_carry_the_same_estate_resolver_byte_for_byte():
         assert text == reference, (
             f"park and {name} have drifted apart in the shared estate resolver")
     assert len(reference.splitlines()) > 100, "the marker moved, not the block"
+
+
+def test_the_lane_helpers_carry_the_same_workspace_resolver_byte_for_byte():
+    """THE SAME DISCIPLINE AS THE ESTATE RESOLVER ABOVE, for the same reason,
+    on the block lane-collision-protocol AMENDMENT 9(a) is made of.
+
+    `lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates` are each ONE
+    file a person has on PATH, placed by `--install`, so the resolver that
+    answers "where is this person's workspace repository" is copied into all
+    four rather than sourced — a shared `orp-workspace.sh` would be a tenth
+    file to place and a broken helper the first time somebody copied only one.
+
+    A drifted copy is TWO ANSWERS to that question, and one answer is the whole
+    of what clause (a) buys: it retired deriving the register from a script's
+    own real path precisely because "a second way to find it is a second
+    answer". Four copies that disagree would put that defect straight back, one
+    helper at a time, and the person would meet it as a register that one
+    command can write and another cannot find.
+
+    The block carries its own markers so this test names the drift rather than
+    a line number, exactly as the estate resolver's does.
+    """
+    def block(path: Path) -> str:
+        text = path.read_text(encoding="utf-8")
+        start = text.index("# --- BEGIN shared workspace resolver")
+        end = text.index("# --- END shared workspace resolver")
+        return text[start:end]
+
+    blocks = {name: block(REPO / name) for name in LANE_BASH}
+    reference = blocks["lanes-edit.sh"]
+    for name, text in blocks.items():
+        assert text == reference, (
+            f"lanes-edit.sh and {name} have drifted apart in the shared "
+            f"workspace resolver (Amendment 9(a))")
+    assert len(reference.splitlines()) > 100, "the marker moved, not the block"
+    # THE PIECES THAT MAKE IT THE AMENDMENT'S RESOLVER AND NOT SOME OTHER ONE.
+    # A block that kept the markers and lost the checkout test would pass the
+    # comparison above four times over.
+    assert '"${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace.yaml"' in reference, (
+        "the resolver no longer reads the one pointer file clause (a) names")
+    for field in ("repository", "path"):
+        assert f'lanes_ws_field {field} "$yaml"' in reference, (
+            f"the resolver no longer reads `{field}:`")
+    assert "rev-parse --show-toplevel" in reference, (
+        "the resolver no longer checks that `path:` is the ROOT of the "
+        "checkout, which clause (a) added as new behaviour")
+    assert "openRepoTools wip init" in reference, (
+        "the refusal no longer names the one command that fixes it")
+
+
+def test_the_workspace_refusal_carries_the_reason_it_computed():
+    """SIX DIAGNOSES ARE COMPUTED AND ALL SIX USED TO BE THROWN AWAY.
+
+    `lanes_workspace_root` sets `$LANES_WS_WHY` to the one sentence that says
+    WHICH of clause (a)'s ways it failed — no file, no `repository:`, no
+    `path:`, a `path:` that is not a checkout, a checkout of something else, or
+    a subdirectory rather than the root. Every caller reaches the resolver
+    through `LANES_WS_ROOT="$(lanes_workspace_root || :)"`, a COMMAND
+    SUBSTITUTION, so that assignment happened in a subshell and died with it:
+    the parent printed "no reason recorded" for all six.
+
+    Clause (a) makes failing to find the workspace "a refusal, never a guess",
+    and the estate's own convention (`status:3076-3078`) is that a refusal must
+    not be readable as something else. A refusal that names none of the six is
+    one a person cannot act on — the fix line `openRepoTools wip init` is
+    right for three of them and wrong for the other three, which want a
+    `workspace.yaml` edited rather than a repository created.
+
+    `lanes_workspace_why` therefore re-derives the reason in the PARENT shell
+    before printing. This test holds that line, because nothing else would
+    notice its loss: the refusal still exits 1 and still names the command.
+    """
+    for name in LANE_BASH:
+        text = (REPO / name).read_text(encoding="utf-8")
+        assert '[ -n "$LANES_WS_WHY" ] || lanes_workspace_root >/dev/null 2>&1 || :' \
+            in text, (
+            f"{name}'s `lanes_workspace_why` does not re-derive the reason in "
+            f"the parent shell, so every refusal reads `no reason recorded`")
 
 
 def test_status_carries_resumes_expand_home_byte_for_byte():
@@ -237,20 +353,64 @@ def test_every_value_taking_arm_refuses_an_empty_value():
         f"was added or removed. Read the new arm, then move the number.")
 
 
+#: A line that actually FETCHES, as opposed to a line of the usage heredoc
+#: that says the word. Both spellings take a quoted argument, which the prose
+#: never does.
+def fetching_lines(path: Path) -> list[str]:
+    return [line for line in code_lines(path).splitlines()
+            if 'gh api "' in line or 'raw.githubusercontent.com/$' in line]
+
+
 def test_the_installer_reaches_only_this_repository():
-    """The installer fetches from `$OPENREPOTOOLS_REPO` and from nowhere else.
+    """`--install` fetches from `$OPENREPOTOOLS_REPO` and from nowhere else.
 
     An `--install` that reached into openRepoShape to complete itself would
     make this repository's installer depend on the standard at run time, which
     is the direction the pin's own header spends a paragraph refusing — and it
     is the mirror of the rule openRepoShape's own `--install` follows by
     printing a POINTER at this repository rather than fetching from it.
+
+    `wip init` IS THE ONE EXCEPTION, and it is not `--install`'s (lane protocol
+    Amendment 9(c) step 7). It materializes openRepoShape's
+    `templates/workspace-root/` — nine files this repository deliberately does
+    not carry a copy of, because a copy is a second answer to what the template
+    is — and it does it AT THE PINNED COMMIT, not at that repository's `main`.
+    The test below is the one that holds it to the pin. Every other fetch in
+    this file is still `$REPO`'s.
     """
-    for line in code_lines(REPO / "openRepoTools").splitlines():
-        if "gh api" in line or "raw.githubusercontent.com" in line:
-            assert "$REPO" in line, (
-                f"the installer fetches from a repository that is not "
-                f"$OPENREPOTOOLS_REPO:\n    {line.strip()}")
+    for line in fetching_lines(REPO / "openRepoTools"):
+        assert "$REPO" in line or "$SHAPE_REPOSITORY" in line, (
+            f"the command fetches from a repository that is neither "
+            f"$OPENREPOTOOLS_REPO nor the pinned standard:\n    {line.strip()}")
+
+
+def test_the_template_is_fetched_from_the_pinned_standard_and_at_the_pin():
+    """`wip init` seeds a person's workspace repository from bytes it fetches,
+    and WHICH bytes is a pin question, not a `main` question.
+
+    openRepoShape squash-merges, so a commit on a branch there is orphaned by
+    the merge and a raw fetch of it 404s for the next person — the reason
+    `contracts/openreposhape-pin.yaml` refuses a commit that is not on that
+    repository's default branch. This test is why `wip_shape_ref` reads the pin
+    rather than spelling `main`: a template that drifted under a person's feet
+    would seed two workstations differently from one command.
+    """
+    text = (REPO / "openRepoTools").read_text(encoding="utf-8")
+    assert 'SHAPE_REPOSITORY="opensoft/openRepoShape"' in text, (
+        "the template's source repository is a constant in this file, by "
+        "Amendment 9(c) step 7's substitution table")
+    for line in fetching_lines(REPO / "openRepoTools"):
+        if "$SHAPE_REPOSITORY" in line:
+            assert "$ref" in line, (
+                "a template fetch that does not carry the pinned ref would "
+                f"take whatever openRepoShape's main holds today:\n    {line.strip()}")
+    # `-e`, and not a bare script followed by `--`: BSD's `getopt` stops at the
+    # first operand, so `sed -n 'script' -- "$file"` reads `--` as a FILENAME
+    # there (A9 Addendum 4, R-A9-11, and the two tests at the foot of this
+    # file).
+    assert 'sed -n -e \'s/^commit:[[:space:]]*//p\'' in text, (
+        "wip_shape_ref must read `commit:` out of "
+        "contracts/openreposhape-pin.yaml rather than spelling a ref")
 
 
 def test_the_readme_prints_the_install_line_the_pointer_prints():
@@ -272,6 +432,45 @@ def test_the_readme_also_carries_the_gh_api_form():
     assert "gh api repos/opensoft/openRepoTools/contents/openRepoTools" in readme
     assert "-H 'Accept: application/vnd.github.raw'" in readme
     assert "bash -s -- --install" in readme
+
+
+def test_the_readme_carries_the_two_line_onboarding_chain():
+    """lane-collision-protocol AMENDMENT 9(e), "The chain": a new person, from
+    nothing to a lane, in TWO LINES — and neither of them is a command in this
+    repository.
+
+    `./setup.sh` runs `openRepoTools --install` and then `openRepoTools wip
+    init` for the person, each best-effort, so neither is a line anybody has to
+    know to type. Brett Heap's direction of 2026-09-12, verbatim "we need to
+    also keep that clean so there is the least choices possible to not confuse
+    the user", is the measure that clause is written to, and an earlier draft
+    of it failed the measure with twelve steps.
+
+    Held here for the reason every other document test in this file is held:
+    the chain is the one part of this repository's story that is TRUE ONLY
+    ELSEWHERE — in workBenches' `setup.sh` — so nothing in this repository's
+    own behaviour goes red when it rots. The two preconditions are held with
+    it, because a chain that omits them is a chain that fails on line 1 for a
+    reason the person cannot see: `gh auth login`, since `wip init` derives the
+    login from `gh api user`, and `~/.local/bin` on `PATH`, which needs a
+    restarted terminal before anything `--install` placed can be typed.
+    """
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    assert "gh repo clone opensoft/workBenches && cd workBenches && ./setup.sh" \
+        in readme, (
+        "README.md does not carry Amendment 9(e)'s first line, byte for byte")
+    assert "pclaude run <profile> --lane <repo>-<n>" in readme, (
+        "README.md does not carry Amendment 9(e)'s second line")
+    assert "gh auth login" in readme, (
+        "README.md names neither of the chain's two preconditions: `wip init` "
+        "derives the login from `gh api user`, so an unauthenticated `gh` "
+        "meets a refusal on line 1")
+    assert "restarted terminal" in readme, (
+        "README.md does not say ~/.local/bin needs a restarted terminal "
+        "before the commands --install placed are on PATH")
+    assert "openRepoTools wip init" in readme, (
+        "README.md does not name the act that creates the workspace, which is "
+        "the by-hand half of the chain for a host with no workBenches")
 
 
 def test_no_document_offers_a_windows_powershell_twin():
@@ -348,8 +547,13 @@ def test_the_documents_say_what_status_is_and_is_not():
     assistant reaches for unaided. A `status` that "checks the remote" is one
     somebody runs `git fetch` on behalf of to make current — when the flag
     is what they should reach for — and a report of findings with exit 1 is
-    one somebody calls a failure. The four-file count is held too, because
-    the install story is the sentence a first-time reader trusts.
+    one somebody calls a failure. The install count is held too, because the
+    install story is the sentence a first-time reader trusts — and it is NINE
+    from lane-collision-protocol Amendment 9(b), not four: the four estate
+    commands plus `lanes-edit.sh`, `lane-start`, `lane-end`, `link-estates`
+    and the shipped `repos.tsv`. The number is asserted rather than the word
+    "four" precisely so that a document which grows the install and forgets
+    to say so is a red test.
     """
     for name in ("README.md", "AGENTS.md", "status"):
         text = (REPO / name).read_text(encoding="utf-8")
@@ -377,8 +581,8 @@ def test_the_documents_say_what_status_is_and_is_not():
         text = (REPO / name).read_text(encoding="utf-8")
         assert "`status`" in text, f"{name} never names the fourth command"
     readme = (REPO / "README.md").read_text(encoding="utf-8")
-    assert "FOUR files" in readme, "README.md does not count the four files"
-    assert "4 of 4 placed" in readme, (
+    assert "NINE files" in readme, "README.md does not count the nine files"
+    assert "9 of 9 placed" in readme, (
         "README.md does not show the count line `--install` actually prints")
     status = (REPO / "status").read_text(encoding="utf-8")
     assert "--no-optional-locks" in status, (
@@ -607,9 +811,53 @@ def test_agents_md_is_short_enough_to_be_read():
     role belongs to NEITHER shape, and would send somebody round the re-park
     loop for ever, which is the loop the entry above this one bought its two
     lines to stop.
+
+    155 -> 179 on 2026-09-13, for lane-collision-protocol AMENDMENT 9, ratified
+    that day, and its adoption act 3 — the one change to this repository that
+    is not a change to the estate verbs at all. Four executables, a shipped
+    data file, a suite and a manual arrived here from a person's workspace
+    repository, and `openRepoTools` grew the verb that creates such a
+    repository. The lines buy four things an assistant cannot infer from the
+    files:
+
+    (a) the opening count, which said THREE INSTALLED COMMANDS and now says
+    what `--install` actually places, because the install story is the
+    sentence a first-time reader trusts and this is the release that moved it;
+
+    (b) the one paragraph that says the lane tooling answers to a DIFFERENT
+    document — the lane collision protocol, not openRepoShape — that the code
+    is here and the data is not, that all four resolve the register through
+    `$AGENT_PROTOCOL_ROOT/workspace.yaml` and never from their own location,
+    and that their exit codes are the protocol's: 1 is *registry not found*
+    there and *findings were printed* here. Two toolsets now ship under one
+    installer, so one number means two things across that seam, and an
+    assistant that reads a 1 without knowing which command produced it reports
+    a refusal as a report or a report as a refusal (Amendment 9(a), (c));
+
+    (c) rule 2, which was "the ONLY writer of `~/.agents/workspace.yaml`" and
+    is now the two, because clause (c) step 9 makes `wip init` the second. The
+    invariant retired ON PURPOSE and is rewritten here rather than found by a
+    red test (Amendment 9, act 3 obligation 3) — and the rule it still carries
+    is the one that matters, that the assistant is neither writer and passes
+    neither `--workspace` nor `wip init` on its own initiative;
+
+    (d) the bash-3.2 line in the testing section. The four arriving
+    executables are parsed under macOS bash 3.2 in CI, where `${x,,}` is a
+    syntax error — that gate found `lanes-edit.sh`'s `${base,,}` on arrival —
+    and an assistant that edits 380 KB of newly arrived bash without knowing
+    the dialect writes the same defect back in. It names the runner for the
+    moved suite in the same breath, because a 122 KB bash suite that no job
+    runs is not a suite (act 3 obligations 4 and 6).
+
+    162 AND 179 MEET AT 186 on 2026-09-13, where act 3's branch merged `main`.
+    Both raises start from the same 155 and neither touches the other's lines:
+    `main` bought 7 for `resume`'s two refusals, this branch bought 24 for
+    Amendment 9's arrival, and the merged file is 186. The cap is the count of
+    what merged, not either side's number — and both entries stay, because each
+    still names the rule its own lines bought.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 162, f"AGENTS.md is {len(lines)} lines; the cap is 162"
+    assert len(lines) <= 186, f"AGENTS.md is {len(lines)} lines; the cap is 186"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -771,9 +1019,90 @@ def test_readme_is_short_enough_to_be_read():
     line about the RULE and not about the wording: a reader who takes
     "mount" literally reads `assembly`, which this repository's own fixtures
     mount at `.`, as a role that is fine.
+
+    251 -> 353 on 2026-09-13, for lane-collision-protocol AMENDMENT 9, ratified
+    that day, and its adoption act 3. This is the largest single raise this
+    file has taken and the reason is not prose: the repository grew a second
+    toolset and a verb. The docstring above says the cap is today's count
+    because "the README says what the two commands are … that is the whole of
+    what this repository has to explain" — and after this release it is not
+    the whole, so the sentence that set the cap is what changed. Four
+    sections, and each is the answer to a question a reader of the old README
+    could not answer at all:
+
+    § "The lane tooling" — that `lane-start`, `lane-end`, `lanes-edit.sh` and
+    `link-estates` are here now, with their history; that what moved is the
+    CODE and the register, the logs and the handoffs stay in the person's own
+    workspace repository where Amendments 4 and 5 put them; and that every one
+    of them finds that data through `$AGENT_PROTOCOL_ROOT/workspace.yaml` and
+    never from its own location, refusing rather than guessing. A reader who
+    finds four unexplained executables at this repository's root otherwise
+    reaches the opposite conclusion — that the data moved too — which is the
+    one thing Amendment 9 does not do.
+
+    § "`openRepoTools wip init`" — the verb. `openRepoTools:13` said "IT
+    INSTALLS AND IT DOES NOTHING ELSE. There is no verb here", and Brett
+    Heap's ruling 4 of 2026-09-12 ("openRepoTools wip init") retired that
+    line. A command that creates a repository, seeds it from a pinned
+    template, pushes, writes a file outside every repository and runs a linker
+    cannot be documented in a sentence, and the paragraph that costs the most
+    lines is the one that earns them: the push to `main` IS the ruleset probe,
+    so a person meets the organisation's PR-only gate here rather than at
+    their first `lane-start`, which is the worst place to meet it. Two of
+    these lines are the OTHER half of that probe, and they were added after
+    an adversarial read found the command could not keep the promise the
+    first half makes: a refused push is exit 2 with the clone and the seed
+    commit left where they are, so the re-run after an administrator acts has
+    only to push. A reader who is not told that reaches for `--dry-run`, a
+    second `--install`, or a hand-made repository.
+
+    the two-line onboarding chain at the head of § "Install" (Amendment 9(e))
+    — `gh repo clone opensoft/workBenches && cd workBenches && ./setup.sh`,
+    then `pclaude run <profile> --lane <repo>-<n>` — with its two
+    preconditions named, `gh auth login` and `~/.local/bin` on `PATH`, and the
+    by-hand pair for a host that has this toolset without workBenches. Brett
+    Heap's direction of 2026-09-12, "we need to also keep that clean so there
+    is the least choices possible to not confuse the user", is the measure
+    that section is written to, and a chain a person cannot find is the same
+    as no chain.
+
+    and the rewrite of § "Install" itself — FOUR files became NINE and four
+    artifacts became TWELVE, since `--install` now also places the
+    `/lane-swap` skill in the shared skills directory and in `~/.claude`, and
+    merges one `SessionStart` entry into `~/.claude/settings.json`. The
+    all-or-nothing rule is the thing being restated, not decorated: the merge
+    is computed with the nine files in hand before any is placed, so a
+    settings file it cannot understand costs a whole install rather than half
+    of one. Three environment variables join the table for the same reason
+    they exist — `$AGENT_PROTOCOL_ROOT`, `$CLAUDE_PROFILES_HOME`,
+    `$PROJECTS_DIR`.
+
+    And the retired invariant, in the same release and named here because it
+    is a DELETION that cost lines rather than saved them: "the only thing in
+    this toolset that writes a file outside a repository" is now two things
+    writing one file, `resume --workspace` and `wip init`, both only on a
+    machine that has none (Amendment 9(c) step 9, act 3 obligation 3).
+
+    353 -> 358 on 2026-09-13, for A9 Addendum 4's R-A9-12 and R-A9-14, ratified
+    the same day on the adversarial review of act 3's PR. Five lines, all in
+    § "Install", and every one of them behaviour a person MEETS rather than
+    prose about it: that `--install` refuses a target that is not a regular
+    file, naming each one and the `rm` that clears it, because `cp` follows a
+    symlink and the thing on the other end of the two this estate actually has
+    is the workspace checkout every lane writes — the review measured
+    `9 of 9 placed` and exit 0 while the two commands stayed uninstalled and
+    `brett-wip`'s worktree went dirty. The other two words are corrections
+    rather than additions: the conflict arm keys on `session-start` and not on
+    `lanes-edit.sh` (R-A9-14), and the merge WRITES the file back at mode 600
+    where this said it preserved a mode it in fact sets.
+
+    256 AND 358 MEET AT 363, the same merge and the same arithmetic: `main`'s
+    5 lines for a branch gone from origin and a role with no place, this
+    branch's 107 for the install story Amendment 9 rewrote, both from 251, and
+    363 in the file that merged.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 256, f"README.md is {len(lines)} lines; the cap is 256"
+    assert len(lines) <= 363, f"README.md is {len(lines)} lines; the cap is 363"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
@@ -861,7 +1190,7 @@ def test_every_shipped_bash_file_is_tracked_with_lf():
     a `crlf` in the index would mean the rule was added after the file was
     committed under `autocrlf=true`, which is the state it exists to prevent.
     """
-    proc = subprocess.run(["git", "ls-files", "--eol", "--", *SHIPPED_BASH],
+    proc = subprocess.run(["git", "ls-files", "--eol", "--", *ALL_BASH],
                           cwd=str(REPO), capture_output=True, text=True,
                           check=True)
     for row in proc.stdout.splitlines():
@@ -878,3 +1207,287 @@ def test_the_python_files_compile():
     """
     for path in sorted((REPO / "tests").glob("*.py")):
         compile(path.read_text(encoding="utf-8"), str(path), "exec")
+
+
+# --- the macOS job RUNS this bash, it does not only parse it (R-A9-11) ------
+
+#: Which options of which utility take a SEPARATE argument. Everything after
+#: the first token that is neither an option nor an option's argument is an
+#: OPERAND, and an operand is where BSD's `getopt` stops looking for options.
+_OPTIONS_WITH_ARGUMENTS = {
+    "sed": {"-e", "-f", "-i", "-l"},
+    "grep": {"-e", "-f", "-m", "-A", "-B", "-C", "--include", "--exclude"},
+    "awk": {"-v", "-f"},
+}
+
+
+def _shell_tokens(text: str) -> list[str]:
+    """Split one shell command into tokens, keeping a quoted run together.
+
+    Deliberately small: it expands nothing and does not care what a token
+    MEANS. All it has to answer is "is this token exactly `--`, and did an
+    operand come before it".
+    """
+    tokens: list[str] = []
+    current: list[str] = []
+    quote, started = "", False
+    for ch in text:
+        if quote:
+            current.append(ch)
+            if ch == quote:
+                quote = ""
+            continue
+        if ch in "'\"":
+            quote, started = ch, True
+            current.append(ch)
+        elif ch.isspace():
+            if started:
+                tokens.append("".join(current))
+            current, started = [], False
+        else:
+            started = True
+            current.append(ch)
+    if started:
+        tokens.append("".join(current))
+    return tokens
+
+
+def _end_of_options_after_an_operand(text: str) -> list[str]:
+    """Every `sed`/`grep`/`awk` call in `text` that passes `--` too late.
+
+    THE BUG THIS IS ABOUT. GNU's `getopt` PERMUTES: it finds options wherever
+    they appear, so `sed -n 'script' -- "$file"` reads `--` as end-of-options
+    and `$file` as the one file. BSD's stops at the first operand — the script
+    — so `--` is left as a FILENAME and macOS answers
+    `sed: --: No such file or directory`, exit 1. The same goes for
+    `grep 'pattern' -- "$f"` and `awk 'program' -- "$f"`.
+
+    `sed -n -e 'script' "$file"` has no operand before the file list at all,
+    which is why that is the shape this repository uses. The protection `--`
+    was there for — a filename that begins with `-` — is kept by every call
+    that still spells it before the operand, which is what the file list of
+    `rm -f -- "$x"` and `grep -v -x -F -- "$pattern"` are.
+    """
+    bad = []
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        for piece in re.split(r"[|;&()]|\$\(|`", line):
+            tokens = _shell_tokens(piece)
+            for start, token in enumerate(tokens):
+                tool = token.rsplit("/", 1)[-1]
+                if tool not in _OPTIONS_WITH_ARGUMENTS:
+                    continue
+                takes_argument = _OPTIONS_WITH_ARGUMENTS[tool]
+                seen_operand = False
+                index = start + 1
+                while index < len(tokens):
+                    argument = tokens[index]
+                    if argument == "--":
+                        if seen_operand:
+                            bad.append(f"{tool}: {line.strip()}")
+                        break
+                    if not seen_operand and argument.startswith("-") and argument != "-":
+                        if argument in takes_argument:
+                            index += 1
+                    else:
+                        seen_operand = True
+                    index += 1
+                break
+    return bad
+
+
+@pytest.mark.parametrize("name", ALL_BASH)
+def test_no_shipped_bash_ends_its_options_after_an_operand(name):
+    """THE macOS JOB IS A RUN GATE AND NOT ONLY A PARSE GATE (A9 Addendum 4,
+    R-A9-11, ratified 2026-09-13 after F4 of the #24 review).
+
+    Act 3's obligation 4 bought `/bin/bash -n` on every bash file this
+    repository ships, and obligation 6 made the same job RUN 196 KB of bash
+    that had only ever run on Linux. It went 507 passed / 447 failed, and the
+    first of the two causes named in that job's own log was seventeen calls of
+    this one shape. `bash -n` cannot see it: the grammar is fine, and the
+    utility is not bash.
+
+    So it is held here, where it costs nothing and runs in EVERY job —
+    `tests-windows` included, which skips every bash claim and can still read a
+    file.
+    """
+    text = (REPO / name).read_text(encoding="utf-8")
+    bad = _end_of_options_after_an_operand(text)
+    assert not bad, (
+        f"{name} passes `--` AFTER an operand, which BSD's `getopt` reads as a "
+        f"FILENAME (macOS: `sed: --: No such file or directory`). Put the "
+        f"script behind `-e` instead:\n  " + "\n  ".join(bad))
+
+
+@pytest.mark.parametrize("name", ALL_BASH)
+def test_no_shipped_bash_leaves_a_variable_name_to_bash_3_2s_locale(name):
+    """`bash -n` PARSES THIS AND macOS DIES ON IT (A9 Addendum 4, R-A9-11).
+
+    Bash decides where a variable NAME ends with `isalnum()`, which is
+    LOCALE-DEPENDENT. Under the `en_US.UTF-8` the macOS runner sets, bash 3.2
+    on Darwin reads the bytes of `\u2026`, `\u2014` and `\u00b7` as name characters, so
+    `"\u2026$excerpt\u2026"` is a reference to a variable called `excerpt\u2026` \u2014 unset,
+    and under `set -u` the script DIES. It cost `lane-end` the whole refusal
+    branch its `--force` message lives in: exit 0 where the estate expects
+    exit 2, and `lane-end: line 573: excerpt\u2026: unbound variable` on stderr.
+
+    This estate writes every message with those three characters in it, so the
+    rule is held for all of them rather than for the one that was found.
+    """
+    text = (REPO / name).read_text(encoding="utf-8")
+    bad = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        for hit in re.finditer(r"\$[A-Za-z_][A-Za-z0-9_]*", line):
+            rest = line[hit.end():hit.end() + 1]
+            if rest and ord(rest) > 127:
+                bad.append(f"{number}: {line.strip()}")
+                break
+    assert not bad, (
+        f"{name} ends an UNBRACED `$name` against a non-ASCII character. Bash "
+        f"3.2 on macOS reads that character as part of the name and the "
+        f"lookup fails under `set -u`. Write `${{name}}`:\n  "
+        + "\n  ".join(bad))
+
+
+@pytest.mark.parametrize("name", ALL_BASH)
+def test_no_shipped_bash_quotes_the_replacement_half_of_a_substitution(name):
+    """BASH 3.2 KEEPS THOSE QUOTES AS CHARACTERS (A9 Addendum 4, R-A9-11).
+
+    In `${var/pattern/replacement}`, bash 4.3 and later read quotes as "this
+    half is a literal, not a pattern". Bash 3.2 removes them from the PATTERN
+    half and KEEPS THEM IN THE REPLACEMENT, so `${row/"$old"/"$new"}` wrote
+    `"<new>"` \u2014 with the quote marks \u2014 into the register on macOS, and nothing
+    went red for it: the write succeeded, the commit landed, the row was
+    quietly wrong. `lane-end --retire` produced `| "RETIRED 2026-09-13T\u2026" \u00b7 \u2026`
+    where every reader of that column expects `| RETIRED 2026-\u2026`.
+
+    Take the replacement out of the pattern machinery instead \u2014 `%%` for the
+    prefix and `#` for the tail, then concatenate.
+    """
+    text = (REPO / name).read_text(encoding="utf-8")
+    bad = [line.strip() for line in text.splitlines()
+           if not line.lstrip().startswith("#")
+           and re.search(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?/[^}]*/[^}]*\"",
+                         line)]
+    assert not bad, (
+        f"{name} quotes the replacement half of a `${{var/pat/rep}}`; bash 3.2 "
+        f"writes those quote marks out as text. Build the string from "
+        f"`${{var%%\"$pat\"*}}` and `${{var#*\"$pat\"}}` instead:\n  "
+        + "\n  ".join(bad))
+
+
+@pytest.mark.parametrize("name", ALL_BASH)
+def test_no_shipped_bash_reaches_for_gnu_only_utilities_unaccompanied(name):
+    """THE SECOND CAUSE IN THAT JOB'S LOG, AND THE FOUR BESIDE IT.
+
+    `date -d`, `stat -c`, `xargs -r`, `sort -z`, `sha256sum` and BRE `\\|` are
+    GNU; macOS answers the first with `illegal option -- d`, does not ship
+    `sha256sum` on a stock install, and reads `\\|` as two literal characters —
+    which is the worst of the five, because it is not an error at all, it is a
+    pattern that quietly matches nothing.
+
+    None of them is forbidden. GNU is what every lane workstation runs, and
+    this is not a rule about writing to the lowest common denominator: it is a
+    rule that the BSD spelling must be within reach of the GNU one, beside the
+    thing it falls back from rather than in a comment somewhere else.
+    """
+    text = (REPO / name).read_text(encoding="utf-8")
+    lines = [line for line in text.splitlines()
+             if not line.lstrip().startswith("#")]
+    # BSD spells reading a stamp `date -u -j -f <format> <stamp>` and spells
+    # arithmetic `date -u -v-5H`; either answers a `date -d`, and a `-d` with
+    # neither within ten lines is a GNU-only call.
+    for index, line in enumerate(lines):
+        if not re.search(r"\bdate\b[^\n|]*\s-d\b", line):
+            continue
+        window = "\n".join(lines[max(0, index - 10):index + 7])
+        assert re.search(r"\bdate\b[^\n|]*\s-j\b", window) or "-v" in window, (
+            f"{name} reads a stamp with GNU `date -d` and carries no BSD "
+            f"spelling within ten lines of it (`date -u -j -f <format>` reads "
+            f"one, `date -u -v-5H` is the arithmetic):\n  {line.strip()}")
+    for line in lines:
+        if re.search(r"\bstat\b[^\n|]*\s-c\b", line):
+            assert re.search(r"\bstat\b[^\n|]*\s-f\b", line), (
+                f"{name} uses GNU `stat -c` with no `stat -f` beside it on the "
+                f"same line:\n  {line.strip()}")
+        assert not re.search(r"\bcmp\b[^\n|]*\s-n\b", line), (
+            f"{name} passes GNU `cmp -n <limit>`; BSD `cmp`'s trailing numbers "
+            f"are SKIPS, not a limit, so macOS answers `illegal option -- n` "
+            f"and exits 2 \u2014 which turns a PROOF into a refusal of a write that "
+            f"was correct. Build what the file must now be and compare that: "
+            f"`{{ cat -- old; printf ...; }} | cmp -s -- file -`. Not "
+            f"`head -c <n>` either: BSD `head` rejects a count of 0:"
+            f"\n  {line.strip()}")
+        assert not re.search(r"\bwc\b\s+-[lcwm]", line) or "tr -d ' '" in line, (
+            f"{name} reads a count out of `wc` and does not strip the spaces "
+            f"BSD `wc` pads it with. `wc -l < f` answers `\"       5\"` on macOS "
+            f"and `\"5\"` under GNU, so the moment that value meets anything "
+            f"unpadded \u2014 an arithmetic `$((n + 1))`, a literal, a count from "
+            f"anywhere else \u2014 a `[ x = y ]` between them is FALSE on one "
+            f"platform and true on the other. That is exactly how "
+            f"`append_text_line` came to refuse every append it had already "
+            f"made on the macOS job, and to say `append changed line count by "
+            f"1` while doing it. Spell it `| tr -d ' '`, as `park:564` and "
+            f"`status:746` always have:\n  {line.strip()}")
+        assert not re.search(r"\bxargs\b[^\n|]*\s-r\b", line), (
+            f"{name} passes GNU `xargs -r`, which BSD `xargs` does not "
+            f"take:\n  {line.strip()}")
+        assert not re.search(r"\bsort\b[^\n|]*\s-z\b", line), (
+            f"{name} passes GNU `sort -z`; sorting the lines a digest prints "
+            f"is as deterministic and needs no NUL:\n  {line.strip()}")
+        assert not (re.search(r"\b(sed|grep)\b", line) and "\\|" in line), (
+            f"{name} spells alternation `\\|`, which is a GNU extension to "
+            f"BRE: BSD `grep` and `sed` match it literally and report no "
+            f"error. Use a second `-e`, or `-E`:\n  {line.strip()}")
+    if "sha256sum" in "\n".join(lines):
+        assert "shasum" in "\n".join(lines), (
+            f"{name} names `sha256sum`, which a stock macOS does not ship, and "
+            f"never names `shasum -a 256`")
+
+
+
+def test_the_rule_6_register_scan_takes_its_alias_table_from_the_environment():
+    """`awk -v` CARRIES ONE LINE (A9 Addendum 4, R-A9-11, round 5).
+
+    POSIX says a `-v assignment` value is processed as if it were a STRING
+    LITERAL, and a string literal cannot span lines. macOS's awk \u2014 one-true-awk,
+    `awk version 20200816` on the runner \u2014 enforces exactly that and refuses one
+    outright: `awk: newline in string \u2026 at source line 1`, exit 2, nothing on
+    stdout. gawk and mawk accept it without a word, which is what made this the
+    last macOS group standing after four rounds and the only one no Linux run
+    of the suite could see.
+
+    `who_landing` handed `awk -v aliases=` the whole `repos.tsv` alias table,
+    one `<alias>\\037<owner/repo>` per line. So on that platform the REGISTER
+    half of `who --landing` produced nothing at all and every open LANDING in
+    the estate read as `none open` \u2014 fourteen red assertions on that job, and
+    off CI a workstation running macOS that cannot see the estate's merge holds
+    while reporting, in words, that there are none.
+
+    Pinned rather than held as a shape. The shape rule \u2014 "a shell FUNCTION's
+    output is a stream, so it does not go into a `-v`" \u2014 was written first and
+    is wrong about this file: `lc`, `short_ws` and `object_slug` are functions
+    too, and each transforms ONE value, so it reddened three call sites that
+    are correct. A hygiene test with three carve-outs teaches the wrong rule.
+    The general claim is held where it can be held honestly \u2014
+    `tests/test_lane_helpers.sh` runs `who --landing` under a proxy that
+    refuses a many-line `-v` exactly as that awk does \u2014 and this pins the one
+    line that proxy exists for, in a test that also runs on Windows.
+    """
+    text = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+    assert 'na = split(ENVIRON["LANES_RULE6_ALIASES"], ar, "\\n")' in text, (
+        "RULE6_AWK must read the alias table out of the environment; "
+        "`ENVIRON` is POSIX awk and takes a value with newlines in it")
+    assert ('wd_rows="$(register_text | LANES_RULE6_ALIASES="$wd_aliases" '
+            'awk "$RULE6_AWK")"') in text, (
+        "the Rule 6 register scan must put the alias table in the environment "
+        "of that one awk, not in a `-v`")
+    assert "-v aliases=" not in text, (
+        "the alias table is many lines and `awk -v` carries one: macOS's awk "
+        "answers `newline in string ... at source line 1` and exits 2, and "
+        "`who --landing` then reports every merge hold in the estate as "
+        "`none open`")

@@ -1,7 +1,8 @@
 # openRepoTools
 
-Three commands for the estates [openRepoShape](https://github.com/opensoft/openRepoShape)
-scaffolds, and the installer that places them:
+The commands for the estates [openRepoShape](https://github.com/opensoft/openRepoShape)
+scaffolds, the lane tooling that records the work in them, and the installer
+that places all of it:
 
 ```sh
 park InkRouter                  # on workstation A, from any folder
@@ -80,14 +81,89 @@ know, which was never parked. No config, or no record, is a note.
 That is all five layers: the local layer, `--fetch`, the fork, the pin and
 the record.
 
-`openRepoTools` itself installs and does nothing else. It has no verb: the
-standard's front door is `openRepoShape`, which scaffolds projects and stays
-there.
+## The lane tooling
+
+`lane-start`, `lane-end`, `lanes-edit.sh` and `link-estates` are here too, with
+their history, since lane-collision-protocol Amendment 9:
+
+```sh
+lane-start openRepoShape 2       # name the window, register the row, launch
+lane-end openRepoShape-2         # close it, refusing while anything is in flight
+lanes-edit.sh who --lane <lane>  # what that lane holds
+```
+
+They record who is working on what across an estate — the register
+`lanes/LANES.md`, the per-lane object logs, the handoffs — and all of that is
+**data, in the person's own workspace repository**, which is where Amendments 4
+and 5 put it and where it stays. What moved here is the CODE. A `<user>-wip` is
+a private repository whose own rules file says "No secrets and no code", nobody
+would look inside somebody else's for a command, and until this move the four
+helpers existed in exactly one place in the world: one person's private
+repository. `docs/README-lanes.md` is the manual.
+
+Every one of them finds that data through `$AGENT_PROTOCOL_ROOT/workspace.yaml`
+— `repository:` and `path:`, the same pointer file `resume` and `status`
+already read — and never from its own location on disk. Failing to find it is a
+refusal naming `openRepoTools wip init`, never a guess.
+
+## `openRepoTools wip init`
+
+The one act that creates the workspace those commands read:
+
+```sh
+openRepoTools wip init
+```
+
+It asks you **at most one question**, and only where an administrator has to
+create the repository for you — and then it prints the exact commands, every
+value already filled in. Everything else is derived: your login from
+`gh api user` lowercased, the organisation from this toolset's own default, the
+team from `gh api /user/teams` where exactly one matches (and where none or
+several do, `--team` is dropped from what it runs AND from what it prints, with
+one line saying why — a placeholder you have to fill is a question wearing a
+different hat).
+
+Then it clones the repository, seeds it from openRepoShape's
+`templates/workspace-root/` at the commit pinned in
+`contracts/openreposhape-pin.yaml`, and pushes one commit to `main` — **which is
+also the check that matters**: a new repository is inside the organisation's
+PR-only ruleset until an administrator excludes it, and until it is, every
+register write will be refused by that gate. Better to meet it here than at
+your first `lane-start` — a refused push is exit 2 naming the ruleset, with
+the clone and the commit left where they are, so the re-run after an
+administrator acts has only to push. Last it writes `~/.agents/workspace.yaml`
+and runs `link-estates`.
+
+**Idempotent**: a workstation that already has a workspace does nothing at all,
+decided by a file test and not a network call. Exit 0 is done or already done;
+exit 2 is a refusal. `--dry-run` rehearses and writes nothing. It scaffolds no
+product repository — that is `openRepoShape`'s, the standard's front door, and
+nothing here touches it.
 
 ## Install
 
+**From nothing, on a new workstation, it is two lines** — and neither of them
+is one of this repository's (lane-collision-protocol Amendment 9(e)):
+
+```sh
+gh repo clone opensoft/workBenches && cd workBenches && ./setup.sh
+pclaude run <profile> --lane <repo>-<n>
+```
+
+`./setup.sh` runs `openRepoTools --install` and then `openRepoTools wip init`
+for you, each best-effort, so neither is a line you have to know to type. Its
+two preconditions are `gh auth login` — `wip init` derives your login from
+`gh api user` — and `~/.local/bin` on your `PATH`, which that script exports
+and which needs a restarted terminal. `pclaude list` names the profiles;
+`<repo>-<n>` is the lane naming rule.
+
+On a host that has this toolset without workBenches, the same two acts by
+hand, in this order, because the second refuses where no openRepoTools is
+installed:
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/opensoft/openRepoTools/main/openRepoTools | bash -s -- --install
+openRepoTools wip init
 ```
 
 or, inside an organisation whose policy blocks raw downloads, the same bytes
@@ -98,15 +174,39 @@ gh api repos/opensoft/openRepoTools/contents/openRepoTools \
     -H 'Accept: application/vnd.github.raw' | bash -s -- --install
 ```
 
-It places FOUR files into `~/.local/bin` — `openRepoTools`, `park`, `resume`
-and `status` — 755, idempotently: a second run prints `already installed …
-(unchanged)` per file, and one whose bytes have drifted prints `updated at`.
-ALL FOUR ARE IN HAND BEFORE ANY IS PLACED, so a fetch that failed replaces
-nothing and names the file it could not get. Then a `4 of 4 placed in <dir>`
-line, and the `export PATH=…` line if that directory is not on your `PATH`.
+It places NINE files into `~/.local/bin` — `openRepoTools`, `park`, `resume`,
+`status`, `lanes-edit.sh`, `lane-start`, `lane-end`, `link-estates` and the
+alias table `repos.tsv` — 755, idempotently: a second run prints
+`already installed … (unchanged)` per file, and one whose bytes have drifted
+prints `updated at`. ALL NINE ARE IN HAND BEFORE ANY IS PLACED, so a fetch that
+failed replaces nothing and names the file it could not get. A target that is
+**not a regular file** — a symlink left by the pre-move `link-estates`, a
+directory — is a refusal in that same planning phase, naming every one of them,
+what it is, and the `rm` that clears them: `cp` follows a symlink, and an
+install through one leaves the command uninstalled and writes these bytes into
+whatever it points at. Then a `9 of 9 placed in <dir>` line, and the
+`export PATH=…` line if that directory is not on your `PATH`.
+
+It also places **three things that are not files in that directory**: the
+`/lane-swap` skill at
+`${CLAUDE_PROFILES_HOME:-~/.claude-profiles}/shared/skills/lane-swap/SKILL.md`
+(one write every profile reads through its own symlink) and at
+`~/.claude/skills/lane-swap/SKILL.md` for a bare `claude` run outside the
+launcher, and **one merged entry** under `hooks.SessionStart` in
+`~/.claude/settings.json`. That merge needs `jq`, never writes the file whole,
+writes it back at mode 600, and is idempotent by exact match on the entry's
+command string. An entry that runs `session-start` with a DIFFERENT string — a
+second writer of this very hook — a file it cannot parse, or a `hooks` that is
+not an object → it **refuses, prints the exact block, and places nothing at
+all**, because the merge is computed with the nine files in hand before any of
+them is placed. An installer that repairs a
+file it does not understand is how you lose a setting you meant. It never
+writes a profile's own `settings.json`: the launcher owns that one.
+
+Twelve artifacts, and the count is the invariant.
 
 Run from a checkout it copies the files beside it and needs no network and no
-`gh` at all; run from stdin, as above, it fetches all four at the same ref.
+`gh` at all; run from stdin, as above, it fetches all of them at the same ref.
 The API is tried before the raw URL, because `gh` is authenticated and works
 where `raw.githubusercontent.com` is blocked.
 
@@ -114,7 +214,10 @@ where `raw.githubusercontent.com` is blocked.
 |---|---|---|
 | `$OPENREPOTOOLS_REPO` | `opensoft/openRepoTools` | the `owner/name` to fetch from — a fork or a mirror, named once |
 | `$OPENREPOTOOLS_REF` | `main` | the ref to fetch it at |
-| `$OPENREPOTOOLS_BIN_DIR` | `~/.local/bin` | where `--install` puts the four |
+| `$OPENREPOTOOLS_BIN_DIR` | `~/.local/bin` | where `--install` puts the nine |
+| `$AGENT_PROTOCOL_ROOT` | `~/.agents` | where `workspace.yaml` lives — the one pointer to your data |
+| `$CLAUDE_PROFILES_HOME` | `~/.claude-profiles` | the profiles root `--install` places the shared skill under |
+| `$PROJECTS_DIR` | `~/projects` | where `wip init` clones your workspace repository |
 
 `openRepoTools --version` prints `openRepoTools (<repo> @ <ref>)`. There is no
 version number here, for the reason openRepoShape has none: the identity is a
@@ -161,9 +264,13 @@ still relays its own `make park` refusal, which names `setup-openspeckit`.
 rebuilding every estate on a fresh machine by accident is the opposite risk
 from failing to park the one you meant.
 
-`resume --workspace <owner>/<repo>` is the only thing in this toolset that
-writes a file outside a repository (`~/.agents/workspace.yaml`), and it writes
-it only on a machine that has none and only because you named the repository.
+**TWO things in this toolset write a file outside a repository, and both write
+the same one**, `~/.agents/workspace.yaml`, both only on a machine that has
+none. `resume --workspace <owner>/<repo>` writes it because you named the
+repository; `openRepoTools wip init` writes it because you asked for the
+repository by running it (lane-collision-protocol Amendment 9(c) step 9).
+Neither ever overwrites one that is already there. Nothing else in this toolset
+writes outside a repository at all.
 
 `status` reads and changes nothing, and takes no lock while it reads. Exit 0
 means every repository read is in sync and clean as of the last fetch; exit 1
