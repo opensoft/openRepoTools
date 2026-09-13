@@ -3811,6 +3811,28 @@ hasnt "…with no \`kill\` anywhere in it" "$out" "kill <pid>"
 run "$E" forks repoA11-1
 is   "forks exits 8 for a lane with no fork of its transcript running" "$rc" 8
 
+# ---- ruling 12: THE TWO WAYS INTO `lane_forks` MUST NOT DIVERGE ------------
+#
+# `lanes` now hands `lane_forks` the row's ids and the retired set out of the
+# pass it has already made, instead of having it render the published register
+# twice and this checkout's once PER LANE. That is a second entrance to one
+# read, and two entrances is how two answers begin — so the suite asks the same
+# question both ways and compares.
+run "$E" forks repoA-1
+FK_DIRECT="$rc:$out"
+run "$E" lanes --lane repoA-1
+FK_VIA_LISTING="$(printf '%s' "$out" | awk -F'\t' '{print $11}')"
+is "the fork column of the listing agrees with the `forks` read beside it" \
+   "$FK_VIA_LISTING" "$(printf '%s' "${FK_DIRECT#*:}" | grep -c . || printf 0)"
+# AND THE ONE-LANE PATH AND THE ESTATE PATH AGREE ON A ROW. `--lane` reads one
+# log where the listing reads them all; they are the same parser over the same
+# grammar, and this is the assertion that keeps it true.
+run "$E" lanes --lane repoA11-1
+ONE_ROW="$out"
+run "$E" lanes --all
+ALL_ROW="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "repoA11-1" { print; exit }')"
+is "one lane read alone is the same row the estate listing gives it" "$ONE_ROW" "$ALL_ROW"
+
 # ------------------- ruling 8: `lane-end --retire <pid|uuid>` IS THE ONE ACT
 #
 # Clause (k) rule (e): *"both print the one act: **retire it**, under Amendment

@@ -1210,6 +1210,29 @@ STALE_HOURS="${LANES_STALE_HOURS:-4}"     # Rule 1's threshold, reused
 # (an event with no payload) shifts every field after it one to the left.
 # \037 — US, "unit separator" — is not whitespace, so empty fields survive it.
 US="$(printf '\037')"
+# THE ROW SEPARATOR FOR THE IN-SHELL LOOKUP TABLES (A11 Addendum 4 ruling 12).
+# GS, one below US, and for the same reason US was chosen over a tab: it is not
+# IFS whitespace, so an empty field does not shift every field after it.
+GS="$(printf '\036')"
+
+# ONE LINE OUT OF A TABLE THIS SHELL IS ALREADY HOLDING, WITHOUT A PROCESS.
+# The listing's three tables — the published register's index, this checkout's,
+# and one line of facts per lane — are a few dozen lines each and were read with
+# `printf | awk` PER LANE, which is six processes a lane to look up strings that
+# are already in memory. Fenced with `$GS` and keyed on the lane name
+# lower-cased, the whole lookup is one parameter expansion.
+#
+# IT ASSIGNS A GLOBAL AND RETURNS, rather than printing: a function whose answer
+# is taken with `$( … )` forks, which is the cost this exists to avoid.
+LOOKUP_OUT=""
+table_lookup() {   # <fenced table> <lower-cased lane>
+  local tl_rest
+  LOOKUP_OUT=""
+  tl_rest="${1#*"$GS$2$US"}"
+  [ "$tl_rest" = "$1" ] && return 1
+  LOOKUP_OUT="${tl_rest%%"$GS"*}"
+  return 0
+}
 
 utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
@@ -1608,13 +1631,26 @@ lane_log_exists() {
 # would break that assumption is a second `log_sync` mid-read, and there is
 # none; `log_sync` clears this cache anyway, so a caller that adds one gets the
 # fresh answer rather than a stale one.
+# AND IN A FILE AS WELL AS A VARIABLE (A11 Addendum 4 ruling 12). The variable
+# serves one shell; every caller of `row_of_lane`, `lane_workstation` and
+# `session_ids_of_lane` reaches it through `$( … )`, which is a SUBSHELL, so the
+# variable cache was rebuilt — a `git show` of 1.1 MB — by all four of the
+# per-lane reads the listing makes, for every lane. The file survives the
+# subshell that wrote it, so the megabyte is rendered once per process.
 LANES_REGISTER_CACHE=""
 register_text() {
   if [ -n "$LANES_REGISTER_CACHE" ]; then printf '%s\n' "$LANES_REGISTER_CACHE"; return 0; fi
+  rt_c="${SE_CACHE_FILE:+$SE_CACHE_FILE.register}"
+  if [ -n "$rt_c" ] && [ -s "$rt_c" ]; then cat -- "$rt_c"; return 0; fi
   if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null; then
     LANES_REGISTER_CACHE="$(git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null)"
   else
     LANES_REGISTER_CACHE="$(cat -- "$LANES_FILE")"
+  fi
+  if [ -n "$rt_c" ]; then
+    printf '%s\n' "$LANES_REGISTER_CACHE" > "$rt_c.${BASHPID:-$$}" 2>/dev/null &&
+      mv -f -- "$rt_c.${BASHPID:-$$}" "$rt_c" 2>/dev/null ||
+      rm -f -- "$rt_c.${BASHPID:-$$}"
   fi
   printf '%s\n' "$LANES_REGISTER_CACHE"
 }
@@ -1798,10 +1834,15 @@ epoch_of() {
     printf ''
 }
 
+# `age_of <utc> [<now, epoch seconds>]`. A CALLER WITH MANY STAMPS PASSES `now`
+# ONCE (A11 Addendum 4 ruling 12): `date -u +%s` is a process, and asking the
+# clock again for every row of a listing both costs one and lets the rows
+# disagree about when "now" was.
 age_of() {
   ao_t="$(epoch_of "$1")"
   if [ -z "$ao_t" ]; then printf 'age unknown'; return 0; fi
-  ao_d=$(( $(date -u +%s) - ao_t )); [ "$ao_d" -lt 0 ] && ao_d=0
+  ao_now="${2-}"; [ -n "$ao_now" ] || ao_now="$(date -u +%s)"
+  ao_d=$(( ao_now - ao_t )); [ "$ao_d" -lt 0 ] && ao_d=0
   printf '%dh %02dm' "$((ao_d / 3600))" "$(((ao_d % 3600) / 60))"
 }
 
@@ -1893,13 +1934,118 @@ session_files() {
 jstr() { printf '%s' "$1" | grep -o "\"$2\":\"[^\"]*\"" | head -n1 | sed 's/^.*":"//; s/"$//'; }
 jnum() { printf '%s' "$1" | grep -o "\"$2\":[0-9][0-9]*" | head -n1 | sed 's/^.*://'; }
 
+# ------------------------------------------------- A11 Addendum 4 ruling 12:
+# ONE PASS OVER THE SESSION RECORDS, FOR THE WHOLE PROCESS
+#
+# *"Decision 6's `lanes` gets a stated bar — it answers in about a second on
+# this estate — and the per-lane fan-out is what changes to meet it."*
+#
+# WHERE THE TIME WENT, measured on a copy of the live register (46 rows, 15
+# logs) before any of this was written: `lanes` took 14 m 30 s wall and ~23
+# CPU-minutes. Not the register, and not the logs — a `git show` of the 1.1 MB
+# register is 11 ms and the fifteen logs are one cached pass. It was THIS: 564
+# session records on this workstation, each read with `cat` and then four or
+# five `jstr`/`jnum` calls that are FOUR PROCESSES EACH (`printf | grep | head |
+# sed`) — about twenty processes per record, eleven thousand per scan — and both
+# scans were rebuilt FOR EVERY LANE, because `live_session_ids` and `fork_map`
+# cached into a VARIABLE and every caller invoked them inside `$( … )`, which is
+# a subshell whose variables die with it.
+#
+# So: the parse becomes ONE awk over every record file, and the caches become
+# FILES, which a subshell's build leaves behind for its parent.
+#
+# `jstr` and `jnum` ARE REPRODUCED HERE RATHER THAN CALLED, and the reproduction
+# is exact: `jstr` is the first `"key":"…"` whose value holds no `"`, `jnum` the
+# first `"key":` followed immediately by a digit. Both are `grep -o … | head -n1`
+# on the whole blob, so both take the FIRST occurrence and neither is anchored.
+# A record is read the same way by either path, and `record_is_live` still makes
+# the liveness decision in shell, on the fields this hands it.
+SESSION_RECORD_AWK='
+function jstr(s, k,   r, i, v) {
+  r = "\"" k "\":\""
+  i = index(s, r); if (i == 0) return ""
+  v = substr(s, i + length(r))
+  i = index(v, "\""); if (i == 0) return ""
+  return substr(v, 1, i - 1)
+}
+function jnum(s, k,   r, i, v, rest) {
+  r = "\"" k "\":"
+  rest = s
+  while ((i = index(rest, r)) > 0) {
+    v = substr(rest, i + length(r))
+    if (v ~ /^[0-9]/) { match(v, /^[0-9]+/); return substr(v, 1, RLENGTH) }
+    rest = substr(rest, i + length(r))
+  }
+  return ""
+}
+function emit(   ) {
+  if (f == "") return
+  printf "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n", f, sep,
+    jstr(blob, "sessionId"), sep, jstr(blob, "tmux"), sep, jstr(blob, "name"), sep,
+    jnum(blob, "pid"), sep, jstr(blob, "kind"), sep, jstr(blob, "cwd"), sep,
+    jstr(blob, "status"), sep, jstr(blob, "procStart")
+}
+FNR == 1 { emit(); f = FILENAME; blob = "" }
+{ blob = blob $0 }
+END { emit() }'
+
+# A PER-PROCESS FILE CACHE. `$( … )` is a subshell, so a variable set by a
+# builder called inside one is gone the moment it answers; a file is not.
+# Named beside the events cache so `cleanup`'s `rm -f -- "$SE_CACHE_FILE".*`
+# already takes them, and cleared by `log_sync` with everything else it moves.
+#
+# SPELLED AS A PARAMETER EXPANSION AND NOT A FUNCTION, because a function called
+# as `$(cache_path register)` is a FORK — and this is reached on the per-lane
+# path the ruling exists to take the forks out of. `${SE_CACHE_FILE:+…}` is the
+# shell's own, costs nothing, and yields the empty string where there is no
+# cache file at all, which is the one case every caller already tests for.
+
+# Every session record on this workstation, parsed once:
+#   <file><US><sessionId><US><tmux><US><name><US><pid><US><kind><US><cwd><US><status><US><procStart>
+session_records() {
+  sr_c="${SE_CACHE_FILE:+$SE_CACHE_FILE.records}"
+  if [ -n "$sr_c" ] && [ -f "$sr_c" ]; then cat -- "$sr_c"; return 0; fi
+  sr_files="$(session_files 2>/dev/null || :)"
+  sr_t=""
+  [ -n "$sr_c" ] && sr_t="$sr_c.${BASHPID:-$$}"
+  if [ -z "$sr_files" ]; then
+    [ -n "$sr_t" ] && { : > "$sr_t"; mv -f -- "$sr_t" "$sr_c" 2>/dev/null || rm -f -- "$sr_t"; }
+    return 0
+  fi
+  # One awk, however many files — `awk` takes them all on its command line and
+  # `FILENAME` keeps each record attributable. The same shape `log_events` uses
+  # for the lane logs, for the same reason.
+  sr_arr=()
+  while IFS= read -r sr_f; do [ -n "$sr_f" ] && sr_arr+=("$sr_f"); done <<EOF
+$sr_files
+EOF
+  if [ "${#sr_arr[@]}" -eq 0 ]; then
+    [ -n "$sr_t" ] && { : > "$sr_t"; mv -f -- "$sr_t" "$sr_c" 2>/dev/null || rm -f -- "$sr_t"; }
+    return 0
+  fi
+  if [ -n "$sr_t" ]; then
+    awk -v sep="$US" "$SESSION_RECORD_AWK" "${sr_arr[@]}" > "$sr_t" 2>/dev/null
+    mv -f -- "$sr_t" "$sr_c" 2>/dev/null || { cat -- "$sr_t"; rm -f -- "$sr_t"; return 0; }
+    cat -- "$sr_c"
+  else
+    awk -v sep="$US" "$SESSION_RECORD_AWK" "${sr_arr[@]}" 2>/dev/null
+  fi
+  return 0
+}
+
 pid_alive() {
   local pid="$1" want="$2" statline rest
   [ -n "$pid" ] || return 1
   kill -0 "$pid" 2>/dev/null || return 1
   [ -n "$want" ] || return 0
   [ -r "/proc/$pid/stat" ] || return 0
-  statline="$(cat "/proc/$pid/stat" 2>/dev/null || :)"
+  # `read` AND NOT `$(cat …)`, WHICH IS A FORK PER RECORD (A11 Addendum 4
+  # ruling 12). This runs once for every session record on the workstation —
+  # 564 of them here — and `lanes` asked about every record for every lane, so
+  # this one substitution was ~26,000 processes for one listing. A builtin read
+  # of a one-line file is the same answer.
+  statline=""
+  read -r statline < "/proc/$pid/stat" 2>/dev/null || statline=""
   rest="${statline##*) }"
   # shellcheck disable=SC2086
   set -- $rest
@@ -1939,9 +2085,16 @@ name_is_explicit() {
 # adds the one that is about a WINDOW. One copy of the three, because two would
 # drift and this is the check that decides whether a name may be taken.
 record_is_live() {   # <the record's JSON blob>
-  ril_status="$(jstr "$1" status)"
-  case "$ril_status" in ended|exited|dead|stopped) return 1 ;; esac
-  pid_alive "$(jnum "$1" pid)" "$(jstr "$1" procStart)"
+  record_fields_are_live "$(jstr "$1" status)" "$(jnum "$1" pid)" "$(jstr "$1" procStart)"
+}
+# THE SAME THREE TESTS, ON FIELDS ALREADY IN HAND (ruling 12). `session_records`
+# parses every record once; re-serialising its fields back into a blob so this
+# could re-parse them would be the fork storm the one pass exists to remove.
+# ONE copy of the three tests, because two would drift and this is the check
+# that decides whether a name may be taken.
+record_fields_are_live() {   # <status> <pid> <procStart>
+  case "${1-}" in ended|exited|dead|stopped) return 1 ;; esac
+  pid_alive "${2-}" "${3-}"
 }
 
 # ------------------------------------- AMENDMENT 8, ruling (g): WHOSE session
@@ -1983,7 +2136,10 @@ record_is_live() {   # <the record's JSON blob>
 # carries no `kind` at all and is read as interactive, because that is the only
 # thing those harnesses ever wrote.
 record_is_session() {   # <the record's JSON blob>
-  case "$(jstr "$1" kind)" in
+  record_fields_are_session "$(jstr "$1" kind)"
+}
+record_fields_are_session() {   # <kind>
+  case "${1-}" in
     ''|interactive) return 0 ;;
     *) return 1 ;;
   esac
@@ -2729,8 +2885,10 @@ write_event() {
 # A read fetches first — there is no index, so "current" means "after a fetch".
 log_sync() {
   # THE CACHE ABOVE IS THE REF AS IT STOOD; a fetch moves the ref, so it is
-  # dropped here rather than read past.
+  # dropped here rather than read past. Both copies of it: the variable this
+  # shell holds and the file every subshell reads (ruling 12).
   LANES_REGISTER_CACHE=""
+  ls_rc="${SE_CACHE_FILE:+$SE_CACHE_FILE.register}"; [ -n "$ls_rc" ] && rm -f -- "$ls_rc"
   [ "$NO_GIT" = 1 ] && return 0
   [ "${LANES_NO_FETCH:-0}" = 1 ] && { note "LANES_NO_FETCH=1 — not fetching; reading origin/$LANES_BRANCH as the ref already stands here"; return 0; }
   git -C "$LANES_REPO" rev-parse --git-dir >/dev/null 2>&1 || return 0
@@ -3320,7 +3478,11 @@ lane_row_facts() {   # events on stdin, ONE LINE PER LANE
       }
       for (i = 1; i <= n; i++) {
         l = byn[i]
-        printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s\n", l, 31, verb[l], 31, utc[l], 31, ws[l], 31, d[l], 31, pf[l], 31, w[l], 31, h[l], 31, sid[l], 31, obj[l]
+        # KEYED ON THE LANE LOWER-CASED, like the register index beside it and
+        # for the same reason: the listing joins these two tables on the lane
+        # name, and this file matches a lane name case-insensitively everywhere
+        # else (`lane_named_ci`).
+        printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s\n", tolower(l), 31, l, 31, verb[l], 31, utc[l], 31, ws[l], 31, d[l], 31, pf[l], 31, w[l], 31, h[l], 31, sid[l], 31, obj[l]
       }
     }'
 }
@@ -3512,34 +3674,40 @@ last_session_of() {   # <lane>
 #
 # One line per fork, `<session id><TAB><pid><TAB><kind><TAB><cwd>`.
 # 0 with rows, 8 with none, 1 where the records could not be read.
-LANES_FORK_MAP_BUILT=0
-LANES_FORK_MAP=""
 # Every LIVE record on this workstation whose transcript carries a custom
-# title, as `<title><US><sessionId><US><pid><US><kind><US><cwd>`. Built ONCE
-# per process: `who` asks about every lane in the register, and one find per
-# record per lane would be a read nobody would run.
+# title, as
+# `<lc title><US><title><US><sessionId><US><lc sessionId><US><pid><US><kind><US><cwd>`.
+# Built ONCE per process: `who` asks about every lane in the register, and one
+# find per record per lane would be a read nobody would run.
+#
+# CACHED IN A FILE for the reason `live_session_ids` gives, and this one was the
+# more expensive of the two: `transcript_title` falls back to a `find` over the
+# whole profiles tree, so a rebuild per lane was a filesystem walk per lane.
+#
+# THE LOWER-CASED TITLE AND ID ARE CARRIED rather than computed by the reader:
+# `lc` is `printf | tr`, TWO PROCESSES, and `lane_forks` ran it on every entry of
+# this map for every lane it was asked about — fifty lanes times however many
+# live records, for two comparisons a `case` can make.
 fork_map() {
-  [ "$LANES_FORK_MAP_BUILT" = 1 ] && { printf '%s' "$LANES_FORK_MAP"; return 0; }
-  LANES_FORK_MAP_BUILT=1
-  fm_files="$(session_files 2>/dev/null || :)"
-  [ -n "$fm_files" ] || { printf ''; return 0; }
+  fm_c="${SE_CACHE_FILE:+$SE_CACHE_FILE.forks}"
+  if [ -n "$fm_c" ] && [ -f "$fm_c" ]; then cat -- "$fm_c"; return 0; fi
   fm_out=""
-  while IFS= read -r fm_f; do
-    [ -n "$fm_f" ] || continue
-    fm_blob="$(cat -- "$fm_f" 2>/dev/null || :)"
-    [ -n "$fm_blob" ] || continue
-    record_is_live "$fm_blob" || continue
-    fm_sid="$(jstr "$fm_blob" sessionId)"
-    [ -n "$fm_sid" ] || continue
-    fm_t="$(transcript_title "$fm_sid" "$fm_f" "$(jstr "$fm_blob" cwd)")"
+  while IFS="$US" read -r fm_f fm_sid fm_tmux fm_name fm_pid fm_kind fm_cwd fm_status fm_start; do
+    [ -n "${fm_sid:-}" ] || continue
+    record_fields_are_live "$fm_status" "$fm_pid" "$fm_start" || continue
+    fm_t="$(transcript_title "$fm_sid" "$fm_f" "$fm_cwd")"
     [ -n "$fm_t" ] || continue
-    fm_out="${fm_out}${fm_t}${US}${fm_sid}${US}$(jnum "$fm_blob" pid)${US}$(jstr "$fm_blob" kind)${US}$(jstr "$fm_blob" cwd)
+    fm_out="${fm_out}$(lc "$fm_t")${US}${fm_t}${US}${fm_sid}${US}$(lc "$fm_sid")${US}${fm_pid}${US}${fm_kind}${US}${fm_cwd}
 "
   done <<EOF
-$fm_files
+$(session_records)
 EOF
-  LANES_FORK_MAP="$fm_out"
-  printf '%s' "$LANES_FORK_MAP"
+  if [ -n "$fm_c" ]; then
+    printf '%s' "$fm_out" > "$fm_c.${BASHPID:-$$}" 2>/dev/null &&
+      mv -f -- "$fm_c.${BASHPID:-$$}" "$fm_c" 2>/dev/null ||
+      rm -f -- "$fm_c.${BASHPID:-$$}"
+  fi
+  printf '%s' "$fm_out"
 }
 
 # The `customTitle` of a transcript, by its uuid. A `/rename` writes a
@@ -3598,21 +3766,46 @@ retired_forks_of() {   # <lane>
       if (v != "") print tolower(v) }'
 }
 
-lane_forks() {   # <lane>
+# `lane_forks <lane> [<ids fence>] [<retired fence>]`
+#
+# THE TWO SETS AS ONE SPACE-FENCED STRING EACH, tested with `case` (A11
+# Addendum 4 ruling 12). The `grep -qx` this replaces was a process per map
+# entry per lane, and `lc` on the entry's title was two more; a `case` is the
+# shell's own.
+#
+# AND A CALLER THAT ALREADY HAS THEM PASSES THEM. `lanes` asks this about every
+# lane, and computing the row's ids here meant TWO renders of the published
+# register plus one of the working tree's, per lane — the very reads the listing
+# has already made in one pass. A caller with one lane in hand (`forks`, `who`)
+# passes nothing and this computes them, so the read is unchanged for everybody
+# else. The fences are `" a b c "`, lower-cased, spaces at both ends.
+lane_forks() {   # <lane> [<ids fence>] [<retired fence>]
   lf_l="${1-}"; [ -n "$lf_l" ] || return 64
-  lf_ids="$( { session_ids_of_lane "$lf_l" 2>/dev/null || :
-               session_ids_local_of_lane "$lf_l" 2>/dev/null || :; } | awk 'NF && !seen[$0]++')"
-  lf_retired="$(retired_forks_of "$lf_l" 2>/dev/null || :)"
+  lf_ll="$(lc "$lf_l")"
+  if [ "$#" -ge 2 ]; then
+    lf_ids="$2"
+  else
+    lf_ids=" $( { session_ids_of_lane "$lf_l" 2>/dev/null || :
+                  session_ids_local_of_lane "$lf_l" 2>/dev/null || :; } | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
+  fi
+  if [ "$#" -ge 3 ]; then
+    lf_retired="$3"
+  else
+    lf_retired=" $(retired_forks_of "$lf_l" 2>/dev/null | tr '\n' ' ' || :)"
+  fi
   lf_out=""
-  while IFS="$US" read -r lf_t lf_sid lf_pid lf_kind lf_cwd; do
-    [ -n "${lf_t:-}" ] || continue
-    [ "$(lc "$lf_t")" = "$(lc "$lf_l")" ] || continue
+  while IFS="$US" read -r lf_tl lf_t lf_sid lf_sidl lf_pid lf_kind lf_cwd; do
+    [ -n "${lf_tl:-}" ] || continue
+    [ "$lf_tl" = "$lf_ll" ] || continue
     # AN ID THE ROW RECORDS IS THE LANE ITSELF, never a fork of it.
-    if [ -n "$lf_ids" ] && printf '%s\n' "$lf_ids" | grep -qx -F -- "$lf_sid"; then continue; fi
+    case "$lf_ids" in *" $lf_sid "*) continue ;; esac
     # AND AN ID THIS LANE HAS ALREADY RETIRED IS NOT ONE EITHER: retiring is the
     # record, so after it nothing counts this process as the lane's fork, and
     # the surfaces stop printing an act that has already been taken.
-    if [ -n "$lf_retired" ] && printf '%s\n' "$lf_retired" | grep -qx -F -- "$(lc "$lf_sid")"; then continue; fi
+    case "$lf_retired" in
+      *" $lf_ll$US$lf_sidl "*) continue ;;
+      *" $lf_sidl "*) continue ;;
+    esac
     lf_out="${lf_out}${lf_sid}	${lf_pid}	${lf_kind:-interactive}	${lf_cwd}
 "
   done <<EOF
@@ -3656,31 +3849,35 @@ EOF
 # a clock and it decides nothing but the ORDER OF A LISTING, which is the one
 # place a clock is allowed to: `swapped` ranks by landing order because a
 # launcher BINDS from its first row, and nothing binds from this one.
-LANES_LIVE_IDS_BUILT=0
-LANES_LIVE_IDS=""
 # Every LIVE session id on this workstation with the window it is in, as
 # `<sessionId><US><tmux target><US><name><US><pid>`. ONE pass over the records
 # for the whole listing: `live_holder` answers about one lane and re-reads
 # every record to do it, which for a 48-row register is 48 scans of the same
 # directory.
+#
+# CACHED IN A FILE AND NOT IN A VARIABLE (A11 Addendum 4 ruling 12). Every
+# caller invokes this inside `$( … )`, which is a SUBSHELL — so the variable the
+# build set died with the build and the next lane rebuilt it, 564 records at a
+# time, 46 times for one listing. A file survives the subshell that wrote it.
 live_session_ids() {
-  [ "$LANES_LIVE_IDS_BUILT" = 1 ] && { printf '%s' "$LANES_LIVE_IDS"; return 0; }
-  LANES_LIVE_IDS_BUILT=1
-  lsi_files="$(session_files 2>/dev/null || :)"
+  lsi_c="${SE_CACHE_FILE:+$SE_CACHE_FILE.live}"
+  if [ -n "$lsi_c" ] && [ -f "$lsi_c" ]; then cat -- "$lsi_c"; return 0; fi
   lsi_out=""
-  while IFS= read -r lsi_f; do
-    [ -n "$lsi_f" ] || continue
-    lsi_blob="$(cat -- "$lsi_f" 2>/dev/null || :)"
-    [ -n "$lsi_blob" ] || continue
-    record_is_session "$lsi_blob" || continue
-    record_is_live "$lsi_blob" || continue
-    lsi_out="${lsi_out}$(jstr "$lsi_blob" sessionId)${US}$(jstr "$lsi_blob" tmux)${US}$(jstr "$lsi_blob" name)${US}$(jnum "$lsi_blob" pid)
+  while IFS="$US" read -r lsi_f lsi_sid lsi_tmux lsi_name lsi_pid lsi_kind lsi_cwd lsi_status lsi_start; do
+    [ -n "${lsi_sid:-}" ] || continue
+    record_fields_are_session "$lsi_kind" || continue
+    record_fields_are_live "$lsi_status" "$lsi_pid" "$lsi_start" || continue
+    lsi_out="${lsi_out}${lsi_sid}${US}${lsi_tmux}${US}${lsi_name}${US}${lsi_pid}
 "
   done <<EOF
-$lsi_files
+$(session_records)
 EOF
-  LANES_LIVE_IDS="$lsi_out"
-  printf '%s' "$LANES_LIVE_IDS"
+  if [ -n "$lsi_c" ]; then
+    printf '%s' "$lsi_out" > "$lsi_c.${BASHPID:-$$}" 2>/dev/null &&
+      mv -f -- "$lsi_c.${BASHPID:-$$}" "$lsi_c" 2>/dev/null ||
+      rm -f -- "$lsi_c.${BASHPID:-$$}"
+  fi
+  printf '%s' "$lsi_out"
 }
 
 # Every lane the register has a row for — the union with `known_lanes` is what
@@ -3693,6 +3890,59 @@ register_lanes() {
       rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
       print substr(rest, 1, p2 - 1)
     }'
+}
+
+# ONE PASS OVER THE REGISTER FOR THE WHOLE LISTING (A11 Addendum 4 ruling 12).
+#   `<lane><US><workstation><US><session ids, lower-cased, space separated>`
+#
+# The four facts the listing wants from a row — is there a row, whose
+# workstation, which ids, which is last — were four separate reads per lane,
+# each of them `register_text | awk` and each therefore a render of the
+# published 1.1 MB register. This is the same three answers from one pass, and
+# the parsing is the SAME parsing: `ROW_AWK`'s first-backticked-token rule for
+# the name, `row_cell`'s "field k+1 because $1 is the empty string before the
+# leading pipe" for the cells, `lane_workstation`'s strip-at-the-first-slash for
+# the workstation, and `uuids_in_cell`'s shape match — restated here in awk
+# because a reader comparing the two must be able to see both.
+LANES_REGISTER_INDEX_AWK='
+    substr($0, 1, 1) != "|" { next }
+    {
+      p1 = index($0, "`"); if (p1 == 0) next
+      rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
+      lane = substr(rest, 1, p2 - 1)
+      n = split($0, c, "|")
+      ses = (n >= 3 ? c[3] : "")
+      ws  = (n >= 4 ? c[4] : "")
+      sub(/^[ \t]+/, "", ws); sub(/[ \t]+$/, "", ws)
+      sub(/ *\/.*$/, "", ws)
+      sub(/[ \t].*$/, "", ws)
+      # `short_ws` IS `printf | tr`, TWO PROCESSES, and the listing ran it per
+      # lane to decide the workstation filter. It is one `sub` and a `tolower`
+      # here, in the pass that already has the value.
+      wss = tolower(ws); sub(/\..*$/, "", wss)
+      ids = ""; s2 = tolower(ses)
+      while (match(s2, /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/)) {
+        ids = ids substr(s2, RSTART, RLENGTH) " "
+        s2 = substr(s2, RSTART + RLENGTH)
+      }
+      sub(/ $/, "", ids)
+      # KEYED ON THE LANE NAME LOWER-CASED, because `lane_named_ci` is the rule
+      # everywhere else in this file: the register spells one lane three ways in
+      # a week, and the names this listing joins on come from the LOG files.
+      # (No apostrophe in this comment: the whole program is a single-quoted
+      # shell string, and one would end it.)
+      print tolower(lane) sep lane sep ws sep wss sep ids
+    }'
+# `--local` READS THIS CHECKOUT'S REGISTER instead of the published one, which
+# is `session_ids_local_of_lane`'s source and is unioned with the published ids
+# for the same fail-closed reason that read gives: an id this checkout knows and
+# `origin/main` does not yet is one more reason to refuse, never to allow.
+lanes_register_index() {   # [--local]
+  if [ "${1-}" = --local ]; then
+    awk -v sep="$US" "$LANES_REGISTER_INDEX_AWK" "$LANES_FILE" 2>/dev/null
+  else
+    register_text | awk -v sep="$US" "$LANES_REGISTER_INDEX_AWK"
+  fi
 }
 
 lanes_rows() {
@@ -3712,10 +3962,13 @@ lanes_rows() {
   # `profile` and nothing else, and building the whole listing for it would walk
   # every log, every row and every live session record on the workstation to
   # answer a question about one lane. Same rows, same columns, same code.
+  # EACH NAME CARRIES ITS OWN LOWER-CASED KEY, emitted by the pass that already
+  # computes it for the de-duplication: the three lookups below join on that key
+  # and `lc` is two processes (ruling 12).
   if [ -n "$lr_one" ]; then
-    lr_names="$lr_one"; lr_all=1
+    lr_names="$(printf '%s\n' "$lr_one" | awk -v sep="$US" 'NF { print tolower($0) sep $0 }')"; lr_all=1
   else
-    lr_names="$( { known_lanes 2>/dev/null || :; register_lanes 2>/dev/null || :; } | awk 'NF && !seen[tolower($0)]++')"
+    lr_names="$( { known_lanes 2>/dev/null || :; register_lanes 2>/dev/null || :; } | awk -v sep="$US" 'NF && !seen[tolower($0)]++ { print tolower($0) sep $0 }')"
   fi
   [ -n "$lr_names" ] || return 8
   # ONE PASS OVER EVERY LANE'S EVENTS, NOT ONE READ PER LANE PER FIELD.
@@ -3736,20 +3989,66 @@ lanes_rows() {
   else
     lr_facts="$(state_events 2>/dev/null | lane_row_facts)"
   fi
+  # THE REGISTER AND THE LIVE RECORDS, EACH READ ONCE FOR THE WHOLE LISTING
+  # (ruling 12). Both were per-lane before, and `live_session_ids` was rebuilt
+  # from 564 session records for every one of them.
+  # THE THREE TABLES, FENCED FOR AN IN-SHELL LOOKUP (ruling 12). `tr` turns each
+  # newline into `$GS` once, and `table_lookup` then finds any lane's line with
+  # one parameter expansion — instead of `printf | awk` per lane per table,
+  # which for fifty lanes was a hundred and fifty processes spent reading
+  # strings this shell was already holding.
+  lr_index="$GS$(lanes_register_index 2>/dev/null | tr '\n' "$GS" || :)"
+  lr_local_index="$GS$(lanes_register_index --local 2>/dev/null | tr '\n' "$GS" || :)"
+  lr_facts_t="$GS$(printf '%s\n' "$lr_facts" | tr '\n' "$GS")"
+  # EVERY FORK ANY LANE HAS RETIRED, in one pass over the cached events, as
+  # `<lane><US><fork id>` — `lane_forks` asked this per lane and each ask was a
+  # pass of its own.
+  lr_retired_all=" $(state_events 2>/dev/null | awk -F"$US" -v sep="$US" '
+      $3 == "RETIRED" && substr($8, 1, 5) == "fork " {
+        v = substr($8, 6); sub(/;.*$/, "", v); sub(/ .*$/, "", v)
+        if (v != "") print tolower($2) sep tolower(v) }' | tr '\n' ' ')"
+  lr_live_rows="$(live_session_ids 2>/dev/null || :)"
+  lr_live_fence=" $(printf '%s\n' "$lr_live_rows" | awk -F"$US" 'NF { print tolower($1) }' | tr '\n' ' ')"
+  lr_ws_short="$(short_ws "$lr_ws")"
+  lr_now="$(date -u +%s)"
+  # ONLY A LANE THE FORK MAP NAMES CAN HAVE A FORK (ruling 12). `lane_forks`
+  # stays the ONE implementation of what a fork is and what disqualifies one;
+  # this simply declines to ask it about the forty-five lanes of this estate
+  # that no live transcript is titled for, each of which cost a subshell, a
+  # `cat` of the map and a `grep` to be told nothing.
+  lr_fork_titles=" $(fork_map | awk -F"$US" 'NF { print $1 }' | tr '\n' ' ')"
   lr_out=""
-  while IFS= read -r lr_l; do
+  while IFS="$US" read -r lr_ll lr_l; do
     [ -n "$lr_l" ] || continue
     lr_verb=""; lr_utc=""; lr_w=""; lr_d=""; lr_pf=""; lr_win=""; lr_home=""; lr_logsid=""; lr_obj=""
-    IFS="$US" read -r lr_fl lr_verb lr_utc lr_w lr_d lr_pf lr_win lr_home lr_logsid lr_obj <<EOF2
-$(printf '%s\n' "$lr_facts" | awk -F"$US" -v l="$lr_l" '$1 == l { print; exit }')
+    if table_lookup "$lr_facts_t" "$lr_ll"; then
+      IFS="$US" read -r lr_fl lr_verb lr_utc lr_w lr_d lr_pf lr_win lr_home lr_logsid lr_obj <<EOF2
+$LOOKUP_OUT
 EOF2
+    fi
+    # THE ROW'S THREE FACTS, OUT OF THE ONE PASS: is there a row at all, whose
+    # workstation it names, and which transcript uuids its session cell carries.
+    lr_ixl=""; lr_rw=""; lr_rws=""; lr_ids_sp=""
+    if table_lookup "$lr_index" "$lr_ll"; then
+      IFS="$US" read -r lr_ixl lr_rw lr_rws lr_ids_sp <<EOF2
+$LOOKUP_OUT
+EOF2
+    fi
+    lr_lixl=""; lr_lrw=""; lr_lrws=""; lr_lids_sp=""
+    if table_lookup "$lr_local_index" "$lr_ll"; then
+      IFS="$US" read -r lr_lixl lr_lrw lr_lrws lr_lids_sp <<EOF2
+$LOOKUP_OUT
+EOF2
+    fi
     # THE REGISTER'S OWN WORKSTATION COLUMN WINS where the row has one: it is
     # what every other read in this file compares, and a lane may have a row
     # here and its last log line from another machine.
-    lr_rw="$(lane_workstation "$lr_l" 2>/dev/null || :)"
     [ -n "$lr_rw" ] && lr_w="$lr_rw"
-    if [ "$lr_all" = 0 ] && [ -n "$lr_w" ] && [ "$(short_ws "$lr_w")" != "$(short_ws "$lr_ws")" ]; then continue; fi
-    lr_row="$(row_of_lane "$lr_l" 2>/dev/null || :)"
+    if [ "$lr_all" = 0 ] && [ -n "$lr_w" ]; then
+      lr_wcmp="$lr_rws"; [ -n "$lr_wcmp" ] || lr_wcmp="$(short_ws "$lr_w")"
+      [ "$lr_wcmp" = "$lr_ws_short" ] || continue
+    fi
+    lr_row="$lr_ixl"
     if [ -n "$lr_home" ]; then
       lr_hc="$(alias_lookup "$lr_home" 2>/dev/null || :)"
       [ -n "$lr_hc" ] && lr_home="$lr_hc"
@@ -3762,24 +4061,26 @@ EOF2
     fi
     # FAILING THE CELL, THE LANE'S OWN LOG — clause (d) rule 3, out of the same
     # one pass rather than a second read of the same stream.
-    lr_sid="$(session_ids_of_lane "$lr_l" 2>/dev/null | tail -n1 || :)"
+    lr_sid="${lr_ids_sp##* }"
     [ -n "$lr_sid" ] || lr_sid="$lr_logsid"
     # THE STATE. A live record naming one of the lane-s ids beats the log-s
     # own last verb, because a lane whose session is running is LIVE whatever
     # its last written line says; otherwise the verb answers.
-    lr_ids="$(session_ids_of_lane "$lr_l" 2>/dev/null || :)"
+    #
+    # A `case` OVER A SPACE-FENCED STRING, AND NOT A `grep` PER RECORD (ruling
+    # 12): this ran `printf | grep -qx` once for every live record for every
+    # lane. The fence is built once above; the lookup of the WINDOW is an awk,
+    # and it only happens for a lane that is actually live.
     lr_state=""
     lr_live_win=""
-    if [ -n "$lr_ids" ]; then
-      while IFS="$US" read -r lsi_id lsi_tgt lsi_name lsi_pid; do
-        [ -n "${lsi_id:-}" ] || continue
-        printf '%s\n' "$lr_ids" | grep -qx -F -- "$lsi_id" || continue
-        lr_state=LIVE; lr_live_win="${lsi_tgt:-}"
-        break
-      done <<EOF2
-$(live_session_ids)
-EOF2
-    fi
+    for lr_one_id in $lr_ids_sp; do
+      case "$lr_live_fence" in
+        *" $lr_one_id "*)
+          lr_state=LIVE
+          lr_live_win="$(printf '%s\n' "$lr_live_rows" | awk -F"$US" -v i="$lr_one_id" 'tolower($1) == i { print $2; exit }')"
+          break ;;
+      esac
+    done
     if [ -n "$lr_live_win" ]; then
       lr_win="$lr_live_win"
     elif [ -n "$lr_win" ]; then
@@ -3801,9 +4102,16 @@ EOF2
       esac
     fi
     [ -n "$lr_obj" ] || lr_obj="none open"
-    lr_age="$([ -n "$lr_utc" ] && age_of "$lr_utc" || printf 'age unknown')"
-    lr_fk="$(lane_forks "$lr_l" 2>/dev/null | grep -c . || :)"
-    case "$lr_fk" in ''|*[!0-9]*) lr_fk=0 ;; esac
+    lr_age="$([ -n "$lr_utc" ] && age_of "$lr_utc" "$lr_now" || printf 'age unknown')"
+    # THE TWO SETS `lane_forks` WOULD OTHERWISE RE-READ THE REGISTER FOR, handed
+    # to it out of the one pass this loop already made (ruling 12) — and asked
+    # at all only where a live transcript carries this lane's title.
+    lr_fk=0
+    case "$lr_fork_titles" in
+      *" $lr_ll "*)
+        lr_fk="$(lane_forks "$lr_l" " $lr_ids_sp $lr_lids_sp " "$lr_retired_all" 2>/dev/null | grep -c . || :)"
+        case "$lr_fk" in ''|*[!0-9]*) lr_fk=0 ;; esac ;;
+    esac
     # `none` AND NEVER A DASH, because three of these columns are `none` on
     # this estate until adoption act 7 cuts each lane over — `profile`,
     # `directory` and the `<@id>` half of `window` all come from records written
