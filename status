@@ -3198,6 +3198,32 @@ moved_on_leg() {
     return 0
 }
 
+# RR4's FIRST ARM, ASKED OF A LEG ROW: is a worktree REGISTERED AT the path
+# `collect_legs` computes for this leg, on this branch — which is the one state
+# `resume.sh` calls already recreated and `continue`s past, and therefore the
+# one state in which RR2, RR1 and RR5 are never reached for that leg.
+#
+# IT REPLACED `worktree_here`, WHICH IS A WIDER QUESTION (Copilot's third round
+# on #27, verbatim: "The `worktree_here` check above delegates to
+# `worktree_on_branch`, so it returns true for any live worktree on this
+# branch, not just the path RR4 computes. With `--fetch`, an off-path worktree
+# plus a successfully fetched missing `origin/<branch>` should reach RR2 in
+# `resume`, but this return suppresses the first-pass `gone` verdict and can
+# make sibling legs recommend the wrong re-park/move exit"). IT IS REAL: run
+# against the extension on 2026-09-13 on a scratch three-leg estate, one leg,
+# its worktree at `$HOME/elsewhere/001-a-thing` and its branch deleted on
+# origin, `resume.sh` answered "Error: 001-a-thing is no longer on origin in
+# the spec leg; that feature was NOT recreated", "REFUSED: 001-a-thing — gone
+# from origin", exit 2 — RR4 missing on the path and RR2 refusing — while this
+# layer named a `git worktree move`, hiding RR2's two exits behind one that
+# does not bring a lost branch back.
+already_recreated() {
+    local repo="$1" want="$2" branch="$3"
+    registered_at "$repo" "$want" || return 1
+    [ "$REGISTERED_BRANCH" = "$branch" ] || return 1
+    return 0
+}
+
 # WHETHER RR2 WILL REFUSE THIS LEG, asked a leg row ahead of the arms below
 # because the answer is the FEATURE's: `read_record`'s first pass asks it of
 # every leg, and `check_parked_leg` asks the same three things again of the
@@ -3219,7 +3245,7 @@ origin_lost_leg() {
     if has_ref "$repo" "refs/remotes/origin/$branch"; then
         return 1
     fi
-    if worktree_here "$repo" "$branch"; then
+    if already_recreated "$repo" "$(leg_tree_path "$root" "$role" "$branch")" "$branch"; then
         return 1
     fi
     return 0
@@ -3257,6 +3283,23 @@ off_path_exit() {
         printf '%s\n' "there is no command that puts it where \`resume\` looks: this leg is declared \`path: \".\"\` in \`project.yaml\`, so the path \`collect_legs\` computes for it ends in \`/.\` — \`mv\` refuses such an operand outright and \`git worktree move\` lands the worktree INSIDE it — and \`resume\` matches that string against no worktree git can spell, so it refuses this feature after every run, including one of its own. What answers it is a \`collect_legs\` that computes \`<worktree_root>/<branch>\` for a leg declared at the root, which is the standard's and not this command's"
     elif [ "$held" -eq 2 ]; then
         printf '%s\n' "clear the stale registration git still holds for that path with \`git -C $(sh_operand "$repo") worktree prune\` first — \`worktree move\` refuses a destination git still holds (\"a missing but already registered worktree\") — then move it where both look: \`mkdir -p $(sh_operand "$(parent_dir "$want")") && git -C $(sh_operand "$repo") worktree move $(sh_operand "$tree") $(sh_operand "$want")\`, both yours to run"
+    elif [ "$(physical_path "$RECORD_WORKTREE_ROOT")" != "$RECORD_WORKTREE_ROOT" ]; then
+        # AND NO MOVE WHERE THE WORKTREE ROOT ITSELF IS A LINK, because the
+        # move succeeds and changes nothing (Copilot's third round on #27,
+        # verbatim: "`off_path_exit` still advertises this move when
+        # `worktree_root` is a symlink. `record_worktree_root` deliberately
+        # preserves that lexical spelling, while Git reports the physical
+        # worktree path; moving an off-path worktree to this `want` therefore
+        # leaves `registered_at` unable to match it, so the next `resume` still
+        # refuses at RR3"). RUN, end to end, on 2026-09-13: the move exited 0,
+        # git then held the worktree at the PHYSICAL `…/real-wt/001-a-thing/
+        # spec`, and `resume.sh` answered "Error: '…/wtlink/001-a-thing/spec'
+        # exists and is not a registered worktree of the spec leg", "REFUSED:
+        # 001-a-thing — an unrelated path is in the way", exit 2. THE EXIT
+        # THAT DOES WORK is the spelling: the same estate with `worktree_root`
+        # set to the path git spells RESUMED the feature, exit 0, on the same
+        # run — so that is what this names, and it is the person's to write.
+        printf '%s\n' "no \`worktree move\` fixes this one, because the worktree root itself is reached through a symlink: both verbs compute $RECORD_WORKTREE_ROOT and git reports $(physical_path "$RECORD_WORKTREE_ROOT"), so \`resume\` matches nothing registered there however the worktree is moved — spell \`worktree_root\` (or \`\$SPECKIT_GIT_WORKTREE_ROOT\`) as $(physical_path "$RECORD_WORKTREE_ROOT"), which is what git spells, and the \`git worktree move\` this line would otherwise name becomes one that works"
     else
         printf '%s\n' "move it where both look: \`mkdir -p $(sh_operand "$(parent_dir "$want")") && git -C $(sh_operand "$repo") worktree move $(sh_operand "$tree") $(sh_operand "$want")\`, which is yours to run — \`worktree move\` creates no parent directory of its own"
     fi
@@ -3924,7 +3967,21 @@ check_parked_leg() {
         held=0
         registered_at "$repo" "$want" || held=$?
         if [ "$tree" != "$want" ] && [ "$held" -ne 0 ] && [ ! -e "$want" ]; then
-            move="$(off_path_exit "$repo" "$role" "$tree" "$want" "$held")"
+            # AND THE EXIT IS RR2's WHERE RR2 IS WHAT REFUSES (Copilot's third
+            # round on #27): with the branch gone from origin and a fetch that
+            # WORKED there, `resume` reaches RR2 before the add it never makes
+            # — run on 2026-09-13, "Error: 001-a-thing is no longer on origin
+            # in the spec leg", "REFUSED: 001-a-thing — gone from origin",
+            # exit 2 — and a `git worktree move` brings back no branch origin
+            # has lost. The FINDING is still this one, because where the
+            # worktree sits is a fact about this workstation that RR2's line
+            # does not carry and `park` here will not collect either; the
+            # EXITS are RR2's own two, and the line says which refusal it is.
+            if [ "$refused_kind" = gone ]; then
+                move="there is no \`origin/$branch\` in this leg after this run's fetch either, so \`resume\` refuses at that before it reaches any add — $(origin_gone_exits "$branch" "$parked_on")"
+            else
+                move="$(off_path_exit "$repo" "$role" "$tree" "$want" "$held")"
+            fi
             finding "parked feature $branch ($role leg): its worktree is at $tree, which is not the $want \`resume\` computes for it — \`resume\` matches a leg's worktree on that path alone, so it does not read this one as already recreated and refuses the WHOLE feature, the other legs with it, at whichever of its own checks this leg reaches first (with the branch still at the parked commit that is the \`git worktree add\` it makes last of all, which cannot take a branch another worktree holds); \`park\` does not carry it either, because it parks the features under $RECORD_WORKTREE_ROOT and no others — $move"
             return 0
         fi
@@ -4242,7 +4299,7 @@ check_parked_leg() {
         fi
         finding "parked feature $branch ($role leg): this worktree is BEHIND the parked commit $(short "$commit"), parked ${parked_at:-?} on ${parked_on:-?} — the record is newer, and \`resume\` refuses to reset it"
     else
-        finding "parked feature $branch ($role leg): diverged from the parked commit $(short "$commit"), parked ${parked_at:-?} on ${parked_on:-?} — reconcile by hand: \`git -C $(sh_operand "$repo") log --oneline $(short "$commit")..$branch\`"
+        finding "parked feature $branch ($role leg): diverged from the parked commit $(short "$commit"), parked ${parked_at:-?} on ${parked_on:-?} — reconcile by hand: \`git -C $(sh_operand "$repo") log --oneline $(sh_operand "$(short "$commit")..$branch")\`"
     fi
     return 0
 }
