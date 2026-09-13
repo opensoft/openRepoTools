@@ -658,9 +658,22 @@ def test_agents_md_is_short_enough_to_be_read():
     registered with nothing on disk, because `worktree move` refuses such a
     destination in the same sentence `worktree add` does — an exit that was
     run and did not work is worse than no exit at all.
+
+    181 -> 182 on 2026-09-13, for Copilot's first round on #27 (suppressed),
+    verbatim: "This contract documents only the environment override and
+    `git-config.yml`, but the implementation also falls back to the shape
+    default (`worktrees` for a three-leg root or `../<root>-worktrees` for a
+    single root). For an estate without either override, readers cannot derive
+    the path that `resume` and the recovery guidance use; include that third
+    source in this statement and its mirrored help/README wording." ONE line,
+    and it buys the case an estate usually IS: the entry above spent four
+    lines making the rule name `$SPECKIT_GIT_WORKTREE_ROOT` because "read no
+    other" denied a source, and this list denied the one almost every estate
+    actually uses. A rule that reads as exhaustive and is not sends an agent
+    to look for a `git-config.yml` that was never written, and then to guess.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 181, f"AGENTS.md is {len(lines)} lines; the cap is 181"
+    assert len(lines) <= 182, f"AGENTS.md is {len(lines)} lines; the cap is 182"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -846,9 +859,17 @@ def test_readme_is_short_enough_to_be_read():
     a `worktree move` that names no `unlock` in front of a locked worktree,
     or an `mv` that leaves a dead registration standing, is an exit that was
     run and did not work.
+
+    267 -> 268 on 2026-09-13, for the same round's suppressed comment read
+    against this text: the finding list said the path is "read out of
+    `$SPECKIT_GIT_WORKTREE_ROOT` or this checkout's `git-config.yml`" and left
+    out the SHAPE's own default, which is where every estate with neither
+    override gets it — which is most of them. One line, and the same one
+    AGENTS.md rule 4 and `status --help` take, because the three texts say the
+    same things or one of them is wrong.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 267, f"README.md is {len(lines)} lines; the cap is 267"
+    assert len(lines) <= 268, f"README.md is {len(lines)} lines; the cap is 268"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

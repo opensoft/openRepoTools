@@ -126,22 +126,23 @@ sequence, and relay their per-repository lines rather than summarising them.
    under `.git/worktrees/`; a worktree BEHIND a newer record — behind by
    more than the WIP commits `resume` itself un-committed — is what `resume`
    refuses, and rule 1 stands, no reset to make it pass. A WORKTREE ON A
-   RECORDED BRANCH AT ANOTHER PATH IS NOT THAT FEATURE'S WORKTREE: both
-   verbs compute `<worktree_root>/<branch>` — the leg's own mount under it
-   in a three-leg root — out of `$SPECKIT_GIT_WORKTREE_ROOT`, else THIS
-   checkout's `git-config.yml`, and never out of the record, so `resume`
-   refuses the WHOLE feature — every leg of it — at whichever of its checks
-   that leg reaches first (with the branch still at the parked commit, the
-   `git worktree add` it makes LAST of all cannot take a branch another
-   worktree holds) and `park` never parks it; the exit is a `git worktree
-   move` to that path, the PERSON'S to run, with a `worktree prune` in front
-   of it where git still holds that path registered with nothing on disk, and
-   where the path found is the leg's own checkout there is nothing to move at
-   all. A worktree the record does not know wants `park`, not a hand-edit of
-   the record. No config, or no record for the estate, is a note, not a
-   finding. `status`'s bare form outside every estate reads them all WITHOUT
-   asking, because a read — fetched or not — moves nothing of yours; `status
-   --all` from anywhere says the same thing.
+   RECORDED BRANCH AT ANOTHER PATH IS NOT THAT FEATURE'S WORKTREE: both verbs
+   compute `<worktree_root>/<branch>` — the leg's own mount under it in a
+   three-leg root — out of `$SPECKIT_GIT_WORKTREE_ROOT`, else THIS checkout's
+   `git-config.yml`, else the SHAPE's default — `worktrees` inside a three-leg
+   root, `../<root folder>-worktrees` beside a single one — and never out of
+   the record, so `resume` refuses the WHOLE feature — every leg of it — at
+   whichever of its checks that leg reaches first (with the branch still at
+   the parked commit, the `git worktree add` it makes LAST of all cannot take
+   a branch another worktree holds) and `park` never parks it; the exit is a
+   `git worktree move` to that path, the PERSON'S to run, with a `worktree
+   prune` in front of it where git still holds that path registered with
+   nothing on disk, and where the path found is the leg's own checkout there
+   is nothing to move at all. A worktree the record does not know wants
+   `park`, not a hand-edit of the record. No config, or no record for the
+   estate, is a note, not a finding. `status`'s bare form outside every estate
+   reads them all WITHOUT asking, because a read — fetched or not — moves
+   nothing of yours; `status --all` from anywhere says the same thing.
 
 ## The pinned standard at `upstream/openRepoShape`
 

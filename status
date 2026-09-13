@@ -177,13 +177,13 @@ repository has no `origin/<branch>` for, a leg parked with `--no-push` or whose
 or a role this shape has no place for, a feature the record lists no leg for, a
 worktree on a recorded branch that is not at the path BOTH VERBS compute for
 that leg — <worktree_root>/<branch>, with the leg's own mount under it in a
-three-leg root, out of this checkout's git-config.yml and not out of the record
-— which is the only worktree `resume` reads as that feature's and the only one
-`park` carries, so the exit is a `git worktree move` of yours, and where that
-path is the leg's own checkout there is nothing to move, anything at that same
-path that is not that leg's worktree, which `resume` refuses the whole feature
-for before it reads origin, and a worktree the record does not know (never
-parked).
+three-leg root, out of $SPECKIT_GIT_WORKTREE_ROOT, else this checkout's
+git-config.yml, else the shape's own default, and not out of the record — which
+is the only worktree `resume` reads as that feature's and the only one `park`
+carries, so the exit is a `git worktree move` of yours, and where that path is
+the leg's own checkout there is nothing to move, anything at that same path
+that is not that leg's worktree, which `resume` refuses the whole feature for
+before it reads origin, and a worktree the record does not know (never parked).
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
 (<Name>/<Name>/family.yaml) or a standalone project root (<Name>/project.yaml).
@@ -1029,6 +1029,34 @@ physical_path() {
     local resolved
     resolved="$(cd "$1" 2>/dev/null && pwd -P)" || resolved="$1"
     printf '%s\n' "$resolved"
+}
+
+# A PATH AS A SHELL OPERAND, QUOTED ONLY WHERE A SHELL WOULD NEED IT (Copilot's
+# first round on #27, verbatim: "The remediation command here interpolates
+# `$repo` and `$want` directly into a shell snippet. Valid paths containing
+# spaces split the command, and shell metacharacters make the copy-pasted `git
+# worktree move` unsafe, so the prescribed cleanup is not reliably runnable.
+# Please emit shell-quoted operands through a shared formatter"). Every command
+# this file prints is one a PERSON is told to run — "which is yours to run" —
+# and the rule at the top of `check_parked_leg` is that an exit which does not
+# run is worse than no exit at all, so a projects directory called `~/My
+# Projects` must not turn `git -C <root> worktree move <a> <b>` into four
+# operands. Single quotes, with the one escape that ends and reopens them for a
+# literal `'`, are what a POSIX shell takes verbatim.
+#
+# AND UNQUOTED WHERE NOTHING NEEDS IT, which is why the byte-for-byte pins in
+# the suite do not move: a path of letters, digits and `/._@%+:,=-` is its own
+# operand in every shell, and quoting it would add noise to every line this
+# command prints on an ordinary estate. The set is deliberately narrow — `~`
+# and `$` and `*` are not in it, because a shell would expand them.
+sh_operand() {
+    case "${1-}" in
+    '') printf "''\n" ;;
+    *[!A-Za-z0-9/._@%+:,=-]*)
+        printf "'%s'\n" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+        ;;
+    *) printf '%s\n' "$1" ;;
+    esac
 }
 
 # EVERY REPOSITORY IS FETCHED BEFORE ANY ROW IS READ, which is what `--fetch`
@@ -2922,12 +2950,20 @@ path_in_the_way() {
         # way what is registered there is the leg's own checkout, and `git
         # worktree move` refuses one: "'…' is a main working tree" (git 2.43,
         # 2026-09-12). Naming it would be naming an exit that does not work.
-        if [ "$want" = "$repo" ] || [ -d "$want/.git" ]; then
+        #
+        # AND THE PATH TEST IS MADE PHYSICAL, because `$want` is built on
+        # `$RECORD_WORKTREE_ROOT`, which the commit that answered blocker 1
+        # made physical, while `$repo` is `leg_repo_for_role`'s string on
+        # `$root` — the lexical one (Copilot's first round on #27). Comparing
+        # one with the other is the shape of that blocker, and the directory
+        # test should not be the only thing standing between a person and an
+        # exit git refuses.
+        if [ "$want" = "$(physical_path "$repo")" ] || [ -d "$want/.git" ]; then
             IN_THE_WAY_EXIT="$want is the $role leg's OWN checkout rather than a worktree of it, and no \`worktree move\` moves a main working tree, so there is nothing here to move aside: while the worktree root this checkout computes puts this feature on top of that checkout, neither verb can do anything with it"
         elif worktree_is_usable "$want"; then
-            IN_THE_WAY_EXIT="move it aside with \`git -C $repo worktree move $want <a path of your choosing>\`, which is yours to run — a registered worktree moved with \`mv\` leaves git holding the path it was at"
+            IN_THE_WAY_EXIT="move it aside with \`git -C $(sh_operand "$repo") worktree move $(sh_operand "$want") <a path of your choosing>\`, which is yours to run — a registered worktree moved with \`mv\` leaves git holding the path it was at"
             [ "$REGISTERED_LOCKED" -eq 0 ] ||
-                IN_THE_WAY_EXIT="git holds that worktree LOCKED and \`worktree move\` refuses a locked one (\"cannot move a locked working tree\"), so the unlock comes first: \`git -C $repo worktree unlock $want\`, then \`git -C $repo worktree move $want <a path of your choosing>\`, both yours to run — a registered worktree moved with \`mv\` leaves git holding the path it was at"
+                IN_THE_WAY_EXIT="git holds that worktree LOCKED and \`worktree move\` refuses a locked one (\"cannot move a locked working tree\"), so the unlock comes first: \`git -C $(sh_operand "$repo") worktree unlock $(sh_operand "$want")\`, then \`git -C $(sh_operand "$repo") worktree move $(sh_operand "$want") <a path of your choosing>\`, both yours to run — a registered worktree moved with \`mv\` leaves git holding the path it was at"
         else
             # NOT PRUNABLE AND NOT A WORKTREE IS LOCKED, and only locked: git
             # computes `prunable` for every other broken registration, and a
@@ -2936,7 +2972,7 @@ path_in_the_way() {
             # stale-registration arms name, for the same reason, and the same
             # leftover DIRECTORY behind it, because the prune clears the
             # registration and touches nothing on disk.
-            IN_THE_WAY_EXIT="the worktree it registers is not there and git holds the registration LOCKED, which is why it calls it no \`prunable\` — clear it with \`git -C $repo worktree unlock $want\`, then \`git -C $repo worktree prune\`, which is yours to run"
+            IN_THE_WAY_EXIT="the worktree it registers is not there and git holds the registration LOCKED, which is why it calls it no \`prunable\` — clear it with \`git -C $(sh_operand "$repo") worktree unlock $(sh_operand "$want")\`, then \`git -C $(sh_operand "$repo") worktree prune\`, which is yours to run"
             [ ! -d "$want" ] ||
                 IN_THE_WAY_EXIT="$IN_THE_WAY_EXIT, and move aside the directory the prune leaves behind, which \`resume\` refuses for existing whatever git holds"
         fi
@@ -2963,9 +2999,9 @@ path_in_the_way() {
     # to override, or 'prune' or 'remove' to clear" — whether or not the
     # directory was moved first (git 2.43, 2026-09-12, both spellings run).
     # So the prune is named with it, and neither half is optional.
-    IN_THE_WAY_EXIT="move it aside with \`mv $want <a path of your choosing>\`, which is yours to run — nothing here moves or deletes a path it did not create"
+    IN_THE_WAY_EXIT="move it aside with \`mv $(sh_operand "$want") <a path of your choosing>\`, which is yours to run — nothing here moves or deletes a path it did not create"
     [ "$rc" -ne 2 ] ||
-        IN_THE_WAY_EXIT="move it aside with \`mv $want <a path of your choosing>\` and clear the stale registration git still holds for that path with \`git -C $repo worktree prune\`, both yours to run — nothing here moves or deletes a path it did not create, and \`git worktree add\` refuses a path it is still registered at (\"a missing but already registered worktree\")"
+        IN_THE_WAY_EXIT="move it aside with \`mv $(sh_operand "$want") <a path of your choosing>\` and clear the stale registration git still holds for that path with \`git -C $(sh_operand "$repo") worktree prune\`, both yours to run — nothing here moves or deletes a path it did not create, and \`git worktree add\` refuses a path it is still registered at (\"a missing but already registered worktree\")"
     return 0
 }
 
@@ -3147,12 +3183,15 @@ origin_lost_leg() {
 # and did not work.
 off_path_exit() {
     local repo="$1" role="$2" tree="$3" want="$4" held="$5"
-    if [ "$tree" = "$repo" ] || [ -d "$tree/.git" ]; then
+    # THE PATH TEST IS MADE PHYSICAL for the reason `path_in_the_way`'s twin
+    # is: `$tree` is `git worktree list`'s, which is always physical, and
+    # `$repo` is `leg_repo_for_role`'s string on `$root`, which is not.
+    if [ "$tree" = "$(physical_path "$repo")" ] || [ -d "$tree/.git" ]; then
         printf '%s\n' "$tree is the $role leg's OWN checkout rather than a worktree of it, and no \`worktree move\` moves a main working tree, so there is nothing here to move: neither verb sees this feature while that checkout is on that branch"
     elif [ "$held" -eq 2 ]; then
-        printf '%s\n' "clear the stale registration git still holds for that path with \`git -C $repo worktree prune\` first — \`worktree move\` refuses a destination git still holds (\"a missing but already registered worktree\") — then move it where both look: \`mkdir -p ${want%/*} && git -C $repo worktree move $tree $want\`, both yours to run"
+        printf '%s\n' "clear the stale registration git still holds for that path with \`git -C $(sh_operand "$repo") worktree prune\` first — \`worktree move\` refuses a destination git still holds (\"a missing but already registered worktree\") — then move it where both look: \`mkdir -p $(sh_operand "${want%/*}") && git -C $(sh_operand "$repo") worktree move $(sh_operand "$tree") $(sh_operand "$want")\`, both yours to run"
     else
-        printf '%s\n' "move it where both look: \`mkdir -p ${want%/*} && git -C $repo worktree move $tree $want\`, which is yours to run — \`worktree move\` creates no parent directory of its own"
+        printf '%s\n' "move it where both look: \`mkdir -p $(sh_operand "${want%/*}") && git -C $(sh_operand "$repo") worktree move $(sh_operand "$tree") $(sh_operand "$want")\`, which is yours to run — \`worktree move\` creates no parent directory of its own"
     fi
 }
 
@@ -3183,7 +3222,30 @@ check_parked_leg() {
     # first pass has already looked at and this function has not — a park
     # somewhere else moves none of it, so the leg that costs the feature and
     # every sibling leg carry the same exit, and it is the one that works.
+    # AND `${13}` AND `${14}` ARE WHICH LEG THIS IS AND WHICH LEG THE VERDICT
+    # BELONGS TO, both ordinals within the feature, because the two arms below
+    # that read a PATH may only speak for the leg `resume` stopped at
+    # (Copilot's first round on #27, verbatim: "If a later leg also has an
+    # obstruction, its own refusal/exit is reported even though `resume` stops
+    # at the earlier leg and the first-pass verdict is meant to be carried to
+    # all siblings. Track the refusing leg and only run these path checks for
+    # that leg"). IT IS REAL: run against the extension on 2026-09-13 on a
+    # scratch three-leg estate with a stray DIRECTORY at the `spec` leg's
+    # computed path and a worktree of another branch at the `code` leg's,
+    # `resume.sh` answered "Error: 'worktrees/001-a-thing/spec' exists and is
+    # not a registered worktree of the spec leg", "REFUSED: 001-a-thing — an
+    # unrelated path is in the way", exit 2, ONCE — while this layer drew both
+    # legs' lines, the second quoting a REFUSED reason that run never printed.
     local refused="${10:-}" refused_kind="${11:-}" refused_exit="${12:-}"
+    local leg_no="${13:-}" refused_leg="${14:-}"
+    # WHETHER THE LEG IN FRONT OF THIS FUNCTION IS THE ONE THE RUN STOPPED AT.
+    # True where there is no verdict at all — then no leg refuses and each
+    # speaks for itself — and where the verdict's ordinal is this leg's. It
+    # SUBSUMES the RR6 carve-out the rebase needed: a leg whose own `pushed:`
+    # is not `true` IS the leg RR6 stops at, so its own line still stands
+    # beside the `pushed:` arms, and a later leg's does not.
+    local mine=0
+    { [ -n "$refused" ] && [ "$refused_leg" != "$leg_no" ]; } || mine=1
     local repo tree="" ghost="" ghost_is="" clear="" out rc=0 tip n unread="" refuses="" where=""
     local gone_exits="" gone_caveat="" shape_line="" shape_says="" settles="" exits=""
     local want="" move="" held=0
@@ -3397,12 +3459,12 @@ check_parked_leg() {
     2)
         ghost="$out"
         ghost_is="a stale worktree registration for it is still recorded at $ghost"
-        clear="\`git -C $repo worktree prune\`"
+        clear="\`git -C $(sh_operand "$repo") worktree prune\`"
         ;;
     3)
         ghost="$out"
         ghost_is="a stale worktree registration for it is still recorded at $ghost and LOCKED, which \`worktree prune\` skips"
-        clear="\`git -C $repo worktree unlock $ghost\`, then \`git -C $repo worktree prune\`"
+        clear="\`git -C $(sh_operand "$repo") worktree unlock $(sh_operand "$ghost")\`, then \`git -C $(sh_operand "$repo") worktree prune\`"
         ;;
     esac
     # AND A REGISTRATION AT THE COMPUTED PATH IS THE SAME STATE READ FROM THE
@@ -3430,7 +3492,7 @@ check_parked_leg() {
             else
                 ghost_is="a stale worktree registration with a detached head is still recorded at the $ghost \`resume\` computes for this leg, with nothing on disk there"
             fi
-            clear="\`git -C $repo worktree prune\`"
+            clear="\`git -C $(sh_operand "$repo") worktree prune\`"
         fi
     fi
     # THE DIRECTORY THE PRUNE LEAVES BEHIND is the second half of that exit
@@ -3660,10 +3722,13 @@ check_parked_leg() {
     # no path is ever looked at for it and the REFUSED line this one quotes is
     # a line the other end does not print. The two arms above say what that
     # record is and what settles it — a park from the workstation that has the
-    # WIP commit — and they answer it whatever is at the path; this gate is
-    # the same one `read_record`'s first pass closes the walk on.
-    if [ "$pushed" = true ] && role_maps_here "$role" &&
-        { [ -z "$refused" ] || [ -n "$refused_exit" ]; }; then
+    # WIP commit — and they answer it whatever is at the path.
+    #
+    # AND NOT FOR A LEG THE RUN NEVER REACHES, which is `$mine`: the REFUSED
+    # reason this line quotes is the one `resume` prints for the leg it stops
+    # at, and it stops at the FIRST leg in the record's order. A second
+    # obstructed leg's path is read by nothing.
+    if [ "$pushed" = true ] && role_maps_here "$role" && [ "$mine" -eq 1 ]; then
         want="$(leg_tree_path "$root" "$role" "$branch")"
         if path_in_the_way "$repo" "$want" "$branch" "$role"; then
             finding "parked feature $branch ($role leg): $IN_THE_WAY_WHAT is at $want, which is the path \`resume\` computes for this leg and is not this branch's worktree — \`resume\` reads that path and no other, overwrites nothing it did not create, and refuses the WHOLE feature, the other legs with it (\"… exists and is not a registered worktree of the $role leg\", refused as \"$IN_THE_WAY_WHY\"), so nothing here brings it back while that is there — $IN_THE_WAY_EXIT"
@@ -3730,27 +3795,16 @@ check_parked_leg() {
     # command — `resume` refuses a root on a feature branch in any case, which
     # is the local layer's own line on the row this one is printed under.
     #
-    # AND THE VERDICT THAT SILENCES IT IS NOT EVERY VERDICT, which is what
-    # this reading meets on `main`: the whole-feature verdict `read_record`
-    # hands down used to be `collect_legs`' or RR2's and is now RR6's and
-    # RR1's as well (Copilot's third round on #23). Those two are readings of
-    # the RECORD's OWN FIELDS — a leg never pushed, a leg with no parked
-    # commit — and neither of them reads a path or moves anything here, so
-    # the worktree is still sitting where neither verb looks after either is
-    # settled and this line is still the only one that says so. That is the
-    # paragraph above said against a verdict instead of against a field: RR6
-    # comes before the path and refuses those legs without reading it, and
-    # this line is printed AFTER the `pushed:` arms and NOT INSTEAD OF THEM.
-    # A `collect_legs` verdict and RR2's do silence it, and for reasons of
-    # their own: `collect_legs` throws the feature out before any leg is read,
-    # so there is no leg-level reading to make, and a branch origin has lost
-    # is a feature no move here brings back — its exits are in the record or
-    # on the workstation that parked it, and this layer makes that verdict
-    # only after a fetch that worked, which is the only run that knows RR2
-    # fires. The `$pushed` test is what keeps an RR6 verdict from speaking
-    # for a LATER leg: `resume` breaks at the first refusing leg in the
-    # record's order, so a leg whose own `pushed:` is `true` sitting behind
-    # one that is not is a leg the run never reaches.
+    # AND ONLY FOR THE LEG THE RUN STOPPED AT, which `$mine` is: `resume`
+    # breaks at the first refusing leg in the RECORD's order, so a line about
+    # what a LATER leg's path holds is a refusal this layer would be inventing
+    # — and a line about an EARLIER leg's is one the verdict every sibling
+    # carries has already made. Where no leg refuses, every leg is its own and
+    # `$mine` is true for all of them. It is also how "AFTER the `pushed:`
+    # arms and NOT INSTEAD OF THEM" survives `main`'s third round, which made
+    # RR6 a whole-feature verdict: a leg whose own `pushed:` is not `true` IS
+    # the leg RR6 stops at, so this line still stands beside the arms above
+    # it, and a later leg's does not.
     #
     # AND ONLY WHERE THE COMPUTED PATH HOLDS NOTHING, because RR4's question
     # is about that PATH and this arm's exit is a `worktree move` ONTO it (the
@@ -3788,9 +3842,7 @@ check_parked_leg() {
     # the line names the outcome and keeps the quoted sentence for the state
     # that prints it: a line about the other end that the other end does not
     # print is the drift this file's own rules forbid.
-    if [ -n "$tree" ] && role_maps_here "$role" &&
-        { [ -z "$refused" ] || [ -n "$refused_exit" ] ||
-            { [ "$refused_kind" = pushed ] && [ "$pushed" != true ]; }; }; then
+    if [ -n "$tree" ] && role_maps_here "$role" && [ "$mine" -eq 1 ]; then
         want="$(leg_tree_path "$root" "$role" "$branch")"
         held=0
         registered_at "$repo" "$want" || held=$?
@@ -4113,7 +4165,7 @@ check_parked_leg() {
         fi
         finding "parked feature $branch ($role leg): this worktree is BEHIND the parked commit $(short "$commit"), parked ${parked_at:-?} on ${parked_on:-?} — the record is newer, and \`resume\` refuses to reset it"
     else
-        finding "parked feature $branch ($role leg): diverged from the parked commit $(short "$commit"), parked ${parked_at:-?} on ${parked_on:-?} — reconcile by hand: \`git -C $repo log --oneline $(short "$commit")..$branch\`"
+        finding "parked feature $branch ($role leg): diverged from the parked commit $(short "$commit"), parked ${parked_at:-?} on ${parked_on:-?} — reconcile by hand: \`git -C $(sh_operand "$repo") log --oneline $(short "$commit")..$branch\`"
     fi
     return 0
 }
@@ -4210,9 +4262,11 @@ read_record() {
     local root="$1" sel rows="" kind a b c d e f n_features=0
     local parked_at="" parked_on="" lane="" active="" recorded="$NL"
     local seen_branches=0 legs where="" refused="" refused_kind="" unnamed=0
-    local refused_exit="" legrepo="" legtree="" legwt="" legheld=0 legrc=0
+    local refused_exit="" refused_leg="" legno=0
+    local legrepo="" legtree="" legwt="" legheld=0 legrc=0
     local -a feature_legs=() feature_why=() feature_rr=() feature_rr_kind=()
-    local -a feature_exit=() feature_add=() feature_addexit=()
+    local -a feature_exit=() feature_rr_leg=()
+    local -a feature_add=() feature_addexit=() feature_add_leg=()
     shift
     RECORD_SHAPE=""
     [ -n "$RECORD_FILE" ] || return 0
@@ -4267,6 +4321,7 @@ read_record() {
             branch)
                 feature_legs+=(0); feature_why+=("")
                 feature_rr+=(""); feature_rr_kind+=(""); feature_exit+=("")
+                feature_rr_leg+=(""); feature_add_leg+=("")
                 feature_add+=(""); feature_addexit+=("")
                 ;;
             leg)
@@ -4403,6 +4458,17 @@ read_record() {
                                 feature_rr[legs - 1]="the record names no parked commit for its \`$b\` leg"
                                 feature_rr_kind[legs - 1]=moved
                             fi
+                            # WHICH LEG THE VERDICT BELONGS TO, kept beside it
+                            # because the arms in `check_parked_leg` that read
+                            # a path have to know whether the leg in front of
+                            # them is the one `resume` stopped at (Copilot's
+                            # first round on #27).  It is the leg's ORDINAL in
+                            # this feature, which `feature_legs` has just been
+                            # incremented to, and not its role: a record may
+                            # name one role twice, and the second of them is
+                            # not the leg the run refused.
+                            [ -z "${feature_rr[legs - 1]}" ] ||
+                                feature_rr_leg[legs - 1]="${feature_legs[legs - 1]}"
                         fi
                     fi
                     # AND THE FIFTH QUESTION IS THE `git worktree add`'s,
@@ -4449,6 +4515,7 @@ read_record() {
                                 [ "$legheld" -ne 0 ] && [ ! -e "$legtree" ]; then
                                 feature_add[legs - 1]="its \`$b\` leg's worktree is at $legwt, which is not the $legtree \`resume\` computes for it"
                                 feature_addexit[legs - 1]="$(off_path_exit "$legrepo" "$b" "$legwt" "$legtree" "$legheld")"
+                                feature_add_leg[legs - 1]="${feature_legs[legs - 1]}"
                             fi
                         fi
                     fi
@@ -4461,6 +4528,7 @@ read_record() {
             project) parked_at="$a"; parked_on="$b"; lane="$c"; active="$d"; RECORD_SHAPE="$e" ;;
             branch)
                 seen_branches=$((seen_branches + 1))
+                legno=0
                 # A FEATURE THE RECORD GIVES NO BRANCH NAME (Copilot on #22)
                 # is one to the loader and is refused by `resume` whatever its
                 # legs say — with legs, at RR2 with the name blank, "Error:  is
@@ -4524,7 +4592,8 @@ read_record() {
                 # to that brace, matching the first pass's, because an index
                 # this reader invents is a claim about a feature the record
                 # does not make.
-                refused=""; refused_kind=""; refused_exit=""
+                refused=""; refused_kind=""; refused_exit=""; refused_leg=""
+                legno=$((legno + 1))
                 if [ "$seen_branches" -gt 0 ]; then
                     refused="${feature_why[seen_branches - 1]:-}"
                     # `collect_legs` BEFORE THE RRs, in the reading as in the
@@ -4542,6 +4611,7 @@ read_record() {
                         refused="${feature_rr[seen_branches - 1]}"
                         refused_kind="${feature_rr_kind[seen_branches - 1]}"
                         refused_exit="${feature_exit[seen_branches - 1]}"
+                        refused_leg="${feature_rr_leg[seen_branches - 1]}"
                     fi
                     # AND THE ADD IS READ BACK LAST, because it runs last:
                     # every RR of every leg is asked before the first worktree
@@ -4550,10 +4620,11 @@ read_record() {
                     if [ -z "$refused" ]; then
                         refused="${feature_add[seen_branches - 1]:-}"
                         refused_exit="${feature_addexit[seen_branches - 1]:-}"
+                        refused_leg="${feature_add_leg[seen_branches - 1]:-}"
                         [ -z "$refused" ] || refused_kind=add
                     fi
                 fi
-                check_parked_leg "$root" "$a" "$b" "$c" "$d" "$parked_at" "$parked_on" "$e" "$f" "$refused" "$refused_kind" "$refused_exit"
+                check_parked_leg "$root" "$a" "$b" "$c" "$d" "$parked_at" "$parked_on" "$e" "$f" "$refused" "$refused_kind" "$refused_exit" "$legno" "$refused_leg"
                 ;;
             esac
         done <<<"$rows"
