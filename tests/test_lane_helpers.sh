@@ -4291,7 +4291,56 @@ is   "restart refuses a lane the register does not carry" "$rc" 2
 has  "…and names the two commands that find one" "$err" "lane-start <repo> <n>"
 
 echo "== Amendment 11 decision 6: \`lanes\` =="
-run "$LANES_CMD" </dev/null
+# ------- ruling 6: EVERY LANE BY DEFAULT, NARROWED INSIDE A CHECKOUT ---------
+#
+# A11 Addendum 4 ruling 6 was answered NO — clause (j)'s estate-wide default
+# STANDS — over Brett Heap's settlement of 2026-09-13T20:38:11Z, verbatim
+# "Narrow inside a checkout (Recommended)". So: the bare word outside any
+# checkout is every lane the register and the logs know, whatever workstation
+# they are on; inside a lane checkout it is THAT REPOSITORY's lanes and ends
+# with the next free position; `--all` forces the first from anywhere; `--here`
+# is the old workstation-scoped default, kept as an option.
+#
+# THE SUITE RUNS FROM A CHECKOUT — this repository's — so every bare `lanes`
+# below would narrow to it. `--all` is what asks the estate-wide question, and
+# the `--dir` cases are what ask the narrowed one.
+run "$LANES_CMD" --all </dev/null
+is   "lanes --all exits 0 with rows" "$rc" 0
+has  "…and a lane of ANOTHER workstation is in it, which is clause (j)'s default" "$out" "repoA11-3"
+run "$LANES_CMD" --here </dev/null
+is   "lanes --here exits 0" "$rc" 0
+hasnt "…and scopes to this workstation, which is what the old default did" "$out" "repoA11-3"
+has   "…while this workstation's lanes are all there" "$out" "repoA11-1"
+# THE NARROWING, AND THE HALF OF THE SETTLEMENT THAT IS NOT A FILTER.
+run "$LANES_CMD" --prefix repoA11 </dev/null
+is   "a narrowed listing exits 0" "$rc" 0
+has  "…carrying the lanes named for that repository" "$out" "repoA11-1"
+hasnt "…and nothing that is not" "$out" "repoA-1"
+has   "…ending with the NEXT FREE POSITION" "$out" "next free position:"
+has   "…and the exact line that takes it, filled in" "$out" "lane-start repoA11 "
+has   "…with the way back to every lane" "$out" "lanes --all"
+# THE LOWEST FREE ONE, not the highest plus one: repoA11-1..-8 exist in this
+# fixture with gaps, and a register that hands out 12 while 9 is free grows a
+# column nobody reads.
+NEXTFREE="$(printf '%s\n' "$out" | sed -n 's/^ *next free position: *//p' | head -n1)"
+is   "…which is the lowest position no lane of that repository holds" "$NEXTFREE" "9"
+# AN EMPTY REPOSITORY STILL GETS THE ANSWER A PERSON CAME FOR.
+run "$LANES_CMD" --prefix repoNoLanesAtAll </dev/null
+is   "a repository with no lanes exits 8" "$rc" 8
+has  "…saying so in its own name" "$out" "no lane of repoNoLanesAtAll is recorded"
+has  "…and still giving the next free position, which is 1" "$out" "next free position:  1"
+has  "…and the line that takes it" "$out" "lane-start repoNoLanesAtAll 1"
+# `lane-start <repo>` WITH NO POSITION LISTS AND SUGGESTS, and launches nothing.
+: > "$FAKE_CLAUDE_LOG"
+run "$START" repoA11
+is    "lane-start <repo> with no position still exits 2" "$rc" 2
+has   "…saying what it is" "$err" "is a repository and not a lane"
+has   "…printing that repository's lanes" "$err" "repoA11-1"
+has   "…and the next free position, filled in" "$err" "lane-start repoA11 "
+has   "…while the refusal names the position it now has a listing for" "$err" "with a position from the listing above"
+is    "…and launches nothing" "$(cat "$FAKE_CLAUDE_LOG")" ""
+
+run "$LANES_CMD" --all </dev/null
 is   "lanes exits 0 with rows" "$rc" 0
 has  "…naming this workstation's lanes" "$out" "repoA11-1"
 has  "…with the recorded profile" "$out" "team-05a"
@@ -4322,9 +4371,10 @@ hasnt "…with no restart line, because column 10 is a PAUSED lane's" "$out" "re
 has   "a RETIRED lane is still a row too" "$out" "repoFX20-2"
 hasnt "…and gets no restart line either" "$out" "restart repoFX20-2"
 has   "…while a PAUSED lane still gets one, so the column still means something" "$out" "restart repoA11-1"
-hasnt "a lane of ANOTHER workstation is not in this workstation's listing" "$out" "repoA11-3"
+run "$LANES_CMD" --here </dev/null
+hasnt "a lane of ANOTHER workstation is not in the --here listing" "$out" "repoA11-3"
 run "$LANES_CMD" --all </dev/null
-has  "…and --all lists it" "$out" "repoA11-3"
+has  "…and the default estate-wide listing has it" "$out" "repoA11-3"
 run "$LANES_CMD" --repo opensoft/repoA11 </dev/null
 is   "lanes --repo narrows to one repository's lanes" "$rc" 0
 has  "…which is decision 7's per-repo listing, read through the same helper" "$out" "repoA11-1"

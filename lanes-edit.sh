@@ -3953,18 +3953,43 @@ lanes_register_index() {   # [--local]
   fi
 }
 
+# SCOPE, AFTER A11 Addendum 4 RULING 6 (ratified "a11 addendum 4 yes", ruling 6
+# = NO to the workstation-scoped default):
+#
+#   default   EVERY lane the register and the logs know — clause (j) as
+#             written. It used to be this workstation's, and that was never in
+#             the contract: `window-lane` is scoped and the contract says so at
+#             length (`R-A11-8`/RV-T7); this read is not. "List the lanes" on a
+#             two-workstation estate means both.
+#   --here    this workstation only. The old default, kept as an OPTION.
+#   --ws <n>  a named workstation only, which implies the same narrowing.
+#   --all     no narrowing of any kind: it CLEARS `--repo`, `--dir`, `--prefix`
+#             and `--here`, so a caller that has narrowed can undo it in one
+#             word. That is what the settlement means by "`--all` forces the
+#             every-lane listing".
+#
+# `--prefix <repo>` is the LABEL fallback and nothing more: a lane whose log
+# records NEITHER a home NOR a directory cannot be filed by either, and its
+# name's `<repo>-` prefix is the only thing left. Amendment 7 calls that prefix
+# a label rather than a fact, so it is used ONLY where the two facts are absent
+# — never to override a home that disagrees with it, which is the case
+# `openRepoTools#28` says must be SAID rather than filed twice.
 lanes_rows() {
-  lr_repo=""; lr_dir=""; lr_ws="$WS"; lr_all=0; lr_one=""
+  lr_repo=""; lr_dir=""; lr_ws="$WS"; lr_here=0; lr_all=0; lr_one=""; lr_prefix=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --repo) lr_repo="${2-}"; shift 2 || return 64 ;;
-      --dir)  lr_dir="${2-}";  shift 2 || return 64 ;;
-      --ws)   lr_ws="${2-}";   shift 2 || return 64 ;;
-      --lane) lr_one="${2-}";  shift 2 || return 64 ;;
-      --all)  lr_all=1; shift ;;
+      --repo)   lr_repo="${2-}";   shift 2 || return 64 ;;
+      --dir)    lr_dir="${2-}";    shift 2 || return 64 ;;
+      --prefix) lr_prefix="${2-}"; shift 2 || return 64 ;;
+      --ws)     lr_ws="${2-}"; lr_here=1; shift 2 || return 64 ;;
+      --lane)   lr_one="${2-}";    shift 2 || return 64 ;;
+      --here)   lr_here=1; shift ;;
+      --all)    lr_all=1; shift ;;
       *) return 64 ;;
     esac
   done
+  # `--all` LAST AND ABSOLUTE, whatever order the flags arrived in.
+  if [ "$lr_all" = 1 ]; then lr_repo=""; lr_dir=""; lr_prefix=""; lr_here=0; fi
   [ -n "$lr_dir" ] && lr_dir="$(cd -- "$lr_dir" 2>/dev/null && pwd -P || printf '%s' "$lr_dir")"
   # ONE LANE, WITHOUT SCANNING THE ESTATE. `restart <lane>` needs one row's
   # `profile` and nothing else, and building the whole listing for it would walk
@@ -3974,7 +3999,8 @@ lanes_rows() {
   # computes it for the de-duplication: the three lookups below join on that key
   # and `lc` is two processes (ruling 12).
   if [ -n "$lr_one" ]; then
-    lr_names="$(printf '%s\n' "$lr_one" | awk -v sep="$US" 'NF { print tolower($0) sep $0 }')"; lr_all=1
+    lr_names="$(printf '%s\n' "$lr_one" | awk -v sep="$US" 'NF { print tolower($0) sep $0 }')"
+    lr_here=0; lr_repo=""; lr_dir=""; lr_prefix=""
   else
     lr_names="$( { known_lanes 2>/dev/null || :; register_lanes 2>/dev/null || :; } | awk -v sep="$US" 'NF && !seen[tolower($0)]++ { print tolower($0) sep $0 }')"
   fi
@@ -4052,7 +4078,7 @@ EOF2
     # what every other read in this file compares, and a lane may have a row
     # here and its last log line from another machine.
     [ -n "$lr_rw" ] && lr_w="$lr_rw"
-    if [ "$lr_all" = 0 ] && [ -n "$lr_w" ]; then
+    if [ "$lr_here" = 1 ] && [ -n "$lr_w" ]; then
       lr_wcmp="$lr_rws"; [ -n "$lr_wcmp" ] || lr_wcmp="$(short_ws "$lr_w")"
       [ "$lr_wcmp" = "$lr_ws_short" ] || continue
     fi
@@ -4061,10 +4087,25 @@ EOF2
       lr_hc="$(alias_lookup "$lr_home" 2>/dev/null || :)"
       [ -n "$lr_hc" ] && lr_home="$lr_hc"
     fi
-    if [ -n "$lr_repo" ] || [ -n "$lr_dir" ]; then
+    if [ -n "$lr_repo" ] || [ -n "$lr_dir" ] || [ -n "$lr_prefix" ]; then
       lr_keep=0
       [ -n "$lr_repo" ] && [ -n "$lr_home" ] && [ "$(lc "$lr_home")" = "$(lc "$lr_repo")" ] && lr_keep=1
       [ -n "$lr_dir" ]  && [ -n "$lr_d" ]    && [ "$lr_d" = "$lr_dir" ] && lr_keep=1
+      # THE LABEL, AS A THIRD OR-TERM. Amendment 7 calls a lane name's
+      # `<repo>-` prefix a LABEL rather than a fact, and the home is what FILES
+      # a lane — but a listing is asked "which lanes are this repository's", and
+      # two populations answer that and are missed by home and `dir` alike:
+      #   * a lane with a ROW AND NO LOG, which this estate has, whose home and
+      #     directory are simply not recorded anywhere yet;
+      #   * a lane a person NAMED for this repository whose log records a
+      #     different home — the disagreement `openRepoTools#28` says to SAY
+      #     rather than resolve, and still a position `lane-start <repo> <n>`
+      #     cannot hand out twice.
+      # It never overrides a home: a lane matched only by its label is LISTED,
+      # not re-homed.
+      if [ "$lr_keep" = 0 ] && [ -n "$lr_prefix" ]; then
+        case "$(lc "$lr_l")" in "$(lc "$lr_prefix")"-*) lr_keep=1 ;; esac
+      fi
       [ "$lr_keep" = 1 ] || continue
     fi
     # FAILING THE CELL, THE LANE'S OWN LOG — clause (d) rule 3, out of the same
@@ -5469,12 +5510,12 @@ EOF
     lns_args=(); lns_fetch=0
     while [ $# -gt 0 ]; do
       case "$1" in
-        --repo|--dir|--ws|--lane) [ -n "${2-}" ] || die "$1 needs a value (usage: lanes [--repo <owner/repo>] [--dir <path>] [--ws <workstation>] [--lane <lane>] [--all] [--fetch])" 64
+        --repo|--dir|--ws|--lane|--prefix) [ -n "${2-}" ] || die "$1 needs a value (usage: lanes [--repo <owner/repo>] [--dir <path>] [--prefix <repo>] [--ws <workstation>] [--lane <lane>] [--here] [--all] [--fetch])" 64
                            lns_args+=("$1" "$2"); shift 2 ;;
-        --all)             lns_args+=("$1"); shift ;;
+        --all|--here)      lns_args+=("$1"); shift ;;
         --fetch)           lns_fetch=1; shift ;;
         --)                shift ;;
-        *)                 die "unknown argument '$1' for lanes (usage: lanes [--repo <owner/repo>] [--dir <path>] [--ws <workstation>] [--all] [--fetch])" 64 ;;
+        *)                 die "unknown argument '$1' for lanes (usage: lanes [--repo <owner/repo>] [--dir <path>] [--prefix <repo>] [--ws <workstation>] [--here] [--all] [--fetch])" 64 ;;
       esac
     done
     # THE ONE READ IN THIS FILE WHOSE DEFAULT IS LOCAL (SPEC rev 4 §15). Every
@@ -5490,7 +5531,7 @@ EOF
     case "$lns_rc" in
       0)  : ;;
       8)  exit 8 ;;
-      64) die "usage: lanes [--repo <owner/repo>] [--dir <path>] [--ws <workstation>] [--all]" 64 ;;
+      64) die "usage: lanes [--repo <owner/repo>] [--dir <path>] [--prefix <repo>] [--ws <workstation>] [--here] [--all]" 64 ;;
       *)  die "the lane listing could not be read (exit $lns_rc)" 1 ;;
     esac
     [ -n "$lns_out" ] || exit 8

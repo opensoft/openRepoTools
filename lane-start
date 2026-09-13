@@ -571,7 +571,28 @@ case "${#positional[@]}" in
     elif [ -n "$dir_override" ]; then
       verbatim="$arg"
     else
-      die "'$arg' is not a lane: a lane is <repo>-<position>, e.g. $arg-1. Run: $prog $arg <n>, or name the checkout yourself with --dir <path> to use '$arg' as the lane name" 2
+      # `lane-start <repo>` WITH NO POSITION LISTS AND SUGGESTS (Brett Heap,
+      # 2026-09-13, interactive multi-choice, verbatim "Yes, list and suggest
+      # (Recommended)"; A11 Addendum 4 ruling 6's third delta, tracked as
+      # `opensoft/openRepoTools#28`). It used to refuse with a placeholder `<n>`
+      # for the operator to translate, at the one moment they are trying to
+      # start work and do not know which positions are taken.
+      #
+      # IT RENDERS NOTHING OF ITS OWN. `lanes --prefix <repo>` is that listing
+      # and its next-free-position footer, installed beside this command by
+      # `openRepoTools --install`; a second rendering here is a second thing to
+      # drift. Where it is absent — an older workstation — the refusal below is
+      # still the whole answer, so this is an improvement and never a dependency.
+      ls_cmd="$(command -v lanes 2>/dev/null || :)"
+      [ -n "$ls_cmd" ] || { [ -x "$SCRIPT_DIR/lanes" ] && ls_cmd="$SCRIPT_DIR/lanes"; }
+      if [ -n "$ls_cmd" ]; then
+        note "'$arg' is a repository and not a lane. Its lanes, and the position that is free:"
+        LANES_NO_FETCH=1 "$ls_cmd" --prefix "$arg" >&2 || :
+      fi
+      # STILL EXIT 2, AND NOTHING IS LAUNCHED. A listing is what a person asked
+      # for; a caller that scripted `lane-start <repo>` expecting a session must
+      # not read 0 from a run that started none.
+      die "'$arg' is not a lane: a lane is <repo>-<position>, e.g. $arg-1. Run: $prog $arg <n> with a position from the listing above, or name the checkout yourself with --dir <path> to use '$arg' as the lane name" 2
     fi
     ;;
   0) usage >&2; die "a lane needs a position: $prog <repo> <n>" 2 ;;

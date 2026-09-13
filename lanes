@@ -3,9 +3,20 @@
 #
 # lanes — every lane on this workstation, newest activity first.
 #
-#   lanes            the estate-wide listing, read LOCALLY
-#   lanes --fetch    the same, after refreshing from origin
-#   lanes --all      every workstation's lanes, not only this one's
+#   lanes            INSIDE a lane checkout: that repository's lanes, and the
+#                    next free position with the exact line that takes it.
+#                    Outside one: every lane the register and the logs know.
+#   lanes --all      every lane, whatever the cwd — it clears the narrowing
+#   lanes --here     only this workstation's lanes
+#   lanes --fetch    any of the above, after refreshing from origin
+#
+# THE DEFAULT IS EVERY LANE, AND THE NARROWING IS BY CHECKOUT (A11 Addendum 4
+# ruling 6, ratified "a11 addendum 4 yes" with ruling 6 answered NO, over the
+# settlement Brett Heap gave at 2026-09-13T20:38:11Z, verbatim "Narrow inside a
+# checkout (Recommended)"). It used to be scoped to the ASKING WORKSTATION,
+# which is in no clause: `window-lane` is scoped and the contract says so at
+# length, and this read is not. "List the lanes" on a two-workstation estate
+# means both. `--here` is the old default, kept as an option.
 #
 # Installed on PATH by `openRepoTools --install`. Brett Heap's direction of
 # 2026-09-13T15:34:30Z, verbatim — "we need a good simple way to restart and
@@ -71,16 +82,24 @@ die() { printf '\n%s: REFUSED: %s\n' "$prog" "$1" >&2; exit "${2:-64}"; }
 
 usage() {
 	cat <<'USAGE'
-lanes [--fetch] [--all] [--repo <owner/repo>] [--dir <path>] [--ws <workstation>]
+lanes [--fetch] [--all] [--here] [--repo <owner/repo>] [--dir <path>] [--ws <workstation>]
 
-Every lane on this workstation, newest activity first: name, state, workstation,
-profile, tmux window, last transcript uuid, directory, held objects and age —
-and for a lane that is not live, the exact command that restarts it.
+Inside a lane checkout: THAT REPOSITORY's lanes, ending with the next free
+position and the exact `lane-start <repo> <n>` that takes it. Outside one: every
+lane the register and the lane logs know. Newest activity first: name, state,
+workstation, profile, tmux window, last transcript uuid, directory, held objects
+and age — and for a PAUSED lane, the exact command that restarts it.
 
   --fetch          refresh from origin first. Without it the read is LOCAL and
                    the foot of the listing says how old this checkout's answer
                    is: a person typing one word wants an answer now.
-  --all            every workstation's lanes, not only this one's.
+  --all            every lane, whatever the cwd: it clears the checkout
+                   narrowing as well as any --repo/--dir/--ws given with it.
+  --prefix <repo>  the lanes NAMED for that repository, and the next free
+                   position for it. `lane-start <repo>` with no position asks
+                   for exactly this rather than rendering a listing of its own.
+  --here           only this workstation's lanes. This was the default before
+                   Amendment 11 Addendum 4 ruling 6 and is an option now.
   --repo <o/r>     only lanes whose register home is that repository.
   --dir <path>     only lanes whose recorded directory is that path.
                    --repo and --dir together are an OR, not an AND: a lane's
@@ -92,7 +111,8 @@ and for a lane that is not live, the exact command that restarts it.
 Exit: 0 rows · 8 none · 64 usage · 2 a helper predating Amendment 11 · 1 a read failed.
 
 It writes nothing, launches nothing and asks nothing. `restart <lane>` is what
-restarts one, and `restart` with no argument lists the CURRENT CHECKOUT's lanes.
+restarts one, and `restart` with no argument lists the CURRENT CHECKOUT's lanes
+on THIS workstation, which is a narrower question than this one.
 USAGE
 }
 
@@ -106,24 +126,67 @@ fi
     command by \`openRepoTools --install\`. Run that, or set \$LANES_EDIT." 1
 
 do_fetch=0
+narrowed=0          # 1 once anything has narrowed the listing
+# THE REPOSITORY THIS LISTING IS ABOUT, where it is about one. Set from the
+# checkout around the cwd, or named by `--prefix <repo>` — which is how
+# `lane-start <repo>` with no position asks for this listing rather than
+# rendering a second one of its own (A11 Addendum 4 ruling 6's third delta,
+# tracked as `opensoft/openRepoTools#28`). Its presence is what turns on the
+# NEXT FREE POSITION footer.
+here_repo=""
 args=()
 while [ $# -gt 0 ]; do
 	case "$1" in
 	-h | --help) usage; exit 0 ;;
 	--fetch) do_fetch=1; shift ;;
-	--all) args+=(--all); shift ;;
-	--repo | --dir | --ws)
+	--all) args+=(--all); narrowed=0; shift ;;
+	--here) args+=(--here); narrowed=1; shift ;;
+	--repo | --dir | --ws | --prefix)
 		[ -n "${2-}" ] || die "$1 needs a value — see $prog --help" 64
-		args+=("$1" "$2"); shift 2 ;;
-	--repo=* | --dir=* | --ws=*)
+		[ "$1" = --prefix ] && here_repo="$2"
+		args+=("$1" "$2"); narrowed=1; shift 2 ;;
+	--repo=* | --dir=* | --ws=* | --prefix=*)
 		flag="${1%%=*}"; val="${1#*=}"
 		[ -n "$val" ] || die "$flag needs a value — see $prog --help" 64
-		args+=("$flag" "$val"); shift ;;
+		[ "$flag" = --prefix ] && here_repo="$val"
+		args+=("$flag" "$val"); narrowed=1; shift ;;
 	--) shift ;;
 	-*) die "unknown option '$1' — see $prog --help" 64 ;;
 	*) die "lanes takes no positional arguments; did you mean \`restart $1\`? — see $prog --help" 64 ;;
 	esac
 done
+
+# THE BARE WORD INSIDE A LANE CHECKOUT NARROWS TO THAT REPOSITORY (Brett Heap's
+# settlement of 2026-09-13T20:38:11Z, verbatim "Narrow inside a checkout
+# (Recommended)"; A11 Addendum 4 ruling 6; SPEC rev 6 §15).
+#
+# THE NARROWING IS THE READ'S OWN, not a second filter: `--dir` is clause (i)'s
+# and defaults here to the checkout around the cwd, `--repo` is that checkout's
+# `origin`, and the two are an OR — a lane's home repository and the checkout it
+# sits in are not the same fact. `--prefix` is the third term and is the LABEL
+# fallback, used by the read only where a lane has neither a home nor a `dir`:
+# a row with no log at all cannot be filed by either, and its name is the only
+# thing left. A lane whose home DISAGREES with its prefix is filed by its home.
+#
+# ANY EXPLICIT NARROWING SUPPRESSES THIS. `--repo`, `--dir`, `--ws` and `--here`
+# are the caller saying which lanes they mean, and `--all` says every one.
+origin_nwo() {
+	url="$(git -C "${1:-.}" remote get-url origin 2>/dev/null || :)"
+	[ -n "$url" ] || return 1
+	nwo="$(printf '%s\n' "$url" | sed -E 's#\.git$##; s#^git@[^:]+:##; s#^ssh://[^/]+/##; s#^https?://[^/]+/##')"
+	printf '%s\n' "$nwo" | grep -qE '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || return 1
+	printf '%s\n' "$nwo"
+}
+here_root=""; here_nwo=""
+if [ "$narrowed" = 0 ] && [ ${#args[@]} -eq 0 ]; then
+	here_root="$(git rev-parse --show-toplevel 2>/dev/null || :)"
+	if [ -n "$here_root" ]; then
+		here_repo="$(basename -- "$here_root")"
+		here_nwo="$(origin_nwo "$here_root" 2>/dev/null || :)"
+		args+=(--dir "$here_root" --prefix "$here_repo")
+		[ -n "$here_nwo" ] && args+=(--repo "$here_nwo")
+	fi
+fi
 
 ws_pair="$("$LANES_EDIT" workstation 2>/dev/null || :)"
 ws_name="$(printf '%s' "$ws_pair" | cut -f1)"
@@ -174,9 +237,20 @@ else
 fi
 case "$rc" in
 0) : ;;
-8) say "no lane is recorded for ${ws_name:-this workstation}."
-	say "  open one:            lane-start <repo> <n>"
-	say "  every workstation:   $prog --all"
+8)
+	if [ -n "$here_repo" ]; then
+		# AN EMPTY REPOSITORY STILL GETS THE ANSWER A PERSON CAME FOR: the next
+		# free position is 1, and the line that takes it is printed filled in.
+		say "no lane of $here_repo is recorded."
+		say ""
+		say "  next free position:  1"
+		say "  take it:             lane-start $here_repo 1"
+		say "  every lane:          $prog --all"
+	else
+		say "no lane is recorded${ws_name:+ that $ws_name can see}."
+		say "  open one:            lane-start <repo> <n>"
+		say "  this workstation:    $prog --here"
+	fi
 	ws_notice
 	exit 8 ;;
 64) die "bad arguments for the listing read — see $prog --help" 64 ;;
@@ -199,6 +273,7 @@ printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
 	LANE STATE WHERE PROFILE WINDOW "LAST TRANSCRIPT" AGE DIRECTORY
 n=0
 defects=0
+taken=""
 while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_restart r_home r_fk; do
 	[ -n "${r_lane:-}" ] || continue
 	printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
@@ -225,16 +300,54 @@ while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_
 		"" "$r_fk" "$LANES_EDIT" "$r_lane" "$r_lane"
 		defects=$((defects + 1)) ;;
 	esac
+	# THE POSITIONS THIS REPOSITORY'S LANES ALREADY HOLD, for the next free one
+	# below. A position is DIGITS with an optional trailing letter, which is
+	# `lane-start:565-578`'s own rule and the only reading under which
+	# `openxfactory-4-opendox-extraction` has no position at all. `5a` and `5`
+	# are the same position taken twice, so the letter is stripped for the
+	# comparison — a lane may be re-cut, and a re-cut position is not free.
+	if [ -n "$here_repo" ]; then
+		case "$(printf '%s' "$r_lane" | tr 'A-Z' 'a-z')" in
+		"$(printf '%s' "$here_repo" | tr 'A-Z' 'a-z')"-*)
+			pos="${r_lane##*-}"; pos="${pos%[A-Za-z]}"
+			case "$pos" in
+			'' | *[!0-9]*) : ;;
+			*) taken="$taken $((10#$pos))" ;;
+			esac ;;
+		esac
+	fi
 	n=$((n + 1))
 done <<EOF
 $out
 EOF
 
+# THE NEXT FREE POSITION AND THE EXACT LINE THAT TAKES IT — the half of the
+# settlement that is not a filter. A listing tells a person what is there; this
+# tells them what to type next, filled in, so nobody has to translate a
+# placeholder at the one moment they are trying to start work.
+#
+# IT IS THE LOWEST FREE ONE, not the highest plus one: positions are re-used as
+# lanes end, and handing out 12 while 3 is free is how a register grows a column
+# nobody reads. `lane-start` refuses a position that is taken, so this is a
+# suggestion with a guard behind it and never an assertion.
+if [ -n "$here_repo" ]; then
+	next=1
+	while :; do
+		case " $taken " in *" $next "*) next=$((next + 1)) ;; *) break ;; esac
+	done
+fi
+
 say ""
 if [ "$do_fetch" = 1 ]; then
-	say "$n lane(s), as of a fetch just now."
+	say "$n lane(s)${here_repo:+ of $here_repo}, as of a fetch just now."
 else
-	say "$n lane(s), read locally — no fetch; this checkout last heard from origin $("$LANES_EDIT" fetch-age 2>/dev/null || printf 'unknown'). \`$prog --fetch\` refreshes first."
+	say "$n lane(s)${here_repo:+ of $here_repo}, read locally — no fetch; this checkout last heard from origin $("$LANES_EDIT" fetch-age 2>/dev/null || printf 'unknown'). \`$prog --fetch\` refreshes first."
+fi
+if [ -n "$here_repo" ]; then
+	say ""
+	say "  next free position:  $next"
+	say "  take it:             lane-start $here_repo $next"
+	say "  every lane:          $prog --all"
 fi
 [ "$defects" = 0 ] || say "$defects lane(s) have a live fork of their transcript running. A fork is never the holder (ratified decision 8(c)); the one act is \`lane-end <lane> --retire <pid|uuid>\`, which writes the record that stops every read counting it — it never kills the process, and that part stays yours (clause (k) rule (e))."
 ws_notice

@@ -189,7 +189,12 @@ list_this_checkout() {
 		note "  \`lanes\` lists every lane on this workstation; \`restart <lane>\` restarts one by name."
 		return 8
 	fi
-	args=()
+	# `--here` KEEPS THIS LISTING WHAT IT HAS ALWAYS BEEN. A11 Addendum 4
+	# ruling 6 flips the READ's default from "this workstation" to every lane;
+	# decision 7's per-repo listing was never asked to change, and a `restart`
+	# line offered for a lane live on another machine is a line that cannot be
+	# typed here. So this narrowing is explicit now rather than inherited.
+	args=(--here)
 	[ -n "$repo" ] && args+=(--repo "$repo")
 	[ -n "$root" ] && args+=(--dir "$root")
 	# LOCAL READS. A person typing `restart` wants an answer now, and every read
