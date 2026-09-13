@@ -3675,11 +3675,24 @@ is   "workstation takes no arguments, and says so with its own 64" "$rc" 64
 # against every line this estate has before the guard was written: of 111
 # payloads in the 15 live lane logs, 0 carry `, ` and 0 carry `"`, while 76
 # carry `; `.
-run env LANES_LANE=repoA11-1 "$E" log RESUMED "lane:repoA11-1" '→' "swap; dir /a, b; workstation Eagle"
+# ON A LANE OF THEIR OWN, because two of these cases WRITE and what they write
+# is read by the `lane-start` directory cases far below: pointed at
+# `repoA11-1`, the quoted-path case left `dir "/a b/c"` as that lane's last
+# recorded directory and three later assertions failed with `no such directory:
+# /a b/c`. A fixture that changes what a later case reads is a fixture that has
+# to be its own.
+add_seed_row "| \`repoA11w-1\` | harness \`$A11_ID2\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoA11/w.md | ACTIVE |"
+{ printf '# lane repoA11w-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoA11w-1, session %s@Eagle, 2026-09-12T09:00:00Z, lane:repoA11w-1 → home opensoft/repoA11; estate repoA11\n' "$A11_ID2"
+} > "$LOGD/repoA11w-1.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the clause (c) write cases their own lane"
+git -C "$WIP" push -q origin main
+run env LANES_LANE=repoA11w-1 "$E" log RESUMED "lane:repoA11w-1" '→' "swap; dir /a, b; workstation Eagle"
 is   "the writer refuses a ', ' in the payload — clause (c)'s other separator" "$rc" 2
 has  "…naming the four fields it would break" "$err" "session <uuid>@<ws>"
 has  "…and the separator that is legitimate there" "$err" "Use a semicolon"
-hasnt "…while writing nothing at all" "$(git -C "$WIP" log --format=%s -n1)" "RESUMED lane:repoA11-1"
+hasnt "…while writing nothing at all" "$(git -C "$WIP" log --format=%s -n1)" "RESUMED lane:repoA11w-1"
 # AND IT IS THE PAYLOAD ONLY. The free text is everything after the SECOND
 # ` — `, where the fields are already split, so prose commas are ordinary there
 # — the estate's own log is full of them, and refusing them would refuse lines
@@ -3693,15 +3706,15 @@ hasnt "…while writing nothing at all" "$(git -C "$WIP" log --format=%s -n1)" "
 # reason — a fixture step, not a fix to anything under test.
 git -C "$WIP" add -A >/dev/null 2>&1
 git -C "$WIP" commit -q -m "commit pending handoff edits before the clause (c) write cases" >/dev/null 2>&1 || :
-run env LANES_LANE=repoA11-1 "$E" log RESUMED "lane:repoA11-1" '→' "swap; workstation Eagle" "tick 8.4 landed, and 5.7a, 5.9a stay unheld"
+run env LANES_LANE=repoA11w-1 "$E" log RESUMED "lane:repoA11w-1" '→' "swap; workstation Eagle" "tick 8.4 landed, and 5.7a, 5.9a stay unheld"
 is   "…while a comma in the FREE TEXT is ordinary prose and is written" "$rc" 0
-has  "…exactly as it was given" "$(tail -n1 "$LOGD/repoA11-1.md")" "landed, and 5.7a, 5.9a stay unheld"
+has  "…exactly as it was given" "$(tail -n1 "$LOGD/repoA11w-1.md")" "landed, and 5.7a, 5.9a stay unheld"
 # AND NOT THE `"`, BECAUSE CLAUSE (c) WRITES ONE. A path with a space is written
 # QUOTED — that is what makes it one ref under 7(b) — so a `"` refusal in the
 # whole-payload guard would refuse the shape the clause mandates.
-run env LANES_LANE=repoA11-1 "$E" log RESUMED "lane:repoA11-1" '→' 'swap; dir "/a b/c"; workstation Eagle'
+run env LANES_LANE=repoA11w-1 "$E" log RESUMED "lane:repoA11w-1" '→' 'swap; dir "/a b/c"; workstation Eagle'
 is   "…and a quoted path, which clause (c) requires for a space, still goes through" "$rc" 0
-has  "…with both quotes intact" "$(tail -n1 "$LOGD/repoA11-1.md")" 'dir "/a b/c"'
+has  "…with both quotes intact" "$(tail -n1 "$LOGD/repoA11w-1.md")" 'dir "/a b/c"'
 
 
 # ------------------ the `/restart` skill's own lines, RUN (F-X9, F-X10, F-X11)
