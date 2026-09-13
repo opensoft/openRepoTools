@@ -128,8 +128,27 @@ if [ -z "$dir" ]; then                                # 8 → the default; nothi
 fi
 ```
 
-**Not a directory → REFUSED**, naming `--dir`. A restart that lands in the right transcript and the wrong
+**Not a directory → REFUSED**, and the refusal is ONE LINE that names the act which RECORDS the directory —
+not just the flag that gets past this run. A restart that lands in the right transcript and the wrong
 directory loses the repository's `CLAUDE.md` and the lane's memory, silently (Evidence 3).
+
+**EVIDENCE 7 is this case, and it is why the refusal must be a refusal.** Measured 2026-09-13T23:01Z: a lane
+whose record predates clause (c) carries `home` and `estate` and **no `dir`**, and whose checkout is nested —
+`opsXfactory-5`, at `~/projects/xFactory/xFactories/OpsxFactory`. `lane-start` derived
+`$PROJECTS_ROOT/<repo>`, found nothing, and **exited 1 behind the launcher's `exec`**: a pane that said
+`[exited]` with the message scrolled past it. So print, verbatim and filled in:
+
+```text
+lane-start --dir <the lane's checkout> <repo> <n>
+```
+
+and say that it RECORDS the directory in the lane's own log, so no later restart on any surface has to be
+told again (Amendment 11 clause (c); nothing is backfilled, Amendment 7(i)). **Do not guess a directory**:
+`lane-start` writes the lane's home from that directory's `origin`, so a checkout that merely has the right
+name re-homes the lane for every `#n` it writes afterwards. `lane-start` itself now tries two further rungs
+before it refuses — the estate's `project.yaml` legs and a checkout of the lane's recorded home one or two
+levels under `$PROJECTS_ROOT`, each **proved by that directory's own `origin`** — so where those answer, step
+5 resolves it and this step never fires.
 
 ## 4. The decision — **before** anything is written
 

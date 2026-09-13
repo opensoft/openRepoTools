@@ -145,7 +145,7 @@ skip() { skipped=$((skipped + 1)); printf 'skip %s\n       %s\n' "$1" "${2-}"; }
 # RATHER THAN OMITTED. Amendment 11's tooling round was directed to build ON the
 # `opensoft/brett-wip` hotfix of 2026-09-13 — step 3b's ownership fence, `--name`
 # on every launch branch, and `log` refusing `unknown` — which `openRepoTools#24`
-# ports into this tree, and NOT to write those three a second time. The tests
+# (Amendment 9's adoption act 3, merged as `d4b5710`) ports into this tree, and NOT to write those three a second time. The tests
 # that would catch each are written here anyway, because a test written after the
 # fix is a test that never proved anything; until the port arrives they report
 # PENDING with the exact expectation, and the moment it does they are ordinary
@@ -619,9 +619,16 @@ has  "lane-start --help prints the usage" "$out" "lane-start [options] <repo> <n
 is   "outside tmux: exit 1 (environment)" "$rc" 1
 has  "outside tmux: the refusal names the fix" "$err" "run this inside the tmux window that will carry the lane"
 
+# EVIDENCE 7 MOVED THIS FROM 1 TO 2. A lane with no recorded checkout and none
+# that can be PROVED is a refusal a person fixes with one flag, not an
+# environment that failed — and as a `1` behind the launcher's `exec` it was a
+# pane that said `[exited]` with the message scrolled past it. `restart` already
+# spends 2 on the same fact (clause (i), `R-A11-20`).
 run "$START" repoZZ 1 --no-launch
-is   "no such directory: exit 1" "$rc" 1
+is   "a lane with no provable checkout REFUSES with 2, not the 1 that printed [exited]" "$rc" 2
 has  "no such directory: names --dir" "$err" "--dir"
+has  "…filled in as the act that RECORDS it" "$err" "lane-start --dir <path> repoZZ 1"
+has  "…and says nothing was started" "$err" "nothing was started"
 
 run "$START" repoA "" --no-launch
 is   "a non-position is refused with exit 2" "$rc" 2
@@ -4146,19 +4153,19 @@ skill_subfield() {   # <win> <dir> — runs the skill's own two `case` lines
     printf 'win=[%s] dir=[%s] refused=[%s]' "$win" "$dir" "$refused" )
 }
 is "a clean window and directory go through untouched" \
-   "$(skill_subfield 'sess:0 @71' '/home/b/x')" 'win=[sess:0 @71] dir=[/home/b/x] refused=[]'
+   "$(skill_subfield 'sess:0 @71' '/checkouts/b/x')" 'win=[sess:0 @71] dir=[/checkouts/b/x] refused=[]'
 is "a space in the path is QUOTED, which is what makes it one ref under 7(b)" \
-   "$(skill_subfield 'sess:0' '/home/b/my projects/x')" 'win=[sess:0] dir=["/home/b/my projects/x"] refused=[]'
+   "$(skill_subfield 'sess:0' '/checkouts/b/my projects/x')" 'win=[sess:0] dir=["/checkouts/b/my projects/x"] refused=[]'
 is "a ', ' in the path DROPS the sub-field, keeps the line, and says what went" \
-   "$(skill_subfield 'sess:0' '/home/b/a, b')" 'win=[sess:0] dir=[] refused=[ dir=/home/b/a, b]'
+   "$(skill_subfield 'sess:0' '/checkouts/b/a, b')" 'win=[sess:0] dir=[] refused=[ dir=/checkouts/b/a, b]'
 is "…and a '; ', which SPEC rev 6 §5 adds for dir and profile" \
-   "$(skill_subfield 'sess:0' '/home/b/a; b')" 'win=[sess:0] dir=[] refused=[ dir=/home/b/a; b]'
+   "$(skill_subfield 'sess:0' '/checkouts/b/a; b')" 'win=[sess:0] dir=[] refused=[ dir=/checkouts/b/a; b]'
 is "…and a '\"', which clause (c) writes itself and so may not be in the value" \
-   "$(skill_subfield 'sess:0' '/home/b/a"b')" 'win=[sess:0] dir=[] refused=[ dir=/home/b/a"b]'
+   "$(skill_subfield 'sess:0' '/checkouts/b/a"b')" 'win=[sess:0] dir=[] refused=[ dir=/checkouts/b/a"b]'
 is "a ', ' in the WINDOW drops that sub-field, on A8(b)'s list and not widened" \
-   "$(skill_subfield 'sess:0, x' '/home/b/x')" 'win=[] dir=[/home/b/x] refused=[ window=sess:0, x]'
+   "$(skill_subfield 'sess:0, x' '/checkouts/b/x')" 'win=[] dir=[/checkouts/b/x] refused=[ window=sess:0, x]'
 is "…and a '; ' in the window is NOT refused, because A8(b)'s list is not widened (R-A11-15)" \
-   "$(skill_subfield 'sess:0; x' '/home/b/x')" 'win=[sess:0; x] dir=[/home/b/x] refused=[]'
+   "$(skill_subfield 'sess:0; x' '/checkouts/b/x')" 'win=[sess:0; x] dir=[/checkouts/b/x] refused=[]'
 # (b) THE NO-WORKTREE `dir` RUNGS — `R-A11-11`, and the rung the launcher round
 # was ORDERED to drop, kept by the copy that survives.
 hasnt "the skill no longer falls to this shell's git toplevel for the lane's dir" \
@@ -4267,10 +4274,94 @@ has  "…naming the path" "$err" "a-directory-that-is-gone"
 has  "…the rung it came from" "$err" "from the lane's log"
 has  "…and the one flag that fixes it" "$err" "--dir"
 
+# ------------------------------- EVIDENCE 7: THE LANE WHOSE CHECKOUT IS NESTED
+#
+# Reported by Brett Heap 2026-09-13T23:01:02Z
+# (brettheap/new-workstation#20, comment 5656793094). `pclaude team03m`
+# auto-selected the saved lane `opsXfactory-5`, `lane-start` derived
+# `~/projects/opsXfactory` — which does not exist — and EXITED 1 BEFORE CLAUDE
+# STARTED, leaving a pane that said `[exited]`. The real checkout is
+# `~/projects/xFactory/xFactories/OpsxFactory`.
+#
+# THE RECORD SHAPE IS COPIED FROM THE LIVE LOG (read only): that lane's last
+# RESUMED and PAUSED lines carry `home opensoft/OpsxFactory; estate xFactory`
+# and `window …; workstation docker-desktop` — and NO `dir`, the field this
+# amendment adds and that nothing backfills (Amendment 7(i)). The lane label
+# and the repository are not even the same string: `opsXfactory` against
+# `OpsxFactory`.
+E7_ID="e7e70001-0007-4000-8000-e7e700010007"
+mkdir -p "$HOME/projects/xFactory/xFactories/OpsxFactory"
+git init -q -b main "$HOME/projects/xFactory/xFactories/OpsxFactory"
+git -C "$HOME/projects/xFactory/xFactories/OpsxFactory" remote add origin "git@github.com:opensoft/OpsxFactory.git"
+add_seed_row "| \`opsXfactory-5\` | harness \`$E7_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/xFactory/o.md | ACTIVE |"
+{ printf '# lane opsXfactory-5 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'RESUMED — lane opsXfactory-5, session %s@Eagle, 2026-09-13T03:30:02Z, lane:opsXfactory-5 → home opensoft/OpsxFactory; estate xFactory\n' "$E7_ID"
+  printf 'PAUSED — lane opsXfactory-5, session %s@docker-desktop, 2026-09-13T22:41:57Z, lane:opsXfactory-5 → swap; window claude-team-03l-20260913220714-66271:0; workstation docker-desktop — on Brett Heap'"'"'s word: nothing in flight\n' "$E7_ID"
+} > "$LOGD/opsXfactory-5.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed Evidence 7's record shape: home and estate, and no dir"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+# THE DEFAULT IS NOT THERE, AND THAT USED TO BE THE WHOLE STORY.
+is   "Evidence 7's default checkout really is absent, which is the fixture" \
+     "$([ -d "$HOME/projects/opsXfactory" ] && printf present || printf absent)" "absent"
+# RUNG 6 ANSWERS: a checkout of the lane's RECORDED HOME, two levels under
+# $PROJECTS_ROOT, proved by its own `origin` — not by its name.
+run "$START" --dry-run opsXfactory 5
+is   "lane-start no longer dies on a lane whose checkout is nested (Evidence 7)" "$rc" 0
+has  "…finding the checkout of the home its own record names" "$err" "cd $HOME/projects/xFactory/xFactories/OpsxFactory"
+has  "…and naming the rung that answered" "$err" "Evidence 7"
+# AND IT IS PROVED BY `origin`, NEVER BY THE NAME. A directory with the right
+# name and somebody else's origin is not this lane's checkout, and taking it
+# would re-home the lane for every `#n` it writes afterwards.
+mkdir -p "$HOME/projects/imposter/OpsxFactory"
+git init -q -b main "$HOME/projects/imposter/OpsxFactory"
+git -C "$HOME/projects/imposter/OpsxFactory" remote add origin "git@github.com:someone/else.git"
+run "$START" --dry-run opsXfactory 5
+has  "…and a same-named checkout with another origin is never taken" "$err" "cd $HOME/projects/xFactory/xFactories/OpsxFactory"
+# NOW THE REFUSAL: the same record shape with no provable checkout anywhere.
+mv "$HOME/projects/xFactory/xFactories/OpsxFactory" "$HOME/projects/xFactory/xFactories/OpsxFactory-moved-away"
+run "$START" --dry-run opsXfactory 5
+is   "…and with nothing provable it REFUSES with 2, not the 1 that printed [exited]" "$rc" 2
+has  "…saying nothing was started" "$err" "nothing was started"
+has  "…naming the one act that RECORDS the directory, filled in" "$err" "lane-start --dir <path> opsXfactory 5"
+has  "…and what it tried, so the refusal is readable" "$err" "project.yaml legs of opensoft/OpsxFactory"
+hasnt "…and it never guesses the same-named checkout with the wrong origin" "$err" "cd $HOME/projects/imposter"
+# RUNG 5 — THE ESTATE'S `project.yaml` LEGS, which are a DECLARATION rather
+# than a search: the leg's `path` is resolved against the manifest's own
+# directory, and the candidate is still proved by its `origin`.
+mkdir -p "$HOME/projects/xFactory/legged/inner"
+git init -q -b main "$HOME/projects/xFactory/legged/inner"
+git -C "$HOME/projects/xFactory/legged/inner" remote add origin "git@github.com:opensoft/OpsxFactory.git"
+{ printf 'schema_version: 1\nkind: project-manifest\nid: xf\nname: "xFactory"\nlegs:\n'
+  printf '  - role: assembly\n    repository: opensoft/Something-Else\n    path: "."\n'
+  printf '  - role: code\n    repository: opensoft/OpsxFactory\n    path: inner\n'
+} > "$HOME/projects/xFactory/legged/project.yaml"
+run "$START" --dry-run opsXfactory 5
+is   "the estate's project.yaml legs answer before the refusal" "$rc" 0
+has  "…taking the leg's own path, resolved against the manifest" "$err" "cd $HOME/projects/xFactory/legged/inner"
+has  "…and saying which manifest declared it" "$err" "legs of"
+rm -rf "$HOME/projects/xFactory/legged" "$HOME/projects/imposter"
+mv "$HOME/projects/xFactory/xFactories/OpsxFactory-moved-away" "$HOME/projects/xFactory/xFactories/OpsxFactory"
+# AND ONE `--dir` CLOSES IT FOR EVER: the field is written, and every later
+# read — `lane-dir`, and `restart`'s `cd` — takes it from the lane's own log
+# rather than from a rung at all.
+FAKE_TMUX_WINDOW="e7sess:@51" FAKE_TMUX_WINDOW_INDEX=0 FAKE_TMUX_WINDOW_NAME=claude \
+  CLAUDE_PROFILE_NAME=team-03l \
+  run "$START" --dir "$HOME/projects/xFactory/xFactories/OpsxFactory" opsXfactory 5 --no-launch
+is   "one lane-start --dir records the field Evidence 7's record was missing" "$rc" 0
+has  "…in the lane's own log" "$(cat "$LOGD/opsXfactory-5.md")" "dir $HOME/projects/xFactory/xFactories/OpsxFactory"
+run "$E" lane-dir opsXfactory-5
+is   "…so lane-dir answers for it now" "$rc" 0
+is   "…with the path that was named once" "$out" "$HOME/projects/xFactory/xFactories/OpsxFactory"
+run "$START" --dry-run opsXfactory 5
+has  "…and the next start takes it from the LOG rather than from any rung" "$err" "from the lane's log"
+
 echo "== Amendment 11: the cross-lane write clause (d) rule 1 forbids =="
 #
 # THE TEST THAT WOULD HAVE CAUGHT EVIDENCE 2(b), written here and owed to the
-# `opensoft/brett-wip` hotfix that `openRepoTools#24` ports into this tree.
+# `opensoft/brett-wip` hotfix that `openRepoTools#24` — act 3, merged as
+# `d4b5710` — ports into this tree.
 # `lane-start:630-640` — step 3b — overwrites the resume target with the uuid of
 # whatever session is live in the window the command was typed in, whenever that
 # uuid is not in the lane's published cell. Typed from ANOTHER lane's window
@@ -4417,6 +4508,38 @@ has  "…after cd-ing into the lane's own recorded directory (Evidence 3)" \
      "$(cat "$FAKE_PCLAUDE_LOG")" "cwd=$A11_DIR"
 hasnt "…and NOTHING is asked: no confirmation" "$out$err" "[y/N]"
 hasnt "…and no question of any kind" "$out$err" "?"
+
+# EVIDENCE 7's LANE, AFTER THE ONE `--dir`: `restart` cd's into the checkout the
+# record now names, which is the whole point of naming it once. Before the
+# `lane-start --dir` above, this lane's record carried `home` and `estate` and
+# no `dir` at all and the launcher's own derivation was
+# `$PROJECTS_ROOT/opsXfactory`, which does not exist.
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX "$RESTART" opsXfactory-5 </dev/null
+is   "restart exits 0 for Evidence 7's lane once its directory is recorded" "$rc" 0
+has  "…cd-ing into the nested checkout and not into \$PROJECTS_ROOT/<repo>" \
+     "$(cat "$FAKE_PCLAUDE_LOG")" "cwd=$HOME/projects/xFactory/xFactories/OpsxFactory"
+has  "…with the profile that one start recorded" \
+     "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane opsXfactory-5 team-03l"
+# AND THE REFUSAL A LANE WITH NO RECORDED DIRECTORY STILL GETS is ONE LINE
+# naming the act that RECORDS it — never an exit 1 with nothing on screen,
+# which is what Evidence 7 actually met.
+# A PROFILE AND NO DIRECTORY, because `restart` refuses on the profile first and
+# this case is about the OTHER refusal.
+add_seed_row "| \`repoE7x-1\` | harness \`$E7_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoA11/e7.md | ACTIVE |"
+{ printf '# lane repoE7x-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoE7x-1, session %s@Eagle, 2026-09-12T09:00:00Z, lane:repoE7x-1 → home opensoft/repoE7x; estate repoE7x; profile team-05a\n' "$E7_ID"
+} > "$LOGD/repoE7x-1.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed a lane with a profile and no recorded directory"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX "$RESTART" repoE7x-1 </dev/null
+is   "restart refuses with 2 for a lane whose record names no directory" "$rc" 2
+has  "…naming the act that RECORDS it, filled in" "$err" "lane-start --dir <the lane's checkout> repoE7x 1"
+has  "…saying that later restarts then read it back" "$err" "reads it back"
+is   "…and launching nothing at all" "$(cat "$FAKE_PCLAUDE_LOG")" ""
 
 # CASE 2 — THE SAME, TYPED IN A WINDOW NAMED `claude`. 8 of this workstation's
 # 16 windows were in that state; the launcher's precedence 2 cannot fire in any

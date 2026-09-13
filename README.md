@@ -218,7 +218,10 @@ them is placed. An installer that repairs a
 file it does not understand is how you lose a setting you meant. It never
 writes a profile's own `settings.json`: the launcher owns that one.
 
-Sixteen artifacts, and the count is the invariant.
+Eighteen artifacts, and the count is the invariant. It was sixteen until A11
+Addendum 4 ruling 9 gave `--install` a command-file list and `commands/swap.md`
+in it, at the same pair of paths a skill takes — because `opensoft/workBenches#74`
+deletes the launcher's copy and `/swap` would otherwise be installed by nobody.
 
 Run from a checkout it copies the files beside it and needs no network and no
 `gh` at all; run from stdin, as above, it fetches all of them at the same ref.

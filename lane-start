@@ -198,13 +198,25 @@
 #
 # EXIT
 #   0  done
-#   1  environment — not inside tmux, no tmux, no such directory, no register,
-#      or `lanes-edit.sh live-holder` failed (which is NOT the same as its
-#      answering 8, "no live session holds this lane")
-#   2  refusal — an ARGUMENT ERROR and nothing else (Amendment 8(d), R-A8-3): a
+#   1  environment — not inside tmux, no tmux, a RECORDED directory that is
+#      gone, no register, or `lanes-edit.sh live-holder` failed (which is NOT
+#      the same as its answering 8, "no live session holds this lane")
+#   2  refusal — an ARGUMENT ERROR, and one further case this amendment adds: a
 #      name that is not a lane, a position that is not a position, a name a
 #      window cannot take, a lane whose register holds two rows and so resolves
-#      to none, or a lane that is live in another window.
+#      to none, a lane that is live in another window — and A LANE WHOSE
+#      CHECKOUT IS NOT RECORDED AND CANNOT BE PROVED (Evidence 7).
+#
+#      THAT LAST ONE MOVED FROM 1 TO 2 AND THE MOVE IS THE POINT. Evidence 7:
+#      a lane whose record predates clause (c) carries no `dir`, the default
+#      `$PROJECTS_ROOT/<repo>` did not exist, and this script exited **1**
+#      behind the launcher's `exec` — a pane that said `[exited]` with the
+#      message scrolled past it. It is a REFUSAL a person fixes with one flag,
+#      not an environment that failed, and `restart` already spends 2 on the
+#      same fact (clause (i), `R-A11-20`: *"no such lane, no recorded
+#      directory, no profile recorded yet"*). A directory the lane itself
+#      RECORDED and which is now gone keeps 1: that is a path that was right
+#      and moved, and nothing is searched for in its place.
 #
 #      A PERSON'S ANSWER IS NOT AN ARGUMENT ERROR. `--confirm` answered `N`, and
 #      `--confirm` with no tty and no `--yes` — the same answer with nobody
@@ -663,7 +675,32 @@ if [ -z "${LANES_FILE:-}" ]; then die "$(lanes_workspace_why)" 1; fi
 # no answer, 2 is a helper predating Amendment 11 — expected and silent, told
 # from a caller's bug by the helper's own words rather than by its status —
 # and anything else is named once and then carried past.
-DIR=""; DIR_SOURCE=""
+# `owner/repo` out of a checkout's `origin`. DEFINED HERE rather than beside
+# its first old caller, because Evidence 7's two rungs are the FIRST callers
+# and they run four hundred lines earlier; a function defined after its call
+# site is a function that is not there yet.
+origin_nwo() {
+  local url nwo
+  url="$(git -C "$1" remote get-url origin 2>/dev/null || :)"
+  [ -n "$url" ] || return 1
+  nwo="$(printf '%s\n' "$url" | sed -E 's#\.git$##; s#^git@[^:]+:##; s#^ssh://[^/]+/##; s#^https?://[^/]+/##')"
+  [[ "$nwo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+  printf '%s\n' "$nwo"
+}
+
+# A CANDIDATE IS PROVED BY ITS OWN `origin`, NEVER BY ITS NAME. Both of the two
+# rungs Evidence 7 adds hand every candidate through here, and a candidate whose
+# origin is not the lane's recorded home is not taken — which is what keeps them
+# rungs rather than the inference clause (c) rules out by name.
+lane_dir_is_home() {   # <candidate dir> <owner/repo the record names>
+  ldh_o="$(origin_nwo "$1" 2>/dev/null || :)"
+  [ -n "$ldh_o" ] || return 1
+  ldh_c="$("$LANES_EDIT" resolve-repo "$ldh_o" 2>/dev/null || :)"
+  [ -n "$ldh_c" ] && ldh_o="$ldh_c"
+  [ "$(printf '%s' "$ldh_o" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$2" | tr 'A-Z' 'a-z')" ]
+}
+
+DIR=""; DIR_SOURCE=""; DIR_DEFAULT_TRIED=""
 if [ -n "$dir_override" ]; then
   DIR="$dir_override"; DIR_SOURCE="--dir"
 fi
@@ -692,10 +729,134 @@ if [ -z "$DIR" ]; then
     *) note "$LANES_EDIT lane-dir $LANE failed (exit $ld_rc) — carrying on to the default for its directory" ;;
   esac
 fi
-if [ -z "$DIR" ]; then
-  DIR="$PROJECTS_ROOT/$repo"; DIR_SOURCE="the default \$PROJECTS_ROOT/<repo>"
+# A DIRECTORY THAT WAS RECORDED AND IS GONE IS ITS OWN FAILURE, and it keeps
+# its own code. Rungs 1 to 3 are the operator's word and the lane's own record:
+# where one of them answered and the path is not there, the path is NAMED and
+# `--dir` is named beside it, and nothing below this line runs — searching for a
+# substitute for a directory the lane itself recorded is the silent re-home
+# clause (c) rules out. Evidence 7's case is the OTHER one: no rung answered at
+# all, `$DIR` is still empty here, and rungs 5 and 6 are what that case reaches.
+if [ -n "$DIR" ] && [ ! -d "$DIR" ]; then
+  die "no such directory: $DIR (from $DIR_SOURCE) — pass --dir <path> if this lane's checkout is somewhere else" 1
 fi
-[ -d "$DIR" ] || die "no such directory: $DIR (from $DIR_SOURCE) — pass --dir <path> if this lane's checkout is somewhere else" 1
+if [ -z "$DIR" ]; then
+  if [ -d "$PROJECTS_ROOT/$repo" ]; then
+    DIR="$PROJECTS_ROOT/$repo"; DIR_SOURCE="the default \$PROJECTS_ROOT/<repo>"
+  else
+    DIR_DEFAULT_TRIED="$PROJECTS_ROOT/$repo"
+  fi
+fi
+
+# ------------------------------------- EVIDENCE 7: THE LANE WHOSE CHECKOUT IS
+#                                       NESTED, AND WHOSE RECORD PREDATES `dir`
+#
+# Measured 2026-09-13T23:01Z and reported by Brett Heap
+# (`brettheap/new-workstation#20`, comment 5656793094). `pclaude team03m`
+# auto-selected the saved lane `opsXfactory-5` from its swap record, the
+# launcher handed a bare lane name to this script, rung 4 derived
+# `~/projects/opsXfactory` — which does not exist — and this script **exited 1
+# before Claude started**, leaving a pane that said `[exited]`. The lane's real
+# checkout is `~/projects/xFactory/xFactories/OpsxFactory`. Its own record could
+# not help: its `STARTED`/`RESUMED` lines carry `home opensoft/OpsxFactory;
+# estate xFactory` and its `PAUSED` swap line carries `window …; workstation
+# docker-desktop`, and **no `dir`** — the field this amendment adds, which
+# nothing backfills (Amendment 7(i)).
+#
+# TWO RUNGS BEFORE THE REFUSAL, AND NEITHER IS AN INFERENCE. Rungs 5 and 6 are
+# both proved by the candidate's own `origin` against the lane's RECORDED HOME,
+# so what they find is the checkout of the lane's own repository and not "a
+# directory that merely has the right name". That distinction is the whole of
+# why clause (c) rules the cwd's checkout out by name: this script writes the
+# lane's home from the directory's `origin`, and a wrong directory silently
+# re-homes the lane. A directory whose origin IS the recorded home cannot.
+#
+#   5. THE ESTATE'S `project.yaml` LEGS. openRepoShape's manifest is a top-level
+#      `legs:` list of `repository:` / `path:`, and Amendment 7 decision 3
+#      treats legs as home. Where a manifest names the lane's home as a leg, the
+#      leg's `path` resolved against that manifest's directory IS the checkout,
+#      declared rather than searched for.
+#   6. A CHECKOUT NAMED FOR THE HOME'S REPOSITORY, one or two levels under
+#      `$PROJECTS_ROOT` — the two depths the estate actually uses and the same
+#      two `same_project` globs for manifests. `opsXfactory` the lane label and
+#      `OpsxFactory` the repository are not the same string, which is why the
+#      NAME comes from the alias table's own canonical spelling
+#      (`resolve-repo`) rather than from the lane's label.
+#
+# BOTH ARE SKIPPED ENTIRELY WHERE THE LANE HAS NO RECORDED HOME, because there
+# is then nothing to prove a candidate against and a match would be a guess.
+if [ -z "$DIR" ]; then
+  ls_home=""; ls_rc=0
+  ls_home="$("$LANES_EDIT" resolve-home "$LANE" 2>/dev/null)" || ls_rc=$?
+  [ "$ls_rc" = 0 ] || ls_home=""
+  case "$ls_home" in */*) : ;; *) ls_home="" ;; esac
+fi
+# Rung 5 — the legs.
+if [ -z "$DIR" ] && [ -n "$ls_home" ]; then
+  for ls_m in "$PROJECTS_ROOT"/*/project.yaml "$PROJECTS_ROOT"/*/*/project.yaml; do
+    [ -f "$ls_m" ] || continue
+    # ONLY `repository:` AND `path:`, and only as navigation: the manifest says
+    # of itself that it CONFERS NOTHING, and `role:` is never read here. This is
+    # the SECOND reader of `legs[]` in this toolset — `lanes-edit.sh`'s
+    # `project_legs_file` is the first — and it exists because that one answers
+    # with repositories alone and no read in clause (h)'s table carries a leg's
+    # PATH. Naming the duplication is the honest half of it.
+    ls_cand="$(awk -v want="$ls_home" '
+      /^[A-Za-z_][A-Za-z0-9_]*:/ { inlegs = ($0 ~ /^legs:/); repo = ""; path = ""; next }
+      !inlegs { next }
+      /^[ \t]*-[ \t]/ { repo = ""; path = "" }
+      /^[ \t]+repository:[ \t]*/ { v = $0; sub(/^[ \t]+repository:[ \t]*/, "", v)
+        sub(/[ \t]+$/, "", v); gsub(/^"|"$/, "", v); gsub(/^'"'"'|'"'"'$/, "", v); repo = v }
+      /^[ \t]+path:[ \t]*/ { v = $0; sub(/^[ \t]+path:[ \t]*/, "", v)
+        sub(/[ \t]+$/, "", v); gsub(/^"|"$/, "", v); gsub(/^'"'"'|'"'"'$/, "", v); path = v }
+      repo != "" && path != "" && tolower(repo) == tolower(want) { print path; exit }' "$ls_m" 2>/dev/null || :)"
+    [ -n "$ls_cand" ] || continue
+    ls_dir="$(dirname -- "$ls_m")"
+    case "$ls_cand" in .) ls_try="$ls_dir" ;; /*) ls_try="$ls_cand" ;; *) ls_try="$ls_dir/$ls_cand" ;; esac
+    [ -d "$ls_try" ] || continue
+    lane_dir_is_home "$ls_try" "$ls_home" || continue
+    DIR="$ls_try"; DIR_SOURCE="the legs of ${ls_m#$PROJECTS_ROOT/} (Evidence 7)"
+    break
+  done
+fi
+# Rung 6 — a checkout named for the repository, proved by its origin.
+if [ -z "$DIR" ] && [ -n "$ls_home" ]; then
+  ls_name="${ls_home#*/}"
+  for ls_try in "$PROJECTS_ROOT/$ls_name" "$PROJECTS_ROOT"/*/"$ls_name" "$PROJECTS_ROOT"/*/*/"$ls_name"; do
+    [ -d "$ls_try" ] || continue
+    lane_dir_is_home "$ls_try" "$ls_home" || continue
+    DIR="$ls_try"; DIR_SOURCE="the checkout of $ls_home under \$PROJECTS_ROOT (Evidence 7)"
+    break
+  done
+fi
+
+# THE REFUSAL IS A REFUSAL (exit 2) AND NOT AN ENVIRONMENT FAILURE (exit 1), and
+# it is ONE LINE a person can type. Evidence 7's whole cost was that this was a
+# `1` behind an `exec`: a pane that said `[exited]` and a message nobody read.
+# `restart` already spends 2 on exactly this case — *"no such lane, no recorded
+# directory, no profile recorded yet"* (clause (i), `R-A11-20`) — so after this
+# the two commands answer the same way about the same fact.
+if [ -z "$DIR" ]; then
+  # EVERY PIECE OF THIS MESSAGE IS BUILT OUT HERE, and that is this file's own
+  # rule rather than a style: an apostrophe inside a `${var:-…}` expansion is
+  # parsed by bash as a QUOTE and not as prose, and the whole script then fails
+  # to parse. `restart` carries the same warning over the same kind of hint.
+  ls_where="$PROJECTS_ROOT/$repo"
+  [ -z "$DIR_DEFAULT_TRIED" ] || ls_where="$DIR_DEFAULT_TRIED"
+  ls_pos="${LANE##*-}"
+  if [ -n "$ls_home" ]; then
+    ls_tried="the default $ls_where, the project.yaml legs of $ls_home, and a checkout of $ls_home one or two levels under $PROJECTS_ROOT"
+  else
+    ls_tried="the default $ls_where. This lane has no home on record either, so there was nothing to prove a candidate against"
+  fi
+  die "lane $LANE has no recorded checkout and none could be PROVED, so nothing was started.
+    Tried: $ls_tried.
+    Name it once, and every later start reads it back out of the lane's own log:
+      lane-start --dir <path> $repo $ls_pos
+    Nothing here guesses. This script writes the lane HOME from the directory's
+    origin, and a directory that merely has the right name would re-home the lane
+    for every \`#n\` it writes afterwards (Amendment 11 clause (c); Evidence 7,
+    brettheap/new-workstation#20 comment 5656793094)." 2
+fi
 DIR="$(cd -- "$DIR" && pwd)"
 DIR_REAL="$(cd -- "$DIR" && pwd -P)"
 [ "$DIR_SOURCE" = "--dir" ] || step "dir $DIR, from $DIR_SOURCE (Amendment 11 clause (c))"
@@ -1063,7 +1224,8 @@ esac
 #   VETO 1 — THE REGISTER. A uuid that belongs to ANOTHER ROW is never taken,
 #     read through `lanes-edit.sh session-lane <uuid>` and fail-closed: only 0
 #     and 8 are answers. That veto is ADOPTION ACT 0'S (`opensoft/brett-wip#5`
-#     @`3719d97`), ported into this copy by `openRepoTools#24`, and this branch
+#     @`3719d97`), ported into this copy by `openRepoTools#24` (Amendment 9's
+#     adoption act 3, MERGED as `d4b5710`), and this branch
 #     does not re-implement it. THE SHA IS THE MERGE COMMIT AND NOT THE DRAFT
 #     HEAD: act 0 merged 2026-09-13T19:14:37Z, squashed, so `#5`'s pre-merge
 #     head `95e7a4c` is NOT an ancestor of `origin/main` and citing it names
@@ -1535,14 +1697,6 @@ fi
 # home containing a space writes an event line the log's own parser cannot
 # read back. `unknown` is the honest answer and the helper already refuses to
 # expand `#n` against it.
-origin_nwo() {
-  local url nwo
-  url="$(git -C "$1" remote get-url origin 2>/dev/null || :)"
-  [ -n "$url" ] || return 1
-  nwo="$(printf '%s\n' "$url" | sed -E 's#\.git$##; s#^git@[^:]+:##; s#^ssh://[^/]+/##; s#^https?://[^/]+/##')"
-  [[ "$nwo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
-  printf '%s\n' "$nwo"
-}
 
 origin_url="$(git -C "$DIR" remote get-url origin 2>/dev/null || :)"
 home_nwo="$(origin_nwo "$DIR" || :)"

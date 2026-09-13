@@ -1118,6 +1118,19 @@ def test_readme_is_short_enough_to_be_read():
     5 lines for a branch gone from origin and a role with no place, this
     branch's 107 for the install story Amendment 9 rewrote, both from 251, and
     363 in the file that merged.
+
+    363 AND 372 MEET AT 382, and that is TWO raises read back in one place
+    rather than a number nobody can reconstruct. Amendment 11's branch raised
+    its own cap twice from the 353 it inherited — 372 for ratified decisions 6
+    and 7 (two new words on PATH, `restart` and `lanes`, and the
+    `$LANES_WORKSTATION` row decision 8(d) makes load-bearing) and 382 for the
+    round that followed — while `main` went 353 -> 358 -> 363 for A9 Addendum
+    4. Merging `main` at `d4b5710` brings both sets of lines into one file, and
+    the cap is the branch's own 382 because it is the higher of the two and the
+    merged README measures 382 exactly. The cap moves with the TOOLSET and
+    never with prose, which is why the four lines A11 Addendum 4 ruling 9 adds
+    — `--install`'s command-file list, and `commands/swap.md` in it — fit
+    inside it rather than raising it again.
     """
     lines = (REPO / "README.md").read_text().splitlines()
     assert len(lines) <= 382, f"README.md is {len(lines)} lines; the cap is 382"

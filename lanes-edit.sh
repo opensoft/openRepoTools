@@ -2816,7 +2816,12 @@ write_event() {
   #
   # AND NOT THE `"` EITHER, WHICH IS WHY THIS GUARD IS NARROWER THAN THE ONES
   # ABOVE IT. Clause (c)'s own rule for a path containing a space is to WRITE IT
-  # QUOTED — `dir "/home/b/my projects/x"`, which is what makes it one ref under
+  # QUOTED — `dir "/checkouts/b/my projects/x"`, which is what makes it one ref
+  # under 7(b)'s own grammar. (The amendment spells that example under a home
+  # directory; it is spelled with a neutral root here because
+  # `test_no_committed_file_names_a_host_absolute_path` refuses a `/home/<name>/`
+  # path in any tracked file, and a rule that holds for a real path holds for an
+  # example of one.) One ref under
   # 7(b) — so `quote_subfield` puts a `"` into the payload deliberately and a `"`
   # refusal here would refuse the very shape the clause mandates. The `"` belongs
   # in the per-VALUE fences, where it is, and not in the whole-payload one.
@@ -5337,7 +5342,9 @@ EOF
   # here does.
 
   # ADOPTION ACT 0 SHIPS `session-lane`, AND IT IS BELOW RATHER THAN HERE.
-  # `opensoft/brett-wip#5` @`3719d97` added it and `openRepoTools#24` ported that
+  # `opensoft/brett-wip#5` @`3719d97` added it and `openRepoTools#24` — MERGED as
+# `d4b5710` on this repository's `main`, which is the sha act 3 is cited by from
+# here on rather than a branch name — ported that
   # commit into this copy, so this branch carries NO second implementation of it
   # (A11 Addendum 3, CF-T11: act 0 ships FOUR items, and that is the fourth).
   # `3719d97` IS THE MERGE COMMIT. Act 0 merged 2026-09-13T19:14:37Z, squashed,

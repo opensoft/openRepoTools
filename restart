@@ -330,12 +330,35 @@ if [ -z "$profile" ]; then
 fi
 
 if [ -z "$lane_dir" ]; then
+	# EVIDENCE 7 — THIS IS THE CASE, AND THE REFUSAL IS WHAT IT ASKS FOR. A lane
+	# whose record predates clause (c) carries `home` and `estate` and no `dir`
+	# (measured: `opsXfactory-5`, whose checkout is
+	# `~/projects/xFactory/xFactories/OpsxFactory`), and `lane-start` used to
+	# derive `$PROJECTS_ROOT/<repo>`, find nothing and exit **1** behind an `exec`
+	# — a pane that said `[exited]` and a message nobody read. It now tries the
+	# estate's `project.yaml` legs and a checkout of the lane's recorded home, each
+	# PROVED by that directory's own `origin`, and refuses with **2** and one line
+	# where neither answers.
+	#
+	# THOSE TWO RUNGS ARE `lane-start`'s AND ARE NOT REPEATED HERE, which is a
+	# BOUND and is stated rather than left to be found: this command refuses for a
+	# lane whose checkout those rungs could still prove. Clause (c) puts the
+	# precedence in `lane-start` and clause (h) forbids two implementations of one
+	# resolution; collecting the whole act behind one command so the two share it
+	# is the *Open* item the text already carries. What is closed here is the
+	# outcome Evidence 7 is about: one line, naming the act that RECORDS the
+	# directory so no later restart has to be told again.
+	pos="${lane##*-}"; lrepo="${lane%-*}"
+	case "${pos%[A-Za-z]}" in '' | *[!0-9]*) lrepo="$lane"; pos="<n>" ;; esac
 	die "lane $lane's record does not name a directory yet, so this command does not know
     where to \`cd\` — and a restart that lands in the right transcript and the wrong
     directory loses the repository's CLAUDE.md and the lane's memory, silently
     (Evidence 3). Name it once:
-      $prog --dir <the lane's checkout> $lane
-    and \`lane-start\` records it from there on." 2
+      lane-start --dir <the lane's checkout> $lrepo $pos
+    which RECORDS it in the lane's own log, so every later \`$prog $lane\` reads it
+    back and no one has to be told again (Amendment 11 clause (c); Evidence 7,
+    brettheap/new-workstation#20 comment 5656793094). For this run alone:
+      $prog --dir <the lane's checkout> $lane" 2
 fi
 [ -d "$lane_dir" ] || die "lane $lane's recorded directory does not exist: $lane_dir
     That is a refusal naming the path and NEVER a silent re-home: this command
