@@ -2306,8 +2306,8 @@ def test_a_locked_registration_of_another_branch_names_the_unlock_not_a_move(
         "the worktree it registers is not there and git holds the "
         "registration LOCKED, which is why it calls it no `prunable` — clear "
         f"it with `git -C {atlas} worktree unlock {where}`, then `git -C "
-        f"{atlas} worktree prune`, which is yours to run, and move aside the "
-        "directory the prune leaves behind, which `resume` refuses for "
+        f"{atlas} worktree prune`, which is yours to run, and move aside "
+        "whatever the prune leaves behind there, which `resume` refuses for "
         "existing whatever git holds") in result.stdout
     assert "worktree move" not in result.stdout
 
@@ -2432,9 +2432,9 @@ def test_a_prunable_registration_on_the_recorded_branch_is_not_in_the_way(
     assert result.returncode == 1, result.stdout + result.stderr
     assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
             f"branch here, but a stale worktree registration for it is still "
-            f"recorded at {where}, whose directory is still on disk and is no "
+            f"recorded at {where}, whose path is still on disk and is no "
             f"longer a worktree — clear it with `git -C {atlas} worktree "
-            "prune` and a move of that directory aside (`git worktree add` "
+            "prune` and a move of what is there aside (`git worktree add` "
             "refuses a path that \"already exists\"), then `resume Atlas` "
             "brings it back") in result.stdout
     assert "which is the path `resume` computes for this leg" not in result.stdout
@@ -2936,9 +2936,9 @@ def test_a_registration_git_calls_prunable_is_stale_with_its_directory_there(
     assert result.returncode == 1, result.stdout + result.stderr
     assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
             "branch here, but a stale worktree registration for it is still "
-            f"recorded at {where}, whose directory is still on disk and is no "
+            f"recorded at {where}, whose path is still on disk and is no "
             f"longer a worktree — clear it with `git -C {atlas} worktree prune`"
-            " and a move of that directory aside (`git worktree add` refuses a "
+            " and a move of what is there aside (`git worktree add` refuses a "
             'path that "already exists"), then `resume Atlas` brings it back'
             ) in result.stdout
 
@@ -2966,9 +2966,9 @@ def test_a_locked_registration_whose_git_file_is_gone_is_stale_too(atlas, home):
     assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
             "branch here, but a stale worktree registration for it is still "
             f"recorded at {where} and LOCKED, which `worktree prune` skips, "
-            "whose directory is still on disk and is no longer a worktree — "
+            "whose path is still on disk and is no longer a worktree — "
             f"clear it with `git -C {atlas} worktree unlock {where}`, then "
-            f"`git -C {atlas} worktree prune` and a move of that directory "
+            f"`git -C {atlas} worktree prune` and a move of what is there "
             'aside (`git worktree add` refuses a path that "already exists"), '
             "then `resume Atlas` brings it back") in result.stdout
 
@@ -4965,6 +4965,95 @@ def test_every_command_it_hands_a_person_survives_a_space_in_the_path(
     assert f"`mv {plain_want} <a path of your choosing>`" in result.stdout
 
 
+def test_what_the_prune_leaves_behind_is_a_path_and_not_a_directory(
+        atlas, home):
+    """COPILOT'S SECOND ROUND ON #27 (2026-09-13, suppressed), verbatim: "For a
+    stale registration on the recorded branch whose old worktree path is now a
+    regular file, the `-d` check is false, so status tells the user to prune
+    and then resume even though the file remains and `resume` still rejects the
+    existing destination. Detect and describe any leftover path here, not just
+    directories." Its twin on the LOCKED arm says the same of that one.
+
+    BOTH ARE REAL, and git says so in three words. Run on 2026-09-13: a
+    worktree registered, its directory replaced by a regular FILE, git calling
+    the block "prunable gitdir file points to non-existent location"; `git
+    worktree prune` cleared the registration and `git worktree add` at that
+    same path then answered "fatal: '…' already exists". The reason is the
+    path EXISTING and not what kind of path it is, so the clause asks `-e` and
+    says "whatever the prune leaves behind"."""
+    checkout = workspace_config(home)
+    where = parked_worktree(atlas, "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    rmtree(where)
+    where.write_text("a file now\n", encoding="utf-8")   # not a directory
+    porcelain = git("worktree", "list", "--porcelain", cwd=atlas).stdout
+    assert "prunable" in porcelain, "git no longer says prunable; moot"
+    assert where.is_file(), "the FILE is what makes this case"
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("whose path is still on disk and is no longer a worktree") in (
+        result.stdout), result.stdout
+    assert ("worktree prune` and a move of what is there aside (`git worktree "
+            'add` refuses a path that "already exists")') in result.stdout
+
+    # AND THE LOCKED ARM'S OWN CLAUSE, which is the same test on the other
+    # side: git computes no `prunable` for a locked block, so that path is
+    # RR4's second arm and the exit is the unlock, the prune and the move.
+    where.unlink()
+    where.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "prune", cwd=atlas)
+    git("worktree", "add", "-q", "-b", "002-other", str(where), cwd=atlas)
+    git("worktree", "lock", str(where), cwd=atlas)
+    rmtree(where)
+    where.write_text("a file now\n", encoding="utf-8")
+    record(checkout, "atlas", branch="001-a-thing", role="repo",
+           commit=git("rev-parse", "origin/001-a-thing",
+                      cwd=atlas).stdout.strip())
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("and move aside whatever the prune leaves behind there, which "
+            "`resume` refuses for existing whatever git holds") in (
+        result.stdout), result.stdout
+
+
+def test_the_move_names_a_parent_that_is_never_the_empty_string(atlas, home):
+    """COPILOT'S SECOND ROUND ON #27 (2026-09-13), verbatim: "When the
+    configured worktree root is `/`, `want` can be `/branch`, so `${want%/*}`
+    expands to the empty string. The generated recovery command becomes `mkdir
+    -p '' && git worktree move ...`, which fails before the move even though
+    `resume` only needs the already-existing `/` parent. Use a parent-directory
+    fallback of `/` (or `dirname`) when constructing this command."
+
+    IT IS RIGHT AND IT WAS RUN: `mkdir -p ''` answers "cannot create directory
+    ''", so the exit dies on its first operand. `parent_dir` is that fallback,
+    and `/` is the one directory `${p%/*}` cannot name.
+
+    NOTHING IS CREATED BY THIS TEST: `status` reads and changes nothing, and
+    the only thing it does with `/001-a-thing` is ask whether it exists."""
+    checkout = workspace_config(home)
+    config = atlas / ".specify" / "extensions" / "git"
+    config.mkdir(parents=True, exist_ok=True)
+    (config / "git-config.yml").write_text(
+        "checkout_mode: worktree\nworktree_root: /\n", encoding="utf-8")
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", elsewhere)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    # `//001-a-thing` AND NOT `/001-a-thing`, because that is the string the
+    # other end computes: `resolve_path_from_repo_root` hands an absolute
+    # value back unchanged and `collect_legs` joins `$WORKTREE_ROOT/$branch`,
+    # so both ends spell the doubled slash and the comparison is exact.
+    assert "which is not the //001-a-thing `resume` computes for it" in (
+        result.stdout), result.stdout
+    assert (f"`mkdir -p / && git -C {atlas} worktree move {elsewhere} "
+            "//001-a-thing`") in result.stdout, result.stdout
+    assert "mkdir -p ''" not in result.stdout
+    assert "mkdir -p  &&" not in result.stdout
+
+
 def test_only_the_leg_the_run_stops_at_speaks_for_the_path(trio, home):
     """COPILOT'S FIRST ROUND ON #27 (2026-09-13, suppressed), verbatim: "When
     an earlier leg has already set the feature verdict to `inway` (or `add`),
@@ -5792,6 +5881,22 @@ def test_a_leg_declared_at_the_root_is_read_at_the_root(atlas, home):
         assert (f"    - parked feature 001-a-thing (code leg): its worktree "
                 f"is at {where}, which is not the {computed}/. `resume` "
                 "computes for it") in result.stdout
+        # AND IT NAMES NO COMMAND (Copilot's second round on #27), because
+        # every operand this path could be put into was RUN and did not work:
+        # `mv '<…>/001-a-thing/.' <dest>` is refused by coreutils outright,
+        # and `mkdir -p <…>/001-a-thing && git worktree move <tree>
+        # '<…>/001-a-thing/.'` exits 0 and leaves the worktree nested at
+        # `<…>/001-a-thing/001-a-thing`, which is where neither verb looks
+        # (git 2.43, GNU coreutils 9.4, both run 2026-09-12). The line says
+        # so, and names the `collect_legs` that answers it.
+        assert "`mkdir -p " not in result.stdout, result.stdout
+        assert f"worktree move {where}" not in result.stdout, result.stdout
+        assert ("there is no command that puts it where `resume` looks: this "
+                'leg is declared `path: "."` in `project.yaml`') in (
+            result.stdout), result.stdout
+        assert ("a `collect_legs` that computes `<worktree_root>/<branch>` "
+                "for a leg declared at the root, which is the standard's and "
+                "not this command's") in result.stdout
 
     # AND WITH NO WORKTREE AT ALL the same leg is the ordinary parked feature
     # `resume` brings back — which is the other half of the same reading,

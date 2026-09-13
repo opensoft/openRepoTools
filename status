@@ -1031,6 +1031,50 @@ physical_path() {
     printf '%s\n' "$resolved"
 }
 
+# THE ONE COMPUTED PATH NO COMMAND CAN TAKE AS AN OPERAND: the mount
+# `collect_legs` spells for a leg the manifest declares `path: "."`, which is
+# `<worktree_root>/<branch>/.`. The tip of this branch recorded why and did not
+# act on it; Copilot's second round on #27 asks for the half that is this
+# file's to give, verbatim: "For a declared `path: "."`, `want` ends in
+# `/<branch>/.` here. This remediation emits `git worktree move <source>
+# <want>`; after `mkdir -p` creates the branch directory, Git treats that `/.`
+# destination as the existing directory and nests the worktree instead of
+# putting it where `resume` can register it. The next `status` run reports the
+# result as an obstruction, so this new remediation is not runnable/idempotent;
+# handle this mount spelling or avoid advertising a move until `collect_legs`
+# is fixed." BOTH HALVES OF THAT WERE RUN on 2026-09-12 and recorded at the tip
+# of this branch: `mv '<…>/001-a-thing/.' <dest>` is refused by coreutils
+# outright ("Device or resource busy", GNU coreutils 9.4) and `mkdir -p
+# <…>/001-a-thing && git worktree move <tree> '<…>/001-a-thing/.'` exits 0 and
+# leaves the worktree at `<…>/001-a-thing/001-a-thing`. SO THE MOVE IS NOT
+# ADVERTISED: the rule at the top of `check_parked_leg` is that an arm may not
+# name an exit that does not run, and this is the one path for which none does
+# — the cure is a `collect_legs` that computes `$WORKTREE_ROOT/$branch` for
+# such a leg, which is workBenches'.
+dot_mount() {
+    case "$1" in
+    */.) return 0 ;;
+    esac
+    return 1
+}
+
+# THE DIRECTORY A PATH SITS IN, AND NEVER THE EMPTY STRING (Copilot's second
+# round on #27, verbatim: "When the configured worktree root is `/`, `want` can
+# be `/branch`, so `${want%/*}` expands to the empty string. The generated
+# recovery command becomes `mkdir -p '' && git worktree move ...`, which fails
+# before the move even though `resume` only needs the already-existing `/`
+# parent"). It is right and it was run: `mkdir -p ''` answers "cannot create
+# directory ''", so the exit dies on its first operand. `${p%/*}` is the empty
+# string for exactly one shape of path — one whose only slash is the leading
+# one — and the directory it means is `/`.
+parent_dir() {
+    local cut="${1%/*}"
+    case "$1" in
+    */*) printf '%s\n' "${cut:-/}" ;;
+    *) printf '.\n' ;;
+    esac
+}
+
 # A PATH AS A SHELL OPERAND, QUOTED ONLY WHERE A SHELL WOULD NEED IT (Copilot's
 # first round on #27, verbatim: "The remediation command here interpolates
 # `$repo` and `$want` directly into a shell snippet. Valid paths containing
@@ -2728,6 +2772,15 @@ record_worktree_root() {
             raw="../${root##*/}-worktrees"
         fi
     fi
+    # AND AN ABSOLUTE VALUE IS TAKEN AS IT STANDS, which is not an oversight
+    # and was checked again for Copilot's second round on #27, which read it as
+    # one: `resolve_path_from_repo_root` tests `[[ "$raw_path" == /* ]]` FIRST
+    # and `printf`s the string back unchanged — the `os.path.abspath` it runs
+    # is in the `elif`, for a RELATIVE path only. Sourced and run on
+    # 2026-09-13, it answered `/tmp/wt/../real/` for `/tmp/wt/../real/` and
+    # `/tmp/wt/../real` for `/tmp/wt/../real`, normalising neither. Normalising
+    # here would compute a path the other end does not, which is the one thing
+    # `lexical_path`'s own comment forbids.
     case "$raw" in
     /*) printf '%s\n' "$raw" ;;
     *) lexical_path "$root/$raw" ;;
@@ -2973,8 +3026,14 @@ path_in_the_way() {
             # leftover DIRECTORY behind it, because the prune clears the
             # registration and touches nothing on disk.
             IN_THE_WAY_EXIT="the worktree it registers is not there and git holds the registration LOCKED, which is why it calls it no \`prunable\` — clear it with \`git -C $(sh_operand "$repo") worktree unlock $(sh_operand "$want")\`, then \`git -C $(sh_operand "$repo") worktree prune\`, which is yours to run"
-            [ ! -d "$want" ] ||
-                IN_THE_WAY_EXIT="$IN_THE_WAY_EXIT, and move aside the directory the prune leaves behind, which \`resume\` refuses for existing whatever git holds"
+            # AND WHAT THE PRUNE LEAVES BEHIND IS A PATH, NOT A DIRECTORY
+            # (Copilot's second round on #27): `git worktree add` refuses the
+            # destination in the same three words whatever is there — "fatal:
+            # '…' already exists", run on 2026-09-13 with a regular FILE at a
+            # pruned registration's path — so a test for `-d` sent a person
+            # to a `resume` that refuses for a file the line never mentioned.
+            [ ! -e "$want" ] ||
+                IN_THE_WAY_EXIT="$IN_THE_WAY_EXIT, and move aside whatever the prune leaves behind there, which \`resume\` refuses for existing whatever git holds"
         fi
         return 0
     fi
@@ -3002,6 +3061,12 @@ path_in_the_way() {
     IN_THE_WAY_EXIT="move it aside with \`mv $(sh_operand "$want") <a path of your choosing>\`, which is yours to run — nothing here moves or deletes a path it did not create"
     [ "$rc" -ne 2 ] ||
         IN_THE_WAY_EXIT="move it aside with \`mv $(sh_operand "$want") <a path of your choosing>\` and clear the stale registration git still holds for that path with \`git -C $(sh_operand "$repo") worktree prune\`, both yours to run — nothing here moves or deletes a path it did not create, and \`git worktree add\` refuses a path it is still registered at (\"a missing but already registered worktree\")"
+    # AND FOR THE ONE PATH NO `mv` TAKES, no command is named at all: see
+    # `dot_mount`. `[ -e "<…>/001-a-thing/." ]` is the feature directory
+    # itself, so this arm is reachable for such a leg, and every operand it
+    # could print was run and did not work.
+    ! dot_mount "$want" ||
+        IN_THE_WAY_EXIT="and there is no command that clears it: this leg is declared \`path: \".\"\` in \`project.yaml\`, so the path \`collect_legs\` computes for it ends in \`/.\`, which \`mv\` refuses as an operand outright — what answers it is a \`collect_legs\` that computes \`<worktree_root>/<branch>\` for a leg declared at the root, which is the standard's and not this command's"
     return 0
 }
 
@@ -3188,10 +3253,12 @@ off_path_exit() {
     # `$repo` is `leg_repo_for_role`'s string on `$root`, which is not.
     if [ "$tree" = "$(physical_path "$repo")" ] || [ -d "$tree/.git" ]; then
         printf '%s\n' "$tree is the $role leg's OWN checkout rather than a worktree of it, and no \`worktree move\` moves a main working tree, so there is nothing here to move: neither verb sees this feature while that checkout is on that branch"
+    elif dot_mount "$want"; then
+        printf '%s\n' "there is no command that puts it where \`resume\` looks: this leg is declared \`path: \".\"\` in \`project.yaml\`, so the path \`collect_legs\` computes for it ends in \`/.\` — \`mv\` refuses such an operand outright and \`git worktree move\` lands the worktree INSIDE it — and \`resume\` matches that string against no worktree git can spell, so it refuses this feature after every run, including one of its own. What answers it is a \`collect_legs\` that computes \`<worktree_root>/<branch>\` for a leg declared at the root, which is the standard's and not this command's"
     elif [ "$held" -eq 2 ]; then
-        printf '%s\n' "clear the stale registration git still holds for that path with \`git -C $(sh_operand "$repo") worktree prune\` first — \`worktree move\` refuses a destination git still holds (\"a missing but already registered worktree\") — then move it where both look: \`mkdir -p $(sh_operand "${want%/*}") && git -C $(sh_operand "$repo") worktree move $(sh_operand "$tree") $(sh_operand "$want")\`, both yours to run"
+        printf '%s\n' "clear the stale registration git still holds for that path with \`git -C $(sh_operand "$repo") worktree prune\` first — \`worktree move\` refuses a destination git still holds (\"a missing but already registered worktree\") — then move it where both look: \`mkdir -p $(sh_operand "$(parent_dir "$want")") && git -C $(sh_operand "$repo") worktree move $(sh_operand "$tree") $(sh_operand "$want")\`, both yours to run"
     else
-        printf '%s\n' "move it where both look: \`mkdir -p $(sh_operand "${want%/*}") && git -C $(sh_operand "$repo") worktree move $(sh_operand "$tree") $(sh_operand "$want")\`, which is yours to run — \`worktree move\` creates no parent directory of its own"
+        printf '%s\n' "move it where both look: \`mkdir -p $(sh_operand "$(parent_dir "$want")") && git -C $(sh_operand "$repo") worktree move $(sh_operand "$tree") $(sh_operand "$want")\`, which is yours to run — \`worktree move\` creates no parent directory of its own"
     fi
 }
 
@@ -3495,15 +3562,25 @@ check_parked_leg() {
             clear="\`git -C $(sh_operand "$repo") worktree prune\`"
         fi
     fi
-    # THE DIRECTORY THE PRUNE LEAVES BEHIND is the second half of that exit
-    # where git called the registration stale with the directory still on
-    # disk: the prune clears the registration and touches nothing on disk, and
-    # `git worktree add` then refuses the path in its own words, "already
-    # exists". That directory holds whatever the worktree held, so it is moved
-    # aside rather than deleted here or anywhere else.
-    if [ -n "$ghost" ] && [ -d "$ghost" ]; then
-        ghost_is="$ghost_is, whose directory is still on disk and is no longer a worktree"
-        clear="$clear and a move of that directory aside (\`git worktree add\` refuses a path that \"already exists\")"
+    # WHAT THE PRUNE LEAVES BEHIND is the second half of that exit where git
+    # called the registration stale with something still on disk: the prune
+    # clears the registration and touches nothing on disk, and `git worktree
+    # add` then refuses the path in its own words, "already exists". Whatever
+    # is there holds whatever the worktree held, so it is moved aside rather
+    # than deleted here or anywhere else.
+    #
+    # AND IT IS ASKED WITH `-e`, NOT `-d` (Copilot's second round on #27):
+    # "For a stale registration on the recorded branch whose old worktree path
+    # is now a regular file, the `-d` check is false, so status tells the user
+    # to prune and then resume even though the file remains and `resume` still
+    # rejects the existing destination." Run on 2026-09-13 — a worktree
+    # registered, its directory replaced by a FILE, git calling the block
+    # `prunable`, the prune clearing it — `git worktree add` at that path
+    # answered "fatal: '…' already exists". The clause says "whatever" now,
+    # because the reason is the path existing and not what kind of path it is.
+    if [ -n "$ghost" ] && [ -e "$ghost" ]; then
+        ghost_is="$ghost_is, whose path is still on disk and is no longer a worktree"
+        clear="$clear and a move of what is there aside (\`git worktree add\` refuses a path that \"already exists\")"
     fi
     # THE SHAPE REFUSAL IS SAID ONCE, AND WHAT IS LEFT TO READ DECIDES
     # WHETHER ANYTHING FOLLOWS IT. With a worktree here the arms below are
