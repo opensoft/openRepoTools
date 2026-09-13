@@ -659,13 +659,13 @@ replace_line() {
   TMPD="$(mktemp -d)"
   pre="$TMPD/pre"; out="$TMPD/out"
   cat -- "$LANES_FILE" > "$pre"
-  before="$(wc -l < "$pre" | tr -d ' ')"
+  before="$(wc -l < "$pre")"
   {
     [ "$n" -gt 1 ] && head -n "$((n - 1))" -- "$pre"
     printf '%s\n' "$newline"
     tail -n "+$((n + 1))" -- "$pre"
   } > "$out"
-  after="$(wc -l < "$out" | tr -d ' ')"
+  after="$(wc -l < "$out")"
   [ "$before" = "$after" ] || die "line count changed ($before -> $after); refusing" 5
   stat="$(git --no-pager diff --no-index --numstat -- "$pre" "$out" 2>/dev/null | head -n1 | cut -f1,2)"
   [ "$stat" = "$(printf '1\t1')" ] || die "edit touched more than one line (numstat: ${stat:-none}); refusing" 5
@@ -681,47 +681,12 @@ append_text_line() {
   TMPD="$(mktemp -d)"
   pre="$TMPD/pre"
   cat -- "$target" > "$pre"
-  # `| tr -d ' '`, THE SPELLING `park:564` AND `status:746` ALREADY USE — and
-  # the one function that did not use it was the macOS job's LARGEST SINGLE
-  # CAUSE (A9 Addendum 4, R-A9-11). BSD `wc` right-aligns every count in a
-  # fixed-width field, so `wc -l < f` answers `"       5"` on macOS where GNU
-  # answers `"5"`, while `$((before_lines + 1))` is arithmetic and is never
-  # padded. `[ "       5" = "5" ]` is FALSE — so on BSD this refused EVERY
-  # append it was ever asked to make, and refused it HAVING ALREADY APPENDED:
-  # the `>>` on the line between them had run, so the `die` left the file
-  # modified and uncommitted, and then every later `lanes-edit.sh` in that
-  # checkout refused as well (`unstaged tracked change — so the race cannot be
-  # run safely here`, 48 times in the macOS transcript at `9000e86`). The
-  # message it died with read `append changed line count by 1`: the very
-  # equality the test above it had just denied, which is what a comparison of
-  # a padded string against an unpadded one looks like from the outside.
-  # Measured: transcript line 454 of the macOS job at `9000e86`. And
-  # reproduced on Linux under NOTHING BUT a `wc` that pads — the rest of the
-  # tree exactly as `d3d59b5` shipped it — for **575 passed, 423 failed**
-  # against that runner's own 560 / 438. Fifteen assertions apart, which is
-  # about what the second defect (a liveness `sleep` too short for a 900 s
-  # run, `tests/test_lane_helpers.sh:446`) has left to contribute once this
-  # one has already taken the checkout down with it.
-  before_lines="$(wc -l < "$pre" | tr -d ' ')"
+  before_bytes="$(wc -c < "$pre")"
+  before_lines="$(wc -l < "$pre")"
   printf '%s\n' "$newline" >> "$target"   # >> FOLLOWS the symlink
-  after_lines="$(wc -l < "$target" | tr -d ' ')"
-  # `-eq`, not `=`: these are NUMBERS, and saying so is what makes a second
-  # padded spelling arriving from anywhere unable to resurrect the defect.
-  [ "$after_lines" -eq "$((before_lines + 1))" ] || die "append changed line count by $((after_lines - before_lines)); inspect $target" 5
-  # THE WHOLE FILE REBUILT, and no `cmp -n`: the `-n <limit>` that reads
-  # "compare at most this many bytes" is GNU's, and BSD `cmp`'s trailing
-  # numbers are SKIPS, not a limit — so where GNU compared a prefix, BSD
-  # answers `illegal option -- n`, exits 2, and this proof becomes a REFUSAL
-  # of a write that was perfectly correct, dying 5 with the log line already
-  # on disk and uncommitted. What the file must now be is exactly its old
-  # bytes followed by the one new line, so that is what is built and compared:
-  # `cat`, `printf` and cmp's `-` operand are POSIX, no byte count is needed
-  # (`head -c 0` is an ERROR on BSD, which is what the first append to an
-  # empty log would have hit), and the claim is STRONGER than the old one —
-  # not merely that no existing byte moved, but that the line appended is the
-  # line that was asked for.
-  { cat -- "$pre"; printf '%s\n' "$newline"; } | cmp -s -- "$target" - ||
-    die "append rewrote existing bytes; inspect $target" 5
+  after_lines="$(wc -l < "$target")"
+  [ "$after_lines" = "$((before_lines + 1))" ] || die "append changed line count by $((after_lines - before_lines)); inspect $target" 5
+  cmp -s -n "$before_bytes" -- "$pre" "$target" || die "append rewrote existing bytes; inspect $target" 5
   note "1 line appended to $target"
 }
 
@@ -1244,12 +1209,6 @@ canon_object() {
 # cannot read back, in a log nothing ever rewrites.
 valid_nwo() { [[ "${1-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; }
 
-# A TRANSCRIPT UUID, and nothing else — the shape `claude --resume` takes
-# exactly and the one every event line's `session` field carries (Amendment
-# 7(b), Definitions sense 1). Not a PR-footer `session_01…`, not a session
-# NAME, and not the literal `unknown`: `write_event` refuses all three.
-valid_uuid() { [[ "${1-}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; }
-
 # The home repo for this invocation. `--home` is for a PRE-CUTOVER lane — one
 # whose log has no STARTED line — and is REFUSED where the log already answers
 # the question, so the flag and the log can never disagree. It is resolved
@@ -1623,19 +1582,13 @@ EOF
 
 # ---------------------------------------------------------- age and staleness
 
-# `date -u -d <stamp>` IS GNU-ONLY, AND THIS FUNCTION IS WHAT STALENESS IS MADE
-# OF (A9 Addendum 4, R-A9-11). BSD `date` — macOS's — answers `illegal option
-# -- d`, and `2>/dev/null || printf ''` turned that refusal into an EMPTY
-# ANSWER rather than an error: `age_of` printed `age unknown` beside every row,
-# `older_than_minutes` and `older_than_threshold` returned false for every
-# stamp, and the whole of `who`'s idle and stale reporting was silently off on
-# a platform this repository's own CI runs. BSD spells the same question
-# `-j -f <format> <stamp>`, so both are asked, GNU first because it is what
-# every lane workstation runs. TWO FORMATS, because this estate writes two:
-# `utc_now`, `lane-end`'s RELEASED and every log line carry SECONDS, and a
-# row's `Started` cell carries MINUTES. GNU reads either from one call; BSD
-# must be told which, so it is asked twice. A stamp none of the three can read
-# is still the empty string every caller here already tests for.
+# GNU spells this `date -u -d <stamp>`; BSD/macOS spells it
+# `date -u -j -f <format> <stamp>` and rejects `-d` outright. Both are asked,
+# GNU first, and a stamp neither can read is still the empty string every
+# caller here already tests for. TWO FORMATS, because this estate writes two:
+# `utc_now` here and `lane-end:585` write seconds, `lane-start:1043`'s
+# `started` column is minutes. GNU reads either from one call; BSD needs to be
+# told which, so it is asked twice.
 epoch_of() {
   date -u -d "$1" +%s 2>/dev/null ||
     date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null ||
@@ -1728,7 +1681,7 @@ session_files() {
     esac
   done
   if [ -s "$sf_err" ]; then
-    SESSION_FILES_ERR="$(LC_ALL=C tr '\n' ';' < "$sf_err" | LC_ALL=C cut -c1-300)"
+    SESSION_FILES_ERR="$(tr '\n' ';' < "$sf_err" | cut -c1-300)"
     sf_rc=1
   fi
   rm -f -- "$sf_err"
@@ -1943,16 +1896,9 @@ live_holder() {
     rm -f -- "$lh_files" "$lh_match" "$lh_err"
     return 8                       # this workstation keeps no records at all
   fi
-  # `xargs -r` IS GNU-ONLY and was dead weight: the `[ ! -s ]` guard above
-  # returns before this line when there is no record to search at all, which
-  # is the only thing `-r` would have caught (A9 Addendum 4, R-A9-11). The
-  # `tr`s read arbitrary bytes — a path, and grep's own words about it — so
-  # they read them as bytes: BSD `tr` answers `Illegal byte sequence` for a
-  # multibyte character in a UTF-8 locale and prints NOTHING, which would turn
-  # a record that cannot be read into a reason nobody can read either.
-  LC_ALL=C tr '\n' '\0' < "$lh_files" | xargs -0 grep -l -F "${pats[@]}" > "$lh_match" 2>"$lh_err" || :
+  tr '\n' '\0' < "$lh_files" | xargs -0 grep -l -F "${pats[@]}" > "$lh_match" 2>"$lh_err" || :
   if [ -s "$lh_err" ]; then        # a record that exists and cannot be read
-    SESSION_FILES_ERR="$(LC_ALL=C tr '\n' ';' < "$lh_err" | LC_ALL=C cut -c1-300)"
+    SESSION_FILES_ERR="$(tr '\n' ';' < "$lh_err" | cut -c1-300)"
     rm -f -- "$lh_files" "$lh_match" "$lh_err"
     return 1
   fi
@@ -2073,10 +2019,9 @@ idle_holders() {   # <lane>
   fi
   ih_pats=()
   for ih_sid in $ih_earlier; do ih_pats+=(-e "\"sessionId\":\"$ih_sid\""); done
-  # `xargs -r` and the locale, for the reason `live_holder` gives above.
-  LC_ALL=C tr '\n' '\0' < "$ih_files" | xargs -0 grep -l -F "${ih_pats[@]}" > "$ih_match" 2>"$ih_err" || :
+  tr '\n' '\0' < "$ih_files" | xargs -0 grep -l -F "${ih_pats[@]}" > "$ih_match" 2>"$ih_err" || :
   if [ -s "$ih_err" ]; then
-    SESSION_FILES_ERR="$(LC_ALL=C tr '\n' ';' < "$ih_err" | LC_ALL=C cut -c1-300)"
+    SESSION_FILES_ERR="$(tr '\n' ';' < "$ih_err" | cut -c1-300)"
     rm -f -- "$ih_files" "$ih_match" "$ih_err"
     return 1
   fi
@@ -2290,20 +2235,11 @@ lane_is_elsewhere() {
 }
 
 # The session id an event line carries: what the caller says it is, else the
-# lane's current one (Amendment 6(b): the LAST id in the cell), else NOTHING.
-#
-# R-A11 (e) — IT NO LONGER SUBSTITUTES THE LITERAL `unknown`. It did, and that
-# literal is in the append-only log four times already, in two lanes
-# (`lanes/log/codeXfactory-1.md` ×3, `lanes/log/openxfactory-4-opendox-extraction.md`
-# ×1 on `origin/main`) — written by `log PAUSED` from a swap skill that had the
-# uuid in hand and did not pass it, and by `release`. Amendment 7(b) makes that
-# field a transcript uuid and ONLY that. Returning empty hands the decision to
-# `write_event`, which refuses the write and names the act that supplies the
-# uuid; the four lines already written stay exactly where they are (Amendment
-# 7(b) forbids editing them, 7(i)'s cutover rule governs).
+# lane's current one (Amendment 6(b): the LAST id in the cell), else unknown.
 session_for() {
   if [ -n "${LANES_SESSION:-}" ]; then printf '%s\n' "$LANES_SESSION"; return 0; fi
-  last_session_id_of_lane "$1" 2>/dev/null || :
+  sf_id="$(last_session_id_of_lane "$1" 2>/dev/null || :)"
+  printf '%s\n' "${sf_id:-unknown}"
 }
 
 # ----------------------------------------------------- project.yaml legs
@@ -2445,33 +2381,6 @@ rule6_line() {
 # register and the log can never disagree about a merge hold.
 write_event() {
   we_lane="$1"; we_verb="$2"; we_obj="$3"; we_ref="$4"; we_pay="$5"; we_txt="$6"; we_utc="$7"; we_uuid="$8"
-  # R-A11 (e) — THE `session` FIELD IS A TRANSCRIPT UUID AND ONLY THAT, AND THE
-  # WRITER ITSELF IS WHERE THAT IS ENFORCED. Amendment 7(b) says so of the
-  # grammar; nothing checked it, and the literal `unknown` is in the append-only
-  # log four times already, in two lanes — three from `log PAUSED` (a swap skill
-  # holding the uuid and not passing it) and one from `release`. The log is
-  # append-only, so a line written wrong there is wrong for ever and no later
-  # line can correct it. Refused HERE rather than in the `log` arm because the
-  # same field is written by `claim` and `release` too, and one of the four came
-  # from `release`: this is the writer, so this is the gate.
-  #
-  # It is the FIRST test in the function, before the lock, before the capture
-  # and before the log file is created, so a refusal leaves the checkout exactly
-  # as it found it — and it names the act that supplies the uuid rather than the
-  # rule it broke, because the caller's next move is that act.
-  #
-  # This composes with `R-A8-2` rather than repeating it: `R-A8-2` stopped
-  # `lane-start` WRITING `unknown` (its title-fallback path defers the line
-  # instead); this stops the writer ACCEPTING it, from any caller.
-  if ! valid_uuid "$we_uuid"; then
-    we_bad="${we_uuid:-<empty>}"
-    case "$we_uuid" in
-      unknown) we_why="'unknown' is the one value this field must never carry: it is in this append-only log four times already, and no later line can correct any of them" ;;
-      session_*) we_why="'$we_bad' is a PR-footer id, which is neither resumable nor liveness-checkable (Amendment 6(b))" ;;
-      *) we_why="'$we_bad' is not a transcript uuid" ;;
-    esac
-    die "an event's session field is the TRANSCRIPT UUID and only that (Amendment 7(b)): $we_why. Nothing was written — not the $we_verb line, not the log file, not a commit. Name the session taking the act: LANES_SESSION=\"\$CLAUDE_CODE_SESSION_ID\" LANES_LANE=$we_lane lanes-edit.sh <subcommand> …   If lane $we_lane has no transcript uuid recorded at all, the act that gives it one is Amendment 6(c)'s session-cell append: run 'lane-start --no-launch <repo> <n>' in the lane's own window first" 2
-  fi
   # THE WRITER REFUSES A FIELD THAT WOULD MAKE THE LINE UNREADABLE (R21).
   # ` — ` divides a line into its three parts, and the grammar guarantees it
   # occurs AT MOST TWICE — once after the verb, once before the free text — so
@@ -2774,11 +2683,9 @@ EOF
 # collapse to the 11 repositories they name, and two LANDINGs a retry spelled
 # two ways are one hold instead of two.
 #
-# The table is handed in through the ENVIRONMENT, as `LANES_RULE6_ALIASES`,
-# one `<lowercased alias>\037<owner/repo>` per line — because awk cannot read
-# `repos.tsv` for itself here (this program's stdin is the register) and
-# because `awk -v`, which is where it used to go, carries ONE LINE: see
-# `who_landing` for what a many-line `-v` does on macOS's awk.
+# The table is handed in as `aliases`, one `<lowercased alias>\037<owner/repo>`
+# per line, because awk cannot read `repos.tsv` for itself here: this program's
+# stdin is the register.
 #
 # BOTH LAYERS, SHIPPED FIRST (Amendment 9(b)). This is the second reader of the
 # table — `alias_lookup` is the other — and it layers them the same way by
@@ -2811,7 +2718,7 @@ RULE6_AWK='
 function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
 function canon(r,   l) { l = tolower(r); return (l in A) ? A[l] : r }
 BEGIN {
-  na = split(ENVIRON["LANES_RULE6_ALIASES"], ar, "\n")
+  na = split(aliases, ar, "\n")
   for (ai = 1; ai <= na; ai++) { ap = index(ar[ai], "\037")
     if (ap > 1) A[substr(ar[ai], 1, ap - 1)] = substr(ar[ai], ap + 1) }
 }
@@ -2887,25 +2794,7 @@ EOF
 
 who_landing() {
   wd_repo="$1"; wd_n=0; wd_rows=""
-  # `awk -v` CARRIES ONE LINE, AND THIS TABLE IS MANY (A9 Addendum 4, R-A9-11,
-  # round 5; the `probe` step of run 34782845181 answered it on the runner).
-  # A `-v name=value` is processed as if it were a STRING LITERAL, and a string
-  # literal cannot span lines: macOS's awk (one-true-awk 20200816) refuses it
-  # outright — `awk: newline in string … at source line 1`, exit 2, no output at
-  # all — while gawk and mawk accept it silently. So this read, and only this
-  # read, answered `none open` for every LANDING in the register on that
-  # platform: fourteen of the job's twenty-six remaining failures, and the
-  # estate's merge holds invisible on a workstation that runs macOS.
-  #
-  # `ENVIRON` has no such restriction and is POSIX awk, so the table goes
-  # through the environment of this one command. The program is otherwise
-  # untouched: the probe ran `RULE6_AWK` itself on that awk with an empty table
-  # and it emitted both rows byte-for-byte, and `length`, `match`, `RSTART`,
-  # `RLENGTH` and `substr` there all agree with each other on a line carrying
-  # an em dash. There was nothing wrong with the parser or with the arithmetic;
-  # the table could not get in.
-  wd_aliases="$(rule6_aliases)"
-  wd_rows="$(register_text | LANES_RULE6_ALIASES="$wd_aliases" awk "$RULE6_AWK")"
+  wd_rows="$(register_text | awk -v aliases="$(rule6_aliases)" "$RULE6_AWK")"
   while IFS="$US" read -r wd_verb wd_lane wd_pr wd_utc wd_r wd_other; do
     [ "${wd_verb:-}" = LANDING ] || continue
     wd_c="$(alias_lookup "${wd_r:-}" 2>/dev/null || :)"; wd_c="${wd_c:-$wd_r}"
@@ -3358,7 +3247,7 @@ gh_reads() {
   command -v gh >/dev/null 2>&1 || { note "gh is not on PATH — rerun with --no-github, or install it"; return 1; }
   printf '1. existing `CLAIMED —` comments on %s:\n' "$gr_obj"
   if [ -n "$gr_n" ]; then
-    gr_c="$( { gh issue view "$gr_n" --repo "$gr_repo" --comments 2>/dev/null || gh pr view "$gr_n" --repo "$gr_repo" --comments 2>/dev/null; } | grep -n -e 'CLAIMED —' -e 'TAKEOVER —' -e 'RELEASED —' || : )"
+    gr_c="$( { gh issue view "$gr_n" --repo "$gr_repo" --comments 2>/dev/null || gh pr view "$gr_n" --repo "$gr_repo" --comments 2>/dev/null; } | grep -n 'CLAIMED —\|TAKEOVER —\|RELEASED —' || : )"
   else
     gr_c=""
   fi
@@ -3456,7 +3345,7 @@ cmd="${1-}"
 # The usage block is this file's own header: print from line 3 until the first
 # line that is not a comment. (It used to be a hard-coded `3,59p`, which went
 # stale the moment the header grew — as it did under Amendment 5.)
-[ -n "$cmd" ] || { sed -n -e '1,2d' -e '/^#/!q' -e 's/^# \{0,1\}//' -e p "$RESOLVED"; exit 2; }
+[ -n "$cmd" ] || { sed -n -e '3,${/^#/!q;s/^# \{0,1\}//;p;}' "$RESOLVED"; exit 2; }
 shift || :
 # `session-start` is EXEMPT. It is a hook: it never writes, and it must exit 0
 # even where there is no register to read at all — a hook that dies is a hook
@@ -3479,17 +3368,9 @@ case "$cmd" in
     lane="${1-}"; [ -n "$lane" ] || die "usage: verify-row <lane>" 2
     n="$(row_line "$lane")" || exit 2
     row="$(sed -n -e "${n}p" "$LANES_FILE")"
-    # Bash substrings, not `cut -c` and `rev`: `${#row}` counts CHARACTERS,
-    # and a register row is full of `·` `—` `→`, so a byte-counting `cut`
-    # disagrees with the length printed one field earlier — and BSD `rev` and
-    # `cut` answer `Illegal byte sequence` on the same row rather than
-    # disagreeing. The same rule `lane-end:566` states (R-A9-11).
-    # `${row: -200}` on a row SHORTER than 200 answers the empty string, where
-    # `rev | cut | rev` answered the whole row — so the short case is asked
-    # for explicitly rather than left to the expansion.
-    row_tail="$row"; [ "${#row}" -gt 200 ] && row_tail="${row: -200}"
     printf 'lane   : %s\nline   : %s\nlength : %s chars\nfirst200: %s\nlast200 : %s\n' \
-      "$lane" "$n" "${#row}" "${row:0:200}" "$row_tail"
+      "$lane" "$n" "${#row}" "$(printf '%s' "$row" | cut -c1-200)" \
+      "$(printf '%s' "$row" | rev | cut -c1-200 | rev)"
     ;;
 
   append-row-status)
@@ -3518,20 +3399,7 @@ case "$cmd" in
     row="$(sed -n -e "${n}p" "$LANES_FILE")"
     c="$(count_occurrences "$row" "$old")" || exit 2
     [ "$c" = 1 ] || die "'$old' occurs $c times in lane $lane's row (line $n); exactly 1 required" 2
-    # NOT `${row/"$old"/"$new"}` (A9 Addendum 4, R-A9-11). Bash 4.3 and later
-    # read the quotes there as "this half is a literal, not a pattern"; BASH
-    # 3.2 KEEPS THE ONES AROUND THE REPLACEMENT AS CHARACTERS, so on macOS
-    # every `replace-in-row` wrote its new text WRAPPED IN DOUBLE QUOTES. The
-    # macOS job read `| "RETIRED 2026-09-13T20:39:04Z" · …` where the register
-    # wanted `| RETIRED 2026-…`, and nothing else noticed: the write succeeded,
-    # the commit landed, and the row was quietly wrong. (The pattern half is
-    # unaffected — 3.2 does remove those quotes, which is how the replacement
-    # got made at all.) Prefix and suffix instead, so `$new` never enters the
-    # pattern machinery: `%%` leaves the shortest prefix and `#` the text after
-    # the first match, and `count_occurrences` above has already proved there
-    # is exactly one.
-    ri_pre="${row%%"$old"*}"; ri_post="${row#*"$old"}"
-    replace_line "$n" "$ri_pre$new$ri_post"
+    replace_line "$n" "${row/"$old"/"$new"}"
     msg="LANES($lane@$WS): ${why:-replace-in-row}"
     [ -n "$PRE_DIRTY_LANES" ] && msg="$msg + sweeps uncommitted edit to row $PRE_DIRTY_LANES"
     commit_push "$msg"
@@ -3603,7 +3471,7 @@ case "$cmd" in
     fi
     acquire_lock; handle_preexisting
     append_text_line "$text"
-    msg="LANES(${lane_tag:-unknown}@$WS): append line — ${text:0:72}"
+    msg="LANES(${lane_tag:-unknown}@$WS): append line — $(printf '%s' "$text" | cut -c1-72)"
     [ -n "$PRE_DIRTY_LANES" ] && msg="$msg + sweeps uncommitted edit to row $PRE_DIRTY_LANES"
     commit_push "$msg"
     ;;
@@ -4094,28 +3962,6 @@ EOF
     rr_row="$(row_of_lane "$lane")"
     [ -n "$rr_row" ] || exit 8
     printf '%s\n' "$rr_row"
-    ;;
-
-  # R-A11-7 — THE HOOK'S OWN uuid → lane READ, EXPOSED. `lane_of_session` has
-  # answered "which lane's row's SESSION CELL names this uuid" since Amendment
-  # 8(e), for a window that carries no lane name; nothing else could reach it.
-  # `lane-start` step 3b needs the same answer to keep R-A11-1's fence — a live
-  # session that belongs to ANOTHER row is never taken — so it is one read with
-  # two callers rather than a second implementation of the same question.
-  #
-  # ONLY the session cell is read, exactly as the hook reads it: state cells
-  # quote other lanes' ids all the time (`RESUMED by <id>`, `handed off to
-  # <id>`), and one of those is not that session's lane.
-  #
-  # Read-only. 0 with the lane, 8 when no row's session cell names it —
-  # Amendment 7(d)'s fail-closed convention, so a caller can tell *none* from
-  # *could not read*.
-  session-lane)
-    sl_id="${1-}"; [ -n "$sl_id" ] || die "usage: session-lane <transcript-uuid>" 2
-    log_sync
-    sl_lane="$(lane_of_session "$sl_id")"
-    [ -n "$sl_lane" ] || exit 8
-    printf '%s\n' "$sl_lane"
     ;;
 
   # `--home`'s validation, WITHOUT a write — the same `resolve_home` the writers

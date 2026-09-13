@@ -99,6 +99,9 @@
 #   LANES_EDIT  default lanes-edit.sh beside this command
 #   LANES_WORKSPACE_ROOT  the workspace repository, overriding workspace.yaml's
 #               `path:` — the test seam
+#   LANES_WORKSTATION  the workstation column this writes (default
+#               `hostname -s`) — the same seam and spelling `lanes-edit.sh:216`
+#               documents (R-A9-13)
 #   AGENT_PROTOCOL_ROOT   dir holding workspace.yaml (default ~/.agents)
 #   OPENREPOTOOLS_BIN_DIR where `--install` put the commands (default
 #               ~/.local/bin) — searched for lanes-edit.sh
@@ -313,7 +316,7 @@ note() { printf '%s: %s\n' "$prog" "$*" >&2; }
 step() { printf '%s: %s\n' "$prog" "$*" >&2; }
 plan() { printf '%s: PLAN %s\n' "$prog" "$*" >&2; }
 die()  { printf '%s: %s\n' "$prog" "$1" >&2; exit "${2:-1}"; }
-usage() { sed -n -e '1,2d' -e '/^#/!q' -e 's/^# \{0,1\}//' -e p "$RESOLVED"; }
+usage() { sed -n -e '3,${/^#/!q;s/^# \{0,1\}//;p;}' "$RESOLVED"; }
 
 # ------------------------------------------------------------------ arguments
 
@@ -567,18 +570,10 @@ elif [ "$in_flight" = 1 ]; then
   # bytes, and these cells are full of · — → , so the two disagree.
   from=$(( cell_at > 40 ? cell_at - 40 : 0 ))
   excerpt="${haystack:from:160}"
-  # BRACED, AND THE BRACES ARE LOAD-BEARING (A9 Addendum 4, R-A9-11). The line
-  # below writes `\u2026$excerpt\u2026`, and bash decides where a variable NAME ends
-  # with `isalnum()`, which is LOCALE-DEPENDENT: bash 3.2 on Darwin, under the
-  # `en_US.UTF-8` the runner sets, reads the three bytes of `\u2026` as name
-  # characters and looks up `excerpt\u2026` instead. Unset, `set -u`, and
-  # `lane-end` died where it was about to print the refusal \u2014 the macOS job read
-  # `lane-end: line 573: excerpt\u2026: unbound variable`, exit 0 instead of the
-  # exit 2 that whole branch exists for. `${excerpt}` says where the name ends.
   if [ "$force" = 0 ]; then
     note "lane $LANE has no object log yet (pre-cutover), so this is the state cell's substring scan, over $cell_source:"
     note "lane $LANE still has something in flight — the last $cell_word in its state cell has no LANDED or RELEASED after it:"
-    note "  …${excerpt}…"
+    note "  …$excerpt…"
     note "the fix, in the order the protocol wants it:"
     note "  lanes-edit.sh append-row-status $LANE \"LANDED — PR #<n> → <merge sha> (<UTC>)\"      # or RELEASED — …"
     note "  $prog $LANE$rflag"

@@ -41,19 +41,7 @@ SUITE = REPO / "tests" / "test_lane_helpers.sh"
 #: real repositories several hundred times and spawns a real `sleep` for the
 #: liveness cases. A CI runner under load is slower than a workstation, and a
 #: timeout that fires there reads as a broken suite rather than a slow one.
-#:
-#: 900 -> 2400 on 2026-09-13 (A9 Addendum 4, R-A9-11). This is the round that
-#: made the suite RUN on macOS rather than fail in its first hundred
-#: assertions, and running is slower than failing: at `9000e86` the job took
-#: 1033 s to reach 507 passed / 447 failed, and at `c405eb4`, with those 447
-#: now doing real work, 900 s was not enough to finish — the run died as a
-#: TimeoutExpired rather than a red assertion, which is the least readable
-#: failure this file can produce. Measured for comparison: 229 s under pytest
-#: on the Linux container this was written on. The bound still exists for the
-#: thing it was written for — a helper that hangs on a lock or a network call
-#: must not hold a runner for six hours — it is just no longer tighter than
-#: the slowest platform this suite is required to pass on.
-TIMEOUT_SECONDS = 2400
+TIMEOUT_SECONDS = 900
 
 
 @WINDOWS_SKIP
@@ -76,15 +64,7 @@ def test_the_lane_helper_suite_passes():
                  "OPENREPOTOOLS_BIN_DIR", "PROJECTS_ROOT"):
         env.pop(name, None)
 
-    # `errors="replace"`, because the thing this wrapper exists to print is the
-    # TRANSCRIPT, and a decode that raises loses all of it. The suite renders
-    # its own failures with bash substrings for that reason (R-A9-11), so a
-    # stray byte here should be impossible — and if one ever gets through, a
-    # `\ufffd` in one line is a readable result where `UnicodeDecodeError` is
-    # none at all. Measured: at `dcf1027` one truncated em dash cost the whole
-    # 998-line transcript on the macOS job.
-    proc = subprocess.run(["bash", str(SUITE)], capture_output=True,
-                          encoding="utf-8", errors="replace",
+    proc = subprocess.run(["bash", str(SUITE)], capture_output=True, text=True,
                           check=False, cwd=str(REPO), timeout=TIMEOUT_SECONDS,
                           env=env)
     tail = proc.stdout.strip().splitlines()[-1:] or ["(no output)"]

@@ -60,24 +60,19 @@ against disk"): the record `park` wrote into the workspace repository that
 and then by its folder name as `resume` looks it up, gives a finding for a
 recorded feature with no worktree here (`resume <Name>` brings it back; with
 `--no-push`, a `pushed:` that is missing or neither true nor false, no parked
-commit named for that leg, a leg given no role at all, a role this shape has no
-place for — unmounted, or one `resume` maps only in the other shape or in
-neither — or no leg at all, only the workstation that parked it can — and
-where that role is really another shape's, only a checkout of that shape,
-where it is neither shape's, none; with the branch gone from origin, which
-only `--fetch` settles, `resume` refuses the WHOLE feature as gone from origin
-and the exits are the record's own entry where the feature landed or a push
-from the workstation that parked it; and where `git worktree list` still holds a
-registration that is no longer a worktree, a `worktree prune` — after a
-`worktree unlock` if it is locked, with any directory it leaves behind moved
-aside — has to clear it first), a worktree whose tip moved on from, fell
-behind (by more than the WIP commits `resume` itself un-committed), or
-diverged from the parked commit — or a record naming no parked commit to
-compare it with — a recorded branch this repository has no `origin/<branch>`
-for, a leg parked with `--no-push` or with a `pushed:` that is missing or
-unreadable, a leg the record gives no role or a role this shape has no place
-for, a feature the record lists no leg for, and a worktree the record does not
-know, which was never parked. No config, or no record, is a note.
+commit named for that leg, a leg given no role at all, a role this shape does
+not mount, or no leg at all, only the workstation that parked it can — and
+where that role is really another shape's, only a checkout of that shape; and
+where `git worktree list` still holds a registration that is no longer a
+worktree, a `worktree prune` — after a `worktree unlock` if it is locked, with
+any directory it leaves behind moved aside — has to clear it first), a
+worktree whose tip moved on from, fell behind (by more than the WIP commits
+`resume` itself un-committed), or diverged from the parked commit — or a
+record naming no parked commit to compare it with — a leg parked with
+`--no-push` or with a `pushed:` that is missing or unreadable, a leg the
+record gives no role or a role this shape does not mount, a feature the record
+lists no leg for, and a worktree the record does not know, which was never
+parked. No config, or no record, is a note.
 That is all five layers: the local layer, `--fetch`, the fork, the pin and
 the record.
 
@@ -180,12 +175,12 @@ alias table `repos.tsv` — 755, idempotently: a second run prints
 `already installed … (unchanged)` per file, and one whose bytes have drifted
 prints `updated at`. ALL NINE ARE IN HAND BEFORE ANY IS PLACED, so a fetch that
 failed replaces nothing and names the file it could not get. A target that is
-**not a regular file** — a symlink left by the pre-move `link-estates`, a
-directory — is a refusal in that same planning phase, naming every one of them,
-what it is, and the `rm` that clears them: `cp` follows a symlink, and an
-install through one leaves the command uninstalled and writes these bytes into
-whatever it points at. Then a `9 of 9 placed in <dir>` line, and the
-`export PATH=…` line if that directory is not on your `PATH`.
+NOT A REGULAR FILE — a symlink left by the pre-move `link-estates`, a directory
+— is a refusal in that same planning phase, naming every one of them and the
+`rm` that clears them: `cp` follows a symlink, and an install through one
+leaves the command uninstalled and writes these bytes into whatever it points
+at. Then a `9 of 9 placed in <dir>` line, and the `export PATH=…` line if that
+directory is not on your `PATH`.
 
 It also places **three things that are not files in that directory**: the
 `/lane-swap` skill at
@@ -194,12 +189,11 @@ It also places **three things that are not files in that directory**: the
 `~/.claude/skills/lane-swap/SKILL.md` for a bare `claude` run outside the
 launcher, and **one merged entry** under `hooks.SessionStart` in
 `~/.claude/settings.json`. That merge needs `jq`, never writes the file whole,
-writes it back at mode 600, and is idempotent by exact match on the entry's
-command string. An entry that runs `session-start` with a DIFFERENT string — a
-second writer of this very hook — a file it cannot parse, or a `hooks` that is
-not an object → it **refuses, prints the exact block, and places nothing at
-all**, because the merge is computed with the nine files in hand before any of
-them is placed. An installer that repairs a
+narrows the mode to 600, and is idempotent by exact match on the entry's
+command string. An entry that runs `session-start` with a DIFFERENT string
+(a second writer of this very hook), a file it cannot parse, or a `hooks` that is not an object → it **refuses, prints the
+exact block, and places nothing at all**, because the merge is computed with the
+nine files in hand before any of them is placed. An installer that repairs a
 file it does not understand is how you lose a setting you meant. It never
 writes a profile's own `settings.json`: the launcher owns that one.
 

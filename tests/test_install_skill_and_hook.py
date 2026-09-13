@@ -329,177 +329,186 @@ def test_a_destination_that_cannot_be_written_refuses_before_anything_is_placed(
         blocked.chmod(0o700)
 
 
-# --- the nine targets, and what they are (R-A9-12) --------------------------
-
 @NEEDS_JQ
 @NOT_ROOT
-def test_a_leaf_destination_that_exists_unwritable_refuses_before_anything_is_placed(
-        tmp_path):
-    """THE `-w` ARM, WHICH THE TEST ABOVE NEVER REACHES (F6 of the #24 review,
-    ruled R-A9-15).
+def test_a_leaf_destination_that_exists_and_is_unwritable_refuses(tmp_path):
+    """THE `[ -w "$d" ]` ARM, WHICH NOTHING REACHED (F6 of the #24 review).
 
-    The case above chmods the PARENT, so `mkdir -p` is what refuses and
-    `[ -w "$d" ] || die` is never asked. Measured: `mkdir -p` returns 0 on a
-    directory that already EXISTS at 0500, so the leaf itself is the only way
-    to reach that arm — and with the arm mutated to a no-op the whole review's
-    run of this file stayed at 13 passed. A guard no test reaches is a guard
-    nobody can rely on.
-
-    The bin directory is the assertion that tells the two apart: the refusal
-    here is a PLANNING one and nothing is placed, where the mutant places all
-    nine files and dies on the `cp` into this same directory, which is the
-    half-install the planning phase exists to prevent.
+    Its sibling above chmods the PARENT 0500, so `mkdir -p` is what refuses and
+    the writability test one line below it is never evaluated — the reviewer
+    replaced that line with a no-op and the file stayed 13 passed. `mkdir -p`
+    returns 0 on a directory that ALREADY EXISTS whatever its mode (measured),
+    so the leaf existing at 0500 is the shape that reaches the guard: the
+    directory is there, `mkdir -p` is happy, and nothing may be written into
+    it. That is also the real-world shape — a skills directory somebody made
+    read-only — rather than an unwritable parent, which would have broken the
+    profile set long before `--install` ran.
     """
-    blocked = tmp_path / ".claude-profiles" / "shared" / "skills" / "lane-swap"
-    blocked.mkdir(parents=True)
-    blocked.chmod(0o500)
+    leaf = tmp_path / ".claude-profiles" / "shared" / "skills" / "lane-swap"
+    leaf.mkdir(parents=True)
+    leaf.chmod(0o500)
     bin_dir = tmp_path / ".local" / "bin"
     try:
         result = run_cmd("--install", home=tmp_path)
         assert result.returncode == 2, result.stdout + result.stderr
-        assert "is not writable" in result.stderr, result.stderr
+        assert f"{leaf} is not writable" in result.stderr, (
+            "the refusal must come from the -w guard, not from mkdir")
         assert "NOTHING was installed" in result.stderr
-        assert not bin_dir.exists() or not any(bin_dir.iterdir()), (
-            "the nine files were placed against a leaf directory that was "
-            "never going to take the skill")
+        assert not bin_dir.exists() or not any(bin_dir.iterdir())
+        assert not (leaf / "SKILL.md").exists()
     finally:
-        blocked.chmod(0o700)
+        leaf.chmod(0o700)
 
 
-def _wip_with_links(tmp_path) -> tuple[Path, Path, dict]:
-    """A bin directory carrying exactly what the pre-move `link-estates` leaves
-    on a workstation: `lane-start` and `lane-end` as symlinks into a checkout.
-    Returns the bin directory, the checkout, and each linked file's bytes."""
-    bin_dir = tmp_path / ".local" / "bin"
-    bin_dir.mkdir(parents=True)
+# --- the nine targets, before any of the twelve is placed (R-A9-12) ---------
+
+def plant_wip_checkout(tmp_path) -> Path:
+    """The shape every workstation is in BEFORE Amendment 9's adoption act 6:
+    `link-estates` put `lane-start` and `lane-end` in the bin directory as
+    SYMLINKS into `opensoft/brett-wip`'s checkout, which is the repository
+    every lane writes."""
     wip = tmp_path / "projects" / "brett-wip" / "lanes"
     wip.mkdir(parents=True)
-    contents = {}
-    for name in ("lane-start", "lane-end"):
-        real = wip / name
-        real.write_text(f"the {name} this checkout had before --install ran\n",
-                        encoding="utf-8")
-        contents[name] = real.read_bytes()
-        (bin_dir / name).symlink_to(real)
-    return bin_dir, wip, contents
-
-
-@NEEDS_JQ
-def test_a_symlinked_target_is_refused_and_nothing_is_written_through_it(tmp_path):
-    """`cp` FOLLOWS A SYMLINK, AND THE FAR END IS THE REGISTER'S CHECKOUT
-    (F5 of the #24 review, ruled R-A9-12).
-
-    Measured before the fix, against exactly this fixture: `lane-start: updated
-    at $BIN/lane-start`, `9 of 9 placed in $BIN`, exit 0 — and both claims
-    false. The targets stayed symlinks, so the two commands were never
-    installed (workBenches' `setup-estate-commands.sh` then refuses the whole
-    estate install on them), and the post-move bytes landed in the working tree
-    on the other end: `git -C $WIP status --porcelain` answered
-    ` M lanes/lane-end` and ` M lanes/lane-start`. That is the repository every
-    lane writes, so `lanes-edit.sh`'s `refuse_dirty_checkout` then refuses
-    `log`, `claim` and `release` on that workstation.
-
-    A host still carrying those links is the NORMAL pre-act-5 case, which is
-    why the refusal names each path, what it is, and the `rm` that clears them.
-    """
-    bin_dir, wip, contents = _wip_with_links(tmp_path)
-    result = run_cmd("--install", home=tmp_path,
-                     env={"OPENREPOTOOLS_BIN_DIR": str(bin_dir)})
-    assert result.returncode == 2, result.stdout + result.stderr
-    assert "NOTHING was installed" in result.stderr
-    for name in ("lane-start", "lane-end"):
-        assert f"{bin_dir / name} — a symlink to {wip / name}" in result.stderr, (
-            "the refusal must name every offending target and say what it "
-            f"is:\n{result.stderr}")
-    assert f'rm -f -- "{bin_dir / "lane-start"}" "{bin_dir / "lane-end"}"' in result.stderr, (
-        f"the refusal must print the exact `rm` that clears them:\n{result.stderr}")
-    # THE POINT OF THE WHOLE ROUND: the checkout on the far end is untouched.
-    for name, before in contents.items():
-        assert (wip / name).read_bytes() == before, (
-            f"--install wrote through the symlink into {wip / name}")
-        assert (bin_dir / name).is_symlink(), (
-            f"{bin_dir / name} is no longer the link it was")
-    # …and it refused in the PLANNING phase: none of the other seven arrived.
-    assert sorted(p.name for p in bin_dir.iterdir()) == ["lane-end", "lane-start"]
-    assert not (tmp_path / ".claude").exists(), (
-        "the hook or the skill was placed by a run that refused")
-
-
-@NEEDS_JQ
-def test_a_directory_where_a_command_goes_is_refused_the_same_way(tmp_path):
-    """THE RULE IS `A REGULAR FILE`, not `not a symlink`. A directory at
-    `$BIN/park` is the same refusal for the same reason — `cp` cannot place a
-    file over it, and finding that out after eight of the nine are placed is
-    the half-install the planning phase exists to prevent."""
-    bin_dir = tmp_path / ".local" / "bin"
-    (bin_dir / "park").mkdir(parents=True)
-    result = run_cmd("--install", home=tmp_path,
-                     env={"OPENREPOTOOLS_BIN_DIR": str(bin_dir)})
-    assert result.returncode == 2, result.stdout + result.stderr
-    assert f"{bin_dir / 'park'} — a directory" in result.stderr, result.stderr
-    assert sorted(p.name for p in bin_dir.iterdir()) == ["park"]
-
-
-@NEEDS_JQ
-def test_a_dangling_symlink_is_refused_rather_than_followed(tmp_path):
-    """`[ -e ]` IS FALSE ON A DANGLING LINK, AND `cp` THROUGH ONE CREATES THE
-    FILE AT THE FAR END. So the planning walk asks `-L` as well: a link into a
-    checkout that is not on this machine yet is the same write into a
-    repository this command was never told about, one `git clone` later."""
     bin_dir = tmp_path / ".local" / "bin"
     bin_dir.mkdir(parents=True)
-    missing = tmp_path / "projects" / "brett-wip" / "lanes" / "lane-start"
-    (bin_dir / "lane-start").symlink_to(missing)
-    result = run_cmd("--install", home=tmp_path,
-                     env={"OPENREPOTOOLS_BIN_DIR": str(bin_dir)})
-    assert result.returncode == 2, result.stdout + result.stderr
-    assert f"{bin_dir / 'lane-start'} — a symlink to {missing}" in result.stderr, result.stderr
-    assert not missing.exists(), "--install created the file at the far end"
+    for name in ("lane-start", "lane-end"):
+        source = wip / name
+        source.write_text(f"#!/usr/bin/env bash\n# the pre-move {name}\n",
+                          encoding="utf-8")
+        (bin_dir / name).symlink_to(source)
+    return wip
 
-
-# --- what the conflict arm keys on (R-A9-14) --------------------------------
 
 @NEEDS_JQ
-def test_a_second_writer_of_this_hook_refuses_whatever_file_carries_it(tmp_path):
-    """THE VERB IS WHAT COLLIDES, NOT THE FILE THAT CARRIES IT (F7 of the #24
-    review, ruled R-A9-14).
+def test_a_symlinked_target_refuses_and_the_checkout_it_points_at_is_untouched(tmp_path):
+    """`cp` FOLLOWS A SYMLINK, AND THE THING ON THE OTHER END IS THE REGISTER
+    REPOSITORY (R-A9-12, from F5 of the #24 review).
 
-    A9 Addendum 3's R-A9-8 narrows clause (b)'s unqualified "whose `command`
-    DIFFERS" to the case the clause gives a REASON for: "an entry that runs
-    `session-start` with a DIFFERENT command — a competing writer of our own
-    hook", whose harm is that merging fires the hook twice. Keyed on
-    `lanes-edit.sh` instead, this arm merged beside exactly that — a second
-    program running the same hook verb — and refused an entry that runs
-    `lanes-edit.sh who`, which competes with nothing.
+    Measured before the fix: `--install` printed `lane-start: updated at
+    <bin>/lane-start`, `openRepoTools: 9 of 9 placed`, and exit 0 — while the
+    two targets STAYED SYMLINKS (so the commands were not installed, and
+    workBenches' `setup-estate-commands.sh:206-218` still refuses the whole
+    estate install on them) and the post-move bytes landed inside
+    `opensoft/brett-wip`'s worktree, where `lanes-edit.sh`'s
+    `refuse_dirty_checkout` then refuses `log`, `claim` and `release` on that
+    workstation.
+
+    This is the NORMAL pre-act-5 state of both workstations, and the Raven
+    sequence sends a person to type `--install` by hand — so the tool enforces
+    act 6 step 1 rather than leaving it to a person to remember it.
     """
-    rival = "~/bin/lane-hook.sh session-start || true"
-    settings = settings_of(tmp_path)
-    settings.parent.mkdir(parents=True)
-    settings.write_text(json.dumps({"hooks": {"SessionStart": [
-        {"matcher": HOOK_MATCHER,
-         "hooks": [{"type": "command", "command": rival, "timeout": 5}]}]}}),
-        encoding="utf-8")
+    wip = plant_wip_checkout(tmp_path)
+    bin_dir = tmp_path / ".local" / "bin"
+    before = {name: (wip / name).read_bytes() for name in ("lane-start", "lane-end")}
+
+    result = run_cmd("--install", home=tmp_path)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "places REGULAR FILES" in result.stderr
+    for name in ("lane-start", "lane-end"):
+        target = bin_dir / name
+        assert f"{target} — a symlink to {wip / name}" in result.stderr, (
+            "the refusal names EVERY offending path and what it is")
+        assert target.is_symlink(), "it must not have replaced the link either"
+        assert (wip / name).read_bytes() == before[name], (
+            "it wrote THROUGH the symlink into the workspace checkout")
+    assert f"rm -f {bin_dir / 'lane-start'} {bin_dir / 'lane-end'}" in result.stderr, (
+        "the refusal carries the exact `rm` that clears them, in one line")
+    assert "adoption act 6" in result.stderr, "and names the act whose step 1 this is"
+    # NOTHING PLACED, not eight of nine: the check is in the planning phase.
+    assert sorted(p.name for p in bin_dir.iterdir()) == ["lane-end", "lane-start"]
+    for target in skill_paths(tmp_path):
+        assert not target.exists(), target
+    assert not settings_of(tmp_path).exists()
+
+
+@NEEDS_JQ
+def test_a_dangling_symlink_target_refuses_too(tmp_path):
+    """`-e` IS FALSE FOR A DANGLING SYMLINK, so the link test has to come
+    first. A link whose target no longer exists is exactly what adoption act 5
+    leaves behind on a host that has not done act 6 — and `cp` through it
+    CREATES the file it points at, inside the stripped checkout."""
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    gone = tmp_path / "projects" / "brett-wip" / "lanes" / "lanes-edit.sh"
+    (bin_dir / "lanes-edit.sh").symlink_to(gone)
+
     result = run_cmd("--install", home=tmp_path)
     assert result.returncode == 2, result.stdout + result.stderr
-    assert "a SessionStart entry that runs `session-start` with a" in result.stderr
-    assert session_start_commands(tmp_path) == [rival], "it changed the file"
-    assert not (tmp_path / ".local" / "bin").exists(), (
-        "the refusal must cost a whole install, not half of one")
+    assert f"{bin_dir / 'lanes-edit.sh'} — a symlink to {gone}" in result.stderr
+    assert not gone.exists(), "it created the file the dangling link pointed at"
+    assert [p.name for p in bin_dir.iterdir()] == ["lanes-edit.sh"]
 
 
 @NEEDS_JQ
-def test_an_entry_that_merely_names_the_same_file_is_no_conflict(tmp_path):
-    """…AND THE OTHER HALF OF THE SAME RULING. `lanes-edit.sh who` under
-    `SessionStart` is somebody's own setting: it writes nothing, it is not this
-    hook, and firing it does not fire ours twice. It is kept, and ours is added
-    beside it — the same answer any unrelated entry gets."""
-    other = "~/projects/xFactory/lanes-edit.sh who || true"
+def test_a_directory_where_a_command_goes_refuses(tmp_path):
+    """The other non-regular file `--install` can meet. `cp` into a directory
+    puts the file INSIDE it, so this one would have reported nine placed and
+    left `~/.local/bin/park/park` where `~/.local/bin/park` was asked for."""
+    bin_dir = tmp_path / ".local" / "bin"
+    (bin_dir / "park").mkdir(parents=True)
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"{bin_dir / 'park'} — a directory" in result.stderr
+    assert [p.name for p in bin_dir.iterdir()] == ["park"]
+
+
+@NEEDS_JQ
+def test_a_regular_file_at_a_target_is_still_replaced(tmp_path):
+    """THE REFUSAL IS NARROW. An ordinary previous install is a regular file
+    and is updated in place, which is what `--install` is for; only a target
+    that is not a regular file costs a run."""
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "park").write_text("#!/usr/bin/env bash\n# an older park\n",
+                                  encoding="utf-8")
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"park: updated at {bin_dir / 'park'}" in result.stdout
+    assert (bin_dir / "park").read_bytes() == (REPO / "park").read_bytes()
+
+
+# --- what the conflict arm keys on (R-A9-14) -------------------------------
+
+@NEEDS_JQ
+def test_a_lanes_edit_entry_that_is_not_a_session_start_is_not_a_conflict(tmp_path):
+    """KEYED ON `lanes-edit.sh`, THIS REFUSED, AND IT IS NOT A COMPETING WRITER
+    (F7 of the #24 review; R-A9-14).
+
+    `lanes-edit.sh who` under `SessionStart` prints the register's view of this
+    lane. It writes no hook, fires nothing twice, and blocking `--install` on
+    it for ever is the literal reading of clause (b) doing exactly the harm the
+    narrowing exists to avoid. The clause's REASON is a second writer of THIS
+    hook, and what two such entries collide on is the verb.
+    """
+    other = "~/.local/bin/lanes-edit.sh who"
     settings = settings_of(tmp_path)
     settings.parent.mkdir(parents=True)
     settings.write_text(json.dumps({"hooks": {"SessionStart": [
         {"matcher": "startup",
-         "hooks": [{"type": "command", "command": other, "timeout": 5}]}]}}),
+         "hooks": [{"type": "command", "command": other, "timeout": 3}]}]}}),
         encoding="utf-8")
     result = run_cmd("--install", home=tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
     assert session_start_commands(tmp_path) == [other, HOOK_COMMAND]
+
+
+@NEEDS_JQ
+def test_a_competing_session_start_writer_under_another_name_is_a_conflict(tmp_path):
+    """AND THE MIRROR OF IT. `~/bin/lane-hook.sh session-start` names no file
+    of ours and IS the thing clause (b) is about: two entries running
+    `session-start`, so the hook fires twice. Keyed on `lanes-edit.sh` this one
+    merged straight past."""
+    other = "~/bin/lane-hook.sh session-start"
+    settings = settings_of(tmp_path)
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({"hooks": {"SessionStart": [
+        {"matcher": HOOK_MATCHER,
+         "hooks": [{"type": "command", "command": other, "timeout": 5}]}]}}),
+        encoding="utf-8")
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "runs `session-start` with a" in result.stderr
+    assert session_start_commands(tmp_path) == [other], "it changed the file"
+    assert not (tmp_path / ".local" / "bin").exists(), (
+        "the refusal must cost a whole install, not half of one")

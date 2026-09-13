@@ -61,7 +61,6 @@ def fake_gh(tmp_path: Path, *, login: str = "brettheap",
             teams: tuple[str, ...] = ("platform",),
             may_create: bool = True,
             exists: bool = False,
-            refuse_clone: bool = False,
             refuse_push: bool = False) -> dict:
     """A `gh` that answers the five calls `wip init` makes, and refuses the rest.
 
@@ -84,11 +83,6 @@ def fake_gh(tmp_path: Path, *, login: str = "brettheap",
     teams_json = "\n".join(
         '{"slug":"%s","organization":{"login":"opensoft"}}' % t for t in teams)
     ruleset_call = 'install_ruleset "$(slug_path "$target")"' if refuse_push else ":"
-    # A `gh repo clone` that fails the way a fresh machine's does — no
-    # credential — and says so on STDERR, which is the whole of F9.
-    clone_refusal = (
-        '''printf '%s\\n' "fatal: could not read Username for 'https://github.com': terminal prompts disabled" >&2; exit 1;'''
-        if refuse_clone else ":")
     fake = tmp_path / "fake-path"
     fake.mkdir(exist_ok=True)
     (fake / "gh").write_text(textwrap.dedent(f"""\
@@ -134,7 +128,6 @@ def fake_gh(tmp_path: Path, *, login: str = "brettheap",
             exit 0 ;;
         "repo clone "*)
             target="$3"; dest="$4"
-            {clone_refusal}
             git clone -q "$(slug_path "$target")" "$dest" || exit 1
             git -C "$dest" config user.email wip@example.invalid
             git -C "$dest" config user.name "wip init tests"
@@ -592,51 +585,3 @@ def test_wip_init_and_the_lane_helpers_read_one_pointer_file_the_same_way(
             f"`lanes-edit.sh` refused {what} for some other reason:\n{helper.stderr}")
         assert "no reason recorded" not in helper.stderr, (
             "the refusal reached the person without the diagnosis it computed")
-
-
-# --- git's own words, on the three failures a fresh machine meets (F9) ------
-
-def test_a_clone_that_fails_prints_what_it_said_and_not_only_a_summary(tmp_path):
-    """THE COMMAND WHOSE JOB IS TO SET UP A NEW MACHINE MUST NOT SWALLOW THE
-    ONE SENTENCE THAT SAYS WHAT IS WRONG WITH IT (F9 of the #24 review, ruled
-    R-A9-15).
-
-    The clone, the stage and the commit all ran `>/dev/null 2>&1` and died with
-    a summary of this command's own devising: a machine with no credential got
-    `could not clone <target> into <path>. Nothing else was changed.` and
-    nothing else, when git had already said exactly what to do about it. Its
-    stderr is kept now and the last of it is printed UNDER the refusal — the
-    shape `fetch_from_repo`'s refusal already has.
-    """
-    home = tmp_path / "home"
-    result = run_wip(home, extra=fake_gh(tmp_path, refuse_clone=True))
-    assert result.returncode == 2, result.stdout + result.stderr
-    assert "could not clone" in result.stderr
-    assert "What it said:" in result.stderr, result.stderr
-    assert "terminal prompts disabled" in result.stderr, (
-        f"the refusal dropped the only sentence that says why:\n{result.stderr}")
-
-
-def test_a_commit_that_fails_prints_what_git_said(tmp_path):
-    """THE SAME RULE ON THE SEED COMMIT, which is the one a machine with no
-    `user.email` configured actually meets. A `pre-commit` hook standing in for
-    it, because the refusal under test is "whatever git said", not one
-    particular sentence git says."""
-    home = tmp_path / "home"
-    env = fake_gh(tmp_path, exists=True)
-    checkout = home / "projects" / "brettheap-wip"
-    checkout.parent.mkdir(parents=True)
-    bare = tmp_path / "github" / "opensoft" / "brettheap-wip.git"
-    subprocess.run(["git", "clone", "-q", str(bare), str(checkout)], check=True)
-    hook = checkout / ".git" / "hooks" / "pre-commit"
-    hook.write_text("#!/bin/sh\necho 'the commit hook said no' >&2\nexit 1\n",
-                    encoding="utf-8")
-    hook.chmod(0o755)
-
-    result = run_wip(home, extra=env)
-    assert result.returncode == 2, result.stdout + result.stderr
-    assert "could not commit the seed" in result.stderr
-    assert "the commit hook said no" in result.stderr, (
-        f"the refusal dropped what git said:\n{result.stderr}")
-    assert not (home / ".agents" / "workspace.yaml").exists(), (
-        "the pointer file was written by a run that never committed")

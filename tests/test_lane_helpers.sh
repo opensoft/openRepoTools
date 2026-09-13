@@ -77,12 +77,7 @@ real_ws_path() {
 }
 REAL_WS="$(real_ws_path 2>/dev/null || :)"
 cleanup() {
-  # Every long-lived fixture process, because they now outlive the whole run by
-  # design (see `sleep 3000` below) and a suite that dies early must not leave
-  # one behind. `kill` on an empty or already-reaped pid is a no-op here.
   [ -n "${LIVE_PID:-}" ] && kill "$LIVE_PID" 2>/dev/null
-  [ -n "${G_PANE:-}" ] && kill "$G_PANE" 2>/dev/null
-  [ -n "${G_OUT:-}" ] && kill "$G_OUT" 2>/dev/null
   [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ] && rm -rf -- "$SANDBOX"
   return 0
 }
@@ -120,58 +115,16 @@ mkdir -p "$AGENT_PROTOCOL_ROOT"
 # reading the host at all.
 export LANES_WORKSTATION=Eagle
 
-# `timeout(1)` IS GNU coreutils AND A STOCK macOS DOES NOT SHIP IT (A9 Addendum
-# 4, R-A9-11). `lanes-edit.sh:810` bounds its network calls with it and reaches
-# for it through `command -v`, so on such a host Amendment 8(h)'s bound is
-# simply ABSENT: a push that hangs holds the mutex until it is killed. That is
-# a real platform gap and it is recorded rather than shimmed — a fake `timeout`
-# in `$SANDBOX/fakebin` would make these cases green on a host where the
-# behaviour they assert does not happen. Read AFTER the fake bin is on PATH, so
-# it answers for the PATH the cases actually run under.
-HAVE_TIMEOUT=0; command -v timeout >/dev/null 2>&1 && HAVE_TIMEOUT=1
-NO_TIMEOUT_WHY="no timeout(1) on this host, so lanes-edit.sh's Amendment 8(h) bound is absent here and there is nothing to assert"
-
-pass=0; fail=0; skipped=0
+pass=0; fail=0
 ok()  { pass=$((pass + 1)); printf 'ok   %s\n' "$1"; }
 bad() { fail=$((fail + 1)); printf 'FAIL %s\n       %s\n' "$1" "${2-}"; }
-# A THIRD ANSWER, because two were not enough and the third was being given
-# SILENTLY (A9 Addendum 4, R-A9-11). A case that cannot run on this host must
-# say so: `timeout(1)` is not on a stock macOS, and the four cases that drive
-# `lanes-edit.sh`'s hung-push bound were not passing there — two were red, and
-# two more were GREEN AND VACUOUS, having asserted that a command which never
-# ran printed nothing. A skip is printed, counted, and named in the footer.
-skip() { skipped=$((skipped + 1)); printf 'skip %s\n       %s\n' "$1" "${2-}"; }
 is()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected [$3], got [$2]"; fi; }
-# NO `tr` AND NO `cut`: THE ONLY PLACE A FAILURE IS EVER RENDERED MUST NOT
-# DEPEND ON EITHER (A9 Addendum 4, R-A9-11), and this estate's messages are
-# full of em dashes. Both spellings this line has already had were lost on the
-# macOS job, in opposite directions:
-#
-#   `tr '\n' '~' | cut -c1-400`   BSD `tr` is not multibyte-aware and answers
-#   (`9000e86`)                   `Illegal byte sequence` for an em dash,
-#                                 printing NOTHING. A failure whose `got:` is
-#                                 empty is a failure nobody can read.
-#   `LC_ALL=C tr | LC_ALL=C cut`  fixes that, and then truncates BYTES — which
-#   (`dcf1027`, `d3d59b5`)        split one em dash in half and cost the WHOLE
-#                                 998-line transcript to a single
-#                                 `UnicodeDecodeError` in the pytest wrapper.
-#
-# Bash does both jobs with no process at all: `${e//…}` swaps the newlines and
-# `${e:0:400}` truncates by CHARACTER wherever the locale is a UTF-8 one. The
-# macOS runner's is — that is not an assumption, it is what the first spelling
-# proved: BSD `tr` reports `Illegal byte sequence` only in a multibyte locale,
-# and it reported it there. And the guarantee does not rest on that reading
-# anyway: `tests/test_lane_helpers_suite.py` decodes this transcript with
-# `errors="replace"`, so the very worst a locale nobody expected can now do is
-# put one `\ufffd` in one line, where it used to hide all 998.
-#
-# `$tilde`, NOT a literal `~`: bash TILDE-EXPANDS the replacement half of
-# `${var//pattern/replacement}`, so a bare `~` there puts `$HOME` between every
-# pair of lines — measured, and it made a one-line excerpt unreadable in
-# exactly the failures it exists to render.
-excerpt() { local e tilde='~'; e="${1//$'\n'/$tilde}"; printf '%s' "${e:0:400}"; }
-has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "expected to contain [$3]; got: $(excerpt "$2")" ;; esac; }
-hasnt() { case "$2" in *"$3"*) bad "$1" "did NOT expect [$3]; got: $(excerpt "$2")" ;; *) ok "$1" ;; esac; }
+# `LC_ALL=C tr`: BSD `tr` refuses a multibyte sequence in a UTF-8 locale with
+# `Illegal byte sequence`, and every message this family prints is full of em
+# dashes. These two are turning newlines into `~` for a one-line report; bytes
+# are all they ever wanted.
+has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "expected to contain [$3]; got: $(printf '%s' "$2" | LC_ALL=C tr '\n' '~' | cut -c1-400)" ;; esac; }
+hasnt() { case "$2" in *"$3"*) bad "$1" "did NOT expect [$3]; got: $(printf '%s' "$2" | LC_ALL=C tr '\n' '~' | cut -c1-400)" ;; *) ok "$1" ;; esac; }
 # lane-start mints a fresh uuid for a NEW session, so its launch line carries a
 # value no test can predict. `launch_of` removes just that pair, leaving the
 # rest of the command line exactly comparable; `minted_of` returns the uuid.
@@ -182,34 +135,27 @@ minted_of() { printf '%s' "$1" | grep -oE -- "--session-id $UUID_RE" | head -n1 
 rc=0; out=""; err=""
 run() { out="$("$@" 2>"$SANDBOX/stderr")"; rc=$?; err="$(cat "$SANDBOX/stderr")"; }
 
-# THIS SUITE'S CLOCK, AND IT IS PORTABLE (A9 Addendum 4, R-A9-11). Ten fixture
-# stamps below are written relative to now, and `date -u -d '-5 hours'` is
-# GNU-only: BSD `date` — macOS's, and this file RUNS on the macOS job, because
-# obligation 4's gate is a run gate by design — answers `illegal option -- d`
-# and prints its usage, which is what every one of those ten used to get. BSD
-# spells the same arithmetic `-v-5H`, so the adjustments are written HERE in
-# that spelling, once, and translated for GNU: `utc_at -3H -26S` is three hours
-# and twenty-six seconds ago on either. GNU is asked first, because it is what
-# every lane workstation runs.
-#
-# `ua_bsd` is declared and assigned on separate lines because `local x=()` is
-# not something bash 3.2 — the bash this file is parsed by on that runner — can
-# be relied on to take.
-utc_at() {   # <+|-><n><H|M|S> …
-  local ua_a ua_n ua_unit ua_gnu=""
-  local ua_bsd; ua_bsd=()
+# THIS SUITE'S CLOCK, AND IT IS PORTABLE (R-A9-11). `date -u -d '-5 hours'` is
+# GNU-only, and this file RUNS on the macOS job — obligation 4's gate is a run
+# gate by design, and BSD `date` answers `-d` with `illegal option -- d` and a
+# usage block. BSD spells the same arithmetic `-v-5H`, so the adjustments are
+# written HERE in that spelling, once, and translated for GNU: `utc_at -3H
+# -26S` is three hours and twenty-six seconds ago on either. GNU is asked
+# first, because it is what every lane workstation runs.
+utc_at() {
+  local a n unit gnu="" bsd=()
   [ $# -gt 0 ] || { echo "utc_at: needs at least one <+|-><n><H|M|S>" >&2; return 1; }
-  for ua_a in "$@"; do
-    ua_n="${ua_a%?}"; ua_unit="${ua_a#"$ua_n"}"
-    case "$ua_unit" in
-    H) ua_unit=hours ;; M) ua_unit=minutes ;; S) ua_unit=seconds ;;
-    *) echo "utc_at: '$ua_a' is not <+|-><n><H|M|S>" >&2; return 1 ;;
+  for a in "$@"; do
+    n="${a%?}"; unit="${a#"$n"}"
+    case "$unit" in
+    H) unit=hours ;; M) unit=minutes ;; S) unit=seconds ;;
+    *) echo "utc_at: '$a' is not <+|-><n><H|M|S>" >&2; return 1 ;;
     esac
-    ua_gnu="${ua_gnu:+$ua_gnu }$ua_n $ua_unit"
-    ua_bsd+=("-v$ua_a")
+    gnu="${gnu:+$gnu }$n $unit"
+    bsd+=("-v$a")
   done
-  date -u -d "$ua_gnu" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
-    date -u "${ua_bsd[@]}" +%Y-%m-%dT%H:%M:%SZ
+  date -u -d "$gnu" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
+    date -u "${bsd[@]}" +%Y-%m-%dT%H:%M:%SZ
 }
 
 # ---------------------------------------------------------------- the fakes
@@ -464,29 +410,7 @@ YAML
 sessions_dir="$HOME/.claude-profiles/profiles/opensoft/team/t1/sessions"
 mkdir -p "$sessions_dir" "$HOME/.claude/sessions"
 
-# 3000 SECONDS, AND THE NUMBER IS TIED TO THE RUNNER'S OWN BOUND (A9 Addendum
-# 4, R-A9-11). This process IS the liveness fixture: every "a live holder …"
-# case from here to the foot of the file asks whether it is still running, and
-# `lane-start`'s own refusals name its pid. On macOS it is the ONLY thing they
-# ask — there is no `/proc` there, so `live_start` below is empty and
-# `lanes-edit.sh:1719`'s `procStart` half never runs, leaving `kill -0` on this
-# pid as the whole of the answer.
-#
-# At `sleep 300` this fixture outlived the suite on Linux (136 s here, 229 s
-# under pytest) and ran out of seconds INSIDE it on anything slower. The macOS
-# job takes ~900 s for this file alone, so the fixture died a third of the way
-# in and every liveness case after that point got a quiet, plausible-looking
-# wrong answer. Measured, by starting it already reaped: 196 of 998. (It was
-# not the largest cause of the 438 at `d3d59b5` — `lanes-edit.sh`'s padded `wc`
-# was, and the two overlap — but it is the one that would have been left
-# standing after that fix, which is the whole reason a suite fixes both at
-# once.)
-#
-# The number must exceed `TIMEOUT_SECONDS` (2400) or the suite can outlive its
-# own evidence on a runner slow enough to hit the bound; `cleanup` kills it on
-# every exit path, and the last assertion in this file checks it was still
-# running when the run ended.
-sleep 3000 & LIVE_PID=$!
+sleep 300 & LIVE_PID=$!
 live_start="$(cut -d' ' -f22 "/proc/$LIVE_PID/stat" 2>/dev/null || printf '')"
 sleep 0.05 & DEAD_PID=$!
 wait "$DEAD_PID" 2>/dev/null
@@ -595,7 +519,7 @@ run "$START" --estate xFactory --dir "$HOME/projects/repoB" repoA 8 --no-launch
 has  "--estate names the handoff directory" "$(grep '^| `repoA-8`' "$LANES")" "handoffs/xFactory/session-handoff-"
 
 run "$START" repoA 1 --no-launch
-is    "a free lane resumes THE ROW'S RECORDED SESSION, by id" "$out" "claude --name repoA-1 --resume $DEAD_ID"
+is    "a free lane resumes THE ROW'S RECORDED SESSION, by id" "$out" "claude --resume $DEAD_ID"
 hasnt "…and never by the ambiguous title" "$out" "--resume repoA-1"
 has   "…saying it is the row's own transcript" "$err" "the row's current session is $DEAD_ID and its transcript is here"
 has   "…having taken live-holder's 8 as the ANSWER it is: this lane is parked" "$err" "no live session holds repoA-1"
@@ -640,13 +564,13 @@ echo "== lane-start: Amendment 6 — resume the row's recorded session =="
 # The fallback, unchanged in shape: the row names an id this directory has no
 # transcript for, so the title is all that is left — and lane-start says so.
 run "$START" repoA 11 --no-launch
-is   "a recorded id with no transcript here falls back to the title" "$out" "claude --name repoA-11 --resume repoA-11"
+is   "a recorded id with no transcript here falls back to the title" "$out" "claude --resume repoA-11"
 has  "…naming the id it could not resolve" "$err" "$GHOST_ID has no transcript for this directory"
 has  "…and warning that a title only filters the picker" "$err" "FILTERS THE PICKER"
 
 # The cell is a history, oldest first, so the LAST id is the lane's current one.
 run "$START" repoA 12 --no-launch
-is    "the LAST id in the session cell is the one resumed" "$out" "claude --name repoA-12 --resume $NEW12_ID"
+is    "the LAST id in the session cell is the one resumed" "$out" "claude --resume $NEW12_ID"
 hasnt "…never an earlier id in the same cell" "$out" "$OLD12_ID"
 
 # The codeXfactory-1 shape of 2026-09-11: a cell of `session_…` footer ids and
@@ -662,7 +586,7 @@ has  "…and it names the footer ids as the reason it has no target" "$err" "the
 # A dedupe-suffixed title is the SAME lane — live_holder() already reads it
 # that way, and a matcher that disagreed would hide a lane from itself.
 run "$START" repoA 16 --no-launch
-is   "a transcript titled '<lane> (2)' is still the lane's" "$out" "claude --name repoA-16 --resume repoA-16"
+is   "a transcript titled '<lane> (2)' is still the lane's" "$out" "claude --resume repoA-16"
 has  "…and the suffix is reported, not silently accepted" "$err" "that title carries a dedupe suffix"
 has  "…with the retire act named" "$err" "retire the stale holders"
 
@@ -678,7 +602,7 @@ has  "…in its own register commit" "$(git -C "$WIP" log --oneline -1 -- lanes/
 # And the loop closes: run it again, and the id just written is resumed by id.
 printf '{"type":"user"}\n' > "$tdir/$REPOA14_SID.jsonl"
 run "$START" repoA 14 --no-launch
-is   "the next start resumes exactly what the previous one recorded" "$out" "claude --name repoA-14 --resume $REPOA14_SID"
+is   "the next start resumes exactly what the previous one recorded" "$out" "claude --resume $REPOA14_SID"
 
 # The minting is switchable, and switching it off restores the old row text.
 LANE_START_SESSION_ID=0 run "$START" repoA 15 --no-launch
@@ -693,7 +617,7 @@ run "$START" --dry-run repoA 12
 is   "--dry-run on a resume-by-id lane exits 0" "$rc" 0
 is   "--dry-run writes no register commit" "$(git -C "$WIP" rev-parse HEAD)" "$before_rev"
 is   "--dry-run leaves LANES.md byte-identical" "$(cksum < "$LANES")" "$before_sum"
-has  "--dry-run plans the exact resume" "$err" "PLAN exec claude --name repoA-12 --resume $NEW12_ID"
+has  "--dry-run plans the exact resume" "$err" "PLAN exec claude --resume $NEW12_ID"
 
 echo "== lane-end =="
 
@@ -762,7 +686,7 @@ has  "a lane whose checkout has no origin still starts, and says the home is unk
 has  "…recording it as unknown rather than guessing" "$(cat "$LOGD/repoQ-1.md")" "lane:repoQ-1 → home unknown; estate repoB"
 
 run "$START" repoA 1 --no-launch
-is   "a resumed lane still resumes by id" "$out" "claude --name repoA-1 --resume $DEAD_ID"
+is   "a resumed lane still resumes by id" "$out" "claude --resume $DEAD_ID"
 has  "…and its log line is a RESUMED, not a STARTED" "$(cat "$LOGD/repoA-1.md")" "RESUMED — lane repoA-1, session "
 has  "…carrying the same lane: object" "$(cat "$LOGD/repoA-1.md")" ", lane:repoA-1 → home opensoft/repoA; estate repoA"
 
@@ -1611,15 +1535,9 @@ has  "…naming the lane that holds it" "$err" "lane repoW-1 holds codeXfactory/
 git -C "$WIP" add -- lanes/log/repoW-3.md
 git -C "$WIP" commit -q -m "a STARTED line carrying the pre-move spelling"
 git -C "$WIP" push -q origin main
-# `LANES_SESSION` because repoW-3 has a LOG and no register ROW, so nothing else
-# can answer what its transcript uuid is — and under R-A11 (e) a write with no
-# uuid is refused rather than stamped `unknown`. Before that rule this scenario
-# passed while appending `session unknown@Eagle` to an append-only log, which is
-# the defect, uncaught, inside the suite that was meant to catch it.
-run env LANES_LANE=repoW-3 LANES_SESSION="$DEAD_ID" "$E" claim "#6" --no-github
+run env LANES_LANE=repoW-3 "$E" claim "#6" --no-github
 is   "a legacy home already on record is resolved when it is read" "$rc" 0
 has  "…so its shorthand keys canonically too" "$(cat "$LOGD/repoW-3.md")" ", codeXfactory/codexFactory#6"
-hasnt "…and the line it wrote carries a real uuid, never \`unknown\`" "$(cat "$LOGD/repoW-3.md")" "session unknown@"
 
 # ------------------------- R21: lane-end's recovery text and its --force line
 "$E" add-row "| \`repoX-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoX/x.md | ACTIVE |" >/dev/null 2>&1
@@ -1829,7 +1747,7 @@ hasnt "…never the uuid of the session that has ended" "$(grep '^| `repoZN-1`' 
 printf '{"type":"custom-title","customTitle":"repoZT-1","sessionId":"titled-zt"}\n' > "$tdir/titled-zt.jsonl"
 "$E" add-row "| \`repoZT-1\` | harness \`$GHOST_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoZT/x.md | ACTIVE |" >/dev/null 2>&1
 run   "$START" --dir "$HOME/projects/repoA" repoZT-1 --no-launch
-is    "the title fallback resumes by title" "$out" "claude --name repoZT-1 --resume repoZT-1"
+is    "the title fallback resumes by title" "$out" "claude --resume repoZT-1"
 is    "…and writes NO object-log line, because \`unknown\` is not a transcript uuid (R-A8-2)" "$([ -f "$LOGD/repoZT-1.md" ] && printf present || printf absent)" absent
 has   "…nor Rule 3's handoff stamp, which is the other deferred record" "$err" "Nor is the handoff's Rule 3 stamp"
 has   "…naming the one act that writes both, at the first instant either can be right" "$err" "--no-launch repoZT 1"
@@ -1939,79 +1857,6 @@ run   "$E" who --landing opensoft/OpsxFactory
 has   "a retry that spelled the repository the other way is ONE triple" "$out" "none open"
 hasnt "…so its LANDED closes it, and PR #64 leaves no hold behind" "$out" "#64"
 
-# --- the alias table must not enter awk through `-v` (A9 Addendum 4, R-A9-11)
-#
-# `awk -v name=value` processes the value AS A STRING LITERAL, and a string
-# literal cannot span lines. macOS's awk — one-true-awk, `awk version
-# 20200816` on the runner — refuses one outright: `awk: newline in string … at
-# source line 1`, exit 2, nothing on stdout. gawk and mawk accept it without a
-# word. `who_landing` handed it the WHOLE repos.tsv alias table that way, one
-# `<alias>\037<owner/repo>` per line, so on macOS the register half of `who
-# --landing` produced nothing at all and every open LANDING in the estate read
-# as `none open` — fourteen of that job's failures, the last group standing
-# after four rounds, and, off CI, the estate's merge holds invisible on a
-# workstation that runs macOS. Every `who --landing` that PASSED there was
-# being answered by the lane's own object log, which is the secondary source.
-#
-# THIS IS THE ONE macOS DEFECT OF THIS ACT A LINUX BOX CAN PROVE FOR ITSELF,
-# so it is proved here rather than bought for another twenty-minute round. The
-# proxy refuses exactly what that awk refuses and hands everything else to the
-# real awk, so it cannot make a case pass that would not pass on the platform;
-# it is written into the sandbox, it is never on PATH for any other case, and
-# it is never shipped. On a host whose awk already refuses (macOS itself) it
-# changes nothing — the refusal simply happens one process earlier.
-#
-# The three behaviour cases below are the register's own mixed-spelling
-# fixture, read back through the proxy: the first two were red on the macOS
-# job by these exact names, and the third is the empty answer that made the
-# other twelve red.
-BSDAWK="$SANDBOX/awk-of-bsd"
-mkdir -p "$BSDAWK"
-LANES_TEST_REAL_AWK="$(command -v awk)"; export LANES_TEST_REAL_AWK
-cat > "$BSDAWK/awk" <<'BSDAWKSHIM'
-#!/usr/bin/env bash
-# A LOCAL PROXY FOR one-true-awk's `-v`, NEVER SHIPPED. Its `setclvar` runs the
-# value through `qstring`, which stops at a literal newline. Nothing else about
-# this awk is imitated: every other call goes straight through.
-awk_nl='
-'
-awk_next=0
-for awk_arg in "$@"; do
-  awk_val=""
-  if [ "$awk_next" = 1 ]; then awk_val="$awk_arg"; awk_next=0
-  else
-    case "$awk_arg" in
-      -v)   awk_next=1 ;;
-      -v?*) awk_val="${awk_arg#-v}" ;;
-    esac
-  fi
-  case "$awk_val" in
-    *=*) case "${awk_val#*=}" in
-           *"$awk_nl"*)
-             printf 'awk: newline in string %s... at source line 1\n' \
-               "${awk_val#*=}" >&2
-             exit 2 ;;
-         esac ;;
-  esac
-done
-exec "${LANES_TEST_REAL_AWK:?no real awk recorded}" "$@"
-BSDAWKSHIM
-chmod +x "$BSDAWK/awk"
-
-is    "the awk proxy refuses a many-line -v, as one-true-awk does" \
-      "$(PATH="$BSDAWK:$PATH" awk -v t="$(printf 'x\ny')" \
-         'BEGIN { print "TAKEN" }' 2>/dev/null; printf 'rc=%s' "$?")" "rc=2"
-is    "…and hands a one-line -v to the real awk, unchanged" \
-      "$(PATH="$BSDAWK:$PATH" awk -v t=kept 'BEGIN { print t }')" "kept"
-
-run   env PATH="$BSDAWK:$PATH" "$E" who --landing Omnigent-Install
-is    "who --landing exits 0 under an awk that refuses a many-line -v" "$rc" 0
-has   "…and the register half still answers, so the hold is still reported" \
-      "$out" "LANDING  opensoft/Omnigent-Install#63  lane repoZQ-4"
-run   env PATH="$BSDAWK:$PATH" "$E" who --landing opensoft/openRepoShape
-has   "…and the alias table still reached awk, so the LANDED is still placed" \
-      "$out" "is on opensoft/Omnigent-Install"
-
 # ------------------- R30: `--home` is resolved AFTER the fetch, in all of them
 #
 # The STARTED line that REFUSES `--home` is read from `origin/<branch>`, so a
@@ -2057,10 +1902,7 @@ is    "…and so does release" "$rc" 2
 has   "…with the same refusal" "$err" "already records its home: opensoft/repoZR"
 
 git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
-# `LANES_SESSION` for the same reason as repoW-3 above: a peer lane has a log on
-# origin/main and no row here, so R-A11 (e) refuses a write that cannot name a
-# transcript uuid instead of writing `unknown` into a file nothing rewrites.
-run env LANES_LANE=repoZR-1 LANES_SESSION="$ZR_ID" "$E" claim "#3" --no-github
+run env LANES_LANE=repoZR-1 "$E" claim "#3" --no-github
 is    "…while the claim itself uses the home the peer recorded" "$rc" 0
 has   "…expanding '#3' against it" "$(cat "$LOGD/repoZR-1.md")" ", opensoft/repoZR#3"
 
@@ -2095,9 +1937,9 @@ run   "$START" --dry-run --dir "$HOME/projects/repoA" repoZC-1
 is    "lane-start on a stale copy of the row exits 0" "$rc" 0
 has   "…reading the session cell from origin/main, which names BOTH ids" "$err" "its session cell on origin/main names 2 session id(s)"
 has   "…so the row's current session is the one that LANDED" "$err" "the row's current session is $ZC2"
-has   "…and that is what it plans to resume" "$err" "PLAN exec claude --name repoZC-1 --resume $ZC2"
+has   "…and that is what it plans to resume" "$err" "PLAN exec claude --resume $ZC2"
 hasnt "…never the id this checkout's copy ends on" "$err" "$ZC1"
-has   "…and the status it plans to append names the same id" "$err" "launching claude --name repoZC-1 --resume $ZC2"
+has   "…and the status it plans to append names the same id" "$err" "launching claude --resume $ZC2"
 is    "…while --dry-run still writes nothing" "$(git -C "$WIP" rev-parse HEAD)" "$before_rev"
 
 # And the durable half: the same divergence with HEAD already current, so the
@@ -2114,7 +1956,7 @@ is    "…while origin/main still names both ids" \
       "$(git -C "$WIP" show origin/main:lanes/LANES.md | grep '^| `repoZC-1`' | grep -c "$ZC2" || :)" 1
 run   "$START" --no-launch --dir "$HOME/projects/repoA" repoZC-1
 is    "lane-start exits 0" "$rc" 0
-is    "…resuming the id the PUBLISHED cell ends on" "$out" "claude --name repoZC-1 --resume $ZC2"
+is    "…resuming the id the PUBLISHED cell ends on" "$out" "claude --resume $ZC2"
 has   "…and the RESUMED line carries THAT uuid, in a file nothing rewrites" \
       "$(cat "$LOGD/repoZC-1.md")" "RESUMED — lane repoZC-1, session $ZC2@"
 hasnt "…never the stale one, which no later line could correct" "$(cat "$LOGD/repoZC-1.md")" "$ZC1"
@@ -2329,7 +2171,7 @@ has   "…and said the published cell does not name it" "$err" "the PUBLISHED se
 has   "…the cell is EXTENDED with it, after the id it already ended on" \
       "$(grep '^| `repoHU-1`' "$LANES")" "harness \`$HW_OLD\` → harness $HW_NEW (transcript uuid; profile t1)"
 has   "…in its own register commit that says why" "$(git -C "$WIP" log --format=%s -- lanes/LANES.md | head -n2 | tail -n1)" "the harness minted $HW_NEW for this window"
-is    "…and the launch resumes the NEW id, not the one the cell used to end on" "$out" "claude --name repoHU-1 --resume $HW_NEW"
+is    "…and the launch resumes the NEW id, not the one the cell used to end on" "$out" "claude --resume $HW_NEW"
 has   "…while the row's status is Amendment 6(c)'s stamp, naming that uuid" \
       "$(grep '^| `repoHU-1`' "$LANES")" "RESUMED by $HW_NEW (lane repoHU-1) — lane-start on"
 has   "…and the object log's RESUMED carries it too" "$(cat "$LOGD/repoHU-1.md")" "RESUMED — lane repoHU-1, session $HW_NEW@"
@@ -2379,149 +2221,9 @@ has   "…the session cell now ends on the third transcript" \
 is    "…the previous uuid's three occurrences are untouched, stamp included" \
       "$(grep '^| `repoHU-1`' "$LANES" | grep -o "$HW_NEW" | grep -c .)" 3
 is    "…the row is still one line" "$(grep -c '^| `repoHU-1`' "$LANES")" 1
-is    "…and the launch resumes the id the cell now ends on" "$out" "claude --name repoHU-1 --resume $HW_NEW2"
+is    "…and the launch resumes the id the cell now ends on" "$out" "claude --resume $HW_NEW2"
 unset FAKE_TMUX_WINDOW
 rm -f "$sessions_dir/live-harness2.json"
-
-echo "== Amendment 11 hotfix: R-A11-1, --name on every branch, unknown refused =="
-
-# ---- R-A11-1: A LIVE SESSION THAT BELONGS TO ANOTHER ROW IS NEVER TAKEN ----
-#
-# Evidence 2(b) on `brettheap/new-workstation#20`: `lane-start openXfactory-5`
-# typed in lane `openRepoProject-1`'s window planned to resume openRepoProject-1's
-# transcript AS openXfactory-5, and to put openRepoProject-1's uuid into
-# openXfactory-5's session cell — the cell Amendment 6(b) resumes from, in a row
-# every later reader trusts, through an append nothing rewrites. Step 3b fired on
-# ANY live session in the typing window; WHOSE it was was never asked. Ratified
-# as R-A11-1 (corrected, ownership alone) by Brett Heap 2026-09-13T18:05:29Z,
-# verbatim "Ratify all four".
-#
-# THE FENCE IS THE REGISTER, NOT THE WINDOW'S NAME, and that is the correction's
-# whole point. The three cases step 3b exists for — a `/clear`, a usage reset, a
-# profile switch — all happen in a window the launcher has just made and still
-# calls `claude` (step 4 renames it AFTERWARDS), carrying a uuid the harness has
-# just minted, which no row names at all. Fencing on the name would refuse
-# exactly those three and leave the cell-stamping dead, which is `RV-T1`'s
-# finding against the withdrawn "and the row carries no transcript yet" conjunct.
-# An id that some OTHER row already names is the one thing provably not this
-# lane's, and that is what is refused.
-XL_X="aaaa0011-1111-4000-8000-aaaa00111111"     # lane X's own recorded session
-XL_Y="aaaa0011-2222-4000-8000-aaaa00112222"     # lane Y's session, live in the window
-XL_FREE="aaaa0011-3333-4000-8000-aaaa00113333"  # a harness mint, in no row at all
-printf '{"type":"user"}\n' > "$tdir/$XL_X.jsonl"
-"$E" add-row "| \`repoXL-1\` | harness \`$XL_X\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoXL/x.md | ACTIVE |" >/dev/null 2>&1
-"$E" add-row "| \`repoXL-2\` | harness \`$XL_Y\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoXL/y.md | ACTIVE |" >/dev/null 2>&1
-write_record_ns "$sessions_dir/live-xl.json" "$XL_Y" "$LIVE_PID" "$live_start" "xlsess:@11.%11" "repoXL-2" "user" "busy"
-xl_y_row_before="$(grep '^| `repoXL-2`' "$LANES")"
-export FAKE_TMUX_WINDOW="xlsess:@11"
-run   "$START" --dir "$HOME/projects/repoA" repoXL-1 --no-launch
-is    "lane-start X typed in lane Y's window exits 0" "$rc" 0
-has   "…having read Y's live session out of the window it was typed in" "$err" "this window's live session is $XL_Y"
-has   "…and answering WHOSE it is from the register, not from the window's name" "$err" "the register says it is lane repoXL-2's, not repoXL-1's"
-hasnt "…so Y's uuid reaches no cell of X's row at all" "$(grep '^| `repoXL-1`' "$LANES")" "$XL_Y"
-is    "…the resume target stays X's OWN row uuid, never Y's transcript" "$out" "claude --name repoXL-1 --resume $XL_X"
-is    "…and Y's row is left exactly as it was" "$(grep '^| `repoXL-2`' "$LANES")" "$xl_y_row_before"
-hasnt "…with no line of X's log naming Y's session either" "$(cat "$LOGD/repoXL-1.md")" "$XL_Y"
-
-# The POSITIVE case, and the one the correction rescued: the same window, the
-# same script, but the live session's uuid is in NO row — the harness minted it
-# at a /clear, a usage reset or a profile switch. Nothing contradicts ownership,
-# so it IS taken and the cell is extended (Amendment 6(c)'s stamp).
-rm -f "$sessions_dir/live-xl.json"
-printf '{"type":"user"}\n' > "$tdir/$XL_FREE.jsonl"
-write_record_ns "$sessions_dir/live-xl2.json" "$XL_FREE" "$LIVE_PID" "$live_start" "xlsess:@11.%11" "repoxl-42" "derived" "busy"
-run   "$START" --dir "$HOME/projects/repoA" repoXL-1 --no-launch
-is    "a live session NO row names is the harness's own mint, and is taken" "$rc" 0
-has   "…the cell extended from the id it ended on, not replaced" \
-      "$(grep '^| `repoXL-1`' "$LANES")" "harness \`$XL_X\` → harness $XL_FREE (transcript uuid; profile t1)"
-is    "…and the launch resumes it, not the id the cell used to end on" "$out" "claude --name repoXL-1 --resume $XL_FREE"
-unset FAKE_TMUX_WINDOW
-rm -f "$sessions_dir/live-xl2.json"
-
-# `session-lane` is the read that answers it — the hook's own `lane_of_session`,
-# exposed for a second caller rather than implemented twice (R-A11-7).
-run "$E" session-lane "$XL_Y"
-is   "session-lane names the lane whose row's session cell carries the uuid" "$out" "repoXL-2"
-is   "…exiting 0" "$rc" 0
-run "$E" session-lane "aaaa0011-4444-4000-8000-aaaa00114444"
-is   "…and 8 when no row's session cell names it, so a caller can tell none from could-not-read" "$rc" 8
-run "$E" session-lane
-is   "…2 on a usage error, which is not an answer" "$rc" 2
-is   "…and it writes nothing: no commit is made by a read" "$(git -C "$WIP" status --porcelain | wc -l | tr -d ' ')" 0
-
-# ---- EVIDENCE 4: `--name <lane>` IS ON EVERY LAUNCH BRANCH, NOT ONE ---------
-#
-# The session NAME is the lane's messaging address (Amendment 2): `ListAgents`,
-# `SendMessage`, `@<lane>` and the statusline all read the harness record's
-# name. Measured on lane openRepoProject-1 2026-09-13 — the transcript carried
-# `customTitle: openRepoProject-1`, set once by `/rename`, while every process
-# that resumed it that day carried a DERIVED name (`openrepoproject-b9`, `-1e`,
-# `-27`, `-45`), because only the new-session branch passed the flag. There are
-# three launch branches and the rule is one: a launch names its session after
-# the lane, or the lane has no address for the life of that session, and there
-# is no API to rename a running one from inside.
-NM_ID="aaaa0013-1111-4000-8000-aaaa00131111"
-NM_GONE="aaaa0013-2222-4000-8000-aaaa00132222"
-printf '{"type":"user"}\n' > "$tdir/$NM_ID.jsonl"
-printf '{"type":"custom-title","customTitle":"repoNM-2","sessionId":"titled-nm"}\n' > "$tdir/titled-nm.jsonl"
-"$E" add-row "| \`repoNM-1\` | harness \`$NM_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoNM/x.md | ACTIVE |" >/dev/null 2>&1
-"$E" add-row "| \`repoNM-2\` | harness \`$NM_GONE\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoNM/y.md | ACTIVE |" >/dev/null 2>&1
-run   "$START" --dir "$HOME/projects/repoA" repoNM-1 --no-launch
-has   "branch 1, resume by id: the launch carries --name <lane>" "$(launch_of "$out")" "--name repoNM-1"
-is    "…and it is the whole command, in the order lane-start builds it" "$(launch_of "$out")" "claude --name repoNM-1 --resume $NM_ID"
-run   "$START" --dir "$HOME/projects/repoA" repoNM-2 --no-launch
-has   "branch 2, the title fallback: it carries --name <lane> too" "$(launch_of "$out")" "--name repoNM-2"
-is    "…beside the title that filters the picker" "$(launch_of "$out")" "claude --name repoNM-2 --resume repoNM-2"
-run   "$START" --dir "$HOME/projects/repoA" repoNM-3 --no-launch
-has   "branch 3, a new session: it always did, and still does" "$(launch_of "$out")" "--name repoNM-3"
-is    "…which is the branch the other two were measured against" "$(launch_of "$out")" "claude --name repoNM-3"
-
-# ---- R-A11 (e): `unknown` IS REFUSED BY THE WRITER, FROM ANY CALLER --------
-#
-# Amendment 7(b) makes an event's `session` field the transcript uuid and only
-# that. Nothing checked it, and the literal is on `origin/main` in the
-# append-only log four times, in two lanes — `lanes/log/codeXfactory-1.md` ×3 and
-# `lanes/log/openxfactory-4-opendox-extraction.md` ×1. Three came from
-# `log PAUSED` (a swap skill holding the uuid and not passing it) and ONE FROM
-# `release`, which is why the gate is in `write_event` — the writer every one of
-# `log`, `claim` and `release` goes through — and not in the `log` arm alone. It
-# is the first test in that function, before the lock and before the log file is
-# created, so a refusal leaves the checkout as it found it. The four lines
-# already written are not rewritten and not deleted (Amendment 7(b), 7(i)).
-UK_ID="aaaa0012-1111-4000-8000-aaaa00121111"
-"$E" add-row "| \`repoUK-1\` | harness \`$UK_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoUK/x.md | ACTIVE |" >/dev/null 2>&1
-env LANES_LANE=repoUK-1 LANES_SESSION="$UK_ID" "$E" log STARTED "lane:repoUK-1" '→' "home opensoft/repoUK; estate repoUK" >/dev/null 2>&1
-un_before="$(cat "$LOGD/repoUK-1.md")"
-un_head="$(git -C "$WIP" rev-parse HEAD)"
-run env LANES_LANE=repoUK-1 LANES_SESSION=unknown "$E" log OPENED "opensoft/repoUK#9"
-is   "log refuses the literal \`unknown\` as a session" "$rc" 2
-has  "…naming the field and the rule it answers to" "$err" "session field is the TRANSCRIPT UUID and only that (Amendment 7(b))"
-has  "…saying why this value in particular" "$err" "no later line can correct any of them"
-has  "…and naming the act that supplies a uuid" "$err" "lane-start --no-launch"
-is   "…while writing nothing to the log" "$(cat "$LOGD/repoUK-1.md")" "$un_before"
-is   "…and making no commit" "$(git -C "$WIP" rev-parse HEAD)" "$un_head"
-run env LANES_LANE=repoUK-1 LANES_SESSION="session_015byFrZSopmRbUWNMYt1zEA" "$E" log OPENED "opensoft/repoUK#9"
-is   "a PR-footer id is refused too: neither resumable nor liveness-checkable" "$rc" 2
-has  "…and the refusal says which kind of id it was handed" "$err" "PR-footer id"
-run env LANES_LANE=repoUK-1 LANES_SESSION="$UK_ID" "$E" log OPENED "opensoft/repoUK#9"
-is   "…while a real transcript uuid writes the line" "$rc" 0
-has  "…carrying that uuid in the session field" "$(cat "$LOGD/repoUK-1.md")" "session $UK_ID@"
-hasnt "…and the lane's log carries no \`session unknown@\` anywhere" "$(cat "$LOGD/repoUK-1.md")" "session unknown@"
-
-# `release` is the other half of the same defect, and one of the four lines on
-# origin/main is a RELEASED. The gate is the writer, so it answers here too.
-run env LANES_LANE=repoUK-1 LANES_SESSION=unknown "$E" release "opensoft/repoUK#9" "not mine after all"
-is   "release refuses it as well — the gate is the writer, not the subcommand" "$rc" 2
-hasnt "…leaving no RELEASED line behind" "$(cat "$LOGD/repoUK-1.md")" "RELEASED"
-
-# And the second rung: with no LANES_SESSION at all, `session_for` no longer
-# substitutes the literal — a row that records no uuid yields none, and the
-# write is refused rather than stamped `unknown` for ever.
-"$E" add-row "| \`repoUK-2\` | pending — set by the session's first act | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoUK/y.md | ACTIVE |" >/dev/null 2>&1
-run env LANES_LANE=repoUK-2 "$E" log STARTED "lane:repoUK-2" '→' "home opensoft/repoUK; estate repoUK"
-is   "a lane whose cell records no uuid is refused too, with no LANES_SESSION to save it" "$rc" 2
-is   "…and no log file is created for it: the guard runs before the file does" \
-     "$([ -f "$LOGD/repoUK-2.md" ] && printf present || printf absent)" absent
 
 # ---- append-session-id, held to account directly --------------------------
 AS_ID="aaaa000d-1111-4000-8000-aaaa000d1111"
@@ -2590,7 +2292,7 @@ git -C "$WIP" push -q origin main
 printf '{"type":"custom-title","customTitle":"repoDW-1","sessionId":"titled-dw"}\n' > "$tdir/titled-dw.jsonl"
 
 run   "$START" --dir "$HOME/projects/repoA" repoDW-1 --no-launch
-is    "the title fallback resumes by title, the picker not yet run" "$out" "claude --name repoDW-1 --resume repoDW-1"
+is    "the title fallback resumes by title, the picker not yet run" "$out" "claude --resume repoDW-1"
 is    "…and writes NO object-log line: \`unknown\` is not a transcript uuid (A7(b))" \
       "$([ -f "$LOGD/repoDW-1.md" ] && printf present || printf absent)" absent
 hasnt "…nor Rule 3's stamp on the handoff the row names" "$(cat "$WIP/handoffs/repoDW/x.md")" "RESUMED by"
@@ -2809,7 +2511,7 @@ run "$START" --confirm --yes --dir "$HOME/projects/repoA" repoCF-3 --no-launch -
 is    "--yes answers it without a terminal and without the seam" "$rc" 0
 has   "…saying which of the two answered" "$err" "(--yes)"
 is    "…with the flags BEFORE the lane and -- passing through to claude" \
-      "$(launch_of "$out")" "claude --name repoCF-3 --resume $DEAD_ID --dangerously-skip-permissions"
+      "$(launch_of "$out")" "claude --resume $DEAD_ID --dangerously-skip-permissions"
 
 export FAKE_TMUX_WINDOW_NAME=repoCF-1
 run env LANE_START_ANSWER=n "$START" --confirm --dir "$HOME/projects/repoA" repoCF-1 --no-launch
@@ -2957,29 +2659,22 @@ chmod +x "$NONET/git"
 # file is not the place to argue an exception, and a `# NOSONAR` marker would
 # hide the finding rather than answer it. `sha256sum` costs nothing here.
 #
-# AND IT IS SPELLED TWO WAYS, because neither spelling is everywhere (A9
-# Addendum 4, R-A9-11). A stock macOS has `shasum -a 256` and no `sha256sum` at
-# all; this runner image happens to carry both, which is exactly the kind of
-# fact a test must not depend on — with the digest missing, this function
-# prints NOTHING and the two comparisons below compare the empty string with
-# itself: green, and asserting no fact. `sort -z`'s `-z` is GNU-only and goes
-# the same way — sorting the DIGEST LINES needs no NUL and is as deterministic.
-# `xargs -r` goes because it is GNU-only and this `find` always names a file.
+# AND IT IS SPELLED TWO WAYS (R-A9-11). There is no `sha256sum` on macOS at
+# all: the same digest is `shasum -a 256` there. Left as it was, this function
+# printed NOTHING on that runner and the two comparisons below compared the
+# empty string with itself — green, and asserting no fact. `xargs -r` goes for
+# the same reason (GNU-only); the `find` here always names at least one file.
 if command -v sha256sum >/dev/null 2>&1; then SHA256=(sha256sum); else SHA256=(shasum -a 256); fi
 tree_of() {   # <checkout>
   local to_dir="$1"
-  ( cd "$to_dir" && find . -path ./.git -prune -o -type f -print0 \
-      | xargs -0 "${SHA256[@]}" | LC_ALL=C sort | "${SHA256[@]}" )
+  ( cd "$to_dir" && find . -path ./.git -prune -o -type f -print0 | LC_ALL=C sort -z \
+      | xargs -0 "${SHA256[@]}" | "${SHA256[@]}" )
   return 0
 }
-# `stat -c` is GNU and `stat -f` is BSD, the same two-spelling rule, and
-# `lanes-edit.sh:2969` already reads FETCH_HEAD's mtime both ways. Spelled `-c`
-# only, this answered `none` on BOTH sides of the call on macOS and the
-# assertion compared `none` with `none`.
-mtime_of() { stat -c %Y -- "$1" 2>/dev/null || stat -f %m -- "$1" 2>/dev/null || printf 'none'; }
 ss_tree_before="$(tree_of "$WIP")"
 ss_refs_before="$(git -C "$WIP" for-each-ref --format='%(refname) %(objectname)')"
 ss_head2_before="$(git -C "$WIP" rev-parse HEAD)"
+mtime_of() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || printf 'none'; }
 ss_fh_before="$(mtime_of "$WIP/.git/FETCH_HEAD")"
 export FAKE_TMUX_WINDOW_NAME=repoSS-1
 out="$(printf "$ss_hook" "$SS_CUR" resume | PATH="$NONET:$PATH" "$E" session-start 2>"$SANDBOX/stderr")"; rc=$?
@@ -3115,9 +2810,9 @@ is    "an unknown option is refused" "$rc" 2
 # Two live processes: one stands in for the pane's own, the other is alive and
 # under no pane at all. Both are children of this shell, so neither is under the
 # OTHER — which is exactly the distinction the ruling turns on.
-sleep 3000 & G_PANE=$!
+sleep 300 & G_PANE=$!
 g_pane_start="$(cut -d' ' -f22 "/proc/$G_PANE/stat" 2>/dev/null || printf '')"
-sleep 3000 & G_OUT=$!
+sleep 300 & G_OUT=$!
 g_out_start="$(cut -d' ' -f22 "/proc/$G_OUT/stat" 2>/dev/null || printf '')"
 
 # The fields the older helpers never write: `kind`, an ABSENT `tmux` (which is
@@ -3346,17 +3041,10 @@ FAKE
 chmod +x "$SANDBOX/hanggit" "$SANDBOX/peekgit"
 
 run env LANES_GIT="$SANDBOX/hanggit" LANES_GIT_TIMEOUT=2 "$E" append-row-status repoGH-1 "2026-09-12T20:00Z HUNGPUSH"
-if [ "$HAVE_TIMEOUT" = 1 ]; then
-  is    "a push that hangs past the timeout exits 3" "$rc" 3
-  has   "…saying so, with the budget it was given" "$err" "TIMED OUT after 2s"
-  has   "…and that the mutex is not held through it" "$err" "the mutex is released"
-  has   "…telling the writer a hung push may have LANDED before it looks again" "$err" "often means it LANDED"
-else
-  skip  "a push that hangs past the timeout exits 3" "$NO_TIMEOUT_WHY"
-  skip  "…saying so, with the budget it was given" "$NO_TIMEOUT_WHY"
-  skip  "…and that the mutex is not held through it" "$NO_TIMEOUT_WHY"
-  skip  "…telling the writer a hung push may have LANDED before it looks again" "$NO_TIMEOUT_WHY"
-fi
+is    "a push that hangs past the timeout exits 3" "$rc" 3
+has   "…saying so, with the budget it was given" "$err" "TIMED OUT after 2s"
+has   "…and that the mutex is not held through it" "$err" "the mutex is released"
+has   "…telling the writer a hung push may have LANDED before it looks again" "$err" "often means it LANDED"
 is    "…the lock is released, not left for the next lane to age out" "$([ -d "$H_LOCK" ] && printf held || printf free)" "free"
 has   "…and the edit is safe as a local commit" "$(git -C "$WIP" log --oneline -n1)" "HUNGPUSH"
 has   "…which is the row, really written" "$(grep '^| `repoGH-1`' "$LANES")" "HUNGPUSH"
@@ -3379,38 +3067,18 @@ PEEK_LOCK="$H_LOCK" PEEK_OUT="$SANDBOX/peek.pid" \
   env PEEK_LOCK="$H_LOCK" PEEK_OUT="$SANDBOX/peek.pid" LANES_GIT="$SANDBOX/peekgit" \
   "$E" append-row-status repoGH-1 "2026-09-12T20:02Z PEEK" >/dev/null 2>&1 || :
 h_peek="$(cat "$SANDBOX/peek.pid" 2>/dev/null || printf '')"
-# THE `case` IS HOISTED OUT OF THE `$( )`, and it has to be (A9 Addendum 4,
-# R-A9-11). Bash 3.2's parser reads the `)` that closes a case PATTERN as the
-# one that closes the command substitution, so this exact expression is a
-# syntax error on macOS and nowhere else: the job answered `command
-# substitution: line 3284: syntax error near unexpected token 'newline'` and
-# the assertion then compared a fragment of THIS FILE'S OWN SOURCE against
-# `yes`. Same test, one variable earlier.
-case "$h_peek" in ''|*[!0-9]*) h_peek_ok=no ;; *) h_peek_ok=yes ;; esac
 is    "the lock carries the holder's pid while the holder is inside it" \
-      "$h_peek_ok" "yes"
+      "$(case "$h_peek" in ''|*[!0-9]*) printf no ;; *) printf yes ;; esac)" "yes"
 
 mkdir -p "$H_LOCK"; printf '%s\n' "$LIVE_PID" > "$H_LOCK/pid"
 h_t0=$SECONDS
-# BOTH OF THESE ARE THE SUITE'S OWN USE OF `timeout`, and where there is none
-# they were not merely red — they were GREEN AND MEANINGLESS. `timeout 3 …`
-# failed as `command not found`, so `$SANDBOX/h.err` was empty, `grep -c`
-# answered 0, the elapsed time was zero, and both assertions passed having
-# tested nothing at all. The writer WAITS on a live lock by design, so with no
-# bound available this case cannot be run at all rather than run unbounded and
-# hang the suite behind its own fixture.
-if [ "$HAVE_TIMEOUT" = 1 ]; then
-  timeout 3 "$E" append-row-status repoGH-1 "2026-09-12T20:03Z NEVER" >/dev/null 2>"$SANDBOX/h.err" || :
-  is    "a lock whose holder is ALIVE is not taken over" "$(grep -c 'taking over' "$SANDBOX/h.err" || :)" "0"
-  # …and a signal STOPS the writer. `trap cleanup EXIT INT TERM` ran the handler
-  # and then resumed the wait: measured, SIGTERM at 8s and the process still going
-  # at 56s, with the lock already released under it.
-  is    "…and a SIGTERM ends it there and then, instead of resuming the wait" \
-        "$(( SECONDS - h_t0 < 15 ))" "1"
-else
-  skip  "a lock whose holder is ALIVE is not taken over" "$NO_TIMEOUT_WHY"
-  skip  "…and a SIGTERM ends it there and then, instead of resuming the wait" "$NO_TIMEOUT_WHY"
-fi
+timeout 3 "$E" append-row-status repoGH-1 "2026-09-12T20:03Z NEVER" >/dev/null 2>"$SANDBOX/h.err" || :
+is    "a lock whose holder is ALIVE is not taken over" "$(grep -c 'taking over' "$SANDBOX/h.err" || :)" "0"
+# …and a signal STOPS the writer. `trap cleanup EXIT INT TERM` ran the handler
+# and then resumed the wait: measured, SIGTERM at 8s and the process still going
+# at 56s, with the lock already released under it.
+is    "…and a SIGTERM ends it there and then, instead of resuming the wait" \
+      "$(( SECONDS - h_t0 < 15 ))" "1"
 rm -rf "$H_LOCK"
 
 # --------------------------------------- the pointer file, when it does NOT answer
@@ -3573,16 +3241,7 @@ is   "the suite never wrote the real register" \
 is   "…and every log it did create is inside the sandbox workspace" \
      "$( [ "$(ls "$WIP/lanes/log" 2>/dev/null | grep -c .)" -gt 0 ] && echo yes || echo no )" "yes"
 
-# THE FIXTURE EVERY LIVENESS CASE ABOVE DEPENDS ON, ASSERTED LAST (A9 Addendum
-# 4, R-A9-11). A `sleep` that runs out of seconds before the suite runs out of
-# cases does not announce itself: it turns "a live holder …" into "no live
-# holder …" one case at a time, and 196 red lines say nothing about why. This
-# one line does. Red here and nowhere else means the bound at `sleep 3000` is
-# what needs raising; red here beside two hundred others means it is why.
-is   "the liveness fixture was still running when the run ended" \
-     "$(kill -0 "$LIVE_PID" 2>/dev/null && printf alive || printf gone)" alive
-
 echo "----"
-printf '%s passed, %s failed, %s skipped\n' "$pass" "$fail" "$skipped"
+printf '%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ] || exit 1
 exit 0
