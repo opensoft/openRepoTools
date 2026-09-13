@@ -38,6 +38,16 @@
 #     directory carried the title `codeXfactory-1` and eight more carried
 #     `codeXfactory-1 (2)` / `(4)`, while the session Brett was actually
 #     driving carried no title at all.
+#   Rule 3 + Amendment 8 (DRAFT 2026-09-12) — THE HANDOFF IS STAMPED HERE TOO.
+#     On a resume, the handoff the row points at gets Rule 3's line, in place,
+#     as the line after its header block:
+#       RESUMED by <uuid> (lane <name>) at <UTC> — lane-start on <ws>
+#     committed on its own as `handoff(<lane>@<ws>): RESUMED by <uuid>`, with
+#     an explicit pathspec and a `Lane:` trailer (Amendment 4(d)), then pulled
+#     and pushed. It NEVER refuses the launch: a stamp that cannot be written
+#     prints the command that writes it. Seven resumes of one lane needed that
+#     line written by hand, and while it was owed the counts drifted 6/4/5
+#     across the row, the object log and the handoff itself.
 #
 # USAGE
 #   lane-start [options] <repo> <n>      # lane-start openRepoShape 2
@@ -58,6 +68,13 @@
 #   --no-launch      do everything except the launch, and print the claude
 #                    command on stdout — for the launcher integration and the
 #                    tests
+#   --confirm        when this window's name is not the lane, print the three
+#                    facts that disagree — the WINDOW, the SESSION live in it,
+#                    the ROW — and ask before taking it. The launcher passes it
+#                    when the lane came from the swap RECORD rather than from
+#                    the window name or a flag (Amendment 8)
+#   --yes            answer that question yes without asking, for a caller that
+#                    has already asked
 #   -h, --help
 #   --               everything after it is passed through to claude
 #
@@ -73,11 +90,38 @@
 #      `sessions/*.json`. A live holder in ANOTHER tmux window is a refusal. A
 #      row whose recorded sessions are all dead is a lane you are RESUMING, and
 #      that is allowed;
+#   3b. the LIVE SESSION IN THIS WINDOW (Amendment 8), which is not the same
+#      question as step 3's. The harness mints a new transcript uuid with
+#      nobody acting — a `/clear` does it, and so did the 2026-09-12 usage
+#      reset that carried this lane's conversation into `4a91f1dc…` while its
+#      row still ended on `09dd34d1…`. That id is in NO row, so step 3 cannot
+#      see it and answers "this lane is parked" about the conversation sitting
+#      in the very window it was asked about. Keyed on the WINDOW instead
+#      (`lanes-edit.sh window-session`), the record is found: its uuid is
+#      appended to the session cell in step 5, BEFORE the stamp, and it is what
+#      this run resumes and stamps. There is no flag for it and there could not
+#      be one — the id does not exist until the session does, so the act is
+#      `lane-start --no-launch <repo> <n>` run IN that window, which is what the
+#      SessionStart hook's block tells the new session to do;
+#   3c. `--confirm`, if it was passed and this window is not already named for
+#      the lane: the triple in front of a person, and a question. Before the
+#      rename and before any write, so a No costs nothing;
 #   4. `tmux rename-window <LANE>` — which also turns automatic-rename OFF for
 #      that window (tmux(1) rename-window), so the name survives the next
 #      command the window runs;
 #   5. the row: `lanes-edit.sh add-row` when there is none, otherwise
-#      `append-row-status`. Never a hand edit and never a whole-file write;
+#      `append-row-status`. Never a hand edit and never a whole-file write.
+#      THE STATUS IS AMENDMENT 6(c)'s STAMP, written here rather than owed to
+#      the session afterwards:
+#        <UTC> RESUMED by <uuid> (lane <lane>) — lane-start on <ws>: window
+#        renamed, launching <the command>
+#      The TAIL states what happened, so a `--no-launch` run ends `window
+#      renamed, no launch` and never claims to have launched anything.
+#      `STARTED` where a new session takes the name, and the uuid is the one
+#      this run actually resumes or mints, read from the PUBLISHED row. A stamp
+#      that is owed is a stamp that is missed, and under Amendment 6(b) a missed
+#      stamp is not bookkeeping debt — it is a lost lane. A brand-new row needs
+#      no stamp: it is created with that uuid already in its session cell;
 #   6. the launch. It is DECIDED in step 5a, before the row is written, because
 #      a brand-new session's id is minted there and step 5 must record it.
 #      RESUME BEATS NEW throughout — a rename into a title that is still held
@@ -125,8 +169,12 @@
 #   makes it current where it can:
 #     * case (c), NEW ROW — the row is created with the minted id already in
 #       its session cell, instead of `pending — set by the session's first act`;
-#     * case (c), EXISTING ROW — `lanes-edit.sh replace-in-row` appends
-#       `→ harness <minted id>` after the cell's last id. When the cell has no
+#     * case (c), EXISTING ROW — `lanes-edit.sh append-session-id` appends
+#       `→ harness <minted id>` after the cell's last id, matching that id
+#       INSIDE THE SESSION CELL: the 6(c) stamp writes the same uuid twice more
+#       into the state cell, so a whole-row anchor (`replace-in-row`) refuses on
+#       every row this tool has already stamped — three occurrences in this
+#       estate's own `openRepoProject-1` row. When the cell has no
 #       id to append to (some rows record only `session_…` footer ids, which
 #       are not transcript ids), it prints the command and leaves the act to
 #       the session — it never guesses at the cell's text;
@@ -153,8 +201,18 @@
 #   1  environment — not inside tmux, no tmux, no such directory, no register,
 #      or `lanes-edit.sh live-holder` failed (which is NOT the same as its
 #      answering 8, "no live session holds this lane")
-#   2  refusal — bad arguments, a duplicated row, or the lane is live in
-#      another window
+#   2  refusal — an ARGUMENT ERROR and nothing else (Amendment 8(d), R-A8-3): a
+#      name that is not a lane, a position that is not a position, a name a
+#      window cannot take, a lane whose register holds two rows and so resolves
+#      to none, or a lane that is live in another window.
+#
+#      A PERSON'S ANSWER IS NOT AN ARGUMENT ERROR. `--confirm` answered `N`, and
+#      `--confirm` with no tty and no `--yes` — the same answer with nobody
+#      there to give it — rename nothing, write nothing, print one notice and
+#      `exec` Claude BARE with the pass-through arguments, exit 0. A launcher
+#      that `exec`s this script would otherwise leave the operator in an exited
+#      pane with no Claude in it. Under `--no-launch` the bare command is
+#      printed on stdout, so a launcher can exec it itself.
 #
 # ENVIRONMENT
 #   PROJECTS_ROOT        default ~/projects
@@ -165,6 +223,21 @@
 #   CLAUDE_BIN           default `claude` from PATH
 #   LANE_START_SESSION_ID  0 turns off minting a uuid for a new session (and
 #                        therefore turns off writing it into the row)
+#   LANE_START_ANSWER    answers `--confirm`'s question without a terminal —
+#                        the seam the tests drive it through. Set at all, it is
+#                        the answer; anything but y/yes is No
+#   LANES_REPO           the checkout the register and the handoffs share
+#                        (default: the git root of $LANES_FILE's directory)
+#   LANES_WORKSPACE_ROOT the workspace repository the handoff is looked for in
+#                        when the register's own checkout does not hold it —
+#                        overriding the `path:` in
+#                        ${AGENT_PROTOCOL_ROOT:-~/.agents}/workspace.yaml
+#   LANES_BRANCH         default main — the branch the handoff stamp is pushed on
+#   LANES_GIT_TIMEOUT    seconds bounding each git call that touches the NETWORK
+#                        (default 60; 0 or a non-number turns the bound off)
+#   LANES_GIT            the git binary THOSE calls use, so a test can hand them
+#                        a git that hangs without shadowing git for the script
+#   LANES_NO_GIT=1       write the handoff's stamp but commit nothing
 #
 # It spells no absolute path of its own: the register and its writer are found
 # beside this script's own REAL path (so the `~/.local/bin` symlink works), and
@@ -180,6 +253,11 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "$RESOLVED")" && pwd)"
 
 LANES_FILE="${LANES_FILE:-$SCRIPT_DIR/LANES.md}"
 LANES_EDIT="${LANES_EDIT:-$SCRIPT_DIR/lanes-edit.sh}"
+# The checkout the register lives in, which under Amendment 5 is also the
+# workspace repository the handoffs live in. Derived from the register's own
+# directory so it follows `LANES_FILE` wherever that points; the env var is the
+# same seam `lanes-edit.sh` spells, honoured here for the same reason.
+LANES_REPO="${LANES_REPO:-$(git -C "$(dirname -- "$LANES_FILE")" rev-parse --show-toplevel 2>/dev/null || :)}"
 PROJECTS_ROOT="${PROJECTS_ROOT:-$HOME/projects}"
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 PROJECTS_STATE="${CLAUDE_PROJECTS_DIR:-$CLAUDE_HOME/projects}"
@@ -198,13 +276,15 @@ quoted() { printf '%q ' "$@" | sed 's/ $//'; }
 
 # ------------------------------------------------------------------ arguments
 
-dry_run=0; no_launch=0; estate=""; dir_override=""
+dry_run=0; no_launch=0; estate=""; dir_override=""; confirm=0; take_yes=0
 positional=(); pass=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run)   dry_run=1; shift ;;
     --no-launch) no_launch=1; shift ;;
+    --confirm)   confirm=1; shift ;;
+    --yes)       take_yes=1; shift ;;
     --dir)       dir_override="${2-}"; [ -n "$dir_override" ] || die "--dir needs a path" 2; shift 2 ;;
     --dir=*)     dir_override="${1#--dir=}"; shift ;;
     --estate)    estate="${2-}"; [ -n "$estate" ] || die "--estate needs a name" 2; shift 2 ;;
@@ -258,6 +338,12 @@ if [ -n "$dir_override" ]; then DIR="$dir_override"; else DIR="$PROJECTS_ROOT/$r
 DIR="$(cd -- "$DIR" && pwd)"
 DIR_REAL="$(cd -- "$DIR" && pwd -P)"
 
+# THIS LANE'S OWN ARGUMENTS, so no hint this script prints ever hands a reader a
+# `<repo> <n>` to translate while the script holds both (F-B6's rule, on this
+# side of the seam). A lane named before the `<repo>-<position>` rule has no
+# position to print and is started through `--dir`, exactly as it was here.
+if [ -n "$n" ]; then self_args="$repo $n"; else self_args="--dir $DIR $LANE"; fi
+
 [ -f "$LANES_FILE" ] || die "no register at $LANES_FILE — this script must sit beside LANES.md (or set LANES_FILE)" 1
 [ -x "$LANES_EDIT" ] || die "no register writer at $LANES_EDIT — it must sit beside LANES.md (or set LANES_EDIT)" 1
 
@@ -269,7 +355,8 @@ step "lane $LANE · dir $DIR · estate $estate"
 command -v tmux >/dev/null 2>&1 || die "tmux is not on PATH, but \$TMUX is set — this environment is inconsistent" 1
 this_window="$(tmux display-message -p '#{session_name}:#{window_id}' 2>/dev/null || :)"
 [ -n "$this_window" ] || die "tmux did not answer display-message — cannot tell which window this is" 1
-step "this window is $this_window, named '$(tmux display-message -p '#W' 2>/dev/null || printf '?')'"
+this_window_name="$(tmux display-message -p '#W' 2>/dev/null || :)"
+step "this window is $this_window, named '${this_window_name:-?}'"
 
 # -------------------------------------------------------- 3. liveness check
 
@@ -417,16 +504,39 @@ holder="$(live_holder 2>"$LS_TMP")" || lh_rc=$?
 [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
 case "$lh_rc" in
   0)
-    IFS=$'\037' read -r h_id h_target h_name h_pid <<<"$holder"
-    if [ "${h_target%.*}" = "$this_window" ]; then
-      holder_here=1
-      step "this window's own session $h_id (pid $h_pid, name '${h_name:-none}') already holds $LANE — carrying on"
-    else
-      note "lane $LANE is live in session $h_id (tmux ${h_target:-unknown}); take $repo-$next_n or resume that window"
-      note "  $prog $repo $next_n"
-      note "  tmux switch-client -t ${h_target%.*}     # or go to the window that holds it"
-      exit 2
-    fi ;;
+    # WHOSE SESSION IT IS COMES FROM THE HELPER (Amendment 8, ruling (g)), not
+    # from a string compare on the `tmux` column here. The first version made
+    # that compare, and on 2026-09-12 it refused this lane the window it was
+    # running in: the record it was handed was the harness's `kind: bg`
+    # COMPANION, which carries the interactive session's own `sessionId` and no
+    # `tmux` at all, so `"none" != "$this_window"` and the refusal read
+    # "lane openRepoProject-1 is live in session c5701b54… (tmux none)" about
+    # the session typing the command. A record with no target is not a record in
+    # no window — the helper now answers with `here`, `elsewhere` or `orphan`,
+    # having tested `$CLAUDE_CODE_SESSION_ID`, the window, and this pane's
+    # process tree in that order.
+    #
+    # AN EMPTY FIFTH FIELD IS A REFUSAL, not a pass: an older `lanes-edit.sh`
+    # that does not send one must not be read as saying "here".
+    IFS=$'\037' read -r h_id h_target h_name h_pid h_where <<<"$holder"
+    case "$h_where" in
+      here)
+        holder_here=1
+        step "this window's own session $h_id (pid $h_pid, name '${h_name:-none}') already holds $LANE — carrying on" ;;
+      orphan)
+        # AMENDMENT 6(d), and not a refusal. A live record that names no window
+        # and is in no pane's process tree is an idle background session still
+        # holding the name — the thing 6(d) says to retire. It is not in this
+        # window, so it is not this window's session; it is in no window, so it
+        # is nobody's rival either. Say so, name the act, and carry on.
+        note "lane $LANE is named by a live record that is in NO window and not in this pane's process tree: session $h_id, pid $h_pid, name '${h_name:-none}'. That is an orphaned holder, not a rival (Amendment 6(d)) — retire it: kill $h_pid. Carrying on."
+        ;;
+      *)
+        note "lane $LANE is live in session $h_id (tmux ${h_target:-unknown}); take $repo-$next_n or resume that window"
+        note "  $prog $repo $next_n"
+        note "  tmux switch-client -t ${h_target%.*}     # or go to the window that holds it"
+        exit 2 ;;
+    esac ;;
   8)
     if [ "$row_count" = 1 ]; then
       step "no live session holds $LANE — this is a resume of a lane whose sessions have all ended"
@@ -437,6 +547,184 @@ case "$lh_rc" in
     note "the helper's own output is above."
     die "$LANES_EDIT live-holder $LANE failed (exit $lh_rc). That is NOT 'no live session holds $LANE', and this script will not rename the window on an answer it did not get: a rename into a name something still holds is what mints '$LANE (2)'. Fix the helper (or run it by hand: $LANES_EDIT live-holder $LANE), then re-run." 1 ;;
 esac
+
+# ------------------------------ 3a. the orphaned holders (Amendment 8(f))
+#
+# R-A8-6. Step 3 asked whether the lane's CURRENT id is held. This asks who is
+# still holding its EARLIER ones — Amendment 6(d)'s orphans, the live-but-idle
+# sessions that are the whole reason the `/resume` picker offered this lane two
+# transcripts of which neither was the lane.
+#
+# IT NAMES THEM AND IT NEVER KILLS. The retire act is `kill <pid>`, printed
+# here with the session id and the profile beside it so a person can check
+# before running it, and run by that person. Clause (f) rules it the operator's
+# act — an idle background session is exactly the shape of thing that turns out
+# to be somebody's long-running job — and it never blocks or delays the launch:
+# a helper too old to know the read simply says nothing.
+ih_out=""; ih_rc=0
+ih_out="$("$LANES_EDIT" idle-holders "$LANE" 2>/dev/null)" || ih_rc=$?
+if [ "$ih_rc" = 0 ] && [ -n "$ih_out" ]; then
+  note "lane $LANE: this row's EARLIER session ids are still held by live but idle sessions (Amendment 6(d) orphans). They are history, not alternatives — retire them, and $prog never does it for you:"
+  while IFS=$'\t' read -r o_sid o_pid o_kind o_prof; do
+    [ -n "$o_sid" ] || continue
+    note "  session $o_sid (kind ${o_kind:-none}, profile ${o_prof:-unknown}) — retire it: kill $o_pid"
+  done <<<"$ih_out"
+fi
+
+# THE RESUME TARGET, from the PUBLISHED cell (R33): the LAST id in it. Read
+# here rather than in 5a because step 3b may replace it with an id the cell does
+# not carry yet, and 5a's launch decision has to see that.
+row_sid=""
+[ -n "$session_ids_ordered" ] && row_sid="$(printf '%s\n' "$session_ids_ordered" | tail -n1)"
+
+# ------------------------------------- 3b. the live session in THIS window
+#
+# A DIFFERENT QUESTION FROM STEP 3's, and Amendment 8 exists for the gap between
+# them. Step 3 asks "is any session the ROW names alive"; this asks "what is
+# live in THIS WINDOW". The harness mints a new transcript uuid with nobody
+# acting — a `/clear` does it (Amendment 6, fact 4), and so did the 2026-09-12
+# usage reset that carried this lane's conversation into `4a91f1dc…` while its
+# row still ended on `09dd34d1…`. An id in no row is an id `live-holder` cannot
+# look up: it answers 8, "this lane is parked", about the conversation sitting
+# in the window it was asked about, and this script would then resume the lane's
+# PREVIOUS conversation and stamp that uuid on an append-only line.
+#
+# So the id is taken from the record itself, and step 5 appends it to the
+# session cell BEFORE it stamps — which is what makes liveness and the next
+# resume follow it. There is no flag for this and there could not be one: the id
+# does not exist until the session does. The act is `lane-start --no-launch` run
+# IN the window, which is what the SessionStart hook's block asks the new
+# session to do, and what this lane did by hand at 2026-09-12T16:59Z.
+#
+# A FAILED READ IS A WARNING HERE, NOT A REFUSAL, and that is not R22 being
+# waived. R22 is for a read whose empty answer PERMITS something: `live-holder`
+# fails closed because a rename over a live name costs a lane its address. This
+# read only ever ADDS an id to a cell, and it runs after `live-holder` has
+# already read the same records and refused if it could not — so a failure here
+# means the records went unreadable between two calls a second apart, and the
+# honest response is to say so and carry on rather than to refuse a lane its
+# start.
+win_sid=""; win_target=""; win_name=""; win_pid=""; win_profile=""
+: > "$LS_TMP"
+win_rec=""; ws_rc=0
+win_rec="$("$LANES_EDIT" window-session "$this_window" 2>"$LS_TMP")" || ws_rc=$?
+[ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
+case "$ws_rc" in
+  0)
+    IFS=$'\037' read -r win_sid win_target win_name win_pid win_profile <<<"$win_rec"
+    step "this window's live session is $win_sid (name '${win_name:-none}', pid $win_pid, profile ${win_profile:-unknown})" ;;
+  8) step "no live session record names this window ($this_window)" ;;
+  *)
+    note "$LANES_EDIT window-session $this_window failed (exit $ws_rc) — carrying on without it. This read only ever ADDS the harness's new transcript uuid to the cell, and live-holder has already read the same records; if the cell is behind, stamp it yourself." ;;
+esac
+
+# The id the cell does not carry. `$session_ids` is the PUBLISHED set (step 3),
+# so an id only this checkout knows is not treated as recorded either.
+#
+# NOT WHEN STEP 3 ALREADY FOUND ITS HOLDER HERE: a row whose OWN id is live in
+# this window is a cell that is current by definition, and there is nothing to
+# append. And only a TRANSCRIPT UUID is ever appended — a cell records those and
+# only those (Amendment 6(b)), and a record carrying anything else in its
+# `sessionId` is not something `--resume` could take.
+harness_sid=""; cell_anchor=""
+if [ -n "$win_sid" ] && [ "$holder_here" = 0 ]; then
+  if ! [[ "$win_sid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+    note "the session live in this window has id '$win_sid', which is not a transcript uuid — leaving the cell alone"
+  elif printf '%s\n' "$session_ids" | grep -qx -F -- "$win_sid"; then
+    step "  its uuid is already in the row's session cell — nothing to append"
+  else
+    harness_sid="$win_sid"
+    cell_anchor="$row_sid"
+    row_sid="$harness_sid"
+    note "the session live in THIS window is $harness_sid and the PUBLISHED session cell does not name it: the harness minted a new transcript (a /clear, a usage reset, a profile switch). It is this lane's current session, and the cell is stamped with it before the row's status."
+  fi
+elif [ -n "$win_sid" ]; then
+  step "  it is the session step 3 already found holding $LANE in this window — the cell is current"
+fi
+
+# ------------------------------------------------------------- 3c. --confirm
+#
+# A window whose name is not the lane is a window whose lane came from somewhere
+# else — the swap RECORD, or a flag — and taking it renames the window and
+# writes the register. `--confirm` puts the three facts that disagree in front
+# of a person first: the WINDOW, the SESSION live in it, and the ROW.
+#
+# NO TERMINAL AND NO `--yes` IS A REFUSAL, exit 2, before the rename and before
+# any write. A question nobody can answer is not a Yes, and a launcher that read
+# it as one would rename a window somebody else's lane is working in.
+if (( confirm )); then
+  if [ "$this_window_name" = "$LANE" ]; then
+    step "--confirm: this window is already named $LANE — nothing to confirm"
+  else
+    case "$this_window_name" in
+      ""|claude|bash|zsh|sh|node) why="auto-named '${this_window_name:-none}'" ;;
+      *)                          why="named '$this_window_name', which is not the lane" ;;
+    esac
+    note "--confirm: this window is $why. The three facts, before anything is renamed or written:"
+    note "  window   $this_window '${this_window_name:-none}'"
+    if [ -n "$win_sid" ]; then
+      note "  session  $win_sid '${win_name:-none}' (pid $win_pid, profile ${win_profile:-unknown})"
+    else
+      note "  session  none — no live session record names this window"
+    fi
+    if [ "$row_count" = 1 ]; then
+      note "  row      $(printf '%s' "$row" | cut -c1-200)"
+    elif [ -n "$pub_row" ]; then
+      note "  row      $(printf '%s' "$pub_row" | head -n1 | cut -c1-200)"
+    else
+      note "  row      none — the register has no row for $LANE"
+    fi
+    answer=""; no_tty=0
+    if (( take_yes )); then
+      step "Take lane $LANE in this window? [y/N] y   (--yes)"
+      answer=y
+    elif [ -n "${LANE_START_ANSWER+set}" ]; then
+      step "Take lane $LANE in this window? [y/N] ${LANE_START_ANSWER:-<empty>}   (LANE_START_ANSWER)"
+      answer="$LANE_START_ANSWER"
+    elif [ -t 0 ]; then
+      printf '%s: Take lane %s in this window? [y/N] ' "$prog" "$LANE" >&2
+      IFS= read -r answer || answer=""
+    else
+      answer=""
+      no_tty=1
+    fi
+    case "$answer" in
+      y|Y|yes|YES|Yes) step "taking lane $LANE in this window" ;;
+      *)
+        # AMENDMENT 8(c)/(d), R-A8-3 — EVERY ANSWER LEADS SOMEWHERE AND NO
+        # ANSWER EXITS. `claude-profile` EXECS this script, so this script's
+        # exit status IS the launcher's: a refusal here is an exited pane with
+        # no Claude in it, which is the one failure the whole change exists to
+        # prevent. `N` means NOT THIS LANE, not NOT AT ALL — and no tty with no
+        # `--yes` is the same answer with nobody there to give it, which must
+        # still not take a lane on an inference nobody confirmed. Both fall
+        # through to Claude, bare: nothing renamed, nothing written, no lane,
+        # ONE notice, exit 0. Exit 2 is left to argument errors alone.
+        if (( no_tty )); then
+          bare_why="--confirm was passed, there is no terminal to ask on, and --yes was not, so lane $LANE is NOT taken in a window $why"
+        else
+          bare_why="lane $LANE is NOT taken: the answer was '${answer:-<empty, which is N>}'"
+        fi
+        note "$bare_why. Nothing has been renamed and nothing has been written. Starting Claude with no lane — to take it later, run: $prog $self_args"
+        bare=("$CLAUDE_BIN" ${pass[@]+"${pass[@]}"})
+        if (( no_launch )); then
+          # The launcher asked for a command to exec; it gets the bare one, on
+          # stdout, exactly as it would have got the lane's.
+          quoted "${bare[@]}"; printf '\n'
+          step "--no-launch: the command above was printed, not run"
+          exit 0
+        fi
+        if (( dry_run )); then
+          plan "exec $(quoted "${bare[@]}")"
+          step "--dry-run: nothing was renamed, written or launched"
+          exit 0
+        fi
+        step "exec: $(quoted "${bare[@]}")"
+        exec "${bare[@]}"
+        ;;
+    esac
+  fi
+fi
 
 # ------------------------------------------------------- 4. name the window
 
@@ -503,9 +791,6 @@ new_uuid() {
   fi
 }
 
-row_sid=""
-[ -n "$session_ids_ordered" ] && row_sid="$(printf '%s\n' "$session_ids_ordered" | tail -n1)"
-
 # Amendment 7's lane verb follows the LAUNCH decision, which is the honest
 # reading of it: a resume is a RESUMED and a new session is a STARTED.
 lane_verb=STARTED
@@ -543,7 +828,15 @@ else
   # left reading `pending — set by the session's first act` in that case, so the
   # log said one thing and the row another about the same act.
   lane_sid=unknown
-  if [ "${LANE_START_SESSION_ID:-1}" != 0 ]; then
+  if [ -n "$harness_sid" ]; then
+    # Nothing is minted: the row is about to name the session that is really in
+    # this window, and minting a second id beside it would give the lane two
+    # answers to "which session is this". The launch still takes a new session —
+    # this branch was reached because the live one has no transcript in this
+    # directory and cannot be resumed by id — and it is not attributed to the
+    # other one, which is what `unknown` says.
+    note "the live session in this window ($harness_sid) has no transcript in this directory, so it cannot be resumed by id. A new session takes the name and nothing is minted; the cell still records the session that is in the window."
+  elif [ "${LANE_START_SESSION_ID:-1}" != 0 ]; then
     if new_sid="$(new_uuid)"; then
       while recorded_transcript "$new_sid" >/dev/null 2>&1; do new_sid="$(new_uuid)"; done
       cmd+=(--session-id "$new_sid")
@@ -569,8 +862,15 @@ user="$(id -un)"
 handoff="handoffs/$estate/session-handoff-$today-lane-$LANE.md"
 
 # The session cell of a NEW row names the session that is about to run,
-# whenever one was minted — that is the whole point of minting it.
-if [ -n "$new_sid" ]; then
+# whenever one was minted — that is the whole point of minting it. And where a
+# session is ALREADY live in this window (step 3b) the cell names THAT one: a
+# lane bound to a running window mid-session is the ordinary shape of
+# `--no-launch`, and a row minting a fresh uuid beside a conversation that is
+# already there would name a session nobody will ever be in.
+harness_cell="harness $harness_sid (transcript uuid; profile ${win_profile:-unknown})"
+if [ -n "$harness_sid" ]; then
+  session_cell="$harness_cell — live in this window, recorded by $prog $utc"
+elif [ -n "$new_sid" ]; then
   session_cell="harness \`$new_sid\` (minted by $prog, $utc)"
 else
   session_cell="pending — set by the session's first act"
@@ -586,12 +886,59 @@ if [ "$row_count" = 0 ]; then
     step "row added"
   fi
 else
-  status_text="$utc lane-start on $ws: window renamed, launching $(quoted "${cmd[@]}")"
+  # AMENDMENT 8 — THE CELL FIRST, THEN THE STAMP. The harness minted a
+  # transcript uuid the published cell does not carry (step 3b), and the stamp
+  # below is about to name that uuid: writing the stamp first would leave, for
+  # as long as the two commits are apart, a row whose status names a session its
+  # own session cell does not — and if the append then refused, for ever. So the
+  # cell is extended first, with the same `replace-in-row` and the same anchor
+  # discipline the minted case uses below: the anchor is the PUBLISHED last id,
+  # which refuses exactly when this checkout's copy of the row is older than the
+  # one that landed, and a refusal prints the act rather than corrupting a cell.
+  if [ -n "$harness_sid" ]; then
+    harness_hint="LANES_LANE=$LANE $LANES_EDIT append-session-id $LANE \"<the session cell's last id>\" \"→ $harness_cell\""
+    if [ -z "$cell_anchor" ]; then
+      note "the row's session cell records no transcript uuid to append to (some rows carry only \`session_…\` footer ids, which are not transcript ids). STAMP IT AS THIS SESSION'S FIRST ACT:"
+      note "  $harness_hint"
+    elif (( dry_run )); then
+      plan "lanes-edit.sh append-session-id $LANE '$cell_anchor' '→ $harness_cell'"
+    elif LANES_LANE="$LANE" "$LANES_EDIT" append-session-id "$LANE" "$cell_anchor" "→ $harness_cell" "session cell: the harness minted $harness_sid for this window"; then
+      step "session cell updated: $cell_anchor → $harness_sid (the transcript live in this window)"
+    else
+      note "the session cell was NOT extended with $harness_sid (this checkout's copy of the row does not carry $cell_anchor exactly once IN ITS SESSION CELL — it may be older than the published one). STAMP IT AS THIS SESSION'S FIRST ACT:"
+      note "  $harness_hint"
+    fi
+  fi
+
+  # AMENDMENT 6(c)'s STAMP, WRITTEN HERE. The row's first act after a resume is
+  # `RESUMED by <transcript uuid>`, and under Amendment 6(b) that stamp is
+  # load-bearing: it is what the NEXT lane-start resumes, so a missed one is not
+  # bookkeeping debt, it is a lost lane. It used to be owed to the session that
+  # lane-start had just exec'd — which is a stamp nobody writes when the session
+  # dies at a usage reset before its first act, the shape this estate hits daily.
+  # The verb follows the launch decision, exactly as the object-log line does: a
+  # resume is RESUMED and a new session is STARTED, and the uuid is the one this
+  # run actually resumes or mints, read from the PUBLISHED row (R33) or from the
+  # record live in this window (step 3b).
+  # THE TAIL STATES WHAT HAPPENED (Amendment 8(d), F-B5). The old line said
+  # `launching <cmd>` unconditionally, so a `--no-launch` run stamped the row
+  # with a launch that by definition did not happen — and `--no-launch` is now
+  # the PRESCRIBED act twice over in clause (d) (the harness-mint append, and
+  # the deferred writes of the title-fallback path), so the defect would have
+  # become the common case rather than an edge. The head of the stamp — the
+  # part Amendment 6(b) and clause (d) quote, up to and including `lane-start on
+  # <ws>:` — is unchanged.
+  if (( no_launch )); then
+    did="window renamed, no launch"
+  else
+    did="window renamed, launching $(quoted "${cmd[@]}")"
+  fi
+  status_text="$utc $lane_verb by ${lane_sid:-unknown} (lane $LANE) — lane-start on $ws: $did"
   if (( dry_run )); then
     plan "lanes-edit.sh append-row-status $LANE \"$status_text\""
   else
     LANES_LANE="$LANE" "$LANES_EDIT" append-row-status "$LANE" "$status_text"
-    step "row status appended"
+    step "row status appended: $lane_verb by ${lane_sid:-unknown}"
   fi
 
   # An EXISTING row that is about to run a NEW session: append the minted id
@@ -607,16 +954,16 @@ else
   # landed, and `commit_push`'s rebase would then conflict on the same line. The
   # refusal prints the act instead, and the launch is unaffected.
   if [ -n "$new_sid" ]; then
-    stamp_hint="LANES_LANE=$LANE $LANES_EDIT replace-in-row $LANE \"<the session cell's text>\" \"<that text> → harness \\\`$new_sid\\\`\""
+    stamp_hint="LANES_LANE=$LANE $LANES_EDIT append-session-id $LANE \"<the session cell's last id>\" \"→ harness \\\`$new_sid\\\`\""
     if [ -z "$row_sid" ]; then
       note "the row's session cell records no session id this script can read (some rows carry only \`session_…\` footer ids). STAMP IT AS THIS SESSION'S FIRST ACT:"
       note "  $stamp_hint"
     elif (( dry_run )); then
-      plan "lanes-edit.sh replace-in-row $LANE '$row_sid' '$row_sid → harness \`$new_sid\`'"
-    elif LANES_LANE="$LANE" "$LANES_EDIT" replace-in-row "$LANE" "$row_sid" "$row_sid → harness \`$new_sid\`" "session cell: $prog minted $new_sid for this window"; then
+      plan "lanes-edit.sh append-session-id $LANE '$row_sid' '→ harness \`$new_sid\`'"
+    elif LANES_LANE="$LANE" "$LANES_EDIT" append-session-id "$LANE" "$row_sid" "→ harness \`$new_sid\`" "session cell: $prog minted $new_sid for this window"; then
       step "session cell updated: $row_sid → $new_sid"
     else
-      note "the session cell was NOT stamped (this checkout's copy of the row does not carry $row_sid exactly once — it may be older than the published one). STAMP IT AS THIS SESSION'S FIRST ACT:"
+      note "the session cell was NOT stamped (this checkout's copy of the row does not carry $row_sid exactly once IN ITS SESSION CELL — it may be older than the published one). STAMP IT AS THIS SESSION'S FIRST ACT:"
       note "  $stamp_hint"
     fi
   fi
@@ -681,7 +1028,34 @@ else
 fi
 lane_payload="home $home_nwo; estate $estate"
 
-if (( dry_run )); then
+# AMENDMENT 8(d), R-A8-2 — `unknown` NEVER REACHES THE OBJECT LOG, AND THE RULE
+# IS THE CONDITION RATHER THAN THE PATH. Amendment 7(b): the `session` field is
+# the transcript uuid and only that. `lane_sid` is the literal `unknown`
+# wherever this run has no uuid to name — the title fallback, where the picker
+# has not run when the stamps would be written; a session already live in this
+# window whose transcript is not in this directory; a run with no uuid source at
+# all; `LANE_START_SESSION_ID=0`. The log is APPEND-ONLY, so a line written
+# wrong there is wrong for ever, and the grammar's own writer does not write a
+# line it cannot fill in. It is not a narrowing of Amendment 7 either: A8
+# narrows A7 in exactly one place, clause (b)'s `PAUSED` payload, and not here.
+#
+# THE ROW'S STAMP STILL CARRIES `unknown`, and that is deliberate: the state
+# cell is a history of ACTS, the act happened, and a placeholder there is a
+# thing a reader can see. `unknown` never enters the SESSION cell, which is what
+# Amendment 6(b) resumes from, and so is never replaced in it.
+#
+# BOTH DEFERRED RECORDS ARE WRITTEN BY THE FIRST ACT THAT KNOWS THE UUID — the
+# session's own `lane-start --no-launch`, which clause (e)'s hook prompts by
+# name. That run reads the live record whose tmux target is this window, APPENDS
+# that uuid to the session cell through the cell-scoped edit, and only then
+# writes this line and the handoff's stamp, both carrying the real uuid.
+lane_sid_known=0
+[[ "$lane_sid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] && lane_sid_known=1
+
+if (( ! lane_sid_known )); then
+  note "no transcript uuid is knowable at this instant (the row's stamp says '${lane_sid:-unknown}'), so the lane's $lane_verb log line is NOT written: Amendment 7(b) makes that field a transcript uuid and only that, and the log is append-only. Nor is the handoff's Rule 3 stamp. BOTH are written by the first act that knows the uuid, which is this session's own:"
+  note "  $prog --no-launch $self_args"
+elif (( dry_run )); then
   plan "lanes-edit.sh log $lane_verb lane:$LANE → \"$lane_payload\""
 else
   if LANES_LANE="$LANE" LANES_SESSION="$lane_sid" "$LANES_EDIT" log "$lane_verb" "lane:$LANE" '→' "$lane_payload"; then
@@ -689,6 +1063,283 @@ else
   else
     note "the lane's object log was NOT written ($lane_verb, home $home_nwo). Write it as this session's first act:"
     note "  LANES_LANE=$LANE $LANES_EDIT log $lane_verb lane:$LANE '→' \"$lane_payload\""
+  fi
+fi
+
+# ------------------------------------------- 5c. the handoff's Rule 3 stamp
+#
+# AMENDMENT 8 — LANE-START WRITES THE RULE 3 STAMP. Rule 3 makes the FIRST act
+# of a lane resuming from a handoff a stamp on that handoff, in place, before
+# it reads any further and before any other act. It was the SESSION's to write,
+# and it was missed every time: seven resumes of this lane needed it written by
+# hand afterwards, and while it was owed the three records of the same day
+# disagreed about how many resumes there had been — the row said six, the
+# object log four, the handoff five, about ONE lane on ONE day. Amendment 6(c)
+# found exactly this about the row's own stamp and cured it the same way: the
+# boundary act that KNOWS the resume writes the record of it, because a stamp
+# that is owed is a stamp that is missed.
+#
+# ON A RESUME OF AN EXISTING ROW, AND NOTHING ELSE. The verb is `$lane_verb` —
+# the very one 5a decided for the row's status and 5b's object line — so the
+# three can never disagree about whether this was a resume. A brand-new row is
+# not a resume of anything: the file its handoff cell names does not exist yet,
+# and the session that will write it has not run.
+#
+# THE INSERT POINT IS RULED: the line immediately after the first blank line
+# that follows line 1 — line 1 being the lane header (Rule 4) and the blank the
+# end of the header block. That puts THIS resume at the top of the block of
+# stamps, above the ones before it.
+#
+# AFTER 5b, so that every `lanes-edit.sh` write this run makes is already
+# committed before this one touches the checkout at all. The register and the
+# handoffs share one checkout, and the helper REFUSES a checkout carrying an
+# uncommitted change to a tracked file it is not itself writing (Amendment 5,
+# `dirty_elsewhere`). Stamp the handoff first and let its commit fail, and the
+# edit made for the row is the reason the row cannot be written.
+#
+# AND IT IS NEVER A REASON TO REFUSE THE LAUNCH. A handoff that has moved, a
+# checkout with no git, a rebase conflict, a push that hangs — each one prints
+# the command that finishes the act, and the lane still starts. Rule 3's stamp
+# is the RECORD of a resume, not the licence for one, and refusing the session
+# would lose the conversation the stamp is about. (Rule 3 also says a lane that
+# finds an existing stamp stops and reports. That is addressed to the session
+# reading the resume prompt, not to the act that records the resume: the file
+# already carries one line per resume and gains one more.)
+
+# Ruling (h)'s bound, in this script's own few lines rather than reached for in
+# the helper's: every git call that touches the NETWORK runs under
+# `LANES_GIT_TIMEOUT` seconds (default 60; `0` or a non-number turns the bound
+# off), so a hung remote costs the launch a minute and never the session. No
+# `timeout` on PATH is not a reason to skip the call — it is a reason to make
+# it unbounded, which is what this did before the bound existed.
+HS_TIMED_OUT=0
+hs_git_net() {
+  local rc=0 budget="${LANES_GIT_TIMEOUT:-60}"
+  HS_TIMED_OUT=0
+  case "$budget" in
+    ''|0|*[!0-9]*) "${LANES_GIT:-git}" "$@" || rc=$? ;;
+    *)
+      if command -v timeout >/dev/null 2>&1; then
+        timeout -k 5 "$budget" "${LANES_GIT:-git}" "$@" || rc=$?
+        case "$rc" in 124|137) HS_TIMED_OUT=1 ;; esac
+      else
+        "${LANES_GIT:-git}" "$@" || rc=$?
+      fi ;;
+  esac
+  return "$rc"
+}
+
+# F-B7 — WHICH CASE THE READER IS IN, said rather than assumed. A stamp that is
+# committed here and not pushed is carried out by the next `lanes-edit.sh` write
+# ONLY where the handoff lives in the register's own checkout: that write pushes
+# the BRANCH, so it takes the orphaned commit with it. `hs_resolve` also accepts
+# an absolute path and a workspace root, either of which can land outside
+# `$LANES_REPO` — and nothing ever pushes a commit made there, because no
+# `lanes-edit.sh` write goes out of it. Promising a carry that will not happen
+# is worse than printing the command, so the note says which it is.
+hs_carry_note() {
+  if [ -n "${LANES_REPO:-}" ] && [ "$hs_repo" = "$LANES_REPO" ]; then
+    note "  (this handoff is in the register's own checkout, so the next lanes-edit.sh write out of it pushes the branch and carries this commit with it.)"
+  else
+    note "  (this handoff is NOT in the register's checkout ($hs_repo), so no lanes-edit.sh write will ever push it: the command above is the whole of the recovery.)"
+  fi
+  return 0
+}
+
+# The workspace repository a person names once in `~/.agents/workspace.yaml`
+# (Amendment 4(a)), which is where handoffs live. Five lines of YAML read with
+# `sed`, because a YAML parser is not a dependency this script will take for
+# one scalar, and the value is written with a bare `~` that nothing expands
+# inside a file. `LANES_WORKSPACE_ROOT` overrides it, so a test can point this
+# at a sandbox without a workspace manifest of its own.
+hs_workspace_root() {
+  local yaml p
+  if [ -n "${LANES_WORKSPACE_ROOT:-}" ]; then printf '%s\n' "$LANES_WORKSPACE_ROOT"; return 0; fi
+  yaml="${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace.yaml"
+  [ -r "$yaml" ] || return 1
+  p="$(sed -n 's/^[[:space:]]*path:[[:space:]]*\(.*[^[:space:]]\)[[:space:]]*$/\1/p' -- "$yaml" | head -n1 || :)"
+  p="${p%\"}"; p="${p#\"}"; p="${p%\'}"; p="${p#\'}"
+  case "$p" in '~') p="$HOME" ;; '~/'*) p="$HOME/${p#'~/'}" ;; esac
+  [ -n "$p" ] || return 1
+  printf '%s\n' "$p"
+}
+
+# The file the row's handoff cell names. Three spellings, first hit wins, and
+# every one of them is a READ:
+#   (a) a path the cell already spells — absolute, or `~`-rooted, which is
+#       Amendment 4(e)'s estate spelling reaching the same file through the
+#       `~/projects/<estate>/handoffs` symlink;
+#   (b) `<the register's own checkout>/<cell>` — the repository-relative
+#       spelling every row this script writes carries, and the one the register
+#       and the handoffs share;
+#   (c) `<the workspace repository>/<cell>`, for a register reached from
+#       somewhere else.
+# A cell that spells a path of its own is answered by (a) alone: joining an
+# absolute path on to a root gives a path nothing has.
+hs_resolve() {
+  local cell="$1" cand root
+  [ -n "$cell" ] || return 1
+  case "$cell" in
+    '~/'*) cand="$HOME/${cell#'~/'}" ;;
+    /*)    cand="$cell" ;;
+    *)     cand="" ;;
+  esac
+  if [ -n "$cand" ]; then
+    [ -f "$cand" ] || return 1
+    printf '%s\n' "$cand"; return 0
+  fi
+  if [ -n "${LANES_REPO:-}" ] && [ -f "$LANES_REPO/$cell" ]; then
+    printf '%s\n' "$LANES_REPO/$cell"; return 0
+  fi
+  root="$(hs_workspace_root 2>/dev/null || :)"
+  if [ -n "$root" ] && [ -f "$root/$cell" ]; then
+    printf '%s\n' "$root/$cell"; return 0
+  fi
+  return 1
+}
+
+# The handoff path is field 7 of the PUBLISHED row: the register's header is
+# `| lane | session id | workstation / env / user | started (UTC) | objects
+# owned | handoff path | state |`, and awk's field 1 is the empty string before
+# the leading pipe. A row carrying an EXTRA cell after its state — there are
+# such rows — does not move field 7; counting back from NF would.
+# AND IT STAMPS ONLY WITH A REAL UUID (R-A8-2). A stamp naming `unknown` is a
+# Rule 3 record that answers nothing about who resumed, in the one document this
+# protocol cannot afford to rewrite; the note above names the act that writes it
+# together with the deferred log line, at the first instant either can be right.
+if [ "$lane_verb" = RESUMED ] && [ "$row_count" = 1 ] && (( lane_sid_known )); then
+  hs_cell="$(cell 7 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' || :)"
+  hs_stamp="RESUMED by $lane_sid (lane $LANE) at $utc — lane-start on $ws"
+  hs_subject="handoff($LANE@$ws): RESUMED by $lane_sid"
+  hs_trailer="Lane: $LANE ($ws)"
+  hs_file=""
+  if [ -z "$hs_cell" ]; then
+    step "the row names no handoff path, so there is no Rule 3 stamp to write"
+  elif ! hs_file="$(hs_resolve "$hs_cell")"; then
+    hs_ws_root="$(hs_workspace_root 2>/dev/null || :)"
+    note "the handoff the row points at was NOT found, so Rule 3's stamp is not written: '$hs_cell'"
+    note "  looked under ${LANES_REPO:-<this checkout has no git root>} and ${hs_ws_root:-<no readable path: in ${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace.yaml>}"
+    note "  STAMP IT AS THIS SESSION'S FIRST ACT — this line under the handoff's header block:"
+    note "    $hs_stamp"
+    note "  then: git -C <the workspace repo> commit -m \"$hs_subject\" -m \"$hs_trailer\" -- <the file>"
+  else
+    # A handoff may be reached through the estate's `handoffs` symlink, so the
+    # path git is given is the REAL one: a pathspec that leaves the repository
+    # lexically is a pathspec git refuses, however plainly it is inside it.
+    hs_real="$(readlink -f -- "$hs_file" 2>/dev/null || printf '%s' "$hs_file")"
+    hs_repo="$(git -C "$(dirname -- "$hs_real")" rev-parse --show-toplevel 2>/dev/null || :)"
+    hs_rel="$hs_real"
+    [ -n "$hs_repo" ] && hs_rel="${hs_real#"$hs_repo"/}"
+    hs_fix="git -C ${hs_repo:-<the workspace repo>} commit -m \"$hs_subject\" -m \"$hs_trailer\" -- $hs_rel"
+    hs_at=""
+    if [ -r "$hs_real" ] && [ -s "$hs_real" ]; then
+      hs_at="$(awk 'NR > 1 && /^[[:space:]]*$/ { print NR; exit }' "$hs_real" || :)"
+      if [ -z "$hs_at" ]; then
+        hs_at=1
+        note "$hs_rel has no blank line after line 1, so it has no header block to stamp under — the stamp goes directly under line 1"
+      fi
+    fi
+    if [ -z "$hs_at" ]; then
+      note "the handoff the row points at is empty or unreadable, so Rule 3's stamp is not written: $hs_file"
+      note "  STAMP IT AS THIS SESSION'S FIRST ACT — this line under the handoff's header block:"
+      note "    $hs_stamp"
+      note "  then: $hs_fix"
+    elif (( dry_run )); then
+      plan "stamp $hs_rel at line $((hs_at + 1)): $hs_stamp"
+      plan "$hs_fix"
+      plan "  then git -C ${hs_repo:-<the workspace repo>} pull --rebase origin ${LANES_BRANCH:-main} && … push origin ${LANES_BRANCH:-main}"
+    else
+      # THE FILE IS SPLICED, NEVER REWRITTEN. A handoff is the one document in
+      # this protocol whose whole purpose is to be read by a later session, and
+      # the act that deleted two lanes' rows on 2026-09-08 was a file written
+      # whole from what somebody remembered of it. So: read it, put ONE line
+      # in, write the rest back unchanged — and prove it before it lands. The
+      # added line must be exactly the stamp, at exactly the ruled position,
+      # and taking that line back out again must give the original file byte
+      # for byte. If it does not, nothing is written at all: that is also what
+      # catches a file whose last line has no newline, where `head` would glue
+      # the stamp on to the end of it.
+      hs_tmpd="$(mktemp -d)"
+      hs_pre="$hs_tmpd/pre"; hs_out="$hs_tmpd/out"
+      if ! cat -- "$hs_real" > "$hs_pre" 2>/dev/null; then
+        note "the handoff the row points at could not be read, so Rule 3's stamp is not written: $hs_file"
+        note "  STAMP IT AS THIS SESSION'S FIRST ACT — this line under the handoff's header block:"
+        note "    $hs_stamp"
+        note "  then: $hs_fix"
+      else
+        { head -n "$hs_at" -- "$hs_pre"
+          printf '%s\n' "$hs_stamp"
+          tail -n "+$((hs_at + 1))" -- "$hs_pre"
+        } > "$hs_out"
+        if [ "$(sed -n "$((hs_at + 1))p" -- "$hs_out")" = "$hs_stamp" ] &&
+           { head -n "$hs_at" -- "$hs_out"; tail -n "+$((hs_at + 2))" -- "$hs_out"; } | cmp -s - "$hs_pre"
+        then
+          cat -- "$hs_out" > "$hs_real"     # the redirect FOLLOWS the symlink
+          step "handoff stamped at line $((hs_at + 1)) of $hs_rel: $hs_stamp"
+          if [ "${LANES_NO_GIT:-0}" = 1 ]; then
+            note "LANES_NO_GIT=1 — the stamp is written and NOT committed:"
+            note "  $hs_fix"
+          elif [ -z "$hs_repo" ]; then
+            note "$hs_real is not inside a git checkout, so the stamp cannot be committed from here — it is written, and nothing outside this machine knows it."
+          else
+            # AMENDMENT 4(d) — one commit per write, an EXPLICIT pathspec, and
+            # the `Lane:` trailer. Never `git add -A` and never a bare `git
+            # commit`: this checkout is shared with every other lane on this
+            # workstation, and a write left uncommitted is captured by the next
+            # lane's commit with its attribution lost.
+            hs_rc=0
+            "${LANES_GIT:-git}" -C "$hs_repo" add -- "$hs_rel" 1>&2 || hs_rc=$?
+            if [ "$hs_rc" = 0 ]; then
+              "${LANES_GIT:-git}" -C "$hs_repo" commit -q -m "$hs_subject" -m "$hs_trailer" -- "$hs_rel" 1>&2 || hs_rc=$?
+            fi
+            if [ "$hs_rc" != 0 ]; then
+              note "the stamp is written but NOT committed (git exit $hs_rc) — an uncommitted write is captured by the next lane's commit and its attribution is lost (Amendment 4(d)). Commit it yourself:"
+              note "  $hs_fix"
+            else
+              step "handoff stamp committed: $hs_subject"
+              hs_branch="${LANES_BRANCH:-main}"
+              if ! hs_git_net -C "$hs_repo" pull --rebase -q origin "$hs_branch" 1>&2; then
+                "${LANES_GIT:-git}" -C "$hs_repo" rebase --abort >/dev/null 2>&1 || :
+                if [ "$HS_TIMED_OUT" = 1 ]; then
+                  note "the pull before the push TIMED OUT after ${LANES_GIT_TIMEOUT:-60}s (ruling (h): the launch does not wait on a hung remote) — the stamp is a local commit here and was not pushed."
+                else
+                  note "the pull before the push did not apply (a conflict, or no reachable origin) — the rebase is aborted, the checkout is clean, and the stamp is a local commit here that was not pushed."
+                fi
+                # RV-B3 — LOOK FIRST, because an aborted pull does NOT mean the
+                # commit stayed here. Observed live 2026-09-12T23:04Z: this
+                # lane's handoff commit hit an abort on a peer lane's untracked
+                # log file, and the peer's own helper then rebased and pushed —
+                # carrying this lane's local commit `59a2576` out to origin
+                # underneath its own `f053245`. A reader who ran the re-push
+                # blind at that point lands the same stamp twice, in the one
+                # document this protocol cannot afford to rewrite. The
+                # push-rejected branch below has always said to look; this one
+                # promised a recovery that is sometimes already done.
+                note "  git -C $hs_repo fetch origin $hs_branch && git -C $hs_repo log --oneline origin/$hs_branch -3   # a peer's push may already carry it"
+                note "  git -C $hs_repo pull --rebase origin $hs_branch && git -C $hs_repo push origin $hs_branch      # only if it is not there"
+                hs_carry_note
+              elif ! hs_git_net -C "$hs_repo" push -q origin "$hs_branch" 1>&2; then
+                if [ "$HS_TIMED_OUT" = 1 ]; then
+                  note "the push TIMED OUT after ${LANES_GIT_TIMEOUT:-60}s (ruling (h)) — a hung push often LANDED and the connection did not close, so look before pushing again."
+                else
+                  note "the push was rejected — the stamp is a local commit here and other workstations cannot see it yet."
+                fi
+                note "  git -C $hs_repo fetch origin $hs_branch && git -C $hs_repo log --oneline origin/$hs_branch -3"
+                note "  git -C $hs_repo push origin $hs_branch      # only if it is not there"
+                hs_carry_note
+              else
+                step "handoff stamp pushed to origin/$hs_branch"
+              fi
+            fi
+          fi
+        else
+          note "the splice of Rule 3's stamp into $hs_rel did not prove out (one line added, none changed), so NOTHING was written to it. Add this line under its header block yourself:"
+          note "    $hs_stamp"
+          note "  then: $hs_fix"
+        fi
+      fi
+      rm -rf -- "$hs_tmpd"
+    fi
   fi
 fi
 

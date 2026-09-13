@@ -198,8 +198,19 @@ lane-end openRepoShape-2 --retire   # …and the lane is not coming back
 ```
 
 Both print every step to **stderr** and refuse with a message that names the
-fix. Exit codes: **0** done, **1** environment, **2** refusal. `--help` prints
-the file's own header, which is the whole manual.
+fix. Exit codes: **0** done, **1** environment, **2** refusal — and under
+Amendment 8 (R-A8-3) `lane-start`'s **2 is for ARGUMENT ERRORS and nothing
+else**: a name that is not a lane, a position that is not a position, a name a
+window cannot take, a lane whose register holds two rows, a lane live in
+another window. **A person's answer is never an argument error.** `--confirm`
+answered `N`, and `--confirm` with no terminal and no `--yes`, rename nothing,
+write nothing, print one notice and `exec` Claude **bare** with the
+pass-through arguments, **exit 0**; under `--no-launch` that bare command is
+printed on stdout so a launcher can exec it. `claude-profile` **`exec`s**
+`lane-start`, so this script's status *is* the launcher's, and a refusal here
+would be an exited pane with no Claude in it — the one failure the change
+exists to prevent. `--help` prints the file's own header, which is the whole
+manual.
 
 ### `lane-start <repo> <n>`
 
@@ -226,13 +237,56 @@ the file's own header, which is the whole manual.
    is some other lane is not a holder either: this register carries rows whose
    session retired from the lane and was renamed, and refusing on those would
    lock free names forever;
+3b. **the live session in THIS window** (Amendment 8), which is not step 3's
+   question. Step 3 asks whether any session the *row* names is alive; this
+   asks what is alive in this *window*, through `lanes-edit.sh window-session`.
+   The harness mints a new transcript uuid with nobody acting — a `/clear` does
+   it, and so did the 2026-09-12 usage reset that carried this lane's
+   conversation into `4a91f1dc…` while its row still ended on `09dd34d1…`. An
+   id in no row is an id `live-holder` cannot look up: it answers 8, *this lane
+   is parked*, about the conversation sitting in the very window it was asked
+   about, and `lane-start` would then resume the lane's **previous**
+   conversation and write that uuid on to an append-only line. Read off the
+   record instead, the id is appended to the session cell in step 5 — before
+   the stamp — and it is what this run resumes and stamps. There is no flag for
+   it and there could not be one: the id does not exist until the session does.
+   The act is `lane-start --no-launch <repo> <n>` run **in** that window, which
+   is what the SessionStart hook's block asks the new session to do;
+3c. `--confirm`, when it was passed and this window is not already named for
+   the lane: the **triple** — the window, the session live in it, the row — and
+   the question `Take lane <lane> in this window? [y/N]`. Before the rename and
+   before any write, so a No costs nothing. `--yes` answers it for a caller
+   that has already asked. **Every answer leads somewhere and no answer
+   exits.** An explicit `N` — and no terminal with no `--yes`, which is the
+   same answer with nobody there to give it — renames nothing, writes nothing,
+   prints **one** notice naming the lane it declined, and `exec`s Claude bare
+   with the pass-through arguments, **exit 0**: `N` means *not this lane*, not
+   *not at all*, and an unattended launch must still not take a lane on an
+   inference nobody confirmed. The launcher passes `--confirm` exactly when the
+   lane came from the swap *record* rather than from the window name or a flag;
 4. `tmux rename-window <LANE>` — which also turns automatic-rename **off** for
    that window, so the name survives the next command it runs;
 5. the row, through `lanes-edit.sh`: `add-row` when there is none — state
    `STARTING`, session id `pending — set by the session's first act`,
    `<workstation> / <profile> / <user>` per Rule 10, handoff path
    `handoffs/<estate>/session-handoff-<date>-lane-<LANE>.md` — and
-   `append-row-status` when there is one. Never a hand edit;
+   `append-row-status` when there is one. Never a hand edit. **That status is
+   Amendment 6(c)'s stamp**, written here rather than owed to the session
+   afterwards:
+
+   ```text
+   <UTC> RESUMED by <uuid> (lane <lane>) — lane-start on <ws>: window renamed, launching <the command>
+   ```
+
+   The **tail states what happened**, so a `--no-launch` run ends `window
+   renamed, no launch` and never claims to have launched anything.
+   `STARTED` where a new session takes the name, and the uuid is the one this
+   run actually resumes or mints, read from the **published** row. Under
+   Amendment 6(b) that stamp is load-bearing — it is what the next `lane-start`
+   resumes — so a stamp that is owed to a session which dies at a usage reset
+   before its first act is a lost lane, which is the shape this estate hits
+   daily. A brand-new row needs no stamp: it is created with that uuid already
+   in its session cell;
 6. the launch — decided *before* the row is written, because a brand-new
    session's id is minted there and the row must record it. **Resume beats
    new**, because a rename into a title that is still held is exactly what mints
@@ -299,7 +353,7 @@ One argument is taken verbatim, so a lane named before the `<repo>-<n>` rule
 ### The tests
 
 ```sh
-bash lanes/test_lane_helpers.sh     # 485 assertions, ~1m, touches nothing real
+bash lanes/test_lane_helpers.sh     # 713 assertions, ~2m, touches nothing real
 ```
 
 A temp `HOME`, a bare repo and a clone seeded with a header and twenty-seven
@@ -313,7 +367,10 @@ plus `--no-github` on each: with it set, `gh_reads`, `gh_comment` and
 fake bin is *prepended* to `PATH`, not substituted for it, so a real `gh` on
 this workstation is still reachable and is not what stops the call. The last
 two assertions check that the real register and the real `lanes/log/` of the
-clone the suite was run from are untouched.
+clone the suite was run from are untouched — the log check compares the
+directory listing taken before the first case with the one after the last,
+because `lanes/log/` carries real lanes' records now and *empty* was never the
+property being asserted.
 `lanes-edit.sh` runs **for real** against the sandbox register, so the commit,
 pull and push path is covered rather than stubbed, and liveness is a real
 `sleep` process and a reaped pid rather than a mocked `/proc`.
@@ -537,6 +594,42 @@ file outside the write's own pathspecs is still a refusal (exit 2), and it is
 taken before the lock and before the capture, so a write that refuses never
 leaves a commit of somebody else's line behind.
 
+**Reads 2 and 3 name the object, not its digits** (Amendment 8). They searched
+for the bare slug as a *substring*, and a number is a substring of almost
+everything: claiming `brettheap/new-workstation#15` printed somebody else's
+PR #10 — GitHub's own search had matched `15` in its text — and a 40-character
+commit sha out of `ls-remote`, both under the heading *existing work on this
+object*. Evidence that is not evidence is how a lane talks itself out of a claim
+it should make, or into one it should not. **Two reads, two tests**, because the two
+inputs are not the same kind of text. `gh pr list`'s rows are **prose**, so a
+reference is `#<n>` — the hash required, its left side unbounded, because the
+canonical spelling is `owner/repo#15` and the character before the `#` is a
+letter — or the row's own number column, which is the PR the object *is*.
+`ls-remote`'s refs are **names**: `issue-15-fix` carries no hash, so there the
+test is the bare number as a whole token, after the leading sha has been
+stripped, so a branch is matched by its name and never by the digits of the
+commit it points at. An OpenSpec change directory has a word for a slug and
+takes the whole-token test in both.
+
+**Read 2 filters over the body.** `gh pr list`'s columns are number, title,
+branch and state; the reference that makes a PR a sibling is almost always in
+its **body**, which is what GitHub's own search matched and what the columns do
+not carry. Filtering the columns alone dropped the real PR for this very
+issue — whose body says `brettheap/new-workstation#15` twice — while a filter
+with the hash optional kept the wrong one instead. So the body is fetched,
+flattened to one line, used for the test, and cut off again before anything is
+printed: under-reporting a sibling is the direction that lets a lane claim what
+somebody else is already working on, and it is the one direction Rule 1 cannot
+afford.
+
+The filter is the `sibling-filter <object> [--branch]` subcommand, which both
+reads pipe through and which can be held to account on its own:
+
+```console
+$ printf '10\tbump the pin to 1150\n15\tthe amendment 8 work\n' | lanes-edit.sh sibling-filter opensoft/repoE#15
+15	the amendment 8 work
+```
+
 `--no-github` skips every `gh` call, for the tests and for an offline lane. A
 line written that way is **not yet a Rule 1 claim**, because the comment a
 person outside this estate reads does not exist, so it carries the free text
@@ -683,6 +776,21 @@ in that lane would then inherit.
 its internal `live-holder` subcommand. Two copies would drift, and this is the
 check that decides whether a lane name is free.
 
+Amendment 8 adds a second read over the same records, keyed on the **window**
+rather than on a lane: `window-session <tmux session>:<window id>` prints the
+live record whose own `tmux` field names that window —
+`<uuid> <tmux> <name> <pid> <profile>`, `\037`-separated, **0** with the
+record, **8** when the records were read and none is in that window, **1** when
+they could not be read at all. Where several live records name one window — a
+session that outlives the window it started in keeps the `tmux` value it was
+born with — the most recently updated one wins, so the answer does not depend on
+which the filesystem listed first. The three live tests are shared with
+`live-holder`; the two that are about a *lane* — the row's ids and the
+`nameSource` rule — are not applied, because a window holds one interactive
+session whatever it is called, and the record's name is reported rather than
+believed. The profile is read off the record's own path, never from the
+environment of whoever is asking.
+
 A lane is LIVE when a session record **on this workstation** carries one of the
 row's transcript uuids, its `status` is not one of `ended`, `exited`, `dead`,
 `stopped`, its pid is alive, and `/proc/<pid>/stat` field 22 still equals the
@@ -760,6 +868,7 @@ else.
 | 6 | `git add` / `commit` / `push` failed |
 | 7 | `CLAIM-LOST` — another lane's claim landed first (`claim` only) |
 | 8 | no record — and no other meaning |
+| 64 | `swapped`'s own usage error — never the dispatcher's 2 |
 
 3 to 6 are the codes this helper already used; 7 and 8 were free.
 
@@ -769,8 +878,22 @@ lane has no log file; the internal reads `lane-start` and `lane-end` use follow
 the same rule — `lane-objects` exits 8 for a lane with no log, `live-holder`
 exits 8 when the session records were READ and no live one holds the lane
 (the ordinary answer for a parked lane) and never when it could not read them,
-`register-row` exits 8 when the PUBLISHED register has no row for the lane, and
-`resolve-home` exits 8 when the lane has no home on record and none was passed.
+`register-row` exits 8 when the PUBLISHED register has no row for the lane
+(and **2**, not 8, for a name that is not lane-shaped at all — a malformed
+argument is a refusal, never an absence), `resolve-home` exits 8 when the lane
+has no home on record and none was passed, `swapped` exits 8 when no lane is
+swapped on the workstation, `idle-holders` exits 8 when no live but idle
+session holds one of the row's earlier ids, and `window-session` exits 8 when
+no live session is in the window.
+
+**`swapped` exits 64 on a usage error of its own, never 2.** The launcher gates
+its whole Amendment 8 degrade on a `2` from `swapped` meaning one thing —
+*this `lanes-edit.sh` predates Amendment 8 and has no such subcommand*, which
+is the dispatcher's unknown-subcommand code. A caller's own bug must not be
+indistinguishable from an old helper at the one place the degrade is decided,
+so `swapped` answers `0` rows, `8` none swapped, `64` a bad call, and leaves
+`2` to mean *no such subcommand* alone. `session-start` is the one subcommand that never exits
+anything but **0**: it is a hook.
 Every other non-zero code from any of them is a FAILURE, and `lane-start`
 and `lane-end` treat only 0 and 8 as answers: anything else is a refusal
 (exit 1) that prints the helper's own stderr and renames and writes nothing.
@@ -865,6 +988,189 @@ refusal, `who <object>` and `who --lane` all carry the takeover already.
 A lane's log is archivable when the lane is `RETIRED` and every object in it is
 `CLOSED`, `LANDED`, `RELEASED` or `CLAIM-LOST`. **Nothing prunes
 automatically.** The amendment states the rule and stops there.
+
+## Swap and restart (Amendment 8)
+
+**DRAFT, 2026-09-12, awaiting Brett Heap's word** (`brettheap/new-workstation#15`).
+A **swap** is a planned stop — a usage reset, a profile switch. A **restart** is
+the launch that follows it. The lane has to survive the gap, and on
+2026-09-12 it twice did not: the restart opened a **new tmux session**, which
+loses the window name that carries the lane, and the reset minted a **new
+transcript uuid** while the row's session cell still ended on the old one.
+
+Neither half adds a file. The **record** a swap leaves is the lane's own
+`PAUSED` line in `lanes/log/<lane>.md`, payload
+`swap; window <tmux session>:<index>; workstation <ws>` — an ordinary event line
+under Amendment 7's grammar, not a new kind of thing:
+
+```text
+PAUSED — lane openRepoProject-1, session 09dd34d1-…@Eagle, 2026-09-12T16:52:39Z, lane:openRepoProject-1 → swap; window claude-team-05b-20260912102132-2699:0; workstation Eagle — on Brett Heap's word: shutdown and i will reset the usage
+```
+
+A lane is **swapped** on a workstation when that `PAUSED` is its **last
+lane-kind line** — no later `RESUMED`, `STARTED`, `ENDED` or `RETIRED`. The line
+above is real, and that lane is *not* swapped today, because a `RESUMED` follows
+it seven minutes later.
+
+Two read-only subcommands. **Neither ever writes**, and both honour
+`LANES_NO_FETCH=1` — the launcher passes it, because a record this workstation
+wrote is already in its own clone and a restart must not wait on the network.
+In that mode they still read `origin/main`, exactly as they do after a fetch;
+what is skipped is the fetch, never the ref.
+
+### `swapped [<workstation>]`
+
+The lanes a swap paused on a workstation and nothing has resumed. Default
+workstation is `hostname -s`. One row per lane, **tab-separated, lane first**:
+
+```console
+$ lanes-edit.sh swapped Eagle
+repoSW-1	2026-09-12T10:00:00Z	claude-team-05b-20260912102132-2699:0
+repoSW-5	2026-09-12T11:00:00Z	sess-five:5
+```
+
+`<lane>`, `<UTC>`, `<window>` — the window being the `window <s>:<i>` the
+`/swap` recorded, which is where that lane was. **Exit 0** with rows, **8** with
+none (and the reason on stderr, so stdout is only ever rows). A launcher takes
+the first row's lane as its default and hands it to `lane-start --confirm`.
+
+**The rows are in LANDING ORDER — most recently landed first — and not in UTC
+order.** Amendment 7's file-order rule orders one lane's own lines and does not
+reach across two lanes' files, and two lanes' UTCs are two clocks: they may be
+two workstations' (which share no order at all) or one workstation's mid-jump —
+this one was observed stepping ±25 s in bursts, and a log commit landed whose
+content carried a UTC 26 s after its own committer date. Git's push
+serialization is the one order both lanes really share, and it is the same
+arbiter `claim` already uses to decide a race. So the key is the position of the
+commit that **added** each lane's `PAUSED` line, measured as its distance from
+the tip of `origin/main` — history, not a committer date either. The UTC stays
+in the output as **information**, and decides nothing. The example above is the
+test's own: `repoSW-5` carries the later UTC and landed first, so it is second.
+
+### `session-start`
+
+The whole output of Claude Code's **SessionStart hook**. It reads the hook's
+JSON on stdin (`session_id`, `source`, `cwd`) and the tmux window name, resolves
+the lane — **the window name first, then the session id against every row's
+session cell** — and prints ONE block. The working directory is in the payload
+and is deliberately *not* read as a lane: the working directory confers no lane
+(Amendment 6(a)), two lanes share one all day, and every nested checkout in the
+xFactory estate shares its parent's.
+
+**It never writes, it never touches the network, and it always exits 0** —
+including on garbage stdin and on no register at all, which every other
+subcommand refuses. A hook that fails is a hook that breaks the session it was
+meant to orient; a hook that fetches puts the network in front of every session
+start on the workstation, and R-A8-1 rules it out for exactly that reason.
+
+So every line of the block is **this checkout as it last stood**, and the block
+says how long ago that was — the line `ssb_tail` prints **unconditionally**, as
+the last line of every block whichever branch wrote the rest (Amendment 8(e)):
+
+```text
+as of 4m ago (no fetch)
+```
+
+The age is `.git/FETCH_HEAD`'s mtime — rewritten by every fetch and by nothing
+else — rendered `<n>s`/`<n>m`/`<n>h`/`<n>d ago`; `never` where this checkout has
+never fetched, `unknown` where it cannot be read. Neither is a failure and
+neither costs a network call. A block that says `as of 4d ago (no fetch)` is a
+block a reader knows not to trust about another workstation's lane, which is the
+whole of what makes an unfetched read honest.
+
+The lane's session is the one the row records, and the hook says so:
+
+```console
+$ lanes-edit.sh session-start   # stdin: {"session_id":"4a91f1dc-…","source":"resume","cwd":"…"}
+LANE openRepoProject-1 — handoff handoffs/openRepoProject/session-handoff-2026-09-11-lane-openRepoProject-1.md — row session 4a91f1dc-46dc-48be-a75a-1789fab038d0
+stamp the handoff RESUMED (Rule 3) and follow its top block
+open: CLAIMED brettheap/new-workstation#15; OPENED brettheap/new-workstation#16; OPENED opensoft/workBenches#63
+as of 4m ago (no fetch)
+```
+
+The first line's last field reads `row session none recorded` where the row
+carries no id this hook can read — the rows that hold only `session_…` footer
+ids, which have no transcript uuid to mismatch *against* and are therefore not
+reported as a mismatch at all.
+
+The second line is one of three, and it is **derived** rather than assumed from
+the ids agreeing: the handoff the ROW names is read and grepped for the line
+this session would owe, because a window started by a bare `claude` has no stamp
+and does still owe one. Already stamped by the launcher → `handoff already
+stamped by lane-start — follow its top block`; no handoff in the row at all →
+`the row records no handoff path — there is none to stamp or to follow`.
+
+The third line is the lane's open objects, `who --lane`'s answer on one line;
+`open: none open` when it holds nothing, and
+`open: no log for <lane> (pre-cutover lane) — see its row's state cell` when it
+has no log at all.
+
+**Two different mismatches, and the block says which.** An id the cell *carries*
+but does not end on is a superseded transcript of this lane — the 2026-09-11
+wrong-lineage resume. The conversation in this window is not the lane's, so it
+is left rather than carried on with:
+
+```text
+WARNING: this is a superseded transcript of lane repoSS-1; the live one is <U>; you resumed <V> — exit this session and run: lane-start repoSS 1
+as of 4m ago (no fetch)
+```
+
+That mismatch has one **sub-branch**: where the lane's newest row stamp says
+`unknown`, the cell's last id names a transcript this directory does not have, a
+relaunch would take the same title fallback again and record nothing either — so
+the cure there is the recording act, not a relaunch:
+
+```text
+WARNING: this is a superseded transcript of lane repoSS-1; the live one is <U>, which the row records as `unknown` — a relaunch would record nothing either, so run: lane-start --no-launch repoSS 1
+as of 4m ago (no fetch)
+```
+
+An id the cell does not carry **at all** is the harness having minted a new
+transcript with nobody acting. The lane is right and the row is simply behind,
+so the cure is the act that reads the live record in this window and appends
+that uuid to the cell:
+
+```text
+WARNING: this window is lane repoSS-1 whose current session is <U>; this session <V> is in no row — the harness minted a new transcript — run: lane-start --no-launch repoSS 1
+as of 4m ago (no fetch)
+```
+
+There is no third mismatch, and **no branch names `/resume` or the picker**:
+neither is a lane surface, and a reader sent back through the picker performs
+the very failure this block exists to catch. Every command is printed **filled
+in** — the hook holds the lane, so `<repo> <n>` reads `repoSS 1` by the time
+anyone sees it, and a lane named before the `<repo>-<n>` rule gets
+`--dir <path> browser-ui-repair` rather than the bad split `browser-ui repair`.
+
+And when neither the window nor the register answers — the one branch that keeps
+its placeholders, because no lane is known there to fill them in with, unless
+the window name itself parses as `<repo>-<n>`:
+
+```text
+no lane bound to this window — run: lane-start <repo> <n>
+as of 4m ago (no fetch)
+```
+
+`source` is one of `startup`, `resume`, `clear`, `compact`, `fork`. A
+**compact** prints **nothing**: the same conversation carries on in the same
+window under the same id, and a block there would announce a lane's identity
+into the middle of a session that already has it. Everything else gets the
+block — a **fork** included, which is a new attachment to the lane's
+conversation — and an unknown or missing `source` is treated as a `startup`
+rather than dropped.
+
+Installing it is user-local configuration, not part of this repository:
+`hooks.SessionStart` in `~/.claude/settings.json`, command
+`~/projects/xFactory/lanes-edit.sh session-start`.
+
+### What Amendment 8 does not add
+
+**No new script and no new path.** `swapped`, `session-start`,
+`window-session` and `sibling-filter` are subcommands of the writer that already
+exists, and every one of them is a **read**: AGENTS.md rule 1's list of writers
+(`append-row-status`, `replace-in-row`, `append-line`, `add-row`, `log`,
+`claim`, `release`, `commit`) and rule 8's list of tooling paths are both
+unchanged by this amendment.
 
 ## Hand edits
 

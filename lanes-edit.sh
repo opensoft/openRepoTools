@@ -40,6 +40,10 @@
 #   lanes-edit.sh [--no-sweep|--sweep] verify-row         <lane>
 #   lanes-edit.sh [--no-sweep|--sweep] append-row-status  <lane> "<text>"
 #   lanes-edit.sh [--no-sweep|--sweep] replace-in-row     <lane> "<old>" "<new>" ["<why>"]
+#   lanes-edit.sh [--no-sweep|--sweep] append-session-id  <lane> "<anchor>" "<text to append>" ["<why>"]
+#                                        (the anchor is matched INSIDE THE
+#                                         SESSION CELL and nowhere else, and the
+#                                         text is appended at the END of it)
 #   lanes-edit.sh [--no-sweep|--sweep] append-line        "<text>"            # LANDING/LANDED lines
 #                                        (attribution: $LANES_LANE, else the
 #                                         "lane <name>" the text itself names)
@@ -51,6 +55,22 @@
 #   lanes-edit.sh claim   <object> [--force] [--no-github] [--home owner/repo]
 #   lanes-edit.sh release <object> ["<why>"] [--no-github] [--home owner/repo]
 #   lanes-edit.sh who     <object> | --lane <lane> | --landing owner/repo
+#
+# AMENDMENT 8 — swap and restart, the READ side (both read-only, never write)
+#   lanes-edit.sh swapped       [<workstation>]
+#   lanes-edit.sh session-start                  # the SessionStart hook; JSON on stdin
+#
+#   A SWAP is a planned stop — a usage reset, a profile switch — and a RESTART
+#   is the launch that follows it. The RECORD a swap leaves is not a new file:
+#   it is the lane's own `PAUSED` line, payload
+#   `swap; window <tmux session>:<index>; workstation <ws>`. A lane is SWAPPED
+#   on a workstation when that PAUSED is its LAST lane-kind line — no later
+#   RESUMED, STARTED, ENDED or RETIRED — and `swapped` lists those lanes, which
+#   is how a restart finds its lane once the new tmux session has lost the
+#   window name. `session-start` is the whole output of the SessionStart hook:
+#   it resolves the lane from the tmux window name, else from the session id in
+#   the hook's JSON, prints ONE block, and ALWAYS exits 0 — a hook that fails
+#   is a hook that breaks the session it was meant to orient.
 #
 #   `--home owner/repo` is an option of all FIVE of `claim`, `release`, `who`,
 #   `log` and `lane-end`, for a lane whose log has no STARTED line. All five
@@ -139,7 +159,10 @@
 #   7  CLAIM-LOST — another lane's claim landed on main first (`claim` only)
 #   8  no record — `who` found nothing; `lane-objects` has no log file for the
 #      lane; `live-holder` READ this workstation's session records and none of
-#      them holds it. A read that could not be performed is never 8 (R22).
+#      them holds it; `swapped` found no lane swapped on the workstation;
+#      `window-session` found no live session in the window. A read that could
+#      not be performed is never 8 (R22). `session-start` never exits 8, or
+#      anything but 0: it is a hook.
 #
 # --no-sweep (DEFAULT, added 2026-09-09 after 0d84d34/a1f2438 swept another
 #   lane's uncommitted hand edit into an unrelated commit): every mutating
@@ -256,29 +279,77 @@ die() {
 }
 note() { printf 'lanes-edit: %s\n' "$*" >&2; }
 
+# AMENDMENT 8, ruling (h): THE LOCK NAMES ITS HOLDER, so a lock nobody holds can
+# be told from a lock somebody does. The directory alone could only be aged out,
+# and ten minutes of every lane on the workstation blocked is not a recovery.
+release_lock() {
+  rm -f -- "$LOCK/pid" 2>/dev/null || :
+  rmdir -- "$LOCK" 2>/dev/null || :
+  LOCK_HELD=0
+  return 0
+}
+
 cleanup() {
-  if [ "$LOCK_HELD" = 1 ]; then rmdir -- "$LOCK" 2>/dev/null || :; fi
+  if [ "$LOCK_HELD" = 1 ]; then release_lock; fi
   [ -n "${TMPD:-}" ] && [ -d "${TMPD:-}" ] && rm -rf -- "$TMPD"
   [ -n "${SE_CACHE_FILE:-}" ] && rm -f -- "$SE_CACHE_FILE" "$SE_CACHE_FILE".* 2>/dev/null
   return 0
 }
-trap cleanup EXIT INT TERM
+# AND A SIGNAL ACTUALLY STOPS IT (Amendment 8, ruling (h)). `trap cleanup EXIT
+# INT TERM` ran the handler and then CARRIED ON, because a trap that returns
+# resumes the command after the one that was interrupted — so a `kill` of a
+# writer stuck in `acquire_lock`'s 60-second wait released the lock and then
+# went on waiting for it, and a `kill` of one mid-write released the lock while
+# it still had the register open. Measured: SIGTERM at 8s, the process still
+# running at 56s. The handler now re-raises with the default disposition, which
+# is the only way a shell reports "killed by that signal" and the only way the
+# process actually stops.
+trap cleanup EXIT
+trap 'cleanup; trap - INT;  kill -INT  $$' INT
+trap 'cleanup; trap - TERM; kill -TERM $$' TERM
+
+# A LOCK WHOSE HOLDER IS DEAD IS STALE THE INSTANT ITS PID IS GONE — not ten
+# minutes later. A helper killed at a usage reset, or an ssh that took the
+# process down with it, leaves a directory no living process will ever remove,
+# and until Amendment 8(h) every writer on the workstation waited out the full
+# age-out behind it. A lock with NO pid file is from an older version of this
+# script and keeps the age test, which is the only thing that could be said
+# about it.
+lock_steal_if_dead() {
+  [ -d "$LOCK" ] || return 0
+  lsd_pid="$(cat -- "$LOCK/pid" 2>/dev/null || :)"
+  case "$lsd_pid" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$lsd_pid" = "$$" ] && return 0
+  kill -0 "$lsd_pid" 2>/dev/null && return 0
+  note "taking over $LOCK: its holder (pid $lsd_pid) is gone"
+  rm -f -- "$LOCK/pid" 2>/dev/null || :
+  rmdir -- "$LOCK" 2>/dev/null || :
+  return 0
+}
 
 acquire_lock() {
-  # Stale lock (>10 min) is removed: a helper run never takes that long.
+  lock_steal_if_dead
+  # Stale lock (>10 min) is removed: a helper run never takes that long. The
+  # age test is now the FALLBACK — the pid test above is the real one.
   if [ -d "$LOCK" ]; then
     if [ -z "$(find "$LOCK" -maxdepth 0 -mmin -10 2>/dev/null)" ]; then
       note "removing stale lock $LOCK"
+      rm -f -- "$LOCK/pid" 2>/dev/null || :
       rmdir -- "$LOCK" 2>/dev/null || :
     fi
   fi
   i=0
   while [ "$i" -lt 60 ]; do
-    if mkdir -- "$LOCK" 2>/dev/null; then LOCK_HELD=1; return 0; fi
+    if mkdir -- "$LOCK" 2>/dev/null; then
+      LOCK_HELD=1
+      printf '%s\n' "$$" > "$LOCK/pid" 2>/dev/null || :
+      return 0
+    fi
+    lock_steal_if_dead          # it may have died while we were waiting
     i=$((i + 1))
     sleep 1
   done
-  die "could not acquire $LOCK after 60s — another lanes-edit run is active" 4
+  die "could not acquire $LOCK after 60s — another lanes-edit run is active (holder pid $(cat -- "$LOCK/pid" 2>/dev/null || printf 'unrecorded'))" 4
 }
 
 # ---------------------------------------------------------------- row lookup
@@ -321,6 +392,26 @@ count_occurrences() { # $1=haystack $2=needle
   printf '%s' "$c"
 }
 
+# A row split into HEAD (everything up to and including the SECOND `|`), the
+# SESSION CELL, and TAIL (from the THIRD `|` on) — the three pieces
+# `append-session-id` needs, and the only safe way to reach cell 3 of a row
+# whose LATER cells may contain a literal `|` (the live register has two such
+# rows). It splits from the LEFT for that reason, never from NF. The three
+# pieces are asserted to reassemble into the row before anything is written.
+RSC_HEAD=""; RSC_CELL=""; RSC_TAIL=""
+row_split_session_cell() {   # <row>
+  rsc_row="$1"; RSC_HEAD=""; RSC_CELL=""; RSC_TAIL=""
+  case "$rsc_row" in *"|"*) : ;; *) return 1 ;; esac
+  rsc_rest="${rsc_row#*|}"                 # after the 1st |
+  case "$rsc_rest" in *"|"*) : ;; *) return 1 ;; esac
+  rsc_rest2="${rsc_rest#*|}"               # after the 2nd |
+  case "$rsc_rest2" in *"|"*) : ;; *) return 1 ;; esac
+  RSC_CELL="${rsc_rest2%%|*}"
+  RSC_TAIL="|${rsc_rest2#*|}"
+  RSC_HEAD="${rsc_row%%|*}|${rsc_rest%%|*}|"
+  [ "$RSC_HEAD$RSC_CELL$RSC_TAIL" = "$rsc_row" ] || return 1
+  return 0
+}
 rstrip_spaces() { s="$1"; while [ "${s% }" != "$s" ]; do s="${s% }"; done; printf '%s' "$s"; }
 
 # Prints the row's OWN spelling of a lane name that matches $1 ignoring case,
@@ -408,7 +499,16 @@ append_text_line() {
 
 LANES_BRANCH="${LANES_BRANCH:-main}"
 
-remote_has_branch() { git -C "$LANES_REPO" ls-remote --exit-code --heads origin "$LANES_BRANCH" >/dev/null 2>&1; }
+# Bounded like every other network call (Amendment 8(h)). A timeout here is not
+# fatal: the callers already degrade to "no remote branch", which costs a fetch
+# that would have hung anyway.
+remote_has_branch() {
+  git_net -C "$LANES_REPO" ls-remote --exit-code --heads origin "$LANES_BRANCH" >/dev/null 2>&1 || {
+    [ "$GIT_TIMED_OUT" = 1 ] && note "ls-remote timed out after ${GIT_TIMEOUT}s — treating origin/$LANES_BRANCH as unreachable"
+    return 1
+  }
+  return 0
+}
 
 # Unstaged changes to TRACKED files OTHER than the register. New in Amendment
 # 5 and unavoidable: the register shares its checkout with handoffs/ and
@@ -475,6 +575,62 @@ refuse_dirty_checkout() {
   die "refusing to $rd_what on a checkout that cannot be rebased" 2
 }
 
+# ------------------------------------------- AMENDMENT 8, ruling (h): THE
+# WRITER NEVER BLOCKS THE ESTATE.
+#
+# On 2026-09-12 at about 01:44Z an ssh `git-receive-pack` hung for five minutes
+# AFTER its push had already landed, and `lanes-edit.sh append-row-status` sat
+# inside it holding the mutex for the whole five minutes. Every lane on Eagle
+# that wanted to write a row waited behind a lock whose holder was blocked on a
+# socket, and the estate only moved again when the ssh was killed by hand.
+#
+# So every git call that touches the NETWORK — push, pull, fetch, ls-remote —
+# runs under a timeout, and a timeout is not a failure to retry: it is a
+# refusal to hold the mutex any longer. The helper aborts any rebase it started,
+# releases the lock, prints how to find out whether the push landed anyway, and
+# exits 3 with the edit safe in a local commit.
+#
+# `LANES_GIT_TIMEOUT` is the budget in seconds (default 60; 0 disables the
+# bound). `LANES_GIT` is the binary, so a test can hand these calls — and ONLY
+# these calls — a git that hangs, without shadowing git for the rest of the
+# script.
+GIT_TIMEOUT="${LANES_GIT_TIMEOUT:-60}"
+GIT_BIN="${LANES_GIT:-git}"
+GIT_TIMED_OUT=0
+git_net() {
+  GIT_TIMED_OUT=0
+  gn_rc=0
+  case "$GIT_TIMEOUT" in
+    ''|0|*[!0-9]*) "$GIT_BIN" "$@" || gn_rc=$? ;;
+    *)
+      if command -v timeout >/dev/null 2>&1; then
+        timeout -k 5 "$GIT_TIMEOUT" "$GIT_BIN" "$@" || gn_rc=$?
+        case "$gn_rc" in 124|137) GIT_TIMED_OUT=1 ;; esac
+      else
+        "$GIT_BIN" "$@" || gn_rc=$?
+      fi ;;
+  esac
+  return "$gn_rc"
+}
+
+# What a timed-out network call does. NEVER a retry: the point is to stop
+# holding the lock, and a second call to the same hung endpoint holds it twice
+# as long.
+git_timeout_die() {   # <the command, for the reader>
+  note "TIMED OUT after ${GIT_TIMEOUT}s: $1"
+  note "  Amendment 8(h): the writer does not hold the estate's mutex on a hung"
+  note "  network call. The lock is being released now, before this exits."
+  "$GIT_BIN" -C "$LANES_REPO" rebase --abort 2>/dev/null || :
+  note "  YOUR EDIT IS SAFE — it is already a local commit:"
+  "$GIT_BIN" -C "$LANES_REPO" --no-pager log --oneline "origin/$LANES_BRANCH..HEAD" 2>/dev/null | head -n 5 >&2 || :
+  note "  RECOVERY — a hung push often means it LANDED and the connection did not close,"
+  note "  so look before you push again:"
+  note "    git -C $LANES_REPO fetch origin $LANES_BRANCH && git -C $LANES_REPO log --oneline origin/$LANES_BRANCH -3"
+  note "    git -C $LANES_REPO push origin $LANES_BRANCH      # only if it is not there"
+  release_lock
+  die "timed out after ${GIT_TIMEOUT}s on '$1' — the mutex is released and your commit is local; nothing was lost." 3
+}
+
 # commit_push "<subject>" [<pathspec>...] — the pathspecs default to the
 # register alone, which is every caller that predates Amendment 7. A LANDING
 # or LANDED writes TWO (the register and the lane's log) so that both halves
@@ -491,7 +647,10 @@ commit_push() {
   git -C "$LANES_REPO" commit -q -m "$msg" -- "${CP_PATHS[@]}" || die "git commit failed" 6
   note "committed: $msg"
   if ! remote_has_branch; then
-    git -C "$LANES_REPO" push -q -u origin "$LANES_BRANCH" || die "initial push of '$LANES_BRANCH' failed" 6
+    if ! git_net -C "$LANES_REPO" push -q -u origin "$LANES_BRANCH"; then
+      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git push -u origin $LANES_BRANCH"
+      die "initial push of '$LANES_BRANCH' failed" 6
+    fi
     note "pushed (created origin/$LANES_BRANCH)"
     return 0
   fi
@@ -514,10 +673,11 @@ commit_push() {
       note "WARNING: this checkout has uncommitted changes to files OTHER than the register — not this invocation's:"
       printf '  %s\n' $others >&2
       note "skipping 'pull --rebase' (it refuses on any unstaged tracked change) and pushing straight out"
-      if git -C "$LANES_REPO" push -q origin "$LANES_BRANCH"; then
+      if git_net -C "$LANES_REPO" push -q origin "$LANES_BRANCH"; then
         note "pushed origin/$LANES_BRANCH (attempt $attempt, no pull — see the warning above)"
         return 0
       fi
+      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git push origin $LANES_BRANCH"
       note "push rejected and the pull is blocked by the files above (attempt $attempt)"
       if [ "$attempt" -ge 6 ]; then
         note "RECOVERY: their author commits those files (a handoff: handoff(<lane>@<workstation>): <what>),"
@@ -525,19 +685,24 @@ commit_push() {
         note "  a local commit here: git -C $LANES_REPO log --oneline origin/$LANES_BRANCH..HEAD"
         die "could not push origin/$LANES_BRANCH: behind the remote, and a peer's uncommitted file blocks the rebase. Nothing was lost — your commit is local." 3
       fi
-    elif git -C "$LANES_REPO" pull --rebase -q origin "$LANES_BRANCH"; then
+    elif git_net -C "$LANES_REPO" pull --rebase -q origin "$LANES_BRANCH"; then
       # The rebase has just put this invocation's commit on top of whatever
       # landed first. `claim` hooks in HERE, because that is the moment the
       # race is decided: if a peer's claim is on this history, theirs landed.
       if [ -n "${CP_AFTER_REBASE:-}" ]; then
         "$CP_AFTER_REBASE" || return $?
       fi
-      if git -C "$LANES_REPO" push -q origin "$LANES_BRANCH"; then
+      if git_net -C "$LANES_REPO" push -q origin "$LANES_BRANCH"; then
         note "pushed origin/$LANES_BRANCH (attempt $attempt)"
         return 0
       fi
+      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git push origin $LANES_BRANCH"
       note "push raced (attempt $attempt) — retrying"
     else
+      # A TIMED-OUT PULL IS NOT A CONFLICT. Read as one it would send the writer
+      # to a recovery that does not apply, and `rebase --abort` would be the
+      # only true line in it.
+      [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git pull --rebase origin $LANES_BRANCH"
       note "REBASE CONFLICT on origin/$LANES_BRANCH — conflicting lines follow:"
       for cp in "${CP_PATHS[@]}"; do
         grep -n -e '^<<<<<<<' -e '^=======' -e '^>>>>>>>' -- "$LANES_REPO/$cp" 2>/dev/null | head -n 40 >&2 || :
@@ -1334,12 +1499,138 @@ name_is_explicit() {
   return 1
 }
 
+# The three tests every record answers, wherever it was found: a status that is
+# not one of {ended, exited, dead, stopped}, a pid that is alive, and a
+# `/proc/<pid>/stat` field 22 still equal to the `procStart` the record wrote
+# down — so a recycled pid cannot hold a name. `live_holder` adds the two that
+# are about a LANE (the row's ids, and the nameSource rule); `window_session`
+# adds the one that is about a WINDOW. One copy of the three, because two would
+# drift and this is the check that decides whether a name may be taken.
+record_is_live() {   # <the record's JSON blob>
+  ril_status="$(jstr "$1" status)"
+  case "$ril_status" in ended|exited|dead|stopped) return 1 ;; esac
+  pid_alive "$(jnum "$1" pid)" "$(jstr "$1" procStart)"
+}
+
+# ------------------------------------- AMENDMENT 8, ruling (g): WHOSE session
+#
+# Three facts about this estate's records, every one of them observed on
+# 2026-09-12 while `lane-start` was refusing the very window that held the lane:
+#
+#   1. THE HARNESS EXPORTS `CLAUDE_CODE_SESSION_ID` into every shell a session
+#      runs — so a `lane-start` that a session runs already knows its own
+#      transcript id without asking the filesystem anything. That is the
+#      cheapest and the most certain test there is, and it comes first.
+#   2. ONE SESSION WRITES MORE THAN ONE RECORD. Beside the interactive process
+#      in the pane the harness runs a companion: `kind: bg`, no `tmux`, no
+#      `nameSource`, its own pid, and THE SAME `sessionId`. Records that share a
+#      `sessionId` are one session, not a queue of rival holders, and there is
+#      no contest between them to win.
+#   3. A RECORD MAY CARRY NO `tmux` AT ALL. The pane's interactive record
+#      usually has one, the companion never does, and the harness has been seen
+#      to write none for a process plainly in a window. "No target" is not "no
+#      window": it is a missing observation, and the process tree holds the
+#      answer the record failed to write down.
+#
+# What those three produced: `live_holder` returned the COMPANION — its
+# `sessionId` matched the row, its pid was alive, and carrying no `nameSource`
+# it survived the name test — reported its target as `none`, and `lane-start`
+# read "not this window" and refused the session that was running the command:
+#
+#   lane openRepoProject-1 is live in session c5701b54… (tmux none);
+#   take openRepoProject-2 or resume that window
+#
+# The orphaned idle holder from the PREVIOUS profile was a real find and was
+# correctly retired under Amendment 6(d); this one was the same shape read
+# wrongly. The difference between them is not recency and never was — it is
+# whether the process is in THIS pane's tree.
+
+# A `kind: bg` record is a COMPANION: never a holder, never a rival, skipped by
+# every read that asks who holds a lane or what is in a window. Only
+# `interactive` records hold a lane; a record from a harness too old to say
+# carries no `kind` at all and is read as interactive, because that is the only
+# thing those harnesses ever wrote.
+record_is_session() {   # <the record's JSON blob>
+  case "$(jstr "$1" kind)" in
+    ''|interactive) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# THIS shell's own window and pane, asked of tmux and never guessed. Both are
+# empty outside tmux, and an empty answer makes every test below fail SHUT — so
+# a caller with no tmux behaves exactly as it did before Amendment 8. Cached
+# because `who` asks about every lane in the register and this is two forks.
+LANES_HERE_CTX=0
+LANES_THIS_WINDOW=""
+LANES_PANE_PID=""
+here_context() {
+  [ "$LANES_HERE_CTX" = 1 ] && return 0
+  LANES_HERE_CTX=1
+  [ -n "${TMUX:-}" ] || return 0
+  command -v tmux >/dev/null 2>&1 || return 0
+  LANES_THIS_WINDOW="$(tmux display-message -p '#{session_name}:#{window_id}' 2>/dev/null || :)"
+  LANES_PANE_PID="$(tmux display-message -p '#{pane_pid}' 2>/dev/null || :)"
+  case "$LANES_PANE_PID" in *[!0-9]*) LANES_PANE_PID="" ;; esac
+  return 0
+}
+
+# pid_under <pid> <ancestor> — is <pid> the ancestor itself, or below it?
+#
+# `/proc/<pid>/stat` is `<pid> (<comm>) <state> <ppid> …`, and a comm may hold
+# spaces and brackets, so the parse starts after the LAST `) ` — the same cut
+# `pid_alive` makes for field 22. The walk stops at pid 1, at an entry it cannot
+# read (a process it cannot see is not in this pane), and at 64 steps, so a
+# /proc that lies about parentage cannot spin it.
+pid_under() {   # <pid> <ancestor>
+  pu_p="${1-}"; pu_anc="${2-}"; pu_i=0
+  [ -n "$pu_p" ] && [ -n "$pu_anc" ] || return 1
+  case "$pu_anc" in *[!0-9]*) return 1 ;; esac
+  while [ "$pu_i" -lt 64 ]; do
+    case "$pu_p" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$pu_p" = "$pu_anc" ] && return 0
+    [ "$pu_p" -gt 1 ] 2>/dev/null || return 1
+    [ -r "/proc/$pu_p/stat" ] || return 1
+    pu_rest="$(cat "/proc/$pu_p/stat" 2>/dev/null || :)"
+    [ -n "$pu_rest" ] || return 1
+    pu_rest="${pu_rest##*) }"
+    pu_p="$(printf '%s' "$pu_rest" | cut -d' ' -f2)"
+    pu_i=$((pu_i + 1))
+  done
+  return 1
+}
+
+# record_is_here <blob> — is this record THIS window's own session? The ruling's
+# order, cheapest and most certain first:
+#   1. its `sessionId` is the one the harness exported into this very shell;
+#   2. its `tmux` target names this window — the FAST PATH, and only a fast
+#      path: a record without one is not thereby somewhere else;
+#   3. its pid is this pane's process, or below it.
+record_is_here() {   # <the record's JSON blob>
+  here_context
+  rih_sid="$(jstr "$1" sessionId)"
+  if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -n "$rih_sid" ] \
+     && [ "$rih_sid" = "$CLAUDE_CODE_SESSION_ID" ]; then return 0; fi
+  rih_t="$(jstr "$1" tmux)"
+  if [ -n "$rih_t" ] && [ -n "$LANES_THIS_WINDOW" ] \
+     && [ "${rih_t%.*}" = "$LANES_THIS_WINDOW" ]; then return 0; fi
+  pid_under "$(jnum "$1" pid)" "$LANES_PANE_PID"
+}
+
 # live_holder <lane> [<newline-separated session ids>]
 #
 # R22 — IT FAILS CLOSED AT THE SOURCE. Three answers, and they are distinct:
 #   0  a live record holds the lane (the row is printed)
 #   8  the records were READ, and none of them does
 #   1  the records could not be read — a permissions or IO fault
+#
+# AND ON 0 IT SAYS WHOSE (Amendment 8, ruling (g)). The fifth field is the
+# verdict — `here`, `elsewhere` or `orphan` — because the caller that has to act
+# on it cannot work it out from the `tmux` column: a record with no target is
+# not a record in no window, and `lane-start` refusing on that string is what
+# refused this lane its own window. `here` beats `elsewhere` beats `orphan`, and
+# a record with no target whose SESSION also wrote a windowed record is that
+# same session seen twice, not a second holder — it is dropped, never ranked.
 # `lane-start` renames a window on 8 and REFUSES on anything else, so collapsing
 # a failed read into 8 is exactly how a running lane loses its address: the
 # rename mints `<lane> (2)` (AGENTS.md rule 7). The first version returned 1 for
@@ -1347,7 +1638,9 @@ name_is_explicit() {
 # source with no way to say "I could not read".
 live_holder() {
   local lane="$1" ids="${2-}" pats=() f blob pid name status target sid base src
-  local lh_files lh_match lh_err
+  local lh_files lh_match lh_err kindv verdict c c_sid c_tgt c_name c_pid c_v
+  local lh_bg="" lh_windowed="" lh_here="" lh_here_tgt="" lh_else="" lh_orph=""
+  local cands=()
   SESSION_FILES_ERR=""
   [ -n "$ids" ] || ids="$(session_ids_of_lane "$lane" 2>/dev/null || :)"
   # A row with no transcript uuid in it is an ANSWER: nothing recorded can be
@@ -1380,25 +1673,261 @@ live_holder() {
     return 1
   fi
   rm -f -- "$lh_files" "$lh_err"
+  # PASS 1 — every live record the row's ids match, classified. Not the first
+  # one found: the first one found is a directory order, and on 2026-09-12 the
+  # directory order put the companion in front of the session at the keyboard.
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     blob="$(cat -- "$f" 2>/dev/null || :)"
+    [ -n "$blob" ] || continue
+    record_is_live "$blob" || continue
     sid="$(jstr "$blob" sessionId)"
-    status="$(jstr "$blob" status)"
-    case "$status" in ended|exited|dead|stopped) continue ;; esac
     pid="$(jnum "$blob" pid)"
-    pid_alive "$pid" "$(jstr "$blob" procStart)" || continue
     name="$(jstr "$blob" name)"
     src="$(jstr "$blob" nameSource)"
+    target="$(jstr "$blob" tmux)"
+    # A COMPANION IS NOT A HOLDER. It is reported, on stderr, so that a person
+    # who is looking at a `(tmux none)` record can see why it was not obeyed.
+    if ! record_is_session "$blob"; then
+      kindv="$(jstr "$blob" kind)"
+      lh_bg="${lh_bg}${lh_bg:+, }pid ${pid:-unknown} (kind ${kindv:-none}, session ${sid:-unknown})"
+      continue
+    fi
     base="${name% (*)}"
     if [ -n "$base" ] && [ "${base,,}" != "${lane,,}" ] && name_is_explicit "$src"; then continue; fi
-    target="$(jstr "$blob" tmux)"
-    printf '%s%s%s%s%s%s%s\n' "$sid" "$US" "${target:-none}" "$US" "${name:-none}" "$US" "$pid"
-    rm -f -- "$lh_match"
-    return 0
+    if record_is_here "$blob"; then verdict=here
+    elif [ -n "$target" ];     then verdict=elsewhere
+    else                            verdict=orphan
+    fi
+    [ -n "$target" ] && lh_windowed="${lh_windowed}${sid}
+"
+    cands+=("$(printf '%s%s%s%s%s%s%s%s%s' "$sid" "$US" "${target:-none}" "$US" "${name:-none}" "$US" "${pid:-unknown}" "$US" "$verdict")")
   done < "$lh_match"
   rm -f -- "$lh_match"
+  [ -n "$lh_bg" ] && note "lane $lane: companion records, which are never holders: $lh_bg"
+
+  # PASS 2 — the pick. `here` first, and among two records of one session the
+  # WINDOWED one is the better witness of it; then a genuine rival in another
+  # window; then an orphan, and only one whose session wrote no windowed record
+  # at all, because the other kind is this same session seen twice.
+  for c in ${cands[@]+"${cands[@]}"}; do
+    IFS="$US" read -r c_sid c_tgt c_name c_pid c_v <<<"$c"
+    case "$c_v" in
+      here)
+        if [ -z "$lh_here" ] || { [ "$lh_here_tgt" = none ] && [ "$c_tgt" != none ]; }; then
+          lh_here="$c"; lh_here_tgt="$c_tgt"
+        fi ;;
+      elsewhere) [ -n "$lh_else" ] || lh_else="$c" ;;
+      orphan)
+        printf '%s' "$lh_windowed" | grep -qx -F -- "$c_sid" && continue
+        [ -n "$lh_orph" ] || lh_orph="$c" ;;
+    esac
+  done
+  if   [ -n "$lh_here" ]; then printf '%s\n' "$lh_here"; return 0
+  elif [ -n "$lh_else" ]; then printf '%s\n' "$lh_else"; return 0
+  elif [ -n "$lh_orph" ]; then printf '%s\n' "$lh_orph"; return 0
+  fi
   return 8
+}
+
+# -------------------------------- AMENDMENT 8(f), R-A8-6: the ORPHANED HOLDERS
+#
+# A row's session cell is a HISTORY, and its EARLIER ids are history rather than
+# alternatives — but a live process can still be holding one, which is Amendment
+# 6(d)'s orphan and, on this lane, the reason the `/resume` picker offered two
+# transcripts of which neither was the lane. `live_holder` answers about the
+# lane's holder, one record, picked; this answers about ALL the earlier ids, and
+# it answers to be READ.
+#
+# IT NAMES THEM AND DOES NOTHING ELSE. Retiring is `kill <pid>`, printed by the
+# caller and run by a person: ending somebody's process is not a boundary
+# script's act — an idle background session is exactly the shape of thing that
+# turns out to be somebody's long-running job — and clause (f) rules it the
+# operator's, for the same reason clause (a)'s step 3 pushes nobody's work for
+# them.
+#
+# IDLE means a LIVE record (Amendment 6's three tests: a status that is not
+# ended, a pid that is alive, a `procStart` that still matches) which is NOT a
+# session in a window: a `kind: bg` companion, or a record carrying no `tmux`
+# target at all. A live INTERACTIVE record with a window is not an orphan, it is
+# a rival, and `live_holder` is the read that answers about those.
+#
+# One line per record, `<session id><TAB><pid><TAB><kind><TAB><profile>`.
+# Exit 0 with rows, 8 with none, 1 where the records could not be read.
+idle_holders() {   # <lane>
+  ih_lane="${1-}"; ih_ids=""; ih_last=""; ih_earlier=""; ih_out=""
+  ih_files=""; ih_match=""; ih_err=""; ih_f=""; ih_blob=""
+  ih_sid=""; ih_pid=""; ih_kind=""; ih_tgt=""
+  SESSION_FILES_ERR=""
+  [ -n "$ih_lane" ] || return 8
+  ih_ids="$(session_ids_of_lane "$ih_lane" 2>/dev/null || :)"
+  [ -n "$ih_ids" ] || return 8
+  ih_last="$(printf '%s\n' "$ih_ids" | tail -n1)"
+  ih_earlier="$(printf '%s\n' "$ih_ids" | grep -vx -F -- "$ih_last" || :)"
+  [ -n "$ih_earlier" ] || return 8
+  ih_files="$(mktemp "${TMPDIR:-/tmp}/lanes-edit-if.XXXXXX" 2>/dev/null || printf '')"
+  ih_match="$(mktemp "${TMPDIR:-/tmp}/lanes-edit-im.XXXXXX" 2>/dev/null || printf '')"
+  ih_err="$(mktemp "${TMPDIR:-/tmp}/lanes-edit-ie.XXXXXX" 2>/dev/null || printf '')"
+  if [ -z "$ih_files" ] || [ -z "$ih_match" ] || [ -z "$ih_err" ]; then
+    rm -f -- "$ih_files" "$ih_match" "$ih_err" 2>/dev/null || :
+    SESSION_FILES_ERR="could not create a temporary file under ${TMPDIR:-/tmp}"
+    return 1
+  fi
+  if ! session_files > "$ih_files"; then
+    rm -f -- "$ih_files" "$ih_match" "$ih_err"
+    return 1
+  fi
+  if [ ! -s "$ih_files" ]; then
+    rm -f -- "$ih_files" "$ih_match" "$ih_err"
+    return 8
+  fi
+  ih_pats=()
+  for ih_sid in $ih_earlier; do ih_pats+=(-e "\"sessionId\":\"$ih_sid\""); done
+  tr '\n' '\0' < "$ih_files" | xargs -0 -r grep -l -F "${ih_pats[@]}" > "$ih_match" 2>"$ih_err" || :
+  if [ -s "$ih_err" ]; then
+    SESSION_FILES_ERR="$(tr '\n' ';' < "$ih_err" | cut -c1-300)"
+    rm -f -- "$ih_files" "$ih_match" "$ih_err"
+    return 1
+  fi
+  rm -f -- "$ih_files" "$ih_err"
+  while IFS= read -r ih_f; do
+    [ -n "$ih_f" ] || continue
+    ih_blob="$(cat -- "$ih_f" 2>/dev/null || :)"
+    [ -n "$ih_blob" ] || continue
+    record_is_live "$ih_blob" || continue
+    ih_sid="$(jstr "$ih_blob" sessionId)"
+    ih_tgt="$(jstr "$ih_blob" tmux)"
+    ih_kind="$(jstr "$ih_blob" kind)"
+    # a session IN a window is not an orphan — it is a rival, and live_holder's
+    # question, not this one's.
+    if record_is_session "$ih_blob" && [ -n "$ih_tgt" ]; then continue; fi
+    ih_pid="$(jnum "$ih_blob" pid)"
+    ih_out="${ih_out}${ih_sid}\t${ih_pid:-unknown}\t${ih_kind:-none}\t$(record_profile "$ih_f")
+"
+  done < "$ih_match"
+  rm -f -- "$ih_match"
+  [ -n "$ih_out" ] || return 8
+  printf '%b' "$ih_out"
+  return 0
+}
+
+# ---------------------------------------------- the session in a tmux WINDOW
+#
+# AMENDMENT 8. `live_holder` asks "is any session this ROW names alive"; this
+# asks "which live session is in THIS WINDOW", and the two answers differ in
+# exactly the case Amendment 8 exists for. The harness mints a new transcript
+# uuid without anybody acting — a `/clear` does it (Amendment 6, fact 4), and so
+# did the 2026-09-12 usage reset that carried this lane's conversation into
+# `4a91f1dc…` while its row still ended on `09dd34d1…`. That id is in no row, so
+# `live_holder` cannot see it and answers 8, "this lane is parked", about the
+# conversation sitting in the window it was asked about. Keyed on the WINDOW
+# instead, the record is found, and `lane-start` appends its uuid to the cell
+# before it stamps — which is what makes the next resume land in the right
+# conversation.
+
+# The profile a record belongs to, read off its own path — never guessed from
+# the environment, because the process asking may be in another profile:
+#   ~/.claude-profiles/profiles/<org>/<team>/<profile>/sessions/<pid>.json
+#   ~/.claude/sessions/<pid>.json                                 -> default
+record_profile() {
+  rpf_d="${1%/*}"; rpf_d="${rpf_d%/sessions}"; rpf_n="${rpf_d##*/}"
+  case "$rpf_n" in .claude|claude|"") printf 'default\n' ;; *) printf '%s\n' "$rpf_n" ;; esac
+}
+
+# window_session <tmux target> — the LIVE record whose own `tmux` field names
+# that window. The target is `<tmux session>:<window id>`, which is what
+# `tmux display-message -p '#{session_name}:#{window_id}'` prints and what the
+# record's `tmux` field carries before its `.%<pane>` suffix.
+#
+# NO NAME TEST. `live_holder`'s fifth test skips a record explicitly named for
+# another lane, because there the question is "does this record hold that lane".
+# Here the question is "what is running in this window", and a window holds one
+# interactive session whatever it is called: the record's name is REPORTED, so
+# the caller can put it in front of a person, and decides nothing.
+#
+# R22 — three answers, never two of them conflated: 0 with the record, 8 when
+# the records were READ and none is in that window, 1 when they could not be
+# read at all.
+# WHERE SEVERAL LIVE RECORDS NAME ONE WINDOW, IDENTITY DECIDES — NOT RECENCY
+# (Amendment 8, ruling (g); this replaces the first version's "the most recently
+# updated one wins", which was wrong in the case it was written for).
+#
+#   tier 3  its `sessionId` is `$CLAUDE_CODE_SESSION_ID`, which the harness
+#           exported into this very shell — when the window asked about is this
+#           one. Nothing beats a session naming itself.
+#   tier 2  its pid is this pane's process or below it — again only for this
+#           window. This is what lets a record with NO `tmux` be found: the
+#           harness does not always write the target down, and a record without
+#           one is not thereby in no window.
+#   tier 1  its `tmux` field names the window. The fast path, and the only test
+#           available for a window that is not this one.
+#
+# `updatedAt` breaks a tie WITHIN a tier and nowhere else, so the answer never
+# depends on directory order. It cannot be the rule itself: it is a LIVENESS
+# HEARTBEAT, and the idle companion beside a working session heartbeats later
+# than the session does — in the 2026-09-12 records the companion's `updatedAt`
+# was 1789235975177 against the interactive record's 1789235958137, so "the
+# newest wins" picks precisely the record that is not in the window. Two records
+# of ONE session are not a contest to win at all: the windowed one represents
+# the session, and `record_is_session` has already dropped the companion.
+window_session() {
+  local target="$1" f blob sid tmuxv name pid upd best_upd best_out wsn_files
+  local tier best_tier ws_is_self ws_pane
+  SESSION_FILES_ERR=""
+  [ -n "$target" ] || return 8
+  # Tiers 2 and 3 are about THIS pane, so they apply only when the window asked
+  # about is the one this process is in. Asked about somebody else's window,
+  # this read is exactly the `tmux`-field match it always was.
+  here_context
+  ws_is_self=0; ws_pane=""
+  if [ -n "$LANES_THIS_WINDOW" ] && [ "$LANES_THIS_WINDOW" = "$target" ]; then
+    ws_is_self=1; ws_pane="$LANES_PANE_PID"
+  fi
+  wsn_files="$(mktemp "${TMPDIR:-/tmp}/lanes-edit-ws.XXXXXX" 2>/dev/null || printf '')"
+  if [ -z "$wsn_files" ]; then
+    SESSION_FILES_ERR="could not create a temporary file under ${TMPDIR:-/tmp}"
+    return 1
+  fi
+  # NOT `$( )`: session_files sets SESSION_FILES_ERR, and a subshell would keep
+  # the reason for the failure to itself.
+  if ! session_files > "$wsn_files"; then rm -f -- "$wsn_files"; return 1; fi
+  best_upd=-1; best_tier=0; best_out=""
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    blob="$(cat -- "$f" 2>/dev/null || :)"
+    [ -n "$blob" ] || continue
+    record_is_live "$blob" || continue
+    # A COMPANION IS NOT WHAT IS IN A WINDOW. `kind: bg` carries the interactive
+    # record's own `sessionId`, so admitting it here would let the SAME uuid be
+    # found by the wrong process — and would re-open the bug the moment a
+    # harness starts writing a target on to companions.
+    record_is_session "$blob" || continue
+    sid="$(jstr "$blob" sessionId)"
+    tmuxv="$(jstr "$blob" tmux)"
+    tier=0
+    if [ "$ws_is_self" = 1 ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] \
+       && [ -n "$sid" ] && [ "$sid" = "$CLAUDE_CODE_SESSION_ID" ]; then
+      tier=3
+    elif [ -n "$ws_pane" ] && pid_under "$(jnum "$blob" pid)" "$ws_pane"; then
+      tier=2
+    elif [ -n "$tmuxv" ] && [ "${tmuxv%.*}" = "$target" ]; then
+      tier=1
+    else
+      continue
+    fi
+    upd="$(jnum "$blob" updatedAt)"
+    case "$upd" in ''|*[!0-9]*) upd=0 ;; esac
+    if [ "$tier" -lt "$best_tier" ]; then continue; fi
+    if [ "$tier" = "$best_tier" ] && [ "$upd" -le "$best_upd" ]; then continue; fi
+    best_tier="$tier"; best_upd="$upd"
+    name="$(jstr "$blob" name)"
+    pid="$(jnum "$blob" pid)"
+    best_out="$(printf '%s%s%s%s%s%s%s%s%s' "$sid" "$US" "${tmuxv:-$target}" "$US" "${name:-none}" "$US" "${pid:-unknown}" "$US" "$(record_profile "$f")")"
+  done < "$wsn_files"
+  rm -f -- "$wsn_files"
+  [ -n "$best_out" ] || return 8
+  printf '%s\n' "$best_out"
+  return 0
 }
 
 # ------------------------------------------------------------ the row, read
@@ -1680,7 +2209,7 @@ write_event() {
   commit_push "$we_msg" "${we_paths[@]}"
   we_rc=$?
   state_events_flush
-  rmdir -- "$LOCK" 2>/dev/null && LOCK_HELD=0 || :
+  release_lock
   return "$we_rc"
 }
 
@@ -1690,8 +2219,8 @@ log_sync() {
   [ "${LANES_NO_FETCH:-0}" = 1 ] && { note "LANES_NO_FETCH=1 — not fetching; reading origin/$LANES_BRANCH as the ref already stands here"; return 0; }
   git -C "$LANES_REPO" rev-parse --git-dir >/dev/null 2>&1 || return 0
   remote_has_branch || return 0
-  git -C "$LANES_REPO" fetch -q origin "$LANES_BRANCH" 2>/dev/null \
-    || note "fetch failed — reading the logs as they stand locally"
+  git_net -C "$LANES_REPO" fetch -q origin "$LANES_BRANCH" 2>/dev/null \
+    || note "fetch $([ "$GIT_TIMED_OUT" = 1 ] && printf 'timed out after %ss' "$GIT_TIMEOUT" || printf 'failed') — reading the logs as they stand locally"
   return 0
 }
 
@@ -1717,15 +2246,50 @@ print_holder_detail() {
     ph_h="$(live_holder "$ph_lane" 2>/dev/null)"; ph_rc=$?
     case "$ph_rc" in
       0)
-        IFS="$US" read -r ph_hid ph_target ph_hname ph_hpid <<EOF
+        IFS="$US" read -r ph_hid ph_target ph_hname ph_hpid ph_where <<EOF
 $ph_h
 EOF
-        printf '  holder   lane %s — LIVE (session %s, pid %s, tmux %s)\n' "$ph_lane" "$ph_hid" "$ph_hpid" "$ph_target" ;;
+        case "$ph_where" in
+          orphan) printf '  holder   lane %s — LIVE but in NO window (session %s, pid %s): an orphaned holder, Amendment 6(d) — retire it: kill %s\n' \
+                    "$ph_lane" "$ph_hid" "$ph_hpid" "$ph_hpid" ;;
+          here)   printf '  holder   lane %s — LIVE (session %s, pid %s, tmux %s) — this window\n' "$ph_lane" "$ph_hid" "$ph_hpid" "$ph_target" ;;
+          *)      printf '  holder   lane %s — LIVE (session %s, pid %s, tmux %s)\n' "$ph_lane" "$ph_hid" "$ph_hpid" "$ph_target" ;;
+        esac ;;
       8)
         printf '  holder   lane %s — NOT LIVE (parked: every session its row records has ended)\n' "$ph_lane" ;;
       *)
         printf '  holder   lane %s — UNKNOWN (this workstation'"'"'s session records could not be read; ask @%s or read its handoff)\n' "$ph_lane" "$ph_lane" ;;
     esac
+  fi
+  # R-A8-6, THE SECOND READER. `lane-start` names the row's orphaned holders to
+  # the operator who is about to take the lane; `who` names them to everyone
+  # else, because "who holds this" is exactly the question a person asks when a
+  # picker has just offered them two transcripts of one lane. The `holder` line
+  # above answers about the lane's CURRENT id; this answers about its EARLIER
+  # ones, which are history rather than alternatives. It NEVER kills: the act is
+  # `kill <pid>`, printed with the session and profile beside it so a person can
+  # check first, and run by that person (clause (f)).
+  #
+  # Silent where there are none, where the lane is on another workstation (its
+  # records are not local and this machine must not claim about them), and where
+  # the read itself failed — an unreadable record is not an assertion that a
+  # holder is absent, and `who`'s own `UNKNOWN` line has already said so.
+  if ! lane_is_elsewhere "$ph_lane"; then
+    ph_idle="$(idle_holders "$ph_lane" 2>/dev/null)"
+    # NOT a pipe: `printf ... | while read; do …; done` runs the loop on the
+    # STRIPPED command substitution with no trailing newline, so `read` hits
+    # EOF on the (only) line before it ever completes one, returns failure,
+    # and the loop body never runs at all — the one-holder case is exactly
+    # the common case, and a pipe here would print nothing, ever. A here-string
+    # always terminates the last line, which is why `lane-start`'s own reader
+    # of this same helper (above) uses one instead of a pipe.
+    if [ -n "$ph_idle" ]; then
+      while IFS="$(printf '\t')" read -r ph_isid ph_ipid ph_ikind ph_iprof; do
+        [ -n "$ph_isid" ] || continue
+        printf '  idle     lane %s — an EARLIER session id of this row is still held: session %s, pid %s (kind %s, profile %s). History, not an alternative — retire it: kill %s\n' \
+          "$ph_lane" "$ph_isid" "$ph_ipid" "${ph_ikind:-none}" "${ph_iprof:-unknown}" "$ph_ipid"
+      done <<<"$ph_idle"
+    fi
   fi
   printf '  address  @%s · claude --resume %s\n' "$ph_lane" "${ph_rowid:-<no transcript uuid in the row>}"
   ph_ho="$(handoff_of_lane "$ph_lane" 2>/dev/null || :)"
@@ -2009,6 +2573,354 @@ EOF
   return 0
 }
 
+# ======================================================== Amendment 8 ======
+#
+# SWAP AND RESTART, THE READ SIDE.
+#
+#   A SWAP is a planned stop — a usage reset, a profile switch — and a RESTART
+#   is the launch that follows it. Neither adds a file. The RECORD a swap
+#   leaves is the lane's own PAUSED line, payload
+#   `swap; window <tmux session>:<index>; workstation <ws>`, and a lane is
+#   SWAPPED on a workstation when that PAUSED is its LAST lane-kind line.
+#
+#   Both reads here are READ-ONLY and neither ever writes. `swapped` is what a
+#   launcher asks when the tmux window name is gone — a restart opens a NEW
+#   tmux session, which is precisely why the window name cannot carry the lane
+#   across one. `session-start` is the SessionStart hook's whole output.
+
+# The register's own spelling of a lane whose name matches $1 ignoring case,
+# read from `origin/<branch>` like every other state read (R19). Rule 10's wire
+# form is lowercase and a tmux window may carry either, while the row's token is
+# camel (`openRepoProject-1`): an exact lookup alone loses the lane.
+lane_named_ci() {
+  register_text | awk -v want="$1" '
+    substr($0,1,1) == "|" {
+      p1 = index($0, "`"); if (p1 == 0) next
+      rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
+      t = substr(rest, 1, p2 - 1)
+      if (tolower(t) == tolower(want)) { print t; exit }
+    }'
+}
+
+# The lane whose row's SESSION CELL names <uuid> — the second resolution the
+# hook has, for a window that carries no lane name. ONLY the session cell is
+# read: state cells quote other lanes' ids all the time ("RESUMED by <id>",
+# "handed off to <id>"), and one of those is not this session's lane.
+lane_of_session() {
+  los_id="$(lc "${1-}")"
+  [ -n "$los_id" ] || return 1
+  register_text | awk -F'|' -v id="$los_id" '
+    substr($0,1,1) != "|" { next }
+    {
+      if (index(tolower($3), id) == 0) next
+      p1 = index($2, "`"); if (p1 == 0) next
+      rest = substr($2, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
+      print substr(rest, 1, p2 - 1); exit
+    }'
+}
+
+# swapped_lanes [<workstation>] — one row per swapped lane, tab-separated:
+#   <lane>	<UTC>	<window>
+#
+# WHICH LINE IS A LANE'S "LAST" IS FILE ORDER (R14), like every other state read
+# here: a lane's log is append-only and single-writer, so a line further down
+# the file is a line written later whatever the two UTC fields say — and this is
+# the read a restart resolves its lane from, so letting a clock decide it would
+# be the same fault Amendment 7 removed everywhere else.
+#
+# THE ROWS ARE ORDERED BY LANDING ORDER ON `origin/<branch>`, MOST RECENTLY
+# LANDED FIRST — the position of the commit that ADDED each lane's PAUSED line,
+# and never the UTC in it. File order does not reach across two lanes' files,
+# and two lanes' UTCs are two clocks: they may be two workstations' (Amendment 7
+# gives them no shared order at all) or one workstation's mid-jump — this one
+# was observed stepping ±25 s in bursts, and a log commit landed whose content
+# carried a UTC 26 s after its own committer date. Git's push serialization is
+# the one order both lanes really share, and it is the same arbiter clause (f)
+# already uses to decide a race. The UTC stays in the output as INFORMATION, and
+# decides nothing.
+#
+# The rank is the DAG distance from the tip (`rev-list --count <sha>..origin`),
+# not a committer date, so it is history order and not a clock either. Swapped
+# lanes are few — one per window a swap paused — so one pickaxe per candidate is
+# the cheap read. A candidate whose adding commit cannot be found (no remote ref
+# here, or the harness's LANES_NO_GIT=1) ranks last, and those fall back to UTC
+# order among themselves: an order that is merely unhelpful, never wrong.
+swapped_candidates() {
+  sw_want="$(short_ws "${1:-$WS}")"
+  state_events | awk -v sep="$US" -v want="$sw_want" '
+    function pos(pf, pn) { return pf "\034" sprintf("%09d", pn) }
+    BEGIN { FS = sep }
+    $6 !~ /^lane:/ { next }
+    { p = pos($10, $11)
+      if (!($2 in mp) || p >= mp[$2]) {
+        mp[$2] = p; verb[$2] = $3; utc[$2] = $1; pay[$2] = $8; uuid[$2] = $4; ws[$2] = $5; obj[$2] = $6 } }
+    END {
+      for (l in mp) {
+        if (verb[l] != "PAUSED") continue
+        if (substr(pay[l], 1, 5) != "swap;") continue
+        w = ""; wst = ""
+        n = split(pay[l], sf, "; ")
+        for (i = 1; i <= n; i++) {
+          if (substr(sf[i], 1,  7) == "window ")      w   = substr(sf[i], 8)
+          if (substr(sf[i], 1, 12) == "workstation ") wst = substr(sf[i], 13)
+        }
+        sub(/[ \t]+$/, "", w); sub(/[ \t]+$/, "", wst); sub(/\..*$/, "", wst)
+        if (tolower(wst) != want) continue
+        # The fourth field is the PICKAXE KEY: the head of the line as it was
+        # written, up to and including its object, which is unique to it and
+        # which `git log -S` can find without a regex.
+        printf "%s%c%s%c%s%c%s — lane %s, session %s@%s, %s, %s\n",
+          l, 31, utc[l], 31, (w == "" ? "unknown" : w), 31,
+          verb[l], l, uuid[l], ws[l], utc[l], obj[l]
+      }
+    }'
+}
+
+swapped_lanes() {
+  sw_rows="$(swapped_candidates "${1:-$WS}")"
+  [ -n "$sw_rows" ] || return 0
+  while IFS="$US" read -r sw_l sw_u sw_w sw_key; do
+    [ -n "${sw_l:-}" ] || continue
+    sw_rank=999999999
+    if have_remote_ref; then
+      sw_sha="$(git -C "$LANES_REPO" log -1 --format=%H -S"$sw_key" "origin/$LANES_BRANCH" -- "$(log_path_for "$sw_l")" 2>/dev/null || :)"
+      if [ -n "$sw_sha" ]; then
+        sw_c="$(git -C "$LANES_REPO" rev-list --count "$sw_sha..origin/$LANES_BRANCH" 2>/dev/null || :)"
+        case "$sw_c" in ''|*[!0-9]*) : ;; *) sw_rank="$sw_c" ;; esac
+      fi
+    fi
+    printf '%09d%s%s%s%s%s%s\n' "$sw_rank" "$US" "$sw_l" "$US" "$sw_u" "$US" "$sw_w"
+  done <<EOF
+$sw_rows
+EOF
+}
+
+# The lane's open objects on ONE line, for the hook's block. `who --lane` prints
+# a line per object and a heading; a hook has one line's worth of a reader's
+# attention, and the objects are what the next act needs to know.
+lane_open_summary() {
+  los_l="$1"; los_out=""
+  if ! lane_log_exists "$los_l"; then
+    printf 'no log for %s (pre-cutover lane) — see its row'"'"'s state cell\n' "$los_l"
+    return 0
+  fi
+  while IFS="$US" read -r lo_utc lo_verb lo_obj lo_ref lo_sup; do
+    [ -n "${lo_verb:-}" ] || continue
+    is_open_verb "$lo_verb" || continue
+    los_out="${los_out}${los_out:+; }$lo_verb $lo_obj${lo_sup:+ (taken over by lane:${lo_sup%@*})}"
+  done <<EOF
+$(lane_objects "$los_l" 2>/dev/null || :)
+EOF
+  printf '%s\n' "${los_out:-none open}"
+}
+
+# HOW OLD THE ANSWER IS (Amendment 8, R-A8-1). The hook never fetches, so every
+# line of its block is the checkout as it last stood. `.git/FETCH_HEAD` is
+# rewritten by every fetch and by nothing else, so its mtime is when this
+# checkout last heard from `origin` — and a block that says "4d ago" is a block
+# a reader knows not to trust about another workstation's lane. Never a network
+# call and never a failure: an unreadable one answers `unknown`.
+fetch_age() {
+  fa_dir="$(git -C "$LANES_REPO" rev-parse --git-dir 2>/dev/null || :)"
+  [ -n "$fa_dir" ] || { printf 'unknown\n'; return 0; }
+  case "$fa_dir" in /*) : ;; *) fa_dir="$LANES_REPO/$fa_dir" ;; esac
+  [ -f "$fa_dir/FETCH_HEAD" ] || { printf 'never\n'; return 0; }
+  fa_t="$(stat -c %Y -- "$fa_dir/FETCH_HEAD" 2>/dev/null || stat -f %m -- "$fa_dir/FETCH_HEAD" 2>/dev/null || :)"
+  case "$fa_t" in ''|*[!0-9]*) printf 'unknown\n'; return 0 ;; esac
+  fa_s=$(( $(date -u +%s) - fa_t ))
+  [ "$fa_s" -lt 0 ] && fa_s=0
+  if   [ "$fa_s" -lt 90 ];     then printf '%ss ago\n' "$fa_s"
+  elif [ "$fa_s" -lt 5400 ];   then printf '%sm ago\n' "$((fa_s / 60))"
+  elif [ "$fa_s" -lt 172800 ]; then printf '%sh ago\n' "$((fa_s / 3600))"
+  else                              printf '%sd ago\n' "$((fa_s / 86400))"
+  fi
+}
+
+# The last line of every block the hook prints, whichever branch wrote the rest,
+# in the words clause (e) gives it: "every block ends with the line
+# `as of <n>m ago (no fetch)`". It is the whole of what makes an unfetched read
+# honest — a reader sees how stale the answer is instead of trusting a freshness
+# nobody verified.
+ssb_tail() {
+  printf 'as of %s (no fetch)\n' "$(fetch_age)"
+  return 0
+}
+
+# `lane-start`'s arguments FOR THIS LANE, filled in (Amendment 8, R-A8-7). The
+# block used to print the literal `<repo> <n>` with the lane in hand, so every
+# reader translated `openRepoProject-1` into `openRepoProject 1` by hand, on
+# every mismatch, for ever. A lane is `<repo>-<position across>` (THE LANE
+# RULE), so the split is on the LAST `-` — and ONLY when what follows it is a
+# number: a lane named before that rule (`browser-ui-repair`) is started through
+# `--dir`, and splitting it would print `browser-ui repair`, which is a command
+# that does the wrong thing rather than one that does nothing.
+lane_start_args() {
+  lsa_l="${1-}"; lsa_n="${lsa_l##*-}"
+  case "$lsa_l" in *-*) : ;; *) printf -- '--dir <path> %s\n' "$lsa_l"; return 0 ;; esac
+  case "$lsa_n" in ''|*[!0-9]*) printf -- '--dir <path> %s\n' "$lsa_l"; return 0 ;; esac
+  printf '%s %s\n' "${lsa_l%-*}" "$lsa_n"
+}
+
+# Has Rule 3's stamp for THIS session already been written? (Amendment 8,
+# R-A8-7: the block told every resume to "stamp the handoff RESUMED" when
+# `lane-start` had just written it — one manufactured decision per resume.) A
+# local file read and nothing else: the row's handoff cell, resolved the way the
+# row spells it, grepped for this session's own line. It is ASKED rather than
+# assumed from the ids matching, because a window started by a bare `claude`
+# rather than by `lane-start` has no stamp and does still owe one.
+handoff_stamped_by() {   # <handoff cell> <session id>
+  hsb_cell="${1-}"; hsb_id="${2-}"; hsb_f=""
+  [ -n "$hsb_cell" ] && [ -n "$hsb_id" ] || return 1
+  case "$hsb_cell" in
+    '~/'*) hsb_f="$HOME/${hsb_cell#'~/'}" ;;
+    /*)    hsb_f="$hsb_cell" ;;
+    *)     [ -n "${LANES_REPO:-}" ] && hsb_f="$LANES_REPO/$hsb_cell" ;;
+  esac
+  [ -n "$hsb_f" ] && [ -r "$hsb_f" ] || return 1
+  grep -qF -e "RESUMED by $hsb_id" -- "$hsb_f" 2>/dev/null
+}
+
+# DOES THE ROW'S NEWEST STAMP NAME A UUID, OR `unknown`? (Amendment 8(e), "the
+# first cure carries one condition".) A real `lane-start` is the wrong-lineage
+# remedy BECAUSE the cell's last id names a transcript the lane's directory has.
+# Where the last launch took clause (d)'s title fallback, that id names a
+# transcript this directory does not have — which is why the fallback was
+# reached — and the row says so in its own words: the stamp that run wrote
+# carries the literal `unknown`. A relaunch would take the same fallback again,
+# so the cure there is the recording act instead.
+#
+# The row is read, never the directory: the hook is handed no lane checkout and
+# the working directory confers no lane. `0` when the newest stamp says
+# `unknown`, `1` otherwise — including a row with no stamp at all, where a
+# relaunch is the ordinary remedy.
+row_stamp_is_unknown() {   # <lane>
+  rsu_lane="${1-}"; rsu_n=""; rsu_row=""; rsu_last=""
+  [ -n "$rsu_lane" ] || return 1
+  rsu_n="$(row_line "$rsu_lane" 2>/dev/null)" || return 1
+  case "$rsu_n" in ''|*[!0-9]*) return 1 ;; esac
+  rsu_row="$(sed -n "${rsu_n}p" -- "$LANES_FILE" 2>/dev/null || :)"
+  [ -n "$rsu_row" ] || return 1
+  rsu_last="$(printf '%s' "$rsu_row" | grep -o '[A-Z][A-Z]* by [^ |]*' | tail -n1 || :)"
+  case "$rsu_last" in *" by unknown") return 0 ;; esac
+  return 1
+}
+
+# session_start_block <hook json> <tmux window name> — the whole of what the
+# SessionStart hook prints. It NEVER writes and its caller ALWAYS exits 0.
+#
+# `source` is one of startup, resume, clear, compact, fork. A COMPACT prints
+# NOTHING: the same conversation carries on in the same window under the same
+# id, and a block there would announce a lane's identity into the middle of a
+# session that already has it. Everything else — a fork included, which is a new
+# attachment to the lane's conversation — gets the block, and an unknown or
+# missing source is treated as a startup rather than dropped.
+#
+# `cwd` is in the payload and is deliberately NOT read as a lane: THE WORKING
+# DIRECTORY CONFERS NO LANE (Amendment 6(a)) — two lanes share one all day, and
+# every nested checkout in the xFactory estate shares its parent's. The WINDOW
+# and the REGISTER decide, in that order.
+session_start_block() {
+  ssb_json="${1-}"; ssb_win="${2-}"
+  ssb_id="$(lc "$(jstr "$ssb_json" session_id)")"
+  ssb_src="$(jstr "$ssb_json" source)"
+  case "$ssb_src" in compact) return 0 ;; esac
+
+  ssb_lane=""
+  [ -n "$ssb_win" ] && ssb_lane="$(lane_named_ci "$ssb_win" 2>/dev/null || :)"
+  [ -n "$ssb_lane" ] || [ -z "$ssb_id" ] || ssb_lane="$(lane_of_session "$ssb_id" 2>/dev/null || :)"
+  if [ -z "$ssb_lane" ]; then
+    # THE ONE PLACE THE PLACEHOLDER IS RIGHT: no lane is known here, so there is
+    # nothing to fill in. It is also the estate's ONE no-lane notice — the
+    # launcher prints its own on stderr before the launch, and Amendment 8's
+    # resume-choice table says one of the two goes; this is the one the session
+    # itself can read.
+    # THE ONE BRANCH THAT KEEPS ITS PLACEHOLDERS — no lane is known here, so
+    # there is nothing to fill in. Except where the WINDOW NAME itself parses as
+    # `<repo>-<n>`: the register has no such row, but the operator's own two
+    # arguments are right there in the name, and printing them beats printing a
+    # blank for them to fill. It is also the estate's ONE no-lane notice —
+    # clause (c) step 4 stands down wherever this hook can speak.
+    if [ -n "$ssb_win" ] && [ "$(lane_start_args "$ssb_win")" != "--dir <path> $ssb_win" ]; then
+      printf 'no lane bound to this window — run: lane-start %s\n' "$(lane_start_args "$ssb_win")"
+    else
+      printf 'no lane bound to this window — run: lane-start <repo> <n>\n'
+    fi
+    ssb_tail
+    return 0
+  fi
+
+  ssb_args="$(lane_start_args "$ssb_lane")"
+  ssb_cur="$(last_session_id_of_lane "$ssb_lane" 2>/dev/null || :)"
+  if [ -n "$ssb_id" ] && [ -n "$ssb_cur" ] && [ "$ssb_id" != "$ssb_cur" ]; then
+    # THE BRANCH IS THE ID'S POSITION IN THE SESSION CELL, NOT ITS PRESENCE.
+    # The cell is a history written oldest first and the LAST id is the lane
+    # (Amendment 6(b)), so there are exactly three places an id can be, and
+    # each is cured by a different act:
+    #
+    #   * the cell's LAST id — this session IS the lane. Handled below.
+    #   * IN the cell but not last — a SUPERSEDED transcript of this lane. That
+    #     is the 2026-09-11 wrong-lineage resume, caught at the first instant it
+    #     can be caught, and the cure is a real `lane-start`, which resumes the
+    #     id the row ends on. The conversation in this window is not the lane's,
+    #     so the session is exited rather than carried on with.
+    #   * in NO cell — the harness minted a new transcript with nobody acting (a
+    #     /clear, a usage reset, a profile switch), or an operator's title-
+    #     fallback pick landed on a transcript no row carries. The lane is right
+    #     and the row is simply behind, so the cure is the recording act and no
+    #     relaunch: `lane-start --no-launch`, which reads the live record in
+    #     this window and appends that uuid to the cell.
+    #
+    # THE TWO CURES ARE NOT INTERCHANGEABLE. A reader who runs `--no-launch` on
+    # a superseded transcript records the WRONG conversation as the lane's, in
+    # the cell the next restart resumes from — the failure this block exists to
+    # catch, performed by its own remedy.
+    #
+    # AND NO CURE SENDS A READER BACK THROUGH THE PICKER (clause (f)): where the
+    # row's newest stamp says `unknown`, the cell's last id names a transcript
+    # the lane's directory does not have, a relaunch would take the same title
+    # fallback again, and the recording act is the cure there too. No branch
+    # names `/resume` or the picker, because neither is a lane surface.
+    #
+    # EVERY COMMAND IS PRINTED FILLED IN (F-B6): the hook holds the lane, and a
+    # reader trying to get back to work should not have to translate
+    # `openRepoProject-1` into `openRepoProject 1` by hand at that moment.
+    if printf '%s\n' "$(session_ids_of_lane "$ssb_lane" 2>/dev/null || :)" | grep -qx -F -- "$ssb_id"; then
+      if row_stamp_is_unknown "$ssb_lane"; then
+        printf 'WARNING: this is a superseded transcript of lane %s; the live one is %s, which the row records as `unknown` — a relaunch would record nothing either, so run: lane-start --no-launch %s\n' \
+          "$ssb_lane" "$ssb_cur" "$ssb_args"
+      else
+        printf 'WARNING: this is a superseded transcript of lane %s; the live one is %s; you resumed %s — exit this session and run: lane-start %s\n' \
+          "$ssb_lane" "$ssb_cur" "$ssb_id" "$ssb_args"
+      fi
+    else
+      printf 'WARNING: this window is lane %s whose current session is %s; this session %s is in no row — the harness minted a new transcript — run: lane-start --no-launch %s\n' \
+        "$ssb_lane" "$ssb_cur" "$ssb_id" "$ssb_args"
+    fi
+    ssb_tail
+    return 0
+  fi
+
+  ssb_ho="$(handoff_of_lane "$ssb_lane" 2>/dev/null || :)"
+  printf 'LANE %s — handoff %s — row session %s\n' \
+    "$ssb_lane" "${ssb_ho:-none recorded}" "${ssb_cur:-none recorded}"
+  # THE BLOCK STOPS ASKING FOR A STAMP `lane-start` HAS ALREADY WRITTEN (R-A8-7,
+  # resume-choice row 9: one manufactured decision per resume). It is DERIVED,
+  # not assumed from the ids matching — a window started by a bare `claude`
+  # rather than through the launcher has no stamp and does still owe one — so
+  # the handoff the ROW names is read and grepped for THIS session's own line.
+  # Where the row names no handoff at all the line says that instead.
+  if [ -z "$ssb_ho" ]; then
+    printf 'the row records no handoff path — there is none to stamp or to follow\n'
+  elif handoff_stamped_by "$ssb_ho" "$ssb_id"; then
+    printf 'handoff already stamped by lane-start — follow its top block\n'
+  else
+    printf 'stamp the handoff RESUMED (Rule 3) and follow its top block\n'
+  fi
+  printf 'open: %s\n' "$(lane_open_summary "$ssb_lane")"
+  ssb_tail
+  return 0
+}
+
 # ----------------------------------------------------------------- GitHub
 #
 # Rule 1 is one act: the three reads, the local line, and the comment that
@@ -2018,8 +2930,61 @@ EOF
 # --no-github skips every call here, which is what the tests and an offline
 # lane run with.
 
+# THE SIBLING READS NAME THE OBJECT, NOT ITS DIGITS (Amendment 8). Rule 1's
+# reads 2 and 3 searched for the bare slug as a SUBSTRING, and a number is a
+# substring of almost everything. Measured live on 2026-09-12 against the
+# governing repository, `gh pr list --search 15` answered with PR #16 and PR
+# #10 — GitHub had matched the digits inside "**15 of the register's 41 rows**"
+# — and `ls-remote | grep 15` answered with a branch whose 40-character sha
+# merely contains them, all under the heading "existing work on this object".
+# A sibling that does not NAME the object is not evidence about it, and evidence
+# that is not evidence is how a lane talks itself out of a claim it should make.
+#
+# TWO READS, TWO TESTS, because the two inputs are not the same kind of text.
+#   pr      `gh pr list`'s rows, which are prose. A number in prose is a
+#           number; a REFERENCE is `#<n>`, so the hash is required — and its
+#           LEFT side is not bounded, because the canonical spelling of the
+#           thing being looked for is `owner/repo#15` and the character before
+#           the `#` is a letter. A row whose FIRST field is the number itself
+#           is kept too: that is the PR the object IS.
+#   branch  `ls-remote`'s refs, which are names. `issue-15-fix` names the
+#           object and carries no hash, so the bare number as a whole token is
+#           the test — after the leading sha is stripped, so a branch is matched
+#           by its name and never by the digits of the commit it points at.
+# An OpenSpec change directory has a word for a slug and takes the whole-token
+# test in both modes.
+#
+# AND READ 2 FILTERS OVER THE BODY. `gh pr list`'s columns are number, title,
+# branch and state; the reference that makes a PR a sibling is almost always in
+# its BODY, which is what GitHub's own search matched and what the columns do
+# not carry. Filtering the columns alone dropped PR #16 — the PR for this very
+# issue, whose body says `brettheap/new-workstation#15` twice — while a filter
+# with the hash optional kept #10 instead. So the body is fetched, flattened to
+# one line, used for the test, and cut off again before anything is printed:
+# under-reporting a sibling is the direction that lets a lane claim what
+# somebody is already working on, and it is the one direction Rule 1 cannot
+# afford.
+ere_quote() { printf '%s' "${1-}" | sed -E 's/[][(){}.^$*+?|\\/]/\\&/g'; }
+sibling_filter() {   # <object> [pr|branch]; candidate lines on stdin
+  sfl_slug="$(object_slug "$1")"
+  sfl_num="$(object_number "$1")"
+  sfl_mode="${2:-pr}"
+  if [ -z "$sfl_slug" ]; then cat; return 0; fi
+  sfl_q="$(ere_quote "$sfl_slug")"
+  if [ -n "$sfl_num" ] && [ "$sfl_mode" = pr ]; then
+    # `#<n>` anywhere, or the row's own number column.
+    awk -v sep="$(printf '\t')" -v n="$sfl_slug" -v re="#$sfl_q([^0-9A-Za-z]|$)" '
+      { if ($0 ~ re) { print; next }
+        split($0, f, sep); if (f[1] == n) print }'
+    return 0
+  fi
+  sed -E 's/^[0-9a-fA-F]{40}[ \t]+//' \
+    | grep -E -- "(^|[^0-9A-Za-z])$sfl_q([^0-9A-Za-z]|\$)" || :
+}
+
 gh_reads() {
   gr_obj="$1"; gr_repo="$(object_repo "$gr_obj")"; gr_n="$(object_number "$gr_obj")"; gr_slug="$(object_slug "$gr_obj")"
+  gr_term="${gr_n:+#$gr_n}"; gr_term="${gr_term:-$gr_slug}"
   if [ "$NO_GITHUB" = 1 ]; then
     printf '1. existing claims on the object: not read (--no-github)\n'
     printf '2. gh pr list --state all --search: not read (--no-github)\n'
@@ -2034,11 +2999,18 @@ gh_reads() {
     gr_c=""
   fi
   printf '%s\n' "${gr_c:-   none}"
-  printf '2. `gh pr list --repo %s --state all --search "%s"`:\n' "$gr_repo" "$gr_slug"
-  gr_p="$(gh pr list --repo "$gr_repo" --state all --search "$gr_slug" --limit 20 2>/dev/null || :)"
+  printf '2. `gh pr list --repo %s --state all --search "%s"`, kept where the row or its body names `%s`:\n' "$gr_repo" "$gr_term" "${gr_n:+#}$gr_slug"
+  # The body is fetched for the TEST and cut off before the print. `--json`
+  # needs a gh that has it; where it does not, the four columns are filtered on
+  # their own, which is strictly less recall and never a wrong answer.
+  gr_raw="$(gh pr list --repo "$gr_repo" --state all --search "$gr_term" --limit 20 \
+              --json number,title,headRefName,state,body \
+              -q '.[] | [.number, .title, .headRefName, .state, (.body // "" | gsub("[\r\n]+"; " "))] | @tsv' 2>/dev/null || :)"
+  [ -n "$gr_raw" ] || gr_raw="$(gh pr list --repo "$gr_repo" --state all --search "$gr_term" --limit 20 2>/dev/null || :)"
+  gr_p="$(printf '%s\n' "$gr_raw" | sibling_filter "$gr_obj" pr | cut -f1-4 || :)"
   printf '%s\n' "${gr_p:-   none}"
-  printf '3. `git ls-remote --heads git@github.com:%s` matching `%s`:\n' "$gr_repo" "$gr_slug"
-  gr_b="$(git ls-remote --heads "git@github.com:$gr_repo.git" 2>/dev/null | grep -i -- "$gr_slug" || :)"
+  printf '3. `git ls-remote --heads git@github.com:%s` branches naming `%s` as a whole token:\n' "$gr_repo" "$gr_slug"
+  gr_b="$(git ls-remote --heads "git@github.com:$gr_repo.git" 2>/dev/null | sibling_filter "$gr_obj" branch || :)"
   printf '%s\n' "${gr_b:-   none}"
   return 0
 }
@@ -2122,7 +3094,13 @@ cmd="${1-}"
 # stale the moment the header grew — as it did under Amendment 5.)
 [ -n "$cmd" ] || { sed -n '3,${/^#/!q;s/^# \{0,1\}//;p}' -- "$RESOLVED"; exit 2; }
 shift || :
-[ -f "$LANES_FILE" ] || die "registry not found: $LANES_FILE"
+# `session-start` is EXEMPT. It is a hook: it never writes, and it must exit 0
+# even where there is no register to read at all — a hook that dies is a hook
+# that breaks the session it was meant to orient.
+case "$cmd" in
+  session-start) : ;;
+  *) [ -f "$LANES_FILE" ] || die "registry not found: $LANES_FILE" ;;
+esac
 
 case "$cmd" in
   verify-row)
@@ -2162,6 +3140,57 @@ case "$cmd" in
     [ "$c" = 1 ] || die "'$old' occurs $c times in lane $lane's row (line $n); exactly 1 required" 2
     replace_line "$n" "${row/"$old"/"$new"}"
     msg="LANES($lane@$WS): ${why:-replace-in-row}"
+    [ -n "$PRE_DIRTY_LANES" ] && msg="$msg + sweeps uncommitted edit to row $PRE_DIRTY_LANES"
+    commit_push "$msg"
+    ;;
+
+  # AMENDMENT 8, R-A8-4 — THE UUID APPEND IS CELL-SCOPED.
+  #
+  # `replace-in-row` refuses unless its anchor occurs exactly once in the WHOLE
+  # ROW, and the anchor for a session-cell append is a transcript uuid — which
+  # the 6(c) stamp writes into the STATE cell again on every launch (`RESUMED by
+  # <uuid> … launching claude --resume <uuid>` — twice more per launched start).
+  # Measured against `origin/main` on 2026-09-12, `openRepoProject-1`'s own row
+  # carries its current uuid THREE times and its previous one three times, so
+  # the single most load-bearing new act in Amendment 8(d) — recording the
+  # transcript the harness minted — could not run on the lane the amendment was
+  # written for.
+  #
+  # So the anchor is matched INSIDE THE SESSION CELL and nowhere else, and must
+  # occur exactly once THERE. `replace-in-row`'s whole-row rule is unchanged and
+  # is still right for what it is for: a state cell says the same thing in two
+  # places all the time, and a blind replace there would rewrite the wrong one.
+  #
+  # AND THE TEXT IS APPENDED AT THE END OF THE CELL, NOT AT THE ANCHOR. This is
+  # the second half of the same finding and it is not cosmetic: the cell spells
+  # its ids `harness `<uuid>`` — inside backticks — so a replace AT a bare-uuid
+  # anchor writes `harness `<uuid> → harness <new>`` and puts the new id inside
+  # the old one's code span. The anchor's job is to prove that the cell this
+  # checkout holds is the published one the caller read (Amendment 6(b): the
+  # cell is a HISTORY, oldest first, and the last id is the lane's current
+  # session); the APPEND's job is to add a lineage after all of them. Those are
+  # two different positions, and conflating them corrupted the cell.
+  #
+  # Anything that is not an append — a cell that must really be rewritten — is
+  # `replace-in-row`'s business, in front of a person.
+  append-session-id)
+    lane="${1-}"; old="${2-}"; add="${3-}"; why="${4-}"
+    [ -n "$lane" ] && [ -n "$old" ] && [ -n "$add" ] \
+      || die "usage: append-session-id <lane> \"<anchor in the session cell>\" \"<text to append to the cell>\" [\"<why>\"]" 2
+    case "$add" in
+      *"|"*) die "append-session-id's appended text may not contain '|': it would forge a cell boundary in the row. Got '$add'." 2 ;;
+    esac
+    acquire_lock; handle_preexisting
+    n="$(row_line "$lane")" || exit 2
+    row="$(sed -n "${n}p" -- "$LANES_FILE")"
+    row_split_session_cell "$row" || die "lane $lane's row (line $n) does not have three '|' before its session cell ends; refusing to touch it" 2
+    c="$(count_occurrences "$RSC_CELL" "$old")" || exit 2
+    if [ "$c" != 1 ]; then
+      whole="$(count_occurrences "$row" "$old" || printf '?')"
+      die "'$old' occurs $c time(s) in lane $lane's SESSION CELL (line $n); exactly 1 required there. The row as a whole carries it $whole time(s) — that difference is exactly why this act is cell-scoped and not replace-in-row." 2
+    fi
+    replace_line "$n" "$RSC_HEAD$(rstrip_spaces "$RSC_CELL") $add $RSC_TAIL"
+    msg="LANES($lane@$WS): ${why:-append-session-id}"
     [ -n "$PRE_DIRTY_LANES" ] && msg="$msg + sweeps uncommitted edit to row $PRE_DIRTY_LANES"
     commit_push "$msg"
     ;;
@@ -2488,6 +3517,65 @@ EOF
     esac
     ;;
 
+  # ------------------------------------------- Amendment 8: swap and restart
+
+  # Read-only. Exit 0 with rows, 8 with none — 8 is "no record" here exactly as
+  # it is everywhere else, so a launcher may gate on it.
+  # `swapped` EXITS 64 ON A USAGE ERROR OF ITS OWN, never the dispatcher's 2
+  # (clause (c); F-B8, F-W4). The launcher gates its whole Amendment 8 degrade
+  # on this subcommand's 2 meaning ONE thing — "this `lanes-edit.sh` predates
+  # Amendment 8 and has no `swapped`" — and the dispatcher's unknown-subcommand
+  # 2 is exactly that. A caller's own bug must not be indistinguishable from an
+  # old helper at the one place the degrade is decided, so it gets a code of its
+  # own: 0 rows, 8 none swapped, 64 a bad call, 2 no such subcommand.
+  swapped)
+    sw_arg=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --) shift ;;
+        -*) die "unknown option '$1' for swapped (usage: swapped [<workstation>])" 64 ;;
+        *)  [ -z "$sw_arg" ] || die "swapped takes at most one workstation: swapped [<workstation>]" 64
+            sw_arg="$1"; shift ;;
+      esac
+    done
+    log_sync
+    sw_out="$(swapped_lanes "${sw_arg:-$WS}" \
+              | LC_ALL=C sort -t"$US" -k1,1 -k3,3r -k2,2 \
+              | awk -v sep="$US" 'BEGIN { FS = sep; OFS = "\t" } NF >= 4 { print $2, $3, $4 }')"
+    if [ -z "$sw_out" ]; then
+      note "no lane on ${sw_arg:-$WS} is swapped — no lane's LAST lane-kind line is a PAUSED whose payload begins 'swap;' and names that workstation"
+      exit 8
+    fi
+    printf '%s\n' "$sw_out"
+    ;;
+
+  # The SessionStart hook. IT NEVER WRITES, IT NEVER TOUCHES THE NETWORK, AND
+  # IT ALWAYS EXITS 0 — the three properties that make it safe to put in front
+  # of every session on this workstation. Its stdin is the hook's JSON; with a
+  # terminal on stdin nobody piped one, and it is read as empty rather than
+  # waited for, because a hook that blocks is worse than a hook that says
+  # nothing.
+  #
+  # AMENDMENT 8, R-A8-1 — THERE IS NO `log_sync` HERE, AND THERE MUST NOT BE.
+  # This branch used to fetch: `log_sync` runs `remote_has_branch` (an
+  # `ls-remote`) and then a `fetch`, two network round-trips bounded at 60 s
+  # EACH, in front of every session start on the workstation — writing
+  # `.git/FETCH_HEAD`, objects and `refs/remotes/origin/main`, and advancing
+  # `origin/main` under any `lane-start` running at the same time. Amendment 7's
+  # "a read fetches first" governs STATE decisions (a claim, a refusal, who
+  # holds what); this is an informational block printed at every session start,
+  # and it must be fast and offline-safe instead. It reads the checkout AS LAST
+  # FETCHED and says how old that is, so a reader can tell a current answer from
+  # a stale one. `git_net` is the only door to the network in this file, and
+  # nothing on this path opens it.
+  session-start)
+    if [ -t 0 ]; then ss_json=""; else ss_json="$(cat 2>/dev/null || :)"; fi
+    ss_win=""
+    command -v tmux >/dev/null 2>&1 && ss_win="$(tmux display-message -p '#W' 2>/dev/null || :)"
+    session_start_block "$ss_json" "$ss_win" || :
+    exit 0
+    ;;
+
   # --- internal reads, for lane-start and lane-end -------------------------
   # Not part of the protocol's surface: they exist so that the two boundary
   # scripts share ONE implementation of liveness and ONE parser of the log,
@@ -2498,6 +3586,26 @@ EOF
   # first version of this returned 1 for both and both scripts read 1 as "no
   # holder" / "pre-cutover lane" — a broken helper turned a refusal into a
   # silent pass, which is the one thing a boundary act must never do.
+  # 0 prints `<uuid> <tmux> <name> <pid> <here|elsewhere|orphan>`, US-separated.
+  # The fifth field is Amendment 8 ruling (g)'s: the caller must not have to
+  # infer whose session it is from the `tmux` column, because a record with no
+  # target is not a record in no window, and reading it as one is what refused
+  # this lane the window it was running in.
+  # AMENDMENT 8(f), R-A8-6 — the row's EARLIER ids, and who is still holding
+  # them. Read-only, no fetch of its own (the caller has just made one), and it
+  # runs nothing: `kill <pid>` is printed by the caller and typed by a person.
+  # 0 with rows, 8 with none, 1 where the records could not be read — the same
+  # three answers `live-holder` gives, so a caller reads them the same way.
+  idle-holders)
+    lane="${1-}"; [ -n "$lane" ] || die "usage: idle-holders <lane>" 2
+    idle_holders "$lane"; ih_rc=$?
+    case "$ih_rc" in
+      0) : ;;
+      8) exit 8 ;;
+      *) die "could not read this workstation's session records for lane $lane: ${SESSION_FILES_ERR:-unknown error}." 1 ;;
+    esac
+    ;;
+
   live-holder)
     lane="${1-}"; [ -n "$lane" ] || die "usage: live-holder <lane>" 2
     # A READ FETCHES FIRST, like every other read here. This one did not, and
@@ -2519,6 +3627,43 @@ EOF
       8) exit 8 ;;
       *) die "could not read this workstation's session records for lane $lane: ${SESSION_FILES_ERR:-unknown error}. That is NOT 'no live session holds it' — fix the records or the permissions and re-run." 1 ;;
     esac
+    ;;
+
+  # AMENDMENT 8 — which LIVE session is in a tmux WINDOW, keyed on the window
+  # and not on a lane's recorded ids. `lane-start` asks it about the window it
+  # is run in, because the harness mints a new transcript uuid with nobody
+  # acting and that id is in no row for `live-holder` to find. 0 with
+  # `<uuid> <tmux> <name> <pid> <profile>` (US-separated), 8 when the records
+  # were read and no live one is in that window, 1 when they could not be read.
+  window-session)
+    wsub="${1-}"; [ -n "$wsub" ] || die "usage: window-session <tmux session>:<window id>" 2
+    window_session "$wsub"; wsub_rc=$?
+    case "$wsub_rc" in
+      0) : ;;
+      8) exit 8 ;;
+      *) die "could not read this workstation's session records for window $wsub: ${SESSION_FILES_ERR:-unknown error}. That is NOT 'no live session is in that window'." 1 ;;
+    esac
+    ;;
+
+  # AMENDMENT 8 — Rule 1's sibling reads, filtered to lines that NAME the
+  # object. `gh_reads` pipes both of its searches through this; it is a
+  # subcommand so that the filter can be held to account directly, and so a
+  # person can run a search of their own through the same test.
+  sibling-filter)
+    sfsub=""; sfsub_mode=pr
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --branch) sfsub_mode=branch; shift ;;
+        --pr)     sfsub_mode=pr; shift ;;
+        --)       shift ;;
+        -*)       die "unknown option '$1' for sibling-filter" 2 ;;
+        *)        [ -z "$sfsub" ] || die "sibling-filter takes one object" 2; sfsub="$1"; shift ;;
+      esac
+    done
+    [ -n "$sfsub" ] || die "usage: sibling-filter <object> [--branch]   (candidate lines on stdin)" 2
+    sfsub_home="$(resolve_home "${LANES_LANE:-}" "" 2>/dev/null || :)"
+    sfsub_obj="$(canon_object "$sfsub" "$sfsub_home")" || exit 2
+    sibling_filter "$sfsub_obj" "$sfsub_mode"
     ;;
 
   # R20 — a lane's HOME goes through `repos.tsv` like every other spelling, and
@@ -2575,6 +3720,6 @@ EOF
     ;;
 
   *)
-    die "unknown subcommand '$cmd' (verify-row|append-row-status|replace-in-row|append-line|add-row|commit|log|claim|release|who)" 2
+    die "unknown subcommand '$cmd' (verify-row|append-row-status|replace-in-row|append-session-id|append-line|add-row|commit|log|claim|release|who|swapped|session-start|idle-holders)" 2
     ;;
 esac
