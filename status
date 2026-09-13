@@ -147,18 +147,28 @@ worktrees on disk: a recorded feature with no worktree here (`resume <Name>`
 brings it back — unless the record says `--no-push`, or its `pushed:` is
 missing or neither true nor false, which `resume` refuses the same way, or it
 names no parked commit for that leg, which `resume` refuses as moved-on, or it
-gives a leg no role at all, or a role this checkout's shape does not mount, or
-lists no leg for it at all, which `resume` refuses the whole feature for: then
-only the workstation that parked it can park it again — and where the role is
-really another shape's, only a checkout of that shape; and where `git worktree
-list` still holds a registration that is no longer a worktree, that is cleared
-with `worktree prune`, after a `worktree unlock` if it is locked and with any
-leftover directory moved aside, before `resume` can recreate anything), a
-worktree whose tip is not the parked commit or a record that names no parked
-commit to compare it with, a leg parked with `--no-push` or whose `pushed:` is
-missing or neither true nor false, a leg the record gives no role or a role
-this shape does not mount, a feature the record lists no leg for, and a
-worktree the record does not know (never parked).
+gives a leg no role at all, or a role this checkout's shape has no place for —
+one it does not mount, or one `resume` maps only onto the other shape, or onto
+neither, as it maps `assembly` — or lists no leg for it at all, which `resume`
+refuses the whole feature for: then only the workstation that parked it can
+park it again — and where the role is really another shape's, only a checkout
+of that shape, and where it is neither shape's, no checkout at all; and unless
+origin has lost the branch, which `resume` refuses as gone from origin, the
+WHOLE feature with it — after a fetch that WORKED in that repository, which is
+the only way it is settled, a missing `origin/<branch>` is origin's answer and
+the exits are the record's own entry where the feature landed or a push of the
+branch from the workstation that parked it, and without one it is named beside
+the `resume` that still brings back a branch this clone has merely not fetched;
+and where `git worktree list` still holds a registration that is no longer a
+worktree, that is cleared with `worktree prune`, after a `worktree unlock` if
+it is locked and with any leftover directory moved aside, before `resume` can
+recreate anything), a worktree
+whose tip is not the parked commit or a record that names no parked commit to
+compare it with, a recorded branch this repository has no `origin/<branch>`
+for, a leg parked with `--no-push` or whose `pushed:` is missing or neither
+true nor false, a leg the record gives no role or a role this shape has no
+place for, a feature the record lists no leg for, and a worktree the record
+does not know (never parked).
 
 <Name> is the estate's folder under your projects directory: a FAMILY folder
 (<Name>/<Name>/family.yaml) or a standalone project root (<Name>/project.yaml).
@@ -916,15 +926,31 @@ read_leg() {
 # `refs/remotes/upstream/*`.
 FETCHED_OK=0
 UPSTREAM_FETCHED_OK=0
+#: WHAT THIS RUN'S `origin` FETCH IN THIS REPOSITORY DID, in one word, because
+#: `FETCHED_OK=0` IS FOUR STATES AND ONE OF THEM IS NOT A FETCH AT ALL
+#: (Copilot's second round on #23). Two of the three returns above the fetch
+#: are reached without running one — a repository git cannot read, and one
+#: with no `origin` remote — and both are STORED by the pre-pass like any
+#: other, so "did the pre-pass enter this repository" answered yes for a
+#: repository nothing was fetched in and the record layer's caveat said "the
+#: fetch this run made there failed" two lines under a row that said "no
+#: remote named origin, so nothing could be fetched". `ok`, `failed`,
+#: `no-remote`, `unreadable` — and `none` for a repository no fetch reached,
+#: which is what the store's absence means and what a run without `--fetch`
+#: is. The word is the ORIGIN remote's alone: `upstream` has its own flag and
+#: its own line, and no reading branches on why its fetch did not happen.
+FETCH_ORIGIN_STATE=none
 fetch_remote() {
     local repo="$1" branch="$2" remote="$3" before after err what="fetch"
     [ "$remote" = origin ] || what="fetch $remote"
     if [ "$remote" = origin ]; then FETCHED_OK=0; else UPSTREAM_FETCHED_OK=0; fi
     if ! g "$repo" rev-parse --git-dir >/dev/null 2>&1; then
+        [ "$remote" != origin ] || FETCH_ORIGIN_STATE=unreadable
         finding "fetch: not a readable git repository (a gitfile whose gitdir is gone?), so nothing could be fetched"
         return 0
     fi
     if ! g "$repo" remote get-url "$remote" >/dev/null 2>&1; then
+        [ "$remote" != origin ] || FETCH_ORIGIN_STATE=no-remote
         finding "fetch: no remote named $remote, so nothing could be fetched"
         return 0
     fi
@@ -933,7 +959,7 @@ fetch_remote() {
             --prune --recurse-submodules=no \
             --refmap="+refs/heads/*:refs/remotes/$remote/*" "$remote" \
             "+refs/heads/*:refs/remotes/$remote/*" 2>&1)"; then
-        if [ "$remote" = origin ]; then FETCHED_OK=1; else UPSTREAM_FETCHED_OK=1; fi
+        if [ "$remote" = origin ]; then FETCHED_OK=1; FETCH_ORIGIN_STATE=ok; else UPSTREAM_FETCHED_OK=1; fi
         after="$(g "$repo" rev-parse -q --verify "refs/remotes/$remote/$branch" 2>/dev/null || true)"
         if [ -n "$before" ] && [ -z "$after" ]; then
             fetch_say "    fetched $remote: $remote/$branch is GONE (was $(short "$before")): deleted or renamed on $remote"
@@ -949,6 +975,7 @@ fetch_remote() {
             fetch_say "    fetched $remote: nothing new on $remote/$branch"
         fi
     else
+        [ "$remote" != origin ] || FETCH_ORIGIN_STATE=failed
         err="${err%%$'\n'*}"
         finding "$what failed: ${err:-git said nothing}; what follows is as of the last fetch that worked"
     fi
@@ -956,15 +983,17 @@ fetch_remote() {
 
 #: WHAT THE PRE-PASS BELOW STORES, one entry per REPOSITORY of the estate in
 #: row order: the path it is keyed by, the lines its fetch printed, the
-#: findings its fetch made, and the two flags the reads branch on. Parallel
-#: arrays and a linear scan, because bash 3.2 has no associative array and an
-#: estate holds a handful of repositories. `FETCH_SAY` is where `fetch_remote`
-#: puts a line instead of printing it.
+#: findings its fetch made, the two flags the reads branch on, and WHAT THE
+#: ORIGIN FETCH DID in `fetch_remote`'s one word. Parallel arrays and a linear
+#: scan, because bash 3.2 has no associative array and an estate holds a
+#: handful of repositories. `FETCH_SAY` is where `fetch_remote` puts a line
+#: instead of printing it.
 FETCH_KEYS=()
 FETCH_SAID=()
 FETCH_FOUND=()
 FETCH_OK_AT=()
 FETCH_UP_OK_AT=()
+FETCH_STATE_AT=()
 FETCH_SAY=""
 fetch_say() { FETCH_SAY="$FETCH_SAY$1"$'\n'; }
 
@@ -1001,6 +1030,7 @@ fetch_estate_first() {
     FETCH_FOUND=()
     FETCH_OK_AT=()
     FETCH_UP_OK_AT=()
+    FETCH_STATE_AT=()
     while IFS=$'\t' read -r label branch path; do
         [ -n "${path:-}" ] || continue
         case "$label" in
@@ -1018,6 +1048,7 @@ fetch_estate_first() {
         done
         FETCH_SAY=""
         FINDINGS=()
+        FETCH_ORIGIN_STATE=none
         fetch_remote "$path" "$branch" origin
         if has_upstream "$path"; then
             fetch_remote "$path" "$branch" upstream
@@ -1027,6 +1058,7 @@ fetch_estate_first() {
         FETCH_FOUND+=("$(printf '%s\n' ${FINDINGS[@]+"${FINDINGS[@]}"})")
         FETCH_OK_AT+=("$FETCHED_OK")
         FETCH_UP_OK_AT+=("$UPSTREAM_FETCHED_OK")
+        FETCH_STATE_AT+=("$FETCH_ORIGIN_STATE")
     done <<<"$1"
     FINDINGS=()
 }
@@ -1075,6 +1107,61 @@ fetched_ok_at() {
         i=$((i + 1))
     done
     return 1
+}
+
+# WHAT THIS RUN'S `origin` FETCH IN `<repo>` DID, in `fetch_remote`'s one
+# word, for the same reason `fetched_ok_at` exists: the store holds one entry
+# per repository of the estate as `estate_repos` lists them, and the record
+# layer asks about the path `project.yaml` gives a role, which is usually one
+# of them and need not be. So a caller that only wants "did a fetch happen
+# here" tests for `ok` or `failed`.
+#
+# AND THE STORE HAS TWO WAYS OF HOLDING NOTHING, which is Copilot's third
+# round on #23 (2026-09-12), verbatim: "when `--fetch` is active,
+# `fetch_state_at` can still be `none` for a mapped role path that
+# `project.yaml` names but `estate_repos` did not enumerate (the code
+# explicitly allows that path not to be one of the fetch-store entries). This
+# fallback then tells the user to run `status --fetch`, even though that flag
+# has already run and repeated runs will not fetch a path absent from
+# `.gitmodules`". IT IS REAL AND IT IS THE SAME FAULT THE ROUND BEFORE FIXED
+# from its other side: a run that HAS fetched being told to fetch. `none` is
+# the answer for a run made WITHOUT the flag — the one `status --fetch`
+# settles — and `unlisted` for a run made WITH it that never reached this
+# repository, which no rerun of the flag changes: the pre-pass fetches the
+# repositories `estate_repos` lists, the root and the legs `.gitmodules`
+# declares, and a `spec` or `code` leg `project.yaml` mounts somewhere else is
+# not among them. THE FLAG'S SCOPE IS NOT WIDENED TO CLOSE IT: `status
+# --fetch`'s one write is bounded to the repositories the estate declares,
+# which is the rule, so the reading says what this run did instead.
+#
+# IT REPLACED A `fetch_tried_at` THAT ANSWERED THE PRESENCE OF THE ENTRY
+# (Copilot's second round on #23), verbatim: "`fetch_tried_at` is true for
+# every repository entered by the pre-pass, including a readable repository
+# where `fetch_remote` returned early because no `origin` remote exists. In
+# that case this message says "the fetch this run made there failed" even
+# though no fetch was attempted, which makes the new diagnostic inaccurate".
+# Run against e18ec53 on 2026-09-12, with `--fetch` and a `pushed: true`
+# record whose branch has no `origin/<branch>` here: a root with its `origin`
+# removed, a `spec` leg with its `origin` removed in the three-leg fixture,
+# and a leg whose gitdir was deleted all drew "the fetch this run made there
+# failed, so nothing has settled it" — in the last two, on the same report as
+# "fetch: no remote named origin, so nothing could be fetched" and "fetch: not
+# a readable git repository …, so nothing could be fetched". A line that says
+# a fetch failed where none was MADE is as wrong as the one S1 fixed, which
+# said a fetch was still to be made where one had just failed.
+fetch_state_at() {
+    local path i=0
+    if [ "$FETCH" -ne 1 ]; then printf 'none\n'; return 0; fi
+    path="$(physical_path "$1")"
+    while [ "$i" -lt "${#FETCH_KEYS[@]}" ]; do
+        if [ "${FETCH_KEYS[$i]}" = "$path" ]; then
+            printf '%s\n' "${FETCH_STATE_AT[$i]}"
+            return 0
+        fi
+        i=$((i + 1))
+    done
+    printf 'unlisted\n'
+    return 0
 }
 
 # --- the fork against its upstream --------------------------------------------
@@ -1621,16 +1708,53 @@ read_shape() {
 #    per FEATURE, in `read_record`, where the comment above that function
 #    says how and why the features are judged before their legs are read.
 #
-# 5, 6 AND 7 ARE REFUSALS OF THE WHOLE FEATURE, SO NO LINE OF THAT FEATURE
-# NAMES `resume` (Copilot on #21, second round, 2026-09-11). A leg of such a
+# 8. A LEG WHOSE BRANCH ORIGIN HAS LOST — no `origin/<branch>` in that leg's
+#    repository — which `resume` refuses the WHOLE feature for at RR2, in
+#    words and with exits of its own: "<branch> is no longer on origin in the
+#    <role> leg", then the record's `- branch: <branch>` block to delete where
+#    the feature landed, or the branch to push again from the workstation that
+#    parked it where it went by mistake (the independent review of #21,
+#    2026-09-11, recorded there as out of scope; verified against the
+#    extension on 2026-09-12). Read only where there is no worktree here,
+#    because RR4 comes first and calls a leg whose worktree is already at the
+#    path it computes recreated; read before 2, because RR2 comes before RR1;
+#    and READ AS OF THE LAST FETCH, because RR2's own test is a REF in that
+#    repository and this is the same ref. Which is why it is TWO readings and
+#    not one: after a fetch that worked here the ref is origin's answer and
+#    the finding is RR2's refusal with RR2's exits, while without one the
+#    commonest reason for a missing `origin/<branch>` is a feature parked
+#    elsewhere since this clone last fetched — `resume` fetches that branch
+#    itself and brings it back — so state 1's line keeps its exit and carries
+#    the other reading, and `status --fetch` is what settles them. THE
+#    WORKTREE THE TWO ENDS LOOK FOR IS NOT QUITE THE SAME WORKTREE:
+#    `worktree_on_branch` finds one on that branch ANYWHERE in the leg's
+#    repository, while `resume.sh`'s `leg_registered_at` matches the PATH it
+#    computes under the worktree root, so a worktree on the branch at some
+#    other path leaves this reading quiet where RR2 would still refuse (the
+#    independent review of this branch, 2026-09-12, note 4). Pre-existing —
+#    every arm here that asks "is there a worktree" asks it that way — and a
+#    reading of its own, recorded here and not taken.
+#    AND WHERE THE FETCH SETTLES IT THE REFUSAL IS THE FEATURE'S, made with
+#    the three below in `read_record`'s first pass and carried onto every leg
+#    of it: the paragraph under this one is what that means for the lines.
+#
+# 5, 6, 7 AND 8 ARE REFUSALS OF THE WHOLE FEATURE, SO NO LINE OF THAT FEATURE
+# NAMES `resume` (Copilot on #21, second round, 2026-09-11; 8 by the
+# independent review of this branch, 2026-09-12, which found that reading
+# PRINTED as a whole-feature refusal and not MADE one). A leg of such a
 # feature that is otherwise perfectly resumable — parked, pushed, no worktree
 # here — used to draw "`resume <Name>` brings it back" two lines under the
 # one that says `resume` refuses the whole feature, and a person reads the
 # REPORT, not one line of it: the two together name an exit that cannot work,
 # which is the rule at the top of `check_parked_leg`. `read_record`'s first
 # pass makes the verdict for every feature before any of its legs is read and
-# hands it down, so those lines say what `collect_legs` will do and end at
-# the one exit there is. Everything else a sibling can say — dirty, moved on,
+# hands it down, so those lines say what `resume` will do and end at the one
+# exit there is. 8 DIFFERS FROM THE OTHER THREE TWICE OVER: its exits are its
+# own, because a re-park settles 5, 6 and 7 and is the wrong thing to name for
+# a branch origin has lost — the feature may have LANDED — and it is a verdict
+# only UNDER `--fetch`, because without one the feature is not known to be
+# refused at all and state 1's line keeps its exit with the other reading
+# beside it. Everything else a sibling can say — dirty, moved on,
 # behind, a commit that is not here — is unchanged: it was never `resume`
 # that answered those.
 #
@@ -1674,6 +1798,11 @@ WORKSPACE_CONFIG="${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace.yaml"
 RECORD_FILE=""
 RECORD_NOTE=""
 RECORD_ID=""
+#: The `shape:` of the block being read, which `read_record` fills from
+#: `record_rows`'s project row and only the shape reading in
+#: `check_parked_leg` looks at. Declared here because `set -u` is on and a
+#: record with no project row leaves it as it was.
+RECORD_SHAPE=""
 NL=$'\n'
 
 # shellcheck disable=SC2088  # a literal leading ~ is what is matched here
@@ -1855,6 +1984,34 @@ locate_record() {
 # record's rows byte-identical; where a hand-edit moved the key, the row now
 # carries the keys AFTER it too, which is what the loader reads.
 #
+# AND THE PROJECT ROW CARRIES WHAT THE LOADER WOULD HAVE READ, WHICH MEANS
+# EMITTING IT WHERE THE BLOCK ENDS (Copilot's first round on #23): "the
+# project row is serialized when `features:` is encountered, but
+# `workspace_load_project` accepts the other project-level keys at the same
+# indent in any order. If a hand-edited or merged manifest places `shape:`
+# after the feature list … `RECORD_SHAPE` remains empty and the new
+# shape-disagreement diagnostic is silently omitted even though `resume` reads
+# the field." It holds for all five of them — the loader's indent-4 arm is one
+# `case` over `shape`, `root`, `parked_at`, `parked_on`, `parked_by_lane`,
+# `active_feature` and the rest, reached by INDENT and not by position. Run
+# against the extension on 2026-09-12 on a record whose `shape:`, `parked_at:`,
+# `parked_on:`, `parked_by_lane:` and `active_feature:` all sit BELOW its
+# feature list: `workspace_load_project` returned every one of them
+# (`MANIFEST_SHAPE=three-leg`, `MANIFEST_PARKED_AT=2026-09-10T20:00:00Z`,
+# `MANIFEST_PARKED_ON=Falcon`, the lane and the active feature), with the
+# feature and its leg intact — while this reader, emitting at `features:`,
+# read them as absent: the root's note line said "parked ? on ?", the
+# unmappable-role finding lost its "the record calls the project three-leg
+# where this checkout is single" clause, and its re-park exit said "the record
+# does not say where" about a record that says Falcon. So the row is built at
+# the FLUSH, from the values the whole block left behind, and `$has_features`
+# — set by the `features:` key and nothing else — is what decides whether
+# there is a row at all, exactly as the key did before. A block with no
+# `features:` key still emits none, and a record `park` wrote is byte for byte
+# the rows it always was: one block matches, `features:` is the last
+# project-level key in it, and the row goes out in front of the branch and leg
+# rows it sat in front of.
+#
 # AND THE SIXTH FIELD IS HOW `absent` IS TOLD FROM `empty`, which are two
 # states and not one: a bare `pushed:` is PRESENT and unreadable (note (d) of
 # the second independent review of #18), and no `pushed:` at all is the
@@ -1901,8 +2058,8 @@ record_scalar() {
 }
 
 record_rows() {
-    local file="$1" sel="$2" line matched=0 value open=0 named=0 held=""
-    local parked_at="" parked_on="" lane="" active="" branch="" role="" commit="" pushed="" depth="" seen=""
+    local file="$1" sel="$2" line matched=0 value open=0 named=0 held="" has_features=0
+    local parked_at="" parked_on="" lane="" active="" branch="" role="" commit="" pushed="" depth="" seen="" shape=""
     [ -f "$file" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
         line="${line%$'\r'}"
@@ -1958,23 +2115,26 @@ record_rows() {
         # sit in it.
         #
         # SO THE ROWS ARE HELD AND FLUSHED, NOT EMITTED AND HOPED FOR. Every
-        # arm below appends to `$held`, the buffer goes out whole as soon as
-        # the block is known to match — in the record's own order, which is
-        # the order it was appended in — and a block that never matches is
-        # dropped at the next `- id:`, which is the only line that starts
-        # another. THE EMITTED BYTES ARE UNCHANGED for every record `park`
-        # writes: `matched` is 1 at the `root:` line above `features:`, so
-        # each row is flushed on the line after the one that appended it, in
-        # the same order and with the same fields.
-        if [ "$matched" -eq 1 ]; then
-            [ -z "$held" ] || { printf '%s' "$held"; held=""; }
-        else
-            case "$line" in '  - id:'*) held="" ;; esac
-        fi
+        # arm below appends to `$held`, the buffer goes out whole where the
+        # block ENDS — in the record's own order, which is the order it was
+        # appended in — and a block that never matched is dropped there
+        # instead. THE EMITTED BYTES ARE UNCHANGED for every record `park`
+        # writes: one block matches, its rows go out in the order they were
+        # appended, with the same fields, and the caller reads this
+        # function's whole output in a `$(…)` either way.
         case "$line" in
         '  - id:'*)
+            # THE BLOCK ABOVE ENDS HERE. Its `project` row goes out in front
+            # of the rows it was gathered beside, which is where it has
+            # always been read — see the note above the row itself.
+            if [ "$matched" -eq 1 ]; then
+                [ "$has_features" -eq 0 ] ||
+                    printf 'project\037%s\037%s\037%s\037%s\037%s\n' "$parked_at" "$parked_on" "$lane" "$active" "$shape"
+                [ -z "$held" ] || printf '%s' "$held"
+            fi
+            held=""; has_features=0
             matched=0
-            parked_at=""; parked_on=""; lane=""; active=""; branch=""; role=""; open=0; named=0
+            parked_at=""; parked_on=""; lane=""; active=""; branch=""; role=""; open=0; named=0; shape=""
             value="$(record_scalar "${line#*:}")"
             case "$sel" in
             id=*) [ "$(lower "$value")" != "$(lower "${sel#id=}")" ] || matched=1 ;;
@@ -1986,13 +2146,23 @@ record_rows() {
             root=*) [ "$(lower "$value")" != "$(lower "${sel#root=}")" ] || matched=1 ;;
             esac
             ;;
+        # THE RECORD'S OWN `shape:`, which `workspace_write_manifest` writes for
+        # every project block it merges (its `PROJECT_KEYS`, second entry) and
+        # `workspace_load_project` loads as `MANIFEST_SHAPE`. IT DECIDES
+        # NOTHING AT EITHER END — `collect_legs` maps roles onto the shape of
+        # THIS CHECKOUT and never reads it — and `resume.sh` only prints it,
+        # in "was parked from a $MANIFEST_SHAPE project and this checkout is
+        # $REPO_SHAPE", which is the sentence the shape reading below
+        # explains. It is read here so that a disagreement between the two can
+        # be NAMED where it is relevant, and nowhere else: a record whose legs
+        # this checkout maps is a record this layer says nothing about,
+        # whatever its `shape:` says.
+        '    shape:'*) shape="$(record_scalar "${line#*:}")" ;;
         '    parked_at:'*) parked_at="$(record_scalar "${line#*:}")" ;;
         '    parked_on:'*) parked_on="$(record_scalar "${line#*:}")" ;;
         '    parked_by_lane:'*) lane="$(record_scalar "${line#*:}")" ;;
         '    active_feature:'*) active="$(record_scalar "${line#*:}")" ;;
-        '    features:'*)
-            held="$held$(printf 'project\037%s\037%s\037%s\037%s' "$parked_at" "$parked_on" "$lane" "$active")$NL"
-            ;;
+        '    features:'*) has_features=1 ;;
         '      - branch:'*)
             # A `- branch:` WITH NO VALUE IS STILL A FEATURE TO THE LOADER:
             # `workspace_load_project` appends `MANIFEST_FEATURE_BRANCHES`
@@ -2036,8 +2206,256 @@ record_rows() {
     if [ "$named" -eq 1 ] && [ "$open" -eq 1 ]; then
         held="$held$(printf 'leg\037%s\037%s\037%s\037%s\037%s\037%s' "$branch" "$role" "$commit" "$pushed" "$depth" "$seen")$NL"
     fi
-    [ "$matched" -eq 0 ] || printf '%s' "$held"
+    if [ "$matched" -eq 1 ]; then
+        [ "$has_features" -eq 0 ] ||
+            printf 'project\037%s\037%s\037%s\037%s\037%s\n' "$parked_at" "$parked_on" "$lane" "$active" "$shape"
+        [ -z "$held" ] || printf '%s' "$held"
+    fi
     return 0
+}
+
+# THIS CHECKOUT'S SHAPE, COMPUTED THE WAY `git-common.sh` COMPUTES IT, because
+# it is what `resume.sh` judges every recorded leg against and the one thing
+# this layer could not say (the feature-level follow-up's own note, 2026-09-11:
+# "a role this root DOES mount that `collect_legs` refuses anyway … Reading
+# that one means computing this root's shape the way `load_repo_shape` does …
+# which is a reading of its own and is recorded in this commit's message, not
+# taken here").
+#
+# THE RULE IS FOUR CONDITIONS AND EVERY ONE OF THEM IS A DECLARATION IN
+# `project.yaml`, read off `load_repo_shape` itself: the file is there, its
+# indent-zero `kind:` is `project-manifest`, its indent-zero `schema:` is
+# `project-repo-schema`, and its `legs:` list declares BOTH a `spec` LEG and a
+# `code` LEG. THE LEG, NOT ITS `path:` — the two are easy to conflate and the
+# difference is real: `_shape_record_leg` stores `"${path:-spec}"` and
+# `"${path:-code}"`, so a `- role: spec` with no `path:` at all still makes
+# `_SHAPE_LEG_SPEC_PATH` non-empty and still declares the leg, and the test
+# `load_repo_shape` then makes is on those two variables being non-empty (the
+# independent review of this branch's base, 2026-09-12, which found the rule
+# written down in this file as "a `spec` and a `code` leg path" — wrong on
+# both counts, and wrong in the direction that matters: it reads as though a
+# leg declared without one were no leg at all).
+# Anything short of the four is `single`: no manifest at all, another `kind:`,
+# no `schema:` line, one leg of the pair missing. A FAMILY HOLDER IS SINGLE
+# TOO, having no `project.yaml` — `load_repo_shape` says so out loud, "using
+# the single-repository layout" — and this suite's own Atlas fixture is single
+# with a `spec` leg mounted: `kind: project-manifest`, no `schema:` line,
+# `assembly` and `spec` legs and no `code` one.
+#
+# THE PARSER IS THAT PARSER, not `legs_of`'s. `legs_of` reads the same file for
+# another question and drops what this one needs — the `assembly` leg and the
+# `.` path — while `load_repo_shape` keys on INDENT: `#` and everything after
+# it comes off every line first, a `legs:` at indent zero opens the list, a
+# `- ` item at any indent sets the item's key column two past its own, keys at
+# that column belong to the item, an indent-zero line closes the list, and the
+# last item is closed by the end of the file. Both readers therefore agree
+# about a manifest with unusual indentation, which is the only kind where they
+# could differ at all.
+ROOT_SHAPE=single
+ROOT_SHAPE_WHY=""
+#: WHAT THE WALK BELOW FOUND, and the reason it is a walk of its own no
+#: longer: `_shape_record_leg`'s two jobs at every leg boundary. The flags are
+#: the two of the four conditions that live in the `legs:` list; the parallel
+#: arrays are every leg's ROLE and the `path:` the manifest gave it, in the
+#: file's order, which is what `leg_repo_for_role` reads back instead of
+#: scanning `project.yaml` a second time (the independent review of this
+#: branch, 2026-09-12: "ONE parser of project.yaml in this file, not two").
+#: Arrays and a linear scan, because bash 3.2 has no associative array and a
+#: manifest declares a handful of legs; globals because the closer is a
+#: function, and reset at the top of every walk because the next root is a
+#: different manifest.
+ROOT_LEG_ROLES=()
+ROOT_LEG_PATHS=()
+_SHAPE_SAW_SPEC=0
+_SHAPE_SAW_CODE=0
+_shape_close_leg() {
+    case "$1" in
+    spec) _SHAPE_SAW_SPEC=1 ;;
+    code) _SHAPE_SAW_CODE=1 ;;
+    esac
+    # A leg item with no `- role:` line is no leg at either end: `collect_legs`
+    # starts none for it, `_shape_record_leg`'s `case` matches nothing, and a
+    # nameless role is not one this reader could be asked about.
+    [ -n "$1" ] || return 0
+    ROOT_LEG_ROLES+=("$1")
+    ROOT_LEG_PATHS+=("$2")
+}
+read_root_shape() {
+    local root="$1" manifest raw content trimmed indent_ws indent key value rest
+    local kind="" schema="" in_legs=0 key_col=-1 cur_role="" cur_path="" missing=""
+    manifest="$root/project.yaml"
+    ROOT_SHAPE=single
+    ROOT_SHAPE_WHY="there is no \`project.yaml\` here"
+    ROOT_LEG_ROLES=()
+    ROOT_LEG_PATHS=()
+    _SHAPE_SAW_SPEC=0
+    _SHAPE_SAW_CODE=0
+    [ -f "$manifest" ] || return 0
+    while IFS= read -r raw || [ -n "$raw" ]; do
+        content="${raw%%#*}"
+        content="${content%$'\r'}"
+        trimmed="${content#"${content%%[![:space:]]*}"}"
+        trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+        [ -n "$trimmed" ] || continue
+        indent_ws="${content%%[![:space:]]*}"
+        indent=${#indent_ws}
+        if [ "$in_legs" -eq 1 ]; then
+            case "$trimmed" in
+            '- '* | '-')
+                if [ "$indent" -gt 0 ]; then
+                    _shape_close_leg "$cur_role" "$cur_path"
+                    cur_role=""
+                    cur_path=""
+                    key_col=$((indent + 2))
+                    rest="${trimmed#-}"
+                    rest="${rest#"${rest%%[![:space:]]*}"}"
+                    key="${rest%%:*}"
+                    if [ -n "$rest" ] && [ "$key" != "$rest" ]; then
+                        case "$key" in
+                        role) cur_role="$(trim_unquote "${rest#*:}")" ;;
+                        path) cur_path="$(trim_unquote "${rest#*:}")" ;;
+                        esac
+                    fi
+                    continue
+                fi
+                ;;
+            esac
+            if [ "$indent" -eq 0 ]; then
+                _shape_close_leg "$cur_role" "$cur_path"
+                cur_role=""
+                cur_path=""
+                in_legs=0
+            elif [ "$indent" -eq "$key_col" ]; then
+                key="${trimmed%%:*}"
+                if [ "$key" != "$trimmed" ]; then
+                    case "$key" in
+                    role) cur_role="$(trim_unquote "${trimmed#*:}")" ;;
+                    path) cur_path="$(trim_unquote "${trimmed#*:}")" ;;
+                    esac
+                fi
+                continue
+            else
+                continue
+            fi
+        fi
+        if [ "$indent" -eq 0 ]; then
+            key="${trimmed%%:*}"
+            [ "$key" != "$trimmed" ] || continue
+            value="$(trim_unquote "${trimmed#*:}")"
+            case "$key" in
+            kind) kind="$value" ;;
+            schema) schema="$value" ;;
+            legs) in_legs=1; key_col=-1 ;;
+            esac
+        fi
+    done <"$manifest"
+    _shape_close_leg "$cur_role" "$cur_path"
+    if [ "$kind" = project-manifest ] && [ "$schema" = project-repo-schema ] &&
+        [ "$_SHAPE_SAW_SPEC" -eq 1 ] && [ "$_SHAPE_SAW_CODE" -eq 1 ]; then
+        ROOT_SHAPE=three-leg
+        ROOT_SHAPE_WHY="its \`project.yaml\` declares both a \`spec\` and a \`code\` leg"
+        return 0
+    fi
+    # EVERY CONDITION THAT FAILED, not the first: a person who reads "no
+    # `schema:`" and adds one finds the checkout still single, because this
+    # fixture's manifest has no `code` leg either. `kind:` is its own clause
+    # because a file that is not a project manifest is not a project manifest
+    # with something missing.
+    ROOT_SHAPE=single
+    if [ "$kind" != project-manifest ]; then
+        ROOT_SHAPE_WHY="its \`project.yaml\` is not \`kind: project-manifest\`"
+        return 0
+    fi
+    [ "$schema" = project-repo-schema ] || missing="no \`schema: project-repo-schema\`"
+    [ "$_SHAPE_SAW_SPEC" -eq 1 ] || missing="${missing:+$missing, }no \`spec\` leg"
+    [ "$_SHAPE_SAW_CODE" -eq 1 ] || missing="${missing:+$missing, }no \`code\` leg"
+    case "$missing" in
+    *', '*) missing="${missing%, *} and ${missing##*, }" ;;
+    esac
+    ROOT_SHAPE_WHY="its \`project.yaml\` declares $missing"
+    return 0
+}
+
+# WHETHER `collect_legs` CAN MAP THIS ROLE ONTO THIS CHECKOUT, which is the
+# whole of its `case`: `spec` and `code` only where `REPO_SHAPE` is
+# `three-leg`, `repo` only where it is `single`, and `*) return 1` for every
+# other word — `assembly` included, which is a role the three-leg SHAPE has
+# and `resume` maps in neither shape, because the assembly root's own worktree
+# is the `repo` leg's. A role it cannot map takes the WHOLE feature with it.
+role_maps_here() {
+    case "$1" in
+    spec | code) [ "$ROOT_SHAPE" = three-leg ] ;;
+    repo) [ "$ROOT_SHAPE" = single ] ;;
+    *) return 1 ;;
+    esac
+}
+
+# The two clauses for a role `collect_legs` cannot map: the SHORT one, which
+# the feature's verdict carries onto every sibling leg's line, and the LONG
+# one, which is the culprit leg's own finding and says which shape this
+# checkout is and why. Both name the ROLE, because "shape mismatch" — all
+# `resume` says out loud — names neither the role nor anything else about it.
+role_shape_short() {
+    case "$1" in
+    spec | code | repo)
+        if [ "$ROOT_SHAPE" = single ]; then
+            printf "its \`%s\` leg names a role \`resume\` maps only onto a three-leg checkout, and this one is single" "$1"
+        else
+            printf "its \`%s\` leg names a role \`resume\` maps only onto a single checkout, and this one is three-leg" "$1"
+        fi
+        ;;
+    *) printf "its \`%s\` leg names a role \`resume\` maps onto no checkout of either shape" "$1" ;;
+    esac
+}
+role_shape_long() {
+    case "$1" in
+    spec | code | repo)
+        if [ "$ROOT_SHAPE" = single ]; then
+            printf "\`resume\` maps the role \`%s\` onto a three-leg checkout only, and this one is single (%s)" "$1" "$ROOT_SHAPE_WHY"
+        else
+            printf "\`resume\` maps the role \`%s\` onto a single checkout only, and this one is three-leg (%s)" "$1" "$ROOT_SHAPE_WHY"
+        fi
+        ;;
+    *) printf "\`resume\` maps the role \`%s\` onto no checkout of either shape — it knows \`spec\` and \`code\` in a three-leg project and \`repo\` in a single one — and this one is %s (%s)" "$1" "$ROOT_SHAPE" "$ROOT_SHAPE_WHY" ;;
+    esac
+}
+
+# AND THE EXITS ARE NOT THE SAME FOR THE TWO KINDS OF UNMAPPABLE ROLE, which
+# is what the one tail both arms below carried said (Copilot's first round on
+# #23): "for roles such as `assembly` or `docs`, `role_shape_long` correctly
+# says that `resume` maps the role onto no checkout of either shape, but this
+# common suffix still says the feature can come back in a checkout of the
+# other shape … contradicts the new help/README wording that a role of neither
+# shape has no resumable checkout." THE REMEDIATION IS NOT IMPOSSIBLE, which
+# is the half of that to disagree with: the tail's "that shape" is the
+# WORKSTATION's, named two clauses earlier, and a park from a three-leg
+# workstation writes `spec` and `code` — `park.sh`'s `build_legs` is
+# `LEG_ROLES=("spec" "code")` in a three-leg root and `("repo")` in a single
+# one, and it writes no other word in either — so the re-park does produce a
+# record some checkout resumes, and this suite's own end-to-end run of
+# `resume.sh` on a `code` leg brought the feature back, exit 0. WHAT IS
+# MISSING IS WHAT THE HELP AND THE README ALREADY SAY: "where the role is
+# really another shape's, only a checkout of that shape, and where it is
+# NEITHER shape's, no checkout at all". The tail said the first of those to
+# both kinds, so a person reading `assembly` was left to think some checkout
+# somewhere resumes this record as it stands, and none does: run against the
+# extension on 2026-09-12, `role: assembly` and `role: docs` in a real
+# three-leg root — both legs mounted, the four conditions met — answered
+# "Error: 001-a-thing was parked from a three-leg project and this checkout is
+# three-leg; that feature was NOT recreated", "REFUSED: 001-a-thing — shape
+# mismatch", exit 2, which is the same refusal both words draw in a single
+# root (the commit before this one, the same estates). Refused in BOTH shapes
+# is a record no checkout brings back, so the `*)` exit says that first and
+# then the one thing that changes it.
+role_shape_exits() {
+    case "$1" in
+    spec | code | repo)
+        printf "park that feature again from the workstation that has it (%s), which writes the roles its own shape has; where that shape is not this checkout's, the feature comes back in a checkout of that shape, not here" "$2"
+        ;;
+    *)
+        printf "nor does any other checkout, of either shape, so the one exit is to park that feature again from the workstation that has it (%s), which writes the roles its own shape has — \`park\` writes \`spec\` and \`code\` in a three-leg project and \`repo\` in a single one, and never this word — and the feature comes back in a checkout of that shape, which is this one only where the two agree" "$2"
+        ;;
+    esac
 }
 
 # The repository a leg role lives in: the root for `repo` and `assembly`, else
@@ -2060,61 +2478,76 @@ record_rows() {
 # line claims nor the exits it offers. Answering the default path returns that
 # state to the short line under it — the leg is not mounted here — which is
 # what this layer can prove.
+#
+# AND THE ANSWER IS `read_root_shape`'s WALK, NOT A SECOND SCAN OF THE SAME
+# FILE (the independent review of this branch, 2026-09-12, verbatim: "have
+# read_root_shape also record the two leg paths it walks past, and let
+# leg_repo_for_role consult those — ONE parser of project.yaml in this file,
+# not two"). What stood here read `project.yaml` again, by COLUMN — `'  - role:'*`
+# and `'    path:'*` — which is not how either loader reads it, and the two
+# answers came apart wherever the file was not indented the way this suite
+# indents it. TWO STATES PROVED IT, both of them manifests `load_repo_shape`
+# reads without blinking: a `legs:` list at FOUR spaces (`    - role: spec` /
+# `      path: docs`) matched neither pattern, so this function answered
+# NOTHING for `spec` and for `code` — and a root the shape reader above calls
+# three-leg then had every leg of every recorded feature refused as "a role
+# this root does not mount", a whole-feature refusal `resume` does not make;
+# and a `path:` under a column-0 `# note` inside the item, which the arm that
+# closed an item on `[![:space:]]*` threw away, leaving a declared `path: docs`
+# on the default `spec/` and the leg read against the wrong repository. Both
+# were fixed AT THIS END twice already — Copilot's two rounds on #22 taught
+# these values to lose a `#` the way `load_repo_shape` loses one, and taught
+# the closer that a full-line comment closes nothing — and the walk above had
+# both from the day it was written, because it is `load_repo_shape`'s own
+# parser: `#` and everything after it comes off every line first, an empty
+# line is skipped, a `- ` item at ANY indent opens a leg, and keys two past
+# its own belong to it. So the walk records each leg's role and `path:` as it
+# passes, and this function reads them back.
+#
+# WHERE A ROLE IS DECLARED TWICE THE LAST ONE WINS, which is
+# `_shape_record_leg` again — it assigns, it does not test for empty — and
+# where the last one gives no `path:` the arms below default it exactly as
+# that function's `${path:-spec}` does.
+#
+# AND `path: .` IS A PATH LIKE ANY OTHER — THE ROOT (Copilot's first round on
+# #23): "a declared `spec` or `code` leg with `path: "."` is mapped to the
+# root repository. Status will instead inspect `$root/spec` or `$root/code`
+# (or report it missing), so its worktree/origin findings disagree with
+# `resume`." `_shape_record_leg` stores `"${path:-spec}"`, and `.` is not
+# empty, so `load_repo_shape` keeps it and builds `SPEC_LEG`/`CODE_LEG` as
+# `$root/$SHAPE_*_PATH` — `$root/.`, which `collect_legs` hands straight to
+# `LEG_REPOS`. Run against the extension on 2026-09-12 on a manifest whose
+# `code` leg carries `path: "."`, `path: .` and `path: '.'` in turn:
+# `REPO_SHAPE=three-leg`, `SHAPE_CODE_PATH=.`, `CODE_LEG=<root>/.` in all
+# three, and an EMPTY `path:` the only spelling that falls to the default
+# `code`. End to end on a scratch estate the same day, that manifest and a
+# record parking a `code` leg: `resume.sh` RESUMED it out of the root —
+# "code  worktrees/001-a-thing/.  <sha>  clean", exit 0, the worktree
+# registered in the ROOT's `git worktree list` — while this reader skipped
+# the declared `.`, found no `code/`, answered the default `$root/code` and
+# drew "the record names a leg this root does not mount here", a whole-feature
+# refusal `resume` does not make. So the declared path is taken whatever it
+# says, and `.` is answered as `$root` rather than as `$root/.`: they are one
+# directory, and `$root` is the spelling `estate_repos` uses, which is what
+# `fetched_ok_at` keys the run's fetches by.
 leg_repo_for_role() {
-    local root="$1" want="$2" line role="" path="" declared=0
+    local root="$1" want="$2" i=0 path="" declared=0
     case "$want" in
     repo | assembly) printf '%s\n' "$root"; return 0 ;;
     esac
-    if [ -f "$root/project.yaml" ]; then
-        while IFS= read -r line || [ -n "$line" ]; do
-            line="${line%$'\r'}"
-            case "$line" in
-            # `load_repo_shape` takes `#` and everything after it off EVERY
-            # line of `project.yaml` before it reads a key (`git-common.sh`,
-            # `content="${raw%%#*}"`), so `- role: spec # the spec leg` is
-            # `spec` there and its `path: spec # here` is `spec`. Read whole
-            # here, the role never matched and the leg fell to the arm that
-            # calls it a role this root cannot mount and `resume` refuses —
-            # a refusal `resume` would not make (Copilot on #22). The same
-            # cut `record_rows` makes, for the same reason.
-            '  - role:'*)
-                role="$(record_scalar "${line#*:}")"; path=""
-                [ "$role" != "$want" ] || declared=1
-                ;;
-            '    path:'*)
-                path="$(record_scalar "${line#*:}")"
-                if [ "$role" = "$want" ] && [ -n "$path" ] && [ "$path" != "." ]; then
-                    printf '%s\n' "$root/$path"
-                    return 0
-                fi
-                ;;
-            # AND A FULL-LINE `#` COMMENT AT COLUMN 0 IS NO KEY EITHER, which
-            # the arm below read as one (Copilot's second round on #22). The
-            # round before taught these values to lose a `#` the way
-            # `load_repo_shape` loses one; the LINE was still read whole, so a
-            # `# note` a hand left at column 0 inside the legs list matched
-            # `[![:space:]]*` and closed the item — and a `path:` under it
-            # went to no role, leaving `spec` and `code` on
-            # `_shape_record_leg`'s default, the role's own name, and every
-            # other role with nothing. `load_repo_shape` takes `#` and
-            # everything after it off every line before it reads one and
-            # SKIPS what is left when it is empty (`[ -n "$trimmed" ] ||
-            # continue`), so that line closes nothing there and the `path:`
-            # below it still belongs to the leg above: run against the
-            # extension on 2026-09-12, a `- role: code` whose `path: spec`
-            # sits under such a comment loaded as `_SHAPE_LEG_CODE_PATH=spec`
-            # and `CODE_LEG=<root>/spec`, where this reader answered
-            # `<root>/code` and the leg drew "the record names a leg this root
-            # does not mount here" for a leg `resume` mounts and resumes. The
-            # same cut `record_rows` was given for the same line in #20
-            # (a2c8521, "a full-line `#` comment at column 0 inside a leg is
-            # no leg-ender"), for the same reason. An INDENTED comment needed
-            # no arm at either end: it matches no key here and trims to
-            # nothing there.
-            '#'*) ;;
-            [![:space:]]*) role="" ;;
-            esac
-        done <"$root/project.yaml"
+    while [ "$i" -lt "${#ROOT_LEG_ROLES[@]}" ]; do
+        if [ "${ROOT_LEG_ROLES[$i]}" = "$want" ]; then
+            declared=1
+            path="${ROOT_LEG_PATHS[$i]}"
+        fi
+        i=$((i + 1))
+    done
+    if [ -n "$path" ]; then
+        case "$path" in
+        .) printf '%s\n' "$root" ;;
+        *) printf '%s\n' "$root/$path" ;;
+        esac
+        return 0
     fi
     if [ -d "$root/$want" ]; then
         printf '%s\n' "$root/$want"
@@ -2240,6 +2673,95 @@ wip_gap_is_ours() {
     return 0
 }
 
+# A WORKTREE ON `<branch>` IN `<repo>`, COUNTED AS `check_parked_leg` COUNTS
+# ONE: `worktree_on_branch`'s rc 0 and no other. Its 2 and 3 are the stale
+# registrations, which are not worktrees at all — `resume` is BLOCKED by one,
+# never satisfied by it — and its 1 is nothing found. Written as a test of its
+# own because the first pass asks the same question a leg row ahead of the
+# arms below, and the two must count the same thing.
+worktree_here() { worktree_on_branch "$1" "$2" >/dev/null; }
+
+# RR2's TWO EXITS, WORDED ONCE, because the verdict they belong to is the
+# FEATURE's and they are said twice: on the culprit leg's own line and on
+# every sibling's. They are not one exit, and neither of them is the re-park
+# every other exception in this layer ends in — a feature that LANDED is a
+# record entry to delete, a branch deleted by mistake is a branch to push
+# again from where it was parked.
+origin_gone_exits() {
+    printf "the exits are to delete its \`- branch: %s\` block from the record where the feature landed, or to push the branch again from %s where it went by mistake" "$1" "${2:-the workstation that parked it}"
+}
+
+# THE FOUR WAYS RR6 REFUSES, WORDED FOR A LEG THAT IS NOT THE CULPRIT, which
+# is why the leg is named: this clause is printed on a SIBLING's line, where
+# "that leg" would have no antecedent. `resume.sh`'s RR6 is `[ "$pushed" !=
+# true ]` and its own three-armed message is the words `check_parked_leg`'s
+# `$unread` carries for the culprit; these are the same four states said about
+# somebody else's leg. `true` never reaches here — the caller tests it first —
+# and the empty value is two states, told apart by the record's own `$seen`
+# the way that function tells them apart.
+pushed_verdict() {
+    case "$2" in
+    false) printf "its \`%s\` leg was parked with --no-push" "$1" ;;
+    '')
+        if [ -z "$3" ]; then
+            printf "the record has no \`pushed:\` for its \`%s\` leg" "$1"
+        else
+            printf "its \`%s\` leg's \`pushed:\` has no value, which is neither true nor false" "$1"
+        fi
+        ;;
+    *) printf "its \`%s\` leg's \`pushed:\` says '%s', which is neither true nor false" "$1" "$2" ;;
+    esac
+}
+
+# WHETHER RR1 WILL REFUSE THIS LEG AS MOVED ON, asked of the record's absent
+# `parked_commit:` alone — the one reading of RR1 this layer already makes,
+# per leg, in the arm below. `resume.sh`'s RR1 is `[ "$remote_tip" !=
+# "$parked_commit" ]` and an absent parked commit never equals a tip, so the
+# leg is refused wherever origin's tip is. The two conditions under it are the
+# two RRs in front of RR1 that this layer can answer: a leg whose repository
+# is not a checkout here is none of RR1's business — `resume` refuses the
+# whole ESTATE for that, before it reads a feature — and a leg with a worktree
+# on the branch here is RR4's, which calls it already recreated. RR2 is not
+# tested here: the caller asks it first, in `resume.sh`'s order.
+moved_on_leg() {
+    local root="$1" role="$2" branch="$3" commit="$4" repo
+    [ -z "$commit" ] || return 1
+    repo="$(leg_repo_for_role "$root" "$role" 2>/dev/null || true)"
+    [ -n "$repo" ] || return 1
+    [ -e "$repo/.git" ] || return 1
+    if worktree_here "$repo" "$branch"; then
+        return 1
+    fi
+    return 0
+}
+
+# WHETHER RR2 WILL REFUSE THIS LEG, asked a leg row ahead of the arms below
+# because the answer is the FEATURE's: `read_record`'s first pass asks it of
+# every leg, and `check_parked_leg` asks the same three things again of the
+# leg it has in front of it, where a repository, a worktree and a stale
+# registration are already in hand. THE THREE ARE `resume.sh`'s OWN ORDER:
+# RR4 comes first and calls a leg whose worktree is already there recreated,
+# so a leg with one is not RR2's; the fetch must have WORKED in that leg's
+# repository this run, because without one a missing `origin/<branch>` has a
+# second and commoner reading; and then the ref itself, which is what RR2
+# reads and refuses the whole feature on. A leg whose repository is not a
+# checkout here is none of RR2's business either — `resume` refuses the whole
+# ESTATE for that, before it reads a feature.
+origin_lost_leg() {
+    local root="$1" role="$2" branch="$3" repo
+    repo="$(leg_repo_for_role "$root" "$role" 2>/dev/null || true)"
+    [ -n "$repo" ] || return 1
+    [ -e "$repo/.git" ] || return 1
+    fetched_ok_at "$repo" || return 1
+    if has_ref "$repo" "refs/remotes/origin/$branch"; then
+        return 1
+    fi
+    if worktree_here "$repo" "$branch"; then
+        return 1
+    fi
+    return 0
+}
+
 # One recorded leg against disk: the four states above, read in the leg's own
 # repository. `$9` is `record_rows`'s sixth field — the word `pushed` where
 # the record carried that key for this leg, empty where it did not — and it
@@ -2249,9 +2771,16 @@ check_parked_leg() {
     local root="$1" branch="$2" role="$3" commit="$4" pushed="$5" parked_at="$6" parked_on="$7" depth="$8" seen="$9"
     # `${10}` and not a tenth name in the line above, because that line is
     # already the widest in this file; `:-` because `set -u` is on and the
-    # verdict is the one argument a caller may leave off.
-    local refused="${10:-}"
+    # verdict is the one argument a caller may leave off. `${11}` says WHICH
+    # refusal that verdict is — empty for the ones `collect_legs` makes
+    # before any RR runs, and `gone`, `pushed` or `moved` for the RR that
+    # refuses first in the record's order — because they differ in both
+    # directions: RR2's exits are its own, and the leg RR2 refuses for still
+    # says so in RR2's words, where a leg `collect_legs` throws out has said
+    # everything it has to say on the line above this one.
+    local refused="${10:-}" refused_kind="${11:-}"
     local repo tree="" ghost="" ghost_is="" clear="" out rc=0 tip n unread="" refuses="" where=""
+    local gone_exits="" gone_caveat="" shape_line="" shape_says="" settles="" exits=""
     # A LEG THE RECORD GIVES NO ROLE IS ANSWERED BEFORE THE ROOT IS ASKED
     # ABOUT IT, and it is not the arm below (the independent review of #20,
     # 2026-09-11, note 8, recorded there as out of scope). `record_rows` used
@@ -2348,7 +2877,11 @@ check_parked_leg() {
     # is what settles a misspelling; where the role really is another
     # shape's, the record is right and this checkout is not where that
     # feature comes back, so the line says so rather than promising that a
-    # re-park will make this root mount it.
+    # re-park will make this root mount it. It is `role_shape_exits` that
+    # words it, because a role of NEITHER shape needs the other half of what
+    # the help and the README say and this arm reaches those words too — a
+    # `spec` or a `code` this manifest declares no leg for is another shape's
+    # role, and any other word that matches no directory here is neither's.
     #
     # WHAT THIS ARM DOES NOT SEE, and what is therefore still unsaid: a role
     # this root DOES mount that `collect_legs` refuses anyway — `assembly`,
@@ -2366,8 +2899,87 @@ check_parked_leg() {
     if [ -z "$repo" ]; then
         where="the record does not say where"
         [ -z "$parked_on" ] || where="the record says $parked_on"
-        finding "parked feature $branch ($role leg): the record names a leg this root does not mount here; \`resume\` maps each leg's role onto this checkout and refuses the WHOLE feature — the other legs with it — where one does not map, reporting it as a shape mismatch, so nothing here brings it back — park that feature again from the workstation that has it ($where), which writes the roles its own shape has; where that shape is not this checkout's, the feature comes back in a checkout of that shape, not here"
+        finding "parked feature $branch ($role leg): the record names a leg this root does not mount here; \`resume\` maps each leg's role onto this checkout and refuses the WHOLE feature — the other legs with it — where one does not map, reporting it as a shape mismatch, so nothing here brings it back — $(role_shape_exits "$role" "$where")"
         return 0
+    fi
+    # AND A ROLE THIS ROOT MOUNTS THAT `collect_legs` REFUSES ANYWAY IS THE
+    # STATE THE ARM ABOVE CANNOT SEE, which is what that arm's own note
+    # recorded and left (the feature-level follow-up, 2026-09-11): "a role
+    # this root DOES mount that `collect_legs` refuses anyway — `assembly`,
+    # or `spec` in a root whose `project.yaml` declares no `code` leg, which
+    # `load_repo_shape` therefore calls `single` — for which
+    # `leg_repo_for_role` hands back a repository, so the leg is read against
+    # disk and nothing here mentions the refusal". `read_root_shape` computes
+    # the shape `collect_legs` maps against, so the question can be asked now,
+    # and it is asked of EVERY leg: `spec` and `code` map only onto a
+    # three-leg checkout, `repo` only onto a single one, and every other word
+    # maps onto neither — `assembly`, a role the three-leg shape HAS, and any
+    # word that merely matches a directory under the root, which
+    # `leg_repo_for_role`'s last case answers by folder name. Run against the
+    # extension on 2026-09-12, on scratch estates shaped like this suite's own
+    # fixtures: `role: assembly` and `role: spec` in a single root that mounts
+    # an `assembly` leg at `.` and a `spec` leg at `spec/` both answered
+    # "Error: 001-a-thing was parked from a three-leg project and this
+    # checkout is single; that feature was NOT recreated", "REFUSED:
+    # 001-a-thing — shape mismatch", exit 2; `role: repo` in a real three-leg
+    # root — `kind: project-manifest`, `schema: project-repo-schema`, both
+    # legs mounted — answered the same with "and this checkout is three-leg",
+    # which is ONE PROJECT CHECKED OUT AT TWO SHAPES and the commonest way
+    # into this state; and `role: spec` in that root RESUMED.
+    #
+    # WHAT IS WORTH SAYING ABOUT A SHAPE MISMATCH IS THE SHAPE, which is
+    # exactly what `resume` does not say: its sentence names the record's
+    # `shape:` and this checkout's and stops — no role, and where the record
+    # agrees it contradicts itself, "parked from a single project and this
+    # checkout is single". So this line names the ROLE, the shape this
+    # checkout is AND WHY it is that shape in `load_repo_shape`'s own terms,
+    # and then the refusal and the exits the two arms above already word. THE
+    # RECORD'S OWN `shape:` IS HELD AGAINST IT AND NOT JUDGED: a record that
+    # calls the project three-leg where this checkout is single is either a
+    # record from a workstation whose checkout is the three-leg one, or a
+    # record written before this project's shape changed, and nothing in
+    # either file says which — so the disagreement is named and the exit is
+    # the one that is right under both readings.
+    #
+    # IT IS SAID BEFORE THE MOUNT ARM BELOW, which is the same disk read more
+    # narrowly. A leg this root mounts that is NOT A CHECKOUT wants `make
+    # bootstrap` — true, and beside the point where `collect_legs` refuses the
+    # whole feature whatever that directory holds, because it maps roles by
+    # NAME onto paths `load_repo_shape` computed and never looks at them.
+    # Where the shape DOES map the role that arm keeps its sentence, and its
+    # silence about any refusal, untouched: in a genuinely three-leg root an
+    # unfetched `spec/` is not a shape mismatch at all — `resume.sh` refuses
+    # the whole ESTATE before it reads a feature, "the spec leg 'spec' is not
+    # an initialised Git checkout … Run 'git submodule update --init' (or
+    # 'make bootstrap')", exit 1 — which is that arm's own advice and none of
+    # this arm's business.
+    if ! role_maps_here "$role"; then
+        where="the record does not say where"
+        [ -z "$parked_on" ] || where="the record says $parked_on"
+        if [ -n "$RECORD_SHAPE" ] && [ "$RECORD_SHAPE" != "$ROOT_SHAPE" ]; then
+            shape_says="; the record calls the project $RECORD_SHAPE where this checkout is $ROOT_SHAPE, which is the disagreement \`resume\` reports and not one this layer can settle"
+        fi
+        # AND THE DISAGREEMENT CLAUSE GOES LAST, BECAUSE THE EXIT'S FIRST
+        # WORD LEANS ON THE CLAUSE BEFORE IT (the independent verification of
+        # this branch, 2026-09-12). `role_shape_exits`'s `*)` arm opens "nor
+        # does any other checkout, of either shape", which answers "nothing
+        # here brings it back" — and with the disagreement spliced between the
+        # two the line read "… not one this layer can settle — nor does any
+        # other checkout", where the "nor" has nothing left to deny. Both
+        # halves are true in either order, and only one of them is an
+        # antecedent, so the antecedent keeps its place: the shape the record
+        # names and the shape this checkout is follow "which is this one only
+        # where the two agree", which is the clause they are about.
+        shape_line="parked feature $branch ($role leg): $(role_shape_long "$role"), so it refuses the WHOLE feature — the other legs with it — reporting it as a shape mismatch, and nothing here brings it back — $(role_shape_exits "$role" "$where")$shape_says"
+        # SAID HERE FOR A LEG THAT IS NOT A CHECKOUT, because the arm below
+        # would say the smaller thing instead and there is nothing left to
+        # read in a directory with no `.git` in it; said after the worktree
+        # probe for every other leg, where what is left to read decides what
+        # follows it.
+        if [ ! -e "$repo/.git" ]; then
+            finding "$shape_line"
+            return 0
+        fi
     fi
     if [ ! -e "$repo/.git" ]; then
         finding "parked feature $branch ($role leg): the record names a leg this root does not mount here"
@@ -2396,6 +3008,22 @@ check_parked_leg() {
     if [ -n "$ghost" ] && [ -d "$ghost" ]; then
         ghost_is="$ghost_is, whose directory is still on disk and is no longer a worktree"
         clear="$clear and a move of that directory aside (\`git worktree add\` refuses a path that \"already exists\")"
+    fi
+    # THE SHAPE REFUSAL IS SAID ONCE, AND WHAT IS LEFT TO READ DECIDES
+    # WHETHER ANYTHING FOLLOWS IT. With a worktree here the arms below are
+    # about THIS workstation's own work — moved on, behind, diverged, a parked
+    # commit that is not here — and they are true whatever `collect_legs` does
+    # with the feature, so they run and the line above sits in front of them.
+    # With NO worktree here they are the arms that answer "what would `resume`
+    # do", and the line above has answered it: the feature's verdict below
+    # would say the same thing in shorter words, the `--no-push` and `pushed:`
+    # arms would name a refusal that never runs because `collect_legs` refuses
+    # first, and a `worktree prune` cannot make `resume` recreate a feature it
+    # throws out. So the leg ends here, as it does for the two arms above that
+    # read the record's roles.
+    if [ -n "$shape_line" ]; then
+        finding "$shape_line"
+        [ -n "$tree" ] || return 0
     fi
     # A STALE REGISTRATION IS NAMED BEFORE THE EXIT IT BLOCKS, and what
     # clears it before that, because this layer reads the record THE WAY
@@ -2547,6 +3175,142 @@ check_parked_leg() {
     if [ -n "$unread" ]; then
         finding "parked feature $branch ($role leg): $unread, so whether its parked commit ever left ${parked_on:-that workstation} cannot be read; $refuses, so park it again from there to write the record afresh"
     fi
+    # A BRANCH ORIGIN HAS LOST IS A RECORD `resume` REFUSES BEFORE IT COMPARES
+    # ANY COMMIT, and this layer never asked (the independent review of #21,
+    # 2026-09-11, recorded there as out of scope). Every arm below reads the
+    # leg against ITS OWN history — the branch tip here, the parked commit
+    # here — and the arm that names `resume` promised it for any leg with no
+    # worktree. `resume.sh` reads origin between RR3 and RR1: its RR2 refuses
+    # the WHOLE feature where the leg's repository has no
+    # `refs/remotes/origin/<branch>`, in words and with exits of its own.
+    #
+    # WHAT RR2 TESTS IS A REF IN THAT REPOSITORY, NOT A QUESTION TO ORIGIN,
+    # which is why the test here is `has_ref` and nothing new: RR2 fetches
+    # `+refs/heads/<branch>:refs/remotes/origin/<branch>` in the leg's
+    # repository first — quietly, `|| true`, and not at all under
+    # `--dry-run` — and then reads that ref, refusing on the empty string. So
+    # the question is the one the local layer already asks of a tracking
+    # branch, `has_ref "$repo" "refs/remotes/origin/$branch"`, AS OF THE LAST
+    # FETCH. Run on 2026-09-12 against a scratch single-shape estate — a bare
+    # remote in a temp dir, a fake `$HOME`, the extension's own scripts at
+    # workBenches' main — with the branch deleted in the bare and pruned here,
+    # the extension answered "Error: 001-a-thing is no longer on origin in the
+    # repo leg; that feature was NOT recreated. / The manifest recorded it at
+    # <sha>, parked <at> on Falcon. / If the feature landed, delete its entry:
+    # / <workspace>/workspaces/<org>/atlas.yaml  ->  remove the `- branch:
+    # 001-a-thing` block / If it was deleted by mistake, push it again from
+    # the workstation that parked it.", "REFUSED: 001-a-thing — gone from
+    # origin", exit 2. BOTH of those exits are in the line below, because they
+    # are not one: a feature that LANDED is a record entry to delete, a branch
+    # deleted by mistake is a branch to push again, and neither is a `resume`.
+    #
+    # AND A STALE `origin/<branch>` READS AS PRESENT AT BOTH ENDS, which is
+    # the other half of reading the ref rather than origin: a branch deleted
+    # on origin and never pruned here still has its remote-tracking ref, and
+    # RR2's own fetch neither creates nor deletes one — it carries no
+    # `--prune`, and a fetch of a branch origin has not got fails and is
+    # ignored — so RR2 sees the stale ref and passes. Verified the same day on
+    # the same estate: with the ref put back by hand the extension RESUMED the
+    # feature. This layer therefore claims exactly what the ref says.
+    #
+    # WHERE IT SITS IS `resume.sh`'s OWN ORDER. After the `pushed:` arms,
+    # because RR6 is first and refuses those legs before origin is read at
+    # all. Only where there is NO WORKTREE here, because RR4 is next and calls
+    # a leg whose worktree is already at the path it computes recreated —
+    # "[specify] 001-a-thing (repo): worktree already registered at …; left as
+    # it is", exit 0, verified the same day with the branch gone from origin —
+    # so a worktree here is not a leg RR2 judges, and the tip arms below go on
+    # saying exactly what they said. Never for a feature `collect_legs`
+    # refuses WHOLE, whose verdict is made before any RR runs and is the arm
+    # below's to say. And before the absent-parked-commit arm, because RR2 is
+    # before RR1: with no parked commit AND the branch gone, that same estate
+    # answered RR2's refusal and not "has moved since it was parked".
+    #
+    # WITHOUT A FETCH THIS RUN THE PROMISE IS KEPT AND CAVEATED, NOT WITHDRAWN
+    # — `no_origin_branch_finding`'s rule in the one place where the missing
+    # ref is USUALLY BENIGN. A recorded feature this workstation has not
+    # resumed was parked somewhere else, and a branch pushed there after this
+    # clone's last fetch has no `origin/<branch>` here for the most ordinary
+    # reason there is; RR2's own fetch then finds it and the feature comes
+    # back. Refusing to say `resume <Name>` there would withdraw the exit that
+    # works from the commonest state this layer reports, and saying "origin
+    # has not got it" would be inventing a refusal — so the line keeps its
+    # exit and names the other reading with the one command that settles it.
+    # AFTER A FETCH THAT WORKED IN THIS REPOSITORY there is nothing left to
+    # settle: origin has not got the branch, RR2 will refuse the feature, and
+    # the line says so and gives RR2's two exits instead of `resume`.
+    # `fetched_ok_at` is the pre-pass's answer for THIS repository, root or
+    # leg, as the missing-commit arms below use it.
+    # AND WHERE THE FETCH SETTLED IT THE REFUSAL IS THE FEATURE'S, WHICH IS
+    # WHAT THIS ARM PRINTED AND DID NOT MAKE (the independent review of this
+    # branch, 2026-09-12, its blocker). The line said `resume` refuses the
+    # WHOLE feature and the verdict machinery below knew nothing about it, so
+    # a sibling leg of that same feature — pushed, parked, its own branch
+    # still on origin — went on drawing "`resume <Name>` brings it back" two
+    # lines under it: the report as a whole then named an exit that cannot
+    # work, which is the one thing the rule above forbids. The question is
+    # asked of every leg in `read_record`'s first pass now, beside the two
+    # `collect_legs` asks, and the answer comes back as `$refused` with
+    # `$refused_kind` set to `gone`. So this arm runs for a leg of a feature
+    # already refused FOR THIS READING — the culprit says it in RR2's own
+    # words, and a second leg origin has also lost says it for itself, which
+    # is how the shape arm above treats two unmappable roles — and stays
+    # silent for a feature `collect_legs` throws out first, whose verdict is
+    # made before any RR runs and is the arm below's to say — and silent,
+    # too, for a feature an EARLIER LEG refuses at RR6 or RR1, whose verdict
+    # arrives here as a kind that is not `gone` (Copilot's third round on
+    # #23). `resume.sh` breaks at the first refusing leg in the record's
+    # order, so where one of those comes first origin is never read for this
+    # feature at all, and a line claiming it — with RR2's exits, which say to
+    # delete the record's entry — would be this layer inventing the refusal
+    # the round before it stopped inventing.
+    if [ -z "$tree" ] && { [ -z "$refused" ] || [ "$refused_kind" = gone ]; } &&
+        ! has_ref "$repo" "refs/remotes/origin/$branch"; then
+        if fetched_ok_at "$repo"; then
+            gone_exits="$(origin_gone_exits "$branch" "$parked_on")"
+            if [ -n "$ghost" ]; then
+                finding "parked feature $branch ($role leg): no worktree on that branch here, but $ghost_is — clear it with $clear; and no \`origin/$branch\` here after this run's fetch, so origin has not got that branch and \`resume\` refuses the WHOLE feature for it, \"$branch is no longer on origin in the $role leg\" — nothing here brings it back: $gone_exits"
+            else
+                finding "parked feature $branch ($role leg): no worktree on that branch here, parked ${parked_at:-?} on ${parked_on:-?}, and no \`origin/$branch\` here after this run's fetch: origin has not got that branch, so \`resume\` refuses the WHOLE feature for it, \"$branch is no longer on origin in the $role leg\", and nothing here brings it back — $gone_exits"
+            fi
+            return 0
+        fi
+        # AND A FETCH THAT FAILED HERE SETTLED NOTHING, so the caveat does not
+        # send the person to the flag they have just run (the same review,
+        # S1). `fetched_ok_at` is false for FOUR different runs — one without
+        # the flag, one whose fetch in THIS repository failed, one whose fetch
+        # never ran there because the repository has no `origin` remote or
+        # could not be read at all, and one that never fetched there at all —
+        # and only the first and the last are answered by `status --fetch`.
+        # The middle two are answered by the row above, which has already
+        # printed why nothing was fetched there and that what follows is as of
+        # the last fetch that worked; this clause says that the reading below
+        # is one of those things, IN THE WORDS OF WHAT ACTUALLY HAPPENED
+        # (Copilot's second round on #23): the first version of it read the
+        # presence of the store's entry and called all three of them a fetch
+        # that failed, which for the two that never ran is a claim about this
+        # run that the row two lines above contradicts.
+        if [ -z "$refused" ]; then
+            case "$(fetch_state_at "$repo")" in
+            failed) settles="the fetch this run made there failed, so nothing has settled it" ;;
+            no-remote) settles="that repository has no \`origin\` remote for this run's fetch to have asked, so nothing has settled it" ;;
+            unreadable) settles="that repository could not be read this run, so no fetch was made there and nothing has settled it" ;;
+            # AND A REPOSITORY THIS RUN'S FETCH NEVER LISTED IS NOT ONE THE
+            # FLAG WILL SETTLE (Copilot's third round on #23): the pre-pass
+            # fetches what `estate_repos` lists — the root and the legs
+            # `.gitmodules` declares — while this layer reads the path
+            # `project.yaml` gives the role, and a leg mounted somewhere else
+            # is fetched by no rerun of the flag. So the line says what this
+            # run did rather than naming the flag the person is holding.
+            unlisted) settles="this run's fetch did not reach that repository: it fetches the root and the legs \`.gitmodules\` declares, and \`project.yaml\` maps this role onto a path that is not one of them, so nothing has settled it" ;;
+            # `ok` cannot reach here — `fetched_ok_at` answered it above and
+            # returned — so what is left is `none`, which is every repository
+            # of a run made without the flag.
+            *) settles="\`status --fetch\` settles which" ;;
+            esac
+            gone_caveat=", unless origin has lost that branch: there is no \`origin/$branch\` here as of the last fetch, and \`resume\` refuses a leg whose branch is not on origin, taking the WHOLE feature with it (\"$branch is no longer on origin in the $role leg\") — $settles"
+        fi
+    fi
     # THE RECORD'S `parked_commit:` HAS TWO READINGS, PRESENT AND ABSENT, and
     # the second was read as neither (the independent review of #20,
     # 2026-09-11, note 7, recorded there as out of scope). `park.sh` records
@@ -2636,19 +3400,40 @@ check_parked_leg() {
     # yet: the record's order is the loader's, not the reader's convenience.
     if [ -z "$tree" ]; then
         if [ -n "$refused" ]; then
-            where="the record does not say where"
-            [ -z "$parked_on" ] || where="the record says $parked_on"
+            # THE EXIT IS THE VERDICT'S, NOT THE ARM'S. A re-park is what
+            # settles every refusal `collect_legs` makes — a misspelt role, a
+            # role of another shape, a feature with no legs — and it is the
+            # wrong thing to name for a branch origin has lost: the feature
+            # may have LANDED, and a park from the workstation that still has
+            # the worktree would push it back. So the gone verdict carries
+            # RR2's own two exits onto the sibling's line, in the words the
+            # culprit leg's line uses. RR6 and RR1 are the re-park again —
+            # the record is what is wrong, and only a park that parks the
+            # feature THROUGH writes it afresh: with the push RR6 wants, and
+            # with the commit RR1 matches against origin's tip — so those two
+            # say it in the words their own culprit lines end in.
+            case "$refused_kind" in
+            gone) exits="$(origin_gone_exits "$branch" "$parked_on")" ;;
+            pushed | moved)
+                exits="park that feature again from ${parked_on:-the workstation that has it}, which writes the record afresh"
+                ;;
+            *)
+                where="the record does not say where"
+                [ -z "$parked_on" ] || where="the record says $parked_on"
+                exits="park that feature again from the workstation that has it ($where)"
+                ;;
+            esac
             if [ -n "$ghost" ]; then
-                finding "parked feature $branch ($role leg): no worktree on that branch here, but $ghost_is — clear it with $clear; and \`resume\` refuses the WHOLE feature in any case, because $refused, so it does not bring this leg back either — park that feature again from the workstation that has it ($where)"
+                finding "parked feature $branch ($role leg): no worktree on that branch here, but $ghost_is — clear it with $clear; and \`resume\` refuses the WHOLE feature in any case, because $refused, so it does not bring this leg back either — $exits"
             else
-                finding "parked feature $branch ($role leg): no worktree on that branch here, parked ${parked_at:-?} on ${parked_on:-?}; \`resume\` refuses the WHOLE feature, because $refused, so it does not bring this leg back — park that feature again from the workstation that has it ($where)"
+                finding "parked feature $branch ($role leg): no worktree on that branch here, parked ${parked_at:-?} on ${parked_on:-?}; \`resume\` refuses the WHOLE feature, because $refused, so it does not bring this leg back — $exits"
             fi
             return 0
         fi
         if [ -n "$ghost" ]; then
-            finding "parked feature $branch ($role leg): no worktree on that branch here, but $ghost_is — clear it with $clear, then \`resume $ESTATE_NAME\` brings it back"
+            finding "parked feature $branch ($role leg): no worktree on that branch here, but $ghost_is — clear it with $clear, then \`resume $ESTATE_NAME\` brings it back$gone_caveat"
         else
-            finding "parked feature $branch ($role leg): no worktree on that branch here; parked ${parked_at:-?} on ${parked_on:-?} — \`resume $ESTATE_NAME\` brings it back"
+            finding "parked feature $branch ($role leg): no worktree on that branch here; parked ${parked_at:-?} on ${parked_on:-?} — \`resume $ESTATE_NAME\` brings it back$gone_caveat"
         fi
         return 0
     fi
@@ -2788,10 +3573,14 @@ unrecorded_worktrees() {
 read_record() {
     local root="$1" sel rows="" kind a b c d e f n_features=0
     local parked_at="" parked_on="" lane="" active="" recorded="$NL"
-    local seen_branches=0 legs where="" refused="" unnamed=0
-    local -a feature_legs=() feature_why=()
+    local seen_branches=0 legs where="" refused="" refused_kind="" unnamed=0
+    local -a feature_legs=() feature_why=() feature_rr=() feature_rr_kind=()
     shift
+    RECORD_SHAPE=""
     [ -n "$RECORD_FILE" ] || return 0
+    # THIS ROOT'S SHAPE IS READ ONCE, HERE, because every leg of every feature
+    # is judged against it and `load_repo_shape` reads a whole file to answer.
+    read_root_shape "$root"
     for sel in "$@"; do
         rows="$(record_rows "$RECORD_FILE" "$sel")"
         [ -z "$rows" ] || break
@@ -2809,7 +3598,10 @@ read_record() {
         # then ignores rather than an index it invents.
         while IFS=$'\037' read -r kind a b c d e f; do
             case "$kind" in
-            branch) feature_legs+=(0); feature_why+=("") ;;
+            branch)
+                feature_legs+=(0); feature_why+=("")
+                feature_rr+=(""); feature_rr_kind+=("")
+                ;;
             leg)
                 legs=${#feature_legs[@]}
                 if [ "$legs" -gt 0 ]; then
@@ -2819,11 +3611,100 @@ read_record() {
                     # returns at the first role it cannot map, so that is the
                     # one `resume`'s refusal is about, and a second would only
                     # lengthen a line about a feature that is already gone.
+                    #
+                    # AND THE THIRD QUESTION IS THE SHAPE'S, ASKED LAST (the
+                    # feature-level follow-up's own note, 2026-09-11).
+                    # `collect_legs` asks one question — can this role be
+                    # mapped onto a checkout of this shape — and the two above
+                    # answer it for the roles that can be answered without
+                    # knowing the shape: no role at all, and a role this root
+                    # has no repository for. A role this root DOES mount can
+                    # still be one no shape maps (`assembly`, or a word that
+                    # happens to match a directory here) or one only the OTHER
+                    # shape maps (`spec` in a single checkout, `repo` in a
+                    # three-leg one), and that is this question. It is asked
+                    # LAST so the two above keep the clauses they had, which
+                    # is what keeps the lines they already explain
+                    # byte-identical.
+                    #
+                    # AND THE FOURTH IS RR2's, WHICH IS NOT `collect_legs`'s
+                    # AT ALL AND IS KEPT APART FROM THE THREE (the independent
+                    # review of this branch, 2026-09-12, its blocker).
+                    # `collect_legs` runs to the end before any RR does, so a
+                    # feature it refuses is refused for THAT, whatever origin
+                    # has lost — which is why this answer goes in an array of
+                    # its own and is read back only where the three above
+                    # found nothing. What it asks is what RR2 will ask of this
+                    # leg: no worktree on the branch here, a fetch that WORKED
+                    # in that leg's repository this run, and no
+                    # `refs/remotes/origin/<branch>` in it — the ref RR2 reads
+                    # and refuses the WHOLE feature on. `[ "$d" = true ]` is
+                    # RR6 coming first: a leg whose `pushed:` is not the
+                    # literal `true` is refused before origin is read at all,
+                    # and that refusal is the leg's own line below, not a
+                    # verdict this layer makes. The origin question is
+                    # skipped without `--fetch`, where a missing ref has a
+                    # second and commoner reading and this layer chooses
+                    # neither.
+                    #
+                    # AND THE FOURTH QUESTION IS ASKED IN `resume.sh`'s OWN
+                    # ORDER, OF THE LEGS IN THE RECORD's (Copilot's third
+                    # round on #23, 2026-09-12): "`feature_gone` is propagated
+                    # to every leg without accounting for an earlier per-leg
+                    # refusal. For example, if the first leg has `pushed:
+                    # false` (RR6) or no `parked_commit:` (RR1) and a later
+                    # leg has a missing origin branch, `resume` stops at the
+                    # first leg in record order, but this makes the whole
+                    # feature report RR2's gone-origin verdict and exits."
+                    # `workspace_load_project` appends each leg in FILE order,
+                    # `collect_legs` walks `MANIFEST_LEG_ROLE` in that order,
+                    # and the loop under it breaks at the first refusal — so
+                    # the refusal the person gets is the first one in the
+                    # record, and a later leg's may not be printed in front of
+                    # it. Run against the extension on 2026-09-12 on a scratch
+                    # three-leg estate, one feature, two legs in two
+                    # repositories, the order the variable: `code` (`pushed:
+                    # false`) then `spec` (branch deleted on origin) answered
+                    # "Error: 001-a-thing (code leg) was parked with
+                    # --no-push", "REFUSED: 001-a-thing — parked with
+                    # --no-push"; `code` (no `parked_commit:`) then the same
+                    # `spec` answered "Error: 001-a-thing (code leg) has moved
+                    # since it was parked", "REFUSED: 001-a-thing —
+                    # divergence"; and the gone leg FIRST answered "Error:
+                    # 001-a-thing is no longer on origin in the spec leg",
+                    # "REFUSED: 001-a-thing — gone from origin". All exit 2.
+                    #
+                    # SO ONE ARRAY HOLDS THE FIRST REFUSAL AND ITS KIND, and
+                    # the arms under it are RR6, RR2 and RR1 in that order,
+                    # which is the order one leg is tested in. RR6 is the
+                    # record alone and is certain — it is the FIRST test of
+                    # the loop, before RR4, so a worktree here does not save
+                    # the leg. RR1 is asked of an absent `parked_commit:`,
+                    # which is the one reading of RR1 this layer makes, and
+                    # only after RR2 has been asked of the same leg, because
+                    # that is where `resume.sh` asks it. What this cannot see
+                    # is RR3, RR5, and RR4 by the PATH `resume` computes —
+                    # recorded by the commits below and the stacked branch's
+                    # subject — so a feature refused there is one this layer
+                    # still reads as resumable.
                     if [ -z "${feature_why[legs - 1]}" ]; then
                         if [ -z "$b" ]; then
                             feature_why[legs - 1]="a leg of it in the record has no role"
                         elif ! leg_repo_for_role "$root" "$b" >/dev/null 2>&1; then
                             feature_why[legs - 1]="its \`$b\` leg names a role this root does not mount"
+                        elif ! role_maps_here "$b"; then
+                            feature_why[legs - 1]="$(role_shape_short "$b")"
+                        elif [ -z "${feature_rr[legs - 1]}" ]; then
+                            if [ "$d" != true ]; then
+                                feature_rr[legs - 1]="$(pushed_verdict "$b" "$d" "$f")"
+                                feature_rr_kind[legs - 1]=pushed
+                            elif [ "$FETCH" -eq 1 ] && origin_lost_leg "$root" "$b" "$a"; then
+                                feature_rr[legs - 1]="there is no \`origin/$a\` in its \`$b\` leg after this run's fetch"
+                                feature_rr_kind[legs - 1]=gone
+                            elif moved_on_leg "$root" "$b" "$a" "$c"; then
+                                feature_rr[legs - 1]="the record names no parked commit for its \`$b\` leg"
+                                feature_rr_kind[legs - 1]=moved
+                            fi
                         fi
                     fi
                 fi
@@ -2832,7 +3713,7 @@ read_record() {
         done <<<"$rows"
         while IFS=$'\037' read -r kind a b c d e f; do
             case "$kind" in
-            project) parked_at="$a"; parked_on="$b"; lane="$c"; active="$d" ;;
+            project) parked_at="$a"; parked_on="$b"; lane="$c"; active="$d"; RECORD_SHAPE="$e" ;;
             branch)
                 seen_branches=$((seen_branches + 1))
                 # A FEATURE THE RECORD GIVES NO BRANCH NAME (Copilot on #22)
@@ -2899,9 +3780,23 @@ read_record() {
                 # this reader invents is a claim about a feature the record
                 # does not make.
                 refused=""
-                [ "$seen_branches" -eq 0 ] ||
+                refused_kind=""
+                if [ "$seen_branches" -gt 0 ]; then
                     refused="${feature_why[seen_branches - 1]:-}"
-                check_parked_leg "$root" "$a" "$b" "$c" "$d" "$parked_at" "$parked_on" "$e" "$f" "$refused"
+                    # `collect_legs` BEFORE THE RRs, in the reading as in the
+                    # extension: it runs to the end before any RR does, so a
+                    # feature it refuses is refused for THAT whatever the legs
+                    # go on to say, and the RR verdict is read back only where
+                    # it found nothing. Which RR that verdict is, and which
+                    # leg it belongs to, was decided in the pass above, in the
+                    # record's order.
+                    if [ -z "$refused" ] &&
+                        [ -n "${feature_rr[seen_branches - 1]:-}" ]; then
+                        refused="${feature_rr[seen_branches - 1]}"
+                        refused_kind="${feature_rr_kind[seen_branches - 1]}"
+                    fi
+                fi
+                check_parked_leg "$root" "$a" "$b" "$c" "$d" "$parked_at" "$parked_on" "$e" "$f" "$refused" "$refused_kind"
                 ;;
             esac
         done <<<"$rows"
