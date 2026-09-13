@@ -1687,7 +1687,7 @@ session_files() {
     esac
   done
   if [ -s "$sf_err" ]; then
-    SESSION_FILES_ERR="$(tr '\n' ';' < "$sf_err" | cut -c1-300)"
+    SESSION_FILES_ERR="$(LC_ALL=C tr '\n' ';' < "$sf_err" | LC_ALL=C cut -c1-300)"
     sf_rc=1
   fi
   rm -f -- "$sf_err"
@@ -1911,7 +1911,7 @@ live_holder() {
   # a record that cannot be read into a reason nobody can read either.
   LC_ALL=C tr '\n' '\0' < "$lh_files" | xargs -0 grep -l -F "${pats[@]}" > "$lh_match" 2>"$lh_err" || :
   if [ -s "$lh_err" ]; then        # a record that exists and cannot be read
-    SESSION_FILES_ERR="$(LC_ALL=C tr '\n' ';' < "$lh_err" | cut -c1-300)"
+    SESSION_FILES_ERR="$(LC_ALL=C tr '\n' ';' < "$lh_err" | LC_ALL=C cut -c1-300)"
     rm -f -- "$lh_files" "$lh_match" "$lh_err"
     return 1
   fi
@@ -2035,7 +2035,7 @@ idle_holders() {   # <lane>
   # `xargs -r` and the locale, for the reason `live_holder` gives above.
   LC_ALL=C tr '\n' '\0' < "$ih_files" | xargs -0 grep -l -F "${ih_pats[@]}" > "$ih_match" 2>"$ih_err" || :
   if [ -s "$ih_err" ]; then
-    SESSION_FILES_ERR="$(LC_ALL=C tr '\n' ';' < "$ih_err" | cut -c1-300)"
+    SESSION_FILES_ERR="$(LC_ALL=C tr '\n' ';' < "$ih_err" | LC_ALL=C cut -c1-300)"
     rm -f -- "$ih_files" "$ih_match" "$ih_err"
     return 1
   fi
@@ -3382,9 +3382,17 @@ case "$cmd" in
     lane="${1-}"; [ -n "$lane" ] || die "usage: verify-row <lane>" 2
     n="$(row_line "$lane")" || exit 2
     row="$(sed -n -e "${n}p" "$LANES_FILE")"
+    # Bash substrings, not `cut -c` and `rev`: `${#row}` counts CHARACTERS,
+    # and a register row is full of `·` `—` `→`, so a byte-counting `cut`
+    # disagrees with the length printed one field earlier — and BSD `rev` and
+    # `cut` answer `Illegal byte sequence` on the same row rather than
+    # disagreeing. The same rule `lane-end:566` states (R-A9-11).
+    # `${row: -200}` on a row SHORTER than 200 answers the empty string, where
+    # `rev | cut | rev` answered the whole row — so the short case is asked
+    # for explicitly rather than left to the expansion.
+    row_tail="$row"; [ "${#row}" -gt 200 ] && row_tail="${row: -200}"
     printf 'lane   : %s\nline   : %s\nlength : %s chars\nfirst200: %s\nlast200 : %s\n' \
-      "$lane" "$n" "${#row}" "$(printf '%s' "$row" | cut -c1-200)" \
-      "$(printf '%s' "$row" | rev | cut -c1-200 | rev)"
+      "$lane" "$n" "${#row}" "${row:0:200}" "$row_tail"
     ;;
 
   append-row-status)
@@ -3485,7 +3493,7 @@ case "$cmd" in
     fi
     acquire_lock; handle_preexisting
     append_text_line "$text"
-    msg="LANES(${lane_tag:-unknown}@$WS): append line — $(printf '%s' "$text" | cut -c1-72)"
+    msg="LANES(${lane_tag:-unknown}@$WS): append line — ${text:0:72}"
     [ -n "$PRE_DIRTY_LANES" ] && msg="$msg + sweeps uncommitted edit to row $PRE_DIRTY_LANES"
     commit_push "$msg"
     ;;

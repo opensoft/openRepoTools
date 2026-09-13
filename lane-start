@@ -589,7 +589,8 @@ if [ "$row_count" = 0 ]; then
     8) : ;;                        # no published row either: the lane really is new
     0)
       note "the register on origin/main ALREADY has a row for $LANE, and this checkout does not:"
-      printf '  %s\n' "$(printf '%s\n' "$pub_row" | head -n1 | cut -c1-200)" >&2
+      pub_row_first="${pub_row%%$'\n'*}"
+      printf '  %s\n' "${pub_row_first:0:200}" >&2
       note "adding a row here would make two, and two rows for one lane is a register lanes-edit.sh cannot edit."
       note "RECOVERY — bring this checkout up to date, then re-run this command:"
       note "  git -C \"$(cd -- "$(dirname -- "$LANES_FILE")/.." && pwd)\" pull --rebase origin main"
@@ -855,9 +856,10 @@ if (( confirm )); then
       note "  session  none — no live session record names this window"
     fi
     if [ "$row_count" = 1 ]; then
-      note "  row      $(printf '%s' "$row" | cut -c1-200)"
+      note "  row      ${row:0:200}"
     elif [ -n "$pub_row" ]; then
-      note "  row      $(printf '%s' "$pub_row" | head -n1 | cut -c1-200)"
+      pub_row_first="${pub_row%%$'\n'*}"
+      note "  row      ${pub_row_first:0:200}"
     else
       note "  row      none — the register has no row for $LANE"
     fi

@@ -124,9 +124,13 @@ is()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected [$3], got [$2]
 # messages this estate is written in — every one of them carries an em dash. A
 # failure whose `got:` is empty is a failure nobody can read, and these two
 # lines are the only place a failure is ever rendered (R-A9-11). Bytes are all
-# a newline-to-`~` swap ever wanted.
-has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "expected to contain [$3]; got: $(printf '%s' "$2" | LC_ALL=C tr '\n' '~' | cut -c1-400)" ;; esac; }
-hasnt() { case "$2" in *"$3"*) bad "$1" "did NOT expect [$3]; got: $(printf '%s' "$2" | LC_ALL=C tr '\n' '~' | cut -c1-400)" ;; *) ok "$1" ;; esac; }
+# a newline-to-`~` swap ever wanted — and `cut -c` is the same rule one pipe
+# later: in a UTF-8 locale BSD `cut` answers `cut: stdin: Illegal byte
+# sequence` for a string this one has already cut somewhere else, and a
+# diagnostic that dies because of what it is diagnosing is worse than a blunt
+# one. Measured on the macOS job at `c405eb4`.
+has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "expected to contain [$3]; got: $(printf '%s' "$2" | LC_ALL=C tr '\n' '~' | LC_ALL=C cut -c1-400)" ;; esac; }
+hasnt() { case "$2" in *"$3"*) bad "$1" "did NOT expect [$3]; got: $(printf '%s' "$2" | LC_ALL=C tr '\n' '~' | LC_ALL=C cut -c1-400)" ;; *) ok "$1" ;; esac; }
 # lane-start mints a fresh uuid for a NEW session, so its launch line carries a
 # value no test can predict. `launch_of` removes just that pair, leaving the
 # rest of the command line exactly comparable; `minted_of` returns the uuid.
