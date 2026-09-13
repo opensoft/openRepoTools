@@ -724,7 +724,25 @@ record_window="$this_window_ref"
 # restart, a workstation reboot or a swap taken from a terminal that is then
 # closed all leave a recorded id naming nothing, and a binding keyed on the id
 # would lose the lane where one keyed on the name does not.
-case "$this_window_id" in @*) record_window="$this_window_ref $this_window_id" ;; esac
+# AND AN ID IS `@<digits>` AND NOTHING ELSE (F-X13(a)). `@*` accepted anything
+# that merely STARTED with an at-sign, and two things that are not ids do: a
+# tmux too old to know `#{window_id}` PRINTS THE FORMAT BACK, and a shim on
+# PATH may print anything at all. Either one recorded here is a lie in an
+# append-only log — and worse than an absence, because the sub-field would then
+# name a window `window-lane` can never resolve while looking complete.
+# `claude-profile` makes exactly this check on exactly this value
+# (`workBenches#71`'s `lane-swap` skill, `:239-240`: `[[ "$win_id" =~
+# ^@[0-9]+$ ]]`), and two writers of one field with two standards is the drift
+# this branch removes everywhere else.
+#
+# Written as a `case` rather than `[[ =~ ]]` to match this file's own style for
+# this test: `@` alone is not an id, and `@` followed by any non-digit is not
+# one either.
+case "$this_window_id" in
+  @) : ;;
+  @*[!0-9]*) : ;;
+  @*) record_window="$this_window_ref $this_window_id" ;;
+esac
 case "$record_window" in
   *', '*|*' — '*|*'"'*)
     die "this window's tmux refs are '$record_window', and a \`window\` sub-field may not contain ', ', ' — ' or '\"' (Amendment 8(b), extended by Amendment 11 clause (c) to \`dir\`): those are what divide an event line into its fields and its free text, and the log is append-only. Rename the tmux session" 2 ;;

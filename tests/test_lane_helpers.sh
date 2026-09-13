@@ -3671,6 +3671,15 @@ hasnt "…while writing nothing at all" "$(git -C "$WIP" log --format=%s -n1)" "
 # ` — `, where the fields are already split, so prose commas are ordinary there
 # — the estate's own log is full of them, and refusing them would refuse lines
 # it legitimately writes.
+#
+# THE TWO CASES BELOW ARE THE FIRST IN THIS SUITE THAT MUST ACTUALLY WRITE AT
+# THIS POINT, and the sandbox checkout is not clean here: the handoff cases far
+# above leave four tracked DELETIONS behind, so `refuse_dirty_checkout` refused
+# both with exit 2 and the guard under test was never reached. Committed first,
+# exactly as the Amendment 11 `lane-start` cases below already do for the same
+# reason — a fixture step, not a fix to anything under test.
+git -C "$WIP" add -A >/dev/null 2>&1
+git -C "$WIP" commit -q -m "commit pending handoff edits before the clause (c) write cases" >/dev/null 2>&1 || :
 run env LANES_LANE=repoA11-1 "$E" log RESUMED "lane:repoA11-1" '→' "swap; workstation Eagle" "tick 8.4 landed, and 5.7a, 5.9a stay unheld"
 is   "…while a comma in the FREE TEXT is ordinary prose and is written" "$rc" 0
 has  "…exactly as it was given" "$(tail -n1 "$LOGD/repoA11-1.md")" "landed, and 5.7a, 5.9a stay unheld"
@@ -3796,6 +3805,52 @@ FAKE_TMUX_WINDOW="a11start:@42" FAKE_TMUX_WINDOW_INDEX=3 FAKE_TMUX_WINDOW_NAME=c
 is    "lane-start exits 0 for a lane started outside the launcher" "$rc" 0
 hasnt "…and writes NO profile sub-field rather than inventing one" "$(cat "$LOGD/repoA11c-1.md")" "profile "
 has   "…while still recording the directory, which it does know" "$(cat "$LOGD/repoA11c-1.md")" "dir $HOME/projects/repoA11c"
+
+# AN `<@id>` IS `@<digits>` AND NOTHING ELSE (F-X13(a), A11 Addendum 4 ruling 10).
+# `case … in @*)` accepted anything that merely STARTED with an at-sign. Two
+# things that are not ids do: a `tmux` too old to know `#{window_id}` prints the
+# FORMAT back, and a shim on PATH may print anything at all — a pane ref beside
+# the window's, say. Either recorded here is a lie in an append-only log, and
+# worse than an absence: the sub-field would then name a window `window-lane`
+# can never resolve while looking complete. `claude-profile` makes exactly this
+# check on exactly this value, so two writers of one field had two standards.
+mkdir -p "$HOME/projects/repoA11d"
+git init -q -b main "$HOME/projects/repoA11d"
+git -C "$HOME/projects/repoA11d" remote add origin "https://github.com/opensoft/repoA11d.git"
+FAKE_TMUX_WINDOW="a11start:0" FAKE_TMUX_WINDOW_INDEX=3 FAKE_TMUX_WINDOW_ID='@42 %7' \
+  FAKE_TMUX_WINDOW_NAME=claude CLAUDE_PROFILE_NAME=team-05a \
+  run "$START" repoA11d 1 --no-launch
+is    "lane-start exits 0 when tmux answers something that is not an <@id>" "$rc" 0
+A11D_LOG="$(cat "$LOGD/repoA11d-1.md" 2>/dev/null || :)"
+hasnt "…and records NO id rather than a string that is not one" "$A11D_LOG" "%7"
+hasnt "…not even the part of it that looked like one" "$A11D_LOG" "@42"
+has   "…while the <session>:<index> IS recorded, because a record with no id is COMPLETE" \
+      "$A11D_LOG" "window a11start:3"
+# THE OTHER SHAPE THE COMMENT NAMES, held so it stays held: an old `tmux` prints
+# the format back, which does not begin with `@` at all and was already refused.
+mkdir -p "$HOME/projects/repoA11e"
+git init -q -b main "$HOME/projects/repoA11e"
+git -C "$HOME/projects/repoA11e" remote add origin "https://github.com/opensoft/repoA11e.git"
+FAKE_TMUX_WINDOW="a11start:0" FAKE_TMUX_WINDOW_INDEX=3 FAKE_TMUX_WINDOW_ID='#{window_id}' \
+  FAKE_TMUX_WINDOW_NAME=claude CLAUDE_PROFILE_NAME=team-05a \
+  run "$START" repoA11e 1 --no-launch
+is    "lane-start exits 0 when a tmux too old prints the format back" "$rc" 0
+hasnt "…and records the format string nowhere" "$(cat "$LOGD/repoA11e-1.md" 2>/dev/null || :)" "#{window_id}"
+
+# THE `/lane-swap` SKILL MAKES THE SAME TEST, and it is run FROM THE FILE rather
+# than restated — the same reason `/restart`'s rung 4 is: a copy is what would
+# go on passing after the file drifted.
+SWSKILL="$SRC_DIR/skills/lane-swap/SKILL.md"
+skill_win_of() {   # <session:index> <what tmux answered> — the skill's own line
+  local swo_win="$1" swo_wid="$2" swo_line
+  swo_line="$(grep -n '^\[\[ "\$wid" =~' "$SWSKILL" | head -n1 | cut -d: -f2-)"
+  [ -n "$swo_line" ] || { printf 'NO LINE IN %s\n' "$SWSKILL"; return 1; }
+  ( win="$swo_win"; wid="$swo_wid"; eval "$swo_line"; printf '%s' "$win" )
+}
+is "the skill records an <@id> that is one" "$(skill_win_of 'a11sess:0' '@71')" "a11sess:0 @71"
+is "…and records none where tmux answered a pane beside it" "$(skill_win_of 'a11sess:0' '@71 %7')" "a11sess:0"
+is "…nor where a tmux too old printed the format back" "$(skill_win_of 'a11sess:0' '#{window_id}')" "a11sess:0"
+is "…nor for a bare at-sign" "$(skill_win_of 'a11sess:0' '@')" "a11sess:0"
 
 # ---------------------------- clause (c): the DIRECTORY PRECEDENCE, four rungs
 run "$START" --dry-run repoA11 1

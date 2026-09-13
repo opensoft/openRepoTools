@@ -185,7 +185,15 @@ dir="$(LANES_NO_FETCH=1 "$L" lane-dir "$lane" 2>/dev/null)" || dir=""
 [[ -n "$dir" ]] || dir="$(git rev-parse --show-toplevel 2>/dev/null)"
 win="$(tmux display-message -p '#S:#I' 2>/dev/null)"
 wid="$(tmux display-message -p '#{window_id}' 2>/dev/null)"
-[[ "$wid" == @* ]] && win="$win $wid"
+# AN ID IS `@<digits>` AND NOTHING ELSE (F-X13(a), A11 Addendum 4 ruling 10).
+# `== @*` accepted anything starting with an at-sign, and two things that are
+# not ids do: a tmux too old to know `#{window_id}` PRINTS THE FORMAT BACK, and
+# a shim on PATH may print anything at all. Recording that string puts a lie in
+# an append-only log — worse than an absence, because the sub-field then names a
+# window `window-lane` can never resolve while looking complete. This is the
+# same check the launcher makes on the same value (`claude-profile`'s own copy
+# of this skill, `:239-240`) and the one `lane-start:727` now makes.
+[[ "$wid" =~ ^@[0-9]+$ ]] && win="$win $wid"
 # BOTH SUB-FIELDS, because both are written into the one append-only line and
 # either one breaks its parser: `dir` is clause (c)'s and `window` is Amendment
 # 8(b)'s, and `lane-start` fences both. The value is named, the swap stops, and
