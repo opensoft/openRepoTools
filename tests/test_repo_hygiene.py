@@ -426,8 +426,13 @@ def test_the_documents_say_what_status_is_and_is_not():
     assistant reaches for unaided. A `status` that "checks the remote" is one
     somebody runs `git fetch` on behalf of to make current — when the flag
     is what they should reach for — and a report of findings with exit 1 is
-    one somebody calls a failure. The four-file count is held too, because
-    the install story is the sentence a first-time reader trusts.
+    one somebody calls a failure. The install count is held too, because the
+    install story is the sentence a first-time reader trusts — and it is NINE
+    from lane-collision-protocol Amendment 9(b), not four: the four estate
+    commands plus `lanes-edit.sh`, `lane-start`, `lane-end`, `link-estates`
+    and the shipped `repos.tsv`. The number is asserted rather than the word
+    "four" precisely so that a document which grows the install and forgets
+    to say so is a red test.
     """
     for name in ("README.md", "AGENTS.md", "status"):
         text = (REPO / name).read_text(encoding="utf-8")
@@ -455,8 +460,8 @@ def test_the_documents_say_what_status_is_and_is_not():
         text = (REPO / name).read_text(encoding="utf-8")
         assert "`status`" in text, f"{name} never names the fourth command"
     readme = (REPO / "README.md").read_text(encoding="utf-8")
-    assert "FOUR files" in readme, "README.md does not count the four files"
-    assert "4 of 4 placed" in readme, (
+    assert "NINE files" in readme, "README.md does not count the nine files"
+    assert "9 of 9 placed" in readme, (
         "README.md does not show the count line `--install` actually prints")
     status = (REPO / "status").read_text(encoding="utf-8")
     assert "--no-optional-locks" in status, (
@@ -656,9 +661,46 @@ def test_agents_md_is_short_enough_to_be_read():
     shape's is a record that is RIGHT, and the feature comes back in a
     checkout of that shape — an assistant told only "re-park" would send
     somebody round that loop for ever.
+
+    155 -> 179 on 2026-09-13, for lane-collision-protocol AMENDMENT 9, ratified
+    that day, and its adoption act 3 — the one change to this repository that
+    is not a change to the estate verbs at all. Four executables, a shipped
+    data file, a suite and a manual arrived here from a person's workspace
+    repository, and `openRepoTools` grew the verb that creates such a
+    repository. The lines buy four things an assistant cannot infer from the
+    files:
+
+    (a) the opening count, which said THREE INSTALLED COMMANDS and now says
+    what `--install` actually places, because the install story is the
+    sentence a first-time reader trusts and this is the release that moved it;
+
+    (b) the one paragraph that says the lane tooling answers to a DIFFERENT
+    document — the lane collision protocol, not openRepoShape — that the code
+    is here and the data is not, that all four resolve the register through
+    `$AGENT_PROTOCOL_ROOT/workspace.yaml` and never from their own location,
+    and that their exit codes are the protocol's: 1 is *registry not found*
+    there and *findings were printed* here. Two toolsets now ship under one
+    installer, so one number means two things across that seam, and an
+    assistant that reads a 1 without knowing which command produced it reports
+    a refusal as a report or a report as a refusal (Amendment 9(a), (c));
+
+    (c) rule 2, which was "the ONLY writer of `~/.agents/workspace.yaml`" and
+    is now the two, because clause (c) step 9 makes `wip init` the second. The
+    invariant retired ON PURPOSE and is rewritten here rather than found by a
+    red test (Amendment 9, act 3 obligation 3) — and the rule it still carries
+    is the one that matters, that the assistant is neither writer and passes
+    neither `--workspace` nor `wip init` on its own initiative;
+
+    (d) the bash-3.2 line in the testing section. The four arriving
+    executables are parsed under macOS bash 3.2 in CI, where `${x,,}` is a
+    syntax error — that gate found `lanes-edit.sh`'s `${base,,}` on arrival —
+    and an assistant that edits 380 KB of newly arrived bash without knowing
+    the dialect writes the same defect back in. It names the runner for the
+    moved suite in the same breath, because a 122 KB bash suite that no job
+    runs is not a suite (act 3 obligations 4 and 6).
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 155, f"AGENTS.md is {len(lines)} lines; the cap is 155"
+    assert len(lines) <= 179, f"AGENTS.md is {len(lines)} lines; the cap is 179"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -801,9 +843,66 @@ def test_readme_is_short_enough_to_be_read():
     keeps the list honest — "feature", where every other entry beside it is a
     leg. AGENTS.md takes the same state in the words it already had and
     repacks, so its cap does not move.
+
+    251 -> 351 on 2026-09-13, for lane-collision-protocol AMENDMENT 9, ratified
+    that day, and its adoption act 3. This is the largest single raise this
+    file has taken and the reason is not prose: the repository grew a second
+    toolset and a verb. The docstring above says the cap is today's count
+    because "the README says what the two commands are … that is the whole of
+    what this repository has to explain" — and after this release it is not
+    the whole, so the sentence that set the cap is what changed. Four
+    sections, and each is the answer to a question a reader of the old README
+    could not answer at all:
+
+    § "The lane tooling" — that `lane-start`, `lane-end`, `lanes-edit.sh` and
+    `link-estates` are here now, with their history; that what moved is the
+    CODE and the register, the logs and the handoffs stay in the person's own
+    workspace repository where Amendments 4 and 5 put them; and that every one
+    of them finds that data through `$AGENT_PROTOCOL_ROOT/workspace.yaml` and
+    never from its own location, refusing rather than guessing. A reader who
+    finds four unexplained executables at this repository's root otherwise
+    reaches the opposite conclusion — that the data moved too — which is the
+    one thing Amendment 9 does not do.
+
+    § "`openRepoTools wip init`" — the verb. `openRepoTools:13` said "IT
+    INSTALLS AND IT DOES NOTHING ELSE. There is no verb here", and Brett
+    Heap's ruling 4 of 2026-09-12 ("openRepoTools wip init") retired that
+    line. A command that creates a repository, seeds it from a pinned
+    template, pushes, writes a file outside every repository and runs a linker
+    cannot be documented in a sentence, and the paragraph that costs the most
+    lines is the one that earns them: the push to `main` IS the ruleset probe,
+    so a person meets the organisation's PR-only gate here rather than at
+    their first `lane-start`, which is the worst place to meet it.
+
+    the two-line onboarding chain at the head of § "Install" (Amendment 9(e))
+    — `gh repo clone opensoft/workBenches && cd workBenches && ./setup.sh`,
+    then `pclaude run <profile> --lane <repo>-<n>` — with its two
+    preconditions named, `gh auth login` and `~/.local/bin` on `PATH`, and the
+    by-hand pair for a host that has this toolset without workBenches. Brett
+    Heap's direction of 2026-09-12, "we need to also keep that clean so there
+    is the least choices possible to not confuse the user", is the measure
+    that section is written to, and a chain a person cannot find is the same
+    as no chain.
+
+    and the rewrite of § "Install" itself — FOUR files became NINE and four
+    artifacts became TWELVE, since `--install` now also places the
+    `/lane-swap` skill in the shared skills directory and in `~/.claude`, and
+    merges one `SessionStart` entry into `~/.claude/settings.json`. The
+    all-or-nothing rule is the thing being restated, not decorated: the merge
+    is computed with the nine files in hand before any is placed, so a
+    settings file it cannot understand costs a whole install rather than half
+    of one. Three environment variables join the table for the same reason
+    they exist — `$AGENT_PROTOCOL_ROOT`, `$CLAUDE_PROFILES_HOME`,
+    `$PROJECTS_DIR`.
+
+    And the retired invariant, in the same release and named here because it
+    is a DELETION that cost lines rather than saved them: "the only thing in
+    this toolset that writes a file outside a repository" is now two things
+    writing one file, `resume --workspace` and `wip init`, both only on a
+    machine that has none (Amendment 9(c) step 9, act 3 obligation 3).
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 251, f"README.md is {len(lines)} lines; the cap is 251"
+    assert len(lines) <= 351, f"README.md is {len(lines)} lines; the cap is 351"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

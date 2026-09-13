@@ -1,8 +1,25 @@
-# `lanes/LANES.md` — how the estate lane register is stored
+# `lanes/LANES.md` — how the estate lane register is stored, and the commands that write it
+
+**THE TOOLING LIVES HERE; THE DATA LIVES IN YOUR WORKSPACE REPOSITORY.**
+Amendment 9, 2026-09-13. This manual and the four commands it describes —
+`lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates` — came to
+`opensoft/openRepoTools` from `opensoft/brett-wip` with their history, because
+a `<user>-wip` is a person's DATA and its own rules file says so: "No secrets
+and no code". They are INSTALLED COMMANDS now, placed by
+`openRepoTools --install`, and none of them is a file in anybody's workspace
+repository any more.
+
+**So every command below is typed by bare name**, and every one of them finds
+your register the same way: through `$AGENT_PROTOCOL_ROOT/workspace.yaml`
+(default `~/.agents/workspace.yaml`), which names your workspace repository and
+where it is checked out. `openRepoTools wip init` is the one command that
+creates that repository and writes that file. A helper that cannot find it
+refuses, exit 1, naming that command — it never guesses, and it never falls
+back to a path derived from its own location.
 
 **Moved 2026-09-10 (Amendment 5).** The register lived on the orphan `lanes`
-branch of `opensoft/xFactory` from 2026-09-09; it now lives HERE, on `main` of
-`opensoft/brett-wip`, the person's workspace repository — ratified by Brett
+branch of `opensoft/xFactory` from 2026-09-09; it moved to `main` of the
+person's workspace repository — for Brett, `opensoft/brett-wip` — ratified by Brett
 Heap 2026-09-10 ("since we now have the user-wip repo this is a better place
 to store our lanes", "create opensoft/brett-wip and move it all there"),
 implemented by lane `openRepoShape-2`, session
@@ -44,16 +61,19 @@ workstation**.
 
 | what | where |
 |---|---|
-| repository | `opensoft/brett-wip` — Brett's workspace repository, private, org-owned (the `<user>-wip` form, `openRepoShape#81`) |
+| repository | `<org>/<login>-wip` — the person's own workspace repository, private, org-owned (the `<user>-wip` form, `openRepoShape#81`); named by `repository:` in `~/.agents/workspace.yaml`. Brett's is `opensoft/brett-wip`; Scott's would be `opensoft/scott-wip`, and the commands below are the same commands |
 | branch | `main`. Direct commits are the norm there **by design**: the repository is excluded from the organisation's PR-only ruleset precisely so a per-edit register commit can land |
-| checkout | `~/projects/brett-wip/` |
-| the register | `~/projects/brett-wip/lanes/LANES.md` |
-| the path every lane already uses | `~/projects/xFactory/LANES.md` — a **symlink** to `~/projects/brett-wip/lanes/LANES.md` |
-| the writer | `~/projects/brett-wip/lanes/lanes-edit.sh` (symlinked as `~/projects/xFactory/lanes-edit.sh`) |
-| the two ends of a lane | `lanes/lane-start` and `lanes/lane-end` (symlinked as `~/.local/bin/lane-start` and `~/.local/bin/lane-end`) |
-| their tests | `lanes/test_lane_helpers.sh` — run it from anywhere; it touches nothing real |
-| the object logs | `lanes/log/<lane>.md` — one per lane (Amendment 7), with `lanes/repos.tsv`, the repo alias table |
-| who places the symlinks | `~/projects/brett-wip/scripts/link-estates` (idempotent, `--dry-run`) |
+| checkout | `~/projects/<login>-wip/`, named by `path:` in `~/.agents/workspace.yaml` and created by `openRepoTools wip init` |
+| how every command finds it | `$AGENT_PROTOCOL_ROOT/workspace.yaml` — `repository:` and `path:`, and nothing else. Never from the command's own location (Amendment 9(a)) |
+| the register | `<the checkout>/lanes/LANES.md` |
+| the path every lane already uses | `~/projects/xFactory/LANES.md` — a **symlink** to `<the checkout>/lanes/LANES.md` |
+| the writer | `lanes-edit.sh`, an installed command in `~/.local/bin` (still symlinked as `~/projects/xFactory/lanes-edit.sh`, which is what Amendment 8(e)'s `SessionStart` hook names) |
+| the two ends of a lane | `lane-start` and `lane-end`, installed commands — **regular files, not symlinks any more** |
+| their tests | `tests/test_lane_helpers.sh` in `opensoft/openRepoTools` — run it from a checkout of that repository; it touches nothing real |
+| the object logs | `<the checkout>/lanes/log/<lane>.md` — one per lane (Amendment 7) |
+| the alias table | two layers: `repos.tsv` shipped by openRepoTools and installed beside the commands, then `<the checkout>/lanes/repos.tsv` where you keep an override (Amendment 9(b)) |
+| who places the symlinks | `link-estates`, an installed command. It places the handoffs links, the register link and the `lanes-edit.sh` link — **and no longer the two `~/.local/bin` ones**, which `--install` owns |
+| who installs all of it | `openRepoTools --install` (nine files, idempotent, all-or-nothing) |
 
 Why `main` of the workspace repository and not the aggregation's: the
 aggregation repo's `main` is PR-only (org rulesets `xFactory Tier-1 main
@@ -64,7 +84,7 @@ that repo instead. The workspace repository has no such gate and no product
 code at all, so the register can sit on its `main` next to the handoffs it
 cross-references. Nothing here is ever released, pinned, swept or bumped.
 
-**The register no longer owns its whole checkout.** `~/projects/brett-wip/`
+**The register no longer owns its whole checkout.** The workspace checkout
 also holds `handoffs/` and `workspaces/`, which other lanes write. That is why
 the writer now (a) uses a pathspec on every `git add` and `git commit`, so a
 peer's half-written handoff can never ride along in a register commit, and (b)
@@ -161,8 +181,8 @@ Every mutating subcommand does the same five things:
 **On a rebase conflict it aborts**, leaves the worktree clean and not
 mid-rebase, prints the conflicting lines and prints the recovery commands. Your
 edit survives as a local commit; read it back with
-`git -C ~/projects/brett-wip diff origin/main..HEAD -- lanes/LANES.md`, then
-`git -C ~/projects/brett-wip reset --hard origin/main` and redo it on top of
+`git -C <the workspace checkout> diff origin/main..HEAD -- lanes/LANES.md`,
+then `git -C <the workspace checkout> reset --hard origin/main` and redo it on top of
 the peer's version.
 
 The script spells no path of its own: it finds the checkout root with `git
@@ -353,8 +373,16 @@ One argument is taken verbatim, so a lane named before the `<repo>-<n>` rule
 ### The tests
 
 ```sh
-bash lanes/test_lane_helpers.sh     # 713 assertions, ~2m, touches nothing real
+# from a checkout of opensoft/openRepoTools, where the suite lives now:
+bash tests/test_lane_helpers.sh     # ~900 assertions, ~3m, touches nothing real
+python3 -m pytest tests -q          # the same suite, under this repository's runner
 ```
+
+The suite copies the four commands and the shipped alias table into a sandbox
+BIN DIRECTORY, seeds a workspace repository with nothing but data in it, and
+writes that sandbox's own `workspace.yaml` to join the two — which is the
+world after Amendment 9, exactly. It unsets every `LANES_*` seam first, so
+what every case exercises is the DEFAULT resolution and not an override.
 
 A temp `HOME`, a bare repo and a clone seeded with a header and twenty-seven
 rows, a fake `tmux` that logs its renames and a fake `claude` that logs its
@@ -390,8 +418,8 @@ This is the tooling half of that answer.
 | a lane's object log | `lanes/log/<lane>.md` — one file per lane, append-only |
 | line 1 of each | `# lane <lane> — object log (lane-collision-protocol Amendment 7)` |
 | every other line | one EVENT, in the grammar below |
-| the alias table | `lanes/repos.tsv` — `alias<TAB>owner/repo`, case-insensitive |
-| the only writer | `lanes/lanes-edit.sh` (`log`, `claim`, `release`), as for `LANES.md` |
+| the alias table | two layers (Amendment 9(b)): the shipped `repos.tsv` installed beside the commands, then `<the checkout>/lanes/repos.tsv` where you keep an override. `alias<TAB>owner/repo`, case-insensitive. An override row replaces the shipped row for the same alias and adds rows it does not carry; an alias in neither is still a refusal saying to spell it `owner/repo` |
+| the only writer | `lanes-edit.sh` (`log`, `claim`, `release`), as for `LANES.md` |
 | the reader | `lanes-edit.sh who` |
 
 One file per lane is what makes this safe from two workstations at once: two
@@ -454,7 +482,7 @@ cuts, file surfaces and Amendment 1's substrates stay where they are today, on
 their governing records, and are an explicit non-goal; a later amendment may
 add keys.
 
-`lanes/repos.tsv` resolves an omitted owner and the register's legacy
+The alias table resolves an omitted owner and the register's legacy
 spellings — all four spellings of `codexFactory` resolve to
 `codeXfactory/codexFactory`, which is the redirect GitHub itself answers with —
 and an alias that is **not** in the table is refused, with the hint to spell
@@ -929,8 +957,9 @@ label, not a scope; this line is the only thing that says where a lane actually
 lives. A checkout with no `origin` records `home unknown` rather than a guess,
 and says so.
 
-**The home is canonical.** That spelling is resolved through `lanes/repos.tsv`
-*before* the line is written, and every comparison of an object's repository
+**The home is canonical.** That spelling is resolved through the alias table
+— both layers, the shipped `repos.tsv` and the checkout's override (Amendment
+9(b)) — *before* the line is written, and every comparison of an object's repository
 against a home resolves both sides — because a home is inherited by every `#<n>`
 that lane ever writes. A checkout whose `origin` still said
 `opensoft/codexFactory` wrote object keys that could never collide with another
@@ -1218,11 +1247,18 @@ snapshot is kept deliberately:
 
 ## Adopting this on another workstation (Raven)
 
+**Two commands, and the second one is the same one that creates a workspace
+repository from nothing** (Amendment 9(c)). `wip init` is idempotent, so on a
+machine whose repository already exists it clones it, adds nothing to a seeded
+repository, writes the pointer file and runs `link-estates`:
+
 ```sh
-git clone git@github.com:opensoft/brett-wip.git ~/projects/brett-wip
-~/projects/brett-wip/scripts/link-estates --dry-run   # rehearse
-~/projects/brett-wip/scripts/link-estates             # place the symlinks
+openRepoTools --install     # the nine commands, the skill and the hook entry
+openRepoTools wip init      # create or adopt the workspace, and link it
 ```
+
+If the host was set up from `opensoft/workBenches`, `./setup.sh` has already
+run both and there is nothing to type at all.
 
 The warning from Amendment 3's "Raven setup (operator, Brett)" block still
 stands and the linker does not do it for you: **diff Raven's local `LANES.md`
@@ -1232,22 +1268,69 @@ register has never seen. `link-estates` never deletes a real file — it moves
 one aside as `<path>.pre-link-estates-<UTC>` — so the content survives either
 way, but a row nobody re-appends is a row nobody reads.
 
-`link-estates` also places `~/.local/bin/lane-start` and
-`~/.local/bin/lane-end` (creating that directory if it is missing, and saying
-so when it is not on your PATH). The helpers resolve the register and its
-writer from their own real path, so the symlink is all they need.
+### Coming from the pre-move world
+
+A workstation that ran lanes before Amendment 9 carries
+`~/.local/bin/lane-start` and `~/.local/bin/lane-end` as **symlinks** into its
+workspace checkout, placed by the old `link-estates`. Remove them before the
+first `--install`, in this order:
+
+```sh
+rm -f ~/.local/bin/lane-start ~/.local/bin/lane-end   # while they are still symlinks
+openRepoTools --install                               # places them as regular files
+link-estates                                          # repoints ~/projects/xFactory/lanes-edit.sh
+```
+
+It is not tidiness. workBenches' `setup-estate-commands.sh` refuses the WHOLE
+estate install when any target "already exists as a symlink", and `setup.sh`
+swallows that exit into one `⚠` line — so a host that skips this looks set up
+and has no estate commands on it. The installed `link-estates` reports either
+stale symlink it finds, with the command that replaces it.
+
+**The helpers no longer resolve the register from their own real path.** They
+read `~/.agents/workspace.yaml`, which is what makes an installed command in
+`~/.local/bin` able to find a register that is nowhere near it.
 
 Also drop the retired worktree if this workstation still has one:
 `git -C ~/projects/xFactory worktree remove .lanes` (Eagle did this on
 2026-09-10).
 
-## Reading the history from before the move
+## Reading the history from before either move
 
-`git subtree add` imports commits unchanged, so the 1242 register commits made
-between 2026-09-09 and the move carry their pre-move path (`LANES.md`, at the
-root of the orphan branch), and git's default history simplification stops at
-the subtree merge. Both halves are one command each, in
-`~/projects/brett-wip`:
+**There have been two moves and they used different mechanisms**, so the two
+halves of the history are read differently. The REGISTER moved in 2026-09-10
+under Amendment 5, by `git subtree`, from the orphan `lanes` branch of
+`opensoft/xFactory` into the workspace repository. The CODE — these four
+commands, their suite and this manual — moved in 2026-09-13 under Amendment
+9(f)(2), by ONE `git filter-repo` run with a written path map and an
+`--allow-unrelated-histories` merge, from the workspace repository into
+`opensoft/openRepoTools`. `git subtree split` was rejected for that second
+move because it carves one prefix and renames nothing, while the move was two
+source prefixes landing on three destinations with a rename on every path.
+
+**The code half**, in a checkout of `opensoft/openRepoTools`, where
+`--follow` crosses the rename and the unrelated-histories merge:
+
+```sh
+git log --follow --oneline -- lanes-edit.sh      # reaches lanes/lanes-edit.sh
+git log --follow --oneline -- lane-start         # and so for lane-end,
+                                                 # link-estates, repos.tsv,
+                                                 # tests/test_lane_helpers.sh
+                                                 # and this file
+```
+
+The rollback for that move is the annotated tag **`pre-amendment-9-move`** on
+`opensoft/brett-wip`, placed at the commit that still carried all seven paths,
+immediately before the strip. Checking it out and running its
+`scripts/link-estates` puts a workstation back on the pre-move world with its
+data untouched, because no data moved.
+
+**The register half**, which is untouched by the 2026-09-13 move — no data
+moved. `git subtree add` imports commits unchanged, so the 1242 register
+commits made between 2026-09-09 and the Amendment 5 move carry their pre-move
+path (`LANES.md`, at the root of the orphan branch), and git's default history
+simplification stops at the subtree merge. Its own two halves are one command
+each, in the workspace checkout:
 
 ```sh
 git log --oneline -- lanes/LANES.md              # since the move

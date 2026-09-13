@@ -1250,8 +1250,15 @@ def test_resume_on_a_fresh_machine_builds_the_whole_estate(remotes, home):
 
 
 def test_resume_writes_the_config_only_when_asked_by_name(remotes, home):
-    """The only file this standard ever writes outside a repository, and it is
-    written only because `--workspace` asked for it."""
+    """One of the two files this standard ever writes outside a repository —
+    and it is the SAME file as the other, `~/.agents/workspace.yaml`, written
+    here only because `--workspace` asked for it.
+
+    `openRepoTools wip init` is the second writer (Amendment 9(c) step 9), for
+    the same reason and under the same condition: only on a machine that has
+    none, and only because the person asked for the repository by running it.
+    The invariant that retired was "the ONLY file", and it retired on purpose
+    rather than by being found with a red test."""
     result = run(RESUME, FAMILY, home=home, env=offline(remotes))
     assert result.returncode == 2, result.stdout + result.stderr
     assert "no workspace record is configured" in result.stderr

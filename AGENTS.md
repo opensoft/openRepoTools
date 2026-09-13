@@ -1,7 +1,10 @@
 # Working in openRepoTools
 
-Three installed commands, `park`, `resume` and `status`, and the
-`openRepoTools --install` that places them. **The verbs add no mechanics.**
+Three estate commands, `park`, `resume` and `status`; the lane tooling
+`lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates`, which came here
+with their history under lane-collision-protocol Amendment 9; and the
+`openRepoTools` that places all nine files and creates the workspace they read.
+**The verbs add no mechanics.**
 They find the estate and run its own `make park` / `make resume`, which run
 the Speckit git extension's scripts — one implementation, ruled 2026-09-09
 (openRepoShape #77, ruling 1). Never hand-roll the WIP commit, the push, the
@@ -13,6 +16,17 @@ and this repository pins the commit its tests were verified against. Read that
 repository's `AGENTS.md` for the Make targets (`make park`, `make resume`) and
 everything about a project's layout; what follows is only what changes when a
 person is driving the two INSTALLED commands.
+
+The lane tooling answers to a different document — the lane collision protocol
+at `$AGENT_PROTOCOL_ROOT/protocols/lane-collision-protocol.md` and its
+amendments — and `docs/README-lanes.md` is its manual. **The code is here; the
+data is not.** Every one of the four finds the register, the logs and the
+handoffs through `$AGENT_PROTOCOL_ROOT/workspace.yaml`'s `repository:` and
+`path:`, never from its own location on disk, and refuses with exit 1 naming
+`openRepoTools wip init` where that file does not answer. Their exit codes are
+the protocol's and not this toolset's — 1 is *registry not found* there and
+*findings were printed* here — so never read a number without knowing which
+command produced it.
 
 ## Driving `park <Name>`, `resume <Name>` and `status <Name>`
 
@@ -51,10 +65,14 @@ sequence, and relay their per-repository lines rather than summarising them.
    is why the refusal names the leg. Never `git reset`, `git stash` or
    `git checkout -f` — and never `git checkout main` in a leg — to make the
    next run succeed: that is the work the refusal exists to protect.
-2. **`resume --workspace <owner>/<repo>` is the only writer of
-   `~/.agents/workspace.yaml`**, and only on a machine that has none. Do not
-   write that file yourself, and do not pass that flag on your own initiative:
-   which private repository holds a person's unfinished work is theirs to name.
+2. **`~/.agents/workspace.yaml` has exactly TWO writers and you are neither.**
+   `resume --workspace <owner>/<repo>` writes it because a person named the
+   repository; `openRepoTools wip init` writes it because a person asked for
+   the repository by running it (Amendment 9(c) step 9). Both write it only on
+   a machine that has none, and neither overwrites one. Do not write that file
+   yourself, and do not pass `--workspace` or run `wip init` on your own
+   initiative: which private repository holds a person's unfinished work is
+   theirs to name.
 3. **READ THE LINES, not the exit code.** `park` passes `make park`'s own
    status straight through and can exit 0 with a report of what it left behind,
    which is the point of printing that report. `resume` exits non-zero whenever
@@ -143,6 +161,12 @@ Three rules, and none of them is negotiable:
 git submodule update --init upstream/openRepoShape
 python3 -m pytest tests -q
 ```
+
+`tests/test_lane_helpers.sh` is 122 KB of bash that arrived with the move;
+`tests/test_lane_helpers_suite.py` is what makes `pytest` run it, so it is one
+slow test rather than no test at all. Everything shipped here is parsed under
+macOS **bash 3.2** in CI, where `${x,,}`, `mapfile`, `declare -A` and
+`local -n` are syntax errors — write `tr '[:upper:]' '[:lower:]'` and a loop.
 
 Without the submodule the command tests SKIP, naming that first line; they
 never fail, because a fork's first `pytest` going red on a missing submodule is
