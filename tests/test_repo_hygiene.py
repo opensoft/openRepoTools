@@ -1154,6 +1154,78 @@ HOST_ABSOLUTE_PATH = re.compile(
 )
 
 
+def _dispatcher_arms(text: str) -> list[str]:
+    """Every subcommand the main dispatcher has an arm for, in file order.
+
+    The dispatcher is the LAST `case "$cmd" in` in the file — the two before it
+    are the pre-flight guards (the dirty-checkout capture and Amendment 11's
+    container refusal), which name a subset deliberately.
+    """
+    lines = text.splitlines()
+    starts = [i for i, l in enumerate(lines) if l.strip() == 'case "$cmd" in']
+    assert starts, "lanes-edit.sh has no `case \"$cmd\" in` at all"
+    out: list[str] = []
+    for line in lines[starts[-1] + 1:]:
+        if line.startswith("esac"):
+            break
+        m = re.match(r"^  ([a-z][a-z0-9|-]*)\)", line)
+        if m:
+            out.extend(m.group(1).split("|"))
+    return out
+
+
+def test_the_unknown_subcommand_refusal_names_every_subcommand_there_is():
+    """`2` FROM THE `*)` ARM IS HOW A CALLER DETECTS AN OLD HELPER, and the
+    list it prints is the only place a person learns what this file answers to.
+
+    `fetch-age` was missing from it (F-X16): the arm existed, the read worked,
+    and the refusal for a typo listed twenty-nine of the thirty verbs — so a
+    person who mistyped `fetch-age` was told, by omission, that it does not
+    exist. The list is DERIVED here from the dispatcher's own arms rather than
+    restated, because a restated list is the thing that drifted.
+    """
+    text = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+    arms = _dispatcher_arms(text)
+    assert len(arms) > 25, f"only {len(arms)} arms parsed — the parser has drifted"
+    m = re.search(r"unknown subcommand '\$cmd' \(([^)]*)\)", text)
+    assert m, "no unknown-subcommand refusal found in lanes-edit.sh"
+    listed = m.group(1).split("|")
+    assert sorted(set(listed)) == sorted(set(arms)), (
+        "the unknown-subcommand refusal and the dispatcher disagree:\n"
+        f"  in the arms but not the list: {sorted(set(arms) - set(listed))}\n"
+        f"  in the list but not the arms: {sorted(set(listed) - set(arms))}")
+    assert len(listed) == len(set(listed)), "the refusal lists a verb twice"
+
+
+def test_the_exit_code_table_carries_every_code_the_file_exits_with():
+    """*"EXIT CODES — every subcommand, one table, no two meanings on one
+    number"* is a claim the table makes about itself (`lanes-edit.sh:160`).
+
+    **64 was in no table at all** while twenty-one `die`s used it and the
+    contract gave it to every read Amendment 11 added (F-X16). A table that
+    says it is complete and is not is worse than no table, because it is the
+    thing a reader checks the code against.
+    """
+    text = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+    start = text.index("# EXIT CODES — every subcommand, one table")
+    # The table ends where the next header does. `\n#\n` is NOT the boundary:
+    # a row long enough to need a blank comment line inside it would truncate
+    # the table and the test would pass by reading less of it.
+    end = text.index("# --no-sweep", start)
+    table = text[start:end]
+    used = set()
+    for m in re.finditer(r'\bdie "(?:[^"\\]|\\.)*" (\d+)', text, re.S):
+        used.add(m.group(1))
+    for m in re.finditer(r"^\s*(?:return|exit) (\d+)\b", text, re.M):
+        used.add(m.group(1))
+    documented = set(re.findall(r"^#\s+(\d+)\s{2}", table, re.M))
+    missing = sorted(int(c) for c in used - documented - {"0"})
+    assert not missing, (
+        f"these exit codes are used and are in no row of the table: {missing}\n"
+        f"the table documents {sorted(int(c) for c in documented)}")
+    assert "64" in documented, "64 is the code every Amendment 11 read uses"
+
+
 def test_no_committed_file_names_a_host_absolute_path():
     """openRepoShape #61: a suite stayed green on every machine but the one a
     fixed path was written on, because the ONE test that read it SKIPPED when

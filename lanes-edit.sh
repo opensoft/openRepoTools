@@ -161,7 +161,27 @@
 #   0  done
 #   1  environment (no register, no writer)
 #   2  refusal: bad arguments, the object is held, an unknown alias, or a
-#      checkout that cannot be rebased
+#      checkout that cannot be rebased. FOUR MEANINGS ON ONE NUMBER, and they
+#      stay readable only because of where each can occur: bad arguments to a
+#      subcommand that predates Amendment 11; `register-row`'s "not lane-shaped";
+#      AN UNKNOWN SUBCOMMAND (the `*)` arm below), which is how a caller detects
+#      a helper predating the amendment that added the read it asked for; and
+#      Amendment 11's container refusal. The last is on WRITERS ONLY (the
+#      dispatcher guard), so no READ can return it and clause (h)'s
+#      fall-to-the-next-rung rule is unaffected by it.
+#  64  usage — a caller's bad arguments to one of the reads Amendment 11 added
+#      (`window-lane`, `lane-dir`, `lane-profile`, `last-session`, `forks`,
+#      `workstation`, `fetch-age`, `lanes`, `session-lane`, and `swapped`, which
+#      took it first). IT WAS IN NO TABLE AT ALL until this round (F-X16), while
+#      being the code the contract gives every one of those reads.
+#
+#      WHY A SECOND USAGE CODE RATHER THAN 2. A read in front of a launch has to
+#      tell "you called me wrong" from "this helper has never heard of you" —
+#      and the second of those IS a 2, emitted by the `*)` arm, on every
+#      workstation until adoption act 3's install reaches it. One number cannot
+#      carry both without the caller guessing, so the newer reads spend a number
+#      of their own and the older half of this file keeps 2 where it always was.
+#      Clause (h)'s table is the contract for which read uses which.
 #   3  rebase conflict — nothing was pushed, the edit is a local commit
 #   4  the mutex could not be taken within 60s
 #   5  an edit moved more than one line and was refused
@@ -5159,6 +5179,6 @@ EOF
     ;;
 
   *)
-    die "unknown subcommand '$cmd' (verify-row|append-row-status|replace-in-row|append-session-id|append-line|add-row|commit|log|claim|release|who|swapped|session-start|idle-holders|live-holder|window-session|session-lane|window-lane|lane-dir|lane-profile|last-session|forks|workstation|lanes|sibling-filter|resolve-repo|lane-objects|register-row|resolve-home)" 2
+    die "unknown subcommand '$cmd' (verify-row|append-row-status|replace-in-row|append-session-id|append-line|add-row|commit|log|claim|release|who|swapped|session-start|idle-holders|live-holder|window-session|session-lane|window-lane|lane-dir|lane-profile|last-session|forks|workstation|fetch-age|lanes|sibling-filter|resolve-repo|lane-objects|register-row|resolve-home)" 2
     ;;
 esac
