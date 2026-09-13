@@ -1544,10 +1544,10 @@ SE_CACHE_FILE="$(mktemp "${TMPDIR:-/tmp}/lanes-edit-events.XXXXXX" 2>/dev/null |
 # stream is parsed — so they were emitted by whichever caller happened to build
 # the cache first, and lost entirely when that caller was a command substitution
 # with `2>/dev/null`. That was always true and never mattered, because the
-# first builder in `who` was a call whose stderr reached the person. Ruling 8's
-# `retired_forks_of` moved the first build one line earlier, into exactly such a
-# substitution, and the whole warning vanished from `who --lane` — caught by the
-# two assertions that exist for it.
+# first builder in `who` was a call whose stderr reached the person. Ruling 12's
+# one-pass listing moved the first build into exactly such a substitution — the
+# `lr_facts` render — and the whole warning vanished from `who --lane`, caught
+# by the two assertions that exist for it.
 #
 # So the build's stderr is CAPTURED beside the cache and replayed once per
 # shell. `SE_WARNED` is deliberately a plain variable: a subshell that replays
@@ -3688,9 +3688,11 @@ last_session_of() {   # <lane>
 # IT NAMES THEM AND DOES NOTHING ELSE, exactly as `idle_holders` does and for
 # the same reason clause (f) of Amendment 8 gives. THE ACT IT NAMES IS
 # `lane-end <lane> --retire <pid|uuid>` (clause (k) rule (e), A11 Addendum 4
-# ruling 8) and never `kill <pid>`: retiring is a RECORD — the RETIRED line this
-# read then stops answering with — and *"neither kills a process"*. Stopping the
-# process stays a person's act and no surface here prints it as this one.
+# ruling 8) and never `kill <pid>`: that act is the DOOR to Amendment 6(d), it
+# writes nothing and *"neither kills a process"*. So this read goes on naming a
+# fork until 6(d) is actually taken on it — the retitle, or the process gone —
+# which is what is TRUE; and stopping the process stays a person's act that no
+# surface here prints as the one.
 #
 # One line per fork, `<session id><TAB><pid><TAB><kind><TAB><cwd>`.
 # 0 with rows, 8 with none, 1 where the records could not be read.
@@ -3769,24 +3771,7 @@ transcript_title() {   # <uuid> [<the record's file>] [<the record's cwd>]
   printf '%s\n' "${tt_v% (*)}"
 }
 
-# THE FORKS OF THIS LANE ITS LOG HAS ALREADY RETIRED (A11 Addendum 4 ruling 8).
-# `lane-end <lane> --retire <pid|uuid>` writes `RETIRED … -> fork <sid>; …`, and
-# retiring is a RECORD rather than a kill — clause (k) rule (e), *"Neither kills
-# a process"* — so the thing that makes the act mean anything is that no read
-# counts that id as this lane afterwards. This is where that happens, once, for
-# `forks`, `lanes` and `restart` together.
-#
-# Out of `state_events`, which is cached for the life of the process, rather
-# than a `git show` of this lane's log per call.
-retired_forks_of() {   # <lane>
-  rf_l="${1-}"; [ -n "$rf_l" ] || return 0
-  state_events 2>/dev/null | awk -F"$US" -v l="$rf_l" '
-    $2 == l && $3 == "RETIRED" && substr($8, 1, 5) == "fork " {
-      v = substr($8, 6); sub(/;.*$/, "", v); sub(/ .*$/, "", v)
-      if (v != "") print tolower(v) }'
-}
-
-# `lane_forks <lane> [<ids fence>] [<retired fence>]`
+# `lane_forks <lane> [<ids fence>]`
 #
 # THE TWO SETS AS ONE SPACE-FENCED STRING EACH, tested with `case` (A11
 # Addendum 4 ruling 12). The `grep -qx` this replaces was a process per map
@@ -3799,7 +3784,7 @@ retired_forks_of() {   # <lane>
 # has already made in one pass. A caller with one lane in hand (`forks`, `who`)
 # passes nothing and this computes them, so the read is unchanged for everybody
 # else. The fences are `" a b c "`, lower-cased, spaces at both ends.
-lane_forks() {   # <lane> [<ids fence>] [<retired fence>]
+lane_forks() {   # <lane> [<ids fence>]
   lf_l="${1-}"; [ -n "$lf_l" ] || return 64
   lf_ll="$(lc "$lf_l")"
   if [ "$#" -ge 2 ]; then
@@ -3808,24 +3793,21 @@ lane_forks() {   # <lane> [<ids fence>] [<retired fence>]
     lf_ids=" $( { session_ids_of_lane "$lf_l" 2>/dev/null || :
                   session_ids_local_of_lane "$lf_l" 2>/dev/null || :; } | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
   fi
-  if [ "$#" -ge 3 ]; then
-    lf_retired="$3"
-  else
-    lf_retired=" $(retired_forks_of "$lf_l" 2>/dev/null | tr '\n' ' ' || :)"
-  fi
   lf_out=""
   while IFS="$US" read -r lf_tl lf_t lf_sid lf_sidl lf_pid lf_kind lf_cwd; do
     [ -n "${lf_tl:-}" ] || continue
     [ "$lf_tl" = "$lf_ll" ] || continue
     # AN ID THE ROW RECORDS IS THE LANE ITSELF, never a fork of it.
     case "$lf_ids" in *" $lf_sid "*) continue ;; esac
-    # AND AN ID THIS LANE HAS ALREADY RETIRED IS NOT ONE EITHER: retiring is the
-    # record, so after it nothing counts this process as the lane's fork, and
-    # the surfaces stop printing an act that has already been taken.
-    case "$lf_retired" in
-      *" $lf_ll$US$lf_sidl "*) continue ;;
-      *" $lf_sidl "*) continue ;;
-    esac
+    # AND THERE IS NO THIRD TEST, BECAUSE RETIRING WRITES NOTHING. The first
+    # build of ruling 8's act appended `RETIRED … -> fork <sid>` to the lane's
+    # log and this read filtered on it; that line is a SEVENTH edit to in-force
+    # text — Amendment 7(b) gives `RETIRED` no payload and A11 clause (c) keeps
+    # it that way — so it is gone (`lane-end`'s own block argues it in full).
+    # `lane-end --retire <pid|uuid>` is the DOOR to Amendment 6(d) and performs
+    # none of it, which is clause (k) rule (e)'s own posture, so a fork stays a
+    # fork here until the operator's retitle or its process is gone. This read
+    # keeps saying what is TRUE rather than what has been acknowledged.
     lf_out="${lf_out}${lf_sid}	${lf_pid}	${lf_kind:-interactive}	${lf_cwd}
 "
   done <<EOF
@@ -4054,13 +4036,6 @@ lanes_rows() {
   lr_index="$GS$(lanes_register_index 2>/dev/null | tr '\n' "$GS" || :)"
   lr_local_index="$GS$(lanes_register_index --local 2>/dev/null | tr '\n' "$GS" || :)"
   lr_facts_t="$GS$(printf '%s\n' "$lr_facts" | tr '\n' "$GS")"
-  # EVERY FORK ANY LANE HAS RETIRED, in one pass over the cached events, as
-  # `<lane><US><fork id>` — `lane_forks` asked this per lane and each ask was a
-  # pass of its own.
-  lr_retired_all=" $(state_events 2>/dev/null | awk -F"$US" -v sep="$US" '
-      $3 == "RETIRED" && substr($8, 1, 5) == "fork " {
-        v = substr($8, 6); sub(/;.*$/, "", v); sub(/ .*$/, "", v)
-        if (v != "") print tolower($2) sep tolower(v) }' | tr '\n' ' ')"
   lr_live_rows="$(live_session_ids 2>/dev/null || :)"
   lr_live_fence=" $(printf '%s\n' "$lr_live_rows" | awk -F"$US" 'NF { print tolower($1) }' | tr '\n' ' ')"
   lr_ws_short="$(short_ws "$lr_ws")"
@@ -4178,7 +4153,7 @@ EOF2
     lr_fk=0
     case "$lr_fork_titles" in
       *" $lr_ll "*)
-        lr_fk="$(lane_forks "$lr_l" " $lr_ids_sp $lr_lids_sp " "$lr_retired_all" 2>/dev/null | grep -c . || :)"
+        lr_fk="$(lane_forks "$lr_l" " $lr_ids_sp $lr_lids_sp " 2>/dev/null | grep -c . || :)"
         case "$lr_fk" in ''|*[!0-9]*) lr_fk=0 ;; esac ;;
     esac
     # `none` AND NEVER A DASH, because three of these columns are `none` on

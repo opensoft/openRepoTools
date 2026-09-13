@@ -35,17 +35,22 @@
 #   --retire            also mark the state cell RETIRED <UTC> — the lane is
 #                       not coming back, as opposed to a window that is only
 #                       closing for the night
-#   --retire <pid|uuid> A DIFFERENT ACT, and it ends nothing: retire a live
-#                       FORK of this lane's transcript (Amendment 11 clause (k)
-#                       rule (e) — "both print the one act: retire it … and
-#                       lane-end's --retire is the door"). It writes a RETIRED
-#                       line naming the fork into the lane's own log, after
-#                       which no read counts that id as this lane. It NEVER
-#                       kills the process: the pid is printed and stopping it
-#                       is the operator's act. Refuses on anything that is not
-#                       a live fork of this lane, and on a `forks` read that
-#                       failed — a read that failed is not "it is not a fork".
-#                       `lanes-edit.sh forks <lane>` names them.
+#   --retire <pid|uuid> A DIFFERENT ACT, and it ends nothing: the DOOR to
+#                       Amendment 6(d)'s retire act for a live FORK of this
+#                       lane's transcript (Amendment 11 clause (k) rule (e) —
+#                       "both print the one act: retire it, under Amendment
+#                       6(d) … Neither kills a process … and lane-end's
+#                       --retire is the door"). It PROVES the pid or uuid is
+#                       this lane's live fork and prints 6(d) for it filled in
+#                       — the /rename for a session with a prompt, 6(d)'s
+#                       "ended" for a kind: bg holder that has none. It writes
+#                       NOTHING (a RETIRED carrying a payload would be a
+#                       seventh edit to in-force text: Amendment 7(b) gives
+#                       RETIRED no payload and A11 clause (c) keeps it that
+#                       way) and it KILLS NOTHING. Refuses on anything that is
+#                       not a live fork of this lane, and on a `forks` read
+#                       that failed — a read that failed is not "it is not a
+#                       fork". `lanes-edit.sh forks <lane>` names them all.
 #   --state-was <text>  the exact text --retire should replace, for a row whose
 #                       state cell does not open with a single state word
 #   --force             end the lane even though its object log still shows
@@ -504,49 +509,62 @@ fi
 
 # ------------------------------------------- --retire <pid|uuid>: A LIVE FORK
 #
-# THE ONE ACT EVERY SURFACE PRINTS FOR A FORK (A11 clause (k) rule (e),
-# A11 Addendum 4 ruling 8): *"both print the one act: **retire it**, under
-# Amendment 6(d) … **Neither kills a process** … and `lane-end`'s `--retire` is
-# the door."* Before this round the door did not exist: `restart` printed a
-# READ (`lanes-edit.sh forks <lane>`), `lanes` printed *"Name them"*, and two
-# places said *"retiring one is `kill <pid>`"* — three spellings of one ratified
-# act, none of them it.
+# THE ONE ACT EVERY SURFACE PRINTS FOR A FORK (A11 clause (k) rule (e), A11
+# Addendum 4 ruling 8, `R-A11-24`): *"both print the one act: **retire it**,
+# under Amendment 6(d), which is the operator's act and stays the operator's.
+# **Neither kills a process** … and `lane-end`'s `--retire` is the door."*
+# Before this round the door did not exist: `restart` printed a READ
+# (`lanes-edit.sh forks <lane>`), `lanes` printed *"Name them"*, and two places
+# said *"retiring one is `kill <pid>`"* — three spellings of one ratified act,
+# none of them it.
 #
-# IT ENDS NOTHING. This is not `lane-end`'s own act with a flag on it: the row
-# is not closed, no state word is replaced, the objects the lane holds are not
-# read and no `ENDED` line is written. It returns as soon as the fork's line is
-# in the lane's log.
+# IT IS A DOOR AND NOT A RECORD, AND THAT IS THIS ROUND CORRECTING ITSELF. The
+# first build of this act wrote `RETIRED — lane <lane>, … , lane:<lane> → fork
+# <sid>; pid <n>; kind <k>` into the lane's own log and filtered `forks` on it.
+# It cannot: **Amendment 7(b) gives `RETIRED` NO PAYLOAD** — *"`PAUSED`,
+# `RESUMED`, `ENDED` and `RETIRED` take no payload"* — and Amendment 11 clause
+# (c), which narrows that sentence for `RESUMED` and counts the narrowing as
+# **edit 1 of six**, says in the same breath that *"`ENDED` and `RETIRED` stay
+# payload-free"*. The other spelling is no better: 7(b)'s *"Every lane-kind line
+# takes the object `lane:<name>`"* is enforced by this estate's own writer
+# (`lanes-edit.sh`'s `log` arm: *"'$verb' is a lane verb: its object is
+# lane:<name>"*), so an object of `fork:<uuid>` narrows that half instead. Either
+# way it is a **SEVENTH edit to in-force text** where the count is six and the
+# six are ratified (`R-A11-15`) — and the first one also needed the state reader
+# to learn a second rule about which of a lane's lines are the lane's, in an
+# append-only file. Writing that silently is the exact defect this estate blocks
+# on, so the record is dropped rather than smuggled.
 #
-# AND IT KILLS NOTHING, which is the rule that makes it safe to print as an act
-# rather than a warning. Evidence 6's fork was a `--fork-session` daemon
-# orchestrating a plan; what makes it harmless is not that its process stops but
-# that NOTHING READS IT AS THE LANE any more — so retiring is a WRITE to the
-# append-only log, and after it `lanes-edit.sh forks` no longer answers with that
-# id, `lanes` stops printing a DEFECT line for it and `restart` stops naming it.
-# The process is the operator's to stop, with their own hands, and the report
-# below says so and prints its pid.
+# WHAT THE RULE ACTUALLY ASKS FOR IS REPORTING, and it says so in its own words:
+# *"This is Amendment 8(f)'s own posture — 'reports what 6(d) is owed and
+# performs none of it' — extended to the case that produced it, and the
+# reporting is what closed Evidence 6 on the day."* So this act **proves** the
+# target is THIS lane's live fork, and **prints Amendment 6(d)'s retire act for
+# it, filled in**. It writes nothing and it kills nothing.
 #
-# THE FORK IS PROVED BEFORE IT IS WRITTEN, and a read that FAILED is never
-# "it is not a fork": `forks` answers 0 with rows, 8 with none and 1 where this
-# workstation's session records could not be read. Only the first can find one.
+# AND IT IS NOT `forks` WITH EXTRA STEPS. `forks` NAMES every fork; this takes
+# ONE, refuses anything that is not one of them (a stranger's pid, a uuid of
+# another lane), refuses a `forks` read that FAILED rather than reading it as
+# *"it is not a fork"*, and spells 6(d) for the kind of session it actually is.
+# One act, one name, on every surface — which is the whole of `R-A11-24`.
+#
+# `kill <pid>` IS PRINTED BY NOTHING (`R-A11-24` in terms). The pid and the cwd
+# are printed as FACTS — `who` and the hook have always printed them — so a
+# person can find the process; what is never printed is a command that ends it.
 if [ -n "$retire_target" ]; then
   [ "$force" = 0 ] || die "--force is for ending a lane that still holds something; it has no meaning for retiring a fork. Run: $prog $LANE --retire $retire_target" 2
   [ -z "$state_was" ] || die "--state-was is for the state cell of a lane being ended; retiring a fork touches no cell. Run: $prog $LANE --retire $retire_target" 2
 
-  # ONE SPELLING OF THE WORKSTATION, and a container with no configured one
-  # writes nothing (A11 decision 8(d), `R-A11-14`) — the same refusal the
-  # closing act below makes, made here because this act returns before it.
-  fk_ws_pair="$(lanes_workstation_pair)"
-  fk_ws="${fk_ws_pair%%	*}"
-  fk_ws_why="$(lanes_workstation_why "${fk_ws_pair##*	}")"
-  [ -z "$fk_ws_why" ] || die "$fk_ws_why" 2
-
+  # THE FORK IS PROVED BEFORE ANYTHING IS PRINTED, and a read that FAILED is
+  # never "it is not a fork": `forks` answers 0 with rows, 8 with none and 1
+  # where this workstation's session records could not be read (Amendment 7(d)).
+  # Only the first can find one.
   fk_rc=0
   fk_rows="$("$LANES_EDIT" forks "$LANE" 2>/dev/null)" || fk_rc=$?
   case "$fk_rc" in
     0) : ;;
-    8) die "no fork of lane $LANE's transcript is live on $fk_ws, so there is nothing to retire. A fork is found by its transcript's TITLE under an id the row does not record (ratified decision 8(e)); \`$LANES_EDIT forks $LANE\` is the read that names them." 8 ;;
-    *) die "$LANES_EDIT forks $LANE failed (exit $fk_rc). That is NOT 'no fork of it is live', and this script will not write a RETIRED line for a fork it could not prove is one. Run it by hand to see what it says, then re-run." 1 ;;
+    8) die "no fork of lane $LANE's transcript is live on this workstation, so there is nothing to retire. A fork is found by its transcript's TITLE under an id the row does not record (ratified decision 8(e)); \`$LANES_EDIT forks $LANE\` is the read that names them." 8 ;;
+    *) die "$LANES_EDIT forks $LANE failed (exit $fk_rc). That is NOT 'no fork of it is live', and this script will not name an act for a fork it could not prove is one. Run it by hand to see what it says, then re-run." 1 ;;
   esac
 
   fk_sid=""; fk_pid=""; fk_kind=""; fk_cwd=""
@@ -567,28 +585,33 @@ FORKS
       [ -n "${fr_sid:-}" ] || continue
       note "  $fr_sid  pid $fr_pid  ${fr_kind:-interactive}  $fr_cwd"
     done
-    die "'$retire_target' is neither the session id nor the pid of a live fork of lane $LANE. A RETIRED line naming something that is not a fork is a line nothing can correct — the log is append-only — so nothing was written. Pick one of the ids or pids above." 2
+    die "'$retire_target' is neither the session id nor the pid of a live fork of lane $LANE. Naming an act against something that is not a fork of this lane is how the wrong conversation gets retitled and the wrong process gets stopped, so nothing is named. Pick one of the ids or pids above." 2
   fi
 
-  # THE SESSION FIELD IS THE FORK'S OWN UUID, not the lane's, because the line
-  # is ABOUT the fork: Amendment 7(b) makes that field the transcript the act
-  # was taken on, and clause (e) refuses a substitute for it. The payload opens
-  # with `fork ` — the marker the state reader keys on, so a fork's RETIRED is
-  # never read as the LANE's own last verb (decision 8(c): a fork is never the
-  # lane).
-  fk_payload="fork $fk_sid; pid ${fk_pid:-unknown}; kind $fk_kind"
-  fk_text="retired by lane-end on $fk_ws; the process was NOT killed"
+  # AMENDMENT 6(d), FILLED IN — and it is TWO acts because 6(d) is two, one per
+  # kind of session: *"When a lineage is superseded, handed off or dead, it is
+  # retitled `<lane> · retired <YYYY-MM-DD>`, and an idle background session
+  # still holding a lane name is ENDED."* A fork with a prompt can be retitled
+  # from inside it and there is no API to do it from out here (clause (f) step
+  # 7's own reason); a `kind: bg` fork has no prompt at all, which is exactly
+  # what Evidence 6's `--fork-session` daemon was, so the retitle is not
+  # available there and 6(d)'s second half is the one that applies.
+  fk_today="$(date -u +%Y-%m-%d)"
+  step "$fk_sid IS a live fork of lane $LANE's transcript — proved, and NOTHING has been written or stopped"
+  note "  pid ${fk_pid:-unknown}  ${fk_kind}${fk_cwd:+  cwd $fk_cwd}"
+  case "$fk_kind" in
+    bg)
+      note "Amendment 6(d)'s retire act for a BACKGROUND holder: \"an idle background session still holding a lane name is ended\". It has no prompt to type into, so the retitle below is not available to it."
+      note "Ending it is YOUR act and no tool's (Amendment 8(f) refuses it by name, and clause (k) rule (e) repeats the refusal for this surface): the pid above is the process." ;;
+    *)
+      note "Amendment 6(d)'s retire act, typed IN THAT SESSION — there is no API to rename one from outside it:"
+      note "    /rename $LANE · retired $fk_today" ;;
+  esac
+  note "Until it is retired, \`$LANES_EDIT forks $LANE\` goes on naming it and every surface goes on marking the lane — which is true, because it is still a fork of this lane until one of the two acts above is taken."
+  note "The lane itself is untouched: this ended nothing, wrote nothing and killed nothing."
   if (( dry_run )); then
-    plan "lanes-edit.sh log RETIRED lane:$LANE → \"$fk_payload\" \"$fk_text\""
-    exit 0
+    note "--dry-run changes nothing here: this act writes nothing on any path, so the run above IS the whole of it."
   fi
-  LANES_LANE="$LANE" LANES_SESSION="$fk_sid" "$LANES_EDIT" log RETIRED "lane:$LANE" \
-    → "$fk_payload" "$fk_text" ||
-    die "the RETIRED line for fork $fk_sid could not be written (the writer's reason is above). Nothing is retired: a fork is retired BY the record, so a line that was not written has retired nothing." 1
-  step "fork $fk_sid of lane $LANE is RETIRED — no read counts it as this lane any more"
-  note "IT IS STILL RUNNING. Retiring is a record, never a kill (Amendment 6(d), clause (k) rule (e)):"
-  note "  pid ${fk_pid:-unknown}${fk_cwd:+, cwd $fk_cwd}"
-  note "Stopping that process is your act and no tool's. The lane itself is untouched: this ended nothing."
   exit 0
 fi
 

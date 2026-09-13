@@ -260,10 +260,14 @@ step 6 is `/restart`'s act and not `lane-start`'s.
 **A live FORK of this lane's transcript is a defect, and it is named wherever this skill meets one**
 (ratified decision 8(e), from Evidence 6). `"$L" forks <lane>` lists them, one `<uuid> <pid> <kind> <cwd>`
 per fork. A fork is never the holder and must never write the register, and the ONE act is clause (k) rule
-(e)'s — **`lane-end <lane> --retire <pid|uuid>`**, typed by a person. It writes a RETIRED line naming the
-fork into the lane's own log, after which no read counts that id as this lane; it does **not** kill the
-process, and ending somebody's process is not a tool's act (Amendment 8(f)). This skill used to print
-`kill <pid>` here, which is the act the ruling says neither surface prints.
+(e)'s — **`lane-end <lane> --retire <pid|uuid>`**, typed by a person. It is the DOOR to Amendment 6(d)'s
+retire act, not a record of one: it proves the pid or uuid is this lane's live fork and prints 6(d) filled
+in — the `/rename <lane> · retired <date>` for a session with a prompt, 6(d)'s *"an idle background session
+still holding a lane name is ended"* for a `kind: bg` holder that has none. It writes **nothing** (a
+`RETIRED` carrying a payload would be a seventh edit to in-force text, and Amendment 7(b) gives that verb
+none) and it does **not** kill the process, because ending somebody's process is not a tool's act
+(Amendment 8(f)). This skill used to print `kill <pid>` here, which is the act the ruling says neither
+surface prints.
 
 **`/restart` binds a window. It does not choose a conversation.** Those are two questions and this skill
 answers only the first; the second is Amendment 6(b)'s and stays there.

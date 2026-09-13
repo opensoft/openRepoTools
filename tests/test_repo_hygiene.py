@@ -1284,8 +1284,10 @@ def test_adoption_act_zero_is_cited_by_the_sha_that_landed():
 
 #: EVERY SURFACE THAT PRINTS SOMETHING ABOUT A LIVE FORK. Six of them: `who`,
 #: the SessionStart hook, `live-holder`, `lanes`, `restart` and the `/restart`
-#: skill.
-FORK_SURFACES = ("lanes-edit.sh", "lanes", "restart", "skills/restart/SKILL.md")
+#: skill — and `lane-end`, which A11 Addendum 4 ruling 8 makes the DOOR and
+#: which must therefore hold to the same rule as the surfaces that print it.
+FORK_SURFACES = ("lanes-edit.sh", "lanes", "restart", "skills/restart/SKILL.md",
+                 "lane-end")
 #: A line that offers an act for a fork says `FORK` or `fork(s)` and an
 #: imperative beside it. Matched on the two spellings the surfaces use.
 FORK_ACT_LINE = re.compile(r"^.*(?:live FORK|live fork\(s\)).*$", re.M)

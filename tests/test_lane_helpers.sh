@@ -3976,54 +3976,80 @@ is "one lane read alone is the same row the estate listing gives it" "$ONE_ROW" 
 # door."* The door did not exist — three surfaces printed three other things —
 # so A11 Addendum 4 ruling 8 (ratified "a11 addendum 4 yes") has it built here.
 #
-# THE WRITES BELOW NEED A CLEAN CHECKOUT, as every writing case in this suite
-# does; the handoff cases far above leave tracked deletions behind.
-git -C "$WIP" add -A >/dev/null 2>&1
-git -C "$WIP" commit -q -m "commit pending handoff edits before the fork-retire cases" >/dev/null 2>&1 || :
+# AND IT IS A DOOR, NOT A RECORD. This round's first build of the act appended
+# `RETIRED … → fork <sid>; pid <n>; kind <k>` to the lane's own log. That line
+# cannot be written: Amendment 7(b) says `PAUSED`, `RESUMED`, `ENDED` and
+# `RETIRED` *"take no payload"* and A11 clause (c) — which narrows that sentence
+# for `RESUMED` and counts the narrowing as edit 1 of six — says `ENDED` and
+# `RETIRED` *"stay payload-free"*. So the assertions below hold the opposite of
+# what they first held: the act PROVES the fork and PRINTS Amendment 6(d) for
+# it, and the log is untouched.
+#
+# THE FIXTURE IS EVIDENCE 6's OWN SHAPE — `kind: bg`, cwd `/workspace`, a
+# transcript titled for the lane under an id no row carries — so the branch it
+# takes is 6(d)'s second half, the one a `/rename` cannot reach.
 
-# REFUSED ON ANYTHING THAT IS NOT A LIVE FORK OF THIS LANE, because the log is
-# append-only and a RETIRED line naming a stranger is a line nothing corrects.
+# REFUSED ON ANYTHING THAT IS NOT A LIVE FORK OF THIS LANE, because naming an
+# act against a stranger is how the wrong process gets stopped.
 run "$END" repoA-1 --retire 999999
 is   "--retire refuses a pid that is not a live fork of this lane" "$rc" 2
 has  "…naming what IS live, so the operator can pick one" "$err" "$FORK_ID"
-has  "…and saying nothing was written" "$err" "nothing was written"
-hasnt "…which is true: no RETIRED line" "$(cat "$LOGD/repoA-1.md" 2>/dev/null || :)" "RETIRED"
+has  "…and saying nothing was named" "$err" "nothing is named"
 # AND ON A LANE WITH NO FORK AT ALL — 8, which is "no record", not a refusal.
 run "$END" repoA11-1 --retire "$FORK_ID"
 is   "…and exits 8 for a lane no fork of which is live" "$rc" 8
+# A `forks` READ THAT FAILED IS NEVER "IT IS NOT A FORK" (Amendment 7(d)).
+cat > "$SANDBOX/forkbroke" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  forks) printf 'lanes-edit: simulated failure\n' >&2; exit 1 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/forkbroke"
+run env REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/forkbroke" "$END" repoA-1 --retire "$FORK_ID"
+is   "…and 1, never 8, where the forks read BROKE" "$rc" 1
+has  "…saying so in Amendment 7(d)'s words" "$err" "NOT 'no fork of it is live'"
 # THE AMBIGUOUS SPELLING IS REFUSED RATHER THAN GUESSED AT: a bare number is
 # both a lane POSITION and a pid, and the two are different acts.
 run "$END" --retire 3
-is   "a bare `--retire <number>` with no lane named is refused as ambiguous" "$rc" 2
+is   'a bare `--retire <number>` with no lane named is refused as ambiguous' "$rc" 2
 has  "…printing both acts it could have been" "$err" "is both a lane POSITION"
-# --dry-run WRITES NOTHING AND PRINTS THE LINE.
+# THE ACT ITSELF — AND IT WRITES NOTHING ANYWHERE.
+A11F_BEFORE="$(cat "$LOGD/repoA-1.md" 2>/dev/null || :)"
+A11F_ROW_BEFORE="$(grep '^| `repoA-1`' "$LANES")"
+run "$END" repoA-1 --retire "$FORK_ID"
+is   "lane-end --retire <uuid> exits 0 on a proved live fork" "$rc" 0
+has  "…saying it proved the fork and wrote nothing" "$err" "NOTHING has been written or stopped"
+has  "…printing the pid a person needs to find the process" "$err" "pid $LIVE_PID"
+has  "…and the cwd that is not the lane's" "$err" "/workspace"
+# AMENDMENT 6(d), FILLED IN, FOR THE KIND OF SESSION THIS ACTUALLY IS.
+has  "…naming Amendment 6(d)'s act for a BACKGROUND holder" "$err" "an idle background session still holding a lane name is ended"
+has  "…and saying whose act it is" "$err" "YOUR act and no tool's"
+hasnt "…and never `kill <pid>`, which R-A11-24 says is printed by nothing" "$err" "kill $LIVE_PID"
+is   "…the log is BYTE-IDENTICAL: a RETIRED with a payload is a seventh edit to in-force text" \
+     "$(cat "$LOGD/repoA-1.md" 2>/dev/null || :)" "$A11F_BEFORE"
+is   "…and the row is untouched too: this ends nothing" "$(grep '^| `repoA-1`' "$LANES")" "$A11F_ROW_BEFORE"
+is   "…and the process really is still running: the door never kills" "$(kill -0 "$LIVE_PID" 2>/dev/null && echo live)" "live"
+# THE READ GOES ON SAYING WHAT IS TRUE. The fork is still a fork until the
+# operator takes 6(d), so `forks` still names it — which is the honest answer
+# and is what the first build's filter would have hidden.
+run "$E" forks repoA-1
+is   "forks still names a fork nobody has retired yet, because it is still one" "$rc" 0
+has  "…by its own id" "$out" "$FORK_ID"
+# --dry-run IS THE SAME RUN, AND SAYS SO RATHER THAN PRETENDING.
 run "$END" repoA-1 --retire "$FORK_ID" --dry-run
 is    "--dry-run exits 0" "$rc" 0
-has   "…printing the exact line it would write" "$err" "log RETIRED lane:repoA-1"
-hasnt "…and writing none of it" "$(cat "$LOGD/repoA-1.md" 2>/dev/null || :)" "RETIRED"
-# THE ACT ITSELF.
+has   "…and says it changes nothing here, because the act writes nothing on any path" "$err" "--dry-run changes nothing here"
+# AN INTERACTIVE FORK GETS 6(d)'s OTHER HALF: the retitle, which is the one a
+# session with a prompt can take and a `kind: bg` one cannot.
+printf '{"pid":%s,"sessionId":"%s","cwd":"/workspace","procStart":"%s","kind":"user","name":"openrepoproject-b9","status":"busy"}\n' \
+  "$LIVE_PID" "$FORK_ID" "$live_start" > "$sessions_dir/live-fork.json"
 run "$END" repoA-1 --retire "$FORK_ID"
-is   "lane-end --retire <uuid> exits 0 on a live fork" "$rc" 0
-A11F_LOG="$(cat "$LOGD/repoA-1.md" 2>/dev/null || :)"
-has  "…writing a RETIRED line into the LANE's own log" "$A11F_LOG" "RETIRED — lane repoA-1"
-has  "…whose session field is the FORK's uuid and not the lane's" "$A11F_LOG" "session $FORK_ID@Eagle"
-has  "…and whose payload opens with the marker the state reader keys on" "$A11F_LOG" "fork $FORK_ID"
-has  "…carrying the pid, which is what the operator needs to stop it" "$A11F_LOG" "pid $LIVE_PID"
-has  "…and saying the process was not killed" "$A11F_LOG" "was NOT killed"
-has  "the report says it is still running" "$err" "IT IS STILL RUNNING"
-is   "…and the process really is: retiring is a record, never a kill" "$(kill -0 "$LIVE_PID" 2>/dev/null && echo live)" "live"
-# WHAT THE RECORD IS FOR: no read counts it as this lane any more.
-run "$E" forks repoA-1
-is   "forks no longer answers with a fork this lane has retired" "$rc" 8
-# AND THE LANE IS NOT RETIRED — it is the FORK that was.
-run "$E" lanes --lane repoA-1
-hasnt "the lane's own state is untouched by retiring its fork" "$out" "	RETIRED	"
-# IT ENDS NOTHING: no closing status line, no state-cell replacement.
-hasnt "…and no closing line was written to the row" "$(grep '^| `repoA-1`' "$LANES")" "window closing"
-# A SECOND RETIRE OF THE SAME FORK FINDS NOTHING TO RETIRE, which is the proof
-# the first one took: `forks` is the read `--retire` asks.
-run "$END" repoA-1 --retire "$FORK_ID"
-is   "retiring the same fork twice finds nothing left to retire" "$rc" 8
+is   "an INTERACTIVE fork is proved the same way" "$rc" 0
+has  "…and gets Amendment 6(d)'s retitle, typed in that session" "$err" "/rename repoA-1 · retired "
+has  "…said to be typed there, because no API renames one from outside" "$err" "there is no API to rename one from outside"
+hasnt "…and still never a kill" "$err" "kill $LIVE_PID"
 
 rm -f "$sessions_dir/live-fork.json" "$fork_tdir/$FORK_ID.jsonl"
 

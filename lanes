@@ -349,6 +349,6 @@ if [ -n "$here_repo" ]; then
 	say "  take it:             lane-start $here_repo $next"
 	say "  every lane:          $prog --all"
 fi
-[ "$defects" = 0 ] || say "$defects lane(s) have a live fork of their transcript running. A fork is never the holder (ratified decision 8(c)); the one act is \`lane-end <lane> --retire <pid|uuid>\`, which writes the record that stops every read counting it — it never kills the process, and that part stays yours (clause (k) rule (e))."
+[ "$defects" = 0 ] || say "$defects lane(s) have a live fork of their transcript running. A fork is never the holder (ratified decision 8(c)); the one act is \`lane-end <lane> --retire <pid|uuid>\`, which proves the fork and prints Amendment 6(d) for it filled in — it writes nothing and it never kills the process, and taking it stays yours (clause (k) rule (e))."
 ws_notice
 exit 0
