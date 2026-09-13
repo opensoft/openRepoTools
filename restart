@@ -202,10 +202,15 @@ list_this_checkout() {
 	fi
 	printf '%-24s %-8s %-12s %-22s %-38s %-10s %s\n' LANE STATE PROFILE WINDOW "LAST TRANSCRIPT" AGE RESTART
 	n=0
-	while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_home r_fk; do
+	while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_restart r_home r_fk; do
 		[ -n "${r_lane:-}" ] || continue
+		# COLUMN 10 COMES OUT OF THE READ (A11 Addendum 4 ruling 7). This printed
+		# `restart <lane>` for every row, including lanes that are ENDED or
+		# RETIRED and lanes whose record names no profile — for which
+		# `restart <lane>` refuses. One rule, stated in `lanes_rows`, rendered by
+		# both surfaces, so neither offers a command the other would not.
 		printf '%-24s %-8s %-12s %-22s %-38s %-10s %s\n' \
-			"$r_lane" "$r_state" "$r_pf" "$r_win" "$r_sid" "$r_age" "restart $r_lane"
+			"$r_lane" "$r_state" "$r_pf" "$r_win" "$r_sid" "$r_age" "${r_restart:-none}"
 		# DECISION 8(e) — A LIVE FORK IS A DEFECT TO RETIRE, NEVER A HOLDER, and
 		# it is shown where a person is choosing what to restart: Evidence 6's
 		# fork went on relaunching writers and writing the lane's log while

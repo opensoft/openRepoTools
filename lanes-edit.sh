@@ -3840,8 +3840,16 @@ EOF
 # a different shape does not need a fourth read.
 #
 #   <lane> <state> <workstation> <profile> <window> <last uuid> <dir>
-#   <objects> <age> <home> <forks>
+#   <objects> <age> <restart line> <home> <forks>
 #
+# THE FIRST TEN ARE CLAUSE (j)'s TEN, IN CLAUSE (j)'s ORDER (A11 Addendum 4
+# ruling 7): *"`lanes` and `restart` each render the subset of clause (j)'s ten
+# columns their surface needs while the read carries all ten."* Column 10 — the
+# restart line — used to be computed by each renderer, which is two
+# implementations of one column; it is the read's now, so the two surfaces
+# cannot disagree about which lane may be restarted or about what to type.
+#
+# `<home>` and `<forks>` are the read's own additions after the ten.
 # `<forks>` is decision 8(e): the count of LIVE forks of this lane's transcript
 # — a defect to retire, shown by both listings and never counted as a holder.
 #
@@ -4117,7 +4125,28 @@ EOF2
     # `directory` and the `<@id>` half of `window` all come from records written
     # under clause (c), and 0 of the 5 swap records on Eagle carry any of them.
     # A word a reader can act on beats a glyph they have to interpret.
-    lr_out="${lr_out}${lr_utc:-0000}${US}${lr_l}	${lr_state}	${lr_w:-unknown}	${lr_pf:-none}	${lr_win:-none}	${lr_sid:-none}	${lr_d:-none}	${lr_obj:-none}	${lr_age}	${lr_home:-none}	${lr_fk}
+    # COLUMN 10 — THE RESTART LINE — IS THE READ'S AND NOT A RENDERER'S
+    # (A11 Addendum 4 ruling 7). Clause (j) gives TEN columns in order and this
+    # carried nine; `lanes` computed the tenth and `restart` computed a
+    # different tenth, which is two implementations of one column and is how
+    # they would come to disagree about which lane may be restarted.
+    #
+    # A PAUSED LANE ONLY (clause (j) column 10, F-X20), and a PAUSED lane whose
+    # record carries NO `profile` gets the form that works today with the
+    # profile named as the one token the operator must supply — because a wrong
+    # profile is a launch into another account and nothing here may guess one,
+    # while a line that cannot be typed is worse than a column that says
+    # `none`. Every other state gets `none`: a lane whose last act was its last
+    # is not a lane a person restarts.
+    lr_restart=none
+    if [ "$lr_state" = PAUSED ]; then
+      if [ -z "$lr_pf" ] || [ "$lr_pf" = none ]; then
+        lr_restart="pclaude --lane $lr_l <profile>"
+      else
+        lr_restart="restart $lr_l"
+      fi
+    fi
+    lr_out="${lr_out}${lr_utc:-0000}${US}${lr_l}	${lr_state}	${lr_w:-unknown}	${lr_pf:-none}	${lr_win:-none}	${lr_sid:-none}	${lr_d:-none}	${lr_obj:-none}	${lr_age}	${lr_restart}	${lr_home:-none}	${lr_fk}
 "
   done <<EOF
 $lr_names

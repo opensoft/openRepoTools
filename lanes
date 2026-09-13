@@ -199,7 +199,7 @@ printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
 	LANE STATE WHERE PROFILE WINDOW "LAST TRANSCRIPT" AGE DIRECTORY
 n=0
 defects=0
-while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_home r_fk; do
+while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_restart r_home r_fk; do
 	[ -n "${r_lane:-}" ] || continue
 	printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
 		"$r_lane" "$r_state" "$r_ws" "$r_pf" "$r_win" "$r_sid" "$r_age" "$r_dir"
@@ -208,31 +208,16 @@ while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_
 	*) printf '%-26s holds: %s\n' "" "$r_obj" ;;
 	esac
 	# THE EXACT RESTART COMMAND, FILLED IN, FOR A **PAUSED** LANE — clause (j)
-	# column 10's own word, and F-X20's correction. This printed one for every
-	# state but `LIVE`, so an `ENDED` and a `RETIRED` lane each got a `restart`
-	# line: a lane whose last act was its last is not a lane a person restarts,
-	# and offering the command anyway is the listing telling them to reopen
-	# something that was closed on purpose. `lane-start <repo> <n>` opens a new
-	# one, which is a different act with a different name.
-	#
-	# AND NOT FOR `IDLE` EITHER, WHICH IS THE CASE WORTH NAMING. An `IDLE` lane
-	# — last verb `STARTED` or `RESUMED`, no live session — is a lane whose
-	# session went away without pausing, and `restart` would very likely work on
-	# it. The clause says *"for a **paused** lane"* and this command does not get
-	# to widen a ratified column on its own judgement; if that is the wrong
-	# reading, it is one word in clause (j) and not a change here. The row is
-	# still printed with all its facts — only the offered command is withheld.
-	case "$r_state" in
-	PAUSED)
-		# A PAUSED LANE WHOSE RECORD CARRIES NO `profile` GETS NO `restart` LINE
-		# (SPEC rev 4 §15). It gets the form that works today with the profile
-		# named as the ONE TOKEN THE OPERATOR MUST SUPPLY, because a line that
-		# cannot be typed is worse than a column that says `none`.
-		if [ "$r_pf" = "none" ] || [ -z "$r_pf" ]; then
-			printf '%-26s restart: pclaude --lane %s <profile>   (no profile recorded yet; it is written at this lane next start or swap)\n' "" "$r_lane"
-		else
-			printf '%-26s restart: restart %s\n' "" "$r_lane"
-		fi ;;
+	# column 10, AND IT COMES OUT OF THE READ (A11 Addendum 4 ruling 7). This
+	# command used to compute it and `restart` computed a different one: two
+	# implementations of one column, which is how two surfaces come to disagree
+	# about which lane may be restarted. The rule — a PAUSED lane only, and the
+	# `pclaude --lane <lane> <profile>` form where the record carries no profile
+	# yet — is stated once, in `lanes_rows`, and rendered here.
+	case "${r_restart:-none}" in
+	none | '') : ;;
+	restart\ *) printf '%-26s restart: %s\n' "" "$r_restart" ;;
+	*) printf '%-26s restart: %s   (no profile recorded yet; it is written at this lane next start or swap)\n' "" "$r_restart" ;;
 	esac
 	case "${r_fk:-0}" in
 	0 | '') : ;;

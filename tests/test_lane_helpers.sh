@@ -3821,9 +3821,27 @@ is   "forks exits 8 for a lane with no fork of its transcript running" "$rc" 8
 run "$E" forks repoA-1
 FK_DIRECT="$rc:$out"
 run "$E" lanes --lane repoA-1
-FK_VIA_LISTING="$(printf '%s' "$out" | awk -F'\t' '{print $11}')"
+FK_VIA_LISTING="$(printf '%s' "$out" | awk -F'\t' '{print $12}')"
 is "the fork column of the listing agrees with the `forks` read beside it" \
    "$FK_VIA_LISTING" "$(printf '%s' "${FK_DIRECT#*:}" | grep -c . || printf 0)"
+# ---- ruling 7: THE READ CARRIES ALL TEN OF CLAUSE (j)'s COLUMNS, IN ORDER ---
+#
+# *"`lanes` and `restart` each render the subset of clause (j)'s ten columns
+# their surface needs while the read carries all ten."* It carried NINE: column
+# 10, the restart line, was computed by `lanes` and computed DIFFERENTLY by
+# `restart`, which is two implementations of one column.
+run "$E" lanes --lane repoA11-1
+is "the read's row has twelve fields: clause (j)'s ten, then home and forks" \
+   "$(printf '%s' "$out" | awk -F'\t' '{print NF}')" 12
+is "…and column 10 is the restart line the surfaces print" \
+   "$(printf '%s' "$out" | awk -F'\t' '{print $10}')" "restart repoA11-1"
+run "$E" lanes --lane repoA11-2
+is "…which for a PAUSED lane with no profile is the form that works today" \
+   "$(printf '%s' "$out" | awk -F'\t' '{print $10}')" "pclaude --lane repoA11-2 <profile>"
+run "$E" lanes --lane repoA11-4
+is "…and for a lane that is not PAUSED it is \`none\`, because column 10 is a PAUSED lane's" \
+   "$(printf '%s' "$out" | awk -F'\t' '{print $10}')" "none"
+
 # AND THE ONE-LANE PATH AND THE ESTATE PATH AGREE ON A ROW. `--lane` reads one
 # log where the listing reads them all; they are the same parser over the same
 # grammar, and this is the assertion that keeps it true.
