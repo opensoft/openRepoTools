@@ -1,0 +1,519 @@
+#!/usr/bin/env bash
+#
+# lane-end — the LAST act of a lane: say in the register that the window is
+# closing and that nothing is in flight, and refuse to say it while something
+# still is.
+#
+# It NEVER renames the tmux window. The name is the lane's history until the
+# next `lane-start` takes that window, and a window renamed back to `claude`
+# is a window nobody can attribute.
+#
+# PROTOCOL  ~/.agents/protocols/lane-collision-protocol.md
+#   Rule 4 — a lane appends its row when it starts and UPDATES THAT ROW WHEN
+#     IT STOPS; the register is the last file a lane writes.
+#   Rule 6 — a row reads LANDING from the moment the lane posts LANDING on a
+#     PR until it posts LANDED. Other lanes hold their merges while it does,
+#     so a lane that ends without closing its landing window stalls the
+#     estate. That is what this script's refusal is for.
+#   Rule 9 + Amendment 5 — the write is one commit, made by lanes-edit.sh.
+#   Amendment 7 (DRAFT 2026-09-11) — the refusal is now EXACT, read from the
+#     lane's own object log rather than guessed at by substring; the lane's
+#     last act is an `ENDED` (or `RETIRED`) line in that log; and the handoff
+#     fragment the next session needs is GENERATED from it, on stdout.
+#
+# USAGE
+#   lane-end [options] <lane>            # lane-end openRepoShape-2
+#   lane-end [options] <repo> <n>        # the split form works too
+#   lane-end [options] <n>               # <repo> = basename of the cwd's git root
+#
+# One argument is taken VERBATIM as the lane name, so the rows named before
+# the `<repo>-<n>` rule (`browser-ui-repair`, `hermes-wallet-exercise`) can be
+# ended too — their last act is exactly what this is for.
+#
+# OPTIONS
+#   --retire            also mark the state cell RETIRED <UTC> — the lane is
+#                       not coming back, as opposed to a window that is only
+#                       closing for the night
+#   --state-was <text>  the exact text --retire should replace, for a row whose
+#                       state cell does not open with a single state word
+#   --force             end the lane even though its object log still shows
+#                       something open, and say so in the lines written
+#   --home owner/repo   the lane's home repo, for a PRE-CUTOVER lane whose log
+#                       has no STARTED line. Accepted for parity with `claim`
+#                       and `who` and passed through to the helper; lane-end's
+#                       own reads are of canonical object keys, so it changes
+#                       nothing they do. It is CHECKED FIRST, through the
+#                       writer's own `resolve-home`, because the only line it
+#                       reaches is written after the row is already closed
+#   --dry-run           print what would be written; write nothing
+#   -h, --help
+#
+# THE REFUSAL
+#   EXACT, from `lanes/log/<lane>.md` (Amendment 7): every object whose LAST
+#   event in this lane's own log is OPEN — `CLAIMED`, `TAKEOVER`, `OPENED`,
+#   `LANDING` or `WITHDRAWN` — is still this lane's, and each one is named. No
+#   substring, no guessing, and no false refusal on a row that merely says the
+#   words. The rows are read from `origin/main` through `lanes-edit.sh
+#   lane-objects`, which answers 8 when the lane has no log at all and 0 with
+#   the rows otherwise; ANY other exit is the helper failing, and this script
+#   refuses rather than treating a failure as an absence.
+#
+#   THE FALLBACK, and only for a lane with NO log file — one that has not
+#   written a line since the cutover: the old scan of the state cell for the
+#   protocol's own words, in which the LAST LANDING or CLAIMED not followed by
+#   a LANDED or RELEASED is something in flight. Phrases that SAY there is
+#   nothing open — `NOTHING CLAIMED`, `NO LANDING OPEN`, `LANDING WITHDRAWN`,
+#   `UNCLAIMED` and their kin — are removed before that scan, because rows are
+#   full of them and a substring match on CLAIMED inside NOTHING CLAIMED would
+#   refuse on every healthy lane. That scan reads TWO cells — this checkout's
+#   row and the PUBLISHED one (`lanes-edit.sh register-row`, which fetches and
+#   reads `origin/main`, like every other state read) — and either of them
+#   showing a hold is a refusal. A fetch does not move the working tree, so a
+#   peer's LANDING pushed on to this row was invisible to the one path that
+#   still decides a merge hold from prose.
+#
+# THE HANDOFF FRAGMENT
+#   On STDOUT, generated from the lane's log, and partitioned by the same two
+#   sets the refusal uses, so no object can fall out of both:
+#     `## Done` — RELEASED, CLAIM-LOST, CLOSED, LANDED
+#     `## Open` — CLAIMED, TAKEOVER, OPENED, LANDING, WITHDRAWN
+#   A `CLAIMED` another lane has since taken over is listed under `## Open` as
+#   `superseded by TAKEOVER (lane:X) — release it`, because it is this lane's
+#   last line on the object and only this lane's `release` closes it — but it is
+#   not work the next session still holds, and a handoff that said it was would
+#   send that session at an object `who` gives to somebody else.
+#   (There is no `MERGED`: Rule 6's `LANDED → <sha>` is the post-merge line.
+#   `WITHDRAWN` is OPEN — a withdrawn landing leaves the PR held by the lane
+#   that withdrew it.) Paste it into the handoff the row points at. It is the
+#   ONLY thing this script writes to stdout; every step and every refusal
+#   still goes to stderr.
+#
+# EXIT
+#   0  done
+#   1  environment — no register, no writer, or `lanes-edit.sh lane-objects`
+#      failed (which is NOT the same as the lane having no object log)
+#   2  refusal — bad arguments, no row (or two), or something still in flight
+#
+# ENVIRONMENT
+#   LANES_FILE  default <script dir>/LANES.md
+#   LANES_EDIT  default <script dir>/lanes-edit.sh
+#
+# It spells no absolute path of its own: the register and its writer are found
+# beside this script's own REAL path, so the `~/.local/bin` symlink works.
+
+set -euo pipefail
+
+prog=lane-end
+
+SELF="${BASH_SOURCE[0]}"
+RESOLVED="$(readlink -f -- "$SELF" 2>/dev/null || printf '%s' "$SELF")"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$RESOLVED")" && pwd)"
+
+LANES_FILE="${LANES_FILE:-$SCRIPT_DIR/LANES.md}"
+LANES_EDIT="${LANES_EDIT:-$SCRIPT_DIR/lanes-edit.sh}"
+
+LE_TMP=""
+cleanup() { [ -n "${LE_TMP:-}" ] && rm -f -- "$LE_TMP"; return 0; }
+trap cleanup EXIT INT TERM
+
+note() { printf '%s: %s\n' "$prog" "$*" >&2; }
+step() { printf '%s: %s\n' "$prog" "$*" >&2; }
+plan() { printf '%s: PLAN %s\n' "$prog" "$*" >&2; }
+die()  { printf '%s: %s\n' "$prog" "$1" >&2; exit "${2:-1}"; }
+usage() { sed -n '3,${/^#/!q;s/^# \{0,1\}//;p}' -- "$RESOLVED"; }
+
+# ------------------------------------------------------------------ arguments
+
+retire=0; force=0; dry_run=0; state_was=""; home_override=""
+positional=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --retire)      retire=1; shift ;;
+    --home)        home_override="${2-}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift 2 ;;
+    --home=*)      home_override="${1#--home=}"; shift ;;
+    --force)       force=1; shift ;;
+    --dry-run)     dry_run=1; shift ;;
+    --state-was)   state_was="${2-}"; [ -n "$state_was" ] || die "--state-was needs the exact text to replace" 2; shift 2 ;;
+    --state-was=*) state_was="${1#--state-was=}"; shift ;;
+    -h|--help)     usage; exit 0 ;;
+    --)            shift ;;
+    -*)            die "unknown option '$1' — see $prog --help" 2 ;;
+    *)             positional+=("$1"); shift ;;
+  esac
+done
+
+# A lane name is taken VERBATIM when one argument is given: the register
+# still carries lanes named before the `<repo>-<n>` rule (browser-ui-repair,
+# hermes-wallet-exercise), and their last act is exactly what this is for.
+LANE=""
+case "${#positional[@]}" in
+  2) LANE="${positional[0]}-${positional[1]}" ;;
+  1)
+    arg="${positional[0]}"
+    if [[ "$arg" =~ ^[0-9]+[A-Za-z]?$ ]]; then
+      top="$(git rev-parse --show-toplevel 2>/dev/null || :)"
+      [ -n "$top" ] || die "no <repo> given and this directory is not a git checkout — run: $prog <repo> $arg" 1
+      LANE="$(basename -- "$top")-$arg"
+    else
+      LANE="$arg"
+    fi
+    ;;
+  0) usage >&2; die "which lane? $prog <lane>" 2 ;;
+  *) die "too many arguments: $prog <lane>" 2 ;;
+esac
+[[ "$LANE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "'$LANE' is not a lane name (allowed: letters, digits, . _ -)" 2
+
+[ -f "$LANES_FILE" ] || die "no register at $LANES_FILE — this script must sit beside LANES.md (or set LANES_FILE)" 1
+[ -x "$LANES_EDIT" ] || die "no register writer at $LANES_EDIT — it must sit beside LANES.md (or set LANES_EDIT)" 1
+
+# `--home` IS VALIDATED BEFORE ANYTHING IS WRITTEN. It is for a PRE-CUTOVER
+# lane, and `lanes-edit.sh` refuses it once the lane's own log records a home —
+# but the only place this script passes it is its LAST act, the ENDED/RETIRED
+# line, which is written AFTER the row has been closed and whose failure is
+# deliberately never fatal. So a bad option that could have been rejected in a
+# second instead closed the row, lost the lane its ENDED line, and exited 0. The
+# check is the writer's own `resolve_home`, asked for through `resolve-home`, so
+# the preflight and the write cannot disagree: 0 or 8 is an answer, 2 is the
+# refusal, and anything else is the helper failing.
+if [ -n "$home_override" ]; then
+  home_rc=0
+  home_err="$("$LANES_EDIT" resolve-home "$LANE" "$home_override" 2>&1 >/dev/null)" || home_rc=$?
+  [ -n "$home_err" ] && printf '%s\n' "$home_err" >&2
+  case "$home_rc" in
+    0|8) : ;;
+    2) die "--home $home_override is refused for lane $LANE (the writer's reason is above). Nothing has been written and the row is untouched." 2 ;;
+    *) die "$LANES_EDIT resolve-home $LANE $home_override failed (exit $home_rc). That is not a verdict on the option, and this script will not close a row on an argument it could not check. Fix the helper, then re-run." 1 ;;
+  esac
+fi
+
+# ---------------------------------------------------------------- the row
+
+rows_for_lane() {
+  awk -v lane="$1" '
+    substr($0,1,1) == "|" {
+      p1 = index($0, "`"); if (p1 == 0) next
+      rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
+      if (substr(rest, 1, p2 - 1) == lane) print
+    }' "$LANES_FILE"
+}
+
+row="$(rows_for_lane "$LANE" || :)"
+row_count=0
+[ -n "$row" ] && row_count="$(printf '%s\n' "$row" | grep -c . || :)"
+
+case "$row_count" in
+  0) die "the register has no row for lane $LANE — nothing to end. If the lane predates the helpers, add its row first: lanes-edit.sh add-row \"| \`$LANE\` | … |\"" 2 ;;
+  1) : ;;
+  *) die "the register has $row_count rows for lane $LANE, and lanes-edit.sh can edit neither. Merge them into one row by hand in $LANES_FILE, then re-run" 2 ;;
+esac
+
+# The state cell is the row's SEVENTH column — awk field 8, because $1 is the
+# empty string before the leading pipe — and it runs to the trailing pipe, so a
+# cell that contains a literal `|` is rejoined rather than truncated. Counting
+# back from NF returned the last FRAGMENT of such a cell, and the live register
+# has two rows with stray pipes in them: for one, NF-1 is ` re-cut `. A
+# fragment that happens not to carry the word LANDING is a fail-open.
+state_cell_of() {
+  local s
+  s="$(printf '%s\n' "$1" | awk -F'|' '{
+    if (NF >= 9) { c = $8; for (i = 9; i < NF; i++) c = c "|" $i; print c }
+    else { print $(NF-1) }
+  }')"
+  s="${s#"${s%%[![:space:]]*}"}"   # ltrim
+  s="${s%"${s##*[![:space:]]}"}"   # rtrim
+  printf '%s' "$s"
+}
+state_cell="$(state_cell_of "$row")"
+
+# ------------------------------------------------------- the in-flight guard
+
+# FIRST, exactly, from the lane's own object log (Amendment 7). `lane-objects`
+# prints this lane's LAST event per object — an object another lane has since
+# taken over is no longer this lane's business and is not listed.
+# ONLY 0 AND 8 ARE ANSWERS. `lane-objects` exits 8 for "this lane has no log
+# file" — the pre-cutover case — and 0 with the rows otherwise. Every other
+# exit is the helper FAILING, and the difference is the difference between "the
+# lane holds nothing" and "nobody asked". With `2>/dev/null` and a single
+# failure code, a broken helper made this script print `no object log for
+# <lane> (pre-cutover lane)` about a lane that was holding an open claim, and
+# end it. Rule 6's merge hold and Rule 1's claim both stopped being enforced,
+# silently, and the fragment the next session reads said there was nothing.
+log_rows=""; have_log=0; open_list=""; open_objs=""
+LE_TMP="$(mktemp)"
+lo_rc=0
+log_rows="$("$LANES_EDIT" lane-objects "$LANE" 2>"$LE_TMP")" || lo_rc=$?
+[ -s "$LE_TMP" ] && cat -- "$LE_TMP" >&2
+case "$lo_rc" in
+  0) have_log=1 ;;
+  8) have_log=0 ;;
+  *) note "the helper's own output is above."
+     die "$LANES_EDIT lane-objects $LANE failed (exit $lo_rc). That is NOT 'this lane has no object log', and this script will not guess which it is while the lane may still hold something. Fix the helper (or run it by hand: $LANES_EDIT lane-objects $LANE), then re-run." 1 ;;
+esac
+
+if [ "$have_log" = 1 ]; then
+  while IFS=$'\037' read -r o_utc o_verb o_obj o_ref o_sup; do
+    [ -n "${o_verb:-}" ] || continue
+    case "$o_verb" in
+      CLAIMED|TAKEOVER|OPENED|LANDING|WITHDRAWN)
+        if [ -n "${o_sup:-}" ]; then
+          # Another lane took this object over. A lane closes only its OWN
+          # hold, so this lane's CLAIMED is still its last line and would
+          # refuse for ever. The way out is its own RELEASED line.
+          open_list="${open_list}${open_list:+$'\n'}  $o_verb $o_obj ($o_utc) — taken over by lane:${o_sup%@*} at ${o_sup#*@}; run: lanes-edit.sh release $o_obj \"taken over by ${o_sup%@*}\""
+        else
+          open_list="${open_list}${open_list:+$'\n'}  $o_verb $o_obj${o_ref:+ $o_ref} ($o_utc)"
+        fi
+        open_objs="${open_objs}${open_objs:+, }$o_obj" ;;
+    esac
+  done <<<"$log_rows"
+fi
+
+# Everything below is CASE-SENSITIVE on purpose: the protocol's words are
+# LANDING, CLAIMED, LANDED, RELEASED in capitals, and a row's ordinary prose
+# ("nothing claimed tonight") is not a claim.
+scrub_cell() {
+  printf '%s' "$1" | sed -E 's/(NOTHING IS CLAIMED|NOTHING CLAIMED|NONE CLAIMED|NOT CLAIMED|UNCLAIMED|NO CLAIM|NO LANDING OPEN|NO LANDING|LANDING WITHDRAWN|LANDING CLOSED|NOT LANDING|LANDING WINDOW|NOTHING IN FLIGHT)//Ig'
+}
+haystack="$(scrub_cell "$state_cell")"
+
+# Start index of the LAST occurrence of $2 in $1, or -1.
+last_index() {
+  local h="$1" needle="$2" rest="${1##*"$2"}"
+  [ "$rest" = "$h" ] && { printf -- '-1'; return 0; }
+  printf '%s' "$(( ${#h} - ${#rest} - ${#needle} ))"
+}
+
+# The STATE-CELL scan keeps its own word. It used to reset the one the log loop
+# had just set, so a lane whose hold came from its log and whose state cell said
+# neither LANDING nor CLAIMED ended with an EMPTY verb written into the register
+# and into the append-only log — `while  was still open` — and the register line
+# blamed the state cell for a hold the script had just announced it read from
+# `lanes/log/<lane>.md`.
+# It is a FUNCTION because it now runs over two cells, not one — see below. It
+# sets cell_at, cell_word and close_at, and RETURNS 0 when that cell is in
+# flight: the last LANDING or CLAIMED in it has no LANDED or RELEASED after it.
+cell_at=-1; cell_word=""; close_at=-1
+scan_cell() {
+  local h="$1" w i
+  cell_at=-1; cell_word=""
+  for w in LANDING CLAIMED; do
+    i="$(last_index "$h" "$w")"
+    if [ "$i" -gt "$cell_at" ]; then cell_at="$i"; cell_word="$w"; fi
+  done
+  close_at=-1
+  for w in LANDED RELEASED; do
+    i="$(last_index "$h" "$w")"
+    if [ "$i" -gt "$close_at" ]; then close_at="$i"; fi
+  done
+  [ "$cell_at" -ge 0 ] && [ "$close_at" -lt "$cell_at" ]
+}
+
+cell_source="this checkout's row"
+in_flight=0
+if [ "$have_log" = 1 ]; then
+  # The log is authoritative for a lane that has one. The state cell is the
+  # row's prose history and no longer decides anything here.
+  [ -n "$open_list" ] && in_flight=1
+  step "in-flight read from lanes/log/$LANE.md (exact), not from the state cell"
+  scan_cell "$haystack" || :
+else
+  # PRE-CUTOVER, AND THE ROW IS READ FROM `origin/main` TOO. `lane-objects`
+  # reads what has LANDED (Amendment 7, R19) and this fallback read the WORKING
+  # TREE — which a fetch does not move. A peer's `LANDING` appended to this
+  # row's state cell and pushed is therefore invisible here until something
+  # pulls, so the one path that still decides a merge hold from prose could
+  # write `NOTHING IN FLIGHT` over a hold that is current, and Rule 6 stops
+  # being enforced for exactly the lanes that have nothing else enforcing it.
+  # BOTH cells are scanned and EITHER is a refusal: this checkout's row may
+  # carry a hold that has not been pushed yet, and the published row a hold
+  # that has not been pulled. A hold seen anywhere is a hold.
+  scan_cell "$haystack" && in_flight=1
+  if [ "$in_flight" = 0 ]; then
+    pub_rc=0
+    pub_row="$("$LANES_EDIT" register-row "$LANE" 2>/dev/null)" || pub_rc=$?
+    case "$pub_rc" in
+      0)
+        pub_hay="$(scrub_cell "$(state_cell_of "$pub_row")")"
+        if [ "$pub_hay" != "$haystack" ] && scan_cell "$pub_hay"; then
+          in_flight=1; haystack="$pub_hay"; cell_source="the published row on origin/main"
+          step "the published row carries an open $cell_word that this checkout has not pulled"
+        fi ;;
+      8) : ;;                     # the published register has no row for it yet
+      *) note "the helper's own output is above."
+         die "$LANES_EDIT register-row $LANE failed (exit $pub_rc). This lane has no object log, so its row's state cell is the ONLY thing that can say whether a merge hold is open, and this script will not end a lane on a read it did not get. Fix the helper (or run it by hand: $LANES_EDIT register-row $LANE), then re-run." 1 ;;
+    esac
+  fi
+fi
+
+rflag=""; (( retire )) && rflag=" --retire"
+
+if [ "$in_flight" = 1 ] && [ "$have_log" = 1 ]; then
+  if [ "$force" = 0 ]; then
+    note "lane $LANE still holds $(printf '%s\n' "$open_list" | grep -c .) object(s) — its own log's last event on each is still open:"
+    printf '%s\n' "$open_list" >&2
+    # THE REAL CLI GRAMMAR OF THE HELPER, and only verbs it accepts. The arrow is
+    # its OWN argument: quoted into the free-text slot, `log LANDED <obj>
+    # "→ <sha>"` writes the sha AFTER the ` — `, the line stops matching
+    # `LANDED → <sha>`, and the Rule 6 line in the register loses the merge sha for
+    # good in a file nothing rewrites. There is no `MERGED` verb at all — the
+    # post-merge line IS `LANDED → <sha>` — and `log RELEASED` is refused, since
+    # `release` is the subcommand and it posts the Rule 1 comment as well.
+    note "the fix, in the order the protocol wants it — one of these per object:"
+    note "  LANES_LANE=$LANE lanes-edit.sh log LANDED <object> → <merge sha>    # the PR merged"
+    note "  LANES_LANE=$LANE lanes-edit.sh release <object> \"<why>\"             # the claim is given up"
+    note "  LANES_LANE=$LANE lanes-edit.sh log CLOSED <object>                  # closed without merging"
+    note "  $prog $LANE$rflag"
+    note "or end it anyway and record that you did: $prog $LANE --force$rflag"
+    exit 2
+  fi
+  step "--force: ending with $(printf '%s\n' "$open_list" | grep -c .) object(s) still open in the lane's log; the line written says so"
+elif [ "$in_flight" = 1 ]; then
+  # Bash substring, not `cut -c`: ${#s} counts characters and GNU cut counts
+  # bytes, and these cells are full of · — → , so the two disagree.
+  from=$(( cell_at > 40 ? cell_at - 40 : 0 ))
+  excerpt="${haystack:from:160}"
+  if [ "$force" = 0 ]; then
+    note "lane $LANE has no object log yet (pre-cutover), so this is the state cell's substring scan, over $cell_source:"
+    note "lane $LANE still has something in flight — the last $cell_word in its state cell has no LANDED or RELEASED after it:"
+    note "  …$excerpt…"
+    note "the fix, in the order the protocol wants it:"
+    note "  lanes-edit.sh append-row-status $LANE \"LANDED — PR #<n> → <merge sha> (<UTC>)\"      # or RELEASED — …"
+    note "  $prog $LANE$rflag"
+    note "or end it anyway and record that you did: $prog $LANE --force$rflag"
+    exit 2
+  fi
+  step "--force: ending with an open $cell_word in the state cell; the line written says so"
+fi
+
+# --------------------------------------------------------------- the write
+
+utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+ws="$(hostname)"
+# The register line names the source it actually read (the log for a lane that
+# has one, the state cell for a pre-cutover lane) and the objects it read there.
+status_text="$utc lane-end on $ws: window closing; NOTHING IN FLIGHT"
+if [ "$in_flight" = 1 ] && [ "$have_log" = 1 ]; then
+  status_text="$utc lane-end on $ws: window closing; ENDED WITH --force while this lane's own object log still showed open: $open_objs"
+elif [ "$in_flight" = 1 ]; then
+  status_text="$utc lane-end on $ws: window closing; ENDED WITH --force while the state cell of $cell_source still showed an open $cell_word — read the cell above this line before trusting it"
+fi
+
+if (( dry_run )); then
+  plan "lanes-edit.sh append-row-status $LANE \"$status_text\""
+else
+  LANES_LANE="$LANE" "$LANES_EDIT" append-row-status "$LANE" "$status_text"
+  step "row closed"
+fi
+
+# ------------------------------------------------------------------ --retire
+
+# `--retire` marks the cell RETIRED, and does it by REPLACING THE STATE WORD
+# the cell opens with, not the whole cell: the cell is the row's history and
+# the register exists to keep it. A row written by lane-start opens with
+# `STARTING`, which is unique in the row by construction; anything else may
+# not be, and `replace-in-row` refuses unless the old text occurs exactly
+# once — which is why `--state-was` exists.
+if (( retire )); then
+  old="$state_was"
+  if [ -z "$old" ]; then
+    head_seg="${state_cell%% · *}"
+    old="${head_seg%% *}"
+    old="${old%[,;:.]}"
+  fi
+  [ -n "$old" ] || die "the state cell is empty, so there is no state word to replace — pass --state-was \"<exact text>\"" 2
+  new="RETIRED $utc"
+  if (( dry_run )); then
+    plan "lanes-edit.sh replace-in-row $LANE \"$old\" \"$new\" \"retired by lane-end on $ws\""
+  elif LANES_LANE="$LANE" "$LANES_EDIT" replace-in-row "$LANE" "$old" "$new" "retired by lane-end on $ws"; then
+    step "state cell now opens with $new"
+  else
+    note "the register refused to replace '$old' — it is not unique in that row."
+    note "pick an exact, unique opening text from the cell and re-run:"
+    note "  $prog $LANE --retire --state-was \"<exact text>\""
+    note "(the closing status line above was written; only the RETIRED mark is missing)"
+    exit 2
+  fi
+fi
+
+# ------------------------------------------- the lane's own object log line
+
+# Amendment 7. Written after the row, and it never fails the end of a lane:
+# a lane that cannot write its log has still ended, and says that it could not.
+# THE EVENT LINE FOLLOWS THE GRAMMAR, AND ITS FREE TEXT CARRIES NO ` — ` (R21).
+# The line reads
+#   ENDED — lane X, session u@W, T, lane:X — forced; open: <object list>
+# so ` — ` occurs exactly twice, which is the guarantee that makes one parser
+# read every line. The old text spent a third one on prose and named an EMPTY
+# verb; the writer now refuses any free text carrying that separator, so this is
+# enforced rather than hoped for.
+lane_verb=ENDED; (( retire )) && lane_verb=RETIRED
+lane_text="window closing; NOTHING IN FLIGHT"
+if [ "$in_flight" = 1 ] && [ "$have_log" = 1 ]; then
+  lane_text="forced; open: $open_objs"
+elif [ "$in_flight" = 1 ]; then
+  lane_text="forced; open: $cell_word in the state cell (pre-cutover lane, no object log)"
+fi
+
+if (( dry_run )); then
+  plan "lanes-edit.sh log $lane_verb lane:$LANE --text \"$lane_text\""
+elif LANES_LANE="$LANE" "$LANES_EDIT" log "$lane_verb" "lane:$LANE" ${home_override:+--home "$home_override"} --text "$lane_text" >/dev/null; then
+  step "object log: $lane_verb"
+else
+  note "the lane's object log was NOT written ($lane_verb). Write it by hand:"
+  note "  LANES_LANE=$LANE $LANES_EDIT log $lane_verb lane:$LANE --text \"$lane_text\""
+fi
+
+# ------------------------------------------------------- the handoff fragment
+#
+# On STDOUT, so it can be piped straight into the handoff the row points at.
+# Generated from the log, because a handoff written from memory is how an
+# object goes missing between two sessions of one lane.
+
+# The headers NAME the two sets in the printed fragment, so a reader can check
+# the partition against the amendment without reading the code that produced
+# it — and so that nobody reads `## Done` as "merged" or `## Open` as "unclaimed".
+printf '## Done (RELEASED, CLAIM-LOST, CLOSED, LANDED)\n\n'
+done_n=0
+if [ "$have_log" = 1 ]; then
+  while IFS=$'\037' read -r o_utc o_verb o_obj o_ref o_sup; do
+    [ -n "${o_verb:-}" ] || continue
+    case "$o_verb" in
+      CLOSED|LANDED|RELEASED|CLAIM-LOST)
+        printf -- '- %s — %s%s (%s)\n' "$o_verb" "$o_obj" "${o_ref:+ $o_ref}" "$o_utc"
+        done_n=$((done_n + 1)) ;;
+    esac
+  done <<<"$log_rows"
+fi
+[ "$done_n" = 0 ] && printf -- '- nothing recorded as done in this lane'"'"'s log\n'
+
+# AND IT READS `lane_objects`' FIFTH FIELD, like the refusal above. An object
+# another lane has taken over is still this lane's LAST LINE — a lane closes
+# only its own hold — so it belongs under `## Open`; what it is not is OPEN. Left
+# unqualified it is pasted into the next session's handoff as work that lane
+# still has, about an object `who` says another lane holds: this fragment is the
+# one surface that becomes a durable document, and the refusal, `who <object>`
+# and `who --lane` all carry the takeover already.
+printf '\n## Open (CLAIMED, TAKEOVER, OPENED, LANDING, WITHDRAWN)\n\n'
+open_n=0
+if [ "$have_log" = 1 ]; then
+  while IFS=$'\037' read -r o_utc o_verb o_obj o_ref o_sup; do
+    [ -n "${o_verb:-}" ] || continue
+    case "$o_verb" in
+      CLAIMED|TAKEOVER|OPENED|LANDING|WITHDRAWN)
+        if [ -n "${o_sup:-}" ]; then
+          printf -- '- %s — %s%s (%s) — superseded by TAKEOVER (lane:%s) — release it\n' \
+            "$o_verb" "$o_obj" "${o_ref:+ $o_ref}" "$o_utc" "${o_sup%@*}"
+        else
+          printf -- '- %s — %s%s (%s)\n' "$o_verb" "$o_obj" "${o_ref:+ $o_ref}" "$o_utc"
+        fi
+        open_n=$((open_n + 1)) ;;
+    esac
+  done <<<"$log_rows"
+else
+  printf -- '- no object log for %s (pre-cutover lane) — see its row'"'"'s state cell in LANES.md\n' "$LANE"
+fi
+[ "$have_log" = 1 ] && [ "$open_n" = 0 ] && printf -- '- nothing open\n'
+
+(( dry_run )) && step "--dry-run: nothing was written"
+exit 0
