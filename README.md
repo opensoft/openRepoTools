@@ -89,9 +89,9 @@ read out of `$SPECKIT_GIT_WORKTREE_ROOT`, this checkout's `git-config.yml`, or
 the shape's own default — which `resume` refuses the whole feature for and
 `park` never parks, leaving a `git worktree move` of yours as the exit — except
 where no move works: the leg's own checkout, a leg declared `path: "."`, and a
-`worktree_root` spelled through a symlink, each of which says so — and a
-worktree the record does not know, which was never parked. No config, or no
-record, is a note.
+symlink anywhere in the computed path's own parents, each of which says so and
+names the component — and a worktree the record does not know, which was never
+parked. No config, or no record, is a note.
 That is all five layers: the local layer, `--fetch`, the fork, the pin and
 the record.
 

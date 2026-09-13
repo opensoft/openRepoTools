@@ -158,14 +158,17 @@ sequence, and relay their per-repository lines rather than summarising them.
    nothing on disk and a `worktree unlock` where git holds the worktree LOCKED
    — AND THERE IS NO MOVE AT ALL for the leg's own checkout, for a leg
    declared `path: "."` (whose computed path ends in `/.`, which no command
-   takes), or for a `worktree_root` spelled through a SYMLINK (git registers
-   the path the link resolves to and `resume` compares the one you wrote, so
-   the move runs and changes nothing; spell it as git spells it instead). A
-   worktree the record does not know wants `park`, not a hand-edit of the
-   record. No config, or no record for the estate, is a note, not a finding.
-   `status`'s bare form outside every estate reads them all WITHOUT asking,
-   because a read — fetched or not — moves nothing of yours; `status --all`
-   from anywhere says the same thing.
+   takes), or for ANY SYMLINK in the computed path's own parents — the
+   worktree root, the feature directory, a mount above it — because git
+   registers what is made there under the path that link resolves to while
+   `resume` compares the one you wrote, so the move runs and changes nothing;
+   the line names the component, and the remedy is to respell `worktree_root`
+   where the link is at or above it and to make that component a real
+   directory where it is below. A worktree the record does not know wants
+   `park`, not a hand-edit of the record. No config, or no record for the
+   estate, is a note, not a finding. `status`'s bare form outside every estate
+   reads them all WITHOUT asking, because a read — fetched or not — moves
+   nothing of yours; `status --all` from anywhere says the same thing.
 
 ## The pinned standard at `upstream/openRepoShape`
 

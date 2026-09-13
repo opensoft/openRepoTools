@@ -5275,7 +5275,13 @@ def test_a_symlinked_parent_of_the_computed_path_gets_no_move_either(
            parked_on="Falcon", root="Trio")
     result = run(STATUS, "Trio", home=home)
     assert result.returncode == 1, result.stdout + result.stderr
-    assert "no `worktree move` fixes this one, because the worktree root " in (
+    assert "no `worktree move` fixes this one, because the path it would " in (
+        result.stdout), result.stdout
+    # AND THE COMPONENT IT NAMES IS THE FEATURE DIRECTORY, not the worktree
+    # root, which is the half Copilot's eighth round on #27 asked for: the root
+    # here is a real directory and the link is under it, so the remedy is that
+    # component being a directory rather than a setting to respell.
+    assert (f"{want.parent} is a symlink under the worktree root") in (
         result.stdout), result.stdout
     assert f"worktree move {elsewhere}" not in result.stdout, result.stdout
 
@@ -5309,6 +5315,111 @@ def test_every_root_mount_spelling_gets_the_same_no_command_reading(
         assert ("there is no command that puts it where `resume` looks: this "
                 'leg is declared `path: "."` in `project.yaml`') in (
             result.stdout), result.stdout
+
+
+def test_no_sibling_offers_resume_for_a_destination_that_blocks_the_add(
+        trio, home):
+    """COPILOT'S SEVENTH AND EIGHTH ROUNDS ON #27 (2026-09-13, suppressed), the
+    seventh verbatim: "This add-verdict prepass only runs when
+    `worktree_on_branch` finds a live off-path worktree. It misses other
+    failures that happen before or at `git worktree add` when no worktree
+    exists, such as a dangling symlink at the computed destination (RR3's
+    `[ -e ]` check passes) or a regular file at the feature-directory parent
+    (`resume`'s `mkdir -p` fails). In a multi-leg record, the culprit line can
+    then say to clear the path and resume while sibling legs still advertise
+    `resume`, even though the run refuses the whole feature."
+
+    IT IS REAL AND IT IS THIS BRANCH'S OWN RULE BROKEN: no line of a feature
+    `resume` refuses whole may name `resume <Name>`. Three states reach the
+    add with no worktree anywhere — a registration git still holds at that path
+    with nothing on disk, a dangling symlink there, and a feature directory
+    that is not a directory — and `check_parked_leg` reads all three on the
+    CULPRIT leg already. What was missing is the FEATURE's verdict, so every
+    sibling went on offering the command that cannot run.
+
+    THE CULPRIT KEEPS ITS OWN LINE, which already names the blocker AND the
+    command that clears it and ends in the `resume` that follows the clearing —
+    the sentence this branch's third commit chose deliberately. The sibling
+    carries the verdict and the same exit, and says nothing about `resume`."""
+    checkout = workspace_config(home)
+    spec, code = trio / "spec", trio / "code"
+    for leg in (spec, code):
+        git("checkout", "-q", "main", cwd=leg)
+        origin_has_branch(leg, "001-a-thing")
+    spec_tip = git("rev-parse", "origin/001-a-thing", cwd=spec).stdout.strip()
+    code_tip = git("rev-parse", "origin/001-a-thing", cwd=code).stdout.strip()
+    want = parked_worktree(trio, "001-a-thing", "spec")
+    want.parent.mkdir(parents=True, exist_ok=True)
+    want.symlink_to(home / "nowhere-at-all")
+    assert not want.exists() and want.is_symlink()
+    path = record(checkout, "trio", branch="001-a-thing", role="spec",
+                  commit=spec_tip, parked_on="Falcon", root="Trio")
+    path.write_text(path.read_text(encoding="utf-8")
+                    + leg_block("code", code_tip), encoding="utf-8")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 2, findings
+    assert findings[0].startswith(
+        "- parked feature 001-a-thing (spec leg): no worktree on that branch "
+        f"here, but a dangling symlink is at the {want} `resume` computes for "
+        "this leg"), findings[0]
+    assert findings[1] == (
+        "- parked feature 001-a-thing (code leg): no worktree on that branch "
+        "here, parked 2026-09-10T20:00:00Z on Falcon; `resume` refuses the "
+        f"WHOLE feature, because a dangling symlink is at the {want} it "
+        "computes for its `spec` leg, which `[ -e ]` looks straight through "
+        "and `git worktree add` refuses all the same, so it does not bring "
+        f"this leg back — move it aside with `mv {want} <a path of your "
+        "choosing>`, which is yours to run"), findings[1]
+    assert "`resume Trio` brings it back" in findings[0], (
+        "the culprit's own line ends in the run AFTER the clearing")
+    assert "`resume Trio`" not in findings[1], (
+        "no sibling offers a command that cannot run")
+
+    # AND THE FEATURE DIRECTORY IS THE SAME VERDICT, read the same way — and
+    # here BOTH legs are culprits, because in a three-leg root one feature
+    # directory is the parent of both mounts. Each says its own reading and
+    # each carries the verdict; neither offers `resume`.
+    want.unlink()
+    rmtree(want.parent)
+    want.parent.write_text("a file where the feature directory goes\n",
+                           encoding="utf-8")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 2, findings
+    for line in findings:
+        assert (f"the {want.parent} `resume` makes the feature's worktrees "
+                "under is not a directory, and `resume` runs `mkdir -p` on it "
+                "before it adds any leg") in line, line
+    # The FIRST leg is the one the verdict belongs to and keeps its own line,
+    # which ends in the run AFTER the clearing; the second carries the verdict
+    # as well and offers no `resume`.
+    assert findings[0].endswith("`), then `resume Trio` brings it back"), (
+        findings[0])
+    assert ("`resume` refuses the WHOLE feature in any case, because the "
+            f"{want.parent} it makes that leg's worktrees under is not a "
+            "directory") in findings[1], findings[1]
+    assert "`resume Trio`" not in findings[1], findings[1]
+
+    # AND A STALE REGISTRATION AT THAT PATH, the third of the three.
+    want.parent.unlink()
+    want.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", "-b", "002-other", str(want), cwd=spec)
+    rmtree(want)
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 2, findings
+    assert ("`resume` refuses the WHOLE feature, because git still holds a "
+            f"worktree registration at the {want} it computes for its `spec` "
+            "leg, with nothing on disk there") in findings[1], findings[1]
+    assert "worktree prune" in findings[1], findings[1]
+    assert "`resume Trio`" not in findings[1]
 
 
 def test_a_feature_directory_that_is_not_a_directory_is_read_too(trio, home):
@@ -5469,15 +5580,22 @@ def test_no_move_is_named_where_the_worktree_root_is_itself_a_symlink(
            parked_on="Falcon")
     result = run(STATUS, "Atlas", home=home)
     assert result.returncode == 1, result.stdout + result.stderr
-    assert (f"no `worktree move` fixes this one, because the worktree root "
-            f"itself is reached through a symlink: both verbs compute "
-            f"{home / 'wtlink'} and git reports the path that link resolves "
-            f"to, so `resume` matches nothing registered there however the "
-            f"worktree is moved — spell `worktree_root` (or "
-            f"`$SPECKIT_GIT_WORKTREE_ROOT`) as the directory git spells, "
-            f"which is {real}, and the `git worktree move` this line would "
-            "otherwise name becomes one that works") in result.stdout, (
-        result.stdout)
+    # AND THE LINE NAMES THE COMPONENT since Copilot's eighth round on #27
+    # (2026-09-13, suppressed): the question was widened to every parent one
+    # round earlier and the ANSWER went on naming the root it no longer meant,
+    # which for a link at `<worktree_root>/<branch>` or a mount's parent is the
+    # wrong setting to point a person at.
+    assert (f"no `worktree move` fixes this one, because the path it would "
+            f"land in is reached through a symlink: both verbs compute "
+            f"{home / 'wtlink' / '001-a-thing'} and git registers whatever is "
+            f"made there under the path that link resolves to, so `resume` "
+            f"matches nothing however the worktree is moved — "
+            f"{home / 'wtlink'} is a symlink, and it is the worktree root this "
+            f"checkout computes (or a directory above it) — spell "
+            f"`worktree_root` (or `$SPECKIT_GIT_WORKTREE_ROOT`) as the "
+            f"directory git spells, which is {real}, and the `git worktree "
+            "move` this line would otherwise name becomes one that works") in (
+        result.stdout), result.stdout
 
     # AND A LINK WHOSE TARGET IS NOT THERE YET is the same refusal, which
     # `physical_path` cannot see (Copilot's fourth round on #27): `cd` into it
@@ -5489,8 +5607,8 @@ def test_no_move_is_named_where_the_worktree_root_is_itself_a_symlink(
     result = run(STATUS, "Atlas", home=home)
     assert result.returncode == 1, result.stdout + result.stderr
     assert "no `worktree move` fixes this one" in result.stdout, result.stdout
-    assert "the directory git spells, and the `git worktree move`" in (
-        result.stdout), "with no target there, git spells no directory yet"
+    assert f"{home / 'wtlink'} is a symlink, and it is the worktree root" in (
+        result.stdout), result.stdout
     real.mkdir()
     assert f"worktree move {elsewhere}" not in result.stdout
 
@@ -6499,6 +6617,13 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     else settles it — which is true of every one of those four states and
     stays as it is.
 
+    AND THE THIRD OF THEM IS EVERY SYMLINKED PARENT, not the worktree root
+    alone, since Copilot's EIGHTH round on #27 (2026-09-13, suppressed): the
+    round before it widened the question `off_path_exit` asks and left all
+    three texts naming the root it no longer meant, which for a link at the
+    feature directory or a mount's parent points a person at the wrong
+    setting. The line names the component now, and so do these.
+
     AND IT NAMES THE THREE STATES THAT GET NO MOVE, since Copilot's FOURTH
     round on #27 (2026-09-13, suppressed), verbatim: "This help text overstates
     the recovery for an off-path worktree: it says the exit is always `git
@@ -6603,9 +6728,9 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
             "worktree `resume` reads as that feature's and the only one "
             "`park` carries, so the exit is a `git worktree move` of yours "
             "— except where no move works and the line says so: the leg's own "
-            "checkout, a leg declared `path: \".\"`, and a `worktree_root` "
-            "spelled through a symlink — anything at that same path that is "
-            "not that leg's "
+            "checkout, a leg declared `path: \".\"`, and a symlink anywhere "
+            "in that path's own parents, each of which names the component — "
+            "anything at that same path that is not that leg's "
             "worktree, which `resume` refuses the whole feature for before "
             "it reads origin, and a "
             "worktree the record does not know (never parked)") in helptext

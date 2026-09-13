@@ -933,6 +933,15 @@ def test_agents_md_is_short_enough_to_be_read():
     Amendment 9's arrival, and the merged file is 186. The cap is the count of
     what merged, not either side's number — and both entries stay, because each
     still names the rule its own lines bought.
+    211 -> 214 on 2026-09-13, for Copilot's eighth round on #27 (suppressed):
+    the round before it widened the symlink QUESTION from the worktree root to
+    every parent of the computed path and left this rule naming the root, which
+    for a link at the feature directory or a mount's parent is the wrong
+    setting to send a person to. Three lines, and they are the difference
+    between a remedy that works and one that does not: a link AT or ABOVE the
+    worktree root is a `worktree_root` to respell, and a link BELOW it is a
+    component that has to BE a directory rather than point at one.
+
     187 AND 186 MEET AT 211 on 2026-09-13, where this branch merged `main`
     after Amendment 9's act 3 landed there. Both raises start from 162 — the
     count after the commit below this branch — and neither touches the other's
@@ -943,7 +952,7 @@ def test_agents_md_is_short_enough_to_be_read():
     rule its own lines bought.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 211, f"AGENTS.md is {len(lines)} lines; the cap is 211"
+    assert len(lines) <= 214, f"AGENTS.md is {len(lines)} lines; the cap is 214"
 
 
 def test_readme_is_short_enough_to_be_read():
