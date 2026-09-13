@@ -246,6 +246,17 @@ jobs:
       # after it was `cat -A`, which is GNU, and macOS answered `cat: illegal
       # option -- A` and, under `bash -e`, took the rest of this step with it.
       # Every command here is POSIX now.
+      #
+      # The two `awk` lines are the last round's answer, kept where the next
+      # round can read it without asking again. This runner's awk is
+      # one-true-awk, and a `-v name=value` there is processed AS A STRING
+      # LITERAL: a literal newline in one is fatal — `awk: newline in string
+      # ... at source line 1`, exit 2, no output at all. gawk and mawk take it
+      # without a word, which is why fourteen `who --landing` assertions were
+      # red on this job alone and green everywhere else. `TAKEN` here means
+      # this runner's awk is the permissive kind; the refusal message means it
+      # is not, and `lanes-edit.sh` must keep handing that table through
+      # `ENVIRON`.
       - name: what this runner actually is
         continue-on-error: true
         run: |
@@ -262,58 +273,11 @@ jobs:
           echo "cmp -n taken : $(printf x > /tmp/.a; printf x > /tmp/.b; \
             cmp -s -n 1 /tmp/.a /tmp/.b >/dev/null 2>&1 && echo yes || echo no)"
           echo "head -c 0 ok : $(head -c 0 /tmp/.a >/dev/null 2>&1 && echo yes || echo no)"
+          printf 'awk          : '; awk --version 2>&1 | head -n1 \
+            || awk -Wversion 2>&1 | head -n1 || :
+          printf 'awk -v \\n    : '; awk -v t="$(printf 'a\nb')" \
+            'BEGIN { print "TAKEN" }' 2>&1 | head -n1
           git --version; python3 --version
-
-      # THE ONE GROUP THE TRANSCRIPT DID NOT EXPLAIN, PROBED WHERE IT HAPPENS.
-      # At `e3d57dd` this job went 973/26, and fourteen of the twenty-six are
-      # `who --landing` answering `none open` for a LANDING that is plainly in
-      # the register. Every `who --landing` that PASSED there was reading a
-      # lane's own object log instead, so `who_landing`'s register half —
-      # `register_text | awk -v aliases=... "$RULE6_AWK"` — produces nothing on
-      # this platform and only on this platform. It runs green under mawk and
-      # under `--traditional` and `--posix` on Linux, so the next thing worth
-      # knowing is whether the AWK half or the SHELL half is at fault, and that
-      # is one command on the host that disagrees.
-      - name: probe - the Rule 6 register scan, on this awk
-        continue-on-error: true
-        run: |
-          awk --version 2>&1 | head -n2 || awk -Wversion 2>&1 | head -n2 || :
-          python3 - <<'EXTRACT' > /tmp/rule6.awk
-          import io, re
-          src = io.open("lanes-edit.sh", encoding="utf-8").read()
-          m = re.search(r"^RULE6_AWK='(.*?)'\n", src, re.S | re.M)
-          print(m.group(1) if m else "# RULE6_AWK NOT FOUND")
-          EXTRACT
-          printf '%s\n' \
-            'LANDING — lane repoP-1, session aaaa-1@Eagle, 2026-09-11T01:00:00Z, PR #77 into workBenches main' \
-            'LANDING — lane repoP-1, session aaaa-1@Eagle, 2026-09-11T01:00:00Z, PR #5 into opensoft/Omni-A main' \
-            > /tmp/r6in.txt
-          echo '--- RULE6_AWK output: expect two rows, 0x1f separated ---'
-          awk -v aliases='' -f /tmp/rule6.awk /tmp/r6in.txt | od -c | head -n 12
-          echo '--- bytes or characters? the line carries one em dash ---'
-          awk '{
-            print "length      :", length($0)
-            print "index-space :", index($0, " ")
-            print "anchor      :", ($0 ~ /^(LANDING|LANDED) — /) ? "MATCHES" : "DOES NOT MATCH"
-            if (match($0, /lane [A-Za-z0-9._-]+/))
-              print "lane        : RSTART=" RSTART " RLENGTH=" RLENGTH " -> [" substr($0, RSTART + 5, RLENGTH - 5) "]"
-            if (match($0, /PR #[0-9]+/))
-              print "pr          : RSTART=" RSTART " RLENGTH=" RLENGTH " -> [" substr($0, RSTART + 4, RLENGTH - 4) "]"
-            if (match($0, /into [A-Za-z0-9\/._-]+ main/))
-              print "repo        : RSTART=" RSTART " RLENGTH=" RLENGTH " -> [" substr($0, RSTART + 5, RLENGTH - 10) "]"
-            exit
-          }' /tmp/r6in.txt
-          echo '--- awk -v carrying a newline ---'
-          awk -v a="$(printf 'x\ny')" 'BEGIN { print "split ->", split(a, q, "\n"), "[" q[1] "][" q[2] "]" }'
-          echo '--- bash 3.2, an empty array under set -u ---'
-          /bin/bash -uc 'e=(); echo "count=${#e[@]}"' 2>&1 | head -n2
-          echo '--- and the shipped repos.tsv the aliases come from ---'
-          head -n3 repos.tsv | od -c | head -n6
-          echo '--- bash 3.2: a nested $( ) inside a double-quoted $( ) ---'
-          /bin/bash -c 'inner() { printf "k\037v\n"; }
-            P="BEGIN { print \"got=[\" a \"]\" }"
-            r="$(printf x | awk -v a="$(inner)" "$P")"
-            printf "%s\n" "$r"' 2>&1 | od -c | head -n 4
 
       - name: tests
         run: python3 -m pytest tests -q

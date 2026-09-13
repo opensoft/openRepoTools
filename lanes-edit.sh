@@ -2774,9 +2774,11 @@ EOF
 # collapse to the 11 repositories they name, and two LANDINGs a retry spelled
 # two ways are one hold instead of two.
 #
-# The table is handed in as `aliases`, one `<lowercased alias>\037<owner/repo>`
-# per line, because awk cannot read `repos.tsv` for itself here: this program's
-# stdin is the register.
+# The table is handed in through the ENVIRONMENT, as `LANES_RULE6_ALIASES`,
+# one `<lowercased alias>\037<owner/repo>` per line — because awk cannot read
+# `repos.tsv` for itself here (this program's stdin is the register) and
+# because `awk -v`, which is where it used to go, carries ONE LINE: see
+# `who_landing` for what a many-line `-v` does on macOS's awk.
 #
 # BOTH LAYERS, SHIPPED FIRST (Amendment 9(b)). This is the second reader of the
 # table — `alias_lookup` is the other — and it layers them the same way by
@@ -2809,7 +2811,7 @@ RULE6_AWK='
 function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
 function canon(r,   l) { l = tolower(r); return (l in A) ? A[l] : r }
 BEGIN {
-  na = split(aliases, ar, "\n")
+  na = split(ENVIRON["LANES_RULE6_ALIASES"], ar, "\n")
   for (ai = 1; ai <= na; ai++) { ap = index(ar[ai], "\037")
     if (ap > 1) A[substr(ar[ai], 1, ap - 1)] = substr(ar[ai], ap + 1) }
 }
@@ -2885,19 +2887,25 @@ EOF
 
 who_landing() {
   wd_repo="$1"; wd_n=0; wd_rows=""
-  # THE INNER SUBSTITUTION IS HOISTED OUT (A9 Addendum 4, R-A9-11). This read
-  # — and only this read — is producing NOTHING on the macOS job while the same
-  # awk runs green under mawk, `--traditional` and `--posix` on Linux, and
-  # fourteen of that job's twenty-six remaining failures are `who --landing`
-  # answering `none open` about a LANDING plainly in the register. The cause is
-  # not yet proved (the `probe` step in `.github/workflows/tests.yml` asks the
-  # runner directly), but a `"$( … "$( … )" … )"` is the shape bash 3.2's
-  # parser is worst at — the same family as the `$(case … esac)` that job
-  # answered `syntax error near unexpected token` for — so it is removed here
-  # rather than left as a suspect. Two lines, identical behaviour on every
-  # bash, one fewer thing that can be the reason.
+  # `awk -v` CARRIES ONE LINE, AND THIS TABLE IS MANY (A9 Addendum 4, R-A9-11,
+  # round 5; the `probe` step of run 34782845181 answered it on the runner).
+  # A `-v name=value` is processed as if it were a STRING LITERAL, and a string
+  # literal cannot span lines: macOS's awk (one-true-awk 20200816) refuses it
+  # outright — `awk: newline in string … at source line 1`, exit 2, no output at
+  # all — while gawk and mawk accept it silently. So this read, and only this
+  # read, answered `none open` for every LANDING in the register on that
+  # platform: fourteen of the job's twenty-six remaining failures, and the
+  # estate's merge holds invisible on a workstation that runs macOS.
+  #
+  # `ENVIRON` has no such restriction and is POSIX awk, so the table goes
+  # through the environment of this one command. The program is otherwise
+  # untouched: the probe ran `RULE6_AWK` itself on that awk with an empty table
+  # and it emitted both rows byte-for-byte, and `length`, `match`, `RSTART`,
+  # `RLENGTH` and `substr` there all agree with each other on a line carrying
+  # an em dash. There was nothing wrong with the parser or with the arithmetic;
+  # the table could not get in.
   wd_aliases="$(rule6_aliases)"
-  wd_rows="$(register_text | awk -v aliases="$wd_aliases" "$RULE6_AWK")"
+  wd_rows="$(register_text | LANES_RULE6_ALIASES="$wd_aliases" awk "$RULE6_AWK")"
   while IFS="$US" read -r wd_verb wd_lane wd_pr wd_utc wd_r wd_other; do
     [ "${wd_verb:-}" = LANDING ] || continue
     wd_c="$(alias_lookup "${wd_r:-}" 2>/dev/null || :)"; wd_c="${wd_c:-$wd_r}"

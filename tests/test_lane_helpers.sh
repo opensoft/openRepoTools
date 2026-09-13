@@ -1939,6 +1939,79 @@ run   "$E" who --landing opensoft/OpsxFactory
 has   "a retry that spelled the repository the other way is ONE triple" "$out" "none open"
 hasnt "…so its LANDED closes it, and PR #64 leaves no hold behind" "$out" "#64"
 
+# --- the alias table must not enter awk through `-v` (A9 Addendum 4, R-A9-11)
+#
+# `awk -v name=value` processes the value AS A STRING LITERAL, and a string
+# literal cannot span lines. macOS's awk — one-true-awk, `awk version
+# 20200816` on the runner — refuses one outright: `awk: newline in string … at
+# source line 1`, exit 2, nothing on stdout. gawk and mawk accept it without a
+# word. `who_landing` handed it the WHOLE repos.tsv alias table that way, one
+# `<alias>\037<owner/repo>` per line, so on macOS the register half of `who
+# --landing` produced nothing at all and every open LANDING in the estate read
+# as `none open` — fourteen of that job's failures, the last group standing
+# after four rounds, and, off CI, the estate's merge holds invisible on a
+# workstation that runs macOS. Every `who --landing` that PASSED there was
+# being answered by the lane's own object log, which is the secondary source.
+#
+# THIS IS THE ONE macOS DEFECT OF THIS ACT A LINUX BOX CAN PROVE FOR ITSELF,
+# so it is proved here rather than bought for another twenty-minute round. The
+# proxy refuses exactly what that awk refuses and hands everything else to the
+# real awk, so it cannot make a case pass that would not pass on the platform;
+# it is written into the sandbox, it is never on PATH for any other case, and
+# it is never shipped. On a host whose awk already refuses (macOS itself) it
+# changes nothing — the refusal simply happens one process earlier.
+#
+# The three behaviour cases below are the register's own mixed-spelling
+# fixture, read back through the proxy: the first two were red on the macOS
+# job by these exact names, and the third is the empty answer that made the
+# other twelve red.
+BSDAWK="$SANDBOX/awk-of-bsd"
+mkdir -p "$BSDAWK"
+LANES_TEST_REAL_AWK="$(command -v awk)"; export LANES_TEST_REAL_AWK
+cat > "$BSDAWK/awk" <<'BSDAWKSHIM'
+#!/usr/bin/env bash
+# A LOCAL PROXY FOR one-true-awk's `-v`, NEVER SHIPPED. Its `setclvar` runs the
+# value through `qstring`, which stops at a literal newline. Nothing else about
+# this awk is imitated: every other call goes straight through.
+awk_nl='
+'
+awk_next=0
+for awk_arg in "$@"; do
+  awk_val=""
+  if [ "$awk_next" = 1 ]; then awk_val="$awk_arg"; awk_next=0
+  else
+    case "$awk_arg" in
+      -v)   awk_next=1 ;;
+      -v?*) awk_val="${awk_arg#-v}" ;;
+    esac
+  fi
+  case "$awk_val" in
+    *=*) case "${awk_val#*=}" in
+           *"$awk_nl"*)
+             printf 'awk: newline in string %s... at source line 1\n' \
+               "${awk_val#*=}" >&2
+             exit 2 ;;
+         esac ;;
+  esac
+done
+exec "${LANES_TEST_REAL_AWK:?no real awk recorded}" "$@"
+BSDAWKSHIM
+chmod +x "$BSDAWK/awk"
+
+is    "the awk proxy refuses a many-line -v, as one-true-awk does" \
+      "$(PATH="$BSDAWK:$PATH" awk -v t="$(printf 'x\ny')" \
+         'BEGIN { print "TAKEN" }' 2>/dev/null; printf 'rc=%s' "$?")" "rc=2"
+is    "…and hands a one-line -v to the real awk, unchanged" \
+      "$(PATH="$BSDAWK:$PATH" awk -v t=kept 'BEGIN { print t }')" "kept"
+
+run   env PATH="$BSDAWK:$PATH" "$E" who --landing Omnigent-Install
+is    "who --landing exits 0 under an awk that refuses a many-line -v" "$rc" 0
+has   "…and the register half still answers, so the hold is still reported" \
+      "$out" "LANDING  opensoft/Omnigent-Install#63  lane repoZQ-4"
+run   env PATH="$BSDAWK:$PATH" "$E" who --landing opensoft/openRepoShape
+has   "…and the alias table still reached awk, so the LANDED is still placed" \
+      "$out" "is on opensoft/Omnigent-Install"
+
 # ------------------- R30: `--home` is resolved AFTER the fetch, in all of them
 #
 # The STARTED line that REFUSES `--home` is read from `origin/<branch>`, so a

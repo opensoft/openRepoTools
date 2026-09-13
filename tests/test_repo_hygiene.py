@@ -1447,3 +1447,47 @@ def test_no_shipped_bash_reaches_for_gnu_only_utilities_unaccompanied(name):
         assert "shasum" in "\n".join(lines), (
             f"{name} names `sha256sum`, which a stock macOS does not ship, and "
             f"never names `shasum -a 256`")
+
+
+
+def test_the_rule_6_register_scan_takes_its_alias_table_from_the_environment():
+    """`awk -v` CARRIES ONE LINE (A9 Addendum 4, R-A9-11, round 5).
+
+    POSIX says a `-v assignment` value is processed as if it were a STRING
+    LITERAL, and a string literal cannot span lines. macOS's awk \u2014 one-true-awk,
+    `awk version 20200816` on the runner \u2014 enforces exactly that and refuses one
+    outright: `awk: newline in string \u2026 at source line 1`, exit 2, nothing on
+    stdout. gawk and mawk accept it without a word, which is what made this the
+    last macOS group standing after four rounds and the only one no Linux run
+    of the suite could see.
+
+    `who_landing` handed `awk -v aliases=` the whole `repos.tsv` alias table,
+    one `<alias>\\037<owner/repo>` per line. So on that platform the REGISTER
+    half of `who --landing` produced nothing at all and every open LANDING in
+    the estate read as `none open` \u2014 fourteen red assertions on that job, and
+    off CI a workstation running macOS that cannot see the estate's merge holds
+    while reporting, in words, that there are none.
+
+    Pinned rather than held as a shape. The shape rule \u2014 "a shell FUNCTION's
+    output is a stream, so it does not go into a `-v`" \u2014 was written first and
+    is wrong about this file: `lc`, `short_ws` and `object_slug` are functions
+    too, and each transforms ONE value, so it reddened three call sites that
+    are correct. A hygiene test with three carve-outs teaches the wrong rule.
+    The general claim is held where it can be held honestly \u2014
+    `tests/test_lane_helpers.sh` runs `who --landing` under a proxy that
+    refuses a many-line `-v` exactly as that awk does \u2014 and this pins the one
+    line that proxy exists for, in a test that also runs on Windows.
+    """
+    text = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+    assert 'na = split(ENVIRON["LANES_RULE6_ALIASES"], ar, "\\n")' in text, (
+        "RULE6_AWK must read the alias table out of the environment; "
+        "`ENVIRON` is POSIX awk and takes a value with newlines in it")
+    assert ('wd_rows="$(register_text | LANES_RULE6_ALIASES="$wd_aliases" '
+            'awk "$RULE6_AWK")"') in text, (
+        "the Rule 6 register scan must put the alias table in the environment "
+        "of that one awk, not in a `-v`")
+    assert "-v aliases=" not in text, (
+        "the alias table is many lines and `awk -v` carries one: macOS's awk "
+        "answers `newline in string ... at source line 1` and exits 2, and "
+        "`who --landing` then reports every merge hold in the estate as "
+        "`none open`")
