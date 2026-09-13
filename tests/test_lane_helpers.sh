@@ -3961,6 +3961,65 @@ FAKE_TMUX_WINDOW="a11start:0" FAKE_TMUX_WINDOW_INDEX=3 FAKE_TMUX_WINDOW_ID='#{wi
 is    "lane-start exits 0 when a tmux too old prints the format back" "$rc" 0
 hasnt "…and records the format string nowhere" "$(cat "$LOGD/repoA11e-1.md" 2>/dev/null || :)" "#{window_id}"
 
+# ----------- rulings 10 and 11: the `/lane-swap` skill absorbs #71's six
+#
+# `opensoft/workBenches#74` @`0b7f6bc` DELETES the launcher's copy of this skill,
+# so after it lands `openRepoTools --install` is the only writer of it on every
+# host and this copy must be the superset (F-X13). Ruling 10 names the six
+# things #71 had and this did not; ruling 11 moves the container case. Six of
+# the seven are prose a test can only read; the SUB-FIELD RULE is arithmetic and
+# is extracted from the file and run, like `/restart`'s rung 4 beside it.
+SWSK="$SRC_DIR/skills/lane-swap/SKILL.md"
+SWSK_TEXT="$(cat "$SWSK")"
+skill_subfield() {   # <win> <dir> — runs the skill's own two `case` lines
+  local ss_win="$1" ss_dir="$2" ss_a ss_b ss_c
+  # MATCHED ON WHAT EACH LINE DOES, with `grep -F`, because the patterns
+  # themselves are full of the characters a regex would eat.
+  ss_a="$(grep -F 'refused="$refused window=$win"' "$SWSK" | head -n1)"
+  ss_b="$(grep -F 'refused="$refused dir=$dir"' "$SWSK" | head -n1)"
+  ss_c="$(grep -F "in *' '*) dir=" "$SWSK" | head -n1)"
+  [ -n "$ss_a" ] && [ -n "$ss_b" ] && [ -n "$ss_c" ] || { printf 'NO LINES\n'; return 1; }
+  ( win="$ss_win"; dir="$ss_dir"; refused=""
+    eval "$ss_a"; eval "$ss_b"; eval "$ss_c"
+    printf 'win=[%s] dir=[%s] refused=[%s]' "$win" "$dir" "$refused" )
+}
+is "a clean window and directory go through untouched" \
+   "$(skill_subfield 'sess:0 @71' '/home/b/x')" 'win=[sess:0 @71] dir=[/home/b/x] refused=[]'
+is "a space in the path is QUOTED, which is what makes it one ref under 7(b)" \
+   "$(skill_subfield 'sess:0' '/home/b/my projects/x')" 'win=[sess:0] dir=["/home/b/my projects/x"] refused=[]'
+is "a ', ' in the path DROPS the sub-field, keeps the line, and says what went" \
+   "$(skill_subfield 'sess:0' '/home/b/a, b')" 'win=[sess:0] dir=[] refused=[ dir=/home/b/a, b]'
+is "…and a '; ', which SPEC rev 6 §5 adds for dir and profile" \
+   "$(skill_subfield 'sess:0' '/home/b/a; b')" 'win=[sess:0] dir=[] refused=[ dir=/home/b/a; b]'
+is "…and a '\"', which clause (c) writes itself and so may not be in the value" \
+   "$(skill_subfield 'sess:0' '/home/b/a"b')" 'win=[sess:0] dir=[] refused=[ dir=/home/b/a"b]'
+is "a ', ' in the WINDOW drops that sub-field, on A8(b)'s list and not widened" \
+   "$(skill_subfield 'sess:0, x' '/home/b/x')" 'win=[] dir=[/home/b/x] refused=[ window=sess:0, x]'
+is "…and a '; ' in the window is NOT refused, because A8(b)'s list is not widened (R-A11-15)" \
+   "$(skill_subfield 'sess:0; x' '/home/b/x')" 'win=[sess:0; x] dir=[/home/b/x] refused=[]'
+# (b) THE NO-WORKTREE `dir` RUNGS — `R-A11-11`, and the rung the launcher round
+# was ORDERED to drop, kept by the copy that survives.
+hasnt "the skill no longer falls to this shell's git toplevel for the lane's dir" \
+      "$SWSK_TEXT" 'dir="$(git rev-parse --show-toplevel'
+has   "…it asks the lane's own recorded checkout first" "$SWSK_TEXT" '"$L" lane-dir "$lane"'
+has   "…then the launcher's own word" "$SWSK_TEXT" 'WORKBENCHES_CLAUDE_LANE_DIR'
+has   "…then the live session's own record, which is what clause (c) names" "$SWSK_TEXT" 'CLAUDE_CONFIG_DIR"/sessions/*.json'
+has   "…and an absolute path or nothing at all" "$SWSK_TEXT" '[[ "$dir" == /* ]] || dir=""'
+# (d) A MISSING `dir` IS SAID, NOT GUESSED AT.
+has   "a missing dir is SAID rather than omitted in silence" "$SWSK_TEXT" "NO dir sub-field"
+# (e) THE CLOSING `/rename` ACT, with the premise that is true today.
+has   "the skill ends with the /rename act (R-A11-16)" "$SWSK_TEXT" "type /rename <lane>"
+has   "…on act 0's MERGED sha, which is the premise that moved" "$SWSK_TEXT" "3719d97"
+# (f) THE ALIAS IS IN THE DESCRIPTION — clause (g).
+has   "the description names the alias" "$SWSK_TEXT" "/lane-swap (alias /swap)"
+has   "…and the amendment that amended it" "$SWSK_TEXT" "amended by Amendment 11"
+# RULING 11 — the container case stops the WRITES, not the swap.
+hasnt "a container with no workstation no longer exits at step 1" "$SWSK_TEXT" 'export LANES_WORKSTATION=<this host name>"
+  exit 2'
+has   "…it records the gap and carries on" "$SWSK_TEXT" "ws_missing=1"
+has   "…the handoff of step 2 is where the gap is named (clause (e))" "$SWSK_TEXT" "THE HANDOFF IS WHERE THE GAP IS NAMED"
+has   "…and step 4's two log writes are the ones that stop" "$SWSK_TEXT" 'if [[ -z "$ws_missing" ]]; then'
+
 # THE `/lane-swap` SKILL MAKES THE SAME TEST, and it is run FROM THE FILE rather
 # than restated — the same reason `/restart`'s rung 4 is: a copy is what would
 # go on passing after the file drifted.

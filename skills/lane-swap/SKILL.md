@@ -1,6 +1,6 @@
 ---
 name: lane-swap
-description: "/lane-swap prepares this lane for a usage reset or profile switch. It fixes the identity triple, refreshes the handoff, polls the writers, writes the swap record, and prints the one restart command (lane-collision-protocol Amendment 8)."
+description: "/lane-swap (alias /swap) prepares this lane for a usage reset or profile switch. It fixes the identity triple, refreshes the handoff, polls the writers, writes the swap record with the window, the lane's directory and the profile, and prints the one restart command (lane-collision-protocol Amendment 8(a), amended by Amendment 11)."
 ---
 
 <!-- PROMPTS TO THE PERSON: 1 — step 3, and only when a writer still holds
@@ -37,11 +37,23 @@ ws="${ws_pair%%	*}"
 # AND IT NEVER WRITES A PLACEHOLDER (`R-A11-14`). Inside a container with no
 # `LANES_WORKSTATION`, the helper's own writers refuse — `@unknown-workstation`
 # is the same defect one field along from the `unknown` clause (e) refuses in
-# the session field, and the log is never rewritten. So this skill STOPS here
-# and says what to set, rather than swapping into a record no reader can match.
+# the session field, and the log is never rewritten.
+#
+# WHAT STOPS IS THE REGISTER AND LOG WRITES, NOT THE SWAP (A11 Addendum 4
+# ruling 11, ratified "a11 addendum 4 yes"). This step used to `exit 2` HERE,
+# before the handoff refresh, the subagent poll, the register line and the
+# printed restart command — so a container with no workstation lost the one
+# thing a swap exists to leave behind. Clause (k) rule (d)'s cost is *"until the
+# value is exported, every lane write from a container stops"*, and that is the
+# register and the logs; step 2's handoff commit is a commit in the LANE'S OWN
+# repository and is not one of them. Clause (e)'s shape for a fact a writer
+# cannot carry is *"the gap named in the handoff"*, and that is what happens
+# here: `$ws_missing` is carried to step 2, which names it, and to step 4, which
+# skips (a) and (b) and still does (c).
+ws_missing=""
 if [[ "${ws_pair##*	}" == container-unset || -z "$ws" ]]; then
-  echo "REFUSED: this is a container and \$LANES_WORKSTATION is not set, so the swap has no workstation to record. The workBenches launcher exports it into every session it starts; set it for this one and re-run: export LANES_WORKSTATION=<this host name>"
-  exit 2
+  ws_missing=1
+  echo "NO WORKSTATION: this is a container and \$LANES_WORKSTATION is not set. The register and object-log writes of step 4 will NOT be made — a record filed under a container id is a record no restart of any workstation will ever find, and both logs are append-only (\`R-A11-14\`). The swap itself goes on: the handoff is refreshed and NAMES this gap, the row is still flipped to PAUSED, and the restart command is still printed. The workBenches launcher exports the value into every session it starts and \`wave-container-shell.sh\` into every container it opens; to close the gap now: export LANES_WORKSTATION=<this host name> and re-run step 4."
 fi
 if [[ -z "$lane" ]]; then
   # AMENDMENT 11 CLAUSE (b) INSERTS A STEP BETWEEN THE NAME AND THE RECORD, AND
@@ -120,7 +132,14 @@ step. Read the row's own text by hand and take its handoff token; do not guess o
 
 `$uuid` is the **last** id in the session cell — this session, and the only one Amendment 6(b) calls the
 lane's. Rewrite the handoff's state line, **every word given and not yet executed**, and the resume prompt;
-a stale handoff is how given words die with the session (Amendment 6(e)). Commit with an explicit pathspec
+a stale handoff is how given words die with the session (Amendment 6(e)).
+
+**If step 1 set `$ws_missing`, THE HANDOFF IS WHERE THE GAP IS NAMED** (A11 Addendum 4 ruling 11, clause
+(e)'s shape for a fact a writer cannot carry). Say in the state line, in as many words, that this session ran
+in a container with no `LANES_WORKSTATION`, that step 4's register and object-log writes were therefore NOT
+made, and that the row still reads as it did — so the next session knows the register is behind its own
+handoff rather than believing the lane never paused. This commit is in the LANE'S OWN repository and is not
+one of the writes that stop. Commit with an explicit pathspec
 and the Rule 5 `Lane:` trailer, then pull-rebase and push:
 
 ```sh
@@ -172,45 +191,96 @@ its free text.
 #   window   gains its `<@id>` beside the `<session>:<index>` it already had —
 #            two space-separated refs in ONE sub-field under 7(b)'s grammar.
 # A path containing a space is WRITTEN QUOTED, which is what makes it one ref;
-# a path containing `, `, ` — ` or `"` is REFUSED rather than written unreadable
-# — and until this round that refusal was this comment and nothing else. Clause
-# (c) names two writers of these sub-fields and gives them one rule: *"A value
-# containing `, `, ` — ` or `; ` is refused, exit 2, naming it — not truncated,
-# not escaped, and not appended."* `lane-start:689-692` and `:728-731` did it;
-# this file only quoted the space, so the two writers of one rule refused
-# different things. The refusal is implemented here now, on the same three
-# separators `lane-start` refuses, BEFORE the quoting — a refusal that ran after
-# it would fire on the `"` this line adds itself.
+# a path containing `, `, ` — `, `; ` or `"` is DROPPED — the sub-field, not the
+# line — and what was dropped is PRINTED (A11 Addendum 4 ruling 10; SPEC rev 6
+# §5 for the `; `).
+#
+# WHY DROPPED HERE AND REFUSED IN `lane-start`, WHICH IS THE SAME RULE READ
+# TWICE. Both writers refuse the same VALUES — the list is identical — and they
+# differ only in what happens next, because of where they stand.
+# `lane-start:686-690` is in front of a LAUNCH: it can exit 2 and the operator
+# moves the checkout and starts again. This is the LAST act of a session that is
+# about to die, and `R-A11-11` binds it: *a swap is never left unwritten*. An
+# `exit 2` here loses the PAUSED line the launcher restarts from, over a
+# sub-field that is information. So the offending sub-field goes, the line
+# stays, and the reader is told which fact it does not carry — which is
+# Amendment 7(i)'s reader rule given a writer that speaks.
+#
+# `window` IS NOT WIDENED to `; ` and that is a ruling rather than an oversight
+# (SPEC rev 6 §5): its list is Amendment 8(b)'s, narrowing it would be a SEVENTH
+# edit to in-force text where the ratified count is six (`R-A11-15`), and a
+# `window` value is a launcher-built session name, an index and an `<@id>`.
+#
+# `dir` IS THE LANE'S CHECKOUT AND NEVER A WORKTREE (`R-A11-11`, A11 Addendum 2;
+# Evidence 3). THREE SOURCES, every one of them a RECORD rather than a
+# derivation:
+#   1. the lane's own recorded `dir` (`lane-dir`), written by `lane-start` at
+#      every start under this amendment — the lane's checkout as the lane's own
+#      writer recorded it;
+#   2. the launcher's `WORKBENCHES_CLAUDE_LANE_DIR`, exported only where the
+#      directory order's rungs 1-3 answered;
+#   3. THE LIVE SESSION'S OWN RECORD — the harness writes `"cwd"` beside
+#      `"tmux"` in `$CLAUDE_CONFIG_DIR/sessions/<pid>.json`, keyed by
+#      `sessionId`, which is this session's directory as the harness itself
+#      keyed it, and the directory whose CLAUDE.md and memory it loaded.
+#
+# `git rev-parse --show-toplevel` AND `$PWD` WERE THE NEXT TWO RUNGS AND ARE
+# GONE (ruling 10). They record the git toplevel of wherever the shell stands,
+# which in a subagent's scratchpad worktree is THAT WORKTREE — and `restart
+# <lane>` then `cd`s into it, losing the repository's CLAUDE.md and the lane's
+# memory (Evidence 3). A record with NO `dir` is complete in the same way a
+# record with no `@id` is; a record with the WRONG one is not, because
+# `lane-start` writes the lane's home from that tree's `origin` and every `#n`
+# after it inherits that.
 dir="$(LANES_NO_FETCH=1 "$L" lane-dir "$lane" 2>/dev/null)" || dir=""
-[[ -n "$dir" ]] || dir="$(git rev-parse --show-toplevel 2>/dev/null)"
+[[ -n "$dir" ]] || dir="${WORKBENCHES_CLAUDE_LANE_DIR:-}"
+if [[ -z "$dir" && -n "${CLAUDE_CODE_SESSION_ID:-}" && -n "${CLAUDE_CONFIG_DIR:-}" ]]; then
+  dir="$(jq -r --arg id "$CLAUDE_CODE_SESSION_ID" \
+    'select((.sessionId // "") == $id) | .cwd // empty' \
+    "$CLAUDE_CONFIG_DIR"/sessions/*.json 2>/dev/null | head -n 1)"
+fi
+# AN ABSOLUTE PATH OR NOTHING AT ALL: a relative one has no meaning without the
+# writer's cwd, which no reader of this log has, and `~` is the writing shell's.
+[[ "$dir" == /* ]] || dir=""
 win="$(tmux display-message -p '#S:#I' 2>/dev/null)"
 wid="$(tmux display-message -p '#{window_id}' 2>/dev/null)"
-# AN ID IS `@<digits>` AND NOTHING ELSE (F-X13(a), A11 Addendum 4 ruling 10).
+# AN `<@id>` IS `@<digits>` AND NOTHING ELSE (F-X13(a), A11 Addendum 4 ruling 10).
 # `== @*` accepted anything starting with an at-sign, and two things that are
 # not ids do: a tmux too old to know `#{window_id}` PRINTS THE FORMAT BACK, and
 # a shim on PATH may print anything at all. Recording that string puts a lie in
 # an append-only log — worse than an absence, because the sub-field then names a
 # window `window-lane` can never resolve while looking complete. This is the
 # same check the launcher makes on the same value (`claude-profile`'s own copy
-# of this skill, `:239-240`) and the one `lane-start:727` now makes.
+# of this skill) and the one `lane-start:727` now makes.
 [[ "$wid" =~ ^@[0-9]+$ ]] && win="$win $wid"
-# BOTH SUB-FIELDS, because both are written into the one append-only line and
-# either one breaks its parser: `dir` is clause (c)'s and `window` is Amendment
-# 8(b)'s, and `lane-start` fences both. The value is named, the swap stops, and
-# nothing is written — a log whose own parser cannot read a line is a log that
-# has lost the fact, and no later line can correct it.
-for _f in dir:"$dir" window:"$win"; do
-  case "${_f#*:}" in
-    *', '*|*' — '*|*'"'*)
-      echo "REFUSED: this lane's ${_f%%:*} sub-field is '${_f#*:}', and it may not contain ', ', ' — ' or '\"': those are what divide an event line into its fields and its free text, the log is append-only, and a line written wrong there is wrong for ever (Amendment 11 clause (c); Amendment 8(b) for window). Nothing was written. Move the checkout, or rename the tmux session, and re-run."
-      exit 2 ;;
-  esac
-done
+# THE DROP, ON THE SAME VALUES `lane-start` REFUSES, BEFORE THE QUOTING — a test
+# that ran after it would fire on the `"` the quoting adds itself.
+refused=""
+case "$win" in *', '*|*' — '*) refused="$refused window=$win"; win="" ;; esac
+case "$dir" in *', '*|*' — '*|*'; '*|*'"'*) refused="$refused dir=$dir"; dir="" ;; esac
 case "$dir" in *' '*) dir="\"$dir\"" ;; esac
-payload="swap; window $win"
-[[ -n "$dir" ]] && payload="$payload; dir $dir"
-[[ -n "${CLAUDE_PROFILE_NAME:-}" ]] && payload="$payload; profile $CLAUDE_PROFILE_NAME"
-payload="$payload; workstation $ws"
+[[ -z "$refused" ]] || printf 'DROPPED sub-field (not appended, and the line is still written):%s\n' "$refused"
+# A MISSING `dir` IS SAID, NOT GUESSED AT (ruling 10). Where none of the three
+# sources answered there is no sub-field, and the reader of this record is told
+# which fact it will not carry rather than handed a plausible wrong one.
+[[ -n "$dir" ]] || printf 'NO dir sub-field: neither the lane log, the launcher nor this session record names the lane checkout, so the record is written without one (Amendment 11 clause (c)).\n'
+# A PROFILE NAME IS A MANIFEST KEY — letters, digits, `.`, `_`, `-` — and the
+# shape check is also how `profile` gets SPEC rev 6 §5's `; ` rule without a
+# token of its own: the pattern admits neither a `;` nor a space, so a value
+# carrying either is omitted rather than written. A record with no `profile` is
+# complete; one naming a profile `pclaude list` does not print is not.
+profile_name="${CLAUDE_PROFILE_NAME:-}"
+[[ "$profile_name" =~ ^[A-Za-z0-9._-]+$ ]] || profile_name=""
+payload="swap"
+[[ -z "$win" ]] || payload="$payload; window $win"
+[[ -z "$dir" ]] || payload="$payload; dir $dir"
+[[ -z "$profile_name" ]] || payload="$payload; profile $profile_name"
+# `workstation <ws>` is NOT omitted the way `dir` and `profile` are, and that is
+# the difference `R-A11-14` settles: those two say something about the lane, and
+# this one is the KEY the records are filed under — a record without it is not
+# incomplete, it is unfindable. So where there is none the two WRITES stop
+# instead (ruling 11), and (c) below still runs.
+[[ -z "$ws" ]] || payload="$payload; workstation $ws"
 
 # (a) the Amendment 7 object-log PAUSED line — the record `swapped` reads.
 # AMENDMENT 11 CLAUSE (e) — THE SKILL SUPPLIES THE UUID, AND `LANES_SESSION` IS
@@ -222,6 +292,13 @@ payload="$payload; workstation $ws"
 # `unknown` in that field is a log clause (d) rule 3 cannot read as a resume
 # target. One environment prefix is the fix; the writer's own refusal is the
 # guard behind it, not the fix.
+#
+# (a) AND (b) ARE THE TWO WRITES A MISSING WORKSTATION STOPS (ruling 11), and
+# the dispatcher guard would refuse them anyway — `lanes-edit.sh:4187-4192`
+# gates `log`, `append-line`, `append-row-status` and six more on a configured
+# workstation. Skipping them here means the skill says WHY once, in its own
+# words, instead of the helper saying it twice in the middle of a swap.
+if [[ -z "$ws_missing" ]]; then
 LANES_LANE="$lane" LANES_SESSION="$uuid" "$L" log PAUSED "lane:$lane" \
   → "$payload" \
   "on <operator>'s word: <sanitized verbatim>"
@@ -230,14 +307,27 @@ LANES_LANE="$lane" LANES_SESSION="$uuid" "$L" log PAUSED "lane:$lane" \
 # is never left unwritten, so a lane whose object line was refused still gets
 # this line and the row's state cell, with the gap named in the handoff.
 "$L" append-line "PAUSED — lane $lane, session $uuid@$ws, $(date -u +%Y-%m-%dT%H:%M:%SZ), on <operator>'s word \"<sanitized verbatim>\"; <what's open, or NOTHING CLAIMED>; handoff refreshed"
+fi
 # (c) the row: flip its leading state word, DERIVED from the row itself. row_write_refused is what step 5
 # reads: empty on success, "1" the moment either write below does not.
 state="$(printf '%s' "$row" | grep -o '| [A-Z][A-Z]* ·' | head -n 1)"   # e.g. '| LIVE ·'
 row_write_refused=""
+# AND (c) IS A REGISTER WRITE TOO, so a missing workstation stops it as well and
+# says so ONCE rather than being refused twice by the helper. Ruling 11's
+# *"still refreshes the handoff naming the gap"* is step 2's commit, which is in
+# the LANE'S OWN repository and is not a register write; this is. `#71`'s copy
+# promised *"(c) below still runs"*, and against this repository's own
+# dispatcher guard that promise is a write the helper refuses — so the promise
+# is corrected here rather than repeated.
+if [[ -n "$ws_missing" ]]; then
+  row_write_refused=1
+  echo "NOT WRITTEN: the row's state cell stays as it is, because every register write from a container with no \$LANES_WORKSTATION stops (clause (k) rule (d)). The handoff refreshed in step 2 names this gap, and step 5 prints the restart command with --lane, because a restart cannot resolve this lane from a row that was never flipped."
+else
 "$L" replace-in-row "$lane" "$state" "| PAUSED ·" "swap" || row_write_refused=1
 if [[ -z "$row_write_refused" ]]; then
   "$L" append-row-status "$lane" "PAUSED — $payload" \
     || row_write_refused=1
+fi
 fi
 ```
 
@@ -263,6 +353,33 @@ printf 'READY TO SWAP — restart with: %s%s\n' "$restart_cmd" "$restart_note"
 lane-start --help 2>/dev/null | grep -q -- '--confirm' \
   && echo 'restart stamps: written by lane-start (Amendment 8(d))' \
   || echo 'restart stamps: MANUAL, as the next session first act (Rule 3 / Amendment 6(c))'
+# AND THE NAME THE NEXT SESSION COMES UP WITH — `R-A11-16` (A11 Addendum 3,
+# ratified "a11 addendum 3 yes"), brought here by A11 Addendum 4 ruling 10
+# because `opensoft/workBenches#74` deletes the copy the ruling was written
+# into. THE ACT STAYS AND ITS PREMISE HAS MOVED, because the estate overtook it.
+#
+# THE TRUE PREMISE: `lane-start` names EVERY session it launches. Adoption act 0
+# merged as `opensoft/brett-wip#5` @`3719d97` — "--name on every launch" — and at
+# that commit `lanes/lane-start:846`, `:855` and `:866` all carry
+# `--name "$LANE"`: the two branches that RESUME as well as the one that
+# CREATES. So a restart that reaches `lane-start` comes up named for the lane
+# and this line says nothing at all.
+#
+# WHAT IT IS STILL FOR is the session that comes up WITHOUT `lane-start`: the
+# launcher's two documented degradations — no `lane-start` on PATH (Evidence 5)
+# and a `lane-start` that refused, both of which start bare Claude in the same
+# window — a `claude` typed by hand, and a workstation whose `lane-start`
+# PREDATES `3719d97`, because the fix is in a checkout and not in the air. Those
+# come up with the name the harness DERIVED (`openrepoproject-b9`, Evidence 4),
+# and a lane whose messaging address (Amendment 2) is a derived name is a lane
+# nobody can address.
+#
+# WHICH ACT REMOVES THIS LINE: none is scheduled, and that is why it is printed
+# CONDITIONALLY rather than always — it is fenced on *if its name is not the
+# lane*, and that test is the whole of it. There is no API to rename a running
+# session from inside, so wherever a session comes up outside `lane-start` the
+# operator's `/rename <lane>` is the only act there is.
+echo 'then, in the session that comes up: if its name is not the lane, type /rename <lane> (lane-start names every session it launches, the resume branches included, since adoption act 0 landed as opensoft/brett-wip#5 @3719d97; a session that came up WITHOUT it — a missing or refusing lane-start, a bare claude, or a workstation whose lane-start predates that commit — carries the name the harness derived, and no API renames one from inside)'
 ```
 
 That one command is the whole restart: bare `pclaude run <profile>` resolves this lane from the window name,
