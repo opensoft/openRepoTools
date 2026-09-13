@@ -950,9 +950,29 @@ def test_agents_md_is_short_enough_to_be_read():
     the merged file is 211. The cap is the count of what merged, not either
     side's number, and every entry above stays, because each still names the
     rule its own lines bought.
+    214 -> 224 on 2026-09-14, for THE RECORD'S OWN KEY ORDER, which rule 4
+    had nothing about at all. `workspace_load_project` reads a record by
+    INDENT and shuts the `features:` list at the next key at project indent
+    and a feature's `legs:` list at the next at feature indent, so a project
+    key a bad merge left between two features — or between a feature and its
+    `legs:` — costs the second feature, or every leg of the first: `resume`
+    makes no feature and collects no leg out of what sits under a shut list.
+    The ten lines buy that reading and, more than it, THE ORDER OF ITS TWO
+    EXITS. The key is put back BY HAND, which is the one hand-edit of the
+    record these rules ask for and reads as a contradiction of the sentence
+    below it that sends a worktree the record does not know to `park` rather
+    than to a hand-edit; and the re-park settles it ONLY from the workstation
+    that has the feature, because `workspace_write_manifest` rewrites a
+    project's whole block and `emit_recorded_feature` carries forward only
+    the features that loader made. An assistant told "re-park" unaided parks
+    from wherever it is standing, and that park is what deletes the lines for
+    good. They are the ten this branch wrote as 162 -> 172, REBASED onto the
+    214 `main` reached while it waited: the same ten lines, in the same rule 4
+    sentence, touching none of the lines the entries above bought — so the
+    count is the one measured after the rebase and the cap is that count.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 214, f"AGENTS.md is {len(lines)} lines; the cap is 214"
+    assert len(lines) <= 224, f"AGENTS.md is {len(lines)} lines; the cap is 224"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -1238,9 +1258,20 @@ def test_readme_is_short_enough_to_be_read():
     branch's 14 lines for the computed path, its three sources and the states
     that get no move, and `main`'s 107 for the install story Amendment 9
     rewrote, both from 256, and 377 in the file that merged.
+    377 -> 383 on 2026-09-14, for THE RECORD'S OWN KEY ORDER, the reading
+    the AGENTS.md entry above describes. Six lines in the exception, and the
+    two exits are why they are here rather than only there: this is the
+    paragraph somebody meets the record layer in WITHOUT rule 4 beside it,
+    and a finding whose exit reads "park that feature again" is one they run
+    from the machine they happen to be sitting at — which is the park that
+    rewrites the block out of its own loader's reading and takes the
+    unread lines with it. The six are the six this branch wrote as
+    256 -> 262, rebased onto the 377 `main` reached while it waited, in the
+    same sentence of the same exception and over none of the lines the
+    entries above bought.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 377, f"README.md is {len(lines)} lines; the cap is 377"
+    assert len(lines) <= 383, f"README.md is {len(lines)} lines; the cap is 383"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

@@ -126,7 +126,17 @@ sequence, and relay their per-repository lines rather than summarising them.
    in neither, as it maps `assembly` — or NO LEG AT ALL, which `resume`
    refuses the whole feature for: that re-park settles a misspelling,
    another shape's role wants a checkout of that shape, and a role of
-   NEITHER shape is a record no checkout resumes. Or unless a STALE
+   NEITHER shape is a record no checkout resumes. Or unless the record's KEY
+   ORDER leaves a `- branch:` or a `- role:` where `resume` READS NEITHER —
+   `workspace_load_project` shuts the `features:` list at the next key at
+   project indent and a feature's `legs:` list at the next at feature indent
+   — so a feature below a moved key is one it never makes and a leg below one
+   is a leg it never collects, costing that feature every leg, or the feature
+   itself. The first exit is putting the key back, THE ONE HAND-EDIT OF THE
+   RECORD these rules ask for; the re-park settles it only FROM THE
+   WORKSTATION THAT HAS THAT FEATURE, because a park anywhere else rewrites
+   the whole block out of what its own loader read and takes those lines with
+   it. Or unless a STALE
    WORKTREE REGISTRATION is named, which is
    `git worktree prune`'s to clear before `resume` can do anything — a
    LOCKED one `git worktree unlock <path>` first, because prune SKIPS it,
