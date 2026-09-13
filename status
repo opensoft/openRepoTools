@@ -1113,9 +1113,26 @@ fetched_ok_at() {
 # word, for the same reason `fetched_ok_at` exists: the store holds one entry
 # per repository of the estate as `estate_repos` lists them, and the record
 # layer asks about the path `project.yaml` gives a role, which is usually one
-# of them and need not be. `none` where the store has no entry — a repository
-# no fetch reached, and every repository of a run without `--fetch` — so a
-# caller that only wants "did a fetch happen here" tests for `ok` or `failed`.
+# of them and need not be. So a caller that only wants "did a fetch happen
+# here" tests for `ok` or `failed`.
+#
+# AND THE STORE HAS TWO WAYS OF HOLDING NOTHING, which is Copilot's third
+# round on #23 (2026-09-12), verbatim: "when `--fetch` is active,
+# `fetch_state_at` can still be `none` for a mapped role path that
+# `project.yaml` names but `estate_repos` did not enumerate (the code
+# explicitly allows that path not to be one of the fetch-store entries). This
+# fallback then tells the user to run `status --fetch`, even though that flag
+# has already run and repeated runs will not fetch a path absent from
+# `.gitmodules`". IT IS REAL AND IT IS THE SAME FAULT THE ROUND BEFORE FIXED
+# from its other side: a run that HAS fetched being told to fetch. `none` is
+# the answer for a run made WITHOUT the flag — the one `status --fetch`
+# settles — and `unlisted` for a run made WITH it that never reached this
+# repository, which no rerun of the flag changes: the pre-pass fetches the
+# repositories `estate_repos` lists, the root and the legs `.gitmodules`
+# declares, and a `spec` or `code` leg `project.yaml` mounts somewhere else is
+# not among them. THE FLAG'S SCOPE IS NOT WIDENED TO CLOSE IT: `status
+# --fetch`'s one write is bounded to the repositories the estate declares,
+# which is the rule, so the reading says what this run did instead.
 #
 # IT REPLACED A `fetch_tried_at` THAT ANSWERED THE PRESENCE OF THE ENTRY
 # (Copilot's second round on #23), verbatim: "`fetch_tried_at` is true for
@@ -1143,7 +1160,7 @@ fetch_state_at() {
         fi
         i=$((i + 1))
     done
-    printf 'none\n'
+    printf 'unlisted\n'
     return 0
 }
 
@@ -2674,6 +2691,50 @@ origin_gone_exits() {
     printf "the exits are to delete its \`- branch: %s\` block from the record where the feature landed, or to push the branch again from %s where it went by mistake" "$1" "${2:-the workstation that parked it}"
 }
 
+# THE FOUR WAYS RR6 REFUSES, WORDED FOR A LEG THAT IS NOT THE CULPRIT, which
+# is why the leg is named: this clause is printed on a SIBLING's line, where
+# "that leg" would have no antecedent. `resume.sh`'s RR6 is `[ "$pushed" !=
+# true ]` and its own three-armed message is the words `check_parked_leg`'s
+# `$unread` carries for the culprit; these are the same four states said about
+# somebody else's leg. `true` never reaches here — the caller tests it first —
+# and the empty value is two states, told apart by the record's own `$seen`
+# the way that function tells them apart.
+pushed_verdict() {
+    case "$2" in
+    false) printf "its \`%s\` leg was parked with --no-push" "$1" ;;
+    '')
+        if [ -z "$3" ]; then
+            printf "the record has no \`pushed:\` for its \`%s\` leg" "$1"
+        else
+            printf "its \`%s\` leg's \`pushed:\` has no value, which is neither true nor false" "$1"
+        fi
+        ;;
+    *) printf "its \`%s\` leg's \`pushed:\` says '%s', which is neither true nor false" "$1" "$2" ;;
+    esac
+}
+
+# WHETHER RR1 WILL REFUSE THIS LEG AS MOVED ON, asked of the record's absent
+# `parked_commit:` alone — the one reading of RR1 this layer already makes,
+# per leg, in the arm below. `resume.sh`'s RR1 is `[ "$remote_tip" !=
+# "$parked_commit" ]` and an absent parked commit never equals a tip, so the
+# leg is refused wherever origin's tip is. The two conditions under it are the
+# two RRs in front of RR1 that this layer can answer: a leg whose repository
+# is not a checkout here is none of RR1's business — `resume` refuses the
+# whole ESTATE for that, before it reads a feature — and a leg with a worktree
+# on the branch here is RR4's, which calls it already recreated. RR2 is not
+# tested here: the caller asks it first, in `resume.sh`'s order.
+moved_on_leg() {
+    local root="$1" role="$2" branch="$3" commit="$4" repo
+    [ -z "$commit" ] || return 1
+    repo="$(leg_repo_for_role "$root" "$role" 2>/dev/null || true)"
+    [ -n "$repo" ] || return 1
+    [ -e "$repo/.git" ] || return 1
+    if worktree_here "$repo" "$branch"; then
+        return 1
+    fi
+    return 0
+}
+
 # WHETHER RR2 WILL REFUSE THIS LEG, asked a leg row ahead of the arms below
 # because the answer is the FEATURE's: `read_record`'s first pass asks it of
 # every leg, and `check_parked_leg` asks the same three things again of the
@@ -2711,11 +2772,12 @@ check_parked_leg() {
     # `${10}` and not a tenth name in the line above, because that line is
     # already the widest in this file; `:-` because `set -u` is on and the
     # verdict is the one argument a caller may leave off. `${11}` says WHICH
-    # refusal that verdict is — `gone` for the one RR2 makes, empty for the
-    # ones `collect_legs` makes before any RR runs — because the two differ in
-    # both directions: RR2's exits are its own, and the leg RR2 refuses for
-    # still says so in RR2's words, where a leg `collect_legs` throws out has
-    # said everything it has to say on the line above this one.
+    # refusal that verdict is — empty for the ones `collect_legs` makes
+    # before any RR runs, and `gone`, `pushed` or `moved` for the RR that
+    # refuses first in the record's order — because they differ in both
+    # directions: RR2's exits are its own, and the leg RR2 refuses for still
+    # says so in RR2's words, where a leg `collect_legs` throws out has said
+    # everything it has to say on the line above this one.
     local refused="${10:-}" refused_kind="${11:-}"
     local repo tree="" ghost="" ghost_is="" clear="" out rc=0 tip n unread="" refuses="" where=""
     local gone_exits="" gone_caveat="" shape_line="" shape_says="" settles="" exits=""
@@ -2897,7 +2959,18 @@ check_parked_leg() {
         if [ -n "$RECORD_SHAPE" ] && [ "$RECORD_SHAPE" != "$ROOT_SHAPE" ]; then
             shape_says="; the record calls the project $RECORD_SHAPE where this checkout is $ROOT_SHAPE, which is the disagreement \`resume\` reports and not one this layer can settle"
         fi
-        shape_line="parked feature $branch ($role leg): $(role_shape_long "$role"), so it refuses the WHOLE feature — the other legs with it — reporting it as a shape mismatch, and nothing here brings it back$shape_says — $(role_shape_exits "$role" "$where")"
+        # AND THE DISAGREEMENT CLAUSE GOES LAST, BECAUSE THE EXIT'S FIRST
+        # WORD LEANS ON THE CLAUSE BEFORE IT (the independent verification of
+        # this branch, 2026-09-12). `role_shape_exits`'s `*)` arm opens "nor
+        # does any other checkout, of either shape", which answers "nothing
+        # here brings it back" — and with the disagreement spliced between the
+        # two the line read "… not one this layer can settle — nor does any
+        # other checkout", where the "nor" has nothing left to deny. Both
+        # halves are true in either order, and only one of them is an
+        # antecedent, so the antecedent keeps its place: the shape the record
+        # names and the shape this checkout is follow "which is this one only
+        # where the two agree", which is the clause they are about.
+        shape_line="parked feature $branch ($role leg): $(role_shape_long "$role"), so it refuses the WHOLE feature — the other legs with it — reporting it as a shape mismatch, and nothing here brings it back — $(role_shape_exits "$role" "$where")$shape_says"
         # SAID HERE FOR A LEG THAT IS NOT A CHECKOUT, because the arm below
         # would say the smaller thing instead and there is nothing left to
         # read in a directory with no `.git` in it; said after the worktree
@@ -3183,7 +3256,14 @@ check_parked_leg() {
     # words, and a second leg origin has also lost says it for itself, which
     # is how the shape arm above treats two unmappable roles — and stays
     # silent for a feature `collect_legs` throws out first, whose verdict is
-    # made before any RR runs and is the arm below's to say.
+    # made before any RR runs and is the arm below's to say — and silent,
+    # too, for a feature an EARLIER LEG refuses at RR6 or RR1, whose verdict
+    # arrives here as a kind that is not `gone` (Copilot's third round on
+    # #23). `resume.sh` breaks at the first refusing leg in the record's
+    # order, so where one of those comes first origin is never read for this
+    # feature at all, and a line claiming it — with RR2's exits, which say to
+    # delete the record's entry — would be this layer inventing the refusal
+    # the round before it stopped inventing.
     if [ -z "$tree" ] && { [ -z "$refused" ] || [ "$refused_kind" = gone ]; } &&
         ! has_ref "$repo" "refs/remotes/origin/$branch"; then
         if fetched_ok_at "$repo"; then
@@ -3215,10 +3295,17 @@ check_parked_leg() {
             failed) settles="the fetch this run made there failed, so nothing has settled it" ;;
             no-remote) settles="that repository has no \`origin\` remote for this run's fetch to have asked, so nothing has settled it" ;;
             unreadable) settles="that repository could not be read this run, so no fetch was made there and nothing has settled it" ;;
+            # AND A REPOSITORY THIS RUN'S FETCH NEVER LISTED IS NOT ONE THE
+            # FLAG WILL SETTLE (Copilot's third round on #23): the pre-pass
+            # fetches what `estate_repos` lists — the root and the legs
+            # `.gitmodules` declares — while this layer reads the path
+            # `project.yaml` gives the role, and a leg mounted somewhere else
+            # is fetched by no rerun of the flag. So the line says what this
+            # run did rather than naming the flag the person is holding.
+            unlisted) settles="this run's fetch did not reach that repository: it fetches the root and the legs \`.gitmodules\` declares, and \`project.yaml\` maps this role onto a path that is not one of them, so nothing has settled it" ;;
             # `ok` cannot reach here — `fetched_ok_at` answered it above and
-            # returned — so what is left is `none`: no fetch reached that
-            # repository this run, which is every repository of a run made
-            # without the flag and any the pre-pass did not list.
+            # returned — so what is left is `none`, which is every repository
+            # of a run made without the flag.
             *) settles="\`status --fetch\` settles which" ;;
             esac
             gone_caveat=", unless origin has lost that branch: there is no \`origin/$branch\` here as of the last fetch, and \`resume\` refuses a leg whose branch is not on origin, taking the WHOLE feature with it (\"$branch is no longer on origin in the $role leg\") — $settles"
@@ -3320,14 +3407,22 @@ check_parked_leg() {
             # may have LANDED, and a park from the workstation that still has
             # the worktree would push it back. So the gone verdict carries
             # RR2's own two exits onto the sibling's line, in the words the
-            # culprit leg's line uses.
-            if [ "$refused_kind" = gone ]; then
-                exits="$(origin_gone_exits "$branch" "$parked_on")"
-            else
+            # culprit leg's line uses. RR6 and RR1 are the re-park again —
+            # the record is what is wrong, and only a park that parks the
+            # feature THROUGH writes it afresh: with the push RR6 wants, and
+            # with the commit RR1 matches against origin's tip — so those two
+            # say it in the words their own culprit lines end in.
+            case "$refused_kind" in
+            gone) exits="$(origin_gone_exits "$branch" "$parked_on")" ;;
+            pushed | moved)
+                exits="park that feature again from ${parked_on:-the workstation that has it}, which writes the record afresh"
+                ;;
+            *)
                 where="the record does not say where"
                 [ -z "$parked_on" ] || where="the record says $parked_on"
                 exits="park that feature again from the workstation that has it ($where)"
-            fi
+                ;;
+            esac
             if [ -n "$ghost" ]; then
                 finding "parked feature $branch ($role leg): no worktree on that branch here, but $ghost_is — clear it with $clear; and \`resume\` refuses the WHOLE feature in any case, because $refused, so it does not bring this leg back either — $exits"
             else
@@ -3479,7 +3574,7 @@ read_record() {
     local root="$1" sel rows="" kind a b c d e f n_features=0
     local parked_at="" parked_on="" lane="" active="" recorded="$NL"
     local seen_branches=0 legs where="" refused="" refused_kind="" unnamed=0
-    local -a feature_legs=() feature_why=() feature_gone=()
+    local -a feature_legs=() feature_why=() feature_rr=() feature_rr_kind=()
     shift
     RECORD_SHAPE=""
     [ -n "$RECORD_FILE" ] || return 0
@@ -3503,7 +3598,10 @@ read_record() {
         # then ignores rather than an index it invents.
         while IFS=$'\037' read -r kind a b c d e f; do
             case "$kind" in
-            branch) feature_legs+=(0); feature_why+=(""); feature_gone+=("") ;;
+            branch)
+                feature_legs+=(0); feature_why+=("")
+                feature_rr+=(""); feature_rr_kind+=("")
+                ;;
             leg)
                 legs=${#feature_legs[@]}
                 if [ "$legs" -gt 0 ]; then
@@ -3544,9 +3642,51 @@ read_record() {
                     # RR6 coming first: a leg whose `pushed:` is not the
                     # literal `true` is refused before origin is read at all,
                     # and that refusal is the leg's own line below, not a
-                    # verdict this layer makes. The whole block is skipped
-                    # without `--fetch`, where a missing ref has a second and
-                    # commoner reading and this layer chooses neither.
+                    # verdict this layer makes. The origin question is
+                    # skipped without `--fetch`, where a missing ref has a
+                    # second and commoner reading and this layer chooses
+                    # neither.
+                    #
+                    # AND THE FOURTH QUESTION IS ASKED IN `resume.sh`'s OWN
+                    # ORDER, OF THE LEGS IN THE RECORD's (Copilot's third
+                    # round on #23, 2026-09-12): "`feature_gone` is propagated
+                    # to every leg without accounting for an earlier per-leg
+                    # refusal. For example, if the first leg has `pushed:
+                    # false` (RR6) or no `parked_commit:` (RR1) and a later
+                    # leg has a missing origin branch, `resume` stops at the
+                    # first leg in record order, but this makes the whole
+                    # feature report RR2's gone-origin verdict and exits."
+                    # `workspace_load_project` appends each leg in FILE order,
+                    # `collect_legs` walks `MANIFEST_LEG_ROLE` in that order,
+                    # and the loop under it breaks at the first refusal — so
+                    # the refusal the person gets is the first one in the
+                    # record, and a later leg's may not be printed in front of
+                    # it. Run against the extension on 2026-09-12 on a scratch
+                    # three-leg estate, one feature, two legs in two
+                    # repositories, the order the variable: `code` (`pushed:
+                    # false`) then `spec` (branch deleted on origin) answered
+                    # "Error: 001-a-thing (code leg) was parked with
+                    # --no-push", "REFUSED: 001-a-thing — parked with
+                    # --no-push"; `code` (no `parked_commit:`) then the same
+                    # `spec` answered "Error: 001-a-thing (code leg) has moved
+                    # since it was parked", "REFUSED: 001-a-thing —
+                    # divergence"; and the gone leg FIRST answered "Error:
+                    # 001-a-thing is no longer on origin in the spec leg",
+                    # "REFUSED: 001-a-thing — gone from origin". All exit 2.
+                    #
+                    # SO ONE ARRAY HOLDS THE FIRST REFUSAL AND ITS KIND, and
+                    # the arms under it are RR6, RR2 and RR1 in that order,
+                    # which is the order one leg is tested in. RR6 is the
+                    # record alone and is certain — it is the FIRST test of
+                    # the loop, before RR4, so a worktree here does not save
+                    # the leg. RR1 is asked of an absent `parked_commit:`,
+                    # which is the one reading of RR1 this layer makes, and
+                    # only after RR2 has been asked of the same leg, because
+                    # that is where `resume.sh` asks it. What this cannot see
+                    # is RR3, RR5, and RR4 by the PATH `resume` computes —
+                    # recorded by the commits below and the stacked branch's
+                    # subject — so a feature refused there is one this layer
+                    # still reads as resumable.
                     if [ -z "${feature_why[legs - 1]}" ]; then
                         if [ -z "$b" ]; then
                             feature_why[legs - 1]="a leg of it in the record has no role"
@@ -3554,10 +3694,17 @@ read_record() {
                             feature_why[legs - 1]="its \`$b\` leg names a role this root does not mount"
                         elif ! role_maps_here "$b"; then
                             feature_why[legs - 1]="$(role_shape_short "$b")"
-                        elif [ "$FETCH" -eq 1 ] && [ "$d" = true ] &&
-                            [ -z "${feature_gone[legs - 1]}" ] &&
-                            origin_lost_leg "$root" "$b" "$a"; then
-                            feature_gone[legs - 1]="there is no \`origin/$a\` in its \`$b\` leg after this run's fetch"
+                        elif [ -z "${feature_rr[legs - 1]}" ]; then
+                            if [ "$d" != true ]; then
+                                feature_rr[legs - 1]="$(pushed_verdict "$b" "$d" "$f")"
+                                feature_rr_kind[legs - 1]=pushed
+                            elif [ "$FETCH" -eq 1 ] && origin_lost_leg "$root" "$b" "$a"; then
+                                feature_rr[legs - 1]="there is no \`origin/$a\` in its \`$b\` leg after this run's fetch"
+                                feature_rr_kind[legs - 1]=gone
+                            elif moved_on_leg "$root" "$b" "$a" "$c"; then
+                                feature_rr[legs - 1]="the record names no parked commit for its \`$b\` leg"
+                                feature_rr_kind[legs - 1]=moved
+                            fi
                         fi
                     fi
                 fi
@@ -3637,14 +3784,16 @@ read_record() {
                 if [ "$seen_branches" -gt 0 ]; then
                     refused="${feature_why[seen_branches - 1]:-}"
                     # `collect_legs` BEFORE THE RRs, in the reading as in the
-                    # extension: a feature it refuses is refused before RR2
-                    # runs, so its verdict is the one that reaches the legs
-                    # and the gone reading is read back only where it found
-                    # nothing.
+                    # extension: it runs to the end before any RR does, so a
+                    # feature it refuses is refused for THAT whatever the legs
+                    # go on to say, and the RR verdict is read back only where
+                    # it found nothing. Which RR that verdict is, and which
+                    # leg it belongs to, was decided in the pass above, in the
+                    # record's order.
                     if [ -z "$refused" ] &&
-                        [ -n "${feature_gone[seen_branches - 1]:-}" ]; then
-                        refused="${feature_gone[seen_branches - 1]}"
-                        refused_kind=gone
+                        [ -n "${feature_rr[seen_branches - 1]:-}" ]; then
+                        refused="${feature_rr[seen_branches - 1]}"
+                        refused_kind="${feature_rr_kind[seen_branches - 1]}"
                     fi
                 fi
                 check_parked_leg "$root" "$a" "$b" "$c" "$d" "$parked_at" "$parked_on" "$e" "$f" "$refused" "$refused_kind"

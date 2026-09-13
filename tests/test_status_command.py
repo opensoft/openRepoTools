@@ -2547,6 +2547,59 @@ def test_a_caveat_where_no_fetch_could_be_made_says_so_and_not_that_one_failed(
     assert "the fetch this run made there failed" not in result.stdout
 
 
+def test_a_caveat_in_a_repository_this_runs_fetch_never_listed_says_so(
+        atlas, home, status_remotes):
+    """Copilot's third round on #23, 2026-09-12, verbatim: "When `--fetch` is
+    active, `fetch_state_at` can still be `none` for a mapped role path that
+    `project.yaml` names but `estate_repos` did not enumerate (the code
+    explicitly allows that path not to be one of the fetch-store entries).
+    This fallback then tells the user to run `status --fetch`, even though
+    that flag has already run and repeated runs will not fetch a path absent
+    from `.gitmodules`; either fetch all mapped leg repositories or report
+    that this repository was not included in the fetch."
+
+    IT IS REAL, AND THE SECOND OF ITS TWO EXITS IS THE ONE TAKEN: `status
+    --fetch`'s one write is bounded to the repositories the estate declares —
+    the root and the legs of its `.gitmodules` — which is what AGENTS.md rule
+    4, the README and the help all say, so the reading says what this run DID
+    rather than widening what the flag does. The state is a `project.yaml`
+    that mounts a leg where `.gitmodules` declares none: `load_repo_shape`
+    maps the role onto that path and `collect_legs` hands it straight to
+    `resume`, while the pre-pass never sees it and no rerun of the flag ever
+    will.
+
+    WITHOUT THE FLAG THE FLAG IS STILL THE ANSWER, which is the control under
+    it: there the run has not asked at all, and what the flag settles is the
+    root and the legs it lists."""
+    checkout = workspace_config(home)
+    code_leg_onto_the_spec_checkout(atlas, path_line="    path: docs\n")
+    git("clone", "-q", str(status_remotes["Atlas"]["leg_bare"]),
+        str(atlas / "docs"), cwd=atlas)
+    record(checkout, "atlas", branch="001-a-thing", role="code",
+           commit=FAKE_SHA, parked_on="Falcon")
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (code leg): "
+            + CAVEAT_HEAD.format(name="Atlas", role="code")
+            + "this run's fetch did not reach that repository: it fetches the "
+            "root and the legs `.gitmodules` declares, and `project.yaml` maps "
+            "this role onto a path that is not one of them, so nothing has "
+            "settled it") in result.stdout
+    assert "settles which" not in result.stdout, (
+        "the flag was run, and no rerun of it reaches a path `.gitmodules` "
+        "does not declare")
+    assert "fetched origin" not in " ".join(
+        line for line in result.stdout.splitlines() if "docs" in line), (
+        "the fetch stays bounded to the repositories the estate declares")
+
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (code leg): "
+            + CAVEAT_HEAD.format(name="Atlas", role="code")
+            + "`status --fetch` settles which") in result.stdout
+    assert "did not reach that repository" not in result.stdout
+
+
 def test_a_leg_the_record_gives_no_role_is_a_finding_not_silence(atlas, home):
     """Note 8 of the independent review of #20, 2026-09-11, recorded there as
     out of scope: an empty `- role:` value. `record_rows` dropped such a leg —
@@ -2877,7 +2930,12 @@ SHAPE_SPEC = ("`resume` maps the role `spec` onto a three-leg checkout only, "
 #: The rest of the `spec`-in-a-single-root finding, whose first clause two
 #: other tests read as `SHAPE_SPEC`: the refusal both shape findings share,
 #: the disagreement this suite's `record()` always writes (`shape:
-#: three-leg`), and the exit.
+#: three-leg`), and the exit. THE DISAGREEMENT IS LAST since the independent
+#: verification of this branch, 2026-09-12: the `*)` exit opens "nor does any
+#: other checkout, of either shape", which answers "nothing here brings it
+#: back", and spliced between the two the disagreement left that "nor" denying
+#: "not one this layer can settle". The three pieces are the same; the order
+#: is the reading.
 MISMATCH = (" — the other legs with it — reporting it as a shape mismatch, "
             "and nothing here brings it back")
 DISAGREE_S = ("; the record calls the project three-leg where this checkout "
@@ -2954,7 +3012,7 @@ def test_a_role_resume_maps_in_no_shape_costs_the_whole_feature(atlas, home):
     assert result.returncode == 1, result.stdout + result.stderr
     findings = [line.strip() for line in result.stdout.splitlines()
                 if line.strip().startswith("- parked feature")]
-    assert findings == [ASSEMBLY + DISAGREE + EXIT_NEITHER], findings
+    assert findings == [ASSEMBLY + EXIT_NEITHER + DISAGREE], findings
     assert "`resume Atlas`" not in result.stdout
 
     # AND WHERE THE RECORD AGREES WITH THIS CHECKOUT there is nothing to hold
@@ -3032,7 +3090,13 @@ def test_a_role_of_neither_shape_is_offered_no_checkout_of_the_other(
         findings = [line.strip() for line in result.stdout.splitlines()
                     if line.strip().startswith("- parked feature")]
         assert len(findings) == 1, findings
-        assert findings[0].endswith(EXIT_NEITHER[3:]), findings[0]
+        # THE EXIT IS LAST WHERE THERE IS NO DISAGREEMENT TO REPORT, and the
+        # disagreement follows it where there is: `assembly` and `docs` reach
+        # the SHAPE arm, whose line holds the record's `shape:` against this
+        # checkout's, while `nope` matches no directory and reaches the mount
+        # arm, which has no such clause.
+        tail = EXIT_NEITHER[3:] + ("" if role == "nope" else DISAGREE)
+        assert findings[0].endswith(tail), findings[0]
         assert "comes back in a checkout of that shape, not here" not in \
             result.stdout, (
                 "a role no shape maps was still offered the other shape")
@@ -3098,13 +3162,14 @@ def test_a_spec_leg_this_single_root_mounts_is_still_the_shape_refusal(
         "`spec` onto a three-leg checkout only, and this one is single (its "
         "`project.yaml` declares no `schema: project-repo-schema` and no "
         "`code` leg), so it refuses the WHOLE feature — the other legs with it — reporting it "
-        "as a shape mismatch, and nothing here brings it back; the record "
-        "calls the project three-leg where this checkout is single, which is "
-        "the disagreement `resume` reports and not one this layer can settle "
+        "as a shape mismatch, and nothing here brings it back "
         "— park that feature again from the workstation that has it (the "
         "record says Falcon), which writes the roles its own shape has; "
         "where that shape is not this checkout's, the feature comes back in "
-        "a checkout of that shape, not here"], findings
+        "a checkout of that shape, not here; the record "
+        "calls the project three-leg where this checkout is single, which is "
+        "the disagreement `resume` reports and not one this layer can settle"
+        ], findings
 
     (where / "more.md").write_text("more\n", encoding="utf-8")
     commit_all(where, "more work")
@@ -3576,6 +3641,246 @@ def test_the_gone_branch_verdict_reaches_the_legs_beside_it(trio, home):
     assert "is no longer on origin" not in result.stdout, (
         "RR2 is never reached for a feature `collect_legs` throws out")
     assert "`resume Trio`" not in result.stdout
+
+
+def test_the_features_verdict_is_the_first_leg_resume_refuses_at(trio, home):
+    """Copilot's THIRD round on #23, 2026-09-12, verbatim: "`feature_gone` is
+    propagated to every leg without accounting for an earlier per-leg
+    refusal. For example, if the first leg has `pushed: false` (RR6) or no
+    `parked_commit:` (RR1) and a later leg has a missing origin branch,
+    `resume` stops at the first leg in record order, but this makes the whole
+    feature report RR2's gone-origin verdict and exits. Track the first
+    applicable refusal/order before promoting a later origin check to a
+    feature verdict, or suppress that promotion when an earlier leg already
+    blocks resume."
+
+    THE ORDER IS THE RECORD'S: `workspace_load_project` appends each leg in
+    file order, `collect_legs` walks `MANIFEST_LEG_ROLE` in that order, and
+    the per-leg loop under it breaks at the FIRST refusal — RR6, RR4, RR3,
+    RR2, RR1, RR5, each `refused=true; break`, with `[ "$refused" = false ] ||
+    continue` throwing the whole feature out after it. Run against the
+    extension on 2026-09-12 on a scratch three-leg estate — bare remotes in a
+    temp dir, a fake `$HOME`, the extension's own scripts — one feature, two
+    legs in two repositories, the record's order the variable:
+
+      `code` (`pushed: false`) then `spec` (branch deleted on origin)
+        "Error: 001-a-thing (code leg) was parked with --no-push; that feature
+        was NOT recreated", "REFUSED: 001-a-thing — parked with --no-push",
+        exit 2
+      `code` (no `parked_commit:`) then `spec` (branch deleted on origin)
+        "Error: 001-a-thing (code leg) has moved since it was parked; that
+        feature was NOT recreated", "REFUSED: 001-a-thing — divergence",
+        exit 2
+      `spec` (branch deleted on origin) then `code` (`pushed: false`)
+        "Error: 001-a-thing is no longer on origin in the spec leg; that
+        feature was NOT recreated", "REFUSED: 001-a-thing — gone from
+        origin", exit 2
+
+    ORIGIN IS NEVER READ IN THE FIRST TWO, so no line of them may say origin
+    has lost that branch and no line of them may name RR2's exits: deleting
+    the record entry is the wrong thing to do about a leg that was never
+    pushed. The verdict is the first REFUSING leg's, and every leg of the
+    feature carries it.
+
+    THE FOURTH BLOCK IS RR6 AGAINST RR4, because the order inside one leg is
+    as load-bearing as the order between legs: RR6 is the FIRST test of the
+    loop and carries no worktree condition, so a `--no-push` leg with its
+    worktree standing here still breaks the loop and still costs the feature,
+    while the gone-origin sibling two rows down is one `resume` never reaches.
+    Run against the extension on 2026-09-13, on a scratch three-leg estate
+    built the same way, the `code` leg's worktree registered at the parked
+    commit and the `spec` leg's branch deleted on origin:
+
+      `code` (`pushed: false`, worktree present) then `spec` (branch gone)
+        "Error: 001-a-thing (code leg) was parked with --no-push; that
+        feature was NOT recreated", "REFUSED: 001-a-thing — parked with
+        --no-push", exit 2, origin never mentioned
+      the same estate with that leg's `pushed: true` — the control
+        "Error: 001-a-thing is no longer on origin in the spec leg", "REFUSED:
+        001-a-thing — gone from origin", exit 2
+
+    So RR4 does not shield the leg from RR6, and it is RR6 that decides which
+    refusal the person gets."""
+    checkout = workspace_config(home)
+    spec, code = trio / "spec", trio / "code"
+    for leg in (spec, code):
+        git("checkout", "-q", "main", cwd=leg)
+        origin_has_branch(leg, "001-a-thing")
+    drop_from_origin(spec, "001-a-thing")
+    afresh = ("park that feature again from Falcon, which writes the record "
+              "afresh")
+
+    # RR6 FIRST, RR2 SECOND. The `--no-push` leg keeps the line it always had
+    # — its own refusal, in its own words — and the leg origin has lost stops
+    # claiming a refusal `resume` never reaches.
+    path = record(checkout, "trio", branch="001-a-thing", role="code",
+                  commit=FAKE_SHA, pushed="false", parked_on="Falcon",
+                  root="Trio")
+    path.write_text(path.read_text(encoding="utf-8")
+                    + leg_block("spec", FAKE_SHA), encoding="utf-8")
+    result = run(STATUS, "--fetch", "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 2, findings
+    assert findings[0] == (
+        "- parked feature 001-a-thing (code leg): parked with --no-push on "
+        "Falcon and no worktree on that branch here; only that workstation "
+        "has the WIP commit, so nothing here brings it back — park it again "
+        "from there"), findings[0]
+    assert findings[1] == (
+        "- parked feature 001-a-thing (spec leg): no worktree on that branch "
+        "here, parked 2026-09-10T20:00:00Z on Falcon; `resume` refuses the "
+        "WHOLE feature, because its `code` leg was parked with --no-push, so "
+        "it does not bring this leg back — " + afresh), findings[1]
+    assert "is no longer on origin" not in result.stdout, (
+        "RR6 breaks the loop before RR2 reads origin at all")
+    assert "delete its `- branch:" not in result.stdout, (
+        "a leg that was never pushed is no reason to delete the record entry")
+    assert "`resume Trio`" not in result.stdout
+
+    # RR1 FIRST, RR2 SECOND, and the same again: a leg the record names no
+    # commit for is refused at RR1 — after RR2 in one leg, before RR2 in the
+    # next one.
+    path = record(checkout, "trio", branch="001-a-thing", role="code",
+                  commit="", parked_on="Falcon", root="Trio")
+    path.write_text(path.read_text(encoding="utf-8")
+                    + leg_block("spec", FAKE_SHA), encoding="utf-8")
+    result = run(STATUS, "--fetch", "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 2, findings
+    assert findings[0] == (
+        "- parked feature 001-a-thing (code leg): the record names no parked "
+        "commit for that leg, and no worktree on that branch here; `resume` "
+        "matches origin's tip against the parked commit before it recreates "
+        "anything, an absent one never matches, and it refuses the leg as "
+        "having moved on since it was parked, so nothing here brings it back "
+        "— park it again from Falcon, which writes the record afresh"
+        ), findings[0]
+    assert findings[1] == (
+        "- parked feature 001-a-thing (spec leg): no worktree on that branch "
+        "here, parked 2026-09-10T20:00:00Z on Falcon; `resume` refuses the "
+        "WHOLE feature, because the record names no parked commit for its "
+        "`code` leg, so it does not bring this leg back — " + afresh
+        ), findings[1]
+    assert "is no longer on origin" not in result.stdout
+    assert "`resume Trio`" not in result.stdout
+
+    # AND THE OTHER ORDER IS THE ONE THIS LAYER ALREADY READ RIGHT: with the
+    # gone leg FIRST, RR2 is the refusal `resume` makes and the report is the
+    # one it always was, the `--no-push` leg saying its own piece under it.
+    path = record(checkout, "trio", branch="001-a-thing", role="spec",
+                  commit=FAKE_SHA, parked_on="Falcon", root="Trio")
+    path.write_text(path.read_text(encoding="utf-8")
+                    + leg_block("code", FAKE_SHA, pushed="false"),
+                    encoding="utf-8")
+    result = run(STATUS, "--fetch", "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 2, findings
+    assert findings[0] == (
+        "- parked feature 001-a-thing (spec leg): no worktree on that branch "
+        "here, parked 2026-09-10T20:00:00Z on Falcon, and no "
+        "`origin/001-a-thing` here after this run's fetch: origin has not got "
+        "that branch, so `resume` refuses the WHOLE feature for it, "
+        "\"001-a-thing is no longer on origin in the spec leg\", and nothing "
+        "here brings it back — the exits are to delete its `- branch: "
+        "001-a-thing` block from the record where the feature landed, or to "
+        "push the branch again from Falcon where it went by mistake"
+        ), findings[0]
+    assert findings[1] == (
+        "- parked feature 001-a-thing (code leg): parked with --no-push on "
+        "Falcon and no worktree on that branch here; only that workstation "
+        "has the WIP commit, so nothing here brings it back — park it again "
+        "from there"), findings[1]
+    assert "`resume Trio`" not in result.stdout
+
+    # AND RR6 IS BEFORE RR4, SO A WORKTREE HERE DOES NOT SAVE THE LEG, which
+    # is the one thing that could have made the first block above an accident
+    # of the fixture: RR2 and RR1 are read here only for a leg with NO
+    # worktree, because RR4 sits in front of them and `continue`s past a leg
+    # already recreated, and if the `pushed:` arm had been written with them
+    # it would have inherited that guard and let the gone-origin leg take the
+    # feature after all. `resume.sh` tests `[ "$pushed" != true ]` as the
+    # FIRST thing in the loop, with nothing about the worktree in it, so the
+    # `--no-push` leg still breaks the loop with its worktree standing — and
+    # the verdict the `spec` leg carries is still RR6's.
+    tip = feature_worktree(code, "001-a-thing",
+                           home / "Trio-wt" / "001-a-thing" / "code")
+    path = record(checkout, "trio", branch="001-a-thing", role="code",
+                  commit=tip, pushed="false", parked_on="Falcon", root="Trio")
+    path.write_text(path.read_text(encoding="utf-8")
+                    + leg_block("spec", FAKE_SHA), encoding="utf-8")
+    result = run(STATUS, "--fetch", "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 2, findings
+    assert findings[0] == (
+        "- parked feature 001-a-thing (code leg): parked with --no-push on "
+        "Falcon; only that workstation has the WIP commit, and `resume` "
+        "refuses it"), findings[0]
+    assert findings[1] == (
+        "- parked feature 001-a-thing (spec leg): no worktree on that branch "
+        "here, parked 2026-09-10T20:00:00Z on Falcon; `resume` refuses the "
+        "WHOLE feature, because its `code` leg was parked with --no-push, so "
+        "it does not bring this leg back — " + afresh), findings[1]
+    assert "is no longer on origin" not in result.stdout, (
+        "RR6 breaks the loop with the worktree standing, and RR2 is never "
+        "reached for the leg origin has lost")
+    assert "`resume Trio`" not in result.stdout
+
+
+def test_no_leg_beside_one_rr6_refuses_says_resume_brings_it_back(trio, home):
+    """THE HOLE THE VERDICT CLOSES ON ITS WAY PAST, and the rule is the one at
+    the top of `check_parked_leg`: NO LINE OF A FEATURE `resume` REFUSES WHOLE
+    MAY NAME `resume <Name>` (Copilot on #21, second round). RR6 is
+    `[ "$pushed" != true ]` and it is the FIRST test in the per-leg loop —
+    before RR4, so a worktree here does not save it — and it ends
+    `refused=true; break`, which throws the feature out with every other leg
+    of it. A good leg beside a `--no-push` one therefore went on saying
+    "`resume Trio` brings it back" about a feature `resume` will not recreate,
+    which is the pair the rule forbids.
+
+    ALL FOUR SPELLINGS RR6 REFUSES, and in both orders, because the record's
+    order decides which refusal is REPORTED and not whether the feature is
+    refused: the loop breaks at the first one wherever it sits, and the legs
+    before it were only ever collected."""
+    checkout = workspace_config(home)
+    spec, code = trio / "spec", trio / "code"
+    for leg in (spec, code):
+        git("checkout", "-q", "main", cwd=leg)
+        origin_has_branch(leg, "001-a-thing")
+    for pushed, why in (
+            ("false", "its `code` leg was parked with --no-push"),
+            (None, "the record has no `pushed:` for its `code` leg"),
+            ("", "its `code` leg's `pushed:` has no value, which is neither "
+                 "true nor false"),
+            ("maybe", "its `code` leg's `pushed:` says 'maybe', which is "
+                      "neither true nor false")):
+        for order in ("spoiler-first", "good-first"):
+            path = record(checkout, "trio", branch="001-a-thing", role="code",
+                          commit=FAKE_SHA, pushed=pushed, parked_on="Falcon",
+                          root="Trio")
+            spoiler = path.read_text(encoding="utf-8")
+            good = leg_block("spec", FAKE_SHA)
+            head, _, culprit = spoiler.partition("          - role: code\n")
+            path.write_text(
+                spoiler + good if order == "spoiler-first"
+                else head + good + "          - role: code\n" + culprit,
+                encoding="utf-8")
+            result = run(STATUS, "Trio", home=home)
+            assert result.returncode == 1, result.stdout + result.stderr
+            assert ("    - parked feature 001-a-thing (spec leg): no worktree "
+                    "on that branch here, parked 2026-09-10T20:00:00Z on "
+                    f"Falcon; `resume` refuses the WHOLE feature, because {why}"
+                    ", so it does not bring this leg back — park that feature "
+                    "again from Falcon, which writes the record afresh"
+                    ) in result.stdout, (pushed, order, result.stdout)
+            assert "`resume Trio`" not in result.stdout, (pushed, order)
 
 
 def test_a_root_key_between_a_branch_and_its_legs_still_reads_that_feature(
@@ -4092,7 +4397,7 @@ def test_a_leg_declared_at_the_root_is_read_at_the_root(atlas, home):
     record(checkout, "atlas", branch="001-a-thing", role="code", commit=tip,
            parked_on="Falcon")
     pristine = (atlas / "project.yaml").read_text(encoding="utf-8")
-    for spelling in ('    path: "."\n', "    path: .\n"):
+    for spelling in ('    path: "."\n', "    path: .\n", "    path: '.'\n"):
         (atlas / "project.yaml").write_text(pristine, encoding="utf-8")
         code_leg_onto_the_spec_checkout(atlas, path_line=spelling)
         result = run(STATUS, "Atlas", home=home)
@@ -4545,7 +4850,7 @@ def test_a_spec_leg_is_read_in_the_legs_own_repository(atlas, home):
     findings = [line.strip() for line in result.stdout.splitlines()
                 if line.strip().startswith("- parked feature")]
     assert findings == ["- parked feature 001-s-thing (spec leg): "
-                        + SHAPE_SPEC + MISMATCH + DISAGREE_S + EXIT_S], findings
+                        + SHAPE_SPEC + MISMATCH + EXIT_S + DISAGREE_S], findings
 
     record(checkout, "atlas", branch="001-s-thing", role="spec", commit=FAKE_SHA)
     result = run(STATUS, "Atlas", home=home)
@@ -4848,7 +5153,7 @@ def test_a_project_key_below_the_features_is_read_as_the_loader_reads_it(
             "Falcon (lane xfactory-2); active 001-a-thing") in result.stdout
     findings = [line.strip() for line in result.stdout.splitlines()
                 if line.strip().startswith("- parked feature")]
-    assert findings == [ASSEMBLY + DISAGREE + EXIT_NEITHER], findings
+    assert findings == [ASSEMBLY + EXIT_NEITHER + DISAGREE], findings
 
 
 def test_a_blank_branch_above_the_root_key_is_still_the_feature_resume_refuses(
