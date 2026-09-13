@@ -6,8 +6,13 @@
 # git) and Rule 10 (workstation designation), Amendment 3, 2026-09-09 — moved
 # to the person's workspace repository by Amendment 5, 2026-09-10.
 #
-# WHERE THE REGISTER LIVES (Amendment 5, 2026-09-10)
-#   `lanes/LANES.md` in `opensoft/brett-wip`, on `main`. Direct commits to
+# WHERE THE REGISTER LIVES (Amendment 5, 2026-09-10; Amendment 9(a), 2026-09-13)
+#   `lanes/LANES.md` on `main` of THE PERSON'S OWN workspace repository — the
+#   `<org>/<login>-wip` that `$AGENT_PROTOCOL_ROOT/workspace.yaml` names, which
+#   is `opensoft/brett-wip` for the person this file was written for and
+#   `opensoft/scott-wip` for the next one. This file names no repository of its
+#   own: Amendment 5's second-person clause put a second person's register in a
+#   second repository, and Amendment 9 is what made that reachable. Direct commits to
 #   `main` are the norm THERE by design: the repository is excluded from the
 #   organisation's PR-only ruleset precisely so that a per-edit registry
 #   commit can land, which is what Rule 9 requires and what the orphan
@@ -274,6 +279,13 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "$RESOLVED")" && pwd)"
 # `LANES_WORKSPACE_ROOT` is the test seam and the only override — the seam
 # `lane-start` already spelled for handoff resolution, widened to the whole
 # question so `test_lane_helpers.sh` can point every helper at one sandbox.
+# --- BEGIN shared workspace resolver (Amendment 9(a)) ----------------------
+# BYTE-IDENTICAL IN ALL FOUR LANE HELPERS, and held there by
+# `tests/test_repo_hygiene.py`. The estate commands carry the same discipline
+# for their own estate resolver and for the same reason its guard gives: a
+# drifted copy is TWO ANSWERS to one question, and "where is this person's
+# workspace" is exactly the question Amendment 9(a) exists to give one answer
+# to. Edit it in one file and the test names the other three.
 LANES_WS_WHY=""
 
 lanes_ws_yaml() { printf '%s\n' "${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace.yaml"; }
@@ -377,13 +389,26 @@ lanes_workspace_root() {
 }
 
 # The refusal's body, so all four helpers say the same thing in the same words.
+#
+# THE REASON IS RE-DERIVED HERE, IN THE PARENT SHELL, and that is the whole
+# point of this line. Every caller reaches the resolver through a command
+# substitution — `LANES_WS_ROOT="$(lanes_workspace_root || :)"` — which runs it
+# in a SUBSHELL, so the $LANES_WS_WHY it set died with that subshell and the
+# parent still holds the empty string it started with. Six distinct diagnoses
+# were being computed and all six were being thrown away; every one of the
+# refusals Amendment 9(a) enumerates printed the same "no reason recorded".
+# The resolver is read-only and cheap — two `sed`s and three `git` reads — and
+# it is reached on the refusal path only, so running it again HERE is the one
+# place its answer survives to be printed.
 lanes_workspace_why() {
+  [ -n "$LANES_WS_WHY" ] || lanes_workspace_root >/dev/null 2>&1 || :
   printf '%s' "the workspace repository could not be found — ${LANES_WS_WHY:-no reason recorded}.
     Amendment 9(a): every lane helper reads \`repository:\` and \`path:\` from
     $(lanes_ws_yaml), never from its own location. One command writes that
     file, creates or clones the repository and places the symlinks:
         openRepoTools wip init"
 }
+# --- END shared workspace resolver ------------------------------------------
 
 # The register is no longer the whole of its own worktree: since Amendment 5
 # it is one file, `lanes/LANES.md`, inside the workspace repository. So every

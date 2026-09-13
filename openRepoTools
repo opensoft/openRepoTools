@@ -239,6 +239,7 @@ install_commands() {
 	collect_skill || die "could not fetch $SKILL_SOURCE_PATH from $REPO at $REF, so NOTHING was
     installed and nothing already installed was replaced."
 	plan_hook_merge
+	plan_skill_targets
 	mkdir -p "$dir"
 	for name in "${INSTALLABLES[@]}"; do
 		source="$STAGED/$name"
@@ -357,6 +358,28 @@ collect_skill() {
 HOOK_PLAN=""      # "absent" | "present" | "nofile"
 HOOK_MERGED=""    # a staged whole file, ready to move into place
 
+# THE THREE DESTINATIONS, PROVED WRITABLE BEFORE ANY OF THE ELEVEN IS PLACED.
+# Amendment 9(b) computes the merge in hand "so a merge that cannot be computed
+# refuses having placed nothing" — and the merge computing fine against a
+# directory nobody may write to is the same failure one step later. A
+# filesystem gives no transaction, so this cannot make the three placements
+# atomic; what it does is move the failure that actually happens — a directory
+# that is not ours to write — back to the planning phase, where the refusal
+# still costs nothing. The directories are created here, which is idempotent
+# and is what the placement would have done anyway.
+plan_skill_targets() {
+	local d
+	for d in "$(skills_home)/shared/skills/$SKILL_NAME" \
+		"$(claude_home)/skills/$SKILL_NAME" "$(claude_home)"; do
+		mkdir -p -- "$d" 2>/dev/null || die "\`--install\` cannot create $d, one of the three places Amendment 9(b) has it
+    place the $SKILL_NAME skill and the SessionStart entry. NOTHING was installed
+    and nothing already installed was replaced."
+		[ -w "$d" ] || die "$d is not writable, and \`--install\` places the $SKILL_NAME skill or the
+    SessionStart entry there (Amendment 9(b)). NOTHING was installed and nothing
+    already installed was replaced."
+	done
+}
+
 plan_hook_merge() {
 	local settings existing
 	settings="$(claude_home)/settings.json"
@@ -389,6 +412,27 @@ $(hook_block_text)"
 	# THE THREE ANSWERS, in one read: our exact command already there; some
 	# OTHER SessionStart entry naming lanes-edit.sh (a hand-installed one, which
 	# is the case Amendment 9(b) says must refuse); or nothing of ours at all.
+	#
+	# THE CONFLICT ARM IS NARROWED TO `lanes-edit.sh`, AND THAT IS A KNOWN
+	# DIVERGENCE FROM THE RATIFIED TEXT, RECORDED HERE RATHER THAN LEFT FOR A
+	# READER TO FIND. Amendment 9(b)'s clause reads "an entry under
+	# `SessionStart` whose `command` DIFFERS … → refuse, print the exact block,
+	# and place nothing at all", unqualified. Read literally, a person whose
+	# `~/.claude/settings.json` carries ANY unrelated SessionStart hook — a
+	# statusline refresh, a `git fetch` — could never run `--install` at all,
+	# and no amount of removing OUR entry would help them.
+	#
+	# The reason the clause gives for refusing is the narrow one: "merging would
+	# fire the hook twice", and the case it names is Eagle's hand-installed
+	# `bash -lc '"$HOME/projects/xFactory/lanes-edit.sh" session-start …'`,
+	# which this test does catch. So the code implements the clause's REASON and
+	# not its LITERAL SCOPE. An unrelated entry is kept and ours is added beside
+	# it (`tests/test_install_skill_and_hook.py`'s
+	# `test_an_unrelated_session_start_entry_is_kept_and_ours_is_added`).
+	#
+	# This is the one place in adoption act 3 where the text could not be
+	# followed as written; it is named in the PR that lands it, and widening the
+	# arm is one word of `jq` if Brett rules the literal reading.
 	existing="$(jq -r --arg c "$HOOK_COMMAND" '
 		[ (.hooks.SessionStart // [])[]? | (.hooks // [])[]? | .command // empty ] as $cmds
 		| if ($cmds | index($c)) then "present"
@@ -428,34 +472,62 @@ $(hook_block_text)
 
 # The three placements, AFTER the nine files and the merge are all in hand.
 place_skill_and_hook() {
-	local shared_dir bare_dir settings target
+	local shared_dir bare_dir settings target verb hook_tmp
 	shared_dir="$(skills_home)/shared/skills/$SKILL_NAME"
 	bare_dir="$(claude_home)/skills/$SKILL_NAME"
 	settings="$(claude_home)/settings.json"
 
+	# EVERY FAILURE HERE IS A `die`, never the shell's own 1. `--install`'s
+	# codes are this toolset's — 0 done, 1 findings printed, 2 a refusal — and
+	# an unguarded `mkdir` or `cp` under `set -e` exits 1, which reads as a
+	# report of findings from a command that placed ten of twelve artifacts.
 	for target in "$shared_dir/SKILL.md" "$bare_dir/SKILL.md"; do
-		mkdir -p -- "$(dirname -- "$target")"
+		mkdir -p -- "$(dirname -- "$target")" ||
+			die "could not create $(dirname -- "$target") for the $SKILL_NAME skill.
+    The $placed commands above are placed; the skill and the hook are not."
 		if [ -e "$target" ] && cmp -s "$WORKDIR/SKILL.md" "$target"; then
 			say "$SKILL_NAME: already installed at $target (unchanged)"
 		else
-			if [ -e "$target" ]; then
-				cp -- "$WORKDIR/SKILL.md" "$target"; say "$SKILL_NAME: updated at $target"
-			else
-				cp -- "$WORKDIR/SKILL.md" "$target"; say "$SKILL_NAME: installed at $target"
-			fi
-			chmod 644 "$target"
+			if [ -e "$target" ]; then verb="updated at $target"; else verb="installed at $target"; fi
+			cp -- "$WORKDIR/SKILL.md" "$target" ||
+				die "could not write $target. The $placed commands above are placed;
+    the skill and the hook are not."
+			# 644: a SKILL.md is a document a session READS, not a command. The
+			# nine in the bin directory are stamped 755 for the reason that loop
+			# gives — "a copy that is not executable is not a command" — and
+			# that reason does not reach this file. Amendment 9(b) describes
+			# `--install` as stamping 755 "on everything it places" while
+			# arguing why adoption act 4b must delete workBenches#63's 0644
+			# loop; the deletion is required either way, because two writers of
+			# one path is the defect and the mode was only its symptom.
+			chmod 644 "$target" || die "could not set the mode on $target."
+			say "$SKILL_NAME: $verb"
 		fi
 	done
 
 	case "$HOOK_PLAN" in
 	present) say "SessionStart hook: already installed in $settings (unchanged)" ;;
 	nofile | absent)
-		mkdir -p -- "$(dirname -- "$settings")"
-		cp -- "$HOOK_MERGED" "$settings"
+		mkdir -p -- "$(dirname -- "$settings")" ||
+			die "could not create $(dirname -- "$settings") for the SessionStart entry."
+		# WRITTEN THROUGH A TEMPORARY IN THE SAME DIRECTORY, then moved into
+		# place: `mktemp` + `chmod 600` + `mv -f`, which is what workBenches'
+		# `scripts/setup-claude-profiles.sh:167-194` does to this very file on
+		# every `./setup.sh` and what Amendment 9(b) cites approvingly. A plain
+		# `cp` that fails half way leaves a person's settings TRUNCATED, and
+		# this is the one file in this installer that is not ours to own.
+		hook_tmp="$(mktemp -- "$(dirname -- "$settings")/settings.json.openrepotools.XXXXXX")" ||
+			die "could not create a temporary file beside $settings."
+		cp -- "$HOOK_MERGED" "$hook_tmp" ||
+			{ rm -f -- "$hook_tmp"; die "could not stage the merged $settings."; }
 		# 600, the mode workBenches' own writer of this file uses. An installer
 		# that widened it would be silently undone, or would widen it behind
-		# that script's back.
-		chmod 600 "$settings"
+		# that script's back. Stamped on the TEMPORARY, so the file never exists
+		# at a wider mode for even an instant.
+		chmod 600 "$hook_tmp" ||
+			{ rm -f -- "$hook_tmp"; die "could not set mode 600 on the merged $settings."; }
+		mv -f -- "$hook_tmp" "$settings" ||
+			{ rm -f -- "$hook_tmp"; die "could not move the merged settings into $settings."; }
 		if [ "$HOOK_PLAN" = nofile ]; then
 			say "SessionStart hook: installed in $settings (the file was created, mode 600)"
 		else
@@ -503,7 +575,14 @@ place_skill_and_hook() {
 #: the same kind `repos.tsv` is (ruling 3) — never asked for and never printed
 #: unfilled. The repository is org-owned rather than personal so that the index
 #: survives offboarding and a later lane can read the handoffs.
-WIP_ORG_DEFAULT="${OPENREPOTOOLS_WIP_ORG:-opensoft}"
+# THE SHIPPED DEFAULT ORGANISATION, a constant and not an environment
+# variable. Amendment 9(c) step 3 derives the organisation from `--org` where
+# given and otherwise from "the toolset's shipped default organisation", and
+# clause (e) says of workBenches' setup step that it passes `--org` only where
+# an operator set `WORKBENCHES_WORKSPACE_ORG`, "because an operator override
+# has NO OTHER WAY IN". A second way in here would falsify that sentence and
+# give one value three sources.
+WIP_ORG_DEFAULT="opensoft"
 
 #: `{{SHAPE_REPOSITORY}}`'s value: a constant here, by clause (c) step 7's
 #: substitution table.
@@ -885,7 +964,14 @@ wip_init() {
 			# exists. It never asks for a token and never tries a second
 			# credential.
 			say ""
-			say "REFUSED by GitHub: this account may not create $target."
+			# NAMED FOR WHAT HAPPENED, not for a cause this has not proved. The
+			# usual cause is that the account may not create a repository in
+			# this organisation, and the block below is the answer to that; a
+			# network that was down is the other, and the same block re-run
+			# costs nothing. Claiming the first outright would send a person to
+			# an administrator over a dropped connection.
+			say "\`gh repo create $target\` did not succeed — most often because this account"
+			say "may not create a repository in $WIP_ORG."
 			say "These are the acts an administrator runs. Every value is already filled in:"
 			wip_admin_block "$target" "$WIP_ORG" "$WIP_TEAM"
 			# ONE QUESTION, ONE RE-CHECK, no poll loop and no timeout to choose:
@@ -968,8 +1054,31 @@ Written by \`openRepoTools wip init\` (lane-collision-protocol Amendment 9(c)).
 It holds data only: the register, the object logs, the handoffs and the
 workspace manifests. The lane tooling is installed from opensoft/openRepoTools." \
 			>/dev/null 2>&1 || die "could not commit the seed in $checkout."
-		if ! git -C "$checkout" push -q origin HEAD:main >/dev/null 2>&1; then
-			die "the seed commit could not be pushed to $target's main.
+		say "  committed the seed in $checkout"
+	fi
+
+	# THE PUSH IS GATED ON THE REMOTE, NOT ON THE WORKTREE, and that is the
+	# whole of what makes the re-run this step promises actually work. A first
+	# run whose push the ruleset rejected leaves a CLEAN worktree and an
+	# unpushed commit — so a `status --porcelain` gate would report "already
+	# carries the seed", write the pointer file and exit 0 over an empty
+	# `main`, and step 1's file test would then return on every later run.
+	# That is the failure step 8 exists to prevent, met one step further on.
+	local local_head remote_head remote_refs
+	local_head="$(git -C "$checkout" rev-parse HEAD 2>/dev/null || :)"
+	if remote_refs="$(git -C "$checkout" ls-remote origin main 2>/dev/null)"; then
+		remote_head="$(printf '%s\n' "$remote_refs" | awk 'NR==1 {print $1}')"
+	else
+		# Could not ask. Fall through to the push: the push IS the probe, and a
+		# question we could not put to the remote is not an answer from it.
+		remote_head=""
+	fi
+	if [ -z "$local_head" ]; then
+		say "  $checkout has no commit to push"
+	elif [ -n "$remote_head" ] && [ "$local_head" = "$remote_head" ]; then
+		say "  $target main already carries this commit ($(printf '%.7s' "$local_head"))"
+	elif ! git -C "$checkout" push -q origin HEAD:main >/dev/null 2>&1; then
+		die "the seed commit could not be pushed to $target's main.
     THAT IS THE RULESET, and it is the thing this push exists to find out: the
     organisation's PR-only ruleset refuses a direct commit, and Rule 9's one commit
     per write cannot land through a PR gate — so the register would be unwritable.
@@ -979,10 +1088,8 @@ workspace manifests. The lane tooling is installed from opensoft/openRepoTools."
     The clone and the seed commit are left exactly where they are, so a re-run after
     that has only to push:
         openRepoTools wip init"
-		fi
-		say "  pushed the seed to $target main (which is also the ruleset probe)"
 	else
-		say "  nothing to commit; $target main already carries the seed"
+		say "  pushed the seed to $target main (which is also the ruleset probe)"
 	fi
 
 	# ---- step 9: WRITE THE POINTER FILE. The SECOND thing in this toolset that
@@ -992,10 +1099,20 @@ workspace manifests. The lane tooling is installed from opensoft/openRepoTools."
 	# never overwrites one — step 1 already returned where one existed.
 	local written="$checkout"
 	case "$checkout" in "$HOME"/*) written="~${checkout#"$HOME"}" ;; esac
-	mkdir -p -- "$(dirname -- "$config")"
+	mkdir -p -- "$(dirname -- "$config")" ||
+		die "could not create $(dirname -- "$config") for the pointer file.
+    The repository is created, cloned, seeded and pushed; only this file is
+    missing, and a re-run writes it."
 	[ ! -e "$config" ] ||
 		die "$config appeared while this ran; it was not overwritten."
-	printf 'repository: %s\npath: %s\n' "$target" "$written" >"$config"
+	# GUARDED, because this command's exit codes are 0 and 2 and nothing else:
+	# an unguarded redirect fails under `set -e` with the shell's own status 1,
+	# which is the code this toolset reserves for "findings were printed". A
+	# refusal that reads as a report is the defect openRepoTools' own convention
+	# exists to prevent (`status:3076-3078`).
+	printf 'repository: %s\npath: %s\n' "$target" "$written" >"$config" ||
+		die "could not write $config. The repository is created, cloned, seeded and
+    pushed; only this file is missing, and a re-run writes it."
 	say "  wrote $config"
 	say "        repository: $target"
 	say "        path: $written"
@@ -1007,7 +1124,18 @@ workspace manifests. The lane tooling is installed from opensoft/openRepoTools."
 	if [ -n "$linker" ] && [ -x "$linker" ]; then
 		say ""
 		say "  link-estates:"
-		"$linker" || say "  (link-estates reported the above and changed nothing else)"
+		# ONE PROJECTS TREE ACROSS THE SEAM. This toolset spells that directory
+		# `$PROJECTS_DIR` (`park:131`, `resume:114`, and step 6 above); the lane
+		# protocol's commands, which arrived from the workspace repository,
+		# spell it `$PROJECTS_ROOT` (`link-estates:200`, `lane-start:427`).
+		# Amendment 9(g) keeps every mechanic of Amendments 6 to 8, so the
+		# helpers keep their name — but step 10 must run the linker against the
+		# tree step 6 actually cloned into, or a host with `$PROJECTS_DIR` set
+		# to anything but the default gets a clone in one tree and its symlinks
+		# looked for in another. Passed only where the person has not set
+		# `$PROJECTS_ROOT` themselves: their answer wins over our inference.
+		PROJECTS_ROOT="${PROJECTS_ROOT:-$(wip_projects_dir)}" "$linker" ||
+			say "  (link-estates reported the above and changed nothing else)"
 	else
 		say ""
 		say "  link-estates is not installed, so no symlinks were placed."

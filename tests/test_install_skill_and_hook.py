@@ -32,7 +32,7 @@ import pytest
 
 from conftest import REPO, WINDOWS_SKIP
 from test_openrepotools_command import (COMMAND, command_env, run_cmd,
-                                        INSTALLED, SKILL_PATH)
+                                        INSTALLED, NEEDS_JQ, SKILL_PATH)
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
                                  reason="openRepoTools is a bash script"),
@@ -48,11 +48,6 @@ pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
 HOOK_COMMAND = "~/projects/xFactory/lanes-edit.sh session-start || true"
 HOOK_MATCHER = "startup|resume|clear|fork"
 HOOK_TIMEOUT = 5
-
-NEEDS_JQ = pytest.mark.skipif(
-    shutil.which("jq") is None,
-    reason="the settings.json merge is jq's, and this asserts on its output")
-
 
 def skill_paths(home: Path) -> tuple[Path, Path]:
     return (home / ".claude-profiles" / "shared" / "skills" / "lane-swap" / "SKILL.md",
@@ -286,3 +281,49 @@ def test_without_jq_it_refuses_and_places_nothing(tmp_path):
     assert HOOK_COMMAND in result.stderr, "the refusal prints the entry"
     assert not (tmp_path / ".local" / "bin").exists(), (
         "NOTHING was installed: the merge is computed before any file is placed")
+
+
+# --- the destination, proved before anything is placed ----------------------
+
+NOT_ROOT = pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root may write a directory whose mode says otherwise")
+
+
+@NEEDS_JQ
+@NOT_ROOT
+@pytest.mark.parametrize("which", ["shared skills", "~/.claude"])
+def test_a_destination_that_cannot_be_written_refuses_before_anything_is_placed(
+        tmp_path, which):
+    """THE MERGE COMPUTING FINE AGAINST A DIRECTORY NOBODY MAY WRITE IS THE SAME
+    FAILURE ONE STEP LATER.
+
+    Amendment 9(b) computes the merge in hand "so a merge that cannot be
+    computed refuses having placed nothing". A filesystem offers no transaction
+    across twelve artifacts, so nothing can make the last three atomic with the
+    first nine — but the failure that actually happens is not an exotic one, it
+    is a directory that is not this installer's to write, and that question can
+    be asked in the planning phase where the refusal still costs nothing.
+
+    Without the check the run places nine files and two of the three remaining
+    artifacts, then dies on the third — leaving a host with commands installed,
+    no `SessionStart` entry, and an installer that reports the same "already
+    installed (unchanged)" for the nine on every re-run while never reaching
+    the one that failed.
+    """
+    if which == "shared skills":
+        blocked = tmp_path / ".claude-profiles" / "shared" / "skills"
+    else:
+        blocked = tmp_path / ".claude"
+    blocked.mkdir(parents=True)
+    blocked.chmod(0o500)
+    bin_dir = tmp_path / ".local" / "bin"
+    try:
+        result = run_cmd("--install", home=tmp_path)
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "NOTHING was installed" in result.stderr
+        assert not bin_dir.exists() or not any(bin_dir.iterdir()), (
+            "nine files were placed against a destination that was never "
+            "going to take the other three")
+    finally:
+        blocked.chmod(0o700)

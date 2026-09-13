@@ -124,8 +124,10 @@ Then it clones the repository, seeds it from openRepoShape's
 also the check that matters**: a new repository is inside the organisation's
 PR-only ruleset until an administrator excludes it, and until it is, every
 register write will be refused by that gate. Better to meet it here than at
-your first `lane-start`. Last it writes `~/.agents/workspace.yaml` and runs
-`link-estates`.
+your first `lane-start` — a refused push is exit 2 naming the ruleset, with
+the clone and the commit left where they are, so the re-run after an
+administrator acts has only to push. Last it writes `~/.agents/workspace.yaml`
+and runs `link-estates`.
 
 **Idempotent**: a workstation that already has a workspace does nothing at all,
 decided by a file test and not a network call. Exit 0 is done or already done;

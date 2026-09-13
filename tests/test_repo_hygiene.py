@@ -144,6 +144,84 @@ def test_the_estate_commands_carry_the_same_estate_resolver_byte_for_byte():
     assert len(reference.splitlines()) > 100, "the marker moved, not the block"
 
 
+def test_the_lane_helpers_carry_the_same_workspace_resolver_byte_for_byte():
+    """THE SAME DISCIPLINE AS THE ESTATE RESOLVER ABOVE, for the same reason,
+    on the block lane-collision-protocol AMENDMENT 9(a) is made of.
+
+    `lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates` are each ONE
+    file a person has on PATH, placed by `--install`, so the resolver that
+    answers "where is this person's workspace repository" is copied into all
+    four rather than sourced — a shared `orp-workspace.sh` would be a tenth
+    file to place and a broken helper the first time somebody copied only one.
+
+    A drifted copy is TWO ANSWERS to that question, and one answer is the whole
+    of what clause (a) buys: it retired deriving the register from a script's
+    own real path precisely because "a second way to find it is a second
+    answer". Four copies that disagree would put that defect straight back, one
+    helper at a time, and the person would meet it as a register that one
+    command can write and another cannot find.
+
+    The block carries its own markers so this test names the drift rather than
+    a line number, exactly as the estate resolver's does.
+    """
+    def block(path: Path) -> str:
+        text = path.read_text(encoding="utf-8")
+        start = text.index("# --- BEGIN shared workspace resolver")
+        end = text.index("# --- END shared workspace resolver")
+        return text[start:end]
+
+    blocks = {name: block(REPO / name) for name in LANE_BASH}
+    reference = blocks["lanes-edit.sh"]
+    for name, text in blocks.items():
+        assert text == reference, (
+            f"lanes-edit.sh and {name} have drifted apart in the shared "
+            f"workspace resolver (Amendment 9(a))")
+    assert len(reference.splitlines()) > 100, "the marker moved, not the block"
+    # THE PIECES THAT MAKE IT THE AMENDMENT'S RESOLVER AND NOT SOME OTHER ONE.
+    # A block that kept the markers and lost the checkout test would pass the
+    # comparison above four times over.
+    assert '"${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace.yaml"' in reference, (
+        "the resolver no longer reads the one pointer file clause (a) names")
+    for field in ("repository", "path"):
+        assert f'lanes_ws_field {field} "$yaml"' in reference, (
+            f"the resolver no longer reads `{field}:`")
+    assert "rev-parse --show-toplevel" in reference, (
+        "the resolver no longer checks that `path:` is the ROOT of the "
+        "checkout, which clause (a) added as new behaviour")
+    assert "openRepoTools wip init" in reference, (
+        "the refusal no longer names the one command that fixes it")
+
+
+def test_the_workspace_refusal_carries_the_reason_it_computed():
+    """SIX DIAGNOSES ARE COMPUTED AND ALL SIX USED TO BE THROWN AWAY.
+
+    `lanes_workspace_root` sets `$LANES_WS_WHY` to the one sentence that says
+    WHICH of clause (a)'s ways it failed — no file, no `repository:`, no
+    `path:`, a `path:` that is not a checkout, a checkout of something else, or
+    a subdirectory rather than the root. Every caller reaches the resolver
+    through `LANES_WS_ROOT="$(lanes_workspace_root || :)"`, a COMMAND
+    SUBSTITUTION, so that assignment happened in a subshell and died with it:
+    the parent printed "no reason recorded" for all six.
+
+    Clause (a) makes failing to find the workspace "a refusal, never a guess",
+    and the estate's own convention (`status:3076-3078`) is that a refusal must
+    not be readable as something else. A refusal that names none of the six is
+    one a person cannot act on — the fix line `openRepoTools wip init` is
+    right for three of them and wrong for the other three, which want a
+    `workspace.yaml` edited rather than a repository created.
+
+    `lanes_workspace_why` therefore re-derives the reason in the PARENT shell
+    before printing. This test holds that line, because nothing else would
+    notice its loss: the refusal still exits 1 and still names the command.
+    """
+    for name in LANE_BASH:
+        text = (REPO / name).read_text(encoding="utf-8")
+        assert '[ -n "$LANES_WS_WHY" ] || lanes_workspace_root >/dev/null 2>&1 || :' \
+            in text, (
+            f"{name}'s `lanes_workspace_why` does not re-derive the reason in "
+            f"the parent shell, so every refusal reads `no reason recorded`")
+
+
 def test_status_carries_resumes_expand_home_byte_for_byte():
     """`expand_home` reads the `~` a person writes in `~/.agents/workspace.yaml`
     the same way in both commands that read that file. It sits OUTSIDE the
@@ -350,6 +428,45 @@ def test_the_readme_also_carries_the_gh_api_form():
     assert "gh api repos/opensoft/openRepoTools/contents/openRepoTools" in readme
     assert "-H 'Accept: application/vnd.github.raw'" in readme
     assert "bash -s -- --install" in readme
+
+
+def test_the_readme_carries_the_two_line_onboarding_chain():
+    """lane-collision-protocol AMENDMENT 9(e), "The chain": a new person, from
+    nothing to a lane, in TWO LINES — and neither of them is a command in this
+    repository.
+
+    `./setup.sh` runs `openRepoTools --install` and then `openRepoTools wip
+    init` for the person, each best-effort, so neither is a line anybody has to
+    know to type. Brett Heap's direction of 2026-09-12, verbatim "we need to
+    also keep that clean so there is the least choices possible to not confuse
+    the user", is the measure that clause is written to, and an earlier draft
+    of it failed the measure with twelve steps.
+
+    Held here for the reason every other document test in this file is held:
+    the chain is the one part of this repository's story that is TRUE ONLY
+    ELSEWHERE — in workBenches' `setup.sh` — so nothing in this repository's
+    own behaviour goes red when it rots. The two preconditions are held with
+    it, because a chain that omits them is a chain that fails on line 1 for a
+    reason the person cannot see: `gh auth login`, since `wip init` derives the
+    login from `gh api user`, and `~/.local/bin` on `PATH`, which needs a
+    restarted terminal before anything `--install` placed can be typed.
+    """
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    assert "gh repo clone opensoft/workBenches && cd workBenches && ./setup.sh" \
+        in readme, (
+        "README.md does not carry Amendment 9(e)'s first line, byte for byte")
+    assert "pclaude run <profile> --lane <repo>-<n>" in readme, (
+        "README.md does not carry Amendment 9(e)'s second line")
+    assert "gh auth login" in readme, (
+        "README.md names neither of the chain's two preconditions: `wip init` "
+        "derives the login from `gh api user`, so an unauthenticated `gh` "
+        "meets a refusal on line 1")
+    assert "restarted terminal" in readme, (
+        "README.md does not say ~/.local/bin needs a restarted terminal "
+        "before the commands --install placed are on PATH")
+    assert "openRepoTools wip init" in readme, (
+        "README.md does not name the act that creates the workspace, which is "
+        "the by-hand half of the chain for a host with no workBenches")
 
 
 def test_no_document_offers_a_windows_powershell_twin():
@@ -844,7 +961,7 @@ def test_readme_is_short_enough_to_be_read():
     leg. AGENTS.md takes the same state in the words it already had and
     repacks, so its cap does not move.
 
-    251 -> 351 on 2026-09-13, for lane-collision-protocol AMENDMENT 9, ratified
+    251 -> 353 on 2026-09-13, for lane-collision-protocol AMENDMENT 9, ratified
     that day, and its adoption act 3. This is the largest single raise this
     file has taken and the reason is not prose: the repository grew a second
     toolset and a verb. The docstring above says the cap is today's count
@@ -872,7 +989,13 @@ def test_readme_is_short_enough_to_be_read():
     cannot be documented in a sentence, and the paragraph that costs the most
     lines is the one that earns them: the push to `main` IS the ruleset probe,
     so a person meets the organisation's PR-only gate here rather than at
-    their first `lane-start`, which is the worst place to meet it.
+    their first `lane-start`, which is the worst place to meet it. Two of
+    these lines are the OTHER half of that probe, and they were added after
+    an adversarial read found the command could not keep the promise the
+    first half makes: a refused push is exit 2 with the clone and the seed
+    commit left where they are, so the re-run after an administrator acts has
+    only to push. A reader who is not told that reaches for `--dry-run`, a
+    second `--install`, or a hand-made repository.
 
     the two-line onboarding chain at the head of § "Install" (Amendment 9(e))
     — `gh repo clone opensoft/workBenches && cd workBenches && ./setup.sh`,
@@ -902,7 +1025,7 @@ def test_readme_is_short_enough_to_be_read():
     machine that has none (Amendment 9(c) step 9, act 3 obligation 3).
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 351, f"README.md is {len(lines)} lines; the cap is 351"
+    assert len(lines) <= 353, f"README.md is {len(lines)} lines; the cap is 353"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

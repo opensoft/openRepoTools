@@ -150,6 +150,13 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "$RESOLVED")" && pwd)"
 # `LANES_WORKSPACE_ROOT` is the test seam and the only override — the seam
 # `lane-start` already spelled for handoff resolution, widened to the whole
 # question so `test_lane_helpers.sh` can point every helper at one sandbox.
+# --- BEGIN shared workspace resolver (Amendment 9(a)) ----------------------
+# BYTE-IDENTICAL IN ALL FOUR LANE HELPERS, and held there by
+# `tests/test_repo_hygiene.py`. The estate commands carry the same discipline
+# for their own estate resolver and for the same reason its guard gives: a
+# drifted copy is TWO ANSWERS to one question, and "where is this person's
+# workspace" is exactly the question Amendment 9(a) exists to give one answer
+# to. Edit it in one file and the test names the other three.
 LANES_WS_WHY=""
 
 lanes_ws_yaml() { printf '%s\n' "${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace.yaml"; }
@@ -253,13 +260,26 @@ lanes_workspace_root() {
 }
 
 # The refusal's body, so all four helpers say the same thing in the same words.
+#
+# THE REASON IS RE-DERIVED HERE, IN THE PARENT SHELL, and that is the whole
+# point of this line. Every caller reaches the resolver through a command
+# substitution — `LANES_WS_ROOT="$(lanes_workspace_root || :)"` — which runs it
+# in a SUBSHELL, so the $LANES_WS_WHY it set died with that subshell and the
+# parent still holds the empty string it started with. Six distinct diagnoses
+# were being computed and all six were being thrown away; every one of the
+# refusals Amendment 9(a) enumerates printed the same "no reason recorded".
+# The resolver is read-only and cheap — two `sed`s and three `git` reads — and
+# it is reached on the refusal path only, so running it again HERE is the one
+# place its answer survives to be printed.
 lanes_workspace_why() {
+  [ -n "$LANES_WS_WHY" ] || lanes_workspace_root >/dev/null 2>&1 || :
   printf '%s' "the workspace repository could not be found — ${LANES_WS_WHY:-no reason recorded}.
     Amendment 9(a): every lane helper reads \`repository:\` and \`path:\` from
     $(lanes_ws_yaml), never from its own location. One command writes that
     file, creates or clones the repository and places the symlinks:
         openRepoTools wip init"
 }
+# --- END shared workspace resolver ------------------------------------------
 
 # THE REGISTER AND ITS WRITER, after the move (Amendment 9(b)). The register is
 # the workspace repository's `lanes/LANES.md`, found through the pointer file

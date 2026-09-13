@@ -3028,14 +3028,104 @@ is    "…and a SIGTERM ends it there and then, instead of resuming the wait" \
       "$(( SECONDS - h_t0 < 15 ))" "1"
 rm -rf "$H_LOCK"
 
+# --------------------------------------- the pointer file, when it does NOT answer
+#
+# AMENDMENT 9(a): "Failing to find it is a refusal, never a guess." Six ways it
+# can fail, each with its own sentence, and every one of them is exit 1 — the
+# code `lanes-edit.sh` has always used for `registry not found` and the code the
+# amendment quotes. Until these cases existed, six diagnoses were computed and
+# every one was thrown away in a subshell: what a person actually saw was "no
+# reason recorded", for all six, in all four helpers.
+#
+# THE YAML IS SAVED AND RESTORED around this block. Every case above it depends
+# on the sandbox's own valid pointer file, and a test that broke it and walked
+# away would take the rest of the suite with it.
+WS_YAML="$AGENT_PROTOCOL_ROOT/workspace.yaml"
+WS_YAML_SAVED="$SANDBOX/workspace.yaml.saved"
+cp -- "$WS_YAML" "$WS_YAML_SAVED"
+
+# SETS TWO VARIABLES; IT DOES NOT PRINT. A function's assignments survive into
+# its caller, but a command substitution's do not — `msg="$(ws_refusal …)"`
+# would run this in a SUBSHELL and take `$WS_RC` down with it, which is the
+# exact defect these cases exist to pin in the helpers themselves.
+WS_MSG=""; WS_RC=0
+ws_run() {
+  WS_MSG="$("$@" 2>&1 >/dev/null)"
+  WS_RC=$?
+}
+
+FOREIGN="$SANDBOX/foreign"
+git init -q -b main "$FOREIGN"
+git -C "$FOREIGN" remote add origin "https://github.com/opensoft/not-your-wip.git"
+
+for helper in lanes-edit.sh lane-start lane-end link-estates; do
+  case "$helper" in
+  lanes-edit.sh) args=(who --lane repoA-1) ;;
+  lane-start)    args=(repoA 9) ;;
+  lane-end)      args=(repoA-1) ;;
+  # `--dry-run` rather than no argument at all: the refusal is reached before
+  # anything is linked either way, and an EMPTY array under `set -u` is an
+  # unbound-variable error on the bash 3.2 this repository still ships for.
+  link-estates)  args=(--dry-run) ;;
+  esac
+
+  rm -f -- "$WS_YAML"
+  ws_run "$helper" "${args[@]}"
+  is   "$helper refuses with exit 1 when there is no workspace.yaml" "$WS_RC" 1
+  has  "…and names the file that is missing" "$WS_MSG" "there is no $WS_YAML"
+  has  "…and names the one command that writes it" "$WS_MSG" "openRepoTools wip init"
+
+  printf 'path: %s\n' "$WIP" > "$WS_YAML"
+  ws_run "$helper" "${args[@]}"
+  is   "$helper refuses a workspace.yaml with no repository:" "$WS_RC" 1
+  has  "…saying which key is missing" "$WS_MSG" "names no \`repository:\`"
+
+  printf 'repository: %s\n' "$ORIGIN" > "$WS_YAML"
+  ws_run "$helper" "${args[@]}"
+  is   "$helper refuses a workspace.yaml with no path:" "$WS_RC" 1
+  has  "…saying which key is missing" "$WS_MSG" "names no \`path:\`"
+
+  { printf 'repository: %s\n' "$ORIGIN"; printf 'path: %s/nowhere\n' "$SANDBOX"; } > "$WS_YAML"
+  ws_run "$helper" "${args[@]}"
+  is   "$helper refuses a path: that is not a git checkout" "$WS_RC" 1
+  has  "…saying so in those words" "$WS_MSG" "which is not a git checkout"
+
+  { printf 'repository: %s\n' "$ORIGIN"; printf 'path: %s\n' "$FOREIGN"; } > "$WS_YAML"
+  ws_run "$helper" "${args[@]}"
+  is   "$helper refuses a path: that is a checkout of something ELSE" "$WS_RC" 1
+  has  "…naming both repositories" "$WS_MSG" "is a checkout of"
+
+  { printf 'repository: %s\n' "$ORIGIN"; printf 'path: %s/lanes\n' "$WIP"; } > "$WS_YAML"
+  ws_run "$helper" "${args[@]}"
+  is   "$helper refuses a path: that is a SUBDIRECTORY, not the root" "$WS_RC" 1
+  has  "…naming the root it should have been" "$WS_MSG" "not the ROOT of that checkout"
+
+  hasnt "$helper never prints \`no reason recorded\`" "$WS_MSG" "no reason recorded"
+done
+
+# AND IT NEVER GUESSES. With no pointer file at all, no helper falls back to a
+# path derived from its own location — which is what Amendment 9(a) retired,
+# and what an installed command in ~/.local/bin could not do anyway.
+rm -f -- "$WS_YAML"
+ws_run lanes-edit.sh who --lane repoA-1
+hasnt "the refusal names no path derived from the command's own location" \
+      "$WS_MSG" "$OPENREPOTOOLS_BIN_DIR/lanes"
+
+cp -- "$WS_YAML_SAVED" "$WS_YAML"
+is   "the sandbox's own pointer file is restored for the guards below" \
+     "$(sed -n 's/^path:[[:space:]]*//p' "$WS_YAML" | head -n1)" "$WIP"
+
 # ------------------------------------------------------- nothing real touched
 #
 # The check is that the suite CREATED nothing here, which is not the same as
-# this directory being empty: `lanes/log/` carries real lanes' logs on `main`
-# now, and asserting a count of zero failed on the checkout's own committed
-# records rather than on anything the suite did. The list is taken before the
-# first case runs (SRC_LOG_BEFORE, at the top) and compared with the list after
-# the last one.
+# this directory being empty: a real `lanes/log/` carries real lanes' logs, and
+# asserting a count of zero would fail on the operator's own committed records
+# rather than on anything the suite did. So it counts only names the SUITE
+# could have written — the `repo[A-Z]…` fixtures every case uses — in the
+# operator's real workspace, read at $REAL_WS before $HOME was redirected. (An
+# earlier draft of this comment described a before/after list under a variable
+# `SRC_LOG_BEFORE`; no such variable was ever written, and the fixture-name
+# filter is what actually does the work.)
 is   "the suite never created a log outside the sandbox" \
      "$(ls "$REAL_WS/lanes/log" 2>/dev/null | grep -c '^repo[A-Z]' || :)" 0
 is   "the suite never wrote the real register" \

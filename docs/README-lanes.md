@@ -19,8 +19,8 @@ back to a path derived from its own location.
 
 **Moved 2026-09-10 (Amendment 5).** The register lived on the orphan `lanes`
 branch of `opensoft/xFactory` from 2026-09-09; it moved to `main` of the
-person's workspace repository — for Brett, `opensoft/brett-wip` — ratified by Brett
-Heap 2026-09-10 ("since we now have the user-wip repo this is a better place
+person's workspace repository — for Brett, `opensoft/brett-wip` — ratified by
+Brett Heap 2026-09-10 ("since we now have the user-wip repo this is a better place
 to store our lanes", "create opensoft/brett-wip and move it all there"),
 implemented by lane `openRepoShape-2`, session
 `8fa66b30-4cf5-4b80-b40c-ac3640cf45ab`, on workstation **Eagle**. All 1242
@@ -182,8 +182,8 @@ Every mutating subcommand does the same five things:
 mid-rebase, prints the conflicting lines and prints the recovery commands. Your
 edit survives as a local commit; read it back with
 `git -C <the workspace checkout> diff origin/main..HEAD -- lanes/LANES.md`,
-then `git -C <the workspace checkout> reset --hard origin/main` and redo it on top of
-the peer's version.
+then `git -C <the workspace checkout> reset --hard origin/main` and redo it on
+top of the peer's version.
 
 The script spells no path of its own: it finds the checkout root with `git
 rev-parse --show-toplevel` from its own directory and derives the pathspec
@@ -959,8 +959,8 @@ and says so.
 
 **The home is canonical.** That spelling is resolved through the alias table
 — both layers, the shipped `repos.tsv` and the checkout's override (Amendment
-9(b)) — *before* the line is written, and every comparison of an object's repository
-against a home resolves both sides — because a home is inherited by every `#<n>`
+9(b)) — *before* the line is written, and every comparison of an object's
+repository against a home resolves both sides — because a home is inherited by every `#<n>`
 that lane ever writes. A checkout whose `origin` still said
 `opensoft/codexFactory` wrote object keys that could never collide with another
 lane's `codeXfactory/codexFactory#<n>`, so two lanes held one GitHub issue under

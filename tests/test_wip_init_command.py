@@ -60,7 +60,8 @@ pytestmark = [WINDOWS_SKIP, NEEDS_TEMPLATE]
 def fake_gh(tmp_path: Path, *, login: str = "brettheap",
             teams: tuple[str, ...] = ("platform",),
             may_create: bool = True,
-            exists: bool = False) -> dict:
+            exists: bool = False,
+            refuse_push: bool = False) -> dict:
     """A `gh` that answers the five calls `wip init` makes, and refuses the rest.
 
     `repo create` makes a BARE repository under `<tmp>/github/<org>/<name>.git`
@@ -68,11 +69,20 @@ def fake_gh(tmp_path: Path, *, login: str = "brettheap",
     against a real ref — which is the only way the ruleset-probe branch can be
     exercised at all. `may_create=False` is the account without the right, and
     `exists=True` is the administrator having already run the block.
+
+    `refuse_push=True` IS THE ORGANISATION'S PR-ONLY RULESET, and it is a real
+    `pre-receive` hook in the bare repository rather than a stubbed exit code:
+    clause (c) step 8 makes the seed's push the probe for that gate, so a test
+    that faked the rejection would be testing the fake. The hook refuses while
+    a marker file sits beside it; deleting that marker is the administrator
+    excluding the repository, and the re-run afterwards is the path step 8
+    promises has "only to push".
     """
     server = tmp_path / "github"
     server.mkdir(parents=True, exist_ok=True)
     teams_json = "\n".join(
         '{"slug":"%s","organization":{"login":"opensoft"}}' % t for t in teams)
+    ruleset_call = 'install_ruleset "$(slug_path "$target")"' if refuse_push else ":"
     fake = tmp_path / "fake-path"
     fake.mkdir(exist_ok=True)
     (fake / "gh").write_text(textwrap.dedent(f"""\
@@ -80,6 +90,21 @@ def fake_gh(tmp_path: Path, *, login: str = "brettheap",
         set -u
         server={server!s}
         slug_path() {{ printf '%s\\n' "$server/$1.git"; }}
+        # THE ORGANISATION'S PR-ONLY RULESET, as a real pre-receive hook: it
+        # refuses every push while `ruleset-on` sits in the bare repository,
+        # which is the state a NEW repository is in until an administrator
+        # excludes it (clause (c) step 8, Addendum 1(2)).
+        install_ruleset() {{
+            d="$1"
+            : > "$d/ruleset-on"
+            {{
+                printf '%s\\n' '#!/bin/sh'
+                printf '%s\\n' '[ -e "$(dirname "$0")/../ruleset-on" ] || exit 0'
+                printf '%s\\n' 'echo "remote: refused by the PR-only ruleset" >&2'
+                printf '%s\\n' 'exit 1'
+            }} > "$d/hooks/pre-receive"
+            chmod 755 "$d/hooks/pre-receive"
+        }}
         case "$1 ${{2-}}" in
         "api user")
             printf '%s\\n' "{login}"; exit 0 ;;
@@ -99,6 +124,7 @@ def fake_gh(tmp_path: Path, *, login: str = "brettheap",
             target="$3"
             mkdir -p -- "$(dirname -- "$(slug_path "$target")")"
             git init -q --bare -b main "$(slug_path "$target")"
+            {ruleset_call}
             exit 0 ;;
         "repo clone "*)
             target="$3"; dest="$4"
@@ -353,3 +379,209 @@ def test_an_existing_checkout_of_another_repository_is_refused(tmp_path):
     assert "already a checkout, and not of opensoft/brettheap-wip" in result.stderr
     assert marker.read_text(encoding="utf-8") == "somebody's work\n"
     assert not (home / ".agents" / "workspace.yaml").exists()
+
+
+# --- step 8: the push IS the ruleset probe, and the re-run has only to push --
+
+def remote_main(tmp_path: Path, slug: str = "opensoft/brettheap-wip") -> str:
+    """What `<slug>`'s bare `main` actually points at, or "" for no such ref.
+
+    Read from the BARE repository rather than from the clone, because the whole
+    question step 8 asks is whether anything landed on the REMOTE.
+    """
+    bare = tmp_path / "github" / f"{slug}.git"
+    done = subprocess.run(["git", "-C", str(bare), "rev-parse", "main"],
+                          capture_output=True, text=True, check=False)
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
+def test_a_push_the_ruleset_refuses_is_exit_2_and_leaves_the_seed_in_place(tmp_path):
+    """CLAUSE (c) STEP 8, and the reason the amendment added it.
+
+    A newly created repository is inside the organisation's PR-only ruleset
+    until an administrator excludes it, and until it is, Rule 9's one commit
+    per write cannot land — so the register would be unwritable. An earlier
+    draft of the clause said `wip init` "names that in its output and cannot do
+    it itself", and the amendment rejected that in so many words: it "let a
+    person finish successfully and meet the failure at their first register
+    write, which is the worst place there is to meet it."
+
+    So: exit 2, the refusal names the PR-only ruleset and step 5's third act,
+    and the clone and the seed commit are LEFT EXACTLY WHERE THEY ARE — which
+    is what the next test spends.
+
+    THE POINTER FILE IS NOT WRITTEN. It is step 9, after this, and writing it
+    here would make step 1's file test return on every later run, which is the
+    one state no re-run can dig out of.
+    """
+    home = tmp_path / "home"
+    result = run_wip(home, extra=fake_gh(tmp_path, refuse_push=True))
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "THAT IS THE RULESET" in result.stderr
+    assert "PR-only ruleset" in result.stderr
+    assert "gh api /orgs/opensoft/rulesets" in result.stderr
+    assert "openRepoTools wip init" in result.stderr
+
+    assert remote_main(tmp_path) == "", "the seed reached main through the gate"
+    checkout = home / "projects" / "brettheap-wip"
+    assert (checkout / "lanes" / "LANES.md").is_file(), (
+        "the clone and the seed were not left in place for the re-run")
+    head = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True)
+    assert head.stdout.strip(), "the seed was not committed"
+    assert not (home / ".agents" / "workspace.yaml").exists(), (
+        "the pointer file was written over a push that never landed, so step "
+        "1 would return on every later run and no re-run could fix it")
+
+
+def test_the_rerun_after_the_administrator_acts_has_only_to_push(tmp_path):
+    """THE OTHER HALF OF STEP 8, and the half that is easy to lose.
+
+    The first run committed the seed and was refused by the gate, so the
+    worktree is CLEAN and the commit is unpushed. A push gated on
+    `git status --porcelain` — on the WORKTREE — therefore finds nothing to do,
+    prints "already carries the seed", writes the pointer file and exits 0 over
+    an empty `main`; and step 1's file test then returns on every later run, so
+    the command can never repair it. The gate is the REMOTE for that reason.
+
+    Deleting the marker is the administrator adding the repository to the
+    ruleset's exempt list. Nothing else changes, and the amendment's promise is
+    that the re-run "has only to push".
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path, refuse_push=True)
+    first = run_wip(home, extra=env)
+    assert first.returncode == 2, first.stdout + first.stderr
+    checkout = home / "projects" / "brettheap-wip"
+    seed = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+    # The administrator excludes it from the PR-only ruleset.
+    (tmp_path / "github" / "opensoft" / "brettheap-wip.git" / "ruleset-on").unlink()
+
+    second = run_wip(home, extra=env)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "pushed the seed" in second.stdout
+    assert remote_main(tmp_path) == seed, (
+        "the re-run did not push the commit the first run left behind")
+    assert (home / ".agents" / "workspace.yaml").is_file(), (
+        "step 9 did not run after the push finally landed")
+
+    # AND IT IS STILL IDEMPOTENT: a third run is step 1's file test.
+    third = run_wip(home, extra=env)
+    assert third.returncode == 0, third.stdout + third.stderr
+    assert "nothing to do" in third.stdout
+
+
+def test_a_seed_already_on_main_is_not_pushed_again(tmp_path):
+    """The other side of the remote gate: where `origin/main` already points at
+    this commit there is nothing to push, and saying so is not the same as
+    saying there was nothing to commit. A command that pushed anyway would be
+    making a network call to learn what it had just read."""
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    first = run_wip(home, extra=env)
+    assert first.returncode == 0, first.stdout + first.stderr
+    seed = remote_main(tmp_path)
+    assert seed, "the first run did not push"
+
+    # A second workstation's view: the pointer file is gone, everything else is
+    # exactly as the first run left it.
+    (home / ".agents" / "workspace.yaml").unlink()
+    second = run_wip(home, extra=env)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "already carries this commit" in second.stdout
+    assert remote_main(tmp_path) == seed
+
+
+# --- one answer to one question, across the seam between two toolsets -------
+
+#: (name, the two yaml lines as a template, whether both sides must ACCEPT).
+#: `{origin}` is the bare repository, `{wip}` its clone's root.
+WORKSPACE_FIXTURES = (
+    ("the root of a checkout of the repository it names",
+     "repository: {origin}\npath: {wip}\n", True),
+    ("a subdirectory of that checkout rather than its root",
+     "repository: {origin}\npath: {wip}/lanes\n", False),
+    ("a checkout of some other repository",
+     "repository: {origin}\npath: {foreign}\n", False),
+    ("a path that is no checkout at all",
+     "repository: {origin}\npath: {nowhere}\n", False),
+    ("no `repository:` line",
+     "path: {wip}\n", False),
+    ("no `path:` line",
+     "repository: {origin}\n", False),
+)
+
+
+@pytest.mark.parametrize("what,yaml,accepted",
+                         WORKSPACE_FIXTURES,
+                         ids=[f[0] for f in WORKSPACE_FIXTURES])
+def test_wip_init_and_the_lane_helpers_read_one_pointer_file_the_same_way(
+        tmp_path, what, yaml, accepted):
+    """TWO IMPLEMENTATIONS OF ONE QUESTION, AND THE FILE SAYS THEY MUST AGREE.
+
+    `openRepoTools` carries `wip_config_file`, `wip_yaml_field`,
+    `wip_norm_repo` and `wip_is_checkout_of`; the four lane helpers carry
+    `lanes_ws_yaml`, `lanes_ws_field`, `lanes_ws_norm` and
+    `lanes_workspace_root`. They are separate code because the two toolsets are
+    separate files on a PATH — `wip init` cannot source a helper it may be
+    running before `--install` has placed, and a helper cannot source the
+    installer — and `openRepoTools`' own comment says what that costs: they
+    "have to agree on what 'already has a workspace' means, or a host can pass
+    one and fail the other."
+
+    That host is the failure this pins. `wip init` accepting means step 1
+    returns "nothing to do" and writes nothing ever again; the helpers refusing
+    means the register cannot be found. A person in that state has a command
+    that says they are set up and four commands that say they are not, and no
+    re-run of anything repairs it — which is precisely the shape of defect
+    Amendment 9(a) exists to remove, arriving through a different door.
+
+    Six fixtures, one `workspace.yaml` at a time, both sides asked.
+    """
+    home = tmp_path / "home"
+    agents = home / ".agents"
+    agents.mkdir(parents=True)
+    origin = tmp_path / "origin.git"
+    wip = home / "projects" / "brettheap-wip"
+    foreign = tmp_path / "foreign"
+    nowhere = tmp_path / "nowhere"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)],
+                   check=True)
+    wip.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "clone", "-q", str(origin), str(wip)], check=True)
+    (wip / "lanes").mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(foreign)], check=True)
+    subprocess.run(["git", "-C", str(foreign), "remote", "add", "origin",
+                    "https://github.com/opensoft/somebody-else-wip.git"],
+                   check=True)
+
+    (agents / "workspace.yaml").write_text(
+        yaml.format(origin=origin, wip=wip, foreign=foreign, nowhere=nowhere),
+        encoding="utf-8")
+
+    env = wip_env(home, fake_gh(tmp_path))
+    tools = run_wip(home)
+    helper = subprocess.run(
+        ["bash", str(REPO / "lanes-edit.sh"), "who", "--lane", "repoA-1"],
+        capture_output=True, text=True, check=False, cwd=str(tmp_path), env=env)
+    unfound = "the workspace repository could not be found"
+
+    if accepted:
+        assert tools.returncode == 0, tools.stdout + tools.stderr
+        assert "nothing to do" in tools.stdout, (
+            f"`wip init` did not accept {what}")
+        assert unfound not in helper.stderr, (
+            f"`wip init` accepted {what} and `lanes-edit.sh` could not find it:\n"
+            f"{helper.stderr}")
+    else:
+        assert tools.returncode == 2, (
+            f"`wip init` did not refuse {what}:\n{tools.stdout}{tools.stderr}")
+        assert helper.returncode == 1, (
+            f"`lanes-edit.sh` did not refuse {what} with exit 1:\n{helper.stderr}")
+        assert unfound in helper.stderr, (
+            f"`lanes-edit.sh` refused {what} for some other reason:\n{helper.stderr}")
+        assert "no reason recorded" not in helper.stderr, (
+            "the refusal reached the person without the diagnosis it computed")

@@ -76,6 +76,24 @@ pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
                                  reason="openRepoTools is a bash script"),
               WINDOWS_SKIP]
 
+#: `--install` HARD-REQUIRES `jq` SINCE lane-collision-protocol AMENDMENT 9(b):
+#: one of its twelve artifacts is a merged entry inside a JSON file somebody
+#: else owns, and the clause has it refuse naming `jq` rather than rewriting
+#: that file by hand. So a run of `--install` on a host without `jq` is a
+#: REFUSAL BY DESIGN, and a test that asserts a successful placement there is
+#: asserting against the contract. Marked rather than left to fail, because a
+#: red suite on a minimal image is how a fork stops being finished — the same
+#: reason `AGENTS.md` gives for the submodule SKIP.
+#:
+#: The tests NOT marked are the ones that never reach the merge: the refusals,
+#: `--help`, `--version`, and `test_install_places_all_nine_or_none`, which is
+#: refused at `collect_commands` before `plan_hook_merge` is called at all.
+#: `test_without_jq_it_refuses_and_places_nothing` is the positive case for the
+#: same fact and is deliberately unmarked.
+NEEDS_JQ = pytest.mark.skipif(
+    shutil.which("jq") is None,
+    reason="`--install` merges one SessionStart entry with jq (Amendment 9(b))")
+
 
 def command_env(home: Path | None = None, env: dict | None = None) -> dict:
     """The environment this suite controls, for a run of the command.
@@ -286,6 +304,7 @@ def test_install_refuses_a_second_argument_and_installs_nothing(tmp_path):
 
 # --- --install --------------------------------------------------------------
 
+@NEEDS_JQ
 def test_install_writes_an_executable_copy(tmp_path):
     """All NINE files, each 755 and byte-identical to this checkout's.
 
@@ -307,6 +326,7 @@ def test_install_writes_an_executable_copy(tmp_path):
         "to be there; the count says so")
 
 
+@NEEDS_JQ
 def test_installing_twice_changes_nothing(tmp_path):
     """Idempotent BY CONTENT, per file: the second run must not rewrite one
     that already holds these bytes, and must say so rather than claim an
@@ -323,6 +343,7 @@ def test_installing_twice_changes_nothing(tmp_path):
 
 
 @pytest.mark.parametrize("name", INSTALLED)
+@NEEDS_JQ
 def test_install_replaces_a_copy_that_has_drifted(tmp_path, name):
     """Per file, and only the one that drifted: an install that rewrote all
     nine every time would have nothing to say about which one was stale."""
@@ -339,6 +360,7 @@ def test_install_replaces_a_copy_that_has_drifted(tmp_path, name):
             assert f"{other}: already installed at" in result.stdout, other
 
 
+@NEEDS_JQ
 def test_bin_dir_overrides_where_it_lands(tmp_path):
     result = run_cmd("--install", home=tmp_path,
                      env={"OPENREPOTOOLS_BIN_DIR": str(tmp_path / "elsewhere")})
@@ -348,6 +370,7 @@ def test_bin_dir_overrides_where_it_lands(tmp_path):
         assert not (tmp_path / ".local" / "bin" / name).exists(), name
 
 
+@NEEDS_JQ
 def test_install_says_how_to_put_it_on_path(tmp_path):
     """ONE path note for the four of them: the directory is the same one, and
     four copies of the same `export` line reads as four problems."""
@@ -356,6 +379,7 @@ def test_install_says_how_to_put_it_on_path(tmp_path):
     assert result.stdout.count("export PATH=") == 1
 
 
+@NEEDS_JQ
 def test_install_from_a_file_never_calls_gh(tmp_path):
     """`--install` run from a file copies THOSE bytes. A machine with no `gh`
     — or no network — must still be able to install the commands, so a `gh` on
@@ -500,6 +524,7 @@ def test_install_places_all_nine_or_none(tmp_path):
     assert "placed" not in result.stdout
 
 
+@NEEDS_JQ
 def test_install_from_stdin_fetches_itself_into_a_live_workdir(offline_github,
                                                                tmp_path):
     """The documented install line: `gh api …/contents/openRepoTools … |
@@ -538,6 +563,7 @@ def test_install_from_stdin_fetches_itself_into_a_live_workdir(offline_github,
         assert f"{name}: installed at" in result.stdout
 
 
+@NEEDS_JQ
 def test_a_fetching_install_follows_the_ref_it_was_given(offline_github,
                                                          tmp_path):
     """`$OPENREPOTOOLS_REF` reaches the API path, so a person installing from a
