@@ -1516,6 +1516,31 @@ remote_log_events() {
 # check) and reading it is 45 `git show`s. Any write flushes it: `claim`
 # rescans after its rebase, and the ref has moved by then.
 SE_CACHE_FILE="$(mktemp "${TMPDIR:-/tmp}/lanes-edit-events.XXXXXX" 2>/dev/null || printf '')"
+# THE BUILD'S WARNINGS OUTLIVE THE BUILD, AND THAT IS NOT A CONVENIENCE.
+# `LOG_AWK` writes `unreadable: <file>:<line>` and its count to stderr WHILE the
+# stream is parsed — so they were emitted by whichever caller happened to build
+# the cache first, and lost entirely when that caller was a command substitution
+# with `2>/dev/null`. That was always true and never mattered, because the
+# first builder in `who` was a call whose stderr reached the person. Ruling 8's
+# `retired_forks_of` moved the first build one line earlier, into exactly such a
+# substitution, and the whole warning vanished from `who --lane` — caught by the
+# two assertions that exist for it.
+#
+# So the build's stderr is CAPTURED beside the cache and replayed once per
+# shell. `SE_WARNED` is deliberately a plain variable: a subshell that replays
+# into `/dev/null` sets it only in ITSELF, so the parent still warns at its own
+# first call — which is the call whose stderr a person is reading. An
+# append-only log is never rewritten, so a line no parser reads is a hold no
+# tool will mention again: this warning is the only notice there is.
+SE_WARN_FILE="${SE_CACHE_FILE:+$SE_CACHE_FILE.warn}"
+SE_WARNED=0
+state_events_warn() {
+  [ "$SE_WARNED" = 1 ] && return 0
+  [ -n "$SE_WARN_FILE" ] && [ -s "$SE_WARN_FILE" ] || return 0
+  SE_WARNED=1
+  cat -- "$SE_WARN_FILE" >&2
+  return 0
+}
 state_events() {
   if [ -z "$SE_CACHE_FILE" ]; then remote_log_events; return 0; fi
   if [ ! -s "$SE_CACHE_FILE" ]; then
@@ -1527,12 +1552,21 @@ state_events() {
     # rename: a reader then sees either the empty file (and builds its own) or
     # the finished one, never half of it.
     se_t="$SE_CACHE_FILE.${BASHPID:-$$}"
-    remote_log_events > "$se_t"
-    mv -f -- "$se_t" "$SE_CACHE_FILE" 2>/dev/null || { cat -- "$se_t"; rm -f -- "$se_t"; return 0; }
+    remote_log_events > "$se_t" 2> "$se_t.warn"
+    mv -f -- "$se_t.warn" "$SE_WARN_FILE" 2>/dev/null || rm -f -- "$se_t.warn"
+    mv -f -- "$se_t" "$SE_CACHE_FILE" 2>/dev/null || { state_events_warn; cat -- "$se_t"; rm -f -- "$se_t"; return 0; }
   fi
+  state_events_warn
   cat -- "$SE_CACHE_FILE"
 }
-state_events_flush() { [ -n "$SE_CACHE_FILE" ] && : > "$SE_CACHE_FILE"; return 0; }
+state_events_flush() {
+  [ -n "$SE_CACHE_FILE" ] && : > "$SE_CACHE_FILE"
+  # The warnings belong to the stream that was parsed; a flush means it is
+  # parsed again, so they are said again.
+  [ -n "$SE_WARN_FILE" ] && : > "$SE_WARN_FILE"
+  SE_WARNED=0
+  return 0
+}
 
 # One lane's own events, and whether that lane has a log at all — from
 # `origin/<branch>` for the same reason. A lane whose log exists only in this
@@ -2861,8 +2895,8 @@ who_lane() {
   if [ -n "$wl_fk" ]; then
     while IFS="$(printf '\t')" read -r wl_fid wl_fpid wl_fkind wl_fcwd; do
       [ -n "${wl_fid:-}" ] || continue
-      printf 'DEFECT   %s is a live FORK of this lane'"'"'s transcript (pid %s, %s, cwd %s) — never a holder, and it must not write the register. Retire it: kill %s\n' \
-        "$wl_fid" "$wl_fpid" "${wl_fkind:-interactive}" "${wl_fcwd:-unknown}" "$wl_fpid"
+      printf 'DEFECT   %s is a live FORK of this lane'"'"'s transcript (pid %s, %s, cwd %s) — never a holder, and it must not write the register. Retire it: lane-end %s --retire %s\n' \
+        "$wl_fid" "$wl_fpid" "${wl_fkind:-interactive}" "${wl_fcwd:-unknown}" "$wl_lane" "$wl_fpid"
     done <<EOF
 $wl_fk
 EOF
@@ -3227,6 +3261,20 @@ lane_row_facts() {   # events on stdin, ONE LINE PER LANE
     $3 == "STARTED" || $3 == "PAUSED" || $3 == "RESUMED" || $3 == "ENDED" || $3 == "RETIRED" {
       l = $2
       if (!(l in seen)) { seen[l] = ++n; byn[n] = l }
+      # A FORK-S RETIRED IS NOT THE LANE-S OWN LAST VERB (decision 8(c): a fork
+      # is never the lane; A11 Addendum 4 ruling 8). `lane-end <lane> --retire
+      # <pid|uuid>` writes `RETIRED … lane:<lane> -> fork <sid>; pid <n>; kind
+      # <k>` into the lane-s log, because that log is the one append-only place
+      # the fact belongs. Read as the lane-s own line it would say the LANE was
+      # retired — which is the opposite of what happened, since the lane may
+      # well be live beside the fork it just disowned. So the line is skipped
+      # HERE, for the state fields only: the marker is the payload opening
+      # `fork `, written by exactly one writer.
+      #
+      # R14 IS NOT WEAKENED BY THIS. R14 decides WHICH of a lane-s own lines is
+      # last; this decides which lines are the lane-s own. A line about
+      # something that is never the lane was never in that set.
+      if (substr($8, 1, 5) == "fork ") next
       # FILE ORDER decides which line is a lane-s LAST (R14), exactly as
       # `swapped_candidates` decides it: a lane-s log is append-only and
       # single-writer, so a line further down the file is a line written later
@@ -3456,8 +3504,11 @@ last_session_of() {   # <lane>
 # read finds.
 #
 # IT NAMES THEM AND DOES NOTHING ELSE, exactly as `idle_holders` does and for
-# the same reason clause (f) of Amendment 8 gives: retiring is `kill <pid>`,
-# printed by the caller and typed by a person.
+# the same reason clause (f) of Amendment 8 gives. THE ACT IT NAMES IS
+# `lane-end <lane> --retire <pid|uuid>` (clause (k) rule (e), A11 Addendum 4
+# ruling 8) and never `kill <pid>`: retiring is a RECORD — the RETIRED line this
+# read then stops answering with — and *"neither kills a process"*. Stopping the
+# process stays a person's act and no surface here prints it as this one.
 #
 # One line per fork, `<session id><TAB><pid><TAB><kind><TAB><cwd>`.
 # 0 with rows, 8 with none, 1 where the records could not be read.
@@ -3530,16 +3581,38 @@ transcript_title() {   # <uuid> [<the record's file>] [<the record's cwd>]
   printf '%s\n' "${tt_v% (*)}"
 }
 
+# THE FORKS OF THIS LANE ITS LOG HAS ALREADY RETIRED (A11 Addendum 4 ruling 8).
+# `lane-end <lane> --retire <pid|uuid>` writes `RETIRED … -> fork <sid>; …`, and
+# retiring is a RECORD rather than a kill — clause (k) rule (e), *"Neither kills
+# a process"* — so the thing that makes the act mean anything is that no read
+# counts that id as this lane afterwards. This is where that happens, once, for
+# `forks`, `lanes` and `restart` together.
+#
+# Out of `state_events`, which is cached for the life of the process, rather
+# than a `git show` of this lane's log per call.
+retired_forks_of() {   # <lane>
+  rf_l="${1-}"; [ -n "$rf_l" ] || return 0
+  state_events 2>/dev/null | awk -F"$US" -v l="$rf_l" '
+    $2 == l && $3 == "RETIRED" && substr($8, 1, 5) == "fork " {
+      v = substr($8, 6); sub(/;.*$/, "", v); sub(/ .*$/, "", v)
+      if (v != "") print tolower(v) }'
+}
+
 lane_forks() {   # <lane>
   lf_l="${1-}"; [ -n "$lf_l" ] || return 64
   lf_ids="$( { session_ids_of_lane "$lf_l" 2>/dev/null || :
                session_ids_local_of_lane "$lf_l" 2>/dev/null || :; } | awk 'NF && !seen[$0]++')"
+  lf_retired="$(retired_forks_of "$lf_l" 2>/dev/null || :)"
   lf_out=""
   while IFS="$US" read -r lf_t lf_sid lf_pid lf_kind lf_cwd; do
     [ -n "${lf_t:-}" ] || continue
     [ "$(lc "$lf_t")" = "$(lc "$lf_l")" ] || continue
     # AN ID THE ROW RECORDS IS THE LANE ITSELF, never a fork of it.
     if [ -n "$lf_ids" ] && printf '%s\n' "$lf_ids" | grep -qx -F -- "$lf_sid"; then continue; fi
+    # AND AN ID THIS LANE HAS ALREADY RETIRED IS NOT ONE EITHER: retiring is the
+    # record, so after it nothing counts this process as the lane's fork, and
+    # the surfaces stop printing an act that has already been taken.
+    if [ -n "$lf_retired" ] && printf '%s\n' "$lf_retired" | grep -qx -F -- "$(lc "$lf_sid")"; then continue; fi
     lf_out="${lf_out}${lf_sid}	${lf_pid}	${lf_kind:-interactive}	${lf_cwd}
 "
   done <<EOF
@@ -4063,8 +4136,8 @@ session_start_block() {
   if [ -n "$ssb_fk" ]; then
     while IFS='\t' read -r ssb_fid ssb_fpid ssb_fkind ssb_fcwd; do
       [ -n "${ssb_fid:-}" ] || continue
-      printf 'DEFECT: %s is a live FORK of this lane'"'"'s transcript (pid %s, %s, cwd %s) — it is not the holder and must not write the register. Retire it: kill %s\n' \
-        "$ssb_fid" "$ssb_fpid" "${ssb_fkind:-interactive}" "${ssb_fcwd:-unknown}" "$ssb_fpid"
+      printf 'DEFECT: %s is a live FORK of this lane'"'"'s transcript (pid %s, %s, cwd %s) — it is not the holder and must not write the register. Retire it: lane-end %s --retire %s\n' \
+        "$ssb_fid" "$ssb_fpid" "${ssb_fkind:-interactive}" "${ssb_fcwd:-unknown}" "$ssb_lane" "$ssb_fpid"
     done <<EOF
 $ssb_fk
 EOF
@@ -4789,7 +4862,8 @@ EOF
   # this lane the window it was running in.
   # AMENDMENT 8(f), R-A8-6 — the row's EARLIER ids, and who is still holding
   # them. Read-only, no fetch of its own (the caller has just made one), and it
-  # runs nothing: `kill <pid>` is printed by the caller and typed by a person.
+  # runs nothing: `lane-end <lane> --retire <pid|uuid>` is printed by the caller
+  # and typed by a person (clause (k) rule (e)).
   # 0 with rows, 8 with none, 1 where the records could not be read — the same
   # three answers `live-holder` gives, so a caller reads them the same way.
   idle-holders)
@@ -4829,7 +4903,7 @@ EOF
     if [ -n "$lh_fk" ]; then
       while IFS="$(printf '\t')" read -r lh_fid lh_fpid lh_fkind lh_fcwd; do
         [ -n "${lh_fid:-}" ] || continue
-        note "DEFECT: $lh_fid is a live FORK of lane $lane's transcript (pid $lh_fpid, ${lh_fkind:-interactive}, cwd ${lh_fcwd:-unknown}) — it is NOT a holder of this lane and must not write the register. Retire it: kill $lh_fpid"
+        note "DEFECT: $lh_fid is a live FORK of lane $lane's transcript (pid $lh_fpid, ${lh_fkind:-interactive}, cwd ${lh_fcwd:-unknown}) — it is NOT a holder of this lane and must not write the register. Retire it: lane-end $lane --retire $lh_fpid"
       done <<EOF
 $lh_fk
 EOF
@@ -4995,8 +5069,9 @@ EOF
   # are a defect to retire and never a holder. Evidence 6: an abandoned launch
   # left a `--fork-session` daemon orchestrating the same plan and writing this
   # lane's log under an id no row carries. It NAMES them and does nothing else:
-  # retiring is `kill <pid>`, printed by the caller and typed by a person, for
-  # the reason Amendment 8(f) gives.
+  # the act is `lane-end <lane> --retire <pid|uuid>` (clause (k) rule (e)),
+  # printed by the caller and typed by a person, for the reason Amendment 8(f)
+  # gives — and it writes a record rather than killing anything.
   # 0 with rows, 8 with none, 1 where the records could not be read.
   forks)
     lane="${1-}"; [ -n "$lane" ] || die "usage: forks <lane>" 64

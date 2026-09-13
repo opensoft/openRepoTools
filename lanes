@@ -39,7 +39,9 @@
 # writers on the same three branches, wrote `RESUMED` and `PAUSED` lines into
 # the lane's log and messaged the interactive session claiming to be the holder
 # while citing a dead pid. It is never a holder and it must never write the
-# register; this listing names it, and retiring it is a person's act.
+# register; this listing names it, and the ONE act it prints is clause (k) rule
+# (e)'s — `lane-end <lane> --retire <pid|uuid>`, which writes the record that
+# stops every read counting it and kills nothing.
 #
 # EXIT CODES, AND THEY ARE THE CONTRACT'S RATHER THAN THIS COMMAND'S (SPEC §15,
 # and clause (h)'s row for the read behind it): `0` rows · `8` none · `64` usage
@@ -225,8 +227,8 @@ while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_
 	esac
 	case "${r_fk:-0}" in
 	0 | '') : ;;
-	*) printf '%-26s DEFECT: %s live fork(s) of this lane transcript — never a holder, and they must not write the register. Name them: %s forks %s\n' \
-		"" "$r_fk" "$LANES_EDIT" "$r_lane"
+	*) printf '%-26s DEFECT: %s live fork(s) of this lane transcript — never a holder, and they must not write the register. Name them: %s forks %s; retire each: lane-end %s --retire <pid>\n' \
+		"" "$r_fk" "$LANES_EDIT" "$r_lane" "$r_lane"
 		defects=$((defects + 1)) ;;
 	esac
 	n=$((n + 1))
@@ -240,6 +242,6 @@ if [ "$do_fetch" = 1 ]; then
 else
 	say "$n lane(s), read locally — no fetch; this checkout last heard from origin $("$LANES_EDIT" fetch-age 2>/dev/null || printf 'unknown'). \`$prog --fetch\` refreshes first."
 fi
-[ "$defects" = 0 ] || say "$defects lane(s) have a live fork of their transcript running. A fork is never the holder (ratified decision 8(c)); retiring one is your act, never a tool's."
+[ "$defects" = 0 ] || say "$defects lane(s) have a live fork of their transcript running. A fork is never the holder (ratified decision 8(c)); the one act is \`lane-end <lane> --retire <pid|uuid>\`, which writes the record that stops every read counting it — it never kills the process, and that part stays yours (clause (k) rule (e))."
 ws_notice
 exit 0

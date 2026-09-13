@@ -243,9 +243,12 @@ of the register and step 4 compared the ids, so by then neither veto has anythin
 step 6 is `/restart`'s act and not `lane-start`'s.
 
 **A live FORK of this lane's transcript is a defect, and it is named wherever this skill meets one**
-(ratified decision 8(e), from Evidence 6). `"$L" forks <lane>` lists them. A fork is never the holder and
-must never write the register; retiring one is `kill <pid>`, typed by a person, because ending somebody's
-process is not a tool's act (Amendment 8(f)).
+(ratified decision 8(e), from Evidence 6). `"$L" forks <lane>` lists them, one `<uuid> <pid> <kind> <cwd>`
+per fork. A fork is never the holder and must never write the register, and the ONE act is clause (k) rule
+(e)'s — **`lane-end <lane> --retire <pid|uuid>`**, typed by a person. It writes a RETIRED line naming the
+fork into the lane's own log, after which no read counts that id as this lane; it does **not** kill the
+process, and ending somebody's process is not a tool's act (Amendment 8(f)). This skill used to print
+`kill <pid>` here, which is the act the ruling says neither surface prints.
 
 **`/restart` binds a window. It does not choose a conversation.** Those are two questions and this skill
 answers only the first; the second is Amendment 6(b)'s and stays there.

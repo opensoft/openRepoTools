@@ -3759,12 +3759,88 @@ has  "…naming the fork's own id, which is in no row" "$out" "$FORK_ID"
 has  "…and the directory it is running in, which is not the lane's" "$out" "/workspace"
 run "$E" who --lane repoA-1
 has  "who --lane calls it a DEFECT rather than a holder" "$out" "DEFECT"
-has  "…and prints the one act that retires it, which is a person's" "$out" "kill $LIVE_PID"
+# F-X8 — THE ONE ACT, AND IT IS THE TEXT'S OWN. Clause (k) rule (e): *"both
+# print the one act: retire it … Neither kills a process … and `lane-end`'s
+# `--retire` is the door."* Every surface printed something else: a READ, a
+# "Name them", or `kill <pid>` — which is the one act the ruling says neither
+# prints.
+has   "…and prints clause (k) rule (e)'s one act, filled in" "$out" "lane-end repoA-1 --retire $LIVE_PID"
+hasnt "…and never `kill <pid>`, which the ruling refuses by name" "$out" "kill $LIVE_PID"
 run "$E" live-holder repoA-1
 hasnt "live-holder never returns a fork as the holder" "$out" "$FORK_ID"
 has   "…and says on stderr that one is live, because a read that cannot return it could otherwise hide it" "$err" "live FORK"
+has   "…printing the same one act as every other surface" "$err" "lane-end repoA-1 --retire $LIVE_PID"
+hasnt "…and not the kill" "$err" "kill $LIVE_PID"
+# THE TWO LISTINGS, WITH THE FORK STILL LIVE — the surfaces F-X8 names besides
+# the reads. `$LANES_CMD` and `$RESTART` are bound further down; the bin
+# directory is where `--install` puts them and is what those bindings use.
+run env LANES_NO_FETCH=1 "$OPENREPOTOOLS_BIN_DIR/lanes" --all
+has   "the estate listing prints the act rather than only naming the forks" "$out" "retire each: lane-end repoA-1 --retire <pid>"
+has   "…and its footer names the act too, saying the process is not killed" "$out" "lane-end <lane> --retire <pid|uuid>"
+hasnt "…with no \`kill\` anywhere in it" "$out" "kill <pid>"
+# `restart`'s per-repo listing renders the same rows and is held by the hygiene
+# test that walks every fork line in every shipped surface at once
+# (`test_every_fork_surface_prints_the_one_act`), because it reads the CHECKOUT
+# the shell is in and this suite does not move.
 run "$E" forks repoA11-1
 is   "forks exits 8 for a lane with no fork of its transcript running" "$rc" 8
+
+# ------------------- ruling 8: `lane-end --retire <pid|uuid>` IS THE ONE ACT
+#
+# Clause (k) rule (e): *"both print the one act: **retire it**, under Amendment
+# 6(d) … **Neither kills a process** … and `lane-end`'s `--retire` is the
+# door."* The door did not exist — three surfaces printed three other things —
+# so A11 Addendum 4 ruling 8 (ratified "a11 addendum 4 yes") has it built here.
+#
+# THE WRITES BELOW NEED A CLEAN CHECKOUT, as every writing case in this suite
+# does; the handoff cases far above leave tracked deletions behind.
+git -C "$WIP" add -A >/dev/null 2>&1
+git -C "$WIP" commit -q -m "commit pending handoff edits before the fork-retire cases" >/dev/null 2>&1 || :
+
+# REFUSED ON ANYTHING THAT IS NOT A LIVE FORK OF THIS LANE, because the log is
+# append-only and a RETIRED line naming a stranger is a line nothing corrects.
+run "$END" repoA-1 --retire 999999
+is   "--retire refuses a pid that is not a live fork of this lane" "$rc" 2
+has  "…naming what IS live, so the operator can pick one" "$err" "$FORK_ID"
+has  "…and saying nothing was written" "$err" "nothing was written"
+hasnt "…which is true: no RETIRED line" "$(cat "$LOGD/repoA-1.md" 2>/dev/null || :)" "RETIRED"
+# AND ON A LANE WITH NO FORK AT ALL — 8, which is "no record", not a refusal.
+run "$END" repoA11-1 --retire "$FORK_ID"
+is   "…and exits 8 for a lane no fork of which is live" "$rc" 8
+# THE AMBIGUOUS SPELLING IS REFUSED RATHER THAN GUESSED AT: a bare number is
+# both a lane POSITION and a pid, and the two are different acts.
+run "$END" --retire 3
+is   "a bare `--retire <number>` with no lane named is refused as ambiguous" "$rc" 2
+has  "…printing both acts it could have been" "$err" "is both a lane POSITION"
+# --dry-run WRITES NOTHING AND PRINTS THE LINE.
+run "$END" repoA-1 --retire "$FORK_ID" --dry-run
+is    "--dry-run exits 0" "$rc" 0
+has   "…printing the exact line it would write" "$err" "log RETIRED lane:repoA-1"
+hasnt "…and writing none of it" "$(cat "$LOGD/repoA-1.md" 2>/dev/null || :)" "RETIRED"
+# THE ACT ITSELF.
+run "$END" repoA-1 --retire "$FORK_ID"
+is   "lane-end --retire <uuid> exits 0 on a live fork" "$rc" 0
+A11F_LOG="$(cat "$LOGD/repoA-1.md" 2>/dev/null || :)"
+has  "…writing a RETIRED line into the LANE's own log" "$A11F_LOG" "RETIRED — lane repoA-1"
+has  "…whose session field is the FORK's uuid and not the lane's" "$A11F_LOG" "session $FORK_ID@Eagle"
+has  "…and whose payload opens with the marker the state reader keys on" "$A11F_LOG" "fork $FORK_ID"
+has  "…carrying the pid, which is what the operator needs to stop it" "$A11F_LOG" "pid $LIVE_PID"
+has  "…and saying the process was not killed" "$A11F_LOG" "was NOT killed"
+has  "the report says it is still running" "$err" "IT IS STILL RUNNING"
+is   "…and the process really is: retiring is a record, never a kill" "$(kill -0 "$LIVE_PID" 2>/dev/null && echo live)" "live"
+# WHAT THE RECORD IS FOR: no read counts it as this lane any more.
+run "$E" forks repoA-1
+is   "forks no longer answers with a fork this lane has retired" "$rc" 8
+# AND THE LANE IS NOT RETIRED — it is the FORK that was.
+run "$E" lanes --lane repoA-1
+hasnt "the lane's own state is untouched by retiring its fork" "$out" "	RETIRED	"
+# IT ENDS NOTHING: no closing status line, no state-cell replacement.
+hasnt "…and no closing line was written to the row" "$(grep '^| `repoA-1`' "$LANES")" "window closing"
+# A SECOND RETIRE OF THE SAME FORK FINDS NOTHING TO RETIRE, which is the proof
+# the first one took: `forks` is the read `--retire` asks.
+run "$END" repoA-1 --retire "$FORK_ID"
+is   "retiring the same fork twice finds nothing left to retire" "$rc" 8
+
 rm -f "$sessions_dir/live-fork.json" "$fork_tdir/$FORK_ID.jsonl"
 
 # --------------------------- clause (c): lane-start RECORDS dir and profile

@@ -1282,6 +1282,50 @@ def test_adoption_act_zero_is_cited_by_the_sha_that_landed():
         "ancestor of origin/main.")
 
 
+#: EVERY SURFACE THAT PRINTS SOMETHING ABOUT A LIVE FORK. Six of them: `who`,
+#: the SessionStart hook, `live-holder`, `lanes`, `restart` and the `/restart`
+#: skill.
+FORK_SURFACES = ("lanes-edit.sh", "lanes", "restart", "skills/restart/SKILL.md")
+#: A line that offers an act for a fork says `FORK` or `fork(s)` and an
+#: imperative beside it. Matched on the two spellings the surfaces use.
+FORK_ACT_LINE = re.compile(r"^.*(?:live FORK|live fork\(s\)).*$", re.M)
+
+
+def test_every_fork_surface_prints_the_one_act():
+    """CLAUSE (k) RULE (e), and it names the act: *"both print the one act:
+    **retire it**, under Amendment 6(d) … **Neither kills a process** … and
+    `lane-end`'s `--retire` is the door."*
+
+    At `dae38be` the estate printed THREE other things and not that one
+    (F-X8): `restart:214` printed `lanes-edit.sh forks <lane>`, which is a
+    READ that retires nothing; `lanes:173` printed *"Name them"*; and `who`,
+    `live-holder`, the SessionStart hook and the `/restart` skill printed
+    `kill <pid>` — the one act the ruling refuses by name.
+
+    Derived rather than restated: every line in every surface that speaks of a
+    live fork must name `--retire`, and none may offer a `kill`. The IDLE
+    HOLDERS of a lane are a different population — earlier sessions of the lane
+    ITSELF, Amendment 6(d)'s orphans, which `lane-end --retire` refuses because
+    they are not forks — and their `kill` lines are deliberately untouched, so
+    this matches fork lines only.
+    """
+    offenders = {}
+    for rel in FORK_SURFACES:
+        text = (REPO / rel).read_text(encoding="utf-8")
+        for line in FORK_ACT_LINE.findall(text):
+            # `\bkill\b` AND NOT `"kill" in line`: the word `skill` contains it,
+            # and `skills/restart/SKILL.md` is one of the files being walked.
+            if re.search(r"\bkill\b", line) and "--retire" not in line:
+                offenders.setdefault(rel, []).append(line.strip()[:160])
+    assert not offenders, (
+        "these fork lines still offer a `kill` and not clause (k) rule (e)'s "
+        f"one act:\n{offenders}")
+    # …and the act is actually printed somewhere in each of the four.
+    missing = [rel for rel in FORK_SURFACES
+               if "--retire" not in (REPO / rel).read_text(encoding="utf-8")]
+    assert not missing, f"these surfaces name no `--retire` act at all: {missing}"
+
+
 def test_no_committed_file_names_a_host_absolute_path():
     """openRepoShape #61: a suite stayed green on every machine but the one a
     fixed path was written on, because the ONE test that read it SKIPPED when

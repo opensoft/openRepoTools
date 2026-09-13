@@ -211,7 +211,12 @@ list_this_checkout() {
 		# fork went on relaunching writers and writing the lane's log while
 		# telling the interactive session it was the holder.
 		case "${r_fk:-0}" in 0 | '') : ;;
-		*) printf '%-24s %s\n' "" "DEFECT: $r_fk live fork(s) of this lane's transcript — retire them: $LANES_EDIT forks $r_lane" ;;
+		# THE ACT IS THE TEXT'S OWN AND NOT A READ (F-X8). This printed
+		# `lanes-edit.sh forks <lane>`, which NAMES forks and retires none.
+		# Clause (k) rule (e): *"both print the one act: retire it … and
+		# `lane-end`'s `--retire` is the door."* The read is still named,
+		# because `--retire` takes the pid or the uuid that read prints.
+		*) printf '%-24s %s\n' "" "DEFECT: $r_fk live fork(s) of this lane's transcript — name them: $LANES_EDIT forks $r_lane; retire each: lane-end $r_lane --retire <pid>" ;;
 		esac
 		n=$((n + 1))
 	done <<EOF
