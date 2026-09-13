@@ -4184,8 +4184,32 @@ is   "lanes exits 0 with rows" "$rc" 0
 has  "…naming this workstation's lanes" "$out" "repoA11-1"
 has  "…with the recorded profile" "$out" "team-05a"
 has  "…the recorded directory" "$out" "$A11_DIR"
-has  "…and the exact restart line for a lane that is not live" "$out" "restart repoA11-1"
+has  "…and the exact restart line for a PAUSED lane, which is what column 10 is" "$out" "restart repoA11-1"
 has  "…saying it read locally and how old that answer is" "$out" "read locally"
+# F-X20 — COLUMN 10 IS *"for a **paused** lane"*, AND THE LISTING PRINTED ONE
+# FOR EVERY STATE BUT `LIVE`. A lane whose last act was its last is not a lane
+# a person restarts, and offering `restart <lane>` for an `ENDED` or a `RETIRED`
+# one is the listing telling them to reopen something that was closed on
+# purpose. Two fixtures, because the two closing verbs are two words.
+add_seed_row "| \`repoFX20-1\` | harness \`$A11_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoFX20/a.md | ENDED |"
+add_seed_row "| \`repoFX20-2\` | harness \`$A11_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoFX20/b.md | RETIRED |"
+{ printf '# lane repoFX20-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoFX20-1, session %s@Eagle, 2026-09-12T09:00:00Z, lane:repoFX20-1 → home opensoft/repoA11; estate repoA11; dir %s; profile team-05a\n' "$A11_ID" "$A11_DIR"
+  printf 'ENDED — lane repoFX20-1, session %s@Eagle, 2026-09-12T11:00:00Z, lane:repoFX20-1 — window closing; NOTHING IN FLIGHT\n' "$A11_ID"
+} > "$LOGD/repoFX20-1.md"
+{ printf '# lane repoFX20-2 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoFX20-2, session %s@Eagle, 2026-09-12T09:00:00Z, lane:repoFX20-2 → home opensoft/repoA11; estate repoA11; dir %s; profile team-05a\n' "$A11_ID" "$A11_DIR"
+  printf 'RETIRED — lane repoFX20-2, session %s@Eagle, 2026-09-12T11:00:00Z, lane:repoFX20-2 — not coming back\n' "$A11_ID"
+} > "$LOGD/repoFX20-2.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed an ENDED and a RETIRED lane for column 10"
+git -C "$WIP" push -q origin main
+run "$LANES_CMD" </dev/null
+has   "an ENDED lane is still a row in the listing" "$out" "repoFX20-1"
+hasnt "…with no restart line, because column 10 is a PAUSED lane's" "$out" "restart repoFX20-1"
+has   "a RETIRED lane is still a row too" "$out" "repoFX20-2"
+hasnt "…and gets no restart line either" "$out" "restart repoFX20-2"
+has   "…while a PAUSED lane still gets one, so the column still means something" "$out" "restart repoA11-1"
 hasnt "a lane of ANOTHER workstation is not in this workstation's listing" "$out" "repoA11-3"
 run "$LANES_CMD" --all </dev/null
 has  "…and --all lists it" "$out" "repoA11-3"

@@ -207,14 +207,23 @@ while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_
 	none | 'none open' | '') : ;;
 	*) printf '%-26s holds: %s\n' "" "$r_obj" ;;
 	esac
-	# THE EXACT RESTART COMMAND, FILLED IN, for a lane that is not live — which
-	# is what a person reading this listing is here for. A lane whose record
-	# carries no profile yet cannot be restarted by name (nothing here may guess
-	# one: a wrong profile is a launch into another account), so the line says
-	# what supplies it rather than printing a command that would refuse.
+	# THE EXACT RESTART COMMAND, FILLED IN, FOR A **PAUSED** LANE — clause (j)
+	# column 10's own word, and F-X20's correction. This printed one for every
+	# state but `LIVE`, so an `ENDED` and a `RETIRED` lane each got a `restart`
+	# line: a lane whose last act was its last is not a lane a person restarts,
+	# and offering the command anyway is the listing telling them to reopen
+	# something that was closed on purpose. `lane-start <repo> <n>` opens a new
+	# one, which is a different act with a different name.
+	#
+	# AND NOT FOR `IDLE` EITHER, WHICH IS THE CASE WORTH NAMING. An `IDLE` lane
+	# — last verb `STARTED` or `RESUMED`, no live session — is a lane whose
+	# session went away without pausing, and `restart` would very likely work on
+	# it. The clause says *"for a **paused** lane"* and this command does not get
+	# to widen a ratified column on its own judgement; if that is the wrong
+	# reading, it is one word in clause (j) and not a change here. The row is
+	# still printed with all its facts — only the offered command is withheld.
 	case "$r_state" in
-	LIVE) : ;;
-	*)
+	PAUSED)
 		# A PAUSED LANE WHOSE RECORD CARRIES NO `profile` GETS NO `restart` LINE
 		# (SPEC rev 4 §15). It gets the form that works today with the profile
 		# named as the ONE TOKEN THE OPERATOR MUST SUPPLY, because a line that
