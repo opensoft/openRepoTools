@@ -77,7 +77,12 @@ real_ws_path() {
 }
 REAL_WS="$(real_ws_path 2>/dev/null || :)"
 cleanup() {
+  # Every long-lived fixture process, because they now outlive the whole run by
+  # design (see `sleep 3000` below) and a suite that dies early must not leave
+  # one behind. `kill` on an empty or already-reaped pid is a no-op here.
   [ -n "${LIVE_PID:-}" ] && kill "$LIVE_PID" 2>/dev/null
+  [ -n "${G_PANE:-}" ] && kill "$G_PANE" 2>/dev/null
+  [ -n "${G_OUT:-}" ] && kill "$G_OUT" 2>/dev/null
   [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ] && rm -rf -- "$SANDBOX"
   return 0
 }
@@ -139,18 +144,36 @@ pending() {   # <name> <got> <want> <what lands it>
   printf 'PEND %s\n       expected [%s], got [%s]\n       lands with: %s\n' "$1" "$3" "$2" "$4"
 }
 is()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected [$3], got [$2]"; fi; }
-# `LC_ALL=C tr`, because BSD `tr` is not multibyte-aware: on macOS, in a UTF-8
-# locale, it answers `Illegal byte sequence` and prints NOTHING for exactly the
-# messages this estate is written in — every one of them carries an em dash. A
-# failure whose `got:` is empty is a failure nobody can read, and these two
-# lines are the only place a failure is ever rendered (R-A9-11). Bytes are all
-# a newline-to-`~` swap ever wanted — and `cut -c` is the same rule one pipe
-# later: in a UTF-8 locale BSD `cut` answers `cut: stdin: Illegal byte
-# sequence` for a string this one has already cut somewhere else, and a
-# diagnostic that dies because of what it is diagnosing is worse than a blunt
-# one. Measured on the macOS job at `c405eb4`.
-has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "expected to contain [$3]; got: $(printf '%s' "$2" | LC_ALL=C tr '\n' '~' | LC_ALL=C cut -c1-400)" ;; esac; }
-hasnt() { case "$2" in *"$3"*) bad "$1" "did NOT expect [$3]; got: $(printf '%s' "$2" | LC_ALL=C tr '\n' '~' | LC_ALL=C cut -c1-400)" ;; *) ok "$1" ;; esac; }
+# NO `tr` AND NO `cut`: THE ONLY PLACE A FAILURE IS EVER RENDERED MUST NOT
+# DEPEND ON EITHER (A9 Addendum 4, R-A9-11), and this estate's messages are
+# full of em dashes. Both spellings this line has already had were lost on the
+# macOS job, in opposite directions:
+#
+#   `tr '\n' '~' | cut -c1-400`   BSD `tr` is not multibyte-aware and answers
+#   (`9000e86`)                   `Illegal byte sequence` for an em dash,
+#                                 printing NOTHING. A failure whose `got:` is
+#                                 empty is a failure nobody can read.
+#   `LC_ALL=C tr | LC_ALL=C cut`  fixes that, and then truncates BYTES — which
+#   (`dcf1027`, `d3d59b5`)        split one em dash in half and cost the WHOLE
+#                                 998-line transcript to a single
+#                                 `UnicodeDecodeError` in the pytest wrapper.
+#
+# Bash does both jobs with no process at all: `${e//…}` swaps the newlines and
+# `${e:0:400}` truncates by CHARACTER wherever the locale is a UTF-8 one. The
+# macOS runner's is — that is not an assumption, it is what the first spelling
+# proved: BSD `tr` reports `Illegal byte sequence` only in a multibyte locale,
+# and it reported it there. And the guarantee does not rest on that reading
+# anyway: `tests/test_lane_helpers_suite.py` decodes this transcript with
+# `errors="replace"`, so the very worst a locale nobody expected can now do is
+# put one `\ufffd` in one line, where it used to hide all 998.
+#
+# `$tilde`, NOT a literal `~`: bash TILDE-EXPANDS the replacement half of
+# `${var//pattern/replacement}`, so a bare `~` there puts `$HOME` between every
+# pair of lines — measured, and it made a one-line excerpt unreadable in
+# exactly the failures it exists to render.
+excerpt() { local e tilde='~'; e="${1//$'\n'/$tilde}"; printf '%s' "${e:0:400}"; }
+has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "expected to contain [$3]; got: $(excerpt "$2")" ;; esac; }
+hasnt() { case "$2" in *"$3"*) bad "$1" "did NOT expect [$3]; got: $(excerpt "$2")" ;; *) ok "$1" ;; esac; }
 # lane-start mints a fresh uuid for a NEW session, so its launch line carries a
 # value no test can predict. `launch_of` removes just that pair, leaving the
 # rest of the command line exactly comparable; `minted_of` returns the uuid.
@@ -483,7 +506,29 @@ YAML
 sessions_dir="$HOME/.claude-profiles/profiles/opensoft/team/t1/sessions"
 mkdir -p "$sessions_dir" "$HOME/.claude/sessions"
 
-sleep 300 & LIVE_PID=$!
+# 3000 SECONDS, AND THE NUMBER IS TIED TO THE RUNNER'S OWN BOUND (A9 Addendum
+# 4, R-A9-11). This process IS the liveness fixture: every "a live holder …"
+# case from here to the foot of the file asks whether it is still running, and
+# `lane-start`'s own refusals name its pid. On macOS it is the ONLY thing they
+# ask — there is no `/proc` there, so `live_start` below is empty and
+# `lanes-edit.sh:1719`'s `procStart` half never runs, leaving `kill -0` on this
+# pid as the whole of the answer.
+#
+# At `sleep 300` this fixture outlived the suite on Linux (136 s here, 229 s
+# under pytest) and ran out of seconds INSIDE it on anything slower. The macOS
+# job takes ~900 s for this file alone, so the fixture died a third of the way
+# in and every liveness case after that point got a quiet, plausible-looking
+# wrong answer. Measured, by starting it already reaped: 196 of 998. (It was
+# not the largest cause of the 438 at `d3d59b5` — `lanes-edit.sh`'s padded `wc`
+# was, and the two overlap — but it is the one that would have been left
+# standing after that fix, which is the whole reason a suite fixes both at
+# once.)
+#
+# The number must exceed `TIMEOUT_SECONDS` (2400) or the suite can outlive its
+# own evidence on a runner slow enough to hit the bound; `cleanup` kills it on
+# every exit path, and the last assertion in this file checks it was still
+# running when the run ended.
+sleep 3000 & LIVE_PID=$!
 live_start="$(cut -d' ' -f22 "/proc/$LIVE_PID/stat" 2>/dev/null || printf '')"
 sleep 0.05 & DEAD_PID=$!
 wait "$DEAD_PID" 2>/dev/null
@@ -3056,9 +3101,9 @@ is    "an unknown option is refused" "$rc" 2
 # Two live processes: one stands in for the pane's own, the other is alive and
 # under no pane at all. Both are children of this shell, so neither is under the
 # OTHER — which is exactly the distinction the ruling turns on.
-sleep 300 & G_PANE=$!
+sleep 3000 & G_PANE=$!
 g_pane_start="$(cut -d' ' -f22 "/proc/$G_PANE/stat" 2>/dev/null || printf '')"
-sleep 300 & G_OUT=$!
+sleep 3000 & G_OUT=$!
 g_out_start="$(cut -d' ' -f22 "/proc/$G_OUT/stat" 2>/dev/null || printf '')"
 
 # The fields the older helpers never write: `kind`, an ABSENT `tmux` (which is
@@ -3962,6 +4007,15 @@ is   "the suite never wrote the real register" \
 # sandbox's own workspace.yaml names, and there is at least one of them.
 is   "…and every log it did create is inside the sandbox workspace" \
      "$( [ "$(ls "$WIP/lanes/log" 2>/dev/null | grep -c .)" -gt 0 ] && echo yes || echo no )" "yes"
+
+# THE FIXTURE EVERY LIVENESS CASE ABOVE DEPENDS ON, ASSERTED LAST (A9 Addendum
+# 4, R-A9-11). A `sleep` that runs out of seconds before the suite runs out of
+# cases does not announce itself: it turns "a live holder …" into "no live
+# holder …" one case at a time, and 196 red lines say nothing about why. This
+# one line does. Red here and nowhere else means the bound at `sleep 3000` is
+# what needs raising; red here beside two hundred others means it is why.
+is   "the liveness fixture was still running when the run ended" \
+     "$(kill -0 "$LIVE_PID" 2>/dev/null && printf alive || printf gone)" alive
 
 echo "----"
 if [ "$pending_n" != 0 ]; then
