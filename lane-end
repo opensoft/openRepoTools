@@ -95,11 +95,18 @@
 #   2  refusal — bad arguments, no row (or two), or something still in flight
 #
 # ENVIRONMENT
-#   LANES_FILE  default <script dir>/LANES.md
-#   LANES_EDIT  default <script dir>/lanes-edit.sh
+#   LANES_FILE  default <the workspace repository>/lanes/LANES.md
+#   LANES_EDIT  default lanes-edit.sh beside this command
+#   LANES_WORKSPACE_ROOT  the workspace repository, overriding workspace.yaml's
+#               `path:` — the test seam
+#   AGENT_PROTOCOL_ROOT   dir holding workspace.yaml (default ~/.agents)
+#   OPENREPOTOOLS_BIN_DIR where `--install` put the commands (default
+#               ~/.local/bin) — searched for lanes-edit.sh
 #
-# It spells no absolute path of its own: the register and its writer are found
-# beside this script's own REAL path, so the `~/.local/bin` symlink works.
+# It spells no absolute path of its own. Since Amendment 9(a) the register is
+# found through `$AGENT_PROTOCOL_ROOT/workspace.yaml` rather than beside this
+# file — this is an installed command now — and its WRITER is found beside it,
+# because `--install` places the two together.
 
 set -euo pipefail
 
@@ -109,8 +116,158 @@ SELF="${BASH_SOURCE[0]}"
 RESOLVED="$(readlink -f -- "$SELF" 2>/dev/null || printf '%s' "$SELF")"
 SCRIPT_DIR="$(cd -- "$(dirname -- "$RESOLVED")" && pwd)"
 
-LANES_FILE="${LANES_FILE:-$SCRIPT_DIR/LANES.md}"
-LANES_EDIT="${LANES_EDIT:-$SCRIPT_DIR/lanes-edit.sh}"
+# --- THE WORKSPACE REPOSITORY (lane-collision-protocol Amendment 9(a)) -------
+#
+# The person's data — the register `lanes/LANES.md`, the object logs
+# `lanes/log/`, the handoffs, the manifests `park` writes, and a
+# `lanes/repos.tsv` override — is found through
+# `$AGENT_PROTOCOL_ROOT/workspace.yaml`, and NEVER from this file's own
+# location. `resume:466` and `status:1673` already read that same file under
+# that same name, and Amendment 9(a) mints no second one: a second way to find
+# it is a second answer.
+#
+# Deriving it from here stopped being POSSIBLE the moment this became an
+# installed regular file in `~/.local/bin` with no register anywhere near it,
+# and it stopped being WANTED for a subtler reason: a file's location on disk
+# is evidence about the file, not about a person's data.
+#
+# THESE FOUR FUNCTIONS ARE A DELIBERATE COPY, byte for byte, across
+# `lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates` — the same trade
+# openRepoTools already makes for its own fetch shim (`openRepoTools:93-100`).
+# A shared `lanes-common.sh` would be a TENTH file for `--install` to place and
+# a broken helper the first time somebody copied only some of them. Each of
+# these is one file a person has on PATH.
+#
+# FAILING TO FIND IT IS A REFUSAL, NEVER A GUESS. No file, no `path:`, no
+# `repository:`, or a `path:` that is not the root of a checkout of the
+# `repository:` named beside it → the caller refuses, exit 1 — the code
+# `lanes-edit.sh` has always used for *registry not found* — with the fix
+# named: `openRepoTools wip init`. Nothing here ever creates that file, writes
+# a register, or falls back to a path derived from its own location. THE
+# CHECKOUT TEST IS NEW: nothing validated it before this, so a `path:` pointing
+# at some other repository used to be accepted and now is not.
+#
+# `LANES_WORKSPACE_ROOT` is the test seam and the only override — the seam
+# `lane-start` already spelled for handoff resolution, widened to the whole
+# question so `test_lane_helpers.sh` can point every helper at one sandbox.
+LANES_WS_WHY=""
+
+lanes_ws_yaml() { printf '%s\n' "${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace.yaml"; }
+
+# `key: value` at the TOP LEVEL only, first occurrence, with an inline `#`
+# comment and surrounding quotes stripped and a leading `~` expanded against
+# $HOME (nothing expands a bare `~` inside a file). The anchored `^key:` never
+# reaches into the INDENTED `orgs:` map, which Amendment 9(a) puts out of
+# scope: these helpers read `repository:` and `path:` and nothing else, because
+# one register in the first workspace repository is the whole rule — the
+# register never follows that map. Two lines of sed, because a YAML parser is
+# not a dependency any of these files will take for one scalar.
+lanes_ws_field() {
+  local v
+  v="$(sed -n "s/^$1:[[:space:]]*//p" -- "$2" 2>/dev/null | head -n 1 |
+    sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//')"
+  v="${v%\"}"; v="${v#\"}"
+  v="${v%\'}"; v="${v#\'}"
+  case "$v" in
+  '~') v="$HOME" ;;
+  '~/'*) v="$HOME/${v#'~/'}" ;;
+  esac
+  printf '%s\n' "$v"
+}
+
+# One of the spellings `git remote get-url origin` prints for one GitHub
+# repository, reduced to a bare lowercased `<owner>/<name>` so it can be
+# compared against workspace.yaml's own `<owner>/<name>`. A URL that is not
+# GitHub's is compared as it stands, lowercased — which is what lets a sandbox
+# name a bare local origin and still be checked.
+lanes_ws_norm() {
+  local u="${1%.git}"
+  case "$u" in
+  https://github.com/*) u="${u#https://github.com/}" ;;
+  ssh://git@github.com/*) u="${u#ssh://git@github.com/}" ;;
+  git@github.com:*) u="${u#git@github.com:}" ;;
+  esac
+  printf '%s' "$u" | tr '[:upper:]' '[:lower:]'
+}
+
+# Prints the workspace checkout's real root, or returns 1 having set
+# $LANES_WS_WHY to the one sentence that says which of the five ways it failed.
+# ROOT-NESS IS ITS OWN CHECK: `rev-parse --is-inside-work-tree` and
+# `remote get-url origin` both succeed from any SUBDIRECTORY of a work tree, so
+# a `path:` naming a subdirectory would otherwise be accepted and resolve
+# `<path>/lanes/LANES.md` inside the wrong directory.
+lanes_workspace_root() {
+  local yaml repo path origin toplevel real
+  LANES_WS_WHY=""
+  if [ -n "${LANES_WORKSPACE_ROOT:-}" ]; then
+    printf '%s\n' "$LANES_WORKSPACE_ROOT"
+    return 0
+  fi
+  yaml="$(lanes_ws_yaml)"
+  if [ ! -r "$yaml" ]; then
+    LANES_WS_WHY="there is no $yaml"
+    return 1
+  fi
+  repo="$(lanes_ws_field repository "$yaml")"
+  path="$(lanes_ws_field path "$yaml")"
+  if [ -z "$repo" ]; then
+    LANES_WS_WHY="$yaml names no \`repository:\`"
+    return 1
+  fi
+  if [ -z "$path" ]; then
+    LANES_WS_WHY="$yaml names no \`path:\`"
+    return 1
+  fi
+  if ! git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    LANES_WS_WHY="$yaml names path: $path, which is not a git checkout"
+    return 1
+  fi
+  origin="$(git -C "$path" remote get-url origin 2>/dev/null || :)"
+  if [ "$(lanes_ws_norm "$origin")" != "$(lanes_ws_norm "$repo")" ]; then
+    LANES_WS_WHY="$yaml names repository: $repo, but $path is a checkout of ${origin:-no origin at all}"
+    return 1
+  fi
+  toplevel="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null || :)"
+  real="$(cd -- "$path" 2>/dev/null && pwd -P)" || real=""
+  if [ -z "$real" ] || [ "$toplevel" != "$real" ]; then
+    LANES_WS_WHY="$yaml names path: $path, which is not the ROOT of that checkout (${toplevel:-unknown} is)"
+    return 1
+  fi
+  printf '%s\n' "$real"
+}
+
+# The refusal's body, so all four helpers say the same thing in the same words.
+lanes_workspace_why() {
+  printf '%s' "the workspace repository could not be found — ${LANES_WS_WHY:-no reason recorded}.
+    Amendment 9(a): every lane helper reads \`repository:\` and \`path:\` from
+    $(lanes_ws_yaml), never from its own location. One command writes that
+    file, creates or clones the repository and places the symlinks:
+        openRepoTools wip init"
+}
+
+# THE REGISTER AND ITS WRITER, after the move (Amendment 9(b)). The register is
+# the workspace repository's `lanes/LANES.md`, found through the pointer file
+# above. The writer is `lanes-edit.sh`, which `--install` places BESIDE this
+# command — in `~/.local/bin` when installed, in the checkout when run from one
+# — so `$SCRIPT_DIR` answers both without a second rule. `$OPENREPOTOOLS_BIN_DIR`
+# and `$PATH` are the fallbacks for a command copied somewhere on its own.
+LANES_WS_ROOT=""
+if [ -z "${LANES_FILE:-}" ] || [ -z "${LANES_REPO:-}" ]; then
+  LANES_WS_ROOT="$(lanes_workspace_root || :)"
+fi
+: "${LANES_REPO:=$LANES_WS_ROOT}"
+LANES_FILE="${LANES_FILE:-${LANES_WS_ROOT:+$LANES_WS_ROOT/lanes/LANES.md}}"
+
+lanes_edit_default() {
+  local d
+  [ -x "$SCRIPT_DIR/lanes-edit.sh" ] && { printf '%s\n' "$SCRIPT_DIR/lanes-edit.sh"; return 0; }
+  d="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
+  [ -x "$d/lanes-edit.sh" ] && { printf '%s\n' "$d/lanes-edit.sh"; return 0; }
+  command -v lanes-edit.sh 2>/dev/null && return 0
+  printf '%s\n' "$SCRIPT_DIR/lanes-edit.sh"
+}
+LANES_EDIT="${LANES_EDIT:-$(lanes_edit_default)}"
+
 
 LE_TMP=""
 cleanup() { [ -n "${LE_TMP:-}" ] && rm -f -- "$LE_TMP"; return 0; }
@@ -164,8 +321,9 @@ case "${#positional[@]}" in
 esac
 [[ "$LANE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "'$LANE' is not a lane name (allowed: letters, digits, . _ -)" 2
 
-[ -f "$LANES_FILE" ] || die "no register at $LANES_FILE — this script must sit beside LANES.md (or set LANES_FILE)" 1
-[ -x "$LANES_EDIT" ] || die "no register writer at $LANES_EDIT — it must sit beside LANES.md (or set LANES_EDIT)" 1
+if [ -z "${LANES_FILE:-}" ]; then die "$(lanes_workspace_why)" 1; fi
+[ -f "$LANES_FILE" ] || die "no register at $LANES_FILE — the workspace repository $(lanes_ws_yaml) names carries no lanes/LANES.md. \`openRepoTools wip init\` seeds one (it is idempotent); or set LANES_FILE" 1
+[ -x "$LANES_EDIT" ] || die "no register writer at $LANES_EDIT — \`lanes-edit.sh\` is installed beside this command by \`openRepoTools --install\`. Run that, or set LANES_EDIT" 1
 
 # `--home` IS VALIDATED BEFORE ANYTHING IS WRITTEN. It is for a PRE-CUTOVER
 # lane, and `lanes-edit.sh` refuses it once the lane's own log records a home —

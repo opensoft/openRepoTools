@@ -16,10 +16,15 @@
 #
 #   Every path a lane already uses keeps resolving:
 #   `~/projects/xFactory/LANES.md` and `~/projects/xFactory/lanes-edit.sh`
-#   are symlinks into the checkout, placed by its `scripts/link-estates`.
-#   This script never spells the checkout's own path — it discovers the
-#   repository root with `git rev-parse --show-toplevel` from its own
-#   directory, so the clone may live wherever a workstation likes.
+#   are symlinks into the checkout, placed by `link-estates`.
+#   This script never spells the checkout's own path, and since Amendment 9(a)
+#   it no longer derives it from its own location either: it reads
+#   `repository:` and `path:` from `$AGENT_PROTOCOL_ROOT/workspace.yaml`, the
+#   same pointer file `resume` and `status` already read. This file is an
+#   installed command in `~/.local/bin` with no register anywhere near it, so
+#   its own directory is evidence about the command and not about a person's
+#   data. Failing to find the workspace is a refusal naming
+#   `openRepoTools wip init`, never a guess.
 #
 # WHY THIS EXISTS
 #   LANES.md is edited by many concurrent lanes on more than one workstation.
@@ -188,11 +193,16 @@
 #   content touches a row other than the caller's own $LANES_LANE.
 #
 # ENVIRONMENT
-#   LANES_FILE         registry path        (default: <script dir>/LANES.md)
-#   LANES_DIR          dir holding it       (default: dir of the resolved script)
-#   LANES_REPO         checkout root        (default: `git rev-parse --show-toplevel`
-#                                            from LANES_DIR — one level up from
-#                                            `lanes/`; never a literal path)
+#   LANES_FILE         registry path        (default: <LANES_DIR>/LANES.md)
+#   LANES_DIR          dir holding it       (default: <LANES_REPO>/lanes)
+#   LANES_REPO         checkout root        (default: the `path:` in
+#                                            $AGENT_PROTOCOL_ROOT/workspace.yaml,
+#                                            checked to be a checkout of the
+#                                            `repository:` beside it — Amendment
+#                                            9(a); never a literal path)
+#   LANES_WORKSPACE_ROOT  that `path:`, overridden  (the test seam; nothing else
+#                                            sets it)
+#   AGENT_PROTOCOL_ROOT  dir holding workspace.yaml  (default: ~/.agents)
 #   LANES_PATH         pathspec of the register RELATIVE to LANES_REPO
 #                                           (default: `lanes/LANES.md`, derived
 #                                            with `git rev-parse --show-prefix`)
@@ -201,7 +211,9 @@
 #   LANES_WORKSTATION  workstation name     (default: `hostname -s`)
 #   LANES_NO_GIT=1     edit only, no commit/push (used by the test harness)
 #   LANES_LOG_DIR      the object logs     (default: <LANES_DIR>/log)
-#   LANES_REPOS_TSV    the alias table     (default: <LANES_DIR>/repos.tsv)
+#   LANES_REPOS_TSV    the per-wip alias OVERRIDE (default: <LANES_DIR>/repos.tsv)
+#   LANES_REPOS_TSV_SHIPPED  the organisation's alias table shipped by
+#                      openRepoTools (default: beside this command)
 #   LANES_SESSION      this session's TRANSCRIPT uuid, for the event lines
 #                      (default: the last uuid in the lane's row — Amendment 6(b))
 #   LANES_LANE_DIR     the lane's checkout, for project.yaml leg detection
@@ -228,23 +240,165 @@ else
 fi
 SCRIPT_DIR="$(cd -- "$(dirname -- "$RESOLVED")" && pwd)"
 
-LANES_DIR="${LANES_DIR:-$SCRIPT_DIR}"
+# --- THE WORKSPACE REPOSITORY (lane-collision-protocol Amendment 9(a)) -------
+#
+# The person's data — the register `lanes/LANES.md`, the object logs
+# `lanes/log/`, the handoffs, the manifests `park` writes, and a
+# `lanes/repos.tsv` override — is found through
+# `$AGENT_PROTOCOL_ROOT/workspace.yaml`, and NEVER from this file's own
+# location. `resume:466` and `status:1673` already read that same file under
+# that same name, and Amendment 9(a) mints no second one: a second way to find
+# it is a second answer.
+#
+# Deriving it from here stopped being POSSIBLE the moment this became an
+# installed regular file in `~/.local/bin` with no register anywhere near it,
+# and it stopped being WANTED for a subtler reason: a file's location on disk
+# is evidence about the file, not about a person's data.
+#
+# THESE FOUR FUNCTIONS ARE A DELIBERATE COPY, byte for byte, across
+# `lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates` — the same trade
+# openRepoTools already makes for its own fetch shim (`openRepoTools:93-100`).
+# A shared `lanes-common.sh` would be a TENTH file for `--install` to place and
+# a broken helper the first time somebody copied only some of them. Each of
+# these is one file a person has on PATH.
+#
+# FAILING TO FIND IT IS A REFUSAL, NEVER A GUESS. No file, no `path:`, no
+# `repository:`, or a `path:` that is not the root of a checkout of the
+# `repository:` named beside it → the caller refuses, exit 1 — the code
+# `lanes-edit.sh` has always used for *registry not found* — with the fix
+# named: `openRepoTools wip init`. Nothing here ever creates that file, writes
+# a register, or falls back to a path derived from its own location. THE
+# CHECKOUT TEST IS NEW: nothing validated it before this, so a `path:` pointing
+# at some other repository used to be accepted and now is not.
+#
+# `LANES_WORKSPACE_ROOT` is the test seam and the only override — the seam
+# `lane-start` already spelled for handoff resolution, widened to the whole
+# question so `test_lane_helpers.sh` can point every helper at one sandbox.
+LANES_WS_WHY=""
+
+lanes_ws_yaml() { printf '%s\n' "${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace.yaml"; }
+
+# `key: value` at the TOP LEVEL only, first occurrence, with an inline `#`
+# comment and surrounding quotes stripped and a leading `~` expanded against
+# $HOME (nothing expands a bare `~` inside a file). The anchored `^key:` never
+# reaches into the INDENTED `orgs:` map, which Amendment 9(a) puts out of
+# scope: these helpers read `repository:` and `path:` and nothing else, because
+# one register in the first workspace repository is the whole rule — the
+# register never follows that map. Two lines of sed, because a YAML parser is
+# not a dependency any of these files will take for one scalar.
+lanes_ws_field() {
+  local v
+  v="$(sed -n "s/^$1:[[:space:]]*//p" -- "$2" 2>/dev/null | head -n 1 |
+    sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//')"
+  v="${v%\"}"; v="${v#\"}"
+  v="${v%\'}"; v="${v#\'}"
+  case "$v" in
+  '~') v="$HOME" ;;
+  '~/'*) v="$HOME/${v#'~/'}" ;;
+  esac
+  printf '%s\n' "$v"
+}
+
+# One of the spellings `git remote get-url origin` prints for one GitHub
+# repository, reduced to a bare lowercased `<owner>/<name>` so it can be
+# compared against workspace.yaml's own `<owner>/<name>`. A URL that is not
+# GitHub's is compared as it stands, lowercased — which is what lets a sandbox
+# name a bare local origin and still be checked.
+lanes_ws_norm() {
+  local u="${1%.git}"
+  case "$u" in
+  https://github.com/*) u="${u#https://github.com/}" ;;
+  ssh://git@github.com/*) u="${u#ssh://git@github.com/}" ;;
+  git@github.com:*) u="${u#git@github.com:}" ;;
+  esac
+  printf '%s' "$u" | tr '[:upper:]' '[:lower:]'
+}
+
+# Prints the workspace checkout's real root, or returns 1 having set
+# $LANES_WS_WHY to the one sentence that says which of the five ways it failed.
+# ROOT-NESS IS ITS OWN CHECK: `rev-parse --is-inside-work-tree` and
+# `remote get-url origin` both succeed from any SUBDIRECTORY of a work tree, so
+# a `path:` naming a subdirectory would otherwise be accepted and resolve
+# `<path>/lanes/LANES.md` inside the wrong directory.
+lanes_workspace_root() {
+  local yaml repo path origin toplevel real
+  LANES_WS_WHY=""
+  if [ -n "${LANES_WORKSPACE_ROOT:-}" ]; then
+    printf '%s\n' "$LANES_WORKSPACE_ROOT"
+    return 0
+  fi
+  yaml="$(lanes_ws_yaml)"
+  if [ ! -r "$yaml" ]; then
+    LANES_WS_WHY="there is no $yaml"
+    return 1
+  fi
+  repo="$(lanes_ws_field repository "$yaml")"
+  path="$(lanes_ws_field path "$yaml")"
+  if [ -z "$repo" ]; then
+    LANES_WS_WHY="$yaml names no \`repository:\`"
+    return 1
+  fi
+  if [ -z "$path" ]; then
+    LANES_WS_WHY="$yaml names no \`path:\`"
+    return 1
+  fi
+  if ! git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    LANES_WS_WHY="$yaml names path: $path, which is not a git checkout"
+    return 1
+  fi
+  origin="$(git -C "$path" remote get-url origin 2>/dev/null || :)"
+  if [ "$(lanes_ws_norm "$origin")" != "$(lanes_ws_norm "$repo")" ]; then
+    LANES_WS_WHY="$yaml names repository: $repo, but $path is a checkout of ${origin:-no origin at all}"
+    return 1
+  fi
+  toplevel="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null || :)"
+  real="$(cd -- "$path" 2>/dev/null && pwd -P)" || real=""
+  if [ -z "$real" ] || [ "$toplevel" != "$real" ]; then
+    LANES_WS_WHY="$yaml names path: $path, which is not the ROOT of that checkout (${toplevel:-unknown} is)"
+    return 1
+  fi
+  printf '%s\n' "$real"
+}
+
+# The refusal's body, so all four helpers say the same thing in the same words.
+lanes_workspace_why() {
+  printf '%s' "the workspace repository could not be found — ${LANES_WS_WHY:-no reason recorded}.
+    Amendment 9(a): every lane helper reads \`repository:\` and \`path:\` from
+    $(lanes_ws_yaml), never from its own location. One command writes that
+    file, creates or clones the repository and places the symlinks:
+        openRepoTools wip init"
+}
+
+# The register is no longer the whole of its own worktree: since Amendment 5
+# it is one file, `lanes/LANES.md`, inside the workspace repository. So every
+# git call needs the checkout ROOT and a pathspec RELATIVE to it. Amendment
+# 9(a) says where the root comes from; `--show-prefix` still derives the
+# pathspec, because `LANES_DIR` may be pointed anywhere by a caller and the
+# pathspec must follow it.
+#
+# RESOLVED HERE, REFUSED LATER. An empty answer is carried rather than fatal,
+# so `--help`, the usage and `session-start` — a hook that must exit 0 on a
+# machine with no register at all — still run. The refusal is the
+# `registry not found` guard below, which is exit 1: the code this script has
+# always used for it and the code Amendment 9(a) quotes.
+LANES_WS_ROOT=""
+if [ -z "${LANES_REPO:-}" ] || { [ -z "${LANES_DIR:-}" ] && [ -z "${LANES_FILE:-}" ]; }; then
+  LANES_WS_ROOT="$(lanes_workspace_root || :)"
+fi
+: "${LANES_REPO:=$LANES_WS_ROOT}"
+if [ -z "${LANES_DIR:-}" ]; then
+  if [ -n "${LANES_FILE:-}" ]; then
+    LANES_DIR="$(dirname -- "$LANES_FILE")"
+  else
+    LANES_DIR="${LANES_WS_ROOT:+$LANES_WS_ROOT/lanes}"
+  fi
+fi
 LANES_FILE="${LANES_FILE:-$LANES_DIR/LANES.md}"
 WS="${LANES_WORKSTATION:-$(hostname -s)}"
 NO_GIT="${LANES_NO_GIT:-0}"
 LOCK="$LANES_DIR/.lanes-edit.lock"
 LOCK_HELD=0
-
-# The register is no longer the whole of its own worktree: since Amendment 5
-# it is one file, `lanes/LANES.md`, inside the workspace repository. So every
-# git call needs the checkout ROOT and a pathspec RELATIVE to it, both
-# DISCOVERED from this script's own directory — never spelled — because the
-# clone's path is a workstation's business. `--show-prefix` prints `lanes/`
-# from here; outside a repository both fall back to the pre-Amendment-5
-# behaviour, which is what the LANES_NO_GIT=1 test harness runs on.
-LANES_REPO="${LANES_REPO:-$(git -C "$LANES_DIR" rev-parse --show-toplevel 2>/dev/null || :)}"
-: "${LANES_REPO:=$LANES_DIR}"
-LANES_PATH="${LANES_PATH:-$(git -C "$LANES_DIR" rev-parse --show-prefix 2>/dev/null || :)${LANES_FILE##*/}}"
+LANES_PATH="${LANES_PATH:-$(git -C "${LANES_DIR:-.}" rev-parse --show-prefix 2>/dev/null || :)${LANES_FILE##*/}}"
 
 # The pathspecs the current invocation is writing. Every subcommand that
 # predates Amendment 7 writes exactly one, the register; a LANDING or LANDED
@@ -844,10 +998,29 @@ capture_register_edit() {
 #   which is why `who --landing` reads THOSE and not the logs. A LANDING or
 #   LANDED writes both files in one commit, with two pathspecs.
 
-LANES_PREFIX="${LANES_PREFIX:-$(git -C "$LANES_DIR" rev-parse --show-prefix 2>/dev/null || :)}"
+LANES_PREFIX="${LANES_PREFIX:-$(git -C "${LANES_DIR:-.}" rev-parse --show-prefix 2>/dev/null || :)}"
 LANES_LOG_DIR="${LANES_LOG_DIR:-$LANES_DIR/log}"
 LANES_LOG_PREFIX="${LANES_LOG_PREFIX:-${LANES_PREFIX}log/}"
-LANES_REPOS_TSV="${LANES_REPOS_TSV:-$LANES_DIR/repos.tsv}"
+
+# THE ALIAS TABLE IS TWO LAYERS, in this order (Amendment 9(b), ruling 3): the
+# per-wip OVERRIDE in the person's own workspace repository, then the
+# organisation's table shipped by openRepoTools and installed beside this
+# command. An override row replaces the shipped row for the same alias and adds
+# rows the shipped table does not carry; an alias in NEITHER layer is still a
+# refusal naming the fix, spell it `owner/repo` (Amendment 7(a), unchanged).
+#
+# The shipped copy sits BESIDE this file because `--install` places from one
+# list into one directory at one mode — the alternative was a second
+# destination and a second mode in two repositories, which is why the table
+# carries an executable bit it has no use for.
+LANES_REPOS_TSV="${LANES_REPOS_TSV:-${LANES_DIR:+$LANES_DIR/repos.tsv}}"
+if [ -z "${LANES_REPOS_TSV_SHIPPED:-}" ]; then
+  if [ -n "${OPENREPOTOOLS_BIN_DIR:-}" ] && [ -f "$OPENREPOTOOLS_BIN_DIR/repos.tsv" ]; then
+    LANES_REPOS_TSV_SHIPPED="$OPENREPOTOOLS_BIN_DIR/repos.tsv"
+  else
+    LANES_REPOS_TSV_SHIPPED="$SCRIPT_DIR/repos.tsv"
+  fi
+fi
 PROJECTS_ROOT="${PROJECTS_ROOT:-$HOME/projects}"
 NO_GITHUB="${LANES_NO_GITHUB:-0}"
 STALE_HOURS="${LANES_STALE_HOURS:-4}"     # Rule 1's threshold, reused
@@ -902,12 +1075,16 @@ ensure_log() {
 # Matching is case-insensitive: the register spells one repo `OpsxFactory`,
 # `opsXfactory` and `opsxfactory` in the same week.
 alias_lookup() {
-  [ -f "$LANES_REPOS_TSV" ] || return 1
-  awk -F'\t' -v k="$1" '
-    BEGIN { kl = tolower(k) }
-    /^[ \t]*#/ { next }
-    NF >= 2 { if (tolower($1) == kl) { print $2; found = 1; exit } }
-    END { exit(found ? 0 : 1) }' "$LANES_REPOS_TSV"
+  al_k="$1"
+  for al_tsv in "${LANES_REPOS_TSV:-}" "${LANES_REPOS_TSV_SHIPPED:-}"; do
+    [ -n "$al_tsv" ] && [ -f "$al_tsv" ] || continue
+    awk -F'\t' -v k="$al_k" '
+      BEGIN { kl = tolower(k) }
+      /^[ \t]*#/ { next }
+      NF >= 2 { if (tolower($1) == kl) { print $2; found = 1; exit } }
+      END { exit(found ? 0 : 1) }' "$al_tsv" && return 0
+  done
+  return 1
 }
 
 # canon_object <raw> [<home owner/repo>] — prints the canonical object key.
@@ -1694,7 +1871,13 @@ live_holder() {
       continue
     fi
     base="${name% (*)}"
-    if [ -n "$base" ] && [ "${base,,}" != "${lane,,}" ] && name_is_explicit "$src"; then continue; fi
+    # `tr`, not `${x,,}`: openRepoTools' CI parses every shipped bash file with
+    # macOS' /bin/bash 3.2, where `${x,,}` is a SYNTAX error and not a portable
+    # lowercase (.github/workflows/tests.yml — that job names this very
+    # construction as its example). Amendment 9's adoption act 3, obligation 4.
+    base_lc="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')"
+    lane_lc="$(printf '%s' "$lane" | tr '[:upper:]' '[:lower:]')"
+    if [ -n "$base" ] && [ "$base_lc" != "$lane_lc" ] && name_is_explicit "$src"; then continue; fi
     if record_is_here "$blob"; then verdict=here
     elif [ -n "$target" ];     then verdict=elsewhere
     else                            verdict=orphan
@@ -2450,15 +2633,32 @@ EOF
 # The table is handed in as `aliases`, one `<lowercased alias>\037<owner/repo>`
 # per line, because awk cannot read `repos.tsv` for itself here: this program's
 # stdin is the register.
+#
+# BOTH LAYERS, SHIPPED FIRST (Amendment 9(b)). This is the second reader of the
+# table — `alias_lookup` is the other — and it layers them the same way by
+# reading the shipped file before the override, so the LAST assignment to an
+# alias wins and an override row REPLACES the shipped row for that alias while
+# adding rows the shipped table does not carry. One map, emitted in the order
+# the aliases were first seen, so the output is stable.
 rule6_aliases() {
-  [ -f "$LANES_REPOS_TSV" ] || return 0
+  r6_files=()
+  for r6_tsv in "${LANES_REPOS_TSV_SHIPPED:-}" "${LANES_REPOS_TSV:-}"; do
+    [ -n "$r6_tsv" ] && [ -f "$r6_tsv" ] || continue
+    r6_files+=("$r6_tsv")
+  done
+  [ "${#r6_files[@]}" -gt 0 ] || return 0
   awk -F'\t' '
     /^[ \t]*#/ { next }
     NF >= 2 {
       a = $1; b = $2
       gsub(/^[ \t]+|[ \t]+$/, "", a); gsub(/^[ \t]+|[ \t]+$/, "", b)
-      if (a != "" && b != "") printf "%s\037%s\n", tolower(a), b
-    }' "$LANES_REPOS_TSV"
+      if (a != "" && b != "") {
+        k = tolower(a)
+        if (!(k in seen)) { seen[k] = 1; ord[++n] = k }
+        m[k] = b
+      }
+    }
+    END { for (i = 1; i <= n; i++) printf "%s\037%s\n", ord[i], m[ord[i]] }' "${r6_files[@]}"
 }
 
 RULE6_AWK='
@@ -3099,7 +3299,15 @@ shift || :
 # that breaks the session it was meant to orient.
 case "$cmd" in
   session-start) : ;;
-  *) [ -f "$LANES_FILE" ] || die "registry not found: $LANES_FILE" ;;
+  *)
+    if [ -z "$LANES_REPO" ] || [ -z "$LANES_DIR" ]; then
+      die "$(lanes_workspace_why)" 1
+    fi
+    [ -f "$LANES_FILE" ] || die "registry not found: $LANES_FILE
+    $LANES_REPO is the workspace repository $(lanes_ws_yaml) names, and it
+    carries no lanes/LANES.md. A repository seeded by \`openRepoTools wip init\`
+    has one; re-run it (it is idempotent) or pull that checkout." 1
+    ;;
 esac
 
 case "$cmd" in

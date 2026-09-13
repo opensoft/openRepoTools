@@ -26,25 +26,56 @@
 #               `gh` on this workstation is still on PATH and is not what
 #               stops the call.
 #
-# Run it from anywhere: ./lanes/test_lane_helpers.sh
+# WHERE THE FILES ARE, after lane-collision-protocol Amendment 9's move. The
+# four commands and the shipped alias table live at the ROOT of
+# `opensoft/openRepoTools` and are INSTALLED into a bin directory; the person's
+# workspace repository holds data and no code at all. This suite reproduces
+# exactly that: it copies the five files into a sandbox bin directory, seeds a
+# workspace repository with nothing but data in it, and writes the sandbox's own
+# `$AGENT_PROTOCOL_ROOT/workspace.yaml` to join the two — which is the default
+# resolution under test, since `:55` unsets every LANES_* seam so that the
+# DEFAULT is what runs.
+#
+# Run it from anywhere: ./tests/test_lane_helpers.sh
 # Exit 0 when every assertion passes, 1 otherwise.
 
 set -uo pipefail          # NOT -e: a failing assertion must not end the run
 
 SELF="$(readlink -f -- "${BASH_SOURCE[0]}")"
-SRC_DIR="$(cd -- "$(dirname -- "$SELF")" && pwd)"
+TESTS_DIR="$(cd -- "$(dirname -- "$SELF")" && pwd)"
+# RE-ANCHORED AT THE REPOSITORY ROOT (Amendment 9, act 3 obligation 5). This
+# file used to require `lane-start`, `lane-end`, `lanes-edit.sh` and
+# `repos.tsv` BESIDE it, because in `opensoft/brett-wip` they were. They are at
+# the root of `opensoft/openRepoTools` now and this suite is in `tests/`.
+SRC_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
 
-for f in lane-start lane-end lanes-edit.sh; do
+for f in lane-start lane-end lanes-edit.sh link-estates; do
   [ -x "$SRC_DIR/$f" ] || { echo "missing or not executable: $SRC_DIR/$f" >&2; exit 1; }
 done
-
-# What `lanes/log/` holds BEFORE anything runs. The last assertion compares the
-# list with this one: the suite must create nothing outside its sandbox, and
-# this checkout's own committed lane logs are not the suite's doing.
-SRC_LOG_BEFORE="$(ls "$SRC_DIR/log" 2>/dev/null | LC_ALL=C sort | tr '\n' ' ')"
+[ -f "$SRC_DIR/repos.tsv" ] || { echo "missing: $SRC_DIR/repos.tsv" >&2; exit 1; }
 
 SANDBOX="$(mktemp -d)"
 REAL_HOME="$HOME"
+
+# THE GUARDS AT THE FOOT OF THIS FILE, re-pointed (Amendment 9, act 3
+# obligation 5). They used to watch `$SRC_DIR/log` and `$SRC_DIR`'s register,
+# which after the move are not in this repository at all — against
+# openRepoTools' root they would pass vacuously and stop guarding the thing
+# they were written for. What they were written for is the OPERATOR'S OWN
+# register and logs, and those are now somewhere this suite can name: the
+# workspace repository the real `~/.agents/workspace.yaml` points at. Read here,
+# before `$HOME` is redirected, and compared again at the end.
+real_ws_path() {
+  local y p
+  y="$REAL_HOME/.agents/workspace.yaml"
+  [ -r "$y" ] || return 1
+  p="$(sed -n 's/^path:[[:space:]]*//p' -- "$y" 2>/dev/null | head -n1)"
+  p="${p%\"}"; p="${p#\"}"; p="${p%\'}"; p="${p#\'}"
+  case "$p" in '~') p="$REAL_HOME" ;; '~/'*) p="$REAL_HOME/${p#'~/'}" ;; esac
+  [ -n "$p" ] && [ -d "$p" ] || return 1
+  printf '%s\n' "$p"
+}
+REAL_WS="$(real_ws_path 2>/dev/null || :)"
 cleanup() {
   [ -n "${LIVE_PID:-}" ] && kill "$LIVE_PID" 2>/dev/null
   [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ] && rm -rf -- "$SANDBOX"
@@ -57,7 +88,15 @@ export TMPDIR="$SANDBOX/tmp"
 mkdir -p "$HOME/projects" "$TMPDIR" "$SANDBOX/fakebin"
 export PATH="$SANDBOX/fakebin:$PATH"
 export CLAUDE_CONFIG_DIR="$HOME/.claude"
-unset LANES_FILE LANES_EDIT LANES_REPO LANES_PATH LANES_LANE PROJECTS_ROOT CLAUDE_PROJECTS_DIR CLAUDE_BIN 2>/dev/null
+# `LANES_WORKSPACE_ROOT` joins the list Amendment 9(a) made it part of: with
+# every seam unset, the DEFAULT resolution — `$AGENT_PROTOCOL_ROOT/workspace.yaml`
+# — is what every case below exercises, which is the whole point of unsetting
+# them. `AGENT_PROTOCOL_ROOT` is then re-exported into the sandbox, two lines
+# down, so the default finds the sandbox's file and never the operator's.
+unset LANES_FILE LANES_EDIT LANES_REPO LANES_PATH LANES_LANE LANES_WORKSPACE_ROOT \
+      LANES_REPOS_TSV LANES_REPOS_TSV_SHIPPED PROJECTS_ROOT CLAUDE_PROJECTS_DIR CLAUDE_BIN 2>/dev/null
+export AGENT_PROTOCOL_ROOT="$HOME/.agents"
+mkdir -p "$AGENT_PROTOCOL_ROOT"
 
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); printf 'ok   %s\n' "$1"; }
@@ -114,14 +153,36 @@ STALE_H=4                      # lanes-edit.sh's default, Rule 1's four hours
 
 # ------------------------------------------------------------- the register
 
+# THE BIN DIRECTORY — the post-move world, where `--install` places the four
+# commands and the shipped alias table as regular files at 755. The workspace
+# repository below gets NONE of them: Amendment 9(a), data only.
+export OPENREPOTOOLS_BIN_DIR="$SANDBOX/bin"
+mkdir -p "$OPENREPOTOOLS_BIN_DIR"
+cp -p "$SRC_DIR/lane-start" "$SRC_DIR/lane-end" "$SRC_DIR/lanes-edit.sh" \
+      "$SRC_DIR/link-estates" "$SRC_DIR/repos.tsv" "$OPENREPOTOOLS_BIN_DIR/"
+chmod 755 "$OPENREPOTOOLS_BIN_DIR"/lane-start "$OPENREPOTOOLS_BIN_DIR"/lane-end \
+          "$OPENREPOTOOLS_BIN_DIR"/lanes-edit.sh "$OPENREPOTOOLS_BIN_DIR"/link-estates \
+          "$OPENREPOTOOLS_BIN_DIR"/repos.tsv
+# AFTER the fake bin, which must still win for `tmux` and `claude`.
+export PATH="$SANDBOX/fakebin:$OPENREPOTOOLS_BIN_DIR:$PATH"
+
 ORIGIN="$SANDBOX/origin.git"
 WIP="$HOME/projects/brett-wip"
 git init -q --bare -b main "$ORIGIN"
 git clone -q "$ORIGIN" "$WIP" 2>/dev/null
 git -C "$WIP" config user.email "test@example.invalid"
 git -C "$WIP" config user.name  "lane helper tests"
-mkdir -p "$WIP/lanes"
-cp -p "$SRC_DIR/lane-start" "$SRC_DIR/lane-end" "$SRC_DIR/lanes-edit.sh" "$SRC_DIR/repos.tsv" "$WIP/lanes/"
+mkdir -p "$WIP/lanes" "$WIP/handoffs"
+printf '# handoffs — one directory per estate\n' > "$WIP/handoffs/README.md"
+
+# THE POINTER FILE, which is the whole of the new resolution (Amendment 9(a)).
+# `repository:` is the sandbox's own bare origin rather than a GitHub slug, and
+# the helpers' checkout test compares the two after the same normalisation, so
+# a non-GitHub origin is checked exactly as a GitHub one is.
+{
+  printf 'repository: %s\n' "$ORIGIN"
+  printf 'path: %s\n' "$WIP"
+} > "$AGENT_PROTOCOL_ROOT/workspace.yaml"
 
 LANES="$WIP/lanes/LANES.md"
 {
@@ -216,12 +277,12 @@ printf 'LANDING — lane repoP-1, session %s@Eagle, 2026-09-11T01:10:00Z, PR #5 
 printf 'LANDED — lane repoP-1, session %s@Eagle, 2026-09-11T01:20:00Z, PR #5 into opensoft/Omni-B main → abc1234\n' "$DEAD_ID" >> "$LANES"
 # A LANDING inside Rule 6'"'"'s thirty minutes, for the other half of the test.
 printf 'LANDING — lane repoP-1, session %s@Eagle, %s, PR #91 into opensoft/repoFresh main\n' "$DEAD_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$LANES"
-git -C "$WIP" add -- lanes/LANES.md lanes/lane-start lanes/lane-end lanes/lanes-edit.sh lanes/repos.tsv
+git -C "$WIP" add -- lanes/LANES.md handoffs/README.md
 git -C "$WIP" commit -q -m "seed the sandbox register"
 git -C "$WIP" push -q origin main
 
-START="$WIP/lanes/lane-start"
-END="$WIP/lanes/lane-end"
+START="$OPENREPOTOOLS_BIN_DIR/lane-start"
+END="$OPENREPOTOOLS_BIN_DIR/lane-end"
 
 for r in repoA repoB repoC repoD repoE repoF repoG repoH; do mkdir -p "$HOME/projects/$r"; done
 git init -q -b main "$HOME/projects/repoA"
@@ -558,7 +619,7 @@ has  "…verbatim, and retired" "$(grep '^| `browser-ui-repair`' "$LANES")" "| R
 
 echo "== Amendment 7: the per-lane object log =="
 
-E="$WIP/lanes/lanes-edit.sh"
+E="$OPENREPOTOOLS_BIN_DIR/lanes-edit.sh"
 WS_S="$(hostname -s)"
 LOGD="$WIP/lanes/log"
 
@@ -726,12 +787,12 @@ hasnt "…and writing nothing to the taker's log" "$(cat "$LOGD/repoF-1.md")" "o
 
 # A claim is decided by which CLAIMED LANDS first, and a rebase is what makes
 # that decidable — so a checkout that cannot be rebased is refused outright.
-printf '# a peer left this here mid-write\n' >> "$WIP/lanes/lane-start"
+printf '# a peer left this here mid-write\n' >> "$WIP/handoffs/README.md"
 run env LANES_LANE=repoE-1 "$E" claim "opensoft/repoE#30" --no-github
 is   "claim refuses on a checkout that cannot be rebased" "$rc" 2
-has  "…naming the offending file" "$err" "lanes/lane-start"
+has  "…naming the offending file" "$err" "handoffs/README.md"
 has  "…and why it matters" "$err" "the race cannot be run safely here"
-git -C "$WIP" checkout -q -- lanes/lane-start
+git -C "$WIP" checkout -q -- handoffs/README.md
 run env LANES_LANE=repoE-1 "$E" claim "opensoft/repoE#30" --no-github
 is   "…and takes the claim once the tree is clean again" "$rc" 0
 
@@ -776,11 +837,11 @@ has  "…and writing the RELEASED line" "$(cat "$LOGD/repoE-1.md")" ", opensoft/
 # the lock and before the capture, so a write that refuses never leaves a
 # commit of somebody else's register line behind either.
 before_rev="$(git -C "$WIP" rev-parse HEAD)"
-printf '# a peer left this here mid-write\n' >> "$WIP/lanes/lane-start"
+printf '# a peer left this here mid-write\n' >> "$WIP/handoffs/README.md"
 printf 'and a register line at the same moment\n' >> "$LANES"
 run env LANES_LANE=repoE-1 "$E" claim "opensoft/repoE#35" --no-github
 is   "a dirty file that is NOT the register still refuses a claim" "$rc" 2
-has  "…naming it" "$err" "lanes/lane-start"
+has  "…naming it" "$err" "handoffs/README.md"
 has  "…and why it matters" "$err" "the race cannot be run safely here"
 has  "…with the recovery its own author runs" "$err" "handoff(<lane>@<workstation>)"
 hasnt "…writing nothing to the lane's log" "$(cat "$LOGD/repoE-1.md")" "opensoft/repoE#35"
@@ -792,7 +853,7 @@ is   "log refuses on the same checkout" "$rc" 2
 run env LANES_LANE=repoE-1 "$E" release "opensoft/repoE#32" "refused, never written" --no-github
 is   "release refuses on it as well" "$rc" 2
 hasnt "…so the release was not written either" "$(cat "$LOGD/repoE-1.md")" "refused, never written"
-git -C "$WIP" checkout -q -- lanes/lane-start
+git -C "$WIP" checkout -q -- handoffs/README.md
 
 # A LANDING reaches the same place by the other road: the register is one of
 # ITS OWN pathspecs, so the ordinary handle_preexisting call captures it and
@@ -803,11 +864,11 @@ is   "a LANDING still writes with a dirty register: that file is one of ITS path
 has  "…capturing the peer's line as its own commit first" "$err" "captured pre-existing edit"
 run env LANES_LANE=repoE-1 "$E" log LANDED "opensoft/repoE#41" "→" "def5678"
 is   "…and its LANDED closes it again" "$rc" 0
-printf '# a peer left this here mid-write\n' >> "$WIP/lanes/lane-start"
+printf '# a peer left this here mid-write\n' >> "$WIP/handoffs/README.md"
 run env LANES_LANE=repoE-1 "$E" log LANDING "opensoft/repoE#42" --no-github
 is   "…while an UNRELATED dirty file refuses a LANDING too: the exemption is those two paths and no others" "$rc" 2
-has  "…naming it" "$err" "lanes/lane-start"
-git -C "$WIP" checkout -q -- lanes/lane-start
+has  "…naming it" "$err" "handoffs/README.md"
+git -C "$WIP" checkout -q -- handoffs/README.md
 
 # --------------------------------------------------- the cross-repo warning
 
@@ -1581,7 +1642,7 @@ has   "…carrying the merge sha as a payload" "$(cat "$LOGD/repoZA-1.md")" ", o
 ZL_ID="aaaa0006-2222-4000-8000-aaaa00062222"
 write_record_ns "$sessions_dir/live-zl.json" "$ZL_ID" "$LIVE_PID" "$live_start" "othersess:@9.%9" "repozl-99" "derived" "busy"
 git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
-( cd "$CLONE2" && LANES_LANE=repoZL-1 ./lanes/lanes-edit.sh add-row \
+( LANES_WORKSPACE_ROOT="$CLONE2" LANES_LANE=repoZL-1 "$E" add-row \
     "| \`repoZL-1\` | harness \`$ZL_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoZL/x.md | ACTIVE |" ) >/dev/null 2>&1
 is    "the peer's row is on origin/main and not in this checkout" "$(grep -c '^| `repoZL-1`' "$LANES" || :)" 0
 run env LANES_NO_FETCH=1 "$E" live-holder repoZL-1
@@ -1597,7 +1658,7 @@ ZS_ID="aaaa0007-3333-4000-8000-aaaa00073333"
 write_record_ns "$sessions_dir/live-zs.json" "$ZS_ID" "$LIVE_PID" "$live_start" "othersess:@9.%9" "repozs-99" "derived" "busy"
 "$E" add-row "| \`repoZS-1\` | pending — set by the session's first act | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoZS/x.md | ACTIVE |" >/dev/null 2>&1
 git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
-( cd "$CLONE2" && LANES_LANE=repoZS-1 ./lanes/lanes-edit.sh replace-in-row repoZS-1 \
+( LANES_WORKSPACE_ROOT="$CLONE2" LANES_LANE=repoZS-1 "$E" replace-in-row repoZS-1 \
     "pending — set by the session's first act" "harness \`$ZS_ID\`" "the session stamps its own row" ) >/dev/null 2>&1
 is    "this checkout's row still records no session id" "$(grep '^| `repoZS-1`' "$LANES" | grep -c 'pending' || :)" 1
 zs_before="$(grep -c 'rename-window repoZS-1' "$FAKE_TMUX_LOG" || :)"
@@ -1610,7 +1671,7 @@ git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
 # lane-start: "this lane is new" is decided against what has LANDED, so a
 # second row is refused rather than written.
 git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
-( cd "$CLONE2" && LANES_LANE=repoZD-1 ./lanes/lanes-edit.sh add-row \
+( LANES_WORKSPACE_ROOT="$CLONE2" LANES_LANE=repoZD-1 "$E" add-row \
     "| \`repoZD-1\` | harness \`$DEAD_ID\` | Raven / test / brett | 2026-09-11T00:00Z | none | handoffs/repoZD/x.md | ACTIVE |" ) >/dev/null 2>&1
 is    "the peer's row for repoZD-1 is on origin/main and not here" "$(grep -c '^| `repoZD-1`' "$LANES" || :)" 0
 zd_before="$(grep -c 'rename-window repoZD-1' "$FAKE_TMUX_LOG" || :)"
@@ -1666,7 +1727,7 @@ hasnt "…so no ENDED line is missing from a closed lane" "$(cat "$LOGD/repoZH-1
 # working tree that a fetch does not move.
 "$E" add-row "| \`repoZZ-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoZZ/x.md | IDLE, NOTHING CLAIMED |" >/dev/null 2>&1
 git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
-( cd "$CLONE2" && LANES_LANE=repoZZ-1 ./lanes/lanes-edit.sh append-row-status repoZZ-1 \
+( LANES_WORKSPACE_ROOT="$CLONE2" LANES_LANE=repoZZ-1 "$E" append-row-status repoZZ-1 \
     "2026-09-11T05:00Z LANDING #8 into repoZZ main" ) >/dev/null 2>&1
 is    "the peer's LANDING is on origin/main and not in this checkout's row" "$(grep '^| `repoZZ-1`' "$LANES" | grep -c 'LANDING #8' || :)" 0
 run   "$END" repoZZ-1
@@ -1818,7 +1879,7 @@ printf '{"type":"user"}\n' > "$tdir/$ZC1.jsonl"
 printf '{"type":"user"}\n' > "$tdir/$ZC2.jsonl"
 "$E" add-row "| \`repoZC-1\` | harness \`$ZC1\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoZC/x.md | ACTIVE |" >/dev/null 2>&1
 git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
-( cd "$CLONE2" && LANES_LANE=repoZC-1 ./lanes/lanes-edit.sh replace-in-row repoZC-1 \
+( LANES_WORKSPACE_ROOT="$CLONE2" LANES_LANE=repoZC-1 "$E" replace-in-row repoZC-1 \
     "harness \`$ZC1\`" "harness \`$ZC1\` → harness \`$ZC2\`" "the session stamps its own row" ) >/dev/null 2>&1
 
 # First, the reviewer's own sequence: this checkout is BEHIND and has not pulled.
@@ -2310,7 +2371,8 @@ printf '{"type":"custom-title","customTitle":"repoCN-2","sessionId":"%s"}\n' "$C
 "$E" add-row "| \`repoCN-2\` | harness \`$CN_B\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoCN/b.md | ACTIVE |" >/dev/null 2>&1
 is   "the cell names a handoff the register's checkout does NOT hold" "$([ -e "$WIP/handoffs/repoCN/b.md" ] && printf present || printf absent)" absent
 
-run env LANES_GIT="$SANDBOX/rejectgit" RJ_VERB=push LANES_WORKSPACE_ROOT="$WS2" "$START" --dir "$HOME/projects/repoA" repoCN-2 --no-launch
+run env LANES_GIT="$SANDBOX/rejectgit" RJ_VERB=push LANES_FILE="$LANES" LANES_REPO="$WIP" \
+        LANES_WORKSPACE_ROOT="$WS2" "$START" --dir "$HOME/projects/repoA" repoCN-2 --no-launch
 is   "…and a rejected push on THAT checkout exits 0 too" "$rc" 0
 has  "…the stamp written into the second checkout, not the register's" "$(cat "$WS2/handoffs/repoCN/b.md")" "RESUMED by $CN_B (lane repoCN-2) at "
 is   "…which the register's checkout never gained a copy of" "$([ -e "$WIP/handoffs/repoCN/b.md" ] && printf present || printf absent)" absent
@@ -2624,7 +2686,7 @@ unset FAKE_TMUX_WINDOW_NAME
 # this suite had ever read the document. A quoted line nobody reads is the same
 # defect as an untested sentence (RV-B2), one file over. Read from `$SRC_DIR`,
 # the checkout's own copy, which is the one a person opens.
-ss_doc="$(cat "$SRC_DIR/README-lanes.md" 2>/dev/null || :)"
+ss_doc="$(cat "$SRC_DIR/docs/README-lanes.md" 2>/dev/null || :)"
 has  "the README states the subcommand's THIRD safety property, not just two" "$ss_doc" "It never writes, it never touches the network, and it always exits 0"
 has  "…and carries the line every block ends with" "$ss_doc" "as of 4m ago (no fetch)"
 has  "…quoting the superseded-transcript branch as the hook really prints it" "$ss_doc" "WARNING: this is a superseded transcript of lane repoSS-1; the live one is <U>; you resumed <V> — exit this session and run: lane-start repoSS 1"
@@ -2974,8 +3036,17 @@ rm -rf "$H_LOCK"
 # records rather than on anything the suite did. The list is taken before the
 # first case runs (SRC_LOG_BEFORE, at the top) and compared with the list after
 # the last one.
-is   "the suite never created a log outside the sandbox" "$(ls "$SRC_DIR/log" 2>/dev/null | LC_ALL=C sort | tr '\n' ' ')" "$SRC_LOG_BEFORE"
-is   "the suite never wrote the real register" "$(git -C "$SRC_DIR" status --porcelain -- LANES.md log 2>/dev/null | grep -c .)" 0
+is   "the suite never created a log outside the sandbox" \
+     "$(ls "$REAL_WS/lanes/log" 2>/dev/null | grep -c '^repo[A-Z]' || :)" 0
+is   "the suite never wrote the real register" \
+     "$(grep -c '^| `repo[A-Z]' "$REAL_WS/lanes/LANES.md" 2>/dev/null || :)" 0
+# NEVER VACUOUS, whatever this host has. The two above compare the operator's
+# own workspace with itself and degrade to a true statement about nothing on a
+# CI runner that has no workspace at all; this one asserts the positive — the
+# logs the suite DID create are inside the sandbox, under the workspace the
+# sandbox's own workspace.yaml names, and there is at least one of them.
+is   "…and every log it did create is inside the sandbox workspace" \
+     "$( [ "$(ls "$WIP/lanes/log" 2>/dev/null | grep -c .)" -gt 0 ] && echo yes || echo no )" "yes"
 
 echo "----"
 printf '%s passed, %s failed\n' "$pass" "$fail"
