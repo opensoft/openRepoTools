@@ -126,6 +126,22 @@ lanes_ws_norm() {
   printf '%s' "$u" | tr '[:upper:]' '[:lower:]'
 }
 
+# Do these two name one repository? Equal after normalisation, OR the origin's
+# path ENDS in the `<owner>/<name>` the pointer file spells — which is how a
+# GitHub Enterprise host, an ssh alias and a local bare mirror laid out by
+# owner and name all say the same thing as `https://github.com/<owner>/<name>`.
+# The pointer file spells `<owner>/<name>` because that is what a person types;
+# `git remote get-url` spells a URL because that is what git stores.
+lanes_ws_same_repo() {
+  local a b
+  a="$(lanes_ws_norm "$1")"
+  b="$(lanes_ws_norm "$2")"
+  [ -n "$a" ] && [ -n "$b" ] || return 1
+  [ "$a" = "$b" ] && return 0
+  case "$a" in */"$b") return 0 ;; esac
+  return 1
+}
+
 # Prints the workspace checkout's real root, or returns 1 having set
 # $LANES_WS_WHY to the one sentence that says which of the five ways it failed.
 # ROOT-NESS IS ITS OWN CHECK: `rev-parse --is-inside-work-tree` and
@@ -159,7 +175,7 @@ lanes_workspace_root() {
     return 1
   fi
   origin="$(git -C "$path" remote get-url origin 2>/dev/null || :)"
-  if [ "$(lanes_ws_norm "$origin")" != "$(lanes_ws_norm "$repo")" ]; then
+  if ! lanes_ws_same_repo "$origin" "$repo"; then
     LANES_WS_WHY="$yaml names repository: $repo, but $path is a checkout of ${origin:-no origin at all}"
     return 1
   fi

@@ -2492,7 +2492,7 @@ SS_NEW="aaaa000c-3333-4000-8000-aaaa000c3333"
 run env LANES_LANE=repoSS-1 "$E" claim "opensoft/repoSS#5" --home opensoft/repoSS --no-github
 is   "the hook's lane holds an object to report" "$rc" 0
 
-ss_hook='{"session_id":"%s","source":"%s","cwd":"/home/x/projects/repoSS","hook_event_name":"SessionStart"}'
+ss_hook='{"session_id":"%s","source":"%s","cwd":"/sandbox/projects/repoSS","hook_event_name":"SessionStart"}'
 ss_run() {   # <session id> <source>
   ssr_id="$1"; ssr_src="$2"
   out="$(printf "$ss_hook" "$ssr_id" "$ssr_src" | "$E" session-start 2>"$SANDBOX/stderr")"; rc=$?
@@ -2534,7 +2534,7 @@ is   "a COMPACT exits 0" "$rc" 0
 is   "…and prints NOTHING: the same session carries on in the same window" "$out" ""
 ss_run "$SS_CUR" clear
 has  "a CLEAR gets the block" "$out" "LANE repoSS-1"
-out="$(printf '{"session_id":"%s","cwd":"/home/x"}' "$SS_CUR" | "$E" session-start 2>/dev/null)"; rc=$?
+out="$(printf '{"session_id":"%s","cwd":"/sandbox"}' "$SS_CUR" | "$E" session-start 2>/dev/null)"; rc=$?
 is   "a payload with NO source at all exits 0" "$rc" 0
 has  "…and is treated as a startup rather than dropped" "$out" "LANE repoSS-1"
 out="$(printf '{"session_id":"%s","source":"teleport"}' "$SS_CUR" | "$E" session-start 2>/dev/null)"; rc=$?

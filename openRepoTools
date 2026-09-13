@@ -575,8 +575,19 @@ wip_is_checkout_of() {
 	local want="$1" path="$2" origin toplevel real
 	[ -n "$path" ] || return 1
 	git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
-	origin="$(git -C "$path" remote get-url origin 2>/dev/null || :)"
-	[ "$(wip_norm_repo "$origin")" = "$(wip_norm_repo "$want")" ] || return 1
+	origin="$(wip_norm_repo "$(git -C "$path" remote get-url origin 2>/dev/null || :)")"
+	want="$(wip_norm_repo "$want")"
+	if [ -z "$origin" ] || [ "$origin" != "$want" ]; then
+		# The origin's path ENDING in the `<owner>/<name>` the pointer file
+		# spells is the same repository: a GitHub Enterprise host, an ssh alias
+		# and a local bare mirror laid out by owner and name all say that, and
+		# the pointer file spells `<owner>/<name>` because that is what a person
+		# types. The four lane helpers make this same test, in the same words.
+		case "$origin" in
+		*/"$want") ;;
+		*) return 1 ;;
+		esac
+	fi
 	toplevel="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null || :)"
 	real="$(cd -- "$path" 2>/dev/null && pwd -P)" || return 1
 	[ "$toplevel" = "$real" ]

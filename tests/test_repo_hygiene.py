@@ -28,6 +28,23 @@ from conftest import REPO, WINDOWS_SKIP
 #: claim true.
 SHIPPED_BASH = ["openRepoTools", "park", "resume", "status"]
 
+#: THE LANE HELPERS, which arrived here from `opensoft/brett-wip` with their
+#: history under lane-collision-protocol Amendment 9(b). They are shipped bash
+#: and `--install` places them, so they are held to the same shebang, the same
+#: executable bit, the same LF index and the same bash-3.2 parse — but NOT to
+#: `set -euo pipefail`, and the exception is deliberate rather than an
+#: oversight. `lanes-edit.sh` runs `set -u` alone, because it is the register's
+#: only writer and a failing command inside a lock-holding write must reach its
+#: own refusal and release the lock rather than exiting where it stands.
+LANE_BASH = ["lanes-edit.sh", "lane-start", "lane-end", "link-estates"]
+
+#: Every bash file this repository ships, for the claims that are about BASH
+#: and not about a command's failure discipline: the parse gate and the LF
+#: index. The moved suite is 196 KB of it and is in this list for the reason
+#: Amendment 9's act-3 obligation 4 gives — the macOS job parses it with bash
+#: 3.2, where a `${x,,}` that nobody ran is still a syntax error.
+ALL_BASH = SHIPPED_BASH + LANE_BASH + ["tests/test_lane_helpers.sh"]
+
 #: THE COMMANDS THAT CARRY THE SHARED ESTATE RESOLVER, byte for byte. Every
 #: estate command is one; the installer is not, it finds no estate.
 ESTATE_COMMANDS = ["park", "resume", "status"]
@@ -53,10 +70,31 @@ def test_shipped_bash_is_executable_and_fails_loudly(name):
         "carry on with an unset variable")
 
 
+@pytest.mark.parametrize("name", LANE_BASH)
+def test_the_lane_helpers_are_executable_and_declare_their_discipline(name):
+    """The lane helpers, held to what they are rather than to what the estate
+    commands are (Amendment 9(b)).
+
+    Same shebang and same executable bit — `--install` stamps 755 on everything
+    it places, and a copy that is not executable is not a command. `set -u` is
+    the floor all four share; `set -e` is NOT required of `lanes-edit.sh`,
+    whose whole job is to hold a lock, reach its own refusal and release it.
+    """
+    script = REPO / name
+    assert script.is_file()
+    assert os.access(script, os.X_OK), f"{name} must be executable: chmod +x"
+    text = script.read_text(encoding="utf-8")
+    assert text.startswith("#!/usr/bin/env bash\n")
+    assert ("set -u" in text or "set -euo pipefail" in text), (
+        f"{name} must at least `set -u`: an installed command that reads an "
+        "unset variable as the empty string writes somewhere nobody named")
+
+
 @WINDOWS_SKIP
-@pytest.mark.parametrize("name", SHIPPED_BASH)
+@pytest.mark.parametrize("name", ALL_BASH)
 def test_shipped_bash_parses_under_bash(name):
-    """`bash -n` on all four shipped bash files, everywhere there is a bash.
+    """`bash -n` on every bash file this repository ships, everywhere there is
+    a bash.
 
     SKIPPED ON WINDOWS, AND `shutil.which` IS NOT ENOUGH TO SEE WHY. The
     `bash` a stock Windows install puts on PATH is
@@ -237,20 +275,60 @@ def test_every_value_taking_arm_refuses_an_empty_value():
         f"was added or removed. Read the new arm, then move the number.")
 
 
+#: A line that actually FETCHES, as opposed to a line of the usage heredoc
+#: that says the word. Both spellings take a quoted argument, which the prose
+#: never does.
+def fetching_lines(path: Path) -> list[str]:
+    return [line for line in code_lines(path).splitlines()
+            if 'gh api "' in line or 'raw.githubusercontent.com/$' in line]
+
+
 def test_the_installer_reaches_only_this_repository():
-    """The installer fetches from `$OPENREPOTOOLS_REPO` and from nowhere else.
+    """`--install` fetches from `$OPENREPOTOOLS_REPO` and from nowhere else.
 
     An `--install` that reached into openRepoShape to complete itself would
     make this repository's installer depend on the standard at run time, which
     is the direction the pin's own header spends a paragraph refusing — and it
     is the mirror of the rule openRepoShape's own `--install` follows by
     printing a POINTER at this repository rather than fetching from it.
+
+    `wip init` IS THE ONE EXCEPTION, and it is not `--install`'s (lane protocol
+    Amendment 9(c) step 7). It materializes openRepoShape's
+    `templates/workspace-root/` — nine files this repository deliberately does
+    not carry a copy of, because a copy is a second answer to what the template
+    is — and it does it AT THE PINNED COMMIT, not at that repository's `main`.
+    The test below is the one that holds it to the pin. Every other fetch in
+    this file is still `$REPO`'s.
     """
-    for line in code_lines(REPO / "openRepoTools").splitlines():
-        if "gh api" in line or "raw.githubusercontent.com" in line:
-            assert "$REPO" in line, (
-                f"the installer fetches from a repository that is not "
-                f"$OPENREPOTOOLS_REPO:\n    {line.strip()}")
+    for line in fetching_lines(REPO / "openRepoTools"):
+        assert "$REPO" in line or "$SHAPE_REPOSITORY" in line, (
+            f"the command fetches from a repository that is neither "
+            f"$OPENREPOTOOLS_REPO nor the pinned standard:\n    {line.strip()}")
+
+
+def test_the_template_is_fetched_from_the_pinned_standard_and_at_the_pin():
+    """`wip init` seeds a person's workspace repository from bytes it fetches,
+    and WHICH bytes is a pin question, not a `main` question.
+
+    openRepoShape squash-merges, so a commit on a branch there is orphaned by
+    the merge and a raw fetch of it 404s for the next person — the reason
+    `contracts/openreposhape-pin.yaml` refuses a commit that is not on that
+    repository's default branch. This test is why `wip_shape_ref` reads the pin
+    rather than spelling `main`: a template that drifted under a person's feet
+    would seed two workstations differently from one command.
+    """
+    text = (REPO / "openRepoTools").read_text(encoding="utf-8")
+    assert 'SHAPE_REPOSITORY="opensoft/openRepoShape"' in text, (
+        "the template's source repository is a constant in this file, by "
+        "Amendment 9(c) step 7's substitution table")
+    for line in fetching_lines(REPO / "openRepoTools"):
+        if "$SHAPE_REPOSITORY" in line:
+            assert "$ref" in line, (
+                "a template fetch that does not carry the pinned ref would "
+                f"take whatever openRepoShape's main holds today:\n    {line.strip()}")
+    assert 'sed -n \'s/^commit:[[:space:]]*//p\'' in text, (
+        "wip_shape_ref must read `commit:` out of "
+        "contracts/openreposhape-pin.yaml rather than spelling a ref")
 
 
 def test_the_readme_prints_the_install_line_the_pointer_prints():
@@ -813,7 +891,7 @@ def test_every_shipped_bash_file_is_tracked_with_lf():
     a `crlf` in the index would mean the rule was added after the file was
     committed under `autocrlf=true`, which is the state it exists to prevent.
     """
-    proc = subprocess.run(["git", "ls-files", "--eol", "--", *SHIPPED_BASH],
+    proc = subprocess.run(["git", "ls-files", "--eol", "--", *ALL_BASH],
                           cwd=str(REPO), capture_output=True, text=True,
                           check=True)
     for row in proc.stdout.splitlines():
