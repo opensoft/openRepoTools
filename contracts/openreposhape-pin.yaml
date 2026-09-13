@@ -51,12 +51,12 @@ source_repository: opensoft/openRepoShape
 submodule_path: upstream/openRepoShape
 materialization: mounted
 
-commit: "32450eb5c5d18fbb0747dc5ad420cf67742cfa99"
+commit: "ba14e1d9308cb912e32f5d20e097bec89d9455a7"
 revision_kind: commit
 
 digest_algorithm: sha256
 digest_definition: sorted-ls-tree-r-v1
 digests:
-  tree_sha256: "9be1ba5a6181602abb5e5962a3f69d7b02b09002541be19c74d1cd11338201f7"
+  tree_sha256: "26a314f34239dd314c0cb7eab2da2915fc2d4bd27ae9c81349052fc4e6b4355e"
 
 verify_pin: tests/test_upstream_pin.py

@@ -10,20 +10,38 @@
 #
 # (or the raw-URL twin, `curl -fsSL …/main/openRepoTools | bash -s -- --install`).
 #
-# IT INSTALLS AND IT DOES NOTHING ELSE. There is no verb here and no scaffold
-# role: `openRepoShape` is the standard's front door and stays there. The two
-# verbs are `park` and `resume`, which add no mechanics of their own — they
-# find the estate under your projects directory and run its own `make park` /
-# `make resume` — and `status` is the read-only view of the same estate.
+# IT INSTALLS THE ESTATE'S COMMANDS, AND IT OWNS THE ONE ACT THAT CREATES THE
+# WORKSPACE THOSE COMMANDS READ. `openRepoShape` is the standard's front door
+# and stays there: this scaffolds no product repository, and that refusal is
+# not ours to touch. The two verbs are `park` and `resume`, which add no
+# mechanics of their own — they find the estate under your projects directory
+# and run its own `make park` / `make resume` — and `status` is the read-only
+# view of the same estate.
 #
-# `--install` PLACES FOUR COMMANDS, not one: this file, `park`, `resume` and
+# THIS FILE USED TO SAY "There is no verb here and no scaffold", and that line
+# is gone on purpose rather than by accident. Brett Heap RULED the command —
+# lane-collision-protocol Amendment 9, ruling 4, verbatim "openRepoTools wip
+# init" — so the line, the `*)` arm and the test that pinned them are what
+# change (Amendment 9(b), and R-A9-1). The identity that survives is narrower
+# and truer.
+#
+# `--install` PLACES NINE FILES, not four: this file, `park`, `resume`,
 # `status` (openRepoShape #82; the fourth under Brett Heap's RULING of
-# 2026-09-10 in this repository, "lets go with a fourth file"). One install
-# line for the whole toolset, so a second engineer gets the estate commands
-# from the README's one line and nothing depends on anyone's dotfiles.
+# 2026-09-10 in this repository, "lets go with a fourth file"), and the four
+# lane helpers `lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates`
+# with the alias table `repos.tsv` they read — which came here from
+# `opensoft/brett-wip` with their history under Amendment 9(b), because a
+# person's workspace repository holds their DATA and the code belongs where
+# code goes. It also places the `/lane-swap` skill and merges one SessionStart
+# entry into `~/.claude/settings.json` (Amendment 9(b), A8 Addendum 2 R-A8-5):
+# TWELVE artifacts, and the count is the invariant.
+#
+# One install line for the whole toolset, so a second engineer gets the estate
+# commands from the README's one line and nothing depends on anyone's dotfiles.
 #
 # openRepoShape #82 wrote the two verbs and these install semantics; its #92
-# carved them out into this repository, which added `status`.
+# carved them out into this repository, which added `status`; lane protocol
+# Amendment 9 brought the lane tooling home and added `wip init`.
 
 set -euo pipefail
 
@@ -43,14 +61,17 @@ die() { printf '\nREFUSED: %s\n' "$1" >&2; exit "${2:-2}"; }
 
 usage() {
 	cat <<'USAGE'
-openRepoTools --install            install (or update) park, resume, status and
-                                   this command into ~/.local/bin
+openRepoTools --install            install (or update) the nine estate and lane
+                                   commands into ~/.local/bin, plus the
+                                   /lane-swap skill and its SessionStart hook
+openRepoTools wip init             create your workspace repository, clone it,
+                                   seed it, and point this workstation at it
 openRepoTools --help | --version
 
-This command installs the estate commands and does nothing else. It has no
-verb of its own: `openRepoShape` is the standard's front door. `--install`
-places four files beside each other — this command, the two verbs, and the
-read-only view:
+`openRepoShape` is the standard's front door and scaffolds product
+repositories; this command scaffolds none. `--install` places nine files
+beside each other — this command, the two verbs, the read-only view, the four
+lane helpers and the alias table they read:
 
   park [<Name>]                    commit, push and RECORD an estate's open
                                    features, so another workstation can take
@@ -59,15 +80,48 @@ read-only view:
                                    recreate those features
   status [<Name>]                  what is in and out of sync across that
                                    estate, as of the last fetch; changes nothing
+  lane-start <repo> <n>            open a lane: name the window, register the
+                                   row, launch or resume the session
+  lane-end <lane>                  close it, and refuse while anything is in
+                                   flight
+  lanes-edit.sh <verb> …           the register's and the object logs' only
+                                   writer
+  link-estates                     place the symlinks every lane path already
+                                   uses, into your workspace repository
+  repos.tsv                        the organisation's alias table, which
+                                   `lanes-edit.sh` reads
 
-`park --help`, `resume --help` and `status --help` say the rest. The verbs
-implement none of the mechanics: they find the estate under your projects
-directory and run its own `make park` / `make resume`, which run the Speckit
-git extension's scripts. `status` only reads.
+`--install` also places `~/.claude-profiles/shared/skills/lane-swap/SKILL.md`
+and `~/.claude/skills/lane-swap/SKILL.md`, and merges ONE `SessionStart` entry
+into `~/.claude/settings.json` (needs `jq`, and refuses rather than rewriting a
+file it cannot parse). It never writes a profile's own settings.json: the
+launcher owns that one.
+
+`wip init` — the workspace repository, which holds your lane register, your
+object logs, your handoffs and your workspace manifests, and no code at all:
+
+  openRepoTools wip init [--org <org>] [--login <name>] [--team <team>]
+                         [--dry-run]
+
+It asks you at most one question, and only where an administrator has to create
+the repository for you — then it prints the exact commands, already filled in.
+Everything else is derived: your login from `gh api user`, the organisation
+from this toolset's own default, the team from `gh api /user/teams` where
+exactly one matches. Idempotent: a workstation that already has a workspace
+does nothing at all. Exits 0 (done, or already done) or 2 (refused).
+
+`park --help`, `resume --help`, `status --help`, `lane-start --help` and
+`lane-end --help` say the rest, and each command's exit codes are its own. The
+two verbs implement none of the mechanics: they find the estate under your
+projects directory and run its own `make park` / `make resume`, which run the
+Speckit git extension's scripts. `status` only reads.
 
   $OPENREPOTOOLS_REPO       owner/name to fetch from (default opensoft/openRepoTools)
   $OPENREPOTOOLS_REF        the ref to fetch it at   (default main)
   $OPENREPOTOOLS_BIN_DIR    where --install puts them (default ~/.local/bin)
+  $AGENT_PROTOCOL_ROOT      where workspace.yaml lives (default ~/.agents)
+  $CLAUDE_PROFILES_HOME     the profiles root         (default ~/.claude-profiles)
+  $PROJECTS_DIR             your projects directory   (default ~/projects)
 USAGE
 }
 
@@ -117,11 +171,23 @@ fetch_from_repo() {
 	return 1
 }
 
-# THE FOUR COMMANDS `--install` PLACES. One list, so the installer, the fetch
+# THE NINE FILES `--install` PLACES. One list, so the installer, the fetch
 # fallback and the tests cannot disagree about what a complete install is.
 # `openRepoTools` is first because it is the one a person types to get the
-# other three.
-INSTALLABLES=(openRepoTools park resume status)
+# others.
+#
+# EVERY ONE OF THEM IS RESOLVED BY BARE NAME AT THE REPOSITORY ROOT — `cp --
+# "$selfdir/$name"` below, and `fetch_from_repo "$name"` — which is why
+# Amendment 9's move landed the four lane helpers and the table at the root and
+# nowhere else.
+#
+# `repos.tsv` IS DATA AND IS PLACED WITH THE COMMANDS, at 755 like everything
+# else here. That is one honest ugliness — a data file carrying an executable
+# bit it has no use for — and the cost of the alternative was a second
+# destination and a second mode in this file, in the loop below, and again in
+# workBenches' `setup-estate-commands.sh`, whose post-install verify refuses any
+# target whose mode is not exactly 755. Amendment 9(b) chose the ugliness.
+INSTALLABLES=(openRepoTools park resume status lanes-edit.sh lane-start lane-end link-estates repos.tsv)
 
 # ALL FOUR IN HAND BEFORE ANY OF THEM IS PLACED (openRepoShape #82, F10 of the
 # review on its #83). One file at a time, dying on the first fetch that failed,
@@ -153,7 +219,7 @@ collect_commands() {
 	done
 	[ -z "$missing" ] || die "could not fetch $missing from $REPO at $REF, so NOTHING was installed
     and nothing already installed was replaced. \`--install\` places all
-    ${#INSTALLABLES[@]} commands or none: a new openRepoTools beside a missing park is
+    ${#INSTALLABLES[@]} files or none: a new openRepoTools beside a missing park is
     a half-install that reads like a whole one. Both ways were tried:
     gh api repos/$REPO/contents/<file>?ref=$REF
     curl -fsSL https://raw.githubusercontent.com/$REPO/$REF/<file>"
@@ -162,7 +228,23 @@ collect_commands() {
 install_commands() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
 	local name target source verb placed=0
+	# ALL TWELVE IN HAND BEFORE ANY IS PLACED. The nine files, the skill, and
+	# the ONE artifact that is not a whole file — the merged `settings.json` —
+	# are all computed here, so a fetch that failed replaces nothing and a merge
+	# that cannot be computed refuses having placed nothing. That last one is
+	# the same rule `--install` already had, extended to cover a merge: an
+	# installer that got half way through a person's settings is worse than one
+	# that did not start.
+	#
+	# THE TARGETS ARE ASKED ABOUT FIRST, before even the fetch: a target that
+	# cannot be written THROUGH is a refusal that costs nothing at all here,
+	# and a network round-trip if it waits (A9 Addendum 4, R-A9-12).
+	plan_install_targets
 	collect_commands
+	collect_skill || die "could not fetch $SKILL_SOURCE_PATH from $REPO at $REF, so NOTHING was
+    installed and nothing already installed was replaced."
+	plan_hook_merge
+	plan_skill_targets
 	mkdir -p "$dir"
 	for name in "${INSTALLABLES[@]}"; do
 		source="$STAGED/$name"
@@ -178,9 +260,10 @@ install_commands() {
 		placed=$((placed + 1))
 		say "$name: $verb"
 	done
-	# THE COUNT, out loud: a person reading four lines cannot tell whether a
-	# fifth was meant to be there.
+	# THE COUNT, out loud: a person reading eight lines cannot tell whether a
+	# ninth was meant to be there.
 	say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir"
+	place_skill_and_hook
 	# ONE PATH NOTE for the four of them: the directory is the same one.
 	case ":${PATH:-}:" in
 	*":$dir:"*) ;;
@@ -191,20 +274,1038 @@ install_commands() {
 	esac
 }
 
+
+# =========================================================================
+# THE THREE ARTIFACTS THAT ARE NOT ONE OF THE NINE FILES
+# =========================================================================
+#
+# lane-collision-protocol Amendment 9(b), inheriting A8 Addendum 2's R-A8-5
+# unvaried — and that ruling is itself ratified. Measured on Eagle 2026-09-12:
+# every `pclaude run` execs with `CLAUDE_CONFIG_DIR=<profile dir>`; 418 profile
+# config dirs exist; 0 of them carry a SessionStart hook; and every profile's
+# `skills` is a symlink to ONE shared directory. So:
+#
+#   * THE SKILL goes to `$CLAUDE_PROFILES_HOME/shared/skills/lane-swap/SKILL.md`
+#     — one write that all 418 profiles read through their own symlinks;
+#   * `~/.claude` KEEPS A COPY of the skill for a bare `claude` run outside the
+#     launcher, plus ONE MERGED ENTRY in `~/.claude/settings.json`;
+#   * THE PROFILE `SessionStart` ENTRY IS NOT THIS COMMAND'S. It stays the
+#     launcher's, which already rewrites each profile's settings.json on every
+#     run and preserves hook keys. This command never writes a profile's
+#     settings.json at all. One path, one writer, in both halves.
+#
+# TWELVE ARTIFACTS, NOT EIGHT, AND THE COUNT IS THE INVARIANT: nine files in
+# the bin directory, the skill in the shared skills directory, the skill's
+# bare-run copy, and one merged entry in `~/.claude/settings.json`.
+
+#: The skill this repository ships, and the two paths it is placed at. Its
+#: directory name is `lane-swap`, which is what `/lane-swap` invokes.
+SKILL_NAME="lane-swap"
+SKILL_SOURCE_PATH="skills/$SKILL_NAME/SKILL.md"
+
+skills_home() { printf '%s\n' "${CLAUDE_PROFILES_HOME:-$HOME/.claude-profiles}"; }
+claude_home() { printf '%s\n' "${CLAUDE_USER_DIR:-$HOME/.claude}"; }
+
+#: THE HOOK ENTRY, byte for byte Amendment 8 clause (e)'s and byte for byte
+#: what opensoft/workBenches#63's launcher ensures in each profile. The string
+#: is the ONLY idempotence any of the three places has — a re-formatted
+#: quotation of a string whose only idempotence is exact match is a SECOND
+#: string — so it is spelled once here and never rebuilt.
+HOOK_COMMAND='~/projects/xFactory/lanes-edit.sh session-start || true'
+HOOK_MATCHER='startup|resume|clear|fork'
+HOOK_TIMEOUT=5
+
+hook_block_text() {
+	cat <<'BLOCK'
+  {
+    "matcher": "startup|resume|clear|fork",
+    "hooks": [
+      { "type": "command", "command": "~/projects/xFactory/lanes-edit.sh session-start || true", "timeout": 5 }
+    ]
+  }
+BLOCK
+}
+
+# The skill's bytes, by `--install`'s own rule: from the checkout beside this
+# file when run from one, else fetched at this same ref.
+collect_skill() {
+	local selfdir=""
+	[ -f "$SELF" ] && selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
+	workdir
+	if [ -n "$selfdir" ] && [ -f "$selfdir/$SKILL_SOURCE_PATH" ]; then
+		cp -- "$selfdir/$SKILL_SOURCE_PATH" "$WORKDIR/SKILL.md"
+		return 0
+	fi
+	fetch_from_repo "$SKILL_SOURCE_PATH" "$WORKDIR/SKILL.md"
+}
+
+# THE MERGE INTO `~/.claude/settings.json`, COMPUTED BEFORE ANYTHING IS PLACED.
+# It is the same all-or-nothing rule `--install` already has, extended to the
+# one artifact that is not a whole file: a merge that cannot be computed
+# refuses having placed nothing.
+#
+#   * it is written with `jq`, and refuses naming `jq` where it is absent. This
+#     repository carries no JSON-handling code otherwise, so the dependency is
+#     named rather than assumed. It is not bash, so the macOS bash-3.2 parse
+#     gate is unaffected;
+#   * it NEVER writes the file whole and never replaces it: the file already
+#     carries a `UserPromptSubmit` hook, and a user's settings are not an
+#     installer's to own;
+#   * it is idempotent by EXACT MATCH on the entry's `command` string;
+#   * an entry under SessionStart whose `command` DIFFERS, a file it cannot
+#     parse, or a `hooks` value that is not an object → refuse, print the exact
+#     block, place nothing. An installer that repairs a file it does not
+#     understand is how a person loses a setting they meant;
+#   * it WRITES THE FILE BACK AT MODE 600 — it sets that mode, it does not
+#     preserve one (F8 of the #24 review: a pre-existing file at 640 comes out
+#     600, measured). workBenches' setup-claude-profiles.sh writes this same
+#     file on every ./setup.sh through jq + mktemp + chmod 600 + mv -f, so 600
+#     is the mode this file already has on a host that has run that script, and
+#     an installer that widened it would be silently undone or would widen it
+#     behind that script's back.
+HOOK_PLAN=""      # "absent" | "present" | "nofile"
+HOOK_MERGED=""    # a staged whole file, ready to move into place
+
+# THE THREE DESTINATIONS, PROVED WRITABLE BEFORE ANY OF THE ELEVEN IS PLACED.
+# Amendment 9(b) computes the merge in hand "so a merge that cannot be computed
+# refuses having placed nothing" — and the merge computing fine against a
+# directory nobody may write to is the same failure one step later. A
+# filesystem gives no transaction, so this cannot make the three placements
+# atomic; what it does is move the failure that actually happens — a directory
+# that is not ours to write — back to the planning phase, where the refusal
+# still costs nothing. The directories are created here, which is idempotent
+# and is what the placement would have done anyway.
+plan_skill_targets() {
+	local d
+	for d in "$(skills_home)/shared/skills/$SKILL_NAME" \
+		"$(claude_home)/skills/$SKILL_NAME" "$(claude_home)"; do
+		mkdir -p -- "$d" 2>/dev/null || die "\`--install\` cannot create $d, one of the three places Amendment 9(b) has it
+    place the $SKILL_NAME skill and the SessionStart entry. NOTHING was installed
+    and nothing already installed was replaced."
+		[ -w "$d" ] || die "$d is not writable, and \`--install\` places the $SKILL_NAME skill or the
+    SessionStart entry there (Amendment 9(b)). NOTHING was installed and nothing
+    already installed was replaced."
+	done
+}
+
+# THE NINE TARGETS, PROVED PLACEABLE BEFORE ANY OF THE TWELVE IS PLACED
+# (A9 Addendum 4, R-A9-12, ruled on F5 of the #24 review).
+#
+# `cp` FOLLOWS A SYMLINK. The loop below tests `[ -e "$target" ]`, compares
+# with `cmp -s` and then copies, and not one of the three can tell a regular
+# file from a link to one — so against the bin directory the pre-move
+# `link-estates` actually leaves on a workstation, `--install` printed
+# `lane-start: updated at …`, `9 of 9 placed`, exit 0, and BOTH claims were
+# false: the target stayed a symlink, so the command was never installed, and
+# the post-move bytes landed in `opensoft/brett-wip`'s WORKING TREE on the
+# other end of it. That repository is the one every lane writes:
+# `lanes-edit.sh`'s `refuse_dirty_checkout` then refuses `log`, `claim` and
+# `release` on that workstation until somebody runs `git checkout -- lanes/`.
+# workBenches' `setup-estate-commands.sh` refuses the whole estate install on a
+# target that "already exists as a symlink" too, so a host in this state also
+# fails the estate install that follows — the exact failure clause (f)(3) is
+# written about.
+#
+# A HOST STILL CARRYING THOSE SYMLINKS IS THE NORMAL PRE-ACT-5 CASE, not an
+# exotic one: adoption act 6 clears them on each workstation before the first
+# `--install` that carries this, and act 5 strips `brett-wip` to data. So the
+# refusal names every offending path, says what each one IS, and prints the one
+# `rm` that clears them — rather than leaving a person to remember a step.
+plan_install_targets() {
+	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
+	local name target kind bad="" paths=""
+	for name in "${INSTALLABLES[@]}"; do
+		target="$dir/$name"
+		# `-L` AS WELL AS `-e`, because a DANGLING symlink is the sharper case:
+		# `[ -e ]` is false on one, and `cp` through it creates the file at the
+		# far end — a write into a repository this command was never told about.
+		if [ -L "$target" ]; then
+			kind="a symlink to $(readlink -- "$target" 2>/dev/null || printf '<unreadable>')"
+		elif [ ! -e "$target" ] || [ -f "$target" ]; then
+			continue
+		elif [ -d "$target" ]; then
+			kind="a directory"
+		else
+			kind="not a regular file"
+		fi
+		bad="${bad:+$bad
+}    $target — $kind"
+		paths="${paths:+$paths }\"$target\""
+	done
+	[ -z "$bad" ] || die "\`--install\` places REGULAR FILES, and these targets are not regular files:
+$bad
+    \`cp\` follows a symlink, so installing over one would leave the command
+    UNINSTALLED — the target stays a link — and would write these bytes into
+    whatever is on the other end of it. NOTHING was installed and nothing
+    already installed was replaced.
+    Clear them, then re-run:
+        rm -f -- $paths
+    (The pre-move \`link-estates\` puts exactly these links in a workstation's
+    \`~/.local/bin\`, pointing into \`opensoft/brett-wip\` — the checkout every
+    lane writes. Amendment 9's adoption act 6 removes them per host before the
+    first \`--install\` that carries this, and act 5 strips that repository to
+    data.)"
+}
+
+plan_hook_merge() {
+	local settings existing
+	settings="$(claude_home)/settings.json"
+	command -v jq >/dev/null 2>&1 || die "\`--install\` needs \`jq\` to merge one SessionStart entry into
+    $settings, and there is no \`jq\` on this PATH. It refuses rather than
+    rewriting a JSON file by hand, and NOTHING was installed. Install jq, then
+    re-run. The entry it would have merged:
+$(hook_block_text)"
+	workdir
+	HOOK_MERGED="$WORKDIR/settings.json"
+
+	if [ ! -e "$settings" ]; then
+		HOOK_PLAN="nofile"
+		jq -n --arg c "$HOOK_COMMAND" --arg m "$HOOK_MATCHER" --argjson t "$HOOK_TIMEOUT" \
+			'{hooks: {SessionStart: [{matcher: $m, hooks: [{type: "command", command: $c, timeout: $t}]}]}}' \
+			>"$HOOK_MERGED" || die "could not compose $settings; nothing was installed."
+		return 0
+	fi
+
+	jq -e . "$settings" >/dev/null 2>&1 || die "$settings is not valid JSON, so \`--install\` cannot merge one entry into it
+    and will not rewrite it. NOTHING was installed and nothing already installed was
+    replaced. Fix that file, then re-run. The entry it would have merged:
+$(hook_block_text)"
+
+	jq -e '(has("hooks") | not) or (.hooks | type == "object")' "$settings" >/dev/null 2>&1 ||
+		die "$settings has a \`hooks\` that is not an object, so there is nothing to merge an
+    entry into. NOTHING was installed. The entry it would have merged:
+$(hook_block_text)"
+
+	# THE THREE ANSWERS, in one read: our exact command already there; some
+	# OTHER SessionStart entry that runs `session-start` (a second writer of
+	# this very hook, which is the case Amendment 9(b) says must refuse); or
+	# nothing of ours at all.
+	#
+	# THE CONFLICT ARM IS NARROWED, AND THE NARROWING IS RATIFIED: A9 Addendum 3
+	# R-A9-8 with A9 Addendum 4 R-A9-14, on brettheap/new-workstation#17.
+	# Amendment 9(b)'s clause reads "an entry under `SessionStart` whose
+	# `command` DIFFERS … → refuse, print the exact block, and place nothing at
+	# all", unqualified. Read literally, a person whose `~/.claude/settings.json`
+	# carries ANY unrelated SessionStart hook — a statusline refresh, a `git
+	# fetch` — could never run `--install` at all, and no amount of removing OUR
+	# entry would help them. This workstation carries exactly such an entry
+	# today (`herdr-agent-state.sh session`, matcher `*`), so the narrowing is
+	# not hypothetical.
+	#
+	# IT KEYS ON `session-start`, WHICH IS WHAT R-A9-8 SAYS, and not on
+	# `lanes-edit.sh`, which is what this line said until R-A9-14 (F7 of the #24
+	# review). The two are not the same set either way round: an entry running
+	# `lanes-edit.sh who` is no competing writer of this hook and was refused,
+	# and `~/bin/lane-hook.sh session-start` IS one — a second program running
+	# the same hook verb — and was merged beside, which fires the hook twice,
+	# the one harm the clause names. The verb is what collides; the file that
+	# carries it is not.
+	existing="$(jq -r --arg c "$HOOK_COMMAND" '
+		[ (.hooks.SessionStart // [])[]? | (.hooks // [])[]? | .command // empty ] as $cmds
+		| if ($cmds | index($c)) then "present"
+		  elif ($cmds | map(select(test("session-start"))) | length) > 0 then "conflict"
+		  else "absent" end' "$settings" 2>/dev/null || printf 'error')"
+
+	case "$existing" in
+	present)
+		HOOK_PLAN="present"
+		cp -- "$settings" "$HOOK_MERGED"
+		;;
+	conflict)
+		die "$settings already carries a SessionStart entry that runs \`session-start\` with a
+    DIFFERENT command string. Exact-string match is the only idempotence this entry
+    has, so merging would fire the hook twice — and repairing a setting a person
+    meant is not an installer's to do. NOTHING was installed.
+    Remove that entry, then re-run. The entry this places, byte for byte:
+$(hook_block_text)
+    (Amendment 9's adoption act 6 removes the hand-installed entry on each
+    workstation before the first \`--install\` that carries this.)"
+		;;
+	absent)
+		HOOK_PLAN="absent"
+		jq --arg c "$HOOK_COMMAND" --arg m "$HOOK_MATCHER" --argjson t "$HOOK_TIMEOUT" '
+			.hooks = (.hooks // {})
+			| .hooks.SessionStart = ((.hooks.SessionStart // []) + [{
+				matcher: $m,
+				hooks: [{type: "command", command: $c, timeout: $t}]
+			  }])' "$settings" >"$HOOK_MERGED" ||
+			die "could not merge the SessionStart entry into $settings; nothing was installed."
+		;;
+	*)
+		die "$settings could not be read for a SessionStart entry; nothing was installed."
+		;;
+	esac
+}
+
+# The three placements, AFTER the nine files and the merge are all in hand.
+place_skill_and_hook() {
+	local shared_dir bare_dir settings target verb hook_tmp
+	shared_dir="$(skills_home)/shared/skills/$SKILL_NAME"
+	bare_dir="$(claude_home)/skills/$SKILL_NAME"
+	settings="$(claude_home)/settings.json"
+
+	# EVERY FAILURE HERE IS A `die`, never the shell's own 1. `--install`'s
+	# codes are this toolset's — 0 done, 1 findings printed, 2 a refusal — and
+	# an unguarded `mkdir` or `cp` under `set -e` exits 1, which reads as a
+	# report of findings from a command that placed ten of twelve artifacts.
+	for target in "$shared_dir/SKILL.md" "$bare_dir/SKILL.md"; do
+		mkdir -p -- "$(dirname -- "$target")" ||
+			die "could not create $(dirname -- "$target") for the $SKILL_NAME skill.
+    The $placed commands above are placed; the skill and the hook are not."
+		if [ -e "$target" ] && cmp -s "$WORKDIR/SKILL.md" "$target"; then
+			say "$SKILL_NAME: already installed at $target (unchanged)"
+		else
+			if [ -e "$target" ]; then verb="updated at $target"; else verb="installed at $target"; fi
+			cp -- "$WORKDIR/SKILL.md" "$target" ||
+				die "could not write $target. The $placed commands above are placed;
+    the skill and the hook are not."
+			# 644: a SKILL.md is a document a session READS, not a command. The
+			# nine in the bin directory are stamped 755 for the reason that loop
+			# gives — "a copy that is not executable is not a command" — and
+			# that reason does not reach this file. Amendment 9(b) describes
+			# `--install` as stamping 755 "on everything it places" while
+			# arguing why adoption act 4b must delete workBenches#63's 0644
+			# loop; the deletion is required either way, because two writers of
+			# one path is the defect and the mode was only its symptom.
+			chmod 644 "$target" || die "could not set the mode on $target."
+			say "$SKILL_NAME: $verb"
+		fi
+	done
+
+	case "$HOOK_PLAN" in
+	present) say "SessionStart hook: already installed in $settings (unchanged)" ;;
+	nofile | absent)
+		mkdir -p -- "$(dirname -- "$settings")" ||
+			die "could not create $(dirname -- "$settings") for the SessionStart entry."
+		# WRITTEN THROUGH A TEMPORARY IN THE SAME DIRECTORY, then moved into
+		# place: `mktemp` + `chmod 600` + `mv -f`, which is what workBenches'
+		# `scripts/setup-claude-profiles.sh:167-194` does to this very file on
+		# every `./setup.sh` and what Amendment 9(b) cites approvingly. A plain
+		# `cp` that fails half way leaves a person's settings TRUNCATED, and
+		# this is the one file in this installer that is not ours to own.
+		hook_tmp="$(mktemp -- "$(dirname -- "$settings")/settings.json.openrepotools.XXXXXX")" ||
+			die "could not create a temporary file beside $settings."
+		cp -- "$HOOK_MERGED" "$hook_tmp" ||
+			{ rm -f -- "$hook_tmp"; die "could not stage the merged $settings."; }
+		# 600, the mode workBenches' own writer of this file uses. An installer
+		# that widened it would be silently undone, or would widen it behind
+		# that script's back. Stamped on the TEMPORARY, so the file never exists
+		# at a wider mode for even an instant.
+		chmod 600 "$hook_tmp" ||
+			{ rm -f -- "$hook_tmp"; die "could not set mode 600 on the merged $settings."; }
+		mv -f -- "$hook_tmp" "$settings" ||
+			{ rm -f -- "$hook_tmp"; die "could not move the merged settings into $settings."; }
+		if [ "$HOOK_PLAN" = nofile ]; then
+			say "SessionStart hook: installed in $settings (the file was created, mode 600)"
+		else
+			say "SessionStart hook: merged into $settings (one entry added; written back at mode 600)"
+		fi
+		;;
+	esac
+}
+# =========================================================================
+# `wip init` — THE ONE ACT THAT CREATES THE WORKSPACE THOSE COMMANDS READ
+# =========================================================================
+#
+# lane-collision-protocol Amendment 9(c), under Brett Heap's ruling 4,
+# "openRepoTools wip init". It is why the line at the top of this file changed:
+# this command installs the estate's commands, and owns the one act that
+# creates the workspace repository those commands read. It still scaffolds no
+# product repository — that refusal is `openRepoShape`'s, and nothing here
+# touches it.
+#
+# IT ASKS AT MOST ONE QUESTION, and only where an administrator has to act
+# (step 5). Brett Heap, 2026-09-12T18:56Z, on the onboarding chain: "there are
+# two options in resume. we need to also keep that clean so there is the least
+# choices possible to not confuse the user." Everything else is DERIVED, and no
+# value it prints is ever left as a placeholder for a person to fill (R-A9-3,
+# ratified).
+#
+# EXIT CODES ARE 0 AND 2, and 2 only. 0 is done or already done; 2 is a
+# refusal. There is no 1 here: `1` in this toolset means "findings were
+# printed", and this command reports no findings. THE MOVED LANE HELPERS KEEP
+# THEIR OWN CODES, which are the lane protocol's — `lanes-edit.sh` exits 1 for
+# *registry not found*. Two toolsets ship under one installer now, so one
+# number means two things across that seam: no caller may read a number without
+# knowing which command produced it.
+#
+# A REFUSAL FROM HERE IS NOT A CAPABILITY SIGNAL. `die`'s default exit is also
+# 2, so an unknown argument and a genuine refusal are the same number. A caller
+# that wants to know whether `wip` exists PROBES `openRepoTools --help` for the
+# verb pair, never an exit code — read the other way round, a genuine refusal
+# with the administrator's `gh repo create` block already on the terminal would
+# be reported as "no such subcommand", and a degradation recipe printed over
+# the top of the one thing the person needed. opensoft/workBenches#68 probes
+# `--help` for exactly this reason.
+
+#: The organisation the repository is created in. Shipped organisation data,
+#: the same kind `repos.tsv` is (ruling 3) — never asked for and never printed
+#: unfilled. The repository is org-owned rather than personal so that the index
+#: survives offboarding and a later lane can read the handoffs.
+# THE SHIPPED DEFAULT ORGANISATION, a constant and not an environment
+# variable. Amendment 9(c) step 3 derives the organisation from `--org` where
+# given and otherwise from "the toolset's shipped default organisation", and
+# clause (e) says of workBenches' setup step that it passes `--org` only where
+# an operator set `WORKBENCHES_WORKSPACE_ORG`, "because an operator override
+# has NO OTHER WAY IN". A second way in here would falsify that sentence and
+# give one value three sources.
+WIP_ORG_DEFAULT="opensoft"
+
+#: `{{SHAPE_REPOSITORY}}`'s value: a constant here, by clause (c) step 7's
+#: substitution table.
+SHAPE_REPOSITORY="opensoft/openRepoShape"
+
+#: The template, `templates/workspace-root/` in openRepoShape (clause (d)).
+#: Nine files, named here because the amendment names them: a directory listing
+#: fetched at runtime would make the set whatever upstream happened to hold.
+WIP_TEMPLATE_DIR="templates/workspace-root"
+WIP_TEMPLATE_FILES=(
+	README.md
+	AGENTS.md
+	CLAUDE.md
+	.gitattributes
+	.gitignore
+	handoffs/README.md
+	lanes/LANES.md
+	lanes/log/README.md
+	workspaces/.gitkeep
+)
+
+WIP_LOGIN=""
+WIP_ORG=""
+WIP_TEAM=""
+WIP_TEAM_WHY=""
+WIP_DRY_RUN=0
+
+wip_config_file() { printf '%s\n' "${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace.yaml"; }
+
+# Where a new clone goes. `$PROJECTS_DIR` names one directory when it is set;
+# otherwise `~/projects`, then `~/Projects` where that exists and is a
+# different directory — the block `park`, `resume` and `status` already carry,
+# narrowed to the one question this command asks of it.
+wip_projects_dir() {
+	if [ -n "${PROJECTS_DIR:-}" ]; then printf '%s\n' "$PROJECTS_DIR"; return 0; fi
+	[ -d "$HOME/projects" ] && { printf '%s\n' "$HOME/projects"; return 0; }
+	if [ -d "$HOME/Projects" ]; then printf '%s\n' "$HOME/Projects"; return 0; fi
+	printf '%s\n' "$HOME/projects"
+}
+
+wip_yaml_field() {
+	local v
+	v="$(sed -n -e "s/^$1:[[:space:]]*//p" "$2" 2>/dev/null | head -n 1 |
+		sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//')"
+	v="${v%\"}"; v="${v#\"}"
+	v="${v%\'}"; v="${v#\'}"
+	case "$v" in
+	'~') v="$HOME" ;;
+	'~/'*) v="$HOME/${v#'~/'}" ;;
+	esac
+	printf '%s\n' "$v"
+}
+
+wip_norm_repo() {
+	local u="${1%.git}"
+	case "$u" in
+	https://github.com/*) u="${u#https://github.com/}" ;;
+	ssh://git@github.com/*) u="${u#ssh://git@github.com/}" ;;
+	git@github.com:*) u="${u#git@github.com:}" ;;
+	esac
+	printf '%s' "$u" | tr '[:upper:]' '[:lower:]'
+}
+
+# Is $2 the ROOT of a checkout of $1? The same three-part test the four lane
+# helpers make, because step 1's idempotence and their refusal have to agree on
+# what "already has a workspace" means, or a host can pass one and fail the
+# other. Local only; no network.
+wip_is_checkout_of() {
+	local want="$1" path="$2" origin toplevel real
+	[ -n "$path" ] || return 1
+	git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+	origin="$(wip_norm_repo "$(git -C "$path" remote get-url origin 2>/dev/null || :)")"
+	want="$(wip_norm_repo "$want")"
+	if [ -z "$origin" ] || [ "$origin" != "$want" ]; then
+		# The origin's path ENDING in the `<owner>/<name>` the pointer file
+		# spells is the same repository: a GitHub Enterprise host, an ssh alias
+		# and a local bare mirror laid out by owner and name all say that, and
+		# the pointer file spells `<owner>/<name>` because that is what a person
+		# types. The four lane helpers make this same test, in the same words.
+		case "$origin" in
+		*/"$want") ;;
+		*) return 1 ;;
+		esac
+	fi
+	toplevel="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null || :)"
+	real="$(cd -- "$path" 2>/dev/null && pwd -P)" || return 1
+	[ "$toplevel" = "$real" ]
+}
+
+wip_have_gh() { command -v gh >/dev/null 2>&1; }
+
+# --- step 2: the login ------------------------------------------------------
+#
+# `gh api user -q .login`, LOWERCASED — the naming contract's own definition of
+# `<user>`. A login that cannot form a compliant name under that family's
+# pattern is a refusal naming the pattern and its source, never a name repaired
+# by guesswork (R-A9-3).
+wip_login_is_compliant() {
+	case "$1" in
+	'' | *[![:lower:][:digit:]-]* | -* | *- | *--*) return 1 ;;
+	*) return 0 ;;
+	esac
+}
+
+wip_derive_login() {
+	local login
+	wip_have_gh || die "\`wip init\` needs your GitHub login and there is no \`gh\` to read it with.
+    Install GitHub CLI, run \`gh auth login\`, then run \`openRepoTools wip init\` again.
+    Nothing was created."
+	if command -v timeout >/dev/null 2>&1; then
+		login="$(timeout 20 gh api user -q .login 2>/dev/null || :)"
+	else
+		login="$(gh api user -q .login 2>/dev/null || :)"
+	fi
+	login="$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')"
+	[ -n "$login" ] || die "\`gh api user\` did not answer with a login, so this command does not know whose
+    workspace to create. That is the one precondition it has:
+        gh auth login
+    Then run \`openRepoTools wip init\` again. Nothing was created."
+	wip_login_is_compliant "$login" || die "the GitHub login '$login' cannot form a compliant \`<user>-wip\` name.
+    openRepoShape's naming contract requires \`^[a-z0-9]+(-[a-z0-9]+)*-wip\$\`, and an
+    underscore, a doubled hyphen or a leading or trailing one does not fit it. This
+    command does not repair a name by guesswork. Name the repository yourself:
+        openRepoTools wip init --login <name>
+    Nothing was created."
+	printf '%s\n' "$login"
+}
+
+# --- step 4: the team, or no team ------------------------------------------
+#
+# `gh api /user/teams` filtered to the organisation. EXACTLY ONE match is used.
+# None, or more than one, and `--team` is omitted ENTIRELY — from what is run
+# and from what is printed — with one line saying why. A placeholder a person
+# must fill is a question wearing a different hat, and this command asks at
+# most once. (Ratified decision 2.)
+wip_derive_team() {
+	local org="$1" teams count
+	WIP_TEAM=""
+	WIP_TEAM_WHY=""
+	if ! wip_have_gh; then
+		WIP_TEAM_WHY="no \`gh\` to read /user/teams with"
+		return 0
+	fi
+	teams="$(gh api --paginate /user/teams \
+		-q ".[] | select((.organization.login | ascii_downcase) == \"$(printf '%s' "$org" | tr '[:upper:]' '[:lower:]')\") | .slug" \
+		2>/dev/null || :)"
+	count="$(printf '%s' "$teams" | grep -c . || :)"
+	case "${count:-0}" in
+	1)
+		WIP_TEAM="$(printf '%s' "$teams" | head -n 1)"
+		;;
+	0)
+		WIP_TEAM_WHY="you are in no team in $org"
+		;;
+	*)
+		WIP_TEAM_WHY="you are in $count teams in $org, and this command does not choose between them"
+		;;
+	esac
+	return 0
+}
+
+# --- step 5: the block an administrator runs -------------------------------
+#
+# THREE ADMINISTRATOR ACTS, NOT TWO (Addendum 1(2) on brettheap/new-workstation#17).
+# Every value of steps 2 to 4 is already substituted, so what is printed runs as
+# it stands. The third is not a fixed command, because a ruleset's id is not
+# derivable without reading the organisation's rulesets: the block prints the
+# one call that lists them, with the organisation substituted, and names the
+# change to make.
+# GIT'S OWN WORDS, KEPT (F9 of the #24 review, ruled R-A9-15). The three
+# failures a FRESH workstation actually meets are here — the clone, the stage
+# and the commit — and all three ran `>/dev/null 2>&1` and died with a summary
+# of this command's own devising. A machine with no `user.email` configured got
+# `could not commit the seed in <path>.` and nothing else, from the command
+# whose whole job is to set up a new machine, when git had already said exactly
+# what to do about it. So the command runs, its stderr is kept, and the last of
+# it is printed UNDER the refusal — the shape `fetch_from_repo`'s refusal
+# already has, where it names both ways it tried.
+#
+# STDOUT IS STILL DROPPED: `gh repo clone` and `git commit` are chatty on
+# success and this command's own `say` lines are the report. It is the WORDS OF
+# A FAILURE that were being thrown away, not progress.
+WIP_LAST_ERR=""
+wip_quietly() {   # <command> [args…] — 0 or 1, with stderr in $WIP_LAST_ERR
+	workdir
+	WIP_LAST_ERR=""
+	if "$@" >/dev/null 2>"$WORKDIR/cmd-err"; then
+		return 0
+	fi
+	WIP_LAST_ERR="$(tail -n 6 -- "$WORKDIR/cmd-err" 2>/dev/null | sed -e 's/^/    | /')"
+	[ -n "$WIP_LAST_ERR" ] || WIP_LAST_ERR="    | (it printed nothing at all)"
+	return 1
+}
+
+wip_admin_block() {
+	local target="$1" org="$2" team="$3"
+	say ""
+	say "  # 1. create the repository (org-owned, private)"
+	if [ -n "$team" ]; then
+		say "  gh repo create $target --private --team $team \\"
+	else
+		say "  gh repo create $target --private \\"
+	fi
+	say "      --description \"${WIP_LOGIN}'s workspace repository: lanes, handoffs, workspaces\""
+	say ""
+	if [ -n "$team" ]; then
+		say "  # 2. give the team read; --team alone grants the org default, not read"
+		say "  gh api --method PUT \\"
+		say "      /orgs/$org/teams/$team/repos/$target -f permission=pull"
+		say ""
+		say "  # 3. exclude it from the organisation's PR-only ruleset. Without this,"
+	else
+		say "  # 2. exclude it from the organisation's PR-only ruleset. Without this,"
+	fi
+	say "  #    Rule 9's one commit per write cannot land and the register is"
+	say "  #    unwritable. List the rulesets, then add $target to the"
+	say "  #    PR-only one's exempt repositories:"
+	say "  gh api /orgs/$org/rulesets"
+	say ""
+	if [ -z "$team" ]; then
+		say "  (No \`--team\` and no team grant: ${WIP_TEAM_WHY:-no single team matched}. The"
+		say "   repository is created without one and an administrator may add one.)"
+		say ""
+	fi
+}
+
+# --- step 7: the template, and the whole of its substitution table ----------
+#
+# openRepoTools substitutes the placeholders ITSELF. openRepoShape's engine
+# (`scripts/shape_materialize.py`) is reached only by that repository's own
+# tools, and `grep -rn 'workspace-root'` finds no code path there for this
+# template at all — so the consumer substitutes, the consumer is this command,
+# and the tokens are exactly these three (clause (c) step 7):
+#
+#   {{LOGIN}}             the lowercased GitHub login      step 2
+#   {{ORG}}               the organisation                 step 3
+#   {{SHAPE_REPOSITORY}}  opensoft/openRepoShape           constant here
+#
+# A TOKEN THE TABLE DOES NOT CARRY IS A REFUSAL NAMING THE TOKEN — never a
+# blank, and never a literal `{{…}}` written into a person's repository. That
+# is what openRepoShape's own engine does with an unsubstituted token
+# (`Refusal("template-unsubstituted", …)`), and it is why the table is written
+# here rather than left to a private function that is no published contract.
+wip_substitute() {
+	local file="$1" left
+	# `|` as the sed delimiter would collide with the table rows in LANES.md;
+	# these three values are a login, an `<org>` and an `<owner>/<name>`, so `#`
+	# cannot appear in any of them and is safe as the delimiter.
+	sed -e "s#{{LOGIN}}#$WIP_LOGIN#g" \
+		-e "s#{{ORG}}#$WIP_ORG#g" \
+		-e "s#{{SHAPE_REPOSITORY}}#$SHAPE_REPOSITORY#g" \
+		-- "$file" >"$file.subst" || die "could not substitute the template file $file"
+	left="$(grep -o -e '{{[A-Z_]*}}' "$file.subst" 2>/dev/null | sort -u | tr '\n' ' ' || :)"
+	if [ -n "$left" ]; then
+		rm -f -- "$file.subst"
+		die "the template carries a placeholder this command has no value for: $left
+    (in ${file##*/}). Amendment 9(c) step 7's substitution table is {{LOGIN}}, {{ORG}}
+    and {{SHAPE_REPOSITORY}}, and a token outside it is a refusal naming the token —
+    never a blank, and never a literal {{…}} written into your repository.
+    Nothing was created."
+	fi
+	mv -f -- "$file.subst" "$file"
+}
+
+# The template's bytes, materialized EXACTLY the way `--install` gets its own
+# files: from the checkout beside this command when run from one, else
+# `gh api …/contents/<path>` at the pinned ref, else the raw URL. *That the
+# template travels by the installer's own fetch path is the drafter's; the
+# issue named the template and not its transport.*
+wip_shape_ref() {
+	local pin selfdir=""
+	[ -f "$SELF" ] && selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
+	if [ -n "$selfdir" ] && [ -f "$selfdir/contracts/openreposhape-pin.yaml" ]; then
+		pin="$(sed -n -e 's/^commit:[[:space:]]*//p' "$selfdir/contracts/openreposhape-pin.yaml" | head -n 1)"
+		pin="${pin%\"}"; pin="${pin#\"}"
+		[ -n "$pin" ] && { printf '%s\n' "$pin"; return 0; }
+	fi
+	workdir
+	if fetch_from_repo "contracts/openreposhape-pin.yaml" "$WORKDIR/pin.yaml"; then
+		pin="$(sed -n -e 's/^commit:[[:space:]]*//p' "$WORKDIR/pin.yaml" | head -n 1)"
+		pin="${pin%\"}"; pin="${pin#\"}"
+		[ -n "$pin" ] && { printf '%s\n' "$pin"; return 0; }
+	fi
+	printf 'main\n'
+}
+
+wip_fetch_template_file() {
+	local rel="$1" dest="$2" ref="$3" selfdir="" path="$WIP_TEMPLATE_DIR/$rel"
+	[ -f "$SELF" ] && selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
+	if [ -n "$selfdir" ] && [ -f "$selfdir/upstream/openRepoShape/$path" ]; then
+		cp -- "$selfdir/upstream/openRepoShape/$path" "$dest"
+		return 0
+	fi
+	if command -v gh >/dev/null 2>&1 &&
+		gh api "repos/$SHAPE_REPOSITORY/contents/$path?ref=$ref" \
+			-H 'Accept: application/vnd.github.raw' >"$dest" 2>/dev/null &&
+		[ -s "$dest" ]; then
+		return 0
+	fi
+	if command -v curl >/dev/null 2>&1 &&
+		curl -fsSL "https://raw.githubusercontent.com/$SHAPE_REPOSITORY/$ref/$path" \
+			>"$dest" 2>/dev/null && [ -s "$dest" ]; then
+		return 0
+	fi
+	# `workspaces/.gitkeep` is zero bytes upstream, so `-s` above is false for
+	# it on every path. It carries no placeholder and no content by definition:
+	# git tracks no empty directory, and that is the whole of its job.
+	case "$rel" in
+	*/.gitkeep | .gitkeep) : >"$dest"; return 0 ;;
+	esac
+	return 1
+}
+
+# --- the command itself -----------------------------------------------------
+wip_init() {
+	local config target checkout ref rel dest seeded=0
+	local existing_repo existing_path
+
+	# ---- step 1: DETECT. A file test, not a network call, and the whole of the
+	# idempotence. A host that already has a workspace does nothing at all.
+	config="$(wip_config_file)"
+	if [ -f "$config" ]; then
+		existing_repo="$(wip_yaml_field repository "$config")"
+		existing_path="$(wip_yaml_field path "$config")"
+		if [ -n "$existing_repo" ] && [ -n "$existing_path" ] &&
+			wip_is_checkout_of "$existing_repo" "$existing_path"; then
+			say "workspace repository: $existing_repo"
+			say "  checked out at      $existing_path"
+			say "  named by            $config"
+			say "openRepoTools wip init: nothing to do."
+			return 0
+		fi
+		# A file that names a repository the path is NOT a checkout of is a
+		# refusal, never a silent overwrite: which private repository holds a
+		# person's unfinished work is theirs to name, and this command has
+		# exactly one write to that file and only on a machine that has none.
+		if [ -n "$existing_repo" ]; then
+			die "$config already names \`repository: $existing_repo\`, and its \`path: ${existing_path:-<none>}\`
+    is not the root of a checkout of it. This command never overwrites that file.
+    Either fix the two lines by hand, or move the file aside and re-run. Nothing
+    was created."
+		fi
+		die "$config exists and names no \`repository:\`. This command never overwrites
+    that file — a half-written pointer is still somebody's. Fix it by hand, or move
+    it aside and re-run. Nothing was created."
+	fi
+
+	# ---- steps 2 to 4: DERIVE. Nothing here is asked.
+	[ -n "$WIP_LOGIN" ] || WIP_LOGIN="$(wip_derive_login)"
+	[ -n "$WIP_ORG" ] || WIP_ORG="$WIP_ORG_DEFAULT"
+	target="$WIP_ORG/$WIP_LOGIN-wip"
+	if [ -z "$WIP_TEAM" ]; then
+		wip_derive_team "$WIP_ORG"
+	fi
+	say "workspace repository: $target"
+	say "  login               $WIP_LOGIN (derived from gh api user)"
+	say "  organisation        $WIP_ORG"
+	if [ -n "$WIP_TEAM" ]; then
+		say "  team                $WIP_TEAM (the one team you are in there)"
+	else
+		say "  team                none — ${WIP_TEAM_WHY:-no single team matched}, so --team is omitted"
+		say "                      entirely and an administrator may add one later."
+	fi
+
+	checkout="$(wip_projects_dir)/$WIP_LOGIN-wip"
+
+	if [ "$WIP_DRY_RUN" -eq 1 ]; then
+		say ""
+		say "--dry-run, so nothing below was done:"
+		say "  would create  $target (private, org-owned)"
+		say "  would clone   $target -> $checkout"
+		say "  would seed    ${#WIP_TEMPLATE_FILES[@]} files from $SHAPE_REPOSITORY $WIP_TEMPLATE_DIR"
+		say "  would push    one commit to main (which is also the ruleset probe)"
+		say "  would write   $config (repository:, path:)"
+		say "  would run     link-estates"
+		return 0
+	fi
+
+	# ---- step 5: CREATE IT, OR PRINT THE COMMANDS — ruling 2.
+	wip_have_gh || die "\`wip init\` needs \`gh\` to create or find $target. Install GitHub CLI,
+    run \`gh auth login\`, then run this again. Nothing was created."
+	if gh repo view "$target" >/dev/null 2>&1; then
+		say ""
+		say "  $target is already there; this run adopts it."
+	else
+		say ""
+		say "  creating $target"
+		local create_args
+		create_args=(repo create "$target" --private)
+		[ -n "$WIP_TEAM" ] && create_args+=(--team "$WIP_TEAM")
+		create_args+=(--description "$WIP_LOGIN's workspace repository: lanes, handoffs, workspaces")
+		if gh "${create_args[@]}" >/dev/null 2>&1; then
+			say "  created $target"
+			if [ -n "$WIP_TEAM" ]; then
+				# `--team` alone grants the ORG DEFAULT, not read.
+				# THE LINE ITSELF, not a pointer to a block that is not printed
+				# on this path: `wip_admin_block` is reached only where the
+				# CREATE failed, and this arm is the one where it succeeded
+				# (F8 of the #24 review).
+				gh api --method PUT \
+					"/orgs/$WIP_ORG/teams/$WIP_TEAM/repos/$target" -f permission=pull \
+					>/dev/null 2>&1 || {
+					say "  (could not give team $WIP_TEAM read. An administrator can:"
+					say "     gh api --method PUT /orgs/$WIP_ORG/teams/$WIP_TEAM/repos/$target -f permission=pull)"
+				}
+			fi
+		else
+			# RULING 2: PRINT THE COMMAND, and continue once the repository
+			# exists. It never asks for a token and never tries a second
+			# credential.
+			say ""
+			# NAMED FOR WHAT HAPPENED, not for a cause this has not proved. The
+			# usual cause is that the account may not create a repository in
+			# this organisation, and the block below is the answer to that; a
+			# network that was down is the other, and the same block re-run
+			# costs nothing. Claiming the first outright would send a person to
+			# an administrator over a dropped connection.
+			say "\`gh repo create $target\` did not succeed — most often because this account"
+			say "may not create a repository in $WIP_ORG."
+			say "These are the acts an administrator runs. Every value is already filled in:"
+			wip_admin_block "$target" "$WIP_ORG" "$WIP_TEAM"
+			# ONE QUESTION, ONE RE-CHECK, no poll loop and no timeout to choose:
+			# an unbounded wait is a decision the person never asked to make.
+			if [ -t 0 ]; then
+				printf '%s' "Press Enter when the administrator has run these (Ctrl-C to stop): " >&2
+				read -r _ || :
+				if gh repo view "$target" >/dev/null 2>&1; then
+					say "  $target is there now; carrying on."
+				else
+					die "$target is still not there, so there is nothing to clone. Run the block
+    above, then: openRepoTools wip init   (it is idempotent and picks up here)."
+				fi
+			else
+				# An unattended launch must not block on a person.
+				die "$target does not exist and this run has no terminal to wait on. Run the block
+    above, then: openRepoTools wip init"
+			fi
+		fi
+	fi
+
+	# ---- step 6: CLONE IT. Before the seed, because the seed is a commit and a
+	# commit needs a checkout.
+	if [ -d "$checkout/.git" ]; then
+		wip_is_checkout_of "$target" "$checkout" ||
+			die "$checkout is already a checkout, and not of $target. This command will not
+    write into a clone of somebody else's repository, and it will not move one aside.
+    Move it yourself, or pass a different projects directory with \$PROJECTS_DIR.
+    $target exists; NOTHING was written into that checkout, and a re-run picks
+    up from here."
+		say "  $checkout is already a checkout of $target"
+	elif [ -e "$checkout" ]; then
+		die "$checkout already exists and is not a git checkout. $target exists;
+    NOTHING was written into that path, and a re-run picks up from here once it
+    is moved aside."
+	else
+		mkdir -p -- "$(dirname -- "$checkout")"
+		say "  cloning $target -> $checkout"
+		wip_quietly gh repo clone "$target" "$checkout" -- --quiet ||
+			die "could not clone $target into $checkout. Nothing else was changed.
+    What it said:
+$WIP_LAST_ERR"
+	fi
+
+	# ---- step 7: SEED IT FROM THE TEMPLATE, additively. A repository that
+	# already has a commit on `main` is NOT re-seeded: files the template would
+	# place and that are already there are left exactly as they are, and the
+	# missing ones are added — which is what makes a re-run after a
+	# half-finished first run safe.
+	ref="$(wip_shape_ref)"
+	workdir
+	for rel in "${WIP_TEMPLATE_FILES[@]}"; do
+		if [ -e "$checkout/$rel" ]; then continue; fi
+		dest="$WORKDIR/tpl-$(printf '%s' "$rel" | tr '/' '_')"
+		wip_fetch_template_file "$rel" "$dest" "$ref" ||
+			die "could not fetch $WIP_TEMPLATE_DIR/$rel from $SHAPE_REPOSITORY at $ref, so the
+    workspace was NOT seeded. The clone at $checkout is untouched and a re-run
+    picks up from here. Both ways were tried:
+    gh api repos/$SHAPE_REPOSITORY/contents/$WIP_TEMPLATE_DIR/$rel?ref=$ref
+    curl -fsSL https://raw.githubusercontent.com/$SHAPE_REPOSITORY/$ref/$WIP_TEMPLATE_DIR/$rel"
+		wip_substitute "$dest"
+		mkdir -p -- "$checkout/$(dirname -- "$rel")"
+		cp -- "$dest" "$checkout/$rel"
+		seeded=$((seeded + 1))
+	done
+	if [ "$seeded" -gt 0 ]; then
+		say "  seeded $seeded of ${#WIP_TEMPLATE_FILES[@]} template files from $SHAPE_REPOSITORY @ $ref"
+	else
+		say "  the workspace already carries every template file; none was replaced"
+	fi
+
+	# ---- step 8: COMMIT AND PUSH — AND THAT PUSH IS THE RULESET PROBE.
+	# A newly created repository is not excluded from the organisation's PR-only
+	# ruleset until an administrator excludes it, and until it is, every register
+	# write will be refused by the gate. So this push is not only the seed
+	# landing; it is the verification (Addendum 1(2)).
+	if [ -n "$(git -C "$checkout" status --porcelain 2>/dev/null)" ]; then
+		wip_quietly git -C "$checkout" add -A -- . ||
+			die "could not stage the seed in $checkout.
+    What it said:
+$WIP_LAST_ERR"
+		wip_quietly git -C "$checkout" commit -q \
+			-m "Seed this workspace repository from $SHAPE_REPOSITORY $WIP_TEMPLATE_DIR
+
+Written by \`openRepoTools wip init\` (lane-collision-protocol Amendment 9(c)).
+It holds data only: the register, the object logs, the handoffs and the
+workspace manifests. The lane tooling is installed from opensoft/openRepoTools." ||
+			die "could not commit the seed in $checkout. A machine with no
+    \`user.email\` configured is the usual reason, and git says so itself:
+$WIP_LAST_ERR"
+		say "  committed the seed in $checkout"
+	fi
+
+	# THE PUSH IS GATED ON THE REMOTE, NOT ON THE WORKTREE, and that is the
+	# whole of what makes the re-run this step promises actually work. A first
+	# run whose push the ruleset rejected leaves a CLEAN worktree and an
+	# unpushed commit — so a `status --porcelain` gate would report "already
+	# carries the seed", write the pointer file and exit 0 over an empty
+	# `main`, and step 1's file test would then return on every later run.
+	# That is the failure step 8 exists to prevent, met one step further on.
+	local local_head remote_head remote_refs
+	local_head="$(git -C "$checkout" rev-parse HEAD 2>/dev/null || :)"
+	if remote_refs="$(git -C "$checkout" ls-remote origin main 2>/dev/null)"; then
+		remote_head="$(printf '%s\n' "$remote_refs" | awk 'NR==1 {print $1}')"
+	else
+		# Could not ask. Fall through to the push: the push IS the probe, and a
+		# question we could not put to the remote is not an answer from it.
+		remote_head=""
+	fi
+	if [ -z "$local_head" ]; then
+		say "  $checkout has no commit to push"
+	elif [ -n "$remote_head" ] && [ "$local_head" = "$remote_head" ]; then
+		say "  $target main already carries this commit ($(printf '%.7s' "$local_head"))"
+	elif ! git -C "$checkout" push -q origin HEAD:main >/dev/null 2>&1; then
+		die "the seed commit could not be pushed to $target's main.
+    THAT IS THE RULESET, and it is the thing this push exists to find out: the
+    organisation's PR-only ruleset refuses a direct commit, and Rule 9's one commit
+    per write cannot land through a PR gate — so the register would be unwritable.
+    An administrator excludes $target from it:
+        gh api /orgs/$WIP_ORG/rulesets
+    then adds $target to the PR-only ruleset's exempt repositories.
+    The clone and the seed commit are left exactly where they are, so a re-run after
+    that has only to push:
+        openRepoTools wip init"
+	else
+		say "  pushed the seed to $target main (which is also the ruleset probe)"
+	fi
+
+	# ---- step 9: WRITE THE POINTER FILE. The SECOND thing in this toolset that
+	# writes a file outside a repository, after `resume --workspace`, for the
+	# same reason and under the same condition: only on a machine that has none,
+	# and only because the person asked for the repository by running this. It
+	# never overwrites one — step 1 already returned where one existed.
+	local written="$checkout"
+	case "$checkout" in "$HOME"/*) written="~${checkout#"$HOME"}" ;; esac
+	mkdir -p -- "$(dirname -- "$config")" ||
+		die "could not create $(dirname -- "$config") for the pointer file.
+    The repository is created, cloned, seeded and pushed; only this file is
+    missing, and a re-run writes it."
+	[ ! -e "$config" ] ||
+		die "$config appeared while this ran; it was not overwritten."
+	# GUARDED, because this command's exit codes are 0 and 2 and nothing else:
+	# an unguarded redirect fails under `set -e` with the shell's own status 1,
+	# which is the code this toolset reserves for "findings were printed". A
+	# refusal that reads as a report is the defect openRepoTools' own convention
+	# exists to prevent (`status:3076-3078`).
+	printf 'repository: %s\npath: %s\n' "$target" "$written" >"$config" ||
+		die "could not write $config. The repository is created, cloned, seeded and
+    pushed; only this file is missing, and a re-run writes it."
+	say "  wrote $config"
+	say "        repository: $target"
+	say "        path: $written"
+
+	# ---- step 10: LINK-ESTATES, which places the symlinks and reports the ones
+	# it skipped.
+	local linker="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}/link-estates"
+	[ -x "$linker" ] || linker="$(command -v link-estates 2>/dev/null || :)"
+	if [ -n "$linker" ] && [ -x "$linker" ]; then
+		say ""
+		say "  link-estates:"
+		# ONE PROJECTS TREE ACROSS THE SEAM. This toolset spells that directory
+		# `$PROJECTS_DIR` (`park:131`, `resume:114`, and step 6 above); the lane
+		# protocol's commands, which arrived from the workspace repository,
+		# spell it `$PROJECTS_ROOT` (`link-estates:200`, `lane-start:427`).
+		# Amendment 9(g) keeps every mechanic of Amendments 6 to 8, so the
+		# helpers keep their name — but step 10 must run the linker against the
+		# tree step 6 actually cloned into, or a host with `$PROJECTS_DIR` set
+		# to anything but the default gets a clone in one tree and its symlinks
+		# looked for in another. Passed only where the person has not set
+		# `$PROJECTS_ROOT` themselves: their answer wins over our inference.
+		PROJECTS_ROOT="${PROJECTS_ROOT:-$(wip_projects_dir)}" "$linker" ||
+			say "  (link-estates reported the above and changed nothing else)"
+	else
+		say ""
+		say "  link-estates is not installed, so no symlinks were placed."
+		say "  \`openRepoTools --install\` places it; then run \`link-estates\`."
+	fi
+
+	# ---- step 11: THE NEXT STEP, which is one line. `<profile>` is the one
+	# value a person supplies and the one this command cannot derive: it is not
+	# a function of the workspace repository.
+	say ""
+	say "Done. The next step is one line:"
+	say "    pclaude run <profile> --lane <repo>-<n>"
+	say ""
+	say "  <profile>   \`pclaude list\` names them"
+	say "  <repo>-<n>  the lane naming rule: the repository the lane is homed on,"
+	say "              and its position — openRepoProject-1, workBenches-2"
+	return 0
+}
+
+# `wip <verb>` — one noun, one verb, and a refusal that names the one there is.
+wip_dispatch() {
+	local verb="${1-}"
+	shift || :
+	case "$verb" in
+	init) ;;
+	'') die "\`wip\` takes one verb and it is \`init\`:
+        openRepoTools wip init [--org <org>] [--login <name>] [--team <team>] [--dry-run]" ;;
+	*) die "\`wip $verb\` is not a thing this command does. The one verb is \`init\`:
+        openRepoTools wip init" ;;
+	esac
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--org) shift; [ $# -gt 0 ] || die "--org needs a value"; WIP_ORG="$1"; shift ;;
+		--login) shift; [ $# -gt 0 ] || die "--login needs a value"; WIP_LOGIN="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"; shift ;;
+		--team) shift; [ $# -gt 0 ] || die "--team needs a value"; WIP_TEAM="$1"; shift ;;
+		--dry-run) WIP_DRY_RUN=1; shift ;;
+		*) die "\`wip init\` takes --org, --login, --team and --dry-run, and nothing else.
+    It got '$1'." ;;
+		esac
+	done
+	if [ -n "$WIP_LOGIN" ] && ! wip_login_is_compliant "$WIP_LOGIN"; then
+		die "--login '$WIP_LOGIN' cannot form a compliant \`<user>-wip\` name: openRepoShape's
+    naming contract requires \`^[a-z0-9]+(-[a-z0-9]+)*-wip\$\`. Nothing was created."
+	fi
+	wip_init
+}
+
 # --- arguments ------------------------------------------------------------
 #
-# THREE ARGUMENTS AND NO OTHERS, and the refusal names the verbs rather than
-# repeating the usage: somebody typing `openRepoTools park` wants `park`, and
-# the shortest true answer is where it is.
+# THREE FLAGS AND ONE VERB PAIR, and no others. The refusal names the commands
+# rather than repeating the usage: somebody typing `openRepoTools park` wants
+# `park`, and the shortest true answer is where it is.
+#
+# `wip` CONSUMES THE REST OF THE LINE, because `wip init --org x` is one
+# command with its own options and not four arguments to this one.
 while [ $# -gt 0 ]; do
 	case "$1" in
 	-h | --help) usage; exit 0 ;;
 	--version) say "openRepoTools ($REPO @ $REF)"; exit 0 ;;
 	--install) MODE="install"; shift ;;
+	wip) shift; wip_dispatch "$@"; exit $? ;;
 	*)
-		die "openRepoTools installs the estate commands and does nothing else. It takes --install,
-    --help or --version. The commands themselves: \`park --help\`, \`resume --help\`,
-    \`status --help\`."
+		die "openRepoTools installs the estate commands and creates the workspace they read.
+    It takes --install, \`wip init\`, --help or --version. The commands themselves:
+    \`park --help\`, \`resume --help\`, \`status --help\`."
 		;;
 	esac
 done
