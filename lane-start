@@ -1038,21 +1038,42 @@ esac
 # A NAME IS A VETO AND NEVER A PERMISSION, which is the whole of `R-A11-12`: a
 # window called `claude` vetoes nothing and the taking goes ahead, which is
 # exactly the case the first correction was made to preserve.
-win_veto=""
+# AND IT FAILS CLOSED, EXACTLY AS THE REGISTER VETO BESIDE IT DOES (`R-A11-12`;
+# clause (d) rule 1, ratified verbatim): *"Both reads fail closed: any answer but
+# 0 naming another lane or 8 leaves the cell and the resume target alone, because
+# here an empty answer is what PERMITS the take."* Only **8** — no row knows this
+# window's name — is permission. Every other code is a read that did not answer
+# the question, and this is the one place where not answering it would be read as
+# "the session is free": the cost of vetoing is one printed act, and the cost of
+# permitting is another lane's uuid on an append-only line.
+#
+# THE `2` IS NAMED RATHER THAN LEFT TO BE FOUND. `register-row` exits 2 where
+# `check_lane_name` refuses the string — a window name carrying a space, a slash
+# or a leading `-`, which no lane name may carry (`lanes-edit.sh:1210-1215`). Such
+# a window is not provably ANOTHER lane's, but it is not provably free either, and
+# the ruling's words admit no third answer: it vetoes, and the note says which
+# code came back so the operator can rename the window or pass --dir. A window
+# named `claude`, `zsh` or anything else lane-SHAPED that no row knows exits 8 and
+# still permits the take, which is what keeps the /clear, the usage reset and the
+# profile switch working in the windows this estate actually has.
+win_veto=""; win_veto_why=""
 if [ -n "$win_sid" ] && [ -n "$this_window_name" ] && [ "$this_window_name" != "$LANE" ]; then
   if [ "$(printf '%s' "$this_window_name" | tr 'A-Z' 'a-z')" != "$(printf '%s' "$LANE" | tr 'A-Z' 'a-z')" ]; then
     wnv_rc=0
     "$LANES_EDIT" register-row "$this_window_name" >/dev/null 2>&1 || wnv_rc=$?
     case "$wnv_rc" in
-      0) win_veto="$this_window_name" ;;
-      *) : ;;   # 8 no row, 2 not lane-shaped, anything else a failed read: no veto
+      0) win_veto="$this_window_name"
+         win_veto_why="which is another lane the register has a row for" ;;
+      8) : ;;
+      *) win_veto="$this_window_name"
+         win_veto_why="and whether that is another lane is NOT KNOWN — \`$LANES_EDIT register-row $this_window_name\` exited $wnv_rc, which is neither 0 (a row) nor 8 (no row), so this read fails closed (R-A11-12)" ;;
     esac
   fi
 fi
 
 harness_sid=""; cell_anchor=""
 if [ -n "$win_veto" ]; then
-  note "this window is named '$win_veto', which is another lane the register has a row for — so the session live in it ($win_sid) is NOT taken as $LANE's, and $LANE's row is not stamped with it (Amendment 11 clause (d) rule 1, veto 2; Evidence 2(b)). Run this from $LANE's own window, or pass --dir and let it start its own session."
+  note "this window is named '$win_veto', $win_veto_why — so the session live in it ($win_sid) is NOT taken as $LANE's, and $LANE's row is not stamped with it (Amendment 11 clause (d) rule 1, veto 2; Evidence 2(b)). Run this from $LANE's own window, or pass --dir and let it start its own session."
 elif [ -n "$win_sid" ] && [ "$holder_here" = 0 ]; then
   if ! [[ "$win_sid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
     note "the session live in this window has id '$win_sid', which is not a transcript uuid — leaving the cell alone"

@@ -3818,6 +3818,58 @@ has "…while the very same uuid IS vetoed from a window named for another lane"
 # OTHER lane's uuid inside that cell edit, which is step 3b's own `→ harness
 # <uuid>` payload.
 hasnt "…so the other session's uuid reaches no cell edit of repoVT-2's row" "$err" "→ harness $VT_FRESH"
+
+# AND VETO 2 FAILS CLOSED, WHICH UNTIL THIS ROUND IT DID NOT (`R-A11-12`, clause
+# (d) rule 1 verbatim: *"Both reads fail closed: any answer but 0 naming another
+# lane or 8 leaves the cell and the resume target alone, because here an empty
+# answer is what PERMITS the take"*). The arm was `0) veto ;; *) : ;;`, so EVERY
+# code but 0 permitted the take and a `register-row` that could not answer was
+# read as "the session is free" — the one reading the ruling forbids. The
+# register veto beside it (adoption act 0's, `3719d97`) has always been written
+# this way and says so; this is the second layer catching up with it.
+#
+# The window is named for another lane and the live uuid is in NO row, so veto 1
+# has nothing to fire on: this layer is the only thing between that session and
+# repoVT-2's append-only cell.
+cat > "$SANDBOX/vetoedit" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}:${2-}" in
+  register-row:repoVT-1) printf 'register-row: simulated failure\n' >&2; exit "${VETO_RC:-1}" ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/vetoedit"
+# 1 an environment failure · 2 the code an older helper and a name that is not
+# lane-shaped both give · 6 a code no read of this window's name can legitimately
+# answer with. None of the three is 0-naming-another-lane and none is 8.
+for vrc in 1 2 6; do
+	FAKE_TMUX_WINDOW="vtsess:@31" FAKE_TMUX_WINDOW_INDEX=0 FAKE_TMUX_WINDOW_NAME="repoVT-1" \
+	  run env REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/vetoedit" VETO_RC="$vrc" \
+	    "$START" --dry-run --dir "$HOME/projects/repoVT" repoVT-2
+	has   "a window-name read exiting $vrc VETOES the take rather than permitting it" \
+	      "$err" "is NOT taken as repoVT-2's"
+	has   "…naming the code it came back with, so a failed read reads differently from a real row" \
+	      "$err" "exited $vrc"
+	hasnt "…so that session's uuid reaches no cell edit of repoVT-2's row" "$err" "→ harness $VT_FRESH"
+	hasnt "…and it is not made repoVT-2's resume target either" "$err" "--resume $VT_FRESH"
+	is    "…while the run itself still exits 0, because a veto is not a refusal" "$rc" 0
+done
+# AND 8 IS STILL PERMISSION, which is the half that keeps step 3b alive: a window
+# whose lane-shaped name no row knows does not veto, and the take goes ahead.
+cat > "$SANDBOX/vetoedit8" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}:${2-}" in
+  register-row:repoVT-1) exit 8 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/vetoedit8"
+FAKE_TMUX_WINDOW="vtsess:@31" FAKE_TMUX_WINDOW_INDEX=0 FAKE_TMUX_WINDOW_NAME="repoVT-1" \
+  run env REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/vetoedit8" \
+    "$START" --dry-run --dir "$HOME/projects/repoVT" repoVT-2
+has "…while an 8 from that same read still PERMITS it — fail-closed is not refuse-always" \
+    "$err" "the harness minted a new transcript"
+
 rm -f "$sessions_dir/live-vt2.json"
 rm -f "$sessions_dir/live-vt.json"
 unset FAKE_TMUX_WINDOWS
