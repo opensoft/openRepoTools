@@ -1226,6 +1226,62 @@ def test_the_exit_code_table_carries_every_code_the_file_exits_with():
     assert "64" in documented, "64 is the code every Amendment 11 read uses"
 
 
+#: ADOPTION ACT 0, AND THE ONE SHA THAT IS IT. `opensoft/brett-wip#5` merged
+#: 2026-09-13T19:14:37Z, SQUASHED — so the PR's pre-merge head is not an
+#: ancestor of `origin/main` and names code that never landed, while the merge
+#: commit does and is (F-X18, A11 Addendum 4 ruling 13).
+ACT0_MERGED = "3719d97"
+ACT0_DRAFT_HEAD = "95e7a4c"
+#: `opensoft/brett-wip#5` @`<sha>` — the citation shape this repository uses.
+ACT0_CITATION = re.compile(
+    r"`?opensoft/brett-wip#5`?\s*@`([0-9a-f]{7,40})`")
+
+
+def test_adoption_act_zero_is_cited_by_the_sha_that_landed():
+    """A SHA IN A COMMENT IS A CLAIM ABOUT HISTORY, and this one was false in
+    two files: `lane-start:1027` and `lanes-edit.sh:4794` both cited act 0 —
+    the register veto this branch builds its second layer beside — as
+    `95e7a4c`, which is `#5`'s DRAFT head. Measured: `git merge-base
+    --is-ancestor 95e7a4c origin/main` is false and the same test on
+    `3719d97` is true.
+
+    The draft head may still be NAMED, and both files now name it — as the
+    thing that did not land. What is checked here is the citation form
+    `opensoft/brett-wip#5 @<sha>`, which asserts "this is act 0".
+    """
+    tracked = subprocess.run(["git", "ls-files"], cwd=str(REPO),
+                             capture_output=True, text=True,
+                             check=True).stdout.splitlines()
+    offenders = {}
+    cited = 0
+    for rel in tracked:
+        path = REPO / rel
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_bytes().decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        # THE CITATION WRAPS, AND A LINE-BY-LINE MATCH WOULD MISS THE ONE THAT
+        # DID. `lane-start` writes it as "(`opensoft/brett-wip#5`\n#     @`…`)",
+        # so the comment marker of the continuation line sits between the two
+        # halves. Joined here before matching — measured: without this the
+        # regex found only `lanes-edit.sh`'s one-line citation and the mutation
+        # of `lane-start`'s survived.
+        flat = re.sub(r"\n[ \t]*#?[ \t]*", " ", text)
+        for sha in ACT0_CITATION.findall(flat):
+            cited += 1
+            if not (sha.startswith(ACT0_MERGED) or ACT0_MERGED.startswith(sha)):
+                offenders.setdefault(rel, []).append(sha)
+    assert cited, (
+        "no file cites adoption act 0 at all — this test has stopped testing "
+        "anything, or the citation form has changed")
+    assert not offenders, (
+        f"act 0 is cited by a sha that is not the merge commit {ACT0_MERGED}: "
+        f"{offenders}. `{ACT0_DRAFT_HEAD}` is the draft head and is not an "
+        "ancestor of origin/main.")
+
+
 def test_no_committed_file_names_a_host_absolute_path():
     """openRepoShape #61: a suite stayed green on every machine but the one a
     fixed path was written on, because the ONE test that read it SKIPPED when

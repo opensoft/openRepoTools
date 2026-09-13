@@ -4877,9 +4877,12 @@ EOF
   # here does.
 
   # ADOPTION ACT 0 SHIPS `session-lane`, AND IT IS BELOW RATHER THAN HERE.
-  # `opensoft/brett-wip#5` @`95e7a4c` added it and `openRepoTools#24` ported that
+  # `opensoft/brett-wip#5` @`3719d97` added it and `openRepoTools#24` ported that
   # commit into this copy, so this branch carries NO second implementation of it
   # (A11 Addendum 3, CF-T11: act 0 ships FOUR items, and that is the fourth).
+  # `3719d97` IS THE MERGE COMMIT. Act 0 merged 2026-09-13T19:14:37Z, squashed,
+  # so the draft head `95e7a4c` this comment used to cite is not an ancestor of
+  # `origin/main` at all (F-X18, A11 Addendum 4 ruling 13).
   # `/restart`'s step 2(b) and `lane-start`'s step 3b both call the ported arm.
 
   # The lane bound to a window OF THE ASKING WORKSTATION. Three callers share

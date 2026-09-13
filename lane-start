@@ -1024,8 +1024,11 @@ esac
 #   VETO 1 — THE REGISTER. A uuid that belongs to ANOTHER ROW is never taken,
 #     read through `lanes-edit.sh session-lane <uuid>` and fail-closed: only 0
 #     and 8 are answers. That veto is ADOPTION ACT 0'S (`opensoft/brett-wip#5`
-#     @`95e7a4c`), ported into this copy by `openRepoTools#24`, and this branch
-#     does not re-implement it.
+#     @`3719d97`), ported into this copy by `openRepoTools#24`, and this branch
+#     does not re-implement it. THE SHA IS THE MERGE COMMIT AND NOT THE DRAFT
+#     HEAD: act 0 merged 2026-09-13T19:14:37Z, squashed, so `#5`'s pre-merge
+#     head `95e7a4c` is NOT an ancestor of `origin/main` and citing it names
+#     something that never landed (F-X18).
 #
 #   VETO 2 — THE WINDOW'S NAME, and it is this PR's second layer. A window NAMED
 #     FOR ANOTHER LANE is never taken. It catches what the register veto cannot:
