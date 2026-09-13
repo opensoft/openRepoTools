@@ -578,9 +578,38 @@ def test_agents_md_is_short_enough_to_be_read():
     shape's is a record that is RIGHT, and the feature comes back in a
     checkout of that shape — an assistant told only "re-park" would send
     somebody round that loop for ever.
+
+    155 -> 159 on 2026-09-12, for the same review's note on a BRANCH GONE
+    FROM ORIGIN: `resume` refuses that record at RR2 — "<branch> is no longer
+    on origin in the <role> leg" — before it compares any commit, and rule 4
+    gave `resume <Name>` as the exit for it. The four lines are the two exits
+    RR2 actually gives and the flag that reaches them. NEITHER IS A RE-PARK,
+    which is why this is not one more clause on the exception above it: a
+    feature that LANDED wants its record entry deleted, and a branch deleted
+    by mistake wants pushing again from the workstation that parked it, and
+    an assistant that reaches for the re-park it has read four times by now
+    writes a record `resume` refuses again for the same reason. The
+    `--fetch` half is the other thing it would get wrong unaided: without
+    that flag a missing `origin/<branch>` here is USUALLY a branch parked
+    elsewhere since this clone last fetched, which `resume` fetches and
+    brings back, so the finding still names `resume` and the flag is what
+    settles the two apart.
+
+    159 -> 162 on 2026-09-12, for the follow-up's own note on A ROLE THIS
+    CHECKOUT'S SHAPE HAS NO PLACE FOR, which the rule had as "a ROLE THIS
+    SHAPE DOES NOT MOUNT". Mounting is not the test `resume` makes:
+    `collect_legs` maps `spec` and `code` only onto a three-leg checkout and
+    `repo` only onto a single one, so a role this root mounts perfectly well
+    — `assembly`, which the three-leg shape HAS, or the other shape's role in
+    a root that happens to have the directory — is refused with the rest. The
+    three lines buy the widened rule and A THIRD EXIT: an assistant told
+    "re-park, or a checkout of that shape" has nowhere to send a record whose
+    role belongs to NEITHER shape, and would send somebody round the re-park
+    loop for ever, which is the loop the entry above this one bought its two
+    lines to stop.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 155, f"AGENTS.md is {len(lines)} lines; the cap is 155"
+    assert len(lines) <= 162, f"AGENTS.md is {len(lines)} lines; the cap is 162"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -723,9 +752,28 @@ def test_readme_is_short_enough_to_be_read():
     keeps the list honest — "feature", where every other entry beside it is a
     leg. AGENTS.md takes the same state in the words it already had and
     repacks, so its cap does not move.
+
+    251 -> 255 on 2026-09-12, for the same review's note on a BRANCH GONE
+    FROM ORIGIN. The same two places once more: three lines put it in the
+    exception, because the exits are the record's own entry and a push from
+    the workstation that parked it rather than the re-park every other
+    exception ends in, and one puts it in the finding list, because a
+    recorded branch this repository has no `origin/<branch>` for is a state
+    of the RECORD against origin that no other entry in that list covers.
+    The `--fetch` clause is in the exception for the reason the AGENTS.md
+    entry gives: without it the two readings of a missing ref are not one
+    the command may choose between.
+
+    255 -> 256 on 2026-09-12, for the same widening: "a role this shape does
+    not mount" becomes "a role this shape has no place for", with what that
+    covers and the third exit, in the exception and in the finding list. One
+    line, because the paragraph repacked as it took the words — and it is a
+    line about the RULE and not about the wording: a reader who takes
+    "mount" literally reads `assembly`, which this repository's own fixtures
+    mount at `.`, as a role that is fine.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 251, f"README.md is {len(lines)} lines; the cap is 251"
+    assert len(lines) <= 256, f"README.md is {len(lines)} lines; the cap is 256"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
