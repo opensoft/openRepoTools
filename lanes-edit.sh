@@ -659,13 +659,13 @@ replace_line() {
   TMPD="$(mktemp -d)"
   pre="$TMPD/pre"; out="$TMPD/out"
   cat -- "$LANES_FILE" > "$pre"
-  before="$(wc -l < "$pre")"
+  before="$(wc -l < "$pre" | tr -d ' ')"
   {
     [ "$n" -gt 1 ] && head -n "$((n - 1))" -- "$pre"
     printf '%s\n' "$newline"
     tail -n "+$((n + 1))" -- "$pre"
   } > "$out"
-  after="$(wc -l < "$out")"
+  after="$(wc -l < "$out" | tr -d ' ')"
   [ "$before" = "$after" ] || die "line count changed ($before -> $after); refusing" 5
   stat="$(git --no-pager diff --no-index --numstat -- "$pre" "$out" 2>/dev/null | head -n1 | cut -f1,2)"
   [ "$stat" = "$(printf '1\t1')" ] || die "edit touched more than one line (numstat: ${stat:-none}); refusing" 5
@@ -681,12 +681,47 @@ append_text_line() {
   TMPD="$(mktemp -d)"
   pre="$TMPD/pre"
   cat -- "$target" > "$pre"
-  before_bytes="$(wc -c < "$pre")"
-  before_lines="$(wc -l < "$pre")"
+  # `| tr -d ' '`, THE SPELLING `park:564` AND `status:746` ALREADY USE — and
+  # the one function that did not use it was the macOS job's LARGEST SINGLE
+  # CAUSE (A9 Addendum 4, R-A9-11). BSD `wc` right-aligns every count in a
+  # fixed-width field, so `wc -l < f` answers `"       5"` on macOS where GNU
+  # answers `"5"`, while `$((before_lines + 1))` is arithmetic and is never
+  # padded. `[ "       5" = "5" ]` is FALSE — so on BSD this refused EVERY
+  # append it was ever asked to make, and refused it HAVING ALREADY APPENDED:
+  # the `>>` on the line between them had run, so the `die` left the file
+  # modified and uncommitted, and then every later `lanes-edit.sh` in that
+  # checkout refused as well (`unstaged tracked change — so the race cannot be
+  # run safely here`, 48 times in the macOS transcript at `9000e86`). The
+  # message it died with read `append changed line count by 1`: the very
+  # equality the test above it had just denied, which is what a comparison of
+  # a padded string against an unpadded one looks like from the outside.
+  # Measured: transcript line 454 of the macOS job at `9000e86`. And
+  # reproduced on Linux under NOTHING BUT a `wc` that pads — the rest of the
+  # tree exactly as `d3d59b5` shipped it — for **575 passed, 423 failed**
+  # against that runner's own 560 / 438. Fifteen assertions apart, which is
+  # about what the second defect (a liveness `sleep` too short for a 900 s
+  # run, `tests/test_lane_helpers.sh:446`) has left to contribute once this
+  # one has already taken the checkout down with it.
+  before_lines="$(wc -l < "$pre" | tr -d ' ')"
   printf '%s\n' "$newline" >> "$target"   # >> FOLLOWS the symlink
-  after_lines="$(wc -l < "$target")"
-  [ "$after_lines" = "$((before_lines + 1))" ] || die "append changed line count by $((after_lines - before_lines)); inspect $target" 5
-  cmp -s -n "$before_bytes" -- "$pre" "$target" || die "append rewrote existing bytes; inspect $target" 5
+  after_lines="$(wc -l < "$target" | tr -d ' ')"
+  # `-eq`, not `=`: these are NUMBERS, and saying so is what makes a second
+  # padded spelling arriving from anywhere unable to resurrect the defect.
+  [ "$after_lines" -eq "$((before_lines + 1))" ] || die "append changed line count by $((after_lines - before_lines)); inspect $target" 5
+  # THE WHOLE FILE REBUILT, and no `cmp -n`: the `-n <limit>` that reads
+  # "compare at most this many bytes" is GNU's, and BSD `cmp`'s trailing
+  # numbers are SKIPS, not a limit — so where GNU compared a prefix, BSD
+  # answers `illegal option -- n`, exits 2, and this proof becomes a REFUSAL
+  # of a write that was perfectly correct, dying 5 with the log line already
+  # on disk and uncommitted. What the file must now be is exactly its old
+  # bytes followed by the one new line, so that is what is built and compared:
+  # `cat`, `printf` and cmp's `-` operand are POSIX, no byte count is needed
+  # (`head -c 0` is an ERROR on BSD, which is what the first append to an
+  # empty log would have hit), and the claim is STRONGER than the old one —
+  # not merely that no existing byte moved, but that the line appended is the
+  # line that was asked for.
+  { cat -- "$pre"; printf '%s\n' "$newline"; } | cmp -s -- "$target" - ||
+    die "append rewrote existing bytes; inspect $target" 5
   note "1 line appended to $target"
 }
 

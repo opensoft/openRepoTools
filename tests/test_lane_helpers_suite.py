@@ -76,7 +76,15 @@ def test_the_lane_helper_suite_passes():
                  "OPENREPOTOOLS_BIN_DIR", "PROJECTS_ROOT"):
         env.pop(name, None)
 
-    proc = subprocess.run(["bash", str(SUITE)], capture_output=True, text=True,
+    # `errors="replace"`, because the thing this wrapper exists to print is the
+    # TRANSCRIPT, and a decode that raises loses all of it. The suite renders
+    # its own failures with bash substrings for that reason (R-A9-11), so a
+    # stray byte here should be impossible — and if one ever gets through, a
+    # `\ufffd` in one line is a readable result where `UnicodeDecodeError` is
+    # none at all. Measured: at `dcf1027` one truncated em dash cost the whole
+    # 998-line transcript on the macOS job.
+    proc = subprocess.run(["bash", str(SUITE)], capture_output=True,
+                          encoding="utf-8", errors="replace",
                           check=False, cwd=str(REPO), timeout=TIMEOUT_SECONDS,
                           env=env)
     tail = proc.stdout.strip().splitlines()[-1:] or ["(no output)"]

@@ -229,5 +229,36 @@ jobs:
           /bin/bash -n link-estates
           /bin/bash -n tests/test_lane_helpers.sh
 
+      # THE FACTS THE LAST THREE ROUNDS WERE SPENT GUESSING AT, printed once,
+      # in seconds, in the job that is the only place they can be read (A9
+      # Addendum 4, R-A9-11). Every macOS defect this branch fixed was a
+      # difference between two `bash`es or two userlands that no Linux runner
+      # and no hand-written shim reproduced, and each cost a ~20-minute round
+      # to find. `continue-on-error` because a diagnostic must never be the
+      # thing that reddens a job: what it prints is evidence, not an assertion.
+      #
+      # The `wc` line is not decoration. BSD `wc` right-aligns its counts and
+      # GNU's does not, and one unstripped count in `lanes-edit.sh` was the
+      # largest single cause of the 438 failures at `d3d59b5` — `cat -A` is
+      # there so the padding is VISIBLE rather than swallowed by the log.
+      - name: what this runner actually is
+        continue-on-error: true
+        run: |
+          sw_vers || :
+          echo "bash on PATH : $(command -v bash)"; bash --version | head -n1
+          echo "/bin/bash    : $(/bin/bash --version | head -n1)"
+          echo "LANG=[${LANG-}] LC_ALL=[${LC_ALL-}] LC_CTYPE=[${LC_CTYPE-}]"
+          locale || :
+          printf 'wc -l pads?  : ['; printf 'a\nb\n' | wc -l | tr -d '\n'; printf ']\n'
+          printf 'a\nb\n' | wc -l | cat -A
+          echo "/proc exists : $( [ -d /proc ] && echo yes || echo no )"
+          for t in timeout gtimeout tmux realpath greadlink gsed shasum sha256sum; do
+            echo "  $t -> $(command -v "$t" || echo '(absent)')"
+          done
+          echo "cmp -n taken : $(printf x > /tmp/.a; printf x > /tmp/.b; \
+            cmp -s -n 1 /tmp/.a /tmp/.b >/dev/null 2>&1 && echo yes || echo no)"
+          echo "head -c 0 ok : $(head -c 0 /tmp/.a >/dev/null 2>&1 && echo yes || echo no)"
+          git --version; python3 --version
+
       - name: tests
         run: python3 -m pytest tests -q

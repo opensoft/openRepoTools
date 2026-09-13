@@ -1355,6 +1355,25 @@ def test_no_shipped_bash_reaches_for_gnu_only_utilities_unaccompanied(name):
             assert re.search(r"\bstat\b[^\n|]*\s-f\b", line), (
                 f"{name} uses GNU `stat -c` with no `stat -f` beside it on the "
                 f"same line:\n  {line.strip()}")
+        assert not re.search(r"\bcmp\b[^\n|]*\s-n\b", line), (
+            f"{name} passes GNU `cmp -n <limit>`; BSD `cmp`'s trailing numbers "
+            f"are SKIPS, not a limit, so macOS answers `illegal option -- n` "
+            f"and exits 2 \u2014 which turns a PROOF into a refusal of a write that "
+            f"was correct. Build what the file must now be and compare that: "
+            f"`{{ cat -- old; printf ...; }} | cmp -s -- file -`. Not "
+            f"`head -c <n>` either: BSD `head` rejects a count of 0:"
+            f"\n  {line.strip()}")
+        assert not re.search(r"\bwc\b\s+-[lcwm]", line) or "tr -d ' '" in line, (
+            f"{name} reads a count out of `wc` and does not strip the spaces "
+            f"BSD `wc` pads it with. `wc -l < f` answers `\"       5\"` on macOS "
+            f"and `\"5\"` under GNU, so the moment that value meets anything "
+            f"unpadded \u2014 an arithmetic `$((n + 1))`, a literal, a count from "
+            f"anywhere else \u2014 a `[ x = y ]` between them is FALSE on one "
+            f"platform and true on the other. That is exactly how "
+            f"`append_text_line` came to refuse every append it had already "
+            f"made on the macOS job, and to say `append changed line count by "
+            f"1` while doing it. Spell it `| tr -d ' '`, as `park:564` and "
+            f"`status:746` always have:\n  {line.strip()}")
         assert not re.search(r"\bxargs\b[^\n|]*\s-r\b", line), (
             f"{name} passes GNU `xargs -r`, which BSD `xargs` does not "
             f"take:\n  {line.strip()}")
