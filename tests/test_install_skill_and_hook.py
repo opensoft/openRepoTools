@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-"""`--install`'s three artifacts that are not one of the nine files.
+"""`--install`'s artifacts that are not one of the ELEVEN files: the two
+skills at two paths each, the `/swap` command file at two more, and the one
+merged `SessionStart` entry.
 
 lane-collision-protocol Amendment 9(b), inheriting A8 Addendum 2's R-A8-5
 unvaried — the skill into the SHARED skills directory every profile reads
@@ -12,7 +14,7 @@ identical" is a `cmp`. The hook is one entry inside a file somebody else owns
 and two other programs also write, and its ONLY idempotence is an exact match
 on the command string. So the tests below are about the four answers that
 string can have — present, absent, differing, unreadable — and about the one
-rule that makes a wrong answer survivable: the merge is computed with the nine
+rule that makes a wrong answer survivable: the merge is computed with the eleven
 files in hand, BEFORE any of them is placed, so a refusal costs a whole install
 rather than half of one.
 
@@ -264,7 +266,7 @@ def test_a_differing_session_start_entry_refuses_and_places_nothing(tmp_path):
     twice.
 
     AND THE COST IS A WHOLE INSTALL, NOT HALF OF ONE: the merge is computed
-    with the nine files in hand, before any of them is placed, so the bin
+    with the eleven files in hand, before any of them is placed, so the bin
     directory is untouched. That is the same all-or-nothing rule `--install`
     already had, extended to the one artifact that is not a whole file.
     """
@@ -377,15 +379,16 @@ def test_a_destination_that_cannot_be_written_refuses_before_anything_is_placed(
 
     Amendment 9(b) computes the merge in hand "so a merge that cannot be
     computed refuses having placed nothing". A filesystem offers no transaction
-    across twelve artifacts, so nothing can make the last three atomic with the
-    first nine — but the failure that actually happens is not an exotic one, it
+    across eighteen artifacts, so nothing can make the last seven atomic with
+    the first eleven — but the failure that actually happens is not an exotic
+    one, it
     is a directory that is not this installer's to write, and that question can
     be asked in the planning phase where the refusal still costs nothing.
 
-    Without the check the run places nine files and two of the three remaining
-    artifacts, then dies on the third — leaving a host with commands installed,
+    Without the check the run places eleven files and some of the remaining
+    artifacts, then dies — leaving a host with commands installed,
     no `SessionStart` entry, and an installer that reports the same "already
-    installed (unchanged)" for the nine on every re-run while never reaching
+    installed (unchanged)" for the eleven on every re-run while never reaching
     the one that failed.
     """
     if which == "shared skills":
@@ -400,13 +403,13 @@ def test_a_destination_that_cannot_be_written_refuses_before_anything_is_placed(
         assert result.returncode == 2, result.stdout + result.stderr
         assert "NOTHING was installed" in result.stderr
         assert not bin_dir.exists() or not any(bin_dir.iterdir()), (
-            "nine files were placed against a destination that was never "
+            "the eleven files were placed against a destination that was never "
             "going to take the other three")
     finally:
         blocked.chmod(0o700)
 
 
-# --- the nine targets, and what they are (R-A9-12) --------------------------
+# --- the eleven targets, and what they are (R-A9-12) ------------------------
 
 @NEEDS_JQ
 @NOT_ROOT
@@ -424,7 +427,7 @@ def test_a_leaf_destination_that_exists_unwritable_refuses_before_anything_is_pl
 
     The bin directory is the assertion that tells the two apart: the refusal
     here is a PLANNING one and nothing is placed, where the mutant places all
-    nine files and dies on the `cp` into this same directory, which is the
+    eleven files and dies on the `cp` into this same directory, which is the
     half-install the planning phase exists to prevent.
     """
     blocked = tmp_path / ".claude-profiles" / "shared" / "skills" / "lane-swap"
@@ -437,7 +440,7 @@ def test_a_leaf_destination_that_exists_unwritable_refuses_before_anything_is_pl
         assert "is not writable" in result.stderr, result.stderr
         assert "NOTHING was installed" in result.stderr
         assert not bin_dir.exists() or not any(bin_dir.iterdir()), (
-            "the nine files were placed against a leaf directory that was "
+            "the eleven files were placed against a leaf directory that was "
             "never going to take the skill")
     finally:
         blocked.chmod(0o700)
@@ -506,7 +509,7 @@ def test_a_symlinked_target_is_refused_and_nothing_is_written_through_it(tmp_pat
 def test_a_directory_where_a_command_goes_is_refused_the_same_way(tmp_path):
     """THE RULE IS `A REGULAR FILE`, not `not a symlink`. A directory at
     `$BIN/park` is the same refusal for the same reason — `cp` cannot place a
-    file over it, and finding that out after eight of the nine are placed is
+    file over it, and finding that out after ten of the eleven are placed is
     the half-install the planning phase exists to prevent."""
     bin_dir = tmp_path / ".local" / "bin"
     (bin_dir / "park").mkdir(parents=True)

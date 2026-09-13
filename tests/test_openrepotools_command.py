@@ -92,7 +92,7 @@ pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
               WINDOWS_SKIP]
 
 #: `--install` HARD-REQUIRES `jq` SINCE lane-collision-protocol AMENDMENT 9(b):
-#: one of its twelve artifacts is a merged entry inside a JSON file somebody
+#: one of its eighteen artifacts is a merged entry inside a JSON file somebody
 #: else owns, and the clause has it refuse naming `jq` rather than rewriting
 #: that file by hand. So a run of `--install` on a host without `jq` is a
 #: REFUSAL BY DESIGN, and a test that asserts a successful placement there is
@@ -164,7 +164,7 @@ def test_help_prints_every_usage_line():
 
 
 def test_help_names_every_command_it_places_and_the_standards_front_door():
-    """`--install` places nine files, and eight of them are commands this one
+    """`--install` places eleven files, and ten of them are commands this one
     knows nothing about — so `--help` has to say what they are and where the
     rest is written down. A command a person has on PATH and cannot find
     written down is a command they will not use.
@@ -352,8 +352,10 @@ def test_installing_twice_changes_nothing(tmp_path):
     assert second.returncode == 0, second.stderr
     for name in INSTALLED:
         assert f"{name}: already installed at" in second.stdout, name
-    # TWELVE, not nine: the two skill copies and the hook entry each report
-    # `unchanged` too, and the count is the invariant Amendment 9(b) names.
+    # EIGHTEEN, not eleven: the two skill copies, the two command-file copies
+    # and the hook entry each report `unchanged` too, and the count is the
+    # invariant Amendment 9(b) names — derived from the three lists, never
+    # restated, so a new skill or command moves it.
     assert second.stdout.count("unchanged") == ARTIFACTS
 
 
@@ -361,7 +363,7 @@ def test_installing_twice_changes_nothing(tmp_path):
 @NEEDS_JQ
 def test_install_replaces_a_copy_that_has_drifted(tmp_path, name):
     """Per file, and only the one that drifted: an install that rewrote all
-    nine every time would have nothing to say about which one was stale."""
+    eleven every time would have nothing to say about which one was stale."""
     assert run_cmd("--install", home=tmp_path).returncode == 0
     target = tmp_path / ".local" / "bin" / name
     target.write_text(target.read_text(encoding="utf-8") + "# drift\n",
