@@ -41,7 +41,17 @@
 # while citing a dead pid. It is never a holder and it must never write the
 # register; this listing names it, and retiring it is a person's act.
 #
-# EXIT CODES: 0 rows · 8 no lane to list · 2 refused · 1 a read failed.
+# EXIT CODES, AND THEY ARE THE CONTRACT'S RATHER THAN THIS COMMAND'S (SPEC §15,
+# and clause (h)'s row for the read behind it): `0` rows · `8` none · `64` usage
+# · `2` A HELPER PREDATING AMENDMENT 11 · `1` a read failed.
+#
+# `64` AND `2` WERE THE WRONG WAY ROUND until this round (F-X4). A typo exited 2
+# where the contract gives 64, and a workstation whose `lanes-edit.sh` predates
+# this amendment — which is EVERY workstation until adoption act 3's install
+# reaches it — exited 1, the code reserved for a read that broke, where the
+# contract gives 2. The helper's own `lanes)` arm had them right all along; only
+# the command in front of it did not. `1` is this command's own and is not in the
+# contract's four: it is the residue, a read that answered nothing recognisable.
 #
 #   $LANES_EDIT   the register's reader (default: lanes-edit.sh beside this file)
 #
@@ -55,7 +65,7 @@ SELF="${BASH_SOURCE[0]:-$0}"
 selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 
 say() { printf '%s\n' "$*"; }
-die() { printf '\n%s: REFUSED: %s\n' "$prog" "$1" >&2; exit "${2:-2}"; }
+die() { printf '\n%s: REFUSED: %s\n' "$prog" "$1" >&2; exit "${2:-64}"; }
 
 usage() {
 	cat <<'USAGE'
@@ -77,7 +87,7 @@ and for a lane that is not live, the exact command that restarts it.
   --ws <name>      another workstation's lanes.
   -h, --help       this.
 
-Exit: 0 rows · 8 none · 2 refused · 1 a read failed.
+Exit: 0 rows · 8 none · 64 usage · 2 a helper predating Amendment 11 · 1 a read failed.
 
 It writes nothing, launches nothing and asks nothing. `restart <lane>` is what
 restarts one, and `restart` with no argument lists the CURRENT CHECKOUT's lanes.
@@ -91,7 +101,7 @@ if [ -z "$LANES_EDIT" ]; then
 	fi
 fi
 [ -n "$LANES_EDIT" ] && [ -x "$LANES_EDIT" ] || die "no register reader at ${LANES_EDIT:-lanes-edit.sh} — it is installed beside this
-    command by \`openRepoTools --install\`. Run that, or set \$LANES_EDIT." 2
+    command by \`openRepoTools --install\`. Run that, or set \$LANES_EDIT." 1
 
 do_fetch=0
 args=()
@@ -101,15 +111,15 @@ while [ $# -gt 0 ]; do
 	--fetch) do_fetch=1; shift ;;
 	--all) args+=(--all); shift ;;
 	--repo | --dir | --ws)
-		[ -n "${2-}" ] || die "$1 needs a value — see $prog --help" 2
+		[ -n "${2-}" ] || die "$1 needs a value — see $prog --help" 64
 		args+=("$1" "$2"); shift 2 ;;
 	--repo=* | --dir=* | --ws=*)
 		flag="${1%%=*}"; val="${1#*=}"
-		[ -n "$val" ] || die "$flag needs a value — see $prog --help" 2
+		[ -n "$val" ] || die "$flag needs a value — see $prog --help" 64
 		args+=("$flag" "$val"); shift ;;
 	--) shift ;;
-	-*) die "unknown option '$1' — see $prog --help" 2 ;;
-	*) die "lanes takes no positional arguments; did you mean \`restart $1\`? — see $prog --help" 2 ;;
+	-*) die "unknown option '$1' — see $prog --help" 64 ;;
+	*) die "lanes takes no positional arguments; did you mean \`restart $1\`? — see $prog --help" 64 ;;
 	esac
 done
 
@@ -167,7 +177,17 @@ case "$rc" in
 	say "  every workstation:   $prog --all"
 	ws_notice
 	exit 8 ;;
-64) die "bad arguments for the listing read — see $prog --help" 2 ;;
+64) die "bad arguments for the listing read — see $prog --help" 64 ;;
+# A HELPER PREDATING AMENDMENT 11, AND IT IS EXPECTED RATHER THAN BROKEN. `2` is
+# what a `lanes-edit.sh` with no `lanes` subcommand exits, exactly as a
+# pre-Amendment-8 one did for `swapped` (`lanes-edit.sh:4818-4826`), and until
+# act 3's install reaches a workstation that is what every one of them answers.
+# The contract gives it its own code so a caller can tell it from a read that
+# broke, and the message names the act rather than the rule.
+2) die "the \`lanes-edit.sh\` on this workstation has no \`lanes\` subcommand, so it
+    predates lane-collision-protocol Amendment 11. That is not a failure and
+    nothing is wrong with the register — this workstation has not taken adoption
+    act 3's install yet. Take it:  openRepoTools --install" 2 ;;
 *) die "$LANES_EDIT lanes failed (exit $rc). That is NOT 'there are no lanes', and this
     command will not print an empty listing on an answer it did not get
     (Amendment 7(d)). Run it by hand to see what it says." 1 ;;

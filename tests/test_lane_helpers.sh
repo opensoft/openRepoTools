@@ -3971,11 +3971,47 @@ has  "…and --all lists it" "$out" "repoA11-3"
 run "$LANES_CMD" --repo opensoft/repoA11 </dev/null
 is   "lanes --repo narrows to one repository's lanes" "$rc" 0
 has  "…which is decision 7's per-repo listing, read through the same helper" "$out" "repoA11-1"
+# THE CONTRACT'S FOUR CODES, WHICH ARE NOT THE ONES THIS COMMAND USED (F-X4).
+# SPEC §15 and clause (h)'s row for the read behind it: `0` rows · `8` none ·
+# `64` usage · `2` a helper predating Amendment 11. A typo exited 2, where the
+# contract gives 64; and a workstation whose helper predates this amendment —
+# every workstation until adoption act 3's install reaches it — exited 1, the
+# code for a read that broke.
 run "$LANES_CMD" repoA11-1 </dev/null
-is   "lanes takes no positional argument" "$rc" 2
+is   "lanes takes no positional argument, and spends the contract's 64 on it" "$rc" 64
 has  "…and points at the command that does" "$err" "restart repoA11-1"
 run "$LANES_CMD" --repo </dev/null
-is   "…and a flag with no value is refused rather than guessed" "$rc" 2
+is   "…and a flag with no value is refused rather than guessed, with the same 64" "$rc" 64
+run "$LANES_CMD" --nosuchflag </dev/null
+is   "…as is an option it has never heard of" "$rc" 64
+# AND `2` IS KEPT FOR THE ONE THING THE CONTRACT GIVES IT. A helper with no
+# `lanes` subcommand exits 2 (`lanes-edit.sh:4818-4826`), which is expected and
+# silent rather than broken, and the command must not report it as a read that
+# failed.
+cat > "$SANDBOX/oldedit" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  lanes) printf "lanes-edit: unknown subcommand 'lanes'\n" >&2; exit 2 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/oldedit"
+run env REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/oldedit" "$LANES_CMD" </dev/null
+is   "a lanes-edit.sh predating Amendment 11 is the contract's 2, not a read that failed" "$rc" 2
+has  "…saying it is an un-upgraded workstation rather than a fault" "$err" "predates lane-collision-protocol Amendment 11"
+has  "…and naming the one act that fixes it" "$err" "openRepoTools --install"
+# A read that genuinely broke is still 1, so the two are told apart.
+cat > "$SANDBOX/brokeedit" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  lanes) printf 'lanes-edit: simulated failure\n' >&2; exit 6 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/brokeedit"
+run env REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/brokeedit" "$LANES_CMD" </dev/null
+is   "…while a read that actually failed stays 1, and is never read as 'no lanes'" "$rc" 1
+has  "…saying so in Amendment 7(d)'s words" "$err" "NOT 'there are no lanes'"
 # A PAUSED LANE WITH NO RECORDED PROFILE GETS NO `restart` LINE — it gets the
 # form that works, with the profile named as the one token to supply.
 has  "a lane with no recorded profile is offered the launcher form, not a line it cannot type" \
