@@ -2587,6 +2587,37 @@ write_event() {
   if [ "${we_pay//[$'\n\r']/}" != "$we_pay" ] || [ "${we_txt//[$'\n\r']/}" != "$we_txt" ]; then
     die "an event's payload and free text are ONE line: a newline in either would append several lines to an append-only log, and the proof that only one was added would fail after the write, not before it" 2
   fi
+  # AND A `, ` IN THE PAYLOAD, WHICH IS CLAUSE (c)'S OTHER SEPARATOR AND WAS IN
+  # NO WRITER AT ALL. ` — ` divides the verb from the fields and the fields from
+  # the free text; `, ` divides THE FIELDS FROM EACH OTHER — `lane <l>, session
+  # <u>@<ws>, <utc>, <object>` — and the payload is the tail of that fourth
+  # field, so a `, ` inside it reads back as a fifth field and a sixth that no
+  # reader knows. `lane-start` fences its `dir`, `window` and `profile` values
+  # one at a time (`:689-692`, `:728-731`, `:1574-1578`) and the `/lane-swap`
+  # skill now fences the same two; this is the backstop under all of them, in the
+  # writer, for the reason this file gives for putting the container guard at the
+  # dispatcher: *"nine copies of one rule is how eight of them would come to
+  # disagree"*.
+  #
+  # THE PAYLOAD AND NOT THE FREE TEXT. The free text is everything after the
+  # SECOND ` — `, where a parser has already finished splitting fields, so a
+  # comma there is ordinary prose and the estate's log is full of it. Refusing it
+  # would refuse lines this estate legitimately writes.
+  #
+  # AND NOT THE `"` EITHER, WHICH IS WHY THIS GUARD IS NARROWER THAN THE ONES
+  # ABOVE IT. Clause (c)'s own rule for a path containing a space is to WRITE IT
+  # QUOTED — `dir "/home/b/my projects/x"`, which is what makes it one ref under
+  # 7(b) — so `quote_subfield` puts a `"` into the payload deliberately and a `"`
+  # refusal here would refuse the very shape the clause mandates. The `"` belongs
+  # in the per-VALUE fences, where it is, and not in the whole-payload one.
+  #
+  # MEASURED BEFORE IT WAS WRITTEN, against every line this estate has: 111
+  # payloads in `opensoft/brett-wip`'s 15 lane logs carry `, ` 0 times and `"` 0
+  # times, while 76 carry `; ` — the sub-field separator, which this guard must
+  # therefore never touch.
+  case "$we_pay" in
+    *", "*) die "an event's payload may not contain ', ': that separator is what divides an event line's four fields from each other — 'lane <lane>, session <uuid>@<ws>, <utc>, <object>' — and the payload is the tail of the fourth, so a ', ' inside it reads back as fields the log's own parser cannot account for. The log is append-only and no later line can correct it. Use a semicolon, which is the sub-field separator: '$we_pay'" 2 ;;
+  esac
   # AND IT REFUSES A FREE TEXT THAT BEGINS WITH AN ARROW (R26, Addendum 6).
   # `→` and `←` introduce the PAYLOAD, and the payload is its own argument.
   # Quoted into the free-text slot — `log LANDED <obj> "→ <sha>"`, the shape a

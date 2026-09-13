@@ -3653,6 +3653,35 @@ has  "…in the same words, from the one place they are written" "$err" "LANES_W
 run "$E" workstation Eagle
 is   "workstation takes no arguments, and says so with its own 64" "$rc" 64
 
+# ------------------------------- clause (c): the writer's OWN `, ` backstop
+#
+# THE SECOND SEPARATOR, WHICH WAS IN NO WRITER AT ALL (F-X12). `write_event`
+# refused a third ` — ` and a newline; `, ` divides the four FIELDS from each
+# other, and the payload is the tail of the fourth, so a `, ` inside it reads
+# back as fields no reader knows — in a file nothing ever rewrites. Measured
+# against every line this estate has before the guard was written: of 111
+# payloads in the 15 live lane logs, 0 carry `, ` and 0 carry `"`, while 76
+# carry `; `.
+run env LANES_LANE=repoA11-1 "$E" log RESUMED "lane:repoA11-1" '→' "swap; dir /a, b; workstation Eagle"
+is   "the writer refuses a ', ' in the payload — clause (c)'s other separator" "$rc" 2
+has  "…naming the four fields it would break" "$err" "session <uuid>@<ws>"
+has  "…and the separator that is legitimate there" "$err" "Use a semicolon"
+hasnt "…while writing nothing at all" "$(git -C "$WIP" log --format=%s -n1)" "RESUMED lane:repoA11-1"
+# AND IT IS THE PAYLOAD ONLY. The free text is everything after the SECOND
+# ` — `, where the fields are already split, so prose commas are ordinary there
+# — the estate's own log is full of them, and refusing them would refuse lines
+# it legitimately writes.
+run env LANES_LANE=repoA11-1 "$E" log RESUMED "lane:repoA11-1" '→' "swap; workstation Eagle" "tick 8.4 landed, and 5.7a, 5.9a stay unheld"
+is   "…while a comma in the FREE TEXT is ordinary prose and is written" "$rc" 0
+has  "…exactly as it was given" "$(tail -n1 "$LOGD/repoA11-1.md")" "landed, and 5.7a, 5.9a stay unheld"
+# AND NOT THE `"`, BECAUSE CLAUSE (c) WRITES ONE. A path with a space is written
+# QUOTED — that is what makes it one ref under 7(b) — so a `"` refusal in the
+# whole-payload guard would refuse the shape the clause mandates.
+run env LANES_LANE=repoA11-1 "$E" log RESUMED "lane:repoA11-1" '→' 'swap; dir "/a b/c"; workstation Eagle'
+is   "…and a quoted path, which clause (c) requires for a space, still goes through" "$rc" 0
+has  "…with both quotes intact" "$(tail -n1 "$LOGD/repoA11-1.md")" 'dir "/a b/c"'
+
+
 # ------------------------------------------- decision 8(e): a FORK is a DEFECT
 #
 # Evidence 6: an abandoned launch left a `--fork-session` daemon orchestrating

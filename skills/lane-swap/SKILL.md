@@ -172,13 +172,33 @@ its free text.
 #   window   gains its `<@id>` beside the `<session>:<index>` it already had —
 #            two space-separated refs in ONE sub-field under 7(b)'s grammar.
 # A path containing a space is WRITTEN QUOTED, which is what makes it one ref;
-# a path containing `, `, ` — ` or `"` is refused rather than written unreadable.
+# a path containing `, `, ` — ` or `"` is REFUSED rather than written unreadable
+# — and until this round that refusal was this comment and nothing else. Clause
+# (c) names two writers of these sub-fields and gives them one rule: *"A value
+# containing `, `, ` — ` or `; ` is refused, exit 2, naming it — not truncated,
+# not escaped, and not appended."* `lane-start:689-692` and `:728-731` did it;
+# this file only quoted the space, so the two writers of one rule refused
+# different things. The refusal is implemented here now, on the same three
+# separators `lane-start` refuses, BEFORE the quoting — a refusal that ran after
+# it would fire on the `"` this line adds itself.
 dir="$(LANES_NO_FETCH=1 "$L" lane-dir "$lane" 2>/dev/null)" || dir=""
 [[ -n "$dir" ]] || dir="$(git rev-parse --show-toplevel 2>/dev/null)"
-case "$dir" in *' '*) dir="\"$dir\"" ;; esac
 win="$(tmux display-message -p '#S:#I' 2>/dev/null)"
 wid="$(tmux display-message -p '#{window_id}' 2>/dev/null)"
 [[ "$wid" == @* ]] && win="$win $wid"
+# BOTH SUB-FIELDS, because both are written into the one append-only line and
+# either one breaks its parser: `dir` is clause (c)'s and `window` is Amendment
+# 8(b)'s, and `lane-start` fences both. The value is named, the swap stops, and
+# nothing is written — a log whose own parser cannot read a line is a log that
+# has lost the fact, and no later line can correct it.
+for _f in dir:"$dir" window:"$win"; do
+  case "${_f#*:}" in
+    *', '*|*' — '*|*'"'*)
+      echo "REFUSED: this lane's ${_f%%:*} sub-field is '${_f#*:}', and it may not contain ', ', ' — ' or '\"': those are what divide an event line into its fields and its free text, the log is append-only, and a line written wrong there is wrong for ever (Amendment 11 clause (c); Amendment 8(b) for window). Nothing was written. Move the checkout, or rename the tmux session, and re-run."
+      exit 2 ;;
+  esac
+done
+case "$dir" in *' '*) dir="\"$dir\"" ;; esac
 payload="swap; window $win"
 [[ -n "$dir" ]] && payload="$payload; dir $dir"
 [[ -n "${CLAUDE_PROFILE_NAME:-}" ]] && payload="$payload; profile $CLAUDE_PROFILE_NAME"
