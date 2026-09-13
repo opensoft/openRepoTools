@@ -111,7 +111,21 @@ refuse everywhere (`R-A11-8`, on RV-T3).
 
 ```sh
 dir="$(LANES_NO_FETCH=1 "$L" lane-dir "$lane" 2>/dev/null)" || dir=""
-[ -n "$dir" ] || dir="$PROJECTS_ROOT/${lane%-*}"      # 8 → the default; nothing is backfilled
+if [ -z "$dir" ]; then                                # 8 → the default; nothing is backfilled
+  # `<repo>` IS THE NAME WITH ITS POSITION REMOVED, AND A POSITION IS DIGITS.
+  # `${lane%-*}` strips the last `-`-separated token WHATEVER it is, so for
+  # `openxfactory-4-opendox-extraction` — a lane this estate has — it answered
+  # `openxfactory-4-opendox`, a repository that does not exist. The rule is
+  # `lane-start:565-578`'s, which is the writer of these names: a lane is
+  # `<repo>-<position>` where the position matches `[0-9]+[A-Za-z]?`, and a name
+  # that does not end that way has no position to strip and is its own `<repo>`.
+  tail="${lane##*-}"
+  case "${tail%[A-Za-z]}" in
+    '' | *[!0-9]*) repo="$lane" ;;
+    *)             repo="${lane%-*}" ;;
+  esac
+  dir="$PROJECTS_ROOT/$repo"
+fi
 ```
 
 **Not a directory → REFUSED**, naming `--dir`. A restart that lands in the right transcript and the wrong
@@ -154,16 +168,30 @@ sub-fields, and the handoff's Rule 3 stamp — and it prints the `claude` comman
 ## 6. The cell — **on 4(c) only**, and only after step 5 exited 0 and renamed the window
 
 ```sh
-"$L" append-session-id "$lane" "<the uuid step 4 read>" \
-  "→ harness <this session's uuid> (transcript uuid; profile ${CLAUDE_PROFILE_NAME:-unknown})"
+# THE `profile` SUB-FIELD IS WRITTEN ONLY WHERE THERE IS ONE. No
+# `$CLAUDE_PROFILE_NAME` is a lane started outside the launcher, and inventing
+# `unknown` for it is the same defect clause (e) refuses in the session field —
+# which is the rule `lane-start` states and follows at `:1553-1558`, in this
+# clause's own words: *"each sub-field is appended only where its value is
+# actually in hand"*. The `:-unknown` that was here wrote the one literal the
+# writer refuses, into the one cell Amendment 6(b) resumes from.
+cell="→ harness <this session's uuid> (transcript uuid"
+[ -n "${CLAUDE_PROFILE_NAME:-}" ] && cell="$cell; profile $CLAUDE_PROFILE_NAME"
+"$L" append-session-id "$lane" "<the uuid step 4 read>" "$cell)"
 ```
 
 Exit 0 → the cell now names the conversation the operator is in. **Refused → the cell is REPORTED STALE and
 the act is printed verbatim; `RESTARTED` is never printed over a cell that stayed stale.**
 
-**It is `/restart`'s act and not `lane-start`'s, and the reason is mechanical.** Under clause (d) rule 1
-`lane-start` proves ownership by the window's **name** or by `live-holder` answering `here`; on the 2(c) path
-the rename is `lane-start`'s own act a hundred lines **after** step 3b, so it correctly declines. `/restart`
+**It is `/restart`'s act and not `lane-start`'s, and it is a step that can find its work already done.**
+Under clause (d) rule 1 as corrected, `lane-start` takes the window's live session **unless a veto fires** —
+so on the 4(c) path there are two cases and not one. Where the helper carries both reads, neither veto has
+anything to fire on (step 2(b) already answered 8, so no row's cell names this session; and the window's name
+is not yet the lane, because `lane-start` renames it a hundred lines **after** step 3b), and `lane-start`
+performs Amendment 6(c)'s append **itself** — step 6 then finds the cell already naming this session and
+appends nothing. Where the helper does **not** carry them, `lane-start` leaves the cell alone and step 6 is
+the act that extends it: a helper predating `session-lane` exits 2 and the fence fails closed, which is the
+state of every workstation until adoption act 0's read reaches it. Either way `/restart`
 has the proof already: step 2 resolved this window to this lane out of the register, and step 4 read the
 anchor out of the published cell. The cell is **appended to**, never replaced — Amendment 6(c)'s own act, so
 the old id stays in the row as history.

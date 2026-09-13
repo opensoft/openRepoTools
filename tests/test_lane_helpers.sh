@@ -3682,6 +3682,54 @@ is   "…and a quoted path, which clause (c) requires for a space, still goes th
 has  "…with both quotes intact" "$(tail -n1 "$LOGD/repoA11-1.md")" 'dir "/a b/c"'
 
 
+# ------------------ the `/restart` skill's own lines, RUN (F-X9, F-X10, F-X11)
+#
+# A SKILL IS PROSE NOTHING EXECUTES, which is the review's own F-X22: the rungs
+# are each tested as reads and the LADDER is held only by its own text. So the
+# one part of it that is arithmetic — rung 4's `<repo>` — is extracted FROM THE
+# FILE and run here, against the names this estate really has. Not a copy: a
+# copy is what would go on passing after the file drifted.
+RSKILL="$SRC_DIR/skills/restart/SKILL.md"
+skill_repo_of() {   # <lane> — evaluates the SKILL's own `tail=`/`case` block
+  local sro_lane="$1" sro_snip sro_out
+  sro_snip="$(awk '/^  tail="/,/^  esac$/' "$RSKILL")"
+  [ -n "$sro_snip" ] || { printf 'NO SNIPPET IN %s\n' "$RSKILL"; return 1; }
+  sro_out="$(lane="$sro_lane"; repo=""; eval "$sro_snip"; printf '%s' "$repo")"
+  printf '%s' "$sro_out"
+}
+# THE LANE THE OLD LINE GOT WRONG, and it is in this register today: SPEC rev 2
+# §0.8 lists `openxfactory-4-opendox-extraction`, for which `${lane%-*}` answered
+# `openxfactory-4-opendox` — a directory `$PROJECTS_ROOT` does not have, so rung
+# 4 handed `/restart` a `cd` target that cannot exist and the refusal below it
+# fired for the wrong reason.
+is "rung 4's <repo> leaves a lane with no position alone (F-X11)" \
+   "$(skill_repo_of openxfactory-4-opendox-extraction)" "openxfactory-4-opendox-extraction"
+is "…and still strips a real position" "$(skill_repo_of openRepoProject-1)" "openRepoProject"
+is "…including a lettered one, which is a position too" "$(skill_repo_of repoX-5a)" "repoX"
+is "…and a pre-rule name is its own repo" "$(skill_repo_of browser-ui-repair)" "browser-ui-repair"
+# IT IS `lane-start`'S RULE AND NOT A SECOND ONE. `lane-start:565-578` is the
+# WRITER of these names — `<repo>-<position>` with the position `[0-9]+[A-Za-z]?`,
+# and `:577`'s `repo="${repo:-$LANE}"` for a name that has none — so a reader
+# deriving a different `<repo>` from the same name would send `/restart` to a
+# directory the writer never used.
+hasnt "the skill no longer derives the directory with a bare \${lane%-*}" \
+      "$(cat "$RSKILL")" 'dir="$PROJECTS_ROOT/${lane%-*}"'
+# F-X10 — THE LITERAL THE WRITER REFUSES TO INVENT. `lane-start:1546-1560`:
+# "inventing `unknown` for it would be the same defect clause (e) refuses in the
+# session field", and it omits the sub-field instead. The skill wrote it into the
+# one cell Amendment 6(b) resumes from.
+hasnt "the skill invents no \`unknown\` profile (F-X10)" "$(cat "$RSKILL")" 'profile ${CLAUDE_PROFILE_NAME:-unknown}'
+has   "…it appends the sub-field only where there is a value" "$(cat "$RSKILL")" 'CLAUDE_PROFILE_NAME:-}" ] && cell='
+# F-X9 — THE WITHDRAWN RULING. `R-A11-12`: "Neither the window's name being the
+# lane nor `live-holder` answering `here` is a condition for taking." The skill
+# restated its twice-corrected predecessor two sections above the place it has
+# it right.
+hasnt "the skill no longer restates the withdrawn permission form (F-X9)" \
+      "$(cat "$RSKILL")" "proves ownership by the window's"
+has   "…and says what the vetoes actually do on the 4(c) path" \
+      "$(cat "$RSKILL")" "takes the window's live session **unless a veto fires**"
+
+
 # ------------------------------------------- decision 8(e): a FORK is a DEFECT
 #
 # Evidence 6: an abandoned launch left a `--fork-session` daemon orchestrating
