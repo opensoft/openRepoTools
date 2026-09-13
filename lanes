@@ -117,6 +117,40 @@ ws_pair="$("$LANES_EDIT" workstation 2>/dev/null || :)"
 ws_name="$(printf '%s' "$ws_pair" | cut -f1)"
 ws_src="$(printf '%s' "$ws_pair" | cut -f2)"
 
+# THE CONTAINER NOTICE, ON THE TOKEN THE HELPER ACTUALLY EMITS AND IN THE
+# HELPER'S OWN WORDS (`R-A11-14`, ratified verbatim "a11 addendum 3 yes").
+#
+# Two defects were in the three lines this replaces. The branch was
+# `hostname-in-container`, which `lanes_workstation_pair` has never emitted —
+# its three sources are `seam`, `hostname` and `container-unset`
+# (`lanes-edit.sh:371-383`) — so the notice could not print at all. And what it
+# printed was the act this toolset REJECTS BY NAME: `lanes-edit.sh:337-339`,
+# *"the rejected alternative — a `workstation:` key in `workspace.yaml` — is a
+# SECOND PLACE FOR THE TRUTH TO BE WRONG beside the variable the launcher
+# already sets."*
+#
+# THE SENTENCE IS ASKED FOR RATHER THAN RESTATED. `lanes_workstation_why` is the
+# one wording three writers already share, and this command carries no copy of
+# the workstation seam — the four that exist are byte-identical and held together
+# by `test_repo_hygiene.py`, and a fifth here would be the drift that test exists
+# to catch. `lanes-edit.sh workstation` prints that sentence on stderr and still
+# answers on stdout, because a read in front of a launch may not refuse; the read
+# above discarded that stderr, so this asks for it again. One extra 0.04 s fork,
+# and only on the path that is already printing a paragraph.
+#
+# IT IS A FUNCTION BECAUSE THE EMPTY LISTING NEEDS IT MOST. In a container with
+# no `LANES_WORKSTATION` the workstation column is the CONTAINER'S id, so no row
+# matches and the read exits 8 — and that is exactly the reader who has to be
+# told why their lanes vanished. Printed at the foot on the rows path and inside
+# the 8 arm on the other, from one definition.
+ws_notice() {
+	case "$ws_src" in
+	container-unset)
+		say ""
+		"$LANES_EDIT" workstation 2>&1 >/dev/null || : ;;
+	esac
+}
+
 # LOCAL IS THE HELPER'S OWN DEFAULT for this one read (SPEC rev 4 §15), so
 # `--fetch` is passed through rather than simulated here: one implementation of
 # "does this read touch the network", in the file that owns the network.
@@ -131,6 +165,7 @@ case "$rc" in
 8) say "no lane is recorded for ${ws_name:-this workstation}."
 	say "  open one:            lane-start <repo> <n>"
 	say "  every workstation:   $prog --all"
+	ws_notice
 	exit 8 ;;
 64) die "bad arguments for the listing read — see $prog --help" 2 ;;
 *) die "$LANES_EDIT lanes failed (exit $rc). That is NOT 'there are no lanes', and this
@@ -186,8 +221,5 @@ else
 	say "$n lane(s), read locally — no fetch; this checkout last heard from origin $("$LANES_EDIT" fetch-age 2>/dev/null || printf 'unknown'). \`$prog --fetch\` refreshes first."
 fi
 [ "$defects" = 0 ] || say "$defects lane(s) have a live fork of their transcript running. A fork is never the holder (ratified decision 8(c)); retiring one is your act, never a tool's."
-case "$ws_src" in
-hostname-in-container)
-	say "This workstation is named '$ws_name', taken from this host's own hostname — which inside a container is the container id and not a workstation (decision 8(d)). Write the real one once, as a top-level \`workstation: <name>\` line in ${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace.yaml." ;;
-esac
+ws_notice
 exit 0

@@ -4962,9 +4962,19 @@ EOF
   # implementation, so `restart`, `lanes` and every other caller name the
   # workstation the same way the register's own writer does rather than each
   # running `hostname` and disagreeing with it. Prints `<name><TAB><source>`,
-  # where the source is `seam`, `config`, `hostname` or `hostname-in-container`
-  # — and on that last one the sentence that says what to write down goes to
-  # stderr, because a read must still answer.
+  # where the source is one of the THREE `lanes_workstation_pair` emits —
+  # `seam`, `hostname` or `container-unset` (`:371-383`) — and on that last one
+  # the sentence that says what to export goes to stderr, because a read must
+  # still answer.
+  #
+  # THE TWO NAMES THAT WERE HERE DO NOT EXIST. `config` and
+  # `hostname-in-container` are the vocabulary of the rung `R-A11-14` REMOVED:
+  # a `workstation:` key in `workspace.yaml`, refused as a second place for the
+  # truth to be wrong beside the variable the launcher already sets (`:337-339`).
+  # `lanes:190` matched the second of them and could therefore never print, which
+  # is how a dead branch went unnoticed (F-X1). SPEC rev 6's §11 row still lists
+  # all four; that is the text's to correct, and the code's own emitters are the
+  # authority for this comment.
   # Always 0: a workstation name that could refuse would be a refusal in front
   # of every launch on this machine.
   workstation)

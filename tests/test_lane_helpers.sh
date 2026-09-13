@@ -3981,6 +3981,27 @@ is   "…and a flag with no value is refused rather than guessed" "$rc" 2
 has  "a lane with no recorded profile is offered the launcher form, not a line it cannot type" \
      "$(run "$LANES_CMD" </dev/null; printf '%s' "$out")" "pclaude --lane repoA11-2 <profile>"
 
+# THE CONTAINER NOTICE PRINTS, AND IT NAMES THE VARIABLE RATHER THAN THE KEY
+# `R-A11-14` REJECTED (F-X1). The branch it hung on was `hostname-in-container`,
+# a source `lanes_workstation_pair` has never emitted, so the notice was DEAD;
+# and the act it named — a top-level `workstation:` line in `workspace.yaml` — is
+# the alternative this toolset refuses by name (`lanes-edit.sh:337-339`), from a
+# command that could not execute to name it.
+#
+# THE EMPTY LISTING IS THE CASE THAT MATTERS. With no `LANES_WORKSTATION` inside
+# a container the workstation column is the CONTAINER'S id, so no row matches and
+# the read exits 8 — the reader whose lanes have just vanished is exactly the one
+# owed the sentence, and a notice printed only after rows would never reach them.
+run env -u LANES_WORKSTATION LANES_IN_CONTAINER=1 "$LANES_CMD" </dev/null
+has  "lanes inside a container with no configured workstation says so" "$out" "LANES_WORKSTATION"
+has  "…in the one sentence its own writers refuse with" "$out" "is the CONTAINER"
+has  "…naming the launcher whose job the value is" "$out" "launcher"
+hasnt "…and never the \`workstation:\` key R-A11-14 rejected by name" "$out" "workstation: "
+hasnt "…nor the source token nothing in the estate emits" "$out" "hostname-in-container"
+# AND IT IS SILENT ON EVERY ORDINARY RUN, so the notice means what it says.
+run "$LANES_CMD" </dev/null
+hasnt "…while a run whose seam answered prints no container notice at all" "$out" "LANES_WORKSTATION"
+
 echo "== the workstation seam: unset, every writer reads the host =="
 
 # THE OTHER HALF OF R-A9-13. Every case above this line runs with
