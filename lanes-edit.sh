@@ -5231,9 +5231,25 @@ EOF
   #
   # Read-only. 0 with the lane, 8 when no row's session cell names it —
   # Amendment 7(d)'s fail-closed convention, so a caller can tell *none* from
-  # *could not read*.
+  # *could not read* — and 64 on a usage error of its own.
+  #
+  # 64 AND NOT 2 (A11 Addendum 4 ruling 1, ratified "a11 addendum 4 yes").
+  # Adoption act 0 wrote this read with a usage `2` (`3719d97:lanes/lanes-edit.sh`)
+  # and SPEC rev 6 §11 recorded the landed code; clause (h)'s own table said
+  # `64 usage` for every read in it, and the contract contradicted itself. The
+  # ruling settles it the other way: *"`session-lane`'s usage code is 64 like
+  # every other read in clause (h); adoption act 0 item (4), which says 2, is
+  # the line corrected."*
+  #
+  # IT MATTERS BECAUSE `2` HERE ALREADY MEANS SOMETHING ELSE. A helper that has
+  # never heard of `session-lane` exits 2 from the `*)` arm, and that is what
+  # every workstation answers until act 3's install reaches it. A caller that
+  # cannot tell that 2 from a usage 2 cannot tell *"install the helper"* from
+  # *"fix your call"* — and both of `session-lane`'s callers fail CLOSED on
+  # anything but 0 or 8, so the distinction is the whole of what they can report.
   session-lane)
-    sl_id="${1-}"; [ -n "$sl_id" ] || die "usage: session-lane <transcript-uuid>" 2
+    sl_id="${1-}"; [ -n "$sl_id" ] || die "usage: session-lane <transcript-uuid>" 64
+    [ "$#" -le 1 ] || die "session-lane takes one transcript uuid: session-lane <transcript-uuid>" 64
     log_sync
     sl_lane="$(lane_of_session "$sl_id")"
     [ -n "$sl_lane" ] || exit 8

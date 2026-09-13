@@ -2432,7 +2432,7 @@ is   "…exiting 0" "$rc" 0
 run "$E" session-lane "aaaa0011-4444-4000-8000-aaaa00114444"
 is   "…and 8 when no row's session cell names it, so a caller can tell none from could-not-read" "$rc" 8
 run "$E" session-lane
-is   "…2 on a usage error, which is not an answer" "$rc" 2
+is   "…64 on a usage error, like every other read in clause (h) (ruling 1)" "$rc" 64
 is   "…and it writes nothing: no commit is made by a read" "$(git -C "$WIP" status --porcelain | wc -l | tr -d ' ')" 0
 
 # ---- EVIDENCE 4: `--name <lane>` IS ON EVERY LAUNCH BRANCH, NOT ONE ---------
@@ -3540,9 +3540,22 @@ is   "…and answers for an EARLIER id in the same cell, which is a history and 
 run "$E" session-lane "cccc0000-9999-4000-8000-cccc00009999"
 is   "session-lane exits 8 for a uuid no row names" "$rc" 8
 is   "…printing nothing" "$out" ""
+# 64 AND NOT ADOPTION ACT 0'S 2 (A11 Addendum 4 ruling 1). `2` here is already
+# spoken for: it is what a helper with no `session-lane` exits from the `*)`
+# arm, which is every workstation until act 3's install arrives — and both of
+# this read's callers fail CLOSED on anything but 0 or 8, so telling "install
+# the helper" from "fix your call" is the whole of what they can report.
 run "$E" session-lane
-is   "session-lane with no uuid refuses, in adoption act 0's own shape" "$rc" 2
+is   "session-lane with no uuid exits 64, like every other read in clause (h)" "$rc" 64
 has  "…naming what it takes" "$err" "usage: session-lane <transcript-uuid>"
+run "$E" session-lane "$A11_ID2" "$A11_ID"
+is   "…and 64 for a second argument it does not take" "$rc" 64
+has  "…saying it takes one" "$err" "takes one transcript uuid"
+# AND THE OTHER `2` IS STILL THE OTHER `2`: an unknown subcommand, which is how
+# a caller detects a helper predating the read it asked for.
+run "$E" session-lane-that-does-not-exist "$A11_ID2"
+is   "…while an unknown subcommand still exits 2, which is the OLD HELPER code" "$rc" 2
+has  "…and says so in its own words rather than in its status" "$err" "unknown subcommand"
 run "$E" session-lane "repoA11-1"
 is   "…and a name that is not a uuid is simply no answer: no row's session cell can contain it" "$rc" 8
 
