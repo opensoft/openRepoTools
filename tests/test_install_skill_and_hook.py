@@ -457,6 +457,96 @@ def test_a_dangling_symlink_is_refused_rather_than_followed(tmp_path):
     assert not missing.exists(), "--install created the file at the far end"
 
 
+
+# --- R-A9-12 reaches the skill paths too (F-X17) -----------------------------
+
+SKILL_TARGETS = tuple(
+    (profiles, name)
+    for name in ("lane-swap", "restart")
+    for profiles in (True, False)
+)
+
+
+def skill_target(home: Path, shared: bool, name: str) -> Path:
+    """The two places `--install` writes each skill, by Amendment 9(b)."""
+    if shared:
+        return home / ".claude-profiles" / "shared" / "skills" / name / "SKILL.md"
+    return home / ".claude" / "skills" / name / "SKILL.md"
+
+
+@NEEDS_JQ
+@pytest.mark.parametrize("shared,name", SKILL_TARGETS)
+def test_a_symlinked_skill_target_is_refused_and_nothing_written_through_it(
+        tmp_path, shared, name):
+    """R-A9-12 IS ABOUT WHAT `cp` DOES, NOT ABOUT WHICH DIRECTORY (F-X17).
+
+    `plan_install_targets` refuses a symlink for every one of the eleven files
+    in the bin directory. `plan_skill_targets` proved only the DIRECTORIES
+    writable, and `place_skill_and_hook` then reached each `SKILL.md` with
+    `[ -e ]`, `cmp -s` and `cp` — none of which can tell a regular file from a
+    link to one. Measured before the fix on exactly this fixture: exit 0, the
+    skill reported `updated at <target>`, the target still a symlink, and the
+    skill's bytes written into the file on the far end.
+
+    Four paths, because this round doubled them from two to four: the pre-A11
+    exposure was `lane-swap` alone, and `restart` arrived beside it.
+    """
+    far = tmp_path / "elsewhere" / f"{name}-SKILL.md"
+    far.parent.mkdir(parents=True)
+    far.write_text("whatever was on the other end of this link\n", encoding="utf-8")
+    before = far.read_bytes()
+    target = skill_target(tmp_path, shared, name)
+    target.parent.mkdir(parents=True)
+    target.symlink_to(far)
+    bin_dir = tmp_path / ".local" / "bin"
+
+    result = run_cmd("--install", home=tmp_path,
+                     env={"OPENREPOTOOLS_BIN_DIR": str(bin_dir)})
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "NOTHING was installed" in result.stderr, result.stderr
+    assert f"{target} — a symlink to {far}" in result.stderr, (
+        f"the refusal must name the offending skill path and say what it is:\n"
+        f"{result.stderr}")
+    assert f'rm -f -- "{target}"' in result.stderr, (
+        f"the refusal must print the exact `rm` that clears it:\n{result.stderr}")
+    assert far.read_bytes() == before, f"--install wrote through the link into {far}"
+    assert target.is_symlink(), f"{target} is no longer the link it was"
+    # AND IT REFUSED IN THE PLANNING PHASE: the eleven commands never arrived
+    # either, which is what makes `NOTHING was installed` true rather than
+    # nearly true.
+    assert not bin_dir.exists() or not any(bin_dir.iterdir()), (
+        "the commands were placed by a run that refused on a skill target")
+
+
+@NEEDS_JQ
+def test_a_dangling_skill_symlink_is_refused_rather_than_followed(tmp_path):
+    """`[ -e ]` IS FALSE ON A DANGLING LINK and `cp` through one CREATES the
+    file at the far end — the same sharper case the bin half already refuses,
+    one directory along."""
+    missing = tmp_path / "elsewhere" / "restart-SKILL.md"
+    target = skill_target(tmp_path, False, "restart")
+    target.parent.mkdir(parents=True)
+    target.symlink_to(missing)
+    result = run_cmd("--install", home=tmp_path,
+                     env={"OPENREPOTOOLS_BIN_DIR": str(tmp_path / ".local" / "bin")})
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"{target} — a symlink to {missing}" in result.stderr, result.stderr
+    assert not missing.exists(), "--install created the file at the far end"
+
+
+@NEEDS_JQ
+def test_a_directory_where_a_skill_goes_is_refused_the_same_way(tmp_path):
+    """THE RULE IS `A REGULAR FILE`, not `not a symlink` — the same sentence
+    the bin half's own directory case is written for."""
+    target = skill_target(tmp_path, True, "lane-swap")
+    target.mkdir(parents=True)
+    result = run_cmd("--install", home=tmp_path,
+                     env={"OPENREPOTOOLS_BIN_DIR": str(tmp_path / ".local" / "bin")})
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"{target} — a directory" in result.stderr, result.stderr
+
+
 # --- what the conflict arm keys on (R-A9-14) --------------------------------
 
 @NEEDS_JQ

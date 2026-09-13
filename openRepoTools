@@ -422,7 +422,7 @@ HOOK_MERGED=""    # a staged whole file, ready to move into place
 # still costs nothing. The directories are created here, which is idempotent
 # and is what the placement would have done anyway.
 plan_skill_targets() {
-	local d name dirs=()
+	local d name dirs=() target kind bad="" paths=""
 	for name in "${SKILLS[@]}"; do
 		dirs+=("$(skills_home)/shared/skills/$name" "$(claude_home)/skills/$name")
 	done
@@ -435,6 +435,35 @@ plan_skill_targets() {
     entry there (Amendment 9(b)).
     NOTHING was installed and nothing already installed was replaced."
 	done
+	# AND THE FOUR FILES INSIDE THEM, BY R-A9-12 (F-X17). The loop above proved
+	# the DIRECTORIES writable and stopped there, while `place_skill_and_hook`
+	# then reaches each `SKILL.md` with `[ -e ]`, `cmp -s` and `cp` — not one of
+	# which can tell a regular file from a link to one. So a symlink at
+	# `~/.claude/skills/restart/SKILL.md` was followed and WRITTEN THROUGH: the
+	# skill stays uninstalled, the target stays a link, and the bytes land
+	# wherever it points. That is the same failure R-A9-12 was ruled on for the
+	# eleven in the bin directory, one directory along, and the ruling says
+	# nothing about which path it applies to.
+	#
+	# `unplaceable_kind` is asked rather than re-tested, because two copies of
+	# one rule is how the bin half would come to refuse a dangling link and the
+	# skill half would not.
+	for name in "${SKILLS[@]}"; do
+		for target in "$(skills_home)/shared/skills/$name/SKILL.md" "$(claude_home)/skills/$name/SKILL.md"; do
+			kind="$(unplaceable_kind "$target")" || continue
+			bad="${bad:+$bad
+}    $target — $kind"
+			paths="${paths:+$paths }\"$target\""
+		done
+	done
+	[ -z "$bad" ] || die "\`--install\` places REGULAR FILES, and these skill targets are not regular files:
+$bad
+    \`cp\` follows a symlink, so installing over one would leave the skill
+    UNINSTALLED — the target stays a link — and would write these bytes into
+    whatever is on the other end of it. NOTHING was installed and nothing
+    already installed was replaced.
+    Clear them, then re-run:
+        rm -f -- $paths"
 }
 
 # THE NINE TARGETS, PROVED PLACEABLE BEFORE ANY OF THE TWELVE IS PLACED
@@ -460,23 +489,34 @@ plan_skill_targets() {
 # `--install` that carries this, and act 5 strips `brett-wip` to data. So the
 # refusal names every offending path, says what each one IS, and prints the one
 # `rm` that clears them — rather than leaving a person to remember a step.
+# WHAT A TARGET IS, WHERE IT IS NOT SOMETHING `--install` MAY PLACE OVER.
+# ONE implementation of R-A9-12's test, for every path this command writes: the
+# eleven in the bin directory and the four `SKILL.md`s (F-X17). Prints the kind
+# and returns 0 where the path is unplaceable; returns 1 — saying nothing —
+# where it is absent or a regular file, which are the two placeable states.
+#
+# `-L` AS WELL AS `-e`, because a DANGLING symlink is the sharper case: `[ -e ]`
+# is false on one, and `cp` through it creates the file at the far end — a write
+# into a repository this command was never told about.
+unplaceable_kind() {   # <target>
+	local t="$1"
+	if [ -L "$t" ]; then
+		printf 'a symlink to %s' "$(readlink -- "$t" 2>/dev/null || printf '<unreadable>')"
+	elif [ ! -e "$t" ] || [ -f "$t" ]; then
+		return 1
+	elif [ -d "$t" ]; then
+		printf 'a directory'
+	else
+		printf 'not a regular file'
+	fi
+}
+
 plan_install_targets() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
 	local name target kind bad="" paths=""
 	for name in "${INSTALLABLES[@]}"; do
 		target="$dir/$name"
-		# `-L` AS WELL AS `-e`, because a DANGLING symlink is the sharper case:
-		# `[ -e ]` is false on one, and `cp` through it creates the file at the
-		# far end — a write into a repository this command was never told about.
-		if [ -L "$target" ]; then
-			kind="a symlink to $(readlink -- "$target" 2>/dev/null || printf '<unreadable>')"
-		elif [ ! -e "$target" ] || [ -f "$target" ]; then
-			continue
-		elif [ -d "$target" ]; then
-			kind="a directory"
-		else
-			kind="not a regular file"
-		fi
+		kind="$(unplaceable_kind "$target")" || continue
 		bad="${bad:+$bad
 }    $target — $kind"
 		paths="${paths:+$paths }\"$target\""
