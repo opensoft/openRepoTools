@@ -1092,7 +1092,19 @@ has_symlink_component() {
 # — the cure is a `collect_legs` that computes `$WORKTREE_ROOT/$branch` for
 # such a leg, which is workBenches'.
 dot_mount() {
-    case "$1" in
+    local path="$1"
+    # AND EVERY SPELLING OF IT, not the bare `/.` alone (Copilot's sixth round
+    # on #27, verbatim: "`dot_mount` only recognizes a destination whose raw
+    # string ends in `/.`. The manifest parser preserves other non-empty root
+    # spellings such as `path: \"./\"`, so `collect_legs` can produce
+    # `<worktree_root>/<branch>/./`; this helper misses it"). Right:
+    # `_shape_record_leg` keeps any non-empty `path:` verbatim, so `./`, `.//`
+    # and `/.` all reach `collect_legs` and all name the feature directory
+    # itself. Trailing slashes come off, then the `.` is what is left.
+    while [ "$path" != "${path%/}" ] && [ "$path" != "/" ]; do
+        path="${path%/}"
+    done
+    case "$path" in
     */.) return 0 ;;
     esac
     return 1
@@ -3107,6 +3119,20 @@ path_in_the_way() {
     # could print was run and did not work.
     ! dot_mount "$want" ||
         IN_THE_WAY_EXIT="and there is no command that clears it: this leg is declared \`path: \".\"\` in \`project.yaml\`, so the path \`collect_legs\` computes for it ends in \`/.\`, which \`mv\` refuses as an operand outright — what answers it is a \`collect_legs\` that computes \`<worktree_root>/<branch>\` for a leg declared at the root, which is the standard's and not this command's"
+    # AND A SYMLINKED PATH NEEDS THE SPELLING FIXED AS WELL AS THE PATH
+    # CLEARED (Copilot's sixth round on #27, whose own example — the `elif
+    # worktree_is_usable "$want"` arm above — cannot be reached under such a
+    # root, because `registered_at` is an exact-string match against git's
+    # ALWAYS-PHYSICAL spelling and the two never compare equal: run on
+    # 2026-09-13, git spelled a worktree made through a link `…/real/wt` where
+    # the config's path was `…/link/wt`, so `$rc` is 1 and this tail is the arm
+    # that speaks. The point stands HERE: clearing the path lets `resume` reach
+    # its add, and the worktree it then makes is registered at the resolved
+    # path, which the next run compares against the lexical one and refuses
+    # again. So the spelling is named beside the move, for the same reason
+    # `off_path_exit` names it instead of one.
+    ! has_symlink_component "$(parent_dir "$want")" ||
+        IN_THE_WAY_EXIT="$IN_THE_WAY_EXIT; and the path itself is reached through a symlink, so clearing it is only half — \`resume\` compares the spelling this checkout computes against the ALWAYS-PHYSICAL one git records, and no worktree made under that spelling ever matches: spell \`worktree_root\` (or \`\$SPECKIT_GIT_WORKTREE_ROOT\`) as the directory git spells"
     return 0
 }
 
@@ -3345,7 +3371,14 @@ off_path_exit() {
     [ "$held" -ne 2 ] ||
         prune="git -C $(sh_operand "$repo") worktree prune && "
     if [ ! -e "$want" ] && [ -L "$want" ]; then
-        clear_link="mv $(sh_operand "$want") $(sh_operand "$want").aside && "
+        # AND IT NAMES NO DESTINATION OF ITS OWN (Copilot's sixth round on
+        # #27: "The dangling-link cleanup hard-codes `$want.aside` as the `mv`
+        # destination. If that path already exists as a regular file, the
+        # copy-paste command overwrites it, contradicting the surrounding
+        # guarantee that status never asks the user to overwrite an unrelated
+        # path"). Right, and every other `mv` this file prints has said
+        # `<a path of your choosing>` since the commit that first named one.
+        clear_link="mv $(sh_operand "$want") <a path of your choosing> && "
     fi
     # THE PATH TEST IS MADE PHYSICAL for the reason `path_in_the_way`'s twin
     # is: `$tree` is `git worktree list`'s, which is always physical, and
@@ -3365,7 +3398,18 @@ off_path_exit() {
     # first, so the spelling is the only exit and it is named before any of
     # them. `dot_mount` and the leg's own checkout stay above it, because
     # neither is a path a spelling would fix.
-    elif has_symlink_component "$RECORD_WORKTREE_ROOT"; then
+    # AND OF THE WHOLE COMPUTED PATH, not the root alone (Copilot's sixth
+    # round on #27: "If an existing `$WORKTREE_ROOT/$branch` (or a parent from
+    # a declared mount) is a symlink while the final `$want` is absent, this
+    # branch advertises `mkdir -p ... && git worktree move ...`; both commands
+    # follow the link and Git records the physical target, while `resume`
+    # later compares the lexical `$want` and still refuses at RR3"). Right,
+    # and it is the same fault one level down: `has_symlink_component` walks
+    # every prefix, so asking it of the destination's PARENT asks it of the
+    # root and of every directory between the root and the mount. The final
+    # component is deliberately left out — a link THERE is the leftover the
+    # `mv` above clears, not a spelling the person has to correct.
+    elif has_symlink_component "$(parent_dir "$want")"; then
         # AND NO MOVE WHERE THE WORKTREE ROOT ITSELF IS A LINK, because the
         # move succeeds and changes nothing (Copilot's third round on #27,
         # verbatim: "`off_path_exit` still advertises this move when
@@ -3698,6 +3742,26 @@ check_parked_leg() {
             ghost="$want"
             ghost_is="a dangling symlink is at the $ghost \`resume\` computes for this leg, which \`[ -e ]\` looks straight through and \`git worktree add\` refuses all the same (\"already exists\")"
             clear="a move of it aside (\`mv $(sh_operand "$want") <a path of your choosing>\`)"
+            ghost_moved=1
+        # AND THE FEATURE DIRECTORY `resume` MAKES FIRST IS A PATH TOO
+        # (Copilot's sixth round on #27, verbatim: "`dest_exists` only checks
+        # the final component. For a three-leg destination, `want` is
+        # `<worktree_root>/<branch>/<mount>`, but `resume` first runs `mkdir -p
+        # <worktree_root>/<branch>`; if that feature directory is a regular
+        # file or dangling symlink, the final path appears absent and status
+        # can recommend `resume` … even though the mkdir fails before the
+        # worktree is added"). RUN on 2026-09-13: `mkdir -p <file>/spec`
+        # answers "cannot create directory '…': Not a directory", so the run
+        # stops before any leg is added — earlier even than the add, and in
+        # `resume.sh`'s own words rather than git's. It is read here because
+        # it is the same shape: a path in the way of a step no RR looks at,
+        # cleared by the same `mv`.
+        elif [ "$want" != "$(parent_dir "$want")" ] &&
+            [ -e "$(parent_dir "$want")" ] &&
+            [ ! -d "$(parent_dir "$want")" ]; then
+            ghost="$(parent_dir "$want")"
+            ghost_is="the $ghost \`resume\` makes the feature's worktrees under is not a directory, and \`resume\` runs \`mkdir -p\` on it before it adds any leg (\"cannot create directory …: Not a directory\")"
+            clear="a move of it aside (\`mv $(sh_operand "$ghost") <a path of your choosing>\`)"
             ghost_moved=1
         fi
     fi

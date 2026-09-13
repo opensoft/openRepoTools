@@ -5228,11 +5228,129 @@ def test_an_off_path_worktree_with_a_dangling_link_at_the_path_is_not_silence(
     assert (f"    - parked feature 001-a-thing (repo leg): its worktree is at "
             f"{elsewhere}, which is not the {want} `resume` computes for it"
             ) in result.stdout, result.stdout
-    assert (f"move it where both look: `mv {want} {want}.aside && mkdir -p "
-            f"{want.parent} && git -C {atlas} worktree move {elsewhere} "
-            f"{want}`") in result.stdout, result.stdout
+    # THE `mv` NAMES NO DESTINATION OF ITS OWN since Copilot's sixth round on
+    # #27 (2026-09-13, suppressed): a hard-coded `<want>.aside` would overwrite
+    # that path where it already exists, which is the one thing every `mv` this
+    # file prints has refused to do since the commit that first named one.
+    assert (f"move it where both look: `mv {want} <a path of your choosing> "
+            f"&& mkdir -p {want.parent} && git -C {atlas} worktree move "
+            f"{elsewhere} {want}`") in result.stdout, result.stdout
     assert ("`git worktree add` refuses the dangling symlink at that path "
             '("already exists") whatever `[ -e ]` says of it') in result.stdout
+
+
+def test_a_symlinked_parent_of_the_computed_path_gets_no_move_either(
+        trio, home):
+    """COPILOT'S SIXTH ROUND ON #27 (2026-09-13, suppressed), verbatim: "The
+    symlink safeguard only checks `RECORD_WORKTREE_ROOT`, not all components of
+    the computed destination. If an existing `$WORKTREE_ROOT/$branch` (or a
+    parent from a declared mount) is a symlink while the final `$want` is
+    absent, this branch advertises `mkdir -p ... && git worktree move ...`;
+    both commands follow the link and Git records the physical target, while
+    `resume` later compares the lexical `$want` and still refuses at RR3."
+
+    RIGHT, and it is the same fault one level down: the question is asked of
+    the destination's PARENT now, which `has_symlink_component` walks prefix by
+    prefix — so the root, the feature directory and every mount above the last
+    component are all in it. The FINAL component is deliberately out: a link
+    there is the leftover the `mv` clears, not a spelling to correct."""
+    checkout = workspace_config(home)
+    spec = trio / "spec"
+    git("checkout", "-q", "main", cwd=spec)
+    origin_has_branch(spec, "001-a-thing")
+    tip = git("rev-parse", "origin/001-a-thing", cwd=spec).stdout.strip()
+    want = parked_worktree(trio, "001-a-thing", "spec")
+    # THE FEATURE DIRECTORY IS THE LINK, and the mount under it is not there at
+    # all — the shape a root-only question cannot see, and the reason this is a
+    # three-leg estate: a single root's computed path IS the feature directory,
+    # so a link there is the FINAL component, which RR3 sees and an `mv` fixes.
+    real = home / "real-feature"
+    real.mkdir()
+    want.parent.parent.mkdir(parents=True, exist_ok=True)
+    want.parent.symlink_to(real)
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    elsewhere.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", str(elsewhere), "001-a-thing", cwd=spec)
+    record(checkout, "trio", branch="001-a-thing", role="spec", commit=tip,
+           parked_on="Falcon", root="Trio")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "no `worktree move` fixes this one, because the worktree root " in (
+        result.stdout), result.stdout
+    assert f"worktree move {elsewhere}" not in result.stdout, result.stdout
+
+
+def test_every_root_mount_spelling_gets_the_same_no_command_reading(
+        atlas, home):
+    """COPILOT'S SIXTH ROUND ON #27 (2026-09-13, suppressed), verbatim:
+    "`dot_mount` only recognizes a destination whose raw string ends in `/.`.
+    The manifest parser preserves other non-empty root spellings such as `path:
+    "./"`, so `collect_legs` can produce `<worktree_root>/<branch>/./`; this
+    helper misses it and `off_path_exit` advertises a move."
+
+    RIGHT: `_shape_record_leg` keeps any non-empty `path:` verbatim, so `.`,
+    `./` and `.//` all reach `collect_legs` and all name the feature directory
+    itself — and every operand built on them was already run and refused (the
+    tip of this branch, and the round that stopped advertising one). Trailing
+    slashes come off before the `.` is looked for."""
+    checkout = workspace_config(home)
+    where = home / "Atlas-wt" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    record(checkout, "atlas", branch="001-a-thing", role="code", commit=tip,
+           parked_on="Falcon")
+    pristine = (atlas / "project.yaml").read_text(encoding="utf-8")
+    for spelling in ('    path: "./"\n', '    path: ".//"\n'):
+        (atlas / "project.yaml").write_text(pristine, encoding="utf-8")
+        code_leg_onto_the_spec_checkout(atlas, path_line=spelling)
+        result = run(STATUS, "Atlas", home=home)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "`mkdir -p " not in result.stdout, result.stdout
+        assert f"worktree move {where}" not in result.stdout, result.stdout
+        assert ("there is no command that puts it where `resume` looks: this "
+                'leg is declared `path: "."` in `project.yaml`') in (
+            result.stdout), result.stdout
+
+
+def test_a_feature_directory_that_is_not_a_directory_is_read_too(trio, home):
+    """COPILOT'S SIXTH ROUND ON #27 (2026-09-13, suppressed), verbatim:
+    "`dest_exists` only checks the final component. For a three-leg
+    destination, `want` is `<worktree_root>/<branch>/<mount>`, but `resume`
+    first runs `mkdir -p <worktree_root>/<branch>`; if that feature directory
+    is a regular file or dangling symlink, the final path appears absent and
+    status can recommend `resume` (or emit a `mkdir -p ... && git worktree move
+    ...`) even though the mkdir fails before the worktree is added."
+
+    RUN on 2026-09-13: `mkdir -p <file>/spec` answers "mkdir: cannot create
+    directory '…': Not a directory". So the run stops EARLIER than the add and
+    in `resume.sh`'s own words rather than git's, and this layer said "`resume
+    Trio` brings it back". It is read with the other paths in the way of a step
+    no RR looks at, and cleared by the same `mv`.
+
+    THE SHAPE IS THE THREE-LEG ONE, because a single root's `repo` leg has no
+    mount under the feature directory: its computed path IS that directory, and
+    a file there is already the dangling/existing reading above."""
+    checkout = workspace_config(home)
+    spec = trio / "spec"
+    git("checkout", "-q", "main", cwd=spec)
+    origin_has_branch(spec, "001-a-thing")
+    tip = git("rev-parse", "origin/001-a-thing", cwd=spec).stdout.strip()
+    want = parked_worktree(trio, "001-a-thing", "spec")
+    feature_dir = want.parent
+    feature_dir.parent.mkdir(parents=True, exist_ok=True)
+    feature_dir.write_text("a file where the feature directory goes\n",
+                           encoding="utf-8")
+    assert feature_dir.is_file() and not want.exists()
+    record(checkout, "trio", branch="001-a-thing", role="spec", commit=tip,
+           parked_on="Falcon", root="Trio")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (spec leg): no worktree on that "
+            f"branch here, but the {feature_dir} `resume` makes the feature's "
+            "worktrees under is not a directory, and `resume` runs `mkdir -p` "
+            'on it before it adds any leg ("cannot create directory …: Not a '
+            f"directory\") — clear it with a move of it aside (`mv "
+            f"{feature_dir} <a path of your choosing>`), then `resume Trio` "
+            "brings it back") in result.stdout, result.stdout
 
 
 def test_a_leftover_at_the_destination_is_named_beside_a_prune_elsewhere(
