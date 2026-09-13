@@ -4186,16 +4186,45 @@ has   "…and step 4's two log writes are the ones that stop" "$SWSK_TEXT" 'if [
 # than restated — the same reason `/restart`'s rung 4 is: a copy is what would
 # go on passing after the file drifted.
 SWSKILL="$SRC_DIR/skills/lane-swap/SKILL.md"
-skill_win_of() {   # <session:index> <what tmux answered> — the skill's own line
-  local swo_win="$1" swo_wid="$2" swo_line
-  swo_line="$(grep -n '^\[\[ "\$wid" =~' "$SWSKILL" | head -n1 | cut -d: -f2-)"
-  [ -n "$swo_line" ] || { printf 'NO LINE IN %s\n' "$SWSKILL"; return 1; }
-  ( win="$swo_win"; wid="$swo_wid"; eval "$swo_line"; printf '%s' "$win" )
+# THE WHOLE `window` BLOCK IS EXTRACTED AND RUN, not one line of it: the block
+# is now four reads and two shape checks (F-X13 row (h) put the launcher's own
+# exports behind the live reads, under `R-A11-26`'s superset rule), and a test
+# that eval'd one line would go green over a broken neighbour. `tmux` is a
+# FUNCTION here, so the block's own `tmux display-message` calls are answered
+# by the case rather than by whatever is on PATH.
+skill_win_of() {   # <what tmux answers for #S:#I> <…for #{window_id}> [<REF env>] [<ID env>]
+  local swo_win="$1" swo_wid="$2" swo_ref="${3-}" swo_id="${4-}" swo_blk
+  swo_blk="$(awk '/^win="\$\(tmux display-message -p .#S:#I/,/^\[\[ "\$wid" =~ \^@\[0-9\]\+\$ \]\] && win=/' "$SWSKILL")"
+  case "$swo_blk" in *'&& win='*) : ;; *) printf 'NO BLOCK IN %s\n' "$SWSKILL"; return 1 ;; esac
+  (
+    tmux() { case "$*" in *'#S:#I'*) printf '%s\n' "$swo_win" ;; *window_id*) printf '%s\n' "$swo_wid" ;; esac; }
+    WORKBENCHES_CLAUDE_WINDOW_REF="$swo_ref" WORKBENCHES_CLAUDE_WINDOW_ID="$swo_id"
+    export WORKBENCHES_CLAUDE_WINDOW_REF WORKBENCHES_CLAUDE_WINDOW_ID
+    eval "$swo_blk"; printf '%s' "$win"
+  )
 }
 is "the skill records an <@id> that is one" "$(skill_win_of 'a11sess:0' '@71')" "a11sess:0 @71"
 is "…and records none where tmux answered a pane beside it" "$(skill_win_of 'a11sess:0' '@71 %7')" "a11sess:0"
 is "…nor where a tmux too old printed the format back" "$(skill_win_of 'a11sess:0' '#{window_id}')" "a11sess:0"
 is "…nor for a bare at-sign" "$(skill_win_of 'a11sess:0' '@')" "a11sess:0"
+# F-X13 ROW (h) — THE LAUNCHER'S OWN EXPORTS ARE READ WHERE THE LIVE ONES
+# ANSWER NOTHING. `#71`'s copy read `WORKBENCHES_CLAUDE_WINDOW_REF` and
+# `_WINDOW_ID`; `#26`'s ignored all of them, and `R-A11-26` makes the surviving
+# copy the SUPERSET, so a seventh divergence is absorbed on the same ground. On
+# the normal path the launcher started this session and threaded the window it
+# captured across its re-exec, so a `tmux` that has gone costs the record a
+# sub-field the process already had in hand.
+is "…and falls back to what the launcher exported when tmux answers nothing" \
+   "$(skill_win_of '' '' 'a11sess:4' '@88')" "a11sess:4 @88"
+is "…taking the exported id beside a live ref" \
+   "$(skill_win_of 'a11sess:0' '' '' '@88')" "a11sess:0 @88"
+# AND AN EXPORT IS NO MORE TRUSTED THAN A SHIM: both are shape-checked.
+is "…while an exported ref that is not one is dropped, like a live one" \
+   "$(skill_win_of '' '' 'not-a-window-ref' '@88')" "@88"
+is "…and an exported id that is not one is dropped too" \
+   "$(skill_win_of 'a11sess:0' '' '' 'window-id-please')" "a11sess:0"
+is "…and with nothing anywhere the sub-field is simply absent" \
+   "$(skill_win_of '' '' '' '')" ""
 
 # ---------------------------- clause (c): the DIRECTORY PRECEDENCE, four rungs
 run "$START" --dry-run repoA11 1

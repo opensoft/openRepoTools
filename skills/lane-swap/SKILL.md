@@ -242,8 +242,22 @@ fi
 # AN ABSOLUTE PATH OR NOTHING AT ALL: a relative one has no meaning without the
 # writer's cwd, which no reader of this log has, and `~` is the writing shell's.
 [[ "$dir" == /* ]] || dir=""
+# AND BOTH REFS FALL BACK TO WHAT THE LAUNCHER EXPORTED, which is `F-X13`'s
+# row (h) and is absorbed under `R-A11-26`'s own rule — *"the survivor is the
+# SUPERSET, so a seventh divergence found after this is absorbed on the same
+# ground and needs no ruling of its own"*. On the normal path the launcher
+# started this session and threaded the window it captured across its re-exec
+# (`WORKBENCHES_CLAUDE_WINDOW_REF`, `_WINDOW_ID`, clause (b) act 1); a `tmux`
+# that is missing, a server that has gone, or a shim that answers nothing then
+# costs the record a `window` sub-field it already had in hand. Each is SHAPE
+# CHECKED before it is taken, by the same two tests the live reads get, because
+# an environment variable is no more trustworthy than a shim.
 win="$(tmux display-message -p '#S:#I' 2>/dev/null)"
+case "$win" in *:[0-9]*) : ;; *) win="" ;; esac
+[[ -n "$win" ]] || win="${WORKBENCHES_CLAUDE_WINDOW_REF:-}"
+case "$win" in *:[0-9]*) : ;; *) win="" ;; esac
 wid="$(tmux display-message -p '#{window_id}' 2>/dev/null)"
+[[ "$wid" =~ ^@[0-9]+$ ]] || wid="${WORKBENCHES_CLAUDE_WINDOW_ID:-}"
 # AN `<@id>` IS `@<digits>` AND NOTHING ELSE (F-X13(a), A11 Addendum 4 ruling 10).
 # `== @*` accepted anything starting with an at-sign, and two things that are
 # not ids do: a tmux too old to know `#{window_id}` PRINTS THE FORMAT BACK, and
@@ -252,7 +266,7 @@ wid="$(tmux display-message -p '#{window_id}' 2>/dev/null)"
 # window `window-lane` can never resolve while looking complete. This is the
 # same check the launcher makes on the same value (`claude-profile`'s own copy
 # of this skill) and the one `lane-start:727` now makes.
-[[ "$wid" =~ ^@[0-9]+$ ]] && win="$win $wid"
+[[ "$wid" =~ ^@[0-9]+$ ]] && win="${win:+$win }$wid"
 # THE DROP, ON THE SAME VALUES `lane-start` REFUSES, BEFORE THE QUOTING — a test
 # that ran after it would fire on the `"` the quoting adds itself.
 refused=""
@@ -382,15 +396,23 @@ lane-start --help 2>/dev/null | grep -q -- '--confirm' \
 echo 'then, in the session that comes up: if its name is not the lane, type /rename <lane> (lane-start names every session it launches, the resume branches included, since adoption act 0 landed as opensoft/brett-wip#5 @3719d97; a session that came up WITHOUT it — a missing or refusing lane-start, a bare claude, or a workstation whose lane-start predates that commit — carries the name the harness derived, and no API renames one from inside)'
 ```
 
-That one command is the whole restart: bare `pclaude run <profile>` resolves this lane from the window name,
-and from the swap record step 4 just wrote when the window is gone (Amendment 8(c)). The profile argument is
-the only part the operator changes, and only when switching accounts. **`--lane <lane>` is printed only
-where step 4's row write was refused** — the row was never flipped to `PAUSED`, so a restart cannot resolve
-this lane from it and the operator must name it explicitly. `--lane` is a **leading** option to
-`claude-profile` (`claude-profile:555-560` accepts it only before the action), so it goes BEFORE `run`, never
-after the profile: `pclaude run <profile> --lane <lane>` would be handed to Claude itself, not to the
-launcher. The capability probe above decides whether the RESUMED stamps are `lane-start`'s act or the next
-session's — do not assert either from memory.
+That one command is the whole restart: bare `pclaude <profile>` resolves this lane from the window name,
+and from the swap record step 4 just wrote when the window is gone (Amendment 8(c)). **The SHORT form is
+the printed one, and that is an edit to in-force text rather than a preference**: Amendment 11 clause (a) —
+*"Every printed restart command becomes the short form … Amendment 8(a) step 5's prescribed
+`pclaude run <profile>` becomes that short form wherever it is printed"* — which the amendment counts as
+**edit 5 of six**. The verb was always optional and nothing breaks: the short and the long form build the
+SAME argv (`claude-profile`'s `action="${1:-list}"` falls through to `run` on any first word that is not
+`list|login|status|run`, without shifting), and the long form is not deprecated. What changes is what this
+file prints. The profile argument is the only part the operator changes, and only when switching accounts.
+
+**`--lane <lane>` is printed only where step 4's row write was refused** — the row was never flipped to
+`PAUSED`, so a restart cannot resolve this lane from it and the operator must name it explicitly. `--lane`
+is a **leading** option to `claude-profile`, read before the action or the profile — measured in the
+launcher itself, *"the first token that is not one of them ends this loop"* — so it goes BEFORE the profile
+and never after it: `pclaude <profile> --lane <lane>` would be handed to Claude itself, not to the
+launcher, and the lane would never be taken. The capability probe above decides whether the RESUMED stamps
+are `lane-start`'s act or the next session's — do not assert either from memory.
 
 **`/resume` and `claude --resume <title>` are not lane surfaces** (A8 Addendum 2, R-A8-6): a lane is entered
-through `pclaude run` or `lane-start`, and by no other door. Do not offer either as a fallback.
+through `pclaude` or `lane-start`, and by no other door. Do not offer either as a fallback.

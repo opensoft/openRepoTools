@@ -1293,6 +1293,63 @@ FORK_SURFACES = ("lanes-edit.sh", "lanes", "restart", "skills/restart/SKILL.md",
 FORK_ACT_LINE = re.compile(r"^.*(?:live FORK|live fork\(s\)).*$", re.M)
 
 
+#: The two halves of the `/lane-swap` skill that must spell the launch the same
+#: way: the `restart_cmd=` the skill EXECUTES into its printed line, and the
+#: prose three paragraphs below that explains it.
+SWAP_SKILL = "skills/lane-swap/SKILL.md"
+
+
+def test_the_swap_skill_snippet_and_its_prose_spell_the_same_command():
+    """AMENDMENT 11 CLAUSE (a), EDIT 5 OF SIX: *"Every printed restart command
+    becomes the short form … Amendment 8(a) step 5's prescribed
+    `pclaude run <profile>` becomes that short form wherever it is printed."*
+
+    At `dae38be` this file took the snippet half of that edit and left the
+    prose half — `restart_cmd="pclaude ${CLAUDE_PROFILE_NAME:-<profile>}"` with
+    three paragraphs below it still saying `pclaude run <profile>`. That is not
+    a wording nit: `opensoft/workBenches#74`'s
+    `devcontainer.test/test-claude-profile-skill-install.sh` EXECUTES step 5's
+    branch rather than grepping it, and reported
+    `FAIL: RV-S2: normal-path restart_cmd='pclaude work', expected the
+    unqualified command` against the vendored bytes
+    (openRepoTools#26-5656319349). The executed snippet and the paragraph
+    explaining it produced different commands.
+
+    So: no `restart_cmd=` may spell the verb, and every `pclaude run` left in
+    the file must be on a line that says WHY the long form is being named — it
+    is quoted twice, as the sentence clause (a) edits and as the argv the short
+    form builds — rather than printed as the act.
+    """
+    text = (REPO / SWAP_SKILL).read_text(encoding="utf-8")
+    bad_cmd = [l.strip() for l in text.splitlines()
+               if "restart_cmd=" in l and "pclaude run" in l]
+    assert not bad_cmd, (
+        "clause (a) makes every PRINTED restart command the short form, and "
+        f"these assignments spell the verb:\n{bad_cmd}")
+    assigns = [l for l in text.splitlines() if l.strip().startswith("restart_cmd=")]
+    assert len(assigns) >= 2, (
+        f"{SWAP_SKILL} has {len(assigns)} `restart_cmd=` assignments; step 5 "
+        "has two branches (with --lane and without) and this test is stale")
+    unexplained = [l.strip()[:120] for l in text.splitlines()
+                   if "pclaude run" in l
+                   and "short form" not in l and "SAME argv" not in l]
+    assert not unexplained, (
+        "these lines print the LONG form without naming it as the one clause "
+        f"(a) supersedes, so the prose no longer agrees with the snippet:\n"
+        f"{unexplained}")
+    # AND `--lane` IS LEADING, on both halves. Measured on the live launcher
+    # (`claude-profile`): `--lane` is read only BEFORE the action or the
+    # profile — *"the first token that is not one of them ends this loop"* — so
+    # a `--lane` after the profile is handed to Claude and the lane is never
+    # taken.
+    after = [l.strip()[:120] for l in text.splitlines()
+             if re.search(r"pclaude (?:run )?[^`\s]*<?profile>? --lane", l)
+             and "never after" not in l and "handed to Claude" not in l]
+    assert not after, (
+        "`--lane` is a LEADING option of the launcher; after the profile it is "
+        f"passed to Claude and the lane is never taken:\n{after}")
+
+
 def test_every_fork_surface_prints_the_one_act():
     """CLAUSE (k) RULE (e), and it names the act: *"both print the one act:
     **retire it**, under Amendment 6(d) … **Neither kills a process** … and
