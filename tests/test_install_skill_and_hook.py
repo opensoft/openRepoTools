@@ -32,6 +32,7 @@ import pytest
 
 from conftest import REPO, WINDOWS_SKIP
 from test_openrepotools_command import (COMMAND, command_env, run_cmd,
+                                        COMMAND_NAMES, COMMAND_PATHS,
                                         INSTALLED, NEEDS_JQ, SKILL_PATH)
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
@@ -110,6 +111,82 @@ def test_a_drifted_skill_is_replaced_and_an_identical_one_is_left_alone(tmp_path
     assert second.returncode == 0, second.stderr
     assert f"lane-swap: updated at {shared}" in second.stdout
     assert shared.read_bytes() == (REPO / SKILL_PATH).read_bytes()
+
+
+# --- the command file (A11 Addendum 4 ruling 9) -----------------------------
+
+def command_paths(home: Path, name: str) -> tuple[Path, Path]:
+    """The two places `--install` writes a command file — the pair a skill has,
+    for the same two ways a session is started."""
+    return (home / ".claude-profiles" / "shared" / "commands" / f"{name}.md",
+            home / ".claude" / "commands" / f"{name}.md")
+
+
+@NEEDS_JQ
+@pytest.mark.parametrize("name", COMMAND_NAMES)
+def test_install_places_the_command_file_at_both_paths(tmp_path, name):
+    """AFTER `workBenches#74`, `/swap` HAS NO OTHER OWNER (F-X28).
+
+    `#74` @`0b7f6bc` deletes `base-image/files/claude/commands/` along with the
+    launcher's copy of the `lane-swap` skill, and adoption act 6 — which would
+    have `--install` inherit command files — lands AFTER act 3, which is this
+    PR's base. So on the day `#74` lands, clause (g)'s `/swap`, a ratified
+    decision and one of the six edits to in-force text, would be installed by
+    nobody. Ruling 9 puts it here.
+
+    `setup-claude-profiles.sh:140,295` makes `<profiles>/shared/commands` and
+    links it into every profile as `<profile>/commands`, exactly as it does for
+    `skills` — so the shared copy is `/swap` under the launcher and the
+    `~/.claude` copy is `/swap` in a bare `claude` run.
+    """
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    source = (REPO / f"commands/{name}.md").read_bytes()
+    for target in command_paths(tmp_path, name):
+        assert target.is_file(), result.stdout
+        assert target.read_bytes() == source, target
+        assert stat.S_IMODE(target.stat().st_mode) == 0o644, target
+        assert f"/{name}: installed at {target}" in result.stdout
+
+
+@NEEDS_JQ
+def test_the_shipped_command_is_an_alias_and_restates_no_step():
+    """CLAUSE (g) MAKES `/swap` AN ALIAS, AND AN ALIAS THAT RESTATES THE STEPS
+    IS THE ALTERNATIVE IT REJECTS BY NAME: *"Two copies of one procedure that
+    must stay byte-equal is the rejected alternative."*
+
+    So the file's whole content is an instruction to invoke the skill, and it
+    must not carry a step list of its own. Held here because the day someone
+    "helpfully" pastes the procedure into it is the day the two can differ.
+    """
+    text = (REPO / "commands/swap.md").read_text(encoding="utf-8")
+    assert text.startswith("---\n"), "a command file opens with front matter"
+    assert "lane-swap" in text, "the alias must name the skill it invokes"
+    assert "/swap" in text, "clause (g): the alias is named in its own description"
+    # The skill's own numbered steps, which this file must NOT carry.
+    skill = (REPO / SKILL_PATH).read_text(encoding="utf-8")
+    for heading in ("## 1.", "## 2.", "## 3.", "## 4.", "## 5."):
+        assert heading in skill, f"the skill lost {heading} — this test is stale"
+        assert heading not in text, (
+            f"commands/swap.md restates the skill's {heading}; clause (g) makes "
+            "it an alias, and two copies of one procedure is what it rejects")
+
+
+@NEEDS_JQ
+def test_a_drifted_command_file_is_replaced_and_an_identical_one_is_left_alone(tmp_path):
+    """The same idempotence the skills have, for the same reason: a person who
+    edits the installed copy gets it back, and a run that changes nothing says
+    so instead of reporting a write."""
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    shared, _bare = command_paths(tmp_path, "swap")
+    shared.write_text(shared.read_text(encoding="utf-8") + "\n<!-- drift -->\n",
+                      encoding="utf-8")
+    second = run_cmd("--install", home=tmp_path)
+    assert second.returncode == 0, second.stderr
+    assert f"/swap: updated at {shared}" in second.stdout
+    assert shared.read_bytes() == (REPO / "commands/swap.md").read_bytes()
+    third = run_cmd("--install", home=tmp_path)
+    assert f"/swap: already installed at {shared} (unchanged)" in third.stdout
 
 
 # --- the hook entry ---------------------------------------------------------

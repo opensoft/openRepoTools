@@ -65,8 +65,8 @@ usage() {
 	cat <<'USAGE'
 openRepoTools --install            install (or update) the eleven estate and
                                    lane commands into ~/.local/bin, plus the
-                                   /lane-swap and /restart skills and the
-                                   SessionStart hook entry
+                                   /lane-swap and /restart skills, the /swap
+                                   command file and the SessionStart hook entry
 openRepoTools wip init             create your workspace repository, clone it,
                                    seed it, and point this workstation at it
 openRepoTools --help | --version
@@ -104,10 +104,13 @@ lane words, the four lane helpers and the alias table they read:
 
 `--install` also places TWO SKILLS at two paths each —
 `~/.claude-profiles/shared/skills/<name>/SKILL.md` and
-`~/.claude/skills/<name>/SKILL.md`, for `lane-swap` and `restart` — and merges
-ONE `SessionStart` entry into `~/.claude/settings.json` (needs `jq`, and
-refuses rather than rewriting a file it cannot parse). It never writes a
-profile's own settings.json: the launcher owns that one.
+`~/.claude/skills/<name>/SKILL.md`, for `lane-swap` and `restart` — and ONE
+COMMAND FILE at the matching pair, `~/.claude-profiles/shared/commands/swap.md`
+and `~/.claude/commands/swap.md`, which is clause (g)'s ratified `/swap` alias
+of `/lane-swap` and adds nothing to it. It merges ONE `SessionStart` entry into
+`~/.claude/settings.json` (needs `jq`, and refuses rather than rewriting a file
+it cannot parse). It never writes a profile's own settings.json: the launcher
+owns that one.
 
 `/restart` is the INSIDE half of `restart` and has to be a skill: a running
 session cannot `exec` a launcher over itself, so it binds the window, stamps
@@ -320,11 +323,23 @@ install_commands() {
 #     run and preserves hook keys. This command never writes a profile's
 #     settings.json at all. One path, one writer, in both halves.
 #
-# SIXTEEN ARTIFACTS, AND THE COUNT IS THE INVARIANT: eleven files in the bin
+# EIGHTEEN ARTIFACTS, AND THE COUNT IS THE INVARIANT: eleven files in the bin
 # directory, two skills in the shared skills directory, their two bare-run
-# copies, and one merged entry in `~/.claude/settings.json`. It was twelve
-# before Amendment 11 added `restart`, `lanes` and the `/restart` skill, and the
-# count moves with the list rather than being restated from memory.
+# copies, ONE COMMAND FILE at those same two paths, and one merged entry in
+# `~/.claude/settings.json`. It was twelve before Amendment 11 added `restart`,
+# `lanes` and the `/restart` skill, and sixteen before ruling 9 added
+# `commands/swap.md`; the count moves with the lists rather than being restated
+# from memory.
+#
+# WHY A COMMAND FILE IS HERE AT ALL, WHEN ADOPTION ACT 6 SAYS THE LAUNCHER
+# VENDORS THEM (F-X28, A11 Addendum 4 ruling 9, ratified "a11 addendum 4 yes").
+# `opensoft/workBenches#74` @`0b7f6bc` deletes the whole `claude/commands` lane
+# surface along with the launcher's copy of the `lane-swap` skill — and act 6,
+# which would have `--install` inherit the command files, comes AFTER act 3,
+# which is this PR's base. So on the day 4b lands, clause (g)'s `/swap` — a
+# RATIFIED decision, and one of the six edits to in-force text — would be
+# installed by NOBODY. The alternative was a PR of its own between now and then,
+# and the ruling took this one.
 
 #: THE SKILLS THIS REPOSITORY SHIPS, each placed at the same two paths. A
 #: skill's DIRECTORY NAME is what `/<name>` invokes, so the list is the names
@@ -336,6 +351,19 @@ install_commands() {
 #: running session cannot `exec` a launcher over itself.
 SKILLS=(lane-swap restart)
 skill_source_path() { printf 'skills/%s/SKILL.md\n' "$1"; }
+
+#: THE COMMAND FILES THIS REPOSITORY SHIPS, each placed at the same two paths a
+#: skill is (A11 Addendum 4 ruling 9). A command file's BASENAME is what
+#: `/<name>` invokes, so the list is the names and every path is derived from
+#: one — the same shape `SKILLS` has, for the same reason.
+#:
+#: `swap` is clause (g)'s ratified alias: `/swap` invokes the `lane-swap` skill
+#: and adds nothing to it. The file is vendored BYTE FOR BYTE from
+#: `opensoft/workBenches#71`, which is where it was written, because two copies
+#: of one procedure that must stay byte-equal is the alternative that clause
+#: rejects by name — and `#74` deletes that copy, which is why this one exists.
+COMMANDS=(swap)
+command_source_path() { printf 'commands/%s.md\n' "$1"; }
 #: Kept as a single name for the one thing that is still singular: the
 #: `SessionStart` hook's own entry, which belongs to `lane-swap`'s amendment
 #: and not to the skill set.
@@ -382,6 +410,19 @@ collect_skills() {
 		fi
 		fetch_from_repo "$src" "$WORKDIR/skill-$name.md" || return 1
 	done
+	# THE COMMAND FILES IN THE SAME BREATH, under the same all-or-nothing rule
+	# (ruling 9). A `/swap` that could not be fetched beside a `/lane-swap` that
+	# could is a half-install of an ALIAS PAIR, which is worse than either
+	# alone: the skill is installed, the alias the text ratifies is not, and
+	# nothing on screen says which.
+	for name in "${COMMANDS[@]}"; do
+		src="$(command_source_path "$name")"
+		if [ -n "$selfdir" ] && [ -f "$selfdir/$src" ]; then
+			cp -- "$selfdir/$src" "$WORKDIR/command-$name.md"
+			continue
+		fi
+		fetch_from_repo "$src" "$WORKDIR/command-$name.md" || return 1
+	done
 	return 0
 }
 
@@ -426,6 +467,12 @@ plan_skill_targets() {
 	for name in "${SKILLS[@]}"; do
 		dirs+=("$(skills_home)/shared/skills/$name" "$(claude_home)/skills/$name")
 	done
+	# A COMMAND FILE HAS NO DIRECTORY OF ITS OWN — it is a file in the commands
+	# directory, where a skill is a `SKILL.md` in a directory named for it — so
+	# the two command destinations are added once rather than once per name.
+	if [ "${#COMMANDS[@]}" -gt 0 ]; then
+		dirs+=("$(skills_home)/shared/commands" "$(claude_home)/commands")
+	fi
 	dirs+=("$(claude_home)")
 	for d in "${dirs[@]}"; do
 		mkdir -p -- "$d" 2>/dev/null || die "\`--install\` cannot create $d, one of the places Amendment 9(b) has
@@ -450,6 +497,14 @@ plan_skill_targets() {
 	# skill half would not.
 	for name in "${SKILLS[@]}"; do
 		for target in "$(skills_home)/shared/skills/$name/SKILL.md" "$(claude_home)/skills/$name/SKILL.md"; do
+			kind="$(unplaceable_kind "$target")" || continue
+			bad="${bad:+$bad
+}    $target — $kind"
+			paths="${paths:+$paths }\"$target\""
+		done
+	done
+	for name in "${COMMANDS[@]}"; do
+		for target in "$(skills_home)/shared/commands/$name.md" "$(claude_home)/commands/$name.md"; do
 			kind="$(unplaceable_kind "$target")" || continue
 			bad="${bad:+$bad
 }    $target — $kind"
@@ -626,7 +681,7 @@ $(hook_block_text)
 	esac
 }
 
-# The five placements, AFTER the eleven files and the merge are all in hand.
+# The seven placements, AFTER the eleven files and the merge are all in hand.
 place_skill_and_hook() {
 	local shared_dir bare_dir settings target verb hook_tmp name
 	settings="$(claude_home)/settings.json"
@@ -637,7 +692,7 @@ place_skill_and_hook() {
 	# EVERY FAILURE HERE IS A `die`, never the shell's own 1. `--install`'s
 	# codes are this toolset's — 0 done, 1 findings printed, 2 a refusal — and
 	# an unguarded `mkdir` or `cp` under `set -e` exits 1, which reads as a
-	# report of findings from a command that placed twelve of sixteen artifacts.
+	# report of findings from a command that placed twelve of eighteen artifacts.
 	for target in "$shared_dir/SKILL.md" "$bare_dir/SKILL.md"; do
 		mkdir -p -- "$(dirname -- "$target")" ||
 			die "could not create $(dirname -- "$target") for the $name skill.
@@ -661,6 +716,36 @@ place_skill_and_hook() {
 			say "$name: $verb"
 		fi
 	done
+	done
+
+	# THE COMMAND FILES, AT THE SAME TWO DESTINATIONS AND THE SAME MODE
+	# (A11 Addendum 4 ruling 9). `setup-claude-profiles.sh` makes
+	# `<profiles>/shared/commands` and links it into every profile as
+	# `<profile>/commands`, exactly as it does for `skills` — so a file placed
+	# in the shared directory is `/swap` in every profile, and the bare copy in
+	# `~/.claude/commands/` is `/swap` in a `claude` run outside one. Two
+	# destinations, for the two ways a session is started, which is the same
+	# reason a skill has two.
+	#
+	# 644 for the same reason a `SKILL.md` is: a command file is a document a
+	# session READS. The 755 argument belongs to the eleven in the bin
+	# directory, where a copy that is not executable is not a command.
+	for name in "${COMMANDS[@]}"; do
+		for target in "$(skills_home)/shared/commands/$name.md" "$(claude_home)/commands/$name.md"; do
+			mkdir -p -- "$(dirname -- "$target")" ||
+				die "could not create $(dirname -- "$target") for the /$name command.
+    The $placed commands above are placed; the skills, the command files and the hook are not."
+			if [ -e "$target" ] && cmp -s "$WORKDIR/command-$name.md" "$target"; then
+				say "/$name: already installed at $target (unchanged)"
+			else
+				if [ -e "$target" ]; then verb="updated at $target"; else verb="installed at $target"; fi
+				cp -- "$WORKDIR/command-$name.md" "$target" ||
+					die "could not write $target. The $placed commands above are placed;
+    the skills, the command files and the hook are not."
+				chmod 644 "$target" || die "could not set the mode on $target."
+				say "/$name: $verb"
+			fi
+		done
 	done
 
 	case "$HOOK_PLAN" in

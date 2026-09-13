@@ -58,14 +58,25 @@ SKILL_NAMES = ("lane-swap", "restart")
 SKILL_PATHS = tuple(f"skills/{n}/SKILL.md" for n in SKILL_NAMES)
 SKILL_PATH = SKILL_PATHS[0]
 
-#: Everything a stdin install has to fetch: the eleven files and the two skills.
-FETCHED = INSTALLED + SKILL_PATHS
+#: The COMMAND FILES `--install` also places, at the matching pair of paths
+#: (A11 Addendum 4 ruling 9, ratified "a11 addendum 4 yes"). `/swap` is clause
+#: (g)'s alias of `/lane-swap`; `opensoft/workBenches#74` deletes the launcher's
+#: copy, and adoption act 6 — which would have the launcher keep vendoring
+#: command files — lands after act 3, so without this it would be installed by
+#: nobody (F-X28).
+COMMAND_NAMES = ("swap",)
+COMMAND_PATHS = tuple(f"commands/{n}.md" for n in COMMAND_NAMES)
 
-#: SIXTEEN ARTIFACTS, AND THE COUNT IS THE INVARIANT: eleven files in the bin
+#: Everything a stdin install has to fetch: the eleven files, the two skills and
+#: the command file.
+FETCHED = INSTALLED + SKILL_PATHS + COMMAND_PATHS
+
+#: EIGHTEEN ARTIFACTS, AND THE COUNT IS THE INVARIANT: eleven files in the bin
 #: directory, two skills in the shared skills directory, their two bare-run
-#: copies, and one merged entry in `~/.claude/settings.json`. Derived from the
-#: two lists rather than restated, so adding a skill or a command moves it.
-ARTIFACTS = len(INSTALLED) + 2 * len(SKILL_NAMES) + 1
+#: copies, one command file at that same pair of destinations, and one merged
+#: entry in `~/.claude/settings.json`. Derived from the three lists rather than
+#: restated, so adding a skill or a command moves it.
+ARTIFACTS = len(INSTALLED) + 2 * len(SKILL_NAMES) + 2 * len(COMMAND_NAMES) + 1
 
 USAGE_LINES = (
     "openRepoTools --install            install (or update) the eleven estate and",
@@ -526,6 +537,36 @@ def test_install_places_all_nine_or_none(tmp_path):
     assert not (bin_dir / "resume").exists()
     assert not (bin_dir / "status").exists()
     assert "placed" not in result.stdout
+
+
+def test_a_withheld_command_file_places_nothing_either(tmp_path):
+    """THE ALL-OR-NOTHING RULE REACHES THE COMMAND FILE (A11 Addendum 4 ruling
+    9). A `/swap` that could not be fetched beside a `/lane-swap` that could is
+    a half-install of an ALIAS PAIR — the skill installed, the alias the text
+    ratifies not, and nothing on screen saying which. `collect_skills` fetches
+    both lists before anything is placed, so this refuses with the bin
+    directory untouched.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "park").write_text("# an older park that still works\n",
+                                  encoding="utf-8")
+    withheld = fake_github(tmp_path,
+                           [n for n in FETCHED if n not in COMMAND_PATHS])
+    result = subprocess.run(
+        ["bash", "-s", "--", "--install"], capture_output=True, text=True,
+        check=False, input=COMMAND.read_text(encoding="utf-8"),
+        cwd=str(tmp_path),
+        env=command_env(home=tmp_path,
+                        env={**withheld,
+                             "OPENREPOTOOLS_BIN_DIR": str(bin_dir)}))
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "NOTHING was installed" in result.stderr, result.stderr
+    assert (bin_dir / "park").read_text(encoding="utf-8") == \
+        "# an older park that still works\n"
+    assert not (bin_dir / "resume").exists()
+    assert not (tmp_path / ".claude").exists(), (
+        "a skill or the hook was placed by a run that could not fetch /swap")
 
 
 @NEEDS_JQ
