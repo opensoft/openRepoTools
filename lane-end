@@ -583,7 +583,11 @@ fi
 # --------------------------------------------------------------- the write
 
 utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-ws="$(hostname)"
+# ONE SPELLING OF THE WORKSTATION, the one `lanes-edit.sh:438` uses and
+# `lane-start` now uses — `${LANES_WORKSTATION:-$(hostname -s)}` (A9 Addendum
+# 4, R-A9-13). This line is the `lane-end on <ws>` free text of the row's
+# status, which a reader compares with the workstation column beside it.
+ws="${LANES_WORKSTATION:-$(hostname -s)}"
 # The register line names the source it actually read (the log for a lane that
 # has one, the state cell for a pre-cutover lane) and the objects it read there.
 status_text="$utc lane-end on $ws: window closing; NOTHING IN FLIGHT"

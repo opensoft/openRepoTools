@@ -1042,7 +1042,16 @@ cmd+=(${pass[@]+"${pass[@]}"})
 utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 started="$(date -u +%Y-%m-%dT%H:%MZ)"
 today="$(date -u +%Y-%m-%d)"
-ws="$(hostname)"
+# THE WORKSTATION COLUMN HAS ONE READER, AND NOW ONE SPELLING (A9 Addendum 4,
+# R-A9-13). `lanes-edit.sh:438` computes this very cell as
+# `${LANES_WORKSTATION:-$(hostname -s)}` and has since Amendment 6; this file
+# computed it as a bare `hostname`, which honours no seam and, on any host
+# whose `hostname` is a FQDN, writes `eagle.local` into a column every reader
+# compares against `eagle`. Two spellings of one column are two answers. The
+# seam is also what makes the moved suite runnable anywhere: its 55 seed rows
+# spell the column `Eagle`, so before this it was green on a workstation
+# literally named Eagle and on no other machine, GitHub's runners included.
+ws="${LANES_WORKSTATION:-$(hostname -s)}"
 env_name="$(basename -- "$CLAUDE_HOME")"
 case "$env_name" in .claude|claude) env_name=default ;; esac
 user="$(id -un)"

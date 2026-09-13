@@ -97,6 +97,23 @@ unset LANES_FILE LANES_EDIT LANES_REPO LANES_PATH LANES_LANE LANES_WORKSPACE_ROO
       LANES_REPOS_TSV LANES_REPOS_TSV_SHIPPED PROJECTS_ROOT CLAUDE_PROJECTS_DIR CLAUDE_BIN 2>/dev/null
 export AGENT_PROTOCOL_ROOT="$HOME/.agents"
 mkdir -p "$AGENT_PROTOCOL_ROOT"
+# THE ONE `LANES_*` SEAM THIS SUITE SETS RATHER THAN UNSETS, for the reason the
+# line above unsets the rest (A9 Addendum 4, R-A9-13). Every seed row below
+# spells the workstation column `Eagle` — 55 of them — and what those rows are
+# for is the REGISTER'S READING of that column: which rows are this
+# workstation's, which are another's, which crossing is a live lane here and
+# which an orphan there. The host's own name is not under test in any of them,
+# so taking it from the host made the whole file green on a workstation
+# literally named Eagle and red on every other machine, GitHub's runners
+# included: `lanes-edit.sh:438` reads `${LANES_WORKSTATION:-$(hostname -s)}`
+# and `lane-start`/`lane-end` now read the same. Pinned here, the rows and the
+# helpers agree wherever this runs.
+#
+# THE DEFAULT IS STILL UNDER TEST, one section from the end: `== the
+# workstation seam ==` unsets this variable and asserts all three writers fall
+# back to `hostname -s` — so pinning it here cannot hide a helper that stopped
+# reading the host at all.
+export LANES_WORKSTATION=Eagle
 
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); printf 'ok   %s\n' "$1"; }
@@ -466,7 +483,7 @@ has  "the new row starts STARTING" "$(grep '^| `repoA-7`' "$LANES")" "| STARTING
 has  "the new row's session cell names the minted session" "$(grep '^| `repoA-7`' "$LANES")" "(minted by lane-start,"
 hasnt "…so it no longer says 'pending'" "$(grep '^| `repoA-7`' "$LANES")" "pending — set by the session's first act"
 has  "…and it is the very id claude was given" "$(grep '^| `repoA-7`' "$LANES")" "$REPOA7_SID"
-has  "the new row names its workstation" "$(grep '^| `repoA-7`' "$LANES")" "$(hostname) / "
+has  "the new row names its workstation" "$(grep '^| `repoA-7`' "$LANES")" "$LANES_WORKSTATION / "
 has  "the new row points at a handoff" "$(grep '^| `repoA-7`' "$LANES")" "handoffs/repoA/session-handoff-"
 has  "the row write is its own commit" "$(git -C "$WIP" log --oneline -1 -- lanes/LANES.md)" "add row"
 is   "the row write was pushed" "$(git -C "$WIP" rev-parse HEAD)" "$(git -C "$WIP" rev-parse origin/main)"
@@ -620,7 +637,7 @@ has  "…verbatim, and retired" "$(grep '^| `browser-ui-repair`' "$LANES")" "| R
 echo "== Amendment 7: the per-lane object log =="
 
 E="$OPENREPOTOOLS_BIN_DIR/lanes-edit.sh"
-WS_S="$(hostname -s)"
+WS_S="${LANES_WORKSTATION:-$(hostname -s)}"
 LOGD="$WIP/lanes/log"
 
 # ------------------------------------------ lane-start writes the STARTED line
@@ -2225,7 +2242,7 @@ is    "a lane that takes a NEW session still exits 0" "$rc" 0
 has   "…and its stamp reads STARTED, not RESUMED" "$(grep '^| `repoHU-2`' "$LANES")" "STARTED by $HU2_SID (lane repoHU-2) — lane-start on"
 run   "$START" repoA 1 --no-launch
 has   "…while a resume-by-id lane's stamp reads RESUMED by that id" "$(grep '^| `repoA-1`' "$LANES")" "RESUMED by $DEAD_ID (lane repoA-1) — lane-start on"
-has   "…and the --no-launch tail behind it states what really happened" "$(grep '^| `repoA-1`' "$LANES")" "RESUMED by $DEAD_ID (lane repoA-1) — lane-start on $(hostname): window renamed, no launch"
+has   "…and the --no-launch tail behind it states what really happened" "$(grep '^| `repoA-1`' "$LANES")" "RESUMED by $DEAD_ID (lane repoA-1) — lane-start on $LANES_WORKSTATION: window renamed, no launch"
 
 # ---- R-A8-2: ONE record written, TWO deferred, and the act that settles them
 #
@@ -3115,6 +3132,47 @@ cp -- "$WS_YAML_SAVED" "$WS_YAML"
 is   "the sandbox's own pointer file is restored for the guards below" \
      "$(sed -n 's/^path:[[:space:]]*//p' "$WS_YAML" | head -n1)" "$WIP"
 
+echo "== the workstation seam: unset, every writer reads the host =="
+
+# THE OTHER HALF OF R-A9-13. Every case above this line runs with
+# `LANES_WORKSTATION=Eagle` exported at the top of this file, which is what
+# makes the 55 seed rows and the three writers agree on any machine. That pin
+# would also hide the opposite defect — a writer that stopped reading the host
+# at all, or that read it with a different command than its siblings, which is
+# exactly what `lane-start` and `lane-end` did with their bare `hostname` until
+# this round. So the seam is UNSET for these three cases and the DEFAULT is
+# asserted directly, against `hostname -s` computed here: one spelling, shared
+# by `lanes-edit.sh:438`, `lane-start` and `lane-end`.
+WS_HOST="$(hostname -s)"
+is   "this host has a short name to fall back to" \
+     "$( [ -n "$WS_HOST" ] && echo yes || echo no )" "yes"
+
+mkdir -p "$HOME/projects/repoWS"
+git init -q -b main "$HOME/projects/repoWS"
+git -C "$HOME/projects/repoWS" remote add origin "https://github.com/opensoft/repoWS.git"
+# The cases above leave handoff files uncommitted in the sandbox workspace on
+# purpose, and `lanes-edit.sh` REFUSES an object-log write on a checkout it
+# cannot rebase — which is the behaviour those cases are about. This one is
+# about the workstation name, so the checkout is committed first and the
+# refusal is out of the way.
+git -C "$WIP" add -A >/dev/null 2>&1
+git -C "$WIP" commit -q -m "commit the sandbox's pending handoffs before the workstation-seam cases" >/dev/null 2>&1 || :
+
+run env -u LANES_WORKSTATION "$START" repoWS 1 --no-launch
+is   "lane-start with the seam unset exits 0" "$rc" 0
+has  "…and its new row names the HOST in the workstation column" \
+     "$(grep '^| `repoWS-1`' "$LANES")" "$WS_HOST / "
+
+run env -u LANES_WORKSTATION LANES_LANE=repoWS-1 "$E" claim "opensoft/repoWS#1" --no-github
+is   "lanes-edit.sh claim with the seam unset exits 0" "$rc" 0
+has  "…and stamps the same host on the CLAIMED line it writes" \
+     "$(grep '^CLAIMED' "$LOGD/repoWS-1.md" | tail -n1)" "@$WS_HOST,"
+
+run env -u LANES_WORKSTATION "$END" repoWS-1 --force
+is   "lane-end with the seam unset exits 0" "$rc" 0
+has  "…and its row status names the same host" \
+     "$(grep '^| `repoWS-1`' "$LANES")" "lane-end on $WS_HOST:"
+
 # ------------------------------------------------------- nothing real touched
 #
 # The check is that the suite CREATED nothing here, which is not the same as
@@ -3129,7 +3187,16 @@ is   "the sandbox's own pointer file is restored for the guards below" \
 is   "the suite never created a log outside the sandbox" \
      "$(ls "$REAL_WS/lanes/log" 2>/dev/null | grep -c '^repo[A-Z]' || :)" 0
 is   "the suite never wrote the real register" \
-     "$(grep -c '^| `repo[A-Z]' "$REAL_WS/lanes/LANES.md" 2>/dev/null || :)" 0
+     "$(cat "$REAL_WS/lanes/LANES.md" 2>/dev/null | grep -c '^| `repo[A-Z]' || :)" 0
+# BOTH OF THEM READ A PIPE, and the second one did not until A9 Addendum 4
+# (R-A9-13, F3). `grep -c PATTERN FILE` on a file that is not there prints
+# NOTHING and exits 2, so with no `~/.agents/workspace.yaml` on the host
+# `$REAL_WS` is empty, the comparison was `""` against `0`, and this assertion
+# FAILED on every CI runner and every new person's machine — the one host
+# shape it was written to be harmless on. `grep -c` reading a PIPE always
+# prints a number, so `cat 2>/dev/null | grep -c` degrades to `0` where the
+# sibling above already did.
+#
 # NEVER VACUOUS, whatever this host has. The two above compare the operator's
 # own workspace with itself and degrade to a true statement about nothing on a
 # CI runner that has no workspace at all; this one asserts the positive — the
