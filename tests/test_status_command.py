@@ -2106,12 +2106,22 @@ def test_that_registration_is_in_the_way_of_a_move_as_well(atlas, home):
     assert ("    - parked feature 001-a-thing (repo leg): its worktree is at "
             f"{where}, which is not the {want} `resume` computes for it"
             ) in result.stdout
-    assert ("clear the stale registration git still holds for that path with "
-            f"`git -C {atlas} worktree prune` first — `worktree move` refuses "
-            'a destination git still holds ("a missing but already registered '
-            'worktree") — then move it where both look: `mkdir -p '
-            f"{want.parent} && git -C {atlas} worktree move {where} {want}`, "
-            "both yours to run") in result.stdout
+    # THE PRUNE IS IN THE COMMAND AND NOT BESIDE IT since Copilot's fifth
+    # round on #27 (2026-09-13, suppressed), verbatim: "In the `held == 2`
+    # recovery, the required destination prune appears only in the prose; the
+    # copy-pastable command is `${unlock}mkdir -p ... && git worktree move ...`
+    # and never runs `git worktree prune`. With a live off-path source and a
+    # stale destination registration, the advertised command therefore still
+    # fails at `worktree move`." Right, and it is this file's own rule: an exit
+    # a person can run is one they can paste, so every step the destination
+    # wants is in the sequence and the reason for each is behind it.
+    assert ("move it where both look: "
+            f"`git -C {atlas} worktree prune && mkdir -p {want.parent} && "
+            f"git -C {atlas} worktree move {where} {want}`, which is yours to "
+            "run — `worktree move` creates no parent directory of its own, and "
+            'it refuses a destination git still holds registered ("a missing '
+            'but already registered worktree") until the prune') in (
+        result.stdout), result.stdout
 
 
 def test_no_sibling_leg_of_an_off_path_feature_offers_resume(trio, home):
@@ -5185,6 +5195,81 @@ def test_a_dangling_symlink_at_that_path_is_the_adds_refusal_not_rr3s(
         "RR3 looks through the link at the other end too")
     assert "worktree prune" not in result.stdout, (
         "nothing is registered at that path to prune")
+
+
+def test_an_off_path_worktree_with_a_dangling_link_at_the_path_is_not_silence(
+        atlas, home):
+    """COPILOT'S FIFTH ROUND ON #27 (2026-09-13), verbatim: "`dest_exists`
+    treats a dangling symlink as occupied, but `resume`'s RR3 uses `[ -e ]` and
+    therefore proceeds to its final `git worktree add`, which still rejects
+    that symlink. With an off-path live worktree and a dangling symlink at this
+    computed destination, this condition is false, so no add verdict is carried
+    to sibling legs and the report can claim the feature is clean even though
+    `resume` fails."
+
+    IT IS RIGHT, AND THE ROUND BEFORE IT MADE THAT SILENCE. `[ -e ]` is the
+    test RR3 makes at the other end, so a path only a link occupies is one the
+    run walks PAST — and then the add refuses it. The feature is refused, the
+    finding is the off-path one, and clearing the link is a STEP IN ITS EXIT
+    rather than a reason to say nothing: the `mv` goes in front of the `mkdir
+    -p`, where the prune goes for a stale registration, and the clause behind
+    the command says which of them git refuses for what."""
+    checkout = workspace_config(home)
+    want = parked_worktree(atlas, "001-a-thing")
+    want.parent.mkdir(parents=True, exist_ok=True)
+    want.symlink_to(home / "nowhere-at-all")
+    assert not want.exists() and want.is_symlink()
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", elsewhere)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (repo leg): its worktree is at "
+            f"{elsewhere}, which is not the {want} `resume` computes for it"
+            ) in result.stdout, result.stdout
+    assert (f"move it where both look: `mv {want} {want}.aside && mkdir -p "
+            f"{want.parent} && git -C {atlas} worktree move {elsewhere} "
+            f"{want}`") in result.stdout, result.stdout
+    assert ("`git worktree add` refuses the dangling symlink at that path "
+            '("already exists") whatever `[ -e ]` says of it') in result.stdout
+
+
+def test_a_leftover_at_the_destination_is_named_beside_a_prune_elsewhere(
+        atlas, home):
+    """COPILOT'S FIFTH ROUND ON #27 (2026-09-13, suppressed), verbatim:
+    "Restricting this probe to `[ -z "$ghost" ]` misses a destination
+    obstruction whenever the recorded branch has a stale registration at some
+    other path … so the destination is never examined and the report offers
+    `resume` even though its final `git worktree add` is blocked by the
+    destination registration."
+
+    THE PRUNE ITSELF IS NOT THE GAP: `git worktree prune` walks every
+    registration in the repository, not one, so the exit those arms name
+    already clears a stale block at the destination too. WHAT THE PRUNE DOES
+    NOT DO IS MOVE ANYTHING ON DISK — and a leftover at the DESTINATION is what
+    `git worktree add` refuses after it, which is the half worth a clause. It
+    is named where the two paths differ, which is the only shape in which the
+    arms above have not named it already."""
+    checkout = workspace_config(home)
+    want = parked_worktree(atlas, "001-a-thing")
+    want.parent.mkdir(parents=True, exist_ok=True)
+    # a stale registration for the RECORDED branch somewhere else…
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", elsewhere)
+    (elsewhere / ".git").unlink()          # prunable, the directory left
+    # …and a DANGLING SYMLINK at the path `resume` computes, which is the one
+    # shape RR3 walks past — a real directory there is RR3's own refusal and
+    # the in-the-way arm says it, above all of this.
+    want.symlink_to(home / "nowhere-at-all")
+    assert not want.exists() and want.is_symlink()
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f", and a move aside of what is at the {want} `resume` computes "
+            "for this leg, which the prune does not touch and `git worktree "
+            "add` refuses for existing") in result.stdout, result.stdout
 
 
 def test_a_locked_off_path_worktree_names_the_unlock_before_the_move(

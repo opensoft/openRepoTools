@@ -3072,7 +3072,7 @@ path_in_the_way() {
             # '…' already exists", run on 2026-09-13 with a regular FILE at a
             # pruned registration's path — so a test for `-d` sent a person
             # to a `resume` that refuses for a file the line never mentioned.
-            [ ! -e "$want" ] ||
+            ! dest_exists "$want" ||
                 IN_THE_WAY_EXIT="$IN_THE_WAY_EXIT, and move aside whatever the prune leaves behind there, which \`resume\` refuses for existing whatever git holds"
         fi
         return 0
@@ -3313,7 +3313,8 @@ origin_lost_leg() {
 # 'prune' or 'remove' to clear" — so the move alone is an exit that was run
 # and did not work.
 off_path_exit() {
-    local repo="$1" role="$2" tree="$3" want="$4" held="$5" resolved="" unlock=""
+    local repo="$1" role="$2" tree="$3" want="$4" held="$5"
+    local resolved="" unlock="" prune="" clear_link=""
     resolved="$(physical_path "$RECORD_WORKTREE_ROOT")"
     [ "$resolved" != "$RECORD_WORKTREE_ROOT" ] || resolved=""
     # AND THE SOURCE'S OWN LOCK GOES IN FRONT OF THE MOVE (Copilot's fourth
@@ -3329,6 +3330,23 @@ off_path_exit() {
     if registered_at "$repo" "$tree" && [ "$REGISTERED_LOCKED" -eq 1 ]; then
         unlock="git -C $(sh_operand "$repo") worktree unlock $(sh_operand "$tree") && "
     fi
+    # AND EVERY STEP THE DESTINATION WANTS IS IN THE COMMAND, not in the prose
+    # beside it (Copilot's fifth round on #27, verbatim: "In the `held == 2`
+    # recovery, the required destination prune appears only in the prose; the
+    # copy-pastable command is `${unlock}mkdir -p ... && git worktree move ...`
+    # and never runs `git worktree prune`. With a live off-path source and a
+    # stale destination registration, the advertised command therefore still
+    # fails at `worktree move`"). It is right, and it is this file's own rule:
+    # an exit a person can run is one they can paste. The prune clears the
+    # registration git holds at the destination; the `mv` clears a DANGLING
+    # SYMLINK left there, which `[ -e ]` looks through and `git worktree add`
+    # refuses all the same (the round before this, run 2026-09-13) — so both
+    # go in front of the `mkdir -p`, in the order the destination needs them.
+    [ "$held" -ne 2 ] ||
+        prune="git -C $(sh_operand "$repo") worktree prune && "
+    if [ ! -e "$want" ] && [ -L "$want" ]; then
+        clear_link="mv $(sh_operand "$want") $(sh_operand "$want").aside && "
+    fi
     # THE PATH TEST IS MADE PHYSICAL for the reason `path_in_the_way`'s twin
     # is: `$tree` is `git worktree list`'s, which is always physical, and
     # `$repo` is `leg_repo_for_role`'s string on `$root`, which is not.
@@ -3336,8 +3354,17 @@ off_path_exit() {
         printf '%s\n' "$tree is the $role leg's OWN checkout rather than a worktree of it, and no \`worktree move\` moves a main working tree, so there is nothing here to move: neither verb sees this feature while that checkout is on that branch"
     elif dot_mount "$want"; then
         printf '%s\n' "there is no command that puts it where \`resume\` looks: this leg is declared \`path: \".\"\` in \`project.yaml\`, so the path \`collect_legs\` computes for it ends in \`/.\` — \`mv\` refuses such an operand outright and \`git worktree move\` lands the worktree INSIDE it — and \`resume\` matches that string against no worktree git can spell, so it refuses this feature after every run, including one of its own. What answers it is a \`collect_legs\` that computes \`<worktree_root>/<branch>\` for a leg declared at the root, which is the standard's and not this command's"
-    elif [ "$held" -eq 2 ]; then
-        printf '%s\n' "clear the stale registration git still holds for that path with \`git -C $(sh_operand "$repo") worktree prune\` first — \`worktree move\` refuses a destination git still holds (\"a missing but already registered worktree\") — then move it where both look: \`${unlock}mkdir -p $(sh_operand "$(parent_dir "$want")") && git -C $(sh_operand "$repo") worktree move $(sh_operand "$tree") $(sh_operand "$want")\`, both yours to run"
+    # AND THE SYMLINKED ROOT COMES BEFORE EVERY ONE OF THEM (Copilot's fifth
+    # round on #27: "The symlink-root safeguard is bypassed when the
+    # destination also has a prunable registration: `held == 2` selects this
+    # branch before `has_symlink_component`. It then recommends pruning and
+    # moving the off-path worktree to the lexical symlink path; Git can
+    # complete that move but records the physical target, so `resume` still
+    # cannot match the lexical path and refuses again"). Right: no sequence
+    # ending in a move to that path works, whatever is cleared out of the way
+    # first, so the spelling is the only exit and it is named before any of
+    # them. `dot_mount` and the leg's own checkout stay above it, because
+    # neither is a path a spelling would fix.
     elif has_symlink_component "$RECORD_WORKTREE_ROOT"; then
         # AND NO MOVE WHERE THE WORKTREE ROOT ITSELF IS A LINK, because the
         # move succeeds and changes nothing (Copilot's third round on #27,
@@ -3356,7 +3383,7 @@ off_path_exit() {
         # run — so that is what this names, and it is the person's to write.
         printf '%s\n' "no \`worktree move\` fixes this one, because the worktree root itself is reached through a symlink: both verbs compute $RECORD_WORKTREE_ROOT and git reports the path that link resolves to, so \`resume\` matches nothing registered there however the worktree is moved — spell \`worktree_root\` (or \`\$SPECKIT_GIT_WORKTREE_ROOT\`) as the directory git spells${resolved:+, which is $resolved}, and the \`git worktree move\` this line would otherwise name becomes one that works"
     else
-        printf '%s\n' "move it where both look: \`${unlock}mkdir -p $(sh_operand "$(parent_dir "$want")") && git -C $(sh_operand "$repo") worktree move $(sh_operand "$tree") $(sh_operand "$want")\`, which is yours to run — \`worktree move\` creates no parent directory of its own${unlock:+, and it refuses a LOCKED source until the unlock in front of it}"
+        printf '%s\n' "move it where both look: \`${unlock}${prune}${clear_link}mkdir -p $(sh_operand "$(parent_dir "$want")") && git -C $(sh_operand "$repo") worktree move $(sh_operand "$tree") $(sh_operand "$want")\`, which is yours to run — \`worktree move\` creates no parent directory of its own${unlock:+, and it refuses a LOCKED source until the unlock in front of it}${prune:+, and it refuses a destination git still holds registered (\"a missing but already registered worktree\") until the prune}${clear_link:+, and \`git worktree add\` refuses the dangling symlink at that path (\"already exists\") whatever \`[ -e ]\` says of it}"
     fi
 }
 
@@ -3413,7 +3440,7 @@ check_parked_leg() {
     { [ -n "$refused" ] && [ "$refused_leg" != "$leg_no" ]; } || mine=1
     local repo tree="" ghost="" ghost_is="" clear="" out rc=0 tip n unread="" refuses="" where=""
     local gone_exits="" gone_caveat="" shape_line="" shape_says="" settles="" exits=""
-    local want="" move="" held=0
+    local want="" move="" held=0 ghost_moved=0
     # A LEG THE RECORD GIVES NO ROLE IS ANSWERED BEFORE THE ROOT IS ASKED
     # ABOUT IT, and it is not the arm below (the independent review of #20,
     # 2026-09-11, note 8, recorded there as out of scope). `record_rows` used
@@ -3671,6 +3698,7 @@ check_parked_leg() {
             ghost="$want"
             ghost_is="a dangling symlink is at the $ghost \`resume\` computes for this leg, which \`[ -e ]\` looks straight through and \`git worktree add\` refuses all the same (\"already exists\")"
             clear="a move of it aside (\`mv $(sh_operand "$want") <a path of your choosing>\`)"
+            ghost_moved=1
         fi
     fi
     # WHAT THE PRUNE LEAVES BEHIND is the second half of that exit where git
@@ -3689,9 +3717,26 @@ check_parked_leg() {
     # `prunable`, the prune clearing it — `git worktree add` at that path
     # answered "fatal: '…' already exists". The clause says "whatever" now,
     # because the reason is the path existing and not what kind of path it is.
-    if [ -n "$ghost" ] && [ -e "$ghost" ]; then
+    if [ -n "$ghost" ] && [ "$ghost_moved" -eq 0 ] && dest_exists "$ghost"; then
         ghost_is="$ghost_is, whose path is still on disk and is no longer a worktree"
         clear="$clear and a move of what is there aside (\`git worktree add\` refuses a path that \"already exists\")"
+    fi
+    # AND THE DESTINATION IS ASKED EVEN WHERE THE ARMS ABOVE FOUND A
+    # REGISTRATION SOMEWHERE ELSE (Copilot's fifth round on #27, verbatim:
+    # "Restricting this probe to `[ -z "$ghost" ]` misses a destination
+    # obstruction whenever the recorded branch has a stale registration at some
+    # other path … so the destination is never examined and the report offers
+    # `resume` even though its final `git worktree add` is blocked by the
+    # destination registration"). THE PRUNE ALREADY CLEARS BOTH — it walks
+    # every registration in the repository, not one — so the exit those arms
+    # name is not wrong; what the prune does NOT do is move anything on disk,
+    # and a leftover at the DESTINATION is what `git worktree add` refuses
+    # after it. So the path is named where the two are not the same path.
+    if [ -n "$ghost" ] && [ -z "$tree" ] && role_maps_here "$role"; then
+        want="$(leg_tree_path "$root" "$role" "$branch")"
+        if [ "$want" != "$ghost" ] && dest_exists "$want"; then
+            clear="$clear, and a move aside of what is at the $want \`resume\` computes for this leg, which the prune does not touch and \`git worktree add\` refuses for existing"
+        fi
     fi
     # THE SHAPE REFUSAL IS SAID ONCE, AND WHAT IS LEFT TO READ DECIDES
     # WHETHER ANYTHING FOLLOWS IT. With a worktree here the arms below are
@@ -4034,7 +4079,20 @@ check_parked_leg() {
         want="$(leg_tree_path "$root" "$role" "$branch")"
         held=0
         registered_at "$repo" "$want" || held=$?
-        if [ "$tree" != "$want" ] && [ "$held" -ne 0 ] && ! dest_exists "$want"; then
+        # AND A DANGLING SYMLINK AT THE DESTINATION DOES NOT SILENCE THIS
+        # (Copilot's fifth round on #27, verbatim: "`dest_exists` treats a
+        # dangling symlink as occupied, but `resume`'s RR3 uses `[ -e ]` and
+        # therefore proceeds to its final `git worktree add`, which still
+        # rejects that symlink. With an off-path live worktree and a dangling
+        # symlink at this computed destination, this condition is false, so no
+        # add verdict is carried to sibling legs and the report can claim the
+        # feature is clean even though `resume` fails"). It is right, and the
+        # round before it had made that silence: `[ -e ]` is the test RR3
+        # makes, so a path only a link occupies is one the run walks past and
+        # the ADD refuses — the feature is refused, the finding is this one,
+        # and clearing the link is a STEP IN ITS EXIT rather than a reason to
+        # say nothing.
+        if [ "$tree" != "$want" ] && [ "$held" -ne 0 ] && [ ! -e "$want" ]; then
             # AND THE EXIT IS RR2's WHERE RR2 IS WHAT REFUSES (Copilot's third
             # round on #27): with the branch gone from origin and a fetch that
             # WORKED there, `resume` reaches RR2 before the add it never makes
@@ -4714,7 +4772,7 @@ read_record() {
                             legheld=0
                             registered_at "$legrepo" "$legtree" || legheld=$?
                             if [ -n "$legwt" ] && [ "$legwt" != "$legtree" ] &&
-                                [ "$legheld" -ne 0 ] && ! dest_exists "$legtree"; then
+                                [ "$legheld" -ne 0 ] && [ ! -e "$legtree" ]; then
                                 feature_add[legs - 1]="its \`$b\` leg's worktree is at $legwt, which is not the $legtree \`resume\` computes for it"
                                 feature_addexit[legs - 1]="$(off_path_exit "$legrepo" "$b" "$legwt" "$legtree" "$legheld")"
                                 feature_add_leg[legs - 1]="${feature_legs[legs - 1]}"
