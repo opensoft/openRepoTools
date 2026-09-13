@@ -2885,7 +2885,19 @@ EOF
 
 who_landing() {
   wd_repo="$1"; wd_n=0; wd_rows=""
-  wd_rows="$(register_text | awk -v aliases="$(rule6_aliases)" "$RULE6_AWK")"
+  # THE INNER SUBSTITUTION IS HOISTED OUT (A9 Addendum 4, R-A9-11). This read
+  # — and only this read — is producing NOTHING on the macOS job while the same
+  # awk runs green under mawk, `--traditional` and `--posix` on Linux, and
+  # fourteen of that job's twenty-six remaining failures are `who --landing`
+  # answering `none open` about a LANDING plainly in the register. The cause is
+  # not yet proved (the `probe` step in `.github/workflows/tests.yml` asks the
+  # runner directly), but a `"$( … "$( … )" … )"` is the shape bash 3.2's
+  # parser is worst at — the same family as the `$(case … esac)` that job
+  # answered `syntax error near unexpected token` for — so it is removed here
+  # rather than left as a suspect. Two lines, identical behaviour on every
+  # bash, one fewer thing that can be the reason.
+  wd_aliases="$(rule6_aliases)"
+  wd_rows="$(register_text | awk -v aliases="$wd_aliases" "$RULE6_AWK")"
   while IFS="$US" read -r wd_verb wd_lane wd_pr wd_utc wd_r wd_other; do
     [ "${wd_verb:-}" = LANDING ] || continue
     wd_c="$(alias_lookup "${wd_r:-}" 2>/dev/null || :)"; wd_c="${wd_c:-$wd_r}"
@@ -3498,7 +3510,20 @@ case "$cmd" in
     row="$(sed -n -e "${n}p" "$LANES_FILE")"
     c="$(count_occurrences "$row" "$old")" || exit 2
     [ "$c" = 1 ] || die "'$old' occurs $c times in lane $lane's row (line $n); exactly 1 required" 2
-    replace_line "$n" "${row/"$old"/"$new"}"
+    # NOT `${row/"$old"/"$new"}` (A9 Addendum 4, R-A9-11). Bash 4.3 and later
+    # read the quotes there as "this half is a literal, not a pattern"; BASH
+    # 3.2 KEEPS THE ONES AROUND THE REPLACEMENT AS CHARACTERS, so on macOS
+    # every `replace-in-row` wrote its new text WRAPPED IN DOUBLE QUOTES. The
+    # macOS job read `| "RETIRED 2026-09-13T20:39:04Z" · …` where the register
+    # wanted `| RETIRED 2026-…`, and nothing else noticed: the write succeeded,
+    # the commit landed, and the row was quietly wrong. (The pattern half is
+    # unaffected — 3.2 does remove those quotes, which is how the replacement
+    # got made at all.) Prefix and suffix instead, so `$new` never enters the
+    # pattern machinery: `%%` leaves the shortest prefix and `#` the text after
+    # the first match, and `count_occurrences` above has already proved there
+    # is exactly one.
+    ri_pre="${row%%"$old"*}"; ri_post="${row#*"$old"}"
+    replace_line "$n" "$ri_pre$new$ri_post"
     msg="LANES($lane@$WS): ${why:-replace-in-row}"
     [ -n "$PRE_DIRTY_LANES" ] && msg="$msg + sweeps uncommitted edit to row $PRE_DIRTY_LANES"
     commit_push "$msg"

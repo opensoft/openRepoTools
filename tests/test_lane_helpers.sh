@@ -120,9 +120,27 @@ mkdir -p "$AGENT_PROTOCOL_ROOT"
 # reading the host at all.
 export LANES_WORKSTATION=Eagle
 
-pass=0; fail=0
+# `timeout(1)` IS GNU coreutils AND A STOCK macOS DOES NOT SHIP IT (A9 Addendum
+# 4, R-A9-11). `lanes-edit.sh:810` bounds its network calls with it and reaches
+# for it through `command -v`, so on such a host Amendment 8(h)'s bound is
+# simply ABSENT: a push that hangs holds the mutex until it is killed. That is
+# a real platform gap and it is recorded rather than shimmed — a fake `timeout`
+# in `$SANDBOX/fakebin` would make these cases green on a host where the
+# behaviour they assert does not happen. Read AFTER the fake bin is on PATH, so
+# it answers for the PATH the cases actually run under.
+HAVE_TIMEOUT=0; command -v timeout >/dev/null 2>&1 && HAVE_TIMEOUT=1
+NO_TIMEOUT_WHY="no timeout(1) on this host, so lanes-edit.sh's Amendment 8(h) bound is absent here and there is nothing to assert"
+
+pass=0; fail=0; skipped=0
 ok()  { pass=$((pass + 1)); printf 'ok   %s\n' "$1"; }
 bad() { fail=$((fail + 1)); printf 'FAIL %s\n       %s\n' "$1" "${2-}"; }
+# A THIRD ANSWER, because two were not enough and the third was being given
+# SILENTLY (A9 Addendum 4, R-A9-11). A case that cannot run on this host must
+# say so: `timeout(1)` is not on a stock macOS, and the four cases that drive
+# `lanes-edit.sh`'s hung-push bound were not passing there — two were red, and
+# two more were GREEN AND VACUOUS, having asserted that a command which never
+# ran printed nothing. A skip is printed, counted, and named in the footer.
+skip() { skipped=$((skipped + 1)); printf 'skip %s\n       %s\n' "$1" "${2-}"; }
 is()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected [$3], got [$2]"; fi; }
 # NO `tr` AND NO `cut`: THE ONLY PLACE A FAILURE IS EVER RENDERED MUST NOT
 # DEPEND ON EITHER (A9 Addendum 4, R-A9-11), and this estate's messages are
@@ -3255,10 +3273,17 @@ FAKE
 chmod +x "$SANDBOX/hanggit" "$SANDBOX/peekgit"
 
 run env LANES_GIT="$SANDBOX/hanggit" LANES_GIT_TIMEOUT=2 "$E" append-row-status repoGH-1 "2026-09-12T20:00Z HUNGPUSH"
-is    "a push that hangs past the timeout exits 3" "$rc" 3
-has   "…saying so, with the budget it was given" "$err" "TIMED OUT after 2s"
-has   "…and that the mutex is not held through it" "$err" "the mutex is released"
-has   "…telling the writer a hung push may have LANDED before it looks again" "$err" "often means it LANDED"
+if [ "$HAVE_TIMEOUT" = 1 ]; then
+  is    "a push that hangs past the timeout exits 3" "$rc" 3
+  has   "…saying so, with the budget it was given" "$err" "TIMED OUT after 2s"
+  has   "…and that the mutex is not held through it" "$err" "the mutex is released"
+  has   "…telling the writer a hung push may have LANDED before it looks again" "$err" "often means it LANDED"
+else
+  skip  "a push that hangs past the timeout exits 3" "$NO_TIMEOUT_WHY"
+  skip  "…saying so, with the budget it was given" "$NO_TIMEOUT_WHY"
+  skip  "…and that the mutex is not held through it" "$NO_TIMEOUT_WHY"
+  skip  "…telling the writer a hung push may have LANDED before it looks again" "$NO_TIMEOUT_WHY"
+fi
 is    "…the lock is released, not left for the next lane to age out" "$([ -d "$H_LOCK" ] && printf held || printf free)" "free"
 has   "…and the edit is safe as a local commit" "$(git -C "$WIP" log --oneline -n1)" "HUNGPUSH"
 has   "…which is the row, really written" "$(grep '^| `repoGH-1`' "$LANES")" "HUNGPUSH"
@@ -3281,18 +3306,38 @@ PEEK_LOCK="$H_LOCK" PEEK_OUT="$SANDBOX/peek.pid" \
   env PEEK_LOCK="$H_LOCK" PEEK_OUT="$SANDBOX/peek.pid" LANES_GIT="$SANDBOX/peekgit" \
   "$E" append-row-status repoGH-1 "2026-09-12T20:02Z PEEK" >/dev/null 2>&1 || :
 h_peek="$(cat "$SANDBOX/peek.pid" 2>/dev/null || printf '')"
+# THE `case` IS HOISTED OUT OF THE `$( )`, and it has to be (A9 Addendum 4,
+# R-A9-11). Bash 3.2's parser reads the `)` that closes a case PATTERN as the
+# one that closes the command substitution, so this exact expression is a
+# syntax error on macOS and nowhere else: the job answered `command
+# substitution: line 3284: syntax error near unexpected token 'newline'` and
+# the assertion then compared a fragment of THIS FILE'S OWN SOURCE against
+# `yes`. Same test, one variable earlier.
+case "$h_peek" in ''|*[!0-9]*) h_peek_ok=no ;; *) h_peek_ok=yes ;; esac
 is    "the lock carries the holder's pid while the holder is inside it" \
-      "$(case "$h_peek" in ''|*[!0-9]*) printf no ;; *) printf yes ;; esac)" "yes"
+      "$h_peek_ok" "yes"
 
 mkdir -p "$H_LOCK"; printf '%s\n' "$LIVE_PID" > "$H_LOCK/pid"
 h_t0=$SECONDS
-timeout 3 "$E" append-row-status repoGH-1 "2026-09-12T20:03Z NEVER" >/dev/null 2>"$SANDBOX/h.err" || :
-is    "a lock whose holder is ALIVE is not taken over" "$(grep -c 'taking over' "$SANDBOX/h.err" || :)" "0"
-# …and a signal STOPS the writer. `trap cleanup EXIT INT TERM` ran the handler
-# and then resumed the wait: measured, SIGTERM at 8s and the process still going
-# at 56s, with the lock already released under it.
-is    "…and a SIGTERM ends it there and then, instead of resuming the wait" \
-      "$(( SECONDS - h_t0 < 15 ))" "1"
+# BOTH OF THESE ARE THE SUITE'S OWN USE OF `timeout`, and where there is none
+# they were not merely red — they were GREEN AND MEANINGLESS. `timeout 3 …`
+# failed as `command not found`, so `$SANDBOX/h.err` was empty, `grep -c`
+# answered 0, the elapsed time was zero, and both assertions passed having
+# tested nothing at all. The writer WAITS on a live lock by design, so with no
+# bound available this case cannot be run at all rather than run unbounded and
+# hang the suite behind its own fixture.
+if [ "$HAVE_TIMEOUT" = 1 ]; then
+  timeout 3 "$E" append-row-status repoGH-1 "2026-09-12T20:03Z NEVER" >/dev/null 2>"$SANDBOX/h.err" || :
+  is    "a lock whose holder is ALIVE is not taken over" "$(grep -c 'taking over' "$SANDBOX/h.err" || :)" "0"
+  # …and a signal STOPS the writer. `trap cleanup EXIT INT TERM` ran the handler
+  # and then resumed the wait: measured, SIGTERM at 8s and the process still going
+  # at 56s, with the lock already released under it.
+  is    "…and a SIGTERM ends it there and then, instead of resuming the wait" \
+        "$(( SECONDS - h_t0 < 15 ))" "1"
+else
+  skip  "a lock whose holder is ALIVE is not taken over" "$NO_TIMEOUT_WHY"
+  skip  "…and a SIGTERM ends it there and then, instead of resuming the wait" "$NO_TIMEOUT_WHY"
+fi
 rm -rf "$H_LOCK"
 
 # --------------------------------------- the pointer file, when it does NOT answer
@@ -3465,6 +3510,6 @@ is   "the liveness fixture was still running when the run ended" \
      "$(kill -0 "$LIVE_PID" 2>/dev/null && printf alive || printf gone)" alive
 
 echo "----"
-printf '%s passed, %s failed\n' "$pass" "$fail"
+printf '%s passed, %s failed, %s skipped\n' "$pass" "$fail" "$skipped"
 [ "$fail" = 0 ] || exit 1
 exit 0
