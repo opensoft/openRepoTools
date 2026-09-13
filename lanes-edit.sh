@@ -3137,9 +3137,11 @@ EOF
 # collapse to the 11 repositories they name, and two LANDINGs a retry spelled
 # two ways are one hold instead of two.
 #
-# The table is handed in as `aliases`, one `<lowercased alias>\037<owner/repo>`
-# per line, because awk cannot read `repos.tsv` for itself here: this program's
-# stdin is the register.
+# The table is handed in through the ENVIRONMENT, as `LANES_RULE6_ALIASES`,
+# one `<lowercased alias>\037<owner/repo>` per line — because awk cannot read
+# `repos.tsv` for itself here (this program's stdin is the register) and
+# because `awk -v`, which is where it used to go, carries ONE LINE: see
+# `who_landing` for what a many-line `-v` does on macOS's awk.
 #
 # BOTH LAYERS, SHIPPED FIRST (Amendment 9(b)). This is the second reader of the
 # table — `alias_lookup` is the other — and it layers them the same way by
@@ -3172,7 +3174,7 @@ RULE6_AWK='
 function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
 function canon(r,   l) { l = tolower(r); return (l in A) ? A[l] : r }
 BEGIN {
-  na = split(aliases, ar, "\n")
+  na = split(ENVIRON["LANES_RULE6_ALIASES"], ar, "\n")
   for (ai = 1; ai <= na; ai++) { ap = index(ar[ai], "\037")
     if (ap > 1) A[substr(ar[ai], 1, ap - 1)] = substr(ar[ai], ap + 1) }
 }
@@ -3248,7 +3250,25 @@ EOF
 
 who_landing() {
   wd_repo="$1"; wd_n=0; wd_rows=""
-  wd_rows="$(register_text | awk -v aliases="$(rule6_aliases)" "$RULE6_AWK")"
+  # `awk -v` CARRIES ONE LINE, AND THIS TABLE IS MANY (A9 Addendum 4, R-A9-11,
+  # round 5; the `probe` step of run 34782845181 answered it on the runner).
+  # A `-v name=value` is processed as if it were a STRING LITERAL, and a string
+  # literal cannot span lines: macOS's awk (one-true-awk 20200816) refuses it
+  # outright — `awk: newline in string … at source line 1`, exit 2, no output at
+  # all — while gawk and mawk accept it silently. So this read, and only this
+  # read, answered `none open` for every LANDING in the register on that
+  # platform: fourteen of the job's twenty-six remaining failures, and the
+  # estate's merge holds invisible on a workstation that runs macOS.
+  #
+  # `ENVIRON` has no such restriction and is POSIX awk, so the table goes
+  # through the environment of this one command. The program is otherwise
+  # untouched: the probe ran `RULE6_AWK` itself on that awk with an empty table
+  # and it emitted both rows byte-for-byte, and `length`, `match`, `RSTART`,
+  # `RLENGTH` and `substr` there all agree with each other on a line carrying
+  # an em dash. There was nothing wrong with the parser or with the arithmetic;
+  # the table could not get in.
+  wd_aliases="$(rule6_aliases)"
+  wd_rows="$(register_text | LANES_RULE6_ALIASES="$wd_aliases" awk "$RULE6_AWK")"
   while IFS="$US" read -r wd_verb wd_lane wd_pr wd_utc wd_r wd_other; do
     [ "${wd_verb:-}" = LANDING ] || continue
     wd_c="$(alias_lookup "${wd_r:-}" 2>/dev/null || :)"; wd_c="${wd_c:-$wd_r}"
@@ -4785,7 +4805,20 @@ case "$cmd" in
     row="$(sed -n -e "${n}p" "$LANES_FILE")"
     c="$(count_occurrences "$row" "$old")" || exit 2
     [ "$c" = 1 ] || die "'$old' occurs $c times in lane $lane's row (line $n); exactly 1 required" 2
-    replace_line "$n" "${row/"$old"/"$new"}"
+    # NOT `${row/"$old"/"$new"}` (A9 Addendum 4, R-A9-11). Bash 4.3 and later
+    # read the quotes there as "this half is a literal, not a pattern"; BASH
+    # 3.2 KEEPS THE ONES AROUND THE REPLACEMENT AS CHARACTERS, so on macOS
+    # every `replace-in-row` wrote its new text WRAPPED IN DOUBLE QUOTES. The
+    # macOS job read `| "RETIRED 2026-09-13T20:39:04Z" · …` where the register
+    # wanted `| RETIRED 2026-…`, and nothing else noticed: the write succeeded,
+    # the commit landed, and the row was quietly wrong. (The pattern half is
+    # unaffected — 3.2 does remove those quotes, which is how the replacement
+    # got made at all.) Prefix and suffix instead, so `$new` never enters the
+    # pattern machinery: `%%` leaves the shortest prefix and `#` the text after
+    # the first match, and `count_occurrences` above has already proved there
+    # is exactly one.
+    ri_pre="${row%%"$old"*}"; ri_post="${row#*"$old"}"
+    replace_line "$n" "$ri_pre$new$ri_post"
     msg="LANES($lane@$WS): ${why:-replace-in-row}"
     [ -n "$PRE_DIRTY_LANES" ] && msg="$msg + sweeps uncommitted edit to row $PRE_DIRTY_LANES"
     commit_push "$msg"

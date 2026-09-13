@@ -1512,6 +1512,65 @@ def test_no_shipped_bash_ends_its_options_after_an_operand(name):
 
 
 @pytest.mark.parametrize("name", ALL_BASH)
+def test_no_shipped_bash_leaves_a_variable_name_to_bash_3_2s_locale(name):
+    """`bash -n` PARSES THIS AND macOS DIES ON IT (A9 Addendum 4, R-A9-11).
+
+    Bash decides where a variable NAME ends with `isalnum()`, which is
+    LOCALE-DEPENDENT. Under the `en_US.UTF-8` the macOS runner sets, bash 3.2
+    on Darwin reads the bytes of `\u2026`, `\u2014` and `\u00b7` as name characters, so
+    `"\u2026$excerpt\u2026"` is a reference to a variable called `excerpt\u2026` \u2014 unset,
+    and under `set -u` the script DIES. It cost `lane-end` the whole refusal
+    branch its `--force` message lives in: exit 0 where the estate expects
+    exit 2, and `lane-end: line 573: excerpt\u2026: unbound variable` on stderr.
+
+    This estate writes every message with those three characters in it, so the
+    rule is held for all of them rather than for the one that was found.
+    """
+    text = (REPO / name).read_text(encoding="utf-8")
+    bad = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        for hit in re.finditer(r"\$[A-Za-z_][A-Za-z0-9_]*", line):
+            rest = line[hit.end():hit.end() + 1]
+            if rest and ord(rest) > 127:
+                bad.append(f"{number}: {line.strip()}")
+                break
+    assert not bad, (
+        f"{name} ends an UNBRACED `$name` against a non-ASCII character. Bash "
+        f"3.2 on macOS reads that character as part of the name and the "
+        f"lookup fails under `set -u`. Write `${{name}}`:\n  "
+        + "\n  ".join(bad))
+
+
+@pytest.mark.parametrize("name", ALL_BASH)
+def test_no_shipped_bash_quotes_the_replacement_half_of_a_substitution(name):
+    """BASH 3.2 KEEPS THOSE QUOTES AS CHARACTERS (A9 Addendum 4, R-A9-11).
+
+    In `${var/pattern/replacement}`, bash 4.3 and later read quotes as "this
+    half is a literal, not a pattern". Bash 3.2 removes them from the PATTERN
+    half and KEEPS THEM IN THE REPLACEMENT, so `${row/"$old"/"$new"}` wrote
+    `"<new>"` \u2014 with the quote marks \u2014 into the register on macOS, and nothing
+    went red for it: the write succeeded, the commit landed, the row was
+    quietly wrong. `lane-end --retire` produced `| "RETIRED 2026-09-13T\u2026" \u00b7 \u2026`
+    where every reader of that column expects `| RETIRED 2026-\u2026`.
+
+    Take the replacement out of the pattern machinery instead \u2014 `%%` for the
+    prefix and `#` for the tail, then concatenate.
+    """
+    text = (REPO / name).read_text(encoding="utf-8")
+    bad = [line.strip() for line in text.splitlines()
+           if not line.lstrip().startswith("#")
+           and re.search(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?/[^}]*/[^}]*\"",
+                         line)]
+    assert not bad, (
+        f"{name} quotes the replacement half of a `${{var/pat/rep}}`; bash 3.2 "
+        f"writes those quote marks out as text. Build the string from "
+        f"`${{var%%\"$pat\"*}}` and `${{var#*\"$pat\"}}` instead:\n  "
+        + "\n  ".join(bad))
+
+
+@pytest.mark.parametrize("name", ALL_BASH)
 def test_no_shipped_bash_reaches_for_gnu_only_utilities_unaccompanied(name):
     """THE SECOND CAUSE IN THAT JOB'S LOG, AND THE FOUR BESIDE IT.
 
@@ -1578,3 +1637,47 @@ def test_no_shipped_bash_reaches_for_gnu_only_utilities_unaccompanied(name):
         assert "shasum" in "\n".join(lines), (
             f"{name} names `sha256sum`, which a stock macOS does not ship, and "
             f"never names `shasum -a 256`")
+
+
+
+def test_the_rule_6_register_scan_takes_its_alias_table_from_the_environment():
+    """`awk -v` CARRIES ONE LINE (A9 Addendum 4, R-A9-11, round 5).
+
+    POSIX says a `-v assignment` value is processed as if it were a STRING
+    LITERAL, and a string literal cannot span lines. macOS's awk \u2014 one-true-awk,
+    `awk version 20200816` on the runner \u2014 enforces exactly that and refuses one
+    outright: `awk: newline in string \u2026 at source line 1`, exit 2, nothing on
+    stdout. gawk and mawk accept it without a word, which is what made this the
+    last macOS group standing after four rounds and the only one no Linux run
+    of the suite could see.
+
+    `who_landing` handed `awk -v aliases=` the whole `repos.tsv` alias table,
+    one `<alias>\\037<owner/repo>` per line. So on that platform the REGISTER
+    half of `who --landing` produced nothing at all and every open LANDING in
+    the estate read as `none open` \u2014 fourteen red assertions on that job, and
+    off CI a workstation running macOS that cannot see the estate's merge holds
+    while reporting, in words, that there are none.
+
+    Pinned rather than held as a shape. The shape rule \u2014 "a shell FUNCTION's
+    output is a stream, so it does not go into a `-v`" \u2014 was written first and
+    is wrong about this file: `lc`, `short_ws` and `object_slug` are functions
+    too, and each transforms ONE value, so it reddened three call sites that
+    are correct. A hygiene test with three carve-outs teaches the wrong rule.
+    The general claim is held where it can be held honestly \u2014
+    `tests/test_lane_helpers.sh` runs `who --landing` under a proxy that
+    refuses a many-line `-v` exactly as that awk does \u2014 and this pins the one
+    line that proxy exists for, in a test that also runs on Windows.
+    """
+    text = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+    assert 'na = split(ENVIRON["LANES_RULE6_ALIASES"], ar, "\\n")' in text, (
+        "RULE6_AWK must read the alias table out of the environment; "
+        "`ENVIRON` is POSIX awk and takes a value with newlines in it")
+    assert ('wd_rows="$(register_text | LANES_RULE6_ALIASES="$wd_aliases" '
+            'awk "$RULE6_AWK")"') in text, (
+        "the Rule 6 register scan must put the alias table in the environment "
+        "of that one awk, not in a `-v`")
+    assert "-v aliases=" not in text, (
+        "the alias table is many lines and `awk -v` carries one: macOS's awk "
+        "answers `newline in string ... at source line 1` and exits 2, and "
+        "`who --landing` then reports every merge hold in the estate as "
+        "`none open`")

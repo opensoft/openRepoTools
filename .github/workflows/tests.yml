@@ -241,8 +241,24 @@ jobs:
       #
       # The `wc` line is not decoration. BSD `wc` right-aligns its counts and
       # GNU's does not, and one unstripped count in `lanes-edit.sh` was the
-      # largest single cause of the 438 failures at `d3d59b5` — `cat -A` is
-      # there so the padding is VISIBLE rather than swallowed by the log.
+      # largest single cause of the 438 failures at `d3d59b5` — the brackets
+      # are there so the padding is VISIBLE rather than swallowed by the log.
+      # It printed `[       2]` on its first run, which is the whole defect in
+      # nine characters. That run also made the point twice over: the line
+      # after it was `cat -A`, which is GNU, and macOS answered `cat: illegal
+      # option -- A` and, under `bash -e`, took the rest of this step with it.
+      # Every command here is POSIX now.
+      #
+      # The two `awk` lines are the last round's answer, kept where the next
+      # round can read it without asking again. This runner's awk is
+      # one-true-awk, and a `-v name=value` there is processed AS A STRING
+      # LITERAL: a literal newline in one is fatal — `awk: newline in string
+      # ... at source line 1`, exit 2, no output at all. gawk and mawk take it
+      # without a word, which is why fourteen `who --landing` assertions were
+      # red on this job alone and green everywhere else. `TAKEN` here means
+      # this runner's awk is the permissive kind; the refusal message means it
+      # is not, and `lanes-edit.sh` must keep handing that table through
+      # `ENVIRON`.
       - name: what this runner actually is
         continue-on-error: true
         run: |
@@ -252,7 +268,6 @@ jobs:
           echo "LANG=[${LANG-}] LC_ALL=[${LC_ALL-}] LC_CTYPE=[${LC_CTYPE-}]"
           locale || :
           printf 'wc -l pads?  : ['; printf 'a\nb\n' | wc -l | tr -d '\n'; printf ']\n'
-          printf 'a\nb\n' | wc -l | cat -A
           echo "/proc exists : $( [ -d /proc ] && echo yes || echo no )"
           for t in timeout gtimeout tmux realpath greadlink gsed shasum sha256sum; do
             echo "  $t -> $(command -v "$t" || echo '(absent)')"
@@ -260,6 +275,10 @@ jobs:
           echo "cmp -n taken : $(printf x > /tmp/.a; printf x > /tmp/.b; \
             cmp -s -n 1 /tmp/.a /tmp/.b >/dev/null 2>&1 && echo yes || echo no)"
           echo "head -c 0 ok : $(head -c 0 /tmp/.a >/dev/null 2>&1 && echo yes || echo no)"
+          printf 'awk          : '; awk --version 2>&1 | head -n1 \
+            || awk -Wversion 2>&1 | head -n1 || :
+          printf 'awk -v \\n    : '; awk -v t="$(printf 'a\nb')" \
+            'BEGIN { print "TAKEN" }' 2>&1 | head -n1
           git --version; python3 --version
 
       - name: tests
