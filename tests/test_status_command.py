@@ -5142,6 +5142,93 @@ def test_an_off_path_leg_whose_branch_origin_lost_carries_rr2s_exits(
     assert f"worktree move {elsewhere} {want}" in result.stdout, result.stdout
 
 
+def test_a_dangling_symlink_at_that_path_is_the_adds_refusal_not_rr3s(
+        atlas, home):
+    """COPILOT'S FOURTH ROUND ON #27 (2026-09-13, suppressed), verbatim: "`[ -e
+    "$want" ]` follows symlinks, so a dangling symlink at the computed
+    destination is treated as absent. `git worktree add` still rejects that
+    existing path, so a parked feature with no branch worktree falls through to
+    the `resume` success guidance even though `resume` fails at its final add."
+
+    IT IS REAL AND GIT SAYS SO: run on 2026-09-13, with a dangling symlink at a
+    path, `[ -e ]` is false, `[ -L ]` is true, and `git worktree add` answers
+    "fatal: '…' already exists".
+
+    AND IT IS THE ADD's REFUSAL, NOT RR3's. `resume.sh`'s RR3 is the same
+    `[ -e "$tree" ]`, so it looks straight through the link too and the run
+    goes on to RR2, RR1, RR5 and dies on the last thing it does — which is
+    exactly the shape of the prunable registration this layer already reads in
+    the stale arms' words. So this is read there too, in words of its own: what
+    settles it is not a prune, because nothing is registered at that path, but
+    the `mv` every other leftover there wants. `path_in_the_way` still asks
+    `[ -e ]` and nothing more, because a reading harder than the other end's
+    would invent an RR3 refusal `resume` does not make."""
+    checkout = workspace_config(home)
+    want = parked_worktree(atlas, "001-a-thing")
+    want.parent.mkdir(parents=True, exist_ok=True)
+    want.symlink_to(home / "nowhere-at-all")
+    assert not want.exists() and want.is_symlink(), "the dangling link is the case"
+    origin_has_branch(atlas, "001-a-thing")
+    tip = git("rev-parse", "origin/001-a-thing", cwd=atlas).stdout.strip()
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (repo leg): no worktree on that "
+            f"branch here, but a dangling symlink is at the {want} `resume` "
+            "computes for this leg, which `[ -e ]` looks straight through and "
+            '`git worktree add` refuses all the same ("already exists") — '
+            f"clear it with a move of it aside (`mv {want} <a path of your "
+            "choosing>`), then `resume Atlas` brings it back") in (
+        result.stdout), result.stdout
+    assert "is in the way" not in result.stdout, (
+        "RR3 looks through the link at the other end too")
+    assert "worktree prune" not in result.stdout, (
+        "nothing is registered at that path to prune")
+
+
+def test_a_locked_off_path_worktree_names_the_unlock_before_the_move(
+        atlas, home):
+    """COPILOT'S FOURTH ROUND ON #27 (2026-09-13, suppressed), verbatim: "When
+    the off-path worktree itself is locked, `worktree_on_branch` still returns
+    it as live, but this branch only checks `held` for the destination and
+    prints `git worktree move <tree> <want>`. Git refuses moving a locked
+    source, so the recovery command cannot run; please carry the source
+    registration's lock state through the lookup and prepend `git worktree
+    unlock <tree>` before the move."
+
+    RUN on 2026-09-13: `git worktree move` with a locked source answered
+    "fatal: cannot move a locked working tree; use 'move -f -f' to override or
+    unlock first", and after `git worktree unlock` the same move exited 0. The
+    unlock goes in front, which is the pair the in-the-way arm has named for a
+    locked DESTINATION since this branch's second commit; this is its twin on
+    the source, and `$held` was only ever the destination's."""
+    checkout = workspace_config(home)
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    want = parked_worktree(atlas, "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing", elsewhere)
+    git("worktree", "lock", str(elsewhere), cwd=atlas)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"move it where both look: `git -C {atlas} worktree unlock "
+            f"{elsewhere} && mkdir -p {want.parent} && git -C {atlas} "
+            f"worktree move {elsewhere} {want}`, which is yours to run — "
+            "`worktree move` creates no parent directory of its own, and it "
+            "refuses a LOCKED source until the unlock in front of it") in (
+        result.stdout), result.stdout
+
+    # AND WITH THE LOCK OFF the command is the pair it always was, which is
+    # the control: one `git worktree unlock` apart.
+    git("worktree", "unlock", str(elsewhere), cwd=atlas)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"move it where both look: `mkdir -p {want.parent} && git -C "
+            f"{atlas} worktree move {elsewhere} {want}`") in result.stdout
+    assert "worktree unlock" not in result.stdout
+
+
 def test_no_move_is_named_where_the_worktree_root_is_itself_a_symlink(
         atlas, home):
     """COPILOT'S THIRD ROUND ON #27 (2026-09-13, suppressed), verbatim:
@@ -5181,12 +5268,27 @@ def test_no_move_is_named_where_the_worktree_root_is_itself_a_symlink(
     assert result.returncode == 1, result.stdout + result.stderr
     assert (f"no `worktree move` fixes this one, because the worktree root "
             f"itself is reached through a symlink: both verbs compute "
-            f"{home / 'wtlink'} and git reports {real}, so `resume` matches "
-            f"nothing registered there however the worktree is moved — spell "
-            f"`worktree_root` (or `$SPECKIT_GIT_WORKTREE_ROOT`) as {real}, "
-            "which is what git spells, and the `git worktree move` this line "
-            "would otherwise name becomes one that works") in result.stdout, (
+            f"{home / 'wtlink'} and git reports the path that link resolves "
+            f"to, so `resume` matches nothing registered there however the "
+            f"worktree is moved — spell `worktree_root` (or "
+            f"`$SPECKIT_GIT_WORKTREE_ROOT`) as the directory git spells, "
+            f"which is {real}, and the `git worktree move` this line would "
+            "otherwise name becomes one that works") in result.stdout, (
         result.stdout)
+
+    # AND A LINK WHOSE TARGET IS NOT THERE YET is the same refusal, which
+    # `physical_path` cannot see (Copilot's fourth round on #27): `cd` into it
+    # fails, so the fallback returns the lexical path and the two compare
+    # equal — while `[ -L ]` on the component answers whether or not the
+    # target exists, and `mkdir -p` through such a link answers "cannot create
+    # directory '…': File exists", so the exit would die on its first operand.
+    rmtree(real)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "no `worktree move` fixes this one" in result.stdout, result.stdout
+    assert "the directory git spells, and the `git worktree move`" in (
+        result.stdout), "with no target there, git spells no directory yet"
+    real.mkdir()
     assert f"worktree move {elsewhere}" not in result.stdout
 
     # AND WITH THE ROOT SPELLED THE WAY GIT SPELLS IT the move is named again,
@@ -6194,6 +6296,18 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     else settles it — which is true of every one of those four states and
     stays as it is.
 
+    AND IT NAMES THE THREE STATES THAT GET NO MOVE, since Copilot's FOURTH
+    round on #27 (2026-09-13, suppressed), verbatim: "This help text overstates
+    the recovery for an off-path worktree: it says the exit is always `git
+    worktree move`, but `off_path_exit` intentionally emits no move for a
+    declared `path: "."` and for a symlink-spelled worktree root because that
+    move does not produce a path `resume` can register." IT IS RIGHT, and it is
+    drift this branch made in the two rounds that suppressed those commands:
+    the code stopped promising a move and these three texts went on promising
+    one. The leg's own checkout was already named; the other two are named
+    beside it now, here, in AGENTS.md rule 4 and in the README, because the
+    three say the same things or one of them is wrong.
+
     AND THE LIST NAMES ALL THREE SOURCES OF THAT PATH SINCE COPILOT'S FIRST
     ROUND ON #27 (2026-09-13, suppressed), verbatim: "This contract documents
     only the environment override and `git-config.yml`, but the implementation
@@ -6284,9 +6398,11 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
             "else the shape's own default, and not out of the record — which "
             "is the only "
             "worktree `resume` reads as that feature's and the only one "
-            "`park` carries, so the exit is a `git worktree move` of yours, "
-            "and where that path is the leg's own checkout there is nothing "
-            "to move, anything at that same path that is not that leg's "
+            "`park` carries, so the exit is a `git worktree move` of yours "
+            "— except where no move works and the line says so: the leg's own "
+            "checkout, a leg declared `path: \".\"`, and a `worktree_root` "
+            "spelled through a symlink — anything at that same path that is "
+            "not that leg's "
             "worktree, which `resume` refuses the whole feature for before "
             "it reads origin, and a "
             "worktree the record does not know (never parked)") in helptext

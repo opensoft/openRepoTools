@@ -671,9 +671,23 @@ def test_agents_md_is_short_enough_to_be_read():
     other" denied a source, and this list denied the one almost every estate
     actually uses. A rule that reads as exhaustive and is not sends an agent
     to look for a `git-config.yml` that was never written, and then to guess.
+
+    182 -> 187 on 2026-09-13, for Copilot's fourth round on #27 (suppressed),
+    verbatim: "This contract says every off-path worktree's exit is `git
+    worktree move`, but the implementation deliberately suppresses that command
+    for `path: \".\"` and for a symlink-spelled worktree root because the move
+    cannot produce a path `resume` registers. Please document those exceptions
+    here so the operational guidance does not direct users to a non-working
+    recovery." IT IS DRIFT THIS BRANCH MADE, in the two rounds that suppressed
+    those commands, and it is the drift these caps exist to catch: a rule that
+    promises a command the command itself refuses to print. Five lines — the
+    `worktree unlock` a locked source wants, and the three states that get no
+    move at all, with the reason for the one a reader cannot guess (git
+    registers the path a link resolves to and `resume` compares the one you
+    wrote, so the move runs and changes nothing).
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 182, f"AGENTS.md is {len(lines)} lines; the cap is 182"
+    assert len(lines) <= 187, f"AGENTS.md is {len(lines)} lines; the cap is 187"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -867,9 +881,16 @@ def test_readme_is_short_enough_to_be_read():
     override gets it — which is most of them. One line, and the same one
     AGENTS.md rule 4 and `status --help` take, because the three texts say the
     same things or one of them is wrong.
+
+    268 -> 270 on 2026-09-13, for the same round read against this text: the
+    finding list promised a `git worktree move` as the off-path exit without
+    the three states where `status` deliberately prints none. Two lines, and
+    the same two AGENTS.md rule 4 and `status --help` take, because a reader
+    sent to a command the command will not print is worse off than one told
+    nothing.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 268, f"README.md is {len(lines)} lines; the cap is 268"
+    assert len(lines) <= 270, f"README.md is {len(lines)} lines; the cap is 270"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
