@@ -4468,6 +4468,25 @@ has   "…with the way back to every lane" "$out" "lanes --all"
 # column nobody reads.
 NEXTFREE="$(printf '%s\n' "$out" | sed -n 's/^ *next free position: *//p' | head -n1)"
 is   "…which is the lowest position no lane of that repository holds" "$NEXTFREE" "9"
+# THE NARROWING NAMES THE REPOSITORY `origin` NAMES, AND NOT THE DIRECTORY THIS
+# SHELL IS STANDING IN. `basename $(git rev-parse --show-toplevel)` is a
+# WORKTREE's own name inside one, so a bare `lanes` run in a worktree of
+# `openRepoTools` called `ort-a11` narrowed to a repository called `ort-a11` and
+# offered `lane-start ort-a11 1` — a lane whose `$PROJECTS_ROOT/<repo>` cannot
+# exist. Every lane on this estate is named for the repository, which is what
+# `origin` says. Proved in a worktree, because a plain clone cannot tell the two
+# apart.
+A11WT="$SANDBOX/a-worktree-named-nothing-like-its-repo"
+git -C "$HOME/projects/repoA11" worktree add -q -b lanes-prefix-probe "$A11WT" 2>/dev/null \
+  || git -C "$HOME/projects/repoA11" worktree add -q "$A11WT" 2>/dev/null || :
+if [ -d "$A11WT" ]; then
+  run env LANES_CWD_PROBE=1 sh -c 'cd "$1" && exec "$2" ' _ "$A11WT" "$LANES_CMD" </dev/null
+  has   "the checkout narrowing names the repository origin names" "$out$err" "repoA11"
+  hasnt "…and never the worktree directory it happens to be standing in" "$out$err" "a-worktree-named-nothing-like-its-repo"
+  git -C "$HOME/projects/repoA11" worktree remove --force "$A11WT" 2>/dev/null || :
+else
+  skip "the checkout narrowing names the repository origin names" "git worktree add refused in this sandbox"
+fi
 # AN EMPTY REPOSITORY STILL GETS THE ANSWER A PERSON CAME FOR.
 run "$LANES_CMD" --prefix repoNoLanesAtAll </dev/null
 is   "a repository with no lanes exits 8" "$rc" 8
@@ -4509,7 +4528,12 @@ add_seed_row "| \`repoFX20-2\` | harness \`$A11_ID\` | Eagle / test / brett | 20
 git -C "$WIP" add -A -- lanes >/dev/null 2>&1
 git -C "$WIP" commit -q -m "seed an ENDED and a RETIRED lane for column 10"
 git -C "$WIP" push -q origin main
-run "$LANES_CMD" </dev/null
+# `--all`, FOR THE REASON THIS SECTION'S OWN HEADER GIVES: the suite runs from a
+# checkout, so a bare word here asks the NARROWED question and these four
+# assertions are about the estate-wide listing. They were bare and were the four
+# red ones at `0303baa` — the listing they read was "no lane of <this checkout>
+# is recorded", which is the right answer to a question they were not asking.
+run "$LANES_CMD" --all </dev/null
 has   "an ENDED lane is still a row in the listing" "$out" "repoFX20-1"
 hasnt "…with no restart line, because column 10 is a PAUSED lane's" "$out" "restart repoFX20-1"
 has   "a RETIRED lane is still a row too" "$out" "repoFX20-2"
@@ -4566,7 +4590,7 @@ has  "…saying so in Amendment 7(d)'s words" "$err" "NOT 'there are no lanes'"
 # A PAUSED LANE WITH NO RECORDED PROFILE GETS NO `restart` LINE — it gets the
 # form that works, with the profile named as the one token to supply.
 has  "a lane with no recorded profile is offered the launcher form, not a line it cannot type" \
-     "$(run "$LANES_CMD" </dev/null; printf '%s' "$out")" "pclaude --lane repoA11-2 <profile>"
+     "$(run "$LANES_CMD" --all </dev/null; printf '%s' "$out")" "pclaude --lane repoA11-2 <profile>"
 
 # THE CONTAINER NOTICE PRINTS, AND IT NAMES THE VARIABLE RATHER THAN THE KEY
 # `R-A11-14` REJECTED (F-X1). The branch it hung on was `hostname-in-container`,

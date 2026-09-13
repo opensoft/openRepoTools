@@ -177,12 +177,22 @@ origin_nwo() {
 	printf '%s\n' "$nwo" | grep -qE '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || return 1
 	printf '%s\n' "$nwo"
 }
+# THE REPOSITORY IS THE ONE `origin` NAMES, AND THE DIRECTORY'S NAME IS THE
+# FALLBACK — not the other way round. `basename $(git rev-parse --show-toplevel)`
+# is the name of the DIRECTORY this shell is standing in, and inside a WORKTREE
+# that is the worktree's own name: run in a worktree of `openRepoTools` called
+# `ort-a11` it narrowed to a repository called `ort-a11`, found none, and offered
+# `lane-start ort-a11 1` — a lane whose `$PROJECTS_ROOT/<repo>` cannot exist.
+# Every lane on this estate is named for the repository, which is what `origin`
+# says and what `repos.tsv` aliases, so the origin's own repository name is the
+# prefix wherever there is an origin. A checkout with no origin keeps the
+# directory name, because there is nothing else to have.
 here_root=""; here_nwo=""
 if [ "$narrowed" = 0 ] && [ ${#args[@]} -eq 0 ]; then
 	here_root="$(git rev-parse --show-toplevel 2>/dev/null || :)"
 	if [ -n "$here_root" ]; then
-		here_repo="$(basename -- "$here_root")"
 		here_nwo="$(origin_nwo "$here_root" 2>/dev/null || :)"
+		if [ -n "$here_nwo" ]; then here_repo="${here_nwo#*/}"; else here_repo="$(basename -- "$here_root")"; fi
 		args+=(--dir "$here_root" --prefix "$here_repo")
 		[ -n "$here_nwo" ] && args+=(--repo "$here_nwo")
 	fi
