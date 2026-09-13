@@ -261,6 +261,11 @@ install_commands() {
 	# the same rule `--install` already had, extended to cover a merge: an
 	# installer that got half way through a person's settings is worse than one
 	# that did not start.
+	#
+	# THE TARGETS ARE ASKED ABOUT FIRST, before even the fetch: a target that
+	# cannot be written THROUGH is a refusal that costs nothing at all here,
+	# and a network round-trip if it waits (A9 Addendum 4, R-A9-12).
+	plan_install_targets
 	collect_commands
 	collect_skills || die "could not fetch one of the ${#SKILLS[@]} skills (${SKILLS[*]}) from $REPO at $REF, so
     NOTHING was installed and nothing already installed was replaced."
@@ -397,10 +402,13 @@ collect_skills() {
 #     parse, or a `hooks` value that is not an object → refuse, print the exact
 #     block, place nothing. An installer that repairs a file it does not
 #     understand is how a person loses a setting they meant;
-#   * it PRESERVES MODE 600, because workBenches' setup-claude-profiles.sh
-#     writes that same file on every ./setup.sh through jq + mktemp + chmod 600
-#     + mv -f, and an installer that widened the mode would be silently undone
-#     or would widen it behind that script's back.
+#   * it WRITES THE FILE BACK AT MODE 600 — it sets that mode, it does not
+#     preserve one (F8 of the #24 review: a pre-existing file at 640 comes out
+#     600, measured). workBenches' setup-claude-profiles.sh writes this same
+#     file on every ./setup.sh through jq + mktemp + chmod 600 + mv -f, so 600
+#     is the mode this file already has on a host that has run that script, and
+#     an installer that widened it would be silently undone or would widen it
+#     behind that script's back.
 HOOK_PLAN=""      # "absent" | "present" | "nofile"
 HOOK_MERGED=""    # a staged whole file, ready to move into place
 
@@ -427,6 +435,65 @@ plan_skill_targets() {
     entry there (Amendment 9(b)).
     NOTHING was installed and nothing already installed was replaced."
 	done
+}
+
+# THE NINE TARGETS, PROVED PLACEABLE BEFORE ANY OF THE TWELVE IS PLACED
+# (A9 Addendum 4, R-A9-12, ruled on F5 of the #24 review).
+#
+# `cp` FOLLOWS A SYMLINK. The loop below tests `[ -e "$target" ]`, compares
+# with `cmp -s` and then copies, and not one of the three can tell a regular
+# file from a link to one — so against the bin directory the pre-move
+# `link-estates` actually leaves on a workstation, `--install` printed
+# `lane-start: updated at …`, `9 of 9 placed`, exit 0, and BOTH claims were
+# false: the target stayed a symlink, so the command was never installed, and
+# the post-move bytes landed in `opensoft/brett-wip`'s WORKING TREE on the
+# other end of it. That repository is the one every lane writes:
+# `lanes-edit.sh`'s `refuse_dirty_checkout` then refuses `log`, `claim` and
+# `release` on that workstation until somebody runs `git checkout -- lanes/`.
+# workBenches' `setup-estate-commands.sh` refuses the whole estate install on a
+# target that "already exists as a symlink" too, so a host in this state also
+# fails the estate install that follows — the exact failure clause (f)(3) is
+# written about.
+#
+# A HOST STILL CARRYING THOSE SYMLINKS IS THE NORMAL PRE-ACT-5 CASE, not an
+# exotic one: adoption act 6 clears them on each workstation before the first
+# `--install` that carries this, and act 5 strips `brett-wip` to data. So the
+# refusal names every offending path, says what each one IS, and prints the one
+# `rm` that clears them — rather than leaving a person to remember a step.
+plan_install_targets() {
+	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
+	local name target kind bad="" paths=""
+	for name in "${INSTALLABLES[@]}"; do
+		target="$dir/$name"
+		# `-L` AS WELL AS `-e`, because a DANGLING symlink is the sharper case:
+		# `[ -e ]` is false on one, and `cp` through it creates the file at the
+		# far end — a write into a repository this command was never told about.
+		if [ -L "$target" ]; then
+			kind="a symlink to $(readlink -- "$target" 2>/dev/null || printf '<unreadable>')"
+		elif [ ! -e "$target" ] || [ -f "$target" ]; then
+			continue
+		elif [ -d "$target" ]; then
+			kind="a directory"
+		else
+			kind="not a regular file"
+		fi
+		bad="${bad:+$bad
+}    $target — $kind"
+		paths="${paths:+$paths }\"$target\""
+	done
+	[ -z "$bad" ] || die "\`--install\` places REGULAR FILES, and these targets are not regular files:
+$bad
+    \`cp\` follows a symlink, so installing over one would leave the command
+    UNINSTALLED — the target stays a link — and would write these bytes into
+    whatever is on the other end of it. NOTHING was installed and nothing
+    already installed was replaced.
+    Clear them, then re-run:
+        rm -f -- $paths
+    (The pre-move \`link-estates\` puts exactly these links in a workstation's
+    \`~/.local/bin\`, pointing into \`opensoft/brett-wip\` — the checkout every
+    lane writes. Amendment 9's adoption act 6 removes them per host before the
+    first \`--install\` that carries this, and act 5 strips that repository to
+    data.)"
 }
 
 plan_hook_merge() {
@@ -459,33 +526,33 @@ $(hook_block_text)"
 $(hook_block_text)"
 
 	# THE THREE ANSWERS, in one read: our exact command already there; some
-	# OTHER SessionStart entry naming lanes-edit.sh (a hand-installed one, which
-	# is the case Amendment 9(b) says must refuse); or nothing of ours at all.
+	# OTHER SessionStart entry that runs `session-start` (a second writer of
+	# this very hook, which is the case Amendment 9(b) says must refuse); or
+	# nothing of ours at all.
 	#
-	# THE CONFLICT ARM IS NARROWED TO `lanes-edit.sh`, AND THAT IS A KNOWN
-	# DIVERGENCE FROM THE RATIFIED TEXT, RECORDED HERE RATHER THAN LEFT FOR A
-	# READER TO FIND. Amendment 9(b)'s clause reads "an entry under
-	# `SessionStart` whose `command` DIFFERS … → refuse, print the exact block,
-	# and place nothing at all", unqualified. Read literally, a person whose
-	# `~/.claude/settings.json` carries ANY unrelated SessionStart hook — a
-	# statusline refresh, a `git fetch` — could never run `--install` at all,
-	# and no amount of removing OUR entry would help them.
+	# THE CONFLICT ARM IS NARROWED, AND THE NARROWING IS RATIFIED: A9 Addendum 3
+	# R-A9-8 with A9 Addendum 4 R-A9-14, on brettheap/new-workstation#17.
+	# Amendment 9(b)'s clause reads "an entry under `SessionStart` whose
+	# `command` DIFFERS … → refuse, print the exact block, and place nothing at
+	# all", unqualified. Read literally, a person whose `~/.claude/settings.json`
+	# carries ANY unrelated SessionStart hook — a statusline refresh, a `git
+	# fetch` — could never run `--install` at all, and no amount of removing OUR
+	# entry would help them. This workstation carries exactly such an entry
+	# today (`herdr-agent-state.sh session`, matcher `*`), so the narrowing is
+	# not hypothetical.
 	#
-	# The reason the clause gives for refusing is the narrow one: "merging would
-	# fire the hook twice", and the case it names is Eagle's hand-installed
-	# `bash -lc '"$HOME/projects/xFactory/lanes-edit.sh" session-start …'`,
-	# which this test does catch. So the code implements the clause's REASON and
-	# not its LITERAL SCOPE. An unrelated entry is kept and ours is added beside
-	# it (`tests/test_install_skill_and_hook.py`'s
-	# `test_an_unrelated_session_start_entry_is_kept_and_ours_is_added`).
-	#
-	# This is the one place in adoption act 3 where the text could not be
-	# followed as written; it is named in the PR that lands it, and widening the
-	# arm is one word of `jq` if Brett rules the literal reading.
+	# IT KEYS ON `session-start`, WHICH IS WHAT R-A9-8 SAYS, and not on
+	# `lanes-edit.sh`, which is what this line said until R-A9-14 (F7 of the #24
+	# review). The two are not the same set either way round: an entry running
+	# `lanes-edit.sh who` is no competing writer of this hook and was refused,
+	# and `~/bin/lane-hook.sh session-start` IS one — a second program running
+	# the same hook verb — and was merged beside, which fires the hook twice,
+	# the one harm the clause names. The verb is what collides; the file that
+	# carries it is not.
 	existing="$(jq -r --arg c "$HOOK_COMMAND" '
 		[ (.hooks.SessionStart // [])[]? | (.hooks // [])[]? | .command // empty ] as $cmds
 		| if ($cmds | index($c)) then "present"
-		  elif ($cmds | map(select(test("lanes-edit\\.sh"))) | length) > 0 then "conflict"
+		  elif ($cmds | map(select(test("session-start"))) | length) > 0 then "conflict"
 		  else "absent" end' "$settings" 2>/dev/null || printf 'error')"
 
 	case "$existing" in
@@ -494,7 +561,7 @@ $(hook_block_text)"
 		cp -- "$settings" "$HOOK_MERGED"
 		;;
 	conflict)
-		die "$settings already carries a SessionStart entry that runs \`lanes-edit.sh\` with a
+		die "$settings already carries a SessionStart entry that runs \`session-start\` with a
     DIFFERENT command string. Exact-string match is the only idempotence this entry
     has, so merging would fire the hook twice — and repairing a setting a person
     meant is not an installer's to do. NOTHING was installed.
@@ -582,7 +649,7 @@ place_skill_and_hook() {
 		if [ "$HOOK_PLAN" = nofile ]; then
 			say "SessionStart hook: installed in $settings (the file was created, mode 600)"
 		else
-			say "SessionStart hook: merged into $settings (one entry added; mode 600 preserved)"
+			say "SessionStart hook: merged into $settings (one entry added; written back at mode 600)"
 		fi
 		;;
 	esac
@@ -676,7 +743,7 @@ wip_projects_dir() {
 
 wip_yaml_field() {
 	local v
-	v="$(sed -n "s/^$1:[[:space:]]*//p" -- "$2" 2>/dev/null | head -n 1 |
+	v="$(sed -n -e "s/^$1:[[:space:]]*//p" "$2" 2>/dev/null | head -n 1 |
 		sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//')"
 	v="${v%\"}"; v="${v#\"}"
 	v="${v%\'}"; v="${v#\'}"
@@ -803,6 +870,31 @@ wip_derive_team() {
 # derivable without reading the organisation's rulesets: the block prints the
 # one call that lists them, with the organisation substituted, and names the
 # change to make.
+# GIT'S OWN WORDS, KEPT (F9 of the #24 review, ruled R-A9-15). The three
+# failures a FRESH workstation actually meets are here — the clone, the stage
+# and the commit — and all three ran `>/dev/null 2>&1` and died with a summary
+# of this command's own devising. A machine with no `user.email` configured got
+# `could not commit the seed in <path>.` and nothing else, from the command
+# whose whole job is to set up a new machine, when git had already said exactly
+# what to do about it. So the command runs, its stderr is kept, and the last of
+# it is printed UNDER the refusal — the shape `fetch_from_repo`'s refusal
+# already has, where it names both ways it tried.
+#
+# STDOUT IS STILL DROPPED: `gh repo clone` and `git commit` are chatty on
+# success and this command's own `say` lines are the report. It is the WORDS OF
+# A FAILURE that were being thrown away, not progress.
+WIP_LAST_ERR=""
+wip_quietly() {   # <command> [args…] — 0 or 1, with stderr in $WIP_LAST_ERR
+	workdir
+	WIP_LAST_ERR=""
+	if "$@" >/dev/null 2>"$WORKDIR/cmd-err"; then
+		return 0
+	fi
+	WIP_LAST_ERR="$(tail -n 6 -- "$WORKDIR/cmd-err" 2>/dev/null | sed -e 's/^/    | /')"
+	[ -n "$WIP_LAST_ERR" ] || WIP_LAST_ERR="    | (it printed nothing at all)"
+	return 1
+}
+
 wip_admin_block() {
 	local target="$1" org="$2" team="$3"
 	say ""
@@ -861,7 +953,7 @@ wip_substitute() {
 		-e "s#{{ORG}}#$WIP_ORG#g" \
 		-e "s#{{SHAPE_REPOSITORY}}#$SHAPE_REPOSITORY#g" \
 		-- "$file" >"$file.subst" || die "could not substitute the template file $file"
-	left="$(grep -o '{{[A-Z_]*}}' -- "$file.subst" 2>/dev/null | sort -u | tr '\n' ' ' || :)"
+	left="$(grep -o -e '{{[A-Z_]*}}' "$file.subst" 2>/dev/null | sort -u | tr '\n' ' ' || :)"
 	if [ -n "$left" ]; then
 		rm -f -- "$file.subst"
 		die "the template carries a placeholder this command has no value for: $left
@@ -882,13 +974,13 @@ wip_shape_ref() {
 	local pin selfdir=""
 	[ -f "$SELF" ] && selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 	if [ -n "$selfdir" ] && [ -f "$selfdir/contracts/openreposhape-pin.yaml" ]; then
-		pin="$(sed -n 's/^commit:[[:space:]]*//p' -- "$selfdir/contracts/openreposhape-pin.yaml" | head -n 1)"
+		pin="$(sed -n -e 's/^commit:[[:space:]]*//p' "$selfdir/contracts/openreposhape-pin.yaml" | head -n 1)"
 		pin="${pin%\"}"; pin="${pin#\"}"
 		[ -n "$pin" ] && { printf '%s\n' "$pin"; return 0; }
 	fi
 	workdir
 	if fetch_from_repo "contracts/openreposhape-pin.yaml" "$WORKDIR/pin.yaml"; then
-		pin="$(sed -n 's/^commit:[[:space:]]*//p' -- "$WORKDIR/pin.yaml" | head -n 1)"
+		pin="$(sed -n -e 's/^commit:[[:space:]]*//p' "$WORKDIR/pin.yaml" | head -n 1)"
 		pin="${pin%\"}"; pin="${pin#\"}"
 		[ -n "$pin" ] && { printf '%s\n' "$pin"; return 0; }
 	fi
@@ -924,7 +1016,7 @@ wip_fetch_template_file() {
 
 # --- the command itself -----------------------------------------------------
 wip_init() {
-	local config target checkout ref rel dest dir seeded=0 added="" existed=0
+	local config target checkout ref rel dest seeded=0
 	local existing_repo existing_path
 
 	# ---- step 1: DETECT. A file test, not a network call, and the whole of the
@@ -991,7 +1083,6 @@ wip_init() {
 	wip_have_gh || die "\`wip init\` needs \`gh\` to create or find $target. Install GitHub CLI,
     run \`gh auth login\`, then run this again. Nothing was created."
 	if gh repo view "$target" >/dev/null 2>&1; then
-		existed=1
 		say ""
 		say "  $target is already there; this run adopts it."
 	else
@@ -1005,10 +1096,16 @@ wip_init() {
 			say "  created $target"
 			if [ -n "$WIP_TEAM" ]; then
 				# `--team` alone grants the ORG DEFAULT, not read.
+				# THE LINE ITSELF, not a pointer to a block that is not printed
+				# on this path: `wip_admin_block` is reached only where the
+				# CREATE failed, and this arm is the one where it succeeded
+				# (F8 of the #24 review).
 				gh api --method PUT \
 					"/orgs/$WIP_ORG/teams/$WIP_TEAM/repos/$target" -f permission=pull \
-					>/dev/null 2>&1 ||
-					say "  (could not give team $WIP_TEAM read; an administrator can: see below)"
+					>/dev/null 2>&1 || {
+					say "  (could not give team $WIP_TEAM read. An administrator can:"
+					say "     gh api --method PUT /orgs/$WIP_ORG/teams/$WIP_TEAM/repos/$target -f permission=pull)"
+				}
 			fi
 		else
 			# RULING 2: PRINT THE COMMAND, and continue once the repository
@@ -1051,15 +1148,20 @@ wip_init() {
 			die "$checkout is already a checkout, and not of $target. This command will not
     write into a clone of somebody else's repository, and it will not move one aside.
     Move it yourself, or pass a different projects directory with \$PROJECTS_DIR.
-    Nothing was created."
+    $target exists; NOTHING was written into that checkout, and a re-run picks
+    up from here."
 		say "  $checkout is already a checkout of $target"
 	elif [ -e "$checkout" ]; then
-		die "$checkout already exists and is not a git checkout. Nothing was created."
+		die "$checkout already exists and is not a git checkout. $target exists;
+    NOTHING was written into that path, and a re-run picks up from here once it
+    is moved aside."
 	else
 		mkdir -p -- "$(dirname -- "$checkout")"
 		say "  cloning $target -> $checkout"
-		gh repo clone "$target" "$checkout" -- --quiet >/dev/null 2>&1 ||
-			die "could not clone $target into $checkout. Nothing else was changed."
+		wip_quietly gh repo clone "$target" "$checkout" -- --quiet ||
+			die "could not clone $target into $checkout. Nothing else was changed.
+    What it said:
+$WIP_LAST_ERR"
 	fi
 
 	# ---- step 7: SEED IT FROM THE TEMPLATE, additively. A repository that
@@ -1081,7 +1183,6 @@ wip_init() {
 		wip_substitute "$dest"
 		mkdir -p -- "$checkout/$(dirname -- "$rel")"
 		cp -- "$dest" "$checkout/$rel"
-		added="${added:+$added }$rel"
 		seeded=$((seeded + 1))
 	done
 	if [ "$seeded" -gt 0 ]; then
@@ -1096,15 +1197,19 @@ wip_init() {
 	# write will be refused by the gate. So this push is not only the seed
 	# landing; it is the verification (Addendum 1(2)).
 	if [ -n "$(git -C "$checkout" status --porcelain 2>/dev/null)" ]; then
-		git -C "$checkout" add -A -- . >/dev/null 2>&1 ||
-			die "could not stage the seed in $checkout."
-		git -C "$checkout" commit -q \
+		wip_quietly git -C "$checkout" add -A -- . ||
+			die "could not stage the seed in $checkout.
+    What it said:
+$WIP_LAST_ERR"
+		wip_quietly git -C "$checkout" commit -q \
 			-m "Seed this workspace repository from $SHAPE_REPOSITORY $WIP_TEMPLATE_DIR
 
 Written by \`openRepoTools wip init\` (lane-collision-protocol Amendment 9(c)).
 It holds data only: the register, the object logs, the handoffs and the
-workspace manifests. The lane tooling is installed from opensoft/openRepoTools." \
-			>/dev/null 2>&1 || die "could not commit the seed in $checkout."
+workspace manifests. The lane tooling is installed from opensoft/openRepoTools." ||
+			die "could not commit the seed in $checkout. A machine with no
+    \`user.email\` configured is the usual reason, and git says so itself:
+$WIP_LAST_ERR"
 		say "  committed the seed in $checkout"
 	fi
 

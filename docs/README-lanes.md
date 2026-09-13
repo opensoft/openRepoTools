@@ -1415,7 +1415,23 @@ openRepoTools wip init      # create or adopt the workspace, and link it
 ```
 
 If the host was set up from `opensoft/workBenches`, `./setup.sh` has already
-run both and there is nothing to type at all.
+run both and there is nothing to type at all — **and that is the whole of
+Amendment 11's decision 8(b) as `R-A11-13` corrected it: there is NO second
+installer.** `setup.sh` already runs `openRepoTools --install`, so `restart`,
+`lanes` and the `/restart` skill ride the step that is there rather than a new
+one. What Evidence 5 actually measured was narrower and is worth saying: after a
+machine rebuild the launcher was present and `lane-start` and `lane-end` were
+**not on `PATH` at all**, so the launcher's documented degradation ran a bare
+`claude --resume <uuid>` — no stamps, a derived session name, a window left
+`claude`, three stampless restarts in one day. The gap was never that nothing
+runs `--install`; it was that the installed `openRepoTools` predated the move
+and placed no lane helper.
+
+**And the launcher exports this workstation's name.** `$LANES_WORKSTATION` is
+written once per host and exported into every session and container the launcher
+starts (`R-A11-14`). Outside a container `hostname -s` still answers; **inside
+one with no value every writer here refuses**, because a container's hostname is
+the container's id and this log is never rewritten.
 
 The warning from Amendment 3's "Raven setup (operator, Brett)" block still
 stands and the linker does not do it for you: **diff Raven's local `LANES.md`
@@ -1437,6 +1453,16 @@ rm -f ~/.local/bin/lane-start ~/.local/bin/lane-end   # while they are still sym
 openRepoTools --install                               # places them as regular files
 link-estates                                          # repoints ~/projects/xFactory/lanes-edit.sh
 ```
+
+**You are not asked to remember it: `--install` refuses** (A9 Addendum 4,
+R-A9-12). In its planning phase, before any of the sixteen artifacts is placed,
+it walks all eleven targets and dies naming every one that is not a regular file,
+what it is, and the one `rm` that clears them. `cp` FOLLOWS A SYMLINK, so an
+install over these would leave the two commands UNINSTALLED — the targets stay
+links — and would write the post-move bytes into `opensoft/brett-wip`'s working
+tree, which is the repository every lane writes: `lanes-edit.sh`'s
+`refuse_dirty_checkout` then refuses `log`, `claim` and `release` on that
+workstation until somebody runs `git checkout -- lanes/`.
 
 It is not tidiness. workBenches' `setup-estate-commands.sh` refuses the WHOLE
 estate install when any target "already exists as a symlink", and `setup.sh`

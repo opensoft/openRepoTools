@@ -189,9 +189,13 @@ It places ELEVEN files into `~/.local/bin` — `openRepoTools`, `park`, `resume`
 `link-estates` and the alias table `repos.tsv` — 755, idempotently: a second run
 prints `already installed … (unchanged)` per file, and one whose bytes have
 drifted prints `updated at`. ALL ELEVEN ARE IN HAND BEFORE ANY IS PLACED, so a
-fetch that failed replaces nothing and names the file it could not get. Then an
-`11 of 11 placed in <dir>` line, and the `export PATH=…` line if that directory
-is not on your `PATH`.
+fetch that failed replaces nothing and names the file it could not get. A target
+that is **not a regular file** — a symlink left by the pre-move `link-estates`, a
+directory — is a refusal in that same planning phase, naming every one of them,
+what it is, and the `rm` that clears them: `cp` follows a symlink, and an
+install through one leaves the command uninstalled and writes these bytes into
+whatever it points at. Then an `11 of 11 placed in <dir>` line, and the
+`export PATH=…` line if that directory is not on your `PATH`.
 
 It also places **five things that are not files in that directory**: TWO SKILLS,
 `/lane-swap` and `/restart`, each at
@@ -200,11 +204,12 @@ It also places **five things that are not files in that directory**: TWO SKILLS,
 `~/.claude/skills/<name>/SKILL.md` for a bare `claude` run outside the
 launcher, and **one merged entry** under `hooks.SessionStart` in
 `~/.claude/settings.json`. That merge needs `jq`, never writes the file whole,
-preserves mode 600, and is idempotent by exact match on the entry's command
-string. An entry that runs `lanes-edit.sh` with a DIFFERENT string, a file it
-cannot parse, or a `hooks` that is not an object → it **refuses, prints the
-exact block, and places nothing at all**, because the merge is computed with the
-eleven files in hand before any of them is placed. An installer that repairs a
+writes it back at mode 600, and is idempotent by exact match on the entry's
+command string. An entry that runs `session-start` with a DIFFERENT string — a
+second writer of this very hook — a file it cannot parse, or a `hooks` that is
+not an object → it **refuses, prints the exact block, and places nothing at
+all**, because the merge is computed with the eleven files in hand before any of
+them is placed. An installer that repairs a
 file it does not understand is how you lose a setting you meant. It never
 writes a profile's own `settings.json`: the launcher owns that one.
 

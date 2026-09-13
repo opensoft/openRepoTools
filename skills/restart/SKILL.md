@@ -204,6 +204,16 @@ code a caller cannot act on.
 | `REFUSED: <reason>` **[2]** | no tmux, no directory, a `<lane>` the register does not carry, or step 5 exited 2 | the reason, and the helper's own stderr verbatim |
 | `REFUSED: <reason>` **[1]** | any other non-zero from any helper, step 4's read included | which read failed, and its stderr |
 
+**Step 3b's fence is TWO VETOES and no permission, and `/restart` never trips either.** When step 5 runs
+`lane-start --no-launch`, that script decides whether to learn the uuid live in this window. Its fence is the
+**register veto** — a uuid that belongs to another row is never taken, read through `session-lane` and
+fail-closed — and the **window-name veto**: a window named for another lane never lends its session. Neither
+the window's name being the lane nor `live-holder` answering `here` is a *condition for taking*, because at
+step 3b the window is usually still called `claude` and there is no holder here (`R-A11-12`, which corrects
+`R-A11-1` a second time). `/restart` reaches step 5 only after step 2 resolved this window to this lane out
+of the register and step 4 compared the ids, so by then neither veto has anything to fire on — which is why
+step 6 is `/restart`'s act and not `lane-start`'s.
+
 **A live FORK of this lane's transcript is a defect, and it is named wherever this skill meets one**
 (ratified decision 8(e), from Evidence 6). `"$L" forks <lane>` lists them. A fork is never the holder and
 must never write the register; retiring one is `kill <pid>`, typed by a person, because ending somebody's

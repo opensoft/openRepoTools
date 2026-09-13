@@ -286,7 +286,7 @@ profile=""
 if [ -z "$profile" ]; then
 	# The log's own `profile` sub-field, for a lane whose last line is not a
 	# swap — a lane that has STARTED under Amendment 11 and not yet paused.
-	profile="$("$LANES_EDIT" lanes --all 2>/dev/null | awk -F'\t' -v l="$lane" '$1 == l { print $4; exit }' || :)"
+	profile="$("$LANES_EDIT" lanes --lane "$lane" 2>/dev/null | awk -F'\t' '{ print $4; exit }' || :)"
 	case "$profile" in none | '') profile="" ;; esac
 fi
 

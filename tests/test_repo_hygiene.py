@@ -414,7 +414,11 @@ def test_the_template_is_fetched_from_the_pinned_standard_and_at_the_pin():
             assert "$ref" in line, (
                 "a template fetch that does not carry the pinned ref would "
                 f"take whatever openRepoShape's main holds today:\n    {line.strip()}")
-    assert 'sed -n \'s/^commit:[[:space:]]*//p\'' in text, (
+    # `-e`, and not a bare script followed by `--`: BSD's `getopt` stops at the
+    # first operand, so `sed -n 'script' -- "$file"` reads `--` as a FILENAME
+    # there (A9 Addendum 4, R-A9-11, and the two tests at the foot of this
+    # file).
+    assert 'sed -n -e \'s/^commit:[[:space:]]*//p\'' in text, (
         "wip_shape_ref must read `commit:` out of "
         "contracts/openreposhape-pin.yaml rather than spelling a ref")
 
@@ -971,7 +975,7 @@ def test_readme_is_short_enough_to_be_read():
     leg. AGENTS.md takes the same state in the words it already had and
     repacks, so its cap does not move.
 
-    353 -> 372 on 2026-09-13, for lane-collision-protocol AMENDMENT 11's
+    358 -> 377 on 2026-09-13, for lane-collision-protocol AMENDMENT 11's
     ratified decisions 6 and 7: two new words on PATH, `restart` and `lanes`,
     which a person reading this file has to be told exist and told what they do,
     plus the `$LANES_WORKSTATION` row that decision 8(d) makes load-bearing. The
@@ -1039,9 +1043,22 @@ def test_readme_is_short_enough_to_be_read():
     this toolset that writes a file outside a repository" is now two things
     writing one file, `resume --workspace` and `wip init`, both only on a
     machine that has none (Amendment 9(c) step 9, act 3 obligation 3).
+
+    353 -> 358 on 2026-09-13, for A9 Addendum 4's R-A9-12 and R-A9-14, ratified
+    the same day on the adversarial review of act 3's PR. Five lines, all in
+    § "Install", and every one of them behaviour a person MEETS rather than
+    prose about it: that `--install` refuses a target that is not a regular
+    file, naming each one and the `rm` that clears it, because `cp` follows a
+    symlink and the thing on the other end of the two this estate actually has
+    is the workspace checkout every lane writes — the review measured
+    `9 of 9 placed` and exit 0 while the two commands stayed uninstalled and
+    `brett-wip`'s worktree went dirty. The other two words are corrections
+    rather than additions: the conflict arm keys on `session-start` and not on
+    `lanes-edit.sh` (R-A9-14), and the merge WRITES the file back at mode 600
+    where this said it preserved a mode it in fact sets.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 372, f"README.md is {len(lines)} lines; the cap is 372"
+    assert len(lines) <= 377, f"README.md is {len(lines)} lines; the cap is 377"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
@@ -1146,3 +1163,165 @@ def test_the_python_files_compile():
     """
     for path in sorted((REPO / "tests").glob("*.py")):
         compile(path.read_text(encoding="utf-8"), str(path), "exec")
+
+
+# --- the macOS job RUNS this bash, it does not only parse it (R-A9-11) ------
+
+#: Which options of which utility take a SEPARATE argument. Everything after
+#: the first token that is neither an option nor an option's argument is an
+#: OPERAND, and an operand is where BSD's `getopt` stops looking for options.
+_OPTIONS_WITH_ARGUMENTS = {
+    "sed": {"-e", "-f", "-i", "-l"},
+    "grep": {"-e", "-f", "-m", "-A", "-B", "-C", "--include", "--exclude"},
+    "awk": {"-v", "-f"},
+}
+
+
+def _shell_tokens(text: str) -> list[str]:
+    """Split one shell command into tokens, keeping a quoted run together.
+
+    Deliberately small: it expands nothing and does not care what a token
+    MEANS. All it has to answer is "is this token exactly `--`, and did an
+    operand come before it".
+    """
+    tokens: list[str] = []
+    current: list[str] = []
+    quote, started = "", False
+    for ch in text:
+        if quote:
+            current.append(ch)
+            if ch == quote:
+                quote = ""
+            continue
+        if ch in "'\"":
+            quote, started = ch, True
+            current.append(ch)
+        elif ch.isspace():
+            if started:
+                tokens.append("".join(current))
+            current, started = [], False
+        else:
+            started = True
+            current.append(ch)
+    if started:
+        tokens.append("".join(current))
+    return tokens
+
+
+def _end_of_options_after_an_operand(text: str) -> list[str]:
+    """Every `sed`/`grep`/`awk` call in `text` that passes `--` too late.
+
+    THE BUG THIS IS ABOUT. GNU's `getopt` PERMUTES: it finds options wherever
+    they appear, so `sed -n 'script' -- "$file"` reads `--` as end-of-options
+    and `$file` as the one file. BSD's stops at the first operand — the script
+    — so `--` is left as a FILENAME and macOS answers
+    `sed: --: No such file or directory`, exit 1. The same goes for
+    `grep 'pattern' -- "$f"` and `awk 'program' -- "$f"`.
+
+    `sed -n -e 'script' "$file"` has no operand before the file list at all,
+    which is why that is the shape this repository uses. The protection `--`
+    was there for — a filename that begins with `-` — is kept by every call
+    that still spells it before the operand, which is what the file list of
+    `rm -f -- "$x"` and `grep -v -x -F -- "$pattern"` are.
+    """
+    bad = []
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        for piece in re.split(r"[|;&()]|\$\(|`", line):
+            tokens = _shell_tokens(piece)
+            for start, token in enumerate(tokens):
+                tool = token.rsplit("/", 1)[-1]
+                if tool not in _OPTIONS_WITH_ARGUMENTS:
+                    continue
+                takes_argument = _OPTIONS_WITH_ARGUMENTS[tool]
+                seen_operand = False
+                index = start + 1
+                while index < len(tokens):
+                    argument = tokens[index]
+                    if argument == "--":
+                        if seen_operand:
+                            bad.append(f"{tool}: {line.strip()}")
+                        break
+                    if not seen_operand and argument.startswith("-") and argument != "-":
+                        if argument in takes_argument:
+                            index += 1
+                    else:
+                        seen_operand = True
+                    index += 1
+                break
+    return bad
+
+
+@pytest.mark.parametrize("name", ALL_BASH)
+def test_no_shipped_bash_ends_its_options_after_an_operand(name):
+    """THE macOS JOB IS A RUN GATE AND NOT ONLY A PARSE GATE (A9 Addendum 4,
+    R-A9-11, ratified 2026-09-13 after F4 of the #24 review).
+
+    Act 3's obligation 4 bought `/bin/bash -n` on every bash file this
+    repository ships, and obligation 6 made the same job RUN 196 KB of bash
+    that had only ever run on Linux. It went 507 passed / 447 failed, and the
+    first of the two causes named in that job's own log was seventeen calls of
+    this one shape. `bash -n` cannot see it: the grammar is fine, and the
+    utility is not bash.
+
+    So it is held here, where it costs nothing and runs in EVERY job —
+    `tests-windows` included, which skips every bash claim and can still read a
+    file.
+    """
+    text = (REPO / name).read_text(encoding="utf-8")
+    bad = _end_of_options_after_an_operand(text)
+    assert not bad, (
+        f"{name} passes `--` AFTER an operand, which BSD's `getopt` reads as a "
+        f"FILENAME (macOS: `sed: --: No such file or directory`). Put the "
+        f"script behind `-e` instead:\n  " + "\n  ".join(bad))
+
+
+@pytest.mark.parametrize("name", ALL_BASH)
+def test_no_shipped_bash_reaches_for_gnu_only_utilities_unaccompanied(name):
+    """THE SECOND CAUSE IN THAT JOB'S LOG, AND THE FOUR BESIDE IT.
+
+    `date -d`, `stat -c`, `xargs -r`, `sort -z`, `sha256sum` and BRE `\\|` are
+    GNU; macOS answers the first with `illegal option -- d`, does not ship
+    `sha256sum` on a stock install, and reads `\\|` as two literal characters —
+    which is the worst of the five, because it is not an error at all, it is a
+    pattern that quietly matches nothing.
+
+    None of them is forbidden. GNU is what every lane workstation runs, and
+    this is not a rule about writing to the lowest common denominator: it is a
+    rule that the BSD spelling must be within reach of the GNU one, beside the
+    thing it falls back from rather than in a comment somewhere else.
+    """
+    text = (REPO / name).read_text(encoding="utf-8")
+    lines = [line for line in text.splitlines()
+             if not line.lstrip().startswith("#")]
+    # BSD spells reading a stamp `date -u -j -f <format> <stamp>` and spells
+    # arithmetic `date -u -v-5H`; either answers a `date -d`, and a `-d` with
+    # neither within ten lines is a GNU-only call.
+    for index, line in enumerate(lines):
+        if not re.search(r"\bdate\b[^\n|]*\s-d\b", line):
+            continue
+        window = "\n".join(lines[max(0, index - 10):index + 7])
+        assert re.search(r"\bdate\b[^\n|]*\s-j\b", window) or "-v" in window, (
+            f"{name} reads a stamp with GNU `date -d` and carries no BSD "
+            f"spelling within ten lines of it (`date -u -j -f <format>` reads "
+            f"one, `date -u -v-5H` is the arithmetic):\n  {line.strip()}")
+    for line in lines:
+        if re.search(r"\bstat\b[^\n|]*\s-c\b", line):
+            assert re.search(r"\bstat\b[^\n|]*\s-f\b", line), (
+                f"{name} uses GNU `stat -c` with no `stat -f` beside it on the "
+                f"same line:\n  {line.strip()}")
+        assert not re.search(r"\bxargs\b[^\n|]*\s-r\b", line), (
+            f"{name} passes GNU `xargs -r`, which BSD `xargs` does not "
+            f"take:\n  {line.strip()}")
+        assert not re.search(r"\bsort\b[^\n|]*\s-z\b", line), (
+            f"{name} passes GNU `sort -z`; sorting the lines a digest prints "
+            f"is as deterministic and needs no NUL:\n  {line.strip()}")
+        assert not (re.search(r"\b(sed|grep)\b", line) and "\\|" in line), (
+            f"{name} spells alternation `\\|`, which is a GNU extension to "
+            f"BRE: BSD `grep` and `sed` match it literally and report no "
+            f"error. Use a second `-e`, or `-E`:\n  {line.strip()}")
+    if "sha256sum" in "\n".join(lines):
+        assert "shasum" in "\n".join(lines), (
+            f"{name} names `sha256sum`, which a stock macOS does not ship, and "
+            f"never names `shasum -a 256`")

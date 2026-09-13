@@ -305,7 +305,7 @@ lanes_ws_yaml() { printf '%s\n' "${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace
 # not a dependency any of these files will take for one scalar.
 lanes_ws_field() {
   local v
-  v="$(sed -n "s/^$1:[[:space:]]*//p" -- "$2" 2>/dev/null | head -n 1 |
+  v="$(sed -n -e "s/^$1:[[:space:]]*//p" "$2" 2>/dev/null | head -n 1 |
     sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//')"
   v="${v%\"}"; v="${v#\"}"
   v="${v%\'}"; v="${v#\'}"
@@ -1293,6 +1293,12 @@ canon_object() {
 # cannot read back, in a log nothing ever rewrites.
 valid_nwo() { [[ "${1-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; }
 
+# A TRANSCRIPT UUID, and nothing else — the shape `claude --resume` takes
+# exactly and the one every event line's `session` field carries (Amendment
+# 7(b), Definitions sense 1). Not a PR-footer `session_01…`, not a session
+# NAME, and not the literal `unknown`: `write_event` refuses all three.
+valid_uuid() { [[ "${1-}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; }
+
 # The home repo for this invocation. `--home` is for a PRE-CUTOVER lane — one
 # whose log has no STARTED line — and is REFUSED where the log already answers
 # the question, so the flag and the log can never disagree. It is resolved
@@ -1499,12 +1505,29 @@ lane_log_exists() {
 # The register, read the same way — `who --landing` is a state read about a
 # merge hold other lanes are holding their merges for, so it must see what
 # landed rather than what this checkout happens to have pulled.
+# CACHED FOR THE LIFE OF ONE PROCESS, and Amendment 11's listing is the reason.
+# The published register is a 1 MB file and this is a `git show` of it; every
+# `row_of_lane`, `lane_named_ci`, `lane_of_session` and `lane_workstation` call
+# makes one. A single lane's act makes a handful and nobody noticed — but
+# `lanes` asks about EVERY lane in the register, so the same megabyte was being
+# re-rendered dozens of times for one listing a person is waiting on.
+#
+# IT IS SAFE BECAUSE NOTHING INSIDE ONE INVOCATION MOVES IT. `origin/<branch>`
+# is advanced by `log_sync`, which every subcommand runs BEFORE it reads, and by
+# `commit_push`, which runs AFTER the last read of a write path — so the ref a
+# process reads is fixed for as long as that process reads it. The one act that
+# would break that assumption is a second `log_sync` mid-read, and there is
+# none; `log_sync` clears this cache anyway, so a caller that adds one gets the
+# fresh answer rather than a stale one.
+LANES_REGISTER_CACHE=""
 register_text() {
+  if [ -n "$LANES_REGISTER_CACHE" ]; then printf '%s\n' "$LANES_REGISTER_CACHE"; return 0; fi
   if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null; then
-    git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null
+    LANES_REGISTER_CACHE="$(git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null)"
   else
-    cat -- "$LANES_FILE"
+    LANES_REGISTER_CACHE="$(cat -- "$LANES_FILE")"
   fi
+  printf '%s\n' "$LANES_REGISTER_CACHE"
 }
 
 # Each lane's LAST line on <object>, as
@@ -1666,7 +1689,25 @@ EOF
 
 # ---------------------------------------------------------- age and staleness
 
-epoch_of() { date -u -d "$1" +%s 2>/dev/null || printf ''; }
+# `date -u -d <stamp>` IS GNU-ONLY, AND THIS FUNCTION IS WHAT STALENESS IS MADE
+# OF (A9 Addendum 4, R-A9-11). BSD `date` — macOS's — answers `illegal option
+# -- d`, and `2>/dev/null || printf ''` turned that refusal into an EMPTY
+# ANSWER rather than an error: `age_of` printed `age unknown` beside every row,
+# `older_than_minutes` and `older_than_threshold` returned false for every
+# stamp, and the whole of `who`'s idle and stale reporting was silently off on
+# a platform this repository's own CI runs. BSD spells the same question
+# `-j -f <format> <stamp>`, so both are asked, GNU first because it is what
+# every lane workstation runs. TWO FORMATS, because this estate writes two:
+# `utc_now`, `lane-end`'s RELEASED and every log line carry SECONDS, and a
+# row's `Started` cell carries MINUTES. GNU reads either from one call; BSD
+# must be told which, so it is asked twice. A stamp none of the three can read
+# is still the empty string every caller here already tests for.
+epoch_of() {
+  date -u -d "$1" +%s 2>/dev/null ||
+    date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null ||
+    date -u -j -f '%Y-%m-%dT%H:%MZ' "$1" +%s 2>/dev/null ||
+    printf ''
+}
 
 age_of() {
   ao_t="$(epoch_of "$1")"
@@ -1753,7 +1794,7 @@ session_files() {
     esac
   done
   if [ -s "$sf_err" ]; then
-    SESSION_FILES_ERR="$(tr '\n' ';' < "$sf_err" | cut -c1-300)"
+    SESSION_FILES_ERR="$(LC_ALL=C tr '\n' ';' < "$sf_err" | LC_ALL=C cut -c1-300)"
     sf_rc=1
   fi
   rm -f -- "$sf_err"
@@ -1968,9 +2009,16 @@ live_holder() {
     rm -f -- "$lh_files" "$lh_match" "$lh_err"
     return 8                       # this workstation keeps no records at all
   fi
-  tr '\n' '\0' < "$lh_files" | xargs -0 -r grep -l -F "${pats[@]}" > "$lh_match" 2>"$lh_err" || :
+  # `xargs -r` IS GNU-ONLY and was dead weight: the `[ ! -s ]` guard above
+  # returns before this line when there is no record to search at all, which
+  # is the only thing `-r` would have caught (A9 Addendum 4, R-A9-11). The
+  # `tr`s read arbitrary bytes — a path, and grep's own words about it — so
+  # they read them as bytes: BSD `tr` answers `Illegal byte sequence` for a
+  # multibyte character in a UTF-8 locale and prints NOTHING, which would turn
+  # a record that cannot be read into a reason nobody can read either.
+  LC_ALL=C tr '\n' '\0' < "$lh_files" | xargs -0 grep -l -F "${pats[@]}" > "$lh_match" 2>"$lh_err" || :
   if [ -s "$lh_err" ]; then        # a record that exists and cannot be read
-    SESSION_FILES_ERR="$(tr '\n' ';' < "$lh_err" | cut -c1-300)"
+    SESSION_FILES_ERR="$(LC_ALL=C tr '\n' ';' < "$lh_err" | LC_ALL=C cut -c1-300)"
     rm -f -- "$lh_files" "$lh_match" "$lh_err"
     return 1
   fi
@@ -2091,9 +2139,10 @@ idle_holders() {   # <lane>
   fi
   ih_pats=()
   for ih_sid in $ih_earlier; do ih_pats+=(-e "\"sessionId\":\"$ih_sid\""); done
-  tr '\n' '\0' < "$ih_files" | xargs -0 -r grep -l -F "${ih_pats[@]}" > "$ih_match" 2>"$ih_err" || :
+  # `xargs -r` and the locale, for the reason `live_holder` gives above.
+  LC_ALL=C tr '\n' '\0' < "$ih_files" | xargs -0 grep -l -F "${ih_pats[@]}" > "$ih_match" 2>"$ih_err" || :
   if [ -s "$ih_err" ]; then
-    SESSION_FILES_ERR="$(tr '\n' ';' < "$ih_err" | cut -c1-300)"
+    SESSION_FILES_ERR="$(LC_ALL=C tr '\n' ';' < "$ih_err" | LC_ALL=C cut -c1-300)"
     rm -f -- "$ih_files" "$ih_match" "$ih_err"
     return 1
   fi
@@ -2261,7 +2310,7 @@ row_of_lane()       { register_text | awk -v lane="$1" "$ROW_AWK"; }
 # subcommand, which unions these ids with the published ones because liveness
 # fails CLOSED — an id this checkout knows and `origin/main` does not yet is one
 # more reason to refuse a rename, never a reason to allow one (AGENTS.md rule 7).
-row_of_lane_local() { awk -v lane="$1" "$ROW_AWK" -- "$LANES_FILE"; }
+row_of_lane_local() { awk -v lane="$1" "$ROW_AWK" "$LANES_FILE"; }
 row_cell() { printf '%s\n' "$1" | awk -F'|' -v i="$2" '{print $i}'; }
 
 uuids_in_cell() { grep -oiE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tr 'A-F' 'a-f' || :; }
@@ -2307,11 +2356,20 @@ lane_is_elsewhere() {
 }
 
 # The session id an event line carries: what the caller says it is, else the
-# lane's current one (Amendment 6(b): the LAST id in the cell), else unknown.
+# lane's current one (Amendment 6(b): the LAST id in the cell), else NOTHING.
+#
+# R-A11 (e) — IT NO LONGER SUBSTITUTES THE LITERAL `unknown`. It did, and that
+# literal is in the append-only log four times already, in two lanes
+# (`lanes/log/codeXfactory-1.md` ×3, `lanes/log/openxfactory-4-opendox-extraction.md`
+# ×1 on `origin/main`) — written by `log PAUSED` from a swap skill that had the
+# uuid in hand and did not pass it, and by `release`. Amendment 7(b) makes that
+# field a transcript uuid and ONLY that. Returning empty hands the decision to
+# `write_event`, which refuses the write and names the act that supplies the
+# uuid; the four lines already written stay exactly where they are (Amendment
+# 7(b) forbids editing them, 7(i)'s cutover rule governs).
 session_for() {
   if [ -n "${LANES_SESSION:-}" ]; then printf '%s\n' "$LANES_SESSION"; return 0; fi
-  sf_id="$(last_session_id_of_lane "$1" 2>/dev/null || :)"
-  printf '%s\n' "${sf_id:-unknown}"
+  last_session_id_of_lane "$1" 2>/dev/null || :
 }
 
 # ----------------------------------------------------- project.yaml legs
@@ -2453,6 +2511,33 @@ rule6_line() {
 # register and the log can never disagree about a merge hold.
 write_event() {
   we_lane="$1"; we_verb="$2"; we_obj="$3"; we_ref="$4"; we_pay="$5"; we_txt="$6"; we_utc="$7"; we_uuid="$8"
+  # R-A11 (e) — THE `session` FIELD IS A TRANSCRIPT UUID AND ONLY THAT, AND THE
+  # WRITER ITSELF IS WHERE THAT IS ENFORCED. Amendment 7(b) says so of the
+  # grammar; nothing checked it, and the literal `unknown` is in the append-only
+  # log four times already, in two lanes — three from `log PAUSED` (a swap skill
+  # holding the uuid and not passing it) and one from `release`. The log is
+  # append-only, so a line written wrong there is wrong for ever and no later
+  # line can correct it. Refused HERE rather than in the `log` arm because the
+  # same field is written by `claim` and `release` too, and one of the four came
+  # from `release`: this is the writer, so this is the gate.
+  #
+  # It is the FIRST test in the function, before the lock, before the capture
+  # and before the log file is created, so a refusal leaves the checkout exactly
+  # as it found it — and it names the act that supplies the uuid rather than the
+  # rule it broke, because the caller's next move is that act.
+  #
+  # This composes with `R-A8-2` rather than repeating it: `R-A8-2` stopped
+  # `lane-start` WRITING `unknown` (its title-fallback path defers the line
+  # instead); this stops the writer ACCEPTING it, from any caller.
+  if ! valid_uuid "$we_uuid"; then
+    we_bad="${we_uuid:-<empty>}"
+    case "$we_uuid" in
+      unknown) we_why="'unknown' is the one value this field must never carry: it is in this append-only log four times already, and no later line can correct any of them" ;;
+      session_*) we_why="'$we_bad' is a PR-footer id, which is neither resumable nor liveness-checkable (Amendment 6(b))" ;;
+      *) we_why="'$we_bad' is not a transcript uuid" ;;
+    esac
+    die "an event's session field is the TRANSCRIPT UUID and only that (Amendment 7(b)): $we_why. Nothing was written — not the $we_verb line, not the log file, not a commit. Name the session taking the act: LANES_SESSION=\"\$CLAUDE_CODE_SESSION_ID\" LANES_LANE=$we_lane lanes-edit.sh <subcommand> …   If lane $we_lane has no transcript uuid recorded at all, the act that gives it one is Amendment 6(c)'s session-cell append: run 'lane-start --no-launch <repo> <n>' in the lane's own window first" 2
+  fi
   # THE WRITER REFUSES A FIELD THAT WOULD MAKE THE LINE UNREADABLE (R21).
   # ` — ` divides a line into its three parts, and the grammar guarantees it
   # occurs AT MOST TWICE — once after the verb, once before the free text — so
@@ -2523,6 +2608,9 @@ write_event() {
 
 # A read fetches first — there is no index, so "current" means "after a fetch".
 log_sync() {
+  # THE CACHE ABOVE IS THE REF AS IT STOOD; a fetch moves the ref, so it is
+  # dropped here rather than read past.
+  LANES_REGISTER_CACHE=""
   [ "$NO_GIT" = 1 ] && return 0
   [ "${LANES_NO_FETCH:-0}" = 1 ] && { note "LANES_NO_FETCH=1 — not fetching; reading origin/$LANES_BRANCH as the ref already stands here"; return 0; }
   git -C "$LANES_REPO" rev-parse --git-dir >/dev/null 2>&1 || return 0
@@ -3021,6 +3109,23 @@ payload_subfield() {   # <payload> <name> [all]
 # payload at all, and its directory has not stopped being true. Amendment 7(i)'s
 # cutover rule is the same shape: a line written before this clause carries
 # none, and a reader that finds none SAYS SO rather than assuming one.
+# THE SAME ANSWER FROM A LIST OF PAYLOADS ALREADY IN HAND. `lane_payload_field`
+# reads the lane's log to get them; a caller that has read that log once for
+# other reasons passes them here instead, and the two cannot disagree because
+# the rule — the LAST payload that carries the sub-field wins — is written once.
+payload_field_from() {   # <payload lines> <name> [all]
+  pff_v=""
+  while IFS= read -r pff_p; do
+    [ -n "$pff_p" ] || continue
+    pff_this="$(payload_subfield "$pff_p" "$2" "${3-}")"
+    [ -n "$pff_this" ] && pff_v="$pff_this"
+  done <<EOF
+$1
+EOF
+  [ -n "$pff_v" ] || return 8
+  printf '%s\n' "$pff_v"
+}
+
 lane_payload_field() {   # <lane> <name> [all]
   # The scan is over EVERY lane-kind payload, newest last, and the answer is
   # the last one that actually carries the sub-field.
@@ -3267,7 +3372,7 @@ transcript_title() {   # <uuid> [<the record's file>] [<the record's cwd>]
     done
   fi
   [ -n "$tt_f" ] || return 1
-  tt_last="$(grep '^{"type":"custom-title"' -- "$tt_f" 2>/dev/null | tail -n1 || :)"
+  tt_last="$(grep -e '^{"type":"custom-title"' -- "$tt_f" 2>/dev/null | tail -n1 || :)"
   [ -n "$tt_last" ] || return 1
   tt_v="$(printf '%s' "$tt_last" | sed 's/.*"customTitle":"//; s/".*//')"
   [ -n "$tt_v" ] || return 1
@@ -3367,18 +3472,27 @@ register_lanes() {
 }
 
 lanes_rows() {
-  lr_repo=""; lr_dir=""; lr_ws="$WS"; lr_all=0
+  lr_repo=""; lr_dir=""; lr_ws="$WS"; lr_all=0; lr_one=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --repo) lr_repo="${2-}"; shift 2 || return 64 ;;
       --dir)  lr_dir="${2-}";  shift 2 || return 64 ;;
       --ws)   lr_ws="${2-}";   shift 2 || return 64 ;;
+      --lane) lr_one="${2-}";  shift 2 || return 64 ;;
       --all)  lr_all=1; shift ;;
       *) return 64 ;;
     esac
   done
   [ -n "$lr_dir" ] && lr_dir="$(cd -- "$lr_dir" 2>/dev/null && pwd -P || printf '%s' "$lr_dir")"
-  lr_names="$( { known_lanes 2>/dev/null || :; register_lanes 2>/dev/null || :; } | awk 'NF && !seen[tolower($0)]++')"
+  # ONE LANE, WITHOUT SCANNING THE ESTATE. `restart <lane>` needs one row's
+  # `profile` and nothing else, and building the whole listing for it would walk
+  # every log, every row and every live session record on the workstation to
+  # answer a question about one lane. Same rows, same columns, same code.
+  if [ -n "$lr_one" ]; then
+    lr_names="$lr_one"; lr_all=1
+  else
+    lr_names="$( { known_lanes 2>/dev/null || :; register_lanes 2>/dev/null || :; } | awk 'NF && !seen[tolower($0)]++')"
+  fi
   [ -n "$lr_names" ] || return 8
   lr_out=""
   while IFS= read -r lr_l; do
@@ -3387,8 +3501,25 @@ lanes_rows() {
     lr_w="$(lane_workstation "$lr_l" 2>/dev/null || :)"
     [ -n "$lr_w" ] || lr_w="$(lane_log_events "$lr_l" 2>/dev/null | awk -F"$US" 'is_lane($3) { w = $5 } function is_lane(v) { return v == "STARTED" || v == "PAUSED" || v == "RESUMED" || v == "ENDED" || v == "RETIRED" } END { print w }')"
     if [ "$lr_all" = 0 ] && [ -n "$lr_w" ] && [ "$(short_ws "$lr_w")" != "$(short_ws "$lr_ws")" ]; then continue; fi
-    lr_d="$(lane_payload_field "$lr_l" dir 2>/dev/null || :)"
-    lr_home="$(home_of_lane "$lr_l" 2>/dev/null || :)"
+    # ONE READ OF THE LANE'S LOG, NOT SIX. `lane_log_events` is a `git show`
+    # plus a parse, and this loop used to make one for the directory, one for
+    # the profile, one for the window, one for the verb and the UTC, and one
+    # more inside `last_session_of` — six per lane, across a register with
+    # dozens of them, for a command a person is waiting on. The events are read
+    # ONCE here and every sub-field is taken from that one copy.
+    lr_ev="$(lane_log_events "$lr_l" 2>/dev/null || :)"
+    lr_pays="$(printf '%s\n' "$lr_ev" | awk -F"$US" '
+      $3 == "STARTED" || $3 == "PAUSED" || $3 == "RESUMED" || $3 == "ENDED" || $3 == "RETIRED" { print $8 }')"
+    lr_d="$(payload_field_from "$lr_pays" dir 2>/dev/null || :)"
+    # The home out of the SAME events, through the same alias table
+    # `home_of_lane` uses — one read, not a second one of the same log.
+    lr_home="$(printf '%s\n' "$lr_ev" | awk -F"$US" '
+      $3 == "STARTED" || $3 == "RESUMED" { if (match($8, /home [^ ;]+/)) h = substr($8, RSTART + 5, RLENGTH - 5) }
+      END { if (h != "" && h != "unknown") print h }')"
+    if [ -n "$lr_home" ]; then
+      lr_hc="$(alias_lookup "$lr_home" 2>/dev/null || :)"
+      [ -n "$lr_hc" ] && lr_home="$lr_hc"
+    fi
     if [ -n "$lr_repo" ] || [ -n "$lr_dir" ]; then
       lr_keep=0
       [ -n "$lr_repo" ] && [ -n "$lr_home" ] && [ "$(lc "$lr_home")" = "$(lc "$lr_repo")" ] && lr_keep=1
@@ -3396,12 +3527,17 @@ lanes_rows() {
       [ "$lr_keep" = 1 ] || continue
     fi
     lr_verb=""; lr_utc=""
-    eval "$(lane_log_events "$lr_l" 2>/dev/null | awk -F"$US" '
+    eval "$(printf '%s\n' "$lr_ev" | awk -F"$US" '
       $3 == "STARTED" || $3 == "PAUSED" || $3 == "RESUMED" || $3 == "ENDED" || $3 == "RETIRED" { v = $3; u = $1 }
       END { printf "lr_verb=%s; lr_utc=%s\n", (v == "" ? "\"\"" : "\"" v "\""), (u == "" ? "\"\"" : "\"" u "\"") }')"
-    lr_sid="$(last_session_of "$lr_l" 2>/dev/null || :)"
-    lr_pf="$(lane_payload_field "$lr_l" profile 2>/dev/null || :)"
-    lr_win="$(lane_payload_field "$lr_l" window all 2>/dev/null || :)"
+    lr_sid="$(session_ids_of_lane "$lr_l" 2>/dev/null | tail -n1 || :)"
+    if [ -z "$lr_sid" ]; then
+      lr_sid="$(printf '%s\n' "$lr_ev" | awk -F"$US" '
+        ($3 == "PAUSED" || $3 == "RESUMED") && $4 ~ /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/ { id = $4 }
+        END { if (id != "") print tolower(id) }')"
+    fi
+    lr_pf="$(payload_field_from "$lr_pays" profile 2>/dev/null || :)"
+    lr_win="$(payload_field_from "$lr_pays" window all 2>/dev/null || :)"
     # THE STATE. A live record naming one of the lane-s ids beats the log-s
     # own last verb, because a lane whose session is running is LIVE whatever
     # its last written line says; otherwise the verb answers.
@@ -3647,7 +3783,7 @@ row_stamp_is_unknown() {   # <lane>
   [ -n "$rsu_lane" ] || return 1
   rsu_n="$(row_line "$rsu_lane" 2>/dev/null)" || return 1
   case "$rsu_n" in ''|*[!0-9]*) return 1 ;; esac
-  rsu_row="$(sed -n "${rsu_n}p" -- "$LANES_FILE" 2>/dev/null || :)"
+  rsu_row="$(sed -n -e "${rsu_n}p" "$LANES_FILE" 2>/dev/null || :)"
   [ -n "$rsu_row" ] || return 1
   rsu_last="$(printf '%s' "$rsu_row" | grep -o '[A-Z][A-Z]* by [^ |]*' | tail -n1 || :)"
   case "$rsu_last" in *" by unknown") return 0 ;; esac
@@ -3855,7 +3991,7 @@ sibling_filter() {   # <object> [pr|branch]; candidate lines on stdin
         split($0, f, sep); if (f[1] == n) print }'
     return 0
   fi
-  sed -E 's/^[0-9a-fA-F]{40}[ \t]+//' \
+  sed -E 's/^[0-9a-fA-F]{40}[[:space:]]+//' \
     | grep -E -- "(^|[^0-9A-Za-z])$sfl_q([^0-9A-Za-z]|\$)" || :
 }
 
@@ -3871,7 +4007,7 @@ gh_reads() {
   command -v gh >/dev/null 2>&1 || { note "gh is not on PATH — rerun with --no-github, or install it"; return 1; }
   printf '1. existing `CLAIMED —` comments on %s:\n' "$gr_obj"
   if [ -n "$gr_n" ]; then
-    gr_c="$( { gh issue view "$gr_n" --repo "$gr_repo" --comments 2>/dev/null || gh pr view "$gr_n" --repo "$gr_repo" --comments 2>/dev/null; } | grep -n 'CLAIMED —\|TAKEOVER —\|RELEASED —' || : )"
+    gr_c="$( { gh issue view "$gr_n" --repo "$gr_repo" --comments 2>/dev/null || gh pr view "$gr_n" --repo "$gr_repo" --comments 2>/dev/null; } | grep -n -e 'CLAIMED —' -e 'TAKEOVER —' -e 'RELEASED —' || : )"
   else
     gr_c=""
   fi
@@ -3969,7 +4105,7 @@ cmd="${1-}"
 # The usage block is this file's own header: print from line 3 until the first
 # line that is not a comment. (It used to be a hard-coded `3,59p`, which went
 # stale the moment the header grew — as it did under Amendment 5.)
-[ -n "$cmd" ] || { sed -n '3,${/^#/!q;s/^# \{0,1\}//;p}' -- "$RESOLVED"; exit 2; }
+[ -n "$cmd" ] || { sed -n -e '1,2d' -e '/^#/!q' -e 's/^# \{0,1\}//' -e p "$RESOLVED"; exit 2; }
 shift || :
 # `session-start` is EXEMPT. It is a hook: it never writes, and it must exit 0
 # even where there is no register to read at all — a hook that dies is a hook
@@ -4005,10 +4141,18 @@ case "$cmd" in
   verify-row)
     lane="${1-}"; [ -n "$lane" ] || die "usage: verify-row <lane>" 2
     n="$(row_line "$lane")" || exit 2
-    row="$(sed -n "${n}p" -- "$LANES_FILE")"
+    row="$(sed -n -e "${n}p" "$LANES_FILE")"
+    # Bash substrings, not `cut -c` and `rev`: `${#row}` counts CHARACTERS,
+    # and a register row is full of `·` `—` `→`, so a byte-counting `cut`
+    # disagrees with the length printed one field earlier — and BSD `rev` and
+    # `cut` answer `Illegal byte sequence` on the same row rather than
+    # disagreeing. The same rule `lane-end:566` states (R-A9-11).
+    # `${row: -200}` on a row SHORTER than 200 answers the empty string, where
+    # `rev | cut | rev` answered the whole row — so the short case is asked
+    # for explicitly rather than left to the expansion.
+    row_tail="$row"; [ "${#row}" -gt 200 ] && row_tail="${row: -200}"
     printf 'lane   : %s\nline   : %s\nlength : %s chars\nfirst200: %s\nlast200 : %s\n' \
-      "$lane" "$n" "${#row}" "$(printf '%s' "$row" | cut -c1-200)" \
-      "$(printf '%s' "$row" | rev | cut -c1-200 | rev)"
+      "$lane" "$n" "${#row}" "${row:0:200}" "$row_tail"
     ;;
 
   append-row-status)
@@ -4016,7 +4160,7 @@ case "$cmd" in
     [ -n "$lane" ] && [ -n "$text" ] || die "usage: append-row-status <lane> \"<text>\"" 2
     acquire_lock; handle_preexisting
     n="$(row_line "$lane")" || exit 2
-    row="$(sed -n "${n}p" -- "$LANES_FILE")"
+    row="$(sed -n -e "${n}p" "$LANES_FILE")"
     trimmed="$(rstrip_spaces "$row")"
     case "$trimmed" in
       *"|") : ;;
@@ -4034,7 +4178,7 @@ case "$cmd" in
     [ -n "$lane" ] && [ -n "$old" ] || die "usage: replace-in-row <lane> \"<old>\" \"<new>\" [\"<why>\"]" 2
     acquire_lock; handle_preexisting
     n="$(row_line "$lane")" || exit 2
-    row="$(sed -n "${n}p" -- "$LANES_FILE")"
+    row="$(sed -n -e "${n}p" "$LANES_FILE")"
     c="$(count_occurrences "$row" "$old")" || exit 2
     [ "$c" = 1 ] || die "'$old' occurs $c times in lane $lane's row (line $n); exactly 1 required" 2
     replace_line "$n" "${row/"$old"/"$new"}"
@@ -4081,7 +4225,7 @@ case "$cmd" in
     esac
     acquire_lock; handle_preexisting
     n="$(row_line "$lane")" || exit 2
-    row="$(sed -n "${n}p" -- "$LANES_FILE")"
+    row="$(sed -n -e "${n}p" "$LANES_FILE")"
     row_split_session_cell "$row" || die "lane $lane's row (line $n) does not have three '|' before its session cell ends; refusing to touch it" 2
     c="$(count_occurrences "$RSC_CELL" "$old")" || exit 2
     if [ "$c" != 1 ]; then
@@ -4109,7 +4253,7 @@ case "$cmd" in
     fi
     acquire_lock; handle_preexisting
     append_text_line "$text"
-    msg="LANES(${lane_tag:-unknown}@$WS): append line — $(printf '%s' "$text" | cut -c1-72)"
+    msg="LANES(${lane_tag:-unknown}@$WS): append line — ${text:0:72}"
     [ -n "$PRE_DIRTY_LANES" ] && msg="$msg + sweeps uncommitted edit to row $PRE_DIRTY_LANES"
     commit_push "$msg"
     ;;
@@ -4579,27 +4723,11 @@ EOF
   # status: the `*)` arm below says "unknown subcommand" and no other refusal
   # here does.
 
-  # The lane whose register row's SESSION CELL names this transcript uuid —
-  # `lane_of_session`, which the SessionStart hook has performed since
-  # Amendment 8(e), exposed as a subcommand (A11 Addendum 2, `R-A11-7`).
-  # ONE IMPLEMENTATION, TWO CALLERS: the hook and `/restart`'s step 2(b). It is
-  # the only rung that reaches a window still named `claude` with no swap
-  # record, which is the case this estate was measured in on 2026-09-13.
-  # THIS ARM ARRIVES FROM ADOPTION ACT 0 AND IS NOT THIS PR'S TO AUTHOR.
-  # `opensoft/brett-wip#5` @`95e7a4c` added it against the helpers where
-  # Amendment 5 left them, and `opensoft/openRepoTools#24` ports that commit into
-  # this copy so the move carries it. It is written here in act 0's OWN SHAPE —
-  # the same usage code, the same two answers — so that the port is an identical
-  # hunk and not a second implementation to reconcile, and it is dropped from
-  # this branch the moment the port lands (A11 Addendum 3, CF-T11: act 0 ships
-  # FOUR items, and this is the fourth).
-  session-lane)
-    sl_id="${1-}"; [ -n "$sl_id" ] || die "usage: session-lane <transcript-uuid>" 2
-    log_sync
-    sl_lane="$(lane_of_session "$sl_id")"
-    [ -n "$sl_lane" ] || exit 8
-    printf '%s\n' "$sl_lane"
-    ;;
+  # ADOPTION ACT 0 SHIPS `session-lane`, AND IT IS BELOW RATHER THAN HERE.
+  # `opensoft/brett-wip#5` @`95e7a4c` added it and `openRepoTools#24` ported that
+  # commit into this copy, so this branch carries NO second implementation of it
+  # (A11 Addendum 3, CF-T11: act 0 ships FOUR items, and that is the fourth).
+  # `/restart`'s step 2(b) and `lane-start`'s step 3b both call the ported arm.
 
   # The lane bound to a window OF THE ASKING WORKSTATION. Three callers share
   # this one implementation — the launcher's precedence 3, `/restart`'s step
@@ -4736,7 +4864,7 @@ EOF
     lns_args=(); lns_fetch=0
     while [ $# -gt 0 ]; do
       case "$1" in
-        --repo|--dir|--ws) [ -n "${2-}" ] || die "$1 needs a value (usage: lanes [--repo <owner/repo>] [--dir <path>] [--ws <workstation>] [--all] [--fetch])" 64
+        --repo|--dir|--ws|--lane) [ -n "${2-}" ] || die "$1 needs a value (usage: lanes [--repo <owner/repo>] [--dir <path>] [--ws <workstation>] [--lane <lane>] [--all] [--fetch])" 64
                            lns_args+=("$1" "$2"); shift 2 ;;
         --all)             lns_args+=("$1"); shift ;;
         --fetch)           lns_fetch=1; shift ;;
@@ -4820,6 +4948,28 @@ EOF
     rr_row="$(row_of_lane "$lane")"
     [ -n "$rr_row" ] || exit 8
     printf '%s\n' "$rr_row"
+    ;;
+
+  # R-A11-7 — THE HOOK'S OWN uuid → lane READ, EXPOSED. `lane_of_session` has
+  # answered "which lane's row's SESSION CELL names this uuid" since Amendment
+  # 8(e), for a window that carries no lane name; nothing else could reach it.
+  # `lane-start` step 3b needs the same answer to keep R-A11-1's fence — a live
+  # session that belongs to ANOTHER row is never taken — so it is one read with
+  # two callers rather than a second implementation of the same question.
+  #
+  # ONLY the session cell is read, exactly as the hook reads it: state cells
+  # quote other lanes' ids all the time (`RESUMED by <id>`, `handed off to
+  # <id>`), and one of those is not that session's lane.
+  #
+  # Read-only. 0 with the lane, 8 when no row's session cell names it —
+  # Amendment 7(d)'s fail-closed convention, so a caller can tell *none* from
+  # *could not read*.
+  session-lane)
+    sl_id="${1-}"; [ -n "$sl_id" ] || die "usage: session-lane <transcript-uuid>" 2
+    log_sync
+    sl_lane="$(lane_of_session "$sl_id")"
+    [ -n "$sl_lane" ] || exit 8
+    printf '%s\n' "$sl_lane"
     ;;
 
   # `--home`'s validation, WITHOUT a write — the same `resolve_home` the writers
