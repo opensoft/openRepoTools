@@ -46,25 +46,29 @@ COMMAND = REPO / "openRepoTools"
 #: under lane-collision-protocol Amendment 9(b), and `repos.tsv` is data placed
 #: at 755 with the commands because `--install` has one list, one destination
 #: and one mode.
-INSTALLED = ("openRepoTools", "park", "resume", "status",
+INSTALLED = ("openRepoTools", "park", "resume", "status", "restart", "lanes",
              "lanes-edit.sh", "lane-start", "lane-end", "link-estates",
              "repos.tsv")
 
-#: The skill `--install` also places, at two paths, and the path it is fetched
-#: from when there is no checkout to copy it out of (Amendment 9(b), inheriting
-#: A8 Addendum 2 R-A8-5).
-SKILL_PATH = "skills/lane-swap/SKILL.md"
+#: The skills `--install` also places, at two paths each, and the paths they are
+#: fetched from when there is no checkout to copy them out of (Amendment 9(b),
+#: inheriting A8 Addendum 2 R-A8-5; `restart` joins under Amendment 11 clause
+#: (f) and ratified decision 7).
+SKILL_NAMES = ("lane-swap", "restart")
+SKILL_PATHS = tuple(f"skills/{n}/SKILL.md" for n in SKILL_NAMES)
+SKILL_PATH = SKILL_PATHS[0]
 
-#: Everything a stdin install has to fetch: the nine files and the skill.
-FETCHED = INSTALLED + (SKILL_PATH,)
+#: Everything a stdin install has to fetch: the eleven files and the two skills.
+FETCHED = INSTALLED + SKILL_PATHS
 
-#: TWELVE ARTIFACTS, AND THE COUNT IS THE INVARIANT: nine files in the bin
-#: directory, the skill in the shared skills directory, the skill's bare-run
-#: copy, and one merged entry in `~/.claude/settings.json`.
-ARTIFACTS = len(INSTALLED) + 3
+#: SIXTEEN ARTIFACTS, AND THE COUNT IS THE INVARIANT: eleven files in the bin
+#: directory, two skills in the shared skills directory, their two bare-run
+#: copies, and one merged entry in `~/.claude/settings.json`. Derived from the
+#: two lists rather than restated, so adding a skill or a command moves it.
+ARTIFACTS = len(INSTALLED) + 2 * len(SKILL_NAMES) + 1
 
 USAGE_LINES = (
-    "openRepoTools --install            install (or update) the nine estate and lane",
+    "openRepoTools --install            install (or update) the eleven estate and",
     "openRepoTools wip init             create your workspace repository, clone it,",
     "openRepoTools --help | --version",
 )

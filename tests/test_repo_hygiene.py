@@ -26,7 +26,17 @@ from conftest import REPO, WINDOWS_SKIP
 #: `set -euo pipefail` rule. The macOS job parses these same four with
 #: `/bin/bash -n`, one command per file, which is what keeps the bash-3.2
 #: claim true.
-SHIPPED_BASH = ["openRepoTools", "park", "resume", "status"]
+#: `restart` and `lanes` join under lane-collision-protocol Amendment 11's
+#: ratified decisions 7 and 6: each is one word a person has on PATH, placed by
+#: `--install`, so each is held to the same shebang, the same executable bit,
+#: the same LF index, the same bash-3.2 parse AND the same `set -euo pipefail`.
+#: They are NOT in `LANE_BASH`, and the reason is the resolver test below: they
+#: carry no copy of Amendment 9(a)'s workspace resolver because they resolve no
+#: workspace — every fact either one needs comes from `lanes-edit.sh`, through
+#: the reads clause (h) adds, which is the same "one implementation, several
+#: callers" rule those reads exist for. A third copy of that block in a file
+#: that never uses it would be a third way for it to drift.
+SHIPPED_BASH = ["openRepoTools", "park", "resume", "status", "restart", "lanes"]
 
 #: THE LANE HELPERS, which arrived here from `opensoft/brett-wip` with their
 #: history under lane-collision-protocol Amendment 9(b). They are shipped bash
@@ -577,8 +587,8 @@ def test_the_documents_say_what_status_is_and_is_not():
         text = (REPO / name).read_text(encoding="utf-8")
         assert "`status`" in text, f"{name} never names the fourth command"
     readme = (REPO / "README.md").read_text(encoding="utf-8")
-    assert "NINE files" in readme, "README.md does not count the nine files"
-    assert "9 of 9 placed" in readme, (
+    assert "ELEVEN files" in readme, "README.md does not count the eleven files"
+    assert "11 of 11 placed" in readme, (
         "README.md does not show the count line `--install` actually prints")
     status = (REPO / "status").read_text(encoding="utf-8")
     assert "--no-optional-locks" in status, (
@@ -961,6 +971,12 @@ def test_readme_is_short_enough_to_be_read():
     leg. AGENTS.md takes the same state in the words it already had and
     repacks, so its cap does not move.
 
+    353 -> 372 on 2026-09-13, for lane-collision-protocol AMENDMENT 11's
+    ratified decisions 6 and 7: two new words on PATH, `restart` and `lanes`,
+    which a person reading this file has to be told exist and told what they do,
+    plus the `$LANES_WORKSTATION` row that decision 8(d) makes load-bearing. The
+    cap moves with the toolset and never with prose.
+
     251 -> 353 on 2026-09-13, for lane-collision-protocol AMENDMENT 9, ratified
     that day, and its adoption act 3. This is the largest single raise this
     file has taken and the reason is not prose: the repository grew a second
@@ -1025,7 +1041,7 @@ def test_readme_is_short_enough_to_be_read():
     machine that has none (Amendment 9(c) step 9, act 3 obligation 3).
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 353, f"README.md is {len(lines)} lines; the cap is 353"
+    assert len(lines) <= 372, f"README.md is {len(lines)} lines; the cap is 372"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

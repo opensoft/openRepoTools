@@ -49,7 +49,7 @@ TESTS_DIR="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 # the root of `opensoft/openRepoTools` now and this suite is in `tests/`.
 SRC_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
 
-for f in lane-start lane-end lanes-edit.sh link-estates; do
+for f in lane-start lane-end lanes-edit.sh link-estates restart lanes; do
   [ -x "$SRC_DIR/$f" ] || { echo "missing or not executable: $SRC_DIR/$f" >&2; exit 1; }
 done
 [ -f "$SRC_DIR/repos.tsv" ] || { echo "missing: $SRC_DIR/repos.tsv" >&2; exit 1; }
@@ -118,6 +118,26 @@ export LANES_WORKSTATION=Eagle
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); printf 'ok   %s\n' "$1"; }
 bad() { fail=$((fail + 1)); printf 'FAIL %s\n       %s\n' "$1" "${2-}"; }
+# AN ASSERTION THAT IS OWED TO A COMMIT LANDING IN ANOTHER REPOSITORY, NAMED
+# RATHER THAN OMITTED. Amendment 11's tooling round was directed to build ON the
+# `opensoft/brett-wip` hotfix of 2026-09-13 — step 3b's ownership fence, `--name`
+# on every launch branch, and `log` refusing `unknown` — which `openRepoTools#24`
+# ports into this tree, and NOT to write those three a second time. The tests
+# that would catch each are written here anyway, because a test written after the
+# fix is a test that never proved anything; until the port arrives they report
+# PENDING with the exact expectation, and the moment it does they are ordinary
+# assertions that pass or fail. PENDING is neither a pass nor a failure and the
+# count is printed at the foot, so nothing is hidden by it.
+pending_n=0; pending_list=""
+pending() {   # <name> <got> <want> <what lands it>
+  if [ "$2" = "$3" ]; then ok "$1"; return 0; fi
+  pending_n=$((pending_n + 1))
+  pending_list="${pending_list}  $1
+      expected [$3], got [$2]
+      lands with: $4
+"
+  printf 'PEND %s\n       expected [%s], got [%s]\n       lands with: %s\n' "$1" "$3" "$2" "$4"
+}
 is()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected [$3], got [$2]"; fi; }
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "expected to contain [$3]; got: $(printf '%s' "$2" | tr '\n' '~' | cut -c1-400)" ;; esac; }
 hasnt() { case "$2" in *"$3"*) bad "$1" "did NOT expect [$3]; got: $(printf '%s' "$2" | tr '\n' '~' | cut -c1-400)" ;; *) ok "$1" ;; esac; }
@@ -135,13 +155,51 @@ run() { out="$("$@" 2>"$SANDBOX/stderr")"; rc=$?; err="$(cat "$SANDBOX/stderr")"
 
 cat > "$SANDBOX/fakebin/tmux" <<'FAKE'
 #!/usr/bin/env bash
+# AMENDMENT 11 — THIS FAKE NOW ANSWERS A TARGETED READ, because clause (h)'s
+# `window-lane` is built on one: `tmux display-message -p -t <ref> '#{window_id}'`
+# is the LIVENESS FENCE itself — a record whose window is gone names a window
+# somebody else's `:0` may since have been given, and matching a dead ref is how
+# a lane binds to a stranger's pane. A fake that answered every ref would make
+# every one of those cases vacuous.
+#
+#   $FAKE_TMUX_WINDOWS   the workstation's live windows, one per line,
+#                        `<session>:<index><TAB><@id><TAB><name>`. A ref that is
+#                        in no line RESOLVES NOTHING and the fake exits 1,
+#                        exactly as tmux does for a window that is gone.
+#
+# The untargeted reads keep their old seams and DERIVE the two new formats from
+# `$FAKE_TMUX_WINDOW`, so every case written before Amendment 11 goes on
+# describing one window rather than three variables that could disagree.
 case "${1-}" in
   display-message)
-    case "${3-}" in
-      '#{session_name}:#{window_id}') printf '%s\n' "${FAKE_TMUX_WINDOW:-testsess:@1}" ;;
-      '#W')                           printf '%s\n' "${FAKE_TMUX_WINDOW_NAME:-claude}" ;;
-      '#{pane_pid}')                  printf '%s\n' "${FAKE_TMUX_PANE_PID:-}" ;;
-      *)                              printf '\n' ;;
+    shift
+    fake_t=""; fake_f=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -p) shift ;;
+        -t) fake_t="${2-}"; shift 2 ;;
+        *)  fake_f="$1"; shift ;;
+      esac
+    done
+    if [ -n "$fake_t" ]; then
+      fake_l="$(printf '%s\n' "${FAKE_TMUX_WINDOWS:-}" | awk -F'\t' -v t="$fake_t" '$1 == t || $2 == t { print; exit }')"
+      [ -n "$fake_l" ] || exit 1
+      case "$fake_f" in
+        '#{window_id}')   printf '%s\n' "$(printf '%s' "$fake_l" | cut -f2)" ;;
+        '#{window_name}') printf '%s\n' "$(printf '%s' "$fake_l" | cut -f3)" ;;
+        *)                printf '\n' ;;
+      esac
+      exit 0
+    fi
+    fake_w="${FAKE_TMUX_WINDOW:-testsess:@1}"
+    case "$fake_f" in
+      '#{session_name}:#{window_id}')    printf '%s\n' "$fake_w" ;;
+      '#{session_name}:#{window_index}') printf '%s\n' "${fake_w%%:*}:${FAKE_TMUX_WINDOW_INDEX:-0}" ;;
+      '#S:#I')                           printf '%s\n' "${fake_w%%:*}:${FAKE_TMUX_WINDOW_INDEX:-0}" ;;
+      '#{window_id}')                    case "${fake_w#*:}" in @*) printf '%s\n' "${fake_w#*:}" ;; *) printf '%s\n' "${FAKE_TMUX_WINDOW_ID:-@1}" ;; esac ;;
+      '#W'|'#{window_name}')             printf '%s\n' "${FAKE_TMUX_WINDOW_NAME:-claude}" ;;
+      '#{pane_pid}')                     printf '%s\n' "${FAKE_TMUX_PANE_PID:-}" ;;
+      *)                                 printf '\n' ;;
     esac ;;
   rename-window) printf 'rename-window %s\n' "${2-}" >> "${FAKE_TMUX_LOG:-/dev/null}" ;;
   *) : ;;
@@ -176,9 +234,11 @@ STALE_H=4                      # lanes-edit.sh's default, Rule 1's four hours
 export OPENREPOTOOLS_BIN_DIR="$SANDBOX/bin"
 mkdir -p "$OPENREPOTOOLS_BIN_DIR"
 cp -p "$SRC_DIR/lane-start" "$SRC_DIR/lane-end" "$SRC_DIR/lanes-edit.sh" \
-      "$SRC_DIR/link-estates" "$SRC_DIR/repos.tsv" "$OPENREPOTOOLS_BIN_DIR/"
+      "$SRC_DIR/link-estates" "$SRC_DIR/restart" "$SRC_DIR/lanes" \
+      "$SRC_DIR/repos.tsv" "$OPENREPOTOOLS_BIN_DIR/"
 chmod 755 "$OPENREPOTOOLS_BIN_DIR"/lane-start "$OPENREPOTOOLS_BIN_DIR"/lane-end \
           "$OPENREPOTOOLS_BIN_DIR"/lanes-edit.sh "$OPENREPOTOOLS_BIN_DIR"/link-estates \
+          "$OPENREPOTOOLS_BIN_DIR"/restart "$OPENREPOTOOLS_BIN_DIR"/lanes \
           "$OPENREPOTOOLS_BIN_DIR"/repos.tsv
 # AFTER the fake bin, which must still win for `tmux` and `claude`.
 export PATH="$SANDBOX/fakebin:$OPENREPOTOOLS_BIN_DIR:$PATH"
@@ -497,7 +557,13 @@ hasnt "…and never by the ambiguous title" "$out" "--resume repoA-1"
 has   "…saying it is the row's own transcript" "$err" "the row's current session is $DEAD_ID and its transcript is here"
 has   "…having taken live-holder's 8 as the ANSWER it is: this lane is parked" "$err" "no live session holds repoA-1"
 has  "a free lane appends a status, not a row" "$(git -C "$WIP" log --oneline -1 -- lanes/LANES.md)" "lane-start on"
-has  "the appended status says what it did — and a --no-launch run never says it launched (F-B5)" "$(grep '^| `repoA-1`' "$LANES")" "window renamed, no launch"
+# AMENDMENT 11 CLAUSE (c) — THE ROW STAMP'S TAIL STATES THE DIRECTORY AND THE
+# WINDOW BESIDE WHAT IT DID. Its HEAD is unchanged (Amendment 8(d): the verb,
+# the uuid and the lane), and the tail still says what actually happened, so a
+# `--no-launch` run still ends `no launch` and never claims to have launched
+# anything.
+has  "the appended status says what it did — and a --no-launch run never says it launched (F-B5)" "$(grep '^| `repoA-1`' "$LANES")" ", no launch"
+has  "…with clause (c)'s directory and window in the tail, for the person reading the row" "$(grep '^| `repoA-1`' "$LANES")" "window renamed, dir $HOME/projects/repoA, window "
 hasnt "…so the stamp of a run that launched nothing claims no launch" "$(grep '^| `repoA-1`' "$LANES")" "no launch, launching"
 
 run "$START" repoA 2 --no-launch
@@ -2028,14 +2094,25 @@ sw_seed repoSW-1 "$SW_OLD_UTC" "$WS_S" "claude-team-05b-20260912102132-2699:0"
 run "$E" swapped "$WS_S"
 is    "swapped exits 0 once a lane is swapped" "$rc" 0
 is    "…one row per swapped lane" "$(printf '%s\n' "$out" | grep -c .)" 2
-is    "…lane first, tab-separated, <lane><TAB><UTC><TAB><window>" \
-      "$(printf '%s\n' "$out" | head -n1)" "$(printf 'repoSW-1\t%s\tclaude-team-05b-20260912102132-2699:0' "$SW_OLD_UTC")"
+# AMENDMENT 11 CLAUSE (h) — `swapped` GAINS A FOURTH FIELD `<dir>` AND A FIFTH
+# `<profile>`, and the tab-is-the-contract rule is what makes that safe: both
+# readers of this output take the FIRST FIELD BEFORE THE FIRST TAB (the launcher
+# at `claude-profile:548-554` and the `/lane-swap` skill at its step 1, each with
+# the same comment saying so), so a fourth and a fifth break neither. These rows
+# were written before clause (c), so both new fields are EMPTY — which is what
+# every record on the estate looks like until adoption act 7 cuts each lane over
+# at its own next start, and a reader that finds none says so rather than
+# assuming one (Amendment 7(i)).
+is    "…lane first, tab-separated, <lane><TAB><UTC><TAB><window><TAB><dir><TAB><profile>" \
+      "$(printf '%s\n' "$out" | head -n1)" "$(printf 'repoSW-1\t%s\tclaude-team-05b-20260912102132-2699:0\t\t' "$SW_OLD_UTC")"
 is    "…MOST RECENTLY LANDED first, though its UTC is the older of the two" \
       "$(printf '%s\n' "$out" | head -n1 | cut -f1)" "repoSW-1"
 is    "…and the lane whose UTC is later, having landed first, comes second" \
       "$(printf '%s\n' "$out" | sed -n 2p | cut -f1)" "repoSW-5"
-is    "…every row carries exactly three tab-separated fields" \
-      "$(printf '%s\n' "$out" | awk -F'\t' 'NF != 3' | grep -c .)" 0
+is    "…every row carries exactly five tab-separated fields" \
+      "$(printf '%s\n' "$out" | awk -F'\t' 'NF != 5' | grep -c .)" 0
+is    "…and the FIRST field before the first tab is still the lane, which is the contract both its readers take" \
+      "$(printf '%s\n' "$out" | head -n1 | cut -f1)" "repoSW-1"
 hasnt "…and nothing is written by a read" "$(git -C "$WIP" log --format=%s -n1)" "swapped"
 
 # A lane that has since RESUMED is not swapped: its last lane-kind line is the
@@ -2242,7 +2319,7 @@ is    "a lane that takes a NEW session still exits 0" "$rc" 0
 has   "…and its stamp reads STARTED, not RESUMED" "$(grep '^| `repoHU-2`' "$LANES")" "STARTED by $HU2_SID (lane repoHU-2) — lane-start on"
 run   "$START" repoA 1 --no-launch
 has   "…while a resume-by-id lane's stamp reads RESUMED by that id" "$(grep '^| `repoA-1`' "$LANES")" "RESUMED by $DEAD_ID (lane repoA-1) — lane-start on"
-has   "…and the --no-launch tail behind it states what really happened" "$(grep '^| `repoA-1`' "$LANES")" "RESUMED by $DEAD_ID (lane repoA-1) — lane-start on $LANES_WORKSTATION: window renamed, no launch"
+has   "…and the --no-launch tail behind it states what really happened" "$(grep '^| `repoA-1`' "$LANES")" "RESUMED by $DEAD_ID (lane repoA-1) — lane-start on $LANES_WORKSTATION: window renamed, dir "
 
 # ---- R-A8-2: ONE record written, TWO deferred, and the act that settles them
 #
@@ -3132,6 +3209,445 @@ cp -- "$WS_YAML_SAVED" "$WS_YAML"
 is   "the sandbox's own pointer file is restored for the guards below" \
      "$(sed -n 's/^path:[[:space:]]*//p' "$WS_YAML" | head -n1)" "$WIP"
 
+echo "== Amendment 11: the record's fields, and clause (h)'s reads =="
+
+# THE SHAPE EVERY CASE BELOW IS ABOUT, in one place: a lane whose log carries
+# clause (c)'s three sub-fields, and a live window table for the reads that
+# fence on a window still existing.
+A11_ID="bbbb0001-1111-4000-8000-bbbb00011111"
+A11_ID2="bbbb0002-2222-4000-8000-bbbb00022222"
+A11_DIR="$HOME/projects/repoA11"
+mkdir -p "$A11_DIR"
+git init -q -b main "$A11_DIR"
+git -C "$A11_DIR" remote add origin "https://github.com/opensoft/repoA11.git"
+add_seed_row "| \`repoA11-1\` | harness \`$A11_ID\` → after /clear \`$A11_ID2\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoA11/x.md | ACTIVE |"
+add_seed_row "| \`repoA11-2\` | pending — set by the session's first act | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoA11/y.md | ACTIVE |"
+add_seed_row "| \`repoA11-3\` | harness \`$A11_ID\` | Raven / test / brett | 2026-09-11T00:00Z | none | handoffs/repoA11/z.md | ACTIVE |"
+{ printf '# lane repoA11-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoA11-1, session %s@Eagle, 2026-09-12T09:00:00Z, lane:repoA11-1 → home opensoft/repoA11; estate repoA11; dir %s; profile team-05a; window a11sess:0 @71\n' "$A11_ID" "$A11_DIR"
+  printf 'PAUSED — lane repoA11-1, session %s@Eagle, 2026-09-12T10:00:00Z, lane:repoA11-1 → swap; window a11sess:0 @71; dir %s; profile team-05a; workstation Eagle\n' "$A11_ID2" "$A11_DIR"
+} > "$LOGD/repoA11-1.md"
+# A lane whose record was written before clause (c): no dir, no profile, no id.
+{ printf '# lane repoA11-2 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoA11-2, session %s@Eagle, 2026-09-12T09:00:00Z, lane:repoA11-2 → home opensoft/repoA11; estate repoA11\n' "$A11_ID"
+  printf 'PAUSED — lane repoA11-2, session %s@Eagle, 2026-09-12T10:30:00Z, lane:repoA11-2 → swap; window a11old:0; workstation Eagle\n' "$A11_ID"
+} > "$LOGD/repoA11-2.md"
+# The same window ref, recorded on ANOTHER workstation.
+{ printf '# lane repoA11-3 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'PAUSED — lane repoA11-3, session %s@Raven, 2026-09-12T10:00:00Z, lane:repoA11-3 → swap; window a11sess:0 @71; dir /elsewhere/repoA11; profile team-09z; workstation Raven\n' "$A11_ID"
+} > "$LOGD/repoA11-3.md"
+# A directory containing a SPACE, written quoted — clause (c)'s one rule rather
+# than its refusal.
+{ printf '# lane repoA11-4 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoA11-4, session %s@Eagle, 2026-09-12T09:00:00Z, lane:repoA11-4 → home opensoft/repoA11; estate repoA11; dir "%s/my projects/x"; profile team-05a; window a11sess:0 @71\n' "$A11_ID" "$HOME"
+} > "$LOGD/repoA11-4.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed Amendment 11 records"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+# The workstation's live windows, for every read that fences on one existing.
+#   a11sess:0  is LIVE and still reports @71  — the record agrees with it
+#   a11live:0  is LIVE and reports @200       — a ref reused since the record
+#   a11gone:0  is in no line at all           — the window is gone
+export FAKE_TMUX_WINDOWS="$(printf 'a11sess:0\t@71\trepoA11-1\na11live:0\t@200\tclaude\na11named:0\t@88\trepoA11-2\n')"
+
+# ---------------------------------------------------------------- lane-dir
+run "$E" lane-dir repoA11-1
+is   "lane-dir exits 0 for a lane whose log records one" "$rc" 0
+is   "…and prints the path the LAST lane-kind line carrying one names" "$out" "$A11_DIR"
+run "$E" lane-dir repoA11-2
+is   "lane-dir exits 8 for a lane started before clause (c) — no answer, not a failure" "$rc" 8
+is   "…and prints no path a caller could mistake for one" "$out" ""
+run "$E" lane-dir repoA11-4
+is   "lane-dir exits 0 for a path written QUOTED because it contains a space" "$rc" 0
+is   "…and hands it back whole, quotes stripped, rather than truncated at the space" "$out" "$HOME/my projects/x"
+run "$E" lane-dir
+is   "lane-dir with no lane exits 64, its own usage code and never the dispatcher's 2" "$rc" 64
+run "$E" lane-dir repoA11-1 repoA11-2
+is   "…and 64 for a second argument, for the same reason" "$rc" 64
+
+# ------------------------------------------------------------ session-lane
+run "$E" session-lane "$A11_ID2"
+is   "session-lane exits 0 for a uuid the register's session cell names" "$rc" 0
+is   "…and prints that lane — the read Amendment 8(e)'s hook already made, exposed" "$out" "repoA11-1"
+run "$E" session-lane "$A11_ID"
+is   "…and answers for an EARLIER id in the same cell, which is a history and not an alternative" "$rc" 0
+run "$E" session-lane "cccc0000-9999-4000-8000-cccc00009999"
+is   "session-lane exits 8 for a uuid no row names" "$rc" 8
+is   "…printing nothing" "$out" ""
+run "$E" session-lane
+is   "session-lane with no uuid refuses, in adoption act 0's own shape" "$rc" 2
+has  "…naming what it takes" "$err" "usage: session-lane <transcript-uuid>"
+run "$E" session-lane "repoA11-1"
+is   "…and a name that is not a uuid is simply no answer: no row's session cell can contain it" "$rc" 8
+
+# ------------------------------------------------------------- window-lane
+run "$E" window-lane "a11named:0"
+is   "window-lane exits 0 where the WINDOW'S OWN NAME is a lane the register has a row for" "$rc" 0
+is   "…which is clause (b)'s precedence 2 read through the same door" "$out" "repoA11-2"
+run "$E" window-lane "@71"
+is   "window-lane exits 0 for an <@id> a live record names" "$rc" 0
+is   "…and prints the lane that record belongs to" "$out" "repoA11-1"
+run "$E" window-lane "Eagle" "a11sess:0"
+is   "…and 0 for the <session>:<index> where the window now holding it reports the recorded @id" "$rc" 0
+is   "…the same lane" "$out" "repoA11-1"
+# THE AGREEMENT RULE (A11 Addendum 2, `R-A11-8`/RV-T6). `a11live:0` exists NOW
+# and reports @200; nothing recorded it. Existing-now is not enough on its own:
+# a record naming `x:0 @97`, met from the window that has since taken `x:0` as
+# @200, passes the existing-now test on its ref and would bind the lane to a
+# STRANGER'S PANE with no question.
+{ printf '# lane repoA11-5 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'PAUSED — lane repoA11-5, session %s@Eagle, 2026-09-12T10:00:00Z, lane:repoA11-5 → swap; window a11live:0 @97; dir %s; profile team-05a; workstation Eagle\n' "$A11_ID" "$A11_DIR"
+} > "$LOGD/repoA11-5.md"
+add_seed_row "| \`repoA11-5\` | harness \`$A11_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoA11/w.md | ACTIVE |"
+{ printf '# lane repoA11-6 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'PAUSED — lane repoA11-6, session %s@Eagle, 2026-09-12T10:00:00Z, lane:repoA11-6 → swap; window a11gone:0 @5; dir %s; profile team-05a; workstation Eagle\n' "$A11_ID" "$A11_DIR"
+} > "$LOGD/repoA11-6.md"
+add_seed_row "| \`repoA11-6\` | harness \`$A11_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoA11/v.md | ACTIVE |"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed Amendment 11 disagreement and dead-window records"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+run "$E" window-lane "a11live:0"
+is   "window-lane REFUSES a record whose @id disagrees with the window now holding its ref" "$rc" 8
+is   "…binding nothing, which is the whole of the fence" "$out" ""
+run "$E" window-lane "a11gone:0"
+is   "window-lane exits 8 for a ref that resolves to no window at all" "$rc" 8
+run "$E" window-lane "@5"
+is   "…and 8 for an <@id> tmux does not resolve, however plainly a record names it" "$rc" 8
+# THE WORKSTATION SCOPING (`R-A11-8`/RV-T7): a `<session>:<index>` is a local
+# fact about one machine, and repoA11-3's record spells exactly the same ref on
+# Raven.
+run "$E" window-lane "Raven" "a11sess:0"
+is   "window-lane asked about Raven answers from Raven's records" "$rc" 0
+is   "…and names Raven's lane, not this workstation's, for the very same ref" "$out" "repoA11-3"
+run "$E" window-lane
+is   "window-lane with no ref exits 64" "$rc" 64
+run "$E" window-lane "Eagle"
+is   "…and 64 where the one argument is neither an @id nor a <session>:<index>" "$rc" 64
+has  "…saying which shapes it takes and that the workstation comes first" "$err" "window-lane [<workstation>] <ref>"
+
+# ------------------------------------------------------------ last-session
+run "$E" last-session repoA11-1
+is   "last-session exits 0 for a lane whose cell names uuids" "$rc" 0
+is   "…and prints the LAST one, which is what Amendment 6(b) resumes" "$out" "$A11_ID2"
+run "$E" last-session repoA-13
+is   "last-session reads a cell of ANY shape — this one holds only PR-footer ids" "$rc" 8
+run "$E" last-session repoA11-2
+is   "last-session falls to the LANE'S OWN LOG where the cell names no uuid" "$rc" 0
+is   "…taking the session field of its last PAUSED or RESUMED line" "$out" "$A11_ID"
+run "$E" last-session
+is   "last-session with no lane exits 64" "$rc" 64
+
+# -------------------------------------- swapped's fourth and fifth fields
+run "$E" swapped Eagle
+is   "swapped exits 0 with Amendment 11's records in the log" "$rc" 0
+A11_ROW="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "repoA11-1" { print; exit }')"
+is   "…and the row's FOURTH field is the recorded directory" "$(printf '%s' "$A11_ROW" | cut -f4)" "$A11_DIR"
+is   "…its FIFTH the recorded profile" "$(printf '%s' "$A11_ROW" | cut -f5)" "team-05a"
+is   "…and its THIRD carries the window's two refs, <session>:<index> and <@id>" \
+     "$(printf '%s' "$A11_ROW" | cut -f3)" "a11sess:0 @71"
+A11_ROW2="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "repoA11-2" { print; exit }')"
+is   "a record written before clause (c) has an EMPTY fourth field rather than a guessed one" \
+     "$(printf '%s' "$A11_ROW2" | cut -f4)" ""
+
+# ----------------------------------------------------- the workstation name
+#
+# DECISION 8(d) AS CORRECTED BY `R-A11-14`. Evidence 6: `opensoft/brett-wip`
+# `origin/main` carries SIX log lines whose workstation is a container id, in an
+# append-only file, written by every writer inside that container. The VALUE is
+# the workBenches launcher's to export (`LANES_WORKSTATION`); these helpers READ
+# it; outside a container `hostname -s` stays the default; and INSIDE one with
+# no value every WRITER refuses rather than substituting a placeholder.
+A11_HOST="$(hostname -s 2>/dev/null || hostname)"
+run "$E" workstation
+is   "workstation exits 0" "$rc" 0
+is   "…and the seam wins, printing the name this suite pinned" "$(printf '%s' "$out" | cut -f1)" "Eagle"
+is   "…naming the rung that answered, so a reader can tell a configured name from a hostname" \
+     "$(printf '%s' "$out" | cut -f2)" "seam"
+run env -u LANES_WORKSTATION LANES_IN_CONTAINER=0 "$E" workstation
+is   "outside a container with no value, the host answers — which is what the seam has defaulted to since Amendment 6" \
+     "$(printf '%s' "$out" | cut -f1)" "$A11_HOST"
+is   "…and says so" "$(printf '%s' "$out" | cut -f2)" "hostname"
+run env -u LANES_WORKSTATION LANES_IN_CONTAINER=1 "$E" workstation
+is   "inside a container with no value the READ still answers, because a read in front of every launch may not refuse" "$rc" 0
+is   "…and names the case rather than the rung" "$(printf '%s' "$out" | cut -f2)" "container-unset"
+has  "…saying on stderr which variable is missing and who sets it" "$err" "LANES_WORKSTATION"
+# AND EVERY WRITER REFUSES THERE. One guard at the dispatcher, because `WS` is
+# built into every event line and every commit subject this file writes.
+run env -u LANES_WORKSTATION LANES_IN_CONTAINER=1 env LANES_LANE=repoA11-1 "$E" log RESUMED "lane:repoA11-1"
+is   "a WRITER inside a container with no configured workstation REFUSES" "$rc" 2
+has  "…naming the variable" "$err" "LANES_WORKSTATION"
+has  "…and saying why a container id is not a workstation" "$err" "is the CONTAINER"
+hasnt "…and writes nothing" "$(git -C "$WIP" log --format=%s -n1)" "RESUMED lane:repoA11-1"
+run env -u LANES_WORKSTATION LANES_IN_CONTAINER=1 "$E" register-row repoA11-1
+is   "…while a READ in the same container is untouched" "$rc" 0
+run env -u LANES_WORKSTATION LANES_IN_CONTAINER=1 "$START" --dry-run repoA11 1
+is   "lane-start refuses there too, BEFORE the row and before the log" "$rc" 2
+has  "…in the same words, from the one place they are written" "$err" "LANES_WORKSTATION"
+run "$E" workstation Eagle
+is   "workstation takes no arguments, and says so with its own 64" "$rc" 64
+
+# ------------------------------------------- decision 8(e): a FORK is a DEFECT
+#
+# Evidence 6: an abandoned launch left a `--fork-session` daemon orchestrating
+# the same plan, relaunching writers on the same branches and writing the lane's
+# log under an id no row carries, while telling the interactive session it was
+# the holder. A fork copies the parent's `custom-title` record, so its
+# transcript says the lane's name while its id says something the row has never
+# heard of — and that pair is the defect.
+FORK_ID="dddd0001-f0f0-4000-8000-dddd0001f0f0"
+fork_tdir="$HOME/.claude/projects/$(sanitize "/workspace")"
+mkdir -p "$fork_tdir"
+printf '{"type":"custom-title","customTitle":"repoA-1","sessionId":"%s"}\n' "$FORK_ID" > "$fork_tdir/$FORK_ID.jsonl"
+printf '{"pid":%s,"sessionId":"%s","cwd":"/workspace","procStart":"%s","kind":"bg","name":"openrepoproject-b9","status":"busy"}\n' \
+  "$LIVE_PID" "$FORK_ID" "$live_start" > "$sessions_dir/live-fork.json"
+run "$E" forks repoA-1
+is   "forks exits 0 where a live fork of the lane's transcript is running" "$rc" 0
+has  "…naming the fork's own id, which is in no row" "$out" "$FORK_ID"
+has  "…and the directory it is running in, which is not the lane's" "$out" "/workspace"
+run "$E" who --lane repoA-1
+has  "who --lane calls it a DEFECT rather than a holder" "$out" "DEFECT"
+has  "…and prints the one act that retires it, which is a person's" "$out" "kill $LIVE_PID"
+run "$E" live-holder repoA-1
+hasnt "live-holder never returns a fork as the holder" "$out" "$FORK_ID"
+has   "…and says on stderr that one is live, because a read that cannot return it could otherwise hide it" "$err" "live FORK"
+run "$E" forks repoA11-1
+is   "forks exits 8 for a lane with no fork of its transcript running" "$rc" 8
+rm -f "$sessions_dir/live-fork.json" "$fork_tdir/$FORK_ID.jsonl"
+
+# --------------------------- clause (c): lane-start RECORDS dir and profile
+mkdir -p "$HOME/projects/repoA11b"
+git init -q -b main "$HOME/projects/repoA11b"
+git -C "$HOME/projects/repoA11b" remote add origin "https://github.com/opensoft/repoA11b.git"
+git -C "$WIP" add -A >/dev/null 2>&1
+git -C "$WIP" commit -q -m "commit pending handoffs before the Amendment 11 lane-start cases" >/dev/null 2>&1 || :
+FAKE_TMUX_WINDOW="a11start:@42" FAKE_TMUX_WINDOW_INDEX=3 FAKE_TMUX_WINDOW_NAME=claude \
+  CLAUDE_PROFILE_NAME=team-05a run "$START" repoA11b 1 --no-launch
+is   "lane-start exits 0 for a new lane under Amendment 11" "$rc" 0
+A11B_LOG="$(cat "$LOGD/repoA11b-1.md" 2>/dev/null || :)"
+has  "…and its STARTED line records the lane's DIRECTORY" "$A11B_LOG" "dir $HOME/projects/repoA11b"
+has  "…its PROFILE, from the launcher's own CLAUDE_PROFILE_NAME" "$A11B_LOG" "profile team-05a"
+has  "…and its WINDOW as two refs, <session>:<index> and <@id>" "$A11B_LOG" "window a11start:3 @42"
+has  "…keeping the home and estate the line already carried" "$A11B_LOG" "home opensoft/repoA11b; estate repoA11b"
+# THE ROW'S STAMP IS AMENDMENT 6(c)'s AND IS WRITTEN ON A RESUME, never on the
+# row's own creation: a brand-new row is created with the uuid already in its
+# session cell, so there is nothing for a stamp to say that the row does not.
+# The second start of the same lane is the one that stamps, and its TAIL is what
+# clause (c) extends — the head (verb, uuid, lane) is Amendment 8(d)'s and is
+# untouched.
+FAKE_TMUX_WINDOW="a11start:@42" FAKE_TMUX_WINDOW_INDEX=3 FAKE_TMUX_WINDOW_NAME=repoA11b-1 \
+  CLAUDE_PROFILE_NAME=team-05a run "$START" repoA11b 1 --no-launch
+is   "lane-start exits 0 on a second start of the same lane" "$rc" 0
+has  "the row's stamp states clause (c)'s two facts for a person, in its TAIL" \
+     "$(grep '^| `repoA11b-1`' "$LANES")" "dir $HOME/projects/repoA11b, window a11start:3 @42"
+has  "…and that tail still says what actually happened, so --no-launch never claims a launch" \
+     "$(grep '^| `repoA11b-1`' "$LANES")" ", no launch"
+has  "…while its HEAD is Amendment 8(d)'s and is untouched" \
+     "$(grep '^| `repoA11b-1`' "$LANES")" "(lane repoA11b-1) — lane-start on Eagle: window renamed, dir "
+# NO PROFILE IS NO SUB-FIELD, never a guessed one (Amendment 7(i)).
+mkdir -p "$HOME/projects/repoA11c"
+git init -q -b main "$HOME/projects/repoA11c"
+git -C "$HOME/projects/repoA11c" remote add origin "https://github.com/opensoft/repoA11c.git"
+FAKE_TMUX_WINDOW="a11start:@42" FAKE_TMUX_WINDOW_INDEX=3 FAKE_TMUX_WINDOW_NAME=claude \
+  run env -u CLAUDE_PROFILE_NAME "$START" repoA11c 1 --no-launch
+is    "lane-start exits 0 for a lane started outside the launcher" "$rc" 0
+hasnt "…and writes NO profile sub-field rather than inventing one" "$(cat "$LOGD/repoA11c-1.md")" "profile "
+has   "…while still recording the directory, which it does know" "$(cat "$LOGD/repoA11c-1.md")" "dir $HOME/projects/repoA11c"
+
+# ---------------------------- clause (c): the DIRECTORY PRECEDENCE, four rungs
+run "$START" --dry-run repoA11 1
+is   "lane-start finds the lane's directory without --dir, from its own record" "$rc" 0
+has  "…naming the rung that answered" "$err" "from the swap record"
+has  "…and planning the cd into it, which Evidence 3 makes load-bearing for CLAUDE.md and the lane's memory" "$err" "cd $A11_DIR"
+# RUNG 1 BEATS THE RECORD: the operator's word is first.
+run "$START" --dry-run --dir "$HOME/projects/repoA" repoA11 1
+has  "--dir beats the record, because rung 1 is the operator's own word" "$err" "cd $HOME/projects/repoA"
+# RUNG 3: a lane with a STARTED that carries a dir and no swap record at all.
+{ printf '# lane repoA11-7 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoA11-7, session %s@Eagle, 2026-09-12T09:00:00Z, lane:repoA11-7 → home opensoft/repoA11; estate repoA11; dir %s; profile team-05a; window a11sess:0 @71\n' "$A11_ID" "$A11_DIR"
+} > "$LOGD/repoA11-7.md"
+add_seed_row "| \`repoA11-7\` | harness \`$A11_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoA11/u.md | ACTIVE |"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed a lane whose only record of its directory is its STARTED line"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+run "$START" --dry-run repoA11 7
+has  "…and failing a swap record, the lane's LOG answers" "$err" "from the lane's log"
+has  "…with the same directory" "$err" "cd $A11_DIR"
+# RUNG 4: the default, and ONLY for a lane that has never been started under
+# this amendment.
+run "$START" --dry-run repoA11b 1
+has  "a lane with no recorded directory falls to \$PROJECTS_ROOT/<repo>, which is what it always did" \
+     "$err" "cd $HOME/projects/repoA11b"
+# AND THERE IS NO FIFTH RUNG: a lane whose recorded directory is GONE is a
+# refusal naming --dir, never a silent re-home from the cwd.
+{ printf '# lane repoA11-8 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoA11-8, session %s@Eagle, 2026-09-12T09:00:00Z, lane:repoA11-8 → home opensoft/repoA11; estate repoA11; dir %s/a-directory-that-is-gone; profile team-05a; window a11sess:0 @71\n' "$A11_ID" "$HOME"
+} > "$LOGD/repoA11-8.md"
+add_seed_row "| \`repoA11-8\` | harness \`$A11_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoA11/t.md | ACTIVE |"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed a lane whose recorded directory no longer exists"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+run "$START" --dry-run repoA11 8
+is   "a recorded directory that is gone is a REFUSAL" "$rc" 1
+has  "…naming the path" "$err" "a-directory-that-is-gone"
+has  "…the rung it came from" "$err" "from the lane's log"
+has  "…and the one flag that fixes it" "$err" "--dir"
+
+echo "== Amendment 11: the cross-lane write clause (d) rule 1 forbids =="
+#
+# THE TEST THAT WOULD HAVE CAUGHT EVIDENCE 2(b), written here and owed to the
+# `opensoft/brett-wip` hotfix that `openRepoTools#24` ports into this tree.
+# `lane-start:630-640` — step 3b — overwrites the resume target with the uuid of
+# whatever session is live in the window the command was typed in, whenever that
+# uuid is not in the lane's published cell. Typed from ANOTHER lane's window
+# that is a cross-lane write: lane X is resumed as lane Y's transcript, and X's
+# row is stamped with Y's uuid, in the one cell Amendment 6(b) makes the resume
+# target. The fence is OWNERSHIP ALONE (`R-A11-1` corrected): the window's name
+# is the lane, or `live-holder` answered `here`.
+XL_ID="eeee0001-1111-4000-8000-eeee00011111"
+add_seed_row "| \`repoXL-1\` | harness \`$XL_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoXL/x.md | ACTIVE |"
+add_seed_row "| \`repoXL-2\` | pending — set by the session's first act | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoXL/y.md | ACTIVE |"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the cross-lane window case"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+mkdir -p "$HOME/projects/repoXL"
+git init -q -b main "$HOME/projects/repoXL"
+git -C "$HOME/projects/repoXL" remote add origin "https://github.com/opensoft/repoXL.git"
+# lane Y's window: named for repoXL-1, and repoXL-1's own live session is in it.
+write_record_ns "$sessions_dir/live-xl.json" "$XL_ID" "$LIVE_PID" "$live_start" "xlsess:@31.%31" "repoXL-1" "user" "busy"
+FAKE_TMUX_WINDOW="xlsess:@31" FAKE_TMUX_WINDOW_INDEX=0 FAKE_TMUX_WINDOW_NAME="repoXL-1" \
+  run "$START" --dry-run --dir "$HOME/projects/repoXL" repoXL-2
+is  "lane-start X typed from lane Y's window never resumes X as Y's transcript" \
+    "$(case "$err" in *"--resume $XL_ID"*) printf 'resumed Y' ;; *) printf 'did not' ;; esac)" "did not"
+is  "…and never plans X's row to be stamped with Y's uuid" \
+    "$(case "$err" in *"append-session-id repoXL-2"*"$XL_ID"*) printf 'stamped Y' ;; *) printf 'did not' ;; esac)" "did not"
+has "…saying which window vetoed it and why" "$err" "which is another lane the register has a row for"
+is  "…and the run itself still exits 0, because a veto is not a refusal" "$rc" 0
+# A NAME IS A VETO AND NEVER A PERMISSION (`R-A11-12`). A window still called
+# `claude` vetoes nothing, and the taking goes ahead — which is the case the
+# first correction was made to preserve and the second broke: 8 of this
+# workstation's 16 windows were named `claude`, and this lane was in one three
+# times in a day.
+write_record_ns "$sessions_dir/live-xl2.json" "$XL_ID" "$LIVE_PID" "$live_start" "xlsess:@31.%31" "openrepoproject-b9" "derived" "busy"
+FAKE_TMUX_WINDOW="xlsess:@31" FAKE_TMUX_WINDOW_INDEX=0 FAKE_TMUX_WINDOW_NAME="claude" \
+  run "$START" --dry-run --dir "$HOME/projects/repoXL" repoXL-2
+has "a window named claude vetoes nothing, so step 3b still stamps the cell" "$err" "the harness minted a new transcript"
+rm -f "$sessions_dir/live-xl2.json"
+rm -f "$sessions_dir/live-xl.json"
+unset FAKE_TMUX_WINDOWS
+
+echo "== Amendment 11 decision 7: `restart`, and Brett's two restart cases =="
+#
+# THE TWO SURFACES BRETT HEAP'S DIRECTION NAMES, and the count they met before
+# this command existed. Measured on Eagle on 2026-09-13, after the tmux server
+# was replaced: EACH MET 1 PROMPT OFFERING 2 CHOICES AND WAS OFFERED THE WRONG
+# LANE — every `@id` on the workstation had been reissued from `@0`, four of
+# five windows were named `claude`, and all five swap records named sessions
+# from the old server, so the launcher's precedences 2 and 3 answered nothing
+# and precedence 4 offered the workstation's newest swap, `openXfactory-5`, to a
+# session that was `openRepoProject-1`. Declining was the only correct answer,
+# and declining left the operator where they started.
+#
+# `restart <lane>` needs no window, no record of a window and no guess: only the
+# lane's name, its `dir` and its `profile`. Both cases below run it FOR REAL
+# with stdin closed, so a command that asked anything would die rather than
+# quietly pass.
+RESTART="$OPENREPOTOOLS_BIN_DIR/restart"
+LANES_CMD="$OPENREPOTOOLS_BIN_DIR/lanes"
+cat > "$SANDBOX/fakebin/pclaude" <<'FAKE'
+#!/usr/bin/env bash
+printf 'cwd=%s argv=%s\n' "$PWD" "$*" >> "${FAKE_PCLAUDE_LOG:-/dev/null}"
+FAKE
+chmod +x "$SANDBOX/fakebin/pclaude"
+export FAKE_PCLAUDE_LOG="$SANDBOX/pclaude.log"
+: > "$FAKE_PCLAUDE_LOG"
+
+# CASE 1 — A FRESH TERMINAL OUTSIDE TMUX. No window, no record of one, nothing
+# to guess from.
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX "$RESTART" repoA11-1 </dev/null
+is   "restart <lane> from a fresh terminal outside tmux exits 0" "$rc" 0
+has  "…launching through the launcher, never \`claude\` itself (Evidence 4)" \
+     "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoA11-1 team-05a"
+has  "…after cd-ing into the lane's own recorded directory (Evidence 3)" \
+     "$(cat "$FAKE_PCLAUDE_LOG")" "cwd=$A11_DIR"
+hasnt "…and NOTHING is asked: no confirmation" "$out$err" "[y/N]"
+hasnt "…and no question of any kind" "$out$err" "?"
+
+# CASE 2 — THE SAME, TYPED IN A WINDOW NAMED `claude`. 8 of this workstation's
+# 16 windows were in that state; the launcher's precedence 2 cannot fire in any
+# of them, and precedence 3 cannot either, because a window `lane-start` never
+# renamed had no swap written from it.
+: > "$FAKE_PCLAUDE_LOG"
+FAKE_TMUX_WINDOW_NAME=claude FAKE_TMUX_WINDOW="a11sess:@71" FAKE_TMUX_WINDOW_INDEX=0 \
+  run "$RESTART" repoA11-1 </dev/null
+is   "restart <lane> in a window named 'claude' exits 0" "$rc" 0
+has  "…launching the same lane with the same profile, from the record" \
+     "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoA11-1 team-05a"
+hasnt "…asking nothing here either" "$out$err" "[y/N]"
+
+# WITH NO ARGUMENT, IN A WINDOW THAT IS A LANE: restart that one, ask nothing.
+: > "$FAKE_PCLAUDE_LOG"
+FAKE_TMUX_WINDOW_NAME=repoA11-1 FAKE_TMUX_WINDOW="a11sess:@71" FAKE_TMUX_WINDOW_INDEX=0 \
+  run "$RESTART" </dev/null
+is   "restart with no argument restarts the lane this window is named for" "$rc" 0
+has  "…and says so rather than asking" "$err" "this window is lane repoA11-1"
+has  "…launching it" "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoA11-1 team-05a"
+
+# WITH NO ARGUMENT AND NO LANE FOR THE WINDOW: the PER-REPO LISTING, and STOP.
+# A printed listing is not a picker (ratified decision 3; decision 7 point 5): it
+# asks nothing, returns nothing, exits, and the next act is a command the
+# operator types.
+: > "$FAKE_PCLAUDE_LOG"
+FAKE_TMUX_WINDOW_NAME=claude FAKE_TMUX_WINDOW="a11sess:@71" FAKE_TMUX_WINDOW_INDEX=0 \
+  run env -C "$A11_DIR" "$RESTART" </dev/null
+is    "restart with no argument in an unnamed window prints the listing and stops" "$rc" 0
+has   "…naming the lane of this checkout" "$out" "repoA11-1"
+has   "…with the exact line that restarts it, ready to type" "$out" "restart repoA11-1"
+has   "…and saying in terms that nothing was asked" "$out" "not a picker"
+is    "…launching NOTHING, because a listing is output and not a choice" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+
+# A LANE WITH NO RECORDED PROFILE IS A REFUSAL AND NEVER A GUESS: a wrong
+# profile is a launch into another account, and nothing here may invent one.
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX "$RESTART" repoA11-2 </dev/null
+is   "restart refuses a lane whose record names no profile" "$rc" 2
+has  "…saying it will not guess, because a wrong profile is another account" "$err" "will not guess"
+has  "…and printing the form that works in the interval" "$err" "pclaude --lane repoA11-2 <profile>"
+is   "…launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+run env -u TMUX "$RESTART" repoNoSuch-9 </dev/null
+is   "restart refuses a lane the register does not carry" "$rc" 2
+has  "…and names the two commands that find one" "$err" "lane-start <repo> <n>"
+
+echo "== Amendment 11 decision 6: \`lanes\` =="
+run "$LANES_CMD" </dev/null
+is   "lanes exits 0 with rows" "$rc" 0
+has  "…naming this workstation's lanes" "$out" "repoA11-1"
+has  "…with the recorded profile" "$out" "team-05a"
+has  "…the recorded directory" "$out" "$A11_DIR"
+has  "…and the exact restart line for a lane that is not live" "$out" "restart repoA11-1"
+has  "…saying it read locally and how old that answer is" "$out" "read locally"
+hasnt "a lane of ANOTHER workstation is not in this workstation's listing" "$out" "repoA11-3"
+run "$LANES_CMD" --all </dev/null
+has  "…and --all lists it" "$out" "repoA11-3"
+run "$LANES_CMD" --repo opensoft/repoA11 </dev/null
+is   "lanes --repo narrows to one repository's lanes" "$rc" 0
+has  "…which is decision 7's per-repo listing, read through the same helper" "$out" "repoA11-1"
+run "$LANES_CMD" repoA11-1 </dev/null
+is   "lanes takes no positional argument" "$rc" 2
+has  "…and points at the command that does" "$err" "restart repoA11-1"
+run "$LANES_CMD" --repo </dev/null
+is   "…and a flag with no value is refused rather than guessed" "$rc" 2
+# A PAUSED LANE WITH NO RECORDED PROFILE GETS NO `restart` LINE — it gets the
+# form that works, with the profile named as the one token to supply.
+has  "a lane with no recorded profile is offered the launcher form, not a line it cannot type" \
+     "$(run "$LANES_CMD" </dev/null; printf '%s' "$out")" "pclaude --lane repoA11-2 <profile>"
+
 echo "== the workstation seam: unset, every writer reads the host =="
 
 # THE OTHER HALF OF R-A9-13. Every case above this line runs with
@@ -3158,17 +3674,23 @@ git -C "$HOME/projects/repoWS" remote add origin "https://github.com/opensoft/re
 git -C "$WIP" add -A >/dev/null 2>&1
 git -C "$WIP" commit -q -m "commit the sandbox's pending handoffs before the workstation-seam cases" >/dev/null 2>&1 || :
 
-run env -u LANES_WORKSTATION "$START" repoWS 1 --no-launch
+# `LANES_IN_CONTAINER=0` THROUGHOUT THIS SECTION, and the reason is the rule
+# itself (`R-A11-14`): with the seam unset, the DEFAULT is `hostname -s` OUTSIDE
+# a container and a REFUSAL INSIDE one — and the host this suite runs on is a
+# container exactly when it is. The half this section is about is the default,
+# so the probe is pinned; the refusal has its own cases in the Amendment 11
+# section above, pinned the other way.
+run env -u LANES_WORKSTATION LANES_IN_CONTAINER=0 "$START" repoWS 1 --no-launch
 is   "lane-start with the seam unset exits 0" "$rc" 0
 has  "…and its new row names the HOST in the workstation column" \
      "$(grep '^| `repoWS-1`' "$LANES")" "$WS_HOST / "
 
-run env -u LANES_WORKSTATION LANES_LANE=repoWS-1 "$E" claim "opensoft/repoWS#1" --no-github
+run env -u LANES_WORKSTATION LANES_IN_CONTAINER=0 env LANES_LANE=repoWS-1 "$E" claim "opensoft/repoWS#1" --no-github
 is   "lanes-edit.sh claim with the seam unset exits 0" "$rc" 0
 has  "…and stamps the same host on the CLAIMED line it writes" \
      "$(grep '^CLAIMED' "$LOGD/repoWS-1.md" | tail -n1)" "@$WS_HOST,"
 
-run env -u LANES_WORKSTATION "$END" repoWS-1 --force
+run env -u LANES_WORKSTATION LANES_IN_CONTAINER=0 "$END" repoWS-1 --force
 is   "lane-end with the seam unset exits 0" "$rc" 0
 has  "…and its row status names the same host" \
      "$(grep '^| `repoWS-1`' "$LANES")" "lane-end on $WS_HOST:"
@@ -3206,6 +3728,10 @@ is   "…and every log it did create is inside the sandbox workspace" \
      "$( [ "$(ls "$WIP/lanes/log" 2>/dev/null | grep -c .)" -gt 0 ] && echo yes || echo no )" "yes"
 
 echo "----"
-printf '%s passed, %s failed\n' "$pass" "$fail"
+if [ "$pending_n" != 0 ]; then
+  printf '%s PENDING — owed to a commit landing in another repository, not a failure:\n' "$pending_n"
+  printf '%s' "$pending_list"
+fi
+printf '%s passed, %s failed, %s pending\n' "$pass" "$fail" "$pending_n"
 [ "$fail" = 0 ] || exit 1
 exit 0

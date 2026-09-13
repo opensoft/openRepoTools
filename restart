@@ -1,0 +1,368 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# restart — the one word that puts you back in a lane, from the zsh shell.
+#
+#   restart <lane>     restart that lane: cd to its recorded directory and
+#                      launch it through the launcher, asking nothing
+#   restart            restart the lane this tmux window is named for; and
+#                      where the window is not a lane, LIST the lanes of the
+#                      current checkout and stop
+#
+# Installed on PATH by `openRepoTools --install`, which is where Brett Heap's
+# direction of 2026-09-13T15:4xZ puts it — lane-collision-protocol Amendment 11,
+# RATIFIED DECISION 7 ("Ratify all four", 2026-09-13T18:05:29Z), and NOT
+# adoption act 6's: act 6 vendors skills and command files through
+# `setup-claude-profiles.sh` into the shared commands directory and
+# `~/.claude/commands/`, and neither of those puts a word on PATH.
+#
+#   we should have one cmd to restart lane from inside claude session and
+#   another from outside in the zsh shell. we could use we could command
+#   restart <lane> and if no lane then it lists the lanes for the current repo.
+#
+# THIS IS THE OUTSIDE HALF. `/restart` is the inside one, and it is a skill
+# because a session cannot exec a launcher over itself.
+#
+# WHY IT IS WORTH A COMMAND AT ALL, measured rather than asserted. On
+# 2026-09-13, after the tmux server on Eagle was replaced, each of the two
+# surfaces the direction names met ONE PROMPT OFFERING TWO CHOICES and WAS
+# OFFERED THE WRONG LANE: every `@id` on the workstation had been reissued from
+# `@0`, four of five windows were named `claude`, and all five swap records
+# named sessions from the old server — so the launcher's precedences 2 and 3
+# answered nothing and precedence 4 offered the workstation's newest swap,
+# `openXfactory-5`, to a session that was `openRepoProject-1`. Declining was the
+# only correct answer, and declining left the operator where they started.
+# `restart <lane>` needs no window, no record of a window and no guess: only the
+# lane's name, its `dir` and its `profile`, which Amendment 11 clause (c) puts
+# in the lane's own log. That is the whole of why decision 7 exists.
+#
+# THREE THINGS IT WILL NOT DO, each for a reason that was paid for:
+#
+#   * IT NEVER CALLS `claude` ITSELF. Every path goes through the launcher and
+#     therefore through `lane-start`, which renames the window, writes the row
+#     stamp, extends the session cell, writes the lane's `RESUMED` object line
+#     and stamps the handoff — and which passes `--name <lane>` so the harness's
+#     record name is the lane rather than a derived one. EVIDENCE 4: this lane's
+#     transcript carries `customTitle: openRepoProject-1`, set once by
+#     `/rename`, while every process that resumed it through a bare
+#     `claude --resume <uuid>` carried a DERIVED record name —
+#     `openrepoproject-b9`, `-1e`, `-27`, `-45` — and the derived name is what
+#     the statusline and `ListAgents` display. A bare `claude --resume` is never
+#     printed as the act on any surface this protocol owns.
+#   * IT `cd`s INTO THE LANE'S DIRECTORY BEFORE IT LAUNCHES, and that is not a
+#     convenience. EVIDENCE 3: a restart of this lane started from `/workspace`
+#     had the launcher create its tmux session with `-c /workspace`, so the
+#     harness keyed the session to that directory — the repository's `CLAUDE.md`
+#     did not load, the lane's memory did not load and the scratchpad moved —
+#     while `--resume <uuid>` went on continuing the transcript under the
+#     repository's own project folder, which is why the loss was SILENT. A
+#     restart that lands in the right transcript and the wrong directory has
+#     lost the lane's instructions.
+#   * IT IS NEVER A PICKER. Ratified decision 3 rules "never a picker, never a
+#     menu", and the listing below does not contradict it: a picker is a
+#     PROCESS THAT HOLDS THE TERMINAL AND RETURNS A SELECTION — it asks, it
+#     waits, and what the operator points at is what happens. This listing asks
+#     nothing and returns nothing. It is output, the command exits, and the next
+#     act is a NEW COMMAND THE OPERATOR TYPES with the lane named in it. The
+#     count is 0 questions, not 1: a person who reads a list and types nothing
+#     has been asked nothing.
+#
+# EXIT CODES, in the family's convention and in clause (f)'s, which excludes 3
+# because `lanes-edit.sh` already uses 3 for an unpushed commit or a rebase
+# conflict and a code that already means something else is a code a caller
+# cannot act on:
+#
+#   0  the lane was restarted (this process is replaced by the launcher), or
+#      the listing printed
+#   8  NO ANSWER — the window names no lane and the current checkout has none
+#   2  REFUSED — no such lane, no directory, no profile recorded yet, no
+#      launcher on PATH, or a lane name that is not lane-shaped
+#   1  a read failed, which is never "nothing to report" (Amendment 7(d))
+#
+#   $LANES_EDIT          the register's reader/writer (default: beside this file)
+#   $PCLAUDE             the launcher            (default: pclaude, else claude-profile)
+#   $RESTART_DRY_RUN=1   print the launch instead of performing it
+#
+# lane-collision-protocol Amendment 11, decision 7, ratified 2026-09-13T18:05:29Z.
+
+set -euo pipefail
+
+prog="${0##*/}"
+SELF="${BASH_SOURCE[0]:-$0}"
+selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
+
+say()  { printf '%s\n' "$*"; }
+note() { printf '%s: %s\n' "$prog" "$*" >&2; }
+die()  { printf '\n%s: REFUSED: %s\n' "$prog" "$1" >&2; exit "${2:-2}"; }
+
+usage() {
+	cat <<'USAGE'
+restart [<lane>] [--dir <path>] [--dry-run]
+
+  restart <lane>   cd to the lane's recorded directory and restart it through
+                   the launcher, asking nothing. The profile comes from the
+                   lane's own record and so does the directory.
+  restart          restart the lane this tmux window is named for; where the
+                   window is not a lane, print the lanes of the CURRENT
+                   CHECKOUT — those whose register home is this checkout's
+                   origin, or whose recorded directory is this checkout — and
+                   stop. Never a picker.
+
+  --dir <path>     the lane's checkout, for a lane whose record has none yet.
+                   Handed straight through to the launcher, which hands it to
+                   lane-start. Not needed on the normal path, and it must not
+                   become the way a restart is typed.
+  --dry-run        print the cd and the launch instead of performing them.
+  -h, --help       this.
+
+Exit: 0 restarted or listed · 8 no lane here and none to list · 2 refused ·
+1 a read failed. (3 is not used: lanes-edit.sh already spends it on an unpushed
+commit, and a code that means two things is a code a caller cannot act on.)
+
+  $LANES_EDIT   the register's reader   (default: lanes-edit.sh beside this file)
+  $PCLAUDE      the launcher            (default: pclaude, else claude-profile)
+
+/restart is the same act from INSIDE a running session. `lanes` is the
+estate-wide listing; this command's bare form is the per-repo one.
+USAGE
+}
+
+# The helper, found the way `lane-start` finds it: beside this command first —
+# `--install` places both in one directory — then on PATH. One resolution, so a
+# workstation with two copies never reads one and writes the other.
+LANES_EDIT="${LANES_EDIT:-}"
+if [ -z "$LANES_EDIT" ]; then
+	if [ -x "$selfdir/lanes-edit.sh" ]; then LANES_EDIT="$selfdir/lanes-edit.sh"
+	else LANES_EDIT="$(command -v lanes-edit.sh 2>/dev/null || printf '')"
+	fi
+fi
+[ -n "$LANES_EDIT" ] && [ -x "$LANES_EDIT" ] || die "no register reader at ${LANES_EDIT:-lanes-edit.sh} — it is installed beside this
+    command by \`openRepoTools --install\`. Run that, or set \$LANES_EDIT." 2
+
+lane=""; dir_flag=""; dry_run="${RESTART_DRY_RUN:-0}"
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-h | --help) usage; exit 0 ;;
+	--dry-run) dry_run=1; shift ;;
+	--dir) dir_flag="${2-}"; [ -n "$dir_flag" ] || die "--dir needs a path" 2; shift 2 ;;
+	--dir=*) dir_flag="${1#--dir=}"; [ -n "$dir_flag" ] || die "--dir needs a path" 2; shift ;;
+	--) shift ;;
+	-*) die "unknown option '$1' — see $prog --help" 2 ;;
+	*) [ -z "$lane" ] || die "restart takes one lane: restart [<lane>]" 2
+		lane="$1"; shift ;;
+	esac
+done
+
+# ------------------------------------------------------------ the workstation
+#
+# FROM CONFIGURATION, NEVER FROM `hostname` (ratified decision 8(d), from
+# Evidence 6): read through the helper, which is the one implementation the
+# register's own writer uses. A command that ran `hostname` here would name a
+# workstation the register has never heard of the moment it ran in a container.
+ws="$("$LANES_EDIT" workstation 2>/dev/null | cut -f1 || :)"
+
+# -------------------------------------------------------------- the listing
+#
+# DECISION 7 POINT 4. Rows are the lanes OF THE CURRENT CHECKOUT: those whose
+# register `home` is this checkout's `origin`, OR whose recorded `dir` is this
+# checkout. That second half is a second use for clause (c)'s `dir` and an
+# argument for recording it, because A LANE'S HOME REPOSITORY AND THE CHECKOUT
+# IT SITS IN ARE NOT THE SAME FACT: two lanes may sit in one repository's two
+# worktrees, and one lane's home repository may be a repository it never checks
+# out at all.
+origin_nwo() {
+	local url nwo
+	url="$(git -C "${1:-.}" remote get-url origin 2>/dev/null || :)"
+	[ -n "$url" ] || return 1
+	nwo="$(printf '%s\n' "$url" | sed -E 's#\.git$##; s#^git@[^:]+:##; s#^ssh://[^/]+/##; s#^https?://[^/]+/##')"
+	printf '%s\n' "$nwo" | grep -qE '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || return 1
+	printf '%s\n' "$nwo"
+}
+
+list_this_checkout() {
+	local root repo args out n
+	root="$(git rev-parse --show-toplevel 2>/dev/null || :)"
+	repo=""
+	[ -n "$root" ] && repo="$(origin_nwo "$root" || :)"
+	if [ -z "$root" ] && [ -z "$repo" ]; then
+		note "this directory is not inside a checkout, so there is no repository to list lanes for."
+		note "  \`lanes\` lists every lane on this workstation; \`restart <lane>\` restarts one by name."
+		return 8
+	fi
+	args=()
+	[ -n "$repo" ] && args+=(--repo "$repo")
+	[ -n "$root" ] && args+=(--dir "$root")
+	# LOCAL READS. A person typing `restart` wants an answer now, and every read
+	# in this family sits in front of a launch: `lanes --fetch` is the refresh.
+	out="$("$LANES_EDIT" lanes ${args[@]+"${args[@]}"} 2>/dev/null)" || out=""
+	if [ -z "$out" ]; then
+		note "no lane of ${repo:-$root} is in the register."
+		note "  open one: lane-start <repo> <n>   ·   every lane on this workstation: lanes"
+		return 8
+	fi
+	printf '%-24s %-8s %-12s %-22s %-38s %-10s %s\n' LANE STATE PROFILE WINDOW "LAST TRANSCRIPT" AGE RESTART
+	n=0
+	while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_home r_fk; do
+		[ -n "${r_lane:-}" ] || continue
+		printf '%-24s %-8s %-12s %-22s %-38s %-10s %s\n' \
+			"$r_lane" "$r_state" "$r_pf" "$r_win" "$r_sid" "$r_age" "restart $r_lane"
+		# DECISION 8(e) — A LIVE FORK IS A DEFECT TO RETIRE, NEVER A HOLDER, and
+		# it is shown where a person is choosing what to restart: Evidence 6's
+		# fork went on relaunching writers and writing the lane's log while
+		# telling the interactive session it was the holder.
+		case "${r_fk:-0}" in 0 | '') : ;;
+		*) printf '%-24s %s\n' "" "DEFECT: $r_fk live fork(s) of this lane's transcript — retire them: $LANES_EDIT forks $r_lane" ;;
+		esac
+		n=$((n + 1))
+	done <<EOF
+$out
+EOF
+	[ "$n" -gt 0 ] || return 8
+	say ""
+	say "Type one of the lines above. Nothing was asked and nothing is waiting:"
+	say "a listing is output, not a picker (ratified decision 3, decision 7 point 5)."
+	return 0
+}
+
+# ------------------------------------------------- with no lane: the window
+#
+# DECISION 7 POINT 3, in the direction's own words: "if one matches the current
+# window name, then just restart that one". The window's NAME is a statement of
+# intent in exactly the way `--lane` is — `lane-start` is the only thing that
+# ever writes it — so it is taken silently.
+if [ -z "$lane" ]; then
+	win_name=""
+	if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+		win_name="$(tmux display-message -p '#{window_name}' 2>/dev/null || :)"
+	fi
+	if [ -n "$win_name" ] && LANES_NO_FETCH=1 "$LANES_EDIT" register-row "$win_name" >/dev/null 2>&1; then
+		lane="$win_name"
+		note "this window is lane $lane — restarting it, asking nothing (decision 7 point 3)"
+	else
+		list_this_checkout || exit $?
+		exit 0
+	fi
+fi
+
+case "$lane" in
+[A-Za-z0-9]*) : ;;
+*) die "'$lane' is not a lane name (letters, digits, . _ -)" 2 ;;
+esac
+
+# ------------------------------------------------------------- the lane's row
+row_rc=0
+LANES_NO_FETCH=1 "$LANES_EDIT" register-row "$lane" >/dev/null 2>&1 || row_rc=$?
+case "$row_rc" in
+0) : ;;
+8) die "the register has no row for lane $lane.
+    Lanes of this checkout:   $prog
+    Every lane here:          lanes
+    Open a new one:           lane-start <repo> <n>" 2 ;;
+*) die "$LANES_EDIT register-row $lane failed (exit $row_rc). That is NOT 'there is no
+    such lane', and this command will not restart a lane on an answer it did not
+    get. Run it by hand to see what it says, then re-run." 1 ;;
+esac
+
+# ----------------------------------------------- the directory and the profile
+#
+# BOTH OUT OF THE LANE'S OWN RECORD, which is the whole of decision 7: a restart
+# typed anywhere but in the lane's surviving window can learn neither from tmux,
+# because act 1's window reuse and any rename destroy the
+# `claude-<profile>-<ts>-<pid>` session name that was the only place the profile
+# ever appeared.
+record_row="$(LANES_NO_FETCH=1 "$LANES_EDIT" swapped "$ws" 2>/dev/null | awk -F'\t' -v l="$lane" '$1 == l { print; exit }' || :)"
+lane_dir="$dir_flag"
+if [ -z "$lane_dir" ] && [ -n "$record_row" ]; then
+	cand="$(printf '%s' "$record_row" | cut -f4)"
+	case "$cand" in /*) lane_dir="$cand" ;; esac
+fi
+if [ -z "$lane_dir" ]; then
+	lane_dir="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-dir "$lane" 2>/dev/null || :)"
+	case "$lane_dir" in /*) : ;; *) lane_dir="" ;; esac
+fi
+
+profile=""
+[ -n "$record_row" ] && profile="$(printf '%s' "$record_row" | cut -f5)"
+if [ -z "$profile" ]; then
+	# The log's own `profile` sub-field, for a lane whose last line is not a
+	# swap — a lane that has STARTED under Amendment 11 and not yet paused.
+	profile="$("$LANES_EDIT" lanes --all 2>/dev/null | awk -F'\t' -v l="$lane" '$1 == l { print $4; exit }' || :)"
+	case "$profile" in none | '') profile="" ;; esac
+fi
+
+# THE INTERVAL, NAMED RATHER THAN GUESSED AT (decision 7 point 8, Amendment
+# 7(i)'s cutover rule). Until a lane has been started once under Amendment 11 its
+# record carries no `profile`, and there is nothing here to derive one from that
+# would not be a guess: the tmux session name is gone, the row does not carry it,
+# and launching the WRONG profile is a launch into another account. So this
+# refuses and prints the act that works today — which is the zero-question form
+# clause (b) already names — rather than inventing one.
+if [ -z "$profile" ]; then
+	# The hint's directory is computed OUT HERE rather than inside the message:
+	# `${lane_dir:-<the lane's checkout>}` puts an apostrophe inside a parameter
+	# expansion, which bash parses as a quote and not as prose, and the whole
+	# file then fails to parse. A refusal that cannot be read is not a refusal.
+	dir_for_hint="$lane_dir"
+	[ -n "$dir_for_hint" ] || dir_for_hint="<the lane checkout>"
+	die "lane $lane's record does not name a profile yet, and this command will not guess one:
+    a wrong profile is a launch into another account. It is recorded by
+    \`lane-start\` at the lane's next start and by \`/lane-swap\` at its next swap
+    (Amendment 11 clause (c); nothing is backfilled, Amendment 7(i)).
+
+    Until then, the zero-question form is one line typed in the lane's own
+    directory:
+      cd $dir_for_hint && pclaude --lane $lane <profile>" 2
+fi
+
+if [ -z "$lane_dir" ]; then
+	die "lane $lane's record does not name a directory yet, so this command does not know
+    where to \`cd\` — and a restart that lands in the right transcript and the wrong
+    directory loses the repository's CLAUDE.md and the lane's memory, silently
+    (Evidence 3). Name it once:
+      $prog --dir <the lane's checkout> $lane
+    and \`lane-start\` records it from there on." 2
+fi
+[ -d "$lane_dir" ] || die "lane $lane's recorded directory does not exist: $lane_dir
+    That is a refusal naming the path and NEVER a silent re-home: this command
+    will not fall back to a directory that merely has the right name, because
+    \`lane-start\` writes the lane's HOME from that directory's origin and every
+    \`#n\` the lane afterwards writes inherits it. Pass the real one:
+      $prog --dir <path> $lane" 2
+
+# ------------------------------------------------------------- the launcher
+#
+# DECISION 8(a) — IT NEVER DEGRADES SILENTLY. Evidence 5: after the machine was
+# rebuilt, `lane-start` and `lane-end` were not on PATH at all, and the
+# launcher's documented degradation ran a bare `claude --resume <uuid>` — no
+# stamps, a derived session name, a window left as `claude`. A missing launcher
+# is said out loud, on the first line, with the act that fixes it.
+pclaude="${PCLAUDE:-}"
+if [ -z "$pclaude" ]; then
+	pclaude="$(command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
+fi
+[ -n "$pclaude" ] || die "there is no launcher on PATH (neither \`pclaude\` nor \`claude-profile\`), and this
+    command will not run \`claude\` itself: every restart path goes through the
+    launcher and therefore through \`lane-start\`, which is what renames the
+    window, stamps the row, extends the session cell and passes \`--name $lane\`
+    so the harness's record name is the lane rather than a derived one
+    (Evidence 4). Install the toolset and the launcher, then re-run." 2
+command -v lane-start >/dev/null 2>&1 || note "\`lane-start\` is not on PATH. The launcher will say what it does about that
+    on its first line; this command does not second-guess it, but a restart
+    without it writes no stamp and leaves the window as it is (Evidence 5).
+    Fix it with: openRepoTools --install"
+
+cmd=("$pclaude" --lane "$lane")
+[ -n "$dir_flag" ] && cmd=("$pclaude" --lane "$lane" --dir "$dir_flag")
+cmd+=("$profile")
+
+from_record=""
+[ -n "$record_row" ] && from_record=" · from the lane record"
+say "restart $lane · dir $lane_dir · profile $profile$from_record"
+if [ "$dry_run" = 1 ]; then
+	say "cd $lane_dir"
+	say "exec ${cmd[*]}"
+	say "--dry-run: nothing was launched"
+	exit 0
+fi
+cd -- "$lane_dir"
+exec "${cmd[@]}"

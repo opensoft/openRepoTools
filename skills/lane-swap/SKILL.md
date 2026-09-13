@@ -26,12 +26,45 @@ claude-usage
 window="$(tmux display-message -p '#W')"                     # Amendment 8(b): the window IS the lane
 lane="$window"
 LANES_NO_FETCH=1 "$L" register-row "$lane" >/dev/null 2>&1 || lane=""
+# THE WORKSTATION COMES FROM CONFIGURATION, NEVER FROM `hostname` (Amendment 11,
+# ratified decision 8(d), from Evidence 6): a forked orchestrator wrote a bench
+# container's id into a register whose every other row says `Eagle`, and a row
+# on a workstation that does not exist is a row no reader can match. `$L`'s own
+# `workstation` read is the one implementation; its second tab-separated field
+# says which rung answered.
+ws_pair="$("$L" workstation 2>/dev/null)"
+ws="${ws_pair%%	*}"
+# AND IT NEVER WRITES A PLACEHOLDER (`R-A11-14`). Inside a container with no
+# `LANES_WORKSTATION`, the helper's own writers refuse — `@unknown-workstation`
+# is the same defect one field along from the `unknown` clause (e) refuses in
+# the session field, and the log is never rewritten. So this skill STOPS here
+# and says what to set, rather than swapping into a record no reader can match.
+if [[ "${ws_pair##*	}" == container-unset || -z "$ws" ]]; then
+  echo "REFUSED: this is a container and \$LANES_WORKSTATION is not set, so the swap has no workstation to record. The workBenches launcher exports it into every session it starts; set it for this one and re-run: export LANES_WORKSTATION=<this host name>"
+  exit 2
+fi
+if [[ -z "$lane" ]]; then
+  # AMENDMENT 11 CLAUSE (b) INSERTS A STEP BETWEEN THE NAME AND THE RECORD, AND
+  # THIS SKILL TAKES IT TOO (clause (h): one read, three callers). `window-lane`
+  # answers "the lane bound to THIS window of THIS workstation" — the register
+  # row whose name is the window's name, else this workstation's swap record
+  # whose `window` sub-field names this window's `<@id>` or its
+  # `<session>:<index>`, and only where that window still exists. Without it the
+  # skill and the launcher disagree in precisely the case the new step exists
+  # for: a window whose name is gone but whose record names it.
+  # 0 is a lane, 8 is none, and 2 is a `lanes-edit.sh` predating Amendment 11 —
+  # expected and silent, and a fall to the next rung rather than a refusal.
+  wl_ref="$(tmux display-message -p '#{window_id}' 2>/dev/null)"
+  [[ -n "$wl_ref" ]] || wl_ref="$(tmux display-message -p '#S:#I' 2>/dev/null)"
+  candidate="$(LANES_NO_FETCH=1 "$L" window-lane "$ws" "$wl_ref" 2>/dev/null)" && \
+    [[ "$candidate" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] && lane="$candidate"
+fi
 if [[ -z "$lane" ]]; then
   # The swap record, read exactly as the launcher reads it: the STATUS decides
   # whether there is an answer at all, and the contract is the tab. A row that
   # printed before a failed read, or one with no tab, is not a record row —
   # `cut -f 1` would hand back the whole line, lane-shaped and wrong.
-  rows="$(LANES_NO_FETCH=1 "$L" swapped "$(hostname -s)" 2>/dev/null)" || rows=""
+  rows="$(LANES_NO_FETCH=1 "$L" swapped "$ws" 2>/dev/null)" || rows=""
   first="$(printf '%s\n' "$rows" | head -n 1)"
   if [[ -n "$rows" && "$first" == *$'\t'* ]]; then
     candidate="${first%%$'\t'*}"
@@ -41,8 +74,9 @@ fi
 printf 'lane=%s\n' "${lane:-<none>}"
 ```
 
-The window name answers first; the swap record answers second — the launcher's own order, so the skill and
-the launcher never disagree about which lane this is. Then make the other two names match it, mechanically:
+The window name answers first, the window's own RECORD second and the workstation's newest swap third —
+the launcher's own order, with Amendment 11 clause (b)'s new zero-question step in the middle, so the skill
+and the launcher never disagree about which lane this is. Then make the other two names match it, mechanically:
 
 - window name ≠ lane → `tmux rename-window "$lane"`;
 - Claude session name ≠ lane → type `/rename <lane>` (Amendment 2: the session name is the lane's
@@ -121,19 +155,60 @@ payload or free text containing ` — ` (exit 2), because that separator is what
 its free text.
 
 ```sh
-# (a) the Amendment 7 object-log PAUSED line — the record `swapped` reads
-LANES_LANE="$lane" "$L" log PAUSED "lane:$lane" \
-  → "swap; window $(tmux display-message -p '#S:#I'); workstation $(hostname -s)" \
+# AMENDMENT 11 CLAUSE (c) — THE RECORD'S TWO NEW SUB-FIELDS, AND ITS SECOND REF.
+# A swap is the ONE moment the lane is certainly running, so it is the one
+# moment both are certainly knowable; neither is derived and neither is guessed.
+#   dir      the lane's CHECKOUT — its own recorded directory where it has one
+#            (`lane-dir`, written by `lane-start` at every start under this
+#            amendment), and only failing that this session's own checkout root.
+#            NEVER a subagent's worktree: a lane's `dir` is where the lane is
+#            restarted, and restarting into a worktree is Evidence 3's silent
+#            loss of the repository's CLAUDE.md and the lane's memory.
+#   profile  `$CLAUDE_PROFILE_NAME`, which the launcher exports into every
+#            session it starts. Without it a `restart <lane>` typed anywhere but
+#            in the lane's surviving window cannot name the profile the launcher
+#            needs, because today the profile is recoverable only from the tmux
+#            session name, which act 1's window reuse and any rename destroy.
+#   window   gains its `<@id>` beside the `<session>:<index>` it already had —
+#            two space-separated refs in ONE sub-field under 7(b)'s grammar.
+# A path containing a space is WRITTEN QUOTED, which is what makes it one ref;
+# a path containing `, `, ` — ` or `"` is refused rather than written unreadable.
+dir="$(LANES_NO_FETCH=1 "$L" lane-dir "$lane" 2>/dev/null)" || dir=""
+[[ -n "$dir" ]] || dir="$(git rev-parse --show-toplevel 2>/dev/null)"
+case "$dir" in *' '*) dir="\"$dir\"" ;; esac
+win="$(tmux display-message -p '#S:#I' 2>/dev/null)"
+wid="$(tmux display-message -p '#{window_id}' 2>/dev/null)"
+[[ "$wid" == @* ]] && win="$win $wid"
+payload="swap; window $win"
+[[ -n "$dir" ]] && payload="$payload; dir $dir"
+[[ -n "${CLAUDE_PROFILE_NAME:-}" ]] && payload="$payload; profile $CLAUDE_PROFILE_NAME"
+payload="$payload; workstation $ws"
+
+# (a) the Amendment 7 object-log PAUSED line — the record `swapped` reads.
+# AMENDMENT 11 CLAUSE (e) — THE SKILL SUPPLIES THE UUID, AND `LANES_SESSION` IS
+# HOW. The defect was never that the skill wrote `unknown`; it is that the skill
+# HAS the uuid in hand ($uuid, bound in step 1 and written into the register's
+# own PAUSED line two lines below) AND DOES NOT PASS IT, so `session_for()` fell
+# to the row's last uuid and, for a row with none, to the literal — four such
+# lines are in the append-only log in two lanes, and a log that may carry
+# `unknown` in that field is a log clause (d) rule 3 cannot read as a resume
+# target. One environment prefix is the fix; the writer's own refusal is the
+# guard behind it, not the fix.
+LANES_LANE="$lane" LANES_SESSION="$uuid" "$L" log PAUSED "lane:$lane" \
+  → "$payload" \
   "on <operator>'s word: <sanitized verbatim>"
-# (b) the LANES.md file-level line, the shape every prior PAUSED/RESUMED used
-"$L" append-line "PAUSED — lane $lane, session $uuid@$(hostname -s), $(date -u +%Y-%m-%dT%H:%M:%SZ), on <operator>'s word \"<sanitized verbatim>\"; <what's open, or NOTHING CLAIMED>; handoff refreshed"
+# (b) the LANES.md file-level line, the shape every prior PAUSED/RESUMED used.
+# IT IS WRITTEN WHETHER OR NOT (a) COULD BE (A8(a) step 4, `R-A11-11`): a swap
+# is never left unwritten, so a lane whose object line was refused still gets
+# this line and the row's state cell, with the gap named in the handoff.
+"$L" append-line "PAUSED — lane $lane, session $uuid@$ws, $(date -u +%Y-%m-%dT%H:%M:%SZ), on <operator>'s word \"<sanitized verbatim>\"; <what's open, or NOTHING CLAIMED>; handoff refreshed"
 # (c) the row: flip its leading state word, DERIVED from the row itself. row_write_refused is what step 5
 # reads: empty on success, "1" the moment either write below does not.
 state="$(printf '%s' "$row" | grep -o '| [A-Z][A-Z]* ·' | head -n 1)"   # e.g. '| LIVE ·'
 row_write_refused=""
 "$L" replace-in-row "$lane" "$state" "| PAUSED ·" "swap" || row_write_refused=1
 if [[ -z "$row_write_refused" ]]; then
-  "$L" append-row-status "$lane" "PAUSED — swap; window $(tmux display-message -p '#S:#I'); workstation $(hostname -s)" \
+  "$L" append-row-status "$lane" "PAUSED — $payload" \
     || row_write_refused=1
 fi
 ```
@@ -150,10 +225,10 @@ never flipped to `PAUSED`.
 
 ```sh
 if [[ -n "${row_write_refused:-}" ]]; then
-  restart_cmd="pclaude --lane $lane run ${CLAUDE_PROFILE_NAME:-<profile>}"
+  restart_cmd="pclaude --lane $lane ${CLAUDE_PROFILE_NAME:-<profile>}"
   restart_note=' (row write was refused; the lane must be named explicitly)'
 else
-  restart_cmd="pclaude run ${CLAUDE_PROFILE_NAME:-<profile>}"
+  restart_cmd="pclaude ${CLAUDE_PROFILE_NAME:-<profile>}"
   restart_note=''
 fi
 printf 'READY TO SWAP — restart with: %s%s\n' "$restart_cmd" "$restart_note"

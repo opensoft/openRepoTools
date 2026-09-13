@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# lanes — every lane on this workstation, newest activity first.
+#
+#   lanes            the estate-wide listing, read LOCALLY
+#   lanes --fetch    the same, after refreshing from origin
+#   lanes --all      every workstation's lanes, not only this one's
+#
+# Installed on PATH by `openRepoTools --install`. Brett Heap's direction of
+# 2026-09-13T15:34:30Z, verbatim — "we need a good simple way to restart and
+# list the lanes" — and RATIFIED as lane-collision-protocol Amendment 11
+# decision 6 on 2026-09-13T18:05:29Z, verbatim "Yes, build `lanes` in A11".
+#
+# IT IS ITS OWN WORD, AND `pclaude` WITH NO ARGUMENTS IS UNTOUCHED. The other
+# half of the same proposal had a bare `pclaude` print this listing, and that
+# REPEALS A RATIFIED DECISION: `pclaude` with no arguments prints the PROFILE
+# list today (`claude-profile:632`, `action="${1:-list}"`) and Amendment 11's
+# ratified decision 1 keeps `list`, `login`, `status` and `run` meaning what
+# they mean. `R-A11-9` took the other way out — one new word on PATH, nothing
+# repealed, and a listing readable from a bare shell that has never heard of a
+# profile.
+#
+# IT CHANGES NOTHING. Every read is Amendment 7's: out of `origin/<branch>`,
+# never the working tree, and it writes nothing, commits nothing and launches
+# nothing. It asks nothing either — a listing is output, not a picker
+# (ratified decision 3; decision 7 point 5 says why the two are different).
+#
+# LOCAL BY DEFAULT, `--fetch` TO REFRESH. Every read in this family sits in
+# front of a launch and a person typing one word wants an answer now, so the
+# default passes `LANES_NO_FETCH=1` and the listing says how old the checkout's
+# answer is. A stale answer a reader can see is worth more than a fresh one
+# they waited on.
+#
+# A LIVE FORK IS SHOWN AS A DEFECT TO RETIRE (ratified decision 8(e), from
+# Evidence 6). On 2026-09-13 an abandoned launch of a lane left behind a
+# `--fork-session` daemon of its transcript — a new session id, `kind: bg`, no
+# tmux, cwd `/workspace` — that went on orchestrating the same plan, relaunched
+# writers on the same three branches, wrote `RESUMED` and `PAUSED` lines into
+# the lane's log and messaged the interactive session claiming to be the holder
+# while citing a dead pid. It is never a holder and it must never write the
+# register; this listing names it, and retiring it is a person's act.
+#
+# EXIT CODES: 0 rows · 8 no lane to list · 2 refused · 1 a read failed.
+#
+#   $LANES_EDIT   the register's reader (default: lanes-edit.sh beside this file)
+#
+# `restart <lane>` restarts one of these; `restart` with no argument is the
+# PER-REPO listing, which is a different question and a different command.
+
+set -euo pipefail
+
+prog="${0##*/}"
+SELF="${BASH_SOURCE[0]:-$0}"
+selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
+
+say() { printf '%s\n' "$*"; }
+die() { printf '\n%s: REFUSED: %s\n' "$prog" "$1" >&2; exit "${2:-2}"; }
+
+usage() {
+	cat <<'USAGE'
+lanes [--fetch] [--all] [--repo <owner/repo>] [--dir <path>] [--ws <workstation>]
+
+Every lane on this workstation, newest activity first: name, state, workstation,
+profile, tmux window, last transcript uuid, directory, held objects and age —
+and for a lane that is not live, the exact command that restarts it.
+
+  --fetch          refresh from origin first. Without it the read is LOCAL and
+                   the foot of the listing says how old this checkout's answer
+                   is: a person typing one word wants an answer now.
+  --all            every workstation's lanes, not only this one's.
+  --repo <o/r>     only lanes whose register home is that repository.
+  --dir <path>     only lanes whose recorded directory is that path.
+                   --repo and --dir together are an OR, not an AND: a lane's
+                   home repository and the checkout it sits in are not the same
+                   fact.
+  --ws <name>      another workstation's lanes.
+  -h, --help       this.
+
+Exit: 0 rows · 8 none · 2 refused · 1 a read failed.
+
+It writes nothing, launches nothing and asks nothing. `restart <lane>` is what
+restarts one, and `restart` with no argument lists the CURRENT CHECKOUT's lanes.
+USAGE
+}
+
+LANES_EDIT="${LANES_EDIT:-}"
+if [ -z "$LANES_EDIT" ]; then
+	if [ -x "$selfdir/lanes-edit.sh" ]; then LANES_EDIT="$selfdir/lanes-edit.sh"
+	else LANES_EDIT="$(command -v lanes-edit.sh 2>/dev/null || printf '')"
+	fi
+fi
+[ -n "$LANES_EDIT" ] && [ -x "$LANES_EDIT" ] || die "no register reader at ${LANES_EDIT:-lanes-edit.sh} — it is installed beside this
+    command by \`openRepoTools --install\`. Run that, or set \$LANES_EDIT." 2
+
+do_fetch=0
+args=()
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-h | --help) usage; exit 0 ;;
+	--fetch) do_fetch=1; shift ;;
+	--all) args+=(--all); shift ;;
+	--repo | --dir | --ws)
+		[ -n "${2-}" ] || die "$1 needs a value — see $prog --help" 2
+		args+=("$1" "$2"); shift 2 ;;
+	--repo=* | --dir=* | --ws=*)
+		flag="${1%%=*}"; val="${1#*=}"
+		[ -n "$val" ] || die "$flag needs a value — see $prog --help" 2
+		args+=("$flag" "$val"); shift ;;
+	--) shift ;;
+	-*) die "unknown option '$1' — see $prog --help" 2 ;;
+	*) die "lanes takes no positional arguments; did you mean \`restart $1\`? — see $prog --help" 2 ;;
+	esac
+done
+
+ws_pair="$("$LANES_EDIT" workstation 2>/dev/null || :)"
+ws_name="$(printf '%s' "$ws_pair" | cut -f1)"
+ws_src="$(printf '%s' "$ws_pair" | cut -f2)"
+
+# LOCAL IS THE HELPER'S OWN DEFAULT for this one read (SPEC rev 4 §15), so
+# `--fetch` is passed through rather than simulated here: one implementation of
+# "does this read touch the network", in the file that owns the network.
+rc=0
+if [ "$do_fetch" = 1 ]; then
+	out="$("$LANES_EDIT" lanes --fetch ${args[@]+"${args[@]}"} 2>/dev/null)" || rc=$?
+else
+	out="$("$LANES_EDIT" lanes ${args[@]+"${args[@]}"} 2>/dev/null)" || rc=$?
+fi
+case "$rc" in
+0) : ;;
+8) say "no lane is recorded for ${ws_name:-this workstation}."
+	say "  open one:            lane-start <repo> <n>"
+	say "  every workstation:   $prog --all"
+	exit 8 ;;
+64) die "bad arguments for the listing read — see $prog --help" 2 ;;
+*) die "$LANES_EDIT lanes failed (exit $rc). That is NOT 'there are no lanes', and this
+    command will not print an empty listing on an answer it did not get
+    (Amendment 7(d)). Run it by hand to see what it says." 1 ;;
+esac
+
+printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
+	LANE STATE WHERE PROFILE WINDOW "LAST TRANSCRIPT" AGE DIRECTORY
+n=0
+defects=0
+while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_home r_fk; do
+	[ -n "${r_lane:-}" ] || continue
+	printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
+		"$r_lane" "$r_state" "$r_ws" "$r_pf" "$r_win" "$r_sid" "$r_age" "$r_dir"
+	case "$r_obj" in
+	none | 'none open' | '') : ;;
+	*) printf '%-26s holds: %s\n' "" "$r_obj" ;;
+	esac
+	# THE EXACT RESTART COMMAND, FILLED IN, for a lane that is not live — which
+	# is what a person reading this listing is here for. A lane whose record
+	# carries no profile yet cannot be restarted by name (nothing here may guess
+	# one: a wrong profile is a launch into another account), so the line says
+	# what supplies it rather than printing a command that would refuse.
+	case "$r_state" in
+	LIVE) : ;;
+	*)
+		# A PAUSED LANE WHOSE RECORD CARRIES NO `profile` GETS NO `restart` LINE
+		# (SPEC rev 4 §15). It gets the form that works today with the profile
+		# named as the ONE TOKEN THE OPERATOR MUST SUPPLY, because a line that
+		# cannot be typed is worse than a column that says `none`.
+		if [ "$r_pf" = "none" ] || [ -z "$r_pf" ]; then
+			printf '%-26s restart: pclaude --lane %s <profile>   (no profile recorded yet; it is written at this lane next start or swap)\n' "" "$r_lane"
+		else
+			printf '%-26s restart: restart %s\n' "" "$r_lane"
+		fi ;;
+	esac
+	case "${r_fk:-0}" in
+	0 | '') : ;;
+	*) printf '%-26s DEFECT: %s live fork(s) of this lane transcript — never a holder, and they must not write the register. Name them: %s forks %s\n' \
+		"" "$r_fk" "$LANES_EDIT" "$r_lane"
+		defects=$((defects + 1)) ;;
+	esac
+	n=$((n + 1))
+done <<EOF
+$out
+EOF
+
+say ""
+if [ "$do_fetch" = 1 ]; then
+	say "$n lane(s), as of a fetch just now."
+else
+	say "$n lane(s), read locally — no fetch; this checkout last heard from origin $("$LANES_EDIT" fetch-age 2>/dev/null || printf 'unknown'). \`$prog --fetch\` refreshes first."
+fi
+[ "$defects" = 0 ] || say "$defects lane(s) have a live fork of their transcript running. A fork is never the holder (ratified decision 8(c)); retiring one is your act, never a tool's."
+case "$ws_src" in
+hostname-in-container)
+	say "This workstation is named '$ws_name', taken from this host's own hostname — which inside a container is the container id and not a workstation (decision 8(d)). Write the real one once, as a top-level \`workstation: <name>\` line in ${AGENT_PROTOCOL_ROOT:-$HOME/.agents}/workspace.yaml." ;;
+esac
+exit 0
