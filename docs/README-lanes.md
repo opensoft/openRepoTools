@@ -73,7 +73,7 @@ workstation**.
 | the object logs | `<the checkout>/lanes/log/<lane>.md` — one per lane (Amendment 7) |
 | the alias table | two layers: `repos.tsv` shipped by openRepoTools and installed beside the commands, then `<the checkout>/lanes/repos.tsv` where you keep an override (Amendment 9(b)) |
 | who places the symlinks | `link-estates`, an installed command. It places the handoffs links, the register link and the `lanes-edit.sh` link — **and no longer the two `~/.local/bin` ones**, which `--install` owns |
-| who installs all of it | `openRepoTools --install` (nine files, idempotent, all-or-nothing) |
+| who installs all of it | `openRepoTools --install` (eleven files, idempotent, all-or-nothing) |
 
 Why `main` of the workspace repository and not the aggregation's: the
 aggregation repo's `main` is PR-only (org rulesets `xFactory Tier-1 main
@@ -1054,9 +1054,17 @@ workstation is `hostname -s`. One row per lane, **tab-separated, lane first**:
 
 ```console
 $ lanes-edit.sh swapped Eagle
-repoSW-1	2026-09-12T10:00:00Z	claude-team-05b-20260912102132-2699:0
+repoSW-1	2026-09-12T10:00:00Z	claude-team-05b-20260912102132-2699:0 @71	~/projects/repoSW	team-05b
 repoSW-5	2026-09-12T11:00:00Z	sess-five:5
 ```
+
+**Amendment 11 gives the row a fourth field, `<dir>`, and a fifth,
+`<profile>`, and the `<window>` field a second ref, `<@id>`** — and the second
+row above is what every record written before that looks like: the fields are
+EMPTY rather than guessed (Amendment 7(i) cuts each lane over at its own next
+start, and nothing is backfilled). **The first field before the first tab is
+still the lane**, which is the contract both readers of this output take, and
+it is what makes a fourth and a fifth field safe to add at all.
 
 `<lane>`, `<UTC>`, `<window>` — the window being the `window <s>:<i>` the
 `/swap` recorded, which is where that lane was. **Exit 0** with rows, **8** with
@@ -1201,6 +1209,226 @@ exists, and every one of them is a **read**: AGENTS.md rule 1's list of writers
 `claim`, `release`, `commit`) and rule 8's list of tooling paths are both
 unchanged by this amendment.
 
+## Restart and list (Amendment 11)
+
+**DRAFT, 2026-09-13, awaiting Brett Heap's word on the amendment itself**
+(`brettheap/new-workstation#21`) — but **eight decisions inside it are
+RATIFIED**, verbatim, on 2026-09-13T18:05:29Z: *"Ratify all four"*, *"Yes, build
+`lanes` in A11"*, *"Ratify the bundle"*, *"Hotfix brett-wip now, move it with
+history"*. Everything below rests on one of those eight.
+
+Amendment 8 made a swap leave a record. Amendment 11 is what makes that record
+enough to **restart from**, and it exists because on 2026-09-13 a restart of a
+real lane printed `[exited]` and a second one came up in the wrong directory
+without the repository's `CLAUDE.md` or the lane's memory, silently.
+
+### The two words
+
+```console
+$ restart openRepoProject-1     # cd to its directory, relaunch through the launcher
+$ restart                       # this window's lane; or this checkout's lanes, listed
+$ lanes                         # inside a checkout: ITS lanes, and the next free one
+$ lanes --all                   # every lane the register and the logs know
+$ lanes --fetch                 # any of them, after refreshing from origin
+```
+
+`restart <lane>` needs **no window, no record of a window and no guess** — only
+the lane's name, its `dir` and its `profile`, both of which the record now
+carries. That is the whole point: measured on this estate after the tmux server
+was replaced, each of the two surfaces the direction names met **one prompt
+offering two choices, and the lane it offered was the wrong one**. Declining was
+the only correct answer, and declining left the operator where they started.
+
+**It never calls `claude` itself.** Every path goes through the launcher and
+therefore through `lane-start`, which renames the window, writes the row stamp,
+extends the session cell, writes the `RESUMED` object line, stamps the handoff —
+and passes `--name <lane>`, without which the harness derives a record name like
+`openrepoproject-b9` and that derived name is what the statusline and
+`ListAgents` show.
+
+**It `cd`s into the lane's directory before it launches**, and that is not a
+convenience: the harness keys a session to the directory it was started in, so a
+restart from the wrong one loads neither the repository's `CLAUDE.md` nor the
+lane's memory, while `--resume <uuid>` goes on continuing the right transcript —
+which is why the loss is silent.
+
+**Neither is ever a picker.** A picker is a process that holds the terminal and
+returns a selection; a listing asks nothing, returns nothing, exits, and the
+next act is a command you type. `restart` with no argument prints the lanes of
+the **current checkout** on this workstation; `lanes` prints **this checkout's
+repository's lanes**, or **every lane** outside one — the section below.
+
+`/restart [<lane>]` is the same act from **inside** a running session, and it is
+a skill rather than a command because a session cannot `exec` a launcher over
+itself: it binds the window through `lane-start --no-launch`, and where this
+session is not the lane's conversation it prints exactly `claude --resume <uuid>`
+and stops.
+
+### The bare word narrows inside a checkout
+
+**Brett Heap settled clause (j)'s default on 2026-09-13T20:38:11Z, verbatim
+*"Narrow inside a checkout (Recommended)"*, and `lane-start <repo>` with no
+position in the same breath, verbatim *"Yes, list and suggest (Recommended)"*.**
+
+A bare `lanes` INSIDE a lane checkout lists **that repository's lanes** — the
+checkout around the cwd as clause (i)'s `--dir`, and that checkout's `origin` as
+`--repo`, which are an **OR and not an AND**, because a lane's home repository
+and the checkout it sits in are not the same fact — and it ends with the **next
+free position** and the exact `lane-start <repo> <n>` that takes it, filled in.
+The position offered is the **lowest** one no lane of that repository holds,
+never the highest plus one: positions come back as lanes end, and `lane-start`
+refuses one that is taken, so this is a suggestion with a guard behind it rather
+than an assertion.
+
+**The repository is the one `origin` names, and the directory's name is only the
+fallback.** Inside a worktree, `basename $(git rev-parse --show-toplevel)` is the
+WORKTREE's name: run in a worktree of `openRepoTools` called `ort-a11` the
+listing narrowed to a repository called `ort-a11`, found none, and offered
+`lane-start ort-a11 1` — a lane whose `$PROJECTS_ROOT/<repo>` cannot exist. A
+checkout with no `origin` keeps the directory name, because there is nothing
+else to have.
+
+`lanes --all`, and a bare `lanes` outside every checkout, are clause (j)'s
+every-lane listing **unchanged**; any explicit narrowing — `--repo`, `--dir`,
+`--ws`, `--here` — is the caller saying which lanes they mean and suppresses it
+too. `--here` is the pre-Amendment-11 default, only the asking workstation's
+lanes, kept as an option: "list the lanes" on a two-workstation estate means
+both.
+
+`lane-start <repo>` with **no position** prints that same listing and that same
+next free position, and **launches nothing**. It still exits **2** — a
+repository is not a lane, and a caller that scripted `lane-start <repo>`
+expecting a session must not read 0 from a run that started none — and the
+refusal names the position it has just given the reader a listing for. It
+renders nothing of its own: it runs `lanes --prefix <repo>`, so the two surfaces
+cannot offer different positions.
+
+### What the record carries now
+
+Two payload sub-fields are added to the lane's `STARTED`, `RESUMED` and swap
+`PAUSED` lines, and the `window` sub-field gains a second ref:
+
+```text
+STARTED — lane openRepoProject-1, session a3ab3df2-…@Eagle, 2026-09-13T04:30:00Z, lane:openRepoProject-1 → home opensoft/openRepoProject; estate openRepoProject; dir ~/projects/openRepoProject; profile team-05a; window claude-team-05a-20260912213845-570498:0 @71
+PAUSED — lane openRepoProject-1, session a3ab3df2-…@Eagle, 2026-09-13T04:32:00Z, lane:openRepoProject-1 → swap; window claude-team-05a-20260912213845-570498:0 @71; dir ~/projects/openRepoProject; profile team-05a; workstation Eagle
+```
+
+- **`dir <path>`** — the lane's checkout. Two writers put it there: `lane-start`
+  from the directory it is about to `cd` into, and the swap from the live
+  session's own record. A path containing `, `, ` — ` or `"` is **refused**,
+  naming the path; a path containing a **space is written quoted**, which is
+  what makes it one ref under Amendment 7(b)'s grammar, and every reader strips
+  the quotes.
+- **`profile <name>`** — from `$CLAUDE_PROFILE_NAME`, which the launcher exports
+  into every session it starts. Without it a restart typed anywhere but in the
+  lane's surviving window cannot name the profile the launcher needs.
+- **`window <session>:<index> <@id>`** — two space-separated refs in one
+  sub-field. **The name is the key and the id is information**: a tmux server
+  restart reissues every id from `@0`, so a binding keyed on the id would lose
+  the lane where one keyed on the name does not.
+
+**A line written before this carries none of them, and a reader that finds none
+says so rather than assuming one.** Nothing is backfilled.
+
+### The lane's directory, in six rungs
+
+`--dir <path>` → the **swap record's** `dir` → the **lane's log** (`lane-dir`) →
+`$PROJECTS_ROOT/<repo>` → the estate's **`project.yaml` legs** → **a checkout
+named for the home's repository** under `$PROJECTS_ROOT`. First answer wins, and
+**the cwd's own checkout is ruled out by name**: deriving the directory from
+wherever you happen to be standing is an inference, and `lane-start` writes the
+lane's HOME from that directory's `origin`, which every `#n` the lane afterwards
+writes inherits. A recorded directory that no longer exists is a **refusal
+naming the path**, never a silent re-home.
+
+**Rungs 5 and 6 were four until Evidence 7** (`708395e`), where a lane whose
+checkout is NESTED — `~/projects/xFactory/xFactories/OpsxFactory`, not
+`$PROJECTS_ROOT/opsXfactory` — met an exit 1 behind an `exec` and a pane that
+said `[exited]`. Neither is a search for a directory that looks right:
+
+- **Rung 5 is a DECLARATION.** openRepoShape's manifest carries a top-level
+  `legs:` list of `repository:`/`path:`, and Amendment 7 decision 3 treats a leg
+  as home. Where a manifest names the lane's recorded home as a leg, that leg's
+  `path`, resolved against the manifest's own directory, IS the checkout.
+- **Rung 6 is a NAME, and the name is the repository's.** One or two levels
+  under `$PROJECTS_ROOT`, a directory named for the home's repository —
+  `resolve-repo`'s canonical spelling, because `opsXfactory` the lane label and
+  `OpsxFactory` the repository are not the same string.
+
+**Both are proved by `origin` and both are skipped entirely where the lane has
+no recorded home**, because there is then nothing to prove a candidate against
+and a match would be the guess rung 4 already refuses to make. A candidate whose
+`origin` is not the recorded home is passed over, not taken. And when all six
+answer nothing the end is still a **refusal, exit 2**, one line a person can
+type — never the exit 1 Evidence 7 met.
+
+### The new reads
+
+All read-only, all out of `origin/<branch>`, all following Amendment 7(d)'s
+fail-closed convention — **0** an answer, **8** *no answer*, **64** a usage error
+of their own — with one exception that every un-upgraded workstation is in:
+**`2` is a helper predating Amendment 11**, expected and silent, and a caller
+falls to its next rung there rather than refusing.
+
+| read | what it answers |
+|---|---|
+| `lanes-edit.sh lane-dir <lane>` | the `dir ` of the lane's **last** lane-kind line carrying one, unquoted where it was written quoted |
+| `lanes-edit.sh lane-profile <lane>` | the same read one sub-field along — the `profile ` of that last line. An addition to the amendment's own table, so that `restart <lane>` can learn a profile with one `git show` instead of a listing that reads every log on the workstation |
+| `lanes-edit.sh window-lane [<ws>] <@id>\|<session>:<index>` | the lane bound to a window **of the asking workstation** — the register row whose name is the window's name, else that workstation's swap record naming that ref |
+| `lanes-edit.sh session-lane <uuid>` | the lane whose register row's **session cell** names that transcript uuid. Adoption act 0's; it is the read the `SessionStart` hook already made. **0** the lane · **8** no row's cell names it · **64** usage — like every other read in this table, by A11 Addendum 4 ruling 1, which corrects act 0's `2` · **2** a helper predating the read |
+| `lanes-edit.sh last-session <lane>` | the lane's resume target: the last uuid in the published cell **whatever shape it is in**, and failing that the session of its last `PAUSED`/`RESUMED`. This is what `/restart`'s step 4 reads, by A11 Addendum 4 ruling 14, rather than clause (f)'s `register-row` alone — so a lane whose row was never stamped but whose log records the session it paused in still has a resume target |
+| `lanes-edit.sh forks <lane>` | the **live forks** of the lane's transcript — never holders, and a defect to retire |
+| `lanes-edit.sh lanes [--repo\|--dir\|--prefix\|--ws\|--lane\|--here\|--all\|--fetch]` | every lane, newest write first, tab-separated: clause (j)'s **ten columns in clause (j)'s order** — name, state, workstation, profile, window, last transcript uuid, directory, held objects, age, restart line — then the read's own two, `home` and the count of live forks. `lanes` and `restart` each render the subset their surface needs (A11 Addendum 4 ruling 7), and column 10 is the read's so the two cannot offer different commands. **The one read whose default is local**, and `--lane <lane>` answers about one without walking the estate. `--prefix <repo>` is the LABEL fallback the checkout narrowing and `lane-start <repo>` both ask for, used only where a lane has neither a home nor a `dir` |
+| `lanes-edit.sh workstation` | `<name><TAB><source>` — `seam`, `hostname`, or `container-unset` |
+| `lanes-edit.sh fetch-age` | how old this checkout's answer is |
+
+**`window-lane` owns the agreement rule, and it owns it once.** Existing-now is
+not enough on its own: a record naming `claude-y:0 @97`, met from the window that
+has since taken `claude-y:0` as `@200`, passes the existing-now test on its ref
+and would bind the lane to a **stranger's pane** with no question. So a record
+that carries an `<@id>` is matched on its `<session>:<index>` **only where the
+window now holding that ref reports that same id**; a record with no id is
+matched on the ref alone. Three callers share that one implementation — the
+launcher's precedence 3, `/restart`'s step 2(c) and `/lane-swap`'s step 1 —
+because three implementations of one rule is how they would come to disagree.
+
+### Two things that are never taken
+
+**A window named for another lane never lends its session.** `lane-start`'s step
+3b learns a harness-minted uuid from the session live in the window it was typed
+in — which is how a `/clear`, a usage reset and a profile switch stay recorded.
+Its fence is **two vetoes and no permission**: the **register veto** (a uuid that
+belongs to another row is never taken, read through `session-lane` and
+fail-closed) and the **window-name veto** (a window named for another lane is
+never taken). Neither the window's name being the lane nor `live-holder`
+answering `here` is a *condition for taking* — at step 3b the window is usually
+still called `claude` and there is no holder here, which is exactly the case the
+mechanism exists for.
+
+**A fork of a lane's transcript is never a holder and never writes the
+register.** A `--fork-session` copies the parent's title and gets a **new id**,
+so lineage is never the test: the holder is the session whose id the published
+cell names. `lanes`, `/restart`, `who --lane` and the `SessionStart` hook all
+show a live fork as a **defect to retire**, and none of them kills anything.
+**Retiring it is `lane-end <lane> --retire <pid|uuid>`** — the one act, ratified
+decision 8(e) and clause (k) rule (e). It is the **DOOR** to Amendment 6(d) and
+not a record of one: it proves the pid or uuid is this lane's live fork and
+prints 6(d) filled in. **It writes nothing** — a `RETIRED` carrying a payload
+would be a seventh edit to in-force text, and Amendment 7(b) gives that verb
+none — so every read goes on naming the fork until the person takes the printed
+act. And it **kills nothing either**: stopping the process is a separate act and
+it stays the person's.
+
+### The workstation's name
+
+`$LANES_WORKSTATION`, exported by the workBenches launcher from the host into
+every session and container it starts. Outside a container it still defaults to
+`hostname -s`. **Inside a container with no value, every writer refuses, exit 2,
+naming the variable** — because a container's `hostname` is the container's id,
+not a workstation, a row on a workstation that does not exist is a row no reader
+can match, and the log is never rewritten. `lanes-edit.sh` already carries six
+such lines in one lane's log, and they stay where they are.
+
 ## Hand edits
 
 After **any** hand edit made with an allowed tool (python read/write, `sed -i
@@ -1253,12 +1481,28 @@ machine whose repository already exists it clones it, adds nothing to a seeded
 repository, writes the pointer file and runs `link-estates`:
 
 ```sh
-openRepoTools --install     # the nine commands, the skill and the hook entry
+openRepoTools --install     # the eleven commands, the two skills and the hook entry
 openRepoTools wip init      # create or adopt the workspace, and link it
 ```
 
 If the host was set up from `opensoft/workBenches`, `./setup.sh` has already
-run both and there is nothing to type at all.
+run both and there is nothing to type at all — **and that is the whole of
+Amendment 11's decision 8(b) as `R-A11-13` corrected it: there is NO second
+installer.** `setup.sh` already runs `openRepoTools --install`, so `restart`,
+`lanes` and the `/restart` skill ride the step that is there rather than a new
+one. What Evidence 5 actually measured was narrower and is worth saying: after a
+machine rebuild the launcher was present and `lane-start` and `lane-end` were
+**not on `PATH` at all**, so the launcher's documented degradation ran a bare
+`claude --resume <uuid>` — no stamps, a derived session name, a window left
+`claude`, three stampless restarts in one day. The gap was never that nothing
+runs `--install`; it was that the installed `openRepoTools` predated the move
+and placed no lane helper.
+
+**And the launcher exports this workstation's name.** `$LANES_WORKSTATION` is
+written once per host and exported into every session and container the launcher
+starts (`R-A11-14`). Outside a container `hostname -s` still answers; **inside
+one with no value every writer here refuses**, because a container's hostname is
+the container's id and this log is never rewritten.
 
 The warning from Amendment 3's "Raven setup (operator, Brett)" block still
 stands and the linker does not do it for you: **diff Raven's local `LANES.md`
@@ -1282,8 +1526,8 @@ link-estates                                          # repoints ~/projects/xFac
 ```
 
 **You are not asked to remember it: `--install` refuses** (A9 Addendum 4,
-R-A9-12). In its planning phase, before any of the twelve artifacts is placed,
-it walks all nine targets and dies naming every one that is not a regular file,
+R-A9-12). In its planning phase, before any of the eighteen artifacts is placed,
+it walks all eleven targets and dies naming every one that is not a regular file,
 what it is, and the one `rm` that clears them. `cp` FOLLOWS A SYMLINK, so an
 install over these would leave the two commands UNINSTALLED — the targets stay
 links — and would write the post-move bytes into `opensoft/brett-wip`'s working

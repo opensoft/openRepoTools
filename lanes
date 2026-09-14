@@ -1,0 +1,468 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# lanes — the lanes of the checkout you are in, or every lane, newest first.
+#
+#   lanes            INSIDE a lane checkout: that repository's lanes, and the
+#                    next free position with the exact line that takes it.
+#                    Outside one: every lane the register and the logs know.
+#   lanes --all      every lane, whatever the cwd — it clears the narrowing
+#   lanes --here     only this workstation's lanes
+#   lanes --fetch    any of the above, after refreshing from origin
+#
+# THE DEFAULT IS EVERY LANE, AND THE NARROWING IS BY CHECKOUT (A11 Addendum 4
+# ruling 6, ratified "a11 addendum 4 yes" with ruling 6 answered NO, over the
+# settlement Brett Heap gave at 2026-09-13T20:38:11Z, verbatim "Narrow inside a
+# checkout (Recommended)"). It used to be scoped to the ASKING WORKSTATION,
+# which is in no clause: `window-lane` is scoped and the contract says so at
+# length, and this read is not. "List the lanes" on a two-workstation estate
+# means both. `--here` is the old default, kept as an option.
+#
+# Installed on PATH by `openRepoTools --install`. Brett Heap's direction of
+# 2026-09-13T15:34:30Z, verbatim — "we need a good simple way to restart and
+# list the lanes" — and RATIFIED as lane-collision-protocol Amendment 11
+# decision 6 on 2026-09-13T18:05:29Z, verbatim "Yes, build `lanes` in A11".
+#
+# IT IS ITS OWN WORD, AND `pclaude` WITH NO ARGUMENTS IS UNTOUCHED. The other
+# half of the same proposal had a bare `pclaude` print this listing, and that
+# REPEALS A RATIFIED DECISION: `pclaude` with no arguments prints the PROFILE
+# list today (`claude-profile:632`, `action="${1:-list}"`) and Amendment 11's
+# ratified decision 1 keeps `list`, `login`, `status` and `run` meaning what
+# they mean. `R-A11-9` took the other way out — one new word on PATH, nothing
+# repealed, and a listing readable from a bare shell that has never heard of a
+# profile.
+#
+# IT CHANGES NOTHING. Every read is Amendment 7's: out of `origin/<branch>`,
+# never the working tree, and it writes nothing, commits nothing and launches
+# nothing. It asks nothing either — a listing is output, not a picker
+# (ratified decision 3; decision 7 point 5 says why the two are different).
+#
+# LOCAL BY DEFAULT, `--fetch` TO REFRESH. Every read in this family sits in
+# front of a launch and a person typing one word wants an answer now, so the
+# default passes `LANES_NO_FETCH=1` and the listing says how old the checkout's
+# answer is. A stale answer a reader can see is worth more than a fresh one
+# they waited on.
+#
+# A LIVE FORK IS SHOWN AS A DEFECT TO RETIRE (ratified decision 8(e), from
+# Evidence 6). On 2026-09-13 an abandoned launch of a lane left behind a
+# `--fork-session` daemon of its transcript — a new session id, `kind: bg`, no
+# tmux, cwd `/workspace` — that went on orchestrating the same plan, relaunched
+# writers on the same three branches, wrote `RESUMED` and `PAUSED` lines into
+# the lane's log and messaged the interactive session claiming to be the holder
+# while citing a dead pid. It is never a holder and it must never write the
+# register; this listing names it, and the ONE act it prints is clause (k) rule
+# (e)'s — `lane-end <lane> --retire <pid|uuid>`, which PROVES the pid or uuid is
+# this lane's live fork and prints Amendment 6(d) filled in for it. IT WRITES
+# NOTHING (#26, the review of `29d3417`): a `RETIRED` carrying a payload would
+# be a seventh edit to in-force text and Amendment 7(b) gives that verb none, so
+# the read goes on naming the fork until the person takes 6(d) — which is what
+# the footer this command prints has said all along, and what this comment did
+# not. It kills nothing either; ending somebody's process is not a tool's act
+# (Amendment 8(f)).
+#
+# EXIT CODES, AND THEY ARE THE CONTRACT'S RATHER THAN THIS COMMAND'S (SPEC §15,
+# and clause (h)'s row for the read behind it): `0` rows · `8` none · `64` usage
+# · `2` A HELPER PREDATING AMENDMENT 11 · `1` a read failed.
+#
+# `64` AND `2` WERE THE WRONG WAY ROUND until this round (F-X4). A typo exited 2
+# where the contract gives 64, and a workstation whose `lanes-edit.sh` predates
+# this amendment — which is EVERY workstation until adoption act 3's install
+# reaches it — exited 1, the code reserved for a read that broke, where the
+# contract gives 2. The helper's own `lanes)` arm had them right all along; only
+# the command in front of it did not. `1` is this command's own and is not in the
+# contract's four: it is the residue, a read that answered nothing recognisable.
+#
+#   $LANES_EDIT   the register's reader (default: lanes-edit.sh beside this file)
+#
+# `restart <lane>` restarts one of these; `restart` with no argument is the
+# PER-REPO listing, which is a different question and a different command.
+
+set -euo pipefail
+
+prog="${0##*/}"
+SELF="${BASH_SOURCE[0]:-$0}"
+selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
+
+say() { printf '%s\n' "$*"; }
+die() { printf '\n%s: REFUSED: %s\n' "$prog" "$1" >&2; exit "${2:-64}"; }
+
+usage() {
+	cat <<'USAGE'
+lanes [--fetch] [--all] [--here] [--repo <owner/repo>] [--dir <path>]
+      [--prefix <repo>] [--ws <workstation>]
+
+Inside a lane checkout: THAT REPOSITORY's lanes, ending with the next free
+position and the exact `lane-start <repo> <n>` that takes it. Outside one: every
+lane the register and the lane logs know. Newest activity first: name, state,
+workstation, profile, tmux window, last transcript uuid, directory, held objects
+and age — and for a PAUSED lane, the exact command that restarts it.
+
+  --fetch          refresh from origin first. Without it the read is LOCAL and
+                   the foot of the listing says how old this checkout's answer
+                   is: a person typing one word wants an answer now.
+  --all            every lane, whatever the cwd: it clears the checkout
+                   narrowing as well as any --repo/--dir/--ws given with it.
+  --prefix <repo>  the lanes NAMED for that repository, and the next free
+                   position for it. `lane-start <repo>` with no position asks
+                   for exactly this rather than rendering a listing of its own.
+  --here           only this workstation's lanes. This was the default before
+                   Amendment 11 Addendum 4 ruling 6 and is an option now.
+  --repo <o/r>     only lanes whose register home is that repository.
+  --dir <path>     only lanes whose recorded directory is that path.
+                   --repo and --dir together are an OR, not an AND: a lane's
+                   home repository and the checkout it sits in are not the same
+                   fact.
+  --ws <name>      another workstation's lanes.
+  -h, --help       this.
+
+Exit: 0 rows · 8 none · 64 usage · 2 a helper predating Amendment 11 · 1 a read failed.
+
+It writes nothing, launches nothing and asks nothing. `restart <lane>` is what
+restarts one, and `restart` with no argument lists the CURRENT CHECKOUT's lanes
+on THIS workstation, which is a narrower question than this one.
+USAGE
+}
+
+LANES_EDIT="${LANES_EDIT:-}"
+if [ -z "$LANES_EDIT" ]; then
+	if [ -x "$selfdir/lanes-edit.sh" ]; then LANES_EDIT="$selfdir/lanes-edit.sh"
+	else LANES_EDIT="$(command -v lanes-edit.sh 2>/dev/null || printf '')"
+	fi
+fi
+[ -n "$LANES_EDIT" ] && [ -x "$LANES_EDIT" ] || die "no register reader at ${LANES_EDIT:-lanes-edit.sh} — it is installed beside this
+    command by \`openRepoTools --install\`. Run that, or set \$LANES_EDIT." 1
+
+do_fetch=0
+narrowed=0          # 1 once anything has narrowed the listing
+all_given=0         # 1 once `--all` has been seen, wherever in the line it was
+# THE REPOSITORY THIS LISTING IS ABOUT, where it is about one. Set from the
+# checkout around the cwd, or named by `--prefix <repo>` — which is how
+# `lane-start <repo>` with no position asks for this listing rather than
+# rendering a second one of its own (A11 Addendum 4 ruling 6's third delta,
+# tracked as `opensoft/openRepoTools#28`). Its presence is what turns on the
+# NEXT FREE POSITION footer.
+here_repo=""
+args=()
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-h | --help) usage; exit 0 ;;
+	--fetch) do_fetch=1; shift ;;
+	# `--all` CLEARS THE LABEL AS WELL AS THE FILTERS. The helper's `--all` drops
+	# `--repo`, `--dir` and `--prefix`, so the ROWS were right — but `here_repo`
+	# is this wrapper's own, and `lanes --all --prefix repoA11` (either order)
+	# listed every lane in the estate under a footer that said "of repoA11" and
+	# offered a next free position computed from one repository's rows. A count
+	# that names a repository it did not narrow to is worse than no count.
+	--all) args+=(--all); narrowed=0; here_repo=""; all_given=1; shift ;;
+	--here) args+=(--here); narrowed=1; shift ;;
+	--repo | --dir | --ws | --prefix)
+		[ -n "${2-}" ] || die "$1 needs a value — see $prog --help" 64
+		[ "$1" = --prefix ] && here_repo="$2"
+		args+=("$1" "$2"); narrowed=1; shift 2 ;;
+	--repo=* | --dir=* | --ws=* | --prefix=*)
+		flag="${1%%=*}"; val="${1#*=}"
+		[ -n "$val" ] || die "$flag needs a value — see $prog --help" 64
+		[ "$flag" = --prefix ] && here_repo="$val"
+		args+=("$flag" "$val"); narrowed=1; shift ;;
+	--) shift ;;
+	-*) die "unknown option '$1' — see $prog --help" 64 ;;
+	*) die "lanes takes no positional arguments; did you mean \`restart $1\`? — see $prog --help" 64 ;;
+	esac
+done
+
+# `--all` WINS WHEREVER IT APPEARS IN THE LINE, so the label is cleared after the
+# loop and not inside the arm: `lanes --all --prefix repoA11` and
+# `lanes --prefix repoA11 --all` are the same command and must print the same
+# footer. The helper drops the FILTERS on `--all`; `here_repo` is this wrapper's
+# own and is what the footer, the count and the next-free-position are computed
+# from.
+if [ "$all_given" = 1 ]; then here_repo=""; fi
+
+# THE BARE WORD INSIDE A LANE CHECKOUT NARROWS TO THAT REPOSITORY (Brett Heap's
+# settlement of 2026-09-13T20:38:11Z, verbatim "Narrow inside a checkout
+# (Recommended)"; A11 Addendum 4 ruling 6; SPEC rev 6 §15).
+#
+# THE NARROWING IS THE READ'S OWN, not a second filter: `--dir` is clause (i)'s
+# and defaults here to the checkout around the cwd, `--repo` is that checkout's
+# `origin`, and the two are an OR — a lane's home repository and the checkout it
+# sits in are not the same fact. `--prefix` is the third term and is the LABEL
+# fallback, used by the read only where a lane has neither a home nor a `dir`:
+# a row with no log at all cannot be filed by either, and its name is the only
+# thing left. A lane whose home DISAGREES with its prefix is filed by its home.
+#
+# ANY EXPLICIT NARROWING SUPPRESSES THIS. `--repo`, `--dir`, `--ws` and `--here`
+# are the caller saying which lanes they mean, and `--all` says every one.
+origin_nwo() {
+	url="$(git -C "${1:-.}" remote get-url origin 2>/dev/null || :)"
+	[ -n "$url" ] || return 1
+	nwo="$(printf '%s\n' "$url" | sed -E 's#\.git$##; s#^git@[^:]+:##; s#^ssh://[^/]+/##; s#^https?://[^/]+/##')"
+	printf '%s\n' "$nwo" | grep -qE '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || return 1
+	printf '%s\n' "$nwo"
+}
+# THE REPOSITORY IS THE ONE `origin` NAMES, AND THE DIRECTORY'S NAME IS THE
+# FALLBACK — not the other way round. `basename $(git rev-parse --show-toplevel)`
+# is the name of the DIRECTORY this shell is standing in, and inside a WORKTREE
+# that is the worktree's own name: run in a worktree of `openRepoTools` called
+# `ort-a11` it narrowed to a repository called `ort-a11`, found none, and offered
+# `lane-start ort-a11 1` — a lane whose `$PROJECTS_ROOT/<repo>` cannot exist.
+# Every lane on this estate is named for the repository, which is what `origin`
+# says and what `repos.tsv` aliases, so the origin's own repository name is the
+# prefix wherever there is an origin. A checkout with no origin keeps the
+# directory name, because there is nothing else to have.
+here_root=""; here_nwo=""
+if [ "$narrowed" = 0 ] && [ ${#args[@]} -eq 0 ]; then
+	here_root="$(git rev-parse --show-toplevel 2>/dev/null || :)"
+	if [ -n "$here_root" ]; then
+		here_nwo="$(origin_nwo "$here_root" 2>/dev/null || :)"
+		if [ -n "$here_nwo" ]; then here_repo="${here_nwo#*/}"; else here_repo="$(basename -- "$here_root")"; fi
+		args+=(--dir "$here_root" --prefix "$here_repo")
+		[ -n "$here_nwo" ] && args+=(--repo "$here_nwo")
+	fi
+fi
+
+ws_pair="$("$LANES_EDIT" workstation 2>/dev/null || :)"
+ws_name="$(printf '%s' "$ws_pair" | cut -f1)"
+ws_src="$(printf '%s' "$ws_pair" | cut -f2)"
+
+# THE CONTAINER NOTICE, ON THE TOKEN THE HELPER ACTUALLY EMITS AND IN THE
+# HELPER'S OWN WORDS (`R-A11-14`, ratified verbatim "a11 addendum 3 yes").
+#
+# Two defects were in the three lines this replaces. The branch was
+# `hostname-in-container`, which `lanes_workstation_pair` has never emitted —
+# its three sources are `seam`, `hostname` and `container-unset`
+# (`lanes-edit.sh:371-383`) — so the notice could not print at all. And what it
+# printed was the act this toolset REJECTS BY NAME: `lanes-edit.sh:337-339`,
+# *"the rejected alternative — a `workstation:` key in `workspace.yaml` — is a
+# SECOND PLACE FOR THE TRUTH TO BE WRONG beside the variable the launcher
+# already sets."*
+#
+# THE SENTENCE IS ASKED FOR RATHER THAN RESTATED. `lanes_workstation_why` is the
+# one wording three writers already share, and this command carries no copy of
+# the workstation seam — the four that exist are byte-identical and held together
+# by `test_repo_hygiene.py`, and a fifth here would be the drift that test exists
+# to catch. `lanes-edit.sh workstation` prints that sentence on stderr and still
+# answers on stdout, because a read in front of a launch may not refuse; the read
+# above discarded that stderr, so this asks for it again. One extra 0.04 s fork,
+# and only on the path that is already printing a paragraph.
+#
+# IT IS A FUNCTION BECAUSE THE EMPTY LISTING NEEDS IT MOST. In a container with
+# no `LANES_WORKSTATION` the workstation column is the CONTAINER'S id, so no row
+# matches and the read exits 8 — and that is exactly the reader who has to be
+# told why their lanes vanished. Printed at the foot on the rows path and inside
+# the 8 arm on the other, from one definition.
+ws_notice() {
+	case "$ws_src" in
+	container-unset)
+		say ""
+		"$LANES_EDIT" workstation 2>&1 >/dev/null || : ;;
+	esac
+}
+
+# LOCAL IS THE HELPER'S OWN DEFAULT for this one read (SPEC rev 4 §15), so
+# `--fetch` is passed through rather than simulated here: one implementation of
+# "does this read touch the network", in the file that owns the network.
+#
+# AND A FETCH THAT DID NOT HAPPEN IS NOT A FETCH (#26, the fail-closed family,
+# `lanes:236`, taken on Brett Heap's word "Take it first, then land"). A read
+# that fetches MAY NOT REFUSE — it sits in front of a launch — so `log_sync`
+# falls back to the local refs and says so on stderr, *"fetch failed — reading
+# the logs as they stand locally"*, and answers 0. This command threw that
+# sentence away with `2>/dev/null` and then printed *"as of a fetch just now"*
+# over the top of it: the one line in the output a person reads to decide
+# whether the answer is CURRENT, asserting something the run had already been
+# told was false. The stderr of the fetch path is kept and rendered; the stderr
+# of the local path still is not, because there the notice is `LANES_NO_FETCH=1`
+# saying what the caller asked for.
+#
+# AND THE FALLBACK THAT MADE NO CAPTURE FILE THREW THEM AWAY AGAIN (#26, the
+# review of `c3ebcfe`, `lanes:280`). Where `mktemp` cannot make a file — a
+# `$TMPDIR` that is gone, full or not writable — this read ran with
+# `2>/dev/null`, so the helper's fallback sentence went to the same place it
+# went before this was fixed at all and the footer printed "as of a fetch just
+# now" over it. The temporary file is a CONVENIENCE for reading the notice back;
+# without one the notice still belongs to the person, so it is PASSED THROUGH to
+# the terminal and the footer stops asserting a freshness this run cannot check.
+rc=0
+fetch_err=""
+fetch_unchecked=0
+if [ "$do_fetch" = 1 ]; then
+	fetch_err_file="$(mktemp "${TMPDIR:-/tmp}/lanes-fetch.XXXXXX" 2>/dev/null || printf '')"
+	if [ -n "$fetch_err_file" ]; then
+		out="$("$LANES_EDIT" lanes --fetch ${args[@]+"${args[@]}"} 2>"$fetch_err_file")" || rc=$?
+		fetch_err="$(cat "$fetch_err_file" 2>/dev/null || printf '')"
+		rm -f -- "$fetch_err_file"
+	else
+		out="$("$LANES_EDIT" lanes --fetch ${args[@]+"${args[@]}"})" || rc=$?
+		fetch_unchecked=1
+	fi
+else
+	# AND THE LOCAL PATH'S STDERR IS NOT ONE KNOWN SENTENCE ANY MORE (#26, the
+	# review of `37632b1`, `lanes:293`). `2>/dev/null` was written when the only
+	# thing on that stream was the helper saying `LANES_NO_FETCH=1` — the notice
+	# this command asks for, on every local read, which is why it was silenced.
+	# The helper now also says there that this workstation's SESSION RECORDS could
+	# not be read, which is the line telling a person that the STATE column is the
+	# log's verb alone and that a lane showing IDLE may be live. So the stream is
+	# KEPT and the one expected sentence is dropped out of it, rather than the
+	# stream being dropped for the sake of that sentence.
+	local_err_file="$(mktemp "${TMPDIR:-/tmp}/lanes-local.XXXXXX" 2>/dev/null || printf '')"
+	if [ -n "$local_err_file" ]; then
+		out="$("$LANES_EDIT" lanes ${args[@]+"${args[@]}"} 2>"$local_err_file")" || rc=$?
+		grep -v 'not fetching; reading origin/' -- "$local_err_file" >&2 || :
+		rm -f -- "$local_err_file"
+	else
+		# No capture file, so nothing is filtered and everything reaches the
+		# person — the same answer the fetch path gives one branch up.
+		out="$("$LANES_EDIT" lanes ${args[@]+"${args[@]}"})" || rc=$?
+	fi
+fi
+
+# THE ONE PHRASE, AND IT IS THE HELPER'S OWN (`lanes-edit.sh:2902`): both the
+# failure and the timeout end *"reading the logs as they stand locally"*, so one
+# test covers both and neither is restated here.
+fetch_fell_back=0
+case "$fetch_err" in
+*"reading the logs as they stand locally"*) fetch_fell_back=1 ;;
+esac
+case "$rc" in
+0) : ;;
+8)
+	if [ -n "$here_repo" ]; then
+		# AN EMPTY REPOSITORY STILL GETS THE ANSWER A PERSON CAME FOR: the next
+		# free position is 1, and the line that takes it is printed filled in.
+		say "no lane of $here_repo is recorded."
+		say ""
+		say "  next free position:  1"
+		say "  take it:             lane-start $here_repo 1"
+		say "  every lane:          $prog --all"
+	else
+		say "no lane is recorded${ws_name:+ that $ws_name can see}."
+		say "  open one:            lane-start <repo> <n>"
+		say "  this workstation:    $prog --here"
+	fi
+	# AN EMPTY LISTING AFTER A FETCH THAT FELL BACK IS THE CASE THAT MATTERS
+	# MOST: "no lane is recorded" read off a stale checkout is the answer a
+	# person is likeliest to act on, and the likeliest to be wrong.
+	if [ "$fetch_fell_back" = 1 ]; then
+		say ""
+		say "  and the fetch did not answer, so that is this checkout's own copy:"
+		printf '%s\n' "$fetch_err" | sed -n 's/^/  /p'
+	elif [ "$fetch_unchecked" = 1 ]; then
+		say ""
+		say "  and whether the fetch answered is UNKNOWN — no temporary file could be made"
+		say "  to read the helper's own notes back, so they went to the terminal above"
+		say "  rather than into this line. That may be this checkout's own copy."
+	fi
+	ws_notice
+	exit 8 ;;
+64) die "bad arguments for the listing read — see $prog --help" 64 ;;
+# A HELPER PREDATING AMENDMENT 11, AND IT IS EXPECTED RATHER THAN BROKEN. `2` is
+# what a `lanes-edit.sh` with no `lanes` subcommand exits, exactly as a
+# pre-Amendment-8 one did for `swapped` (`lanes-edit.sh:4818-4826`), and until
+# act 3's install reaches a workstation that is what every one of them answers.
+# The contract gives it its own code so a caller can tell it from a read that
+# broke, and the message names the act rather than the rule.
+2) die "the \`lanes-edit.sh\` on this workstation has no \`lanes\` subcommand, so it
+    predates lane-collision-protocol Amendment 11. That is not a failure and
+    nothing is wrong with the register — this workstation has not taken adoption
+    act 3's install yet. Take it:  openRepoTools --install" 2 ;;
+*) die "$LANES_EDIT lanes failed (exit $rc). That is NOT 'there are no lanes', and this
+    command will not print an empty listing on an answer it did not get
+    (Amendment 7(d)). Run it by hand to see what it says." 1 ;;
+esac
+
+printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
+	LANE STATE WHERE PROFILE WINDOW "LAST TRANSCRIPT" AGE DIRECTORY
+n=0
+defects=0
+taken=""
+while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_restart r_home r_fk; do
+	[ -n "${r_lane:-}" ] || continue
+	printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
+		"$r_lane" "$r_state" "$r_ws" "$r_pf" "$r_win" "$r_sid" "$r_age" "$r_dir"
+	case "$r_obj" in
+	none | 'none open' | '') : ;;
+	*) printf '%-26s holds: %s\n' "" "$r_obj" ;;
+	esac
+	# THE EXACT RESTART COMMAND, FILLED IN, FOR A **PAUSED** LANE — clause (j)
+	# column 10, AND IT COMES OUT OF THE READ (A11 Addendum 4 ruling 7). This
+	# command used to compute it and `restart` computed a different one: two
+	# implementations of one column, which is how two surfaces come to disagree
+	# about which lane may be restarted. The rule — a PAUSED lane only, and the
+	# `pclaude --lane <lane> <profile>` form where the record carries no profile
+	# yet — is stated once, in `lanes_rows`, and rendered here.
+	case "${r_restart:-none}" in
+	none | '') : ;;
+	restart\ *) printf '%-26s restart: %s\n' "" "$r_restart" ;;
+	*) printf '%-26s restart: %s   (no profile recorded yet; it is written at this lane next start or swap)\n' "" "$r_restart" ;;
+	esac
+	case "${r_fk:-0}" in
+	0 | '') : ;;
+	*) printf '%-26s DEFECT: %s live fork(s) of this lane transcript — never a holder, and they must not write the register. Name them: %s forks %s; retire each: lane-end %s --retire <pid>\n' \
+		"" "$r_fk" "$LANES_EDIT" "$r_lane" "$r_lane"
+		defects=$((defects + 1)) ;;
+	esac
+	# THE POSITIONS THIS REPOSITORY'S LANES ALREADY HOLD, for the next free one
+	# below. A position is DIGITS with an optional trailing letter, which is
+	# `lane-start:565-578`'s own rule and the only reading under which
+	# `openxfactory-4-opendox-extraction` has no position at all. `5a` and `5`
+	# are the same position taken twice, so the letter is stripped for the
+	# comparison — a lane may be re-cut, and a re-cut position is not free.
+	if [ -n "$here_repo" ]; then
+		case "$(printf '%s' "$r_lane" | tr 'A-Z' 'a-z')" in
+		"$(printf '%s' "$here_repo" | tr 'A-Z' 'a-z')"-*)
+			pos="${r_lane##*-}"; pos="${pos%[A-Za-z]}"
+			case "$pos" in
+			'' | *[!0-9]*) : ;;
+			*) taken="$taken $((10#$pos))" ;;
+			esac ;;
+		esac
+	fi
+	n=$((n + 1))
+done <<EOF
+$out
+EOF
+
+# THE NEXT FREE POSITION AND THE EXACT LINE THAT TAKES IT — the half of the
+# settlement that is not a filter. A listing tells a person what is there; this
+# tells them what to type next, filled in, so nobody has to translate a
+# placeholder at the one moment they are trying to start work.
+#
+# IT IS THE LOWEST FREE ONE, not the highest plus one: positions are re-used as
+# lanes end, and handing out 12 while 3 is free is how a register grows a column
+# nobody reads. `lane-start` refuses a position that is taken, so this is a
+# suggestion with a guard behind it and never an assertion.
+if [ -n "$here_repo" ]; then
+	next=1
+	while :; do
+		case " $taken " in *" $next "*) next=$((next + 1)) ;; *) break ;; esac
+	done
+fi
+
+say ""
+if [ "$do_fetch" = 1 ] && [ "$fetch_fell_back" = 1 ]; then
+	# THE PHRASE THE FOOTER MUST NOT CARRY IS NOT QUOTED HERE EITHER: the suite
+	# asserts that a fallen-back fetch never prints the fresh-fetch sentence, and
+	# a message that QUOTED it to disown it failed that assertion on its own
+	# words. What the helper said is printed under this line instead.
+	say "$n lane(s)${here_repo:+ of $here_repo}, read LOCALLY: the fetch did not answer, so this is the checkout's own copy as of $("$LANES_EDIT" fetch-age 2>/dev/null || printf 'unknown'). What the helper said:"
+	printf '%s\n' "$fetch_err" | sed -n 's/^/  /p'
+elif [ "$do_fetch" = 1 ] && [ "$fetch_unchecked" = 1 ]; then
+	# NO CAPTURE FILE, SO NO CLAIM. The helper's notes went straight to the
+	# terminal above and this line does not know whether one of them was the
+	# fallback sentence — which is exactly why it does not say "just now".
+	say "$n lane(s)${here_repo:+ of $here_repo}, and whether the fetch answered is UNKNOWN: no temporary file could be made to read the helper's own notes back, so they are above rather than in this line. This checkout last heard from origin $("$LANES_EDIT" fetch-age 2>/dev/null || printf 'unknown')."
+elif [ "$do_fetch" = 1 ]; then
+	say "$n lane(s)${here_repo:+ of $here_repo}, as of a fetch just now."
+else
+	say "$n lane(s)${here_repo:+ of $here_repo}, read locally — no fetch; this checkout last heard from origin $("$LANES_EDIT" fetch-age 2>/dev/null || printf 'unknown'). \`$prog --fetch\` refreshes first."
+fi
+if [ -n "$here_repo" ]; then
+	say ""
+	say "  next free position:  $next"
+	say "  take it:             lane-start $here_repo $next"
+	say "  every lane:          $prog --all"
+fi
+[ "$defects" = 0 ] || say "$defects lane(s) have a live fork of their transcript running. A fork is never the holder (ratified decision 8(c)); the one act is \`lane-end <lane> --retire <pid|uuid>\`, which proves the fork and prints Amendment 6(d) for it filled in — it writes nothing and it never kills the process, and taking it stays yours (clause (k) rule (e))."
+ws_notice
+exit 0

@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-"""`--install`'s three artifacts that are not one of the nine files.
+"""`--install`'s artifacts that are not one of the ELEVEN files: the two
+skills at two paths each, the `/swap` command file at two more, and the one
+merged `SessionStart` entry.
 
 lane-collision-protocol Amendment 9(b), inheriting A8 Addendum 2's R-A8-5
 unvaried — the skill into the SHARED skills directory every profile reads
@@ -12,7 +14,7 @@ identical" is a `cmp`. The hook is one entry inside a file somebody else owns
 and two other programs also write, and its ONLY idempotence is an exact match
 on the command string. So the tests below are about the four answers that
 string can have — present, absent, differing, unreadable — and about the one
-rule that makes a wrong answer survivable: the merge is computed with the nine
+rule that makes a wrong answer survivable: the merge is computed with the eleven
 files in hand, BEFORE any of them is placed, so a refusal costs a whole install
 rather than half of one.
 
@@ -32,6 +34,7 @@ import pytest
 
 from conftest import REPO, WINDOWS_SKIP
 from test_openrepotools_command import (COMMAND, command_env, run_cmd,
+                                        COMMAND_NAMES, COMMAND_PATHS,
                                         INSTALLED, NEEDS_JQ, SKILL_PATH)
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
@@ -112,6 +115,82 @@ def test_a_drifted_skill_is_replaced_and_an_identical_one_is_left_alone(tmp_path
     assert shared.read_bytes() == (REPO / SKILL_PATH).read_bytes()
 
 
+# --- the command file (A11 Addendum 4 ruling 9) -----------------------------
+
+def command_paths(home: Path, name: str) -> tuple[Path, Path]:
+    """The two places `--install` writes a command file — the pair a skill has,
+    for the same two ways a session is started."""
+    return (home / ".claude-profiles" / "shared" / "commands" / f"{name}.md",
+            home / ".claude" / "commands" / f"{name}.md")
+
+
+@NEEDS_JQ
+@pytest.mark.parametrize("name", COMMAND_NAMES)
+def test_install_places_the_command_file_at_both_paths(tmp_path, name):
+    """AFTER `workBenches#74`, `/swap` HAS NO OTHER OWNER (F-X28).
+
+    `#74` @`0b7f6bc` deletes `base-image/files/claude/commands/` along with the
+    launcher's copy of the `lane-swap` skill, and adoption act 6 — which would
+    have `--install` inherit command files — lands AFTER act 3, which is this
+    PR's base. So on the day `#74` lands, clause (g)'s `/swap`, a ratified
+    decision and one of the six edits to in-force text, would be installed by
+    nobody. Ruling 9 puts it here.
+
+    `setup-claude-profiles.sh:140,295` makes `<profiles>/shared/commands` and
+    links it into every profile as `<profile>/commands`, exactly as it does for
+    `skills` — so the shared copy is `/swap` under the launcher and the
+    `~/.claude` copy is `/swap` in a bare `claude` run.
+    """
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    source = (REPO / f"commands/{name}.md").read_bytes()
+    for target in command_paths(tmp_path, name):
+        assert target.is_file(), result.stdout
+        assert target.read_bytes() == source, target
+        assert stat.S_IMODE(target.stat().st_mode) == 0o644, target
+        assert f"/{name}: installed at {target}" in result.stdout
+
+
+@NEEDS_JQ
+def test_the_shipped_command_is_an_alias_and_restates_no_step():
+    """CLAUSE (g) MAKES `/swap` AN ALIAS, AND AN ALIAS THAT RESTATES THE STEPS
+    IS THE ALTERNATIVE IT REJECTS BY NAME: *"Two copies of one procedure that
+    must stay byte-equal is the rejected alternative."*
+
+    So the file's whole content is an instruction to invoke the skill, and it
+    must not carry a step list of its own. Held here because the day someone
+    "helpfully" pastes the procedure into it is the day the two can differ.
+    """
+    text = (REPO / "commands/swap.md").read_text(encoding="utf-8")
+    assert text.startswith("---\n"), "a command file opens with front matter"
+    assert "lane-swap" in text, "the alias must name the skill it invokes"
+    assert "/swap" in text, "clause (g): the alias is named in its own description"
+    # The skill's own numbered steps, which this file must NOT carry.
+    skill = (REPO / SKILL_PATH).read_text(encoding="utf-8")
+    for heading in ("## 1.", "## 2.", "## 3.", "## 4.", "## 5."):
+        assert heading in skill, f"the skill lost {heading} — this test is stale"
+        assert heading not in text, (
+            f"commands/swap.md restates the skill's {heading}; clause (g) makes "
+            "it an alias, and two copies of one procedure is what it rejects")
+
+
+@NEEDS_JQ
+def test_a_drifted_command_file_is_replaced_and_an_identical_one_is_left_alone(tmp_path):
+    """The same idempotence the skills have, for the same reason: a person who
+    edits the installed copy gets it back, and a run that changes nothing says
+    so instead of reporting a write."""
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    shared, _bare = command_paths(tmp_path, "swap")
+    shared.write_text(shared.read_text(encoding="utf-8") + "\n<!-- drift -->\n",
+                      encoding="utf-8")
+    second = run_cmd("--install", home=tmp_path)
+    assert second.returncode == 0, second.stderr
+    assert f"/swap: updated at {shared}" in second.stdout
+    assert shared.read_bytes() == (REPO / "commands/swap.md").read_bytes()
+    third = run_cmd("--install", home=tmp_path)
+    assert f"/swap: already installed at {shared} (unchanged)" in third.stdout
+
+
 # --- the hook entry ---------------------------------------------------------
 
 @NEEDS_JQ
@@ -187,7 +266,7 @@ def test_a_differing_session_start_entry_refuses_and_places_nothing(tmp_path):
     twice.
 
     AND THE COST IS A WHOLE INSTALL, NOT HALF OF ONE: the merge is computed
-    with the nine files in hand, before any of them is placed, so the bin
+    with the eleven files in hand, before any of them is placed, so the bin
     directory is untouched. That is the same all-or-nothing rule `--install`
     already had, extended to the one artifact that is not a whole file.
     """
@@ -300,15 +379,16 @@ def test_a_destination_that_cannot_be_written_refuses_before_anything_is_placed(
 
     Amendment 9(b) computes the merge in hand "so a merge that cannot be
     computed refuses having placed nothing". A filesystem offers no transaction
-    across twelve artifacts, so nothing can make the last three atomic with the
-    first nine — but the failure that actually happens is not an exotic one, it
+    across eighteen artifacts, so nothing can make the last seven atomic with
+    the first eleven — but the failure that actually happens is not an exotic
+    one, it
     is a directory that is not this installer's to write, and that question can
     be asked in the planning phase where the refusal still costs nothing.
 
-    Without the check the run places nine files and two of the three remaining
-    artifacts, then dies on the third — leaving a host with commands installed,
+    Without the check the run places eleven files and some of the remaining
+    artifacts, then dies — leaving a host with commands installed,
     no `SessionStart` entry, and an installer that reports the same "already
-    installed (unchanged)" for the nine on every re-run while never reaching
+    installed (unchanged)" for the eleven on every re-run while never reaching
     the one that failed.
     """
     if which == "shared skills":
@@ -323,13 +403,13 @@ def test_a_destination_that_cannot_be_written_refuses_before_anything_is_placed(
         assert result.returncode == 2, result.stdout + result.stderr
         assert "NOTHING was installed" in result.stderr
         assert not bin_dir.exists() or not any(bin_dir.iterdir()), (
-            "nine files were placed against a destination that was never "
+            "the eleven files were placed against a destination that was never "
             "going to take the other three")
     finally:
         blocked.chmod(0o700)
 
 
-# --- the nine targets, and what they are (R-A9-12) --------------------------
+# --- the eleven targets, and what they are (R-A9-12) ------------------------
 
 @NEEDS_JQ
 @NOT_ROOT
@@ -347,7 +427,7 @@ def test_a_leaf_destination_that_exists_unwritable_refuses_before_anything_is_pl
 
     The bin directory is the assertion that tells the two apart: the refusal
     here is a PLANNING one and nothing is placed, where the mutant places all
-    nine files and dies on the `cp` into this same directory, which is the
+    eleven files and dies on the `cp` into this same directory, which is the
     half-install the planning phase exists to prevent.
     """
     blocked = tmp_path / ".claude-profiles" / "shared" / "skills" / "lane-swap"
@@ -360,7 +440,7 @@ def test_a_leaf_destination_that_exists_unwritable_refuses_before_anything_is_pl
         assert "is not writable" in result.stderr, result.stderr
         assert "NOTHING was installed" in result.stderr
         assert not bin_dir.exists() or not any(bin_dir.iterdir()), (
-            "the nine files were placed against a leaf directory that was "
+            "the eleven files were placed against a leaf directory that was "
             "never going to take the skill")
     finally:
         blocked.chmod(0o700)
@@ -429,7 +509,7 @@ def test_a_symlinked_target_is_refused_and_nothing_is_written_through_it(tmp_pat
 def test_a_directory_where_a_command_goes_is_refused_the_same_way(tmp_path):
     """THE RULE IS `A REGULAR FILE`, not `not a symlink`. A directory at
     `$BIN/park` is the same refusal for the same reason — `cp` cannot place a
-    file over it, and finding that out after eight of the nine are placed is
+    file over it, and finding that out after ten of the eleven are placed is
     the half-install the planning phase exists to prevent."""
     bin_dir = tmp_path / ".local" / "bin"
     (bin_dir / "park").mkdir(parents=True)
@@ -455,6 +535,96 @@ def test_a_dangling_symlink_is_refused_rather_than_followed(tmp_path):
     assert result.returncode == 2, result.stdout + result.stderr
     assert f"{bin_dir / 'lane-start'} — a symlink to {missing}" in result.stderr, result.stderr
     assert not missing.exists(), "--install created the file at the far end"
+
+
+
+# --- R-A9-12 reaches the skill paths too (F-X17) -----------------------------
+
+SKILL_TARGETS = tuple(
+    (profiles, name)
+    for name in ("lane-swap", "restart")
+    for profiles in (True, False)
+)
+
+
+def skill_target(home: Path, shared: bool, name: str) -> Path:
+    """The two places `--install` writes each skill, by Amendment 9(b)."""
+    if shared:
+        return home / ".claude-profiles" / "shared" / "skills" / name / "SKILL.md"
+    return home / ".claude" / "skills" / name / "SKILL.md"
+
+
+@NEEDS_JQ
+@pytest.mark.parametrize("shared,name", SKILL_TARGETS)
+def test_a_symlinked_skill_target_is_refused_and_nothing_written_through_it(
+        tmp_path, shared, name):
+    """R-A9-12 IS ABOUT WHAT `cp` DOES, NOT ABOUT WHICH DIRECTORY (F-X17).
+
+    `plan_install_targets` refuses a symlink for every one of the eleven files
+    in the bin directory. `plan_skill_targets` proved only the DIRECTORIES
+    writable, and `place_skill_and_hook` then reached each `SKILL.md` with
+    `[ -e ]`, `cmp -s` and `cp` — none of which can tell a regular file from a
+    link to one. Measured before the fix on exactly this fixture: exit 0, the
+    skill reported `updated at <target>`, the target still a symlink, and the
+    skill's bytes written into the file on the far end.
+
+    Four paths, because this round doubled them from two to four: the pre-A11
+    exposure was `lane-swap` alone, and `restart` arrived beside it.
+    """
+    far = tmp_path / "elsewhere" / f"{name}-SKILL.md"
+    far.parent.mkdir(parents=True)
+    far.write_text("whatever was on the other end of this link\n", encoding="utf-8")
+    before = far.read_bytes()
+    target = skill_target(tmp_path, shared, name)
+    target.parent.mkdir(parents=True)
+    target.symlink_to(far)
+    bin_dir = tmp_path / ".local" / "bin"
+
+    result = run_cmd("--install", home=tmp_path,
+                     env={"OPENREPOTOOLS_BIN_DIR": str(bin_dir)})
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "NOTHING was installed" in result.stderr, result.stderr
+    assert f"{target} — a symlink to {far}" in result.stderr, (
+        f"the refusal must name the offending skill path and say what it is:\n"
+        f"{result.stderr}")
+    assert f'rm -f -- "{target}"' in result.stderr, (
+        f"the refusal must print the exact `rm` that clears it:\n{result.stderr}")
+    assert far.read_bytes() == before, f"--install wrote through the link into {far}"
+    assert target.is_symlink(), f"{target} is no longer the link it was"
+    # AND IT REFUSED IN THE PLANNING PHASE: the eleven commands never arrived
+    # either, which is what makes `NOTHING was installed` true rather than
+    # nearly true.
+    assert not bin_dir.exists() or not any(bin_dir.iterdir()), (
+        "the commands were placed by a run that refused on a skill target")
+
+
+@NEEDS_JQ
+def test_a_dangling_skill_symlink_is_refused_rather_than_followed(tmp_path):
+    """`[ -e ]` IS FALSE ON A DANGLING LINK and `cp` through one CREATES the
+    file at the far end — the same sharper case the bin half already refuses,
+    one directory along."""
+    missing = tmp_path / "elsewhere" / "restart-SKILL.md"
+    target = skill_target(tmp_path, False, "restart")
+    target.parent.mkdir(parents=True)
+    target.symlink_to(missing)
+    result = run_cmd("--install", home=tmp_path,
+                     env={"OPENREPOTOOLS_BIN_DIR": str(tmp_path / ".local" / "bin")})
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"{target} — a symlink to {missing}" in result.stderr, result.stderr
+    assert not missing.exists(), "--install created the file at the far end"
+
+
+@NEEDS_JQ
+def test_a_directory_where_a_skill_goes_is_refused_the_same_way(tmp_path):
+    """THE RULE IS `A REGULAR FILE`, not `not a symlink` — the same sentence
+    the bin half's own directory case is written for."""
+    target = skill_target(tmp_path, True, "lane-swap")
+    target.mkdir(parents=True)
+    result = run_cmd("--install", home=tmp_path,
+                     env={"OPENREPOTOOLS_BIN_DIR": str(tmp_path / ".local" / "bin")})
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"{target} — a directory" in result.stderr, result.stderr
 
 
 # --- what the conflict arm keys on (R-A9-14) --------------------------------

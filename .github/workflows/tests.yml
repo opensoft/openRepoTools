@@ -223,6 +223,8 @@ jobs:
           /bin/bash -n park
           /bin/bash -n resume
           /bin/bash -n status
+          /bin/bash -n restart
+          /bin/bash -n lanes
           /bin/bash -n lanes-edit.sh
           /bin/bash -n lane-start
           /bin/bash -n lane-end
