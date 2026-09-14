@@ -4015,6 +4015,71 @@ EXIT_NEITHER = (
     "never this word — and the feature comes back in a checkout of that "
     "shape, which is this one only where the two agree")
 
+#: AND THE LINES THE LOADER READS NEITHER A FEATURE NOR A LEG OUT OF, whose
+#: own section is at the bottom of this file and whose two `why` halves and
+#: shared exits are hoisted here beside the other findings' pieces, because
+#: the two tests that were written before that reading — the `root:` key
+#: between a feature and its legs, and the blank branch above it — read them
+#: too. THE TWO ARMS SAY DIFFERENT THINGS DELIBERATELY: a line that costs a
+#: LEG is not sent looking at the feature list, because the key that shut the
+#: list is the one the person has to go and find.
+WHY_FEATURES = (
+    "because `resume` reads a record by INDENT, and `workspace_load_project` "
+    "SHUTS the `features:` list at the next key at project indent, making no "
+    "feature of a `- branch:` below one")
+WHY_LEGS = (
+    "because `resume` reads a record by INDENT, and `workspace_load_project` "
+    "SHUTS a feature's `legs:` list at the next line shallower than its "
+    "`- role:` items, making no leg of one below it")
+#: AND THE OTHER ARM FOR A LOST LEG, which is a different line to go and
+#: find: a key at PROJECT indent shuts the feature list and every leg list
+#: inside it, so a `legs:` key below one opens nothing and an open leg list
+#: above one ends there. Naming the feature-indent arm for it would send a
+#: hand looking at an indent the record has nothing out of place at.
+WHY_OUTER = (
+    "because `resume` reads a record by INDENT, and `workspace_load_project` "
+    "SHUTS the `features:` list at the next key at project indent, and every "
+    "feature's `legs:` list inside it with it, making no leg of a `- role:` "
+    "below one")
+#: AND THE TWO ARMS FOR A LIST THAT WAS NEVER OPENED AT ALL (Copilot's first
+#: round on this PR, suppressed): `features:` is what OPENS the feature list
+#: and `legs:` a feature's leg list, so a `- branch:` above every `features:`
+#: key and a `- role:` above its feature's `legs:` key are unread for the
+#: OPPOSITE reason — nothing shut a list, nothing opened one. Read whole,
+#: both were told in the shutting arms above, which send a reader looking for
+#: a key the record has not got.
+WHY_NOLIST = (
+    "because `resume` reads a record by INDENT, and the `features:` key is "
+    "what OPENS the list `workspace_load_project` reads a `- branch:` out of "
+    "— this block has no such key ABOVE that line, so the loader is in no "
+    "feature list when it reaches it")
+WHY_NOLEGS = (
+    "because `resume` reads a record by INDENT, and the `legs:` key is what "
+    "OPENS the list `workspace_load_project` reads a `- role:` out of — this "
+    "feature has no such key ABOVE that line, so the loader is in no leg "
+    "list when it reaches it")
+
+
+def unread_exits(where: str = "the record says Falcon",
+                 name: str = "atlas.yaml") -> str:
+    """The exits every one of those findings ends in: the record's own key
+    ORDER first, which is the person's to put back and never `status`'s, and
+    the re-park second and only FROM THE WORKSTATION THAT HAS THE FEATURE.
+    That order is not a preference. `workspace_write_manifest` rewrites a
+    project's WHOLE BLOCK out of what its own `workspace_load_project` read
+    plus what it finds on disk, and `emit_recorded_feature` carries a feature
+    forward out of `MANIFEST_FEATURE_BRANCHES` — where a feature that loader
+    never made is not — so a park run anywhere else writes the block back
+    without these lines at all (read off both functions, 2026-09-12)."""
+    return (
+        " — the exits are to put the block back in the order `park` writes it "
+        "(every project-level key above `features:`, every feature-level key "
+        f"above `legs:`) in {name}, which is yours to do and not `status`'s, "
+        "or to park that feature again FROM THE WORKSTATION THAT HAS IT "
+        f"({where}), which rewrites the whole block in that order; a park from "
+        "any other workstation rewrites it out of what its own loader read and "
+        "takes these lines with it")
+
 
 def test_a_role_resume_maps_in_no_shape_costs_the_whole_feature(atlas, home):
     """The reading the feature-level commit recorded and did not take: "a
@@ -5956,7 +6021,21 @@ def test_a_root_key_between_a_branch_and_its_legs_still_reads_that_feature(
     COUNTED. `record_rows` can no longer hand out a leg row with no branch row
     before it, `$named` being set by the same line that appends the branch
     row; the guard in `read_record` stays as the belt to that brace, and this
-    test is what proves the record it was written for now reads."""
+    test is what proves the record it was written for now reads.
+
+    AND THE LEG PINNED HERE MOVED ON 2026-09-12, with the reading at the
+    bottom of this file: `    root:` is a key at PROJECT indent, and it shuts
+    the feature's `legs:` list with the feature list it is inside. Run against
+    the extension that day this record loads as ONE FEATURE AND ZERO LEGS — so
+    `collect_legs` collects nothing, refuses the whole feature as a shape
+    mismatch, and the `resume Atlas` this test used to pin was the command
+    that refuses it. The feature half of the test is untouched, which is the
+    half it was written for: the block still matches on `root:`, the rows
+    above that key are still held rather than dropped, the feature is still
+    counted, and the report still reaches its footer. What changed is the
+    sentence under it, and the second phase now REOPENS the list with a
+    second `features:` key so that the verdict half — each feature keeping its
+    own — is still asked of two features the loader really makes."""
     checkout = workspace_config(home)
     manifest = atlas / "project.yaml"
     manifest.write_text(manifest.read_text(encoding="utf-8").replace(
@@ -5975,14 +6054,13 @@ def test_a_root_key_between_a_branch_and_its_legs_still_reads_that_feature(
 
     result = run(STATUS, "Atlas", home=home)
     assert result.returncode == 1, result.stdout + result.stderr
-    assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
-            "branch here; parked 2026-09-10T20:00:00Z on Eagle — `resume "
-            "Atlas` brings it back, unless origin has lost that branch: there is no "
-            "`origin/001-a-thing` here as of the last fetch, and `resume` "
-            "refuses a leg whose branch is not on origin, taking the WHOLE "
-            "feature with it (\"001-a-thing is no longer on origin in the "
-            "repo leg\") — `status --fetch` settles which"
-            ) in result.stdout
+    no_leg = (
+        "- parked feature 001-a-thing: the record lists its `repo` leg where "
+        f"`resume` reads no leg, {WHY_OUTER}; `resume` collects NO leg for this "
+        "feature and refuses it WHOLE, reporting it as a shape mismatch, so "
+        "nothing here brings it back"
+        + unread_exits(where="the record says Eagle", name="Atlas.yaml"))
+    assert "    " + no_leg in result.stdout, result.stdout
     assert ("    parked record: 1 feature(s), parked 2026-09-10T20:00:00Z on "
             "Eagle (lane xfactory-2); active 001-a-thing") in result.stdout, (
         "the block matched on `root:` and the rows above it were held, not "
@@ -5990,16 +6068,21 @@ def test_a_root_key_between_a_branch_and_its_legs_still_reads_that_feature(
     assert result.stdout.splitlines()[-1] == (
         "status: Atlas - 1 finding(s) in 2 repositories; nothing was changed."
         ), "the footer, which a report that died mid-run never reaches"
-    assert "refuses the WHOLE feature" not in result.stdout
-    # (On this branch the leg line carries the RR2 clause as well: the
-    # branch was never pushed, so origin has not got it — the commit that
-    # reads a branch origin has lost. The verdict this test guards is the
-    # feature one, still absent.)
+    assert "(repo leg)" not in result.stdout, (
+        "a leg read against disk for a feature `collect_legs` collects none "
+        "for")
+    assert "`resume Atlas`" not in result.stdout, (
+        "the command that refuses this feature, offered for it")
 
     # AND WITH A FEATURE AFTER IT, the verdict that is not this leg's: on bash
     # 5 `${feature_why[-1]}` was the OTHER feature's refusal, on the line of a
     # leg the record files under this one. Each feature keeps its own now.
-    path.write_text(mangled + "      - branch: 002-another\n"
+    # The second `features:` key is what makes the second feature a feature at
+    # all — the `root:` above it shut the list — and the loader reads a
+    # reopened list as it reads the first (2 features, 2 legs, against the
+    # extension 2026-09-12), so this phase asks what it always asked.
+    path.write_text(mangled + "    features:\n"
+                    "      - branch: 002-another\n"
                     "        legs:\n" + leg_block("nope", FAKE_SHA),
                     encoding="utf-8")
     result = run(STATUS, "Atlas", home=home)
@@ -6007,14 +6090,7 @@ def test_a_root_key_between_a_branch_and_its_legs_still_reads_that_feature(
     findings = [line.strip() for line in result.stdout.splitlines()
                 if line.strip().startswith("- parked feature")]
     assert len(findings) == 2, findings
-    assert findings[0] == (
-        "- parked feature 001-a-thing (repo leg): no worktree on that branch "
-        "here; parked 2026-09-10T20:00:00Z on Eagle — `resume Atlas` brings "
-        "it back, unless origin has lost that branch: there is no "
-        "`origin/001-a-thing` here as of the last fetch, and `resume` "
-        "refuses a leg whose branch is not on origin, taking the WHOLE "
-        "feature with it (\"001-a-thing is no longer on origin in the "
-        "repo leg\") — `status --fetch` settles which"), findings[0]
+    assert findings[0] == no_leg, findings[0]
     assert findings[1].startswith(
         "- parked feature 002-another (nope leg): the record names a leg this "
         "root does not mount here; `resume` maps each leg's role onto this "
@@ -6692,7 +6768,21 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     already registered worktree"), both run against git 2.43 the same day.
     It goes in the EXCEPTION and not in the list beside it, unlike the
     eighth: this IS a record `resume <Name>` brings back, once the path is
-    clear, and the sentence it falsifies is the promise itself."""
+    clear, and the sentence it falsifies is the promise itself.
+
+    THE TENTH IS THE RECORD'S OWN KEY ORDER, 2026-09-12, and it is the
+    second whose exits are not the re-park — and the first whose FIRST exit
+    is a hand on the record. `workspace_load_project` shuts the `features:`
+    list at the next key at project indent and a feature's `legs:` list at
+    the next key at feature indent, so a `- branch:` or a `- role:` a bad merge
+    left below one is a line `resume` reads no feature and no leg out of.
+    The order of the two exits is why the sentence is pinned and not merely
+    counted: the key goes back BY HAND, which is the one hand-edit of the
+    record these texts ask for, and the re-park settles it only FROM THE
+    WORKSTATION THAT HAS THE FEATURE, because `workspace_write_manifest`
+    rewrites a project's whole block out of what its own loader read and a
+    park anywhere else takes those lines with it. A help text that named the
+    re-park first would send a person to the park that deletes the work."""
     result = run(STATUS, "--help", home=home)
     assert result.returncode == 0, result.stdout + result.stderr
     helptext = " ".join(result.stdout.split())
@@ -6717,7 +6807,14 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
             "feature landed or a push of the branch from the workstation "
             "that parked it, and without one it is named beside the `resume` "
             "that still brings back a branch this clone has merely not "
-            "fetched; and where `git worktree list` still "
+            "fetched; and where the record's KEY ORDER leaves a `- branch:` "
+            "or a `- role:` where the loader reads neither — it shuts the "
+            "`features:` list at the next key at project indent and a "
+            "feature's `legs:` list at the next key at feature indent — the "
+            "exits are putting that key back, which is yours and not this "
+            "command's, and a re-park only from the workstation that has the "
+            "feature, since a park anywhere else rewrites the block without "
+            "those lines; and where `git worktree list` still "
             "holds a registration that is no longer a worktree, that is "
             "cleared with `worktree prune`, after a `worktree unlock` if it "
             "is locked and with any leftover directory moved aside, before "
@@ -7360,7 +7457,20 @@ def test_a_blank_branch_above_the_root_key_is_still_the_feature_resume_refuses(
     loader makes a feature of every `- branch:` line whatever sits above or
     below it, and `resume` refuses the one named nothing at RR2 ("Error:  is
     no longer on origin in the repo leg", exit 2) — so the feature's own line
-    is what this record gets, and no leg line under it."""
+    is what this record gets, and no leg line under it.
+
+    AND THE SENTENCE MOVED 2026-09-12, with the reading at the bottom of this
+    file: the `    root:` key this record puts between the branch and its
+    `legs:` shuts the leg list too, so the loader loads this feature with ZERO
+    legs and `collect_legs` refuses it as a shape mismatch BEFORE RR2 is
+    reached. TWO DEFECTS AND ONE LINE, then: "a `- branch:` with no value" is
+    still the first thing said, the refusal named is the one `resume` actually
+    makes, and the leg the record does list is named rather than passed over —
+    "lists no leg", which is what the no-leg arm beside this one says, is true
+    of the loader and false of this record. The exits do not move: a blank
+    name is not settled by the key order, so it is the delete-or-re-park pair
+    the arm above gives, and only the workstation that has the feature can
+    write the branch and the legs back."""
     checkout = workspace_config(home)
     path = folder_matched_record(atlas, checkout)
     text = path.read_text(encoding="utf-8")
@@ -7372,18 +7482,744 @@ def test_a_blank_branch_above_the_root_key_is_still_the_feature_resume_refuses(
     result = run(STATUS, "Atlas", home=home)
     assert result.returncode == 1, result.stdout + result.stderr
     assert ("    - parked feature with no branch name: a `- branch:` in the "
-            "record has no value; `resume` reads it as a feature named nothing "
-            "and refuses it as a branch origin has not got (\"is no longer on "
-            "origin\", the name blank), so nothing here brings it back — if "
-            "that feature landed, remove its `- branch:` block from Atlas.yaml; "
-            "if it was parked, park it again from the workstation that has it "
-            "(the record says Falcon), which writes the branch it parks"
-            ) in result.stdout
+            "record has no value, and the `repo` leg listed under it sits "
+            f"where `resume` reads no leg, {WHY_OUTER}; `resume` reads the "
+            "feature as one named nothing, collects no leg for it, and "
+            "refuses it whole as a shape mismatch before it reads one, so "
+            "nothing here brings it back — if that feature landed, remove its "
+            "`- branch:` block from Atlas.yaml; if it was parked, park it "
+            "again from the workstation that has it (the record says Falcon), "
+            "which writes the branch and the legs it parks") in result.stdout
     assert "(repo leg)" not in result.stdout
+    assert "lists no leg" not in result.stdout, (
+        "said about a record that lists one")
     assert "`resume Atlas`" not in result.stdout, (
         "a feature named nothing was offered the command that refuses it")
     assert ("    parked record: 1 feature(s), parked 2026-09-10T20:00:00Z on "
             "Falcon (lane xfactory-2); active 001-a-thing") in result.stdout
+
+
+# --- the key ORDER, and the lines the loader reads NEITHER out of ------------
+#
+# `workspace_load_project` reads a record by INDENT and shuts a list at the
+# first key shallower than its items: `in_features=false` is the first line of
+# its indent-4 arm, `in_legs=false` the first line of its indent-8 arm, its
+# `- branch:` arm sits behind `[ "$in_features" = true ] || continue` and its
+# `- role:` arm behind `[ "$in_legs" = true ] || continue`. So a project-level
+# key between two features, or between a feature and its `legs:`, or a
+# feature-level key inside a leg list, does not merely reorder the record — it
+# ENDS the list, and what is below it is lines `resume` makes no feature and no
+# leg out of. Run against the extension on 2026-09-12, nine hand-built records,
+# the `MANIFEST_*` arrays printed:
+#
+#   the ordinary record `park` writes, two features     -> 2 features, 2 legs
+#   a project key BETWEEN two features                  -> 1 feature,  1 leg
+#   a project key between a `- branch:` and its `legs:` -> 1 feature,  0 legs
+#   a `- branch:` above every `features:` key           -> 0 features, 0 legs
+#   a feature-level key between `legs:` and its items   -> 1 feature,  0 legs
+#   a feature-level key BETWEEN two legs                -> 1 feature,  1 leg
+#   a project key between two legs                      -> 1 feature,  1 leg
+#   a SECOND `features:` key after a project key        -> 2 features, 2 legs
+#   a `- branch:` below a project key, no legs          -> 1 feature,  1 leg
+#
+# THIS LAYER HAD NO SUCH STATE: it matched the indent of a line and nothing
+# above it, so it counted features `resume` never makes and legs it never
+# collects, and offered `resume <Name>` for both. That is work `status` claims
+# and `resume` will not bring back — the direction that most needs a line,
+# because a person reading it believes the feature is safe. The `why` halves
+# and the exits these findings share are hoisted to the top of this file,
+# beside the other findings' pieces; the two tests above that were written
+# before this reading read them too.
+
+#: The second feature these records grow, and the project-level key moved down
+#: to shut the list in front of it. `record()` writes exactly one of that key.
+SECOND_FEATURE = ("      - branch: 002-second\n"
+                  "        feature_directory: worktrees/002-second\n"
+                  "        legs:\n")
+LANE = "    parked_by_lane: xfactory-2\n"
+FEATURES = "    features:\n"
+LEGS_KEY = "        legs:\n"
+
+
+def test_a_project_key_between_two_features_leaves_the_second_unread(
+        atlas, home):
+    """A project-level key that a hand-edit or a bad merge left between two
+    features ENDS the feature list: the loader reads the first feature and its
+    leg and makes nothing at all of the second (1 feature, 1 leg, against the
+    extension, 2026-09-12). This layer counted two and offered `resume Atlas`
+    for both — for a feature `resume` never selects, never collects a leg for
+    and never mentions. The second is a finding of its own now, said ONCE: the
+    legs written under an unread `- branch:` are the same defect twice, and
+    the branch's line is the one with a name on it."""
+    checkout = workspace_config(home)
+    origin_has_branch(atlas, "001-a-thing")
+    origin_has_branch(atlas, "002-second")
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    assert text.count(LANE) == 1, text
+    second = SECOND_FEATURE + leg_block("repo", FAKE_SHA)
+    path.write_text(text.replace(LANE, "") + LANE + second, encoding="utf-8")
+
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    parked record: 1 feature(s), parked 2026-09-10T20:00:00Z on "
+            "Falcon (lane xfactory-2); active 001-a-thing") in result.stdout
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    unread = (
+        "- parked feature 002-second: the record lists this branch where "
+        f"`resume` reads no feature, {WHY_FEATURES}; it is in none of the "
+        "features a bare `resume` walks and none `--feature` can name, so "
+        "nothing here brings it back" + unread_exits())
+    assert findings == [
+        "- parked feature 001-a-thing (repo leg): no worktree on that branch "
+        "here; parked 2026-09-10T20:00:00Z on Falcon — `resume Atlas` brings "
+        "it back",
+        unread,
+        ], findings
+    assert result.stdout.count("`resume Atlas`") == 1, (
+        "a feature the loader never makes was offered the command that never "
+        "sees it")
+
+    # AND WITH NO LEGS UNDER IT, which is the same reading and used to be a
+    # different sentence: "the record lists no leg for it" is the refusal
+    # `collect_legs` makes, about a feature it reaches. This one it does not
+    # reach — the feature is not refused, it does not exist — so the line is
+    # the branch's, whether the record lists legs for it or none.
+    path.write_text(text.replace(LANE, "") + LANE
+                    + "      - branch: 002-second\n", encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "    " + unread in result.stdout, result.stdout
+    assert "lists no leg for it" not in result.stdout
+    assert result.stdout.count("`resume Atlas`") == 1
+
+
+def test_a_branch_above_every_features_key_is_a_feature_resume_never_makes(
+        atlas, home):
+    """The `features:` key OPENS the list, so a `- branch:` above every one of
+    them is under no list at all: 0 features, 0 legs (against the extension,
+    2026-09-12). Both spellings are here because the second is the one that
+    also moves the note line: with no `features:` key in the block the project
+    row was suppressed entirely — that key was its whole gate — and the
+    finding would have had no date and no workstation to name in its exits.
+    The row goes out for a block that owes a finding now, which is the one
+    thing added to that gate.
+
+    AND THE BRANCH IS IN NO RECORDED SET, which the third phase holds: a
+    worktree on it really is one `park` has never recorded, because `park`
+    reads this record through the same loader and would park it as new.
+
+    AND THE WHY IS THE OPENING KEY AND NOT A SHUTTING ONE since Copilot's
+    first round on this PR (2026-09-14, suppressed): nothing here shut the
+    feature list, because no `features:` key above these lines ever opened
+    one, and the shutting arm every other unread `- branch:` gets sent a
+    reader looking for a key at project indent that this record has not got.
+    The exits do not move — the order `park` writes is exactly what puts the
+    `features:` key back above the branch."""
+    checkout = workspace_config(home)
+    origin_has_branch(atlas, "001-a-thing")
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    assert text.count("    features:\n") == 1, text
+    unread = (
+        "- parked feature 001-a-thing: the record lists this branch where "
+        f"`resume` reads no feature, {WHY_NOLIST}; it is in none of the "
+        "features a bare `resume` walks and none `--feature` can name, so "
+        "nothing here brings it back" + unread_exits())
+    note = ("    parked record: 0 feature(s), parked 2026-09-10T20:00:00Z on "
+            "Falcon (lane xfactory-2); active 001-a-thing")
+
+    # (1) the key pushed to the bottom of its own block.
+    path.write_text(text.replace("    features:\n", "") + "    features:\n",
+                    encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert note in result.stdout, result.stdout
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert findings == [unread], findings
+    assert "`resume Atlas`" not in result.stdout
+
+    # (2) the key gone altogether, which is the gate.
+    path.write_text(text.replace("    features:\n", ""), encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert note in result.stdout, (
+        "the project row a block with no `features:` key still owes")
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert findings == [unread], findings
+    assert "`resume Atlas`" not in result.stdout
+
+    # (3) and a worktree on that branch is one the record does not know.
+    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - worktree on 001-a-thing (root): not in the parked record — "
+            "never parked") in result.stdout, result.stdout
+
+
+def test_a_feature_level_key_between_legs_and_its_items_leaves_no_leg(
+        atlas, home):
+    """`legs:` opens a feature's leg list and the next key at FEATURE indent
+    shuts it, so a `feature_directory:` a merge put below `legs:` rather than
+    above it costs that feature every leg it has: 1 feature, 0 legs (against
+    the extension, 2026-09-12). `collect_legs` collects none and refuses the
+    WHOLE feature as a shape mismatch before it reads one — so this layer read
+    the leg against disk and offered `resume Atlas` for a feature `resume`
+    throws out. The line is the FEATURE's, not the leg's, and it names the leg
+    the record lists rather than saying it lists none."""
+    checkout = workspace_config(home)
+    origin_has_branch(atlas, "001-a-thing")
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    directory = "        feature_directory: worktrees/001-a-thing\n"
+    legs = "        legs:\n"
+    assert text.count(directory + legs) == 1, text
+    path.write_text(text.replace(directory + legs, legs + directory),
+                    encoding="utf-8")
+
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    parked record: 1 feature(s), parked 2026-09-10T20:00:00Z on "
+            "Falcon (lane xfactory-2); active 001-a-thing") in result.stdout
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert findings == [
+        "- parked feature 001-a-thing: the record lists its `repo` leg where "
+        f"`resume` reads no leg, {WHY_LEGS}; `resume` collects NO leg for this "
+        "feature and refuses it WHOLE, reporting it as a shape mismatch, so "
+        "nothing here brings it back" + unread_exits(),
+        ], findings
+    assert "(repo leg)" not in result.stdout, (
+        "a leg read against disk for a feature `collect_legs` collects none "
+        "for")
+    assert "`resume Atlas`" not in result.stdout
+    assert "lists no leg for it" not in result.stdout, (
+        "said about a record that lists one")
+
+
+def test_a_key_between_two_legs_costs_that_leg_and_not_the_feature(trio, home):
+    """THE SAME KEY IN THE SAME PLACE, ONE LEG LATER, IS A DIFFERENT ANSWER:
+    the feature and the legs above the key are read, the legs below it are
+    not, and `resume` brings the feature back with what it read. So no line of
+    this record may say "refuses the WHOLE feature" — which is what this layer
+    said, because it read the second leg, mapped its role and let it spoil a
+    feature `collect_legs` never sees it in — and the leg that DOES come back
+    keeps `resume Trio`. A three-leg estate, where both roles map: the point
+    is the key, not the shape.
+
+    Both enders are held, because they are two arms of the loader and one
+    reading: a key at FEATURE indent (`in_legs=false` at the top of the
+    indent-8 arm) and a key at PROJECT indent, which shuts the leg list with
+    the feature list it is inside."""
+    checkout = workspace_config(home)
+    origin_has_branch(trio / "spec", "001-a-thing")
+    path = record(checkout, "trio", branch="001-a-thing", role="spec",
+                  commit=FAKE_SHA, parked_on="Falcon", root="Trio")
+    code = leg_block("code", FAKE_SHA)
+    text = path.read_text(encoding="utf-8") + code
+    directory = "        feature_directory: worktrees/001-a-thing\n"
+    assert text.count(directory) == 1 and text.count(code) == 1, text
+
+    def lost(why):
+        return (
+            "- parked feature 001-a-thing: the record lists a `code` leg for "
+            f"it where `resume` reads no leg, {why}; `resume` brings the "
+            "feature back with the legs it does read and leaves that one's "
+            "work where it was parked" + unread_exits(name="trio.yaml"))
+    kept = ("- parked feature 001-a-thing (spec leg): no worktree on that "
+            "branch here; parked 2026-09-10T20:00:00Z on Falcon — `resume "
+            "Trio` brings it back")
+
+    for moved, why in ((directory, WHY_LEGS), (LANE, WHY_OUTER)):
+        path.write_text(text.replace(moved, "").replace(code, moved + code),
+                        encoding="utf-8")
+        result = run(STATUS, "Trio", home=home)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert ("    parked record: 1 feature(s), parked 2026-09-10T20:00:00Z "
+                "on Falcon") in result.stdout, moved
+        findings = [line.strip() for line in result.stdout.splitlines()
+                    if line.strip().startswith("- parked feature")]
+        assert findings == [lost(why), kept], (moved, findings)
+        assert "refuses the WHOLE feature" not in result.stdout, moved
+        assert result.stdout.count("`resume Trio`") == 1, moved
+
+
+def test_a_second_features_key_reopens_the_list_and_its_legs_keep_the_feature(
+        atlas, home):
+    """THE LIST REOPENS, AND THE LOADER'S `feature_index` DOES NOT GO BACK.
+
+    The first phase is the control and must not move: a project key between
+    two features, a second `features:` key below it, and both features and
+    both legs are read again (2 features, 2 legs, against the extension,
+    2026-09-12). This reading closes a LIST, not a record.
+
+    The second is what `$branch` is for. `feature_index` at the loader is the
+    last feature it MADE, and a `- branch:` it reads no feature out of does
+    not move it — so the legs of a `features:` key reopened below such a line
+    are collected onto the feature ABOVE it, and the verdict they cost is that
+    feature's. Read with `$branch` overwritten at every `- branch:` line
+    whatever became of it, the refusal went out against the phantom, which is
+    a feature the same report says `resume` never makes."""
+    checkout = workspace_config(home)
+    origin_has_branch(atlas, "001-a-thing")
+    origin_has_branch(atlas, "002-second")
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    second = SECOND_FEATURE + leg_block("repo", FAKE_SHA)
+    path.write_text(text.replace(LANE, "") + LANE + "    features:\n" + second,
+                    encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    parked record: 2 feature(s), parked 2026-09-10T20:00:00Z on "
+            "Falcon (lane xfactory-2); active 001-a-thing") in result.stdout
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 2, findings
+    for branch in ("001-a-thing", "002-second"):
+        assert (f"- parked feature {branch} (repo leg): no worktree on that "
+                "branch here; parked 2026-09-10T20:00:00Z on Falcon — `resume "
+                "Atlas` brings it back") in findings, (branch, findings)
+    assert "reads no feature" not in result.stdout, "the list reopened"
+
+    # AND THE LEGS OF A REOPENED LIST BELONG TO THE FEATURE ABOVE THE UNREAD
+    # BRANCH. `nope` is a role this root does not mount, so `collect_legs`
+    # refuses whichever feature owns it — and the name on that refusal is the
+    # whole question.
+    path.write_text(text.replace(LANE, "") + LANE
+                    + "      - branch: 002-second\n"
+                    + "    features:\n        legs:\n"
+                    + leg_block("nope", FAKE_SHA), encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    parked record: 1 feature(s), parked 2026-09-10T20:00:00Z on "
+            "Falcon (lane xfactory-2); active 001-a-thing") in result.stdout
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 3, findings
+    assert findings[0] == (
+        "- parked feature 001-a-thing (repo leg): no worktree on that branch "
+        "here, parked 2026-09-10T20:00:00Z on Falcon; `resume` refuses the "
+        "WHOLE feature, because its `nope` leg names a role this root does "
+        "not mount, so it does not bring this leg back — park that feature "
+        "again from the workstation that has it (the record says Falcon)"
+        ), findings[0]
+    assert findings[1] == (
+        "- parked feature 002-second: the record lists this branch where "
+        f"`resume` reads no feature, {WHY_FEATURES}; it is in none of the "
+        "features a bare `resume` walks and none `--feature` can name, so "
+        "nothing here brings it back" + unread_exits()), findings[1]
+    assert findings[2].startswith(
+        "- parked feature 001-a-thing (nope leg): the record names a leg this "
+        "root does not mount here"), findings[2]
+    assert "002-second (nope leg)" not in result.stdout, (
+        "the leg went out under the `- branch:` line above it rather than "
+        "under the feature the loader collects it onto")
+    assert "`resume Atlas`" not in result.stdout
+
+
+def test_a_reopened_list_below_an_unread_branch_still_says_the_leg_it_drops(
+        atlas, home):
+    """COPILOT'S FIRST ROUND ON THIS PR (2026-09-14, suppressed), verbatim:
+    "`dropped` remains set after an unread `- branch:` even when a later
+    `features:` key reopens the list. In that shape the loader keeps the last
+    real feature as the current feature, so a subsequent `- role:` under a
+    closed `legs:` list belongs to that real feature; this condition
+    suppresses its `noleg` row, causing `read_record` to miss the unread leg
+    (or incorrectly report that the feature lists no leg). Reset `dropped`
+    when `features:` reopens the feature list, and add a regression for this
+    reopen-then-noleg case."
+
+    IT IS RIGHT, AND THE SECOND HALF IS THIS COMMIT'S OWN SENTENCE TURNED ON
+    ITSELF. `$dropped` says "the last `- branch:` line was one the loader did
+    not read, so the legs written under it are its defect and not a second
+    one" — and a `features:` key ENDS that, because the legs of a reopened
+    list are collected onto the feature ABOVE the unread line (record (k) of
+    the probe, and the test above this one). Run against the extension
+    2026-09-14: this record loads as ONE feature and ONE leg, the `spec` line
+    below the reopened key read as no leg at all — and left as it was, this
+    layer said nothing whatever about it. The second phase is the half that
+    made a FALSE line: with the feature above keeping no read leg of its own,
+    "the record lists no leg for it" went out about a record that lists one,
+    which is the sentence the arm beside this one exists to stop making.
+
+    The WHY is `outer` in both, and that is the same reading: the key that
+    shut the leg list is at PROJECT indent — `parked_by_lane:` here, and the
+    `features:` key that reopened the feature list is at that indent too —
+    so no feature-level key is what a hand should go looking for."""
+    checkout = workspace_config(home)
+    origin_has_branch(atlas, "001-a-thing")
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    ghost = "      - branch: 002-ghost\n"
+    tail = ghost + FEATURES + leg_block("spec", FAKE_SHA)
+    unread_branch = (
+        "- parked feature 002-ghost: the record lists this branch where "
+        f"`resume` reads no feature, {WHY_FEATURES}; it is in none of the "
+        "features a bare `resume` walks and none `--feature` can name, so "
+        "nothing here brings it back" + unread_exits())
+
+    # (1) the feature above KEEPS the leg it does list, so the line is the
+    # leg's and `resume Atlas` still stands for the feature.
+    path.write_text(text.replace(LANE, "") + LANE + tail, encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    parked record: 1 feature(s), parked 2026-09-10T20:00:00Z on "
+            "Falcon (lane xfactory-2); active 001-a-thing") in result.stdout
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert findings == [
+        "- parked feature 001-a-thing: the record lists a `spec` leg for it "
+        f"where `resume` reads no leg, {WHY_OUTER}; `resume` brings the "
+        "feature back with the legs it does read and leaves that one's work "
+        "where it was parked" + unread_exits(),
+        "- parked feature 001-a-thing (repo leg): no worktree on that branch "
+        "here; parked 2026-09-10T20:00:00Z on Falcon — `resume Atlas` brings "
+        "it back",
+        unread_branch,
+        ], findings
+
+    # (2) and with no read leg under it, the line the arm beside this one
+    # would have said instead: "lists no leg", about a record that lists one.
+    head = text.split(LEGS_KEY)[0]
+    assert head.count(LANE) == 1 and head.endswith(
+        "        feature_directory: worktrees/001-a-thing\n"), head
+    path.write_text(head.replace(LANE, "") + LANE + tail, encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert findings == [
+        "- parked feature 001-a-thing: the record lists its `spec` leg where "
+        f"`resume` reads no leg, {WHY_OUTER}; `resume` collects NO leg for "
+        "this feature and refuses it WHOLE, reporting it as a shape mismatch, "
+        "so nothing here brings it back" + unread_exits(),
+        unread_branch,
+        ], findings
+    assert "lists no leg for it" not in result.stdout, (
+        "said about a record that lists one")
+    assert "`resume Atlas`" not in result.stdout
+
+
+def test_a_role_above_its_features_legs_key_names_the_key_that_never_opened(
+        atlas, home):
+    """COPILOT'S FIRST ROUND ON THIS PR (2026-09-14, suppressed), the second
+    half of its note on `record_unread_why`: "the analogous `legs` text is
+    also wrong when a role precedes the first `legs:` key". IT IS RIGHT. The
+    `legs:` key is what OPENS a feature's leg list, so a `- role:` above it is
+    unread because nothing opened one — not because a key at feature indent
+    shut one — and the shutting arm sends a hand looking for a line the
+    record has not got. Run against the extension 2026-09-14: with the
+    `- role:` above the `legs:` key the loader reads ONE leg (the one below
+    it), and with no `legs:` key at all it reads NONE.
+
+    The exits do not move: the order `park` writes is where the `legs:` key
+    goes back, and the re-park is still only from the workstation that has
+    the feature.
+
+    AND THE THIRD PHASE IS THE LINE THIS ARM MAY NOT TAKE ON ITS WAY IN,
+    which is the loader's own reading and not a symmetry: its indent-6 arm
+    makes a feature only where the item's key is `branch`, so an indent-6
+    line that is anything else reads as no feature and leaves the one above
+    it current — and THAT feature has its `legs:` key above the line. The
+    list was opened and a key at that indent shut it, which is the arm every
+    such line had before this round; answering `nolegs` there would send a
+    hand looking for a `legs:` key the feature has got. Run against the
+    extension 2026-09-14 on both spellings of the line, `- stray: x` and
+    `stray: x`: 1 feature, 1 leg (`repo`), `MANIFEST_LEG_FEATURE` `0` — the
+    line makes no feature, and the `- role:` below it is no leg."""
+    checkout = workspace_config(home)
+    origin_has_branch(atlas, "001-a-thing")
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    spec = leg_block("spec", FAKE_SHA)
+    assert text.count(LEGS_KEY) == 1, text
+
+    # (1) the `- role:` above the key that would have opened the list.
+    path.write_text(text.replace(LEGS_KEY, spec + LEGS_KEY), encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert findings == [
+        "- parked feature 001-a-thing: the record lists a `spec` leg for it "
+        f"where `resume` reads no leg, {WHY_NOLEGS}; `resume` brings the "
+        "feature back with the legs it does read and leaves that one's work "
+        "where it was parked" + unread_exits(),
+        "- parked feature 001-a-thing (repo leg): no worktree on that branch "
+        "here; parked 2026-09-10T20:00:00Z on Falcon — `resume Atlas` brings "
+        "it back",
+        ], findings
+
+    # (2) and with no `legs:` key in the feature at all, where the feature is
+    # the one `collect_legs` refuses whole.
+    path.write_text(text.split(LEGS_KEY)[0] + spec, encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert findings == [
+        "- parked feature 001-a-thing: the record lists its `spec` leg where "
+        f"`resume` reads no leg, {WHY_NOLEGS}; `resume` collects NO leg for "
+        "this feature and refuses it WHOLE, reporting it as a shape mismatch, "
+        "so nothing here brings it back" + unread_exits(),
+        ], findings
+    assert "`resume Atlas`" not in result.stdout
+    assert "lists no leg for it" not in result.stdout
+
+    # (3) and the line the arm above may not take: an indent-6 key that is
+    # not a `- branch:` shuts the list the `legs:` key above it opened, and
+    # the feature it is still inside HAS that key.
+    for stray in ("      - stray: x\n", "      stray: x\n"):
+        path.write_text(text + stray + spec, encoding="utf-8")
+        result = run(STATUS, "Atlas", home=home)
+        assert result.returncode == 1, result.stdout + result.stderr
+        findings = [line.strip() for line in result.stdout.splitlines()
+                    if line.strip().startswith("- parked feature")]
+        assert findings == [
+            "- parked feature 001-a-thing: the record lists a `spec` leg for "
+            f"it where `resume` reads no leg, {WHY_LEGS}; `resume` brings the "
+            "feature back with the legs it does read and leaves that one's "
+            "work where it was parked" + unread_exits(),
+            "- parked feature 001-a-thing (repo leg): no worktree on that "
+            "branch here; parked 2026-09-10T20:00:00Z on Falcon — `resume "
+            "Atlas` brings it back",
+            ], (stray, findings)
+
+
+def test_an_unread_leg_with_no_role_is_named_by_the_role_it_has_not_got(
+        atlas, home):
+    """COPILOT'S SECOND ROUND ON THIS PR (2026-09-14, suppressed), verbatim:
+    "When an unread `- role:` has an empty value (for example `- role: # note`
+    under a closed `legs:` list), `feature_drop_role` is empty and this
+    renders `the record lists its `` leg`. That makes the new recovery
+    diagnostic unclear for a roleless record; use an explicit label such as
+    'a leg with no role' (and cover this malformed spelling in the regression
+    tests)."
+
+    IT IS RIGHT, AND THE SPELLING IS ONE THIS LAYER ALREADY KNOWS. `- role: #
+    note` is a leg with no role to BOTH readers, because `record_scalar` takes
+    a `#` comment off every value for the same reason `workspace_load_project`
+    takes it off every line — the reading #21's round put above `record_scalar`
+    itself. Run against the extension 2026-09-14 on every record below: with a
+    `repo` leg beside it the loader reads `features=1 legs=1 roles=[repo]`,
+    and with the roleless line as the feature's only leg, `features=1
+    legs=0` — `MANIFEST_LEG_ROLE` empty in both. So the line is unread in each
+    of them, and the finding about it was naming the leg with a pair of empty
+    backticks: a name where the reader is looking for one, on the line whose
+    whole worth is sending a hand to a line.
+
+    THE TWO PHASES ARE THE TWO ARMS THAT NAME A DROPPED LEG ON A FEATURE THE
+    RECORD NAMES — the one where the feature keeps a leg `resume` reads and
+    the one where it keeps none; the third, a feature whose `- branch:` has no
+    value either, is the test below this one. Both spellings are held in each,
+    the `#` comment and the bare key, because it is `record_scalar` that makes
+    them the same thing and not this arm.
+
+    RECORDED AND NOT TAKEN, and it is the exits' reading rather than this
+    line's: with the key put back this leg becomes one `collect_legs` READS,
+    and a leg with no role is a refusal of the WHOLE feature — which this
+    layer already says, in `check_parked_leg`'s own roleless arm, on the run
+    after the key moves. Bolting that onto this sentence would say it twice
+    and in the wrong place; the arm that owns it says it where it is true."""
+    checkout = workspace_config(home)
+    origin_has_branch(atlas, "001-a-thing")
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    directory = "        feature_directory: worktrees/001-a-thing\n"
+    assert text.count(directory) == 1, text
+
+    for roleless in ("# note", ""):
+        # (1) beside a leg the loader DOES read: the feature comes back and
+        # the line is about the leg that does not come with it.
+        path.write_text(text.replace(directory, "") + directory
+                        + leg_block(roleless, FAKE_SHA), encoding="utf-8")
+        result = run(STATUS, "Atlas", home=home)
+        assert result.returncode == 1, result.stdout + result.stderr
+        findings = [line.strip() for line in result.stdout.splitlines()
+                    if line.strip().startswith("- parked feature")]
+        assert findings == [
+            "- parked feature 001-a-thing: the record lists a leg with no "
+            f"role for it where `resume` reads no leg, {WHY_LEGS}; `resume` "
+            "brings the feature back with the legs it does read and leaves "
+            "that one's work where it was parked" + unread_exits(),
+            "- parked feature 001-a-thing (repo leg): no worktree on that "
+            "branch here; parked 2026-09-10T20:00:00Z on Falcon — `resume "
+            "Atlas` brings it back",
+            ], (roleless, findings)
+        assert "``" not in result.stdout, (roleless, "an empty name")
+
+        # (2) as the feature's only leg, with no `legs:` key above it to
+        # have opened a list: `collect_legs` collects none and refuses the
+        # feature whole (the loader, same day: `features=1 legs=0`).
+        path.write_text(text.split(LEGS_KEY)[0] + leg_block(roleless, FAKE_SHA),
+                        encoding="utf-8")
+        result = run(STATUS, "Atlas", home=home)
+        assert result.returncode == 1, result.stdout + result.stderr
+        findings = [line.strip() for line in result.stdout.splitlines()
+                    if line.strip().startswith("- parked feature")]
+        assert findings == [
+            "- parked feature 001-a-thing: the record lists its leg with no "
+            f"role where `resume` reads no leg, {WHY_NOLEGS}; `resume` "
+            "collects NO leg for this feature and refuses it WHOLE, reporting "
+            "it as a shape mismatch, so nothing here brings it back"
+            + unread_exits(),
+            ], (roleless, findings)
+        assert "``" not in result.stdout, (roleless, "an empty name")
+        assert "`resume Atlas`" not in result.stdout, roleless
+
+
+def test_a_blank_branch_over_an_unread_leg_with_no_role_says_both_and_neither(
+        atlas, home):
+    """THE THIRD ARM OF COPILOT'S SECOND ROUND (2026-09-14, suppressed): the
+    line for a feature whose `- branch:` has no value AND whose only listed
+    leg sits where `resume` reads none named that leg with the same empty
+    backticks. Two defects were already said in one line here; the leg is now
+    named by the role it has not got, and nothing else about this record
+    moves — not the refusal `resume` makes, and not the exits, which are the
+    delete-or-re-park pair a blank name needs rather than the key order."""
+    checkout = workspace_config(home)
+    path = folder_matched_record(atlas, checkout)
+    text = path.read_text(encoding="utf-8")
+    assert text.count("        legs:\n") == 1
+    path.write_text(text.replace("    root: Atlas\n", "")
+                    .replace("      - branch: 001-a-thing\n", "      - branch:\n")
+                    .replace("          - role: repo\n", "          - role: # note\n")
+                    .replace("        legs:\n", "    root: Atlas\n        legs:\n"),
+                    encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature with no branch name: a `- branch:` in the "
+            "record has no value, and the leg with no role listed under it "
+            f"sits where `resume` reads no leg, {WHY_OUTER}; `resume` reads "
+            "the feature as one named nothing, collects no leg for it, and "
+            "refuses it whole as a shape mismatch before it reads one, so "
+            "nothing here brings it back — if that feature landed, remove its "
+            "`- branch:` block from Atlas.yaml; if it was parked, park it "
+            "again from the workstation that has it (the record says Falcon), "
+            "which writes the branch and the legs it parks") in result.stdout
+    assert "``" not in result.stdout, "an empty name"
+    assert "`resume Atlas`" not in result.stdout
+
+
+def test_a_blank_branch_that_keeps_a_leg_still_names_the_one_it_drops(
+        atlas, home):
+    """COPILOT'S THIRD ROUND ON THIS PR (2026-09-14), verbatim: "When a blank
+    `- branch:` has both a readable leg and a `noleg`, this condition skips
+    the new combined diagnostic because it only enters the unread-leg branch
+    when `feature_legs` is zero. Control then falls through to the older
+    blank-branch message; `unnamed=1` suppresses all readable leg rows and the
+    later `noleg` arm is a no-op, so the unread leg/key-order defect is never
+    reported. Please handle this mixed case too (and add a regression) while
+    retaining the blank-branch refusal."
+
+    IT IS RIGHT, AND IT IS THE ONE HOLE THIS WHOLE BRANCH EXISTS TO SHUT: a
+    line the record lists, that `resume` reads nothing of, said NOWHERE. The
+    blank name suppresses every per-leg line by design — there is no branch to
+    find a worktree for — and the `noleg` arm only counts, so the feature's own
+    line is the only place the unread one can be named, and the combined arm
+    was reached only where the feature keeps none. Against the extension
+    2026-09-14, the record below loads as ONE feature named nothing with ONE
+    leg (`MANIFEST_LEG_ROLE` `[repo]`, `MANIFEST_LEG_FEATURE` `0`), the `spec`
+    line below the `feature_directory:` key read as no leg at all — and this
+    layer said only "a `- branch:` in the record has no value", with nothing
+    whatever about the line it drops.
+
+    THE REFUSAL DOES NOT MOVE, and that is the half Copilot asked to keep:
+    the feature DOES keep a leg `collect_legs` collects, so the run reaches
+    RR2 and refuses it there with the name blank — not the shape mismatch the
+    legless arm names. Nor do the exits: a key put back leaves a feature named
+    nothing, which no re-ordering settles, so they are the blank name's
+    delete-or-re-park pair, and the re-park carries the dropped leg's lines
+    because the park that writes the branch writes the legs with it."""
+    checkout = workspace_config(home)
+    origin_has_branch(atlas, "001-a-thing")
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    directory = "        feature_directory: worktrees/001-a-thing\n"
+    assert text.count(directory) == 1, text
+    blank = text.replace("      - branch: 001-a-thing\n", "      - branch:\n")
+    path.write_text(blank.replace(directory, "") + directory
+                    + leg_block("spec", FAKE_SHA), encoding="utf-8")
+
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature with no branch name: a `- branch:` in the "
+            "record has no value, and a `spec` leg listed under it sits where "
+            f"`resume` reads no leg, {WHY_LEGS}; `resume` reads the feature "
+            "as one named nothing and refuses it as a branch origin has not "
+            "got (\"is no longer on origin\", the name blank), so nothing here "
+            "brings it back — if that feature landed, remove its `- branch:` "
+            "block from atlas.yaml; if it was parked, park it again from the "
+            "workstation that has it (the record says Falcon), which writes "
+            "the branch and the legs it parks") in result.stdout, result.stdout
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 1, findings
+    assert "(repo leg)" not in result.stdout, (
+        "a per-leg line for a feature whose legs have no branch to be found by")
+    assert "(spec leg)" not in result.stdout
+    assert "`resume Atlas`" not in result.stdout
+    assert "lists no leg" not in result.stdout, (
+        "said about a record that lists two")
+    assert "parked record: 1 feature(s)" in result.stdout
+
+
+def test_the_unread_leg_line_never_promises_a_feature_this_run_refuses(
+        atlas, home):
+    """COPILOT'S FIRST ROUND ON THIS PR (2026-09-14, suppressed), verbatim:
+    "This wording assumes that the readable legs will resume successfully,
+    but `feature_why`, `feature_rr`, or `feature_add` may already contain a
+    whole-feature refusal from one of those legs. In that case
+    `check_parked_leg` reports the feature as refused and does not offer
+    `resume`, while this line says that `resume` brings it back, producing
+    contradictory guidance."
+
+    IT IS RIGHT, and the pair is the one the rule at the top of
+    `check_parked_leg` forbids — made here by this layer against itself. The
+    record below lists a `nope` leg, which this root does not mount, and a
+    second leg the key above it leaves unread: `collect_legs` refuses the
+    WHOLE feature over the first before any RR is asked, every leg line says
+    so and offers no `resume`, and the unread-leg line may not promise the
+    feature back beside them. What it still says is the key ORDER, because
+    that leg's lines are one park from gone whatever refuses the feature."""
+    checkout = workspace_config(home)
+    origin_has_branch(atlas, "001-a-thing")
+    path = record(checkout, "atlas", branch="001-a-thing", role="nope",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    directory = "        feature_directory: worktrees/001-a-thing\n"
+    assert text.count(directory) == 1, text
+    path.write_text(text.replace(directory, "") + directory
+                    + leg_block("repo", FAKE_SHA), encoding="utf-8")
+
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert findings[0] == (
+        "- parked feature 001-a-thing: the record lists a `repo` leg for it "
+        f"where `resume` reads no leg, {WHY_LEGS}; `resume` refuses this "
+        "feature WHOLE in any case, for the reason the legs it does read give "
+        "on their own lines below, so nothing here brings it back"
+        + unread_exits()), findings[0]
+    assert findings[1].startswith(
+        "- parked feature 001-a-thing (nope leg): the record names a leg this "
+        "root does not mount here"), findings[1]
+    assert len(findings) == 2, findings
+    assert "brings the feature back with the legs it does read" not in (
+        result.stdout), "promised beside a refusal of the whole feature"
+    assert "`resume Atlas`" not in result.stdout
 
 
 def test_the_record_layer_under_all_is_located_per_estate(home, status_remotes):

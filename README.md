@@ -67,7 +67,13 @@ where that role is really another shape's, only a checkout of that shape,
 where it is neither shape's, none; with the branch gone from origin, which
 only `--fetch` settles, `resume` refuses the WHOLE feature as gone from origin
 and the exits are the record's own entry where the feature landed or a push
-from the workstation that parked it; and where `git worktree list` still holds a
+from the workstation that parked it; with a `- branch:` or a `- role:` left by
+the record's KEY ORDER where the loader reads neither — it shuts the
+`features:` list at the next key at project indent and a feature's `legs:`
+list at the next key at feature indent — the exits are putting that key back,
+which is yours to do, and a re-park only from the workstation that has the
+feature, since a park anywhere else rewrites the block without those lines;
+and where `git worktree list` still holds a
 registration that is no longer a worktree, a `worktree prune` — after a
 `worktree unlock` if it is locked, with any directory it leaves behind moved
 aside — has to clear it first; and where anything else sits at the path both
