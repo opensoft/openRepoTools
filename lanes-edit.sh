@@ -2005,7 +2005,18 @@ END { emit() }'
 session_records() {
   sr_c="${SE_CACHE_FILE:+$SE_CACHE_FILE.records}"
   if [ -n "$sr_c" ] && [ -f "$sr_c" ]; then cat -- "$sr_c"; return 0; fi
-  sr_files="$(session_files 2>/dev/null || :)"
+  # AND A TREE THAT COULD NOT BE READ IS NOT A WORKSTATION WITH NO SESSIONS
+  # (#26, the review of `37632b1`, `lanes-edit.sh:2008`). `session_files` sets
+  # `SESSION_FILES_ERR` and returns 1 for exactly that case — the three callers
+  # that read it DIRECTLY refuse on it, and say so where they do — and this one
+  # read it through `|| :` inside a `$( )`, which discards the status and the
+  # message with the subshell. The empty answer was then CACHED for the life of
+  # the process, so every consumer after it was told the same untrue thing. The
+  # status decides here and NOTHING IS WRITTEN to the cache on it: a cache of a
+  # failure is a failure nobody can see.
+  sr_files=""; sr_frc=0
+  sr_files="$(session_files 2>/dev/null)" || sr_frc=$?
+  [ "$sr_frc" = 0 ] || return 1
   sr_t=""
   [ -n "$sr_c" ] && sr_t="$sr_c.${BASHPID:-$$}"
   if [ -z "$sr_files" ]; then
@@ -3081,7 +3092,16 @@ who_lane() {
   # 6's fork wrote `RESUMED` and `PAUSED` lines into one that did. `who` names
   # it and does nothing; ending somebody's process is a person's act (Amendment
   # 8(f)).
-  wl_fk="$(lane_forks "$wl_lane" 2>/dev/null || :)"
+  # A SURFACE THAT MAY NOT REFUSE SAYS IT COULD NOT LOOK (#26, the review of
+  # `37632b1`). `|| :` printed the same nothing for "no fork is live" and for "I
+  # could not read this workstation's session records", and those are the two
+  # answers ratified decision 8(e) most needs kept apart.
+  wl_fk=""; wl_fkrc=0
+  wl_fk="$(lane_forks "$wl_lane" 2>/dev/null)" || wl_fkrc=$?
+  case "$wl_fkrc" in
+    0 | 8) : ;;
+    *) printf 'UNKNOWN  this workstation'"'"'s session records could not be read, so whether a live FORK of lane %s'"'"'s transcript is running is NOT established — which is not the same as none. See: lanes-edit.sh forks %s\n' "$wl_lane" "$wl_lane" ;;
+  esac
   if [ -n "$wl_fk" ]; then
     while IFS="$(printf '\t')" read -r wl_fid wl_fpid wl_fkind wl_fcwd; do
       [ -n "${wl_fid:-}" ] || continue
@@ -3761,6 +3781,13 @@ last_session_of() {   # <lane>
 fork_map() {
   fm_c="${SE_CACHE_FILE:+$SE_CACHE_FILE.forks}"
   if [ -n "$fm_c" ] && [ -f "$fm_c" ]; then cat -- "$fm_c"; return 0; fi
+  # THE READ IS ITS OWN STEP AND ITS STATUS DECIDES, because the loop below is
+  # fed by a HERE-DOCUMENT and a here-document body is TEXT: the status of a
+  # command substitution inside it is discarded outright (#26, the review of
+  # `37632b1`; the same shape `f368a75` took out of `lane_payload_field`).
+  fm_recs=""; fm_rc=0
+  fm_recs="$(session_records)" || fm_rc=$?
+  [ "$fm_rc" = 0 ] || return 1
   fm_out=""
   while IFS="$US" read -r fm_f fm_sid fm_tmux fm_name fm_pid fm_kind fm_cwd fm_status fm_start; do
     [ -n "${fm_sid:-}" ] || continue
@@ -3770,7 +3797,7 @@ fork_map() {
     fm_out="${fm_out}$(lc "$fm_t")${US}${fm_t}${US}${fm_sid}${US}$(lc "$fm_sid")${US}${fm_pid}${US}${fm_kind}${US}${fm_cwd}
 "
   done <<EOF
-$(session_records)
+$fm_recs
 EOF
   if [ -n "$fm_c" ]; then
     printf '%s' "$fm_out" > "$fm_c.${BASHPID:-$$}" 2>/dev/null &&
@@ -3841,6 +3868,16 @@ lane_forks() {   # <lane> [<ids fence>]
     lf_ids=" $( { session_ids_of_lane "$lf_l" 2>/dev/null || :
                   session_ids_local_of_lane "$lf_l" 2>/dev/null || :; } | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
   fi
+  # AND THE MAP IS READ BEFORE THE LOOP, so that a session tree which could not
+  # be read leaves here as **1** and not as the **8** that means "no fork of it
+  # is live" (#26, the review of `37632b1`). The `forks` arm has carried the
+  # refusal for that 1 since it was written — *"That is NOT 'no fork of it is
+  # live'"* — and it was UNREACHABLE, because the status died in the
+  # here-document below. A fork is a DEFECT under ratified decision 8(e); the
+  # one thing worse than reporting one is reporting none without looking.
+  lf_map=""; lf_mrc=0
+  lf_map="$(fork_map)" || lf_mrc=$?
+  [ "$lf_mrc" = 0 ] || return 1
   lf_out=""
   while IFS="$US" read -r lf_tl lf_t lf_sid lf_sidl lf_pid lf_kind lf_cwd; do
     [ -n "${lf_tl:-}" ] || continue
@@ -3859,7 +3896,7 @@ lane_forks() {   # <lane> [<ids fence>]
     lf_out="${lf_out}${lf_sid}	${lf_pid}	${lf_kind:-interactive}	${lf_cwd}
 "
   done <<EOF
-$(fork_map)
+$lf_map
 EOF
   [ -n "$lf_out" ] || return 8
   printf '%s' "$lf_out"
@@ -3920,6 +3957,13 @@ EOF
 live_session_ids() {
   lsi_c="${SE_CACHE_FILE:+$SE_CACHE_FILE.live}"
   if [ -n "$lsi_c" ] && [ -f "$lsi_c" ]; then cat -- "$lsi_c"; return 0; fi
+  # ITS OWN STEP, FOR THE HERE-DOCUMENT'S SAKE, exactly as in `fork_map`: a
+  # session tree that could not be read is not a workstation with nothing live
+  # on it, and this answer decides the STATE column of every row a listing
+  # prints (#26, the review of `37632b1`).
+  lsi_recs=""; lsi_rc=0
+  lsi_recs="$(session_records)" || lsi_rc=$?
+  [ "$lsi_rc" = 0 ] || return 1
   lsi_out=""
   while IFS="$US" read -r lsi_f lsi_sid lsi_tmux lsi_name lsi_pid lsi_kind lsi_cwd lsi_status lsi_start; do
     [ -n "${lsi_sid:-}" ] || continue
@@ -3928,7 +3972,7 @@ live_session_ids() {
     lsi_out="${lsi_out}${lsi_sid}${US}${lsi_tmux}${US}${lsi_name}${US}${lsi_pid}
 "
   done <<EOF
-$(session_records)
+$lsi_recs
 EOF
   if [ -n "$lsi_c" ]; then
     printf '%s' "$lsi_out" > "$lsi_c.${BASHPID:-$$}" 2>/dev/null &&
@@ -4091,7 +4135,18 @@ lanes_rows() {
   lr_index="$GS$(lanes_register_index 2>/dev/null | tr '\n' "$GS" || :)"
   lr_local_index="$GS$(lanes_register_index --local 2>/dev/null | tr '\n' "$GS" || :)"
   lr_facts_t="$GS$(printf '%s\n' "$lr_facts" | tr '\n' "$GS")"
-  lr_live_rows="$(live_session_ids 2>/dev/null || :)"
+  # THE LIVE SCAN, AND WHAT A LISTING DOES WHEN IT FAILS (#26, the review of
+  # `37632b1`). NOT a refusal: this listing is the read a person makes IN FRONT
+  # OF A LAUNCH, and `43b6320`'s rule for the fetch is the rule here — it
+  # answers, and says what it could not establish. What it must never do is
+  # print a lane's log verb as its STATE in silence, because a lane that is
+  # LIVE then shows as IDLE or PAUSED and the row offers the `restart` line that
+  # would start a second session on it. The collision itself is still refused
+  # one surface along: `lane-start`'s own `live_holder` reads these same records
+  # DIRECTLY and exits 1 where they cannot be read.
+  lr_live_rows=""; lr_live_rc=0
+  lr_live_rows="$(live_session_ids 2>/dev/null)" || lr_live_rc=$?
+  lr_fork_rc=0
   lr_live_fence=" $(printf '%s\n' "$lr_live_rows" | awk -F"$US" 'NF { print tolower($1) }' | tr '\n' ' ')"
   lr_ws_short="$(short_ws "$lr_ws")"
   lr_now="$(date -u +%s)"
@@ -4100,7 +4155,12 @@ lanes_rows() {
   # this simply declines to ask it about the forty-five lanes of this estate
   # that no live transcript is titled for, each of which cost a subshell, a
   # `cat` of the map and a `grep` to be told nothing.
-  lr_fork_titles=" $(fork_map | awk -F"$US" 'NF { print $1 }' | tr '\n' ' ')"
+  lr_fork_map=""
+  lr_fork_map="$(fork_map 2>/dev/null)" || lr_fork_rc=$?
+  lr_fork_titles=" $(printf '%s\n' "$lr_fork_map" | awk -F"$US" 'NF { print $1 }' | tr '\n' ' ')"
+  if [ "$lr_live_rc" != 0 ] || [ "$lr_fork_rc" != 0 ]; then
+    note "this workstation's session records could not be read, so the STATE column below is the LOG's verb alone: a lane that is live may show as IDLE or PAUSED here, and no fork of any lane is established either way. Fix the read and re-run before acting on a restart line."
+  fi
   lr_out=""
   while IFS="$US" read -r lr_ll lr_l; do
     [ -n "$lr_l" ] || continue
@@ -4560,7 +4620,14 @@ session_start_block() {
   # somebody else's fork is still running needs to know before it acts, and the
   # retirement is a person's act (Amendment 8(f)), so the line NAMES and does
   # nothing.
-  ssb_fk="$(lane_forks "$ssb_lane" 2>/dev/null || :)"
+  ssb_fk=""; ssb_fkrc=0
+  ssb_fk="$(lane_forks "$ssb_lane" 2>/dev/null)" || ssb_fkrc=$?
+  # AND THE SAME HERE, for the same reason: this block is the first thing a
+  # session that starts into a lane reads, and "no fork" is a fact it acts on.
+  case "$ssb_fkrc" in
+    0 | 8) : ;;
+    *) printf 'UNKNOWN: this workstation'"'"'s session records could not be read, so whether a live FORK of this lane'"'"'s transcript is running is NOT established — which is not the same as none. See: lanes-edit.sh forks %s\n' "$ssb_lane" ;;
+  esac
   if [ -n "$ssb_fk" ]; then
     while IFS='\t' read -r ssb_fid ssb_fpid ssb_fkind ssb_fcwd; do
       [ -n "${ssb_fid:-}" ] || continue
@@ -5340,7 +5407,15 @@ EOF
     # was one AND was orchestrating, so the rule is extended to forks BY ID.
     # The note is on stderr, so the 0/8 contract this read's two callers gate
     # on is untouched.
-    lh_fk="$(lane_forks "$lane" 2>/dev/null || :)"
+    lh_fk=""; lh_fkrc=0
+    lh_fk="$(lane_forks "$lane" 2>/dev/null)" || lh_fkrc=$?
+    # ON STDERR, like the DEFECT line below it, so the 0/8 contract this read's
+    # two callers gate on is untouched — and said at all, because a fork check
+    # that could not be made is not a lane with no fork (#26, `37632b1`).
+    case "$lh_fkrc" in
+      0 | 8) : ;;
+      *) note "this workstation's session records could not be read, so whether a live FORK of lane $lane's transcript is running is NOT established — which is not the same as none. See: lanes-edit.sh forks $lane" ;;
+    esac
     if [ -n "$lh_fk" ]; then
       while IFS="$(printf '\t')" read -r lh_fid lh_fpid lh_fkind lh_fcwd; do
         [ -n "${lh_fid:-}" ] || continue

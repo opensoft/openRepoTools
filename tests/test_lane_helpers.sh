@@ -5297,6 +5297,74 @@ has   "…with the rows" "$out" "repoA11-1"
 hasnt "…and never claims a fetch it could not check on" "$out" "as of a fetch just now"
 has   "…saying in terms that it does not know" "$out" "whether the fetch answered is UNKNOWN"
 has   "…while the helper's own notes reach the person instead of /dev/null" "$err" "reading the logs as they stand locally"
+
+# A RECORDS TREE THAT COULD NOT BE READ IS NOT A LANE WITH NO FORK (#26, the
+# review of `37632b1`). `session_files` returns 1 and sets its own message for
+# exactly that case — `live-holder` has refused on it since `R-A8-3`, which this
+# suite proves a thousand lines above — but `session_records` read it through
+# `|| :` inside a `$( )`, which discards the status with the subshell, and
+# `fork_map`, `live_session_ids` and `lane_forks` each read THEIR source inside a
+# HERE-DOCUMENT, where a substitution's status is discarded outright. The empty
+# answer was then CACHED for the life of the process. So `forks` answered 8 —
+# "no fork of it is live" — and the refusal its own arm has carried since it was
+# written was UNREACHABLE.
+#
+# THE SAME FIXTURE THE `live-holder` CASES USE, and the same reason: the tree
+# itself, not a path through it.
+if [ "$(id -u)" = 0 ]; then
+  skip "an unreadable records tree is a refusal and not 'no fork of it is live'" "running as root, which can read a mode-000 tree"
+else
+  # THE FORK FIXTURE, RE-MADE: the retire cases removed it above, and these two
+  # answers are about a fork that IS live. Removed again below, so nothing after
+  # this block sees a world this block made.
+  printf '{"type":"custom-title","customTitle":"repoA-1","sessionId":"%s"}\n' "$FORK_ID" > "$fork_tdir/$FORK_ID.jsonl"
+  printf '{"pid":%s,"sessionId":"%s","cwd":"/workspace","procStart":"%s","kind":"bg","name":"openrepoproject-b9","status":"busy"}\n' \
+    "$LIVE_PID" "$FORK_ID" "$live_start" > "$sessions_dir/live-fork.json"
+  chmod 000 "$profiles_root"
+  run "$E" forks repoA-1
+  is    "forks exits 1 where this workstation's session records could not be read" "$rc" 1
+  has   "…saying what that is NOT, in its own arm's words" "$err" "That is NOT 'no fork of it is live'"
+  run "$E" who --lane repoA-1
+  hasnt "…and who names no DEFECT it could not establish" "$out" "DEFECT"
+  has   "…saying instead, in terms, that it could not look" "$out" "is NOT established"
+  # THE LISTING ANSWERS AND SAYS WHAT IT COULD NOT ESTABLISH, which is
+  # `43b6320`'s rule for the fetch: this is the read a person makes in FRONT of
+  # a launch, and the collision itself is refused one surface along, by
+  # `lane-start`'s own direct read of the same records.
+  run "$LANES_CMD" --all </dev/null
+  is    "a listing still ANSWERS where the records could not be read" "$rc" 0
+  has   "…with the rows" "$out" "repoA11-1"
+  has   "…and the notice, which reaches the person now the local read's stderr is kept" "$err" "session records could not be read"
+  has   "…saying what that costs the STATE column" "$err" "may show as IDLE or PAUSED"
+  chmod 755 "$profiles_root"
+  run "$E" forks repoA-1
+  is    "…while a readable tree still finds the fork" "$rc" 0
+  has   "…naming the fork's own id" "$out" "$FORK_ID"
+  rm -f "$sessions_dir/live-fork.json" "$fork_tdir/$FORK_ID.jsonl"
+  run "$LANES_CMD" --all </dev/null
+  hasnt "…and a listing off a readable tree carries no notice at all" "$err" "session records could not be read"
+fi
+
+# A RELATIVE `--dir` NAMED TWO DIRECTORIES (#26, the review of `37632b1`,
+# `restart:505`). `restart` cd's into the directory and then execs the launcher
+# WITH THE SAME STRING, which `lane-start` resolves a second time — from the new
+# working directory — so `--dir ../x` meant one checkout to the test here and
+# another to the launch. Asked with `--dry-run`, which prints the exact argv.
+run env -u TMUX -C "$HOME/projects/repoA11" "$RESTART" --dry-run --dir . repoA11-1 </dev/null
+is    "restart --dry-run with a relative --dir exits 0" "$rc" 0
+has   "…and the launcher is handed the directory RESOLVED, not the relative spelling" "$out" "--dir $A11_DIR"
+hasnt "…never the '.' that means something else after the cd" "$out" "--dir ."
+has   "…and the cd goes to the same resolved path" "$out" "cd $A11_DIR"
+
+# THE INSTALLER'S STAGING COMMENT COUNTED FOUR FILES OF ELEVEN (#26, the review
+# of `37632b1`, `openRepoTools:226`) — the same defect as the stale artifact
+# counts `2f44da0` corrected, and the fix is to spell NO number where the code
+# below already derives every one it prints.
+ort_text="$(cat "$SRC_DIR/openRepoTools")"
+hasnt "the installer's staging block no longer counts four of eleven files" "$ort_text" "ALL FOUR IN HAND"
+hasnt "…nor says each of the four is fetched at this ref" "$ort_text" "each of the four is fetched"
+has   "…and says it in the words that cannot go stale" "$ort_text" "ALL OF THEM IN HAND"
+has   "…while the counts it PRINTS stay derived from the list itself" "$ort_text" '${#INSTALLABLES[@]} files or none'
 # A PAUSED LANE WITH NO RECORDED PROFILE GETS NO `restart` LINE — it gets the
 # form that works, with the profile named as the one token to supply.
 has  "a lane with no recorded profile is offered the launcher form, not a line it cannot type" \

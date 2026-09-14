@@ -219,12 +219,19 @@ fetch_from_repo() {
 # is a `PATH` entry — which is exactly what decision 7 point 8 says.
 INSTALLABLES=(openRepoTools park resume status restart lanes lanes-edit.sh lane-start lane-end link-estates repos.tsv)
 
-# ALL FOUR IN HAND BEFORE ANY OF THEM IS PLACED (openRepoShape #82, F10 of the
-# review on its #83). One file at a time, dying on the first fetch that failed,
-# leaves a person with a NEW `openRepoTools` and no `park` — a half-install that
-# says `installed at` and is not one — and nothing on screen to say which of the
-# four were missing. Every one is collected into the temporary directory first:
-# a failure there replaces NOTHING, names what was not fetched, and exits.
+# ALL OF THEM IN HAND BEFORE ANY OF THEM IS PLACED (openRepoShape #82, F10 of
+# the review on its #83). One file at a time, dying on the first fetch that
+# failed, leaves a person with a NEW `openRepoTools` and no `park` — a
+# half-install that says `installed at` and is not one — and nothing on screen
+# to say which were missing. Every one is collected into the temporary directory
+# first: a failure there replaces NOTHING, names what was not fetched, and exits.
+#
+# NO NUMBER IS SPELLED IN THIS BLOCK, and that is the fix rather than a bigger
+# number (#26, the review of `37632b1`, `openRepoTools:226`). It said "ALL FOUR"
+# and "which of the four" while `INSTALLABLES` carried ELEVEN — the count grew
+# under a comment stating the old one, which is the same defect as the stale
+# artifact counts `2f44da0` corrected and as `lane-start`'s "no fifth rung". The
+# code below already derives every count it prints from `${#INSTALLABLES[@]}`.
 collect_commands() {
 	local name selfdir="" missing=""
 	# Run from a file, install THOSE bytes: `--install` then needs no network
@@ -232,7 +239,7 @@ collect_commands() {
 	# file, in the checkout and in the repository alike, so the siblings that
 	# are there are copied and only a missing one is fetched. Run from stdin
 	# (`curl … | bash -s -- --install`) there is no file to copy from at all,
-	# so each of the four is fetched at this same ref.
+	# so each one is fetched at this same ref.
 	if [ -f "$SELF" ]; then
 		selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 	fi

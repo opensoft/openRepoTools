@@ -290,7 +290,25 @@ if [ "$do_fetch" = 1 ]; then
 		fetch_unchecked=1
 	fi
 else
-	out="$("$LANES_EDIT" lanes ${args[@]+"${args[@]}"} 2>/dev/null)" || rc=$?
+	# AND THE LOCAL PATH'S STDERR IS NOT ONE KNOWN SENTENCE ANY MORE (#26, the
+	# review of `37632b1`, `lanes:293`). `2>/dev/null` was written when the only
+	# thing on that stream was the helper saying `LANES_NO_FETCH=1` — the notice
+	# this command asks for, on every local read, which is why it was silenced.
+	# The helper now also says there that this workstation's SESSION RECORDS could
+	# not be read, which is the line telling a person that the STATE column is the
+	# log's verb alone and that a lane showing IDLE may be live. So the stream is
+	# KEPT and the one expected sentence is dropped out of it, rather than the
+	# stream being dropped for the sake of that sentence.
+	local_err_file="$(mktemp "${TMPDIR:-/tmp}/lanes-local.XXXXXX" 2>/dev/null || printf '')"
+	if [ -n "$local_err_file" ]; then
+		out="$("$LANES_EDIT" lanes ${args[@]+"${args[@]}"} 2>"$local_err_file")" || rc=$?
+		grep -v 'not fetching; reading origin/' -- "$local_err_file" >&2 || :
+		rm -f -- "$local_err_file"
+	else
+		# No capture file, so nothing is filtered and everything reaches the
+		# person — the same answer the fetch path gives one branch up.
+		out="$("$LANES_EDIT" lanes ${args[@]+"${args[@]}"})" || rc=$?
+	fi
 fi
 
 # THE ONE PHRASE, AND IT IS THE HELPER'S OWN (`lanes-edit.sh:2902`): both the

@@ -164,6 +164,20 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
+# A RELATIVE `--dir` NAMES TWO DIRECTORIES (#26, the review of `37632b1`,
+# `restart:505`). This command `cd`s into the directory and then `exec`s the
+# launcher WITH THE SAME STRING, which `lane-start` resolves a second time —
+# from the new working directory. `--dir ../peer` therefore meant one checkout
+# to the existence test here and another to the launch, and the launch's is the
+# one the lane is started in. Resolved ONCE, to what it meant where the operator
+# typed it, by the same `cd … && pwd -P` idiom `lanes_rows` uses for `--dir`.
+# A path that does not exist is left exactly as typed, so the refusal that names
+# it is unchanged.
+if [ -n "$dir_flag" ]; then
+	dir_abs="$(cd -- "$dir_flag" 2>/dev/null && pwd -P || printf '')"
+	[ -n "$dir_abs" ] && dir_flag="$dir_abs"
+fi
+
 # ------------------------------------------------------------ the workstation
 #
 # FROM CONFIGURATION, NEVER FROM `hostname` (ratified decision 8(d), from
@@ -220,8 +234,21 @@ list_this_checkout() {
 	# `0` rows · `8` none · `2` A HELPER PREDATING AMENDMENT 11, which is every
 	# workstation until act 3's install reaches it · anything else a read that
 	# failed, which is never "there are no lanes".
+	# AND ITS STDERR IS KEPT, MINUS THE ONE SENTENCE THIS READ ASKS FOR (#26, the
+	# review of `37632b1`, `restart:224`). The helper says `LANES_NO_FETCH=1 — not
+	# fetching …` on every local read, which is why the stream was dropped; it
+	# also says there that this workstation's SESSION RECORDS could not be read,
+	# and that is the line telling a person the STATE column below is the log's
+	# verb alone. The same shape `lanes` uses, in the file beside this one.
 	lc_rc=0
-	out="$("$LANES_EDIT" lanes ${args[@]+"${args[@]}"} 2>/dev/null)" || lc_rc=$?
+	lc_err_file="$(mktemp "${TMPDIR:-/tmp}/restart-lanes.XXXXXX" 2>/dev/null || printf '')"
+	if [ -n "$lc_err_file" ]; then
+		out="$("$LANES_EDIT" lanes ${args[@]+"${args[@]}"} 2>"$lc_err_file")" || lc_rc=$?
+		grep -v 'not fetching; reading origin/' -- "$lc_err_file" >&2 || :
+		rm -f -- "$lc_err_file"
+	else
+		out="$("$LANES_EDIT" lanes ${args[@]+"${args[@]}"})" || lc_rc=$?
+	fi
 	case "$lc_rc" in
 	0) : ;;
 	8) out="" ;;

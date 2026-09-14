@@ -61,11 +61,24 @@ lread() {                      # lread <var> "<what the failure is NOT>" <verb> 
 ## 1. The window
 
 ```sh
-tmux display-message -p '#{session_name}:#{window_index} #{window_id} #{window_name}'
+# THE PROBE'S OWN STATUS IS THE REFUSAL, not a sentence below it (#26, the
+# review of `37632b1`, this file's `:64`). The paragraph under this block has
+# always said "No tmux → REFUSED", and nothing here captured or tested the
+# status: `tmux display-message` on a host with no server prints its error and
+# exits non-zero, and the steps below would then go on resolving a lane for a
+# window that does not exist — which is the one thing this skill binds.
+win_line=""
+win_line="$(tmux display-message -p '#{session_name}:#{window_index} #{window_id} #{window_name}' 2>/dev/null)" || win_line=""
+if [ -z "$win_line" ]; then
+  printf 'REFUSED: there is no tmux window to bind (`tmux display-message` answered nothing). This skill binds a WINDOW; with no window there is nothing to bind. The manual act is: lane-start --no-launch --dir <path> <lane>\n' >&2
+  exit 1
+fi
+printf '%s\n' "$win_line"
 ```
 
 **No tmux → REFUSED**, naming the manual act: `lane-start --no-launch --dir <path> <lane>`. This skill binds
-a **window**; with no window there is nothing to bind.
+a **window**; with no window there is nothing to bind — and the block above is where that refusal happens,
+rather than in this sentence.
 
 ## 2. The lane
 
