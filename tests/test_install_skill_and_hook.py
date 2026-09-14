@@ -156,10 +156,17 @@ def test_a_skill_whose_bytes_are_right_and_whose_mode_is_not_is_re_moded(tmp_pat
     assert stat.S_IMODE(shared.stat().st_mode) == 0o644, (
         "the bytes matched, so the mode was never stamped")
     assert shared.read_bytes() == before, "it rewrote a file to repair a mode"
-    assert f"lane-swap: already installed at {shared} (mode restored to 644)" \
+    # `{SKILL_DIR_NAME}` AND NEVER THE LITERAL, which is what `skill_paths`
+    # above already derives from `SKILL_NAMES`: Amendment 17(a) renamed this act
+    # from `lane-swap` to `handoff` and kept `lane-swap` as an ALIAS FILE, so a
+    # name spelled here is a name that goes stale the next time the act is
+    # named — and it did, in the merge that brought this case (#40, #44) on to
+    # the branch that made the rename (#36). The paths above are the first
+    # skill's; the line the installer prints for them carries that skill's name.
+    assert f"{SKILL_DIR_NAME}: already installed at {shared} (mode restored to 644)" \
         in second.stdout, second.stdout
     # …and the copy that was already right still reports what it is.
-    assert f"lane-swap: already installed at {bare} (unchanged)" in second.stdout
+    assert f"{SKILL_DIR_NAME}: already installed at {bare} (unchanged)" in second.stdout
 
 
 # --- the command file (A11 Addendum 4 ruling 9) -----------------------------
