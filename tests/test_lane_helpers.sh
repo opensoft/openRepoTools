@@ -3978,6 +3978,28 @@ is   "a read that still ANSWERS is unaffected by its own other stderr" \
 has  "…and that other line reaches the person now, never dropped with the notice" \
      "$(cat "$SANDBOX/fence3.err")" "session records for this workstation could not be read"
 
+# Copilot's round-1 review of #53 (5202775204): the fence's OWN `grep -v
+# 'pattern' -- "$file"` puts the PATTERN before `--`, so a NON-PERMUTING
+# getopt — BSD's, and every macOS shell — reads the pattern as the first
+# OPERAND and then reads `--` itself as a second one, a FILENAME (the exact
+# anti-pattern tests/test_repo_hygiene.py names for `sed` and `grep` alike,
+# just on a file that hygiene test does not walk: SKILL.md is not in
+# ALL_BASH). GNU grep hides this by PERMUTING; `POSIXLY_CORRECT=1` turns that
+# off and reproduces the same failure right here, no macOS runner needed —
+# measured against the unfixed line, this exact case printed `grep: --: No
+# such file or directory` to stderr and prefixed the real line with the temp
+# file's own name, because grep then believed there were two files.
+( L="$SANDBOX/fencehelper"; eval "$rskill_fence"
+  export POSIXLY_CORRECT=1
+  v=unset; lread v "'a thing it is not'" some-verb 2>"$SANDBOX/fence3b.err"
+  printf 'rc=%s v=[%s]' "$?" "$v" ) > "$SANDBOX/fence3b.out"
+is   "…and under a NON-PERMUTING getopt (BSD's shape) the read still answers" \
+     "$(cat "$SANDBOX/fence3b.out")" "rc=0 v=[ANSWER]"
+is   "…the other line reaches the person UNPREFIXED, exactly as the helper wrote it" \
+     "$(cat "$SANDBOX/fence3b.err")" "session records for this workstation could not be read: permission denied"
+hasnt "…and grep itself never errors on \`--\` as though it were a missing file" \
+     "$(cat "$SANDBOX/fence3b.err")" "No such file or directory"
+
 # AND WITH NO CAPTURE FILE AT ALL, NOTHING IS FILTERED — silence in place of a
 # stream this fence could not open would be the same defect the notice fix
 # exists to correct, only quieter.

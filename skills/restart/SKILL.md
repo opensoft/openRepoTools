@@ -55,7 +55,7 @@ lread() {                      # lread <var> "<what the failure is NOT>" <verb> 
   ln_err_file="$(mktemp "${TMPDIR:-/tmp}/restart-lread.XXXXXX" 2>/dev/null || printf '')"
   if [ -n "$ln_err_file" ]; then
     ln_out="$(LANES_NO_FETCH=1 "$L" "$@" 2>"$ln_err_file")" || ln_rc=$?
-    grep -v 'not fetching; reading origin/' -- "$ln_err_file" >&2 || :
+    grep -v -e 'not fetching; reading origin/' -- "$ln_err_file" >&2 || :
     rm -f -- "$ln_err_file"
   else
     # No capture file, so nothing is filtered and everything reaches the
