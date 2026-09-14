@@ -54,6 +54,14 @@
 #   lane-start [options] <repo>-<n>      # the full lane name works too
 #   lane-start [options] <n>             # <repo> = basename of the cwd's git root
 #   lane-start --dir <path> <lane>       # any lane name, when --dir says where
+#   lane-start                           # no <repo> and no <n>: this is `lane`
+#
+# BARE, THIS IS `lane` (Amendment 18 Addendum 1 clause (i-4)): the lanes,
+# numbered, and the one you pick is bound. It renders nothing of its own — it
+# `exec`s that word, carrying `--dry-run` and `--dir`, which mean the same thing
+# there, and REFUSING by name the options `lane` has nothing to apply them to
+# rather than dropping them. On a workstation with no `lane` the old refusal is
+# still the whole answer.
 #
 # <repo> is parsed out of the lane name only because it is what locates the
 # lane's directory. With `--dir` there is nothing left to parse, so the name is

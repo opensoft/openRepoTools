@@ -550,7 +550,7 @@ go_available() {
     will not start a second session on a lane that may already be running
     (clause (h)); that is the collision the whole protocol is about, and an
     unread record is not an answer (Amendment 7(d)).
-      what is actually running:  lanes-edit.sh live-holder --lane $R_LANE
+      what is actually running:  lanes-edit.sh live-holder $R_LANE
       fix the read and re-run:   lanes --all
     A lane PARKED by its own last line needs no such proof and is launched as
     it always was — this refusal is for a binding alone." 2

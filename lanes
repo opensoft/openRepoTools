@@ -438,7 +438,6 @@ next=""; next_rc=0
 if [ -n "$here_repo" ]; then
 	next="$(printf '%s\n' "$out" | "$LANES_EDIT" next-free "$here_repo" 2>/dev/null)" || next_rc=$?
 	case "${next:-}" in '' | *[!0-9]*) next="" ;; esac
-	if [ -z "$next" ] && [ "$next_rc" = 0 ]; then next_rc=1; fi
 fi
 
 say ""
@@ -474,9 +473,10 @@ elif [ -n "$here_repo" ] && [ "$next_rc" = 2 ]; then
 elif [ -n "$here_repo" ]; then
 	say ""
 	say "  the next free position could not be read: \`lanes-edit.sh next-free\` exited"
-	say "  $next_rc. That is NOT a position of 1 and this listing will not offer one it"
-	say "  did not get (Amendment 7(d)). Run it by hand to see what it says:"
-	say "    $prog --prefix $here_repo | $LANES_EDIT next-free $here_repo"
+	say "  $next_rc and gave no position. That is NOT a position of 1 and this listing"
+	say "  will not offer one it did not get (Amendment 7(d)) — a 0 with nothing a"
+	say "  position can be made of is in that class too. Run it by hand to see:"
+	say "    $LANES_EDIT lanes --prefix $here_repo | $LANES_EDIT next-free $here_repo"
 	say "  every lane:          $prog --all"
 fi
 [ "$defects" = 0 ] || say "$defects lane(s) have a live fork of their transcript running. A fork is never the holder (ratified decision 8(c)); the one act is \`lane-end <lane> --retire <pid|uuid>\`, which proves the fork and prints Amendment 6(d) for it filled in — it writes nothing and it never kills the process, and taking it stays yours (clause (k) rule (e))."

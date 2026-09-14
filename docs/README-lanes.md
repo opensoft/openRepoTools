@@ -1331,10 +1331,15 @@ $ lanes --fetch                 # any of them, after refreshing from origin
 on Brett Heap's ruling *"i think we can drop restart as a cli command and keep
 it inside a claude session with /restart. if we need it for ctx, keep it for
 that, but I do not see any reason to expose this to the user. lane does all the
-things a user wants"*). `openRepoTools --install` no longer places `restart`;
-everything decision 7 ratified about that act is true of `lane <name>`, which
-does it and three things more. Everything below is about `lane <name>` and was
-written about `restart <lane>`.
+things a user wants"*). `openRepoTools --install` no longer places `restart`
+**and REMOVES the copy an earlier install placed** — printing `restart: RETIRED`
+beside the file it took away — because a word that merely stops being written
+stays on the PATH of every workstation that already took it. It removes only
+what it wrote: a file of that name carrying this installer's own header goes,
+and one that does not is NAMED, left exactly as it is, and the `rm` that removes
+it printed for the person to run. Everything decision 7 ratified about that act
+is true of `lane <name>`, which does it and three things more. Everything below
+is about `lane <name>` and was written about `restart <lane>`.
 
 `lane <name>` needs **no window, no record of a window and no guess** — only
 the lane's name, its `dir` and its `profile`, both of which the record now
