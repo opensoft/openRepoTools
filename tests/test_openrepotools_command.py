@@ -6,9 +6,9 @@ bytes beside it and reaches nothing at all; the tests that exercise the
 FETCHING path put a fake `gh` first on `$PATH` — `fetch_from_repo` tries the
 API before the raw URL, so answering that one call is the whole of the server
 they need — and shadow `curl` with a script that refuses, so a run cannot fall
-through to the network even if the fake `gh` stops matching. There are FOUR
-files to answer for (`openRepoTools`, `park`, `resume`, `status`), because
-`--install` places all four or none.
+through to the network even if the fake `gh` stops matching. `INSTALLED`
+below is what this suite answers for, because `--install` places every name
+in it, or none.
 
 What a fake `gh` cannot show is which way round the real two are tried, so THAT
 rule — the authenticated call first, because an organisation can block
