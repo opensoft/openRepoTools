@@ -188,10 +188,13 @@ edit survives as a local commit — but an aborted pull is not proof it never
 reached origin: this checkout is shared with every lane on the workstation, so
 the very next write out of it can pull this dangling commit onto its own and
 push both together (#32). LOOK first: `git -C <the workspace checkout> fetch
-origin main`, then check ANCESTRY of your own commit rather than eyeballing a
-capped log — `git -C <the workspace checkout> merge-base --is-ancestor <your
-commit> origin/main` exits 0 once it is already there, in which case STOP.
-Only once it answers non-zero do you read your edit back with
+origin main` — if THAT fails, STOP and retry it; a stale or unreachable origin
+proves nothing either way, and is not permission to reset and redo. Only once
+the fetch succeeds do you check ANCESTRY of your own commit rather than
+eyeballing a capped log — `git -C <the workspace checkout> merge-base
+--is-ancestor <your commit> origin/main` exits 0 once it is already there, in
+which case STOP. Only once fetch succeeded AND this answers non-zero do you
+read your edit back with
 `git -C <the workspace checkout> diff origin/main..HEAD -- lanes/LANES.md`,
 then `git -C <the workspace checkout> reset --hard origin/main` and redo it on
 top of the peer's version.
@@ -943,7 +946,7 @@ else.
 | 0 | done |
 | 1 | environment — no register, no writer |
 | 2 | refusal — bad arguments, the object is held, an unknown alias, a checkout that cannot be rebased |
-| 3 | rebase conflict — not pushed by this attempt; a later write from this checkout may already carry it to origin, so look before you retry |
+| 3 | the commit stays local, never a permanent loss, but not confirmed on origin from this attempt either — a rebase conflict (not pushed by this attempt; a later write from this checkout may already carry it to origin, so look before you retry), a network timeout on the push itself (a hung push often already landed), or six attempts exhausted because a peer's uncommitted file blocks every rebase |
 | 4 | the mutex could not be taken within 60s |
 | 5 | an edit moved more than one line and was refused |
 | 6 | `git add` / `commit` / `push` failed |

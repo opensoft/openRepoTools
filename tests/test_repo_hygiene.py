@@ -1900,6 +1900,14 @@ def test_the_exit_3_documentation_agrees_with_the_die_message_it_describes():
     test that enforces two descriptions agree with each other, never that
     either agrees with the code. The die is extracted and checked first now,
     so all three have to agree with the one thing that actually runs.
+
+    Round 3 (5203261904) named exit 3's other two causes (`git_timeout_die`,
+    and six push attempts exhausted against a peer's uncommitted file) that
+    this row used to leave out entirely; the row now names all three, which
+    means the phrase this test looks for can legitimately wrap onto its own
+    comment-continuation line — so the comparison text is whitespace-
+    normalized (one space, however the source wrapped it) rather than
+    matched as one literal run of characters.
     """
     src = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
     m = re.search(r'die "(rebase conflict on origin/\$LANES_BRANCH[^"]*)" 3\b', src)
@@ -1912,15 +1920,41 @@ def test_the_exit_3_documentation_agrees_with_the_die_message_it_describes():
     end = src.index("# --no-sweep", start)
     table = src[start:end]
     manual = (REPO / "docs/README-lanes.md").read_text(encoding="utf-8")
+    def flatten(text):
+        # A row that wraps onto a comment-continuation line puts a literal
+        # `#` back-to-back with the next word once newlines alone are
+        # collapsed — strip the leading `#` (lanes-edit.sh's own comment
+        # marker; a no-op on docs/README-lanes.md's markdown lines, which
+        # never start with one) from every line FIRST, so a phrase that
+        # wraps still reads as one run of words, not one broken by a stray
+        # `#`.
+        lines = (re.sub(r"^#\s*", "", ln) for ln in text.splitlines())
+        return re.sub(r"\s+", " ", " ".join(lines)).strip()
+
     for name, text in (("lanes-edit.sh's own exit-code table", table),
                         ("docs/README-lanes.md's copy of it", manual)):
-        assert "nothing was pushed" not in text and "nothing pushed" not in text, (
+        flat = flatten(text)
+        assert "nothing was pushed" not in flat and "nothing pushed" not in flat, (
             f"{name} still claims exit 3 means nothing reached origin, which "
             "an aborted pull does not prove (#32)")
-    assert "not pushed BY THIS ATTEMPT" in table, (
+    manual_start = manual.index("### Exit codes")
+    manual_end = manual.index("3 to 6 are the codes this helper already used", manual_start)
+    manual_table = manual[manual_start:manual_end]
+    table_flat = flatten(table)
+    manual_flat = flatten(manual_table)
+    assert "not pushed BY THIS ATTEMPT" in table_flat, (
         "lanes-edit.sh's exit-3 row no longer names the attempt-scoped wording")
-    assert "not pushed by this attempt" in manual, (
+    assert "not pushed by this attempt" in manual_flat, (
         "docs/README-lanes.md's exit-3 row no longer names the attempt-scoped wording")
+    for name, flat in (("lanes-edit.sh's own exit-code table", table_flat),
+                        ("docs/README-lanes.md's own exit-codes table", manual_flat)):
+        for cause in ("timeout", "peer's"):
+            assert cause in flat, (
+                f"{name} no longer names a {cause!r} cause, one of exit 3's "
+                "other two causes (#50 round 3, 5203261904) — this table "
+                "claims to be \"no two meanings on one number\", so a code "
+                "with three causes has to name all three or it is back to "
+                "being wrong")
 
 
 #: ADOPTION ACT 0, AND THE ONE SHA THAT IS IT. `opensoft/brett-wip#5` merged

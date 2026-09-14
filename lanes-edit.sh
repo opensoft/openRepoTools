@@ -185,8 +185,15 @@
 #      carry both without the caller guessing, so the newer reads spend a number
 #      of their own and the older half of this file keeps 2 where it always was.
 #      Clause (h)'s table is the contract for which read uses which.
-#   3  rebase conflict — not pushed BY THIS ATTEMPT; a later write from this
-#      checkout may already carry it to origin, so LOOK before you retry
+#   3  the commit stays local — never a permanent loss, but not confirmed on
+#      origin from THIS attempt either. THREE CAUSES (Copilot round 3 on #50,
+#      5203261904, naming the other two this row used to leave out): a
+#      rebase conflict this attempt could not resolve — not pushed BY THIS
+#      ATTEMPT; a later write from this checkout may already carry it to
+#      origin, so LOOK by ancestry before you retry; `git_timeout_die`'s
+#      network timeout on the push itself, where a hung push often already
+#      landed; or six attempts exhausted because a peer's own uncommitted
+#      file blocks every rebase.
 #   4  the mutex could not be taken within 60s
 #   5  an edit moved more than one line and was refused — or, Amendment 15, a
 #      lane's object log could not be renamed to the row's own spelling
@@ -1177,9 +1184,17 @@ EOF
       # (Copilot round 2 on #50, 5203033893): a log capped at a few entries
       # can bury this commit below the window while it stays an ancestor, the
       # moment four or more later writes land ahead of it.
+      # ROUND 3 (Copilot 5203261904): `fetch && merge-base ... && echo A ||
+      # echo B` is left-associative — a FAILED fetch also falls to the `||`
+      # and prints the SAME "not-there" a genuine non-ancestor does, so a
+      # stale or unreachable origin would silently wave the reset/redo path
+      # through. The merge-base-and-echo pair is grouped in `{ }` so the
+      # trailing `|| echo FETCH-FAILED` only fires when fetch ITSELF failed
+      # (the group then never runs at all, against a ref that was never
+      # refreshed).
       note "RECOVERY (in that order):"
-      note "  git -C $LANES_REPO fetch origin $LANES_BRANCH && git -C $LANES_REPO merge-base --is-ancestor $cp_sha origin/$LANES_BRANCH && echo ALREADY-THERE || echo not-there   # ancestry, not a capped log: a write that ran after this one, however many commits back, may already have carried it"
-      note "  if that printed ALREADY-THERE, STOP — reset or redo now would write it a second time."
+      note "  git -C $LANES_REPO fetch origin $LANES_BRANCH && { git -C $LANES_REPO merge-base --is-ancestor $cp_sha origin/$LANES_BRANCH && echo ALREADY-THERE || echo not-there; } || echo FETCH-FAILED   # ancestry, not a capped log — and a FAILED fetch answers NEITHER, never treat it as not-there"
+      note "  if that printed ALREADY-THERE, STOP — reset or redo now would write it a second time. If it printed FETCH-FAILED, STOP and retry the fetch — a stale or unreachable origin proves nothing either way."
       note "  git -C $LANES_REPO diff origin/$LANES_BRANCH..HEAD -- ${CP_PATHS[*]}   # only if it is not there: read back exactly what you wrote"
       note "  git -C $LANES_REPO reset --hard origin/$LANES_BRANCH                # then drop the local commits (NOTE: also drops any"
       note "                                                          # uncommitted peer edit in this checkout)"
