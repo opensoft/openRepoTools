@@ -6496,13 +6496,15 @@ is    "…and nothing was written" "$(grep -c '^RESUMED' "$LOGD/repoHF-7.md")" 0
 # `openRepoTools#43` places `lane` in `~/.local/bin`, and a case that asked
 # "what happens where there is no `lane`" against a workstation that has one
 # would go green on the answer to a different question.
-a17_path_without_lane() {
+a17_path_without() {   # <word> — this section's PATH with every directory that holds <word> taken out
+  a17p_want="$1"
   printf '%s' "$A17PATH" | tr ':' '\n' | while IFS= read -r a17p_d; do
     [ -n "$a17p_d" ] || continue
-    if [ -x "$a17p_d/lane" ]; then continue; fi
+    if [ -x "$a17p_d/$a17p_want" ]; then continue; fi
     printf '%s:' "$a17p_d"
   done | sed 's/:$//'
 }
+a17_path_without_lane() { a17_path_without lane; }
 A17PATH_NOLANE="$(a17_path_without_lane)"
 
 : > "$FAKE_TMUX_A17_LOG"
@@ -6831,9 +6833,14 @@ hasnt "…and nothing was launched" "$(cat "$FAKE_CODEX_LOG")" "repoAG-4"
 # BEFORE ANY WRITE (Copilot round 3 on openRepoTools#47). The row, the object
 # log and the Rule 3 stamp are all written before the `exec`, so a `codex` that
 # is not here records the lane as RESUMED and then exits 127 — a false
-# transition in two append-only files. `$PATH` here is the suite's own, which
-# carries no `codex`: `$A17PATH` is what adds it.
-run env FAKE_TMUX_WINDOW="agsess:@41" CLAUDE_PROFILE_NAME=team-05a \
+# transition in two append-only files.
+#
+# ON A PATH THIS FILE BUILT, for the reason the three `lane` cases below give:
+# a workstation that HAS `codex` installed — this one does, at
+# `~/.npm-global/bin/codex` — would answer a different question and go green on
+# it. `a17_path_without codex` takes out every directory holding the word,
+# including the fake this section placed.
+run env PATH="$(a17_path_without codex)" FAKE_TMUX_WINDOW="agsess:@41" CLAUDE_PROFILE_NAME=team-05a \
     "$START" --dir "$AG_DIR" --agent codex repoAG-8 --no-launch
 is    "--agent codex on a workstation with no codex is refused" "$rc" 2
 has   "…naming the launcher it does not have" "$err" "no 'codex' on PATH"
