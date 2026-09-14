@@ -21,11 +21,13 @@ import pytest
 from conftest import REPO, WINDOWS_SKIP
 
 #: EVERY BASH FILE THIS REPOSITORY SHIPS, and nothing else is one. Each is a
-#: file a person has on their PATH — the installer, the two estate verbs and
-#: the read-only `status` — so each is held to the same shebang, mode bit and
-#: `set -euo pipefail` rule. The macOS job parses these same four with
-#: `/bin/bash -n`, one command per file, which is what keeps the bash-3.2
-#: claim true.
+#: file a person has on their PATH — the installer, the two estate verbs, the
+#: read-only `status` and the two lane words below — so each is held to the
+#: same shebang, mode bit and `set -euo pipefail` rule. The macOS job parses
+#: these same SIX with `/bin/bash -n`, one command per file, which is what
+#: keeps the bash-3.2 claim true. (It said "four" while the list held six,
+#: which is a description contradicting the inventory it explains; Copilot
+#: round 3 on #45.)
 #: `lane` and `lanes` join under lane-collision-protocol Amendment 18 Addendum 1
 #: and Amendment 11's ratified decision 6: each is one word a person has on
 #: PATH, placed by `--install`, so each is held to the same shebang, the same

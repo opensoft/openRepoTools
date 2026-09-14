@@ -6389,6 +6389,28 @@ git -C "$WIP" commit -q -m "seed the five states the pick partitions"
 git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
 git -C "$WIP" push -q origin main
 
+# THE TWO `next-free` WRAPPERS BOTH SURFACES NEED, made once here: `lane`'s
+# pick and `lanes`'s footer read the same helper and answer for it the same
+# way, so the cases that prove it read the same two fakes. `nfold` is the
+# un-upgraded workstation (2, the contract's own silent code); `nfbroke` is a
+# read that FAILED, which is never the same thing (Amendment 7(d)).
+cat > "$SANDBOX/nfold" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  next-free) printf "lanes-edit: unknown subcommand 'next-free'\n" >&2; exit 2 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/nfold"
+cat > "$SANDBOX/nfbroke" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  next-free) printf 'lanes-edit: simulated failure\n' >&2; exit 6 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/nfbroke"
+
 # ------------------------------------- the partition, asked of the helper
 #
 # THE GROUPING IS A READ AND IS HELD AS ONE. `lane` renders it; `lanes-edit.sh
@@ -6499,6 +6521,16 @@ else
   is    "answering \`f\` with a --dir exits 0" "$rc" 0
   has   "…handing that directory to lane-start, resolved" "$out" "--dir $PICK_DIR_R"
   has   "…and still at the next free position" "$out" "repoPick 6"
+  # …AND `f` READS THE POSITION'S OWN STATUS (Copilot round 3 on #45,
+  # `lane:751`). `|| :` discarded it, so a read that FAILED after printing
+  # digits handed those digits to the validation below and opened a lane at a
+  # position this estate may well have taken.
+  : > "$FAKE_CLAUDE_LOG"
+  lane_pick f env -C "$PICK_DIR" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/nfbroke" "$LANE" --dry-run
+  is    "answering \`f\` where the position read FAILED refuses with 1" "$rc" 1
+  has   "…naming the code it got" "$out" "exited 6"
+  has   "…saying it will not open a lane at a position it did not get" "$out" "did not get"
+  is    "…and starting nothing" "$(cat "$FAKE_CLAUDE_LOG")" ""
   # `q` PICKS NONE, AND THAT IS NOT A FAILURE.
   : > "$LANE_TMUX_LOG"; : > "$FAKE_PCLAUDE_LOG"
   lane_pick q env -C "$PICK_DIR" "$LANE"
@@ -6564,6 +6596,39 @@ is    "…and the sentence is said once, not once for every surface that wants i
 # AND IT IS SILENT WHERE THE SEAM ANSWERED, so the notice means what it says.
 run env PATH="$LANEBIN_PATH" "$LANE" repoPick-4 </dev/null
 hasnt "an ordinary elsewhere refusal carries no container notice at all" "$err" "LANES_WORKSTATION"
+
+# AND A READ THIS COMMAND COULD NOT CAPTURE IS NOT A PROOF EITHER (Copilot round
+# 3 on #45, `lane:322`). With no writable `$TMPDIR` the helper's notes go
+# straight to the terminal and cannot be read back, so whether the liveness
+# records answered is UNKNOWN from here — and unknown is not "the proof was
+# made". Three states, not two.
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX TMPDIR="$SANDBOX/no-such-tmpdir" PATH="$LANEBIN_PATH" "$LANE" repoPick-7 </dev/null
+is    "a binding refuses where this command could not read whether the proof was made" "$rc" 2
+has   "…saying the notes could not be read back" "$err" "no temporary file could be made"
+has   "…and that the answer is UNKNOWN rather than absent" "$err" "UNKNOWN from here"
+is    "…launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+# …AND A PARKED LANE IS STILL PARKED, whatever this command could or could not
+# read: its own last line says so.
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX TMPDIR="$SANDBOX/no-such-tmpdir" PATH="$LANEBIN_PATH" "$LANE" repoPick-1 </dev/null
+is    "…while a PAUSED lane launches with no temporary file either" "$rc" 0
+has   "…through the launcher" "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoPick-1 team-05a"
+
+# THE PICK SAYS WHY `f` IS NOT OFFERED (Copilot round 3 on #45, `lane:960`).
+# `|| :` collapsed every status of the next-free read and the answer simply
+# vanished from the question, which is a listing with an action missing and
+# nothing on screen about it — the defect `lanes`'s footer had one file over.
+run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/nfold" "$LANE" </dev/null
+is    "the pick still lists where the next-free read is MISSING" "$rc" 0
+has   "…with the rows" "$out" "repoPick-1"
+has   "…saying in terms that \`f\` is not offered" "$out" "is not offered"
+has   "…and naming the act that brings it back" "$out" "openRepoTools --install"
+hasnt "…never offering a position it did not get" "$out" "lane-start repoPick"
+run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/nfbroke" "$LANE" </dev/null
+is    "…and where that read FAILED it still lists" "$rc" 0
+has   "…saying so with the code it got" "$out" "exited 6"
+hasnt "…and never calls a failed read an un-upgraded workstation" "$out" "predates lane-collision-protocol Amendment 18"
 # A PROFILE CANNOT BE HANDED TO AN ATTACH, because an attach starts nothing.
 run env PATH="$LANEBIN_PATH" "$LANE" repoPick-2 team-09z </dev/null
 is    "lane <name> <profile> on a LIVE lane refuses rather than attaching under another name" "$rc" 2
@@ -6708,14 +6773,6 @@ fi
 # A `lanes-edit.sh` WITH NO `next-free` IS NOT A NEXT FREE POSITION OF 1
 # (Amendment 7(d)). `lanes` offered `lane-start <repo> 1` out of a read that
 # never answered, which is a position this estate may well have taken.
-cat > "$SANDBOX/nfold" <<'WRAP'
-#!/usr/bin/env bash
-case "${1-}" in
-  next-free) printf "lanes-edit: unknown subcommand 'next-free'\n" >&2; exit 2 ;;
-esac
-exec "$REAL_LANES_EDIT" "$@"
-WRAP
-chmod +x "$SANDBOX/nfold"
 run env LANES_NO_FETCH=1 REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/nfold" "$LANES_CMD" --prefix repoPick </dev/null
 is    "lanes still lists where the next-free read is missing" "$rc" 0
 has   "…with the rows" "$out" "repoPick-1"
@@ -6726,14 +6783,6 @@ has   "…saying which act brings it back" "$out" "openRepoTools --install"
 # #45, `lanes:432`). `|| :` made every status of that read the same status, and
 # the footer then told a person to take the install for a read that had broken:
 # the fail-closed family's own defect, one rung down.
-cat > "$SANDBOX/nfbroke" <<'WRAP'
-#!/usr/bin/env bash
-case "${1-}" in
-  next-free) printf 'lanes-edit: simulated failure\n' >&2; exit 6 ;;
-esac
-exec "$REAL_LANES_EDIT" "$@"
-WRAP
-chmod +x "$SANDBOX/nfbroke"
 run env LANES_NO_FETCH=1 REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/nfbroke" "$LANES_CMD" --prefix repoPick </dev/null
 is    "lanes still lists where the next-free read FAILED" "$rc" 0
 has   "…with the rows" "$out" "repoPick-1"

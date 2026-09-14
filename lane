@@ -299,6 +299,12 @@ ROWS_OUT=""
 # lane that may still be running, which is the collision clause (h) exists for
 # (Copilot round 1 on #45, `lane:777`). The sentence is caught here, where the
 # stderr is already being read, and `go_available` refuses on it.
+#
+# THREE STATES AND NOT TWO (Copilot round 3 on #45, `lane:322`): `0` the proof
+# was made · `1` the helper SAID it could not make it · `2` this command could
+# not read whether it did, because no temporary file could be made to capture
+# the helper's notes. `2` is not `0`: the fall-through Amendment 7(d) forbids is
+# exactly "I did not get the answer, so I will treat it as the good one".
 LIVENESS_UNREAD=0
 read_rows() {   # <args for `lanes-edit.sh lanes`>
 	local rr_rc=0 rr_err_file
@@ -317,8 +323,10 @@ read_rows() {   # <args for `lanes-edit.sh lanes`>
 	else
 		# NO TEMPORARY FILE, SO THE HELPER'S NOTES WENT STRAIGHT TO THE TERMINAL
 		# and this command cannot read them back — the same degradation `lanes`
-		# already names for its fetch line. The liveness sentence is then the
-		# person's to act on rather than this command's, and it is above them.
+		# already names for its fetch line. What it must NOT do is read its own
+		# blindness as an answer: whether the liveness proof was made is UNKNOWN
+		# from here, and `go_available` treats unknown as unproved.
+		LIVENESS_UNREAD=2
 		ROWS_OUT="$(LANES_NO_FETCH=1 "$LANES_EDIT" lanes "$@")" || rr_rc=$?
 	fi
 	case "$rr_rc" in
@@ -545,7 +553,7 @@ launcher() {
 # session name that was the only place the profile ever appeared.
 go_available() {
 	local ga_dir="$R_DIR" ga_pf="$profile" ga_from="" ga_pclaude dir_for_hint pos lrepo
-	local ga_cmd
+	local ga_cmd ga_why
 	# A BINDING IS AVAILABLE BECAUSE THIS HOST PROVED IT DEAD, and where the
 	# session records could not be read that proof was never made: the row's
 	# state is the LOG's verb alone, so an `IDLE` here may be a lane that is
@@ -553,13 +561,18 @@ go_available() {
 	# proof, so it is the one state this passes — every other one refuses,
 	# because a second session on a live lane is the collision (clause (h),
 	# Amendment 7(d)'s fail-closed rule; Copilot round 1 on #45).
-	if [ "$LIVENESS_UNREAD" = 1 ] && [ "${R_STATE:-}" != PAUSED ]; then
-		die "lane $R_LANE reads ${R_STATE:-UNKNOWN}, and this workstation's session records could NOT
-    be read (the line above) — so nothing here has PROVED that binding dead, and
-    a lane that is live shows as IDLE when the proof is missing. This command
-    will not start a second session on a lane that may already be running
-    (clause (h)); that is the collision the whole protocol is about, and an
-    unread record is not an answer (Amendment 7(d)).
+	if [ "$LIVENESS_UNREAD" != 0 ] && [ "${R_STATE:-}" != PAUSED ]; then
+		ga_why="this workstation's session records could NOT be read (the line above)"
+		case "$LIVENESS_UNREAD" in
+		2) ga_why="no temporary file could be made to read the helper's own notes back, so
+    whether those records answered is UNKNOWN from here" ;;
+		esac
+		die "lane $R_LANE reads ${R_STATE:-UNKNOWN}, and $ga_why — so nothing here has PROVED
+    that binding dead, and a lane that is live shows as IDLE when the proof is
+    missing. This command will not start a second session on a lane that may
+    already be running (clause (h)); that is the collision the whole protocol is
+    about, and a record this command did not read is not an answer (Amendment
+    7(d)).
       what is actually running:  lanes-edit.sh live-holder $R_LANE
       fix the read and re-run:   lanes --all
     A lane PARKED by its own last line needs no such proof and is launched as
@@ -754,11 +767,22 @@ go_elsewhere() {
 # the helper, over the rows this command has already read, so the number this
 # word offers and the one `lanes` prints cannot differ.
 go_new() {   # <repo>
-	local gn_repo="${1-}" gn_next gn_start
+	local gn_repo="${1-}" gn_next gn_start gn_rc
 	local gn_cmd
 	[ -n "$gn_repo" ] || die "there is no repository in scope, so there is no position for \`f\` to take.
     Stand in the lane's checkout, or name it:  lane-start <repo> <n>" 2
-	gn_next="$(printf '%s\n' "$ROWS_OUT" | "$LANES_EDIT" next-free "$gn_repo" 2>/dev/null || :)"
+	# THE STATUS IS READ, NOT DISCARDED (Copilot round 3 on #45, `lane:751`): a
+	# read that FAILED can still have printed digits before it did, and `|| :`
+	# handed them to the validation below as if they were an answer — a position
+	# this estate may well have taken, opened as a new lane.
+	gn_rc=0
+	gn_next="$(printf '%s\n' "$ROWS_OUT" | "$LANES_EDIT" next-free "$gn_repo" 2>/dev/null)" || gn_rc=$?
+	if [ "$gn_rc" != 0 ]; then
+		die "the next free position of $gn_repo could not be read: \`lanes-edit.sh next-free\`
+    exited $gn_rc. This command will not open a lane at a position it did not
+    get (Amendment 7(d)) — a number printed by a read that then failed is not an
+    answer. Read it:  lanes --prefix $gn_repo" 1
+	fi
 	case "${gn_next:-}" in
 	'' | *[!0-9]*) die "the next free position of $gn_repo could not be read, and this command will not
     offer a position it did not get (Amendment 7(d)). Read it:  lanes --prefix $gn_repo" 1 ;;
@@ -963,9 +987,15 @@ render_group available "AVAILABLE — parked, or a binding this host proves dead
 render_group live "LIVE HERE — attach, never a second process"
 render_group elsewhere "BOUND ELSEWHERE — ask that workstation for the handoff"
 
-next_free=""
+# AND WHEN IT CANNOT BE READ THE PICK SAYS SO (Copilot round 3 on #45,
+# `lane:960`). `|| :` collapsed every status of this read into an empty string
+# and the `f` answer then vanished from the question with nothing on screen to
+# say why — the same defect `lanes`'s footer had one file over, and the same
+# answer: `2` is an un-upgraded workstation and says so, anything else names the
+# code it got, and neither is a position of 1.
+next_free=""; next_free_rc=0
 if [ -n "$here_repo" ]; then
-	next_free="$(printf '%s\n' "$ROWS_OUT" | "$LANES_EDIT" next-free "$here_repo" 2>/dev/null || :)"
+	next_free="$(printf '%s\n' "$ROWS_OUT" | "$LANES_EDIT" next-free "$here_repo" 2>/dev/null)" || next_free_rc=$?
 	case "${next_free:-}" in '' | *[!0-9]*) next_free="" ;; esac
 fi
 
@@ -973,6 +1003,19 @@ if [ "$n" = 0 ]; then
 	say ""
 	say "no lane$label is available, live here or bound elsewhere."
 	say "  every lane, closed and dormant ones included:  lanes --all"
+fi
+if [ -n "$here_repo" ] && [ -z "$next_free" ]; then
+	say ""
+	case "$next_free_rc" in
+	2)
+		say "  \`f\` is not offered: this workstation's \`lanes-edit.sh\` has no \`next-free\`, so"
+		say "  it predates lane-collision-protocol Amendment 18 Addendum 1. Take the"
+		say "  install and the answer comes back:  openRepoTools --install" ;;
+	*)
+		say "  \`f\` is not offered: \`lanes-edit.sh next-free\` exited $next_free_rc and gave no"
+		say "  position, and this command will not offer one it did not get (Amendment"
+		say "  7(d)). Read it by hand:  lanes --prefix $here_repo" ;;
+	esac
 fi
 ws_notice
 
