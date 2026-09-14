@@ -1005,36 +1005,99 @@ git_timeout_die() {   # <the command, for the reader>
 # register alone, which is every caller that predates Amendment 7. A LANDING
 # or LANDED writes TWO (the register and the lane's log) so that both halves
 # of one act land in one commit and no reader ever sees half of it.
-# AMENDMENT 15 — `-c core.ignorecase=false` ON THE STAGING, AND IT IS THE ONLY
-# WAY A CASE-ONLY RENAME IS EVER RECORDED. `ensure_log` renames a lane-s log to
-# the register row-s spelling and hands BOTH paths to this function; on a
-# case-INSENSITIVE filesystem git-s index matches them as ONE path, so
-# `git add -- lanes/log/repocase-1.md lanes/log/repoCase-1.md` stages a
-# MODIFICATION of the old name and the rename never reaches the commit at all.
-# Measured on the macOS job of openRepoTools#41 at `48f2111`: fifteen red
-# assertions, the first of them *"the rename landed in the WRITE-s own
-# commit"*, whose `git log -- <the canonical path>` came back EMPTY — and the
-# writes after it met a checkout git thought was modified and refused (2), then
-# could not rebase (3). With exact matching the old path is absent from the
-# worktree and still in the index, which is a DELETION, and the new path is a
-# file nothing in the index claims, which is an ADDITION: one commit, one
-# rename, on both kinds of filesystem.
+# AMENDMENT 15 — A CASE-ONLY RENAME IS STAGED IN THE INDEX AND COMMITTED FROM
+# IT, because a PATH-LIMITED commit cannot record one at all on a
+# case-INSENSITIVE filesystem — which is what this repository's macOS job runs
+# on. `ensure_log` renames a lane's log to the register row's spelling and
+# hands the OLD path in beside the new one. Three things are true there, and
+# together they leave exactly one way through:
 #
-# EVERY CALL THAT TAKES `CP_PATHS` CARRIES IT, because a pathspec that means one
-# thing to `add` and another to `commit` is the same defect one line along. It
-# narrows nothing else: these paths are this file-s own — `lanes/LANES.md` and
-# `lanes/log/<lane>.md` — spelled by the code that computes them.
+#   * `git add -- <old> <new>` under git's own `core.ignorecase=true` matches
+#     both pathspecs to the ONE index entry and stages a MODIFICATION under the
+#     old name, so the rename never reaches the commit. Measured on the macOS
+#     job of openRepoTools#41 at `48f2111`: fifteen red assertions, the first
+#     of them *"the rename landed in the WRITE's own commit"*, whose
+#     `git log -- <the canonical path>` came back EMPTY.
+#   * The same `add` under `core.ignorecase=false` is no better, and is worse:
+#     the OPERATING SYSTEM still resolves `lanes/log/repocase-1.md` to the file
+#     now named `repoCase-1.md`, so git stages the old entry as MODIFIED and
+#     the new path as a SECOND entry. One file on disk, two paths in the tree —
+#     and every checkout after it reports the one it cannot materialise as
+#     deleted, so the writes behind it are refused (2) for a dirty checkout
+#     they did not make. Measured at `e35f2a8` and `928908a`: eleven red
+#     assertions, all of them behind `lanes/log/repocase-1.md` reported dirty.
+#   * `git commit -- <paths>` is `--only`: it builds the tree from HEAD and the
+#     WORKING TREE of those paths, disregarding what is staged. So an index
+#     that holds the rename exactly is thrown away by the commit anyway, and
+#     the old path — which the OS still resolves — comes back in the tree.
+#
+# So the old entry is dropped from the INDEX by its exact path, where no
+# filesystem is consulted at all; the NEW path alone is added; and the commit
+# is made from the index rather than from a pathspec.
+# `update-index --force-remove` is the one git verb that removes an entry
+# without asking the filesystem whether the file is still there, and it is a
+# no-op on a path the index does not hold — so a log that was never committed
+# renames just as quietly. The index commit is FAIL-CLOSED: anything staged
+# that is not one of this write's own pathspecs refuses (6) instead of riding
+# along, which is the guarantee the `--only` pathspec was there to give.
+#
+# `-c core.ignorecase=false` stays on every call that takes `CP_PATHS`, because
+# a pathspec that means one thing to `add` and another to `diff` is the same
+# defect one line along: with the old entry already gone it is what makes `add`
+# record the new path in the spelling the code computed rather than the one the
+# index used to hold. It narrows nothing else — these paths are this file's own,
+# `lanes/LANES.md` and `lanes/log/<lane>.md`, spelled by the code that computes
+# them.
 CP_EXACT="core.ignorecase=false"
 commit_push() {
   msg="$1"; shift || :
   if [ "$#" -gt 0 ]; then CP_PATHS=("$@"); else CP_PATHS=("$LANES_PATH"); fi
   [ "$NO_GIT" = 1 ] && { note "LANES_NO_GIT=1 — not committing"; return 0; }
-  git -C "$LANES_REPO" -c "$CP_EXACT" add -- "${CP_PATHS[@]}" || die "git add failed" 6
+  # THE OLD PATH IS A PATHSPEC FOR THE DIFFS AND NEVER FOR THE `add`: after the
+  # index entry is force-removed it matches neither the index nor a directory
+  # read that compares exactly, and `git add` FAILS on a pathspec that matches
+  # nothing at all.
+  cp_ren="${LOG_RENAMED_FROM:-}"
+  cp_add=(); cp_add_n=0
+  for cp_p in ${CP_PATHS[@]+"${CP_PATHS[@]}"}; do
+    if [ -n "$cp_ren" ] && [ "$cp_p" = "$cp_ren" ]; then continue; fi
+    cp_add+=("$cp_p"); cp_add_n=$((cp_add_n + 1))
+  done
+  if [ -n "$cp_ren" ]; then
+    git -C "$LANES_REPO" -c "$CP_EXACT" update-index --force-remove -- "$cp_ren" \
+      || die "git update-index --force-remove $cp_ren failed — the log is already renamed on disk and git still holds the old path, so nothing was committed. Re-run; if it refuses again, \`git -C $LANES_REPO rm --cached -- $cp_ren\` is the same act by hand." 6
+  fi
+  if [ "$cp_add_n" -gt 0 ]; then
+    git -C "$LANES_REPO" -c "$CP_EXACT" add -- ${cp_add[@]+"${cp_add[@]}"} || die "git add failed" 6
+  fi
   if git -C "$LANES_REPO" -c "$CP_EXACT" diff --cached --quiet -- "${CP_PATHS[@]}"; then
     note "nothing staged for ${CP_PATHS[*]} — no commit made"
     return 0
   fi
-  git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "$msg" -- "${CP_PATHS[@]}" || die "git commit failed" 6
+  if [ -n "$cp_ren" ]; then
+    cp_staged="$(git -C "$LANES_REPO" -c "$CP_EXACT" diff --cached --name-only)"
+    cp_extra=""
+    while IFS= read -r cp_s; do
+      [ -n "$cp_s" ] || continue
+      cp_known=0
+      for cp_p in ${CP_PATHS[@]+"${CP_PATHS[@]}"}; do
+        if [ "$cp_s" = "$cp_p" ]; then cp_known=1; fi
+      done
+      if [ "$cp_known" = 0 ]; then cp_extra="$cp_extra $cp_s"; fi
+    done <<EOF
+$cp_staged
+EOF
+    if [ -n "$cp_extra" ]; then
+      die "this commit carries a case-only rename of the lane's log, so it is made from the INDEX rather than from its pathspecs — and the index also holds$cp_extra, which is not this write's to commit. Stage-reset it — \`git -C $LANES_REPO restore --staged --\`$cp_extra — and re-run. Nothing was committed and the log is already renamed on disk." 6
+    fi
+    git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "$msg" || die "git commit failed" 6
+    # THE RENAME IS DONE AND IN HEAD: the old path is no longer a pathspec of
+    # anything below, and the next `commit_push` of this run is not a rename.
+    CP_PATHS=(${cp_add[@]+"${cp_add[@]}"})
+    LOG_RENAMED_FROM=""
+  else
+    git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "$msg" -- "${CP_PATHS[@]}" || die "git commit failed" 6
+  fi
   note "committed: $msg"
   if ! remote_has_branch; then
     if ! git_net -C "$LANES_REPO" push -q -u origin "$LANES_BRANCH"; then
@@ -1375,7 +1438,7 @@ ensure_log() {
   if [ "$el_n" = 0 ] && have_remote_ref; then
     el_pub="$(log_path_ci "$lane")"
     if [ "$el_pub" != "$(log_path_for "$lane")" ]; then
-      die "lane $lane-s object log is published as $el_pub and this checkout does not have it: the row spells the lane $lane, so the log is $(log_path_for "$lane") (Amendment 15), and writing one here now would leave TWO files for one lane. Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run; the rename then happens once, inside this write-s own commit. Nothing was written." 2
+      die "lane ${lane}'s object log is published as $el_pub and this checkout does not have it: the row spells the lane $lane, so the log is $(log_path_for "$lane") (Amendment 15), and writing one here now would leave TWO files for one lane. Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run; the rename then happens once, inside this write's own commit. Nothing was written." 2
     fi
   fi
   el_from=""
@@ -1388,8 +1451,11 @@ ensure_log() {
     # two names are one file and `mv a A` answers "identical" rather than
     # renaming; two `mv`s do the same job on both kinds of filesystem, and
     # neither is `git mv`, whose own case-only rename is the thing that differs
-    # between platforms. `commit_push` stages both paths (the caller adds the
-    # old one to its pathspecs), so git records the rename in the write's commit.
+    # between platforms. The caller puts the old path in this write's pathspecs
+    # and `commit_push` drops its INDEX entry by that exact path before staging
+    # the new one, then commits the index rather than the pathspecs — the one
+    # sequence that records the rename on a case-insensitive filesystem as well
+    # as on this one, argued in full above `CP_EXACT`.
     el_tmp="$lf.amendment15.$$"
     # THE REFUSAL SAYS WHERE THE FILE IS, and the two halves fail differently:
     # the first `mv` failing leaves the log exactly where it was, while the

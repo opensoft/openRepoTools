@@ -5610,6 +5610,15 @@ has   "…which names the old path" \
       "$(git -C "$WIP" show --name-status --format= "$case_sha")" "lanes/log/repocase-1.md"
 has   "…and the new one, in the one commit" \
       "$(git -C "$WIP" show --name-status --format= "$case_sha")" "lanes/log/repoCase-1.md"
+# AND THE TREE HOLDS ONE PATH, WHICH IS THE ASSERTION THE TWO ABOVE CANNOT
+# MAKE: both of them pass on a commit that MODIFIED the old path and ADDED the
+# new one, which is what a case-insensitive index produces and what leaves a
+# lane TWO committed logs — the state Amendment 15 exists to make impossible.
+# Counted case-INSENSITIVELY on purpose, so a second path under any spelling is
+# a second path. (Measured red on the macOS job of this PR at `928908a`; this
+# line is what names it on any filesystem.)
+is    "…and HEAD holds ONE path for that log, not the two a case-insensitive index leaves" \
+      "$(git -C "$WIP" ls-tree -r --name-only HEAD -- lanes/log | grep -ci '^lanes/log/repocase-1\.md$' || :)" 1
 # ONCE. The file is already the row's spelling now, so there is nothing left to
 # rename and the next write must not say there was.
 run env LANES_LANE=repocase-1 LANES_SESSION="$DEAD_ID" "$E" log PAUSED lane:repocase-1 --no-github
@@ -5631,11 +5640,11 @@ has   "…and the line it wrote is under the row's spelling, from a lowercase LA
 # EMPTY and fifteen assertions went red behind it.
 # SAVED AND RESTORED, NEVER UNSET. `core.ignorecase` is the value `git init`
 # WRITES from its own probe of the filesystem, so on a case-insensitive one it
-# is already `true` and it is load-bearing: unsetting it leaves git treating
-# that filesystem as case-sensitive, every renamed log reads as a phantom
-# modification, and the writes after this one are refused for a dirty checkout
-# they did not make. Measured on the macOS job of this PR at `e35f2a8`: eleven
-# red assertions, all of them behind `lanes/log/repocase-1.md` reported dirty.
+# is already `true` and setting it here is a no-op there — this case reproduces
+# the INDEX half on a case-sensitive filesystem, and only that half. The other
+# half is the operating system resolving both spellings to one file, which no
+# config reproduces; what covers it is the tree count below, asserted on every
+# platform.
 ign_was="$(git -C "$WIP" config --local core.ignorecase 2>/dev/null || printf '')"
 git -C "$WIP" config core.ignorecase true
 run env LANES_LANE=repoign-1 LANES_SESSION="$DEAD_ID" "$E" log PAUSED lane:repoign-1 --no-github
@@ -5652,6 +5661,8 @@ has   "…which names the old path" \
       "$(git -C "$WIP" show --name-status --format= "$ign_sha" 2>/dev/null)" "lanes/log/repoign-1.md"
 has   "…and the new one, in the one commit" \
       "$(git -C "$WIP" show --name-status --format= "$ign_sha" 2>/dev/null)" "lanes/log/repoIgn-1.md"
+is    "…and HEAD holds ONE path for this lane's log as well" \
+      "$(git -C "$WIP" ls-tree -r --name-only HEAD -- lanes/log | grep -ci '^lanes/log/repoign-1\.md$' || :)" 1
 is    "…leaving the checkout clean, so the next write is not refused for it" \
       "$(git -C "$WIP" status --porcelain -- lanes | grep -c . || :)" 0
 
