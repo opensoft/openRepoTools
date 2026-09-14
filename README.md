@@ -70,14 +70,28 @@ and the exits are the record's own entry where the feature landed or a push
 from the workstation that parked it; and where `git worktree list` still holds a
 registration that is no longer a worktree, a `worktree prune` — after a
 `worktree unlock` if it is locked, with any directory it leaves behind moved
-aside — has to clear it first), a worktree whose tip moved on from, fell
-behind (by more than the WIP commits `resume` itself un-committed), or
-diverged from the parked commit — or a record naming no parked commit to
-compare it with — a recorded branch this repository has no `origin/<branch>`
-for, a leg parked with `--no-push` or with a `pushed:` that is missing or
-unreadable, a leg the record gives no role or a role this shape has no place
-for, a feature the record lists no leg for, and a worktree the record does not
-know, which was never parked. No config, or no record, is a note.
+aside — has to clear it first; and where anything else sits at the path both
+verbs compute for that leg — a directory, a file, a worktree of another
+branch — `resume` refuses the whole feature for it, before it reads origin
+and without overwriting a path it did not create, so moving that aside is
+yours first: a `git worktree move` where git holds it as a worktree and a
+plain `mv` where it does not, with the `unlock` a locked registration wants
+in front of either and the `prune` a dead one wants beside the `mv`), a
+worktree whose tip moved on from, fell behind (by more than the WIP commits
+`resume` itself un-committed), or diverged from the parked commit — or a record
+naming no parked commit to compare it with — a recorded branch this repository
+has no `origin/<branch>` for, a leg parked with `--no-push` or with a `pushed:`
+that is missing or unreadable, a leg the record gives no role or a role this
+shape has no place for, a feature the record lists no leg for, a worktree on a
+recorded branch that is not at the path BOTH verbs compute for that leg —
+`<worktree_root>/<branch>`, the leg's own mount under it in a three-leg root,
+read out of `$SPECKIT_GIT_WORKTREE_ROOT`, this checkout's `git-config.yml`, or
+the shape's own default — which `resume` refuses the whole feature for and
+`park` never parks, leaving a `git worktree move` of yours as the exit — except
+where no move works: the leg's own checkout, a leg declared `path: "."`, and a
+symlink anywhere in the computed path's own parents, each of which says so and
+names the component — and a worktree the record does not know, which was never
+parked. No config, or no record, is a note.
 That is all five layers: the local layer, `--fetch`, the fork, the pin and
 the record.
 

@@ -147,7 +147,8 @@ def command_env(home: Path, env: dict | None = None) -> dict:
     environ = dict(os.environ)
     for name in ("PROJECTS_DIR", "AGENT_PROTOCOL_ROOT",
                  "OPENREPOTOOLS_REMOTE_BASE", "MAKEFLAGS", "MAKELEVEL",
-                 "SPECKIT_WORKSPACE_PATH", "SPECKIT_WORKSPACE_REPOSITORY"):
+                 "SPECKIT_WORKSPACE_PATH", "SPECKIT_WORKSPACE_REPOSITORY",
+                 "SPECKIT_GIT_WORKTREE_ROOT"):
         environ.pop(name, None)
     environ["HOME"] = str(home)
     environ["PYTHON"] = sys.executable

@@ -196,6 +196,13 @@ def seed_three_leg_root(base: Path, name: str) -> dict:
         THREE_LEG_YAML.format(id=name.lower(), name=name, org=ORG),
         encoding="utf-8")
     (seed / "README.md").write_text(f"# {name}\n", encoding="utf-8")
+    # A three-leg root's `worktree_root` is `worktrees` INSIDE it, so the
+    # feature worktrees `park` and `resume` make show in the root's own `git
+    # status` unless it ignores them: `setup-openspeckit` writes the line, and
+    # `resume.sh` warns where it is missing ("'…/.gitignore' does not ignore
+    # /worktrees/; the recreated worktrees will show in `git status` at the
+    # root"). A fixture without it would report dirt no real root has.
+    (seed / ".gitignore").write_text("worktrees/\n", encoding="utf-8")
     git("init", "-q", "-b", "main", ".", cwd=seed)
     commit_all(seed, "seed")
     for role in ("spec", "code"):
@@ -1591,6 +1598,22 @@ projects:
     return path
 
 
+def parked_worktree(root: Path, branch: str, mount: str | None = None) -> Path:
+    """THE ONE PATH `resume.sh` READS AS A FEATURE'S WORKTREE, and the one
+    `park.sh` collects features from: `collect_legs` computes
+    `<worktree_root>/<branch>` for a single root's `repo` leg and
+    `<worktree_root>/<branch>/<leg mount>` for a three-leg one, and
+    `get_config_value`'s default for `worktree_root` is `../<root
+    folder>-worktrees` BESIDE a single root and `worktrees` INSIDE a three-leg
+    one — these fixtures carry no `.specify/extensions/git/git-config.yml` to
+    say otherwise. A worktree anywhere else is one neither verb sees, which is
+    a finding of its own; every fixture below that means "the worktree `park`
+    made" therefore puts it here."""
+    if mount is None:
+        return root.parent / f"{root.name}-worktrees" / branch
+    return root / "worktrees" / branch / mount
+
+
 def feature_worktree(repo: Path, branch: str, where: Path, *, push: bool = True) -> str:
     """A linked worktree on a new branch with one commit, pushed so the branch
     itself is not a finding; returns the tip sha."""
@@ -1659,7 +1682,8 @@ def test_a_recorded_feature_with_no_worktree_here_names_resume(atlas, home):
 
 def test_a_worktree_at_the_parked_commit_is_in_sync(atlas, home):
     checkout = workspace_config(home)
-    tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing",
+                           parked_worktree(atlas, "001-a-thing"))
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
     result = run(STATUS, "Atlas", home=home)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -1680,7 +1704,7 @@ def test_a_recorded_features_deleted_worktree_names_the_prune_then_the_resume(
     git still holds. So the prune comes first and the `resume` second, and
     the bare line — which names an exit that cannot run — never appears."""
     checkout = workspace_config(home)
-    where = home / "Atlas-wt" / "001-a-thing"
+    where = parked_worktree(atlas, "001-a-thing")
     tip = feature_worktree(atlas, "001-a-thing", where)
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
     rmtree(where)           # and NO `git worktree prune`
@@ -1697,7 +1721,7 @@ def test_a_recorded_features_deleted_worktree_names_the_prune_then_the_resume(
 
 def test_a_worktree_that_moved_on_since_it_was_parked(atlas, home):
     checkout = workspace_config(home)
-    where = home / "Atlas-wt" / "001-a-thing"
+    where = parked_worktree(atlas, "001-a-thing")
     tip = feature_worktree(atlas, "001-a-thing", where)
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
     (where / "more.md").write_text("more\n", encoding="utf-8")
@@ -1712,7 +1736,7 @@ def test_a_worktree_that_moved_on_since_it_was_parked(atlas, home):
 
 def test_a_worktree_behind_a_newer_record_is_what_resume_refuses(atlas, home):
     checkout = workspace_config(home)
-    where = home / "Atlas-wt" / "001-a-thing"
+    where = parked_worktree(atlas, "001-a-thing")
     feature_worktree(atlas, "001-a-thing", where)
     (where / "more.md").write_text("more\n", encoding="utf-8")
     commit_all(where, "parked elsewhere, later")
@@ -1729,9 +1753,1013 @@ def test_a_worktree_behind_a_newer_record_is_what_resume_refuses(atlas, home):
             ) in result.stdout
 
 
+# --- the path `resume` computes, and no other ------------------------------
+#
+# The independent reviewer's note of 2026-09-12, verbatim: "`worktree_on_branch`
+# (in `status`) matches any path while RR4 matches only the computed one."
+
+def path_finding(root, branch: str, at, want, wtroot, repo=None) -> str:
+    """The one line the reading below prints, for a LINKED worktree.
+
+    IT NAMES THE OUTCOME AND NOT THE CHECK since the independent review of
+    this branch, 2026-09-12: "`resume.sh` only reaches that `worktree add`
+    when the leg also clears RR3, RR2, RR1 and RR5." Run against the real
+    `resume.sh` on four twin estates the same day, an off-path worktree at
+    the parked commit is refused at the `git worktree add` ("already used by
+    worktree at …"); moved on it is RR1's divergence, behind it is RR5, and
+    with the branch gone from origin it is RR2 — the same whole-feature
+    refusal and the same exit in all of them, and a quoted sentence the
+    other end does not print in four of the five. So the line says what
+    `resume` does, and keeps the quoted `worktree add` for the state that
+    prints it."""
+    repo = repo or root
+    return (f"    - parked feature {branch} (repo leg): its worktree is at "
+            f"{at}, which is not the {want} `resume` computes for it — "
+            "`resume` matches a leg's worktree on that path alone, so it does "
+            "not read this one as already recreated and refuses the WHOLE "
+            "feature, the other legs with it, at whichever of its own checks "
+            "this leg reaches first (with the branch still at the parked "
+            "commit that is the `git worktree add` it makes last of all, "
+            "which cannot take a branch another worktree holds); `park` does "
+            "not carry it either, because it parks the features under "
+            f"{wtroot} and no others — move it where both "
+            f"look: `mkdir -p {Path(want).parent} && git -C {repo} worktree "
+            f"move {at} {want}`, which is yours to run — `worktree move` "
+            "creates no parent directory of its own")
+
+
+def test_a_worktree_off_the_computed_path_is_a_finding_not_silence(atlas, home):
+    """VERIFIED AGAINST THE EXTENSION on 2026-09-12, on a scratch single-shape
+    estate with the real scripts: with the worktree on the branch at
+    `$HOME/elsewhere/001-a-thing` rather than `worktrees/001-a-thing`, and the
+    record's `pushed: true` and its parked commit origin's tip, `resume.sh`
+    answered "Error: could not add the repo leg worktree
+    'worktrees/001-a-thing' for '001-a-thing'; that feature was NOT recreated.
+    / fatal: '001-a-thing' is already used by worktree at
+    '…/elsewhere/001-a-thing'", "REFUSED: 001-a-thing — git worktree add
+    failed", exit 2 — while `status` answered "0 finding(s) in 1 repository",
+    exit 0. The feature read as CLEAN AND PRESENT, which is the one answer
+    that hides the state this layer exists for: RR4 matches a leg on the
+    registered PATH alone, and a worktree at any other path is not that leg's."""
+    checkout = workspace_config(home)
+    where = home / "elsewhere" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert path_finding(atlas, "001-a-thing", where,
+                        parked_worktree(atlas, "001-a-thing"),
+                        home / "projects" / "Atlas-worktrees") in result.stdout
+
+
+def test_the_path_reading_ends_the_leg_because_park_is_blind_to_it_too(
+        atlas, home):
+    """Every arm below that one exits through "park again", and `park.sh`
+    collects a single checkout's features through `verify_git_worktree_candidate
+    "$REPO_ROOT" "$WORKTREE_ROOT" …`, which drops every worktree outside that
+    root: run on the same scratch estate the same day, `park --dry-run`
+    answered "[specify] No open features under 'worktrees'; nothing to park.",
+    and answered "PARKED: 001-a-thing" with the worktree at the computed path.
+    So the moved-on line, whose exit is exactly that park, must not follow
+    it — and what it would have said is said on the run after the move."""
+    checkout = workspace_config(home)
+    where = home / "elsewhere" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    (where / "more.md").write_text("more\n", encoding="utf-8")
+    commit_all(where, "more work")
+    git("push", "-q", "origin", "001-a-thing", cwd=where)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert path_finding(atlas, "001-a-thing", where,
+                        parked_worktree(atlas, "001-a-thing"),
+                        home / "projects" / "Atlas-worktrees") in result.stdout
+    assert "moved on since it was parked" not in result.stdout
+
+
+def test_the_worktree_root_in_git_config_moves_the_path_both_verbs_use(
+        atlas, home):
+    """`worktree_root:` in `.specify/extensions/git/git-config.yml` is where
+    the other end gets it — `get_config_value "worktree_root"
+    "$DEFAULT_WORKTREE_ROOT" "SPECKIT_GIT_WORKTREE_ROOT"` — taking the LAST
+    line for the key, stripping a `#` comment only where whitespace comes
+    first, and unquoting. So the DEFAULT path is the wrong one here, and the
+    configured one is right: both halves are run, and the `worktree move`
+    between them is the very command the finding names."""
+    checkout = workspace_config(home)
+    config = atlas / ".specify" / "extensions" / "git" / "git-config.yml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text("checkout_mode: worktree\n"
+                      'worktree_root: "wt"   # beside the legs\n',
+                      encoding="utf-8")
+    where = parked_worktree(atlas, "001-a-thing")       # the DEFAULT path
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert path_finding(atlas, "001-a-thing", where,
+                        atlas / "wt" / "001-a-thing",
+                        atlas / "wt") in result.stdout
+    (atlas / "wt").mkdir()      # `worktree move` creates no parent
+    git("worktree", "move", str(where), str(atlas / "wt" / "001-a-thing"),
+        cwd=atlas)
+    result = run(STATUS, "Atlas", home=home)
+    assert "parked feature" not in result.stdout, result.stdout
+    assert "    parked record: 1 feature(s)" in result.stdout
+
+
+def test_the_environment_override_moves_that_path_too(atlas, home):
+    """`get_config_value` reads `$SPECKIT_GIT_WORKTREE_ROOT` BEFORE the config
+    file and before the default, so a person who runs `park` and `resume` with
+    it set has their worktrees somewhere else entirely. One estate, two runs:
+    without the variable the worktree is off the path, with it the same
+    worktree IS the path, and nothing on disk moved between them."""
+    checkout = workspace_config(home)
+    where = home / "elsewhere" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert path_finding(atlas, "001-a-thing", where,
+                        parked_worktree(atlas, "001-a-thing"),
+                        home / "projects" / "Atlas-worktrees") in result.stdout
+    result = run(STATUS, "Atlas", home=home,
+                 env={"SPECKIT_GIT_WORKTREE_ROOT": str(home / "elsewhere")})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "parked feature" not in result.stdout
+
+
+def test_a_three_leg_legs_worktree_is_judged_under_its_own_mount(trio, home):
+    """`collect_legs` computes `$WORKTREE_ROOT/$branch/$SHAPE_SPEC_PATH` for a
+    `spec` leg, so the feature directory itself is not that leg's worktree —
+    and a three-leg root's `worktree_root` defaults to `worktrees` INSIDE it,
+    not to the `../<folder>-worktrees` a single root gets."""
+    checkout = workspace_config(home)
+    leg = trio / "spec"
+    git("checkout", "-q", "main", cwd=leg)
+    where = trio / "worktrees" / "001-s-thing"
+    tip = feature_worktree(leg, "001-s-thing", where)
+    record(checkout, "trio", branch="001-s-thing", role="spec", commit=tip,
+           root="Trio", parked_on="Falcon")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-s-thing (spec leg): its worktree is at "
+            f"{where}, which is not the {where / 'spec'} `resume` computes "
+            "for it — ") in result.stdout
+    assert f"worktree move {where} {where / 'spec'}`" in result.stdout
+
+
+def test_the_legs_own_checkout_on_that_branch_names_no_worktree_move(
+        atlas, home):
+    """`worktree_on_branch` answers with the MAIN worktree too, and `git
+    worktree move` refuses one: "'…' is a main working tree" (git 2.43,
+    2026-09-12). Naming it would be naming an exit that does not work, which
+    is the one thing the rule at the top of `check_parked_leg` forbids — and
+    `resume` refuses a root on a feature branch in any case, which the row
+    above says in the local layer's own words."""
+    checkout = workspace_config(home)
+    tip = feature_worktree(atlas, "001-a-thing",
+                           parked_worktree(atlas, "001-a-thing"))
+    git("worktree", "remove", str(parked_worktree(atlas, "001-a-thing")),
+        cwd=atlas)
+    git("checkout", "-q", "001-a-thing", cwd=atlas)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (repo leg): its worktree is at "
+            f"{atlas}, which is not the "
+            f"{parked_worktree(atlas, '001-a-thing')} `resume` computes for "
+            "it — ") in result.stdout
+    assert (f"and no others — {atlas} is the repo leg's OWN checkout rather "
+            "than a worktree of it, and no `worktree move` moves a main "
+            "working tree, so there is nothing here to move: neither verb "
+            "sees this feature while that checkout is on that branch"
+            ) in result.stdout
+    assert "worktree move" in result.stdout
+    assert f"worktree move {atlas}" not in result.stdout
+
+
+def test_a_feature_resume_refuses_whole_says_nothing_about_the_path(
+        atlas, home):
+    """The rule the verdict already carries: no line of a feature
+    `collect_legs` throws out may claim a refusal reached later. RR4 is never
+    reached for one, so the leg's own path is not what stops it, and the
+    feature's line — the one that names the leg that costs it — is the whole
+    answer."""
+    checkout = workspace_config(home)
+    where = home / "elsewhere" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=tip)
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text + "          - role: nope\n"
+                    "            remote: origin\n"
+                    f"            parked_commit: {tip}\n"
+                    "            wip: true\n"
+                    "            wip_depth: 1\n"
+                    "            pushed: true\n", encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (nope leg): the record names a "
+            "leg this root does not mount here; `resume` maps each leg's role "
+            "onto this checkout and refuses the WHOLE feature") in result.stdout
+    assert "which is not the" not in result.stdout
+    assert "1 finding(s)" in result.stdout
+
+
+def test_a_symlinked_spelling_of_the_root_is_the_path_git_spells(atlas, home):
+    """The independent review of this branch, 2026-09-12, its first blocker,
+    verbatim: "`$root` is the estate path as `estate_walk_up "$PWD"` /
+    `$PROJECTS_DIRS` spell it — LEXICAL, symlinks intact. `$tree` is
+    `worktree_on_branch`'s answer, which comes from `git worktree list
+    --porcelain` and is ALWAYS the physical path. `resume.sh` sets
+    `REPO_ROOT="$(git rev-parse --show-toplevel)"`, which is also always
+    physical."
+
+    RUN BOTH WAYS ON ONE ESTATE the same day, with the worktree AT the
+    computed path and nothing differing but the SPELLING of the projects
+    directory — a symlink to the very same directory. `resume.sh`, run from
+    the symlinked spelling, answered "[specify] 001-a-thing (repo): worktree
+    already registered at worktrees/001-a-thing; left as it is", "RESUMED:
+    001-a-thing", exit 0; this layer answered "a directory is at
+    …/proj-link/Atlas-worktrees/001-a-thing, which is the path `resume`
+    computes for this leg", refused the WHOLE feature and named an `mv` of
+    the feature's own worktree — because `[ -e ]` follows the link where an
+    exact-string match of the registered paths cannot. A healthy feature read
+    as somebody else's obstruction is the worst answer this arm has.
+
+    THE ROOT IS RESOLVED AS FAR AS GIT RESOLVES IT AND NO FURTHER, which is
+    the test below this one."""
+    checkout = workspace_config(home)
+    at = parked_worktree(atlas, "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing", at)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "parked feature" not in result.stdout
+    link = home / "proj-link"
+    link.symlink_to(home / "projects", target_is_directory=True)
+    result = run(STATUS, "Atlas", home=home, env={"PROJECTS_DIR": str(link)})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "parked feature" not in result.stdout
+    assert f"root   main   {link / 'Atlas'}" in result.stdout
+
+
+def test_a_symlinked_worktree_root_is_a_miss_at_both_ends(atlas, home):
+    """AND NO FURTHER THAN GIT, which is the other half of the blocker above:
+    `get_config_value` does not resolve `worktree_root:` and
+    `resolve_path_from_repo_root` is `os.path.abspath`, which resolves no
+    symlink either. So where the WORKTREE ROOT is a symlink `collect_legs`
+    computes the unresolved path, `git worktree list` reports the resolved
+    one, and RR4 misses at the other end exactly as it misses here.
+
+    Run against the extension on 2026-09-12 with `worktree_root: wtlink`
+    pointing at a directory elsewhere and the worktree added through the
+    link: `resume.sh` answered "Error: 'wtlink/001-a-thing' exists and is not
+    a registered worktree of the repo leg; that feature was NOT recreated …
+    Move it aside", "REFUSED: 001-a-thing — an unrelated path is in the way",
+    exit 2. The finding stands, and it is RR3's: resolving the root harder
+    than git does would have deleted a refusal the other end makes."""
+    checkout = workspace_config(home)
+    config = atlas / ".specify" / "extensions" / "git" / "git-config.yml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text("checkout_mode: worktree\nworktree_root: wtlink\n",
+                      encoding="utf-8")
+    real = home / "real-wt"
+    real.mkdir()
+    (atlas / "wtlink").symlink_to(real, target_is_directory=True)
+    at = atlas / "wtlink" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", at)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): a directory is at "
+            f"{at}, which is the path `resume` computes for this leg and is "
+            "not this branch's worktree") in result.stdout
+    assert 'refused as "an unrelated path is in the way"' in result.stdout
+
+
+def test_a_registration_at_that_path_with_nothing_on_disk_wants_the_prune(
+        atlas, home):
+    """THE STATE THE COMMIT BELOW FOUND AND DID NOT TAKE: a PRUNABLE
+    registration AT the computed path for ANOTHER branch, with no directory
+    on disk. `load_git_worktrees` DROPS a prunable block, so RR4 never sees
+    it; `[ -e "$tree" ]` is false, so RR3 finds nothing; RR2, RR1 and RR5
+    pass — and the run dies at the very end, on the `git worktree add` that
+    is the last thing it does.
+
+    RUN AGAINST THE EXTENSION on 2026-09-12, on a scratch single-shape estate
+    with the real scripts: "Error: could not create the repo leg worktree
+    'worktrees/001-a-thing' from 'origin/001-a-thing'; that feature was NOT
+    recreated. / fatal: '…/worktrees/001-a-thing' is a missing but already
+    registered worktree; use 'add -f' to override, or 'prune' or 'remove' to
+    clear", "REFUSED: 001-a-thing — git worktree add failed", exit 2 — while
+    this layer said "`resume Atlas` brings it back". It is neither RR3 nor
+    RR4 and its REFUSED line is its own, and it belongs with the
+    stale-registration arms, which look for the RECORDED BRANCH and never at
+    the path: the exit is the same `worktree prune`, and after it `resume`
+    does bring the feature back."""
+    checkout = workspace_config(home)
+    want = parked_worktree(atlas, "001-a-thing")
+    want.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", "-b", "002-other", str(want), cwd=atlas)
+    rmtree(want)                # and NO `git worktree prune`
+    porcelain = git("worktree", "list", "--porcelain", cwd=atlas).stdout
+    assert "prunable" in porcelain, "git pruned it for us; the test is moot"
+    record(checkout, "atlas", branch="001-a-thing", role="repo",
+           commit=FAKE_SHA, parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
+            "branch here, but a stale worktree registration for `002-other` "
+            f"is still recorded at the {want} `resume` computes for this leg, "
+            f"with nothing on disk there — clear it with `git -C {atlas} "
+            "worktree prune`, then `resume Atlas` brings it back"
+            ) in result.stdout
+
+
+def test_that_registration_is_in_the_way_of_a_move_as_well(atlas, home):
+    """AND IT OUTLIVES THE MOVE the arm above names, which is why the two are
+    one reading: with the feature's own worktree off the path AND a dead
+    registration on it, `git worktree move` refuses the destination in the
+    same words `git worktree add` refuses it — "a missing but already
+    registered worktree" (git 2.43, 2026-09-12) — so the prune comes FIRST
+    and the move second.
+
+    Run against the extension the same day on both spellings of it, the
+    registration naming another branch and the RECORDED one: each answered
+    "Error: could not add the repo leg worktree 'worktrees/001-a-thing' for
+    '001-a-thing'; that feature was NOT recreated. / fatal: '…' is a missing
+    but already registered worktree", "REFUSED: 001-a-thing — git worktree
+    add failed", exit 2 — the registration, not the branch already in use
+    elsewhere, being what the add hits first."""
+    checkout = workspace_config(home)
+    want = parked_worktree(atlas, "001-a-thing")
+    want.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", "-b", "002-other", str(want), cwd=atlas)
+    rmtree(want)                # and NO `git worktree prune`
+    where = home / "elsewhere" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): its worktree is at "
+            f"{where}, which is not the {want} `resume` computes for it"
+            ) in result.stdout
+    # THE PRUNE IS IN THE COMMAND AND NOT BESIDE IT since Copilot's fifth
+    # round on #27 (2026-09-13, suppressed), verbatim: "In the `held == 2`
+    # recovery, the required destination prune appears only in the prose; the
+    # copy-pastable command is `${unlock}mkdir -p ... && git worktree move ...`
+    # and never runs `git worktree prune`. With a live off-path source and a
+    # stale destination registration, the advertised command therefore still
+    # fails at `worktree move`." Right, and it is this file's own rule: an exit
+    # a person can run is one they can paste, so every step the destination
+    # wants is in the sequence and the reason for each is behind it.
+    assert ("move it where both look: "
+            f"`git -C {atlas} worktree prune && mkdir -p {want.parent} && "
+            f"git -C {atlas} worktree move {where} {want}`, which is yours to "
+            "run — `worktree move` creates no parent directory of its own, and "
+            'it refuses a destination git still holds registered ("a missing '
+            'but already registered worktree") until the prune') in (
+        result.stdout), result.stdout
+
+
+def test_no_sibling_leg_of_an_off_path_feature_offers_resume(trio, home):
+    """THE RULE AT THE TOP OF `check_parked_leg`, applied to this reading: a
+    worktree off the computed path refuses the WHOLE feature at the other
+    end, so no line of that feature may name `resume <Name>`. A three-leg
+    record is where it shows — the `spec` leg's worktree at the feature
+    directory instead of under its own mount, and a `code` leg with no
+    worktree here at all — and the `code` leg's line said "`resume Trio`
+    brings it back" while the `spec` leg's said the feature was refused
+    whole.
+
+    Verified against the extension on 2026-09-12: with the spec leg's
+    worktree off the path, `resume.sh` refuses at the `git worktree add`
+    ("already used by worktree at …"), "REFUSED", exit 2, and recreates
+    nothing for any leg of that feature."""
+    checkout = workspace_config(home)
+    leg = trio / "spec"
+    git("checkout", "-q", "main", cwd=leg)
+    where = trio / "worktrees" / "001-s-thing"
+    tip = feature_worktree(leg, "001-s-thing", where)
+    path = record(checkout, "trio", branch="001-s-thing", role="spec",
+                  commit=tip, root="Trio", parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text + leg_block("code", FAKE_SHA), encoding="utf-8")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "`resume Trio`" not in result.stdout, result.stdout
+
+
+# --- and what is AT that path, which is the other half of the question -----
+#
+# `resume.sh`'s RR4 second arm and RR3, the two readings the commit above
+# verified and recorded rather than took. Both refuse the WHOLE feature, both
+# are reached before RR2 reads origin, and this layer offered `resume <Name>`
+# for each.
+
+def in_the_way_finding(branch: str, role: str, what: str, at, why: str,
+                       exit_clause: str) -> str:
+    """The one line this reading prints, for the culprit leg."""
+    return (f"    - parked feature {branch} ({role} leg): {what} is at {at}, "
+            "which is the path `resume` computes for this leg and is not this "
+            "branch's worktree — `resume` reads that path and no other, "
+            "overwrites nothing it did not create, and refuses the WHOLE "
+            "feature, the other legs with it (\"… exists and is not a "
+            f"registered worktree of the {role} leg\", refused as \"{why}\"), "
+            f"so nothing here brings it back while that is there — {exit_clause}")
+
+
+def move_aside(at) -> str:
+    return (f"move it aside with `mv {at} <a path of your choosing>`, which "
+            "is yours to run — nothing here moves or deletes a path it did "
+            "not create")
+
+
+def worktree_move_aside(repo, at) -> str:
+    return (f"move it aside with `git -C {repo} worktree move {at} <a path of "
+            "your choosing>`, which is yours to run — a registered worktree "
+            "moved with `mv` leaves git holding the path it was at")
+
+
+def unlock_then_move(repo, at) -> str:
+    return ("git holds that worktree LOCKED and `worktree move` refuses a "
+            "locked one (\"cannot move a locked working tree\"), so the "
+            f"unlock comes first: `git -C {repo} worktree unlock {at}`, then "
+            f"`git -C {repo} worktree move {at} <a path of your choosing>`, "
+            "both yours to run — a registered worktree moved with `mv` "
+            "leaves git holding the path it was at")
+
+
+def move_aside_and_prune(repo, at) -> str:
+    return (f"move it aside with `mv {at} <a path of your choosing>` and "
+            "clear the stale registration git still holds for that path with "
+            f"`git -C {repo} worktree prune`, both yours to run — nothing "
+            "here moves or deletes a path it did not create, and `git "
+            "worktree add` refuses a path it is still registered at (\"a "
+            "missing but already registered worktree\")")
+
+
+def test_a_stray_path_at_the_computed_path_is_rr3_and_never_a_resume(
+        atlas, home):
+    """VERIFIED AGAINST THE EXTENSION on 2026-09-12, on a scratch single-shape
+    estate with the real scripts — a bare remote in a temp dir, a fake `$HOME`
+    — whose record carried `pushed: true` and a parked commit that was
+    origin's tip, with NO worktree for the feature here: a plain directory at
+    `worktrees/001-a-thing` answered "Error: 'worktrees/001-a-thing' exists
+    and is not a registered worktree of the repo leg; that feature was NOT
+    recreated. / Nothing here overwrites a directory it did not create. /
+    look:  git -C . worktree list / Move it aside, then re-run `make
+    resume`.", "REFUSED: 001-a-thing — an unrelated path is in the way", exit
+    2 — and a plain FILE there answered exactly the same. With nothing at that
+    path the same estate RESUMED the feature, exit 0. `status` at fd9ae96, this
+    branch's base, answered "`resume Atlas` brings it back" for both."""
+    checkout = workspace_config(home)
+    where = parked_worktree(atlas, "001-a-thing")
+    origin_has_branch(atlas, "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo",
+           commit=git("rev-parse", "origin/001-a-thing", cwd=atlas).stdout.strip())
+
+    where.mkdir(parents=True)
+    (where / "notes.md").write_text("somebody else's\n", encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert in_the_way_finding("001-a-thing", "repo", "a directory", where,
+                              "an unrelated path is in the way",
+                              move_aside(where)) in result.stdout
+    assert "`resume Atlas` brings it back" not in result.stdout
+
+    rmtree(where)
+    where.write_text("somebody else's\n", encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert in_the_way_finding("001-a-thing", "repo", "a file", where,
+                              "an unrelated path is in the way",
+                              move_aside(where)) in result.stdout
+    assert "`resume Atlas` brings it back" not in result.stdout
+
+
+def test_a_worktree_of_another_branch_at_that_path_is_rr4s_second_arm(
+        atlas, home):
+    """`leg_registered_at` matches the PATH and then tests the branch, and
+    `[ "$LEG_REGISTERED_BRANCH" = "$branch" ]` failing is RR4's second arm.
+    Run against the extension on the same estate the same day, a worktree of
+    `002-other` at `worktrees/001-a-thing` answered the same four stderr lines
+    as RR3 and "REFUSED: 001-a-thing — an unrelated worktree is in the way",
+    exit 2; a worktree with a DETACHED head there answered the same, because
+    a detached block has no `branch` line and `LEG_REGISTERED_BRANCH` is then
+    the empty string, which is no branch name either.
+
+    THE EXIT IS NOT THE STRAY PATH'S. `mv` on a registered worktree leaves
+    git holding the path it was at, and `git worktree move` is the command
+    that moves the directory and the registration together."""
+    checkout = workspace_config(home)
+    where = parked_worktree(atlas, "001-a-thing")
+    origin_has_branch(atlas, "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo",
+           commit=git("rev-parse", "origin/001-a-thing", cwd=atlas).stdout.strip())
+
+    where.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", "-b", "002-other", str(where), cwd=atlas)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert in_the_way_finding("001-a-thing", "repo", "a worktree on `002-other`",
+                              where, "an unrelated worktree is in the way",
+                              worktree_move_aside(atlas, where)) in result.stdout
+    assert "`resume Atlas` brings it back" not in result.stdout
+
+    git("worktree", "remove", str(where), cwd=atlas)
+    git("branch", "-q", "-D", "002-other", cwd=atlas)
+    git("worktree", "add", "-q", "--detach", str(where), "main", cwd=atlas)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert in_the_way_finding("001-a-thing", "repo",
+                              "a worktree with a detached head", where,
+                              "an unrelated worktree is in the way",
+                              worktree_move_aside(atlas, where)) in result.stdout
+    assert "`resume Atlas` brings it back" not in result.stdout
+
+
+def test_a_locked_registration_of_another_branch_names_the_unlock_not_a_move(
+        atlas, home):
+    """A block git calls `prunable` is one `load_git_worktrees` DROPS, so
+    `resume` never sees it — but it computes no `prunable` for a LOCKED one
+    (git 2.43), and `leg_registered_at` therefore matches it and RR4's second
+    arm refuses the feature. Verified against the extension on 2026-09-12:
+    with the worktree of `002-other` at `worktrees/001-a-thing` locked and its
+    `.git` deleted, it answered "REFUSED: 001-a-thing — an unrelated worktree
+    is in the way", exit 2.
+
+    AND THE EXIT IS NOT A `worktree move` THERE: the directory is no longer a
+    worktree, so what clears the registration is the unlock and the prune the
+    stale-registration arms already name — with the directory the prune
+    leaves behind moved aside, because `resume` refuses a path that exists
+    whatever git holds."""
+    checkout = workspace_config(home)
+    where = parked_worktree(atlas, "001-a-thing")
+    origin_has_branch(atlas, "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo",
+           commit=git("rev-parse", "origin/001-a-thing", cwd=atlas).stdout.strip())
+    where.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", "-b", "002-other", str(where), cwd=atlas)
+    git("worktree", "lock", str(where), cwd=atlas)
+    (where / ".git").unlink()       # the directory stays; the worktree does not
+    porcelain = git("worktree", "list", "--porcelain", cwd=atlas).stdout
+    assert "prunable" not in porcelain, "git called a locked block prunable"
+
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert in_the_way_finding(
+        "001-a-thing", "repo", "a worktree on `002-other`", where,
+        "an unrelated worktree is in the way",
+        "the worktree it registers is not there and git holds the "
+        "registration LOCKED, which is why it calls it no `prunable` — clear "
+        f"it with `git -C {atlas} worktree unlock {where}`, then `git -C "
+        f"{atlas} worktree prune`, which is yours to run, and move aside "
+        "whatever the prune leaves behind there, which `resume` refuses for "
+        "existing whatever git holds") in result.stdout
+    assert "worktree move" not in result.stdout
+
+
+def test_a_locked_worktree_of_another_branch_puts_the_unlock_first(
+        atlas, home):
+    """RR4's second arm again, and the EXIT is the whole of what is new: git
+    holds a live worktree there LOCKED, `leg_registered_at` matches it because
+    a locked block carries no `prunable`, and the extension answered "REFUSED:
+    001-a-thing — an unrelated worktree is in the way", exit 2, on 2026-09-12.
+    `git worktree move` REFUSES a locked worktree — "fatal: cannot move a
+    locked working tree; use 'move -f -f' to override or unlock first", git
+    2.43 the same day — so the plain move this layer named at fd9ae96 is an
+    exit that does not run, and the unlock goes in front of it (run there
+    too: `unlock` then `move` exits 0)."""
+    checkout = workspace_config(home)
+    where = parked_worktree(atlas, "001-a-thing")
+    origin_has_branch(atlas, "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo",
+           commit=git("rev-parse", "origin/001-a-thing", cwd=atlas).stdout.strip())
+    where.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", "-b", "002-other", str(where), cwd=atlas)
+    git("worktree", "lock", str(where), cwd=atlas)
+
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert in_the_way_finding("001-a-thing", "repo", "a worktree on `002-other`",
+                              where, "an unrelated worktree is in the way",
+                              unlock_then_move(atlas, where)) in result.stdout
+    assert worktree_move_aside(atlas, where) not in result.stdout
+
+
+def test_a_prunable_registration_at_that_path_names_the_prune_with_the_move(
+        atlas, home):
+    """A block git calls `prunable` is one `load_git_worktrees` DROPS, so
+    `leg_registered_at` misses it and what refuses the feature is the
+    DIRECTORY: RR3, "an unrelated path is in the way", exit 2 against the
+    extension on 2026-09-12 with a worktree of `002-other` at the computed
+    path whose `.git` had been deleted.
+
+    AND THE `mv` IS NOT THE WHOLE EXIT THERE. The registration outlives the
+    directory, and the `git worktree add` at the end of the run dies on it
+    instead — "'…' is a missing but already registered worktree; use 'add -f'
+    to override, or 'prune' or 'remove' to clear" — with the directory moved
+    aside or not (git 2.43, both spellings run the same day). So the prune is
+    named beside the move, and neither half is optional."""
+    checkout = workspace_config(home)
+    where = parked_worktree(atlas, "001-a-thing")
+    origin_has_branch(atlas, "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo",
+           commit=git("rev-parse", "origin/001-a-thing", cwd=atlas).stdout.strip())
+    where.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", "-b", "002-other", str(where), cwd=atlas)
+    (where / ".git").unlink()       # prunable, with its directory still there
+    assert "prunable" in git("worktree", "list", "--porcelain",
+                             cwd=atlas).stdout
+
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert in_the_way_finding("001-a-thing", "repo", "a directory", where,
+                              "an unrelated path is in the way",
+                              move_aside_and_prune(atlas, where)) in result.stdout
+    assert move_aside(where) not in result.stdout
+
+
+def test_a_worktree_registered_at_that_path_is_the_leg_however_many_others(
+        atlas, home):
+    """RR4's QUESTION IS THE PATH'S, AND THE BRANCH IS TESTED AFTER IT (the
+    independent review of fd9ae96, 2026-09-12, blocker 2). `leg_registered_at`
+    walks the registered paths for an exact match and only then reads the
+    branch on the block it found; `worktree_on_branch` walks the BRANCHES and
+    answers with the first live worktree holding it, which `git worktree list`
+    orders by path. Where one branch is checked out twice — `worktree add
+    --force`, the state this file's own comments already name — the two
+    answers are different worktrees, and the base read the wrong one: it
+    refused the WHOLE feature and named a `git worktree move` ONTO the very
+    worktree `resume` had just resumed the feature from. Verified against the
+    extension on 2026-09-12 with exactly this estate: "[specify] 001-a-thing
+    (repo): worktree already registered at worktrees/001-a-thing; left as it
+    is", "RESUMED: 001-a-thing", exit 0. So there is nothing to say here, and
+    the decoy's own path sorting before or after the computed one changes
+    nothing."""
+    checkout = workspace_config(home)
+    where = parked_worktree(atlas, "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    decoy = home / "elsewhere" / "001-a-thing"
+    decoy.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", "--force", str(decoy), "001-a-thing",
+        cwd=atlas)
+
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "0 finding(s)" in result.stdout
+    assert "which is not the" not in result.stdout
+    assert "which is the path `resume` computes for this leg" not in result.stdout
+
+
+def test_a_prunable_registration_on_the_recorded_branch_is_not_in_the_way(
+        atlas, home):
+    """The state the stale-registration arms already answer, and the one this
+    reading must not answer twice. `_git_worktree_finalize_record` stages a
+    block only `if [ "$prunable" = false ]`, so `leg_registered_at` never sees
+    this one and RR4 is not reached — and the prune, plus a move of the
+    directory it leaves behind, is what `resume` needs before it can recreate
+    anything, which is exactly what that line says. Two findings about one
+    path, one of them promising a `resume` and the other refusing it, is the
+    contradiction this guard exists to prevent.
+
+    AND IT IS THE LINE, NOT THE BLOCK, THAT DECIDES IT: the carve-out asks
+    `worktree_on_branch` which block it answered with, because that is the
+    one this layer prints. Put a LIVE worktree on the branch somewhere else
+    and it answers with that instead, nothing names the obstructed path at
+    all, and the reading is the only one left that does — with the prune in
+    the exit, because the dead registration is still on that path."""
+    checkout = workspace_config(home)
+    where = parked_worktree(atlas, "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    (where / ".git").unlink()       # prunable, with its directory still there
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
+            f"branch here, but a stale worktree registration for it is still "
+            f"recorded at {where}, whose path is still on disk and is no "
+            f"longer a worktree — clear it with `git -C {atlas} worktree "
+            "prune` and a move of what is there aside (`git worktree add` "
+            "refuses a path that \"already exists\"), then `resume Atlas` "
+            "brings it back") in result.stdout
+    assert "which is the path `resume` computes for this leg" not in result.stdout
+
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    elsewhere.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", "--force", str(elsewhere), "001-a-thing",
+        cwd=atlas)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert in_the_way_finding("001-a-thing", "repo", "a directory", where,
+                              "an unrelated path is in the way",
+                              move_aside_and_prune(atlas, where)) in result.stdout
+    assert "a stale worktree registration" not in result.stdout
+
+
+def test_the_legs_own_checkout_at_that_path_names_nothing_to_move(atlas, home):
+    """`worktree list --porcelain` names the MAIN worktree too, so a root
+    whose computed worktree path is the root itself is a registration RR4
+    matches and refuses the feature for. Verified against the extension on
+    2026-09-12 on a scratch estate whose `git-config.yml` said `worktree_root:
+    ..` and whose recorded branch was named for the root folder: it answered
+    "Error: '.' exists and is not a registered worktree of the repo leg",
+    "REFUSED: Atlas — an unrelated worktree is in the way", exit 2.
+
+    `git worktree move` refuses a main working tree, so this spelling names no
+    command at all: an exit that cannot run is the one thing the rule at the
+    top of `check_parked_leg` forbids. `$SPECKIT_GIT_WORKTREE_ROOT` is the
+    override both verbs read first, which is how the fixture reaches the state
+    without a config file."""
+    checkout = workspace_config(home)
+    origin_has_branch(atlas, "Atlas")
+    record(checkout, "atlas", branch="Atlas", role="repo",
+           commit=git("rev-parse", "origin/Atlas", cwd=atlas).stdout.strip())
+    result = run(STATUS, "Atlas", home=home,
+                 env={"SPECKIT_GIT_WORKTREE_ROOT": str(home / "projects")})
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert in_the_way_finding(
+        "Atlas", "repo", "a worktree on `main`", atlas,
+        "an unrelated worktree is in the way",
+        f"{atlas} is the repo leg's OWN checkout rather than a worktree of "
+        "it, and no `worktree move` moves a main working tree, so there is "
+        "nothing here to move aside: while the worktree root this checkout "
+        "computes puts this feature on top of that checkout, neither verb can "
+        "do anything with it") in result.stdout
+    assert "worktree move" in result.stdout
+    assert f"worktree move {atlas}" not in result.stdout
+
+
+def test_the_reading_ends_the_leg_because_resume_never_gets_past_it(
+        atlas, home):
+    """RR3 and RR4 come before RR2 and RR1, so every arm below this one names
+    an exit `resume` never reaches. Two records prove it on one estate: a
+    branch origin has LOST, whose own line offers RR2's two exits, and a
+    record naming NO PARKED COMMIT, whose line offers a re-park — under a
+    stray directory neither is what happens, and the extension answered "an
+    unrelated path is in the way" for both on 2026-09-12."""
+    checkout = workspace_config(home)
+    where = parked_worktree(atlas, "001-a-thing")
+    origin_has_branch(atlas, "001-a-thing")
+    tip = git("rev-parse", "origin/001-a-thing", cwd=atlas).stdout.strip()
+    where.mkdir(parents=True)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    drop_from_origin(atlas, "001-a-thing")
+    result = run(STATUS, "Atlas", "--fetch", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert in_the_way_finding("001-a-thing", "repo", "a directory", where,
+                              "an unrelated path is in the way",
+                              move_aside(where)) in result.stdout
+    assert "is no longer on origin in the repo leg" not in result.stdout
+
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit="")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert in_the_way_finding("001-a-thing", "repo", "a directory", where,
+                              "an unrelated path is in the way",
+                              move_aside(where)) in result.stdout
+    assert "names no parked commit" not in result.stdout
+
+
+def test_it_is_read_before_the_path_the_worktree_is_at_because_rr4_is_first(
+        atlas, home):
+    """The feature's own worktree somewhere else AND a stray directory at the
+    computed path: `resume` refuses at RR3 without ever reaching the `git
+    worktree add` the arm below predicts — "REFUSED: 001-a-thing — an
+    unrelated path is in the way", exit 2, against the extension on
+    2026-09-12. And the arm below would name a `git worktree move` INTO that
+    directory, which does not fail: `git worktree move` behaves like `mv` and
+    puts the worktree INSIDE an existing destination, leaving it at
+    `worktrees/001-a-thing/001-a-thing` — still where neither verb looks, and
+    now under the stray directory (git 2.43, the same day). An exit that
+    quietly misfiles the work is worse than one that refuses."""
+    checkout = workspace_config(home)
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", elsewhere)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    where = parked_worktree(atlas, "001-a-thing")
+    where.mkdir(parents=True)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert in_the_way_finding("001-a-thing", "repo", "a directory", where,
+                              "an unrelated path is in the way",
+                              move_aside(where)) in result.stdout
+    assert "which is not the" not in result.stdout
+
+
+def test_rr6_is_read_first_so_a_no_push_record_says_what_it_always_said(
+        atlas, home):
+    """`resume.sh` tests `[ "$pushed" != true ]` at the top of the leg loop
+    and `break`s there, so no path is ever looked at for such a leg: the
+    refusal is RR6's, the exit is a park from the workstation that has the
+    WIP commit, and a stray directory here changes neither.
+
+    AND WITH A WORKTREE OFF THE PATH TOO the path-parity arm below goes quiet
+    as well, for the same stray directory and a reason of its own: the
+    `git worktree move` it names does not fail on an occupied destination, it
+    behaves like `mv` and puts the worktree INSIDE it (git 2.43, 2026-09-12).
+    An exit that quietly misfiles the work is worse than one line fewer, and
+    the line above already says what this record needs."""
+    checkout = workspace_config(home)
+    where = parked_worktree(atlas, "001-a-thing")
+    where.mkdir(parents=True)
+    record(checkout, "atlas", branch="001-a-thing", role="repo",
+           commit=FAKE_SHA, pushed="false", parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): parked with "
+            "--no-push on Falcon and no worktree on that branch here; only "
+            "that workstation has the WIP commit, so nothing here brings it "
+            "back — park it again from there") in result.stdout
+    assert "which is the path `resume` computes for this leg" not in result.stdout
+
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    feature_worktree(atlas, "001-a-thing", elsewhere, push=False)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): parked with "
+            "--no-push on Falcon; only that workstation has the WIP commit, "
+            "and `resume` refuses it") in result.stdout
+    assert "which is the path `resume` computes for this leg" not in result.stdout
+    assert "which is not the" not in result.stdout
+
+
+def test_an_rr6_leg_still_says_where_its_own_worktree_sits(atlas, home):
+    """AFTER THE `pushed:` ARMS, AND NOT INSTEAD OF THEM — the claim the first
+    commit of this branch makes, met on `main` by a verdict that had not
+    existed when it was written. Since Copilot's third round on #23 a leg
+    whose `pushed:` is not `true` is RR6's refusal OF THE WHOLE FEATURE and
+    `read_record` hands that verdict down to every leg, so the test that
+    silences this arm for a feature `resume` refuses whole would have silenced
+    it here too.
+
+    IT MUST NOT. `resume.sh` tests `[ "$pushed" != true ]` at the TOP of the
+    leg loop, so RR6 IS "whichever of its own checks this leg reaches first",
+    and what this line says is true of THIS workstation whatever the record
+    says: a worktree on the recorded branch sitting where neither verb looks,
+    which `park` here does not collect either, and a `git worktree move` that
+    RUNS. The two lines answer different things and neither is the other's
+    second reading.
+
+    AND AN EARLIER LEG'S RR6 DOES SILENCE IT, which is the other half and is
+    the round's own rule: `resume` breaks at the first refusing leg in the
+    record's order, so a later leg is one the run never reaches and a line
+    about the check it would have reached first is a refusal this layer would
+    be inventing. RUN AGAINST THE EXTENSION on 2026-09-13, on a scratch
+    three-leg estate with the `code` leg recorded FIRST as `pushed: false` and
+    the `spec` leg's worktree at `$HOME/elsewhere/001-a-thing`: "Error:
+    001-a-thing (code leg) was parked with --no-push; that feature was NOT
+    recreated", "REFUSED: 001-a-thing — parked with --no-push", exit 2 — and
+    the same estate with that leg's `pushed: true`, which is the control,
+    "Error: could not add the spec leg worktree 'worktrees/001-a-thing/spec'
+    for '001-a-thing'", "REFUSED: 001-a-thing — git worktree add failed",
+    exit 2."""
+    checkout = workspace_config(home)
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", elsewhere)
+    want = parked_worktree(atlas, "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           pushed="false", parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (repo leg): parked with "
+            "--no-push on Falcon; only that workstation has the WIP commit, "
+            "and `resume` refuses it") in result.stdout
+    assert (f"    - parked feature 001-a-thing (repo leg): its worktree is at "
+            f"{elsewhere}, which is not the {want} `resume` computes for it"
+            ) in result.stdout
+    assert f"git -C {atlas} worktree move {elsewhere} {want}" in result.stdout
+
+
+def test_a_later_leg_says_nothing_about_a_path_an_rr6_leg_beat_it_to(
+        trio, home):
+    """The other half of the test above, in the shape that needs two legs: the
+    `code` leg recorded FIRST and parked `--no-push`, the `spec` leg's worktree
+    off the path. `resume` breaks at RR6 on the first leg and never reads the
+    second, so the second says nothing about its path — the run above is the
+    proof, and so is its `pushed: true` control, which reaches the add."""
+    checkout = workspace_config(home)
+    spec, code = trio / "spec", trio / "code"
+    for leg in (spec, code):
+        git("checkout", "-q", "main", cwd=leg)
+        origin_has_branch(leg, "001-a-thing")
+    spec_tip = git("rev-parse", "origin/001-a-thing", cwd=spec).stdout.strip()
+    code_tip = git("rev-parse", "origin/001-a-thing", cwd=code).stdout.strip()
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    elsewhere.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", str(elsewhere), "001-a-thing", cwd=spec)
+    path = record(checkout, "trio", branch="001-a-thing", role="code",
+                  commit=code_tip, pushed="false", parked_on="Falcon",
+                  root="Trio")
+    path.write_text(path.read_text(encoding="utf-8")
+                    + leg_block("spec", spec_tip), encoding="utf-8")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert findings == [
+        "- parked feature 001-a-thing (code leg): parked with --no-push on "
+        "Falcon and no worktree on that branch here; only that workstation "
+        "has the WIP commit, so nothing here brings it back — park it again "
+        "from there"], findings
+    assert "worktree move" not in result.stdout, (
+        "RR6 on the first leg breaks the loop before the second leg's path "
+        "is read at all")
+
+    # AND WITH THAT LEG'S `pushed: true` — the control — the run reaches the
+    # add, and this layer says so on the leg whose worktree is off the path.
+    path = record(checkout, "trio", branch="001-a-thing", role="code",
+                  commit=code_tip, parked_on="Falcon", root="Trio")
+    path.write_text(path.read_text(encoding="utf-8")
+                    + leg_block("spec", spec_tip), encoding="utf-8")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"its `spec` leg's worktree is at {elsewhere}") in result.stdout
+    assert "`resume Trio`" not in result.stdout
+
+
+def test_no_line_of_a_feature_a_path_in_the_way_refuses_offers_resume(
+        trio, home):
+    """THE VERDICT IS THE FEATURE'S, because the refusal is. RR3 and RR4 are
+    per leg and `break` the leg loop, so one leg's obstructed path takes every
+    other leg of that feature with it — and a sibling leg with no worktree
+    here would otherwise print "`resume Trio` brings it back" beside the line
+    that says the feature is refused. `read_record`'s first pass asks the
+    question of each leg in the record's order and hands the answer down, as
+    it does for every verdict `collect_legs` makes; what is new is that this
+    one carries its own EXIT, because a park on another workstation moves
+    nothing out of this checkout's way.
+
+    The `spec` leg's worktree belongs under its own mount — `collect_legs`
+    computes `$WORKTREE_ROOT/$branch/$SHAPE_SPEC_PATH` — so the stray
+    directory goes there and not at the feature directory."""
+    checkout = workspace_config(home)
+    for leg in ("spec", "code"):
+        git("checkout", "-q", "main", cwd=trio / leg)
+        origin_has_branch(trio / leg, "001-s-thing")
+    where = parked_worktree(trio, "001-s-thing", "spec")
+    where.mkdir(parents=True)
+    tip = git("rev-parse", "origin/001-s-thing", cwd=trio / "spec").stdout.strip()
+    path = record(checkout, "trio", branch="001-s-thing", role="spec",
+                  commit=tip, root="Trio", parked_on="Falcon")
+    code_tip = git("rev-parse", "origin/001-s-thing",
+                   cwd=trio / "code").stdout.strip()
+    path.write_text(path.read_text(encoding="utf-8")
+                    + "          - role: code\n"
+                      "            remote: origin\n"
+                      f"            parked_commit: {code_tip}\n"
+                      "            wip: true\n"
+                      "            wip_depth: 1\n"
+                      "            pushed: true\n", encoding="utf-8")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert in_the_way_finding("001-s-thing", "spec", "a directory", where,
+                              "an unrelated path is in the way",
+                              move_aside(where)) in result.stdout
+    assert ("    - parked feature 001-s-thing (code leg): no worktree on that "
+            "branch here, parked 2026-09-10T20:00:00Z on Falcon; `resume` "
+            f"refuses the WHOLE feature, because a directory is at the {where} "
+            "it computes for its `spec` leg, so it does not bring this leg "
+            "back "
+            f"— {move_aside(where)}") in result.stdout
+    assert "`resume Trio` brings it back" not in result.stdout
+
+
+def test_a_feature_collect_legs_refuses_whole_says_nothing_about_that_path(
+        atlas, home):
+    """`collect_legs` is answered before any leg is read, so a feature it
+    throws out never reaches RR3 or RR4 and the path is not what stops it.
+    The verdict that wins is the one that is made first, and the line that
+    names the leg costing the feature is the whole answer."""
+    checkout = workspace_config(home)
+    where = parked_worktree(atlas, "001-a-thing")
+    where.mkdir(parents=True)
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    path.write_text(path.read_text(encoding="utf-8")
+                    + "          - role: nope\n"
+                      "            remote: origin\n"
+                      f"            parked_commit: {FAKE_SHA}\n"
+                      "            wip: true\n"
+                      "            wip_depth: 1\n"
+                      "            pushed: true\n", encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature 001-a-thing (nope leg): the record names a "
+            "leg this root does not mount here; `resume` maps each leg's role "
+            "onto this checkout and refuses the WHOLE feature") in result.stdout
+    assert "which is the path `resume` computes for this leg" not in result.stdout
+    assert "`resume Atlas` brings it back" not in result.stdout
+
+
 def test_a_leg_parked_with_no_push_is_a_finding(atlas, home):
     checkout = workspace_config(home)
-    tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing",
+                           parked_worktree(atlas, "001-a-thing"))
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
            pushed="false", parked_on="Falcon")
     result = run(STATUS, "Atlas", home=home)
@@ -1752,7 +2780,8 @@ def test_an_unreadable_pushed_is_a_finding_where_the_worktree_is_in_sync(
     where the worktree here sits at the parked commit; and the line NAMES the
     value rather than deciding what it must have meant."""
     checkout = workspace_config(home)
-    tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing",
+                           parked_worktree(atlas, "001-a-thing"))
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
            pushed="maybe", parked_on="Falcon")
     result = run(STATUS, "Atlas", home=home)
@@ -1812,7 +2841,8 @@ def test_a_record_with_no_pushed_key_at_all_is_a_finding_not_silence(
     what the record does not say rather than deciding what it must have
     meant."""
     checkout = workspace_config(home)
-    tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing",
+                           parked_worktree(atlas, "001-a-thing"))
     path = record(checkout, "atlas", branch="001-a-thing", role="repo",
                   commit=tip, pushed=None, parked_on="Falcon")
     assert "pushed" not in path.read_text(encoding="utf-8"), (
@@ -1840,7 +2870,8 @@ def test_an_absent_pushed_key_and_a_bare_one_are_not_the_same_finding(
     and one told only "has no `pushed:`" would miss the one that is. Each is
     named for what it is."""
     checkout = workspace_config(home)
-    tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing",
+                           parked_worktree(atlas, "001-a-thing"))
 
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
            pushed=None, parked_on="Falcon")
@@ -1904,7 +2935,7 @@ def test_a_registration_git_calls_prunable_is_stale_with_its_directory_there(
     halves: the prune clears the registration and leaves the directory, which
     `git worktree add` then refuses ("already exists")."""
     checkout = workspace_config(home)
-    where = home / "Atlas-wt" / "001-a-thing"
+    where = parked_worktree(atlas, "001-a-thing")
     tip = feature_worktree(atlas, "001-a-thing", where)
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
     (where / ".git").unlink()       # the directory stays; the worktree does not
@@ -1915,9 +2946,9 @@ def test_a_registration_git_calls_prunable_is_stale_with_its_directory_there(
     assert result.returncode == 1, result.stdout + result.stderr
     assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
             "branch here, but a stale worktree registration for it is still "
-            f"recorded at {where}, whose directory is still on disk and is no "
+            f"recorded at {where}, whose path is still on disk and is no "
             f"longer a worktree — clear it with `git -C {atlas} worktree prune`"
-            " and a move of that directory aside (`git worktree add` refuses a "
+            " and a move of what is there aside (`git worktree add` refuses a "
             'path that "already exists"), then `resume Atlas` brings it back'
             ) in result.stdout
 
@@ -1931,7 +2962,7 @@ def test_a_locked_registration_whose_git_file_is_gone_is_stale_too(atlas, home):
     registration `resume` still trips on — cleared by unlock, then prune,
     then moving the directory aside."""
     checkout = workspace_config(home)
-    where = home / "Atlas-wt" / "001-a-thing"
+    where = parked_worktree(atlas, "001-a-thing")
     tip = feature_worktree(atlas, "001-a-thing", where)
     git("worktree", "lock", str(where), cwd=atlas)
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
@@ -1945,9 +2976,9 @@ def test_a_locked_registration_whose_git_file_is_gone_is_stale_too(atlas, home):
     assert ("    - parked feature 001-a-thing (repo leg): no worktree on that "
             "branch here, but a stale worktree registration for it is still "
             f"recorded at {where} and LOCKED, which `worktree prune` skips, "
-            "whose directory is still on disk and is no longer a worktree — "
+            "whose path is still on disk and is no longer a worktree — "
             f"clear it with `git -C {atlas} worktree unlock {where}`, then "
-            f"`git -C {atlas} worktree prune` and a move of that directory "
+            f"`git -C {atlas} worktree prune` and a move of what is there "
             'aside (`git worktree add` refuses a path that "already exists"), '
             "then `resume Atlas` brings it back") in result.stdout
 
@@ -1958,7 +2989,8 @@ def test_a_locked_registration_that_is_not_a_worktree_is_not_unparked_work(
     not a worktree, so it was never parked work either — and `park` would
     carry nothing if somebody ran it."""
     checkout = workspace_config(home)
-    tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing",
+                           parked_worktree(atlas, "001-a-thing"))
     gone = home / "Atlas-wt" / "002-unparked"
     feature_worktree(atlas, "002-unparked", gone)
     git("worktree", "lock", str(gone), cwd=atlas)
@@ -1976,7 +3008,7 @@ def test_the_locked_one_of_two_stale_registrations_is_the_one_named(atlas, home)
     locked registration standing and `resume` still blocked, which is the
     state the first draft's "first stale block wins" produced."""
     checkout = workspace_config(home)
-    first = home / "Atlas-wt" / "001-a-thing"
+    first = parked_worktree(atlas, "001-a-thing")
     second = home / "Atlas-wt2" / "001-a-thing"
     tip = feature_worktree(atlas, "001-a-thing", first)
     git("worktree", "add", "--force", "-q", str(second), "001-a-thing", cwd=atlas)
@@ -2003,7 +3035,7 @@ def test_a_locked_stale_registration_names_the_unlock_before_the_prune(
     that named the prune alone would have left `resume` blocked by the very
     thing it said to clear."""
     checkout = workspace_config(home)
-    where = home / "Atlas-wt" / "001-a-thing"
+    where = parked_worktree(atlas, "001-a-thing")
     tip = feature_worktree(atlas, "001-a-thing", where)
     git("worktree", "lock", str(where), cwd=atlas)
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
@@ -2041,7 +3073,7 @@ def test_a_no_push_record_with_no_worktree_here_never_names_resume(atlas, home):
 
     # The same record with a stale registration left behind: the prune is
     # named, and `resume` still is not — there is nothing here to resume.
-    where = home / "Atlas-wt" / "001-a-thing"
+    where = parked_worktree(atlas, "001-a-thing")
     feature_worktree(atlas, "001-a-thing", where)
     rmtree(where)           # and NO `git worktree prune`
     result = run(STATUS, "Atlas", home=home)
@@ -2078,7 +3110,7 @@ def test_an_unreadable_pushed_with_no_worktree_here_never_names_resume(
 
     # And with a stale registration left behind: the prune is named first,
     # exactly as it is for a `--no-push` record, and `resume` still is not.
-    where = home / "Atlas-wt" / "001-a-thing"
+    where = parked_worktree(atlas, "001-a-thing")
     feature_worktree(atlas, "001-a-thing", where)
     rmtree(where)           # and NO `git worktree prune`
     result = run(STATUS, "Atlas", home=home)
@@ -2123,7 +3155,7 @@ def test_no_pushed_key_with_no_worktree_here_never_names_resume(atlas, home):
 
     # And with a stale registration left behind: the prune first, and
     # `resume` still not named.
-    where = home / "Atlas-wt" / "001-a-thing"
+    where = parked_worktree(atlas, "001-a-thing")
     feature_worktree(atlas, "001-a-thing", where)
     rmtree(where)           # and NO `git worktree prune`
     result = run(STATUS, "Atlas", home=home)
@@ -2170,7 +3202,7 @@ def test_a_record_that_names_no_parked_commit_never_names_resume(atlas, home):
             "record afresh") in result.stdout
     assert "`resume Atlas` brings it back" not in result.stdout
 
-    where = home / "Atlas-wt" / "001-a-thing"
+    where = parked_worktree(atlas, "001-a-thing")
     feature_worktree(atlas, "001-a-thing", where)
     rmtree(where)           # and NO `git worktree prune`
     result = run(STATUS, "Atlas", home=home)
@@ -2206,7 +3238,8 @@ def test_a_record_that_names_no_parked_commit_still_reads_the_worktree_here(
     Under `--fetch` it says the same thing, because no fetch can bring back a
     commit the record does not name."""
     checkout = workspace_config(home)
-    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    feature_worktree(atlas, "001-a-thing",
+                     parked_worktree(atlas, "001-a-thing"))
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit="",
            parked_on="Falcon")
     for extra in ([], ["--fetch"]):
@@ -2291,7 +3324,7 @@ def test_under_fetch_a_branch_origin_has_lost_names_rr2_and_not_resume(
     landed is a record entry to delete, and a branch deleted by mistake is a
     branch to push again."""
     checkout = workspace_config(home)
-    where = home / "Atlas-wt" / "001-a-thing"
+    where = parked_worktree(atlas, "001-a-thing")
     tip = feature_worktree(atlas, "001-a-thing", where)
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
            parked_on="Falcon")
@@ -2321,7 +3354,7 @@ def test_a_gone_branch_names_the_stale_registration_that_blocks_it_too(
     is named first and the refusal after it, exactly as the `--no-push` and
     absent-commit arms name it."""
     checkout = workspace_config(home)
-    where = home / "Atlas-wt" / "001-a-thing"
+    where = parked_worktree(atlas, "001-a-thing")
     tip = feature_worktree(atlas, "001-a-thing", where)
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
            parked_on="Falcon")
@@ -2395,7 +3428,7 @@ def test_the_gone_branch_reading_stops_where_resume_s_own_order_does(
     assert "is no longer on origin in the repo leg" in result.stdout
 
     # RR4: a worktree here, and the tip arms' line alone.
-    where = home / "Atlas-wt" / "001-a-thing"
+    where = parked_worktree(atlas, "001-a-thing")
     tip = feature_worktree(atlas, "001-a-thing", where)
     (where / "more.md").write_text("more\n", encoding="utf-8")
     commit_all(where, "more work")
@@ -2620,7 +3653,8 @@ def test_a_leg_the_record_gives_no_role_is_a_finding_not_silence(atlas, home):
     an empty role is `[ -d "$root/" ]` — always true — and it would hand back
     the root, reading the leg as if the record had named `repo`."""
     checkout = workspace_config(home)
-    tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing",
+                           parked_worktree(atlas, "001-a-thing"))
     path = record(checkout, "atlas", branch="001-a-thing", role="", commit=tip,
                   parked_on="Falcon")
     for extra in ([], ["--fetch"]):
@@ -2773,7 +3807,8 @@ def test_a_role_this_shape_does_not_mount_names_the_whole_feature_refusal(
     is the one that changed with the shape reading, and its comment says
     why."""
     checkout = workspace_config(home)
-    tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing",
+                           parked_worktree(atlas, "001-a-thing"))
     for role, exits in (
             ("nope", "nor does any other checkout, of either shape, so the "
                      "one exit is to park that feature again from the "
@@ -3238,7 +4273,7 @@ def test_a_three_leg_checkout_maps_spec_and_code_and_nothing_else(trio, home):
     leg = trio / "spec"
     git("checkout", "-q", "main", cwd=leg)
     tip = feature_worktree(leg, "001-s-thing",
-                           home / "Trio-wt" / "001-s-thing" / "spec")
+                           parked_worktree(trio, "001-s-thing", "spec"))
     record(checkout, "trio", branch="001-s-thing", role="spec", commit=tip,
            parked_on="Falcon")
     result = run(STATUS, "Trio", home=home)
@@ -3375,7 +4410,8 @@ def test_a_feature_with_no_legs_is_still_a_feature_the_record_knows(
     checkout = workspace_config(home)
     path = record(checkout, "atlas", branch="001-a-thing", role="repo",
                   commit=FAKE_SHA, parked_on="Falcon")
-    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    feature_worktree(atlas, "001-a-thing",
+                     parked_worktree(atlas, "001-a-thing"))
     head = path.read_text(encoding="utf-8").split("        legs:\n")[0]
     path.write_text(head + "        legs:\n", encoding="utf-8")
     result = run(STATUS, "Atlas", home=home)
@@ -3471,7 +4507,8 @@ def test_no_line_of_a_feature_resume_refuses_whole_offers_resume(atlas, home):
     line says what `collect_legs` will do and why, and ends at the one exit
     there is."""
     checkout = workspace_config(home)
-    tip = feature_worktree(atlas, "001-b-other", home / "Atlas-wt" / "001-b-other")
+    tip = feature_worktree(atlas, "001-b-other",
+                           parked_worktree(atlas, "001-b-other"))
     for second, why in (
             ("", "a leg of it in the record has no role"),
             ("nope", "its `nope` leg names a role this root does not mount")):
@@ -3495,7 +4532,7 @@ def test_a_refused_feature_still_names_the_prune_that_blocks_it(atlas, home):
     the prune keeps its place at the front of the line, and only the `resume`
     at the end of it goes."""
     checkout = workspace_config(home)
-    where = home / "Atlas-wt" / "001-a-thing"
+    where = parked_worktree(atlas, "001-a-thing")
     feature_worktree(atlas, "001-a-thing", where)
     rmtree(where)               # and NO `git worktree prune`
     two_leg_record(checkout, second="", first_commit=FAKE_SHA,
@@ -3700,7 +4737,15 @@ def test_the_features_verdict_is_the_first_leg_resume_refuses_at(trio, home):
         001-a-thing — gone from origin", exit 2
 
     So RR4 does not shield the leg from RR6, and it is RR6 that decides which
-    refusal the person gets."""
+    refusal the person gets.
+
+    THE FOURTH BLOCK'S WORKTREE IS AT THE PATH `resume` COMPUTES, which is
+    what "registered at the parked commit" meant in the run above and is what
+    this file's `parked_worktree` builds: RR4 matches ONE string, and a
+    worktree anywhere else is not the already-recreated leg this block needs
+    in order to be about RR6 at all. It was written at `Trio-wt/<branch>/
+    code`, a path neither verb reads, before this branch's own reading of RR4
+    existed to say so."""
     checkout = workspace_config(home)
     spec, code = trio / "spec", trio / "code"
     for leg in (spec, code):
@@ -3809,7 +4854,7 @@ def test_the_features_verdict_is_the_first_leg_resume_refuses_at(trio, home):
     # `--no-push` leg still breaks the loop with its worktree standing — and
     # the verdict the `spec` leg carries is still RR6's.
     tip = feature_worktree(code, "001-a-thing",
-                           home / "Trio-wt" / "001-a-thing" / "code")
+                           parked_worktree(trio, "001-a-thing", "code"))
     path = record(checkout, "trio", branch="001-a-thing", role="code",
                   commit=tip, pushed="false", parked_on="Falcon", root="Trio")
     path.write_text(path.read_text(encoding="utf-8")
@@ -3831,6 +4876,1006 @@ def test_the_features_verdict_is_the_first_leg_resume_refuses_at(trio, home):
     assert "is no longer on origin" not in result.stdout, (
         "RR6 breaks the loop with the worktree standing, and RR2 is never "
         "reached for the leg origin has lost")
+    assert "`resume Trio`" not in result.stdout
+
+
+def test_every_command_it_hands_a_person_survives_a_space_in_the_path(
+        status_remotes, home):
+    """COPILOT'S FIRST ROUND ON #27 (2026-09-13), verbatim: "The remediation
+    command here interpolates `$repo` and `$want` directly into a shell
+    snippet. Valid paths containing spaces split the command, and shell
+    metacharacters make the copy-pasted `git worktree move` unsafe, so the
+    prescribed cleanup is not reliably runnable. Please emit shell-quoted
+    operands through a shared formatter (and cover such paths in tests)."
+
+    IT IS RIGHT, and by this layer's own rule: every one of these lines ends
+    in "which is yours to run", and the rule at the top of `check_parked_leg`
+    is that an arm may not name an exit that does not run. `~/My Projects` is
+    an ordinary spelling on a Mac, and a `git -C <that>/Atlas worktree move
+    <a> <b>` built by splicing it in is four operands where git wants two.
+
+    `sh_operand` is that formatter, and it quotes ONLY where a shell would
+    need it — a path of letters, digits and `/._@%+:,=-` is its own operand
+    everywhere — which is why no other pin in this file moves. This test is
+    the other half: a projects directory with a SPACE in it, where every
+    command the record layer prints must come back quoted and runnable.
+
+    The estate NAME is not tested for it because it cannot carry one:
+    `is_safe_folder_name` refuses anything outside `[A-Za-z0-9_.+@-]`, so
+    `resume <Name>` has no operand to quote."""
+    spaced = home / "my projects"
+    spaced.mkdir()
+    git("-c", "protocol.file.allow=always", "clone", "-q",
+        "--recurse-submodules", str(status_remotes["Atlas"]["bare"]),
+        str(spaced / "Atlas"), cwd=spaced)
+    atlas = spaced / "Atlas"
+    checkout = workspace_config(home)
+    origin_has_branch(atlas, "001-a-thing")
+    tip = git("rev-parse", "origin/001-a-thing", cwd=atlas).stdout.strip()
+    want = parked_worktree(atlas, "001-a-thing")
+    want.mkdir(parents=True)
+    (want / "stray.txt").write_text("not ours\n", encoding="utf-8")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home,
+                 env={"PROJECTS_DIR": str(spaced)})
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"move it aside with `mv '{want}' <a path of your choosing>`" in (
+        result.stdout), result.stdout
+    assert str(want) in result.stdout
+
+    # AND THE MOVE, WHICH TAKES TWO OF THEM: the worktree off the path, with
+    # nothing at the path this time, so the arm that names `worktree move` is
+    # the one that speaks.
+    rmtree(want)
+    elsewhere = home / "not the place" / "001-a-thing"
+    elsewhere.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", str(elsewhere), "001-a-thing", cwd=atlas)
+    result = run(STATUS, "Atlas", home=home,
+                 env={"PROJECTS_DIR": str(spaced)})
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"`mkdir -p '{want.parent}' && git -C '{atlas}' worktree move "
+            f"'{elsewhere}' '{want}'`") in result.stdout, result.stdout
+
+    # AND A SINGLE QUOTE IS THE ONE CHARACTER SINGLE QUOTES CANNOT HOLD, so
+    # the escape that ends them, adds a literal one and reopens them is what
+    # the formatter writes — `'it'\''s'` is `it's` to every POSIX shell.
+    quoted = home / "it's projects"
+    quoted.mkdir()
+    git("-c", "protocol.file.allow=always", "clone", "-q",
+        "--recurse-submodules", str(status_remotes["Atlas"]["bare"]),
+        str(quoted / "Atlas"), cwd=quoted)
+    q_atlas = quoted / "Atlas"
+    origin_has_branch(q_atlas, "001-a-thing")
+    q_tip = git("rev-parse", "origin/001-a-thing", cwd=q_atlas).stdout.strip()
+    q_want = parked_worktree(q_atlas, "001-a-thing")
+    q_want.mkdir(parents=True)
+    (q_want / "stray.txt").write_text("not ours\n", encoding="utf-8")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=q_tip,
+           parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home,
+                 env={"PROJECTS_DIR": str(quoted)})
+    assert result.returncode == 1, result.stdout + result.stderr
+    shell_safe = "'" + str(q_want).replace("'", "'\\''") + "'"
+    assert f"move it aside with `mv {shell_safe} <a path of your choosing>`" in (
+        result.stdout), result.stdout
+
+    # AND A PATH THAT NEEDS NOTHING IS LEFT ALONE, which is why every other
+    # pin in this file still passes: the same estate under a plain projects
+    # directory prints the same command unquoted.
+    plain = clone_root(home, status_remotes["Atlas"], "Atlas")
+    origin_has_branch(plain, "001-a-thing")
+    plain_tip = git("rev-parse", "origin/001-a-thing", cwd=plain).stdout.strip()
+    plain_want = parked_worktree(plain, "001-a-thing")
+    plain_want.mkdir(parents=True)
+    record(checkout, "atlas", branch="001-a-thing", role="repo",
+           commit=plain_tip, parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"`mv {plain_want} <a path of your choosing>`" in result.stdout
+
+
+def test_what_the_prune_leaves_behind_is_a_path_and_not_a_directory(
+        atlas, home):
+    """COPILOT'S SECOND ROUND ON #27 (2026-09-13, suppressed), verbatim: "For a
+    stale registration on the recorded branch whose old worktree path is now a
+    regular file, the `-d` check is false, so status tells the user to prune
+    and then resume even though the file remains and `resume` still rejects the
+    existing destination. Detect and describe any leftover path here, not just
+    directories." Its twin on the LOCKED arm says the same of that one.
+
+    BOTH ARE REAL, and git says so in three words. Run on 2026-09-13: a
+    worktree registered, its directory replaced by a regular FILE, git calling
+    the block "prunable gitdir file points to non-existent location"; `git
+    worktree prune` cleared the registration and `git worktree add` at that
+    same path then answered "fatal: '…' already exists". The reason is the
+    path EXISTING and not what kind of path it is, so the clause asks `-e` and
+    says "whatever the prune leaves behind"."""
+    checkout = workspace_config(home)
+    where = parked_worktree(atlas, "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
+    rmtree(where)
+    where.write_text("a file now\n", encoding="utf-8")   # not a directory
+    porcelain = git("worktree", "list", "--porcelain", cwd=atlas).stdout
+    assert "prunable" in porcelain, "git no longer says prunable; moot"
+    assert where.is_file(), "the FILE is what makes this case"
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("whose path is still on disk and is no longer a worktree") in (
+        result.stdout), result.stdout
+    assert ("worktree prune` and a move of what is there aside (`git worktree "
+            'add` refuses a path that "already exists")') in result.stdout
+
+    # AND THE LOCKED ARM'S OWN CLAUSE, which is the same test on the other
+    # side: git computes no `prunable` for a locked block, so that path is
+    # RR4's second arm and the exit is the unlock, the prune and the move.
+    where.unlink()
+    where.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "prune", cwd=atlas)
+    git("worktree", "add", "-q", "-b", "002-other", str(where), cwd=atlas)
+    git("worktree", "lock", str(where), cwd=atlas)
+    rmtree(where)
+    where.write_text("a file now\n", encoding="utf-8")
+    record(checkout, "atlas", branch="001-a-thing", role="repo",
+           commit=git("rev-parse", "origin/001-a-thing",
+                      cwd=atlas).stdout.strip())
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("and move aside whatever the prune leaves behind there, which "
+            "`resume` refuses for existing whatever git holds") in (
+        result.stdout), result.stdout
+
+
+def test_the_move_names_a_parent_that_is_never_the_empty_string(atlas, home):
+    """COPILOT'S SECOND ROUND ON #27 (2026-09-13), verbatim: "When the
+    configured worktree root is `/`, `want` can be `/branch`, so `${want%/*}`
+    expands to the empty string. The generated recovery command becomes `mkdir
+    -p '' && git worktree move ...`, which fails before the move even though
+    `resume` only needs the already-existing `/` parent. Use a parent-directory
+    fallback of `/` (or `dirname`) when constructing this command."
+
+    IT IS RIGHT AND IT WAS RUN: `mkdir -p ''` answers "cannot create directory
+    ''", so the exit dies on its first operand. `parent_dir` is that fallback,
+    and `/` is the one directory `${p%/*}` cannot name.
+
+    NOTHING IS CREATED BY THIS TEST: `status` reads and changes nothing, and
+    the only thing it does with `/001-a-thing` is ask whether it exists."""
+    checkout = workspace_config(home)
+    config = atlas / ".specify" / "extensions" / "git"
+    config.mkdir(parents=True, exist_ok=True)
+    (config / "git-config.yml").write_text(
+        "checkout_mode: worktree\nworktree_root: /\n", encoding="utf-8")
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", elsewhere)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    # `//001-a-thing` AND NOT `/001-a-thing`, because that is the string the
+    # other end computes: `resolve_path_from_repo_root` hands an absolute
+    # value back unchanged and `collect_legs` joins `$WORKTREE_ROOT/$branch`,
+    # so both ends spell the doubled slash and the comparison is exact.
+    assert "which is not the //001-a-thing `resume` computes for it" in (
+        result.stdout), result.stdout
+    assert (f"`mkdir -p / && git -C {atlas} worktree move {elsewhere} "
+            "//001-a-thing`") in result.stdout, result.stdout
+    assert "mkdir -p ''" not in result.stdout
+    assert "mkdir -p  &&" not in result.stdout
+
+
+def test_the_ref_in_the_diverged_command_is_a_shell_operand_too(atlas, home):
+    """COPILOT'S THIRD ROUND ON #27 (2026-09-13), verbatim: "The generated `git
+    log` command now quotes the repository path but still interpolates `branch`
+    unquoted. Git refnames can contain shell metacharacters such as `$`, so a
+    valid recorded branch can make this copy-pasted diagnostic expand or split
+    in the user's shell. Pass the ref through the same shell-operand formatter
+    and cover a metacharacter-bearing branch in the command-output test."
+
+    IT IS RIGHT: `git check-ref-format` takes `$` in a refname, and `git log
+    --oneline <sha>..feat/$HOME-thing` in a shell is `git log --oneline
+    <sha>..feat/` followed by whatever `$HOME-thing` expands to. The whole
+    revision range is one operand, so the whole range goes through
+    `sh_operand` — which leaves an ordinary branch name untouched, and is why
+    the pin beside this one did not move."""
+    checkout = workspace_config(home)
+    branch = "001-a-$thing"
+    where = parked_worktree(atlas, branch)
+    base = feature_worktree(atlas, branch, where)
+    (where / "theirs.md").write_text("theirs\n", encoding="utf-8")
+    commit_all(where, "parked elsewhere")
+    git("push", "-q", "origin", branch, cwd=where)
+    theirs = git("rev-parse", "HEAD", cwd=where).stdout.strip()
+    git("reset", "-q", "--hard", base, cwd=where)
+    (where / "mine.md").write_text("mine\n", encoding="utf-8")
+    commit_all(where, "mine")
+    record(checkout, "atlas", branch=branch, role="repo", commit=theirs)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"reconcile by hand: `git -C {atlas} log --oneline "
+            f"'{theirs[:7]}..{branch}'`") in result.stdout, result.stdout
+    assert f"--oneline {theirs[:7]}..{branch}`" not in result.stdout, (
+        "the ref is an operand, and an unquoted `$` is the shell's")
+
+
+def test_an_off_path_leg_whose_branch_origin_lost_carries_rr2s_exits(
+        atlas, home):
+    """COPILOT'S THIRD ROUND ON #27 (2026-09-13, suppressed), two comments and
+    one finding. On the RR2 predicate: "The `worktree_here` check above
+    delegates to `worktree_on_branch`, so it returns true for any live worktree
+    on this branch, not just the path RR4 computes. With `--fetch`, an off-path
+    worktree plus a successfully fetched missing `origin/<branch>` should reach
+    RR2 in `resume`, but this return suppresses the first-pass `gone` verdict
+    and can make sibling legs recommend the wrong re-park/move exit." And on
+    the arm it feeds: "this row instead recommends moving the worktree and
+    hides the delete/push exits for the actual refusal."
+
+    BOTH ARE REAL, and one run settles them. On a scratch estate on 2026-09-13
+    with the leg's worktree at `$HOME/elsewhere/001-a-thing` and its branch
+    deleted on origin, `resume.sh` answered "Error: 001-a-thing is no longer on
+    origin in the spec leg; that feature was NOT recreated", "REFUSED:
+    001-a-thing — gone from origin", exit 2 — RR4 missing ON THE PATH, RR3
+    finding nothing there, and RR2 refusing before any add — while this layer
+    named a `git worktree move`, which brings back no branch origin has lost.
+
+    SO `already_recreated` REPLACES `worktree_here` in RR2's predicate — RR4's
+    first arm asked the way RR4 asks it, a registration AT the computed path on
+    this branch — and the off-path line keeps its FACT and takes RR2's EXITS.
+    The fact is still worth a line: where the worktree sits is true of this
+    workstation, RR2's own words do not carry it, and `park` here will not
+    collect it either."""
+    checkout = workspace_config(home)
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    want = parked_worktree(atlas, "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing", elsewhere)
+    drop_from_origin(atlas, "001-a-thing")
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           parked_on="Falcon")
+    result = run(STATUS, "--fetch", "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (repo leg): its worktree is at "
+            f"{elsewhere}, which is not the {want} `resume` computes for it"
+            ) in result.stdout, result.stdout
+    assert ("there is no `origin/001-a-thing` in this leg after this run's "
+            "fetch either, so `resume` refuses at that before it reaches any "
+            "add — the exits are to delete its `- branch: 001-a-thing` block "
+            "from the record where the feature landed, or to push the branch "
+            "again from Falcon where it went by mistake") in result.stdout
+    assert "worktree move" not in result.stdout, (
+        "a move brings back no branch origin has lost")
+
+    # AND WITHOUT THE FLAG the reading is not made at all — a missing
+    # `origin/<branch>` has a second and commoner reading there — so the move
+    # is the exit again, which is the control for the arm above.
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"worktree move {elsewhere} {want}" in result.stdout, result.stdout
+
+
+def test_a_dangling_symlink_at_that_path_is_the_adds_refusal_not_rr3s(
+        atlas, home):
+    """COPILOT'S FOURTH ROUND ON #27 (2026-09-13, suppressed), verbatim: "`[ -e
+    "$want" ]` follows symlinks, so a dangling symlink at the computed
+    destination is treated as absent. `git worktree add` still rejects that
+    existing path, so a parked feature with no branch worktree falls through to
+    the `resume` success guidance even though `resume` fails at its final add."
+
+    IT IS REAL AND GIT SAYS SO: run on 2026-09-13, with a dangling symlink at a
+    path, `[ -e ]` is false, `[ -L ]` is true, and `git worktree add` answers
+    "fatal: '…' already exists".
+
+    AND IT IS THE ADD's REFUSAL, NOT RR3's. `resume.sh`'s RR3 is the same
+    `[ -e "$tree" ]`, so it looks straight through the link too and the run
+    goes on to RR2, RR1, RR5 and dies on the last thing it does — which is
+    exactly the shape of the prunable registration this layer already reads in
+    the stale arms' words. So this is read there too, in words of its own: what
+    settles it is not a prune, because nothing is registered at that path, but
+    the `mv` every other leftover there wants. `path_in_the_way` still asks
+    `[ -e ]` and nothing more, because a reading harder than the other end's
+    would invent an RR3 refusal `resume` does not make."""
+    checkout = workspace_config(home)
+    want = parked_worktree(atlas, "001-a-thing")
+    want.parent.mkdir(parents=True, exist_ok=True)
+    want.symlink_to(home / "nowhere-at-all")
+    assert not want.exists() and want.is_symlink(), "the dangling link is the case"
+    origin_has_branch(atlas, "001-a-thing")
+    tip = git("rev-parse", "origin/001-a-thing", cwd=atlas).stdout.strip()
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (repo leg): no worktree on that "
+            f"branch here, but a dangling symlink is at the {want} `resume` "
+            "computes for this leg, which `[ -e ]` looks straight through and "
+            '`git worktree add` refuses all the same ("already exists") — '
+            f"clear it with a move of it aside (`mv {want} <a path of your "
+            "choosing>`), then `resume Atlas` brings it back") in (
+        result.stdout), result.stdout
+    assert "is in the way" not in result.stdout, (
+        "RR3 looks through the link at the other end too")
+    assert "worktree prune" not in result.stdout, (
+        "nothing is registered at that path to prune")
+
+
+def test_an_off_path_worktree_with_a_dangling_link_at_the_path_is_not_silence(
+        atlas, home):
+    """COPILOT'S FIFTH ROUND ON #27 (2026-09-13), verbatim: "`dest_exists`
+    treats a dangling symlink as occupied, but `resume`'s RR3 uses `[ -e ]` and
+    therefore proceeds to its final `git worktree add`, which still rejects
+    that symlink. With an off-path live worktree and a dangling symlink at this
+    computed destination, this condition is false, so no add verdict is carried
+    to sibling legs and the report can claim the feature is clean even though
+    `resume` fails."
+
+    IT IS RIGHT, AND THE ROUND BEFORE IT MADE THAT SILENCE. `[ -e ]` is the
+    test RR3 makes at the other end, so a path only a link occupies is one the
+    run walks PAST — and then the add refuses it. The feature is refused, the
+    finding is the off-path one, and clearing the link is a STEP IN ITS EXIT
+    rather than a reason to say nothing: the `mv` goes in front of the `mkdir
+    -p`, where the prune goes for a stale registration, and the clause behind
+    the command says which of them git refuses for what."""
+    checkout = workspace_config(home)
+    want = parked_worktree(atlas, "001-a-thing")
+    want.parent.mkdir(parents=True, exist_ok=True)
+    want.symlink_to(home / "nowhere-at-all")
+    assert not want.exists() and want.is_symlink()
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", elsewhere)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (repo leg): its worktree is at "
+            f"{elsewhere}, which is not the {want} `resume` computes for it"
+            ) in result.stdout, result.stdout
+    # THE `mv` NAMES NO DESTINATION OF ITS OWN since Copilot's sixth round on
+    # #27 (2026-09-13, suppressed): a hard-coded `<want>.aside` would overwrite
+    # that path where it already exists, which is the one thing every `mv` this
+    # file prints has refused to do since the commit that first named one.
+    assert (f"move it where both look: `mv {want} <a path of your choosing> "
+            f"&& mkdir -p {want.parent} && git -C {atlas} worktree move "
+            f"{elsewhere} {want}`") in result.stdout, result.stdout
+    assert ("`git worktree add` refuses the dangling symlink at that path "
+            '("already exists") whatever `[ -e ]` says of it') in result.stdout
+
+
+def test_a_symlinked_parent_of_the_computed_path_gets_no_move_either(
+        trio, home):
+    """COPILOT'S SIXTH ROUND ON #27 (2026-09-13, suppressed), verbatim: "The
+    symlink safeguard only checks `RECORD_WORKTREE_ROOT`, not all components of
+    the computed destination. If an existing `$WORKTREE_ROOT/$branch` (or a
+    parent from a declared mount) is a symlink while the final `$want` is
+    absent, this branch advertises `mkdir -p ... && git worktree move ...`;
+    both commands follow the link and Git records the physical target, while
+    `resume` later compares the lexical `$want` and still refuses at RR3."
+
+    RIGHT, and it is the same fault one level down: the question is asked of
+    the destination's PARENT now, which `has_symlink_component` walks prefix by
+    prefix — so the root, the feature directory and every mount above the last
+    component are all in it. The FINAL component is deliberately out: a link
+    there is the leftover the `mv` clears, not a spelling to correct."""
+    checkout = workspace_config(home)
+    spec = trio / "spec"
+    git("checkout", "-q", "main", cwd=spec)
+    origin_has_branch(spec, "001-a-thing")
+    tip = git("rev-parse", "origin/001-a-thing", cwd=spec).stdout.strip()
+    want = parked_worktree(trio, "001-a-thing", "spec")
+    # THE FEATURE DIRECTORY IS THE LINK, and the mount under it is not there at
+    # all — the shape a root-only question cannot see, and the reason this is a
+    # three-leg estate: a single root's computed path IS the feature directory,
+    # so a link there is the FINAL component, which RR3 sees and an `mv` fixes.
+    real = home / "real-feature"
+    real.mkdir()
+    want.parent.parent.mkdir(parents=True, exist_ok=True)
+    want.parent.symlink_to(real)
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    elsewhere.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", str(elsewhere), "001-a-thing", cwd=spec)
+    record(checkout, "trio", branch="001-a-thing", role="spec", commit=tip,
+           parked_on="Falcon", root="Trio")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "no `worktree move` fixes this one, because the path it would " in (
+        result.stdout), result.stdout
+    # AND THE COMPONENT IT NAMES IS THE FEATURE DIRECTORY, not the worktree
+    # root, which is the half Copilot's eighth round on #27 asked for: the root
+    # here is a real directory and the link is under it, so the remedy is that
+    # component being a directory rather than a setting to respell.
+    assert (f"{want.parent} is a symlink under the worktree root") in (
+        result.stdout), result.stdout
+    assert f"worktree move {elsewhere}" not in result.stdout, result.stdout
+
+
+def test_every_root_mount_spelling_gets_the_same_no_command_reading(
+        atlas, home):
+    """COPILOT'S SIXTH ROUND ON #27 (2026-09-13, suppressed), verbatim:
+    "`dot_mount` only recognizes a destination whose raw string ends in `/.`.
+    The manifest parser preserves other non-empty root spellings such as `path:
+    "./"`, so `collect_legs` can produce `<worktree_root>/<branch>/./`; this
+    helper misses it and `off_path_exit` advertises a move."
+
+    RIGHT: `_shape_record_leg` keeps any non-empty `path:` verbatim, so `.`,
+    `./` and `.//` all reach `collect_legs` and all name the feature directory
+    itself — and every operand built on them was already run and refused (the
+    tip of this branch, and the round that stopped advertising one). Trailing
+    slashes come off before the `.` is looked for."""
+    checkout = workspace_config(home)
+    where = home / "Atlas-wt" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", where)
+    record(checkout, "atlas", branch="001-a-thing", role="code", commit=tip,
+           parked_on="Falcon")
+    pristine = (atlas / "project.yaml").read_text(encoding="utf-8")
+    for spelling in ('    path: "./"\n', '    path: ".//"\n'):
+        (atlas / "project.yaml").write_text(pristine, encoding="utf-8")
+        code_leg_onto_the_spec_checkout(atlas, path_line=spelling)
+        result = run(STATUS, "Atlas", home=home)
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "`mkdir -p " not in result.stdout, result.stdout
+        assert f"worktree move {where}" not in result.stdout, result.stdout
+        assert ("there is no command that puts it where `resume` looks: this "
+                'leg is declared `path: "."` in `project.yaml`') in (
+            result.stdout), result.stdout
+
+
+def test_no_sibling_offers_resume_for_a_destination_that_blocks_the_add(
+        trio, home):
+    """COPILOT'S SEVENTH AND EIGHTH ROUNDS ON #27 (2026-09-13, suppressed), the
+    seventh verbatim: "This add-verdict prepass only runs when
+    `worktree_on_branch` finds a live off-path worktree. It misses other
+    failures that happen before or at `git worktree add` when no worktree
+    exists, such as a dangling symlink at the computed destination (RR3's
+    `[ -e ]` check passes) or a regular file at the feature-directory parent
+    (`resume`'s `mkdir -p` fails). In a multi-leg record, the culprit line can
+    then say to clear the path and resume while sibling legs still advertise
+    `resume`, even though the run refuses the whole feature."
+
+    IT IS REAL AND IT IS THIS BRANCH'S OWN RULE BROKEN: no line of a feature
+    `resume` refuses whole may name `resume <Name>`. Three states reach the
+    add with no worktree anywhere — a registration git still holds at that path
+    with nothing on disk, a dangling symlink there, and a feature directory
+    that is not a directory — and `check_parked_leg` reads all three on the
+    CULPRIT leg already. What was missing is the FEATURE's verdict, so every
+    sibling went on offering the command that cannot run.
+
+    THE CULPRIT KEEPS ITS OWN LINE, which already names the blocker AND the
+    command that clears it and ends in the `resume` that follows the clearing —
+    the sentence this branch's third commit chose deliberately. The sibling
+    carries the verdict and the same exit, and says nothing about `resume`."""
+    checkout = workspace_config(home)
+    spec, code = trio / "spec", trio / "code"
+    for leg in (spec, code):
+        git("checkout", "-q", "main", cwd=leg)
+        origin_has_branch(leg, "001-a-thing")
+    spec_tip = git("rev-parse", "origin/001-a-thing", cwd=spec).stdout.strip()
+    code_tip = git("rev-parse", "origin/001-a-thing", cwd=code).stdout.strip()
+    want = parked_worktree(trio, "001-a-thing", "spec")
+    want.parent.mkdir(parents=True, exist_ok=True)
+    want.symlink_to(home / "nowhere-at-all")
+    assert not want.exists() and want.is_symlink()
+    path = record(checkout, "trio", branch="001-a-thing", role="spec",
+                  commit=spec_tip, parked_on="Falcon", root="Trio")
+    path.write_text(path.read_text(encoding="utf-8")
+                    + leg_block("code", code_tip), encoding="utf-8")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 2, findings
+    assert findings[0].startswith(
+        "- parked feature 001-a-thing (spec leg): no worktree on that branch "
+        f"here, but a dangling symlink is at the {want} `resume` computes for "
+        "this leg"), findings[0]
+    assert findings[1] == (
+        "- parked feature 001-a-thing (code leg): no worktree on that branch "
+        "here, parked 2026-09-10T20:00:00Z on Falcon; `resume` refuses the "
+        f"WHOLE feature, because a dangling symlink is at the {want} it "
+        "computes for its `spec` leg, which `[ -e ]` looks straight through "
+        "and `git worktree add` refuses all the same, so it does not bring "
+        f"this leg back — clear it with `mv {want} <a path of your "
+        "choosing>`, which is yours to run"), findings[1]
+    assert "`resume Trio` brings it back" in findings[0], (
+        "the culprit's own line ends in the run AFTER the clearing")
+    assert "`resume Trio`" not in findings[1], (
+        "no sibling offers a command that cannot run")
+
+    # AND THE FEATURE DIRECTORY IS THE SAME VERDICT, read the same way — and
+    # here BOTH legs are culprits, because in a three-leg root one feature
+    # directory is the parent of both mounts. Each says its own reading and
+    # each carries the verdict; neither offers `resume`.
+    want.unlink()
+    rmtree(want.parent)
+    want.parent.write_text("a file where the feature directory goes\n",
+                           encoding="utf-8")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 2, findings
+    for line in findings:
+        assert (f"the {want.parent} `resume` makes the feature's worktrees "
+                "under is not a directory, and `resume` runs `mkdir -p` on it "
+                "before it adds any leg") in line, line
+    # The FIRST leg is the one the verdict belongs to and keeps its own line,
+    # which ends in the run AFTER the clearing; the second carries the verdict
+    # as well and offers no `resume`.
+    assert findings[0].endswith("`), then `resume Trio` brings it back"), (
+        findings[0])
+    assert ("`resume` refuses the WHOLE feature in any case, because the "
+            f"{want.parent} it makes that leg's worktrees under is not a "
+            "directory") in findings[1], findings[1]
+    assert "`resume Trio`" not in findings[1], findings[1]
+
+    # AND A STALE REGISTRATION AT THAT PATH, the third of the three.
+    want.parent.unlink()
+    want.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", "-b", "002-other", str(want), cwd=spec)
+    rmtree(want)
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 2, findings
+    assert ("`resume` refuses the WHOLE feature, because git still holds a "
+            f"worktree registration at the {want} it computes for its `spec` "
+            "leg, with nothing on disk there") in findings[1], findings[1]
+    assert "worktree prune" in findings[1], findings[1]
+    assert "`resume Trio`" not in findings[1]
+
+    # AND WHERE TWO OF THEM HOLD AT ONCE the exit is BOTH, in order (Copilot's
+    # ninth round on #27, 2026-09-13, verbatim: "`ADD_BLOCKED_EXIT` then
+    # contains only `worktree prune`, but prune does not remove the dangling
+    # link or parent file; in a multi-leg record, siblings carry that
+    # incomplete exit and `resume` still fails"). Right: the prune clears a
+    # REGISTRATION and touches nothing on disk, so where a dangling link holds
+    # the same path both steps belong in the one exit a person pastes.
+    want.symlink_to(home / "nowhere-at-all")
+    assert not want.exists() and want.is_symlink()
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 2, findings
+    assert (f"clear it with `git -C {trio / 'spec'} worktree prune`, then "
+            f"`mv {want} <a path of your choosing>`, which is yours to run"
+            ) in findings[1], findings[1]
+    assert "`resume Trio`" not in findings[1], findings[1]
+
+
+def test_a_feature_directory_that_is_not_a_directory_is_read_too(trio, home):
+    """COPILOT'S SIXTH ROUND ON #27 (2026-09-13, suppressed), verbatim:
+    "`dest_exists` only checks the final component. For a three-leg
+    destination, `want` is `<worktree_root>/<branch>/<mount>`, but `resume`
+    first runs `mkdir -p <worktree_root>/<branch>`; if that feature directory
+    is a regular file or dangling symlink, the final path appears absent and
+    status can recommend `resume` (or emit a `mkdir -p ... && git worktree move
+    ...`) even though the mkdir fails before the worktree is added."
+
+    RUN on 2026-09-13: `mkdir -p <file>/spec` answers "mkdir: cannot create
+    directory '…': Not a directory". So the run stops EARLIER than the add and
+    in `resume.sh`'s own words rather than git's, and this layer said "`resume
+    Trio` brings it back". It is read with the other paths in the way of a step
+    no RR looks at, and cleared by the same `mv`.
+
+    THE SHAPE IS THE THREE-LEG ONE, because a single root's `repo` leg has no
+    mount under the feature directory: its computed path IS that directory, and
+    a file there is already the dangling/existing reading above."""
+    checkout = workspace_config(home)
+    spec = trio / "spec"
+    git("checkout", "-q", "main", cwd=spec)
+    origin_has_branch(spec, "001-a-thing")
+    tip = git("rev-parse", "origin/001-a-thing", cwd=spec).stdout.strip()
+    want = parked_worktree(trio, "001-a-thing", "spec")
+    feature_dir = want.parent
+    feature_dir.parent.mkdir(parents=True, exist_ok=True)
+    feature_dir.write_text("a file where the feature directory goes\n",
+                           encoding="utf-8")
+    assert feature_dir.is_file() and not want.exists()
+    record(checkout, "trio", branch="001-a-thing", role="spec", commit=tip,
+           parked_on="Falcon", root="Trio")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"    - parked feature 001-a-thing (spec leg): no worktree on that "
+            f"branch here, but the {feature_dir} `resume` makes the feature's "
+            "worktrees under is not a directory, and `resume` runs `mkdir -p` "
+            'on it before it adds any leg ("cannot create directory …: Not a '
+            f"directory\") — clear it with a move of it aside (`mv "
+            f"{feature_dir} <a path of your choosing>`), then `resume Trio` "
+            "brings it back") in result.stdout, result.stdout
+
+
+def test_a_leftover_at_the_destination_is_named_beside_a_prune_elsewhere(
+        atlas, home):
+    """COPILOT'S FIFTH ROUND ON #27 (2026-09-13, suppressed), verbatim:
+    "Restricting this probe to `[ -z "$ghost" ]` misses a destination
+    obstruction whenever the recorded branch has a stale registration at some
+    other path … so the destination is never examined and the report offers
+    `resume` even though its final `git worktree add` is blocked by the
+    destination registration."
+
+    THE PRUNE ITSELF IS NOT THE GAP: `git worktree prune` walks every
+    registration in the repository, not one, so the exit those arms name
+    already clears a stale block at the destination too. WHAT THE PRUNE DOES
+    NOT DO IS MOVE ANYTHING ON DISK — and a leftover at the DESTINATION is what
+    `git worktree add` refuses after it, which is the half worth a clause. It
+    is named where the two paths differ, which is the only shape in which the
+    arms above have not named it already."""
+    checkout = workspace_config(home)
+    want = parked_worktree(atlas, "001-a-thing")
+    want.parent.mkdir(parents=True, exist_ok=True)
+    # a stale registration for the RECORDED branch somewhere else…
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", elsewhere)
+    (elsewhere / ".git").unlink()          # prunable, the directory left
+    # …and a DANGLING SYMLINK at the path `resume` computes, which is the one
+    # shape RR3 walks past — a real directory there is RR3's own refusal and
+    # the in-the-way arm says it, above all of this.
+    want.symlink_to(home / "nowhere-at-all")
+    assert not want.exists() and want.is_symlink()
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f", and a move aside of what is at the {want} `resume` computes "
+            "for this leg, which the prune does not touch and `git worktree "
+            "add` refuses for existing") in result.stdout, result.stdout
+
+
+def test_a_locked_off_path_worktree_names_the_unlock_before_the_move(
+        atlas, home):
+    """COPILOT'S FOURTH ROUND ON #27 (2026-09-13, suppressed), verbatim: "When
+    the off-path worktree itself is locked, `worktree_on_branch` still returns
+    it as live, but this branch only checks `held` for the destination and
+    prints `git worktree move <tree> <want>`. Git refuses moving a locked
+    source, so the recovery command cannot run; please carry the source
+    registration's lock state through the lookup and prepend `git worktree
+    unlock <tree>` before the move."
+
+    RUN on 2026-09-13: `git worktree move` with a locked source answered
+    "fatal: cannot move a locked working tree; use 'move -f -f' to override or
+    unlock first", and after `git worktree unlock` the same move exited 0. The
+    unlock goes in front, which is the pair the in-the-way arm has named for a
+    locked DESTINATION since this branch's second commit; this is its twin on
+    the source, and `$held` was only ever the destination's."""
+    checkout = workspace_config(home)
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    want = parked_worktree(atlas, "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing", elsewhere)
+    git("worktree", "lock", str(elsewhere), cwd=atlas)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"move it where both look: `git -C {atlas} worktree unlock "
+            f"{elsewhere} && mkdir -p {want.parent} && git -C {atlas} "
+            f"worktree move {elsewhere} {want}`, which is yours to run — "
+            "`worktree move` creates no parent directory of its own, and it "
+            "refuses a LOCKED source until the unlock in front of it") in (
+        result.stdout), result.stdout
+
+    # AND WITH THE LOCK OFF the command is the pair it always was, which is
+    # the control: one `git worktree unlock` apart.
+    git("worktree", "unlock", str(elsewhere), cwd=atlas)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"move it where both look: `mkdir -p {want.parent} && git -C "
+            f"{atlas} worktree move {elsewhere} {want}`") in result.stdout
+    assert "worktree unlock" not in result.stdout
+
+
+def test_no_move_is_named_where_the_worktree_root_is_itself_a_symlink(
+        atlas, home):
+    """COPILOT'S THIRD ROUND ON #27 (2026-09-13, suppressed), verbatim:
+    "`off_path_exit` still advertises this move when `worktree_root` is a
+    symlink. `record_worktree_root` deliberately preserves that lexical
+    spelling, while Git reports the physical worktree path; moving an off-path
+    worktree to this `want` therefore leaves `registered_at` unable to match
+    it, so the next `resume` still refuses at RR3."
+
+    IT IS REAL AND IT WAS RUN END TO END on 2026-09-13: the move exited 0, git
+    then held the worktree at the PHYSICAL `…/real-wt/001-a-thing/spec`, and
+    `resume.sh` answered "Error: '…/wtlink/001-a-thing/spec' exists and is not
+    a registered worktree of the spec leg", "REFUSED: 001-a-thing — an
+    unrelated path is in the way", exit 2. The move ran and fixed nothing,
+    which is the one thing the rule at the top of `check_parked_leg` forbids.
+
+    THE EXIT THAT DOES WORK IS THE SPELLING, and that was run too: the same
+    estate with `worktree_root` set to the path git spells RESUMED the feature,
+    exit 0. So the line names that, and the resolving is still not done here —
+    a `worktree_root` resolved harder than the other end resolves it would
+    compute a path `resume` does not, which is the finding this branch already
+    carries from the other side."""
+    checkout = workspace_config(home)
+    real = home / "real-wt"
+    real.mkdir()
+    (home / "wtlink").symlink_to(real)
+    where = atlas / ".specify" / "extensions" / "git"
+    where.mkdir(parents=True, exist_ok=True)
+    (where / "git-config.yml").write_text(
+        f"checkout_mode: worktree\nworktree_root: {home / 'wtlink'}\n",
+        encoding="utf-8")
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    tip = feature_worktree(atlas, "001-a-thing", elsewhere)
+    record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip,
+           parked_on="Falcon")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    # AND THE LINE NAMES THE COMPONENT since Copilot's eighth round on #27
+    # (2026-09-13, suppressed): the question was widened to every parent one
+    # round earlier and the ANSWER went on naming the root it no longer meant,
+    # which for a link at `<worktree_root>/<branch>` or a mount's parent is the
+    # wrong setting to point a person at.
+    assert (f"no `worktree move` fixes this one, because the path it would "
+            f"land in is reached through a symlink: both verbs compute "
+            f"{home / 'wtlink' / '001-a-thing'} and git registers whatever is "
+            f"made there under the path that link resolves to, so `resume` "
+            f"matches nothing however the worktree is moved — "
+            f"{home / 'wtlink'} is a symlink, and it is the worktree root this "
+            f"checkout computes (or a directory above it) — spell "
+            f"`worktree_root` (or `$SPECKIT_GIT_WORKTREE_ROOT`) as the "
+            f"directory git spells, which is {real}, and the `git worktree "
+            "move` this line would otherwise name becomes one that works") in (
+        result.stdout), result.stdout
+
+    # AND A LINK WHOSE TARGET IS NOT THERE YET is the same refusal, which
+    # `physical_path` cannot see (Copilot's fourth round on #27): `cd` into it
+    # fails, so the fallback returns the lexical path and the two compare
+    # equal — while `[ -L ]` on the component answers whether or not the
+    # target exists, and `mkdir -p` through such a link answers "cannot create
+    # directory '…': File exists", so the exit would die on its first operand.
+    rmtree(real)
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "no `worktree move` fixes this one" in result.stdout, result.stdout
+    assert f"{home / 'wtlink'} is a symlink, and it is the worktree root" in (
+        result.stdout), result.stdout
+    real.mkdir()
+    assert f"worktree move {elsewhere}" not in result.stdout
+
+    # AND WITH THE ROOT SPELLED THE WAY GIT SPELLS IT the move is named again,
+    # which is the control: the same estate, the same worktree, one line of
+    # config apart.
+    (where / "git-config.yml").write_text(
+        f"checkout_mode: worktree\nworktree_root: {real}\n", encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (f"worktree move {elsewhere} {real / '001-a-thing'}") in (
+        result.stdout), result.stdout
+
+
+def test_only_the_leg_the_run_stops_at_speaks_for_the_path(trio, home):
+    """COPILOT'S FIRST ROUND ON #27 (2026-09-13, suppressed), verbatim: "When
+    an earlier leg has already set the feature verdict to `inway` (or `add`),
+    `refused_exit` is nonempty for every sibling, so this guard still lets
+    later legs re-enter `path_in_the_way` (and the analogous off-path guard
+    below). If a later leg also has an obstruction, its own refusal/exit is
+    reported even though `resume` stops at the earlier leg and the first-pass
+    verdict is meant to be carried to all siblings. Track the refusing leg and
+    only run these path checks for that leg; otherwise render the stored
+    verdict for siblings."
+
+    IT IS REAL, and the run says so. On a scratch three-leg estate on
+    2026-09-13 — bare remotes in a temp dir, a fake `$HOME`, workBenches' own
+    scripts — with a stray DIRECTORY at the `spec` leg's computed path and a
+    worktree of another branch at the `code` leg's, `resume.sh` answered
+    ONCE: "Error: 'worktrees/001-a-thing/spec' exists and is not a registered
+    worktree of the spec leg; that feature was NOT recreated", "REFUSED:
+    001-a-thing — an unrelated path is in the way", exit 2. It breaks at the
+    FIRST leg in the record's order and never reads the second leg's path, so
+    a second line quoting "an unrelated worktree is in the way" is a REFUSED
+    reason that run does not print — the drift this file's own rules forbid,
+    and the one the round before this closed from the other side.
+
+    So the verdict carries its leg's ORDINAL now, and the two arms that read
+    a path run for that leg alone. The sibling says what every sibling of a
+    refused feature says: the verdict, and the exit that travels with it."""
+    checkout = workspace_config(home)
+    spec, code = trio / "spec", trio / "code"
+    for leg in (spec, code):
+        git("checkout", "-q", "main", cwd=leg)
+        origin_has_branch(leg, "001-a-thing")
+    spec_tip = git("rev-parse", "origin/001-a-thing", cwd=spec).stdout.strip()
+    code_tip = git("rev-parse", "origin/001-a-thing", cwd=code).stdout.strip()
+    spec_want = parked_worktree(trio, "001-a-thing", "spec")
+    code_want = parked_worktree(trio, "001-a-thing", "code")
+    spec_want.mkdir(parents=True)
+    (spec_want / "stray.txt").write_text("not ours\n", encoding="utf-8")
+    code_want.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", "-b", "002-other", str(code_want), cwd=code)
+    path = record(checkout, "trio", branch="001-a-thing", role="spec",
+                  commit=spec_tip, parked_on="Falcon", root="Trio")
+    path.write_text(path.read_text(encoding="utf-8")
+                    + leg_block("code", code_tip), encoding="utf-8")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 2, findings
+    assert findings[0].startswith(
+        f"- parked feature 001-a-thing (spec leg): a directory is at "
+        f"{spec_want}, which is the path `resume` computes for this leg"
+        ), findings[0]
+    assert findings[1] == (
+        "- parked feature 001-a-thing (code leg): no worktree on that branch "
+        "here, parked 2026-09-10T20:00:00Z on Falcon; `resume` refuses the "
+        f"WHOLE feature, because a directory is at the {spec_want} it "
+        "computes for its `spec` leg, so it does not bring this leg back — "
+        f"move it aside with `mv {spec_want} <a path of your choosing>`, "
+        "which is yours to run — nothing here moves or deletes a path it did "
+        "not create"), findings[1]
+    assert "an unrelated worktree is in the way" not in result.stdout, (
+        "`resume` stops at the spec leg and never reads the code leg's path")
+    assert str(code_want) not in result.stdout, (
+        "the later leg's obstruction is one the run never reaches")
+    assert "`resume Trio`" not in result.stdout
+
+    # AND WITH THE RECORD'S ORDER REVERSED the other leg is the one that
+    # speaks, which is what makes this the record's order and not a priority
+    # between readings.
+    path = record(checkout, "trio", branch="001-a-thing", role="code",
+                  commit=code_tip, parked_on="Falcon", root="Trio")
+    path.write_text(path.read_text(encoding="utf-8")
+                    + leg_block("spec", spec_tip), encoding="utf-8")
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 2, findings
+    assert findings[0].startswith(
+        f"- parked feature 001-a-thing (code leg): a worktree on `002-other` "
+        f"is at {code_want}, which is the path `resume` computes for this leg"
+        ), findings[0]
+    assert "an unrelated path is in the way" not in result.stdout, (
+        "with the code leg first, the spec leg's directory is never read")
+
+
+def test_the_path_takes_its_place_in_that_order_and_the_add_does_not(
+        trio, home):
+    """THE SAME ORDER, WITH THE TWO READINGS THIS BRANCH ADDS IN IT. The test
+    above settled that the feature's verdict is the FIRST leg `resume`
+    refuses in the RECORD's order; this branch teaches that pass two more
+    refusals — RR4's second arm and RR3, which are the PATH, and the `git
+    worktree add` that is the LAST thing the run does — and where each of
+    them goes is not a matter of taste. `resume.sh`'s leg loop is RR6 -> RR4
+    -> RR3 -> RR2 -> RR1 -> RR5, every one of them `refused=true; break`, and
+    the loop that creates the worktrees runs only after every leg has passed
+    all six.
+
+    COPILOT'S FIFTH ROUND ON #23 (2026-09-13, suppressed), verbatim: "A
+    stale-registration leg before a later gone-origin leg is not represented
+    in this verdict pass … `resume` stops at RR3 first." FIVE ESTATES WERE
+    BUILT TO SETTLE IT, on 2026-09-13, against workBenches' own `resume.sh`,
+    `park.sh`, `git-common.sh` and `workspace-common.sh` — a three-leg estate
+    with bare remotes in a temp dir and a fake `$HOME`, the `spec` leg
+    recorded FIRST and the `code` leg second with `code`'s branch deleted on
+    its origin:
+
+      (a) a stray DIRECTORY at the `spec` leg's computed path
+          "Error: 'worktrees/001-a-thing/spec' exists and is not a registered
+          worktree of the spec leg", "REFUSED: 001-a-thing — an unrelated
+          path is in the way", exit 2 — RR3 on the EARLIER leg, and origin
+          never read for the later one. THE ROUND IS RIGHT ABOUT THIS SHAPE.
+      (b) a PRUNABLE registration at that path with nothing on disk
+          "Error: 001-a-thing is no longer on origin in the code leg",
+          "REFUSED: 001-a-thing — gone from origin", exit 2 — in BOTH
+          spellings, the registration for ANOTHER branch and the one for the
+          RECORDED branch: `load_git_worktrees` drops a prunable block so RR4
+          never sees it, `[ -e "$tree" ]` finds nothing so RR3 passes, and
+          the LATER leg's RR2 is the refusal the person gets. THE ROUND'S
+          PREMISE IS WRONG FOR A STALE REGISTRATION.
+      (c) the `spec` leg's WORKTREE on the branch, off the computed path
+          "Error: 001-a-thing is no longer on origin in the code leg",
+          "REFUSED: 001-a-thing — gone from origin", exit 2 — the add is the
+          last thing the run does and every RR of every leg comes first, so
+          the later leg's RR2 takes it. THE ROUND'S PREMISE IS WRONG HERE
+          TOO, and this reading never claimed otherwise.
+
+    And the control that tells (a) from (b): a LOCKED registration for
+    another branch at that path with nothing on disk — which git computes no
+    `prunable` for, so `leg_registered_at` DOES match it — answered "REFUSED:
+    001-a-thing — an unrelated worktree is in the way", exit 2, RR4's second
+    arm on the earlier leg in front of the later leg's RR2.
+
+    So the round is REAL for a path in the way and WRONG for a stale
+    registration, which is the distinction `path_in_the_way` already makes;
+    what this pins is that the VERDICT PASS makes it too, in one array, so
+    that no reading overtakes another by being read back in a different
+    order."""
+    checkout = workspace_config(home)
+    spec, code = trio / "spec", trio / "code"
+    for leg in (spec, code):
+        git("checkout", "-q", "main", cwd=leg)
+        origin_has_branch(leg, "001-a-thing")
+    spec_tip = git("rev-parse", "origin/001-a-thing", cwd=spec).stdout.strip()
+    code_tip = git("rev-parse", "origin/001-a-thing", cwd=code).stdout.strip()
+    drop_from_origin(code, "001-a-thing")
+
+    def two_legs():
+        path = record(checkout, "trio", branch="001-a-thing", role="spec",
+                      commit=spec_tip, parked_on="Falcon", root="Trio")
+        path.write_text(path.read_text(encoding="utf-8")
+                        + leg_block("code", code_tip), encoding="utf-8")
+
+    def findings(*args):
+        result = run(STATUS, *args, home=home)
+        assert result.returncode == 1, result.stdout + result.stderr
+        return result, [line.strip() for line in result.stdout.splitlines()
+                        if line.strip().startswith("- parked feature")]
+
+    want = parked_worktree(trio, "001-a-thing", "spec")
+
+    # (a) RR3 ON THE EARLIER LEG BEATS RR2 ON THE LATER ONE.
+    want.mkdir(parents=True)
+    (want / "stray.txt").write_text("not ours\n", encoding="utf-8")
+    two_legs()
+    result, lines = findings("--fetch", "Trio")
+    assert len(lines) == 2, lines
+    assert lines[0].startswith(
+        f"- parked feature 001-a-thing (spec leg): a directory is at {want}, "
+        "which is the path `resume` computes for this leg"), lines[0]
+    assert lines[1] == (
+        "- parked feature 001-a-thing (code leg): no worktree on that branch "
+        "here, parked 2026-09-10T20:00:00Z on Falcon; `resume` refuses the "
+        f"WHOLE feature, because a directory is at the {want} it computes for "
+        "its `spec` leg, so it does not bring this leg back — move it aside "
+        f"with `mv {want} <a path of your choosing>`, which is yours to run — "
+        "nothing here moves or deletes a path it did not create"), lines[1]
+    assert "is no longer on origin" not in result.stdout, (
+        "RR3 breaks the loop on the earlier leg and origin is never read")
+    assert "delete its `- branch:" not in result.stdout, (
+        "RR2's exits are the wrong thing to name for a path in the way")
+    rmtree(want)
+
+    # (b) A STALE REGISTRATION IS NOT RR3's, AND THE LATER LEG'S RR2 TAKES IT
+    # — in both spellings, the one for another branch and the one for the
+    # recorded branch, because `load_git_worktrees` drops a prunable block
+    # whichever branch it names.
+    for other in ("002-other", "001-a-thing"):
+        want.parent.mkdir(parents=True, exist_ok=True)
+        if other == "001-a-thing":
+            git("worktree", "add", "-q", str(want), "001-a-thing", cwd=spec)
+        else:
+            git("worktree", "add", "-q", "-b", other, str(want), cwd=spec)
+        rmtree(want)            # and NO `git worktree prune`
+        porcelain = git("worktree", "list", "--porcelain", cwd=spec).stdout
+        assert "prunable" in porcelain, "git pruned it for us; the test is moot"
+        two_legs()
+        result, lines = findings("--fetch", "Trio")
+        assert len(lines) == 2, lines
+        assert "worktree prune`" in lines[0], lines[0]
+        assert ("`resume` refuses the WHOLE feature in any case, because there "
+                "is no `origin/001-a-thing` in its `code` leg after this run's "
+                "fetch") in lines[0], lines[0]
+        assert lines[1].endswith(
+            "the exits are to delete its `- branch: 001-a-thing` block from "
+            "the record where the feature landed, or to push the branch again "
+            "from Falcon where it went by mistake"), lines[1]
+        assert "is in the way" not in result.stdout, (
+            "RR4 never sees a prunable block and RR3 finds nothing on disk")
+        git("worktree", "prune", cwd=spec)
+
+    # (c) THE ADD RUNS LAST, so the later leg's RR2 beats it — while WITHOUT
+    # the flag, which is the only run that reads RR2 here, the off-path
+    # worktree is the verdict and the move is the exit.
+    elsewhere = home / "elsewhere" / "001-a-thing"
+    elsewhere.parent.mkdir(parents=True, exist_ok=True)
+    git("worktree", "add", "-q", str(elsewhere), "001-a-thing", cwd=spec)
+    two_legs()
+    result, lines = findings("--fetch", "Trio")
+    assert len(lines) == 1, lines
+    assert lines[0].startswith(
+        "- parked feature 001-a-thing (code leg): no worktree on that branch "
+        "here, parked 2026-09-10T20:00:00Z on Falcon, and no "
+        "`origin/001-a-thing` here after this run's fetch"), lines[0]
+    assert "worktree move" not in result.stdout, (
+        "every RR of every leg is asked before the first worktree is added")
+    result, lines = findings("Trio")
+    assert len(lines) == 2, lines
+    assert lines[0].startswith(
+        "- parked feature 001-a-thing (spec leg): its worktree is at "
+        f"{elsewhere}, which is not the {want} `resume` computes for it"
+        ), lines[0]
+    assert (f"`resume` refuses the WHOLE feature, because its `spec` leg's "
+            f"worktree is at {elsewhere}") in lines[1], lines[1]
     assert "`resume Trio`" not in result.stdout
 
 
@@ -4108,7 +6153,8 @@ def test_a_comment_after_any_records_value_is_read_as_the_loader_reads_it(
     parser reads — `role:`, `parked_commit:` and the rest — because a reader
     that judges a value must read it the way the judge will."""
     checkout = workspace_config(home)
-    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    feature_worktree(atlas, "001-a-thing",
+                     parked_worktree(atlas, "001-a-thing"))
     path = record(checkout, "atlas", branch="001-a-thing", role="repo",
                   commit=FAKE_SHA, parked_on="Falcon")
     text = path.read_text(encoding="utf-8")
@@ -4379,40 +6425,78 @@ def test_a_leg_declared_at_the_root_is_read_at_the_root(atlas, home):
     `SHAPE_CODE_PATH=.` and `CODE_LEG=<root>/.` for all three — `.` is not
     empty, so `"${path:-code}"` keeps it — and an EMPTY `path:` was the one
     spelling that fell to the default `code`. `collect_legs` hands `$CODE_LEG`
-    straight to `LEG_REPOS`, so the leg `resume` reads is the ROOT: end to end
-    on a scratch estate the same day, that manifest and a record parking a
-    `code` leg RESUMED, "code  worktrees/001-a-thing/.  <sha>  clean", exit 0,
-    with the worktree registered in the ROOT's own `git worktree list`. This
+    straight to `LEG_REPOS`, so the leg `resume` reads is the ROOT. This
     reader skipped the declared `.`, found no `code/` and answered the default
     `<root>/code`, so the same estate drew "the record names a leg this root
     does not mount here" — a whole-feature refusal `resume` does not make.
 
-    THE PROOF IS THE ROOT'S OWN HISTORY, not the absence of that line: a
-    worktree on the branch AT the parked commit is in sync, and one commit
-    past it is "moved on", and both of those are readings of the repository
-    this leg is declared into."""
+    AND THE MOUNT IS `.` AT THE OTHER END TOO, which is what the proof turns
+    on since this layer reads the path `collect_legs` computes: `LEG_TREES`
+    for a `code` leg is `$WORKTREE_ROOT/$branch/$SHAPE_CODE_PATH`, and with
+    the leg declared `path: "."` that is `worktrees/<branch>/.` — a string
+    `leg_registered_at` never matches, because git spells no registered path
+    with a trailing `/.`. Run end to end against the extension on 2026-09-12
+    on a three-leg estate whose `code` leg carried `path: "."` and whose
+    `spec` leg was a real submodule: with NOTHING at that path `resume.sh`
+    RESUMED the feature — "code  worktrees/001-a-thing/.", exit 0; with the
+    feature's own worktree on the recorded branch AT `worktrees/001-a-thing`
+    it REFUSED, "Error: 'worktrees/001-a-thing/.' exists and is not a
+    registered worktree of the code leg", "REFUSED: 001-a-thing — an
+    unrelated path is in the way", exit 2; and with that worktree elsewhere
+    it refused at the `git worktree add`, "'001-a-thing' is already used by
+    worktree at …". So the ROOT's own registrations answer all three, and a
+    leg read at `<root>/code` — a directory that does not exist — answers
+    none of them.
+
+    THE PROOF IS THE ROOT'S OWN WORKTREE LIST, not the absence of that line:
+    the worktree this test makes is a worktree of the ROOT repository, and it
+    is found, named and judged against `worktrees/001-a-thing/.` — the mount
+    the manifest declares — while a reader looking at `<root>/code` would
+    have neither the worktree nor the path."""
     checkout = workspace_config(home)
     where = home / "Atlas-wt" / "001-a-thing"
     tip = feature_worktree(atlas, "001-a-thing", where)
     record(checkout, "atlas", branch="001-a-thing", role="code", commit=tip,
            parked_on="Falcon")
     pristine = (atlas / "project.yaml").read_text(encoding="utf-8")
+    computed = atlas / "worktrees" / "001-a-thing"
     for spelling in ('    path: "."\n', "    path: .\n", "    path: '.'\n"):
         (atlas / "project.yaml").write_text(pristine, encoding="utf-8")
         code_leg_onto_the_spec_checkout(atlas, path_line=spelling)
         result = run(STATUS, "Atlas", home=home)
-        assert result.returncode == 1, result.stdout + result.stderr  # dirty
-        assert "parked feature" not in result.stdout, (
-            "the `code` leg was read anywhere but the root `path: .` names")
+        assert result.returncode == 1, result.stdout + result.stderr
         assert "does not mount here" not in result.stdout
+        assert (f"    - parked feature 001-a-thing (code leg): its worktree "
+                f"is at {where}, which is not the {computed}/. `resume` "
+                "computes for it") in result.stdout
+        # AND IT NAMES NO COMMAND (Copilot's second round on #27), because
+        # every operand this path could be put into was RUN and did not work:
+        # `mv '<…>/001-a-thing/.' <dest>` is refused by coreutils outright,
+        # and `mkdir -p <…>/001-a-thing && git worktree move <tree>
+        # '<…>/001-a-thing/.'` exits 0 and leaves the worktree nested at
+        # `<…>/001-a-thing/001-a-thing`, which is where neither verb looks
+        # (git 2.43, GNU coreutils 9.4, both run 2026-09-12). The line says
+        # so, and names the `collect_legs` that answers it.
+        assert "`mkdir -p " not in result.stdout, result.stdout
+        assert f"worktree move {where}" not in result.stdout, result.stdout
+        assert ("there is no command that puts it where `resume` looks: this "
+                'leg is declared `path: "."` in `project.yaml`') in (
+            result.stdout), result.stdout
+        assert ("a `collect_legs` that computes `<worktree_root>/<branch>` "
+                "for a leg declared at the root, which is the standard's and "
+                "not this command's") in result.stdout
 
-    (where / "more.md").write_text("more\n", encoding="utf-8")
-    commit_all(where, "more work")
+    # AND WITH NO WORKTREE AT ALL the same leg is the ordinary parked feature
+    # `resume` brings back — which is the other half of the same reading,
+    # because a leg read at `<root>/code` is a whole-feature refusal in this
+    # state too, and the extension resumed it (exit 0, the same day).
+    git("worktree", "remove", "--force", str(where), cwd=atlas)
     result = run(STATUS, "Atlas", home=home)
     assert result.returncode == 1, result.stdout + result.stderr
-    assert (f"    - parked feature 001-a-thing (code leg): moved on since it "
-            f"was parked, 1 commit(s) after {tip[:7]} — park again before "
-            "leaving") in result.stdout
+    assert "does not mount here" not in result.stdout
+    assert ("    - parked feature 001-a-thing (code leg): no worktree on that "
+            "branch here") in result.stdout
+    assert "`resume Atlas` brings it back" in result.stdout
 
 
 def test_a_feature_the_record_gives_no_branch_name_is_a_finding_not_silence(
@@ -4550,7 +6634,65 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
     AGENTS.md rule 4's "only `status --fetch` settles that" and the README's
     "which only `--fetch` settles" are claims of EXCLUSIVITY — that nothing
     else settles it — which is true of every one of those four states and
-    stays as it is."""
+    stays as it is.
+
+    AND THE THIRD OF THEM IS EVERY SYMLINKED PARENT, not the worktree root
+    alone, since Copilot's EIGHTH round on #27 (2026-09-13, suppressed): the
+    round before it widened the question `off_path_exit` asks and left all
+    three texts naming the root it no longer meant, which for a link at the
+    feature directory or a mount's parent points a person at the wrong
+    setting. The line names the component now, and so do these.
+
+    AND IT NAMES THE THREE STATES THAT GET NO MOVE, since Copilot's FOURTH
+    round on #27 (2026-09-13, suppressed), verbatim: "This help text overstates
+    the recovery for an off-path worktree: it says the exit is always `git
+    worktree move`, but `off_path_exit` intentionally emits no move for a
+    declared `path: "."` and for a symlink-spelled worktree root because that
+    move does not produce a path `resume` can register." IT IS RIGHT, and it is
+    drift this branch made in the two rounds that suppressed those commands:
+    the code stopped promising a move and these three texts went on promising
+    one. The leg's own checkout was already named; the other two are named
+    beside it now, here, in AGENTS.md rule 4 and in the README, because the
+    three say the same things or one of them is wrong.
+
+    AND THE LIST NAMES ALL THREE SOURCES OF THAT PATH SINCE COPILOT'S FIRST
+    ROUND ON #27 (2026-09-13, suppressed), verbatim: "This contract documents
+    only the environment override and `git-config.yml`, but the implementation
+    also falls back to the shape default (`worktrees` for a three-leg root or
+    `../<root>-worktrees` for a single root). For an estate without either
+    override, readers cannot derive the path that `resume` and the recovery
+    guidance use; include that third source in this statement and its mirrored
+    help/README wording." IT IS RIGHT, AND THE DEFAULT IS THE COMMON CASE:
+    these fixtures carry no `git-config.yml` at all, so every path in every
+    finding this file pins comes from the shape, and a reader told only about
+    the two overrides is told about the two spellings an estate usually does
+    not have. It is the same fault as the should-fix that put
+    `$SPECKIT_GIT_WORKTREE_ROOT` here — a list that reads as exhaustive and is
+    not — so AGENTS.md rule 4, the README and this clause all take the third
+    source.
+
+    The eighth is the independent reviewer's note of 2026-09-12 on the PATH,
+    and it goes in the LIST and not in the exception: nothing is being
+    brought back for a worktree that is already here, and the exit is neither
+    a `resume` nor a re-park but a `git worktree move` to the path both verbs
+    compute. The list says which path that is, because a reader who is not
+    told it is computed HERE — from this checkout's `git-config.yml`, or the
+    environment, or the shape's own default — reaches for the record's own
+    `worktree_root:`, which is the one thing neither verb reads.
+
+    The ninth is that reviewer's second and third notes of 2026-09-12, and
+    they are ONE clause rather than two: `resume.sh` words RR3 and RR4's
+    second arm identically — "'…' exists and is not a registered worktree of
+    the <role> leg … Move it aside" — and the only thing that differs is
+    WHAT GIT HOLDS at the obstructed path, which is the only thing the exit
+    turns on. The `unlock` and the `prune` ride in that same clause because
+    neither command clears the path without them: `git worktree move` refuses
+    a locked worktree ("cannot move a locked working tree") and `git worktree
+    add` refuses a path a dead registration still names ("a missing but
+    already registered worktree"), both run against git 2.43 the same day.
+    It goes in the EXCEPTION and not in the list beside it, unlike the
+    eighth: this IS a record `resume <Name>` brings back, once the path is
+    clear, and the sentence it falsifies is the promise itself."""
     result = run(STATUS, "--help", home=home)
     assert result.returncode == 0, result.stdout + result.stderr
     helptext = " ".join(result.stdout.split())
@@ -4579,7 +6721,15 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
             "holds a registration that is no longer a worktree, that is "
             "cleared with `worktree prune`, after a `worktree unlock` if it "
             "is locked and with any leftover directory moved aside, before "
-            "`resume` can recreate anything)") in helptext
+            "`resume` can recreate anything; and where ANYTHING ELSE is at "
+            "the path both verbs compute for that leg — a directory, a file, "
+            "a worktree of another branch — `resume` refuses the WHOLE "
+            "feature rather than overwrite a path it did not create, and "
+            "moving that aside first is yours: a `git worktree move` where "
+            "git holds it as a worktree and a plain `mv` where it does not, "
+            "with the `worktree unlock` a LOCKED registration wants in front "
+            "of either and the `worktree prune` a dead one wants beside the "
+            "`mv`)") in helptext
     # And the LIST of findings beside it names the new one, as the README's
     # does: the two texts say the same things or one of them is wrong.
     assert ("a worktree whose tip is not the parked commit or a record that "
@@ -4587,7 +6737,21 @@ def test_the_help_carries_the_no_push_exception_its_findings_do(home):
             "this repository has no `origin/<branch>` for, a leg parked with "
             "`--no-push` or whose `pushed:` is missing or neither true nor "
             "false, a leg the record gives no role or a role this shape has "
-            "no place for, a feature the record lists no leg for, and a "
+            "no place for, a feature the record lists no leg for, a worktree "
+            "on a recorded branch that is not at the path BOTH VERBS compute "
+            "for that leg — <worktree_root>/<branch>, with the leg's own "
+            "mount under it in a three-leg root, out of "
+            "$SPECKIT_GIT_WORKTREE_ROOT, else this checkout's git-config.yml, "
+            "else the shape's own default, and not out of the record — which "
+            "is the only "
+            "worktree `resume` reads as that feature's and the only one "
+            "`park` carries, so the exit is a `git worktree move` of yours "
+            "— except where no move works and the line says so: the leg's own "
+            "checkout, a leg declared `path: \".\"`, and a symlink anywhere "
+            "in that path's own parents, each of which names the component — "
+            "anything at that same path that is not that leg's "
+            "worktree, which `resume` refuses the whole feature for before "
+            "it reads origin, and a "
             "worktree the record does not know (never parked)") in helptext
 
 
@@ -4598,7 +6762,8 @@ def test_a_missing_parked_commit_is_read_against_what_the_record_claims(
     the other case, already a finding of its own, and here only says where the
     commit is. The first draft offered both reasons under either record."""
     checkout = workspace_config(home)
-    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    feature_worktree(atlas, "001-a-thing",
+                     parked_worktree(atlas, "001-a-thing"))
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA)
     result = run(STATUS, "Atlas", home=home)
     assert result.returncode == 1, result.stdout + result.stderr
@@ -4628,7 +6793,8 @@ def test_a_missing_parked_commit_under_an_unreadable_pushed_rules_nothing_out(
     reason still standing is named, and the VALUE is named too, because a
     reader who is told the record cannot be read can go and look at it."""
     checkout = workspace_config(home)
-    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    feature_worktree(atlas, "001-a-thing",
+                     parked_worktree(atlas, "001-a-thing"))
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA,
            pushed="", parked_on="Falcon")
     result = run(STATUS, "Atlas", home=home)
@@ -4688,7 +6854,8 @@ def test_a_missing_parked_commit_with_no_pushed_key_rules_nothing_out(
     standing — and until the leg had a row at all, it named none of them,
     because there was no line."""
     checkout = workspace_config(home)
-    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    feature_worktree(atlas, "001-a-thing",
+                     parked_worktree(atlas, "001-a-thing"))
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA,
            pushed=None, parked_on="Falcon")
     result = run(STATUS, "Atlas", home=home)
@@ -4709,7 +6876,8 @@ def test_a_parked_commit_still_missing_after_this_runs_fetch_says_so(atlas, home
     moment earlier — `no_origin_branch_finding`'s rule, and this layer's too
     now that every repository is fetched before any row is read."""
     checkout = workspace_config(home)
-    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    feature_worktree(atlas, "001-a-thing",
+                     parked_worktree(atlas, "001-a-thing"))
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA)
     result = run(STATUS, "--fetch", "Atlas", home=home)
     assert result.returncode == 1, result.stdout + result.stderr
@@ -4729,7 +6897,8 @@ def test_an_unreadable_pushed_after_this_runs_fetch_drops_the_fetch_reason(
     unreadable `pushed:` leaves standing is the other two, and the line names
     those and no more."""
     checkout = workspace_config(home)
-    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    feature_worktree(atlas, "001-a-thing",
+                     parked_worktree(atlas, "001-a-thing"))
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA,
            pushed="maybe", parked_on="Falcon")
     result = run(STATUS, "--fetch", "Atlas", home=home)
@@ -4751,7 +6920,8 @@ def test_no_pushed_key_after_this_runs_fetch_drops_the_fetch_reason(
     line printed a moment earlier. An absent `pushed:` leaves the other two
     standing, and the line names those and no more."""
     checkout = workspace_config(home)
-    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    feature_worktree(atlas, "001-a-thing",
+                     parked_worktree(atlas, "001-a-thing"))
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=FAKE_SHA,
            pushed=None, parked_on="Falcon")
     result = run(STATUS, "--fetch", "Atlas", home=home)
@@ -4823,7 +6993,8 @@ def test_two_spellings_of_one_leg_are_one_repository_in_the_fetch_store(
 
 def test_a_worktree_the_record_does_not_know_was_never_parked(atlas, home):
     checkout = workspace_config(home)
-    tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing",
+                           parked_worktree(atlas, "001-a-thing"))
     feature_worktree(atlas, "002-unparked", home / "Atlas-wt" / "002-unparked")
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
     result = run(STATUS, "Atlas", home=home)
@@ -4840,7 +7011,8 @@ def test_a_deleted_worktrees_stale_entry_is_not_an_unparked_worktree(atlas, home
     directory which is not there was never parked is a finding about nothing,
     and `park` would carry nothing when they ran it."""
     checkout = workspace_config(home)
-    tip = feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    tip = feature_worktree(atlas, "001-a-thing",
+                           parked_worktree(atlas, "001-a-thing"))
     gone = home / "Atlas-wt" / "002-unparked"
     feature_worktree(atlas, "002-unparked", gone)
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit=tip)
@@ -4900,7 +7072,7 @@ def test_the_state_a_resume_leaves_is_not_behind(atlas, home):
     `resume.sh`'s `wip_gap_is_ours` is why it does not refuse it. So neither
     does this: the first draft called it BEHIND, forever, on every run."""
     checkout = workspace_config(home)
-    where = home / "Atlas-wt" / "001-a-thing"
+    where = parked_worktree(atlas, "001-a-thing")
     feature_worktree(atlas, "001-a-thing", where)
     (where / "half-done.md").write_text("half done\n", encoding="utf-8")
     git("add", "-A", cwd=where)
@@ -4930,7 +7102,8 @@ def test_an_absent_optional_key_does_not_shift_the_fields(atlas, home):
     `parked_commit:` and `pushed: false` must still report the --no-push
     finding, not a parked commit called `false`."""
     checkout = workspace_config(home)
-    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    feature_worktree(atlas, "001-a-thing",
+                     parked_worktree(atlas, "001-a-thing"))
     record(checkout, "atlas", branch="001-a-thing", role="repo", commit="",
            pushed="false", parked_on="Falcon")
     result = run(STATUS, "Atlas", home=home)
@@ -4942,7 +7115,7 @@ def test_an_absent_optional_key_does_not_shift_the_fields(atlas, home):
 
 def test_a_diverged_worktree_names_the_log_to_read(atlas, home):
     checkout = workspace_config(home)
-    where = home / "Atlas-wt" / "001-a-thing"
+    where = parked_worktree(atlas, "001-a-thing")
     base = feature_worktree(atlas, "001-a-thing", where)
     (where / "theirs.md").write_text("theirs\n", encoding="utf-8")
     commit_all(where, "parked elsewhere")
@@ -4963,7 +7136,8 @@ def test_a_diverged_worktree_names_the_log_to_read(atlas, home):
 def test_a_root_the_record_does_not_mention_still_has_its_worktrees_swept(
         atlas, home):
     checkout = workspace_config(home)
-    feature_worktree(atlas, "001-a-thing", home / "Atlas-wt" / "001-a-thing")
+    feature_worktree(atlas, "001-a-thing",
+                     parked_worktree(atlas, "001-a-thing"))
     record(checkout, "atlas", branch="001-x", role="repo", commit=FAKE_SHA)
     # the file is atlas.yaml, but its one block is somebody else's — by id
     # AND by root, since a block whose `root:` is this folder is this root's
