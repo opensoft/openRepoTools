@@ -6319,7 +6319,7 @@ hf_seed_handoff() {   # <file> <lane>
     printf 'Written before Amendment 17, by hand.\n'
   } > "$1"
 }
-for hf_l in repoHF-1 repoHF-2 repoHF-3 repoHF-4 repoHF-5 repoHF-6 repoHF-7 repoHF-8 repoHF-9; do
+for hf_l in repoHF-1 repoHF-2 repoHF-3 repoHF-4 repoHF-5 repoHF-6 repoHF-7 repoHF-8 repoHF-9 repoHF-10; do
   hf_seed_handoff "$WIP/handoffs/repoHF/$hf_l.md" "$hf_l"
 done
 git -C "$WIP" add -- handoffs/repoHF >/dev/null 2>&1
@@ -6341,6 +6341,8 @@ hf_row repoHF-7 "harness \`$HF4_ID\`"
 # `lane` IS on PATH, one where the `lane` on PATH is somebody else's word.
 hf_row repoHF-8 "harness \`$HF_ID\`"
 hf_row repoHF-9 "harness \`$HF_ID\`"
+# The lane the IN-PROCESS clear is recorded on: its writers live through it.
+hf_row repoHF-10 "harness \`$HF_ID\`"
 
 # The lane's own log, with the STARTED a running lane has.
 hf_seed_log() {   # <lane> <utc> [<extra line>…]
@@ -6356,7 +6358,7 @@ hf_seed_log() {   # <lane> <utc> [<extra line>…]
   git -C "$WIP" push -q origin main
   return 0
 }
-for hf_l in repoHF-1 repoHF-2 repoHF-3 repoHF-5 repoHF-6 repoHF-7 repoHF-8 repoHF-9; do
+for hf_l in repoHF-1 repoHF-2 repoHF-3 repoHF-5 repoHF-6 repoHF-7 repoHF-8 repoHF-9 repoHF-10; do
   hf_seed_log "$hf_l" "2026-09-14T09:00:00Z"
 done
 
@@ -6413,6 +6415,19 @@ has   "…its branch" "$hf1_file" "branch \`feat/w1\`"
 has   "…what it had committed" "$hf1_file" "the writer's last commit"
 has   "…and what it is holding" "$hf1_file" "1 dirty"
 has   "…the section for the brief where the caller passed none" "$hf1_file" "brief: (fill in"
+# THE WRITERS OF AN IN-PROCESS CLEAR SURVIVE IT, AND THE BLOCK IS WHAT TELLS THE
+# NEXT SESSION WHICH CASE IT IS IN (measured in this lane on 2026-09-14: a
+# harness `/clear` mints a new transcript id in the SAME process, so every
+# subagent lives through it and only its in-flight tool calls die). `ListAgents`
+# comes first in BOTH kinds, because relaunching a writer that is still listed
+# is two writers on one worktree.
+has   "the top block's act (3) runs ListAgents FIRST" "$hf1_file" "RUN \`ListAgents\` FIRST"
+has   "…with the rule a listed writer is never relaunched" "$hf1_file" "DO NOT RELAUNCH IT"
+has   "…and the reads that say where an unlisted one stood" "$hf1_file" "git log @{u}.."
+has   "…the WRITERS section carrying the same rule" "$hf1_file" "a writer it still names is alive and owns its worktree"
+has   "…and a plain handoff is the RESPAWN kind, whose writers are gone" "$hf1_file" "kind respawn"
+has   "…so this block is the one that says relaunch" "$hf1_file" "expect \`ListAgents\` to name none of them"
+has   "the record carries the kind too, after the agent and the transcript" "$hf1_log" "; kind respawn"
 has   "…and the file it was, below, as history" "$hf1_file" "Written before Amendment 17, by hand."
 has   "the writers are polled on stdout too, with git's own words" "$hf1_out" "git status --short"
 has   "…and the unpushed read beside it" "$hf1_out" "git log @{u}.."
@@ -6563,6 +6578,36 @@ is    "…and the pane is not respawned as well: one act at a time" \
 run env PATH="$A17PATH" "$HANDOFF_CMD" --lane repoHF-4 --restart --exit x
 is    "--restart and --exit together are refused" "$rc" 2
 has   "…naming the two ends they are" "$err" "two different ends for one act"
+
+# ------------------------- 2b. --in-process: the writers live through a clear
+#
+# MEASURED IN THIS LANE ON 2026-09-14, and it is why the kind is recorded at
+# all: a harness `/clear` mints a NEW TRANSCRIPT ID IN THE SAME PROCESS, so
+# every subagent the lane has running SURVIVES it — only the tool calls they had
+# in flight die. A top block that then said *relaunch every writer below* would
+# put a SECOND writer on a worktree the first one still holds. The `--restart`
+# above is the other kind and its block is right to say relaunch: that one
+# replaces the process.
+: > "$FAKE_TMUX_A17_LOG"
+export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-10.md"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-10 --in-process clear
+is    "lane-handoff --in-process exits 0" "$rc" 0
+hf10_log="$(cat "$LOGD/repoHF-10.md")"
+hf10_file="$(cat "$WIP/handoffs/repoHF/repoHF-10.md")"
+has   "…and the record says which kind of clear this was" "$hf10_log" "; kind in-process"
+has   "…the top block says the writers SURVIVED it" "$hf10_file" "every writer below SURVIVED this clear"
+hasnt "…and never tells the next session to relaunch them all" "$hf10_file" "relaunch every writer below from where it stands"
+has   "…it tells it to relaunch NONE of them" "$hf10_file" "relaunch NONE of them"
+has   "…and to expect ListAgents to name every one" "$hf10_file" "expect \`ListAgents\` to name every writer below"
+has   "…with the same ListAgents-first rule the other kind carries" "$hf10_file" "RUN \`ListAgents\` FIRST"
+is    "…and the pane is untouched: --in-process respawns nothing" \
+      "$(grep -c 'respawn-pane' "$FAKE_TMUX_A17_LOG")" 0
+run env PATH="$A17PATH" "$HANDOFF_CMD" --lane repoHF-4 --in-process --restart x
+is    "--in-process with --restart is refused" "$rc" 2
+has   "…because each of those replaces the process the writers are children of" "$err" "THIS PROCESS KEEPS RUNNING"
+run env PATH="$A17PATH" "$HANDOFF_CMD" --lane repoHF-4 --in-process --exit x
+is    "…and so is --in-process with --exit" "$rc" 2
 
 # ----------------------------------------------- 3. --late, and its one rule
 
@@ -6847,7 +6892,14 @@ has   "and /ctx is that skill with --restart" "$ctxcmd" "with \`--restart\`"
 has   "…which is what the amendment calls it" "$ctxcmd" "/ctx\` is \`/handoff --restart\`"
 has   "the skill carries Amendment 17(b)'s two sub-fields where the record is written" "$hfsk" "agent \$agent_name; transcript \$transcript_id"
 has   "…and the WRITERS section in its top block" "$hfsk" "**WRITERS at <UTC>**"
-has   "…and the respawn line Addendum 2 (i-8) names: \`lane <lane>\`" "$hfsk" 'LANE_START_FRESH=1 lane $lane'
+has   "the skill's top block carries the ListAgents rule, in the same words the command writes" \
+      "$hfsk" "\`ListAgents\` FIRST, before relaunching anything"
+has   "…and the reason it is never skipped" "$hfsk" "A WRITER STILL LISTED IS ALIVE AND OWNS ITS WORKTREE"
+has   "…and the two kinds, with what each tells the next session" "$hfsk" "kind <in-process|respawn>"
+has   "…the in-process one relaunching none" "$hfsk" "relaunch NONE of them"
+has   "…and the measured fact that is the whole reason for the distinction" \
+      "$hfsk" "mints a NEW TRANSCRIPT ID IN THE SAME PROCESS"
+has   "and the respawn line Addendum 2 (i-8) names: \`lane <lane>\`" "$hfsk" 'LANE_START_FRESH=1 lane $lane'
 has   "…with the launcher as the door the same clause leaves open" "$hfsk" "pclaude --lane \$lane"
 has   "…chosen by whether that word is on PATH, which is the choice the command makes in code" \
       "$hfsk" 'if command -v lane >/dev/null 2>&1; then'

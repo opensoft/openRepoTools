@@ -1501,9 +1501,24 @@ def test_agents_md_is_short_enough_to_be_read():
     the merge rather than the branch's own carried forward, which is the
     only way either of them is ever allowed to be right, and the entry
     above stays because its ten lines are still the ten in rule 4.
+
+    224 -> 243 on 2026-09-14, for ONE SUITE AT A TIME WHERE LANES SHARE A
+    WORKSTATION, and every one of the nineteen is a thing an agent MEETS on
+    this repository rather than prose about it. Measured that day: six lanes
+    build in sibling worktrees of this checkout, and FOUR SUITES RAN AT ONCE
+    under the guard they had all been given — `pgrep -af 'python3 -m pytest' |
+    grep -v pgrep >/dev/null`, which never waits where `grep` is the harness's
+    own shell function whose status is 1 when its stdout is `/dev/null`, and
+    whose unanchored pattern also matches the guard's own command line. The
+    lines are the working form (an anchored `pgrep -fc`, its pattern split so
+    it cannot match itself, and a `flock` so the waiters cannot all start
+    together), the two defects it exists for, and the sentence that makes it
+    usable at all — every lane on the workstation must name the SAME lock
+    file. An assistant told only "run pytest" starts the fifth suite, and this
+    run is minutes of bash and hundreds of `git` processes.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 224, f"AGENTS.md is {len(lines)} lines; the cap is 224"
+    assert len(lines) <= 243, f"AGENTS.md is {len(lines)} lines; the cap is 243"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -2065,7 +2080,22 @@ FORK_ACT_LINE = re.compile(r"^.*(?:live FORK|live fork\(s\)).*$", re.M)
 #: The two halves of the `/lane-swap` skill that must spell the launch the same
 #: way: the `restart_cmd=` the skill EXECUTES into its printed line, and the
 #: prose three paragraphs below that explains it.
-SWAP_SKILL = "skills/lane-swap/SKILL.md"
+#: THE SKILL THAT CARRIES THE ACT, READ OUT OF THE INSTALLER'S OWN
+#: `SKILL_NAME` rather than spelled here. Amendment 17(a) renamed the act from
+#: `lane-swap` to `handoff` and left an ALIAS FILE at the old path — one that
+#: restates no step, by the rule `tests/test_install_skill_and_hook.py` holds —
+#: so a constant spelled here went on reading a file with nothing in it to
+#: check, and every assertion below passed on an emptiness. The installer
+#: declares the canonical name once; this follows it, and the next rename moves
+#: both together.
+def _canonical_skill_path() -> str:
+    text = (REPO / "openRepoTools").read_text(encoding="utf-8")
+    match = re.search(r'^SKILL_NAME="([A-Za-z0-9._-]+)"$', text, re.MULTILINE)
+    assert match, "openRepoTools no longer declares `SKILL_NAME=\"…\"`"
+    return f"skills/{match.group(1)}/SKILL.md"
+
+
+SWAP_SKILL = _canonical_skill_path()
 
 
 def test_the_swap_skill_snippet_and_its_prose_spell_the_same_command():

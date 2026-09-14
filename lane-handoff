@@ -13,6 +13,11 @@
 #   lane-handoff --exit [why]      the same, and then type `/exit` into this
 #                                  lane's own pane (Amendment 18(d), for a
 #                                  handoff another place REQUESTED)
+#   lane-handoff --in-process [why]
+#                                  the same, for a clear that keeps THIS PROCESS
+#                                  running: the record says `kind in-process`
+#                                  and the top block tells the next session that
+#                                  every writer SURVIVED and to relaunch none
 #   lane-handoff --late --at <UTC> [why]
 #                                  the record written AFTER THE FACT for a swap
 #                                  that never ran, BEFORE the relaunch
@@ -35,8 +40,9 @@
 # — and nothing else changes with the why. That is the whole of clause (a):
 # *"The word has been wrong, not the act."*
 #
-# THE THREE FLAGS, and each is one act after the record rather than a second
-# kind of record:
+# THE FLAGS, and each is one act after the record rather than a second kind of
+# record — except `--in-process`, which is the one fact about the act that
+# FOLLOWS the record and which the record therefore carries:
 #
 #   --restart  Amendment 17(f), `/ctx`: *"a `/ctx` whose record could not be
 #              written REFUSES before it kills anything (a pane is never
@@ -49,6 +55,15 @@
 #   --late     Amendment 17 adoption act 7: the swap that never ran, recorded
 #              after the fact. It is written BEFORE the relaunch — see THE LATE
 #              RULE below, which is the whole of why it takes `--at`.
+#   --in-process
+#              THE WRITERS SURVIVE THIS ONE. Measured in this lane on
+#              2026-09-14: a harness `/clear` mints a new transcript id IN THE
+#              SAME PROCESS, so every subagent the lane has running lives
+#              through it and only its in-flight tool calls die. The record then
+#              says `kind in-process` and the top block tells the next session
+#              to RELAUNCH NONE OF THEM — because relaunching a writer that is
+#              still alive puts two of them on one worktree. Every other form is
+#              `kind respawn`: a new process, and its writers are gone.
 #
 # THE LATE RULE, stated here because it is the one rule of this command a
 # reader cannot derive from the amendment. A lane's state is its log's LAST
@@ -108,9 +123,9 @@ quoted() { printf '%q ' "$@" | sed 's/ $//'; }
 
 usage() {
 	cat <<'USAGE'
-lane-handoff [--restart | --exit] [--late --at <UTC>] [--lane <lane>]
-             [--agent <name>] [--transcript <id|none>] [--writers-file <path>]
-             [--dir <path>] [why …]
+lane-handoff [--restart | --exit | --in-process] [--late --at <UTC>]
+             [--lane <lane>] [--agent <name>] [--transcript <id|none>]
+             [--writers-file <path>] [--dir <path>] [why …]
 
   lane-handoff [why]      hand this lane off — the act /handoff, /swap and
                           /lane-swap all name. The identity triple is fixed,
@@ -125,6 +140,12 @@ lane-handoff [--restart | --exit] [--late --at <UTC>] [--lane <lane>]
                           be written refuses before anything is killed.
   --exit                  after the record, type /exit into this lane's own
                           pane (Amendment 18(d): a handoff to another place).
+  --in-process            the clear that follows keeps THIS PROCESS running (a
+                          harness /clear), so every writer this lane has running
+                          survives it: the record says `kind in-process` and the
+                          top block tells the next session to relaunch NONE of
+                          them. Refused with --restart and --exit, which each
+                          replace the process. Default: `kind respawn`.
   --late --at <UTC>       write the record a swap never left, dated by the
                           moment the old session ended. Run it from a shell
                           BEFORE the relaunch; see --help's LATE RULE.
@@ -144,7 +165,7 @@ USAGE
 
 # ------------------------------------------------------------------ arguments
 
-do_restart=0; do_exit=0; do_late=0
+do_restart=0; do_exit=0; do_late=0; do_in_process=0
 late_at=""; lane=""; agent=""; transcript=""; writers_file=""; dir_flag=""
 why=""
 
@@ -166,6 +187,13 @@ while [ $# -gt 0 ]; do
 	--restart) do_restart=1; shift ;;
 	--exit) do_exit=1; shift ;;
 	--late) do_late=1; shift ;;
+	# THE PROCESS SURVIVES THIS ONE, AND THAT CHANGES WHAT THE NEXT SESSION IS
+	# TOLD (measured in this lane on 2026-09-14): a harness `/clear` mints a new
+	# transcript id IN THE SAME PROCESS, so every subagent this lane has running
+	# lives through it and only its in-flight tool calls die. A block that then
+	# says *relaunch every writer* puts a second writer on a worktree the first
+	# one still holds.
+	--in-process) do_in_process=1; shift ;;
 	--at) late_at="$(flag_value --at "${2-}")"; shift 2 ;;
 	--at=*) late_at="${1#--at=}"; shift ;;
 	--lane) lane="$(flag_value --lane "${2-}")"; shift 2 ;;
@@ -197,6 +225,41 @@ done
 # `pclaude`.
 [ "$do_late" = 1 ] && { [ "$do_restart" = 1 ] || [ "$do_exit" = 1 ]; } &&
 	die "--late is the record a swap never left, written from a shell BEFORE the relaunch: there is no session of this lane's to restart or exit. Write the late record first, then start the lane." 2
+
+# ------------------------------------------- THE KIND OF CLEAR THIS RECORDS
+#
+# MEASURED IN THIS LANE ON 2026-09-14, and it is the difference between a
+# handoff a session can act on and one that costs it a worktree:
+#
+#   in-process  a harness `/clear` — and any `/ctx` that clears IN PLACE rather
+#               than respawning the pane — mints a NEW TRANSCRIPT ID IN THE SAME
+#               PROCESS. Every subagent this lane has running SURVIVES it; only
+#               the tool calls they had in flight die (a `Bash` killed at the
+#               clear exits 137). A top block that then says *relaunch every
+#               writer below* puts a SECOND writer on a worktree the first one
+#               still holds, and the two of them lose each other's work.
+#   respawn     the pane is respawned (`--restart`), the session is ended
+#               (`--exit`), or the person relaunches through the launcher after
+#               a plain handoff — a NEW PROCESS either way, and every writer of
+#               the old one is gone. Relaunching them is what the next session
+#               is for.
+#
+# THE DEFAULT IS `respawn` BECAUSE THE PLAIN FORM PRINTS A RESTART LINE: the act
+# that follows it is a launch, and a person who is about to clear in place says
+# so with `--in-process`. Both are recorded, so no reader has to infer it.
+[ "$do_in_process" = 1 ] && { [ "$do_restart" = 1 ] || [ "$do_exit" = 1 ]; } &&
+	die "--in-process says THIS PROCESS KEEPS RUNNING, and --restart respawns this lane's pane while --exit ends the session: each of those replaces the process every writer of this lane is a child of. Pick one — the flag is for a clear that happens inside the session that is running." 2
+if [ "$do_in_process" = 1 ]; then
+	handoff_kind=in-process
+	kind_headline='every writer below SURVIVED this clear — list them before you touch any of them'
+	kind_act='THIS HANDOFF WAS WRITTEN FOR AN IN-PROCESS CLEAR: the process was not replaced, so expect `ListAgents` to name every writer below and relaunch NONE of them — ask each for where it stands instead.'
+	kind_state='the process was not replaced, so every writer above kept running through the clear and only its in-flight tool calls died'
+else
+	handoff_kind=respawn
+	kind_headline='relaunch every writer below from where it stands'
+	kind_act='THIS HANDOFF WAS WRITTEN FOR A RESPAWN: the process that ran the writers is gone, so expect `ListAgents` to name none of them and relaunch each one from where it stood.'
+	kind_state='a NEW PROCESS takes this lane on — the pane respawned, the session ended, or the restart line below typed — so every writer of the old one is gone with it'
+fi
 
 # ---------------------------------------------------------------- the helper
 #
@@ -574,14 +637,16 @@ top_block() {
 	printf 'Lane: %s (%s, session %s) — single-use resume prompt: stamp RESUMED-by before acting (lane-collision-protocol rule 3)\n' \
 		"$lane" "${profile_name:-profile unknown}" "${uuid:-unknown}"
 	printf '\n'
-	printf '## RESUME PROMPT — PAUSED %s (%s), agent %s, transcript %s — relaunch every writer below from where it stands\n\n' \
-		"$UTC" "${why:-handoff}" "$agent" "$transcript"
-	printf '**FIRST ACTS, in order.** (1) You are lane `%s`%s%s. Stamp this block RESUMED before anything else (Rule 3, single use) — `lane-start --no-launch <repo> <n>` in this window writes it. (2) Read AGENTS.md, then this block. (3) RELAUNCH EVERY WRITER in WRITERS below from where it stands: each one'"'"'s worktree, branch and last commit are named, and a writer with unpushed work is relaunched before anything else is started. Older sections below are history.\n\n' \
-		"$lane" "${window_ref:+ in tmux window \`$window_ref\`}" "${dir:+, checkout \`$dir\`}"
-	printf '**STATE at %s.** Handed off by `%s` on %s: %s. Agent `%s`, transcript `%s`.%s\n\n' \
+	printf '## RESUME PROMPT — PAUSED %s (%s), agent %s, transcript %s, kind %s — %s\n\n' \
+		"$UTC" "${why:-handoff}" "$agent" "$transcript" "$handoff_kind" "$kind_headline"
+	printf '**FIRST ACTS, in order.** (1) You are lane `%s`%s%s. Stamp this block RESUMED before anything else (Rule 3, single use) — `lane-start --no-launch <repo> <n>` in this window writes it. (2) Read AGENTS.md, then this block. (3) RUN `ListAgents` FIRST, before relaunching anything. A WRITER STILL LISTED IS ALIVE AND OWNS ITS WORKTREE: DO NOT RELAUNCH IT — two writers on one worktree is how the work in it is lost. Relaunch only writers `ListAgents` does NOT name, and only after `git status --short` and `git log @{u}..` in that worktree say where it stood. %s Older sections below are history.\n\n' \
+		"$lane" "${window_ref:+ in tmux window \`$window_ref\`}" "${dir:+, checkout \`$dir\`}" "$kind_act"
+	printf '**STATE at %s.** Handed off by `%s` on %s: %s. Agent `%s`, transcript `%s`. Kind `%s`: %s.%s\n\n' \
 		"$UTC" "$prog" "${ws:-<no workstation>}" "${why:-no why given}" "$agent" "$transcript" \
+		"$handoff_kind" "$kind_state" \
 		"${ws_missing:+ THE REGISTER AND OBJECT-LOG WRITES WERE NOT MADE: this session ran with no configured workstation, so the row still reads as it did and the register is BEHIND this file (\`R-A11-14\`). The next session binds with \`lane-start --no-launch\`.}"
-	printf '**WRITERS at %s** (%s found under `%s`):\n\n' "$UTC" "$writer_count" "${dir:-<no recorded checkout>}"
+	printf '**WRITERS at %s** (%s found under `%s`) — `ListAgents` FIRST: a writer it still names is alive and owns its worktree, and only the ones it does not name are relaunched:\n\n' \
+		"$UTC" "$writer_count" "${dir:-<no recorded checkout>}"
 	if [ "$writer_count" = 0 ]; then
 		printf -- '- none running at the handoff. A writer this lane starts later is listed by the next refresh.\n'
 	else
@@ -675,6 +740,13 @@ case "$dir_field" in *' '*) dir_field="\"$dir_field\"" ;; esac
 # before this amendment stops at the sub-field it knows and a reader that finds
 # none says so (Amendment 7(i)'s cutover rule).
 payload="$payload; agent $agent; transcript $transcript"
+# AND THE KIND OF CLEAR, AFTER THEM, ON THE SAME ARGUMENT: a reader written
+# before this field stops at the sub-field it knows. It is in the record and not
+# only in the handoff because the record is what a launcher and a later reader
+# have — `in-process` says the writers of that session were still running when
+# the line was written, which is the one fact that decides whether relaunching
+# them is right.
+payload="$payload; kind $handoff_kind"
 [ -z "$refused" ] || note "DROPPED sub-field (not appended, and the line is still written):$refused"
 
 # ------------------------------------------------------------ the LATE branch

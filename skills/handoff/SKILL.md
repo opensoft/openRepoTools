@@ -216,18 +216,39 @@ so nothing below is rewritten and everything already there stays as history unde
 ```text
 Lane: <lane> (<profile>, session <uuid>) — single-use resume prompt: stamp RESUMED-by before acting (lane-collision-protocol rule 3)
 
-## RESUME PROMPT — PAUSED <UTC> (<why>), agent <agent>, transcript <id|none> — relaunch every writer below from where it stands
+## RESUME PROMPT — PAUSED <UTC> (<why>), agent <agent>, transcript <id|none>, kind <in-process|respawn> — <relaunch every writer below from where it stands | every writer below SURVIVED this clear — list them before you touch any of them>
 
 **FIRST ACTS, in order.** (1) You are lane `<lane>` in tmux window `<window>`, checkout `<dir>`. Stamp this
-block RESUMED before anything else (Rule 3, single use). (2) Read AGENTS.md, then this block. (3) RELAUNCH
-EVERY WRITER in WRITERS below from where it stands. Older sections below are history.
+block RESUMED before anything else (Rule 3, single use). (2) Read AGENTS.md, then this block. (3) RUN
+`ListAgents` FIRST, before relaunching anything. A WRITER STILL LISTED IS ALIVE AND OWNS ITS WORKTREE: DO NOT
+RELAUNCH IT — two writers on one worktree is how the work in it is lost. Relaunch only writers `ListAgents`
+does NOT name, and only after `git status --short` and `git log @{u}..` in that worktree say where it stood.
+<the kind's own sentence, from the table below.> Older sections below are history.
 
-**STATE at <UTC>.** <what is true, what is owed, every word given and not yet executed>
+**STATE at <UTC>.** <what is true, what is owed, every word given and not yet executed> Kind `<kind>`: <its
+sentence>.
 
-**WRITERS at <UTC>** (<n> found under `<dir>`):
+**WRITERS at <UTC>** (<n> found under `<dir>`) — `ListAgents` FIRST: a writer it still names is alive and owns its worktree, and only the ones it does not name are relaunched:
 
 - `<worktree>` — branch `<branch>`, last commit `<sha> <subject>`, <n> dirty, <m> unpushed; brief: <the brief that writer was given>
 ```
+
+**THE KIND IS NOT COSMETIC, AND IT WAS MEASURED HERE ON 2026-09-14.** A harness `/clear` — and any `/ctx`
+that clears IN PLACE rather than respawning the pane — mints a NEW TRANSCRIPT ID IN THE SAME PROCESS: every
+subagent this lane has running SURVIVES it, and only the tool calls they had in flight die (a `Bash` killed
+that way exits 137). A handoff that then tells the next session *relaunch every writer* puts a SECOND writer
+on a worktree the first one still holds. Only a new process — the pane respawned (`--restart`), the session
+ended (`--exit`), a relaunch through the launcher after a plain handoff — takes the writers with it.
+
+| kind | when | the sentence act (3) carries | what the next session does |
+|---|---|---|---|
+| `in-process` | a `/clear`, or a `/ctx` that clears in place | *THIS HANDOFF WAS WRITTEN FOR AN IN-PROCESS CLEAR: the process was not replaced, so expect `ListAgents` to name every writer below and relaunch NONE of them — ask each for where it stands instead.* | lists, then asks; relaunches nothing |
+| `respawn` | `--restart`, `--exit`, or a plain handoff whose restart line is typed | *THIS HANDOFF WAS WRITTEN FOR A RESPAWN: the process that ran the writers is gone, so expect `ListAgents` to name none of them and relaunch each one from where it stood.* | lists (expecting none), then relaunches each |
+
+`lane-handoff` writes whichever of the two applies — `--in-process` for the first, nothing for the second —
+and the `PAUSED` payload carries it as `kind <in-process|respawn>` beside `agent` and `transcript`, because
+the record is what a later reader has. **`ListAgents` comes first in both**: the rule is *never relaunch a
+writer that is still listed*, and it holds whatever the block says about the kind.
 
 **Line 1 and the blank line after it are STRUCTURAL**: `lane-start` splices its `RESUMED by …` stamp at the
 line immediately after the first blank line that follows line 1, so a block that does not open that way is a
@@ -603,6 +624,15 @@ reads the record step 4 just wrote — the lane's recorded directory and profile
 `lane` is not on `PATH`** (it arrives with #43, and this act shipped first) the line is `pclaude --lane
 <lane> <profile>`, the same act one door along: a respawn is the one act no later refusal can undo, so the
 word is used only where it can be seen on `PATH`.
+
+**A `/ctx` THAT RESPAWNS IS `kind respawn`; ONE THAT CLEARS IN PLACE IS NOT.** The respawn above replaces the
+pane's process, so every writer of this lane dies with it and the next session is right to relaunch them —
+which is what the block it comes up holding says. If what is about to happen is an IN-PROCESS clear instead
+(the harness's own `/clear`, which mints a new transcript id in the SAME process), the writers LIVE THROUGH
+IT: write the record with `lane-handoff --in-process` (or the same two texts by hand), and the block will
+tell the next session to run `ListAgents` and relaunch NONE of them. **Never tell a session to relaunch a
+writer that is still running** — that is two writers on one worktree, and it is what this lane measured on
+2026-09-14.
 
 **`/handoff --exit requested by <uuid>@<host>/<container>` — the handoff another place asked for.** After
 the record, `/exit` is typed into this lane's own pane (Amendment 12's M1, the one mechanism there is), and

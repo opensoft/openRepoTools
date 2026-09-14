@@ -207,6 +207,25 @@ git submodule update --init upstream/openRepoShape
 python3 -m pytest tests -q
 ```
 
+**ONE SUITE AT A TIME WHERE LANES SHARE A WORKSTATION.** This run is minutes of
+bash and hundreds of `git` processes, and several lanes build in sibling
+worktrees of the same checkout. Serialize with a LOCK, and anchor the pattern so
+it counts only real runs:
+
+```sh
+pat='^python3 -m pyt'"est"                       # split so it cannot match itself
+while [ "$(pgrep -fc "$pat")" -gt 0 ]; do sleep 20; done
+flock "${TMPDIR:-/tmp}/openrepotools-pytest.lock" python3 -m pytest tests -q
+```
+
+Two measured defects, both on 2026-09-14. A guard written `pgrep -af '…' | grep
+-v pgrep >/dev/null` NEVER WAITS where `grep` is the harness's own shell
+function, whose status is 1 when its stdout is `/dev/null` — four suites ran at
+once under it — and an unanchored pattern matches the guard's own command line.
+A poll ALONE then lets every waiter start the instant the run ends, which is the
+same collision one step later: the lock is what makes the second one wait, and
+every lane on one workstation must name the SAME lock file or there is none.
+
 `tests/test_lane_helpers.sh` is 122 KB of bash that arrived with the move;
 `tests/test_lane_helpers_suite.py` is what makes `pytest` run it, so it is one
 slow test rather than no test at all. Everything shipped here is parsed under

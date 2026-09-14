@@ -1508,7 +1508,7 @@ The `PAUSED` payload gains two beside Amendment 11(c)'s `window`, `dir` and
 `profile`:
 
 ```text
-PAUSED — lane repoHF-1, session a17a0001-…@Eagle, 2026-09-14T17:05:11Z, lane:repoHF-1 → swap; window hfsess:0 @21; dir /home/b/projects/repoHF; profile team-05a; workstation Eagle; agent claude; transcript a17a0001-… — clear
+PAUSED — lane repoHF-1, session a17a0001-…@Eagle, 2026-09-14T17:05:11Z, lane:repoHF-1 → swap; window hfsess:0 @21; dir ~/projects/repoHF; profile team-05a; workstation Eagle; agent claude; transcript a17a0001-… — clear
 ```
 
 - **`agent <name>`** — `claude`, `codex`, or the launcher's name for whatever
@@ -1517,6 +1517,19 @@ PAUSED — lane repoHF-1, session a17a0001-…@Eagle, 2026-09-14T17:05:11Z, lane
   own, and `lane-start --agent` reads it back to choose a launcher.
 - **`transcript <id|none>`** — the agent's own resumable id where it has one.
   `none` is an **answer**, not a gap.
+
+And the tooling writes a third beside them, `kind <in-process|respawn>`, because
+it is the one fact about the act that FOLLOWS the record and no later reader can
+infer it: **an in-process clear does not kill this lane's writers.** Measured
+here on 2026-09-14 — a harness `/clear` mints a new transcript id in the SAME
+process, so every subagent survives it and only its in-flight tool calls die (a
+`Bash` killed that way exits 137). Only a new process takes them: the pane
+respawned (`--restart`), the session ended (`--exit`), or the launcher run after
+a plain handoff. `lane-handoff --in-process` writes the first; everything else
+writes `respawn`. What the kind decides is what the next session is told — and
+in both cases the top block's act (3) is **`ListAgents` FIRST: a writer still
+listed is alive and owns its worktree, so relaunch only the ones it does not
+name**, because two writers on one worktree is how the work in it is lost.
 
 **The writer validates both** (`pause_subfields_check`, called from
 `write_event`) and refuses the line rather than writing a sub-field no reader can
@@ -1529,7 +1542,7 @@ gains a sixth and a seventh field for the same two:
 
 ```console
 $ lanes-edit.sh swapped Eagle
-repoHF-1	2026-09-14T17:05:11Z	hfsess:0 @21	/home/b/projects/repoHF	team-05a	claude	a17a0001-…
+repoHF-1	2026-09-14T17:05:11Z	hfsess:0 @21	~/projects/repoHF	team-05a	claude	a17a0001-…
 repoSW-1	2026-09-12T10:00:00Z	claude-team-05b-20260912102132-2699:0
 ```
 
@@ -1564,9 +1577,13 @@ how the register has spelled Codex sessions since 2026-09-05.
 `/ctx` (`/handoff --restart`) performs the handoff and then **restarts in
 place**: `tmux respawn-pane -k` on the lane's own pane, with a NEW session of the
 same agent whose **first prompt is the handoff's top block**. That block's first line is *"relaunch every writer below from where it
-stands"*, and its `WRITERS` section lists every worktree the lane had running —
-its branch, its last commit, what it was holding, and the brief it was given —
-so the new session relaunches them rather than discovering them.
+stands"* — a respawn really does take the writers with it — and its `WRITERS`
+section lists every worktree the lane had running: its branch, its last commit,
+what it was holding, and the brief it was given, so the new session relaunches
+them rather than discovering them, after `ListAgents` has told it which are
+still alive. **A `/ctx` that clears IN PLACE rather than respawning is the other
+kind and must say so** (`--in-process`): the process survives, its writers
+survive with it, and the next session relaunches NONE of them.
 
 **The record comes first, always.** A `/ctx` whose `PAUSED` line could not be
 written **refuses before it kills anything**: a pane is never respawned over an
@@ -1632,7 +1649,7 @@ the transcript**, and says when that directory is shared:
 
 ```text
 lane-start: transcript a17a…f3 found in this profile's projects directory
-(/home/b/.claude/projects), which IS the directory profile(s) t3 read too (one
+(~/.claude/projects), which IS the directory profile(s) t3 read too (one
 shared directory: a profile switch resumes this lane by id and moves nothing)
 ```
 

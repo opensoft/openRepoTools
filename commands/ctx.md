@@ -20,8 +20,13 @@ What that means in order, and the order is the rule:
 2. **then** the lane's own pane is respawned through the launcher — `tmux respawn-pane -k`, so the act
    survives the death of the session that started it — with a NEW session of the same agent whose FIRST
    PROMPT is that top block, run without anyone typing it;
-3. that session stamps `RESUMED by …` first, as Rule 3 requires, and then **relaunches every writer the
-   block lists, from where each stood**.
+3. that session stamps `RESUMED by …` first, as Rule 3 requires, then runs `ListAgents` — **a writer still
+   listed is alive and owns its worktree, and is never relaunched** — and **relaunches every writer the block
+   lists that `ListAgents` does not name, from where each stood**.
+
+Because this `/ctx` respawns the pane, the process every writer was a child of is gone and relaunching them
+is right; the record says so (`kind respawn`). A clear that happens IN PLACE instead keeps that process, and
+its writers with it — that one is `--in-process`, and its block tells the next session to relaunch none.
 
 **A `/ctx` whose record could not be written REFUSES before it kills anything.** A pane is never respawned
 over an unrecorded lane: if the `PAUSED` line did not land, this pane stays exactly as it is and the reason
