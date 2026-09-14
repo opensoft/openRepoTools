@@ -3587,47 +3587,51 @@ is    "a peer's rewrite of the SAME row is a real conflict: exit 3" "$rc" 3
 has   "…REBASE CONFLICT is still named" "$err" "REBASE CONFLICT on origin/main"
 has   "…the abort runs and says the tree is clean" "$err" "rebase ABORTED — the worktree is clean and NOT mid-rebase"
 is    "…and it really is clean" "$(git -C "$WIP" status --porcelain | grep -c .)" 0
-has   "…told to fetch and check ANCESTRY before resetting or redoing anything" "$err" \
-      "merge-base --is-ancestor"
-has   "…a real ancestry test, not a log capped at a few entries (Copilot round 2 on #50)" "$err" \
-      "&& echo ALREADY-THERE || echo not-there; } || echo FETCH-FAILED   # ancestry, not a capped log"
-cp_sha_printed="$(printf '%s\n' "$err" | grep -oE 'is-ancestor [0-9a-f]{7,40} origin/main' | head -n1 | awk '{print $2}')"
-is    "…naming a real local commit to check ancestry of, not a placeholder" \
-      "$([ -n "$cp_sha_printed" ] && printf 'has-sha' || printf 'MISSING')" "has-sha"
+has   "…told to fetch before resetting or redoing anything" "$err" \
+      "fetch origin main || echo FETCH-FAILED"
+has   "…and STOP named for a FAILED fetch too, never treated as leave to redo" "$err" \
+      "if that printed FETCH-FAILED, STOP and retry — a stale or unreachable origin proves nothing either way"
 
-# Copilot's round-3 review of #50 (5203261904): `fetch && merge-base ... &&
-# echo A || echo B` is left-associative, so a FAILED fetch also falls to the
-# trailing `||` and prints the SAME "not-there" a genuine non-ancestor does —
-# silently waving reset/redo through against a ref that was never refreshed.
-# Grouping the merge-base-and-echo pair in `{ }` makes a THIRD outcome
-# possible, reached only when fetch itself failed.
-has   "…and a FAILED fetch is its own THIRD outcome, never folded into not-there" "$err" \
-      "|| echo FETCH-FAILED"
-has   "…named as answering neither ALREADY-THERE nor not-there" "$err" \
-      "a FAILED fetch answers NEITHER, never treat it as not-there"
+# Copilot's round-4 review of #50 (5203455553): the very peer write this
+# recovery exists for carries a dangling commit by REBASING it onto a newer
+# base — which the branch just above this one takes — and a rebase changes
+# the commit's sha without changing its patch. `merge-base --is-ancestor
+# $cp_sha …` (round 2's own fix) checks the OLD sha, so it can still answer
+# "not-there" once the change is published under a new one. `git cherry`
+# compares by PATCH, so it finds it either way; verified against a real bare
+# repo for a peer-rebased commit (0, correctly ALREADY THERE — where
+# `merge-base --is-ancestor` on the same sha answered "not-there"), a
+# genuinely local-only one (1, correctly not-there), and a fetch against a
+# bad remote (FETCH-FAILED, cherry never run against a stale ref).
+has   "…checked by CONTENT (git cherry), never by a sha a peer's rebase can change" "$err" \
+      "cherry origin/main"
+cp_sha_printed="$(printf '%s\n' "$err" | grep -oE 'cherry origin/main [0-9a-f]{7,40}' | head -n1 | awk '{print $3}')"
+is    "…naming a real local commit to check, not a placeholder" \
+      "$([ -n "$cp_sha_printed" ] && printf 'has-sha' || printf 'MISSING')" "has-sha"
+has   "…counting only the patches git cherry could not find upstream" "$err" \
+      "grep -c '^+'"
 has   "…the reset is now conditional on that look, not unconditional" "$err" \
       "only if it is not there: read back exactly what you wrote"
 has   "…and the die itself is scoped to this attempt, never a permanent claim" "$err" \
       "not pushed by this attempt; a later write from this checkout may already carry it"
 hasnt "…never the old unconditional claim an aborted pull cannot prove" "$err" \
       "rebase conflict on origin/main — nothing was pushed."
-pc_look="$(printf '%s\n' "$err" | grep -n -- 'merge-base --is-ancestor' | head -n1 | cut -d: -f1)"
+pc_fetch="$(printf '%s\n' "$err" | grep -n -- 'fetch origin main || echo FETCH-FAILED' | head -n1 | cut -d: -f1)"
+pc_look="$(printf '%s\n' "$err" | grep -n -- 'cherry origin/main' | head -n1 | cut -d: -f1)"
 pc_reset="$(printf '%s\n' "$err" | grep -n -- 'reset --hard origin/main' | head -n1 | cut -d: -f1)"
-is    "…the look printed BEFORE the reset it gates, the same order RV-B3 pins" \
-      "$([ -n "$pc_look" ] && [ -n "$pc_reset" ] && [ "$pc_look" -lt "$pc_reset" ] && printf 'look first' || printf "look $pc_look, reset $pc_reset")" "look first"
+is    "…fetched, THEN checked by content, THEN reset — the same order RV-B3 pins" \
+      "$([ -n "$pc_fetch" ] && [ -n "$pc_look" ] && [ -n "$pc_reset" ] && [ "$pc_fetch" -lt "$pc_look" ] && [ "$pc_look" -lt "$pc_reset" ] && printf 'ordered' || printf "fetch $pc_fetch, look $pc_look, reset $pc_reset")" "ordered"
 
 # Copilot's review of #50 (5202640056), suppressed comment on lanes-edit.sh:1180:
 # the gate above was attached only to the diagnostic `diff` line — a caller
-# whose fetch/log just showed the commit already on origin was still told, by
+# whose fetch/look just showed the commit already on origin was still told, by
 # the next two unconditional lines, to reset and redo, which is the exact
 # duplicate this PR exists to prevent. A single STOP between the look and the
 # reset gates all three lines below it (diff, reset, redo) at once, the same
 # job the existing "only if it is not there" qualifier does for the diff line
 # alone.
 has   "…and told to STOP there instead of resetting or redoing a landed commit" "$err" \
-      "if that printed ALREADY-THERE, STOP — reset or redo now would write it a second time."
-has   "…and STOP on a FAILED fetch too, never treated as leave to redo" "$err" \
-      "If it printed FETCH-FAILED, STOP and retry the fetch — a stale or unreachable origin proves nothing either way."
+      "if that printed 0, STOP — reset or redo now would write it a second time."
 pc_stop="$(printf '%s\n' "$err" | grep -n -- 'STOP — reset or redo now' | head -n1 | cut -d: -f1)"
 is    "…the STOP sits between the look and the reset, gating both reset and redo" \
       "$([ -n "$pc_look" ] && [ -n "$pc_stop" ] && [ -n "$pc_reset" ] && [ "$pc_look" -lt "$pc_stop" ] && [ "$pc_stop" -lt "$pc_reset" ] && printf 'ordered' || printf "look $pc_look, stop $pc_stop, reset $pc_reset")" "ordered"

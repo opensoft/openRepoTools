@@ -1908,6 +1908,14 @@ def test_the_exit_3_documentation_agrees_with_the_die_message_it_describes():
     comment-continuation line — so the comparison text is whitespace-
     normalized (one space, however the source wrapped it) rather than
     matched as one literal run of characters.
+
+    Round 4 (5203455553) found this test's own gap in THAT check: it looked
+    for the bare word "timeout" only, which the round-3 wording ("timeout on
+    the push itself") already satisfied while omitting `git_timeout_die`'s
+    OTHER call site — a timed-out `git pull --rebase` (lanes-edit.sh:1166) —
+    entirely. Checking for "timeout" alone would keep passing even if a push
+    is all either row ever names again; "push" and "pull" are now checked
+    for too, so the row has to cover both keywords or the test catches it.
     """
     src = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
     m = re.search(r'die "(rebase conflict on origin/\$LANES_BRANCH[^"]*)" 3\b', src)
@@ -1948,13 +1956,15 @@ def test_the_exit_3_documentation_agrees_with_the_die_message_it_describes():
         "docs/README-lanes.md's exit-3 row no longer names the attempt-scoped wording")
     for name, flat in (("lanes-edit.sh's own exit-code table", table_flat),
                         ("docs/README-lanes.md's own exit-codes table", manual_flat)):
-        for cause in ("timeout", "peer's"):
+        for cause in ("timeout", "push", "pull", "peer's"):
             assert cause in flat, (
-                f"{name} no longer names a {cause!r} cause, one of exit 3's "
-                "other two causes (#50 round 3, 5203261904) — this table "
-                "claims to be \"no two meanings on one number\", so a code "
-                "with three causes has to name all three or it is back to "
-                "being wrong")
+                f"{name} no longer names a {cause!r} cause, part of exit 3's "
+                "other two causes (#50 rounds 3 and 4, 5203261904 and "
+                "5203455553) — `git_timeout_die` fires for a push OR a pull "
+                "timeout (lanes-edit.sh:1112/1141/1160 and :1166), and this "
+                "table claims to be \"no two meanings on one number\", so a "
+                "code with three causes has to name all three or it is back "
+                "to being wrong")
 
 
 #: ADOPTION ACT 0, AND THE ONE SHA THAT IS IT. `opensoft/brett-wip#5` merged

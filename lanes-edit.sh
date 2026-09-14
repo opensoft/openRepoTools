@@ -185,15 +185,17 @@
 #      carry both without the caller guessing, so the newer reads spend a number
 #      of their own and the older half of this file keeps 2 where it always was.
 #      Clause (h)'s table is the contract for which read uses which.
-#   3  the commit stays local — never a permanent loss, but not confirmed on
-#      origin from THIS attempt either. THREE CAUSES (Copilot round 3 on #50,
+#   3  the edit is never a permanent loss, but this attempt cannot confirm
+#      whether it also reached origin. THREE CAUSES (Copilot round 3 on #50,
 #      5203261904, naming the other two this row used to leave out): a
 #      rebase conflict this attempt could not resolve — not pushed BY THIS
 #      ATTEMPT; a later write from this checkout may already carry it to
-#      origin, so LOOK by ancestry before you retry; `git_timeout_die`'s
-#      network timeout on the push itself, where a hung push often already
-#      landed; or six attempts exhausted because a peer's own uncommitted
-#      file blocks every rebase.
+#      origin, so LOOK by CONTENT before you retry (round 4, 5203455553:
+#      SHA ancestry alone misses a peer's rebase of it, which changes the
+#      hash but not the patch); `git_timeout_die`'s network timeout on a
+#      push OR a pull, where a hung one often already landed; or six
+#      attempts exhausted because a peer's own uncommitted file blocks
+#      every rebase.
 #   4  the mutex could not be taken within 60s
 #   5  an edit moved more than one line and was refused — or, Amendment 15, a
 #      lane's object log could not be renamed to the row's own spelling
@@ -1188,13 +1190,24 @@ EOF
       # echo B` is left-associative — a FAILED fetch also falls to the `||`
       # and prints the SAME "not-there" a genuine non-ancestor does, so a
       # stale or unreachable origin would silently wave the reset/redo path
-      # through. The merge-base-and-echo pair is grouped in `{ }` so the
-      # trailing `|| echo FETCH-FAILED` only fires when fetch ITSELF failed
-      # (the group then never runs at all, against a ref that was never
-      # refreshed).
+      # through. Fetch is now its own line, checked before anything else.
+      # ROUND 4 (Copilot 5203455553): SHA ancestry is the wrong test — the
+      # very write this whole recovery exists to catch (a peer's own
+      # `commit_push` pulling THIS dangling commit and rebasing it onto a
+      # newer base, per the very next branch above) gives it a NEW sha, so
+      # `merge-base --is-ancestor $cp_sha …` answers "not-there" even once
+      # the CONTENT is published. `git cherry` compares by PATCH, not by
+      # sha, so a rebase that only replays the same change (no real
+      # conflict) is still found. Measured against a real bare repo: a
+      # commit rebased by a peer this way answers `not-there` under
+      # `merge-base --is-ancestor` and `-` (found, equivalent) under
+      # `git cherry` — verified for the genuinely-absent case too (`+`) and
+      # the plain same-sha case (no output at all, which the `-c '^+'`
+      # count below also reads as zero, i.e. already there).
       note "RECOVERY (in that order):"
-      note "  git -C $LANES_REPO fetch origin $LANES_BRANCH && { git -C $LANES_REPO merge-base --is-ancestor $cp_sha origin/$LANES_BRANCH && echo ALREADY-THERE || echo not-there; } || echo FETCH-FAILED   # ancestry, not a capped log — and a FAILED fetch answers NEITHER, never treat it as not-there"
-      note "  if that printed ALREADY-THERE, STOP — reset or redo now would write it a second time. If it printed FETCH-FAILED, STOP and retry the fetch — a stale or unreachable origin proves nothing either way."
+      note "  git -C $LANES_REPO fetch origin $LANES_BRANCH || echo FETCH-FAILED   # if that printed FETCH-FAILED, STOP and retry — a stale or unreachable origin proves nothing either way"
+      note "  git -C $LANES_REPO cherry origin/$LANES_BRANCH $cp_sha | grep -c '^+'   # BY CONTENT, not by sha: a peer's rebase changes the hash but git cherry still finds the same patch"
+      note "  if that printed 0, STOP — reset or redo now would write it a second time."
       note "  git -C $LANES_REPO diff origin/$LANES_BRANCH..HEAD -- ${CP_PATHS[*]}   # only if it is not there: read back exactly what you wrote"
       note "  git -C $LANES_REPO reset --hard origin/$LANES_BRANCH                # then drop the local commits (NOTE: also drops any"
       note "                                                          # uncommitted peer edit in this checkout)"
