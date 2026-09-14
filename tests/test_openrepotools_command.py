@@ -515,6 +515,42 @@ def test_install_names_a_dangling_symlink_of_a_retired_name(tmp_path, name):
     assert f"rm {link}" in result.stdout
 
 
+@pytest.mark.parametrize("name", RETIRED)
+@NEEDS_JQ
+def test_install_retires_only_after_the_placement_it_migrates_to(tmp_path, name):
+    """THE ONE DESTRUCTIVE STEP IS THE LAST ONE.
+
+    Copilot round 7 on #45, `openRepoTools:369`. `retire_commands` ran BEFORE
+    `place_skill_and_hook`, so a skills directory this run could not write left
+    a workstation with the old word already deleted and the adoption it was
+    migrating to unfinished — while every other refusal in that file places
+    NOTHING rather than half of it. Here `~/.claude/skills` is a regular file,
+    which is a `mkdir -p` that cannot succeed.
+    """
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    stale = bin_dir / name
+    stale.write_text(
+        "#!/usr/bin/env bash\n"
+        f"# {name} — the word this installer used to place.\n"
+        "# Installed on PATH by `openRepoTools --install`, which is where it came from.\n"
+        "echo stale\n", encoding="utf-8")
+    stale.chmod(0o755)
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    (claude / "skills").write_text("a file where the skills directory goes\n",
+                                   encoding="utf-8")
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode != 0, (
+        "the placement could not finish and the run said it did:\n"
+        + result.stdout)
+    assert stale.is_file(), (
+        f"`{name}` was retired by a run whose placement then failed:\n"
+        + result.stdout + result.stderr)
+    assert f"{name}: RETIRED" not in result.stdout, (
+        "and it never said it had been:\n" + result.stdout)
+
+
 @NEEDS_JQ
 def test_bin_dir_overrides_where_it_lands(tmp_path):
     result = run_cmd("--install", home=tmp_path,

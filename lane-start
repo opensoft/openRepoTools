@@ -694,8 +694,13 @@ case "${#positional[@]}" in
       # <n> --estate --yes`, whose `--estate` swallows the `--yes` and names an
       # estate `--yes`. A line printed for a person to type is a line this
       # command has to be willing to have typed back at it.
-      [ -z "$estate" ]     || ls_drop="$ls_drop --estate $estate"
-      [ "${#pass[@]}" = 0 ] || ls_drop="$ls_drop -- ${pass[*]}"
+      # AND EACH VALUE IS QUOTED THE WAY THE SHELL WILL READ IT BACK (Copilot
+      # round 7 on #45, `lane-start:698`): `--estate 'team blue'` printed bare
+      # is two words when it is typed again, which is a suggested command that
+      # does something else. `quoted` is the same helper every other printed
+      # command in this file goes through.
+      [ -z "$estate" ]     || ls_drop="$ls_drop --estate $(quoted "$estate")"
+      [ "${#pass[@]}" = 0 ] || ls_drop="$ls_drop -- $(quoted "${pass[@]}")"
       if [ -n "$ls_drop" ]; then
         die "bare \`$prog\` is \`lane\` (Amendment 18 Addendum 1 clause (i-4)), which lists the
     lanes and binds the one you pick — and$ls_drop belongs to a lane that has

@@ -4833,10 +4833,21 @@ lane_groups() {   # <workstation> ; rows on stdin
 
 # THE NEXT FREE POSITION, over those same rows: clause (i-1)'s `f` answer, and
 # the footer `lanes` has printed since Brett Heap's settlement of
-# 2026-09-13T20:38:11Z. It is the LOWEST free one and never the highest plus
-# one, because positions come back as lanes end and handing out 12 while 3 is
-# free grows a column nobody reads — and `lane-start` refuses a position that is
-# taken, so this is a suggestion with a guard behind it and never an assertion.
+# 2026-09-13T20:38:11Z. It is the LOWEST one NO ROW HOLDS and never the highest
+# plus one, because handing out 12 while 3 has never been used grows a column
+# nobody reads — and `lane-start` refuses a position that is taken, so this is a
+# suggestion with a guard behind it and never an assertion.
+#
+# A POSITION A LANE HAS HELD IS RESERVED, ENDED AND RETIRED ROWS INCLUDED
+# (Copilot round 7 on #45, `lanes-edit.sh:4839`, where this paragraph said
+# positions "come back as lanes end" and the code has never done that). EVERY
+# row on stdin is taken, whatever its state, and that is deliberate: a lane's
+# identity is its name, its object log is `lanes/log/<lane>.md` and it is
+# APPEND-ONLY, so a second lane at a retired position would write its life into
+# the first one's file and every read of that log — who holds what, when it was
+# claimed, which session paused it — would answer for two lanes at once. The
+# register's row is the same story in one line. Positions are cheap; identities
+# are not.
 #
 # A POSITION IS DIGITS WITH AN OPTIONAL TRAILING LETTER, which is
 # `lane-start`'s own rule: `5a` and `5` are one position taken twice, because a
@@ -4847,12 +4858,19 @@ lane_groups() {   # <workstation> ; rows on stdin
 lane_next_free() {   # <repo> ; rows on stdin
   [ -n "${1-}" ] || return 64
   awk -F'\t' -v r="$1" '
-    BEGIN { rl = tolower(r) "-" }
+    BEGIN { rl = tolower(r) }
     $1 != "" {
-      l = tolower($1)
-      if (substr(l, 1, length(rl)) != rl) next
-      p = $1
-      sub(/^.*-/, "", p)
+      # THE WHOLE NAME BEFORE THE POSITION IS COMPARED, NOT A PREFIX (Copilot
+      # round 7 on #45, `lanes-edit.sh:4853`). `substr(l, 1, length(rl))` reads
+      # `repo-foo-1` as a lane of `repo`, so a repository whose name is another
+      # name plus a hyphen took positions out of its neighbour: `next-free repo`
+      # would skip 1 because `repo-foo-1` exists, and hand out a number for a
+      # reason nobody could see in the listing. `head` is everything before the
+      # LAST hyphen and has to equal the repository exactly.
+      p = $1; sub(/^.*-/, "", p)
+      head = $1; sub(/-[^-]*$/, "", head)
+      if (head == $1) next
+      if (tolower(head) != rl) next
       sub(/[A-Za-z]$/, "", p)
       if (p !~ /^[0-9]+$/) next
       taken[p + 0] = 1

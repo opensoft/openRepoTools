@@ -743,16 +743,24 @@ go_live() {
 		say "lane $R_LANE is in session $W_SESS — switching this client to it (nothing is launched)"
 		if [ "$dry_run" = 1 ]; then
 			say "tmux select-window -t $W_SESS:$W_ID"
-			say "tmux switch-client -t $W_SESS"
+			say "tmux switch-client -t $W_SESS:$W_ID"
 			say "--dry-run: nothing was switched"
 			exit 0
 		fi
+		# AND THE SWITCH NAMES THE WINDOW, for the reason the attach does (Copilot
+		# round 7 on #45, `lane:738`): another client can make that session's
+		# current window something else between the select and the switch, and a
+		# `switch-client -t <session>` would then land this client on it. MEASURED,
+		# tmux 3.4 on a private socket, 2026-09-14: a client on `home`, `dst`
+		# current on `@1`, and `switch-client -t dst:@3` moved the client to `dst`
+		# AND made `@3` current in ONE act, while `switch-client -t dst:@999`
+		# refused with `can't find window: @999` and exit 1.
 		select_window_or_refuse "$W_SESS" "$W_ID" ""
-		tmux switch-client -t "$W_SESS" || die "lane $R_LANE's window $W_ID was selected in session $W_SESS, and \`tmux
-    switch-client -t $W_SESS\` then failed — so this client is still where it
-    was and nothing else was done. That session's current window IS the lane
+		tmux switch-client -t "$W_SESS:$W_ID" || die "lane $R_LANE's window $W_ID was selected in session $W_SESS, and \`tmux
+    switch-client -t $W_SESS:$W_ID\` then failed — so this client is still where
+    it was and nothing else was done. That session's current window IS the lane
     now, which is the half that worked:
-      go there by hand:            tmux switch-client -t $W_SESS
+      go there by hand:            tmux switch-client -t $W_SESS:$W_ID
       or bring the window here:    $prog $R_LANE" 2
 		exit 0
 	fi

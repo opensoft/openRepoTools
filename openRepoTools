@@ -365,8 +365,15 @@ install_commands() {
 	# THE COUNT, out loud: a person reading eight lines cannot tell whether a
 	# ninth was meant to be there.
 	say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir"
-	retire_commands
+	# THE RETIREMENT IS THE LAST ACT OF THE INSTALL, AFTER EVERY PLACEMENT
+	# (Copilot round 7 on #45, `openRepoTools:369`). It is the one DESTRUCTIVE
+	# step here, and it ran before `place_skill_and_hook` — so a skill directory
+	# or a `settings.json` this run could not write left a workstation with the
+	# old word already deleted and the adoption it was migrating to unfinished.
+	# Every other refusal in this file places NOTHING rather than half of it; this
+	# one removes nothing until the rest of the install has actually happened.
 	place_skill_and_hook
+	retire_commands
 	# ONE PATH NOTE for the four of them: the directory is the same one.
 	case ":${PATH:-}:" in
 	*":$dir:"*) ;;

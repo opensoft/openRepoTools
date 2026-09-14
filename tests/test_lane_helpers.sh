@@ -6446,6 +6446,19 @@ is   "next-free is the LOWEST position no lane of that repository holds" \
      "$(printf '%s\n' "$PICK_ROWS" | "$E" next-free repoPick)" "6"
 run env LANES_NO_FETCH=1 "$E" next-free
 is   "…and it refuses with the contract's 64 when no repository is named" "$rc" 64
+# A POSITION A LANE HAS HELD IS RESERVED, `ENDED` AND `RETIRED` INCLUDED, and a
+# NEIGHBOUR REPOSITORY'S LANES ARE NOT THIS ONE'S (Copilot round 7 on #45,
+# `lanes-edit.sh:4839` and `:4853`). The first is why `repoPick-5`, which ended
+# two fixtures ago, does not hand 5 back: a lane's identity is its name and its
+# object log is append-only, so a second lane at that position would write its
+# life into the first one's file. The second is a prefix test that read
+# `repo-foo-1` as a lane of `repo` and took a position out of its neighbour.
+is   "an ENDED lane's position is RESERVED and never handed out again" \
+     "$(printf '%s\n' "$PICK_ROWS" | "$E" next-free repoPick)" "6"
+is   "…and a neighbour repository's lanes take none of this one's positions" \
+     "$(printf 'repoNb-foo-1\nrepoNb-foo-2\n' | "$E" next-free repoNb)" "1"
+is   "…while its own, under the same names, are taken as they always were" \
+     "$(printf 'repoNb-1\nrepoNb-foo-2\nrepoNb-3a\n' | "$E" next-free repoNb)" "2"
 
 # ------------------------------------------------- the listing, and no question
 #
@@ -6566,6 +6579,8 @@ else
   lane_pick 4 env -C "$PICK_DIR" "$LANE" --switch
   is    "--switch exits 0 on a lane in another session" "$rc" 0
   has   "…switching the client to that session" "$(cat "$LANE_TMUX_LOG")" "switch-client -t detsess"
+  has   "…naming the WINDOW in the switch itself, so no client can move it in between" \
+        "$(cat "$LANE_TMUX_LOG")" "switch-client -t detsess:@32"
   hasnt "…and moving no window" "$(cat "$LANE_TMUX_LOG")" "move-window"
 fi
 
@@ -6789,6 +6804,13 @@ has   "…and the other" "$err" "--estate"
 # waiting.
 has   "…with the VALUE the flag was given, so the line can actually be typed" "$err" "--estate x"
 hasnt "…and never the flag with the next flag as its value" "$err" "--estate --yes"
+# …AND QUOTED THE WAY THE SHELL WILL READ IT BACK (Copilot round 7 on #45,
+# `lane-start:698`): a value with a space printed bare is two words when it is
+# typed again, which is a suggested command that does something else.
+run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" "$START" --estate 'team blue' </dev/null
+is    "…and a value with a space in it is still one value" "$rc" 2
+has   "…quoted the way the shell reads it back" "$err" "--estate 'team blue'"
+hasnt "…never bare, which would be two words on the next line someone types" "$err" "--estate team blue"
 if [ "$HAVE_PTY" = 0 ]; then
   skip "bare lane-start forwards the flags lane has" "$NO_PTY_WHY"
 else
