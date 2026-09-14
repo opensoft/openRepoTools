@@ -5629,9 +5629,19 @@ has   "…and the line it wrote is under the row's spelling, from a lowercase LA
 # records a modification where a rename belongs. Measured that way on the macOS
 # job of this PR at `48f2111`: `git log -- <the canonical path>` came back
 # EMPTY and fifteen assertions went red behind it.
+# SAVED AND RESTORED, NEVER UNSET. `core.ignorecase` is the value `git init`
+# WRITES from its own probe of the filesystem, so on a case-insensitive one it
+# is already `true` and it is load-bearing: unsetting it leaves git treating
+# that filesystem as case-sensitive, every renamed log reads as a phantom
+# modification, and the writes after this one are refused for a dirty checkout
+# they did not make. Measured on the macOS job of this PR at `e35f2a8`: eleven
+# red assertions, all of them behind `lanes/log/repocase-1.md` reported dirty.
+ign_was="$(git -C "$WIP" config --local core.ignorecase 2>/dev/null || printf '')"
 git -C "$WIP" config core.ignorecase true
 run env LANES_LANE=repoign-1 LANES_SESSION="$DEAD_ID" "$E" log PAUSED lane:repoign-1 --no-github
-git -C "$WIP" config --unset core.ignorecase
+if [ -n "$ign_was" ]; then git -C "$WIP" config core.ignorecase "$ign_was"
+else                      git -C "$WIP" config --unset core.ignorecase || :
+fi
 is    "a write under a case-INSENSITIVE index exits 0" "$rc" 0
 is    "…and the lane's log is the row's spelling on disk" \
       "$(ls "$LOGD" | grep -c '^repoIgn-1\.md$' || :)" 1
