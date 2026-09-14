@@ -1803,9 +1803,59 @@ def test_readme_is_short_enough_to_be_read():
     profile — needs it before they run the command. The count below the
     paragraph moves 18 -> 19 with them, in the one place it is stated here and
     derived in `test_openrepotools_command.py`.
+    409 -> 422 on 2026-09-14, for the FOUR FINDINGS of #40 — Copilot's review
+    of the re-vendor at `8a36eb3`, filed here rather than taken there because
+    they predate the pin move. Thirteen lines, and every one of them is
+    BEHAVIOUR A PERSON MEETS rather than prose about it, which is the only
+    kind this cap moves for. Four in the install paragraph: `--install` stamps
+    the documented mode on every artifact whether or not the bytes moved, so a
+    second run prints `(mode restored to 755)` where it used to print
+    `(unchanged)` over a mode it had just repaired; and a target this user
+    CANNOT WRITE — not only one that is not a regular file — is refused in the
+    same planning phase, with the `rm -f` that clears it and the reason that
+    `rm` takes a read-only file at all. Two more say the mode of the artifacts
+    that are NOT files in the bin directory, where it was the defect and not
+    only the line: a `SKILL.md` whose bytes were right kept a wrong mode for
+    ever, and `~/.claude/settings.json` kept a widened one on the one path
+    that never rewrote it. Six for `wip init`'s seed, which staged
+    `git add -A -- .` and pushed whatever an ADOPTED checkout carried into the
+    one repository that holds a person's unfinished work — the refusal, what
+    it names, and that it is asked before a byte is written into that
+    checkout. Every dated entry above stays, and none of these thirteen is
+    over one of their lines.
+
+    422 -> 428 on 2026-09-14, for THE SIX LINES #44's first review round buys,
+    each of them a refusal a person meets rather than prose about one. THREE
+    SAY WHAT A DIRECTORY HAS TO BE: the question is put to the nearest ancestor
+    that exists, so a `$OPENREPOTOOLS_BIN_DIR` that is not there YET is refused
+    for the parent that would not take it rather than dying at an unguarded
+    `mkdir -p` with the shell's own 1; a create takes a directory's search bit
+    as well as its write bit, so one at 0600 is refused where `-w` alone passed
+    it and the `cp` failed with eleven artifacts placed; and a refusal creates
+    none of those directories, where planning used to prove each writable by
+    MAKING it and so left seven behind on a machine that had none. THREE SAY
+    THAT `~/.claude/settings.json` MUST ITSELF BE A REGULAR FILE — the one
+    artifact no walk asked about, which mattered the moment the round before
+    this one gave the `present` arm a `chmod`: `chmod` follows a symlink, so a
+    settings file linked into a dotfiles checkout had the 600 stamped on the
+    file at the FAR END, and the merge arms replace such a link with the file
+    they wrote. Every dated entry above stays, and none of these six is over a
+    line one of them bought.
+
+    417 and 428 -> 436 on 2026-09-14, at the merge of this branch with `main`
+    @ `b5244e2`. Each side raised this cap for its own lines and every dated
+    entry above stays: Amendment 12's second hook entry bought 8 on this
+    branch, and #40's four findings and #44's first round bought 13 and 6 on
+    `main`. They meet in ONE paragraph, the install one, which both sides
+    rewrote — so the merged sentence carries both facts, the TWO merged
+    entries with the name guard's own sentence AND the regular-file rule with
+    the modes `--install` stamps — and a paragraph that says both is longer
+    than either half of it. The cap is the count of WHAT MERGED and not
+    either side's number, which is the rule the 2026-09-13 entry above states
+    in its own words.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 417, f"README.md is {len(lines)} lines; the cap is 417"
+    assert len(lines) <= 436, f"README.md is {len(lines)} lines; the cap is 436"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

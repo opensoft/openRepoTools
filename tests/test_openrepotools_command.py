@@ -391,6 +391,38 @@ def test_install_replaces_a_copy_that_has_drifted(tmp_path, name):
 
 
 @NEEDS_JQ
+def test_a_copy_whose_bytes_are_right_and_whose_mode_is_not_says_so(tmp_path):
+    """THE ELEVEN HAVE ALWAYS BEEN STAMPED EVERY TIME, AND THE LINE DID NOT SAY
+    SO (#40, finding 2).
+
+    `chmod 755` sits outside the bytes comparison here — a copy that is not
+    executable is not a command — so this half was never the defect the skills
+    and the command files had. What it did was report `unchanged` over a mode
+    it had just repaired, which is a line a person reads as "nothing to look
+    at" about the one thing that run actually did to that file.
+
+    The bytes are asserted untouched as well: a mode is fixed with `chmod`, not
+    by rewriting a file.
+    """
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    target = tmp_path / ".local" / "bin" / "park"
+    before = target.read_bytes()
+    os.chmod(target, 0o644)
+
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert stat.S_IMODE(target.stat().st_mode) == 0o755
+    assert target.read_bytes() == before
+    assert f"park: already installed at {target} (mode restored to 755)" \
+        in result.stdout, result.stdout
+    for other in INSTALLED:
+        if other != "park":
+            assert f"{other}: already installed at " \
+                   f"{tmp_path / '.local' / 'bin' / other} (unchanged)" \
+                in result.stdout, other
+
+
+@NEEDS_JQ
 def test_bin_dir_overrides_where_it_lands(tmp_path):
     result = run_cmd("--install", home=tmp_path,
                      env={"OPENREPOTOOLS_BIN_DIR": str(tmp_path / "elsewhere")})

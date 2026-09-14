@@ -6045,7 +6045,14 @@ export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
 # which is the case below this one and not this one.
 export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude
 gdsess:9	@99	repoGD-1	%99	claude"
-export FAKE_TMUX_PANE_PID="$$" FAKE_TMUX_PANE_ID="%99"
+# THE PANE PID IS THE RECORD'S OWN, AND THAT IS A PORTABILITY FACT AND NOT A
+# convenience: `pid_under` answers 0 at its FIRST step when the pid IS the
+# ancestor, and walks `/proc` only to climb. macOS has no `/proc`, so a
+# record whose pid is a CHILD of this pane is "here" on Linux and nowhere on
+# the macOS job — which is what `tests-macos` said at `6cf5359`, three red
+# lines under a green Linux run. A record whose pid IS the pane's needs no
+# walk at all and is this window's on both.
+export FAKE_TMUX_PANE_PID="$LIVE_PID" FAKE_TMUX_PANE_ID="%99"
 write_record_a12 "$sessions_dir/gd.json" "$GD_LANE_ID" "$LIVE_PID" "$live_start" interactive "-" repogd-7e derived "$GD_OLD_MS"
 gd_before="$(gd_keys)"
 gd_run "$GD_LANE_ID"
@@ -6061,7 +6068,7 @@ has   "…into the pane tmux itself names, the record having named none" "$(tail
 export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude
 othersess:0	@5	repoGD-1	%5	claude
 gdsess:9	@99	repoGD-1	%99	claude"
-export FAKE_TMUX_PANE_PID="$$" FAKE_TMUX_PANE_ID="%99"
+export FAKE_TMUX_PANE_PID="$LIVE_PID" FAKE_TMUX_PANE_ID="%99"
 write_record_a12 "$sessions_dir/gd.json" "$GD_LANE_ID" "$LIVE_PID" "$live_start" interactive "othersess:@5.%5" repogd-7e derived "$GD_OLD_MS"
 gd_before="$(gd_keys)"
 gd_run "$GD_LANE_ID"
