@@ -606,8 +606,14 @@ case "${#positional[@]}" in
       # `openRepoTools --install`; a second rendering here is a second thing to
       # drift. Where it is absent — an older workstation — the refusal below is
       # still the whole answer, so this is an improvement and never a dependency.
-      ls_cmd="$(command -v lanes 2>/dev/null || :)"
-      [ -n "$ls_cmd" ] || { [ -x "$SCRIPT_DIR/lanes" ] && ls_cmd="$SCRIPT_DIR/lanes"; }
+      # BESIDE THIS COMMAND FIRST, THEN PATH (Copilot round 1 on #45): the two
+      # are placed in ONE directory by `openRepoTools --install`, and a
+      # workstation carrying two copies must not render this listing out of a
+      # different version from the one it is standing in. Same rule as the bare
+      # form's `lane` below and as `lane`'s own `$LANES_EDIT`.
+      if [ -x "$SCRIPT_DIR/lanes" ]; then ls_cmd="$SCRIPT_DIR/lanes"
+      else ls_cmd="$(command -v lanes 2>/dev/null || :)"
+      fi
       # AND THE REFUSAL PROMISES A LISTING ONLY WHERE ONE WAS MADE (#26, the
       # review of `c3ebcfe`, `lane-start:602`). `|| :` made every code of that
       # read the same code, and the sentence below then sent a person to "the
@@ -654,11 +660,38 @@ case "${#positional[@]}" in
     # `exec`, NOT A CALL: this command is itself `exec`ed by the launcher, so a
     # pick that ends in a launch must replace this process rather than leave it
     # waiting on a child that has replaced itself.
-    lane_word="$(command -v lane 2>/dev/null || :)"
-    [ -n "$lane_word" ] || { [ -x "$SCRIPT_DIR/lane" ] && lane_word="$SCRIPT_DIR/lane"; }
+    if [ -x "$SCRIPT_DIR/lane" ]; then lane_word="$SCRIPT_DIR/lane"
+    else lane_word="$(command -v lane 2>/dev/null || :)"
+    fi
     if [ -n "$lane_word" ]; then
+      # THE OPTIONS ARE NOT DROPPED ON THE FLOOR (Copilot round 1 on #45,
+      # `lane-start:661`). This command's parser has already taken them, and an
+      # `exec` with none of them turns `--no-launch` — a flag whose whole
+      # promise is that nothing starts — into an interactive pick that launches.
+      # `--dry-run` and `--dir` mean the same thing in `lane` and go with it;
+      # every other flag here is this command's own, has no meaning for a
+      # listing that has not been answered yet, and is REFUSED BY NAME rather
+      # than ignored.
+      lane_argv=("$lane_word")
+      [ "$dry_run" = 0 ] || lane_argv+=(--dry-run)
+      [ -z "$dir_override" ] || lane_argv+=(--dir "$dir_override")
+      ls_drop=""
+      [ "$no_launch" = 0 ] || ls_drop="$ls_drop --no-launch"
+      [ "$confirm" = 0 ]   || ls_drop="$ls_drop --confirm"
+      [ "$take_yes" = 0 ]  || ls_drop="$ls_drop --yes"
+      [ -z "$estate" ]     || ls_drop="$ls_drop --estate"
+      [ "${#pass[@]}" = 0 ] || ls_drop="$ls_drop --"
+      if [ -n "$ls_drop" ]; then
+        die "bare \`$prog\` is \`lane\` (Amendment 18 Addendum 1 clause (i-4)), which lists the
+    lanes and binds the one you pick — and$ls_drop belongs to a lane that has
+    already been named, so there is nothing here for it to apply to. It is
+    refused rather than ignored: a flag that is silently dropped is a promise
+    that was not kept.
+      pick a lane:                    $prog
+      that lane, with those options:  $prog <repo> <n>$ls_drop" 2
+      fi
       note "no <repo> and no position: this is \`lane\`, which lists the lanes and binds the one you pick (Amendment 18 Addendum 1 clause (i-4))"
-      exec "$lane_word"
+      exec "${lane_argv[@]}"
     fi
     usage >&2; die "a lane needs a position: $prog <repo> <n>" 2 ;;
   *) die "too many arguments: $prog <repo> <n>" 2 ;;

@@ -6260,7 +6260,13 @@ case "${1-}" in
       '#{window_id}')        printf '%s\n' "$(printf '%s' "$lt_l" | cut -f1)" ;;
       *)                     printf '\n' ;;
     esac ;;
-  move-window|select-window|switch-client|attach|attach-session)
+  select-window)
+    # THE ONE ACT THAT CAN FAIL AFTER THE FENCE HAS PASSED: the window resolved
+    # a moment ago and is gone by the time it is selected. `$LANE_TMUX_SELECT_FAIL`
+    # is that window, and nothing is logged — because nothing happened.
+    [ -z "${LANE_TMUX_SELECT_FAIL:-}" ] || exit 1
+    printf '%s\n' "$*" >> "${LANE_TMUX_LOG:-/dev/null}" ;;
+  move-window|switch-client|attach|attach-session)
     printf '%s\n' "$*" >> "${LANE_TMUX_LOG:-/dev/null}" ;;
   *) : ;;
 esac
@@ -6467,6 +6473,16 @@ else
   has   "…naming the lane it would open" "$out" "a new lane at repoPick-6"
   has   "…and the act, which is lane-start at that position" "$out" "lane-start repoPick 6"
   is    "…launching nothing under --dry-run" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+  # …AND `--dir` GOES WITH IT (Copilot round 1 on #45, `lane:710`). The flag is
+  # in this word's own parser and `lane-start` takes the same one, so dropping
+  # it here would open the new lane in a checkout nobody named — Evidence 3's
+  # silent loss, at the one moment a lane is being created.
+  : > "$FAKE_PCLAUDE_LOG"
+  PICK_DIR_R="$(cd -- "$PICK_DIR" 2>/dev/null && pwd -P || printf '%s' "$PICK_DIR")"
+  lane_pick f env -C "$PICK_DIR" "$LANE" --dry-run --dir "$PICK_DIR"
+  is    "answering \`f\` with a --dir exits 0" "$rc" 0
+  has   "…handing that directory to lane-start, resolved" "$out" "--dir $PICK_DIR_R"
+  has   "…and still at the next free position" "$out" "repoPick 6"
   # `q` PICKS NONE, AND THAT IS NOT A FAILURE.
   : > "$LANE_TMUX_LOG"; : > "$FAKE_PCLAUDE_LOG"
   lane_pick q env -C "$PICK_DIR" "$LANE"
@@ -6570,6 +6586,54 @@ is    "lane <name> outside tmux exits 0 on a live lane" "$rc" 0
 has   "…selecting the lane's own window first" "$(cat "$LANE_TMUX_LOG")" "select-window -t @32"
 has   "…and then attaching to its session" "$(cat "$LANE_TMUX_LOG")" "attach -t detsess"
 
+# A SELECT THAT FAILED IS PART OF THE FENCE AND NOT A COURTESY (Copilot round 1
+# on #45, `lane:610`). The id resolved at the check above and is gone by the
+# time it is selected — a window closed in the half-second between — and going
+# on would attach to whatever window that session left CURRENT, which is
+# another lane. That is the one thing the id-AND-session fence exists to stop,
+# so the swallowed failure is a refusal.
+: > "$LANE_TMUX_LOG"
+run env -u TMUX PATH="$LANEBIN_PATH" LANE_TMUX_SELECT_FAIL=1 "$LANE" repoPick-3 </dev/null
+is    "a select-window that FAILED refuses instead of attaching to the current window" "$rc" 2
+has   "…saying the window could not be selected" "$err" "could not be selected"
+has   "…and why going on would be wrong" "$err" "another lane"
+is    "…having attached to nothing at all" "$(cat "$LANE_TMUX_LOG")" ""
+# THE SAME FENCE ON THE MOVE, where the window has already been brought here:
+# the move is logged and the select still refuses rather than leaving the
+# terminal on a window nobody asked for.
+: > "$LANE_TMUX_LOG"
+run env PATH="$LANEBIN_PATH" LANE_TMUX_SELECT_FAIL=1 "$LANE" repoPick-3 </dev/null
+is    "…and so does the one after a move-window" "$rc" 2
+has   "…saying what had already been done" "$err" "moved into this session"
+has   "…and the move itself is still in the log, because it happened" "$(cat "$LANE_TMUX_LOG")" "move-window"
+
+# A BINDING IS AVAILABLE BECAUSE THIS HOST PROVED IT DEAD, AND AN UNREAD
+# SESSION RECORD IS NOT THAT PROOF (Copilot round 1 on #45, `lane:777`).
+# `lanes_rows` says on STDERR — and goes on answering — that this workstation's
+# session records could not be read, in which case the STATE column is the
+# LOG'S VERB ALONE and a lane that is LIVE shows as IDLE. Launching one is a
+# second process on a running lane, which is the collision clause (h) is about.
+cat > "$SANDBOX/livewarn" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  lanes) printf "lanes-edit: this workstation's session records could not be read, so the STATE column below is the LOG's verb alone\n" >&2 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/livewarn"
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX PATH="$LANEBIN_PATH" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/livewarn" "$LANE" repoPick-7 </dev/null
+is    "a BINDING refuses where the liveness read did not answer" "$rc" 2
+has   "…saying nothing proved that binding dead" "$err" "PROVED that binding dead"
+has   "…and naming the read that says what is actually running" "$err" "live-holder"
+is    "…launching nothing at all" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+# …WHILE A PARKED LANE IS PARKED BY ITS OWN LAST LINE and needs no such proof,
+# so the refusal is for a binding alone and never for every lane on the screen.
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX PATH="$LANEBIN_PATH" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/livewarn" "$LANE" repoPick-1 </dev/null
+is    "…while a PAUSED lane still launches, because its own last line parked it" "$rc" 0
+has   "…through the launcher, as it always did" "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoPick-1 team-05a"
+
 # ---------------------------------------------------------- `--all`, grouped
 run env PATH="$LANEBIN_PATH" "$LANE" --all </dev/null
 is    "lane --all exits 0" "$rc" 0
@@ -6593,6 +6657,32 @@ has   "…and printing that word's listing rather than one of its own" "$out" "A
 has   "…numbered, which is the pick" "$out" "1  repoPick-1"
 is    "…and launching no session at all" "$(cat "$FAKE_CLAUDE_LOG")" ""
 
+# AND THE OPTIONS IT WAS HANDED ARE NOT DROPPED ON THE FLOOR (Copilot round 1 on
+# #45, `lane-start:661`). This command's parser has already taken them, and an
+# `exec` carrying none of them turned `--no-launch` — a flag whose whole promise
+# is that nothing starts — into an interactive pick that launches.
+run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" "$START" --no-launch </dev/null
+is    "bare lane-start REFUSES a flag it would otherwise drop" "$rc" 2
+has   "…naming the flag" "$err" "--no-launch"
+has   "…and saying what the bare word is" "$err" "is \`lane\`"
+has   "…with the form that does take it, filled in" "$err" "<repo> <n> --no-launch"
+run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" "$START" --estate x --yes </dev/null
+is    "…and names every one of them, not the first" "$rc" 2
+has   "…the one" "$err" "--yes"
+has   "…and the other" "$err" "--estate"
+if [ "$HAVE_PTY" = 0 ]; then
+  skip "bare lane-start forwards the flags lane has" "$NO_PTY_WHY"
+else
+  # …WHILE THE TWO `lane` ALSO HAS ARE FORWARDED. `--dry-run` is proved by what
+  # the AVAILABLE branch does with it: the act printed instead of performed.
+  : > "$FAKE_PCLAUDE_LOG"
+  lane_pick 1 env -C "$PICK_DIR" "$START" --dry-run
+  is    "bare lane-start --dry-run exits 0" "$rc" 0
+  has   "…having reached lane's own pick" "$out" "which? [1-"
+  has   "…and carried the flag, so the act is printed and not performed" "$out" "--dry-run: nothing was launched"
+  is    "…launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+fi
+
 # -------------------------------------- the footer when the helper is older
 #
 # A `lanes-edit.sh` WITH NO `next-free` IS NOT A NEXT FREE POSITION OF 1
@@ -6611,6 +6701,25 @@ is    "lanes still lists where the next-free read is missing" "$rc" 0
 has   "…with the rows" "$out" "repoPick-1"
 hasnt "…and never offers a position it did not get" "$out" "next free position:"
 has   "…saying which act brings it back" "$out" "openRepoTools --install"
+
+# AND A READ THAT *FAILED* IS NOT AN UN-UPGRADED WORKSTATION (Copilot round 1 on
+# #45, `lanes:432`). `|| :` made every status of that read the same status, and
+# the footer then told a person to take the install for a read that had broken:
+# the fail-closed family's own defect, one rung down.
+cat > "$SANDBOX/nfbroke" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  next-free) printf 'lanes-edit: simulated failure\n' >&2; exit 6 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/nfbroke"
+run env LANES_NO_FETCH=1 REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/nfbroke" "$LANES_CMD" --prefix repoPick </dev/null
+is    "lanes still lists where the next-free read FAILED" "$rc" 0
+has   "…with the rows" "$out" "repoPick-1"
+hasnt "…offering no position it did not get, here either" "$out" "next free position:"
+has   "…naming the code the read actually gave" "$out" "exited"
+hasnt "…and never calling a failed read an un-upgraded workstation" "$out" "predates lane-collision-protocol Amendment 18"
 
 echo "== the workstation seam: unset, every writer reads the host =="
 

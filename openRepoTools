@@ -233,6 +233,41 @@ fetch_from_repo() {
 # one word left as another arrived, which is why nothing below it is a number.
 INSTALLABLES=(openRepoTools park resume status lane lanes lanes-edit.sh lane-start lane-end link-estates repos.tsv)
 
+# ---------------------------------------------- THE WORDS THAT WERE RETIRED
+#
+# A WORD THAT LEAVES THE LIST HAS TO LEAVE THE DIRECTORY (Copilot round 1 on
+# #45, `openRepoTools:234`). Dropping `restart` from `INSTALLABLES` stops THIS
+# run from copying it and does nothing at all about the copy the LAST run
+# placed — so a workstation that took the install before lane-collision-protocol
+# Amendment 18 Addendum 2 would keep `restart` on its PATH for ever, which is
+# the one thing that addendum says must stop: *"`restart` is no longer a command
+# a person is given"*, ratified 2026-09-14T16:50:32Z verbatim "ratify". An
+# installer whose only act is to stop writing a file is not a retirement; it is
+# a file nobody will ever clean up.
+#
+# AND IT REMOVES ONLY WHAT IT WROTE. The test is the header this installer puts
+# in every command it owns — `Installed on PATH by ` + the installer's own name
+# — so a person's own script that happens to be called `restart` is NAMED and
+# LEFT EXACTLY AS IT IS, with the one line to run printed beside it. Deleting a
+# file this command did not write is not an act an installer may take on
+# somebody's behalf, and a retirement that did would be the worst possible way
+# to learn the difference.
+RETIRED=(restart)
+retire_commands() {
+	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
+	local name target
+	for name in "${RETIRED[@]}"; do
+		target="$dir/$name"
+		[ -e "$target" ] || continue
+		if [ -f "$target" ] && grep -qF -e 'Installed on PATH by `openRepoTools --install`' -- "$target" 2>/dev/null; then
+			rm -f -- "$target"
+			say "$name: RETIRED, removed from $target (lane-collision-protocol Amendment 18 Addendum 2; \`lane <name>\` is that act now)"
+		else
+			say "$name: RETIRED by lane-collision-protocol Amendment 18 Addendum 2, and $target is NOT this installer's copy — left exactly as it is. Remove it yourself if it is stale:  rm $target"
+		fi
+	done
+}
+
 # ALL OF THEM IN HAND BEFORE ANY OF THEM IS PLACED (openRepoShape #82, F10 of
 # the review on its #83). One file at a time, dying on the first fetch that
 # failed, leaves a person with a NEW `openRepoTools` and no `park` — a
@@ -315,6 +350,7 @@ install_commands() {
 	# THE COUNT, out loud: a person reading eight lines cannot tell whether a
 	# ninth was meant to be there.
 	say "openRepoTools: $placed of ${#INSTALLABLES[@]} placed in $dir"
+	retire_commands
 	place_skill_and_hook
 	# ONE PATH NOTE for the four of them: the directory is the same one.
 	case ":${PATH:-}:" in

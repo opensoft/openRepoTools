@@ -427,10 +427,18 @@ EOF
 # `lanes-edit.sh` predating the read exits 2 and prints nothing, and a listing
 # that then offered `lane-start <repo> 1` would be offering a position this
 # estate may well have taken. The footer says so instead.
-next=""
+# AND THE CODE SAYS WHICH IT WAS. `|| :` made every status of that read the same
+# status, and the footer below then told a person to take the install for a read
+# that had FAILED — the fail-closed family's own defect, one rung down (Copilot
+# round 1 on #45, `lanes:432`). `2` is the un-upgraded workstation and says so;
+# anything else is a read that did not answer and is named as one. A `0` that
+# comes back with nothing a position could be made of is in that second class:
+# the read answered, and what it answered is not a number.
+next=""; next_rc=0
 if [ -n "$here_repo" ]; then
-	next="$(printf '%s\n' "$out" | "$LANES_EDIT" next-free "$here_repo" 2>/dev/null || :)"
+	next="$(printf '%s\n' "$out" | "$LANES_EDIT" next-free "$here_repo" 2>/dev/null)" || next_rc=$?
 	case "${next:-}" in '' | *[!0-9]*) next="" ;; esac
+	if [ -z "$next" ] && [ "$next_rc" = 0 ]; then next_rc=1; fi
 fi
 
 say ""
@@ -457,11 +465,18 @@ if [ -n "$here_repo" ] && [ -n "$next" ]; then
 	say "  take it:             lane-start $here_repo $next"
 	say "  pick one:            lane"
 	say "  every lane:          $prog --all"
-elif [ -n "$here_repo" ]; then
+elif [ -n "$here_repo" ] && [ "$next_rc" = 2 ]; then
 	say ""
 	say "  the next free position could not be read: this workstation's \`lanes-edit.sh\`"
 	say "  has no \`next-free\`, so it predates lane-collision-protocol Amendment 18"
 	say "  Addendum 1. Take the install and it comes back:  openRepoTools --install"
+	say "  every lane:          $prog --all"
+elif [ -n "$here_repo" ]; then
+	say ""
+	say "  the next free position could not be read: \`lanes-edit.sh next-free\` exited"
+	say "  $next_rc. That is NOT a position of 1 and this listing will not offer one it"
+	say "  did not get (Amendment 7(d)). Run it by hand to see what it says:"
+	say "    $prog --prefix $here_repo | $LANES_EDIT next-free $here_repo"
 	say "  every lane:          $prog --all"
 fi
 [ "$defects" = 0 ] || say "$defects lane(s) have a live fork of their transcript running. A fork is never the holder (ratified decision 8(c)); the one act is \`lane-end <lane> --retire <pid|uuid>\`, which proves the fork and prints Amendment 6(d) for it filled in — it writes nothing and it never kills the process, and taking it stays yours (clause (k) rule (e))."

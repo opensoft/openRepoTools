@@ -384,6 +384,76 @@ def test_install_replaces_a_copy_that_has_drifted(tmp_path, name):
             assert f"{other}: already installed at" in result.stdout, other
 
 
+#: THE WORDS THIS INSTALLER USED TO PLACE AND DOES NOT ANY MORE. `restart` left
+#: under lane-collision-protocol Amendment 18 Addendum 2 (ratified
+#: 2026-09-14T16:50:32Z, verbatim "ratify"): `lane <name>` is that act, and the
+#: addendum's words are *"`restart` is no longer a command a person is given"*.
+RETIRED = ("restart",)
+
+
+@pytest.mark.parametrize("name", RETIRED)
+@NEEDS_JQ
+def test_install_removes_a_word_it_used_to_place(tmp_path, name):
+    """DROPPING IT FROM THE LIST ONLY STOPS THE NEXT COPY.
+
+    The install loop places `INSTALLABLES` and removes nothing, so a
+    workstation that took the install while `restart` was in that list keeps
+    `restart` on its PATH for ever — and the addendum that retired it says the
+    opposite. The retirement is therefore an ACT of `--install` and not an
+    absence from a list, which is what this holds.
+
+    Pre-seeded with a copy carrying this installer's own header, which is what
+    marks a file as one it wrote.
+    """
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    stale = bin_dir / name
+    stale.write_text(
+        "#!/usr/bin/env bash\n"
+        "# SPDX-License-Identifier: Apache-2.0\n"
+        "#\n"
+        f"# {name} — the word this installer used to place.\n"
+        "#\n"
+        "# Installed on PATH by `openRepoTools --install`, which is where it came from.\n"
+        "echo stale\n", encoding="utf-8")
+    stale.chmod(0o755)
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert not stale.exists(), (
+        f"`{name}` is still on PATH after an install that retired it:\n"
+        + result.stdout)
+    assert f"{name}: RETIRED" in result.stdout, (
+        "the removal is said out loud, because a file that vanishes without a "
+        f"line is a file nobody can ask about:\n{result.stdout}")
+
+
+@pytest.mark.parametrize("name", RETIRED)
+@NEEDS_JQ
+def test_install_never_removes_a_file_it_did_not_write(tmp_path, name):
+    """AND IT DELETES ONLY WHAT IT WROTE.
+
+    A person's own script that happens to carry a retired name is theirs. It
+    is NAMED, the line that removes it is printed, and the file is left exactly
+    where it is — because an installer that deletes a stranger's script to
+    tidy its own list has done something no list can justify.
+    """
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    mine = bin_dir / name
+    mine.write_text("#!/usr/bin/env bash\n# my own script\necho mine\n",
+                    encoding="utf-8")
+    mine.chmod(0o755)
+    before = mine.read_bytes()
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert mine.is_file(), "a file this installer did not write was deleted"
+    assert mine.read_bytes() == before
+    assert f"{name}: RETIRED" in result.stdout
+    assert f"rm {mine}" in result.stdout, (
+        "the one line that removes it is printed, filled in, because the act "
+        f"is the person's:\n{result.stdout}")
+
+
 @NEEDS_JQ
 def test_bin_dir_overrides_where_it_lands(tmp_path):
     result = run_cmd("--install", home=tmp_path,
