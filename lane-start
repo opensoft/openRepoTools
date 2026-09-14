@@ -1858,6 +1858,19 @@ $(printf '%s\n' "$ft_holders" | sed 's/^/      pid /; s/\t/ in /; s/\t/ under pr
     fi
     mkdir -p -- "$ft_dest_dir" 2>/dev/null || {
       FOLLOW_WHY="could not create $ft_dest_dir to move transcript $ft_id into"; return 2; }
+    # AN OCCUPIED DESTINATION IS REFUSED BEFORE ANYTHING MOVES (Copilot round 3
+    # on openRepoTools#47). `mv <dir> <existing dir>` does not fail — it moves
+    # the source INSIDE it — so a `<uuid>/` already sitting here would take the
+    # other profile's sidecar as `<uuid>/<uuid>/`, mark the sibling moved, and
+    # resume with the transcript's state split from the transcript. Nothing this
+    # command writes is worth guessing which of two `<uuid>` directories is the
+    # lane's, so it names what is there and stops. A name that is NOT a
+    # directory is left to the transaction below, where `mv` really does fail
+    # and the rollback puts the transcript back.
+    if [ -d "$ft_dest_dir/$ft_id" ] || [ -e "$ft_dest_dir/$ft_id.jsonl" ]; then
+      FOLLOW_WHY="transcript $ft_id is in profile $ft_prof's projects directory ($ft_d), and something ALREADY SITS where it would go: $ft_dest_dir/$ft_id$( [ -e "$ft_dest_dir/$ft_id.jsonl" ] && printf '.jsonl' ). Nothing was moved — a move onto an occupied name puts one transcript inside another, and which of the two is this lane's is not this command's to guess. Move that aside, or end the lane that owns it."
+      return 2
+    fi
     if ! mv -- "$ft_f" "$ft_dest_dir/$ft_id.jsonl" 2>/dev/null; then
       FOLLOW_WHY="could not move $ft_f into $ft_dest_dir (the transcript stays where it is, and this lane will not resume an id it cannot read)"
       return 2
@@ -2123,6 +2136,14 @@ fi
 if [ "$AGENT" != claude ]; then
   case "$AGENT" in
     codex)
+      # THE LAUNCHER IS ON PATH, OR NOTHING IS WRITTEN (Copilot round 3 on
+      # openRepoTools#47). The row, the object log and the Rule 3 stamp are all
+      # written BEFORE the `exec` at the foot of this command, so a `codex` this
+      # workstation does not have records the lane as RESUMED and then exits
+      # 127 — a false transition in two append-only files that a person has to
+      # repair by hand. The check is here, in 5a, which is before every write.
+      command -v "$AGENT" >/dev/null 2>&1 ||
+        die "this command's launcher table knows '$AGENT', and this workstation has no '$AGENT' on PATH. Nothing was written: the row, the object log and the handoff's Rule 3 stamp are all written before the launch, and a lane recorded as RESUMED by a launch that exits 127 is a false transition in two append-only files. Install it, or name an agent this workstation has: $prog --agent <name> …" 2
       # `codex` KEEPS NO ID THIS COMMAND CAN PASS: it prints its own resumable
       # id where it has one, so the lane's record carries whatever the last
       # handoff wrote (`transcript <id>`) and the session's own first act
@@ -2726,7 +2747,13 @@ if [ "$lane_verb" = RESUMED ] && [ "$row_count" = 1 ] && (( stamp_ok )); then
     # A handoff may be reached through the estate's `handoffs` symlink, so the
     # path git is given is the REAL one: a pathspec that leaves the repository
     # lexically is a pathspec git refuses, however plainly it is inside it.
-    hs_real="$(readlink -f -- "$hs_file" 2>/dev/null || printf '%s' "$hs_file")"
+    # `cd -P` AND NOT `readlink -f`, for the reason `real_of` gives above and
+    # `lane-handoff` gives one file over (Copilot round 3 on openRepoTools#47):
+    # an unresolved path here is a `hs_rel` git refuses as a pathspec, and the
+    # stamp is then written and never committed.
+    hs_dirreal="$( CDPATH=''; cd -P -- "$(dirname -- "$hs_file")" 2>/dev/null && pwd -P )" ||
+      hs_dirreal="$(dirname -- "$hs_file")"
+    hs_real="$hs_dirreal/$(basename -- "$hs_file")"
     hs_repo="$(git -C "$(dirname -- "$hs_real")" rev-parse --show-toplevel 2>/dev/null || :)"
     hs_rel="$hs_real"
     [ -n "$hs_repo" ] && hs_rel="${hs_real#"$hs_repo"/}"

@@ -6540,6 +6540,19 @@ cat > "$SANDBOX/a17lane/lane" <<'FAKE'
 # lane — the word, as lane-collision-protocol Amendment 18 Addendum 1 names it
 printf '%s\n' "$*" >> "${FAKE_LANE_LOG:-/dev/null}"
 FAKE
+# AND IT IS LARGER THAN THE BOUNDED READ (Copilot round 3 on openRepoTools#47).
+# The word is recognised by `head -c 8192 < file | grep …`, and under
+# `set -o pipefail` a `grep -q` that exits on the match leaves `head` writing
+# into a closed pipe: SIGPIPE, 141, and the estate's OWN `lane` classified as
+# somebody else's. The marker is in the first line; the padding below is what
+# makes `head` still have something to write when `grep` has seen it.
+{ printf '# padding, so this file is larger than the bounded read:\n'
+  i=0
+  while [ "$i" -lt 400 ]; do
+    printf '# %s\n' "................................................................"
+    i=$((i + 1))
+  done
+} >> "$SANDBOX/a17lane/lane"
 chmod +x "$SANDBOX/a17lane/lane"
 : > "$FAKE_TMUX_A17_LOG"
 export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-8.md"
@@ -6814,6 +6827,19 @@ has   "…naming the ones it knows" "$err" "It knows: claude"
 has   "…and codex beside it" "$err" "codex"
 hasnt "…and nothing was launched" "$(cat "$FAKE_CODEX_LOG")" "repoAG-4"
 
+# A LAUNCHER THE TABLE KNOWS AND THIS WORKSTATION DOES NOT HAVE IS REFUSED
+# BEFORE ANY WRITE (Copilot round 3 on openRepoTools#47). The row, the object
+# log and the Rule 3 stamp are all written before the `exec`, so a `codex` that
+# is not here records the lane as RESUMED and then exits 127 — a false
+# transition in two append-only files. `$PATH` here is the suite's own, which
+# carries no `codex`: `$A17PATH` is what adds it.
+run env FAKE_TMUX_WINDOW="agsess:@41" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$AG_DIR" --agent codex repoAG-8 --no-launch
+is    "--agent codex on a workstation with no codex is refused" "$rc" 2
+has   "…naming the launcher it does not have" "$err" "no 'codex' on PATH"
+has   "…and saying nothing was written, because the writes come before the launch" "$err" "Nothing was written"
+is    "…and no row was added for the lane" "$(grep -c '^| `repoAG-8`' "$LANES")" 0
+
 # A RECORDED TRANSCRIPT BELONGS TO THE AGENT THAT RECORDED IT (Copilot round 2
 # on openRepoTools#47). `lane-transcript` answers for the LANE — its last
 # `PAUSED`, whichever agent wrote it — so a lane paused by `claude` and resumed
@@ -7041,6 +7067,41 @@ is    "…and this profile holds no half-moved transcript" \
       "$( [ -f "$HOME/.claude/projects/$rb_slug/$RB_ID.jsonl" ] && echo no || echo yes )" yes
 is    "…and no pointer was left for a move that did not happen" \
       "$(ls "$t2_projects/$rb_slug" | grep -c "moved-to-")" 0
+
+# AND AN OCCUPIED DESTINATION IS REFUSED BEFORE ANYTHING MOVES AT ALL (Copilot
+# round 3 on openRepoTools#47). `mv <dir> <existing dir>` does NOT fail — it
+# moves the source INSIDE it — so a `<uuid>/` already sitting here would take
+# the other profile's sidecar as `<uuid>/<uuid>/`, mark the sibling moved, and
+# resume with the transcript's state split from the transcript. Which of two
+# `<uuid>` directories is this lane's is not a thing to guess at.
+OC_DIR="$HOME/projects/repoOC"
+OC_ID="a17a0010-1010-4000-8000-a17a00101010"
+mkdir -p "$OC_DIR"
+git init -q -b main "$OC_DIR"
+git -C "$OC_DIR" remote add origin "https://github.com/opensoft/repoOC.git"
+oc_slug="$(sanitize "$OC_DIR")"
+mkdir -p "$t2_projects/$oc_slug/$OC_ID"
+printf '{"type":"user"}\n' > "$t2_projects/$oc_slug/$OC_ID.jsonl"
+printf 'the other profile.s sidecar\n' > "$t2_projects/$oc_slug/$OC_ID/sidecar.txt"
+mkdir -p "$HOME/.claude/projects/$oc_slug/$OC_ID"
+printf 'a sidecar that is ALREADY here\n' > "$HOME/.claude/projects/$oc_slug/$OC_ID/sidecar.txt"
+mkdir -p "$WIP/handoffs/repoOC"
+printf 'Lane: repoOC-1 — resume prompt\n\nx\n' > "$WIP/handoffs/repoOC/repoOC-1.md"
+git -C "$WIP" add -- handoffs/repoOC >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the repoOC handoff"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+"$E" add-row "| \`repoOC-1\` | harness \`$OC_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoOC/repoOC-1.md | ACTIVE |" >/dev/null 2>&1
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="ocsess:@93" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$OC_DIR" repoOC-1 --no-launch
+is    "a destination that already holds that uuid is refused before anything moves" "$rc" 2
+has   "…naming what already sits there" "$err" "ALREADY SITS where it would go"
+is    "…the transcript never left the other profile" \
+      "$( [ -f "$t2_projects/$oc_slug/$OC_ID.jsonl" ] && echo yes || echo no )" yes
+is    "…and nothing was nested inside the directory that was already here" \
+      "$( [ -e "$HOME/.claude/projects/$oc_slug/$OC_ID/$OC_ID" ] && echo no || echo yes )" yes
+is    "…which still holds exactly what it held" \
+      "$(cat "$HOME/.claude/projects/$oc_slug/$OC_ID/sidecar.txt")" "a sidecar that is ALREADY here"
 
 # ------------------------------------------- 6. the three names are one act
 

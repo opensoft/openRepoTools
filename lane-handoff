@@ -809,7 +809,17 @@ fi
 # writes a missing workstation stops (A11 Addendum 4 ruling 11): it is where the
 # gap is NAMED. One commit, an explicit pathspec and the Rule 5 trailer.
 if [ "$handoff_written" = 1 ] && [ "${LANES_NO_GIT:-0}" != 1 ]; then
-	hs_real="$(readlink -f -- "$handoff_file" 2>/dev/null || printf '%s' "$handoff_file")"
+	# THE PARENT IS RESOLVED WITH `cd -P`, NOT `readlink -f` (Copilot round 3 on
+	# openRepoTools#47, the same rule as `lane-start`'s `real_of`). Where
+	# `readlink -f` is not in the userland the fallback hands the path back
+	# UNRESOLVED, so `hs_repo` — which git answers with a PHYSICAL path — and
+	# `hs_rel`, derived from the symlinked spelling, disagree: `git add` then
+	# refuses a pathspec that "leaves the repository", and the handoff this act
+	# has just written is left uncommitted. A handoff is reached through the
+	# estate's `handoffs` symlink on every workstation that has one.
+	hs_dirreal="$( CDPATH=''; cd -P -- "$(dirname -- "$handoff_file")" 2>/dev/null && pwd -P )" ||
+		hs_dirreal="$(dirname -- "$handoff_file")"
+	hs_real="$hs_dirreal/$(basename -- "$handoff_file")"
 	hs_repo="$(git -C "$(dirname -- "$hs_real")" rev-parse --show-toplevel 2>/dev/null || :)"
 	if [ -n "$hs_repo" ]; then
 		hs_rel="${hs_real#"$hs_repo"/}"
@@ -857,7 +867,12 @@ why_text="$(sanitize "${why:-handoff}") $kind_word"
 # offending sub-field costs its own information and never the record.
 payload="swap"
 refused=""
-case "$window_ref" in *', '* | *' — '*) refused="$refused window=$window_ref"; window_ref="" ;; esac
+# THE SAME FENCE FOR ALL FOUR SEPARATORS (Copilot round 3 on openRepoTools#47).
+# `window` is two space-separated refs in ONE sub-field, so a `; ` inside it
+# would be read back as the END of the sub-field and the rest as another one:
+# every reader of this line would then recover a window ref that is not the
+# lane's. The comment above already said both were dropped; now they are.
+case "$window_ref" in *', '* | *' — '* | *'; '* | *'"'*) refused="$refused window=$window_ref"; window_ref="" ;; esac
 case "$dir" in *', '* | *' — '* | *'; '* | *'"'*) refused="$refused dir=$dir"; dir="" ;; esac
 dir_field="$dir"
 case "$dir_field" in *' '*) dir_field="\"$dir_field\"" ;; esac
@@ -1049,7 +1064,14 @@ if [ "$do_restart" = 1 ]; then
 		# runs this suite under BSD `head`, whose option handling is its own,
 		# and a portability question is not one to answer inside the act that
 		# kills a pane.
-		if head -c 8192 < "$lane_word_path" 2>/dev/null | grep -q 'lane-collision-protocol'; then
+		# `grep` READS ALL OF IT, AND `-q` IS WHY IT MUST (Copilot round 3 on
+		# openRepoTools#47). Under `set -o pipefail` the pipeline's status is
+		# the last non-zero one, and `grep -q` exits the instant it matches —
+		# so `head` writing the rest of a word larger than 8192 bytes takes
+		# SIGPIPE, 141 wins over grep's 0, and the estate's OWN `lane` is
+		# classified as somebody else's. The redirect costs nothing and the
+		# input is bounded by `head` already.
+		if head -c 8192 < "$lane_word_path" 2>/dev/null | grep 'lane-collision-protocol' >/dev/null 2>&1; then
 			lane_word="$lane_word_path"
 		else
 			note "there is a \`lane\` on PATH ($lane_word_path) that is not this estate's word (its head names no lane-collision-protocol), so the respawn goes through the launcher instead — the door Amendment 18 Addendum 2 (i-8) leaves open."
