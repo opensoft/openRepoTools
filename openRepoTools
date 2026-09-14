@@ -1642,15 +1642,31 @@ $unrelated
     gh api repos/$SHAPE_REPOSITORY/contents/$WIP_TEMPLATE_DIR/$rel?ref=$ref
     curl -fsSL https://raw.githubusercontent.com/$SHAPE_REPOSITORY/$ref/$WIP_TEMPLATE_DIR/$rel"
 				wip_substitute "$dest"
-				if cmp -s -- "$dest" "$checkout/$rel"; then
+				# THE WORKTREE IS NOT THE ONLY PLACE THOSE BYTES CAN LIE (#44
+				# round 3, `openRepoTools:1647`): HEAD lacking `$rel` says nothing
+				# about the INDEX, so a person's own edit `git add`ed at this path
+				# — staged before this run and never committed — sits exactly
+				# where step 8's `add` would overwrite it, and a worktree that
+				# happens to read back as the template is not permission to stage
+				# over what is already staged there. The index is asked the same
+				# question the worktree already answers: no entry is this
+				# command's own leftover exactly as no file is, and an entry
+				# whose bytes are not the template fails it exactly as the
+				# worktree's would.
+				if cmp -s -- "$dest" "$checkout/$rel" &&
+					{ ! git -C "$checkout" cat-file -e ":$rel" 2>/dev/null ||
+					git -C "$checkout" cat-file -p ":$rel" 2>/dev/null |
+						cmp -s -- "$dest" -; }
+				then
 					written+=("$rel")
 					owed=$((owed + 1))
 				else
-					die "$checkout/$rel exists, HEAD does not carry it, and its bytes are not what
-    $SHAPE_REPOSITORY's $WIP_TEMPLATE_DIR/$rel substitutes to at $ref — so this is not an
-    earlier run's own leftover; it is somebody's own untracked file at a path the template
-    also names. A seed commit is the template and nothing else, so this command will not
-    publish it. NOTHING was written into that checkout on this run and nothing was staged.
+					die "$checkout/$rel exists, HEAD does not carry it, and its worktree bytes, its staged
+    bytes, or both are not what $SHAPE_REPOSITORY's $WIP_TEMPLATE_DIR/$rel substitutes to at
+    $ref — so this is not an earlier run's own leftover; it is somebody's own file, staged or
+    not, at a path the template also names. A seed commit is the template and nothing else, and
+    this command will not publish it or stage over what is already staged there.
+    NOTHING was written into that checkout on this run and nothing was staged.
     Commit, stash or remove that path, then re-run:
         openRepoTools wip init"
 				fi

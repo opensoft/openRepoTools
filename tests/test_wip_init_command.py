@@ -776,6 +776,63 @@ def test_an_untracked_file_at_a_template_path_is_refused_not_absorbed(tmp_path):
         "something was pushed despite the refusal")
 
 
+def test_a_staged_edit_at_a_missing_path_is_refused_even_when_the_worktree_reads_back_as_the_template(
+        tmp_path):
+    """THE HALF THE WORKTREE COMPARISON ALONE COULD NOT TELL APART (#44
+    round 3, `openRepoTools:1647`).
+
+    HEAD lacking a template path says nothing about the INDEX: a person can
+    `git add` their own edit at that path — before this command ever runs —
+    and step 8's `add` stages straight from the worktree, by name, so it would
+    stage over that edit the moment the WORKTREE's own bytes happen to read
+    back as the template, exactly as an earlier run's real leftover does. The
+    index is asked the same question the worktree already answers, so a
+    staged edit does not vanish just because the file on disk no longer shows
+    it.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout = adopted_checkout(tmp_path, home, env)
+    # What the template substitutes to, captured from the first run's own
+    # seed before the path is removed from HEAD below.
+    template_bytes = (checkout / "handoffs" / "README.md").read_text(
+        encoding="utf-8")
+    for args in (["rm", "-q", "--", "handoffs/README.md"],
+                 ["commit", "-q", "-m", "somebody removed the handoffs README"],
+                 ["push", "-q", "origin", "HEAD:main"]):
+        subprocess.run(["git", "-C", str(checkout), *args], check=True)
+    before_head = head_of(checkout)
+
+    foreign = checkout / "handoffs" / "README.md"
+    foreign.parent.mkdir(parents=True, exist_ok=True)
+    foreign_text = "this is somebody's own staged edit, not the template\n"
+    foreign.write_text(foreign_text, encoding="utf-8")
+    subprocess.run(["git", "-C", str(checkout), "add", "--",
+                    "handoffs/README.md"], check=True)
+    # …and now the WORKTREE copy reads back as the template, even though what
+    # is STAGED at this path is still the person's own edit above.
+    foreign.write_text(template_bytes, encoding="utf-8")
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "handoffs/README.md exists" in result.stderr, result.stderr
+    assert "NOTHING was written into that checkout on this run" in result.stderr
+    assert foreign.read_text(encoding="utf-8") == template_bytes, (
+        "the worktree file was overwritten")
+    assert staged_in(checkout).split() == ["handoffs/README.md"], (
+        f"the staged edit was unstaged: {staged_in(checkout)!r}")
+    staged_blob = subprocess.run(
+        ["git", "-C", str(checkout), "show", ":handoffs/README.md"],
+        capture_output=True, text=True, check=True).stdout
+    assert staged_blob == foreign_text, (
+        "the seed overwrote the person's staged edit with the template")
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+
+
 # --- one answer to one question, across the seam between two toolsets -------
 
 #: (name, the two yaml lines as a template, whether both sides must ACCEPT).
