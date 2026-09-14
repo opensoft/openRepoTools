@@ -5749,6 +5749,30 @@ run env PATH="$LANEBIN_PATH" "$LANE" repoPick-4 </dev/null
 is    "lane <name> on a lane bound elsewhere refuses with 2" "$rc" 2
 has   "…naming where it is bound" "$err" "bound on Raven"
 is    "…and touching nothing" "$(cat "$LANE_TMUX_LOG")" ""
+# AND THE CONTAINER NOTICE REACHES THIS BRANCH, WHICH IS THE ONE THAT NEEDS IT
+# MOST. With no `$LANES_WORKSTATION` inside a container the workstation is the
+# CONTAINER'S id, so NO row is this workstation's — and the partition then files
+# a person's OWN lane under BOUND ELSEWHERE and refuses it by naming a machine
+# they are sitting at. The listing has carried the sentence since it was
+# written; `lane <name>` reaches this same refusal WITHOUT passing through the
+# listing, so a notice printed only beneath the rows never reaches the person
+# who typed the name. `repoPick-7` is a binding of THIS host, which is exactly
+# the row the unset seam turns into somebody else's.
+run env -u LANES_WORKSTATION LANES_IN_CONTAINER=1 PATH="$LANEBIN_PATH" "$LANE" repoPick-7 </dev/null
+is    "a lane of THIS host refuses as bound elsewhere once the seam is unset" "$rc" 2
+has   "…naming the workstation its row carries" "$err" "bound on Eagle"
+has   "…and saying WHY this host is not that workstation" "$err" "LANES_WORKSTATION"
+has   "…in the one sentence its own writers refuse with" "$err" "is the CONTAINER"
+has   "…naming the launcher whose job the value is" "$err" "launcher"
+hasnt "…and never the workstation: key R-A11-14 rejected by name" "$err" "workstation: "
+# SAID ONCE PER RUN AND NEVER ONCE PER SURFACE: one run can reach both the
+# listing and this branch, and a person who picked a number out of a listing
+# that had already explained itself does not need the paragraph twice.
+is    "…and the sentence is said once, not once for every surface that wants it" \
+      "$(printf '%s' "$out$err" | tr -d '\r\n' | grep -o 'is the CONTAINER' | wc -l | tr -d ' ')" "1"
+# AND IT IS SILENT WHERE THE SEAM ANSWERED, so the notice means what it says.
+run env PATH="$LANEBIN_PATH" "$LANE" repoPick-4 </dev/null
+hasnt "an ordinary elsewhere refusal carries no container notice at all" "$err" "LANES_WORKSTATION"
 # A PROFILE CANNOT BE HANDED TO AN ATTACH, because an attach starts nothing.
 run env PATH="$LANEBIN_PATH" "$LANE" repoPick-2 team-09z </dev/null
 is    "lane <name> <profile> on a LIVE lane refuses rather than attaching under another name" "$rc" 2

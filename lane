@@ -258,9 +258,17 @@ ws_src="$(printf '%s' "$ws_pair" | cut -f2)"
 # `test_repo_hygiene.py` holds the four against. The helper prints it on stderr
 # and still answers on stdout, because a read in front of a launch may not
 # refuse; the read above discarded that stderr, so this asks for it again.
+#
+# SAID ONCE PER RUN, because BOTH surfaces that need it can be reached in ONE
+# run: the listing prints it under the rows, and the branch a mis-filed lane
+# takes prints it above its own refusal. A person who picked a number out of a
+# listing that had already explained itself does not need the paragraph twice.
+ws_notice_said=0
 ws_notice() {
+	[ "$ws_notice_said" = 0 ] || return 0
 	case "$ws_src" in
 	container-unset)
+		ws_notice_said=1
 		say ""
 		"$LANES_EDIT" workstation 2>&1 >/dev/null || : ;;
 	esac
@@ -653,6 +661,16 @@ go_live() {
 # — and when they arrive they arrive in `lanes_rows`, which is where this line
 # would read them. What it never does is offer a launch: that is the collision.
 go_elsewhere() {
+	# AND THE CONTAINER NOTICE BELONGS HERE MOST OF ALL, not only under the
+	# listing. With no `$LANES_WORKSTATION` inside a container the workstation is
+	# the CONTAINER'S id, so NO row is this workstation's — and the partition then
+	# files a person's OWN lane under this heading, which makes the sentence below
+	# name a machine they are sitting at. `lane <name>` reaches this refusal
+	# WITHOUT passing through the listing, so a notice printed only beneath the
+	# rows never reaches the person who typed the name; and the pick reaches both,
+	# which is what `ws_notice`'s once-per-run guard is for. On stderr, because
+	# the refusal under it is.
+	ws_notice >&2
 	die "lane $R_LANE is bound on ${R_WS:-a workstation this row does not name}${R_WIN:+, window $R_WIN}${R_AGE:+, as of $R_AGE ago},
     and this workstation cannot see another machine's tmux — so there is nothing
     here to attach to, and a second session on it is the collision this protocol
