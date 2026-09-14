@@ -4582,7 +4582,11 @@ session_start_block() {
   # below, because both are facts about this session and not about which of them
   # applies. `|| :` for the reason the whole block has one: this hook never
   # fails and always exits 0 (R-A8-1).
-  ssb_name_line "$ssb_id" "$ssb_lane" || :
+  # THE SUBSHELL IS THE `|| :` MADE TRUE OF MORE THAN A RETURN — see
+  # `ssb_name_line`'s own header. It is the one line of this block that reads
+  # every profile's session records, so it is the one most able to meet
+  # something this hook may not die on.
+  ( ssb_name_line "$ssb_id" "$ssb_lane" ) || :
   if [ -z "$ssb_lane" ]; then
     # THE ONE PLACE THE PLACEHOLDER IS RIGHT: no lane is known here, so there is
     # nothing to fill in. It is also the estate's ONE no-lane notice — the
@@ -5508,7 +5512,16 @@ ssb_name_line() {   # <session uuid> <lane, or empty>
   snl_tmp="$(mktemp "${TMPDIR:-/tmp}/lanes-edit-sn.XXXXXX" 2>/dev/null || printf '')"
   [ -n "$snl_tmp" ] || return 0
   snl_rc=0
-  transcript_holders "$snl_id" > "$snl_tmp" 2>/dev/null || snl_rc=$?
+  # IN A SUBSHELL, AND THAT IS R-A8-1 AND NOT TIDINESS. *"This hook never fails
+  # and always exits 0"*; `|| snl_rc=$?` catches a RETURN and catches nothing
+  # else, because a fatal inside a function called in this shell — an unbound
+  # variable under `set -u`, a `die` on a path nobody expected to reach one —
+  # exits the shell itself, `|| :` at the call site and all. Measured: with
+  # `th_here_prof` unset, `lanes-edit.sh session-start` exited 1 and printed no
+  # block at all, which is precisely the hook breaking the session it was
+  # written to orient. Nothing here needs state from the call — the rows come
+  # back through a file — so the subshell costs nothing and bounds it.
+  ( transcript_holders "$snl_id" ) > "$snl_tmp" 2>/dev/null || snl_rc=$?
   if [ "$snl_rc" != 0 ]; then rm -f -- "$snl_tmp"; return 0; fi
   snl_file=""; snl_tgt=none; snl_others=""
   while IFS="$US" read -r sn_pid sn_kind sn_tgt sn_prof sn_where sn_verdict sn_file; do
@@ -6261,8 +6274,29 @@ EOF
   guard)
     [ "$#" -eq 0 ] || die "usage: guard   (the UserPromptSubmit hook; the hook's JSON on stdin)" 2
     if [ -t 0 ]; then g_json=""; else g_json="$(cat 2>/dev/null || :)"; fi
-    guard_run "$g_json"; g_rc=$?
-    exit "$g_rc"
+    # IN A SUBSHELL, AND EVERY CODE BUT 0 IS A 2. This is clause (d) — *"fail
+    # CLOSED"* — made true of the guard's OWN failures and not only of the
+    # reads it makes, and it is here because the alternative was measured:
+    # `transcript_holders` left `th_here_prof` unset, `set -u` (line 292) took
+    # the whole shell down at the first record that was not this window's, and
+    # `lanes-edit.sh guard` exited 1. A 1 does not block a `UserPromptSubmit`
+    # — only 2 does — so the one defect this guard cannot have, a guard that
+    # lets a prompt through in silence, is exactly what a fatal inside it
+    # produced. The subshell contains it: `guard_run`'s effects are on the
+    # filesystem (the offer file, `lane-start`, the register) and on stderr,
+    # all of which cross it, and the only thing lost is shell state nothing
+    # reads afterwards.
+    #
+    # A `die` reached from one of the reads it makes is caught the same way,
+    # which is why the arm maps EVERY unexpected code rather than listing the
+    # ones known today.
+    g_rc=0
+    ( guard_run "$g_json" ) || g_rc=$?
+    case "$g_rc" in
+      0 | 2) exit "$g_rc" ;;
+      *) note "THE NAME GUARD ITSELF FAILED (exit $g_rc), so the three names were not verified — and a triple that cannot be verified is not a triple that agrees (Amendment 12(d)). This prompt is refused rather than let through, because only a 2 blocks one and a guard that fails open is the silence this amendment exists to end. $(guard_bypass)"
+         exit 2 ;;
+    esac
     ;;
 
   # --- internal reads, for lane-start and lane-end -------------------------

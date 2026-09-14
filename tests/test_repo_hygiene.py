@@ -1405,9 +1405,25 @@ def test_agents_md_is_short_enough_to_be_read():
     the merge rather than the branch's own carried forward, which is the
     only way either of them is ever allowed to be right, and the entry
     above stays because its ten lines are still the ten in rule 4.
+
+    224 -> 228 on 2026-09-14, for THE ONE EXIT CODE THIS FILE NOW STATES
+    WRONG (lane-collision-protocol Amendment 12, opensoft/openRepoTools#25).
+    Four lines, and every one of them is behaviour rather than prose about
+    it. The paragraph promised, without qualification, that each of the four
+    "refuses with exit 1 naming `openRepoTools wip init` where that file does
+    not answer" — and `lanes-edit.sh guard` deliberately does not: it is a
+    `UserPromptSubmit` hook, only a 2 blocks a prompt
+    (code.claude.com/docs/en/hooks), and a 1 there would print the workspace
+    refusal and let the prompt THROUGH, which is the one failure clause (d)
+    forbids by name. An assistant reading the old sentence and getting a 2
+    back has no way to tell a blocked prompt from the "the object is held"
+    that 2 has meant here since Amendment 5, which is exactly what the
+    sentence beneath it — "never read a number without knowing which command
+    produced it" — exists to prevent, and it could not do that while the
+    clause above it named the wrong number for one of them.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 224, f"AGENTS.md is {len(lines)} lines; the cap is 224"
+    assert len(lines) <= 228, f"AGENTS.md is {len(lines)} lines; the cap is 228"
 
 
 def test_readme_is_short_enough_to_be_read():
