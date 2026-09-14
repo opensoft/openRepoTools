@@ -42,8 +42,10 @@
 #     Nothing is launched, nothing is resumed and nothing is written: the
 #     session is already running and this word only puts a terminal in front of
 #     it. Measured 2026-09-14: the acts are `tmux move-window -a -s
-#     <session>:<index>` and then `tmux select-window -t <@id>`, and where the
-#     window is already in this session the move is not made at all.
+#     <session>:<@id>` and then `tmux select-window -t <session>:<@id>` — the
+#     `@id` on both, because an index is a name another window can be given
+#     between the read and the act — and where the window is already in this
+#     session the move is not made at all.
 #   * BOUND ELSEWHERE — clause (c)'s question, the handoff request. The request
 #     itself is `brettheap/new-workstation#38`'s act 4 and DOES NOT EXIST YET,
 #     so until it does this refuses and names where the lane is bound. It never
@@ -552,31 +554,40 @@ launcher() {
 # because a window reuse or a rename destroys the `claude-<profile>-<ts>-<pid>`
 # session name that was the only place the profile ever appeared.
 go_available() {
-	local ga_dir="$R_DIR" ga_pf="$profile" ga_from="" ga_pclaude dir_for_hint pos lrepo
+	local ga_dir="$R_DIR" ga_pf="$profile" ga_from="" ga_pclaude dir_for_hint pos lrepo ga_start
 	local ga_cmd ga_why
-	# A BINDING IS AVAILABLE BECAUSE THIS HOST PROVED IT DEAD, and where the
-	# session records could not be read that proof was never made: the row's
-	# state is the LOG's verb alone, so an `IDLE` here may be a lane that is
-	# LIVE. A PAUSED lane is parked by its own last line and needs no such
-	# proof, so it is the one state this passes — every other one refuses,
-	# because a second session on a live lane is the collision (clause (h),
-	# Amendment 7(d)'s fail-closed rule; Copilot round 1 on #45).
-	if [ "$LIVENESS_UNREAD" != 0 ] && [ "${R_STATE:-}" != PAUSED ]; then
+	# A LANE IS AVAILABLE BECAUSE THIS HOST PROVED NOTHING IS RUNNING ON IT, and
+	# where the session records could not be read that proof was never made — IN
+	# EVERY STATE, `PAUSED` INCLUDED (Copilot round 4 on #45, `lane:560`).
+	#
+	# THE EXCEPTION ROUND 1 CARVED OUT WAS THE ROW MOST LIKELY TO COLLIDE, and
+	# the evidence is the sentence this file already quotes forty lines above:
+	# *"a lane that is live may show as IDLE OR PAUSED here"* (`lanes-edit.sh:4628`,
+	# the helper's own words). A live record BEATS the log's last verb — *"a lane
+	# whose session is running is LIVE whatever its last written line says;
+	# otherwise the verb answers"* (`lanes-edit.sh:4700`) — so when the live read
+	# fails the verb is ALL that is left, and `/lane-swap` writes the `PAUSED`
+	# line while its session is still on screen. "Parked by its own last line" was
+	# read as a proof; it is a line, and the proof is the read that did not
+	# happen. Every state refuses (clause (h), Amendment 7(d)).
+	if [ "$LIVENESS_UNREAD" != 0 ]; then
 		ga_why="this workstation's session records could NOT be read (the line above)"
 		case "$LIVENESS_UNREAD" in
 		2) ga_why="no temporary file could be made to read the helper's own notes back, so
     whether those records answered is UNKNOWN from here" ;;
 		esac
-		die "lane $R_LANE reads ${R_STATE:-UNKNOWN}, and $ga_why — so nothing here has PROVED
-    that binding dead, and a lane that is live shows as IDLE when the proof is
-    missing. This command will not start a second session on a lane that may
+		die "lane $R_LANE reads ${R_STATE:-UNKNOWN}, and $ga_why — so nothing here has
+    PROVED that lane dead, and a lane that is LIVE shows as IDLE or PAUSED when
+    that proof is missing — the helper's own words (\`lanes-edit.sh:4628\`),
+    because a live record beats the log's last verb and the verb is all that is
+    left. This command will not start a second session on a lane that may
     already be running (clause (h)); that is the collision the whole protocol is
     about, and a record this command did not read is not an answer (Amendment
     7(d)).
       what is actually running:  lanes-edit.sh live-holder $R_LANE
       fix the read and re-run:   lanes --all
-    A lane PARKED by its own last line needs no such proof and is launched as
-    it always was — this refusal is for a binding alone." 2
+    A PAUSED row is no exception here: \`/lane-swap\` writes that line while its
+    session is still on screen, so it is the row most likely to be running." 2
 	fi
 	if [ -n "$dir_flag" ]; then ga_dir="$dir_flag"; fi
 	if [ -z "$ga_pf" ]; then ga_pf="$R_PF"; fi
@@ -599,13 +610,21 @@ go_available() {
       cd $dir_for_hint && pclaude --lane $R_LANE <profile>" 2
 	fi
 	if [ -z "$ga_dir" ]; then
+		# THE ACT PRINTED IS THE ONE `lane-start` TAKES FOR *THIS* LANE'S NAME
+		# (Copilot round 4 on #45, `lane:595`). A lane whose name is not
+		# `<repo>-<n>` — `browser-ui-repair`, a `--verbatim` row like any other — is
+		# started by the ONE-ARGUMENT form beside a `--dir` (`lane-start:601`), and
+		# appending a position to it names A DIFFERENT LANE: `lane-start
+		# browser-ui-repair 3` is `browser-ui-repair-3`. A refusal whose remedy
+		# records the directory of another lane is worse than no remedy at all.
 		pos="${R_LANE##*-}"; lrepo="${R_LANE%-*}"
-		case "${pos%[A-Za-z]}" in '' | *[!0-9]*) lrepo="$R_LANE"; pos="<n>" ;; esac
+		ga_start="$lrepo $pos"
+		case "${pos%[A-Za-z]}" in '' | *[!0-9]*) ga_start="$R_LANE" ;; esac
 		die "lane $R_LANE's record does not name a directory yet, so this command does not
     know where to \`cd\` — and a launch that lands in the right transcript and
     the wrong directory loses the repository's CLAUDE.md and the lane's memory,
     silently (Evidence 3). Name it once:
-      lane-start --dir <the lane's checkout> $lrepo $pos
+      lane-start --dir <the lane's checkout> $ga_start
     which RECORDS it in the lane's own log, so every later \`$prog $R_LANE\`
     reads it back and no one has to be told again (Amendment 11 clause (c);
     Evidence 7). For this run alone:
@@ -644,7 +663,7 @@ go_available() {
 # Nothing is launched and nothing is written: the session is running, and what a
 # person asked for is a terminal in front of it.
 go_live() {
-	local gl_this gl_now gl_idx gl_says
+	local gl_this gl_now gl_says
 	if [ -n "$profile" ]; then
 		die "lane $R_LANE is LIVE HERE under profile ${R_PF:-<none recorded>}, and \`$prog <name>
     <profile>\` names the profile to LAUNCH under — an attach starts nothing, so
@@ -699,33 +718,62 @@ go_live() {
 		exit 0
 	fi
 	if [ "$switch" = 1 ]; then
+		# THE SELECT COMES FIRST AND THE SWITCH ONLY FOLLOWS ONE THAT WORKED
+		# (Copilot round 3 on #45, `lane:687`). `select-window` names the session it
+		# acts on and needs no client there, so the lane's own window is made that
+		# session's current window BEFORE this client is moved into it. Switching
+		# first and selecting after leaves a client that LOST THE RACE sitting on
+		# whatever window that session left current — another lane, and this
+		# terminal already in it — which is the one thing the id-AND-session fence
+		# exists to stop. Ordered this way a select that fails costs nothing: the
+		# client has not moved.
 		say "lane $R_LANE is in session $W_SESS — switching this client to it (nothing is launched)"
 		if [ "$dry_run" = 1 ]; then
-			say "tmux switch-client -t $W_SESS"
 			say "tmux select-window -t $W_SESS:$W_ID"
+			say "tmux switch-client -t $W_SESS"
 			say "--dry-run: nothing was switched"
 			exit 0
 		fi
-		tmux switch-client -t "$W_SESS"
-		select_window_or_refuse "$W_SESS" "$W_ID" "this client is now on $W_SESS"
+		select_window_or_refuse "$W_SESS" "$W_ID" ""
+		tmux switch-client -t "$W_SESS" || die "lane $R_LANE's window $W_ID was selected in session $W_SESS, and \`tmux
+    switch-client -t $W_SESS\` then failed — so this client is still where it
+    was and nothing else was done. That session's current window IS the lane
+    now, which is the half that worked:
+      go there by hand:            tmux switch-client -t $W_SESS
+      or bring the window here:    $prog $R_LANE" 2
 		exit 0
 	fi
-	# THE MOVE, PROVED BY HAND ON 2026-09-14: `move-window -a -s <session>:<index>`
+	# THE MOVE, PROVED BY HAND ON 2026-09-14: `move-window -a -s <session>:<@id>`
 	# brings the window into THIS session after the current one, and
-	# `select-window -t <@id>` puts the terminal on it. A detached session whose
-	# only window moves closes itself, which is the tidy end of a lane that was
-	# left in one.
-	gl_idx="$(tmux_field "$W_ID" '#{window_index}' 2>/dev/null || :)"
-	[ -n "$gl_idx" ] || die "lane $R_LANE's window $W_ID is in session $W_SESS and tmux gave it no index, so the
-    move cannot be spelled. Attach to that session instead:  tmux attach -t $W_SESS" 2
+	# `select-window -t <session>:<@id>` puts the terminal on it. A detached
+	# session whose only window moves closes itself, which is the tidy end of a
+	# lane that was left in one.
+	#
+	# THE SOURCE IS THE `@id` AND NEVER THE INDEX (Copilot round 4 on #45,
+	# `lane:715`). An index read one command before it is used is a name another
+	# window can be given in between, and the fence above proved the `@id` — not
+	# a number. MEASURED, tmux 3.4 on a private socket, 2026-09-14: with `w3` at
+	# `src:2`, killing it and opening another window at that index and then
+	# `move-window -a -s src:2` MOVED THE INTRUDER into the destination and
+	# exited 0 — the wrong window, here, silently — while `move-window -a -s
+	# src:@2` on that same estate refused with `can't find window: @2` and exit 1.
+	# tmux resolves a `<session>:<@id>` inside the session named or not at all,
+	# which is the whole of the fence, and a move that fails is a refusal: the
+	# select below runs only on one that worked.
 	say "lane $R_LANE is in session $W_SESS — moving its window here and selecting it (nothing is launched)"
 	if [ "$dry_run" = 1 ]; then
-		say "tmux move-window -a -s $W_SESS:$gl_idx"
+		say "tmux move-window -a -s $W_SESS:$W_ID"
 		say "tmux select-window -t $gl_this:$W_ID"
 		say "--dry-run: nothing was moved"
 		exit 0
 	fi
-	tmux move-window -a -s "$W_SESS:$gl_idx"
+	tmux move-window -a -s "$W_SESS:$W_ID" || die "lane $R_LANE's window $W_ID could not be moved out of session $W_SESS into this one,
+    so NOTHING was moved and this terminal is where it was. It resolved a moment
+    ago, at the check above, and tmux refuses a \`<session>:<@id>\` whose window
+    is no longer in that session — which is the fence doing its work rather than
+    a fault.
+      what the register says now:            lanes --all
+      that session, if you want it anyway:   tmux attach -t $W_SESS" 2
 	select_window_or_refuse "$gl_this" "$W_ID" "its window was moved here out of $W_SESS, which may have closed behind it"
 	exit 0
 }

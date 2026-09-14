@@ -258,7 +258,15 @@ retire_commands() {
 	local name target
 	for name in "${RETIRED[@]}"; do
 		target="$dir/$name"
-		[ -e "$target" ] || continue
+		# `-e` FOLLOWS THE LINK AND IS FALSE FOR A DANGLING ONE (Copilot round 4 on
+		# #45, `openRepoTools:261`), so a `restart` SYMLINK whose target has since
+		# gone — and the pre-move `link-estates` put exactly such links in a
+		# workstation's `~/.local/bin`, pointing into a checkout that may no longer
+		# be there — was NEITHER removed NOR named: it stayed on PATH, and the one
+		# run that was going to mention it said nothing. `-L` is the other half of
+		# "is there anything at this path at all"; what happens next is the same as
+		# for any other link, which is that it is named and left.
+		[ -e "$target" ] || [ -L "$target" ] || continue
 		# `! -L` BEFORE `-f`, BECAUSE `-f` FOLLOWS THE LINK (Copilot round 2 on
 		# #45). A person's own `restart` SYMLINK pointing at a file that happens
 		# to carry this installer's header would otherwise be unlinked — and

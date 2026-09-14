@@ -687,8 +687,15 @@ case "${#positional[@]}" in
       [ "$no_launch" = 0 ] || ls_drop="$ls_drop --no-launch"
       [ "$confirm" = 0 ]   || ls_drop="$ls_drop --confirm"
       [ "$take_yes" = 0 ]  || ls_drop="$ls_drop --yes"
-      [ -z "$estate" ]     || ls_drop="$ls_drop --estate"
-      [ "${#pass[@]}" = 0 ] || ls_drop="$ls_drop --"
+      # AND THE VALUE GOES WITH THE FLAG THAT TOOK ONE (Copilot round 4 on #45,
+      # `lane-start:690`). `--estate` and `--` are parsed WITH their operands,
+      # and a suggested command carrying the flag and not the value is one
+      # nobody can run: `lane-start --estate x --yes` printed `lane-start <repo>
+      # <n> --estate --yes`, whose `--estate` swallows the `--yes` and names an
+      # estate `--yes`. A line printed for a person to type is a line this
+      # command has to be willing to have typed back at it.
+      [ -z "$estate" ]     || ls_drop="$ls_drop --estate $estate"
+      [ "${#pass[@]}" = 0 ] || ls_drop="$ls_drop -- ${pass[*]}"
       if [ -n "$ls_drop" ]; then
         die "bare \`$prog\` is \`lane\` (Amendment 18 Addendum 1 clause (i-4)), which lists the
     lanes and binds the one you pick — and$ls_drop belongs to a lane that has

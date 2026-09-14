@@ -6280,7 +6280,17 @@ case "${1-}" in
     # is that window, and nothing is logged — because nothing happened.
     [ -z "${LANE_TMUX_SELECT_FAIL:-}" ] || exit 1
     printf '%s\n' "$*" >> "${LANE_TMUX_LOG:-/dev/null}" ;;
-  move-window|switch-client|attach|attach-session)
+  move-window)
+    # THE MOVE CAN LOSE THE SAME RACE, and tmux refuses a `<session>:<@id>`
+    # whose window has left that session between the check and the act —
+    # measured on tmux 3.4, `can't find window: @2`, exit 1. Nothing is
+    # logged, because nothing happened.
+    [ -z "${LANE_TMUX_MOVE_FAIL:-}" ] || exit 1
+    printf '%s\n' "$*" >> "${LANE_TMUX_LOG:-/dev/null}" ;;
+  switch-client)
+    [ -z "${LANE_TMUX_SWITCH_FAIL:-}" ] || exit 1
+    printf '%s\n' "$*" >> "${LANE_TMUX_LOG:-/dev/null}" ;;
+  attach|attach-session)
     printf '%s\n' "$*" >> "${LANE_TMUX_LOG:-/dev/null}" ;;
   *) : ;;
 esac
@@ -6489,7 +6499,8 @@ else
   : > "$LANE_TMUX_LOG"; : > "$FAKE_PCLAUDE_LOG"
   lane_pick 4 env -C "$PICK_DIR" "$LANE"
   is    "answering with a lane live in a DETACHED session exits 0" "$rc" 0
-  has   "…moving its window into this session, after the current one" "$(cat "$LANE_TMUX_LOG")" "move-window -a -s detsess:7"
+  has   "…moving its window into this session by its @id, never by an index" \
+        "$(cat "$LANE_TMUX_LOG")" "move-window -a -s detsess:@32"
   has   "…and selecting it in THIS session, which is where the move put it" \
         "$(cat "$LANE_TMUX_LOG")" "select-window -t picksess:@32"
   is    "…and launching nothing here either" "$(cat "$FAKE_PCLAUDE_LOG")" ""
@@ -6608,12 +6619,13 @@ is    "a binding refuses where this command could not read whether the proof was
 has   "…saying the notes could not be read back" "$err" "no temporary file could be made"
 has   "…and that the answer is UNKNOWN rather than absent" "$err" "UNKNOWN from here"
 is    "…launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
-# …AND A PARKED LANE IS STILL PARKED, whatever this command could or could not
-# read: its own last line says so.
+# …AND A `PAUSED` LANE IS NO EXCEPTION TO IT (Copilot round 4, `lane:560`): its
+# own last line is a LINE, and the proof is the read that did not happen.
 : > "$FAKE_PCLAUDE_LOG"
 run env -u TMUX TMPDIR="$SANDBOX/no-such-tmpdir" PATH="$LANEBIN_PATH" "$LANE" repoPick-1 </dev/null
-is    "…while a PAUSED lane launches with no temporary file either" "$rc" 0
-has   "…through the launcher" "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoPick-1 team-05a"
+is    "…and a PAUSED lane refuses on the unread state as well" "$rc" 2
+has   "…in that state's own words" "$err" "no temporary file could be made"
+is    "…launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
 
 # THE PICK SAYS WHY `f` IS NOT OFFERED (Copilot round 3 on #45, `lane:960`).
 # `|| :` collapsed every status of the next-free read and the answer simply
@@ -6709,15 +6721,23 @@ chmod +x "$SANDBOX/livewarn"
 : > "$FAKE_PCLAUDE_LOG"
 run env -u TMUX PATH="$LANEBIN_PATH" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/livewarn" "$LANE" repoPick-7 </dev/null
 is    "a BINDING refuses where the liveness read did not answer" "$rc" 2
-has   "…saying nothing proved that binding dead" "$err" "PROVED that binding dead"
+has   "…saying nothing proved that lane dead" "$err" "PROVED that lane dead"
 has   "…and naming the read that says what is actually running" "$err" "live-holder"
 is    "…launching nothing at all" "$(cat "$FAKE_PCLAUDE_LOG")" ""
-# …WHILE A PARKED LANE IS PARKED BY ITS OWN LAST LINE and needs no such proof,
-# so the refusal is for a binding alone and never for every lane on the screen.
+# …AND SO DOES A `PAUSED` ROW, WHICH IS THE ONE MOST LIKELY TO BE RUNNING
+# (Copilot round 4 on #45, `lane:560`). Round 1 passed `PAUSED` through on the
+# reading that a lane parked by its own last line needs no proof — but the
+# sentence this very refusal is reacting to says *"a lane that is live may show
+# as IDLE OR PAUSED here"* (`lanes-edit.sh:4628`), because a live record beats
+# the log's last verb and the verb is all that is left when the read fails
+# (`lanes-edit.sh:4700`). `/lane-swap` writes the PAUSED line while its session
+# is still on screen. The exception was a hole in the fence at its widest point.
 : > "$FAKE_PCLAUDE_LOG"
 run env -u TMUX PATH="$LANEBIN_PATH" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/livewarn" "$LANE" repoPick-1 </dev/null
-is    "…while a PAUSED lane still launches, because its own last line parked it" "$rc" 0
-has   "…through the launcher, as it always did" "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoPick-1 team-05a"
+is    "…and a PAUSED lane refuses too, on the same unread proof" "$rc" 2
+has   "…saying a live lane shows as IDLE or PAUSED when the proof is missing" "$err" "IDLE or PAUSED"
+has   "…naming /lane-swap, which writes that line while its session is still up" "$err" "/lane-swap"
+is    "…launching nothing either" "$(cat "$FAKE_PCLAUDE_LOG")" ""
 
 # ---------------------------------------------------------- `--all`, grouped
 run env PATH="$LANEBIN_PATH" "$LANE" --all </dev/null
@@ -6755,6 +6775,13 @@ run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" "$START" --estate x --yes </dev/null
 is    "…and names every one of them, not the first" "$rc" 2
 has   "…the one" "$err" "--yes"
 has   "…and the other" "$err" "--estate"
+# …AND THE VALUE GOES WITH THE FLAG THAT TOOK ONE (Copilot round 4 on #45,
+# `lane-start:690`). `--estate x --yes` printed `--estate --yes`, whose
+# `--estate` swallows the `--yes` and names an estate `--yes`: a suggested
+# command that cannot be run is not a suggestion, it is a second refusal
+# waiting.
+has   "…with the VALUE the flag was given, so the line can actually be typed" "$err" "--estate x"
+hasnt "…and never the flag with the next flag as its value" "$err" "--estate --yes"
 if [ "$HAVE_PTY" = 0 ]; then
   skip "bare lane-start forwards the flags lane has" "$NO_PTY_WHY"
 else
@@ -6789,6 +6816,89 @@ has   "…with the rows" "$out" "repoPick-1"
 hasnt "…offering no position it did not get, here either" "$out" "next free position:"
 has   "…naming the code the read actually gave" "$out" "exited"
 hasnt "…and never calling a failed read an un-upgraded workstation" "$out" "predates lane-collision-protocol Amendment 18"
+
+# ---- THE TWO ACTS THAT CAN FAIL *AFTER* THE FENCE HAS PASSED ---------------
+#
+# THE MOVE IS SPELLED WITH THE `@id` AND THE SOURCE IS FENCED WITH IT (Copilot
+# round 4 on #45, `lane:715`). The index was read one command before it was
+# used, and a window that closes in between gives its index to the next one.
+# MEASURED, tmux 3.4 on a private socket, 2026-09-14: with `w3` at `src:2`,
+# killing it and opening another window at that index and then `move-window -a
+# -s src:2` moved the INTRUDER and exited 0 — the wrong window, in this
+# session, silently — while `move-window -a -s src:@2` refused with `can't find
+# window: @2` and exit 1. So the failure is tmux's own fence doing its work, and
+# this word refuses on it rather than selecting into whatever came back.
+: > "$LANE_TMUX_LOG"; : > "$FAKE_PCLAUDE_LOG"
+run env PATH="$LANEBIN_PATH" LANE_TMUX_MOVE_FAIL=1 "$LANE" repoPick-3 </dev/null
+is    "a move-window that FAILED is a refusal and never a select afterwards" "$rc" 2
+has   "…naming the session the window could not be moved out of" "$err" "could not be moved out of session detsess"
+has   "…saying nothing was moved and this terminal is where it was" "$err" "NOTHING was moved"
+is    "…having touched nothing at all, the select included" "$(cat "$LANE_TMUX_LOG")" ""
+is    "…and launching nothing either" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+
+# AND UNDER `--switch` THE SELECT COMES FIRST (Copilot round 3 on #45,
+# `lane:687`). `switch-client` then `select-window` leaves a client that lost
+# the race sitting in the target session's current window — another lane, and
+# this terminal already in it. `select-window` names the session it acts on and
+# needs no client there, so the lane's own window is made current BEFORE the
+# client moves, and a select that fails costs nothing.
+: > "$LANE_TMUX_LOG"
+run env PATH="$LANEBIN_PATH" LANE_TMUX_SELECT_FAIL=1 "$LANE" --switch repoPick-3 </dev/null
+is    "--switch with a select that FAILED refuses with 2" "$rc" 2
+has   "…saying the window could not be selected" "$err" "could not be selected in session detsess"
+hasnt "…and the client was never switched, because the select is the first act" \
+      "$(cat "$LANE_TMUX_LOG")" "switch-client"
+# …AND A SWITCH THAT FAILED AFTER A SELECT THAT WORKED IS ALSO A REFUSAL, in
+# the words of the half that did happen: that session is on the lane now, and
+# this client simply did not move.
+: > "$LANE_TMUX_LOG"
+run env PATH="$LANEBIN_PATH" LANE_TMUX_SWITCH_FAIL=1 "$LANE" --switch repoPick-3 </dev/null
+is    "…and a switch-client that FAILED refuses with 2 as well" "$rc" 2
+has   "…naming the act that failed" "$err" "switch-client -t detsess\` then failed"
+has   "…and the half that worked, which is the lane's own window selected there" \
+      "$(cat "$LANE_TMUX_LOG")" "select-window -t detsess:@32"
+
+# ---- A LANE WHOSE NAME IS NOT `<repo>-<n>` IS STARTED BY ONE ARGUMENT -------
+#
+# Copilot round 4 on #45, `lane:595`. The no-directory refusal built its remedy
+# as `<repo> <position>`, and a `--verbatim` lane has neither: `browser-ui-repair`
+# is a row like any other (`lane-start:601` takes it as ONE argument beside a
+# `--dir`), and `lane-start --dir <path> browser-ui-repair <n>` would open
+# `browser-ui-repair-<n>` — A DIFFERENT LANE. A refusal whose remedy records the
+# directory of another lane is worse than one that says nothing.
+VERB_ID="dddd0008-8888-4000-8000-dddd00088888"
+add_seed_row "| \`browser-ui-repair\` | harness \`$VERB_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/browser/ui.md | ACTIVE |"
+{ printf '# lane browser-ui-repair — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane browser-ui-repair, session %s@Eagle, 2026-09-12T08:00:00Z, lane:browser-ui-repair → home opensoft/browser; estate browser; profile team-05a\n' "$VERB_ID"
+} > "$LOGD/browser-ui-repair.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed a --verbatim lane with a profile and no recorded directory"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX PATH="$LANEBIN_PATH" "$LANE" browser-ui-repair </dev/null
+is    "a --verbatim lane with no recorded directory refuses with 2" "$rc" 2
+has   "…naming the ONE-ARGUMENT form that records it for THIS lane" \
+      "$err" "lane-start --dir <the lane's checkout> browser-ui-repair"
+hasnt "…and never a position appended to a name that has none" "$err" "browser-ui-repair <n>"
+is    "…launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+
+# ---- AND `env -C` IS NOT A GNU-ONLY OPTION THIS SUITE CANNOT USE -----------
+#
+# Round 4 read this section's `env -C <dir>` invocations as a macOS failure —
+# *"`env -C` is a GNU `env` option, not available in macOS's /usr/bin/env … the
+# macOS Bash 3.2 job will fail before exercising these lane cases"*. It does
+# not. The macOS job has run these very cases GREEN — job 104128188482 on
+# `fce18d5`: `ok a bare lane inside a checkout exits 0` and `ok answering with
+# the number of an AVAILABLE lane exits 0`, both of them `env -C` forms, neither
+# of which can exit 0 and carry a listing if `env` had refused the flag — and
+# `main` has carried four more of them since Amendment 11. Asserted here as
+# well, directly and on every platform, because a decline that is argued rather
+# than measured is one the next round makes again.
+is   "this platform's env takes the -C that every pick case in this section passes it" \
+     "$(env -C "$LOGD" /bin/pwd -P 2>/dev/null)" "$(cd -- "$LOGD" && pwd -P)"
+is   "…and exits 0 doing it, so a case that used it ran the command and not the usage" \
+     "$(env -C "$LOGD" true >/dev/null 2>&1; echo $?)" 0
 
 echo "== the workstation seam: unset, every writer reads the host =="
 

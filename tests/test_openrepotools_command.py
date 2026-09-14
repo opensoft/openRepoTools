@@ -486,6 +486,35 @@ def test_install_never_unlinks_a_symlink_of_a_retired_name(tmp_path, name):
     assert f"rm {link}" in result.stdout
 
 
+@pytest.mark.parametrize("name", RETIRED)
+@NEEDS_JQ
+def test_install_names_a_dangling_symlink_of_a_retired_name(tmp_path, name):
+    """AND `-e` IS FALSE FOR A LINK WHOSE TARGET IS GONE.
+
+    Copilot round 4 on #45, `openRepoTools:261`. `[ -e "$target" ] || continue`
+    follows the link, so a `restart` symlink pointing at a file that has since
+    been removed was skipped outright: still on PATH, still the first `restart`
+    a shell finds, and not one word about it in the run that was supposed to
+    retire that name. The pre-move `link-estates` put exactly these links in a
+    workstation's `~/.local/bin`. It is NAMED like any other link — and left,
+    because a link is somebody's decision about their own PATH.
+    """
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    link = bin_dir / name
+    link.symlink_to(tmp_path / "gone-with-the-checkout.sh")
+    assert not link.exists() and link.is_symlink(), "the fixture is a dangling link"
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert link.is_symlink(), (
+        f"a dangling symlink named `{name}` was removed by the retirement:\n"
+        + result.stdout)
+    assert f"{name}: RETIRED" in result.stdout, (
+        "a retired name still on PATH is named, whatever kind of file it is:\n"
+        + result.stdout)
+    assert f"rm {link}" in result.stdout
+
+
 @NEEDS_JQ
 def test_bin_dir_overrides_where_it_lands(tmp_path):
     result = run_cmd("--install", home=tmp_path,
