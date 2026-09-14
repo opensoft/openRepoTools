@@ -812,6 +812,84 @@ def test_agents_md_is_short_enough_to_be_read():
     loop for ever, which is the loop the entry above this one bought its two
     lines to stop.
 
+    162 -> 169 on 2026-09-12, for the independent reviewer's note that
+    `worktree_on_branch` matches ANY path while RR4 matches only the COMPUTED
+    one. Seven lines, and every one buys a thing an assistant gets wrong
+    unaided. That the path is computed HERE — `<worktree_root>/<branch>` out
+    of this checkout's `git-config.yml`, the leg's own mount under it — and
+    not read out of the record, which carries a `worktree_root:` of its own
+    that `resume.sh` loads and never uses. That a worktree on the branch
+    somewhere else is not merely unseen but a WHOLE-FEATURE refusal, because
+    `git worktree add` cannot take a branch another worktree holds. That
+    `park` is blind to it too, which is what rules out the "park it again"
+    every other exception in this rule ends in. And that the exit is a `git
+    worktree move`, the PERSON'S to run, with no such command for a leg's own
+    checkout. Without them "a recorded feature with no worktree here" reads as
+    "a worktree on the branch is a worktree here", which is the reading this
+    layer had.
+
+    169 -> 177 on 2026-09-12, for that reviewer's second and third notes —
+    RR3, a path that merely EXISTS at the computed path, and RR4's second
+    arm, a worktree REGISTERED there on another branch. Eight lines, and the
+    entry above is why they are not free: it taught the rule that the
+    computed path is the only one either verb reads, and an assistant that
+    knows only that reads "nothing of ours is there" as "`resume` will make
+    it". What these buy is that the refusal comes BEFORE origin is read — so
+    neither RR2's exits nor the re-park below them is what answers it — and
+    that the exit turns on one thing only, WHAT GIT HOLDS at that path: a
+    `git worktree move` where it holds a worktree, because `mv` on a
+    registered one leaves git holding the path it was at, and a plain `mv`
+    where it holds none, because `git worktree move` is no command for a
+    directory git never made. The `unlock` and the `prune` ride in one
+    clause rather than a sentence each, because they are the pair this rule
+    already names above it, and both are exits that were RUN: `worktree
+    move` refuses a locked worktree and `worktree add` refuses a path a dead
+    registration still names, so neither command clears the path alone.
+    177 -> 181 on 2026-09-12, for the independent review's should-fixes on
+    this same paragraph. Four lines, and every one of them a sentence the
+    rule had wrong rather than one it was missing. That the root is read out
+    of `$SPECKIT_GIT_WORKTREE_ROOT` FIRST — the variable both verbs read
+    before any file, which "out of THIS checkout's `git-config.yml`, and
+    read no other" actively denied, sending an agent that has it set to the
+    wrong path with the rule's own authority behind it. That the refusal is
+    made at whichever check the leg reaches first, the `git worktree add`
+    being only the one it reaches with the branch still AT the parked
+    commit: moved on it is the divergence, behind it the behind-ness, gone
+    from origin the gone-ness, all four run against the extension that day,
+    and a rule that quotes the wrong mechanism teaches an assistant to
+    disbelieve the refusal when the words do not match. And that a `worktree
+    prune` goes in front of the move where git still holds the destination
+    registered with nothing on disk, because `worktree move` refuses such a
+    destination in the same sentence `worktree add` does — an exit that was
+    run and did not work is worse than no exit at all.
+
+    181 -> 182 on 2026-09-13, for Copilot's first round on #27 (suppressed),
+    verbatim: "This contract documents only the environment override and
+    `git-config.yml`, but the implementation also falls back to the shape
+    default (`worktrees` for a three-leg root or `../<root>-worktrees` for a
+    single root). For an estate without either override, readers cannot derive
+    the path that `resume` and the recovery guidance use; include that third
+    source in this statement and its mirrored help/README wording." ONE line,
+    and it buys the case an estate usually IS: the entry above spent four
+    lines making the rule name `$SPECKIT_GIT_WORKTREE_ROOT` because "read no
+    other" denied a source, and this list denied the one almost every estate
+    actually uses. A rule that reads as exhaustive and is not sends an agent
+    to look for a `git-config.yml` that was never written, and then to guess.
+
+    182 -> 187 on 2026-09-13, for Copilot's fourth round on #27 (suppressed),
+    verbatim: "This contract says every off-path worktree's exit is `git
+    worktree move`, but the implementation deliberately suppresses that command
+    for `path: \".\"` and for a symlink-spelled worktree root because the move
+    cannot produce a path `resume` registers. Please document those exceptions
+    here so the operational guidance does not direct users to a non-working
+    recovery." IT IS DRIFT THIS BRANCH MADE, in the two rounds that suppressed
+    those commands, and it is the drift these caps exist to catch: a rule that
+    promises a command the command itself refuses to print. Five lines — the
+    `worktree unlock` a locked source wants, and the three states that get no
+    move at all, with the reason for the one a reader cannot guess (git
+    registers the path a link resolves to and `resume` compares the one you
+    wrote, so the move runs and changes nothing).
+
     155 -> 179 on 2026-09-13, for lane-collision-protocol AMENDMENT 9, ratified
     that day, and its adoption act 3 — the one change to this repository that
     is not a change to the estate verbs at all. Four executables, a shipped
@@ -855,9 +933,26 @@ def test_agents_md_is_short_enough_to_be_read():
     Amendment 9's arrival, and the merged file is 186. The cap is the count of
     what merged, not either side's number — and both entries stay, because each
     still names the rule its own lines bought.
+    211 -> 214 on 2026-09-13, for Copilot's eighth round on #27 (suppressed):
+    the round before it widened the symlink QUESTION from the worktree root to
+    every parent of the computed path and left this rule naming the root, which
+    for a link at the feature directory or a mount's parent is the wrong
+    setting to send a person to. Three lines, and they are the difference
+    between a remedy that works and one that does not: a link AT or ABOVE the
+    worktree root is a `worktree_root` to respell, and a link BELOW it is a
+    component that has to BE a directory rather than point at one.
+
+    187 AND 186 MEET AT 211 on 2026-09-13, where this branch merged `main`
+    after Amendment 9's act 3 landed there. Both raises start from 162 — the
+    count after the commit below this branch — and neither touches the other's
+    lines: `main` bought 24 for the lane tooling's arrival, this branch bought
+    25 for the path `resume` computes and the four rounds of review on it, and
+    the merged file is 211. The cap is the count of what merged, not either
+    side's number, and every entry above stays, because each still names the
+    rule its own lines bought.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 186, f"AGENTS.md is {len(lines)} lines; the cap is 186"
+    assert len(lines) <= 214, f"AGENTS.md is {len(lines)} lines; the cap is 214"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -1020,6 +1115,45 @@ def test_readme_is_short_enough_to_be_read():
     "mount" literally reads `assembly`, which this repository's own fixtures
     mount at `.`, as a role that is fine.
 
+    256 -> 261 on 2026-09-12, for the same reviewer's note on the PATH a
+    worktree is at. Five lines, and all five in the finding list rather than
+    in the exception above it, because this is not an exception to `resume
+    <Name>`: nothing is being brought back — the work is already here, and
+    neither verb can see it. What they buy is the path itself, said to be
+    computed in THIS checkout and not carried by the record, and the exit,
+    which is a `git worktree move` and not the re-park every other entry
+    beside it ends in: `park` collects the features under that root and no
+    others, so a re-park writes nothing about this one.
+
+    261 -> 267 on 2026-09-12, for the same reviewer's second and third notes
+    on WHAT IS AT that path. Six lines, and all six in the EXCEPTION
+    above the finding list rather than in the list itself, which is where the
+    entry above put its own: this IS a record `resume <Name>` brings back —
+    the work is not here, and nothing of the person's is at that path — and
+    all that stands between the two is a directory, a file or somebody else's
+    worktree. So it is an exception to the promise, and the promise is what
+    it falsifies; and the exit is neither the re-park every other exception
+    ends in nor the prune the one above it names, but a move whose command
+    depends on what git holds at that path — two of the six lines, because
+    a `worktree move` that names no `unlock` in front of a locked worktree,
+    or an `mv` that leaves a dead registration standing, is an exit that was
+    run and did not work.
+
+    267 -> 268 on 2026-09-13, for the same round's suppressed comment read
+    against this text: the finding list said the path is "read out of
+    `$SPECKIT_GIT_WORKTREE_ROOT` or this checkout's `git-config.yml`" and left
+    out the SHAPE's own default, which is where every estate with neither
+    override gets it — which is most of them. One line, and the same one
+    AGENTS.md rule 4 and `status --help` take, because the three texts say the
+    same things or one of them is wrong.
+
+    268 -> 270 on 2026-09-13, for the same round read against this text: the
+    finding list promised a `git worktree move` as the off-path exit without
+    the three states where `status` deliberately prints none. Two lines, and
+    the same two AGENTS.md rule 4 and `status --help` take, because a reader
+    sent to a command the command will not print is worse off than one told
+    nothing.
+
     251 -> 353 on 2026-09-13, for lane-collision-protocol AMENDMENT 9, ratified
     that day, and its adoption act 3. This is the largest single raise this
     file has taken and the reason is not prose: the repository grew a second
@@ -1100,9 +1234,13 @@ def test_readme_is_short_enough_to_be_read():
     5 lines for a branch gone from origin and a role with no place, this
     branch's 107 for the install story Amendment 9 rewrote, both from 251, and
     363 in the file that merged.
+    270 AND 363 MEET AT 377, the same merge and the same arithmetic: this
+    branch's 14 lines for the computed path, its three sources and the states
+    that get no move, and `main`'s 107 for the install story Amendment 9
+    rewrote, both from 256, and 377 in the file that merged.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 363, f"README.md is {len(lines)} lines; the cap is 363"
+    assert len(lines) <= 377, f"README.md is {len(lines)} lines; the cap is 377"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
