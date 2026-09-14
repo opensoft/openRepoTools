@@ -17,6 +17,39 @@ copy-pasteable as written once `lane` is derived in step 1.
 
 ```sh
 L=~/projects/xFactory/lanes-edit.sh
+
+# EVERY READ IN STEP 1 GOES THROUGH THIS ONE FENCE, and Amendment 7(d) is the
+# whole of it: `0` an answer · `8` NO ANSWER · `2` a helper predating the read —
+# both of those fall to the next rung — and ANYTHING ELSE is a read that FAILED,
+# which is neither of them (#26, the review of `c3ebcfe`, this file's `:28` and
+# `:72`). All three of step 1's reads collapsed every code into the ordinary
+# case, and what is beneath them is not a refusal: it is THE NEXT RUNG, and the
+# last rung is the workstation's NEWEST SWAP — a different lane. A register that
+# could not be read is not "this window is not a lane", and step 4 would then
+# write a PAUSED record, a stamp and a restart command for a lane this window
+# is not.
+#
+# IT IS `/restart`'s `lread` WITH ONE DIFFERENCE, STATED RATHER THAN LEFT TO BE
+# FOUND: step 4's `dir` read does NOT come through here, because this fence
+# STOPS and that read may not — `R-A11-11`, *a swap is never left unwritten*.
+# It drops the sub-field and names the read instead, where it stands.
+#
+# IT SETS A VARIABLE RATHER THAN PRINTING ITS ANSWER, and that is load-bearing:
+# a refusal inside `$( )` kills only the substitution's subshell and the skill
+# would carry on with an empty answer.
+sread() {                      # sread <var> "<what the failure is NOT>" <verb> [args…]
+  sr_var="$1"; sr_not="$2"; shift 2
+  sr_out=""; sr_rc=0
+  sr_out="$(LANES_NO_FETCH=1 "$L" "$@" 2>/dev/null)" || sr_rc=$?
+  case "$sr_rc" in
+    0)   : ;;
+    8|2) sr_out="" ;;
+    *)   printf 'REFUSED: `%s %s` failed (exit %s). That is NOT %s — a read that failed is never an answer (Amendment 7(d)), and this skill will not bind a lane, write a PAUSED record or print a restart command on one. Run it by hand to see what it says.\n' \
+           "$L" "$1" "$sr_rc" "$sr_not" >&2
+         exit 1 ;;
+  esac
+  eval "$sr_var=\$sr_out"
+}
 ```
 
 ## 1. Usage, then the identity triple — derived, not asked
@@ -25,7 +58,8 @@ L=~/projects/xFactory/lanes-edit.sh
 claude-usage
 window="$(tmux display-message -p '#W')"                     # Amendment 8(b): the window IS the lane
 lane="$window"
-LANES_NO_FETCH=1 "$L" register-row "$lane" >/dev/null 2>&1 || lane=""
+sread row_probe "'this window is not a lane'" register-row "$lane"
+[[ -n "$row_probe" ]] || lane=""
 # THE WORKSTATION COMES FROM CONFIGURATION, NEVER FROM `hostname` (Amendment 11,
 # ratified decision 8(d), from Evidence 6): a forked orchestrator wrote a bench
 # container's id into a register whose every other row says `Eagle`, and a row
@@ -68,15 +102,15 @@ if [[ -z "$lane" ]]; then
   # expected and silent, and a fall to the next rung rather than a refusal.
   wl_ref="$(tmux display-message -p '#{window_id}' 2>/dev/null)"
   [[ -n "$wl_ref" ]] || wl_ref="$(tmux display-message -p '#S:#I' 2>/dev/null)"
-  candidate="$(LANES_NO_FETCH=1 "$L" window-lane "$ws" "$wl_ref" 2>/dev/null)" && \
-    [[ "$candidate" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] && lane="$candidate"
+  sread candidate "'no lane is bound to this window'" window-lane "$ws" "$wl_ref"
+  [[ "$candidate" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] && lane="$candidate"
 fi
 if [[ -z "$lane" ]]; then
   # The swap record, read exactly as the launcher reads it: the STATUS decides
   # whether there is an answer at all, and the contract is the tab. A row that
   # printed before a failed read, or one with no tab, is not a record row —
   # `cut -f 1` would hand back the whole line, lane-shaped and wrong.
-  rows="$(LANES_NO_FETCH=1 "$L" swapped "$ws" 2>/dev/null)" || rows=""
+  sread rows "'this workstation has no swap record'" swapped "$ws"
   first="$(printf '%s\n' "$rows" | head -n 1)"
   if [[ -n "$rows" && "$first" == *$'\t'* ]]; then
     candidate="${first%%$'\t'*}"
@@ -232,12 +266,35 @@ its free text.
 # record with no `@id` is; a record with the WRONG one is not, because
 # `lane-start` writes the lane's home from that tree's `origin` and every `#n`
 # after it inherits that.
-dir="$(LANES_NO_FETCH=1 "$L" lane-dir "$lane" 2>/dev/null)" || dir=""
-[[ -n "$dir" ]] || dir="${WORKBENCHES_CLAUDE_LANE_DIR:-}"
-if [[ -z "$dir" && -n "${CLAUDE_CODE_SESSION_ID:-}" && -n "${CLAUDE_CONFIG_DIR:-}" ]]; then
-  dir="$(jq -r --arg id "$CLAUDE_CODE_SESSION_ID" \
-    'select((.sessionId // "") == $id) | .cwd // empty' \
-    "$CLAUDE_CONFIG_DIR"/sessions/*.json 2>/dev/null | head -n 1)"
+# AND A READ THAT FAILED IS NOT A RECORD THAT NAMES NO DIRECTORY (#26, the
+# review of `c3ebcfe`, this file's `:236`). `|| dir=""` made those two the same
+# fact, and sources 2 and 3 are NOT rungs beneath a failed read: they answer for
+# a lane whose record names no directory, and the third of them is THIS
+# SESSION'S OWN `cwd`. A swap typed in one checkout for a lane that lives in
+# another would then record this session's directory as that lane's, in a log
+# nothing rewrites — Evidence 3's wrong checkout, written by the one act that
+# exists to leave the lane findable. So a failed read takes no substitute: the
+# two sources below are skipped and the sub-field is absent.
+#
+# IT DOES NOT STOP, AND THAT IS `R-A11-11`: *a swap is never left unwritten*.
+# The offending sub-field goes and the line stays — the same answer this file
+# already gives for a `dir` it may not write (the DROP below) — and the reader
+# of the record is told WHICH READ was lost rather than handed a plausible wrong
+# path. That is why this one read does not come through `sread`, which stops.
+dir=""; dir_read_failed=""; dir_rc=0
+dir="$(LANES_NO_FETCH=1 "$L" lane-dir "$lane" 2>/dev/null)" || dir_rc=$?
+case "$dir_rc" in
+  0)   : ;;
+  8|2) dir="" ;;
+  *)   dir=""; dir_read_failed="\`$L lane-dir $lane\` failed (exit $dir_rc)" ;;
+esac
+if [[ -z "$dir" && -z "$dir_read_failed" ]]; then
+  dir="${WORKBENCHES_CLAUDE_LANE_DIR:-}"
+  if [[ -z "$dir" && -n "${CLAUDE_CODE_SESSION_ID:-}" && -n "${CLAUDE_CONFIG_DIR:-}" ]]; then
+    dir="$(jq -r --arg id "$CLAUDE_CODE_SESSION_ID" \
+      'select((.sessionId // "") == $id) | .cwd // empty' \
+      "$CLAUDE_CONFIG_DIR"/sessions/*.json 2>/dev/null | head -n 1)"
+  fi
 fi
 # AN ABSOLUTE PATH OR NOTHING AT ALL: a relative one has no meaning without the
 # writer's cwd, which no reader of this log has, and `~` is the writing shell's.
@@ -277,7 +334,8 @@ case "$dir" in *' '*) dir="\"$dir\"" ;; esac
 # A MISSING `dir` IS SAID, NOT GUESSED AT (ruling 10). Where none of the three
 # sources answered there is no sub-field, and the reader of this record is told
 # which fact it will not carry rather than handed a plausible wrong one.
-[[ -n "$dir" ]] || printf 'NO dir sub-field: neither the lane log, the launcher nor this session record names the lane checkout, so the record is written without one (Amendment 11 clause (c)).\n'
+[[ -n "$dir" ]] || printf 'NO dir sub-field: %s, so the record is written without one (Amendment 11 clause (c)).\n' \
+  "${dir_read_failed:-neither the lane log, the launcher nor this session record names the lane checkout}"
 # A PROFILE NAME IS A MANIFEST KEY — letters, digits, `.`, `_`, `-` — and the
 # shape check is also how `profile` gets SPEC rev 6 §5's `; ` rule without a
 # token of its own: the pattern admits neither a `;` nor a space, so a value

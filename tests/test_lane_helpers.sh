@@ -3960,6 +3960,32 @@ hasnt "…nor on a bare && that cannot tell 8 from 1" "$(cat "$RSKILL")" '>/dev/
 has   "…and step 4 refuses a lane the register does not carry, before anything is written" \
       "$(cat "$RSKILL")" "this skill binds an existing lane and never creates one"
 
+# AND THE DERIVED DEFAULT IS NOT A REFUSAL WHERE IT IS NOT THERE (#26, the
+# review of `c3ebcfe`, `skills/restart/SKILL.md:152`). Step 3's fallback is a
+# SECOND COPY of `lane-start`'s rung 4 and of nothing else; `708395e` gave that
+# ladder rungs 5 and 6 for EVIDENCE 7 — the estate's `project.yaml` legs and a
+# checkout named for the lane's recorded home, each proved by that directory's
+# own `origin` — and the paragraph below the step has said since then that
+# "step 5 resolves it and this step never fires". It fired first: the step
+# refused for the very lane those rungs can prove. The block is EXTRACTED AND
+# RUN, against a `$PROJECTS_ROOT` that has one of the two repositories.
+rskill_dirblk="$(awk '/^if \[ -z "\$dir" \]; then/,/^fi$/' "$RSKILL")"
+is   "the skill carries step 3's fallback block" \
+     "$( [ -n "$rskill_dirblk" ] && printf yes || printf no )" "yes"
+mkdir -p "$SANDBOX/proots/repoA11"
+skill_dir_of() {   # <lane> — evaluates the SKILL's own step 3 fallback
+  ( lane="$1"; PROJECTS_ROOT="$SANDBOX/proots"; dir=""
+    eval "$rskill_dirblk"; printf '%s' "$dir" )
+}
+is   "step 3 derives \$PROJECTS_ROOT/<repo> where that checkout is there" \
+     "$(skill_dir_of repoA11-1)" "$SANDBOX/proots/repoA11"
+is   "…and derives NOTHING where it is not, so lane-start's rungs 5 and 6 are reached" \
+     "$(skill_dir_of opsXfactory-5)" ""
+has  "…which is why step 5 passes --dir only where step 3 has one" \
+     "$(cat "$RSKILL")" 'lane-start --no-launch ${dir:+--dir "$dir"} "$lane"'
+hasnt "…and never the unconditional flag, which put a GUESS at rung 1" \
+      "$(cat "$RSKILL")" 'lane-start --no-launch --dir "$dir" "$lane"'
+
 
 # ------------------------------------------- decision 8(e): a FORK is a DEFECT
 #
@@ -4304,6 +4330,68 @@ hasnt "a container with no workstation no longer exits at step 1" "$SWSK_TEXT" '
 has   "…it records the gap and carries on" "$SWSK_TEXT" "ws_missing=1"
 has   "…the handoff of step 2 is where the gap is named (clause (e))" "$SWSK_TEXT" "THE HANDOFF IS WHERE THE GAP IS NAMED"
 has   "…and step 4's two log writes are the ones that stop" "$SWSK_TEXT" 'if [[ -z "$ws_missing" ]]; then'
+
+# THE SWAP SKILL'S OWN FAIL-CLOSED FENCE, EXTRACTED AND RUN (#26, the review of
+# `c3ebcfe`, this file's `:28`, `:72` and `:236`; the same family `73caa5d` took
+# in `/restart`). Step 1's three reads collapsed every code into the ordinary
+# case, and beneath them is not a refusal but THE NEXT RUNG — the last of which
+# is the workstation's NEWEST SWAP, a different lane. A register that could not
+# be read is not "this window is not a lane", and step 4 would then write a
+# PAUSED record and a restart command for a lane this window is not.
+swsk_fence="$(awk '/^sread\(\) \{/,/^\}$/' "$SWSK")"
+is   "the swap skill carries the fence its step 1 reads go through" \
+     "$( [ -n "$swsk_fence" ] && printf yes || printf no )" "yes"
+sfence_probe() {   # <helper exit code> — runs the SKILL's own fence against it
+  printf '#!/usr/bin/env bash\nprintf "ANSWER\\n"\nexit %s\n' "$1" > "$SANDBOX/sfencehelper"
+  chmod +x "$SANDBOX/sfencehelper"
+  ( L="$SANDBOX/sfencehelper"; eval "$swsk_fence"
+    v=unset; sread v "'a thing it is not'" some-verb 2>"$SANDBOX/sfence.err"
+    printf 'rc=%s v=[%s]' "$?" "$v" )
+}
+is   "an answer reaches the variable" "$(sfence_probe 0)" "rc=0 v=[ANSWER]"
+is   "…8 is NO ANSWER and falls to the next rung" "$(sfence_probe 8)" "rc=0 v=[]"
+is   "…2 is a helper predating the read and falls through too" "$(sfence_probe 2)" "rc=0 v=[]"
+is   "…and a read that FAILED stops the skill where it stands" "$(sfence_probe 6)" ""
+has  "…naming the read and the code it came back with" "$(cat "$SANDBOX/sfence.err")" "some-verb\` failed (exit 6)"
+has  "…and what it will not do on one" "$(cat "$SANDBOX/sfence.err")" "will not bind a lane, write a PAUSED record"
+hasnt "no step 1 read is left on the shape that cannot tell 8 from 1" \
+      "$SWSK_TEXT" 'register-row "$lane" >/dev/null 2>&1 || lane=""'
+hasnt "…nor the swap record's on \`|| rows=\"\"\`" "$SWSK_TEXT" '2>/dev/null)" || rows=""'
+hasnt "…nor the window read's bare \`&&\`, which reads every failure as no candidate" \
+      "$SWSK_TEXT" 'window-lane "$ws" "$wl_ref" 2>/dev/null)" &&'
+
+# AND THE `dir` READ, WHICH MAY NOT STOP — `R-A11-11`, *a swap is never left
+# unwritten* — SO IT DROPS THE SUB-FIELD AND NAMES THE READ. Its two lower
+# sources are not rungs beneath a failed read: the third is THIS SESSION'S own
+# `cwd`, and a swap typed in one checkout for a lane that lives in another would
+# record this session's directory as that lane's, in a log nothing rewrites.
+# Extracted from the file and run against a helper in each state.
+swap_dir_blk="$(awk '/^dir=""; dir_read_failed=/,/^fi$/' "$SWSK")"
+is   "the swap skill carries the dir read as its own step" \
+     "$( [ -n "$swap_dir_blk" ] && printf yes || printf no )" "yes"
+cat > "$SANDBOX/dirhelper" <<'WRAP'
+#!/usr/bin/env bash
+[ -n "${STUB_OUT:-}" ] && printf '%s\n' "$STUB_OUT"
+exit "${STUB_RC:-0}"
+WRAP
+chmod +x "$SANDBOX/dirhelper"
+swap_dir_probe() {   # <helper exit code> <what it prints> <what the launcher exported>
+  ( L="$SANDBOX/dirhelper"; lane=repoA11-1
+    STUB_RC="$1"; STUB_OUT="$2"; export STUB_RC STUB_OUT
+    WORKBENCHES_CLAUDE_LANE_DIR="$3"
+    CLAUDE_CODE_SESSION_ID=""; CLAUDE_CONFIG_DIR=""
+    eval "$swap_dir_blk"
+    printf 'dir=[%s] failed=[%s]' "$dir" "${dir_read_failed:+named}" )
+}
+is   "the lane's own recorded checkout is taken where the read answered" \
+     "$(swap_dir_probe 0 /checkouts/lane /launcher/export)" "dir=[/checkouts/lane] failed=[]"
+is   "…8 is a record naming none, and the launcher's word is the next source" \
+     "$(swap_dir_probe 8 '' /launcher/export)" "dir=[/launcher/export] failed=[]"
+is   "…as is a helper predating the read" \
+     "$(swap_dir_probe 2 '' /launcher/export)" "dir=[/launcher/export] failed=[]"
+is   "…while a read that FAILED takes NO substitute and names itself" \
+     "$(swap_dir_probe 6 '' /launcher/export)" "dir=[] failed=[named]"
+has  "…and the record still says which fact it does not carry" "$SWSK_TEXT" "NO dir sub-field: %s"
 
 # THE `/lane-swap` SKILL MAKES THE SAME TEST, and it is run FROM THE FILE rather
 # than restated — the same reason `/restart`'s rung 4 is: a copy is what would

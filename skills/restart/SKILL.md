@@ -149,12 +149,33 @@ if [ -z "$dir" ]; then                                # 8 → the default; nothi
     *)             repo="${lane%-*}" ;;
   esac
   dir="$PROJECTS_ROOT/$repo"
+  # AND A DEFAULT THAT IS NOT THERE IS NOT A REFUSAL — IT IS `lane-start`'s
+  # QUESTION (#26, the review of `c3ebcfe`, this file's `:152`). This rung is a
+  # SECOND COPY of `lane-start`'s rung 4 and of nothing else, and `708395e` gave
+  # that ladder two more: the estate's `project.yaml` legs, and a checkout named
+  # for the lane's recorded home one or two levels under `$PROJECTS_ROOT`, each
+  # PROVED by that directory's own `origin`. The paragraph below this step has
+  # said since then that where those answer "step 5 resolves it and this step
+  # never fires" — and that was not true, because this step fires FIRST: it
+  # refused for EVIDENCE 7's own lane, whose checkout rung 5 or 6 can prove, and
+  # told the operator to name a directory the estate could already find.
+  # So where the DERIVED default is not there, none is passed on: step 5 runs
+  # `lane-start` without `--dir`, the one implementation of clause (c)'s order
+  # answers, and its own exit 2 is the line this step would have printed. Clause
+  # (h) forbids the second implementation the alternative would need here.
+  [ -d "$dir" ] || dir=""
 fi
 ```
 
-**Not a directory → REFUSED**, and the refusal is ONE LINE that names the act which RECORDS the directory —
-not just the flag that gets past this run. A restart that lands in the right transcript and the wrong
-directory loses the repository's `CLAUDE.md` and the lane's memory, silently (Evidence 3).
+**A directory the lane's own RECORD names, which is not there → REFUSED**, and the refusal is ONE LINE that
+names the act which RECORDS the directory — not just the flag that gets past this run. A restart that lands
+in the right transcript and the wrong directory loses the repository's `CLAUDE.md` and the lane's memory,
+silently (Evidence 3).
+
+**A DERIVED default that is not there is a different case and is not that refusal.** Nothing was recorded,
+so there is nothing to contradict; `$dir` is left empty and `lane-start`'s own ladder — rungs 2 to 6, three
+of which this step cannot see — answers next. Step 5 passes no `--dir` there, and `lane-start`'s exit 2 is
+this step's refusal, printed once by the command that owns the resolution.
 
 **EVIDENCE 7 is this case, and it is why the refusal must be a refusal.** Measured 2026-09-13T23:01Z: a lane
 whose record predates clause (c) carries `home` and `estate` and **no `dir`**, and whose checkout is nested —
@@ -208,6 +229,11 @@ Compare `$cell_last` with `$CLAUDE_CODE_SESSION_ID`:
   object line. Outcome `RESUME REQUIRED <lane>` **[0]**.
 - **(c) they DIFFER and that uuid has no transcript here → step 5**, and step 5's report says so and names
   Amendment 8(d)'s deferral.
+- **`$dir` is empty — the record names no directory and no default exists → (b) CANNOT BE DECIDED AND IS NOT
+  CLAIMED.** That test is a look inside the lane's directory and there is no directory yet. Say so, go to
+  step 5 as (a) and (c) both do, and let `lane-start`'s own rungs resolve it; the report names the uuid step
+  4 read and says the transcript could not be looked for — never (c)'s *"no transcript here"* about a place
+  this skill never looked.
 
 **THE DECISION COMES BEFORE THE BIND, AND THAT IS `R-A11-2`.** Binding first and comparing after makes the
 comparison a **tautology**: `lane-start --no-launch` performs step 3b and the `append-session-id` itself, so
@@ -219,8 +245,13 @@ rename the lane's window or stamp its row on the way to telling the operator whe
 ## 5. The bind
 
 ```sh
-lane-start --no-launch --dir "$dir" "$lane"
+lane-start --no-launch ${dir:+--dir "$dir"} "$lane"
 ```
+
+`--dir` is passed only where step 3 HAS a directory — the lane's own record, or a default that exists. Where
+it has none, the flag is absent and not empty: `--dir` with an empty value is refused by the two spellings of
+that arm, and passing a directory this skill DERIVED as `--dir` would put a guess at rung 1, the operator's
+own word, in front of the five rungs `lane-start` reads for itself.
 
 It renames the window, writes the row stamp, Amendment 6(c)'s session-cell append where it can prove the
 window is the lane's, the lane's `RESUMED` object line with clause (c)'s `dir`, `profile` and `window`
