@@ -696,18 +696,26 @@ DUPES
     # `duplicate-holder` already excludes it on the read side (over the same
     # `live_holder` implementation `live-holder` calls); this asks the SAME
     # question again, in words, before a single signal is sent — belt and
-    # suspenders, never a second liveness primitive.
+    # suspenders, never a second liveness primitive. A read that FAILS here
+    # is not "it is not the lane's own session" (Copilot round 1, PR #61): a
+    # protective re-check that silently skips itself on its own read failure
+    # protects nothing, so only rc 8 (records read, nothing live) clears the
+    # kill below; rc 0 dies above, and anything else dies here.
     lh_rc=0
     lh_out="$("$LANES_EDIT" live-holder "$LANE" 2>/dev/null)" || lh_rc=$?
-    if [ "$lh_rc" = 0 ]; then
-      lh_sid=""; lh_tgt=""; lh_name=""; lh_pid=""; lh_verdict=""
-      IFS=$'\037' read -r lh_sid lh_tgt lh_name lh_pid lh_verdict <<LIVE || :
+    case "$lh_rc" in
+      0)
+        lh_sid=""; lh_tgt=""; lh_name=""; lh_pid=""; lh_verdict=""
+        IFS=$'\037' read -r lh_sid lh_tgt lh_name lh_pid lh_verdict <<LIVE || :
 $lh_out
 LIVE
-      if [ -n "$lh_pid" ] && { [ "$lh_pid" = "$dh_parent" ] || [ "$lh_pid" = "$dh_child" ]; }; then
-        die "pid $lh_pid is lane $LANE's own live session (session $lh_sid, ${lh_verdict:-here}) — Amendment 18(h) refuses to retire the one process a lane's binding actually is. Retire the OTHER pid of the pair ($prog $LANE --retire <pid>), or end the lane itself." 2
-      fi
-    fi
+        if [ -n "$lh_pid" ] && { [ "$lh_pid" = "$dh_parent" ] || [ "$lh_pid" = "$dh_child" ]; }; then
+          die "pid $lh_pid is lane $LANE's own live session (session $lh_sid, ${lh_verdict:-here}) — Amendment 18(h) refuses to retire the one process a lane's binding actually is. Retire the OTHER pid of the pair ($prog $LANE --retire <pid>), or end the lane itself." 2
+        fi
+        ;;
+      8) : ;;
+      *) die "$LANES_EDIT live-holder $LANE failed (exit $lh_rc) while confirming pid $dh_parent (or $dh_child) is not lane $LANE's own live session, before sending it TERM. That is NOT 'it is not the lane's own session' — fix the helper or the records, then re-run." 1 ;;
+    esac
 
     # AMENDMENT 18(h) — A DUPLICATE HOLDER IS TERMED, NOT ONLY NAMED. Unlike
     # decision 8(e)'s title-based fork above (never killed: Amendment 8(f), A11

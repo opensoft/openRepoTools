@@ -2295,8 +2295,14 @@ holder_is_dead() {   # <lane>
   esac
   hid_ids="$( { session_ids_of_lane "$hid_l" 2>/dev/null || :
                 session_ids_local_of_lane "$hid_l" 2>/dev/null || :; } | awk 'NF && !seen[$0]++')"
+  # THREE ANSWERS, NEVER TWO CONFLATED (Copilot round 1, opensoft/openRepoTools#61):
+  # `live_holder` is 0 live, 8 read-and-confirmed-nothing, or any other code a
+  # records tree this workstation could not read at all — and THAT is not
+  # "confirmed dead" either, it is "not established", exactly as every other
+  # caller of this one liveness implementation already treats it. Only 8 may
+  # pass; 0 and every failure both refuse.
   live_holder "$hid_l" "$hid_ids" >/dev/null 2>&1; hid_lrc=$?
-  [ "$hid_lrc" != 0 ] || return 1
+  [ "$hid_lrc" = 8 ] || return 1
   HOLDER_DEAD_VERB="$hid_verb"
   return 0
 }
