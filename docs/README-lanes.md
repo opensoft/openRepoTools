@@ -184,7 +184,20 @@ creating a second one; two rows differing only by case are a refusal naming both
 
 **On a rebase conflict it aborts**, leaves the worktree clean and not
 mid-rebase, prints the conflicting lines and prints the recovery commands. Your
-edit survives as a local commit; read it back with
+edit survives as a local commit — but an aborted pull is not proof it never
+reached origin: this checkout is shared with every lane on the workstation, so
+the very next write out of it can pull this dangling commit onto its own and
+push both together (#32). LOOK first: `git -C <the workspace checkout> fetch
+origin main` — if THAT fails, STOP and retry it; a stale or unreachable origin
+proves nothing either way, and is not permission to reset and redo. Only once
+the fetch succeeds do you check by CONTENT whether your own commit is already
+there, never by sha: the very peer write this recovery exists for carries a
+dangling commit by rebasing it onto a newer base, which changes its hash, so
+`merge-base --is-ancestor` alone can still say "not there" once the change is
+actually published. `git -C <the workspace checkout> cherry origin/main <your
+commit> | grep -c '^+'` compares by patch instead and still finds it; 0 means
+it is already there, in which case STOP. Only once fetch succeeded AND this
+prints something other than 0 do you read your edit back with
 `git -C <the workspace checkout> diff origin/main..HEAD -- lanes/LANES.md`,
 then `git -C <the workspace checkout> reset --hard origin/main` and redo it on
 top of the peer's version.
@@ -936,7 +949,7 @@ else.
 | 0 | done |
 | 1 | environment — no register, no writer |
 | 2 | refusal — bad arguments, the object is held, an unknown alias, a checkout that cannot be rebased |
-| 3 | rebase conflict — nothing pushed, the edit is a local commit |
+| 3 | the edit is never a permanent loss, but this attempt cannot confirm whether it also reached origin — a rebase conflict (not pushed by this attempt; a later write from this checkout may already carry it to origin, so look by content before you retry), a network timeout on a push or a pull (a hung one often already landed), or six attempts exhausted because a peer's uncommitted file blocks every rebase |
 | 4 | the mutex could not be taken within 60s |
 | 5 | an edit moved more than one line and was refused |
 | 6 | `git add` / `commit` / `push` failed |
