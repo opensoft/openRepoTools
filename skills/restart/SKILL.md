@@ -22,8 +22,10 @@ by hand, a session that came up before the launcher carried clause (b). It runs 
 
 **What it never does, and why each one was paid for:**
 
-- **It never runs the launcher and never resumes anything itself.** `restart <lane>` is the outside half and
+- **It never runs the launcher and never resumes anything itself.** `lane <name>` is the outside half and
   it `exec`s; a session cannot exec a launcher over itself, so this one binds the window and prints.
+  (That word was `restart <lane>` until Amendment 18 Addendum 2 retired it from the PATH; this skill,
+  the INSIDE half, is unchanged by that and keeps its name.)
 - **It never opens a picker and never names a title.** Ratified decision 3: *"never a picker, never a
   menu"*. The one command it may print carries an **exact uuid**, so no picker opens and no title is
   filtered.

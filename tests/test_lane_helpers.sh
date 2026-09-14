@@ -49,7 +49,7 @@ TESTS_DIR="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 # the root of `opensoft/openRepoTools` now and this suite is in `tests/`.
 SRC_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
 
-for f in lane-start lane-end lanes-edit.sh link-estates restart lanes; do
+for f in lane-start lane-end lanes-edit.sh link-estates lane lanes; do
   [ -x "$SRC_DIR/$f" ] || { echo "missing or not executable: $SRC_DIR/$f" >&2; exit 1; }
 done
 [ -f "$SRC_DIR/repos.tsv" ] || { echo "missing: $SRC_DIR/repos.tsv" >&2; exit 1; }
@@ -315,11 +315,11 @@ STALE_H=4                      # lanes-edit.sh's default, Rule 1's four hours
 export OPENREPOTOOLS_BIN_DIR="$SANDBOX/bin"
 mkdir -p "$OPENREPOTOOLS_BIN_DIR"
 cp -p "$SRC_DIR/lane-start" "$SRC_DIR/lane-end" "$SRC_DIR/lanes-edit.sh" \
-      "$SRC_DIR/link-estates" "$SRC_DIR/restart" "$SRC_DIR/lanes" \
+      "$SRC_DIR/link-estates" "$SRC_DIR/lane" "$SRC_DIR/lanes" \
       "$SRC_DIR/repos.tsv" "$OPENREPOTOOLS_BIN_DIR/"
 chmod 755 "$OPENREPOTOOLS_BIN_DIR"/lane-start "$OPENREPOTOOLS_BIN_DIR"/lane-end \
           "$OPENREPOTOOLS_BIN_DIR"/lanes-edit.sh "$OPENREPOTOOLS_BIN_DIR"/link-estates \
-          "$OPENREPOTOOLS_BIN_DIR"/restart "$OPENREPOTOOLS_BIN_DIR"/lanes \
+          "$OPENREPOTOOLS_BIN_DIR"/lane "$OPENREPOTOOLS_BIN_DIR"/lanes \
           "$OPENREPOTOOLS_BIN_DIR"/repos.tsv
 # AFTER the fake bin, which must still win for `tmux` and `claude`.
 export PATH="$SANDBOX/fakebin:$OPENREPOTOOLS_BIN_DIR:$PATH"
@@ -3638,7 +3638,7 @@ run "$E" lane-dir repoA11-4
 is   "lane-dir exits 0 for a path written QUOTED because it contains a space" "$rc" 0
 is   "…and hands it back whole, quotes stripped, rather than truncated at the space" "$out" "$HOME/my projects/x"
 # `lane-profile` IS `lane-dir` ONE SUB-FIELD ALONG, and it exists so that
-# `restart <lane>` can learn a profile with ONE `git show` rather than through
+# `lane <name>` can learn a profile with ONE `git show` rather than through
 # the listing, which must read every log on the workstation for its held-objects
 # column — seventeen seconds on the live register, to answer one question about
 # one lane, on the path a person types to get back to work.
@@ -4020,13 +4020,13 @@ has   "…and says on stderr that one is live, because a read that cannot return
 has   "…printing the same one act as every other surface" "$err" "lane-end repoA-1 --retire $LIVE_PID"
 hasnt "…and not the kill" "$err" "kill $LIVE_PID"
 # THE TWO LISTINGS, WITH THE FORK STILL LIVE — the surfaces F-X8 names besides
-# the reads. `$LANES_CMD` and `$RESTART` are bound further down; the bin
+# the reads. `$LANES_CMD` and `$LANE` are bound further down; the bin
 # directory is where `--install` puts them and is what those bindings use.
 run env LANES_NO_FETCH=1 "$OPENREPOTOOLS_BIN_DIR/lanes" --all
 has   "the estate listing prints the act rather than only naming the forks" "$out" "retire each: lane-end repoA-1 --retire <pid>"
 has   "…and its footer names the act too, saying the process is not killed" "$out" "lane-end <lane> --retire <pid|uuid>"
 hasnt "…with no \`kill\` anywhere in it" "$out" "kill <pid>"
-# `restart`'s per-repo listing renders the same rows and is held by the hygiene
+# `lane`'s own pick renders the same rows and is held by the hygiene
 # test that walks every fork line in every shipped surface at once
 # (`test_every_fork_surface_prints_the_one_act`), because it reads the CHECKOUT
 # the shell is in and this suite does not move.
@@ -4050,13 +4050,15 @@ is "the fork column of the listing agrees with the \`forks\` read beside it" \
 #
 # *"`lanes` and `restart` each render the subset of clause (j)'s ten columns
 # their surface needs while the read carries all ten."* It carried NINE: column
-# 10, the restart line, was computed by `lanes` and computed DIFFERENTLY by
-# `restart`, which is two implementations of one column.
+# 10, the line that binds the lane, was computed by `lanes` and computed
+# DIFFERENTLY by `restart`, which is two implementations of one column. The word
+# that column names is `lane <name>` since Amendment 18 Addendum 2 retired
+# `restart` from the PATH — one change, in the read, and both surfaces took it.
 run "$E" lanes --lane repoA11-1
 is "the read's row has twelve fields: clause (j)'s ten, then home and forks" \
    "$(printf '%s' "$out" | awk -F'\t' '{print NF}')" 12
-is "…and column 10 is the restart line the surfaces print" \
-   "$(printf '%s' "$out" | awk -F'\t' '{print $10}')" "restart repoA11-1"
+is "…and column 10 is the line that binds the lane, which both surfaces print" \
+   "$(printf '%s' "$out" | awk -F'\t' '{print $10}')" "lane repoA11-1"
 run "$E" lanes --lane repoA11-2
 is "…which for a PAUSED lane with no profile is the form that works today" \
    "$(printf '%s' "$out" | awk -F'\t' '{print $10}')" "pclaude --lane repoA11-2 <profile>"
@@ -4686,11 +4688,11 @@ rm -f "$sessions_dir/live-vt2.json"
 rm -f "$sessions_dir/live-vt.json"
 unset FAKE_TMUX_WINDOWS
 
-echo "== Amendment 11 decision 7: `restart`, and Brett's two restart cases =="
+echo "== Amendment 11 decision 7, as Amendment 18 Addendum 2 leaves it: \`lane <name>\` =="
 #
 # THE TWO SURFACES BRETT HEAP'S DIRECTION NAMES, and the count they met before
-# this command existed. Measured on Eagle on 2026-09-13, after the tmux server
-# was replaced: EACH MET 1 PROMPT OFFERING 2 CHOICES AND WAS OFFERED THE WRONG
+# this word existed. Measured on Eagle on 2026-09-13, after the tmux server was
+# replaced: EACH MET 1 PROMPT OFFERING 2 CHOICES AND WAS OFFERED THE WRONG
 # LANE — every `@id` on the workstation had been reissued from `@0`, four of
 # five windows were named `claude`, and all five swap records named sessions
 # from the old server, so the launcher's precedences 2 and 3 answered nothing
@@ -4698,11 +4700,26 @@ echo "== Amendment 11 decision 7: `restart`, and Brett's two restart cases =="
 # session that was `openRepoProject-1`. Declining was the only correct answer,
 # and declining left the operator where they started.
 #
-# `restart <lane>` needs no window, no record of a window and no guess: only the
+# `lane <name>` needs no window, no record of a window and no guess: only the
 # lane's name, its `dir` and its `profile`. Both cases below run it FOR REAL
 # with stdin closed, so a command that asked anything would die rather than
 # quietly pass.
-RESTART="$OPENREPOTOOLS_BIN_DIR/restart"
+#
+# THE WORD IS `lane <name>` AND THE CASES ARE `restart <lane>`'s (AMENDMENT 18
+# ADDENDUM 2, ratified 2026-09-14T16:50:32Z verbatim "ratify", on Brett Heap's
+# ruling *"i think we can drop restart as a cli command … lane does all the
+# things a user wants"*). The act is the same act — the launcher's path, the
+# lane's own recorded directory and profile, asking nothing — so every case
+# below is the case decision 7 was proved with, re-pointed at the word that is
+# now on the person's PATH.
+#
+# TWO OF `restart`'s CASES ARE NOT HERE, AND BOTH BECAME SOMETHING ELSE: the
+# bare word that restarted THIS WINDOW's lane, and the bare word that printed
+# the per-repo listing and stopped. Bare `lane` is the numbered PICK (Addendum
+# 1) and has its own section below, where the listing, the one question, each
+# answer and the no-terminal case are run. Nothing that was asserted about the
+# act is dropped; what moved is which word performs it.
+LANE="$OPENREPOTOOLS_BIN_DIR/lane"
 LANES_CMD="$OPENREPOTOOLS_BIN_DIR/lanes"
 cat > "$SANDBOX/fakebin/pclaude" <<'FAKE'
 #!/usr/bin/env bash
@@ -4716,36 +4733,60 @@ export FAKE_PCLAUDE_LOG="$SANDBOX/pclaude.log"
 # (#26 review of `3d06a2b`, `restart:268`). `[A-Za-z0-9]*)` pins one character,
 # so a string that is not a lane name reached `register-row` and the person was
 # told "the register has no row for lane repoA11-1/extra" — sent looking for a
-# missing row instead of being told what they typed.
-run env -u TMUX "$RESTART" "repoA11-1/extra" </dev/null
-is   "restart refuses a lane name that is not one, whole-string" "$rc" 2
+# missing row instead of being told what they typed. The pattern moved to `lane`
+# with the act, and `test_lane_fences_a_lane_name_the_way_the_helper_does` holds
+# the two spellings to one rule.
+run env -u TMUX "$LANE" "repoA11-1/extra" </dev/null
+is   "lane refuses a lane name that is not one, whole-string" "$rc" 2
 has  "…saying what a lane name is, in lanes-edit.sh's own words" "$err" "not opening with . or -"
 hasnt "…and never reporting it as a missing row" "$err" "has no row for lane"
-run env -u TMUX "$RESTART" "repoA11-1 x" </dev/null
+run env -u TMUX "$LANE" "repoA11-1 x" </dev/null
 is   "…a space is refused too" "$rc" 2
-run env -u TMUX "$RESTART" "-repoA11-1" </dev/null
-is   "…and a leading dash, which the helper refuses by name" "$rc" 2
+# A `-`-LED WORD IS AN OPTION BEFORE `--` AND A LANE NAME AFTER IT, and both
+# refusals are asked for: the parser's 64 for the word it cannot be, and the
+# FENCE's own 2 for the name it is not. `restart` had only the second, because
+# its parser spent 2 on an unknown option too.
+run env -u TMUX "$LANE" "-repoA11-1" </dev/null
+is   "…a leading dash is refused as the option it looks like" "$rc" 64
+has  "…naming it as one" "$err" "unknown option '-repoA11-1'"
+run env -u TMUX "$LANE" -- "-repoA11-1" </dev/null
+is   "…and past \`--\`, where it can only be a name, the helper's own fence refuses it" "$rc" 2
+has  "…in lanes-edit.sh's words again" "$err" "not opening with . or -"
 
 # CASE 1 — A FRESH TERMINAL OUTSIDE TMUX. No window, no record of one, nothing
 # to guess from.
 : > "$FAKE_PCLAUDE_LOG"
-run env -u TMUX "$RESTART" repoA11-1 </dev/null
-is   "restart <lane> from a fresh terminal outside tmux exits 0" "$rc" 0
+run env -u TMUX "$LANE" repoA11-1 </dev/null
+is   "lane <name> from a fresh terminal outside tmux exits 0" "$rc" 0
 has  "…launching through the launcher, never \`claude\` itself (Evidence 4)" \
      "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoA11-1 team-05a"
 has  "…after cd-ing into the lane's own recorded directory (Evidence 3)" \
      "$(cat "$FAKE_PCLAUDE_LOG")" "cwd=$A11_DIR"
+has  "…saying which profile it took and where from" "$out" "from the lane record"
 hasnt "…and NOTHING is asked: no confirmation" "$out$err" "[y/N]"
-hasnt "…and no question of any kind" "$out$err" "?"
+hasnt "…and no question of any kind" "$out$err" "which?"
 
-# EVIDENCE 7's LANE, AFTER THE ONE `--dir`: `restart` cd's into the checkout the
+# THE LATE SWAP — `lane <name> <profile>` NAMES THE ACCOUNT (Brett Heap's
+# refinement of 2026-09-14T14:1xZ, from his question "when do i use lane vs
+# restart … they seem almost the same to me"): the recorded profile is what a
+# person gets by typing nothing, and the second argument is how they switch,
+# exactly as `pclaude --lane <lane> <profile>` already takes it.
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX "$LANE" repoA11-1 team-09z </dev/null
+is   "lane <name> <profile> exits 0" "$rc" 0
+has  "…handing the launcher the profile that was NAMED, not the one recorded" \
+     "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoA11-1 team-09z"
+has  "…in the same recorded directory" "$(cat "$FAKE_PCLAUDE_LOG")" "cwd=$A11_DIR"
+has  "…and saying the profile came from the command line" "$out" "named on the command line"
+
+# EVIDENCE 7's LANE, AFTER THE ONE `--dir`: `lane` cd's into the checkout the
 # record now names, which is the whole point of naming it once. Before the
 # `lane-start --dir` above, this lane's record carried `home` and `estate` and
 # no `dir` at all and the launcher's own derivation was
 # `$PROJECTS_ROOT/opsXfactory`, which does not exist.
 : > "$FAKE_PCLAUDE_LOG"
-run env -u TMUX "$RESTART" opsXfactory-5 </dev/null
-is   "restart exits 0 for Evidence 7's lane once its directory is recorded" "$rc" 0
+run env -u TMUX "$LANE" opsXfactory-5 </dev/null
+is   "lane exits 0 for Evidence 7's lane once its directory is recorded" "$rc" 0
 has  "…cd-ing into the nested checkout and not into \$PROJECTS_ROOT/<repo>" \
      "$(cat "$FAKE_PCLAUDE_LOG")" "cwd=$HOME/projects/xFactory/xFactories/OpsxFactory"
 has  "…with the profile that one start recorded" \
@@ -4753,8 +4794,8 @@ has  "…with the profile that one start recorded" \
 # AND THE REFUSAL A LANE WITH NO RECORDED DIRECTORY STILL GETS is ONE LINE
 # naming the act that RECORDS it — never an exit 1 with nothing on screen,
 # which is what Evidence 7 actually met.
-# A PROFILE AND NO DIRECTORY, because `restart` refuses on the profile first and
-# this case is about the OTHER refusal.
+# A PROFILE AND NO DIRECTORY, because the profile is refused first and this case
+# is about the OTHER refusal.
 add_seed_row "| \`repoE7x-1\` | harness \`$E7_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoA11/e7.md | ACTIVE |"
 { printf '# lane repoE7x-1 — object log (lane-collision-protocol Amendment 7)\n'
   printf 'STARTED — lane repoE7x-1, session %s@Eagle, 2026-09-12T09:00:00Z, lane:repoE7x-1 → home opensoft/repoE7x; estate repoE7x; profile team-05a\n' "$E7_ID"
@@ -4764,10 +4805,10 @@ git -C "$WIP" commit -q -m "seed a lane with a profile and no recorded directory
 git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
 git -C "$WIP" push -q origin main
 : > "$FAKE_PCLAUDE_LOG"
-run env -u TMUX "$RESTART" repoE7x-1 </dev/null
-is   "restart refuses with 2 for a lane whose record names no directory" "$rc" 2
+run env -u TMUX "$LANE" repoE7x-1 </dev/null
+is   "lane refuses with 2 for a lane whose record names no directory" "$rc" 2
 has  "…naming the act that RECORDS it, filled in" "$err" "lane-start --dir <the lane's checkout> repoE7x 1"
-has  "…saying that later restarts then read it back" "$err" "reads it back"
+has  "…saying that later runs then read it back" "$err" "reads it back"
 is   "…and launching nothing at all" "$(cat "$FAKE_PCLAUDE_LOG")" ""
 
 # CASE 2 — THE SAME, TYPED IN A WINDOW NAMED `claude`. 8 of this workstation's
@@ -4776,181 +4817,119 @@ is   "…and launching nothing at all" "$(cat "$FAKE_PCLAUDE_LOG")" ""
 # renamed had no swap written from it.
 : > "$FAKE_PCLAUDE_LOG"
 FAKE_TMUX_WINDOW_NAME=claude FAKE_TMUX_WINDOW="a11sess:@71" FAKE_TMUX_WINDOW_INDEX=0 \
-  run "$RESTART" repoA11-1 </dev/null
-is   "restart <lane> in a window named 'claude' exits 0" "$rc" 0
+  run "$LANE" repoA11-1 </dev/null
+is   "lane <name> in a window named 'claude' exits 0" "$rc" 0
 has  "…launching the same lane with the same profile, from the record" \
      "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoA11-1 team-05a"
 hasnt "…asking nothing here either" "$out$err" "[y/N]"
 
-# WITH NO ARGUMENT, IN A WINDOW THAT IS A LANE: restart that one, ask nothing.
-: > "$FAKE_PCLAUDE_LOG"
-FAKE_TMUX_WINDOW_NAME=repoA11-1 FAKE_TMUX_WINDOW="a11sess:@71" FAKE_TMUX_WINDOW_INDEX=0 \
-  run "$RESTART" </dev/null
-is   "restart with no argument restarts the lane this window is named for" "$rc" 0
-has  "…and says so rather than asking" "$err" "this window is lane repoA11-1"
-has  "…launching it" "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoA11-1 team-05a"
-
-# WITH NO ARGUMENT AND NO LANE FOR THE WINDOW: the PER-REPO LISTING, and STOP.
-# A printed listing is not a picker (ratified decision 3; decision 7 point 5): it
-# asks nothing, returns nothing, exits, and the next act is a command the
-# operator types.
-: > "$FAKE_PCLAUDE_LOG"
-FAKE_TMUX_WINDOW_NAME=claude FAKE_TMUX_WINDOW="a11sess:@71" FAKE_TMUX_WINDOW_INDEX=0 \
-  run env -C "$A11_DIR" "$RESTART" </dev/null
-is    "restart with no argument in an unnamed window prints the listing and stops" "$rc" 0
-has   "…naming the lane of this checkout" "$out" "repoA11-1"
-has   "…with the exact line that restarts it, ready to type" "$out" "restart repoA11-1"
-has   "…and saying in terms that nothing was asked" "$out" "not a picker"
-is    "…launching NOTHING, because a listing is output and not a choice" "$(cat "$FAKE_PCLAUDE_LOG")" ""
-
 # A LANE WITH NO RECORDED PROFILE IS A REFUSAL AND NEVER A GUESS: a wrong
 # profile is a launch into another account, and nothing here may invent one.
 : > "$FAKE_PCLAUDE_LOG"
-run env -u TMUX "$RESTART" repoA11-2 </dev/null
-is   "restart refuses a lane whose record names no profile" "$rc" 2
+run env -u TMUX "$LANE" repoA11-2 </dev/null
+is   "lane refuses a lane whose record names no profile" "$rc" 2
 has  "…saying it will not guess, because a wrong profile is another account" "$err" "will not guess"
-has  "…and printing the form that works in the interval" "$err" "pclaude --lane repoA11-2 <profile>"
+has  "…naming the form this word itself takes" "$err" "lane repoA11-2 <profile>"
+has  "…and printing the launcher form that works in the interval" "$err" "pclaude --lane repoA11-2 <profile>"
 is   "…launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
-run env -u TMUX "$RESTART" repoNoSuch-9 </dev/null
-is   "restart refuses a lane the register does not carry" "$rc" 2
-has  "…and names the two commands that find one" "$err" "lane-start <repo> <n>"
+# …AND THE SECOND ARGUMENT IS WHAT THAT REFUSAL NAMES, so it is run. This lane's
+# record carries no `dir` either — it is the pre-clause-(c) shape — so `--dir`
+# is named here too, which is the one run that proves the flag reaches the
+# launcher rather than being resolved and dropped.
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX "$LANE" --dir "$A11_DIR" repoA11-2 team-05a </dev/null
+is   "…while the profile named on the command line is enough for that same lane" "$rc" 0
+has  "…launching it under the profile that was typed, with the directory named" \
+     "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoA11-2 --dir $A11_DIR team-05a"
+has  "…from that directory" "$(cat "$FAKE_PCLAUDE_LOG")" "cwd=$A11_DIR"
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX "$LANE" repoNoSuch-9 </dev/null
+is   "lane refuses a lane the register and the logs do not carry" "$rc" 2
+has  "…saying so about the name that was typed" "$err" "no lane called 'repoNoSuch-9'"
+has  "…and names the command that opens one" "$err" "lane-start <repo> <n>"
+is   "…launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
 
-# THE FAIL-CLOSED FAMILY, ON THIS SURFACE'S THREE READS (#26; Brett Heap, "Take
-# it first, then land"). Amendment 7(d) gives each answer its own code — `0` an
-# answer · `8` NO ANSWER · `2` a helper predating the amendment that added the
-# read · anything else a read that FAILED — and all three of these sites
-# collapsed every one of them into the ordinary case. A register that cannot be
-# read is not "this window is not a lane"; a `lanes` that failed is not "no lane
-# of this checkout"; and a `swapped` that failed is not "this lane has no swap
-# record", which is the one that ends in a restart in the WRONG CHECKOUT.
+# A LANE NAME IS ONE NAME UNDER ANY CASE (Amendment 15). The one-lane read is
+# asked for the spelling that was TYPED — one log rather than the estate's —
+# and only where that answers nothing of the lane's own is the estate-wide read
+# made and matched case-insensitively. Either way the act runs on the ROW'S OWN
+# spelling, which is what `canon_lane` writes into every line below it.
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX "$LANE" REPOa11-1 </dev/null
+is   "lane <name> resolves a name typed in another case" "$rc" 0
+has  "…and launches the lane under the spelling the register carries" \
+     "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoA11-1 team-05a"
+hasnt "…never the spelling that was typed" "$(cat "$FAKE_PCLAUDE_LOG")" "REPOa11-1"
+
+# THE FAIL-CLOSED FAMILY, ON THE READS THIS SURFACE MAKES (#26; Brett Heap,
+# "Take it first, then land"). Amendment 7(d) gives each answer its own code —
+# `0` an answer · `8` NO ANSWER · `2` a helper predating the amendment that
+# added the read · anything else a read that FAILED — and `restart` collapsed
+# every one of them into the ordinary case at three sites. `lane` makes TWO
+# reads in front of a launch, the rows and their grouping, and both are held to
+# the same rule: a register that cannot be read is not "there are no lanes", and
+# a grouping that failed is not "no lane is available".
 : > "$FAKE_PCLAUDE_LOG"
 cat > "$SANDBOX/rowbroke" <<'WRAP'
-#!/usr/bin/env bash
-case "${1-}" in
-  register-row) printf 'lanes-edit: simulated failure\n' >&2; exit 6 ;;
-esac
-exec "$REAL_LANES_EDIT" "$@"
-WRAP
-chmod +x "$SANDBOX/rowbroke"
-FAKE_TMUX_WINDOW_NAME=repoA11-1 FAKE_TMUX_WINDOW="a11sess:@71" FAKE_TMUX_WINDOW_INDEX=0 \
-  run env REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/rowbroke" "$RESTART" </dev/null
-is    "a window's register read that FAILED refuses rather than falling through" "$rc" 1
-has   "…saying what it is not, in Amendment 7(d)'s terms" "$err" "is NOT 'this window"
-is    "…and launches nothing at all" "$(cat "$FAKE_PCLAUDE_LOG")" ""
-# …while the two codes that ARE the fall-through still fall through.
-cat > "$SANDBOX/rowold" <<'WRAP'
-#!/usr/bin/env bash
-case "${1-}" in
-  register-row) printf "lanes-edit: unknown subcommand 'register-row'\n" >&2; exit 2 ;;
-esac
-exec "$REAL_LANES_EDIT" "$@"
-WRAP
-chmod +x "$SANDBOX/rowold"
-FAKE_TMUX_WINDOW_NAME=repoA11-1 FAKE_TMUX_WINDOW="a11sess:@71" FAKE_TMUX_WINDOW_INDEX=0 \
-  run env -C "$A11_DIR" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/rowold" "$RESTART" </dev/null
-is    "a helper predating the read is the listing, not a refusal" "$rc" 0
-has   "…which is the per-repo listing this window's name could not shortcut" "$out" "repoA11-1"
-# THE LISTING'S OWN READ, the same three codes one rung down.
-cat > "$SANDBOX/listbroke" <<'WRAP'
 #!/usr/bin/env bash
 case "${1-}" in
   lanes) printf 'lanes-edit: simulated failure\n' >&2; exit 6 ;;
 esac
 exec "$REAL_LANES_EDIT" "$@"
 WRAP
-chmod +x "$SANDBOX/listbroke"
-FAKE_TMUX_WINDOW_NAME=claude FAKE_TMUX_WINDOW="a11sess:@71" FAKE_TMUX_WINDOW_INDEX=0 \
-  run env -C "$A11_DIR" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/listbroke" "$RESTART" </dev/null
-is    "a listing read that FAILED refuses rather than printing an empty one" "$rc" 1
-has   "…saying it is not 'no lane of this checkout'" "$err" "is NOT 'no lane of this checkout"
-cat > "$SANDBOX/listold" <<'WRAP'
+chmod +x "$SANDBOX/rowbroke"
+run env -u TMUX REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/rowbroke" "$LANE" repoA11-1 </dev/null
+is    "a row read that FAILED refuses rather than falling through" "$rc" 1
+has   "…saying what it is not, in Amendment 7(d)'s terms" "$err" "is NOT 'there are no lanes'"
+is    "…and launches nothing at all" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+# …while the code that means AN OLDER WORKSTATION is named as one.
+cat > "$SANDBOX/rowold" <<'WRAP'
 #!/usr/bin/env bash
 case "${1-}" in
   lanes) printf "lanes-edit: unknown subcommand 'lanes'\n" >&2; exit 2 ;;
 esac
 exec "$REAL_LANES_EDIT" "$@"
 WRAP
-chmod +x "$SANDBOX/listold"
-FAKE_TMUX_WINDOW_NAME=claude FAKE_TMUX_WINDOW="a11sess:@71" FAKE_TMUX_WINDOW_INDEX=0 \
-  run env -C "$A11_DIR" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/listold" "$RESTART" </dev/null
-is    "…and a helper predating Amendment 11 is the contract's 2" "$rc" 2
-has   "…naming the act that upgrades the workstation" "$err" "openRepoTools --install"
-has   "…and the way round it that needs no listing" "$err" "restart <lane>"
-# AND THE SWAP RECORD, which is the read the DIRECTORY comes from.
+chmod +x "$SANDBOX/rowold"
+run env -u TMUX REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/rowold" "$LANE" repoA11-1 </dev/null
+is    "a helper predating Amendment 11 is the contract's 2, not a read that failed" "$rc" 2
+has   "…saying it is an un-upgraded workstation rather than a fault" "$err" "predates lane-collision-protocol Amendment 11"
+has   "…and naming the one act that fixes it" "$err" "openRepoTools --install"
+# THE GROUPING, which is the read Addendum 1 adds and the one that decides
+# WHICH BRANCH a lane takes. A failure there is not "no lane is available".
 : > "$FAKE_PCLAUDE_LOG"
-cat > "$SANDBOX/swapbroke" <<'WRAP'
+cat > "$SANDBOX/grpbroke" <<'WRAP'
 #!/usr/bin/env bash
 case "${1-}" in
-  swapped) printf 'lanes-edit: simulated failure\n' >&2; exit 6 ;;
+  lane-groups) printf 'lanes-edit: simulated failure\n' >&2; exit 6 ;;
 esac
 exec "$REAL_LANES_EDIT" "$@"
 WRAP
-chmod +x "$SANDBOX/swapbroke"
-run env -u TMUX REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/swapbroke" "$RESTART" repoA11-1 </dev/null
-is    "a swap-record read that FAILED refuses rather than falling to the rungs below it" "$rc" 1
-has   "…saying what it is not" "$err" "is NOT 'this lane has no swap"
-is    "…and launches nothing, because that fall-through is a wrong checkout" "$(cat "$FAKE_PCLAUDE_LOG")" ""
-
-# AND THE TWO READS BELOW THE SWAP RECORD, which `013e0d5` left on `|| :` (#26,
-# the review of `c3ebcfe`, `restart:366` and `:375`). They are the harder half of
-# the family to see, because nothing beneath them launches: what is beneath them
-# is a REFUSAL THAT PRESCRIBES A WRITE — `lane-start --dir <the lane's checkout>`,
-# which APPENDS a `dir` to an append-only log that may already carry a different
-# one (Amendment 7(i)), and `pclaude --lane <lane> <profile>`, which is the one
-# guess this command exists to refuse because a wrong profile is a launch into
-# another account. `repoA11-7` is the lane with NO swap record — the rung above
-# these two — so for it both reads are actually made.
-: > "$FAKE_PCLAUDE_LOG"
-run env -u TMUX "$RESTART" repoA11-7 </dev/null
-is    "restart reads the lane's LOG for a lane with no swap record" "$rc" 0
-has   "…cd-ing into the directory that log names" "$(cat "$FAKE_PCLAUDE_LOG")" "cwd=$A11_DIR"
-has   "…with the profile it names too" "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoA11-7 team-05a"
-cat > "$SANDBOX/dirbroke" <<'WRAP'
+chmod +x "$SANDBOX/grpbroke"
+run env -u TMUX REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/grpbroke" "$LANE" repoA11-1 </dev/null
+is    "a grouping read that FAILED refuses rather than guessing a branch" "$rc" 1
+has   "…saying what THAT is not" "$err" "is NOT 'no lane is"
+is    "…and launches nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+cat > "$SANDBOX/grpold" <<'WRAP'
 #!/usr/bin/env bash
 case "${1-}" in
-  lane-dir) printf 'lanes-edit: simulated failure\n' >&2; exit 6 ;;
+  lane-groups) printf "lanes-edit: unknown subcommand 'lane-groups'\n" >&2; exit 2 ;;
 esac
 exec "$REAL_LANES_EDIT" "$@"
 WRAP
-chmod +x "$SANDBOX/dirbroke"
-: > "$FAKE_PCLAUDE_LOG"
-run env -u TMUX REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/dirbroke" "$RESTART" repoA11-7 </dev/null
-is    "a lane-dir read that FAILED refuses instead of prescribing the act that RECORDS one" "$rc" 1
-has   "…saying what it is not, in Amendment 7(d)'s terms" "$err" "is NOT 'this lane has no recorded directory'"
-hasnt "…and never printing the act that would append a SECOND directory to the log" "$err" "lane-start --dir <the lane's checkout>"
-is    "…launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
-cat > "$SANDBOX/dirold" <<'WRAP'
-#!/usr/bin/env bash
-case "${1-}" in
-  lane-dir) printf "lanes-edit: unknown subcommand 'lane-dir'\n" >&2; exit 2 ;;
-esac
-exec "$REAL_LANES_EDIT" "$@"
-WRAP
-chmod +x "$SANDBOX/dirold"
-run env -u TMUX REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/dirold" "$RESTART" repoA11-7 </dev/null
-is    "…while a helper predating the read still falls through to the refusal that names the act" "$rc" 2
-has   "…which is the one line a person types, filled in" "$err" "lane-start --dir <the lane's checkout> repoA11 7"
-cat > "$SANDBOX/profbroke" <<'WRAP'
-#!/usr/bin/env bash
-case "${1-}" in
-  lane-profile) printf 'lanes-edit: simulated failure\n' >&2; exit 6 ;;
-esac
-exec "$REAL_LANES_EDIT" "$@"
-WRAP
-chmod +x "$SANDBOX/profbroke"
-: > "$FAKE_PCLAUDE_LOG"
-run env -u TMUX REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/profbroke" "$RESTART" repoA11-7 </dev/null
-is    "a lane-profile read that FAILED refuses rather than asking for the guess" "$rc" 1
-has   "…saying what THAT is not" "$err" "is NOT 'this lane's record names no profile'"
-hasnt "…and never handing over the form that supplies one by hand" "$err" "pclaude --lane repoA11-7 <profile>"
-is    "…launching nothing either" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+chmod +x "$SANDBOX/grpold"
+run env -u TMUX REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/grpold" "$LANE" repoA11-1 </dev/null
+is    "…and a helper predating Addendum 1 is the contract's 2 as well" "$rc" 2
+has   "…naming the read that is missing" "$err" "lane-groups"
+has   "…and the act that upgrades the workstation" "$err" "openRepoTools --install"
+has   "…while still naming the read that answers today" "$err" "lanes"
 
 # THE PLAN IS A THING A PERSON TYPES (#26, the review of `c3ebcfe`,
 # `restart:472`). Clause (c) admits a directory with a SPACE in it — `lane-start`
 # writes it quoted, which is what makes it one ref under 7(b), and `lane-dir`
 # hands it back unquoted — so `cd /p/spaced dir` was a line that cd's into
 # `/p/spaced`. `lane-start:550`'s one-line `quoted` has printed its own plan that
-# way since it had one; this command printed `${cmd[*]}`.
+# way since it had one; the sibling command printed `${cmd[*]}`.
 SPACE_ID="aaaa0007-5555-4000-8000-aaaa00075555"
 mkdir -p "$HOME/projects/spaced dir"
 add_seed_row "| \`repoSpace-1\` | harness \`$SPACE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoA11/s.md | ACTIVE |"
@@ -4962,16 +4941,16 @@ git -C "$WIP" commit -q -m "seed a lane whose recorded directory carries a space
 git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
 git -C "$WIP" push -q origin main
 : > "$FAKE_PCLAUDE_LOG"
-run env -u TMUX "$RESTART" --dry-run repoSpace-1 </dev/null
-is    "restart --dry-run exits 0 for a lane whose directory has a space" "$rc" 0
+run env -u TMUX "$LANE" --dry-run repoSpace-1 </dev/null
+is    "lane --dry-run exits 0 for a lane whose directory has a space" "$rc" 0
 has   "…printing a cd line that can be typed" "$out" "cd $HOME/projects/spaced\\ dir"
 hasnt "…and never the one that cd's into half the path" "$out" "cd $HOME/projects/spaced dir"
 has   "…and an exec line quoted the same way" "$out" "exec "
 is    "…launching nothing, which is what --dry-run means" "$(cat "$FAKE_PCLAUDE_LOG")" ""
 # AND THE ORDINARY PLAN IS UNCHANGED: a path with no space is printed as itself.
-run env -u TMUX "$RESTART" --dry-run repoA11-7 </dev/null
+run env -u TMUX "$LANE" --dry-run repoA11-7 </dev/null
 has   "a directory with nothing to quote is printed as itself" "$out" "cd $A11_DIR"
-
+has   "…and the lane's own log answers for a lane with no swap record" "$out" "profile team-05a"
 echo "== Amendment 11 decision 6: \`lanes\` =="
 # ------- ruling 6: EVERY LANE BY DEFAULT, NARROWED INSIDE A CHECKOUT ---------
 #
@@ -5107,11 +5086,11 @@ is   "lanes exits 0 with rows" "$rc" 0
 has  "…naming this workstation's lanes" "$out" "repoA11-1"
 has  "…with the recorded profile" "$out" "team-05a"
 has  "…the recorded directory" "$out" "$A11_DIR"
-has  "…and the exact restart line for a PAUSED lane, which is what column 10 is" "$out" "restart repoA11-1"
+has  "…and the exact line that binds a PAUSED lane, which is what column 10 is" "$out" "bind it: lane repoA11-1"
 has  "…saying it read locally and how old that answer is" "$out" "read locally"
 # F-X20 — COLUMN 10 IS *"for a **paused** lane"*, AND THE LISTING PRINTED ONE
 # FOR EVERY STATE BUT `LIVE`. A lane whose last act was its last is not a lane
-# a person restarts, and offering `restart <lane>` for an `ENDED` or a `RETIRED`
+# a person restarts, and offering `lane <name>` for an `ENDED` or a `RETIRED`
 # one is the listing telling them to reopen something that was closed on
 # purpose. Two fixtures, because the two closing verbs are two words.
 add_seed_row "| \`repoFX20-1\` | harness \`$A11_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoFX20/a.md | ENDED |"
@@ -5134,10 +5113,10 @@ git -C "$WIP" push -q origin main
 # is recorded", which is the right answer to a question they were not asking.
 run "$LANES_CMD" --all </dev/null
 has   "an ENDED lane is still a row in the listing" "$out" "repoFX20-1"
-hasnt "…with no restart line, because column 10 is a PAUSED lane's" "$out" "restart repoFX20-1"
+hasnt "…with no line that binds it, because column 10 is a PAUSED lane's" "$out" "lane repoFX20-1"
 has   "a RETIRED lane is still a row too" "$out" "repoFX20-2"
-hasnt "…and gets no restart line either" "$out" "restart repoFX20-2"
-has   "…while a PAUSED lane still gets one, so the column still means something" "$out" "restart repoA11-1"
+hasnt "…and gets no line that binds it either" "$out" "lane repoFX20-2"
+has   "…while a PAUSED lane still gets one, so the column still means something" "$out" "bind it: lane repoA11-1"
 run "$LANES_CMD" --here </dev/null
 hasnt "a lane of ANOTHER workstation is not in the --here listing" "$out" "repoA11-3"
 run "$LANES_CMD" --all </dev/null
@@ -5185,7 +5164,7 @@ hasnt "…and still reads one log rather than the estate's" "$out" "repoA11-3"
 
 run "$LANES_CMD" repoA11-1 </dev/null
 is   "lanes takes no positional argument, and spends the contract's 64 on it" "$rc" 64
-has  "…and points at the command that does" "$err" "restart repoA11-1"
+has  "…and points at the command that does" "$err" "lane repoA11-1"
 run "$LANES_CMD" --repo </dev/null
 is   "…and a flag with no value is refused rather than guessed, with the same 64" "$rc" 64
 run "$LANES_CMD" --nosuchflag </dev/null
@@ -5357,8 +5336,8 @@ fi
 # spelling is not. Asserting the sandbox's spelling would be asserting that the
 # path was NOT resolved on the one runner where the two differ.
 A11_DIR_R="$(cd -- "$A11_DIR" 2>/dev/null && pwd -P || printf '%s' "$A11_DIR")"
-run env -u TMUX -C "$A11_DIR" "$RESTART" --dry-run --dir . repoA11-1 </dev/null
-is    "restart --dry-run with a relative --dir exits 0" "$rc" 0
+run env -u TMUX -C "$A11_DIR" "$LANE" --dry-run --dir . repoA11-1 </dev/null
+is    "lane --dry-run with a relative --dir exits 0" "$rc" 0
 has   "…and the launcher is handed the directory RESOLVED, not the relative spelling" "$out" "--dir $A11_DIR_R"
 hasnt "…never the '.' that means something else after the cd" "$out" "--dir ."
 has   "…and the cd goes to the same resolved path" "$out" "cd $A11_DIR_R"
@@ -5454,6 +5433,401 @@ hasnt "…nor the source token nothing in the estate emits" "$out" "hostname-in-
 # AND IT IS SILENT ON EVERY ORDINARY RUN, so the notice means what it says.
 run "$LANES_CMD" </dev/null
 hasnt "…while a run whose seam answered prints no container notice at all" "$out" "LANES_WORKSTATION"
+
+echo "== Amendment 18 Addendum 1: the word \`lane\`, the numbered pick, the three branches =="
+#
+# AMENDMENT 18 ADDENDUM 1, RATIFIED 2026-09-14T14:05:54Z verbatim "ratify the
+# addendum", out of Brett Heap's two messages that morning — *"i dont understand
+# in another window i want to attach to that lane. what command do i use to do
+# that?"* and *"this is too hard for users. we need simple way to list the lanes
+# and then pick one to bind."* — and his answer to what the word should be,
+# verbatim "lane (Recommended)".
+#
+# FIVE STATES IN ONE REGISTER, because the pick is a PARTITION and a partition
+# is only proved by the rows it puts on each side:
+#
+#   repoPick-1  PAUSED, dir and profile recorded        AVAILABLE
+#   repoPick-7  a binding THIS host proves dead         AVAILABLE
+#   repoPick-2  LIVE, in the session this shell is in   LIVE HERE (select only)
+#   repoPick-3  LIVE, in a DETACHED session             LIVE HERE (move + select)
+#   repoPick-4  a binding on ANOTHER workstation        BOUND ELSEWHERE
+#   repoPick-5  ENDED                                   HIDDEN (Amendment 19)
+#
+# THE NUMBERS ARE THE READ'S ORDER AND THE STAMPS DECIDE THEM: rows come back
+# newest activity first, and the pick renders available, then live here, then
+# bound elsewhere, numbering as it goes. So the six stamps above descend in the
+# order the list is read in — 10:00, 09:50, 09:40, 09:30, 09:20 — and the
+# answers below are 1 repoPick-1 · 2 repoPick-7 · 3 repoPick-2 · 4 repoPick-3 ·
+# 5 repoPick-4. A case that hard-codes a number without pinning the stamp is a
+# case that passes for the wrong reason.
+#
+# THE FAKE TMUX IS THIS SECTION'S OWN, in a directory of its own put FIRST on
+# PATH for these cases only. The suite's shared fake answers the reads
+# `lane-start`, `lane-end` and `window-lane` make; this one answers the four
+# `lane` makes (`#S`, `#{session_name}`, `#{window_index}`, `#{session_attached}`)
+# and LOGS the three acts — `move-window`, `select-window`, `switch-client` and
+# the `attach` — so the attach can be watched without a tmux server. Its window
+# table is `<@id><TAB><session><TAB><index><TAB><attached>`.
+mkdir -p "$SANDBOX/lanebin"
+cat > "$SANDBOX/lanebin/tmux" <<'FAKE'
+#!/usr/bin/env bash
+lt_by_id()   { printf '%s\n' "${LANE_TMUX_WINDOWS:-}" | awk -F'\t' -v t="$1" '$1 == t { print; exit }'; }
+lt_by_sess() { printf '%s\n' "${LANE_TMUX_WINDOWS:-}" | awk -F'\t' -v s="$1" '$2 == s { print; exit }'; }
+case "${1-}" in
+  display-message)
+    shift
+    lt_t=""; lt_f=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -p) shift ;;
+        -t) lt_t="${2-}"; shift 2 ;;
+        *)  lt_f="$1"; shift ;;
+      esac
+    done
+    if [ -z "$lt_t" ]; then
+      case "$lt_f" in
+        '#S') printf '%s\n' "${LANE_TMUX_THIS:-}" ;;
+        *)    printf '\n' ;;
+      esac
+      exit 0
+    fi
+    lt_l="$(lt_by_id "$lt_t")"
+    [ -n "$lt_l" ] || lt_l="$(lt_by_sess "$lt_t")"
+    [ -n "$lt_l" ] || exit 1
+    case "$lt_f" in
+      '#{session_name}')     printf '%s\n' "$(printf '%s' "$lt_l" | cut -f2)" ;;
+      '#{window_index}')     printf '%s\n' "$(printf '%s' "$lt_l" | cut -f3)" ;;
+      '#{session_attached}') printf '%s\n' "$(printf '%s' "$lt_l" | cut -f4)" ;;
+      '#{window_id}')        printf '%s\n' "$(printf '%s' "$lt_l" | cut -f1)" ;;
+      *)                     printf '\n' ;;
+    esac ;;
+  move-window|select-window|switch-client|attach|attach-session)
+    printf '%s\n' "$*" >> "${LANE_TMUX_LOG:-/dev/null}" ;;
+  *) : ;;
+esac
+FAKE
+chmod +x "$SANDBOX/lanebin/tmux"
+export LANE_TMUX_LOG="$SANDBOX/lane-tmux.log"
+: > "$LANE_TMUX_LOG"
+export LANE_TMUX_THIS="picksess"
+export LANE_TMUX_WINDOWS="$(printf '@31\tpicksess\t3\t1\n@32\tdetsess\t7\t0\n@33\tothersess\t1\t1\n')"
+LANEBIN_PATH="$SANDBOX/lanebin:$PATH"
+
+# THE ONE ANSWER, READ FROM A REAL TERMINAL. `[ -t 0 ]` is the whole of what
+# decides whether the question is asked, so a case that faked the test rather
+# than the terminal would prove nothing about the branch a person meets. This
+# runs the word under a pty, writes ONE line into it and collects everything the
+# terminal saw — stdout and stderr together, which is what a terminal is.
+LANE_PTY="$SANDBOX/pty-run.py"
+cat > "$LANE_PTY" <<'PY'
+import os, pty, select, sys
+
+answer, argv = sys.argv[1], sys.argv[2:]
+pid, fd = pty.fork()
+if pid == 0:
+    try:
+        os.execvp(argv[0], argv)
+    finally:
+        os._exit(127)
+os.write(fd, (answer + "\n").encode())
+seen = b""
+while True:
+    try:
+        ready, _, _ = select.select([fd], [], [], 60)
+    except OSError:
+        break
+    if not ready:
+        os.kill(pid, 9)
+        break
+    try:
+        chunk = os.read(fd, 65536)
+    except OSError:
+        break
+    if not chunk:
+        break
+    seen += chunk
+_, status = os.waitpid(pid, 0)
+sys.stdout.write(seen.decode("utf-8", "replace"))
+sys.exit(os.WEXITSTATUS(status) if os.WIFEXITED(status) else 128 + os.WTERMSIG(status))
+PY
+HAVE_PTY=0
+python3 -c 'import pty' >/dev/null 2>&1 && HAVE_PTY=1
+NO_PTY_WHY="no python3 with pty on this host, so no terminal can be faked and the one question cannot be asked"
+lane_pick() {   # <answer> <args to lane…>
+  run env PATH="$LANEBIN_PATH" python3 "$LANE_PTY" "$@"
+}
+
+# ------------------------------------------------------------- the fixtures
+PICK_DIR="$HOME/projects/repoPick"
+mkdir -p "$PICK_DIR"
+git init -q -b main "$PICK_DIR"
+git -C "$PICK_DIR" remote add origin "https://github.com/opensoft/repoPick.git"
+PICK1_ID="dddd0001-1111-4000-8000-dddd00011111"
+PICK2_ID="dddd0002-2222-4000-8000-dddd00022222"
+PICK3_ID="dddd0003-3333-4000-8000-dddd00033333"
+PICK4_ID="dddd0004-4444-4000-8000-dddd00044444"
+PICK5_ID="dddd0005-5555-4000-8000-dddd00055555"
+PICK7_ID="dddd0007-7777-4000-8000-dddd00077777"
+# The two LIVE ones are live because a real process is: the same `sleep` every
+# liveness case in this file leans on, under two session ids of their own.
+write_record "$sessions_dir/pick-here.json" "$PICK2_ID" "$LIVE_PID" "$live_start" "picksess:@31.%31" "repoPick-2" "busy"
+write_record "$sessions_dir/pick-det.json"  "$PICK3_ID" "$LIVE_PID" "$live_start" "detsess:@32.%32"  "repoPick-3" "idle"
+add_seed_row "| \`repoPick-1\` | harness \`$PICK1_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoPick/1.md | ACTIVE |"
+add_seed_row "| \`repoPick-2\` | harness \`$PICK2_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoPick/2.md | ACTIVE |"
+add_seed_row "| \`repoPick-3\` | harness \`$PICK3_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoPick/3.md | ACTIVE |"
+add_seed_row "| \`repoPick-4\` | harness \`$PICK4_ID\` | Raven / test / brett | 2026-09-11T00:00Z | none | handoffs/repoPick/4.md | ACTIVE |"
+add_seed_row "| \`repoPick-5\` | harness \`$PICK5_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoPick/5.md | ACTIVE |"
+add_seed_row "| \`repoPick-7\` | harness \`$PICK7_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoPick/7.md | ACTIVE |"
+{ printf '# lane repoPick-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoPick-1, session %s@Eagle, 2026-09-12T09:00:00Z, lane:repoPick-1 → home opensoft/repoPick; estate repoPick; dir %s; profile team-05a\n' "$PICK1_ID" "$PICK_DIR"
+  printf 'PAUSED — lane repoPick-1, session %s@Eagle, 2026-09-12T10:00:00Z, lane:repoPick-1 → swap; dir %s; profile team-05a; workstation Eagle\n' "$PICK1_ID" "$PICK_DIR"
+} > "$LOGD/repoPick-1.md"
+{ printf '# lane repoPick-2 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoPick-2, session %s@Eagle, 2026-09-12T09:40:00Z, lane:repoPick-2 → home opensoft/repoPick; estate repoPick; dir %s; profile team-05a; window picksess:3 @31\n' "$PICK2_ID" "$PICK_DIR"
+} > "$LOGD/repoPick-2.md"
+{ printf '# lane repoPick-3 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoPick-3, session %s@Eagle, 2026-09-12T09:30:00Z, lane:repoPick-3 → home opensoft/repoPick; estate repoPick; dir %s; profile team-05a; window detsess:7 @32\n' "$PICK3_ID" "$PICK_DIR"
+} > "$LOGD/repoPick-3.md"
+# BOUND ELSEWHERE is a STARTED that never paused, on a workstation this host
+# cannot see the session records of: `lanes_rows` cannot prove it dead and this
+# machine has no way to say NOT LIVE about Raven.
+{ printf '# lane repoPick-4 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'RESUMED — lane repoPick-4, session %s@Raven, 2026-09-12T09:20:00Z, lane:repoPick-4 → home opensoft/repoPick; estate repoPick; dir /elsewhere/repoPick; profile team-09z; window ravensess:2 @44\n' "$PICK4_ID"
+} > "$LOGD/repoPick-4.md"
+{ printf '# lane repoPick-5 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoPick-5, session %s@Eagle, 2026-09-12T09:40:00Z, lane:repoPick-5 → home opensoft/repoPick; estate repoPick; dir %s; profile team-05a\n' "$PICK5_ID" "$PICK_DIR"
+  printf 'ENDED — lane repoPick-5, session %s@Eagle, 2026-09-12T11:40:00Z, lane:repoPick-5 — window closing; NOTHING IN FLIGHT\n' "$PICK5_ID"
+} > "$LOGD/repoPick-5.md"
+# A BINDING THIS HOST PROVES DEAD: a STARTED on THIS workstation with no live
+# session record naming its id. That is the second half of "available", and the
+# half a person is likeliest to meet — a lane whose window was closed without a
+# swap.
+{ printf '# lane repoPick-7 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoPick-7, session %s@Eagle, 2026-09-12T09:50:00Z, lane:repoPick-7 → home opensoft/repoPick; estate repoPick; dir %s; profile team-05a\n' "$PICK7_ID" "$PICK_DIR"
+} > "$LOGD/repoPick-7.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the five states the pick partitions"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+# ------------------------------------- the partition, asked of the helper
+#
+# THE GROUPING IS A READ AND IS HELD AS ONE. `lane` renders it; `lanes-edit.sh
+# lane-groups` decides it, over the rows both words already have, so the two
+# surfaces cannot come to disagree about which lanes are free — the rule that
+# put column 10 in the read (A11 Addendum 4 ruling 7).
+run env LANES_NO_FETCH=1 "$E" lanes --prefix repoPick
+is   "the rows of the seeded repository read" "$rc" 0
+PICK_ROWS="$out"
+pick_group_of() { printf '%s\n' "$PICK_GROUPS" | awk -F'\t' -v l="$1" '$2 == l { print $1; exit }'; }
+PICK_GROUPS="$(printf '%s\n' "$PICK_ROWS" | "$E" lane-groups Eagle)"
+is   "a PAUSED lane is AVAILABLE" "$(pick_group_of repoPick-1)" "available"
+is   "a lane a live session here holds is LIVE" "$(pick_group_of repoPick-2)" "live"
+is   "…and so is one in a detached session of this workstation" "$(pick_group_of repoPick-3)" "live"
+is   "a binding on ANOTHER workstation is BOUND ELSEWHERE" "$(pick_group_of repoPick-4)" "elsewhere"
+is   "a binding THIS host proves dead is AVAILABLE" "$(pick_group_of repoPick-7)" "available"
+is   "an ENDED lane is in no group at all (Amendment 19)" "$(pick_group_of repoPick-5)" ""
+run env LANES_NO_FETCH=1 "$E" lanes --lane repoFX20-2
+is   "…and a RETIRED one is not either" "$(printf '%s\n' "$out" | "$E" lane-groups Eagle)" ""
+# THE NEXT FREE POSITION IS THE SAME READ'S, over the same rows, so `lane`'s `f`
+# and `lanes`'s footer cannot offer two different positions.
+is   "next-free is the LOWEST position no lane of that repository holds" \
+     "$(printf '%s\n' "$PICK_ROWS" | "$E" next-free repoPick)" "6"
+run env LANES_NO_FETCH=1 "$E" next-free
+is   "…and it refuses with the contract's 64 when no repository is named" "$rc" 64
+
+# ------------------------------------------------- the listing, and no question
+#
+# CLAUSE (i-3): with no terminal on stdin the word LISTS, SUGGESTS and ASKS
+# NOTHING. An agent's stdin is not a terminal, and every agent on this estate
+# reads this output rather than answering it — so this is the form the estate
+# itself meets, and it is run first.
+run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" "$LANE" </dev/null
+is    "a bare lane inside a checkout exits 0" "$rc" 0
+has   "…heading its available lanes" "$out" "AVAILABLE"
+has   "…with the parked one numbered" "$out" "1  repoPick-1"
+has   "…naming its recorded profile and directory" "$out" "team-05a"
+has   "…heading the lanes that are LIVE HERE" "$out" "LIVE HERE"
+has   "…saying where the one in this session is, in clause (i-1)'s words" "$out" "window 3 of this session"
+has   "…and that the other is in a detached session" "$out" "detached session detsess"
+has   "…heading the lanes bound elsewhere" "$out" "BOUND ELSEWHERE"
+has   "…naming the workstation that holds it" "$out" "Raven"
+hasnt "…while a CLOSED lane is hidden from the pick entirely (Amendment 19)" "$out" "repoPick-5"
+hasnt "…and no question was asked" "$out$err" "which?"
+has   "…saying in terms why nothing was asked" "$out" "stdin is not a terminal"
+has   "…and offering the acts filled in, which is what an agent reads" "$out" "lane-start repoPick 6"
+# THE SAME ROWS AS A READ STILL SHOW THE CLOSED LANE, because `lanes` is the
+# read and this is a pick.
+run env LANES_NO_FETCH=1 "$LANES_CMD" --prefix repoPick </dev/null
+has   "…while `lanes` still carries the closed lane, because that is the READ" "$out" "repoPick-5"
+has   "…and its footer offers the same next free position the pick does" "$out" "next free position:  6"
+has   "…and points at the word that binds one" "$out" "pick one:            lane"
+
+# ------------------------------------------------------- one question, one answer
+if [ "$HAVE_PTY" = 0 ]; then
+  skip "the numbered pick asks one question on a terminal" "$NO_PTY_WHY"
+else
+  : > "$FAKE_PCLAUDE_LOG"
+  lane_pick 1 env -C "$PICK_DIR" "$LANE"
+  is    "answering with the number of an AVAILABLE lane exits 0" "$rc" 0
+  has   "…having asked exactly one question" "$out" "which? [1-"
+  has   "…which offers the new-lane answer with the position filled in" "$out" "f = a new lane at the next free position (repoPick-6)"
+  has   "…and the launch goes through the LAUNCHER, in the lane's own directory and profile" \
+        "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoPick-1 team-05a"
+  has   "…cd-ing there first (Evidence 3)" "$(cat "$FAKE_PCLAUDE_LOG")" "cwd=$PICK_DIR"
+  # A LANE LIVE IN THIS SESSION IS SELECTED AND NEVER STARTED AGAIN (clause (h)).
+  : > "$LANE_TMUX_LOG"; : > "$FAKE_PCLAUDE_LOG"
+  lane_pick 3 env -C "$PICK_DIR" "$LANE"
+  is    "answering with a lane LIVE in this very session exits 0" "$rc" 0
+  has   "…selecting its window" "$(cat "$LANE_TMUX_LOG")" "select-window -t @31"
+  hasnt "…and moving nothing, because the window is already here" "$(cat "$LANE_TMUX_LOG")" "move-window"
+  is    "…launching NOTHING: an attach is never a second process" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+  # AND ONE IN A DETACHED SESSION IS MOVED HERE AND SELECTED — the two acts
+  # measured by hand on 2026-09-14.
+  : > "$LANE_TMUX_LOG"; : > "$FAKE_PCLAUDE_LOG"
+  lane_pick 4 env -C "$PICK_DIR" "$LANE"
+  is    "answering with a lane live in a DETACHED session exits 0" "$rc" 0
+  has   "…moving its window into this session, after the current one" "$(cat "$LANE_TMUX_LOG")" "move-window -a -s detsess:7"
+  has   "…and selecting it by id" "$(cat "$LANE_TMUX_LOG")" "select-window -t @32"
+  is    "…and launching nothing here either" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+  # BOUND ELSEWHERE IS A REFUSAL NAMING WHERE, until #38's act 4 exists.
+  : > "$LANE_TMUX_LOG"; : > "$FAKE_PCLAUDE_LOG"
+  lane_pick 5 env -C "$PICK_DIR" "$LANE"
+  is    "answering with a lane bound ELSEWHERE refuses with 2" "$rc" 2
+  has   "…naming the workstation it is bound on" "$out" "bound on Raven"
+  has   "…and the act, which is clause (c)'s handoff and not a launch" "$out" "HANDOFF"
+  has   "…saying the request itself does not exist yet" "$out" "act 4 and does not exist yet"
+  is    "…launching nothing at all" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+  is    "…and touching no tmux either" "$(cat "$LANE_TMUX_LOG")" ""
+  # `f` IS A NEW LANE AT THE NEXT FREE POSITION, which is `lane-start`'s act and
+  # is printed here rather than run, so the register is left as this section
+  # found it.
+  : > "$FAKE_PCLAUDE_LOG"
+  lane_pick f env -C "$PICK_DIR" "$LANE" --dry-run
+  is    "answering \`f\` exits 0" "$rc" 0
+  has   "…naming the lane it would open" "$out" "a new lane at repoPick-6"
+  has   "…and the act, which is lane-start at that position" "$out" "lane-start repoPick 6"
+  is    "…launching nothing under --dry-run" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+  # `q` PICKS NONE, AND THAT IS NOT A FAILURE.
+  : > "$LANE_TMUX_LOG"; : > "$FAKE_PCLAUDE_LOG"
+  lane_pick q env -C "$PICK_DIR" "$LANE"
+  is    "answering \`q\` exits 0" "$rc" 0
+  has   "…saying nothing was picked" "$out" "nothing picked"
+  is    "…and doing nothing" "$(cat "$FAKE_PCLAUDE_LOG")$(cat "$LANE_TMUX_LOG")" ""
+  # AN ANSWER THAT IS NOT ONE OF THE CHOICES IS A REFUSAL AND NEVER A RE-ASK: one
+  # answer is read, and a process that holds the terminal for a second is the
+  # thing ratified decision 3 refused.
+  : > "$FAKE_PCLAUDE_LOG"
+  lane_pick 99 env -C "$PICK_DIR" "$LANE"
+  is    "a number outside the list refuses with 2" "$rc" 2
+  has   "…saying what the range was" "$out" "is not in 1-"
+  has   "…and that nothing is waiting now" "$out" "nothing is waiting"
+  is    "…launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+  lane_pick zzz env -C "$PICK_DIR" "$LANE"
+  is    "…and an answer that is not a number at all refuses the same way" "$rc" 2
+  has   "…naming what was typed" "$out" "'zzz' is not one of the choices"
+  # --switch IS THE OTHER ATTACH, for a person who wants the client moved rather
+  # than the window.
+  : > "$LANE_TMUX_LOG"
+  lane_pick 4 env -C "$PICK_DIR" "$LANE" --switch
+  is    "--switch exits 0 on a lane in another session" "$rc" 0
+  has   "…switching the client to that session" "$(cat "$LANE_TMUX_LOG")" "switch-client -t detsess"
+  hasnt "…and moving no window" "$(cat "$LANE_TMUX_LOG")" "move-window"
+fi
+
+# ------------------------------------------------- `lane <name>` on each branch
+#
+# The same three branches, reached by NAME rather than by number: one dispatch,
+# so a lane picked and a lane named cannot take different paths.
+: > "$LANE_TMUX_LOG"; : > "$FAKE_PCLAUDE_LOG"
+run env PATH="$LANEBIN_PATH" "$LANE" repoPick-2 </dev/null
+is    "lane <name> on a lane LIVE in this session exits 0" "$rc" 0
+has   "…selecting its window and nothing else" "$(cat "$LANE_TMUX_LOG")" "select-window -t @31"
+is    "…and launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+: > "$LANE_TMUX_LOG"
+run env PATH="$LANEBIN_PATH" "$LANE" repoPick-4 </dev/null
+is    "lane <name> on a lane bound elsewhere refuses with 2" "$rc" 2
+has   "…naming where it is bound" "$err" "bound on Raven"
+is    "…and touching nothing" "$(cat "$LANE_TMUX_LOG")" ""
+# A PROFILE CANNOT BE HANDED TO AN ATTACH, because an attach starts nothing.
+run env PATH="$LANEBIN_PATH" "$LANE" repoPick-2 team-09z </dev/null
+is    "lane <name> <profile> on a LIVE lane refuses rather than attaching under another name" "$rc" 2
+has   "…saying an attach starts nothing" "$err" "an attach starts nothing"
+has   "…and naming the act that does change a live lane's account" "$err" "/lane-swap"
+# A CLOSED LANE IS NO ANSWER (8) AND NEVER A LAUNCH.
+: > "$FAKE_PCLAUDE_LOG"
+run env PATH="$LANEBIN_PATH" "$LANE" repoPick-5 </dev/null
+is    "lane <name> on an ENDED lane exits 8" "$rc" 8
+has   "…saying its last act was its last" "$err" "last act was its last"
+is    "…and launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+
+# THE WINDOW IS MATCHED BY ITS ID *AND* ITS SESSION NAME, which is the fence
+# clause (b) states for `window-lane` and the reason it exists: tmux reissues
+# `@` ids from `@0` when its server is replaced — measured on Eagle on
+# 2026-09-13, 0 of 5 recorded windows resolving — so attaching on the id alone
+# puts a person in whatever pane has since been given it.
+: > "$LANE_TMUX_LOG"
+run env PATH="$LANEBIN_PATH" LANE_TMUX_WINDOWS="$(printf '@31\tsomebody-elses-session\t0\t1\n')" "$LANE" repoPick-2 </dev/null
+is    "a recorded window whose id now names ANOTHER session is a refusal" "$rc" 2
+has   "…naming the session the id is in now and the one the record names" "$err" "is in session somebody-elses-session and the record says picksess"
+has   "…and the act that is still safe to type" "$err" "tmux attach -t picksess"
+is    "…having attached to nothing" "$(cat "$LANE_TMUX_LOG")" ""
+: > "$LANE_TMUX_LOG"
+run env PATH="$LANEBIN_PATH" LANE_TMUX_WINDOWS="" "$LANE" repoPick-2 </dev/null
+is    "…and an id that names no window at all is the same refusal" "$rc" 2
+has   "…saying so" "$err" "names no window on this tmux server at all"
+is    "…and attaches to nothing" "$(cat "$LANE_TMUX_LOG")" ""
+
+# OUTSIDE TMUX THE ATTACH IS `tmux attach -t <session>`, with the lane's own
+# window selected FIRST so the terminal lands on the lane rather than on
+# whichever window that session left current.
+: > "$LANE_TMUX_LOG"
+run env -u TMUX PATH="$LANEBIN_PATH" "$LANE" repoPick-3 </dev/null
+is    "lane <name> outside tmux exits 0 on a live lane" "$rc" 0
+has   "…selecting the lane's own window first" "$(cat "$LANE_TMUX_LOG")" "select-window -t @32"
+has   "…and then attaching to its session" "$(cat "$LANE_TMUX_LOG")" "attach -t detsess"
+
+# ---------------------------------------------------------- `--all`, grouped
+run env PATH="$LANEBIN_PATH" "$LANE" --all </dev/null
+is    "lane --all exits 0" "$rc" 0
+has   "…carrying this repository's lanes" "$out" "repoPick-1"
+has   "…and another repository's, which is what --all asks for" "$out" "repoA11-1"
+has   "…grouped by repository under each heading" "$out" "$(printf '\n  repoPick\n')"
+hasnt "…and no next-free position, because no one repository is in scope" "$out" "lane-start repoPick"
+run env PATH="$LANEBIN_PATH" "$LANE" --all repoPick-1 </dev/null
+is    "--all and a lane name are two questions, and saying so is the 64" "$rc" 64
+
+# ------------------------------------------------ clause (i-4): the alias
+#
+# *"Bare `lane-start` — no repository, no position — is an alias of `lane`, so
+# clause (i) as ruled still holds and there is one implementation."* It renders
+# nothing of its own: it `exec`s the word, because the launcher `exec`s IT.
+: > "$FAKE_CLAUDE_LOG"
+run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" "$START" </dev/null
+is    "a bare lane-start exits 0, where it used to refuse with 2" "$rc" 0
+has   "…saying in one line that this is \`lane\`" "$err" "this is \`lane\`"
+has   "…and printing that word's listing rather than one of its own" "$out" "AVAILABLE"
+has   "…numbered, which is the pick" "$out" "1  repoPick-1"
+is    "…and launching no session at all" "$(cat "$FAKE_CLAUDE_LOG")" ""
+
+# -------------------------------------- the footer when the helper is older
+#
+# A `lanes-edit.sh` WITH NO `next-free` IS NOT A NEXT FREE POSITION OF 1
+# (Amendment 7(d)). `lanes` offered `lane-start <repo> 1` out of a read that
+# never answered, which is a position this estate may well have taken.
+cat > "$SANDBOX/nfold" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  next-free) printf "lanes-edit: unknown subcommand 'next-free'\n" >&2; exit 2 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/nfold"
+run env LANES_NO_FETCH=1 REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/nfold" "$LANES_CMD" --prefix repoPick </dev/null
+is    "lanes still lists where the next-free read is missing" "$rc" 0
+has   "…with the rows" "$out" "repoPick-1"
+hasnt "…and never offers a position it did not get" "$out" "next free position:"
+has   "…saying which act brings it back" "$out" "openRepoTools --install"
 
 echo "== the workstation seam: unset, every writer reads the host =="
 

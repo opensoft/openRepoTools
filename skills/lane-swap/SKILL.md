@@ -237,7 +237,7 @@ its free text.
 #            restarted, and restarting into a worktree is Evidence 3's silent
 #            loss of the repository's CLAUDE.md and the lane's memory.
 #   profile  `$CLAUDE_PROFILE_NAME`, which the launcher exports into every
-#            session it starts. Without it a `restart <lane>` typed anywhere but
+#            session it starts. Without it a `lane <name>` typed anywhere but
 #            in the lane's surviving window cannot name the profile the launcher
 #            needs, because today the profile is recoverable only from the tmux
 #            session name, which act 1's window reuse and any rename destroy.
@@ -279,8 +279,8 @@ its free text.
 #
 # `git rev-parse --show-toplevel` AND `$PWD` WERE THE NEXT TWO RUNGS AND ARE
 # GONE (ruling 10). They record the git toplevel of wherever the shell stands,
-# which in a subagent's scratchpad worktree is THAT WORKTREE — and `restart
-# <lane>` then `cd`s into it, losing the repository's CLAUDE.md and the lane's
+# which in a subagent's scratchpad worktree is THAT WORKTREE — and `lane
+# <name>` then `cd`s into it, losing the repository's CLAUDE.md and the lane's
 # memory (Evidence 3). A record with NO `dir` is complete in the same way a
 # record with no `@id` is; a record with the WRONG one is not, because
 # `lane-start` writes the lane's home from that tree's `origin` and every `#n`

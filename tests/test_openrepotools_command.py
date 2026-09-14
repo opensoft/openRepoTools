@@ -46,7 +46,14 @@ COMMAND = REPO / "openRepoTools"
 #: under lane-collision-protocol Amendment 9(b), and `repos.tsv` is data placed
 #: at 755 with the commands because `--install` has one list, one destination
 #: and one mode.
-INSTALLED = ("openRepoTools", "park", "resume", "status", "restart", "lanes",
+#:
+#: `lane` TAKES `restart`'s PLACE AND THE COUNT DOES NOT MOVE (Amendment 18
+#: Addendum 1, the word, and Addendum 2, the retirement — ratified
+#: 2026-09-14T14:05:54Z and 16:50:32Z). `lane <name>` is `restart <lane>`'s act
+#: — the launcher's path, the lane's own recorded directory and profile, asking
+#: nothing — plus the numbered pick, the attach and the handoff branch, so what
+#: a person is given is one word instead of two.
+INSTALLED = ("openRepoTools", "park", "resume", "status", "lane", "lanes",
              "lanes-edit.sh", "lane-start", "lane-end", "link-estates",
              "repos.tsv")
 

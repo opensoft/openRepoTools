@@ -27,8 +27,9 @@
 #
 # `--install` PLACES ELEVEN FILES, not four: this file, `park`, `resume`,
 # `status` (openRepoShape #82; the fourth under Brett Heap's RULING of
-# 2026-09-10 in this repository, "lets go with a fourth file"), `restart` and
-# `lanes` (lane-collision-protocol Amendment 11, ratified decisions 7 and 6),
+# 2026-09-10 in this repository, "lets go with a fourth file"), `lane` and
+# `lanes` (lane-collision-protocol Amendment 18 Addendum 1 and Amendment 11's
+# ratified decision 6),
 # and the four lane helpers `lanes-edit.sh`, `lane-start`, `lane-end` and
 # `link-estates` with the alias table `repos.tsv` they read — which came here
 # from `opensoft/brett-wip` with their history under Amendment 9(b), because a
@@ -84,11 +85,12 @@ lane words, the four lane helpers and the alias table they read:
                                    recreate those features
   status [<Name>]                  what is in and out of sync across that
                                    estate, as of the last fetch; changes nothing
-  restart [<lane>]                 put yourself back in a lane: cd to its
-                                   recorded directory and relaunch it through
-                                   the launcher, asking nothing. With no lane,
-                                   the current window's lane — or the lanes of
-                                   the current checkout, listed
+  lane [<name> [<profile>]]        the lanes, NUMBERED, and one question: the
+                                   one you pick is bound — a parked lane
+                                   through the launcher in its own directory
+                                   and profile, one live here by attaching to
+                                   its window, one bound elsewhere by naming
+                                   where. With no terminal it asks nothing
   lanes [--all] [--fetch]          inside a checkout: that repository's lanes
                                    and the next free position, filled in;
                                    outside one, or with --all, every lane.
@@ -114,10 +116,12 @@ of `/lane-swap` and adds nothing to it. It merges ONE `SessionStart` entry into
 it cannot parse). It never writes a profile's own settings.json: the launcher
 owns that one.
 
-`/restart` is the INSIDE half of `restart` and has to be a skill: a running
-session cannot `exec` a launcher over itself, so it binds the window, stamps
-the record through `lane-start --no-launch` and prints — never a picker
-(Amendment 11 clause (f), ratified decisions 3 and 7).
+`/restart` is the INSIDE half and has to be a skill: a running session cannot
+`exec` a launcher over itself, so it binds the window, stamps the record
+through `lane-start --no-launch` and prints — never a picker (Amendment 11
+clause (f), ratified decisions 3 and 7). `lane` is the OUTSIDE half, and it is
+the whole of what a person is given: `restart` left the PATH under Amendment 18
+Addendum 2 (ratified 2026-09-14T16:50:32Z, verbatim "ratify").
 
 `wip init` — the workspace repository, which holds your lane register, your
 object logs, your handoffs and your workspace manifests, and no code at all:
@@ -210,14 +214,24 @@ fetch_from_repo() {
 # workBenches' `setup-estate-commands.sh`, whose post-install verify refuses any
 # target whose mode is not exactly 755. Amendment 9(b) chose the ugliness.
 #
-# ELEVEN SINCE AMENDMENT 11. `restart` and `lanes` join the list under RATIFIED
-# DECISIONS 7 and 6 (2026-09-13T18:05:29Z, "Ratify all four" and "Yes, build
-# `lanes` in A11"), and `openRepoTools --install` owns them because THIS IS THE
-# ONLY INSTALLER IN THE ESTATE THAT PUTS A WORD ON PATH. Adoption act 6 vendors
-# skills and command files through workBenches' `setup-claude-profiles.sh` into
-# the shared commands directory and `~/.claude/commands/`, and neither of those
-# is a `PATH` entry — which is exactly what decision 7 point 8 says.
-INSTALLABLES=(openRepoTools park resume status restart lanes lanes-edit.sh lane-start lane-end link-estates repos.tsv)
+# ELEVEN SINCE AMENDMENT 11. `restart` and `lanes` joined the list under
+# RATIFIED DECISIONS 7 and 6 (2026-09-13T18:05:29Z, "Ratify all four" and "Yes,
+# build `lanes` in A11"), and `openRepoTools --install` owns them because THIS
+# IS THE ONLY INSTALLER IN THE ESTATE THAT PUTS A WORD ON PATH. Adoption act 6
+# vendors skills and command files through workBenches' `setup-claude-profiles.sh`
+# into the shared commands directory and `~/.claude/commands/`, and neither of
+# those is a `PATH` entry — which is exactly what decision 7 point 8 says.
+#
+# ELEVEN STILL, AND ONE NAME CHANGED: `lane` takes `restart`'s place under
+# AMENDMENT 18 ADDENDUM 1 (the word, ratified 2026-09-14T14:05:54Z) and ADDENDUM
+# 2 (the retirement, ratified 2026-09-14T16:50:32Z, verbatim "ratify" on Brett
+# Heap's ruling *"i think we can drop restart as a cli command and keep it
+# inside a claude session with /restart … lane does all the things a user
+# wants"*). `lane <name>` is `restart <lane>`'s act to the byte — the launcher's
+# path, the lane's own recorded directory and profile, asking nothing — and adds
+# the pick, the attach and the handoff branch. The count did not move because
+# one word left as another arrived, which is why nothing below it is a number.
+INSTALLABLES=(openRepoTools park resume status lane lanes lanes-edit.sh lane-start lane-end link-estates repos.tsv)
 
 # ALL OF THEM IN HAND BEFORE ANY OF THEM IS PLACED (openRepoShape #82, F10 of
 # the review on its #83). One file at a time, dying on the first fetch that
@@ -335,8 +349,8 @@ install_commands() {
 # EIGHTEEN ARTIFACTS, AND THE COUNT IS THE INVARIANT: eleven files in the bin
 # directory, two skills in the shared skills directory, their two bare-run
 # copies, ONE COMMAND FILE at those same two paths, and one merged entry in
-# `~/.claude/settings.json`. It was twelve before Amendment 11 added `restart`,
-# `lanes` and the `/restart` skill, and sixteen before ruling 9 added
+# `~/.claude/settings.json`. It was twelve before Amendment 11 added a second
+# word on PATH, `lanes` and the `/restart` skill, and sixteen before ruling 9 added
 # `commands/swap.md`; the count moves with the lists rather than being restated
 # from memory.
 #
@@ -355,9 +369,9 @@ install_commands() {
 #: and every path is derived from one.
 #:
 #: `restart` joins `lane-swap` under Amendment 11 clause (f) and ratified
-#: decision 7: `/restart` is the INSIDE half of the restart and `restart` on
-#: `PATH` is the outside one, and the inside half has to be a skill because a
-#: running session cannot `exec` a launcher over itself.
+#: decision 7: `/restart` is the INSIDE half and `lane <name>` on `PATH` is the
+#: outside one (Amendment 18 Addendum 2), and the inside half has to be a skill
+#: because a running session cannot `exec` a launcher over itself.
 SKILLS=(lane-swap restart)
 skill_source_path() { printf 'skills/%s/SKILL.md\n' "$1"; }
 

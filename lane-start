@@ -638,7 +638,29 @@ case "${#positional[@]}" in
       die "'$arg' is not a lane: a lane is <repo>-<position>, e.g. $arg-1. Run: $prog $arg <n>$from_listing, or name the checkout yourself with --dir <path> to use '$arg' as the lane name" 2
     fi
     ;;
-  0) usage >&2; die "a lane needs a position: $prog <repo> <n>" 2 ;;
+  0)
+    # BARE `lane-start` IS `lane` (Amendment 18 Addendum 1 clause (i-4),
+    # ratified 2026-09-14T14:05:54Z verbatim "ratify the addendum"): *"Bare
+    # `lane-start` — no repository, no position — is an alias of `lane`, so
+    # clause (i) as ruled still holds and there is one implementation."*
+    #
+    # IT RENDERS NOTHING OF ITS OWN, exactly as the `<repo>`-with-no-position
+    # rung above renders nothing of its own: `lane` is the listing, the numbered
+    # pick and the three branches, installed beside this command by
+    # `openRepoTools --install`. Where it is ABSENT — an older workstation — the
+    # refusal below is still the whole answer, so this is an improvement and
+    # never a dependency.
+    #
+    # `exec`, NOT A CALL: this command is itself `exec`ed by the launcher, so a
+    # pick that ends in a launch must replace this process rather than leave it
+    # waiting on a child that has replaced itself.
+    lane_word="$(command -v lane 2>/dev/null || :)"
+    [ -n "$lane_word" ] || { [ -x "$SCRIPT_DIR/lane" ] && lane_word="$SCRIPT_DIR/lane"; }
+    if [ -n "$lane_word" ]; then
+      note "no <repo> and no position: this is \`lane\`, which lists the lanes and binds the one you pick (Amendment 18 Addendum 1 clause (i-4))"
+      exec "$lane_word"
+    fi
+    usage >&2; die "a lane needs a position: $prog <repo> <n>" 2 ;;
   *) die "too many arguments: $prog <repo> <n>" 2 ;;
 esac
 

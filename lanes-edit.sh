@@ -4096,7 +4096,7 @@ lanes_rows() {
   # wrapper's own `here_repo` had one file up (`lanes:143`, taken at `2f44da0`).
   if [ "$lr_all" = 1 ]; then lr_repo=""; lr_dir=""; lr_prefix=""; lr_here=0; lr_one=""; fi
   [ -n "$lr_dir" ] && lr_dir="$(cd -- "$lr_dir" 2>/dev/null && pwd -P || printf '%s' "$lr_dir")"
-  # ONE LANE, WITHOUT SCANNING THE ESTATE. `restart <lane>` needs one row's
+  # ONE LANE, WITHOUT SCANNING THE ESTATE. `lane <name>` needs one row's
   # `profile` and nothing else, and building the whole listing for it would walk
   # every log, every row and every live session record on the workstation to
   # answer a question about one lane. Same rows, same columns, same code.
@@ -4119,7 +4119,7 @@ lanes_rows() {
   # cached for the life of the process, and `lane_row_facts` turns it into one
   # line per lane carrying the six facts a row needs — `payload_subfield`'s two
   # rules and `home_of_lane`'s one, applied in the same awk that parses.
-  # `--lane` READS ONE LOG, NOT THE ESTATE'S. `restart <lane>` asks for one
+  # `--lane` READS ONE LOG, NOT THE ESTATE'S. `lane <name>` asks for one
   # lane's profile and nothing else, and `state_events` is a `git show` per log
   # file — nine seconds on the live register. The same parser over the same
   # grammar either way, so the two answers cannot differ.
@@ -4280,11 +4280,18 @@ EOF2
     # `directory` and the `<@id>` half of `window` all come from records written
     # under clause (c), and 0 of the 5 swap records on Eagle carry any of them.
     # A word a reader can act on beats a glyph they have to interpret.
-    # COLUMN 10 — THE RESTART LINE — IS THE READ'S AND NOT A RENDERER'S
-    # (A11 Addendum 4 ruling 7). Clause (j) gives TEN columns in order and this
-    # carried nine; `lanes` computed the tenth and `restart` computed a
-    # different tenth, which is two implementations of one column and is how
-    # they would come to disagree about which lane may be restarted.
+    # COLUMN 10 — THE LINE THAT BINDS THE LANE — IS THE READ'S AND NOT A
+    # RENDERER'S (A11 Addendum 4 ruling 7). Clause (j) gives TEN columns in
+    # order and this carried nine; `lanes` computed the tenth and `restart`
+    # computed a different tenth, which is two implementations of one column and
+    # is how they would come to disagree about which lane may be restarted.
+    #
+    # THE WORD IS `lane <name>` (Amendment 18 Addendum 2, ratified
+    # 2026-09-14T16:50:32Z verbatim "ratify"): `restart` is no longer a command
+    # a person is given, and `lane <name>` is the same act — the launcher's
+    # path, the lane's own recorded directory and profile, asking nothing —
+    # plus the pick, the attach and the elsewhere branch. A column naming a word
+    # that is not on the person's PATH is a column they cannot type.
     #
     # A PAUSED LANE ONLY (clause (j) column 10, F-X20), and a PAUSED lane whose
     # record carries NO `profile` gets the form that works today with the
@@ -4298,7 +4305,7 @@ EOF2
       if [ -z "$lr_pf" ] || [ "$lr_pf" = none ]; then
         lr_restart="pclaude --lane $lr_l <profile>"
       else
-        lr_restart="restart $lr_l"
+        lr_restart="lane $lr_l"
       fi
     fi
     lr_out="${lr_out}${lr_utc:-0000}${US}${lr_l}	${lr_state}	${lr_w:-unknown}	${lr_pf:-none}	${lr_win:-none}	${lr_sid:-none}	${lr_d:-none}	${lr_obj:-none}	${lr_age}	${lr_restart}	${lr_home:-none}	${lr_fk}
@@ -4308,6 +4315,87 @@ $lr_names
 EOF
   [ -n "$lr_out" ] || return 8
   printf '%s' "$lr_out" | LC_ALL=C sort -t"$US" -k1,1r | awk -F"$US" 'NF >= 2 { print $2 }'
+}
+
+# --------------------- AMENDMENT 18 ADDENDUM 1: THE PICK'S TWO READS ---------
+#
+# `lane` (Addendum 1 (i-1), ratified 2026-09-14T14:05:54Z verbatim "ratify the
+# addendum") renders THE SAME ROWS `lanes` renders — in three groups, with a
+# number in front of each. Neither the grouping nor the next free position is
+# that word's own: both are computed HERE, over the rows `lanes_rows` printed,
+# because two surfaces computing one answer is how they come to disagree. That
+# is the rule clause (h) already gives `window-lane` and `session-lane`, and the
+# one A11 Addendum 4 ruling 7 gave column 10 after `lanes` and `restart` had
+# each computed a restart line of its own.
+#
+# ROWS ON STDIN, like `sibling-filter` one screen down: the caller has already
+# made the read and paid for it, and a subcommand that read the register a
+# second time would double the cost of every pick to answer a question about
+# the rows already in its hand. Neither of these two reads the register, the
+# logs, the session records or the network at all.
+
+# THE PARTITION, AND IT IS THE STATE COLUMN'S (clause (i-2)):
+#
+#   available   PARKED — a lane nobody holds — or A BINDING THIS HOST PROVES
+#               DEAD: a lane whose last verb was STARTED or RESUMED, on this
+#               workstation, with no live session record naming any of its ids.
+#               `lanes_rows` has already made that proof, and it is the whole
+#               difference between its `LIVE` and its `IDLE`.
+#   live        LIVE: a live session record on this workstation names one of the
+#               row's ids. The act is the ATTACH and never a second process.
+#   elsewhere   a binding this host CANNOT prove dead, because the row is
+#               another workstation's: the session records are local files, so
+#               saying NOT LIVE about Raven from Eagle would be a claim this
+#               machine has no way to make. Clause (c)'s handoff question.
+#
+# CLOSED AND DORMANT LANES LEAVE THE PICK (Amendment 19). A lane whose last act
+# was its last is not a lane a person picks, and a pick that offered one would
+# be offering to reopen something closed on purpose. `ENDED` and `RETIRED` are
+# that set in today's vocabulary and `CLOSED`/`DORMANT` are the words the rows
+# take under #42; both are named here, so the pick is right under either and
+# the word does not have to move when the read does. They are still ROWS in
+# `lanes`, which is the READ — this is a pick.
+lane_groups() {   # <workstation> ; rows on stdin
+  awk -F'\t' -v me="$(short_ws "${1:-$WS}")" '
+    NF >= 3 {
+      st = $2
+      if (st == "ENDED" || st == "RETIRED" || st == "CLOSED" || st == "DORMANT") next
+      w = tolower($3); sub(/\..*$/, "", w)
+      if (st == "LIVE") g = "live"
+      else if (st == "PAUSED") g = "available"
+      else if (w == me) g = "available"
+      else g = "elsewhere"
+      print g "\t" $0
+    }'
+}
+
+# THE NEXT FREE POSITION, over those same rows: clause (i-1)'s `f` answer, and
+# the footer `lanes` has printed since Brett Heap's settlement of
+# 2026-09-13T20:38:11Z. It is the LOWEST free one and never the highest plus
+# one, because positions come back as lanes end and handing out 12 while 3 is
+# free grows a column nobody reads — and `lane-start` refuses a position that is
+# taken, so this is a suggestion with a guard behind it and never an assertion.
+#
+# A POSITION IS DIGITS WITH AN OPTIONAL TRAILING LETTER, which is
+# `lane-start`'s own rule: `5a` and `5` are one position taken twice, because a
+# lane may be re-cut and a re-cut position is not free, and it is the only
+# reading under which `openxfactory-4-opendox-extraction` has no position at
+# all. The comparison is case-insensitive on both sides, like every other lookup
+# of a lane name in this file (Amendment 15).
+lane_next_free() {   # <repo> ; rows on stdin
+  [ -n "${1-}" ] || return 64
+  awk -F'\t' -v r="$1" '
+    BEGIN { rl = tolower(r) "-" }
+    $1 != "" {
+      l = tolower($1)
+      if (substr(l, 1, length(rl)) != rl) next
+      p = $1
+      sub(/^.*-/, "", p)
+      sub(/[A-Za-z]$/, "", p)
+      if (p !~ /^[0-9]+$/) next
+      taken[p + 0] = 1
+    }
+    END { i = 1; while (i in taken) i++; print i }'
 }
 
 # swapped_lanes [<workstation>] — one row per swapped lane, tab-separated:
@@ -4850,7 +4938,11 @@ case "$cmd" in
 esac
 
 case "$cmd" in
-  session-start) : ;;
+  # THE TWO FILTERS OF AMENDMENT 18 ADDENDUM 1 READ THEIR ROWS FROM STDIN and
+  # touch no workspace at all, so a workspace this workstation has not pointed
+  # at yet is not a reason to refuse them — the same exemption `session-start`
+  # has had since it was written, for the same reason.
+  session-start|lane-groups|next-free) : ;;
   *)
     if [ -z "$LANES_REPO" ] || [ -z "$LANES_DIR" ]; then
       die "$(lanes_workspace_why)" 1
@@ -5556,7 +5648,7 @@ EOF
   # sub-field along: the `profile ` of its log's LAST lane-kind line carrying
   # one, unquoted where it was written quoted.
   #
-  # IT IS AN ADDITION TO SPEC §11's TABLE AND IS NAMED AS ONE. `restart <lane>`
+  # IT IS AN ADDITION TO SPEC §11's TABLE AND IS NAMED AS ONE. `lane <name>`
   # needs exactly two facts about a lane it is not standing in — its directory
   # and its profile — and the directory already had a read of its own. Without
   # this the profile came out of the `lanes` listing, which must consult
@@ -5712,6 +5804,25 @@ EOF
     printf '%s\n' "$lns_out"
     ;;
 
+  # AMENDMENT 18 ADDENDUM 1 — THE PICK'S TWO READS, over the rows the `lanes`
+  # arm above has just printed. Both take those rows on STDIN and neither reads
+  # the register: the caller has paid for that read and a second one would
+  # double the cost of every pick. `lane` is the only caller of the first and
+  # `lane` and `lanes` are both callers of the second, which is the point — two
+  # surfaces computing one partition, or one next free position, is how they
+  # come to disagree.
+  # 0 with the answer · 64 a usage error of its own.
+  lane-groups)
+    [ "$#" -le 1 ] || die "lane-groups takes one optional workstation: lane-groups [<workstation>]   (the rows on stdin)" 64
+    lane_groups "${1-}"
+    ;;
+
+  next-free)
+    [ -n "${1-}" ] || die "usage: next-free <repo>   (the rows on stdin)" 64
+    [ "$#" -le 1 ] || die "next-free takes one repository: next-free <repo>   (the rows on stdin)" 64
+    lane_next_free "$1"
+    ;;
+
   # AMENDMENT 8 — Rule 1's sibling reads, filtered to lines that NAME the
   # object. `gh_reads` pipes both of its searches through this; it is a
   # subcommand so that the filter can be held to account directly, and so a
@@ -5825,6 +5936,6 @@ EOF
     ;;
 
   *)
-    die "unknown subcommand '$cmd' (verify-row|append-row-status|replace-in-row|append-session-id|append-line|add-row|commit|log|claim|release|who|swapped|session-start|idle-holders|live-holder|window-session|session-lane|window-lane|lane-dir|lane-profile|last-session|forks|workstation|fetch-age|lanes|sibling-filter|resolve-repo|lane-objects|register-row|resolve-home)" 2
+    die "unknown subcommand '$cmd' (verify-row|append-row-status|replace-in-row|append-session-id|append-line|add-row|commit|log|claim|release|who|swapped|session-start|idle-holders|live-holder|window-session|session-lane|window-lane|lane-dir|lane-profile|last-session|forks|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|resolve-home)" 2
     ;;
 esac
