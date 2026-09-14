@@ -5659,7 +5659,7 @@ has   "…and offering the acts filled in, which is what an agent reads" "$out" 
 # THE SAME ROWS AS A READ STILL SHOW THE CLOSED LANE, because `lanes` is the
 # read and this is a pick.
 run env LANES_NO_FETCH=1 "$LANES_CMD" --prefix repoPick </dev/null
-has   "…while `lanes` still carries the closed lane, because that is the READ" "$out" "repoPick-5"
+has   "…while \`lanes\` still carries the closed lane, because that is the READ" "$out" "repoPick-5"
 has   "…and its footer offers the same next free position the pick does" "$out" "next free position:  6"
 has   "…and points at the word that binds one" "$out" "pick one:            lane"
 
