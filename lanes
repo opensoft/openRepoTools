@@ -401,7 +401,11 @@ fi
 
 say ""
 if [ "$do_fetch" = 1 ] && [ "$fetch_fell_back" = 1 ]; then
-	say "$n lane(s)${here_repo:+ of $here_repo}, read LOCALLY: the fetch did not answer, so this is the checkout's own copy as of $("$LANES_EDIT" fetch-age 2>/dev/null || printf 'unknown'). The helper said so and this command will not print \"as of a fetch just now\" over it:"
+	# THE PHRASE THE FOOTER MUST NOT CARRY IS NOT QUOTED HERE EITHER: the suite
+	# asserts that a fallen-back fetch never prints the fresh-fetch sentence, and
+	# a message that QUOTED it to disown it failed that assertion on its own
+	# words. What the helper said is printed under this line instead.
+	say "$n lane(s)${here_repo:+ of $here_repo}, read LOCALLY: the fetch did not answer, so this is the checkout's own copy as of $("$LANES_EDIT" fetch-age 2>/dev/null || printf 'unknown'). What the helper said:"
 	printf '%s\n' "$fetch_err" | sed -n 's/^/  /p'
 elif [ "$do_fetch" = 1 ]; then
 	say "$n lane(s)${here_repo:+ of $here_repo}, as of a fetch just now."
