@@ -2295,14 +2295,19 @@ is    "…one row per swapped lane" "$(printf '%s\n' "$out" | grep -c .)" 2
 # every record on the estate looks like until adoption act 7 cuts each lane over
 # at its own next start, and a reader that finds none says so rather than
 # assuming one (Amendment 7(i)).
-is    "…lane first, tab-separated, <lane><TAB><UTC><TAB><window><TAB><dir><TAB><profile>" \
-      "$(printf '%s\n' "$out" | head -n1)" "$(printf 'repoSW-1\t%s\tclaude-team-05b-20260912102132-2699:0\t\t' "$SW_OLD_UTC")"
+# AMENDMENT 17(b) ADDS A SIXTH AND A SEVENTH, `<agent>` and `<transcript>`, on
+# the same argument the fourth and fifth were added on: the FIRST FIELD BEFORE
+# THE FIRST TAB is the contract every reader takes, and a record written before
+# an amendment carries its fields EMPTY rather than guessed. These rows were
+# written before both amendments, so four of the seven are empty.
+is    "…lane first, tab-separated, <lane><TAB><UTC><TAB><window><TAB><dir><TAB><profile><TAB><agent><TAB><transcript>" \
+      "$(printf '%s\n' "$out" | head -n1)" "$(printf 'repoSW-1\t%s\tclaude-team-05b-20260912102132-2699:0\t\t\t\t' "$SW_OLD_UTC")"
 is    "…MOST RECENTLY LANDED first, though its UTC is the older of the two" \
       "$(printf '%s\n' "$out" | head -n1 | cut -f1)" "repoSW-1"
 is    "…and the lane whose UTC is later, having landed first, comes second" \
       "$(printf '%s\n' "$out" | sed -n 2p | cut -f1)" "repoSW-5"
-is    "…every row carries exactly five tab-separated fields" \
-      "$(printf '%s\n' "$out" | awk -F'\t' 'NF != 5' | grep -c .)" 0
+is    "…every row carries exactly seven tab-separated fields" \
+      "$(printf '%s\n' "$out" | awk -F'\t' 'NF != 7' | grep -c .)" 0
 is    "…and the FIRST field before the first tab is still the lane, which is the contract both its readers take" \
       "$(printf '%s\n' "$out" | head -n1 | cut -f1)" "repoSW-1"
 hasnt "…and nothing is written by a read" "$(git -C "$WIP" log --format=%s -n1)" "swapped"
@@ -4280,7 +4285,11 @@ hasnt "…and records the format string nowhere" "$(cat "$LOGD/repoA11e-1.md" 2>
 # things #71 had and this did not; ruling 11 moves the container case. Six of
 # the seven are prose a test can only read; the SUB-FIELD RULE is arithmetic and
 # is extracted from the file and run, like `/restart`'s rung 4 beside it.
-SWSK="$SRC_DIR/skills/lane-swap/SKILL.md"
+# THE FILE MOVED WITH THE ACT (Amendment 17(a), ratified 2026-09-14): the steps
+# these cases read are `skills/handoff/SKILL.md`'s now, and `skills/lane-swap/`
+# holds the ALIAS that names it. Every assertion below is the same assertion
+# against the file that carries the act.
+SWSK="$SRC_DIR/skills/handoff/SKILL.md"
 SWSK_TEXT="$(cat "$SWSK")"
 skill_subfield() {   # <win> <dir> — runs the skill's own two `case` lines
   local ss_win="$1" ss_dir="$2" ss_a ss_b ss_c
@@ -4322,8 +4331,9 @@ has   "a missing dir is SAID rather than omitted in silence" "$SWSK_TEXT" "NO di
 has   "the skill ends with the /rename act (R-A11-16)" "$SWSK_TEXT" "type /rename <lane>"
 has   "…on act 0's MERGED sha, which is the premise that moved" "$SWSK_TEXT" "3719d97"
 # (f) THE ALIAS IS IN THE DESCRIPTION — clause (g).
-has   "the description names the alias" "$SWSK_TEXT" "/lane-swap (alias /swap)"
-has   "…and the amendment that amended it" "$SWSK_TEXT" "amended by Amendment 11"
+has   "the description names the aliases" "$SWSK_TEXT" "aliases /swap, /lane-swap"
+has   "…and the word a context clear uses" "$SWSK_TEXT" "/ctx is /handoff --restart"
+has   "…and the amendments that amended it" "$SWSK_TEXT" "amended by Amendments 11, 17 and 18(d)"
 # RULING 11 — the container case stops the WRITES, not the swap.
 hasnt "a container with no workstation no longer exits at step 1" "$SWSK_TEXT" 'export LANES_WORKSTATION=<this host name>"
   exit 2'
@@ -4396,7 +4406,7 @@ has  "…and the record still says which fact it does not carry" "$SWSK_TEXT" "N
 # THE `/lane-swap` SKILL MAKES THE SAME TEST, and it is run FROM THE FILE rather
 # than restated — the same reason `/restart`'s rung 4 is: a copy is what would
 # go on passing after the file drifted.
-SWSKILL="$SRC_DIR/skills/lane-swap/SKILL.md"
+SWSKILL="$SRC_DIR/skills/handoff/SKILL.md"
 # THE WHOLE `window` BLOCK IS EXTRACTED AND RUN, not one line of it: the block
 # is now four reads and two shape checks (F-X13 row (h) put the launcher's own
 # exports behind the live reads, under `R-A11-26`'s superset rule), and a test
@@ -5454,6 +5464,519 @@ hasnt "…nor the source token nothing in the estate emits" "$out" "hostname-in-
 # AND IT IS SILENT ON EVERY ORDINARY RUN, so the notice means what it says.
 run "$LANES_CMD" </dev/null
 hasnt "…while a run whose seam answered prints no container notice at all" "$out" "LANES_WORKSTATION"
+
+echo "== Amendment 17: the handoff is the swap =="
+
+# THE ACT UNDER ITS THREE NAMES, AND THE TWO SUB-FIELDS THAT MAKE A LANE
+# RESUMABLE BY ANY AGENT. lane-collision-protocol Amendment 17, ratified
+# 2026-09-14T09:45:33Z (clause (f), `/ctx`, included); Amendment 18(d)'s
+# `--exit` and Addendum 2's respawn line; adoption acts 6 (the transcript
+# follows the lane) and 7 (`--late`).
+#
+# EVERYTHING THIS SECTION ADDS IS ITS OWN — its own bin copy of `lane-handoff`,
+# its own fakes in their own directory, its own lanes, its own profiles — so
+# that it can be read, moved or merged in one piece. The shared fakes at the
+# head of this file are not edited; `$SANDBOX/a17bin/tmux` DELEGATES to the
+# shared one for every read, and adds the two writes tmux makes here.
+
+HANDOFF_CMD="$OPENREPOTOOLS_BIN_DIR/lane-handoff"
+cp -p "$SRC_DIR/lane-handoff" "$OPENREPOTOOLS_BIN_DIR/" 2>/dev/null
+chmod 755 "$HANDOFF_CMD" 2>/dev/null
+is   "lane-handoff is installed beside the helper it reads through" \
+     "$( [ -x "$HANDOFF_CMD" ] && echo yes || echo no )" yes
+
+mkdir -p "$SANDBOX/a17bin"
+# A FAKE `codex`, LOGGING ITS ARGV — the whole of what a launcher table can be
+# tested against. It also records, at the instant it is launched, how many
+# `RESUMED by codex` stamps the handoff carries: that is how "the stamp is
+# written BEFORE the launch" is proved rather than assumed.
+cat > "$SANDBOX/a17bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FAKE_CODEX_LOG:-/dev/null}"
+if [ -n "${FAKE_CODEX_WATCH:-}" ]; then
+  printf 'stamps-at-launch=%s\n' \
+    "$(grep -c 'RESUMED by codex' "$FAKE_CODEX_WATCH" 2>/dev/null || printf 0)" \
+    >> "${FAKE_CODEX_LOG:-/dev/null}"
+fi
+exit 0
+FAKE
+# THE TWO WRITES TMUX MAKES IN THIS SECTION, and the same trick: each records
+# how many PAUSED lines the lane's log carried at the instant it ran. Amendment
+# 17(f) is an ORDER — *"a pane is never respawned over an unrecorded lane"* —
+# and an order is proved by what the second act could see of the first.
+cat > "$SANDBOX/a17bin/tmux" <<'FAKE'
+#!/usr/bin/env bash
+case "${1-}" in
+  send-keys|respawn-pane)
+    printf '%s' "$*" >> "${FAKE_TMUX_A17_LOG:-/dev/null}"
+    printf ' | paused-lines=%s\n' \
+      "$(grep -c '^PAUSED' "${FAKE_TMUX_A17_WATCH:-/dev/null}" 2>/dev/null || printf 0)" \
+      >> "${FAKE_TMUX_A17_LOG:-/dev/null}"
+    exit 0 ;;
+esac
+exec "${FAKE_TMUX_REAL:?}" "$@"
+FAKE
+cat > "$SANDBOX/a17bin/pclaude" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FAKE_PCLAUDE_LOG:-/dev/null}"
+FAKE
+chmod +x "$SANDBOX/a17bin/codex" "$SANDBOX/a17bin/tmux" "$SANDBOX/a17bin/pclaude"
+export FAKE_TMUX_REAL="$SANDBOX/fakebin/tmux"
+export FAKE_CODEX_LOG="$SANDBOX/codex.log" FAKE_TMUX_A17_LOG="$SANDBOX/tmux-a17.log"
+export FAKE_PCLAUDE_LOG="$SANDBOX/pclaude.log"
+: > "$FAKE_CODEX_LOG"; : > "$FAKE_TMUX_A17_LOG"; : > "$FAKE_PCLAUDE_LOG"
+A17PATH="$SANDBOX/a17bin:$PATH"
+
+# ------------------------------------------------------------- the fixtures
+
+HF_ID="a17a0001-1111-4000-8000-a17a00011111"
+HF2_ID="a17a0002-2222-4000-8000-a17a00022222"
+HF3_ID="a17a0003-3333-4000-8000-a17a00033333"
+HF4_ID="a17a0004-4444-4000-8000-a17a00044444"
+CODEX_ID="01JCODEXSESSION0000000001"
+
+mkdir -p "$HOME/projects/repoHF"
+git init -q -b main "$HOME/projects/repoHF"
+git -C "$HOME/projects/repoHF" remote add origin "https://github.com/opensoft/repoHF.git"
+HF_DIR="$HOME/projects/repoHF"
+
+# ONE RUNNING WRITER, on disk, exactly as a lane keeps them: a worktree under
+# the lane's own checkout with work in it that is neither committed nor pushed.
+mkdir -p "$HF_DIR/.claude/worktrees/w1"
+git init -q -b feat/w1 "$HF_DIR/.claude/worktrees/w1"
+git -C "$HF_DIR/.claude/worktrees/w1" config user.email "test@example.invalid"
+git -C "$HF_DIR/.claude/worktrees/w1" config user.name "lane helper tests"
+printf 'first\n' > "$HF_DIR/.claude/worktrees/w1/a.txt"
+git -C "$HF_DIR/.claude/worktrees/w1" add -A >/dev/null 2>&1
+git -C "$HF_DIR/.claude/worktrees/w1" commit -q -m "the writer's last commit"
+printf 'uncommitted\n' > "$HF_DIR/.claude/worktrees/w1/b.txt"
+
+mkdir -p "$WIP/handoffs/repoHF"
+hf_seed_handoff() {   # <file> <lane>
+  { printf 'Lane: %s (team-05a, session %s) — single-use resume prompt: stamp RESUMED-by before acting (lane-collision-protocol rule 3)\n' "$2" "$HF_ID"
+    printf '\n'
+    printf 'Written before Amendment 17, by hand.\n'
+  } > "$1"
+}
+for hf_l in repoHF-1 repoHF-2 repoHF-3 repoHF-4 repoHF-5 repoHF-6 repoHF-7; do
+  hf_seed_handoff "$WIP/handoffs/repoHF/$hf_l.md" "$hf_l"
+done
+git -C "$WIP" add -- handoffs/repoHF >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the Amendment 17 handoffs"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+hf_row() {   # <lane> <session cell>
+  "$E" add-row "| \`$1\` | $2 | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoHF/$1.md | ACTIVE |" >/dev/null 2>&1
+}
+hf_row repoHF-1 "harness \`$HF_ID\`"
+hf_row repoHF-2 "\`session_01A17NOUUIDATALL000000\` (profile team-05a)"
+hf_row repoHF-3 "harness \`$HF2_ID\`"
+hf_row repoHF-4 "harness \`$HF3_ID\`"
+hf_row repoHF-5 "harness \`$HF_ID\`"
+hf_row repoHF-6 "harness \`$HF_ID\`"
+hf_row repoHF-7 "harness \`$HF4_ID\`"
+
+# The lane's own log, with the STARTED a running lane has.
+hf_seed_log() {   # <lane> <utc> [<extra line>…]
+  hf_l="$1"; hf_u="$2"; shift 2
+  { printf '# lane %s — object log (lane-collision-protocol Amendment 7)\n' "$hf_l"
+    printf 'STARTED — lane %s, session %s@Eagle, %s, lane:%s → home opensoft/repoHF; estate repoHF; dir %s\n' \
+      "$hf_l" "$HF_ID" "$hf_u" "$hf_l" "$HF_DIR"
+    for hf_x in "$@"; do printf '%s\n' "$hf_x"; done
+  } > "$LOGD/$hf_l.md"
+  git -C "$WIP" add -- "lanes/log/$hf_l.md"
+  git -C "$WIP" commit -q -m "LOG($hf_l@Eagle): seed"
+  git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+  git -C "$WIP" push -q origin main
+  return 0
+}
+for hf_l in repoHF-1 repoHF-2 repoHF-3 repoHF-5 repoHF-6 repoHF-7; do
+  hf_seed_log "$hf_l" "2026-09-14T09:00:00Z"
+done
+
+# The live record of the window this lane is in, so the pane `--exit` and
+# `--restart` type into is the one the harness itself recorded.
+write_record_ns "$sessions_dir/live-a17.json" "$HF_ID" "$LIVE_PID" "$live_start" "hfsess:@21.%21" "repoHF-1" "user" "busy"
+
+# ------------------------------------- 1. the record, and its two sub-fields
+
+export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-1.md"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-1 clear
+is    "lane-handoff exits 0" "$rc" 0
+hf1_log="$(cat "$LOGD/repoHF-1.md")"
+has   "…writing the lane's PAUSED line" "$hf1_log" "PAUSED — lane repoHF-1, session $HF_ID@Eagle"
+has   "…whose payload opens 'swap;', which is what \`swapped\` matches on" "$hf1_log" "lane:repoHF-1 → swap;"
+has   "…carrying Amendment 11(c)'s window" "$hf1_log" "window hfsess:0 @21"
+has   "…its dir" "$hf1_log" "dir $HF_DIR"
+has   "…its profile" "$hf1_log" "profile team-05a"
+has   "…and Amendment 17(b)'s two: the agent" "$hf1_log" "agent claude"
+has   "…and the transcript" "$hf1_log" "transcript $HF_ID"
+has   "…with the why as the line's free text" "$hf1_log" " — clear"
+has   "the restart line is printed, and it is one command" "$out" "READY — restart with: pclaude team-05a"
+has   "…naming the agent the next start will use" "$out" "lane-start --agent claude resumes it"
+
+run   "$E" swapped Eagle
+has   "swapped lists the lane" "$out" "repoHF-1"
+is    "…with the agent as its sixth field and the transcript as its seventh" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "repoHF-1" { print $6 "/" $7 }')" "claude/$HF_ID"
+is    "…and a record written before Amendment 17 carries both EMPTY, never a guess" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "repoSW-1" { print $6 "/" $7 }')" "/"
+run   "$E" lane-agent repoHF-1
+is    "lane-agent reads the record's agent" "$out" "claude"
+run   "$E" lane-transcript repoHF-1
+is    "lane-transcript reads its transcript" "$out" "$HF_ID"
+run   "$E" lane-agent repoSW-1
+is    "…and an older record with neither is 8, the estate's 'no record' (Amendment 7(i))" "$rc" 8
+
+# THE HANDOFF FILE — a fresh Rule 3 top block, the WRITERS section filled from
+# the disk, and everything that was there kept below as history.
+hf1_file="$(cat "$WIP/handoffs/repoHF/repoHF-1.md")"
+is    "the handoff's line 1 is still the Rule 3 header lane-start splices under" \
+      "$(head -n1 "$WIP/handoffs/repoHF/repoHF-1.md" | cut -c1-20)" "Lane: repoHF-1 (team"
+is    "…with the blank line after it that puts the stamps at line 3" \
+      "$(sed -n 2p "$WIP/handoffs/repoHF/repoHF-1.md")" ""
+has   "…a fresh RESUME PROMPT block naming the agent and the transcript" "$hf1_file" "agent claude, transcript $HF_ID"
+has   "…whose first line is Amendment 17(f)'s" "$hf1_file" "relaunch every writer below from where it stands"
+has   "…a WRITERS section" "$hf1_file" "**WRITERS at"
+has   "…naming the running writer's worktree" "$hf1_file" "$HF_DIR/.claude/worktrees/w1"
+has   "…its branch" "$hf1_file" "branch \`feat/w1\`"
+has   "…what it had committed" "$hf1_file" "the writer's last commit"
+has   "…and what it is holding" "$hf1_file" "1 dirty"
+has   "…the section for the brief where the caller passed none" "$hf1_file" "brief: (fill in"
+has   "…and the file it was, below, as history" "$hf1_file" "Written before Amendment 17, by hand."
+has   "the writers are polled on stdout too, with git's own words" "$out" "git status --short"
+has   "…and the unpushed read beside it" "$out" "git log @{u}.."
+is    "the handoff refresh is its own commit in the workspace repository" \
+      "$(git -C "$WIP" log --format=%s -n1 -- handoffs/repoHF/repoHF-1.md)" "handoff(repoHF-1@Eagle): PAUSED, clear"
+has   "…with the Rule 5 trailer" "$(git -C "$WIP" log --format=%b -n1 -- handoffs/repoHF/repoHF-1.md)" "Lane: repoHF-1"
+has   "the row is flipped to PAUSED" "$(grep '^| `repoHF-1`' "$LANES")" "| PAUSED "
+
+# The brief a caller DOES pass reaches the section.
+printf '%s\t%s\n' "$HF_DIR/.claude/worktrees/w1" "take round 4 of #41" > "$SANDBOX/a17-writers.tsv"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-3 --writers-file "$SANDBOX/a17-writers.tsv" --dir "$HF_DIR" clear
+is    "a second handoff exits 0" "$rc" 0
+has   "…and the WRITERS section carries the brief the caller passed" \
+      "$(cat "$WIP/handoffs/repoHF/repoHF-3.md")" "brief: take round 4 of #41"
+
+# THE SUB-FIELDS ARE VALIDATED BY THE WRITER, because this log is append-only.
+run env LANES_LANE=repoHF-7 LANES_SESSION="$HF4_ID" "$E" log PAUSED lane:repoHF-7 '→' "swap; agent not a key" "x"
+is    "an \`agent\` that is not a manifest key is refused by the writer" "$rc" 2
+has   "…naming the rule rather than the caller" "$err" "manifest key"
+hasnt "…and nothing was written" "$(cat "$LOGD/repoHF-7.md")" "not a key"
+run env LANES_LANE=repoHF-7 LANES_SESSION="$HF4_ID" "$E" log PAUSED lane:repoHF-7 '→' "swap; transcript two words" "x"
+is    "…and so is a \`transcript\` that is neither an id nor 'none'" "$rc" 2
+run env PATH="$A17PATH" CLAUDE_CODE_SESSION_ID="$HF4_ID" "$HANDOFF_CMD" --lane repoHF-7 --agent 'not a key' x
+is    "lane-handoff refuses the same value at the flag" "$rc" 2
+has   "…naming the flag the caller used" "$err" "--agent takes a manifest key"
+
+# ------------------------------------------ 2. /ctx — the record, then the pane
+
+: > "$FAKE_TMUX_A17_LOG"
+export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-5.md"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-5 --restart clear
+is    "lane-handoff --restart exits 0" "$rc" 0
+a17_tmux="$(cat "$FAKE_TMUX_A17_LOG")"
+has   "…respawning the lane's own pane" "$a17_tmux" "respawn-pane -k -t hfsess:@21.%21"
+has   "…through the launcher, with --lane BEFORE the profile" "$a17_tmux" "pclaude --lane repoHF-5 team-05a"
+has   "…and the seam that makes the new session a FRESH one primed by the top block" "$a17_tmux" "LANE_START_FRESH=1"
+hasnt "…never \`restart <lane>\`, which Addendum 2 takes off the person's PATH" "$a17_tmux" "restart repoHF-5"
+is    "THE RECORD WAS WRITTEN BEFORE THE RESPAWN, which is what the fake could see" \
+      "$(printf '%s\n' "$a17_tmux" | grep -o 'paused-lines=[0-9]*' | head -n1)" "paused-lines=1"
+has   "…and the record is the lane's own PAUSED" "$(cat "$LOGD/repoHF-5.md")" "lane:repoHF-5 → swap;"
+
+# A RECORD THAT CANNOT BE WRITTEN REFUSES BEFORE ANYTHING IS KILLED. repoHF-2's
+# row carries only `session_…` footer ids, so no transcript uuid is knowable and
+# `write_event` refuses the line (Amendment 11 clause (e)).
+: > "$FAKE_TMUX_A17_LOG"
+export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-2.md"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_PROFILE_NAME=team-05a \
+    "$HANDOFF_CMD" --lane repoHF-2 --restart clear
+is    "a /ctx whose record could not be written REFUSES" "$rc" 2
+has   "…saying the pane is exactly as it was" "$err" "this pane is left exactly as it is"
+is    "…and the pane was never respawned" "$(grep -c 'respawn-pane' "$FAKE_TMUX_A17_LOG")" 0
+hasnt "…nor is there a PAUSED line for that lane" "$(cat "$LOGD/repoHF-2.md")" "PAUSED"
+
+# --exit types /exit into the lane's own pane (Amendment 18(d)).
+: > "$FAKE_TMUX_A17_LOG"
+export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-6.md"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-6 --exit "requested by $HF2_ID@Eagle/py-bench"
+is    "lane-handoff --exit exits 0" "$rc" 0
+has   "…typing /exit into the lane's own pane" "$(cat "$FAKE_TMUX_A17_LOG")" "send-keys -t hfsess:@21.%21 /exit Enter"
+is    "…after the record, which is the same order /ctx takes" \
+      "$(grep -o 'paused-lines=[0-9]*' "$FAKE_TMUX_A17_LOG" | head -n1)" "paused-lines=1"
+has   "…and the why the requester gave is the record's free text" \
+      "$(cat "$LOGD/repoHF-6.md")" "requested by $HF2_ID@Eagle/py-bench"
+is    "…and the pane is not respawned as well: one act at a time" \
+      "$(grep -c 'respawn-pane' "$FAKE_TMUX_A17_LOG")" 0
+run env PATH="$A17PATH" "$HANDOFF_CMD" --lane repoHF-4 --restart --exit x
+is    "--restart and --exit together are refused" "$rc" 2
+has   "…naming the two ends they are" "$err" "two different ends for one act"
+
+# ----------------------------------------------- 3. --late, and its one rule
+
+# The lane's last lane-kind line is a STARTED at 09:00Z; the session died at
+# 12:02:27Z with no swap. The late record is written from a SHELL, before the
+# relaunch, dated by the moment the old session ended.
+run env PATH="$A17PATH" CLAUDE_CODE_SESSION_ID="$HF_ID" CLAUDE_PROFILE_NAME=team-05a \
+    "$HANDOFF_CMD" --lane repoHF-4 --late
+is    "--late with no --at is refused" "$rc" 2
+has   "…naming the flag and why a late line is dated by its own field" "$err" "a late record is dated by the moment the OLD SESSION ENDED"
+run env PATH="$A17PATH" CLAUDE_CODE_SESSION_ID="$HF_ID" CLAUDE_PROFILE_NAME=team-05a \
+    "$HANDOFF_CMD" --lane repoHF-4 --late --at "not-a-utc"
+is    "…and so is an --at that is not a UTC instant" "$rc" 2
+
+hf_seed_log repoHF-4 "2026-09-14T09:00:00Z"
+run env PATH="$A17PATH" CLAUDE_CODE_SESSION_ID="$HF_ID" CLAUDE_PROFILE_NAME=team-05a \
+    "$HANDOFF_CMD" --lane repoHF-4 --late --at "2026-09-14T12:02:27Z"
+is    "--late writes the record a swap never left" "$rc" 0
+hf4_log="$(cat "$LOGD/repoHF-4.md")"
+has   "…as the lane's own PAUSED" "$hf4_log" "PAUSED — lane repoHF-4, session $HF_ID@Eagle, 2026-09-14T12:02:27Z"
+has   "…dated by the moment the old session ended, not by this shell's clock" "$hf4_log" "; late 2026-09-14T12:02:27Z"
+has   "…with the why the act is for" "$hf4_log" "usage limit hit before the swap"
+has   "…and the handoff refreshed by the session that now holds the knowledge" \
+      "$(cat "$WIP/handoffs/repoHF/repoHF-4.md")" "relaunch every writer below from where it stands"
+has   "…and it says the relaunch comes next" "$out" "Now start the lane"
+
+run env PATH="$A17PATH" CLAUDE_CODE_SESSION_ID="$HF_ID" CLAUDE_PROFILE_NAME=team-05a \
+    "$HANDOFF_CMD" --lane repoHF-4 --late --at "2026-09-14T12:05:00Z"
+is    "…and a second late record on an already-paused lane is refused" "$rc" 2
+has   "…saying the record is already there" "$err" "already a PAUSED"
+is    "…and the log is unchanged" "$(grep -c '^PAUSED' "$LOGD/repoHF-4.md")" 1
+
+# THE ORDER IS THE RULE. A lane whose relaunch is already recorded may not take
+# a late PAUSED: file order is what every state read means by "last", the log is
+# append-only, and a PAUSED after that RESUMED would make a RUNNING lane read as
+# paused.
+hf_seed_log repoHF-7 "2026-09-14T09:00:00Z" \
+  "RESUMED — lane repoHF-7, session $HF4_ID@Eagle, 2026-09-14T13:00:00Z, lane:repoHF-7 → home opensoft/repoHF; estate repoHF"
+run env PATH="$A17PATH" CLAUDE_CODE_SESSION_ID="$HF4_ID" CLAUDE_PROFILE_NAME=team-05a \
+    "$HANDOFF_CMD" --lane repoHF-7 --late --at "2026-09-14T12:02:27Z"
+is    "--late is refused once the relaunch is recorded" "$rc" 2
+has   "…naming the line that is already last" "$err" "RESUMED at 2026-09-14T13:00:00Z"
+has   "…and what the log would otherwise say about a lane that is running" "$err" "would make a lane that is RUNNING read as paused"
+has   "…with the act that was owed, in order" "$err" "from a SHELL, and only then start the lane"
+is    "…and nothing was written" "$(grep -c '^PAUSED' "$LOGD/repoHF-7.md")" 0
+
+# ------------------------------------- 4. lane-start --agent: the launcher table
+
+mkdir -p "$WIP/handoffs/repoAG"
+AG_DIR="$HOME/projects/repoAG"
+mkdir -p "$AG_DIR"
+git init -q -b main "$AG_DIR"
+git -C "$AG_DIR" remote add origin "https://github.com/opensoft/repoAG.git"
+ag_seed_handoff() {   # <lane>
+  { printf 'Lane: %s (team-05a, session %s) — single-use resume prompt: stamp RESUMED-by before acting (lane-collision-protocol rule 3)\n' "$1" "$HF_ID"
+    printf '\n'
+    printf '## RESUME PROMPT — PAUSED 2026-09-14T12:00:00Z (clear), agent codex, transcript %s — relaunch every writer below from where it stands\n\n' "$CODEX_ID"
+    printf '**FIRST ACTS, in order.** (1) You are lane `%s`. THE TOP BLOCK OF %s.\n\n' "$1" "$1"
+    printf -- '---\n\n'
+    printf 'Everything below the rule is history and is NOT the first prompt.\n'
+  } > "$WIP/handoffs/repoAG/$1.md"
+}
+ag_row() {   # <lane> <cell>
+  "$E" add-row "| \`$1\` | $2 | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoAG/$1.md | ACTIVE |" >/dev/null 2>&1
+}
+ag_seed_log() {   # <lane> <payload tail>
+  { printf '# lane %s — object log (lane-collision-protocol Amendment 7)\n' "$1"
+    printf 'STARTED — lane %s, session %s@Eagle, 2026-09-14T09:00:00Z, lane:%s → home opensoft/repoAG; estate repoAG; dir %s\n' \
+      "$1" "$HF_ID" "$1" "$AG_DIR"
+    printf 'PAUSED — lane %s, session %s@Eagle, 2026-09-14T12:00:00Z, lane:%s → swap; dir %s; workstation Eagle; %s — clear\n' \
+      "$1" "$HF_ID" "$1" "$AG_DIR" "$2"
+  } > "$LOGD/$1.md"
+  git -C "$WIP" add -- "lanes/log/$1.md"
+  git -C "$WIP" commit -q -m "LOG($1@Eagle): seed a paused lane"
+  git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+  git -C "$WIP" push -q origin main
+  return 0
+}
+for ag_l in repoAG-1 repoAG-2 repoAG-3 repoAG-4; do ag_seed_handoff "$ag_l"; done
+git -C "$WIP" add -- handoffs/repoAG >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the repoAG handoffs"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+ag_row repoAG-1 "harness \`$HF2_ID\`"
+ag_row repoAG-2 "harness \`$HF2_ID\`"
+ag_row repoAG-3 "harness \`$HF2_ID\`"
+ag_row repoAG-4 "harness \`$HF2_ID\`"
+ag_seed_log repoAG-1 "agent codex; transcript $CODEX_ID"
+ag_seed_log repoAG-2 "agent codex; transcript $CODEX_ID"
+ag_seed_log repoAG-3 "agent claude; transcript $HF2_ID"
+ag_seed_log repoAG-4 "agent claude; transcript $HF2_ID"
+
+: > "$FAKE_CODEX_LOG"
+export FAKE_CODEX_WATCH="$WIP/handoffs/repoAG/repoAG-1.md"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="agsess:@41" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$AG_DIR" --agent codex repoAG-1
+is    "lane-start --agent codex exits 0" "$rc" 0
+ag_codex="$(cat "$FAKE_CODEX_LOG")"
+has   "…launching codex with the handoff's TOP BLOCK as its first prompt" "$ag_codex" "THE TOP BLOCK OF repoAG-1."
+hasnt "…and only the top block: what is below the rule is history, not a prompt" "$ag_codex" "Everything below the rule is history"
+is    "…with the Rule 3 stamp already in the file when codex was launched" \
+      "$(grep -o 'stamps-at-launch=[0-9]*' "$FAKE_CODEX_LOG" | head -n1)" "stamps-at-launch=1"
+has   "…the stamp naming the agent and its own id" \
+      "$(cat "$WIP/handoffs/repoAG/repoAG-1.md")" "RESUMED by codex $CODEX_ID (lane repoAG-1) at"
+has   "…the row's session cell appended in the agent's own spelling" \
+      "$(grep '^| `repoAG-1`' "$LANES")" "→ Codex \`$CODEX_ID\`"
+has   "…and the row's stamp says who resumed it" "$(grep '^| `repoAG-1`' "$LANES")" "RESUMED by codex $CODEX_ID (lane repoAG-1)"
+
+: > "$FAKE_CODEX_LOG"
+export FAKE_CODEX_WATCH="$WIP/handoffs/repoAG/repoAG-2.md"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="agsess:@41" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$AG_DIR" repoAG-2
+is    "with no --agent at all, the default is the agent of the last PAUSED" "$rc" 0
+has   "…which is codex here, launched with the top block" "$(cat "$FAKE_CODEX_LOG")" "THE TOP BLOCK OF repoAG-2."
+
+: > "$FAKE_CLAUDE_LOG"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="agsess:@41" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$AG_DIR" --agent claude repoAG-3
+is    "--agent claude with no transcript here exits 0" "$rc" 0
+ag_claude="$(cat "$FAKE_CLAUDE_LOG")"
+has   "…taking a NEW session named for the lane" "$ag_claude" "--name repoAG-3 --session-id"
+has   "…with the handoff's top block as its first prompt" "$ag_claude" "THE TOP BLOCK OF repoAG-3."
+hasnt "…and never the title fallback, which filters a picker" "$ag_claude" "--resume repoAG-3"
+
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="agsess:@41" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$AG_DIR" --agent gpt-5-cli repoAG-4 --no-launch
+is    "an agent the table does not carry is a refusal" "$rc" 2
+has   "…naming the ones it knows" "$err" "It knows: claude"
+has   "…and codex beside it" "$err" "codex"
+hasnt "…and nothing was launched" "$(cat "$FAKE_CODEX_LOG")" "repoAG-4"
+
+# `LANE_START_FRESH=1` — the seam /ctx respawns through: a NEW session of this
+# lane's agent, primed by the top block, even though the transcript is here.
+FRESH_DIR="$HOME/projects/repoFR"
+mkdir -p "$FRESH_DIR"
+git init -q -b main "$FRESH_DIR"
+git -C "$FRESH_DIR" remote add origin "https://github.com/opensoft/repoFR.git"
+fr_tdir="$HOME/.claude/projects/$(sanitize "$FRESH_DIR")"
+mkdir -p "$fr_tdir"
+printf '{"type":"user"}\n' > "$fr_tdir/$HF3_ID.jsonl"
+mkdir -p "$WIP/handoffs/repoFR"
+{ printf 'Lane: repoFR-1 (team-05a, session %s) — single-use resume prompt: stamp RESUMED-by before acting (lane-collision-protocol rule 3)\n' "$HF3_ID"
+  printf '\n'
+  printf '## RESUME PROMPT — the top block of repoFR-1\n'
+} > "$WIP/handoffs/repoFR/repoFR-1.md"
+git -C "$WIP" add -- handoffs/repoFR >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the repoFR handoff"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+"$E" add-row "| \`repoFR-1\` | harness \`$HF3_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoFR/repoFR-1.md | ACTIVE |" >/dev/null 2>&1
+
+: > "$FAKE_CLAUDE_LOG"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="frsess:@51" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$FRESH_DIR" repoFR-1 --no-launch
+is    "without the seam, a lane whose transcript is here resumes it by id" "$rc" 0
+has   "…exactly as Amendment 6 has always done" "$out" "--resume $HF3_ID"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="frsess:@51" CLAUDE_PROFILE_NAME=team-05a \
+    LANE_START_FRESH=1 "$START" --dir "$FRESH_DIR" repoFR-1 --no-launch
+is    "with LANE_START_FRESH=1 the same lane takes a NEW session" "$rc" 0
+hasnt "…never a resume of the transcript the /ctx just paused" "$out" "--resume $HF3_ID"
+has   "…named for the lane" "$out" "--name repoFR-1 --session-id"
+has   "…and primed by the handoff's top block" "$out" "the top block of repoFR-1"
+
+# ------------------------- 5. act 6: the transcript follows the lane
+
+# A SHARED `projects/` NEEDS NO MOVE, and that is the measured fact this act
+# shrank to (2026-09-14T12:35Z): on a launcher-configured workstation every
+# profile's `projects/` resolves to ONE directory.
+mkdir -p "$HOME/.claude-profiles/profiles/opensoft/team/t3"
+ln -sfn "$HOME/.claude/projects" "$HOME/.claude-profiles/profiles/opensoft/team/t3/projects"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="frsess:@51" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$FRESH_DIR" repoFR-1 --no-launch
+is    "lane-start says WHERE it found the transcript" "$rc" 0
+has   "…naming this profile's projects directory" "$err" "found in this profile's projects directory"
+has   "…and saying that directory is SHARED, so a profile switch moves nothing" "$err" "which IS the directory profile(s) t3 read too"
+
+# A PROFILE WHOSE `projects/` IS REALLY ANOTHER DIRECTORY: the transcript is
+# MOVED, a pointer is left, and the lane resumes by id.
+MV_DIR="$HOME/projects/repoMV"
+mkdir -p "$MV_DIR"
+git init -q -b main "$MV_DIR"
+git -C "$MV_DIR" remote add origin "https://github.com/opensoft/repoMV.git"
+MV_ID="a17a0005-5555-4000-8000-a17a00055555"
+t2_projects="$HOME/.claude-profiles/profiles/opensoft/team/t2/projects"
+mv_slug="$(sanitize "$MV_DIR")"
+mkdir -p "$t2_projects/$mv_slug"
+printf '{"type":"user"}\n' > "$t2_projects/$mv_slug/$MV_ID.jsonl"
+mkdir -p "$t2_projects/$mv_slug/$MV_ID"
+printf 'a sidecar file\n' > "$t2_projects/$mv_slug/$MV_ID/sidecar.txt"
+mkdir -p "$WIP/handoffs/repoMV"
+printf 'Lane: repoMV-1 — resume prompt\n\nx\n' > "$WIP/handoffs/repoMV/repoMV-1.md"
+git -C "$WIP" add -- handoffs/repoMV >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the repoMV handoff"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+"$E" add-row "| \`repoMV-1\` | harness \`$MV_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoMV/repoMV-1.md | ACTIVE |" >/dev/null 2>&1
+
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="mvsess:@61" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$MV_DIR" repoMV-1 --no-launch
+is    "a transcript in ANOTHER profile's own projects directory is followed" "$rc" 0
+has   "…and the move is said, with both directories" "$err" "moved into $HOME/.claude/projects/$mv_slug"
+is    "…the transcript is HERE now" \
+      "$( [ -f "$HOME/.claude/projects/$mv_slug/$MV_ID.jsonl" ] && echo yes || echo no )" yes
+is    "…its sibling directory came with it" \
+      "$( [ -f "$HOME/.claude/projects/$mv_slug/$MV_ID/sidecar.txt" ] && echo yes || echo no )" yes
+is    "…it is a MOVE and not a copy, because two live transcripts of one uuid diverge" \
+      "$( [ -f "$t2_projects/$mv_slug/$MV_ID.jsonl" ] && echo no || echo yes )" yes
+is    "…with a pointer left where it was" \
+      "$(ls "$t2_projects/$mv_slug" | grep -c "^$MV_ID.jsonl.moved-to-team-05a-")" 1
+has   "…and the lane resumes it by id" "$out" "--resume $MV_ID"
+
+# A UUID WHOSE HOLDER IS LIVE IN THE OTHER PROFILE IS A REFUSAL, NEVER A MOVE
+# (Amendment 18(h): one live process per transcript).
+LV_DIR="$HOME/projects/repoLV"
+mkdir -p "$LV_DIR"
+git init -q -b main "$LV_DIR"
+git -C "$LV_DIR" remote add origin "https://github.com/opensoft/repoLV.git"
+LV_ID="a17a0006-6666-4000-8000-a17a00066666"
+lv_slug="$(sanitize "$LV_DIR")"
+mkdir -p "$t2_projects/$lv_slug"
+printf '{"type":"user"}\n' > "$t2_projects/$lv_slug/$LV_ID.jsonl"
+mkdir -p "$HOME/.claude-profiles/profiles/opensoft/team/t2/sessions"
+write_record_ns "$HOME/.claude-profiles/profiles/opensoft/team/t2/sessions/live-lv.json" \
+  "$LV_ID" "$LIVE_PID" "$live_start" "othersess:@99.%99" "repoLV-1" "user" "busy"
+mkdir -p "$WIP/handoffs/repoLV"
+printf 'Lane: repoLV-1 — resume prompt\n\nx\n' > "$WIP/handoffs/repoLV/repoLV-1.md"
+git -C "$WIP" add -- handoffs/repoLV >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the repoLV handoff"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+"$E" add-row "| \`repoLV-1\` | harness \`$LV_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoLV/repoLV-1.md | ACTIVE |" >/dev/null 2>&1
+
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="lvsess:@71" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$LV_DIR" repoLV-1 --no-launch
+is    "a transcript a LIVE process holds in another profile is refused" "$rc" 2
+has   "…naming the pid" "$err" "pid $LIVE_PID"
+has   "…and where that process is" "$err" "othersess:@99.%99"
+has   "…and the rule it would have broken" "$err" "held by ONE live process"
+has   "…with the retire act" "$err" "lane-end repoLV-1 --retire"
+is    "…and the transcript was NOT moved" \
+      "$( [ -f "$t2_projects/$lv_slug/$LV_ID.jsonl" ] && echo yes || echo no )" yes
+
+# ------------------------------------------- 6. the three names are one act
+
+hfsk="$(cat "$SRC_DIR/skills/handoff/SKILL.md")"
+lssk="$(cat "$SRC_DIR/skills/lane-swap/SKILL.md")"
+swcmd="$(cat "$SRC_DIR/commands/swap.md")"
+hfcmd="$(cat "$SRC_DIR/commands/handoff.md")"
+ctxcmd="$(cat "$SRC_DIR/commands/ctx.md")"
+has   "the handoff skill is the act itself" "$hfsk" "# \`/handoff\` — hand this lane off"
+has   "…and names the shell form as the same steps" "$hfsk" "\`lane-handoff\` is these same steps as one command"
+has   "the lane-swap skill is an ALIAS of it" "$lssk" "Invoke the \`handoff\` skill now"
+hasnt "…restating none of its steps" "$lssk" "## 4. Write the swap record"
+has   "the /swap command names the same skill" "$swcmd" "Invoke the \`handoff\` skill now"
+has   "the /handoff command names it too" "$hfcmd" "Invoke the \`handoff\` skill now"
+has   "and /ctx is that skill with --restart" "$ctxcmd" "with \`--restart\`"
+has   "…which is what the amendment calls it" "$ctxcmd" "/ctx\` is \`/handoff --restart\`"
+has   "the skill carries Amendment 17(b)'s two sub-fields where the record is written" "$hfsk" "agent \$agent_name; transcript \$transcript_id"
+has   "…and the WRITERS section in its top block" "$hfsk" "**WRITERS at <UTC>**"
+has   "…and the respawn line Addendum 2 fixed" "$hfsk" "pclaude --lane \$lane"
+hasnt "…which is never \`restart <lane>\`" "$hfsk" 'respawn-pane -k -t "$pane" "restart'
 
 echo "== the workstation seam: unset, every writer reads the host =="
 

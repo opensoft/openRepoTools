@@ -47,14 +47,16 @@ COMMAND = REPO / "openRepoTools"
 #: at 755 with the commands because `--install` has one list, one destination
 #: and one mode.
 INSTALLED = ("openRepoTools", "park", "resume", "status", "restart", "lanes",
-             "lanes-edit.sh", "lane-start", "lane-end", "link-estates",
-             "repos.tsv")
+             "lane-handoff", "lanes-edit.sh", "lane-start", "lane-end",
+             "link-estates", "repos.tsv")
 
 #: The skills `--install` also places, at two paths each, and the paths they are
 #: fetched from when there is no checkout to copy them out of (Amendment 9(b),
 #: inheriting A8 Addendum 2 R-A8-5; `restart` joins under Amendment 11 clause
-#: (f) and ratified decision 7).
-SKILL_NAMES = ("lane-swap", "restart")
+#: (f) and ratified decision 7; `handoff` under Amendment 17(a), which renames
+#: the act `lane-swap` performed and keeps `lane-swap` as an ALIAS FILE naming
+#: it — one skill is the source of the act and the aliases add nothing).
+SKILL_NAMES = ("handoff", "lane-swap", "restart")
 SKILL_PATHS = tuple(f"skills/{n}/SKILL.md" for n in SKILL_NAMES)
 SKILL_PATH = SKILL_PATHS[0]
 
@@ -63,23 +65,24 @@ SKILL_PATH = SKILL_PATHS[0]
 #: (g)'s alias of `/lane-swap`; `opensoft/workBenches#74` deletes the launcher's
 #: copy, and adoption act 6 — which would have the launcher keep vendoring
 #: command files — lands after act 3, so without this it would be installed by
-#: nobody (F-X28).
-COMMAND_NAMES = ("swap",)
+#: nobody (F-X28). `/handoff` is the act's own word and `/ctx` is
+#: `/handoff --restart`, both under Amendment 17 (clauses (a) and (f)).
+COMMAND_NAMES = ("handoff", "ctx", "swap")
 COMMAND_PATHS = tuple(f"commands/{n}.md" for n in COMMAND_NAMES)
 
-#: Everything a stdin install has to fetch: the eleven files, the two skills and
-#: the command file.
+#: Everything a stdin install has to fetch: the twelve files, the three skills
+#: and the three command files.
 FETCHED = INSTALLED + SKILL_PATHS + COMMAND_PATHS
 
-#: EIGHTEEN ARTIFACTS, AND THE COUNT IS THE INVARIANT: eleven files in the bin
-#: directory, two skills in the shared skills directory, their two bare-run
-#: copies, one command file at that same pair of destinations, and one merged
-#: entry in `~/.claude/settings.json`. Derived from the three lists rather than
-#: restated, so adding a skill or a command moves it.
+#: TWENTY-FIVE ARTIFACTS, AND THE COUNT IS THE INVARIANT: twelve files in the
+#: bin directory, three skills in the shared skills directory, their three
+#: bare-run copies, three command files at that same pair of destinations, and
+#: one merged entry in `~/.claude/settings.json`. Derived from the three lists
+#: rather than restated, so adding a skill or a command moves it.
 ARTIFACTS = len(INSTALLED) + 2 * len(SKILL_NAMES) + 2 * len(COMMAND_NAMES) + 1
 
 USAGE_LINES = (
-    "openRepoTools --install            install (or update) the eleven estate and",
+    "openRepoTools --install            install (or update) the twelve estate and",
     "openRepoTools wip init             create your workspace repository, clone it,",
     "openRepoTools --help | --version",
 )
@@ -92,7 +95,7 @@ pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
               WINDOWS_SKIP]
 
 #: `--install` HARD-REQUIRES `jq` SINCE lane-collision-protocol AMENDMENT 9(b):
-#: one of its eighteen artifacts is a merged entry inside a JSON file somebody
+#: one of its twenty-five artifacts is a merged entry inside a JSON file somebody
 #: else owns, and the clause has it refuse naming `jq` rather than rewriting
 #: that file by hand. So a run of `--install` on a host without `jq` is a
 #: REFUSAL BY DESIGN, and a test that asserts a successful placement there is
@@ -164,7 +167,7 @@ def test_help_prints_every_usage_line():
 
 
 def test_help_names_every_command_it_places_and_the_standards_front_door():
-    """`--install` places eleven files, and ten of them are commands this one
+    """`--install` places twelve files, and eleven of them are commands this one
     knows nothing about — so `--help` has to say what they are and where the
     rest is written down. A command a person has on PATH and cannot find
     written down is a command they will not use.
@@ -352,7 +355,7 @@ def test_installing_twice_changes_nothing(tmp_path):
     assert second.returncode == 0, second.stderr
     for name in INSTALLED:
         assert f"{name}: already installed at" in second.stdout, name
-    # EIGHTEEN, not eleven: the two skill copies, the two command-file copies
+    # TWENTY-FIVE, not twelve: the six skill copies, the six command-file copies
     # and the hook entry each report `unchanged` too, and the count is the
     # invariant Amendment 9(b) names — derived from the three lists, never
     # restated, so a new skill or command moves it.
@@ -363,7 +366,7 @@ def test_installing_twice_changes_nothing(tmp_path):
 @NEEDS_JQ
 def test_install_replaces_a_copy_that_has_drifted(tmp_path, name):
     """Per file, and only the one that drifted: an install that rewrote all
-    eleven every time would have nothing to say about which one was stale."""
+    twelve every time would have nothing to say about which one was stale."""
     assert run_cmd("--install", home=tmp_path).returncode == 0
     target = tmp_path / ".local" / "bin" / name
     target.write_text(target.read_text(encoding="utf-8") + "# drift\n",
@@ -457,7 +460,7 @@ def fake_github(tmp_path, served_names) -> dict:
     for name in served_names:
         target = served / name
         # NESTED, because one of the things `--install` fetches is not at the
-        # root: `skills/lane-swap/SKILL.md`. The route below matches on the
+        # root: `skills/handoff/SKILL.md`. The route below matches on the
         # whole path after `contents/`, so the file has to sit under the same
         # shape here.
         target.parent.mkdir(parents=True, exist_ok=True)

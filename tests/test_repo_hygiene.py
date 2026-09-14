@@ -824,8 +824,8 @@ def test_the_documents_say_what_status_is_and_is_not():
         text = (REPO / name).read_text(encoding="utf-8")
         assert "`status`" in text, f"{name} never names the fourth command"
     readme = (REPO / "README.md").read_text(encoding="utf-8")
-    assert "ELEVEN files" in readme, "README.md does not count the eleven files"
-    assert "11 of 11 placed" in readme, (
+    assert "TWELVE files" in readme, "README.md does not count the twelve files"
+    assert "12 of 12 placed" in readme, (
         "README.md does not show the count line `--install` actually prints")
     status = (REPO / "status").read_text(encoding="utf-8")
     assert "--no-optional-locks" in status, (
@@ -1768,9 +1768,25 @@ def test_readme_is_short_enough_to_be_read():
     side's number — 383 and 403 are each a half of this file and neither
     is this file — and both dated entries above stay, because each still
     names the lines it bought.
+
+    409 -> 415 on 2026-09-14, for lane-collision-protocol AMENDMENT 17,
+    ratified that day, and its tooling (#36). Six lines, all in § "Install",
+    and every one of them a fact a person MEETS rather than prose about one:
+    the file count moved 11 -> 12 because `lane-handoff` is a word the
+    amendment puts on PATH (clause (a): *"`lane-handoff` on `PATH` (placed by
+    `openRepoTools --install`) from a shell"*), so the sentences carrying that
+    number and the `12 of 12 placed` line a person reads back off their own
+    terminal all move with it; the skill list is three rather than two and the
+    command-file list three rather than one, because the act was renamed
+    `handoff` with `lane-swap` kept as an alias naming it, and because `/ctx` is
+    `/handoff --restart`; and the artifact count is 25. The lines that earn
+    their place are the last four: a reader who types `/ctx` needs to know it
+    writes the record BEFORE it respawns the pane, and that the new session
+    comes up with the handoff's top block as its first prompt — which is the
+    whole of why the word exists.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 409, f"README.md is {len(lines)} lines; the cap is 409"
+    assert len(lines) <= 415, f"README.md is {len(lines)} lines; the cap is 415"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

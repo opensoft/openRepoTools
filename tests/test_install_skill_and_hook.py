@@ -35,7 +35,8 @@ import pytest
 from conftest import REPO, WINDOWS_SKIP
 from test_openrepotools_command import (COMMAND, command_env, run_cmd,
                                         COMMAND_NAMES, COMMAND_PATHS,
-                                        INSTALLED, NEEDS_JQ, SKILL_PATH)
+                                        INSTALLED, NEEDS_JQ, SKILL_NAMES,
+                                        SKILL_PATH)
 
 pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
                                  reason="openRepoTools is a bash script"),
@@ -52,9 +53,16 @@ HOOK_COMMAND = "~/projects/xFactory/lanes-edit.sh session-start || true"
 HOOK_MATCHER = "startup|resume|clear|fork"
 HOOK_TIMEOUT = 5
 
+#: The CANONICAL skill's own name, derived from the path the installer test
+#: derives from `SKILL_NAMES` — Amendment 17(a) renamed the act from `lane-swap`
+#: to `handoff` and kept `lane-swap` as an alias file, so a name spelled here
+#: would be a second place to rename.
+SKILL_DIR_NAME = Path(SKILL_PATH).parent.name
+
+
 def skill_paths(home: Path) -> tuple[Path, Path]:
-    return (home / ".claude-profiles" / "shared" / "skills" / "lane-swap" / "SKILL.md",
-            home / ".claude" / "skills" / "lane-swap" / "SKILL.md")
+    return (home / ".claude-profiles" / "shared" / "skills" / SKILL_DIR_NAME / "SKILL.md",
+            home / ".claude" / "skills" / SKILL_DIR_NAME / "SKILL.md")
 
 
 def settings_of(home: Path) -> Path:
@@ -88,19 +96,27 @@ def test_install_places_the_skill_at_both_paths(tmp_path):
         assert target.is_file(), result.stdout
         assert target.read_bytes() == source, target
         assert stat.S_IMODE(target.stat().st_mode) == 0o644, target
-        assert f"lane-swap: installed at {target}" in result.stdout
+        assert f"{SKILL_DIR_NAME}: installed at {target}" in result.stdout
 
 
 @NEEDS_JQ
 def test_the_shipped_skill_is_the_one_the_launcher_invokes(tmp_path):
-    """`/lane-swap` is what Claude Code invokes, and what it invokes is the
+    """`/handoff` is what Claude Code invokes, and what it invokes is the
     skill's own `name:` (Addendum 1(3) on brettheap/new-workstation#17).
     A directory named one thing and a front-matter name that is another is a
-    skill nobody can call."""
-    text = (REPO / SKILL_PATH).read_text(encoding="utf-8")
-    assert text.startswith("---\n")
-    assert "\nname: lane-swap\n" in text
-    assert Path(SKILL_PATH).parent.name == "lane-swap"
+    skill nobody can call.
+
+    HELD FOR EVERY SKILL SHIPPED, not just the canonical one: Amendment 17(a)
+    renamed this act and left `lane-swap` as an ALIAS FILE at its old path, and
+    an alias whose front matter still named the old directory would be a skill
+    Claude Code invokes under one name and finds under another."""
+    for name in SKILL_NAMES:
+        path = REPO / f"skills/{name}/SKILL.md"
+        text = path.read_text(encoding="utf-8")
+        assert text.startswith("---\n"), name
+        assert f"\nname: {name}\n" in text, name
+    assert Path(SKILL_PATH).parent.name == "handoff", (
+        "the canonical skill is `handoff` — Amendment 17(a): one act, three names")
 
 
 @NEEDS_JQ
@@ -111,7 +127,7 @@ def test_a_drifted_skill_is_replaced_and_an_identical_one_is_left_alone(tmp_path
                       encoding="utf-8")
     second = run_cmd("--install", home=tmp_path)
     assert second.returncode == 0, second.stderr
-    assert f"lane-swap: updated at {shared}" in second.stdout
+    assert f"{SKILL_DIR_NAME}: updated at {shared}" in second.stdout
     assert shared.read_bytes() == (REPO / SKILL_PATH).read_bytes()
 
 
@@ -152,26 +168,51 @@ def test_install_places_the_command_file_at_both_paths(tmp_path, name):
 
 
 @NEEDS_JQ
-def test_the_shipped_command_is_an_alias_and_restates_no_step():
+@pytest.mark.parametrize("name", COMMAND_NAMES)
+def test_the_shipped_command_is_an_alias_and_restates_no_step(name):
     """CLAUSE (g) MAKES `/swap` AN ALIAS, AND AN ALIAS THAT RESTATES THE STEPS
     IS THE ALTERNATIVE IT REJECTS BY NAME: *"Two copies of one procedure that
     must stay byte-equal is the rejected alternative."*
 
-    So the file's whole content is an instruction to invoke the skill, and it
-    must not carry a step list of its own. Held here because the day someone
-    "helpfully" pastes the procedure into it is the day the two can differ.
+    So each command file's whole content is an instruction to invoke the skill,
+    and none of them may carry a step list of its own. Held here because the day
+    someone "helpfully" pastes the procedure into one is the day the copies can
+    differ — and Amendment 17 made that THREE doors to one act (`/handoff`,
+    `/ctx` = `/handoff --restart`, and `/swap`) plus the `lane-swap` alias skill,
+    so the rule is checked per file rather than on the one that had it first.
     """
-    text = (REPO / "commands/swap.md").read_text(encoding="utf-8")
+    text = (REPO / f"commands/{name}.md").read_text(encoding="utf-8")
     assert text.startswith("---\n"), "a command file opens with front matter"
-    assert "lane-swap" in text, "the alias must name the skill it invokes"
-    assert "/swap" in text, "clause (g): the alias is named in its own description"
-    # The skill's own numbered steps, which this file must NOT carry.
+    assert "handoff" in text, "the alias must name the skill it invokes"
+    assert f"/{name}" in text, "the alias is named in its own description"
+    # The skill's own numbered steps, which no command file may carry.
     skill = (REPO / SKILL_PATH).read_text(encoding="utf-8")
     for heading in ("## 1.", "## 2.", "## 3.", "## 4.", "## 5."):
         assert heading in skill, f"the skill lost {heading} — this test is stale"
         assert heading not in text, (
-            f"commands/swap.md restates the skill's {heading}; clause (g) makes "
-            "it an alias, and two copies of one procedure is what it rejects")
+            f"commands/{name}.md restates the skill's {heading}; the alias adds "
+            "nothing, and two copies of one procedure is what is rejected")
+
+
+@NEEDS_JQ
+def test_the_alias_skill_names_the_act_and_restates_no_step():
+    """AMENDMENT 17(a) KEPT `/lane-swap` — *"so that nothing written about them
+    stops working"* — AS AN ALIAS AND NOT AS A SECOND COPY.
+
+    The steps moved to `skills/handoff/SKILL.md` with their history; the file at
+    the old path names the skill that now carries them and adds nothing. This is
+    the same rule the command files take, one directory along, and it is what
+    makes "same steps, same record" true by construction rather than by
+    somebody keeping two files byte-equal.
+    """
+    text = (REPO / "skills/lane-swap/SKILL.md").read_text(encoding="utf-8")
+    assert "\nname: lane-swap\n" in text, "the alias keeps its own invocable name"
+    assert "`handoff` skill" in text, "the alias must name the skill it invokes"
+    skill = (REPO / SKILL_PATH).read_text(encoding="utf-8")
+    for heading in ("## 1.", "## 2.", "## 3.", "## 4.", "## 5."):
+        assert heading in skill, f"the skill lost {heading} — this test is stale"
+        assert heading not in text, (
+            f"skills/lane-swap/SKILL.md restates {heading}; it is an alias")
 
 
 @NEEDS_JQ
@@ -430,7 +471,7 @@ def test_a_leaf_destination_that_exists_unwritable_refuses_before_anything_is_pl
     eleven files and dies on the `cp` into this same directory, which is the
     half-install the planning phase exists to prevent.
     """
-    blocked = tmp_path / ".claude-profiles" / "shared" / "skills" / "lane-swap"
+    blocked = tmp_path / ".claude-profiles" / "shared" / "skills" / SKILL_DIR_NAME
     blocked.mkdir(parents=True)
     blocked.chmod(0o500)
     bin_dir = tmp_path / ".local" / "bin"
@@ -440,7 +481,7 @@ def test_a_leaf_destination_that_exists_unwritable_refuses_before_anything_is_pl
         assert "is not writable" in result.stderr, result.stderr
         assert "NOTHING was installed" in result.stderr
         assert not bin_dir.exists() or not any(bin_dir.iterdir()), (
-            "the eleven files were placed against a leaf directory that was "
+            "the twelve files were placed against a leaf directory that was "
             "never going to take the skill")
     finally:
         blocked.chmod(0o700)
@@ -542,7 +583,7 @@ def test_a_dangling_symlink_is_refused_rather_than_followed(tmp_path):
 
 SKILL_TARGETS = tuple(
     (profiles, name)
-    for name in ("lane-swap", "restart")
+    for name in SKILL_NAMES
     for profiles in (True, False)
 )
 
@@ -560,7 +601,7 @@ def test_a_symlinked_skill_target_is_refused_and_nothing_written_through_it(
         tmp_path, shared, name):
     """R-A9-12 IS ABOUT WHAT `cp` DOES, NOT ABOUT WHICH DIRECTORY (F-X17).
 
-    `plan_install_targets` refuses a symlink for every one of the eleven files
+    `plan_install_targets` refuses a symlink for every one of the twelve files
     in the bin directory. `plan_skill_targets` proved only the DIRECTORIES
     writable, and `place_skill_and_hook` then reached each `SKILL.md` with
     `[ -e ]`, `cmp -s` and `cp` — none of which can tell a regular file from a
@@ -568,8 +609,10 @@ def test_a_symlinked_skill_target_is_refused_and_nothing_written_through_it(
     skill reported `updated at <target>`, the target still a symlink, and the
     skill's bytes written into the file on the far end.
 
-    Four paths, because this round doubled them from two to four: the pre-A11
-    exposure was `lane-swap` alone, and `restart` arrived beside it.
+    Six paths, because each round has added a skill: the pre-A11 exposure was
+    `lane-swap` alone, `restart` arrived beside it, and Amendment 17(a) added
+    `handoff` — the act itself, with `lane-swap` kept as its alias file. The
+    list is `SKILL_NAMES`, so the next skill is covered by existing itself.
     """
     far = tmp_path / "elsewhere" / f"{name}-SKILL.md"
     far.parent.mkdir(parents=True)
@@ -619,7 +662,7 @@ def test_a_dangling_skill_symlink_is_refused_rather_than_followed(tmp_path):
 def test_a_directory_where_a_skill_goes_is_refused_the_same_way(tmp_path):
     """THE RULE IS `A REGULAR FILE`, not `not a symlink` — the same sentence
     the bin half's own directory case is written for."""
-    target = skill_target(tmp_path, True, "lane-swap")
+    target = skill_target(tmp_path, True, SKILL_DIR_NAME)
     target.mkdir(parents=True)
     result = run_cmd("--install", home=tmp_path,
                      env={"OPENREPOTOOLS_BIN_DIR": str(tmp_path / ".local" / "bin")})
