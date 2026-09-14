@@ -4898,6 +4898,14 @@ transcript_holders() {   # <session uuid>
   th_id="${1-}"; [ -n "$th_id" ] || return 64
   th_files=""; th_match=""; th_err=""; th_f=""; th_blob=""
   th_pid=""; th_kind=""; th_tgt=""; th_where=""; th_verdict=""; th_out=""
+  # `th_here_prof` AND `th_here` AMONG THEM, and the omission was not cosmetic:
+  # this file runs under `set -u` (line 292), pass 2's `[ -z "$th_here_prof" ]`
+  # is reached for the FIRST record that is not this window's, and an unset
+  # variable there exits the shell with `unbound variable` — a 1 every caller
+  # reads as "the records could not be read" and refuses on. It cost the suite's
+  # `the same lane live in THIS window is not a collision`, which asks
+  # `lane-start` for an exit 0 and got `dup_check`'s fail-closed 1.
+  th_here=""; th_here_prof=""; th_prof=""; th_wrc=0; th_final=""
   SESSION_FILES_ERR=""
   here_context
   th_files="$(mktemp "${TMPDIR:-/tmp}/lanes-edit-tf.XXXXXX" 2>/dev/null || printf '')"
@@ -5038,10 +5046,17 @@ guard_offer_file() {   # <session uuid>
   printf '%s/lanes/offers/%s\n' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" "${1-}"
 }
 
-# `lane-start`, found the way `restart` finds `lanes-edit.sh`: beside this file
-# first — `--install` places both in one directory — then on PATH. One
-# resolution, so a workstation with two copies never reads one and runs the
-# other. `$LANES_LANE_START` is the seam the suite sets.
+# `lane-start`, found the way every word in this toolset finds its siblings:
+# beside this file first — `--install` places them in one directory — then on
+# PATH. One resolution, so a workstation with two copies never reads one and
+# runs the other. `$LANES_LANE_START` is the seam the suite sets.
+#
+# NAMED AS A SIBLING OF THIS FILE AND NOT OF ANY PARTICULAR WORD, because
+# Amendment 18 Addendum 2 (in force 2026-09-14T16:50:32Z) takes `restart` off a
+# person's PATH altogether — "i think we can drop restart as a cli command and
+# keep it inside a claude session with /restart … lane does all the things a
+# user wants" — and opensoft/openRepoTools#43 removes the file. A comment that
+# pointed at it for its resolution order would name a file that is going.
 guard_lane_start() {
   if [ -n "${LANES_LANE_START:-}" ]; then printf '%s\n' "$LANES_LANE_START"; return 0; fi
   if [ -x "$SCRIPT_DIR/lane-start" ]; then printf '%s\n' "$SCRIPT_DIR/lane-start"; return 0; fi

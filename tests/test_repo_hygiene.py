@@ -1768,9 +1768,28 @@ def test_readme_is_short_enough_to_be_read():
     side's number — 383 and 403 are each a half of this file and neither
     is this file — and both dated entries above stay, because each still
     names the lines it bought.
+
+    409 -> 417 on 2026-09-14, for lane-collision-protocol AMENDMENT 12's
+    SECOND HOOK ENTRY (ratified 2026-09-13T18:20:44Z, "Ratify revision 2";
+    adoption act 3, opensoft/openRepoTools#25). Eight lines, and the cap moves
+    with the TOOLSET as every entry above it does: `--install` now merges TWO
+    entries into `~/.claude/settings.json` rather than one, so the install
+    paragraph's "seven things that are not files in that directory" is eight,
+    the sentence that named one merged entry names two and says what the second
+    one DOES — at every prompt it checks that the tmux window, the session's own
+    name and the register row are one lane, and refuses the prompt when they are
+    not — the conflict sentence gains the `guard` arm, and one line says that a
+    person's own `UserPromptSubmit` hooks are left where they are, which is the
+    half of the contract the count cannot show. That last line is not prose
+    about the install: it is the reason the arm keys on the VERB and not on the
+    word anywhere in a path, and a reader whose settings already carry
+    `~/projects/xFactory/guard.sh` — this estate's usage guard, in every
+    profile — needs it before they run the command. The count below the
+    paragraph moves 18 -> 19 with them, in the one place it is stated here and
+    derived in `test_openrepotools_command.py`.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 409, f"README.md is {len(lines)} lines; the cap is 409"
+    assert len(lines) <= 417, f"README.md is {len(lines)} lines; the cap is 417"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

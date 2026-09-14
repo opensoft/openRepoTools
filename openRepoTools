@@ -35,8 +35,10 @@
 # person's workspace repository holds their DATA and the code belongs where
 # code goes. It also places TWO skills, `/lane-swap` and `/restart`, at two
 # paths each, ONE command file, `/swap`, at that same pair of paths (A11
-# Addendum 4 ruling 9), and merges one SessionStart entry into
-# `~/.claude/settings.json` (Amendment 9(b), A8 Addendum 2 R-A8-5): EIGHTEEN
+# Addendum 4 ruling 9), and merges TWO hook entries into
+# `~/.claude/settings.json` — the `SessionStart` one (Amendment 9(b), A8
+# Addendum 2 R-A8-5) and, since lane-collision-protocol Amendment 12 adoption
+# act 3, the `UserPromptSubmit` NAME GUARD beside it: NINETEEN
 # artifacts, and the count is the invariant.
 #
 # One install line for the whole toolset, so a second engineer gets the estate
@@ -265,9 +267,9 @@ collect_commands() {
 install_commands() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
 	local name target source verb placed=0
-	# ALL EIGHTEEN IN HAND BEFORE ANY IS PLACED. The eleven files, the two
-	# skills, the one command file, and the ONE artifact that is not a whole
-	# file — the merged `settings.json` —
+	# ALL NINETEEN IN HAND BEFORE ANY IS PLACED. The eleven files, the two
+	# skills, the one command file, and the TWO artifacts that are not whole
+	# files — the two hook entries merged into one `settings.json` —
 	# are all computed here, so a fetch that failed replaces nothing and a merge
 	# that cannot be computed refuses having placed nothing. That last one is
 	# the same rule `--install` already had, extended to cover a merge: an
@@ -314,7 +316,7 @@ install_commands() {
 
 
 # =========================================================================
-# THE SEVEN ARTIFACTS THAT ARE NOT ONE OF THE ELEVEN FILES
+# THE EIGHT ARTIFACTS THAT ARE NOT ONE OF THE ELEVEN FILES
 # =========================================================================
 #
 # lane-collision-protocol Amendment 9(b), inheriting A8 Addendum 2's R-A8-5
@@ -332,13 +334,14 @@ install_commands() {
 #     run and preserves hook keys. This command never writes a profile's
 #     settings.json at all. One path, one writer, in both halves.
 #
-# EIGHTEEN ARTIFACTS, AND THE COUNT IS THE INVARIANT: eleven files in the bin
+# NINETEEN ARTIFACTS, AND THE COUNT IS THE INVARIANT: eleven files in the bin
 # directory, two skills in the shared skills directory, their two bare-run
-# copies, ONE COMMAND FILE at those same two paths, and one merged entry in
+# copies, ONE COMMAND FILE at those same two paths, and TWO merged entries in
 # `~/.claude/settings.json`. It was twelve before Amendment 11 added `restart`,
-# `lanes` and the `/restart` skill, and sixteen before ruling 9 added
-# `commands/swap.md`; the count moves with the lists rather than being restated
-# from memory.
+# `lanes` and the `/restart` skill, sixteen before ruling 9 added
+# `commands/swap.md`, and eighteen before Amendment 12 adoption act 3 added the
+# `UserPromptSubmit` name guard beside the `SessionStart` entry; the count moves
+# with the lists rather than being restated from memory.
 #
 # WHY A COMMAND FILE IS HERE AT ALL, WHEN ADOPTION ACT 6 SAYS THE LAUNCHER
 # VENDORS THEM (F-X28, A11 Addendum 4 ruling 9, ratified "a11 addendum 4 yes").
@@ -465,23 +468,30 @@ collect_skills() {
 	return 0
 }
 
-# THE MERGE INTO `~/.claude/settings.json`, COMPUTED BEFORE ANYTHING IS PLACED.
-# It is the same all-or-nothing rule `--install` already has, extended to the
-# one artifact that is not a whole file: a merge that cannot be computed
-# refuses having placed nothing.
+# THE TWO MERGES INTO `~/.claude/settings.json`, COMPUTED BEFORE ANYTHING IS
+# PLACED. It is the same all-or-nothing rule `--install` already has, extended
+# to the two artifacts that are not whole files: a merge that cannot be
+# computed refuses having placed nothing — and since Amendment 12 adoption act
+# 3 the rule covers the PAIR, because a settings file that took the
+# `SessionStart` entry and refused the `UserPromptSubmit` guard is a half
+# install of a hook pair and nothing on screen would say which half.
 #
 #   * it is written with `jq`, and refuses naming `jq` where it is absent. This
 #     repository carries no JSON-handling code otherwise, so the dependency is
 #     named rather than assumed. It is not bash, so the macOS bash-3.2 parse
 #     gate is unaffected;
 #   * it NEVER writes the file whole and never replaces it: the file already
-#     carries a `UserPromptSubmit` hook, and a user's settings are not an
-#     installer's to own;
+#     carries a `UserPromptSubmit` hook of the person's own — the usage guard
+#     — and a user's settings are not an installer's to own. THAT IS WHY THE
+#     `UserPromptSubmit` ARM KEYS ON THE VERB `guard` AS A WHOLE ARGUMENT and
+#     not as a substring: this command adds an entry to an event a person is
+#     already using, and every entry already there stays exactly where it is;
 #   * it is idempotent by EXACT MATCH on the entry's `command` string;
-#   * an entry under SessionStart whose `command` DIFFERS, a file it cannot
-#     parse, or a `hooks` value that is not an object → refuse, print the exact
-#     block, place nothing. An installer that repairs a file it does not
-#     understand is how a person loses a setting they meant;
+#   * an entry under SessionStart whose `command` DIFFERS, one under
+#     UserPromptSubmit that RUNS `guard` with a different string, a file it
+#     cannot parse, or a `hooks` value that is not an object → refuse, print
+#     the exact block, place nothing. An installer that repairs a file it does
+#     not understand is how a person loses a setting they meant;
 #   * it WRITES THE FILE BACK AT MODE 600 — it sets that mode, it does not
 #     preserve one (F8 of the #24 review: a pre-existing file at 640 comes out
 #     600, measured). workBenches' setup-claude-profiles.sh writes this same
@@ -561,7 +571,7 @@ $bad
         rm -f -- $paths"
 }
 
-# THE ELEVEN TARGETS, PROVED PLACEABLE BEFORE ANY OF THE EIGHTEEN IS PLACED
+# THE ELEVEN TARGETS, PROVED PLACEABLE BEFORE ANY OF THE NINETEEN IS PLACED
 # (A9 Addendum 4, R-A9-12, ruled on F5 of the #24 review).
 #
 # `cp` FOLLOWS A SYMLINK. The loop below tests `[ -e "$target" ]`, compares
@@ -779,7 +789,7 @@ place_skill_and_hook() {
 	# EVERY FAILURE HERE IS A `die`, never the shell's own 1. `--install`'s
 	# codes are this toolset's — 0 done, 1 findings printed, 2 a refusal — and
 	# an unguarded `mkdir` or `cp` under `set -e` exits 1, which reads as a
-	# report of findings from a command that placed eleven of eighteen artifacts.
+	# report of findings from a command that placed eleven of nineteen artifacts.
 	for target in "$shared_dir/SKILL.md" "$bare_dir/SKILL.md"; do
 		mkdir -p -- "$(dirname -- "$target")" ||
 			die "could not create $(dirname -- "$target") for the $name skill.
