@@ -398,24 +398,64 @@ def test_every_value_taking_arm_reads_its_value_through_flag_value():
 
     Whole-line comments are dropped first, by `code_lines`, so a comment that
     QUOTES an arm in order to explain it cannot stand in for the arm.
+
+    THE EXEMPTION IS A LINE RANGE, NOT A STRING (Copilot's review of #37,
+    2026-09-14). The one legitimate read of `$2` in each file is the one
+    INSIDE `flag_value`, and exempting the text `FLAG_VALUE="$2"` wherever it
+    appeared was not the same claim: an arm that wrote that very line and then
+    read the value back as `${FLAG_VALUE}` was exempted here AND invisible to
+    the counter below, so it left nine and PASSED — the same silent pass the
+    2026-09-11 review caught in the version before this one, reached by a
+    different door. Proved on a scratch copy of `park` before it was changed.
+    So the helper's own body is located by line number and the exemption is
+    "inside it", and the assignment this reads is any shell variable in either
+    spelling of `$2` — `value2="$2"` and `X="${2}"` are the same arm written
+    in a different case and in braces, and neither was matched before. The
+    counter reads `${FLAG_VALUE}` as well as `$FLAG_VALUE` for the same
+    reason. The match stays ANCHORED at the start of the statement, because a
+    `local file="$1" key="$2" line` is a function reading its own parameters
+    and not an arm at all — thirty-five of those lines across the three files
+    is what an unanchored search would have called a finding.
     """
+    #: An assignment that takes `$2` straight, in either spelling and whatever
+    #: the variable is called, ANCHORED at the start of the statement so that
+    #: a function reading its own parameters (`local file="$1" key="$2" line`)
+    #: is not one.
+    takes_dollar_two = re.compile(r'\s*[A-Za-z_][A-Za-z0-9_]*="\$\{?2\}?"')
+    #: An arm reading the value the helper answered with, in either spelling.
+    reads_flag_value = re.compile(
+        r'\s*[A-Za-z_][A-Za-z0-9_]*="\$\{?FLAG_VALUE\}?"')
+
     found = 0
     for name in ESTATE_COMMANDS:
         lines = code_lines(REPO / name).splitlines()
+        # THE HELPER'S OWN BODY, by line number: `flag_value() {` to the `}`
+        # in column 0 that closes it. This is the whole of the exemption
+        # below, and it is a RANGE rather than a string for the reason the
+        # docstring gives.
+        opens = [i for i, l in enumerate(lines)
+                 if l.startswith("flag_value() {")]
+        assert len(opens) == 1, (
+            f"{name}: {len(opens)} definitions of flag_value, expected one")
+        start = opens[0]
+        closes = [i for i in range(start + 1, len(lines)) if lines[i] == "}"]
+        assert closes, f"{name}: flag_value is never closed in column 0"
+        end = closes[0]
         for i, line in enumerate(lines):
             # A TENTH ARM WRITTEN THE OLD WAY — `X="$2"` — must be caught, not
             # missed: the count below sees only arms that read `$FLAG_VALUE`,
             # so an arm that bypasses `flag_value` would leave it at nine and
-            # pass (the independent review of this branch, 2026-09-11). The
-            # one legitimate `="$2"` left in the three files is the read
-            # inside `flag_value` itself.
-            if re.match(r'\s*[A-Z_]+="\$2"', line):
-                assert line.strip() == 'FLAG_VALUE="$2"', (
+            # pass (the independent review of this branch, 2026-09-11, and
+            # Copilot's of #37). The one legitimate read of `$2` in each file
+            # is the one inside `flag_value` itself, and INSIDE is asked of
+            # the line number, not of the text.
+            if takes_dollar_two.match(line):
+                assert start < i < end, (
                     f"{name}: {line.strip()} takes $2 straight from the "
-                    f"command line; every value-taking arm reads its value "
-                    f"through flag_value")
+                    f"command line, outside flag_value; every value-taking "
+                    f"arm reads its value through flag_value")
                 continue
-            if not re.match(r'\s*[A-Z_]+="\$FLAG_VALUE"', line):
+            if not reads_flag_value.match(line):
                 continue
             found += 1
             where = f"{name}: {line.strip()}"
