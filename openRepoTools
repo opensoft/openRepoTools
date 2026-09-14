@@ -1626,7 +1626,7 @@ $unrelated
 			# change at one is not its leftover and never enters its commit
 			# (#44 round 1, `openRepoTools:1525`).
 			#
-			# `! cat-file -e HEAD:—` ALONE IS NOT PROOF (#44 round 2,
+			# `! cat-file -e HEAD:…` ALONE IS NOT PROOF (#44 round 2,
 			# `openRepoTools:1621`): a template path that is UNTRACKED and
 			# carries a PERSON'S OWN CONTENT is absent from HEAD exactly as
 			# this command's own leftover is, so it answered this question the
