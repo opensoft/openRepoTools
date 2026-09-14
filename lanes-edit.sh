@@ -1163,6 +1163,7 @@ EOF
         grep -n -A2 -e '^<<<<<<<' -- "$LANES_REPO/$cp" 2>/dev/null | head -n 40 >&2 || :
       done
       git -C "$LANES_REPO" rebase --abort 2>/dev/null || :
+      cp_sha="$(git -C "$LANES_REPO" rev-parse HEAD 2>/dev/null)"
       note "rebase ABORTED — the worktree is clean and NOT mid-rebase. Your edit is safe in these local commits:"
       git -C "$LANES_REPO" --no-pager log --oneline "origin/$LANES_BRANCH..HEAD" 2>/dev/null | head -n 10 >&2 || :
       # #32 — AN ABORTED PULL IS NOT PROOF THIS COMMIT NEVER REACHED ORIGIN
@@ -1172,10 +1173,13 @@ EOF
       # commit onto its own and pushes both together — three of the four
       # "rebase conflict … nothing was pushed" lines seen on Eagle in one
       # hour named a commit that was ALREADY on origin by the time anyone
-      # read them. LOOK before you reset or redo anything.
+      # read them. LOOK before you reset or redo anything — by ANCESTRY
+      # (Copilot round 2 on #50, 5203033893): a log capped at a few entries
+      # can bury this commit below the window while it stays an ancestor, the
+      # moment four or more later writes land ahead of it.
       note "RECOVERY (in that order):"
-      note "  git -C $LANES_REPO fetch origin $LANES_BRANCH && git -C $LANES_REPO log --oneline origin/$LANES_BRANCH -3   # a write that ran after this one may already have carried it"
-      note "  if that commit is already there, STOP — reset or redo now would write it a second time."
+      note "  git -C $LANES_REPO fetch origin $LANES_BRANCH && git -C $LANES_REPO merge-base --is-ancestor $cp_sha origin/$LANES_BRANCH && echo ALREADY-THERE || echo not-there   # ancestry, not a capped log: a write that ran after this one, however many commits back, may already have carried it"
+      note "  if that printed ALREADY-THERE, STOP — reset or redo now would write it a second time."
       note "  git -C $LANES_REPO diff origin/$LANES_BRANCH..HEAD -- ${CP_PATHS[*]}   # only if it is not there: read back exactly what you wrote"
       note "  git -C $LANES_REPO reset --hard origin/$LANES_BRANCH                # then drop the local commits (NOTE: also drops any"
       note "                                                          # uncommitted peer edit in this checkout)"

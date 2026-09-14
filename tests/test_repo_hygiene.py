@@ -1893,8 +1893,21 @@ def test_the_exit_3_documentation_agrees_with_the_die_message_it_describes():
     manual) that contradicts the code it describes is worse than no table at
     all — the same claim `test_the_exit_code_table_carries_every_code_the_
     file_exits_with` makes for a code missing from the table entirely.
+
+    Round 2 (5203033893) found this test's own gap: it read only the table
+    and the manual, so a regression in the `die` MESSAGE ITSELF, back to
+    "nothing was pushed", left both docs unchanged and passed anyway — a
+    test that enforces two descriptions agree with each other, never that
+    either agrees with the code. The die is extracted and checked first now,
+    so all three have to agree with the one thing that actually runs.
     """
     src = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+    m = re.search(r'die "(rebase conflict on origin/\$LANES_BRANCH[^"]*)" 3\b', src)
+    assert m, "no exit-3 die message found in lanes-edit.sh to check the docs against"
+    die_text = m.group(1)
+    assert "not pushed by this attempt" in die_text, (
+        "the exit-3 die message itself no longer names the attempt-scoped "
+        f"wording the table and the manual are checked against: {die_text!r}")
     start = src.index("# EXIT CODES — every subcommand, one table")
     end = src.index("# --no-sweep", start)
     table = src[start:end]

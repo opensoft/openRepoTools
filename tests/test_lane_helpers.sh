@@ -3587,15 +3587,20 @@ is    "a peer's rewrite of the SAME row is a real conflict: exit 3" "$rc" 3
 has   "…REBASE CONFLICT is still named" "$err" "REBASE CONFLICT on origin/main"
 has   "…the abort runs and says the tree is clean" "$err" "rebase ABORTED — the worktree is clean and NOT mid-rebase"
 is    "…and it really is clean" "$(git -C "$WIP" status --porcelain | grep -c .)" 0
-has   "…told to fetch and look before resetting or redoing anything" "$err" \
-      "log --oneline origin/main -3   # a write that ran after this one may already have carried it"
+has   "…told to fetch and check ANCESTRY before resetting or redoing anything" "$err" \
+      "merge-base --is-ancestor"
+has   "…a real ancestry test, not a log capped at a few entries (Copilot round 2 on #50)" "$err" \
+      "&& echo ALREADY-THERE || echo not-there   # ancestry, not a capped log"
+cp_sha_printed="$(printf '%s\n' "$err" | grep -oE 'is-ancestor [0-9a-f]{7,40} origin/main' | head -n1 | awk '{print $2}')"
+is    "…naming a real local commit to check ancestry of, not a placeholder" \
+      "$([ -n "$cp_sha_printed" ] && printf 'has-sha' || printf 'MISSING')" "has-sha"
 has   "…the reset is now conditional on that look, not unconditional" "$err" \
       "only if it is not there: read back exactly what you wrote"
 has   "…and the die itself is scoped to this attempt, never a permanent claim" "$err" \
       "not pushed by this attempt; a later write from this checkout may already carry it"
 hasnt "…never the old unconditional claim an aborted pull cannot prove" "$err" \
       "rebase conflict on origin/main — nothing was pushed."
-pc_look="$(printf '%s\n' "$err" | grep -n -- 'log --oneline origin/main -3' | head -n1 | cut -d: -f1)"
+pc_look="$(printf '%s\n' "$err" | grep -n -- 'merge-base --is-ancestor' | head -n1 | cut -d: -f1)"
 pc_reset="$(printf '%s\n' "$err" | grep -n -- 'reset --hard origin/main' | head -n1 | cut -d: -f1)"
 is    "…the look printed BEFORE the reset it gates, the same order RV-B3 pins" \
       "$([ -n "$pc_look" ] && [ -n "$pc_reset" ] && [ "$pc_look" -lt "$pc_reset" ] && printf 'look first' || printf "look $pc_look, reset $pc_reset")" "look first"
@@ -3609,7 +3614,7 @@ is    "…the look printed BEFORE the reset it gates, the same order RV-B3 pins"
 # job the existing "only if it is not there" qualifier does for the diff line
 # alone.
 has   "…and told to STOP there instead of resetting or redoing a landed commit" "$err" \
-      "if that commit is already there, STOP — reset or redo now would write it a second time."
+      "if that printed ALREADY-THERE, STOP — reset or redo now would write it a second time."
 pc_stop="$(printf '%s\n' "$err" | grep -n -- 'STOP — reset or redo now' | head -n1 | cut -d: -f1)"
 is    "…the STOP sits between the look and the reset, gating both reset and redo" \
       "$([ -n "$pc_look" ] && [ -n "$pc_stop" ] && [ -n "$pc_reset" ] && [ "$pc_look" -lt "$pc_stop" ] && [ "$pc_stop" -lt "$pc_reset" ] && printf 'ordered' || printf "look $pc_look, stop $pc_stop, reset $pc_reset")" "ordered"

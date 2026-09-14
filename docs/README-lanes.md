@@ -184,7 +184,14 @@ creating a second one; two rows differing only by case are a refusal naming both
 
 **On a rebase conflict it aborts**, leaves the worktree clean and not
 mid-rebase, prints the conflicting lines and prints the recovery commands. Your
-edit survives as a local commit; read it back with
+edit survives as a local commit — but an aborted pull is not proof it never
+reached origin: this checkout is shared with every lane on the workstation, so
+the very next write out of it can pull this dangling commit onto its own and
+push both together (#32). LOOK first: `git -C <the workspace checkout> fetch
+origin main`, then check ANCESTRY of your own commit rather than eyeballing a
+capped log — `git -C <the workspace checkout> merge-base --is-ancestor <your
+commit> origin/main` exits 0 once it is already there, in which case STOP.
+Only once it answers non-zero do you read your edit back with
 `git -C <the workspace checkout> diff origin/main..HEAD -- lanes/LANES.md`,
 then `git -C <the workspace checkout> reset --hard origin/main` and redo it on
 top of the peer's version.
