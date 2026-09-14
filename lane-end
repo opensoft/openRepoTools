@@ -23,7 +23,8 @@
 #
 # USAGE
 #   lane-end [options] <lane>            # lane-end openRepoShape-2
-#   lane-end <lane> --retire <pid|uuid>  # retire a live FORK or DUPLICATE; ends nothing
+#   lane-end <lane> --retire <pid|uuid>  # retire a live FORK (pid or uuid) or a
+#                                        # DUPLICATE (pid); ends nothing
 #   lane-end [options] <repo> <n>        # the split form works too
 #   lane-end [options] <n>               # <repo> = basename of the cwd's git root
 #
@@ -60,9 +61,18 @@
 #                       lane's OWN session, in its own window, is refused by
 #                       name: retiring the session that IS the lane is how a
 #                       lane loses the conversation it is, and ending the lane
-#                       is the bare form above.
+#                       is the bare form above, and the harness's OWN COMPANION
+#                       of that session — the `kind: bg` record beside it in the
+#                       same profile, Amendment 8 ruling (g) — is refused by
+#                       name too: it is one half of the live session and not a
+#                       rival to it.
+#                       A DUPLICATE IS NAMED BY ITS PID and never by a uuid,
+#                       because its uuid IS the row's own and could not pick
+#                       between the processes carrying it; the uuid form above
+#                       is for a FORK, whose id is one the row does not record.
 #                       `lanes-edit.sh transcript-holders <uuid>` lists every
-#                       live process carrying one transcript.
+#                       live process carrying one transcript, with its window,
+#                       its kind, its profile and which of the three it is.
 #   --state-was <text>  the exact text --retire should replace, for a row whose
 #                       state cell does not open with a single state word
 #   --force             end the lane even though its object log still shows
@@ -655,6 +665,7 @@ FORKS
   # carrying that id is the duplicate.
   dup_pid=""; dup_kind=""; dup_where=""; dup_prof=""
   dup_own=""; dup_rows=""; dup_id=""
+  dup_comp=""; dup_comp_kind=""; dup_comp_prof=""
   if [ -z "$fk_sid" ]; then
     du_rc=0
     dup_id="$("$LANES_EDIT" last-session "$LANE" 2>/dev/null)" || du_rc=$?
@@ -686,12 +697,37 @@ FORKS
             dup_own="${dup_own:+$dup_own }$dr_pid"
           fi
           if [ "$dr_pid" = "$retire_target" ]; then
-            dup_pid="$dr_pid"; dup_kind="${dr_kind:-interactive}"
-            dup_where="$dr_where"; dup_prof="$dr_prof"
+            # THE HARNESS'S OWN COMPANION IS NOT A DUPLICATE AND MAY NOT BE
+            # NAMED AS ONE. `transcript_holders` marks it `companion` — the
+            # `kind: bg` record beside THIS window's own record of this id,
+            # Amendment 8 ruling (g)'s *"records that share a `sessionId` are
+            # one session, not a queue of rival holders"* — and the guard and
+            # `lane-start` both pass it over in silence. Selecting it here would
+            # have this act print Amendment 6(d)'s ending for one half of a live
+            # session that IS the lane (Copilot round 2 on this PR). It is held
+            # separately so the refusal below can say WHICH thing the pid is,
+            # rather than falling through to "neither" and naming nothing.
+            if [ "$dr_verdict" = companion ]; then
+              dup_comp="$dr_pid"; dup_comp_kind="${dr_kind:-interactive}"
+              dup_comp_prof="$dr_prof"
+            else
+              dup_pid="$dr_pid"; dup_kind="${dr_kind:-interactive}"
+              dup_where="$dr_where"; dup_prof="$dr_prof"
+            fi
           fi
         done <<<"$dup_rows"
       fi
     fi
+  fi
+
+  # THE COMPANION IS REFUSED BY NAME TOO, and before the rest, because it is
+  # the one pid a person can reach for here that is neither a duplicate nor the
+  # lane's own session: it is the OTHER HALF of the session that is. Ending it
+  # is not Amendment 6(d)'s act on anything — 6(d) ends an idle background
+  # session still holding a lane NAME, and this one holds the live session's own
+  # id, which ruling (g) reads as one session and not as a rival.
+  if [ -z "$fk_sid" ] && [ -z "$dup_pid" ] && [ -n "$dup_comp" ]; then
+    die "pid $dup_comp is the HARNESS'S OWN COMPANION of lane $LANE's live session (kind ${dup_comp_kind:-bg}; profile ${dup_comp_prof:-unknown}; the same transcript ${dup_id:-unknown} and the same profile as this window's own record of it). Amendment 8 ruling (g): \"records that share a \`sessionId\` are one session, not a queue of rival holders, and there is no contest between them to win\" — so it is not a duplicate of anything, and ending it would end one half of the session that IS this lane. Nothing is named. To retire a real duplicate pass ITS pid (\`$LANES_EDIT transcript-holders $dup_id\` lists every live process carrying this transcript and says which is which); to end the lane, run: $prog $LANE" 2
   fi
 
   # THE WINDOW'S OWN SESSION IS REFUSED BY NAME, and the refusal names the act

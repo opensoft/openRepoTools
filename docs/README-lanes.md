@@ -1537,8 +1537,15 @@ send it again.
 
 The pane's **current command is asked first** and nothing is typed into a pane
 running anything else: `/rename openRepoTools-3` typed at a shell is a command
-that does not exist, and typed into an editor it is text nobody wrote. Every
+that does not exist, and typed into an editor it is text nobody wrote. A pane
+whose command cannot be read is not typed into either — fail closed. Every
 outcome but a successful typing prints the line for you to type yourself.
+
+**Which pane**: the one the live record names, and where the record names none
+— the harness has been seen to write no `tmux` field for a process plainly in a
+window — the pane this hook is itself running in, `tmux display-message -p
+'#{pane_id}'`. Both hooks run inside the session's own pane, so that is the same
+pane, asked of tmux rather than guessed.
 
 A `<lane> (N)` title is a **mismatch** (ratified decision D4) and the suffix is
 evidence: it is exactly what a rename into a title something else still holds
@@ -1628,9 +1635,13 @@ it rather than implementing the rule three times:
   than appending such an id to the row or launching a second resume of it;
 * **`lane-end <lane> --retire <pid>`** retires a duplicate whose id **IS** the
   row's own, which `forks` cannot see because its criterion is "an id the row
-  does NOT record". The window's own session is refused **by name**: retiring
-  the session that IS the lane is how a lane loses the conversation it is, and
-  ending the lane is the bare `lane-end <lane>`.
+  does NOT record". A duplicate is named by its **pid** and never by a uuid —
+  its uuid is the row's own and could not pick between the processes carrying
+  it; the uuid form is for a fork. The window's own session is refused **by
+  name**: retiring the session that IS the lane is how a lane loses the
+  conversation it is, and ending the lane is the bare `lane-end <lane>`. The
+  harness's own **companion** of that session is refused by name too: it is one
+  half of the live session, not a rival to it.
 
 A window is matched by **id AND session name** (Amendment 11(h)'s agreement
 rule) because tmux reuses window ids once a window is gone.

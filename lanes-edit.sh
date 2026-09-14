@@ -5365,10 +5365,18 @@ record_window_state() {   # <the record's tmux field>
 #               UNDER ONE PROFILE as benign (Copilot round 1 on this PR), and
 #               that is the cheapest way there is to make two live processes on
 #               one transcript: no move, no swap, one command.
-#               `record_fields_are_session` is this file's own predicate for the
-#               distinction — `bg` is a companion, `interactive` and a harness
-#               too old to say are holders — and it is ASKED here rather than
-#               re-spelled, so there is one reading of what a companion is.
+#               THE KIND IS `bg` AND NOTHING ELSE IS READ AS ONE. `not a session
+#               record` was the first spelling of this test and it was too wide
+#               by exactly the kinds nobody has ruled on: this suite's own
+#               interactive fork carries `kind: user`
+#               (`tests/test_lane_helpers.sh`, Amendment 11 clause (k)), and any
+#               kind a later harness invents would have arrived here as the
+#               harness's benign companion (Copilot round 2 on this PR). Ruling
+#               (g) names ONE shape to pass over, so that shape is what this
+#               matches; every other live record on this id — known kind or not,
+#               and a record too old to carry a `kind` at all, which pass 1
+#               writes down as `interactive` — is a duplicate, which is the
+#               closed direction.
 #   duplicate   EVERY OTHER live record carrying this id: a session record in
 #               another window of this same profile, or any record at all in
 #               ANOTHER profile's `sessions/` beside this window's own. That is
@@ -5481,7 +5489,7 @@ transcript_holders() {   # <session uuid>
       tv_v=here
     elif [ -z "$th_here_prof" ]; then
       tv_v=unrelated
-    elif [ "$tv_prof" = "$th_here_prof" ] && ! record_fields_are_session "$tv_kind"; then
+    elif [ "$tv_prof" = "$th_here_prof" ] && [ "$tv_kind" = bg ]; then
       tv_v=companion
     else
       tv_v=duplicate
@@ -5529,8 +5537,22 @@ lane_binding_utc() {   # <lane>
 #   9  the pane is running something else
 guard_type() {   # <pane target> <the line to type>
   gt_pane="${1-}"; gt_text="${2-}"
-  [ -n "$gt_pane" ] && [ -n "$gt_text" ] || return 1
+  [ -n "$gt_text" ] || return 1
   command -v tmux >/dev/null 2>&1 || return 1
+  # THE RECORD'S PANE, ELSE THIS ONE — AND THIS ONE IS THE RIGHT FALLBACK
+  # BECAUSE OF WHERE THIS CODE RUNS. The pane comes from the live record's
+  # `tmux` field, and the harness has been seen to write NO `tmux` at all for a
+  # process plainly in a window (Amendment 8, ruling (g)'s third fact) — a
+  # record `transcript_holders` and `record_is_here` still place HERE, by the
+  # pane's own process tree. With an empty target the lock used to print "tmux
+  # would not take the keys" and type nothing, for a session whose name it could
+  # have fixed (Copilot round 2 on this PR). Both callers of this function run
+  # INSIDE the session's own pane — a `UserPromptSubmit` hook and a
+  # `SessionStart` hook do — so `#{pane_id}` with no `-t` is that session's
+  # pane, asked of tmux rather than guessed, and M1's condition below is still
+  # asked of whatever pane this resolves to.
+  [ -n "$gt_pane" ] || gt_pane="$(tmux display-message -p '#{pane_id}' 2>/dev/null || :)"
+  [ -n "$gt_pane" ] || return 1
   gt_cmd="$(tmux_window_field "$gt_pane" '#{pane_current_command}' 2>/dev/null || :)"
   [ -n "$gt_cmd" ] || return 8
   case "$gt_cmd" in claude|node) : ;; *) return 9 ;; esac

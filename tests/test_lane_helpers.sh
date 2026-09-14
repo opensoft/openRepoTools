@@ -316,6 +316,7 @@ case "${1-}" in
           fake_n="$(cat "$FAKE_TMUX_NAME_FILE")"
         fi
         printf '%s\n' "$fake_n" ;;
+      '#{pane_id}')                      printf '%s\n' "${FAKE_TMUX_PANE_ID:-}" ;;
       '#{pane_pid}')                     printf '%s\n' "${FAKE_TMUX_PANE_PID:-}" ;;
       *)                                 printf '\n' ;;
     esac ;;
@@ -5915,6 +5916,16 @@ has   "…named as one" "$err" "ANOTHER LIVE PROCESS CARRIES THIS SESSION ID"
 has   "…by pid, and as the interactive record it is" "$err" "pid $GD_DUP (window gdsess:@77"
 has   "…in this window's own profile, which is no longer a reason to pass it over" "$err" "profile t1"
 rm -f "$sessions_dir/twin.json"
+# AND THE COMPANION IS THE `bg` RECORD AND NOTHING ELSE IS READ AS ONE: this
+# suite's own interactive fork carries `kind: user` (Amendment 11 clause (k)'s
+# section above), and "not a session record" — the first spelling of this test
+# — would have taken that, and every kind a later harness invents, as the
+# harness's benign companion (Copilot round 2 on this PR).
+write_record_a12 "$sessions_dir/usertwin.json" "$GD_LANE_ID" "$GD_DUP" "$gd_dup_start" user "-" "repoGD-1" - "$GD_OLD_MS"
+gd_run "$GD_LANE_ID"
+is    "a kind this file has no rule for is a duplicate and not the companion" "$rc" 2
+has   "…named with the kind as found" "$err" "kind user"
+rm -f "$sessions_dir/usertwin.json"
 # THE HARNESS'S OWN COMPANION IS STILL SILENT, and this is the case that says
 # the verdict turns on the record's KIND and not on the profile: the same
 # profile, the same id, live — and `kind: bg` (Amendment 8 ruling (g), "records
@@ -5923,6 +5934,17 @@ write_record_a12 "$sessions_dir/bgtwin.json" "$GD_LANE_ID" "$GD_DUP" "$gd_dup_st
 gd_run "$GD_LANE_ID"
 is    "…while the harness's own \`bg\` companion beside it is no duplicate at all" "$rc" 0
 is    "…and says nothing" "$err" ""
+# AND `--retire` MAY NOT NAME IT EITHER, which is the same rule one surface
+# over: the pid a person could reach for here is the OTHER HALF of the session
+# that IS the lane, so ending it is not Amendment 6(d)'s act on anything
+# (Copilot round 2 on this PR — the target was selected by pid alone and the
+# verdict was not read).
+run   "$END" repoGD-1 --retire "$GD_DUP"
+is    "lane-end refuses to retire the harness's own companion of this lane's live session" "$rc" 2
+has   "…naming what the pid actually is" "$err" "is the HARNESS'S OWN COMPANION"
+has   "…in ruling (g)'s own words" "$err" "not a queue of rival holders"
+has   "…and naming the read that says which process is which" "$err" "transcript-holders $GD_LANE_ID"
+hasnt "…never 6(d)'s ending for it" "$err" "an idle background session still holding a lane"
 rm -f "$sessions_dir/bgtwin.json"
 
 # ---- AMENDMENT 18(h) IN THE LAUNCH BRANCH: THE ID A RUN IS ABOUT TO RESUME.
@@ -5978,6 +6000,61 @@ gd_run "$GD_LANE_ID" "no"
 is    "…which it does" "$rc" 2
 has   "…staying the lane this window is" "$err" "STAYING repoGD-1"
 is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
+
+# ---- M1's TWO CONDITIONS ON TYPING AT ALL, AND THE PANE IT TYPES INTO.
+#
+# (a) THE PANE IS THE RECORD'S, ELSE THIS ONE. The harness has been seen to
+# write no `tmux` at all for a process plainly in a window (Amendment 8, ruling
+# (g)'s third fact), and `record_is_here`'s tier 3 still places such a record
+# HERE by the pane's own process tree — so the lock had a session to rename and
+# no pane to type into, and printed "tmux would not take the keys" for a name it
+# could have fixed (Copilot round 2 on this PR). Both hooks run INSIDE the
+# session's own pane, so `#{pane_id}` with no `-t` is that pane, asked of tmux
+# rather than guessed. The fake answers it only for a case that opts in, so
+# every case written before this one still describes a record with a target.
+# THE PANE THE FALLBACK FINDS IS A REAL ONE AND NOT THE RECORD'S: a second
+# window in the fake's table, so that the pane typed into can only have come
+# from tmux's own `#{pane_id}`. M1's gate is asked of it like any other, which
+# is why it has to be a pane the table knows: a `%99` in no window at all is
+# read as "the pane's current command could not be read" and nothing is typed,
+# which is the case below this one and not this one.
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude
+gdsess:9	@99	repoGD-1	%99	claude"
+export FAKE_TMUX_PANE_PID="$$" FAKE_TMUX_PANE_ID="%99"
+write_record_a12 "$sessions_dir/gd.json" "$GD_LANE_ID" "$LIVE_PID" "$live_start" interactive "-" repogd-7e derived "$GD_OLD_MS"
+gd_before="$(gd_keys)"
+gd_run "$GD_LANE_ID"
+is    "a live record with NO tmux target is still this window's, and the lock still renames it" "$rc" 2
+has   "…saying it did" "$err" "SO IT HAS BEEN RENAMED FOR YOU"
+is    "…typing once" "$(( $(gd_keys) - gd_before ))" 1
+has   "…into the pane tmux itself names, the record having named none" "$(tail -n1 "$FAKE_TMUX_LOG")" "send-keys -t %99 /rename repoGD-1 Enter"
+unset FAKE_TMUX_PANE_ID FAKE_TMUX_PANE_PID
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
+
+# (b) AND NOTHING ELSE IS TYPED INTO. M1 ratified the mechanism with its
+# condition: the keys go in *"only while the pane's current command is
+# `claude`"* — a `/rename` typed at a shell is a command that does not exist and
+# typed into an editor is text nobody wrote. Neither half of that gate had a
+# case, and it is the only barrier between this hook and somebody else's process
+# (Copilot round 2 on this PR).
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	bash"
+gd_rec "$GD_LANE_ID" repogd-7e derived "$GD_OLD_MS"
+gd_before="$(gd_keys)"
+gd_run "$GD_LANE_ID"
+is    "a pane running something other than claude is NOT typed into" "$(gd_keys)" "$gd_before"
+is    "…and the prompt is still refused" "$rc" 2
+has   "…saying why nothing was typed" "$err" "this pane is not running claude, so NOTHING was typed"
+has   "…with the line for the person to type in the lane's own pane" "$err" "/rename repoGD-1"
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
+# A PANE THAT COULD NOT BE ASKED IS THE OTHER HALF, and it fails the same way:
+# the record names a pane this window does not have, so the targeted read
+# resolves nothing and the gate has no answer to test.
+write_record_a12 "$sessions_dir/gd.json" "$GD_LANE_ID" "$LIVE_PID" "$live_start" interactive "gdsess:@12.%77" repogd-7e derived "$GD_OLD_MS"
+gd_before="$(gd_keys)"
+gd_run "$GD_LANE_ID"
+is    "a pane whose current command could not be read is not typed into either" "$(gd_keys)" "$gd_before"
+is    "…and that prompt is refused too" "$rc" 2
+has   "…fail closed, and saying what a stray \`/rename\` would have landed in" "$err" "the pane's current command could not be read"
 
 # ---- CLAUSE (f): THE `SessionStart` BLOCK'S OWN LINE, WHICH REFUSES NOTHING.
 gd_rec "$GD_LANE_ID" repogd-7e derived "$GD_OLD_MS"
