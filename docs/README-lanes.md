@@ -1549,10 +1549,14 @@ picker, and nothing else). That one prompt is refused so the rename lands first;
 send it again.
 
 The pane's **current command is asked first** and nothing is typed into a pane
-running anything else: `/rename openRepoTools-3` typed at a shell is a command
-that does not exist, and typed into an editor it is text nobody wrote. A pane
-whose command cannot be read is not typed into either — fail closed. Every
-outcome but a successful typing prints the line for you to type yourself.
+running anything else — `claude` and nothing else, which is M1's own word:
+`/rename openRepoTools-3` typed at a shell is a command that does not exist,
+typed into an editor it is text nobody wrote, and typed into a Node REPL it is
+input somebody has to clear. A pane whose command cannot be read is not typed
+into either — fail closed. Every outcome but a successful typing prints the line
+for you to type yourself, which is the cure and not a failure: on Eagle today
+two panes report `bash` (a session under a launcher wrapper), and those are
+exactly the windows where you will read it.
 
 **Which pane**: the one the live record names, and where the record names none
 — the harness has been seen to write no `tmux` field for a process plainly in a
@@ -1663,7 +1667,11 @@ rule) because tmux reuses window ids once a window is gone.
 
 The `SessionStart` hook gains one line — `session name '<x>' was not the lane
 '<y>' — renamed` — and types the rename itself, so the first prompt already
-finds the three agreeing. It is that hook's **one act on a pane and its only act
+finds the three agreeing. It types over DRIFT only: a name a PERSON set to
+another lane's, newer than this window's binding, is clause (h) rule 2's
+instruction and this hook leaves it alone, says so, and lets the guard put the
+offer at the next prompt — otherwise a rename followed by a `/clear` would be
+undone before anyone was asked. It is that hook's **one act on a pane and its only act
 of any kind**: it stays read-only against the register and **always exits 0**,
 because a hook that fails is a hook that breaks the session it was meant to
 orient (R-A8-1). Where another live process carries this session id it **SAYS

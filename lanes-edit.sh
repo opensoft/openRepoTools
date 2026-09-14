@@ -5571,8 +5571,19 @@ lane_binding_utc() {   # <lane>
 # THE PANE'S CURRENT COMMAND IS ASKED FIRST, and a pane that is running anything
 # else is NOT typed into: `/rename openRepoTools-3` typed at a shell is a command
 # that does not exist, and typed into an editor it is text somebody did not
-# write. `node` is accepted beside `claude` because the harness is a node
-# program and `#{pane_current_command}` reports the process, not the wrapper.
+# write.
+#
+# `claude` AND NOTHING ELSE, which is M1's own word — *"only while the pane's
+# current command is `claude`"*. This test read `claude|node` for one round, on
+# the reasoning that the harness is a node program and this format reports the
+# process rather than the wrapper; MEASURED on Eagle 2026-09-14T23:4xZ, across
+# the twelve panes tmux had, it is not: eleven lane panes report `claude`, two
+# report `bash` (a pane whose session is under a launcher wrapper) and one
+# `zsh`, and no pane reports `node` at all. So `node` bought nothing here and
+# would have let a stray Node REPL in a pane take `/rename <lane>` as input
+# (Copilot round 4 on this PR). A pane this refuses is not a lock that failed:
+# the caller prints the line for the person to type, which is the cure — and on
+# this estate today the `bash` panes are exactly where they will read it.
 #
 #   0  typed
 #   1  no tmux, or `send-keys` itself refused
@@ -5598,7 +5609,7 @@ guard_type() {   # <pane target> <the line to type>
   [ -n "$gt_pane" ] || return 1
   gt_cmd="$(tmux_window_field "$gt_pane" '#{pane_current_command}' 2>/dev/null || :)"
   [ -n "$gt_cmd" ] || return 8
-  case "$gt_cmd" in claude|node) : ;; *) return 9 ;; esac
+  case "$gt_cmd" in claude) : ;; *) return 9 ;; esac
   tmux send-keys -t "$gt_pane" "$gt_text" Enter 2>/dev/null || return 1
   return 0
 }
@@ -6261,6 +6272,24 @@ ssb_name_line() {   # <session uuid> <lane, or empty>
   # this hook types into a pane. `here_context` is asked HERE because the read
   # above it runs in a subshell, which is where its answer would otherwise have
   # stayed.
+  # A PERSON'S RENAME TO ANOTHER LANE IS THE GUARD'S TO OFFER, NOT THIS HOOK'S
+  # TO UNDO. Clause (f) types the rename for (h)1's case — DRIFT, a name that is
+  # no lane's — while (h) rule 2 makes a record whose `nameSource` is `user`,
+  # whose name is another lane's, and whose `nameSince` is later than this
+  # window's binding an INSTRUCTION, answered `yes` or `no` at the next prompt.
+  # This hook runs on every startup, resume, clear and fork, so typing over such
+  # a name would erase the person's choice before the guard could put the
+  # question (Copilot round 4 on this PR): a rename, then a `/clear`, and the
+  # offer never happens. It is SAID here and left to the prompt that follows.
+  snl_src="$(jstr "$snl_blob" nameSource)"
+  snl_since="$(jnum "$snl_blob" nameSince)"
+  if [ "${snl_src:-}" = user ] && [ "$(lc "$snl_name")" != "$(lc "$snl_lane")" ] \
+     && { [ -n "$(rows_named_ci "$snl_name" 2>/dev/null || :)" ] || lane_shaped "$snl_name"; } \
+     && guard_rename_is_newer "$snl_lane" "$snl_since"; then
+    printf "session name '%s' is a lane name YOU set, newer than this window's binding to '%s' — the name guard offers the move at your next prompt (Amendment 12(h) rule 2); nothing was renamed here\n" \
+      "$snl_name" "$snl_lane"
+    return 0
+  fi
   here_context
   snl_pane=""
   if [ -n "$snl_tgt" ] && [ "$snl_tgt" != none ] && [ -n "$LANES_THIS_WINDOW" ] \

@@ -1,22 +1,25 @@
 # SPDX-License-Identifier: Apache-2.0
 """`--install`'s artifacts that are not one of the ELEVEN files: the two
-skills at two paths each, the `/swap` command file at two more, and the one
-merged `SessionStart` entry.
+skills at two paths each, the `/swap` command file at two more, and the TWO
+merged hook entries.
 
 lane-collision-protocol Amendment 9(b), inheriting A8 Addendum 2's R-A8-5
 unvaried — the skill into the SHARED skills directory every profile reads
 through its own symlink, a copy into `~/.claude` for a bare `claude` run
-outside the launcher, and ONE merged entry in `~/.claude/settings.json`.
+outside the launcher, and the merged entries in `~/.claude/settings.json`:
+the `SessionStart` one, and — since Amendment 12 adoption act 3
+(opensoft/openRepoTools#25) — the `UserPromptSubmit` NAME GUARD beside it.
 
-WHY THE HOOK IS THE HARD ONE, and why most of this file is about it. Every
+WHY THE HOOKS ARE THE HARD ONES, and why most of this file is about them. Every
 other thing `--install` places is a whole file, so "already there and
-identical" is a `cmp`. The hook is one entry inside a file somebody else owns
+identical" is a `cmp`. A hook is one entry inside a file somebody else owns
 and two other programs also write, and its ONLY idempotence is an exact match
 on the command string. So the tests below are about the four answers that
-string can have — present, absent, differing, unreadable — and about the one
-rule that makes a wrong answer survivable: the merge is computed with the eleven
-files in hand, BEFORE any of them is placed, so a refusal costs a whole install
-rather than half of one.
+string can have — present, absent, differing, unreadable — asked of EACH entry,
+and about the one rule that makes a wrong answer survivable: both merges are
+computed with the eleven files in hand, BEFORE any of them is placed, so a
+refusal costs a whole install rather than half of one — and, since the pair,
+a settings file never passes through a state carrying one entry of the two.
 
 NO NETWORK: every run here is from the checkout, so nothing is fetched at all.
 """

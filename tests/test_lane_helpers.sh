@@ -6299,6 +6299,19 @@ is    "a pane running something other than claude is NOT typed into" "$(gd_keys)
 is    "…and the prompt is still refused" "$rc" 2
 has   "…saying why nothing was typed" "$err" "this pane is not running claude, so NOTHING was typed"
 has   "…with the line for the person to type in the lane's own pane" "$err" "/rename repoGD-1"
+# AND `node` IS NOT `claude` EITHER, which is M1's own word: *"only while the
+# pane's current command is `claude`"*. This gate read `claude|node` for one
+# round, on the reasoning that the harness is a node program — measured on Eagle
+# 2026-09-14T23:4xZ across the twelve panes tmux had, eleven lane panes report
+# `claude`, two `bash` and one `zsh`, and none reports `node`. So the second
+# word bought nothing and would have let a stray Node REPL take `/rename <lane>`
+# as input (Copilot round 4 on this PR).
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	node"
+gd_rec "$GD_LANE_ID" repogd-7e derived "$GD_OLD_MS"
+gd_before="$(gd_keys)"
+gd_run "$GD_LANE_ID"
+is    "a pane running \`node\` is not typed into either" "$(gd_keys)" "$gd_before"
+has   "…for the reason M1 gives, in one word" "$err" "this pane is not running claude"
 export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
 # A PANE THAT COULD NOT BE ASKED IS THE OTHER HALF, and it fails the same way:
 # the record names a pane this window does not have, so the targeted read
@@ -6322,7 +6335,21 @@ out="$(printf '{"session_id":"%s","source":"resume","cwd":"%s/projects/repoGD"}'
 is    "…and a duplicate process is SAID and not acted on there" "$rc" 0
 has   "…named as the defect it is, with the retire act" "$out" "another live process carries this session id"
 has   "…and never a kill" "$out" "lane-end repoGD-1 --retire <pid>"
-rm -f "$gd_t2/fork.json" "$sessions_dir/gd.json"
+rm -f "$gd_t2/fork.json"
+# AND IT LEAVES A PERSON'S OWN RENAME TO ANOTHER LANE ALONE. Clause (f) types
+# the rename for (h)1's case — DRIFT, a name that is no lane's — while (h) rule
+# 2 makes a `nameSource: user` rename to another lane's name an INSTRUCTION,
+# answered at the next prompt. This hook runs on every startup, resume, clear
+# and fork, so typing over such a name would erase the person's choice before
+# the guard could put the question: a rename, then a `/clear`, and the offer
+# never happens (Copilot round 4 on this PR).
+gd_rec "$GD_LANE_ID" repoGD-2 user "$GD_NEW_MS"
+gd_before="$(gd_keys)"
+out="$(printf '{"session_id":"%s","source":"resume","cwd":"%s/projects/repoGD"}' "$GD_LANE_ID" "$HOME" | "$E" session-start 2>/dev/null)"; rc=$?
+is    "the SessionStart hook does not type over a rename a PERSON made to another lane" "$(gd_keys)" "$gd_before"
+is    "…still exiting 0, as it always does" "$rc" 0
+has   "…and saying the guard will put the question at the next prompt" "$out" "the name guard offers the move at your next prompt"
+rm -f "$sessions_dir/gd.json"
 kill "$GD_DUP" 2>/dev/null || :
 # THE FIXTURE PUT BACK EXACTLY AS IT WAS FOUND — an empty capture means the
 # variable was unset here and is unset again, which `${x:+…}` alone could not
