@@ -733,6 +733,49 @@ def test_the_rerun_after_a_commit_that_failed_carries_the_seed_it_left_behind(
         "step 9 did not run after the seed finally landed")
 
 
+def test_an_untracked_file_at_a_template_path_is_refused_not_absorbed(tmp_path):
+    """THE HALF THE `cat-file -e HEAD:` QUESTION COULD NOT TELL APART (#44
+    round 2, `openRepoTools:1621`).
+
+    An earlier run's own leftover and a person's own untracked file at a
+    template path are BOTH absent from HEAD — the one question step 7 asked
+    could not tell them apart, so a person's own `handoffs/README.md`, never
+    committed and never named to this command, answered it exactly as this
+    command's own half-finished leftover would have, and went into the seed.
+
+    The bytes tell them apart where the question alone could not: this
+    command's own leftover is what THIS RUN would itself write there, so the
+    fetched, substituted template is compared against what is on disk before
+    either is trusted as this command's own — and a mismatch is a refusal in
+    the same voice as step 6a's, not a silent seed of somebody else's file.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout = adopted_checkout(tmp_path, home, env)
+    for args in (["rm", "-q", "--", "handoffs/README.md"],
+                 ["commit", "-q", "-m", "somebody removed the handoffs README"],
+                 ["push", "-q", "origin", "HEAD:main"]):
+        subprocess.run(["git", "-C", str(checkout), *args], check=True)
+    before_head = head_of(checkout)
+    foreign = checkout / "handoffs" / "README.md"
+    foreign.parent.mkdir(parents=True, exist_ok=True)
+    foreign_text = "this is somebody's own file, not the template\n"
+    foreign.write_text(foreign_text, encoding="utf-8")
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "handoffs/README.md exists" in result.stderr, result.stderr
+    assert "NOTHING was written into that checkout on this run" in result.stderr
+    assert foreign.read_text(encoding="utf-8") == foreign_text, (
+        "the foreign file was overwritten")
+    assert staged_in(checkout) == "", "the foreign file was staged"
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+
+
 # --- one answer to one question, across the seam between two toolsets -------
 
 #: (name, the two yaml lines as a template, whether both sides must ACCEPT).

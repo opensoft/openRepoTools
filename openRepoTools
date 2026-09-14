@@ -696,13 +696,27 @@ unplaceable_kind() {   # <target>
 # `tests/test_install_skill_and_hook.py:658`). Every place this command writes
 # into is made in the PLACEMENT phase, by the guarded `mkdir -p` each `cp`
 # already carries.
+#
+# `-L` STOPS THE WALK TOO, not only `-e` (#44 round 2, `openRepoTools:701`).
+# `-e` follows a symlink, so it is FALSE on a DANGLING one — the walk read
+# that as "not there yet" and stepped past it to ask about ITS parent instead,
+# so a dangling `skills_home` or bin-directory ancestor passed this planner and
+# met `mkdir -p` after other artifacts were already placed, on the one path
+# that promises all or none. A symlink, dangling or not, is something AT that
+# path; the walk stops at the nearest one of those, exactly as it stops at the
+# nearest directory, file or anything else that is there.
 unusable_dir_kind() {   # <directory>
 	local d="$1" up
-	while [ ! -e "$d" ]; do
+	while [ ! -e "$d" ] && [ ! -L "$d" ]; do
 		up="$(dirname -- "$d")"
 		[ "$up" != "$d" ] || break
 		d="$up"
 	done
+	if [ -L "$d" ] && [ ! -e "$d" ]; then
+		printf '%s is a symlink to %s, which is not there' "$d" \
+			"$(readlink -- "$d" 2>/dev/null || printf '<unreadable>')"
+		return 0
+	fi
 	if [ ! -d "$d" ]; then
 		printf '%s is not a directory' "$d"
 		return 0
@@ -1595,6 +1609,7 @@ $unrelated
 	ref="$(wip_shape_ref)"
 	workdir
 	for rel in "${WIP_TEMPLATE_FILES[@]}"; do
+		dest="$WORKDIR/tpl-$(printf '%s' "$rel" | tr '/' '_')"
 		if [ -e "$checkout/$rel" ]; then
 			# ALREADY THERE — AND THE SEED CAN STILL OWE IT. A template path the
 			# WORKTREE carries and HEAD does not is what an earlier run of this
@@ -1609,19 +1624,39 @@ $unrelated
 			# change at one is not its leftover and never enters its commit
 			# (#44 round 1, `openRepoTools:1525`).
 			#
-			# WHAT NO QUESTION HERE CAN TELL APART is a template path that is
-			# UNTRACKED and carries the person's own content: it is absent from
-			# HEAD exactly as this command's own leftover is, and it goes into
-			# the seed. That is the blind spot step 6a names in so many words
-			# and the price of the re-run step 7 promises; what closes here is
-			# the half that can be told apart.
+			# `! cat-file -e HEAD:…` ALONE IS NOT PROOF (#44 round 2,
+			# `openRepoTools:1621`): a template path that is UNTRACKED and
+			# carries a PERSON'S OWN CONTENT is absent from HEAD exactly as
+			# this command's own leftover is, so it answered this question the
+			# same way and went into the seed regardless of whose bytes they
+			# were. The bytes settle what the question alone could not: this
+			# command's own leftover is what THIS RUN would itself write
+			# there, so the template is fetched and substituted the same way
+			# a MISSING file below is, and the two are compared before either
+			# is trusted as this command's own.
 			if ! git -C "$checkout" cat-file -e "HEAD:$rel" 2>/dev/null; then
-				written+=("$rel")
-				owed=$((owed + 1))
+				wip_fetch_template_file "$rel" "$dest" "$ref" ||
+					die "could not fetch $WIP_TEMPLATE_DIR/$rel from $SHAPE_REPOSITORY at $ref, so the
+    workspace was NOT seeded. The clone at $checkout is untouched and a re-run
+    picks up from here. Both ways were tried:
+    gh api repos/$SHAPE_REPOSITORY/contents/$WIP_TEMPLATE_DIR/$rel?ref=$ref
+    curl -fsSL https://raw.githubusercontent.com/$SHAPE_REPOSITORY/$ref/$WIP_TEMPLATE_DIR/$rel"
+				wip_substitute "$dest"
+				if cmp -s -- "$dest" "$checkout/$rel"; then
+					written+=("$rel")
+					owed=$((owed + 1))
+				else
+					die "$checkout/$rel exists, HEAD does not carry it, and its bytes are not what
+    $SHAPE_REPOSITORY's $WIP_TEMPLATE_DIR/$rel substitutes to at $ref — so this is not an
+    earlier run's own leftover; it is somebody's own untracked file at a path the template
+    also names. A seed commit is the template and nothing else, so this command will not
+    publish it. NOTHING was written into that checkout on this run and nothing was staged.
+    Commit, stash or remove that path, then re-run:
+        openRepoTools wip init"
+				fi
 			fi
 			continue
 		fi
-		dest="$WORKDIR/tpl-$(printf '%s' "$rel" | tr '/' '_')"
 		wip_fetch_template_file "$rel" "$dest" "$ref" ||
 			die "could not fetch $WIP_TEMPLATE_DIR/$rel from $SHAPE_REPOSITORY at $ref, so the
     workspace was NOT seeded. The clone at $checkout is untouched and a re-run

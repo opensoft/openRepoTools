@@ -931,6 +931,36 @@ def test_a_planning_refusal_creates_none_of_the_destination_directories(tmp_path
         os.chmod(target, 0o644)
 
 
+@NEEDS_JQ
+def test_a_dangling_symlink_ancestor_is_refused_rather_than_stepped_over(tmp_path):
+    """`-e` FOLLOWS A SYMLINK AND IS FALSE ON A DANGLING ONE (#44 round 2,
+    `openRepoTools:701`).
+
+    `unusable_dir_kind`'s walk asked `[ ! -e "$d" ]` alone to decide "not there
+    yet, keep walking up" — and `-e` is false on a DANGLING symlink exactly as
+    it is on a path with nothing at it at all, so the walk stepped PAST a
+    dangling `$OPENREPOTOOLS_BIN_DIR` parent and asked about its grandparent
+    instead, which passed. `mkdir -p` then meets the dangling link and fails —
+    on the one path that promises all or none.
+
+    A symlink is something AT that path, dangling or not: the walk now stops
+    there, exactly as it stops at a real directory or file.
+    """
+    parent = tmp_path / "opt"
+    parent.symlink_to(tmp_path / "nowhere-at-all")
+    bin_dir = parent / "bin"
+    result = run_cmd("--install", home=tmp_path,
+                     env={"OPENREPOTOOLS_BIN_DIR": str(bin_dir)})
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"{parent} is a symlink to" in result.stderr, (
+        f"the refusal must name the dangling ancestor, not step past it:\n"
+        f"{result.stderr}")
+    assert "NOTHING was installed" in result.stderr
+    assert not bin_dir.exists(), "mkdir -p ran despite the dangling ancestor"
+    assert not (tmp_path / ".claude").exists(), (
+        "the skills or the hook were placed by a run that refused")
+
+
 # --- R-A9-12 reaches the skill paths too (F-X17) -----------------------------
 
 SKILL_TARGETS = tuple(
