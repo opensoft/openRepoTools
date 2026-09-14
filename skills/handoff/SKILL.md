@@ -581,16 +581,28 @@ prompt is the top block step 2 just wrote:
 # the pane is the LIVE RECORD'S own `tmux` field — `<session>:<@id>.%<pane>` —
 # because that is the pane the session is really in.
 pane="$("$L" window-session "$(tmux display-message -p '#{window_id}')" | awk -F'\037' '{print $2}')"
-tmux respawn-pane -k -t "$pane" "LANE_START_FRESH=1 pclaude --lane $lane ${CLAUDE_PROFILE_NAME:-<profile>}"
+# `lane <name>` where this workstation has that word, and the launcher where it
+# does not: `lane-handoff --restart` makes exactly this choice, in code.
+if command -v lane >/dev/null 2>&1; then
+  tmux respawn-pane -k -t "$pane" "LANE_START_FRESH=1 lane $lane"
+else
+  tmux respawn-pane -k -t "$pane" "LANE_START_FRESH=1 pclaude --lane $lane ${CLAUDE_PROFILE_NAME:-<profile>}"
+fi
 ```
 
 `respawn-pane -k` replaces the pane's process, so the act survives the death of the session that started it.
 `LANE_START_FRESH=1` is the one seam: it tells `lane-start` *a NEW session of this lane's agent, started with
 the top block of the handoff the row names as its first prompt* — which is what a context clear IS, and it is
-why `/ctx` does not simply resume the transcript it has just paused. **The launcher line is `pclaude --lane
-<lane> <profile>` and never `restart <lane>`** (Amendment 18 Addendum 2, in force 2026-09-14T16:50:32Z:
-`restart` leaves the person's `PATH`; `lane <name>` takes its place once `opensoft/openRepoTools#43` lands,
-and the launcher is the door the addendum leaves open until then).
+why `/ctx` does not simply resume the transcript it has just paused. It is an ENVIRONMENT seam and not an
+argument, so it survives `lane` handing the launch on to `lane-start` exactly as it survives the launcher
+doing so. **The respawn line is `lane <lane>` and never `restart <lane>`** (Amendment 18 Addendum 2, in force
+2026-09-14T16:50:32Z, clause (i-8): the respawn *"relaunches the lane's own pane with `lane <name>` (its
+parked branch is exactly Amendment 11(i)'s act), or through the launcher directly"*, and `restart` leaves the
+person's `PATH` with `opensoft/openRepoTools#43`). `lane <name>` needs no profile argument: its parked branch
+reads the record step 4 just wrote — the lane's recorded directory and profile — and asks nothing. **Where
+`lane` is not on `PATH`** (it arrives with #43, and this act shipped first) the line is `pclaude --lane
+<lane> <profile>`, the same act one door along: a respawn is the one act no later refusal can undo, so the
+word is used only where it can be seen on `PATH`.
 
 **`/handoff --exit requested by <uuid>@<host>/<container>` — the handoff another place asked for.** After
 the record, `/exit` is typed into this lane's own pane (Amendment 12's M1, the one mechanism there is), and

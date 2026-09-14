@@ -5562,7 +5562,7 @@ hf_seed_handoff() {   # <file> <lane>
     printf 'Written before Amendment 17, by hand.\n'
   } > "$1"
 }
-for hf_l in repoHF-1 repoHF-2 repoHF-3 repoHF-4 repoHF-5 repoHF-6 repoHF-7; do
+for hf_l in repoHF-1 repoHF-2 repoHF-3 repoHF-4 repoHF-5 repoHF-6 repoHF-7 repoHF-8 repoHF-9; do
   hf_seed_handoff "$WIP/handoffs/repoHF/$hf_l.md" "$hf_l"
 done
 git -C "$WIP" add -- handoffs/repoHF >/dev/null 2>&1
@@ -5580,6 +5580,10 @@ hf_row repoHF-4 "harness \`$HF3_ID\`"
 hf_row repoHF-5 "harness \`$HF_ID\`"
 hf_row repoHF-6 "harness \`$HF_ID\`"
 hf_row repoHF-7 "harness \`$HF4_ID\`"
+# The two lanes Amendment 18 Addendum 2 (i-8) is asked on: one respawned where
+# `lane` IS on PATH, one where the `lane` on PATH is somebody else's word.
+hf_row repoHF-8 "harness \`$HF_ID\`"
+hf_row repoHF-9 "harness \`$HF_ID\`"
 
 # The lane's own log, with the STARTED a running lane has.
 hf_seed_log() {   # <lane> <utc> [<extra line>…]
@@ -5595,7 +5599,7 @@ hf_seed_log() {   # <lane> <utc> [<extra line>…]
   git -C "$WIP" push -q origin main
   return 0
 }
-for hf_l in repoHF-1 repoHF-2 repoHF-3 repoHF-5 repoHF-6 repoHF-7; do
+for hf_l in repoHF-1 repoHF-2 repoHF-3 repoHF-5 repoHF-6 repoHF-7 repoHF-8 repoHF-9; do
   hf_seed_log "$hf_l" "2026-09-14T09:00:00Z"
 done
 
@@ -5681,19 +5685,92 @@ has   "…naming the flag the caller used" "$err" "--agent takes a manifest key"
 
 # ------------------------------------------ 2. /ctx — the record, then the pane
 
+# WHICH `lane` THE COMMAND CAN SEE IS THE QUESTION IN THREE OF THE CASES BELOW
+# (Amendment 18 Addendum 2 (i-8)), so each of them runs on a PATH THIS FILE
+# BUILT rather than on whatever the workstation happens to carry:
+# `openRepoTools#43` places `lane` in `~/.local/bin`, and a case that asked
+# "what happens where there is no `lane`" against a workstation that has one
+# would go green on the answer to a different question.
+a17_path_without_lane() {
+  printf '%s' "$A17PATH" | tr ':' '\n' | while IFS= read -r a17p_d; do
+    [ -n "$a17p_d" ] || continue
+    if [ -x "$a17p_d/lane" ]; then continue; fi
+    printf '%s:' "$a17p_d"
+  done | sed 's/:$//'
+}
+A17PATH_NOLANE="$(a17_path_without_lane)"
+
 : > "$FAKE_TMUX_A17_LOG"
 export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-5.md"
-run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+run env PATH="$A17PATH_NOLANE" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
     CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-5 --restart clear
 is    "lane-handoff --restart exits 0" "$rc" 0
 a17_tmux="$(cat "$FAKE_TMUX_A17_LOG")"
 has   "…respawning the lane's own pane" "$a17_tmux" "respawn-pane -k -t hfsess:@21.%21"
-has   "…through the launcher, with --lane BEFORE the profile" "$a17_tmux" "pclaude --lane repoHF-5 team-05a"
+# WITH NO `lane` ON PATH — which is this sandbox, and every workstation until
+# `openRepoTools#43` places that word — the line is the launcher's, which is
+# the door Amendment 18 Addendum 2 (i-8) leaves open in the same sentence that
+# names `lane <name>`: *"or through the launcher directly"*. The case below
+# asks for the word itself, where it is there to be seen.
+has   "…with no \`lane\` on PATH, through the launcher, with --lane BEFORE the profile" "$a17_tmux" "pclaude --lane repoHF-5 team-05a"
 has   "…and the seam that makes the new session a FRESH one primed by the top block" "$a17_tmux" "LANE_START_FRESH=1"
 hasnt "…never \`restart <lane>\`, which Addendum 2 takes off the person's PATH" "$a17_tmux" "restart repoHF-5"
 is    "THE RECORD WAS WRITTEN BEFORE THE RESPAWN, which is what the fake could see" \
       "$(printf '%s\n' "$a17_tmux" | grep -o 'paused-lines=[0-9]*' | head -n1)" "paused-lines=1"
 has   "…and the record is the lane's own PAUSED" "$(cat "$LOGD/repoHF-5.md")" "lane:repoHF-5 → swap;"
+
+# AMENDMENT 18 ADDENDUM 2 (i-8) AND ITS ADOPTION LINE — *"opensoft/
+# openRepoTools#36 (`/ctx`) respawns with `lane <name>`"*. Where the word is on
+# PATH it is the word that is typed, with NO profile argument: `lane <name>`
+# reads the record this act has just written for the lane's directory and
+# profile, and asks nothing.
+#
+# THE FAKE CARRIES THE STRING EVERY BASH FILE THIS TOOLSET SHIPS CARRIES,
+# because that is what `lane-handoff` reads it for: `lane` is an ordinary
+# English word, and a pane respawned over somebody else's `lane` is a pane the
+# person cannot get back.
+mkdir -p "$SANDBOX/a17lane"
+cat > "$SANDBOX/a17lane/lane" <<'FAKE'
+#!/usr/bin/env bash
+# lane — the word, as lane-collision-protocol Amendment 18 Addendum 1 names it
+printf '%s\n' "$*" >> "${FAKE_LANE_LOG:-/dev/null}"
+FAKE
+chmod +x "$SANDBOX/a17lane/lane"
+: > "$FAKE_TMUX_A17_LOG"
+export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-8.md"
+run env PATH="$SANDBOX/a17lane:$A17PATH_NOLANE" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-8 --restart clear
+is    "with \`lane\` on PATH, lane-handoff --restart exits 0" "$rc" 0
+a17_lane_tmux="$(cat "$FAKE_TMUX_A17_LOG")"
+has   "…and the respawn line is \`lane <lane>\` — that word, resolved where it was found" \
+      "$a17_lane_tmux" "a17lane/lane repoHF-8"
+has   "…still with the FRESH seam, which rides in the environment and survives the hand-on to lane-start" \
+      "$a17_lane_tmux" "LANE_START_FRESH=1"
+hasnt "…and with no profile argument: \`lane <name>\` reads the record for it" "$a17_lane_tmux" "repoHF-8 team-05a"
+hasnt "…never the launcher, where the word itself is there to be typed" "$a17_lane_tmux" "pclaude --lane repoHF-8"
+hasnt "…and never \`restart <lane>\`" "$a17_lane_tmux" "restart repoHF-8"
+is    "…the record still written BEFORE the respawn" \
+      "$(printf '%s\n' "$a17_lane_tmux" | grep -o 'paused-lines=[0-9]*' | head -n1)" "paused-lines=1"
+
+# A `lane` ON PATH THAT IS NOT THIS ESTATE'S WORD IS PASSED OVER FOR THE
+# LAUNCHER, and said. The safe side of the two is the one that still starts the
+# lane: a respawn is the one act no later refusal can undo.
+mkdir -p "$SANDBOX/a17foreign"
+cat > "$SANDBOX/a17foreign/lane" <<'FAKE'
+#!/usr/bin/env bash
+# somebody else's `lane`: a swimming-lane plotter, say. It names no protocol.
+exit 0
+FAKE
+chmod +x "$SANDBOX/a17foreign/lane"
+: > "$FAKE_TMUX_A17_LOG"
+export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-9.md"
+run env PATH="$SANDBOX/a17foreign:$A17PATH_NOLANE" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-9 --restart clear
+is    "a \`lane\` that is not this estate's word still exits 0" "$rc" 0
+a17_foreign_tmux="$(cat "$FAKE_TMUX_A17_LOG")"
+has   "…respawning through the launcher instead" "$a17_foreign_tmux" "pclaude --lane repoHF-9 team-05a"
+hasnt "…and never through the word it could not recognise" "$a17_foreign_tmux" "a17foreign/lane repoHF-9"
+has   "…saying which \`lane\` it passed over" "$err" "is not this estate's word"
 
 # A RECORD THAT CANNOT BE WRITTEN REFUSES BEFORE ANYTHING IS KILLED. repoHF-2's
 # row carries only `session_…` footer ids, so no transcript uuid is knowable and
@@ -6013,7 +6090,10 @@ has   "and /ctx is that skill with --restart" "$ctxcmd" "with \`--restart\`"
 has   "…which is what the amendment calls it" "$ctxcmd" "/ctx\` is \`/handoff --restart\`"
 has   "the skill carries Amendment 17(b)'s two sub-fields where the record is written" "$hfsk" "agent \$agent_name; transcript \$transcript_id"
 has   "…and the WRITERS section in its top block" "$hfsk" "**WRITERS at <UTC>**"
-has   "…and the respawn line Addendum 2 fixed" "$hfsk" "pclaude --lane \$lane"
+has   "…and the respawn line Addendum 2 (i-8) names: \`lane <lane>\`" "$hfsk" 'LANE_START_FRESH=1 lane $lane'
+has   "…with the launcher as the door the same clause leaves open" "$hfsk" "pclaude --lane \$lane"
+has   "…chosen by whether that word is on PATH, which is the choice the command makes in code" \
+      "$hfsk" 'if command -v lane >/dev/null 2>&1; then'
 hasnt "…which is never \`restart <lane>\`" "$hfsk" 'respawn-pane -k -t "$pane" "restart'
 
 echo "== the workstation seam: unset, every writer reads the host =="

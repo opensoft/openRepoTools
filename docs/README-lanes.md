@@ -1516,21 +1516,31 @@ how the register has spelled Codex sessions since 2026-09-05.
 ### `/ctx` — one word, and everything after it is automatic
 
 `/ctx` (`/handoff --restart`) performs the handoff and then **restarts in
-place**: `tmux respawn-pane -k` on the lane's own pane, through the launcher,
-with a NEW session of the same agent whose **first prompt is the handoff's top
-block**. That block's first line is *"relaunch every writer below from where it
+place**: `tmux respawn-pane -k` on the lane's own pane, with a NEW session of the
+same agent whose **first prompt is the handoff's top block**. That block's first line is *"relaunch every writer below from where it
 stands"*, and its `WRITERS` section lists every worktree the lane had running —
 its branch, its last commit, what it was holding, and the brief it was given —
 so the new session relaunches them rather than discovering them.
 
 **The record comes first, always.** A `/ctx` whose `PAUSED` line could not be
 written **refuses before it kills anything**: a pane is never respawned over an
-unrecorded lane. The launcher line is `pclaude --lane <lane> <profile>` and
-never `restart <lane>` (Amendment 18 Addendum 2 takes that word off the person's
-`PATH`; `lane <name>` replaces it once `openRepoTools#43` lands), and
-`LANE_START_FRESH=1` is the one seam that says *a new session, primed by the top
-block* — which is what a context clear is, and why `/ctx` does not resume the
-transcript it has just paused.
+unrecorded lane.
+
+**The respawn line is `lane <lane>`**, and never `restart <lane>` — Amendment 18
+Addendum 2 (i-8): the respawn *"relaunches the lane's own pane with `lane <name>`
+(its parked branch is exactly Amendment 11(i)'s act), or through the launcher
+directly"*, and `restart` leaves the person's `PATH` with `openRepoTools#43`.
+`lane <name>` needs no profile argument: its parked branch reads the record the
+handoff has just written — the lane's recorded directory and profile — and asks
+nothing. **Where `lane` is not on `PATH`** (it arrives with #43, and this act
+shipped first) the line is `pclaude --lane <lane> <profile>`, the same act one
+door along, and a `lane` on `PATH` that is not this estate's word is passed over
+for it with a line saying so: a respawn is the one act no later refusal can undo,
+so the word is used only where it can be SEEN. `LANE_START_FRESH=1` is the one
+seam that says *a new session, primed by the top block* — which is what a
+context clear is, and why `/ctx` does not resume the transcript it has just
+paused. It rides in the ENVIRONMENT, so it survives `lane` handing the launch on
+to `lane-start` exactly as it survives the launcher doing so.
 
 `/handoff --exit requested by <uuid>@<host>/<container>` is the other end
 (Amendment 18(d)): after the record, `/exit` is typed into this lane's own pane

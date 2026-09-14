@@ -800,22 +800,40 @@ if [ "$do_restart" = 1 ]; then
 	# session running this command is killed BY the command it just wrote the
 	# record for.
 	#
-	# THE LAUNCHER LINE IS `pclaude --lane <lane> <profile>` AND NOT
-	# `restart <lane>` (Amendment 18 Addendum 2, in force 2026-09-14T16:50:32Z:
-	# *"the `/ctx` respawn of Amendment 17(f) relaunches the lane's own pane with
-	# `lane <name>` … not `restart <lane>`, which leaves the person's PATH with
-	# #43"*). Until `lane` is on PATH (opensoft/openRepoTools#43) the launcher
-	# IS the door the addendum leaves open — *"or through the launcher
-	# directly"* — and `--lane` is a LEADING option, read before the action and
-	# the profile, so it goes BEFORE the profile and never after it.
-	launcher="${PCLAUDE:-}"
-	if [ -z "$launcher" ]; then
-		launcher="$(command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
+	# THE RESPAWN LINE IS `lane <lane>`, AND NEVER `restart <lane>` (Amendment 18
+	# Addendum 2, in force 2026-09-14T16:50:32Z, clause (i-8): *"The respawn
+	# after `/ctx` (Amendment 17(f)) relaunches the lane's own pane with `lane
+	# <name>` (its parked branch is exactly Amendment 11(i)'s act), or through
+	# the launcher directly"*, and its adoption line: *"opensoft/openRepoTools#36
+	# (`/ctx`) respawns with `lane <name>`"*). `lane <name>` needs no profile
+	# argument from here: its parked branch reads the record THIS COMMAND JUST
+	# WROTE — the lane's recorded directory and profile — and asks nothing.
+	#
+	# AND THE LAUNCHER IS THE DOOR THE SAME CLAUSE LEAVES OPEN, for the
+	# workstation where that word is not installed yet: `lane` arrives with
+	# opensoft/openRepoTools#43 and this command ships before it. A respawn is
+	# the one act no later refusal can undo — the pane's process is already dead
+	# when the new command fails — so the word is used only where it can be SEEN
+	# on `PATH` here, and everywhere else the line is `pclaude --lane <lane>
+	# <profile>`, the same act one door along. `--lane` is a LEADING option, read
+	# before the action and the profile, so it goes BEFORE the profile and never
+	# after it.
+	lane_word=""
+	lane_word_path="$(command -v lane 2>/dev/null || printf '')"
+	if [ -n "$lane_word_path" ] && [ -f "$lane_word_path" ] && [ -r "$lane_word_path" ]; then
+		# THE WORD THIS ESTATE PLACES, AND NOT EVERY `lane` ON A PATH. `pclaude`
+		# is nobody else's name; `lane` is an ordinary English word, and a pane
+		# respawned over somebody else's `lane` is a pane the person loses with
+		# no way back. So the file is read for the string every bash file this
+		# toolset ships carries, and a `lane` that is not this estate's takes
+		# the launcher — which is the SAFE side of the two: the same act, one
+		# door along, rather than a killed pane.
+		if head -c 8192 -- "$lane_word_path" 2>/dev/null | grep -q 'lane-collision-protocol'; then
+			lane_word="$lane_word_path"
+		else
+			note "there is a \`lane\` on PATH ($lane_word_path) that is not this estate's word (its head names no lane-collision-protocol), so the respawn goes through the launcher instead — the door Amendment 18 Addendum 2 (i-8) leaves open."
+		fi
 	fi
-	[ -n "$launcher" ] ||
-		die "the record is written and there is no launcher on PATH (pclaude, claude-profile), so this pane was NOT respawned. Start the lane yourself: $restart_cmd" 2
-	[ -n "$profile_name" ] ||
-		die "the record is written and this lane's record names no profile, so the launcher cannot be told which account to come up in and the pane was NOT respawned. Start it yourself, naming the profile: pclaude --lane $lane <profile>" 2
 	# THE FIRST PROMPT IS THE HANDOFF'S TOP BLOCK, and it is delivered by
 	# `lane-start` rather than carried through this argv. `LANE_START_FRESH=1`
 	# is the one seam: it says *a NEW session of this lane's agent, started with
@@ -823,8 +841,22 @@ if [ "$do_restart" = 1 ]; then
 	# exactly what a context clear is, and it is why `/ctx` does not simply
 	# resume the transcript it just paused. One mechanism, read in one place
 	# (`lane-start`'s 5a), so the prompt a respawn delivers and the prompt an
-	# `--agent` launch delivers are the same bytes from the same file.
-	launch_line="LANE_START_FRESH=1 $(quoted "$launcher" --lane "$lane" "$profile_name")"
+	# `--agent` launch delivers are the same bytes from the same file. It is an
+	# ENVIRONMENT seam and not an argument, so it survives `lane` handing the
+	# launch on to `lane-start` exactly as it survives the launcher doing so.
+	if [ -n "$lane_word" ]; then
+		launch_line="LANE_START_FRESH=1 $(quoted "$lane_word" "$lane")"
+	else
+		launcher="${PCLAUDE:-}"
+		if [ -z "$launcher" ]; then
+			launcher="$(command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
+		fi
+		[ -n "$launcher" ] ||
+			die "the record is written and there is neither \`lane\` nor a launcher on PATH (pclaude, claude-profile), so this pane was NOT respawned. Start the lane yourself: $restart_cmd" 2
+		[ -n "$profile_name" ] ||
+			die "the record is written and this lane's record names no profile, so the launcher cannot be told which account to come up in and the pane was NOT respawned. Start it yourself, naming the profile: pclaude --lane $lane <profile>" 2
+		launch_line="LANE_START_FRESH=1 $(quoted "$launcher" --lane "$lane" "$profile_name")"
+	fi
 	say "  respawning $target: $launch_line"
 	if tmux respawn-pane -k -t "$target" "$launch_line" 2>/dev/null; then
 		say "  respawned (the new session's first prompt is this handoff's top block)"
