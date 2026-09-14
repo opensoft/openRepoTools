@@ -3889,6 +3889,43 @@ hasnt "the skill no longer restates the withdrawn permission form (F-X9)" \
 has   "…and says what the vetoes actually do on the 4(c) path" \
       "$(cat "$RSKILL")" "takes the window's live session **unless a veto fires**"
 
+# THE SKILL'S OWN FAIL-CLOSED FENCE, EXTRACTED AND RUN (#26's fail-closed
+# family; Brett Heap, "Take it first, then land"). Six reads in this file
+# collapsed every code into the ordinary case: `|| lane=""`, `|| dir=""`,
+# `&& lane="$win_name"`, and one that ignored the status altogether. Amendment
+# 7(d) gives `8` and `2` to the fall-through — no answer, and a helper predating
+# the read — and everything else to a read that FAILED, which may not bind a
+# window or write a stamp. `lread` is that rule, once, and these four cases run
+# THE FILE'S OWN COPY of it against a helper in each state.
+#
+# IT SETS A VARIABLE RATHER THAN PRINTING, and that is load-bearing: a refusal
+# inside `$( )` would kill only the substitution's subshell and the skill would
+# carry on with an empty answer — the same trap `lanes-edit.sh:673-676` names
+# for `row_line`.
+rskill_fence="$(awk '/^lread\(\) \{/,/^\}$/' "$RSKILL")"
+is   "the skill carries the fence its reads go through" \
+     "$( [ -n "$rskill_fence" ] && printf yes || printf no )" "yes"
+fence_probe() {   # <helper exit code> — runs the SKILL's own fence against it
+  printf '#!/usr/bin/env bash\nprintf "ANSWER\\n"\nexit %s\n' "$1" > "$SANDBOX/fencehelper"
+  chmod +x "$SANDBOX/fencehelper"
+  ( L="$SANDBOX/fencehelper"; eval "$rskill_fence"
+    v=unset; lread v "'a thing it is not'" some-verb 2>"$SANDBOX/fence.err"
+    printf 'rc=%s v=[%s]' "$?" "$v" )
+}
+is   "an answer reaches the variable" "$(fence_probe 0)" "rc=0 v=[ANSWER]"
+is   "…8 is NO ANSWER and falls to the next rung" "$(fence_probe 8)" "rc=0 v=[]"
+is   "…2 is a helper predating the read and falls through too" "$(fence_probe 2)" "rc=0 v=[]"
+is   "…and a read that FAILED stops the skill where it stands" "$(fence_probe 6)" ""
+has  "…naming the read and the code it came back with" "$(cat "$SANDBOX/fence.err")" "some-verb\` failed (exit 6)"
+has  "…and saying what that is NOT, in Amendment 7(d)'s words" "$(cat "$SANDBOX/fence.err")" "a read that failed is never an answer"
+# AND EVERY READ IN THE FILE GOES THROUGH IT: none of the four old shapes is left.
+hasnt "no read is left on \`|| lane=\"\"\`" "$(cat "$RSKILL")" '2>/dev/null)" || lane=""'
+hasnt "…nor on \`|| dir=\"\"\`" "$(cat "$RSKILL")" '2>/dev/null)" || dir=""'
+hasnt "…nor on \`|| cell_last=\"\"\`" "$(cat "$RSKILL")" '2>/dev/null)" || cell_last=""'
+hasnt "…nor on a bare && that cannot tell 8 from 1" "$(cat "$RSKILL")" '>/dev/null 2>&1 && lane="$win_name"'
+has   "…and step 4 refuses a lane the register does not carry, before anything is written" \
+      "$(cat "$RSKILL")" "this skill binds an existing lane and never creates one"
+
 
 # ------------------------------------------- decision 8(e): a FORK is a DEFECT
 #

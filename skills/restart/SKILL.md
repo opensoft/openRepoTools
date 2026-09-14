@@ -36,6 +36,26 @@ and fall back to the symlink Amendment 5 left:
 ```sh
 L="$(command -v lanes-edit.sh || printf '%s' ~/projects/xFactory/lanes-edit.sh)"
 WS="$("$L" workstation 2>/dev/null | cut -f1)"    # decision 8(d): configuration, never `hostname`
+
+# EVERY READ BELOW GOES THROUGH THIS ONE FENCE, and Amendment 7(d) is the whole
+# of it: `0` an answer · `8` NO ANSWER · `2` a helper predating the read — both
+# of those fall to the next rung — and ANYTHING ELSE is a read that FAILED,
+# which is a REFUSAL naming the read and never a rung. It sets a VARIABLE rather
+# than printing, because a refusal inside `$( )` would only kill the
+# substitution's subshell and the skill would carry on with an empty answer.
+lread() {                      # lread <var> "<what the failure is NOT>" <verb> [args…]
+  ln_var="$1"; ln_not="$2"; shift 2
+  ln_out=""; ln_rc=0
+  ln_out="$(LANES_NO_FETCH=1 "$L" "$@" 2>/dev/null)" || ln_rc=$?
+  case "$ln_rc" in
+    0)   : ;;
+    8|2) ln_out="" ;;
+    *)   printf 'REFUSED: `%s %s` failed (exit %s). That is NOT %s — a read that failed is never an answer (Amendment 7(d)), and this skill will not bind a window, write a stamp or print a resume command on one. Run it by hand to see what it says.\n' \
+           "$L" "$1" "$ln_rc" "$ln_not" >&2
+         exit 1 ;;
+  esac
+  eval "$ln_var=\$ln_out"
+}
 ```
 
 ## 1. The window
@@ -51,8 +71,11 @@ a **window**; with no window there is nothing to bind.
 
 **With a `<lane>` argument, SKIP THIS STEP ENTIRELY and go to step 3 with that lane** — the operator's word
 beats every inference, exactly as `--lane` does at clause (b)'s precedence 1 (decision 7 point 6). Check only
-that the register has a row for it (`"$L" register-row <lane>`, exit 0); a lane the register does not carry
-is a **REFUSED** naming `lanes`.
+that the register has a row for it — `lread row_probe "'the register has no row for this lane'" register-row
+<lane>`, through the same fence as every other read here, so the check is LOCAL (`LANES_NO_FETCH=1`, like
+every read in this skill: a check in front of a bind must not sit on the network or block on ssh) and a read
+that FAILED refuses instead of being read as "no such lane". An empty answer — the contract's 8 — is a
+**REFUSED** naming `lanes`.
 
 With no argument, four rungs, **first answer wins, and every one of them is an exact match**:
 
@@ -61,7 +84,8 @@ With no argument, four rungs, **first answer wins, and every one of them is an e
 #     so the name is a statement of intent in the way `--lane` is.
 lane=""
 win_name="$(tmux display-message -p '#{window_name}')"
-LANES_NO_FETCH=1 "$L" register-row "$win_name" >/dev/null 2>&1 && lane="$win_name"
+lread row_probe "'this window is not a lane'" register-row "$win_name"
+[ -z "$row_probe" ] || lane="$win_name"
 
 # (b) THIS SESSION'S OWN UUID, in the register's session cell (R-A11-7).
 #     THE READ THAT ANSWERED ON THIS ESTATE THE MORNING THIS WAS WRITTEN: this
@@ -73,7 +97,7 @@ LANES_NO_FETCH=1 "$L" register-row "$win_name" >/dev/null 2>&1 && lane="$win_nam
 #     workstation's newest swap, which was a different lane. THE HOOK KNEW,
 #     exactly and with no question, through this same read — `lane_of_session`,
 #     which clause (h) exposes as a subcommand. One implementation, two callers.
-[ -n "$lane" ] || lane="$(LANES_NO_FETCH=1 "$L" session-lane "$CLAUDE_CODE_SESSION_ID" 2>/dev/null)" || lane=""
+[ -n "$lane" ] || lread lane "'no row names this session'" session-lane "$CLAUDE_CODE_SESSION_ID"
 
 # (c) THE WINDOW THE OPERATOR IS STANDING IN, out of the swap records. The
 #     `<@id>` first and the `<session>:<index>` second, and either only where
@@ -83,8 +107,8 @@ LANES_NO_FETCH=1 "$L" register-row "$win_name" >/dev/null 2>&1 && lane="$win_nam
 #     implementation: this skill, the launcher's precedence 3 and `/lane-swap`.
 if [ -z "$lane" ]; then
   wid="$(tmux display-message -p '#{window_id}')"
-  lane="$(LANES_NO_FETCH=1 "$L" window-lane "$WS" "$wid" 2>/dev/null)" || lane=""
-  [ -n "$lane" ] || lane="$(LANES_NO_FETCH=1 "$L" window-lane "$WS" "$(tmux display-message -p '#S:#I')" 2>/dev/null)" || lane=""
+  lread lane "'no lane is bound to this window'" window-lane "$WS" "$wid"
+  [ -n "$lane" ] || lread lane "'no lane is bound to this window'" window-lane "$WS" "$(tmux display-message -p '#S:#I')"
 fi
 
 # (d) NOTHING MATCHED — PRINT THE PER-REPO LISTING AND STOP (decision 7 point 6).
@@ -110,7 +134,7 @@ refuse everywhere (`R-A11-8`, on RV-T3).
 ## 3. The directory
 
 ```sh
-dir="$(LANES_NO_FETCH=1 "$L" lane-dir "$lane" 2>/dev/null)" || dir=""
+lread dir "'this lane has no recorded directory'" lane-dir "$lane"
 if [ -z "$dir" ]; then                                # 8 → the default; nothing is backfilled
   # `<repo>` IS THE NAME WITH ITS POSITION REMOVED, AND A POSITION IS DIGITS.
   # `${lane%-*}` strips the last `-`-separated token WHATEVER it is, so for
@@ -153,7 +177,11 @@ levels under `$PROJECTS_ROOT`, each **proved by that directory's own `origin`** 
 ## 4. The decision — **before** anything is written
 
 ```sh
-row="$(LANES_NO_FETCH=1 "$L" register-row "$lane")"
+lread row "'the register has no row for this lane'" register-row "$lane"
+# AND AN EMPTY ANSWER IS A REFUSAL HERE, not a rung: step 4 decides what to
+# WRITE, and `lane-start --no-launch` on a lane-shaped name the register has
+# never carried CREATES a row. A read that answered 8 must not reach it.
+[ -n "$row" ] || { printf 'REFUSED: the register has no row for lane %s. Find it with `lanes`, or open it with `lane-start <repo> <n>` — this skill binds an existing lane and never creates one.\n' "$lane" >&2; exit 1; }
 # `last-session` AND NOT `register-row` ALONE, AND THAT IS RULED RATHER THAN
 # ASSUMED (A11 Addendum 4 ruling 14, ratified "a11 addendum 4 yes": *"`/restart`'s
 # step 4 may read `last-session` (the cell, then the log) rather than clause
@@ -169,7 +197,7 @@ row="$(LANES_NO_FETCH=1 "$L" register-row "$lane")"
 # HAS a resume target, and 4(a) would have walked past it into a bind that
 # silently orphaned the transcript. The cost is that two sources answer where
 # the clause named one, which is why it is a ruling and not a preference.
-cell_last="$(LANES_NO_FETCH=1 "$L" last-session "$lane" 2>/dev/null)" || cell_last=""
+lread cell_last "'this lane has no resume target'" last-session "$lane"
 ```
 
 Compare `$cell_last` with `$CLAUDE_CODE_SESSION_ID`:
