@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# lanes — every lane on this workstation, newest activity first.
+# lanes — the lanes of the checkout you are in, or every lane, newest first.
 #
 #   lanes            INSIDE a lane checkout: that repository's lanes, and the
 #                    next free position with the exact line that takes it.
@@ -82,7 +82,8 @@ die() { printf '\n%s: REFUSED: %s\n' "$prog" "$1" >&2; exit "${2:-64}"; }
 
 usage() {
 	cat <<'USAGE'
-lanes [--fetch] [--all] [--here] [--repo <owner/repo>] [--dir <path>] [--ws <workstation>]
+lanes [--fetch] [--all] [--here] [--repo <owner/repo>] [--dir <path>]
+      [--prefix <repo>] [--ws <workstation>]
 
 Inside a lane checkout: THAT REPOSITORY's lanes, ending with the next free
 position and the exact `lane-start <repo> <n>` that takes it. Outside one: every

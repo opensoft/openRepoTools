@@ -630,6 +630,107 @@ def test_the_documents_say_the_sweep_skips_a_root_without_the_overlay():
             f"{name} does not show the summary clause a person actually sees")
 
 
+def _parser_long_options(text):
+    """Every long option the file's argument loop has an arm for, taken from
+    the arms themselves rather than from a list beside them."""
+    loop = re.search(r"^while \[ \$# -gt 0 \]; do$(.*?)^done$", text,
+                     re.S | re.M)
+    assert loop, "no `while [ $# -gt 0 ]` argument loop found"
+    found = set()
+    for line in loop.group(1).splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("-"):
+            continue
+        found.update(re.findall(r"--[a-z][a-z0-9-]+", stripped.split(")", 1)[0]))
+    return found
+
+
+@pytest.mark.parametrize("name", ["lanes", "restart"])
+def test_every_option_the_parser_accepts_is_in_the_usage(name):
+    """AN OPTION NOT IN THE SYNOPSIS IS AN OPTION NOBODY FINDS.
+
+    `lanes --prefix <repo>` was parsed, documented in the BODY of `--help` and
+    used by `lane-start <repo>` with no position - and missing from the SYNOPSIS
+    LINE, which is the line a person reads first and often the only one they
+    read. So the one way to ask for a repository's lanes by name was invisible
+    to everybody who did not read to the bottom. The defect is the same one
+    `test_the_unknown_subcommand_refusal_names_every_subcommand_there_is`
+    exists for, one file over, and the fix is the same: DERIVE the list from
+    the arms rather than restate it beside them.
+
+    The SYNOPSIS is what is asserted, not the whole of `--help`: the body had
+    `--prefix` all along, so a rule that accepted the body would have passed
+    over the defect it was written for. `--help` itself is exempt, because a
+    synopsis that lists it says nothing a reader typing `--help` does not
+    already know.
+
+    Held for the two words Amendment 11 adds, and not yet for the eight files
+    beside them: their parsers are older, larger and not all of this shape, and
+    widening the rule to them is an act with its own evidence rather than a
+    line in this one.
+    """
+    text = (REPO / name).read_text(encoding="utf-8")
+    usage = re.search(r"^usage\(\) \{\n\tcat <<'USAGE'\n(.*?)^USAGE$", text,
+                      re.S | re.M)
+    assert usage, f"{name} has no `usage()` heredoc"
+    synopsis = usage.group(1).split("\n\n", 1)[0]
+    missing = sorted(opt for opt in _parser_long_options(text)
+                     if opt != "--help" and opt not in synopsis)
+    assert not missing, (
+        f"{name} parses {', '.join(missing)} and its usage line never names "
+        f"them: an option a person cannot find is an option they do not use")
+
+
+def test_the_documents_say_what_a_bare_lanes_lists():
+    """THE SETTLED DEFAULT, AND THE FOUR PLACES THAT STATED THE OLD ONE.
+
+    Brett Heap settled clause (j) on 2026-09-13T20:38:11Z, verbatim "Narrow
+    inside a checkout (Recommended)": a bare `lanes` INSIDE a lane checkout
+    lists THAT REPOSITORY's lanes and ends with the next free position and the
+    `lane-start <repo> <n>` that takes it; `lanes --all`, and a bare `lanes`
+    outside every checkout, are the every-lane listing.
+
+    The code took it in the same round that documented the OPPOSITE. `lanes`'s
+    own header line, README.md's code block, the manual's "two words" block and
+    `--help`'s entry all still read "every lane on this workstation" - the
+    pre-settlement default, and wrong twice over, because the scope is the
+    ESTATE now and inside a checkout it is one repository. Nothing was red for
+    it: no assertion in this repository had ever read those four sentences,
+    which is RV-B2's rule one file over - an untested sentence is a sentence
+    that drifts.
+
+    The ABSENCE half is the half that bites. A reader promised every lane who
+    gets one repository's does not read a narrowing, they read a broken
+    command, and the one word that would have answered them - `--all` - is the
+    word the stale sentence does not carry.
+    """
+    surfaces = ("README.md", "docs/README-lanes.md", "lanes", "restart",
+                "openRepoTools")
+    for name in surfaces:
+        text = (REPO / name).read_text(encoding="utf-8")
+        assert "every lane on this workstation" not in text, (
+            f"{name} still calls `lanes` the listing of every lane on this "
+            f"workstation, which is the pre-settlement default")
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    assert "Narrow inside a checkout" in readme, (
+        "README.md does not quote the settlement that narrowed the bare word")
+    assert "lanes --all" in readme, (
+        "README.md never shows the word that asks for every lane")
+    assert "next free position" in readme, (
+        "README.md does not say the narrowed listing ends with the next free "
+        "position, which is the half of the settlement that is not a filter")
+    usage = (REPO / "openRepoTools").read_text(encoding="utf-8")
+    assert "lanes [--all] [--fetch]" in usage, (
+        "`openRepoTools --help` does not offer --all, so a person narrowed "
+        "into a checkout cannot find the way back to every lane")
+    manual = (REPO / "docs/README-lanes.md").read_text(encoding="utf-8")
+    assert "Narrow inside a checkout (Recommended)" in manual, (
+        "the manual does not quote the settlement verbatim")
+    assert "Yes, list and suggest (Recommended)" in manual, (
+        "the manual does not quote the settlement for `lane-start <repo>` "
+        "with no position, which was ratified in the same breath")
+
+
 def test_agents_md_names_the_pin_rules():
     """The three rules an agent touching the submodule has to have read, and
     the reason they are in AGENTS.md rather than only in the pin's header: an
@@ -1131,9 +1232,33 @@ def test_readme_is_short_enough_to_be_read():
     never with prose, which is why the four lines A11 Addendum 4 ruling 9 adds
     — `--install`'s command-file list, and `commands/swap.md` in it — fit
     inside it rather than raising it again.
+
+    382 -> 389 on 2026-09-13, for TWO rules, and the second is a correction.
+
+    The first is the SETTLED DEFAULT of clause (j)'s listing
+    (Brett Heap, 2026-09-13T20:38:11Z, verbatim "Narrow inside a checkout
+    (Recommended)"). Five lines, and every one of them is behaviour a person
+    MEETS: the code block said `lanes  # every lane on this workstation`, which
+    was the pre-settlement default and is now wrong twice over - a bare `lanes`
+    inside a checkout lists THAT REPOSITORY's lanes and ends with the next free
+    position and the `lane-start <repo> <n>` that takes it, and outside one it
+    lists every lane the estate knows rather than one workstation's. A reader
+    who types the word from a checkout and is told the listing is broken,
+    because the document promised them every lane, is the cost of leaving it.
+    The second line of the block is `lanes --all`, which is the sentence's
+    other half and the thing to type when the narrowing is not what you meant.
+
+    The second is the COMMAND FILE the install paragraph never named. A11
+    Addendum 4 ruling 9 gave `--install` `commands/swap.md` at the same pair of
+    paths a skill takes, and the count below that paragraph was raised to
+    eighteen - but the paragraph itself still said "five things that are not
+    files in that directory" and listed four skill copies and the hook. Two
+    lines name the command file and its two destinations, which is the half of
+    the install contract a person cannot verify from the count alone: they can
+    count to eighteen and still not know where `/swap` lands.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 382, f"README.md is {len(lines)} lines; the cap is 382"
+    assert len(lines) <= 389, f"README.md is {len(lines)} lines; the cap is 389"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
@@ -1398,6 +1523,37 @@ def test_every_fork_surface_prints_the_one_act():
     assert not missing, f"these surfaces name no `--retire` act at all: {missing}"
 
 
+def test_the_manual_offers_the_fork_act_and_not_a_kill():
+    """THE SAME RULE AS THE TEST ABOVE, READ BY PARAGRAPH BECAUSE PROSE WRAPS.
+
+    `test_every_fork_surface_prints_the_one_act` matches LINES, and a line is
+    the right unit in a bash file where each message is one string. It is the
+    wrong unit in a manual: `README-lanes.md`'s fork paragraph said *"none of
+    them kills anything - retiring is `kill <pid>`, typed by a person"*, and
+    the two halves of that contradiction sat on two different lines, so no
+    line-matching rule could see it and the document went on offering the one
+    act clause (k) rule (e) refuses BY NAME while the five surfaces beside it
+    had all been corrected (F-X8).
+
+    So the manual is read as PARAGRAPHS: any paragraph that speaks of a fork
+    and offers a `kill` must name `--retire`. The idle holders of a lane are a
+    different population - Amendment 6(d)'s orphans, which `lane-end --retire`
+    refuses because they are not forks - and their `kill` lines are untouched
+    here for the same reason the test above leaves them alone.
+    """
+    text = (REPO / "docs/README-lanes.md").read_text(encoding="utf-8")
+    offenders = [" ".join(para.split())[:200]
+                 for para in re.split(r"\n\s*\n", text)
+                 if re.search(r"\bfork\b", para, re.I)
+                 and re.search(r"\bkill\b", para)
+                 and "--retire" not in para]
+    assert not offenders, (
+        "these paragraphs of the manual offer a `kill` for a fork and never "
+        f"clause (k) rule (e)'s one act:\n  " + "\n  ".join(offenders))
+    assert "lane-end <lane> --retire <pid|uuid>" in text, (
+        "the manual never spells the one fork act in full")
+
+
 def test_no_committed_file_names_a_host_absolute_path():
     """openRepoShape #61: a suite stayed green on every machine but the one a
     fixed path was written on, because the ONE test that read it SKIPPED when
@@ -1640,6 +1796,45 @@ def test_no_shipped_bash_quotes_the_replacement_half_of_a_substitution(name):
         f"writes those quote marks out as text. Build the string from "
         f"`${{var%%\"$pat\"*}}` and `${{var#*\"$pat\"}}` instead:\n  "
         + "\n  ".join(bad))
+
+
+@pytest.mark.parametrize("name", ALL_BASH)
+def test_no_shipped_bash_opens_a_case_inside_a_command_substitution(name):
+    """A `)` THAT CLOSES A `case` PATTERN CLOSES THE SUBSTITUTION TOO (A9
+    Addendum 4, R-A9-11).
+
+    Bash 3.2 - the bash the macOS job parses these files with - reads the `)`
+    that ends a case PATTERN as the one that ends the enclosing `$( )`. So
+    `$(case "$x" in a) printf yes ;; *) printf no ;; esac)` is a SYNTAX ERROR
+    there and nowhere else, and what the caller gets back is a fragment of the
+    script's own source. The job answered `command substitution: line 3284:
+    syntax error near unexpected token 'newline'` at `dcf1027`; two more of the
+    shape were written into this amendment's own suite afterwards, and at
+    `708395e` `tests-macos` compared ` printf 'resumed Y' ;; *) printf 'did
+    not' ;; esac)` against `did not` - twice, and green on every GNU runner.
+
+    A `bash -n` ON A GNU RUNNER PARSES IT, which is why this is a text rule
+    rather than a parse gate: all eleven files already pass `bash -n` in CI,
+    and the macOS job is the only place the defect exists. The fix is one line
+    each time - hoist the `case` above the assertion and read the variable it
+    sets - so the rule is held for every bash file this repository ships
+    rather than for the two that were found.
+
+    Only the same-line form is matched. A `case` inside a multi-line `$(` ...
+    `)` is the same defect and wants the same hoist, but a line-level regex is
+    what the three rules beside this one are, and a paren-counting scanner that
+    misread one quoted `)` would refuse a file for nothing.
+    """
+    text = (REPO / name).read_text(encoding="utf-8")
+    bad = [f"{number}: {line.strip()}"
+           for number, line in enumerate(text.splitlines(), 1)
+           if not line.lstrip().startswith("#")
+           and re.search(r"\$\([^()]*\bcase\b", line)]
+    assert not bad, (
+        f"{name} opens a `case` inside a `$( )`; bash 3.2 ends the "
+        f"substitution at the first pattern's `)` and hands the caller a piece "
+        f"of the script's own source. Hoist the `case` onto its own line and "
+        f"read the variable it sets:\n  " + "\n  ".join(bad))
 
 
 @pytest.mark.parametrize("name", ALL_BASH)

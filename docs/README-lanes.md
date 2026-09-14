@@ -1227,8 +1227,9 @@ without the repository's `CLAUDE.md` or the lane's memory, silently.
 ```console
 $ restart openRepoProject-1     # cd to its directory, relaunch through the launcher
 $ restart                       # this window's lane; or this checkout's lanes, listed
-$ lanes                         # every lane on this workstation, newest write first
-$ lanes --fetch                 # the same, after refreshing from origin
+$ lanes                         # inside a checkout: ITS lanes, and the next free one
+$ lanes --all                   # every lane the register and the logs know
+$ lanes --fetch                 # any of them, after refreshing from origin
 ```
 
 `restart <lane>` needs **no window, no record of a window and no guess** — only
@@ -1254,13 +1255,53 @@ which is why the loss is silent.
 **Neither is ever a picker.** A picker is a process that holds the terminal and
 returns a selection; a listing asks nothing, returns nothing, exits, and the
 next act is a command you type. `restart` with no argument prints the lanes of
-the **current checkout**; `lanes` prints **every lane on this workstation**.
+the **current checkout** on this workstation; `lanes` prints **this checkout's
+repository's lanes**, or **every lane** outside one — the section below.
 
 `/restart [<lane>]` is the same act from **inside** a running session, and it is
 a skill rather than a command because a session cannot `exec` a launcher over
 itself: it binds the window through `lane-start --no-launch`, and where this
 session is not the lane's conversation it prints exactly `claude --resume <uuid>`
 and stops.
+
+### The bare word narrows inside a checkout
+
+**Brett Heap settled clause (j)'s default on 2026-09-13T20:38:11Z, verbatim
+*"Narrow inside a checkout (Recommended)"*, and `lane-start <repo>` with no
+position in the same breath, verbatim *"Yes, list and suggest (Recommended)"*.**
+
+A bare `lanes` INSIDE a lane checkout lists **that repository's lanes** — the
+checkout around the cwd as clause (i)'s `--dir`, and that checkout's `origin` as
+`--repo`, which are an **OR and not an AND**, because a lane's home repository
+and the checkout it sits in are not the same fact — and it ends with the **next
+free position** and the exact `lane-start <repo> <n>` that takes it, filled in.
+The position offered is the **lowest** one no lane of that repository holds,
+never the highest plus one: positions come back as lanes end, and `lane-start`
+refuses one that is taken, so this is a suggestion with a guard behind it rather
+than an assertion.
+
+**The repository is the one `origin` names, and the directory's name is only the
+fallback.** Inside a worktree, `basename $(git rev-parse --show-toplevel)` is the
+WORKTREE's name: run in a worktree of `openRepoTools` called `ort-a11` the
+listing narrowed to a repository called `ort-a11`, found none, and offered
+`lane-start ort-a11 1` — a lane whose `$PROJECTS_ROOT/<repo>` cannot exist. A
+checkout with no `origin` keeps the directory name, because there is nothing
+else to have.
+
+`lanes --all`, and a bare `lanes` outside every checkout, are clause (j)'s
+every-lane listing **unchanged**; any explicit narrowing — `--repo`, `--dir`,
+`--ws`, `--here` — is the caller saying which lanes they mean and suppresses it
+too. `--here` is the pre-Amendment-11 default, only the asking workstation's
+lanes, kept as an option: "list the lanes" on a two-workstation estate means
+both.
+
+`lane-start <repo>` with **no position** prints that same listing and that same
+next free position, and **launches nothing**. It still exits **2** — a
+repository is not a lane, and a caller that scripted `lane-start <repo>`
+expecting a session must not read 0 from a run that started none — and the
+refusal names the position it has just given the reader a listing for. It
+renders nothing of its own: it runs `lanes --prefix <repo>`, so the two surfaces
+cannot offer different positions.
 
 ### What the record carries now
 
@@ -1315,7 +1356,7 @@ falls to its next rung there rather than refusing.
 | `lanes-edit.sh session-lane <uuid>` | the lane whose register row's **session cell** names that transcript uuid. Adoption act 0's; it is the read the `SessionStart` hook already made. **0** the lane · **8** no row's cell names it · **64** usage — like every other read in this table, by A11 Addendum 4 ruling 1, which corrects act 0's `2` · **2** a helper predating the read |
 | `lanes-edit.sh last-session <lane>` | the lane's resume target: the last uuid in the published cell **whatever shape it is in**, and failing that the session of its last `PAUSED`/`RESUMED`. This is what `/restart`'s step 4 reads, by A11 Addendum 4 ruling 14, rather than clause (f)'s `register-row` alone — so a lane whose row was never stamped but whose log records the session it paused in still has a resume target |
 | `lanes-edit.sh forks <lane>` | the **live forks** of the lane's transcript — never holders, and a defect to retire |
-| `lanes-edit.sh lanes [--repo\|--dir\|--ws\|--lane\|--all\|--fetch]` | every lane, newest write first, tab-separated: clause (j)'s **ten columns in clause (j)'s order** — name, state, workstation, profile, window, last transcript uuid, directory, held objects, age, restart line — then the read's own two, `home` and the count of live forks. `lanes` and `restart` each render the subset their surface needs (A11 Addendum 4 ruling 7), and column 10 is the read's so the two cannot offer different commands. **The one read whose default is local**, and `--lane <lane>` answers about one without walking the estate |
+| `lanes-edit.sh lanes [--repo\|--dir\|--prefix\|--ws\|--lane\|--here\|--all\|--fetch]` | every lane, newest write first, tab-separated: clause (j)'s **ten columns in clause (j)'s order** — name, state, workstation, profile, window, last transcript uuid, directory, held objects, age, restart line — then the read's own two, `home` and the count of live forks. `lanes` and `restart` each render the subset their surface needs (A11 Addendum 4 ruling 7), and column 10 is the read's so the two cannot offer different commands. **The one read whose default is local**, and `--lane <lane>` answers about one without walking the estate. `--prefix <repo>` is the LABEL fallback the checkout narrowing and `lane-start <repo>` both ask for, used only where a lane has neither a home nor a `dir` |
 | `lanes-edit.sh workstation` | `<name><TAB><source>` — `seam`, `hostname`, or `container-unset` |
 | `lanes-edit.sh fetch-age` | how old this checkout's answer is |
 
@@ -1346,8 +1387,11 @@ mechanism exists for.
 register.** A `--fork-session` copies the parent's title and gets a **new id**,
 so lineage is never the test: the holder is the session whose id the published
 cell names. `lanes`, `/restart`, `who --lane` and the `SessionStart` hook all
-show a live fork as a **defect to retire**, and none of them kills anything —
-retiring is `kill <pid>`, typed by a person.
+show a live fork as a **defect to retire**, and none of them kills anything.
+**Retiring it is `lane-end <lane> --retire <pid|uuid>`** — the one act, ratified
+decision 8(e) and clause (k) rule (e) — which writes the Amendment 6(d) record
+that stops every read counting it, and **kills nothing either**. Stopping the
+process is a separate act and it stays the person's.
 
 ### The workstation's name
 
@@ -1456,7 +1500,7 @@ link-estates                                          # repoints ~/projects/xFac
 ```
 
 **You are not asked to remember it: `--install` refuses** (A9 Addendum 4,
-R-A9-12). In its planning phase, before any of the sixteen artifacts is placed,
+R-A9-12). In its planning phase, before any of the eighteen artifacts is placed,
 it walks all eleven targets and dies naming every one that is not a regular file,
 what it is, and the one `rm` that clears them. `cp` FOLLOWS A SYMLINK, so an
 install over these would leave the two commands UNINSTALLED — the targets stay

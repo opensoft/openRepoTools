@@ -34,9 +34,10 @@
 # from `opensoft/brett-wip` with their history under Amendment 9(b), because a
 # person's workspace repository holds their DATA and the code belongs where
 # code goes. It also places TWO skills, `/lane-swap` and `/restart`, at two
-# paths each, and merges one SessionStart entry into `~/.claude/settings.json`
-# (Amendment 9(b), A8 Addendum 2 R-A8-5): SIXTEEN artifacts, and the count is
-# the invariant.
+# paths each, ONE command file, `/swap`, at that same pair of paths (A11
+# Addendum 4 ruling 9), and merges one SessionStart entry into
+# `~/.claude/settings.json` (Amendment 9(b), A8 Addendum 2 R-A8-5): EIGHTEEN
+# artifacts, and the count is the invariant.
 #
 # One install line for the whole toolset, so a second engineer gets the estate
 # commands from the README's one line and nothing depends on anyone's dotfiles.
@@ -88,9 +89,10 @@ lane words, the four lane helpers and the alias table they read:
                                    the launcher, asking nothing. With no lane,
                                    the current window's lane — or the lanes of
                                    the current checkout, listed
-  lanes [--fetch]                  every lane on this workstation, newest
-                                   activity first; reads locally, changes
-                                   nothing, asks nothing
+  lanes [--all] [--fetch]          inside a checkout: that repository's lanes
+                                   and the next free position, filled in;
+                                   outside one, or with --all, every lane.
+                                   Reads locally, changes nothing, asks nothing
   lane-start <repo> <n>            open a lane: name the window, register the
                                    row, launch or resume the session
   lane-end <lane>                  close it, and refuse while anything is in
@@ -256,9 +258,9 @@ collect_commands() {
 install_commands() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
 	local name target source verb placed=0
-	# ALL SIXTEEN IN HAND BEFORE ANY IS PLACED. The eleven files, the two
-	# skills, and the ONE artifact that is not a whole file — the merged
-	# `settings.json` —
+	# ALL EIGHTEEN IN HAND BEFORE ANY IS PLACED. The eleven files, the two
+	# skills, the one command file, and the ONE artifact that is not a whole
+	# file — the merged `settings.json` —
 	# are all computed here, so a fetch that failed replaces nothing and a merge
 	# that cannot be computed refuses having placed nothing. That last one is
 	# the same rule `--install` already had, extended to cover a merge: an

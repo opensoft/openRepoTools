@@ -864,13 +864,25 @@ DIR_REAL="$(cd -- "$DIR" && pwd -P)"
 # THE DIRECTORY THIS SCRIPT IS ABOUT TO RECORD MUST BE READABLE BACK OUT OF THE
 # LINE THAT RECORDS IT (clause (c), and Amendment 8(b)'s same refusal for
 # `window`). `, ` and ` — ` are what divide an event line into its fields and
-# its free text, and a `"` is what clause (c) uses to make a path with a space
-# ONE ref under Amendment 7(b)'s grammar — so a path carrying any of the three
-# is REFUSED, naming the path, rather than truncated, escaped or appended. A
-# log whose own parser cannot read a line is a log that has lost the fact.
+# its free text, `; ` is what divides the payload's SUB-FIELDS from each other,
+# and a `"` is what clause (c) uses to make a path with a space ONE ref under
+# Amendment 7(b)'s grammar — so a path carrying any of the four is REFUSED,
+# naming the path, rather than truncated, escaped or appended. A log whose own
+# parser cannot read a line is a log that has lost the fact.
+#
+# `; ` WAS THE ONE THIS FENCE DID NOT HAVE, and clause (c) names it in the same
+# breath as the other two: *"A value containing `, `, ` — ` or `; ` is refused,
+# exit 2, naming it — not truncated, not escaped, and not appended."* The
+# `/lane-swap` skill, the other writer the clause names, has refused all three
+# since `68614bf`; this one refused two of them and the quoting does NOT cover
+# the gap. `payload_subfield` splits on `; ` BEFORE it honours a quote
+# (`lanes-edit.sh:payload_subfield`), so `dir "/p/a; b"` — quoted, because it
+# carries a space — splits into `dir "/p/a` and `b"`, and `lane-dir` answers
+# `"/p/a`: a path that is wrong, carries a quote mark, and was never written by
+# anyone. That is Evidence 3's failure exactly, in a file nothing rewrites.
 case "$DIR" in
-  *', '*|*' — '*|*'"'*)
-    die "this lane's directory is $DIR, and a \`dir\` sub-field may not contain ', ', ' — ' or '\"': those are what divide an event line into its fields and its free text, and the log is append-only, so a line written wrong there is wrong for ever. Move the checkout, or start the lane with --dir <a path without them>" 2 ;;
+  *', '*|*' — '*|*'; '*|*'"'*)
+    die "this lane's directory is $DIR, and a \`dir\` sub-field may not contain ', ', ' — ', '; ' or '\"': those are what divide an event line into its fields, its sub-fields and its free text, and the log is append-only, so a line written wrong there is wrong for ever. Move the checkout, or start the lane with --dir <a path without them>" 2 ;;
 esac
 
 # THIS LANE'S OWN ARGUMENTS, so no hint this script prints ever hands a reader a
@@ -1768,8 +1780,8 @@ quote_subfield() {
 }
 lane_profile="${CLAUDE_PROFILE_NAME:-}"
 case "$lane_profile" in
-  *', '*|*' — '*|*'"'*)
-    note "\$CLAUDE_PROFILE_NAME is '$lane_profile', which contains ', ', ' — ' or '\"' — the lane's \`profile\` sub-field is left out rather than written unreadable"
+  *', '*|*' — '*|*'; '*|*'"'*)
+    note "\$CLAUDE_PROFILE_NAME is '$lane_profile', which contains ', ', ' — ', '; ' or '\"' — the lane's \`profile\` sub-field is left out rather than written unreadable"
     lane_profile="" ;;
 esac
 lane_payload="home $home_nwo; estate $estate; dir $(quote_subfield "$DIR")"

@@ -4099,6 +4099,51 @@ is    "lane-start exits 0 for a lane started outside the launcher" "$rc" 0
 hasnt "…and writes NO profile sub-field rather than inventing one" "$(cat "$LOGD/repoA11c-1.md")" "profile "
 has   "…while still recording the directory, which it does know" "$(cat "$LOGD/repoA11c-1.md")" "dir $HOME/projects/repoA11c"
 
+# CLAUSE (c)'s SEPARATOR FENCE, ON THE WRITER THAT DID NOT HAVE IT. SPEC rev 6
+# §5 adds `; ` to `, ` and ` — ` for `dir` and `profile` — *"A value containing
+# `, `, ` — ` or `; ` is refused, exit 2, naming it — not truncated, not escaped,
+# and not appended"* — and the `/lane-swap` skill, the other writer the clause
+# names, has refused all three since `68614bf` (the `skill_subfield` cases
+# below prove it). THIS writer refused two of them.
+#
+# THE QUOTING DOES NOT COVER THE GAP, which is why this is a refusal and not a
+# shrug: `payload_subfield` splits the payload on `; ` BEFORE it honours a
+# quote, so `dir "/p/a; b"` — quoted, because a path with a space is written
+# quoted — splits into `dir "/p/a` and `b"`, and `lane-dir` answers `"/p/a`: a
+# path that is wrong, carries a quote mark, and nobody ever wrote. A restart
+# then lands in the right transcript and the wrong directory, silently, which is
+# Evidence 3 exactly.
+A11F="$HOME/projects/repoA11f"
+mkdir -p "$A11F/a; b"
+git init -q -b main "$A11F/a; b"
+git -C "$A11F/a; b" remote add origin "https://github.com/opensoft/repoA11f.git"
+FAKE_TMUX_WINDOW="a11start:@42" FAKE_TMUX_WINDOW_INDEX=3 FAKE_TMUX_WINDOW_NAME=claude \
+  CLAUDE_PROFILE_NAME=team-05a run "$START" --dir "$A11F/a; b" repoA11f 1 --no-launch
+is    "lane-start REFUSES a directory carrying the payload's sub-field separator" "$rc" 2
+has   "…naming the path, rather than truncating or escaping it" "$err" "$A11F/a; b"
+has   "…and the separator, beside the two this fence always had" "$err" "'; '"
+is    "…having written no log for the lane at all" \
+      "$( [ -f "$LOGD/repoA11f-1.md" ] && printf wrote || printf none )" "none"
+# THE COMMA IS STILL REFUSED, so the widening added a separator and removed none.
+mkdir -p "$A11F/c, d"
+git init -q -b main "$A11F/c, d"
+git -C "$A11F/c, d" remote add origin "https://github.com/opensoft/repoA11f.git"
+FAKE_TMUX_WINDOW="a11start:@42" FAKE_TMUX_WINDOW_INDEX=3 FAKE_TMUX_WINDOW_NAME=claude \
+  CLAUDE_PROFILE_NAME=team-05a run "$START" --dir "$A11F/c, d" repoA11f 1 --no-launch
+is    "…and a ', ' is refused exactly as it was" "$rc" 2
+# A PROFILE CARRYING IT IS DROPPED AND NEVER REFUSED, because a profile is not
+# the thing the run needs to be correct — the same asymmetry this file already
+# holds for `, ` and `"`.
+mkdir -p "$HOME/projects/repoA11g"
+git init -q -b main "$HOME/projects/repoA11g"
+git -C "$HOME/projects/repoA11g" remote add origin "https://github.com/opensoft/repoA11g.git"
+FAKE_TMUX_WINDOW="a11start:@42" FAKE_TMUX_WINDOW_INDEX=3 FAKE_TMUX_WINDOW_NAME=claude \
+  CLAUDE_PROFILE_NAME='team; 05a' run "$START" repoA11g 1 --no-launch
+is    "a PROFILE carrying the separator does not stop the start" "$rc" 0
+hasnt "…and no profile sub-field is written rather than an unreadable one" \
+      "$(cat "$LOGD/repoA11g-1.md" 2>/dev/null || :)" "profile "
+has   "…while the run says which separator took it out" "$err" "'; '"
+
 # AN `<@id>` IS `@<digits>` AND NOTHING ELSE (F-X13(a), A11 Addendum 4 ruling 10).
 # `case … in @*)` accepted anything that merely STARTED with an at-sign. Two
 # things that are not ids do: a `tmux` too old to know `#{window_id}` prints the
@@ -4383,10 +4428,21 @@ git -C "$HOME/projects/repoVT" remote add origin "https://github.com/opensoft/re
 write_record_ns "$sessions_dir/live-vt.json" "$VT_ID" "$LIVE_PID" "$live_start" "vtsess:@31.%31" "repoVT-1" "user" "busy"
 FAKE_TMUX_WINDOW="vtsess:@31" FAKE_TMUX_WINDOW_INDEX=0 FAKE_TMUX_WINDOW_NAME="repoVT-1" \
   run "$START" --dry-run --dir "$HOME/projects/repoVT" repoVT-2
+# THE TWO `case`s ARE HOISTED OUT OF THE `$( )`, and they have to be (A9
+# Addendum 4, R-A9-11, and `test_no_shipped_bash_opens_a_case_inside_a_command_substitution`
+# is what holds the rule now). Bash 3.2 reads the `)` that closes a case PATTERN
+# as the one that closes the command substitution, so both of these were a
+# syntax error on macOS and nowhere else: at `708395e` the assertion compared a
+# fragment of THIS FILE'S OWN SOURCE — `printf 'resumed Y' ;; *) printf 'did
+# not' ;; esac)` — against `did not`, and `tests-macos` was two cases redder
+# than every GNU runner for a defect in the test rather than in `lane-start`.
+# Same two tests, two variables earlier.
+case "$err" in *"--resume $VT_ID"*) vt_resumed="resumed Y" ;; *) vt_resumed="did not" ;; esac
+case "$err" in *"append-session-id repoVT-2"*"$VT_ID"*) vt_stamped="stamped Y" ;; *) vt_stamped="did not" ;; esac
 is  "lane-start X typed from lane Y's window never resumes X as Y's transcript" \
-    "$(case "$err" in *"--resume $VT_ID"*) printf 'resumed Y' ;; *) printf 'did not' ;; esac)" "did not"
+    "$vt_resumed" "did not"
 is  "…and never plans X's row to be stamped with Y's uuid" \
-    "$(case "$err" in *"append-session-id repoVT-2"*"$VT_ID"*) printf 'stamped Y' ;; *) printf 'did not' ;; esac)" "did not"
+    "$vt_stamped" "did not"
 has "…saying which window vetoed it and why" "$err" "which is another lane the register has a row for"
 is  "…and the run itself still exits 0, because a veto is not a refusal" "$rc" 0
 # A NAME IS A VETO AND NEVER A PERMISSION (`R-A11-12`). A window still called
@@ -4654,6 +4710,29 @@ has   "…printing that repository's lanes" "$err" "repoA11-1"
 has   "…and the next free position, filled in" "$err" "lane-start repoA11 "
 has   "…while the refusal names the position it now has a listing for" "$err" "with a position from the listing above"
 is    "…and launches nothing" "$(cat "$FAKE_CLAUDE_LOG")" ""
+
+# AND THE MANUAL SAYS SO, which is RV-B4 one settlement on: the code took the
+# narrowing in the round that documented the OPPOSITE, and `README-lanes.md`
+# went on calling `lanes` "every lane on this workstation, newest write first"
+# — the pre-settlement default, wrong twice over, because the scope is the
+# ESTATE now and inside a checkout it is one repository. Nothing was red for it:
+# no assertion had ever read that sentence. Read from `$SRC_DIR`, the checkout's
+# own copy, which is the one a person opens.
+ln_doc="$(cat "$SRC_DIR/docs/README-lanes.md" 2>/dev/null || :)"
+has   "the manual quotes the settlement that narrowed the bare word" "$ln_doc" \
+      "Narrow inside a checkout (Recommended)"
+has   "…and the one that made \`lane-start <repo>\` list and suggest" "$ln_doc" \
+      "Yes, list and suggest (Recommended)"
+has   "…saying what a bare \`lanes\` lists inside a checkout" "$ln_doc" \
+      "A bare \`lanes\` INSIDE a lane checkout lists **that repository's lanes**"
+has   "…that it ends with the next free position and the line that takes it" "$ln_doc" \
+      "free position** and the exact \`lane-start <repo> <n>\` that takes it, filled in."
+has   "…that the position is the LOWEST free one, which is what this suite proves above" "$ln_doc" \
+      "The position offered is the **lowest** one no lane of that repository holds,"
+has   "…and the way back to every lane, which is the word the stale sentence lacked" "$ln_doc" \
+      "\`lanes --all\`, and a bare \`lanes\` outside every checkout, are clause (j)'s"
+hasnt "…never the pre-settlement default it documented while building the narrowing" "$ln_doc" \
+      "every lane on this workstation"
 
 run "$LANES_CMD" --all </dev/null
 is   "lanes exits 0 with rows" "$rc" 0

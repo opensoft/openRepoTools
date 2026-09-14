@@ -92,7 +92,8 @@ lane-start openRepoShape 2       # name the window, register the row, launch
 lane-end openRepoShape-2         # close it, refusing while anything is in flight
 lanes-edit.sh who --lane <lane>  # what that lane holds
 restart openRepoShape-2          # put yourself back in it, asking nothing
-lanes                            # every lane on this workstation
+lanes                            # this checkout's lanes, and the next free one
+lanes --all                      # every lane the register and the logs know
 ```
 
 **`restart` and `lanes` are the two words Amendment 11 adds, and both were asked
@@ -106,6 +107,10 @@ prompt offering the wrong lane to none at all. With no argument it restarts the
 lane this window is named for, and failing that it **lists this checkout's
 lanes and stops** — a listing is output, not a picker. `/restart` is the inside
 half, a skill, because a running session cannot `exec` a launcher over itself.
+`lanes` narrows the same way, on Brett Heap's settlement of the same day
+(*"Narrow inside a checkout"*): inside a checkout it lists **that repository's**
+lanes and ends with the **next free position** and the `lane-start <repo> <n>`
+that takes it, filled in; outside one, or with `--all`, it lists every lane.
 
 They record who is working on what across an estate — the register
 `lanes/LANES.md`, the per-lane object logs, the handoffs — and all of that is
@@ -202,21 +207,23 @@ install through one leaves the command uninstalled and writes these bytes into
 whatever it points at. Then an `11 of 11 placed in <dir>` line, and the
 `export PATH=…` line if that directory is not on your `PATH`.
 
-It also places **five things that are not files in that directory**: TWO SKILLS,
-`/lane-swap` and `/restart`, each at
+It also places **seven things that are not files in that directory**: TWO
+SKILLS, `/lane-swap` and `/restart`, each at
 `${CLAUDE_PROFILES_HOME:-~/.claude-profiles}/shared/skills/<name>/SKILL.md`
 (one write every profile reads through its own symlink) and at
 `~/.claude/skills/<name>/SKILL.md` for a bare `claude` run outside the
-launcher, and **one merged entry** under `hooks.SessionStart` in
-`~/.claude/settings.json`. That merge needs `jq`, never writes the file whole,
-writes it back at mode 600, and is idempotent by exact match on the entry's
-command string. An entry that runs `session-start` with a DIFFERENT string — a
-second writer of this very hook — a file it cannot parse, or a `hooks` that is
-not an object → it **refuses, prints the exact block, and places nothing at
-all**, because the merge is computed with the eleven files in hand before any of
-them is placed. An installer that repairs a
-file it does not understand is how you lose a setting you meant. It never
-writes a profile's own `settings.json`: the launcher owns that one.
+launcher; **one command file**, `/swap`, at that same pair of paths
+(`…/shared/commands/swap.md` and `~/.claude/commands/swap.md`), because
+`opensoft/workBenches#74` deletes the launcher's copy; and **one merged entry**
+under `hooks.SessionStart` in `~/.claude/settings.json`. That merge needs
+`jq`, never writes the file whole, writes it back at mode 600, and is
+idempotent by exact match on the entry's command string. An entry that runs
+`session-start` with a DIFFERENT string — a second writer of this very hook — a
+file it cannot parse, or a `hooks` that is not an object → it **refuses, prints
+the exact block, and places nothing at all**, because the merge is computed
+with the eleven files in hand before any of them is placed. An installer that
+repairs a file it does not understand is how you lose a setting you meant. It
+never writes a profile's own `settings.json`: the launcher owns that one.
 
 Eighteen artifacts, and the count is the invariant. It was sixteen until A11
 Addendum 4 ruling 9 gave `--install` a command-file list and `commands/swap.md`

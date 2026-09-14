@@ -122,8 +122,11 @@ commit, and a code that means two things is a code a caller cannot act on.)
   $LANES_EDIT   the register's reader   (default: lanes-edit.sh beside this file)
   $PCLAUDE      the launcher            (default: pclaude, else claude-profile)
 
-/restart is the same act from INSIDE a running session. `lanes` is the
-estate-wide listing; this command's bare form is the per-repo one.
+/restart is the same act from INSIDE a running session. `lanes --all` is the
+estate-wide listing and a bare `lanes` narrows to this checkout's repository
+ACROSS every workstation; this command's bare form narrows to the same
+repository on THIS one, because a restart line for a lane live on another
+machine is a line that cannot be typed here.
 USAGE
 }
 
@@ -186,7 +189,7 @@ list_this_checkout() {
 	[ -n "$root" ] && repo="$(origin_nwo "$root" || :)"
 	if [ -z "$root" ] && [ -z "$repo" ]; then
 		note "this directory is not inside a checkout, so there is no repository to list lanes for."
-		note "  \`lanes\` lists every lane on this workstation; \`restart <lane>\` restarts one by name."
+		note "  \`lanes\` lists every lane the register and the logs know; \`restart <lane>\` restarts one by name."
 		return 8
 	fi
 	# `--here` KEEPS THIS LISTING WHAT IT HAS ALWAYS BEEN. A11 Addendum 4
@@ -202,7 +205,7 @@ list_this_checkout() {
 	out="$("$LANES_EDIT" lanes ${args[@]+"${args[@]}"} 2>/dev/null)" || out=""
 	if [ -z "$out" ]; then
 		note "no lane of ${repo:-$root} is in the register."
-		note "  open one: lane-start <repo> <n>   ·   every lane on this workstation: lanes"
+		note "  open one: lane-start <repo> <n>   ·   every lane: lanes --all"
 		return 8
 	fi
 	printf '%-24s %-8s %-12s %-22s %-38s %-10s %s\n' LANE STATE PROFILE WINDOW "LAST TRANSCRIPT" AGE RESTART
@@ -355,9 +358,10 @@ if [ -z "$lane_dir" ]; then
     directory loses the repository's CLAUDE.md and the lane's memory, silently
     (Evidence 3). Name it once:
       lane-start --dir <the lane's checkout> $lrepo $pos
-    which RECORDS it in the lane's own log, so every later \`$prog $lane\` reads it
-    back and no one has to be told again (Amendment 11 clause (c); Evidence 7,
-    brettheap/new-workstation#20 comment 5656793094). For this run alone:
+    which RECORDS it in the lane's own log, so every later \`$prog $lane\`
+    reads it back and no one has to be told again (Amendment 11 clause (c);
+    Evidence 7, brettheap/new-workstation#20 comment 5656793094). For this
+    run alone:
       $prog --dir <the lane's checkout> $lane" 2
 fi
 [ -d "$lane_dir" ] || die "lane $lane's recorded directory does not exist: $lane_dir
