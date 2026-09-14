@@ -4013,7 +4013,7 @@ has  "who --lane calls it a DEFECT rather than a holder" "$out" "DEFECT"
 # "Name them", or `kill <pid>` — which is the one act the ruling says neither
 # prints.
 has   "…and prints clause (k) rule (e)'s one act, filled in" "$out" "lane-end repoA-1 --retire $LIVE_PID"
-hasnt "…and never `kill <pid>`, which the ruling refuses by name" "$out" "kill $LIVE_PID"
+hasnt "…and never \`kill <pid>\`, which the ruling refuses by name" "$out" "kill $LIVE_PID"
 run "$E" live-holder repoA-1
 hasnt "live-holder never returns a fork as the holder" "$out" "$FORK_ID"
 has   "…and says on stderr that one is live, because a read that cannot return it could otherwise hide it" "$err" "live FORK"
@@ -4044,7 +4044,7 @@ run "$E" forks repoA-1
 FK_DIRECT="$rc:$out"
 run "$E" lanes --lane repoA-1
 FK_VIA_LISTING="$(printf '%s' "$out" | awk -F'\t' '{print $12}')"
-is "the fork column of the listing agrees with the `forks` read beside it" \
+is "the fork column of the listing agrees with the \`forks\` read beside it" \
    "$FK_VIA_LISTING" "$(printf '%s' "${FK_DIRECT#*:}" | grep -c . || printf 0)"
 # ---- ruling 7: THE READ CARRIES ALL TEN OF CLAUSE (j)'s COLUMNS, IN ORDER ---
 #
@@ -4130,7 +4130,7 @@ has  "…and the cwd that is not the lane's" "$err" "/workspace"
 # AMENDMENT 6(d), FILLED IN, FOR THE KIND OF SESSION THIS ACTUALLY IS.
 has  "…naming Amendment 6(d)'s act for a BACKGROUND holder" "$err" "an idle background session still holding a lane name is ended"
 has  "…and saying whose act it is" "$err" "YOUR act and no tool's"
-hasnt "…and never `kill <pid>`, which R-A11-24 says is printed by nothing" "$err" "kill $LIVE_PID"
+hasnt "…and never \`kill <pid>\`, which R-A11-24 says is printed by nothing" "$err" "kill $LIVE_PID"
 is   "…the log is BYTE-IDENTICAL: a RETIRED with a payload is a seventh edit to in-force text" \
      "$(cat "$LOGD/repoA-1.md" 2>/dev/null || :)" "$A11F_BEFORE"
 is   "…and the row is untouched too: this ends nothing" "$(grep '^| `repoA-1`' "$LANES")" "$A11F_ROW_BEFORE"
@@ -5350,11 +5350,18 @@ fi
 # WITH THE SAME STRING, which `lane-start` resolves a second time — from the new
 # working directory — so `--dir ../x` meant one checkout to the test here and
 # another to the launch. Asked with `--dry-run`, which prints the exact argv.
-run env -u TMUX -C "$HOME/projects/repoA11" "$RESTART" --dry-run --dir . repoA11-1 </dev/null
+# THE EXPECTATION IS COMPUTED THE WAY THE CODE COMPUTES IT, and that is not
+# pedantry: `pwd -P` is the estate's own idiom for this (`lanes_rows` resolves
+# `--dir` with it), and on macOS `/var` is a symlink to `/private/var`, so the
+# resolved path of this sandbox is the physical one and the sandbox's own
+# spelling is not. Asserting the sandbox's spelling would be asserting that the
+# path was NOT resolved on the one runner where the two differ.
+A11_DIR_R="$(cd -- "$A11_DIR" 2>/dev/null && pwd -P || printf '%s' "$A11_DIR")"
+run env -u TMUX -C "$A11_DIR" "$RESTART" --dry-run --dir . repoA11-1 </dev/null
 is    "restart --dry-run with a relative --dir exits 0" "$rc" 0
-has   "…and the launcher is handed the directory RESOLVED, not the relative spelling" "$out" "--dir $A11_DIR"
+has   "…and the launcher is handed the directory RESOLVED, not the relative spelling" "$out" "--dir $A11_DIR_R"
 hasnt "…never the '.' that means something else after the cd" "$out" "--dir ."
-has   "…and the cd goes to the same resolved path" "$out" "cd $A11_DIR"
+has   "…and the cd goes to the same resolved path" "$out" "cd $A11_DIR_R"
 
 # THE INSTALLER'S STAGING COMMENT COUNTED FOUR FILES OF ELEVEN (#26, the review
 # of `37632b1`, `openRepoTools:226`) — the same defect as the stale artifact

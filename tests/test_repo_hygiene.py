@@ -439,6 +439,44 @@ def test_the_two_spellings_of_a_flag_refuse_the_same_empty_value(name):
         f"below the flag runs on a value the operator did give.")
 
 
+#: The four helpers every assertion in the shell suite is written with, and the
+#: DESCRIPTION each takes first — the string a person reads in the output.
+SUITE_ASSERT_DESC = re.compile(r'^\s*(?:is|has|hasnt|skip)\s+"((?:[^"\\]|\\.)*)"')
+
+
+def test_the_suite_descriptions_run_no_command_of_their_own():
+    """A BACKTICK IN A DOUBLE-QUOTED STRING IS A COMMAND SUBSTITUTION, and this
+    estate writes prose full of them.
+
+    Found in the `tests-macos` log of `29d3417`, which prints the suite's own
+    stderr when it fails: *"command substitution: line 4016: syntax error near
+    unexpected token `newline'"*, twice. The lines are descriptions —
+    `hasnt "…and never `kill <pid>`, which the ruling refuses by name"` — where
+    bash read the backticks as a substitution, tried to run `kill <pid>`, and
+    handed the assertion a description with a hole in it. A third,
+    `the `forks` read beside it`, RAN `forks`. None of them can fail a test,
+    which is why all three sat there: the description is not compared to
+    anything. What they cost is the output a person reads when something else
+    fails, and on one of them the words that went missing name the act the
+    ruling refuses.
+
+    So: in the description of every `is`, `has`, `hasnt` and `skip`, a backtick
+    is escaped. The other arguments are untouched — they are `$(…)`
+    substitutions by design.
+    """
+    bad = []
+    for number, line in enumerate(
+            (REPO / "tests/test_lane_helpers.sh").read_text(
+                encoding="utf-8").splitlines(), 1):
+        hit = SUITE_ASSERT_DESC.match(line)
+        if hit and re.search(r"(?<!\\)`", hit.group(1)):
+            bad.append(f"{number}: {line.strip()[:120]}")
+    assert not bad, (
+        "these assertion descriptions carry an UNESCAPED backtick, so bash "
+        "runs what is between them and the description a person reads has a "
+        "hole where those words were. Write ``\\` ``:\n  " + "\n  ".join(bad))
+
+
 #: A line that actually FETCHES, as opposed to a line of the usage heredoc
 #: that says the word. Both spellings take a quoted argument, which the prose
 #: never does.
