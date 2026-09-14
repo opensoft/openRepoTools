@@ -3492,14 +3492,18 @@ lane_row_facts() {   # events on stdin, ONE LINE PER LANE
       l = $2
       if (!(l in seen)) { seen[l] = ++n; byn[n] = l }
       # A FORK-S RETIRED IS NOT THE LANE-S OWN LAST VERB (decision 8(c): a fork
-      # is never the lane; A11 Addendum 4 ruling 8). `lane-end <lane> --retire
-      # <pid|uuid>` writes `RETIRED … lane:<lane> -> fork <sid>; pid <n>; kind
-      # <k>` into the lane-s log, because that log is the one append-only place
-      # the fact belongs. Read as the lane-s own line it would say the LANE was
-      # retired — which is the opposite of what happened, since the lane may
-      # well be live beside the fork it just disowned. So the line is skipped
-      # HERE, for the state fields only: the marker is the payload opening
-      # `fork `, written by exactly one writer.
+      # is never the lane; A11 Addendum 4 ruling 8). Read as the lane-s own line
+      # it would say the LANE was retired — the opposite of what happened, since
+      # the lane may well be live beside the fork it disowned. So a line whose
+      # payload opens `fork ` is skipped HERE, for the state fields only.
+      # NOTHING WRITES ONE ANY MORE, and this comment said otherwise (#26, the
+      # review of `29d3417`). The first build of ruling 8-s act appended
+      # `RETIRED … lane:<lane> -> fork <sid>; pid <n>; kind <k>`; that line is a
+      # seventh edit to in-force text and Amendment 7(b) gives `RETIRED` no
+      # payload, so `lane-end --retire` PROVES the fork and prints 6(d) and
+      # writes nothing at all (`lane_forks`-s own block argues it in full). The
+      # skip stays because these logs are APPEND-ONLY and never rewritten: a log
+      # that took one of those lines while that build was live still carries it.
       #
       # R14 IS NOT WEAKENED BY THIS. R14 decides WHICH of a lane-s own lines is
       # last; this decides which lines are the lane-s own. A line about

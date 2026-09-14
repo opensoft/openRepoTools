@@ -51,8 +51,14 @@
 # the lane's log and messaged the interactive session claiming to be the holder
 # while citing a dead pid. It is never a holder and it must never write the
 # register; this listing names it, and the ONE act it prints is clause (k) rule
-# (e)'s — `lane-end <lane> --retire <pid|uuid>`, which writes the record that
-# stops every read counting it and kills nothing.
+# (e)'s — `lane-end <lane> --retire <pid|uuid>`, which PROVES the pid or uuid is
+# this lane's live fork and prints Amendment 6(d) filled in for it. IT WRITES
+# NOTHING (#26, the review of `29d3417`): a `RETIRED` carrying a payload would
+# be a seventh edit to in-force text and Amendment 7(b) gives that verb none, so
+# the read goes on naming the fork until the person takes 6(d) — which is what
+# the footer this command prints has said all along, and what this comment did
+# not. It kills nothing either; ending somebody's process is not a tool's act
+# (Amendment 8(f)).
 #
 # EXIT CODES, AND THEY ARE THE CONTRACT'S RATHER THAN THIS COMMAND'S (SPEC §15,
 # and clause (h)'s row for the read behind it): `0` rows · `8` none · `64` usage

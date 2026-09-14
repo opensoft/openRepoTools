@@ -5372,6 +5372,56 @@ hasnt "the installer's staging block no longer counts four of eleven files" "$or
 hasnt "…nor says each of the four is fetched at this ref" "$ort_text" "each of the four is fetched"
 has   "…and says it in the words that cannot go stale" "$ort_text" "ALL OF THEM IN HAND"
 has   "…while the counts it PRINTS stay derived from the list itself" "$ort_text" '${#INSTALLABLES[@]} files or none'
+
+# A HELPER PREDATING THE READ IS NOT A CONTAINER (#26, the review of `29d3417`,
+# `skills/lane-swap/SKILL.md:70`). `workstation` is one of Amendment 11's reads,
+# so a `lanes-edit.sh` that has not taken act 3's install exits 2 and prints
+# nothing — and `-z "$ws"` alone then told the operator of an ordinary host that
+# they were in a container with `$LANES_WORKSTATION` unset, a sentence they
+# cannot act on. Until the install reaches every workstation, 2 is the answer
+# every one of them gives (`R-A11-8`), which makes this the common case. The
+# block is EXTRACTED FROM THE FILE and run against a helper in each state.
+swsk_ws_blk="$(awk '/^ws_pair=""; ws_rc=0$/,/^fi$/' "$SWSK")"
+is   "the swap skill carries its workstation read as a fenced step" \
+     "$( [ -n "$swsk_ws_blk" ] && printf yes || printf no )" "yes"
+swap_ws_probe() {   # <helper exit code> <what it prints>
+  ( L="$SANDBOX/dirhelper"; STUB_RC="$1"; STUB_OUT="$2"; export STUB_RC STUB_OUT
+    eval "$swsk_ws_blk"
+    printf ' ws=[%s] missing=[%s]' "$ws" "${ws_missing:-}" )
+}
+has  "a workstation the helper named is taken, and nothing is said" \
+     "$(swap_ws_probe 0 "$(printf 'Eagle\tseam')")" "ws=[Eagle] missing=[]"
+has  "…a helper predating the read names the INSTALL, not a container" \
+     "$(swap_ws_probe 2 '')" "NO WORKSTATION READ"
+has  "…saying which code it came back with" "$(swap_ws_probe 2 '')" "exited 2 and named none"
+has  "…and still stopping the writes, because a record filed under nothing is the placeholder R-A11-14 refuses" \
+     "$(swap_ws_probe 2 '')" "missing=[1]"
+hasnt "…while never calling that host a container" "$(swap_ws_probe 2 '')" "this is a container"
+has  "…and a container with no value still gets ITS own sentence" \
+     "$(swap_ws_probe 0 "$(printf 'abc123\tcontainer-unset')")" "NO WORKSTATION: this is a container"
+has  "…with the writes stopped there too" \
+     "$(swap_ws_probe 0 "$(printf 'abc123\tcontainer-unset')")" "missing=[1]"
+
+# STEP 2(d) IS TERMINAL, WHICH THE BLOCK SAID EVERYWHERE BUT IN ITS CODE (#26,
+# the review of `29d3417`, `skills/restart/SKILL.md:134`).
+rskill_text="$(cat "$RSKILL")"
+has   "the skill's listing rung stops where the outcome table ends it" "$rskill_text" "NO LANE FOR THIS WINDOW [8] —"
+has   "…on the code the table gives it" "$rskill_text" "exit 8"
+
+# AND `--retire` WRITES NOTHING, WHICH THREE SURFACES STILL SAID IT DID (#26,
+# the review of `29d3417`). The act is the DOOR to Amendment 6(d) and performs
+# none of it: a `RETIRED` carrying a payload is a seventh edit to in-force text
+# and Amendment 7(b) gives that verb none. `lanes`'s own FOOTER has said so
+# since it was written; its header comment, the helper's parser comment and the
+# manual's paragraph had not caught up.
+lanes_text="$(cat "$SRC_DIR/lanes")"
+le_text="$(cat "$SRC_DIR/lanes-edit.sh")"
+hasnt "the listing no longer says the retire act writes a record" "$lanes_text" "which writes the record that"
+has   "…it says what the act does, which is prove and print" "$lanes_text" "which PROVES the pid or uuid is"
+hasnt "the helper's parser comment no longer says one writer still writes that line" "$le_text" '`<pid|uuid>` writes `RETIRED'
+has   "…it names the line as the legacy an append-only log still carries" "$le_text" "NOTHING WRITES ONE ANY MORE"
+hasnt "the manual no longer promises an Amendment 6(d) record" "$ln_doc" "which writes the Amendment 6(d) record"
+has   "…and says in terms that it writes nothing" "$ln_doc" "**It writes nothing**"
 # A PAUSED LANE WITH NO RECORDED PROFILE GETS NO `restart` LINE — it gets the
 # form that works, with the profile named as the one token to supply.
 has  "a lane with no recorded profile is offered the launcher form, not a line it cannot type" \

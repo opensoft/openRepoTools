@@ -131,6 +131,13 @@ if [ -z "$lane" ]; then
   root="$(git rev-parse --show-toplevel 2>/dev/null)"
   origin="$(git -C "${root:-.}" remote get-url origin 2>/dev/null | sed -E 's#\.git$##; s#^git@[^:]+:##; s#^ssh://[^/]+/##; s#^https?://[^/]+/##')"
   LANES_NO_FETCH=1 "$L" lanes ${origin:+--repo "$origin"} ${root:+--dir "$root"}
+  # AND THIS RUNG IS TERMINAL, WHICH THE BLOCK SAID EVERYWHERE BUT IN ITS CODE
+  # (#26, the review of `29d3417`, this file's `:134`). The heading says PRINT
+  # THE LISTING AND STOP and the outcome table ends step 2 here; with `$lane`
+  # still empty the lines below would carry on — into a step 3 that resolves a
+  # directory for no lane and a step 5 that binds one.
+  printf 'NO LANE FOR THIS WINDOW [8] — the listing above is every lane of this checkout. Open one with: lane-start --no-launch <repo> <n>, filled in from this window name where it parses.\n' >&2
+  exit 8
 fi
 ```
 

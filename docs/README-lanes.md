@@ -1411,9 +1411,13 @@ so lineage is never the test: the holder is the session whose id the published
 cell names. `lanes`, `/restart`, `who --lane` and the `SessionStart` hook all
 show a live fork as a **defect to retire**, and none of them kills anything.
 **Retiring it is `lane-end <lane> --retire <pid|uuid>`** — the one act, ratified
-decision 8(e) and clause (k) rule (e) — which writes the Amendment 6(d) record
-that stops every read counting it, and **kills nothing either**. Stopping the
-process is a separate act and it stays the person's.
+decision 8(e) and clause (k) rule (e). It is the **DOOR** to Amendment 6(d) and
+not a record of one: it proves the pid or uuid is this lane's live fork and
+prints 6(d) filled in. **It writes nothing** — a `RETIRED` carrying a payload
+would be a seventh edit to in-force text, and Amendment 7(b) gives that verb
+none — so every read goes on naming the fork until the person takes the printed
+act. And it **kills nothing either**: stopping the process is a separate act and
+it stays the person's.
 
 ### The workstation's name
 

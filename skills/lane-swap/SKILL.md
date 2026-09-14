@@ -66,7 +66,8 @@ sread row_probe "'this window is not a lane'" register-row "$lane"
 # on a workstation that does not exist is a row no reader can match. `$L`'s own
 # `workstation` read is the one implementation; its second tab-separated field
 # says which rung answered.
-ws_pair="$("$L" workstation 2>/dev/null)"
+ws_pair=""; ws_rc=0
+ws_pair="$("$L" workstation 2>/dev/null)" || ws_rc=$?
 ws="${ws_pair%%	*}"
 # AND IT NEVER WRITES A PLACEHOLDER (`R-A11-14`). Inside a container with no
 # `LANES_WORKSTATION`, the helper's own writers refuse — `@unknown-workstation`
@@ -84,8 +85,26 @@ ws="${ws_pair%%	*}"
 # cannot carry is *"the gap named in the handoff"*, and that is what happens
 # here: `$ws_missing` is carried to step 2, which names it, and to step 4, which
 # skips (a) and (b) and still does (c).
+#
+# AND A HELPER PREDATING THE READ IS NOT A CONTAINER (#26, the review of
+# `29d3417`, this file's `:70`). `workstation` is one of Amendment 11's reads,
+# so a `lanes-edit.sh` that has not taken adoption act 3's install exits **2**
+# from its unknown-subcommand arm and prints nothing — and `-z "$ws"` then told
+# the operator of a perfectly ordinary host that they were in a container with
+# `$LANES_WORKSTATION` unset, which is a sentence they cannot act on. Until the
+# install reaches every workstation, **2 is the answer every one of them gives**
+# (`R-A11-8`), so this is the common case and not the corner.
+#
+# THE OUTCOME IS THE SAME AND THE REASON IS NOT. The writes still stop, for the
+# same reason they stop in a container: `$ws` is written into the PAUSED line's
+# payload and into `session <uuid>@<ws>`, and a record filed under nothing is
+# the placeholder `R-A11-14` refuses. What changes is that the gap is named
+# truthfully and the act that closes it is the install rather than an export.
 ws_missing=""
-if [[ "${ws_pair##*	}" == container-unset || -z "$ws" ]]; then
+if [[ "$ws_rc" != 0 && "$ws_rc" != 8 ]] && [[ -z "$ws" ]]; then
+  ws_missing=1
+  echo "NO WORKSTATION READ: \`$L workstation\` exited $ws_rc and named none. Exit 2 is a lanes-edit.sh predating Amendment 11 — expected, and every workstation gives it until adoption act 3's install reaches it (\`R-A11-8\`); anything else is a read that failed. Either way this skill will not write a record filed under no workstation (\`R-A11-14\`), so the register and object-log writes of step 4 are NOT made and the row is NOT flipped. The swap itself goes on: the handoff is refreshed and NAMES this gap, and the restart command is still printed, with --lane. To close it: openRepoTools --install, then re-run step 4."
+elif [[ "${ws_pair##*	}" == container-unset || -z "$ws" ]]; then
   ws_missing=1
   echo "NO WORKSTATION: this is a container and \$LANES_WORKSTATION is not set. The register and object-log writes of step 4 will NOT be made — a record filed under a container id is a record no restart of any workstation will ever find, and both logs are append-only (\`R-A11-14\`). The swap itself goes on: the handoff is refreshed and NAMES this gap, and the restart command is still printed — with --lane, because the row is NOT flipped either and a restart cannot resolve this lane from a row that was never written. The workBenches launcher exports the value into every session it starts and \`wave-container-shell.sh\` into every container it opens; to close the gap now: export LANES_WORKSTATION=<this host name> and re-run step 4."
 fi
