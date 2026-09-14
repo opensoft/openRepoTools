@@ -1403,7 +1403,7 @@ wip_fetch_template_file() {
 
 # --- the command itself -----------------------------------------------------
 wip_init() {
-	local config target checkout ref rel dest seeded=0 owed=0
+	local config target checkout ref rel dest seeded=0 owed=0 kind
 	local existing_repo existing_path
 	# THE PATHS THE SEED OWES THIS CHECKOUT, which is what step 8 stages and
 	# commits and the whole of what it commits: the ones step 7 wrote (`seeded`)
@@ -1659,17 +1659,23 @@ $unrelated
 			# asked for directly too. All four are asked for here instead,
 			# beside the worktree.
 			if ! git -C "$checkout" cat-file -e "HEAD:$rel" 2>/dev/null; then
-				# A SYMLINK HERE IS NEVER THIS COMMAND'S OWN, DANGLING OR NOT: `cmp`
-				# reads through a link to whatever it names, so a live one whose
-				# target happens to hold the template's own bytes would pass the
-				# comparison below, and a `git add` of it stages the LINK ITSELF
-				# — not the bytes at its far end. This command has never placed
-				# a link at a template path, so one here is refused before either
-				# branch can act on it, or on whatever it points at.
-				if [ -L "$checkout/$rel" ]; then
-					die "$checkout/$rel is a symlink, and a seed commit is the template's own
-    bytes and never a link to wherever one points, dangling or not. Nothing beyond this
-    run's own template bytes was written into that checkout, and nothing was staged.
+				# THE SAME QUESTION `unplaceable_kind` ASKS OF AN INSTALL TARGET,
+				# asked of an owed candidate: a SYMLINK is never this command's
+				# own, dangling or not, because `cmp` reads through a live one to
+				# whatever it names — so one whose target happens to hold the
+				# template's own bytes would pass the comparison below, and a
+				# `git add` of it stages the LINK ITSELF, not the bytes at its far
+				# end — and a FIFO, a socket or a device node is worse: `cmp`
+				# opens it and can block waiting for a writer, or read whatever a
+				# device answers, rather than refusing. `path_kind` already
+				# answers all three the same way `--install`'s own planners rely
+				# on; this command has placed none of them at a template path, so
+				# any of them here is refused before either branch can act on it,
+				# open it, or write through it.
+				if kind="$(path_kind "$checkout/$rel")"; then
+					die "$checkout/$rel is $kind, and a seed commit is the template's own bytes
+    at a REGULAR FILE and nothing else there could be. Nothing beyond this run's own
+    template bytes was written into that checkout, and nothing was staged.
     Remove or replace that path, then re-run:
         openRepoTools wip init"
 				fi

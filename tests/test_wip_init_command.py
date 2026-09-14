@@ -879,13 +879,58 @@ def test_a_symlink_at_a_missing_template_path_is_refused_not_followed(
 
     assert result.returncode == 2, result.stdout + result.stderr
     assert f"{link} is a symlink" in result.stderr, result.stderr
-    assert ("run's own template bytes was written into that checkout, "
+    assert ("template bytes was written into that checkout, "
             "and nothing was staged.") in result.stderr, result.stderr
     assert link.is_symlink(), "the symlink was replaced"
     if not dangling:
         assert target.read_text(encoding="utf-8") == template_bytes, (
             "the symlink's target was modified")
     assert staged_in(checkout) == "", "the symlink was staged"
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+
+
+def test_a_non_regular_file_at_a_missing_template_path_is_refused_not_opened(
+        tmp_path):
+    """`cmp` MAY BLOCK ON WHAT IT OPENS, NOT ONLY MISREAD IT (#44 round 3,
+    a second finding at `openRepoTools:1699`).
+
+    A FIFO at a template path HEAD does not carry answers `[ -e ]` true and
+    `[ -L ]` false exactly as a regular file would, so without asking what
+    KIND of node it is, `cmp` would open it directly to compare it against
+    the template — and `cmp` on a FIFO with no writer on the other end
+    blocks forever rather than refusing. `path_kind`, the same question
+    `--install`'s own planners already ask of a target, is asked here too,
+    before anything opens it. A bounded subprocess timeout stands in for
+    "forever": this test fails loudly rather than hanging the suite if the
+    refusal ever stops firing before the `cmp`.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout = adopted_checkout(tmp_path, home, env)
+    for args in (["rm", "-q", "--", "handoffs/README.md"],
+                 ["commit", "-q", "-m", "somebody removed the handoffs README"],
+                 ["push", "-q", "origin", "HEAD:main"]):
+        subprocess.run(["git", "-C", str(checkout), *args], check=True)
+    before_head = head_of(checkout)
+
+    fifo = checkout / "handoffs" / "README.md"
+    fifo.parent.mkdir(parents=True, exist_ok=True)
+    os.mkfifo(fifo)
+
+    (home / "projects").mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        ["bash", str(COMMAND), "wip", "init"],
+        capture_output=True, text=True, check=False,
+        cwd=str(REPO), env=wip_env(home, env), timeout=30)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"{fifo} is not a regular file" in result.stderr, result.stderr
+    assert ("template bytes was written into that checkout, "
+            "and nothing was staged.") in result.stderr, result.stderr
+    assert not fifo.is_file(), "the FIFO was replaced with a regular file"
     assert head_of(checkout) == before_head, (
         "a commit was made despite the refusal")
     assert remote_main(tmp_path) == before_head, (
