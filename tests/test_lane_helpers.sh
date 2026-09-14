@@ -4852,6 +4852,46 @@ chmod +x "$SANDBOX/brokeedit"
 run env REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/brokeedit" "$LANES_CMD" </dev/null
 is   "…while a read that actually failed stays 1, and is never read as 'no lanes'" "$rc" 1
 has  "…saying so in Amendment 7(d)'s words" "$err" "NOT 'there are no lanes'"
+# A FETCH THAT DID NOT ANSWER IS NOT A FETCH, AND THE FOOTER MAY NOT SAY IT WAS
+# (#26's fail-closed family, `lanes:236`; Brett Heap, "Take it first, then
+# land"). A read in front of a launch MAY NOT REFUSE, so `log_sync` falls back
+# to the local refs, says so on stderr — *"fetch failed — reading the logs as
+# they stand locally"* (`lanes-edit.sh:2902`) — and answers 0. This command
+# threw that sentence away and printed "as of a fetch just now" over it: the one
+# line a person reads to decide whether the answer is CURRENT, asserting the
+# opposite of what the run had already been told.
+#
+# THE STUB IS THE HELPER IN THAT STATE, not a broken one: it prints the same
+# sentence on stderr and still answers from the local refs, exit 0.
+cat > "$SANDBOX/fetchfallback" <<'WRAP'
+#!/usr/bin/env bash
+if [ "${1-}" = lanes ]; then
+  printf 'lanes-edit: fetch failed — reading the logs as they stand locally\n' >&2
+  shift
+  ff_args=()
+  for ff_a in "$@"; do [ "$ff_a" = --fetch ] || ff_args+=("$ff_a"); done
+  exec "$REAL_LANES_EDIT" lanes ${ff_args[@]+"${ff_args[@]}"}
+fi
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/fetchfallback"
+run env REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/fetchfallback" "$LANES_CMD" --fetch --all </dev/null
+is    "lanes --fetch still exits 0 when the fetch did not answer" "$rc" 0
+has   "…and the rows are there, because a read in front of a launch may not refuse" "$out" "repoA11-1"
+has   "…while the footer says the answer is LOCAL" "$out" "read LOCALLY: the fetch did not answer"
+has   "…quoting the helper's own sentence rather than a copy of it" "$out" "reading the logs as they stand locally"
+hasnt "…and never claims a fetch it did not get" "$out" "as of a fetch just now"
+# AND THE EMPTY LISTING IS THE CASE THAT MATTERS MOST: "no lane is recorded",
+# read off a stale checkout, is the answer a person is likeliest to act on.
+run env REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/fetchfallback" "$LANES_CMD" --fetch --prefix repoNoLanesAtAll </dev/null
+is    "an empty listing after a fetch that fell back still exits 8" "$rc" 8
+has   "…saying so in its own name" "$out" "no lane of repoNoLanesAtAll is recorded"
+has   "…and that the fetch did not answer, which is why it may be stale" "$out" "the fetch did not answer"
+# …while a fetch that DID answer says so, so the sentence keeps its meaning.
+run "$LANES_CMD" --fetch --all </dev/null
+is    "a fetch that answered exits 0" "$rc" 0
+has   "…and says it is as of a fetch just now" "$out" "as of a fetch just now"
+hasnt "…with no fallback notice anywhere in it" "$out" "the fetch did not answer"
 # A PAUSED LANE WITH NO RECORDED PROFILE GETS NO `restart` LINE — it gets the
 # form that works, with the profile named as the one token to supply.
 has  "a lane with no recorded profile is offered the launcher form, not a line it cannot type" \

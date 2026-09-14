@@ -255,12 +255,40 @@ ws_notice() {
 # LOCAL IS THE HELPER'S OWN DEFAULT for this one read (SPEC rev 4 §15), so
 # `--fetch` is passed through rather than simulated here: one implementation of
 # "does this read touch the network", in the file that owns the network.
+#
+# AND A FETCH THAT DID NOT HAPPEN IS NOT A FETCH (#26, the fail-closed family,
+# `lanes:236`, taken on Brett Heap's word "Take it first, then land"). A read
+# that fetches MAY NOT REFUSE — it sits in front of a launch — so `log_sync`
+# falls back to the local refs and says so on stderr, *"fetch failed — reading
+# the logs as they stand locally"*, and answers 0. This command threw that
+# sentence away with `2>/dev/null` and then printed *"as of a fetch just now"*
+# over the top of it: the one line in the output a person reads to decide
+# whether the answer is CURRENT, asserting something the run had already been
+# told was false. The stderr of the fetch path is kept and rendered; the stderr
+# of the local path still is not, because there the notice is `LANES_NO_FETCH=1`
+# saying what the caller asked for.
 rc=0
+fetch_err=""
 if [ "$do_fetch" = 1 ]; then
-	out="$("$LANES_EDIT" lanes --fetch ${args[@]+"${args[@]}"} 2>/dev/null)" || rc=$?
+	fetch_err_file="$(mktemp "${TMPDIR:-/tmp}/lanes-fetch.XXXXXX" 2>/dev/null || printf '')"
+	if [ -n "$fetch_err_file" ]; then
+		out="$("$LANES_EDIT" lanes --fetch ${args[@]+"${args[@]}"} 2>"$fetch_err_file")" || rc=$?
+		fetch_err="$(cat "$fetch_err_file" 2>/dev/null || printf '')"
+		rm -f -- "$fetch_err_file"
+	else
+		out="$("$LANES_EDIT" lanes --fetch ${args[@]+"${args[@]}"} 2>/dev/null)" || rc=$?
+	fi
 else
 	out="$("$LANES_EDIT" lanes ${args[@]+"${args[@]}"} 2>/dev/null)" || rc=$?
 fi
+
+# THE ONE PHRASE, AND IT IS THE HELPER'S OWN (`lanes-edit.sh:2902`): both the
+# failure and the timeout end *"reading the logs as they stand locally"*, so one
+# test covers both and neither is restated here.
+fetch_fell_back=0
+case "$fetch_err" in
+*"reading the logs as they stand locally"*) fetch_fell_back=1 ;;
+esac
 case "$rc" in
 0) : ;;
 8)
@@ -276,6 +304,14 @@ case "$rc" in
 		say "no lane is recorded${ws_name:+ that $ws_name can see}."
 		say "  open one:            lane-start <repo> <n>"
 		say "  this workstation:    $prog --here"
+	fi
+	# AN EMPTY LISTING AFTER A FETCH THAT FELL BACK IS THE CASE THAT MATTERS
+	# MOST: "no lane is recorded" read off a stale checkout is the answer a
+	# person is likeliest to act on, and the likeliest to be wrong.
+	if [ "$fetch_fell_back" = 1 ]; then
+		say ""
+		say "  and the fetch did not answer, so that is this checkout's own copy:"
+		printf '%s\n' "$fetch_err" | sed -n 's/^/  /p'
 	fi
 	ws_notice
 	exit 8 ;;
@@ -364,7 +400,10 @@ if [ -n "$here_repo" ]; then
 fi
 
 say ""
-if [ "$do_fetch" = 1 ]; then
+if [ "$do_fetch" = 1 ] && [ "$fetch_fell_back" = 1 ]; then
+	say "$n lane(s)${here_repo:+ of $here_repo}, read LOCALLY: the fetch did not answer, so this is the checkout's own copy as of $("$LANES_EDIT" fetch-age 2>/dev/null || printf 'unknown'). The helper said so and this command will not print \"as of a fetch just now\" over it:"
+	printf '%s\n' "$fetch_err" | sed -n 's/^/  /p'
+elif [ "$do_fetch" = 1 ]; then
 	say "$n lane(s)${here_repo:+ of $here_repo}, as of a fetch just now."
 else
 	say "$n lane(s)${here_repo:+ of $here_repo}, read locally — no fetch; this checkout last heard from origin $("$LANES_EDIT" fetch-age 2>/dev/null || printf 'unknown'). \`$prog --fetch\` refreshes first."
