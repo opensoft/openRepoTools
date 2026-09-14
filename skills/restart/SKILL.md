@@ -46,7 +46,22 @@ WS="$("$L" workstation 2>/dev/null | cut -f1)"    # decision 8(d): configuration
 lread() {                      # lread <var> "<what the failure is NOT>" <verb> [args…]
   ln_var="$1"; ln_not="$2"; shift 2
   ln_out=""; ln_rc=0
-  ln_out="$(LANES_NO_FETCH=1 "$L" "$@" 2>/dev/null)" || ln_rc=$?
+  # AND ITS STDERR IS KEPT, MINUS THE ONE SENTENCE THIS READ ASKS FOR (#34,
+  # the third site of the shape `lanes` and `restart` took at `29d3417`).
+  # `2>/dev/null` was written when the only thing on that stream was
+  # `LANES_NO_FETCH=1 — not fetching …`, which is why the whole stream was
+  # silenced; anything else there — this workstation's session records
+  # unreadable, say — is a read this fence must still be able to name.
+  ln_err_file="$(mktemp "${TMPDIR:-/tmp}/restart-lread.XXXXXX" 2>/dev/null || printf '')"
+  if [ -n "$ln_err_file" ]; then
+    ln_out="$(LANES_NO_FETCH=1 "$L" "$@" 2>"$ln_err_file")" || ln_rc=$?
+    grep -v -e 'not fetching; reading origin/' -- "$ln_err_file" >&2 || :
+    rm -f -- "$ln_err_file"
+  else
+    # No capture file, so nothing is filtered and everything reaches the
+    # person — never silence in place of a stream this fence could not open.
+    ln_out="$(LANES_NO_FETCH=1 "$L" "$@")" || ln_rc=$?
+  fi
   case "$ln_rc" in
     0)   : ;;
     8|2) ln_out="" ;;
@@ -280,7 +295,7 @@ lane-start --no-launch ${dir:+--dir "$dir"} "$lane"
 `--dir` is passed only where step 3 HAS a directory — the lane's own record, or a default that exists. Where
 it has none, the flag is absent and not empty: `--dir` with an empty value is refused by the two spellings of
 that arm, and passing a directory this skill DERIVED as `--dir` would put a guess at rung 1, the operator's
-own word, in front of the five rungs `lane-start` reads for itself.
+own word, in front of the other five rungs `lane-start` reads for itself.
 
 It renames the window, writes the row stamp, Amendment 6(c)'s session-cell append where it can prove the
 window is the lane's, the lane's `RESUMED` object line with clause (c)'s `dir`, `profile` and `window`
