@@ -3593,6 +3593,19 @@ A11_ID="bbbb0001-1111-4000-8000-bbbb00011111"
 A11_ID2="bbbb0002-2222-4000-8000-bbbb00022222"
 A11_DIR="$HOME/projects/repoA11"
 mkdir -p "$A11_DIR"
+# AND THE SPELLING `pwd -P` GIVES IT, which on macOS is not the same string:
+# `$TMPDIR` there is under `/var`, a symlink to `/private/var`, so every case
+# that asserts a path a command RESOLVED must assert the resolved one. `lane`
+# resolves `--dir` ONCE, where the operator typed it, because it `cd`s and then
+# hands the same string to a launcher that would resolve it a second time from
+# somewhere else — so a `--dir` case compares against this and a case reading
+# the RECORD's own path compares against `$A11_DIR`, which is never resolved.
+# Asserting the sandbox's own spelling for a resolved path is asserting that
+# the resolution did not happen, which is the one thing it must do; caught by
+# `tests-macos` on #45, where the two `--dir` assertions were the only red.
+# AFTER THE `mkdir`, because `cd` into a directory that does not exist yet
+# falls back to the unresolved spelling and is the same defect written twice.
+A11_DIR_R="$(cd -- "$A11_DIR" 2>/dev/null && pwd -P || printf '%s' "$A11_DIR")"
 git init -q -b main "$A11_DIR"
 git -C "$A11_DIR" remote add origin "https://github.com/opensoft/repoA11.git"
 add_seed_row "| \`repoA11-1\` | harness \`$A11_ID\` → after /clear \`$A11_ID2\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoA11/x.md | ACTIVE |"
@@ -4840,8 +4853,9 @@ is   "…launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
 run env -u TMUX "$LANE" --dir "$A11_DIR" repoA11-2 team-05a </dev/null
 is   "…while the profile named on the command line is enough for that same lane" "$rc" 0
 has  "…launching it under the profile that was typed, with the directory named" \
-     "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoA11-2 --dir $A11_DIR team-05a"
-has  "…from that directory" "$(cat "$FAKE_PCLAUDE_LOG")" "cwd=$A11_DIR"
+     "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoA11-2 --dir $A11_DIR_R team-05a"
+has  "…from that directory, in the spelling the resolution gave it" \
+     "$(cat "$FAKE_PCLAUDE_LOG")" "cwd=$A11_DIR_R"
 : > "$FAKE_PCLAUDE_LOG"
 run env -u TMUX "$LANE" repoNoSuch-9 </dev/null
 is   "lane refuses a lane the register and the logs do not carry" "$rc" 2
@@ -5334,8 +5348,8 @@ fi
 # `--dir` with it), and on macOS `/var` is a symlink to `/private/var`, so the
 # resolved path of this sandbox is the physical one and the sandbox's own
 # spelling is not. Asserting the sandbox's spelling would be asserting that the
-# path was NOT resolved on the one runner where the two differ.
-A11_DIR_R="$(cd -- "$A11_DIR" 2>/dev/null && pwd -P || printf '%s' "$A11_DIR")"
+# path was NOT resolved on the one runner where the two differ. `$A11_DIR_R` is
+# that spelling, computed once beside `$A11_DIR` itself.
 run env -u TMUX -C "$A11_DIR" "$LANE" --dry-run --dir . repoA11-1 </dev/null
 is    "lane --dry-run with a relative --dir exits 0" "$rc" 0
 has   "…and the launcher is handed the directory RESOLVED, not the relative spelling" "$out" "--dir $A11_DIR_R"
@@ -6444,7 +6458,8 @@ else
   : > "$LANE_TMUX_LOG"; : > "$FAKE_PCLAUDE_LOG"
   lane_pick 3 env -C "$PICK_DIR" "$LANE"
   is    "answering with a lane LIVE in this very session exits 0" "$rc" 0
-  has   "…selecting its window" "$(cat "$LANE_TMUX_LOG")" "select-window -t @31"
+  has   "…selecting its window, the target SESSION-QUALIFIED so tmux picks nothing" \
+        "$(cat "$LANE_TMUX_LOG")" "select-window -t picksess:@31"
   hasnt "…and moving nothing, because the window is already here" "$(cat "$LANE_TMUX_LOG")" "move-window"
   is    "…launching NOTHING: an attach is never a second process" "$(cat "$FAKE_PCLAUDE_LOG")" ""
   # AND ONE IN A DETACHED SESSION IS MOVED HERE AND SELECTED — the two acts
@@ -6453,7 +6468,8 @@ else
   lane_pick 4 env -C "$PICK_DIR" "$LANE"
   is    "answering with a lane live in a DETACHED session exits 0" "$rc" 0
   has   "…moving its window into this session, after the current one" "$(cat "$LANE_TMUX_LOG")" "move-window -a -s detsess:7"
-  has   "…and selecting it by id" "$(cat "$LANE_TMUX_LOG")" "select-window -t @32"
+  has   "…and selecting it in THIS session, which is where the move put it" \
+        "$(cat "$LANE_TMUX_LOG")" "select-window -t picksess:@32"
   is    "…and launching nothing here either" "$(cat "$FAKE_PCLAUDE_LOG")" ""
   # BOUND ELSEWHERE IS A REFUSAL NAMING WHERE, until #38's act 4 exists.
   : > "$LANE_TMUX_LOG"; : > "$FAKE_PCLAUDE_LOG"
@@ -6517,7 +6533,7 @@ fi
 : > "$LANE_TMUX_LOG"; : > "$FAKE_PCLAUDE_LOG"
 run env PATH="$LANEBIN_PATH" "$LANE" repoPick-2 </dev/null
 is    "lane <name> on a lane LIVE in this session exits 0" "$rc" 0
-has   "…selecting its window and nothing else" "$(cat "$LANE_TMUX_LOG")" "select-window -t @31"
+has   "…selecting its window and nothing else" "$(cat "$LANE_TMUX_LOG")" "select-window -t picksess:@31"
 is    "…and launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
 : > "$LANE_TMUX_LOG"
 run env PATH="$LANEBIN_PATH" "$LANE" repoPick-4 </dev/null
@@ -6583,7 +6599,8 @@ is    "…and attaches to nothing" "$(cat "$LANE_TMUX_LOG")" ""
 : > "$LANE_TMUX_LOG"
 run env -u TMUX PATH="$LANEBIN_PATH" "$LANE" repoPick-3 </dev/null
 is    "lane <name> outside tmux exits 0 on a live lane" "$rc" 0
-has   "…selecting the lane's own window first" "$(cat "$LANE_TMUX_LOG")" "select-window -t @32"
+has   "…selecting the lane's own window first, in the session the record names" \
+      "$(cat "$LANE_TMUX_LOG")" "select-window -t detsess:@32"
 has   "…and then attaching to its session" "$(cat "$LANE_TMUX_LOG")" "attach -t detsess"
 
 # A SELECT THAT FAILED IS PART OF THE FENCE AND NOT A COURTESY (Copilot round 1
@@ -6604,7 +6621,10 @@ is    "…having attached to nothing at all" "$(cat "$LANE_TMUX_LOG")" ""
 : > "$LANE_TMUX_LOG"
 run env PATH="$LANEBIN_PATH" LANE_TMUX_SELECT_FAIL=1 "$LANE" repoPick-3 </dev/null
 is    "…and so does the one after a move-window" "$rc" 2
-has   "…saying what had already been done" "$err" "moved into this session"
+has   "…saying what had already been done" "$err" "moved here out of detsess"
+has   "…and naming the session the window is in NOW, not the one it came from" \
+      "$err" "could not be selected in session picksess"
+hasnt "…so it never sends a person back to a source that may have closed" "$err" "tmux attach -t detsess"
 has   "…and the move itself is still in the log, because it happened" "$(cat "$LANE_TMUX_LOG")" "move-window"
 
 # A BINDING IS AVAILABLE BECAUSE THIS HOST PROVED IT DEAD, AND AN UNREAD

@@ -259,7 +259,14 @@ retire_commands() {
 	for name in "${RETIRED[@]}"; do
 		target="$dir/$name"
 		[ -e "$target" ] || continue
-		if [ -f "$target" ] && grep -qF -e 'Installed on PATH by `openRepoTools --install`' -- "$target" 2>/dev/null; then
+		# `! -L` BEFORE `-f`, BECAUSE `-f` FOLLOWS THE LINK (Copilot round 2 on
+		# #45). A person's own `restart` SYMLINK pointing at a file that happens
+		# to carry this installer's header would otherwise be unlinked — and
+		# `plan_install_targets` refuses a `-L` target for exactly that reason
+		# (`unplaceable_kind`, which names the link rather than writing through
+		# it). A link is somebody's decision about their own PATH; it is named
+		# here and left, like every other file this installer did not write.
+		if [ ! -L "$target" ] && [ -f "$target" ] && grep -qF -e 'Installed on PATH by `openRepoTools --install`' -- "$target" 2>/dev/null; then
 			rm -f -- "$target"
 			say "$name: RETIRED, removed from $target (lane-collision-protocol Amendment 18 Addendum 2; \`lane <name>\` is that act now)"
 		else

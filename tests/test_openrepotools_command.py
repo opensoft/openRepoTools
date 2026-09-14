@@ -454,6 +454,38 @@ def test_install_never_removes_a_file_it_did_not_write(tmp_path, name):
         f"is the person's:\n{result.stdout}")
 
 
+@pytest.mark.parametrize("name", RETIRED)
+@NEEDS_JQ
+def test_install_never_unlinks_a_symlink_of_a_retired_name(tmp_path, name):
+    """`-f` FOLLOWS THE LINK, AND A LINK IS SOMEBODY'S DECISION.
+
+    A person's own `restart` symlink pointing at a file that happens to carry
+    this installer's header would be unlinked by an ownership test written as
+    `[ -f "$target" ]` alone — and `plan_install_targets` refuses a `-L`
+    target for exactly that reason, naming the link rather than writing
+    through it. The retirement holds to the same rule: the link is NAMED and
+    left, and both it and what it points at are still there afterwards.
+    """
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    real = tmp_path / "elsewhere.sh"
+    real.write_text(
+        "#!/usr/bin/env bash\n"
+        "# Installed on PATH by `openRepoTools --install`, once upon a time.\n"
+        "echo linked\n", encoding="utf-8")
+    real.chmod(0o755)
+    link = bin_dir / name
+    link.symlink_to(real)
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert link.is_symlink(), (
+        f"a symlink named `{name}` was unlinked by the retirement:\n"
+        + result.stdout)
+    assert real.is_file(), "and what it pointed at is still there"
+    assert f"{name}: RETIRED" in result.stdout
+    assert f"rm {link}" in result.stdout
+
+
 @NEEDS_JQ
 def test_bin_dir_overrides_where_it_lands(tmp_path):
     result = run_cmd("--install", home=tmp_path,
