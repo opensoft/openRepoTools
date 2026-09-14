@@ -4656,6 +4656,82 @@ run env -u TMUX "$RESTART" repoNoSuch-9 </dev/null
 is   "restart refuses a lane the register does not carry" "$rc" 2
 has  "…and names the two commands that find one" "$err" "lane-start <repo> <n>"
 
+# THE FAIL-CLOSED FAMILY, ON THIS SURFACE'S THREE READS (#26; Brett Heap, "Take
+# it first, then land"). Amendment 7(d) gives each answer its own code — `0` an
+# answer · `8` NO ANSWER · `2` a helper predating the amendment that added the
+# read · anything else a read that FAILED — and all three of these sites
+# collapsed every one of them into the ordinary case. A register that cannot be
+# read is not "this window is not a lane"; a `lanes` that failed is not "no lane
+# of this checkout"; and a `swapped` that failed is not "this lane has no swap
+# record", which is the one that ends in a restart in the WRONG CHECKOUT.
+: > "$FAKE_PCLAUDE_LOG"
+cat > "$SANDBOX/rowbroke" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  register-row) printf 'lanes-edit: simulated failure\n' >&2; exit 6 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/rowbroke"
+FAKE_TMUX_WINDOW_NAME=repoA11-1 FAKE_TMUX_WINDOW="a11sess:@71" FAKE_TMUX_WINDOW_INDEX=0 \
+  run env REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/rowbroke" "$RESTART" </dev/null
+is    "a window's register read that FAILED refuses rather than falling through" "$rc" 1
+has   "…saying what it is not, in Amendment 7(d)'s terms" "$err" "is NOT 'this window"
+is    "…and launches nothing at all" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+# …while the two codes that ARE the fall-through still fall through.
+cat > "$SANDBOX/rowold" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  register-row) printf "lanes-edit: unknown subcommand 'register-row'\n" >&2; exit 2 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/rowold"
+FAKE_TMUX_WINDOW_NAME=repoA11-1 FAKE_TMUX_WINDOW="a11sess:@71" FAKE_TMUX_WINDOW_INDEX=0 \
+  run env -C "$A11_DIR" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/rowold" "$RESTART" </dev/null
+is    "a helper predating the read is the listing, not a refusal" "$rc" 0
+has   "…which is the per-repo listing this window's name could not shortcut" "$out" "repoA11-1"
+# THE LISTING'S OWN READ, the same three codes one rung down.
+cat > "$SANDBOX/listbroke" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  lanes) printf 'lanes-edit: simulated failure\n' >&2; exit 6 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/listbroke"
+FAKE_TMUX_WINDOW_NAME=claude FAKE_TMUX_WINDOW="a11sess:@71" FAKE_TMUX_WINDOW_INDEX=0 \
+  run env -C "$A11_DIR" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/listbroke" "$RESTART" </dev/null
+is    "a listing read that FAILED refuses rather than printing an empty one" "$rc" 1
+has   "…saying it is not 'no lane of this checkout'" "$err" "is NOT 'no lane of this checkout"
+cat > "$SANDBOX/listold" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  lanes) printf "lanes-edit: unknown subcommand 'lanes'\n" >&2; exit 2 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/listold"
+FAKE_TMUX_WINDOW_NAME=claude FAKE_TMUX_WINDOW="a11sess:@71" FAKE_TMUX_WINDOW_INDEX=0 \
+  run env -C "$A11_DIR" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/listold" "$RESTART" </dev/null
+is    "…and a helper predating Amendment 11 is the contract's 2" "$rc" 2
+has   "…naming the act that upgrades the workstation" "$err" "openRepoTools --install"
+has   "…and the way round it that needs no listing" "$err" "restart <lane>"
+# AND THE SWAP RECORD, which is the read the DIRECTORY comes from.
+: > "$FAKE_PCLAUDE_LOG"
+cat > "$SANDBOX/swapbroke" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  swapped) printf 'lanes-edit: simulated failure\n' >&2; exit 6 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/swapbroke"
+run env -u TMUX REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/swapbroke" "$RESTART" repoA11-1 </dev/null
+is    "a swap-record read that FAILED refuses rather than falling to the rungs below it" "$rc" 1
+has   "…saying what it is not" "$err" "is NOT 'this lane has no swap"
+is    "…and launches nothing, because that fall-through is a wrong checkout" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+
 echo "== Amendment 11 decision 6: \`lanes\` =="
 # ------- ruling 6: EVERY LANE BY DEFAULT, NARROWED INSIDE A CHECKOUT ---------
 #

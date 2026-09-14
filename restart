@@ -202,7 +202,31 @@ list_this_checkout() {
 	[ -n "$root" ] && args+=(--dir "$root")
 	# LOCAL READS. A person typing `restart` wants an answer now, and every read
 	# in this family sits in front of a launch: `lanes --fetch` is the refresh.
-	out="$("$LANES_EDIT" lanes ${args[@]+"${args[@]}"} 2>/dev/null)" || out=""
+	#
+	# AND THE CODE IS READ, NOT THE EMPTINESS OF THE OUTPUT (#26's fail-closed
+	# family; Amendment 7(d)). `|| out=""` turned EVERY nonzero into "no lane of
+	# this checkout is in the register" — a register whose read had just failed,
+	# a workstation whose helper predates Amendment 11, and a genuinely empty
+	# checkout all printed the same sentence, and the first two are not that
+	# sentence at all. The contract gives each its own code and this reads them:
+	# `0` rows · `8` none · `2` A HELPER PREDATING AMENDMENT 11, which is every
+	# workstation until act 3's install reaches it · anything else a read that
+	# failed, which is never "there are no lanes".
+	lc_rc=0
+	out="$("$LANES_EDIT" lanes ${args[@]+"${args[@]}"} 2>/dev/null)" || lc_rc=$?
+	case "$lc_rc" in
+	0) : ;;
+	8) out="" ;;
+	2) die "the \`lanes-edit.sh\` on this workstation has no \`lanes\` subcommand, so it
+    predates lane-collision-protocol Amendment 11 and this listing cannot be
+    read here. That is not a failure and nothing is wrong with the register —
+    this workstation has not taken adoption act 3's install yet. Take it:
+        openRepoTools --install
+    Or restart the lane by name, which needs no listing:  $prog <lane>" 2 ;;
+	*) die "$LANES_EDIT lanes failed (exit $lc_rc). That is NOT 'no lane of this checkout
+    is in the register', and this command will not print an empty listing on an
+    answer it did not get (Amendment 7(d)). Run it by hand to see what it says." 1 ;;
+	esac
 	if [ -z "$out" ]; then
 		note "no lane of ${repo:-$root} is in the register."
 		note "  open one: lane-start <repo> <n>   ·   every lane: lanes --all"
@@ -253,7 +277,26 @@ if [ -z "$lane" ]; then
 	if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
 		win_name="$(tmux display-message -p '#{window_name}' 2>/dev/null || :)"
 	fi
-	if [ -n "$win_name" ] && LANES_NO_FETCH=1 "$LANES_EDIT" register-row "$win_name" >/dev/null 2>&1; then
+	# THE CODE DECIDES, NOT THE TRUTHINESS OF THE COMMAND (#26's fail-closed
+	# family). `&& helper register-row …` read 8 — THIS WINDOW IS NOT A LANE,
+	# which is the ordinary case this fall-through exists for — and 1, a read
+	# that FAILED, as the same thing. A register that cannot be read is not a
+	# window that is not a lane, and inferring a lane from the next rung after a
+	# failed read is how a restart lands in the wrong one.
+	win_rc=0
+	if [ -n "$win_name" ]; then
+		LANES_NO_FETCH=1 "$LANES_EDIT" register-row "$win_name" >/dev/null 2>&1 || win_rc=$?
+	else
+		win_rc=8
+	fi
+	case "$win_rc" in
+	0 | 8 | 2) : ;;
+	*) die "$LANES_EDIT register-row $win_name failed (exit $win_rc). That is NOT 'this window
+    is not a lane', and this command will not fall to a listing — or to a lane
+    — on an answer it did not get (Amendment 7(d)). Run it by hand to see what
+    it says, then re-run." 1 ;;
+	esac
+	if [ "$win_rc" = 0 ]; then
 		lane="$win_name"
 		note "this window is lane $lane — restarting it, asking nothing (decision 7 point 3)"
 	else
@@ -294,7 +337,25 @@ esac
 # because act 1's window reuse and any rename destroy the
 # `claude-<profile>-<ts>-<pid>` session name that was the only place the profile
 # ever appeared.
-record_row="$(LANES_NO_FETCH=1 "$LANES_EDIT" swapped "$ws" 2>/dev/null | awk -F'\t' -v l="$lane" '$1 == l { print; exit }' || :)"
+# THE READ AND THE FILTER ARE TWO STEPS, because a pipeline's `$?` is the LAST
+# command's and `awk` succeeds on an empty input (#26's fail-closed family).
+# `|| :` swallowed every code `swapped` has: `8` no swap record for this
+# workstation — the ordinary case, and the one the next rung exists for — `2` a
+# helper predating Amendment 8, also a fall-through, and anything else a read
+# that FAILED. Carrying on there means resolving the directory and the profile
+# from the rungs below a record that may well exist, which is a restart in the
+# wrong checkout with no question asked (Evidence 3).
+sw_out=""; sw_rc=0
+sw_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" swapped "$ws" 2>/dev/null)" || sw_rc=$?
+case "$sw_rc" in
+0) : ;;
+8 | 2) sw_out="" ;;
+*) die "$LANES_EDIT swapped $ws failed (exit $sw_rc). That is NOT 'this lane has no swap
+    record', and this command will not resolve a directory or a profile from the
+    rungs below a record it could not read (Amendment 7(d)). Run it by hand to
+    see what it says, then re-run." 1 ;;
+esac
+record_row="$(printf '%s\n' "$sw_out" | awk -F'\t' -v l="$lane" '$1 == l { print; exit }' || :)"
 lane_dir="$dir_flag"
 if [ -z "$lane_dir" ] && [ -n "$record_row" ]; then
 	cand="$(printf '%s' "$record_row" | cut -f4)"
