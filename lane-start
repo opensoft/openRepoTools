@@ -560,10 +560,21 @@ while [ $# -gt 0 ]; do
     --no-launch) no_launch=1; shift ;;
     --confirm)   confirm=1; shift ;;
     --yes)       take_yes=1; shift ;;
+    # THE TWO SPELLINGS OF ONE FLAG GIVE ONE ANSWER, and these two did not
+    # (#26, the review of `c3ebcfe`, `lane-start:707`). `--dir ""` refuses;
+    # `--dir=` set the variable to nothing and fell through as if the operator
+    # had not named a directory at all — so the rungs below it ran, and one of
+    # them is `$PROJECTS_ROOT/<repo>`: `lane-start --dir= <repo> <n>` started in
+    # a checkout the operator had not asked for instead of refusing a path they
+    # had not given. `restart:151` — the same flag, on the sibling command —
+    # has carried the guard on both spellings all along, which is what makes
+    # this a divergence rather than a decision. Held for every flag in this
+    # estate by `test_the_two_spellings_of_a_flag_refuse_the_same_empty_value`,
+    # derived from the arms themselves rather than from a list.
     --dir)       dir_override="${2-}"; [ -n "$dir_override" ] || die "--dir needs a path" 2; shift 2 ;;
-    --dir=*)     dir_override="${1#--dir=}"; shift ;;
+    --dir=*)     dir_override="${1#--dir=}"; [ -n "$dir_override" ] || die "--dir needs a path" 2; shift ;;
     --estate)    estate="${2-}"; [ -n "$estate" ] || die "--estate needs a name" 2; shift 2 ;;
-    --estate=*)  estate="${1#--estate=}"; shift ;;
+    --estate=*)  estate="${1#--estate=}"; [ -n "$estate" ] || die "--estate needs a name" 2; shift ;;
     -h|--help)   usage; exit 0 ;;
     --)          shift; pass=("$@"); break ;;
     -*)          die "unknown option '$1' — see $prog --help" 2 ;;
@@ -597,14 +608,34 @@ case "${#positional[@]}" in
       # still the whole answer, so this is an improvement and never a dependency.
       ls_cmd="$(command -v lanes 2>/dev/null || :)"
       [ -n "$ls_cmd" ] || { [ -x "$SCRIPT_DIR/lanes" ] && ls_cmd="$SCRIPT_DIR/lanes"; }
+      # AND THE REFUSAL PROMISES A LISTING ONLY WHERE ONE WAS MADE (#26, the
+      # review of `c3ebcfe`, `lane-start:602`). `|| :` made every code of that
+      # read the same code, and the sentence below then sent a person to "the
+      # listing above" when what was above it was `lanes`'s own refusal. `0` and
+      # `8` both PRINT one — 8 is the empty repository, whose listing is the
+      # next free position and the line that takes it — `2` is a `lanes`
+      # predating the read, which says so in its own words, and anything else is
+      # a read that FAILED. Nothing of the listing is re-rendered here on any of
+      # them: this command renders none of it (the paragraph above), the read's
+      # own output and stderr have already gone to the terminal, and what
+      # changes is only whether this refusal claims a listing it did not get.
+      ls_listed=0
       if [ -n "$ls_cmd" ]; then
         note "'$arg' is a repository and not a lane. Its lanes, and the position that is free:"
-        LANES_NO_FETCH=1 "$ls_cmd" --prefix "$arg" >&2 || :
+        ls_rc=0
+        LANES_NO_FETCH=1 "$ls_cmd" --prefix "$arg" >&2 || ls_rc=$?
+        case "$ls_rc" in
+          0 | 8) ls_listed=1 ;;
+          2) : ;;
+          *) note "that listing FAILED (exit $ls_rc) — which is not 'this repository has no lanes', so no position is offered from it" ;;
+        esac
       fi
       # STILL EXIT 2, AND NOTHING IS LAUNCHED. A listing is what a person asked
       # for; a caller that scripted `lane-start <repo>` expecting a session must
       # not read 0 from a run that started none.
-      die "'$arg' is not a lane: a lane is <repo>-<position>, e.g. $arg-1. Run: $prog $arg <n> with a position from the listing above, or name the checkout yourself with --dir <path> to use '$arg' as the lane name" 2
+      from_listing=" with a position from the listing above"
+      [ "$ls_listed" = 1 ] || from_listing=""
+      die "'$arg' is not a lane: a lane is <repo>-<position>, e.g. $arg-1. Run: $prog $arg <n>$from_listing, or name the checkout yourself with --dir <path> to use '$arg' as the lane name" 2
     fi
     ;;
   0) usage >&2; die "a lane needs a position: $prog <repo> <n>" 2 ;;
@@ -647,9 +678,9 @@ if [ -z "${LANES_FILE:-}" ]; then die "$(lanes_workspace_why)" 1; fi
 # So the directory is READ FROM THE LANE'S OWN RECORD, and this script `cd`s
 # into it before it launches (step 6).
 #
-# FOUR RUNGS, FIRST ANSWER WINS, and clause (c) states them here rather than
+# SIX RUNGS, FIRST ANSWER WINS, and clause (c) states them here rather than
 # leaving them to an implementation because the launcher draft that read the
-# first text of that clause invented a fifth:
+# first text of that clause invented one of its own:
 #
 #   1. `--dir <path>` — the operator's word. NOT tested for existence at this
 #      rung: the refusal below names the path and the flag that fixes it, and a
@@ -660,14 +691,32 @@ if [ -z "${LANES_FILE:-}" ]; then die "$(lanes_workspace_why)" 1; fi
 #      its last lane-kind line carrying one.
 #   4. `$PROJECTS_ROOT/<repo>` — the default, and ONLY the default for a lane
 #      that has never been started under this amendment.
+#   5. THE ESTATE'S `project.yaml` LEGS, and
+#   6. A CHECKOUT NAMED FOR THE HOME'S REPOSITORY one or two levels under
+#      `$PROJECTS_ROOT` — both added for Evidence 7, both PROVED by the
+#      candidate's own `origin` against the lane's recorded home, and both
+#      STATED IN FULL beside the code that implements them a hundred lines
+#      below rather than a second time here.
 #
-# THERE IS NO FIFTH RUNG, AND THE CWD'S OWN CHECKOUT IS RULED OUT BY NAME.
-# Deriving the directory from the directory the operator happens to be standing
-# in is an inference, and this script writes the lane's HOME into its Amendment
-# 7 `STARTED` line from that directory's `origin`, which every `#n` the lane
-# afterwards writes inherits. An inference that can silently re-home a lane is
-# not worth the refusal it saves; the refusal names `--dir`, and `--dir` is one
-# word.
+# THEY WERE FOUR UNTIL EVIDENCE 7 AND THIS BLOCK WENT ON SAYING SO (#26, the
+# review of `c3ebcfe`, `lane-start:780`). `708395e` added rungs 5 and 6 to this
+# file; `2f44da0` corrected the MANUAL's count to six. The contract THE CODE
+# CARRIES still said "FOUR RUNGS" and "THERE IS NO FIFTH RUNG" a hundred lines
+# above the two rungs it had grown — which makes the code below look
+# unreachable to its next reader, and the one act that reading invites is
+# deleting it.
+#
+# WHAT THAT SENTENCE RULED OUT IS UNCHANGED, AND IT WAS NEVER A COUNT: THE
+# CWD'S OWN CHECKOUT IS RULED OUT BY NAME. Deriving the directory from the
+# directory the operator happens to be standing in is an inference, and this
+# script writes the lane's HOME into its Amendment 7 `STARTED` line from that
+# directory's `origin`, which every `#n` the lane afterwards writes inherits. An
+# inference that can silently re-home a lane is not worth the refusal it saves;
+# the refusal names `--dir`, and `--dir` is one word. Rungs 5 and 6 are not that
+# inference and cannot decay into it: every candidate is PROVED by its own
+# `origin` against the recorded home, one that fails the proof is passed over,
+# and both are skipped entirely for a lane with no recorded home to prove it
+# against.
 #
 # EVERY READ FAILS TO THE NEXT RUNG AND NEVER TO A REFUSAL. Amendment 7(d)'s
 # fail-closed rule says a read that could not run must never be taken for

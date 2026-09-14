@@ -4803,6 +4803,87 @@ is    "a swap-record read that FAILED refuses rather than falling to the rungs b
 has   "…saying what it is not" "$err" "is NOT 'this lane has no swap"
 is    "…and launches nothing, because that fall-through is a wrong checkout" "$(cat "$FAKE_PCLAUDE_LOG")" ""
 
+# AND THE TWO READS BELOW THE SWAP RECORD, which `013e0d5` left on `|| :` (#26,
+# the review of `c3ebcfe`, `restart:366` and `:375`). They are the harder half of
+# the family to see, because nothing beneath them launches: what is beneath them
+# is a REFUSAL THAT PRESCRIBES A WRITE — `lane-start --dir <the lane's checkout>`,
+# which APPENDS a `dir` to an append-only log that may already carry a different
+# one (Amendment 7(i)), and `pclaude --lane <lane> <profile>`, which is the one
+# guess this command exists to refuse because a wrong profile is a launch into
+# another account. `repoA11-7` is the lane with NO swap record — the rung above
+# these two — so for it both reads are actually made.
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX "$RESTART" repoA11-7 </dev/null
+is    "restart reads the lane's LOG for a lane with no swap record" "$rc" 0
+has   "…cd-ing into the directory that log names" "$(cat "$FAKE_PCLAUDE_LOG")" "cwd=$A11_DIR"
+has   "…with the profile it names too" "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoA11-7 team-05a"
+cat > "$SANDBOX/dirbroke" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  lane-dir) printf 'lanes-edit: simulated failure\n' >&2; exit 6 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/dirbroke"
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/dirbroke" "$RESTART" repoA11-7 </dev/null
+is    "a lane-dir read that FAILED refuses instead of prescribing the act that RECORDS one" "$rc" 1
+has   "…saying what it is not, in Amendment 7(d)'s terms" "$err" "is NOT 'this lane has no recorded directory'"
+hasnt "…and never printing the act that would append a SECOND directory to the log" "$err" "lane-start --dir <the lane's checkout>"
+is    "…launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+cat > "$SANDBOX/dirold" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  lane-dir) printf "lanes-edit: unknown subcommand 'lane-dir'\n" >&2; exit 2 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/dirold"
+run env -u TMUX REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/dirold" "$RESTART" repoA11-7 </dev/null
+is    "…while a helper predating the read still falls through to the refusal that names the act" "$rc" 2
+has   "…which is the one line a person types, filled in" "$err" "lane-start --dir <the lane's checkout> repoA11 7"
+cat > "$SANDBOX/profbroke" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  lane-profile) printf 'lanes-edit: simulated failure\n' >&2; exit 6 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/profbroke"
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/profbroke" "$RESTART" repoA11-7 </dev/null
+is    "a lane-profile read that FAILED refuses rather than asking for the guess" "$rc" 1
+has   "…saying what THAT is not" "$err" "is NOT 'this lane's record names no profile'"
+hasnt "…and never handing over the form that supplies one by hand" "$err" "pclaude --lane repoA11-7 <profile>"
+is    "…launching nothing either" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+
+# THE PLAN IS A THING A PERSON TYPES (#26, the review of `c3ebcfe`,
+# `restart:472`). Clause (c) admits a directory with a SPACE in it — `lane-start`
+# writes it quoted, which is what makes it one ref under 7(b), and `lane-dir`
+# hands it back unquoted — so `cd /p/spaced dir` was a line that cd's into
+# `/p/spaced`. `lane-start:550`'s one-line `quoted` has printed its own plan that
+# way since it had one; this command printed `${cmd[*]}`.
+SPACE_ID="aaaa0007-5555-4000-8000-aaaa00075555"
+mkdir -p "$HOME/projects/spaced dir"
+add_seed_row "| \`repoSpace-1\` | harness \`$SPACE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoA11/s.md | ACTIVE |"
+{ printf '# lane repoSpace-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoSpace-1, session %s@Eagle, 2026-09-12T09:00:00Z, lane:repoSpace-1 → home opensoft/repoSpace; estate repoSpace; dir "%s"; profile team-05a\n' "$SPACE_ID" "$HOME/projects/spaced dir"
+} > "$LOGD/repoSpace-1.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed a lane whose recorded directory carries a space"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX "$RESTART" --dry-run repoSpace-1 </dev/null
+is    "restart --dry-run exits 0 for a lane whose directory has a space" "$rc" 0
+has   "…printing a cd line that can be typed" "$out" "cd $HOME/projects/spaced\\ dir"
+hasnt "…and never the one that cd's into half the path" "$out" "cd $HOME/projects/spaced dir"
+has   "…and an exec line quoted the same way" "$out" "exec "
+is    "…launching nothing, which is what --dry-run means" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+# AND THE ORDINARY PLAN IS UNCHANGED: a path with no space is printed as itself.
+run env -u TMUX "$RESTART" --dry-run repoA11-7 </dev/null
+has   "a directory with nothing to quote is printed as itself" "$out" "cd $A11_DIR"
+
 echo "== Amendment 11 decision 6: \`lanes\` =="
 # ------- ruling 6: EVERY LANE BY DEFAULT, NARROWED INSIDE A CHECKOUT ---------
 #
@@ -4871,6 +4952,44 @@ has   "…printing that repository's lanes" "$err" "repoA11-1"
 has   "…and the next free position, filled in" "$err" "lane-start repoA11 "
 has   "…while the refusal names the position it now has a listing for" "$err" "with a position from the listing above"
 is    "…and launches nothing" "$(cat "$FAKE_CLAUDE_LOG")" ""
+# AND THE REFUSAL PROMISES A LISTING ONLY WHERE ONE WAS MADE (#26, the review of
+# `c3ebcfe`, `lane-start:602`). `|| :` made every code of that read the same
+# code, so a `lanes` that FAILED still ended "with a position from the listing
+# above" — pointing a person at its refusal. `0` and `8` both print one (8 is the
+# empty repository, whose listing IS the next free position), `2` says in its own
+# words that the workstation has not taken act 3's install, and anything else is
+# a read that failed. Nothing of the listing is re-rendered here on any of them.
+cat > "$SANDBOX/lsbroke" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  lanes) printf 'lanes-edit: simulated failure\n' >&2; exit 6 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/lsbroke"
+: > "$FAKE_CLAUDE_LOG"
+run env REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/lsbroke" "$START" repoA11
+is    "lane-start <repo> still refuses with 2 when the listing read fails" "$rc" 2
+has   "…naming the read that failed rather than being silent about it" "$err" "that listing FAILED (exit 1)"
+hasnt "…and never pointing at a listing nobody got" "$err" "from the listing above"
+has   "…while the form that works is still there" "$err" "is not a lane: a lane is <repo>-<position>"
+is    "…and launches nothing" "$(cat "$FAKE_CLAUDE_LOG")" ""
+
+# THE TWO SPELLINGS OF ONE FLAG GIVE ONE ANSWER (#26, the review of `c3ebcfe`,
+# `lane-start:707`). `--dir ""` refuses; `--dir=` set the variable to nothing and
+# fell through as if no directory had been named at all, so the rungs below it
+# ran — one of which is `$PROJECTS_ROOT/<repo>` — and `lane-start --dir= <repo>
+# <n>` started in a checkout the operator never asked for. `restart:151`, the
+# same flag on the sibling command, has carried the guard on both spellings all
+# along, which is what makes this a divergence rather than a decision.
+: > "$FAKE_CLAUDE_LOG"
+run "$START" --dir= repoA11 9
+is    "lane-start --dir= refuses, exactly as --dir \"\" already did" "$rc" 2
+has   "…in that arm's own words" "$err" "--dir needs a path"
+is    "…and launches nothing" "$(cat "$FAKE_CLAUDE_LOG")" ""
+run "$START" --estate= repoA11 9
+is    "…and its neighbour --estate= the same" "$rc" 2
+has   "…in ITS arm's own words" "$err" "--estate needs a name"
 
 # AND THE MANUAL SAYS SO, which is RV-B4 one settlement on: the code took the
 # narrowing in the round that documented the OPPOSITE, and `README-lanes.md`

@@ -363,6 +363,82 @@ def test_every_value_taking_arm_refuses_an_empty_value():
         f"was added or removed. Read the new arm, then move the number.")
 
 
+#: `--flag <value>` and `--flag=<value>` are two spellings of ONE flag. The
+#: pattern half of a `case` arm, up to its `)`, with grouped patterns kept whole.
+CASE_ARM_HEAD = re.compile(r"^\s*(--[A-Za-z0-9=*|_ -]+?)\)(\s|$)")
+#: The guard the two-token arms of this estate are written with.
+EMPTY_VALUE_GUARD = re.compile(r'\[ -n "\$\{?[A-Za-z_][A-Za-z0-9_]*\}?" \]')
+
+
+def _value_flag_arms(text: str) -> dict:
+    """{flag: {"plain": arm text, "equals": arm text}} for every option arm.
+
+    An arm runs from its pattern line to the line carrying its `;;`, so a
+    multi-line arm (`lane-end`'s `--retire=*`) is read whole and not by its
+    first line. Grouped patterns (`--repo | --dir | --ws | --prefix)`) count
+    for every flag they name.
+    """
+    lines = text.splitlines()
+    arms: dict = {}
+    for i, line in enumerate(lines):
+        head = CASE_ARM_HEAD.match(line)
+        if not head or line.lstrip().startswith("#"):
+            continue
+        body, j = [line], i
+        while ";;" not in lines[j] and j + 1 < len(lines) and j - i < 15:
+            j += 1
+            body.append(lines[j])
+        whole = "\n".join(body)
+        for token in head.group(1).split("|"):
+            token = token.strip()
+            if not token.startswith("--"):
+                continue
+            equals = token.endswith("=*")
+            flag = token[2:-2] if equals else token[2:]
+            if not flag:
+                continue
+            arms.setdefault(flag, {})["equals" if equals else "plain"] = whole
+    return arms
+
+
+@pytest.mark.parametrize("name", ALL_BASH)
+def test_the_two_spellings_of_a_flag_refuse_the_same_empty_value(name):
+    """ONE FLAG, TWO SPELLINGS, ONE ANSWER (#26, the review of `c3ebcfe`,
+    `lane-start:707`).
+
+    `lane-start --dir ""` refuses; `lane-start --dir=` set the variable to
+    nothing and FELL THROUGH as if no directory had been named at all, so the
+    rungs below it ran — one of which is `$PROJECTS_ROOT/<repo>` — and the
+    command started in a checkout the operator never asked for instead of
+    refusing a path they never gave. `restart:151`, the same flag on the
+    sibling command, has carried the guard on both spellings all along, which
+    is what makes this a DIVERGENCE and not a decision: eight arms across three
+    files had the guard on the two-token spelling and none on the `=` one, and
+    not one of them was reachable by any test in this suite, because an arm
+    that does not refuse says nothing for a test to read. That is the same
+    reasoning `test_every_value_taking_arm_refuses_an_empty_value` was written
+    from, one command over, after an outside reviewer caught the same class
+    twice.
+
+    Derived from the arms themselves and never from a list: where a flag's
+    two-token arm carries the estate's own `[ -n "$var" ]` guard, its `=` arm
+    must carry one too. A flag guarded in NEITHER spelling is not this rule's
+    business — `--text` is deliberately one — and a flag with only one spelling
+    has nothing to disagree with.
+    """
+    arms = _value_flag_arms((REPO / name).read_text(encoding="utf-8"))
+    offenders = [
+        flag for flag, spelling in sorted(arms.items())
+        if "plain" in spelling and "equals" in spelling
+        and EMPTY_VALUE_GUARD.search(spelling["plain"])
+        and not EMPTY_VALUE_GUARD.search(spelling["equals"])]
+    assert not offenders, (
+        f"{name}: `--{'`, `--'.join(offenders)}` refuses an empty value when "
+        f"it is spelled `--flag \"\"` and takes one when it is spelled "
+        f"`--flag=`. The second spelling then reads as ABSENT, and every rung "
+        f"below the flag runs on a value the operator did give.")
+
+
 #: A line that actually FETCHES, as opposed to a line of the usage heredoc
 #: that says the word. Both spellings take a quoted argument, which the prose
 #: never does.
@@ -706,6 +782,60 @@ def test_restart_fences_a_lane_name_the_way_the_helper_does():
         "`restart` does not fence a lane name with `lanes-edit.sh`'s own "
         f"pattern.\n  the helper refuses: {pattern}\n  and `restart` must "
         f"refuse the same string, not merely a first character")
+
+
+#: The words clause (c)'s ladder is counted in, in `lane-start` and in the
+#: manual. Both spell the number out; neither writes a digit.
+RUNG_WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+              "seven": 7, "eight": 8, "nine": 9}
+
+
+def test_the_directory_precedence_states_every_rung_it_implements():
+    """THE CONTRACT THE CODE CARRIES SAID *"THERE IS NO FIFTH RUNG"* WHILE THE
+    CODE A HUNDRED LINES BELOW IT HAD SIX (#26, the review of `c3ebcfe`,
+    `lane-start:780`).
+
+    `708395e` added rungs 5 and 6 for Evidence 7 - the estate's `project.yaml`
+    legs and a checkout named for the home's repository, each proved by that
+    directory's own `origin` - and `2f44da0` corrected the MANUAL's count to
+    six. The block at the top of `lane-start` that clause (c) states the ladder
+    in was corrected in neither. A contract that contradicts the code beneath
+    it makes that code look unreachable, and the one act that reading invites
+    is deleting it.
+
+    Derived from the two files rather than restated: the count the block
+    DECLARES, the rungs it LISTS, the rungs the implementation MARKS with its
+    own `# Rung <n>` comments, and the count the manual's heading states must
+    be one number. Any of the four moving alone is the drift this catches.
+    """
+    code = (REPO / "lane-start").read_text(encoding="utf-8")
+    head = re.search(r"^# ([A-Z]+) RUNGS, FIRST ANSWER WINS", code, re.M)
+    assert head, "`lane-start` no longer declares clause (c)'s rung count"
+    declared = RUNG_WORDS[head.group(1).lower()]
+    # FROM THE LINE AFTER THE DECLARATION TO THE FIRST LINE OF CODE: the block
+    # is one run of comment lines, and the numbered items are the ladder.
+    lines = code.splitlines()
+    first = next(i for i, l in enumerate(lines)
+                 if l.startswith(f"# {head.group(1)} RUNGS, FIRST ANSWER WINS"))
+    listed = set()
+    for line in lines[first + 1:]:
+        if not line.startswith("#"):
+            break
+        item = re.match(r"#\s{3}(\d+)\. ", line)
+        if item:
+            listed.add(int(item.group(1)))
+    implemented = {int(n) for n in re.findall(r"^# Rung (\d+) ", code, re.M)}
+    assert implemented <= listed, (
+        f"`lane-start` implements rungs {sorted(implemented - listed)} that "
+        f"clause (c)'s own block does not list: {sorted(listed)}")
+    assert listed == set(range(1, declared + 1)), (
+        f"the block says {declared} rungs and lists {sorted(listed)}")
+    manual = (REPO / "docs/README-lanes.md").read_text(encoding="utf-8")
+    stated = re.search(r"The lane's directory, in (\w+) rungs", manual)
+    assert stated, "the manual has no directory-precedence heading to count"
+    assert RUNG_WORDS[stated.group(1).lower()] == declared, (
+        f"the manual counts {stated.group(1)} rungs and `lane-start` counts "
+        f"{head.group(1).lower()}")
 
 
 def test_the_documents_say_what_a_bare_lanes_lists():

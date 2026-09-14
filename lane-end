@@ -450,11 +450,11 @@ while [ $# -gt 0 ]; do
         shift
       fi ;;
     --home)        home_override="${2-}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift 2 ;;
-    --home=*)      home_override="${1#--home=}"; shift ;;
+    --home=*)      home_override="${1#--home=}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift ;;
     --force)       force=1; shift ;;
     --dry-run)     dry_run=1; shift ;;
     --state-was)   state_was="${2-}"; [ -n "$state_was" ] || die "--state-was needs the exact text to replace" 2; shift 2 ;;
-    --state-was=*) state_was="${1#--state-was=}"; shift ;;
+    --state-was=*) state_was="${1#--state-was=}"; [ -n "$state_was" ] || die "--state-was needs the exact text to replace" 2; shift ;;
     -h|--help)     usage; exit 0 ;;
     --)            shift ;;
     -*)            die "unknown option '$1' — see $prog --help" 2 ;;

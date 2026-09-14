@@ -4982,7 +4982,7 @@ case "$cmd" in
       case "$1" in
         --no-github) NO_GITHUB=1; shift ;;
         --home)      home_override="${2-}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift 2 ;;
-        --home=*)    home_override="${1#--home=}"; shift ;;
+        --home=*)    home_override="${1#--home=}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift ;;
         --text)      text="${2-}"; shift 2 ;;
         --text=*)    text="${1#--text=}"; shift ;;
         --)          shift ;;
@@ -5040,7 +5040,7 @@ case "$cmd" in
         --force)     force=1; shift ;;
         --no-github) NO_GITHUB=1; shift ;;
         --home)      home_override="${2-}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift 2 ;;
-        --home=*)    home_override="${1#--home=}"; shift ;;
+        --home=*)    home_override="${1#--home=}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift ;;
         --)          shift ;;
         -*)          die "unknown option '$1' for claim" 2 ;;
         *)           [ -z "$obj_raw" ] || die "claim takes exactly one object" 2; obj_raw="$1"; shift ;;
@@ -5160,7 +5160,7 @@ EOF
       case "$1" in
         --no-github) NO_GITHUB=1; shift ;;
         --home)      home_override="${2-}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift 2 ;;
-        --home=*)    home_override="${1#--home=}"; shift ;;
+        --home=*)    home_override="${1#--home=}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift ;;
         --)          shift ;;
         -*)          die "unknown option '$1' for release" 2 ;;
         *)
@@ -5201,11 +5201,11 @@ EOF
     while [ $# -gt 0 ]; do
       case "$1" in
         --lane)      mode="lane";    arg="${2-}"; [ -n "$arg" ] || die "--lane needs a lane name" 2; shift 2 ;;
-        --lane=*)    mode="lane";    arg="${1#--lane=}"; shift ;;
+        --lane=*)    mode="lane";    arg="${1#--lane=}"; [ -n "$arg" ] || die "--lane needs a lane name" 2; shift ;;
         --landing)   mode="landing"; arg="${2-}"; [ -n "$arg" ] || die "--landing needs owner/repo" 2; shift 2 ;;
-        --landing=*) mode="landing"; arg="${1#--landing=}"; shift ;;
+        --landing=*) mode="landing"; arg="${1#--landing=}"; [ -n "$arg" ] || die "--landing needs owner/repo" 2; shift ;;
         --home)      home_override="${2-}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift 2 ;;
-        --home=*)    home_override="${1#--home=}"; shift ;;
+        --home=*)    home_override="${1#--home=}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift ;;
         --no-fetch)  LANES_NO_FETCH=1; shift ;;
         --)          shift ;;
         -*)          die "unknown option '$1' for who" 2 ;;
