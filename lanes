@@ -267,8 +267,18 @@ ws_notice() {
 # told was false. The stderr of the fetch path is kept and rendered; the stderr
 # of the local path still is not, because there the notice is `LANES_NO_FETCH=1`
 # saying what the caller asked for.
+#
+# AND THE FALLBACK THAT MADE NO CAPTURE FILE THREW THEM AWAY AGAIN (#26, the
+# review of `c3ebcfe`, `lanes:280`). Where `mktemp` cannot make a file — a
+# `$TMPDIR` that is gone, full or not writable — this read ran with
+# `2>/dev/null`, so the helper's fallback sentence went to the same place it
+# went before this was fixed at all and the footer printed "as of a fetch just
+# now" over it. The temporary file is a CONVENIENCE for reading the notice back;
+# without one the notice still belongs to the person, so it is PASSED THROUGH to
+# the terminal and the footer stops asserting a freshness this run cannot check.
 rc=0
 fetch_err=""
+fetch_unchecked=0
 if [ "$do_fetch" = 1 ]; then
 	fetch_err_file="$(mktemp "${TMPDIR:-/tmp}/lanes-fetch.XXXXXX" 2>/dev/null || printf '')"
 	if [ -n "$fetch_err_file" ]; then
@@ -276,7 +286,8 @@ if [ "$do_fetch" = 1 ]; then
 		fetch_err="$(cat "$fetch_err_file" 2>/dev/null || printf '')"
 		rm -f -- "$fetch_err_file"
 	else
-		out="$("$LANES_EDIT" lanes --fetch ${args[@]+"${args[@]}"} 2>/dev/null)" || rc=$?
+		out="$("$LANES_EDIT" lanes --fetch ${args[@]+"${args[@]}"})" || rc=$?
+		fetch_unchecked=1
 	fi
 else
 	out="$("$LANES_EDIT" lanes ${args[@]+"${args[@]}"} 2>/dev/null)" || rc=$?
@@ -312,6 +323,11 @@ case "$rc" in
 		say ""
 		say "  and the fetch did not answer, so that is this checkout's own copy:"
 		printf '%s\n' "$fetch_err" | sed -n 's/^/  /p'
+	elif [ "$fetch_unchecked" = 1 ]; then
+		say ""
+		say "  and whether the fetch answered is UNKNOWN — no temporary file could be made"
+		say "  to read the helper's own notes back, so they went to the terminal above"
+		say "  rather than into this line. That may be this checkout's own copy."
 	fi
 	ws_notice
 	exit 8 ;;
@@ -407,6 +423,11 @@ if [ "$do_fetch" = 1 ] && [ "$fetch_fell_back" = 1 ]; then
 	# words. What the helper said is printed under this line instead.
 	say "$n lane(s)${here_repo:+ of $here_repo}, read LOCALLY: the fetch did not answer, so this is the checkout's own copy as of $("$LANES_EDIT" fetch-age 2>/dev/null || printf 'unknown'). What the helper said:"
 	printf '%s\n' "$fetch_err" | sed -n 's/^/  /p'
+elif [ "$do_fetch" = 1 ] && [ "$fetch_unchecked" = 1 ]; then
+	# NO CAPTURE FILE, SO NO CLAIM. The helper's notes went straight to the
+	# terminal above and this line does not know whether one of them was the
+	# fallback sentence — which is exactly why it does not say "just now".
+	say "$n lane(s)${here_repo:+ of $here_repo}, and whether the fetch answered is UNKNOWN: no temporary file could be made to read the helper's own notes back, so they are above rather than in this line. This checkout last heard from origin $("$LANES_EDIT" fetch-age 2>/dev/null || printf 'unknown')."
 elif [ "$do_fetch" = 1 ]; then
 	say "$n lane(s)${here_repo:+ of $here_repo}, as of a fetch just now."
 else

@@ -3656,6 +3656,40 @@ is   "lane-dir with no lane exits 64, its own usage code and never the dispatche
 run "$E" lane-dir repoA11-1 repoA11-2
 is   "…and 64 for a second argument, for the same reason" "$rc" 64
 
+# A LOG THAT COULD NOT BE READ IS **1** AND NOT THE PRE-CUTOVER **8** (#26, the
+# review of `c3ebcfe`, `lanes-edit.sh:3525`). `lane_payload_field` read the
+# events inside the HERE-DOCUMENT that feeds its loop, where a command
+# substitution's status is discarded outright, so an unreadable log arrived as no
+# lines and left through `return 8` — the one code `restart`, `lane-start` and
+# both skills are entitled to read as "this lane has not started under Amendment
+# 11 yet" and to fall past. These two arms carry their siblings' `case` now.
+#
+# THE LOG IS MADE UNREADABLE FOR REAL rather than stubbed, because the defect is
+# INSIDE this file and a stub of `$E` would not exercise it. `LANES_NO_GIT=1`
+# forces the local branch of `lane_log_events` — with a remote ref present it
+# reads `git show`'s stdout, where a file mode cannot fail — and `awk` then
+# exits non-zero on the file it cannot open. Skipped for a root that can read it
+# anyway.
+if [ "$(id -u)" = 0 ]; then
+  skip "a log that cannot be read is a refusal and not 'no record'" "running as root, which can read a mode-000 file"
+else
+  chmod 000 "$LOGD/repoA11-1.md"
+  run env LANES_NO_GIT=1 "$E" lane-dir repoA11-1
+  is   "a lane-dir whose log could not be READ exits 1, never the pre-cutover 8" "$rc" 1
+  has  "…saying what that is NOT, in Amendment 7(d)'s words" "$err" "is NOT 'this lane has no recorded directory'"
+  run env LANES_NO_GIT=1 "$E" lane-profile repoA11-1
+  is   "…and its sibling the same, because a wrong profile is another account" "$rc" 1
+  has  "…naming the read and the code it came back with" "$err" "lane-profile could not read lane repoA11-1's log"
+  chmod 644 "$LOGD/repoA11-1.md"
+  # …AND THE PRE-CUTOVER 8 IS UNTOUCHED, so nothing that used to fall through
+  # refuses now: `repoA11-2` is the lane with no `dir` sub-field at all.
+  run env LANES_NO_GIT=1 "$E" lane-dir repoA11-2
+  is   "a readable log with no dir sub-field is still the contract's 8" "$rc" 8
+  run env LANES_NO_GIT=1 "$E" lane-dir repoA11-1
+  is   "…and a readable one still answers 0" "$rc" 0
+  is   "…with the same path it always gave" "$out" "$A11_DIR"
+fi
+
 # ------------------------------------------------------------ session-lane
 run "$E" session-lane "$A11_ID2"
 is   "session-lane exits 0 for a uuid the register's session cell names" "$rc" 0
@@ -4929,6 +4963,18 @@ hasnt "…and the same absent label" "$out" "of repoA11,"
 run "$LANES_CMD" --prefix repoA11 </dev/null
 has   "a --prefix on its own still names the repository in its count" "$out" "of repoA11,"
 has   "…and still ends with the next free position" "$out" "next free position"
+# AND `--all` IS ABSOLUTE OVER `--lane` TOO, which the helper's own reset left
+# standing (#26, the review of `c3ebcfe`, `lanes-edit.sh:3999`). `--lane` is the
+# narrowest selector there is and it clears the other four for itself, so
+# `--all --lane X` answered about ONE lane under the flag whose comment has said
+# "LAST AND ABSOLUTE" since it was written. The wrapper takes no `--lane`, so
+# this is asked of the helper, which is where the selector lives.
+run "$E" lanes --all --lane repoA11-1
+is    "lanes --all --lane exits 0" "$rc" 0
+has   "…listing every lane, which is what --all asks for" "$out" "repoA11-3"
+run "$E" lanes --lane repoA11-1
+is    "…while --lane on its own is still the one-lane read restart makes" "$rc" 0
+hasnt "…and still reads one log rather than the estate's" "$out" "repoA11-3"
 
 run "$LANES_CMD" repoA11-1 </dev/null
 is   "lanes takes no positional argument, and spends the contract's 64 on it" "$rc" 64
@@ -5005,6 +5051,45 @@ run "$LANES_CMD" --fetch --all </dev/null
 is    "a fetch that answered exits 0" "$rc" 0
 has   "…and says it is as of a fetch just now" "$out" "as of a fetch just now"
 hasnt "…with no fallback notice anywhere in it" "$out" "the fetch did not answer"
+
+# THE QUIET HALF OF THE SAME DEFECT (#26, the review of `c3ebcfe`, `lanes:411`).
+# `43b6320` closed the LOUD path — the fetch was attempted, failed, and the
+# helper said so. FOUR ways out of `log_sync` never reach the fetch at all and
+# said NOTHING: `LANES_NO_GIT=1`, a `LANES_NO_FETCH=1` already in the
+# environment, a `$LANES_REPO` that is not a checkout, and an
+# `origin/$LANES_BRANCH` `ls-remote` could not confirm — the TIMEOUT among them.
+# On every one of them `--fetch` printed "as of a fetch just now" over a fetch
+# that never ran. The helper records WHY and the `lanes` arm says it in the one
+# phrase the wrapper already reads.
+run env LANES_NO_FETCH=1 "$LANES_CMD" --fetch --all </dev/null
+is    "lanes --fetch with LANES_NO_FETCH=1 already set still exits 0" "$rc" 0
+has   "…with the rows, because a listing may not refuse over a freshness note" "$out" "repoA11-1"
+hasnt "…and never claims the fetch it was told not to make" "$out" "as of a fetch just now"
+has   "…saying instead that the answer is LOCAL" "$out" "read LOCALLY: the fetch did not answer"
+has   "…and naming which of the four reasons this run had" "$out" "LANES_NO_FETCH=1 is set in this environment"
+run env LANES_NO_GIT=1 "$LANES_CMD" --fetch --all </dev/null
+is    "…and the same for a run in which nothing touches git" "$rc" 0
+hasnt "…which also never says 'just now'" "$out" "as of a fetch just now"
+has   "…and names ITS reason rather than the other one" "$out" "LANES_NO_GIT=1 is set"
+# THE HELPER SAYS IT ONLY UNDER `--fetch`, because without it the local read is
+# the documented default (SPEC rev 4 §15) and the notice would be a line saying
+# the command did what it was asked.
+run "$LANES_CMD" --all </dev/null
+hasnt "a listing with no --fetch carries no no-fetch notice of its own" "$out" "NO FETCH WAS MADE"
+hasnt "…on stderr either" "$err" "NO FETCH WAS MADE"
+
+# AND THE CAPTURE FILE THAT COULD NOT BE MADE THREW THE SAME NOTICE AWAY (#26,
+# the review of `c3ebcfe`, `lanes:280`). `mktemp` under a `$TMPDIR` that does not
+# exist fails, and this command's fallback ran the read with `2>/dev/null` — the
+# exact line the fix above replaced — so the footer went back to asserting a
+# fetch it could not check. The notes go to the terminal now and the footer says
+# it does not know.
+run env TMPDIR="$SANDBOX/no-such-tmpdir" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/fetchfallback" "$LANES_CMD" --fetch --all </dev/null
+is    "lanes --fetch with no usable TMPDIR still exits 0" "$rc" 0
+has   "…with the rows" "$out" "repoA11-1"
+hasnt "…and never claims a fetch it could not check on" "$out" "as of a fetch just now"
+has   "…saying in terms that it does not know" "$out" "whether the fetch answered is UNKNOWN"
+has   "…while the helper's own notes reach the person instead of /dev/null" "$err" "reading the logs as they stand locally"
 # A PAUSED LANE WITH NO RECORDED PROFILE GETS NO `restart` LINE — it gets the
 # form that works, with the profile named as the one token to supply.
 has  "a lane with no recorded profile is offered the launcher form, not a line it cannot type" \

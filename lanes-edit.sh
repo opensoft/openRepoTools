@@ -2888,18 +2888,45 @@ write_event() {
 }
 
 # A read fetches first — there is no index, so "current" means "after a fetch".
+#
+# AND WHERE IT DID NOT FETCH IT RECORDS WHY, so the one caller with a freshness
+# line can correct it (#26, the fail-closed family one layer out, `lanes:411`).
+# FOUR of the five ways out of here never reach the fetch at all —
+# `LANES_NO_GIT=1`, `LANES_NO_FETCH=1`, a `$LANES_REPO` that is not a checkout,
+# and an `origin/$LANES_BRANCH` `ls-remote` could not confirm, THE TIMEOUT AMONG
+# THEM — and every one of them answered 0 in silence. `lanes --fetch` reads this
+# file's stderr for one phrase and prints *"as of a fetch just now"* when it does
+# not find it, so all four printed that sentence over a fetch that never ran.
+# `43b6320` closed the LOUD path, where the fetch was attempted and failed; this
+# is the quiet one.
+#
+# IT IS RECORDED HERE AND SAID IN THE `lanes` ARM, not printed here, because
+# EVERY subcommand in this file runs this function and only the one with a
+# `--fetch` flag has a freshness line to be wrong. A note on every path would put
+# a paragraph in front of every launch on the workstation to fix a sentence that
+# is printed in one place.
+LOG_SYNC_FETCH=""      # yes · fell-back · else WHY this run did not fetch
 log_sync() {
   # THE CACHE ABOVE IS THE REF AS IT STOOD; a fetch moves the ref, so it is
   # dropped here rather than read past. Both copies of it: the variable this
   # shell holds and the file every subshell reads (ruling 12).
   LANES_REGISTER_CACHE=""
   ls_rc="${SE_CACHE_FILE:+$SE_CACHE_FILE.register}"; [ -n "$ls_rc" ] && rm -f -- "$ls_rc"
-  [ "$NO_GIT" = 1 ] && return 0
-  [ "${LANES_NO_FETCH:-0}" = 1 ] && { note "LANES_NO_FETCH=1 — not fetching; reading origin/$LANES_BRANCH as the ref already stands here"; return 0; }
-  git -C "$LANES_REPO" rev-parse --git-dir >/dev/null 2>&1 || return 0
-  remote_has_branch || return 0
-  git_net -C "$LANES_REPO" fetch -q origin "$LANES_BRANCH" 2>/dev/null \
-    || note "fetch $([ "$GIT_TIMED_OUT" = 1 ] && printf 'timed out after %ss' "$GIT_TIMEOUT" || printf 'failed') — reading the logs as they stand locally"
+  LOG_SYNC_FETCH=""
+  [ "$NO_GIT" = 1 ] && { LOG_SYNC_FETCH="LANES_NO_GIT=1 is set, so nothing in this run touches git"; return 0; }
+  [ "${LANES_NO_FETCH:-0}" = 1 ] && { LOG_SYNC_FETCH="LANES_NO_FETCH=1 is set in this environment"; note "LANES_NO_FETCH=1 — not fetching; reading origin/$LANES_BRANCH as the ref already stands here"; return 0; }
+  git -C "$LANES_REPO" rev-parse --git-dir >/dev/null 2>&1 || { LOG_SYNC_FETCH="$LANES_REPO is not a git checkout"; return 0; }
+  if ! remote_has_branch; then
+    LOG_SYNC_FETCH="origin/$LANES_BRANCH could not be reached"
+    [ "$GIT_TIMED_OUT" = 1 ] && LOG_SYNC_FETCH="$LOG_SYNC_FETCH — ls-remote timed out after ${GIT_TIMEOUT}s"
+    return 0
+  fi
+  if git_net -C "$LANES_REPO" fetch -q origin "$LANES_BRANCH" 2>/dev/null; then
+    LOG_SYNC_FETCH=yes
+  else
+    LOG_SYNC_FETCH=fell-back
+    note "fetch $([ "$GIT_TIMED_OUT" = 1 ] && printf 'timed out after %ss' "$GIT_TIMEOUT" || printf 'failed') — reading the logs as they stand locally"
+  fi
   return 0
 }
 
@@ -3512,7 +3539,23 @@ lane_row_facts() {   # events on stdin, ONE LINE PER LANE
     }'
 }
 
+# 0 with the sub-field · 8 the log was read and carries none · 1 THE LOG COULD
+# NOT BE READ, which is not the same fact and never was (#26, the fail-closed
+# family one layer out, `lanes-edit.sh:3525`).
+#
+# THE READ WAS INSIDE THE HERE-DOCUMENT THAT FEEDS THE LOOP, and a command
+# substitution's status THERE is not carried anywhere — not, as the review had
+# it, carried as `awk`'s; it is discarded outright, because a here-document body
+# is text and nothing tests it. So a `lane_log_events` that failed arrived as no
+# lines at all and left through the `return 8` below, and 8 is the one code every
+# caller of this function is entitled to read as *"this lane has not started
+# under Amendment 11 yet"* — the pre-cutover answer that sends `restart`,
+# `lane-start` and both skills to the rungs beneath a record they never
+# established was readable. The read is its own step now and its status decides.
 lane_payload_field() {   # <lane> <name> [all]
+  lpf_lines=""; lpf_rc=0
+  lpf_lines="$(lane_log_events "$1")" || lpf_rc=$?
+  [ "$lpf_rc" = 0 ] || return 1
   # The scan is over EVERY lane-kind payload, newest last, and the answer is
   # the last one that actually carries the sub-field.
   lpf_v=""
@@ -3521,7 +3564,7 @@ lane_payload_field() {   # <lane> <name> [all]
     lpf_this="$(payload_subfield "$lpf_p" "$2" "${3-}")"
     [ -n "$lpf_this" ] && lpf_v="$lpf_this"
   done <<EOF
-$(lane_log_events "$1" 2>/dev/null | awk -F"$US" '
+$(printf '%s\n' "$lpf_lines" | awk -F"$US" '
     $3 == "STARTED" || $3 == "PAUSED" || $3 == "RESUMED" || $3 == "ENDED" || $3 == "RETIRED" { print $8 }')
 EOF
   [ -n "$lpf_v" ] || return 8
@@ -3995,8 +4038,15 @@ lanes_rows() {
       *) return 64 ;;
     esac
   done
-  # `--all` LAST AND ABSOLUTE, whatever order the flags arrived in.
-  if [ "$lr_all" = 1 ]; then lr_repo=""; lr_dir=""; lr_prefix=""; lr_here=0; fi
+  # `--all` LAST AND ABSOLUTE, whatever order the flags arrived in — AND THAT
+  # INCLUDES `--lane`, which this reset used to leave standing (#26, the review
+  # of `c3ebcfe`). `--lane <name>` is the narrowest selector there is: the block
+  # below it sets `lr_names` to that one name and clears the other four filters
+  # for itself, so `lanes --all --lane X` answered about ONE lane under the flag
+  # that means every lane. The sentence above it has said "absolute" since it was
+  # written; this is the code catching up with it, and it is the same defect the
+  # wrapper's own `here_repo` had one file up (`lanes:143`, taken at `2f44da0`).
+  if [ "$lr_all" = 1 ]; then lr_repo=""; lr_dir=""; lr_prefix=""; lr_here=0; lr_one=""; fi
   [ -n "$lr_dir" ] && lr_dir="$(cd -- "$lr_dir" 2>/dev/null && pwd -P || printf '%s' "$lr_dir")"
   # ONE LANE, WITHOUT SCANNING THE ESTATE. `restart <lane>` needs one row's
   # `profile` and nothing else, and building the whole listing for it would walk
@@ -5407,7 +5457,18 @@ EOF
     [ "$#" -le 1 ] || die "lane-dir takes one lane: lane-dir <lane>" 64
     check_lane_name "$lane"
     log_sync
-    ld_out="$(lane_payload_field "$lane" dir 2>/dev/null || :)"
+    # THE READER'S STATUS DECIDES, AS IT DOES IN EVERY OTHER ARM OF THIS CLAUSE
+    # (#26, the fail-closed family one layer out). `window-session`, `last-session`,
+    # `forks` and `window-lane` all carry this `case`; these two carried
+    # `|| :` and then read the EMPTINESS of the output, so a log that could not
+    # be read left here as **8** — the pre-cutover answer, which is the one
+    # answer every caller of this read treats as *"fall to the next rung"*.
+    ld_out="$(lane_payload_field "$lane" dir)"; ld_rc=$?
+    case "$ld_rc" in
+      0) : ;;
+      8) exit 8 ;;
+      *) die "lane-dir could not read lane $lane's log (exit $ld_rc). That is NOT 'this lane has no recorded directory', and a caller that read it that way would resolve the directory from the rungs beneath a record it never read (Amendment 7(d))." 1 ;;
+    esac
     [ -n "$ld_out" ] || exit 8
     printf '%s\n' "$ld_out"
     ;;
@@ -5434,7 +5495,12 @@ EOF
     [ "$#" -le 1 ] || die "lane-profile takes one lane: lane-profile <lane>" 64
     check_lane_name "$lane"
     log_sync
-    lp_out="$(lane_payload_field "$lane" profile 2>/dev/null || :)"
+    lp_out="$(lane_payload_field "$lane" profile)"; lp_rc=$?
+    case "$lp_rc" in
+      0) : ;;
+      8) exit 8 ;;
+      *) die "lane-profile could not read lane $lane's log (exit $lp_rc). That is NOT 'this lane's record names no profile', and a wrong profile is a launch into another account (Amendment 7(d))." 1 ;;
+    esac
     [ -n "$lp_out" ] || exit 8
     printf '%s\n' "$lp_out"
     ;;
@@ -5542,6 +5608,20 @@ EOF
     # its answer is, exactly as Amendment 8(e)'s hook does under `R-A8-1`.
     [ "$lns_fetch" = 1 ] || LANES_NO_FETCH=1
     log_sync
+    # A FETCH THAT DID NOT HAPPEN IS NOT A FETCH, AND IT IS SAID IN THE ONE
+    # PHRASE THE CALLER ALREADY READS (#26, `lanes:411`). `log_sync` leaves four
+    # ways out of itself that never reach the fetch and were silent on all four;
+    # `lanes --fetch` matches its stderr for *"reading the logs as they stand
+    # locally"* and prints *"as of a fetch just now"* where it does not find it.
+    # So the phrase is the helper's, once, and the reason is named beside it.
+    #
+    # ONLY UNDER `--fetch`. Without it this read's default is LOCAL by design
+    # (SPEC rev 4 §15) and the notice would be a line saying it did what it was
+    # asked — which is why the wrapper renders the fetch path's stderr and not
+    # the local path's.
+    if [ "$lns_fetch" = 1 ] && [ "$LOG_SYNC_FETCH" != yes ] && [ "$LOG_SYNC_FETCH" != fell-back ]; then
+      note "--fetch was asked for and NO FETCH WAS MADE: $LOG_SYNC_FETCH — reading the logs as they stand locally"
+    fi
     lns_out="$(lanes_rows ${lns_args[@]+"${lns_args[@]}"})"; lns_rc=$?
     case "$lns_rc" in
       0)  : ;;
