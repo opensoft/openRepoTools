@@ -4890,6 +4890,26 @@ record_unread_why() {
 record_unread_exits() {
     printf "the exits are to put the block back in the order \`park\` writes it (every project-level key above \`features:\`, every feature-level key above \`legs:\`) in %s, which is yours to do and not \`status\`'s, or to park that feature again FROM THE WORKSTATION THAT HAS IT (%s), which rewrites the whole block in that order; a park from any other workstation rewrites it out of what its own loader read and takes these lines with it" "$1" "$2"
 }
+# AND THE LEG IS NAMED BY ITS ROLE, OR BY THE ROLE IT HAS NOT GOT (Copilot's
+# second round on this PR, suppressed, verbatim: "When an unread `- role:`
+# has an empty value (for example `- role: # note` under a closed `legs:`
+# list), `feature_drop_role` is empty and this renders `the record lists its
+# `` leg`. That makes the new recovery diagnostic unclear for a roleless
+# record; use an explicit label such as \"a leg with no role\" (and cover this
+# malformed spelling in the regression tests)."). IT IS RIGHT, AND THE
+# SPELLING IS ONE THIS LAYER ALREADY KNOWS: `record_scalar` takes `#` and
+# everything after it off every value because `workspace_load_project` takes
+# it off every LINE, so `- role: # note` is a leg with no role to both
+# readers — the reading #21's round put there, four functions above this one.
+# An empty role between two backticks is a name where the reader is looking
+# for one, and the line it is on exists to send a hand to a line.
+record_unread_leg() {
+    if [ -n "$1" ]; then
+        printf "\`%s\` leg" "$1"
+    else
+        printf "leg with no role"
+    fi
+}
 
 # A root's block of the record against its disk: the note line, one finding
 # per leg that is out of step, one per FEATURE the record leaves with no legs
@@ -5268,7 +5288,7 @@ read_record() {
                         # leg is read; the exits are still this arm's, since
                         # both of them settle the branch name and the key
                         # order together.
-                        finding "parked feature with no branch name: a \`- branch:\` in the record has no value, and the \`${feature_drop_role[seen_branches - 1]:-}\` leg listed under it sits where \`resume\` reads no leg, because $(record_unread_why "${feature_drop_why[seen_branches - 1]:-legs}"); \`resume\` reads the feature as one named nothing, collects no leg for it, and refuses it whole as a shape mismatch before it reads one, so nothing here brings it back — if that feature landed, remove its \`- branch:\` block from ${RECORD_FILE##*/}; if it was parked, park it again from the workstation that has it ($where), which writes the branch and the legs it parks"
+                        finding "parked feature with no branch name: a \`- branch:\` in the record has no value, and the $(record_unread_leg "${feature_drop_role[seen_branches - 1]:-}") listed under it sits where \`resume\` reads no leg, because $(record_unread_why "${feature_drop_why[seen_branches - 1]:-legs}"); \`resume\` reads the feature as one named nothing, collects no leg for it, and refuses it whole as a shape mismatch before it reads one, so nothing here brings it back — if that feature landed, remove its \`- branch:\` block from ${RECORD_FILE##*/}; if it was parked, park it again from the workstation that has it ($where), which writes the branch and the legs it parks"
                     elif [ "${feature_legs[seen_branches - 1]:-0}" -eq 0 ]; then
                         finding "parked feature with no branch name: a \`- branch:\` in the record has no value and lists no leg; \`resume\` reads it as a feature named nothing and refuses it whole as a shape mismatch before it reads a leg, so nothing here brings it back — if that feature landed, remove its \`- branch:\` block from ${RECORD_FILE##*/}; if it was parked, park it again from the workstation that has it ($where), which writes the branch it parks"
                     else
@@ -5318,11 +5338,11 @@ read_record() {
                     [ -n "$verdict" ] || verdict="${feature_rr[seen_branches - 1]:-}"
                     [ -n "$verdict" ] || verdict="${feature_add[seen_branches - 1]:-}"
                     if [ "${feature_legs[seen_branches - 1]:-0}" -eq 0 ]; then
-                        finding "parked feature $a: the record lists its \`${feature_drop_role[seen_branches - 1]:-}\` leg where \`resume\` reads no leg, because $(record_unread_why "${feature_drop_why[seen_branches - 1]:-legs}"); \`resume\` collects NO leg for this feature and refuses it WHOLE, reporting it as a shape mismatch, so nothing here brings it back — $(record_unread_exits "${RECORD_FILE##*/}" "$where")"
+                        finding "parked feature $a: the record lists its $(record_unread_leg "${feature_drop_role[seen_branches - 1]:-}") where \`resume\` reads no leg, because $(record_unread_why "${feature_drop_why[seen_branches - 1]:-legs}"); \`resume\` collects NO leg for this feature and refuses it WHOLE, reporting it as a shape mismatch, so nothing here brings it back — $(record_unread_exits "${RECORD_FILE##*/}" "$where")"
                     elif [ -n "$verdict" ]; then
-                        finding "parked feature $a: the record lists a \`${feature_drop_role[seen_branches - 1]:-}\` leg for it where \`resume\` reads no leg, because $(record_unread_why "${feature_drop_why[seen_branches - 1]:-legs}"); \`resume\` refuses this feature WHOLE in any case, for the reason the legs it does read give on their own lines below, so nothing here brings it back — $(record_unread_exits "${RECORD_FILE##*/}" "$where")"
+                        finding "parked feature $a: the record lists a $(record_unread_leg "${feature_drop_role[seen_branches - 1]:-}") for it where \`resume\` reads no leg, because $(record_unread_why "${feature_drop_why[seen_branches - 1]:-legs}"); \`resume\` refuses this feature WHOLE in any case, for the reason the legs it does read give on their own lines below, so nothing here brings it back — $(record_unread_exits "${RECORD_FILE##*/}" "$where")"
                     else
-                        finding "parked feature $a: the record lists a \`${feature_drop_role[seen_branches - 1]:-}\` leg for it where \`resume\` reads no leg, because $(record_unread_why "${feature_drop_why[seen_branches - 1]:-legs}"); \`resume\` brings the feature back with the legs it does read and leaves that one's work where it was parked — $(record_unread_exits "${RECORD_FILE##*/}" "$where")"
+                        finding "parked feature $a: the record lists a $(record_unread_leg "${feature_drop_role[seen_branches - 1]:-}") for it where \`resume\` reads no leg, because $(record_unread_why "${feature_drop_why[seen_branches - 1]:-legs}"); \`resume\` brings the feature back with the legs it does read and leaves that one's work where it was parked — $(record_unread_exits "${RECORD_FILE##*/}" "$where")"
                     fi
                 elif [ "${feature_legs[seen_branches - 1]:-0}" -eq 0 ]; then
                     where="the record does not say where"

@@ -7995,6 +7995,122 @@ def test_a_role_above_its_features_legs_key_names_the_key_that_never_opened(
             ], (stray, findings)
 
 
+def test_an_unread_leg_with_no_role_is_named_by_the_role_it_has_not_got(
+        atlas, home):
+    """COPILOT'S SECOND ROUND ON THIS PR (2026-09-14, suppressed), verbatim:
+    "When an unread `- role:` has an empty value (for example `- role: # note`
+    under a closed `legs:` list), `feature_drop_role` is empty and this
+    renders `the record lists its `` leg`. That makes the new recovery
+    diagnostic unclear for a roleless record; use an explicit label such as
+    'a leg with no role' (and cover this malformed spelling in the regression
+    tests)."
+
+    IT IS RIGHT, AND THE SPELLING IS ONE THIS LAYER ALREADY KNOWS. `- role: #
+    note` is a leg with no role to BOTH readers, because `record_scalar` takes
+    a `#` comment off every value for the same reason `workspace_load_project`
+    takes it off every line — the reading #21's round put above `record_scalar`
+    itself. Run against the extension 2026-09-14 on every record below: with a
+    `repo` leg beside it the loader reads `features=1 legs=1 roles=[repo]`,
+    and with the roleless line as the feature's only leg, `features=1
+    legs=0` — `MANIFEST_LEG_ROLE` empty in both. So the line is unread in each
+    of them, and the finding about it was naming the leg with a pair of empty
+    backticks: a name where the reader is looking for one, on the line whose
+    whole worth is sending a hand to a line.
+
+    THE TWO PHASES ARE THE TWO ARMS THAT NAME A DROPPED LEG ON A FEATURE THE
+    RECORD NAMES — the one where the feature keeps a leg `resume` reads and
+    the one where it keeps none; the third, a feature whose `- branch:` has no
+    value either, is the test below this one. Both spellings are held in each,
+    the `#` comment and the bare key, because it is `record_scalar` that makes
+    them the same thing and not this arm.
+
+    RECORDED AND NOT TAKEN, and it is the exits' reading rather than this
+    line's: with the key put back this leg becomes one `collect_legs` READS,
+    and a leg with no role is a refusal of the WHOLE feature — which this
+    layer already says, in `check_parked_leg`'s own roleless arm, on the run
+    after the key moves. Bolting that onto this sentence would say it twice
+    and in the wrong place; the arm that owns it says it where it is true."""
+    checkout = workspace_config(home)
+    origin_has_branch(atlas, "001-a-thing")
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    directory = "        feature_directory: worktrees/001-a-thing\n"
+    assert text.count(directory) == 1, text
+
+    for roleless in ("# note", ""):
+        # (1) beside a leg the loader DOES read: the feature comes back and
+        # the line is about the leg that does not come with it.
+        path.write_text(text.replace(directory, "") + directory
+                        + leg_block(roleless, FAKE_SHA), encoding="utf-8")
+        result = run(STATUS, "Atlas", home=home)
+        assert result.returncode == 1, result.stdout + result.stderr
+        findings = [line.strip() for line in result.stdout.splitlines()
+                    if line.strip().startswith("- parked feature")]
+        assert findings == [
+            "- parked feature 001-a-thing: the record lists a leg with no "
+            f"role for it where `resume` reads no leg, {WHY_LEGS}; `resume` "
+            "brings the feature back with the legs it does read and leaves "
+            "that one's work where it was parked" + unread_exits(),
+            "- parked feature 001-a-thing (repo leg): no worktree on that "
+            "branch here; parked 2026-09-10T20:00:00Z on Falcon — `resume "
+            "Atlas` brings it back",
+            ], (roleless, findings)
+        assert "``" not in result.stdout, (roleless, "an empty name")
+
+        # (2) as the feature's only leg, with no `legs:` key above it to
+        # have opened a list: `collect_legs` collects none and refuses the
+        # feature whole (the loader, same day: `features=1 legs=0`).
+        path.write_text(text.split(LEGS_KEY)[0] + leg_block(roleless, FAKE_SHA),
+                        encoding="utf-8")
+        result = run(STATUS, "Atlas", home=home)
+        assert result.returncode == 1, result.stdout + result.stderr
+        findings = [line.strip() for line in result.stdout.splitlines()
+                    if line.strip().startswith("- parked feature")]
+        assert findings == [
+            "- parked feature 001-a-thing: the record lists its leg with no "
+            f"role where `resume` reads no leg, {WHY_NOLEGS}; `resume` "
+            "collects NO leg for this feature and refuses it WHOLE, reporting "
+            "it as a shape mismatch, so nothing here brings it back"
+            + unread_exits(),
+            ], (roleless, findings)
+        assert "``" not in result.stdout, (roleless, "an empty name")
+        assert "`resume Atlas`" not in result.stdout, roleless
+
+
+def test_a_blank_branch_over_an_unread_leg_with_no_role_says_both_and_neither(
+        atlas, home):
+    """THE THIRD ARM OF COPILOT'S SECOND ROUND (2026-09-14, suppressed): the
+    line for a feature whose `- branch:` has no value AND whose only listed
+    leg sits where `resume` reads none named that leg with the same empty
+    backticks. Two defects were already said in one line here; the leg is now
+    named by the role it has not got, and nothing else about this record
+    moves — not the refusal `resume` makes, and not the exits, which are the
+    delete-or-re-park pair a blank name needs rather than the key order."""
+    checkout = workspace_config(home)
+    path = folder_matched_record(atlas, checkout)
+    text = path.read_text(encoding="utf-8")
+    assert text.count("        legs:\n") == 1
+    path.write_text(text.replace("    root: Atlas\n", "")
+                    .replace("      - branch: 001-a-thing\n", "      - branch:\n")
+                    .replace("          - role: repo\n", "          - role: # note\n")
+                    .replace("        legs:\n", "    root: Atlas\n        legs:\n"),
+                    encoding="utf-8")
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature with no branch name: a `- branch:` in the "
+            "record has no value, and the leg with no role listed under it "
+            f"sits where `resume` reads no leg, {WHY_OUTER}; `resume` reads "
+            "the feature as one named nothing, collects no leg for it, and "
+            "refuses it whole as a shape mismatch before it reads one, so "
+            "nothing here brings it back — if that feature landed, remove its "
+            "`- branch:` block from Atlas.yaml; if it was parked, park it "
+            "again from the workstation that has it (the record says Falcon), "
+            "which writes the branch and the legs it parks") in result.stdout
+    assert "``" not in result.stdout, "an empty name"
+    assert "`resume Atlas`" not in result.stdout
+
+
 def test_the_unread_leg_line_never_promises_a_feature_this_run_refuses(
         atlas, home):
     """COPILOT'S FIRST ROUND ON THIS PR (2026-09-14, suppressed), verbatim:
