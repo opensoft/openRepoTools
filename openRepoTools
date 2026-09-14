@@ -744,9 +744,10 @@ $(hook_block_text)
 	conflict)
 		die "$settings already carries a UserPromptSubmit entry that runs \`guard\` with a
     DIFFERENT command string. Exact-string match is the only idempotence this entry
-    has, so merging would fire the name guard twice — two refusals for one prompt —
-    and repairing a setting a person meant is not an installer's to do. NOTHING was
-    installed. Remove that entry, then re-run. The entry this places, byte for byte:
+    has, so merging would fire the name guard twice — two refusals for one prompt.
+    Repairing a setting a person meant is not an installer's to do, so
+    NOTHING was installed. Remove that entry, then re-run.
+    The entry this places, byte for byte:
 $(guard_block_text)"
 		;;
 	present | absent) GUARD_PLAN="$existing_guard" ;;
