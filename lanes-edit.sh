@@ -185,7 +185,8 @@
 #      carry both without the caller guessing, so the newer reads spend a number
 #      of their own and the older half of this file keeps 2 where it always was.
 #      Clause (h)'s table is the contract for which read uses which.
-#   3  rebase conflict — nothing was pushed, the edit is a local commit
+#   3  rebase conflict — not pushed BY THIS ATTEMPT; a later write from this
+#      checkout may already carry it to origin, so LOOK before you retry
 #   4  the mutex could not be taken within 60s
 #   5  an edit moved more than one line and was refused — or, Amendment 15, a
 #      lane's object log could not be renamed to the row's own spelling
@@ -1174,6 +1175,7 @@ EOF
       # read them. LOOK before you reset or redo anything.
       note "RECOVERY (in that order):"
       note "  git -C $LANES_REPO fetch origin $LANES_BRANCH && git -C $LANES_REPO log --oneline origin/$LANES_BRANCH -3   # a write that ran after this one may already have carried it"
+      note "  if that commit is already there, STOP — reset or redo now would write it a second time."
       note "  git -C $LANES_REPO diff origin/$LANES_BRANCH..HEAD -- ${CP_PATHS[*]}   # only if it is not there: read back exactly what you wrote"
       note "  git -C $LANES_REPO reset --hard origin/$LANES_BRANCH                # then drop the local commits (NOTE: also drops any"
       note "                                                          # uncommitted peer edit in this checkout)"

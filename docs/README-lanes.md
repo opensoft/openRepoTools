@@ -936,7 +936,7 @@ else.
 | 0 | done |
 | 1 | environment — no register, no writer |
 | 2 | refusal — bad arguments, the object is held, an unknown alias, a checkout that cannot be rebased |
-| 3 | rebase conflict — nothing pushed, the edit is a local commit |
+| 3 | rebase conflict — not pushed by this attempt; a later write from this checkout may already carry it to origin, so look before you retry |
 | 4 | the mutex could not be taken within 60s |
 | 5 | an edit moved more than one line and was refused |
 | 6 | `git add` / `commit` / `push` failed |

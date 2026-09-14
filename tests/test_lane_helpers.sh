@@ -3600,6 +3600,20 @@ pc_reset="$(printf '%s\n' "$err" | grep -n -- 'reset --hard origin/main' | head 
 is    "…the look printed BEFORE the reset it gates, the same order RV-B3 pins" \
       "$([ -n "$pc_look" ] && [ -n "$pc_reset" ] && [ "$pc_look" -lt "$pc_reset" ] && printf 'look first' || printf "look $pc_look, reset $pc_reset")" "look first"
 
+# Copilot's review of #50 (5202640056), suppressed comment on lanes-edit.sh:1180:
+# the gate above was attached only to the diagnostic `diff` line — a caller
+# whose fetch/log just showed the commit already on origin was still told, by
+# the next two unconditional lines, to reset and redo, which is the exact
+# duplicate this PR exists to prevent. A single STOP between the look and the
+# reset gates all three lines below it (diff, reset, redo) at once, the same
+# job the existing "only if it is not there" qualifier does for the diff line
+# alone.
+has   "…and told to STOP there instead of resetting or redoing a landed commit" "$err" \
+      "if that commit is already there, STOP — reset or redo now would write it a second time."
+pc_stop="$(printf '%s\n' "$err" | grep -n -- 'STOP — reset or redo now' | head -n1 | cut -d: -f1)"
+is    "…the STOP sits between the look and the reset, gating both reset and redo" \
+      "$([ -n "$pc_look" ] && [ -n "$pc_stop" ] && [ -n "$pc_reset" ] && [ "$pc_look" -lt "$pc_stop" ] && [ "$pc_stop" -lt "$pc_reset" ] && printf 'ordered' || printf "look $pc_look, stop $pc_stop, reset $pc_reset")" "ordered"
+
 # Suite housekeeping: this conflict is real and stays real (the peer's row
 # rewrite is still on origin), so nothing later inherits this section's own
 # dangling commit — and nothing later finds $WIP behind the peer's push

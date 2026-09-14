@@ -1883,6 +1883,33 @@ def test_the_exit_code_table_carries_every_code_the_file_exits_with():
     assert "64" in documented, "64 is the code every Amendment 11 read uses"
 
 
+def test_the_exit_3_documentation_agrees_with_the_die_message_it_describes():
+    """Copilot's review of PR #50 (5202640056): the `die` for exit 3 picked up
+    attempt-scoped wording (#32) — *"not pushed by this attempt; a later
+    write from this checkout may already carry it"* — while the exit-code
+    table just above it in the same file, and the manual's own copy of that
+    table (`docs/README-lanes.md`), both still read *"nothing was pushed"* /
+    *"nothing pushed"*, a claim an aborted pull never proved. A table (or a
+    manual) that contradicts the code it describes is worse than no table at
+    all — the same claim `test_the_exit_code_table_carries_every_code_the_
+    file_exits_with` makes for a code missing from the table entirely.
+    """
+    src = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+    start = src.index("# EXIT CODES — every subcommand, one table")
+    end = src.index("# --no-sweep", start)
+    table = src[start:end]
+    manual = (REPO / "docs/README-lanes.md").read_text(encoding="utf-8")
+    for name, text in (("lanes-edit.sh's own exit-code table", table),
+                        ("docs/README-lanes.md's copy of it", manual)):
+        assert "nothing was pushed" not in text and "nothing pushed" not in text, (
+            f"{name} still claims exit 3 means nothing reached origin, which "
+            "an aborted pull does not prove (#32)")
+    assert "not pushed BY THIS ATTEMPT" in table, (
+        "lanes-edit.sh's exit-3 row no longer names the attempt-scoped wording")
+    assert "not pushed by this attempt" in manual, (
+        "docs/README-lanes.md's exit-3 row no longer names the attempt-scoped wording")
+
+
 #: ADOPTION ACT 0, AND THE ONE SHA THAT IS IT. `opensoft/brett-wip#5` merged
 #: 2026-09-13T19:14:37Z, SQUASHED — so the PR's pre-merge head is not an
 #: ancestor of `origin/main` and names code that never landed, while the merge
