@@ -1768,9 +1768,30 @@ def test_readme_is_short_enough_to_be_read():
     side's number — 383 and 403 are each a half of this file and neither
     is this file — and both dated entries above stay, because each still
     names the lines it bought.
+
+    409 -> 422 on 2026-09-14, for the FOUR FINDINGS of #40 — Copilot's review
+    of the re-vendor at `8a36eb3`, filed here rather than taken there because
+    they predate the pin move. Thirteen lines, and every one of them is
+    BEHAVIOUR A PERSON MEETS rather than prose about it, which is the only
+    kind this cap moves for. Four in the install paragraph: `--install` stamps
+    the documented mode on every artifact whether or not the bytes moved, so a
+    second run prints `(mode restored to 755)` where it used to print
+    `(unchanged)` over a mode it had just repaired; and a target this user
+    CANNOT WRITE — not only one that is not a regular file — is refused in the
+    same planning phase, with the `rm -f` that clears it and the reason that
+    `rm` takes a read-only file at all. Two more say the mode of the artifacts
+    that are NOT files in the bin directory, where it was the defect and not
+    only the line: a `SKILL.md` whose bytes were right kept a wrong mode for
+    ever, and `~/.claude/settings.json` kept a widened one on the one path
+    that never rewrote it. Six for `wip init`'s seed, which staged
+    `git add -A -- .` and pushed whatever an ADOPTED checkout carried into the
+    one repository that holds a person's unfinished work — the refusal, what
+    it names, and that it is asked before a byte is written into that
+    checkout. Every dated entry above stays, and none of these thirteen is
+    over one of their lines.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 409, f"README.md is {len(lines)} lines; the cap is 409"
+    assert len(lines) <= 422, f"README.md is {len(lines)} lines; the cap is 422"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

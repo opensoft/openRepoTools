@@ -262,6 +262,21 @@ collect_commands() {
     curl -fsSL https://raw.githubusercontent.com/$REPO/$REF/<file>"
 }
 
+# WHAT MODE A PLACED ARTIFACT IS AT, asked without `stat`. GNU spells that
+# `stat -c %a` and BSD `stat -f %Lp`, and nothing this repository ships may
+# reach for one of the two without the other beside it — so `find` answers it
+# instead, in the one spelling both agree on: with the octal preceded by
+# neither `-` nor `+`, GNU and BSD `find` each evaluate `-perm` true only where
+# the permission bits are EXACTLY that number.
+#
+# IT IS ASKED SO THAT A LINE CAN TELL THE TWO CASES APART. `--install` stamps
+# the documented mode on every artifact whether or not the bytes changed
+# (#40, findings 2 and 3), and a run that repaired a mode and reported
+# `unchanged` is a run that told a person there was nothing to look at.
+mode_is() {   # <octal> <path>
+	[ -n "$(find "$2" -maxdepth 0 -perm "$1" -print 2>/dev/null)" ]
+}
+
 install_commands() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
 	local name target source verb placed=0
@@ -288,7 +303,17 @@ install_commands() {
 		source="$STAGED/$name"
 		target="$dir/$name"
 		if [ -e "$target" ] && cmp -s "$source" "$target"; then
-			verb="already installed at $target (unchanged)"
+			# THE BYTES WERE RIGHT, WHICH IS NOT THE SAME AS NOTHING TO DO
+			# (#40, finding 2). The `chmod` below has always run on this arm
+			# too — the eleven are the one set this installer never got wrong —
+			# but the line said `unchanged` over a mode it had just repaired.
+			# The mode is asked BEFORE it is stamped, and the line says which
+			# of the two happened.
+			if mode_is 755 "$target"; then
+				verb="already installed at $target (unchanged)"
+			else
+				verb="already installed at $target (mode restored to 755)"
+			fi
 		else
 			if [ -e "$target" ]; then verb="updated at $target"; else verb="installed at $target"; fi
 			cp -- "$source" "$target"
@@ -462,11 +487,17 @@ collect_skills() {
 HOOK_PLAN=""      # "absent" | "present" | "nofile"
 HOOK_MERGED=""    # a staged whole file, ready to move into place
 
-# THE THREE DESTINATIONS, PROVED WRITABLE BEFORE ANY OF THE ELEVEN IS PLACED.
+# THE DESTINATIONS, PROVED WRITABLE BEFORE ANY OF THE ELEVEN IS PLACED — every
+# directory the artifacts that are not one of the eleven files go into, derived
+# from the two lists and NOT counted in this sentence. It said "THE THREE
+# DESTINATIONS" while the loop below built seven of them, which is the same
+# defect `collect_commands` names above: a number restated beside a list that
+# grew is a number that goes stale where nobody is looking.
+#
 # Amendment 9(b) computes the merge in hand "so a merge that cannot be computed
 # refuses having placed nothing" — and the merge computing fine against a
 # directory nobody may write to is the same failure one step later. A
-# filesystem gives no transaction, so this cannot make the three placements
+# filesystem gives no transaction, so this cannot make those placements
 # atomic; what it does is move the failure that actually happens — a directory
 # that is not ours to write — back to the planning phase, where the refusal
 # still costs nothing. The directories are created here, which is idempotent
@@ -503,7 +534,11 @@ plan_skill_targets() {
 	#
 	# `unplaceable_kind` is asked rather than re-tested, because two copies of
 	# one rule is how the bin half would come to refuse a dangling link and the
-	# skill half would not.
+	# skill half would not — and that is exactly what happened to the second
+	# half of the question it answers: a target that IS a regular file and is
+	# not this user's to write (#40, finding 4). The eleven were already placed
+	# by the time `cp` met it, on the one path that promises all or none, so the
+	# `-w` is asked here beside the `-L`.
 	for name in "${SKILLS[@]}"; do
 		for target in "$(skills_home)/shared/skills/$name/SKILL.md" "$(claude_home)/skills/$name/SKILL.md"; do
 			kind="$(unplaceable_kind "$target")" || continue
@@ -520,13 +555,17 @@ plan_skill_targets() {
 			paths="${paths:+$paths }\"$target\""
 		done
 	done
-	[ -z "$bad" ] || die "\`--install\` places REGULAR FILES, and these skill and command targets are not regular files:
+	[ -z "$bad" ] || die "\`--install\` places a REGULAR FILE IT CAN WRITE at each of these skill and
+    command targets, and these are not that:
 $bad
     \`cp\` follows a symlink, so installing over one would leave the skill
     UNINSTALLED — the target stays a link — and would write these bytes into
-    whatever is on the other end of it. NOTHING was installed and nothing
-    already installed was replaced.
-    Clear them, then re-run:
+    whatever is on the other end of it; and a target this user cannot write is
+    a \`cp\` that fails with the eleven commands already placed, which is the
+    half-install this phase exists to prevent. NOTHING was installed and
+    nothing already installed was replaced.
+    Clear them, then re-run — \`rm -f\` takes a read-only file, because what a
+    removal needs is the DIRECTORY's write bit and not the file's:
         rm -f -- $paths"
 }
 
@@ -562,22 +601,64 @@ $bad
 # `-L` AS WELL AS `-e`, because a DANGLING symlink is the sharper case: `[ -e ]`
 # is false on one, and `cp` through it creates the file at the far end — a write
 # into a repository this command was never told about.
+#
+# AND `-w` AS WELL AS `-f` (#40, finding 4). This answered "a regular file" with
+# `return 1` and asked nothing else, so every existing file counted as one
+# `--install` may place over — and `plan_skill_targets` let a READ-ONLY
+# `SKILL.md` or command file through. `install_commands` has already copied the
+# eleven PATH files by the time `place_skill_and_hook` reaches the `cp`, so an
+# ordinary permission failure there left a host with eleven of the eighteen
+# artifacts placed, on the one path in this file that promises all or none. A
+# mode is not an exotic state either: `chmod 444` on a file a person did not
+# want overwritten is what a person does.
+#
+# THE REFUSAL'S ONE REMEDY STAYS TRUE OF THE NEW KIND, which is why it is
+# answered here rather than in a second walk: `rm -f` takes a read-only file —
+# what a removal needs is the DIRECTORY's write bit, not the file's — so the
+# `rm -f -- <paths>` both planners print clears every path either of them names.
 unplaceable_kind() {   # <target>
 	local t="$1"
 	if [ -L "$t" ]; then
 		printf 'a symlink to %s' "$(readlink -- "$t" 2>/dev/null || printf '<unreadable>')"
-	elif [ ! -e "$t" ] || [ -f "$t" ]; then
-		return 1
-	elif [ -d "$t" ]; then
-		printf 'a directory'
-	else
-		printf 'not a regular file'
+		return 0
 	fi
+	if [ -d "$t" ]; then
+		printf 'a directory'
+		return 0
+	fi
+	if [ -e "$t" ] && [ ! -f "$t" ]; then
+		printf 'not a regular file'
+		return 0
+	fi
+	if [ -f "$t" ]; then
+		if [ -w "$t" ]; then return 1; fi
+		printf 'a regular file this user cannot write'
+		return 0
+	fi
+	return 1
 }
 
 plan_install_targets() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
 	local name target kind bad="" paths=""
+	# THE DIRECTORY FIRST, which is the `-w` question for every target that is
+	# not there yet: an absent file is placeable exactly where the directory it
+	# would be created in takes a write. `plan_skill_targets` asks this of the
+	# ones it writes into; the bin directory is the same question for the eleven,
+	# and without it a `$OPENREPOTOOLS_BIN_DIR` that is not this user's failed at
+	# the first `cp` under `set -e` — exit 1, which this toolset spends on
+	# "findings were printed", from a run that placed nothing and said nothing.
+	# A directory that does not exist yet is NOT asked about: the `mkdir -p` in
+	# `install_commands` makes it, and a parent that refuses that is its refusal
+	# to report, not a mode to read off a path that is not there.
+	if [ -e "$dir" ] && [ ! -d "$dir" ]; then
+		die "$dir is where \`--install\` places the ${#INSTALLABLES[@]} commands, and it is not a
+    directory. NOTHING was installed and nothing already installed was replaced."
+	fi
+	if [ -d "$dir" ] && [ ! -w "$dir" ]; then
+		die "$dir is not writable, and \`--install\` places the ${#INSTALLABLES[@]} commands there.
+    NOTHING was installed and nothing already installed was replaced."
+	fi
 	for name in "${INSTALLABLES[@]}"; do
 		target="$dir/$name"
 		kind="$(unplaceable_kind "$target")" || continue
@@ -585,13 +666,17 @@ plan_install_targets() {
 }    $target — $kind"
 		paths="${paths:+$paths }\"$target\""
 	done
-	[ -z "$bad" ] || die "\`--install\` places REGULAR FILES, and these targets are not regular files:
+	[ -z "$bad" ] || die "\`--install\` places a REGULAR FILE IT CAN WRITE at each of these, and these are
+    not that:
 $bad
     \`cp\` follows a symlink, so installing over one would leave the command
     UNINSTALLED — the target stays a link — and would write these bytes into
-    whatever is on the other end of it. NOTHING was installed and nothing
-    already installed was replaced.
-    Clear them, then re-run:
+    whatever is on the other end of it; and a target this user cannot write is
+    a \`cp\` that fails with the artifacts before it already placed, which is the
+    half-install this phase exists to prevent. NOTHING was installed and
+    nothing already installed was replaced.
+    Clear them, then re-run — \`rm -f\` takes a read-only file, because what a
+    removal needs is the DIRECTORY's write bit and not the file's:
         rm -f -- $paths
     (The pre-move \`link-estates\` puts exactly these links in a workstation's
     \`~/.local/bin\`, pointing into \`opensoft/brett-wip\` — the checkout every
@@ -707,23 +792,34 @@ place_skill_and_hook() {
 			die "could not create $(dirname -- "$target") for the $name skill.
     The $placed commands above are placed; the skills and the hook are not."
 		if [ -e "$target" ] && cmp -s "$WORKDIR/skill-$name.md" "$target"; then
-			say "$name: already installed at $target (unchanged)"
+			# THE MODE IS STAMPED WHETHER OR NOT THE BYTES MOVED (#40, finding
+			# 2). This arm reported the file unchanged and then SKIPPED the
+			# `chmod` below, which sat inside the `else` — so a `SKILL.md` that
+			# had drifted to 755, or to anything else, kept that mode for as
+			# long as its bytes stayed right and no re-run of `--install` ever
+			# put it back. The eleven in the bin directory have been stamped
+			# every time all along; this is that same rule, one directory on.
+			if mode_is 644 "$target"; then
+				verb="already installed at $target (unchanged)"
+			else
+				verb="already installed at $target (mode restored to 644)"
+			fi
 		else
 			if [ -e "$target" ]; then verb="updated at $target"; else verb="installed at $target"; fi
 			cp -- "$WORKDIR/skill-$name.md" "$target" ||
 				die "could not write $target. The $placed commands above are placed;
     the skills and the hook are not."
-			# 644: a SKILL.md is a document a session READS, not a command. The
-			# eleven in the bin directory are stamped 755 for the reason that loop
-			# gives — "a copy that is not executable is not a command" — and
-			# that reason does not reach this file. Amendment 9(b) describes
-			# `--install` as stamping 755 "on everything it places" while
-			# arguing why adoption act 4b must delete workBenches#63's 0644
-			# loop; the deletion is required either way, because two writers of
-			# one path is the defect and the mode was only its symptom.
-			chmod 644 "$target" || die "could not set the mode on $target."
-			say "$name: $verb"
 		fi
+		# 644: a SKILL.md is a document a session READS, not a command. The
+		# eleven in the bin directory are stamped 755 for the reason that loop
+		# gives — "a copy that is not executable is not a command" — and
+		# that reason does not reach this file. Amendment 9(b) describes
+		# `--install` as stamping 755 "on everything it places" while
+		# arguing why adoption act 4b must delete workBenches#63's 0644
+		# loop; the deletion is required either way, because two writers of
+		# one path is the defect and the mode was only its symptom.
+		chmod 644 "$target" || die "could not set the mode on $target."
+		say "$name: $verb"
 	done
 	done
 
@@ -745,20 +841,46 @@ place_skill_and_hook() {
 				die "could not create $(dirname -- "$target") for the /$name command.
     The $placed commands above are placed; the skills, the command files and the hook are not."
 			if [ -e "$target" ] && cmp -s "$WORKDIR/command-$name.md" "$target"; then
-				say "/$name: already installed at $target (unchanged)"
+				# The same stamp on the same arm, for the same reason a skill's
+				# is (#40, finding 2): the mode is this installer's to set on
+				# every artifact it places, and a mode it repaired is a line
+				# that says so rather than `unchanged`.
+				if mode_is 644 "$target"; then
+					verb="already installed at $target (unchanged)"
+				else
+					verb="already installed at $target (mode restored to 644)"
+				fi
 			else
 				if [ -e "$target" ]; then verb="updated at $target"; else verb="installed at $target"; fi
 				cp -- "$WORKDIR/command-$name.md" "$target" ||
 					die "could not write $target. The $placed commands above are placed;
     the skills, the command files and the hook are not."
-				chmod 644 "$target" || die "could not set the mode on $target."
-				say "/$name: $verb"
 			fi
+			chmod 644 "$target" || die "could not set the mode on $target."
+			say "/$name: $verb"
 		done
 	done
 
 	case "$HOOK_PLAN" in
-	present) say "SessionStart hook: already installed in $settings (unchanged)" ;;
+	present)
+		# THE ENTRY BEING THERE SAYS NOTHING ABOUT THE MODE (#40, finding 3).
+		# The two arms below write this file through `mktemp` + `chmod 600` +
+		# `mv -f`, so a file THEY wrote is 600 — and a file whose entry was
+		# already present was never given one, which is how a direct `--install`
+		# could leave `~/.claude/settings.json` world-readable for ever. 600 is
+		# the narrowing of the two and the mode workBenches'
+		# `setup-claude-profiles.sh` writes this same file at, so an installer
+		# that left it wider would be silently undone or would widen it behind
+		# that script's back.
+		if mode_is 600 "$settings"; then
+			say "SessionStart hook: already installed in $settings (unchanged)"
+		else
+			chmod 600 "$settings" ||
+				die "could not set mode 600 on $settings, which already carries this entry.
+    Nothing in that file was changed."
+			say "SessionStart hook: already installed in $settings (mode restored to 600)"
+		fi
+		;;
 	nofile | absent)
 		mkdir -p -- "$(dirname -- "$settings")" ||
 			die "could not create $(dirname -- "$settings") for the SessionStart entry."
@@ -1152,6 +1274,14 @@ wip_fetch_template_file() {
 wip_init() {
 	local config target checkout ref rel dest seeded=0
 	local existing_repo existing_path
+	# THE PATHS STEP 7 ACTUALLY WROTE, which is what step 8 stages and the whole
+	# of what it stages. `seeded` counts them rather than `${#written[@]}` doing
+	# it: an empty array expanded as `"${written[@]}"` is an UNBOUND VARIABLE
+	# under `set -u` in the bash 3.2 macOS ships, so every reader of this list is
+	# guarded on the count, and a count that is read in two places is read from
+	# one name.
+	local written
+	written=()
 
 	# ---- step 1: DETECT. A file test, not a network call, and the whole of the
 	# idempotence. A host that already has a workspace does nothing at all.
@@ -1298,6 +1428,47 @@ wip_init() {
 $WIP_LAST_ERR"
 	fi
 
+	# ---- step 6a: AN ADOPTED CHECKOUT CARRIES THE TEMPLATE AND NOTHING ELSE,
+	# OR THIS COMMAND STOPS (#40, finding 1).
+	#
+	# Step 8 staged with `git add -A -- .` and committed whatever
+	# `status --porcelain` had found, so a checkout ADOPTED at the derived path —
+	# or one a half-finished earlier run left behind — had every unrelated
+	# modified, deleted and untracked file it carried staged, committed and
+	# `push origin HEAD:main`ed as part of the seed. The repository on the other
+	# end of that push is the one a person keeps their unfinished work in, which
+	# is the last place a file should arrive by accident.
+	#
+	# ASKED HERE, BEFORE STEP 7 WRITES A SINGLE BYTE INTO THAT CHECKOUT, for the
+	# reason `plan_install_targets` is asked before the fetch: a refusal costs
+	# nothing at all at this point, and the person's own files are still exactly
+	# where they left them when they read it.
+	#
+	# THE TEMPLATE'S OWN PATHS ARE NOT `UNRELATED`, which is why the question is
+	# put to git as an EXCLUSION and not as "is it clean": a first run that
+	# fetched and copied the ${#WIP_TEMPLATE_FILES[@]} files and then could not
+	# commit them — no `user.email`, the case F9 is written about — leaves
+	# exactly those paths behind, and step 7's promise is that a re-run after a
+	# half-finished run is safe. `--untracked-files=all` because git collapses an
+	# untracked DIRECTORY to one line otherwise, and `handoffs/` is not a path
+	# any exclusion below spells.
+	local status_args unrelated
+	status_args=(status --porcelain --untracked-files=all -- .)
+	for rel in "${WIP_TEMPLATE_FILES[@]}"; do
+		status_args+=(":(exclude)$rel")
+	done
+	unrelated="$(git -C "$checkout" "${status_args[@]}" 2>/dev/null | sed -e 's/^/    /' || :)"
+	if [ -n "$unrelated" ]; then
+		die "$checkout carries changes this command did not write:
+$unrelated
+    A seed commit is $SHAPE_REPOSITORY's $WIP_TEMPLATE_DIR and nothing else, and the
+    push that follows it goes straight to $target's main — so anything else
+    staged beside it is somebody's unfinished work published. NOTHING was written
+    into that checkout on this run and nothing was staged.
+    Commit, stash or remove those paths, then re-run:
+        openRepoTools wip init"
+	fi
+
 	# ---- step 7: SEED IT FROM THE TEMPLATE, additively. A repository that
 	# already has a commit on `main` is NOT re-seeded: files the template would
 	# place and that are already there are left exactly as they are, and the
@@ -1317,6 +1488,7 @@ $WIP_LAST_ERR"
 		wip_substitute "$dest"
 		mkdir -p -- "$checkout/$(dirname -- "$rel")"
 		cp -- "$dest" "$checkout/$rel"
+		written+=("$rel")
 		seeded=$((seeded + 1))
 	done
 	if [ "$seeded" -gt 0 ]; then
@@ -1330,11 +1502,26 @@ $WIP_LAST_ERR"
 	# ruleset until an administrator excludes it, and until it is, every register
 	# write will be refused by the gate. So this push is not only the seed
 	# landing; it is the verification (Addendum 1(2)).
-	if [ -n "$(git -C "$checkout" status --porcelain 2>/dev/null)" ]; then
-		wip_quietly git -C "$checkout" add -A -- . ||
+	#
+	# EACH PATH BY NAME, NEVER `git add -A -- .` (#40, finding 1). Step 6a means
+	# there is nothing unrelated left in the worktree for a `-A` to sweep up —
+	# and this means that a path step 6a could not see as unrelated, because the
+	# template names it and a person had edited it, is still not published by a
+	# command that came to place a template. Two answers to one finding, and the
+	# cheaper one is the one that runs first.
+	if [ "$seeded" -gt 0 ]; then
+		wip_quietly git -C "$checkout" add -- "${written[@]}" ||
 			die "could not stage the seed in $checkout.
     What it said:
 $WIP_LAST_ERR"
+	fi
+	# WHAT IS ACTUALLY STAGED, which after an `add` of paths that are already in
+	# HEAD can be nothing at all: a checkout that had a template file DELETED
+	# gets it back from the template above, and where those bytes match HEAD
+	# there is no change to commit and `git commit` refuses with one. It also
+	# carries the OTHER half of the re-run step 7 promises — an earlier run that
+	# staged the seed and could not commit it leaves the index exactly here.
+	if ! git -C "$checkout" diff --cached --quiet 2>/dev/null; then
 		wip_quietly git -C "$checkout" commit -q \
 			-m "Seed this workspace repository from $SHAPE_REPOSITORY $WIP_TEMPLATE_DIR
 

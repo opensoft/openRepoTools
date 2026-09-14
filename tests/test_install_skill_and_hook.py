@@ -115,6 +115,37 @@ def test_a_drifted_skill_is_replaced_and_an_identical_one_is_left_alone(tmp_path
     assert shared.read_bytes() == (REPO / SKILL_PATH).read_bytes()
 
 
+@NEEDS_JQ
+def test_a_skill_whose_bytes_are_right_and_whose_mode_is_not_is_re_moded(tmp_path):
+    """THE MODE IS STAMPED WHETHER OR NOT THE BYTES MOVED (#40, finding 2).
+
+    `chmod 644` sat inside the `else` of the bytes comparison, so a `SKILL.md`
+    whose bytes were right and whose mode was not was reported `unchanged` and
+    left exactly as it was — for ever, because every later `--install` compared
+    the same matching bytes and took the same arm. 755 is the drift that
+    actually happens: Amendment 9(b) describes `--install` as stamping 755 "on
+    everything it places", and workBenches#63's own 0644 loop wrote this same
+    path until adoption act 4b deleted it, so a host can carry either.
+
+    And the LINE has to say which of the two happened: a run that repaired a
+    mode and printed `unchanged` told a person there was nothing to look at.
+    """
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    shared, bare = skill_paths(tmp_path)
+    before = shared.read_bytes()
+    os.chmod(shared, 0o755)
+
+    second = run_cmd("--install", home=tmp_path)
+    assert second.returncode == 0, second.stderr
+    assert stat.S_IMODE(shared.stat().st_mode) == 0o644, (
+        "the bytes matched, so the mode was never stamped")
+    assert shared.read_bytes() == before, "it rewrote a file to repair a mode"
+    assert f"lane-swap: already installed at {shared} (mode restored to 644)" \
+        in second.stdout, second.stdout
+    # …and the copy that was already right still reports what it is.
+    assert f"lane-swap: already installed at {bare} (unchanged)" in second.stdout
+
+
 # --- the command file (A11 Addendum 4 ruling 9) -----------------------------
 
 def command_paths(home: Path, name: str) -> tuple[Path, Path]:
@@ -191,6 +222,24 @@ def test_a_drifted_command_file_is_replaced_and_an_identical_one_is_left_alone(t
     assert f"/swap: already installed at {shared} (unchanged)" in third.stdout
 
 
+@NEEDS_JQ
+def test_a_command_file_whose_mode_drifted_is_re_moded_too(tmp_path):
+    """The same stamp on the same arm, one directory along (#40, finding 2).
+    A command file is a document a session READS, at 644 for the reason a
+    `SKILL.md` is, and an installer that owns the mode owns it on every run."""
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    shared, _bare = command_paths(tmp_path, "swap")
+    before = shared.read_bytes()
+    os.chmod(shared, 0o600)
+
+    second = run_cmd("--install", home=tmp_path)
+    assert second.returncode == 0, second.stderr
+    assert stat.S_IMODE(shared.stat().st_mode) == 0o644
+    assert shared.read_bytes() == before
+    assert f"/swap: already installed at {shared} (mode restored to 644)" \
+        in second.stdout, second.stdout
+
+
 # --- the hook entry ---------------------------------------------------------
 
 @NEEDS_JQ
@@ -254,6 +303,40 @@ def test_installing_twice_adds_one_entry_and_not_two(tmp_path):
     assert session_start_commands(tmp_path) == [HOOK_COMMAND]
     assert "SessionStart hook: already installed" in second.stdout
     assert "unchanged" in second.stdout
+
+
+@NEEDS_JQ
+def test_a_present_hook_in_a_widened_settings_file_is_narrowed_to_600(tmp_path):
+    """`HOOK_PLAN=present` NEVER APPLIED THE DOCUMENTED MODE (#40, finding 3).
+
+    The `nofile` and `absent` arms write this file through `mktemp` +
+    `chmod 600` + `mv -f`, so a file THEY wrote is 600. The `present` arm — an
+    existing settings file whose expected entry is already there — printed one
+    line and touched nothing, so a direct `--install` could leave
+    `~/.claude/settings.json` world-readable for ever, and no later run would
+    ever narrow it: the entry stays present on every one of them.
+
+    600 is not this installer's preference either. workBenches'
+    `setup-claude-profiles.sh` writes this same file at 600 on every
+    `./setup.sh`, so a wider mode left here is either silently undone by that
+    script or widened behind its back.
+
+    THE FILE IS NOT REWRITTEN TO FIX A MODE: a user's settings are not an
+    installer's to own, and `chmod` changes no byte of them.
+    """
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    settings = settings_of(tmp_path)
+    before = settings.read_bytes()
+    os.chmod(settings, 0o644)
+
+    second = run_cmd("--install", home=tmp_path)
+    assert second.returncode == 0, second.stderr
+    assert stat.S_IMODE(settings.stat().st_mode) == 0o600, (
+        "a `present` hook left the file at the mode it found")
+    assert settings.read_bytes() == before, "it rewrote the file to repair a mode"
+    assert session_start_commands(tmp_path) == [HOOK_COMMAND]
+    assert f"SessionStart hook: already installed in {settings} " \
+           f"(mode restored to 600)" in second.stdout, second.stdout
 
 
 @NEEDS_JQ
@@ -538,6 +621,72 @@ def test_a_dangling_symlink_is_refused_rather_than_followed(tmp_path):
 
 
 
+@NEEDS_JQ
+@NOT_ROOT
+def test_an_unwritable_command_in_the_bin_directory_is_refused(tmp_path):
+    """`unplaceable_kind` TREATED EVERY EXISTING REGULAR FILE AS WRITABLE
+    (#40, finding 4).
+
+    It answered `return 1` — placeable — for any `[ -f ]`, so a target this
+    user may not write passed the plan and met `cp` instead. In the bin
+    directory that is a run that dies part way through the eleven; one
+    directory along it is worse, because `install_commands` has already copied
+    all eleven by then.
+
+    The remedy the refusal prints is still the right one for this kind: `rm -f`
+    takes a read-only file, because what a removal needs is the DIRECTORY's
+    write bit and not the file's.
+    """
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    target = bin_dir / "park"
+    target.write_text("the park a person chmod 444'd\n", encoding="utf-8")
+    before = target.read_bytes()
+    os.chmod(target, 0o444)
+    try:
+        result = run_cmd("--install", home=tmp_path,
+                         env={"OPENREPOTOOLS_BIN_DIR": str(bin_dir)})
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert f"{target} — a regular file this user cannot write" \
+            in result.stderr, result.stderr
+        assert f'rm -f -- "{target}"' in result.stderr, result.stderr
+        assert "NOTHING was installed" in result.stderr
+        assert target.read_bytes() == before, "it wrote the file anyway"
+        assert sorted(p.name for p in bin_dir.iterdir()) == ["park"], (
+            "the other ten were placed by a run that refused")
+        assert not (tmp_path / ".claude").exists(), (
+            "the skills or the hook were placed by a run that refused")
+    finally:
+        os.chmod(target, 0o644)
+
+
+@NEEDS_JQ
+@NOT_ROOT
+def test_a_bin_directory_that_cannot_be_written_refuses_before_anything(tmp_path):
+    """THE `-w` QUESTION FOR EVERY TARGET THAT IS NOT THERE YET (#40, finding
+    4). An absent file is placeable exactly where the directory it would be
+    created in takes a write, and `plan_skill_targets` has always asked that of
+    the directories it writes into. The bin directory was never asked, so a
+    `$OPENREPOTOOLS_BIN_DIR` that is not this user's failed at the first `cp`
+    under `set -e` — exit 1, the code this toolset spends on "findings were
+    printed", from a run that placed nothing and printed none.
+    """
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    bin_dir.chmod(0o500)
+    try:
+        result = run_cmd("--install", home=tmp_path,
+                         env={"OPENREPOTOOLS_BIN_DIR": str(bin_dir)})
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert f"{bin_dir} is not writable" in result.stderr, result.stderr
+        assert "NOTHING was installed" in result.stderr
+        assert not any(bin_dir.iterdir())
+        assert not (tmp_path / ".claude").exists(), (
+            "the skills or the hook were placed by a run that refused")
+    finally:
+        bin_dir.chmod(0o700)
+
+
 # --- R-A9-12 reaches the skill paths too (F-X17) -----------------------------
 
 SKILL_TARGETS = tuple(
@@ -625,6 +774,72 @@ def test_a_directory_where_a_skill_goes_is_refused_the_same_way(tmp_path):
                      env={"OPENREPOTOOLS_BIN_DIR": str(tmp_path / ".local" / "bin")})
     assert result.returncode == 2, result.stdout + result.stderr
     assert f"{target} — a directory" in result.stderr, result.stderr
+
+
+@NEEDS_JQ
+@NOT_ROOT
+@pytest.mark.parametrize("shared,name", SKILL_TARGETS)
+def test_an_unwritable_skill_target_refuses_before_anything_is_placed(
+        tmp_path, shared, name):
+    """AN UNWRITABLE `SKILL.md` PASSED THE TARGET PLAN, AND THE ALL-OR-NOTHING
+    RULE THEN COVERED ELEVEN OF THE EIGHTEEN (#40, finding 4).
+
+    `unplaceable_kind` answered `return 1` for every `[ -f ]` and asked nothing
+    else, so `plan_skill_targets` let a read-only `SKILL.md` through.
+    `install_commands` copies the eleven PATH files BEFORE `place_skill_and_hook`
+    reaches `cp`, so an ordinary permission failure there left a host with the
+    eleven commands installed, no skills, no `/swap` and no `SessionStart`
+    entry — on the one path in this file that promises all or none, and with
+    every later `--install` reporting the eleven `already installed
+    (unchanged)` while never reaching the one that failed.
+
+    THE BIN DIRECTORY IS THE ASSERTION THAT TELLS THE FIX FROM THE DEFECT: the
+    refusal here is a PLANNING one and nothing is placed at all.
+    """
+    target = skill_target(tmp_path, shared, name)
+    target.parent.mkdir(parents=True)
+    target.write_text("the SKILL.md a person made read-only\n", encoding="utf-8")
+    before = target.read_bytes()
+    os.chmod(target, 0o444)
+    bin_dir = tmp_path / ".local" / "bin"
+    try:
+        result = run_cmd("--install", home=tmp_path,
+                         env={"OPENREPOTOOLS_BIN_DIR": str(bin_dir)})
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert f"{target} — a regular file this user cannot write" \
+            in result.stderr, result.stderr
+        assert f'rm -f -- "{target}"' in result.stderr, result.stderr
+        assert "NOTHING was installed" in result.stderr
+        assert target.read_bytes() == before, f"--install wrote over {target}"
+        assert not bin_dir.exists() or not any(bin_dir.iterdir()), (
+            "the eleven commands were placed against a skill target that was "
+            "never going to take the skill")
+    finally:
+        os.chmod(target, 0o644)
+
+
+@NEEDS_JQ
+@NOT_ROOT
+@pytest.mark.parametrize("name", COMMAND_NAMES)
+def test_an_unwritable_command_target_is_refused_the_same_way(tmp_path, name):
+    """The same rule at the command file's own pair of destinations, because
+    the rule is `unplaceable_kind` and not a list of paths."""
+    target = command_paths(tmp_path, name)[0]
+    target.parent.mkdir(parents=True)
+    target.write_text("the alias a person made read-only\n", encoding="utf-8")
+    before = target.read_bytes()
+    os.chmod(target, 0o444)
+    bin_dir = tmp_path / ".local" / "bin"
+    try:
+        result = run_cmd("--install", home=tmp_path,
+                         env={"OPENREPOTOOLS_BIN_DIR": str(bin_dir)})
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert f"{target} — a regular file this user cannot write" \
+            in result.stderr, result.stderr
+        assert target.read_bytes() == before
+        assert not bin_dir.exists() or not any(bin_dir.iterdir())
+    finally:
+        os.chmod(target, 0o644)
 
 
 # --- what the conflict arm keys on (R-A9-14) --------------------------------
