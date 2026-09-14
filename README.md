@@ -70,7 +70,7 @@ and the exits are the record's own entry where the feature landed or a push
 from the workstation that parked it; with a `- branch:` or a `- role:` left by
 the record's KEY ORDER where the loader reads neither — it shuts the
 `features:` list at the next key at project indent and a feature's `legs:`
-list at the next at feature indent — the exits are putting that key back,
+list at the next key at feature indent — the exits are putting that key back,
 which is yours to do, and a re-park only from the workstation that has the
 feature, since a park anywhere else rewrites the block without those lines;
 and where `git worktree list` still holds a

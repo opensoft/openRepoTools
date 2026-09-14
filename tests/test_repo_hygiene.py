@@ -953,10 +953,11 @@ def test_agents_md_is_short_enough_to_be_read():
     214 -> 224 on 2026-09-14, for THE RECORD'S OWN KEY ORDER, which rule 4
     had nothing about at all. `workspace_load_project` reads a record by
     INDENT and shuts the `features:` list at the next key at project indent
-    and a feature's `legs:` list at the next at feature indent, so a project
-    key a bad merge left between two features — or between a feature and its
-    `legs:` — costs the second feature, or every leg of the first: `resume`
-    makes no feature and collects no leg out of what sits under a shut list.
+    and a feature's `legs:` list at the next key at feature indent, so a
+    project key a bad merge left between two features — or between a
+    feature and its `legs:` — costs the second feature, or every leg of
+    the first: `resume` makes no feature and collects no leg out of what
+    sits under a shut list.
     The ten lines buy that reading and, more than it, THE ORDER OF ITS TWO
     EXITS. The key is put back BY HAND, which is the one hand-edit of the
     record these rules ask for and reads as a contradiction of the sentence

@@ -163,10 +163,10 @@ branch from the workstation that parked it, and without one it is named beside
 the `resume` that still brings back a branch this clone has merely not fetched;
 and where the record's KEY ORDER leaves a `- branch:` or a `- role:` where the
 loader reads neither — it shuts the `features:` list at the next key at project
-indent and a feature's `legs:` list at the next at feature indent — the exits
-are putting that key back, which is yours and not this command's, and a re-park
-only from the workstation that has the feature, since a park anywhere else
-rewrites the block without those lines;
+indent and a feature's `legs:` list at the next key at feature indent — the
+exits are putting that key back, which is yours and not this command's, and a
+re-park only from the workstation that has the feature, since a park anywhere
+else rewrites the block without those lines;
 and where `git worktree list` still holds a registration that is no longer a
 worktree, that is cleared with `worktree prune`, after a `worktree unlock` if
 it is locked and with any leftover directory moved aside, before `resume` can
@@ -2253,7 +2253,7 @@ record_scalar() {
 
 record_rows() {
     local file="$1" sel="$2" line matched=0 value open=0 named=0 held="" has_features=0
-    local in_features=0 in_legs=0 dropped=0 unread=0
+    local in_features=0 in_legs=0 dropped=0 unread=0 leg_why=outer why=""
     local parked_at="" parked_on="" lane="" active="" branch="" role="" commit="" pushed="" depth="" seen="" shape=""
     [ -f "$file" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
@@ -2312,25 +2312,72 @@ record_rows() {
         # `resume` never sees and a `leg` row for a leg it never makes, which
         # is work `status` claimed and `resume` will not bring back: the
         # direction that most needs a line, because a person reading it
-        # believes the feature is safe. The two flags below are the loader's
-        # two, set in the same places: every line at indent 0, 2 or 4 shuts
-        # the feature list and `features:` alone reopens it, every line at
-        # indent 6 or 8 shuts the leg list and `legs:` reopens it INSIDE an
+        # believes the feature is safe. The first two flags below are the
+        # loader's two, set in the same places: every line at indent 0, 2 or 4
+        # shuts the feature list and `features:` alone reopens it, every line
+        # at indent 6 or 8 shuts the leg list and `legs:` reopens it INSIDE an
         # open feature list. Nothing at indent 10 or 12 moves either, as
         # nothing does at the loader, and a full-line comment is not a line at
         # all to either reader. The rows the lines under a shut list get
         # instead are `nofeature` and `noleg`, read by `read_record`: this
         # layer drops nothing silently.
+        #
+        # AND `$leg_why` IS WHICH LINE THE PERSON HAS TO GO AND FIND, kept
+        # beside them because a finding that names the wrong one sends a hand
+        # to an indent the record has nothing out of place at. It is three
+        # states and not two (Copilot's first round on this PR, suppressed):
+        # `outer`, a key at PROJECT indent, which shuts the feature list and
+        # every leg list inside it — and which a `features:` key is too, so a
+        # list REOPENED by one is still `outer` until something nearer shuts
+        # it; `legs`, a key at FEATURE indent shutting a list a `legs:` key
+        # had opened; and `nolegs`, where no `legs:` key has opened one at
+        # all since this feature's `- branch:` line. Read whole, the third
+        # was told as the second: "shuts a feature's `legs:` list" for a
+        # record whose feature has no `legs:` key above that line to shut.
+        #
+        # AND `nolegs` IS THE `- branch:` LINE'S AND NO OTHER LINE'S AT
+        # INDENT 6, which is the loader again: its indent-6 arm makes a
+        # feature only where the item's key is `branch` (`[ "$key" = branch ]
+        # || continue`), and at any other line there it reads no feature and
+        # stays in the one above — whose `legs:` key IS above that line. So
+        # that line is a key that SHUT a list, `legs` like the indent-8 keys
+        # beside it, and a `nolegs` there would send a hand looking for a
+        # `legs:` key the feature has got. The third state is the one this
+        # round ADDED, and it may not swallow the second on its way in.
         case "${line#"${line%%[![:space:]]*}"}" in
         '#'*) ;;
         *)
             case "$line" in
-            '    features:'*) in_features=1; in_legs=0 ;;
-            [![:space:]]* | '  '[![:space:]]* | '    '[![:space:]]*)
-                in_features=0; in_legs=0
+            '    features:'*)
+                in_features=1; in_legs=0; leg_why=outer
+                # AND A REOPENED LIST IS A CLEAN SLATE FOR `$dropped`
+                # (Copilot's first round on this PR, suppressed). The legs of
+                # a list reopened below an unread `- branch:` are collected
+                # onto the feature ABOVE it — record (k) of the probe — so a
+                # `- role:` under one is that feature's defect and not the
+                # unread branch's said twice. Left set, it suppressed the
+                # `noleg` row for exactly that line, and where the feature
+                # above had no other leg the report then said "the record
+                # lists no leg for it" about a record that lists one, which is
+                # the sentence this commit exists to stop making.
+                dropped=0
                 ;;
-            '        legs:'*) in_legs="$in_features" ;;
-            '      '[![:space:]]* | '        '[![:space:]]*) in_legs=0 ;;
+            [![:space:]]* | '  '[![:space:]]* | '    '[![:space:]]*)
+                in_features=0; in_legs=0; leg_why=outer
+                ;;
+            '        legs:'*)
+                in_legs="$in_features"
+                [ "$in_features" -eq 0 ] || leg_why=legs
+                ;;
+            '      - branch:'*)
+                in_legs=0
+                [ "$in_features" -eq 0 ] || leg_why=nolegs
+                ;;
+            '      '[![:space:]]* | '        '[![:space:]]*)
+                in_legs=0
+                [ "$in_features" -eq 0 ] || [ "$leg_why" = nolegs ] ||
+                    leg_why=legs
+                ;;
             esac
             ;;
         esac
@@ -2436,7 +2483,16 @@ record_rows() {
             # (k) of the probe). `$dropped` is the other half, and it carries
             # down to the leg lines under an unread branch: their own rows
             # would be the same defect said twice, and the branch's is the one
-            # with a name on it.
+            # with a name on it — as far as the next `features:` key, which
+            # reopens the list onto the feature above and clears it.
+            #
+            # AND THE ROW CARRIES WHICH LINE TO GO AND FIND, as the `noleg`
+            # row does and for the same reason (Copilot's first round on this
+            # PR, suppressed): `$has_features` is whether a `features:` key
+            # has been read in this block at all, so a `- branch:` ABOVE every
+            # one of them — or in a block that has none — is told that the key
+            # which OPENS the list is missing above it, and not that a key at
+            # project indent below it shut a list there is none of.
             value="$(record_scalar "${line#*:}")"
             if [ "$in_features" -eq 1 ]; then
                 branch="$value"
@@ -2446,7 +2502,9 @@ record_rows() {
             else
                 dropped=1
                 unread=1
-                held="$held$(printf 'nofeature\037%s' "$value")$NL"
+                why=feature
+                [ "$has_features" -eq 1 ] || why=nolist
+                held="$held$(printf 'nofeature\037%s\037%s' "$value" "$why")$NL"
             fi
             ;;
         '          - role:'*)
@@ -2466,16 +2524,9 @@ record_rows() {
             open="$in_legs"
             if [ "$in_legs" -eq 0 ] && [ "$named" -eq 1 ] && [ "$dropped" -eq 0 ]; then
                 unread=1
-                # AND WHICH LIST WAS SHUT IS THE THIRD FIELD, because it is
-                # the line the person has to go and find: with the feature
-                # list still open the key is a feature's own, above `legs:`,
-                # and with it shut the key is at PROJECT indent and the leg
-                # list never opened (or was shut with the list around it).
-                # Naming the wrong one sends a hand looking at an indent the
-                # record has nothing out of place at.
-                value=legs
-                [ "$in_features" -eq 1 ] || value=outer
-                held="$held$(printf 'noleg\037%s\037%s\037%s' "$branch" "$role" "$value")$NL"
+                # AND WHICH LIST WAS SHUT IS THE THIRD FIELD, which is
+                # `$leg_why` above and the line the person has to go and find.
+                held="$held$(printf 'noleg\037%s\037%s\037%s' "$branch" "$role" "$leg_why")$NL"
             fi
             ;;
         '            parked_commit:'*) commit="$(record_scalar "${line#*:}")" ;;
@@ -4815,6 +4866,19 @@ record_unread_why() {
     feature)
         printf "\`resume\` reads a record by INDENT, and \`workspace_load_project\` SHUTS the \`features:\` list at the next key at project indent, making no feature of a \`- branch:\` below one"
         ;;
+    # AND A LIST THAT WAS NEVER OPENED HAS NO KEY THAT SHUT IT (Copilot's
+    # first round on this PR, suppressed). `features:` is what OPENS the
+    # feature list and `legs:` a feature's leg list, so a `- branch:` above
+    # every `features:` key — or in a block that has none — and a `- role:`
+    # above its feature's `legs:` key are unread for the opposite reason, and
+    # an arm that names a shutting key sends the reader to a line the record
+    # has not got.
+    nolist)
+        printf "\`resume\` reads a record by INDENT, and the \`features:\` key is what OPENS the list \`workspace_load_project\` reads a \`- branch:\` out of — this block has no such key ABOVE that line, so the loader is in no feature list when it reaches it"
+        ;;
+    nolegs)
+        printf "\`resume\` reads a record by INDENT, and the \`legs:\` key is what OPENS the list \`workspace_load_project\` reads a \`- role:\` out of — this feature has no such key ABOVE that line, so the loader is in no leg list when it reaches it"
+        ;;
     outer)
         printf "\`resume\` reads a record by INDENT, and \`workspace_load_project\` SHUTS the \`features:\` list at the next key at project indent, and every feature's \`legs:\` list inside it with it, making no leg of a \`- role:\` below one"
         ;;
@@ -4872,7 +4936,7 @@ read_record() {
     local root="$1" sel rows="" kind a b c d e f n_features=0
     local parked_at="" parked_on="" lane="" active="" recorded="$NL"
     local seen_branches=0 legs where="" refused="" refused_kind="" unnamed=0
-    local refused_exit="" refused_leg="" legno=0
+    local refused_exit="" refused_leg="" legno=0 verdict=""
     local legrepo="" legtree="" legwt="" legheld=0 legrc=0
     local -a feature_legs=() feature_why=() feature_rr=() feature_rr_kind=()
     local -a feature_exit=() feature_rr_leg=()
@@ -5238,8 +5302,25 @@ read_record() {
                 if [ "${feature_drops[seen_branches - 1]:-0}" -gt 0 ]; then
                     where="the record does not say where"
                     [ -z "$parked_on" ] || where="the record says $parked_on"
+                    # AND "BRINGS THE FEATURE BACK" IS NOT SAID OVER A
+                    # FEATURE THIS RUN ALREADY REFUSES (Copilot's first round
+                    # on this PR, suppressed). The legs it DOES read can carry
+                    # a whole-feature verdict of their own — `collect_legs`'s,
+                    # an RR's, or the `git worktree add`'s — and
+                    # `check_parked_leg` then prints that refusal on every one
+                    # of their lines and offers no `resume` at all. A line
+                    # here promising the feature back is the contradictory
+                    # pair the rule at the top of `check_parked_leg` forbids,
+                    # made by this layer against itself. The verdict is read
+                    # back in the order that arm reads it, and where there is
+                    # one the sentence says so and stops.
+                    verdict="${feature_why[seen_branches - 1]:-}"
+                    [ -n "$verdict" ] || verdict="${feature_rr[seen_branches - 1]:-}"
+                    [ -n "$verdict" ] || verdict="${feature_add[seen_branches - 1]:-}"
                     if [ "${feature_legs[seen_branches - 1]:-0}" -eq 0 ]; then
                         finding "parked feature $a: the record lists its \`${feature_drop_role[seen_branches - 1]:-}\` leg where \`resume\` reads no leg, because $(record_unread_why "${feature_drop_why[seen_branches - 1]:-legs}"); \`resume\` collects NO leg for this feature and refuses it WHOLE, reporting it as a shape mismatch, so nothing here brings it back — $(record_unread_exits "${RECORD_FILE##*/}" "$where")"
+                    elif [ -n "$verdict" ]; then
+                        finding "parked feature $a: the record lists a \`${feature_drop_role[seen_branches - 1]:-}\` leg for it where \`resume\` reads no leg, because $(record_unread_why "${feature_drop_why[seen_branches - 1]:-legs}"); \`resume\` refuses this feature WHOLE in any case, for the reason the legs it does read give on their own lines below, so nothing here brings it back — $(record_unread_exits "${RECORD_FILE##*/}" "$where")"
                     else
                         finding "parked feature $a: the record lists a \`${feature_drop_role[seen_branches - 1]:-}\` leg for it where \`resume\` reads no leg, because $(record_unread_why "${feature_drop_why[seen_branches - 1]:-legs}"); \`resume\` brings the feature back with the legs it does read and leaves that one's work where it was parked — $(record_unread_exits "${RECORD_FILE##*/}" "$where")"
                     fi
@@ -5255,14 +5336,17 @@ read_record() {
             # a worktree on that branch really is one `park` has never
             # recorded, and `park` reading this record through the same loader
             # would park it as new — and it takes no leg row with it, because
-            # the legs under it were never emitted either.
+            # the legs under it were never emitted either. The second field is
+            # WHICH LINE TO GO AND FIND, as a `noleg` row's third is: a key at
+            # project indent that shut the list, or no `features:` key above
+            # the line at all.
             nofeature)
                 where="the record does not say where"
                 [ -z "$parked_on" ] || where="the record says $parked_on"
                 if [ -z "$a" ]; then
-                    finding "parked feature with no branch name: the record lists a \`- branch:\` with no value where \`resume\` reads no feature, because $(record_unread_why feature); it is in none of the features a bare \`resume\` walks, so nothing here brings it back — $(record_unread_exits "${RECORD_FILE##*/}" "$where")"
+                    finding "parked feature with no branch name: the record lists a \`- branch:\` with no value where \`resume\` reads no feature, because $(record_unread_why "${b:-feature}"); it is in none of the features a bare \`resume\` walks, so nothing here brings it back — $(record_unread_exits "${RECORD_FILE##*/}" "$where")"
                 else
-                    finding "parked feature $a: the record lists this branch where \`resume\` reads no feature, because $(record_unread_why feature); it is in none of the features a bare \`resume\` walks and none \`--feature\` can name, so nothing here brings it back — $(record_unread_exits "${RECORD_FILE##*/}" "$where")"
+                    finding "parked feature $a: the record lists this branch where \`resume\` reads no feature, because $(record_unread_why "${b:-feature}"); it is in none of the features a bare \`resume\` walks and none \`--feature\` can name, so nothing here brings it back — $(record_unread_exits "${RECORD_FILE##*/}" "$where")"
                 fi
                 ;;
             # Counted in the first pass and said on the feature's own line
