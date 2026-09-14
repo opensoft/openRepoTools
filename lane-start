@@ -651,10 +651,45 @@ if [ -z "$repo" ] && [ -z "$verbatim" ]; then
   repo="$(basename -- "$top")"
 fi
 
+# ------------------------------------ AMENDMENT 15(a): `<repo>` IS A DIRECTORY
+#
+# **A lane name is one name under any case, and the register row's spelling is
+# the one it carries** (ratified 2026-09-14T00:07:18Z). The `<repo>` half of a
+# NEW lane's name has no row to take a spelling from, so it takes the CHECKOUT'S
+# REAL DIRECTORY NAME — which is the only spelling on this workstation that is a
+# fact rather than a habit, and the one every later reader of the lane's `dir`
+# and `$PROJECTS_ROOT/<repo>` rung will meet.
+#
+# TWO DIRECTORIES DIFFERING ONLY BY CASE ARE A REFUSAL NAMING BOTH. On a
+# case-insensitive filesystem — macOS — they cannot both exist and this never
+# fires; on Linux they can, and choosing one of them is choosing which
+# repository the lane is in.
+#
+# `ls` and ONE awk rather than a `tr` per entry: this sits in front of a launch,
+# `$PROJECTS_ROOT` holds a few dozen directories, and the `[ -d ]` below runs
+# only for the names that already matched.
+projects_dir_matches() {   # <typed repo>
+  ls -- "$PROJECTS_ROOT" 2>/dev/null |
+    awk -v want="$1" 'BEGIN { w = tolower(want) } tolower($0) == w { print }' |
+    while IFS= read -r pdm_m; do
+      [ -d "$PROJECTS_ROOT/$pdm_m" ] && printf '%s\n' "$pdm_m"
+    done
+}
+if [ -n "$repo" ] && [ -d "$PROJECTS_ROOT" ]; then
+  repo_hits="$(projects_dir_matches "$repo" || :)"
+  repo_hit_n=0
+  if [ -n "$repo_hits" ]; then repo_hit_n="$(printf '%s\n' "$repo_hits" | grep -c . || :)"; fi
+  if [ "$repo_hit_n" -gt 1 ]; then
+    die "$PROJECTS_ROOT holds $repo_hit_n directories whose names differ only by case for '$repo': $(printf '%s\n' "$repo_hits" | tr '\n' ' ')— a lane name is ONE name under any case (Amendment 15(a)), so there is no spelling of '$repo' this can take without choosing which repository the lane is in. Name the checkout yourself with --dir <path>, or rename one of those directories." 2
+  fi
+  if [ "$repo_hit_n" = 1 ] && [ "$repo_hits" != "$repo" ]; then
+    step "repo $repo → $repo_hits (Amendment 15(a): the checkout's real directory name under $PROJECTS_ROOT)"
+    repo="$repo_hits"
+  fi
+fi
+
 LANE="${verbatim:-$repo-$n}"
 [[ "$LANE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "'$LANE' is not usable as a window and session name (allowed: letters, digits, . _ -)" 2
-repo="${repo:-$LANE}"          # the verbatim form has no <repo> of its own
-estate="${estate:-$repo}"
 
 # The position after this one, for the refusal to name. `10#` because a lane
 # may be `-08` and 08 is not a number in base 8.
@@ -663,6 +698,40 @@ if [[ "$n" =~ ^[0-9]+$ ]]; then next_n="$((10#$n + 1))"; else next_n="<the next 
 if [ -z "${LANES_FILE:-}" ]; then die "$(lanes_workspace_why)" 1; fi
 [ -f "$LANES_FILE" ] || die "no register at $LANES_FILE — the workspace repository $(lanes_ws_yaml) names carries no lanes/LANES.md. \`openRepoTools wip init\` seeds one (it is idempotent); or set LANES_FILE" 1
 [ -x "$LANES_EDIT" ] || die "no register writer at $LANES_EDIT — \`lanes-edit.sh\` is installed beside this command by \`openRepoTools --install\`. Run that, or set LANES_EDIT" 1
+
+# ------------------------- AMENDMENT 15: THE ROW'S SPELLING IS THE LANE'S NAME
+#
+# The row wins over the directory, and over what was typed: it is what the
+# window is renamed to (step 4), what `--name`s every launch branch (step 5a),
+# what the row stamp and the object log carry, and what the log file is called.
+# `--verbatim` lanes come through here too — `browser-ui-repair` is a row like
+# any other and a `lane-start Browser-UI-Repair` is that lane.
+#
+# ONE RESOLVER, SHARED. `lanes-edit.sh canon-lane` is the same read `lane-end`,
+# `lanes` and `restart` make, for the reason clause (h) gives every other read
+# in this toolset: four implementations of "which row is this name's" is how the
+# four would come to disagree about it.
+#
+# 2 IS NOT ACTED ON HERE, and that is deliberate. It is the code a helper
+# predating this amendment spends on an unknown subcommand — every workstation
+# until adoption reaches it — and it is ALSO `canon-lane`'s own two-rows
+# refusal; this script cannot tell them apart by status, and it does not have
+# to, because the two-rows refusal is one it makes again forty lines below, out
+# of its own read of the register, with 15(d)'s merge named in it.
+cl_out=""; cl_rc=0
+cl_out="$("$LANES_EDIT" canon-lane "$LANE" 2>/dev/null)" || cl_rc=$?
+case "$cl_rc" in
+  0)
+    if [ -n "$cl_out" ] && [ "$cl_out" != "$LANE" ]; then
+      step "lane $LANE → $cl_out (Amendment 15: the register row's spelling is canonical)"
+      LANE="$cl_out"
+    fi ;;
+  2) : ;;
+  *) note "$LANES_EDIT canon-lane $LANE failed (exit $cl_rc) — carrying on with the name as typed, which the register may spell differently" ;;
+esac
+
+repo="${repo:-$LANE}"          # the verbatim form has no <repo> of its own
+estate="${estate:-$repo}"
 
 # ----------------------------------------- 1b. THE LANE'S DIRECTORY
 #
@@ -758,7 +827,7 @@ if [ -z "$DIR" ]; then
   ld_out="$("$LANES_EDIT" swapped 2>/dev/null)" || ld_rc=$?
   case "$ld_rc" in
     0)
-      ld_row="$(printf '%s\n' "$ld_out" | awk -F'\t' -v l="$LANE" '$1 == l { print; exit }')"
+      ld_row="$(printf '%s\n' "$ld_out" | awk -F'\t' -v l="$LANE" 'tolower($1) == tolower(l) { print; exit }')"
       if [ -n "$ld_row" ]; then
         ld_cand="$(printf '%s' "$ld_row" | cut -f4)"
         case "$ld_cand" in
@@ -997,12 +1066,29 @@ step "  its record refs are $record_window"
 
 # The row, READ (never written) with the same rule lanes-edit.sh uses to find
 # one: the row's FIRST backticked token is the lane name.
+# AMENDMENT 15 — `tolower` ON BOTH SIDES, exactly as `row_line` now compares.
+# This read is what decides "is this lane new", and it was the byte-for-byte
+# comparison that let `lane-start openxfactory 2` add a SECOND row for
+# `openXfactory-2` at 2026-09-13T23:51:56Z. Case-insensitive, the lane is found,
+# the branch below is the RESUME branch, and `add-row` is never reached.
 rows_for_lane() {
   awk -v lane="$1" '
     substr($0,1,1) == "|" {
       p1 = index($0, "`"); if (p1 == 0) next
       rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
-      if (substr(rest, 1, p2 - 1) == lane) print
+      if (tolower(substr(rest, 1, p2 - 1)) == tolower(lane)) print
+    }' "$LANES_FILE"
+}
+# The names those rows carry — which under Amendment 15 may be two spellings of
+# ONE name, and a refusal that could not say so would send a person looking for
+# a duplicate that is not there to find.
+row_names_for_lane() {
+  awk -v lane="$1" '
+    substr($0,1,1) == "|" {
+      p1 = index($0, "`"); if (p1 == 0) next
+      rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
+      t = substr(rest, 1, p2 - 1)
+      if (tolower(t) == tolower(lane)) print t
     }' "$LANES_FILE"
 }
 
@@ -1011,7 +1097,13 @@ row_count=0
 [ -n "$row" ] && row_count="$(printf '%s\n' "$row" | grep -c . || :)"
 
 if [ "$row_count" -gt 1 ]; then
-  die "the register has $row_count rows for lane $LANE, and lanes-edit.sh can edit neither. Merge them into one row by hand in $LANES_FILE (one line each), commit with 'LANES_LANE=$LANE lanes-edit.sh commit \"merged duplicate rows\"', then re-run" 2
+  rfl_names="$(row_names_for_lane "$LANE" | tr '\n' ' ')"
+  rfl_distinct="$(row_names_for_lane "$LANE" | LC_ALL=C sort -u | grep -c . || :)"
+  rfl_why="and lanes-edit.sh can edit neither"
+  if [ "$rfl_distinct" -gt 1 ]; then
+    rfl_why="spelled $rfl_names— a lane name is ONE name under any case (Amendment 15), so those are two rows for ONE lane, and lanes-edit.sh can edit neither"
+  fi
+  die "the register has $row_count rows for lane $LANE, $rfl_why. Merge them into one row by hand in $LANES_FILE (one line each) — Amendment 15(d): append the newer row's session id(s) to the older row's session cell, in order, and remove the newer row in the SAME commit, whose message names both spellings — then commit with 'LANES_LANE=$LANE lanes-edit.sh commit \"merged duplicate rows\"' and re-run" 2
 fi
 
 # AND EVERYTHING THIS SCRIPT DECIDES FROM THE ROW IS DECIDED AGAINST WHAT HAS

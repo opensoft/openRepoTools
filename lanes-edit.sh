@@ -160,8 +160,10 @@
 # EXIT CODES — every subcommand, one table, no two meanings on one number
 #   0  done
 #   1  environment (no register, no writer)
-#   2  refusal: bad arguments, the object is held, an unknown alias, or a
-#      checkout that cannot be rebased. FOUR MEANINGS ON ONE NUMBER, and they
+#   2  refusal: bad arguments, the object is held, an unknown alias, a
+#      checkout that cannot be rebased, or — Amendment 15 — a register holding
+#      two rows whose lane names differ only by case, which every writer and
+#      `canon-lane` refuse until 15(d)'s merge. FIVE MEANINGS ON ONE NUMBER, and they
 #      stay readable only because of where each can occur: bad arguments to a
 #      subcommand that predates Amendment 11; `register-row`'s "not lane-shaped";
 #      AN UNKNOWN SUBCOMMAND (the `*)` arm below), which is how a caller detects
@@ -172,7 +174,8 @@
 #  64  usage — a caller's bad arguments to one of the reads Amendment 11 added
 #      (`window-lane`, `lane-dir`, `lane-profile`, `last-session`, `forks`,
 #      `workstation`, `fetch-age`, `lanes`, `session-lane`, and `swapped`, which
-#      took it first). IT WAS IN NO TABLE AT ALL until this round (F-X16), while
+#      took it first), and to Amendment 15's `canon-lane`, which takes the same
+#      contract because its four callers sit in front of a launch as those do. IT WAS IN NO TABLE AT ALL until this round (F-X16), while
 #      being the code the contract gives every one of those reads.
 #
 #      WHY A SECOND USAGE CODE RATHER THAN 2. A read in front of a launch has to
@@ -184,7 +187,8 @@
 #      Clause (h)'s table is the contract for which read uses which.
 #   3  rebase conflict — nothing was pushed, the edit is a local commit
 #   4  the mutex could not be taken within 60s
-#   5  an edit moved more than one line and was refused
+#   5  an edit moved more than one line and was refused — or, Amendment 15, a
+#      lane's object log could not be renamed to the row's own spelling
 #   6  git add / commit / push failed
 #   7  CLAIM-LOST — another lane's claim landed on main first (`claim` only)
 #   8  no record — `who` found nothing; `lane-objects` has no log file for the
@@ -653,8 +657,37 @@ acquire_lock() {
 
 # ---------------------------------------------------------------- row lookup
 
+# AMENDMENT 15 — A LANE NAME IS ONE NAME UNDER ANY CASE, AND THE ROW'S SPELLING
+# IS THE ONE IT CARRIES (ratified 2026-09-14T00:07:18Z).
+#
+# Every spelling the WORKING TREE's register carries for a name, compared
+# case-insensitively, one per line. This is the set `row_line` counts and the
+# set every refusal below NAMES: at 2026-09-13T23:51:56Z a `lane-start
+# openxfactory 2` typed in lowercase for the lane `openXfactory-2` found NO row
+# here — the row key was the one exact comparison left in this file — and
+# appended a SECOND row for a lane that had run since 2026-09-02, while its
+# object log went on into the one file both spellings had always shared.
+rows_named_ci_local() {   # <typed name>
+  awk -v want="$1" '
+    substr($0,1,1) == "|" {
+      p1 = index($0, "`"); if (p1 == 0) next
+      rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
+      t = substr(rest, 1, p2 - 1)
+      if (tolower(t) == tolower(want)) print t
+    }' "$LANES_FILE"
+}
+
 # Prints the 1-based line number of the row whose FIRST backticked token is the
-# lane name. Exactly one match is required.
+# lane name, COMPARED CASE-INSENSITIVELY (Amendment 15). Exactly one match is
+# required — and where there are two, that is the amendment's own refusal and
+# not a puzzle about which row to edit: 15(d) says the two are merged into one,
+# by hand, in a commit that names both spellings.
+#
+# THE LINE IT RETURNS IS STILL THE EXACT LINE. What changed is how the line is
+# FOUND; every editor above still rewrites that one line byte for byte, so a row
+# spelled `openXfactory-2` keeps its spelling when a caller typed the lowercase
+# form. Which spelling gets WRITTEN into new text is `canon_lane`'s answer, one
+# function along.
 row_line() {
   lane="$1"
   hits="$(
@@ -665,7 +698,7 @@ row_line() {
         rest = substr($0, p1 + 1)
         p2 = index(rest, "`")
         if (p2 == 0) next
-        if (substr(rest, 1, p2 - 1) == lane) print NR
+        if (tolower(substr(rest, 1, p2 - 1)) == tolower(lane)) print NR
       }' "$LANES_FILE"
   )"
   n="$(printf '%s' "$hits" | grep -c . || :)"
@@ -674,6 +707,9 @@ row_line() {
     # here would only leave the command substitution's subshell and the caller
     # would carry on with an empty line number.
     note "expected exactly 1 row for lane '$lane', found $n${hits:+ (lines: $(printf '%s' "$hits" | tr '\n' ' '))}"
+    if [ "$n" -gt 1 ]; then
+      note "those rows are spelled $(rows_named_ci_local "$lane" | tr '\n' ' ')— a lane name is ONE name under any case (Amendment 15), so merge them into one row (Amendment 15(d)): append the newer row's session id(s) to the older row's session cell, in order, and remove the newer row in the SAME commit"
+    fi
     return 2
   fi
   printf '%s' "$hits"
@@ -1260,9 +1296,71 @@ check_lane_name() {
 log_file_for() { printf '%s/%s.md\n' "$LANES_LOG_DIR" "$1"; }
 log_path_for() { printf '%s%s.md\n' "$LANES_LOG_PREFIX" "$1"; }
 
+# AMENDMENT 15 — THE LOG FILE IS `lanes/log/<canonical>.md`, AND A FILE OF
+# ANOTHER CASE IS STILL THIS LANE'S LOG.
+#
+# The log's file name was lowercased from the start, which is exactly why the
+# 2026-09-13 incident produced TWO ROWS AND ONE LOG: `openXfactory-2` and
+# `openxfactory-2` had always shared `lanes/log/openxfactory-2.md`. The real
+# register still carries `lanes/log/openxfactory-4.md` beside the row
+# `openxfactory-4` — the same spelling, nothing to do — and the historical
+# mismatch is the shape these two functions exist for. READERS find the file
+# whatever its case; the first WRITE renames it to the canonical spelling, once,
+# inside its own commit (`ensure_log` below).
+#
+# `ls` and one `awk`, not a `$(lc …)` per file: `lanes/log/` carries a file per
+# lane of the estate and this is asked on the path a person is waiting on.
+log_files_named_ci() {   # <lane> — every existing log file for it, whatever its case
+  ls -- "$LANES_LOG_DIR" 2>/dev/null | awk -v want="$1" -v d="$LANES_LOG_DIR" '
+    BEGIN { w = tolower(want) ".md" }
+    tolower($0) == w { print d "/" $0 }'
+}
+
+# The PUBLISHED path of a lane's log, found the same way — the canonical path
+# where `origin/<branch>` has no file of another case, so a lane with no log at
+# all still reads as the pre-cutover 8 rather than as a failure.
+log_path_ci() {   # <lane>
+  lpc_exact="$(log_path_for "$1")"
+  if have_remote_ref; then
+    lpc_hit="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" 2>/dev/null \
+      | awk -v want="$lpc_exact" 'BEGIN { w = tolower(want) } tolower($0) == w { print; exit }')"
+    [ -n "$lpc_hit" ] && { printf '%s\n' "$lpc_hit"; return 0; }
+  fi
+  printf '%s\n' "$lpc_exact"
+}
+
+# The repo-relative path `ensure_log` renamed a log AWAY from, for the ONE
+# caller that has to put it in the same commit as the write. Empty on every
+# other run, and reset by every `ensure_log`, so "renamed" is never sticky.
+LOG_RENAMED_FROM=""
+
 ensure_log() {
   lane="$1"; lf="$(log_file_for "$lane")"
+  LOG_RENAMED_FROM=""
   [ -d "$LANES_LOG_DIR" ] || mkdir -p -- "$LANES_LOG_DIR"
+  el_hits="$(log_files_named_ci "$lane")"
+  el_n="$(printf '%s' "$el_hits" | grep -c . || :)"
+  if [ "$el_n" -gt 1 ]; then
+    die "lane $lane has $el_n object logs whose names differ only by case: $(printf '%s\n' "$el_hits" | tr '\n' ' ')— one lane is ONE lane under any case and its log is ONE file (Amendment 15). Merge them by hand into $lf, oldest lines first, remove the others in the same commit, and re-run. Nothing was written." 2
+  fi
+  el_from=""
+  [ "$el_n" = 1 ] && el_from="$el_hits"
+  if [ -n "$el_from" ] && [ "$el_from" != "$lf" ]; then
+    # THE RENAME IS ONE ACT AND IT HAPPENS ONCE: after it the canonical name is
+    # the only one `log_files_named_ci` can find, so the next write takes the
+    # branch above and does nothing. THROUGH A TEMPORARY NAME, because on a
+    # case-INSENSITIVE filesystem — macOS, which this repository's CI runs — the
+    # two names are one file and `mv a A` answers "identical" rather than
+    # renaming; two `mv`s do the same job on both kinds of filesystem, and
+    # neither is `git mv`, whose own case-only rename is the thing that differs
+    # between platforms. `commit_push` stages both paths (the caller adds the
+    # old one to its pathspecs), so git records the rename in the write's commit.
+    el_tmp="$lf.amendment15.$$"
+    mv -- "$el_from" "$el_tmp" 2>/dev/null && mv -- "$el_tmp" "$lf" 2>/dev/null ||
+      die "could not rename $el_from to $lf (Amendment 15: the register row's spelling names the lane's log). Nothing was written; move it by hand and re-run." 5
+    LOG_RENAMED_FROM="${LANES_LOG_PREFIX}${el_from##*/}"
+    note "$el_from → $lf: the register row spells this lane $lane, and the row's spelling names its log (Amendment 15)"
+  fi
   if [ ! -f "$lf" ]; then
     printf '# lane %s — object log (lane-collision-protocol Amendment 7)\n' "$lane" > "$lf"
     note "created $lf"
@@ -1306,7 +1404,14 @@ canon_object() {
       case "${co_raw#lane:}" in
         "" | *[!A-Za-z0-9._-]*) note "'$co_raw' is not a lane object: lane:<name>"; return 2 ;;
       esac
-      printf '%s\n' "$co_raw"; return 0 ;;
+      # AMENDMENT 15 — A LANE OBJECT CARRIES THE ROW'S SPELLING TOO. `lane:<name>`
+      # is the object of every lane-kind line (7(b)), so a `log PAUSED
+      # lane:openxfactory-2` on the lane `openXfactory-2` would write a key that
+      # does not match the lane's own earlier lines — in a file nothing rewrites,
+      # and against which `who lane:<name>` is then asked. Canonicalised here, so
+      # the writers and the reader ask the same question of it.
+      co_cl="$(canon_lane "${co_raw#lane:}")" || return 2
+      printf 'lane:%s\n' "$co_cl"; return 0 ;;
     '#'*)
       case "${co_raw#\#}" in
         "" | *[!0-9]*) note "'$co_raw' is not an object key: after '#' comes the issue or PR number"; return 2 ;;
@@ -1596,21 +1701,27 @@ state_events_flush() {
 # working tree has not published anything, and a lane whose log exists only on
 # `origin` is a lane this checkout has not pulled: the second is the case that
 # matters and the one that used to read as "pre-cutover".
+#
+# AMENDMENT 15 — AND THE FILE IS FOUND WHATEVER ITS CASE. A lane whose log was
+# written under another spelling has not lost its history the moment its row's
+# spelling becomes canonical; the first write renames the file, and until then
+# every reader finds it.
 lane_log_events() {
-  ll_rel="$(log_path_for "$1")"
+  ll_rel="$(log_path_ci "$1")"
   if have_remote_ref; then
     git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$ll_rel" 2>/dev/null | parse_log_stream "$ll_rel"
   else
-    ll_f="$(log_file_for "$1")"
-    [ -f "$ll_f" ] || return 0
+    ll_f="$(log_files_named_ci "$1" | head -n1)"
+    [ -n "$ll_f" ] && [ -f "$ll_f" ] || return 0
     log_events "$ll_f"
   fi
 }
 lane_log_exists() {
   if have_remote_ref; then
-    git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$(log_path_for "$1")" 2>/dev/null
+    git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$(log_path_ci "$1")" 2>/dev/null
   else
-    [ -f "$(log_file_for "$1")" ]
+    lle_f="$(log_files_named_ci "$1" | head -n1)"
+    [ -n "$lle_f" ] && [ -f "$lle_f" ]
   fi
 }
 
@@ -1879,7 +1990,7 @@ claim_is_stale() {   # <lane> <object> <utc-of-the-claim> <its file> <its line>
   object_is_pr "$cs_obj" && return 1
   state_events | awk -v sep="$US" -v l="$cs_lane" -v o="$cs_obj" -v f="$cs_file" -v ln="$cs_line" '
     BEGIN { FS = sep }
-    $2 == l && $3 == "OPENED" && $10 == f && ($11 + 0) > (ln + 0) {
+    tolower($2) == tolower(l) && $3 == "OPENED" && $10 == f && ($11 + 0) > (ln + 0) {
       # the `←` payload is space-separated issue keys
       n = split($8, a, " ")
       for (i = 1; i <= n; i++) if (a[i] == o) { found = 1 }
@@ -2555,11 +2666,16 @@ window_session() {
 # the handoff path, which are the two things `who` exists to hand over. Nothing
 # in `who` reads the working tree now.
 
+# AMENDMENT 15 — `tolower` ON BOTH SIDES, like every other lookup of a lane
+# name in this file. A caller reaches these two through `canon_lane`, so the
+# name arriving here is already the ROW's own spelling; the comparison is
+# case-insensitive anyway, because a caller that did not canonicalise must not
+# silently read "this lane has no row" about a lane that has one.
 ROW_AWK='
   substr($0,1,1) == "|" {
     p1 = index($0, "`"); if (p1 == 0) next
     rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
-    if (substr(rest, 1, p2 - 1) == lane) print
+    if (tolower(substr(rest, 1, p2 - 1)) == tolower(lane)) print
   }'
 row_of_lane()       { register_text | awk -v lane="$1" "$ROW_AWK"; }
 # The same row as THIS CHECKOUT has it. One caller: the `live-holder`
@@ -2568,6 +2684,66 @@ row_of_lane()       { register_text | awk -v lane="$1" "$ROW_AWK"; }
 # more reason to refuse a rename, never a reason to allow one (AGENTS.md rule 7).
 row_of_lane_local() { awk -v lane="$1" "$ROW_AWK" "$LANES_FILE"; }
 row_cell() { printf '%s\n' "$1" | awk -F'|' -v i="$2" '{print $i}'; }
+
+# ====================================================== AMENDMENT 15 =======
+#
+# THE RESOLVER. **A lane name is compared CASE-INSENSITIVELY wherever a name is
+# looked up, and the spelling the register row carries is canonical** — it is
+# what the window is named, what the session is named, what the log file is
+# called, and what every line and stamp writes. A name typed in another case
+# RESOLVES to it and is never written as typed.
+#
+# Every spelling the PUBLISHED register carries for a name, from
+# `origin/<branch>` like every other state read (R19). `lane_named_ci` below is
+# the same question asked for one answer and no refusal — it is the hook's read
+# and the hook never refuses — so the two are one parse in two shapes rather
+# than two rules.
+rows_named_ci() {   # <typed name>
+  register_text | awk -v want="$1" '
+    substr($0,1,1) == "|" {
+      p1 = index($0, "`"); if (p1 == 0) next
+      rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
+      t = substr(rest, 1, p2 - 1)
+      if (tolower(t) == tolower(want)) print t
+    }'
+}
+
+# canon_lane <typed> — the name every `<lane>` argument and `$LANES_LANE` is
+# read through BEFORE anything is read or written under it.
+#
+#   exactly one row matches, ignoring case   its OWN spelling
+#   no row matches                           the typed spelling, unchanged —
+#                                            which is what `add-row` needs, and
+#                                            what makes a brand-new lane's
+#                                            first act possible at all
+#   two or more                              REFUSE (2), naming them all
+#
+# IT RETURNS AND NEVER EXITS, for `row_line`'s reason: every caller takes it
+# with `$( )`, and an `exit` there would leave only the substitution's subshell
+# while the caller carried on with an empty lane name. The callers spell it
+# `lane="$(canon_lane "$lane")" || exit 2`.
+#
+# THE REFUSAL IS THE AMENDMENT'S OWN AND IT BELONGS TO EVERY WRITER, not only
+# to `lane-start`, which has refused two rows for one name since Amendment 5:
+# clause (b) says *"where the register already holds two rows that differ only
+# by case, every writer REFUSES, naming both, until they are merged"*. Merging
+# them is 15(d)'s act and a person's — the newer row's session id(s) appended to
+# the older row's cell, in order, and the newer row removed in the same commit —
+# because a tool that merged two rows of history on its own would be choosing
+# which lane's record survives.
+canon_lane() {   # <typed name>
+  cl_want="${1-}"
+  [ -n "$cl_want" ] || return 0
+  cl_hits="$(rows_named_ci "$cl_want" 2>/dev/null || :)"
+  cl_n="$(printf '%s' "$cl_hits" | grep -c . || :)"
+  if [ "$cl_n" -gt 1 ]; then
+    note "the register has $cl_n rows whose lane names differ only by case for '$cl_want': $(printf '%s' "$cl_hits" | tr '\n' ' ')"
+    note "a lane name is ONE name under any case (Amendment 15), so no read and no write under it is unambiguous. Merge them into one row (Amendment 15(d)): append the newer row's session id(s) to the older row's session cell, in order, remove the newer row in the SAME commit, and name both spellings in the commit message."
+    return 2
+  fi
+  if [ "$cl_n" = 1 ]; then printf '%s' "$cl_hits"; else printf '%s' "$cl_want"; fi
+  return 0
+}
 
 uuids_in_cell() { grep -oiE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tr 'A-F' 'a-f' || :; }
 
@@ -2875,9 +3051,20 @@ write_event() {
   # created, so that a refusal leaves the checkout exactly as it found it.
   refuse_dirty_checkout "write $we_verb" "${we_paths[@]}" "$LANES_PATH"
   acquire_lock
-  ensure_log "$we_lane"
   capture_register_edit "${we_paths[@]}"
   handle_preexisting "${we_paths[@]}"
+  # AMENDMENT 15 — `ensure_log` IS BELOW THE CAPTURE AND NOT ABOVE IT, and the
+  # order is load-bearing rather than tidy. It may now RENAME the lane's log to
+  # the row's own spelling, and the amendment says that rename lands "in that
+  # same commit" as the write — while `handle_preexisting` exists to commit
+  # whatever it finds dirty in this write's pathspecs FIRST, as somebody else's
+  # content. Run above it, the rename was exactly what that capture would
+  # commit: the one act of this write, taken out of it and attributed to a peer.
+  # Below it, the checkout is clean when the rename happens and the rename is
+  # this write's own. The old path joins the pathspecs so the deletion is
+  # committed beside the append.
+  ensure_log "$we_lane"
+  [ -n "$LOG_RENAMED_FROM" ] && we_paths+=("$LOG_RENAMED_FROM")
   # THEN re-test, against the checkout the capture left behind. The capture is
   # not assumed to have worked — handle_preexisting swallows a failed commit by
   # design, it never fails the call — and a register still dirty at this point
@@ -4107,7 +4294,14 @@ lanes_rows() {
     lr_names="$(printf '%s\n' "$lr_one" | awk -v sep="$US" 'NF { print tolower($0) sep $0 }')"
     lr_here=0; lr_repo=""; lr_dir=""; lr_prefix=""
   else
-    lr_names="$( { known_lanes 2>/dev/null || :; register_lanes 2>/dev/null || :; } | awk -v sep="$US" 'NF && !seen[tolower($0)]++ { print tolower($0) sep $0 }')"
+    # THE REGISTER FIRST, AND THAT IS AMENDMENT 15 (it was the logs first).
+    # The de-duplication has always been on the name LOWER-CASED, so for a lane
+    # both sources know it is the FIRST source that decides which spelling the
+    # listing prints — and the amendment says the register row's spelling is the
+    # canonical one. Read the other way round, a lane whose log file predates
+    # its row's spelling was listed under the file name, and column 10's
+    # `restart <lane>` line offered that spelling back to the reader.
+    lr_names="$( { register_lanes 2>/dev/null || :; known_lanes 2>/dev/null || :; } | awk -v sep="$US" 'NF && !seen[tolower($0)]++ { print tolower($0) sep $0 }')"
   fi
   [ -n "$lr_names" ] || return 8
   # ONE PASS OVER EVERY LANE'S EVENTS, NOT ONE READ PER LANE PER FIELD.
@@ -4528,6 +4722,16 @@ session_start_block() {
   ssb_src="$(jstr "$ssb_json" source)"
   case "$ssb_src" in compact) return 0 ;; esac
 
+  # AMENDMENT 15 — THE WINDOW NAME, THE SESSION NAME AND THE ROW KEY ARE
+  # COMPARED CASE-INSENSITIVELY, AND EVERY LINE BELOW PRINTS THE ROW'S OWN
+  # SPELLING. Both reads already answer with the register's spelling —
+  # `lane_named_ci` lowercases both sides by name, and `lane_of_session` prints
+  # the row's token — so `$ssb_lane` is canonical from here down, which is what
+  # makes `lane_start_args` below hand a reader the commands filled in with the
+  # spelling their window and their session are about to be named.
+  # AMENDMENT 12'S GUARD AND LOCK PLUG IN HERE (opensoft/openRepoTools#25, not
+  # built): the lock renames a session whose name differs from `$ssb_lane` only
+  # by case, with a `/rename` to that spelling.
   ssb_lane=""
   [ -n "$ssb_win" ] && ssb_lane="$(lane_named_ci "$ssb_win" 2>/dev/null || :)"
   [ -n "$ssb_lane" ] || [ -z "$ssb_id" ] || ssb_lane="$(lane_of_session "$ssb_id" 2>/dev/null || :)"
@@ -4865,6 +5069,7 @@ esac
 case "$cmd" in
   verify-row)
     lane="${1-}"; [ -n "$lane" ] || die "usage: verify-row <lane>" 2
+    lane="$(canon_lane "$lane")" || exit 2
     n="$(row_line "$lane")" || exit 2
     row="$(sed -n -e "${n}p" "$LANES_FILE")"
     # Bash substrings, not `cut -c` and `rev`: `${#row}` counts CHARACTERS,
@@ -4883,6 +5088,11 @@ case "$cmd" in
   append-row-status)
     lane="${1-}"; text="${2-}"
     [ -n "$lane" ] && [ -n "$text" ] || die "usage: append-row-status <lane> \"<text>\"" 2
+    # AMENDMENT 15 — THE ROW'S OWN SPELLING, BEFORE THE LOCK AND BEFORE THE
+    # EDIT. `row_line` below finds the same line either way; this is what the
+    # COMMIT SUBJECT and every message here then carry, and a register whose
+    # rows differ only by case is refused here rather than edited at random.
+    lane="$(canon_lane "$lane")" || exit 2
     acquire_lock; handle_preexisting
     n="$(row_line "$lane")" || exit 2
     row="$(sed -n -e "${n}p" "$LANES_FILE")"
@@ -4901,6 +5111,7 @@ case "$cmd" in
   replace-in-row)
     lane="${1-}"; old="${2-}"; new="${3-}"; why="${4-}"
     [ -n "$lane" ] && [ -n "$old" ] || die "usage: replace-in-row <lane> \"<old>\" \"<new>\" [\"<why>\"]" 2
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
     acquire_lock; handle_preexisting
     n="$(row_line "$lane")" || exit 2
     row="$(sed -n -e "${n}p" "$LANES_FILE")"
@@ -4961,6 +5172,7 @@ case "$cmd" in
     case "$add" in
       *"|"*) die "append-session-id's appended text may not contain '|': it would forge a cell boundary in the row. Got '$add'." 2 ;;
     esac
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
     acquire_lock; handle_preexisting
     n="$(row_line "$lane")" || exit 2
     row="$(sed -n -e "${n}p" "$LANES_FILE")"
@@ -4979,15 +5191,18 @@ case "$cmd" in
   append-line)
     text="${1-}"; [ -n "$text" ] || die "usage: append-line \"<text>\"" 2
     lane_tag="${LANES_LANE:-}"
+    [ -z "$lane_tag" ] || lane_tag="$(canon_lane "$lane_tag")" || exit 2
     if [ -z "$lane_tag" ]; then
       cand="$(lane_from_text "$text")"
-      if [ -n "$cand" ]; then
-        if row_line "$cand" >/dev/null 2>&1; then
-          lane_tag="$cand"
-        else
-          lane_tag="$(row_lane_ci "$cand")"
-        fi
-      fi
+      # AMENDMENT 15 — `row_lane_ci` ALONE, and the exact branch that used to
+      # sit above it is the same question asked twice now that `row_line`
+      # compares case-insensitively too. It answers with the ROW's spelling
+      # rather than the LINE's, which is what Rule 10's wire form needs: the
+      # line says `Lane: openxfactory-2` in lowercase and the row's token is
+      # `openXfactory-2`. It is still the register that decides — a candidate no
+      # row matches prints nothing, so "…names no lane at all" is never
+      # attributed to a lane called "at".
+      [ -n "$cand" ] && lane_tag="$(row_lane_ci "$cand")"
     fi
     acquire_lock; handle_preexisting
     append_text_line "$text"
@@ -5009,8 +5224,20 @@ case "$cmd" in
     pipes="$(count_occurrences "$row" "|")" || exit 2
     [ "$pipes" -ge 8 ] || die "a 7-column row needs at least 8 '|' characters, found $pipes" 2
     lane_new="$(printf '%s' "$row" | cut -d'`' -f2)"
-    if [ -n "$lane_new" ] && row_line "$lane_new" >/dev/null 2>&1; then
-      die "lane '$lane_new' already has a row — use append-row-status / replace-in-row" 2
+    # AMENDMENT 15(a) — A ROW UNDER ANY CASE IS A ROW, AND THE REFUSAL NAMES IT.
+    # This is the act the 2026-09-13 incident got past: `lane-start openxfactory
+    # 2` found no row for `openXfactory-2` and appended a second one for a lane
+    # that already had one. `row_line`'s exactly-one test cannot be the whole
+    # gate here, because two rows differing only by case make it fail for the
+    # OTHER reason and a failed `row_line` used to read as "no row, go ahead".
+    if [ -n "$lane_new" ]; then
+      ar_hits="$(rows_named_ci_local "$lane_new")"
+      ar_n="$(printf '%s' "$ar_hits" | grep -c . || :)"
+      if [ "$ar_n" -gt 0 ]; then
+        ar_more=""
+        [ "$ar_n" -gt 1 ] && ar_more=" Those $ar_n rows differ only by case and are themselves the refusal: merge them into one row first (Amendment 15(d))."
+        die "lane '$lane_new' already has a row, spelled $(printf '%s\n' "$ar_hits" | tr '\n' ' ')— a lane name is ONE name under any case (Amendment 15(a)), so a row under another case IS that lane's row and this would be a second one. Use append-row-status / replace-in-row on the row that is there.$ar_more" 2
+      fi
     fi
     acquire_lock; handle_preexisting
     append_text_line "$row"
@@ -5021,6 +5248,10 @@ case "$cmd" in
 
   commit)
     msg="${1-}"; [ -n "$msg" ] || die "usage: commit \"<message>\"" 2
+    # AMENDMENT 15 — `$LANES_LANE` passes through the resolver like every
+    # `<lane>` argument does: it is the attribution in this commit's subject and
+    # the name the "touches other rows" test compares against.
+    [ -z "${LANES_LANE:-}" ] || LANES_LANE="$(canon_lane "$LANES_LANE")" || exit 2
     acquire_lock
     # `commit` has no edit of its own to separate from a pre-existing one —
     # its whole job is to wrap whatever is already dirty (a hand edit made
@@ -5091,6 +5322,11 @@ case "$cmd" in
     # nothing here had moved, and the pull inside `commit_push` comes far too
     # late to be that read.
     log_sync
+    # AMENDMENT 15 — AFTER THE FETCH AND BEFORE EVERY READ AND WRITE BELOW IT.
+    # The resolver reads the PUBLISHED register (R19), so it is asked once
+    # `log_sync` has moved the ref — and what it answers is the lane this line
+    # is WRITTEN with, the file it is written to, and the commit subject.
+    lane="$(canon_lane "$lane")" || exit 2
     home="$(resolve_home "$lane" "$home_override")" || exit $?
     obj="$(canon_object "$obj_raw" "$home")" || exit 2
     if is_lane_verb "$verb"; then
@@ -5130,7 +5366,7 @@ case "$cmd" in
     # uncommitted `lanes/LANES.md` as its own commit and re-tests the checkout
     # afterwards (R11), so a claim is not refused for the one file this
     # checkout is dirty in most of the day.
-    refuse_dirty_checkout claim "$(log_path_for "$lane")" "$LANES_PATH"
+    refuse_dirty_checkout claim "$(log_path_ci "$lane")" "$LANES_PATH"
 
     # 1. FETCH FIRST OF ALL — then resolve `--home` against the lane's STARTED
     #    line (R30), canonicalise the object, and pre-check against what has
@@ -5138,6 +5374,7 @@ case "$cmd" in
     #    anything, and never against a log this checkout has not pulled: a home
     #    a peer recorded is on `origin/<branch>` and nowhere else here.
     log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
     home="$(resolve_home "$lane" "$home_override")" || exit $?
     obj="$(canon_object "$obj_raw" "$home")" || exit 2
     ! is_lane_object "$obj" || die "a lane is not a claimable object" 2
@@ -5244,10 +5481,11 @@ EOF
     done
     [ -n "$obj_raw" ] || die "usage: release <object> [\"<why>\"] [--no-github] [--home owner/repo]" 2
     log_sync                      # R30 — the fetch, then --home and the STARTED line
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
     home="$(resolve_home "$lane" "$home_override")" || exit $?
     obj="$(canon_object "$obj_raw" "$home")" || exit 2
     ! is_lane_object "$obj" || die "a lane is not a releasable object" 2
-    mine="$(state_events | lane_states_on "$obj" | awk -v sep="$US" -v lane="$lane" 'BEGIN{FS=sep} $2 == lane' || :)"
+    mine="$(state_events | lane_states_on "$obj" | awk -v sep="$US" -v lane="$lane" 'BEGIN{FS=sep} tolower($2) == tolower(lane)' || :)"
     if [ -z "$mine" ]; then
       note "NOTE: this lane has no line on $obj — releasing anyway, and the log will show that it did."
     else
@@ -5286,7 +5524,8 @@ EOF
     [ -n "$arg" ] || die "usage: who <object> | who --lane <lane> | who --landing owner/repo" 2
     log_sync
     case "$mode" in
-      lane)    who_lane "$arg" || exit $? ;;
+      lane)    arg="$(canon_lane "$arg")" || exit 2          # Amendment 15
+               who_lane "$arg" || exit $? ;;
       landing)
         wl_repo="$(alias_lookup "$arg" 2>/dev/null || :)"; wl_repo="${wl_repo:-$arg}"
         case "$wl_repo" in */*) : ;; *) die "--landing needs owner/repo (or an alias in ${LANES_LOG_PREFIX%log/}repos.tsv); '$arg' is neither" 2 ;; esac
@@ -5380,6 +5619,7 @@ EOF
   # three answers `live-holder` gives, so a caller reads them the same way.
   idle-holders)
     lane="${1-}"; [ -n "$lane" ] || die "usage: idle-holders <lane>" 2
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
     idle_holders "$lane"; ih_rc=$?
     case "$ih_rc" in
       0) : ;;
@@ -5401,6 +5641,7 @@ EOF
     # The id SET is the published row's union the working tree's (R25): this is
     # the boundary read that decides whether a window may take a name, and an id
     # only ever adds a reason to refuse.
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
     lh_ids="$( { session_ids_of_lane "$lane" 2>/dev/null || :
                  session_ids_local_of_lane "$lane" 2>/dev/null || :; } | awk 'NF && !seen[$0]++')"
     # DECISION 8(e) — A `--fork-session` OF THIS LANE'S TRANSCRIPT IS NEVER A
@@ -5536,6 +5777,7 @@ EOF
     [ "$#" -le 1 ] || die "lane-dir takes one lane: lane-dir <lane>" 64
     check_lane_name "$lane"
     log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
     # THE READER'S STATUS DECIDES, AS IT DOES IN EVERY OTHER ARM OF THIS CLAUSE
     # (#26, the fail-closed family one layer out). `window-session`, `last-session`,
     # `forks` and `window-lane` all carry this `case`; these two carried
@@ -5574,6 +5816,7 @@ EOF
     [ "$#" -le 1 ] || die "lane-profile takes one lane: lane-profile <lane>" 64
     check_lane_name "$lane"
     log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
     lp_out="$(lane_payload_field "$lane" profile)"; lp_rc=$?
     case "$lp_rc" in
       0) : ;;
@@ -5595,6 +5838,7 @@ EOF
     [ "$#" -le 1 ] || die "last-session takes one lane: last-session <lane>" 64
     check_lane_name "$lane"
     log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
     last_session_of "$lane"; ls_rc=$?
     case "$ls_rc" in
       0) : ;;
@@ -5616,6 +5860,7 @@ EOF
     [ "$#" -le 1 ] || die "forks takes one lane: forks <lane>" 64
     check_lane_name "$lane"
     log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
     lane_forks "$lane"; fk_rc=$?
     case "$fk_rc" in
       0)  : ;;
@@ -5701,6 +5946,18 @@ EOF
     if [ "$lns_fetch" = 1 ] && [ "$LOG_SYNC_FETCH" != yes ] && [ "$LOG_SYNC_FETCH" != fell-back ]; then
       note "--fetch was asked for and NO FETCH WAS MADE: $LOG_SYNC_FETCH — reading the logs as they stand locally"
     fi
+    # AMENDMENT 15 — `--lane <name>` IS A `<lane>` ARGUMENT AND GOES THROUGH THE
+    # RESOLVER. The filter inside `lanes_rows` has always joined on the name
+    # lower-cased, so the ROWS came back either way; what a typed spelling used
+    # to do was put itself in column 1 and in column 10's `restart <lane>` line.
+    lns_i=0
+    while [ "$lns_i" -lt "${#lns_args[@]}" ]; do
+      if [ "${lns_args[$lns_i]}" = --lane ]; then
+        lns_j=$((lns_i + 1))
+        lns_args[$lns_j]="$(canon_lane "${lns_args[$lns_j]}")" || exit 2
+      fi
+      lns_i=$((lns_i + 1))
+    done
     lns_out="$(lanes_rows ${lns_args[@]+"${lns_args[@]}"})"; lns_rc=$?
     case "$lns_rc" in
       0)  : ;;
@@ -5749,6 +6006,7 @@ EOF
   lane-objects)
     lane="${1-}"; [ -n "$lane" ] || die "usage: lane-objects <lane>" 2
     log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
     lane_objects "$lane" || exit $?
     ;;
 
@@ -5765,6 +6023,7 @@ EOF
     lane="${1-}"; [ -n "$lane" ] || die "usage: register-row <lane>" 2
     check_lane_name "$lane"
     log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
     rr_row="$(row_of_lane "$lane")"
     [ -n "$rr_row" ] || exit 8
     printf '%s\n' "$rr_row"
@@ -5808,6 +6067,35 @@ EOF
     printf '%s\n' "$sl_lane"
     ;;
 
+  # AMENDMENT 15 — THE RESOLVER, EXPOSED, because `lane-start`, `lane-end`,
+  # `lanes` and `restart` all take a `<lane>` argument and the amendment gives
+  # all four the SAME resolver. Four implementations of "which row is this
+  # name's" is how the four would come to disagree about it — which is the whole
+  # reason clause (h) turned `window-lane` and `session-lane` into subcommands.
+  #
+  # Read-only, out of `origin/<branch>` like every other state read (R19).
+  #   0   the canonical spelling — the row's own where a row matches ignoring
+  #       case, and the TYPED spelling where none does, because a lane with no
+  #       row is a lane `add-row` is about to create and the typed name is all
+  #       there is.
+  #   2   the refusal: two or more rows differ only by case (15(d)). It is 2 and
+  #       not 8 because it is a REFUSAL and not an absence — and `lane-start`
+  #       already spends 2 on exactly this fact for two rows of one spelling.
+  #   64  a usage error of its own, as every read in clause (h)'s table does.
+  # A caller that meets 2 from a helper predating this amendment is meeting the
+  # `*)` arm's unknown-subcommand 2, told apart by the helper's own WORDS as
+  # every other read here is; the four callers fall through to the typed
+  # spelling there, and each has its own refusal for a register that really does
+  # hold two such rows.
+  canon-lane)
+    cl_in="${1-}"; [ -n "$cl_in" ] || die "usage: canon-lane <lane>" 64
+    [ "$#" -le 1 ] || die "canon-lane takes one lane: canon-lane <lane>" 64
+    check_lane_name "$cl_in"
+    log_sync
+    cl_res="$(canon_lane "$cl_in")" || exit 2
+    printf '%s\n' "$cl_res"
+    ;;
+
   # `--home`'s validation, WITHOUT a write — the same `resolve_home` the writers
   # call, so a preflight and the write can never disagree. 0 with the canonical
   # home, 8 when the lane has none and none was given, 2 when the option is
@@ -5819,12 +6107,13 @@ EOF
     lane="${1-}"; [ -n "$lane" ] || die "usage: resolve-home <lane> [<owner/repo|alias>]" 2
     check_lane_name "$lane"
     log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
     rh_out="$(resolve_home "$lane" "${2-}")" || exit $?
     [ -n "$rh_out" ] || exit 8
     printf '%s\n' "$rh_out"
     ;;
 
   *)
-    die "unknown subcommand '$cmd' (verify-row|append-row-status|replace-in-row|append-session-id|append-line|add-row|commit|log|claim|release|who|swapped|session-start|idle-holders|live-holder|window-session|session-lane|window-lane|lane-dir|lane-profile|last-session|forks|workstation|fetch-age|lanes|sibling-filter|resolve-repo|lane-objects|register-row|resolve-home)" 2
+    die "unknown subcommand '$cmd' (verify-row|append-row-status|replace-in-row|append-session-id|append-line|add-row|commit|log|claim|release|who|swapped|session-start|idle-holders|live-holder|window-session|session-lane|window-lane|lane-dir|lane-profile|last-session|forks|workstation|fetch-age|lanes|sibling-filter|resolve-repo|lane-objects|register-row|canon-lane|resolve-home)" 2
     ;;
 esac

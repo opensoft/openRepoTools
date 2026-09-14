@@ -351,6 +351,27 @@ case "$lane" in
 	die "'$lane' is not a lane name (letters, digits, . _ -, not opening with . or -)" 2 ;;
 esac
 
+# ------------------------- AMENDMENT 15: THE ROW'S SPELLING IS THE LANE'S NAME
+#
+# **A lane name is one name under any case** (ratified 2026-09-14T00:07:18Z),
+# and `lanes-edit.sh canon-lane` is the ONE resolver all four commands share —
+# for the reason Amendment 11 clause (h) gives every other read here: four
+# implementations of "which row is this name's" is how the four would come to
+# disagree about it.
+#
+# EVERY CODE BUT 0 CARRIES ON WITH THE NAME AS TYPED. `2` is what a helper
+# predating this amendment spends on an unknown subcommand, and it is also
+# `canon-lane`'s own two-rows refusal; this command cannot tell them apart by
+# status and does not need to, because the `register-row` read below refuses a
+# register holding two such rows and this command relays that refusal.
+
+cl_out=""; cl_rc=0
+cl_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "$lane" 2>/dev/null)" || cl_rc=$?
+if [ "$cl_rc" = 0 ] && [ -n "$cl_out" ] && [ "$cl_out" != "$lane" ]; then
+	note "lane $lane → $cl_out (Amendment 15: the register row's spelling is canonical)"
+	lane="$cl_out"
+fi
+
 # ------------------------------------------------------------- the lane's row
 row_rc=0
 LANES_NO_FETCH=1 "$LANES_EDIT" register-row "$lane" >/dev/null 2>&1 || row_rc=$?
@@ -390,7 +411,11 @@ case "$sw_rc" in
     rungs below a record it could not read (Amendment 7(d)). Run it by hand to
     see what it says, then re-run." 1 ;;
 esac
-record_row="$(printf '%s\n' "$sw_out" | awk -F'\t' -v l="$lane" '$1 == l { print; exit }' || :)"
+# AMENDMENT 15 — `tolower` ON BOTH SIDES. The swap record's lane column carries
+# whatever spelling the lane was paused under, and `$lane` is the register row's;
+# an exact compare here lost the record — and with it the directory and the
+# profile — for any lane whose two spellings differ.
+record_row="$(printf '%s\n' "$sw_out" | awk -F'\t' -v l="$lane" 'tolower($1) == tolower(l) { print; exit }' || :)"
 lane_dir="$dir_flag"
 if [ -z "$lane_dir" ] && [ -n "$record_row" ]; then
 	cand="$(printf '%s' "$record_row" | cut -f4)"

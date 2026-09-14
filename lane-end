@@ -487,6 +487,28 @@ if [ -z "${LANES_FILE:-}" ]; then die "$(lanes_workspace_why)" 1; fi
 [ -f "$LANES_FILE" ] || die "no register at $LANES_FILE — the workspace repository $(lanes_ws_yaml) names carries no lanes/LANES.md. \`openRepoTools wip init\` seeds one (it is idempotent); or set LANES_FILE" 1
 [ -x "$LANES_EDIT" ] || die "no register writer at $LANES_EDIT — \`lanes-edit.sh\` is installed beside this command by \`openRepoTools --install\`. Run that, or set LANES_EDIT" 1
 
+# ------------------------- AMENDMENT 15: THE ROW'S SPELLING IS THE LANE'S NAME
+#
+# **A lane name is one name under any case** (ratified 2026-09-14T00:07:18Z),
+# and `lanes-edit.sh canon-lane` is the ONE resolver all four commands share —
+# for the reason Amendment 11 clause (h) gives every other read here: four
+# implementations of "which row is this name's" is how the four would come to
+# disagree about it.
+#
+# EVERY CODE BUT 0 CARRIES ON WITH THE NAME AS TYPED. `2` is what a helper
+# predating this amendment spends on an unknown subcommand, and it is also
+# `canon-lane`'s own two-rows refusal; this command cannot tell them apart by
+# status and does not need to, because its own refusals name the lane it
+# was given and every act it takes goes through `lanes-edit.sh`, which refuses
+# a register holding two such rows on its own account.
+
+cl_out=""; cl_rc=0
+cl_out="$("$LANES_EDIT" canon-lane "$LANE" 2>/dev/null)" || cl_rc=$?
+if [ "$cl_rc" = 0 ] && [ -n "$cl_out" ] && [ "$cl_out" != "$LANE" ]; then
+  note "lane $LANE → $cl_out (Amendment 15: the register row's spelling is canonical)"
+  LANE="$cl_out"
+fi
+
 # `--home` IS VALIDATED BEFORE ANYTHING IS WRITTEN. It is for a PRE-CUTOVER
 # lane, and `lanes-edit.sh` refuses it once the lane's own log records a home —
 # but the only place this script passes it is its LAST act, the ENDED/RETIRED
