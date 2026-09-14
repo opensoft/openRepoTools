@@ -3,9 +3,10 @@
 
 Adapted from openRepoShape's `tests/test_repo_hygiene.py` — the rules travel
 with the files. NOTHING HERE NEEDS THE SUBMODULE, on purpose: these are facts
-about the four bash files and the four documents this repository ships, so
-they run in a clone made without `--recurse-submodules` and they run on
-Windows, which is what the Windows job is for.
+about the bash files this repository ships (`SHIPPED_BASH` and `LANE_BASH`
+below) and the documents beside them, so they run in a clone made without
+`--recurse-submodules` and they run on Windows, which is what the Windows job
+is for.
 """
 
 from __future__ import annotations
