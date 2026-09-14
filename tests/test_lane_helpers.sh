@@ -4557,6 +4557,20 @@ export FAKE_PCLAUDE_LOG="$SANDBOX/pclaude.log"
 # to guess from.
 : > "$FAKE_PCLAUDE_LOG"
 run env -u TMUX "$RESTART" repoA11-1 </dev/null
+# THE LANE-NAME FENCE IS THE HELPER'S OWN, and it was a first-character test
+# (#26 review of `3d06a2b`, `restart:268`). `[A-Za-z0-9]*)` pins one character,
+# so a string that is not a lane name reached `register-row` and the person was
+# told "the register has no row for lane repoA11-1/extra" — sent looking for a
+# missing row instead of being told what they typed.
+run env -u TMUX "$RESTART" "repoA11-1/extra" </dev/null
+is   "restart refuses a lane name that is not one, whole-string" "$rc" 2
+has  "…saying what a lane name is, in lanes-edit.sh's own words" "$err" "not opening with . or -"
+hasnt "…and never reporting it as a missing row" "$err" "has no row for lane"
+run env -u TMUX "$RESTART" "repoA11-1 x" </dev/null
+is   "…a space is refused too" "$rc" 2
+run env -u TMUX "$RESTART" "-repoA11-1" </dev/null
+is   "…and a leading dash, which the helper refuses by name" "$rc" 2
+
 is   "restart <lane> from a fresh terminal outside tmux exits 0" "$rc" 0
 has  "…launching through the launcher, never \`claude\` itself (Evidence 4)" \
      "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoA11-1 team-05a"
@@ -4783,6 +4797,26 @@ has  "…which is decision 7's per-repo listing, read through the same helper" "
 # contract gives 64; and a workstation whose helper predates this amendment —
 # every workstation until adoption act 3's install reaches it — exited 1, the
 # code for a read that broke.
+# `--all` CLEARS THE LABEL AS WELL AS THE FILTERS, IN EITHER ORDER. The helper's
+# `--all` drops `--repo`, `--dir` and `--prefix`, so the ROWS were always right;
+# `here_repo` is the wrapper's own, and `lanes --all --prefix repoA11` listed
+# every lane in the estate under a footer that said "of repoA11" and offered a
+# next free position computed from one repository's rows (#26 review of
+# `3d06a2b`, `lanes:143`).
+run "$LANES_CMD" --all --prefix repoA11 </dev/null
+is    "lanes --all --prefix exits 0" "$rc" 0
+has   "…listing every lane, which is what --all asks for" "$out" "repoA11-3"
+hasnt "…and labelling the count for no repository" "$out" "of repoA11,"
+hasnt "…nor offering a next free position it did not narrow to" "$out" "next free position"
+run "$LANES_CMD" --prefix repoA11 --all </dev/null
+is    "…and the other order is the same command" "$rc" 0
+has   "…with the same every-lane listing" "$out" "repoA11-3"
+hasnt "…and the same absent label" "$out" "of repoA11,"
+# …while `--prefix` ALONE still narrows and still offers the position.
+run "$LANES_CMD" --prefix repoA11 </dev/null
+has   "a --prefix on its own still names the repository in its count" "$out" "of repoA11,"
+has   "…and still ends with the next free position" "$out" "next free position"
+
 run "$LANES_CMD" repoA11-1 </dev/null
 is   "lanes takes no positional argument, and spends the contract's 64 on it" "$rc" 64
 has  "…and points at the command that does" "$err" "restart repoA11-1"

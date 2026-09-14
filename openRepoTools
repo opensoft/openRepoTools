@@ -272,7 +272,7 @@ install_commands() {
 	# and a network round-trip if it waits (A9 Addendum 4, R-A9-12).
 	plan_install_targets
 	collect_commands
-	collect_skills || die "could not fetch one of the ${#SKILLS[@]} skills (${SKILLS[*]}) from $REPO at $REF, so
+	collect_skills || die "could not fetch one of the ${#SKILLS[@]} skills (${SKILLS[*]}) or the ${#COMMANDS[@]} command file (${COMMANDS[*]}) from $REPO at $REF, so
     NOTHING was installed and nothing already installed was replaced."
 	plan_hook_merge
 	plan_skill_targets
@@ -307,7 +307,7 @@ install_commands() {
 
 
 # =========================================================================
-# THE FIVE ARTIFACTS THAT ARE NOT ONE OF THE ELEVEN FILES
+# THE SEVEN ARTIFACTS THAT ARE NOT ONE OF THE ELEVEN FILES
 # =========================================================================
 #
 # lane-collision-protocol Amendment 9(b), inheriting A8 Addendum 2's R-A8-5
@@ -484,7 +484,7 @@ plan_skill_targets() {
     entry there (Amendment 9(b)).
     NOTHING was installed and nothing already installed was replaced."
 	done
-	# AND THE FOUR FILES INSIDE THEM, BY R-A9-12 (F-X17). The loop above proved
+	# AND THE SIX FILES INSIDE THEM, BY R-A9-12 (F-X17). The loop above proved
 	# the DIRECTORIES writable and stopped there, while `place_skill_and_hook`
 	# then reaches each `SKILL.md` with `[ -e ]`, `cmp -s` and `cp` — not one of
 	# which can tell a regular file from a link to one. So a symlink at
@@ -513,7 +513,7 @@ plan_skill_targets() {
 			paths="${paths:+$paths }\"$target\""
 		done
 	done
-	[ -z "$bad" ] || die "\`--install\` places REGULAR FILES, and these skill targets are not regular files:
+	[ -z "$bad" ] || die "\`--install\` places REGULAR FILES, and these skill and command targets are not regular files:
 $bad
     \`cp\` follows a symlink, so installing over one would leave the skill
     UNINSTALLED — the target stays a link — and would write these bytes into
@@ -523,7 +523,7 @@ $bad
         rm -f -- $paths"
 }
 
-# THE NINE TARGETS, PROVED PLACEABLE BEFORE ANY OF THE TWELVE IS PLACED
+# THE ELEVEN TARGETS, PROVED PLACEABLE BEFORE ANY OF THE EIGHTEEN IS PLACED
 # (A9 Addendum 4, R-A9-12, ruled on F5 of the #24 review).
 #
 # `cp` FOLLOWS A SYMLINK. The loop below tests `[ -e "$target" ]`, compares
@@ -694,7 +694,7 @@ place_skill_and_hook() {
 	# EVERY FAILURE HERE IS A `die`, never the shell's own 1. `--install`'s
 	# codes are this toolset's — 0 done, 1 findings printed, 2 a refusal — and
 	# an unguarded `mkdir` or `cp` under `set -e` exits 1, which reads as a
-	# report of findings from a command that placed twelve of eighteen artifacts.
+	# report of findings from a command that placed eleven of eighteen artifacts.
 	for target in "$shared_dir/SKILL.md" "$bare_dir/SKILL.md"; do
 		mkdir -p -- "$(dirname -- "$target")" ||
 			die "could not create $(dirname -- "$target") for the $name skill.

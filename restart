@@ -262,9 +262,15 @@ if [ -z "$lane" ]; then
 	fi
 fi
 
+# THE WHOLE STRING, AND IT IS `lanes-edit.sh`'s OWN RULE (`check_lane_name`).
+# `[A-Za-z0-9]*)` pins the FIRST CHARACTER and nothing else — `repoA11-1/extra`,
+# `repoA11-1 x` and `repoA11-1*` all passed it and went to `register-row`, which
+# then answered "no row for that lane" about a string that is not a lane name at
+# all. One rule, spelled the same in both files, which
+# `test_restart_fences_a_lane_name_the_way_the_helper_does` holds.
 case "$lane" in
-[A-Za-z0-9]*) : ;;
-*) die "'$lane' is not a lane name (letters, digits, . _ -)" 2 ;;
+"" | *[!A-Za-z0-9._-]* | .* | -*)
+	die "'$lane' is not a lane name (letters, digits, . _ -, not opening with . or -)" 2 ;;
 esac
 
 # ------------------------------------------------------------- the lane's row

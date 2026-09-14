@@ -1330,15 +1330,37 @@ PAUSED — lane openRepoProject-1, session a3ab3df2-…@Eagle, 2026-09-13T04:32:
 **A line written before this carries none of them, and a reader that finds none
 says so rather than assuming one.** Nothing is backfilled.
 
-### The lane's directory, in four rungs
+### The lane's directory, in six rungs
 
 `--dir <path>` → the **swap record's** `dir` → the **lane's log** (`lane-dir`) →
-`$PROJECTS_ROOT/<repo>`. First answer wins. **There is no fifth rung and the
-cwd's own checkout is ruled out by name**: deriving the directory from wherever
-you happen to be standing is an inference, and `lane-start` writes the lane's
-HOME from that directory's `origin`, which every `#n` the lane afterwards writes
-inherits. A recorded directory that no longer exists is a **refusal naming the
-path**, never a silent re-home.
+`$PROJECTS_ROOT/<repo>` → the estate's **`project.yaml` legs** → **a checkout
+named for the home's repository** under `$PROJECTS_ROOT`. First answer wins, and
+**the cwd's own checkout is ruled out by name**: deriving the directory from
+wherever you happen to be standing is an inference, and `lane-start` writes the
+lane's HOME from that directory's `origin`, which every `#n` the lane afterwards
+writes inherits. A recorded directory that no longer exists is a **refusal
+naming the path**, never a silent re-home.
+
+**Rungs 5 and 6 were four until Evidence 7** (`708395e`), where a lane whose
+checkout is NESTED — `~/projects/xFactory/xFactories/OpsxFactory`, not
+`$PROJECTS_ROOT/opsXfactory` — met an exit 1 behind an `exec` and a pane that
+said `[exited]`. Neither is a search for a directory that looks right:
+
+- **Rung 5 is a DECLARATION.** openRepoShape's manifest carries a top-level
+  `legs:` list of `repository:`/`path:`, and Amendment 7 decision 3 treats a leg
+  as home. Where a manifest names the lane's recorded home as a leg, that leg's
+  `path`, resolved against the manifest's own directory, IS the checkout.
+- **Rung 6 is a NAME, and the name is the repository's.** One or two levels
+  under `$PROJECTS_ROOT`, a directory named for the home's repository —
+  `resolve-repo`'s canonical spelling, because `opsXfactory` the lane label and
+  `OpsxFactory` the repository are not the same string.
+
+**Both are proved by `origin` and both are skipped entirely where the lane has
+no recorded home**, because there is then nothing to prove a candidate against
+and a match would be the guess rung 4 already refuses to make. A candidate whose
+`origin` is not the recorded home is passed over, not taken. And when all six
+answer nothing the end is still a **refusal, exit 2**, one line a person can
+type — never the exit 1 Evidence 7 met.
 
 ### The new reads
 

@@ -681,6 +681,33 @@ def test_every_option_the_parser_accepts_is_in_the_usage(name):
         f"them: an option a person cannot find is an option they do not use")
 
 
+def test_restart_fences_a_lane_name_the_way_the_helper_does():
+    """ONE RULE FOR WHAT A LANE NAME IS, AND `restart` HAD A WEAKER ONE.
+
+    `lanes-edit.sh`'s `check_lane_name` refuses `"" | *[!A-Za-z0-9._-]* | .* |
+    -*` - the WHOLE string, and the two leading characters a path or an option
+    would start with. `restart` tested `[A-Za-z0-9]*)`, which in a `case`
+    pattern pins the FIRST CHARACTER and nothing else: `repoA11-1/extra`,
+    `repoA11-1 x` and `repoA11-1*` all passed it and went on to `register-row`,
+    which then answered "the register has no row for lane X" about a string
+    that is not a lane name at all. The refusal a person needs ("that is not a
+    lane name") was replaced by one that sends them looking for a missing row.
+
+    Held by comparing the two patterns rather than by restating either: a
+    second spelling of one rule is how the two files come to disagree.
+    """
+    helper = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+    wanted = re.search(r"check_lane_name\(\) \{\s*case \S+ in\s*\n\s*(\S.*?)\)",
+                       helper)
+    assert wanted, "lanes-edit.sh has no `check_lane_name` case pattern"
+    pattern = wanted.group(1).strip()
+    text = (REPO / "restart").read_text(encoding="utf-8")
+    assert pattern in text, (
+        "`restart` does not fence a lane name with `lanes-edit.sh`'s own "
+        f"pattern.\n  the helper refuses: {pattern}\n  and `restart` must "
+        f"refuse the same string, not merely a first character")
+
+
 def test_the_documents_say_what_a_bare_lanes_lists():
     """THE SETTLED DEFAULT, AND THE FOUR PLACES THAT STATED THE OLD ONE.
 
@@ -1304,6 +1331,13 @@ def _dispatcher_arms(text: str) -> list[str]:
     assert starts, "lanes-edit.sh has no `case \"$cmd\" in` at all"
     out: list[str] = []
     for line in lines[starts[-1] + 1:]:
+        # `startswith` AND NOT `line.strip() == "esac"`, and it is deliberate:
+        # the dispatcher's arms contain NESTED `case` statements whose `esac` is
+        # indented, so a whitespace-insensitive test ends the scan at the first
+        # of those. Measured: with `line.strip() == "esac"` this parser finds
+        # TWO arms instead of thirty and the test below fails on its own guard
+        # ("the parser has drifted"). The unindented `esac` is the dispatcher's
+        # own, which is exactly the property being relied on.
         if line.startswith("esac"):
             break
         m = re.match(r"^  ([a-z][a-z0-9|-]*)\)", line)

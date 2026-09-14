@@ -128,6 +128,7 @@ fi
 
 do_fetch=0
 narrowed=0          # 1 once anything has narrowed the listing
+all_given=0         # 1 once `--all` has been seen, wherever in the line it was
 # THE REPOSITORY THIS LISTING IS ABOUT, where it is about one. Set from the
 # checkout around the cwd, or named by `--prefix <repo>` — which is how
 # `lane-start <repo>` with no position asks for this listing rather than
@@ -140,7 +141,13 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 	-h | --help) usage; exit 0 ;;
 	--fetch) do_fetch=1; shift ;;
-	--all) args+=(--all); narrowed=0; shift ;;
+	# `--all` CLEARS THE LABEL AS WELL AS THE FILTERS. The helper's `--all` drops
+	# `--repo`, `--dir` and `--prefix`, so the ROWS were right — but `here_repo`
+	# is this wrapper's own, and `lanes --all --prefix repoA11` (either order)
+	# listed every lane in the estate under a footer that said "of repoA11" and
+	# offered a next free position computed from one repository's rows. A count
+	# that names a repository it did not narrow to is worse than no count.
+	--all) args+=(--all); narrowed=0; here_repo=""; all_given=1; shift ;;
 	--here) args+=(--here); narrowed=1; shift ;;
 	--repo | --dir | --ws | --prefix)
 		[ -n "${2-}" ] || die "$1 needs a value — see $prog --help" 64
@@ -156,6 +163,14 @@ while [ $# -gt 0 ]; do
 	*) die "lanes takes no positional arguments; did you mean \`restart $1\`? — see $prog --help" 64 ;;
 	esac
 done
+
+# `--all` WINS WHEREVER IT APPEARS IN THE LINE, so the label is cleared after the
+# loop and not inside the arm: `lanes --all --prefix repoA11` and
+# `lanes --prefix repoA11 --all` are the same command and must print the same
+# footer. The helper drops the FILTERS on `--all`; `here_repo` is this wrapper's
+# own and is what the footer, the count and the next-free-position are computed
+# from.
+if [ "$all_given" = 1 ]; then here_repo=""; fi
 
 # THE BARE WORD INSIDE A LANE CHECKOUT NARROWS TO THAT REPOSITORY (Brett Heap's
 # settlement of 2026-09-13T20:38:11Z, verbatim "Narrow inside a checkout
