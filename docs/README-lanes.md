@@ -1570,6 +1570,22 @@ a window named for another lane, which after a `yes` is exactly what this window
 is — without the rename the lane would be started and stamped with this
 transcript left out of its session cell.
 
+**And the LAST write of the `yes` is the guard's own**, because `lane-start`
+may not make it: its step 3b **veto 1** never takes a uuid that belongs to
+ANOTHER row (Amendment 11 clause (d) rule 1), and after the rename this uuid
+still belongs to the lane being left. So `lane-start` mints a fresh id for the
+new lane and the person's own transcript stays out of the cell — and the next
+prompt then finds a lane window whose row does not name this transcript and
+refuses, with a cure that vetoes for the same reason and changes nothing. A
+blocking hook that refuses for ever, on a state it created by obeying the
+person, is the worst outcome this surface has, so after `lane-start` returns
+the guard appends this uuid to the new lane's cell itself — with `lane-start`'s
+own anchor discipline, the PUBLISHED last id, so a stale copy of the row
+refuses rather than writing a cell that no longer matches. That is not a hole
+in veto 1: the veto exists for the take nobody asked for, and clause (h) rule
+4's limit is that the lock never moves a uuid between rows **without the
+person's `yes`** — here there is one, answered at this very prompt.
+
 ### The duplicate read (Amendment 18(h))
 
 **A transcript is held by ONE live process.** The harness can fork one

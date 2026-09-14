@@ -83,6 +83,7 @@ cleanup() {
   [ -n "${LIVE_PID:-}" ] && kill "$LIVE_PID" 2>/dev/null
   [ -n "${G_PANE:-}" ] && kill "$G_PANE" 2>/dev/null
   [ -n "${G_OUT:-}" ] && kill "$G_OUT" 2>/dev/null
+  [ -n "${GD_DUP:-}" ] && kill "$GD_DUP" 2>/dev/null
   [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ] && rm -rf -- "$SANDBOX"
   return 0
 }
@@ -5520,6 +5521,15 @@ echo "== Amendment 12: the name guard and the lock =="
 # premise of every case after it from a distance. Captured here, restored at the
 # end, so the Amendment 15 section below reads exactly what it read when it was
 # written against `main`.
+# A LIVE PROCESS OF THIS SECTION'S OWN, AND IT HAS TO BE ITS OWN. `$G_OUT` —
+# the liveness section's second process — is KILLED at the end of that section,
+# hundreds of cases above this one, so a record naming it is a record
+# `record_is_live` correctly judges dead, and a duplicate that is not live is no
+# duplicate at all: the guard exits 0, `lane-start` binds, and `lane-end
+# --retire` answers 8. Every Amendment 18(h) case here rests on this pid being
+# alive, so it is started here and killed at the end of the section.
+sleep 3000 & GD_DUP=$!
+gd_dup_start="$(cut -d' ' -f22 "/proc/$GD_DUP/stat" 2>/dev/null || printf '')"
 GD_SAVE_WINDOWS="${FAKE_TMUX_WINDOWS-}"
 GD_SAVE_WINDOW="${FAKE_TMUX_WINDOW-}"
 GD_SAVE_NAME="${FAKE_TMUX_WINDOW_NAME-}"
@@ -5661,8 +5671,18 @@ has   "…named as the harness minting a transcript with nobody acting" "$err" "
 has   "…and cured by the recording act, with no relaunch" "$err" "run: lane-start --no-launch repoGD 1"
 
 # ---- (b) ROW 7: TWO ROWS FOR ONE NAME, AND A REGISTER THAT CANNOT BE READ.
-"$E" add-row "| \`repoGC-1\` | harness \`$GD_FREE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoGC/x.md | ACTIVE |" >/dev/null 2>&1
-"$E" add-row "| \`repogc-1\` | harness \`$GD_LANE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoGC/y.md | ACTIVE |" >/dev/null 2>&1
+# SEEDED AND NOT ADDED, because `add-row` is one of the writers Amendment 15(b)
+# has REFUSED this very state since #41 landed — which is the point of the
+# guard's own row for it: the pair can no longer be created by the tooling, only
+# met, exactly as `openXfactory-2`'s was met on 2026-09-13. So it is written the
+# way that state actually arrives, straight into the register and pushed, the
+# same `add_seed_row` + commit the Amendment 15 section below uses.
+add_seed_row "| \`repoGC-1\` | harness \`$GD_FREE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoGC/x.md | ACTIVE |"
+add_seed_row "| \`repogc-1\` | harness \`$GD_LANE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoGC/y.md | ACTIVE |"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed Amendment 12's case pair: two rows for one lane name, which add-row refuses"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
 export FAKE_TMUX_WINDOW_NAME=repoGC-1
 export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGC-1	%12	claude"
 gd_rec "$GD_LANE_ID" repoGC-1 user "$GD_OLD_MS"
@@ -5680,6 +5700,39 @@ chmod 755 "$profiles_root"
 is    "session records that cannot be READ block the prompt — fail CLOSED (clause (d))" "$rc" 2
 has   "…naming the read that failed" "$err" "session records could not be read"
 has   "…and the one bypass, which is not an environment flag" "$err" "claude --safe-mode"
+# AND THE `SessionStart` HOOK MEETS THE SAME UNREADABLE RECORDS AND STILL EXITS
+# 0. The two hooks read the same directories through the same function and are
+# held to OPPOSITE contracts — one refuses on a read it could not make (clause
+# (d)), the other may never fail at all (R-A8-1) — so the one fixture is asked
+# of both. This is the case that was RED while `transcript_holders` left
+# `th_here_prof` unset: an unbound variable under `set -u` exits the shell where
+# it stands, so `|| :` at the call site caught nothing and `session-start`
+# exited 1 with no block at all — the hook breaking the session it exists to
+# orient. The read now happens in a subshell, which is what bounds it.
+chmod 000 "$profiles_root"
+out="$(printf '{"session_id":"%s","source":"resume","cwd":"%s/projects/repoGD"}' "$GD_LANE_ID" "$HOME" | "$E" session-start 2>/dev/null)"; rc=$?
+chmod 755 "$profiles_root"
+is    "…while the SessionStart hook, on the very same unreadable records, still exits 0 (R-A8-1)" "$rc" 0
+# THE TAIL AND NOT THE HEAD: `ssb_tail` prints UNCONDITIONALLY as the last line
+# of every block, whichever branch wrote the rest (Amendment 8(e)) — so it is
+# the one assertion that says "a WHOLE block came out" without pinning which
+# branch this fixture happens to take.
+has   "…having printed its block down to the tail every branch ends with, because a hook that dies breaks the session it orients" "$out" "(no fetch)"
+
+# ---- THE WORKSPACE THAT CANNOT BE READ, AND THE ONE NUMBER THAT DECIDES.
+#
+# EVERY OTHER SUBCOMMAND DIES 1 HERE — the dispatcher's own guard — and `guard`
+# is exempt from it and refuses for itself with a 2. That is not a preference:
+# only a 2 blocks a `UserPromptSubmit`, so a 1 would print the workspace refusal
+# and let the prompt THROUGH, which is the silence Amendment 12 exists to end.
+# AGENTS.md's lane paragraph carries the exception for the same reason.
+out="$(printf "$gd_hook" "$GD_LANE_ID" "$HOME/projects/repoGD" "do the work" | LANES_FILE="$SANDBOX/no-such-register.md" "$E" guard 2>"$SANDBOX/stderr")"; rc=$?
+err="$(cat "$SANDBOX/stderr")"
+is    "a register this workstation cannot read blocks the prompt with 2, never the dispatcher's 1" "$rc" 2
+has   "…saying it is the ROW half of the triple that could not be read" "$err" "the ROW cannot be read"
+has   "…and the one bypass" "$err" "claude --safe-mode"
+out="$(printf '' | LANES_FILE="$SANDBOX/no-such-register.md" "$E" session-start 2>/dev/null)"; rc=$?
+is    "…while session-start on the same missing register still exits 0, as it always has" "$rc" 0
 gd_run "$GD_LANE_ID" "do the work" ""
 is    "a payload naming no cwd at all is an indeterminate read, not 'outside the root'" "$rc" 2
 has   "…and says which read did not happen" "$err" "carried no \`cwd\`"
@@ -5721,6 +5774,12 @@ has   "…and this window is the other lane now" "$err" "MOVED: this window is n
 has   "…the window renamed by lane-start's own act" "$(grep 'rename-window' "$FAKE_TMUX_LOG" | tail -n1)" "rename-window repoGD-2"
 has   "…this session appended to that lane's cell, which is what the next resume follows" \
       "$("$E" register-row repoGD-2 2>/dev/null || :)" "$GD_LANE_ID"
+# AND THE GUARD SAYS IT MADE THAT WRITE, because `lane-start` cannot: its step
+# 3b veto 1 never takes a uuid another row records, and after the rename this
+# one is repoGD-1's. Without this the new row would carry a FRESH id, the next
+# prompt would find a lane whose row does not name this transcript, and the
+# guard would refuse for ever on a state it created by obeying the person.
+has   "…the guard having made that one write itself, on the person's yes" "$err" "session cell now ends on $GD_LANE_ID"
 has   "…and the lane it LEFT marked, so the register says where the work went" \
       "$("$E" register-row repoGD-1 2>/dev/null || :)" "MOVED → repoGD-2"
 is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
@@ -5737,11 +5796,11 @@ export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
 gd_t2="$HOME/.claude-profiles/profiles/opensoft/team/t2/sessions"
 mkdir -p "$gd_t2"
 gd_rec "$GD_LANE_ID" repoGD-1 user "$GD_OLD_MS"
-write_record_a12 "$gd_t2/fork.json" "$GD_LANE_ID" "$G_OUT" "$g_out_start" bg "-" "repoGD-1" - "$GD_OLD_MS"
+write_record_a12 "$gd_t2/fork.json" "$GD_LANE_ID" "$GD_DUP" "$gd_dup_start" bg "-" "repoGD-1" - "$GD_OLD_MS"
 gd_run "$GD_LANE_ID"
 is    "a second LIVE process on one transcript blocks every prompt (Amendment 18(h))" "$rc" 2
 has   "…naming it" "$err" "ANOTHER LIVE PROCESS CARRIES THIS SESSION ID"
-has   "…by pid, and as the \`bg\` it is" "$err" "pid $G_OUT (bg, kind bg"
+has   "…by pid, and as the \`bg\` it is" "$err" "pid $GD_DUP (bg, kind bg"
 has   "…in the profile whose sessions/ directory it sits in — the sweep is of every one" "$err" "profile t2"
 has   "…and names the retire act, filled in" "$err" "run: lane-end repoGD-1 --retire <pid>"
 is    "…and the read that finds them is a subcommand two other surfaces share" \
@@ -5753,7 +5812,7 @@ has   "…naming the pid and where it is" "$err" "another live process already c
 has   "…and the same one act" "$err" "lane-end repoGD-1 --retire <pid>"
 hasnt "…having launched nothing" "$err" "exec: "
 
-run   "$END" repoGD-1 --retire "$G_OUT"
+run   "$END" repoGD-1 --retire "$GD_DUP"
 is    "lane-end --retire <the duplicate's pid> retires it, where the row records its id (#39)" "$rc" 0
 has   "…proving it first, and writing nothing" "$err" "IS a live DUPLICATE of lane repoGD-1's own transcript"
 has   "…and naming Amendment 6(d)'s act for a background holder, which has no prompt to type into" "$err" "an idle background session still holding a lane name is ended"
@@ -5771,12 +5830,13 @@ out="$(printf '{"session_id":"%s","source":"resume","cwd":"%s/projects/repoGD"}'
 is    "the SessionStart hook still exits 0 with the name wrong — it never refuses (R-A8-1)" "$rc" 0
 has   "…and says the name was not the lane's, in clause (f)'s own words" "$out" "session name 'repogd-7e' was not the lane 'repoGD-1' — renamed"
 is    "…having typed the rename itself ((h)1: its ONE act on the pane)" "$(( $(gd_keys) - gd_before ))" 1
-write_record_a12 "$gd_t2/fork.json" "$GD_LANE_ID" "$G_OUT" "$g_out_start" bg "-" "repoGD-1" - "$GD_OLD_MS"
+write_record_a12 "$gd_t2/fork.json" "$GD_LANE_ID" "$GD_DUP" "$gd_dup_start" bg "-" "repoGD-1" - "$GD_OLD_MS"
 out="$(printf '{"session_id":"%s","source":"resume","cwd":"%s/projects/repoGD"}' "$GD_LANE_ID" "$HOME" | "$E" session-start 2>/dev/null)"; rc=$?
 is    "…and a duplicate process is SAID and not acted on there" "$rc" 0
 has   "…named as the defect it is, with the retire act" "$out" "another live process carries this session id"
 has   "…and never a kill" "$out" "lane-end repoGD-1 --retire <pid>"
 rm -f "$gd_t2/fork.json" "$sessions_dir/gd.json"
+kill "$GD_DUP" 2>/dev/null || :
 # THE FIXTURE PUT BACK EXACTLY AS IT WAS FOUND — an empty capture means the
 # variable was unset here and is unset again, which `${x:+…}` alone could not
 # express.
