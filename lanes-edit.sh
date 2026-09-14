@@ -1356,8 +1356,18 @@ ensure_log() {
     # between platforms. `commit_push` stages both paths (the caller adds the
     # old one to its pathspecs), so git records the rename in the write's commit.
     el_tmp="$lf.amendment15.$$"
-    mv -- "$el_from" "$el_tmp" 2>/dev/null && mv -- "$el_tmp" "$lf" 2>/dev/null ||
-      die "could not rename $el_from to $lf (Amendment 15: the register row's spelling names the lane's log). Nothing was written; move it by hand and re-run." 5
+    # THE REFUSAL SAYS WHERE THE FILE IS, and the two halves fail differently:
+    # the first `mv` failing leaves the log exactly where it was, while the
+    # SECOND failing leaves it at `$el_tmp` — a name no reader of this
+    # directory looks for. A refusal that told a person to "move it by hand"
+    # without saying which path to move is a refusal they cannot act on, and
+    # this one costs a lane its whole history if it is acted on wrongly.
+    if ! mv -- "$el_from" "$el_tmp" 2>/dev/null; then
+      die "could not rename $el_from to $lf (Amendment 15: the register row's spelling names the lane's log). Nothing was written and the log is untouched at $el_from; rename it by hand and re-run." 5
+    fi
+    if ! mv -- "$el_tmp" "$lf" 2>/dev/null; then
+      die "could not rename $el_tmp to $lf (Amendment 15: the register row's spelling names the lane's log). Nothing was written, and THIS LANE'S LOG IS NOW AT $el_tmp — rename it to $lf by hand, or back to $el_from, and re-run. It is not lost and no reader looks for it under that name." 5
+    fi
     LOG_RENAMED_FROM="${LANES_LOG_PREFIX}${el_from##*/}"
     note "$el_from → $lf: the register row spells this lane $lane, and the row's spelling names its log (Amendment 15)"
   fi
@@ -1815,11 +1825,24 @@ holders_of() {
 #   utc  verb  object  ref+payload  superseded-by(lane@utc, or empty)
 lane_objects() {
   lane_log_exists "$1" || return 8      # 8, not 1: "no log file" is an ANSWER
+  # AMENDMENT 15 — THE LANE FIELD OF A LOG LINE IS MATCHED CASE-INSENSITIVELY,
+  # and the caller has already resolved `$1` to the row's spelling. The line's
+  # own spelling is whatever was TYPED on the day it was appended, and an
+  # append-only log is never rewritten: `lanes/log/openxfactory-2.md` carries
+  # `lane openXfactory-2` lines from 2026-09-02 and `lane openxfactory-2` lines
+  # from the 23:51:56Z incident, in one file, about one lane. Read byte for
+  # byte, half of that lane's claims are invisible to `who --lane` and to
+  # `lane-end`'s refusal — which is the amendment's own sentence, that a lane
+  # name is compared case-insensitively wherever a name is looked up, and the
+  # OBJECT LOG is one of the places it lists.
+  #
+  # `mel` IS COMPUTED ONCE IN `BEGIN`, not per line: this stream is every line
+  # of every lane's log on the estate.
   state_events | awk -v sep="$US" -v me="$1" '
     function pos(pf, pn) { return pf "\034" sprintf("%09d", pn) }
-    BEGIN { FS = sep }
+    BEGIN { FS = sep; mel = tolower(me) }
     $6 ~ /^lane:/ { next }
-    $2 == me {
+    tolower($2) == mel {
       if (!($6 in ord)) { ord[$6] = ++n; byn[n] = $6 }
       p = pos($10, $11)
       if (!($6 in mp) || p >= mp[$6]) { mp[$6] = p; utc[$6] = $1; verb[$6] = $3; ref[$6] = $7; pay[$6] = $8 }
@@ -1828,9 +1851,14 @@ lane_objects() {
     # rule this lane is read by (R14). The verb is kept, not only the TAKEOVERs,
     # because what decides supersession is whether a TAKEOVER is still the last
     # word of the lane that wrote it — see the END block.
-    $2 != me {
-      q = pos($10, $11)
-      if (!(($6 SUBSEP $2) in op) || q >= op[$6, $2]) { op[$6, $2] = q; ov[$6, $2] = $3; ou[$6, $2] = $1 }
+    # KEYED ON THE OTHER LANE LOWER-CASED TOO, and its SPELLING carried beside
+    # the key (Amendment 15): two spellings of one taker would otherwise be two
+    # takers, and the one whose last line is a stale CLAIMED could hide the
+    # other-s TAKEOVER. `on[]` keeps the spelling of the line that won the
+    # position test, so what is PRINTED is still a name somebody wrote.
+    tolower($2) != mel {
+      q = pos($10, $11); okey = $6 SUBSEP tolower($2)
+      if (!(okey in op) || q >= op[okey]) { op[okey] = q; ov[okey] = $3; ou[okey] = $1; on[okey] = $2 }
     }
     # SUPERSEDED, WITHOUT ORDERING TWO FILES AGAINST EACH OTHER (R14), AND ONLY
     # WHILE THE TAKEOVER STILL STANDS (R18): another lane has a TAKEOVER on the
@@ -1845,7 +1873,7 @@ lane_objects() {
     # after the fact and is reported as it stands. The two lines sit in two
     # different lanes, whose files share no clock, and this asks for none.
     END { for (kk in ov) if (ov[kk] == "TAKEOVER") {
-            split(kk, aa, SUBSEP); oo = aa[1]; ll = aa[2]
+            split(kk, aa, SUBSEP); oo = aa[1]; ll = on[kk]
             if (!(oo in tp) || op[kk] >= tp[oo]) { tp[oo] = op[kk]; tlane[oo] = ll; tutc[oo] = ou[kk] } }
           for (i = 1; i <= n; i++) { o = byn[i]
             sup = ((o in tlane) && verb[o] == "CLAIMED") ? tlane[o] "@" tutc[o] : ""
@@ -1874,11 +1902,16 @@ lane_objects() {
 # conflict is visible in `who` rather than resolved here (see README, "Known").
 superseded_by() {   # <object> <lane> <that lane's own last verb on it>
   [ "${3-}" = CLAIMED ] || return 0
+  # AMENDMENT 15 — `tolower` ON BOTH SIDES, exactly as `lane_objects` above
+  # reads the same stream: the lane field of a log line carries the spelling
+  # that was typed on the day, and one lane's two spellings are one lane. The
+  # NAME is still the one the winning line carried, because this is printed.
   state_events | awk -v sep="$US" -v o="$1" -v me="$2" '
     function pos(pf, pn) { return pf "\034" sprintf("%09d", pn) }
-    BEGIN { FS = sep }
-    $6 == o && $2 != me { p = pos($10, $11); if (!($2 in q) || p >= q[$2]) { q[$2] = p; v[$2] = $3; u[$2] = $1 } }
-    END { for (l in q) if (v[l] == "TAKEOVER" && (!seen || q[l] >= b)) { seen = 1; b = q[l]; bl = l; bu = u[l] }
+    BEGIN { FS = sep; mel = tolower(me) }
+    $6 == o && tolower($2) != mel { p = pos($10, $11); ll = tolower($2)
+      if (!(ll in q) || p >= q[ll]) { q[ll] = p; v[ll] = $3; u[ll] = $1; nm[ll] = $2 } }
+    END { for (l in q) if (v[l] == "TAKEOVER" && (!seen || q[l] >= b)) { seen = 1; b = q[l]; bl = nm[l]; bu = u[l] }
           if (seen) print bl "@" bu }'
 }
 
@@ -3676,8 +3709,19 @@ lane_row_facts() {   # events on stdin, ONE LINE PER LANE
     function pos(pf2, pn) { return pf2 "\034" sprintf("%09d", pn) }
     BEGIN { FS = sep }
     $3 == "STARTED" || $3 == "PAUSED" || $3 == "RESUMED" || $3 == "ENDED" || $3 == "RETIRED" {
-      l = $2
+      # AMENDMENT 15 — KEYED ON THE LANE LOWER-CASED, WITH ITS SPELLING BESIDE
+      # IT. Every consumer of this table already looks a lane up by its
+      # lower-cased name (`lanes_rows`-s `table_lookup`, which reads the FIRST
+      # line with that key), and the key used to be the spelling the LINE
+      # carried: a log holding both spellings of one lane — which is what
+      # `lanes/log/openxfactory-2.md` holds — emitted TWO lines under one key,
+      # and the listing took the first and lost the other-s state, dir,
+      # profile, window, home and session. `disp` is the first spelling seen,
+      # for the second column; `lanes_rows` prints the register-s spelling over
+      # it anyway, and this is what a lane with a log and no row shows as.
+      l = tolower($2)
       if (!(l in seen)) { seen[l] = ++n; byn[n] = l }
+      if (!(l in disp)) disp[l] = $2
       # A FORK-S RETIRED IS NOT THE LANE-S OWN LAST VERB (decision 8(c): a fork
       # is never the lane; A11 Addendum 4 ruling 8). Read as the lane-s own line
       # it would say the LANE was retired — the opposite of what happened, since
@@ -3725,11 +3769,12 @@ lane_row_facts() {   # events on stdin, ONE LINE PER LANE
     # listing says WHAT A LANE HOLDS; `who --lane <lane>` is the authority that
     # says whether somebody has taken it over, and the listing points at it.
     $6 !~ /^lane:/ {
-      l = $2; k = l "\034" $6
+      l = tolower($2); k = l "\034" $6          # Amendment 15, as above
       p = pos($10, $11)
       if (!(k in omp) || p >= omp[k]) { omp[k] = p; overb[k] = $3; oobj[k] = $6; olane[k] = l
         if (!(k in okseen)) { okseen[k] = ++okn; okbyn[okn] = k } }
       if (!(l in seen)) { seen[l] = ++n; byn[n] = l }
+      if (!(l in disp)) disp[l] = $2
     }
     END {
       for (i = 1; i <= okn; i++) {
@@ -3745,7 +3790,7 @@ lane_row_facts() {   # events on stdin, ONE LINE PER LANE
         # for the same reason: the listing joins these two tables on the lane
         # name, and this file matches a lane name case-insensitively everywhere
         # else (`lane_named_ci`).
-        printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s\n", tolower(l), 31, l, 31, verb[l], 31, utc[l], 31, ws[l], 31, d[l], 31, pf[l], 31, w[l], 31, h[l], 31, sid[l], 31, obj[l]
+        printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s\n", l, 31, disp[l], 31, verb[l], 31, utc[l], 31, ws[l], 31, d[l], 31, pf[l], 31, w[l], 31, h[l], 31, sid[l], 31, obj[l]
       }
     }'
 }
@@ -3884,7 +3929,16 @@ window_lane() {   # <workstation> <ref>
       if [ "$wl_local" = 1 ] && [ -n "$wl_rec_id" ] && [ "$wl_rec_id" != "$wl_now_id" ]; then continue; fi
       ;;
     esac
-    printf '%s\n' "$wl_l"
+    # AMENDMENT 15 — AND THE ANSWER IS THE ROW'S SPELLING, as rung 1's already
+    # is. `$wl_l` is the lane as its own `PAUSED … swap;` line spells it, which
+    # is whatever the lane was PAUSED under; this read's three callers hand what
+    # it prints to `tmux rename-window`, to `--name` and to `restart <lane>`, so
+    # a record written before the row's spelling settled would rename a window
+    # to the wrong one. A register holding the 15(d) pair keeps the record's own
+    # spelling rather than refusing: this read is a rung in front of a launch and
+    # its contract is 0, 8 or 64 — the refusal belongs to the writer it leads to.
+    wl_can="$(canon_lane "$wl_l" 2>/dev/null || :)"
+    printf '%s\n' "${wl_can:-$wl_l}"
     return 0
   done <<EOF
 $(swapped_candidates "$wl_ws")
@@ -5950,14 +6004,25 @@ EOF
     # RESOLVER. The filter inside `lanes_rows` has always joined on the name
     # lower-cased, so the ROWS came back either way; what a typed spelling used
     # to do was put itself in column 1 and in column 10's `restart <lane>` line.
-    lns_i=0
-    while [ "$lns_i" -lt "${#lns_args[@]}" ]; do
-      if [ "${lns_args[$lns_i]}" = --lane ]; then
-        lns_j=$((lns_i + 1))
-        lns_args[$lns_j]="$(canon_lane "${lns_args[$lns_j]}")" || exit 2
+    # `${lns_args[@]+"${lns_args[@]}"}` AND NOT `${#lns_args[@]}` OR AN INDEX:
+    # this file is parsed under macOS bash 3.2 in CI, where an EMPTY array under
+    # `set -u` is the expansion this idiom exists for — it is the same one the
+    # `lanes_rows` call below already uses, and a bare `lanes` with no flags is
+    # exactly the empty case. The rebuild also stops assuming the value sits at
+    # `i + 1`; it takes the word AFTER `--lane`, which is what the parser above
+    # guarantees there is one of.
+    lns_new=(); lns_take=0
+    for lns_a in ${lns_args[@]+"${lns_args[@]}"}; do
+      if [ "$lns_take" = 1 ]; then
+        lns_take=0
+        lns_one="$(canon_lane "$lns_a")" || exit 2
+        lns_new+=("$lns_one")
+        continue
       fi
-      lns_i=$((lns_i + 1))
+      case "$lns_a" in --lane) lns_take=1 ;; esac
+      lns_new+=("$lns_a")
     done
+    lns_args=(${lns_new[@]+"${lns_new[@]}"})
     lns_out="$(lanes_rows ${lns_args[@]+"${lns_args[@]}"})"; lns_rc=$?
     case "$lns_rc" in
       0)  : ;;

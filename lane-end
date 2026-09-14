@@ -639,12 +639,33 @@ fi
 
 # ---------------------------------------------------------------- the row
 
+# AMENDMENT 15 — `tolower` ON BOTH SIDES, exactly as `lane-start`'s function of
+# this name now compares and as `row_line` compares one file over. The resolver
+# above has usually already made `$LANE` the row's own spelling, and this is
+# what happens when it could NOT: a helper predating `canon-lane` spends 2 on
+# the unknown subcommand, and a register holding 15(d)'s pair spends 2 as well.
+# Byte for byte, `lane-end openxfactory-2` on the lane `openXfactory-2` then
+# reads as NO ROW — and the refusal's own remedy is `add-row`, which is the
+# 23:51:56Z incident performed by the other end of the lane. (`add-row` refuses
+# it, so the register is safe either way; the message was the defect.)
 rows_for_lane() {
   awk -v lane="$1" '
     substr($0,1,1) == "|" {
       p1 = index($0, "`"); if (p1 == 0) next
       rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
-      if (substr(rest, 1, p2 - 1) == lane) print
+      if (tolower(substr(rest, 1, p2 - 1)) == tolower(lane)) print
+    }' "$LANES_FILE"
+}
+# The SPELLINGS those rows carry, for a refusal that can name them — two rows
+# for one lane may now be two spellings of one name, and a person sent looking
+# for a duplicate that is not there to find loses the time twice.
+row_names_for_lane() {
+  awk -v lane="$1" '
+    substr($0,1,1) == "|" {
+      p1 = index($0, "`"); if (p1 == 0) next
+      rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
+      t = substr(rest, 1, p2 - 1)
+      if (tolower(t) == tolower(lane)) print t
     }' "$LANES_FILE"
 }
 
@@ -655,7 +676,16 @@ row_count=0
 case "$row_count" in
   0) die "the register has no row for lane $LANE — nothing to end. If the lane predates the helpers, add its row first: lanes-edit.sh add-row \"| \`$LANE\` | … |\"" 2 ;;
   1) : ;;
-  *) die "the register has $row_count rows for lane $LANE, and lanes-edit.sh can edit neither. Merge them into one row by hand in $LANES_FILE, then re-run" 2 ;;
+  *) rfl_names="$(row_names_for_lane "$LANE" | tr '\n' ' ')"
+     rfl_distinct="$(row_names_for_lane "$LANE" | LC_ALL=C sort -u | grep -c . || :)"
+     rfl_why="and lanes-edit.sh can edit neither. Merge them into one row by hand in $LANES_FILE, then re-run"
+     if [ "$rfl_distinct" -gt 1 ]; then
+       # BRACED: bash decides where a NAME ends with a locale-dependent
+       # `isalnum()`, and bash 3.2 on Darwin reads the em dash's three bytes as
+       # part of it (A9 Addendum 4, R-A9-11).
+       rfl_why="spelled ${rfl_names}— a lane name is ONE name under any case (Amendment 15), so those are two rows for ONE lane, and lanes-edit.sh can edit neither. Merge them into one row by hand in $LANES_FILE — Amendment 15(d): append the newer row's session id(s) to the older row's session cell, in order, and remove the newer row in the SAME commit, whose message names both spellings — then re-run"
+     fi
+     die "the register has $row_count rows for lane $LANE, $rfl_why" 2 ;;
 esac
 
 # The state cell is the row's SEVENTH column — awk field 8, because $1 is the

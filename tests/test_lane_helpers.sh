@@ -5492,13 +5492,59 @@ add_seed_row "| \`repoCase-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2
 { printf '# lane repocase-1 — object log (lane-collision-protocol Amendment 7)\n'
   printf 'STARTED — lane repoCase-1, session %s@Eagle, %s, lane:repoCase-1 → home opensoft/repoCase; estate repoCase\n' "$DEAD_ID" "$OLD_UTC"
 } > "$LOGD/repocase-1.md"
+# A LOG THAT SPELLS ITS OWN LANE BOTH WAYS, which is not a contrivance: an
+# object log is APPEND-ONLY and its lane field carries whatever was typed on the
+# day, so `lanes/log/openxfactory-2.md` holds `lane openXfactory-2` lines from
+# 2026-09-02 beside the `lane openxfactory-2` lines of the 23:51:56Z incident,
+# in one file, about one lane. The CLAIMED here is written in the OTHER case
+# from the row and it is a REAL HOLD. Matched byte for byte it would belong to
+# no lane at all: `who --lane` would say this one holds nothing and `lane-end`
+# would end it without a word.
+add_seed_row "| \`repoHold-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoHold/x.md | ACTIVE |"
+{ printf '# lane repoHold-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoHold-1, session %s@Eagle, %s, lane:repoHold-1 → home opensoft/repoHold; estate repoHold\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repohold-1, session %s@Eagle, %s, opensoft/repoHold#9\n' "$DEAD_ID" "$OLD_UTC"
+} > "$LOGD/repoHold-1.md"
+# THE ROW'S SPELLING IS NOT THE DIRECTORY'S, AND THE ROW STILL WINS. `repoMix`
+# is the checkout on disk and `repoMIX-1` is the register's row: the `<repo>`
+# half resolves to the directory (15(a)) and the LANE resolves to the row, and
+# a run that took one answer for both would get one of the two wrong.
+mkdir -p "$HOME/projects/repoMix"
+git init -q -b main "$HOME/projects/repoMix"
+git -C "$HOME/projects/repoMix" remote add origin "https://github.com/opensoft/repoMix.git"
+mixdir="$HOME/.claude/projects/$(sanitize "$HOME/projects/repoMix")"
+mkdir -p "$mixdir"
+printf '{"type":"custom-title","customTitle":"repoMIX-1","sessionId":"%s"}\n' "$DEAD_ID" > "$mixdir/$DEAD_ID.jsonl"
+add_seed_row "| \`repoMIX-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoMix/x.md | ACTIVE |"
+# A LANE WHOSE OWN LOG SPELLS IT BOTH WAYS, AND WHOSE FACTS ARE IN BOTH LINES:
+# the directory and the profile are on the STARTED the row's way, the state and
+# the swap record are on the PAUSED the other way. One lane, one set of facts.
+add_seed_row "| \`repoWin-1\` | harness \`$DEAD_ID\` | Raven / test / brett | 2026-09-11T00:00Z | none | handoffs/repoWin/x.md | ACTIVE |"
+{ printf '# lane repoWin-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoWin-1, session %s@Raven, %s, lane:repoWin-1 → home opensoft/repoWin; dir /elsewhere/repoWin; profile team-09z\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'PAUSED — lane repowin-1, session %s@Raven, 2026-09-12T09:00:00Z, lane:repowin-1 → swap; window casewin:3; workstation Raven\n' "$DEAD_ID"
+} > "$LOGD/repoWin-1.md"
+# A TRANSCRIPT TITLED IN THE OTHER CASE, which is `openXfactory-2`'s own state:
+# the launcher named its session `openxfactory-2` on 2026-09-13 and the row has
+# said `openXfactory-2` since the 15(d) merge. The row's recorded id has NO
+# transcript in this directory, so the TITLE is all that is left — and a matcher
+# that compares it byte for byte finds nothing and mints a second conversation
+# on a lane that already has one.
+TITLE_ID="00000000-7171-4000-8000-000000007171"
+mkdir -p "$HOME/projects/repoTitle"
+git init -q -b main "$HOME/projects/repoTitle"
+git -C "$HOME/projects/repoTitle" remote add origin "https://github.com/opensoft/repoTitle.git"
+titledir="$HOME/.claude/projects/$(sanitize "$HOME/projects/repoTitle")"
+mkdir -p "$titledir"
+printf '{"type":"custom-title","customTitle":"repotitle-1","sessionId":"titled-15"}\n' > "$titledir/titled-15.jsonl"
+add_seed_row "| \`repoTitle-1\` | harness \`$TITLE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoTitle/x.md | ACTIVE |"
 # THE PAIR THE AMENDMENT MAKES IMPOSSIBLE, seeded as it existed: two rows whose
 # lane names differ only by case. Every writer refuses on it until 15(d)'s merge.
 add_seed_row "| \`repoPair-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoPair/x.md | ACTIVE |"
 PAIR_ID="abcdef01-15c5-4000-8000-abcdef0115c5"
 add_seed_row "| \`repopair-1\` | harness \`$PAIR_ID\` | Eagle / test / brett | 2026-09-13T23:51Z | none | handoffs/repoPair/x.md | STARTING |"
 git -C "$WIP" add -A -- lanes >/dev/null 2>&1
-git -C "$WIP" commit -q -m "seed a mixed-case row with a lowercase log, and the case pair 15(d) merges"
+git -C "$WIP" commit -q -m "seed the Amendment 15 fixtures: a mixed-case row with a lowercase log, a hold spelled the other way, a row spelled unlike its checkout, a log that spells its own lane twice, and the case pair 15(d) merges"
 git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
 git -C "$WIP" push -q origin main
 
@@ -5512,7 +5558,15 @@ is    "…resuming the row's recorded session, --name'd with the ROW's spelling"
       "$(launch_of "$out")" "claude --name repoCase-1 --resume $DEAD_ID"
 has   "…renaming the window to the row's spelling" "$(cat "$FAKE_TMUX_LOG")" "rename-window repoCase-1"
 hasnt "…and never to the spelling that was typed" "$(cat "$FAKE_TMUX_LOG")" "rename-window repocase-1"
-has   "…saying which spelling it resolved to, and why" "$err" "lane repocase-1 → repoCase-1"
+# WHICH HALF SPOKE, AND IN WHICH ORDER. `<repo>` is resolved to the directory
+# BEFORE `$LANE` is built out of it, so for a lane whose row and whose checkout
+# are spelled the same the repo half has already produced the canonical name and
+# the lane half has nothing left to change. That is the right order and not an
+# accident: the directory is a fact on this workstation and the row may not
+# exist yet. The pure LANE resolution — a row spelled unlike its directory — is
+# asserted on `repoMIX-1` below, where only the register can settle it.
+has   "…saying which spelling of <repo> it resolved to, and why" "$err" "repo repocase → repoCase"
+has   "…naming the rule that settles it" "$err" "Amendment 15(a)"
 is    "…the register still has exactly ONE row for the lane" "$(grep -c '^| `repoCase-1`' "$LANES")" 1
 is    "…and no second row under the typed spelling — the 23:51:56Z defect" \
       "$(grep -c '^| `repocase-1`' "$LANES")" 0
@@ -5550,6 +5604,55 @@ is    "…the directory still holds one log for the lane" \
       "$(ls "$LOGD" | grep -ci '^repocase-1\.md$' || :)" 1
 has   "…and the line it wrote is under the row's spelling, from a lowercase LANES_LANE" \
       "$(tail -n1 "$LOGD/repoCase-1.md")" "PAUSED — lane repoCase-1,"
+
+# THE ROW WINS OVER THE DIRECTORY, AND THE DIRECTORY IS STILL ITS OWN SPELLING.
+# `repoMix` on disk, `repoMIX-1` in the register: the `<repo>` half answers from
+# the checkout and the LANE half answers from the row, and this is the run where
+# the two answers differ, so neither can be standing in for the other.
+: > "$FAKE_TMUX_LOG"
+run env FAKE_TMUX_WINDOW_NAME=claude FAKE_TMUX_WINDOW="testsess:@1" FAKE_TMUX_WINDOW_INDEX=0 \
+    "$START" repomix 1 --no-launch
+is    "a lane whose row is spelled unlike its checkout exits 0" "$rc" 0
+has   "…the repo half answering from the directory" "$err" "repo repomix → repoMix"
+has   "…and the LANE half answering from the register row, over it" "$err" "lane repoMix-1 → repoMIX-1"
+is    "…so the launch is --name'd with the ROW's spelling" \
+      "$(launch_of "$out")" "claude --name repoMIX-1 --resume $DEAD_ID"
+has   "…and the window is renamed to it" "$(cat "$FAKE_TMUX_LOG")" "rename-window repoMIX-1"
+hasnt "…never to the spelling the directory would give" "$(cat "$FAKE_TMUX_LOG")" "rename-window repoMix-1"
+is    "…with no second row added under either spelling" \
+      "$(grep -c '^| `repoMix-1`' "$LANES")" 0
+has   "…and the lane's directory is still the CHECKOUT's own spelling, which the row does not carry" \
+      "$(grep '^| `repoMIX-1`' "$LANES")" "dir $HOME/projects/repoMix,"
+
+# A TRANSCRIPT TITLED IN THE OTHER CASE IS STILL THIS LANE'S, AND IS RESUMED.
+# The row's id has no transcript here, so this is the TITLE fallback — the
+# branch that decides resume versus mint — and the amendment names the session
+# name among the lookups that compare case-insensitively.
+: > "$FAKE_TMUX_LOG"
+run env FAKE_TMUX_WINDOW_NAME=claude FAKE_TMUX_WINDOW="testsess:@1" FAKE_TMUX_WINDOW_INDEX=0 \
+    "$START" repotitle 1 --no-launch
+is    "a transcript titled in ANOTHER case is found, and resume beats a new session" \
+      "$(launch_of "$out")" "claude --name repoTitle-1 --resume repoTitle-1"
+has   "…saying which title it actually found" "$err" "carries the title 'repotitle-1'"
+has   "…and that the two spellings are one lane" "$err" "spells this lane in another case"
+hasnt "…never calling it a dedupe suffix, which is a different fact with a different cure" \
+      "$err" "dedupe suffix"
+hasnt "…and minting no new session id for a lane that already has a conversation" \
+      "$out" "--session-id"
+
+# AND `--confirm` DOES NOT TELL A PERSON THEIR OWN LANE'S WINDOW IS NOT THE LANE.
+# The window here is named `repotitle-1` and the row says `repoTitle-1`: the
+# rename still happens, to the row's spelling, but the sentence the operator is
+# asked to answer decides whether they say y — and "which is not the lane" about
+# their own window earns an N that abandons a legitimate resume.
+: > "$FAKE_TMUX_LOG"
+run env FAKE_TMUX_WINDOW_NAME=repotitle-1 FAKE_TMUX_WINDOW="testsess:@1" FAKE_TMUX_WINDOW_INDEX=0 \
+    "$START" repotitle 1 --no-launch --confirm --yes
+is    "--confirm in a window named for this lane in ANOTHER case exits 0" "$rc" 0
+has   "…telling the operator it is THIS LANE under another case" "$err" "THIS LANE under another case"
+hasnt "…and never that their own lane's window is not the lane" "$err" "which is not the lane"
+has   "…while still renaming it to the register row's spelling" \
+      "$(cat "$FAKE_TMUX_LOG")" "rename-window repoTitle-1"
 
 # add-row REFUSES THE CASE-DUPLICATE, AND NAMES THE ROW THAT IS THERE. This is
 # the act the incident got past: `row_line`'s exactly-one test failing for the
@@ -5595,6 +5698,18 @@ done
 is   "…and none of the three wrote a log for the lane" \
      "$(ls "$LOGD" | grep -ci '^repopair-1\.md$' || :)" 0
 
+# AND `lane-end` REFUSES THE PAIR OUT OF ITS OWN READ, not only through the
+# helper. `canon-lane` spends 2 on it, which `lane-end` cannot tell from the 2 a
+# helper predating this amendment spends on an unknown subcommand — so it
+# carries on with the name as typed, and its OWN row scan is what has to see
+# both rows. Compared byte for byte that scan found exactly ONE and went on to
+# end a lane whose register is ambiguous.
+run "$END" repopair-1
+is   "lane-end refuses the 15(d) pair out of its own read of the register" "$rc" 2
+has  "…naming the spelling that was typed" "$err" "repopair-1"
+has  "…and the one beside it" "$err" "repoPair-1"
+has  "…citing the merge that is a person's act" "$err" "Amendment 15(d)"
+
 # ------------------------------------------- act 1: Rule 6 attribution, Rule 10
 #
 # Rule 10's wire form is LOWERCASE — `Lane: openxfactory-2 (openXfactory-2)` —
@@ -5613,10 +5728,46 @@ has  "…and the line itself lands verbatim, because a Rule 6 line is never rewr
 run "$E" who --lane repocase-1 --no-fetch
 has  "who --lane takes the lowercase spelling and answers about the mixed-case row" \
      "$out$err" "repoCase-1"
+# AND THE OBJECT LOG IS ONE LANE'S WHATEVER CASE ITS LINES SPELL THE LANE IN.
+# `repoHold-1`'s CLAIMED says `lane repohold-1`; matched byte for byte it is
+# another lane's line and that lane reads as holding nothing. The amendment's
+# own sentence names the object log among the places a name is looked up.
+run  "$E" who --lane repoHold-1 --no-fetch
+has  "who --lane names a hold its log recorded in the OTHER case" \
+     "$out" "opensoft/repoHold#9"
+run  "$END" repoHold-1
+is   "…and lane-end REFUSES to end that lane, which is the hold's whole point" "$rc" 2
+has  "…naming the object it still holds" "$err" "opensoft/repoHold#9"
+has  "…and the one word that ends it anyway" "$err" "--force"
 run "$E" lanes --lane repocase-1
 is   "lanes --lane takes the lowercase spelling" "$rc" 0
 is   "…and column 1 is the row's own spelling, never the typed one" \
      "$(printf '%s' "$out" | cut -f1)" "repoCase-1"
+# ONE LANE, TWO SPELLINGS IN ITS OWN LOG, ONE SET OF FACTS. `repoWin-1`'s
+# STARTED carries its directory and profile the row's way and its PAUSED carries
+# the state the other way. Keyed on the spelling each LINE used, the listing
+# emitted two rows under one lower-cased key and took the first: the state of
+# one and the fields of the other, and column 10 could not be a restart line at
+# all, because that needs the PAUSED and the profile together.
+run "$E" lanes --lane repowin-1
+is   "lanes --lane reads a log that spells its lane two ways as ONE lane" "$rc" 0
+is   "…taking the state from the LAST line, which spells it lowercase" \
+     "$(printf '%s' "$out" | awk -F'\t' '{print $2}')" "PAUSED"
+is   "…and the profile from the STARTED, which spells it the row's way" \
+     "$(printf '%s' "$out" | awk -F'\t' '{print $4}')" "team-09z"
+is   "…and the directory from that same line" \
+     "$(printf '%s' "$out" | awk -F'\t' '{print $7}')" "/elsewhere/repoWin"
+is   "…so column 10 is the restart line, which needs both halves at once" \
+     "$(printf '%s' "$out" | awk -F'\t' '{print $10}')" "restart repoWin-1"
+
+# THE WINDOW-TO-LANE READ ANSWERS WITH THE ROW'S SPELLING FROM EITHER RUNG. Its
+# second rung reads the swap RECORD, which spells the lane however it was paused
+# — and what this read prints is handed to `tmux rename-window`, to `--name` and
+# to `restart <lane>` by its three callers.
+run "$E" window-lane Raven casewin:3
+is   "window-lane finds the lane from a record that spells it in another case" "$rc" 0
+is   "…and answers with the register row's spelling" "$out" "repoWin-1"
+
 run "$E" register-row repocase-1
 is   "register-row takes it too" "$rc" 0
 has  "…answering with the mixed-case row" "$out" "| \`repoCase-1\` |"
