@@ -828,7 +828,11 @@ if [ "$do_restart" = 1 ]; then
 		# toolset ships carries, and a `lane` that is not this estate's takes
 		# the launcher — which is the SAFE side of the two: the same act, one
 		# door along, rather than a killed pane.
-		if head -c 8192 -- "$lane_word_path" 2>/dev/null | grep -q 'lane-collision-protocol'; then
+		# READ THROUGH A REDIRECT and not `head -c … -- <file>`: the macOS job
+		# runs this suite under BSD `head`, whose option handling is its own,
+		# and a portability question is not one to answer inside the act that
+		# kills a pane.
+		if head -c 8192 < "$lane_word_path" 2>/dev/null | grep -q 'lane-collision-protocol'; then
 			lane_word="$lane_word_path"
 		else
 			note "there is a \`lane\` on PATH ($lane_word_path) that is not this estate's word (its head names no lane-collision-protocol), so the respawn goes through the launcher instead — the door Amendment 18 Addendum 2 (i-8) leaves open."
