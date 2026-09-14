@@ -23,6 +23,7 @@
 #
 # USAGE
 #   lane-end [options] <lane>            # lane-end openRepoShape-2
+#   lane-end <lane> --retire <pid|uuid>  # retire a live FORK; ends nothing
 #   lane-end [options] <repo> <n>        # the split form works too
 #   lane-end [options] <n>               # <repo> = basename of the cwd's git root
 #
@@ -34,6 +35,22 @@
 #   --retire            also mark the state cell RETIRED <UTC> — the lane is
 #                       not coming back, as opposed to a window that is only
 #                       closing for the night
+#   --retire <pid|uuid> A DIFFERENT ACT, and it ends nothing: the DOOR to
+#                       Amendment 6(d)'s retire act for a live FORK of this
+#                       lane's transcript (Amendment 11 clause (k) rule (e) —
+#                       "both print the one act: retire it, under Amendment
+#                       6(d) … Neither kills a process … and lane-end's
+#                       --retire is the door"). It PROVES the pid or uuid is
+#                       this lane's live fork and prints 6(d) for it filled in
+#                       — the /rename for a session with a prompt, 6(d)'s
+#                       "ended" for a kind: bg holder that has none. It writes
+#                       NOTHING (a RETIRED carrying a payload would be a
+#                       seventh edit to in-force text: Amendment 7(b) gives
+#                       RETIRED no payload and A11 clause (c) keeps it that
+#                       way) and it KILLS NOTHING. Refuses on anything that is
+#                       not a live fork of this lane, and on a `forks` read
+#                       that failed — a read that failed is not "it is not a
+#                       fork". `lanes-edit.sh forks <lane>` names them all.
 #   --state-was <text>  the exact text --retire should replace, for a row whose
 #                       state cell does not open with a single state word
 #   --force             end the lane even though its object log still shows
@@ -182,6 +199,83 @@ lanes_ws_field() {
   printf '%s\n' "$v"
 }
 
+# THE WORKSTATION'S NAME IS READ, NEVER INVENTED — AND NEVER `hostname` INSIDE A
+# CONTAINER (lane-collision-protocol Amendment 11, ratified decision 8(d), as
+# corrected by A11 Addendum 3's `R-A11-14`).
+#
+# WHAT WENT WRONG. `opensoft/brett-wip` `origin/main` carries SIX lines in
+# `lanes/log/openRepoProject-1.md` whose workstation is a container id — five
+# `@0e7d1a79a07e`, one `@55cceb3e5bc9` — in an append-only file, written by every
+# writer inside that container and not only by Evidence 6's fork. A row on a
+# workstation that does not exist is a row no reader can match, no crossing can
+# detect and no `swapped <ws>` can answer for; and the log is never rewritten, so
+# each one is wrong for ever.
+#
+# WHO OWNS THE VALUE. `R-A11-14`: the **workBenches launcher**, which runs on the
+# host and exports `LANES_WORKSTATION=<the host's own hostname -s>` into every
+# session AND every container it starts, beside the `CLAUDE_PROFILE_NAME` it
+# already exports. These helpers READ it. They do not write it, they do not
+# derive it from a second file, and THEY NEVER SUBSTITUTE A PLACEHOLDER: an
+# `@unknown-workstation` is the same defect one field along from the `unknown`
+# clause (e) refuses in the session field, and the rejected alternative — a
+# `workstation:` key in `workspace.yaml` — is a SECOND PLACE FOR THE TRUTH TO BE
+# WRONG beside the variable the launcher already sets.
+#
+# THE THREE ANSWERS, as `<name><TAB><source>`:
+#
+#   seam              `$LANES_WORKSTATION` is set. This is the ordinary case
+#                     wherever the launcher started the session.
+#   hostname          no seam, and this is NOT a container: `hostname -s`, which
+#                     is what the seam has defaulted to since Amendment 6 and
+#                     what every row written before this rung was written by.
+#   container-unset   no seam, and this IS a container. The NAME still answers,
+#                     because a read in front of every launch may not refuse —
+#                     it will simply match nothing, which is the honest answer —
+#                     but every WRITER refuses, exit 2, naming the variable and
+#                     the launcher that sets it.
+#
+# IT ANSWERS AS A PAIR, AND THAT IS NOT A STYLE CHOICE. A caller reads the name
+# with `$(lanes_workstation)`, which is a COMMAND SUBSTITUTION and therefore a
+# subshell: a global the function set there dies with it. The source is on the
+# same line as the name, which is the only way out of a subshell there is.
+#
+#   $LANES_IN_CONTAINER   1 or 0, forcing the probe. THE TEST SEAM, and nothing
+#                         else sets it: the suite must be able to exercise both
+#                         halves of this rule on one host, and the host it runs
+#                         on is a container exactly when it is.
+lanes_in_container() {
+  case "${LANES_IN_CONTAINER:-}" in
+  1) return 0 ;;
+  0) return 1 ;;
+  esac
+  [ -e /.dockerenv ] || [ -e /run/.containerenv ]
+}
+
+lanes_workstation_pair() {
+  local v
+  if [ -n "${LANES_WORKSTATION:-}" ]; then
+    printf '%s\t%s\n' "$LANES_WORKSTATION" seam
+    return 0
+  fi
+  v="$(hostname -s 2>/dev/null || hostname 2>/dev/null || printf 'unknown')"
+  if lanes_in_container; then
+    printf '%s\t%s\n' "$v" container-unset
+  else
+    printf '%s\t%s\n' "$v" hostname
+  fi
+}
+
+# THE NAME ALONE, which is what every writer of the workstation column wants.
+lanes_workstation() { lanes_workstation_pair | cut -f1; }
+
+# The ONE SENTENCE a writer refuses with, in one place, so the three writers
+# cannot word it three ways. Empty on every other source, so
+# `[ -n "$(lanes_workstation_why "$src")" ]` is the whole of the test.
+lanes_workstation_why() {   # <source>
+  [ "${1:-}" = container-unset ] || return 0
+  printf '%s\n' "this is a container and \$LANES_WORKSTATION is not set, so there is no workstation name to write. This host's own \`hostname\` is the CONTAINER'S id, not a workstation, and a row on a workstation that does not exist is a row no reader can match — in a log nothing ever rewrites (Amendment 11, decision 8(d); R-A11-14). The value is the workBenches launcher's to export into every session and container it starts. Set it for this one and re-run: export LANES_WORKSTATION=<this host's name>"
+}
+
 # One of the spellings `git remote get-url origin` prints for one GitHub
 # repository, reduced to a bare lowercased `<owner>/<name>` so it can be
 # compared against workspace.yaml's own `<owner>/<name>`. A URL that is not
@@ -317,18 +411,50 @@ usage() { sed -n -e '1,2d' -e '/^#/!q' -e 's/^# \{0,1\}//' -e p "$RESOLVED"; }
 
 # ------------------------------------------------------------------ arguments
 
-retire=0; force=0; dry_run=0; state_was=""; home_override=""
+retire=0; force=0; dry_run=0; state_was=""; home_override=""; retire_target=""
 positional=()
+
+# A TRANSCRIPT UUID AND A PID, TOLD APART FROM A LANE ARGUMENT BY SHAPE.
+# `--retire` is two acts now (A11 Addendum 4 ruling 8) and the value is what
+# tells them apart, so the shapes a value may have are written here once.
+is_fork_uuid() { [[ "${1-}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; }
+is_fork_pid()  { case "${1-}" in '' | *[!0-9]*) return 1 ;; esac; return 0; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --retire)      retire=1; shift ;;
+    # `--retire` IS TWO ACTS, AND THE VALUE TELLS THEM APART (A11 Addendum 4
+    # ruling 8, ratified "a11 addendum 4 yes"). Bare, it is what it has always
+    # been: mark THIS LANE's state cell RETIRED as part of ending it. With a
+    # `<pid|uuid>` it is the one act clause (k) rule (e) gives for a live FORK
+    # of the lane's transcript — *"both print the one act: retire it … and
+    # `lane-end`'s `--retire` is the door"* — and it ends nothing.
+    #
+    # THE ONE AMBIGUOUS SPELLING IS REFUSED RATHER THAN GUESSED AT. A bare
+    # number is a legal lane argument (`lane-end 3` ends `<cwd repo>-3`), so
+    # `lane-end --retire 3` could be either act. Where no lane has been named
+    # yet, that spelling refuses and prints both — the alternative is choosing
+    # between two different acts on a coin toss. A uuid is never ambiguous,
+    # and `--retire=<value>` is always the fork form.
+    --retire=*)
+      retire=1; retire_target="${1#--retire=}"
+      [ -n "$retire_target" ] || die "--retire= needs a pid or a transcript uuid" 2
+      shift ;;
+    --retire)
+      retire=1
+      if is_fork_uuid "${2-}"; then
+        retire_target="$2"; shift 2
+      elif is_fork_pid "${2-}"; then
+        [ "${#positional[@]}" -gt 0 ] || die "'--retire $2' is ambiguous: '$2' is both a lane POSITION — \`$prog $2\` ends lane <repo>-$2 and marks it RETIRED — and a pid, which retires a live FORK of a lane and ends nothing. Name the lane first: $prog <lane> --retire $2   (or spell the fork form $prog <lane> --retire=$2)" 2
+        retire_target="$2"; shift 2
+      else
+        shift
+      fi ;;
     --home)        home_override="${2-}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift 2 ;;
-    --home=*)      home_override="${1#--home=}"; shift ;;
+    --home=*)      home_override="${1#--home=}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift ;;
     --force)       force=1; shift ;;
     --dry-run)     dry_run=1; shift ;;
     --state-was)   state_was="${2-}"; [ -n "$state_was" ] || die "--state-was needs the exact text to replace" 2; shift 2 ;;
-    --state-was=*) state_was="${1#--state-was=}"; shift ;;
+    --state-was=*) state_was="${1#--state-was=}"; [ -n "$state_was" ] || die "--state-was needs the exact text to replace" 2; shift ;;
     -h|--help)     usage; exit 0 ;;
     --)            shift ;;
     -*)            die "unknown option '$1' — see $prog --help" 2 ;;
@@ -379,6 +505,114 @@ if [ -n "$home_override" ]; then
     2) die "--home $home_override is refused for lane $LANE (the writer's reason is above). Nothing has been written and the row is untouched." 2 ;;
     *) die "$LANES_EDIT resolve-home $LANE $home_override failed (exit $home_rc). That is not a verdict on the option, and this script will not close a row on an argument it could not check. Fix the helper, then re-run." 1 ;;
   esac
+fi
+
+# ------------------------------------------- --retire <pid|uuid>: A LIVE FORK
+#
+# THE ONE ACT EVERY SURFACE PRINTS FOR A FORK (A11 clause (k) rule (e), A11
+# Addendum 4 ruling 8, `R-A11-24`): *"both print the one act: **retire it**,
+# under Amendment 6(d), which is the operator's act and stays the operator's.
+# **Neither kills a process** … and `lane-end`'s `--retire` is the door."*
+# Before this round the door did not exist: `restart` printed a READ
+# (`lanes-edit.sh forks <lane>`), `lanes` printed *"Name them"*, and two places
+# said *"retiring one is `kill <pid>`"* — three spellings of one ratified act,
+# none of them it.
+#
+# IT IS A DOOR AND NOT A RECORD, AND THAT IS THIS ROUND CORRECTING ITSELF. The
+# first build of this act wrote `RETIRED — lane <lane>, … , lane:<lane> → fork
+# <sid>; pid <n>; kind <k>` into the lane's own log and filtered `forks` on it.
+# It cannot: **Amendment 7(b) gives `RETIRED` NO PAYLOAD** — *"`PAUSED`,
+# `RESUMED`, `ENDED` and `RETIRED` take no payload"* — and Amendment 11 clause
+# (c), which narrows that sentence for `RESUMED` and counts the narrowing as
+# **edit 1 of six**, says in the same breath that *"`ENDED` and `RETIRED` stay
+# payload-free"*. The other spelling is no better: 7(b)'s *"Every lane-kind line
+# takes the object `lane:<name>`"* is enforced by this estate's own writer
+# (`lanes-edit.sh`'s `log` arm: *"'$verb' is a lane verb: its object is
+# lane:<name>"*), so an object of `fork:<uuid>` narrows that half instead. Either
+# way it is a **SEVENTH edit to in-force text** where the count is six and the
+# six are ratified (`R-A11-15`) — and the first one also needed the state reader
+# to learn a second rule about which of a lane's lines are the lane's, in an
+# append-only file. Writing that silently is the exact defect this estate blocks
+# on, so the record is dropped rather than smuggled.
+#
+# WHAT THE RULE ACTUALLY ASKS FOR IS REPORTING, and it says so in its own words:
+# *"This is Amendment 8(f)'s own posture — 'reports what 6(d) is owed and
+# performs none of it' — extended to the case that produced it, and the
+# reporting is what closed Evidence 6 on the day."* So this act **proves** the
+# target is THIS lane's live fork, and **prints Amendment 6(d)'s retire act for
+# it, filled in**. It writes nothing and it kills nothing.
+#
+# AND IT IS NOT `forks` WITH EXTRA STEPS. `forks` NAMES every fork; this takes
+# ONE, refuses anything that is not one of them (a stranger's pid, a uuid of
+# another lane), refuses a `forks` read that FAILED rather than reading it as
+# *"it is not a fork"*, and spells 6(d) for the kind of session it actually is.
+# One act, one name, on every surface — which is the whole of `R-A11-24`.
+#
+# `kill <pid>` IS PRINTED BY NOTHING (`R-A11-24` in terms). The pid and the cwd
+# are printed as FACTS — `who` and the hook have always printed them — so a
+# person can find the process; what is never printed is a command that ends it.
+if [ -n "$retire_target" ]; then
+  [ "$force" = 0 ] || die "--force is for ending a lane that still holds something; it has no meaning for retiring a fork. Run: $prog $LANE --retire $retire_target" 2
+  [ -z "$state_was" ] || die "--state-was is for the state cell of a lane being ended; retiring a fork touches no cell. Run: $prog $LANE --retire $retire_target" 2
+
+  # THE FORK IS PROVED BEFORE ANYTHING IS PRINTED, and a read that FAILED is
+  # never "it is not a fork": `forks` answers 0 with rows, 8 with none and 1
+  # where this workstation's session records could not be read (Amendment 7(d)).
+  # Only the first can find one.
+  fk_rc=0
+  fk_rows="$("$LANES_EDIT" forks "$LANE" 2>/dev/null)" || fk_rc=$?
+  case "$fk_rc" in
+    0) : ;;
+    8) die "no fork of lane $LANE's transcript is live on this workstation, so there is nothing to retire. A fork is found by its transcript's TITLE under an id the row does not record (ratified decision 8(e)); \`$LANES_EDIT forks $LANE\` is the read that names them." 8 ;;
+    *) die "$LANES_EDIT forks $LANE failed (exit $fk_rc). That is NOT 'no fork of it is live', and this script will not name an act for a fork it could not prove is one. Run it by hand to see what it says, then re-run." 1 ;;
+  esac
+
+  fk_sid=""; fk_pid=""; fk_kind=""; fk_cwd=""
+  while IFS="$(printf '\t')" read -r fr_sid fr_pid fr_kind fr_cwd; do
+    [ -n "${fr_sid:-}" ] || continue
+    if [ "$(printf '%s' "$fr_sid" | tr 'A-F' 'a-f')" = "$(printf '%s' "$retire_target" | tr 'A-F' 'a-f')" ] \
+       || { [ -n "$fr_pid" ] && [ "$fr_pid" = "$retire_target" ]; }; then
+      fk_sid="$fr_sid"; fk_pid="$fr_pid"; fk_kind="${fr_kind:-interactive}"; fk_cwd="$fr_cwd"
+      break
+    fi
+  done <<FORKS
+$fk_rows
+FORKS
+
+  if [ -z "$fk_sid" ]; then
+    note "the live forks of lane $LANE's transcript are:"
+    printf '%s\n' "$fk_rows" | while IFS="$(printf '\t')" read -r fr_sid fr_pid fr_kind fr_cwd; do
+      [ -n "${fr_sid:-}" ] || continue
+      note "  $fr_sid  pid $fr_pid  ${fr_kind:-interactive}  $fr_cwd"
+    done
+    die "'$retire_target' is neither the session id nor the pid of a live fork of lane $LANE. Naming an act against something that is not a fork of this lane is how the wrong conversation gets retitled and the wrong process gets stopped, so nothing is named. Pick one of the ids or pids above." 2
+  fi
+
+  # AMENDMENT 6(d), FILLED IN — and it is TWO acts because 6(d) is two, one per
+  # kind of session: *"When a lineage is superseded, handed off or dead, it is
+  # retitled `<lane> · retired <YYYY-MM-DD>`, and an idle background session
+  # still holding a lane name is ENDED."* A fork with a prompt can be retitled
+  # from inside it and there is no API to do it from out here (clause (f) step
+  # 7's own reason); a `kind: bg` fork has no prompt at all, which is exactly
+  # what Evidence 6's `--fork-session` daemon was, so the retitle is not
+  # available there and 6(d)'s second half is the one that applies.
+  fk_today="$(date -u +%Y-%m-%d)"
+  step "$fk_sid IS a live fork of lane $LANE's transcript — proved, and NOTHING has been written or stopped"
+  note "  pid ${fk_pid:-unknown}  ${fk_kind}${fk_cwd:+  cwd $fk_cwd}"
+  case "$fk_kind" in
+    bg)
+      note "Amendment 6(d)'s retire act for a BACKGROUND holder: \"an idle background session still holding a lane name is ended\". It has no prompt to type into, so the retitle below is not available to it."
+      note "Ending it is YOUR act and no tool's (Amendment 8(f) refuses it by name, and clause (k) rule (e) repeats the refusal for this surface): the pid above is the process." ;;
+    *)
+      note "Amendment 6(d)'s retire act, typed IN THAT SESSION — there is no API to rename one from outside it:"
+      note "    /rename $LANE · retired $fk_today" ;;
+  esac
+  note "Until it is retired, \`$LANES_EDIT forks $LANE\` goes on naming it and every surface goes on marking the lane — which is true, because it is still a fork of this lane until one of the two acts above is taken."
+  note "The lane itself is untouched: this ended nothing, wrote nothing and killed nothing."
+  if (( dry_run )); then
+    note "--dry-run changes nothing here: this act writes nothing on any path, so the run above IS the whole of it."
+  fi
+  exit 0
 fi
 
 # ---------------------------------------------------------------- the row
@@ -595,7 +829,14 @@ utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # `lane-start` now uses — `${LANES_WORKSTATION:-$(hostname -s)}` (A9 Addendum
 # 4, R-A9-13). This line is the `lane-end on <ws>` free text of the row's
 # status, which a reader compares with the workstation column beside it.
-ws="${LANES_WORKSTATION:-$(hostname -s)}"
+ws_pair="$(lanes_workstation_pair)"
+ws="${ws_pair%%	*}"
+# A CONTAINER WITH NO CONFIGURED WORKSTATION WRITES NOTHING (Amendment 11,
+# decision 8(d), `R-A11-14`): this value is the `lane-end on <ws>` free text of
+# the row's status, which a reader compares with the workstation column beside
+# it, and a container id there is a comparison that can never match.
+ws_why="$(lanes_workstation_why "${ws_pair##*	}")"
+[ -z "$ws_why" ] || die "$ws_why" 2
 # The register line names the source it actually read (the log for a lane that
 # has one, the state cell for a pre-cutover lane) and the objects it read there.
 status_text="$utc lane-end on $ws: window closing; NOTHING IN FLIGHT"

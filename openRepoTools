@@ -25,16 +25,19 @@
 # change (Amendment 9(b), and R-A9-1). The identity that survives is narrower
 # and truer.
 #
-# `--install` PLACES NINE FILES, not four: this file, `park`, `resume`,
+# `--install` PLACES ELEVEN FILES, not four: this file, `park`, `resume`,
 # `status` (openRepoShape #82; the fourth under Brett Heap's RULING of
-# 2026-09-10 in this repository, "lets go with a fourth file"), and the four
-# lane helpers `lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates`
-# with the alias table `repos.tsv` they read — which came here from
-# `opensoft/brett-wip` with their history under Amendment 9(b), because a
+# 2026-09-10 in this repository, "lets go with a fourth file"), `restart` and
+# `lanes` (lane-collision-protocol Amendment 11, ratified decisions 7 and 6),
+# and the four lane helpers `lanes-edit.sh`, `lane-start`, `lane-end` and
+# `link-estates` with the alias table `repos.tsv` they read — which came here
+# from `opensoft/brett-wip` with their history under Amendment 9(b), because a
 # person's workspace repository holds their DATA and the code belongs where
-# code goes. It also places the `/lane-swap` skill and merges one SessionStart
-# entry into `~/.claude/settings.json` (Amendment 9(b), A8 Addendum 2 R-A8-5):
-# TWELVE artifacts, and the count is the invariant.
+# code goes. It also places TWO skills, `/lane-swap` and `/restart`, at two
+# paths each, ONE command file, `/swap`, at that same pair of paths (A11
+# Addendum 4 ruling 9), and merges one SessionStart entry into
+# `~/.claude/settings.json` (Amendment 9(b), A8 Addendum 2 R-A8-5): EIGHTEEN
+# artifacts, and the count is the invariant.
 #
 # One install line for the whole toolset, so a second engineer gets the estate
 # commands from the README's one line and nothing depends on anyone's dotfiles.
@@ -61,17 +64,18 @@ die() { printf '\nREFUSED: %s\n' "$1" >&2; exit "${2:-2}"; }
 
 usage() {
 	cat <<'USAGE'
-openRepoTools --install            install (or update) the nine estate and lane
-                                   commands into ~/.local/bin, plus the
-                                   /lane-swap skill and its SessionStart hook
+openRepoTools --install            install (or update) the eleven estate and
+                                   lane commands into ~/.local/bin, plus the
+                                   /lane-swap and /restart skills, the /swap
+                                   command file and the SessionStart hook entry
 openRepoTools wip init             create your workspace repository, clone it,
                                    seed it, and point this workstation at it
 openRepoTools --help | --version
 
 `openRepoShape` is the standard's front door and scaffolds product
-repositories; this command scaffolds none. `--install` places nine files
-beside each other — this command, the two verbs, the read-only view, the four
-lane helpers and the alias table they read:
+repositories; this command scaffolds none. `--install` places eleven files
+beside each other — this command, the two verbs, the read-only view, the two
+lane words, the four lane helpers and the alias table they read:
 
   park [<Name>]                    commit, push and RECORD an estate's open
                                    features, so another workstation can take
@@ -80,6 +84,15 @@ lane helpers and the alias table they read:
                                    recreate those features
   status [<Name>]                  what is in and out of sync across that
                                    estate, as of the last fetch; changes nothing
+  restart [<lane>]                 put yourself back in a lane: cd to its
+                                   recorded directory and relaunch it through
+                                   the launcher, asking nothing. With no lane,
+                                   the current window's lane — or the lanes of
+                                   the current checkout, listed
+  lanes [--all] [--fetch]          inside a checkout: that repository's lanes
+                                   and the next free position, filled in;
+                                   outside one, or with --all, every lane.
+                                   Reads locally, changes nothing, asks nothing
   lane-start <repo> <n>            open a lane: name the window, register the
                                    row, launch or resume the session
   lane-end <lane>                  close it, and refuse while anything is in
@@ -91,11 +104,20 @@ lane helpers and the alias table they read:
   repos.tsv                        the organisation's alias table, which
                                    `lanes-edit.sh` reads
 
-`--install` also places `~/.claude-profiles/shared/skills/lane-swap/SKILL.md`
-and `~/.claude/skills/lane-swap/SKILL.md`, and merges ONE `SessionStart` entry
-into `~/.claude/settings.json` (needs `jq`, and refuses rather than rewriting a
-file it cannot parse). It never writes a profile's own settings.json: the
-launcher owns that one.
+`--install` also places TWO SKILLS at two paths each —
+`~/.claude-profiles/shared/skills/<name>/SKILL.md` and
+`~/.claude/skills/<name>/SKILL.md`, for `lane-swap` and `restart` — and ONE
+COMMAND FILE at the matching pair, `~/.claude-profiles/shared/commands/swap.md`
+and `~/.claude/commands/swap.md`, which is clause (g)'s ratified `/swap` alias
+of `/lane-swap` and adds nothing to it. It merges ONE `SessionStart` entry into
+`~/.claude/settings.json` (needs `jq`, and refuses rather than rewriting a file
+it cannot parse). It never writes a profile's own settings.json: the launcher
+owns that one.
+
+`/restart` is the INSIDE half of `restart` and has to be a skill: a running
+session cannot `exec` a launcher over itself, so it binds the window, stamps
+the record through `lane-start --no-launch` and prints — never a picker
+(Amendment 11 clause (f), ratified decisions 3 and 7).
 
 `wip init` — the workspace repository, which holds your lane register, your
 object logs, your handoffs and your workspace manifests, and no code at all:
@@ -171,7 +193,7 @@ fetch_from_repo() {
 	return 1
 }
 
-# THE NINE FILES `--install` PLACES. One list, so the installer, the fetch
+# THE ELEVEN FILES `--install` PLACES. One list, so the installer, the fetch
 # fallback and the tests cannot disagree about what a complete install is.
 # `openRepoTools` is first because it is the one a person types to get the
 # others.
@@ -187,14 +209,29 @@ fetch_from_repo() {
 # destination and a second mode in this file, in the loop below, and again in
 # workBenches' `setup-estate-commands.sh`, whose post-install verify refuses any
 # target whose mode is not exactly 755. Amendment 9(b) chose the ugliness.
-INSTALLABLES=(openRepoTools park resume status lanes-edit.sh lane-start lane-end link-estates repos.tsv)
+#
+# ELEVEN SINCE AMENDMENT 11. `restart` and `lanes` join the list under RATIFIED
+# DECISIONS 7 and 6 (2026-09-13T18:05:29Z, "Ratify all four" and "Yes, build
+# `lanes` in A11"), and `openRepoTools --install` owns them because THIS IS THE
+# ONLY INSTALLER IN THE ESTATE THAT PUTS A WORD ON PATH. Adoption act 6 vendors
+# skills and command files through workBenches' `setup-claude-profiles.sh` into
+# the shared commands directory and `~/.claude/commands/`, and neither of those
+# is a `PATH` entry — which is exactly what decision 7 point 8 says.
+INSTALLABLES=(openRepoTools park resume status restart lanes lanes-edit.sh lane-start lane-end link-estates repos.tsv)
 
-# ALL FOUR IN HAND BEFORE ANY OF THEM IS PLACED (openRepoShape #82, F10 of the
-# review on its #83). One file at a time, dying on the first fetch that failed,
-# leaves a person with a NEW `openRepoTools` and no `park` — a half-install that
-# says `installed at` and is not one — and nothing on screen to say which of the
-# four were missing. Every one is collected into the temporary directory first:
-# a failure there replaces NOTHING, names what was not fetched, and exits.
+# ALL OF THEM IN HAND BEFORE ANY OF THEM IS PLACED (openRepoShape #82, F10 of
+# the review on its #83). One file at a time, dying on the first fetch that
+# failed, leaves a person with a NEW `openRepoTools` and no `park` — a
+# half-install that says `installed at` and is not one — and nothing on screen
+# to say which were missing. Every one is collected into the temporary directory
+# first: a failure there replaces NOTHING, names what was not fetched, and exits.
+#
+# NO NUMBER IS SPELLED IN THIS BLOCK, and that is the fix rather than a bigger
+# number (#26, the review of `37632b1`, `openRepoTools:226`). It said "ALL FOUR"
+# and "which of the four" while `INSTALLABLES` carried ELEVEN — the count grew
+# under a comment stating the old one, which is the same defect as the stale
+# artifact counts `2f44da0` corrected and as `lane-start`'s "no fifth rung". The
+# code below already derives every count it prints from `${#INSTALLABLES[@]}`.
 collect_commands() {
 	local name selfdir="" missing=""
 	# Run from a file, install THOSE bytes: `--install` then needs no network
@@ -202,7 +239,7 @@ collect_commands() {
 	# file, in the checkout and in the repository alike, so the siblings that
 	# are there are copied and only a missing one is fetched. Run from stdin
 	# (`curl … | bash -s -- --install`) there is no file to copy from at all,
-	# so each of the four is fetched at this same ref.
+	# so each one is fetched at this same ref.
 	if [ -f "$SELF" ]; then
 		selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 	fi
@@ -228,8 +265,9 @@ collect_commands() {
 install_commands() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
 	local name target source verb placed=0
-	# ALL TWELVE IN HAND BEFORE ANY IS PLACED. The nine files, the skill, and
-	# the ONE artifact that is not a whole file — the merged `settings.json` —
+	# ALL EIGHTEEN IN HAND BEFORE ANY IS PLACED. The eleven files, the two
+	# skills, the one command file, and the ONE artifact that is not a whole
+	# file — the merged `settings.json` —
 	# are all computed here, so a fetch that failed replaces nothing and a merge
 	# that cannot be computed refuses having placed nothing. That last one is
 	# the same rule `--install` already had, extended to cover a merge: an
@@ -241,8 +279,8 @@ install_commands() {
 	# and a network round-trip if it waits (A9 Addendum 4, R-A9-12).
 	plan_install_targets
 	collect_commands
-	collect_skill || die "could not fetch $SKILL_SOURCE_PATH from $REPO at $REF, so NOTHING was
-    installed and nothing already installed was replaced."
+	collect_skills || die "could not fetch one of the ${#SKILLS[@]} skills (${SKILLS[*]}) or the ${#COMMANDS[@]} command file (${COMMANDS[*]}) from $REPO at $REF, so
+    NOTHING was installed and nothing already installed was replaced."
 	plan_hook_merge
 	plan_skill_targets
 	mkdir -p "$dir"
@@ -276,7 +314,7 @@ install_commands() {
 
 
 # =========================================================================
-# THE THREE ARTIFACTS THAT ARE NOT ONE OF THE NINE FILES
+# THE SEVEN ARTIFACTS THAT ARE NOT ONE OF THE ELEVEN FILES
 # =========================================================================
 #
 # lane-collision-protocol Amendment 9(b), inheriting A8 Addendum 2's R-A8-5
@@ -285,23 +323,61 @@ install_commands() {
 # config dirs exist; 0 of them carry a SessionStart hook; and every profile's
 # `skills` is a symlink to ONE shared directory. So:
 #
-#   * THE SKILL goes to `$CLAUDE_PROFILES_HOME/shared/skills/lane-swap/SKILL.md`
+#   * EACH SKILL goes to `$CLAUDE_PROFILES_HOME/shared/skills/<name>/SKILL.md`
 #     — one write that all 418 profiles read through their own symlinks;
-#   * `~/.claude` KEEPS A COPY of the skill for a bare `claude` run outside the
+#   * `~/.claude` KEEPS A COPY of each skill for a bare `claude` run outside the
 #     launcher, plus ONE MERGED ENTRY in `~/.claude/settings.json`;
 #   * THE PROFILE `SessionStart` ENTRY IS NOT THIS COMMAND'S. It stays the
 #     launcher's, which already rewrites each profile's settings.json on every
 #     run and preserves hook keys. This command never writes a profile's
 #     settings.json at all. One path, one writer, in both halves.
 #
-# TWELVE ARTIFACTS, NOT EIGHT, AND THE COUNT IS THE INVARIANT: nine files in
-# the bin directory, the skill in the shared skills directory, the skill's
-# bare-run copy, and one merged entry in `~/.claude/settings.json`.
+# EIGHTEEN ARTIFACTS, AND THE COUNT IS THE INVARIANT: eleven files in the bin
+# directory, two skills in the shared skills directory, their two bare-run
+# copies, ONE COMMAND FILE at those same two paths, and one merged entry in
+# `~/.claude/settings.json`. It was twelve before Amendment 11 added `restart`,
+# `lanes` and the `/restart` skill, and sixteen before ruling 9 added
+# `commands/swap.md`; the count moves with the lists rather than being restated
+# from memory.
+#
+# WHY A COMMAND FILE IS HERE AT ALL, WHEN ADOPTION ACT 6 SAYS THE LAUNCHER
+# VENDORS THEM (F-X28, A11 Addendum 4 ruling 9, ratified "a11 addendum 4 yes").
+# `opensoft/workBenches#74` @`0b7f6bc` deletes the whole `claude/commands` lane
+# surface along with the launcher's copy of the `lane-swap` skill — and act 6,
+# which would have `--install` inherit the command files, comes AFTER act 3,
+# which is this PR's base. So on the day 4b lands, clause (g)'s `/swap` — a
+# RATIFIED decision, and one of the six edits to in-force text — would be
+# installed by NOBODY. The alternative was a PR of its own between now and then,
+# and the ruling took this one.
 
-#: The skill this repository ships, and the two paths it is placed at. Its
-#: directory name is `lane-swap`, which is what `/lane-swap` invokes.
+#: THE SKILLS THIS REPOSITORY SHIPS, each placed at the same two paths. A
+#: skill's DIRECTORY NAME is what `/<name>` invokes, so the list is the names
+#: and every path is derived from one.
+#:
+#: `restart` joins `lane-swap` under Amendment 11 clause (f) and ratified
+#: decision 7: `/restart` is the INSIDE half of the restart and `restart` on
+#: `PATH` is the outside one, and the inside half has to be a skill because a
+#: running session cannot `exec` a launcher over itself.
+SKILLS=(lane-swap restart)
+skill_source_path() { printf 'skills/%s/SKILL.md\n' "$1"; }
+
+#: THE COMMAND FILES THIS REPOSITORY SHIPS, each placed at the same two paths a
+#: skill is (A11 Addendum 4 ruling 9). A command file's BASENAME is what
+#: `/<name>` invokes, so the list is the names and every path is derived from
+#: one — the same shape `SKILLS` has, for the same reason.
+#:
+#: `swap` is clause (g)'s ratified alias: `/swap` invokes the `lane-swap` skill
+#: and adds nothing to it. The file is vendored BYTE FOR BYTE from
+#: `opensoft/workBenches#71`, which is where it was written, because two copies
+#: of one procedure that must stay byte-equal is the alternative that clause
+#: rejects by name — and `#74` deletes that copy, which is why this one exists.
+COMMANDS=(swap)
+command_source_path() { printf 'commands/%s.md\n' "$1"; }
+#: Kept as a single name for the one thing that is still singular: the
+#: `SessionStart` hook's own entry, which belongs to `lane-swap`'s amendment
+#: and not to the skill set.
 SKILL_NAME="lane-swap"
-SKILL_SOURCE_PATH="skills/$SKILL_NAME/SKILL.md"
+SKILL_SOURCE_PATH="$(skill_source_path "$SKILL_NAME")"
 
 skills_home() { printf '%s\n' "${CLAUDE_PROFILES_HOME:-$HOME/.claude-profiles}"; }
 claude_home() { printf '%s\n' "${CLAUDE_USER_DIR:-$HOME/.claude}"; }
@@ -326,17 +402,37 @@ hook_block_text() {
 BLOCK
 }
 
-# The skill's bytes, by `--install`'s own rule: from the checkout beside this
-# file when run from one, else fetched at this same ref.
-collect_skill() {
-	local selfdir=""
+# EVERY SKILL'S BYTES, by `--install`'s own rule: from the checkout beside this
+# file when run from one, else fetched at this same ref. ALL OF THEM IN HAND
+# BEFORE ANY IS PLACED, which is the same all-or-nothing rule the eleven files
+# already have — a new `/restart` beside a `lane-swap` that could not be fetched
+# is a half-install that reads like a whole one.
+collect_skills() {
+	local selfdir="" name src
 	[ -f "$SELF" ] && selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 	workdir
-	if [ -n "$selfdir" ] && [ -f "$selfdir/$SKILL_SOURCE_PATH" ]; then
-		cp -- "$selfdir/$SKILL_SOURCE_PATH" "$WORKDIR/SKILL.md"
-		return 0
-	fi
-	fetch_from_repo "$SKILL_SOURCE_PATH" "$WORKDIR/SKILL.md"
+	for name in "${SKILLS[@]}"; do
+		src="$(skill_source_path "$name")"
+		if [ -n "$selfdir" ] && [ -f "$selfdir/$src" ]; then
+			cp -- "$selfdir/$src" "$WORKDIR/skill-$name.md"
+			continue
+		fi
+		fetch_from_repo "$src" "$WORKDIR/skill-$name.md" || return 1
+	done
+	# THE COMMAND FILES IN THE SAME BREATH, under the same all-or-nothing rule
+	# (ruling 9). A `/swap` that could not be fetched beside a `/lane-swap` that
+	# could is a half-install of an ALIAS PAIR, which is worse than either
+	# alone: the skill is installed, the alias the text ratifies is not, and
+	# nothing on screen says which.
+	for name in "${COMMANDS[@]}"; do
+		src="$(command_source_path "$name")"
+		if [ -n "$selfdir" ] && [ -f "$selfdir/$src" ]; then
+			cp -- "$selfdir/$src" "$WORKDIR/command-$name.md"
+			continue
+		fi
+		fetch_from_repo "$src" "$WORKDIR/command-$name.md" || return 1
+	done
+	return 0
 }
 
 # THE MERGE INTO `~/.claude/settings.json`, COMPUTED BEFORE ANYTHING IS PLACED.
@@ -376,19 +472,65 @@ HOOK_MERGED=""    # a staged whole file, ready to move into place
 # still costs nothing. The directories are created here, which is idempotent
 # and is what the placement would have done anyway.
 plan_skill_targets() {
-	local d
-	for d in "$(skills_home)/shared/skills/$SKILL_NAME" \
-		"$(claude_home)/skills/$SKILL_NAME" "$(claude_home)"; do
-		mkdir -p -- "$d" 2>/dev/null || die "\`--install\` cannot create $d, one of the three places Amendment 9(b) has it
-    place the $SKILL_NAME skill and the SessionStart entry. NOTHING was installed
-    and nothing already installed was replaced."
-		[ -w "$d" ] || die "$d is not writable, and \`--install\` places the $SKILL_NAME skill or the
-    SessionStart entry there (Amendment 9(b)). NOTHING was installed and nothing
-    already installed was replaced."
+	local d name dirs=() target kind bad="" paths=""
+	for name in "${SKILLS[@]}"; do
+		dirs+=("$(skills_home)/shared/skills/$name" "$(claude_home)/skills/$name")
 	done
+	# A COMMAND FILE HAS NO DIRECTORY OF ITS OWN — it is a file in the commands
+	# directory, where a skill is a `SKILL.md` in a directory named for it — so
+	# the two command destinations are added once rather than once per name.
+	if [ "${#COMMANDS[@]}" -gt 0 ]; then
+		dirs+=("$(skills_home)/shared/commands" "$(claude_home)/commands")
+	fi
+	dirs+=("$(claude_home)")
+	for d in "${dirs[@]}"; do
+		mkdir -p -- "$d" 2>/dev/null || die "\`--install\` cannot create $d, one of the places Amendment 9(b) has
+    it place this repository's skills and the SessionStart entry.
+    NOTHING was installed and nothing already installed was replaced."
+		[ -w "$d" ] || die "$d is not writable, and \`--install\` places a skill or the SessionStart
+    entry there (Amendment 9(b)).
+    NOTHING was installed and nothing already installed was replaced."
+	done
+	# AND THE SIX FILES INSIDE THEM, BY R-A9-12 (F-X17). The loop above proved
+	# the DIRECTORIES writable and stopped there, while `place_skill_and_hook`
+	# then reaches each `SKILL.md` with `[ -e ]`, `cmp -s` and `cp` — not one of
+	# which can tell a regular file from a link to one. So a symlink at
+	# `~/.claude/skills/restart/SKILL.md` was followed and WRITTEN THROUGH: the
+	# skill stays uninstalled, the target stays a link, and the bytes land
+	# wherever it points. That is the same failure R-A9-12 was ruled on for the
+	# eleven in the bin directory, one directory along, and the ruling says
+	# nothing about which path it applies to.
+	#
+	# `unplaceable_kind` is asked rather than re-tested, because two copies of
+	# one rule is how the bin half would come to refuse a dangling link and the
+	# skill half would not.
+	for name in "${SKILLS[@]}"; do
+		for target in "$(skills_home)/shared/skills/$name/SKILL.md" "$(claude_home)/skills/$name/SKILL.md"; do
+			kind="$(unplaceable_kind "$target")" || continue
+			bad="${bad:+$bad
+}    $target — $kind"
+			paths="${paths:+$paths }\"$target\""
+		done
+	done
+	for name in "${COMMANDS[@]}"; do
+		for target in "$(skills_home)/shared/commands/$name.md" "$(claude_home)/commands/$name.md"; do
+			kind="$(unplaceable_kind "$target")" || continue
+			bad="${bad:+$bad
+}    $target — $kind"
+			paths="${paths:+$paths }\"$target\""
+		done
+	done
+	[ -z "$bad" ] || die "\`--install\` places REGULAR FILES, and these skill and command targets are not regular files:
+$bad
+    \`cp\` follows a symlink, so installing over one would leave the skill
+    UNINSTALLED — the target stays a link — and would write these bytes into
+    whatever is on the other end of it. NOTHING was installed and nothing
+    already installed was replaced.
+    Clear them, then re-run:
+        rm -f -- $paths"
 }
 
-# THE NINE TARGETS, PROVED PLACEABLE BEFORE ANY OF THE TWELVE IS PLACED
+# THE ELEVEN TARGETS, PROVED PLACEABLE BEFORE ANY OF THE EIGHTEEN IS PLACED
 # (A9 Addendum 4, R-A9-12, ruled on F5 of the #24 review).
 #
 # `cp` FOLLOWS A SYMLINK. The loop below tests `[ -e "$target" ]`, compares
@@ -411,23 +553,34 @@ plan_skill_targets() {
 # `--install` that carries this, and act 5 strips `brett-wip` to data. So the
 # refusal names every offending path, says what each one IS, and prints the one
 # `rm` that clears them — rather than leaving a person to remember a step.
+# WHAT A TARGET IS, WHERE IT IS NOT SOMETHING `--install` MAY PLACE OVER.
+# ONE implementation of R-A9-12's test, for every path this command writes: the
+# eleven in the bin directory and the four `SKILL.md`s (F-X17). Prints the kind
+# and returns 0 where the path is unplaceable; returns 1 — saying nothing —
+# where it is absent or a regular file, which are the two placeable states.
+#
+# `-L` AS WELL AS `-e`, because a DANGLING symlink is the sharper case: `[ -e ]`
+# is false on one, and `cp` through it creates the file at the far end — a write
+# into a repository this command was never told about.
+unplaceable_kind() {   # <target>
+	local t="$1"
+	if [ -L "$t" ]; then
+		printf 'a symlink to %s' "$(readlink -- "$t" 2>/dev/null || printf '<unreadable>')"
+	elif [ ! -e "$t" ] || [ -f "$t" ]; then
+		return 1
+	elif [ -d "$t" ]; then
+		printf 'a directory'
+	else
+		printf 'not a regular file'
+	fi
+}
+
 plan_install_targets() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
 	local name target kind bad="" paths=""
 	for name in "${INSTALLABLES[@]}"; do
 		target="$dir/$name"
-		# `-L` AS WELL AS `-e`, because a DANGLING symlink is the sharper case:
-		# `[ -e ]` is false on one, and `cp` through it creates the file at the
-		# far end — a write into a repository this command was never told about.
-		if [ -L "$target" ]; then
-			kind="a symlink to $(readlink -- "$target" 2>/dev/null || printf '<unreadable>')"
-		elif [ ! -e "$target" ] || [ -f "$target" ]; then
-			continue
-		elif [ -d "$target" ]; then
-			kind="a directory"
-		else
-			kind="not a regular file"
-		fi
+		kind="$(unplaceable_kind "$target")" || continue
 		bad="${bad:+$bad
 }    $target — $kind"
 		paths="${paths:+$paths }\"$target\""
@@ -537,30 +690,31 @@ $(hook_block_text)
 	esac
 }
 
-# The three placements, AFTER the nine files and the merge are all in hand.
+# The seven placements, AFTER the eleven files and the merge are all in hand.
 place_skill_and_hook() {
-	local shared_dir bare_dir settings target verb hook_tmp
-	shared_dir="$(skills_home)/shared/skills/$SKILL_NAME"
-	bare_dir="$(claude_home)/skills/$SKILL_NAME"
+	local shared_dir bare_dir settings target verb hook_tmp name
 	settings="$(claude_home)/settings.json"
+	for name in "${SKILLS[@]}"; do
+	shared_dir="$(skills_home)/shared/skills/$name"
+	bare_dir="$(claude_home)/skills/$name"
 
 	# EVERY FAILURE HERE IS A `die`, never the shell's own 1. `--install`'s
 	# codes are this toolset's — 0 done, 1 findings printed, 2 a refusal — and
 	# an unguarded `mkdir` or `cp` under `set -e` exits 1, which reads as a
-	# report of findings from a command that placed ten of twelve artifacts.
+	# report of findings from a command that placed eleven of eighteen artifacts.
 	for target in "$shared_dir/SKILL.md" "$bare_dir/SKILL.md"; do
 		mkdir -p -- "$(dirname -- "$target")" ||
-			die "could not create $(dirname -- "$target") for the $SKILL_NAME skill.
-    The $placed commands above are placed; the skill and the hook are not."
-		if [ -e "$target" ] && cmp -s "$WORKDIR/SKILL.md" "$target"; then
-			say "$SKILL_NAME: already installed at $target (unchanged)"
+			die "could not create $(dirname -- "$target") for the $name skill.
+    The $placed commands above are placed; the skills and the hook are not."
+		if [ -e "$target" ] && cmp -s "$WORKDIR/skill-$name.md" "$target"; then
+			say "$name: already installed at $target (unchanged)"
 		else
 			if [ -e "$target" ]; then verb="updated at $target"; else verb="installed at $target"; fi
-			cp -- "$WORKDIR/SKILL.md" "$target" ||
+			cp -- "$WORKDIR/skill-$name.md" "$target" ||
 				die "could not write $target. The $placed commands above are placed;
-    the skill and the hook are not."
+    the skills and the hook are not."
 			# 644: a SKILL.md is a document a session READS, not a command. The
-			# nine in the bin directory are stamped 755 for the reason that loop
+			# eleven in the bin directory are stamped 755 for the reason that loop
 			# gives — "a copy that is not executable is not a command" — and
 			# that reason does not reach this file. Amendment 9(b) describes
 			# `--install` as stamping 755 "on everything it places" while
@@ -568,8 +722,39 @@ place_skill_and_hook() {
 			# loop; the deletion is required either way, because two writers of
 			# one path is the defect and the mode was only its symptom.
 			chmod 644 "$target" || die "could not set the mode on $target."
-			say "$SKILL_NAME: $verb"
+			say "$name: $verb"
 		fi
+	done
+	done
+
+	# THE COMMAND FILES, AT THE SAME TWO DESTINATIONS AND THE SAME MODE
+	# (A11 Addendum 4 ruling 9). `setup-claude-profiles.sh` makes
+	# `<profiles>/shared/commands` and links it into every profile as
+	# `<profile>/commands`, exactly as it does for `skills` — so a file placed
+	# in the shared directory is `/swap` in every profile, and the bare copy in
+	# `~/.claude/commands/` is `/swap` in a `claude` run outside one. Two
+	# destinations, for the two ways a session is started, which is the same
+	# reason a skill has two.
+	#
+	# 644 for the same reason a `SKILL.md` is: a command file is a document a
+	# session READS. The 755 argument belongs to the eleven in the bin
+	# directory, where a copy that is not executable is not a command.
+	for name in "${COMMANDS[@]}"; do
+		for target in "$(skills_home)/shared/commands/$name.md" "$(claude_home)/commands/$name.md"; do
+			mkdir -p -- "$(dirname -- "$target")" ||
+				die "could not create $(dirname -- "$target") for the /$name command.
+    The $placed commands above are placed; the skills, the command files and the hook are not."
+			if [ -e "$target" ] && cmp -s "$WORKDIR/command-$name.md" "$target"; then
+				say "/$name: already installed at $target (unchanged)"
+			else
+				if [ -e "$target" ]; then verb="updated at $target"; else verb="installed at $target"; fi
+				cp -- "$WORKDIR/command-$name.md" "$target" ||
+					die "could not write $target. The $placed commands above are placed;
+    the skills, the command files and the hook are not."
+				chmod 644 "$target" || die "could not set the mode on $target."
+				say "/$name: $verb"
+			fi
+		done
 	done
 
 	case "$HOOK_PLAN" in

@@ -26,7 +26,17 @@ from conftest import REPO, WINDOWS_SKIP
 #: `set -euo pipefail` rule. The macOS job parses these same four with
 #: `/bin/bash -n`, one command per file, which is what keeps the bash-3.2
 #: claim true.
-SHIPPED_BASH = ["openRepoTools", "park", "resume", "status"]
+#: `restart` and `lanes` join under lane-collision-protocol Amendment 11's
+#: ratified decisions 7 and 6: each is one word a person has on PATH, placed by
+#: `--install`, so each is held to the same shebang, the same executable bit,
+#: the same LF index, the same bash-3.2 parse AND the same `set -euo pipefail`.
+#: They are NOT in `LANE_BASH`, and the reason is the resolver test below: they
+#: carry no copy of Amendment 9(a)'s workspace resolver because they resolve no
+#: workspace — every fact either one needs comes from `lanes-edit.sh`, through
+#: the reads clause (h) adds, which is the same "one implementation, several
+#: callers" rule those reads exist for. A third copy of that block in a file
+#: that never uses it would be a third way for it to drift.
+SHIPPED_BASH = ["openRepoTools", "park", "resume", "status", "restart", "lanes"]
 
 #: THE LANE HELPERS, which arrived here from `opensoft/brett-wip` with their
 #: history under lane-collision-protocol Amendment 9(b). They are shipped bash
@@ -353,6 +363,120 @@ def test_every_value_taking_arm_refuses_an_empty_value():
         f"was added or removed. Read the new arm, then move the number.")
 
 
+#: `--flag <value>` and `--flag=<value>` are two spellings of ONE flag. The
+#: pattern half of a `case` arm, up to its `)`, with grouped patterns kept whole.
+CASE_ARM_HEAD = re.compile(r"^\s*(--[A-Za-z0-9=*|_ -]+?)\)(\s|$)")
+#: The guard the two-token arms of this estate are written with.
+EMPTY_VALUE_GUARD = re.compile(r'\[ -n "\$\{?[A-Za-z_][A-Za-z0-9_]*\}?" \]')
+
+
+def _value_flag_arms(text: str) -> dict:
+    """{flag: {"plain": arm text, "equals": arm text}} for every option arm.
+
+    An arm runs from its pattern line to the line carrying its `;;`, so a
+    multi-line arm (`lane-end`'s `--retire=*`) is read whole and not by its
+    first line. Grouped patterns (`--repo | --dir | --ws | --prefix)`) count
+    for every flag they name.
+    """
+    lines = text.splitlines()
+    arms: dict = {}
+    for i, line in enumerate(lines):
+        head = CASE_ARM_HEAD.match(line)
+        if not head or line.lstrip().startswith("#"):
+            continue
+        body, j = [line], i
+        while ";;" not in lines[j] and j + 1 < len(lines) and j - i < 15:
+            j += 1
+            body.append(lines[j])
+        whole = "\n".join(body)
+        for token in head.group(1).split("|"):
+            token = token.strip()
+            if not token.startswith("--"):
+                continue
+            equals = token.endswith("=*")
+            flag = token[2:-2] if equals else token[2:]
+            if not flag:
+                continue
+            arms.setdefault(flag, {})["equals" if equals else "plain"] = whole
+    return arms
+
+
+@pytest.mark.parametrize("name", ALL_BASH)
+def test_the_two_spellings_of_a_flag_refuse_the_same_empty_value(name):
+    """ONE FLAG, TWO SPELLINGS, ONE ANSWER (#26, the review of `c3ebcfe`,
+    `lane-start:707`).
+
+    `lane-start --dir ""` refuses; `lane-start --dir=` set the variable to
+    nothing and FELL THROUGH as if no directory had been named at all, so the
+    rungs below it ran — one of which is `$PROJECTS_ROOT/<repo>` — and the
+    command started in a checkout the operator never asked for instead of
+    refusing a path they never gave. `restart:151`, the same flag on the
+    sibling command, has carried the guard on both spellings all along, which
+    is what makes this a DIVERGENCE and not a decision: eight arms across three
+    files had the guard on the two-token spelling and none on the `=` one, and
+    not one of them was reachable by any test in this suite, because an arm
+    that does not refuse says nothing for a test to read. That is the same
+    reasoning `test_every_value_taking_arm_refuses_an_empty_value` was written
+    from, one command over, after an outside reviewer caught the same class
+    twice.
+
+    Derived from the arms themselves and never from a list: where a flag's
+    two-token arm carries the estate's own `[ -n "$var" ]` guard, its `=` arm
+    must carry one too. A flag guarded in NEITHER spelling is not this rule's
+    business — `--text` is deliberately one — and a flag with only one spelling
+    has nothing to disagree with.
+    """
+    arms = _value_flag_arms((REPO / name).read_text(encoding="utf-8"))
+    offenders = [
+        flag for flag, spelling in sorted(arms.items())
+        if "plain" in spelling and "equals" in spelling
+        and EMPTY_VALUE_GUARD.search(spelling["plain"])
+        and not EMPTY_VALUE_GUARD.search(spelling["equals"])]
+    assert not offenders, (
+        f"{name}: `--{'`, `--'.join(offenders)}` refuses an empty value when "
+        f"it is spelled `--flag \"\"` and takes one when it is spelled "
+        f"`--flag=`. The second spelling then reads as ABSENT, and every rung "
+        f"below the flag runs on a value the operator did give.")
+
+
+#: The four helpers every assertion in the shell suite is written with, and the
+#: DESCRIPTION each takes first — the string a person reads in the output.
+SUITE_ASSERT_DESC = re.compile(r'^\s*(?:is|has|hasnt|skip)\s+"((?:[^"\\]|\\.)*)"')
+
+
+def test_the_suite_descriptions_run_no_command_of_their_own():
+    """A BACKTICK IN A DOUBLE-QUOTED STRING IS A COMMAND SUBSTITUTION, and this
+    estate writes prose full of them.
+
+    Found in the `tests-macos` log of `29d3417`, which prints the suite's own
+    stderr when it fails: *"command substitution: line 4016: syntax error near
+    unexpected token `newline'"*, twice. The lines are descriptions —
+    `hasnt "…and never `kill <pid>`, which the ruling refuses by name"` — where
+    bash read the backticks as a substitution, tried to run `kill <pid>`, and
+    handed the assertion a description with a hole in it. A third,
+    `the `forks` read beside it`, RAN `forks`. None of them can fail a test,
+    which is why all three sat there: the description is not compared to
+    anything. What they cost is the output a person reads when something else
+    fails, and on one of them the words that went missing name the act the
+    ruling refuses.
+
+    So: in the description of every `is`, `has`, `hasnt` and `skip`, a backtick
+    is escaped. The other arguments are untouched — they are `$(…)`
+    substitutions by design.
+    """
+    bad = []
+    for number, line in enumerate(
+            (REPO / "tests/test_lane_helpers.sh").read_text(
+                encoding="utf-8").splitlines(), 1):
+        hit = SUITE_ASSERT_DESC.match(line)
+        if hit and re.search(r"(?<!\\)`", hit.group(1)):
+            bad.append(f"{number}: {line.strip()[:120]}")
+    assert not bad, (
+        "these assertion descriptions carry an UNESCAPED backtick, so bash "
+        "runs what is between them and the description a person reads has a "
+        "hole where those words were. Write ``\\` ``:\n  " + "\n  ".join(bad))
+
+
 #: A line that actually FETCHES, as opposed to a line of the usage heredoc
 #: that says the word. Both spellings take a quoted argument, which the prose
 #: never does.
@@ -581,8 +705,8 @@ def test_the_documents_say_what_status_is_and_is_not():
         text = (REPO / name).read_text(encoding="utf-8")
         assert "`status`" in text, f"{name} never names the fourth command"
     readme = (REPO / "README.md").read_text(encoding="utf-8")
-    assert "NINE files" in readme, "README.md does not count the nine files"
-    assert "9 of 9 placed" in readme, (
+    assert "ELEVEN files" in readme, "README.md does not count the eleven files"
+    assert "11 of 11 placed" in readme, (
         "README.md does not show the count line `--install` actually prints")
     status = (REPO / "status").read_text(encoding="utf-8")
     assert "--no-optional-locks" in status, (
@@ -618,6 +742,188 @@ def test_the_documents_say_the_sweep_skips_a_root_without_the_overlay():
         assert "skipped (no overlay)" in (REPO / name).read_text(
             encoding="utf-8"), (
             f"{name} does not show the summary clause a person actually sees")
+
+
+def _parser_long_options(text):
+    """Every long option the file's argument loop has an arm for, taken from
+    the arms themselves rather than from a list beside them."""
+    loop = re.search(r"^while \[ \$# -gt 0 \]; do$(.*?)^done$", text,
+                     re.S | re.M)
+    assert loop, "no `while [ $# -gt 0 ]` argument loop found"
+    found = set()
+    for line in loop.group(1).splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("-"):
+            continue
+        found.update(re.findall(r"--[a-z][a-z0-9-]+", stripped.split(")", 1)[0]))
+    return found
+
+
+@pytest.mark.parametrize("name", ["lanes", "restart"])
+def test_every_option_the_parser_accepts_is_in_the_usage(name):
+    """AN OPTION NOT IN THE SYNOPSIS IS AN OPTION NOBODY FINDS.
+
+    `lanes --prefix <repo>` was parsed, documented in the BODY of `--help` and
+    used by `lane-start <repo>` with no position - and missing from the SYNOPSIS
+    LINE, which is the line a person reads first and often the only one they
+    read. So the one way to ask for a repository's lanes by name was invisible
+    to everybody who did not read to the bottom. The defect is the same one
+    `test_the_unknown_subcommand_refusal_names_every_subcommand_there_is`
+    exists for, one file over, and the fix is the same: DERIVE the list from
+    the arms rather than restate it beside them.
+
+    The SYNOPSIS is what is asserted, not the whole of `--help`: the body had
+    `--prefix` all along, so a rule that accepted the body would have passed
+    over the defect it was written for. `--help` itself is exempt, because a
+    synopsis that lists it says nothing a reader typing `--help` does not
+    already know.
+
+    Held for the two words Amendment 11 adds, and not yet for the eight files
+    beside them: their parsers are older, larger and not all of this shape, and
+    widening the rule to them is an act with its own evidence rather than a
+    line in this one.
+    """
+    text = (REPO / name).read_text(encoding="utf-8")
+    usage = re.search(r"^usage\(\) \{\n\tcat <<'USAGE'\n(.*?)^USAGE$", text,
+                      re.S | re.M)
+    assert usage, f"{name} has no `usage()` heredoc"
+    synopsis = usage.group(1).split("\n\n", 1)[0]
+    missing = sorted(opt for opt in _parser_long_options(text)
+                     if opt != "--help" and opt not in synopsis)
+    assert not missing, (
+        f"{name} parses {', '.join(missing)} and its usage line never names "
+        f"them: an option a person cannot find is an option they do not use")
+
+
+def test_restart_fences_a_lane_name_the_way_the_helper_does():
+    """ONE RULE FOR WHAT A LANE NAME IS, AND `restart` HAD A WEAKER ONE.
+
+    `lanes-edit.sh`'s `check_lane_name` refuses `"" | *[!A-Za-z0-9._-]* | .* |
+    -*` - the WHOLE string, and the two leading characters a path or an option
+    would start with. `restart` tested `[A-Za-z0-9]*)`, which in a `case`
+    pattern pins the FIRST CHARACTER and nothing else: `repoA11-1/extra`,
+    `repoA11-1 x` and `repoA11-1*` all passed it and went on to `register-row`,
+    which then answered "the register has no row for lane X" about a string
+    that is not a lane name at all. The refusal a person needs ("that is not a
+    lane name") was replaced by one that sends them looking for a missing row.
+
+    Held by comparing the two patterns rather than by restating either: a
+    second spelling of one rule is how the two files come to disagree.
+    """
+    helper = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+    wanted = re.search(r"check_lane_name\(\) \{\s*case \S+ in\s*\n\s*(\S.*?)\)",
+                       helper)
+    assert wanted, "lanes-edit.sh has no `check_lane_name` case pattern"
+    pattern = wanted.group(1).strip()
+    text = (REPO / "restart").read_text(encoding="utf-8")
+    assert pattern in text, (
+        "`restart` does not fence a lane name with `lanes-edit.sh`'s own "
+        f"pattern.\n  the helper refuses: {pattern}\n  and `restart` must "
+        f"refuse the same string, not merely a first character")
+
+
+#: The words clause (c)'s ladder is counted in, in `lane-start` and in the
+#: manual. Both spell the number out; neither writes a digit.
+RUNG_WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+              "seven": 7, "eight": 8, "nine": 9}
+
+
+def test_the_directory_precedence_states_every_rung_it_implements():
+    """THE CONTRACT THE CODE CARRIES SAID *"THERE IS NO FIFTH RUNG"* WHILE THE
+    CODE A HUNDRED LINES BELOW IT HAD SIX (#26, the review of `c3ebcfe`,
+    `lane-start:780`).
+
+    `708395e` added rungs 5 and 6 for Evidence 7 - the estate's `project.yaml`
+    legs and a checkout named for the home's repository, each proved by that
+    directory's own `origin` - and `2f44da0` corrected the MANUAL's count to
+    six. The block at the top of `lane-start` that clause (c) states the ladder
+    in was corrected in neither. A contract that contradicts the code beneath
+    it makes that code look unreachable, and the one act that reading invites
+    is deleting it.
+
+    Derived from the two files rather than restated: the count the block
+    DECLARES, the rungs it LISTS, the rungs the implementation MARKS with its
+    own `# Rung <n>` comments, and the count the manual's heading states must
+    be one number. Any of the four moving alone is the drift this catches.
+    """
+    code = (REPO / "lane-start").read_text(encoding="utf-8")
+    head = re.search(r"^# ([A-Z]+) RUNGS, FIRST ANSWER WINS", code, re.M)
+    assert head, "`lane-start` no longer declares clause (c)'s rung count"
+    declared = RUNG_WORDS[head.group(1).lower()]
+    # FROM THE LINE AFTER THE DECLARATION TO THE FIRST LINE OF CODE: the block
+    # is one run of comment lines, and the numbered items are the ladder.
+    lines = code.splitlines()
+    first = next(i for i, l in enumerate(lines)
+                 if l.startswith(f"# {head.group(1)} RUNGS, FIRST ANSWER WINS"))
+    listed = set()
+    for line in lines[first + 1:]:
+        if not line.startswith("#"):
+            break
+        item = re.match(r"#\s{3}(\d+)\. ", line)
+        if item:
+            listed.add(int(item.group(1)))
+    implemented = {int(n) for n in re.findall(r"^# Rung (\d+) ", code, re.M)}
+    assert implemented <= listed, (
+        f"`lane-start` implements rungs {sorted(implemented - listed)} that "
+        f"clause (c)'s own block does not list: {sorted(listed)}")
+    assert listed == set(range(1, declared + 1)), (
+        f"the block says {declared} rungs and lists {sorted(listed)}")
+    manual = (REPO / "docs/README-lanes.md").read_text(encoding="utf-8")
+    stated = re.search(r"The lane's directory, in (\w+) rungs", manual)
+    assert stated, "the manual has no directory-precedence heading to count"
+    assert RUNG_WORDS[stated.group(1).lower()] == declared, (
+        f"the manual counts {stated.group(1)} rungs and `lane-start` counts "
+        f"{head.group(1).lower()}")
+
+
+def test_the_documents_say_what_a_bare_lanes_lists():
+    """THE SETTLED DEFAULT, AND THE FOUR PLACES THAT STATED THE OLD ONE.
+
+    Brett Heap settled clause (j) on 2026-09-13T20:38:11Z, verbatim "Narrow
+    inside a checkout (Recommended)": a bare `lanes` INSIDE a lane checkout
+    lists THAT REPOSITORY's lanes and ends with the next free position and the
+    `lane-start <repo> <n>` that takes it; `lanes --all`, and a bare `lanes`
+    outside every checkout, are the every-lane listing.
+
+    The code took it in the same round that documented the OPPOSITE. `lanes`'s
+    own header line, README.md's code block, the manual's "two words" block and
+    `--help`'s entry all still read "every lane on this workstation" - the
+    pre-settlement default, and wrong twice over, because the scope is the
+    ESTATE now and inside a checkout it is one repository. Nothing was red for
+    it: no assertion in this repository had ever read those four sentences,
+    which is RV-B2's rule one file over - an untested sentence is a sentence
+    that drifts.
+
+    The ABSENCE half is the half that bites. A reader promised every lane who
+    gets one repository's does not read a narrowing, they read a broken
+    command, and the one word that would have answered them - `--all` - is the
+    word the stale sentence does not carry.
+    """
+    surfaces = ("README.md", "docs/README-lanes.md", "lanes", "restart",
+                "openRepoTools")
+    for name in surfaces:
+        text = (REPO / name).read_text(encoding="utf-8")
+        assert "every lane on this workstation" not in text, (
+            f"{name} still calls `lanes` the listing of every lane on this "
+            f"workstation, which is the pre-settlement default")
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    assert "Narrow inside a checkout" in readme, (
+        "README.md does not quote the settlement that narrowed the bare word")
+    assert "lanes --all" in readme, (
+        "README.md never shows the word that asks for every lane")
+    assert "next free position" in readme, (
+        "README.md does not say the narrowed listing ends with the next free "
+        "position, which is the half of the settlement that is not a filter")
+    usage = (REPO / "openRepoTools").read_text(encoding="utf-8")
+    assert "lanes [--all] [--fetch]" in usage, (
+        "`openRepoTools --help` does not offer --all, so a person narrowed "
+        "into a checkout cannot find the way back to every lane")
+    manual = (REPO / "docs/README-lanes.md").read_text(encoding="utf-8")
+    assert "Narrow inside a checkout (Recommended)" in manual, (
+        "the manual does not quote the settlement verbatim")
+    assert "Yes, list and suggest (Recommended)" in manual, (
+        "the manual does not quote the settlement for `lane-start <repo>` "
+        "with no position, which was ratified in the same breath")
 
 
 def test_agents_md_names_the_pin_rules():
@@ -971,6 +1277,15 @@ def test_agents_md_is_short_enough_to_be_read():
     214 `main` reached while it waited: the same ten lines, in the same rule 4
     sentence, touching none of the lines the entries above bought — so the
     count is the one measured after the rebase and the cap is that count.
+
+    224 AND 214 MEET AT 224 on 2026-09-14, where this branch merged `main`
+    at `63a74af` — Amendment 11's tooling, #26. The cap does not move, and
+    that is the reading, not an omission: #26 changed ONE WORD of this file
+    — the opening count of what `--install` places, nine to eleven — and a
+    word is not a line. So the 224 below is still the number MEASURED after
+    the merge rather than the branch's own carried forward, which is the
+    only way either of them is ever allowed to be right, and the entry
+    above stays because its ten lines are still the ten in rule 4.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
     assert len(lines) <= 224, f"AGENTS.md is {len(lines)} lines; the cap is 224"
@@ -1117,6 +1432,14 @@ def test_readme_is_short_enough_to_be_read():
     leg. AGENTS.md takes the same state in the words it already had and
     repacks, so its cap does not move.
 
+    363 -> 382 on 2026-09-13, for lane-collision-protocol AMENDMENT 11's
+    ratified decisions 6 and 7: two new words on PATH, `restart` and `lanes`,
+    which a person reading this file has to be told exist and told what they
+    do, plus the `$LANES_WORKSTATION` row that decision 8(d) makes
+    load-bearing. The cap moves with the toolset and never with prose, and it
+    is raised from the 363 the merge of `main` left rather than from the 358
+    this branch started at — both histories below, newest first.
+
     251 -> 255 on 2026-09-12, for the same review's note on a BRANCH GONE
     FROM ORIGIN. The same two places once more: three lines put it in the
     exception, because the exits are the record's own entry and a push from
@@ -1255,6 +1578,43 @@ def test_readme_is_short_enough_to_be_read():
     5 lines for a branch gone from origin and a role with no place, this
     branch's 107 for the install story Amendment 9 rewrote, both from 251, and
     363 in the file that merged.
+
+    363 AND 372 MEET AT 382, and that is TWO raises read back in one place
+    rather than a number nobody can reconstruct. Amendment 11's branch raised
+    its own cap twice from the 353 it inherited — 372 for ratified decisions 6
+    and 7 (two new words on PATH, `restart` and `lanes`, and the
+    `$LANES_WORKSTATION` row decision 8(d) makes load-bearing) and 382 for the
+    round that followed — while `main` went 353 -> 358 -> 363 for A9 Addendum
+    4. Merging `main` at `d4b5710` brings both sets of lines into one file, and
+    the cap is the branch's own 382 because it is the higher of the two and the
+    merged README measures 382 exactly. The cap moves with the TOOLSET and
+    never with prose, which is why the four lines A11 Addendum 4 ruling 9 adds
+    — `--install`'s command-file list, and `commands/swap.md` in it — fit
+    inside it rather than raising it again.
+
+    382 -> 389 on 2026-09-13, for TWO rules, and the second is a correction.
+
+    The first is the SETTLED DEFAULT of clause (j)'s listing
+    (Brett Heap, 2026-09-13T20:38:11Z, verbatim "Narrow inside a checkout
+    (Recommended)"). Five lines, and every one of them is behaviour a person
+    MEETS: the code block said `lanes  # every lane on this workstation`, which
+    was the pre-settlement default and is now wrong twice over - a bare `lanes`
+    inside a checkout lists THAT REPOSITORY's lanes and ends with the next free
+    position and the `lane-start <repo> <n>` that takes it, and outside one it
+    lists every lane the estate knows rather than one workstation's. A reader
+    who types the word from a checkout and is told the listing is broken,
+    because the document promised them every lane, is the cost of leaving it.
+    The second line of the block is `lanes --all`, which is the sentence's
+    other half and the thing to type when the narrowing is not what you meant.
+
+    The second is the COMMAND FILE the install paragraph never named. A11
+    Addendum 4 ruling 9 gave `--install` `commands/swap.md` at the same pair of
+    paths a skill takes, and the count below that paragraph was raised to
+    eighteen - but the paragraph itself still said "five things that are not
+    files in that directory" and listed four skill copies and the hook. Two
+    lines name the command file and its two destinations, which is the half of
+    the install contract a person cannot verify from the count alone: they can
+    count to eighteen and still not know where `/swap` lands.
     270 AND 363 MEET AT 377, the same merge and the same arithmetic: this
     branch's 14 lines for the computed path, its three sources and the states
     that get no move, and `main`'s 107 for the install story Amendment 9
@@ -1270,9 +1630,28 @@ def test_readme_is_short_enough_to_be_read():
     256 -> 262, rebased onto the 377 `main` reached while it waited, in the
     same sentence of the same exception and over none of the lines the
     entries above bought.
+
+    389 AND 377 MEET AT 403, the same merge and the same arithmetic, and both
+    halves of it are above: this branch's 26 lines from 363 - 372 for ratified
+    decisions 6 and 7, 382 for the round after them, 389 for the settled
+    narrowing and the command file - and `main`'s 14 for the computed worktree
+    path (#27, `7efc850`), both from 363, and 403 in the file that merged.
+    Neither dated entry is dropped, because a cap is only worth having while
+    the reason for every line of it can still be read back.
+
+    383 AND 403 MEET AT 409 on 2026-09-14, where this branch merged `main`
+    at `63a74af` — Amendment 11's tooling, #26 — after waiting on review.
+    Both raises start from the 377 the entry three above records, and
+    neither touches the other's lines: this branch bought 6 for the
+    record's own key order, `main` bought 26 for `restart`, `lanes`, the
+    `$LANES_WORKSTATION` row and the settled narrowing, and the merged
+    README measures 409. The cap is the count of what merged, not either
+    side's number — 383 and 403 are each a half of this file and neither
+    is this file — and both dated entries above stay, because each still
+    names the lines it bought.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 383, f"README.md is {len(lines)} lines; the cap is 383"
+    assert len(lines) <= 409, f"README.md is {len(lines)} lines; the cap is 409"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
@@ -1304,6 +1683,275 @@ HOST_ABSOLUTE_PATH = re.compile(
     r"|/Users/[A-Za-z][A-Za-z0-9_-]*/"
     r"|C:\\Users\\(?!runneradmin\\)[^\s\\]+\\"
 )
+
+
+def _dispatcher_arms(text: str) -> list[str]:
+    """Every subcommand the main dispatcher has an arm for, in file order.
+
+    The dispatcher is the LAST `case "$cmd" in` in the file — the two before it
+    are the pre-flight guards (the dirty-checkout capture and Amendment 11's
+    container refusal), which name a subset deliberately.
+    """
+    lines = text.splitlines()
+    starts = [i for i, l in enumerate(lines) if l.strip() == 'case "$cmd" in']
+    assert starts, "lanes-edit.sh has no `case \"$cmd\" in` at all"
+    out: list[str] = []
+    for line in lines[starts[-1] + 1:]:
+        # `startswith` AND NOT `line.strip() == "esac"`, and it is deliberate:
+        # the dispatcher's arms contain NESTED `case` statements whose `esac` is
+        # indented, so a whitespace-insensitive test ends the scan at the first
+        # of those. Measured: with `line.strip() == "esac"` this parser finds
+        # TWO arms instead of thirty and the test below fails on its own guard
+        # ("the parser has drifted"). The unindented `esac` is the dispatcher's
+        # own, which is exactly the property being relied on.
+        if line.startswith("esac"):
+            break
+        m = re.match(r"^  ([a-z][a-z0-9|-]*)\)", line)
+        if m:
+            out.extend(m.group(1).split("|"))
+    return out
+
+
+def test_the_unknown_subcommand_refusal_names_every_subcommand_there_is():
+    """`2` FROM THE `*)` ARM IS HOW A CALLER DETECTS AN OLD HELPER, and the
+    list it prints is the only place a person learns what this file answers to.
+
+    `fetch-age` was missing from it (F-X16): the arm existed, the read worked,
+    and the refusal for a typo listed twenty-nine of the thirty verbs — so a
+    person who mistyped `fetch-age` was told, by omission, that it does not
+    exist. The list is DERIVED here from the dispatcher's own arms rather than
+    restated, because a restated list is the thing that drifted.
+    """
+    text = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+    arms = _dispatcher_arms(text)
+    assert len(arms) > 25, f"only {len(arms)} arms parsed — the parser has drifted"
+    m = re.search(r"unknown subcommand '\$cmd' \(([^)]*)\)", text)
+    assert m, "no unknown-subcommand refusal found in lanes-edit.sh"
+    listed = m.group(1).split("|")
+    assert sorted(set(listed)) == sorted(set(arms)), (
+        "the unknown-subcommand refusal and the dispatcher disagree:\n"
+        f"  in the arms but not the list: {sorted(set(arms) - set(listed))}\n"
+        f"  in the list but not the arms: {sorted(set(listed) - set(arms))}")
+    assert len(listed) == len(set(listed)), "the refusal lists a verb twice"
+
+
+def test_the_exit_code_table_carries_every_code_the_file_exits_with():
+    """*"EXIT CODES — every subcommand, one table, no two meanings on one
+    number"* is a claim the table makes about itself (`lanes-edit.sh:160`).
+
+    **64 was in no table at all** while twenty-one `die`s used it and the
+    contract gave it to every read Amendment 11 added (F-X16). A table that
+    says it is complete and is not is worse than no table, because it is the
+    thing a reader checks the code against.
+    """
+    text = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+    start = text.index("# EXIT CODES — every subcommand, one table")
+    # The table ends where the next header does. `\n#\n` is NOT the boundary:
+    # a row long enough to need a blank comment line inside it would truncate
+    # the table and the test would pass by reading less of it.
+    end = text.index("# --no-sweep", start)
+    table = text[start:end]
+    used = set()
+    for m in re.finditer(r'\bdie "(?:[^"\\]|\\.)*" (\d+)', text, re.S):
+        used.add(m.group(1))
+    for m in re.finditer(r"^\s*(?:return|exit) (\d+)\b", text, re.M):
+        used.add(m.group(1))
+    documented = set(re.findall(r"^#\s+(\d+)\s{2}", table, re.M))
+    missing = sorted(int(c) for c in used - documented - {"0"})
+    assert not missing, (
+        f"these exit codes are used and are in no row of the table: {missing}\n"
+        f"the table documents {sorted(int(c) for c in documented)}")
+    assert "64" in documented, "64 is the code every Amendment 11 read uses"
+
+
+#: ADOPTION ACT 0, AND THE ONE SHA THAT IS IT. `opensoft/brett-wip#5` merged
+#: 2026-09-13T19:14:37Z, SQUASHED — so the PR's pre-merge head is not an
+#: ancestor of `origin/main` and names code that never landed, while the merge
+#: commit does and is (F-X18, A11 Addendum 4 ruling 13).
+ACT0_MERGED = "3719d97"
+ACT0_DRAFT_HEAD = "95e7a4c"
+#: `opensoft/brett-wip#5` @`<sha>` — the citation shape this repository uses.
+ACT0_CITATION = re.compile(
+    r"`?opensoft/brett-wip#5`?\s*@`([0-9a-f]{7,40})`")
+
+
+def test_adoption_act_zero_is_cited_by_the_sha_that_landed():
+    """A SHA IN A COMMENT IS A CLAIM ABOUT HISTORY, and this one was false in
+    two files: `lane-start:1027` and `lanes-edit.sh:4794` both cited act 0 —
+    the register veto this branch builds its second layer beside — as
+    `95e7a4c`, which is `#5`'s DRAFT head. Measured: `git merge-base
+    --is-ancestor 95e7a4c origin/main` is false and the same test on
+    `3719d97` is true.
+
+    The draft head may still be NAMED, and both files now name it — as the
+    thing that did not land. What is checked here is the citation form
+    `opensoft/brett-wip#5 @<sha>`, which asserts "this is act 0".
+    """
+    tracked = subprocess.run(["git", "ls-files"], cwd=str(REPO),
+                             capture_output=True, text=True,
+                             check=True).stdout.splitlines()
+    offenders = {}
+    cited = 0
+    for rel in tracked:
+        path = REPO / rel
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_bytes().decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        # THE CITATION WRAPS, AND A LINE-BY-LINE MATCH WOULD MISS THE ONE THAT
+        # DID. `lane-start` writes it as "(`opensoft/brett-wip#5`\n#     @`…`)",
+        # so the comment marker of the continuation line sits between the two
+        # halves. Joined here before matching — measured: without this the
+        # regex found only `lanes-edit.sh`'s one-line citation and the mutation
+        # of `lane-start`'s survived.
+        flat = re.sub(r"\n[ \t]*#?[ \t]*", " ", text)
+        for sha in ACT0_CITATION.findall(flat):
+            cited += 1
+            if not (sha.startswith(ACT0_MERGED) or ACT0_MERGED.startswith(sha)):
+                offenders.setdefault(rel, []).append(sha)
+    assert cited, (
+        "no file cites adoption act 0 at all — this test has stopped testing "
+        "anything, or the citation form has changed")
+    assert not offenders, (
+        f"act 0 is cited by a sha that is not the merge commit {ACT0_MERGED}: "
+        f"{offenders}. `{ACT0_DRAFT_HEAD}` is the draft head and is not an "
+        "ancestor of origin/main.")
+
+
+#: EVERY SURFACE THAT PRINTS SOMETHING ABOUT A LIVE FORK. Six of them: `who`,
+#: the SessionStart hook, `live-holder`, `lanes`, `restart` and the `/restart`
+#: skill — and `lane-end`, which A11 Addendum 4 ruling 8 makes the DOOR and
+#: which must therefore hold to the same rule as the surfaces that print it.
+FORK_SURFACES = ("lanes-edit.sh", "lanes", "restart", "skills/restart/SKILL.md",
+                 "lane-end")
+#: A line that offers an act for a fork says `FORK` or `fork(s)` and an
+#: imperative beside it. Matched on the two spellings the surfaces use.
+FORK_ACT_LINE = re.compile(r"^.*(?:live FORK|live fork\(s\)).*$", re.M)
+
+
+#: The two halves of the `/lane-swap` skill that must spell the launch the same
+#: way: the `restart_cmd=` the skill EXECUTES into its printed line, and the
+#: prose three paragraphs below that explains it.
+SWAP_SKILL = "skills/lane-swap/SKILL.md"
+
+
+def test_the_swap_skill_snippet_and_its_prose_spell_the_same_command():
+    """AMENDMENT 11 CLAUSE (a), EDIT 5 OF SIX: *"Every printed restart command
+    becomes the short form … Amendment 8(a) step 5's prescribed
+    `pclaude run <profile>` becomes that short form wherever it is printed."*
+
+    At `dae38be` this file took the snippet half of that edit and left the
+    prose half — `restart_cmd="pclaude ${CLAUDE_PROFILE_NAME:-<profile>}"` with
+    three paragraphs below it still saying `pclaude run <profile>`. That is not
+    a wording nit: `opensoft/workBenches#74`'s
+    `devcontainer.test/test-claude-profile-skill-install.sh` EXECUTES step 5's
+    branch rather than grepping it, and reported
+    `FAIL: RV-S2: normal-path restart_cmd='pclaude work', expected the
+    unqualified command` against the vendored bytes
+    (openRepoTools#26-5656319349). The executed snippet and the paragraph
+    explaining it produced different commands.
+
+    So: no `restart_cmd=` may spell the verb, and every `pclaude run` left in
+    the file must be on a line that says WHY the long form is being named — it
+    is quoted twice, as the sentence clause (a) edits and as the argv the short
+    form builds — rather than printed as the act.
+    """
+    text = (REPO / SWAP_SKILL).read_text(encoding="utf-8")
+    bad_cmd = [l.strip() for l in text.splitlines()
+               if "restart_cmd=" in l and "pclaude run" in l]
+    assert not bad_cmd, (
+        "clause (a) makes every PRINTED restart command the short form, and "
+        f"these assignments spell the verb:\n{bad_cmd}")
+    assigns = [l for l in text.splitlines() if l.strip().startswith("restart_cmd=")]
+    assert len(assigns) >= 2, (
+        f"{SWAP_SKILL} has {len(assigns)} `restart_cmd=` assignments; step 5 "
+        "has two branches (with --lane and without) and this test is stale")
+    unexplained = [l.strip()[:120] for l in text.splitlines()
+                   if "pclaude run" in l
+                   and "short form" not in l and "SAME argv" not in l]
+    assert not unexplained, (
+        "these lines print the LONG form without naming it as the one clause "
+        f"(a) supersedes, so the prose no longer agrees with the snippet:\n"
+        f"{unexplained}")
+    # AND `--lane` IS LEADING, on both halves. Measured on the live launcher
+    # (`claude-profile`): `--lane` is read only BEFORE the action or the
+    # profile — *"the first token that is not one of them ends this loop"* — so
+    # a `--lane` after the profile is handed to Claude and the lane is never
+    # taken.
+    after = [l.strip()[:120] for l in text.splitlines()
+             if re.search(r"pclaude (?:run )?[^`\s]*<?profile>? --lane", l)
+             and "never after" not in l and "handed to Claude" not in l]
+    assert not after, (
+        "`--lane` is a LEADING option of the launcher; after the profile it is "
+        f"passed to Claude and the lane is never taken:\n{after}")
+
+
+def test_every_fork_surface_prints_the_one_act():
+    """CLAUSE (k) RULE (e), and it names the act: *"both print the one act:
+    **retire it**, under Amendment 6(d) … **Neither kills a process** … and
+    `lane-end`'s `--retire` is the door."*
+
+    At `dae38be` the estate printed THREE other things and not that one
+    (F-X8): `restart:214` printed `lanes-edit.sh forks <lane>`, which is a
+    READ that retires nothing; `lanes:173` printed *"Name them"*; and `who`,
+    `live-holder`, the SessionStart hook and the `/restart` skill printed
+    `kill <pid>` — the one act the ruling refuses by name.
+
+    Derived rather than restated: every line in every surface that speaks of a
+    live fork must name `--retire`, and none may offer a `kill`. The IDLE
+    HOLDERS of a lane are a different population — earlier sessions of the lane
+    ITSELF, Amendment 6(d)'s orphans, which `lane-end --retire` refuses because
+    they are not forks — and their `kill` lines are deliberately untouched, so
+    this matches fork lines only.
+    """
+    offenders = {}
+    for rel in FORK_SURFACES:
+        text = (REPO / rel).read_text(encoding="utf-8")
+        for line in FORK_ACT_LINE.findall(text):
+            # `\bkill\b` AND NOT `"kill" in line`: the word `skill` contains it,
+            # and `skills/restart/SKILL.md` is one of the files being walked.
+            if re.search(r"\bkill\b", line) and "--retire" not in line:
+                offenders.setdefault(rel, []).append(line.strip()[:160])
+    assert not offenders, (
+        "these fork lines still offer a `kill` and not clause (k) rule (e)'s "
+        f"one act:\n{offenders}")
+    # …and the act is actually printed somewhere in each of the four.
+    missing = [rel for rel in FORK_SURFACES
+               if "--retire" not in (REPO / rel).read_text(encoding="utf-8")]
+    assert not missing, f"these surfaces name no `--retire` act at all: {missing}"
+
+
+def test_the_manual_offers_the_fork_act_and_not_a_kill():
+    """THE SAME RULE AS THE TEST ABOVE, READ BY PARAGRAPH BECAUSE PROSE WRAPS.
+
+    `test_every_fork_surface_prints_the_one_act` matches LINES, and a line is
+    the right unit in a bash file where each message is one string. It is the
+    wrong unit in a manual: `README-lanes.md`'s fork paragraph said *"none of
+    them kills anything - retiring is `kill <pid>`, typed by a person"*, and
+    the two halves of that contradiction sat on two different lines, so no
+    line-matching rule could see it and the document went on offering the one
+    act clause (k) rule (e) refuses BY NAME while the five surfaces beside it
+    had all been corrected (F-X8).
+
+    So the manual is read as PARAGRAPHS: any paragraph that speaks of a fork
+    and offers a `kill` must name `--retire`. The idle holders of a lane are a
+    different population - Amendment 6(d)'s orphans, which `lane-end --retire`
+    refuses because they are not forks - and their `kill` lines are untouched
+    here for the same reason the test above leaves them alone.
+    """
+    text = (REPO / "docs/README-lanes.md").read_text(encoding="utf-8")
+    offenders = [" ".join(para.split())[:200]
+                 for para in re.split(r"\n\s*\n", text)
+                 if re.search(r"\bfork\b", para, re.I)
+                 and re.search(r"\bkill\b", para)
+                 and "--retire" not in para]
+    assert not offenders, (
+        "these paragraphs of the manual offer a `kill` for a fork and never "
+        f"clause (k) rule (e)'s one act:\n  " + "\n  ".join(offenders))
+    assert "lane-end <lane> --retire <pid|uuid>" in text, (
+        "the manual never spells the one fork act in full")
 
 
 def test_no_committed_file_names_a_host_absolute_path():
@@ -1548,6 +2196,45 @@ def test_no_shipped_bash_quotes_the_replacement_half_of_a_substitution(name):
         f"writes those quote marks out as text. Build the string from "
         f"`${{var%%\"$pat\"*}}` and `${{var#*\"$pat\"}}` instead:\n  "
         + "\n  ".join(bad))
+
+
+@pytest.mark.parametrize("name", ALL_BASH)
+def test_no_shipped_bash_opens_a_case_inside_a_command_substitution(name):
+    """A `)` THAT CLOSES A `case` PATTERN CLOSES THE SUBSTITUTION TOO (A9
+    Addendum 4, R-A9-11).
+
+    Bash 3.2 - the bash the macOS job parses these files with - reads the `)`
+    that ends a case PATTERN as the one that ends the enclosing `$( )`. So
+    `$(case "$x" in a) printf yes ;; *) printf no ;; esac)` is a SYNTAX ERROR
+    there and nowhere else, and what the caller gets back is a fragment of the
+    script's own source. The job answered `command substitution: line 3284:
+    syntax error near unexpected token 'newline'` at `dcf1027`; two more of the
+    shape were written into this amendment's own suite afterwards, and at
+    `708395e` `tests-macos` compared ` printf 'resumed Y' ;; *) printf 'did
+    not' ;; esac)` against `did not` - twice, and green on every GNU runner.
+
+    A `bash -n` ON A GNU RUNNER PARSES IT, which is why this is a text rule
+    rather than a parse gate: all eleven files already pass `bash -n` in CI,
+    and the macOS job is the only place the defect exists. The fix is one line
+    each time - hoist the `case` above the assertion and read the variable it
+    sets - so the rule is held for every bash file this repository ships
+    rather than for the two that were found.
+
+    Only the same-line form is matched. A `case` inside a multi-line `$(` ...
+    `)` is the same defect and wants the same hoist, but a line-level regex is
+    what the three rules beside this one are, and a paren-counting scanner that
+    misread one quoted `)` would refuse a file for nothing.
+    """
+    text = (REPO / name).read_text(encoding="utf-8")
+    bad = [f"{number}: {line.strip()}"
+           for number, line in enumerate(text.splitlines(), 1)
+           if not line.lstrip().startswith("#")
+           and re.search(r"\$\([^()]*\bcase\b", line)]
+    assert not bad, (
+        f"{name} opens a `case` inside a `$( )`; bash 3.2 ends the "
+        f"substitution at the first pattern's `)` and hands the caller a piece "
+        f"of the script's own source. Hoist the `case` onto its own line and "
+        f"read the variable it sets:\n  " + "\n  ".join(bad))
 
 
 @pytest.mark.parametrize("name", ALL_BASH)
