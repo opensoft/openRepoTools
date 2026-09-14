@@ -5039,9 +5039,12 @@ session_start_block() {
   # the row's token — so `$ssb_lane` is canonical from here down, which is what
   # makes `lane_start_args` below hand a reader the commands filled in with the
   # spelling their window and their session are about to be named.
-  # AMENDMENT 12'S GUARD AND LOCK PLUG IN HERE (opensoft/openRepoTools#25, not
-  # built): the lock renames a session whose name differs from `$ssb_lane` only
-  # by case, with a `/rename` to that spelling.
+  # AMENDMENT 12'S GUARD AND LOCK PLUG IN HERE, and since #25 they ARE built —
+  # `ssb_name_line` immediately below is clause (f), and the lock it types is
+  # the same `guard_type` the `UserPromptSubmit` guard uses. A session whose
+  # name differs from `$ssb_lane` only by case is renamed to the ROW's spelling
+  # like any other drift, which is what makes this line and Amendment 15 one
+  # rule rather than two.
   ssb_lane=""
   [ -n "$ssb_win" ] && ssb_lane="$(lane_named_ci "$ssb_win" 2>/dev/null || :)"
   [ -n "$ssb_lane" ] || [ -z "$ssb_id" ] || ssb_lane="$(lane_of_session "$ssb_id" 2>/dev/null || :)"
@@ -5337,9 +5340,14 @@ record_window_state() {   # <the record's tmux field>
 # THREE IN-FORCE RULES MEET HERE AND NONE OF THEM MAY BE OVERTURNED BY THIS ONE:
 #
 #   here        the record is THIS window's own process — its `tmux` names this
-#               window, or its pid is this pane's or below it (`record_is_here`'s
-#               tiers 1 and 2; its tier 3 cannot discriminate, because every
-#               candidate carries the very id it tests).
+#               window, or its pid is this pane's or below it: `record_is_here`'s
+#               TIERS 2 AND 3, and its tier 1 is left out because it cannot
+#               discriminate here. That tier asks whether the record's
+#               `sessionId` is `$CLAUDE_CODE_SESSION_ID`, and every candidate in
+#               this set carries the very id being tested — so on the asking
+#               session's own transcript it would answer `here` for the
+#               duplicate too, which is the one reading this function exists to
+#               prevent.
 #   companion   not this window's, and in the SAME profile's `sessions/` as this
 #               window's own record of this id. AMENDMENT 8, RULING (g): *"Beside
 #               the interactive process in the pane the harness runs a companion:
@@ -5763,6 +5771,29 @@ guard_run() {   # <the hook's JSON, on stdin already read>
     fi
     return 2
   fi
+
+  # ---- AMENDMENT 18 CLAUSES (d) AND (e) PLUG IN HERE, AND NOT IN THIS PULL
+  # REQUEST. Both are reads of THIS lane's own object log, made at this point
+  # for the same reason (h)'s count is: the lane is known, nothing has been
+  # judged yet, and a refusal here costs the prompt and nothing else.
+  #
+  #   (d) a `HANDOFF-REQUESTED` newer than this session's binding and not yet
+  #       answered by a `PAUSED` of its own -> refuse this one prompt, naming
+  #       who asked and from where, and type `/handoff --exit requested by …`
+  #       into this pane ((h)1's mechanism, which `guard_type` already is);
+  #   (e) a `PAUSED … on behalf of <this uuid>` newer than this session's
+  #       binding that THIS session did not write -> refuse EVERY prompt from
+  #       then on, naming the line and who forced it, until the person here
+  #       runs the handoff themselves or ends the session.
+  #
+  # NEITHER CAN BE BUILT YET AND THAT IS A DEPENDENCY, not a deferral: (d)'s
+  # answer IS Amendment 17(a)'s handoff under `--exit` (opensoft/openRepoTools#36)
+  # and (e)'s line is written by the `--force` writer Amendment 18 adoption act 1
+  # adds (#38). A guard that refused on a line no writer in this estate can yet
+  # produce would be refusing on a read of a log that never carries it — and a
+  # guard that TYPED `/handoff --exit` into a pane where that flag does not exist
+  # would type a command into somebody's session that does nothing. #38 is where
+  # both land, and Amendment 18's own adoption list puts it after this one.
 
   # ---- (b) ROWS 1 AND 2: THE WINDOW IS NOT A LANE.
   if [ -z "$G_LANE" ]; then

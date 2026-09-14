@@ -69,7 +69,8 @@ usage() {
 openRepoTools --install            install (or update) the eleven estate and
                                    lane commands into ~/.local/bin, plus the
                                    /lane-swap and /restart skills, the /swap
-                                   command file and the SessionStart hook entry
+                                   command file, and the SessionStart hook
+                                   entry and the UserPromptSubmit name guard
 openRepoTools wip init             create your workspace repository, clone it,
                                    seed it, and point this workstation at it
 openRepoTools --help | --version
@@ -111,10 +112,13 @@ lane words, the four lane helpers and the alias table they read:
 `~/.claude/skills/<name>/SKILL.md`, for `lane-swap` and `restart` — and ONE
 COMMAND FILE at the matching pair, `~/.claude-profiles/shared/commands/swap.md`
 and `~/.claude/commands/swap.md`, which is clause (g)'s ratified `/swap` alias
-of `/lane-swap` and adds nothing to it. It merges ONE `SessionStart` entry into
-`~/.claude/settings.json` (needs `jq`, and refuses rather than rewriting a file
-it cannot parse). It never writes a profile's own settings.json: the launcher
-owns that one.
+of `/lane-swap` and adds nothing to it. It merges TWO entries into
+`~/.claude/settings.json` — the `SessionStart` one and, since
+lane-collision-protocol Amendment 12, the `UserPromptSubmit` NAME GUARD, which
+refuses a prompt whose window, session name and register row are not one lane
+(needs `jq`, refuses rather than rewriting a file it cannot parse, and leaves
+every `UserPromptSubmit` hook of your own exactly where it is). It never writes
+a profile's own settings.json: the launcher owns that one.
 
 `/restart` is the INSIDE half of `restart` and has to be a skill: a running
 session cannot `exec` a launcher over itself, so it binds the window, stamps
