@@ -1610,8 +1610,10 @@ $unrelated
 	workdir
 	for rel in "${WIP_TEMPLATE_FILES[@]}"; do
 		dest="$WORKDIR/tpl-$(printf '%s' "$rel" | tr '/' '_')"
-		if [ -e "$checkout/$rel" ]; then
-			# ALREADY THERE — AND THE SEED CAN STILL OWE IT. A template path the
+		if [ -e "$checkout/$rel" ] || [ -L "$checkout/$rel" ] ||
+			git -C "$checkout" cat-file -e ":$rel" 2>/dev/null
+		then
+			# ALREADY THERE, OR AS GOOD AS — AND THE SEED CAN STILL OWE IT. A template path the
 			# WORKTREE carries and HEAD does not is what an earlier run of this
 			# command leaves behind when it copied the template and could not
 			# commit it: no `user.email`, the case the refusal below is written
@@ -1624,7 +1626,7 @@ $unrelated
 			# change at one is not its leftover and never enters its commit
 			# (#44 round 1, `openRepoTools:1525`).
 			#
-			# `! cat-file -e HEAD:…` ALONE IS NOT PROOF (#44 round 2,
+			# `! cat-file -e HEAD:—` ALONE IS NOT PROOF (#44 round 2,
 			# `openRepoTools:1621`): a template path that is UNTRACKED and
 			# carries a PERSON'S OWN CONTENT is absent from HEAD exactly as
 			# this command's own leftover is, so it answered this question the
@@ -1634,7 +1636,45 @@ $unrelated
 			# there, so the template is fetched and substituted the same way
 			# a MISSING file below is, and the two are compared before either
 			# is trusted as this command's own.
+			#
+			# THE WORKTREE TEST ALONE MISSES TWO MORE SHAPES (#44 round 3,
+			# `openRepoTools:1613`): a DANGLING symlink answers `[ -e ]` false
+			# exactly as nothing-there-at-all does, so without the `-L` above the
+			# MISSING branch below would meet it at `cp` and follow it — writing
+			# this run's bytes wherever it points, inside this checkout or far
+			# outside it; and a person's own `git add` of a template path,
+			# followed by removing the worktree file, leaves the INDEX carrying
+			# something the worktree no longer does, which the same MISSING
+			# branch would silently overwrite at `cp` and step 8 would then stage
+			# over. Both are asked for here instead, beside the worktree.
 			if ! git -C "$checkout" cat-file -e "HEAD:$rel" 2>/dev/null; then
+				# A SYMLINK HERE IS NEVER THIS COMMAND'S OWN, DANGLING OR NOT: `cmp`
+				# reads through a link to whatever it names, so a live one whose
+				# target happens to hold the template's own bytes would pass the
+				# comparison below, and a `git add` of it stages the LINK ITSELF
+				# — not the bytes at its far end. This command has never placed
+				# a link at a template path, so one here is refused before either
+				# branch can act on it, or on whatever it points at.
+				if [ -L "$checkout/$rel" ]; then
+					die "$checkout/$rel is a symlink, and a seed commit is the template's own
+    bytes and never a link to wherever one points, dangling or not. Nothing beyond this
+    run's own template bytes was written into that checkout, and nothing was staged.
+    Remove or replace that path, then re-run:
+        openRepoTools wip init"
+				fi
+				# AND THE INDEX CAN OWE SOMETHING THE WORKTREE NO LONGER HAS AT ALL:
+				# this command has never staged a path and then removed its own file
+				# from under it, so an index entry with nothing on disk behind it is
+				# somebody else's, whatever it holds.
+				if [ ! -e "$checkout/$rel" ]; then
+					die "$checkout/$rel does not exist, HEAD does not carry $rel, and something is
+    staged there anyway — so this is somebody's own staged addition, removed from the
+    worktree after being added, and not this command's to overwrite or commit over. Nothing
+    beyond this run's own template bytes was written into that checkout, and nothing
+    already staged was changed.
+    Commit, stash or unstage that path, then re-run:
+        openRepoTools wip init"
+				fi
 				wip_fetch_template_file "$rel" "$dest" "$ref" ||
 					die "could not fetch $WIP_TEMPLATE_DIR/$rel from $SHAPE_REPOSITORY at $ref, so the
     workspace was NOT seeded. The clone at $checkout is untouched and a re-run
@@ -1642,7 +1682,7 @@ $unrelated
     gh api repos/$SHAPE_REPOSITORY/contents/$WIP_TEMPLATE_DIR/$rel?ref=$ref
     curl -fsSL https://raw.githubusercontent.com/$SHAPE_REPOSITORY/$ref/$WIP_TEMPLATE_DIR/$rel"
 				wip_substitute "$dest"
-				# THE WORKTREE IS NOT THE ONLY PLACE THOSE BYTES CAN LIE (#44
+				# THE WORKTREE IS NOT THE ONLY PLACE THOSE BYTES CAN LIE EITHER (#44
 				# round 3, `openRepoTools:1647`): HEAD lacking `$rel` says nothing
 				# about the INDEX, so a person's own edit `git add`ed at this path
 				# — staged before this run and never committed — sits exactly
@@ -1665,8 +1705,8 @@ $unrelated
     bytes, or both are not what $SHAPE_REPOSITORY's $WIP_TEMPLATE_DIR/$rel substitutes to at
     $ref — so this is not an earlier run's own leftover; it is somebody's own file, staged or
     not, at a path the template also names. A seed commit is the template and nothing else, and
-    this command will not publish it or stage over what is already staged there.
-    NOTHING was written into that checkout on this run and nothing was staged.
+    this command will not publish it or stage over what is already staged there. Nothing beyond
+    this run's own template bytes was written into that checkout, and nothing was staged.
     Commit, stash or remove that path, then re-run:
         openRepoTools wip init"
 				fi

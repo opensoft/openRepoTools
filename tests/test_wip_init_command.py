@@ -766,7 +766,8 @@ def test_an_untracked_file_at_a_template_path_is_refused_not_absorbed(tmp_path):
 
     assert result.returncode == 2, result.stdout + result.stderr
     assert "handoffs/README.md exists" in result.stderr, result.stderr
-    assert "NOTHING was written into that checkout on this run" in result.stderr
+    assert ("run's own template bytes was written into that checkout, "
+            "and nothing was staged.") in result.stderr
     assert foreign.read_text(encoding="utf-8") == foreign_text, (
         "the foreign file was overwritten")
     assert staged_in(checkout) == "", "the foreign file was staged"
@@ -817,7 +818,8 @@ def test_a_staged_edit_at_a_missing_path_is_refused_even_when_the_worktree_reads
 
     assert result.returncode == 2, result.stdout + result.stderr
     assert "handoffs/README.md exists" in result.stderr, result.stderr
-    assert "NOTHING was written into that checkout on this run" in result.stderr
+    assert ("run's own template bytes was written into that checkout, "
+            "and nothing was staged.") in result.stderr
     assert foreign.read_text(encoding="utf-8") == template_bytes, (
         "the worktree file was overwritten")
     assert staged_in(checkout).split() == ["handoffs/README.md"], (
@@ -827,6 +829,110 @@ def test_a_staged_edit_at_a_missing_path_is_refused_even_when_the_worktree_reads
         capture_output=True, text=True, check=True).stdout
     assert staged_blob == foreign_text, (
         "the seed overwrote the person's staged edit with the template")
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+
+
+@pytest.mark.parametrize("dangling", [True, False],
+                         ids=["dangling", "live-matching-target"])
+def test_a_symlink_at_a_missing_template_path_is_refused_not_followed(
+        tmp_path, dangling):
+    """NEITHER `cmp` NOR `cp` MAY BE TRUSTED THROUGH ONE (#44 round 3,
+    `openRepoTools:1613` and `:1647`).
+
+    `[ -e ]` alone answers false for a DANGLING symlink exactly as it does for
+    nothing there at all, so without also asking `-L` this path would reach
+    the MISSING branch and meet `cp` at a link — writing this run's bytes
+    wherever the link points, inside the checkout or far outside it. And a
+    LIVE symlink whose target happens to hold the template's own bytes would
+    pass the worktree comparison the owed-candidate branch makes, and a
+    `git add` of it would stage the LINK ITSELF, never the bytes at its far
+    end. Both shapes are refused the same way, before either branch acts on
+    the link or on whatever it points at.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout = adopted_checkout(tmp_path, home, env)
+    template_bytes = (checkout / "handoffs" / "README.md").read_text(
+        encoding="utf-8")
+    for args in (["rm", "-q", "--", "handoffs/README.md"],
+                 ["commit", "-q", "-m", "somebody removed the handoffs README"],
+                 ["push", "-q", "origin", "HEAD:main"]):
+        subprocess.run(["git", "-C", str(checkout), *args], check=True)
+    before_head = head_of(checkout)
+
+    link = checkout / "handoffs" / "README.md"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    # OUTSIDE the checkout: a file inside it would itself be an untracked
+    # path step 6a's own refusal catches first, and that is a different
+    # test (`test_an_adopted_checkout_with_unrelated_changes_is_refused`).
+    if dangling:
+        target = tmp_path / "nowhere-at-all"
+    else:
+        target = tmp_path / "elsewhere-with-template-bytes.md"
+        target.write_text(template_bytes, encoding="utf-8")
+    link.symlink_to(target)
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"{link} is a symlink" in result.stderr, result.stderr
+    assert ("run's own template bytes was written into that checkout, "
+            "and nothing was staged.") in result.stderr, result.stderr
+    assert link.is_symlink(), "the symlink was replaced"
+    if not dangling:
+        assert target.read_text(encoding="utf-8") == template_bytes, (
+            "the symlink's target was modified")
+    assert staged_in(checkout) == "", "the symlink was staged"
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+
+
+def test_a_staged_addition_with_no_worktree_file_is_refused_not_overwritten(
+        tmp_path):
+    """THE INDEX CAN OWE SOMETHING THE WORKTREE NO LONGER HAS AT ALL (#44
+    round 3, `openRepoTools:1613`).
+
+    A person's own `git add` of a template path, followed by removing the
+    worktree file, leaves the INDEX carrying something the worktree does not
+    — a shape `[ -e "$checkout/$rel" ]` alone reads as plain MISSING, which
+    would `cp` the template straight in and let step 8's own `add` stage over
+    whatever they had. This command has never staged a path and then removed
+    its own file out from under it, so an index entry with nothing on disk
+    behind it is never this command's own leftover, whatever it holds.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout = adopted_checkout(tmp_path, home, env)
+    for args in (["rm", "-q", "--", "handoffs/README.md"],
+                 ["commit", "-q", "-m", "somebody removed the handoffs README"],
+                 ["push", "-q", "origin", "HEAD:main"]):
+        subprocess.run(["git", "-C", str(checkout), *args], check=True)
+    before_head = head_of(checkout)
+
+    staged = checkout / "handoffs" / "README.md"
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    staged_text = "somebody's own staged addition, then the file was removed\n"
+    staged.write_text(staged_text, encoding="utf-8")
+    subprocess.run(["git", "-C", str(checkout), "add", "--",
+                    "handoffs/README.md"], check=True)
+    staged.unlink()
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"{staged} does not exist, HEAD does not carry" in result.stderr, (
+        result.stderr)
+    assert not staged.exists(), "a file was written where there was none"
+    staged_blob = subprocess.run(
+        ["git", "-C", str(checkout), "show", ":handoffs/README.md"],
+        capture_output=True, text=True, check=True).stdout
+    assert staged_blob == staged_text, (
+        "the seed overwrote the person's staged addition")
     assert head_of(checkout) == before_head, (
         "a commit was made despite the refusal")
     assert remote_main(tmp_path) == before_head, (
