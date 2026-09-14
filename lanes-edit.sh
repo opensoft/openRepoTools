@@ -1045,12 +1045,21 @@ commit_push() {
       git -C "$LANES_REPO" rebase --abort 2>/dev/null || :
       note "rebase ABORTED — the worktree is clean and NOT mid-rebase. Your edit is safe in these local commits:"
       git -C "$LANES_REPO" --no-pager log --oneline "origin/$LANES_BRANCH..HEAD" 2>/dev/null | head -n 10 >&2 || :
+      # #32 — AN ABORTED PULL IS NOT PROOF THIS COMMIT NEVER REACHED ORIGIN
+      # (the same rule RV-B3 took for the handoff stamp's own push, in
+      # lane-start). This checkout is shared with every lane on the
+      # workstation, so the very next write out of it pulls this dangling
+      # commit onto its own and pushes both together — three of the four
+      # "rebase conflict … nothing was pushed" lines seen on Eagle in one
+      # hour named a commit that was ALREADY on origin by the time anyone
+      # read them. LOOK before you reset or redo anything.
       note "RECOVERY (in that order):"
-      note "  git -C $LANES_REPO diff origin/$LANES_BRANCH..HEAD -- ${CP_PATHS[*]}   # read back exactly what you wrote"
-      note "  git -C $LANES_REPO reset --hard origin/$LANES_BRANCH                # drop the local commits (NOTE: also drops any"
+      note "  git -C $LANES_REPO fetch origin $LANES_BRANCH && git -C $LANES_REPO log --oneline origin/$LANES_BRANCH -3   # a write that ran after this one may already have carried it"
+      note "  git -C $LANES_REPO diff origin/$LANES_BRANCH..HEAD -- ${CP_PATHS[*]}   # only if it is not there: read back exactly what you wrote"
+      note "  git -C $LANES_REPO reset --hard origin/$LANES_BRANCH                # then drop the local commits (NOTE: also drops any"
       note "                                                          # uncommitted peer edit in this checkout)"
       note "  then re-read LANES.md and redo the edit with lanes-edit.sh, on top of the peer's version."
-      die "rebase conflict on origin/$LANES_BRANCH — nothing was pushed." 3
+      die "rebase conflict on origin/$LANES_BRANCH — not pushed by this attempt; a later write from this checkout may already carry it, so look before you retry." 3
     fi
     attempt=$((attempt + 1))
     sleep 3
