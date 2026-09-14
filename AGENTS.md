@@ -3,7 +3,7 @@
 Three estate commands, `park`, `resume` and `status`; the lane tooling
 `lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates`, which came here
 with their history under lane-collision-protocol Amendment 9; and the
-`openRepoTools` that places all eleven files and creates the workspace they read.
+`openRepoTools` that places all twelve files and creates the workspace they read.
 **The verbs add no mechanics.**
 They find the estate and run its own `make park` / `make resume`, which run
 the Speckit git extension's scripts — one implementation, ruled 2026-09-09

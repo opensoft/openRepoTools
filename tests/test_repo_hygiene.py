@@ -48,12 +48,29 @@ SHIPPED_BASH = ["openRepoTools", "park", "resume", "status", "restart", "lanes"]
 #: own refusal and release the lock rather than exiting where it stands.
 LANE_BASH = ["lanes-edit.sh", "lane-start", "lane-end", "link-estates"]
 
+#: `lane-handoff`, under lane-collision-protocol Amendment 17(a) — *"the act
+#: Amendment 8(a) calls the swap is the HANDOFF: `lane-handoff` on `PATH`
+#: (placed by `openRepoTools --install`) from a shell"*. It is shipped bash and
+#: `--install` places it, so it takes the shebang, the executable bit, the LF
+#: index, the bash-3.2 parse and the flag-spelling rule with the lane helpers.
+#:
+#: IT IS IN NEITHER LIST ABOVE, and each of them states its own reason. Not
+#: `SHIPPED_BASH`, because it does not `set -e`: `R-A11-11` is that a swap is
+#: never left unwritten, so a read that fails part-way through must reach this
+#: command's own refusal — or drop one sub-field and carry on — rather than
+#: exiting where it stands, which is `lanes-edit.sh`'s exception one file over.
+#: Not `LANE_BASH`, because it carries no copy of Amendment 9(a)'s workspace
+#: resolver: it resolves no workspace, and the one path it needs comes back
+#: from `lanes-edit.sh workspace-root`. That is the same "one implementation,
+#: several callers" rule `restart` and `lanes` are out of `LANE_BASH` for.
+HELPER_BASH = ["lane-handoff"]
+
 #: Every bash file this repository ships, for the claims that are about BASH
 #: and not about a command's failure discipline: the parse gate and the LF
 #: index. The moved suite is 196 KB of it and is in this list for the reason
 #: Amendment 9's act-3 obligation 4 gives — the macOS job parses it with bash
 #: 3.2, where a `${x,,}` that nobody ran is still a syntax error.
-ALL_BASH = SHIPPED_BASH + LANE_BASH + ["tests/test_lane_helpers.sh"]
+ALL_BASH = SHIPPED_BASH + LANE_BASH + HELPER_BASH + ["tests/test_lane_helpers.sh"]
 
 #: THE COMMANDS THAT CARRY THE SHARED ESTATE RESOLVER, byte for byte. Every
 #: estate command is one; the installer is not, it finds no estate.
@@ -80,15 +97,16 @@ def test_shipped_bash_is_executable_and_fails_loudly(name):
         "carry on with an unset variable")
 
 
-@pytest.mark.parametrize("name", LANE_BASH)
+@pytest.mark.parametrize("name", LANE_BASH + HELPER_BASH)
 def test_the_lane_helpers_are_executable_and_declare_their_discipline(name):
     """The lane helpers, held to what they are rather than to what the estate
     commands are (Amendment 9(b)).
 
     Same shebang and same executable bit — `--install` stamps 755 on everything
     it places, and a copy that is not executable is not a command. `set -u` is
-    the floor all four share; `set -e` is NOT required of `lanes-edit.sh`,
-    whose whole job is to hold a lock, reach its own refusal and release it.
+    the floor all five share; `set -e` is NOT required of `lanes-edit.sh`,
+    whose whole job is to hold a lock, reach its own refusal and release it,
+    nor of `lane-handoff`, whose whole job is to leave no swap unwritten.
     """
     script = REPO / name
     assert script.is_file()
@@ -121,6 +139,84 @@ def test_shipped_bash_parses_under_bash(name):
     proc = subprocess.run(["bash", "-n", str(REPO / name)],
                           capture_output=True, text=True, check=False)
     assert proc.returncode == 0, proc.stderr
+
+
+def test_the_macos_job_parses_every_bash_file_this_repository_ships():
+    """THE macOS PARSE STEP IS A HAND-WRITTEN LIST, AND A HAND-WRITTEN LIST IS
+    A THING SOMEBODY FORGETS.
+
+    That step is the only place the README's claim — that Apple's stock
+    `/bin/bash`, 3.2, is enough for every bash file here — is actually asked of
+    bash 3.2. The test above runs on whatever `bash` the runner has, which on
+    the Linux jobs is 5.x, and `mapfile`, `${x,,}` and `declare -A` all parse
+    there. One command per file, because `bash -n a b` parses `a` and hands `b`
+    to it as `$1`, so a file appended to somebody else's line is never read at
+    all — which is why this is a per-name check and not a substring search for
+    the step.
+
+    Held here rather than trusted, because the omission has no symptom: the job
+    goes green, and what it proves is quietly one file smaller than it says.
+    `lane-handoff` arrived under Amendment 17(a) as the twelfth placed file and
+    was not in that list; nothing anywhere said so.
+    """
+    workflow = (REPO / ".github" / "workflows" / "tests.yml").read_text(
+        encoding="utf-8")
+    parsed = {line.strip()[len("/bin/bash -n "):]
+              for line in workflow.splitlines()
+              if line.strip().startswith("/bin/bash -n ")}
+    assert parsed, "the macOS job no longer runs `/bin/bash -n` at all"
+    missing = [name for name in ALL_BASH if name not in parsed]
+    assert not missing, (
+        "the macOS job's `/bin/bash -n` step does not parse every bash file "
+        "this repository ships, so the bash-3.2 claim is untested for:\n  "
+        + "\n  ".join(missing))
+
+
+#: THE FILES `--install` PLACES, READ OUT OF THE INSTALLER'S OWN LIST rather
+#: than restated here. `openRepoTools` declares them once — *"One list, so the
+#: installer, the fetch and the report cannot disagree"* — and deriving from it
+#: is what makes the rule below hold for the NEXT file this repository ships
+#: without anyone remembering to come here.
+def _installables() -> list[str]:
+    text = (REPO / "openRepoTools").read_text(encoding="utf-8")
+    match = re.search(r"^INSTALLABLES=\(([^)]*)\)$", text, re.MULTILINE)
+    assert match, "openRepoTools no longer declares `INSTALLABLES=( … )`"
+    names = match.group(1).split()
+    assert len(names) > 1, "INSTALLABLES parsed as one entry; the shape moved"
+    return names
+
+
+def test_every_placed_file_carries_in_the_index_the_mode_it_is_placed_with():
+    """A COMMAND THAT IS NOT EXECUTABLE IS NOT A COMMAND, AND THE INDEX IS
+    WHERE A FRESH CLONE READS THAT FROM.
+
+    `--install` stamps 755 on everything it places, so an installed copy runs
+    whatever the checkout says. What does NOT is the checkout itself: `./park`
+    from a clone, and the `cp -p` the lane suite copies `lane-handoff` with,
+    both take the mode git recorded. `lane-handoff` was committed 100644 under
+    Amendment 17(a) and the suite's own `chmod` hid it — which is the whole
+    reason this is asked of the INDEX and derived from the installer's list
+    instead of a list here: the two tests above are per-name, and a name nobody
+    added to either of them is a name neither one asks about.
+
+    The data file is the exception and is named as one: `repos.tsv` is read,
+    never run.
+    """
+    names = _installables()
+    proc = subprocess.run(["git", "ls-files", "-s", "--", *names],
+                          cwd=str(REPO), capture_output=True, text=True,
+                          check=True)
+    modes = {row.split("\t", 1)[1]: row.split(" ", 1)[0]
+             for row in proc.stdout.splitlines()}
+    assert sorted(modes) == sorted(names), (
+        f"`--install` names a file git does not track: {sorted(set(names) - set(modes))}")
+    for name in names:
+        want = "100644" if name.endswith(".tsv") else "100755"
+        assert modes[name] == want, (
+            f"{name} is {modes[name]} in the index and `--install` places it "
+            f"as {want}. For a command that is `git update-index --chmod=+x "
+            f"{name}`; a file that is DATA rather than a command wants the "
+            f"rule above it widened, not this one loosened")
 
 
 def test_the_estate_commands_carry_the_same_estate_resolver_byte_for_byte():
@@ -2349,7 +2445,7 @@ def test_no_shipped_bash_opens_a_case_inside_a_command_substitution(name):
     not' ;; esac)` against `did not` - twice, and green on every GNU runner.
 
     A `bash -n` ON A GNU RUNNER PARSES IT, which is why this is a text rule
-    rather than a parse gate: all eleven files already pass `bash -n` in CI,
+    rather than a parse gate: all twelve files already pass `bash -n` in CI,
     and the macOS job is the only place the defect exists. The fix is one line
     each time - hoist the `case` above the assertion and read the variable it
     sets - so the rule is held for every bash file this repository ships

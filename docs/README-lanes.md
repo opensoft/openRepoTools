@@ -73,7 +73,7 @@ workstation**.
 | the object logs | `<the checkout>/lanes/log/<lane>.md` — one per lane (Amendment 7) |
 | the alias table | two layers: `repos.tsv` shipped by openRepoTools and installed beside the commands, then `<the checkout>/lanes/repos.tsv` where you keep an override (Amendment 9(b)) |
 | who places the symlinks | `link-estates`, an installed command. It places the handoffs links, the register link and the `lanes-edit.sh` link — **and no longer the two `~/.local/bin` ones**, which `--install` owns |
-| who installs all of it | `openRepoTools --install` (eleven files, idempotent, all-or-nothing) |
+| who installs all of it | `openRepoTools --install` (twelve files, idempotent, all-or-nothing) |
 
 Why `main` of the workspace repository and not the aggregation's: the
 aggregation repo's `main` is PR-only (org rulesets `xFactory Tier-1 main
@@ -1645,7 +1645,7 @@ machine whose repository already exists it clones it, adds nothing to a seeded
 repository, writes the pointer file and runs `link-estates`:
 
 ```sh
-openRepoTools --install     # the eleven commands, the two skills and the hook entry
+openRepoTools --install     # the twelve commands, the three skills, the three command files and the hook entry
 openRepoTools wip init      # create or adopt the workspace, and link it
 ```
 
@@ -1690,8 +1690,8 @@ link-estates                                          # repoints ~/projects/xFac
 ```
 
 **You are not asked to remember it: `--install` refuses** (A9 Addendum 4,
-R-A9-12). In its planning phase, before any of the eighteen artifacts is placed,
-it walks all eleven targets and dies naming every one that is not a regular file,
+R-A9-12). In its planning phase, before any of the twenty-five artifacts is placed,
+it walks all twelve targets and dies naming every one that is not a regular file,
 what it is, and the one `rm` that clears them. `cp` FOLLOWS A SYMLINK, so an
 install over these would leave the two commands UNINSTALLED — the targets stay
 links — and would write the post-move bytes into `opensoft/brett-wip`'s working

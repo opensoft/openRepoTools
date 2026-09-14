@@ -5480,9 +5480,13 @@ echo "== Amendment 17: the handoff is the swap =="
 # shared one for every read, and adds the two writes tmux makes here.
 
 HANDOFF_CMD="$OPENREPOTOOLS_BIN_DIR/lane-handoff"
+# `cp -p` AND NO `chmod` AFTER IT, deliberately: the mode this case reads back
+# is the one the REPOSITORY carries, so a `lane-handoff` committed 100644 is a
+# failure here rather than a file the fixture quietly made runnable. That is
+# how it was committed under Amendment 17(a), and a `chmod 755` on this line
+# saw nothing.
 cp -p "$SRC_DIR/lane-handoff" "$OPENREPOTOOLS_BIN_DIR/" 2>/dev/null
-chmod 755 "$HANDOFF_CMD" 2>/dev/null
-is   "lane-handoff is installed beside the helper it reads through" \
+is   "lane-handoff is installed beside the helper it reads through, executable as the repository ships it" \
      "$( [ -x "$HANDOFF_CMD" ] && echo yes || echo no )" yes
 
 mkdir -p "$SANDBOX/a17bin"

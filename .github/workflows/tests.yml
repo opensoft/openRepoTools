@@ -225,6 +225,7 @@ jobs:
           /bin/bash -n status
           /bin/bash -n restart
           /bin/bash -n lanes
+          /bin/bash -n lane-handoff
           /bin/bash -n lanes-edit.sh
           /bin/bash -n lane-start
           /bin/bash -n lane-end
