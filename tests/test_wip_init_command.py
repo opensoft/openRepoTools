@@ -939,6 +939,102 @@ def test_a_staged_addition_with_no_worktree_file_is_refused_not_overwritten(
         "something was pushed despite the refusal")
 
 
+def test_a_staged_deletion_of_a_head_tracked_path_is_left_alone(tmp_path):
+    """A TEMPLATE PATH HEAD ALREADY CARRIES IS THE PERSON'S EVEN MID-DELETE
+    (#44 round 3, `openRepoTools:1615`).
+
+    `git rm` of a path HEAD still carries leaves the worktree file gone and
+    the index entry gone too, so it answers `[ -e ]`, `[ -L ]` and the
+    stage-0 index question all false — exactly what a plain MISSING path
+    answers — unless `HEAD` itself is also asked. Without that, the MISSING
+    branch would fetch the template and `cp` it straight back, undoing a
+    deletion this command has never modified a committed file to make.
+    `HEAD:$rel` answers true here, so the path is left exactly where the
+    person put it: staged, and this run commits nothing over it.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout = adopted_checkout(tmp_path, home, env)
+    before_head = head_of(checkout)
+
+    lanes = checkout / "lanes" / "LANES.md"
+    subprocess.run(["git", "-C", str(checkout), "rm", "-q", "--",
+                    "lanes/LANES.md"], check=True)
+    assert not lanes.exists()
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "the workspace already carries every template file" in result.stdout, (
+        result.stdout)
+    assert not lanes.exists(), "the deleted file was restored"
+    assert staged_in(checkout).split() == ["lanes/LANES.md"], (
+        f"the staged deletion was not exactly what remained staged: "
+        f"{staged_in(checkout)!r}")
+    assert head_of(checkout) == before_head, (
+        "a commit was made over the person's own staged deletion")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed over the person's own staged deletion")
+
+
+def test_a_template_path_with_an_unresolved_merge_conflict_is_refused(tmp_path):
+    """FOUR TESTS, AND A CONFLICT ANSWERS ALL OF THEM FALSE (#44 round 3,
+    `openRepoTools:1699`).
+
+    A path at stages 1-3 with no stage 0 — an unresolved merge conflict,
+    added differently on two sides with no common ancestor version — can
+    have no worktree file of its own and no `HEAD` entry either, so
+    `[ -e ]`, `[ -L ]`, the stage-0 index question and `HEAD:$rel` are all
+    false: exactly what a plain MISSING path answers, and step 6a's own
+    exclusion of template paths means no earlier gate has seen it either.
+    `git ls-files -u` is asked directly instead, and a conflict there is
+    refused rather than settled by whichever branch the worktree's own
+    (absent) state happens to satisfy.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout = adopted_checkout(tmp_path, home, env)
+    for args in (["rm", "-q", "--", "handoffs/README.md"],
+                 ["commit", "-q", "-m", "somebody removed the handoffs README"],
+                 ["push", "-q", "origin", "HEAD:main"]):
+        subprocess.run(["git", "-C", str(checkout), *args], check=True)
+    before_head = head_of(checkout)
+
+    def hash_object(text: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(checkout), "hash-object", "-w", "--stdin"],
+            input=text, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    # A stage-1-3 conflict built directly through plumbing: an add/add with
+    # no common ancestor has no stage 1 either, and no `git merge` is needed
+    # to reach exactly the index shape this finding is about.
+    ours = hash_object("ours: not the template\n")
+    theirs = hash_object("theirs: not the template either\n")
+    index_info = (f"100644 {ours} 2\thandoffs/README.md\n"
+                  f"100644 {theirs} 3\thandoffs/README.md\n")
+    subprocess.run(["git", "-C", str(checkout), "update-index", "--index-info"],
+                   input=index_info, text=True, check=True)
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert (f"{checkout} has an unresolved merge conflict at "
+            "handoffs/README.md") in result.stderr, result.stderr
+    assert not (checkout / "handoffs" / "README.md").exists(), (
+        "a file was written where the conflict left none")
+    unmerged = subprocess.run(
+        ["git", "-C", str(checkout), "ls-files", "-u", "--",
+         "handoffs/README.md"],
+        capture_output=True, text=True, check=True).stdout
+    assert unmerged.count("\n") == 2, (
+        f"the conflict's own stages were touched: {unmerged!r}")
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+
+
 # --- one answer to one question, across the seam between two toolsets -------
 
 #: (name, the two yaml lines as a template, whether both sides must ACCEPT).

@@ -1611,7 +1611,9 @@ $unrelated
 	for rel in "${WIP_TEMPLATE_FILES[@]}"; do
 		dest="$WORKDIR/tpl-$(printf '%s' "$rel" | tr '/' '_')"
 		if [ -e "$checkout/$rel" ] || [ -L "$checkout/$rel" ] ||
-			git -C "$checkout" cat-file -e ":$rel" 2>/dev/null
+			git -C "$checkout" cat-file -e ":$rel" 2>/dev/null ||
+			git -C "$checkout" cat-file -e "HEAD:$rel" 2>/dev/null ||
+			[ -n "$(git -C "$checkout" ls-files -u -- "$rel" 2>/dev/null)" ]
 		then
 			# ALREADY THERE, OR AS GOOD AS — AND THE SEED CAN STILL OWE IT. A template path the
 			# WORKTREE carries and HEAD does not is what an earlier run of this
@@ -1637,16 +1639,25 @@ $unrelated
 			# a MISSING file below is, and the two are compared before either
 			# is trusted as this command's own.
 			#
-			# THE WORKTREE TEST ALONE MISSES TWO MORE SHAPES (#44 round 3,
-			# `openRepoTools:1613`): a DANGLING symlink answers `[ -e ]` false
-			# exactly as nothing-there-at-all does, so without the `-L` above the
-			# MISSING branch below would meet it at `cp` and follow it — writing
-			# this run's bytes wherever it points, inside this checkout or far
-			# outside it; and a person's own `git add` of a template path,
-			# followed by removing the worktree file, leaves the INDEX carrying
-			# something the worktree no longer does, which the same MISSING
-			# branch would silently overwrite at `cp` and step 8 would then stage
-			# over. Both are asked for here instead, beside the worktree.
+			# THE WORKTREE TEST ALONE MISSES FOUR MORE SHAPES (#44 round 3,
+			# `openRepoTools:1613`/`:1615`/`:1699`): a DANGLING symlink answers
+			# `[ -e ]` false exactly as nothing-there-at-all does, so without
+			# the `-L` above the MISSING branch below would meet it at `cp` and
+			# follow it — writing this run's bytes wherever it points, inside
+			# this checkout or far outside it; a person's own `git add` of a
+			# template path, followed by removing the worktree file, leaves
+			# the INDEX carrying something the worktree no longer does, which
+			# the same MISSING branch would silently overwrite at `cp` and
+			# step 8 would then stage over; a `git rm` of a path HEAD already
+			# carries — staged, worktree gone, index gone too — passes none of
+			# the first three tests either, so without asking `HEAD` directly
+			# here the same MISSING branch would put the file straight back,
+			# undoing a deletion this command has never modified a committed
+			# file to make; and an UNRESOLVED MERGE CONFLICT can leave a path
+			# at stages 1-3 with no stage 0, no worktree file and no `HEAD`
+			# entry at all — invisible to all four other tests — so it is
+			# asked for directly too. All four are asked for here instead,
+			# beside the worktree.
 			if ! git -C "$checkout" cat-file -e "HEAD:$rel" 2>/dev/null; then
 				# A SYMLINK HERE IS NEVER THIS COMMAND'S OWN, DANGLING OR NOT: `cmp`
 				# reads through a link to whatever it names, so a live one whose
@@ -1660,6 +1671,23 @@ $unrelated
     bytes and never a link to wherever one points, dangling or not. Nothing beyond this
     run's own template bytes was written into that checkout, and nothing was staged.
     Remove or replace that path, then re-run:
+        openRepoTools wip init"
+				fi
+				# AN UNRESOLVED MERGE CONFLICT'S STAGES ARE INVISIBLE TO A
+				# STAGE-0 QUESTION: `:$rel` reads stage 0 alone, so a path with
+				# only stages 1-3 (added differently on both sides of a merge,
+				# say) answers `cat-file -e ":$rel"` false exactly as an empty
+				# index does, and step 6a's own exclusion of template paths
+				# means no earlier gate has seen it either. This command has
+				# never resolved anybody's merge, so a conflict here is refused
+				# rather than silently settled by whichever branch the
+				# worktree's own state happens to satisfy.
+				if [ -n "$(git -C "$checkout" ls-files -u -- "$rel" 2>/dev/null)" ]; then
+					die "$checkout has an unresolved merge conflict at $rel, and HEAD does not
+    carry $rel either, so this command cannot tell which side, if either, is its own
+    template substitution. This command has never resolved anybody's merge. Nothing beyond
+    this run's own template bytes was written into that checkout, and nothing was staged.
+    Resolve that conflict, then re-run:
         openRepoTools wip init"
 				fi
 				# AND THE INDEX CAN OWE SOMETHING THE WORKTREE NO LONGER HAS AT ALL:
