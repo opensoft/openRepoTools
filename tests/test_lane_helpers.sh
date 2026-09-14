@@ -6861,26 +6861,26 @@ has   "…and the half that worked, which is the lane's own window selected ther
 # ---- A LANE WHOSE NAME IS NOT `<repo>-<n>` IS STARTED BY ONE ARGUMENT -------
 #
 # Copilot round 4 on #45, `lane:595`. The no-directory refusal built its remedy
-# as `<repo> <position>`, and a `--verbatim` lane has neither: `browser-ui-repair`
+# as `<repo> <position>`, and a `--verbatim` lane has neither: `nav-rail-audit`
 # is a row like any other (`lane-start:601` takes it as ONE argument beside a
-# `--dir`), and `lane-start --dir <path> browser-ui-repair <n>` would open
-# `browser-ui-repair-<n>` — A DIFFERENT LANE. A refusal whose remedy records the
+# `--dir`), and `lane-start --dir <path> nav-rail-audit <n>` would open
+# `nav-rail-audit-<n>` — A DIFFERENT LANE. A refusal whose remedy records the
 # directory of another lane is worse than one that says nothing.
 VERB_ID="dddd0008-8888-4000-8000-dddd00088888"
-add_seed_row "| \`browser-ui-repair\` | harness \`$VERB_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/browser/ui.md | ACTIVE |"
-{ printf '# lane browser-ui-repair — object log (lane-collision-protocol Amendment 7)\n'
-  printf 'STARTED — lane browser-ui-repair, session %s@Eagle, 2026-09-12T08:00:00Z, lane:browser-ui-repair → home opensoft/browser; estate browser; profile team-05a\n' "$VERB_ID"
-} > "$LOGD/browser-ui-repair.md"
+add_seed_row "| \`nav-rail-audit\` | harness \`$VERB_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/browser/ui.md | ACTIVE |"
+{ printf '# lane nav-rail-audit — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane nav-rail-audit, session %s@Eagle, 2026-09-12T08:00:00Z, lane:nav-rail-audit → home opensoft/browser; estate browser; profile team-05a\n' "$VERB_ID"
+} > "$LOGD/nav-rail-audit.md"
 git -C "$WIP" add -A -- lanes >/dev/null 2>&1
 git -C "$WIP" commit -q -m "seed a --verbatim lane with a profile and no recorded directory"
 git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
 git -C "$WIP" push -q origin main
 : > "$FAKE_PCLAUDE_LOG"
-run env -u TMUX PATH="$LANEBIN_PATH" "$LANE" browser-ui-repair </dev/null
+run env -u TMUX PATH="$LANEBIN_PATH" "$LANE" nav-rail-audit </dev/null
 is    "a --verbatim lane with no recorded directory refuses with 2" "$rc" 2
 has   "…naming the ONE-ARGUMENT form that records it for THIS lane" \
-      "$err" "lane-start --dir <the lane's checkout> browser-ui-repair"
-hasnt "…and never a position appended to a name that has none" "$err" "browser-ui-repair <n>"
+      "$err" "lane-start --dir <the lane's checkout> nav-rail-audit"
+hasnt "…and never a position appended to a name that has none" "$err" "nav-rail-audit <n>"
 is    "…launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
 
 # ---- AND `env -C` IS NOT A GNU-ONLY OPTION THIS SUITE CANNOT USE -----------
@@ -6899,6 +6899,65 @@ is   "this platform's env takes the -C that every pick case in this section pass
      "$(env -C "$LOGD" /bin/pwd -P 2>/dev/null)" "$(cd -- "$LOGD" && pwd -P)"
 is   "…and exits 0 doing it, so a case that used it ran the command and not the usage" \
      "$(env -C "$LOGD" true >/dev/null 2>&1; echo $?)" 0
+
+# ---- A READ THAT PRINTED DIGITS AND THEN FAILED IS STILL A READ THAT FAILED --
+#
+# Copilot round 5 on #45, `lane:1000` and `lanes:441`. Round 3 closed this in
+# the `f` ANSWER (`go_new`, `lane:751`) and left it open in the two surfaces that
+# OFFER `f`: both captured the status and then decided on the TEXT, and text
+# from a failed read passes a shape test on its own output. `nfbroke` prints
+# nothing, so neither surface had ever met the case. `nfpartial` prints a
+# position and exits 6 — the position of a read that did not answer.
+cat > "$SANDBOX/nfpartial" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  next-free) printf '3\n'; printf 'lanes-edit: died after printing\n' >&2; exit 6 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/nfpartial"
+run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/nfpartial" "$LANE" </dev/null
+is    "the pick lists where next-free printed a position and THEN failed" "$rc" 0
+has   "…with the rows" "$out" "repoPick-1"
+has   "…saying \`f\` is not offered" "$out" "is not offered"
+has   "…naming the code that read actually gave" "$out" "exited 6"
+hasnt "…and never offering the position it printed before it died" "$out" "lane-start repoPick 3"
+hasnt "…which is not in the question either" "$out$err" "f = a new lane"
+run env LANES_NO_FETCH=1 REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/nfpartial" "$LANES_CMD" --prefix repoPick </dev/null
+is    "…and the lanes footer answers the same way about the same read" "$rc" 0
+hasnt "…offering no next free position out of it" "$out" "next free position:"
+has   "…and naming the code instead" "$out" "exited 6"
+hasnt "…never the digits that read printed before it failed" "$out" "lane-start repoPick 3"
+
+# ---- THE ACTS A NO-TERMINAL RUN PRINTS CARRY THE `--dir` IT WAS GIVEN -------
+#
+# Copilot round 5 on #45, `lane:1030`. The `f` ANSWER has carried `--dir` since
+# round 1 (`lane:710`); the line PRINTED for an agent to type dropped it, which
+# opens the new lane in whatever checkout the reader happens to be standing in.
+# One surface performed the act and the other printed it.
+PICK_DIR_P="$(cd -- "$PICK_DIR" && pwd -P)"
+run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" "$LANE" --dir "$PICK_DIR" </dev/null
+is    "a no-terminal listing with --dir exits 0" "$rc" 0
+has   "…printing the new-lane act WITH that directory, resolved" "$out" "lane-start --dir $PICK_DIR_P repoPick"
+has   "…and the named-lane act with it too, because the flag means the same there" "$out" "lane --dir $PICK_DIR_P <name>"
+
+# ---- AND THE `AVAILABLE` HEADING SAYS WHAT AN UNREAD PROOF COSTS ------------
+#
+# Copilot round 5 on #45, `lanes-edit.sh:4829`. `lane-groups` groups a local row
+# that is not LIVE as available — out of the STATE column, which is the log's
+# verb alone when the session records could not be read. Every row under that
+# heading is then unproven and `go_available` refuses each of them, so a listing
+# that numbered them without a word would be asking a person to pick an answer
+# this command has already decided to refuse.
+run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/livewarn" "$LANE" </dev/null
+is    "the pick still lists where the liveness read did not answer" "$rc" 0
+has   "…with the available rows on screen, because a person still needs to see them" "$out" "repoPick-1"
+has   "…and says in terms that none of them can be launched from here" "$out" "NOTHING above can be launched"
+has   "…naming the read that says what is actually running" "$out" "live-holder"
+has   "…and that an attach is unaffected, because it starts nothing" "$out" "an attach starts"
+# …AND IT IS SILENT WHERE THE PROOF *WAS* MADE, so the paragraph means what it says.
+run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" "$LANE" </dev/null
+hasnt "…while an ordinary listing carries no such paragraph at all" "$out" "NOTHING above can be launched"
 
 echo "== the workstation seam: unset, every writer reads the host =="
 

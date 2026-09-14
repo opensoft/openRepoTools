@@ -1032,6 +1032,24 @@ label=""
 if [ -n "$here_repo" ]; then label=" of $here_repo"; fi
 say "lanes$label, read locally — \`lanes --fetch\` refreshes first"
 render_group available "AVAILABLE — parked, or a binding this host proves dead"
+# AND WHERE THE PROOF WAS NOT READ, THIS HEADING SAYS WHAT IT COSTS (Copilot
+# round 5 on #45, `lanes-edit.sh:4829`). The partition itself is right and is
+# ONE read: `lane-groups` groups by the STATE column, and when the session
+# records could not be read that column is the LOG'S VERB ALONE — so every row
+# under this heading is unproven and `go_available` refuses each of them, in
+# every state (clause (h)). A listing that numbered them without a word would be
+# asking a person to pick an answer this command has already decided to refuse.
+avail_n="$n"
+if [ "$LIVENESS_UNREAD" != 0 ] && [ "$avail_n" != 0 ]; then
+	say ""
+	say "  NOTHING above can be launched from here until that read is fixed: the STATE"
+	say "  column is the log's own last verb, so a lane that is LIVE shows as IDLE or"
+	say "  PAUSED, and picking one of these is REFUSED rather than launched (clause (h),"
+	say "  Amendment 7(d)). A LIVE HERE lane below is unaffected — an attach starts"
+	say "  nothing."
+	say "    what is actually running:  lanes-edit.sh live-holder <lane>"
+	say "    fix the read and re-run:   lanes --all"
+fi
 render_group live "LIVE HERE — attach, never a second process"
 render_group elsewhere "BOUND ELSEWHERE — ask that workstation for the handoff"
 
@@ -1044,6 +1062,13 @@ render_group elsewhere "BOUND ELSEWHERE — ask that workstation for the handoff
 next_free=""; next_free_rc=0
 if [ -n "$here_repo" ]; then
 	next_free="$(printf '%s\n' "$ROWS_OUT" | "$LANES_EDIT" next-free "$here_repo" 2>/dev/null)" || next_free_rc=$?
+	# THE STATUS DECIDES BEFORE THE TEXT DOES (Copilot round 5 on #45,
+	# `lane:1000`). A read that printed digits AND THEN FAILED passes the shape
+	# test below on its own output, so the fail-closed arm under it was skipped
+	# and `f` was offered at a position nothing answered for — which is the very
+	# thing `go_new` stopped doing one round earlier (round 3, `lane:751`). The
+	# offer and the answer read the same status now.
+	[ "$next_free_rc" = 0 ] || next_free=""
 	case "${next_free:-}" in '' | *[!0-9]*) next_free="" ;; esac
 fi
 
@@ -1074,8 +1099,16 @@ ws_notice
 if [ ! -t 0 ]; then
 	say ""
 	say "nothing was asked: stdin is not a terminal. The acts, filled in:"
-	if [ "$n" != 0 ]; then printf '    %-34s %s\n' "$prog <name>" "the lane you want, from the list above"; fi
-	if [ -n "$next_free" ]; then printf '    %-34s %s\n' "lane-start $here_repo $next_free" "a new lane at the next free position"; fi
+	# AND THE ACTS CARRY THE `--dir` THIS RUN WAS GIVEN (Copilot round 5 on #45,
+	# `lane:1030`). The `f` answer has taken it since round 1 (`lane:710`), and an
+	# act PRINTED for a person to type that drops it opens the new lane in
+	# whatever checkout they happen to be standing in — Evidence 3's silent loss,
+	# at the one moment a lane is created. One surface performed the act and the
+	# other printed it; they spell it the same way now.
+	nt_dir=""
+	if [ -n "$dir_flag" ]; then nt_dir=" --dir $(quoted "$dir_flag")"; fi
+	if [ "$n" != 0 ]; then printf '    %-34s %s\n' "$prog$nt_dir <name>" "the lane you want, from the list above"; fi
+	if [ -n "$next_free" ]; then printf '    %-34s %s\n' "lane-start$nt_dir $here_repo $next_free" "a new lane at the next free position"; fi
 	printf '    %-34s %s\n' "lanes --all" "every lane the register and the logs know"
 	if [ "$n" = 0 ]; then exit 8; fi
 	exit 0
