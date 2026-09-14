@@ -718,7 +718,8 @@ no later `OPENED` whose `←` payload names the issue. A PR is never stale by
 this rule — Rule 6 governs PRs, with its own thirty minutes. An object is taken
 to be a PR once some lane has written `OPENED` on it, which is the only
 offline evidence there is and exactly the evidence Rule 1 cares about.
-`--force` takes over a stale claim and nothing else, writing
+`--force` takes over a stale claim — or, per the dead-lane exception just
+below, a dead lane's hold of any verb — and nothing else, writing
 `TAKEOVER ← <the stale claim's comment URL>`; `TAKEOVER` is itself an open
 verb, so no second line is needed to say the taker holds it.
 

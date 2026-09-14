@@ -35,9 +35,10 @@
 #   --retire            also mark the state cell RETIRED <UTC> — the lane is
 #                       not coming back, as opposed to a window that is only
 #                       closing for the night
-#   --retire <pid|uuid> A DIFFERENT ACT, and it ends nothing in the LANE'S ROW:
-#                       the DOOR to Amendment 6(d)'s retire act for a live
-#                       FORK of this lane's transcript (Amendment 11 clause
+#   --retire <pid|uuid> A DIFFERENT ACT for one of TWO kinds of target, and it
+#                       ends nothing in the LANE'S ROW either way: for a live
+#                       FORK of this lane's transcript it is the DOOR to
+#                       Amendment 6(d)'s retire act (Amendment 11 clause
 #                       (k) rule (e) — "both print the one act: retire it,
 #                       under Amendment 6(d) … Neither kills a process … and
 #                       lane-end's --retire is the door"). For a FORK — a live
@@ -770,34 +771,60 @@ DUPES
     # honest fact whether it truly exited or the number now belongs to
     # something else this act must never touch.
     #
-    # EACH SIGNAL'S OWN STATUS IS KEPT, never assumed (Copilot round 2, PR
-    # #61): `kill` exits non-zero both for a pid that is already gone — a
-    # legitimate race, not a failure of this act — and for one this process
-    # lacks permission to signal, which IS a failure this report must not
-    # call a retirement. Under `set -euo pipefail` the status is captured
-    # with `&&`, never left to an unguarded failure that would abort before
-    # the report below prints.
+    # AN EXACT PATH COMPONENT, NOT AN ARBITRARY SUBSTRING (Copilot round 4, PR
+    # #61, the same fix as `duplicate_holder_pids`'s own discovery match):
+    # `*"$uuid.jsonl"*` also matches `other-<uuid>.jsonl` and
+    # `<uuid>.jsonl.bak`, neither of which is THIS transcript's basename.
+    # `/<uuid>.jsonl` must be preceded by a path separator and followed by
+    # the end of the argument or a space.
     dh_uuid_lc="$(printf '%s' "$dh_uuid" | tr 'A-F' 'a-f')"
-    dh_p_ok=0
-    case "$(ps -o args= -p "$dh_parent" 2>/dev/null | tr 'A-F' 'a-f')" in
-      *"--fork-session"*"--resume"*"$dh_uuid_lc"*) kill -TERM "$dh_parent" 2>/dev/null && dh_p_ok=1 ;;
+    dh_p_sent=0
+    dh_p_args="$(ps -o args= -p "$dh_parent" 2>/dev/null | tr 'A-F' 'a-f')"
+    case "$dh_p_args" in
+      *"--fork-session"*"--resume"*"/$dh_uuid_lc.jsonl")   dh_p_sent=1 ;;
+      *"--fork-session"*"--resume"*"/$dh_uuid_lc.jsonl "*) dh_p_sent=1 ;;
     esac
-    dh_c_ok=1
+    [ "$dh_p_sent" = 1 ] && kill -TERM "$dh_parent" 2>/dev/null
+    dh_c_sent=1
     if [ -n "$dh_child" ]; then
-      dh_c_ok=0
-      case "$(ps -o args= -p "$dh_child" 2>/dev/null | tr 'A-F' 'a-f')" in
-        *"--fork-session"*"--resume"*"$dh_uuid_lc"*) kill -TERM "$dh_child" 2>/dev/null && dh_c_ok=1 ;;
+      dh_c_sent=0
+      dh_c_args="$(ps -o args= -p "$dh_child" 2>/dev/null | tr 'A-F' 'a-f')"
+      case "$dh_c_args" in
+        *"--fork-session"*"--resume"*"/$dh_uuid_lc.jsonl")   dh_c_sent=1 ;;
+        *"--fork-session"*"--resume"*"/$dh_uuid_lc.jsonl "*) dh_c_sent=1 ;;
       esac
+      [ "$dh_c_sent" = 1 ] && kill -TERM "$dh_child" 2>/dev/null
     fi
-    note "TERM to pid $dh_parent (bg-pty-host): $([ "$dh_p_ok" = 1 ] && printf delivered || printf 'NOT delivered (already gone, or no longer matches, or no permission)')"
-    [ -n "$dh_child" ] && note "TERM to pid $dh_child (child): $([ "$dh_c_ok" = 1 ] && printf delivered || printf 'NOT delivered (already gone, or no longer matches, or no permission)')"
-    if [ "$dh_p_ok" = 1 ] && [ "$dh_c_ok" = 1 ]; then
+    # VERIFIED GONE, NOT ASSUMED FROM `kill`'S OWN STATUS (Copilot round 4, PR
+    # #61): that status conflates "already gone" (fine — the goal was never
+    # the signal, it was the duplicate not existing) with "no permission"
+    # (a real failure), and a caller that always reads exit 0 here cannot
+    # tell a genuine retirement from a duplicate still running. `kill -0`
+    # after a brief settle — SIGTERM is not always instant — answers the
+    # only question that matters: is it gone.
+    sleep 0.1
+    dh_p_gone=1; kill -0 "$dh_parent" 2>/dev/null && dh_p_gone=0
+    dh_c_gone=1
+    if [ -n "$dh_child" ]; then
+      dh_c_gone=1; kill -0 "$dh_child" 2>/dev/null && dh_c_gone=0
+    fi
+    dh_p_msg="gone"
+    [ "$dh_p_gone" = 1 ] || dh_p_msg="STILL ALIVE, TERM withheld: argv no longer matched"
+    [ "$dh_p_gone" = 1 ] || [ "$dh_p_sent" = 0 ] || dh_p_msg="STILL ALIVE despite TERM delivered"
+    note "pid $dh_parent (bg-pty-host): $dh_p_msg"
+    if [ -n "$dh_child" ]; then
+      dh_c_msg="gone"
+      [ "$dh_c_gone" = 1 ] || dh_c_msg="STILL ALIVE, TERM withheld: argv no longer matched"
+      [ "$dh_c_gone" = 1 ] || [ "$dh_c_sent" = 0 ] || dh_c_msg="STILL ALIVE despite TERM delivered"
+      note "pid $dh_child (child): $dh_c_msg"
+    fi
+    if [ "$dh_p_gone" = 1 ] && [ "$dh_c_gone" = 1 ]; then
       step "RETIRED lane $LANE's duplicate holder of transcript $dh_uuid (Amendment 18(h))"
-    else
-      note "lane $LANE's duplicate holder of transcript $dh_uuid was only partly signalled — see above. A pid already gone before this ran needed no signal to begin with and is not itself a failure of this act; one that did not deliver for want of permission is, and \`kill -0 <pid>\` by hand tells the two apart."
+      note "The lane itself is untouched: its row, and its own live session if it has one, are unaffected."
+      exit 0
     fi
     note "The lane itself is untouched: its row, and its own live session if it has one, are unaffected."
-    exit 0
+    die "lane $LANE's duplicate holder of transcript $dh_uuid was only partly retired — see the pid lines above. Whatever is still alive did not accept TERM (permission, a handler that ignores it, or argv changed before this act reached it); re-run $prog $LANE --retire <pid> once you have looked, or end it by hand." 1
   fi
 
   if [ -z "$fk_sid" ]; then

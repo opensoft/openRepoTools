@@ -4544,21 +4544,39 @@ DHPLINE
     dhp_args_lc="$(printf '%s' "$dhp_args" | tr 'A-F' 'a-f')"
     for dhp_id in $dhp_ids; do
       dhp_id_lc="$(printf '%s' "$dhp_id" | tr 'A-F' 'a-f')"
+      # AN EXACT PATH COMPONENT, NOT AN ARBITRARY SUBSTRING (Copilot round 4,
+      # PR #61): `*"$id.jsonl"*` also matches `other-<id>.jsonl` (no leading
+      # `/`, so it is not THIS transcript's basename) and `<id>.jsonl.bak`
+      # (more argv after it, so `.jsonl` is not where the token ends) —
+      # `/<id>.jsonl` must be preceded by a path separator and followed by
+      # either the end of the argument or a space starting the next one.
+      dhp_matched=0
       case "$dhp_args_lc" in
-        *"$dhp_id_lc.jsonl"*)
+        *"/$dhp_id_lc.jsonl") dhp_matched=1 ;;
+        *"/$dhp_id_lc.jsonl "*) dhp_matched=1 ;;
+      esac
+      if [ "$dhp_matched" = 1 ]; then
           # THE CHILD, PREFERRING ONE THAT IS ITSELF A `--fork-session` MATCH
           # (the real `claude` leaf) over whichever child the process table
-          # happens to list first.
-          dhp_child=""
-          for dhp_c in $(pgrep -P "$dhp_pid" 2>/dev/null); do
+          # happens to list first. `pgrep -P`'s OWN status, three-way, same as
+          # the top-level `pgrep -f` above (Copilot round 4): 1 is its own
+          # "no children", honestly empty; anything else is a read that
+          # FAILED, and this candidate is skipped rather than reported with a
+          # child slot that only LOOKS empty on purpose.
+          dhp_child=""; dhp_kids=""; dhp_kidrc=0
+          dhp_kids="$(pgrep -P "$dhp_pid" 2>/dev/null)" || dhp_kidrc=$?
+          case "$dhp_kidrc" in
+            0 | 1) : ;;
+            *) return 1 ;;
+          esac
+          for dhp_c in $dhp_kids; do
             case "$dhp_cand_fence" in *" $dhp_c "*) dhp_child="$dhp_c"; break ;; esac
             [ -n "$dhp_child" ] || dhp_child="$dhp_c"
           done
           dhp_out="${dhp_out}${dhp_pid}$(printf '\t')${dhp_child}$(printf '\t')${dhp_id}
 "
           break
-          ;;
-      esac
+      fi
     done
   done <<EOF
 $dhp_cand
