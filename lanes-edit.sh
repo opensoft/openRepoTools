@@ -4577,27 +4577,37 @@ duplicate_holder_pids() {   # <lane>
   while IFS= read -r dhp_pid; do
     [ -n "$dhp_pid" ] || continue
     [ -n "$dhp_legit" ] && [ "$dhp_pid" = "$dhp_legit" ] && continue
-    dhp_line="$(ps -o pid=,ppid=,args= -p "$dhp_pid" 2>/dev/null)"
-    [ -n "$dhp_line" ] || continue
+    dhp_psrc=0
+    dhp_line="$(ps -o pid=,ppid=,args= -p "$dhp_pid" 2>/dev/null)" || dhp_psrc=$?
+    # A `ps -p` MISS IS NOT A READ FAILURE, but a nonzero status alongside
+    # OUTPUT would be (Copilot round 5/6, PR #61: "a failed ps lookup is read
+    # as no candidate") — `ps -p <gone pid>` fails with EMPTY output, which is
+    # the ordinary, honest "it already exited" race this whole scan expects;
+    # a command that failed and still printed something is the one case
+    # this file's fail-closed rule everywhere else applies to.
+    if [ -z "$dhp_line" ]; then continue; fi
+    [ "$dhp_psrc" = 0 ] || return 1
     read -r dhp_pid_chk dhp_ppid dhp_args <<DHPLINE
 $dhp_line
 DHPLINE
-    case "$dhp_args" in *"--fork-session"*"--resume"*) : ;; *) continue ;; esac
+    case "$dhp_args" in *"--fork-session"*"--resume "*) : ;; *) continue ;; esac
     case "$dhp_cand_fence" in *" $dhp_ppid "*) continue ;; esac
     dhp_args_lc="$(printf '%s' "$dhp_args" | tr 'A-F' 'a-f')"
+    # THE ACTUAL `--resume` VALUE, NOT A GLOB THAT CAN SPAN OTHER ARGUMENTS
+    # (Copilot round 5, PR #61): `*"--resume"*"/$id.jsonl"*` also matches
+    # `--resume /other.jsonl --label /<id>.jsonl`, since `*` between them
+    # freely crosses argument boundaries. The token right after `--resume ` —
+    # up to the next space or the end of argv — is what was actually
+    # resumed, and that is the only thing compared now.
+    dhp_resume="${dhp_args_lc#*--resume }"; dhp_resume="${dhp_resume%% *}"
     for dhp_id in $dhp_ids; do
       dhp_id_lc="$(printf '%s' "$dhp_id" | tr 'A-F' 'a-f')"
       # AN EXACT PATH COMPONENT, NOT AN ARBITRARY SUBSTRING (Copilot round 4,
-      # PR #61): `*"$id.jsonl"*` also matches `other-<id>.jsonl` (no leading
-      # `/`, so it is not THIS transcript's basename) and `<id>.jsonl.bak`
-      # (more argv after it, so `.jsonl` is not where the token ends) —
-      # `/<id>.jsonl` must be preceded by a path separator and followed by
-      # either the end of the argument or a space starting the next one.
+      # PR #61): a bare substring also matches `other-<id>.jsonl` (no leading
+      # `/`, so it is not THIS transcript's basename) and `<id>.jsonl.bak` —
+      # `/<id>.jsonl` must be the resume token's own trailing path component.
       dhp_matched=0
-      case "$dhp_args_lc" in
-        *"/$dhp_id_lc.jsonl") dhp_matched=1 ;;
-        *"/$dhp_id_lc.jsonl "*) dhp_matched=1 ;;
-      esac
+      case "$dhp_resume" in */"$dhp_id_lc.jsonl") dhp_matched=1 ;; esac
       if [ "$dhp_matched" = 1 ]; then
           # THE CHILD, PREFERRING ONE THAT IS ITSELF A `--fork-session` MATCH
           # (the real `claude` leaf) over whichever child the process table
@@ -4612,9 +4622,17 @@ DHPLINE
             0 | 1) : ;;
             *) return 1 ;;
           esac
+          # AN ARBITRARY CHILD IS NEVER GUESSED (Copilot round 6, PR #61): a
+          # bg-pty-host can have children that are not the `claude` process it
+          # wraps at all — a shell, a pty helper — and reporting the FIRST one
+          # `pgrep -P` happens to list, when none of them is itself a
+          # `--fork-session` candidate, could hand an unrelated process to
+          # `lane-end --retire`'s TERM. Only a child THIS SAME SCAN also
+          # confirmed as a fork-session candidate is ever named; otherwise the
+          # child slot stays empty; the parent is still reported and retirable
+          # on its own.
           for dhp_c in $dhp_kids; do
             case "$dhp_cand_fence" in *" $dhp_c "*) dhp_child="$dhp_c"; break ;; esac
-            [ -n "$dhp_child" ] || dhp_child="$dhp_c"
           done
           dhp_out="${dhp_out}${dhp_pid}$(printf '\t')${dhp_child}$(printf '\t')${dhp_id}
 "

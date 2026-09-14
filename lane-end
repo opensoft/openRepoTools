@@ -777,23 +777,29 @@ DUPES
     # `<uuid>.jsonl.bak`, neither of which is THIS transcript's basename.
     # `/<uuid>.jsonl` must be preceded by a path separator and followed by
     # the end of the argument or a space.
+    # THE ACTUAL `--resume` VALUE, NOT A GLOB THAT CAN SPAN OTHER ARGUMENTS
+    # (Copilot round 5, PR #61): `*"--resume"*"/$uuid.jsonl"*` matches
+    # `--resume /other.jsonl --label /<uuid>.jsonl` too, since `*` between
+    # them freely crosses argument boundaries. The token immediately after
+    # `--resume ` — up to the next space or the end of argv — is what the
+    # harness actually resumed, and that is the only thing compared now.
     dh_uuid_lc="$(printf '%s' "$dh_uuid" | tr 'A-F' 'a-f')"
     dh_p_sent=0
     dh_p_args="$(ps -o args= -p "$dh_parent" 2>/dev/null | tr 'A-F' 'a-f')"
-    case "$dh_p_args" in
-      *"--fork-session"*"--resume"*"/$dh_uuid_lc.jsonl")   dh_p_sent=1 ;;
-      *"--fork-session"*"--resume"*"/$dh_uuid_lc.jsonl "*) dh_p_sent=1 ;;
+    case "$dh_p_args" in *"--fork-session"*"--resume "*)
+      dh_p_resume="${dh_p_args#*--resume }"; dh_p_resume="${dh_p_resume%% *}"
+      case "$dh_p_resume" in */"$dh_uuid_lc.jsonl") dh_p_sent=1 ;; esac
     esac
-    [ "$dh_p_sent" = 1 ] && kill -TERM "$dh_parent" 2>/dev/null
+    [ "$dh_p_sent" = 1 ] && { kill -TERM "$dh_parent" 2>/dev/null || :; }
     dh_c_sent=1
     if [ -n "$dh_child" ]; then
       dh_c_sent=0
       dh_c_args="$(ps -o args= -p "$dh_child" 2>/dev/null | tr 'A-F' 'a-f')"
-      case "$dh_c_args" in
-        *"--fork-session"*"--resume"*"/$dh_uuid_lc.jsonl")   dh_c_sent=1 ;;
-        *"--fork-session"*"--resume"*"/$dh_uuid_lc.jsonl "*) dh_c_sent=1 ;;
+      case "$dh_c_args" in *"--fork-session"*"--resume "*)
+        dh_c_resume="${dh_c_args#*--resume }"; dh_c_resume="${dh_c_resume%% *}"
+        case "$dh_c_resume" in */"$dh_uuid_lc.jsonl") dh_c_sent=1 ;; esac
       esac
-      [ "$dh_c_sent" = 1 ] && kill -TERM "$dh_child" 2>/dev/null
+      [ "$dh_c_sent" = 1 ] && { kill -TERM "$dh_child" 2>/dev/null || :; }
     fi
     # VERIFIED GONE, NOT ASSUMED FROM `kill`'S OWN STATUS (Copilot round 4, PR
     # #61): that status conflates "already gone" (fine — the goal was never
