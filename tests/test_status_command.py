@@ -8111,6 +8111,70 @@ def test_a_blank_branch_over_an_unread_leg_with_no_role_says_both_and_neither(
     assert "`resume Atlas`" not in result.stdout
 
 
+def test_a_blank_branch_that_keeps_a_leg_still_names_the_one_it_drops(
+        atlas, home):
+    """COPILOT'S THIRD ROUND ON THIS PR (2026-09-14), verbatim: "When a blank
+    `- branch:` has both a readable leg and a `noleg`, this condition skips
+    the new combined diagnostic because it only enters the unread-leg branch
+    when `feature_legs` is zero. Control then falls through to the older
+    blank-branch message; `unnamed=1` suppresses all readable leg rows and the
+    later `noleg` arm is a no-op, so the unread leg/key-order defect is never
+    reported. Please handle this mixed case too (and add a regression) while
+    retaining the blank-branch refusal."
+
+    IT IS RIGHT, AND IT IS THE ONE HOLE THIS WHOLE BRANCH EXISTS TO SHUT: a
+    line the record lists, that `resume` reads nothing of, said NOWHERE. The
+    blank name suppresses every per-leg line by design — there is no branch to
+    find a worktree for — and the `noleg` arm only counts, so the feature's own
+    line is the only place the unread one can be named, and the combined arm
+    was reached only where the feature keeps none. Against the extension
+    2026-09-14, the record below loads as ONE feature named nothing with ONE
+    leg (`MANIFEST_LEG_ROLE` `[repo]`, `MANIFEST_LEG_FEATURE` `0`), the `spec`
+    line below the `feature_directory:` key read as no leg at all — and this
+    layer said only "a `- branch:` in the record has no value", with nothing
+    whatever about the line it drops.
+
+    THE REFUSAL DOES NOT MOVE, and that is the half Copilot asked to keep:
+    the feature DOES keep a leg `collect_legs` collects, so the run reaches
+    RR2 and refuses it there with the name blank — not the shape mismatch the
+    legless arm names. Nor do the exits: a key put back leaves a feature named
+    nothing, which no re-ordering settles, so they are the blank name's
+    delete-or-re-park pair, and the re-park carries the dropped leg's lines
+    because the park that writes the branch writes the legs with it."""
+    checkout = workspace_config(home)
+    origin_has_branch(atlas, "001-a-thing")
+    path = record(checkout, "atlas", branch="001-a-thing", role="repo",
+                  commit=FAKE_SHA, parked_on="Falcon")
+    text = path.read_text(encoding="utf-8")
+    directory = "        feature_directory: worktrees/001-a-thing\n"
+    assert text.count(directory) == 1, text
+    blank = text.replace("      - branch: 001-a-thing\n", "      - branch:\n")
+    path.write_text(blank.replace(directory, "") + directory
+                    + leg_block("spec", FAKE_SHA), encoding="utf-8")
+
+    result = run(STATUS, "Atlas", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ("    - parked feature with no branch name: a `- branch:` in the "
+            "record has no value, and a `spec` leg listed under it sits where "
+            f"`resume` reads no leg, {WHY_LEGS}; `resume` reads the feature "
+            "as one named nothing and refuses it as a branch origin has not "
+            "got (\"is no longer on origin\", the name blank), so nothing here "
+            "brings it back — if that feature landed, remove its `- branch:` "
+            "block from atlas.yaml; if it was parked, park it again from the "
+            "workstation that has it (the record says Falcon), which writes "
+            "the branch and the legs it parks") in result.stdout, result.stdout
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 1, findings
+    assert "(repo leg)" not in result.stdout, (
+        "a per-leg line for a feature whose legs have no branch to be found by")
+    assert "(spec leg)" not in result.stdout
+    assert "`resume Atlas`" not in result.stdout
+    assert "lists no leg" not in result.stdout, (
+        "said about a record that lists two")
+    assert "parked record: 1 feature(s)" in result.stdout
+
+
 def test_the_unread_leg_line_never_promises_a_feature_this_run_refuses(
         atlas, home):
     """COPILOT'S FIRST ROUND ON THIS PR (2026-09-14, suppressed), verbatim:

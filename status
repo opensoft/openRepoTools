@@ -5289,6 +5289,36 @@ read_record() {
                         # both of them settle the branch name and the key
                         # order together.
                         finding "parked feature with no branch name: a \`- branch:\` in the record has no value, and the $(record_unread_leg "${feature_drop_role[seen_branches - 1]:-}") listed under it sits where \`resume\` reads no leg, because $(record_unread_why "${feature_drop_why[seen_branches - 1]:-legs}"); \`resume\` reads the feature as one named nothing, collects no leg for it, and refuses it whole as a shape mismatch before it reads one, so nothing here brings it back — if that feature landed, remove its \`- branch:\` block from ${RECORD_FILE##*/}; if it was parked, park it again from the workstation that has it ($where), which writes the branch and the legs it parks"
+                    elif [ "${feature_drops[seen_branches - 1]:-0}" -gt 0 ]; then
+                        # AND THE SAME TWO DEFECTS WHERE THE FEATURE KEEPS A
+                        # LEG (Copilot's third round on this PR, verbatim:
+                        # "When a blank `- branch:` has both a readable leg
+                        # and a `noleg`, this condition skips the new combined
+                        # diagnostic because it only enters the unread-leg
+                        # branch when `feature_legs` is zero. Control then
+                        # falls through to the older blank-branch message;
+                        # `unnamed=1` suppresses all readable leg rows and the
+                        # later `noleg` arm is a no-op, so the unread leg/key-
+                        # order defect is never reported."). IT IS RIGHT, AND
+                        # IT IS THE ONE HOLE THIS WHOLE BRANCH EXISTS TO SHUT:
+                        # a line the record lists, that `resume` reads nothing
+                        # of, said NOWHERE. The blank name suppresses every
+                        # per-leg line by design — there is no branch to find
+                        # a worktree for — and the `noleg` arm below only
+                        # counts, so this line is the only place the unread
+                        # one can be named, and the arm above it was reached
+                        # only where the feature keeps none.
+                        #
+                        # THE REFUSAL IS THE ONE THE ARM BELOW NAMES, not the
+                        # shape mismatch: the feature DOES keep a leg
+                        # `collect_legs` collects, so the run gets as far as
+                        # RR2 and refuses it there with the name blank. The
+                        # exits are still the blank name's — a key put back
+                        # leaves a feature named nothing, which no re-ordering
+                        # settles — and they carry the leg's lines too,
+                        # because the park that writes the branch writes the
+                        # legs it parks with it.
+                        finding "parked feature with no branch name: a \`- branch:\` in the record has no value, and a $(record_unread_leg "${feature_drop_role[seen_branches - 1]:-}") listed under it sits where \`resume\` reads no leg, because $(record_unread_why "${feature_drop_why[seen_branches - 1]:-legs}"); \`resume\` reads the feature as one named nothing and refuses it as a branch origin has not got (\"is no longer on origin\", the name blank), so nothing here brings it back — if that feature landed, remove its \`- branch:\` block from ${RECORD_FILE##*/}; if it was parked, park it again from the workstation that has it ($where), which writes the branch and the legs it parks"
                     elif [ "${feature_legs[seen_branches - 1]:-0}" -eq 0 ]; then
                         finding "parked feature with no branch name: a \`- branch:\` in the record has no value and lists no leg; \`resume\` reads it as a feature named nothing and refuses it whole as a shape mismatch before it reads a leg, so nothing here brings it back — if that feature landed, remove its \`- branch:\` block from ${RECORD_FILE##*/}; if it was parked, park it again from the workstation that has it ($where), which writes the branch it parks"
                     else
