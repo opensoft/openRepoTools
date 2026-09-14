@@ -186,7 +186,17 @@
 #      carry both without the caller guessing, so the newer reads spend a number
 #      of their own and the older half of this file keeps 2 where it always was.
 #      Clause (h)'s table is the contract for which read uses which.
-#   3  rebase conflict — nothing was pushed, the edit is a local commit
+#   3  the edit is never a permanent loss, but this attempt cannot confirm
+#      whether it also reached origin. THREE CAUSES (Copilot round 3 on #50,
+#      5203261904, naming the other two this row used to leave out): a
+#      rebase conflict this attempt could not resolve — not pushed BY THIS
+#      ATTEMPT; a later write from this checkout may already carry it to
+#      origin, so LOOK by CONTENT before you retry (round 4, 5203455553:
+#      SHA ancestry alone misses a peer's rebase of it, which changes the
+#      hash but not the patch); `git_timeout_die`'s network timeout on a
+#      push OR a pull, where a hung one often already landed; or six
+#      attempts exhausted because a peer's own uncommitted file blocks
+#      every rebase.
 #   4  the mutex could not be taken within 60s
 #   5  an edit moved more than one line and was refused — or, Amendment 15, a
 #      lane's object log could not be renamed to the row's own spelling
@@ -1163,14 +1173,47 @@ EOF
         grep -n -A2 -e '^<<<<<<<' -- "$LANES_REPO/$cp" 2>/dev/null | head -n 40 >&2 || :
       done
       git -C "$LANES_REPO" rebase --abort 2>/dev/null || :
+      cp_sha="$(git -C "$LANES_REPO" rev-parse HEAD 2>/dev/null)"
       note "rebase ABORTED — the worktree is clean and NOT mid-rebase. Your edit is safe in these local commits:"
       git -C "$LANES_REPO" --no-pager log --oneline "origin/$LANES_BRANCH..HEAD" 2>/dev/null | head -n 10 >&2 || :
+      # #32 — AN ABORTED PULL IS NOT PROOF THIS COMMIT NEVER REACHED ORIGIN
+      # (the same rule RV-B3 took for the handoff stamp's own push, in
+      # lane-start). This checkout is shared with every lane on the
+      # workstation, so the very next write out of it pulls this dangling
+      # commit onto its own and pushes both together — three of the four
+      # "rebase conflict … nothing was pushed" lines seen on Eagle in one
+      # hour named a commit that was ALREADY on origin by the time anyone
+      # read them. LOOK before you reset or redo anything — by ANCESTRY
+      # (Copilot round 2 on #50, 5203033893): a log capped at a few entries
+      # can bury this commit below the window while it stays an ancestor, the
+      # moment four or more later writes land ahead of it.
+      # ROUND 3 (Copilot 5203261904): `fetch && merge-base ... && echo A ||
+      # echo B` is left-associative — a FAILED fetch also falls to the `||`
+      # and prints the SAME "not-there" a genuine non-ancestor does, so a
+      # stale or unreachable origin would silently wave the reset/redo path
+      # through. Fetch is now its own line, checked before anything else.
+      # ROUND 4 (Copilot 5203455553): SHA ancestry is the wrong test — the
+      # very write this whole recovery exists to catch (a peer's own
+      # `commit_push` pulling THIS dangling commit and rebasing it onto a
+      # newer base, per the very next branch above) gives it a NEW sha, so
+      # `merge-base --is-ancestor $cp_sha …` answers "not-there" even once
+      # the CONTENT is published. `git cherry` compares by PATCH, not by
+      # sha, so a rebase that only replays the same change (no real
+      # conflict) is still found. Measured against a real bare repo: a
+      # commit rebased by a peer this way answers `not-there` under
+      # `merge-base --is-ancestor` and `-` (found, equivalent) under
+      # `git cherry` — verified for the genuinely-absent case too (`+`) and
+      # the plain same-sha case (no output at all, which the `-c '^+'`
+      # count below also reads as zero, i.e. already there).
       note "RECOVERY (in that order):"
-      note "  git -C $LANES_REPO diff origin/$LANES_BRANCH..HEAD -- ${CP_PATHS[*]}   # read back exactly what you wrote"
-      note "  git -C $LANES_REPO reset --hard origin/$LANES_BRANCH                # drop the local commits (NOTE: also drops any"
+      note "  git -C $LANES_REPO fetch origin $LANES_BRANCH || echo FETCH-FAILED   # if that printed FETCH-FAILED, STOP and retry — a stale or unreachable origin proves nothing either way"
+      note "  git -C $LANES_REPO cherry origin/$LANES_BRANCH $cp_sha | grep -c '^+'   # BY CONTENT, not by sha: a peer's rebase changes the hash but git cherry still finds the same patch"
+      note "  if that printed 0, STOP — reset or redo now would write it a second time."
+      note "  git -C $LANES_REPO diff origin/$LANES_BRANCH..HEAD -- ${CP_PATHS[*]}   # only if it is not there: read back exactly what you wrote"
+      note "  git -C $LANES_REPO reset --hard origin/$LANES_BRANCH                # then drop the local commits (NOTE: also drops any"
       note "                                                          # uncommitted peer edit in this checkout)"
       note "  then re-read LANES.md and redo the edit with lanes-edit.sh, on top of the peer's version."
-      die "rebase conflict on origin/$LANES_BRANCH — nothing was pushed." 3
+      die "rebase conflict on origin/$LANES_BRANCH — not pushed by this attempt; a later write from this checkout may already carry it, so look before you retry." 3
     fi
     attempt=$((attempt + 1))
     sleep 3
