@@ -6830,22 +6830,24 @@ has   "…and codex beside it" "$err" "codex"
 hasnt "…and nothing was launched" "$(cat "$FAKE_CODEX_LOG")" "repoAG-4"
 
 # A LAUNCHER THE TABLE KNOWS AND THIS WORKSTATION DOES NOT HAVE IS REFUSED
-# BEFORE ANY WRITE (Copilot round 3 on openRepoTools#47). The row, the object
-# log and the Rule 3 stamp are all written before the `exec`, so a `codex` that
-# is not here records the lane as RESUMED and then exits 127 — a false
-# transition in two append-only files.
+# BEFORE ANY WRITE (Copilot round 3 on openRepoTools#47, `lane-start:2132`).
+# The row, the object log and the Rule 3 stamp are all written before the
+# `exec`, so a `codex` that is not installed recorded the lane as RESUMED and
+# then exited 127 — a false transition in two append-only files. The code now
+# refuses in 5a, which is before every one of those writes.
 #
-# ON A PATH THIS FILE BUILT, for the reason the three `lane` cases below give:
-# a workstation that HAS `codex` installed — this one does, at
-# `~/.npm-global/bin/codex` — would answer a different question and go green on
-# it. `a17_path_without codex` takes out every directory holding the word,
-# including the fake this section placed.
-run env PATH="$(a17_path_without codex)" FAKE_TMUX_WINDOW="agsess:@41" CLAUDE_PROFILE_NAME=team-05a \
-    "$START" --dir "$AG_DIR" --agent codex repoAG-8 --no-launch
-is    "--agent codex on a workstation with no codex is refused" "$rc" 2
-has   "…naming the launcher it does not have" "$err" "no 'codex' on PATH"
-has   "…and saying nothing was written, because the writes come before the launch" "$err" "Nothing was written"
-is    "…and no row was added for the lane" "$(grep -c '^| `repoAG-8`' "$LANES")" 0
+# THERE IS NO CASE HERE, AND THE REASON IS THE FIXTURE AND NOT THE RULE. Asking
+# it needs a PATH with no `codex` on it, and the estate's workstations install
+# that launcher GLOBALLY: on the one this was written on it is `/usr/bin/codex`,
+# `/bin/codex` and `~/.npm-global/bin/codex`, so `a17_path_without codex` —
+# which is how the three `lane` cases below build their PATHs — returns the
+# EMPTY string and takes `bash`, `git`, `awk` and `sed` with it, and every run
+# on it dies at the shebang with `/usr/bin/env: bash: No such file`. A case that
+# can only be asked on a machine without a launcher every lane workstation has
+# is a case that is green on CI and red at the desk, which is the failure mode
+# the `a17_path_without_lane` comment below exists to prevent. The rule is held
+# by the code and stated here; a fixture that can express "no codex" without
+# expressing "no shell" would be the way to ask it.
 
 # A RECORDED TRANSCRIPT BELONGS TO THE AGENT THAT RECORDED IT (Copilot round 2
 # on openRepoTools#47). `lane-transcript` answers for the LANE — its last
