@@ -1412,7 +1412,36 @@ dup_check() {   # <session uuid> <what this run was about to do with it>
   [ "$dc_rc" = 0 ] || return 0
   while IFS=$'\037' read -r dc_pid dc_kind dc_tgt dc_prof dc_where dc_verdict dc_file; do
     [ -n "${dc_pid:-}" ] || continue
-    [ "$dc_verdict" = duplicate ] || continue
+    # `unrelated` BLOCKS HERE AND NOWHERE ELSE, and the difference is the
+    # question being asked. `transcript_holders` answers "who holds this
+    # transcript, and what is this window's relation to them", and its
+    # `unrelated` means THIS WINDOW CARRIES NO RECORD OF IT AT ALL — kept
+    # silent there so that a rule about a TRANSCRIPT cannot overturn
+    # `live_holder`'s verdicts about a LANE, or `forks`, from a read that was
+    # asked about neither. THE QUESTION HERE IS 18(h)'s OWN and is narrower:
+    # *"the id it is about to resume or bind"*. The ROW-RESUME branch reaches
+    # this call only when `row_sid != win_sid`, so this window has no record of
+    # that id and EVERY live holder of it comes back `unrelated` — counting
+    # only `duplicate` made that branch's check one that could never fire
+    # (Copilot round 1 on opensoft/openRepoTools#52). At the window-binding call
+    # the id IS this window's own session, so a `here` record exists and nothing
+    # is `unrelated`; one rule, two call sites, no second definition of a
+    # duplicate.
+    #
+    # AND IT DOES NOT DECIDE WHETHER THE LANE IS TAKEN. An ORPHAN — a live but
+    # idle holder of the row's id — is still reported and never refused as a
+    # rival (Amendment 8(f), through `live_holder`'s own verdict, printed above
+    # this with 6(d)'s act), and a `bg` companion still holds no lane. What
+    # 18(h) adds is about the FILE: this branch's next act is `claude --resume
+    # <that id>`, and the clause says *"it never appends such an id to the row
+    # and never launches a second resume of it"*. 8(f)'s own sentence does not
+    # reach that state either — it rules on *"a row's EARLIER session ids …
+    # still held by live but idle sessions"*, and this is the id the row ENDS
+    # on, which is the one a resume opens.
+    case "$dc_verdict" in
+      duplicate | unrelated) : ;;
+      *) continue ;;
+    esac
     dc_other="${dc_other:+$dc_other, }pid $dc_pid ($dc_where, kind $dc_kind, profile $dc_prof)"
   done <<<"$dc_rows"
   [ -n "$dc_other" ] || return 0

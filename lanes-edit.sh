@@ -5348,30 +5348,51 @@ record_window_state() {   # <the record's tmux field>
 #               session's own transcript it would answer `here` for the
 #               duplicate too, which is the one reading this function exists to
 #               prevent.
-#   companion   not this window's, and in the SAME profile's `sessions/` as this
-#               window's own record of this id. AMENDMENT 8, RULING (g): *"Beside
+#   companion   not this window's, in the SAME profile's `sessions/` as this
+#               window's own record of this id, AND NOT A SESSION RECORD.
+#               AMENDMENT 8, RULING (g) names exactly one such thing: *"Beside
 #               the interactive process in the pane the harness runs a companion:
 #               `kind: bg`, no `tmux`, no `nameSource`, its own pid, and THE SAME
 #               `sessionId` … Records that share a `sessionId` are one session,
 #               not a queue of rival holders, and there is no contest between
 #               them to win."* The harness writes a session's own records under
 #               that session's own `$CLAUDE_CONFIG_DIR`, so same-profile is what
-#               "the harness's own second record of one session" looks like.
-#   duplicate   not this window's, and in ANOTHER profile's `sessions/` beside
-#               this window's own. AMENDMENT 18(h)'s second live process, and the
-#               profile is the discriminator BECAUSE IT IS WHAT WAS MEASURED:
-#               four times on 2026-09-14, the last at 18:14Z, the second record
-#               sat in another profile's directory — and 18(h) says why that is
-#               the shape it takes, *"on a launcher-configured workstation every
-#               profile's `projects/` is one shared directory … which is also why
-#               a duplicate is one `--resume` away"*.
+#               "the harness's own second record of one session" looks like —
+#               and the `kind` is what tells that record apart from a SECOND
+#               INTERACTIVE PROCESS in the same directory, which is one
+#               transcript resumed twice and is 18(h)'s own case rather than the
+#               harness's companion. The profile alone read a second `--resume`
+#               UNDER ONE PROFILE as benign (Copilot round 1 on this PR), and
+#               that is the cheapest way there is to make two live processes on
+#               one transcript: no move, no swap, one command.
+#               `record_fields_are_session` is this file's own predicate for the
+#               distinction — `bg` is a companion, `interactive` and a harness
+#               too old to say are holders — and it is ASKED here rather than
+#               re-spelled, so there is one reading of what a companion is.
+#   duplicate   EVERY OTHER live record carrying this id: a session record in
+#               another window of this same profile, or any record at all in
+#               ANOTHER profile's `sessions/` beside this window's own. That is
+#               AMENDMENT 18(h)'s second live process. The MEASURED shape was the
+#               second one — four times on 2026-09-14, the last at 18:14Z, the
+#               second record sat in another profile's directory, and 18(h) says
+#               why, *"on a launcher-configured workstation every profile's
+#               `projects/` is one shared directory … which is also why a
+#               duplicate is one `--resume` away"* — but the rule it states is
+#               one live PROCESS per transcript, not one per profile.
 #   unrelated   THIS WINDOW CARRIES NO RECORD OF THIS TRANSCRIPT AT ALL, so this
 #               read says nothing about the processes that do. That is not
 #               timidity: `live_holder` answers "is any session this row names
 #               alive" and Amendment 8(f) rules an ORPHAN reported and never
 #               refused, while `lane_forks` answers about a fork. A rule that
 #               counted every live record here would overturn both from a read
-#               that was not asked about either.
+#               that was not asked about either. ONE CALLER TAKES IT AS A
+#               BLOCKER ANYWAY AND SAYS SO WHERE IT DOES: `lane-start`'s
+#               `dup_check`, asked about the ONE id a run is about to resume,
+#               where an `unrelated` holder is a second live process on the very
+#               file that run is about to open (Amendment 18(h), *"never
+#               launches a second resume of it"*). That is a narrower question
+#               than this verdict answers, so the narrowing lives at that call
+#               site and not in this table.
 #
 # 0 with rows, 8 with none, 1 where the records could not be read, 64 no uuid.
 transcript_holders() {   # <session uuid>
@@ -5460,7 +5481,7 @@ transcript_holders() {   # <session uuid>
       tv_v=here
     elif [ -z "$th_here_prof" ]; then
       tv_v=unrelated
-    elif [ "$tv_prof" = "$th_here_prof" ]; then
+    elif [ "$tv_prof" = "$th_here_prof" ] && ! record_fields_are_session "$tv_kind"; then
       tv_v=companion
     else
       tv_v=duplicate
@@ -5747,18 +5768,15 @@ guard_run() {   # <the hook's JSON, on stdin already read>
     G_ROW="this window names no lane, so no row is keyed by it"
   fi
 
-  # ---- THE PENDING OFFER, ANSWERED BEFORE ANYTHING ELSE IS JUDGED (clause
-  # (h) rule 2). The answer prompt is the person's reply to a question this
-  # guard asked, it is consumed here and never reaches the model, and the
-  # triple still disagrees BECAUSE of the rename being answered — so this
-  # cannot wait behind the table below.
-  gr_off="$(guard_offer_file "$G_ID")"
-  if [ -f "$gr_off" ]; then
-    guard_answer "$gr_off" "$gr_prompt" "$gr_pane"
-    return 2
-  fi
-
-  # ---- AMENDMENT 18(h) — ONE LIVE PROCESS PER TRANSCRIPT.
+  # ---- AMENDMENT 18(h) — ONE LIVE PROCESS PER TRANSCRIPT, ASKED BEFORE THE
+  # PENDING OFFER IS ANSWERED. Clause (h) refuses *"every prompt in a process
+  # that shares its session id with another live one"*, and THE ANSWER TO THIS
+  # GUARD'S OWN QUESTION IS A PROMPT: a `yes` consumed here runs `lane-start`,
+  # writes a register row and appends a uuid to a cell, out of a process that
+  # may not be writing anything at all — and the offer is held per SESSION ID,
+  # so the second process answers the first one's question. The offer is KEPT
+  # while the duplicate stands and is answered at the first prompt after the
+  # other process is retired (Copilot round 1 on this PR).
   if [ -n "$gr_others" ]; then
     guard_triple
     note "ANOTHER LIVE PROCESS CARRIES THIS SESSION ID ($G_ID): $gr_others."
@@ -5769,6 +5787,18 @@ guard_run() {   # <the hook's JSON, on stdin already read>
     else
       note "retire the other one: lane-end <lane> --retire <pid>. This window names no lane, so which lane it is is yours to name."
     fi
+    return 2
+  fi
+
+  # ---- THE PENDING OFFER, ANSWERED BEFORE THE TABLE BELOW IS CONSULTED
+  # (clause (h) rule 2). The answer prompt is the person's reply to a question
+  # this guard asked, it is consumed here and never reaches the model, and the
+  # triple still disagrees BECAUSE of the rename being answered — so this
+  # cannot wait behind the table below. It DOES wait behind 18(h)'s count
+  # above, for the reason stated there.
+  gr_off="$(guard_offer_file "$G_ID")"
+  if [ -f "$gr_off" ]; then
+    guard_answer "$gr_off" "$gr_prompt" "$gr_pane"
     return 2
   fi
 
@@ -5880,6 +5910,22 @@ guard_lock_rename() {   # <pane> <what is wrong with the name, as a clause>
   return 2
 }
 
+# F-B6 PRINTS EVERY COMMAND FILLED IN, AND THERE IS ONE LANE NAME THAT CANNOT
+# BE. `lane_start_args` answers `<repo> <n>` for a lane named under Rule 4's
+# `<repo>-<n>` form and `--dir <path> <lane>` for one named before it — and that
+# `<path>` is a PLACEHOLDER, because nothing in the register, the window or this
+# session says where such a lane's checkout is. Printing it in a diagnostic is
+# honest; RUNNING it is not. `lane-start --no-launch --dir '<path>' legacy-ui`
+# refuses on a directory that does not exist, and the offer that ran it would
+# ask the same question at every prompt afterwards (Copilot round 1 on this PR).
+# So the offer SAYS what it cannot fill in and the `yes` refuses instead of
+# running it, with the offer kept so that `no` still answers.
+guard_args_filled() {   # <lane>
+  gaf_a="$(lane_start_args "$1")"
+  case "$gaf_a" in *'<path>'*) return 1 ;; esac
+  return 0
+}
+
 # ------------------------------------------------------------ (h)2: THE OFFER
 #
 # *"if the user does a rename, then we should offer to move to that lane or
@@ -5904,7 +5950,11 @@ guard_offer() {   # <offer file> <pane>
   else
     note "you renamed this session to $G_SES_LANE — lane $G_SES_LANE DOES NOT EXIST yet."
   fi
-  note "Reply \`yes\` to move this window to it (creating the lane if there is none: \`lane-start --no-launch $(lane_start_args "$G_SES_LANE")\` is run for you, this window is renamed, the row created or this uuid appended, and $G_LANE is marked MOVED)."
+  if guard_args_filled "$G_SES_LANE"; then
+    note "Reply \`yes\` to move this window to it (creating the lane if there is none: \`lane-start --no-launch $(lane_start_args "$G_SES_LANE")\` is run for you, this window is renamed, the row created or this uuid appended, and $G_LANE is marked MOVED)."
+  else
+    note "Reply \`yes\` and it will say what it cannot do: $G_SES_LANE is named before Rule 4's \`<repo>-<n>\` form, so \`lane-start\` needs that lane's DIRECTORY and nothing here knows which one it is. Moving this window to it is \`lane-start --no-launch --dir <that lane's checkout> $G_SES_LANE\`, yours to run with the path filled in."
+  fi
   note "Reply \`no\` to stay $G_LANE — the session is renamed back with \`/rename $G_LANE\`."
   note "The answer is the NEXT prompt, it is consumed here and never reaches the model, and anything but yes or no asks again. The offer expires with this session."
   [ -f "$go_f" ] || note "(the offer could not be written to $go_f, so the answer will be read as a fresh prompt and this question asked again — which is the safe direction)"
@@ -5994,6 +6044,10 @@ guard_answer() {   # <offer file> <the prompt> <pane>
   fi
   case "$ga_ans" in
   y|yes)
+    if ! guard_args_filled "$ga_to"; then
+      guard_refuse "lane $ga_to is named before Rule 4's \`<repo>-<n>\` form, so the act that moves this window to it cannot be filled in here: \`lane-start\` needs that lane's DIRECTORY and nothing in the register, the window or this session says which one it is. NOTHING has been renamed, moved or written, and the offer is KEPT — run it yourself with the path, or answer \`no\` to stay $ga_from." "lane-start --no-launch --dir <that lane's checkout> $ga_to"
+      return 2
+    fi
     ga_start="$(guard_lane_start)"
     if [ -z "$ga_start" ] || [ ! -x "$ga_start" ]; then
       guard_refuse "there is no \`lane-start\` beside this file or on PATH, so this window has NOT moved to $ga_to and NOTHING has been written. The offer is kept: answer \`yes\` again once it is installed (\`openRepoTools --install\`)."

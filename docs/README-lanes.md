@@ -1564,7 +1564,20 @@ lanes-edit: Reply `no` to stay openRepoTools-3 — the session is renamed back w
 The answer is the **next prompt**; it is consumed by the guard and never reaches
 the model, and anything but `yes` or `no` asks again. The pending offer is held
 per session id under `$CLAUDE_CONFIG_DIR/lanes/offers/<uuid>` and expires with
-the session. On `yes` the **window is renamed first** and that order is
+the session. **An answer is a prompt**, so it waits behind the duplicate read
+below: while a second live process carries this transcript the answer is
+refused with that, and the offer is kept for the first prompt after the other
+process is retired — a `yes` consumed there would run `lane-start` out of a
+process that may not be writing at all, on a question the other one could
+equally have answered.
+
+**A lane named before Rule 4's `<repo>-<n>` form is offered, not run.** The
+register carries 22 of them, and `lane-start` needs such a lane's DIRECTORY,
+which nothing in the register, the window or the session says. So the offer
+says what it cannot fill in and `yes` refuses rather than running a command with
+a `<path>` placeholder in it: the move is
+`lane-start --no-launch --dir <that lane's checkout> <lane>`, yours to run with
+the path filled in, and the offer is kept so that `no` still answers it. On `yes` the **window is renamed first** and that order is
 load-bearing: `lane-start`'s step 3b veto 2 refuses to take the session live in
 a window named for another lane, which after a `yes` is exactly what this window
 is — without the rename the lane would be started and stamped with this
@@ -1595,6 +1608,14 @@ twice, and the tooling refuses to build on either. Measured four times on
 beside the interactive record in ANOTHER's, both live, both carrying one
 `sessionId` — so the sweep is of **every** profile's directory, not the asking
 session's.
+
+The one live record this read passes over in silence is the harness's own
+**companion**: `kind: bg`, beside this window's own record, in the same
+profile's `sessions/` (Amendment 8, ruling (g) — *"records that share a
+`sessionId` are one session, not a queue of rival holders"*). The **kind** is
+what tells it from a second live process, not the profile: one profile can
+resume one transcript twice — no move, no swap, one command — and the
+interactive record that makes is 18(h)'s own case.
 
 `lanes-edit.sh transcript-holders <uuid>` is the read, and three surfaces share
 it rather than implementing the rule three times:
