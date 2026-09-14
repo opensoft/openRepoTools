@@ -6809,8 +6809,14 @@ hasnt "…and never the flag with the next flag as its value" "$err" "--estate -
 # typed again, which is a suggested command that does something else.
 run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" "$START" --estate 'team blue' </dev/null
 is    "…and a value with a space in it is still one value" "$rc" 2
-has   "…quoted the way the shell reads it back" "$err" "--estate 'team blue'"
+# THE EXPECTATION IS `printf %q`'s OWN OUTPUT, because that is what `quoted` is:
+# a case that spelled one of the shell's several correct quotings by hand would
+# be asserting the FORM rather than the contract, and bash renders this one
+# `team\ blue` rather than `'team blue'`.
+has   "…quoted the way the shell reads it back" "$err" "--estate $(printf '%q' 'team blue')"
 hasnt "…never bare, which would be two words on the next line someone types" "$err" "--estate team blue"
+is    "…and the shell reads that fragment back as ONE word" \
+      "$(eval "set -- $(printf '%q' 'team blue')"; printf '%s' "$#")" "1"
 if [ "$HAVE_PTY" = 0 ]; then
   skip "bare lane-start forwards the flags lane has" "$NO_PTY_WHY"
 else
@@ -6883,7 +6889,7 @@ hasnt "…and the client was never switched, because the select is the first act
 : > "$LANE_TMUX_LOG"
 run env PATH="$LANEBIN_PATH" LANE_TMUX_SWITCH_FAIL=1 "$LANE" --switch repoPick-3 </dev/null
 is    "…and a switch-client that FAILED refuses with 2 as well" "$rc" 2
-has   "…naming the act that failed" "$err" "switch-client -t detsess\` then failed"
+has   "…naming the act that failed, window and all" "$err" "switch-client -t detsess:@32\` then failed"
 has   "…and the half that worked, which is the lane's own window selected there" \
       "$(cat "$LANE_TMUX_LOG")" "select-window -t detsess:@32"
 
