@@ -154,7 +154,11 @@ grep -n 'my-lane' LANES.md
 LANES_LANE=my-lane ./lanes-edit.sh commit "row rewritten by hand"
 ```
 
-Every mutating subcommand does the same five things:
+Every mutating subcommand FIRST resolves its `<lane>` — and `LANES_LANE` — to
+the register row's own spelling, case-insensitively, before it reads or writes
+anything, so a name typed in another case edits the row that is there instead of
+creating a second one; two rows differing only by case are a refusal naming both
+(Amendment 15). Then it does the same five things:
 
 1. takes a `mkdir` lock in `.lanes/` (so two helper runs never interleave);
 2. checks whether LANES.md is already dirty before making its own edit. If it
@@ -247,6 +251,34 @@ still called `claude` has no lane at all; and whether a name is free is
 decided by whether the row's recorded session id is **live**, never by whether
 a row exists.
 
+**A lane name is ONE name under any case, and the register row's spelling is
+canonical** (Amendment 15, in force 2026-09-14T00:07:18Z). `lane-start
+openxfactory 2` and `lane-start openXfactory 2` are the same lane: every lookup
+of a name — the row, the object log, the tmux window, the session name,
+`LANES_LANE`, and every `<lane>` argument of the four commands — compares
+case-insensitively, and the row's own spelling is what the window is renamed to,
+what the launch is `--name`d with, what the log file is called, and what every
+line and stamp writes. A name typed in another case RESOLVES to it and is never
+written as typed. A lane with no row yet takes the checkout's REAL directory
+name for its `<repo>` half, resolved under the projects root case-insensitively;
+two directories differing only by case are a refusal naming both, because
+choosing one of them is choosing which repository the lane is in. Where the
+register already holds two rows differing only by case, **every writer refuses,
+naming both**, until they are merged by hand — 15(d): the newer row's session
+id(s) appended to the older row's session cell, in order, and the newer row
+removed in the SAME commit, whose message names both spellings. `lanes-edit.sh
+canon-lane <name>` is that resolver as a read, and the one all four commands
+share: **0** with the canonical spelling (the typed one where no row matches, so
+`add-row` can still create a lane), **2** for the pair, **64** usage — and that
+2 is RELAYED by `lane-start`, `lane-end` and `lane` rather than carried past,
+because the pair may be on `origin/<branch>` while this checkout still holds one
+row. `add-row` asks the published register as well as this copy of it for the
+same reason: a row a peer pushed is a refusal here, naming it and the `git pull
+--rebase` that settles it, and never a second row. The LOG is held to the same
+rule — two files under `lanes/log/` whose names differ only by case are two logs
+for one lane, and every read and every write under that name refuses, naming
+both, until they are merged.
+
 Honouring that by hand is five acts at one end of a lane and one at the other,
 and this register records where they get dropped: rows added hours late (`ROW
 ADDED LATE 2026-09-09T18:05Z — the lane worked from 00:10Z without a row, a
@@ -283,7 +315,9 @@ manual.
 ### `lane-start <repo> <n>`
 
 1. derives `LANE=<repo>-<n>` and the lane's directory — `~/projects/<repo>`,
-   or `--dir <path>`;
+   or `--dir <path>`. Both halves resolve case-insensitively under Amendment
+   15: `<repo>` to the checkout's real directory name, and the lane to the
+   register row's own spelling, which then wins over everything typed;
 2. **refuses unless it is already inside tmux.** It renames the window it is
    run in and never creates a tmux session: the window is the lane;
 3. **liveness check, before it takes the name — and it is always asked.** It
@@ -334,8 +368,11 @@ manual.
    lane came from the swap *record* rather than from the window name or a flag;
 4. `tmux rename-window <LANE>` — which also turns automatic-rename **off** for
    that window, so the name survives the next command it runs;
-5. the row, through `lanes-edit.sh`: `add-row` when there is none — state
-   `STARTING`, session id `pending — set by the session's first act`,
+5. the row, through `lanes-edit.sh`: `add-row` when there is none under ANY
+   case — it refuses one that exists under another and names it, and the
+   liveness check above reaches the RESUME branch for that row rather than this
+   one (Amendment 15(a)) — state `STARTING`, session id `pending — set by the
+   session's first act`,
    `<workstation> / <profile> / <user>` per Rule 10, handoff path
    `handoffs/<estate>/session-handoff-<date>-lane-<LANE>.md` — and
    `append-row-status` when there is one. Never a hand edit. **That status is
@@ -463,7 +500,7 @@ This is the tooling half of that answer.
 
 | what | where |
 |---|---|
-| a lane's object log | `lanes/log/<lane>.md` — one file per lane, append-only |
+| a lane's object log | `lanes/log/<lane>.md` — one file per lane, append-only. `<lane>` is the REGISTER ROW'S spelling (Amendment 15); a file left under another case is found by every reader and RENAMED to that spelling once, by the first write that touches it, inside that write's own commit — so git records the rename beside the line appended. Two plain `mv`s through a temporary name, because on a case-insensitive filesystem `mv a A` answers *identical* and renames nothing |
 | line 1 of each | `# lane <lane> — object log (lane-collision-protocol Amendment 7)` |
 | every other line | one EVENT, in the grammar below |
 | the alias table | two layers (Amendment 9(b)): the shipped `repos.tsv` installed beside the commands, then `<the checkout>/lanes/repos.tsv` where you keep an override. `alias<TAB>owner/repo`, case-insensitive. An override row replaces the shipped row for the same alias and adds rows it does not carry; an alias in neither is still a refusal saying to spell it `owner/repo` |
@@ -520,6 +557,15 @@ STARTED — lane openRepoProject-1, session 09dd34d1-3afe-43a1-88fc-c33c92c08088
 
 `PAUSED`, `RESUMED`, `ENDED` and `RETIRED` carry the same `lane:<name>` object
 and no payload.
+
+**The `<lane>` field and the `lane:<name>` object are matched
+case-insensitively, and a writer writes the register row's spelling into both**
+(Amendment 15). A log is append-only and its lines carry whatever was typed on
+the day it was written: `lanes/log/openxfactory-2.md` holds `lane
+openXfactory-2` lines from 2026-09-02 beside the `lane openxfactory-2` lines of
+the 23:51Z incident, in one file, about one lane. `who --lane`, `lane-end`'s
+refusal and the `lanes` listing read both as that lane's; the old lines are
+never rewritten.
 
 **The object kinds in scope** are an issue or PR (`owner/repo#<n>`), an
 OpenSpec change directory (`owner/repo:openspec/changes/<name>`), and — for
@@ -1434,7 +1480,7 @@ falls to its next rung there rather than refusing.
 |---|---|
 | `lanes-edit.sh lane-dir <lane>` | the `dir ` of the lane's **last** lane-kind line carrying one, unquoted where it was written quoted |
 | `lanes-edit.sh lane-profile <lane>` | the same read one sub-field along — the `profile ` of that last line. An addition to the amendment's own table, so that `lane <name>` can learn a profile with one `git show` instead of a listing that reads every log on the workstation |
-| `lanes-edit.sh window-lane [<ws>] <@id>\|<session>:<index>` | the lane bound to a window **of the asking workstation** — the register row whose name is the window's name, else that workstation's swap record naming that ref |
+| `lanes-edit.sh window-lane [<ws>] <@id>\|<session>:<index>` | the lane bound to a window **of the asking workstation** — the register row whose name is the window's name, else that workstation's swap record naming that ref. Both rungs answer in the **register row's own spelling** (Amendment 15): what this prints is renamed to, `--name`d with and typed as `lane <name>` |
 | `lanes-edit.sh session-lane <uuid>` | the lane whose register row's **session cell** names that transcript uuid. Adoption act 0's; it is the read the `SessionStart` hook already made. **0** the lane · **8** no row's cell names it · **64** usage — like every other read in this table, by A11 Addendum 4 ruling 1, which corrects act 0's `2` · **2** a helper predating the read |
 | `lanes-edit.sh last-session <lane>` | the lane's resume target: the last uuid in the published cell **whatever shape it is in**, and failing that the session of its last `PAUSED`/`RESUMED`. This is what `/restart`'s step 4 reads, by A11 Addendum 4 ruling 14, rather than clause (f)'s `register-row` alone — so a lane whose row was never stamped but whose log records the session it paused in still has a resume target |
 | `lanes-edit.sh forks <lane>` | the **live forks** of the lane's transcript — never holders, and a defect to retire |

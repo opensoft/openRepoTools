@@ -726,14 +726,54 @@ go_row() {   # <group> <row>
 # --------------------------------------------------------------- `lane <name>`
 #
 # A LANE NAME IS ONE NAME UNDER ANY CASE (Amendment 15), and the spelling the
-# REGISTER ROW carries is the canonical one. The one-lane read is asked for the
-# typed spelling first — it reads ONE log rather than the estate's, which is the
-# whole reason that selector exists — and only where it comes back knowing
-# NOTHING of the lane is the estate-wide read made and matched case-
-# insensitively. So the ordinary path pays for one read, the person who typed
-# another case pays for two, and the answer is the ROW'S OWN SPELLING either
-# way, which is what `canon_lane` writes into every line below this one.
+# REGISTER ROW carries is the canonical one. `canon-lane` answers that — one
+# resolver, shared — and every line below this one then speaks of the lane by
+# the row's own spelling: what is `cd`'d for, what is handed to the launcher as
+# `--lane`, what is attached to and what every refusal names.
+#
+# THE ONE-LANE READ FOLLOWS IT, on the canonical name: it reads ONE log rather
+# than the estate's, which is the whole reason that selector exists. THE
+# ESTATE-WIDE READ UNDER IT IS THE FALLBACK AND NOT THE RESOLVER — it fires only
+# where the one-lane read came back knowing NOTHING of the lane, which after
+# `canon-lane` means a workstation whose `lanes-edit.sh` predates Amendment 15
+# and answered 2 as an unknown subcommand. So the ordinary path pays for one
+# read, an un-upgraded one pays for two, and neither can give a different answer
+# from the other about which lane was meant.
 if [ -n "$name" ]; then
+	# AMENDMENT 15 FIRST, BECAUSE THE ROW'S SPELLING IS THE LANE'S NAME. *"A lane
+	# name is one name under any case"* (ratified 2026-09-14T00:07:18Z verbatim
+	# "Ratify as drafted"), and `lanes-edit.sh canon-lane` is the ONE resolver
+	# every command that takes a `<lane>` shares — for the reason clause (h) gives
+	# every other read here: four implementations of *which row is this name's* is
+	# how the four come to disagree about it. This is `restart`'s own call, moved
+	# here with the act under Amendment 18 Addendum 2.
+	#
+	# `2` IS TWO ANSWERS AND ONE OF THEM IS A REFUSAL. It is what a helper
+	# predating Amendment 15 spends on an unknown subcommand — silent, expected,
+	# and a fall-through — and it is also `canon-lane`'s OWN refusal for a
+	# register that spells one lane two ways, which no read below can resolve and
+	# which only a person's 15(d) merge settles. The two are told apart by the
+	# refusal's own words, which no un-upgraded helper emits, and the pair is
+	# RELAYED rather than reported as a read that failed.
+	cl_out=""; cl_rc=0
+	cl_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "$name" 2>/dev/null)" || cl_rc=$?
+	cl_why=""; cl_pair=0
+	if [ "$cl_rc" = 2 ]; then
+		cl_why="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "$name" 2>&1 >/dev/null || :)"
+		case "$cl_why" in *"Amendment 15(d)"*) cl_pair=1 ;; esac
+	fi
+	if [ "$cl_pair" = 1 ]; then
+		printf '%s\n' "$cl_why" >&2
+		die "the PUBLISHED register spells lane $name two ways (above), so no read under that
+    name is unambiguous and this command will not bind a lane it cannot name —
+    Amendment 15(d): merge the newer row's session id(s) into the older row's
+    session cell, in order, remove the newer row in the SAME commit naming both
+    spellings, and re-run. Nothing was launched and nothing was attached." 2
+	fi
+	if [ "$cl_rc" = 0 ] && [ -n "$cl_out" ] && [ "$cl_out" != "$name" ]; then
+		note "lane $name → $cl_out (Amendment 15: the register row's spelling is canonical)"
+		name="$cl_out"
+	fi
 	read_rows --lane "$name" || :
 	row="$(printf '%s\n' "$ROWS_OUT" | awk -F"$TAB" 'NF >= 2 { print; exit }')"
 	split_row "${row:-}"
