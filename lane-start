@@ -723,21 +723,35 @@ if [ -z "${LANES_FILE:-}" ]; then die "$(lanes_workspace_why)" 1; fi
 # in this toolset: four implementations of "which row is this name's" is how the
 # four would come to disagree about it.
 #
-# 2 IS NOT ACTED ON HERE, and that is deliberate. It is the code a helper
-# predating this amendment spends on an unknown subcommand — every workstation
-# until adoption reaches it — and it is ALSO `canon-lane`'s own two-rows
-# refusal; this script cannot tell them apart by status, and it does not have
-# to, because the two-rows refusal is one it makes again forty lines below, out
-# of its own read of the register, with 15(d)'s merge named in it.
+# 2 IS TWO ANSWERS AND THE REFUSAL IS THE ONE THAT MATTERS (Copilot round 4 on
+# openRepoTools#41). It is the code a helper predating this amendment spends on
+# an unknown subcommand — every workstation until adoption reaches it — and it is
+# ALSO `canon-lane`'s own two-rows refusal. Carrying on from both was written
+# here on the reading that the refusal is one this script makes again forty lines
+# below out of its own read of the register; that read is `$LANES_FILE`, THE
+# WORKING TREE, and the register this refusal is about is `origin/<branch>`. On a
+# checkout that is behind, the pair is published and this file holds one row: the
+# local scan passes, and what the operator gets is the stderr-suppressed
+# `register-row` read below turning the SAME refusal into a generic exit 1 that
+# names neither spelling. So the refusal is asked for by its own words — no old
+# helper emits them from an unknown subcommand — and relayed, with the fallback
+# for a genuinely old helper left exactly as it was.
 cl_out=""; cl_rc=0
 cl_out="$("$LANES_EDIT" canon-lane "$LANE" 2>/dev/null)" || cl_rc=$?
+cl_why=""; cl_pair=0
+[ "$cl_rc" = 2 ] && cl_why="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "$LANE" 2>&1 >/dev/null || :)"
+case "$cl_why" in *"Amendment 15(d)"*) cl_pair=1 ;; esac
 case "$cl_rc" in
   0)
     if [ -n "$cl_out" ] && [ "$cl_out" != "$LANE" ]; then
       step "lane $LANE → $cl_out (Amendment 15: the register row's spelling is canonical)"
       LANE="$cl_out"
     fi ;;
-  2) : ;;
+  2)
+    if [ "$cl_pair" = 1 ]; then
+      printf '%s\n' "$cl_why" >&2
+      die "the PUBLISHED register spells lane $LANE two ways (above), so no read and no write under that name is unambiguous and nothing here picks one — Amendment 15(d): merge the newer row's session id(s) into the older row's session cell, in order, remove the newer row in the SAME commit naming both spellings, push, and re-run. Nothing was launched, renamed or written." 2
+    fi ;;
   *) note "$LANES_EDIT canon-lane $LANE failed (exit $cl_rc) — carrying on with the name as typed, which the register may spell differently" ;;
 esac
 

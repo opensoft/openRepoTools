@@ -1402,13 +1402,46 @@ log_files_named_ci() {   # <lane> — every existing log file for it, whatever i
 # The PUBLISHED path of a lane's log, found the same way — the canonical path
 # where `origin/<branch>` has no file of another case, so a lane with no log at
 # all still reads as the pre-cutover 8 rather than as a failure.
-log_path_ci() {   # <lane>
+#
+# TWO PATHS DIFFERING ONLY BY CASE ARE A REFUSAL AND NOT A CHOICE (Copilot round
+# 4 on openRepoTools#41). The `exit` after the first match read a tree holding
+# BOTH `lanes/log/repocase-1.md` and `lanes/log/repoCase-1.md` as though it held
+# one, and every reader behind it — `lane_log_events`, `lane_log_exists`,
+# `last-session`, the listing's per-lane facts — then consumed whichever `ls-tree`
+# happened to name first and DROPPED the other file's lines without saying so.
+# That is two logs for one lane, the state 15(d)'s hand merge exists for, and an
+# append-only history half of which is invisible is worse than a refusal. Counted
+# and REFUSED (2) naming both, in `canon_lane`'s own shape — it RETURNS rather
+# than exits, because every caller takes it with `$( )`.
+#
+# AND THE WORKING TREE ANSWERS WHERE `origin` HAS NOTHING. The fallback was the
+# canonical path outright, which is a path that need not exist: a lane whose log
+# is still spelled the old way and has never been pushed has ONE file on disk and
+# this named another. `claim`'s dirty-checkout exemption is computed from it, so
+# the lane's own uncommitted log read as an unrelated dirty file and the claim was
+# refused for it. The same case-insensitive scan every other reader uses answers
+# that half (Copilot round 4).
+log_path_ci() {   # <lane> — 0 with the ONE path, 2 where two differ only by case
   lpc_exact="$(log_path_for "$1")"
   if have_remote_ref; then
-    lpc_hit="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" 2>/dev/null \
-      | awk -v want="$lpc_exact" 'BEGIN { w = tolower(want) } tolower($0) == w { print; exit }')"
-    [ -n "$lpc_hit" ] && { printf '%s\n' "$lpc_hit"; return 0; }
+    lpc_hits="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" 2>/dev/null \
+      | awk -v want="$lpc_exact" 'BEGIN { w = tolower(want) } tolower($0) == w')"
+    lpc_n="$(printf '%s' "$lpc_hits" | grep -c . || :)"
+    if [ "$lpc_n" -gt 1 ]; then
+      note "lane $1 has $lpc_n object logs on origin/$LANES_BRANCH whose names differ only by case: $(printf '%s\n' "$lpc_hits" | tr '\n' ' ')"
+      note "one lane is ONE lane under any case and its log is ONE file (Amendment 15), so no read of it is unambiguous and nothing here picks one of them. Merge them by hand into $lpc_exact, oldest lines first, remove the others in the same commit (Amendment 15(d)), and re-run."
+      return 2
+    fi
+    [ "$lpc_n" = 1 ] && { printf '%s\n' "$lpc_hits"; return 0; }
   fi
+  lpc_loc="$(log_files_named_ci "$1")"
+  lpc_ln="$(printf '%s' "$lpc_loc" | grep -c . || :)"
+  if [ "$lpc_ln" -gt 1 ]; then
+    note "lane $1 has $lpc_ln object logs in this checkout whose names differ only by case: $(printf '%s\n' "$lpc_loc" | tr '\n' ' ')"
+    note "one lane is ONE lane under any case and its log is ONE file (Amendment 15), so no read of it is unambiguous and nothing here picks one of them. Merge them by hand into $(log_file_for "$1"), oldest lines first, remove the others in the same commit (Amendment 15(d)), and re-run."
+    return 2
+  fi
+  [ "$lpc_ln" = 1 ] && { printf '%s\n' "${LANES_LOG_PREFIX}${lpc_loc##*/}"; return 0; }
   printf '%s\n' "$lpc_exact"
 }
 
@@ -1435,14 +1468,27 @@ ensure_log() {
   # rebase would then land BOTH. The refusal below is fail-closed and its cure
   # is one command, where the cure for two published files is 15(d)-s hand
   # merge (Copilot round 1 on openRepoTools#41).
-  if [ "$el_n" = 0 ] && have_remote_ref; then
-    el_pub="$(log_path_ci "$lane")"
-    if [ "$el_pub" != "$(log_path_for "$lane")" ]; then
-      die "lane ${lane}'s object log is published as $el_pub and this checkout does not have it: the row spells the lane $lane, so the log is $(log_path_for "$lane") (Amendment 15), and writing one here now would leave TWO files for one lane. Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run; the rename then happens once, inside this write's own commit. Nothing was written." 2
-    fi
-  fi
+  #
+  # AND THE GUARD IS NOT ONLY FOR A CHECKOUT WITH NO FILE AT ALL (Copilot round 4
+  # on openRepoTools#41). It ran under `el_n = 0`, so the state a rename leaves
+  # when its COMMIT does not land — the canonical file here, the old-cased path
+  # still in the remote tree — walked straight past it, and the next write staged
+  # the canonical path alone and left the published one where it was: two files
+  # for one lane again, by the path this function exists to close. The test is
+  # therefore on the PATHS and not on the count: a published path that is neither
+  # the canonical one NOR the one this checkout is about to rename FROM is a
+  # refusal, which leaves the ordinary rename (local and published agree on the
+  # old spelling) exactly as it was.
   el_from=""
   [ "$el_n" = 1 ] && el_from="$el_hits"
+  if have_remote_ref; then
+    el_pub="$(log_path_ci "$lane")" || die "lane $lane's object log is published twice (above) and nothing is written under a name that means two files. Merge them by hand (Amendment 15(d)) and re-run. Nothing was written." 2
+    if [ "$el_pub" != "$(log_path_for "$lane")" ] && [ "${el_from##*/}" != "${el_pub##*/}" ]; then
+      el_here="and this checkout does not have it"
+      [ -n "$el_from" ] && el_here="while this checkout has ${LANES_LOG_PREFIX}${el_from##*/} instead — a case-only rename whose commit never landed"
+      die "lane ${lane}'s object log is published as $el_pub $el_here: the row spells the lane $lane, so the log is $(log_path_for "$lane") (Amendment 15), and writing one here now would leave TWO files for one lane. Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run; the rename then happens once, inside this write's own commit. Nothing was written." 2
+    fi
+  fi
   if [ -n "$el_from" ] && [ "$el_from" != "$lf" ]; then
     # THE RENAME IS ONE ACT AND IT HAPPENS ONCE: after it the canonical name is
     # the only one `log_files_named_ci` can find, so the next write takes the
@@ -1817,22 +1863,31 @@ state_events_flush() {
 # written under another spelling has not lost its history the moment its row's
 # spelling becomes canonical; the first write renames the file, and until then
 # every reader finds it.
+#
+# BOTH HALVES ASK `log_path_ci`, AND A `head -n1` IS NOT AN ANSWER (Copilot round
+# 4 on openRepoTools#41). The working-tree branch took the first of the
+# case-insensitive matches exactly as the published lookup did, so two local
+# files made a read-only caller decide a lane's resume, its profile and its state
+# out of half its history — silently, while the WRITER treats that same state as
+# ambiguous and refuses. One resolver now answers both, and its 2 is carried:
+# `lane_log_exists` spends it rather than 1, so "there are two logs" is never
+# read as "there is no log".
 lane_log_events() {
-  ll_rel="$(log_path_ci "$1")"
+  ll_rel="$(log_path_ci "$1")" || return 2
   if have_remote_ref; then
     git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$ll_rel" 2>/dev/null | parse_log_stream "$ll_rel"
   else
-    ll_f="$(log_files_named_ci "$1" | head -n1)"
-    [ -n "$ll_f" ] && [ -f "$ll_f" ] || return 0
+    ll_f="$LANES_LOG_DIR/${ll_rel##*/}"
+    [ -f "$ll_f" ] || return 0
     log_events "$ll_f"
   fi
 }
 lane_log_exists() {
+  lle_rel="$(log_path_ci "$1")" || return 2
   if have_remote_ref; then
-    git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$(log_path_ci "$1")" 2>/dev/null
+    git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$lle_rel" 2>/dev/null
   else
-    lle_f="$(log_files_named_ci "$1" | head -n1)"
-    [ -n "$lle_f" ] && [ -f "$lle_f" ]
+    [ -f "$LANES_LOG_DIR/${lle_rel##*/}" ]
   fi
 }
 
@@ -1923,6 +1978,24 @@ holders_of() {
   done
 }
 
+# A LANE NAME IS NOT A REGULAR EXPRESSION (Copilot round 4 on openRepoTools#41).
+# Every filter of these US-delimited holder rows was `grep "^$lane$US"`, which
+# hands a name straight to a matcher: `check_lane_name` admits `.`, so excluding
+# `repo.a-1` also excludes the REAL rival `repoXa-1`, and `first_landed_of`'s
+# `grep -q` could match a lane that is not in the set at all. A claim decided by
+# that filter is a claim whose winner is whichever name happened to be a pattern
+# — in a race whose whole point is that the arbiter is exact.
+#
+# So the comparison is `awk` on FIELD ONE, `tolower` on both sides, with no
+# pattern anywhere: literal, case-insensitive (Amendment 15) and blind to `.`,
+# `*`, `[` and `^`. `-v` carries one line, which a lane name is.
+rows_not_named() {   # <lane> — every row whose first field is NOT it
+  awk -v sep="$US" -v want="$1" 'BEGIN { FS = sep; w = tolower(want) } tolower($1) != w'
+}
+rows_named() {       # <lane> — every row whose first field IS it
+  awk -v sep="$US" -v want="$1" 'BEGIN { FS = sep; w = tolower(want) } tolower($1) == w'
+}
+
 # Every object this lane's OWN log mentions, with the lane's last verb on it.
 # `lane-end`'s refusal and `who --lane` both read exactly this.
 # Every object this lane's OWN log mentions, with the lane's last verb on it,
@@ -1932,7 +2005,17 @@ holders_of() {
 # `lane-end` would refuse for ever and never say why.
 #   utc  verb  object  ref+payload  superseded-by(lane@utc, or empty)
 lane_objects() {
-  lane_log_exists "$1" || return 8      # 8, not 1: "no log file" is an ANSWER
+  # 8, not 1: "no log file" is an ANSWER. TWO LOGS IS NOT THAT ANSWER, and 2 is
+  # carried through rather than flattened into it (Copilot round 4): `who --lane`
+  # and `lane-end`'s refusal would otherwise report a lane whose history is split
+  # across two files as a pre-cutover lane with no log at all.
+  lo_ex=0
+  lane_log_exists "$1" || lo_ex=$?
+  case "$lo_ex" in
+    0) : ;;
+    2) return 2 ;;
+    *) return 8 ;;
+  esac
   # AMENDMENT 15 — THE LANE FIELD OF A LOG LINE IS MATCHED CASE-INSENSITIVELY,
   # and the caller has already resolved `$1` to the row's spelling. The line's
   # own spelling is whatever was TYPED on the day it was appended, and an
@@ -3186,11 +3269,21 @@ write_event() {
     LANDING|LANDED) we_r6="$(rule6_line "$we_verb" "$we_lane" "$we_uuid" "$we_utc" "$we_obj" "$we_pay" 2>/dev/null || :)" ;;
   esac
   [ -n "$we_r6" ] && we_paths+=("$LANES_PATH")
+  # THE EXEMPTION IS THE PATH THE LOG IS ACTUALLY AT, WHICH NEED NOT BE THE
+  # CANONICAL ONE YET (Amendment 15; Copilot round 4 on openRepoTools#41).
+  # `$we_lane` is the ROW's spelling by the time it reaches here, while the file
+  # may still carry the spelling it was written under until THIS write renames
+  # it — so a lane with uncommitted lines in its own old-cased log met the test
+  # that exists to refuse somebody ELSE's uncommitted work, and could not write
+  # at all. Only the two exemptions take it: `we_paths` is what the capture and
+  # the commit are given and stays exactly what it was, with the old path joining
+  # it below as `LOG_RENAMED_FROM` once the rename has actually happened.
+  we_lp="$(log_path_ci "$we_lane")" || die "lane $we_lane's object log is published twice (above), and one lane is ONE lane under any case: its log is ONE file (Amendment 15). Merge them by hand (Amendment 15(d)) and re-run. Nothing was written." 2
   # R11 — the register is EXEMPT from this first test, because it is captured
   # below rather than refused. Everything ELSE this checkout has dirty is
   # refused HERE: before the lock, before the capture and before anything is
   # created, so that a refusal leaves the checkout exactly as it found it.
-  refuse_dirty_checkout "write $we_verb" "${we_paths[@]}" "$LANES_PATH"
+  refuse_dirty_checkout "write $we_verb" "${we_paths[@]}" "$we_lp" "$LANES_PATH"
   acquire_lock
   capture_register_edit "${we_paths[@]}"
   handle_preexisting "${we_paths[@]}"
@@ -3211,7 +3304,7 @@ write_event() {
   # design, it never fails the call — and a register still dirty at this point
   # would send commit_push down Amendment 5(d)'s skip-the-pull branch, which is
   # the branch that disables the rescan deciding a race.
-  refuse_dirty_checkout "write $we_verb" "${we_paths[@]}"
+  refuse_dirty_checkout "write $we_verb" "${we_paths[@]}" "$we_lp"
   append_text_line "$we_line" "$(log_file_for "$we_lane")"
   if [ -n "$we_r6" ]; then
     append_text_line "$we_r6" "$LANES_FILE"
@@ -5158,7 +5251,14 @@ first_landed_of() {   # <object> <holder rows>
     while IFS= read -r fl_f; do
       [ -n "$fl_f" ] || continue
       fl_lane="${fl_f##*/}"; fl_lane="${fl_lane%.md}"
-      if printf '%s\n' "$fl_holders" | grep -q "^$fl_lane$US"; then printf '%s\n' "$fl_lane"; return 0; fi
+      # THE JOIN IS FILE NAME → HOLDER ROW, AND THE TWO NEED NOT SPELL THE LANE
+      # ALIKE (Copilot round 4). The file carries the row's canonical spelling
+      # from the moment the first write renames it (Amendment 15); the holder row
+      # carries whatever the winning LINE was typed with, which an append-only
+      # log never rewrites. Byte for byte this join missed the winner and the
+      # rescan fell back to the sorted-first holder — a CLAIM-LOST naming the
+      # wrong lane. Literal and case-insensitive, both defects at once.
+      if [ -n "$(printf '%s\n' "$fl_holders" | rows_named "$fl_lane")" ]; then printf '%s\n' "$fl_lane"; return 0; fi
     done <<EOF
 $(git -C "$LANES_REPO" show --name-only --format= "$fl_sha" -- "$LANES_LOG_PREFIX" 2>/dev/null)
 EOF
@@ -5174,18 +5274,21 @@ claim_rescan_hook() {
   # so everything this read can see landed before ours, which is the whole
   # test. Flush the cache first: the ref moved a moment ago.
   state_events_flush
-  # `-i` ON BOTH EXCLUSIONS (Amendment 15), for the reason `claim`-s own
-  # pre-check carries it: these two remove THIS lane and the lane it is taking
-  # over from the set of rivals, and the row each removes carries whatever
+  # CASE-INSENSITIVE ON BOTH EXCLUSIONS (Amendment 15), for the reason `claim`-s
+  # own pre-check carries it: these two remove THIS lane and the lane it is
+  # taking over from the set of rivals, and the row each removes carries whatever
   # spelling the winning line used. Byte for byte, a lane whose earlier CLAIMED
   # says `repohold-1` under the row `repoHold-1` loses the race to ITSELF and
   # writes a CLAIM-LOST naming itself as the winner — measured, exit 7.
+  # AND LITERAL, not `grep -iv` (Copilot round 4): a name is not a pattern, and a
+  # rival removed because a `.` in THIS lane's name matched its spelling is a
+  # race this read reports as won when it was lost.
   crh="$(state_events | lane_states_on "$CLAIM_OBJ" | holders_of "$CLAIM_OBJ" \
-         | grep -iv "^$CLAIM_LANE$US" | { [ -n "$CLAIM_SKIP" ] && grep -iv "^$CLAIM_SKIP$US" || cat; } || :)"
+         | rows_not_named "$CLAIM_LANE" | { [ -n "$CLAIM_SKIP" ] && rows_not_named "$CLAIM_SKIP" || cat; } || :)"
   [ -n "$crh" ] || return 0
   CLAIM_WINNER="$(first_landed_of "$CLAIM_OBJ" "$crh")"
   IFS="$US" read -r crh_lane crh_verb crh_utc crh_rest <<EOF
-$(printf '%s\n' "$crh" | grep "^$CLAIM_WINNER$US" | head -n1)
+$(printf '%s\n' "$crh" | rows_named "$CLAIM_WINNER" | head -n1)
 EOF
   note "another lane's claim landed on main before this one: @$CLAIM_WINNER ($crh_verb, $crh_utc)"
   return 7
@@ -5414,13 +5517,29 @@ case "$cmd" in
     # that already had one. `row_line`'s exactly-one test cannot be the whole
     # gate here, because two rows differing only by case make it fail for the
     # OTHER reason and a failed `row_line` used to read as "no row, go ahead".
+    #
+    # AND THE PUBLISHED ROWS ARE ASKED TOO — R19, AND R30's FETCH IN FRONT OF IT
+    # (Copilot round 4 on openRepoTools#41). The scan was of `$LANES_FILE` alone,
+    # which a fetch does not move: on a checkout that is behind, a row `origin`
+    # already carries as `repoCase-1` is invisible here, this appends
+    # `repocase-1`, and `commit_push`'s own rebase then publishes the pair — the
+    # exact duplicate 15(a) makes this command refuse, arrived at through the one
+    # file the check never read. BOTH sets are asked and either is the refusal:
+    # the local scan stays because a row added here and not yet pushed is on no
+    # `origin` at all, and the published scan is the one the incident needed.
     if [ -n "$lane_new" ]; then
+      log_sync
       ar_hits="$(rows_named_ci_local "$lane_new")"
-      ar_n="$(printf '%s' "$ar_hits" | grep -c . || :)"
+      ar_pub="$(rows_named_ci "$lane_new" 2>/dev/null || :)"
+      ar_all="$(printf '%s\n%s\n' "$ar_hits" "$ar_pub" | grep -v '^$' | LC_ALL=C sort -u || :)"
+      ar_n="$(printf '%s' "$ar_all" | grep -c . || :)"
+      ar_ln="$(printf '%s' "$ar_hits" | grep -c . || :)"
       if [ "$ar_n" -gt 0 ]; then
         ar_more=""
         [ "$ar_n" -gt 1 ] && ar_more=" Those $ar_n rows differ only by case and are themselves the refusal: merge them into one row first (Amendment 15(d))."
-        die "lane '$lane_new' already has a row, spelled $(printf '%s\n' "$ar_hits" | tr '\n' ' ')— a lane name is ONE name under any case (Amendment 15(a)), so a row under another case IS that lane's row and this would be a second one. Use append-row-status / replace-in-row on the row that is there.$ar_more" 2
+        ar_where="Use append-row-status / replace-in-row on the row that is there."
+        [ "$ar_ln" = 0 ] && ar_where="That row is on origin/$LANES_BRANCH and this checkout has not pulled it, so adding one here would make two the moment this push rebases. Pull first — \`git -C $LANES_REPO pull --rebase\` — then use append-row-status / replace-in-row on the row that is there."
+        die "lane '$lane_new' already has a row, spelled $(printf '%s\n' "$ar_all" | tr '\n' ' ')— a lane name is ONE name under any case (Amendment 15(a)), so a row under another case IS that lane's row and this would be a second one. $ar_where$ar_more" 2
       fi
     fi
     acquire_lock; handle_preexisting
@@ -5550,7 +5669,10 @@ case "$cmd" in
     # uncommitted `lanes/LANES.md` as its own commit and re-tests the checkout
     # afterwards (R11), so a claim is not refused for the one file this
     # checkout is dirty in most of the day.
-    refuse_dirty_checkout claim "$(log_path_ci "$lane")" "$LANES_PATH"
+    # AND THE EXEMPTION IS A PATH, SO ITS AMBIGUITY IS THIS CLAIM'S (Copilot
+    # round 4): two logs differing only by case are a refusal, not a pathspec.
+    claim_log="$(log_path_ci "$lane")" || exit 2
+    refuse_dirty_checkout claim "$claim_log" "$LANES_PATH"
 
     # 1. FETCH FIRST OF ALL — then resolve `--home` against the lane's STARTED
     #    line (R30), canonicalise the object, and pre-check against what has
@@ -5563,12 +5685,14 @@ case "$cmd" in
     obj="$(canon_object "$obj_raw" "$home")" || exit 2
     ! is_lane_object "$obj" || die "a lane is not a claimable object" 2
     takeover_payload=""; takeover_note=""; takeover_from=""
-    # `-i`, FOR THE SAME REASON THE KEY ABOVE IS LOWER-CASED (Amendment 15).
-    # This is the lane REMOVING ITSELF from the holders of the object it is
-    # about to claim, and the row it removes carries whatever spelling the
-    # winning line used. Byte for byte, a lane whose own earlier CLAIMED says
-    # `repohold-1` under the row `repoHold-1` is refused its own object.
-    held="$(state_events | lane_states_on "$obj" | holders_of "$obj" | grep -iv "^$lane$US" || :)"
+    # CASE-INSENSITIVE, FOR THE SAME REASON THE KEY ABOVE IS LOWER-CASED
+    # (Amendment 15). This is the lane REMOVING ITSELF from the holders of the
+    # object it is about to claim, and the row it removes carries whatever
+    # spelling the winning line used. Byte for byte, a lane whose own earlier
+    # CLAIMED says `repohold-1` under the row `repoHold-1` is refused its own
+    # object. AND LITERAL rather than `grep -iv` (Copilot round 4): `repo.-1`
+    # excluding the rival `repoX-1` is a claim taken over a hold that is open.
+    held="$(state_events | lane_states_on "$obj" | holders_of "$obj" | rows_not_named "$lane" || :)"
     if [ -n "$held" ]; then
       who_object "$obj" || :
       IFS="$US" read -r h_lane h_verb h_utc h_file h_line <<EOF

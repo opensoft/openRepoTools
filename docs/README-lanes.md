@@ -221,7 +221,15 @@ id(s) appended to the older row's session cell, in order, and the newer row
 removed in the SAME commit, whose message names both spellings. `lanes-edit.sh
 canon-lane <name>` is that resolver as a read, and the one all four commands
 share: **0** with the canonical spelling (the typed one where no row matches, so
-`add-row` can still create a lane), **2** for the pair, **64** usage.
+`add-row` can still create a lane), **2** for the pair, **64** usage — and that
+2 is RELAYED by `lane-start`, `lane-end` and `restart` rather than carried past,
+because the pair may be on `origin/<branch>` while this checkout still holds one
+row. `add-row` asks the published register as well as this copy of it for the
+same reason: a row a peer pushed is a refusal here, naming it and the `git pull
+--rebase` that settles it, and never a second row. The LOG is held to the same
+rule — two files under `lanes/log/` whose names differ only by case are two logs
+for one lane, and every read and every write under that name refuses, naming
+both, until they are merged.
 
 Honouring that by hand is five acts at one end of a lane and one at the other,
 and this register records where they get dropped: rows added hours late (`ROW
