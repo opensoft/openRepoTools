@@ -23,7 +23,7 @@
 #
 # USAGE
 #   lane-end [options] <lane>            # lane-end openRepoShape-2
-#   lane-end <lane> --retire <pid|uuid>  # retire a live FORK; ends nothing
+#   lane-end <lane> --retire <pid|uuid>  # retire a live FORK or DUPLICATE; ends nothing
 #   lane-end [options] <repo> <n>        # the split form works too
 #   lane-end [options] <n>               # <repo> = basename of the cwd's git root
 #
@@ -51,6 +51,18 @@
 #                       not a live fork of this lane, and on a `forks` read
 #                       that failed — a read that failed is not "it is not a
 #                       fork". `lanes-edit.sh forks <lane>` names them all.
+#                       AND SINCE AMENDMENT 18(h) IT TAKES A SECOND POPULATION
+#                       (opensoft/openRepoTools#39): a live DUPLICATE of the
+#                       row's OWN id — a second process carrying the transcript
+#                       the row records, which `forks` cannot see, because its
+#                       criterion is "an id the row does NOT record" and
+#                       `lane-start` had just appended that id to the cell. The
+#                       lane's OWN session, in its own window, is refused by
+#                       name: retiring the session that IS the lane is how a
+#                       lane loses the conversation it is, and ending the lane
+#                       is the bare form above.
+#                       `lanes-edit.sh transcript-holders <uuid>` lists every
+#                       live process carrying one transcript.
 #   --state-was <text>  the exact text --retire should replace, for a row whose
 #                       state cell does not open with a single state word
 #   --force             end the lane even though its object log still shows
@@ -563,7 +575,17 @@ if [ -n "$retire_target" ]; then
   fk_rows="$("$LANES_EDIT" forks "$LANE" 2>/dev/null)" || fk_rc=$?
   case "$fk_rc" in
     0) : ;;
-    8) die "no fork of lane $LANE's transcript is live on this workstation, so there is nothing to retire. A fork is found by its transcript's TITLE under an id the row does not record (ratified decision 8(e)); \`$LANES_EDIT forks $LANE\` is the read that names them." 8 ;;
+    # AMENDMENT 18(h) / opensoft/openRepoTools#39 — AN 8 IS NO LONGER THE END OF
+    # THIS ACT. `forks` finds a fork by its transcript's TITLE under an id THE
+    # ROW DOES NOT RECORD, and on 2026-09-14 that criterion made the very
+    # process the launcher had just named invisible: a `--fork-session` whose id
+    # `lane-start --no-launch` had since appended to the row's session cell was
+    # no longer "an id the row does not record", so this act answered *"nothing
+    # to retire"* about a second live writer of the lane's own transcript and
+    # the retire had to be a bare `kill`, outside the tooling. So an 8 falls
+    # through to the duplicate read below, and only the two of them together
+    # refuse.
+    8) fk_rows="" ;;
     *) die "$LANES_EDIT forks $LANE failed (exit $fk_rc). That is NOT 'no fork of it is live', and this script will not name an act for a fork it could not prove is one. Run it by hand to see what it says, then re-run." 1 ;;
   esac
 
@@ -579,13 +601,123 @@ if [ -n "$retire_target" ]; then
 $fk_rows
 FORKS
 
+  # ---------------- A DUPLICATE OF THE ROW'S OWN ID (opensoft/openRepoTools#39)
+  #
+  # THE SECOND POPULATION, AND THE ONE THE FIRST BUILD OF THIS ACT COULD NOT
+  # SEE. Amendment 6(d) allows exactly one live conversation per lane and
+  # Amendment 18(h) sharpens it to one live PROCESS per transcript; `forks`
+  # answers about ids the row does NOT record, and this answers about the id it
+  # DOES. Measured 2026-09-14T12:05–12:30Z on lane openRepoTools-3: a harness
+  # `--fork-session` in a background pty host, whose record sat in ANOTHER
+  # profile's `sessions/` directory, beside the interactive resume of the same
+  # transcript in a tmux window — three live processes on one file at the peak.
+  #
+  # THE WINDOW'S OWN SESSION IS THE ONE IT REFUSES TO RETIRE, and it is read out
+  # of the same rows rather than out of a second helper and a second fetch: the
+  # record that is an interactive session in a window tmux still resolves — by
+  # `<@id>` AND session name, Amendment 11(h)'s agreement rule, which
+  # `transcript-holders` owns — is the lane's session. Every OTHER live process
+  # carrying that id is the duplicate.
+  dup_pid=""; dup_kind=""; dup_where=""; dup_prof=""
+  dup_own=""; dup_rows=""; dup_id=""
   if [ -z "$fk_sid" ]; then
-    note "the live forks of lane $LANE's transcript are:"
-    printf '%s\n' "$fk_rows" | while IFS="$(printf '\t')" read -r fr_sid fr_pid fr_kind fr_cwd; do
-      [ -n "${fr_sid:-}" ] || continue
-      note "  $fr_sid  pid $fr_pid  ${fr_kind:-interactive}  $fr_cwd"
-    done
-    die "'$retire_target' is neither the session id nor the pid of a live fork of lane $LANE. Naming an act against something that is not a fork of this lane is how the wrong conversation gets retitled and the wrong process gets stopped, so nothing is named. Pick one of the ids or pids above." 2
+    du_rc=0
+    dup_id="$("$LANES_EDIT" last-session "$LANE" 2>/dev/null)" || du_rc=$?
+    case "$du_rc" in
+      0 | 8) : ;;
+      *) die "$LANES_EDIT last-session $LANE exited $du_rc, so the id the row records could not be read and whether '$retire_target' is a DUPLICATE of it is not known. That is not 'it is not one', and this script will not name an act against a process it could not prove is one." 1 ;;
+    esac
+    if [ "$du_rc" = 0 ] && [ -n "$dup_id" ]; then
+      dh_rc=0
+      dup_rows="$("$LANES_EDIT" transcript-holders "$dup_id" 2>/dev/null)" || dh_rc=$?
+      case "$dh_rc" in
+        0 | 8) : ;;
+        2) note "this \`lanes-edit.sh\` has no \`transcript-holders\` (exit 2), so a duplicate of lane $LANE's own transcript cannot be looked for here. Install the one beside this script (\`openRepoTools --install\`)." ;;
+        *) die "$LANES_EDIT transcript-holders $dup_id exited $dh_rc, so whether '$retire_target' is a live duplicate of lane $LANE's own transcript could NOT be read — which is not 'it is not one'." 1 ;;
+      esac
+      if [ "$dh_rc" = 0 ]; then
+        while IFS=$'\037' read -r dr_pid dr_kind dr_tgt dr_prof dr_where dr_verdict dr_file; do
+          [ -n "${dr_pid:-}" ] || continue
+          # A WINDOW THAT COULD NOT BE ASKED ABOUT IS UNKNOWN AND NOT DEAD
+          # (Amendment 18(b)): `(not asked)` — no tmux here, or a record with
+          # no `<@id>` in it — PROTECTS the process, and only a `(gone)` this
+          # server actually refuted makes it retirable.
+          case "$dr_where" in
+            "window "*"(gone)") dr_own=0 ;;
+            "window "*) dr_own=1 ;;
+            *) dr_own=0 ;;
+          esac
+          if [ "$dr_own" = 1 ] && [ "$dr_kind" != bg ]; then
+            dup_own="${dup_own:+$dup_own }$dr_pid"
+          fi
+          if [ "$dr_pid" = "$retire_target" ]; then
+            dup_pid="$dr_pid"; dup_kind="${dr_kind:-interactive}"
+            dup_where="$dr_where"; dup_prof="$dr_prof"
+          fi
+        done <<<"$dup_rows"
+      fi
+    fi
+  fi
+
+  # THE WINDOW'S OWN SESSION IS REFUSED BY NAME, and the refusal names the act
+  # that DOES end a lane, because an operator who typed this meant one of the
+  # two and there is no third thing to mean.
+  if [ -z "$fk_sid" ] && [ -n "$dup_pid" ]; then
+    case " $dup_own " in
+      *" $dup_pid "*)
+        die "pid $dup_pid IS lane $LANE's own live session, in its own window ($dup_where) — not a duplicate of it. Retiring the session that IS the lane is how a lane loses the conversation it is, so nothing is named. To end the lane, run: $prog $LANE   ·   to retire a duplicate, pass ITS pid (\`$LANES_EDIT transcript-holders $dup_id\` lists every live process carrying this transcript)." 2 ;;
+    esac
+  fi
+
+  if [ -z "$fk_sid" ] && [ -n "$dup_pid" ]; then
+    fk_today="$(date -u +%Y-%m-%d)"
+    step "pid $dup_pid IS a live DUPLICATE of lane $LANE's own transcript $dup_id — proved, and NOTHING has been written or stopped"
+    note "  $dup_where  kind $dup_kind  profile $dup_prof"
+    note "A transcript is held by ONE live process (Amendment 18(h), ratified 2026-09-14): two of them append to one file, each overwriting what the other wrote. The lane's own session is${dup_own:+ pid $dup_own} in its window."
+    case "$dup_kind" in
+      bg)
+        note "Amendment 6(d)'s retire act for a BACKGROUND holder: \"an idle background session still holding a lane name is ended\". It has no prompt to type into, so the retitle below is not available to it."
+        note "Ending it is YOUR act and no tool's (Amendment 8(f) refuses it by name, and A11 clause (k) rule (e) repeats the refusal for this surface): the pid above is the process." ;;
+      *)
+        note "Amendment 6(d)'s retire act, typed IN THAT SESSION — there is no API to rename one from outside it:"
+        note "    /rename $LANE · retired $fk_today" ;;
+    esac
+    note "Until it is retired, every surface goes on naming it — which is true, because it is still a second live writer of this lane's transcript until one of the two acts above is taken."
+    note "The lane itself is untouched: this ended nothing, wrote nothing and killed nothing."
+    if (( dry_run )); then
+      note "--dry-run changes nothing here: this act writes nothing on any path, so the run above IS the whole of it."
+    fi
+    exit 0
+  fi
+
+  if [ -z "$fk_sid" ]; then
+    if [ -n "$fk_rows" ]; then
+      note "the live forks of lane $LANE's transcript are:"
+      printf '%s\n' "$fk_rows" | while IFS="$(printf '\t')" read -r fr_sid fr_pid fr_kind fr_cwd; do
+        [ -n "${fr_sid:-}" ] || continue
+        note "  $fr_sid  pid $fr_pid  ${fr_kind:-interactive}  $fr_cwd"
+      done
+    else
+      note "no fork of lane $LANE's transcript is live on this workstation. A fork is found by its transcript's TITLE under an id the row does not record (ratified decision 8(e)); \`$LANES_EDIT forks $LANE\` is the read that names them."
+    fi
+    if [ -n "$dup_rows" ]; then
+      note "and the live processes carrying lane $LANE's OWN transcript ${dup_id:-(none recorded)} are:"
+      printf '%s\n' "$dup_rows" | while IFS=$'\037' read -r dr_pid dr_kind dr_tgt dr_prof dr_where dr_verdict dr_file; do
+        [ -n "${dr_pid:-}" ] || continue
+        note "  pid $dr_pid  ${dr_kind:-interactive}  $dr_where  profile $dr_prof"
+      done
+    else
+      note "and no second live process carries lane $LANE's own transcript ${dup_id:-(none recorded)} either (Amendment 18(h))."
+    fi
+    # 8 IS KEPT FOR "THERE IS NOTHING OF EITHER KIND", which is the code this
+    # act has answered since it was written and the one a caller reads as "no
+    # fork is live". The 2 is for a target that is not one of the things that
+    # ARE there — a stranger's pid, another lane's uuid — and the two were one
+    # code until this round gave the act a second population to look in.
+    if [ -z "$fk_rows" ] && [ -z "$dup_rows" ]; then
+      die "nothing of either kind is live for lane $LANE on this workstation, so there is nothing to retire: no FORK of its transcript (an id the row does not record, ratified decision 8(e)) and no live DUPLICATE of the id it does (Amendment 18(h))." 8
+    fi
+    die "'$retire_target' is neither the session id nor the pid of a live fork of lane $LANE, nor the pid of a live duplicate of its own transcript. Naming an act against something that is neither is how the wrong conversation gets retitled and the wrong process gets stopped, so nothing is named. Pick one of the ids or pids above." 2
   fi
 
   # AMENDMENT 6(d), FILLED IN — and it is TWO acts because 6(d) is two, one per

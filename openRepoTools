@@ -402,6 +402,36 @@ hook_block_text() {
 BLOCK
 }
 
+#: THE SECOND HOOK — lane-collision-protocol AMENDMENT 12's NAME GUARD, adoption
+#: act 3 (opensoft/openRepoTools#25). Same shape, same file, same all-or-nothing
+#: merge, and TWO deliberate differences from the entry above:
+#:
+#:   * NO `|| true`. On `SessionStart` that suffix is the whole safety property —
+#:     a hook that dies must not break the session it was meant to orient. On
+#:     `UserPromptSubmit` it would be the OPPOSITE of the mechanism: exit 2 is
+#:     what BLOCKS a prompt (code.claude.com/docs/en/hooks), and `cmd || true`
+#:     exits 0 for every code the command can produce. Copying the string with
+#:     its suffix would have installed a guard that refuses nothing, silently,
+#:     which is the exact state Amendment 12 exists to end.
+#:   * NO MATCHER. `UserPromptSubmit` has no source to match on; the `matcher`
+#:     key belongs to the events that do.
+#:
+#: The `~/projects/xFactory/lanes-edit.sh` spelling is the estate's convention
+#: and `link-estates` places that link — the same path the entry above uses, so
+#: one workstation has one spelling of one file.
+GUARD_COMMAND='~/projects/xFactory/lanes-edit.sh guard'
+GUARD_TIMEOUT=5
+
+guard_block_text() {
+	cat <<'BLOCK'
+  {
+    "hooks": [
+      { "type": "command", "command": "~/projects/xFactory/lanes-edit.sh guard", "timeout": 5 }
+    ]
+  }
+BLOCK
+}
+
 # EVERY SKILL'S BYTES, by `--install`'s own rule: from the checkout beside this
 # file when run from one, else fetched at this same ref. ALL OF THEM IN HAND
 # BEFORE ANY IS PLACED, which is the same all-or-nothing rule the eleven files
@@ -460,6 +490,7 @@ collect_skills() {
 #     an installer that widened it would be silently undone or would widen it
 #     behind that script's back.
 HOOK_PLAN=""      # "absent" | "present" | "nofile"
+GUARD_PLAN=""     # the same three, for Amendment 12's UserPromptSubmit entry
 HOOK_MERGED=""    # a staged whole file, ready to move into place
 
 # THE THREE DESTINATIONS, PROVED WRITABLE BEFORE ANY OF THE ELEVEN IS PLACED.
@@ -610,11 +641,14 @@ plan_hook_merge() {
 $(hook_block_text)"
 	workdir
 	HOOK_MERGED="$WORKDIR/settings.json"
+	local staged="$WORKDIR/settings.stage.json"
 
 	if [ ! -e "$settings" ]; then
-		HOOK_PLAN="nofile"
+		HOOK_PLAN="nofile"; GUARD_PLAN="nofile"
 		jq -n --arg c "$HOOK_COMMAND" --arg m "$HOOK_MATCHER" --argjson t "$HOOK_TIMEOUT" \
-			'{hooks: {SessionStart: [{matcher: $m, hooks: [{type: "command", command: $c, timeout: $t}]}]}}' \
+		      --arg g "$GUARD_COMMAND" --argjson gt "$GUARD_TIMEOUT" \
+			'{hooks: {SessionStart: [{matcher: $m, hooks: [{type: "command", command: $c, timeout: $t}]}],
+			          UserPromptSubmit: [{hooks: [{type: "command", command: $g, timeout: $gt}]}]}}' \
 			>"$HOOK_MERGED" || die "could not compose $settings; nothing was installed."
 		return 0
 	fi
@@ -659,11 +693,25 @@ $(hook_block_text)"
 		  elif ($cmds | map(select(test("session-start"))) | length) > 0 then "conflict"
 		  else "absent" end' "$settings" 2>/dev/null || printf 'error')"
 
+	# AND THE SAME THREE ANSWERS FOR AMENDMENT 12's ENTRY, keyed on its own verb.
+	#
+	# `guard` AS A WHOLE ARGUMENT, and not as a substring — the one place this
+	# read differs from the one above, and the difference is load-bearing. The
+	# `SessionStart` arm keys on `session-start`, a word that appears in nothing
+	# else; `guard` appears in `~/projects/xFactory/guard.sh`, a plain
+	# `UserPromptSubmit` hook a person's settings may already carry and one this
+	# installer must leave exactly where it is. So the test is the verb with a
+	# boundary on both sides: a command RUNNING `guard` collides, a file merely
+	# NAMED guard does not. That is R-A9-14's rule one event over — the verb is
+	# what collides; the file that carries it is not.
+	local existing_guard
+	existing_guard="$(jq -r --arg c "$GUARD_COMMAND" '
+		[ (.hooks.UserPromptSubmit // [])[]? | (.hooks // [])[]? | .command // empty ] as $cmds
+		| if ($cmds | index($c)) then "present"
+		  elif ($cmds | map(select(test("(^|\\s)guard(\\s|$)"))) | length) > 0 then "conflict"
+		  else "absent" end' "$settings" 2>/dev/null || printf 'error')"
+
 	case "$existing" in
-	present)
-		HOOK_PLAN="present"
-		cp -- "$settings" "$HOOK_MERGED"
-		;;
 	conflict)
 		die "$settings already carries a SessionStart entry that runs \`session-start\` with a
     DIFFERENT command string. Exact-string match is the only idempotence this entry
@@ -674,20 +722,50 @@ $(hook_block_text)
     (Amendment 9's adoption act 6 removes the hand-installed entry on each
     workstation before the first \`--install\` that carries this.)"
 		;;
-	absent)
-		HOOK_PLAN="absent"
+	present | absent) HOOK_PLAN="$existing" ;;
+	*) die "$settings could not be read for a SessionStart entry; nothing was installed." ;;
+	esac
+
+	case "$existing_guard" in
+	conflict)
+		die "$settings already carries a UserPromptSubmit entry that runs \`guard\` with a
+    DIFFERENT command string. Exact-string match is the only idempotence this entry
+    has, so merging would fire the name guard twice — two refusals for one prompt —
+    and repairing a setting a person meant is not an installer's to do. NOTHING was
+    installed. Remove that entry, then re-run. The entry this places, byte for byte:
+$(guard_block_text)"
+		;;
+	present | absent) GUARD_PLAN="$existing_guard" ;;
+	*) die "$settings could not be read for a UserPromptSubmit entry; nothing was installed." ;;
+	esac
+
+	# BOTH MERGES ARE COMPUTED BEFORE EITHER IS PLACED, into one staged file, so
+	# the all-or-nothing rule covers the PAIR: a settings file that took the
+	# SessionStart entry and refused the guard is a half-install of a hook pair,
+	# and nothing on screen would say which half.
+	cp -- "$settings" "$HOOK_MERGED" ||
+		die "could not stage $settings for merging; nothing was installed."
+	if [ "$HOOK_PLAN" = absent ]; then
 		jq --arg c "$HOOK_COMMAND" --arg m "$HOOK_MATCHER" --argjson t "$HOOK_TIMEOUT" '
 			.hooks = (.hooks // {})
 			| .hooks.SessionStart = ((.hooks.SessionStart // []) + [{
 				matcher: $m,
 				hooks: [{type: "command", command: $c, timeout: $t}]
-			  }])' "$settings" >"$HOOK_MERGED" ||
+			  }])' "$HOOK_MERGED" >"$staged" ||
 			die "could not merge the SessionStart entry into $settings; nothing was installed."
-		;;
-	*)
-		die "$settings could not be read for a SessionStart entry; nothing was installed."
-		;;
-	esac
+		mv -f -- "$staged" "$HOOK_MERGED" ||
+			die "could not stage the merged $settings; nothing was installed."
+	fi
+	if [ "$GUARD_PLAN" = absent ]; then
+		jq --arg c "$GUARD_COMMAND" --argjson t "$GUARD_TIMEOUT" '
+			.hooks = (.hooks // {})
+			| .hooks.UserPromptSubmit = ((.hooks.UserPromptSubmit // []) + [{
+				hooks: [{type: "command", command: $c, timeout: $t}]
+			  }])' "$HOOK_MERGED" >"$staged" ||
+			die "could not merge the UserPromptSubmit entry into $settings; nothing was installed."
+		mv -f -- "$staged" "$HOOK_MERGED" ||
+			die "could not stage the merged $settings; nothing was installed."
+	fi
 }
 
 # The seven placements, AFTER the eleven files and the merge are all in hand.
@@ -759,9 +837,15 @@ place_skill_and_hook() {
 
 	case "$HOOK_PLAN" in
 	present) say "SessionStart hook: already installed in $settings (unchanged)" ;;
-	nofile | absent)
+	esac
+	case "$GUARD_PLAN" in
+	present) say "UserPromptSubmit guard: already installed in $settings (unchanged)" ;;
+	esac
+	# ONE WRITE FOR THE TWO ENTRIES: they live in one file, and writing it twice
+	# would move a person's settings through a state carrying one of the pair.
+	if [ "$HOOK_PLAN" != present ] || [ "$GUARD_PLAN" != present ]; then
 		mkdir -p -- "$(dirname -- "$settings")" ||
-			die "could not create $(dirname -- "$settings") for the SessionStart entry."
+			die "could not create $(dirname -- "$settings") for the hook entries."
 		# WRITTEN THROUGH A TEMPORARY IN THE SAME DIRECTORY, then moved into
 		# place: `mktemp` + `chmod 600` + `mv -f`, which is what workBenches'
 		# `scripts/setup-claude-profiles.sh:167-194` does to this very file on
@@ -780,13 +864,15 @@ place_skill_and_hook() {
 			{ rm -f -- "$hook_tmp"; die "could not set mode 600 on the merged $settings."; }
 		mv -f -- "$hook_tmp" "$settings" ||
 			{ rm -f -- "$hook_tmp"; die "could not move the merged settings into $settings."; }
-		if [ "$HOOK_PLAN" = nofile ]; then
-			say "SessionStart hook: installed in $settings (the file was created, mode 600)"
-		else
-			say "SessionStart hook: merged into $settings (one entry added; written back at mode 600)"
-		fi
-		;;
-	esac
+		case "$HOOK_PLAN" in
+		nofile) say "SessionStart hook: installed in $settings (the file was created, mode 600)" ;;
+		absent) say "SessionStart hook: merged into $settings (one entry added; written back at mode 600)" ;;
+		esac
+		case "$GUARD_PLAN" in
+		nofile) say "UserPromptSubmit guard: installed in $settings (the file was created, mode 600)" ;;
+		absent) say "UserPromptSubmit guard: merged into $settings (one entry added; written back at mode 600)" ;;
+		esac
+	fi
 }
 # =========================================================================
 # `wip init` — THE ONE ACT THAT CREATES THE WORKSPACE THOSE COMMANDS READ

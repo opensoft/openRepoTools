@@ -1240,6 +1240,59 @@ row_sid=""
 # means the records went unreadable between two calls a second apart, and the
 # honest response is to say so and carry on rather than to refuse a lane its
 # start.
+# ------------------- AMENDMENT 18(h): ONE LIVE PROCESS PER TRANSCRIPT
+#
+# *"`lane-start` — every launch branch and `--no-launch`'s window-binding step —
+# counts the live records carrying the id it is about to resume or bind, across
+# every profile's `sessions/`, and REFUSES when a process other than this
+# window's holds it, naming the pid(s), their windows or `bg`, and the retire
+# act; it never appends such an id to the row and never launches a second resume
+# of it."* Ratified 2026-09-14T13:15:18Z as revision 4 of Amendment 18;
+# opensoft/openRepoTools#39.
+#
+# MEASURED, AND THAT IS WHY IT IS A REFUSAL AND NOT A NOTE. On 2026-09-14 at
+# 12:05Z the harness spawned `claude --session-id d1ac715c… --fork-session` under
+# a `bg-pty-host`; at 12:07Z the launcher NAMED it as a defect; at 12:10Z a
+# `lane-start --no-launch openRepoTools 3` in a new window bound THAT SAME
+# transcript as the row's session, seeing nothing; at 12:25Z a second `pclaude`
+# resumed it interactively. Three live processes, one transcript file, and the
+# retire act could not see any of them BECAUSE the row now recorded the id.
+# The count below is the read that was missing, and it is asked of the id this
+# run is about to write down or resume — never of the lane.
+#
+# IT FAILS CLOSED, AND THE THREE CODES ARE THE CONTRACT: 0 with rows, 8 with
+# none, 64 a usage error, anything else a read that did not happen. A 2 is a
+# `lanes-edit.sh` that predates this read — the un-upgraded workstation — and
+# THAT one falls through with a note, exactly as clause (h)'s other reads do,
+# because refusing every lane start on every workstation that has not installed
+# this yet is not a safety property.
+dup_check() {   # <session uuid> <what this run was about to do with it>
+  local dc_id="${1-}" dc_why="${2-}" dc_rows="" dc_rc=0 dc_other=""
+  local dc_pid dc_kind dc_tgt dc_prof dc_where dc_verdict dc_file
+  [ -n "$dc_id" ] || return 0
+  : > "$LS_TMP"
+  dc_rows="$("$LANES_EDIT" transcript-holders "$dc_id" 2>"$LS_TMP")" || dc_rc=$?
+  case "$dc_rc" in
+    0 | 8) : ;;
+    2) [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
+       note "this \`lanes-edit.sh\` has no \`transcript-holders\` (exit 2), so whether another live process already carries $dc_id is NOT known here. Install the one beside this script (\`openRepoTools --install\`); carrying on."
+       return 0 ;;
+    *) [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
+       die "$LANES_EDIT transcript-holders $dc_id exited $dc_rc, so whether another live process already carries that transcript could NOT be read — and that is not 'no other process does'. A transcript is held by ONE live process (Amendment 18(h)); nothing has been renamed, written or launched." 1 ;;
+  esac
+  [ "$dc_rc" = 0 ] || return 0
+  while IFS=$'\037' read -r dc_pid dc_kind dc_tgt dc_prof dc_where dc_verdict dc_file; do
+    [ -n "${dc_pid:-}" ] || continue
+    [ "$dc_verdict" = duplicate ] || continue
+    dc_other="${dc_other:+$dc_other, }pid $dc_pid ($dc_where, kind $dc_kind, profile $dc_prof)"
+  done <<<"$dc_rows"
+  [ -n "$dc_other" ] || return 0
+  note "another live process already carries transcript $dc_id: $dc_other"
+  note "A transcript is held by ONE live process (Amendment 18(h)): two of them append to one file, each overwriting what the other wrote, and a row that records it has two processes answering for one lane. This run was about to $dc_why, and it has done NOTHING — no window renamed, no id appended, no session launched."
+  die "retire the other one first — \`lane-end\` proves it is this lane's duplicate and prints Amendment 6(d)'s act for it, and it ends, writes and kills nothing:
+    lane-end $LANE --retire <pid>" 1
+}
+
 win_sid=""; win_target=""; win_name=""; win_pid=""; win_profile=""
 : > "$LS_TMP"
 win_rec=""; ws_rc=0
@@ -1253,6 +1306,12 @@ case "$ws_rc" in
   *)
     note "$LANES_EDIT window-session $this_window failed (exit $ws_rc) — carrying on without it. This read only ever ADDS the harness's new transcript uuid to the cell, and live-holder has already read the same records; if the cell is behind, stamp it yourself." ;;
 esac
+
+# AMENDMENT 18(h), THE WINDOW-BINDING STEP. Asked BEFORE the vetoes and before
+# anything is taken: an id a second live process already carries is one this run
+# must neither append to a cell nor resume, whatever the vetoes below decide
+# about whose it is.
+[ -n "$win_sid" ] && dup_check "$win_sid" "bind $win_sid as lane $LANE's session"
 
 # The id the cell does not carry. `$session_ids` is the PUBLISHED set (step 3),
 # so an id only this checkout knows is not treated as recorded either.
@@ -1554,6 +1613,17 @@ lane_sid=""
 # and there is no API to rename a running one from inside.
 new_sid=""
 if [ -n "$row_sid" ] && rec_file="$(recorded_transcript "$row_sid")"; then
+  # AMENDMENT 18(h), THE LAUNCH BRANCHES, AND THIS IS THE ONLY ONE WITH AN ID TO
+  # COUNT. The clause is *"the id it is about to resume or bind"*: this branch is
+  # the one that resumes an id, and it is asked INSIDE the branch rather than
+  # above the `if`, because above it the row's id is merely a candidate — the
+  # test on its own next line is what decides whether anything resumes it at all,
+  # and counting the holders of a transcript nobody is about to open would refuse
+  # a lane for a fact about a conversation it is not going to touch. The
+  # title-fallback branch resumes through the PICKER, whose transcript is not
+  # knowable here, and the new-session branch MINTS a fresh uuid; neither has an
+  # id, which is stated rather than left to be noticed.
+  [ "$row_sid" != "$win_sid" ] && dup_check "$row_sid" "resume transcript $row_sid as lane $LANE"
   step "the row's current session is $row_sid and its transcript is here ($(basename -- "$rec_file")) — resuming it by id"
   (( holder_here )) && step "  (it is the session live in this window; --resume attaches to the same conversation)"
   cmd=("$CLAUDE_BIN" --name "$LANE" --resume "$row_sid")
