@@ -4266,8 +4266,8 @@ rm -f "$sessions_dir/live-fork.json" "$fork_tdir/$FORK_ID.jsonl"
 DUP_PARENT=88101
 DUP_CHILD=88102
 FAKE_PS_M="$(printf '%s\t%s\t%s\n%s\t%s\t%s' \
-  "$LIVE_PID"  1 "claude --session-id $MLIVE_ID --fork-session --resume /home/x/$MLIVE_ID.jsonl" \
-  "$DUP_PARENT" 1 "claude --session-id $MLIVE_ID --fork-session --resume /home/x/$MLIVE_ID.jsonl")"
+  "$LIVE_PID"  1 "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl" \
+  "$DUP_PARENT" 1 "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl")"
 FAKE_PGREP_F_M="$(printf '%s\n%s' "$LIVE_PID" "$DUP_PARENT")"
 FAKE_PGREP_CHILDREN_M="$(printf '%s\t%s' "$DUP_CHILD" "$DUP_PARENT")"
 
