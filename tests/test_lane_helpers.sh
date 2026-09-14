@@ -6670,15 +6670,22 @@ is    "…and an id that names no window at all is the same refusal" "$rc" 2
 has   "…saying so" "$err" "names no window on this tmux server at all"
 is    "…and attaches to nothing" "$(cat "$LANE_TMUX_LOG")" ""
 
-# OUTSIDE TMUX THE ATTACH IS `tmux attach -t <session>`, with the lane's own
-# window selected FIRST so the terminal lands on the lane rather than on
-# whichever window that session left current.
+# OUTSIDE TMUX THE ATTACH IS `tmux attach -t <session>:<@id>`, with the lane's
+# own window selected FIRST so the terminal lands on the lane rather than on
+# whichever window that session left current — and the WINDOW named in the
+# attach itself (Copilot round 6 on #45, `lane:708`), because a select and an
+# attach are two acts and a window that closes between them would leave the
+# second one on another lane. Measured on tmux 3.4: `attach -t <session>:<@id>`
+# attaches AND makes that window current in one act, and refuses outright for a
+# window that is not in that session.
 : > "$LANE_TMUX_LOG"
 run env -u TMUX PATH="$LANEBIN_PATH" "$LANE" repoPick-3 </dev/null
 is    "lane <name> outside tmux exits 0 on a live lane" "$rc" 0
 has   "…selecting the lane's own window first, in the session the record names" \
       "$(cat "$LANE_TMUX_LOG")" "select-window -t detsess:@32"
 has   "…and then attaching to its session" "$(cat "$LANE_TMUX_LOG")" "attach -t detsess"
+has   "…naming the WINDOW in that attach too, so no act between the two can land elsewhere" \
+      "$(cat "$LANE_TMUX_LOG")" "attach -t detsess:@32"
 
 # A SELECT THAT FAILED IS PART OF THE FENCE AND NOT A COURTESY (Copilot round 1
 # on #45, `lane:610`). The id resolved at the check above and is gone by the
@@ -6958,6 +6965,28 @@ has   "…and that an attach is unaffected, because it starts nothing" "$out" "a
 # …AND IT IS SILENT WHERE THE PROOF *WAS* MADE, so the paragraph means what it says.
 run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" "$LANE" </dev/null
 hasnt "…while an ordinary listing carries no such paragraph at all" "$out" "NOTHING above can be launched"
+
+# ---- AND AN EMPTY LISTING'S `1` IS THE HELPER'S OWN ANSWER ------------------
+#
+# Round 6 read the `rc=8` branch of `lanes` — which prints `next free position:
+# 1` without calling `next-free` — as a position that "can reuse a position the
+# estate already owns" on a workstation whose helper predates the read. It
+# cannot. `lane_next_free` (`lanes-edit.sh:4847`) reads ONLY THE ROWS ON STDIN
+# and keeps those whose name begins `<repo>-`; the rows it would be handed are
+# the ones that listing just found NONE of, and `lanes_rows`' own `--prefix`
+# filter keeps every lane whose NAME carries the prefix (its third or-term), so
+# an empty filtered listing IS "no lane named `<repo>-<n>` anywhere in this
+# register". Routing it through the helper could only add a failure path in
+# front of an answer that needs no read: a workstation without `next-free` would
+# be refused the one position it can be certain of. Measured here rather than
+# argued, both halves, on the same rows.
+run env LANES_NO_FETCH=1 "$LANES_CMD" --prefix repoNoSuchAtAll </dev/null
+is   "an empty listing exits 8, which is \`no lane of this repository\`" "$rc" 8
+has  "…offering the position that follows from no lanes at all" "$out" "next free position:  1"
+is   "…which is the helper's own answer over the rows that listing did not find" \
+     "$(printf '' | "$E" next-free repoNoSuchAtAll)" "1"
+is   "…and the helper says the same when it is handed the empty set explicitly" \
+     "$(printf '\n' | "$E" next-free repoNoSuchAtAll)" "1"
 
 echo "== the workstation seam: unset, every writer reads the host =="
 

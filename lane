@@ -38,7 +38,9 @@
 #     <profile>` already takes.
 #   * LIVE HERE — the ATTACH, and NEVER A SECOND PROCESS (clause (h)). Inside
 #     tmux the lane's window is moved into this session and selected; outside
-#     tmux, `tmux attach -t <its session>` with that window selected first.
+#     tmux, `tmux attach -t <its session>:<@id>` — the window named in the
+#     attach itself, so no act between the fence and the terminal can land on
+#     another lane — with that window selected first.
 #     Nothing is launched, nothing is resumed and nothing is written: the
 #     session is already running and this word only puts a terminal in front of
 #     it. Measured 2026-09-14: the acts are `tmux move-window -a -s
@@ -700,12 +702,23 @@ go_live() {
 		say "lane $R_LANE is live in session $W_SESS — attaching (nothing is launched)"
 		if [ "$dry_run" = 1 ]; then
 			say "tmux select-window -t $W_SESS:$W_ID"
-			say "exec tmux attach -t $W_SESS"
+			say "exec tmux attach -t $W_SESS:$W_ID"
 			say "--dry-run: nothing was attached"
 			exit 0
 		fi
+		# THE ATTACH NAMES THE WINDOW AND NOT ONLY THE SESSION (Copilot round 6 on
+		# #45, `lane:708`). A select and then an attach are TWO acts, and a window
+		# that closes between them leaves `attach -t <session>` on whatever that
+		# session has since made current — another lane, which is the one thing the
+		# id-AND-session fence exists to stop. MEASURED, tmux 3.4 on a private
+		# socket, 2026-09-14: with `dst` current on `@0`, `attach -t dst:@2`
+		# attached AND made `@2` current in ONE act, and `attach -t dst:@3` naming a
+		# window of ANOTHER session refused with `can't find window: @3`. The select
+		# above stays: it is this command's own refusal, in this command's words,
+		# while there is still a terminal to print it on — and the attach then
+		# resolves the same `<session>:<@id>` at the moment it acts.
 		select_window_or_refuse "$W_SESS" "$W_ID" ""
-		exec tmux attach -t "$W_SESS"
+		exec tmux attach -t "$W_SESS:$W_ID"
 	fi
 	if [ "$gl_this" = "$W_SESS" ]; then
 		say "lane $R_LANE is a window of this session — selecting it (nothing is launched)"
