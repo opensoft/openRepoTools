@@ -50,6 +50,13 @@ REPO_ARG=""
 DRY_RUN=0
 LANE=""
 PASSTHROUGH=()
+#: `flag_value`'s three answers, declared with the other globals so that a
+#: `die` reaching `$FLAG_HINT` before any arm has asked is an empty hint under
+#: `set -u`, never "unbound variable" at exit 1 — the one exit these arms must
+#: not produce (the independent review of this branch, 2026-09-11).
+FLAG_VALUE=""
+FLAG_SHIFT=2
+FLAG_HINT=""
 #: 1 when EVERY estate under the projects directory is to be parked: set by
 #: `--all` / `-a` on the command line, or by a YES to the question the bare
 #: form asks when the walk-up found no estate around the cwd. Every other
@@ -100,6 +107,9 @@ command that clones).
   --project <Name>    the positional under a flag (also --name)
   --dry-run           rehearse: `make park ARGS=--dry-run`, which writes nothing
   --lane <name>       the lane recorded in the WIP commit subject
+  --flag=<value>      every flag that takes a value takes it after an `=` too
+                      (`--repo=<owner/name>`): the one way to give a value
+                      that begins with `-`, which the spaced spelling refuses
   -- ARGS...          passed on to the extension through `make park ARGS='...'`
 
   $PROJECTS_DIR       your projects directory (default: ~/projects, then
@@ -881,6 +891,57 @@ $(estates_or_none)"
 }
 
 # --- arguments -------------------------------------------------------------
+
+# THE VALUE OF A VALUE-TAKING FLAG, in either spelling, read in ONE place so
+# that the ways of not giving one are ONE refusal. `flag_value "$@"` from an
+# arm sets `FLAG_VALUE` and `FLAG_SHIFT` — the arguments that arm then
+# consumes, 2 for `--flag value` and 1 for `--flag=value` — or it returns 1
+# with `FLAG_HINT` carrying whatever that refusal has to add. THE WORDS STAY
+# AT THE ARM: each flag says what its own value is, and this says only whether
+# one was given.
+# A VALUE BEGINNING WITH `-` IS NOT ONE in the spaced spelling — the hole #17
+# named and left open. `park Atlas --lane --dry-run` ran a REAL park with the
+# lane set to `--dry-run`: the flag a person typed was swallowed as a value,
+# `--dry-run` itself never took effect, and the only sign was a WIP commit
+# subject labelled with it. Nothing here swallows the next word whatever it
+# is, so that is a refusal.
+# `--flag=value` IS THE OTHER HALF, and the escape that refusing `-*` would
+# otherwise foreclose: a value that really does begin with `-` is spelled
+# `--lane=--weird`, which takes whatever follows the FIRST `=` and asks
+# nothing about it. An `=` with nothing after it is an empty value and is
+# refused as #17 refuses one.
+# BYTE-IDENTICAL IN `park`, `resume` AND `status`, held by
+# `tests/test_repo_hygiene.py` the way the estate resolver and `expand_home`
+# are: three files a person has on PATH, and one answer to what a flag's value
+# is.
+flag_value() {
+    FLAG_VALUE=""
+    FLAG_SHIFT=2
+    FLAG_HINT=""
+    case "$1" in
+    *=*)
+        FLAG_SHIFT=1
+        FLAG_VALUE="${1#*=}"
+        [ -n "$FLAG_VALUE" ] || return 1
+        return 0 ;;
+    esac
+    [ $# -ge 2 ] && [ -n "$2" ] || return 1
+    # THE NEXT ARGUMENT, ONLY IF IT CANNOT BE A FLAG. The hint names the `=`
+    # spelling because that is the whole exit: this refuses nothing a person
+    # cannot then say.
+    case "$2" in
+    -*)
+        FLAG_HINT="
+    \`$2\` begins with a \`-\`, so it is a flag and not this one's value:
+    nothing here swallows the next word whatever it is. A value that really
+    does begin with \`-\` is given after an \`=\`:
+
+      $1=$2"
+        return 1 ;;
+    esac
+    FLAG_VALUE="$2"
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
     -h | --help) usage; exit 0 ;;
@@ -889,13 +950,14 @@ while [ $# -gt 0 ]; do
     # anywhere, with no question (the RULING of 2026-09-10 at the sweep's
     # section head: "park all should be park -a or park --all").
     -a | --all) PARK_ALL=1; shift ;;
-    # A MISSING OR EMPTY VALUE IS THIS COMMAND'S REFUSAL, exit 2, in its own
-    # words: `${2:?…}` would be bash's message and bash's exit 1, which is not
-    # a status this command means anything by (`status` gave the reason first:
-    # its 1 is "findings"; here, a typo must not read like `make park`'s own
-    # exit).
-    # EMPTY IS REFUSED THE SAME WAY, which is why every arm below asks for a
-    # NON-EMPTY `$2` and not only for a second argument. `${2:?…}` rejected
+    # A MISSING, EMPTY OR FLAG-SHAPED VALUE IS THIS COMMAND'S REFUSAL, exit 2,
+    # in its own words: `${2:?…}` would be bash's message and bash's exit 1,
+    # which is not a status this command means anything by (`status` gave the
+    # reason first: its 1 is "findings"; here, a typo must not read like `make
+    # park`'s own exit).
+    # EMPTY IS REFUSED THE SAME WAY, and so is a flag where a value belongs:
+    # `flag_value` above asks all three questions once for every arm below,
+    # and each arm keeps its own words. `${2:?…}` rejected
     # unset AND null; `[ $# -ge 2 ]` alone rejects only the first, and what it
     # lets through is read later as "was this given at all?" — so
     # `park --lane ""` would carry on with `LANE` empty, the lane is then left
@@ -906,23 +968,23 @@ while [ $# -gt 0 ]; do
     # origin was there to prevent. A value that came out empty is a flag that
     # was typed and lost, never one that was never typed, and the two must not
     # do different things (Copilot's review of #14).
-    --lane)
-        [ $# -ge 2 ] && [ -n "$2" ] ||
-            die "--lane needs a value: the lane recorded in the WIP commit subject."
-        LANE="$2"; shift 2 ;;
-    --repo)
-        [ $# -ge 2 ] && [ -n "$2" ] ||
-            die "--repo needs a value: <owner>/<name>, or any url spelling of one."
-        REPO_SLUG="$2"; REPO_ARG="$REPO_SLUG"; shift 2 ;;
+    --lane | --lane=*)
+        flag_value "$@" ||
+            die "--lane needs a value: the lane recorded in the WIP commit subject.$FLAG_HINT"
+        LANE="$FLAG_VALUE"; shift "$FLAG_SHIFT" ;;
+    --repo | --repo=*)
+        flag_value "$@" ||
+            die "--repo needs a value: <owner>/<name>, or any url spelling of one.$FLAG_HINT"
+        REPO_SLUG="$FLAG_VALUE"; REPO_ARG="$REPO_SLUG"; shift "$FLAG_SHIFT" ;;
     # `--project <Name>` and `--name <Name>` are the positional under a flag,
     # because the issue's own words are "park --project <project> or park
     # --repo <repo> and it defaults to project" (Brett Heap, 2026-09-09). The
     # value is never mistaken for the positional this way, which is the same
     # reason `openRepoShape` names its value-taking flags.
-    --name | --project)
-        [ $# -ge 2 ] && [ -n "$2" ] ||
-            die "$1 needs a value: one estate folder name under your projects directory."
-        NAME="$2"; shift 2 ;;
+    --name | --project | --name=* | --project=*)
+        flag_value "$@" ||
+            die "${1%%=*} needs a value: one estate folder name under your projects directory.$FLAG_HINT"
+        NAME="$FLAG_VALUE"; shift "$FLAG_SHIFT" ;;
     # EVERYTHING AFTER `--` IS THE EXTENSION'S, verbatim. `park.sh` has flags
     # this command has no opinion about (--feature, --message, --no-push,
     # --retire-parked-wip) and a command that ate them would be a command

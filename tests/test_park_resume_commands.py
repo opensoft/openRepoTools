@@ -1468,6 +1468,150 @@ def test_a_flag_given_an_empty_value_is_refused_the_same_way(
     assert not (home / ".agents").exists(), "nothing may be written before a refusal"
 
 
+@pytest.mark.parametrize("command, flag", VALUE_TAKING_FLAGS, ids=flag_id)
+def test_a_flag_given_a_flag_for_its_value_is_refused_and_nothing_runs(
+        home, command, flag):
+    """A FLAG IS NOT A VALUE, and it was read as one until now.
+
+    `${2:?…}` and the arity check that replaced it both asked only whether
+    there was a next argument; `park Atlas --lane --dry-run` therefore ran a
+    REAL park with its lane set to `--dry-run` — the flag a person typed,
+    swallowed, with `--dry-run` itself never taking effect and nothing but
+    the WIP commit subject to say so. That is the same silence as `--lane ""`,
+    one argument further along, and this is the same refusal: exit 2, in the
+    arm's own words, in the argument loop before anything is resolved or run.
+
+    THE REFUSAL NAMES THE WAY BACK, which is the whole reason `-*` can be
+    refused at all: `--lane=--dry-run` says the same thing and is not
+    ambiguous, so nothing a person could legitimately mean has been taken
+    away. Asserted here per flag, because a hint that named the wrong flag
+    would be worse than none.
+
+    RUN FROM INSIDE AN ESTATE, which is what makes this bite: the walk-up
+    finds `Atlas` from there, so before the fix `park` went all the way into
+    `make park` and `resume` as far as the workspace record. An empty stdout
+    is the proof that neither the verb nor the fallback was reached.
+    """
+    root = probe_project(home / "projects", "Atlas")
+    result = run(command, flag, "--dry-run", home=home, cwd=root)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"REFUSED: {flag} needs a value:" in result.stderr
+    assert "`--dry-run` begins with a `-`" in result.stderr
+    assert f"{flag}=--dry-run" in result.stderr, (
+        "the refusal must name the spelling that does take this value")
+    assert result.stdout == "", (
+        "nothing may be resolved, said or run before a flag given a flag is "
+        f"refused; stdout was {result.stdout!r}")
+    assert "PROBE" not in result.stdout + result.stderr, (
+        "the estate's own make target ran: nothing was parked, and nothing "
+        "may have been")
+    assert not (home / ".agents").exists(), "nothing may be written before a refusal"
+
+
+@pytest.mark.parametrize("command, flag", VALUE_TAKING_FLAGS, ids=flag_id)
+def test_a_flag_takes_its_value_after_an_equals_sign_too(home, command, flag):
+    """`--flag=value` IS `--flag value`, and it is the only way to pass a
+    value that begins with `-`.
+
+    Refusing a `-`-led value in the spaced spelling would otherwise foreclose
+    such a value entirely, because these arms had no `=` form at all: before
+    this, `--lane=x` fell through to the catch-all and came back as "park does
+    not know --lane=x". So the two halves are asserted together — the same
+    command, spelled both ways, has to produce the same bytes and the same
+    exit; and `--flag=--dry-run` has to be ACCEPTED, which is what makes the
+    refusal above a spelling rule rather than a value this toolset can no
+    longer express.
+
+    AN `=` WITH NOTHING AFTER IT IS AN EMPTY VALUE, refused exactly as `""`
+    is: `${1#*=}` cannot tell the two apart and must not, or `--repo=` would
+    be the walk-up again under a new spelling.
+    """
+    root = probe_project(home / "projects", "Atlas")
+    spaced = run(command, flag, "zz-value", home=home, cwd=root)
+    equals = run(command, f"{flag}=zz-value", home=home, cwd=root)
+    assert (equals.returncode, equals.stdout, equals.stderr) == \
+        (spaced.returncode, spaced.stdout, spaced.stderr), (
+            f"{flag}=zz-value and {flag} zz-value are not the same run:\n"
+            f"  = : {equals.returncode} {equals.stdout!r} {equals.stderr!r}\n"
+            f"  ' ': {spaced.returncode} {spaced.stdout!r} {spaced.stderr!r}")
+    assert "does not know" not in equals.stderr
+
+    weird = run(command, f"{flag}=--dry-run", home=home, cwd=root)
+    assert f"{flag} needs a value" not in weird.stderr, (
+        f"{flag}=--dry-run is the spelling the refusal names; it must take "
+        f"the value, not repeat the refusal")
+    assert "does not know" not in weird.stderr, (
+        f"{flag}=--dry-run reached the catch-all: the `=` arm is missing")
+
+    nothing = run(command, f"{flag}=", home=home, cwd=root)
+    assert nothing.returncode == 2, nothing.stdout + nothing.stderr
+    assert f"REFUSED: {flag} needs a value:" in nothing.stderr
+    assert "begins with a `-`" not in nothing.stderr, (
+        "an empty value is empty, not flag-shaped")
+    assert nothing.stdout == "", (
+        f"nothing may be run before `{flag}=` is refused; stdout was "
+        f"{nothing.stdout!r}")
+
+
+def test_park_takes_a_lane_beginning_with_a_dash_through_the_equals_form(home):
+    """THE CASE #17 NAMED, both halves, end to end.
+
+    `park Atlas --lane --dry-run` is the accident: two flags typed, one
+    swallowed as the other's value, a REAL park where a rehearsal was meant.
+    It is now a refusal that runs nothing — the probe Makefile would say so if
+    it had.
+
+    And said with an `=` it is a lane again: `--lane=--dry-run --dry-run` puts
+    BOTH through, so `ARGS` carries the rehearsal flag once from `--dry-run`
+    and once as the lane's value. That second `--dry-run` is what proves the
+    value reached `LANE` and went out in `ARGS` — which is as far as this
+    command can carry it: the recipe word-splits `$(ARGS)`, so the extension
+    receives the same two words from `--lane=--dry-run` as it did from the
+    accident, and the `=` form buys `park`'s own parsing, not the extension's
+    (the independent review of this branch, 2026-09-11). For `--repo`,
+    `--name` and `--project`, which never leave the command, it buys the value.
+    """
+    root = probe_project(home / "projects", "Atlas")
+    refused = run(PARK, "Atlas", "--lane", "--dry-run", home=home)
+    assert refused.returncode == 2, refused.stdout + refused.stderr
+    assert "REFUSED: --lane needs a value:" in refused.stderr
+    assert "--lane=--dry-run" in refused.stderr
+    assert refused.stdout == "", f"a refusal parked: {refused.stdout!r}"
+    assert "PROBE park" not in refused.stdout + refused.stderr
+
+    result = run(PARK, "Atlas", "--lane=--dry-run", "--dry-run", home=home)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "make park ARGS='--dry-run --lane --dry-run'" in result.stdout
+    assert f"PROBE park in {root} ARGS=[--dry-run --lane --dry-run]" \
+        in result.stdout
+
+
+def test_resume_takes_the_workspace_and_the_org_after_an_equals_sign(remotes,
+                                                                     home):
+    """The `=` spelling is not a second parser: the value does the same work.
+
+    Both of these flags CHANGE WHAT HAPPENS rather than merely being echoed —
+    `--workspace` names the private repository to clone, `--org` picks between
+    two manifests that record one name — so a spelling that arrived but was
+    read as something else would show here and nowhere in the parametrized
+    pair above. The two calls are the same two `test_resume_refuses_when_two_
+    orgs_record_the_same_name` makes, spelled with an `=`.
+    """
+    refused = run(RESUME, FAMILY, "--workspace=tester/twoorgs", home=home,
+                  env=offline(remotes))
+    assert refused.returncode == 2, refused.stdout + refused.stderr
+    assert "workspace manifests record 'TestFam'" in refused.stderr
+    assert f"resume {FAMILY} --org <org>" in refused.stderr
+    assert (home / ".agents" / "workspace.yaml").is_file(), (
+        "the workspace slug arrived: the config it writes is the proof")
+
+    answered = run(RESUME, FAMILY, "--org=orgb", home=home,
+                   env=offline(remotes))
+    assert answered.returncode == 0, answered.stderr + answered.stdout
+    assert "org             orgb" in answered.stdout
+    assert (home / "projects" / FAMILY / FAMILY / "family.yaml").is_file()
+
+
 def test_a_leg_whose_submodule_name_carries_a_space_is_still_reported(home,
                                                                        tmp_path):
     """`.gitmodules` is read with `git config -z`: a submodule NAME with a

@@ -647,8 +647,66 @@ def test_refusals_read_nothing(home, status_remotes):
         assert result.stdout == "", (
             "nothing may be resolved, said or read before an empty value is "
             f"refused; stdout was {result.stdout!r}")
-    for result in (both, unknown, nope, valueless, *(r for _, r in empty)):
+    # AND A FLAG IS NOT A VALUE EITHER. `status --repo --fetch` set the slug
+    # to `--fetch` and left the flag unset, so the one thing the person asked
+    # for — a CURRENT answer — was the one thing that did not happen, and the
+    # refusal that followed was about a repository nobody named. The refusal
+    # is now the arm's own, and it names the spelling that does take a value
+    # beginning with `-`.
+    flagged = [(flag, run(STATUS, flag, "--fetch", home=home, cwd=atlas))
+               for flag in ("--repo", "--name", "--project")]
+    for flag, result in flagged:
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert f"REFUSED: {flag} needs a value:" in result.stderr
+        assert "`--fetch` begins with a `-`" in result.stderr
+        assert f"{flag}=--fetch" in result.stderr
+        assert result.stdout == "", (
+            "nothing may be read before a flag given a flag is refused; "
+            f"stdout was {result.stdout!r}")
+    for result in (both, unknown, nope, valueless,
+                   *(r for _, r in empty), *(r for _, r in flagged)):
         assert str(atlas) not in result.stdout, "a refusal read nothing"
+
+
+def test_a_flag_takes_its_value_after_an_equals_sign_too(home, status_remotes):
+    """`--flag=value` IS `--flag value` here too, and `--flag=` is empty.
+
+    `status` has no verb to run, so what the `=` spelling has to prove is that
+    the value RESOLVES THE ESTATE: `--name=Atlas`, and `--repo=` the origin
+    of the clone, both read Atlas from a directory that is not inside it, so
+    the walk-up cannot be what answered. Before this they reached the
+    catch-all — "status does not know --name=Atlas" — which is why refusing a
+    `-`-led value needed this spelling in the same commit.
+    """
+    atlas = clone_root(home, status_remotes["Atlas"], "Atlas")
+    # The origin is re-spelled as the url a real root carries, because a clone
+    # whose origin is a bare repository ON DISK answers `<Name>` and the
+    # walk-up but never `--repo` — `test_park_resume_commands.py` re-spells it
+    # for the same reason.
+    git("remote", "set-url", "origin", f"https://github.com/{ORG}/Atlas.git",
+        cwd=atlas)
+    for spelling in ("--name=Atlas", "--project=Atlas", f"--repo={ORG}/Atlas"):
+        result = run(STATUS, spelling, home=home, cwd=home)
+        assert result.returncode == 0, (
+            f"{spelling}: {result.stdout}{result.stderr}")
+        assert f"status: Atlas - the assembly root at {atlas}" in result.stdout
+        assert "reading every estate" not in result.stdout, (
+            f"{spelling} fell past the arm into the bare form")
+
+    for spelling in ("--name=", "--project=", "--repo="):
+        result = run(STATUS, spelling, home=home, cwd=atlas)
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert f"REFUSED: {spelling[:-1]} needs a value:" in result.stderr
+        assert result.stdout == "", (
+            f"nothing may be read before `{spelling}` is refused; stdout was "
+            f"{result.stdout!r}")
+
+    # A VALUE THAT REALLY DOES BEGIN WITH `-` IS SAYABLE, which is the reason
+    # the spelling exists: read as a name, not as the flag it looks like.
+    weird = run(STATUS, "--name=--fetch", home=home, cwd=home)
+    assert weird.returncode == 2, weird.stdout + weird.stderr
+    assert "no estate named '--fetch'" in weird.stderr
+    assert "needs a value" not in weird.stderr
 
 
 def test_a_git_that_cannot_run_is_refused_not_reported(atlas, home, tmp_path):
