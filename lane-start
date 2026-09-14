@@ -2091,13 +2091,20 @@ else
   # (`RESUMED by codex pending`), because that cell is a history of acts.
   if [ "$AGENT" != claude ] && [ -n "$AGENT_ID" ]; then
     agent_cell="$AGENT_WORD \`$AGENT_ID\`"
-    if [ -z "$cell_anchor" ]; then
+    # THE ANCHOR IS THE PUBLISHED ROW'S LAST ID, which is the same anchor the
+    # minted-uuid append below uses and for the same reason: `append-session-id`
+    # refuses unless it occurs exactly once IN THE SESSION CELL, so a stale copy
+    # of the row is a refusal that prints the act rather than a corruption.
+    # `$cell_anchor` is NOT it — that variable is set only where a session is
+    # live in this window whose uuid the cell lacks (step 3b), which is never
+    # the case for a launch of an agent that is not Claude.
+    if [ -z "$row_sid" ]; then
       note "the row's session cell records no id to append to, so this launch's $AGENT_WORD id is not in it. STAMP IT AS THIS SESSION'S FIRST ACT:"
       note "  LANES_LANE=$LANE $LANES_EDIT append-session-id $LANE \"<the session cell's last id>\" \"→ $agent_cell\""
     elif (( dry_run )); then
-      plan "lanes-edit.sh append-session-id $LANE '$cell_anchor' '→ $agent_cell'"
-    elif LANES_LANE="$LANE" "$LANES_EDIT" append-session-id "$LANE" "$cell_anchor" "→ $agent_cell" "session cell: $prog launched $AGENT for this lane"; then
-      step "session cell updated: $cell_anchor → $agent_cell"
+      plan "lanes-edit.sh append-session-id $LANE '$row_sid' '→ $agent_cell'"
+    elif LANES_LANE="$LANE" "$LANES_EDIT" append-session-id "$LANE" "$row_sid" "→ $agent_cell" "session cell: $prog launched $AGENT for this lane"; then
+      step "session cell updated: $row_sid → $agent_cell"
     else
       note "the session cell was NOT extended with $agent_cell (this checkout's copy of the row may be older than the published one). STAMP IT AS THIS SESSION'S FIRST ACT:"
       note "  LANES_LANE=$LANE $LANES_EDIT append-session-id $LANE \"<the session cell's last id>\" \"→ $agent_cell\""

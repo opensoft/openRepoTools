@@ -5605,6 +5605,9 @@ export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-1.md"
 run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
     CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-1 clear
 is    "lane-handoff exits 0" "$rc" 0
+# ITS OWN STDOUT, KEPT: `$out` is whatever the LAST `run` left, and there is a
+# `swapped` read between this run and the assertions at the foot of this block.
+hf1_out="$out"
 hf1_log="$(cat "$LOGD/repoHF-1.md")"
 has   "…writing the lane's PAUSED line" "$hf1_log" "PAUSED — lane repoHF-1, session $HF_ID@Eagle"
 has   "…whose payload opens 'swap;', which is what \`swapped\` matches on" "$hf1_log" "lane:repoHF-1 → swap;"
@@ -5614,8 +5617,8 @@ has   "…its profile" "$hf1_log" "profile team-05a"
 has   "…and Amendment 17(b)'s two: the agent" "$hf1_log" "agent claude"
 has   "…and the transcript" "$hf1_log" "transcript $HF_ID"
 has   "…with the why as the line's free text" "$hf1_log" " — clear"
-has   "the restart line is printed, and it is one command" "$out" "READY — restart with: pclaude team-05a"
-has   "…naming the agent the next start will use" "$out" "lane-start --agent claude resumes it"
+has   "the restart line is printed, and it is one command" "$hf1_out" "READY — restart with: pclaude team-05a"
+has   "…naming the agent the next start will use" "$hf1_out" "lane-start --agent claude resumes it"
 
 run   "$E" swapped Eagle
 has   "swapped lists the lane" "$out" "repoHF-1"
@@ -5646,8 +5649,8 @@ has   "…what it had committed" "$hf1_file" "the writer's last commit"
 has   "…and what it is holding" "$hf1_file" "1 dirty"
 has   "…the section for the brief where the caller passed none" "$hf1_file" "brief: (fill in"
 has   "…and the file it was, below, as history" "$hf1_file" "Written before Amendment 17, by hand."
-has   "the writers are polled on stdout too, with git's own words" "$out" "git status --short"
-has   "…and the unpushed read beside it" "$out" "git log @{u}.."
+has   "the writers are polled on stdout too, with git's own words" "$hf1_out" "git status --short"
+has   "…and the unpushed read beside it" "$hf1_out" "git log @{u}.."
 is    "the handoff refresh is its own commit in the workspace repository" \
       "$(git -C "$WIP" log --format=%s -n1 -- handoffs/repoHF/repoHF-1.md)" "handoff(repoHF-1@Eagle): PAUSED, clear"
 has   "…with the Rule 5 trailer" "$(git -C "$WIP" log --format=%b -n1 -- handoffs/repoHF/repoHF-1.md)" "Lane: repoHF-1"
@@ -5693,7 +5696,13 @@ has   "…and the record is the lane's own PAUSED" "$(cat "$LOGD/repoHF-5.md")" 
 # `write_event` refuses the line (Amendment 11 clause (e)).
 : > "$FAKE_TMUX_A17_LOG"
 export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-2.md"
-run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_PROFILE_NAME=team-05a \
+# THE WINDOW IS ONE NO LIVE RECORD NAMES, and that is the point: repoHF-2's row
+# carries only `session_…` footer ids, so with no session in the window either
+# there is no transcript uuid anywhere and `write_event` refuses the line
+# (Amendment 11 clause (e)). Asked from the window `live-a17.json` names, the
+# window read would hand it a uuid and there would be no unwritable record to
+# test with.
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@22" CLAUDE_PROFILE_NAME=team-05a \
     "$HANDOFF_CMD" --lane repoHF-2 --restart clear
 is    "a /ctx whose record could not be written REFUSES" "$rc" 2
 has   "…saying the pane is exactly as it was" "$err" "this pane is left exactly as it is"
@@ -5884,13 +5893,33 @@ has   "…and primed by the handoff's top block" "$out" "the top block of repoFR
 # A SHARED `projects/` NEEDS NO MOVE, and that is the measured fact this act
 # shrank to (2026-09-14T12:35Z): on a launcher-configured workstation every
 # profile's `projects/` resolves to ONE directory.
+#
+# ITS OWN LANE, because the case is about the row's LAST id having a transcript
+# here: `repoFR-1`'s cell has since gained the uuid the `LANE_START_FRESH=1` run
+# minted, and that one has no transcript at all — which is the OTHER branch.
 mkdir -p "$HOME/.claude-profiles/profiles/opensoft/team/t3"
 ln -sfn "$HOME/.claude/projects" "$HOME/.claude-profiles/profiles/opensoft/team/t3/projects"
-run env PATH="$A17PATH" FAKE_TMUX_WINDOW="frsess:@51" CLAUDE_PROFILE_NAME=team-05a \
-    "$START" --dir "$FRESH_DIR" repoFR-1 --no-launch
+SH_DIR="$HOME/projects/repoSH"
+SH_ID="a17a0007-7777-4000-8000-a17a00077777"
+mkdir -p "$SH_DIR"
+git init -q -b main "$SH_DIR"
+git -C "$SH_DIR" remote add origin "https://github.com/opensoft/repoSH.git"
+sh_tdir="$HOME/.claude/projects/$(sanitize "$SH_DIR")"
+mkdir -p "$sh_tdir"
+printf '{"type":"user"}\n' > "$sh_tdir/$SH_ID.jsonl"
+mkdir -p "$WIP/handoffs/repoSH"
+printf 'Lane: repoSH-1 — resume prompt\n\nx\n' > "$WIP/handoffs/repoSH/repoSH-1.md"
+git -C "$WIP" add -- handoffs/repoSH >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the repoSH handoff"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+"$E" add-row "| \`repoSH-1\` | harness \`$SH_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoSH/repoSH-1.md | ACTIVE |" >/dev/null 2>&1
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="shsess:@81" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$SH_DIR" repoSH-1 --no-launch
 is    "lane-start says WHERE it found the transcript" "$rc" 0
 has   "…naming this profile's projects directory" "$err" "found in this profile's projects directory"
 has   "…and saying that directory is SHARED, so a profile switch moves nothing" "$err" "which IS the directory profile(s) t3 read too"
+has   "…and it resumes the lane by id, moving nothing" "$out" "--resume $SH_ID"
 
 # A PROFILE WHOSE `projects/` IS REALLY ANOTHER DIRECTORY: the transcript is
 # MOVED, a pointer is left, and the lane resumes by id.
@@ -5938,8 +5967,13 @@ lv_slug="$(sanitize "$LV_DIR")"
 mkdir -p "$t2_projects/$lv_slug"
 printf '{"type":"user"}\n' > "$t2_projects/$lv_slug/$LV_ID.jsonl"
 mkdir -p "$HOME/.claude-profiles/profiles/opensoft/team/t2/sessions"
+# NAMED FOR ANOTHER LANE, BY A PERSON — so `live_holder`'s fifth test skips it
+# and this lane does not read as live at step 3. That is exactly the shape
+# Amendment 18(h) is written about: a SECOND PROCESS on one transcript that the
+# lane's own liveness read does not see, which is how three of them came to hold
+# this lane's id on 2026-09-14.
 write_record_ns "$HOME/.claude-profiles/profiles/opensoft/team/t2/sessions/live-lv.json" \
-  "$LV_ID" "$LIVE_PID" "$live_start" "othersess:@99.%99" "repoLV-1" "user" "busy"
+  "$LV_ID" "$LIVE_PID" "$live_start" "othersess:@99.%99" "somewhere-else-9" "user" "idle"
 mkdir -p "$WIP/handoffs/repoLV"
 printf 'Lane: repoLV-1 — resume prompt\n\nx\n' > "$WIP/handoffs/repoLV/repoLV-1.md"
 git -C "$WIP" add -- handoffs/repoLV >/dev/null 2>&1
