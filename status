@@ -3186,6 +3186,7 @@ ADD_BLOCKED_WHAT=""
 ADD_BLOCKED_EXIT=""
 leg_add_blocked() {
     local root="$1" role="$2" branch="$3" repo want parent held=0
+    local what="" exits=""
     ADD_BLOCKED_WHAT=""; ADD_BLOCKED_EXIT=""
     role_maps_here "$role" || return 1
     repo="$(leg_repo_for_role "$root" "$role" 2>/dev/null || true)"
@@ -3198,18 +3199,32 @@ leg_add_blocked() {
     [ "$held" -ne 0 ] || return 1
     [ ! -e "$want" ] || return 1
     parent="$(parent_dir "$want")"
+    # AND THEY ARE NOT EXCLUSIVE, so the verdict is built rather than chosen
+    # (Copilot's ninth round on #27, verbatim: "When `held == 2` and
+    # `[ ! -e "$want" ]`, this branch wins for both a truly absent destination
+    # and a dangling symlink (and can also hide a missing final component
+    # beneath a non-directory parent). `ADD_BLOCKED_EXIT` then contains only
+    # `worktree prune`, but prune does not remove the dangling link or parent
+    # file; in a multi-leg record, siblings carry that incomplete exit and
+    # `resume` still fails"). Right, and it is the same mistake `off_path_exit`
+    # stopped making a round earlier: the prune clears a REGISTRATION and
+    # touches nothing on disk, so where something is also in the way on disk
+    # both steps belong in the one exit a person pastes.
     if [ "$held" -eq 2 ]; then
-        ADD_BLOCKED_WHAT="git still holds a worktree registration at the $want it computes for its \`$role\` leg, with nothing on disk there"
-        ADD_BLOCKED_EXIT="clear it with \`git -C $(sh_operand "$repo") worktree prune\`, which is yours to run"
-    elif [ -L "$want" ]; then
-        ADD_BLOCKED_WHAT="a dangling symlink is at the $want it computes for its \`$role\` leg, which \`[ -e ]\` looks straight through and \`git worktree add\` refuses all the same"
-        ADD_BLOCKED_EXIT="move it aside with \`mv $(sh_operand "$want") <a path of your choosing>\`, which is yours to run"
-    elif [ "$parent" != "$want" ] && dest_exists "$parent" && [ ! -d "$parent" ]; then
-        ADD_BLOCKED_WHAT="the $parent it makes that leg's worktrees under is not a directory, and \`resume\` runs \`mkdir -p\` on it before it adds any leg"
-        ADD_BLOCKED_EXIT="move it aside with \`mv $(sh_operand "$parent") <a path of your choosing>\`, which is yours to run"
-    else
-        return 1
+        what="git still holds a worktree registration at the $want it computes for its \`$role\` leg, with nothing on disk there"
+        exits="\`git -C $(sh_operand "$repo") worktree prune\`"
     fi
+    if [ -L "$want" ]; then
+        what="${what:+$what, and }a dangling symlink is at the $want it computes for its \`$role\` leg, which \`[ -e ]\` looks straight through and \`git worktree add\` refuses all the same"
+        exits="${exits:+$exits, then }\`mv $(sh_operand "$want") <a path of your choosing>\`"
+    fi
+    if [ "$parent" != "$want" ] && dest_exists "$parent" && [ ! -d "$parent" ]; then
+        what="${what:+$what, and }the $parent it makes that leg's worktrees under is not a directory, and \`resume\` runs \`mkdir -p\` on it before it adds any leg"
+        exits="${exits:+$exits, then }\`mv $(sh_operand "$parent") <a path of your choosing>\`"
+    fi
+    [ -n "$what" ] || return 1
+    ADD_BLOCKED_WHAT="$what"
+    ADD_BLOCKED_EXIT="clear it with $exits, which is yours to run"
     return 0
 }
 

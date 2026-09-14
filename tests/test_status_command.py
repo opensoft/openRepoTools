@@ -5371,7 +5371,7 @@ def test_no_sibling_offers_resume_for_a_destination_that_blocks_the_add(
         f"WHOLE feature, because a dangling symlink is at the {want} it "
         "computes for its `spec` leg, which `[ -e ]` looks straight through "
         "and `git worktree add` refuses all the same, so it does not bring "
-        f"this leg back — move it aside with `mv {want} <a path of your "
+        f"this leg back — clear it with `mv {want} <a path of your "
         "choosing>`, which is yours to run"), findings[1]
     assert "`resume Trio` brings it back" in findings[0], (
         "the culprit's own line ends in the run AFTER the clearing")
@@ -5420,6 +5420,25 @@ def test_no_sibling_offers_resume_for_a_destination_that_blocks_the_add(
             "leg, with nothing on disk there") in findings[1], findings[1]
     assert "worktree prune" in findings[1], findings[1]
     assert "`resume Trio`" not in findings[1]
+
+    # AND WHERE TWO OF THEM HOLD AT ONCE the exit is BOTH, in order (Copilot's
+    # ninth round on #27, 2026-09-13, verbatim: "`ADD_BLOCKED_EXIT` then
+    # contains only `worktree prune`, but prune does not remove the dangling
+    # link or parent file; in a multi-leg record, siblings carry that
+    # incomplete exit and `resume` still fails"). Right: the prune clears a
+    # REGISTRATION and touches nothing on disk, so where a dangling link holds
+    # the same path both steps belong in the one exit a person pastes.
+    want.symlink_to(home / "nowhere-at-all")
+    assert not want.exists() and want.is_symlink()
+    result = run(STATUS, "Trio", home=home)
+    assert result.returncode == 1, result.stdout + result.stderr
+    findings = [line.strip() for line in result.stdout.splitlines()
+                if line.strip().startswith("- parked feature")]
+    assert len(findings) == 2, findings
+    assert (f"clear it with `git -C {trio / 'spec'} worktree prune`, then "
+            f"`mv {want} <a path of your choosing>`, which is yours to run"
+            ) in findings[1], findings[1]
+    assert "`resume Trio`" not in findings[1], findings[1]
 
 
 def test_a_feature_directory_that_is_not_a_directory_is_read_too(trio, home):
