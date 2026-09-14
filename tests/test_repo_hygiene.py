@@ -1923,6 +1923,90 @@ def test_the_exit_code_table_carries_every_code_the_file_exits_with():
     assert "64" in documented, "64 is the code every Amendment 11 read uses"
 
 
+def test_the_exit_3_documentation_agrees_with_the_die_message_it_describes():
+    """Copilot's review of PR #50 (5202640056): the `die` for exit 3 picked up
+    attempt-scoped wording (#32) — *"not pushed by this attempt; a later
+    write from this checkout may already carry it"* — while the exit-code
+    table just above it in the same file, and the manual's own copy of that
+    table (`docs/README-lanes.md`), both still read *"nothing was pushed"* /
+    *"nothing pushed"*, a claim an aborted pull never proved. A table (or a
+    manual) that contradicts the code it describes is worse than no table at
+    all — the same claim `test_the_exit_code_table_carries_every_code_the_
+    file_exits_with` makes for a code missing from the table entirely.
+
+    Round 2 (5203033893) found this test's own gap: it read only the table
+    and the manual, so a regression in the `die` MESSAGE ITSELF, back to
+    "nothing was pushed", left both docs unchanged and passed anyway — a
+    test that enforces two descriptions agree with each other, never that
+    either agrees with the code. The die is extracted and checked first now,
+    so all three have to agree with the one thing that actually runs.
+
+    Round 3 (5203261904) named exit 3's other two causes (`git_timeout_die`,
+    and six push attempts exhausted against a peer's uncommitted file) that
+    this row used to leave out entirely; the row now names all three, which
+    means the phrase this test looks for can legitimately wrap onto its own
+    comment-continuation line — so the comparison text is whitespace-
+    normalized (one space, however the source wrapped it) rather than
+    matched as one literal run of characters.
+
+    Round 4 (5203455553) found this test's own gap in THAT check: it looked
+    for the bare word "timeout" only, which the round-3 wording ("timeout on
+    the push itself") already satisfied while omitting `git_timeout_die`'s
+    OTHER call site — a timed-out `git pull --rebase` (lanes-edit.sh:1166) —
+    entirely. Checking for "timeout" alone would keep passing even if a push
+    is all either row ever names again; "push" and "pull" are now checked
+    for too, so the row has to cover both keywords or the test catches it.
+    """
+    src = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
+    m = re.search(r'die "(rebase conflict on origin/\$LANES_BRANCH[^"]*)" 3\b', src)
+    assert m, "no exit-3 die message found in lanes-edit.sh to check the docs against"
+    die_text = m.group(1)
+    assert "not pushed by this attempt" in die_text, (
+        "the exit-3 die message itself no longer names the attempt-scoped "
+        f"wording the table and the manual are checked against: {die_text!r}")
+    start = src.index("# EXIT CODES — every subcommand, one table")
+    end = src.index("# --no-sweep", start)
+    table = src[start:end]
+    manual = (REPO / "docs/README-lanes.md").read_text(encoding="utf-8")
+    def flatten(text):
+        # A row that wraps onto a comment-continuation line puts a literal
+        # `#` back-to-back with the next word once newlines alone are
+        # collapsed — strip the leading `#` (lanes-edit.sh's own comment
+        # marker; a no-op on docs/README-lanes.md's markdown lines, which
+        # never start with one) from every line FIRST, so a phrase that
+        # wraps still reads as one run of words, not one broken by a stray
+        # `#`.
+        lines = (re.sub(r"^#\s*", "", ln) for ln in text.splitlines())
+        return re.sub(r"\s+", " ", " ".join(lines)).strip()
+
+    for name, text in (("lanes-edit.sh's own exit-code table", table),
+                        ("docs/README-lanes.md's copy of it", manual)):
+        flat = flatten(text)
+        assert "nothing was pushed" not in flat and "nothing pushed" not in flat, (
+            f"{name} still claims exit 3 means nothing reached origin, which "
+            "an aborted pull does not prove (#32)")
+    manual_start = manual.index("### Exit codes")
+    manual_end = manual.index("3 to 6 are the codes this helper already used", manual_start)
+    manual_table = manual[manual_start:manual_end]
+    table_flat = flatten(table)
+    manual_flat = flatten(manual_table)
+    assert "not pushed BY THIS ATTEMPT" in table_flat, (
+        "lanes-edit.sh's exit-3 row no longer names the attempt-scoped wording")
+    assert "not pushed by this attempt" in manual_flat, (
+        "docs/README-lanes.md's exit-3 row no longer names the attempt-scoped wording")
+    for name, flat in (("lanes-edit.sh's own exit-code table", table_flat),
+                        ("docs/README-lanes.md's own exit-codes table", manual_flat)):
+        for cause in ("timeout", "push", "pull", "peer's"):
+            assert cause in flat, (
+                f"{name} no longer names a {cause!r} cause, part of exit 3's "
+                "other two causes (#50 rounds 3 and 4, 5203261904 and "
+                "5203455553) — `git_timeout_die` fires for a push OR a pull "
+                "timeout (lanes-edit.sh:1112/1141/1160 and :1166), and this "
+                "table claims to be \"no two meanings on one number\", so a "
+                "code with three causes has to name all three or it is back "
+                "to being wrong")
+
+
 #: ADOPTION ACT 0, AND THE ONE SHA THAT IS IT. `opensoft/brett-wip#5` merged
 #: 2026-09-13T19:14:37Z, SQUASHED — so the PR's pre-merge head is not an
 #: ancestor of `origin/main` and names code that never landed, while the merge
