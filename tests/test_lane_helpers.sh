@@ -292,7 +292,44 @@ cat > "$SANDBOX/fakebin/claude" <<'FAKE'
 printf '%s\n' "$*" >> "${FAKE_CLAUDE_LOG:-/dev/null}"
 FAKE
 
-chmod +x "$SANDBOX/fakebin/tmux" "$SANDBOX/fakebin/claude"
+# issue #39 — `duplicate_holder_pids` is the only caller of either, and it
+# reaches no real process table: `ps` and `pgrep` are faked here for the
+# WHOLE suite (this bin is prepended to PATH for every case, not only the
+# ones below), so a pre-existing test that never sets a `FAKE_PS_*`/
+# `FAKE_PGREP_*` variable gets the honest "nothing found" answer — `pgrep -f`
+# exits 1, `ps -p` exits 1 — rather than a peek at whatever is really running
+# on the runner.
+cat > "$SANDBOX/fakebin/pgrep" <<'FAKE'
+#!/usr/bin/env bash
+case "${1-}" in
+  -f)
+    out="$(printf '%s\n' "${FAKE_PGREP_F_PIDS:-}" | awk 'NF')"
+    [ -n "$out" ] || exit 1
+    printf '%s\n' "$out" ;;
+  -P)
+    out="$(printf '%s\n' "${FAKE_PGREP_CHILDREN:-}" | awk -F'\t' -v pp="${2-}" '$2 == pp { print $1 }')"
+    [ -n "$out" ] || exit 1
+    printf '%s\n' "$out" ;;
+  *) exit 1 ;;
+esac
+FAKE
+
+cat > "$SANDBOX/fakebin/ps" <<'FAKE'
+#!/usr/bin/env bash
+target=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -p) target="${2-}"; shift 2 ;;
+    *)  shift ;;
+  esac
+done
+[ -n "$target" ] || exit 1
+line="$(printf '%s\n' "${FAKE_PS_RECORDS:-}" | awk -F'\t' -v p="$target" '$1 == p { print; exit }')"
+[ -n "$line" ] || exit 1
+printf '%s\n' "$line" | awk -F'\t' '{printf "%s %s %s\n", $1, $2, $3}'
+FAKE
+
+chmod +x "$SANDBOX/fakebin/tmux" "$SANDBOX/fakebin/claude" "$SANDBOX/fakebin/pgrep" "$SANDBOX/fakebin/ps"
 export FAKE_TMUX_LOG="$SANDBOX/tmux.log" FAKE_CLAUDE_LOG="$SANDBOX/claude.log"
 : > "$FAKE_TMUX_LOG"; : > "$FAKE_CLAUDE_LOG"
 export TMUX="$SANDBOX/fake-tmux-socket,0,0"
@@ -402,14 +439,29 @@ add_seed_row "| \`repoA-16\` | harness \`$GHOST5_ID\` | Eagle / test / brett | 2
 # repoH-1 / repoH-2  the two sides of a race decided by which claim LANDS.
 # repoP-1 / repoP-2  PRE-CUTOVER: no object log, ever.
 # repoR-1  a row whose workstation column is another machine.
+# repoK-1  RETIRED, no live session — its OPENED PR and a FRESH CLAIMED issue
+#          are both takeable whatever the verb (issue #30); repoK-2 takes over.
+# repoK-3  RETIRED too, but a LIVE session still backs the id up — refused
+#          exactly as a live holder is (issue #30's own liveness confirmation).
 F_ID="aaaa0001-f1f1-4000-8000-aaaa0001f1f1"
 G_ID="aaaa0002-6363-4000-8000-aaaa00026363"
 R_ID="aaaa0003-4a4e-4000-8000-aaaa00034a4e"
 H_ID="aaaa0004-8e8e-4000-8000-aaaa00048e8e"
+KLIVE_ID="aaaa0005-1234-4000-8000-aaaa00051234"
+# repoM-1 — issue #39: a `--fork-session` DUPLICATE HOLDER of its own
+# transcript, found in the (faked) process table, alongside its own real
+# live session under the SAME id. `--retire` must take the duplicate and
+# refuse the lane's own live pid.
+MLIVE_ID="aaaa0006-3939-4000-8000-aaaa00063939"
 add_seed_row "| \`repoF-1\` | harness \`$F_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoF/x.md | ACTIVE |"
 add_seed_row "| \`repoG-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoG/x.md | ACTIVE |"
 add_seed_row "| \`repoG-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoG/x.md | ACTIVE |"
 add_seed_row "| \`repoG-3\` | harness \`$G_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoG/x.md | ACTIVE |"
+add_seed_row "| \`repoK-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoK/x.md | ACTIVE |"
+add_seed_row "| \`repoK-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoK/x.md | ACTIVE |"
+add_seed_row "| \`repoK-3\` | harness \`$KLIVE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoK/x.md | ACTIVE |"
+add_seed_row "| \`repoK-4\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoK/x.md | ACTIVE |"
+add_seed_row "| \`repoM-1\` | harness \`$MLIVE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoM/x.md | ACTIVE |"
 add_seed_row "| \`repoH-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoH/x.md | ACTIVE |"
 add_seed_row "| \`repoH-2\` | harness \`$DEAD_ID\` | Raven / test / brett | 2026-09-11T00:00Z | none | handoffs/repoH/y.md | ACTIVE |"
 add_seed_row "| \`repoP-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoP/x.md | ACTIVE · LANDING #7 into repoP main |"
@@ -557,6 +609,12 @@ write_record() { # <file> <sessionId> <pid> <procStart> <tmux> <name> <status>
 }
 write_record "$sessions_dir/$DEAD_PID.json" "$DEAD_ID" "$DEAD_PID" ""            "testsess:@9.%9"  "repoA-1" "idle"
 write_record "$sessions_dir/$LIVE_PID.json" "$LIVE_ID" "$LIVE_PID" "$live_start" "othersess:@9.%9" "repoB-1" "idle"
+# repoK-3: its object log ends RETIRED, but this real process is still live
+# under its id — issue #30's own confirmation must refuse the takeover anyway.
+write_record "$sessions_dir/$LIVE_PID-repoK3.json" "$KLIVE_ID" "$LIVE_PID" "$live_start" "k3sess:@9.%9" "repoK-3" "idle"
+# repoM-1: its OWN live session (issue #39) — `duplicate_holder_pids` must
+# exclude this pid even when the (faked) process table also names it.
+write_record "$sessions_dir/$LIVE_PID-repoM1.json" "$MLIVE_ID" "$LIVE_PID" "$live_start" "msess:@9.%9" "repoM-1" "idle"
 write_record_ns() { # <file> <sessionId> <pid> <procStart> <tmux> <name> <nameSource> <status>
   printf '{"pid":%s,"sessionId":"%s","cwd":"x","procStart":"%s","tmux":"%s","name":"%s","nameSource":"%s","status":"%s"}\n' \
     "$3" "$2" "$4" "$5" "$6" "$7" "$8" > "$1"
@@ -605,6 +663,25 @@ mkdir -p "$WIP/lanes/log"
   printf 'OPENED — lane repoG-1, session %s@Eagle, %s, opensoft/repoG#12 ← opensoft/repoG#11\n' "$DEAD_ID" "$MID_UTC"
   printf 'LANDING — lane repoG-1, session %s@Eagle, %s, opensoft/repoG#9\n' "$DEAD_ID" "$OLD_UTC"
 } > "$WIP/lanes/log/repoG-1.md"
+# issue #30 — a DEAD lane (its log ends RETIRED, and no live session backs it
+# up): an OPENED PR and a FRESH CLAIMED issue, neither of them stale by
+# Rule 1's own time-and-verb tests, both takeable anyway because the lane
+# itself is gone.
+NOW_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+{ printf '# lane repoK-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoK-1, session %s@Eagle, %s, lane:repoK-1 → home opensoft/repoK; estate repoK\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'OPENED — lane repoK-1, session %s@Eagle, %s, opensoft/repoK#5 ← opensoft/repoK#4\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repoK-1, session %s@Eagle, %s, opensoft/repoK#6\n' "$DEAD_ID" "$NOW_UTC"
+  printf 'RETIRED — lane repoK-1, session %s@Eagle, %s, lane:repoK-1\n' "$DEAD_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoK-1.md"
+# repoK-3 — the SAME shape (RETIRED, an OPENED PR left behind) but a real live
+# process ($LIVE_PID) still answers for its id: the takeover must be refused
+# exactly as it would be for a lane that never retired at all.
+{ printf '# lane repoK-3 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoK-3, session %s@Eagle, %s, lane:repoK-3 → home opensoft/repoK; estate repoK\n' "$KLIVE_ID" "$OLD_UTC"
+  printf 'OPENED — lane repoK-3, session %s@Eagle, %s, opensoft/repoK#15 ← opensoft/repoK#14\n' "$KLIVE_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repoK-3, session %s@Eagle, %s, lane:repoK-3\n' "$KLIVE_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoK-3.md"
 git -C "$WIP" add -- lanes/log
 git -C "$WIP" commit -q -m "seed two object logs"
 git -C "$WIP" push -q origin main
@@ -1137,6 +1214,28 @@ run env LANES_LANE=repoG-1 "$E" release "opensoft/repoG#8" "taken over by repoG-
 is   "…and release closes its own line" "$rc" 0
 run "$E" who "opensoft/repoG#8"
 hasnt "…so it is no longer listed as superseded" "$out" "superseded by TAKEOVER"
+
+# --------------------------------------- issue #30: a DEAD lane's hold
+
+run env LANES_LANE=repoK-2 "$E" claim "opensoft/repoK#5" --no-github --force
+is   "--force takes over a DEAD lane's OPENED PR whatever its verb" "$rc" 0
+K2="$(cat "$LOGD/repoK-2.md")"
+has  "…writing a TAKEOVER line" "$K2" "TAKEOVER — lane repoK-2, session "
+has  "…referencing the dead lane with ←" "$K2" "opensoft/repoK#5 ← lane:repoK-1"
+has  "…and the free text says why" "$K2" "lane repoK-1 is dead (log ends RETIRED"
+hasnt "…and no separate CLAIMED line: TAKEOVER is itself an open verb" "$K2" "CLAIMED — lane repoK-2, session .*opensoft/repoK#5"
+
+run env LANES_LANE=repoK-2 "$E" claim "opensoft/repoK#6" --no-github --force
+is   "…and a FRESH CLAIMED issue too — Rule 1's four-hour clock never enters it" "$rc" 0
+has  "…also a TAKEOVER, over the same dead lane" "$(cat "$LOGD/repoK-2.md")" "opensoft/repoK#6 ← lane:repoK-1"
+
+run "$E" who "opensoft/repoK#5"
+has  "…so the taker now holds the PR" "$out" "HOLDS    lane repoK-2"
+
+run env LANES_LANE=repoK-4 "$E" claim "opensoft/repoK#15" --no-github --force
+is   "--force still refuses a lane whose log ends RETIRED when a live session backs it up" "$rc" 2
+has  "…the verb-mismatch refusal fires exactly as it does for a live lane" "$err" "is not a stale claim"
+hasnt "…and nothing is written" "$(cat "$LOGD/repoK-4.md" 2>/dev/null)" "opensoft/repoK#15"
 
 # ------------------------------------------- LANDING, LANDED, who --landing
 
@@ -4156,6 +4255,46 @@ has  "…said to be typed there, because no API renames one from outside" "$err"
 hasnt "…and still never a kill" "$err" "kill $LIVE_PID"
 
 rm -f "$sessions_dir/live-fork.json" "$fork_tdir/$FORK_ID.jsonl"
+
+# ------------------------- issue #39: a DUPLICATE HOLDER is TERMED, not named
+#
+# repoM-1's own live session is $LIVE_PID under $MLIVE_ID (seeded above,
+# `$sessions_dir/$LIVE_PID-repoM1.json`). The (faked) process table ALSO
+# shows $LIVE_PID as a `--fork-session --resume … $MLIVE_ID.jsonl` process —
+# on purpose, so the exclusion is proved rather than merely untested — beside
+# a genuine STRAY duplicate, $DUP_PARENT, with its child $DUP_CHILD.
+DUP_PARENT=88101
+DUP_CHILD=88102
+FAKE_PS_M="$(printf '%s\t%s\t%s\n%s\t%s\t%s' \
+  "$LIVE_PID"  1 "claude --session-id $MLIVE_ID --fork-session --resume /home/x/$MLIVE_ID.jsonl" \
+  "$DUP_PARENT" 1 "claude --session-id $MLIVE_ID --fork-session --resume /home/x/$MLIVE_ID.jsonl")"
+FAKE_PGREP_F_M="$(printf '%s\n%s' "$LIVE_PID" "$DUP_PARENT")"
+FAKE_PGREP_CHILDREN_M="$(printf '%s\t%s' "$DUP_CHILD" "$DUP_PARENT")"
+
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_M" FAKE_PS_RECORDS="$FAKE_PS_M" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_M" \
+  "$E" duplicate-holder repoM-1
+is   "duplicate-holder finds the STRAY fork-session pid" "$rc" 0
+has  "…naming its parent" "$out" "$DUP_PARENT"
+has  "…and its child, found via pgrep -P" "$out" "$DUP_CHILD"
+hasnt "…but never repoM-1's OWN live pid, excluded over live_holder" "$out" "$(printf '%s\t' "$LIVE_PID")"
+
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_M" FAKE_PS_RECORDS="$FAKE_PS_M" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_M" \
+  "$END" repoM-1 --retire "$DUP_PARENT"
+is   "lane-end --retire TERMS a duplicate holder's pid pair" "$rc" 0
+has  "…and reports RETIRED naming both pids" "$err" "RETIRED lane repoM-1's duplicate holder"
+has  "…the parent" "$err" "pid $DUP_PARENT (bg-pty-host)"
+has  "…and the child" "$err" "pid $DUP_CHILD (child)"
+has  "…the lane's own row and session are said to be untouched" "$err" "lane itself is untouched"
+
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_M" FAKE_PS_RECORDS="$FAKE_PS_M" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_M" \
+  "$END" repoM-1 --retire "$LIVE_PID"
+is   "…but --retire refuses repoM-1's OWN live pid — Amendment 18(h)'s window pid" "$rc" 2
+has  "…naming what IS a live duplicate holder instead" "$err" "$DUP_PARENT"
+has  "…and saying nothing was named" "$err" "nothing is named"
+
+run "$END" repoM-1 --retire 777777
+is   "…and a pid that is neither a fork nor a duplicate holder is refused, exit 8" "$rc" 8
+has  "…naming both reads" "$err" "no fork and no duplicate holder"
 
 # --------------------------- clause (c): lane-start RECORDS dir and profile
 mkdir -p "$HOME/projects/repoA11b"

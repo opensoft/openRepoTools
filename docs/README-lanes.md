@@ -722,6 +722,23 @@ offline evidence there is and exactly the evidence Rule 1 cares about.
 `TAKEOVER ← <the stale claim's comment URL>`; `TAKEOVER` is itself an open
 verb, so no second line is needed to say the taker holds it.
 
+**Or the holder's LANE is dead, whatever the verb** (opensoft/openRepoTools#30).
+Staleness answers Rule 1's own question about one claim; it says nothing about
+a lane that went silent and was retired, leaving an `OPENED` PR or a fresh
+`CLAIMED` issue behind that neither gate above will ever call takeable — the
+verb-check refuses the PR outright, and a `CLAIMED` lane that later `OPENED` a
+PR naming it is deliberately never stale, which is exactly backwards once the
+lane itself is gone. `--force` also takes over a hold of ANY open verb when the
+holder's own object log ends its lane-kind lines (`STARTED`/`PAUSED`/
+`RESUMED`/`ENDED`/`RETIRED`) on `ENDED` or `RETIRED` — a swap (`PAUSED`) is
+deliberately not dead — **and** no live session for it is found on this
+workstation (`live_holder`, the one liveness implementation this file has,
+never a second one): a `RETIRED` register line is not proof by itself that
+nothing is still running under that name (opensoft/openRepoTools#39), so the
+register's verdict is checked before it is trusted. Before this the only path
+was a `release` of the dead lane's held objects by hand, one at a time, run
+under its own name on the taker's word.
+
 **A crossing warns; it never refuses** (Brett Heap, 2026-09-11: "yes just
 warn"). Crossing is routine — `opsXfactory-3` landed **32 distinct PRs** into
 `opensoft/Omnigent-Install`, every one of them foreign to its home, and
@@ -1464,6 +1481,25 @@ would be a seventh edit to in-force text, and Amendment 7(b) gives that verb
 none — so every read goes on naming the fork until the person takes the printed
 act. And it **kills nothing either**: stopping the process is a separate act and
 it stays the person's.
+
+**A duplicate holder of a lane's OWN transcript is a different thing, and it IS
+killed** (opensoft/openRepoTools#39, Amendment 18(h)). A cross-profile resume
+can leave a `bg-pty-host` running `claude --fork-session --resume
+<path>/<uuid>.jsonl` behind; once a later `lane-start --no-launch` binds that
+forked id as the row's own session, the id is no longer one `forks` (decision
+8(e)) will ever report — it is designed to stay silent about an id the row
+DOES record — while a second live process now holds the one transcript
+Amendment 18(h) says exactly one may. `lanes-edit.sh duplicate-holder <lane>`
+finds it in the PROCESS TABLE instead (`pgrep -f` for a live `--fork-session`,
+then `ps -o pid=,ppid=,args= -p` per candidate — portable across GNU and
+BSD/macOS), matched against every id this lane's row has ever carried, and
+excludes the lane's own live holder (`live_holder`, the same implementation
+`live-holder` already calls). `lane-end <lane> --retire <pid>` tries `forks`
+first and this second, and on a match here it TERMs the pair — the
+`bg-pty-host` parent and its child — and reports the pids it signalled; it
+refuses, naming the reason, when the pid given is the lane's own live session
+rather than the duplicate. Before this the retirement was a bare `kill -TERM`,
+outside every tool this estate has.
 
 ### The workstation's name
 
