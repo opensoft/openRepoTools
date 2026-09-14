@@ -4333,7 +4333,11 @@ is   "lane-end --retire TERMS a duplicate holder's pid pair" "$rc" 0
 has  "…and reports RETIRED naming both pids" "$err" "RETIRED lane repoM-1's duplicate holder"
 has  "…the parent" "$err" "pid $DUP_PARENT (bg-pty-host)"
 has  "…and the child" "$err" "pid $DUP_CHILD (child)"
-has  "…each delivery reported, not merely asserted" "$err" "TERM to pid $DUP_PARENT (bg-pty-host): delivered"
+# "gone", not "delivered" (Copilot round 4, PR #61): the verdict is now
+# kill -0 after a settle, never kill's own exit status, so a caller cannot
+# read exit 0 for a duplicate that is still running.
+has  "…each pid's own verified state reported, not merely asserted" "$err" "pid $DUP_PARENT (bg-pty-host): gone"
+has  "…the child's too" "$err" "pid $DUP_CHILD (child): gone"
 has  "…the lane's own row and session are said to be untouched" "$err" "lane itself is untouched"
 # `kill -TERM` IS REAL, so a `sleep 3000` genuinely dies — proof the act did
 # not merely print a report `kill`'s own exit status was never checked against.
