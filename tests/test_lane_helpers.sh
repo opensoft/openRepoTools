@@ -4590,10 +4590,6 @@ chmod +x "$SANDBOX/fakebin/pclaude"
 export FAKE_PCLAUDE_LOG="$SANDBOX/pclaude.log"
 : > "$FAKE_PCLAUDE_LOG"
 
-# CASE 1 — A FRESH TERMINAL OUTSIDE TMUX. No window, no record of one, nothing
-# to guess from.
-: > "$FAKE_PCLAUDE_LOG"
-run env -u TMUX "$RESTART" repoA11-1 </dev/null
 # THE LANE-NAME FENCE IS THE HELPER'S OWN, and it was a first-character test
 # (#26 review of `3d06a2b`, `restart:268`). `[A-Za-z0-9]*)` pins one character,
 # so a string that is not a lane name reached `register-row` and the person was
@@ -4608,6 +4604,10 @@ is   "…a space is refused too" "$rc" 2
 run env -u TMUX "$RESTART" "-repoA11-1" </dev/null
 is   "…and a leading dash, which the helper refuses by name" "$rc" 2
 
+# CASE 1 — A FRESH TERMINAL OUTSIDE TMUX. No window, no record of one, nothing
+# to guess from.
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX "$RESTART" repoA11-1 </dev/null
 is   "restart <lane> from a fresh terminal outside tmux exits 0" "$rc" 0
 has  "…launching through the launcher, never \`claude\` itself (Evidence 4)" \
      "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoA11-1 team-05a"
