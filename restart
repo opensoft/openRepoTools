@@ -351,6 +351,38 @@ case "$lane" in
 	die "'$lane' is not a lane name (letters, digits, . _ -, not opening with . or -)" 2 ;;
 esac
 
+# ------------------------- AMENDMENT 15: THE ROW'S SPELLING IS THE LANE'S NAME
+#
+# **A lane name is one name under any case** (ratified 2026-09-14T00:07:18Z),
+# and `lanes-edit.sh canon-lane` is the ONE resolver all four commands share —
+# for the reason Amendment 11 clause (h) gives every other read here: four
+# implementations of "which row is this name's" is how the four would come to
+# disagree about it.
+#
+# `2` IS TWO ANSWERS AND ONE OF THEM IS A REFUSAL (Copilot round 4 on
+# openRepoTools#41). It is what a helper predating this amendment spends on an
+# unknown subcommand, and it is also `canon-lane`'s own two-rows refusal. Both
+# used to carry on with the name as typed, on the reading that the `register-row`
+# read below relays the refusal — and it does not: that call suppresses stderr
+# and its own 2 falls into the arm that says the helper FAILED, exit 1, naming
+# neither spelling nor the merge. So the refusal is identified by its own words,
+# which no helper predating this amendment emits from an unknown subcommand, and
+# relayed here; the old-helper fallback is left exactly as it was.
+
+cl_out=""; cl_rc=0
+cl_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "$lane" 2>/dev/null)" || cl_rc=$?
+cl_why=""; cl_pair=0
+[ "$cl_rc" = 2 ] && cl_why="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "$lane" 2>&1 >/dev/null || :)"
+case "$cl_why" in *"Amendment 15(d)"*) cl_pair=1 ;; esac
+if [ "$cl_pair" = 1 ]; then
+	printf '%s\n' "$cl_why" >&2
+	die "the PUBLISHED register spells lane $lane two ways (above), so no read under that name is unambiguous and this command will not restart a lane it cannot name — Amendment 15(d): merge the newer row's session id(s) into the older row's session cell, in order, remove the newer row in the SAME commit naming both spellings, and re-run. Nothing was launched." 2
+fi
+if [ "$cl_rc" = 0 ] && [ -n "$cl_out" ] && [ "$cl_out" != "$lane" ]; then
+	note "lane $lane → $cl_out (Amendment 15: the register row's spelling is canonical)"
+	lane="$cl_out"
+fi
+
 # ------------------------------------------------------------- the lane's row
 row_rc=0
 LANES_NO_FETCH=1 "$LANES_EDIT" register-row "$lane" >/dev/null 2>&1 || row_rc=$?
@@ -390,7 +422,11 @@ case "$sw_rc" in
     rungs below a record it could not read (Amendment 7(d)). Run it by hand to
     see what it says, then re-run." 1 ;;
 esac
-record_row="$(printf '%s\n' "$sw_out" | awk -F'\t' -v l="$lane" '$1 == l { print; exit }' || :)"
+# AMENDMENT 15 — `tolower` ON BOTH SIDES. The swap record's lane column carries
+# whatever spelling the lane was paused under, and `$lane` is the register row's;
+# an exact compare here lost the record — and with it the directory and the
+# profile — for any lane whose two spellings differ.
+record_row="$(printf '%s\n' "$sw_out" | awk -F'\t' -v l="$lane" 'tolower($1) == tolower(l) { print; exit }' || :)"
 lane_dir="$dir_flag"
 if [ -z "$lane_dir" ] && [ -n "$record_row" ]; then
 	cand="$(printf '%s' "$record_row" | cut -f4)"
