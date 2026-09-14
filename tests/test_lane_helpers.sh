@@ -3502,6 +3502,154 @@ else
 fi
 rm -rf "$H_LOCK"
 
+# =========================================================================
+# #32 — `commit_push` NAMES THE ATTEMPT THAT ACTUALLY LANDED, NEVER AN
+# EARLIER ONE ORIGIN HAS SINCE OVERTAKEN.
+#
+# Observed on Eagle, three to four times in one hour on 2026-09-13/14 while
+# several lanes wrote the register concurrently: `append-row-status` /
+# `append-line` printed "rebase conflict on origin/main — nothing was
+# pushed" for a commit that WAS on origin by the time anyone read the line —
+# carried out by the very next lanes-edit.sh write through this same shared
+# checkout, which pulls this dangling local commit onto its own and pushes
+# both together. A caller who trusted "nothing was pushed" and redid the
+# write wrote a duplicate line (issue #32). The second clone plays the peer
+# that moves origin between this invocation's own commit and its push,
+# exactly as it does for the lost-claim race above.
+#
+# THIS SANDBOX'S OWN CHECKOUT IS ALREADY DIRTY, from the rejectgit cases
+# above (a stamp whose push or pull was faked to fail leaves its commit
+# local, and the fixture files those cases wrote are still uncommitted
+# where their own act never got to commit them) — real content, and none of
+# it this section's. `dirty_elsewhere` would read it as "someone else's
+# uncommitted file" and route every case below through Amendment 5(d)'s
+# skip-the-pull branch instead of the rebase this section means to exercise,
+# so it is committed first, exactly as its own author would.
+# -------------------------------------------------------------------------
+if [ -n "$(git -C "$WIP" diff --name-only 2>/dev/null)" ]; then
+  git -C "$WIP" add -u -- .
+  git -C "$WIP" commit -q -m "fixture cleanup: commit content earlier cases left uncommitted, before the #32 race/conflict cases"
+  git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+  git -C "$WIP" push -q origin main
+fi
+git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
+RC_ID="aaaa0005-c0c0-4000-8000-aaaa0005c0c0"
+"$E" add-row "| \`repoRC-1\` | harness \`$RC_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoRC/x.md | ACTIVE |" >/dev/null 2>&1
+
+# -- a race a LATER attempt wins: not a conflict, and the message must name
+#    the attempt that actually pushed, never attempt 1's rejection — and the
+#    retry must not write the row's own text twice.
+RACE_FLAG="$SANDBOX/race-peer-landed"
+rm -f -- "$RACE_FLAG"
+cat > "$SANDBOX/racegit" <<FAKE
+#!/usr/bin/env bash
+# Plays the second workstation, landing its own commit in the exact window
+# the retry loop exists for: after this attempt's own pull --rebase has
+# already succeeded and just before its push, so the push is rejected and
+# the NEXT attempt's own pull --rebase is what actually meets the peer.
+for a in "\$@"; do
+  if [ "\$a" = push ] && [ ! -e "$RACE_FLAG" ]; then
+    touch "$RACE_FLAG"
+    git -C "$CLONE2" pull -q --rebase origin main >/dev/null 2>&1
+    printf 'CLAIMED — lane repoH-2, session %s@Raven, %s, opensoft/repoH#92\n' \
+      "$DEAD_ID" "\$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$CLONE2/lanes/log/repoH-2.md"
+    git -C "$CLONE2" add -- lanes/log/repoH-2.md
+    git -C "$CLONE2" commit -q -m "LOG(repoH-2@Raven): lands between this attempt's pull and its push"
+    git -C "$CLONE2" push -q origin main >/dev/null 2>&1
+  fi
+done
+exec git "\$@"
+FAKE
+chmod +x "$SANDBOX/racegit"
+
+run env LANES_GIT="$SANDBOX/racegit" "$E" append-row-status repoRC-1 "RACE-RETRY-WINS"
+is    "a peer landing between this attempt's pull and its push still exits 0" "$rc" 0
+has   "…the message names attempt 2, the one that actually pushed" "$err" "pushed origin/main (attempt 2)"
+hasnt "…never claiming attempt 1 pushed it" "$err" "pushed origin/main (attempt 1)"
+is    "…and the retry writes the row's text once, never twice" "$(grep -c 'RACE-RETRY-WINS' "$LANES")" 1
+
+# -- a race the rebase truly cannot resolve: the peer rewrote the SAME row.
+#    `rebase --abort` must leave the tree clean, the message must say so
+#    truthfully, and — because a write that runs after this one carries the
+#    dangling commit out regardless of what conflicted here — it must say to
+#    LOOK before resetting or redoing anything, the same rule RV-B3 took for
+#    the handoff stamp's own push in `lane-start`.
+git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
+PC_LINE="$(grep -n '^| `repoRC-1`' "$CLONE2/lanes/LANES.md" | head -n1 | cut -d: -f1)"
+PC_ROW="$(sed -n -e "${PC_LINE}p" "$CLONE2/lanes/LANES.md")"
+PC_TMP="$(mktemp -d)/pre"
+cat -- "$CLONE2/lanes/LANES.md" > "$PC_TMP"
+{ [ "$PC_LINE" -gt 1 ] && head -n "$((PC_LINE - 1))" -- "$PC_TMP"
+  printf '%s\n' "${PC_ROW%|}· PEER-CONFLICT |"
+  tail -n "+$((PC_LINE + 1))" -- "$PC_TMP"
+} > "$CLONE2/lanes/LANES.md"
+git -C "$CLONE2" add -- lanes/LANES.md
+git -C "$CLONE2" commit -q -m "LANES(repoRC-1@Raven): peer rewrites the same row"
+git -C "$CLONE2" push -q origin main
+
+run "$E" append-row-status repoRC-1 "OURS-CONFLICT"
+is    "a peer's rewrite of the SAME row is a real conflict: exit 3" "$rc" 3
+has   "…REBASE CONFLICT is still named" "$err" "REBASE CONFLICT on origin/main"
+has   "…the abort runs and says the tree is clean" "$err" "rebase ABORTED — the worktree is clean and NOT mid-rebase"
+is    "…and it really is clean" "$(git -C "$WIP" status --porcelain | grep -c .)" 0
+has   "…told to fetch before resetting or redoing anything" "$err" \
+      "fetch origin main || echo FETCH-FAILED"
+has   "…and STOP named for a FAILED fetch too, never treated as leave to redo" "$err" \
+      "if that printed FETCH-FAILED, STOP and retry — a stale or unreachable origin proves nothing either way"
+
+# Copilot's round-4 review of #50 (5203455553): the very peer write this
+# recovery exists for carries a dangling commit by REBASING it onto a newer
+# base — which the branch just above this one takes — and a rebase changes
+# the commit's sha without changing its patch. `merge-base --is-ancestor
+# $cp_sha …` (round 2's own fix) checks the OLD sha, so it can still answer
+# "not-there" once the change is published under a new one. `git cherry`
+# compares by PATCH, so it finds it either way; verified against a real bare
+# repo for a peer-rebased commit (0, correctly ALREADY THERE — where
+# `merge-base --is-ancestor` on the same sha answered "not-there"), a
+# genuinely local-only one (1, correctly not-there), and a fetch against a
+# bad remote (FETCH-FAILED, cherry never run against a stale ref).
+has   "…checked by CONTENT (git cherry), never by a sha a peer's rebase can change" "$err" \
+      "cherry origin/main"
+cp_sha_printed="$(printf '%s\n' "$err" | grep -oE 'cherry origin/main [0-9a-f]{7,40}' | head -n1 | awk '{print $3}')"
+is    "…naming a real local commit to check, not a placeholder" \
+      "$([ -n "$cp_sha_printed" ] && printf 'has-sha' || printf 'MISSING')" "has-sha"
+has   "…counting only the patches git cherry could not find upstream" "$err" \
+      "grep -c '^+'"
+has   "…the reset is now conditional on that look, not unconditional" "$err" \
+      "only if it is not there: read back exactly what you wrote"
+has   "…and the die itself is scoped to this attempt, never a permanent claim" "$err" \
+      "not pushed by this attempt; a later write from this checkout may already carry it"
+hasnt "…never the old unconditional claim an aborted pull cannot prove" "$err" \
+      "rebase conflict on origin/main — nothing was pushed."
+pc_fetch="$(printf '%s\n' "$err" | grep -n -- 'fetch origin main || echo FETCH-FAILED' | head -n1 | cut -d: -f1)"
+pc_look="$(printf '%s\n' "$err" | grep -n -- 'cherry origin/main' | head -n1 | cut -d: -f1)"
+pc_reset="$(printf '%s\n' "$err" | grep -n -- 'reset --hard origin/main' | head -n1 | cut -d: -f1)"
+is    "…fetched, THEN checked by content, THEN reset — the same order RV-B3 pins" \
+      "$([ -n "$pc_fetch" ] && [ -n "$pc_look" ] && [ -n "$pc_reset" ] && [ "$pc_fetch" -lt "$pc_look" ] && [ "$pc_look" -lt "$pc_reset" ] && printf 'ordered' || printf "fetch $pc_fetch, look $pc_look, reset $pc_reset")" "ordered"
+
+# Copilot's review of #50 (5202640056), suppressed comment on lanes-edit.sh:1180:
+# the gate above was attached only to the diagnostic `diff` line — a caller
+# whose fetch/look just showed the commit already on origin was still told, by
+# the next two unconditional lines, to reset and redo, which is the exact
+# duplicate this PR exists to prevent. A single STOP between the look and the
+# reset gates all three lines below it (diff, reset, redo) at once, the same
+# job the existing "only if it is not there" qualifier does for the diff line
+# alone.
+has   "…and told to STOP there instead of resetting or redoing a landed commit" "$err" \
+      "if that printed 0, STOP — reset or redo now would write it a second time."
+pc_stop="$(printf '%s\n' "$err" | grep -n -- 'STOP — reset or redo now' | head -n1 | cut -d: -f1)"
+is    "…the STOP sits between the look and the reset, gating both reset and redo" \
+      "$([ -n "$pc_look" ] && [ -n "$pc_stop" ] && [ -n "$pc_reset" ] && [ "$pc_look" -lt "$pc_stop" ] && [ "$pc_stop" -lt "$pc_reset" ] && printf 'ordered' || printf "look $pc_look, stop $pc_stop, reset $pc_reset")" "ordered"
+
+# Suite housekeeping: this conflict is real and stays real (the peer's row
+# rewrite is still on origin), so nothing later inherits this section's own
+# dangling commit — and nothing later finds $WIP behind the peer's push
+# either, which every case below this one assumes it never is. Fully synced
+# to the CURRENT origin/main (the abort's own fetch already has it), not
+# merely one commit back from wherever HEAD happened to be.
+git -C "$WIP" fetch -q origin main 2>/dev/null || :
+git -C "$WIP" reset --hard origin/main >/dev/null 2>&1
+
 # --------------------------------------- the pointer file, when it does NOT answer
 #
 # AMENDMENT 9(a): "Failing to find it is a refusal, never a guess." Six ways it
@@ -3957,6 +4105,65 @@ is   "…2 is a helper predating the read and falls through too" "$(fence_probe 
 is   "…and a read that FAILED stops the skill where it stands" "$(fence_probe 6)" ""
 has  "…naming the read and the code it came back with" "$(cat "$SANDBOX/fence.err")" "some-verb\` failed (exit 6)"
 has  "…and saying what that is NOT, in Amendment 7(d)'s words" "$(cat "$SANDBOX/fence.err")" "a read that failed is never an answer"
+
+# #34 — THE FENCE'S OWN STDERR IS KEPT, MINUS THE ONE SENTENCE THIS READ ASKS
+# FOR (Copilot's final round on #26, review 5194970614; the third site of the
+# shape `lanes` and `restart` took at `29d3417`). `2>/dev/null` was written
+# when the only thing on that stream was `LANES_NO_FETCH=1 — not fetching …`,
+# on every local read — which is why the whole stream was silenced. Anything
+# else there, on a read that still ANSWERED, used to be thrown away with it.
+printf '#!/usr/bin/env bash\nprintf "LANES_NO_FETCH=1 — not fetching; reading origin/main as the ref already stands here\\n" >&2\nprintf "ANSWER\\n"\nexit 0\n' > "$SANDBOX/fencehelper"
+chmod +x "$SANDBOX/fencehelper"
+( L="$SANDBOX/fencehelper"; eval "$rskill_fence"
+  v=unset; lread v "'a thing it is not'" some-verb 2>"$SANDBOX/fence2.err"
+  printf 'rc=%s v=[%s]' "$?" "$v" ) > "$SANDBOX/fence2.out"
+is   "the known no-fetch notice still reaches the variable, not the person" \
+     "$(cat "$SANDBOX/fence2.out")" "rc=0 v=[ANSWER]"
+is   "…the notice itself is dropped from stderr" "$(grep -c 'not fetching' "$SANDBOX/fence2.err")" 0
+
+printf '#!/usr/bin/env bash\nprintf "session records for this workstation could not be read: permission denied\\n" >&2\nprintf "ANSWER\\n"\nexit 0\n' > "$SANDBOX/fencehelper"
+chmod +x "$SANDBOX/fencehelper"
+( L="$SANDBOX/fencehelper"; eval "$rskill_fence"
+  v=unset; lread v "'a thing it is not'" some-verb 2>"$SANDBOX/fence3.err"
+  printf 'rc=%s v=[%s]' "$?" "$v" ) > "$SANDBOX/fence3.out"
+is   "a read that still ANSWERS is unaffected by its own other stderr" \
+     "$(cat "$SANDBOX/fence3.out")" "rc=0 v=[ANSWER]"
+has  "…and that other line reaches the person now, never dropped with the notice" \
+     "$(cat "$SANDBOX/fence3.err")" "session records for this workstation could not be read"
+
+# Copilot's round-1 review of #53 (5202775204): the fence's OWN `grep -v
+# 'pattern' -- "$file"` puts the PATTERN before `--`, so a NON-PERMUTING
+# getopt — BSD's, and every macOS shell — reads the pattern as the first
+# OPERAND and then reads `--` itself as a second one, a FILENAME (the exact
+# anti-pattern tests/test_repo_hygiene.py names for `sed` and `grep` alike,
+# just on a file that hygiene test does not walk: SKILL.md is not in
+# ALL_BASH). GNU grep hides this by PERMUTING; `POSIXLY_CORRECT=1` turns that
+# off and reproduces the same failure right here, no macOS runner needed —
+# measured against the unfixed line, this exact case printed `grep: --: No
+# such file or directory` to stderr and prefixed the real line with the temp
+# file's own name, because grep then believed there were two files.
+( L="$SANDBOX/fencehelper"; eval "$rskill_fence"
+  export POSIXLY_CORRECT=1
+  v=unset; lread v "'a thing it is not'" some-verb 2>"$SANDBOX/fence3b.err"
+  printf 'rc=%s v=[%s]' "$?" "$v" ) > "$SANDBOX/fence3b.out"
+is   "…and under a NON-PERMUTING getopt (BSD's shape) the read still answers" \
+     "$(cat "$SANDBOX/fence3b.out")" "rc=0 v=[ANSWER]"
+is   "…the other line reaches the person UNPREFIXED, exactly as the helper wrote it" \
+     "$(cat "$SANDBOX/fence3b.err")" "session records for this workstation could not be read: permission denied"
+hasnt "…and grep itself never errors on \`--\` as though it were a missing file" \
+     "$(cat "$SANDBOX/fence3b.err")" "No such file or directory"
+
+# AND WITH NO CAPTURE FILE AT ALL, NOTHING IS FILTERED — silence in place of a
+# stream this fence could not open would be the same defect the notice fix
+# exists to correct, only quieter.
+( L="$SANDBOX/fencehelper"; eval "$rskill_fence"
+  mktemp() { return 1; }
+  v=unset; lread v "'a thing it is not'" some-verb 2>"$SANDBOX/fence4.err"
+  printf 'rc=%s v=[%s]' "$?" "$v" ) > "$SANDBOX/fence4.out"
+is   "with no capture file, the read still answers" "$(cat "$SANDBOX/fence4.out")" "rc=0 v=[ANSWER]"
+has  "…and everything on stderr reaches the person, filtered or not" \
+     "$(cat "$SANDBOX/fence4.err")" "session records for this workstation could not be read"
+
 # AND EVERY READ IN THE FILE GOES THROUGH IT: none of the four old shapes is left.
 hasnt "no read is left on \`|| lane=\"\"\`" "$(cat "$RSKILL")" '2>/dev/null)" || lane=""'
 hasnt "…nor on \`|| dir=\"\"\`" "$(cat "$RSKILL")" '2>/dev/null)" || dir=""'
