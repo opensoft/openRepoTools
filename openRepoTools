@@ -648,11 +648,14 @@ $bad
 plan_hook_merge() {
 	local settings existing
 	settings="$(claude_home)/settings.json"
-	command -v jq >/dev/null 2>&1 || die "\`--install\` needs \`jq\` to merge one SessionStart entry into
+	command -v jq >/dev/null 2>&1 || die "\`--install\` needs \`jq\` to merge its TWO hook entries into
     $settings, and there is no \`jq\` on this PATH. It refuses rather than
     rewriting a JSON file by hand, and NOTHING was installed. Install jq, then
-    re-run. The entry it would have merged:
-$(hook_block_text)"
+    re-run. The entries it would have merged — the \`SessionStart\` one and
+    Amendment 12's \`UserPromptSubmit\` name guard, which are ONE all-or-nothing
+    merge:
+$(hook_block_text)
+$(guard_block_text)"
 	workdir
 	HOOK_MERGED="$WORKDIR/settings.json"
 	local staged="$WORKDIR/settings.stage.json"
@@ -667,15 +670,17 @@ $(hook_block_text)"
 		return 0
 	fi
 
-	jq -e . "$settings" >/dev/null 2>&1 || die "$settings is not valid JSON, so \`--install\` cannot merge one entry into it
-    and will not rewrite it. NOTHING was installed and nothing already installed was
-    replaced. Fix that file, then re-run. The entry it would have merged:
-$(hook_block_text)"
+	jq -e . "$settings" >/dev/null 2>&1 || die "$settings is not valid JSON, so \`--install\` cannot merge its two entries into
+    it and will not rewrite it. NOTHING was installed and nothing already installed was
+    replaced. Fix that file, then re-run. The entries it would have merged:
+$(hook_block_text)
+$(guard_block_text)"
 
 	jq -e '(has("hooks") | not) or (.hooks | type == "object")' "$settings" >/dev/null 2>&1 ||
-		die "$settings has a \`hooks\` that is not an object, so there is nothing to merge an
-    entry into. NOTHING was installed. The entry it would have merged:
-$(hook_block_text)"
+		die "$settings has a \`hooks\` that is not an object, so there is nothing to merge
+    either entry into. NOTHING was installed. The entries it would have merged:
+$(hook_block_text)
+$(guard_block_text)"
 
 	# THE THREE ANSWERS, in one read: our exact command already there; some
 	# OTHER SessionStart entry that runs `session-start` (a second writer of

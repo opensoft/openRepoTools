@@ -6001,6 +6001,31 @@ is    "…which it does" "$rc" 2
 has   "…staying the lane this window is" "$err" "STAYING repoGD-1"
 is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
 
+# ---- THE OTHER TEXT A SESSION CELL CAN CARRY INSTEAD OF A UUID.
+#
+# `lane-start` writes `pending — set by the session's first act` into a row it
+# creates with neither a minted uuid nor one it was allowed to take
+# (`lane-start:1914`), and after a `yes` that is exactly the shape the
+# destination can be in: veto 1 refuses this window's uuid because the row being
+# LEFT still records it. Anchored only on `none recorded`, the guard's own last
+# write could not be made there and the next prompt refused for ever on a state
+# it had created by obeying the person (Copilot round 3 on this PR).
+"$E" add-row "| \`repoGD-4\` | pending — set by the session's first act | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoGD/w.md | ACTIVE |" >/dev/null 2>&1
+export FAKE_TMUX_RENAME_STICKS=1 FAKE_TMUX_NAME_FILE="$SANDBOX/tmux-window-name"
+printf 'repoGD-1\n' > "$SANDBOX/tmux-window-name"
+gd_rec "$GD_LANE_ID" repoGD-4 user "$GD_NEW_MS"
+gd_run "$GD_LANE_ID"
+is    "a rename to a lane whose cell carries no uuid at all is the offer" "$rc" 2
+has   "…naming the lane it would move to" "$err" "you renamed this session to repoGD-4"
+gd_run "$GD_LANE_ID" "yes"
+is    "…and \`yes\` moves the window" "$rc" 2
+has   "…saying so" "$err" "MOVED: this window is now lane repoGD-4"
+has   "…with the guard's own last write anchored on the cell's \`pending\` text" "$err" "session cell now ends on $GD_LANE_ID"
+has   "…which the register carries" "$("$E" register-row repoGD-4 2>/dev/null || :)" "$GD_LANE_ID"
+unset FAKE_TMUX_RENAME_STICKS FAKE_TMUX_NAME_FILE
+export FAKE_TMUX_WINDOW_NAME=repoGD-1
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
+
 # ---- M1's TWO CONDITIONS ON TYPING AT ALL, AND THE PANE IT TYPES INTO.
 #
 # (a) THE PANE IS THE RECORD'S, ELSE THIS ONE. The harness has been seen to
@@ -6028,6 +6053,21 @@ is    "a live record with NO tmux target is still this window's, and the lock st
 has   "…saying it did" "$err" "SO IT HAS BEEN RENAMED FOR YOU"
 is    "…typing once" "$(( $(gd_keys) - gd_before ))" 1
 has   "…into the pane tmux itself names, the record having named none" "$(tail -n1 "$FAKE_TMUX_LOG")" "send-keys -t %99 /rename repoGD-1 Enter"
+# AND A TARGET THAT NAMES ANOTHER WINDOW IS NOT A PANE THIS HOOK MAY TYPE INTO.
+# `here` is true by the record's target OR by the pane's process tree, and tmux
+# REUSES window ids — so a record that is here BY ANCESTRY can carry a target
+# some other window now answers to, and M1's gate cannot catch that one: the
+# other pane is running `claude` too (Copilot round 3 on this PR).
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude
+othersess:0	@5	repoGD-1	%5	claude
+gdsess:9	@99	repoGD-1	%99	claude"
+export FAKE_TMUX_PANE_PID="$$" FAKE_TMUX_PANE_ID="%99"
+write_record_a12 "$sessions_dir/gd.json" "$GD_LANE_ID" "$LIVE_PID" "$live_start" interactive "othersess:@5.%5" repogd-7e derived "$GD_OLD_MS"
+gd_before="$(gd_keys)"
+gd_run "$GD_LANE_ID"
+is    "a stale target naming another window is not the pane the lock types into" "$(( $(gd_keys) - gd_before ))" 1
+has   "…which is the one tmux names for THIS window" "$(tail -n1 "$FAKE_TMUX_LOG")" "send-keys -t %99 /rename repoGD-1 Enter"
+hasnt "…and never the pane the record named, which another session is sitting in" "$(tail -n1 "$FAKE_TMUX_LOG")" "-t %5 "
 unset FAKE_TMUX_PANE_ID FAKE_TMUX_PANE_PID
 export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
 

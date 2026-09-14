@@ -5751,8 +5751,18 @@ guard_run() {   # <the hook's JSON, on stdin already read>
   G_NAME="$(jstr "$gr_blob" name)"
   G_SRC="$(jstr "$gr_blob" nameSource)"
   gr_since="$(jnum "$gr_blob" nameSince)"
+  # THE PANE ONLY FROM A TARGET THAT NAMES THIS WINDOW. `here` is true by the
+  # record's target OR by the pane's own process tree, and tmux REUSES window
+  # ids — so a record that is here BY ANCESTRY can carry a target another
+  # window now answers to, and `/rename` typed into it would land in somebody
+  # else's pane. M1's gate cannot catch that one: the other pane is running
+  # `claude` too (Copilot round 3 on this PR). Where the record's target does
+  # not name this window the pane is left EMPTY, and `guard_type` asks tmux for
+  # the pane this hook is running in, which is the session's own.
   gr_pane=""
-  case "$gr_tgt" in *.%*) gr_pane="${gr_tgt##*.}" ;; esac
+  if [ -n "$gr_tgt" ] && [ -n "$LANES_THIS_WINDOW" ] && [ "${gr_tgt%.*}" = "$LANES_THIS_WINDOW" ]; then
+    case "$gr_tgt" in *.%*) gr_pane="${gr_tgt##*.}" ;; esac
+  fi
 
   # ---- THE ROW, from `origin/<branch>` as this checkout last had it (R19), and
   # every comparison case-insensitive with the register's spelling printed
@@ -6033,8 +6043,19 @@ guard_bind_uuid() {   # <the lane moved to> <the lane moved from>
   gbu_anchor="$gbu_last"
   if [ -z "$gbu_anchor" ]; then
     gbu_cell="$(row_cell "$(row_of_lane "$gbu_to" 2>/dev/null || :)" 3 | sed -e 's/^ *//' -e 's/ *$//')"
+    # THE TWO TEXTS A CELL THIS ACT CAN MEET CARRIES INSTEAD OF A UUID, and
+    # both come from `lane-start` itself: `none recorded` for a row a person
+    # wrote by hand, and `pending — set by the session's first act` for a row
+    # `lane-start` has just CREATED with neither a minted uuid nor one it was
+    # allowed to take (`lane-start:1914`). The second is exactly the state a
+    # `yes` to a brand-new lane can leave — veto 1 refuses this window's uuid
+    # because the source row still records it, and a run that minted none has
+    # nothing else to write — so anchoring only on the first left the cure for
+    # the loop unreachable in the one case the loop most needs it (Copilot
+    # round 3 on this PR).
     case "$gbu_cell" in
       "none recorded") gbu_anchor="none recorded" ;;
+      "pending — set by the session's first act") gbu_anchor="$gbu_cell" ;;
     esac
   fi
   gbu_add="→ harness $G_ID (transcript uuid; profile ${G_PROF:-unknown})"
@@ -6192,8 +6213,17 @@ ssb_name_line() {   # <session uuid> <lane, or empty>
   snl_name="$(jstr "$snl_blob" name)"
   [ -n "$snl_name" ] || snl_name=none
   [ "$snl_name" = "$snl_lane" ] && return 0
+  # THE SAME FENCE AS THE GUARD'S, for the same reason and in the same words:
+  # a record that is here by ancestry can carry another window's target, and
+  # this hook types into a pane. `here_context` is asked HERE because the read
+  # above it runs in a subshell, which is where its answer would otherwise have
+  # stayed.
+  here_context
   snl_pane=""
-  case "$snl_tgt" in *.%*) snl_pane="${snl_tgt##*.}" ;; esac
+  if [ -n "$snl_tgt" ] && [ "$snl_tgt" != none ] && [ -n "$LANES_THIS_WINDOW" ] \
+     && [ "${snl_tgt%.*}" = "$LANES_THIS_WINDOW" ]; then
+    case "$snl_tgt" in *.%*) snl_pane="${snl_tgt##*.}" ;; esac
+  fi
   snl_trc=0
   guard_type "$snl_pane" "/rename $snl_lane" || snl_trc=$?
   if [ "$snl_trc" = 0 ]; then
