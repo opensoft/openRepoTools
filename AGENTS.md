@@ -204,27 +204,39 @@ Three rules, and none of them is negotiable:
 
 ```sh
 git submodule update --init upstream/openRepoShape
-python3 -m pytest tests -q
+tests/run.sh                      # the suite, serialized — pass any pytest argument
 ```
 
-**ONE SUITE AT A TIME WHERE LANES SHARE A WORKSTATION.** This run is minutes of
-bash and hundreds of `git` processes, and several lanes build in sibling
-worktrees of the same checkout. Serialize with a LOCK, and anchor the pattern so
-it counts only real runs:
+**`tests/run.sh` IS HOW THIS SUITE IS RUN, and `python3 -m pytest tests -q` by
+hand is the thing it exists to stop.** The run is minutes of bash and hundreds
+of `git` processes, and several lanes build in sibling worktrees of one
+checkout: the wrapper waits for any live run, takes
+`${TMPDIR:-/tmp}/openrepotools-pytest.lock` (`flock` where there is one, a
+`mkdir` lock on macOS, which has none), waits again inside it, then runs
+`python3 -m pytest tests -q "$@"`. Every lane on one workstation must name the
+SAME lock file or there is no lock, which is the whole reason the path is
+written here as well as in the file.
+
+Two measured defects on 2026-09-14 (opensoft/openRepoTools#51), both of them
+inside a guard that had been copied into four briefs:
+
+```sh
+while pgrep -af 'python3 -m pytest' | grep -v pgrep >/dev/null; do sleep 20; done
+```
+
+It NEVER WAITED — under the harness `grep` is a shell function whose status is 1
+when its stdout is `/dev/null`, even where it matched, so four suites ran at
+once — and the pattern is unanchored, so it also matches the guard's own command
+line. Read `command grep` wherever an exit status matters. A poll ALONE is the
+second defect: every waiter starts the instant the run it watched ends, which is
+the same collision one step later. Anchored, split so it cannot match itself,
+and locked:
 
 ```sh
 pat='^python3 -m pyt'"est"                       # split so it cannot match itself
 while [ "$(pgrep -fc "$pat")" -gt 0 ]; do sleep 20; done
 flock "${TMPDIR:-/tmp}/openrepotools-pytest.lock" python3 -m pytest tests -q
 ```
-
-Two measured defects, both on 2026-09-14. A guard written `pgrep -af '…' | grep
--v pgrep >/dev/null` NEVER WAITS where `grep` is the harness's own shell
-function, whose status is 1 when its stdout is `/dev/null` — four suites ran at
-once under it — and an unanchored pattern matches the guard's own command line.
-A poll ALONE then lets every waiter start the instant the run ends, which is the
-same collision one step later: the lock is what makes the second one wait, and
-every lane on one workstation must name the SAME lock file or there is none.
 
 `tests/test_lane_helpers.sh` is 122 KB of bash that arrived with the move;
 `tests/test_lane_helpers_suite.py` is what makes `pytest` run it, so it is one

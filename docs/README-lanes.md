@@ -411,8 +411,24 @@ One argument is taken verbatim, so a lane named before the `<repo>-<n>` rule
 
 ```sh
 # from a checkout of opensoft/openRepoTools, where the suite lives now:
-bash tests/test_lane_helpers.sh     # ~900 assertions, ~3m, touches nothing real
-python3 -m pytest tests -q          # the same suite, under this repository's runner
+bash tests/test_lane_helpers.sh     # the shell suite alone, touches nothing real
+tests/run.sh                        # the same suite under pytest, SERIALIZED
+```
+
+`tests/run.sh` is the way to run it wherever lanes share a workstation
+(opensoft/openRepoTools#51): it waits for any live run, takes
+`${TMPDIR:-/tmp}/openrepotools-pytest.lock` — `flock` where there is one, a
+`mkdir` lock on macOS, which has none — and only then runs `python3 -m pytest
+tests -q`. Four suites ran at once on Eagle on 2026-09-14 past a guard written
+`pgrep -af '…' | grep -v pgrep >/dev/null`, which never waits: `grep` there is
+a shell function whose status is 1 when its stdout is `/dev/null`. The guard
+that does wait is anchored, split so it cannot match its own command line, and
+followed by the lock:
+
+```sh
+pat='^python3 -m pyt'"est"
+while [ "$(pgrep -fc "$pat")" -gt 0 ]; do sleep 20; done
+flock "${TMPDIR:-/tmp}/openrepotools-pytest.lock" python3 -m pytest tests -q
 ```
 
 The suite copies the four commands and the shipped alias table into a sandbox
@@ -1518,18 +1534,32 @@ PAUSED — lane repoHF-1, session a17a0001-…@Eagle, 2026-09-14T17:05:11Z, lane
 - **`transcript <id|none>`** — the agent's own resumable id where it has one.
   `none` is an **answer**, not a gap.
 
-And the tooling writes a third beside them, `kind <in-process|respawn>`, because
-it is the one fact about the act that FOLLOWS the record and no later reader can
-infer it: **an in-process clear does not kill this lane's writers.** Measured
-here on 2026-09-14 — a harness `/clear` mints a new transcript id in the SAME
-process, so every subagent survives it and only its in-flight tool calls die (a
-`Bash` killed that way exits 137). Only a new process takes them: the pane
-respawned (`--restart`), the session ended (`--exit`), or the launcher run after
-a plain handoff. `lane-handoff --in-process` writes the first; everything else
-writes `respawn`. What the kind decides is what the next session is told — and
-in both cases the top block's act (3) is **`ListAgents` FIRST: a writer still
-listed is alive and owns its worktree, so relaunch only the ones it does not
-name**, because two writers on one worktree is how the work in it is lost.
+And the tooling writes a third beside them, `kind <in-process|respawn|unknown>`,
+because it is the one fact about the act that FOLLOWS the record and no later
+reader can infer it: **an in-process clear does not kill this lane's writers**
+(**Amendment 17 Addendum 1**, clauses (h)–(k), in force 2026-09-14T20:59:31Z).
+Measured here on 2026-09-14 — a harness `/clear` mints a new transcript id in the
+SAME process, so every subagent survives it and only its in-flight tool calls die
+(a `Bash` killed that way exits 137); the handoff written a minute earlier said
+*relaunch every writer below*, and the live count a minute later showed all five
+alive on their worktrees.
+
+| kind | what happened to the process | written by |
+|---|---|---|
+| `in-process` | it keeps running, and every writer with it | `lane-handoff --in-process` |
+| `respawn` | it is replaced or ended — the pane respawned, the session exited, a profile switch, a usage-reset relaunch | `--restart`, `--exit`, `--late` |
+| `unknown` | not this command's to know: a plain handoff may be followed by a `/clear` or by a relaunch | a plain `lane-handoff` |
+
+The same word is in the line's FREE TEXT after the why — `clear in-process`,
+`clear respawn`, `kind unknown` (clause (h)) — so the person reading the record
+reads it too. **THE KIND SAYS WHAT TO EXPECT AND NEVER WHAT TO DO** (j). What
+says what to do is clause (i), and it is the same in every kind: the `WRITERS`
+section is **a list to COUNT, not a list to relaunch** — `ListAgents` in Claude,
+the agent's equivalent elsewhere; a writer still live OWNS its worktree and is
+sent one message rather than relaunched; only a writer that is NOT live is
+relaunched, from where it stands. Where the count and the block disagree, **the
+count wins**: the block is what the paused session expected and the count is what
+is true. And one worktree is one writer's for as long as that writer is live (k).
 
 **The writer validates both** (`pause_subfields_check`, called from
 `write_event`) and refuses the line rather than writing a sub-field no reader can
@@ -1576,18 +1606,22 @@ how the register has spelled Codex sessions since 2026-09-05.
 
 `/ctx` (`/handoff --restart`) performs the handoff and then **restarts in
 place**: `tmux respawn-pane -k` on the lane's own pane, with a NEW session of the
-same agent whose **first prompt is the handoff's top block**. That block's first line is *"relaunch every writer below from where it
-stands"* — a respawn really does take the writers with it — and its `WRITERS`
-section lists every worktree the lane had running: its branch, its last commit,
-what it was holding, and the brief it was given, so the new session relaunches
-them rather than discovering them, after `ListAgents` has told it which are
-still alive. **A `/ctx` that clears IN PLACE rather than respawning is the other
-kind and must say so** (`--in-process`): the process survives, its writers
-survive with it, and the next session relaunches NONE of them.
+same agent whose **first prompt is the handoff's top block**. That block's
+`WRITERS` section lists every worktree the lane had running: its branch, its last
+commit, what it was holding, and the brief it was given, so the new session finds
+them rather than discovering them — and its first line is Addendum 1 (i)'s, the
+COUNT. **`/ctx` says which it did** (j): this one respawns, so the record says
+`kind respawn` and the count then finds none, which is what makes relaunching
+each one right. A `/ctx` that clears IN PLACE is the other kind and must say so
+(`--in-process`, `kind in-process`): the process survives, its writers survive
+with it, and the block says to EXPECT every writer below live.
 
-**The record comes first, always.** A `/ctx` whose `PAUSED` line could not be
-written **refuses before it kills anything**: a pane is never respawned over an
-unrecorded lane.
+**The record comes first, always, and the record is THREE writes.** A `/ctx`
+**refuses before it kills anything** where the `PAUSED` line did not land, where
+the row was not flipped (the register would say RUNNING about a session that has
+just been replaced), or where the handoff could not be refreshed (its top block
+is literally the new session's first prompt, and a stale one hands over the
+instructions of another act). A pane is never respawned over an unrecorded lane.
 
 **The respawn line is `lane <lane>`**, and never `restart <lane>` — Amendment 18
 Addendum 2 (i-8): the respawn *"relaunches the lane's own pane with `lane <name>`

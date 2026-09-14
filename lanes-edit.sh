@@ -3941,26 +3941,73 @@ payload_subfield() {   # <payload> <name> [all]
 # before this amendment carries neither, and Amendment 7(i)'s cutover rule is
 # that a reader finding none says so rather than assuming one. The check fires
 # only on a sub-field that is THERE.
+# THE TWO ARE WRITTEN TOGETHER OR NOT AT ALL, AND AN EMPTY ONE IS NOT AN
+# ABSENT ONE (Copilot rounds 1 and 2 on openRepoTools#47). The first shape of
+# this gate entered on either sub-field and then accepted each empty result
+# independently, which let a HALF record through: `agent codex` with no
+# transcript, or `transcript <id>` with no agent, both of which `lane-start`
+# reads one field of and defaults the other — launching Claude on a codex id,
+# or codex on none. And a sub-field written EMPTY (`; agent ; …`) parsed
+# identically to one that was never there, so a malformed line was indexed as a
+# pre-amendment one for ever, in a log nothing rewrites.
+#
+# PRESENCE IS READ OFF THE SUB-FIELDS, never off the whole line: `dir
+# /srv/agent-work` carries the letters and is not the field.
 pause_subfields_check() {   # <payload>
   psc_pay="${1-}"
-  case "$psc_pay" in *'agent '*|*'transcript '*) : ;; *) return 0 ;; esac
-  # READ WITH `all`, WHICH IS THE WHOLE SUB-FIELD AND NOT ITS FIRST REF. The
-  # default mode ends a value at its first space — the rule `dir` and `profile`
-  # are read by — so `agent not a key` would come back as `not`, a perfectly
-  # good manifest key, and the check would pass the very value it exists to
-  # refuse. A gate reads what was written, never what a reader would make of it.
-  psc_a="$(payload_subfield "$psc_pay" agent all)"
-  psc_t="$(payload_subfield "$psc_pay" transcript all)"
-  case "$psc_a" in
-    '') : ;;
-    *[!A-Za-z0-9._-]*)
-      die "the record's \`agent\` sub-field is a manifest key — letters, digits, '.', '_', '-' — and '$psc_a' is not one (Amendment 17(b)). Nothing was written: this log is append-only, and \`lane-start --agent\` launches on what it reads back from this field" 2 ;;
-  esac
-  case "$psc_t" in
-    '') : ;;
-    *[!A-Za-z0-9._-]*)
-      die "the record's \`transcript\` sub-field is the agent's own resumable id, or the word 'none' — '$psc_t' is neither (Amendment 17(b)). Nothing was written" 2 ;;
-  esac
+  case "$psc_pay" in *agent*|*transcript*) : ;; *) return 0 ;; esac
+  psc_has_a=0; psc_has_t=0
+  psc_rest="$psc_pay"
+  while : ; do
+    psc_one="${psc_rest%%; *}"
+    case "$psc_one" in
+      agent | 'agent '*)           psc_has_a=1 ;;
+      transcript | 'transcript '*) psc_has_t=1 ;;
+    esac
+    case "$psc_rest" in
+      *'; '*) psc_rest="${psc_rest#*; }" ;;
+      *) break ;;
+    esac
+  done
+  # A PAYLOAD CARRYING NEITHER IS VALID AND STAYS VALID: every record written
+  # before this amendment carries neither, and Amendment 7(i)'s cutover rule is
+  # that a reader finding none says so rather than assuming one.
+  if [ "$psc_has_a" = 0 ] && [ "$psc_has_t" = 0 ]; then return 0; fi
+  # EACH FIELD THAT IS THERE IS READ WITH `all`, WHICH IS THE WHOLE SUB-FIELD
+  # AND NOT ITS FIRST REF. The default mode ends a value at its first space —
+  # the rule `dir` and `profile` are read by — so `agent not a key` would come
+  # back as `not`, a perfectly good manifest key, and the check would pass the
+  # very value it exists to refuse. A gate reads what was written, never what a
+  # reader would make of it. THE VALUE IS JUDGED BEFORE THE PAIR, so a payload
+  # that is both malformed and half-written is refused for the malformation,
+  # which is the thing the writer of it can see in what they typed.
+  if [ "$psc_has_a" = 1 ]; then
+    psc_a="$(payload_subfield "$psc_pay" agent all)"
+    case "$psc_a" in
+      '')
+        die "the record's \`agent\` sub-field is THERE and EMPTY, which is not the same as absent: no reader can tell it from a pre-amendment record, so every one of them would default to \`claude\` for ever (Amendment 7(i)'s cutover rule is about a field that was never written, not one written blank). Write the agent, or write neither sub-field. Nothing was written" 2 ;;
+      *[!A-Za-z0-9._-]*)
+        die "the record's \`agent\` sub-field is a manifest key — letters, digits, '.', '_', '-' — and '$psc_a' is not one (Amendment 17(b)). Nothing was written: this log is append-only, and \`lane-start --agent\` launches on what it reads back from this field" 2 ;;
+    esac
+  fi
+  if [ "$psc_has_t" = 1 ]; then
+    psc_t="$(payload_subfield "$psc_pay" transcript all)"
+    case "$psc_t" in
+      '')
+        die "the record's \`transcript\` sub-field is THERE and EMPTY. The word for an agent with no resumable id is \`none\`, which is an ANSWER; blank is a gap no reader can tell from a pre-amendment record. Nothing was written" 2 ;;
+      *[!A-Za-z0-9._-]*)
+        die "the record's \`transcript\` sub-field is the agent's own resumable id, or the word 'none' — '$psc_t' is neither (Amendment 17(b)). Nothing was written" 2 ;;
+    esac
+  fi
+  # AND THE PAIR. `lane-start` reads ONE of these fields to choose a launcher
+  # and the OTHER to choose what it hands that launcher, so a record carrying
+  # one of them makes it default the other: Claude launched on a codex id, or
+  # codex launched on none, out of a line nothing rewrites.
+  if [ "$psc_has_a" != "$psc_has_t" ]; then
+    psc_only=transcript
+    [ "$psc_has_a" = 1 ] && psc_only=agent
+    die "Amendment 17(b)'s two sub-fields are written TOGETHER or not at all, and this payload carries only \`$psc_only\`. A half record is worse than none: \`lane-start\` reads the field that is there and DEFAULTS the one that is not, so it would launch the wrong agent, or the right one on an id that is not its. Write both (\`agent <name>; transcript <id|none>\`), or neither. Nothing was written — this log is append-only" 2
+  fi
   return 0
 }
 
@@ -5774,6 +5821,16 @@ case "$cmd" in
     fi
     log_utc="$(utc_now)"
     if [ -n "$utc_override" ]; then
+      # `--utc` IS THE LATE `PAUSED`'s SEAM AND HAS NO OTHER CALLER (Amendment
+      # 17, adoption act 7; Copilot round 2 on openRepoTools#47). The parser
+      # above takes the option for every verb and only its SHAPE was checked
+      # here, so a `STARTED` or a `RESUMED` could be dated by hand — and this
+      # log is append-only with FILE ORDER deciding which line is a lane's
+      # last, so a hand-dated line changes what every state read reports about
+      # a lane that is running. The one line that legitimately carries its own
+      # date is the record a swap never left, and `lane-handoff --late` has its
+      # own rule for when even that may be written.
+      [ "$verb" = PAUSED ] || die "--utc dates the LATE PAUSED that a swap never left (Amendment 17, adoption act 7) and nothing else — '$verb' is not one. Every other line is dated by the clock of the act that wrote it, because this log is append-only and a line dated by hand is a line whose order no reader can trust. Write it without --utc." 2
       case "$utc_override" in
         [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) log_utc="$utc_override" ;;
         *) die "--utc takes a UTC instant spelled as this log spells it, YYYY-MM-DDTHH:MM:SSZ — '$utc_override' is not one, and a line nothing can date is a line no reader can order" 2 ;;

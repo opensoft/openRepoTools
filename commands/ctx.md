@@ -20,16 +20,21 @@ What that means in order, and the order is the rule:
 2. **then** the lane's own pane is respawned through the launcher — `tmux respawn-pane -k`, so the act
    survives the death of the session that started it — with a NEW session of the same agent whose FIRST
    PROMPT is that top block, run without anyone typing it;
-3. that session stamps `RESUMED by …` first, as Rule 3 requires, then runs `ListAgents` — **a writer still
-   listed is alive and owns its worktree, and is never relaunched** — and **relaunches every writer the block
-   lists that `ListAgents` does not name, from where each stood**.
+3. that session stamps `RESUMED by …` first, as Rule 3 requires, then **COUNTS the live writers** —
+   `ListAgents`, the agent's equivalent elsewhere — because the block's `WRITERS` section is a list to COUNT
+   and not a list to relaunch (Amendment 17 Addendum 1 (i), in force 2026-09-14T20:59:31Z). A writer still
+   live OWNS its worktree and is told, not relaunched; only a writer that is NOT live is relaunched, from
+   where it stood.
 
-Because this `/ctx` respawns the pane, the process every writer was a child of is gone and relaunching them
-is right; the record says so (`kind respawn`). A clear that happens IN PLACE instead keeps that process, and
-its writers with it — that one is `--in-process`, and its block tells the next session to relaunch none.
+**`/ctx` says which it did** (Addendum 1 (j)). This one respawns the pane, so the process every writer was a
+child of is gone, the record says `kind respawn`, and the count then finds none — which is what makes
+relaunching each one right. A clear that happens IN PLACE keeps that process and its writers with it: that
+one is `--in-process`, `kind in-process`, and its block says to EXPECT every writer below live. Either way
+the kind says what to expect and never what to do.
 
 **A `/ctx` whose record could not be written REFUSES before it kills anything.** A pane is never respawned
-over an unrecorded lane: if the `PAUSED` line did not land, this pane stays exactly as it is and the reason
-is printed.
+over an unrecorded lane — and the record is three writes, not one: if the `PAUSED` line did not land, or the
+row was not flipped, or the handoff's top block (which is the new session's first prompt) could not be
+refreshed, this pane stays exactly as it is and the reason is printed.
 
 No picker, no title fallback, no second command: the one word is the whole act.

@@ -70,7 +70,16 @@ HELPER_BASH = ["lane-handoff"]
 #: index. The moved suite is 196 KB of it and is in this list for the reason
 #: Amendment 9's act-3 obligation 4 gives — the macOS job parses it with bash
 #: 3.2, where a `${x,,}` that nobody ran is still a syntax error.
-ALL_BASH = SHIPPED_BASH + LANE_BASH + HELPER_BASH + ["tests/test_lane_helpers.sh"]
+#:
+#: `tests/run.sh` (opensoft/openRepoTools#51) is bash for the same reason and
+#: is held to the same parse: it is the wrapper that takes the suite's lock,
+#: its `mkdir` fallback is there BECAUSE macOS has no `flock`, and a wrapper
+#: that does not parse on the platform its fallback exists for is no wrapper.
+#: It is in no list above — `--install` does not place it and nobody has it on
+#: PATH — so the mode and discipline rules those lists carry are not asked of
+#: it; this one is.
+ALL_BASH = (SHIPPED_BASH + LANE_BASH + HELPER_BASH
+            + ["tests/test_lane_helpers.sh", "tests/run.sh"])
 
 #: THE COMMANDS THAT CARRY THE SHARED ESTATE RESOLVER, byte for byte. Every
 #: estate command is one; the installer is not, it finds no estate.
@@ -193,11 +202,17 @@ def test_every_placed_file_carries_in_the_index_the_mode_it_is_placed_with():
     `--install` stamps 755 on everything it places, so an installed copy runs
     whatever the checkout says. What does NOT is the checkout itself: `./park`
     from a clone, and the `cp -p` the lane suite copies `lane-handoff` with,
-    both take the mode git recorded. `lane-handoff` was committed 100644 under
-    Amendment 17(a) and the suite's own `chmod` hid it — which is the whole
-    reason this is asked of the INDEX and derived from the installer's list
-    instead of a list here: the two tests above are per-name, and a name nobody
-    added to either of them is a name neither one asks about.
+    both take the mode git recorded.
+
+    WHAT THIS TEST IS DERIVED FROM, AND WHY IT IS ASKED OF THE INDEX. The first
+    `lane-handoff` commit under Amendment 17(a) landed 100644 and the lane
+    suite's own `chmod` hid it; `e25b54c` made it 100755 and added this row, so
+    the mode is now git's and the fixture reads it back rather than making it.
+    The two tests above are PER-NAME, and a name nobody added to either of them
+    is a name neither one asks about — which is the whole reason this one reads
+    the installer's own `INSTALLABLES` list instead of a list restated here.
+    (Any finding that says `lane-handoff` is 100644 is reading this paragraph
+    and not the index: `git ls-files -s lane-handoff` is the answer.)
 
     The data file is the exception and is named as one: `repos.tsv` is read,
     never run.
@@ -1516,9 +1531,23 @@ def test_agents_md_is_short_enough_to_be_read():
     usable at all — every lane on the workstation must name the SAME lock
     file. An assistant told only "run pytest" starts the fifth suite, and this
     run is minutes of bash and hundreds of `git` processes.
+
+    243 -> 255 the same day, when those nineteen lines gained a COMMAND to
+    point at (opensoft/openRepoTools#51). Prose that shows a guard is prose
+    somebody retypes, and the four suites that ran at once had each retyped
+    it; `tests/run.sh` is the guard written ONCE, and the twelve lines are the
+    shape of naming it: the wrapper as the first thing the testing section
+    says to run, what it does (waits, takes
+    `${TMPDIR:-/tmp}/openrepotools-pytest.lock`, `flock` or a `mkdir` lock on
+    macOS, waits again inside it), the sentence that makes a lock a lock at
+    all -- every lane on one workstation names the SAME file -- and the broken
+    guard kept as the thing being corrected, because an assistant that has
+    seen the working one still meets the old one in older briefs. The runnable
+    form stays beneath it for a person with no checkout of this repository in
+    front of them.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 243, f"AGENTS.md is {len(lines)} lines; the cap is 243"
+    assert len(lines) <= 255, f"AGENTS.md is {len(lines)} lines; the cap is 255"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -2609,3 +2638,63 @@ def test_the_rule_6_register_scan_takes_its_alias_table_from_the_environment():
         "answers `newline in string ... at source line 1` and exits 2, and "
         "`who --landing` then reports every merge hold in the estate as "
         "`none open`")
+
+
+def test_the_suite_wrapper_takes_one_lock_and_names_it_where_agents_read_it():
+    """ONE SUITE AT A TIME WHERE LANES SHARE A WORKSTATION, and the lock has to
+    be the SAME lock in every lane or there is no lock at all
+    (opensoft/openRepoTools#51, measured 2026-09-14T20:4xZ on Eagle).
+
+    Four `python3 -m pytest tests -q` runs were live at once in four worktrees,
+    every one of them past a guard that had been copied into four briefs:
+
+        while pgrep -af 'python3 -m pytest' | grep -v pgrep >/dev/null; do sleep 20; done
+
+    It never waited. Under the harness `grep` is a shell FUNCTION, and its
+    status with stdout on `/dev/null` is 1 even where it matched — the same
+    pipeline captured into a variable returned 0 and six lines. The collision
+    is not a shared path (the suite redirects `$HOME` and `$TMPDIR`); it is
+    TIME: a suite that takes 18 minutes alone takes far longer four-wide and
+    trips every wrapper's timeout around it.
+
+    So the guard is written once, in `tests/run.sh`, and three things about it
+    are held here rather than trusted, because each has already been got wrong:
+
+      * THE LOCK PATH IS THE ESTATE'S, spelled the same in the wrapper and in
+        `AGENTS.md`. A lane that locks a different file locks nothing.
+      * THE PATTERN IS ANCHORED AND SPLIT, so it counts real runs and cannot
+        match the guard's own command line.
+      * `AGENTS.md` NAMES THE WRAPPER as the way to run the suite, because a
+        document that only shows `python3 -m pytest` is the document all four
+        of those runs were following.
+    """
+    wrapper = REPO / "tests" / "run.sh"
+    assert wrapper.is_file(), "tests/run.sh is the way this suite is run"
+    text = wrapper.read_text(encoding="utf-8")
+    agents = (REPO / "AGENTS.md").read_text(encoding="utf-8")
+
+    lock = '${TMPDIR:-/tmp}/openrepotools-pytest.lock'
+    assert lock in text, f"the wrapper must take {lock}"
+    assert lock in agents, (
+        f"AGENTS.md must name {lock}: every lane on one workstation locks the "
+        "same file or there is no lock")
+    assert "tests/run.sh" in agents, (
+        "AGENTS.md must name tests/run.sh as the way to run the suite")
+
+    assert "'^python3 -m pyt'" in text, (
+        "the pgrep pattern must be anchored and split so it cannot match its "
+        "own command line")
+    # THE BROKEN FORM MAY BE QUOTED AND MUST NOT BE RUN. It is in the
+    # wrapper's own head as the defect being corrected, which is worth
+    # keeping: an assistant that has met the working guard still meets the
+    # old one in older briefs. So the rule is asked of the CODE lines only.
+    code = [ln for ln in text.splitlines()
+            if ln.strip() and not ln.lstrip().startswith("#")]
+    assert not any("| grep -v pgrep" in ln for ln in code), (
+        "that guard never waits where `grep` is a shell function whose status "
+        "is 1 with stdout on /dev/null — which is the harness every lane runs in")
+
+    assert "flock" in text and "mkdir " in text, (
+        "macOS ships no `flock`, so the wrapper needs the `mkdir` lock as its "
+        "fallback — that platform is the one the fallback exists for")
+    assert "python3 -m pytest tests -q" in text

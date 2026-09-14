@@ -119,7 +119,43 @@ say()  { printf '%s\n' "$*"; }
 note() { printf '%s: %s\n' "$prog" "$*" >&2; }
 step() { printf '%s: %s\n' "$prog" "$*" >&2; }
 die()  { printf '\n%s: REFUSED: %s\n' "$prog" "$1" >&2; exit "${2:-2}"; }
-quoted() { printf '%q ' "$@" | sed 's/ $//'; }
+# EVERY ARGUMENT AS ONE SHELL WORD, WITHOUT `printf %q` AND WITHOUT A PIPE —
+# measured on the macOS job at `db206db` and `ac0c697`, where three cases of
+# this branch's own went red and no other platform could see it. One line, two
+# defects:
+#
+#   * `printf '%q '` RENDERS DIFFERENTLY UNDER BASH 3.2, which is what Apple
+#     ships and what that job runs (`/bin/bash` 3.2.57). Bash 4.4 and later
+#     give a multi-line argument back as `$'…\n…'` — one readable, runnable
+#     word; 3.2 has no such form and escapes every space and every byte of
+#     every multi-byte character with a backslash of its own. The one caller
+#     that passes a multi-line argument is the `--no-launch` print of a launch
+#     carrying the handoff's top block as its first prompt (Amendment 17(c)),
+#     and it got back neither a readable line nor a runnable one.
+#   * AND THE PIPE THROUGH `sed` MADE THAT FATAL RATHER THAN UGLY. Under
+#     `set -o pipefail` this function's status IS the pipeline's, and BSD `sed`
+#     in a UTF-8 locale (`LC_ALL=en_US.UTF-8` on that runner) refuses bytes
+#     that are not a valid sequence — `RE error: illegal byte sequence` — which
+#     is what 3.2's `%q` makes of the em dash every one of these documents is
+#     written with. `quoted` is a BARE command in the `--no-launch` branch, so
+#     `set -e` ended the command there: exit 1, and an empty stdout.
+#
+# So the quoting is this file's own, and it is the POSIX one every shell reads
+# the same way: a word of safe characters bare, anything else in single quotes
+# with its own single quotes spelled `'\''`. A newline inside single quotes IS
+# a newline, so the line stays readable as well as runnable, on either bash.
+quoted() {
+	q_sep=""
+	for q_a in "$@"; do
+		case "$q_a" in
+		'' | *[!A-Za-z0-9._/:=@%+,-]*)
+			printf "%s'%s'" "$q_sep" "${q_a//\'/\'\\\'\'}" ;;
+		*) printf '%s%s' "$q_sep" "$q_a" ;;
+		esac
+		q_sep=' '
+	done
+	return 0
+}
 
 usage() {
 	cat <<'USAGE'
@@ -238,27 +274,44 @@ done
 #               clear exits 137). A top block that then says *relaunch every
 #               writer below* puts a SECOND writer on a worktree the first one
 #               still holds, and the two of them lose each other's work.
-#   respawn     the pane is respawned (`--restart`), the session is ended
-#               (`--exit`), or the person relaunches through the launcher after
-#               a plain handoff — a NEW PROCESS either way, and every writer of
-#               the old one is gone. Relaunching them is what the next session
-#               is for.
+#   respawn     the pane is respawned (`--restart`) or the session is ended
+#               (`--exit`) — a NEW PROCESS either way, and every writer of the
+#               old one is gone with it. A profile switch and a usage-reset
+#               relaunch are the same kind by the same argument (Addendum 1
+#               (h)), and each is this command with one of those two flags.
 #
-# THE DEFAULT IS `respawn` BECAUSE THE PLAIN FORM PRINTS A RESTART LINE: the act
-# that follows it is a launch, and a person who is about to clear in place says
-# so with `--in-process`. Both are recorded, so no reader has to infer it.
+#   unknown     a PLAIN handoff — `/handoff` with none of the three flags —
+#               after which the person may type `/clear` or may relaunch. The
+#               act that follows is not this command's to know, and Addendum 1
+#               (h) is explicit that such a record writes `kind unknown` rather
+#               than guessing: the top block then treats it as (i) treats every
+#               kind, which is to COUNT the live writers first.
+#
+# THE KIND SAYS WHAT TO EXPECT AND NEVER WHAT TO DO (Amendment 17 Addendum 1,
+# ratified 2026-09-14T20:59:31Z, clause (j)). Clause (i) is what says what to
+# do, it is the same in all three cases, and it is the WRITERS section's first
+# line below.
 [ "$do_in_process" = 1 ] && { [ "$do_restart" = 1 ] || [ "$do_exit" = 1 ]; } &&
 	die "--in-process says THIS PROCESS KEEPS RUNNING, and --restart respawns this lane's pane while --exit ends the session: each of those replaces the process every writer of this lane is a child of. Pick one — the flag is for a clear that happens inside the session that is running." 2
 if [ "$do_in_process" = 1 ]; then
 	handoff_kind=in-process
-	kind_headline='every writer below SURVIVED this clear — list them before you touch any of them'
-	kind_act='THIS HANDOFF WAS WRITTEN FOR AN IN-PROCESS CLEAR: the process was not replaced, so expect `ListAgents` to name every writer below and relaunch NONE of them — ask each for where it stands instead.'
+	kind_headline='expect every writer below live — count them before you touch any of them'
+	kind_act='THIS HANDOFF WAS WRITTEN FOR AN IN-PROCESS CLEAR: the process was not replaced, so expect every writer below live and the count to name them all.'
 	kind_state='the process was not replaced, so every writer above kept running through the clear and only its in-flight tool calls died'
-else
+elif [ "$do_restart" = 1 ] || [ "$do_exit" = 1 ] || [ "$do_late" = 1 ]; then
+	# `--late` IS A RESPAWN AND NEVER AN UNKNOWN: the record a swap never left
+	# is written for a session that has ALREADY ended — that is why it is late —
+	# so the process is gone and every writer with it, which is what the word
+	# names (Addendum 1 (h): "a usage-reset relaunch").
 	handoff_kind=respawn
-	kind_headline='relaunch every writer below from where it stands'
-	kind_act='THIS HANDOFF WAS WRITTEN FOR A RESPAWN: the process that ran the writers is gone, so expect `ListAgents` to name none of them and relaunch each one from where it stood.'
-	kind_state='a NEW PROCESS takes this lane on — the pane respawned, the session ended, or the restart line below typed — so every writer of the old one is gone with it'
+	kind_headline='expect none of the writers below live — count them, then relaunch from where each stands'
+	kind_act='THIS HANDOFF WAS WRITTEN FOR A RESPAWN: the process that ran the writers is gone, so expect the count to name none of them.'
+	kind_state='a NEW PROCESS takes this lane on — the pane respawned or the session ended — so every writer of the old one is gone with it'
+else
+	handoff_kind=unknown
+	kind_headline='the count decides: this handoff cannot know whether the process survived'
+	kind_act='THIS HANDOFF CANNOT KNOW WHICH KIND FOLLOWED IT: a plain handoff may be followed by a `/clear` in this process or by a relaunch, so nothing below assumes either — the count is the answer.'
+	kind_state='the act that follows this record was not this command'"'"'s to know (`kind unknown`, Addendum 1 (h)) — the restart line below is one of the two, and a `/clear` typed here is the other'
 fi
 
 # ---------------------------------------------------------------- the helper
@@ -293,13 +346,33 @@ have_tmux() {
 # IT SETS A VARIABLE RATHER THAN PRINTING ITS ANSWER, and that is load-bearing:
 # a refusal inside `$( )` kills only the substitution's subshell, and this
 # command would carry on with an empty answer.
+#
+# AND `2` IS TWO ANSWERS (Amendment 15; Copilot round 2 on openRepoTools#47).
+# It is what a helper predating a subcommand spends on an unknown one — the
+# rung this fence falls through for, and every workstation until adoption
+# reaches it — and it is ALSO `canon_lane`'s refusal of a register holding two
+# rows that differ only by case, which every read through `check_lane_name` now
+# carries. Falling through THAT is binding this window to whichever lane the
+# next rung happens to answer with, and then renaming the window, writing a
+# PAUSED record and respawning a pane for it. So the refusal is asked for BY
+# ITS OWN WORDS — no old helper emits them from an unknown subcommand, which is
+# how `lane-start:755-767`, `lane-end` and `restart` tell the two apart — and
+# relayed, with the fall-through for a genuinely old helper left as it was.
 sread() {   # sread <var> "<what the failure is NOT>" <verb> [args…]
 	sr_var="$1"; sr_not="$2"; shift 2
 	sr_out=""; sr_rc=0
 	sr_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" "$@" 2>/dev/null)" || sr_rc=$?
 	case "$sr_rc" in
 	0) : ;;
-	8 | 2) sr_out="" ;;
+	2)
+		sr_why="$(LANES_NO_FETCH=1 "$LANES_EDIT" "$@" 2>&1 >/dev/null || :)"
+		case "$sr_why" in
+		*"Amendment 15(d)"*)
+			die "the register holds two rows for this lane that differ only by case, so no read of it is unambiguous and this command will not pick one (Amendment 15(d)). Nothing was written and nothing was renamed. The helper's own words:
+$sr_why" 2 ;;
+		esac
+		sr_out="" ;;
+	8) sr_out="" ;;
 	*) die "\`$LANES_EDIT $1\` failed (exit $sr_rc). That is NOT $sr_not — a read that failed is never an answer (Amendment 7(d)), and this command will not bind a lane, write a PAUSED record or print a restart command on one. Run it by hand to see what it says." 1 ;;
 	esac
 	eval "$sr_var=\$sr_out"
@@ -391,6 +464,26 @@ if [ -z "$lane" ]; then
     or name the lane here: $prog --lane <lane>" 2 ;;
 	esac
 fi
+# ONE NAME UNDER ANY CASE, AND BEFORE ANYTHING IS RENAMED OR WRITTEN
+# (Amendment 15; Copilot round 2 on openRepoTools#47). Every rung above answers
+# with a spelling of its own — the tmux window's name, a record's lane field,
+# the swap row's first cell — and `--lane` answers with whatever was typed,
+# validated by nothing until the record write far below. The REGISTER ROW's
+# spelling is the canonical one, and it is what the window rename, the top
+# block, the payload, the object log's lane field and the restart line must all
+# carry; so it is taken ONCE, here, through the resolver `lane-start`,
+# `lane-end`, `lanes` and `restart` share. It is also where a `--lane` this
+# estate has no name for is refused — before the rename, so that a refusal
+# leaves the window exactly as it found it.
+sread lane_canon "'this lane has no row'" canon-lane "$lane"
+if [ -n "$lane_canon" ] && [ "$lane_canon" != "$lane" ]; then
+	step "lane $lane → $lane_canon (Amendment 15: the register row's spelling is canonical)"
+	lane="$lane_canon"
+fi
+case "$lane" in
+*[!A-Za-z0-9._-]* | .* | -* | '')
+	die "'$lane' is not a lane name (letters, digits, . _ -, not opening with . or -). Nothing was renamed and nothing was written: a name the register cannot hold is one every write below would refuse anyway, and the window would already have been renamed to it." 2 ;;
+esac
 step "lane=$lane${window_ref:+ window=$window_ref} workstation=${ws:-<none>}"
 
 # THE OTHER TWO NAMES MADE TO MATCH IT, mechanically. The window is renamed
@@ -450,10 +543,19 @@ case "$agent" in
 *[!A-Za-z0-9._-]* | '') die "--agent takes a manifest key — letters, digits, '.', '_', '-' — and '$agent' is not one. The record's \`agent\` sub-field is what \`lane-start --agent\` reads back to know which launcher to use (Amendment 17(b))." 2 ;;
 esac
 # `transcript <id|none>`: the agent's own resumable id where it has one. For
-# `claude` that is this session's transcript uuid; an agent with none writes
+# `claude` that is this lane's transcript uuid; an agent with none writes
 # `none`, which is an answer and not a gap.
+#
+# IT IS THE RESOLVED `$uuid` AND NOT `$sess_uuid` (Copilot round 1 on
+# openRepoTools#47). Run from a shell with no `CLAUDE_CODE_SESSION_ID` and no
+# live record for this window — `lane-handoff --lane <lane>` from a bare
+# terminal, which is the `--late` case and every scripted one — `$sess_uuid` is
+# empty while `$uuid` has already fallen back to the ROW's recorded session,
+# which is the id `lane-start` resumes this lane by. Writing `transcript none`
+# there records *this agent has no resumable id* about a conversation whose id
+# the same line carries in its `session` field.
 if [ -z "$transcript" ]; then
-	if [ "$agent" = claude ] && [ -n "$sess_uuid" ]; then transcript="$sess_uuid"
+	if [ "$agent" = claude ] && [ -n "$uuid" ]; then transcript="$uuid"
 	else transcript=none
 	fi
 fi
@@ -552,7 +654,17 @@ fi
 # TWO PLACES, because the estate uses both: `<checkout>/.claude/worktrees/<name>`
 # for a writer working inside the lane's own repository, and
 # `<projects>/.lane-worktrees/<lane>/<name>` for the ones a lane keeps beside it.
+#
+# THE SNAPSHOT FILE IS A PRECONDITION, NOT A CONVENIENCE (Copilot round 1 on
+# openRepoTools#47). With no temporary file the count below still rises and
+# every line written to it goes nowhere: the block would then say *WRITERS: 3
+# found* and list none, and a `/ctx` on that block relaunches nothing while
+# telling the next session there were three. A section that cannot be filled is
+# refused here, before the handoff is touched and before the record is written,
+# which is the one point at which nothing has happened yet.
 writers_tmp="$(mktemp "${TMPDIR:-/tmp}/lane-handoff-writers.XXXXXX" 2>/dev/null || printf '')"
+[ -n "$writers_tmp" ] ||
+	die "could not create a temporary file under ${TMPDIR:-/tmp} to snapshot this lane's writers into, and the WRITERS section is what the next session counts against \`ListAgents\` (Amendment 17 Addendum 1 (i)). Nothing was written, nothing was renamed and no pane was touched. Free some space, or set TMPDIR to somewhere writable, and re-run." 2
 cleanup() { [ -n "${writers_tmp:-}" ] && rm -f -- "$writers_tmp"; return 0; }
 trap cleanup EXIT INT TERM
 
@@ -586,7 +698,7 @@ poll_writer() {   # <path>
 	return 0
 }
 
-: > "${writers_tmp:-/dev/null}"
+: > "$writers_tmp"
 if [ -n "$dir" ]; then
 	for w in "$dir"/.claude/worktrees/*; do poll_writer "$w"; done
 	parent="${dir%/*}"
@@ -639,13 +751,13 @@ top_block() {
 	printf '\n'
 	printf '## RESUME PROMPT — PAUSED %s (%s), agent %s, transcript %s, kind %s — %s\n\n' \
 		"$UTC" "${why:-handoff}" "$agent" "$transcript" "$handoff_kind" "$kind_headline"
-	printf '**FIRST ACTS, in order.** (1) You are lane `%s`%s%s. Stamp this block RESUMED before anything else (Rule 3, single use) — `lane-start --no-launch <repo> <n>` in this window writes it. (2) Read AGENTS.md, then this block. (3) RUN `ListAgents` FIRST, before relaunching anything. A WRITER STILL LISTED IS ALIVE AND OWNS ITS WORKTREE: DO NOT RELAUNCH IT — two writers on one worktree is how the work in it is lost. Relaunch only writers `ListAgents` does NOT name, and only after `git status --short` and `git log @{u}..` in that worktree say where it stood. %s Older sections below are history.\n\n' \
+	printf '**FIRST ACTS, in order.** (1) You are lane `%s`%s%s. Stamp this block RESUMED before anything else (Rule 3, single use) — `lane-start --no-launch <repo> <n>` in this window writes it. (2) Read AGENTS.md, then this block. (3) COUNT THE LIVE WRITERS before relaunching anything — the WRITERS section below is a list to COUNT, not a list to relaunch (Amendment 17 Addendum 1 (i)). ONE WORKTREE, ONE WRITER (k): a worktree is one writer'"'"'s for as long as that writer is live, a relaunch onto a live writer'"'"'s worktree is the writers'"'"' form of Amendment 18(h)'"'"'s second binding, and where you find one made you retire the newer before either commits. %s Older sections below are history.\n\n' \
 		"$lane" "${window_ref:+ in tmux window \`$window_ref\`}" "${dir:+, checkout \`$dir\`}" "$kind_act"
 	printf '**STATE at %s.** Handed off by `%s` on %s: %s. Agent `%s`, transcript `%s`. Kind `%s`: %s.%s\n\n' \
 		"$UTC" "$prog" "${ws:-<no workstation>}" "${why:-no why given}" "$agent" "$transcript" \
 		"$handoff_kind" "$kind_state" \
 		"${ws_missing:+ THE REGISTER AND OBJECT-LOG WRITES WERE NOT MADE: this session ran with no configured workstation, so the row still reads as it did and the register is BEHIND this file (\`R-A11-14\`). The next session binds with \`lane-start --no-launch\`.}"
-	printf '**WRITERS at %s** (%s found under `%s`) — `ListAgents` FIRST: a writer it still names is alive and owns its worktree, and only the ones it does not name are relaunched:\n\n' \
+	printf '**WRITERS at %s** (%s found under `%s`) — FIRST count the live writers: `ListAgents` in Claude, the agent'"'"'s equivalent elsewhere. A writer still live OWNS its worktree: do not relaunch it; one message telling it that its in-flight call died and who the coordinator now is, is enough. Relaunch only a writer that is NOT live, from where it stands — `git status` and `git log @{u}..` in its worktree, then its brief. WHERE THE COUNT AND THIS LIST DISAGREE, THE COUNT WINS: this list is what the paused session expected, the count is what is true.\n\n' \
 		"$UTC" "$writer_count" "${dir:-<no recorded checkout>}"
 	if [ "$writer_count" = 0 ]; then
 		printf -- '- none running at the handoff. A writer this lane starts later is listed by the next refresh.\n'
@@ -673,9 +785,18 @@ else
 		# last line has no newline.
 		hs_added="$(( $(grep -c '' "$hs_tmpd/out") - $(grep -c '' "$handoff_file") ))"
 		if tail -n +$((hs_added + 1)) -- "$hs_tmpd/out" | cmp -s - "$handoff_file"; then
-			cat -- "$hs_tmpd/out" > "$handoff_file"   # the redirect FOLLOWS the symlink
-			handoff_written=1
-			step "handoff refreshed: $handoff_file (+$hs_added lines at the head)"
+			# THE FLAG FOLLOWS THE WRITE AND NEVER THE INTENTION (Copilot round 1 on
+			# openRepoTools#47). A handoff file that is read-only, or on a filesystem
+			# that is full, fails HERE — and `handoff_written=1` set regardless is
+			# what lets `--restart` pass its gate and respawn the pane over a STALE
+			# top block, which is the one document the new session is started with.
+			if cat -- "$hs_tmpd/out" > "$handoff_file"; then   # the redirect FOLLOWS the symlink
+				handoff_written=1
+				step "handoff refreshed: $handoff_file (+$hs_added lines at the head)"
+			else
+				note "the refreshed top block could NOT be written to $handoff_file (the error above is the shell's own), so that file still carries the block it had. It is printed below; put it at the head of that file by hand:"
+				top_block >&2
+			fi
 		else
 			note "the splice of the new top block into $handoff_file did not prove out (the old file must survive it byte for byte), so NOTHING was written to it."
 			top_block >&2
@@ -717,7 +838,16 @@ fi
 # free text containing ` — ` (exit 2), because that separator is what divides a
 # line's fields from its free text.
 sanitize() { printf '%s' "$1" | sed 's/ — /; /g'; }
-why_text="$(sanitize "${why:-handoff}")"
+# THE FREE TEXT NAMES THE KIND AFTER ITS WHY (Amendment 17 Addendum 1 (h), in
+# force 2026-09-14T20:59:31Z): `clear in-process`, `clear respawn`, `switch
+# respawn`, `reset respawn` — the why the caller gave, then the word for what
+# happened to the PROCESS. A handoff that cannot know which will follow writes
+# `kind unknown`, which is the addendum's own spelling of it. The payload
+# carries the same fact as a sub-field (`; kind <k>`) for the readers that
+# parse the line; this is for the person who reads it.
+kind_word="$handoff_kind"
+[ "$handoff_kind" = unknown ] && kind_word="kind unknown"
+why_text="$(sanitize "${why:-handoff}") $kind_word"
 
 # THE PAYLOAD. It opens `swap; ` because that is what `swapped` matches on — the
 # record the launcher restarts from — and the sub-fields after it are Amendment
@@ -752,7 +882,7 @@ payload="$payload; kind $handoff_kind"
 # ------------------------------------------------------------ the LATE branch
 if [ "$do_late" = 1 ]; then
 	late_payload="$payload; late $late_at"
-	late_why="$(sanitize "${why:-late; usage limit hit before the swap at $late_at}")"
+	late_why="$(sanitize "${why:-late; usage limit hit before the swap at $late_at}") $kind_word"
 	if LANES_LANE="$lane" LANES_SESSION="$uuid" "$LANES_EDIT" log PAUSED "lane:$lane" \
 		'→' "$late_payload" "$late_why" --utc "$late_at"; then
 		step "late PAUSED written, dated $late_at (before the relaunch, which is the only place it can go)"
@@ -840,6 +970,21 @@ say "  agent $agent, transcript $transcript (lane-start --agent $agent resumes i
 if [ "$do_restart" = 1 ] || [ "$do_exit" = 1 ]; then
 	[ "$record_written" = 1 ] ||
 		die "the lane's PAUSED record was NOT written, so this pane is left exactly as it is: a pane is never respawned over an unrecorded lane, and a session is never ended without one (Amendment 17(f)). Fix the write above and re-run." 2
+	# AND THE RECORD IS THREE WRITES, NOT ONE (Copilot rounds 1 and 2 on
+	# openRepoTools#47). The object-log line above is the first of them; the
+	# ROW is what every other lane and every launcher reads this lane's state
+	# from, and the HANDOFF is the document the new session is started with —
+	# its top block is literally the respawn's first prompt (`lane-start`'s
+	# 5a). A pane respawned over an unflipped row leaves the register saying
+	# RUNNING about a session that no longer exists, and a pane respawned over
+	# a STALE top block hands the new session the last handoff's instructions:
+	# the writers of another act, the why of another act. Neither is a state
+	# this command may create and then kill the only process that could fix it,
+	# so both are gates, and each names the act that clears it.
+	[ -z "$row_write_refused" ] ||
+		die "the lane's PAUSED line is written and the ROW WAS NOT FLIPPED (the note above says why), so this pane is left exactly as it is: respawning it would leave the register reading RUNNING for a session that has just been replaced, and every other lane reads the row. Flip it and re-run, or restart by hand:  $restart_cmd" 2
+	[ "$handoff_written" = 1 ] ||
+		die "the lane's PAUSED line is written and the HANDOFF WAS NOT REFRESHED (the note above says why), so this pane is left exactly as it is: the top block of that file is what the new session is started with, and respawning now would hand it the block of a handoff this act has replaced. Put the block printed above at the head of the handoff, then re-run — or restart by hand once you have:  $restart_cmd" 2
 	have_tmux ||
 		die "the record is written, and there is no tmux here to ${do_restart:+respawn}${do_exit:+end} this pane with. Do it by hand — the record is the part that mattered." 2
 	# THE PANE, from the LIVE RECORD's own `tmux` field — `<session>:<@id>.%<pane>`

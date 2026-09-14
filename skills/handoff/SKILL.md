@@ -208,47 +208,55 @@ lane's. Rewrite the handoff's state line, **every word given and not yet execute
 a stale handoff is how given words die with the session (Amendment 6(e)).
 
 **THE TOP BLOCK'S TEMPLATE GAINS A `WRITERS` SECTION AND A FIRST LINE** (Amendment 17(f): the block *"LISTS
-EVERY WRITER THE LANE HAS RUNNING (its worktree, its branch, its brief, what it had committed)"* and the
-next session *"RELAUNCHES EVERY WRITER IT LISTS from where each stood"*). Write it exactly this shape, and
-prepend it — a handoff is the one document in this protocol whose purpose is to be read by a later session,
-so nothing below is rewritten and everything already there stays as history under a `---` rule:
+EVERY WRITER THE LANE HAS RUNNING (its worktree, its branch, its brief, what it had committed)"*, as
+**Addendum 1 (i)** reads that section — *"a list to COUNT, not a list to relaunch"*, in force 2026-09-14T20:59:31Z).
+Write it exactly this shape, and prepend it — a handoff is the one document in this protocol whose purpose is
+to be read by a later session, so nothing below is rewritten and everything already there stays as history
+under a `---` rule:
 
 ```text
 Lane: <lane> (<profile>, session <uuid>) — single-use resume prompt: stamp RESUMED-by before acting (lane-collision-protocol rule 3)
 
-## RESUME PROMPT — PAUSED <UTC> (<why>), agent <agent>, transcript <id|none>, kind <in-process|respawn> — <relaunch every writer below from where it stands | every writer below SURVIVED this clear — list them before you touch any of them>
+## RESUME PROMPT — PAUSED <UTC> (<why>), agent <agent>, transcript <id|none>, kind <in-process|respawn|unknown> — <the kind's expectation, from the table below>
 
 **FIRST ACTS, in order.** (1) You are lane `<lane>` in tmux window `<window>`, checkout `<dir>`. Stamp this
-block RESUMED before anything else (Rule 3, single use). (2) Read AGENTS.md, then this block. (3) RUN
-`ListAgents` FIRST, before relaunching anything. A WRITER STILL LISTED IS ALIVE AND OWNS ITS WORKTREE: DO NOT
-RELAUNCH IT — two writers on one worktree is how the work in it is lost. Relaunch only writers `ListAgents`
-does NOT name, and only after `git status --short` and `git log @{u}..` in that worktree say where it stood.
-<the kind's own sentence, from the table below.> Older sections below are history.
+block RESUMED before anything else (Rule 3, single use). (2) Read AGENTS.md, then this block. (3) COUNT THE
+LIVE WRITERS before relaunching anything — the WRITERS section below is a list to COUNT, not a list to
+relaunch (Addendum 1 (i)). ONE WORKTREE, ONE WRITER (k): a worktree is one writer's for as long as that
+writer is live, a relaunch onto a live writer's worktree is the writers' form of Amendment 18(h)'s second
+binding, and where you find one made you retire the newer before either commits. <the kind's own sentence,
+from the table below.> Older sections below are history.
 
 **STATE at <UTC>.** <what is true, what is owed, every word given and not yet executed> Kind `<kind>`: <its
 sentence>.
 
-**WRITERS at <UTC>** (<n> found under `<dir>`) — `ListAgents` FIRST: a writer it still names is alive and owns its worktree, and only the ones it does not name are relaunched:
+**WRITERS at <UTC>** (<n> found under `<dir>`) — FIRST count the live writers: `ListAgents` in Claude, the agent's equivalent elsewhere. A writer still live OWNS its worktree: do not relaunch it; one message telling it that its in-flight call died and who the coordinator now is, is enough. Relaunch only a writer that is NOT live, from where it stands — `git status` and `git log @{u}..` in its worktree, then its brief. WHERE THE COUNT AND THIS LIST DISAGREE, THE COUNT WINS: this list is what the paused session expected, the count is what is true.
 
 - `<worktree>` — branch `<branch>`, last commit `<sha> <subject>`, <n> dirty, <m> unpushed; brief: <the brief that writer was given>
 ```
 
-**THE KIND IS NOT COSMETIC, AND IT WAS MEASURED HERE ON 2026-09-14.** A harness `/clear` — and any `/ctx`
-that clears IN PLACE rather than respawning the pane — mints a NEW TRANSCRIPT ID IN THE SAME PROCESS: every
-subagent this lane has running SURVIVES it, and only the tool calls they had in flight die (a `Bash` killed
-that way exits 137). A handoff that then tells the next session *relaunch every writer* puts a SECOND writer
-on a worktree the first one still holds. Only a new process — the pane respawned (`--restart`), the session
-ended (`--exit`), a relaunch through the launcher after a plain handoff — takes the writers with it.
+**THE KIND IS NOT COSMETIC, AND IT WAS MEASURED HERE ON 2026-09-14** — the measurement Amendment 17
+Addendum 1 was drafted and ratified on the same day. A harness `/clear` — and any `/ctx` that clears IN PLACE
+rather than respawning the pane — mints a NEW TRANSCRIPT ID IN THE SAME PROCESS: every subagent this lane has
+running SURVIVES it, and only the tool calls they had in flight die (a `Bash` killed that way exits 137). The
+handoff written a minute before that clear said *every agent dies with this context* and *relaunch every
+writer below*; the live count a minute after it showed all five alive, each still on its worktree. Followed as
+written, the block would have put a SECOND writer on each of five worktrees. Only a new process — the pane
+respawned (`--restart`), the session ended (`--exit`), a profile switch, a usage-reset relaunch — takes the
+writers with it.
 
-| kind | when | the sentence act (3) carries | what the next session does |
+| kind | when | the sentence act (3) carries | what the count then finds |
 |---|---|---|---|
-| `in-process` | a `/clear`, or a `/ctx` that clears in place | *THIS HANDOFF WAS WRITTEN FOR AN IN-PROCESS CLEAR: the process was not replaced, so expect `ListAgents` to name every writer below and relaunch NONE of them — ask each for where it stands instead.* | lists, then asks; relaunches nothing |
-| `respawn` | `--restart`, `--exit`, or a plain handoff whose restart line is typed | *THIS HANDOFF WAS WRITTEN FOR A RESPAWN: the process that ran the writers is gone, so expect `ListAgents` to name none of them and relaunch each one from where it stood.* | lists (expecting none), then relaunches each |
+| `in-process` | a `/clear`, or a `/ctx` that clears in place | *THIS HANDOFF WAS WRITTEN FOR AN IN-PROCESS CLEAR: the process was not replaced, so expect every writer below live and the count to name them all.* | every writer below, live and owning its worktree |
+| `respawn` | `--restart`, `--exit`, a profile switch, a usage-reset relaunch, `lane <name>` | *THIS HANDOFF WAS WRITTEN FOR A RESPAWN: the process that ran the writers is gone, so expect the count to name none of them.* | none of them — each is relaunched from where it stood |
+| `unknown` | a plain `/handoff`, after which the person may `/clear` or may relaunch | *THIS HANDOFF CANNOT KNOW WHICH KIND FOLLOWED IT: a plain handoff may be followed by a `/clear` in this process or by a relaunch, so nothing below assumes either — the count is the answer.* | whatever is true; the count decides |
 
-`lane-handoff` writes whichever of the two applies — `--in-process` for the first, nothing for the second —
-and the `PAUSED` payload carries it as `kind <in-process|respawn>` beside `agent` and `transcript`, because
-the record is what a later reader has. **`ListAgents` comes first in both**: the rule is *never relaunch a
-writer that is still listed*, and it holds whatever the block says about the kind.
+`lane-handoff` writes whichever of the three applies — `--in-process` for the first, `--restart`/`--exit` for
+the second, nothing for the third — and the `PAUSED` payload carries it as `kind <in-process|respawn|unknown>`
+beside `agent` and `transcript`, with the same word in the line's FREE TEXT after the why (`clear in-process`,
+`clear respawn`, `kind unknown` — Addendum 1 (h)), because the record is what a later reader has. **THE KIND
+SAYS WHAT TO EXPECT AND NEVER WHAT TO DO** (j): clause (i)'s count is what says what to do, it is the same in
+all three, and where the count and the list disagree the count wins.
 
 **Line 1 and the blank line after it are STRUCTURAL**: `lane-start` splices its `RESUMED by …` stamp at the
 line immediately after the first blank line that follows line 1, so a block that does not open that way is a
@@ -625,14 +633,15 @@ reads the record step 4 just wrote — the lane's recorded directory and profile
 <lane> <profile>`, the same act one door along: a respawn is the one act no later refusal can undo, so the
 word is used only where it can be seen on `PATH`.
 
-**A `/ctx` THAT RESPAWNS IS `kind respawn`; ONE THAT CLEARS IN PLACE IS NOT.** The respawn above replaces the
-pane's process, so every writer of this lane dies with it and the next session is right to relaunch them —
-which is what the block it comes up holding says. If what is about to happen is an IN-PROCESS clear instead
+**`/ctx` SAYS WHICH IT DID** (Addendum 1 (j)). The respawn above replaces the pane's process, so every writer
+of this lane dies with it: the kind is `respawn`, and the count the next session makes first then finds none,
+which is what makes relaunching each one right. If what is about to happen is an IN-PROCESS clear instead
 (the harness's own `/clear`, which mints a new transcript id in the SAME process), the writers LIVE THROUGH
-IT: write the record with `lane-handoff --in-process` (or the same two texts by hand), and the block will
-tell the next session to run `ListAgents` and relaunch NONE of them. **Never tell a session to relaunch a
-writer that is still running** — that is two writers on one worktree, and it is what this lane measured on
-2026-09-14.
+IT: write the record with `lane-handoff --in-process` (or the same two texts by hand), the kind is
+`in-process`, and the block tells the next session to EXPECT every writer below live. Either way the block
+carries clause (i)'s first line, because **the kind says what to expect and never what to do**. **Never
+relaunch a writer that is still live** — a worktree is one writer's for as long as that writer is live
+(clause (k)), and that is what this lane measured on 2026-09-14.
 
 **`/handoff --exit requested by <uuid>@<host>/<container>` — the handoff another place asked for.** After
 the record, `/exit` is typed into this lane's own pane (Amendment 12's M1, the one mechanism there is), and

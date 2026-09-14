@@ -231,6 +231,7 @@ jobs:
           /bin/bash -n lane-end
           /bin/bash -n link-estates
           /bin/bash -n tests/test_lane_helpers.sh
+          /bin/bash -n tests/run.sh
 
       # THE FACTS THE LAST THREE ROUNDS WERE SPENT GUESSING AT, printed once,
       # in seconds, in the job that is the only place they can be read (A9

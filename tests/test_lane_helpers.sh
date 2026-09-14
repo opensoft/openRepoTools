@@ -6238,10 +6238,12 @@ echo "== Amendment 17: the handoff is the swap =="
 
 HANDOFF_CMD="$OPENREPOTOOLS_BIN_DIR/lane-handoff"
 # `cp -p` AND NO `chmod` AFTER IT, deliberately: the mode this case reads back
-# is the one the REPOSITORY carries, so a `lane-handoff` committed 100644 is a
-# failure here rather than a file the fixture quietly made runnable. That is
-# how it was committed under Amendment 17(a), and a `chmod 755` on this line
-# saw nothing.
+# is the one the REPOSITORY carries, so a `lane-handoff` that is not 100755 in
+# the index is a failure here rather than a file the fixture quietly made
+# runnable. The first Amendment 17(a) commit landed it 100644 and a `chmod 755`
+# on this line saw nothing; `e25b54c` made it 100755 and this fixture is what
+# holds it there. (`git ls-files -s lane-handoff` is the answer to any claim
+# that it is not.)
 cp -p "$SRC_DIR/lane-handoff" "$OPENREPOTOOLS_BIN_DIR/" 2>/dev/null
 is   "lane-handoff is installed beside the helper it reads through, executable as the repository ships it" \
      "$( [ -x "$HANDOFF_CMD" ] && echo yes || echo no )" yes
@@ -6408,7 +6410,7 @@ is    "the handoff's line 1 is still the Rule 3 header lane-start splices under"
 is    "…with the blank line after it that puts the stamps at line 3" \
       "$(sed -n 2p "$WIP/handoffs/repoHF/repoHF-1.md")" ""
 has   "…a fresh RESUME PROMPT block naming the agent and the transcript" "$hf1_file" "agent claude, transcript $HF_ID"
-has   "…whose first line is Amendment 17(f)'s" "$hf1_file" "relaunch every writer below from where it stands"
+has   "…whose headline is what to EXPECT and never what to do (Addendum 1 (j))" "$hf1_file" "the count decides: this handoff cannot know"
 has   "…a WRITERS section" "$hf1_file" "**WRITERS at"
 has   "…naming the running writer's worktree" "$hf1_file" "$HF_DIR/.claude/worktrees/w1"
 has   "…its branch" "$hf1_file" "branch \`feat/w1\`"
@@ -6421,13 +6423,15 @@ has   "…the section for the brief where the caller passed none" "$hf1_file" "b
 # subagent lives through it and only its in-flight tool calls die). `ListAgents`
 # comes first in BOTH kinds, because relaunching a writer that is still listed
 # is two writers on one worktree.
-has   "the top block's act (3) runs ListAgents FIRST" "$hf1_file" "RUN \`ListAgents\` FIRST"
-has   "…with the rule a listed writer is never relaunched" "$hf1_file" "DO NOT RELAUNCH IT"
-has   "…and the reads that say where an unlisted one stood" "$hf1_file" "git log @{u}.."
-has   "…the WRITERS section carrying the same rule" "$hf1_file" "a writer it still names is alive and owns its worktree"
-has   "…and a plain handoff is the RESPAWN kind, whose writers are gone" "$hf1_file" "kind respawn"
-has   "…so this block is the one that says relaunch" "$hf1_file" "expect \`ListAgents\` to name none of them"
-has   "the record carries the kind too, after the agent and the transcript" "$hf1_log" "; kind respawn"
+has   "the top block's act (3) COUNTS the live writers first (Addendum 1 (i))" "$hf1_file" "COUNT THE LIVE WRITERS"
+has   "…with clause (k) beside it, which is why the count comes first" "$hf1_file" "ONE WORKTREE, ONE WRITER"
+has   "…and the reads that say where a writer that is NOT live stood" "$hf1_file" "git log @{u}.."
+has   "…the WRITERS section opening with clause (i)'s own words" "$hf1_file" "FIRST count the live writers"
+has   "…a live writer OWNING its worktree, messaged rather than relaunched" "$hf1_file" "A writer still live OWNS its worktree"
+has   "…and the count beating the list where the two disagree" "$hf1_file" "THE COUNT WINS"
+has   "…while a PLAIN handoff cannot know which kind followed it (Addendum 1 (h))" "$hf1_file" "kind unknown"
+has   "the record carries the kind too, after the agent and the transcript" "$hf1_log" "; kind unknown"
+has   "…and the free text names it after the why, in the addendum's own spelling" "$hf1_log" " — clear kind unknown"
 has   "…and the file it was, below, as history" "$hf1_file" "Written before Amendment 17, by hand."
 has   "the writers are polled on stdout too, with git's own words" "$hf1_out" "git status --short"
 has   "…and the unpushed read beside it" "$hf1_out" "git log @{u}.."
@@ -6454,6 +6458,35 @@ is    "…and so is a \`transcript\` that is neither an id nor 'none'" "$rc" 2
 run env PATH="$A17PATH" CLAUDE_CODE_SESSION_ID="$HF4_ID" "$HANDOFF_CMD" --lane repoHF-7 --agent 'not a key' x
 is    "lane-handoff refuses the same value at the flag" "$rc" 2
 has   "…naming the flag the caller used" "$err" "--agent takes a manifest key"
+
+# THE TWO SUB-FIELDS ARE WRITTEN TOGETHER OR NOT AT ALL, AND AN EMPTY ONE IS NOT
+# AN ABSENT ONE (Copilot rounds 1 and 2 on openRepoTools#47). A half record is
+# read by `lane-start` as one field plus a DEFAULT for the other: Claude over a
+# codex id, or codex over none. And a sub-field written blank parses exactly
+# like one that was never there, so a malformed line would be indexed as a
+# pre-amendment one for ever, in a log nothing rewrites.
+run env LANES_LANE=repoHF-7 LANES_SESSION="$HF4_ID" "$E" log PAUSED lane:repoHF-7 '→' "swap; agent codex" "x"
+is    "an \`agent\` with no \`transcript\` beside it is refused by the writer" "$rc" 2
+has   "…naming the pair rather than the caller" "$err" "written TOGETHER or not at all"
+run env LANES_LANE=repoHF-7 LANES_SESSION="$HF4_ID" "$E" log PAUSED lane:repoHF-7 '→' "swap; transcript none" "x"
+is    "…and a \`transcript\` with no \`agent\` is refused the same way" "$rc" 2
+run env LANES_LANE=repoHF-7 LANES_SESSION="$HF4_ID" "$E" log PAUSED lane:repoHF-7 '→' "swap; agent ; transcript none" "x"
+is    "…and a sub-field that is THERE and EMPTY is neither valid nor 'absent'" "$rc" 2
+has   "…saying no reader can tell it from a pre-amendment record" "$err" "THERE and EMPTY"
+is    "…and nothing was written by any of the three" "$(grep -c '^PAUSED' "$LOGD/repoHF-7.md")" 0
+# (the PAIR TOGETHER is what every `lane-handoff` above writes, and repoHF-1's
+# record is the case that reads it back — this lane's log is left EMPTY of
+# `PAUSED` lines on purpose: section 3 below is the `--late` rule, and its whole
+# question is what a lane with no paused record does.)
+
+# `--utc` IS THE LATE `PAUSED`'s SEAM AND HAS NO OTHER CALLER (Amendment 17,
+# adoption act 7). This log is append-only and FILE ORDER is what every state
+# read means by "last", so a STARTED or a RESUMED dated by hand changes what
+# every reader reports about a lane that is running.
+run env LANES_LANE=repoHF-7 LANES_SESSION="$HF4_ID" "$E" log RESUMED lane:repoHF-7 --utc "2026-09-13T01:02:03Z"
+is    "--utc on a verb that is not PAUSED is refused" "$rc" 2
+has   "…naming the one line that carries its own date" "$err" "dates the LATE PAUSED"
+is    "…and nothing was written" "$(grep -c '^RESUMED' "$LOGD/repoHF-7.md")" 0
 
 # ------------------------------------------ 2. /ctx — the record, then the pane
 
@@ -6562,6 +6595,45 @@ has   "…saying the pane is exactly as it was" "$err" "this pane is left exactl
 is    "…and the pane was never respawned" "$(grep -c 'respawn-pane' "$FAKE_TMUX_A17_LOG")" 0
 hasnt "…nor is there a PAUSED line for that lane" "$(cat "$LOGD/repoHF-2.md")" "PAUSED"
 
+# THE RECORD IS THREE WRITES, AND A PANE IS NEVER RESPAWNED OVER A PARTIAL ONE
+# (Copilot rounds 1 and 2 on openRepoTools#47). The object-log line is the
+# first; the ROW is what every other lane and every launcher reads this lane's
+# state from, and the HANDOFF's top block is literally the new session's first
+# prompt. Each of the two below writes the PAUSED line and then fails at one of
+# the others, and neither may kill the only process that could put it right.
+hf_seed_handoff "$WIP/handoffs/repoHF/repoHF-11.md" repoHF-11
+git -C "$WIP" add -- handoffs/repoHF/repoHF-11.md >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed repoHF-11's handoff"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+# A STATE CELL NO ANCHOR MATCHES: `replace-in-row` is given a word derived from
+# the row itself, and a lower-case one is derived from nothing — which is the
+# refusal, not a guess.
+"$E" add-row "| \`repoHF-11\` | harness \`$HF_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoHF/repoHF-11.md | running |" >/dev/null 2>&1
+: > "$FAKE_TMUX_A17_LOG"
+export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-11.md"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-11 --restart clear
+is    "a /ctx whose ROW could not be flipped REFUSES" "$rc" 2
+has   "…saying the register would read RUNNING for a session that was just replaced" "$err" "the ROW WAS NOT FLIPPED"
+has   "…and that the pane is exactly as it was" "$err" "this pane is left exactly as it is"
+is    "…and the pane was never respawned" "$(grep -c 'respawn-pane' "$FAKE_TMUX_A17_LOG")" 0
+has   "…while the record itself IS written, because a swap is never left unwritten" \
+      "$(cat "$LOGD/repoHF-11.md")" "lane:repoHF-11 → swap;"
+
+# A HANDOFF THE ROW NAMES AND NOTHING CAN FIND: the top block cannot be
+# refreshed, so a respawn would hand the new session the block of the handoff
+# this act has replaced — the writers of another act, the why of another act.
+"$E" add-row "| \`repoHF-12\` | harness \`$HF_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoHF/repoHF-12-nowhere.md | ACTIVE |" >/dev/null 2>&1
+: > "$FAKE_TMUX_A17_LOG"
+export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-12.md"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-12 --restart clear
+is    "a /ctx whose HANDOFF could not be refreshed REFUSES" "$rc" 2
+has   "…saying the top block is what the new session is started with" "$err" "the HANDOFF WAS NOT REFRESHED"
+is    "…and the pane was never respawned" "$(grep -c 'respawn-pane' "$FAKE_TMUX_A17_LOG")" 0
+has   "…with the block printed, so the act it could not make is still recoverable" "$err" "## RESUME PROMPT — PAUSED"
+
 # --exit types /exit into the lane's own pane (Amendment 18(d)).
 : > "$FAKE_TMUX_A17_LOG"
 export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-6.md"
@@ -6596,11 +6668,12 @@ is    "lane-handoff --in-process exits 0" "$rc" 0
 hf10_log="$(cat "$LOGD/repoHF-10.md")"
 hf10_file="$(cat "$WIP/handoffs/repoHF/repoHF-10.md")"
 has   "…and the record says which kind of clear this was" "$hf10_log" "; kind in-process"
-has   "…the top block says the writers SURVIVED it" "$hf10_file" "every writer below SURVIVED this clear"
+has   "…the top block says to EXPECT every writer below live" "$hf10_file" "expect every writer below live"
 hasnt "…and never tells the next session to relaunch them all" "$hf10_file" "relaunch every writer below from where it stands"
-has   "…it tells it to relaunch NONE of them" "$hf10_file" "relaunch NONE of them"
-has   "…and to expect ListAgents to name every one" "$hf10_file" "expect \`ListAgents\` to name every writer below"
-has   "…with the same ListAgents-first rule the other kind carries" "$hf10_file" "RUN \`ListAgents\` FIRST"
+hasnt "…nor to relaunch NONE of them: a kind says what to expect, never what to do (Addendum 1 (j))" "$hf10_file" "relaunch NONE of them"
+has   "…with clause (i)'s count, which is the same first line in every kind" "$hf10_file" "FIRST count the live writers"
+has   "…and the one message a live writer is owed in place of a relaunch" "$hf10_file" "its in-flight call died"
+has   "…and the free text carries the kind after the why (Addendum 1 (h))" "$hf10_log" " — clear in-process"
 is    "…and the pane is untouched: --in-process respawns nothing" \
       "$(grep -c 'respawn-pane' "$FAKE_TMUX_A17_LOG")" 0
 run env PATH="$A17PATH" "$HANDOFF_CMD" --lane repoHF-4 --in-process --restart x
@@ -6631,7 +6704,9 @@ has   "…as the lane's own PAUSED" "$hf4_log" "PAUSED — lane repoHF-4, sessio
 has   "…dated by the moment the old session ended, not by this shell's clock" "$hf4_log" "; late 2026-09-14T12:02:27Z"
 has   "…with the why the act is for" "$hf4_log" "usage limit hit before the swap"
 has   "…and the handoff refreshed by the session that now holds the knowledge" \
-      "$(cat "$WIP/handoffs/repoHF/repoHF-4.md")" "relaunch every writer below from where it stands"
+      "$(cat "$WIP/handoffs/repoHF/repoHF-4.md")" "expect none of the writers below live"
+has   "…the late record being the RESPAWN kind: the session it is written for has already ended" \
+      "$hf4_log" "; kind respawn"
 has   "…and it says the relaunch comes next" "$out" "Now start the lane"
 
 run env PATH="$A17PATH" CLAUDE_CODE_SESSION_ID="$HF_ID" CLAUDE_PROFILE_NAME=team-05a \
@@ -6738,6 +6813,32 @@ is    "an agent the table does not carry is a refusal" "$rc" 2
 has   "…naming the ones it knows" "$err" "It knows: claude"
 has   "…and codex beside it" "$err" "codex"
 hasnt "…and nothing was launched" "$(cat "$FAKE_CODEX_LOG")" "repoAG-4"
+
+# A RECORDED TRANSCRIPT BELONGS TO THE AGENT THAT RECORDED IT (Copilot round 2
+# on openRepoTools#47). `lane-transcript` answers for the LANE — its last
+# `PAUSED`, whichever agent wrote it — so a lane paused by `claude` and resumed
+# with `--agent codex` would take the CLAUDE uuid and append it to the row's
+# session cell spelled `Codex <uuid>`: an id no `codex` can resume, attributing
+# this lane's history to a conversation that is not it, in a cell nothing
+# rewrites. repoAG-4's record says `agent claude; transcript $HF2_ID`.
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="agsess:@41" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$AG_DIR" --agent codex repoAG-4 --no-launch
+is    "--agent codex over a record that names claude exits 0" "$rc" 0
+has   "…saying whose the recorded transcript is, and that this launch does not take it" \
+      "$err" "names agent claude and this launch is codex"
+hasnt "…and the session cell is NOT appended with a Claude uuid in Codex's spelling" \
+      "$(grep '^| `repoAG-4`' "$LANES")" "Codex \`$HF2_ID\`"
+
+# A LANE WITH NO ROW IS A `STARTED`, WHATEVER BRANCH LAUNCHED IT. `--agent` and
+# the `/ctx` seam both set the verb to RESUMED because they resume a lane that
+# PAUSED; a lane the register has never carried has paused nothing, and a
+# RESUMED opening its object log is a line no reader can pair with a start.
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="agsess:@41" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$AG_DIR" --agent claude repoAG-9 --no-launch
+is    "--agent claude on a lane with NO row exits 0" "$rc" 0
+has   "…saying there is nothing to have resumed" "$err" "no row yet"
+has   "…and the object log opens with a STARTED" "$(cat "$LOGD/repoAG-9.md")" "STARTED — lane repoAG-9"
+hasnt "…never a RESUMED for a lane that has paused nothing" "$(cat "$LOGD/repoAG-9.md")" "RESUMED"
 
 # `LANE_START_FRESH=1` — the seam /ctx respawns through: a NEW session of this
 # lane's agent, primed by the top block, even though the transcript is here.
@@ -6875,6 +6976,72 @@ has   "…with the retire act" "$err" "lane-end repoLV-1 --retire"
 is    "…and the transcript was NOT moved" \
       "$( [ -f "$t2_projects/$lv_slug/$LV_ID.jsonl" ] && echo yes || echo no )" yes
 
+# `--dry-run` MOVES NOTHING (Copilot round 1 on openRepoTools#47). This search
+# runs long before the dry-run exit at the foot of the command, and a run whose
+# last line is *nothing was renamed, written or launched* must not have moved a
+# person's transcript out of another profile to get there.
+DR_DIR="$HOME/projects/repoDR"
+DR_ID="a17a0008-8888-4000-8000-a17a00088888"
+mkdir -p "$DR_DIR"
+git init -q -b main "$DR_DIR"
+git -C "$DR_DIR" remote add origin "https://github.com/opensoft/repoDR.git"
+dr_slug="$(sanitize "$DR_DIR")"
+mkdir -p "$t2_projects/$dr_slug"
+printf '{"type":"user"}\n' > "$t2_projects/$dr_slug/$DR_ID.jsonl"
+mkdir -p "$WIP/handoffs/repoDR"
+printf 'Lane: repoDR-1 — resume prompt\n\nx\n' > "$WIP/handoffs/repoDR/repoDR-1.md"
+git -C "$WIP" add -- handoffs/repoDR >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the repoDR handoff"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+"$E" add-row "| \`repoDR-1\` | harness \`$DR_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoDR/repoDR-1.md | ACTIVE |" >/dev/null 2>&1
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="drsess:@91" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$DR_DIR" repoDR-1 --dry-run
+is    "a --dry-run that finds a transcript in another profile exits 0" "$rc" 0
+has   "…printing the move it WOULD make, with both paths" "$err" "PLAN mv $t2_projects/$dr_slug/$DR_ID.jsonl"
+has   "…and saying nothing was moved" "$err" "Nothing was moved"
+is    "…the transcript is exactly where it was" \
+      "$( [ -f "$t2_projects/$dr_slug/$DR_ID.jsonl" ] && echo yes || echo no )" yes
+is    "…and this profile has no copy of it" \
+      "$( [ -f "$HOME/.claude/projects/$dr_slug/$DR_ID.jsonl" ] && echo no || echo yes )" yes
+
+# THE MOVE IS ONE TRANSACTION. The `.jsonl`, its sibling `<uuid>/` state
+# directory and the pointer left behind are one act: a sibling orphaned in the
+# other profile is state the resumed session silently loses, so a step that
+# cannot complete PUTS BACK what the steps before it moved and refuses. A file
+# already sitting where the sibling directory must go is how that is asked.
+RB_DIR="$HOME/projects/repoRB"
+RB_ID="a17a0009-9999-4000-8000-a17a00099999"
+mkdir -p "$RB_DIR"
+git init -q -b main "$RB_DIR"
+git -C "$RB_DIR" remote add origin "https://github.com/opensoft/repoRB.git"
+rb_slug="$(sanitize "$RB_DIR")"
+mkdir -p "$t2_projects/$rb_slug/$RB_ID"
+printf '{"type":"user"}\n' > "$t2_projects/$rb_slug/$RB_ID.jsonl"
+printf 'a sidecar file\n' > "$t2_projects/$rb_slug/$RB_ID/sidecar.txt"
+mkdir -p "$HOME/.claude/projects/$rb_slug"
+printf 'not a directory\n' > "$HOME/.claude/projects/$rb_slug/$RB_ID"
+mkdir -p "$WIP/handoffs/repoRB"
+printf 'Lane: repoRB-1 — resume prompt\n\nx\n' > "$WIP/handoffs/repoRB/repoRB-1.md"
+git -C "$WIP" add -- handoffs/repoRB >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the repoRB handoff"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+"$E" add-row "| \`repoRB-1\` | harness \`$RB_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoRB/repoRB-1.md | ACTIVE |" >/dev/null 2>&1
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="rbsess:@92" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$RB_DIR" repoRB-1 --no-launch
+is    "a move whose SIBLING cannot follow is refused, not half made" "$rc" 2
+has   "…naming the sibling that could not follow" "$err" "sibling state directory"
+has   "…and saying the move was put back" "$err" "the move was put back"
+is    "…the transcript IS back where it was" \
+      "$( [ -f "$t2_projects/$rb_slug/$RB_ID.jsonl" ] && echo yes || echo no )" yes
+is    "…its sibling never left either" \
+      "$( [ -f "$t2_projects/$rb_slug/$RB_ID/sidecar.txt" ] && echo yes || echo no )" yes
+is    "…and this profile holds no half-moved transcript" \
+      "$( [ -f "$HOME/.claude/projects/$rb_slug/$RB_ID.jsonl" ] && echo no || echo yes )" yes
+is    "…and no pointer was left for a move that did not happen" \
+      "$(ls "$t2_projects/$rb_slug" | grep -c "moved-to-")" 0
+
 # ------------------------------------------- 6. the three names are one act
 
 hfsk="$(cat "$SRC_DIR/skills/handoff/SKILL.md")"
@@ -6892,11 +7059,17 @@ has   "and /ctx is that skill with --restart" "$ctxcmd" "with \`--restart\`"
 has   "…which is what the amendment calls it" "$ctxcmd" "/ctx\` is \`/handoff --restart\`"
 has   "the skill carries Amendment 17(b)'s two sub-fields where the record is written" "$hfsk" "agent \$agent_name; transcript \$transcript_id"
 has   "…and the WRITERS section in its top block" "$hfsk" "**WRITERS at <UTC>**"
-has   "the skill's top block carries the ListAgents rule, in the same words the command writes" \
-      "$hfsk" "\`ListAgents\` FIRST, before relaunching anything"
-has   "…and the reason it is never skipped" "$hfsk" "A WRITER STILL LISTED IS ALIVE AND OWNS ITS WORKTREE"
-has   "…and the two kinds, with what each tells the next session" "$hfsk" "kind <in-process|respawn>"
-has   "…the in-process one relaunching none" "$hfsk" "relaunch NONE of them"
+has   "the skill's top block carries Addendum 1 (i)'s count, in the same words the command writes" \
+      "$hfsk" "FIRST count the live writers"
+has   "…a live writer owning its worktree, messaged rather than relaunched" \
+      "$hfsk" "A writer still live OWNS its worktree"
+has   "…and the count beating the list where the two disagree" "$hfsk" "THE COUNT WINS"
+has   "…with clause (k) in the first acts" "$hfsk" "ONE WORKTREE, ONE WRITER"
+has   "…and the THREE kinds, with what each tells the next session to EXPECT" \
+      "$hfsk" "kind <in-process|respawn|unknown>"
+has   "…the in-process one expecting every writer live" "$hfsk" "expect every writer below live"
+has   "…and the unknown one, which a plain handoff cannot know (Addendum 1 (h))" \
+      "$hfsk" "THIS HANDOFF CANNOT KNOW WHICH KIND FOLLOWED IT"
 has   "…and the measured fact that is the whole reason for the distinction" \
       "$hfsk" "mints a NEW TRANSCRIPT ID IN THE SAME PROCESS"
 has   "and the respawn line Addendum 2 (i-8) names: \`lane <lane>\`" "$hfsk" 'LANE_START_FRESH=1 lane $lane'
@@ -6951,6 +7124,44 @@ run env -u LANES_WORKSTATION LANES_IN_CONTAINER=0 "$END" repoWS-1 --force
 is   "lane-end with the seam unset exits 0" "$rc" 0
 has  "…and its row status names the same host" \
      "$(grep '^| `repoWS-1`' "$LANES")" "lane-end on $WS_HOST:"
+
+# ------------- 7. the resolver's 2 is a REFUSAL here too (Amendment 15(d))
+#
+# `2` IS TWO ANSWERS AND THE REFUSAL IS THE ONE THAT MATTERS. It is what a
+# helper predating a subcommand spends on an unknown one — the rung this
+# command's read fence falls through for — and it is ALSO `canon_lane`'s
+# refusal of a register holding two rows that differ only by case, which every
+# read through `check_lane_name` now carries. Falling through THAT is binding
+# this window to whichever lane the next rung answers with, and then renaming
+# the window, writing a PAUSED record and respawning a pane for it. So the
+# refusal is asked for by its own WORDS, exactly as `lane-start`, `lane-end` and
+# `restart` ask for it, and relayed — and it is asked BEFORE the rename, so a
+# refusal leaves the window exactly as it found it.
+#
+# This pair is made LAST, after every other case in this section has run: two
+# rows differing only by case are a register no read of that lane is unambiguous
+# in, which is the point.
+#
+# SEEDED AS IT EXISTED, with `add_seed_row` and one commit — NOT with `add-row`,
+# which is one of the writers Amendment 15 makes refuse this very shape. A
+# fixture built through the writer would be a fixture with one row in it, and
+# the case below would go green on a register that is not ambiguous at all.
+add_seed_row "| \`repoHF-13\` | harness \`$HF_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoHF/repoHF-13.md | ACTIVE |"
+add_seed_row "| \`repohf-13\` | harness \`$HF2_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoHF/repohf-13.md | ACTIVE |"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the 15(d) pair lane-handoff is asked about"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+: > "$FAKE_TMUX_A17_LOG"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-13 --restart clear
+is    "lane-handoff refuses a register holding two rows that differ only by case" "$rc" 2
+has   "…citing the merge that is a person's act" "$err" "Amendment 15(d)"
+has   "…saying nothing was written and nothing renamed" "$err" "Nothing was written and nothing was renamed"
+is    "…and no pane was respawned for a lane no read of it is unambiguous about" \
+      "$(grep -c 'respawn-pane' "$FAKE_TMUX_A17_LOG")" 0
+is    "…and no log was written for either spelling" \
+      "$(ls "$LOGD" | grep -ci '^repohf-13\.md$' || :)" 0
 
 # ------------------------------------------------------- nothing real touched
 #
