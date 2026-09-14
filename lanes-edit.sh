@@ -4485,6 +4485,7 @@ EOF
 duplicate_holder_pids() {   # <lane>
   dhp_l="${1-}"; [ -n "$dhp_l" ] || return 64
   command -v pgrep >/dev/null 2>&1 || return 1
+  command -v ps    >/dev/null 2>&1 || return 1
   dhp_ids="$( { session_ids_of_lane "$dhp_l" 2>/dev/null || :
                 session_ids_local_of_lane "$dhp_l" 2>/dev/null || :; } | awk 'NF && !seen[$0]++')"
   [ -n "$dhp_ids" ] || return 8
@@ -5902,7 +5903,7 @@ case "$cmd" in
     home="$(resolve_home "$lane" "$home_override")" || exit $?
     obj="$(canon_object "$obj_raw" "$home")" || exit 2
     ! is_lane_object "$obj" || die "a lane is not a claimable object" 2
-    takeover_payload=""; takeover_note=""; takeover_from=""
+    takeover_payload=""; takeover_note=""; takeover_from=""; takeover_reason_phrase=""
     # CASE-INSENSITIVE, FOR THE SAME REASON THE KEY ABOVE IS LOWER-CASED
     # (Amendment 15). This is the lane REMOVING ITSELF from the holders of the
     # object it is about to claim, and the row it removes carries whatever
@@ -5930,6 +5931,14 @@ EOF
       if holder_is_dead "$h_lane"; then
         takeover_from="$h_lane"
         takeover_note="lane $h_lane is dead (log ends $HOLDER_DEAD_VERB, no live session on this workstation, issue #30)"
+        # A DIFFERENT PHRASE FOR THE PUBLIC COMMENT (Copilot round 3, PR #61):
+        # the formatter below used to say every takeover was "of the stale
+        # claim" unconditionally, which is simply false for this branch — the
+        # object may be an OPENED PR that was never a CLAIMED issue to begin
+        # with, and even a CLAIMED one is takeable here whatever its age. The
+        # audit comment a person outside this estate reads must not misstate
+        # why.
+        takeover_reason_phrase=" (takeover of a dead lane's hold: $takeover_note)"
       else
         if [ "$h_verb" != CLAIMED ]; then
           die "--force takes over a stale CLAIMED and nothing else: $obj is $h_verb by lane $h_lane. An open OPENED, LANDING or WITHDRAWN is not a stale claim, and lane $h_lane's own log does not end on ENDED or RETIRED either (or a live session on this workstation still holds it)." 2
@@ -5939,6 +5948,7 @@ EOF
         fi
         takeover_from="$h_lane"
         takeover_note="stale claim by lane $h_lane, posted $h_utc, no PR after ${STALE_HOURS}h"
+        takeover_reason_phrase=" (takeover of the stale claim held by lane $takeover_from)"
       fi
       if [ "$NO_GITHUB" = 1 ]; then
         takeover_payload="lane:$h_lane"
@@ -5989,7 +5999,7 @@ EOF
     if [ "$NO_GITHUB" != 1 ]; then
       body="$(printf '%s — lane %s, session %s@%s, %s, for %s\n\nLogged in `%s` at `%s`%s.\n\nThe three reads (lane-collision-protocol Rule 1):\n\n```text\n%s\n```\n' \
                "${takeover_from:+TAKEOVER}${takeover_from:-CLAIMED}" "$lane" "$uuid" "$WS" "$utc" "$obj" \
-               "$(log_path_for "$lane")" "${sha:-unknown}" "${takeover_from:+ (takeover of the stale claim held by lane $takeover_from)}" "$reads")"
+               "$(log_path_for "$lane")" "${sha:-unknown}" "$takeover_reason_phrase" "$reads")"
       url="$(gh_comment "$obj" "$body" 2>/dev/null || :)"
       if [ -n "$url" ]; then
         note "comment posted: $url"

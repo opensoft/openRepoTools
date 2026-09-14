@@ -35,7 +35,7 @@
 #   --retire            also mark the state cell RETIRED <UTC> — the lane is
 #                       not coming back, as opposed to a window that is only
 #                       closing for the night
-#   --retire <pid|uuid> A DIFFERENT ACT, and it ends the LANE'S ROW nothing:
+#   --retire <pid|uuid> A DIFFERENT ACT, and it ends nothing in the LANE'S ROW:
 #                       the DOOR to Amendment 6(d)'s retire act for a live
 #                       FORK of this lane's transcript (Amendment 11 clause
 #                       (k) rule (e) — "both print the one act: retire it,
@@ -657,16 +657,25 @@ FORKS
   # NOT record") is designed to stay silent about it — which is the gap: two
   # live processes now hold the one transcript Amendment 18(h) says exactly
   # one may. `duplicate-holder` reads the process table for exactly that
-  # shape and already excludes the lane's own live holder from its rows. It
-  # is tried WHATEVER `forks` answered — not only when `fk_sid` is empty — so
-  # that a target which matches neither is refused once, having asked both,
-  # never after only one.
-  dh_rc=0
-  dh_rows="$("$LANES_EDIT" duplicate-holder "$LANE" 2>/dev/null)" || dh_rc=$?
-  case "$dh_rc" in
-    0 | 8) : ;;
-    *) die "$LANES_EDIT duplicate-holder $LANE failed (exit $dh_rc). That is NOT 'no duplicate holder is live', and this script will not name an act against a process it could not prove is one. Run it by hand to see what it says, then re-run." 1 ;;
-  esac
+  # shape and already excludes the lane's own live holder from its rows.
+  #
+  # ONLY WHEN `fk_sid` IS STILL EMPTY (Copilot round 3, PR #61): a proved
+  # fork already answers the whole act below, and this second, unrelated read
+  # — a separate `lanes-edit.sh` process, its own `git fetch` — must not turn
+  # a WORKING fork retirement into a hard failure because `pgrep` happens to
+  # be missing or the process table happens to be unreadable at this exact
+  # moment. `LANES_NO_FETCH=1` skips the fetch `forks` just made for the same
+  # checkout, so this reads the ref that call already brought current rather
+  # than paying for it, and possibly disagreeing with it, twice.
+  dh_rc=8; dh_rows=""
+  if [ -z "$fk_sid" ]; then
+    dh_rc=0
+    dh_rows="$(LANES_NO_FETCH=1 "$LANES_EDIT" duplicate-holder "$LANE" 2>/dev/null)" || dh_rc=$?
+    case "$dh_rc" in
+      0 | 8) : ;;
+      *) die "$LANES_EDIT duplicate-holder $LANE failed (exit $dh_rc). That is NOT 'no duplicate holder is live', and this script will not name an act against a process it could not prove is one. Run it by hand to see what it says, then re-run." 1 ;;
+    esac
+  fi
 
   # AMENDMENT 18(h) — THE LANE'S OWN LIVE SESSION HAS ITS OWN REFUSAL EVEN
   # WHEN NOTHING ELSE IS HOLDING THIS TRANSCRIPT (Copilot round 2, PR #61):
@@ -674,26 +683,30 @@ FORKS
   # excludes the lane's own pid and answers 8, same as "nothing at all" — but
   # "nothing else holds it" and "the pid you named IS the one thing holding
   # it" are different facts, and only the second earns this specific refusal
-  # rather than the generic 8 below. Read ONCE, here, and the result is reused
-  # inside the duplicate-holder branch too, so this never asks `live-holder`
-  # about the same lane twice for one invocation. A read that FAILS is not
+  # rather than the generic 8 below. Skipped entirely once a fork has already
+  # matched, for the same reason the duplicate-holder read above is: a proved
+  # fork answers the act, and this is a THIRD process and fetch this checkout
+  # does not need to make to use its own answer. A read that FAILS is not
   # "it is not the lane's own session": only rc 8 clears the general checks
   # that follow; rc 0 either dies here or clears them; anything else dies.
-  lh_rc=0
-  lh_out="$("$LANES_EDIT" live-holder "$LANE" 2>/dev/null)" || lh_rc=$?
-  lh_sid=""; lh_tgt=""; lh_name=""; lh_pid=""; lh_verdict=""
-  case "$lh_rc" in
-    0)
-      IFS=$'\037' read -r lh_sid lh_tgt lh_name lh_pid lh_verdict <<LIVE || :
+  lh_rc=8; lh_pid=""; lh_sid=""; lh_verdict=""
+  if [ -z "$fk_sid" ]; then
+    lh_rc=0
+    lh_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" live-holder "$LANE" 2>/dev/null)" || lh_rc=$?
+    lh_sid=""; lh_tgt=""; lh_name=""; lh_pid=""; lh_verdict=""
+    case "$lh_rc" in
+      0)
+        IFS=$'\037' read -r lh_sid lh_tgt lh_name lh_pid lh_verdict <<LIVE || :
 $lh_out
 LIVE
-      if [ -n "$lh_pid" ] && [ "$lh_pid" = "$retire_target" ]; then
-        die "pid $lh_pid is lane $LANE's own live session (session $lh_sid, ${lh_verdict:-here}) — Amendment 18(h) refuses to retire the one process a lane's binding actually is: it is not a fork and not a duplicate holder, it is the lane. End the lane instead, or name the OTHER pid of a genuine duplicate pair." 2
-      fi
-      ;;
-    8) : ;;
-    *) die "$LANES_EDIT live-holder $LANE failed (exit $lh_rc) while checking whether $retire_target is lane $LANE's own live session. That is NOT 'it is not' — fix the helper or the records, then re-run." 1 ;;
-  esac
+        if [ -n "$lh_pid" ] && [ "$lh_pid" = "$retire_target" ]; then
+          die "pid $lh_pid is lane $LANE's own live session (session $lh_sid, ${lh_verdict:-here}) — Amendment 18(h) refuses to retire the one process a lane's binding actually is: it is not a fork and not a duplicate holder, it is the lane. End the lane instead, or name the OTHER pid of a genuine duplicate pair." 2
+        fi
+        ;;
+      8) : ;;
+      *) die "$LANES_EDIT live-holder $LANE failed (exit $lh_rc) while checking whether $retire_target is lane $LANE's own live session. That is NOT 'it is not' — fix the helper or the records, then re-run." 1 ;;
+    esac
+  fi
 
   # NEITHER READ FOUND ANYTHING AT ALL FOR THIS LANE — the ordinary answer for
   # a healthy one, and 8 (not 2) is the code every subcommand here uses for
@@ -748,20 +761,36 @@ DUPES
       note "--dry-run: would send TERM to pid $dh_parent (bg-pty-host)${dh_child:+ and pid $dh_child (child)} — lane $LANE's duplicate holder of transcript $dh_uuid. Nothing sent."
       exit 0
     fi
+    # RE-VALIDATED IMMEDIATELY BEFORE EACH SIGNAL, not trusted from the read
+    # a few lines above (Copilot round 3, PR #61): that read and this signal
+    # are two different moments, and a pid can be reaped and reused by an
+    # unrelated process in the gap between them. A pid whose CURRENT argv no
+    # longer shows `--fork-session --resume …<this transcript>.jsonl` is not
+    # signalled — it is treated exactly as "already gone", which is the
+    # honest fact whether it truly exited or the number now belongs to
+    # something else this act must never touch.
+    #
     # EACH SIGNAL'S OWN STATUS IS KEPT, never assumed (Copilot round 2, PR
     # #61): `kill` exits non-zero both for a pid that is already gone — a
-    # legitimate race between the read above and this signal, not a failure
-    # of this act — and for one this process lacks permission to signal,
-    # which IS a failure this report must not call a retirement. Under
-    # `set -euo pipefail` the status is captured with `&&`, never left to an
-    # unguarded failure that would abort before the report below prints.
-    dh_p_ok=0; kill -TERM "$dh_parent" 2>/dev/null && dh_p_ok=1
+    # legitimate race, not a failure of this act — and for one this process
+    # lacks permission to signal, which IS a failure this report must not
+    # call a retirement. Under `set -euo pipefail` the status is captured
+    # with `&&`, never left to an unguarded failure that would abort before
+    # the report below prints.
+    dh_uuid_lc="$(printf '%s' "$dh_uuid" | tr 'A-F' 'a-f')"
+    dh_p_ok=0
+    case "$(ps -o args= -p "$dh_parent" 2>/dev/null | tr 'A-F' 'a-f')" in
+      *"--fork-session"*"--resume"*"$dh_uuid_lc"*) kill -TERM "$dh_parent" 2>/dev/null && dh_p_ok=1 ;;
+    esac
     dh_c_ok=1
     if [ -n "$dh_child" ]; then
-      dh_c_ok=0; kill -TERM "$dh_child" 2>/dev/null && dh_c_ok=1
+      dh_c_ok=0
+      case "$(ps -o args= -p "$dh_child" 2>/dev/null | tr 'A-F' 'a-f')" in
+        *"--fork-session"*"--resume"*"$dh_uuid_lc"*) kill -TERM "$dh_child" 2>/dev/null && dh_c_ok=1 ;;
+      esac
     fi
-    note "TERM to pid $dh_parent (bg-pty-host): $([ "$dh_p_ok" = 1 ] && printf delivered || printf 'NOT delivered (already gone, or no permission)')"
-    [ -n "$dh_child" ] && note "TERM to pid $dh_child (child): $([ "$dh_c_ok" = 1 ] && printf delivered || printf 'NOT delivered (already gone, or no permission)')"
+    note "TERM to pid $dh_parent (bg-pty-host): $([ "$dh_p_ok" = 1 ] && printf delivered || printf 'NOT delivered (already gone, or no longer matches, or no permission)')"
+    [ -n "$dh_child" ] && note "TERM to pid $dh_child (child): $([ "$dh_c_ok" = 1 ] && printf delivered || printf 'NOT delivered (already gone, or no longer matches, or no permission)')"
     if [ "$dh_p_ok" = 1 ] && [ "$dh_c_ok" = 1 ]; then
       step "RETIRED lane $LANE's duplicate holder of transcript $dh_uuid (Amendment 18(h))"
     else

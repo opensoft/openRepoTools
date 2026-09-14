@@ -464,6 +464,11 @@ add_seed_row "| \`repoK-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026
 add_seed_row "| \`repoK-3\` | harness \`$KLIVE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoK/x.md | ACTIVE |"
 add_seed_row "| \`repoK-4\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoK/x.md | ACTIVE |"
 add_seed_row "| \`repoM-1\` | harness \`$MLIVE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoM/x.md | ACTIVE |"
+# repoN-1 / repoN-2 — issue #30's OTHER terminal verb: a plain `lane-end`
+# (no --retire) writes ENDED, never RETIRED, and `holder_is_dead` names both
+# in its case; repoK-1/3 above exercise RETIRED only.
+add_seed_row "| \`repoN-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoN/x.md | ACTIVE |"
+add_seed_row "| \`repoN-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoN/x.md | ACTIVE |"
 add_seed_row "| \`repoH-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoH/x.md | ACTIVE |"
 add_seed_row "| \`repoH-2\` | harness \`$DEAD_ID\` | Raven / test / brett | 2026-09-11T00:00Z | none | handoffs/repoH/y.md | ACTIVE |"
 add_seed_row "| \`repoP-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoP/x.md | ACTIVE · LANDING #7 into repoP main |"
@@ -684,6 +689,13 @@ NOW_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'OPENED — lane repoK-3, session %s@Eagle, %s, opensoft/repoK#15 ← opensoft/repoK#14\n' "$KLIVE_ID" "$OLD_UTC"
   printf 'RETIRED — lane repoK-3, session %s@Eagle, %s, lane:repoK-3\n' "$KLIVE_ID" "$NOW_UTC"
 } > "$WIP/lanes/log/repoK-3.md"
+# repoN-1 — issue #30's OTHER dead verdict: ENDED (a plain `lane-end`, no
+# `--retire`), no live session, one CLAIMED issue left open.
+{ printf '# lane repoN-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoN-1, session %s@Eagle, %s, lane:repoN-1 → home opensoft/repoN; estate repoN\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repoN-1, session %s@Eagle, %s, opensoft/repoN#7\n' "$DEAD_ID" "$NOW_UTC"
+  printf 'ENDED — lane repoN-1, session %s@Eagle, %s, lane:repoN-1\n' "$DEAD_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoN-1.md"
 git -C "$WIP" add -- lanes/log
 git -C "$WIP" commit -q -m "seed two object logs"
 git -C "$WIP" push -q origin main
@@ -1243,6 +1255,13 @@ run env LANES_LANE=repoK-4 "$E" claim "opensoft/repoK#15" --no-github --force
 is   "--force still refuses a lane whose log ends RETIRED when a live session backs it up" "$rc" 2
 has  "…the verb-mismatch refusal fires exactly as it does for a live lane" "$err" "is not a stale claim"
 hasnt "…and nothing is written" "$(cat "$LOGD/repoK-4.md" 2>/dev/null)" "opensoft/repoK#15"
+
+# repoN-1's OWN terminal verb is ENDED, not RETIRED (Copilot round 3, PR #61:
+# `holder_is_dead`'s case accepts both, but only RETIRED was ever seeded).
+run env LANES_LANE=repoN-2 "$E" claim "opensoft/repoN#7" --no-github --force
+is   "--force also takes over a lane whose log ends ENDED (a plain lane-end)" "$rc" 0
+has  "…writing a TAKEOVER line" "$(cat "$LOGD/repoN-2.md")" "opensoft/repoN#7 ← lane:repoN-1"
+has  "…naming ENDED, not RETIRED, as the verdict" "$(cat "$LOGD/repoN-2.md")" "log ends ENDED"
 
 # ------------------------------------------- LANDING, LANDED, who --landing
 
@@ -4280,10 +4299,17 @@ rm -f "$sessions_dir/live-fork.json" "$fork_tdir/$FORK_ID.jsonl"
 # retire it refuses to make left `$LIVE_PID` running.
 sleep 3000 & DUP_PARENT=$!
 sleep 3000 & DUP_CHILD=$!
-FAKE_PS_M="$(printf '%s\t%s\t%s\n%s\t%s\t%s' \
-  "$LIVE_PID"  1 "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl" \
-  "$DUP_PARENT" 1 "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl")"
-FAKE_PGREP_F_M="$(printf '%s\n%s' "$LIVE_PID" "$DUP_PARENT")"
+# $DUP_CHILD's OWN argv ALSO matches (Copilot round 2, PR #61): a
+# `--fork-session` invocation's argv is inherited by the child `claude`
+# process as often as the bg-pty-host wrapper that starts it, so `pgrep -f`
+# routinely returns BOTH — and this fixture now says so, to prove the
+# ppid fence keeps the child from being read as a second, headless parent
+# of its own rather than merely never exercising the question.
+FAKE_PS_M="$(printf '%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s' \
+  "$LIVE_PID"   1            "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl" \
+  "$DUP_PARENT" 1            "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl" \
+  "$DUP_CHILD"  "$DUP_PARENT" "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl")"
+FAKE_PGREP_F_M="$(printf '%s\n%s\n%s' "$LIVE_PID" "$DUP_PARENT" "$DUP_CHILD")"
 FAKE_PGREP_CHILDREN_M="$(printf '%s\t%s' "$DUP_CHILD" "$DUP_PARENT")"
 
 run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_M" FAKE_PS_RECORDS="$FAKE_PS_M" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_M" \
@@ -4292,6 +4318,10 @@ is   "duplicate-holder finds the STRAY fork-session pid" "$rc" 0
 has  "…naming its parent" "$out" "$DUP_PARENT"
 has  "…and its child, found via pgrep -P" "$out" "$DUP_CHILD"
 hasnt "…but never repoM-1's OWN live pid, excluded over live_holder" "$out" "$(printf '%s\t' "$LIVE_PID")"
+# ONE ROW, NOT TWO (Copilot round 2, PR #61): $DUP_CHILD's own argv ALSO
+# matches `--fork-session`, so without the ppid fence it would be read again
+# on its own turn as a second, headless "parent" of nothing.
+is   "…and exactly one row: the child is never read as a second parent" "$(printf '%s\n' "$out" | grep -c .)" 1
 
 # BOTH ALIVE BEFORE THE ACT, so a kill that did nothing cannot pass by luck.
 is   "…both fixture processes are alive before the act" \
