@@ -232,11 +232,14 @@ get. A target that is **not a regular file, or not one this user can write** —
 symlink left by the pre-move `link-estates`, a directory, a file somebody made
 read-only — is a refusal in that same planning phase, naming every one of them,
 what it is, and the `rm` that clears them (`rm -f` takes a read-only file: a
-removal needs the directory's write bit, not the file's), as is a bin directory
-this user cannot write. `cp` follows a symlink, and an install through one
-leaves the command uninstalled and writes these bytes into whatever it points
-at. Then an `11 of 11 placed in <dir>` line, and the `export PATH=…` line if
-that directory is not on your `PATH`.
+removal needs the directory's write bit, not the file's), as is a directory it
+must create a file in and cannot: that question is put to the NEAREST ANCESTOR
+THAT EXISTS, so a bin directory that is not there yet is refused for the parent
+that would not take it, and a create needs a directory's search bit as well as
+its write bit. A refusal creates none of those directories either. `cp` follows
+a symlink, and an install through one leaves the command uninstalled and writes
+these bytes into whatever it points at. Then an `11 of 11 placed in <dir>` line,
+and the `export PATH=…` line if that directory is not on your `PATH`.
 
 It also places **seven things that are not files in that directory**: TWO
 SKILLS, `/lane-swap` and `/restart`, each at
@@ -248,15 +251,18 @@ launcher; **one command file**, `/swap`, at that same pair of paths
 `opensoft/workBenches#74` deletes the launcher's copy; and **one merged entry**
 under `hooks.SessionStart` in `~/.claude/settings.json`. That merge needs
 `jq`, never writes the file whole, writes it back at mode 600, and is
-idempotent by exact match on the entry's command string. The skills and the
-command file are 644 and that file 600 on every run — including the run that
-finds the entry already there and changes no byte of it. An entry that runs
-`session-start` with a DIFFERENT string — a second writer of this very hook — a
-file it cannot parse, or a `hooks` that is not an object → it **refuses, prints
-the exact block, and places nothing at all**, because the merge is computed
-with the eleven files in hand before any of them is placed. An installer that
-repairs a file it does not understand is how you lose a setting you meant. It
-never writes a profile's own `settings.json`: the launcher owns that one.
+idempotent by exact match on the entry's command string. That path must be a
+REGULAR FILE: a symlink there — into a dotfiles checkout, say — is a refusal in
+the same planning phase, because `chmod` follows a link and the merge replaces
+what is at that path. The skills and the command file are 644 and that file 600
+on every run — including the run that finds the entry already there and changes
+no byte of it. An entry that runs `session-start` with a DIFFERENT string — a
+second writer of this very hook — a file it cannot parse, or a `hooks` that is
+not an object → it **refuses, prints the exact block, and places nothing at
+all**, because the merge is computed with the eleven files in hand before any
+of them is placed. An installer that repairs a file it does not understand is
+how you lose a setting you meant. It never writes a profile's own
+`settings.json`: the launcher owns that one.
 
 Eighteen artifacts, and the count is the invariant. It was sixteen until A11
 Addendum 4 ruling 9 gave `--install` a command-file list and `commands/swap.md`

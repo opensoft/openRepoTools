@@ -298,7 +298,13 @@ install_commands() {
     NOTHING was installed and nothing already installed was replaced."
 	plan_hook_merge
 	plan_skill_targets
-	mkdir -p "$dir"
+	# EVERY FAILURE FROM HERE IS A `die`, and this was the one that was not
+	# (#44 round 1, Sourcery's `README.md:237`). `plan_install_targets` has
+	# proved the nearest existing ancestor writable, so what is left for this to
+	# meet is a race or a full disk — and under `set -e` an unguarded `mkdir`
+	# exits 1, which reads as a report of findings from a run that placed none.
+	mkdir -p -- "$dir" || die "could not create $dir for the ${#INSTALLABLES[@]} commands.
+    NOTHING was installed and nothing already installed was replaced."
 	for name in "${INSTALLABLES[@]}"; do
 		source="$STAGED/$name"
 		target="$dir/$name"
@@ -500,8 +506,11 @@ HOOK_MERGED=""    # a staged whole file, ready to move into place
 # filesystem gives no transaction, so this cannot make those placements
 # atomic; what it does is move the failure that actually happens — a directory
 # that is not ours to write — back to the planning phase, where the refusal
-# still costs nothing. The directories are created here, which is idempotent
-# and is what the placement would have done anyway.
+# still costs nothing. IT MAKES NONE OF THEM: the question is put to the nearest
+# ancestor that exists, so a run that refuses leaves a machine exactly as it
+# found it, and the placement's own guarded `mkdir -p` is the one writer of
+# these directories (#44 round 1, Sourcery's
+# `tests/test_install_skill_and_hook.py:658`).
 plan_skill_targets() {
 	local d name dirs=() target kind bad="" paths=""
 	for name in "${SKILLS[@]}"; do
@@ -515,12 +524,11 @@ plan_skill_targets() {
 	fi
 	dirs+=("$(claude_home)")
 	for d in "${dirs[@]}"; do
-		mkdir -p -- "$d" 2>/dev/null || die "\`--install\` cannot create $d, one of the places Amendment 9(b) has
-    it place this repository's skills and the SessionStart entry.
+		if kind="$(unusable_dir_kind "$d")"; then
+			die "\`--install\` places a skill, a command file or the SessionStart entry in
+    $d (Amendment 9(b)), and $kind.
     NOTHING was installed and nothing already installed was replaced."
-		[ -w "$d" ] || die "$d is not writable, and \`--install\` places a skill or the SessionStart
-    entry there (Amendment 9(b)).
-    NOTHING was installed and nothing already installed was replaced."
+		fi
 	done
 	# AND THE SIX FILES INSIDE THEM, BY R-A9-12 (F-X17). The loop above proved
 	# the DIRECTORIES writable and stopped there, while `place_skill_and_hook`
@@ -592,31 +600,23 @@ $bad
 # `--install` that carries this, and act 5 strips `brett-wip` to data. So the
 # refusal names every offending path, says what each one IS, and prints the one
 # `rm` that clears them — rather than leaving a person to remember a step.
-# WHAT A TARGET IS, WHERE IT IS NOT SOMETHING `--install` MAY PLACE OVER.
+# WHAT IS AT A PATH, WHERE IT IS NOT A REGULAR FILE.
 # ONE implementation of R-A9-12's test, for every path this command writes: the
-# eleven in the bin directory and the four `SKILL.md`s (F-X17). Prints the kind
-# and returns 0 where the path is unplaceable; returns 1 — saying nothing —
-# where it is absent or a regular file, which are the two placeable states.
+# eleven in the bin directory, the four `SKILL.md`s (F-X17), the two command
+# files, and `~/.claude/settings.json` (#44 round 1, `openRepoTools:878`).
+# Prints what is there and returns 0; returns 1 — saying nothing — where the
+# path is absent or is a regular file.
 #
 # `-L` AS WELL AS `-e`, because a DANGLING symlink is the sharper case: `[ -e ]`
 # is false on one, and `cp` through it creates the file at the far end — a write
 # into a repository this command was never told about.
 #
-# AND `-w` AS WELL AS `-f` (#40, finding 4). This answered "a regular file" with
-# `return 1` and asked nothing else, so every existing file counted as one
-# `--install` may place over — and `plan_skill_targets` let a READ-ONLY
-# `SKILL.md` or command file through. `install_commands` has already copied the
-# eleven PATH files by the time `place_skill_and_hook` reaches the `cp`, so an
-# ordinary permission failure there left a host with eleven of the eighteen
-# artifacts placed, on the one path in this file that promises all or none. A
-# mode is not an exotic state either: `chmod 444` on a file a person did not
-# want overwritten is what a person does.
-#
-# THE REFUSAL'S ONE REMEDY STAYS TRUE OF THE NEW KIND, which is why it is
-# answered here rather than in a second walk: `rm -f` takes a read-only file —
-# what a removal needs is the DIRECTORY's write bit, not the file's — so the
-# `rm -f -- <paths>` both planners print clears every path either of them names.
-unplaceable_kind() {   # <target>
+# IT IS ASKED APART FROM THE WRITE, because the writes are not one write. `cp`
+# needs the target file's own `w`; the SessionStart merge REPLACES its file
+# through `mktemp` + `mv -f` and needs the DIRECTORY's, so a `settings.json`
+# this user cannot write is one `--install` may still merge into — and a single
+# walk that asked `-w` of all three would refuse an install that works.
+path_kind() {   # <path>
 	local t="$1"
 	if [ -L "$t" ]; then
 		printf 'a symlink to %s' "$(readlink -- "$t" 2>/dev/null || printf '<unreadable>')"
@@ -630,9 +630,89 @@ unplaceable_kind() {   # <target>
 		printf 'not a regular file'
 		return 0
 	fi
-	if [ -f "$t" ]; then
-		if [ -w "$t" ]; then return 1; fi
+	return 1
+}
+
+# AND WHETHER `cp` MAY WRITE OVER IT: `-w` as well as `-f` (#40, finding 4).
+# This answered "a regular file" with `return 1` and asked nothing else, so
+# every existing file counted as one `--install` may place over — and
+# `plan_skill_targets` let a READ-ONLY `SKILL.md` or command file through.
+# `install_commands` has already copied the eleven PATH files by the time
+# `place_skill_and_hook` reaches the `cp`, so an ordinary permission failure
+# there left a host with eleven of the eighteen artifacts placed, on the one
+# path in this file that promises all or none. A mode is not an exotic state
+# either: `chmod 444` on a file a person did not want overwritten is what a
+# person does.
+#
+# WHAT `-w` DOES NOT PROVE IS THAT THE MODE STAMP CAN SUCCEED, and that limit is
+# deliberate (#44 round 1, the suppressed comment at `openRepoTools:635`). A
+# GROUP-WRITABLE file owned by another account takes the `cp` and refuses the
+# `chmod`, and the question that would settle it — `[ -O ]`, this euid against
+# the file's owner — is one no test in this suite can put: `tmp_path` cannot
+# make a second account, and it would refuse a root `--install` into another
+# user's home, where the `chmod` does in fact succeed. A guard no test reaches
+# is the guard R-A9-15 was ruled about, so this asks what it can prove and the
+# stamp's own failure stays a `die` naming the artifact it could not mode.
+#
+# THE REFUSAL'S ONE REMEDY STAYS TRUE OF THE NEW KIND, which is why it is
+# answered here rather than in a second walk: `rm -f` takes a read-only file —
+# what a removal needs is the DIRECTORY's write bit, not the file's — so the
+# `rm -f -- <paths>` both planners print clears every path either of them names.
+unplaceable_kind() {   # <target>
+	local t="$1" kind
+	if kind="$(path_kind "$t")"; then
+		printf '%s' "$kind"
+		return 0
+	fi
+	if [ -f "$t" ] && [ ! -w "$t" ]; then
 		printf 'a regular file this user cannot write'
+		return 0
+	fi
+	return 1
+}
+
+# WHETHER A DIRECTORY THIS RUN MUST CREATE A FILE IN CAN TAKE ONE — asked of the
+# NEAREST ANCESTOR THAT EXISTS, because a directory that is not there yet is
+# exactly as placeable as the directory it would be created in (#44 round 1,
+# `openRepoTools:653`, and Sourcery's `README.md:237`). `plan_install_targets`
+# asked `[ -d "$dir" ]` first and so asked NOTHING AT ALL where the answer was
+# "not yet": a `$OPENREPOTOOLS_BIN_DIR` under a parent this user cannot write
+# passed planning and met the `mkdir -p` in `install_commands`, which died with
+# the shell's own 1 under `set -e` — the code this toolset spends on "findings
+# were printed" — instead of the refusal this phase exists to print.
+#
+# `-x` AS WELL AS `-w`, because creating a file in a directory takes both of its
+# bits (#44 round 1, the suppressed comment at `openRepoTools:658`): a directory
+# at 0600 accepts no new file at all, and `-w` alone passed it. ONE
+# implementation for the bin directory and for the seven destinations
+# `plan_skill_targets` walks, for the reason `unplaceable_kind` is one: two
+# copies of one rule is how the bin half comes to refuse what the skill half
+# allows.
+#
+# AND IT CREATES NOTHING. `plan_skill_targets` proved a directory writable by
+# `mkdir -p`-ing it first, so a run that then REFUSED had already left seven
+# directories on a machine that had none — which is not what "NOTHING was
+# installed" says (#44 round 1, Sourcery's
+# `tests/test_install_skill_and_hook.py:658`). Every place this command writes
+# into is made in the PLACEMENT phase, by the guarded `mkdir -p` each `cp`
+# already carries.
+unusable_dir_kind() {   # <directory>
+	local d="$1" up
+	while [ ! -e "$d" ]; do
+		up="$(dirname -- "$d")"
+		[ "$up" != "$d" ] || break
+		d="$up"
+	done
+	if [ ! -d "$d" ]; then
+		printf '%s is not a directory' "$d"
+		return 0
+	fi
+	if [ ! -w "$d" ]; then
+		printf '%s is not writable' "$d"
+		return 0
+	fi
+	if [ ! -x "$d" ]; then
+		printf '%s is not searchable (a create takes its `x` bit as well as its `w`)' "$d"
 		return 0
 	fi
 	return 1
@@ -648,15 +728,11 @@ plan_install_targets() {
 	# and without it a `$OPENREPOTOOLS_BIN_DIR` that is not this user's failed at
 	# the first `cp` under `set -e` — exit 1, which this toolset spends on
 	# "findings were printed", from a run that placed nothing and said nothing.
-	# A directory that does not exist yet is NOT asked about: the `mkdir -p` in
-	# `install_commands` makes it, and a parent that refuses that is its refusal
-	# to report, not a mode to read off a path that is not there.
-	if [ -e "$dir" ] && [ ! -d "$dir" ]; then
-		die "$dir is where \`--install\` places the ${#INSTALLABLES[@]} commands, and it is not a
-    directory. NOTHING was installed and nothing already installed was replaced."
-	fi
-	if [ -d "$dir" ] && [ ! -w "$dir" ]; then
-		die "$dir is not writable, and \`--install\` places the ${#INSTALLABLES[@]} commands there.
+	# A directory that is not there YET is asked about through the nearest
+	# ancestor that is, because `install_commands` creates it and a parent that
+	# refuses the `mkdir -p` is a refusal this phase can print for nothing.
+	if kind="$(unusable_dir_kind "$dir")"; then
+		die "\`--install\` places the ${#INSTALLABLES[@]} commands in $dir, and $kind.
     NOTHING was installed and nothing already installed was replaced."
 	fi
 	for name in "${INSTALLABLES[@]}"; do
@@ -686,13 +762,42 @@ $bad
 }
 
 plan_hook_merge() {
-	local settings existing
+	local settings existing kind
 	settings="$(claude_home)/settings.json"
 	command -v jq >/dev/null 2>&1 || die "\`--install\` needs \`jq\` to merge one SessionStart entry into
     $settings, and there is no \`jq\` on this PATH. It refuses rather than
     rewriting a JSON file by hand, and NOTHING was installed. Install jq, then
     re-run. The entry it would have merged:
 $(hook_block_text)"
+
+	# WHAT IS AT THAT PATH, BEFORE A BYTE OF IT IS READ (#44 round 1,
+	# `openRepoTools:878`). This file is the eighteenth artifact and the only
+	# one no walk asked about, and the `present` arm now CHMODs it: `chmod`
+	# follows a symlink, so a `~/.claude/settings.json` linked into a dotfiles
+	# checkout had the 600 stamped on the file at the far end — an unrelated
+	# file re-moded by an installer that reported `already installed
+	# (unchanged)` for it. The two merge arms are the older half of the same
+	# defect: `mv -f` REPLACES a symlink with the regular file it wrote, so the
+	# link a person put there was swallowed and the far end silently stopped
+	# being what `claude` reads.
+	#
+	# `path_kind` AND NOT `unplaceable_kind`, because this file is not placed
+	# with `cp`: the merge writes a temporary beside it and moves that into
+	# place, which takes the DIRECTORY's write bit and not the file's, so a
+	# read-only `settings.json` is one this command may still merge into.
+	if kind="$(path_kind "$settings")"; then
+		die "\`--install\` merges one SessionStart entry into a REGULAR FILE, and this is not
+    one:
+    $settings — $kind
+    A \`chmod\` follows a link, so the mode this installer stamps would land on
+    whatever is on the other end of it; and the merge itself writes a temporary
+    beside this path and moves it here, which would take the link away.
+    NOTHING was installed and nothing already installed was replaced.
+    Clear it — what is on the other end keeps its bytes and its mode — then
+    re-run:
+        rm -f -- \"$settings\""
+	fi
+
 	workdir
 	HOOK_MERGED="$WORKDIR/settings.json"
 
@@ -872,6 +977,18 @@ place_skill_and_hook() {
 		# `setup-claude-profiles.sh` writes this same file at, so an installer
 		# that left it wider would be silently undone or would widen it behind
 		# that script's back.
+		#
+		# THIS CHMOD CAN FAIL FOR THE SAME REASON `unplaceable_kind`'s CAN (#44
+		# round 1, the suppressed comment at `openRepoTools:880`): a
+		# `settings.json` this euid can write but does not own takes `jq` and
+		# every check `plan_hook_merge` puts to it, then refuses the mode
+		# stamp, with the eleven commands, the skills and the command files —
+		# seventeen of the eighteen artifacts — already placed. The guard that
+		# would catch it first is the same `[ -O ]` `unplaceable_kind`'s own
+		# comment declines, for the same reason: no test in this suite can
+		# make a second account to own this file, and the check would refuse a
+		# root `--install` into another user's home, where this `chmod` does
+		# in fact succeed. The failure stays a `die` naming this file.
 		if mode_is 600 "$settings"; then
 			say "SessionStart hook: already installed in $settings (unchanged)"
 		else
@@ -1272,14 +1389,15 @@ wip_fetch_template_file() {
 
 # --- the command itself -----------------------------------------------------
 wip_init() {
-	local config target checkout ref rel dest seeded=0
+	local config target checkout ref rel dest seeded=0 owed=0
 	local existing_repo existing_path
-	# THE PATHS STEP 7 ACTUALLY WROTE, which is what step 8 stages and the whole
-	# of what it stages. `seeded` counts them rather than `${#written[@]}` doing
-	# it: an empty array expanded as `"${written[@]}"` is an UNBOUND VARIABLE
-	# under `set -u` in the bash 3.2 macOS ships, so every reader of this list is
-	# guarded on the count, and a count that is read in two places is read from
-	# one name.
+	# THE PATHS THE SEED OWES THIS CHECKOUT, which is what step 8 stages and
+	# commits and the whole of what it commits: the ones step 7 wrote (`seeded`)
+	# and the ones an earlier run wrote and could not commit (`owed`). Two
+	# counters rather than `${#written[@]}`: an empty array expanded as
+	# `"${written[@]}"` is an UNBOUND VARIABLE under `set -u` in the bash 3.2
+	# macOS ships, so every reader of this list is guarded on a count, and the
+	# count that says how many were COPIED is the one step 7's line prints.
 	local written
 	written=()
 
@@ -1477,7 +1595,32 @@ $unrelated
 	ref="$(wip_shape_ref)"
 	workdir
 	for rel in "${WIP_TEMPLATE_FILES[@]}"; do
-		if [ -e "$checkout/$rel" ]; then continue; fi
+		if [ -e "$checkout/$rel" ]; then
+			# ALREADY THERE — AND THE SEED CAN STILL OWE IT. A template path the
+			# WORKTREE carries and HEAD does not is what an earlier run of this
+			# command leaves behind when it copied the template and could not
+			# commit it: no `user.email`, the case the refusal below is written
+			# about. Step 8 has to carry those, or the re-run this step promises
+			# commits nothing, pushes nothing, and writes the pointer file over
+			# an EMPTY main — the one state no later run can dig out of.
+			#
+			# A TEMPLATE PATH HEAD ALREADY CARRIES IS THE PERSON'S, whatever it
+			# says now: this command has never modified a committed file, so a
+			# change at one is not its leftover and never enters its commit
+			# (#44 round 1, `openRepoTools:1525`).
+			#
+			# WHAT NO QUESTION HERE CAN TELL APART is a template path that is
+			# UNTRACKED and carries the person's own content: it is absent from
+			# HEAD exactly as this command's own leftover is, and it goes into
+			# the seed. That is the blind spot step 6a names in so many words
+			# and the price of the re-run step 7 promises; what closes here is
+			# the half that can be told apart.
+			if ! git -C "$checkout" cat-file -e "HEAD:$rel" 2>/dev/null; then
+				written+=("$rel")
+				owed=$((owed + 1))
+			fi
+			continue
+		fi
 		dest="$WORKDIR/tpl-$(printf '%s' "$rel" | tr '/' '_')"
 		wip_fetch_template_file "$rel" "$dest" "$ref" ||
 			die "could not fetch $WIP_TEMPLATE_DIR/$rel from $SHAPE_REPOSITORY at $ref, so the
@@ -1509,25 +1652,34 @@ $unrelated
 	# template names it and a person had edited it, is still not published by a
 	# command that came to place a template. Two answers to one finding, and the
 	# cheaper one is the one that runs first.
-	if [ "$seeded" -gt 0 ]; then
+	if [ "$((seeded + owed))" -gt 0 ]; then
 		wip_quietly git -C "$checkout" add -- "${written[@]}" ||
 			die "could not stage the seed in $checkout.
     What it said:
 $WIP_LAST_ERR"
 	fi
-	# WHAT IS ACTUALLY STAGED, which after an `add` of paths that are already in
-	# HEAD can be nothing at all: a checkout that had a template file DELETED
-	# gets it back from the template above, and where those bytes match HEAD
-	# there is no change to commit and `git commit` refuses with one. It also
-	# carries the OTHER half of the re-run step 7 promises — an earlier run that
-	# staged the seed and could not commit it leaves the index exactly here.
-	if ! git -C "$checkout" diff --cached --quiet 2>/dev/null; then
+	# AND THE COMMIT IS THOSE PATHS AND NO OTHERS (#44 round 1,
+	# `openRepoTools:1525`). `git commit` with no pathspec commits THE INDEX, so
+	# a person's own `git add` of a file step 6a is deliberately blind to — a
+	# TEMPLATE path they had edited — rode into the seed commit and out to
+	# `main` on the push below, which is the finding this round was opened for
+	# one layer down. The pathspec commits the worktree at those paths and
+	# leaves every other staged change exactly where the person left it: staged,
+	# uncommitted, unpushed.
+	#
+	# THE `diff --cached` ASKS ABOUT THE SAME PATHS, because after an `add` of
+	# paths that are already in HEAD there can be nothing to commit at all — a
+	# checkout that had a template file DELETED gets it back from the template
+	# above, and where those bytes match HEAD `git commit` refuses with one.
+	if [ "$((seeded + owed))" -gt 0 ] &&
+		! git -C "$checkout" diff --cached --quiet -- "${written[@]}" 2>/dev/null; then
 		wip_quietly git -C "$checkout" commit -q \
 			-m "Seed this workspace repository from $SHAPE_REPOSITORY $WIP_TEMPLATE_DIR
 
 Written by \`openRepoTools wip init\` (lane-collision-protocol Amendment 9(c)).
 It holds data only: the register, the object logs, the handoffs and the
-workspace manifests. The lane tooling is installed from opensoft/openRepoTools." ||
+workspace manifests. The lane tooling is installed from opensoft/openRepoTools." \
+			-- "${written[@]}" ||
 			die "could not commit the seed in $checkout. A machine with no
     \`user.email\` configured is the usual reason, and git says so itself:
 $WIP_LAST_ERR"

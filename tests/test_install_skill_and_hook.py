@@ -240,6 +240,81 @@ def test_a_command_file_whose_mode_drifted_is_re_moded_too(tmp_path):
         in second.stdout, second.stdout
 
 
+# --- the one question the mode stamp asks (#44 round 1, `openRepoTools:277`) -
+
+def helper_source(name: str) -> str:
+    """One function lifted out of the command, so a test can ask it directly.
+
+    Anchored on the function's own opening line and the `}` in the first column
+    that closes it, which is how every function in that file is written — a
+    rename or a reshape fails this loudly rather than silently testing nothing.
+    """
+    text = COMMAND.read_text(encoding="utf-8")
+    start = text.index(f"\n{name}() {{")
+    end = text.index("\n}\n", start)
+    return text[start + 1:end + 3]
+
+
+#: Every mode `--install` stamps, asked of a file at each of them: 755 for the
+#: eleven, 644 for the four skill copies and the two command files, 600 for
+#: `settings.json`.
+MODE_ANSWERS = (
+    (0o755, "755", True), (0o644, "644", True), (0o600, "600", True),
+    (0o755, "644", False), (0o644, "755", False), (0o600, "644", False),
+    (0o640, "600", False),
+)
+
+
+@pytest.mark.parametrize("on_disk,asked,expected", MODE_ANSWERS,
+                         ids=[f"{o:03o} is {a}" for o, a, _ in MODE_ANSWERS])
+def test_mode_is_answers_the_find_this_platform_ships(tmp_path, on_disk, asked,
+                                                      expected):
+    """THE CLAIM `mode_is` MAKES IS A PORTABILITY CLAIM, SO IT IS ASKED ON EACH
+    PLATFORM THAT RUNS THIS SUITE (#44 round 1, `openRepoTools:277`).
+
+    The round's review held that `find -maxdepth` is not in the stock BSD/macOS
+    `find`, so `mode_is` would answer FALSE for every mode on that platform and
+    every artifact would report `(mode restored …)` for ever. It is in it —
+    `-maxdepth` is a FreeBSD primary, documented in that `find`'s own page in
+    the words *"`-maxdepth 0` limits the whole search to the command line
+    arguments"*, and this repository already ships three of them in
+    `lanes-edit.sh` — and the `tests-macos` job is where that stops being a
+    claim about a manual page: this test asks the helper the three octals
+    `--install` actually stamps, and both answers for each, on whatever `find`
+    the platform running it has.
+
+    That is the whole reason the helper is `find` and not `stat`: GNU spells it
+    `stat -c %a` and BSD `stat -f %Lp`, nothing here may reach for one without
+    the other beside it (`test_repo_hygiene.py`'s GNU-only rule), and
+    `-perm <octal>` with neither a `-` nor a `+` in front of it is EXACT on
+    both.
+    """
+    target = tmp_path / "artifact"
+    target.write_text("whatever this installer placed\n", encoding="utf-8")
+    os.chmod(target, on_disk)
+    script = helper_source("mode_is") + \
+        f'\nif mode_is {asked} "$1"; then echo yes; else echo no; fi\n'
+    done = subprocess.run(["bash", "-c", script, "mode_is", str(target)],
+                          capture_output=True, text=True, check=False)
+    assert done.stdout.strip() == ("yes" if expected else "no"), (
+        f"`mode_is {asked}` on a file at {on_disk:03o} answered "
+        f"{done.stdout.strip()!r} — this platform's `find` does not take the "
+        f"one spelling GNU and BSD agree on:\n{done.stderr}")
+
+
+def test_mode_is_says_no_about_a_path_that_is_not_there(tmp_path):
+    """The other answer it has to get right: `find` prints a diagnostic and
+    exits non-zero on a missing path, and a helper that read that as `yes`
+    would report a mode on a file nothing placed."""
+    script = helper_source("mode_is") + \
+        '\nif mode_is 644 "$1"; then echo yes; else echo no; fi\n'
+    done = subprocess.run(["bash", "-c", script, "mode_is",
+                           str(tmp_path / "never-placed")],
+                          capture_output=True, text=True, check=False)
+    assert done.stdout.strip() == "no", done.stdout + done.stderr
+    assert done.stderr == "", "the diagnostic reached a person's terminal"
+
+
 # --- the hook entry ---------------------------------------------------------
 
 @NEEDS_JQ
@@ -337,6 +412,58 @@ def test_a_present_hook_in_a_widened_settings_file_is_narrowed_to_600(tmp_path):
     assert session_start_commands(tmp_path) == [HOOK_COMMAND]
     assert f"SessionStart hook: already installed in {settings} " \
            f"(mode restored to 600)" in second.stdout, second.stdout
+
+
+@NEEDS_JQ
+@pytest.mark.parametrize("entry", ["present", "absent"])
+def test_a_symlinked_settings_file_is_refused_rather_than_written_through(
+        tmp_path, entry):
+    """`chmod` FOLLOWS A SYMLINK, AND SO DOES NOTHING ELSE ABOUT IT (#44 round
+    1, `openRepoTools:878`).
+
+    The mode stamp this round put on the `present` arm is the sharper half: a
+    `~/.claude/settings.json` linked into a dotfiles checkout — which is how a
+    person who versions their settings has it — got the 600 stamped on the file
+    at the FAR END, an unrelated file re-moded by a run that reported the entry
+    `already installed`. The `absent` arm is the older half of the same
+    question: it writes a temporary beside this path and `mv -f`s it here,
+    which REPLACES the link with a regular file, so the link a person put there
+    is gone and their dotfiles copy silently stops being what `claude` reads.
+
+    One refusal answers both, in the planning phase and with the same shape the
+    other seventeen artifacts are refused with: the path, what it is, and the
+    `rm` that clears it. What is on the other end keeps its bytes and its mode,
+    which is the assertion that tells this from either defect.
+    """
+    far = tmp_path / "dotfiles" / "settings.json"
+    far.parent.mkdir(parents=True)
+    payload = {"model": "opus"}
+    if entry == "present":
+        payload["hooks"] = {"SessionStart": [
+            {"matcher": HOOK_MATCHER,
+             "hooks": [{"type": "command", "command": HOOK_COMMAND,
+                        "timeout": HOOK_TIMEOUT}]}]}
+    far.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.chmod(far, 0o644)
+    before = far.read_bytes()
+    settings = settings_of(tmp_path)
+    settings.parent.mkdir(parents=True)
+    settings.symlink_to(far)
+    bin_dir = tmp_path / ".local" / "bin"
+
+    result = run_cmd("--install", home=tmp_path,
+                     env={"OPENREPOTOOLS_BIN_DIR": str(bin_dir)})
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"{settings} — a symlink to {far}" in result.stderr, result.stderr
+    assert f'rm -f -- "{settings}"' in result.stderr, result.stderr
+    assert "NOTHING was installed" in result.stderr
+    assert stat.S_IMODE(far.stat().st_mode) == 0o644, (
+        "the mode was stamped through the link onto the file at the far end")
+    assert far.read_bytes() == before, "the far end was written through"
+    assert settings.is_symlink(), "the merge replaced the link with its own file"
+    assert not bin_dir.exists() or not any(bin_dir.iterdir()), (
+        "the eleven commands were placed by a run that refused")
 
 
 @NEEDS_JQ
@@ -498,15 +625,18 @@ def test_a_destination_that_cannot_be_written_refuses_before_anything_is_placed(
 @NOT_ROOT
 def test_a_leaf_destination_that_exists_unwritable_refuses_before_anything_is_placed(
         tmp_path):
-    """THE `-w` ARM, WHICH THE TEST ABOVE NEVER REACHES (F6 of the #24 review,
-    ruled R-A9-15).
+    """EVERY DESTINATION IS ASKED ABOUT, AND NOT ONLY THE ROOTS THEY HANG UNDER
+    (F6 of the #24 review, ruled R-A9-15).
 
-    The case above chmods the PARENT, so `mkdir -p` is what refuses and
-    `[ -w "$d" ] || die` is never asked. Measured: `mkdir -p` returns 0 on a
-    directory that already EXISTS at 0500, so the leaf itself is the only way
-    to reach that arm — and with the arm mutated to a no-op the whole review's
-    run of this file stayed at 13 passed. A guard no test reaches is a guard
-    nobody can rely on.
+    When the arm was `mkdir -p` and then `[ -w "$d" ]`, the case above — which
+    chmods the PARENT — never reached the `-w` at all, because the `mkdir`
+    refused first; measured then: `mkdir -p` returns 0 on a directory that
+    already EXISTS at 0500, so the leaf was the only way in, and with the arm
+    mutated to a no-op the whole review's run of this file stayed at 13 passed.
+    Since #44 round 1 the planner creates nothing and asks the nearest ancestor
+    that exists, so both cases land on one arm — and this fixture is what says
+    the walk covers the LEAF each artifact actually goes in, rather than the
+    two roots above it. A guard no test reaches is a guard nobody can rely on.
 
     The bin directory is the assertion that tells the two apart: the refusal
     here is a PLANNING one and nothing is placed, where the mutant places all
@@ -685,6 +815,120 @@ def test_a_bin_directory_that_cannot_be_written_refuses_before_anything(tmp_path
             "the skills or the hook were placed by a run that refused")
     finally:
         bin_dir.chmod(0o700)
+
+
+@NEEDS_JQ
+@NOT_ROOT
+def test_a_bin_directory_that_cannot_be_created_is_refused_in_planning(tmp_path):
+    """THE `-w` THAT WAS NEVER ASKED, BECAUSE THE DIRECTORY WAS NOT THERE TO ASK
+    (#44 round 1, Sourcery's `README.md:237`, and `openRepoTools:653`).
+
+    The round before this one added the bin directory to the planning phase and
+    asked `[ -d "$dir" ]` first, so a `$OPENREPOTOOLS_BIN_DIR` that does not
+    exist YET was asked nothing at all — and an absent directory under a parent
+    this user cannot write is the case that fails. It reached the `mkdir -p` in
+    `install_commands`, which was unguarded: `set -e` exits 1 there, and 1 is
+    the code this toolset spends on "findings were printed", so the run said
+    nothing and a person reading the exit code was told the wrong thing.
+
+    The question is put to the NEAREST ANCESTOR THAT EXISTS, which is the same
+    question `-w` on an existing directory is — and it is put before the fetch,
+    so a refusal costs no network round-trip either.
+    """
+    parent = tmp_path / "opt"
+    parent.mkdir()
+    bin_dir = parent / "bin"
+    parent.chmod(0o500)
+    try:
+        result = run_cmd("--install", home=tmp_path,
+                         env={"OPENREPOTOOLS_BIN_DIR": str(bin_dir)})
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert f"{parent} is not writable" in result.stderr, (
+            f"the refusal must name the ancestor that refuses the create:\n"
+            f"{result.stderr}")
+        assert "NOTHING was installed" in result.stderr
+        assert not bin_dir.exists(), "the run created the directory it refused"
+        assert not (tmp_path / ".claude").exists(), (
+            "the skills or the hook were placed by a run that refused")
+    finally:
+        parent.chmod(0o700)
+
+
+@NEEDS_JQ
+@NOT_ROOT
+@pytest.mark.parametrize("which", ["the bin directory", "a skill destination"])
+def test_a_destination_whose_search_bit_is_off_is_refused_in_planning(
+        tmp_path, which):
+    """`-w` DOES NOT MAKE A DIRECTORY ONE A FILE CAN BE CREATED IN (#44 round 1,
+    the suppressed comment at `openRepoTools:658`).
+
+    Creating a file takes the directory's `w` AND its `x`, so a directory at
+    0600 accepts nothing at all — and both planners asked only `-w`, passed it,
+    and met the failure at a `cp` with artifacts already placed. The two halves
+    are parametrized together because the rule is one implementation: two
+    copies of it is how the bin half comes to refuse what the skill half
+    allows.
+    """
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    if which == "the bin directory":
+        blocked = bin_dir
+    else:
+        blocked = tmp_path / ".claude-profiles" / "shared" / "skills"
+        blocked.mkdir(parents=True)
+    blocked.chmod(0o600)
+    try:
+        result = run_cmd("--install", home=tmp_path,
+                         env={"OPENREPOTOOLS_BIN_DIR": str(bin_dir)})
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert f"{blocked} is not searchable" in result.stderr, result.stderr
+        assert "NOTHING was installed" in result.stderr
+        assert not any(bin_dir.iterdir()), (
+            "the eleven commands were placed against a directory that takes "
+            "no file at all")
+    finally:
+        blocked.chmod(0o700)
+
+
+@NEEDS_JQ
+@NOT_ROOT
+def test_a_planning_refusal_creates_none_of_the_destination_directories(tmp_path):
+    """"NOTHING WAS INSTALLED" INCLUDED SEVEN DIRECTORIES (#44 round 1,
+    Sourcery's `tests/test_install_skill_and_hook.py:658`).
+
+    `plan_skill_targets` proved each destination writable by `mkdir -p`-ing it
+    and reading the result, so a run that then refused — on a target one
+    directory along, or on the hook — had already made `~/.claude`,
+    `~/.claude/skills/<each>`, `~/.claude/commands` and the shared trio on a
+    machine that had none of them. The refusal says nothing was installed, and
+    a person who then removes what they were told about is left with the rest.
+
+    The question is put to the nearest ancestor that exists instead, and the
+    places are made in the placement phase by the guarded `mkdir -p` each `cp`
+    already carries. The offending target here is in the SHARED tree, so
+    `~/.claude` is the assertion: a fixture cannot both put a file at a path
+    and leave that path's directory unmade.
+    """
+    target = skill_target(tmp_path, True, "lane-swap")
+    target.parent.mkdir(parents=True)
+    target.write_text("the SKILL.md a person made read-only\n", encoding="utf-8")
+    os.chmod(target, 0o444)
+    bin_dir = tmp_path / ".local" / "bin"
+    try:
+        result = run_cmd("--install", home=tmp_path,
+                         env={"OPENREPOTOOLS_BIN_DIR": str(bin_dir)})
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "NOTHING was installed" in result.stderr
+        assert not (tmp_path / ".claude").exists(), (
+            "planning made ~/.claude on a machine that had none, over a "
+            "refusal that says nothing was installed")
+        assert not skill_target(tmp_path, True, "restart").parent.exists(), (
+            "planning made the other skill's shared directory")
+        assert not (tmp_path / ".claude-profiles" / "shared" / "commands").exists(), (
+            "planning made the shared commands directory")
+        assert not bin_dir.exists() or not any(bin_dir.iterdir())
+    finally:
+        os.chmod(target, 0o644)
 
 
 # --- R-A9-12 reaches the skill paths too (F-X17) -----------------------------

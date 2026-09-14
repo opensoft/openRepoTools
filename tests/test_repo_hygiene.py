@@ -1789,9 +1789,27 @@ def test_readme_is_short_enough_to_be_read():
     it names, and that it is asked before a byte is written into that
     checkout. Every dated entry above stays, and none of these thirteen is
     over one of their lines.
+
+    422 -> 428 on 2026-09-14, for THE SIX LINES #44's first review round buys,
+    each of them a refusal a person meets rather than prose about one. THREE
+    SAY WHAT A DIRECTORY HAS TO BE: the question is put to the nearest ancestor
+    that exists, so a `$OPENREPOTOOLS_BIN_DIR` that is not there YET is refused
+    for the parent that would not take it rather than dying at an unguarded
+    `mkdir -p` with the shell's own 1; a create takes a directory's search bit
+    as well as its write bit, so one at 0600 is refused where `-w` alone passed
+    it and the `cp` failed with eleven artifacts placed; and a refusal creates
+    none of those directories, where planning used to prove each writable by
+    MAKING it and so left seven behind on a machine that had none. THREE SAY
+    THAT `~/.claude/settings.json` MUST ITSELF BE A REGULAR FILE — the one
+    artifact no walk asked about, which mattered the moment the round before
+    this one gave the `present` arm a `chmod`: `chmod` follows a symlink, so a
+    settings file linked into a dotfiles checkout had the 600 stamped on the
+    file at the FAR END, and the merge arms replace such a link with the file
+    they wrote. Every dated entry above stays, and none of these six is over a
+    line one of them bought.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 422, f"README.md is {len(lines)} lines; the cap is 422"
+    assert len(lines) <= 428, f"README.md is {len(lines)} lines; the cap is 428"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

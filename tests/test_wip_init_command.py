@@ -638,6 +638,101 @@ def test_the_seed_stages_the_paths_it_wrote_and_not_a_template_file_beside(
         f"the edit was staged or committed:\n{dirty.stdout}")
 
 
+def test_a_staged_edit_to_a_template_file_stays_out_of_the_seed(tmp_path):
+    """AND THE HALF THAT WAS STILL OPEN: THE INDEX (#44 round 1,
+    `openRepoTools:1525`).
+
+    Step 8 staged the paths it wrote BY NAME and then committed with no
+    pathspec, and `git commit` with no pathspec commits THE INDEX. So the one
+    path step 6a is deliberately blind to — a template file the person had
+    edited — rode out to `main` anyway, as long as they had `git add`ed it and
+    the run had any seeding to do at all. The staging was by name and the
+    commit was not, which is the same publication one line further down.
+
+    The commit takes the same pathspec, so the person's staged edit is exactly
+    where they left it when the run finishes: staged, uncommitted, unpushed.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout = adopted_checkout(tmp_path, home, env)
+    # A template file the workspace no longer has, so the seed has work to do.
+    for args in (["rm", "-q", "--", "handoffs/README.md"],
+                 ["commit", "-q", "-m", "somebody removed the handoffs README"],
+                 ["push", "-q", "origin", "HEAD:main"]):
+        subprocess.run(["git", "-C", str(checkout), *args], check=True)
+    # …and one the person has edited AND STAGED.
+    lanes = checkout / "lanes" / "LANES.md"
+    edited = lanes.read_text(encoding="utf-8") + "\n| a row being written |\n"
+    lanes.write_text(edited, encoding="utf-8")
+    subprocess.run(["git", "-C", str(checkout), "add", "--", "lanes/LANES.md"],
+                   check=True)
+
+    result = run_wip(home, extra=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    committed = subprocess.run(
+        ["git", "-C", str(checkout), "show", "--name-only", "--pretty=format:",
+         "HEAD"], capture_output=True, text=True, check=True)
+    assert committed.stdout.split() == ["handoffs/README.md"], (
+        f"the seed commit published a path the person staged:\n"
+        f"{committed.stdout}")
+    assert staged_in(checkout).split() == ["lanes/LANES.md"], (
+        f"the seed commit consumed the person's index: {staged_in(checkout)!r}")
+    assert lanes.read_text(encoding="utf-8") == edited, (
+        "the person's edit was overwritten")
+
+
+def test_the_rerun_after_a_commit_that_failed_carries_the_seed_it_left_behind(
+        tmp_path):
+    """THE OTHER HALF OF THE SAME PATHSPEC, and the one it could have cost.
+
+    A first run that copied the nine template files and could not commit them
+    — no `user.email`, which is what the refusal above is written about —
+    leaves them in the worktree and in the index, and HEAD carrying none of
+    them. The re-run seeds NOTHING, because step 7 leaves a file that is
+    already there exactly as it is, so a commit restricted to the paths THIS
+    run wrote would commit nothing, push nothing, and go on to write the
+    pointer file over an empty `main`: the one state step 8's remote gate
+    exists to prevent, reached from the other side.
+
+    So the pathspec is the paths the seed OWES this checkout — what this run
+    wrote, and every template path the worktree carries and HEAD does not.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path, exists=True)
+    checkout = home / "projects" / "brettheap-wip"
+    checkout.parent.mkdir(parents=True)
+    bare = tmp_path / "github" / "opensoft" / "brettheap-wip.git"
+    subprocess.run(["git", "clone", "-q", str(bare), str(checkout)], check=True)
+    hook = checkout / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\necho 'no user.email here' >&2\nexit 1\n",
+                    encoding="utf-8")
+    hook.chmod(0o755)
+
+    first = run_wip(home, extra=env)
+    assert first.returncode == 2, first.stdout + first.stderr
+    assert "could not commit the seed" in first.stderr
+    assert sorted(staged_in(checkout).split()) == sorted(TEMPLATE_FILES), (
+        f"the first run left something other than the seed staged: "
+        f"{staged_in(checkout)!r}")
+    assert head_of(checkout) == "", "the first run committed after all"
+
+    hook.unlink()
+    second = run_wip(home, extra=env)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "committed the seed" in second.stdout, second.stdout
+
+    committed = subprocess.run(
+        ["git", "-C", str(checkout), "show", "--name-only", "--pretty=format:",
+         "HEAD"], capture_output=True, text=True, check=True)
+    assert sorted(committed.stdout.split()) == sorted(TEMPLATE_FILES), (
+        f"the re-run did not carry the seed the first run left staged:\n"
+        f"{committed.stdout}")
+    assert remote_main(tmp_path) == head_of(checkout), "the seed never landed"
+    assert (home / ".agents" / "workspace.yaml").is_file(), (
+        "step 9 did not run after the seed finally landed")
+
+
 # --- one answer to one question, across the seam between two toolsets -------
 
 #: (name, the two yaml lines as a template, whether both sides must ACCEPT).
