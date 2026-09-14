@@ -1393,6 +1393,19 @@ log_path_for() { printf '%s%s.md\n' "$LANES_LOG_PREFIX" "$1"; }
 #
 # `ls` and one `awk`, not a `$(lc …)` per file: `lanes/log/` carries a file per
 # lane of the estate and this is asked on the path a person is waiting on.
+#
+# AND THE `--` STAYS (Copilot round 3 on openRepoTools#41, DECLINED with a
+# measurement). It was read as a macOS defect — *"BSD `ls` rejects `--`, and the
+# suppressed error makes every case-insensitive log scan empty"* — which would
+# mean no first write ever renames anything on the one platform this amendment's
+# rename exists for. BSD `ls` ends its options at `--` through `getopt(3)`, as
+# every POSIX utility does, and `tests-macos` has been GREEN on the two
+# assertions that can only pass if this scan finds a file of another case there:
+# the rename recorded inside the write's own commit, and `lane-start`'s own
+# `repo repocase → repoCase` out of the twin scan at `lane-start:677`. The suite
+# asserts the parse itself as well, on every platform. Dropping `--` would hand
+# a directory whose name begins with `-` back to `ls` as flags and change
+# nothing else.
 log_files_named_ci() {   # <lane> — every existing log file for it, whatever its case
   ls -- "$LANES_LOG_DIR" 2>/dev/null | awk -v want="$1" -v d="$LANES_LOG_DIR" '
     BEGIN { w = tolower(want) ".md" }

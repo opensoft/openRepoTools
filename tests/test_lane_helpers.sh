@@ -6155,6 +6155,27 @@ hasnt "lanes --dir with a space in the path is not a usage error" "$err" "usage:
 hasnt "…and no word of it arrives as an argument of its own" "$err" "unknown argument"
 is    "…it is simply a directory no lane is in" "$rc" 8
 
+# ---- AND `--` IS NOT A DEFECT IN `ls` ON ANY PLATFORM THIS SHIPS TO ---------
+#
+# Round 3 read `ls -- "$LANES_LOG_DIR"` (`log_files_named_ci`) and its twin
+# `ls -- "$PROJECTS_ROOT"` (`lane-start`-s `projects_dir_matches`) as a macOS
+# failure — *"BSD `ls` rejects `--`, and the suppressed error makes every
+# case-insensitive log scan empty"* — under which no first write renames a log
+# on the one platform the rename exists for, and `<repo>` never resolves to the
+# checkout's real directory. It does not: BSD `ls` ends its options at `--`
+# through `getopt(3)` like every other POSIX utility, and the macOS job has been
+# green throughout on the two assertions that can only pass if both scans answer
+# there — the rename inside the write's own commit, and the `repo repocase →
+# repoCase` step line. Asserted here as well, directly and on every platform,
+# because a decline that is argued rather than measured is one the next round
+# makes again.
+is   "this platform's ls accepts the -- that both case-insensitive scans pass it" \
+     "$(ls -- "$LOGD" >/dev/null 2>&1; echo $?)" 0
+is   "…and lists exactly what the bare form lists, neither more nor fewer" \
+     "$(ls -- "$LOGD" 2>/dev/null | grep -c . || :)" "$(ls "$LOGD" 2>/dev/null | grep -c . || :)"
+has  "…including the log a lane's own scan has to find in it" \
+     "$(ls -- "$LOGD" 2>/dev/null)" "repoCase-1.md"
+
 # ---- THE RACE'S WINNER IS JOINED ON A FILE NAME, AND THE LINE SPELLS IT FREELY
 #
 # LAST IN THIS SECTION, because it is decided by an `origin/main` this checkout

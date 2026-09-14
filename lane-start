@@ -667,7 +667,12 @@ fi
 #
 # `ls` and ONE awk rather than a `tr` per entry: this sits in front of a launch,
 # `$PROJECTS_ROOT` holds a few dozen directories, and the `[ -d ]` below runs
-# only for the names that already matched.
+# only for the names that already matched. The `--` stays for the reason
+# `lanes-edit.sh`'s twin scan carries in full (`log_files_named_ci`; Copilot
+# round 3 on openRepoTools#41, declined with a measurement): BSD `ls` ends its
+# options at `--` like every other POSIX utility, and the step line this
+# function produces — `repo repocase → repoCase` — is asserted on the macOS job,
+# where an `ls` that refused `--` would leave it silent.
 projects_dir_matches() {   # <typed repo>
   ls -- "$PROJECTS_ROOT" 2>/dev/null |
     awk -v want="$1" 'BEGIN { w = tolower(want) } tolower($0) == w { print }' |
