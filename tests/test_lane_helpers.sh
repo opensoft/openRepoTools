@@ -5407,6 +5407,13 @@ has  "…with the writes stopped there too" \
 rskill_text="$(cat "$RSKILL")"
 has   "the skill's listing rung stops where the outcome table ends it" "$rskill_text" "NO LANE FOR THIS WINDOW [8] —"
 has   "…on the code the table gives it" "$rskill_text" "exit 8"
+# AND THE READ IT ENDS ON GOES THROUGH THE FENCE (#26, the review of `90cef58`).
+# It was the last read in the file that ignored its own status, and once the rung
+# ENDS in an outcome a `lanes` that exited 1 or 64 would print as [8] — a refusal
+# turned into a no-answer, at the rung whose next act CREATES a row.
+has   "…and its listing read goes through the same fence as every other" \
+      "$rskill_text" 'lread listing "'"'"'no lane of this checkout is in the register'"'"'" lanes'
+hasnt "…with no read left outside it" "$rskill_text" 'LANES_NO_FETCH=1 "$L" lanes ${origin'
 
 # AND `--retire` WRITES NOTHING, WHICH THREE SURFACES STILL SAID IT DID (#26,
 # the review of `29d3417`). The act is the DOOR to Amendment 6(d) and performs

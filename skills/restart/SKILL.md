@@ -130,7 +130,16 @@ fi
 if [ -z "$lane" ]; then
   root="$(git rev-parse --show-toplevel 2>/dev/null)"
   origin="$(git -C "${root:-.}" remote get-url origin 2>/dev/null | sed -E 's#\.git$##; s#^git@[^:]+:##; s#^ssh://[^/]+/##; s#^https?://[^/]+/##')"
-  LANES_NO_FETCH=1 "$L" lanes ${origin:+--repo "$origin"} ${root:+--dir "$root"}
+  # AND THIS ONE GOES THROUGH THE FENCE TOO, which the stop below made matter
+  # (#26, the review of `90cef58`, this file's `:133`). It was the last read in
+  # the file that ignored its own status, and while the block fell through that
+  # cost nothing; the moment it ENDS in an outcome, a `lanes` that exited 1 or
+  # 64 would be printed as **[8]**, *no lane for this window* — a refusal turned
+  # into a no-answer, at the one rung whose next act is `lane-start`, which
+  # CREATES a row. `lread` sets a variable rather than printing, so the listing
+  # is printed from it.
+  lread listing "'no lane of this checkout is in the register'" lanes ${origin:+--repo "$origin"} ${root:+--dir "$root"}
+  [ -z "$listing" ] || printf '%s\n' "$listing"
   # AND THIS RUNG IS TERMINAL, WHICH THE BLOCK SAID EVERYWHERE BUT IN ITS CODE
   # (#26, the review of `29d3417`, this file's `:134`). The heading says PRINT
   # THE LISTING AND STOP and the outcome table ends step 2 here; with `$lane`
