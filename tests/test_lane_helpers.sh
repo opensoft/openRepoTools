@@ -83,6 +83,8 @@ cleanup() {
   [ -n "${LIVE_PID:-}" ] && kill "$LIVE_PID" 2>/dev/null
   [ -n "${G_PANE:-}" ] && kill "$G_PANE" 2>/dev/null
   [ -n "${G_OUT:-}" ] && kill "$G_OUT" 2>/dev/null
+  [ -n "${DUP_PARENT:-}" ] && kill "$DUP_PARENT" 2>/dev/null
+  [ -n "${DUP_CHILD:-}" ] && kill "$DUP_CHILD" 2>/dev/null
   [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ] && rm -rf -- "$SANDBOX"
   return 0
 }
@@ -1223,7 +1225,12 @@ K2="$(cat "$LOGD/repoK-2.md")"
 has  "…writing a TAKEOVER line" "$K2" "TAKEOVER — lane repoK-2, session "
 has  "…referencing the dead lane with ←" "$K2" "opensoft/repoK#5 ← lane:repoK-1"
 has  "…and the free text says why" "$K2" "lane repoK-1 is dead (log ends RETIRED"
-hasnt "…and no separate CLAIMED line: TAKEOVER is itself an open verb" "$K2" "CLAIMED — lane repoK-2, session .*opensoft/repoK#5"
+# A REAL PATTERN, NOT `hasnt`'S FIXED STRING (Copilot round 2, PR #61): `has`
+# and `hasnt` test literal substrings (`tests/test_lane_helpers.sh:193-194`),
+# so a `.*` meant to skip the session uuid was never a wildcard here and this
+# check passed no matter what the log held. `grep -E` is the real thing.
+is   "…and no separate CLAIMED line: TAKEOVER is itself an open verb" \
+     "$(printf '%s\n' "$K2" | grep -cE '^CLAIMED — lane repoK-2,.*opensoft/repoK#5')" 0
 
 run env LANES_LANE=repoK-2 "$E" claim "opensoft/repoK#6" --no-github --force
 is   "…and a FRESH CLAIMED issue too — Rule 1's four-hour clock never enters it" "$rc" 0
@@ -4263,8 +4270,16 @@ rm -f "$sessions_dir/live-fork.json" "$fork_tdir/$FORK_ID.jsonl"
 # shows $LIVE_PID as a `--fork-session --resume … $MLIVE_ID.jsonl` process —
 # on purpose, so the exclusion is proved rather than merely untested — beside
 # a genuine STRAY duplicate, $DUP_PARENT, with its child $DUP_CHILD.
-DUP_PARENT=88101
-DUP_CHILD=88102
+#
+# REAL PROCESSES, NOT ARBITRARY NUMBERS (Copilot round 2, PR #61): `ps` and
+# `pgrep` are faked, but `kill -TERM` is not and never should be — it is the
+# one thing this act actually does outside the sandbox's own bookkeeping —
+# so an arbitrary pid let the report claim delivery `kill` never attempted
+# against anything real. These two are killed for real below and checked
+# with `kill -0` afterward, exactly as the fork fixture already proves a
+# retire it refuses to make left `$LIVE_PID` running.
+sleep 3000 & DUP_PARENT=$!
+sleep 3000 & DUP_CHILD=$!
 FAKE_PS_M="$(printf '%s\t%s\t%s\n%s\t%s\t%s' \
   "$LIVE_PID"  1 "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl" \
   "$DUP_PARENT" 1 "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl")"
@@ -4278,19 +4293,30 @@ has  "…naming its parent" "$out" "$DUP_PARENT"
 has  "…and its child, found via pgrep -P" "$out" "$DUP_CHILD"
 hasnt "…but never repoM-1's OWN live pid, excluded over live_holder" "$out" "$(printf '%s\t' "$LIVE_PID")"
 
+# BOTH ALIVE BEFORE THE ACT, so a kill that did nothing cannot pass by luck.
+is   "…both fixture processes are alive before the act" \
+     "$(kill -0 "$DUP_PARENT" 2>/dev/null && kill -0 "$DUP_CHILD" 2>/dev/null && echo both-alive)" "both-alive"
+
 run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_M" FAKE_PS_RECORDS="$FAKE_PS_M" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_M" \
   "$END" repoM-1 --retire "$DUP_PARENT"
 is   "lane-end --retire TERMS a duplicate holder's pid pair" "$rc" 0
 has  "…and reports RETIRED naming both pids" "$err" "RETIRED lane repoM-1's duplicate holder"
 has  "…the parent" "$err" "pid $DUP_PARENT (bg-pty-host)"
 has  "…and the child" "$err" "pid $DUP_CHILD (child)"
+has  "…each delivery reported, not merely asserted" "$err" "TERM to pid $DUP_PARENT (bg-pty-host): delivered"
 has  "…the lane's own row and session are said to be untouched" "$err" "lane itself is untouched"
+# `kill -TERM` IS REAL, so a `sleep 3000` genuinely dies — proof the act did
+# not merely print a report `kill`'s own exit status was never checked against.
+sleep 0.2
+is   "…and the parent really is gone" "$(kill -0 "$DUP_PARENT" 2>/dev/null && echo alive || echo gone)" "gone"
+is   "…and the child really is gone" "$(kill -0 "$DUP_CHILD" 2>/dev/null && echo alive || echo gone)" "gone"
 
 run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_M" FAKE_PS_RECORDS="$FAKE_PS_M" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_M" \
   "$END" repoM-1 --retire "$LIVE_PID"
 is   "…but --retire refuses repoM-1's OWN live pid — Amendment 18(h)'s window pid" "$rc" 2
-has  "…naming what IS a live duplicate holder instead" "$err" "$DUP_PARENT"
-has  "…and saying nothing was named" "$err" "nothing is named"
+has  "…naming it as the lane's own live session, whatever else was found" "$err" "is lane repoM-1's own live session"
+has  "…and saying it is not a fork or a duplicate holder" "$err" "it is not a fork and not a duplicate holder, it is the lane"
+is   "…and the still-live \$LIVE_PID is of course untouched" "$(kill -0 "$LIVE_PID" 2>/dev/null && echo alive)" "alive"
 
 run "$END" repoM-1 --retire 777777
 is   "…and a pid that is neither a fork nor a duplicate holder is refused, exit 8" "$rc" 8

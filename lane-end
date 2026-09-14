@@ -668,6 +668,33 @@ FORKS
     *) die "$LANES_EDIT duplicate-holder $LANE failed (exit $dh_rc). That is NOT 'no duplicate holder is live', and this script will not name an act against a process it could not prove is one. Run it by hand to see what it says, then re-run." 1 ;;
   esac
 
+  # AMENDMENT 18(h) — THE LANE'S OWN LIVE SESSION HAS ITS OWN REFUSAL EVEN
+  # WHEN NOTHING ELSE IS HOLDING THIS TRANSCRIPT (Copilot round 2, PR #61):
+  # with no fork and no OTHER process on this id, `duplicate-holder` rightly
+  # excludes the lane's own pid and answers 8, same as "nothing at all" — but
+  # "nothing else holds it" and "the pid you named IS the one thing holding
+  # it" are different facts, and only the second earns this specific refusal
+  # rather than the generic 8 below. Read ONCE, here, and the result is reused
+  # inside the duplicate-holder branch too, so this never asks `live-holder`
+  # about the same lane twice for one invocation. A read that FAILS is not
+  # "it is not the lane's own session": only rc 8 clears the general checks
+  # that follow; rc 0 either dies here or clears them; anything else dies.
+  lh_rc=0
+  lh_out="$("$LANES_EDIT" live-holder "$LANE" 2>/dev/null)" || lh_rc=$?
+  lh_sid=""; lh_tgt=""; lh_name=""; lh_pid=""; lh_verdict=""
+  case "$lh_rc" in
+    0)
+      IFS=$'\037' read -r lh_sid lh_tgt lh_name lh_pid lh_verdict <<LIVE || :
+$lh_out
+LIVE
+      if [ -n "$lh_pid" ] && [ "$lh_pid" = "$retire_target" ]; then
+        die "pid $lh_pid is lane $LANE's own live session (session $lh_sid, ${lh_verdict:-here}) — Amendment 18(h) refuses to retire the one process a lane's binding actually is: it is not a fork and not a duplicate holder, it is the lane. End the lane instead, or name the OTHER pid of a genuine duplicate pair." 2
+      fi
+      ;;
+    8) : ;;
+    *) die "$LANES_EDIT live-holder $LANE failed (exit $lh_rc) while checking whether $retire_target is lane $LANE's own live session. That is NOT 'it is not' — fix the helper or the records, then re-run." 1 ;;
+  esac
+
   # NEITHER READ FOUND ANYTHING AT ALL FOR THIS LANE — the ordinary answer for
   # a healthy one, and 8 (not 2) is the code every subcommand here uses for
   # "no record", never for a bad argument (Amendment 7's exit-code table).
@@ -692,30 +719,18 @@ DUPES
 
   if [ -n "$dh_parent" ]; then
     # THE WINDOW'S OWN LIVE SESSION IS NEVER RETIRED THIS WAY (Amendment
-    # 18(h): "the window's own session is the one it refuses to retire").
-    # `duplicate-holder` already excludes it on the read side (over the same
-    # `live_holder` implementation `live-holder` calls); this asks the SAME
-    # question again, in words, before a single signal is sent — belt and
-    # suspenders, never a second liveness primitive. A read that FAILS here
-    # is not "it is not the lane's own session" (Copilot round 1, PR #61): a
-    # protective re-check that silently skips itself on its own read failure
-    # protects nothing, so only rc 8 (records read, nothing live) clears the
-    # kill below; rc 0 dies above, and anything else dies here.
-    lh_rc=0
-    lh_out="$("$LANES_EDIT" live-holder "$LANE" 2>/dev/null)" || lh_rc=$?
-    case "$lh_rc" in
-      0)
-        lh_sid=""; lh_tgt=""; lh_name=""; lh_pid=""; lh_verdict=""
-        IFS=$'\037' read -r lh_sid lh_tgt lh_name lh_pid lh_verdict <<LIVE || :
-$lh_out
-LIVE
-        if [ -n "$lh_pid" ] && { [ "$lh_pid" = "$dh_parent" ] || [ "$lh_pid" = "$dh_child" ]; }; then
-          die "pid $lh_pid is lane $LANE's own live session (session $lh_sid, ${lh_verdict:-here}) — Amendment 18(h) refuses to retire the one process a lane's binding actually is. Retire the OTHER pid of the pair ($prog $LANE --retire <pid>), or end the lane itself." 2
-        fi
-        ;;
-      8) : ;;
-      *) die "$LANES_EDIT live-holder $LANE failed (exit $lh_rc) while confirming pid $dh_parent (or $dh_child) is not lane $LANE's own live session, before sending it TERM. That is NOT 'it is not the lane's own session' — fix the helper or the records, then re-run." 1 ;;
-    esac
+    # 18(h): "the window's own session is the one it refuses to retire") —
+    # reusing the SAME `live-holder` read already taken once above, never a
+    # second shell-out and never a second liveness primitive for one
+    # invocation. Its own case above already dies on anything but 0 or 8, so
+    # by the time control reaches here `lh_rc` can only be one of those two:
+    # `duplicate-holder`'s own exclusion already keeps a live `dh_parent` from
+    # ever equalling `lh_pid`, so this is the residual, cheap check for the
+    # child slot alone (a `pgrep -P` result coinciding with the lane's own
+    # pid would be bizarre, but the fence costs nothing to keep).
+    if [ -n "$lh_pid" ] && { [ "$lh_pid" = "$dh_parent" ] || [ "$lh_pid" = "$dh_child" ]; }; then
+      die "pid $lh_pid is lane $LANE's own live session (session $lh_sid, ${lh_verdict:-here}) — Amendment 18(h) refuses to retire the one process a lane's binding actually is. Retire the OTHER pid of the pair ($prog $LANE --retire <pid>), or end the lane itself." 2
+    fi
 
     # AMENDMENT 18(h) — A DUPLICATE HOLDER IS TERMED, NOT ONLY NAMED. Unlike
     # decision 8(e)'s title-based fork above (never killed: Amendment 8(f), A11
@@ -733,13 +748,25 @@ LIVE
       note "--dry-run: would send TERM to pid $dh_parent (bg-pty-host)${dh_child:+ and pid $dh_child (child)} — lane $LANE's duplicate holder of transcript $dh_uuid. Nothing sent."
       exit 0
     fi
-    # `|| :` ON BOTH, under `set -euo pipefail`: `kill` exits non-zero for a
-    # pid that is already gone — a legitimate race between the read above and
-    # this signal, or simply a child `pgrep` never found — and an unguarded
-    # failure here would abort the script BEFORE the report below ever prints.
-    [ -n "$dh_child" ] && { kill -TERM "$dh_child" 2>/dev/null || :; }
-    kill -TERM "$dh_parent" 2>/dev/null || :
-    step "RETIRED lane $LANE's duplicate holder of transcript $dh_uuid (Amendment 18(h)) — TERM sent to pid $dh_parent (bg-pty-host)${dh_child:+ and pid $dh_child (child)}"
+    # EACH SIGNAL'S OWN STATUS IS KEPT, never assumed (Copilot round 2, PR
+    # #61): `kill` exits non-zero both for a pid that is already gone — a
+    # legitimate race between the read above and this signal, not a failure
+    # of this act — and for one this process lacks permission to signal,
+    # which IS a failure this report must not call a retirement. Under
+    # `set -euo pipefail` the status is captured with `&&`, never left to an
+    # unguarded failure that would abort before the report below prints.
+    dh_p_ok=0; kill -TERM "$dh_parent" 2>/dev/null && dh_p_ok=1
+    dh_c_ok=1
+    if [ -n "$dh_child" ]; then
+      dh_c_ok=0; kill -TERM "$dh_child" 2>/dev/null && dh_c_ok=1
+    fi
+    note "TERM to pid $dh_parent (bg-pty-host): $([ "$dh_p_ok" = 1 ] && printf delivered || printf 'NOT delivered (already gone, or no permission)')"
+    [ -n "$dh_child" ] && note "TERM to pid $dh_child (child): $([ "$dh_c_ok" = 1 ] && printf delivered || printf 'NOT delivered (already gone, or no permission)')"
+    if [ "$dh_p_ok" = 1 ] && [ "$dh_c_ok" = 1 ]; then
+      step "RETIRED lane $LANE's duplicate holder of transcript $dh_uuid (Amendment 18(h))"
+    else
+      note "lane $LANE's duplicate holder of transcript $dh_uuid was only partly signalled — see above. A pid already gone before this ran needed no signal to begin with and is not itself a failure of this act; one that did not deliver for want of permission is, and \`kill -0 <pid>\` by hand tells the two apart."
+    fi
     note "The lane itself is untouched: its row, and its own live session if it has one, are unaffected."
     exit 0
   fi

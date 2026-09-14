@@ -4489,14 +4489,46 @@ duplicate_holder_pids() {   # <lane>
                 session_ids_local_of_lane "$dhp_l" 2>/dev/null || :; } | awk 'NF && !seen[$0]++')"
   [ -n "$dhp_ids" ] || return 8
   dhp_legit=""
-  dhp_lh="$(live_holder "$dhp_l" "$dhp_ids" 2>/dev/null)"; dhp_lrc=$?
+  # NOT `$( … )` (Copilot round 2, PR #61): `live_holder` communicates a read
+  # failure by setting `SESSION_FILES_ERR` in ITS CALLER's shell, exactly as
+  # `session_files` documents and `window_session` already relies on — a
+  # command substitution runs in a SUBSHELL, so that assignment would die with
+  # it and the dispatcher's `${SESSION_FILES_ERR:-unknown error}` would print
+  # "unknown error" always. The tmp file is what lets this call stay direct
+  # and still hand the printed record back to the code after it.
+  dhp_lh_f="$(mktemp "${TMPDIR:-/tmp}/lanes-edit-dhp.XXXXXX" 2>/dev/null || printf '')"
+  if [ -z "$dhp_lh_f" ]; then
+    SESSION_FILES_ERR="could not create a temporary file under ${TMPDIR:-/tmp}"
+    return 1
+  fi
+  live_holder "$dhp_l" "$dhp_ids" > "$dhp_lh_f" 2>/dev/null; dhp_lrc=$?
   case "$dhp_lrc" in
-    0) dhp_legit="$(printf '%s' "$dhp_lh" | awk -F"$US" '{print $4}')" ;;
+    0) dhp_legit="$(awk -F"$US" '{print $4}' "$dhp_lh_f")" ;;
     8) : ;;
+    *) rm -f -- "$dhp_lh_f"; return 1 ;;
+  esac
+  rm -f -- "$dhp_lh_f"
+  # `pgrep -f` ITSELF, THREE-WAY (Copilot round 2): 1 is its OWN "no process
+  # matched" — the ordinary, honest 8 — and anything else (2 usage, 3 a fatal
+  # error reading the process table) is a READ THAT FAILED, never "none is a
+  # duplicate".
+  dhp_cand=""; dhp_pgrc=0
+  dhp_cand="$(pgrep -f 'fork-session' 2>/dev/null)" || dhp_pgrc=$?
+  case "$dhp_pgrc" in
+    0) : ;;
+    1) return 8 ;;
     *) return 1 ;;
   esac
-  dhp_cand="$(pgrep -f 'fork-session' 2>/dev/null)"
   [ -n "$dhp_cand" ] || return 8
+  # A CANDIDATE'S OWN PARENT, WHEN IT IS ALSO A CANDIDATE, IS NEVER TREATED AS
+  # A SECOND PARENT (Copilot round 2): `--fork-session`'s argv is inherited by
+  # the child `claude` process as often as the bg-pty-host wrapper that
+  # started it, so `pgrep -f` routinely returns BOTH — and reading the child
+  # on its own turn, with no ppid fence, reported it as a headless parent of
+  # its own (no child of ITS OWN to find), doubling one duplicate into two
+  # rows and leaving `--retire <the real parent's pid>` unreachable if the
+  # child's spurious row was taken instead.
+  dhp_cand_fence=" $(printf '%s' "$dhp_cand" | tr '\n' ' ') "
   dhp_out=""
   while IFS= read -r dhp_pid; do
     [ -n "$dhp_pid" ] || continue
@@ -4507,12 +4539,20 @@ duplicate_holder_pids() {   # <lane>
 $dhp_line
 DHPLINE
     case "$dhp_args" in *"--fork-session"*"--resume"*) : ;; *) continue ;; esac
+    case "$dhp_cand_fence" in *" $dhp_ppid "*) continue ;; esac
     dhp_args_lc="$(printf '%s' "$dhp_args" | tr 'A-F' 'a-f')"
     for dhp_id in $dhp_ids; do
       dhp_id_lc="$(printf '%s' "$dhp_id" | tr 'A-F' 'a-f')"
       case "$dhp_args_lc" in
         *"$dhp_id_lc.jsonl"*)
-          dhp_child="$(pgrep -P "$dhp_pid" 2>/dev/null | head -n1)"
+          # THE CHILD, PREFERRING ONE THAT IS ITSELF A `--fork-session` MATCH
+          # (the real `claude` leaf) over whichever child the process table
+          # happens to list first.
+          dhp_child=""
+          for dhp_c in $(pgrep -P "$dhp_pid" 2>/dev/null); do
+            case "$dhp_cand_fence" in *" $dhp_c "*) dhp_child="$dhp_c"; break ;; esac
+            [ -n "$dhp_child" ] || dhp_child="$dhp_c"
+          done
           dhp_out="${dhp_out}${dhp_pid}$(printf '\t')${dhp_child}$(printf '\t')${dhp_id}
 "
           break
