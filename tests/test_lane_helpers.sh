@@ -5455,6 +5455,192 @@ hasnt "…nor the source token nothing in the estate emits" "$out" "hostname-in-
 run "$LANES_CMD" </dev/null
 hasnt "…while a run whose seam answered prints no container notice at all" "$out" "LANES_WORKSTATION"
 
+echo "== Amendment 15: a lane name is one name under any case =="
+
+# RATIFIED BY BRETT HEAP 2026-09-14T00:07:18Z, verbatim *"Ratify as drafted
+# (Recommended)"*, on his question of the day before, verbatim *"can we make
+# lane names case insenstive?"*. **A lane name is compared CASE-INSENSITIVELY
+# wherever a name is looked up, and the spelling the register row carries is
+# canonical.**
+#
+# WHAT IT COST TO LEARN, five minutes before it was asked about. At
+# 2026-09-13T23:51:56Z a `lane-start openxfactory 2`, typed in lowercase for the
+# lane `openXfactory-2` that had run since 2026-09-02, found NO row — the row
+# key was the one exact comparison left in the tooling, while `repos.tsv`,
+# `lane_named_ci`, Rule 6 attribution and home matching already lowercased —
+# minted a new session, named the window `openxfactory-2` and appended a SECOND
+# row, while its object log went on into `lanes/log/openxfactory-2.md`, the one
+# file both spellings had always shared. Two rows, one lane, one log.
+#
+# THE CHECKOUT IS COMMITTED FIRST, for the reason the section below this one
+# gives in the same words: the cases above leave the sandbox workspace dirty on
+# purpose, and `lanes-edit.sh` REFUSES an object-log write on a checkout it
+# cannot rebase — which is those cases' subject and not this one's.
+git -C "$WIP" add -A >/dev/null 2>&1
+git -C "$WIP" commit -q -m "commit the sandbox's pending edits before the Amendment 15 cases" >/dev/null 2>&1 || :
+
+# THE FIXTURE IS THE INCIDENT'S OWN SHAPE: a MIXED-CASE row, a checkout whose
+# directory is spelled that way too, and a log file already written under the
+# LOWERCASE name — which is the state `openXfactory-2` was actually in.
+mkdir -p "$HOME/projects/repoCase"
+git init -q -b main "$HOME/projects/repoCase"
+git -C "$HOME/projects/repoCase" remote add origin "https://github.com/opensoft/repoCase.git"
+casedir="$HOME/.claude/projects/$(sanitize "$HOME/projects/repoCase")"
+mkdir -p "$casedir"
+printf '{"type":"custom-title","customTitle":"repoCase-1","sessionId":"%s"}\n' "$DEAD_ID" > "$casedir/$DEAD_ID.jsonl"
+add_seed_row "| \`repoCase-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoCase/x.md | ACTIVE |"
+{ printf '# lane repocase-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoCase-1, session %s@Eagle, %s, lane:repoCase-1 → home opensoft/repoCase; estate repoCase\n' "$DEAD_ID" "$OLD_UTC"
+} > "$LOGD/repocase-1.md"
+# THE PAIR THE AMENDMENT MAKES IMPOSSIBLE, seeded as it existed: two rows whose
+# lane names differ only by case. Every writer refuses on it until 15(d)'s merge.
+add_seed_row "| \`repoPair-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoPair/x.md | ACTIVE |"
+PAIR_ID="abcdef01-15c5-4000-8000-abcdef0115c5"
+add_seed_row "| \`repopair-1\` | harness \`$PAIR_ID\` | Eagle / test / brett | 2026-09-13T23:51Z | none | handoffs/repoPair/x.md | STARTING |"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed a mixed-case row with a lowercase log, and the case pair 15(d) merges"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+# ---------------------------------------------- act 2: lane-start, both halves
+
+: > "$FAKE_TMUX_LOG"
+run env FAKE_TMUX_WINDOW_NAME=claude FAKE_TMUX_WINDOW="testsess:@1" FAKE_TMUX_WINDOW_INDEX=0 \
+    "$START" repocase 1 --no-launch
+is    "a lowercase <repo> <n> resolves to the mixed-case row and exits 0" "$rc" 0
+is    "…resuming the row's recorded session, --name'd with the ROW's spelling" \
+      "$(launch_of "$out")" "claude --name repoCase-1 --resume $DEAD_ID"
+has   "…renaming the window to the row's spelling" "$(cat "$FAKE_TMUX_LOG")" "rename-window repoCase-1"
+hasnt "…and never to the spelling that was typed" "$(cat "$FAKE_TMUX_LOG")" "rename-window repocase-1"
+has   "…saying which spelling it resolved to, and why" "$err" "lane repocase-1 → repoCase-1"
+is    "…the register still has exactly ONE row for the lane" "$(grep -c '^| `repoCase-1`' "$LANES")" 1
+is    "…and no second row under the typed spelling — the 23:51:56Z defect" \
+      "$(grep -c '^| `repocase-1`' "$LANES")" 0
+has   "…it APPENDED a status rather than adding a row" \
+      "$(git -C "$WIP" log --oneline -1 -- lanes/LANES.md)" "lane-start on"
+has   "…and the stamp it appended carries the canonical spelling" \
+      "$(grep '^| `repoCase-1`' "$LANES")" "(lane repoCase-1)"
+has   "…having found the checkout by its real directory name, not the typed one" \
+      "$(grep '^| `repoCase-1`' "$LANES")" "dir $HOME/projects/repoCase,"
+
+# THE LOG FILE IS THE ROW'S SPELLING, AND THE RENAME IS PART OF THE WRITE.
+is    "the lane's log is now named for the row" \
+      "$(ls "$LOGD" | grep -c '^repoCase-1\.md$' || :)" 1
+is    "…and the lowercase name it was written under is gone from the directory" \
+      "$(ls "$LOGD" | grep -c '^repocase-1\.md$' || :)" 0
+is    "…so there is exactly ONE log for this lane, whatever the case" \
+      "$(ls "$LOGD" | grep -ci '^repocase-1\.md$' || :)" 1
+has   "…and the line lane-start wrote is in it, under the canonical lane" \
+      "$(cat "$LOGD/repoCase-1.md")" "RESUMED — lane repoCase-1,"
+has   "…with the lane OBJECT canonical too, so the log's own key does not fork" \
+      "$(cat "$LOGD/repoCase-1.md")" "lane:repoCase-1 →"
+case_sha="$(git -C "$WIP" log -1 --format=%H -- lanes/log/repoCase-1.md)"
+has   "the rename landed in the WRITE's own commit, not a commit of its own" \
+      "$(git -C "$WIP" log -1 --format=%s "$case_sha")" "LOG(repoCase-1@Eagle): RESUMED"
+has   "…which names the old path" \
+      "$(git -C "$WIP" show --name-status --format= "$case_sha")" "lanes/log/repocase-1.md"
+has   "…and the new one, in the one commit" \
+      "$(git -C "$WIP" show --name-status --format= "$case_sha")" "lanes/log/repoCase-1.md"
+# ONCE. The file is already the row's spelling now, so there is nothing left to
+# rename and the next write must not say there was.
+run env LANES_LANE=repocase-1 LANES_SESSION="$DEAD_ID" "$E" log PAUSED lane:repocase-1 --no-github
+is    "a second write to the same lane exits 0" "$rc" 0
+hasnt "…and renames nothing, because the rename happened once" "$err" "the row's spelling names its log"
+is    "…the directory still holds one log for the lane" \
+      "$(ls "$LOGD" | grep -ci '^repocase-1\.md$' || :)" 1
+has   "…and the line it wrote is under the row's spelling, from a lowercase LANES_LANE" \
+      "$(tail -n1 "$LOGD/repoCase-1.md")" "PAUSED — lane repoCase-1,"
+
+# add-row REFUSES THE CASE-DUPLICATE, AND NAMES THE ROW THAT IS THERE. This is
+# the act the incident got past: `row_line`'s exactly-one test failing for the
+# OTHER reason used to read as "no row, go ahead".
+run "$E" add-row "| \`repocase-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoCase/x.md | ACTIVE |"
+is    "add-row refuses a row whose lane differs from an existing one only by case" "$rc" 2
+has   "…naming the row that is already there, in its own spelling" "$err" "spelled repoCase-1"
+has   "…and citing the clause that makes the two one lane" "$err" "Amendment 15(a)"
+is    "…adding nothing" "$(grep -c '^| `repocase-1`' "$LANES")" 0
+
+# A REPO DIRECTORY TYPED IN THE WRONG CASE IS FOUND — asserted above through the
+# recorded `dir` — AND TWO THAT DIFFER ONLY BY CASE ARE A REFUSAL NAMING BOTH.
+# On a case-INSENSITIVE filesystem the pair cannot exist and the case is skipped
+# rather than asserted vacuously.
+mkdir -p "$HOME/projects/repoTwin" "$HOME/projects/repotwin" 2>/dev/null || :
+twin_n="$(ls "$HOME/projects" | grep -ci '^repotwin$' || :)"
+if [ "$twin_n" = 2 ]; then
+  run "$START" repotwin 1 --no-launch
+  is    "two \$PROJECTS_ROOT directories differing only by case refuse with 2" "$rc" 2
+  has   "…saying how many there are" "$err" "holds 2 directories whose names differ only by case"
+  has   "…naming the one that is not what was typed" "$err" "repoTwin"
+  has   "…citing the clause" "$err" "Amendment 15(a)"
+  has   "…and naming the flag that settles it" "$err" "--dir <path>"
+  is    "…and renaming nothing" "$(grep -c 'repotwin-1' "$FAKE_TMUX_LOG")" 0
+else
+  skip "two \$PROJECTS_ROOT directories differing only by case refuse with 2" \
+       "this filesystem is case-insensitive, so the pair cannot exist on it"
+fi
+
+# ------------------------------- act 1: every writer refuses the pair, by name
+
+for a15_cmd in "log" "claim" "append-session-id"; do
+  case "$a15_cmd" in
+    log)               run env LANES_LANE=repopair-1 LANES_SESSION="$DEAD_ID" "$E" log PAUSED lane:repopair-1 --no-github ;;
+    claim)             run env LANES_LANE=repopair-1 LANES_SESSION="$DEAD_ID" "$E" claim "opensoft/repoPair#1" --no-github ;;
+    append-session-id) run "$E" append-session-id repopair-1 "$DEAD_ID" "→ harness \`$PAIR_ID\`" ;;
+  esac
+  is   "$a15_cmd refuses a register holding two rows that differ only by case" "$rc" 2
+  has  "…naming the older spelling" "$err" "repoPair-1"
+  has  "…naming the newer one beside it" "$err" "repopair-1"
+  has  "…and citing the merge that is a person's act" "$err" "Amendment 15(d)"
+done
+is   "…and none of the three wrote a log for the lane" \
+     "$(ls "$LOGD" | grep -ci '^repopair-1\.md$' || :)" 0
+
+# ------------------------------------------- act 1: Rule 6 attribution, Rule 10
+#
+# Rule 10's wire form is LOWERCASE — `Lane: openxfactory-2 (openXfactory-2)` —
+# while the row's token is camel, which is why `append-line` has matched the
+# name case-insensitively since `5219569`. Under this amendment it must still
+# match, and the commit it makes must carry the ROW's spelling.
+run "$E" append-line "LANDING — lane repocase-1, session $DEAD_ID@Eagle, 2026-09-11T01:00:00Z, PR #3 into opensoft/repoCase main"
+is   "append-line with a lowercase lane name in its text exits 0" "$rc" 0
+has  "…attributing the commit to the ROW's spelling, not the line's" \
+     "$(git -C "$WIP" log --oneline -1 -- lanes/LANES.md)" "LANES(repoCase-1@Eagle)"
+has  "…and the line itself lands verbatim, because a Rule 6 line is never rewritten" \
+     "$(tail -n5 "$LANES")" "LANDING — lane repocase-1,"
+
+# ------------------------------------- acts 1 and 3: the reads take either case
+
+run "$E" who --lane repocase-1 --no-fetch
+has  "who --lane takes the lowercase spelling and answers about the mixed-case row" \
+     "$out$err" "repoCase-1"
+run "$E" lanes --lane repocase-1
+is   "lanes --lane takes the lowercase spelling" "$rc" 0
+is   "…and column 1 is the row's own spelling, never the typed one" \
+     "$(printf '%s' "$out" | cut -f1)" "repoCase-1"
+run "$E" register-row repocase-1
+is   "register-row takes it too" "$rc" 0
+has  "…answering with the mixed-case row" "$out" "| \`repoCase-1\` |"
+run "$E" canon-lane REPOCASE-1
+is   "canon-lane answers 0 for a name the register spells differently" "$rc" 0
+is   "…with the row's own spelling" "$out" "repoCase-1"
+run "$E" canon-lane repoNoRow-9
+is   "…and 0 with the TYPED spelling for a lane no row carries, so add-row can create it" "$rc" 0
+is   "…unchanged" "$out" "repoNoRow-9"
+run "$E" canon-lane repopair-1
+is   "…and 2 for the pair, which is a refusal and not an absence" "$rc" 2
+has  "…naming both spellings" "$err" "repoPair-1"
+
+run env -u TMUX "$RESTART" repocase-1 </dev/null
+hasnt "restart takes the lowercase spelling and never reports a missing row" "$err" "has no row for lane"
+has   "…speaking of the lane by the row's own spelling" "$out$err" "repoCase-1"
+
+run "$END" repocase-1 --force
+is   "lane-end takes the lowercase spelling" "$rc" 0
+has  "…and the status it appends names the row's own spelling" \
+     "$(grep '^| `repoCase-1`' "$LANES")" "lane-end on Eagle: window closing"
+has  "…as does the ENDED line in the lane's log" \
+     "$(tail -n1 "$LOGD/repoCase-1.md")" "ENDED — lane repoCase-1,"
+
 echo "== the workstation seam: unset, every writer reads the host =="
 
 # THE OTHER HALF OF R-A9-13. Every case above this line runs with
