@@ -1005,16 +1005,36 @@ git_timeout_die() {   # <the command, for the reader>
 # register alone, which is every caller that predates Amendment 7. A LANDING
 # or LANDED writes TWO (the register and the lane's log) so that both halves
 # of one act land in one commit and no reader ever sees half of it.
+# AMENDMENT 15 — `-c core.ignorecase=false` ON THE STAGING, AND IT IS THE ONLY
+# WAY A CASE-ONLY RENAME IS EVER RECORDED. `ensure_log` renames a lane-s log to
+# the register row-s spelling and hands BOTH paths to this function; on a
+# case-INSENSITIVE filesystem git-s index matches them as ONE path, so
+# `git add -- lanes/log/repocase-1.md lanes/log/repoCase-1.md` stages a
+# MODIFICATION of the old name and the rename never reaches the commit at all.
+# Measured on the macOS job of openRepoTools#41 at `48f2111`: fifteen red
+# assertions, the first of them *"the rename landed in the WRITE-s own
+# commit"*, whose `git log -- <the canonical path>` came back EMPTY — and the
+# writes after it met a checkout git thought was modified and refused (2), then
+# could not rebase (3). With exact matching the old path is absent from the
+# worktree and still in the index, which is a DELETION, and the new path is a
+# file nothing in the index claims, which is an ADDITION: one commit, one
+# rename, on both kinds of filesystem.
+#
+# EVERY CALL THAT TAKES `CP_PATHS` CARRIES IT, because a pathspec that means one
+# thing to `add` and another to `commit` is the same defect one line along. It
+# narrows nothing else: these paths are this file-s own — `lanes/LANES.md` and
+# `lanes/log/<lane>.md` — spelled by the code that computes them.
+CP_EXACT="core.ignorecase=false"
 commit_push() {
   msg="$1"; shift || :
   if [ "$#" -gt 0 ]; then CP_PATHS=("$@"); else CP_PATHS=("$LANES_PATH"); fi
   [ "$NO_GIT" = 1 ] && { note "LANES_NO_GIT=1 — not committing"; return 0; }
-  git -C "$LANES_REPO" add -- "${CP_PATHS[@]}" || die "git add failed" 6
-  if git -C "$LANES_REPO" diff --cached --quiet -- "${CP_PATHS[@]}"; then
+  git -C "$LANES_REPO" -c "$CP_EXACT" add -- "${CP_PATHS[@]}" || die "git add failed" 6
+  if git -C "$LANES_REPO" -c "$CP_EXACT" diff --cached --quiet -- "${CP_PATHS[@]}"; then
     note "nothing staged for ${CP_PATHS[*]} — no commit made"
     return 0
   fi
-  git -C "$LANES_REPO" commit -q -m "$msg" -- "${CP_PATHS[@]}" || die "git commit failed" 6
+  git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "$msg" -- "${CP_PATHS[@]}" || die "git commit failed" 6
   note "committed: $msg"
   if ! remote_has_branch; then
     if ! git_net -C "$LANES_REPO" push -q -u origin "$LANES_BRANCH"; then
@@ -1027,9 +1047,9 @@ commit_push() {
   attempt=1
   while [ "$attempt" -le 6 ]; do
     # A peer may have written LANES.md between our commit and this pull.
-    if ! git -C "$LANES_REPO" diff --quiet -- "${CP_PATHS[@]}"; then
-      cap="$(git -C "$LANES_REPO" --no-pager diff --numstat -- "${CP_PATHS[@]}" | cut -f1,2 | tr '\t' '/')"
-      git -C "$LANES_REPO" commit -q -m "LANES(concurrent@$WS): capture an uncommitted registry edit ($cap lines +/-) made by whoever else is writing right now — its author should follow up with a commit that says what it was" -- "${CP_PATHS[@]}" || :
+    if ! git -C "$LANES_REPO" -c "$CP_EXACT" diff --quiet -- "${CP_PATHS[@]}"; then
+      cap="$(git -C "$LANES_REPO" -c "$CP_EXACT" --no-pager diff --numstat -- "${CP_PATHS[@]}" | cut -f1,2 | tr '\t' '/')"
+      git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "LANES(concurrent@$WS): capture an uncommitted registry edit ($cap lines +/-) made by whoever else is writing right now — its author should follow up with a commit that says what it was" -- "${CP_PATHS[@]}" || :
       note "captured a concurrent uncommitted edit ($cap lines +/-) as its own commit"
     fi
     others="$(dirty_elsewhere)"
@@ -1342,6 +1362,21 @@ ensure_log() {
   el_n="$(printf '%s' "$el_hits" | grep -c . || :)"
   if [ "$el_n" -gt 1 ]; then
     die "lane $lane has $el_n object logs whose names differ only by case: $(printf '%s\n' "$el_hits" | tr '\n' ' ')— one lane is ONE lane under any case and its log is ONE file (Amendment 15). Merge them by hand into $lf, oldest lines first, remove the others in the same commit, and re-run. Nothing was written." 2
+  fi
+  # A LOG THIS CHECKOUT HAS NOT PULLED IS STILL THIS LANE-S LOG, AND CREATING
+  # THE CANONICAL FILE BESIDE IT IS THE SPLIT THIS FUNCTION EXISTS TO PREVENT.
+  # `log_files_named_ci` reads the WORKING TREE, while every state reader here
+  # deliberately answers out of `origin/<branch>` (R19): on a checkout that is
+  # behind, a published `lanes/log/repocase-1.md` is invisible to the scan
+  # above, this write would create `repoCase-1.md`, and `commit_push`-s own
+  # rebase would then land BOTH. The refusal below is fail-closed and its cure
+  # is one command, where the cure for two published files is 15(d)-s hand
+  # merge (Copilot round 1 on openRepoTools#41).
+  if [ "$el_n" = 0 ] && have_remote_ref; then
+    el_pub="$(log_path_ci "$lane")"
+    if [ "$el_pub" != "$(log_path_for "$lane")" ]; then
+      die "lane $lane-s object log is published as $el_pub and this checkout does not have it: the row spells the lane $lane, so the log is $(log_path_for "$lane") (Amendment 15), and writing one here now would leave TWO files for one lane. Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run; the rename then happens once, inside this write-s own commit. Nothing was written." 2
+    fi
   fi
   el_from=""
   [ "$el_n" = 1 ] && el_from="$el_hits"
@@ -1785,10 +1820,17 @@ register_text() {
 # invisible behind the LANDING it closed, on the day this workstation's clock
 # was jumping ±25s. `pos()` is the line's address — its file and its line
 # number, zero-padded so that one string comparison orders both.
+# AMENDMENT 15 — KEYED ON THE LANE LOWER-CASED. The key decides how many rows
+# come out of here, and the ROW is the whole line, so the spelling a reader sees
+# is still the one the winning line carried. Keyed on the raw `$2`, a lane whose
+# log spells it two ways emitted TWO rows for ONE lane — and `claim`-s rival
+# test, which excludes its OWN row from this set, then met its own earlier
+# CLAIMED as a stranger and refused the lane its own object (Copilot round 1 on
+# openRepoTools#41).
 PER_LANE_AWK='
 function pos(pf, pn) { return pf "\034" sprintf("%09d", pn) }
 BEGIN { FS = sep }
-$6 == o { p = pos($10, $11); if (!($2 in u) || p >= u[$2]) { u[$2] = p; L[$2] = $0 } }
+$6 == o { k = tolower($2); p = pos($10, $11); if (!(k in u) || p >= u[k]) { u[k] = p; L[k] = $0 } }
 END { for (l in u) print L[l] }'
 
 # Ordered by LANE NAME, deliberately. These rows are one line per lane, so
@@ -4590,9 +4632,15 @@ swapped_candidates() {
     function pos(pf, pn) { return pf "\034" sprintf("%09d", pn) }
     BEGIN { FS = sep }
     $6 !~ /^lane:/ { next }
-    { p = pos($10, $11)
-      if (!($2 in mp) || p >= mp[$2]) {
-        mp[$2] = p; verb[$2] = $3; utc[$2] = $1; pay[$2] = $8; uuid[$2] = $4; ws[$2] = $5; obj[$2] = $6 } }
+    # AMENDMENT 15 — LOWER-CASED KEY, ORIGINAL SPELLING BESIDE IT. Which line is
+    # a lane-s LAST is what decides whether that lane is SWAPPED at all, and
+    # keyed on the raw `$2` a `PAUSED … swap;` under one spelling followed by a
+    # `RESUMED` under the other left the PAUSED alive as a candidate: `restart`
+    # would relaunch a lane that is not paused, and `window-lane` would bind a
+    # window ref the lane has since left (Copilot round 1 on openRepoTools#41).
+    { k = tolower($2); p = pos($10, $11)
+      if (!(k in mp) || p >= mp[k]) {
+        mp[k] = p; verb[k] = $3; utc[k] = $1; pay[k] = $8; uuid[k] = $4; ws[k] = $5; obj[k] = $6; nm[k] = $2 } }
     END {
       for (l in mp) {
         if (verb[l] != "PAUSED") continue
@@ -4620,9 +4668,9 @@ swapped_candidates() {
         # written, up to and including its object, which is unique to it and
         # which `git log -S` can find without a regex.
         printf "%s%c%s%c%s%c%s%c%s%c%s — lane %s, session %s@%s, %s, %s\n",
-          l, 31, utc[l], 31, (w == "" ? "unknown" : w), 31,
+          nm[l], 31, utc[l], 31, (w == "" ? "unknown" : w), 31,
           (d == "" ? "" : d), 31, (pf == "" ? "" : pf), 31,
-          verb[l], l, uuid[l], ws[l], utc[l], obj[l]
+          verb[l], nm[l], uuid[l], ws[l], utc[l], obj[l]
       }
     }'
 }
@@ -5060,8 +5108,14 @@ claim_rescan_hook() {
   # so everything this read can see landed before ours, which is the whole
   # test. Flush the cache first: the ref moved a moment ago.
   state_events_flush
+  # `-i` ON BOTH EXCLUSIONS (Amendment 15), for the reason `claim`-s own
+  # pre-check carries it: these two remove THIS lane and the lane it is taking
+  # over from the set of rivals, and the row each removes carries whatever
+  # spelling the winning line used. Byte for byte, a lane whose earlier CLAIMED
+  # says `repohold-1` under the row `repoHold-1` loses the race to ITSELF and
+  # writes a CLAIM-LOST naming itself as the winner — measured, exit 7.
   crh="$(state_events | lane_states_on "$CLAIM_OBJ" | holders_of "$CLAIM_OBJ" \
-         | grep -v "^$CLAIM_LANE$US" | { [ -n "$CLAIM_SKIP" ] && grep -v "^$CLAIM_SKIP$US" || cat; } || :)"
+         | grep -iv "^$CLAIM_LANE$US" | { [ -n "$CLAIM_SKIP" ] && grep -iv "^$CLAIM_SKIP$US" || cat; } || :)"
   [ -n "$crh" ] || return 0
   CLAIM_WINNER="$(first_landed_of "$CLAIM_OBJ" "$crh")"
   IFS="$US" read -r crh_lane crh_verb crh_utc crh_rest <<EOF
@@ -5256,7 +5310,17 @@ case "$cmd" in
       # `openXfactory-2`. It is still the register that decides — a candidate no
       # row matches prints nothing, so "…names no lane at all" is never
       # attributed to a lane called "at".
-      [ -n "$cand" ] && lane_tag="$(row_lane_ci "$cand")"
+      #
+      # AND THE 15(d) PAIR IS A REFUSAL HERE TOO, not an absence. `row_lane_ci`
+      # answers EMPTY for two rows exactly as it does for none, and an empty
+      # `lane_tag` is a commit attributed to nobody — a writer carrying on over
+      # the one register state the amendment says every writer refuses (Copilot
+      # round 1 on openRepoTools#41). `canon_lane` is asked for its STATUS only;
+      # which of "no row" and "one row" it is stays `row_lane_ci`-s answer.
+      if [ -n "$cand" ]; then
+        canon_lane "$cand" >/dev/null || exit 2
+        lane_tag="$(row_lane_ci "$cand")"
+      fi
     fi
     acquire_lock; handle_preexisting
     append_text_line "$text"
@@ -5433,7 +5497,12 @@ case "$cmd" in
     obj="$(canon_object "$obj_raw" "$home")" || exit 2
     ! is_lane_object "$obj" || die "a lane is not a claimable object" 2
     takeover_payload=""; takeover_note=""; takeover_from=""
-    held="$(state_events | lane_states_on "$obj" | holders_of "$obj" | grep -v "^$lane$US" || :)"
+    # `-i`, FOR THE SAME REASON THE KEY ABOVE IS LOWER-CASED (Amendment 15).
+    # This is the lane REMOVING ITSELF from the holders of the object it is
+    # about to claim, and the row it removes carries whatever spelling the
+    # winning line used. Byte for byte, a lane whose own earlier CLAIMED says
+    # `repohold-1` under the row `repoHold-1` is refused its own object.
+    held="$(state_events | lane_states_on "$obj" | holders_of "$obj" | grep -iv "^$lane$US" || :)"
     if [ -n "$held" ]; then
       who_object "$obj" || :
       IFS="$US" read -r h_lane h_verb h_utc h_file h_line <<EOF
@@ -6011,11 +6080,25 @@ EOF
     # exactly the empty case. The rebuild also stops assuming the value sits at
     # `i + 1`; it takes the word AFTER `--lane`, which is what the parser above
     # guarantees there is one of.
+    # `--all` IS ABSOLUTE AND IT CLEARS `--lane` (the reset inside `lanes_rows`
+    # says so in terms), so a `--lane` it is about to throw away must not be
+    # resolved — and must not REFUSE. `lanes --all --lane <the 15(d) pair>` is
+    # the every-lane listing, in either flag order, and exiting 2 on a selector
+    # this run ignores would hide every lane for a name nothing was asked about
+    # (Copilot round 1 on openRepoTools#41).
+    lns_all=0
+    for lns_a in ${lns_args[@]+"${lns_args[@]}"}; do
+      case "$lns_a" in --all) lns_all=1 ;; esac
+    done
     lns_new=(); lns_take=0
     for lns_a in ${lns_args[@]+"${lns_args[@]}"}; do
       if [ "$lns_take" = 1 ]; then
         lns_take=0
-        lns_one="$(canon_lane "$lns_a")" || exit 2
+        if [ "$lns_all" = 0 ]; then
+          lns_one="$(canon_lane "$lns_a")" || exit 2
+        else
+          lns_one="$lns_a"
+        fi
         lns_new+=("$lns_one")
         continue
       fi

@@ -679,8 +679,19 @@ if [ -n "$repo" ] && [ -d "$PROJECTS_ROOT" ]; then
   repo_hits="$(projects_dir_matches "$repo" || :)"
   repo_hit_n=0
   if [ -n "$repo_hits" ]; then repo_hit_n="$(printf '%s\n' "$repo_hits" | grep -c . || :)"; fi
-  if [ "$repo_hit_n" -gt 1 ]; then
+  # THE REFUSAL IS FOR A RUN THAT HAS NO OTHER ANSWER, AND `--dir` IS THE OTHER
+  # ANSWER. Its own remedy names `--dir <path>`, so refusing a run that already
+  # passed one is refusing the fix it printed: `lane-start --dir /chosen repotwin
+  # 1` was rejected before the rung that honours the flag (Copilot round 1 on
+  # openRepoTools#41). With the checkout named, the ambiguity that is left is
+  # only about the lane-s NAME, which keeps the spelling that was typed and is
+  # then overruled by the register row-s a few lines below — so this SAYS what
+  # it did not resolve and carries on.
+  if [ "$repo_hit_n" -gt 1 ] && [ -z "$dir_override" ]; then
     die "$PROJECTS_ROOT holds $repo_hit_n directories whose names differ only by case for '$repo': $(printf '%s\n' "$repo_hits" | tr '\n' ' ')— a lane name is ONE name under any case (Amendment 15(a)), so there is no spelling of '$repo' this can take without choosing which repository the lane is in. Name the checkout yourself with --dir <path>, or rename one of those directories." 2
+  fi
+  if [ "$repo_hit_n" -gt 1 ]; then
+    note "$PROJECTS_ROOT holds $repo_hit_n directories whose names differ only by case for '$repo': $(printf '%s\n' "$repo_hits" | tr '\n' ' ')— --dir has named the checkout, so this run is not ambiguous about WHERE the lane is. Its NAME keeps the '$repo' you typed, and the register row's own spelling wins over that below (Amendment 15(a))."
   fi
   if [ "$repo_hit_n" = 1 ] && [ "$repo_hits" != "$repo" ]; then
     step "repo $repo → $repo_hits (Amendment 15(a): the checkout's real directory name under $PROJECTS_ROOT)"
