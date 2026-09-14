@@ -1710,9 +1710,10 @@ $unrelated
         openRepoTools wip init"
 				fi
 				wip_fetch_template_file "$rel" "$dest" "$ref" ||
-					die "could not fetch $WIP_TEMPLATE_DIR/$rel from $SHAPE_REPOSITORY at $ref, so the
-    workspace was NOT seeded. The clone at $checkout is untouched and a re-run
-    picks up from here. Both ways were tried:
+					die "could not fetch $WIP_TEMPLATE_DIR/$rel from $SHAPE_REPOSITORY at $ref, so $rel
+    itself was NOT seeded. Nothing beyond an earlier template path's own bytes in
+    this same run, if it reached one before this fetch, was written into that
+    checkout, and nothing was staged; a re-run picks up from here. Both ways were tried:
     gh api repos/$SHAPE_REPOSITORY/contents/$WIP_TEMPLATE_DIR/$rel?ref=$ref
     curl -fsSL https://raw.githubusercontent.com/$SHAPE_REPOSITORY/$ref/$WIP_TEMPLATE_DIR/$rel"
 				wip_substitute "$dest"
@@ -1748,9 +1749,10 @@ $unrelated
 			continue
 		fi
 		wip_fetch_template_file "$rel" "$dest" "$ref" ||
-			die "could not fetch $WIP_TEMPLATE_DIR/$rel from $SHAPE_REPOSITORY at $ref, so the
-    workspace was NOT seeded. The clone at $checkout is untouched and a re-run
-    picks up from here. Both ways were tried:
+			die "could not fetch $WIP_TEMPLATE_DIR/$rel from $SHAPE_REPOSITORY at $ref, so $rel
+    itself was NOT seeded. Nothing beyond an earlier template path's own bytes in
+    this same run, if it reached one before this fetch, was written into that
+    checkout, and nothing was staged; a re-run picks up from here. Both ways were tried:
     gh api repos/$SHAPE_REPOSITORY/contents/$WIP_TEMPLATE_DIR/$rel?ref=$ref
     curl -fsSL https://raw.githubusercontent.com/$SHAPE_REPOSITORY/$ref/$WIP_TEMPLATE_DIR/$rel"
 		wip_substitute "$dest"
