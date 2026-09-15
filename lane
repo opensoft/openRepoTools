@@ -429,10 +429,18 @@ fi
 #   1 lane · 2 state · 3 workstation · 4 profile · 5 window · 6 last uuid ·
 #   7 directory · 8 objects · 9 age · 10 the line that restarts it · 11 home ·
 #   12 live forks of its transcript
+# AND AMENDMENT 19's FOUR: 13 the row's class (`closed`, `dormant` or `none`) ·
+# 14 its `started` cell · 15 its state cell's head · 16 the flag words in that
+# cell. A closed or dormant row never reaches this word — `lanes_rows` leaves
+# them out of the listing and `lane_groups` drops them by state as well — but
+# the four fields are READ here all the same: this split takes the row BY
+# POSITION, and four unread fields at the end land in the twelfth, which is the
+# fork count this command prints a defect for.
 R_LANE=""; R_STATE=""; R_WS=""; R_PF=""; R_WIN=""; R_SID=""; R_DIR=""
 R_OBJ=""; R_AGE=""; R_CMD=""; R_HOME=""; R_FK=""
+R_CLASS=""; R_START=""; R_WAS=""; R_FLAGS=""
 split_row() {   # <row>
-	IFS="$TAB" read -r R_LANE R_STATE R_WS R_PF R_WIN R_SID R_DIR R_OBJ R_AGE R_CMD R_HOME R_FK <<EOF
+	IFS="$TAB" read -r R_LANE R_STATE R_WS R_PF R_WIN R_SID R_DIR R_OBJ R_AGE R_CMD R_HOME R_FK R_CLASS R_START R_WAS R_FLAGS <<EOF
 ${1-}
 EOF
 	case "${R_DIR:-none}" in none) R_DIR="" ;; esac

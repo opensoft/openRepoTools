@@ -474,11 +474,17 @@ case-insensitively before that scan. Without that, a substring match on
 `CLAIMED` inside `NOTHING CLAIMED` would refuse on every healthy lane in the
 register.
 
-`--retire` also marks the cell `RETIRED <UTC>`, by replacing the **state word
-the cell opens with** — never the whole cell, which is the row's history and
-the reason the register exists. `replace-in-row` requires that word to be
-unique in the row; when it is not, the refusal prints the exact
-`--state-was "<text>"` re-run.
+`--retire` is **the same single write**, carrying `RETIRED` instead of `ENDED`
+— since Amendment 13(a) the state cell is one phrase that `set-row-state`
+REPLACES, so there is no second act, no word to find inside the cell and no
+history in it to preserve. `--state-was "<text>"` named the exact text the old
+two-step had to replace; it is **accepted and ignored**, and a re-run that
+passes it does the same thing a re-run without it does.
+
+`lane-end --retire-dormant <repo>` is a **different act again** and ends no
+lane: it is Amendment 19(c)'s sweep of the rows that have no lane left to end.
+It is described under [A closed or dormant lane leaves the
+listing](#a-closed-or-dormant-lane-leaves-the-listing-amendment-19) below.
 
 It **never renames the window.** The name is the lane's history until the next
 `lane-start` takes that window, and a window renamed back to `claude` is a
@@ -1548,9 +1554,9 @@ falls to its next rung there rather than refusing.
 | `lanes-edit.sh session-lane <uuid>` | the lane whose register row's **session cell** names that transcript uuid. Adoption act 0's; it is the read the `SessionStart` hook already made. **0** the lane · **8** no row's cell names it · **64** usage — like every other read in this table, by A11 Addendum 4 ruling 1, which corrects act 0's `2` · **2** a helper predating the read |
 | `lanes-edit.sh last-session <lane>` | the lane's resume target: the last uuid in the published cell **whatever shape it is in**, and failing that the session of its last `PAUSED`/`RESUMED`. This is what `/restart`'s step 4 reads, by A11 Addendum 4 ruling 14, rather than clause (f)'s `register-row` alone — so a lane whose row was never stamped but whose log records the session it paused in still has a resume target |
 | `lanes-edit.sh forks <lane>` | the **live forks** of the lane's transcript — never holders, and a defect to retire |
-| `lanes-edit.sh lanes [--repo\|--dir\|--prefix\|--ws\|--lane\|--here\|--all\|--fetch]` | every lane, newest write first, tab-separated: clause (j)'s **ten columns in clause (j)'s order** — name, state, workstation, profile, window, last transcript uuid, directory, held objects, age, the line that binds it — then the read's own two, `home` and the count of live forks. `lanes` and `lane` each render the subset their surface needs (A11 Addendum 4 ruling 7), and column 10 is the read's so the two cannot offer different commands; since Amendment 18 Addendum 2 the word it names is `lane <name>`. **The one read whose default is local**, and `--lane <lane>` answers about one without walking the estate. `--prefix <repo>` is the LABEL fallback the checkout narrowing and `lane-start <repo>` both ask for, used only where a lane has neither a home nor a `dir` |
+| `lanes-edit.sh lanes [--repo\|--dir\|--prefix\|--ws\|--lane\|--here\|--all\|--closed\|--fetch]` | every lane, newest write first, tab-separated: clause (j)'s **ten columns in clause (j)'s order** — name, state, workstation, profile, window, last transcript uuid, directory, held objects, age, the line that binds it — then the read's own two, `home` and the count of live forks, then Amendment 19's four: the row's **class** (`closed`, `dormant` or `none`), its `started` cell, its state cell's **head** and the **flag words** in that cell. **CLOSED and DORMANT rows are left out unless `--closed` is passed** (19(b)); `--lane <name>` is never filtered, because its caller has named the lane. `lanes` and `lane` each render the subset their surface needs (A11 Addendum 4 ruling 7), and column 10 is the read's so the two cannot offer different commands; since Amendment 18 Addendum 2 the word it names is `lane <name>`. **The one read whose default is local**, and `--lane <lane>` answers about one without walking the estate. `--prefix <repo>` is the LABEL fallback the checkout narrowing and `lane-start <repo>` both ask for, used only where a lane has neither a home nor a `dir` |
 | `lanes-edit.sh lane-groups [<ws>]` | **the rows on STDIN**, each with the group the pick puts it in: `available` (PARKED, or a binding that workstation proves dead), `live`, `elsewhere`. Closed and dormant rows are DROPPED (Amendment 19). It reads nothing itself — the caller has already paid for `lanes`, and two surfaces computing one partition is how they come to disagree |
-| `lanes-edit.sh next-free <repo>` | **the rows on STDIN**, and the LOWEST position no lane of that repository HAS EVER held — `ENDED` and `RETIRED` rows reserve theirs, because a lane's identity is its name and its object log `lanes/log/<lane>.md` is append-only, so a second lane at a retired position would write its life into the first one's file. The name before the position is compared whole, so `repo-foo-1` is no lane of `repo`. `lanes`'s footer and `lane`'s `f` answer both read it, so the two cannot offer different positions |
+| `lanes-edit.sh next-free <repo>` | **the rows on STDIN plus every row of this checkout's register and of `lanes/archive/LANES-retired.md`** (Amendment 19(b) and (d): the rows the listing hides and the rows `archive-rows` has moved out still hold their positions), and the LOWEST position no lane of that repository HAS EVER held — `ENDED` and `RETIRED` rows reserve theirs, because a lane's identity is its name and its object log `lanes/log/<lane>.md` is append-only, so a second lane at a retired position would write its life into the first one's file. The name before the position is compared whole, so `repo-foo-1` is no lane of `repo`. `lanes`'s footer and `lane`'s `f` answer both read it, so the two cannot offer different positions |
 | `lanes-edit.sh workstation` | `<name><TAB><source>` — `seam`, `hostname`, or `container-unset` |
 | `lanes-edit.sh fetch-age` | how old this checkout's answer is |
 
@@ -2126,6 +2132,127 @@ diverge, and nothing merges them.
 the pid, where that process is (its window, or `bg`), the profile it is under,
 and the retire act — `lane-end <lane> --retire <pid>` — and nothing is moved and
 nothing is launched.
+
+## A closed or dormant lane leaves the listing (Amendment 19)
+
+**In force — ratified by Brett Heap 2026-09-14T13:46:16Z, verbatim *"ratify
+19"*** (`brettheap/new-workstation#36`, text `#37`). It amends what `lanes`
+lists (11(j), 18(i)), gives Amendment 6(d)'s retire act a **sweep** for rows
+that predate the object log, and uses Amendment 13's `RETIRED` as a row's
+current state.
+
+It exists because of a measurement. On 2026-09-14 `lanes` inside the
+openxFactory checkout listed **nineteen rows for five lanes**: the five live
+under `team-01b`, and **fourteen marked `NO LOG`** — lanes that ran between
+2026-08-27 and 2026-09-02, before Amendment 7 gave every lane a log, and that
+were never ended under any rule that could end them. Their rows carry their own
+last words (`ended`, `dormant`, `CLOSED 2026-09-04`, one `LIVE` that is not, and
+five saying `ENDED WITHOUT PUSHING — loss risk`, `work unpushed` or `owes …`),
+and **no writer today can close them**: `lane-end` wants a live session or a log
+to write into, and they have neither.
+
+### The two states below PARKED
+
+| state | what it is | how it is read |
+|---|---|---|
+| **CLOSED** | the lane's own log has finished | the **last lane-kind line** of `lanes/log/<lane>.md` is `ENDED` or `RETIRED` |
+| **DORMANT** | a row with **no object log** and no live session on this workstation | no lane-kind line anywhere in the logs for that name, and no live session record naming any of the row's transcript ids |
+
+Neither is **bound** (18(b)) and neither is **available to bind** (18(i)): a
+closed lane's name is finished, and a dormant row's is not known to be. Both
+already left the numbered pick; this is what takes them out of the read.
+
+**One row with no log is NOT dormant:** one whose state cell is Amendment
+13(a)'s phrase and whose state word is something other than `ENDED`, `RETIRED`
+or the migration's `MIGRATED`. The row says the lane is somewhere — `PAUSED`,
+`LANDING #<n>`, `HANDED OFF` — and hiding it would hide a lane a person can
+still pick up.
+
+### The listing
+
+```console
+$ lanes                      # CLOSED and DORMANT rows are not here
+$ lanes --closed             # …and now they are, each with a second line
+$ lanes --closed --all       # every repository's
+$ lanes --closed --here      # this workstation's
+```
+
+A CLOSED lane is shown with the closing line's **verb** (the `STATE` column) and
+its **time** (the `AGE` column). A DORMANT row is shown as `NO LOG` with its
+**start date** and its **state cell's head** — the row's own last words, which
+are the only thing it has left to say — and with **FLAGS** where that cell says
+the work was `unpushed`, `lost`, a `loss` or `owed`, or still says `LIVE`.
+
+**The next free position is computed over EVERY row** — hidden rows and the
+archive of the next section included — so a retired `<repo>-<n>` is **never
+reissued**. A lane's identity is its name, its log is `lanes/log/<lane>.md` and
+that file is append-only: a second lane at a retired position would write its
+life into the first one's file, and every read of that log would answer for two
+lanes at once. Positions are cheap; identities are not.
+
+### The sweep — one act, on a word
+
+```console
+$ lane-end --retire-dormant openxFactory                      # DRY RUN
+$ LANES_LANE=<your lane> lane-end --retire-dormant openxFactory \
+      --reason "pre-Amendment-7 rows; no log, no session" --yes
+```
+
+Without `--yes` it **writes nothing** and prints every dormant row of that
+repository with its start, its workstation and the head of its state cell,
+flagging the ones above — *so the person sees what the sweep will close before
+it closes it; an agent's stdin is not a terminal, so the word is `--yes` typed
+by a person.*
+
+With `--yes` it is **ONE commit** (`lanes-edit.sh retire-rows`, the lock held
+once). Per dormant row:
+
+* `lanes/log/<lane>.md` is created with a single line —
+  `RETIRED — lane <lane>, session <the sweeping session's uuid>@<ws>, <UTC>,
+  lane:<lane> → retired-dormant by lane <writer>; reason <why>; was: <the state
+  cell's head, verbatim, capped at 240>`. The session field is the **writer's**
+  transcript uuid (7(b)), and the row's own last words are carried into the log
+  so that nothing the row said is lost when the row stops saying it;
+* the row's state cell becomes `RETIRED · <UTC> · <why>; was: <head>`. Clause
+  (c) writes that cell as `RETIRED <UTC> · <why> · was: <head>`, which is four
+  parts where 13(a)'s cell has three and whose first word would be a state no
+  reader knows; the phrase above carries the same four facts under the grammar
+  every other writer obeys, and goes through the same `row_state_check` — so the
+  240-character cap, the `|` and the second ` · ` are refused here exactly as
+  they are for `set-row-state`. A `|` a legacy cell carries becomes `/` in the
+  row (it would forge a cell boundary) and stays **verbatim** in the log line,
+  which is not a table.
+
+It **refuses**: a lane a live session holds on this workstation; a row whose log
+already carries a lane-kind line other than `ENDED`/`RETIRED` (**a parked lane
+is not dormant**); and a repository with no dormant row — *nothing to do is
+said, not done* (exit **8**). Any one of them refuses the **whole run**, before
+a byte is written, because it is one commit and therefore one decision. It also
+refuses a session-record read that failed: *"a read that failed is not 'nothing
+is live'"*.
+
+It touches **no file outside the register and the logs**. A retired row records
+that a lane is finished; worktrees, branches and handoffs stay exactly where
+they are.
+
+### The archive — a second act on a second word
+
+```console
+$ lanes-edit.sh archive-rows openxFactory                     # DRY RUN
+$ lanes-edit.sh archive-rows openxFactory --yes               # ONE commit
+```
+
+It moves every **`RETIRED`** row of that repository out of `lanes/LANES.md` and
+into **`lanes/archive/LANES-retired.md`**, in one commit whose message names
+each lane moved. The archive is written **first** and the rows removed second,
+so a refusal between the two leaves a copy in the archive and the register
+whole, never a row in neither file.
+
+Nothing reads a row differently for having moved: the listing reads the archive
+beside the register (so `lanes --closed` still shows those rows) and so does
+every reader of the next free position. **Rule 9 holds either way** — a row is
+one `git show` away — so the archive is for a register a person wants shorter,
+and never a requirement.
 
 ## Hand edits
 

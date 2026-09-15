@@ -25,6 +25,10 @@
 #   lane-end [options] <lane>            # lane-end openRepoShape-2
 #   lane-end <lane> --retire <pid|uuid>  # retire a live FORK (pid or uuid) or a
 #                                        # DUPLICATE (pid); ends nothing
+#   lane-end --retire-dormant <repo> [--reason "<why>"] [--yes]
+#                                        # the DORMANT rows of one repository,
+#                                        # dry run by default; --yes is ONE
+#                                        # commit (Amendment 19(c))
 #   lane-end [options] <repo> <n>        # the split form works too
 #   lane-end [options] <n>               # <repo> = basename of the cwd's git root
 #
@@ -89,6 +93,34 @@
 #                       nothing they do. It is CHECKED FIRST, through the
 #                       writer's own `resolve-home`, because the only line it
 #                       reaches is written after the row is already closed
+#   --retire-dormant <repo>
+#                       A THIRD ACT, and it ends no lane either: the SWEEP of
+#                       lane-collision-protocol Amendment 19(c). A DORMANT row
+#                       is one with NO object log and no live session here — a
+#                       lane from before Amendment 7 gave every lane a log, or
+#                       one whose log was never created. No `lane-end <lane>`
+#                       can close those: this command wants a live session or a
+#                       log to write into, and they have neither, so they sit at
+#                       the top of every `lanes` and the next free position is
+#                       read past them. Without `--yes` this is a DRY RUN that
+#                       names every dormant row of `<repo>` with its start, its
+#                       workstation and the head of its state cell, and FLAGS
+#                       each row whose cell says the work was unpushed, lost, a
+#                       loss or owed, or still says LIVE — so a person sees what
+#                       the sweep will close before it closes it. With `--yes`
+#                       it is ONE commit (`lanes-edit.sh retire-rows`): each
+#                       lane's log is created with a single `RETIRED` line
+#                       carrying the reason and the row's own last words, and
+#                       the row's state becomes `RETIRED · <UTC> · <why>;
+#                       was: <head>`. It REFUSES a lane a live session holds
+#                       here and a row whose log says the lane is parked, and it
+#                       touches NO file outside the register and the logs —
+#                       worktrees, branches and handoffs stay exactly where they
+#                       are. An agent's stdin is not a terminal, so `--yes` is a
+#                       word a PERSON types.
+#   --reason "<why>"    the words the sweep writes into each RETIRED line and
+#                       into each row's state cell. `--retire-dormant` only
+#   --yes               make the sweep the one act. `--retire-dormant` only
 #   --dry-run           print what would be written; write nothing
 #   -h, --help
 #
@@ -439,6 +471,7 @@ usage() { sed -n -e '1,2d' -e '/^#/!q' -e 's/^# \{0,1\}//' -e p "$RESOLVED"; }
 # ------------------------------------------------------------------ arguments
 
 retire=0; force=0; dry_run=0; state_was=""; home_override=""; retire_target=""
+retire_dormant=""; sweep_reason=""; sweep_yes=0
 positional=()
 
 # A TRANSCRIPT UUID AND A PID, TOLD APART FROM A LANE ARGUMENT BY SHAPE.
@@ -476,6 +509,24 @@ while [ $# -gt 0 ]; do
       else
         shift
       fi ;;
+    # AMENDMENT 19(c) — THE SWEEP. It takes the REPOSITORY as its own value, so
+    # that nothing about it is ambiguous with the lane argument this command
+    # otherwise takes: `lane-end --retire-dormant openxFactory` names a
+    # repository and never a lane, and the bare form with the repository as a
+    # positional is accepted for the reader who typed it that way.
+    --retire-dormant)
+      case "${2-}" in
+        '' | -*) retire_dormant="-" ;;
+        *) retire_dormant="$2"; shift ;;
+      esac
+      shift ;;
+    --retire-dormant=*)
+      retire_dormant="${1#--retire-dormant=}"
+      [ -n "$retire_dormant" ] || die "--retire-dormant= needs the repository whose dormant rows are to be swept" 2
+      shift ;;
+    --reason)      sweep_reason="${2-}"; [ -n "$sweep_reason" ] || die "--reason needs the words that say why" 2; shift 2 ;;
+    --reason=*)    sweep_reason="${1#--reason=}"; [ -n "$sweep_reason" ] || die "--reason needs the words that say why" 2; shift ;;
+    --yes)         sweep_yes=1; shift ;;
     --home)        home_override="${2-}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift 2 ;;
     --home=*)      home_override="${1#--home=}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift ;;
     --force)       force=1; shift ;;
@@ -488,6 +539,124 @@ while [ $# -gt 0 ]; do
     *)             positional+=("$1"); shift ;;
   esac
 done
+
+# ------------------- AMENDMENT 19(c): `--retire-dormant <repo>`, THE SWEEP ---
+#
+# IT IS NOT A LANE ARGUMENT AND IT NEVER ENDS A LANE, so it is answered here —
+# before the `<lane>` derivation below, which would otherwise refuse this line
+# for naming no lane at all.
+#
+# THE DRY RUN IS THE DEFAULT AND THE AMENDMENT SAYS WHY: *"so the person sees
+# what the sweep will close before it closes it; an agent's stdin is not a
+# terminal, so the word is `--yes` typed by a person"*. This half makes no
+# decision of its own about what is dormant: it asks the READ — `lanes --closed
+# --prefix <repo>`, whose thirteenth column is the row's class — so the listing
+# and the sweep can never disagree about which rows they are talking about, and
+# `lanes-edit.sh retire-rows` re-proves every one of clause (c)'s refusals for
+# itself before it writes a byte.
+if [ -n "$retire_dormant" ]; then
+  [ "$retire" = 0 ] || die "--retire and --retire-dormant are two different acts: --retire is a lane's own ending (or a live fork's), and --retire-dormant sweeps a repository's rows that have no lane left to end. Run one of them." 2
+  [ "$force" = 0 ] || die "--force ends a lane that still holds something; it has no meaning for a sweep of rows whose lanes ended before Amendment 7. Nothing was written." 2
+  [ -z "$state_was" ] || die "--state-was is for the state cell of a lane being ended; the sweep writes each row's cell itself, from the reason and the row's own last words. Nothing was written." 2
+  [ -z "$home_override" ] || die "--home is for a pre-cutover lane's own log line; the sweep writes no home into anything. Nothing was written." 2
+  [ "$dry_run" = 0 ] || sweep_yes=0
+  # THE REPOSITORY, WHICHEVER WAY IT WAS TYPED — as the flag's value, or as the
+  # one positional after a bare flag. Two of them is a refusal rather than a
+  # choice between them.
+  if [ "$retire_dormant" = "-" ]; then
+    case "${#positional[@]}" in
+      1) retire_dormant="${positional[0]}" ;;
+      0) die "which repository? $prog --retire-dormant <repo> [--reason \"<why>\"] [--yes]" 2 ;;
+      *) die "--retire-dormant takes ONE repository: $prog --retire-dormant <repo>" 2 ;;
+    esac
+  elif [ "${#positional[@]}" -gt 0 ]; then
+    die "--retire-dormant already names the repository ($retire_dormant), so '${positional[0]}' is one argument too many. It sweeps a repository's dormant ROWS and takes no lane: $prog --retire-dormant $retire_dormant [--reason \"<why>\"] [--yes]" 2
+  fi
+  case "$retire_dormant" in
+    *[!A-Za-z0-9._-]* | '') die "'$retire_dormant' is not a repository name (letters, digits, . _ -)" 2 ;;
+  esac
+  if [ -z "${LANES_FILE:-}" ]; then die "$(lanes_workspace_why)" 1; fi
+  [ -f "$LANES_FILE" ] || die "no register at $LANES_FILE — the workspace repository $(lanes_ws_yaml) names carries no lanes/LANES.md. \`openRepoTools wip init\` seeds one (it is idempotent); or set LANES_FILE" 1
+  [ -x "$LANES_EDIT" ] || die "no register writer at $LANES_EDIT — \`lanes-edit.sh\` is installed beside this command by \`openRepoTools --install\`. Run that, or set LANES_EDIT" 1
+
+  # THE READ IS FETCHED. Every other listing in this family is local by design —
+  # it sits in front of a person who is waiting — but this one sits in front of
+  # a WRITE, and a dormant row is a row about which this checkout's copy may be
+  # a week old.
+  rd_rc=0
+  rd_rows="$("$LANES_EDIT" lanes --fetch --closed --prefix "$retire_dormant")" || rd_rc=$?
+  case "$rd_rc" in
+    0) : ;;
+    8) die "no lane of $retire_dormant is recorded at all, so there is no dormant row to retire. Nothing was written." 8 ;;
+    2) die "the \`lanes-edit.sh\` on this workstation has no \`lanes\` subcommand, so it predates lane-collision-protocol Amendment 11 and cannot say which rows are dormant. This workstation has not taken the install yet:  openRepoTools --install" 2 ;;
+    *) die "$LANES_EDIT lanes --closed --prefix $retire_dormant exited $rd_rc, so which rows are dormant was never established — and that is NOT 'none of them are' (Amendment 7(d)). Run it by hand to see what it says. Nothing was written." 1 ;;
+  esac
+
+  rd_lanes=(); rd_n=0; rd_flagged=0
+  rd_report=""
+  TAB="$(printf '\t')"
+  while IFS="$TAB" read -r d_lane d_state d_ws d_pf d_win d_sid d_dir d_obj d_age d_cmd d_home d_fk d_class d_start d_was d_flags; do
+    [ -n "${d_lane:-}" ] || continue
+    [ "${d_class:-none}" = dormant ] || continue
+    rd_lanes+=("$d_lane")
+    rd_n=$((rd_n + 1))
+    d_mark="    "
+    case "${d_flags:-none}" in
+      none | '') d_flags="" ;;
+      *) d_mark="FLAG"; rd_flagged=$((rd_flagged + 1)) ;;
+    esac
+    rd_report="$rd_report$(printf '  %s %-26s %-20s %-10s %s' "$d_mark" "$d_lane" "${d_start:-unknown}" "${d_ws:-unknown}" "$d_flags")
+$(printf '       was: %s' "${d_was:-none}")
+"
+  done <<EOF
+$rd_rows
+EOF
+
+  printf '%s --retire-dormant %s — %s (lane-collision-protocol Amendment 19(c))\n' \
+    "$prog" "$retire_dormant" "$( [ "$sweep_yes" = 1 ] && printf 'THE ACT' || printf 'DRY RUN, nothing is written' )"
+  printf '  register : %s\n' "$LANES_FILE"
+  printf '  dormant  : %s row(s), %s of them FLAGGED\n' "$rd_n" "$rd_flagged"
+  if [ "$rd_n" = 0 ]; then
+    die "no row of $retire_dormant is DORMANT — a dormant row is one with no object log and no live session here (Amendment 19(a)), and every row of that repository has one or the other. There is nothing to do, and nothing was done. \`lanes --closed --prefix $retire_dormant\` shows what its rows say." 8
+  fi
+  printf '\n       lane                       started              where      flags\n'
+  printf '%s' "$rd_report"
+  printf '\n  A FLAG is this row saying the work was unpushed, lost, a loss or owed, or\n'
+  printf '  still saying LIVE. Retiring the row does not lose that text: it is carried\n'
+  printf '  into the RETIRED line of the log this sweep creates, and into the cell.\n'
+  printf '  Nothing outside the register and the logs is touched — worktrees, branches\n'
+  printf '  and handoffs stay exactly where they are (Amendment 19(c)).\n'
+  if [ -n "$sweep_reason" ]; then
+    printf '  reason   : %s\n' "$sweep_reason"
+  else
+    printf '  reason   : none given — the writer names the amendment (--reason "<why>" says it better)\n'
+  fi
+
+  if [ "$sweep_yes" != 1 ]; then
+    printf '\n  DRY RUN — nothing was written. Make it the one act with:\n'
+    printf '    LANES_LANE=<your lane> %s --retire-dormant %s%s --yes\n' \
+      "$prog" "$retire_dormant" "$( [ -n "$sweep_reason" ] && printf ' --reason "%s"' "$sweep_reason" || printf ' --reason "<why>"' )"
+    exit 0
+  fi
+
+  # THE WRITER IS A LANE, AND IT IS NOT GUESSED. Every line this sweep appends
+  # carries the sweeping lane's own transcript uuid in its session field
+  # (Amendment 7(b)), and a session field that is anything else is wrong for
+  # ever in an append-only log — so the lane is named by the person running it
+  # or the act does not happen.
+  [ -n "${LANES_LANE:-}" ] ||
+    die "the sweep writes a RETIRED line into each lane's log, and the session field of every one of them is the SWEEPING lane's transcript uuid (Amendment 7(b)) — so this act needs to know which lane is doing it. Re-run it from your lane: LANES_LANE=<your lane> $prog --retire-dormant $retire_dormant --yes. Nothing was written." 2
+  rd_argv=(retire-rows)
+  for rd_l in ${rd_lanes[@]+"${rd_lanes[@]}"}; do rd_argv+=("$rd_l"); done
+  # AN `&&` LIST WHOSE TEST FAILS IS A FAILING COMMAND, and this script runs
+  # under `set -e`: written as `[ -n "$x" ] && rd_argv+=(…)` a run with no
+  # `--reason` would exit here, silently, having printed the whole dry run.
+  if [ -n "$sweep_reason" ]; then rd_argv+=(--reason "$sweep_reason"); fi
+  rd_argv+=(--writer "$LANES_LANE")
+  step "the one commit: $LANES_EDIT ${rd_argv[*]}"
+  "$LANES_EDIT" "${rd_argv[@]}"
+  exit $?
+fi
 
 # A lane name is taken VERBATIM when one argument is given: the register
 # still carries lanes named before the `<repo>-<n>` rule (browser-ui-repair,
