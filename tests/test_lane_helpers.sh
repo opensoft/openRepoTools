@@ -9119,6 +9119,19 @@ has   "…saying which cell the other reading would have overwritten" "$err" "ha
 has   "…and naming the escape a Markdown table wants" "$err" '\|'
 is    "…and the row is untouched" "$(grep '^| `repoA13-2`' "$LANES")" "$a13_amb"
 
+# THE SHARED CUT THE THREE ROW WRITERS CARRY, as a unit. It is what keeps a
+# `dir` or a launch flag holding a `|` from reaching `set-row-state`, whose
+# contract refuses every pipe — a normal start would then rename the window and
+# fail to stamp the row (Copilot round 1 on openRepoTools#82).
+a13_cut="$(bash -c 'eval "$(sed -n "/^cut_to_line() {/,/^}/p" "$1")"; cut_to_line "$2"' _ "$OPENREPOTOOLS_BIN_DIR/lane-start" "launching claude --flag a|b; dir /x · y")"
+is    "the shared cut spells a cell boundary as the broken bar" "$a13_cut" "launching claude --flag a¦b; dir /x; y"
+a13_long="$(awk 'BEGIN { s = ""; while (length(s) < 400) s = s "word "; print s }')"
+a13_cut2="$(bash -c 'eval "$(sed -n "/^cut_to_line() {/,/^}/p" "$1")"; cut_to_line "$2"' _ "$OPENREPOTOOLS_BIN_DIR/lane-start" "$a13_long")"
+is    "…and cuts a long line at a word boundary, inside the cap" \
+      "$( [ "${#a13_cut2}" -le 240 ] && echo yes || echo "no ${#a13_cut2}" )" "yes"
+has   "…saying it was cut" "$a13_cut2" " ..."
+hasnt "…never leaving half a character where the cut landed" "$a13_cut2" "wor ..."
+
 # ---- (b) `append-row-status` is RETIRED, and the refusal names both acts.
 run "$E" append-row-status repoA13-1 "anything at all"
 is    "append-row-status refuses" "$rc" 2
@@ -9166,6 +9179,23 @@ has   "…and a NOTED written AFTER the swap does not un-swap it (Amendment 13(b
 run "$E" lane-last repoA13-1
 has   "…nor does it become the lane's last lane-kind line" "$out" "PAUSED"
 
+# THE PHRASE'S LINE IS PROSE, AND `lane-end` READS THE STATE (Copilot round 1
+# on openRepoTools#82). The one path that still decides a merge hold from words
+# — a lane with no object log — scanned the WHOLE cell, so an Amendment 13
+# phrase whose line legitimately says "waiting for LANDING #7" was a false hold
+# that refused to close the lane. A LEGACY DIARY CELL IS UNCHANGED.
+"$E" add-row "| \`repoA13-3\` | harness \`$A13_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoA13/p.md | LIVE · 2026-09-14T00:00:00Z · waiting for LANDING #7 to go green |" >/dev/null 2>&1
+run "$END" repoA13-3
+is    "a phrase whose LINE mentions a landing is not a hold" "$rc" 0
+has   "…and the lane is closed" "$(grep '^| `repoA13-3`' "$LANES")" "| ENDED · "
+"$E" add-row "| \`repoA13-4\` | harness \`$A13_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoA13/q.md | LANDING #9 · 2026-09-14T00:00:00Z · CI green; waiting on review |" >/dev/null 2>&1
+run "$END" repoA13-4
+is    "…while a phrase whose STATE is LANDING still is one (Rule 6, unchanged)" "$rc" 2
+has   "…named as what it read" "$err" "the last LANDING in its state cell"
+"$E" add-row "| \`repoA13-5\` | harness \`$A13_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoA13/r.md | ACTIVE · 2026-09-12T10:00Z LANDING #7 into repoA13 main |" >/dev/null 2>&1
+run "$END" repoA13-5
+is    "…and a LEGACY diary cell is still scanned whole" "$rc" 2
+
 # ---- (d) `history` — the diary the cell used to be.
 run "$E" history repoA13-1
 is    "history exits 0 for a lane that has written a narrative" "$rc" 0
@@ -9211,20 +9241,32 @@ MIG_ID2="aaaa0015-1515-4000-8000-aaaa00151515"
   # becomes `MIGRATED`, which is clause (e)'s own word for "the state is in the
   # log now" and is not one of clause (a)'s seven.
   printf '| `repoMig-4` | harness `%s` | Eagle / test / brett | 2026-09-12 | none | handoffs/repoMig/w.md | ACTIVE · 2026-09-13T09:00:00Z rebased and re-ran the suite |\n' "$MIG_ID1"
+  # A FIFTH, already in clause (a)'s shape: this act leaves it alone, and the
+  # report counts it apart from the one-word cells, which are NOT in the shape
+  # (Copilot round 1 on openRepoTools#82).
+  printf '| `repoMig-5` | harness `%s` | Eagle / test / brett | 2026-09-12 | none | handoffs/repoMig/v.md | LIVE \302\267 2026-09-14T00:00:00Z \302\267 already the phrase |\n' "$MIG_ID1"
+  # A SIXTH, whose last entry opens `LANDING #123abc`: the number ends where the
+  # word ends, so that is NO landing and the cell becomes `MIGRATED` rather than
+  # a merge hold Rule 6 would read (Copilot round 1 on openRepoTools#82).
+  printf '| `repoMig-6` | harness `%s` | Eagle / test / brett | 2026-09-12 | none | handoffs/repoMig/u.md | ACTIVE \302\267 2026-09-13T10:00:00Z LANDING #123abc is not a number |\n' "$MIG_ID1"
 } > "$MIG_WIP/lanes/LANES.md"
 git -C "$MIG_WIP" add -A >/dev/null 2>&1
 git -C "$MIG_WIP" commit -q -m "seed the migration sandbox"
 git -C "$MIG_WIP" push -q -u origin main
 MIG_HEAD0="$(git -C "$MIG_WIP" rev-parse HEAD)"
 
+a13_tmp_before="$(ls -d "$TMPDIR"/tmp.* 2>/dev/null | grep -c . || :)"
 run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells
 is    "the migration is a DRY RUN by default" "$rc" 0
 has   "…saying so" "$out" "DRY RUN, nothing is written"
 has   "…naming the archive it would write" "$out" "lanes/archive/LANES-pre-amendment-13-"
-has   "…counting the rows it would take" "$out" "4 read · 3 to migrate · 1 already one phrase · 0 skipped"
-has   "…and the lines it would write" "$out" "log lines: 9 (7 NOTED, 2 RULED)"
+has   "…counting the rows it would take" "$out" "6 read · 4 to migrate · 1 already the phrase · 1 one word, no history · 0 skipped"
+has   "…and saying what a one-word cell still owes, since it is NOT the phrase" "$out" "the next set-row-state on each writes it"
+has   "…and the lines it would write" "$out" "log lines: 11 (9 NOTED, 2 RULED)"
 has   "…with the phrase each cell becomes" "$out" "→ PAUSED · "
 is    "…and it wrote NOTHING" "$(git -C "$MIG_WIP" status --porcelain | grep -c . || :)" 0
+is    "…and left no staging directory behind either (Copilot round 1)" \
+      "$(ls -d "$TMPDIR"/tmp.* 2>/dev/null | grep -c . || :)" "$a13_tmp_before"
 is    "…not even a commit" "$(git -C "$MIG_WIP" rev-parse HEAD)" "$MIG_HEAD0"
 
 run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --yes
@@ -9232,8 +9274,8 @@ is    "the act exits 0" "$rc" 0
 is    "…and it is ONE commit (Rule 9), not one per row" \
       "$(git -C "$MIG_WIP" rev-list --count "$MIG_HEAD0"..HEAD)" 1
 has   "…whose subject says what it did" "$(git -C "$MIG_WIP" log -1 --format=%s)" "Amendment 13(e)"
-is    "…carrying the archive, all three logs and the register, and nothing else" \
-      "$(git -C "$MIG_WIP" show --name-only --format= HEAD | grep -c .)" 5
+is    "…carrying the archive, all four logs and the register, and nothing else" \
+      "$(git -C "$MIG_WIP" show --name-only --format= HEAD | grep -c .)" 6
 is    "the pre-migration register is archived" \
       "$(ls "$MIG_WIP/lanes/archive" | grep -c '^LANES-pre-amendment-13-.*\.md$' || :)" 1
 is    "…byte for byte as it was" \
@@ -9258,6 +9300,8 @@ mig_reg="$(cat "$MIG_WIP/lanes/LANES.md")"
 has   "the cell is REPLACED by the state its last entry names" "$mig_reg" "| PAUSED · "
 has   "…LANDED where the last entry says LANDED" "$mig_reg" "| LANDED · "
 has   "…and by MIGRATED where the last entry's leading word is no state at all" "$mig_reg" "| MIGRATED · "
+is    "…and `LANDING #123abc` derives no landing, because the number ends where the word does" \
+      "$(grep '^| `repoMig-6`' "$MIG_WIP/lanes/LANES.md" | grep -c '| MIGRATED · ' || :)" 1
 has   "…every migrated cell pointing at the log that now holds its history" "$mig_reg" "history in lanes/log/repoMig-1.md |"
 hasnt "…with the diary gone from the row" "$mig_reg" "opened the PR and it went green"
 has   "…and a cell that was already one phrase is untouched" "$mig_reg" "| LIVE |"

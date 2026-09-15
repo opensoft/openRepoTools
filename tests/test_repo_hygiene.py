@@ -305,6 +305,13 @@ def test_the_three_row_writers_carry_the_same_one_line_cut_byte_for_byte():
     assert "ctl=\"${ctl% *}\"" in reference, (
         "the cut no longer drops the last partial word, which is the whole of "
         "what keeps a byte offset from landing inside a character")
+    assert 'ctl="${1// \u00b7 /; }"' in reference, (
+        "the cut no longer replaces the phrase's own separator, which "
+        "`set-row-state` refuses inside the line")
+    assert 'ctl="${ctl//|/\u00a6}"' in reference, (
+        "the cut no longer replaces a `|`, which `set-row-state` refuses "
+        "because it would forge a cell boundary in the row — and a launch "
+        "flag or a directory may legitimately carry one")
 
 
 def test_the_lane_helpers_carry_the_same_workspace_resolver_byte_for_byte():

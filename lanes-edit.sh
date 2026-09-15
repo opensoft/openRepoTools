@@ -7074,7 +7074,13 @@ mig_lead_state() {   # <entry>
           *) break ;;
         esac
       done
-      [ -n "$mls_d" ] && printf 'LANDING #%s' "$mls_d"
+      # THE NUMBER ENDS WHERE THE WORD ENDS, exactly as `state_word_is_valid`
+      # and the five states below bound theirs. Without the test `LANDING #123abc`
+      # derived the state `LANDING #123` — a merge hold Rule 6 would read, out of
+      # an entry that names no PR at all (Copilot round 1 on openRepoTools#82).
+      case "$mls_n" in
+        '' | [!A-Za-z0-9]*) [ -n "$mls_d" ] && printf 'LANDING #%s' "$mls_d" ;;
+      esac
       return 0 ;;
     'HANDED OFF' | 'HANDED OFF'[!A-Za-z0-9]*) printf 'HANDED OFF'; return 0 ;;
     LIVE    | LIVE[!A-Za-z0-9]*)    printf 'LIVE';    return 0 ;;
@@ -7144,6 +7150,13 @@ append_text_block() {   # <target> <block, lines separated by newlines>
     die "append changed line count by $((atb_after - atb_before)) where $atb_n lines were appended; inspect $atb_t" 5
   { cat -- "$atb_pre"; printf '%s\n' "$atb_b"; } | cmp -s -- "$atb_t" - ||
     die "append rewrote existing bytes; inspect $atb_t" 5
+  # AND THE COPY GOES, because it is a whole log and there is one per lane: the
+  # live register's migration makes twenty of them in a run, and a dry run makes
+  # them while reporting that nothing was written (Copilot round 1 on
+  # openRepoTools#82). It is removed HERE, where the proof has just passed, and
+  # a `die` above leaves it for the same reason every other `mktemp -d` in this
+  # file leaves one: a refused write is evidence.
+  rm -rf -- "$ATB_TMPD"
   note "$atb_n lines appended to $atb_t"
 }
 
@@ -7183,8 +7196,8 @@ migrate_state_cells() {   # <1 = the act, 0 = the dry run>
       print tolower(substr(r, 1, p2 - 1))
     }' "$LANES_FILE" | LC_ALL=C sort | LC_ALL=C uniq -d)"
 
-  msc_rows=0; msc_ok=0; msc_lines=0; msc_noted=0; msc_ruled=0; msc_nodot=0; msc_skipped=0
-  msc_before=0; msc_after=0
+  msc_rows=0; msc_ok=0; msc_lines=0; msc_noted=0; msc_ruled=0; msc_skipped=0
+  msc_phrase=0; msc_plain=0; msc_before=0; msc_after=0
 
   while IFS="$(printf '\t')" read -r msc_n msc_lane; do
     [ -n "${msc_n:-}" ] || continue
@@ -7214,11 +7227,19 @@ EOF
     if [ -z "$msc_why" ]; then
       mig_trim "$RSS_CELL"; msc_cell="$MIG_TRIM"
       msc_head="$RSS_HEAD"; msc_tail="$RSS_TAIL"
+      # TWO WAYS A CELL HOLDS NO HISTORY, AND THEY ARE NOT THE SAME FACT
+      # (Copilot round 1 on openRepoTools#82). A cell that is already
+      # `<STATE> · <UTC> · <one line>` is in clause (a)'s shape and there is
+      # nothing to do. A cell holding ONE WORD — `ACTIVE`, `LIVE`, the bare
+      # states this register is full of — has no diary to move either, so this
+      # act leaves it alone, but it is NOT in the shape: the next
+      # `set-row-state` on that lane puts it there, and reporting the two as one
+      # number would say the register was compliant when a third of it is not.
       case "$msc_cell" in
         *' · '*) : ;;
-        *) msc_nodot=$((msc_nodot + 1)); continue ;;
+        *) msc_plain=$((msc_plain + 1)); continue ;;
       esac
-      if mig_cell_is_phrase "$msc_cell"; then msc_nodot=$((msc_nodot + 1)); continue; fi
+      if mig_cell_is_phrase "$msc_cell"; then msc_phrase=$((msc_phrase + 1)); continue; fi
     fi
     if [ -z "$msc_why" ]; then
       # The row's own columns, walked from the LEFT out of the head this split
@@ -7305,7 +7326,7 @@ EOF
 $(printf '%s\n' "$msc_cell" | awk '{ gsub(/ · /, "\n"); print }')
 EOF
     if [ "$msc_en" = 0 ]; then
-      msc_nodot=$((msc_nodot + 1)); rm -f -- "$msc_tmp/block/$msc_n"; continue
+      msc_plain=$((msc_plain + 1)); rm -f -- "$msc_tmp/block/$msc_n"; continue
     fi
 
     # THE CELL IT BECOMES — clause (e): the state the LAST entry's leading verb
@@ -7332,8 +7353,8 @@ EOF
     "$( [ "$msc_do" = 1 ] && printf 'THE ACT' || printf 'DRY RUN, nothing is written' )"
   printf '  register : %s\n' "$LANES_FILE"
   printf '  archive  : %s\n' "$msc_arch_rel"
-  printf '  rows     : %s read · %s to migrate · %s already one phrase · %s skipped\n' \
-    "$msc_rows" "$msc_ok" "$msc_nodot" "$msc_skipped"
+  printf '  rows     : %s read · %s to migrate · %s already the phrase · %s one word, no history · %s skipped\n' \
+    "$msc_rows" "$msc_ok" "$msc_phrase" "$msc_plain" "$msc_skipped"
   if [ "$msc_ok" -gt 0 ]; then
     printf '\n  lane                      entries    cell now → the phrase it becomes\n'
     cat -- "$msc_tmp/report"
@@ -7342,6 +7363,11 @@ EOF
     printf '\n  SKIPPED — nothing is written for these rows and their cells keep every\n'
     printf '  character, so a re-run after each is settled migrates exactly it:\n'
     cat -- "$msc_tmp/skips"
+  fi
+  if [ "$msc_plain" -gt 0 ]; then
+    printf '\n  %s row(s) hold ONE WORD and no history (`ACTIVE`, `LIVE`, …). This act leaves\n' "$msc_plain"
+    printf '  them exactly as they are — there is no diary in them to move — and they are NOT\n'
+    printf '  yet `<STATE> · <UTC> · <one line>`: the next set-row-state on each writes it.\n'
   fi
   printf '\n  log lines: %s (%s NOTED, %s RULED) into %s log(s)\n' "$msc_lines" "$msc_noted" "$msc_ruled" "$msc_ok"
   printf '  state cells: %s characters → %s\n' "$msc_before" "$msc_after"
@@ -7352,11 +7378,13 @@ EOF
   if [ "$msc_ok" = 0 ]; then
     msc_left=""
     [ "$msc_skipped" -gt 0 ] && msc_left=" The $msc_skipped row(s) listed above still hold theirs and are the ones this act cannot take; each is settled by the line beside it, and a re-run then migrates exactly those."
-    die "no cell holds a ' · ' entry this act can migrate: every row is already in Amendment 13(a)'s shape, or holds one phrase and no history.$msc_left The migration is ONE act and this was not it — nothing was written." 2
+    rm -rf -- "$msc_tmp"
+    die "no cell holds a ' · ' entry this act can migrate: $msc_phrase row(s) are already in Amendment 13(a)'s shape and $msc_plain hold ONE WORD and no history, which this act leaves alone — the next \`set-row-state\` on each of those lanes writes it as the phrase.$msc_left The migration is ONE act and this was not it — nothing was written." 2
   fi
   if [ "$msc_do" != 1 ]; then
     printf '\n  DRY RUN — nothing was written. Make it the one act with:  lanes-edit.sh migrate-state-cells --yes\n'
     printf '  (Amendment 13(e): one commit carrying the archive, the logs and the register.)\n'
+    rm -rf -- "$msc_tmp"
     return 0
   fi
 
@@ -7407,6 +7435,11 @@ EOF
   commit_push "$msc_msg" "${msc_paths[@]}"
   msc_rc=$?
   release_lock
+  # THE STAGING GOES ON THE WAY OUT, on both paths: this directory holds a block
+  # of log lines per migrated lane, and on the live register that is 2,206 lines
+  # (Copilot round 1 on openRepoTools#82). A `die` on the way here keeps it, like
+  # every other refused write in this file.
+  rm -rf -- "$msc_tmp"
   return "$msc_rc"
 }
 

@@ -525,10 +525,15 @@ fi
 # with a day of narrative between. The cell is now ONE PHRASE that
 # `set-row-state` replaces: no anchor, no second write, and a row whose cell
 # opens with anything at all takes the same call.
-hs_line="${payload// · /; }"          # the cell's own separator, never inside the line
-# CUT SO THE CUT CANNOT LAND INSIDE A CHARACTER — `${s:0:n}` counts BYTES
-# wherever the locale is not a UTF-8 one, so the last partial word goes too.
-# 230, not ratified decision O1's 240, so the ` ...` marker fits inside it.
+# THREE THINGS THE CELL'S LINE MAY NOT CARRY, and `set-row-state` refuses all
+# three: ` · ` (the phrase's own separator, spelled `; `), `|` (a cell boundary
+# in the row, spelled `¦` — a `dir` or a launch flag may hold one), and more
+# than ratified decision O1's 240 characters. The cut is at 230 with the last
+# partial WORD dropped, because `${s:0:n}` counts BYTES wherever the locale is
+# not a UTF-8 one and a byte offset can land inside `—`, `·` or `→`. This is
+# `cut_to_line` in `lane-start`, `lane-end` and `lane-handoff`, byte for byte.
+hs_line="${payload// · /; }"
+hs_line="${hs_line//|/¦}"
 if [[ ${#hs_line} -gt 230 ]]; then
   hs_line="${hs_line:0:230}"; hs_line="${hs_line% *} ..."
 fi
