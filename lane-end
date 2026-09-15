@@ -611,7 +611,18 @@ if [ -n "$retire_dormant" ]; then
       none | '') d_flags="" ;;
       *) d_mark="FLAG"; rd_flagged=$((rd_flagged + 1)) ;;
     esac
-    rd_report="$rd_report$(printf '  %s %-26s %-20s %-10s %s' "$d_mark" "$d_lane" "${d_start:-unknown}" "${d_ws:-unknown}" "$d_flags")
+    # THE TWO FREE-TEXT COLUMNS ARE CUT TO THEIR WIDTH AND THE NAME IS NOT.
+    # Measured on the live register: `started` holds `2026-09-02 ~22:30Z;
+    # RESUMED 09-03 12:55Z and 19:27Z` and the workstation cell `<workstation? —
+    # owner fills>`, either of which pushes every column after it out of line in
+    # a report a person reads to decide. The LANE is never cut — it is the name
+    # they act on — and the cut is a bash expansion rather than printf's `%.Ns`,
+    # which counts BYTES and would tear the `≤` and `—` these cells carry.
+    d_start_s="${d_start:-unknown}"
+    if [ "${#d_start_s}" -gt 20 ]; then d_start_s="${d_start_s:0:19}…"; fi
+    d_ws_s="${d_ws:-unknown}"
+    if [ "${#d_ws_s}" -gt 10 ]; then d_ws_s="${d_ws_s:0:9}…"; fi
+    rd_report="$rd_report$(printf '  %s %-28s %-20s %-10s %s' "$d_mark" "$d_lane" "$d_start_s" "$d_ws_s" "$d_flags")
 $(printf '       was: %s' "${d_was:-none}")
 "
   done <<EOF
@@ -625,7 +636,7 @@ EOF
   if [ "$rd_n" = 0 ]; then
     die "no row of $retire_dormant is DORMANT — a dormant row is one with no object log and no live session here (Amendment 19(a)), and every row of that repository has one or the other. There is nothing to do, and nothing was done. \`lanes --closed --prefix $retire_dormant\` shows what its rows say." 8
   fi
-  printf '\n       lane                       started              where      flags\n'
+  printf '\n       lane                         started              where      flags\n'
   printf '%s' "$rd_report"
   printf '\n  A FLAG is this row saying the work was unpushed, lost, a loss or owed, or\n'
   printf '  still saying LIVE. Retiring the row does not lose that text: it is carried\n'
