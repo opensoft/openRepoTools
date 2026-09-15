@@ -5177,6 +5177,15 @@ lanes_rows() {
   lr_fork_map=""
   lr_fork_map="$(fork_map 2>/dev/null)" || lr_fork_rc=$?
   lr_fork_titles=" $(printf '%s\n' "$lr_fork_map" | awk -F"$US" 'NF { print $1 }' | tr '\n' ' ')"
+  # THE LOG FILES THIS CHECKOUT HAS, LOWER-CASED, AS ONE FENCE (Copilot round 4
+  # on #93). `state_events` reads the PUBLISHED logs (R19), so a log committed
+  # here and not yet pushed is not in the facts pass at all — and DORMANT is
+  # "no object log", which that lane has. The sweep reads the local log for
+  # exactly this reason since round 3, and the read and the writer may not
+  # disagree about the amendment's own condition. One `ls` for the whole
+  # listing, matched with a `case` per lane, and lower-cased because a lane name
+  # is ONE name under any case (Amendment 15).
+  lr_logfiles=" $(ls -- "$LANES_LOG_DIR" 2>/dev/null | awk '{ print tolower($0) }' | tr '\n' ' ')"
   if [ "$lr_live_rc" != 0 ] || [ "$lr_fork_rc" != 0 ]; then
     note "this workstation's session records could not be read, so the STATE column below is the LOG's verb alone: a lane that is live may show as IDLE or PAUSED here, and no fork of any lane is established either way. Fix the read and re-run before acting on a restart line."
   fi
@@ -5341,6 +5350,10 @@ EOF2
         # row stays listed and the sweep is never offered it.
         if [ -n "$lr_row" ] && [ "$lr_lanekind" = 0 ] && [ "$lr_live_rc" = 0 ]; then
           lr_class=dormant
+          # A LOG THIS CHECKOUT HAS AND `origin` HAS NOT IS STILL AN OBJECT LOG.
+          case "$lr_logfiles" in
+            *" $lr_ll.md "*) lr_class="" ;;
+          esac
           if mig_cell_is_phrase "$lr_was"; then
             case "${lr_was%% · *}" in
               ENDED|RETIRED|MIGRATED) : ;;
@@ -8187,7 +8200,14 @@ archive_rows() {   # <repo> <1 = the act, 0 = the dry run>
         *) die "this checkout is $ar_behind commit(s) behind origin/$LANES_BRANCH. The move is ONE commit carrying the register and the archive, so it is made against the published register or not at all. Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run. Nothing was written." 2 ;;
       esac
     fi
-    refuse_dirty_checkout "archive-rows" "$LANES_PATH" "$LANES_ARCH_PATH"
+    # THE ARCHIVE IS NOT EXEMPT (Copilot round 4 on #93). It was, because this
+    # act writes it — but `handle_preexisting` captures the REGISTER alone, so a
+    # tracked edit somebody else left in the archive rode into this commit under
+    # this act's message. And it is what makes a half-done move safe: if the
+    # append lands and `delete_lines` or the commit does not, the archive is
+    # dirty and the next run REFUSES by name instead of appending the same rows
+    # a second time.
+    refuse_dirty_checkout "archive-rows" "$LANES_PATH"
     # THE SAME RULE FOR THE ARCHIVE ITSELF: an untracked one is a file this act
     # did not create, and appending to it would commit somebody else's lines
     # inside this move (openRepoTools#82, round 2). An archive this act creates
@@ -8200,6 +8220,19 @@ archive_rows() {   # <repo> <1 = the act, 0 = the dry run>
     acquire_lock
     handle_preexisting "$LANES_PATH"
   fi
+
+  # THE REGISTER IS READ WITH ITS OWN STATUS (Copilot round 4 on #93). Inside
+  # the here-document below, a failed `awk` — an unreadable register — is
+  # discarded, the loop gets no rows, and the act reports "no row of <repo> has
+  # the state RETIRED" about a file it never read. An unreadable source is never
+  # an empty set (Amendment 7(d)).
+  ar_scan=""
+  ar_scan="$(awk 'substr($0,1,1) == "|" {
+         p1 = index($0, "`"); if (p1 == 0) next
+         r = substr($0, p1 + 1); p2 = index(r, "`"); if (p2 == 0) next
+         printf "%d\t%s\n", NR, substr(r, 1, p2 - 1)
+       }' "$LANES_FILE")" ||
+    die "the register $LANES_FILE could not be read, so which of $ar_repo's rows are RETIRED is not known — and that is not 'none of them are' (Amendment 7(d)). Nothing was written." 1
 
   ar_tmp="$(mktemp -d)"
   : > "$ar_tmp/rows"; : > "$ar_tmp/nums"; : > "$ar_tmp/names"
@@ -8230,11 +8263,7 @@ archive_rows() {   # <repo> <1 = the act, 0 = the dry run>
     printf '%s\n' "$ar_lane" >> "$ar_tmp/names"
     ar_n=$((ar_n + 1))
   done <<EOF
-$(awk 'substr($0,1,1) == "|" {
-         p1 = index($0, "`"); if (p1 == 0) next
-         r = substr($0, p1 + 1); p2 = index(r, "`"); if (p2 == 0) next
-         printf "%d\t%s\n", NR, substr(r, 1, p2 - 1)
-       }' "$LANES_FILE")
+$ar_scan
 EOF
 
   printf 'archive-rows %s — %s (lane-collision-protocol Amendment 19(d))\n' \

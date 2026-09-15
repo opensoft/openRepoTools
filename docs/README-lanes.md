@@ -2256,6 +2256,15 @@ It touches **no file outside the register and the logs**. A retired row records
 that a lane is finished; worktrees, branches and handoffs stay exactly where
 they are.
 
+**Nothing is half-PUBLISHED, because the commit is the only thing that
+publishes.** Every refusal above is made in the scan, before a byte is written.
+A failure in the writes themselves — a log whose append could not be proved, a
+row whose rewrite touched more than one line — leaves this checkout DIRTY and
+the register unpublished: that is what `git status` then shows, `git checkout --
+lanes` undoes it whole, and the next run is REFUSED by the dirty-checkout guard
+rather than made twice. `migrate-state-cells` has the same shape for the same
+reason.
+
 ### The archive — a second act on a second word
 
 ```console

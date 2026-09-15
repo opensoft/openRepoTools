@@ -9750,6 +9750,21 @@ run a19 "$END" repo19-2 --reason "because"
 is    "--reason without --retire-dormant is refused rather than dropped" "$rc" 2
 has   "…and offering the line that would have taken it" "$err" "--retire-dormant <repo> --reason"
 
+# A LOG THIS CHECKOUT HAS AND `origin` HAS NOT IS STILL AN OBJECT LOG (Copilot
+# round 4 on #93). `state_events` reads the PUBLISHED logs, so a log committed
+# here and not yet pushed is in no fact this listing has — and the sweep reads
+# the local log since round 3, so the read and the writer would have disagreed
+# about the amendment's own "no object log" on a checkout that is ahead.
+printf '# lane repo19e-1 — object log (written here, not yet pushed)\n' > "$A19_WIP/lanes/log/repo19e-1.md"
+run a19 "$E" lanes --closed --prefix repo19e
+is    "a row whose object log exists only in this checkout is NOT dormant" "$(a19_field "$out" repo19e-1 13)" "none"
+run a19 "$E" lanes --prefix repo19e
+is    "…so the default listing carries it" "$rc" 0
+has   "…by name" "$out" "repo19e-1"
+rm -f "$A19_WIP/lanes/log/repo19e-1.md"
+run a19 "$E" lanes --prefix repo19e
+is    "…and with the file gone it is dormant again, which is the same rule reading the other way" "$rc" 8
+
 echo "== the workstation seam: unset, every writer reads the host =="
 
 # THE OTHER HALF OF R-A9-13. Every case above this line runs with

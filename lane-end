@@ -607,8 +607,28 @@ if [ -n "$retire_dormant" ]; then
   # it sits in front of a person who is waiting — but this one sits in front of
   # a WRITE, and a dormant row is a row about which this checkout's copy may be
   # a week old.
+  # THE READ'S STDERR IS KEPT (Copilot round 4 on #93). `lanes_rows` leaves the
+  # class unset where this workstation's session records could not be read —
+  # DORMANT is "no log AND no live session here", and the second half was never
+  # established — and it SAYS so on stderr. Without that sentence this command
+  # would count zero dormant rows and exit 8 announcing that none are dormant,
+  # which is a reason it has not got. The stream is passed through either way:
+  # it is the person's.
   rd_rc=0
-  rd_rows="$("$LANES_EDIT" lanes --fetch --closed --prefix "$retire_dormant")" || rd_rc=$?
+  rd_err=""
+  rd_errf="$(mktemp "${TMPDIR:-/tmp}/lane-end-sweep.XXXXXX" 2>/dev/null || printf '')"
+  if [ -n "$rd_errf" ]; then
+    rd_rows="$("$LANES_EDIT" lanes --fetch --closed --prefix "$retire_dormant" 2>"$rd_errf")" || rd_rc=$?
+    rd_err="$(cat "$rd_errf" 2>/dev/null || printf '')"
+    printf '%s' "$rd_err" >&2
+    rm -f -- "$rd_errf"
+  else
+    rd_rows="$("$LANES_EDIT" lanes --fetch --closed --prefix "$retire_dormant")" || rd_rc=$?
+  fi
+  case "$rd_err" in
+    *"session records could not be read"*)
+      die "this workstation's session records could not be read (the read says so above), so whether any of $retire_dormant's rows has a LIVE session here was never established — and DORMANT is 'no object log AND no live session here'. The rows are not counted over a fact that was not read (Amendment 7(d)). Fix the read and re-run; nothing was written." 1 ;;
+  esac
   case "$rd_rc" in
     0) : ;;
     8) die "no lane of $retire_dormant is recorded at all, so there is no dormant row to retire. Nothing was written." 8 ;;
