@@ -85,6 +85,8 @@ cleanup() {
   [ -n "${G_OUT:-}" ] && kill "$G_OUT" 2>/dev/null
   [ -n "${DUP_PARENT:-}" ] && kill "$DUP_PARENT" 2>/dev/null
   [ -n "${DUP_CHILD:-}" ] && kill "$DUP_CHILD" 2>/dev/null
+  [ -n "${RACE_PARENT:-}" ] && kill "$RACE_PARENT" 2>/dev/null
+  [ -n "${RACE_CHILD:-}" ] && kill "$RACE_CHILD" 2>/dev/null
   [ -n "${GD_DUP:-}" ] && kill "$GD_DUP" 2>/dev/null
   [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ] && rm -rf -- "$SANDBOX"
   return 0
@@ -515,6 +517,17 @@ add_seed_row "| \`repoK-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026
 add_seed_row "| \`repoK-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoK/x.md | ACTIVE |"
 add_seed_row "| \`repoK-3\` | harness \`$KLIVE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoK/x.md | ACTIVE |"
 add_seed_row "| \`repoK-4\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoK/x.md | ACTIVE |"
+# repoL-1/3/5 — Copilot round 8, PR #61: issue #30's dead-lane takeover,
+# regression-tested for OPENED and CLAIMED (repoK-1/2 above) but not for
+# LANDING, WITHDRAWN or an earlier TAKEOVER — the same broadened
+# `superseded_by`/`lane_states_on` open-verb set this round's fix touches.
+# repoL-2/4/6 are the takers.
+add_seed_row "| \`repoL-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoL/x.md | ACTIVE |"
+add_seed_row "| \`repoL-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoL/x.md | ACTIVE |"
+add_seed_row "| \`repoL-3\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoL/x.md | ACTIVE |"
+add_seed_row "| \`repoL-4\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoL/x.md | ACTIVE |"
+add_seed_row "| \`repoL-5\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoL/x.md | ACTIVE |"
+add_seed_row "| \`repoL-6\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoL/x.md | ACTIVE |"
 add_seed_row "| \`repoM-1\` | harness \`$MLIVE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoM/x.md | ACTIVE |"
 # repoN-1 / repoN-2 — issue #30's OTHER terminal verb: a plain `lane-end`
 # (no --retire) writes ENDED, never RETIRED, and `holder_is_dead` names both
@@ -741,6 +754,32 @@ NOW_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'OPENED — lane repoK-3, session %s@Eagle, %s, opensoft/repoK#15 ← opensoft/repoK#14\n' "$KLIVE_ID" "$OLD_UTC"
   printf 'RETIRED — lane repoK-3, session %s@Eagle, %s, lane:repoK-3\n' "$KLIVE_ID" "$NOW_UTC"
 } > "$WIP/lanes/log/repoK-3.md"
+# repoL-1/3/5 — Copilot round 8, PR #61: the three open verbs repoK-1/2 never
+# exercised for issue #30's dead-lane takeover. Each ends RETIRED, no live
+# session backs $DEAD_ID up (as repoK-1/G-1/N-1/H-1/P-1 above already lean
+# on), and repoL-2/4/6 take over below.
+{ printf '# lane repoL-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoL-1, session %s@Eagle, %s, lane:repoL-1 → home opensoft/repoL; estate repoL\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'OPENED — lane repoL-1, session %s@Eagle, %s, opensoft/repoL#20 ← opensoft/repoL#19\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'LANDING — lane repoL-1, session %s@Eagle, %s, opensoft/repoL#20\n' "$DEAD_ID" "$NOW_UTC"
+  printf 'RETIRED — lane repoL-1, session %s@Eagle, %s, lane:repoL-1\n' "$DEAD_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoL-1.md"
+{ printf '# lane repoL-3 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoL-3, session %s@Eagle, %s, lane:repoL-3 → home opensoft/repoL; estate repoL\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'OPENED — lane repoL-3, session %s@Eagle, %s, opensoft/repoL#30 ← opensoft/repoL#29\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'WITHDRAWN — lane repoL-3, session %s@Eagle, %s, opensoft/repoL#30\n' "$DEAD_ID" "$NOW_UTC"
+  printf 'RETIRED — lane repoL-3, session %s@Eagle, %s, lane:repoL-3\n' "$DEAD_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoL-3.md"
+# repoL-5's OWN last line on the object is a TAKEOVER (it had earlier taken
+# opensoft/repoL#40 over from some dispossessed lane of its own, named only in
+# the free ← text, exactly as any TAKEOVER's payload is) — proving the
+# broadened set supersedes a dead lane's earlier TAKEOVER too, not only its
+# CLAIMED/OPENED/LANDING/WITHDRAWN.
+{ printf '# lane repoL-5 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoL-5, session %s@Eagle, %s, lane:repoL-5 → home opensoft/repoL; estate repoL\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'TAKEOVER — lane repoL-5, session %s@Eagle, %s, opensoft/repoL#40 ← lane:repoL-0\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repoL-5, session %s@Eagle, %s, lane:repoL-5\n' "$DEAD_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoL-5.md"
 # repoN-1 — issue #30's OTHER dead verdict: ENDED (a plain `lane-end`, no
 # `--retire`), no live session, one CLAIMED issue left open.
 { printf '# lane repoN-1 — object log (lane-collision-protocol Amendment 7)\n'
@@ -1314,6 +1353,56 @@ run env LANES_LANE=repoK-4 "$E" claim "opensoft/repoK#15" --no-github --force
 is   "--force still refuses a lane whose log ends RETIRED when a live session backs it up" "$rc" 2
 has  "…the verb-mismatch refusal fires exactly as it does for a live lane" "$err" "is not a stale claim"
 hasnt "…and nothing is written" "$(cat "$LOGD/repoK-4.md" 2>/dev/null)" "opensoft/repoK#15"
+
+# --------- Copilot round 8, PR #61: the three open verbs repoK-1/2 left
+# untested for issue #30's dead-lane takeover — LANDING, WITHDRAWN and an
+# earlier TAKEOVER, the same broadened `superseded_by`/`lane_states_on`
+# open-verb set (CLAIMED|TAKEOVER|OPENED|LANDING|WITHDRAWN) as OPENED/CLAIMED
+# above, never separately regression-tested before this round.
+
+run env LANES_LANE=repoL-2 "$E" claim "opensoft/repoL#20" --no-github --force
+is   "--force takes over a DEAD lane's LANDING too, not only its OPENED/CLAIMED" "$rc" 0
+L2="$(cat "$LOGD/repoL-2.md")"
+has  "…writing a TAKEOVER line" "$L2" "TAKEOVER — lane repoL-2, session "
+has  "…referencing the dead lane with ←" "$L2" "opensoft/repoL#20 ← lane:repoL-1"
+run "$E" who "opensoft/repoL#20"
+is   "…and exactly ONE lane holds it, not two" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 1
+hasnt "…repoL-1's own dead LANDING is not also reported as a live hold" "$out" "HOLDS    lane repoL-1"
+
+run env LANES_LANE=repoL-4 "$E" claim "opensoft/repoL#30" --no-github --force
+is   "--force takes over a DEAD lane's WITHDRAWN too" "$rc" 0
+L4="$(cat "$LOGD/repoL-4.md")"
+has  "…writing a TAKEOVER line" "$L4" "TAKEOVER — lane repoL-4, session "
+has  "…referencing the dead lane with ←" "$L4" "opensoft/repoL#30 ← lane:repoL-3"
+run "$E" who "opensoft/repoL#30"
+is   "…and exactly ONE lane holds it, not two" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 1
+hasnt "…repoL-3's own dead WITHDRAWN is not also reported as a live hold" "$out" "HOLDS    lane repoL-3"
+
+run env LANES_LANE=repoL-6 "$E" claim "opensoft/repoL#40" --no-github --force
+is   "--force takes over a DEAD lane's own earlier TAKEOVER too" "$rc" 0
+L6="$(cat "$LOGD/repoL-6.md")"
+has  "…writing a TAKEOVER line" "$L6" "TAKEOVER — lane repoL-6, session "
+has  "…referencing the dead lane with ←, not the lane it had itself taken over from" "$L6" "opensoft/repoL#40 ← lane:repoL-5"
+hasnt "…never the earlier dispossessed lane repoL-5 never held directly" "$L6" "← lane:repoL-0"
+# THE WRITE IS RIGHT; THE DERIVED VIEW IS NOT (filed as opensoft/openRepoTools#74,
+# claimed, not fixed here): `superseded_by`'s own "does some OTHER lane's last
+# line here read TAKEOVER" test does not stop at the CURRENT one — repoL-5's
+# now-stale TAKEOVER (over repoL-0) is still read as proof that repoL-6 is
+# ALSO superseded, so `holders_of` drops BOTH ends of the chain instead of
+# only the one repoL-6 actually displaced. This is a pre-existing gap in
+# `superseded_by` (it has always compared positions across different lanes'
+# own files this way); PR #61's broadening of the open-verb gate to admit a
+# dead lane's own TAKEOVER (issue #30) is what makes a CHAIN of two takeovers
+# reachable from one ordinary `--force`, where before only the pre-existing
+# simultaneous-race shape (`repoG-1`/`repoG-2` above) could produce two lanes
+# each ending on TAKEOVER. Nothing here is corrupted: every line above is
+# correct and in the right order, and this asserts the CURRENT, honest
+# (if wrong) reported count rather than assuming the write's correctness
+# implies the read's.
+run "$E" who "opensoft/repoL#40"
+is   "…but who reports ZERO holders, not one (opensoft/openRepoTools#74)" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 0
+hasnt "…repoL-5's own dead TAKEOVER is not reported as a live hold either way" "$out" "HOLDS    lane repoL-5"
+hasnt "…and neither, wrongly, is repoL-6's — the gap #74 tracks, not a new one here" "$out" "HOLDS    lane repoL-6"
 
 # repoN-1's OWN terminal verb is ENDED, not RETIRED (Copilot round 3, PR #61:
 # `holder_is_dead`'s case accepts both, but only RETIRED was ever seeded).
@@ -4608,11 +4697,39 @@ run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_M" FAKE_PS_RECORDS="$FAKE_PS_M" FAKE_PG
 is   "duplicate-holder finds the STRAY fork-session pid" "$rc" 0
 has  "…naming its parent" "$out" "$DUP_PARENT"
 has  "…and its child, found via pgrep -P" "$out" "$DUP_CHILD"
-hasnt "…but never repoM-1's OWN live pid, excluded over live_holder" "$out" "$(printf '%s\t' "$LIVE_PID")"
+hasnt "…but never repoM-1's OWN live pid, excluded over live_holder" "$out" "$(printf '%s\037' "$LIVE_PID")"
 # ONE ROW, NOT TWO (Copilot round 2, PR #61): $DUP_CHILD's own argv ALSO
 # matches `--fork-session`, so without the ppid fence it would be read again
 # on its own turn as a second, headless "parent" of nothing.
 is   "…and exactly one row: the child is never read as a second parent" "$(printf '%s\n' "$out" | grep -c .)" 1
+
+# Copilot round 8, PR #61: being IN the global fork-session fence only proves
+# a child is SOME `--fork-session` process, not THIS parent's transcript's —
+# a wrapper with TWO such children (an unusual process tree, never assumed
+# absent) must not have the wrong one attached to this parent's row. Pure
+# discovery, no kill: fixed numbers are fine here, `lane-end --retire` is
+# never called against them.
+AMBIG_PARENT=900101
+AMBIG_CHILD_RIGHT=900102
+AMBIG_CHILD_WRONG=900103
+WRONG_ID="aaaa0007-7777-4000-8000-aaaa00077777"
+FAKE_PS_AMBIG="$(printf '%s\t%s\t%s\n%s\t%s\t%s\n%s\t%s\t%s' \
+  "$AMBIG_PARENT"      1               "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl" \
+  "$AMBIG_CHILD_RIGHT" "$AMBIG_PARENT" "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl" \
+  "$AMBIG_CHILD_WRONG" "$AMBIG_PARENT" "claude --session-id $WRONG_ID --fork-session --resume /nonexistent/other-projects/$WRONG_ID.jsonl")"
+FAKE_PGREP_F_AMBIG="$(printf '%s\n%s\n%s\n%s' "$LIVE_PID" "$AMBIG_PARENT" "$AMBIG_CHILD_WRONG" "$AMBIG_CHILD_RIGHT")"
+# THE WRONG CHILD LISTED FIRST (Copilot round 8), so a fix that merely kept
+# "whichever `pgrep -P` lists first" would still pass every OTHER assertion
+# here and only this ordering would catch it.
+FAKE_PGREP_CHILDREN_AMBIG="$(printf '%s\t%s\n%s\t%s' "$AMBIG_CHILD_WRONG" "$AMBIG_PARENT" "$AMBIG_CHILD_RIGHT" "$AMBIG_PARENT")"
+
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_AMBIG" FAKE_PS_RECORDS="$FAKE_PS_AMBIG" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_AMBIG" \
+  "$E" duplicate-holder repoM-1
+is   "two fork-session children of one wrapper: still one row, and no crash" "$rc" 0
+has  "…names the parent" "$out" "$AMBIG_PARENT"
+has  "…and the child that actually resumes THIS transcript" "$out" "$AMBIG_CHILD_RIGHT"
+hasnt "…never the sibling resuming a DIFFERENT transcript, though pgrep -P lists it first" "$out" "$AMBIG_CHILD_WRONG"
+is   "…exactly one row" "$(printf '%s\n' "$out" | grep -c .)" 1
 
 # BOTH ALIVE BEFORE THE ACT, so a kill that did nothing cannot pass by luck.
 is   "…both fixture processes are alive before the act" \
@@ -4643,24 +4760,50 @@ has  "…naming it as the lane's own live session, whatever else was found" "$er
 has  "…and saying it is not a fork or a duplicate holder" "$err" "it is not a fork and not a duplicate holder, it is the lane"
 is   "…and the still-live \$LIVE_PID is of course untouched" "$(kill -0 "$LIVE_PID" 2>/dev/null && echo alive)" "alive"
 
+# Copilot round 8, PR #61 follow-up (caught by this suite, not by review):
+# repoM-1 has a perfectly ordinary LIVE session ($LIVE_PID) throughout this
+# block, and `transcript-holders` — asked, as `lane-end` always asks it, from
+# OUTSIDE any bound claude session — verdicts that session `unrelated` rather
+# than recognising it as the lane's own. Reading raw `dup_rows` for "is
+# anything live here" answered yes for a lane with nothing wrong at all, and
+# 777777 (which matches nothing anywhere) was refused 2 ("neither ... nor a
+# duplicate") instead of the honest 8 ("nothing of any kind is live") this
+# case is for.
 run "$END" repoM-1 --retire 777777
 is   "…and a pid that is neither a fork nor a duplicate holder is refused, exit 8" "$rc" 8
-has  "…naming both reads" "$err" "no fork and no duplicate holder"
+has  "…naming the process-table read" "$err" "no live DUPLICATE HOLDER of the id it does in the process table"
+has  "…and the session-record read" "$err" "no live DUPLICATE of it by session record either"
+has  "…never reading repoM-1's own live \$LIVE_PID session as a reason to refuse 2 instead" "$err" "nothing of any kind is live for lane repoM-1"
 
 # ------------------- issue #39 continued, Copilot round 7: a pid that exited
 # in the race between discovery and the pre-kill signal must not abort the
 # script under set -euo pipefail — `x=$(ps ...) || x=''` is the fix; a bare
 # assignment aborted on the pipeline's own (pipefail) failure before kill -0's
 # verification and the per-pid report ever ran. `duplicate-holder`'s own
-# discovery never calls `ps -p` on the CHILD (only `pgrep -P` on the parent),
-# so omitting the child from THIS call's fake `ps` table — while discovery
-# still finds the pair via pgrep alone — is exactly "gone by the time the
-# pre-kill recheck asks", without needing a stateful fake.
+# discovery finds the CHILD from `pgrep -f` (the candidate fence) and
+# `pgrep -P` alone and never calls `ps -p` on it — so `$RACE_CHILD` is in BOTH
+# fakes discovery reads (`FAKE_PGREP_F_RACE`, so it passes the "is this child
+# itself a fork-session candidate" fence; `FAKE_PGREP_CHILDREN_RACE`, so
+# `pgrep -P $RACE_PARENT` names it) — and omitted ONLY from `FAKE_PS_RACE`,
+# the table `lane-end`'s own PRE-KILL recheck reads a few lines later, which
+# is exactly "gone by the time the pre-kill recheck asks", without needing a
+# stateful fake.
+#
+# CAUGHT BY CI ON e4f9054, NOT BY THIS SUITE: the ORIGINAL fixture omitted
+# `$RACE_CHILD` from `FAKE_PGREP_F_RACE` too, so discovery's own fence never
+# matched it and `duplicate-holder` answered a child slot that was — correctly
+# for THAT fixture — empty, never reaching the pre-kill-recheck path this case
+# exists to prove at all. The empty slot then found the SEPARATE, real defect
+# this same round fixed (`lanes-edit.sh`'s `dhp_out` and `lane-end`'s own
+# read of it, both `$US`-separated now): a bare TAB is IFS whitespace to
+# `read`, so `"<parent>\t\t<uuid>"`'s two adjacent tabs collapsed into one
+# delimiter and shifted the uuid into the child field. Both fixed; this
+# fixture now exercises the case its own comment always claimed to.
 sleep 3000 & RACE_PARENT=$!
 sleep 3000 & RACE_CHILD=$!
 FAKE_PS_RACE="$(printf '%s\t%s\t%s' \
   "$RACE_PARENT" 1 "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl")"
-FAKE_PGREP_F_RACE="$(printf '%s\n%s' "$LIVE_PID" "$RACE_PARENT")"
+FAKE_PGREP_F_RACE="$(printf '%s\n%s\n%s' "$LIVE_PID" "$RACE_PARENT" "$RACE_CHILD")"
 FAKE_PGREP_CHILDREN_RACE="$(printf '%s\t%s' "$RACE_CHILD" "$RACE_PARENT")"
 run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_RACE" FAKE_PS_RECORDS="$FAKE_PS_RACE" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_RACE" \
   "$END" repoM-1 --retire "$RACE_PARENT"
@@ -6334,8 +6477,14 @@ has   "…and naming Amendment 6(d)'s act for a background holder, which has no 
 has   "…the lane itself untouched" "$err" "ended nothing, wrote nothing and killed nothing"
 run   "$END" repoGD-1 --retire "$LIVE_PID"
 is    "…while the WINDOW's own session is refused: retiring the session that IS the lane is not an act" "$rc" 2
-has   "…saying so" "$err" "IS lane repoGD-1's own live session"
-has   "…and naming the act that DOES end a lane" "$err" "To end the lane, run: lane-end repoGD-1"
+# THE process-table AND live-holder READS (PR #61) ANSWER THIS BEFORE THE
+# session-record ONE (PR #52) EVER RUNS: `$LIVE_PID` is proved to be lane
+# repoGD-1's own live session by `lanes-edit.sh live-holder` first (no fork,
+# no process-table duplicate found for it), so this refusal is the OWN-PID
+# check's wording and not `transcript-holders`' — both say the same thing;
+# only one of them gets to say it first, and it does.
+has   "…saying so" "$err" "is lane repoGD-1's own live session"
+has   "…and naming the act that DOES end a lane" "$err" "End the lane instead"
 rm -f "$gd_t2/fork.json"
 
 # AND THE SECOND PROCESS IS NOT ALWAYS IN ANOTHER PROFILE. One profile can

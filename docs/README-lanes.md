@@ -585,9 +585,20 @@ object. No clock and no cross-file order is needed to ask this: both halves are
 
 *Known, deliberate.* Two lanes that each end on a `TAKEOVER` of one object are
 **both** reported as holders. That is a visible conflict rather than a silent
-one, and it is not reachable through the helpers — `claim --force` takes over a
-stale `CLAIMED` and nothing else, and refuses outright when more than one lane
-holds the object.
+one, and it is not reachable through the helpers in the ordinary case — a live
+lane's `claim --force` takes over a stale `CLAIMED` and nothing else (or, per
+the dead-lane exception below, a **dead** lane's hold of any verb, an earlier
+`TAKEOVER` included), and refuses outright when more than one lane holds the
+object.
+
+*Known, NOT deliberate — opensoft/openRepoTools#74.* A CHAIN of two takeovers
+on one object (`A` claims; `B` takes over from `A`; `C` later takes over from
+`B` — the dead-lane exception's own `TAKEOVER`-of-a-`TAKEOVER` shape) makes
+`who` report **zero** holders, neither `B` nor `C`: `superseded_by`'s "does
+some other lane's last line here read `TAKEOVER`" test does not distinguish
+the CURRENT taker from an earlier, already-superseded one, so `B`'s own
+stale `TAKEOVER` is misread as proof that `C` is superseded too. Every log
+line involved is correct and in order; only this derived view is wrong.
 
 **State is read in FILE ORDER, never by comparing timestamps.** A lane's log is
 append-only and single-writer, so its line order *is* that lane's write order,

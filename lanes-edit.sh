@@ -2159,8 +2159,13 @@ lane_objects() {
 }
 
 # The lane and UTC of a TAKEOVER on <object> that is STILL THAT LANE'S OWN LAST
-# LINE on it — printed only when $3, our own last verb on the object, is the
-# CLAIMED a takeover displaces. Empty when there is none.
+# LINE on it — printed only when $3, our own last verb on the object, is one of
+# the OPEN VERBS a takeover can displace: CLAIMED (decision 8(e)'s ordinary
+# stale-claim shape), or TAKEOVER, OPENED, LANDING or WITHDRAWN (issue #30's
+# dead-lane exception, `superseded_by`'s own case below). Empty when there is
+# none. STALE UNTIL PR #61 (Copilot round 8): this line said "the CLAIMED a
+# takeover displaces", singular, after the awk fragment just above it had
+# already grown the full set — the code was never wrong, only this prose.
 #
 # R18 — "ITS OWN LAST LINE" IS THE WHOLE OF THE BOUND. Per-lane last-line
 # semantics apply to the taker too: once the taker writes RELEASED, CLOSED or
@@ -2365,13 +2370,27 @@ claim_is_stale() {   # <lane> <object> <utc-of-the-claim> <its file> <its line>
 #
 # 0 dead-and-confirmed (`HOLDER_DEAD_VERB` names the verdict), 1 not — refuse
 # as before.
+#
+# A LINE WHOSE PAYLOAD OPENS `fork ` IS NEVER THE LANE'S OWN VERB (Copilot
+# round 8, PR #61) — the same exclusion `lane_row_facts` already makes (above,
+# "A FORK-S RETIRED IS NOT THE LANE-S OWN LAST VERB") and for the identical
+# reason: the first build of ruling 8's retire act appended `RETIRED … lane:
+# <lane> -> fork <sid>; pid <n>; kind <k>` to the LANE's own log for a FORK it
+# retired, and nothing writes one any more but these logs are append-only, so
+# one written under that build is still there. Read as this lane's own last
+# line, it says the LANE was retired — backwards for a lane that may be alive
+# beside the fork it disowned, and exactly the state a PAUSED (swapped) lane
+# would be in if a stray line like this landed after its own last STARTED or
+# RESUMED: `claim --force` would read it as ENDED and take over holds a
+# planned, expected stop was never meant to surrender — the very collision
+# Amendment 8 exists to prevent.
 HOLDER_DEAD_VERB=""
 holder_is_dead() {   # <lane>
   hid_l="${1-}"; [ -n "$hid_l" ] || return 1
   HOLDER_DEAD_VERB=""
   hid_rc=0
   hid_verb="$(lane_log_events "$hid_l" 2>/dev/null | awk -F"$US" '
-    $3=="STARTED"||$3=="PAUSED"||$3=="RESUMED"||$3=="ENDED"||$3=="RETIRED" { v=$3 }
+    ($3=="STARTED"||$3=="PAUSED"||$3=="RESUMED"||$3=="ENDED"||$3=="RETIRED") && substr($8,1,5)!="fork " { v=$3 }
     END { print v }')" || hid_rc=$?
   [ "$hid_rc" = 0 ] || return 1
   case "$hid_verb" in
@@ -4570,8 +4589,23 @@ EOF
 # usually a no-op is exactly what a fence should be, and `lane-end` asks the
 # same question again, in words, before it sends a single signal.
 #
-# One line per surviving match: `<parent pid><TAB><child pid, or empty><TAB>
-# <the matched uuid>`. 0 with rows, 8 with none, 1 where `pgrep` is missing or
+# One line per surviving match: `<parent pid><US><child pid, or empty><US>
+# <the matched uuid>` — `$US`, never a TAB. A CONFIRMED CHILD OF THE CI RUN ON
+# PR #61: with a real, honest, DOCUMENTED-empty child slot (the line just
+# above — "the child slot stays empty" is not a race-only rarity, it is this
+# read's ordinary answer for a parent with no confirmable fork-session child),
+# a bare TAB is one of bash `read`'s own IFS-WHITESPACE characters, so
+# `IFS=$'\t' read -r a b c` on `"<parent>\t\t<uuid>"` — TWO adjacent tabs
+# either side of the empty middle field — COLLAPSES them into ONE delimiter
+# exactly as it collapses repeated spaces, silently shifting the uuid into
+# `b` and leaving `c` empty. Measured: `tests-no-submodule` on e4f9054,
+# `test_the_lane_helper_suite_passes` read the empty child as a parent still
+# "STILL ALIVE" (its own argv check comparing against `$dh_uuid_lc=""` could
+# match nothing) and the uuid as a pid — `pid <uuid> (child): gone`. `$US` is
+# not IFS whitespace, so `read` never merges it with itself; both consumers in
+# `lane-end` read this format with `IFS=$'\037'` for the same reason
+# `live-holder`'s own multi-field line already does.
+# 0 with rows, 8 with none, 1 where `pgrep` is missing or
 # this workstation's session records could not be read — a read that failed is
 # never "nothing is a duplicate".
 duplicate_holder_pids() {   # <lane>
@@ -4680,10 +4714,49 @@ DHPLINE
           # confirmed as a fork-session candidate is ever named; otherwise the
           # child slot stays empty; the parent is still reported and retirable
           # on its own.
+          #
+          # A SECOND CANDIDATE MUST ALSO PROVE IT RESUMES THIS SAME TRANSCRIPT
+          # (Copilot round 8, PR #61): being in `dhp_cand_fence` only proves a
+          # child is SOME `--fork-session` process, not THIS one's — a wrapper
+          # with more than one such child could otherwise attach a different
+          # transcript's fork to this parent's row. Counted FIRST, because the
+          # ordinary shape (one wrapper, one child — Amendment 8 ruling (g)'s
+          # own `bg` companion is the only sibling this file documents) must
+          # keep working exactly as `lane-end`'s own race case proves it does:
+          # a SOLE fenced candidate is accepted on the fence alone, with no
+          # `ps -p` call on it at all, so a child already unreadable by the
+          # time discovery runs (the exact race the pre-kill recheck below
+          # exists to catch a step later) is still named and still retirable.
+          # Only with TWO OR MORE fenced candidates is the ambiguity real, and
+          # only then is each put through the identical per-candidate `ps`
+          # read and exact-path-component `--resume` match the parent above
+          # just proved itself with, against the SAME `$dhp_id_lc`; a `ps -p`
+          # miss on one of several is skipped for the next rather than
+          # guessed, and NONE matching leaves the child empty rather than
+          # naming an unverified one — the parent is still reported and
+          # retirable on its own either way.
+          dhp_kid_n=0; dhp_kid_first=""
           for dhp_c in $dhp_kids; do
-            case "$dhp_cand_fence" in *" $dhp_c "*) dhp_child="$dhp_c"; break ;; esac
+            case "$dhp_cand_fence" in *" $dhp_c "*) : ;; *) continue ;; esac
+            dhp_kid_n=$((dhp_kid_n + 1))
+            [ -n "$dhp_kid_first" ] || dhp_kid_first="$dhp_c"
           done
-          dhp_out="${dhp_out}${dhp_pid}$(printf '\t')${dhp_child}$(printf '\t')${dhp_id}
+          if [ "$dhp_kid_n" = 1 ]; then
+            dhp_child="$dhp_kid_first"
+          elif [ "$dhp_kid_n" -gt 1 ]; then
+            for dhp_c in $dhp_kids; do
+              case "$dhp_cand_fence" in *" $dhp_c "*) : ;; *) continue ;; esac
+              dhp_c_line=""; dhp_c_psrc=0
+              dhp_c_line="$(ps -o args= -p "$dhp_c" 2>/dev/null)" || dhp_c_psrc=$?
+              [ -n "$dhp_c_line" ] || continue
+              [ "$dhp_c_psrc" = 0 ] || return 1
+              dhp_c_args_lc="$(printf '%s' "$dhp_c_line" | tr 'A-F' 'a-f')"
+              case "$dhp_c_args_lc" in *"--fork-session"*"--resume "*) : ;; *) continue ;; esac
+              dhp_c_resume="${dhp_c_args_lc#*--resume }"; dhp_c_resume="${dhp_c_resume%% *}"
+              case "$dhp_c_resume" in */"$dhp_id_lc.jsonl") dhp_child="$dhp_c"; break ;; esac
+            done
+          fi
+          dhp_out="${dhp_out}${dhp_pid}${US}${dhp_child}${US}${dhp_id}
 "
           break
       fi
@@ -7164,7 +7237,16 @@ EOF
         takeover_reason_phrase=" (takeover of a dead lane's hold: $takeover_note)"
       else
         if [ "$h_verb" != CLAIMED ]; then
-          die "--force takes over a stale CLAIMED and nothing else: $obj is $h_verb by lane $h_lane. An open OPENED, LANDING or WITHDRAWN is not a stale claim, and lane $h_lane's own log does not end on ENDED or RETIRED either (or a live session on this workstation still holds it)." 2
+          # NAMES ITS OWN VERB, NOT ONLY THE THREE THAT USED TO BE POSSIBLE
+          # HERE (Copilot round 8, PR #61): before issue #30, `$h_verb` could
+          # only be OPENED, LANDING or WITHDRAWN by the time this branch is
+          # reached (a live lane's own TAKEOVER on an object it still holds
+          # falls through the `!= CLAIMED` test the same way) — but a dead
+          # lane's own un-superseded TAKEOVER (an earlier stale-claim takeover
+          # this lane never followed with a CLOSED/RELEASED/LANDED) reaches
+          # here too when THIS lane is confirmed alive, and the enumeration
+          # left it unnamed.
+          die "--force takes over a stale CLAIMED and nothing else: $obj is $h_verb by lane $h_lane. An open TAKEOVER, OPENED, LANDING or WITHDRAWN is not a stale claim, and lane $h_lane's own log does not end on ENDED or RETIRED either (or a live session on this workstation still holds it)." 2
         fi
         if ! claim_is_stale "$h_lane" "$obj" "$h_utc" "$h_file" "$h_line"; then
           die "--force refused: lane $h_lane's claim on $obj is $(age_of "$h_utc") old (threshold ${STALE_HOURS}h), or it is a PR, or that lane has since OPENED a PR naming it. Rule 1 makes a claim takeable only when it is stale, and lane $h_lane's own log does not end on ENDED or RETIRED either (or a live session on this workstation still holds it)." 2

@@ -738,7 +738,20 @@ LIVE
 
   dh_parent=""; dh_child=""; dh_uuid=""
   if [ -z "$fk_sid" ] && [ "$dh_rc" = 0 ]; then
-    while IFS="$(printf '\t')" read -r dr_parent dr_child dr_uuid; do
+    # `IFS=$'\037'`, NEVER A TAB: `duplicate-holder`'s child field is
+    # DOCUMENTED empty for a parent with no confirmable fork-session child
+    # (lanes-edit.sh's own `duplicate_holder_pids`, "the child slot stays
+    # empty"), and a bare tab is IFS-whitespace to `read` — two adjacent tabs
+    # either side of that empty field collapse into one delimiter exactly as
+    # repeated spaces do, shifting the uuid into `dr_child` and leaving
+    # `dr_uuid` empty. Measured on e4f9054's CI (`tests-no-submodule`): a
+    # partly-retired duplicate's still-alive child was reported as
+    # `pid <uuid> (child): gone` and its genuinely-killed parent as
+    # `STILL ALIVE, TERM withheld` (its own argv check comparing against an
+    # emptied `$dh_uuid`). The unit separator is not IFS whitespace, so it
+    # never collapses — the same reason `live-holder`'s own line below already
+    # reads with it.
+    while IFS=$'\037' read -r dr_parent dr_child dr_uuid; do
       [ -n "${dr_parent:-}" ] || continue
       if [ "$dr_parent" = "$retire_target" ] \
          || { [ -n "$dr_child" ] && [ "$dr_child" = "$retire_target" ]; } \
@@ -886,6 +899,21 @@ DUPES
   dup_pid=""; dup_kind=""; dup_where=""; dup_prof=""
   dup_own=""; dup_rows=""; dup_id=""
   dup_comp=""; dup_comp_kind=""; dup_comp_prof=""
+  # `dup_other` IS NOT `dup_rows`'S OWN EMPTINESS (Copilot round 8, PR #61
+  # follow-up, caught by this suite rather than by review): `lane-end` is a
+  # plain script, never itself a bound claude session, so `transcript_holders`
+  # never sees a "here" record and every row it returns — INCLUDING the
+  # lane's own perfectly ordinary live session — verdicts `unrelated` rather
+  # than `companion` or `duplicate`. Reading raw `dup_rows` as "something is
+  # live here" made an entirely healthy lane (one live session, nothing else)
+  # answer the SAME as a lane with a genuine second process: `--retire` on a
+  # pid that is neither refused with 8 ("nothing of any kind is live") but
+  # with 2 ("neither ... nor a live duplicate"), naming a "duplicate" that was
+  # only ever the lane's own session all along. `$lh_pid` — proved a few lines
+  # above by `live-holder`, the one liveness implementation this file has, and
+  # already known before this read ever runs — is the fence: a row that IS it
+  # is accounted for and not "other"; a row that is not it genuinely is.
+  dup_other=""
   if [ -z "$fk_sid" ] && [ -z "$dh_parent" ]; then
     du_rc=0
     dup_id="$(LANES_NO_FETCH=1 "$LANES_EDIT" last-session "$LANE" 2>/dev/null)" || du_rc=$?
@@ -919,6 +947,12 @@ DUPES
           esac
           if [ "$dr_own" = 1 ] && [ "$dr_kind" != bg ]; then
             dup_own="${dup_own:+$dup_own }$dr_pid"
+          fi
+          # NOT lane $LANE's OWN KNOWN LIVE PID, proved above by `live-holder`
+          # (Copilot round 8 follow-up): that pid is accounted for whatever
+          # `transcript_holders` verdicts it here, `unrelated` included.
+          if [ -z "$lh_pid" ] || [ "$dr_pid" != "$lh_pid" ]; then
+            dup_other=1
           fi
           if [ "$dr_pid" = "$retire_target" ]; then
             # THE HARNESS'S OWN COMPANION IS NOT A DUPLICATE AND MAY NOT BE
@@ -997,7 +1031,7 @@ DUPES
     fi
     if [ -n "${dh_rows:-}" ]; then
       note "the live duplicate holders of lane $LANE's transcript, by PROCESS TABLE, are:"
-      printf '%s\n' "$dh_rows" | while IFS="$(printf '\t')" read -r dr_parent dr_child dr_uuid; do
+      printf '%s\n' "$dh_rows" | while IFS=$'\037' read -r dr_parent dr_child dr_uuid; do
         [ -n "${dr_parent:-}" ] || continue
         note "  pid $dr_parent (bg-pty-host)${dr_child:+, pid $dr_child (child)}  transcript $dr_uuid"
       done
@@ -1024,7 +1058,7 @@ DUPES
     # transcript), kept as three because each is built on a different kind of
     # evidence and this workstation is not the only place any one of them can
     # fail to see what another does.
-    if [ -z "$fk_rows" ] && [ -z "${dh_rows:-}" ] && [ -z "$dup_rows" ]; then
+    if [ -z "$fk_rows" ] && [ -z "${dh_rows:-}" ] && [ -z "$dup_other" ]; then
       die "nothing of any kind is live for lane $LANE on this workstation, so there is nothing to retire: no FORK of its transcript (an id the row does not record, ratified decision 8(e)), no live DUPLICATE HOLDER of the id it does in the process table (Amendment 18(h), opensoft/openRepoTools#39), and no live DUPLICATE of it by session record either (Amendment 18(h))." 8
     fi
     die "'$retire_target' is neither the session id nor the pid of a live fork of lane $LANE, nor the pid or transcript id of a live duplicate holder of its own transcript in the process table, nor the pid of a live duplicate of it by session record. Naming an act against something that is none of this lane's is how the wrong conversation gets retitled and the wrong process gets stopped, so nothing is named. Pick one of the ids or pids above." 2
