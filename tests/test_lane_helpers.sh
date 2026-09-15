@@ -8046,6 +8046,10 @@ has   "…and the THREE kinds, with what each tells the next session to EXPECT" 
 has   "…the in-process one expecting every writer live" "$hfsk" "expect every writer below live"
 has   "…and the unknown one, which a plain handoff cannot know (Addendum 1 (h))" \
       "$hfsk" "THIS HANDOFF CANNOT KNOW WHICH KIND FOLLOWED IT"
+has   "the skill's own record writer carries the kind sub-field too" "$hfsk" 'payload="$payload; kind $kind"'
+has   "…and the free text after the why, in the addendum's spelling" "$hfsk" "kind unknown"
+has   "…and it asks window-session with the harness's own spelling of the window" \
+      "$hfsk" "#{session_name}:#{window_id}"
 has   "…and the measured fact that is the whole reason for the distinction" \
       "$hfsk" "mints a NEW TRANSCRIPT ID IN THE SAME PROCESS"
 has   "and the respawn line Addendum 2 (i-8) names: \`lane <lane>\`" "$hfsk" 'LANE_START_FRESH=1 lane $lane'

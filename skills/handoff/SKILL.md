@@ -474,6 +474,18 @@ payload="swap"
 # instead (ruling 11), and (c) below still runs.
 [[ -z "$ws" ]] || payload="$payload; workstation $ws"
 payload="$payload; agent $agent_name; transcript $transcript_id"
+# AND THE KIND, AFTER THEM (Amendment 17 Addendum 1 (h), in force
+# 2026-09-14T20:59:31Z). `in-process` where the clear that follows keeps THIS
+# process — a harness `/clear` — `respawn` where it does not (`/ctx`, `/exit`,
+# a relaunch), and `unknown` where this act cannot know which will follow,
+# which is a plain `/handoff`. `lane-handoff` writes the same sub-field, and a
+# record from the skill that carried none would be a record no reader can tell
+# a surviving writer from a dead one by. The same word goes in the line's FREE
+# TEXT after the why — `clear in-process`, `clear respawn`, `kind unknown`.
+kind="${kind:-unknown}"       # in-process | respawn | unknown
+payload="$payload; kind $kind"
+why_text="$why"
+if [[ "$kind" == unknown ]]; then why_text="$why kind unknown"; else why_text="$why $kind"; fi
 
 # (a) the Amendment 7 object-log PAUSED line — the record `swapped` reads.
 # AMENDMENT 11 CLAUSE (e) — THE SKILL SUPPLIES THE UUID, AND `LANES_SESSION` IS
@@ -609,7 +621,11 @@ prompt is the top block step 2 just wrote:
 ```sh
 # the pane is the LIVE RECORD'S own `tmux` field — `<session>:<@id>.%<pane>` —
 # because that is the pane the session is really in.
-pane="$("$L" window-session "$(tmux display-message -p '#{window_id}')" | awk -F'\037' '{print $2}')"
+# AND IT IS ASKED WITH `<session>:<@id>`, NOT `@id` ALONE: that is the HARNESS's
+# own `tmux` field, which is what `window-session` matches a record on, and the
+# three spellings of one window are never derived from each other
+# (`lane-start:975-984`, and `lane-handoff` reads it the same way).
+pane="$("$L" window-session "$(tmux display-message -p '#{session_name}:#{window_id}')" | awk -F'\037' '{print $2}')"
 # `lane <name>` where this workstation has that word, and the launcher where it
 # does not: `lane-handoff --restart` makes exactly this choice, in code.
 if command -v lane >/dev/null 2>&1; then
