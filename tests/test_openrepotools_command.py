@@ -449,7 +449,7 @@ def test_install_never_removes_a_file_it_did_not_write(tmp_path, name):
     assert mine.is_file(), "a file this installer did not write was deleted"
     assert mine.read_bytes() == before
     assert f"{name}: RETIRED" in result.stdout
-    assert f"rm {mine}" in result.stdout, (
+    assert f'rm -f -- "{mine}"' in result.stdout, (
         "the one line that removes it is printed, filled in, because the act "
         f"is the person's:\n{result.stdout}")
 
@@ -483,7 +483,7 @@ def test_install_never_unlinks_a_symlink_of_a_retired_name(tmp_path, name):
         + result.stdout)
     assert real.is_file(), "and what it pointed at is still there"
     assert f"{name}: RETIRED" in result.stdout
-    assert f"rm {link}" in result.stdout
+    assert f'rm -f -- "{link}"' in result.stdout
 
 
 @pytest.mark.parametrize("name", RETIRED)
@@ -512,7 +512,7 @@ def test_install_names_a_dangling_symlink_of_a_retired_name(tmp_path, name):
     assert f"{name}: RETIRED" in result.stdout, (
         "a retired name still on PATH is named, whatever kind of file it is:\n"
         + result.stdout)
-    assert f"rm {link}" in result.stdout
+    assert f'rm -f -- "{link}"' in result.stdout
 
 
 @pytest.mark.parametrize("name", RETIRED)
@@ -581,6 +581,34 @@ def test_a_copy_whose_bytes_are_right_and_whose_mode_is_not_says_so(tmp_path):
             assert f"{other}: already installed at " \
                    f"{tmp_path / '.local' / 'bin' / other} (unchanged)" \
                 in result.stdout, other
+
+
+@pytest.mark.parametrize("name", RETIRED)
+@NEEDS_JQ
+def test_the_retirement_prints_a_removal_that_can_be_pasted(tmp_path, name):
+    """A PRINTED COMMAND IS A LINE SOMEBODY TYPES BACK.
+
+    Copilot round 9 on #45, `openRepoTools:281`. `OPENREPOTOOLS_BIN_DIR` is a
+    path a person chooses, and the retirement printed `rm <path>` bare — so a
+    directory with a space in it produced a line that removes nothing (or, with
+    the wrong path, something else). Both planners in this file already print
+    `rm -f -- "<path>"` out of a `paths` they build with the quotes in; this is
+    the same spelling.
+    """
+    bin_dir = tmp_path / "my bin dir"
+    bin_dir.mkdir(parents=True)
+    mine = bin_dir / name
+    mine.write_text("#!/usr/bin/env bash\n# my own script\necho mine\n",
+                    encoding="utf-8")
+    mine.chmod(0o755)
+    result = run_cmd("--install", home=tmp_path,
+                     env={"OPENREPOTOOLS_BIN_DIR": str(bin_dir)})
+    assert result.returncode == 0, result.stderr
+    assert mine.is_file(), "a file this installer did not write was deleted"
+    assert f'rm -f -- "{mine}"' in result.stdout, (
+        "the removal is printed quoted, because the path has a space in it:\n"
+        + result.stdout)
+    assert f"rm {mine}\n" not in result.stdout
 
 
 @NEEDS_JQ

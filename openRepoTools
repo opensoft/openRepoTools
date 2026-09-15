@@ -278,7 +278,14 @@ retire_commands() {
 			rm -f -- "$target"
 			say "$name: RETIRED, removed from $target (lane-collision-protocol Amendment 18 Addendum 2; \`lane <name>\` is that act now)"
 		else
-			say "$name: RETIRED by lane-collision-protocol Amendment 18 Addendum 2, and $target is NOT this installer's copy — left exactly as it is. Remove it yourself if it is stale:  rm $target"
+			# THE PRINTED REMOVAL IS QUOTED, AND IT IS THIS FILE'S OWN SPELLING
+			# (Copilot round 9 on #45, `openRepoTools:281`): both planners print
+			# `rm -f -- "<path>" "<path>"` out of a `paths` they build with the
+			# quotes IN, because `OPENREPOTOOLS_BIN_DIR` is a path a person chooses
+			# and a bare one with a space in it is a line that removes nothing. `-f`
+			# for the reason those two give: what a removal needs is the DIRECTORY's
+			# write bit, not the file's.
+			say "$name: RETIRED by lane-collision-protocol Amendment 18 Addendum 2, and $target is NOT this installer's copy — left exactly as it is. Remove it yourself if it is stale:  rm -f -- \"$target\""
 		fi
 	done
 }
