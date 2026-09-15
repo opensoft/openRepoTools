@@ -517,6 +517,13 @@ add_seed_row "| \`repoK-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026
 add_seed_row "| \`repoK-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoK/x.md | ACTIVE |"
 add_seed_row "| \`repoK-3\` | harness \`$KLIVE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoK/x.md | ACTIVE |"
 add_seed_row "| \`repoK-4\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoK/x.md | ACTIVE |"
+# repoK-5 — Copilot round 13, PR #61: the SAME live-but-RETIRED shape as
+# repoK-3, but its held object is a stale CLAIMED rather than an OPENED PR —
+# the one combination `holder_is_dead` returning false could still fall
+# through into the ordinary stale-claim branch for. repoK-6 is the taker.
+K5LIVE_ID="aaaa0007-4b35-4000-8000-aaaa00074b35"
+add_seed_row "| \`repoK-5\` | harness \`$K5LIVE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoK/x.md | ACTIVE |"
+add_seed_row "| \`repoK-6\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoK/x.md | ACTIVE |"
 # repoL-1/3/5 — Copilot round 8, PR #61: issue #30's dead-lane takeover,
 # regression-tested for OPENED and CLAIMED (repoK-1/2 above) but not for
 # LANDING, WITHDRAWN or an earlier TAKEOVER — the same broadened
@@ -690,6 +697,8 @@ write_record "$sessions_dir/$LIVE_PID.json" "$LIVE_ID" "$LIVE_PID" "$live_start"
 # repoK-3: its object log ends RETIRED, but this real process is still live
 # under its id — issue #30's own confirmation must refuse the takeover anyway.
 write_record "$sessions_dir/$LIVE_PID-repoK3.json" "$KLIVE_ID" "$LIVE_PID" "$live_start" "k3sess:@9.%9" "repoK-3" "idle"
+# repoK-5: same real live process, a second id, Copilot round 13's own case.
+write_record "$sessions_dir/$LIVE_PID-repoK5.json" "$K5LIVE_ID" "$LIVE_PID" "$live_start" "k5sess:@9.%9" "repoK-5" "idle"
 # repoM-1: its OWN live session (issue #39) — `duplicate_holder_pids` must
 # exclude this pid even when the (faked) process table also names it.
 write_record "$sessions_dir/$LIVE_PID-repoM1.json" "$MLIVE_ID" "$LIVE_PID" "$live_start" "msess:@9.%9" "repoM-1" "idle"
@@ -760,6 +769,16 @@ NOW_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'OPENED — lane repoK-3, session %s@Eagle, %s, opensoft/repoK#15 ← opensoft/repoK#14\n' "$KLIVE_ID" "$OLD_UTC"
   printf 'RETIRED — lane repoK-3, session %s@Eagle, %s, lane:repoK-3\n' "$KLIVE_ID" "$NOW_UTC"
 } > "$WIP/lanes/log/repoK-3.md"
+# repoK-5 — Copilot round 13, PR #61: RETIRED, a real live session still
+# backs it up (exactly as repoK-3), but the object it holds is a CLAIMED
+# posted $OLD_UTC (5h old — stale by Rule 1's own ${STALE_HOURS:-4}h test)
+# rather than an OPENED PR, reaching the stale-claim branch `holder_is_dead`
+# alone was never enough to keep it out of.
+{ printf '# lane repoK-5 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoK-5, session %s@Eagle, %s, lane:repoK-5 → home opensoft/repoK; estate repoK\n' "$K5LIVE_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repoK-5, session %s@Eagle, %s, opensoft/repoK#99\n' "$K5LIVE_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repoK-5, session %s@Eagle, %s, lane:repoK-5\n' "$K5LIVE_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoK-5.md"
 # repoL-1/3/5 — Copilot round 8, PR #61: the three open verbs repoK-1/2 never
 # exercised for issue #30's dead-lane takeover. Each ends RETIRED, no live
 # session backs $DEAD_ID up (as repoK-1/G-1/N-1/H-1/P-1 above already lean
@@ -1367,6 +1386,20 @@ run env LANES_LANE=repoK-4 "$E" claim "opensoft/repoK#15" --no-github --force
 is   "--force still refuses a lane whose log ends RETIRED when a live session backs it up" "$rc" 2
 has  "…the verb-mismatch refusal fires exactly as it does for a live lane" "$err" "is not a stale claim"
 hasnt "…and nothing is written" "$(cat "$LOGD/repoK-4.md" 2>/dev/null)" "opensoft/repoK#15"
+
+# Copilot round 13, PR #61: the SAME live-but-RETIRED shape, but the held
+# object is a stale CLAIMED — the one case that used to reach `claim_is_stale`
+# rather than an explicit liveness refusal, because `holder_is_dead` returning
+# false was read as "not terminal" instead of "terminal, but confirmed live".
+run env LANES_LANE=repoK-6 "$E" claim "opensoft/repoK#99" --no-github --force
+is   "--force refuses a live lane's stale CLAIMED too, not only its OPENED/other verbs" "$rc" 2
+has  "…naming what its own log says" "$err" "lane repoK-5's own log ends RETIRED"
+has  "…and that a live session is why, not the claim's age" "$err" "a live session on this workstation still backs it up"
+hasnt "…never reaching the ordinary stale-claim wording" "$err" "old (threshold"
+hasnt "…and nothing is written" "$(cat "$LOGD/repoK-6.md" 2>/dev/null)" "opensoft/repoK#99"
+run "$E" who "opensoft/repoK#99"
+is   "…the object is still repoK-5's, untaken" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 1
+has  "…held by the live lane itself" "$out" "HOLDS    lane repoK-5"
 
 # --------- Copilot round 8, PR #61: the three open verbs repoK-1/2 left
 # untested for issue #30's dead-lane takeover — LANDING, WITHDRAWN and an
@@ -4813,6 +4846,14 @@ has  "…the lane's own row and session are said to be untouched" "$err" "lane i
 sleep 0.2
 is   "…and the parent really is gone" "$(kill -0 "$DUP_PARENT" 2>/dev/null && echo alive || echo gone)" "gone"
 is   "…and the child really is gone" "$(kill -0 "$DUP_CHILD" 2>/dev/null && echo alive || echo gone)" "gone"
+# CLEARED, NOT LEFT FOR THE TRAP (Copilot round 13, PR #61): `cleanup` fires
+# only at this file's very end, thousands of subprocesses after this point,
+# and a pid the two lines above have ALREADY verified gone is free for the OS
+# to hand to something unrelated before then — a stale $DUP_PARENT or
+# $DUP_CHILD in the trap would signal whatever that turned out to be. Cleared
+# here, now that both are independently confirmed gone; never before, and
+# never for a pid still alive.
+DUP_PARENT=""; DUP_CHILD=""
 
 run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_M" FAKE_PS_RECORDS="$FAKE_PS_M" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_M" \
   "$END" repoM-1 --retire "$LIVE_PID"
@@ -4873,6 +4914,16 @@ has  "…the parent, present throughout, is still TERMed, verified and reported"
 has  "…and the child a ps -p miss could not find is reported honestly" "$err" "pid $RACE_CHILD (child): STILL ALIVE"
 is   "…and that child, never having matched, is of course still running" "$(kill -0 "$RACE_CHILD" 2>/dev/null && echo alive)" "alive"
 kill "$RACE_PARENT" "$RACE_CHILD" 2>/dev/null || :
+# VERIFIED, THEN CLEARED, THE SAME RULE $DUP_PARENT/$DUP_CHILD JUST TOOK
+# (Copilot round 13, PR #61): this `kill` is this fixture's OWN teardown and
+# not the tool under test, but a variable the trap still owns is exactly the
+# same pid-reuse hazard — settled and confirmed gone before either is
+# cleared, never assumed from the `kill` above alone.
+sleep 0.2
+is   "…and the fixture pair really is gone before its pids are freed" \
+     "$(kill -0 "$RACE_PARENT" 2>/dev/null && echo alive || echo gone),$(kill -0 "$RACE_CHILD" 2>/dev/null && echo alive || echo gone)" \
+     "gone,gone"
+RACE_PARENT=""; RACE_CHILD=""
 
 # --------------------------- clause (c): lane-start RECORDS dir and profile
 mkdir -p "$HOME/projects/repoA11b"

@@ -875,14 +875,38 @@ DUPES
     # #61): that status conflates "already gone" (fine — the goal was never
     # the signal, it was the duplicate not existing) with "no permission"
     # (a real failure), and a caller that always reads exit 0 here cannot
-    # tell a genuine retirement from a duplicate still running. `kill -0`
-    # after a brief settle — SIGTERM is not always instant — answers the
-    # only question that matters: is it gone.
+    # tell a genuine retirement from a duplicate still running. A brief
+    # settle first — SIGTERM is not always instant.
+    #
+    # `kill -0`'S OWN FAILURE HAS THE SAME TWO ANSWERS CONFLATED, ONE LEVEL
+    # DOWN (Copilot round 13, PR #61): ESRCH (truly gone) and EPERM (still
+    # there, just not ours to signal) both read as "gone" here, so a TERM
+    # this process had no permission to deliver in the first place could be
+    # reported RETIRED over a duplicate still running. `kill -0` STAYS the
+    # primary check — it is a raw syscall, answers instantly, and every
+    # genuinely-gone case (the whole suite's own fixtures included) settles
+    # inside the same brief pause this file already gave it — and `ps -p`
+    # is asked ONLY where `kill -0` already says gone, to catch the one case
+    # that disagrees: a pid EPERM hid from the syscall but a process listing
+    # can still see. Trusting `ps -p` as primary measured slower and flakier
+    # under this suite's own concurrent load than the syscall it would have
+    # replaced (forking `ps` itself competes for the CPU the dying process
+    # needs), so it is the fallback and never the first question.
     sleep 0.1
-    dh_p_gone=1; kill -0 "$dh_parent" 2>/dev/null && dh_p_gone=0
+    dh_p_gone=1
+    if kill -0 "$dh_parent" 2>/dev/null; then
+      dh_p_gone=0
+    elif ps -p "$dh_parent" >/dev/null 2>&1; then
+      dh_p_gone=0
+    fi
     dh_c_gone=1
     if [ -n "$dh_child" ]; then
-      dh_c_gone=1; kill -0 "$dh_child" 2>/dev/null && dh_c_gone=0
+      dh_c_gone=1
+      if kill -0 "$dh_child" 2>/dev/null; then
+        dh_c_gone=0
+      elif ps -p "$dh_child" >/dev/null 2>&1; then
+        dh_c_gone=0
+      fi
     fi
     dh_p_msg="gone"
     [ "$dh_p_gone" = 1 ] || dh_p_msg="STILL ALIVE, TERM withheld: argv no longer matched"

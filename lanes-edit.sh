@@ -2425,9 +2425,11 @@ claim_is_stale() {   # <lane> <object> <utc-of-the-claim> <its file> <its line>
 # planned, expected stop was never meant to surrender — the very collision
 # Amendment 8 exists to prevent.
 HOLDER_DEAD_VERB=""
+HOLDER_LIVE_TERMINAL=""
 holder_is_dead() {   # <lane>
   hid_l="${1-}"; [ -n "$hid_l" ] || return 1
   HOLDER_DEAD_VERB=""
+  HOLDER_LIVE_TERMINAL=""
   hid_rc=0
   hid_verb="$(lane_log_events "$hid_l" 2>/dev/null | awk -F"$US" '
     ($3=="STARTED"||$3=="PAUSED"||$3=="RESUMED"||$3=="ENDED"||$3=="RETIRED") && substr($8,1,5)!="fork " { v=$3 }
@@ -2446,7 +2448,22 @@ holder_is_dead() {   # <lane>
   # caller of this one liveness implementation already treats it. Only 8 may
   # pass; 0 and every failure both refuse.
   live_holder "$hid_l" "$hid_ids" >/dev/null 2>&1; hid_lrc=$?
-  [ "$hid_lrc" = 8 ] || return 1
+  [ "$hid_lrc" = 8 ] || {
+    # A CONFIRMED-LIVE TERMINAL LOG IS ITS OWN VERDICT, NOT "NOT ESTABLISHED"
+    # (Copilot round 13, PR #61): this function's OWN return value stays
+    # fail-closed exactly as above — only 8 ever lets it answer dead — but a
+    # caller that reads false here and falls back to Rule 1's ORDINARY
+    # stale-claim test has no way to tell "this log never terminated" apart
+    # from "this log terminated and a real session still answers for it",
+    # and the second is refused on liveness alone wherever else this file
+    # meets it (`repoK-3`'s own case, `lane-start`'s own refusal). Recorded
+    # here, ONLY for `hid_lrc = 0` (genuinely confirmed live — never for an
+    # unreadable records tree, which this lane answers for no better than
+    # "not established"), so `claim --force` can refuse it explicitly rather
+    # than ask `claim_is_stale` a question it was never built to answer.
+    [ "$hid_lrc" = 0 ] && HOLDER_LIVE_TERMINAL="$hid_verb"
+    return 1
+  }
   HOLDER_DEAD_VERB="$hid_verb"
   return 0
 }
@@ -7589,6 +7606,21 @@ EOF
           # here too when THIS lane is confirmed alive, and the enumeration
           # left it unnamed.
           die "--force takes over a stale CLAIMED and nothing else: $obj is $h_verb by lane $h_lane. An open TAKEOVER, OPENED, LANDING or WITHDRAWN is not a stale claim, and lane $h_lane's own log does not end on ENDED or RETIRED either (or a live session on this workstation still holds it)." 2
+        fi
+        # A LIVE TERMINAL HOLDER IS REFUSED HERE, NOT ASKED WHETHER ITS CLAIM
+        # IS OLD (Copilot round 13, PR #61): `claim_is_stale` answers a claim's
+        # own AGE and has never known anything about the lane behind it — so a
+        # CLAIMED left by a lane whose own log says ENDED/RETIRED while a real
+        # session on this workstation still backs it up would read as an
+        # ORDINARY stale claim once old enough, and be taken over, which is
+        # exactly the collision issue #30 exists to stop (repoK-3's own shape,
+        # reached here only because ITS object happened to be OPENED rather
+        # than CLAIMED). `HOLDER_LIVE_TERMINAL` is the immediately-preceding
+        # `holder_is_dead` call's own tri-state answer for this lane; refused
+        # in these words rather than folded into the stale-claim message
+        # below, which is not why this one is refused.
+        if [ -n "$HOLDER_LIVE_TERMINAL" ]; then
+          die "--force refused: lane $h_lane's own log ends $HOLDER_LIVE_TERMINAL, but a live session on this workstation still backs it up — refused exactly as any other live holder's claim on $obj is. Rule 1: the lane stops and reports; it does not author a successor." 2
         fi
         if ! claim_is_stale "$h_lane" "$obj" "$h_utc" "$h_file" "$h_line"; then
           die "--force refused: lane $h_lane's claim on $obj is $(age_of "$h_utc") old (threshold ${STALE_HOURS}h), or it is a PR, or that lane has since OPENED a PR naming it. Rule 1 makes a claim takeable only when it is stale, and lane $h_lane's own log does not end on ENDED or RETIRED either (or a live session on this workstation still holds it)." 2
