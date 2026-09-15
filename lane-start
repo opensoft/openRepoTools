@@ -2598,6 +2598,43 @@ else
     fi
   fi
 
+  # AMENDMENT 8's RULE, FOLLOWED HERE TOO: THE CELL FIRST, THEN THE STAMP
+  # (Copilot round 5 on openRepoTools#82). The harness path above says it in
+  # those words — the stamp names a uuid, so the cell that carries the uuid is
+  # written first — and this path did the opposite: it stamped the minted id and
+  # THEN tried to append it, so a refused append left the row's state naming a
+  # session its own session cell does not carry. The resume target is the
+  # SESSION CELL and nothing else (Amendment 6(b)), so that never resumed the
+  # wrong conversation — it resumed the id the register knew — but the row said
+  # two things a reader has to reconcile. Written in this order the common path
+  # says one thing, and a refused append still prints the act that cures it.
+  # An EXISTING row that is about to run a NEW session: append the minted id
+  # after the cell's last id, so the next start resumes by id instead of by
+  # title. The append is `replace-in-row`, which refuses unless its anchor
+  # occurs exactly once in the row — so a failure here is a refusal, never a
+  # corruption, and it never fails the launch.
+  #
+  # THE ANCHOR IS THE PUBLISHED ID AND THE FILE IS THIS CHECKOUT'S, which is a
+  # refusal exactly when the two disagree — a stale copy of the row, the case
+  # the read above exists for. That is the right way round: appending after the
+  # id THIS copy ends on would write a cell that no longer matches the one that
+  # landed, and `commit_push`'s rebase would then conflict on the same line. The
+  # refusal prints the act instead, and the launch is unaffected.
+  if [ -n "$new_sid" ]; then
+    stamp_hint="LANES_LANE=$LANE $LANES_EDIT append-session-id $LANE \"<the session cell's last id>\" \"→ harness \\\`$new_sid\\\`\""
+    if [ -z "$row_sid" ]; then
+      note "the row's session cell records no session id this script can read (some rows carry only \`session_…\` footer ids). STAMP IT AS THIS SESSION'S FIRST ACT:"
+      note "  $stamp_hint"
+    elif (( dry_run )); then
+      plan "lanes-edit.sh append-session-id $LANE '$row_sid' '→ harness \`$new_sid\`'"
+    elif LANES_LANE="$LANE" "$LANES_EDIT" append-session-id "$LANE" "$row_sid" "→ harness \`$new_sid\`" "session cell: $prog minted $new_sid for this window"; then
+      step "session cell updated: $row_sid → $new_sid"
+    else
+      note "the session cell was NOT stamped (this checkout's copy of the row does not carry $row_sid exactly once IN ITS SESSION CELL — it may be older than the published one). STAMP IT AS THIS SESSION'S FIRST ACT:"
+      note "  $stamp_hint"
+    fi
+  fi
+
   # AMENDMENT 6(c)'s STAMP, WRITTEN HERE. The row's first act after a resume is
   # `RESUMED by <transcript uuid>`, and under Amendment 6(b) that stamp is
   # load-bearing: it is what the NEXT lane-start resumes, so a missed one is not
@@ -2659,33 +2696,6 @@ else
   else
     LANES_LANE="$LANE" "$LANES_EDIT" set-row-state "$LANE" "LIVE · $state_line"
     step "row state set: LIVE · $lane_verb by ${lane_sid:-unknown}"
-  fi
-
-  # An EXISTING row that is about to run a NEW session: append the minted id
-  # after the cell's last id, so the next start resumes by id instead of by
-  # title. The append is `replace-in-row`, which refuses unless its anchor
-  # occurs exactly once in the row — so a failure here is a refusal, never a
-  # corruption, and it never fails the launch.
-  #
-  # THE ANCHOR IS THE PUBLISHED ID AND THE FILE IS THIS CHECKOUT'S, which is a
-  # refusal exactly when the two disagree — a stale copy of the row, the case
-  # the read above exists for. That is the right way round: appending after the
-  # id THIS copy ends on would write a cell that no longer matches the one that
-  # landed, and `commit_push`'s rebase would then conflict on the same line. The
-  # refusal prints the act instead, and the launch is unaffected.
-  if [ -n "$new_sid" ]; then
-    stamp_hint="LANES_LANE=$LANE $LANES_EDIT append-session-id $LANE \"<the session cell's last id>\" \"→ harness \\\`$new_sid\\\`\""
-    if [ -z "$row_sid" ]; then
-      note "the row's session cell records no session id this script can read (some rows carry only \`session_…\` footer ids). STAMP IT AS THIS SESSION'S FIRST ACT:"
-      note "  $stamp_hint"
-    elif (( dry_run )); then
-      plan "lanes-edit.sh append-session-id $LANE '$row_sid' '→ harness \`$new_sid\`'"
-    elif LANES_LANE="$LANE" "$LANES_EDIT" append-session-id "$LANE" "$row_sid" "→ harness \`$new_sid\`" "session cell: $prog minted $new_sid for this window"; then
-      step "session cell updated: $row_sid → $new_sid"
-    else
-      note "the session cell was NOT stamped (this checkout's copy of the row does not carry $row_sid exactly once IN ITS SESSION CELL — it may be older than the published one). STAMP IT AS THIS SESSION'S FIRST ACT:"
-      note "  $stamp_hint"
-    fi
   fi
 
   # AMENDMENT 17(c) — THE CELL, IN THE AGENT'S OWN SPELLING. A launch of an

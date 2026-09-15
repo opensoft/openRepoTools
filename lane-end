@@ -970,6 +970,15 @@ cell_for_scan() {   # <state cell> — the part of it that says where the lane i
       cfs_rest="${cfs#* · }"
       case "$cfs_rest" in *' · '*) : ;; *) printf '%s' "$cfs"; return 0 ;; esac
       cfs_two="${cfs_rest%% · *}"
+      cfs_three="${cfs_rest#* · }"
+      # EXACTLY THREE PARTS, AND THE THIRD NOT EMPTY — `mig_cell_is_phrase`'s
+      # rule to the letter (Copilot round 5 on openRepoTools#82). A FOURTH ` · `
+      # means a diary: `LIVE · <UTC> · a note · <UTC> LANDING #7` has the
+      # phrase's first two fields and a history after them, and narrowing to
+      # `LIVE` there would close a lane over an open landing.
+      case "$cfs_three" in
+        '' | *' · '*) printf '%s' "$cfs"; return 0 ;;
+      esac
       cfs_ok=0
       case "$cfs_one" in
         LIVE|PAUSED|LANDED|ENDED|RETIRED|'HANDED OFF'|MIGRATED) cfs_ok=1 ;;

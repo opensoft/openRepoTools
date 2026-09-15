@@ -804,7 +804,12 @@ REPOA14_SID="$(minted_of "$out")"
 is   "an existing row with a stale id starts a new session" "$(launch_of "$out")" "claude --name repoA-14"
 has  "…and the session cell is stamped with the minted id, AFTER the old id's code span" "$(grep '^| `repoA-14`' "$LANES")" "harness \`$GHOST2_ID\` → harness \`$REPOA14_SID\`"
 hasnt "…never inside it, which a replace at a bare-uuid anchor would do (F-B1)" "$(grep '^| `repoA-14`' "$LANES")" "\`$GHOST2_ID → "
-has  "…in its own register commit" "$(git -C "$WIP" log --oneline -1 -- lanes/LANES.md)" "session cell: lane-start minted $REPOA14_SID"
+# ITS OWN REGISTER COMMIT, AND THE ONE BEFORE THE STAMP (Copilot round 5 on
+# openRepoTools#82): Amendment 8's rule is THE CELL FIRST, THEN THE STAMP — the
+# stamp names a uuid, so the cell that carries it is written first — and this
+# path used to do the opposite. Both commits are asserted, in that order.
+has  "…in its own register commit" "$(git -C "$WIP" log --format=%s -- lanes/LANES.md | head -n2 | tail -n1)" "session cell: lane-start minted $REPOA14_SID"
+has  "…with the state stamp committed after it, naming the same id" "$(git -C "$WIP" log --format=%s -n1 -- lanes/LANES.md)" "state · LIVE · STARTED by $REPOA14_SID"
 
 # And the loop closes: run it again, and the id just written is resumed by id.
 printf '{"type":"user"}\n' > "$tdir/$REPOA14_SID.jsonl"
@@ -9165,6 +9170,10 @@ is    "a NOTED whose object is not the lane is refused" "$rc" 2
 has   "…pointing at the payload where an object belongs" "$err" "log RULED lane:repoA13-1 → opensoft/openRepoTools#29"
 run env LANES_LANE=repoA13-1 LANES_SESSION="$A13_ID" "$E" log NOTED "lane:repoA13-1" "→" "opensoft/openRepoTools#29" "x"
 is    "a NOTED with a payload is refused" "$rc" 2
+run env LANES_LANE=repoA13-1 LANES_SESSION="$A13_ID" "$E" log NOTED "lane:repoB-1" "a note about somebody else's lane"
+is    "a NOTED whose object is ANOTHER lane is refused (Copilot round 5)" "$rc" 2
+has   "…because a note is written into the log of the lane it names" "$err" "lane:repoA13-1, not lane:repoB-1"
+is    "…and nothing was written to that lane's log" "$(cat "$LOGD/repoB-1.md" 2>/dev/null | grep -c 'somebody else' || :)" 0
 run env LANES_LANE=repoA13-1 LANES_SESSION="$A13_ID" "$E" log RULED "lane:repoA13-1"
 is    "a RULED with no words is refused" "$rc" 2
 has   "…because the words ARE the ruling" "$err" "verbatim"
@@ -9212,6 +9221,13 @@ is    "…and a LEGACY diary cell is still scanned whole" "$rc" 2
 run "$END" repoA13-6
 is    "a diary whose second entry is only an instant is not the phrase" "$rc" 2
 has   "…so its landing still holds the lane" "$err" "the last LANDING in its state cell"
+# AND EXACTLY THREE PARTS, WITH THE THIRD NOT EMPTY (Copilot round 5): a FOURTH
+# ` · ` is a history after the phrase's first two fields, and narrowing to the
+# state there would close a lane over the landing in that history.
+"$E" add-row "| \`repoA13-7\` | harness \`$A13_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoA13/t.md | LIVE · 2026-09-14T00:00:00Z · a note · 2026-09-14T01:00:00Z LANDING #7 into repoA13 main |" >/dev/null 2>&1
+run "$END" repoA13-7
+is    "a cell with a FOURTH part is a diary, not the phrase" "$rc" 2
+has   "…so the landing in its history still holds the lane" "$err" "the last LANDING in its state cell"
 
 # ---- (d) `history` — the diary the cell used to be.
 run "$E" history repoA13-1
@@ -9340,6 +9356,22 @@ has   "…every migrated cell pointing at the log that now holds its history" "$
 hasnt "…with the diary gone from the row" "$mig_reg" "opened the PR and it went green"
 has   "…and a cell that was already one phrase is untouched" "$mig_reg" "| LIVE |"
 
+# THE MIGRATED LINE IS BOUNDED BY THE SAME CAP THE WRITER ENFORCES (Copilot
+# round 5): this cell is built directly, not through `set-row-state`, and it
+# carries a PATH whose length is the lane's name — which `check_lane_name`
+# bounds in characters and not in length.
+MIG_LONG="repoMig-$(awk 'BEGIN { s = ""; while (length(s) < 230) s = s "x"; print s }')"
+printf '| `%s` | harness `%s` | Eagle / test / brett | 2026-09-12 | none | h | ACTIVE · 2026-09-13T10:00:00Z a long-named lane |\n' "$MIG_LONG" "$MIG_ID1" >> "$MIG_WIP/lanes/LANES.md"
+git -C "$MIG_WIP" add -A >/dev/null 2>&1
+git -C "$MIG_WIP" commit -q -m "seed a lane whose name alone is longer than the cap"
+git -C "$MIG_WIP" push -q origin main 2>/dev/null || :
+run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --yes
+is    "a lane whose name alone overruns the cap still migrates" "$rc" 0
+mig_long_cell="$(grep "^| \`$MIG_LONG\`" "$MIG_WIP/lanes/LANES.md" | awk -F' \\| ' '{ c = $NF; sub(/ \|$/, "", c); n = split(c, p, / · /); print (length(p[3]) <= 240 ? "yes" : "no " length(p[3])) }')"
+is    "…with its line inside ratified decision O1's 240 characters" "$mig_long_cell" "yes"
+has   "…and the line says it was cut" "$(grep "^| \`$MIG_LONG\`" "$MIG_WIP/lanes/LANES.md")" " ..."
+MIG_HEAD2="$(git -C "$MIG_WIP" rev-parse HEAD)"
+
 run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" history repoMig-1 --since 2026-09-12T11:00:00Z
 is    "history reads the migrated narrative" "$rc" 0
 hasnt "…--since drops every entry older than the instant" "$out" "opened the PR"
@@ -9349,7 +9381,7 @@ has   "…and what came after it" "$out" "PAUSED for the night"
 run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --yes
 is    "a SECOND run refuses: the migration is ONE act" "$rc" 2
 has   "…saying the register is already in the shape" "$err" "already in Amendment 13(a)'s shape"
-is    "…and changed nothing" "$(git -C "$MIG_WIP" rev-list --count "$MIG_HEAD1"..HEAD)" 1
+is    "…and changed nothing" "$(git -C "$MIG_WIP" rev-list --count "$MIG_HEAD2"..HEAD)" 0
 run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --no-such-flag
 is    "an unknown flag is a refusal, not a silent dry run" "$rc" 2
 

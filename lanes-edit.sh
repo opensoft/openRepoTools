@@ -6626,10 +6626,22 @@ guard_answer() {   # <offer file> <the prompt> <pane>
       # went. It used to be an `append-row-status` of `MOVED → <lane>`, which
       # left the cell saying two things at once — whatever state it opened with,
       # and this.
-      if "$RESOLVED" set-row-state "$ga_from" "PAUSED · this window moved to lane $ga_to; the session named $ga_to answered yes at the guard" >&2; then
+      # THE LINE IS BOUNDED (Copilot round 5 on openRepoTools#82). A lane name is
+      # bounded in its CHARACTERS by `check_lane_name` and not in its length, and
+      # this line carried it twice: a long enough name makes `set-row-state`
+      # refuse the very write that records where the work went — after the window
+      # has already been renamed and moved. The name is said ONCE, and cut where
+      # even once does not fit, so the act always records something true.
+      ga_line="this window moved to lane $ga_to on the person's yes at the guard"
+      if [ "${#ga_line}" -gt 230 ]; then
+        ga_line="${ga_line:0:230}"
+        case "$ga_line" in *' '*) ga_line="${ga_line% *}" ;; esac
+        ga_line="$ga_line ..."
+      fi
+      if "$RESOLVED" set-row-state "$ga_from" "PAUSED · $ga_line" >&2; then
         note "…and $ga_from's row now reads PAUSED, naming the move to $ga_to."
       else
-        note "…but $ga_from's row could NOT be marked (its writer's words are above). Run: lanes-edit.sh set-row-state $ga_from \"PAUSED · this window moved to lane $ga_to\""
+        note "…but $ga_from's row could NOT be marked (its writer's words are above). Run: lanes-edit.sh set-row-state $ga_from \"PAUSED · $ga_line\""
       fi
     else
       note "…and the register has no row for $ga_from, so there is nothing to mark MOVED there."
@@ -7364,7 +7376,21 @@ EOF
     # names, where that verb is one of clause (a)'s, else `MIGRATED`.
     msc_state="$(mig_lead_state "$msc_last")"
     [ -n "$msc_state" ] || msc_state=MIGRATED
-    msc_new="$msc_state · $msc_utc · history in $msc_rel"
+    # THE CAP IS THE CAP HERE TOO (Copilot round 5 on openRepoTools#82). This
+    # builds the cell directly rather than through `set-row-state`, so nothing
+    # else enforces ratified decision O1's 240 characters on the line — and the
+    # line carries a PATH whose length is the lane's name: `check_lane_name`
+    # bounds a name's characters and not its length, so a lane named with 216 of
+    # them would be migrated to a cell the writer itself would refuse. Cut back
+    # to the last space, for the reason the three commands' `cut_to_line` gives:
+    # `${s:0:n}` counts bytes wherever the locale is not a UTF-8 one.
+    msc_line="history in $msc_rel"
+    if [ "${#msc_line}" -gt 230 ]; then
+      msc_line="${msc_line:0:230}"
+      case "$msc_line" in *' '*) msc_line="${msc_line% *}" ;; esac
+      msc_line="$msc_line ..."
+    fi
+    msc_new="$msc_state · $msc_utc · $msc_line"
     printf '%s%s%s%s%s%s%s\n' "$msc_n" "$US" "$msc_new" "$US" "$msc_head" "$US" "$msc_tail" >> "$msc_tmp/cells"
     printf '%s%s%s%s%s\n' "$msc_n" "$US" "$msc_lf" "$US" "$msc_rel" >> "$msc_tmp/targets"
     printf '  %-26s %4s entries  %7s chars → %s\n' \
@@ -7887,6 +7913,16 @@ Nothing was written." 2
     if is_note_verb "$verb"; then
       is_lane_object "$obj" ||
         die "'$verb' is a lane-kind line (Amendment 13(b)): its object is the LANE itself, lane:$lane, and not $obj. The object a ruling BEARS ON is its payload: LANES_LANE=$lane lanes-edit.sh log RULED lane:$lane → $obj \"<the words, verbatim>\"" 2
+      # AND IT IS THIS LANE, NOT ANOTHER (Copilot round 5 on openRepoTools#82).
+      # `is_lane_object` reads the `lane:` prefix and nothing more, so
+      # `LANES_LANE=repoA … log NOTED lane:repoB` wrote a line into repoA's log
+      # whose object named repoB — a note about a lane in a file that is not its
+      # log, and `history repoB` would never show it. Clause (b) is explicit
+      # that these are "lane-kind lines whose object is the lane itself".
+      # COMPARED CASE-INSENSITIVELY, because `$lane` is already the row's own
+      # spelling and a caller may have typed another (Amendment 15).
+      [ "$(lc "${obj#lane:}")" = "$(lc "$lane")" ] ||
+        die "'$verb' is a line about THIS lane, and its object is this lane: lane:$lane, not $obj (Amendment 13(b)). A note is written into the log of the lane it names, so an object naming another lane is a note nobody reading that lane's history would ever see. To say something about another lane, write it in the text; to record a ruling about an OBJECT, that object is the payload: LANES_LANE=$lane lanes-edit.sh log RULED lane:$lane → <object> \"<the words>\"" 2
       if [ -z "$text" ]; then
         case "$verb" in
           RULED) die "a RULED with no words is not a ruling. The text is the ruling, VERBATIM — it is what Amendment 13(b) put this verb in the log for: LANES_LANE=$lane lanes-edit.sh log RULED lane:$lane${payload:+ → $payload} \"<Brett Heap's words, verbatim>\"" 2 ;;
