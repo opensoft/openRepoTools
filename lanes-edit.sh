@@ -8116,7 +8116,16 @@ case "$cmd" in
   # at yet is not a reason to refuse them — the same exemption `session-start`
   # has had since it was written, and the same one `guard` joined under
   # Amendment 12(d), each for its own reason.
-  session-start|guard|lane-groups|next-free) : ;;
+  # AND THE RETIRED VERB IS EXEMPT TOO (Copilot round 4 on openRepoTools#82,
+  # suppressed comment `lanes-edit.sh:7525`). `append-row-status` is out of the
+  # WRITER list above and says so of itself — *"it refuses before the
+  # workstation guard and before the register is even looked for"* — but this
+  # second guard caught it all the same: on a machine with no configured
+  # workspace the caller got the workspace refusal (exit 1) instead of the
+  # RETIREMENT refusal (exit 2) naming the two acts that replace it. A
+  # compatibility refusal that only fires where the register is already
+  # reachable is not one.
+  session-start|guard|lane-groups|next-free|append-row-status) : ;;
   *)
     if [ -z "$LANES_REPO" ] || [ -z "$LANES_DIR" ]; then
       die "$(lanes_workspace_why)" 1
