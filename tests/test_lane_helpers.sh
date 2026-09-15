@@ -49,7 +49,7 @@ TESTS_DIR="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 # the root of `opensoft/openRepoTools` now and this suite is in `tests/`.
 SRC_DIR="$(cd -- "$TESTS_DIR/.." && pwd)"
 
-for f in lane-start lane-end lanes-edit.sh link-estates lane lanes; do
+for f in lane-start lane-end lanes-edit.sh link-estates lane lanes lane-rename; do
   [ -x "$SRC_DIR/$f" ] || { echo "missing or not executable: $SRC_DIR/$f" >&2; exit 1; }
 done
 [ -f "$SRC_DIR/repos.tsv" ] || { echo "missing: $SRC_DIR/repos.tsv" >&2; exit 1; }
@@ -344,12 +344,56 @@ cat > "$SANDBOX/fakebin/claude" <<'FAKE'
 printf '%s\n' "$*" >> "${FAKE_CLAUDE_LOG:-/dev/null}"
 FAKE
 
-chmod +x "$SANDBOX/fakebin/tmux" "$SANDBOX/fakebin/claude"
+# A FAKE `gh`, AND IT MAKES THIS SUITE SAFER RATHER THAN LOOSER (Copilot round 7
+# on openRepoTools#81). `LANES_NO_GITHUB=1` below stops every `gh` call this
+# helper would make, which is why there was no fake at all — and why Amendment
+# 16(g)'s POST-COMMIT COMMENT, the one act of `rename-lane` that happens after
+# the push, had no test: every case here switches it off. The fake is the way to
+# test it without reaching anything, and note what it changes for the rest of the
+# file: the fakebin is PREPENDED to `$PATH`, so until now a call that slipped
+# past `LANES_NO_GITHUB` would have found the WORKSTATION'S OWN `gh`. It cannot
+# now. Anything but the two comment forms `gh_comment` makes is a loud refusal.
+cat > "$SANDBOX/fakebin/gh" <<'FAKE'
+#!/usr/bin/env bash
+# `gh issue comment <n> --repo <owner/repo> --body-file -` and its `pr` twin are
+# the only calls this fake answers; the body arrives on stdin.
+fake_gh_kind="${1-}"; fake_gh_verb="${2-}"; shift 2 2>/dev/null || :
+case "$fake_gh_kind/$fake_gh_verb" in
+  issue/comment | pr/comment) : ;;
+  *)
+    printf 'FAKE gh REFUSED: %s %s — this suite reaches no GitHub surface
+'       "$fake_gh_kind" "$fake_gh_verb" >&2
+    exit 90 ;;
+esac
+fake_gh_n="${1-}"; fake_gh_repo=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) fake_gh_repo="${2-}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[ "${FAKE_GH_FAIL:-0}" = 1 ] && { printf 'FAKE gh: refusing on purpose
+' >&2; exit 1; }
+{ printf '=== %s %s %s %s
+' "$fake_gh_kind" "$fake_gh_verb" "$fake_gh_repo" "$fake_gh_n"
+  cat
+  printf '
+'
+} >> "${FAKE_GH_LOG:-/dev/null}"
+printf 'https://github.com/%s/issues/%s#issuecomment-%s
+'   "${fake_gh_repo:-owner/repo}" "${fake_gh_n:-0}" "$$"
+FAKE
+
+chmod +x "$SANDBOX/fakebin/tmux" "$SANDBOX/fakebin/claude" "$SANDBOX/fakebin/gh"
 export FAKE_TMUX_LOG="$SANDBOX/tmux.log" FAKE_CLAUDE_LOG="$SANDBOX/claude.log"
-: > "$FAKE_TMUX_LOG"; : > "$FAKE_CLAUDE_LOG"
+export FAKE_GH_LOG="$SANDBOX/gh.log"
+: > "$FAKE_TMUX_LOG"; : > "$FAKE_CLAUDE_LOG"; : > "$FAKE_GH_LOG"
 export TMUX="$SANDBOX/fake-tmux-socket,0,0"
 
-# Amendment 7: no test may reach GitHub, whatever a case forgets to pass.
+# Amendment 7: no test may reach GitHub, whatever a case forgets to pass. The
+# fake above is the second lock on the same door: this variable stops the call
+# being made, and the fake stops the workstation's own `gh` being what answers
+# it if a case switches the variable off on purpose — which exactly one does.
 export LANES_NO_GITHUB=1
 
 # Amendment 8, ruling (g): the harness exports `CLAUDE_CODE_SESSION_ID` into
@@ -368,11 +412,11 @@ export OPENREPOTOOLS_BIN_DIR="$SANDBOX/bin"
 mkdir -p "$OPENREPOTOOLS_BIN_DIR"
 cp -p "$SRC_DIR/lane-start" "$SRC_DIR/lane-end" "$SRC_DIR/lanes-edit.sh" \
       "$SRC_DIR/link-estates" "$SRC_DIR/lane" "$SRC_DIR/lanes" \
-      "$SRC_DIR/repos.tsv" "$OPENREPOTOOLS_BIN_DIR/"
+      "$SRC_DIR/lane-rename" "$SRC_DIR/repos.tsv" "$OPENREPOTOOLS_BIN_DIR/"
 chmod 755 "$OPENREPOTOOLS_BIN_DIR"/lane-start "$OPENREPOTOOLS_BIN_DIR"/lane-end \
           "$OPENREPOTOOLS_BIN_DIR"/lanes-edit.sh "$OPENREPOTOOLS_BIN_DIR"/link-estates \
           "$OPENREPOTOOLS_BIN_DIR"/lane "$OPENREPOTOOLS_BIN_DIR"/lanes \
-          "$OPENREPOTOOLS_BIN_DIR"/repos.tsv
+          "$OPENREPOTOOLS_BIN_DIR"/lane-rename "$OPENREPOTOOLS_BIN_DIR"/repos.tsv
 # AFTER the fake bin, which must still win for `tmux` and `claude`.
 export PATH="$SANDBOX/fakebin:$OPENREPOTOOLS_BIN_DIR:$PATH"
 
@@ -7144,6 +7188,903 @@ has  "…naming the one that LANDED first, whose own line spells it in another c
 hasnt "…and never the one that merely sorts first" "$err" "@repoRace-3"
 has  "…with the CLAIM-LOST line pointing at that winner" \
      "$(cat "$LOGD/repoRace-1.md")" "opensoft/repoRace#7 → lane:repoRace-2"
+
+echo "== Amendment 16: a lane is renamed by one word, in one commit =="
+
+# RATIFIED BY BRETT HEAP 2026-09-14T09:24:35Z, verbatim *"Ratify as drafted
+# (Recommended)"*, on his request of the same day, verbatim: *"we need the
+# ability to rename a lane. maybe lanes --rename <current lane name> <new lane
+# name>."* **A LANE IS RENAMED BY ONE WORD, IN ONE COMMIT, AND ITS OLD NAME
+# KEEPS RESOLVING FOR EVER.**
+#
+# WHAT IT COST TO LEARN: on 2026-09-14 two lanes renamed themselves BY HAND,
+# each as one `RENAMED` line appended to `LANES.md` with `append-line`. The
+# lines are honest and they are all there is — the rows still carried the old
+# keys, the logs and the handoffs the old names, and a reader of either lane's
+# history had to know the rename to follow it.
+#
+# THE CHECKOUT IS COMMITTED FIRST, for the reason the section above this one
+# gives in the same words: the cases before it leave the sandbox workspace dirty
+# on purpose, and a write that has to `pull --rebase` refuses on a checkout it
+# cannot rebase — which is those cases' subject and not this one's.
+git -C "$WIP" add -A >/dev/null 2>&1
+git -C "$WIP" commit -q -m "commit the sandbox's pending edits before the Amendment 16 cases" >/dev/null 2>&1 || :
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main 2>/dev/null || :
+
+# THE FIXTURE IS A WHOLE LANE: a row, a log with a HELD object in it, and a
+# handoff named for the lane — because the act under test moves all three in one
+# commit, and a fixture missing any of them would leave a move untested.
+REN_ID="12ab34cd-16a1-4000-8000-12ab34cd16a1"
+RENH="$WIP/handoffs/repoRen"
+mkdir -p "$RENH"
+add_seed_row "| \`repoRen-1\` | harness \`$REN_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoRen/session-handoff-2026-09-11-lane-repoRen-1.md | ACTIVE |"
+{ printf '# lane repoRen-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoRen-1, session %s@Eagle, %s, lane:repoRen-1 → home opensoft/repoRen; estate repoRen\n' "$REN_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repoRen-1, session %s@Eagle, %s, opensoft/repoRen#4\n' "$REN_ID" "$OLD_UTC"
+} > "$LOGD/repoRen-1.md"
+{ printf 'Lane: repoRen-1 (opensoft/team-05b, session %s) — single-use resume prompt\n' "$REN_ID"
+  printf '\n'
+  printf '## RESUME PROMPT — written %s\n' "$OLD_UTC"
+} > "$RENH/session-handoff-2026-09-11-lane-repoRen-1.md"
+# The row a rename INTO that name would collide with.
+add_seed_row "| \`repoRen-9\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoRen/x.md | ACTIVE |"
+# A LANE A LIVE SESSION HOLDS, for clause (a)'s live-holder refusal and for the
+# one window that is exempt from it. Its recorded id is the suite's live one, so
+# `live_holder` finds a real record of a real process.
+add_seed_row "| \`repoRenL-1\` | harness \`$LIVE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoRen/live.md | ACTIVE |"
+git -C "$WIP" add -A -- lanes handoffs >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the Amendment 16 fixtures: a lane with a row, a held object, a handoff named for it, a collision row and a live-held lane"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+# ------------------------------------------- clause (a): every refusal, FIRST
+#
+# EVERY ONE OF THEM MUST LEAVE THE CHECKOUT EXACTLY AS IT FOUND IT, and that is
+# the assertion under all of them: this command moves four files, and a
+# half-done rename is not something a second run can finish.
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+
+run env LANES_SESSION="$REN_ID" "$E" rename-lane repoNope-1 repoNope-2 --no-github
+is   "a rename of a lane with no row is refused" "$rc" 2
+has  "…naming the absence, and the read that lists the rows there are" "$err" "no row for lane 'repoNope-1'"
+has  "…and saying nothing was written" "$err" "Nothing was written."
+
+run env LANES_SESSION="$REN_ID" "$E" rename-lane repoRen-1 repoRen-9 --no-github
+is   "a rename into a name that already has a row is refused" "$rc" 2
+has  "…naming the row that is there" "$err" "lane 'repoRen-9' already has a row"
+
+run env LANES_SESSION="$REN_ID" "$E" rename-lane repoRen-1 REPOREN-1 --no-github
+is   "a CASE-ONLY rename is refused: that is the row's own spelling" "$rc" 2
+has  "…and it names 15(d), which is the act that changes one" "$err" "Amendment 15(d)"
+
+run env LANES_SESSION="$REN_ID" "$E" rename-lane repoRen-1 renamed_lane --no-github
+is   "a <new> that is not <repo>-<n> is refused" "$rc" 2
+has  "…naming what that form is computed for" "$err" "lane-start <repo> <n>"
+has  "…and the flag that means it" "$err" "--verbatim"
+
+run env LANES_SESSION="$REN_ID" "$E" rename-lane repoRenL-1 repoRenL-2 --no-github
+is   "a rename while a LIVE session holds the lane in another window is refused" "$rc" 2
+has  "…naming that session" "$err" "$LIVE_ID"
+has  "…and the two ways out: its own window, or a handoff first" "$err" "lane-handoff"
+
+run env LANES_SESSION="$REN_ID" "$E" rename-lane repoPair-1 repoPairX-1 --no-github
+is   "two rows differing only by case refuse the rename" "$rc" 2
+has  "…with Amendment 15(d)'s merge, not a coin toss" "$err" "Amendment 15(d)"
+
+run env LANES_SESSION=not-a-uuid "$E" rename-lane repoRen-1 repoRen-4 --no-github
+is   "a session field that is not a transcript uuid is refused" "$rc" 2
+has  "…by the rule that owns it" "$err" "TRANSCRIPT UUID and only that"
+
+is   "…and NOT ONE of those refusals committed anything" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+is   "…nor moved the lane's log" "$( [ -f "$LOGD/repoRen-1.md" ] && echo yes )" "yes"
+is   "…nor its handoff" "$( [ -f "$RENH/session-handoff-2026-09-11-lane-repoRen-1.md" ] && echo yes )" "yes"
+is   "…nor created an alias table" "$( [ -e "$WIP/lanes/aliases.tsv" ] && echo yes || echo no )" "no"
+
+# ---- THE WINDOW THE COMMAND RUNS IN IS THE ONE EXEMPTION (clause (f)): a lane
+# renames ITSELF, and `live_holder`'s `here` verdict is what tells that apart.
+run env LANES_SESSION="$LIVE_ID" CLAUDE_CODE_SESSION_ID="$LIVE_ID" "$E" rename-lane repoRenL-1 repoRenL-2 --no-github
+is   "the same rename from the lane's OWN session is allowed" "$rc" 0
+is   "…and the row moved" "$(command grep -c '^| `repoRenL-2`' "$LANES")" 1
+
+# ------------------------------- clauses (b)–(e): the four moves, ONE commit
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN_ID" "$E" rename-lane repoRen-1 repoRen-4 "Brett Heap's word: shorten it" --no-github
+is   "the rename exits 0" "$rc" 0
+is   "…(b) the row's key cell is the new name" "$(command grep -c '^| `repoRen-4`' "$LANES")" 1
+# THE ROW ITSELF, TAKEN ONCE. A `\`` inside the SINGLE-QUOTED pattern of a
+# `$( )` is a literal BACKSLASH to grep — the quotes have already made the
+# backtick literal — and the pattern then matches nothing at all, which reads in
+# a failure as "the cell is empty" rather than as "this test asked the wrong
+# question".
+ren_row="$(command grep '^| `repoRen-4`' "$LANES")"
+has  "…with the ex-name and the instant beside it, the form the register already uses" \
+     "$ren_row" "*(ex \`repoRen-1\`, renamed 20"
+is   "…and no row is left under the old name" "$(command grep -c '^| `repoRen-1`' "$LANES")" 0
+has  "…the session cell keeping its whole history (Amendment 6(b))" \
+     "$ren_row" "harness \`$REN_ID\`"
+is   "…(c) the object log moved to the new name" \
+     "$( [ -f "$LOGD/repoRen-4.md" ] && [ ! -e "$LOGD/repoRen-1.md" ] && echo yes )" "yes"
+has  "…and gained a RENAMED line under the new name" "$(tail -n1 "$LOGD/repoRen-4.md")" "RENAMED — lane repoRen-4, session $REN_ID@$WS_S,"
+has  "…whose payload is lane:<new> ← lane:<old>, with the why the person gave" \
+     "$(tail -n1 "$LOGD/repoRen-4.md")" ", lane:repoRen-4 ← lane:repoRen-1 — Brett Heap's word: shorten it"
+has  "…while the lines ABOVE it are never rewritten and still say the old name" \
+     "$(cat "$LOGD/repoRen-4.md")" "CLAIMED — lane repoRen-1,"
+is   "…(d) the handoff moved to the same date with lane-<new>" \
+     "$( [ -f "$RENH/session-handoff-2026-09-11-lane-repoRen-4.md" ] && [ ! -e "$RENH/session-handoff-2026-09-11-lane-repoRen-1.md" ] && echo yes )" "yes"
+has  "…and gained its Rule 3 stamp under the header block" \
+     "$(cat "$RENH/session-handoff-2026-09-11-lane-repoRen-4.md")" "RENAMED from repoRen-1 by $REN_ID (lane repoRen-4) at 20"
+is   "…with the stamp SPLICED in: the file's own first line is untouched" \
+     "$(head -n1 "$RENH/session-handoff-2026-09-11-lane-repoRen-4.md")" \
+     "Lane: repoRen-1 (opensoft/team-05b, session $REN_ID) — single-use resume prompt"
+has  "…and the row's handoff column following the file" \
+     "$ren_row" "handoffs/repoRen/session-handoff-2026-09-11-lane-repoRen-4.md"
+has  "…(e) lanes/aliases.tsv gained <old> <new> <UTC>" \
+     "$(cat "$WIP/lanes/aliases.tsv")" "$(printf 'repoRen-1\trepoRen-4\t20')"
+
+ren_show="$(git -C "$WIP" show --name-only --format=%s HEAD)"
+has  "…and all four are in ONE commit, whose subject names the act" "$ren_show" "RENAMED lane repoRen-1 → repoRen-4"
+has  "…carrying the register" "$ren_show" "lanes/LANES.md"
+has  "…the log at its new name" "$ren_show" "lanes/log/repoRen-4.md"
+has  "…the handoff at its new name" "$ren_show" "handoffs/repoRen/session-handoff-2026-09-11-lane-repoRen-4.md"
+has  "…and the alias table" "$ren_show" "lanes/aliases.tsv"
+is   "…ONE commit and not four" "$(git -C "$WIP" rev-list --count "$ren_before..HEAD")" 1
+is   "…and it is pushed" "$(git -C "$WIP" rev-parse HEAD)" "$(git -C "$WIP" rev-parse origin/main)"
+hasnt "…--no-github reached no GitHub surface at all" "$err" "comment posted"
+
+# ------------------ clause (e): the old name resolves, in every reader at once
+run "$E" canon-lane repoRen-1
+is   "canon-lane answers the NEW name for the old one" "$out" "repoRen-4"
+has  "…and SAYS it resolved a former name" "$err" "is a FORMER name of lane repoRen-4"
+
+run "$E" who --lane repoRen-1
+is   "who --lane <old> answers for the lane it is now" "$rc" 0
+has  "…reporting the hold whose own log line still spells the old name" "$out" "opensoft/repoRen#4"
+
+run "$E" lane-objects repoRen-1
+has  "lane-objects <old> reads the renamed log" "$out" "opensoft/repoRen#4"
+
+run "$E" register-row repoRen-1
+has  "register-row <old> answers with the row that is there now" "$out" "\`repoRen-4\`"
+
+run "$E" who "opensoft/repoRen#4"
+has  "the object's holder is reported under the lane's CURRENT name" "$out" "repoRen-4"
+hasnt "…and never under the name its own line was written with" "$out" "lane repoRen-1 "
+
+run "$E" live-holder repoRen-1
+is   "live-holder <old> reads the new row and answers 8, not 'no such lane'" "$rc" 8
+
+# THE SessionStart BLOCK IS NAMED IN CLAUSE (e)'s OWN LIST, and it is the read
+# that orients a session which has just come up in a window nobody renamed.
+ss_save_name="${FAKE_TMUX_WINDOW_NAME-}"
+export FAKE_TMUX_WINDOW_NAME=repoRen-1
+ss_run "$REN_ID" resume
+is    "the SessionStart block exits 0 for a window carrying the lane's FORMER name" "$rc" 0
+has   "…orienting the session to the lane it is now" "$out" "LANE repoRen-4"
+hasnt "…and never telling a bound lane that nothing binds its window" "$out" "no lane bound to this window"
+has   "…with the hold it still has, under the object's own key" "$out" "open: CLAIMED opensoft/repoRen#4"
+export FAKE_TMUX_WINDOW_NAME="$ss_save_name"
+
+run "$E" lanes --all
+has  "the listing carries the lane under its new name" "$out" "repoRen-4"
+is   "…exactly once, and not as two lanes" "$(printf '%s\n' "$out" | command grep -c 'repoRen-4')" 1
+
+run env LANES_SESSION="$REN_ID" "$E" append-line "LANDING — lane repoRen-1, session $REN_ID@$WS_S, $(utc_at -1M), PR #4 into opensoft/repoRen main"
+is   "a Rule 6 line naming the OLD lane is appended" "$rc" 0
+has  "…and ATTRIBUTED to the lane it is now" "$(git -C "$WIP" log --oneline -1)" "LANES(repoRen-4@$WS_S): append line"
+
+# ---------------------------------------------- a chain resolves to its end
+run env LANES_SESSION="$REN_ID" "$E" rename-lane repoRen-4 repoRen-7 "again" --no-github
+is   "a second rename of the same lane exits 0" "$rc" 0
+run "$E" canon-lane repoRen-1
+is   "…and the FIRST name resolves through the chain to its end" "$out" "repoRen-7"
+run "$E" canon-lane repoRen-4
+is   "…as does the middle one" "$out" "repoRen-7"
+run "$E" who --lane repoRen-1
+has  "…and the hold is still found under the oldest name of all" "$out" "opensoft/repoRen#4"
+
+# ---------------------------- renaming BACK into its own chain is refused, and
+# a cycle in the table is refused at write time
+#
+# THE TWO REFUSALS OVERLAP ON PURPOSE. Every name on a chain is an alias KEY, so
+# the key refusal (Copilot round 1) is the one a rename back meets first — and
+# it is the broader rule: a row under a former name would end that name
+# resolving whether or not the chain closes. The cycle test behind it is what
+# still answers for a table somebody edited by hand, which is the only other way
+# one can arrive.
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN_ID" "$E" rename-lane repoRen-7 repoRen-1 --no-github
+is   "renaming back to a name in its own chain is refused" "$rc" 2
+has  "…because a row under a former name would end that name resolving" "$err" "already a FORMER name"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+
+# ---- A CYCLE PUT THERE BY HAND IS READ AS NO ANSWER, NOT AS A LANE.
+ren_cyc="$SANDBOX/aliases-cycle.tsv"
+{ printf '# a table somebody edited by hand\n'
+  printf 'cycA-1\tcycB-1\t2026-09-15T00:00:00Z\n'
+  printf 'cycB-1\tcycA-1\t2026-09-15T00:00:01Z\n'
+} > "$ren_cyc"
+run env LANES_NO_FETCH=1 LANES_ALIASES_TSV="$ren_cyc" LANES_ALIASES_PATH=lanes/aliases-cycle.tsv "$E" canon-lane cycA-1
+is   "a hand-written CYCLE answers the name exactly as typed" "$out" "cycA-1"
+has  "…and says the table names no lane at all" "$err" "CYCLE"
+
+# --------------------------------- the verb: a lane kind that changes no state
+run env LANES_LANE=repoRen-7 LANES_SESSION="$REN_ID" "$E" log RENAMED "lane:repoRen-7" --no-github
+is   "a RENAMED written by hand is refused" "$rc" 2
+has  "…naming the one word that writes it" "$err" "lane-rename"
+run env LANES_LANE=repoRen-7 LANES_SESSION="$REN_ID" "$E" log PAUSED "lane:repoRen-7" → "swap; window rensess:0; workstation Eagle" --no-github
+is   "the lane's own PAUSED still writes" "$rc" 0
+run "$E" lane-last repoRen-7
+has  "…and the RENAMED above it is skipped by the last-lane-kind-line read" "$out" "PAUSED"
+run "$E" swapped Eagle
+has  "…so a renamed lane that has since PAUSED still reads as swapped" "$out" "repoRen-7"
+
+# --------------------------------------- clause (h): `lanes` stays read-only
+run "$OPENREPOTOOLS_BIN_DIR/lanes" --rename repoRen-7 repoRen-8
+is   "lanes --rename is refused" "$rc" 64
+has  "…naming the one word to type, filled in" "$err" "lane-rename repoRen-7 repoRen-8"
+has  "…and saying why it is not an option of this command" "$err" "writes nothing"
+
+# ------------- clause (f): the guard finishes a window that carries the old name
+#
+# THE FIXTURE IS CAPTURED AND PUT BACK, exactly as the Amendment 12 section
+# above does and for its reason: this section sits between two others in one
+# long file, and a section that left the sandbox's window table changed would be
+# changing the premise of every case after it from a distance.
+A16_SAVE_WINDOWS="${FAKE_TMUX_WINDOWS-}"
+A16_SAVE_WINDOW="${FAKE_TMUX_WINDOW-}"
+A16_SAVE_NAME="${FAKE_TMUX_WINDOW_NAME-}"
+export FAKE_TMUX_WINDOW="rensess:@16"
+export FAKE_TMUX_WINDOW_NAME=repoRen-1
+export FAKE_TMUX_WINDOWS="$(printf 'rensess:0\t@16\trepoRen-1\t%%16\tclaude')"
+write_record_a12 "$sessions_dir/a16.json" "$REN_ID" "$LIVE_PID" "$live_start" interactive "rensess:@16.%16" "repoRen-1" user "$GD_OLD_MS"
+a16_keys="$(command grep -c 'send-keys' "$FAKE_TMUX_LOG" || :)"
+a16_ren="$(command grep -c 'rename-window' "$FAKE_TMUX_LOG" || :)"
+out="$(printf '{"session_id":"%s","cwd":"%s/projects/repoRen","prompt":"do the work","hook_event_name":"UserPromptSubmit"}' "$REN_ID" "$HOME" | "$E" guard 2>"$SANDBOX/stderr")"; rc=$?
+err="$(cat "$SANDBOX/stderr")"
+is   "a window still carrying the lane's FORMER name does not read as 'no lane'" "$rc" 2
+hasnt "…so the guard never sends a running lane to bind a row it already has" "$err" "lane-start --no-launch"
+has  "…the triple naming the window as a former name of the lane" "$err" "a former name of repoRen-7"
+has  "…and the guard renames the WINDOW itself, which needs nobody" "$err" "it has been renamed to repoRen-7 for you"
+is   "…as one tmux call" "$(command grep -c 'rename-window repoRen-7' "$FAKE_TMUX_LOG" || :)" 1
+has  "…while the SESSION's name is typed, which is the only path it has" "$(cat "$FAKE_TMUX_LOG")" "send-keys -t %16 /rename repoRen-7"
+rm -f "$sessions_dir/a16.json"
+
+# ---------------------------------- the word: `lane-rename` on PATH (clause (f))
+REN2_ID="12ab34cd-16a2-4000-8000-12ab34cd16a2"
+add_seed_row "| \`repoRenW-1\` | harness \`$REN2_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoRen/w.md | ACTIVE |"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the lane-rename word's own lane"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+RENAME="$OPENREPOTOOLS_BIN_DIR/lane-rename"
+
+export FAKE_TMUX_WINDOW_NAME=some-other-window
+run env LANES_SESSION="$REN2_ID" "$RENAME" repoRenW-1 repoRenW-2 --no-github
+is   "lane-rename from another window still renames the lane" "$rc" 0
+has  "…and says the window and the session are the lane's own to fix" "$out" "tmux rename-window repoRenW-2"
+has  "…naming the guard as what does it at the lane's next prompt" "$out" "/rename repoRenW-2"
+
+export FAKE_TMUX_WINDOW="rensess:@17"
+export FAKE_TMUX_WINDOW_NAME=repoRenW-2
+export FAKE_TMUX_WINDOWS="$(printf 'rensess:0\t@17\trepoRenW-2\t%%17\tclaude')"
+write_record_a12 "$sessions_dir/a16w.json" "$REN2_ID" "$LIVE_PID" "$live_start" interactive "rensess:@17.%17" "repoRenW-2" user "$GD_OLD_MS"
+: > "$FAKE_TMUX_LOG"
+run env LANES_SESSION="$REN2_ID" CLAUDE_CODE_SESSION_ID="$REN2_ID" "$RENAME" repoRenW-2 repoRenW-3 --no-github
+is   "lane-rename in the lane's OWN window exits 0" "$rc" 0
+is   "…renaming the window in the same breath" "$(command grep -c 'rename-window repoRenW-3' "$FAKE_TMUX_LOG" || :)" 1
+has  "…and typing the one line a running session's name can only take that way" \
+     "$(cat "$FAKE_TMUX_LOG")" "send-keys -t %17 /rename repoRenW-3"
+rm -f "$sessions_dir/a16w.json"
+
+run env LANES_SESSION="$REN2_ID" "$RENAME" repoRenW-3
+is   "lane-rename with one argument is a usage refusal" "$rc" 2
+run env LANES_SESSION="$REN2_ID" "$RENAME" repoRenW-3 repoRenW-9 --nonsense
+is   "…as is an option it does not know" "$rc" 2
+
+
+# ============ Copilot round 1 on openRepoTools#81: the states it found ========
+
+# ---- A `<new>` THAT IS ALREADY AN ALIAS KEY IS REFUSED.
+#
+# A row wins over an alias at every hop, so minting a row under a name some
+# other lane was renamed AWAY from would END that lane's old name resolving —
+# the one thing clause (e) promises never happens.
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN2_ID" "$E" rename-lane repoRenW-3 repoRen-1 --no-github
+is   "renaming INTO a name that is already an alias key is refused" "$rc" 2
+has  "…because a row under it would end that lane's old name resolving" "$err" "already a FORMER name"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+
+# ---- A ROW WINS OVER AN ALIAS AT EVERY HOP, NOT ONLY AT THE START.
+#
+# `repoRen-1` was renamed away, so the NAME is free and a lane may legitimately
+# be created under it again — which `lane_next_free` will hand out. Read through
+# the chain's END that lane's own log lines would be remapped on to repoRen-7,
+# whose holds are somebody else's.
+REN3_ID="12ab34cd-16a3-4000-8000-12ab34cd16a3"
+add_seed_row "| \`repoRen-1\` | harness \`$REN3_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | handoffs/repoRen/again.md | ACTIVE |"
+{ printf '# lane repoRen-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoRen-1, session %s@Eagle, %s, lane:repoRen-1 → home opensoft/repoRen; estate repoRen\n' "$REN3_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repoRen-1, session %s@Eagle, %s, opensoft/repoRen#12\n' "$REN3_ID" "$OLD_UTC"
+} > "$LOGD/repoRen-1.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed a NEW lane under a name that is already an alias key"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+run "$E" canon-lane repoRen-1
+is    "a name that is an alias key AND a row again answers the ROW" "$out" "repoRen-1"
+hasnt "…without claiming it resolved a former name" "$err" "FORMER name"
+run "$E" who --lane repoRen-1
+has   "…and that lane's own holds are its own" "$out" "opensoft/repoRen#12"
+hasnt "…never the holds of the lane that used to have the name" "$out" "opensoft/repoRen#4"
+run "$E" who --lane repoRen-7
+has   "…while the renamed lane keeps its own, read under its current name" "$out" "opensoft/repoRen#4"
+hasnt "…and does not collect the new lane's" "$out" "opensoft/repoRen#12"
+
+# ---- A CASE-VARIANT LOG FOR `<new>` IS FOUND AND REFUSED.
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+printf '# lane REPOREN-20 — object log\n' > "$LOGD/REPOREN-20.md"
+run env LANES_SESSION="$REN3_ID" "$E" rename-lane repoRen-1 repoRen-20 --no-github
+is   "a rename into a name whose log exists under ANOTHER CASE is refused" "$rc" 2
+has  "…naming the file that is there" "$err" "REPOREN-20.md"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+rm -f "$LOGD/REPOREN-20.md"
+
+# ---- A HANDOFF OUTSIDE THE WORKSPACE REPOSITORY IS REFUSED, NOT NOTED.
+#
+# Four moves in ONE commit cannot carry a file outside the checkout the commit
+# is made in, so a row naming one is refused before anything is written.
+REN4_ID="12ab34cd-16a4-4000-8000-12ab34cd16a4"
+mkdir -p "$SANDBOX/outside"
+printf 'Lane: repoOut-1 — single-use resume prompt\n\n## RESUME\n' > "$SANDBOX/outside/h.md"
+add_seed_row "| \`repoOut-1\` | harness \`$REN4_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | $SANDBOX/outside/h.md | ACTIVE |"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed a lane whose handoff is outside the workspace repository"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN4_ID" "$E" rename-lane repoOut-1 repoOut-2 --no-github
+is   "a handoff outside the workspace repository is refused" "$rc" 2
+has  "…saying a commit cannot carry it" "$err" "outside the workspace repository"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+is   "…the row still under its own name" "$(command grep -c '^| `repoOut-1`' "$LANES")" 1
+
+# ---- A WRITE THAT FAILS PART-WAY IS ROLLED BACK, NOT LEFT HALF-RENAMED.
+#
+# The handoff is made UNWRITABLE, so Rule 3's stamp cannot land — the failure
+# that used to leave the log moved, its RENAMED line appended and the rename
+# committed anyway.
+REN5_ID="12ab34cd-16a5-4000-8000-12ab34cd16a5"
+mkdir -p "$WIP/handoffs/repoRoll"
+printf 'Lane: repoRoll-1 — single-use resume prompt\n\n## RESUME\n' > "$WIP/handoffs/repoRoll/session-handoff-2026-09-12-lane-repoRoll-1.md"
+add_seed_row "| \`repoRoll-1\` | harness \`$REN5_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | handoffs/repoRoll/session-handoff-2026-09-12-lane-repoRoll-1.md | ACTIVE |"
+{ printf '# lane repoRoll-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoRoll-1, session %s@Eagle, %s, lane:repoRoll-1 → home opensoft/repoRoll; estate repoRoll\n' "$REN5_ID" "$OLD_UTC"
+} > "$LOGD/repoRoll-1.md"
+git -C "$WIP" add -A -- lanes handoffs >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the rollback lane"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+roll_log_before="$(cat "$LOGD/repoRoll-1.md")"
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+chmod 0444 "$WIP/handoffs/repoRoll/session-handoff-2026-09-12-lane-repoRoll-1.md"
+chmod 0555 "$WIP/handoffs/repoRoll"
+run env LANES_SESSION="$REN5_ID" "$E" rename-lane repoRoll-1 repoRoll-2 --no-github
+chmod 0755 "$WIP/handoffs/repoRoll"
+chmod 0644 "$WIP/handoffs/repoRoll"/*.md 2>/dev/null || :
+if [ "$rc" = 0 ]; then
+  skip "a handoff that cannot take its stamp refuses and rolls back" "this filesystem let the write through (running as a user that ignores the mode)"
+else
+  is   "a handoff that cannot take its Rule 3 stamp refuses" "$rc" 5
+  is   "…rolling the object log back to where it was" "$(cat "$LOGD/repoRoll-1.md" 2>/dev/null)" "$roll_log_before"
+  is   "…leaving no log under the new name" "$( [ -e "$LOGD/repoRoll-2.md" ] && echo yes || echo no )" "no"
+  is   "…the handoff still at its own path" "$( [ -f "$WIP/handoffs/repoRoll/session-handoff-2026-09-12-lane-repoRoll-1.md" ] && echo yes )" "yes"
+  is   "…and nothing committed" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+  is   "…with the row untouched" "$(command grep -c '^| `repoRoll-1`' "$LANES")" 1
+  has  "…and it says the rename was rolled back" "$err" "rolled back"
+fi
+git -C "$WIP" checkout -- lanes handoffs 2>/dev/null || :
+
+# ---- AN UNREADABLE ALIAS TABLE FAILS CLOSED RATHER THAN READING AS EMPTY.
+#
+# POINTED AT A PATH `origin` DOES NOT CARRY, because the published copy is a git
+# OBJECT and no mode on the working tree can stop `git show` reading it — which
+# is the right answer for a checkout whose file is merely unreadable, and the
+# wrong fixture for the question asked here.
+ren_unread="$WIP/lanes/aliases-unreadable.tsv"
+printf 'someLane-1\tsomeLane-2\t2026-09-15T00:00:00Z\n' > "$ren_unread"
+chmod 0000 "$ren_unread"
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_NO_FETCH=1 LANES_SESSION="$REN3_ID" \
+    LANES_ALIASES_TSV="$ren_unread" LANES_ALIASES_PATH=lanes/aliases-unreadable.tsv \
+    "$E" rename-lane repoRen-1 repoRen-21 --no-github
+if [ "$rc" = 0 ]; then
+  skip "an unreadable alias table refuses the write" "this filesystem let the read through (running as a user that ignores the mode)"
+else
+  is   "an alias table that cannot be READ refuses the write" "$rc" 1
+  has  "…rather than reading as an estate with no renames" "$err" "could not be read"
+  is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+fi
+chmod 0644 "$ren_unread"; rm -f "$ren_unread"
+
+# ---- THE WORD'S REPAIR RUN: the write has landed, the window has not.
+export FAKE_TMUX_WINDOW="rensess:@18"
+export FAKE_TMUX_WINDOW_NAME=repoRenW-2
+export FAKE_TMUX_WINDOWS="$(printf 'rensess:0\t@18\trepoRenW-2\t%%18\tclaude')"
+: > "$FAKE_TMUX_LOG"
+run env LANES_SESSION="$REN2_ID" "$RENAME" repoRenW-2 repoRenW-3 --no-github
+is   "re-running the word after the write has landed exits 0" "$rc" 0
+has  "…saying the rename itself is already done" "$err" "already landed"
+is   "…and doing the half that is left: the window" "$(command grep -c 'rename-window repoRenW-3' "$FAKE_TMUX_LOG" || :)" 1
+
+
+# ============ Copilot round 3 on openRepoTools#81 ============================
+
+# ---- AN UNREADABLE ALIAS TABLE REFUSES THE READERS TOO, not only the writes.
+#
+# `canon_lane`'s answer is what `lane-start` decides "is this lane new" by, so
+# carrying on with the typed spelling is not a read-only shrug: a renamed lane
+# would read as new and get a SECOND row.
+ren_unread2="$WIP/lanes/aliases-unread2.tsv"
+printf 'someLane-1\tsomeLane-2\t2026-09-15T00:00:00Z\n' > "$ren_unread2"
+chmod 0000 "$ren_unread2"
+run env LANES_NO_FETCH=1 LANES_ALIASES_TSV="$ren_unread2" LANES_ALIASES_PATH=lanes/aliases-unread2.tsv \
+    "$E" canon-lane repoRen-4
+if [ "$rc" = 0 ]; then
+  skip "canon-lane refuses on an alias table it cannot read" "this filesystem let the read through"
+else
+  is    "canon-lane REFUSES on an alias table it cannot read" "$rc" 66
+  has   "…rather than answering the typed spelling" "$err" "NOT established"
+  hasnt "…and answers nothing at all" "$out" "repoRen"
+fi
+
+# ---- AND THE NAME GUARD REFUSES THE PROMPT ON IT (clause (d) is fail closed).
+gd_save_w="${FAKE_TMUX_WINDOW-}"; gd_save_n="${FAKE_TMUX_WINDOW_NAME-}"; gd_save_ws="${FAKE_TMUX_WINDOWS-}"
+# THE WINDOW CARRIES A NAME WITH NO ROW, which is what makes the guard ASK the
+# alias table at all: `repoRen-4` is a middle name of this lane's chain, so a
+# name that does have a row would be answered by the register alone and this
+# case would prove nothing.
+export FAKE_TMUX_WINDOW="rensess:@19"
+export FAKE_TMUX_WINDOW_NAME=repoRen-4
+export FAKE_TMUX_WINDOWS="$(printf 'rensess:0\t@19\trepoRen-4\t%%19\tclaude')"
+write_record_a12 "$sessions_dir/a16g.json" "$REN_ID" "$LIVE_PID" "$live_start" interactive "rensess:@19.%19" "repoRen-4" user "$GD_OLD_MS"
+out="$(printf '{"session_id":"%s","cwd":"%s/projects/repoRen","prompt":"do the work","hook_event_name":"UserPromptSubmit"}' "$REN_ID" "$HOME" \
+      | env LANES_ALIASES_TSV="$ren_unread2" LANES_ALIASES_PATH=lanes/aliases-unread2.tsv "$E" guard 2>"$SANDBOX/stderr")"; rc=$?
+err="$(cat "$SANDBOX/stderr")"
+if [ "$rc" = 0 ]; then
+  skip "the guard refuses a prompt on an alias table it cannot read" "this filesystem let the read through"
+else
+  is    "the guard REFUSES the prompt on an alias table it cannot read" "$rc" 2
+  has   "…because a triple that cannot be verified is not a triple that agrees" "$err" "could not be read"
+  hasnt "…and never sends a running lane to bind a row it already has" "$err" "lane-start --no-launch"
+fi
+rm -f "$sessions_dir/a16g.json"
+export FAKE_TMUX_WINDOW="$gd_save_w"; export FAKE_TMUX_WINDOW_NAME="$gd_save_n"; export FAKE_TMUX_WINDOWS="$gd_save_ws"
+chmod 0644 "$ren_unread2"; rm -f "$ren_unread2"
+
+# ---- A HANDOFF PATH THAT EXISTS AND IS NOT A REGULAR FILE IS REFUSED.
+REN6_ID="12ab34cd-16a6-4000-8000-12ab34cd16a6"
+mkdir -p "$WIP/handoffs/repoKind/session-handoff-2026-09-12-lane-repoKind-1.md"
+add_seed_row "| \`repoKind-1\` | harness \`$REN6_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | handoffs/repoKind/session-handoff-2026-09-12-lane-repoKind-1.md | ACTIVE |"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed a lane whose handoff path is a directory"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN6_ID" "$E" rename-lane repoKind-1 repoKind-2 --no-github
+is   "a handoff path that is a DIRECTORY is refused, not read as absent" "$rc" 2
+has  "…saying what it found there" "$err" "is not a regular file"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+rmdir "$WIP/handoffs/repoKind/session-handoff-2026-09-12-lane-repoKind-1.md"
+
+# ---- AN ALIAS TABLE PUBLISHED AND NOT PULLED IS REFUSED, NOT OVERWRITTEN.
+rm -f "$WIP/lanes/aliases.tsv"
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN6_ID" "$E" rename-lane repoKind-1 repoKind-2 --no-github
+is   "an alias table origin carries and this checkout does not is refused" "$rc" 2
+has  "…because appending here would drop every alias already published" "$err" "drop every alias already published"
+has  "…and it names the pull" "$err" "pull --rebase"
+is   "…with nothing written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+git -C "$WIP" checkout -- lanes/aliases.tsv
+
+# ---- THE LANE'S OWN SESSION KEEPS ITS FORMER NAME UNTIL ITS NEXT PROMPT,
+# AND IS STILL ITS HOLDER (Amendment 16(e) meeting Amendment 8's explicit-name
+# rule). Without this the rename's own window loses the `/rename` clause (f)
+# gives it, and `who` calls a running lane NOT LIVE.
+# `repoRen-4`, NOT `repoRen-1`: the first name of this chain is a row again —
+# a different lane — so a session named for it IS another lane's, which is the
+# case below. `repoRen-4` is the middle name and belongs to nobody else.
+write_record_a12 "$sessions_dir/a16h.json" "$REN_ID" "$LIVE_PID" "$live_start" interactive "rensess:@20.%20" "repoRen-4" user "$GD_OLD_MS"
+run "$E" live-holder repoRen-7
+is   "a live session still named for the lane's FORMER name is its holder" "$rc" 0
+has  "…named as the session it is" "$out" "$REN_ID"
+rm -f "$sessions_dir/a16h.json"
+
+# ---- AND A FORMER NAME THAT IS A ROW AGAIN IS ANOTHER LANE (the row wins).
+write_record_a12 "$sessions_dir/a16j.json" "$REN_ID" "$LIVE_PID" "$live_start" interactive "rensess:@20.%20" "repoRen-1" user "$GD_OLD_MS"
+run "$E" live-holder repoRen-7
+is   "…while a former name somebody has since taken as a LANE is not this one" "$rc" 8
+rm -f "$sessions_dir/a16j.json"
+
+# ---- AND A SESSION A PERSON NAMED FOR ANOTHER LANE IS STILL NOT (Amendment 8).
+write_record_a12 "$sessions_dir/a16i.json" "$REN_ID" "$LIVE_PID" "$live_start" interactive "rensess:@20.%20" "repoD-2" user "$GD_OLD_MS"
+run "$E" live-holder repoRen-7
+is   "…while a session named for a DIFFERENT lane is not a holder, as before" "$rc" 8
+rm -f "$sessions_dir/a16i.json"
+
+
+# ============ Copilot round 4 on openRepoTools#81 ============================
+
+# ---- THE ALIAS-READ REFUSAL HAS ITS OWN EXIT CODE, because 2 already carries
+# two meanings to the four commands that read `canon-lane`.
+ren_unread3="$WIP/lanes/aliases-unread3.tsv"
+printf 'someLane-1\tsomeLane-2\t2026-09-15T00:00:00Z\n' > "$ren_unread3"
+chmod 0000 "$ren_unread3"
+run env LANES_NO_FETCH=1 LANES_ALIASES_TSV="$ren_unread3" LANES_ALIASES_PATH=lanes/aliases-unread3.tsv \
+    "$E" canon-lane repoRen-4
+if [ "$rc" = 0 ]; then
+  skip "canon-lane spends EX_NOINPUT on a table it cannot read" "this filesystem let the read through"
+else
+  is   "canon-lane spends 66 (EX_NOINPUT) on a table it cannot read, never 2" "$rc" 66
+  # ---- AND live-holder FAILS CLOSED ON IT rather than answering 'no holder'.
+  write_record_a12 "$sessions_dir/a16k.json" "$REN_ID" "$LIVE_PID" "$live_start" interactive "rensess:@21.%21" "repoRen-4" user "$GD_OLD_MS"
+  run env LANES_NO_FETCH=1 LANES_ALIASES_TSV="$ren_unread3" LANES_ALIASES_PATH=lanes/aliases-unread3.tsv \
+      "$E" live-holder repoRen-7
+  is   "live-holder fails CLOSED on a table it cannot read" "$rc" 1
+  hasnt "…rather than answering 8, which reads as 'no live session holds it'" "$rc" 8
+  has  "…naming the read that could not be made" "$err" "could not be read"
+  rm -f "$sessions_dir/a16k.json"
+  # ---- AND lane-start REFUSES rather than adding a second row.
+  mkdir -p "$HOME/projects/repoRen"
+  run env LANES_NO_FETCH=1 LANES_ALIASES_TSV="$ren_unread3" LANES_ALIASES_PATH=lanes/aliases-unread3.tsv \
+      "$START" --no-launch --dir "$HOME/projects/repoRen" repoRen-4
+  is   "lane-start REFUSES a name it cannot resolve through the alias table" "$rc" 2
+  has  "…saying it would add a second row for a lane that is running" "$err" "second row"
+fi
+chmod 0644 "$ren_unread3"; rm -f "$ren_unread3"
+
+# ---- A SYMLINKED OBJECT LOG, HANDOFF OR ALIAS TABLE IS REFUSED.
+#
+# All three are written IN PLACE with a redirect or an append, which follows a
+# link: the bytes would land at the far end while the commit recorded the link.
+REN7_ID="12ab34cd-16a7-4000-8000-12ab34cd16a7"
+mkdir -p "$SANDBOX/faraway" "$WIP/handoffs/repoLink"
+printf '# lane repoLink-1 — object log (lane-collision-protocol Amendment 7)\n' > "$SANDBOX/faraway/log.md"
+printf 'Lane: repoLink-1 — single-use resume prompt\n\n## RESUME\n' > "$WIP/handoffs/repoLink/session-handoff-2026-09-12-lane-repoLink-1.md"
+add_seed_row "| \`repoLink-1\` | harness \`$REN7_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | handoffs/repoLink/session-handoff-2026-09-12-lane-repoLink-1.md | ACTIVE |"
+git -C "$WIP" add -A -- lanes handoffs >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the symlink-refusal lane"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+ln -s "$SANDBOX/faraway/log.md" "$LOGD/repoLink-1.md"
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN7_ID" "$E" rename-lane repoLink-1 repoLink-2 --no-github
+is   "a SYMLINKED object log is refused" "$rc" 2
+has  "…because an append-only log is written in place" "$err" "is a SYMLINK"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+is   "…and the far end is untouched" "$(wc -l < "$SANDBOX/faraway/log.md" | tr -d ' ')" 1
+rm -f "$LOGD/repoLink-1.md"
+printf '# lane repoLink-1 — object log (lane-collision-protocol Amendment 7)\n' > "$LOGD/repoLink-1.md"
+# AND COMMITTED, because an UNTRACKED source log is its own refusal now (round
+# 6) and would answer every case below this one instead of the one it asks.
+git -C "$WIP" add -- lanes/log/repoLink-1.md >/dev/null 2>&1
+git -C "$WIP" commit -q -m "commit the symlink-refusal lane's own log"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+mv "$WIP/handoffs/repoLink/session-handoff-2026-09-12-lane-repoLink-1.md" "$SANDBOX/faraway/h.md"
+ln -s "$SANDBOX/faraway/h.md" "$WIP/handoffs/repoLink/session-handoff-2026-09-12-lane-repoLink-1.md"
+run env LANES_SESSION="$REN7_ID" "$E" rename-lane repoLink-1 repoLink-2 --no-github
+is   "a SYMLINKED handoff is refused" "$rc" 2
+has  "…because Rule 3's stamp is written in place" "$err" "is a SYMLINK"
+hasnt "…and the far end took no stamp" "$(cat "$SANDBOX/faraway/h.md")" "RENAMED from"
+rm -f "$WIP/handoffs/repoLink/session-handoff-2026-09-12-lane-repoLink-1.md"
+mv "$SANDBOX/faraway/h.md" "$WIP/handoffs/repoLink/session-handoff-2026-09-12-lane-repoLink-1.md"
+
+ren_alias_real="$WIP/lanes/aliases.tsv"
+mv "$ren_alias_real" "$SANDBOX/faraway/aliases.tsv"
+ln -s "$SANDBOX/faraway/aliases.tsv" "$ren_alias_real"
+run env LANES_SESSION="$REN7_ID" "$E" rename-lane repoLink-1 repoLink-2 --no-github
+is   "a SYMLINKED alias table is refused" "$rc" 2
+has  "…because the alias row is appended in place" "$err" "is a SYMLINK"
+rm -f "$ren_alias_real"
+mv "$SANDBOX/faraway/aliases.tsv" "$ren_alias_real"
+
+# ---- AN UNCOMMITTED ALIAS TABLE IS SOMEBODY ELSE'S HALF-FINISHED RENAME.
+printf 'peerLane-1\tpeerLane-2\t2026-09-15T00:00:00Z\n' >> "$ren_alias_real"
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN7_ID" "$E" rename-lane repoLink-1 repoLink-2 --no-github
+is   "a DIRTY alias table refuses the rename rather than being swept into it" "$rc" 2
+has  "…naming the file that is not this write's" "$err" "aliases.tsv"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+git -C "$WIP" checkout -- lanes/aliases.tsv
+
+# ---- THE REGISTER IS IN THE ROLLBACK TOO.
+#
+# `commit_push` can die on `git add` or `git commit` BEFORE any commit exists,
+# and the row is written before it. A `pre-commit` hook that refuses is the
+# smallest honest way to reach that branch: no commit is made, so all FOUR must
+# come back — the register with them, or the checkout is left in a split rename.
+ren_reg_before="$(cat "$LANES")"
+ren_log_before="$(cat "$LOGD/repoLink-1.md")"
+ren_alias_before="$(cat "$ren_alias_real")"
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+mkdir -p "$WIP/.git/hooks"
+printf '#!/bin/sh\nexit 1\n' > "$WIP/.git/hooks/pre-commit"
+chmod 755 "$WIP/.git/hooks/pre-commit"
+run env LANES_SESSION="$REN7_ID" "$E" rename-lane repoLink-1 repoLink-2 --no-github
+rm -f "$WIP/.git/hooks/pre-commit"
+is   "a commit that never happens leaves NOTHING renamed" "$rc" 6
+is   "…the register back, row and all" "$(cat "$LANES")" "$ren_reg_before"
+is   "…the object log back under its own name" "$(cat "$LOGD/repoLink-1.md" 2>/dev/null)" "$ren_log_before"
+is   "…and no log under the new one" "$( [ -e "$LOGD/repoLink-2.md" ] && echo yes || echo no )" "no"
+is   "…the alias table back" "$(cat "$ren_alias_real")" "$ren_alias_before"
+is   "…the handoff back under its own name" \
+     "$( [ -f "$WIP/handoffs/repoLink/session-handoff-2026-09-12-lane-repoLink-1.md" ] && echo yes )" "yes"
+is   "…and nothing committed" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+is   "…with nothing left staged for the next writer to commit by accident" \
+     "$(git -C "$WIP" diff --cached --name-only | grep -c . || :)" 0
+has  "…and it says the rename was rolled back" "$err" "rolled back"
+
+# ---- AND THE SAME RENAME THEN GOES THROUGH, which is what "refused or whole"
+# is worth: a refusal leaves a checkout a re-run can use.
+run env LANES_SESSION="$REN7_ID" "$E" rename-lane repoLink-1 repoLink-2 --no-github
+is   "the same rename then goes through" "$rc" 0
+is   "…and the row moved" "$(command grep -c '^| `repoLink-2`' "$LANES")" 1
+is   "…with the log at its new name" "$( [ -f "$LOGD/repoLink-2.md" ] && echo yes )" "yes"
+
+
+# ============ Copilot round 5 on openRepoTools#81 ============================
+
+REN8_ID="12ab34cd-16a8-4000-8000-12ab34cd16a8"
+mkdir -p "$WIP/handoffs/repoEdge" "$HOME/projects/outside"
+printf 'Lane: repoEdge-1 — single-use resume prompt\n\n## RESUME\n' > "$HOME/projects/outside/h.md"
+add_seed_row "| \`repoEdge-1\` | harness \`$REN8_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | handoffs/../../outside/h.md | ACTIVE |"
+{ printf '# lane repoEdge-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoEdge-1, session %s@Eagle, %s, lane:repoEdge-1 → home opensoft/repoEdge; estate repoEdge\n' "$REN8_ID" "$OLD_UTC"
+} > "$LOGD/repoEdge-1.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the round-5 edge lane"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+# ---- A HANDOFF THAT LEAVES THE WORKSPACE THROUGH `..` IS STILL OUTSIDE IT.
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN8_ID" "$E" rename-lane repoEdge-1 repoEdge-2 --no-github
+is   "a handoff that leaves the workspace through '..' is refused" "$rc" 2
+has  "…by the physical path, not by a string prefix" "$err" "outside the workspace repository"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+is   "…the far end untouched" "$(command grep -c 'RENAMED from' "$HOME/projects/outside/h.md" || :)" 0
+
+# ---- A DANGLING SYMLINK AT THE DESTINATION IS OCCUPIED, NOT ABSENT.
+"$E" replace-in-row repoEdge-1 "handoffs/../../outside/h.md" "handoffs/repoEdge/session-handoff-2026-09-12-lane-repoEdge-1.md" "point it inside the workspace" >/dev/null 2>&1
+printf 'Lane: repoEdge-1 — single-use resume prompt\n\n## RESUME\n' > "$WIP/handoffs/repoEdge/session-handoff-2026-09-12-lane-repoEdge-1.md"
+ln -s "$HOME/projects/outside/gone.md" "$WIP/handoffs/repoEdge/session-handoff-2026-09-12-lane-repoEdge-2.md"
+git -C "$WIP" add -A -- handoffs >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the dangling destination" >/dev/null 2>&1
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN8_ID" "$E" rename-lane repoEdge-1 repoEdge-2 --no-github
+is   "a DANGLING symlink at the handoff's destination is occupied" "$rc" 2
+has  "…and says something is already there" "$err" "already there"
+is   "…with nothing written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+git -C "$WIP" rm -q --cached -- handoffs/repoEdge/session-handoff-2026-09-12-lane-repoEdge-2.md >/dev/null 2>&1 || :
+rm -f "$WIP/handoffs/repoEdge/session-handoff-2026-09-12-lane-repoEdge-2.md"
+git -C "$WIP" commit -q -m "remove the dangling destination" >/dev/null 2>&1 || :
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main 2>/dev/null || :
+
+# ---- A FIFO AT THE OLD LOG PATH IS REFUSED RATHER THAN READ.
+#
+# `cat` of one BLOCKS, for ever, holding this lane's mutex.
+if command -v mkfifo >/dev/null 2>&1; then
+  ren_log_keep="$(cat "$LOGD/repoEdge-1.md")"
+  rm -f "$LOGD/repoEdge-1.md"
+  mkfifo "$LOGD/repoEdge-1.md"
+  ren_before="$(git -C "$WIP" rev-parse HEAD)"
+  run env LANES_SESSION="$REN8_ID" "$E" rename-lane repoEdge-1 repoEdge-2 --no-github
+  is   "a FIFO at the old log path is refused rather than read" "$rc" 2
+  has  "…saying a read of one would block this write and its lock" "$err" "not a regular file"
+  is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+  rm -f "$LOGD/repoEdge-1.md"
+  printf '%s\n' "$ren_log_keep" > "$LOGD/repoEdge-1.md"
+else
+  skip "a FIFO at the old log path is refused rather than read" "no mkfifo on this host"
+fi
+
+# ---- AN ALIAS TABLE WITH NO TRAILING NEWLINE IS REFUSED.
+#
+# `>>` would put this record on the END of the previous line, and
+# `append_text_line`'s own proof passes because it concatenates the same way —
+# so the parser would never see the alias and the old name would stop resolving.
+ren_alias_keep="$(cat "$WIP/lanes/aliases.tsv")"
+printf '%s' "$ren_alias_keep" > "$WIP/lanes/aliases.tsv"
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN8_ID" "$E" rename-lane repoEdge-1 repoEdge-2 --no-github
+is   "an alias table with no trailing newline is refused" "$rc" 2
+has  "…because the record would join the line before it" "$err" "does not end with a newline"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+git -C "$WIP" checkout -- lanes/aliases.tsv
+
+# ---- AN EXISTING UNTRACKED ALIAS TABLE IS SOMEBODY'S HAND EDIT.
+#
+# `tracked_dirty` deliberately omits untracked files, so the dirty-checkout
+# refusal never sees one.
+ren_alias_tracked="$(cat "$WIP/lanes/aliases.tsv")"
+git -C "$WIP" rm -q --cached -- lanes/aliases.tsv >/dev/null 2>&1
+git -C "$WIP" commit -q -m "make the alias table untracked for one case" >/dev/null 2>&1
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main 2>/dev/null || :
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN8_ID" "$E" rename-lane repoEdge-1 repoEdge-2 --no-github
+is   "an existing UNTRACKED alias table is refused" "$rc" 2
+has  "…because git does not track it and this command commits what it writes" "$err" "git does not track it"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+git -C "$WIP" add -- lanes/aliases.tsv >/dev/null 2>&1
+git -C "$WIP" commit -q -m "track the alias table again" >/dev/null 2>&1
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main 2>/dev/null || :
+
+# ---- AND WITH EVERY EDGE CLEARED, THE RENAME GOES THROUGH.
+run env LANES_SESSION="$REN8_ID" "$E" rename-lane repoEdge-1 repoEdge-2 --no-github
+is   "with every edge cleared the rename goes through" "$rc" 0
+is   "…the row moved" "$(command grep -c '^| `repoEdge-2`' "$LANES")" 1
+is   "…the log at its new name" "$( [ -f "$LOGD/repoEdge-2.md" ] && echo yes )" "yes"
+is   "…the handoff at its new name" \
+     "$( [ -f "$WIP/handoffs/repoEdge/session-handoff-2026-09-12-lane-repoEdge-2.md" ] && echo yes )" "yes"
+has  "…and the alias table carries the pair" "$(cat "$WIP/lanes/aliases.tsv")" "$(printf 'repoEdge-1\trepoEdge-2\t20')"
+
+
+# ============ Copilot round 6 on openRepoTools#81 ============================
+
+# ---- A RENAMED IS SKIPPED BY THE ONE READER THAT TAKES THE LAST LANE-KIND
+# LINE WHATEVER IT IS. `swapped_candidates` names the verbs it skips, so a lane
+# whose LAST line is its rename must still read as PAUSED — otherwise `swapped`
+# loses it and `restart` cannot bring it back.
+REN9_ID="12ab34cd-16a9-4000-8000-12ab34cd16a9"
+add_seed_row "| \`repoRSw-1\` | harness \`$REN9_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | handoffs/repoRSw/x.md | ACTIVE |"
+{ printf '# lane repoRSw-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoRSw-1, session %s@Eagle, %s, lane:repoRSw-1 → home opensoft/repoRSw; estate repoRSw\n' "$REN9_ID" "$OLD_UTC"
+  printf 'PAUSED — lane repoRSw-1, session %s@Eagle, 2026-09-14T09:00:00Z, lane:repoRSw-1 → swap; window swsess:2; workstation Eagle\n' "$REN9_ID"
+} > "$LOGD/repoRSw-1.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed a swapped lane about to be renamed"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+run "$E" swapped Eagle
+has  "a PAUSED lane reads as swapped before the rename" "$out" "repoRSw-1"
+# ITS ROW NAMES A HANDOFF DIRECTORY NOTHING HAS CREATED, which is the ordinary
+# state of every lane before its first swap — `lane-start` puts the path in the
+# row and `lane-handoff` writes the file later — so this case also holds the
+# containment test to the nearest ancestor that EXISTS.
+run env LANES_SESSION="$REN9_ID" "$E" rename-lane repoRSw-1 repoRSw-2 --no-github
+is   "…and the rename goes through" "$rc" 0
+run "$E" swapped Eagle
+has  "…and it STILL reads as swapped, under its new name, with RENAMED as its last line" "$out" "repoRSw-2"
+hasnt "…and not under the old one" "$out" "repoRSw-1	" 
+run "$E" lane-last repoRSw-2
+has  "…while the last LANE-kind line a state read takes is still the PAUSED" "$out" "PAUSED"
+
+# ---- AN UNTRACKED OBJECT LOG OR HANDOFF IS SOMEBODY'S UNCOMMITTED WORK.
+#
+# `tracked_dirty` reports no untracked file, so the dirty-checkout refusal never
+# sees one — and this rename would MOVE it to a path it always stages.
+REN10_ID="12ab34cd-16b0-4000-8000-12ab34cd16b0"
+add_seed_row "| \`repoUnt-1\` | harness \`$REN10_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | handoffs/repoUnt/session-handoff-2026-09-12-lane-repoUnt-1.md | ACTIVE |"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the untracked-source lane"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+{ printf '# lane repoUnt-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoUnt-1, session %s@Eagle, %s, lane:repoUnt-1 → home opensoft/repoUnt; estate repoUnt\n' "$REN10_ID" "$OLD_UTC"
+} > "$LOGD/repoUnt-1.md"
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN10_ID" "$E" rename-lane repoUnt-1 repoUnt-2 --no-github
+is   "an UNTRACKED object log is refused, not moved into this commit" "$rc" 2
+has  "…because its lines have never been committed by anyone" "$err" "git does not track it"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+is   "…the log still under its own name" "$( [ -f "$LOGD/repoUnt-1.md" ] && echo yes )" "yes"
+git -C "$WIP" add -- "lanes/log/repoUnt-1.md" >/dev/null 2>&1
+git -C "$WIP" commit -q -m "commit the lane's own log, as the refusal asks"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+mkdir -p "$WIP/handoffs/repoUnt"
+printf 'Lane: repoUnt-1 — single-use resume prompt\n\n## RESUME\n' > "$WIP/handoffs/repoUnt/session-handoff-2026-09-12-lane-repoUnt-1.md"
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN10_ID" "$E" rename-lane repoUnt-1 repoUnt-2 --no-github
+is   "an UNTRACKED handoff is refused, not stamped into this commit" "$rc" 2
+has  "…for the same reason" "$err" "git does not track it"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+hasnt "…the handoff took no stamp" "$(cat "$WIP/handoffs/repoUnt/session-handoff-2026-09-12-lane-repoUnt-1.md")" "RENAMED from"
+git -C "$WIP" add -- handoffs >/dev/null 2>&1
+git -C "$WIP" commit -q -m "commit the lane's own handoff, as the refusal asks"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+run env LANES_SESSION="$REN10_ID" "$E" rename-lane repoUnt-1 repoUnt-2 --no-github
+is   "…and with both committed the rename goes through" "$rc" 0
+is   "…the log at its new name" "$( [ -f "$LOGD/repoUnt-2.md" ] && echo yes )" "yes"
+is   "…the handoff at its new name" \
+     "$( [ -f "$WIP/handoffs/repoUnt/session-handoff-2026-09-12-lane-repoUnt-2.md" ] && echo yes )" "yes"
+
+
+# ---- CLAUSE (g): ONE COMMENT PER OBJECT THE LANE HOLDS, AFTER THE COMMIT.
+#
+# The one act of this command that happens AFTER the push, and the one every
+# case above switches off — so it is exercised here against the fake `gh` the
+# head of this file puts first on `$PATH`, with `LANES_NO_GITHUB=0` for this
+# case alone. Nothing reaches GitHub: the fake answers the two comment forms
+# `gh_comment` makes and REFUSES every other call loudly.
+REN11_ID="12ab34cd-16b1-4000-8000-12ab34cd16b1"
+add_seed_row "| \`repoCmt-1\` | harness \`$REN11_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | handoffs/repoCmt/x.md | ACTIVE |"
+{ printf '# lane repoCmt-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoCmt-1, session %s@Eagle, %s, lane:repoCmt-1 → home opensoft/repoCmt; estate repoCmt\n' "$REN11_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repoCmt-1, session %s@Eagle, %s, opensoft/repoCmt#11\n' "$REN11_ID" "$OLD_UTC"
+  printf 'OPENED — lane repoCmt-1, session %s@Eagle, %s, opensoft/repoCmt#12\n' "$REN11_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repoCmt-1, session %s@Eagle, %s, opensoft/repoCmt#13\n' "$REN11_ID" "$OLD_UTC"
+  printf 'RELEASED — lane repoCmt-1, session %s@Eagle, %s, opensoft/repoCmt#13\n' "$REN11_ID" "$OLD_UTC"
+} > "$LOGD/repoCmt-1.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the comment lane: two objects open, one released"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+: > "$FAKE_GH_LOG"
+run env LANES_NO_GITHUB=0 LANES_SESSION="$REN11_ID" "$E" rename-lane repoCmt-1 repoCmt-2
+is   "a rename with GitHub ON exits 0" "$rc" 0
+ren_sha="$(git -C "$WIP" rev-parse HEAD)"
+is   "…posting ONE comment per object the lane HOLDS, and no more" \
+     "$(command grep -c '^=== issue comment' "$FAKE_GH_LOG" || :)" 2
+has  "…on the first of them" "$(cat "$FAKE_GH_LOG")" "=== issue comment opensoft/repoCmt 11"
+has  "…and the second" "$(cat "$FAKE_GH_LOG")" "=== issue comment opensoft/repoCmt 12"
+hasnt "…never on the one it released, which it does not hold" "$(cat "$FAKE_GH_LOG")" "opensoft/repoCmt 13"
+has  "…the body in the amendment's own words" "$(cat "$FAKE_GH_LOG")" \
+     "Lane repoCmt-1 renamed repoCmt-2 at 20"
+has  "…with Rule 10's wire form, lower-case and canonical" "$(cat "$FAKE_GH_LOG")" \
+     "Lane: repocmt-2 (repoCmt-2)"
+has  "…citing the commit that carries the rename" "$(cat "$FAKE_GH_LOG")" "$ren_sha"
+has  "…and naming the table that keeps the old name resolving" "$(cat "$FAKE_GH_LOG")" \
+     "lanes/aliases.tsv\` resolves \`repoCmt-1\` to \`repoCmt-2\`"
+has  "…reporting each comment's URL" "$err" "comment posted on opensoft/repoCmt#11"
+
+# ---- AND A COMMENT THAT CANNOT BE POSTED LEAVES THE RENAME WHERE IT LANDED.
+#
+# The commit IS the rename (clause (g): the comment is posted AFTER it), so a
+# `gh` that refuses must warn and never undo anything.
+REN12_ID="12ab34cd-16b2-4000-8000-12ab34cd16b2"
+add_seed_row "| \`repoCmt-5\` | harness \`$REN12_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | handoffs/repoCmt/y.md | ACTIVE |"
+{ printf '# lane repoCmt-5 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoCmt-5, session %s@Eagle, %s, lane:repoCmt-5 → home opensoft/repoCmt; estate repoCmt\n' "$REN12_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repoCmt-5, session %s@Eagle, %s, opensoft/repoCmt#21\n' "$REN12_ID" "$OLD_UTC"
+} > "$LOGD/repoCmt-5.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the lane whose comment will fail"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+: > "$FAKE_GH_LOG"
+run env LANES_NO_GITHUB=0 FAKE_GH_FAIL=1 LANES_SESSION="$REN12_ID" "$E" rename-lane repoCmt-5 repoCmt-6
+is   "a rename whose comment cannot be posted still exits 0" "$rc" 0
+has  "…warning, and naming the object it could not reach" "$err" "could not be posted on: opensoft/repoCmt#21"
+has  "…saying the commit IS the rename and it has landed" "$err" "it has landed"
+is   "…with the row moved all the same" "$(command grep -c '^| `repoCmt-6`' "$LANES")" 1
+is   "…the log at its new name" "$( [ -f "$LOGD/repoCmt-6.md" ] && echo yes )" "yes"
+is   "…and the commit still on origin" \
+     "$(git -C "$WIP" rev-parse HEAD)" "$(git -C "$WIP" rev-parse origin/main)"
+is   "…and nothing was posted" "$(command grep -c '^=== ' "$FAKE_GH_LOG" || :)" 0
+
+# ---- AND THE FAKE REFUSES ANY OTHER GITHUB CALL, LOUDLY.
+run env FAKE_GH_LOG="$SANDBOX/gh-probe.log" gh repo view opensoft/openRepoTools
+is   "the fake gh refuses every call but the two comment forms" "$rc" 90
+has  "…saying this suite reaches no GitHub surface" "$err" "reaches no GitHub surface"
+
+export FAKE_TMUX_WINDOWS="$A16_SAVE_WINDOWS"
+export FAKE_TMUX_WINDOW="$A16_SAVE_WINDOW"
+export FAKE_TMUX_WINDOW_NAME="$A16_SAVE_NAME"
 
 echo "== Amendment 17: the handoff is the swap =="
 
