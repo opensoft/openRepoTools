@@ -9367,7 +9367,14 @@ git -C "$MIG_WIP" commit -q -m "seed a lane whose name alone is longer than the 
 git -C "$MIG_WIP" push -q origin main 2>/dev/null || :
 run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --yes
 is    "a lane whose name alone overruns the cap still migrates" "$rc" 0
-mig_long_cell="$(grep "^| \`$MIG_LONG\`" "$MIG_WIP/lanes/LANES.md" | awk -F' \\| ' '{ c = $NF; sub(/ \|$/, "", c); n = split(c, p, / · /); print (length(p[3]) <= 240 ? "yes" : "no " length(p[3])) }')"
+# TWO LINES, AND THE SPLIT IS NOT A STYLE CHOICE: `grep` and the awk program's
+# `\|` on ONE line is what `test_no_shipped_bash_reaches_for_gnu_only_utilities_unaccompanied`
+# reads as a BRE alternation handed to `grep`, which is a GNU extension BSD
+# matches literally without saying so. The `\|` here is awk's own escape inside
+# an ERE and never reaches `grep` — so the row is taken first, and the awk that
+# splits it runs on its own line.
+mig_long_row="$(grep "^| \`$MIG_LONG\`" "$MIG_WIP/lanes/LANES.md")"
+mig_long_cell="$(printf '%s' "$mig_long_row" | awk -F' \\| ' '{ c = $NF; sub(/ \|$/, "", c); n = split(c, p, / · /); print (length(p[3]) <= 240 ? "yes" : "no " length(p[3])) }')"
 is    "…with its line inside ratified decision O1's 240 characters" "$mig_long_cell" "yes"
 has   "…and the line says it was cut" "$(grep "^| \`$MIG_LONG\`" "$MIG_WIP/lanes/LANES.md")" " ..."
 MIG_HEAD2="$(git -C "$MIG_WIP" rev-parse HEAD)"
