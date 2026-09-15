@@ -524,7 +524,13 @@ while [ $# -gt 0 ]; do
       retire_dormant="${1#--retire-dormant=}"
       [ -n "$retire_dormant" ] || die "--retire-dormant= needs the repository whose dormant rows are to be swept" 2
       shift ;;
-    --reason)      sweep_reason="${2-}"; [ -n "$sweep_reason" ] || die "--reason needs the words that say why" 2; shift 2 ;;
+    # A FLAG IS NOT A VALUE (Copilot round 1 on #93): `--reason --yes` took
+    # `--yes` as the reason, fell back to the dry run and exited 0 — a malformed
+    # line that ran and did not do what it said. A value beginning with `-` is
+    # refused, and the `=` spelling is named for a reason that really begins
+    # with one.
+    --reason)      case "${2-}" in '' | -*) die "--reason needs the words that say why, and '${2-}' is a flag — so the reason was left out and the act it belongs to may have been too. Spell a reason that really begins with a dash as --reason=<why>." 2 ;; esac
+                   sweep_reason="$2"; shift 2 ;;
     --reason=*)    sweep_reason="${1#--reason=}"; [ -n "$sweep_reason" ] || die "--reason needs the words that say why" 2; shift ;;
     --yes)         sweep_yes=1; shift ;;
     --home)        home_override="${2-}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift 2 ;;

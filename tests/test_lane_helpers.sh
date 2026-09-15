@@ -9602,6 +9602,20 @@ has   "…naming the transcript that is live" "$err" "LIVE session on this works
 run a19 env LANES_LANE=repo19-2 "$E" retire-rows repo19-2
 is    "a PARKED lane is refused: a parked lane is not dormant" "$rc" 2
 has   "…naming the line in its log that says so" "$err" "carries a PAUSED line"
+# AND THE ROW'S OWN CLAIM IS RE-PROVED BY THE WRITER, not trusted from the list
+# `lane-end` handed it: the listing does not hide a no-log row whose 13(a) cell
+# says the lane is somewhere, and the two must not disagree about which rows are
+# dormant (Copilot round 1 on #93).
+run a19 env LANES_LANE=repo19-2 "$E" retire-rows repo19b-1
+is    "a no-log row whose 13(a) cell says PAUSED is refused too" "$rc" 2
+has   "…naming the cell that says it" "$err" "Amendment 13(a)'s phrase"
+has   "…and the act that does end such a lane" "$err" "lane-end repo19b-1"
+# A FLAG IS NOT A VALUE: `--reason --yes` took the word that makes it the act as
+# the reason, fell back to the dry run and exited 0 (Copilot round 1 on #93).
+run a19 "$END" --retire-dormant repo19 --reason --yes
+is    "a --reason whose value is a flag is refused" "$rc" 2
+has   "…saying the reason was left out" "$err" "is a flag"
+has   "…and naming the spelling for a reason that begins with a dash" "$err" "--reason=<why>"
 is    "…and neither refusal wrote anything" "$(git -C "$A19_WIP" rev-parse HEAD)" "$A19_HEAD1"
 
 # THE LISTING AFTER THE SWEEP: the three are CLOSED now, by their own logs.
@@ -9676,6 +9690,21 @@ has   "…saying what that file is" "$err" "is NOT TRACKED"
 has   "…and naming the commit that settles it" "$err" "git -C"
 is    "…and nothing was written" "$(git -C "$A19_WIP" rev-parse HEAD)" "$A19_HEAD3"
 rm -f "$A19_WIP/lanes/log/repo19-6.md"
+
+# A ROW OF THIS REPOSITORY THAT CANNOT BE TAKEN APART IS A REFUSAL AND NOT A
+# SKIP (Copilot round 1 on #93): `archive-rows` says it moves EVERY `RETIRED`
+# row of a repository, and a row whose ` | ` count hides which text is the state
+# cell may BE one — so moving the others and saying nothing about it would
+# report a partial act as a whole one. Its own repository, so nothing above is
+# disturbed.
+printf '| `repo19c-1` | harness `%s` | Eagle / test / brett | 2026-09-01 | none | a | b | RETIRED \302\267 2026-09-14T00:00:00Z \302\267 finished |\n' "$A19_OLD" >> "$A19_WIP/lanes/LANES.md"
+git -C "$A19_WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$A19_WIP" commit -q -m "a row whose state cell hides behind an extra separator"
+git -C "$A19_WIP" push -q origin main
+run a19 env LANES_LANE=repo19-2 "$E" archive-rows repo19c
+is    "a row of the repository that cannot be taken apart refuses the whole move" "$rc" 2
+has   "…counting the separators it found" "$err" "' | ' separators where a seven-column row carries 6"
+has   "…and naming the hand edit that settles it" "$err" "Escape the literal pipe"
 
 echo "== the workstation seam: unset, every writer reads the host =="
 
