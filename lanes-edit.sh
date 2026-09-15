@@ -8090,10 +8090,11 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
        ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$(log_path_for "$rr_l")" >/dev/null 2>&1; then
       die "lane $rr_l's object log $(log_path_for "$rr_l") exists in this checkout but is NOT TRACKED — somebody's uncommitted work, which this sweep would commit inside its own commit and under its own message. Commit it first (\`git -C $LANES_REPO commit -m \"<what it is>\" -- $(log_path_for "$rr_l")\`) and re-run. Nothing was written." 2
     fi
-    rr_pub=""; rr_prc=0
-    rr_pub="$(log_path_ci "$rr_l")" || rr_prc=$?
-    [ "$rr_prc" = 0 ] ||
-      die "lane $rr_l's object log is published twice under names that differ only by case (above) — 15(d)'s hand merge. Nothing was written." 2
+    # THE PUBLISHED PATH IS THE ONE THE READABILITY PROBE ALREADY RESOLVED —
+    # `log_path_ci` is a `ls-tree` of the whole log directory and this loop runs
+    # per lane, so asking it twice for one lane is a second read of the same
+    # tree for the same answer.
+    rr_pub="$rr_pubp"
     if [ "${rr_pub##*/}" != "$(log_path_for "$rr_l")" ] && [ "$rr_pub" != "$(log_path_for "$rr_l")" ] && [ "$rr_ln2" = 0 ]; then
       die "lane $rr_l's object log is published as $rr_pub and this checkout does not have it: writing one here now would leave TWO files for one lane (Amendment 15). Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run. Nothing was written." 2
     fi
