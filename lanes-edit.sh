@@ -82,6 +82,27 @@
 #   `yes` or `no` at the next prompt. It is silent and cheap where the three
 #   agree, silent outside `$PROJECTS_ROOT` and silent for a subagent's prompt.
 #
+# AMENDMENT 18 — ONE BINDING PER LANE
+#   lanes-edit.sh binding <lane>                 # where this lane is bound
+#   lanes-edit.sh request-handoff <lane> [--wait <s>] [--session <uuid>]
+#   lanes-edit.sh request-handoff <lane> --force "<why>"
+#
+#   A lane's BINDING is the `host`, `container` and `window` of its last
+#   `STARTED`/`RESUMED` with no `PAUSED`/`ENDED`/`RETIRED` after it, and those
+#   three sub-fields are written by `write_event` beside Amendment 11(c)'s
+#   `dir`/`profile`/`window` — read from `LANES_HOST`/`LANES_OS`/
+#   `LANES_CONTAINER`, which the launcher exports, with clause (a)'s fallbacks.
+#   **Liveness is pronounced only from inside the binding's own host and
+#   container**: from anywhere else it is UNKNOWN and never dead, whatever
+#   `kill -0` of a pid in another namespace would say. The ONE exception is a
+#   window that is gone from a tmux server the two share, which is dead and is
+#   today's takeover path. A second place ASKS — `request-handoff` writes the
+#   line and pushes it, types `/handoff --exit requested by …` into the bound
+#   pane where that pane is here, and waits; an empty wait refuses with the
+#   facts and names `--force`, which is a second invocation that releases the
+#   binding on the bound session's behalf in the requester's own session field.
+#   The prompt guard answers both from the bound side (clauses (d) and (e)).
+#
 # AMENDMENT 18(h) — one live process per transcript
 #   lanes-edit.sh transcript-holders <uuid>      # every live process carrying it
 #
@@ -309,6 +330,20 @@
 #                                            and inside one WITH NO VALUE every
 #                                            WRITER refuses — Amendment 11,
 #                                            decision 8(d), R-A11-14)
+#   LANES_HOST         the MACHINE's short hostname as it reads OUTSIDE any
+#                      container (Amendment 18(a); the launcher exports it).
+#                      Fallback: `hostname -s` outside a container, and inside
+#                      one the Rule 10 workstation name
+#   LANES_OS           linux | macos | wsl | windows — the HOST's, as the person
+#                      means it. Fallback: the kernel probe (Darwin -> macos,
+#                      /proc/version naming microsoft -> wsl, linuxkit -> macos,
+#                      any other Linux -> linux). `windows` is a launcher's word
+#                      only: this file is bash and runs in WSL2 there
+#   LANES_CONTAINER    the bench's name (`py-bench`, …). Fallback: inside a
+#                      container, that container's own `hostname` — read LIVE at
+#                      every write, never cached; outside one, `none`
+#   LANES_POLL_SECONDS the interval `request-handoff`'s wait polls the published
+#                      log at (default 15). The test seam, and only that
 #   LANES_IN_CONTAINER 1|0                  force the container probe (test seam)
 #   LANES_NO_GIT=1     edit only, no commit/push (used by the test harness)
 #   LANES_LOG_DIR      the object logs     (default: <LANES_DIR>/log)
@@ -5244,6 +5279,26 @@ EOF2
     # while a line that cannot be typed is worse than a column that says
     # `none`. Every other state gets `none`: a lane whose last act was its last
     # is not a lane a person restarts.
+    #
+    # AND A **LIVE** LANE'S ONE ACT IS THE ATTACH, FILLED IN (Amendment 18
+    # clause (i), refined on the question Brett Heap asked 2026-09-14T13:47Z —
+    # verbatim *"how do i start claude with that profile and that lane? do i use
+    # lane command?"*, about a lane live in a DETACHED tmux session, where the
+    # listing named the session and no act). A live lane is never started a
+    # second time: clause (h) is one live process per transcript, and a
+    # `lane-start` or a `pclaude` on a running lane is exactly the second one.
+    # So the column carries `tmux switch-client` inside tmux and `tmux attach`
+    # outside it — the same two acts `lane`'s LIVE HERE branch performs, which
+    # is why the CHOICE between them is made here, in the read both surfaces
+    # share, and not in a renderer.
+    #
+    # THE TARGET IS `<session>:<@id>` WHERE THE RECORD KNOWS AN ID, and the
+    # session alone where it does not. Measured on this estate 2026-09-14 (tmux
+    # 3.4, private socket): `attach -t dst:@2` attached AND made `@2` current in
+    # ONE act, while `attach -t <session>` lands on whatever that session has
+    # since made current — another lane, which is the one thing the
+    # id-AND-session fence exists to stop. A bare session is still what a record
+    # with no `@id` can offer, and it is offered as that.
     lr_restart=none
     if [ "$lr_state" = PAUSED ]; then
       if [ -z "$lr_pf" ] || [ "$lr_pf" = none ]; then
@@ -5251,6 +5306,31 @@ EOF2
       else
         lr_restart="lane $lr_l"
       fi
+    elif [ "$lr_state" = LIVE ]; then
+      # THE WINDOW COLUMN HAS TWO SHAPES AND BOTH REACH HERE. A LIVE row takes
+      # it from the live session record, whose `tmux` field is
+      # `<session>:<@id>.<%pane>`; every other row takes it from the log, whose
+      # `window` sub-field is Amendment 11(c)'s TWO space-separated refs,
+      # `<session>:<index> <@id>`. Reading one for the other is how this column
+      # would offer `tmux attach -t <session>:<index>` — an index another window
+      # can be given between the read and the act, which is exactly what the
+      # id-AND-session rule exists to stop.
+      lr_wref="${lr_win%% *}"
+      lr_attid=""
+      case "$lr_win" in *' @'*) lr_attid="${lr_win##* }" ;; esac
+      if [ -z "$lr_attid" ]; then
+        lr_wtmp="${lr_wref%%.*}"
+        case "${lr_wtmp#*:}" in @[0-9]*) lr_attid="${lr_wtmp#*:}" ;; esac
+      fi
+      lr_att="${lr_wref%%:*}"
+      [ -z "$lr_attid" ] || lr_att="$lr_att:$lr_attid"
+      case "${lr_win:-none}" in
+        none | *'(gone)'*) : ;;
+        *)
+          if [ -n "${TMUX:-}" ]; then lr_restart="tmux switch-client -t $lr_att"
+          else lr_restart="tmux attach -t $lr_att"
+          fi ;;
+      esac
     fi
     lr_out="${lr_out}${lr_utc:-0000}${US}${lr_l}	${lr_state}	${lr_w:-unknown}	${lr_pf:-none}	${lr_win:-none}	${lr_sid:-none}	${lr_d:-none}	${lr_obj:-none}	${lr_age}	${lr_restart}	${lr_home:-none}	${lr_fk}
 "
@@ -6167,10 +6247,24 @@ lane_binding_scan() {   # <lane>
       cont = field(b_pay, "container", 0); if (cont == "") cont = "none"
       win  = field(b_pay, "window", 1)
       os   = field(b_pay, "os", 0)
-      if (state == "free" || state == "released") { host = ""; cont = ""; win = ""; os = "" }
-      printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s\n", \
+      # CLAUSE (a) CUTOVER RULE, CARRIED AS A FIELD OF ITS OWN: *"A line
+      # written before this amendment carries none of the three and stays
+      # valid; readers treat its binding as THE WINDOW ON THE ROW-S
+      # WORKSTATION, which is what they read today."* What they read today has
+      # no container in it — so a pre-amendment binding must not be filed under
+      # ANOTHER container merely because the asker is in one, which on an estate
+      # whose every line predates this clause would refuse every lane start
+      # inside every bench. The fallback values above are still what the read
+      # PRINTS (`none` is the answer a reader acts on); this field says which of
+      # them were read and which were supplied.
+      # (No apostrophe anywhere in this comment: the whole program is a
+      # single-quoted shell string, and one would end it — the same rule
+      # `LANES_REGISTER_INDEX_AWK` states for its own.)
+      legacy = (field(b_pay, "host", 0) == "" ? "legacy" : "")
+      if (state == "free" || state == "released") { host = ""; cont = ""; win = ""; os = ""; legacy = "" }
+      printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s\n", \
         state, 31, host, 31, cont, 31, win, 31, b_utc, 31, b_sess, 31, os, 31, \
-        r_utc, 31, r_sess, 31, r_pay, 31, x_verb, 31, x_utc, 31, x_sess, 31, x_pay
+        r_utc, 31, r_sess, 31, r_pay, 31, x_verb, 31, x_utc, 31, x_sess, 31, x_pay, 31, legacy
     }'
   return 0
 }
@@ -6185,8 +6279,17 @@ lane_binding_scan() {   # <lane>
 # `none`, so a lane bound before this amendment on THIS workstation reads `here`
 # outside a container and `elsewhere` inside one — which is the honest answer and
 # is exactly the case the amendment was written for.
-binding_is_here() {   # <host> <container>
+binding_is_here() {   # <host> <container> [legacy]
   [ "$(lc "${1-}")" = "$(lc "$LANES_HOST_NAME")" ] || [ "$(lc "${1-}")" = "$(lc "$WS")" ] || return 1
+  # A PRE-AMENDMENT LINE IS MATCHED ON THE HOST ALONE, which is clause (a)'s own
+  # cutover sentence and not a loosening of clause (b): such a line's binding is
+  # *"the window on the row's workstation, which is what they read today"*, and
+  # today's reading has no container in it. Matched on a container it never
+  # carried, every lane of an estate whose lines all predate this clause would
+  # read as another container's the moment the asker was in one — which is every
+  # bench session on a launcher-configured workstation, and a refusal of the
+  # whole estate on the day this lands.
+  [ "${3-}" = legacy ] && return 0
   [ "$(lc "${2-}")" = "$(lc "$LANES_CONTAINER_NAME")" ] || return 1
   return 0
 }
@@ -6689,7 +6792,7 @@ guard_run() {   # <the hook's JSON, on stdin already read>
   elif [ "$gr_bind_rc" != 0 ]; then
     note "lane $G_LANE's object log could not be read, so whether another place has asked for this lane (Amendment 18(d)) or forced it away (18(e)) is NOT known this prompt. The prompt is not refused for it — the three names above agree — but a request would be answered one prompt late."
   else
-    IFS="$US" read -r gb_state gb_host gb_cont gb_win gb_utc gb_sess gb_os gb_rutc gb_rsess gb_rpay gb_xverb gb_xutc gb_xsess gb_xpay <<EOF
+    IFS="$US" read -r gb_state gb_host gb_cont gb_win gb_utc gb_sess gb_os gb_rutc gb_rsess gb_rpay gb_xverb gb_xutc gb_xsess gb_xpay gb_legacy <<EOF
 $gr_bind
 EOF
     gb_mine=0
@@ -8150,7 +8253,8 @@ EOF
     bd_out=""; bd_rc=0
     bd_out="$(lane_binding_scan "$lane")" || bd_rc=$?
     [ "$bd_rc" = 0 ] || die "binding could not read lane $lane's object log (exit $bd_rc). That is NOT 'this lane is free' — a read that failed is never an answer (Amendment 7(d)), and a caller that took it as one would start a second session on a lane another place is holding." 1
-    IFS="$US" read -r bd_state bd_host bd_cont bd_win bd_utc bd_sess bd_os bd_rest <<EOF
+    IFS="$US" read -r bd_state bd_host bd_cont bd_win bd_utc bd_sess bd_os \
+      bd_rutc bd_rsess bd_rpay bd_xverb bd_xutc bd_xsess bd_xpay bd_legacy <<EOF
 $bd_out
 EOF
     case "$bd_state" in
@@ -8158,7 +8262,7 @@ EOF
       *) exit 8 ;;
     esac
     bd_where=elsewhere
-    binding_is_here "$bd_host" "$bd_cont" && bd_where=here
+    binding_is_here "$bd_host" "$bd_cont" "$bd_legacy" && bd_where=here
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "${bd_host:-unknown}" "${bd_cont:-none}" "${bd_win:-none}" "${bd_utc:-unknown}" \
       "${bd_sess:-unknown}" "${bd_os:-unknown}" "$bd_where" "$(binding_window_state "$bd_host" "$bd_win")"
@@ -8212,7 +8316,7 @@ EOF
     rh_out=""; rh_rc=0
     rh_out="$(lane_binding_scan "$lane")" || rh_rc=$?
     [ "$rh_rc" = 0 ] || die "request-handoff could not read lane $lane's object log (exit $rh_rc). That is NOT 'this lane is free' (Amendment 7(d)), and nothing was written." 1
-    IFS="$US" read -r rh_state rh_host rh_cont rh_win rh_utc rh_bsess rh_os rh_rutc rh_rsess rh_rpay rh_xverb rh_xutc rh_xsess rh_xpay <<EOF
+    IFS="$US" read -r rh_state rh_host rh_cont rh_win rh_utc rh_bsess rh_os rh_rutc rh_rsess rh_rpay rh_xverb rh_xutc rh_xsess rh_xpay rh_legacy <<EOF
 $rh_out
 EOF
     case "$rh_state" in
@@ -8224,7 +8328,7 @@ EOF
       die "lane $lane's binding IS this window ($rh_win): a handoff request is what a SECOND place makes of the first, and there is nothing here to ask. Nothing was written." 2
     fi
     rh_here=elsewhere
-    binding_is_here "$rh_host" "$rh_cont" && rh_here=here
+    binding_is_here "$rh_host" "$rh_cont" "$rh_legacy" && rh_here=here
 
     # ---- CLAUSE (e): `--force`, THE SECOND INVOCATION.
     if [ "$rh_force" = 1 ]; then
