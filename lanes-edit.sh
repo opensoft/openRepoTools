@@ -4477,6 +4477,19 @@ lane_row_facts() {   # events on stdin, ONE LINE PER LANE
       v = field($8, "window", 1);  if (v != "") w[l] = v
       if ($3 == "STARTED" || $3 == "RESUMED") {
         v = field($8, "home", 0); if (v != "" && v != "unknown") h[l] = v
+        # AMENDMENT 18(b) — WHERE THIS BINDING IS, out of the same pass, and
+        # taken from the BINDING LINE rather than from the last line carrying a
+        # sub-field: a `PAUSED` releases a binding and its own host is where the
+        # release was written, not where the lane was. Lower-cased here so the
+        # comparison one layer up costs no process (`lc` is a printf and a tr,
+        # and this listing asks it of every lane).
+        bh[l] = tolower(field($8, "host", 0)); if (bh[l] == "") bh[l] = tolower($5)
+        bc[l] = tolower(field($8, "container", 0)); if (bc[l] == "") bc[l] = "none"
+        # A line written before clause (a) carries none of the three, and its
+        # binding is *"the window on the row-s workstation"* — which has no
+        # container in it. Said here so the reader one layer up matches it on
+        # the host alone, exactly as `binding` does.
+        bl[l] = (field($8, "host", 0) == "" ? "legacy" : "")
       }
       # Clause (d) rule 3-s second source, out of the same pass: the session
       # field of the lane-s last PAUSED or RESUMED, which is the resume target
@@ -4516,7 +4529,7 @@ lane_row_facts() {   # events on stdin, ONE LINE PER LANE
         # for the same reason: the listing joins these two tables on the lane
         # name, and this file matches a lane name case-insensitively everywhere
         # else (`lane_named_ci`).
-        printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s\n", l, 31, disp[l], 31, verb[l], 31, utc[l], 31, ws[l], 31, d[l], 31, pf[l], 31, w[l], 31, h[l], 31, sid[l], 31, obj[l]
+        printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s\n", l, 31, disp[l], 31, verb[l], 31, utc[l], 31, ws[l], 31, d[l], 31, pf[l], 31, w[l], 31, h[l], 31, sid[l], 31, obj[l], 31, bh[l], 31, bc[l], 31, bl[l]
       }
     }'
 }
@@ -5133,6 +5146,13 @@ lanes_rows() {
   lr_live_fence=" $(printf '%s\n' "$lr_live_rows" | awk -F"$US" 'NF { print tolower($1) }' | tr '\n' ' ')"
   lr_ws_short="$(short_ws "$lr_ws")"
   lr_now="$(date -u +%s)"
+  # AMENDMENT 18(b), FOR THE PARTITION — computed ONCE for the whole listing,
+  # because `lc` is two processes and this is asked of every lane. The row
+  # carries the BINDING-s host and container (lower-cased by the awk above) and
+  # this is what they are compared against.
+  lr_me_host="$(lc "$LANES_HOST_NAME")"
+  lr_me_ws="$(lc "$WS")"
+  lr_me_cont="$(lc "$LANES_CONTAINER_NAME")"
   # ONLY A LANE THE FORK MAP NAMES CAN HAVE A FORK (ruling 12). `lane_forks`
   # stays the ONE implementation of what a fork is and what disqualifies one;
   # this simply declines to ask it about the forty-five lanes of this estate
@@ -5148,8 +5168,10 @@ lanes_rows() {
   while IFS="$US" read -r lr_ll lr_l; do
     [ -n "$lr_l" ] || continue
     lr_verb=""; lr_utc=""; lr_w=""; lr_d=""; lr_pf=""; lr_win=""; lr_home=""; lr_logsid=""; lr_obj=""
+    lr_bhost=""; lr_bcont=""; lr_blegacy=""
     if table_lookup "$lr_facts_t" "$lr_ll"; then
-      IFS="$US" read -r lr_fl lr_verb lr_utc lr_w lr_d lr_pf lr_win lr_home lr_logsid lr_obj <<EOF2
+      IFS="$US" read -r lr_fl lr_verb lr_utc lr_w lr_d lr_pf lr_win lr_home lr_logsid lr_obj \
+        lr_bhost lr_bcont lr_blegacy <<EOF2
 $LOOKUP_OUT
 EOF2
     fi
@@ -5332,7 +5354,26 @@ EOF2
           fi ;;
       esac
     fi
-    lr_out="${lr_out}${lr_utc:-0000}${US}${lr_l}	${lr_state}	${lr_w:-unknown}	${lr_pf:-none}	${lr_win:-none}	${lr_sid:-none}	${lr_d:-none}	${lr_obj:-none}	${lr_age}	${lr_restart}	${lr_home:-none}	${lr_fk}
+    # COLUMN 13 — WHETHER THIS PLACE MAY PRONOUNCE ON THAT BINDING, and it is
+    # the READ-s answer and not a renderer-s (Copilot round 1 on this PR; the
+    # rule A11 Addendum 4 ruling 7 gave column 10). `lane-groups` filed an
+    # `IDLE` row as AVAILABLE on the workstation column alone — and an IDLE row
+    # is a binding THIS host could not see a live record for, which across a
+    # container seam is exactly the lane that IS running: two benches on one
+    # host share the profile directory, so the pick offered another container-s
+    # live lane and the launch made a second process on it. `here` is Amendment
+    # 18(b)-s only place liveness may be pronounced from; a pre-clause line is
+    # matched on the host alone, which is clause (a)-s cutover sentence; and an
+    # EMPTY value is a lane with no binding line at all, which changes nothing
+    # about how it was filed before this column existed.
+    lr_local=""
+    if [ -n "$lr_bhost" ]; then
+      lr_local=elsewhere
+      if [ "$lr_bhost" = "$lr_me_host" ] || [ "$lr_bhost" = "$lr_me_ws" ]; then
+        if [ "$lr_blegacy" = legacy ] || [ "$lr_bcont" = "$lr_me_cont" ]; then lr_local=here; fi
+      fi
+    fi
+    lr_out="${lr_out}${lr_utc:-0000}${US}${lr_l}	${lr_state}	${lr_w:-unknown}	${lr_pf:-none}	${lr_win:-none}	${lr_sid:-none}	${lr_d:-none}	${lr_obj:-none}	${lr_age}	${lr_restart}	${lr_home:-none}	${lr_fk}	${lr_local}
 "
   done <<EOF
 $lr_names
@@ -5385,8 +5426,23 @@ lane_groups() {   # <workstation> ; rows on stdin
       st = $2
       if (st == "ENDED" || st == "RETIRED" || st == "CLOSED" || st == "DORMANT") next
       w = tolower($3); sub(/\..*$/, "", w)
+      # COLUMN 13 IS THE READ-S OWN ANSWER to *"may this place pronounce on that
+      # binding"* (Amendment 18(b)), and an `IDLE` row is exactly the row that
+      # needs it: IDLE means THIS host saw no live record for the lane-s ids,
+      # and across a container seam that is the lane that IS running — two
+      # benches on one host share the profile directory, so the pid the record
+      # names is in the other one-s namespace. Filed on the workstation column
+      # alone, such a row was offered as AVAILABLE and the launch made a second
+      # process on a live lane (Copilot round 1 on openRepoTools#83).
+      #
+      # AN EMPTY COLUMN 13 IS A ROW WITH NO BINDING LINE AT ALL — a lane with a
+      # row and no log, or a `lanes-edit.sh` predating this column — and it is
+      # filed exactly as it was before the column existed, which is Amendment
+      # 7(i)-s cutover rule for a field a reader may simply not have.
+      loc = (NF >= 13 ? $13 : "")
       if (st == "LIVE") g = "live"
       else if (st == "PAUSED") g = "available"
+      else if (loc == "elsewhere") g = "elsewhere"
       else if (w == me) g = "available"
       else g = "elsewhere"
       print g "\t" $0
@@ -6195,14 +6251,19 @@ EOF
 #   2 host        3 container   4 window    5 utc   6 session   7 os
 #   8 request utc      9 request session    10 request payload
 #   11 release verb    12 release utc       13 release session  14 release payload
+#   15 legacy      `legacy` where the binding line predates clause (a)
+#   16 foreign release verb  17 utc  18 session  19 payload — the release
+#              ANOTHER session wrote after the session named in argument 2 wrote
+#              its own last lane-kind line, which is clause (e)-s test and which
+#              survives a later binding by a third place
 #
 # 0 with the line, 1 where the LOG COULD NOT BE READ — which is not the same
 # fact as "this lane has no binding" and never was (#26, the fail-closed family).
-lane_binding_scan() {   # <lane>
+lane_binding_scan() {   # <lane> [<this session uuid>]
   lbs_lines=""; lbs_rc=0
   lbs_lines="$(lane_log_events "$1")" || lbs_rc=$?
   [ "$lbs_rc" = 0 ] || return 1
-  printf '%s\n' "$lbs_lines" | awk -v sep="$US" '
+  printf '%s\n' "$lbs_lines" | awk -v sep="$US" -v me="$(lc "${2-}")" '
     function field(pay, want, whole,   n, i, sf, v, q) {
       want = want " "
       n = split(pay, sf, "; ")
@@ -6220,6 +6281,28 @@ lane_binding_scan() {   # <lane>
       return ""
     }
     BEGIN { FS = sep; state = "free" }
+    # THIS SESSION-S OWN LAST LANE-KIND LINE, wherever it is, and the release
+    # another session wrote AFTER it — clause (e), which says EVERY prompt from
+    # then on and not merely the prompt before the next binding (Copilot round 1
+    # on this PR). Tracked beside the binding and never out of it: when a third
+    # place binds the lane after a forced release, the binding fields below move
+    # on to that new line while this pair stays exactly where it was, which is
+    # what makes the refusal persist as the clause says it must.
+    me != "" && tolower($4) == me && \
+      ($3 == "STARTED" || $3 == "RESUMED" || $3 == "PAUSED" || $3 == "ENDED" || $3 == "RETIRED") { me_pos = NR; me_verb = $3 }
+    me != "" && tolower($4) != me && ($3 == "PAUSED" || $3 == "ENDED" || $3 == "RETIRED") {
+      if (substr($8, 1, 5) != "fork ") {
+        f_pos = NR; f_verb = $3; f_utc = $1; f_sess = $4; f_pay = $8
+        # A release that NAMES this session is evidence on its own, whether or
+        # not this session ever wrote a line of its own: clause (e)-s `on behalf
+        # of <bound uuid>` is written by a place that read the binding, and the
+        # session it names may have been bound by a `lane-start` whose own
+        # STARTED was deferred for want of a uuid (Amendment 8(d), R-A8-2).
+        if (index(tolower($8), "on behalf of " me) > 0) {
+          ob_pos = NR; ob_verb = $3; ob_utc = $1; ob_sess = $4; ob_pay = $8
+        }
+      }
+    }
     $3 == "STARTED" || $3 == "RESUMED" {
       if (substr($8, 1, 5) == "fork ") next
       state = "bound"; seen = 1
@@ -6262,9 +6345,36 @@ lane_binding_scan() {   # <lane>
       # `LANES_REGISTER_INDEX_AWK` states for its own.)
       legacy = (field(b_pay, "host", 0) == "" ? "legacy" : "")
       if (state == "free" || state == "released") { host = ""; cont = ""; win = ""; os = ""; legacy = "" }
-      printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s\n", \
+      # A release by another session counts only where it came AFTER this
+      # session-s own last line. One that came before it is a lane this session
+      # has bound or handed off since, and the clause is about being released
+      # from UNDER a session, not about anything that ever happened to the lane.
+      # A release by another session counts only where it came AFTER this
+      # session-s own last line, and only where this session HAS one: a uuid
+      # that appears nowhere in this log has been released from nothing, and
+      # every fresh transcript in a lane-s window would otherwise be refused for
+      # ever by the PAUSED its predecessor wrote. The exception is a release
+      # that names this session outright, which is evidence with no line of its
+      # own needed.
+      if (ob_pos > me_pos) {
+        f_verb = ob_verb; f_utc = ob_utc; f_sess = ob_sess; f_pay = ob_pay
+      } else if (me_pos == 0 || f_pos <= me_pos) {
+        f_verb = ""; f_utc = ""; f_sess = ""; f_pay = ""
+      }
+      # AND A SESSION THAT RELEASED THE LANE ITSELF WAS TAKEN FROM NOTHING.
+      # Clause (e) is about a binding released from UNDER a session that still
+      # holds it; where this session-s own last lane-kind line is a PAUSED, an
+      # ENDED or a RETIRED, it gave the lane up, and the next place-s release of
+      # it is ordinary history. A session in that state that is somehow still
+      # running is the (b) table-s superseded-transcript row, which says the
+      # right thing about it and names the right cure.
+      if (me_verb == "PAUSED" || me_verb == "ENDED" || me_verb == "RETIRED") {
+        f_verb = ""; f_utc = ""; f_sess = ""; f_pay = ""
+      }
+      printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s\n", \
         state, 31, host, 31, cont, 31, win, 31, b_utc, 31, b_sess, 31, os, 31, \
-        r_utc, 31, r_sess, 31, r_pay, 31, x_verb, 31, x_utc, 31, x_sess, 31, x_pay, 31, legacy
+        r_utc, 31, r_sess, 31, r_pay, 31, x_verb, 31, x_utc, 31, x_sess, 31, x_pay, 31, legacy, 31, \
+        f_verb, 31, f_utc, 31, f_sess, 31, f_pay
     }'
   return 0
 }
@@ -6775,7 +6885,13 @@ guard_run() {   # <the hook's JSON, on stdin already read>
   # the first, a session in a window that merely carries the name would answer
   # for somebody else's binding.
   #
-  # A READ THAT FAILED IS NOT A LANE WITH NOTHING PENDING — but it is not a
+  # WHAT IT COSTS, MEASURED: `lanes-edit.sh binding openRepoTools-3` against this
+# estate's live register is **0.17 s** wall (2026-09-15), because it is one
+# `git show` of ONE lane's log and one awk — not the register read the triple
+# above already paid for. The guard's own budget is the amendment's `timeout 5`,
+# and the two reads it makes before this one measured ~2 s and ~0.4 s.
+#
+# A READ THAT FAILED IS NOT A LANE WITH NOTHING PENDING — but it is not a
   # refusal either, and that is a narrowing this guard makes deliberately.
   # Clause (d) is fail-closed about the READS THAT BUILD THE TRIPLE; these two
   # decide whether ANOTHER PLACE has asked for the lane, and a log that cannot
@@ -6787,12 +6903,13 @@ guard_run() {   # <the hook's JSON, on stdin already read>
   # read and no binding to be asked for; the row below this block is the one
   # that refuses a window naming none, and it says the right thing about it.
   gr_bind=""; gr_bind_rc=0
-  [ -n "$G_LANE" ] && { gr_bind="$(lane_binding_scan "$G_LANE")" || gr_bind_rc=$?; }
+  [ -n "$G_LANE" ] && { gr_bind="$(lane_binding_scan "$G_LANE" "$G_ID")" || gr_bind_rc=$?; }
   if [ -z "$G_LANE" ]; then :
   elif [ "$gr_bind_rc" != 0 ]; then
     note "lane $G_LANE's object log could not be read, so whether another place has asked for this lane (Amendment 18(d)) or forced it away (18(e)) is NOT known this prompt. The prompt is not refused for it — the three names above agree — but a request would be answered one prompt late."
   else
-    IFS="$US" read -r gb_state gb_host gb_cont gb_win gb_utc gb_sess gb_os gb_rutc gb_rsess gb_rpay gb_xverb gb_xutc gb_xsess gb_xpay gb_legacy <<EOF
+    IFS="$US" read -r gb_state gb_host gb_cont gb_win gb_utc gb_sess gb_os gb_rutc gb_rsess gb_rpay \
+      gb_xverb gb_xutc gb_xsess gb_xpay gb_legacy gb_fverb gb_futc gb_fsess gb_fpay <<EOF
 $gr_bind
 EOF
     gb_mine=0
@@ -6824,14 +6941,20 @@ EOF
       note "If this lane is NOT going anywhere, the answer is still an act and not a silence: tell that place, and they can stop waiting."
       return 2
     fi
-    if [ "$gb_mine" = 1 ] && [ "$gb_state" = released ] && [ "$gb_xverb" = PAUSED ] \
-       && [ -n "$gb_xsess" ] && [ "$(lc "$gb_xsess")" != "$G_ID" ]; then
+    # CLAUSE (e) IS ASKED OF THIS SESSION-S OWN TRACK, not of the latest
+    # binding (Copilot round 1 on this PR). Read off the binding, the refusal
+    # stopped the moment a THIRD place bound the lane — the scan-s `x_*` fields
+    # move on to the new line — and the clause says the refusal is EVERY prompt
+    # from then on, until the person here hands off or ends the session. Fields
+    # 16-19 are that track: the release another session wrote after this one-s
+    # own last lane-kind line, wherever the lane has been since.
+    if [ -n "$gb_fverb" ] && [ -n "$gb_fsess" ]; then
       guard_triple
-      note "THIS LANE'S BINDING WAS RELEASED BY SOMEBODY ELSE (Amendment 18(e)). Lane $G_LANE's log carries a \`PAUSED\` at ${gb_xutc:-an instant this line does not name}, written by session $gb_xsess — not by this one — after this session's binding of ${gb_utc:-an instant the binding does not name}:"
-      note "    $gb_xpay"
+      note "THIS LANE'S BINDING WAS RELEASED BY SOMEBODY ELSE (Amendment 18(e)). Lane $G_LANE's log carries a \`$gb_fverb\` at ${gb_futc:-an instant this line does not name}, written by session $gb_fsess — not by this one — after this session's own last line:"
+      note "    ${gb_fpay:-(no payload)}"
       note "Another place forced the lane away and has bound it, or is binding it now. TWO PLACES NEVER BOTH WRITE A LANE: every prompt in this session is refused from here on, and this is not a state a rename or a relaunch clears."
       note "The exits, and both are yours: hand this session off properly, which records what it holds and ends it —"
-      note "    lane-handoff --exit \"released from under me by $gb_xsess\""
+      note "    lane-handoff --exit \"released from under me by $gb_fsess\""
       note "— or end the session. To take the lane BACK, do it from a place that can bind it, after this one has stopped."
       return 2
     fi
@@ -8262,8 +8385,16 @@ EOF
     bd_out=""; bd_rc=0
     bd_out="$(lane_binding_scan "$lane")" || bd_rc=$?
     [ "$bd_rc" = 0 ] || die "binding could not read lane $lane's object log (exit $bd_rc). That is NOT 'this lane is free' — a read that failed is never an answer (Amendment 7(d)), and a caller that took it as one would start a second session on a lane another place is holding." 1
+    # EVERY FIELD IS NAMED, and the last name is the last field: `read` puts
+    # what is left into its final variable, so a name short of the emit is a
+    # variable carrying four more fields glued on by `$US` — and `bd_legacy`
+    # then reads `legacy` plus four separators, which is not `legacy`, and the
+    # cutover rule below silently stops firing. Measured by the suite, on
+    # `lane-start --dry-run repoA11 7`: a pre-amendment binding on this very
+    # workstation read as another container's.
     IFS="$US" read -r bd_state bd_host bd_cont bd_win bd_utc bd_sess bd_os \
-      bd_rutc bd_rsess bd_rpay bd_xverb bd_xutc bd_xsess bd_xpay bd_legacy <<EOF
+      bd_rutc bd_rsess bd_rpay bd_xverb bd_xutc bd_xsess bd_xpay bd_legacy \
+      bd_fverb bd_futc bd_fsess bd_fpay <<EOF
 $bd_out
 EOF
     case "$bd_state" in
@@ -8333,7 +8464,9 @@ EOF
     rh_out=""; rh_rc=0
     rh_out="$(lane_binding_scan "$lane")" || rh_rc=$?
     [ "$rh_rc" = 0 ] || die "request-handoff could not read lane $lane's object log (exit $rh_rc). That is NOT 'this lane is free' (Amendment 7(d)), and nothing was written." 1
-    IFS="$US" read -r rh_state rh_host rh_cont rh_win rh_utc rh_bsess rh_os rh_rutc rh_rsess rh_rpay rh_xverb rh_xutc rh_xsess rh_xpay rh_legacy <<EOF
+    IFS="$US" read -r rh_state rh_host rh_cont rh_win rh_utc rh_bsess rh_os \
+      rh_rutc rh_rsess rh_rpay rh_xverb rh_xutc rh_xsess rh_xpay rh_legacy \
+      rh_fverb rh_futc rh_fsess rh_fpay <<EOF
 $rh_out
 EOF
     case "$rh_state" in
@@ -8341,11 +8474,24 @@ EOF
       *) note "lane $lane is FREE — its last lane-kind line is ${rh_xverb:-none at all}${rh_xutc:+ at $rh_xutc}, so there is no binding to ask and nothing was written. Bind it."; exit 8 ;;
     esac
     rh_wstate="$(binding_window_state "$rh_host" "$rh_win")"
-    if binding_is_this_window "$rh_win"; then
-      die "lane $lane's binding IS this window ($rh_win): a handoff request is what a SECOND place makes of the first, and there is nothing here to ask. Nothing was written." 2
-    fi
+    # WHERE the binding is decides what a reader is TOLD, not whether the
+    # request is allowed. Clause (c) makes a different `host`, `container` OR
+    # WINDOW a refusal to bind, so a binding in this very host and container —
+    # a second window of it — is asked for exactly as another machine's is, and
+    # the one place a request has nothing to ask is the window it is made from.
     rh_here=elsewhere
     binding_is_here "$rh_host" "$rh_cont" "$rh_legacy" && rh_here=here
+    # AND THAT ONE PLACE IS TESTED ONLY WHERE THE BINDING IS LOCAL (Copilot
+    # round 1 on this PR). A tmux `@id` names a window ON ONE TMUX SERVER and
+    # tmux reissues them from `@0` when a server is replaced, so `@3` here and
+    # `@3` on another machine are not one window — and comparing the ids alone
+    # would refuse a request from a second HOST whose current window happened to
+    # carry the bound window's number, which is the one refusal that leaves a
+    # lane unaskable. The identity test is made after locality is proved, never
+    # instead of it.
+    if [ "$rh_here" = here ] && binding_is_this_window "$rh_win"; then
+      die "lane $lane's binding IS this window ($rh_win) on this host and in this container: a handoff request is what a SECOND place makes of the first, and there is nothing here to ask. Nothing was written." 2
+    fi
 
     # ---- CLAUSE (e): `--force`, THE SECOND INVOCATION.
     if [ "$rh_force" = 1 ]; then
@@ -8370,6 +8516,27 @@ EOF
       # exactly the ones they typed, and `why` is a name no reader in this file
       # parses.
       rh_why_clean="$(printf '%s' "$rh_why" | sed 's/ — / · /g; s/, / · /g; s/; / · /g')"
+      # THE BINDING IS READ AGAIN IMMEDIATELY BEFORE THE APPEND (Copilot round 1
+      # on this PR). This release names the session it acts for — `on behalf of
+      # <bound uuid>` — out of a scan made before the uuid was resolved and the
+      # why was checked. If the original holder released in between and a third
+      # place bound the lane, an unconditional append would release THE NEW
+      # HOLDER while naming the old one: the one act this clause exists to make
+      # loud, made silently against somebody who never had a chance to answer.
+      # The window is not closed by this — an append is not a lock, and nothing
+      # in the ratified text gives a lane one — but the scan is now the last
+      # thing before the write rather than the first thing in the run, and a
+      # binding that moved is a refusal naming what it moved to.
+      rh_re=""; rh_re_rc=0
+      rh_re="$(lane_binding_scan "$lane")" || rh_re_rc=$?
+      [ "$rh_re_rc" = 0 ] || die "lane $lane's object log could not be re-read immediately before the forced release (exit $rh_re_rc), and a \`PAUSED\` written on an answer nobody got could release a binding that is not the one this run read. Nothing was written." 1
+      IFS="$US" read -r rh2_state rh2_host rh2_cont rh2_win rh2_utc rh2_sess rh2_rest <<EOF
+$rh_re
+EOF
+      if [ "$rh2_utc" != "$rh_utc" ] || [ "$rh2_sess" != "$rh_bsess" ]; then
+        die "lane $lane's binding CHANGED while this run was preparing to force it. It was window $rh_win in container $rh_cont on host $rh_host (session ${rh_bsess:-unknown}, $rh_utc); it is now ${rh2_state:-free}${rh2_win:+, window $rh2_win in container ${rh2_cont:-none} on host ${rh2_host:-unknown} (session ${rh2_sess:-unknown}, $rh2_utc)}. Nothing was written: a forced release names the session it acts for, and this one would have named a session that no longer holds the lane while releasing one that does. Read it and decide again:
+    $SELF binding $lane" 2
+      fi
       rh_fpay="on behalf of ${rh_bsess:-unknown}; forced by $rh_uuid@$LANES_HOST_NAME/$LANES_CONTAINER_NAME; why $rh_why_clean"
       if [ "$rh_dry" = 1 ]; then
         note "PLAN: $SELF log PAUSED lane:$lane → \"$rh_fpay\"   (as session $rh_uuid)"
@@ -8432,8 +8599,16 @@ EOF
     rh_deadline=$(( $(date -u +%s) + rh_wait ))
     [ "$rh_wait" = 0 ] || note "waiting up to ${rh_wait}s for lane $lane to be released (polling the published log every ${rh_poll}s) …"
     while : ; do
-      if [ "$(date -u +%s)" -ge "$rh_deadline" ]; then break; fi
-      sleep "$rh_poll"
+      rh_left=$(( rh_deadline - $(date -u +%s) ))
+      if [ "$rh_left" -le 0 ]; then break; fi
+      # THE SLEEP IS BOUNDED BY WHAT IS LEFT OF THE WAIT (Copilot round 1 on
+      # this PR). `--wait <s>` is an UPPER BOUND a person named, and a fixed
+      # fifteen-second poll overruns it whenever the two disagree: `--wait 1`
+      # slept fifteen and then answered. What the poll interval decides is how
+      # OFTEN the log is asked, never how long the caller is held.
+      rh_nap="$rh_poll"
+      [ "$rh_nap" -gt "$rh_left" ] && rh_nap="$rh_left"
+      sleep "$rh_nap"
       log_sync
       rh_out=""; rh_rc=0
       rh_out="$(lane_binding_scan "$lane")" || rh_rc=$?

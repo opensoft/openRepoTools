@@ -462,12 +462,19 @@ fi
 #
 # Clause (j)'s ten columns and the read's two additions, in the read's order:
 #   1 lane · 2 state · 3 workstation · 4 profile · 5 window · 6 last uuid ·
-#   7 directory · 8 objects · 9 age · 10 the line that restarts it · 11 home ·
-#   12 live forks of its transcript
+#   7 directory · 8 objects · 9 age · 10 the one act for it · 11 home ·
+#   12 live forks of its transcript · 13 whether this place may pronounce on
+#   that binding (Amendment 18(b): `here`, `elsewhere`, or empty for a row with
+#   no binding line at all)
+#
+# THE LAST NAME MUST BE THE LAST COLUMN, and that is not a style point: `read`
+# puts every remaining field into its final variable, so a column added to the
+# read and not to this list arrives glued to the one before it. Column 12 is a
+# COUNT and column 13 a word, and `0<TAB>here` is neither.
 R_LANE=""; R_STATE=""; R_WS=""; R_PF=""; R_WIN=""; R_SID=""; R_DIR=""
-R_OBJ=""; R_AGE=""; R_CMD=""; R_HOME=""; R_FK=""
+R_OBJ=""; R_AGE=""; R_CMD=""; R_HOME=""; R_FK=""; R_LOC=""
 split_row() {   # <row>
-	IFS="$TAB" read -r R_LANE R_STATE R_WS R_PF R_WIN R_SID R_DIR R_OBJ R_AGE R_CMD R_HOME R_FK <<EOF
+	IFS="$TAB" read -r R_LANE R_STATE R_WS R_PF R_WIN R_SID R_DIR R_OBJ R_AGE R_CMD R_HOME R_FK R_LOC <<EOF
 ${1-}
 EOF
 	case "${R_DIR:-none}" in none) R_DIR="" ;; esac

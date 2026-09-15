@@ -1829,11 +1829,13 @@ fi
 # that did not happen, and this one fails CLOSED — a binding that could not be
 # read is not a lane that is free, and the cost of guessing here is two sessions
 # writing one append-only log.
-bind_out=""; bind_rc=0
+bind_out=""; bind_rc=0; bind_recheck=0
 : > "$LS_TMP"
 bind_out="$("$LANES_EDIT" binding "$LANE" 2>"$LS_TMP")" || bind_rc=$?
 case "$bind_rc" in
-  0 | 8) [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2 ;;
+  0) [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2 ;;
+  8) [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
+     step "no binding: lane $LANE's last lane-kind line released it, or it has none (Amendment 18(b)) — nothing to ask" ;;
   2) [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
      note "this \`lanes-edit.sh\` has no \`binding\` (exit 2), so whether lane $LANE is bound somewhere else is NOT known here. Install the one beside this script (\`openRepoTools --install\`); carrying on with step 3's liveness read alone, which cannot see another container." ;;
   *) [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
@@ -1894,8 +1896,8 @@ if [ "$bind_rc" = 0 ]; then
     ls_rh_rc=0
     "${ls_rh[@]}" || ls_rh_rc=$?
     case "$ls_rh_rc" in
-      0) step "lane $LANE is free — binding it here (Amendment 18(c))" ;;
-      8) step "lane $LANE was already free by the time the request was made — binding it here" ;;
+      0) bind_recheck=1; step "lane $LANE is free — binding it here (Amendment 18(c))" ;;
+      8) bind_recheck=1; step "lane $LANE was already free by the time the request was made — binding it here" ;;
       2) die "the handoff was not obtained (the helper's own facts and its \`--force\` line are above), so lane $LANE is still bound elsewhere and NOTHING here has been renamed, written or launched." 2 ;;
       *) die "$LANES_EDIT request-handoff $LANE exited $ls_rh_rc, which is neither 'the lane is free' nor the refusal that says it is not — nothing here has been renamed, written or launched." 1 ;;
     esac
@@ -1994,6 +1996,48 @@ if (( confirm )); then
         ;;
     esac
   fi
+fi
+
+# ---------------- 3d. AND THE BINDING IS READ AGAIN BEFORE THE FIRST ACT
+#
+# A HANDOFF THAT LANDED IS AN OBSERVATION AND NOT A RESERVATION (Copilot round 1
+# on opensoft/openRepoTools#83). `request-handoff` returns 0 when it SEES the
+# release; between that and the rename, the row status, the log line and the
+# launch, another place waiting on the same release can bind the lane — and
+# `commit_push` rebases both append-only writes rather than refusing the second,
+# so the log would carry two bindings and no reader could say which is the
+# lane's.
+#
+# NOTHING IN THE RATIFIED TEXT GIVES A LANE A RESERVATION, and inventing one
+# here would be an unratified act on an in-force protocol — it is filed rather
+# than smuggled in (opensoft/openRepoTools#84). What IS available is to make the
+# read the LAST thing before the first act instead of the first thing in the
+# run: the window between them is then one read wide rather than a question, a
+# rename, two register writes and a launch wide, and a lane that moved in it is
+# a refusal naming where it went rather than a second binding written over it.
+#
+# ONLY ON THE PATH THAT WAITED. Every other run has just read the binding a few
+# lines above and has asked nobody anything since; a second fetch on every lane
+# start would be a network round-trip bought for a window that is already this
+# narrow.
+if [ "$bind_recheck" = 1 ]; then
+  : > "$LS_TMP"
+  bind_again=""; bind_again_rc=0
+  bind_again="$("$LANES_EDIT" binding "$LANE" 2>"$LS_TMP")" || bind_again_rc=$?
+  [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
+  case "$bind_again_rc" in
+    8) step "binding: still free after the handoff — taking it" ;;
+    0)
+      IFS=$'\t' read -r ba_host ba_cont ba_win ba_utc ba_sess ba_os ba_where ba_wstate <<<"$bind_again"
+      if [ "$ba_where" = here ] && [ "$ba_win" = "$record_window" ]; then
+        step "binding: this window took it while this run waited — carrying on"
+      else
+        die "lane $LANE was released and BOUND AGAIN while this run was taking it: it is now window ${ba_win:-none} in container ${ba_cont:-none} on host ${ba_host:-unknown} (session ${ba_sess:-unknown}, ${ba_utc:-unknown}). The handoff this run asked for LANDED — that place did hand off — and somebody else bound the lane before this run reached its first act. Nothing has been renamed, written or launched. Ask again, or take it up with that place:
+      $prog --request-handoff $self_args" 2
+      fi ;;
+    2) note "this \`lanes-edit.sh\` has no \`binding\`, so whether the lane moved again while this run waited is not known here; carrying on." ;;
+    *) die "$LANES_EDIT binding $LANE exited $bind_again_rc on the re-read before the rename, so whether this lane is still free could NOT be established — and that is not 'it is'. Nothing has been renamed, written or launched." 1 ;;
+  esac
 fi
 
 # ------------------------------------------------------- 4. name the window

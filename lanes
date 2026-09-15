@@ -380,7 +380,10 @@ printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
 	LANE STATE WHERE PROFILE WINDOW "LAST TRANSCRIPT" AGE DIRECTORY
 n=0
 defects=0
-while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_restart r_home r_fk; do
+# THE LAST NAME TAKES EVERY REMAINING FIELD, so `r_loc` — Amendment 18(b)'s
+# column 13 — is named here even though this listing does not render it: without
+# it column 13 arrives glued to the fork COUNT, and `0<TAB>here` is not a count.
+while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_restart r_home r_fk r_loc; do
 	[ -n "${r_lane:-}" ] || continue
 	printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
 		"$r_lane" "$r_state" "$r_ws" "$r_pf" "$r_win" "$r_sid" "$r_age" "$r_dir"
