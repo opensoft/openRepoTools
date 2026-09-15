@@ -23,7 +23,11 @@ amendments — and `docs/README-lanes.md` is its manual. **The code is here; the
 data is not.** Every one of the four finds the register, the logs and the
 handoffs through `$AGENT_PROTOCOL_ROOT/workspace.yaml`'s `repository:` and
 `path:`, never from its own location on disk, and refuses with exit 1 naming
-`openRepoTools wip init` where that file does not answer. Their exit codes are
+`openRepoTools wip init` where that file does not answer — with ONE exception,
+and it is a mechanism and not a taste: `lanes-edit.sh guard`, the
+`UserPromptSubmit` name guard Amendment 12 adds, answers that same unreadable
+workspace with **2**, because only a 2 blocks a prompt and a 1 would print the
+refusal and let the work through it. Their exit codes are
 the protocol's and not this toolset's — 1 is *registry not found* there and
 *findings were printed* here — so never read a number without knowing which
 command produced it.
