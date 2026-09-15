@@ -8013,10 +8013,19 @@ EOF
   # or overwritten: which lane a tree belongs to is a person's to say.
   lrc_unmanaged=0
   if [ -n "$lrc_dir" ] && [ -d "$lrc_dir" ]; then
+    # THE CHECKOUT'S OWN ROW IS NOT AN UNMANAGED TREE, AND git ANSWERS WITH THE
+    # PHYSICAL PATH. A recorded `dir` reached through a symlink — which is how
+    # every estate with a `projects` link spells it — would otherwise not match
+    # the first row of `worktree list` and the lane's own checkout would be
+    # reported as a tree nobody manages. `cd -P` is the portable resolver here
+    # for the reason `lane-start`'s `real_of` gives: `readlink -f` is not in the
+    # stock macOS userland.
+    lrc_dirp="$( CDPATH=''; cd -P -- "$lrc_dir" 2>/dev/null && pwd -P )" || lrc_dirp=""
     while IFS= read -r lrc_wl; do
       case "$lrc_wl" in worktree\ *) : ;; *) continue ;; esac
       lrc_wp="${lrc_wl#worktree }"
       [ "$lrc_wp" = "$lrc_dir" ] && continue
+      [ -n "$lrc_dirp" ] && [ "$lrc_wp" = "$lrc_dirp" ] && continue
       case "$lrc_seen" in *" $lrc_wp "*) continue ;; esac
       if [ -d "$lrc_wp" ]; then
         printf 'TREE%s%s%sunmanaged%s%s%sgit registers it in %s and no sidecar of this lane names it; it is left exactly as it is\n' \

@@ -9478,7 +9478,7 @@ run "$E" lane-trees repoRC-1
 is    "…and no inventory either" "$rc" 8
 run "$E" lane-reconcile repoRC-1
 is    "lane-reconcile still answers for it" "$rc" 0
-has   "…with the verdict that names the cutover rule rather than guessing a crash" "$out" "no-state"
+is    "…with the verdict that names the cutover rule rather than guessing a crash" "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "no-state"
 is    "…and nothing was created on disk by a read" \
       "$( [ -e "$RC_STATE_ROOT/repoRC-1" ] && echo made || echo none )" none
 
@@ -9511,16 +9511,16 @@ is    "an ENDED closes the lifecycle too" \
 run "$E" set-lane-state repoRC-2 RUNNING --owner "$RC_ID" --agent claude --profile team-01a
 is    "set-lane-state writes the first snapshot for a lane that has none" "$rc" 0
 run "$E" lane-reconcile repoRC-2
-has   "RUNNING with no live holder is an UNGRACEFUL STOP — the session died before any handoff began" \
-      "$out" "ungraceful-stop"
+is    "RUNNING with no live holder is an UNGRACEFUL STOP — the session died before any handoff began" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "ungraceful-stop"
 has   "…and the report says so in the words a resumed session acts on" "$out" "before any handoff began"
 run "$E" set-lane-state repoRC-2 SWAPPING --expect RUNNING
 is    "…the lane moves to SWAPPING" "$rc" 0
 rc_gen="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "generation" { print $2 }')"
 rc_op="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "operation" { print $2 }')"
 run "$E" lane-reconcile repoRC-2
-has   "SWAPPING with no live holder is an INTERRUPTED SWAP — the handoff began and did not finish" \
-      "$out" "interrupted-swap"
+is    "SWAPPING with no live holder is an INTERRUPTED SWAP — the handoff began and did not finish" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "interrupted-swap"
 has   "…naming the operation that never finished" "$out" "$rc_op"
 has   "…and saying the three writes may each be half done" "$out" "may each be half done"
 
@@ -9529,11 +9529,11 @@ has   "…and saying the three writes may each be half done" "$out" "may each be
 write_record_ns "$sessions_dir/live-rc91.json" "$RC_LIVE" "$LIVE_PID" "$live_start" "rcsess:@31.%31" "repoRC-4" "user" "busy"
 run "$E" set-lane-state repoRC-4 RUNNING --owner "$RC_LIVE" --agent claude
 run "$E" lane-reconcile repoRC-4
-has   "RUNNING with a live holder is a lane that is RUNNING, and not a crash" "$out" "VERDICT"
+is    "RUNNING with a live holder is a lane that is RUNNING, and not a crash" "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "running"
 hasnt "…and never an ungraceful stop" "$out" "ungraceful-stop"
 run "$E" set-lane-state repoRC-4 SWAPPING --expect RUNNING
 run "$E" lane-reconcile repoRC-4
-has   "SWAPPING with a live holder is a swap in flight, not an interrupted one" "$out" "swap-in-progress"
+is    "SWAPPING with a live holder is a swap in flight, not an interrupted one" "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "swap-in-progress"
 hasnt "…and is never reported as interrupted" "$out" "interrupted-swap"
 
 # ------------------------------------------------------------- 4. the fence
@@ -9556,7 +9556,7 @@ run "$E" lane-state repoRC-2
 is    "…and a transition that named no owner KEPT the one that was there" \
       "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "owner" { print $2 }')" "$RC_ID"
 run "$E" lane-reconcile repoRC-2
-has   "a swapped lane with no holder is resumable" "$out" "resumable"
+is    "a swapped lane with no holder is resumable" "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "resumable"
 
 # A COMPETING RESUME ADVANCES THE GENERATION, and that is what refuses the old
 # swap's finalizer if it ever wakes — the whole point of the fence.
@@ -9613,8 +9613,9 @@ is    "…so the worktree it describes is no dirtier for having been recorded" \
 # THE FOURTH WINDOW: the replacement has not started yet, so the lane stays
 # SWAPPED and nothing has written RUNNING on a launcher's behalf.
 run "$E" lane-reconcile repoRC-5
-has   "between the handoff and the next session the lane is resumable, not running" "$out" "resumable"
-has   "…and the dirty writer worktree is reported as dirty" "$out" "dirty"
+is    "between the handoff and the next session the lane is resumable, not running" "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "resumable"
+is    "…and the dirty writer worktree is reported as dirty" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "TREE" && $4 ~ /worktrees\/w1$/ { print $3 }')" "dirty"
 run env LANES_LANE=repoRC-5 LANES_SESSION="$RC_ID2" "$E" log RESUMED lane:repoRC-5 '→' "dir $RC_DIR; profile team-09z" "the next session"
 run "$E" lane-state repoRC-5
 is    "…and only the confirming act takes it back to RUNNING" \
@@ -9636,7 +9637,7 @@ run "$E" lane-state repoRC-6
 is    "…but the lane stays SWAPPING, because one of the three mandatory writes did not land" \
       "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "state" { print $2 }')" SWAPPING
 run "$E" lane-reconcile repoRC-6
-has   "…which a later session reads as an interrupted swap and not as a clean handoff" "$out" "interrupted-swap"
+is    "…which a later session reads as an interrupted swap and not as a clean handoff" "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "interrupted-swap"
 
 # ------------------------------------ 7. what the reconciliation classifies
 
@@ -9659,18 +9660,24 @@ run "$E" set-lane-tree repoRC-5 "$RC_DIR/.claude/worktrees/detached" --checkout 
 
 run "$E" lane-reconcile repoRC-5
 rc5_rep="$out"
-has   "a missing tree that last held dirty or unpushed work is POSSIBLE LOSS" "$rc5_rep" "possible-loss"
+is    "a missing tree that last held dirty or unpushed work is POSSIBLE LOSS" \
+      "$(printf '%s\n' "$rc5_rep" | awk -F'\037' '$1 == "TREE" && $4 ~ /worktrees\/lost$/ { print $3 }')" "possible-loss"
 has   "…and says plainly that nothing here reconstructs uncommitted files" "$rc5_rep" "NOTHING here can reconstruct uncommitted files"
-has   "a missing tree that was clean and published is MISSING, and names the estate's own resume as the only rebuild" \
+is    "a missing tree that was clean and published is MISSING, and not a possible loss" \
+      "$(printf '%s\n' "$rc5_rep" | awk -F'\037' '$1 == "TREE" && $4 ~ /worktrees\/tidy$/ { print $3 }')" "missing"
+has   "…naming the estate's own resume as the only rebuild, rather than running it" \
       "$rc5_rep" "the estate parked record and \`resume <Name>\` are the only rebuild"
-has   "a tree git registers that no sidecar names is UNMANAGED" "$rc5_rep" "unmanaged"
+is    "a tree git registers that no sidecar names is UNMANAGED" \
+      "$(printf '%s\n' "$rc5_rep" | awk -F'\037' '$1 == "TREE" && $4 ~ /worktrees\/unmanaged$/ { print $3 }')" "unmanaged"
 has   "…and is left exactly as it is" "$rc5_rep" "it is left exactly as it is"
-has   "a registration whose directory is gone is a STALE REGISTRATION" "$rc5_rep" "stale-registration"
+is    "a registration whose directory is gone is a STALE REGISTRATION" \
+      "$(printf '%s\n' "$rc5_rep" | awk -F'\037' '$1 == "TREE" && $4 ~ /worktrees\/stale$/ { print $3 }')" "stale-registration"
 has   "…naming the prune that clears it, which is a person's act" "$rc5_rep" "worktree prune"
-has   "a detached HEAD is recorded and reported as detached, not as a branch" "$rc5_rep" "detached"
+is    "a detached HEAD is recorded and reported as detached, not as a branch" \
+      "$(printf '%s\n' "$rc5_rep" | awk -F'\037' '$1 == "TREE" && $4 ~ /worktrees\/detached$/ { print $5 }' | awk '{print $2}')" "detached"
 has   "the stored observation is a COMPARISON POINT and the report says what git says NOW" "$rc5_rep" "observed"
 is    "every discovered tree is named ONCE, whichever of the two sweeps found it" \
-      "$(printf '%s\n' "$rc5_rep" | awk -F'\037' '$1 == "TREE" && $5 ~ /worktrees\/unmanaged$/' | grep -c .)" 1
+      "$(printf '%s\n' "$rc5_rep" | awk -F'\037' '$1 == "TREE" && $4 ~ /worktrees\/unmanaged$/' | grep -c .)" 1
 
 # AND IT RESET NOTHING. This is the claim the whole read exists under:
 # `park` CREATES NOTHING and `resume` RESETS NOTHING (AGENTS.md rule 1).
@@ -9689,7 +9696,7 @@ printf 'schema: 999\nstate: WONDERLAND\n' > "$RC_STATE_ROOT/repoRC-3/lane-state.
 run "$E" lane-state repoRC-3
 has   "a snapshot written by a newer tooling is UNKNOWN-SCHEMA and never a state this reader acts on" "$out" "UNKNOWN-SCHEMA"
 run "$E" lane-reconcile repoRC-3
-has   "…and the verdict says nothing is assumed about it" "$out" "unknown-state"
+is    "…and the verdict says nothing is assumed about it" "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "unknown-state"
 
 # ------------------------------------------ 9. the usage contract of the five
 
