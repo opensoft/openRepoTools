@@ -701,6 +701,15 @@ case "${#positional[@]}" in
       # command in this file goes through.
       [ -z "$estate" ]     || ls_drop="$ls_drop --estate $(quoted "$estate")"
       [ "${#pass[@]}" = 0 ] || ls_drop="$ls_drop -- $(quoted "${pass[@]}")"
+      # AND THE LINE CARRIES THE OPTIONS THAT WERE *KEPT* TOO (Copilot round 8
+      # on #45, `lane-start:706`). The remedy was built out of the refused flags
+      # alone, so `lane-start --dir /work/repo --estate x` printed `lane-start
+      # <repo> <n> --estate x` and the checkout the person had named was gone
+      # from the line they were told to type. What is suggested is the WHOLE
+      # command they meant, not the half this rung could not take.
+      ls_keep=""
+      [ "$dry_run" = 0 ]     || ls_keep="$ls_keep --dry-run"
+      [ -z "$dir_override" ] || ls_keep="$ls_keep --dir $(quoted "$dir_override")"
       if [ -n "$ls_drop" ]; then
         die "bare \`$prog\` is \`lane\` (Amendment 18 Addendum 1 clause (i-4)), which lists the
     lanes and binds the one you pick — and$ls_drop belongs to a lane that has
@@ -708,7 +717,7 @@ case "${#positional[@]}" in
     refused rather than ignored: a flag that is silently dropped is a promise
     that was not kept.
       pick a lane:                    $prog
-      that lane, with those options:  $prog <repo> <n>$ls_drop" 2
+      that lane, with those options:  $prog <repo> <n>$ls_keep$ls_drop" 2
       fi
       note "no <repo> and no position: this is \`lane\`, which lists the lanes and binds the one you pick (Amendment 18 Addendum 1 clause (i-4))"
       exec "${lane_argv[@]}"

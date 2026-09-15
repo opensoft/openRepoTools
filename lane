@@ -599,8 +599,15 @@ go_available() {
 	# row does not carry it. Launching the WRONG profile is a launch into
 	# another account, so this refuses and names the two lines that work.
 	if [ -z "$ga_pf" ]; then
-		dir_for_hint="$ga_dir"
-		[ -n "$dir_for_hint" ] || dir_for_hint="<the lane's checkout>"
+		# QUOTED WHERE IT IS A PATH, LEGIBLE WHERE IT IS A PLACEHOLDER (Copilot
+		# round 8 on #45, `lane:612`). A recorded directory with a space in it —
+		# `/work/my lane` — printed bare makes `cd /work/my lane` two arguments, so
+		# the one line this refusal exists to hand over is a line that cannot be
+		# pasted. `%q` through `quoted`, the same helper the dry-run uses; the
+		# placeholder is left as words, because `\<the\ lane\'s\ checkout\>` is
+		# not a thing to type either.
+		dir_for_hint="<the lane's checkout>"
+		[ -z "$ga_dir" ] || dir_for_hint="$(quoted "$ga_dir")"
 		die "lane $R_LANE's record does not name a profile yet, and this command will not guess one:
     a wrong profile is a launch into another account. It is recorded
     by \`lane-start\` at the lane's next start and by \`/lane-swap\` at its next
@@ -1126,9 +1133,15 @@ if [ ! -t 0 ]; then
 	# whatever checkout they happen to be standing in — Evidence 3's silent loss,
 	# at the one moment a lane is created. One surface performed the act and the
 	# other printed it; they spell it the same way now.
-	nt_dir=""
+	nt_dir=""; nt_sw=""
 	if [ -n "$dir_flag" ]; then nt_dir=" --dir $(quoted "$dir_flag")"; fi
-	if [ "$n" != 0 ]; then printf '    %-34s %s\n' "$prog$nt_dir <name>" "the lane you want, from the list above"; fi
+	# …AND `--switch`, WHICH IS A DIFFERENT ATTACH AND NOT A PREFERENCE (Copilot
+	# round 8 on #45, `lane:1123`). Typing back a `lane <name>` that lost it MOVES
+	# a live lane's window into this session instead of switching the client to
+	# it — a different act on somebody's terminal. It goes on the `lane` line
+	# alone: `lane-start` has no such flag.
+	if [ "$switch" = 1 ]; then nt_sw=" --switch"; fi
+	if [ "$n" != 0 ]; then printf '    %-34s %s\n' "$prog$nt_dir$nt_sw <name>" "the lane you want, from the list above"; fi
 	if [ -n "$next_free" ]; then printf '    %-34s %s\n' "lane-start$nt_dir $here_repo $next_free" "a new lane at the next free position"; fi
 	printf '    %-34s %s\n' "lanes --all" "every lane the register and the logs know"
 	if [ "$n" = 0 ]; then exit 8; fi

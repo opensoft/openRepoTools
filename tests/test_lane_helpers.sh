@@ -7223,6 +7223,48 @@ is   "…which is the helper's own answer over the rows that listing did not fin
 is   "…and the helper says the same when it is handed the empty set explicitly" \
      "$(printf '\n' | "$E" next-free repoNoSuchAtAll)" "1"
 
+# ---- AND EVERY PRINTED ACT IS A LINE THAT CAN BE TYPED BACK ----------------
+#
+# Copilot round 8 on #45: `lane:612`, `lane:1123`, `lane-start:706`. Three
+# surfaces print a command for a person or an agent to run, and each dropped
+# something the run it describes would need — a directory with a space in it,
+# the `--switch` that makes the attach a switch rather than a move, and the
+# `--dir` a bare `lane-start` was handed beside the flag it refused.
+#
+# THE `cd` IN THE NO-PROFILE REFUSAL, quoted where it is a path. `repoGap-1`
+# records a directory with a space, which is a path a person may well have.
+GAP_DIR="$HOME/projects/my gap repo"
+mkdir -p "$GAP_DIR"
+GAP_ID="dddd0010-1010-4000-8000-dddd00101010"
+add_seed_row "| \`repoGap-1\` | harness \`$GAP_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoGap/1.md | ACTIVE |"
+{ printf '# lane repoGap-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoGap-1, session %s@Eagle, 2026-09-12T08:30:00Z, lane:repoGap-1 → home opensoft/repoGap; estate repoGap; dir "%s"\n' "$GAP_ID" "$GAP_DIR"
+} > "$LOGD/repoGap-1.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed a lane whose recorded directory has a space in it"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX PATH="$LANEBIN_PATH" "$LANE" repoGap-1 </dev/null
+is    "a lane with no recorded profile still refuses with 2" "$rc" 2
+has   "…and the one line it hands over is QUOTED, so it can be pasted" \
+      "$err" "cd $(printf '%q' "$GAP_DIR")"
+hasnt "…never bare, which would be two arguments to cd" "$err" "cd $GAP_DIR "
+is    "…launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+
+# `--switch` IS A DIFFERENT ATTACH AND THE PRINTED ACT KEEPS IT.
+run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" "$LANE" --switch </dev/null
+is    "a no-terminal listing with --switch exits 0" "$rc" 0
+has   "…printing the named-lane act WITH the flag that makes it a switch" "$out" "lane --switch <name>"
+hasnt "…and never the new-lane act with it, because lane-start has no such flag" "$out" "lane-start --switch"
+
+# AND THE BARE `lane-start` REMEDY CARRIES WHAT IT KEPT, not only what it refused.
+run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" "$START" --dir "$PICK_DIR" --estate x </dev/null
+is    "bare lane-start with one kept flag and one refused still refuses with 2" "$rc" 2
+has   "…naming the refused one" "$err" "--estate x"
+has   "…and carrying the kept one into the line it tells a person to type" "$err" "--dir"
+has   "…with the checkout they actually named" "$err" "$PICK_DIR"
+
 echo "== the workstation seam: unset, every writer reads the host =="
 
 # THE OTHER HALF OF R-A9-13. Every case above this line runs with
