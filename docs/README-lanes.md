@@ -2183,6 +2183,15 @@ its **time** (the `AGE` column). A DORMANT row is shown as `NO LOG` with its
 are the only thing it has left to say — and with **FLAGS** where that cell says
 the work was `unpushed`, `lost`, a `loss` or `owed`, or still says `LIVE`.
 
+**An empty listing is not an empty register.** A repository whose every row is
+closed or dormant lists nothing, so `lanes --prefix <repo>` says that in those
+terms — *"no lane of `<repo>` is LISTED — and that is not the same as none being
+recorded"* — points at `--closed`, and offers the position it read from the
+register and the archive rather than assuming 1. And a closed or dormant row
+never reaches the numbered pick even when it is asked for by name: `lane
+<name>`'s read is deliberately unfiltered, so `lane-groups` drops it on its
+CLASS rather than on its state word.
+
 **The next free position is computed over EVERY row** — hidden rows and the
 archive of the next section included — so a retired `<repo>-<n>` is **never
 reissued**. A lane's identity is its name, its log is `lanes/log/<lane>.md` and
