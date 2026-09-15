@@ -38,43 +38,67 @@
 #                       only closing for the night. Since Amendment 13(a) that
 #                       is the SAME write as the closing one (the cell is one
 #                       phrase that set-row-state replaces), not a second act
-#   --retire <pid|uuid> A DIFFERENT ACT, and it ends nothing: the DOOR to
-#                       Amendment 6(d)'s retire act for a live FORK of this
-#                       lane's transcript (Amendment 11 clause (k) rule (e) —
-#                       "both print the one act: retire it, under Amendment
-#                       6(d) … Neither kills a process … and lane-end's
-#                       --retire is the door"). It PROVES the pid or uuid is
-#                       this lane's live fork and prints 6(d) for it filled in
-#                       — the /rename for a session with a prompt, 6(d)'s
-#                       "ended" for a kind: bg holder that has none. It writes
-#                       NOTHING (a RETIRED carrying a payload would be a
-#                       seventh edit to in-force text: Amendment 7(b) gives
-#                       RETIRED no payload and A11 clause (c) keeps it that
-#                       way) and it KILLS NOTHING. Refuses on anything that is
-#                       not a live fork of this lane, and on a `forks` read
-#                       that failed — a read that failed is not "it is not a
-#                       fork". `lanes-edit.sh forks <lane>` names them all.
-#                       AND SINCE AMENDMENT 18(h) IT TAKES A SECOND POPULATION
-#                       (opensoft/openRepoTools#39): a live DUPLICATE of the
-#                       row's OWN id — a second process carrying the transcript
-#                       the row records, which `forks` cannot see, because its
-#                       criterion is "an id the row does NOT record" and
-#                       `lane-start` had just appended that id to the cell. The
-#                       lane's OWN session, in its own window, is refused by
-#                       name: retiring the session that IS the lane is how a
-#                       lane loses the conversation it is, and ending the lane
-#                       is the bare form above, and the harness's OWN COMPANION
-#                       of that session — the `kind: bg` record beside it in the
-#                       same profile, Amendment 8 ruling (g) — is refused by
-#                       name too: it is one half of the live session and not a
-#                       rival to it.
-#                       A DUPLICATE IS NAMED BY ITS PID and never by a uuid,
-#                       because its uuid IS the row's own and could not pick
-#                       between the processes carrying it; the uuid form above
-#                       is for a FORK, whose id is one the row does not record.
-#                       `lanes-edit.sh transcript-holders <uuid>` lists every
-#                       live process carrying one transcript, with its window,
-#                       its kind, its profile and which of the three it is.
+#   --retire <pid|uuid> A DIFFERENT ACT for one of THREE kinds of target, and
+#                       it ends nothing in the LANE'S ROW on any of them: for a
+#                       live FORK of this lane's transcript it is the DOOR to
+#                       Amendment 6(d)'s retire act (Amendment 11 clause
+#                       (k) rule (e) — "both print the one act: retire it,
+#                       under Amendment 6(d) … Neither kills a process … and
+#                       lane-end's --retire is the door"). For a FORK — a live
+#                       session under an id the row does NOT record, wearing
+#                       this lane's title (decision 8(e)) — it PROVES the pid
+#                       or uuid is one and prints 6(d) for it filled in, the
+#                       /rename for a session with a prompt or 6(d)'s "ended"
+#                       for a kind: bg holder that has none; it writes NOTHING
+#                       (a RETIRED carrying a payload would be a seventh edit
+#                       to in-force text: Amendment 7(b) gives RETIRED no
+#                       payload and A11 clause (c) keeps it that way) and it
+#                       KILLS NOTHING there. The other two kinds both answer
+#                       Amendment 18(h) — exactly one live process may hold one
+#                       transcript — from two different kinds of evidence, and
+#                       this door runs both because neither can see what the
+#                       other does:
+#                         * a DUPLICATE HOLDER — a live `--fork-session`
+#                           process under an id the row DOES record, found in
+#                           the PROCESS TABLE (opensoft/openRepoTools#39) — is
+#                           a background wrapper nobody is answering a prompt
+#                           in, so this act TERMs the pair (the bg-pty-host
+#                           parent and its child, never the lane's own live
+#                           session, which it refuses to touch) and reports
+#                           the pids it signalled. Named by the PARENT or
+#                           CHILD PID and never by the transcript uuid
+#                           (Copilot round 9, PR #61) — the same reason a
+#                           DUPLICATE below never is: the uuid IS the row's
+#                           own and cannot distinguish two process-table
+#                           holders (or a duplicate beside a not-yet-bound
+#                           fork) that carry the identical id;
+#                         * a DUPLICATE — any other live process carrying the
+#                           row's own id, found by SESSION RECORD
+#                           (opensoft/openRepoTools#39, Amendment 12/#52),
+#                           which also catches an ordinary INTERACTIVE second
+#                           resume the process-table match was never built to
+#                           see — is reported and never killed, exactly like a
+#                           FORK, because it may have a prompt open; the
+#                           lane's OWN session, in its own window, is refused
+#                           by name (retiring the session that IS the lane is
+#                           how a lane loses the conversation it is — end the
+#                           lane instead, the bare form above), and the
+#                           harness's OWN COMPANION of that session — the
+#                           `kind: bg` record beside it in the same profile,
+#                           Amendment 8 ruling (g) — is refused by name too:
+#                           it is one half of the live session and not a
+#                           rival to it. A DUPLICATE is named by its PID and
+#                           never by a uuid, because its uuid IS the row's
+#                           own and could not pick between the processes
+#                           carrying it; the uuid form above is for a FORK,
+#                           whose id is one the row does not record.
+#                       Refuses on anything that is none of the three, and on
+#                       any of the reads failing — a read that failed is not
+#                       "it is not one". `lanes-edit.sh forks <lane>`,
+#                       `lanes-edit.sh duplicate-holder <lane>` and
+#                       `lanes-edit.sh transcript-holders <uuid>` (the last
+#                       against the row's own id, via `last-session <lane>`)
+#                       are the reads that name them.
 #   --state-was <text>  ACCEPTED AND IGNORED since Amendment 13(a). It named the
 #                       exact text `--retire` had to replace, back when the cell
 #                       was the row's history and retiring meant flipping the
@@ -613,6 +637,24 @@ fi
 # `kill <pid>` IS PRINTED BY NOTHING (`R-A11-24` in terms). The pid and the cwd
 # are printed as FACTS — `who` and the hook have always printed them — so a
 # person can find the process; what is never printed is a command that ends it.
+#
+# ALL OF THE ABOVE IS ABOUT A FORK, AND ONLY A FORK (opensoft/openRepoTools#39,
+# Amendment 18(h)). A DUPLICATE HOLDER is a different thing wearing a similar
+# shape, and this door tells them apart before it decides what to do: a fork
+# (decision 8(e)) is a live session under an id the row does NOT record,
+# wearing this lane's title — it might be somebody's long-running job with a
+# prompt still open, so Amendment 8(f) reserves ending it for a person. A
+# duplicate holder is a live `--fork-session` process found in the PROCESS
+# TABLE under an id the row DOES record — the very thing Amendment 18(h) says
+# may never coexist with the lane's own live session ("the tooling refuses to
+# build on either… it never appends such an id to the row and never launches a
+# second resume of it"). Nobody is answering a prompt in a background
+# `bg-pty-host` fork of a transcript this lane's own row already claims for
+# itself, so this door TERMS that pair on sight rather than only naming it —
+# the retirement Evidence of 2026-09-14 had to do by hand, outside every tool
+# this estate has (`kill -TERM`, on Brett Heap's word). It never touches a
+# process on another transcript, and it refuses the lane's own live session
+# exactly as the fork case refuses to end a lane's row.
 if [ -n "$retire_target" ]; then
   [ "$force" = 0 ] || die "--force is for ending a lane that still holds something; it has no meaning for retiring a fork. Run: $prog $LANE --retire $retire_target" 2
   [ -z "$state_was" ] || die "--state-was is for the state cell of a lane being ended; retiring a fork touches no cell. Run: $prog $LANE --retire $retire_target" 2
@@ -620,38 +662,311 @@ if [ -n "$retire_target" ]; then
   # THE FORK IS PROVED BEFORE ANYTHING IS PRINTED, and a read that FAILED is
   # never "it is not a fork": `forks` answers 0 with rows, 8 with none and 1
   # where this workstation's session records could not be read (Amendment 7(d)).
-  # Only the first can find one.
+  # Only the first can find one. 8 is DEFERRED rather than an immediate die
+  # (issue #30/#39): a lane with no live FORK may still have a live duplicate
+  # of one of the two other kinds below, and dying here before either gets a
+  # turn would make that read unreachable for exactly the lanes it exists for
+  # — one with no fork at all.
   fk_rc=0
   fk_rows="$("$LANES_EDIT" forks "$LANE" 2>/dev/null)" || fk_rc=$?
   case "$fk_rc" in
-    0) : ;;
-    # AMENDMENT 18(h) / opensoft/openRepoTools#39 — AN 8 IS NO LONGER THE END OF
-    # THIS ACT. `forks` finds a fork by its transcript's TITLE under an id THE
-    # ROW DOES NOT RECORD, and on 2026-09-14 that criterion made the very
-    # process the launcher had just named invisible: a `--fork-session` whose id
-    # `lane-start --no-launch` had since appended to the row's session cell was
-    # no longer "an id the row does not record", so this act answered *"nothing
-    # to retire"* about a second live writer of the lane's own transcript and
-    # the retire had to be a bare `kill`, outside the tooling. So an 8 falls
-    # through to the duplicate read below, and only the two of them together
-    # refuse.
-    8) fk_rows="" ;;
+    0 | 8) : ;;
     *) die "$LANES_EDIT forks $LANE failed (exit $fk_rc). That is NOT 'no fork of it is live', and this script will not name an act for a fork it could not prove is one. Run it by hand to see what it says, then re-run." 1 ;;
   esac
 
   fk_sid=""; fk_pid=""; fk_kind=""; fk_cwd=""
-  while IFS="$(printf '\t')" read -r fr_sid fr_pid fr_kind fr_cwd; do
-    [ -n "${fr_sid:-}" ] || continue
-    if [ "$(printf '%s' "$fr_sid" | tr 'A-F' 'a-f')" = "$(printf '%s' "$retire_target" | tr 'A-F' 'a-f')" ] \
-       || { [ -n "$fr_pid" ] && [ "$fr_pid" = "$retire_target" ]; }; then
-      fk_sid="$fr_sid"; fk_pid="$fr_pid"; fk_kind="${fr_kind:-interactive}"; fk_cwd="$fr_cwd"
-      break
-    fi
-  done <<FORKS
+  if [ "$fk_rc" = 0 ]; then
+    while IFS="$(printf '\t')" read -r fr_sid fr_pid fr_kind fr_cwd; do
+      [ -n "${fr_sid:-}" ] || continue
+      if [ "$(printf '%s' "$fr_sid" | tr 'A-F' 'a-f')" = "$(printf '%s' "$retire_target" | tr 'A-F' 'a-f')" ] \
+         || { [ -n "$fr_pid" ] && [ "$fr_pid" = "$retire_target" ]; }; then
+        fk_sid="$fr_sid"; fk_pid="$fr_pid"; fk_kind="${fr_kind:-interactive}"; fk_cwd="$fr_cwd"
+        break
+      fi
+    done <<FORKS
 $fk_rows
 FORKS
+  fi
 
-  # ---------------- A DUPLICATE OF THE ROW'S OWN ID (opensoft/openRepoTools#39)
+  # ISSUE #39 — NOT A TITLE-BASED FORK; TRY A DUPLICATE HOLDER OF THIS LANE'S
+  # OWN TRANSCRIPT INSTEAD (Amendment 18(h)). A cross-profile resume leaves a
+  # `bg-pty-host` running `claude --fork-session --resume <path>/<uuid>.jsonl`
+  # behind, and once a `lane-start --no-launch` binds that forked id as the
+  # row's own session, `forks` (decision 8(e), keyed on "an id the row does
+  # NOT record") is designed to stay silent about it — which is the gap: two
+  # live processes now hold the one transcript Amendment 18(h) says exactly
+  # one may. `duplicate-holder` reads the PROCESS TABLE for exactly that
+  # shape and already excludes the lane's own live holder from its rows.
+  #
+  # ONLY WHEN `fk_sid` IS STILL EMPTY (Copilot round 3, PR #61): a proved
+  # fork already answers the whole act below, and this second, unrelated read
+  # — a separate `lanes-edit.sh` process, its own `git fetch` — must not turn
+  # a WORKING fork retirement into a hard failure because `pgrep` happens to
+  # be missing or the process table happens to be unreadable at this exact
+  # moment. `LANES_NO_FETCH=1` skips the fetch `forks` just made for the same
+  # checkout, so this reads the ref that call already brought current rather
+  # than paying for it, and possibly disagreeing with it, twice.
+  dh_rc=8; dh_rows=""
+  if [ -z "$fk_sid" ]; then
+    dh_rc=0
+    dh_rows="$(LANES_NO_FETCH=1 "$LANES_EDIT" duplicate-holder "$LANE" 2>/dev/null)" || dh_rc=$?
+    case "$dh_rc" in
+      0 | 8) : ;;
+      *) die "$LANES_EDIT duplicate-holder $LANE failed (exit $dh_rc). That is NOT 'no duplicate holder is live', and this script will not name an act against a process it could not prove is one. Run it by hand to see what it says, then re-run." 1 ;;
+    esac
+  fi
+
+  # AMENDMENT 18(h) — THE LANE'S OWN LIVE SESSION HAS ITS OWN REFUSAL EVEN
+  # WHEN NOTHING ELSE IS HOLDING THIS TRANSCRIPT (Copilot round 2, PR #61):
+  # with no fork and no OTHER process on this id, `duplicate-holder` rightly
+  # excludes the lane's own pid and answers 8, same as "nothing at all" — but
+  # "nothing else holds it" and "the pid you named IS the one thing holding
+  # it" are different facts, and only the second earns this specific refusal
+  # rather than the generic 8 below. Skipped entirely once a fork has already
+  # matched, for the same reason the duplicate-holder read above is: a proved
+  # fork answers the act, and this is a THIRD process and fetch this checkout
+  # does not need to make to use its own answer. A read that FAILS is not
+  # "it is not the lane's own session": only rc 8 clears the general checks
+  # that follow; rc 0 either dies here or clears them; anything else dies.
+  lh_rc=8; lh_pid=""; lh_sid=""; lh_verdict=""
+  if [ -z "$fk_sid" ]; then
+    lh_rc=0
+    lh_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" live-holder "$LANE" 2>/dev/null)" || lh_rc=$?
+    lh_sid=""; lh_tgt=""; lh_name=""; lh_pid=""; lh_verdict=""
+    case "$lh_rc" in
+      0)
+        IFS=$'\037' read -r lh_sid lh_tgt lh_name lh_pid lh_verdict <<LIVE || :
+$lh_out
+LIVE
+        if [ -n "$lh_pid" ] && [ "$lh_pid" = "$retire_target" ]; then
+          die "pid $lh_pid is lane $LANE's own live session (session $lh_sid, ${lh_verdict:-here}) — Amendment 18(h) refuses to retire the one process a lane's binding actually is: it is not a fork and not a duplicate holder, it is the lane. End the lane instead, or name the OTHER pid of a genuine duplicate pair." 2
+        fi
+        ;;
+      8) : ;;
+      *) die "$LANES_EDIT live-holder $LANE failed (exit $lh_rc) while checking whether $retire_target is lane $LANE's own live session. That is NOT 'it is not' — fix the helper or the records, then re-run." 1 ;;
+    esac
+  fi
+
+  dh_parent=""; dh_child=""; dh_uuid=""
+  if [ -z "$fk_sid" ] && [ "$dh_rc" = 0 ]; then
+    # `IFS=$'\037'`, NEVER A TAB: `duplicate-holder`'s child field is
+    # DOCUMENTED empty for a parent with no confirmable fork-session child
+    # (lanes-edit.sh's own `duplicate_holder_pids`, "the child slot stays
+    # empty"), and a bare tab is IFS-whitespace to `read` — two adjacent tabs
+    # either side of that empty field collapse into one delimiter exactly as
+    # repeated spaces do, shifting the uuid into `dr_child` and leaving
+    # `dr_uuid` empty. Measured on e4f9054's CI (`tests-no-submodule`): a
+    # partly-retired duplicate's still-alive child was reported as
+    # `pid <uuid> (child): gone` and its genuinely-killed parent as
+    # `STILL ALIVE, TERM withheld` (its own argv check comparing against an
+    # emptied `$dh_uuid`). The unit separator is not IFS whitespace, so it
+    # never collapses — the same reason `live-holder`'s own line below already
+    # reads with it.
+    # PID ONLY, NEVER THE TRANSCRIPT UUID (Copilot round 9, PR #61): a
+    # duplicate holder is documented as PID-addressed, and matching `dr_uuid`
+    # too made the row's own transcript id a valid target — which cannot
+    # DISTINGUISH between multiple process-table holders of one transcript
+    # (two separate stray `bg-pty-host` duplicates, or a duplicate beside a
+    # not-yet-bound fork under the same id, all carry the identical uuid),
+    # so a uuid match silently picked whichever row this loop reached first.
+    # The uuid form stays reserved for a title-based FORK above, whose id is
+    # one the row does NOT record and so cannot repeat across rows the way a
+    # duplicate holder's row-recorded id can.
+    while IFS=$'\037' read -r dr_parent dr_child dr_uuid; do
+      [ -n "${dr_parent:-}" ] || continue
+      if [ "$dr_parent" = "$retire_target" ] \
+         || { [ -n "$dr_child" ] && [ "$dr_child" = "$retire_target" ]; }; then
+        dh_parent="$dr_parent"; dh_child="$dr_child"; dh_uuid="$dr_uuid"
+        break
+      fi
+    done <<DUPES
+$dh_rows
+DUPES
+  fi
+
+  if [ -n "$dh_parent" ]; then
+    # THE WINDOW'S OWN LIVE SESSION IS NEVER RETIRED THIS WAY (Amendment
+    # 18(h): "the window's own session is the one it refuses to retire") —
+    # reusing the SAME `live-holder` read already taken once above, never a
+    # second shell-out and never a second liveness primitive for one
+    # invocation. Its own case above already dies on anything but 0 or 8, so
+    # by the time control reaches here `lh_rc` can only be one of those two:
+    # `duplicate-holder`'s own exclusion already keeps a live `dh_parent` from
+    # ever equalling `lh_pid`, so this is the residual, cheap check for the
+    # child slot alone (a `pgrep -P` result coinciding with the lane's own
+    # pid would be bizarre, but the fence costs nothing to keep).
+    if [ -n "$lh_pid" ] && { [ "$lh_pid" = "$dh_parent" ] || [ "$lh_pid" = "$dh_child" ]; }; then
+      die "pid $lh_pid is lane $LANE's own live session (session $lh_sid, ${lh_verdict:-here}) — Amendment 18(h) refuses to retire the one process a lane's binding actually is. Retire the OTHER pid of the pair ($prog $LANE --retire <pid>), or end the lane itself." 2
+    fi
+
+    # AMENDMENT 18(h) — A DUPLICATE HOLDER IS TERMED, NOT ONLY NAMED. Unlike
+    # decision 8(e)'s title-based fork above (never killed: Amendment 8(f), A11
+    # clause (k) rule (e) — a fork MIGHT be somebody's long-running job with a
+    # prompt to answer), a live process sharing THIS LANE'S OWN transcript id
+    # is exactly what Amendment 18(h) says may never coexist with the lane's
+    # own session: "the tooling refuses to build on either... it never
+    # appends such an id to the row and never launches a second resume of
+    # it." Retiring the register's own binding does not end a duplicate that
+    # is still holding the transcript file open, so THIS act ends the
+    # duplicate itself — never a process on another transcript (the read is
+    # scoped to this lane's own ids), and never the pid just proved above to
+    # be the lane's own.
+    if (( dry_run )); then
+      note "--dry-run: would send TERM to pid $dh_parent (bg-pty-host)${dh_child:+ and pid $dh_child (child)} — lane $LANE's duplicate holder of transcript $dh_uuid. Nothing sent."
+      exit 0
+    fi
+    # RE-VALIDATED IMMEDIATELY BEFORE EACH SIGNAL, not trusted from the read
+    # a few lines above (Copilot round 3, PR #61): that read and this signal
+    # are two different moments, and a pid can be reaped and reused by an
+    # unrelated process in the gap between them. A pid whose CURRENT argv no
+    # longer shows `--fork-session --resume …<this transcript>.jsonl` is not
+    # signalled — it is treated exactly as "already gone", which is the
+    # honest fact whether it truly exited or the number now belongs to
+    # something else this act must never touch.
+    #
+    # AN EXACT PATH COMPONENT, NOT AN ARBITRARY SUBSTRING (Copilot round 4, PR
+    # #61, the same fix as `duplicate_holder_pids`'s own discovery match):
+    # `*"$uuid.jsonl"*` also matches `other-<uuid>.jsonl` and
+    # `<uuid>.jsonl.bak`, neither of which is THIS transcript's basename.
+    # `/<uuid>.jsonl` must be preceded by a path separator and followed by
+    # the end of the argument or a space.
+    # THE ACTUAL `--resume` VALUE, NOT A GLOB THAT CAN SPAN OTHER ARGUMENTS
+    # (Copilot round 5, PR #61): `*"--resume"*"/$uuid.jsonl"*` matches
+    # `--resume /other.jsonl --label /<uuid>.jsonl` too, since `*` between
+    # them freely crosses argument boundaries. The token immediately after
+    # `--resume ` — up to the next space or the end of argv — is what the
+    # harness actually resumed, and that is the only thing compared now.
+    dh_uuid_lc="$(printf '%s' "$dh_uuid" | tr 'A-F' 'a-f')"
+    dh_p_match=0
+    dh_p_args="$(ps -o args= -p "$dh_parent" 2>/dev/null | tr 'A-F' 'a-f')" || dh_p_args=""
+    # `--fork-session ` WITH ITS OWN TRAILING SPACE (Copilot round 11, PR
+    # #61): a bare substring also matches `--fork-session-helper` or any
+    # other flag that merely STARTS WITH this text — never the process this
+    # recheck means. The real invocation always has a boundary (a space,
+    # then `--resume`) right after this flag, so requiring it here rules the
+    # false one out the same way `--resume ` already rules out
+    # `--resume-file` beside it.
+    case "$dh_p_args" in *"--fork-session "*"--resume "*)
+      dh_p_resume="${dh_p_args#*--resume }"; dh_p_resume="${dh_p_resume%% *}"
+      case "$dh_p_resume" in */"$dh_uuid_lc.jsonl") dh_p_match=1 ;; esac
+    esac
+    # THE SIGNAL'S OWN EXIT STATUS, KEPT APART FROM "DID ARGV MATCH" (Copilot
+    # round 11, PR #61): folding both into one `dh_p_sent` flag and
+    # swallowing `kill`'s status (`|| :`) made a `kill -TERM` that failed
+    # outright — wrong owner, or the pid reaped in the gap since the recheck
+    # above — indistinguishable from one truly delivered. The message below
+    # must be able to say "nothing was sent" (retrying TERM cannot help;
+    # look at who owns the pid) apart from "TERM was sent and ignored" (a
+    # KILL, or more time, is the next step) — that needs both bits kept.
+    dh_p_killed=0
+    if [ "$dh_p_match" = 1 ]; then
+      kill -TERM "$dh_parent" 2>/dev/null && dh_p_killed=1
+    fi
+    dh_c_match=1
+    dh_c_killed=1
+    if [ -n "$dh_child" ]; then
+      dh_c_match=0
+      dh_c_killed=0
+      dh_c_args="$(ps -o args= -p "$dh_child" 2>/dev/null | tr 'A-F' 'a-f')" || dh_c_args=""
+      case "$dh_c_args" in *"--fork-session "*"--resume "*)
+        dh_c_resume="${dh_c_args#*--resume }"; dh_c_resume="${dh_c_resume%% *}"
+        case "$dh_c_resume" in */"$dh_uuid_lc.jsonl") dh_c_match=1 ;; esac
+      esac
+      if [ "$dh_c_match" = 1 ]; then
+        kill -TERM "$dh_child" 2>/dev/null && dh_c_killed=1
+      fi
+    fi
+    # VERIFIED GONE, NOT ASSUMED FROM `kill`'S OWN STATUS (Copilot round 4, PR
+    # #61): that status conflates "already gone" (fine — the goal was never
+    # the signal, it was the duplicate not existing) with "no permission"
+    # (a real failure), and a caller that always reads exit 0 here cannot
+    # tell a genuine retirement from a duplicate still running.
+    #
+    # `kill -0`'S OWN FAILURE HAS THE SAME TWO ANSWERS CONFLATED, ONE LEVEL
+    # DOWN (Copilot round 13, PR #61): ESRCH (truly gone) and EPERM (still
+    # there, just not ours to signal) both read as "gone" here, so a TERM
+    # this process had no permission to deliver in the first place could be
+    # reported RETIRED over a duplicate still running. `kill -0` STAYS the
+    # primary check — it is a raw syscall and answers instantly — and `ps -p`
+    # is asked only where `kill -0` already says gone, to catch the one case
+    # that disagrees: a pid EPERM hid from the syscall but a process listing
+    # can still see.
+    #
+    # `command -p`, NOT A BARE `ps` (measured, not merely reasoned to): this
+    # suite fakes `ps` and `pgrep` for its WHOLE run (`$SANDBOX/fakebin`,
+    # prepended to PATH) so `duplicate_holder_pids`' DISCOVERY never touches
+    # the real process table — but that fake is a STATIC table, built once
+    # from `$FAKE_PS_RECORDS` at fixture setup and never told about a `kill`
+    # this act sends minutes later, so a bare `ps -p` here would ask the very
+    # same fake DISCOVERY consulted and get the pre-kill answer back forever,
+    # no matter how long this retries. Measured directly: this fallback,
+    # written as a bare `ps -p`, reported the DUP/RACE fixtures "STILL ALIVE"
+    # after a genuine, verified `kill -TERM`, on a clean CI runner with no
+    # other process anywhere near that pid — the fake, not scheduling, not
+    # load. `command -p ps` is POSIX's own way to ask for the REAL utility on
+    # a default PATH regardless of what the caller's own PATH resolves to,
+    # exactly the bypass this verification (of a REAL fixture process this
+    # suite itself spawned) needs; `kill -0` needs no such bypass because
+    # nothing here fakes `kill`.
+    #
+    # A BOUNDED RETRY, NOT ONE FIXED PAUSE: a single 0.1s settle is long
+    # enough for every genuinely-gone case under ordinary load, but SIGTERM
+    # delivery and reaping both wait on the scheduler under real contention
+    # from a sibling lane's own concurrent run on a shared workstation.
+    # `dh_settle_gone` polls up to two seconds (twenty tries, 0.1s apart) and
+    # returns the instant both checks agree the pid is gone, so the common,
+    # unloaded case still resolves in one pass.
+    dh_settle_gone() {   # <pid> — 0 once confirmed gone, 1 if still found
+      dsg_tries=0
+      while [ "$dsg_tries" -lt 20 ]; do
+        if ! kill -0 "$1" 2>/dev/null && ! command -p ps -p "$1" >/dev/null 2>&1; then
+          return 0
+        fi
+        dsg_tries=$((dsg_tries + 1))
+        sleep 0.1
+      done
+      return 1
+    }
+    dh_p_gone=1; dh_settle_gone "$dh_parent" || dh_p_gone=0
+    dh_c_gone=1
+    if [ -n "$dh_child" ]; then
+      dh_c_gone=1; dh_settle_gone "$dh_child" || dh_c_gone=0
+    fi
+    dh_p_msg="gone"
+    [ "$dh_p_gone" = 1 ] || dh_p_msg="STILL ALIVE, TERM withheld: argv no longer matched"
+    [ "$dh_p_gone" = 1 ] || [ "$dh_p_match" = 0 ] || [ "$dh_p_killed" = 1 ] || dh_p_msg="STILL ALIVE, TERM NOT SENT: the signal itself failed (check ownership/permissions) — this is not the process ignoring TERM, it never received one"
+    [ "$dh_p_gone" = 1 ] || [ "$dh_p_match" = 0 ] || [ "$dh_p_killed" = 0 ] || dh_p_msg="STILL ALIVE despite TERM delivered"
+    note "pid $dh_parent (bg-pty-host): $dh_p_msg"
+    if [ -n "$dh_child" ]; then
+      dh_c_msg="gone"
+      [ "$dh_c_gone" = 1 ] || dh_c_msg="STILL ALIVE, TERM withheld: argv no longer matched"
+      [ "$dh_c_gone" = 1 ] || [ "$dh_c_match" = 0 ] || [ "$dh_c_killed" = 1 ] || dh_c_msg="STILL ALIVE, TERM NOT SENT: the signal itself failed (check ownership/permissions) — this is not the process ignoring TERM, it never received one"
+      [ "$dh_c_gone" = 1 ] || [ "$dh_c_match" = 0 ] || [ "$dh_c_killed" = 0 ] || dh_c_msg="STILL ALIVE despite TERM delivered"
+      note "pid $dh_child (child): $dh_c_msg"
+    fi
+    if [ "$dh_p_gone" = 1 ] && [ "$dh_c_gone" = 1 ]; then
+      step "RETIRED lane $LANE's duplicate holder of transcript $dh_uuid (Amendment 18(h))"
+      note "The lane itself is untouched: its row, and its own live session if it has one, are unaffected."
+      exit 0
+    fi
+    note "The lane itself is untouched: its row, and its own live session if it has one, are unaffected."
+    die "lane $LANE's duplicate holder of transcript $dh_uuid was only partly retired — see the pid lines above. Whatever is still alive did not accept TERM (permission, a handler that ignores it, or argv changed before this act reached it); re-run $prog $LANE --retire <pid> once you have looked, or end it by hand." 1
+  fi
+
+  # ---------------- A DUPLICATE OF THE ROW'S OWN ID, BY SESSION RECORD
+  # (opensoft/openRepoTools#39, Amendment 12/#52) — A DIFFERENT READING OF THE
+  # SAME RULE, FROM A DIFFERENT SURFACE, NOT A REPLACEMENT FOR THE ONE ABOVE.
+  # `duplicate-holder` above finds a `bg-pty-host` wrapper in the PROCESS
+  # TABLE by its `--fork-session --resume <uuid>.jsonl` argv and TERMs it on
+  # sight, because nothing is answering a prompt in it. `transcript-holders`
+  # instead finds every LIVE SESSION RECORD carrying the row's own id,
+  # wherever the harness keeps one — which also catches an ordinary
+  # INTERACTIVE second resume the process-table match was never built to see
+  # — and only REPORTS it, the same way a title-based fork is only reported,
+  # because a second interactive resume may have a prompt open. Both reads
+  # run (each on its own evidence, neither replacing the other); whichever
+  # finds `$retire_target` first answers, and this one is reached only when
+  # the process-table read above did not already match it (`dh_parent` empty).
   #
   # THE SECOND POPULATION, AND THE ONE THE FIRST BUILD OF THIS ACT COULD NOT
   # SEE. Amendment 6(d) allows exactly one live conversation per lane and
@@ -671,22 +986,59 @@ FORKS
   dup_pid=""; dup_kind=""; dup_where=""; dup_prof=""
   dup_own=""; dup_rows=""; dup_id=""
   dup_comp=""; dup_comp_kind=""; dup_comp_prof=""
-  if [ -z "$fk_sid" ]; then
+  # `dup_other` IS NOT `dup_rows`'S OWN EMPTINESS (Copilot round 8, PR #61
+  # follow-up, caught by this suite rather than by review): `lane-end` is a
+  # plain script, never itself a bound claude session, so `transcript_holders`
+  # never sees a "here" record and every row it returns — INCLUDING the
+  # lane's own perfectly ordinary live session — verdicts `unrelated` rather
+  # than `companion` or `duplicate`. Reading raw `dup_rows` as "something is
+  # live here" made an entirely healthy lane (one live session, nothing else)
+  # answer the SAME as a lane with a genuine second process: `--retire` on a
+  # pid that is neither refused with 8 ("nothing of any kind is live") but
+  # with 2 ("neither ... nor a live duplicate"), naming a "duplicate" that was
+  # only ever the lane's own session all along. `$lh_pid` — proved a few lines
+  # above by `live-holder`, the one liveness implementation this file has, and
+  # already known before this read ever runs — is the fence: a row that IS it
+  # is accounted for and not "other"; a row that is not it genuinely is.
+  dup_other=""
+  if [ -z "$fk_sid" ] && [ -z "$dh_parent" ]; then
     du_rc=0
-    dup_id="$("$LANES_EDIT" last-session "$LANE" 2>/dev/null)" || du_rc=$?
+    dup_id="$(LANES_NO_FETCH=1 "$LANES_EDIT" last-session "$LANE" 2>/dev/null)" || du_rc=$?
     case "$du_rc" in
       0 | 8) : ;;
       *) die "$LANES_EDIT last-session $LANE exited $du_rc, so the id the row records could not be read and whether '$retire_target' is a DUPLICATE of it is not known. That is not 'it is not one', and this script will not name an act against a process it could not prove is one." 1 ;;
     esac
     if [ "$du_rc" = 0 ] && [ -n "$dup_id" ]; then
-      dh_rc=0
-      dup_rows="$("$LANES_EDIT" transcript-holders "$dup_id" 2>/dev/null)" || dh_rc=$?
-      case "$dh_rc" in
+      # `thh_rc` AND NOT `dh_rc`: this is `transcript-holders`' OWN exit
+      # status, a different read from `duplicate-holder`'s above, and reusing
+      # that name here would step on a value `dh_rc` no longer needs by this
+      # point but a later reader of this block could mistake for it.
+      thh_rc=0
+      dup_rows="$("$LANES_EDIT" transcript-holders "$dup_id" 2>/dev/null)" || thh_rc=$?
+      case "$thh_rc" in
         0 | 8) : ;;
         2) note "this \`lanes-edit.sh\` has no \`transcript-holders\` (exit 2), so a duplicate of lane $LANE's own transcript cannot be looked for here. Install the one beside this script (\`openRepoTools --install\`)." ;;
-        *) die "$LANES_EDIT transcript-holders $dup_id exited $dh_rc, so whether '$retire_target' is a live duplicate of lane $LANE's own transcript could NOT be read — which is not 'it is not one'." 1 ;;
+        *) die "$LANES_EDIT transcript-holders $dup_id exited $thh_rc, so whether '$retire_target' is a live duplicate of lane $LANE's own transcript could NOT be read — which is not 'it is not one'." 1 ;;
       esac
-      if [ "$dh_rc" = 0 ]; then
+      if [ "$thh_rc" = 0 ]; then
+        # WHICH PROFILES HAVE AN INTERACTIVE HOLDER, FIRST (Copilot round 10,
+        # PR #61) — a `kind: bg` row is Amendment 8 ruling (g)'s companion
+        # ONLY beside an interactive record IN THE SAME PROFILE; a `kind: bg`
+        # row in a profile with no interactive row of its own is not anyone's
+        # proven companion and stays a candidate "other" (round 9's own fix
+        # read EVERY `kind: bg` row as a companion, which also excluded a
+        # genuine duplicate in a DIFFERENT profile — exactly `transcript_
+        # holders`' own `duplicate` case, "any record at all in ANOTHER
+        # profile's sessions/", which this PR's own repoGD fixture already
+        # exercises). Built in its own pass because a row's verdict alone
+        # cannot answer this from OUTSIDE any bound window: every row here
+        # reads `unrelated` in that case, `companion` included.
+        dup_int_profs=""
+        while IFS=$'\037' read -r ip_pid ip_kind ip_tgt ip_prof ip_where ip_verdict ip_file; do
+          [ -n "${ip_pid:-}" ] || continue
+          [ "$ip_kind" = bg ] && continue
+          case "$dup_int_profs" in *" $ip_prof "*) : ;; *) dup_int_profs="${dup_int_profs} $ip_prof " ;; esac
+        done <<<"$dup_rows"
         while IFS=$'\037' read -r dr_pid dr_kind dr_tgt dr_prof dr_where dr_verdict dr_file; do
           [ -n "${dr_pid:-}" ] || continue
           # A WINDOW THAT COULD NOT BE ASKED ABOUT IS UNKNOWN AND NOT DEAD
@@ -701,6 +1053,24 @@ FORKS
           if [ "$dr_own" = 1 ] && [ "$dr_kind" != bg ]; then
             dup_own="${dup_own:+$dup_own }$dr_pid"
           fi
+          dr_is_comp=0
+          if [ "$dr_verdict" = companion ]; then
+            dr_is_comp=1
+          elif [ "$dr_kind" = bg ]; then
+            case "$dup_int_profs" in *" $dr_prof "*) dr_is_comp=1 ;; esac
+          fi
+          # NEITHER lane $LANE's OWN KNOWN LIVE PID (proved above by
+          # `live-holder`, Copilot round 8 follow-up: that pid is accounted
+          # for whatever `transcript_holders` verdicts it here, `unrelated`
+          # included) NOR ITS HARNESS COMPANION (Copilot round 9, refined
+          # round 10: the companion test above, not `dr_kind = bg` alone —
+          # so a stranger pid against a lane with nothing wrong keeps
+          # answering 8, never a false "a duplicate exists" 2, while a
+          # `kind: bg` row in a DIFFERENT profile with no interactive row
+          # of its own still counts as one).
+          if { [ -z "$lh_pid" ] || [ "$dr_pid" != "$lh_pid" ]; } && [ "$dr_is_comp" = 0 ]; then
+            dup_other=1
+          fi
           if [ "$dr_pid" = "$retire_target" ]; then
             # THE HARNESS'S OWN COMPANION IS NOT A DUPLICATE AND MAY NOT BE
             # NAMED AS ONE. `transcript_holders` marks it `companion` — the
@@ -712,7 +1082,21 @@ FORKS
             # session that IS the lane (Copilot round 2 on this PR). It is held
             # separately so the refusal below can say WHICH thing the pid is,
             # rather than falling through to "neither" and naming nothing.
-            if [ "$dr_verdict" = companion ]; then
+            #
+            # `$dr_is_comp` (Copilot rounds 9 AND 10, PR #61), NOT `dr_verdict`
+            # ALONE: the verdict is `companion` only when `lane-end` runs from
+            # WITHIN the lane's own bound window (the one context where
+            # `th_here_prof` is set at all) — run the ordinary way, a plain
+            # script, every row here verdicts `unrelated` instead, `companion`
+            # included, and round 9's first fix read `dr_kind = bg` alone as
+            # the fallback signal — which ALSO excluded a genuine `kind: bg`
+            # duplicate in a DIFFERENT profile (`transcript_holders`' own
+            # `duplicate` case), since a companion is proven only BESIDE an
+            # interactive holder of this id IN THE SAME PROFILE, never by
+            # kind alone. `$dr_is_comp`, computed above against every
+            # interactive row's own profile, is the one test both routings
+            # (this one and `dup_other`'s) now share.
+            if [ "$dr_is_comp" = 1 ]; then
               dup_comp="$dr_pid"; dup_comp_kind="${dr_kind:-interactive}"
               dup_comp_prof="$dr_prof"
             else
@@ -731,21 +1115,21 @@ FORKS
   # is not Amendment 6(d)'s act on anything — 6(d) ends an idle background
   # session still holding a lane NAME, and this one holds the live session's own
   # id, which ruling (g) reads as one session and not as a rival.
-  if [ -z "$fk_sid" ] && [ -z "$dup_pid" ] && [ -n "$dup_comp" ]; then
+  if [ -z "$fk_sid" ] && [ -z "$dh_parent" ] && [ -z "$dup_pid" ] && [ -n "$dup_comp" ]; then
     die "pid $dup_comp is the HARNESS'S OWN COMPANION of lane $LANE's live session (kind ${dup_comp_kind:-bg}; profile ${dup_comp_prof:-unknown}; the same transcript ${dup_id:-unknown} and the same profile as this window's own record of it). Amendment 8 ruling (g): \"records that share a \`sessionId\` are one session, not a queue of rival holders, and there is no contest between them to win\" — so it is not a duplicate of anything, and ending it would end one half of the session that IS this lane. Nothing is named. To retire a real duplicate pass ITS pid (\`$LANES_EDIT transcript-holders $dup_id\` lists every live process carrying this transcript and says which is which); to end the lane, run: $prog $LANE" 2
   fi
 
   # THE WINDOW'S OWN SESSION IS REFUSED BY NAME, and the refusal names the act
   # that DOES end a lane, because an operator who typed this meant one of the
   # two and there is no third thing to mean.
-  if [ -z "$fk_sid" ] && [ -n "$dup_pid" ]; then
+  if [ -z "$fk_sid" ] && [ -z "$dh_parent" ] && [ -n "$dup_pid" ]; then
     case " $dup_own " in
       *" $dup_pid "*)
         die "pid $dup_pid IS lane $LANE's own live session, in its own window ($dup_where) — not a duplicate of it. Retiring the session that IS the lane is how a lane loses the conversation it is, so nothing is named. To end the lane, run: $prog $LANE   ·   to retire a duplicate, pass ITS pid (\`$LANES_EDIT transcript-holders $dup_id\` lists every live process carrying this transcript)." 2 ;;
     esac
   fi
 
-  if [ -z "$fk_sid" ] && [ -n "$dup_pid" ]; then
+  if [ -z "$fk_sid" ] && [ -z "$dh_parent" ] && [ -n "$dup_pid" ]; then
     fk_today="$(date -u +%Y-%m-%d)"
     step "pid $dup_pid IS a live DUPLICATE of lane $LANE's own transcript $dup_id — proved, and NOTHING has been written or stopped"
     note "  $dup_where  kind $dup_kind  profile $dup_prof"
@@ -766,7 +1150,7 @@ FORKS
     exit 0
   fi
 
-  if [ -z "$fk_sid" ]; then
+  if [ -z "$fk_sid" ] && [ -z "$dh_parent" ]; then
     if [ -n "$fk_rows" ]; then
       note "the live forks of lane $LANE's transcript are:"
       printf '%s\n' "$fk_rows" | while IFS="$(printf '\t')" read -r fr_sid fr_pid fr_kind fr_cwd; do
@@ -776,24 +1160,39 @@ FORKS
     else
       note "no fork of lane $LANE's transcript is live on this workstation. A fork is found by its transcript's TITLE under an id the row does not record (ratified decision 8(e)); \`$LANES_EDIT forks $LANE\` is the read that names them."
     fi
+    if [ -n "${dh_rows:-}" ]; then
+      note "the live duplicate holders of lane $LANE's transcript, by PROCESS TABLE, are:"
+      printf '%s\n' "$dh_rows" | while IFS=$'\037' read -r dr_parent dr_child dr_uuid; do
+        [ -n "${dr_parent:-}" ] || continue
+        note "  pid $dr_parent (bg-pty-host)${dr_child:+, pid $dr_child (child)}  transcript $dr_uuid"
+      done
+    else
+      note "no live duplicate holder of lane $LANE's transcript is in the process table either (Amendment 18(h), opensoft/openRepoTools#39); \`$LANES_EDIT duplicate-holder $LANE\` is the read that names them."
+    fi
     if [ -n "$dup_rows" ]; then
-      note "and the live processes carrying lane $LANE's OWN transcript ${dup_id:-(none recorded)} are:"
+      note "and the live processes carrying lane $LANE's OWN transcript ${dup_id:-(none recorded)}, by SESSION RECORD, are:"
       printf '%s\n' "$dup_rows" | while IFS=$'\037' read -r dr_pid dr_kind dr_tgt dr_prof dr_where dr_verdict dr_file; do
         [ -n "${dr_pid:-}" ] || continue
         note "  pid $dr_pid  ${dr_kind:-interactive}  $dr_where  profile $dr_prof"
       done
     else
-      note "and no second live process carries lane $LANE's own transcript ${dup_id:-(none recorded)} either (Amendment 18(h))."
+      note "and no second live session record carries lane $LANE's own transcript ${dup_id:-(none recorded)} either (Amendment 18(h))."
     fi
-    # 8 IS KEPT FOR "THERE IS NOTHING OF EITHER KIND", which is the code this
-    # act has answered since it was written and the one a caller reads as "no
+    # 8 IS KEPT FOR "THERE IS NOTHING OF ANY KIND", which is the code this act
+    # has answered since it was written and the one a caller reads as "no
     # fork is live". The 2 is for a target that is not one of the things that
-    # ARE there — a stranger's pid, another lane's uuid — and the two were one
-    # code until this round gave the act a second population to look in.
-    if [ -z "$fk_rows" ] && [ -z "$dup_rows" ]; then
-      die "nothing of either kind is live for lane $LANE on this workstation, so there is nothing to retire: no FORK of its transcript (an id the row does not record, ratified decision 8(e)) and no live DUPLICATE of the id it does (Amendment 18(h))." 8
+    # ARE there — a stranger's pid, another lane's uuid — and the two stayed
+    # one code until issue #39 gave the act a second population, now a third,
+    # to look in: `forks` (title, never killed), `duplicate-holder` (process
+    # table, TERMed), `transcript-holders` (session record, never killed) —
+    # three reads answering one rule (Amendment 18(h): one live process per
+    # transcript), kept as three because each is built on a different kind of
+    # evidence and this workstation is not the only place any one of them can
+    # fail to see what another does.
+    if [ -z "$fk_rows" ] && [ -z "${dh_rows:-}" ] && [ -z "$dup_other" ]; then
+      die "nothing of any kind is live for lane $LANE on this workstation, so there is nothing to retire: no FORK of its transcript (an id the row does not record, ratified decision 8(e)), no live DUPLICATE HOLDER of the id it does in the process table (Amendment 18(h), opensoft/openRepoTools#39), and no live DUPLICATE of it by session record either (Amendment 18(h))." 8
     fi
-    die "'$retire_target' is neither the session id nor the pid of a live fork of lane $LANE, nor the pid of a live duplicate of its own transcript. Naming an act against something that is neither is how the wrong conversation gets retitled and the wrong process gets stopped, so nothing is named. Pick one of the ids or pids above." 2
+    die "'$retire_target' is neither the session id nor the pid of a live fork of lane $LANE, nor the pid (parent or child) of a live duplicate holder of its own transcript in the process table, nor the pid of a live duplicate of it by session record. Naming an act against something that is none of this lane's is how the wrong conversation gets retitled and the wrong process gets stopped, so nothing is named. Pick one of the ids or pids above." 2
   fi
 
   # AMENDMENT 6(d), FILLED IN — and it is TWO acts because 6(d) is two, one per
