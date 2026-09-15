@@ -312,6 +312,20 @@ def test_the_three_row_writers_carry_the_same_one_line_cut_byte_for_byte():
         "the cut no longer flattens a newline, and a row is ONE line of a "
         "table: one in this text splits the row in two and every row after it "
         "is read as a lane")
+    # AND THE SKILL'S OWN COPY CARRIES THE SAME FOUR. `/handoff` is the same act
+    # as `lane-handoff` under one name (Amendment 17(a)), so it writes the state
+    # cell too — and a copy that dropped one of the four would be REFUSED by the
+    # writer exactly where the command is not (Copilot round 4 on #82). It is
+    # prose in a skill rather than a shell function, so the substitutions are
+    # asserted rather than compared byte for byte.
+    skill = (REPO / "skills/handoff/SKILL.md").read_text(encoding="utf-8")
+    for spelling in ("hs_line=\"${payload//$'\\r'/ }\"",
+                     "hs_line=\"${hs_line//$'\\n'/; }\"",
+                     'hs_line="${hs_line// \u00b7 /; }"',
+                     'hs_line="${hs_line//|/\u00a6}"'):
+        assert spelling in skill, (
+            f"the /handoff skill's row write no longer carries {spelling}, so "
+            f"it can hand `set-row-state` a line that writer refuses")
     assert 'ctl="${ctl//|/\u00a6}"' in reference, (
         "the cut no longer replaces a `|`, which `set-row-state` refuses "
         "because it would forge a cell boundary in the row — and a launch "

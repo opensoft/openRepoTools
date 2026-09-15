@@ -9197,6 +9197,16 @@ has   "…named as what it read" "$err" "the last LANDING in its state cell"
 "$E" add-row "| \`repoA13-5\` | harness \`$A13_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoA13/r.md | ACTIVE · 2026-09-12T10:00Z LANDING #7 into repoA13 main |" >/dev/null 2>&1
 run "$END" repoA13-5
 is    "…and a LEGACY diary cell is still scanned whole" "$rc" 2
+# THE SECOND FIELD BEING AN INSTANT IS NOT ENOUGH (Copilot round 4 on
+# openRepoTools#82). A legacy diary whose second entry is nothing but a
+# timestamp has the phrase's SHAPE and none of its meaning: narrowing the scan
+# to `ACTIVE` there would close a pre-cutover lane over an open landing, and
+# narrowing is the fail-OPEN direction. The first field must be one of the
+# amendment's own states too.
+"$E" add-row "| \`repoA13-6\` | harness \`$A13_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoA13/s.md | ACTIVE · 2026-09-12T10:00:00Z · LANDING #7 into repoA13 main |" >/dev/null 2>&1
+run "$END" repoA13-6
+is    "a diary whose second entry is only an instant is not the phrase" "$rc" 2
+has   "…so its landing still holds the lane" "$err" "the last LANDING in its state cell"
 
 # ---- (d) `history` — the diary the cell used to be.
 run "$E" history repoA13-1

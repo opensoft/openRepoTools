@@ -951,16 +951,39 @@ scrub_cell() {
 # whole; the two are told apart the way the migration tells them apart, by
 # asking whether the cell's SECOND ` · ` field is exactly an instant — a diary's
 # second entry begins with one and is never only one.
+# BOTH FIELDS ARE CHECKED, NOT ONE (Copilot round 4 on openRepoTools#82). A
+# second field that is an instant is not enough: a LEGACY DIARY whose second
+# entry is nothing but a timestamp — `ACTIVE · 2026-09-12T10:00:00Z · LANDING
+# #7` — would pass that test, the scan would be narrowed to `ACTIVE`, and a
+# pre-cutover lane holding an open landing would be CLOSED instead of refused.
+# Narrowing is the fail-OPEN direction, so it is taken only where the cell is
+# certainly the phrase: the first field one of Amendment 13(a)'s seven states
+# (or `MIGRATED`, which `migrate-state-cells` writes and which holds nothing),
+# the second exactly an instant, and a third part after it. That is
+# `mig_cell_is_phrase`'s rule in `lanes-edit.sh`; the states are the
+# amendment's own list, and this is the second place that list is written.
 cell_for_scan() {   # <state cell> — the part of it that says where the lane is
   cfs="$1"
   case "$cfs" in
     *' · '*)
+      cfs_one="${cfs%% · *}"
       cfs_rest="${cfs#* · }"
+      case "$cfs_rest" in *' · '*) : ;; *) printf '%s' "$cfs"; return 0 ;; esac
       cfs_two="${cfs_rest%% · *}"
+      cfs_ok=0
+      case "$cfs_one" in
+        LIVE|PAUSED|LANDED|ENDED|RETIRED|'HANDED OFF'|MIGRATED) cfs_ok=1 ;;
+        'LANDING #'*)
+          case "${cfs_one#LANDING #}" in
+            '' | *[!0-9]*) : ;;
+            *) cfs_ok=1 ;;
+          esac ;;
+      esac
       case "$cfs_two" in
-        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]Z | [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z)
-          cfs="${cfs%% · *}" ;;
-      esac ;;
+        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]Z | [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) : ;;
+        *) cfs_ok=0 ;;
+      esac
+      [ "$cfs_ok" = 1 ] && cfs="$cfs_one" ;;
   esac
   printf '%s' "$cfs"
 }

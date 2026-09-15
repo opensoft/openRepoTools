@@ -525,14 +525,19 @@ fi
 # with a day of narrative between. The cell is now ONE PHRASE that
 # `set-row-state` replaces: no anchor, no second write, and a row whose cell
 # opens with anything at all takes the same call.
-# THREE THINGS THE CELL'S LINE MAY NOT CARRY, and `set-row-state` refuses all
-# three: ` · ` (the phrase's own separator, spelled `; `), `|` (a cell boundary
-# in the row, spelled `¦` — a `dir` or a launch flag may hold one), and more
-# than ratified decision O1's 240 characters. The cut is at 230 with the last
-# partial WORD dropped, because `${s:0:n}` counts BYTES wherever the locale is
-# not a UTF-8 one and a byte offset can land inside `—`, `·` or `→`. This is
-# `cut_to_line` in `lane-start`, `lane-end` and `lane-handoff`, byte for byte.
-hs_line="${payload// · /; }"
+# FOUR THINGS THE CELL'S LINE MAY NOT CARRY, and `set-row-state` refuses all
+# four: ` · ` (the phrase's own separator, spelled `; `), `|` (a cell boundary
+# in the row, spelled `¦` — a `dir` or a launch flag may hold one), CR and LF (a
+# row is ONE line of a table, so a newline would split it in two), and more than
+# ratified decision O1's 240 characters. The cut is at 230 with the last partial
+# WORD dropped, because `${s:0:n}` counts BYTES wherever the locale is not a
+# UTF-8 one and a byte offset can land inside `—`, `·` or `→`. This is
+# `cut_to_line` in `lane-start`, `lane-end` and `lane-handoff`, and it is kept
+# in step with them — a copy that dropped one of the four would be refused by
+# the writer where the command is not (Copilot round 4 on openRepoTools#82).
+hs_line="${payload//$'\r'/ }"
+hs_line="${hs_line//$'\n'/; }"
+hs_line="${hs_line// · /; }"
 hs_line="${hs_line//|/¦}"
 if [[ ${#hs_line} -gt 230 ]]; then
   hs_line="${hs_line:0:230}"; hs_line="${hs_line% *} ..."
