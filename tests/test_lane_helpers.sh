@@ -9376,6 +9376,26 @@ is   "…and it has NOT released the binding it could not obtain" "$rc" 0
 run env LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 --force
 is   "--force with no WHY is refused: the why is written into an append-only log and is what the bound session reads" "$rc" 2
 has  "…saying so" "$err" "--force takes a WHY"
+# AND A WHY WITHOUT `--force` IS REFUSED RATHER THAN IGNORED. Clause (c)'s
+# request line says WHO is asking and from WHERE and carries no sentence, so
+# words given to it are words a person believes they wrote into an append-only
+# log and nobody did.
+run env LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 taking this one
+is   "a WHY with no --force is refused rather than silently dropped" "$rc" 64
+has  "…saying the request line carries no sentence" "$err" "carries no sentence"
+has  "…and naming the act that does write one, with the words already in it" "$err" '--force "taking this one"'
+# THE WHOLE PLAN, PRINTED AND NOT PERFORMED (act 4's own line). A `--dry-run`
+# writes no line, types into no pane and waits for nothing.
+bind_keys_before="$(grep -c 'send-keys' "$FAKE_TMUX_LOG" || :)"
+bind_lines_before="$(git -C "$WIP" show origin/main:lanes/log/repoBind-3.md | grep -c . || :)"
+run env LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 --dry-run --wait 45
+is   "--dry-run exits 0" "$rc" 0
+has  "…printing the binding it would ask" "$err" "PLAN: lane repoBind-3 is bound to window"
+has  "…the line it would write, and that it goes FIRST" "$err" "log HANDOFF-REQUESTED lane:repoBind-3"
+has  "…the pane it would type into" "$err" "PLAN: tmux send-keys into @62"
+has  "…and the wait that follows, with the word that ends an empty one" "$err" "an empty wait REFUSES and names --force"
+is   "…having written NOTHING" "$(git -C "$WIP" show origin/main:lanes/log/repoBind-3.md | grep -c . || :)" "$bind_lines_before"
+is   "…and typed nothing into any pane" "$(grep -c 'send-keys' "$FAKE_TMUX_LOG" || :)" "$bind_keys_before"
 run env LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 --force "cloud-bench is not answering"
 is   "--force is a SECOND invocation and it releases the binding" "$rc" 0
 bind_forced="$(git -C "$WIP" show origin/main:lanes/log/repoBind-3.md | tail -n1)"

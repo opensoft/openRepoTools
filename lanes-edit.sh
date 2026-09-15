@@ -8310,6 +8310,14 @@ EOF
       esac
     done
     case "$rh_wait" in ''|*[!0-9]*) die "--wait takes a whole number of seconds; '$rh_wait' is not one" 64 ;; esac
+    # A WHY BELONGS TO `--force` AND TO NOTHING ELSE, so one given without it is
+    # REFUSED rather than ignored: a request carries the asker's host, container
+    # and window and no sentence, and words silently dropped are words a person
+    # believes they wrote into an append-only log.
+    if [ -n "$rh_why" ] && [ "$rh_force" = 0 ]; then
+      die "request-handoff takes no free text: clause (c)'s request line says WHO is asking and from WHERE — \`by host <h>; container <c>; window <w>; wait <n>s\` — and carries no sentence. A why is what \`--force\` writes, because that one is read by the session it takes the lane from:
+    $SELF request-handoff $lane --force \"$rh_why\"" 64
+    fi
     check_lane_name "$lane"
     log_sync
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15

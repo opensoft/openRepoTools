@@ -896,6 +896,13 @@ go_elsewhere() {
 	# which is what `ws_notice`'s once-per-run guard is for. On stderr, because
 	# the refusal under it is.
 	ws_notice >&2
+	# LOCAL, LIKE EVERY READ IN THIS WORD, and the fetch that matters is one
+	# layer down rather than missing: this read decides WHAT to ask and which
+	# facts to print, and `request-handoff` — the act it leads to — fetches for
+	# itself before it writes a line, so a binding this checkout has not pulled
+	# the release of answers 8 there and this branch takes the available one.
+	# The other direction is `lane-start`'s: it reads the binding after a fetch
+	# before it binds anything, so nothing is taken on a stale answer either.
 	ge_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" binding "$R_LANE" 2>/dev/null)" || ge_rc=$?
 	case "$ge_rc" in
 	0) : ;;
