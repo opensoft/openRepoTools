@@ -9300,7 +9300,7 @@ mig_reg="$(cat "$MIG_WIP/lanes/LANES.md")"
 has   "the cell is REPLACED by the state its last entry names" "$mig_reg" "| PAUSED · "
 has   "…LANDED where the last entry says LANDED" "$mig_reg" "| LANDED · "
 has   "…and by MIGRATED where the last entry's leading word is no state at all" "$mig_reg" "| MIGRATED · "
-is    "…and `LANDING #123abc` derives no landing, because the number ends where the word does" \
+is    "…and \`LANDING #123abc\` derives no landing, because the number ends where the word does" \
       "$(grep '^| `repoMig-6`' "$MIG_WIP/lanes/LANES.md" | grep -c '| MIGRATED · ' || :)" 1
 has   "…every migrated cell pointing at the log that now holds its history" "$mig_reg" "history in lanes/log/repoMig-1.md |"
 hasnt "…with the diary gone from the row" "$mig_reg" "opened the PR and it went green"
