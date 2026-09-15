@@ -488,6 +488,17 @@ tmux_here() { [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; }
 # window belongs to THIS session and the source may have closed itself behind
 # it, so a refusal naming `$W_SESS` would send a person to a session that is
 # gone (Copilot round 2, `lane:706`). Every caller passes the session it means.
+#
+# AND THE LINE IT OFFERS FIRST KEEPS THE WINDOW IT CHECKED (Copilot round 11 on
+# #45, `lane:499` and `lane:804`). `tmux attach -t <session>` alone lands on
+# whatever that session has since made current — which is the outcome this whole
+# fence exists to stop, offered in the refusal that exists to stop it. The
+# qualified form attaches AND selects in one act (measured, tmux 3.4: `attach -t
+# dst:@2` made `@2` current; `attach -t dst:@3` for a window of another session
+# refused with `can't find window: @3`), so it is either the lane or a refusal,
+# never another lane. The bare session stays UNDER it, said as what it is —
+# whatever that session now holds — because a person who wants it anyway is
+# entitled to type it knowing that.
 select_window_or_refuse() {   # <session> <@id> <what was already done, or "">
 	tmux select-window -t "$1:$2" 2>/dev/null && return 0
 	die "lane $R_LANE's window $2 could not be selected in session $1${3:+ ($3)}. It
@@ -496,7 +507,8 @@ select_window_or_refuse() {   # <session> <@id> <what was already done, or "">
     is another lane, and that is the one thing the id-AND-session fence exists
     to stop.
       what the register says now:            lanes --all
-      that session, if you want it anyway:   tmux attach -t $1" 2
+      that window, if it is back:            tmux attach -t $1:$2
+      that session, whatever it now holds:   tmux attach -t $1" 2
 }
 tmux_field() {   # <target> <format>
 	command -v tmux >/dev/null 2>&1 || return 1
@@ -801,7 +813,8 @@ go_live() {
     is no longer in that session — which is the fence doing its work rather than
     a fault.
       what the register says now:            lanes --all
-      that session, if you want it anyway:   tmux attach -t $W_SESS" 2
+      that window, if it is back:            tmux attach -t $W_SESS:$W_ID
+      that session, whatever it now holds:   tmux attach -t $W_SESS" 2
 	select_window_or_refuse "$gl_this" "$W_ID" "its window was moved here out of $W_SESS, which may have closed behind it"
 	exit 0
 }
@@ -948,6 +961,23 @@ if [ -n "$name" ]; then
     Amendment 15(d): merge the newer row's session id(s) into the older row's
     session cell, in order, remove the newer row in the SAME commit naming both
     spellings, and re-run. Nothing was launched and nothing was attached." 2
+	fi
+	# AND A RESOLVER THAT *FAILED* IS NOT "THE TYPED SPELLING WILL DO" (Copilot
+	# round 11 on #45, `lane:956`). Only two statuses are answers here: `0`, the
+	# row's own spelling, and the unknown-subcommand `2` of a helper predating
+	# Amendment 15, which is the documented fall-through to the estate-wide read
+	# below — told apart from `canon-lane`'s OWN 2 by the 15(d) words, one branch
+	# up. Anything else is a read that did not answer, and this command binds no
+	# lane under a name nothing established (Amendment 7(d), the same rule the row
+	# read, the grouping read and the position read each take in this file).
+	if [ "$cl_rc" != 0 ] && [ "$cl_rc" != 2 ]; then
+		die "the register's spelling of lane $name could not be read: \`lanes-edit.sh canon-lane\`
+    exited $cl_rc. A lane name is ONE name under any case (Amendment 15) and the
+    row's own spelling is the one every read and every write goes under — so
+    this command will not bind a lane under a spelling nothing has established
+    (Amendment 7(d)). Nothing was launched and nothing was attached.
+      run it by hand to see what it says:  $LANES_EDIT canon-lane $name
+      what the register says now:          lanes --all" 1
 	fi
 	if [ "$cl_rc" = 0 ] && [ -n "$cl_out" ] && [ "$cl_out" != "$name" ]; then
 		note "lane $name → $cl_out (Amendment 15: the register row's spelling is canonical)"

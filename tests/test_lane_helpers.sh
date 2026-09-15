@@ -7975,6 +7975,62 @@ has   "…naming the refused one" "$err" "--estate x"
 has   "…and carrying the kept one into the line it tells a person to type" "$err" "--dir"
 has   "…with the checkout they actually named" "$err" "$PICK_DIR"
 
+# ---- AND THE FENCE'S OWN REFUSALS OFFER THE WINDOW, NOT ONLY THE SESSION ----
+#
+# Copilot round 11 on #45, `lane:499` and `lane:804`. Both refusals ended with
+# `tmux attach -t <session>` — the bare session, which lands on whatever that
+# session has since made current. That is the outcome the id-AND-session fence
+# exists to stop, offered inside the refusal that exists to stop it. The
+# qualified form attaches AND selects in one act, or refuses; the bare session
+# stays under it, said as what it is.
+: > "$LANE_TMUX_LOG"
+run env -u TMUX PATH="$LANEBIN_PATH" LANE_TMUX_SELECT_FAIL=1 "$LANE" repoPick-3 </dev/null
+is    "a select that FAILED outside tmux still refuses with 2" "$rc" 2
+has   "…offering the WINDOW first, which is either the lane or a refusal" "$err" "tmux attach -t detsess:@32"
+has   "…and the bare session under it, said as whatever it now holds" "$err" "whatever it now holds"
+: > "$LANE_TMUX_LOG"
+run env PATH="$LANEBIN_PATH" LANE_TMUX_MOVE_FAIL=1 "$LANE" repoPick-3 </dev/null
+is    "…and the move refusal answers the same way" "$rc" 2
+has   "…with the window in the line it offers" "$err" "tmux attach -t detsess:@32"
+
+# ---- A RESOLVER THAT *FAILED* IS NOT "THE TYPED SPELLING WILL DO" -----------
+#
+# Copilot round 11 on #45, `lane:956`. Two statuses are answers: `0`, the row's
+# own spelling, and the unknown-subcommand `2` of a helper predating Amendment
+# 15, which is the documented fall-through to the estate-wide read. Anything
+# else is a read that did not answer, and a lane bound under a spelling nothing
+# established is the defect Amendment 15 exists to prevent — taken here in the
+# same words the row read, the grouping read and the position read already use.
+cat > "$SANDBOX/canonbroke" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  canon-lane) printf 'lanes-edit: simulated failure\n' >&2; exit 5 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/canonbroke"
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX PATH="$LANEBIN_PATH" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/canonbroke" "$LANE" repoPick-1 </dev/null
+is    "a canon-lane read that FAILED refuses with 1" "$rc" 1
+has   "…naming the code it got" "$err" "exited 5"
+has   "…saying a lane name is one name under any case" "$err" "Amendment 15"
+has   "…and that nothing was launched or attached" "$err" "Nothing was launched"
+is    "…launching nothing, which is the point" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+# …WHILE THE HELPER THAT PREDATES THE AMENDMENT IS STILL THE FALL-THROUGH IT
+# WAS: `2` with no 15(d) words is an un-upgraded workstation, and the lane binds.
+cat > "$SANDBOX/canonold" <<'WRAP'
+#!/usr/bin/env bash
+case "${1-}" in
+  canon-lane) printf "lanes-edit: unknown subcommand 'canon-lane'\n" >&2; exit 2 ;;
+esac
+exec "$REAL_LANES_EDIT" "$@"
+WRAP
+chmod +x "$SANDBOX/canonold"
+: > "$FAKE_PCLAUDE_LOG"
+run env -u TMUX PATH="$LANEBIN_PATH" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/canonold" "$LANE" repoPick-1 </dev/null
+is    "…and a helper with no canon-lane at all still binds the lane" "$rc" 0
+has   "…through the launcher, as it always did" "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoPick-1 team-05a"
+
 echo "== the workstation seam: unset, every writer reads the host =="
 
 # THE OTHER HALF OF R-A9-13. Every case above this line runs with
