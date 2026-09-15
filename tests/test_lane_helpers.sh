@@ -7341,6 +7341,20 @@ is   "…and so is one in a detached session of this workstation" "$(pick_group_
 is   "a binding on ANOTHER workstation is BOUND ELSEWHERE" "$(pick_group_of repoPick-4)" "elsewhere"
 is   "a binding THIS host proves dead is AVAILABLE" "$(pick_group_of repoPick-7)" "available"
 is   "an ENDED lane is in no group at all (Amendment 19)" "$(pick_group_of repoPick-5)" ""
+# AND A `PAUSED` ROW OF ANOTHER WORKSTATION IS AVAILABLE HERE, which is the act
+# this whole word exists for and is asserted so that no reordering of that awk
+# can take it away quietly (Copilot round 10 on #45, `lanes-edit.sh:4870`, which
+# asked for exactly this case for exactly that reason — and round 9 and round 10
+# both read the same branch as a defect). `go_elsewhere`'s own refusal is the
+# contract, in the words a person reads: *"the exit is a person on <workstation>
+# parking it — `/lane-swap` in that session — after which it is PARKED and `lane
+# <lane>` takes it here"*. Fed straight to the helper, because the seeded rows of
+# this section are a partition of THIS workstation's and adding a sixth row to
+# them would renumber every pick below.
+is   "a PAUSED row of ANOTHER workstation is AVAILABLE, because parking IS the handoff" \
+     "$(printf 'someRepo-9\tPAUSED\tRaven\n' | "$E" lane-groups Eagle | cut -f1)" "available"
+is   "…while a BINDING of that same workstation is bound elsewhere, as it always was" \
+     "$(printf 'someRepo-9\tIDLE\tRaven\n' | "$E" lane-groups Eagle | cut -f1)" "elsewhere"
 run env LANES_NO_FETCH=1 "$E" lanes --lane repoFX20-2
 is   "…and a RETIRED one is not either" "$(printf '%s\n' "$out" | "$E" lane-groups Eagle)" ""
 # THE NEXT FREE POSITION IS THE SAME READ'S, over the same rows, so `lane`'s `f`
