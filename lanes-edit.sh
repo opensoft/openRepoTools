@@ -7854,8 +7854,18 @@ retire_rows() {   # <lane>… [--reason "<why>"] [--writer <lane>]
   rr_tmp="$(mktemp -d)"
   : > "$rr_tmp/plan"; : > "$rr_tmp/report"
   rr_n=0; rr_names=""
+  rr_seen=""
   for rr_lane in $rr_lanes; do
     rr_l="$(canon_lane "$rr_lane")" || exit 2          # Amendment 15
+    # A LANE NAMED TWICE IS A REFUSAL AND NOT A SECOND LINE. The log is
+    # append-only: a duplicate in the argument list would put the same `RETIRED`
+    # line into it twice, in one commit, and no later line could take it back.
+    # Compared on the RESOLVED name, so the two spellings of one lane are one
+    # lane here as they are everywhere else (Amendment 15).
+    case " $rr_seen " in
+      *" $rr_l "*) die "lane $rr_l is named twice in this sweep. Its log is append-only, so a second pass over it would write the same RETIRED line again and nothing could take it back. Name each lane once. Nothing was written." 2 ;;
+    esac
+    rr_seen="$rr_seen $rr_l"
     rr_ln="$(row_line "$rr_l")" || exit 2              # one row, exactly
     rr_row="$(sed -n -e "${rr_ln}p" "$LANES_FILE")"
     rr_rc=0; row_split_state_cell "$rr_row" || rr_rc=$?
@@ -8040,7 +8050,7 @@ EOF
   printf '  rows     : %s RETIRED row(s) of %s\n' "$ar_n" "$ar_repo"
   if [ "$ar_n" -gt 0 ]; then
     printf '\n'
-    sed -n 's/^/  /p' -- "$ar_tmp/names"
+    awk '{ print "  " $0 }' "$ar_tmp/names"
   fi
   if [ "$ar_n" = 0 ]; then
     rm -rf -- "$ar_tmp"
