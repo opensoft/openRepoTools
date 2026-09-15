@@ -22,22 +22,26 @@ import pytest
 from conftest import REPO, WINDOWS_SKIP
 
 #: EVERY BASH FILE THIS REPOSITORY SHIPS, and nothing else is one. Each is a
-#: file a person has on their PATH — the installer, the two estate verbs and
-#: the read-only `status` — so each is held to the same shebang, mode bit and
-#: `set -euo pipefail` rule. The macOS job parses these same four with
-#: `/bin/bash -n`, one command per file, which is what keeps the bash-3.2
-#: claim true.
-#: `restart` and `lanes` join under lane-collision-protocol Amendment 11's
-#: ratified decisions 7 and 6: each is one word a person has on PATH, placed by
-#: `--install`, so each is held to the same shebang, the same executable bit,
-#: the same LF index, the same bash-3.2 parse AND the same `set -euo pipefail`.
+#: file a person has on their PATH — the installer, the two estate verbs, the
+#: read-only `status` and the two lane words below — so each is held to the
+#: same shebang, mode bit and `set -euo pipefail` rule. The macOS job parses
+#: these same SIX with `/bin/bash -n`, one command per file, which is what
+#: keeps the bash-3.2 claim true. (It said "four" while the list held six,
+#: which is a description contradicting the inventory it explains; Copilot
+#: round 3 on #45.)
+#: `lane` and `lanes` join under lane-collision-protocol Amendment 18 Addendum 1
+#: and Amendment 11's ratified decision 6: each is one word a person has on
+#: PATH, placed by `--install`, so each is held to the same shebang, the same
+#: executable bit, the same LF index, the same bash-3.2 parse AND the same
+#: `set -euo pipefail`. (`restart` was the third until Addendum 2 retired it —
+#: `lane <name>` is that act, and one word a person is given rather than two.)
 #: They are NOT in `LANE_BASH`, and the reason is the resolver test below: they
 #: carry no copy of Amendment 9(a)'s workspace resolver because they resolve no
 #: workspace — every fact either one needs comes from `lanes-edit.sh`, through
 #: the reads clause (h) adds, which is the same "one implementation, several
 #: callers" rule those reads exist for. A third copy of that block in a file
 #: that never uses it would be a third way for it to drift.
-SHIPPED_BASH = ["openRepoTools", "park", "resume", "status", "restart", "lanes"]
+SHIPPED_BASH = ["openRepoTools", "park", "resume", "status", "lane", "lanes"]
 
 #: THE LANE HELPERS, which arrived here from `opensoft/brett-wip` with their
 #: history under lane-collision-protocol Amendment 9(b). They are shipped bash
@@ -990,7 +994,7 @@ def _parser_long_options(text):
     return found
 
 
-@pytest.mark.parametrize("name", ["lanes", "restart"])
+@pytest.mark.parametrize("name", ["lanes", "lane"])
 def test_every_option_the_parser_accepts_is_in_the_usage(name):
     """AN OPTION NOT IN THE SYNOPSIS IS AN OPTION NOBODY FINDS.
 
@@ -1009,10 +1013,11 @@ def test_every_option_the_parser_accepts_is_in_the_usage(name):
     synopsis that lists it says nothing a reader typing `--help` does not
     already know.
 
-    Held for the two words Amendment 11 adds, and not yet for the eight files
-    beside them: their parsers are older, larger and not all of this shape, and
-    widening the rule to them is an act with its own evidence rather than a
-    line in this one.
+    Held for the two words a person is given — `lanes`, which Amendment 11
+    added, and `lane`, which Amendment 18 Addendum 1 added and Addendum 2 made
+    the only door — and not yet for the eight files beside them: their parsers
+    are older, larger and not all of this shape, and widening the rule to them
+    is an act with its own evidence rather than a line in this one.
     """
     text = (REPO / name).read_text(encoding="utf-8")
     usage = re.search(r"^usage\(\) \{\n\tcat <<'USAGE'\n(.*?)^USAGE$", text,
@@ -1026,7 +1031,7 @@ def test_every_option_the_parser_accepts_is_in_the_usage(name):
         f"them: an option a person cannot find is an option they do not use")
 
 
-def test_restart_fences_a_lane_name_the_way_the_helper_does():
+def test_lane_fences_a_lane_name_the_way_the_helper_does():
     """ONE RULE FOR WHAT A LANE NAME IS, AND `restart` HAD A WEAKER ONE.
 
     `lanes-edit.sh`'s `check_lane_name` refuses `"" | *[!A-Za-z0-9._-]* | .* |
@@ -1040,16 +1045,21 @@ def test_restart_fences_a_lane_name_the_way_the_helper_does():
 
     Held by comparing the two patterns rather than by restating either: a
     second spelling of one rule is how the two files come to disagree.
+
+    ASKED OF `lane` NOW, because that is the file that takes a `<name>` from a
+    person: Amendment 18 Addendum 2 retired `restart` from the PATH and `lane
+    <name>` is its act. The fence moved with it, and this rule moved with the
+    fence rather than being retired beside the file it was written for.
     """
     helper = (REPO / "lanes-edit.sh").read_text(encoding="utf-8")
     wanted = re.search(r"check_lane_name\(\) \{\s*case \S+ in\s*\n\s*(\S.*?)\)",
                        helper)
     assert wanted, "lanes-edit.sh has no `check_lane_name` case pattern"
     pattern = wanted.group(1).strip()
-    text = (REPO / "restart").read_text(encoding="utf-8")
+    text = (REPO / "lane").read_text(encoding="utf-8")
     assert pattern in text, (
-        "`restart` does not fence a lane name with `lanes-edit.sh`'s own "
-        f"pattern.\n  the helper refuses: {pattern}\n  and `restart` must "
+        "`lane` does not fence a lane name with `lanes-edit.sh`'s own "
+        f"pattern.\n  the helper refuses: {pattern}\n  and `lane` must "
         f"refuse the same string, not merely a first character")
 
 
@@ -1130,7 +1140,7 @@ def test_the_documents_say_what_a_bare_lanes_lists():
     command, and the one word that would have answered them - `--all` - is the
     word the stale sentence does not carry.
     """
-    surfaces = ("README.md", "docs/README-lanes.md", "lanes", "restart",
+    surfaces = ("README.md", "docs/README-lanes.md", "lanes", "lane",
                 "openRepoTools")
     for name in surfaces:
         text = (REPO / name).read_text(encoding="utf-8")
@@ -2294,10 +2304,12 @@ def test_adoption_act_zero_is_cited_by_the_sha_that_landed():
 
 
 #: EVERY SURFACE THAT PRINTS SOMETHING ABOUT A LIVE FORK. Six of them: `who`,
-#: the SessionStart hook, `live-holder`, `lanes`, `restart` and the `/restart`
-#: skill — and `lane-end`, which A11 Addendum 4 ruling 8 makes the DOOR and
-#: which must therefore hold to the same rule as the surfaces that print it.
-FORK_SURFACES = ("lanes-edit.sh", "lanes", "restart", "skills/restart/SKILL.md",
+#: the SessionStart hook, `live-holder`, `lanes`, `lane` — which shows it where
+#: a person is CHOOSING what to bind, and which is where `restart`'s listing
+#: went under Amendment 18 Addendum 2 — and the `/restart` skill; and
+#: `lane-end`, which A11 Addendum 4 ruling 8 makes the DOOR and which must
+#: therefore hold to the same rule as the surfaces that print it.
+FORK_SURFACES = ("lanes-edit.sh", "lanes", "lane", "skills/restart/SKILL.md",
                  "lane-end")
 #: A line that offers an act for a fork says `FORK` or `fork(s)` and an
 #: imperative beside it. Matched on the two spellings the surfaces use.

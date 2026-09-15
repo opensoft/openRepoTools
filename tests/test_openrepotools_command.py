@@ -46,7 +46,15 @@ COMMAND = REPO / "openRepoTools"
 #: under lane-collision-protocol Amendment 9(b), and `repos.tsv` is data placed
 #: at 755 with the commands because `--install` has one list, one destination
 #: and one mode.
-INSTALLED = ("openRepoTools", "park", "resume", "status", "restart", "lanes",
+#:
+#: `lane` TAKES `restart`'s PLACE AND THE COUNT DOES NOT MOVE (Amendment 18
+#: Addendum 1, the word, and Addendum 2, the retirement — ratified
+#: 2026-09-14T14:05:54Z and 16:50:32Z). `lane <name>` is `restart <lane>`'s act
+#: — the launcher's path, the lane's own recorded directory and profile, asking
+#: nothing — plus the numbered pick, the attach and the handoff branch, so what
+#: a person is given is one word instead of two. `lane-handoff` joined beside it
+#: under Amendment 17(a), which is why the list is TWELVE.
+INSTALLED = ("openRepoTools", "park", "resume", "status", "lane", "lanes",
              "lane-handoff", "lanes-edit.sh", "lane-start", "lane-end",
              "link-estates", "repos.tsv")
 
@@ -393,6 +401,173 @@ def test_install_replaces_a_copy_that_has_drifted(tmp_path, name):
             assert f"{other}: already installed at" in result.stdout, other
 
 
+#: THE WORDS THIS INSTALLER USED TO PLACE AND DOES NOT ANY MORE. `restart` left
+#: under lane-collision-protocol Amendment 18 Addendum 2 (ratified
+#: 2026-09-14T16:50:32Z, verbatim "ratify"): `lane <name>` is that act, and the
+#: addendum's words are *"`restart` is no longer a command a person is given"*.
+RETIRED = ("restart",)
+
+
+@pytest.mark.parametrize("name", RETIRED)
+@NEEDS_JQ
+def test_install_removes_a_word_it_used_to_place(tmp_path, name):
+    """DROPPING IT FROM THE LIST ONLY STOPS THE NEXT COPY.
+
+    The install loop places `INSTALLABLES` and removes nothing, so a
+    workstation that took the install while `restart` was in that list keeps
+    `restart` on its PATH for ever — and the addendum that retired it says the
+    opposite. The retirement is therefore an ACT of `--install` and not an
+    absence from a list, which is what this holds.
+
+    Pre-seeded with a copy carrying this installer's own header, which is what
+    marks a file as one it wrote.
+    """
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    stale = bin_dir / name
+    stale.write_text(
+        "#!/usr/bin/env bash\n"
+        "# SPDX-License-Identifier: Apache-2.0\n"
+        "#\n"
+        f"# {name} — the word this installer used to place.\n"
+        "#\n"
+        "# Installed on PATH by `openRepoTools --install`, which is where it came from.\n"
+        "echo stale\n", encoding="utf-8")
+    stale.chmod(0o755)
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert not stale.exists(), (
+        f"`{name}` is still on PATH after an install that retired it:\n"
+        + result.stdout)
+    assert f"{name}: RETIRED" in result.stdout, (
+        "the removal is said out loud, because a file that vanishes without a "
+        f"line is a file nobody can ask about:\n{result.stdout}")
+
+
+@pytest.mark.parametrize("name", RETIRED)
+@NEEDS_JQ
+def test_install_never_removes_a_file_it_did_not_write(tmp_path, name):
+    """AND IT DELETES ONLY WHAT IT WROTE.
+
+    A person's own script that happens to carry a retired name is theirs. It
+    is NAMED, the line that removes it is printed, and the file is left exactly
+    where it is — because an installer that deletes a stranger's script to
+    tidy its own list has done something no list can justify.
+    """
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    mine = bin_dir / name
+    mine.write_text("#!/usr/bin/env bash\n# my own script\necho mine\n",
+                    encoding="utf-8")
+    mine.chmod(0o755)
+    before = mine.read_bytes()
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert mine.is_file(), "a file this installer did not write was deleted"
+    assert mine.read_bytes() == before
+    assert f"{name}: RETIRED" in result.stdout
+    assert f'rm -f -- "{mine}"' in result.stdout, (
+        "the one line that removes it is printed, filled in, because the act "
+        f"is the person's:\n{result.stdout}")
+
+
+@pytest.mark.parametrize("name", RETIRED)
+@NEEDS_JQ
+def test_install_never_unlinks_a_symlink_of_a_retired_name(tmp_path, name):
+    """`-f` FOLLOWS THE LINK, AND A LINK IS SOMEBODY'S DECISION.
+
+    A person's own `restart` symlink pointing at a file that happens to carry
+    this installer's header would be unlinked by an ownership test written as
+    `[ -f "$target" ]` alone — and `plan_install_targets` refuses a `-L`
+    target for exactly that reason, naming the link rather than writing
+    through it. The retirement holds to the same rule: the link is NAMED and
+    left, and both it and what it points at are still there afterwards.
+    """
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    real = tmp_path / "elsewhere.sh"
+    real.write_text(
+        "#!/usr/bin/env bash\n"
+        "# Installed on PATH by `openRepoTools --install`, once upon a time.\n"
+        "echo linked\n", encoding="utf-8")
+    real.chmod(0o755)
+    link = bin_dir / name
+    link.symlink_to(real)
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert link.is_symlink(), (
+        f"a symlink named `{name}` was unlinked by the retirement:\n"
+        + result.stdout)
+    assert real.is_file(), "and what it pointed at is still there"
+    assert f"{name}: RETIRED" in result.stdout
+    assert f'rm -f -- "{link}"' in result.stdout
+
+
+@pytest.mark.parametrize("name", RETIRED)
+@NEEDS_JQ
+def test_install_names_a_dangling_symlink_of_a_retired_name(tmp_path, name):
+    """AND `-e` IS FALSE FOR A LINK WHOSE TARGET IS GONE.
+
+    Copilot round 4 on #45, `openRepoTools:261`. `[ -e "$target" ] || continue`
+    follows the link, so a `restart` symlink pointing at a file that has since
+    been removed was skipped outright: still on PATH, still the first `restart`
+    a shell finds, and not one word about it in the run that was supposed to
+    retire that name. The pre-move `link-estates` put exactly these links in a
+    workstation's `~/.local/bin`. It is NAMED like any other link — and left,
+    because a link is somebody's decision about their own PATH.
+    """
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    link = bin_dir / name
+    link.symlink_to(tmp_path / "gone-with-the-checkout.sh")
+    assert not link.exists() and link.is_symlink(), "the fixture is a dangling link"
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert link.is_symlink(), (
+        f"a dangling symlink named `{name}` was removed by the retirement:\n"
+        + result.stdout)
+    assert f"{name}: RETIRED" in result.stdout, (
+        "a retired name still on PATH is named, whatever kind of file it is:\n"
+        + result.stdout)
+    assert f'rm -f -- "{link}"' in result.stdout
+
+
+@pytest.mark.parametrize("name", RETIRED)
+@NEEDS_JQ
+def test_install_retires_only_after_the_placement_it_migrates_to(tmp_path, name):
+    """THE ONE DESTRUCTIVE STEP IS THE LAST ONE.
+
+    Copilot round 7 on #45, `openRepoTools:369`. `retire_commands` ran BEFORE
+    `place_skill_and_hook`, so a skills directory this run could not write left
+    a workstation with the old word already deleted and the adoption it was
+    migrating to unfinished — while every other refusal in that file places
+    NOTHING rather than half of it. Here `~/.claude/skills` is a regular file,
+    which is a `mkdir -p` that cannot succeed.
+    """
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    stale = bin_dir / name
+    stale.write_text(
+        "#!/usr/bin/env bash\n"
+        f"# {name} — the word this installer used to place.\n"
+        "# Installed on PATH by `openRepoTools --install`, which is where it came from.\n"
+        "echo stale\n", encoding="utf-8")
+    stale.chmod(0o755)
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    (claude / "skills").write_text("a file where the skills directory goes\n",
+                                   encoding="utf-8")
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode != 0, (
+        "the placement could not finish and the run said it did:\n"
+        + result.stdout)
+    assert stale.is_file(), (
+        f"`{name}` was retired by a run whose placement then failed:\n"
+        + result.stdout + result.stderr)
+    assert f"{name}: RETIRED" not in result.stdout, (
+        "and it never said it had been:\n" + result.stdout)
+
+
 @NEEDS_JQ
 def test_a_copy_whose_bytes_are_right_and_whose_mode_is_not_says_so(tmp_path):
     """THE ELEVEN HAVE ALWAYS BEEN STAMPED EVERY TIME, AND THE LINE DID NOT SAY
@@ -423,6 +598,34 @@ def test_a_copy_whose_bytes_are_right_and_whose_mode_is_not_says_so(tmp_path):
             assert f"{other}: already installed at " \
                    f"{tmp_path / '.local' / 'bin' / other} (unchanged)" \
                 in result.stdout, other
+
+
+@pytest.mark.parametrize("name", RETIRED)
+@NEEDS_JQ
+def test_the_retirement_prints_a_removal_that_can_be_pasted(tmp_path, name):
+    """A PRINTED COMMAND IS A LINE SOMEBODY TYPES BACK.
+
+    Copilot round 9 on #45, `openRepoTools:281`. `OPENREPOTOOLS_BIN_DIR` is a
+    path a person chooses, and the retirement printed `rm <path>` bare — so a
+    directory with a space in it produced a line that removes nothing (or, with
+    the wrong path, something else). Both planners in this file already print
+    `rm -f -- "<path>"` out of a `paths` they build with the quotes in; this is
+    the same spelling.
+    """
+    bin_dir = tmp_path / "my bin dir"
+    bin_dir.mkdir(parents=True)
+    mine = bin_dir / name
+    mine.write_text("#!/usr/bin/env bash\n# my own script\necho mine\n",
+                    encoding="utf-8")
+    mine.chmod(0o755)
+    result = run_cmd("--install", home=tmp_path,
+                     env={"OPENREPOTOOLS_BIN_DIR": str(bin_dir)})
+    assert result.returncode == 0, result.stderr
+    assert mine.is_file(), "a file this installer did not write was deleted"
+    assert f'rm -f -- "{mine}"' in result.stdout, (
+        "the removal is printed quoted, because the path has a space in it:\n"
+        + result.stdout)
+    assert f"rm {mine}\n" not in result.stdout
 
 
 @NEEDS_JQ

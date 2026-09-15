@@ -74,8 +74,11 @@
 #
 #   $LANES_EDIT   the register's reader (default: lanes-edit.sh beside this file)
 #
-# `restart <lane>` restarts one of these; `restart` with no argument is the
-# PER-REPO listing, which is a different question and a different command.
+# `lane <name>` BINDS one of these — the launcher for a parked one, the attach
+# for one live here — and a bare `lane` is that listing as a NUMBERED PICK with
+# one question under it (Amendment 18 Addendum 1). This command asks nothing and
+# binds nothing: it is the read, and it shows the rows a pick hides — the closed
+# lanes, the dormant ones, and every column.
 
 set -euo pipefail
 
@@ -117,9 +120,9 @@ and age — and for a PAUSED lane, the exact command that restarts it.
 
 Exit: 0 rows · 8 none · 64 usage · 2 a helper predating Amendment 11 · 1 a read failed.
 
-It writes nothing, launches nothing and asks nothing. `restart <lane>` is what
-restarts one, and `restart` with no argument lists the CURRENT CHECKOUT's lanes
-on THIS workstation, which is a narrower question than this one.
+It writes nothing, launches nothing and asks nothing. `lane <name>` is what
+BINDS one — the launcher for a parked lane, the attach for one live here — and a
+bare `lane` is this listing as a numbered pick with one question under it.
 USAGE
 }
 
@@ -166,7 +169,7 @@ while [ $# -gt 0 ]; do
 		args+=("$flag" "$val"); narrowed=1; shift ;;
 	--) shift ;;
 	-*) die "unknown option '$1' — see $prog --help" 64 ;;
-	*) die "lanes takes no positional arguments; did you mean \`restart $1\`? — see $prog --help" 64 ;;
+	*) die "lanes takes no positional arguments; did you mean \`lane $1\`? — see $prog --help" 64 ;;
 	esac
 done
 
@@ -375,7 +378,6 @@ printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
 	LANE STATE WHERE PROFILE WINDOW "LAST TRANSCRIPT" AGE DIRECTORY
 n=0
 defects=0
-taken=""
 while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_restart r_home r_fk; do
 	[ -n "${r_lane:-}" ] || continue
 	printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
@@ -384,17 +386,18 @@ while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_
 	none | 'none open' | '') : ;;
 	*) printf '%-26s holds: %s\n' "" "$r_obj" ;;
 	esac
-	# THE EXACT RESTART COMMAND, FILLED IN, FOR A **PAUSED** LANE — clause (j)
-	# column 10, AND IT COMES OUT OF THE READ (A11 Addendum 4 ruling 7). This
+	# THE EXACT COMMAND THAT BINDS IT, FILLED IN, FOR A **PAUSED** LANE — clause
+	# (j) column 10, AND IT COMES OUT OF THE READ (A11 Addendum 4 ruling 7). This
 	# command used to compute it and `restart` computed a different one: two
 	# implementations of one column, which is how two surfaces come to disagree
 	# about which lane may be restarted. The rule — a PAUSED lane only, and the
 	# `pclaude --lane <lane> <profile>` form where the record carries no profile
-	# yet — is stated once, in `lanes_rows`, and rendered here.
+	# yet — is stated once, in `lanes_rows`, and rendered here. The word it
+	# prints is `lane <name>` since Amendment 18 Addendum 2 retired `restart`.
 	case "${r_restart:-none}" in
 	none | '') : ;;
-	restart\ *) printf '%-26s restart: %s\n' "" "$r_restart" ;;
-	*) printf '%-26s restart: %s   (no profile recorded yet; it is written at this lane next start or swap)\n' "" "$r_restart" ;;
+	lane\ *) printf '%-26s bind it: %s\n' "" "$r_restart" ;;
+	*) printf '%-26s bind it: %s   (no profile recorded yet; it is written at this lane next start or swap)\n' "" "$r_restart" ;;
 	esac
 	case "${r_fk:-0}" in
 	0 | '') : ;;
@@ -402,22 +405,6 @@ while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_
 		"" "$r_fk" "$LANES_EDIT" "$r_lane" "$r_lane"
 		defects=$((defects + 1)) ;;
 	esac
-	# THE POSITIONS THIS REPOSITORY'S LANES ALREADY HOLD, for the next free one
-	# below. A position is DIGITS with an optional trailing letter, which is
-	# `lane-start:565-578`'s own rule and the only reading under which
-	# `openxfactory-4-opendox-extraction` has no position at all. `5a` and `5`
-	# are the same position taken twice, so the letter is stripped for the
-	# comparison — a lane may be re-cut, and a re-cut position is not free.
-	if [ -n "$here_repo" ]; then
-		case "$(printf '%s' "$r_lane" | tr 'A-Z' 'a-z')" in
-		"$(printf '%s' "$here_repo" | tr 'A-Z' 'a-z')"-*)
-			pos="${r_lane##*-}"; pos="${pos%[A-Za-z]}"
-			case "$pos" in
-			'' | *[!0-9]*) : ;;
-			*) taken="$taken $((10#$pos))" ;;
-			esac ;;
-		esac
-	fi
 	n=$((n + 1))
 done <<EOF
 $out
@@ -428,15 +415,35 @@ EOF
 # tells them what to type next, filled in, so nobody has to translate a
 # placeholder at the one moment they are trying to start work.
 #
-# IT IS THE LOWEST FREE ONE, not the highest plus one: positions are re-used as
-# lanes end, and handing out 12 while 3 is free is how a register grows a column
-# nobody reads. `lane-start` refuses a position that is taken, so this is a
-# suggestion with a guard behind it and never an assertion.
+# IT IS THE HELPER'S ANSWER AND NO LONGER THIS COMMAND'S (Amendment 18 Addendum
+# 1). `lane`'s `f` answer opens a lane at the same position, and two surfaces
+# computing one number is how they come to offer two — the defect A11 Addendum 4
+# ruling 7 removed from column 10. `next-free` takes THESE ROWS on stdin, so it
+# costs one process and not a second read, and the rule it states — the LOWEST
+# free position, digits with an optional trailing letter, `5a` and `5` one
+# position taken twice — is stated there once.
+#
+# AND A HELPER THAT CANNOT ANSWER IT IS NOT A POSITION OF 1 (Amendment 7(d)): a
+# `lanes-edit.sh` predating the read exits 2 and prints nothing, and a listing
+# that then offered `lane-start <repo> 1` would be offering a position this
+# estate may well have taken. The footer says so instead.
+# AND THE CODE SAYS WHICH IT WAS. `|| :` made every status of that read the same
+# status, and the footer below then told a person to take the install for a read
+# that had FAILED — the fail-closed family's own defect, one rung down (Copilot
+# round 1 on #45, `lanes:432`). `2` is the un-upgraded workstation and says so;
+# anything else is a read that did not answer and is named as one. A `0` that
+# comes back with nothing a position could be made of is in that second class:
+# the read answered, and what it answered is not a number.
+next=""; next_rc=0
 if [ -n "$here_repo" ]; then
-	next=1
-	while :; do
-		case " $taken " in *" $next "*) next=$((next + 1)) ;; *) break ;; esac
-	done
+	next="$(printf '%s\n' "$out" | "$LANES_EDIT" next-free "$here_repo" 2>/dev/null)" || next_rc=$?
+	# THE STATUS DECIDES BEFORE THE TEXT DOES (Copilot round 5 on #45,
+	# `lanes:441`). Digits printed by a read that THEN FAILED pass the shape test
+	# below on their own output, and this footer would hand out a position out of
+	# a read that did not answer — the same hole `lane` had one file over, and the
+	# same rule closes it.
+	[ "$next_rc" = 0 ] || next=""
+	case "${next:-}" in '' | *[!0-9]*) next="" ;; esac
 fi
 
 say ""
@@ -457,10 +464,29 @@ elif [ "$do_fetch" = 1 ]; then
 else
 	say "$n lane(s)${here_repo:+ of $here_repo}, read locally — no fetch; this checkout last heard from origin $("$LANES_EDIT" fetch-age 2>/dev/null || printf 'unknown'). \`$prog --fetch\` refreshes first."
 fi
-if [ -n "$here_repo" ]; then
+if [ -n "$here_repo" ] && [ -n "$next" ]; then
 	say ""
 	say "  next free position:  $next"
 	say "  take it:             lane-start $here_repo $next"
+	say "  pick one:            lane"
+	say "  every lane:          $prog --all"
+elif [ -n "$here_repo" ] && [ "$next_rc" = 2 ]; then
+	say ""
+	say "  the next free position could not be read: this workstation's \`lanes-edit.sh\`"
+	say "  has no \`next-free\`, so it predates lane-collision-protocol Amendment 18"
+	say "  Addendum 1. Take the install and it comes back:  openRepoTools --install"
+	say "  every lane:          $prog --all"
+elif [ -n "$here_repo" ]; then
+	say ""
+	# THE CODE STAYS ON THE WORD IT BELONGS TO. A line break between `exited` and
+	# the number is a refusal that no longer says which code it got to anything
+	# reading a line at a time — and the reflow that split `PROVED that binding
+	# dead` across two lines was CI's one red case on `9581ac9`.
+	say "  the next free position could not be read: \`lanes-edit.sh next-free\`"
+	say "  exited $next_rc and gave no position. That is NOT a position of 1 and this"
+	say "  listing will not offer one it did not get (Amendment 7(d)) — a 0 with"
+	say "  nothing a position can be made of is in that class too. Run it by hand:"
+	say "    $LANES_EDIT lanes --prefix $here_repo | $LANES_EDIT next-free $here_repo"
 	say "  every lane:          $prog --all"
 fi
 [ "$defects" = 0 ] || say "$defects lane(s) have a live fork of their transcript running. A fork is never the holder (ratified decision 8(c)); the one act is \`lane-end <lane> --retire <pid|uuid>\`, which proves the fork and prints Amendment 6(d) for it filled in — it writes nothing and it never kills the process, and taking it stays yours (clause (k) rule (e))."

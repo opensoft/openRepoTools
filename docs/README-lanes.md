@@ -209,6 +209,54 @@ overrides `LANES_REPO`, `LANES_PATH` and `LANES_BRANCH` exist for tests.
 
 ## Starting and ending a lane
 
+### One word: `lane`
+
+```console
+$ lane                          # the lanes, numbered, and ONE question: which?
+$ lane openRepoShape-2          # straight to that one, asking nothing
+$ lane openRepoShape-2 team-05e # …under another account (the late swap)
+$ lane --all                    # every repository, grouped
+```
+
+**This is the word, and it is Brett Heap's own** (lane-collision-protocol
+**Amendment 18 Addendum 1**, ratified 2026-09-14T14:05:54Z verbatim *"ratify the
+addendum"*), out of his two messages that morning, verbatim: *"i dont understand
+in another window i want to attach to that lane. what command do i use to do
+that?"* and *"this is too hard for users. we need simple way to list the lanes
+and then pick one to bind."*
+
+A bare `lane` prints clause (i)'s listing as a **numbered pick** — available
+lanes first (PARKED, or a binding this host proves dead), lanes **LIVE HERE**
+next with where each one is (`window <n> of this session`, `detached session
+<name>`), lanes **bound elsewhere** last with the workstation holding them;
+closed and dormant lanes hidden (Amendment 19) — and asks **one** question:
+`which? [1-N, f = a new lane at the next free position (<repo>-<n>), q]`. Inside
+a checkout it is that repository's lanes; outside one, or with `--all`, every
+repository, grouped.
+
+**Three branches, one per state** (clause (i-2)):
+
+| the lane is | `lane` does |
+|---|---|
+| **available** — PARKED, or a binding this host proves dead | `cd` to its **own recorded directory** and relaunch it **through the launcher** under its **own recorded profile**: `pclaude --lane <lane> <profile>`. Never a bare `lane-start` under whatever profile the shell carries, which outside a launcher session is the default config directory and therefore the wrong account. `lane <name> <profile>` names another one — the late swap |
+| **LIVE HERE** | **attaches, and never starts a second process** (clause (h)). Inside tmux: `tmux move-window -a -s <session>:<@id>` then `tmux select-window -t <session>:<@id>` — the `@id` on both, so tmux resolves the window inside the session the record named or not at all — and where the window is already in this session, only the select. With `--switch`: the same select first, and `tmux switch-client` only after it worked. Outside tmux: `tmux attach -t <session>:<@id>` — the window named in the attach itself, which tmux resolves in that session or refuses — with that window selected first |
+| **bound elsewhere** | clause (c)'s question, the **handoff request**. That request is `brettheap/new-workstation#38`'s act 4 and does not exist yet, so until it does `lane` **refuses and names where the lane is bound**. It never offers a launch: a second session on a lane another workstation holds is the collision |
+
+**The window is matched by its id AND its session name.** tmux reissues `@` ids
+from `@0` when its server is replaced — measured here on 2026-09-13, where 0 of
+5 recorded windows resolved — so an id alone would attach to whatever pane has
+since been given it. Where the two disagree `lane` refuses and names both.
+
+**With no terminal on stdin it lists, suggests and asks nothing** (clause
+(i-3)): an agent's stdin is not a terminal. **Bare `lane-start` is `lane`**
+(clause (i-4)) — one implementation, and clause (i)'s ruled behaviour stands.
+
+`lanes` is the same rows as a **read**: every column, closed lanes included, no
+question. `/restart` is the act from **inside** a running session. And `restart`
+is gone from the PATH — the section below.
+
+### `lane-start` and `lane-end`
+
 The lane rule, ruled by Brett Heap 2026-09-10: **lane = tmux window name =
 Claude session name**, in the form `<repo>-<position across, left to right>`.
 The working directory confers NO lane — two lanes may share one; a window
@@ -235,7 +283,7 @@ removed in the SAME commit, whose message names both spellings. `lanes-edit.sh
 canon-lane <name>` is that resolver as a read, and the one all four commands
 share: **0** with the canonical spelling (the typed one where no row matches, so
 `add-row` can still create a lane), **2** for the pair, **64** usage — and that
-2 is RELAYED by `lane-start`, `lane-end` and `restart` rather than carried past,
+2 is RELAYED by `lane-start`, `lane-end` and `lane` rather than carried past,
 because the pair may be on `origin/<branch>` while this checkout still holds one
 row. `add-row` asks the published register as well as this copy of it for the
 same reason: a row a peer pushed is a refusal here, naming it and the `git pull
@@ -1289,7 +1337,7 @@ exists, and every one of them is a **read**: AGENTS.md rule 1's list of writers
 `claim`, `release`, `commit`) and rule 8's list of tooling paths are both
 unchanged by this amendment.
 
-## Restart and list (Amendment 11)
+## Bind and list (Amendment 11, amended by Amendment 18)
 
 **DRAFT, 2026-09-13, awaiting Brett Heap's word on the amendment itself**
 (`brettheap/new-workstation#21`) — but **eight decisions inside it are
@@ -1305,14 +1353,29 @@ without the repository's `CLAUDE.md` or the lane's memory, silently.
 ### The two words
 
 ```console
-$ restart openRepoProject-1     # cd to its directory, relaunch through the launcher
-$ restart                       # this window's lane; or this checkout's lanes, listed
+$ lane openRepoProject-1        # cd to its directory, relaunch through the launcher
+$ lane                          # the lanes of this checkout, numbered — pick one
 $ lanes                         # inside a checkout: ITS lanes, and the next free one
 $ lanes --all                   # every lane the register and the logs know
 $ lanes --fetch                 # any of them, after refreshing from origin
 ```
 
-`restart <lane>` needs **no window, no record of a window and no guess** — only
+**`lane <name>` is Amendment 11's OUTSIDE half and `restart` is retired**
+(**Amendment 18 Addendum 2**, ratified 2026-09-14T16:50:32Z verbatim *"ratify"*,
+on Brett Heap's ruling *"i think we can drop restart as a cli command and keep
+it inside a claude session with /restart. if we need it for ctx, keep it for
+that, but I do not see any reason to expose this to the user. lane does all the
+things a user wants"*). `openRepoTools --install` no longer places `restart`
+**and REMOVES the copy an earlier install placed** — printing `restart: RETIRED`
+beside the file it took away — because a word that merely stops being written
+stays on the PATH of every workstation that already took it. It removes only
+what it wrote: a file of that name carrying this installer's own header goes,
+and one that does not is NAMED, left exactly as it is, and the `rm` that removes
+it printed for the person to run. Everything decision 7 ratified about that act
+is true of `lane <name>`, which does it and three things more. Everything below
+is about `lane <name>` and was written about `restart <lane>`.
+
+`lane <name>` needs **no window, no record of a window and no guess** — only
 the lane's name, its `dir` and its `profile`, both of which the record now
 carries. That is the whole point: measured on this estate after the tmux server
 was replaced, each of the two surfaces the direction names met **one prompt
@@ -1332,17 +1395,19 @@ restart from the wrong one loads neither the repository's `CLAUDE.md` nor the
 lane's memory, while `--resume <uuid>` goes on continuing the right transcript —
 which is why the loss is silent.
 
-**Neither is ever a picker.** A picker is a process that holds the terminal and
-returns a selection; a listing asks nothing, returns nothing, exits, and the
-next act is a command you type. `restart` with no argument prints the lanes of
-the **current checkout** on this workstation; `lanes` prints **this checkout's
-repository's lanes**, or **every lane** outside one — the section below.
+**`lanes` is never a picker, and `lane` asks exactly one question.** Ratified
+decision 3 refused a picker for the words Amendment 11 added, and Amendment 18
+Addendum 1 is the later word on a question that decision was not asked: a person
+who has to type a lane name has to know one. So `lanes` still asks nothing at
+all — it is a read — and `lane` prints the listing, asks `which?` **once**, acts
+on the one answer, and stops; with no terminal on stdin it asks nothing either.
 
 `/restart [<lane>]` is the same act from **inside** a running session, and it is
 a skill rather than a command because a session cannot `exec` a launcher over
 itself: it binds the window through `lane-start --no-launch`, and where this
 session is not the lane's conversation it prints exactly `claude --resume <uuid>`
-and stops.
+and stops. It is unchanged by Addendum 2: what left the PATH is the outside
+half, and `/restart` was always the inside one.
 
 ### The bare word narrows inside a checkout
 
@@ -1453,12 +1518,14 @@ falls to its next rung there rather than refusing.
 | read | what it answers |
 |---|---|
 | `lanes-edit.sh lane-dir <lane>` | the `dir ` of the lane's **last** lane-kind line carrying one, unquoted where it was written quoted |
-| `lanes-edit.sh lane-profile <lane>` | the same read one sub-field along — the `profile ` of that last line. An addition to the amendment's own table, so that `restart <lane>` can learn a profile with one `git show` instead of a listing that reads every log on the workstation |
-| `lanes-edit.sh window-lane [<ws>] <@id>\|<session>:<index>` | the lane bound to a window **of the asking workstation** — the register row whose name is the window's name, else that workstation's swap record naming that ref. Both rungs answer in the **register row's own spelling** (Amendment 15): what this prints is renamed to, `--name`d with and typed as `restart <lane>` |
+| `lanes-edit.sh lane-profile <lane>` | the same read one sub-field along — the `profile ` of that last line. An addition to the amendment's own table, so that `lane <name>` can learn a profile with one `git show` instead of a listing that reads every log on the workstation |
+| `lanes-edit.sh window-lane [<ws>] <@id>\|<session>:<index>` | the lane bound to a window **of the asking workstation** — the register row whose name is the window's name, else that workstation's swap record naming that ref. Both rungs answer in the **register row's own spelling** (Amendment 15): what this prints is renamed to, `--name`d with and typed as `lane <name>` |
 | `lanes-edit.sh session-lane <uuid>` | the lane whose register row's **session cell** names that transcript uuid. Adoption act 0's; it is the read the `SessionStart` hook already made. **0** the lane · **8** no row's cell names it · **64** usage — like every other read in this table, by A11 Addendum 4 ruling 1, which corrects act 0's `2` · **2** a helper predating the read |
 | `lanes-edit.sh last-session <lane>` | the lane's resume target: the last uuid in the published cell **whatever shape it is in**, and failing that the session of its last `PAUSED`/`RESUMED`. This is what `/restart`'s step 4 reads, by A11 Addendum 4 ruling 14, rather than clause (f)'s `register-row` alone — so a lane whose row was never stamped but whose log records the session it paused in still has a resume target |
 | `lanes-edit.sh forks <lane>` | the **live forks** of the lane's transcript — never holders, and a defect to retire |
-| `lanes-edit.sh lanes [--repo\|--dir\|--prefix\|--ws\|--lane\|--here\|--all\|--fetch]` | every lane, newest write first, tab-separated: clause (j)'s **ten columns in clause (j)'s order** — name, state, workstation, profile, window, last transcript uuid, directory, held objects, age, restart line — then the read's own two, `home` and the count of live forks. `lanes` and `restart` each render the subset their surface needs (A11 Addendum 4 ruling 7), and column 10 is the read's so the two cannot offer different commands. **The one read whose default is local**, and `--lane <lane>` answers about one without walking the estate. `--prefix <repo>` is the LABEL fallback the checkout narrowing and `lane-start <repo>` both ask for, used only where a lane has neither a home nor a `dir` |
+| `lanes-edit.sh lanes [--repo\|--dir\|--prefix\|--ws\|--lane\|--here\|--all\|--fetch]` | every lane, newest write first, tab-separated: clause (j)'s **ten columns in clause (j)'s order** — name, state, workstation, profile, window, last transcript uuid, directory, held objects, age, the line that binds it — then the read's own two, `home` and the count of live forks. `lanes` and `lane` each render the subset their surface needs (A11 Addendum 4 ruling 7), and column 10 is the read's so the two cannot offer different commands; since Amendment 18 Addendum 2 the word it names is `lane <name>`. **The one read whose default is local**, and `--lane <lane>` answers about one without walking the estate. `--prefix <repo>` is the LABEL fallback the checkout narrowing and `lane-start <repo>` both ask for, used only where a lane has neither a home nor a `dir` |
+| `lanes-edit.sh lane-groups [<ws>]` | **the rows on STDIN**, each with the group the pick puts it in: `available` (PARKED, or a binding that workstation proves dead), `live`, `elsewhere`. Closed and dormant rows are DROPPED (Amendment 19). It reads nothing itself — the caller has already paid for `lanes`, and two surfaces computing one partition is how they come to disagree |
+| `lanes-edit.sh next-free <repo>` | **the rows on STDIN**, and the LOWEST position no lane of that repository HAS EVER held — `ENDED` and `RETIRED` rows reserve theirs, because a lane's identity is its name and its object log `lanes/log/<lane>.md` is append-only, so a second lane at a retired position would write its life into the first one's file. The name before the position is compared whole, so `repo-foo-1` is no lane of `repo`. `lanes`'s footer and `lane`'s `f` answer both read it, so the two cannot offer different positions |
 | `lanes-edit.sh workstation` | `<name><TAB><source>` — `seam`, `hostname`, or `container-unset` |
 | `lanes-edit.sh fetch-age` | how old this checkout's answer is |
 
@@ -1999,7 +2066,7 @@ openRepoTools wip init      # create or adopt the workspace, and link it
 If the host was set up from `opensoft/workBenches`, `./setup.sh` has already
 run both and there is nothing to type at all — **and that is the whole of
 Amendment 11's decision 8(b) as `R-A11-13` corrected it: there is NO second
-installer.** `setup.sh` already runs `openRepoTools --install`, so `restart`,
+installer.** `setup.sh` already runs `openRepoTools --install`, so `lane`,
 `lanes` and the `/restart` skill ride the step that is there rather than a new
 one. What Evidence 5 actually measured was narrower and is worth saying: after a
 machine rebuild the launcher was present and `lane-start` and `lane-end` were

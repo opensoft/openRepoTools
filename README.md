@@ -104,33 +104,33 @@ the record.
 ## The lane tooling
 
 `lane-start`, `lane-end`, `lanes-edit.sh` and `link-estates` are here too, with
-their history, since lane-collision-protocol Amendment 9, and `restart` and
-`lanes` joined them under Amendment 11:
+their history, since lane-collision-protocol Amendment 9, and `lane` and `lanes`
+joined them under Amendments 18 and 11:
 
 ```sh
-lane-start openRepoShape 2       # name the window, register the row, launch
-lane-end openRepoShape-2         # close it, refusing while anything is in flight
-lanes-edit.sh who --lane <lane>  # what that lane holds
-restart openRepoShape-2          # put yourself back in it, asking nothing
+lane                             # the lanes, numbered — pick one and it binds
+lane openRepoShape-2             # straight to that one, asking nothing
 lanes                            # this checkout's lanes, and the next free one
 lanes --all                      # every lane the register and the logs know
+lane-start openRepoShape 2       # name the window, register the row, launch
+lane-end openRepoShape-2         # close it, refusing while anything is in flight
 ```
 
-**`restart` and `lanes` are the two words Amendment 11 adds, and both were asked
-for in one sentence.** Brett Heap, 2026-09-13: *"we need a good simple way to
-restart and list the lanes"*, and *"we should have one cmd to restart lane from
-inside claude session and another from outside in the zsh shell"*. `restart
-<lane>` is the outside one: it reads the lane's own record for its directory and
-its profile, `cd`s there, and relaunches it through the launcher — **no window,
-no record of a window and no guess**, which is what takes a restart from one
-prompt offering the wrong lane to none at all. With no argument it restarts the
-lane this window is named for, and failing that it **lists this checkout's
-lanes and stops** — a listing is output, not a picker. `/restart` is the inside
-half, a skill, because a running session cannot `exec` a launcher over itself.
-`lanes` narrows the same way, on Brett Heap's settlement of the same day
-(*"Narrow inside a checkout"*): inside a checkout it lists **that repository's**
-lanes and ends with the **next free position** and the `lane-start <repo> <n>`
-that takes it, filled in; outside one, or with `--all`, it lists every lane.
+**`lane` is the one word a person needs, and it is Brett Heap's own.**
+2026-09-14, verbatim: *"this is too hard for users. we need simple way to list
+the lanes and then pick one to bind"* — lane-collision-protocol Amendment 18
+Addendum 1. Bare, it prints the lanes NUMBERED — available first, live here
+next with where each one is, bound elsewhere last — and asks ONE question.
+**Available** goes through the launcher, in the lane's own recorded directory
+and under its own recorded profile; **live here** ATTACHES to its window and
+never starts a second process; **bound elsewhere** names where it is bound. With
+no terminal on stdin it lists, suggests and asks nothing. `restart` was that
+first act without the pick and left the PATH in the same breath (Addendum 2,
+*"lane does all the things a user wants"*); `/restart` is the INSIDE half, a
+skill, because a running session cannot `exec` a launcher over itself. `lanes`
+is the same rows as a READ, narrowed inside a checkout on Brett Heap's
+settlement of 2026-09-13 (*"Narrow inside a checkout"*) and ending with the
+**next free position** and the `lane-start <repo> <n>` that takes it, filled in.
 
 They record who is working on what across an estate — the register
 `lanes/LANES.md`, the per-lane object logs, the handoffs — and all of that is
@@ -221,7 +221,7 @@ gh api repos/opensoft/openRepoTools/contents/openRepoTools \
 ```
 
 It places TWELVE files into `~/.local/bin` — `openRepoTools`, `park`, `resume`,
-`status`, `restart`, `lanes`, `lane-handoff`, `lanes-edit.sh`, `lane-start`,
+`status`, `lane`, `lanes`, `lane-handoff`, `lanes-edit.sh`, `lane-start`,
 `lane-end`, `link-estates` and the alias table `repos.tsv` — 755, idempotently: a
 second run prints `already installed … (unchanged)` per file, one whose bytes have
 drifted prints `updated at`, and one whose bytes were right and whose MODE was not
