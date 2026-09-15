@@ -2231,6 +2231,18 @@ a byte is written, because it is one commit and therefore one decision. It also
 refuses a session-record read that failed: *"a read that failed is not 'nothing
 is live'"*.
 
+It refuses six more things for the reason every writer here refuses them — a
+half-written act is worse than no act: a checkout **behind** `origin` or dirty
+in anything but the register; a row whose ` | ` count makes **which text is the
+state cell** unknowable; a lane whose object log would need Amendment 15's
+**case-only rename**, which is a write of its own and not one this commit
+smuggles; an object log that exists here and is **NOT TRACKED**, which is
+somebody's uncommitted work and would land inside this commit under this act's
+message; a lane **named twice**, whose log would take the same line twice in a
+file nothing can correct; and a `--reason` carrying a `|`, a second ` · ` or a
+newline, which is refused as the **argument** it is (capped at 180 characters,
+because the row's own last words go in beside it).
+
 It touches **no file outside the register and the logs**. A retired row records
 that a lane is finished; worktrees, branches and handoffs stay exactly where
 they are.
@@ -2250,7 +2262,11 @@ whole, never a row in neither file.
 
 Nothing reads a row differently for having moved: the listing reads the archive
 beside the register (so `lanes --closed` still shows those rows) and so does
-every reader of the next free position. **Rule 9 holds either way** — a row is
+every reader of the next free position — and a published archive that cannot be
+*rendered* falls back to this checkout's copy and says so, because read as
+absent it would put a retired position back on offer. `add-row` refuses a lane
+name the archive holds, so `lane-start <repo> <n>` cannot reissue one by hand
+either. **Rule 9 holds either way** — a row is
 one `git show` away — so the archive is for a register a person wants shorter,
 and never a requirement.
 
