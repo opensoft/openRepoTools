@@ -293,6 +293,13 @@
 #      lane's object log could not be renamed to the row's own spelling
 #   6  git add / commit / push failed
 #   7  CLAIM-LOST — another lane's claim landed on main first (`claim` only)
+#   9  CLAIM-LOST — issue #30's own dead-lane verdict could not be
+#      reconfirmed before this takeover's push landed: the source lane's own
+#      log moved past its terminal line, a live session on this workstation
+#      now backs it up, or that could not be read at all (`claim` only,
+#      `--force` over a dead lane's hold). NEVER coerced to 7: that code
+#      means a RIVAL's claim landed first, and this is the same lane the
+#      takeover was granted over, alive again rather than beaten to main.
 #   8  no record — `who` found nothing; `lane-objects` has no log file for the
 #      lane; `live-holder` READ this workstation's session records and none of
 #      them holds it; `swapped` found no lane swapped on the workstation;
@@ -7295,7 +7302,6 @@ EOF
 
 claim_rescan_hook() {
   CLAIM_WINNER=""
-  CLAIM_REVIVED=""
   # The pull has just moved `origin/<branch>`, and OUR commit is not on it —
   # so everything this read can see landed before ours, which is the whole
   # test. Flush the cache first: the ref moved a moment ago.
@@ -7311,10 +7317,34 @@ claim_rescan_hook() {
   # age does not run backwards — so this runs only where `CLAIM_SKIP_DEAD` says
   # the skip was issue #30's.
   if [ -n "$CLAIM_SKIP_DEAD" ] && [ -n "$CLAIM_SKIP" ] && ! holder_is_dead "$CLAIM_SKIP"; then
-    note "lane $CLAIM_SKIP is no longer confirmed dead — a live session or a fresher RESUMED record was found before this takeover's push landed"
+    # THREE DIFFERENT ANSWERS, NEVER ONE SENTENCE (Copilot's own "closer
+    # look" on 21b8e82, PR #61): `holder_is_dead` returning false a SECOND
+    # time is not one fact. `HOLDER_LIVE_TERMINAL` set is a CONFIRMED
+    # revival; `HOLDER_TERMINAL_UNKNOWN` set is a read that failed — fail-
+    # closed for ownership, same as the grant itself demanded, but "I could
+    # not check" is not "it came back", and saying so would misreport a read
+    # failure as a fact this file never established; NEITHER set means the
+    # log's own last lane-kind line has moved past ENDED/RETIRED entirely —
+    # a resume in every sense but the word. Distinguished so the note says
+    # which actually happened here.
+    if [ -n "$HOLDER_LIVE_TERMINAL" ]; then
+      note "lane $CLAIM_SKIP is no longer confirmed dead — its own log ends $HOLDER_LIVE_TERMINAL, but a live session on this workstation now backs it up"
+    elif [ -n "$HOLDER_TERMINAL_UNKNOWN" ]; then
+      note "lane $CLAIM_SKIP's dead-lane verdict could not be reconfirmed — this workstation could not read whether a live session backs it up before this takeover's push landed. That is NOT 'still dead', so the takeover is abandoned rather than assumed safe"
+    else
+      note "lane $CLAIM_SKIP is no longer confirmed dead — its own log has moved past the terminal line this takeover was granted on, a resume in every sense but the word"
+    fi
     CLAIM_WINNER="$CLAIM_SKIP"
-    CLAIM_REVIVED=1
-    return 7
+    # A DISTINCT EXIT CODE, NOT A REUSE OF 7 (Copilot's own "closer look" on
+    # 21b8e82, PR #61): 7 is documented, elsewhere and before this PR
+    # (`lanes-edit.sh`'s own exit-code table, `docs/README-lanes.md`), as
+    # CLAIM-LOST — another lane's claim landing on main first — and
+    # automation reading that code for THIS abort would chase a remote race
+    # that never happened. 9 is this file's own public code, unused before
+    # now; the event this writes is still CLAIM-LOST (this attempt did not
+    # succeed, which is what that verb has always meant), but the PROCESS
+    # exit is not the SAME claim as a landed rival's.
+    return 9
   fi
   # CASE-INSENSITIVE ON BOTH EXCLUSIONS (Amendment 15), for the reason `claim`-s
   # own pre-check carries it: these two remove THIS lane and the lane it is
@@ -8548,9 +8578,16 @@ EOF
 
     # 5. lost: Rule 1 says the lane STOPS AND REPORTS. The claim is abandoned,
     #    never queued — Rule 7's queueing is for substrates, which this
-    #    amendment does not touch.
-    if [ "$wrc" = 7 ]; then
-      if [ -n "$CLAIM_REVIVED" ]; then
+    #    amendment does not touch. TWO CAUSES, TWO EXIT CODES (Copilot's own
+    #    "closer look" on 21b8e82, PR #61): 7 is the documented, pre-existing
+    #    CLAIM-LOST — a rival's claim landed on main first; 9 is issue #30's
+    #    own dead-lane verdict failing to reconfirm before this takeover's
+    #    push landed. Both write the same CLAIM-LOST event (this attempt did
+    #    not succeed, in either cause), but automation reading the PROCESS
+    #    exit must be able to tell them apart, so the exit is never coerced
+    #    to 7 for the second.
+    if [ "$wrc" = 7 ] || [ "$wrc" = 9 ]; then
+      if [ "$wrc" = 9 ]; then
         note "TAKEOVER ABANDONED — lane $CLAIM_WINNER is alive again. Rule 1: stop and report; do not author a successor."
         write_event "$lane" CLAIM-LOST "$obj" "→" "lane:$CLAIM_WINNER" "abandoned: $CLAIM_WINNER is no longer dead, takeover withdrawn before landing" "$(utc_now)" "$uuid"
       else
@@ -8558,7 +8595,7 @@ EOF
         write_event "$lane" CLAIM-LOST "$obj" "→" "lane:$CLAIM_WINNER" "abandoned: $CLAIM_WINNER landed its claim first" "$(utc_now)" "$uuid"
       fi
       who_object "$obj" || :
-      exit 7
+      exit "$wrc"
     fi
     [ "$wrc" = 0 ] || exit "$wrc"
 

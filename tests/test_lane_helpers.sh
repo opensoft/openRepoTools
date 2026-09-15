@@ -1644,7 +1644,7 @@ git -C "$CLONE2" commit -q -m "LOG(repoT-1@Eagle): RESUMED"
 git -C "$CLONE2" push -q origin main
 
 run env LANES_LANE=repoT-2 LANES_NO_FETCH=1 "$E" claim "opensoft/repoT#1" --no-github --force
-is   "a dead-lane takeover whose source RESUMES before the push lands aborts, exit 7" "$rc" 7
+is   "a dead-lane takeover whose source RESUMES before the push lands aborts, exit 9 (never 7, a RIVAL's own code)" "$rc" 9
 has  "…naming the lane that is alive again" "$err" "lane repoT-1 is no longer confirmed dead"
 has  "…and citing Rule 1 rather than completing the takeover" "$err" "stop and report; do not author a successor"
 has  "…writing CLAIM-LOST in the taker's own log" "$(cat "$LOGD/repoT-2.md" 2>/dev/null)" "CLAIM-LOST — lane repoT-2, session "

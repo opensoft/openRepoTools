@@ -1084,6 +1084,7 @@ else.
 | 5 | an edit moved more than one line and was refused |
 | 6 | `git add` / `commit` / `push` failed |
 | 7 | `CLAIM-LOST` — another lane's claim landed first (`claim` only) |
+| 9 | `CLAIM-LOST` — issue #30's own dead-lane verdict could not be reconfirmed before a `--force` takeover's push landed: the source lane resumed, a live session now backs it up, or that could not be read at all (`claim` only). Never 7 — that code is a RIVAL's claim, and this is the same lane the takeover was granted over |
 | 8 | no record — and no other meaning |
 | 64 | `swapped`'s own usage error — never the dispatcher's 2 |
 
