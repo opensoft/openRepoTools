@@ -104,6 +104,34 @@
 #   the hook's JSON, prints ONE block, and ALWAYS exits 0 — a hook that fails
 #   is a hook that breaks the session it was meant to orient.
 #
+# AMENDMENT 17 — the handoff is the swap, and the record names the agent
+#   lanes-edit.sh lane-agent      <lane>    # the last record's `agent <name>`
+#   lanes-edit.sh lane-transcript <lane>    # its `transcript <id|none>`
+#   lanes-edit.sh lane-last       <lane>    # its LAST lane-kind line, as
+#                                           # <verb><TAB><utc><TAB><session><TAB><payload>
+#   lanes-edit.sh workspace-root            # the workspace repository's path
+#   lanes-edit.sh log PAUSED … --utc <UTC>  # date a LATE record by its own field
+#
+#   Clause (b) gives the `PAUSED` payload two sub-fields beside Amendment
+#   11(c)'s `window`, `dir` and `profile`: `agent <name>` — `claude`, `codex`,
+#   or the launcher's name for whatever wrote the line, a manifest key (letters,
+#   digits, `.`, `_`, `-`) — and `transcript <id|none>`, the agent's own
+#   resumable id where it has one. THE WRITER VALIDATES BOTH (`pause_subfields_check`,
+#   called from `write_event`) because the log is append-only: a malformed
+#   sub-field there is malformed for ever, and `lane-start --agent` launches on
+#   what it reads. `swapped` prints them as its sixth and seventh fields, after
+#   the five it already had, and a record written before this amendment carries
+#   neither — which is EMPTY in that output and 8 from the two reads, never a
+#   guess (Amendment 7(i)'s cutover rule).
+#
+#   `--utc <UTC>` IS FOR THE LATE RECORD AND NOTHING ELSE (adoption act 7): the
+#   `PAUSED` a swap never left, written after the fact and dated by the moment
+#   the old session ENDED rather than by the clock of the shell writing it. It
+#   changes which instant the line NAMES and never where the line goes: the log
+#   is append-only and FILE ORDER is what every state read means by "last", so
+#   `lane-handoff --late` refuses to write one that would land after the
+#   relaunch's `RESUMED` — a lane that is running must never read as paused.
+#
 #   `--home owner/repo` is an option of all FIVE of `claim`, `release`, `who`,
 #   `log` and `lane-end`, for a lane whose log has no STARTED line. All five
 #   resolve it AFTER the fetch (R30), because the STARTED line that refuses it
@@ -3354,6 +3382,10 @@ write_event() {
       esac
       die "an event's free text may not begin with '→' or '←': those arrows introduce the PAYLOAD, which is its own argument and comes BEFORE the free text. Quoted into the text slot it is written after the ' — ', where no reader and no parser looks for it — a LANDED that way loses its merge sha from both the log and the register's Rule 6 line, in two files nothing rewrites. Write it positionally, e.g. 'lanes-edit.sh log LANDED <object> → <sha>'; for this call: $we_hint" 2 ;;
   esac
+  # AMENDMENT 17(b) — the two sub-fields, checked in the writer for the same
+  # reason the session field is: from any caller, before the lock, before the
+  # log file is created, and on a log no later line can correct.
+  pause_subfields_check "$we_pay"
   we_line="$(event_line "$we_verb" "$we_lane" "$we_uuid" "$we_utc" "$we_obj" "$we_ref" "$we_pay" "$we_txt")"
   we_paths=("$(log_path_for "$we_lane")")
   we_r6=""
@@ -3961,6 +3993,103 @@ payload_subfield() {   # <payload> <name> [all]
     }'
 }
 
+# ---------------------------------------- AMENDMENT 17(b): THE TWO SUB-FIELDS
+#
+# `agent <name>` and `transcript <id|none>`, VALIDATED BY THE WRITER. Amendment
+# 17(b) gives the `PAUSED` payload both; nothing else in this file could check
+# them, because a payload is free text to `write_event` — and this log is
+# APPEND-ONLY, so a sub-field written wrong is wrong for ever and no later line
+# corrects it. The check is the same shape `valid_uuid` gives the session field
+# under clause (e): the WRITER is the gate, from any caller.
+#
+# WHAT EACH ADMITS, and why the pattern is the rule rather than a list:
+#   agent       A MANIFEST KEY — letters, digits, `.`, `_`, `-`. It is what
+#               `lane-start --agent <name>` reads back to choose a launcher, so
+#               a value carrying a space or a `;` is a value that would come
+#               back as two sub-fields or as an argument nobody meant. The
+#               pattern is also how this sub-field gets SPEC rev 6 §5's `; `
+#               rule without a token of its own — the same argument clause (c)'s
+#               `profile` takes.
+#   transcript  THE AGENT'S OWN RESUMABLE ID, or the literal `none` — which is
+#               an ANSWER ("this agent has no resumable id") and not a gap.
+#               Claude's is a uuid; another agent's is whatever that agent
+#               prints, so the shape is the same manifest key rather than
+#               `valid_uuid`, which would refuse every agent but one.
+#
+# A PAYLOAD CARRYING NEITHER IS VALID AND STAYS VALID. Every record written
+# before this amendment carries neither, and Amendment 7(i)'s cutover rule is
+# that a reader finding none says so rather than assuming one. The check fires
+# only on a sub-field that is THERE.
+# THE TWO ARE WRITTEN TOGETHER OR NOT AT ALL, AND AN EMPTY ONE IS NOT AN
+# ABSENT ONE (Copilot rounds 1 and 2 on openRepoTools#47). The first shape of
+# this gate entered on either sub-field and then accepted each empty result
+# independently, which let a HALF record through: `agent codex` with no
+# transcript, or `transcript <id>` with no agent, both of which `lane-start`
+# reads one field of and defaults the other — launching Claude on a codex id,
+# or codex on none. And a sub-field written EMPTY (`; agent ; …`) parsed
+# identically to one that was never there, so a malformed line was indexed as a
+# pre-amendment one for ever, in a log nothing rewrites.
+#
+# PRESENCE IS READ OFF THE SUB-FIELDS, never off the whole line: `dir
+# /srv/agent-work` carries the letters and is not the field.
+pause_subfields_check() {   # <payload>
+  psc_pay="${1-}"
+  case "$psc_pay" in *agent*|*transcript*) : ;; *) return 0 ;; esac
+  psc_has_a=0; psc_has_t=0
+  psc_rest="$psc_pay"
+  while : ; do
+    psc_one="${psc_rest%%; *}"
+    case "$psc_one" in
+      agent | 'agent '*)           psc_has_a=1 ;;
+      transcript | 'transcript '*) psc_has_t=1 ;;
+    esac
+    case "$psc_rest" in
+      *'; '*) psc_rest="${psc_rest#*; }" ;;
+      *) break ;;
+    esac
+  done
+  # A PAYLOAD CARRYING NEITHER IS VALID AND STAYS VALID: every record written
+  # before this amendment carries neither, and Amendment 7(i)'s cutover rule is
+  # that a reader finding none says so rather than assuming one.
+  if [ "$psc_has_a" = 0 ] && [ "$psc_has_t" = 0 ]; then return 0; fi
+  # EACH FIELD THAT IS THERE IS READ WITH `all`, WHICH IS THE WHOLE SUB-FIELD
+  # AND NOT ITS FIRST REF. The default mode ends a value at its first space —
+  # the rule `dir` and `profile` are read by — so `agent not a key` would come
+  # back as `not`, a perfectly good manifest key, and the check would pass the
+  # very value it exists to refuse. A gate reads what was written, never what a
+  # reader would make of it. THE VALUE IS JUDGED BEFORE THE PAIR, so a payload
+  # that is both malformed and half-written is refused for the malformation,
+  # which is the thing the writer of it can see in what they typed.
+  if [ "$psc_has_a" = 1 ]; then
+    psc_a="$(payload_subfield "$psc_pay" agent all)"
+    case "$psc_a" in
+      '')
+        die "the record's \`agent\` sub-field is THERE and EMPTY, which is not the same as absent: no reader can tell it from a pre-amendment record, so every one of them would default to \`claude\` for ever (Amendment 7(i)'s cutover rule is about a field that was never written, not one written blank). Write the agent, or write neither sub-field. Nothing was written" 2 ;;
+      *[!A-Za-z0-9._-]*)
+        die "the record's \`agent\` sub-field is a manifest key — letters, digits, '.', '_', '-' — and '$psc_a' is not one (Amendment 17(b)). Nothing was written: this log is append-only, and \`lane-start --agent\` launches on what it reads back from this field" 2 ;;
+    esac
+  fi
+  if [ "$psc_has_t" = 1 ]; then
+    psc_t="$(payload_subfield "$psc_pay" transcript all)"
+    case "$psc_t" in
+      '')
+        die "the record's \`transcript\` sub-field is THERE and EMPTY. The word for an agent with no resumable id is \`none\`, which is an ANSWER; blank is a gap no reader can tell from a pre-amendment record. Nothing was written" 2 ;;
+      *[!A-Za-z0-9._-]*)
+        die "the record's \`transcript\` sub-field is the agent's own resumable id, or the word 'none' — '$psc_t' is neither (Amendment 17(b)). Nothing was written" 2 ;;
+    esac
+  fi
+  # AND THE PAIR. `lane-start` reads ONE of these fields to choose a launcher
+  # and the OTHER to choose what it hands that launcher, so a record carrying
+  # one of them makes it default the other: Claude launched on a codex id, or
+  # codex launched on none, out of a line nothing rewrites.
+  if [ "$psc_has_a" != "$psc_has_t" ]; then
+    psc_only=transcript
+    [ "$psc_has_a" = 1 ] && psc_only=agent
+    die "Amendment 17(b)'s two sub-fields are written TOGETHER or not at all, and this payload carries only \`$psc_only\`. A half record is worse than none: \`lane-start\` reads the field that is there and DEFAULTS the one that is not, so it would launch the wrong agent, or the right one on an id that is not its. Write both (\`agent <name>; transcript <id|none>\`), or neither. Nothing was written — this log is append-only" 2
+  fi
+  return 0
+}
+
 # The <name> sub-field of the lane's LAST lane-kind line that carries one, IN
 # FILE ORDER — which is the order every other state read in this file uses, and
 # for the reason `swapped_lanes` states below: a lane's log is append-only and
@@ -4201,7 +4330,12 @@ window_lane() {   # <workstation> <ref>
     wl_now_id="$(tmux_window_field "$wl_ref" '#{window_id}' 2>/dev/null || :)"
     [ -n "$wl_now_id" ] || return 8        # the ref names no window HERE, now
   fi
-  while IFS="$US" read -r wl_l wl_u wl_w wl_d wl_p wl_key; do
+  # THE FIELD LIST IS `swapped_candidates`' OWN, IN FULL, and it gains Amendment
+  # 17(b)'s two: `read` puts every field it has no variable for into the LAST
+  # one, so a short list would have quietly moved the pickaxe key — which is not
+  # read here — into `wl_p` and the agent into it too. Named in full, the reader
+  # and the writer of this row cannot drift apart.
+  while IFS="$US" read -r wl_l wl_u wl_w wl_d wl_p wl_a wl_t wl_key; do
     [ -n "${wl_l:-}" ] || continue
     [ -n "${wl_w:-}" ] && [ "$wl_w" != unknown ] || continue
     # The sub-field's refs: `<session>:<index>` first, `<@id>` second.
@@ -4852,7 +4986,16 @@ EOF
 }
 
 # swapped_lanes [<workstation>] — one row per swapped lane, tab-separated:
-#   <lane>	<UTC>	<window>
+#   <lane>	<UTC>	<window>	<dir>	<profile>	<agent>	<transcript>
+#
+# THE LAST TWO ARE AMENDMENT 17(b)'s, and they are added at the END for the
+# reason the fourth and fifth were: the FIRST FIELD BEFORE THE FIRST TAB is the
+# contract every reader of this output takes (the launcher, the `handoff`
+# skill's step 1, `lane-start`'s directory rung 2 and `restart`'s, each with the
+# same comment saying so), and each of the others is read by its own index. A
+# record written before an amendment carries its fields EMPTY rather than
+# guessed — Amendment 7(i)'s cutover rule, which is what makes a sixth and a
+# seventh safe to add at all.
 #
 # WHICH LINE IS A LANE'S "LAST" IS FILE ORDER (R14), like every other state read
 # here: a lane's log is append-only and single-writer, so a line further down
@@ -4896,7 +5039,7 @@ swapped_candidates() {
       for (l in mp) {
         if (verb[l] != "PAUSED") continue
         if (substr(pay[l], 1, 5) != "swap;") continue
-        w = ""; wst = ""; d = ""; pf = ""
+        w = ""; wst = ""; d = ""; pf = ""; ag = ""; tr = ""
         n = split(pay[l], sf, "; ")
         for (i = 1; i <= n; i++) {
           if (substr(sf[i], 1,  7) == "window ")      w   = substr(sf[i], 8)
@@ -4907,20 +5050,34 @@ swapped_candidates() {
           # are stripped here — one unquoter, in the one parser of this line.
           if (substr(sf[i], 1,  4) == "dir ")         d   = substr(sf[i], 5)
           if (substr(sf[i], 1,  8) == "profile ")     pf  = substr(sf[i], 9)
+          # AMENDMENT 17(b): two more, and a record written before that
+          # amendment carries neither — which is EMPTY here, never a guess
+          # (the cutover rule of Amendment 7(i); no apostrophe in this comment,
+          # because this awk program is single-quoted in the shell).
+          if (substr(sf[i], 1,  6) == "agent ")       ag  = substr(sf[i], 7)
+          if (substr(sf[i], 1, 11) == "transcript ")  tr  = substr(sf[i], 12)
         }
         sub(/[ \t]+$/, "", w); sub(/[ \t]+$/, "", wst); sub(/\..*$/, "", wst)
         sub(/^[ \t]+/, "", d);  sub(/[ \t]+$/, "", d)
         sub(/^[ \t]+/, "", pf); sub(/[ \t]+$/, "", pf)
+        sub(/^[ \t]+/, "", ag); sub(/[ \t]+$/, "", ag)
+        sub(/^[ \t]+/, "", tr); sub(/[ \t]+$/, "", tr)
         if (substr(d, 1, 1) == "\"") { q = index(substr(d, 2), "\""); if (q > 0) d = substr(d, 2, q - 1) }
         else                          { sub(/ .*$/, "", d) }
         sub(/ .*$/, "", pf)
+        sub(/ .*$/, "", ag)
+        sub(/ .*$/, "", tr)
         if (tolower(wst) != want) continue
-        # The SIXTH field is the PICKAXE KEY: the head of the line as it was
+        # The LAST field is the PICKAXE KEY: the head of the line as it was
         # written, up to and including its object, which is unique to it and
         # which `git log -S` can find without a regex.
-        printf "%s%c%s%c%s%c%s%c%s%c%s — lane %s, session %s@%s, %s, %s\n",
+        # `nm[l]` AND NEVER `l` (Amendment 15, `8345d2f`): the key is the lane
+        # folded to one case and `nm` is the spelling the register row carries,
+        # which is the one a caller of this output hands back to a read.
+        printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s — lane %s, session %s@%s, %s, %s\n",
           nm[l], 31, utc[l], 31, (w == "" ? "unknown" : w), 31,
           (d == "" ? "" : d), 31, (pf == "" ? "" : pf), 31,
+          (ag == "" ? "" : ag), 31, (tr == "" ? "" : tr), 31,
           verb[l], nm[l], uuid[l], ws[l], utc[l], obj[l]
       }
     }'
@@ -4929,7 +5086,7 @@ swapped_candidates() {
 swapped_lanes() {
   sw_rows="$(swapped_candidates "${1:-$WS}")"
   [ -n "$sw_rows" ] || return 0
-  while IFS="$US" read -r sw_l sw_u sw_w sw_d sw_p sw_key; do
+  while IFS="$US" read -r sw_l sw_u sw_w sw_d sw_p sw_a sw_t sw_key; do
     [ -n "${sw_l:-}" ] || continue
     sw_rank=999999999
     if have_remote_ref; then
@@ -4939,7 +5096,8 @@ swapped_lanes() {
         case "$sw_c" in ''|*[!0-9]*) : ;; *) sw_rank="$sw_c" ;; esac
       fi
     fi
-    printf '%09d%s%s%s%s%s%s%s%s%s%s\n' "$sw_rank" "$US" "$sw_l" "$US" "$sw_u" "$US" "$sw_w" "$US" "${sw_d:-}" "$US" "${sw_p:-}"
+    printf '%09d%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' "$sw_rank" "$US" "$sw_l" "$US" "$sw_u" "$US" "$sw_w" \
+      "$US" "${sw_d:-}" "$US" "${sw_p:-}" "$US" "${sw_a:-}" "$US" "${sw_t:-}"
   done <<EOF
 $sw_rows
 EOF
@@ -6769,10 +6927,21 @@ case "$cmd" in
     lane="${LANES_LANE:-}"
     [ -n "$lane" ] || die "log needs the lane: LANES_LANE=<lane> lanes-edit.sh log <VERB> <object> …" 2
     check_lane_name "$lane"
-    verb=""; obj_raw=""; ref=""; payload=""; text=""; home_override=""
+    verb=""; obj_raw=""; ref=""; payload=""; text=""; home_override=""; utc_override=""
     while [ $# -gt 0 ]; do
       case "$1" in
         --no-github) NO_GITHUB=1; shift ;;
+        # AMENDMENT 17, adoption act 7 — THE LATE RECORD'S OWN DATE, AND
+        # NOTHING ELSE USES IT. A `PAUSED` written after the fact for a swap
+        # that never ran names the moment the OLD SESSION ENDED, not the moment
+        # the shell writing it ran: `lane-handoff --late --at <UTC>` is the one
+        # caller, and its own rule is that the line may only be written where it
+        # is still the lane's last one (this log is append-only and FILE ORDER
+        # is what every state read means by "last"). The shape is checked here
+        # because a UTC field this parser cannot read is a line no reader can
+        # date — and the log is never rewritten.
+        --utc)       utc_override="${2-}"; [ -n "$utc_override" ] || die "--utc needs a UTC instant" 2; shift 2 ;;
+        --utc=*)     utc_override="${1#--utc=}"; [ -n "$utc_override" ] || die "--utc needs a UTC instant" 2; shift ;;
         --home)      home_override="${2-}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift 2 ;;
         --home=*)    home_override="${1#--home=}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift ;;
         --text)      text="${2-}"; shift 2 ;;
@@ -6824,7 +6993,24 @@ case "$cmd" in
     else
       ! is_lane_object "$obj" || die "'$verb' is an object verb: lane:<name> is not one of its objects" 2
     fi
-    write_event "$lane" "$verb" "$obj" "$ref" "$payload" "$text" "$(utc_now)" "$(session_for "$lane")"
+    log_utc="$(utc_now)"
+    if [ -n "$utc_override" ]; then
+      # `--utc` IS THE LATE `PAUSED`'s SEAM AND HAS NO OTHER CALLER (Amendment
+      # 17, adoption act 7; Copilot round 2 on openRepoTools#47). The parser
+      # above takes the option for every verb and only its SHAPE was checked
+      # here, so a `STARTED` or a `RESUMED` could be dated by hand — and this
+      # log is append-only with FILE ORDER deciding which line is a lane's
+      # last, so a hand-dated line changes what every state read reports about
+      # a lane that is running. The one line that legitimately carries its own
+      # date is the record a swap never left, and `lane-handoff --late` has its
+      # own rule for when even that may be written.
+      [ "$verb" = PAUSED ] || die "--utc dates the LATE PAUSED that a swap never left (Amendment 17, adoption act 7) and nothing else — '$verb' is not one. Every other line is dated by the clock of the act that wrote it, because this log is append-only and a line dated by hand is a line whose order no reader can trust. Write it without --utc." 2
+      case "$utc_override" in
+        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) log_utc="$utc_override" ;;
+        *) die "--utc takes a UTC instant spelled as this log spells it, YYYY-MM-DDTHH:MM:SSZ — '$utc_override' is not one, and a line nothing can date is a line no reader can order" 2 ;;
+      esac
+    fi
+    write_event "$lane" "$verb" "$obj" "$ref" "$payload" "$text" "$log_utc" "$(session_for "$lane")"
     ;;
 
   claim)
@@ -7059,9 +7245,13 @@ EOF
       esac
     done
     log_sync
+    # SEVEN FIELDS SINCE AMENDMENT 17(b), and the `NF >= 4` gate is unchanged:
+    # it is the shape test for a row that got as far as carrying a window, not a
+    # count of the fields a row has. `$7` and `$8` are the agent and its
+    # transcript, EMPTY for every record written before that amendment.
     sw_out="$(swapped_lanes "${sw_arg:-$WS}" \
               | LC_ALL=C sort -t"$US" -k1,1 -k3,3r -k2,2 \
-              | awk -v sep="$US" 'BEGIN { FS = sep; OFS = "\t" } NF >= 4 { print $2, $3, $4, $5, $6 }')"
+              | awk -v sep="$US" 'BEGIN { FS = sep; OFS = "\t" } NF >= 4 { print $2, $3, $4, $5, $6, $7, $8 }')"
     if [ -z "$sw_out" ]; then
       note "no lane on ${sw_arg:-$WS} is swapped — no lane's LAST lane-kind line is a PAUSED whose payload begins 'swap;' and names that workstation"
       exit 8
@@ -7389,6 +7579,93 @@ EOF
     printf '%s\n' "$lp_out"
     ;;
 
+  # ------------------------------------------- AMENDMENT 17(b): the two reads
+  #
+  # `lane-agent` and `lane-transcript` are `lane-dir`'s siblings, one sub-field
+  # along and through the same `lane_payload_field`, so the four cannot disagree
+  # about which line is a lane's last. ONE CALLER EACH TODAY and that is the
+  # point of the read existing rather than being inlined: `lane-start` reads the
+  # agent to know WHICH LAUNCHER to use with no `--agent`, and reads the
+  # transcript to know the id to append to the row's session cell in that
+  # agent's own spelling (`Codex <id>`), which is the one id a launch of a
+  # non-Claude agent has in hand.
+  #
+  # 8 IS THE ANSWER FOR EVERY RECORD WRITTEN BEFORE THIS AMENDMENT, and it is
+  # not a failure: Amendment 7(i) cuts each lane over at its own next handoff,
+  # nothing is backfilled, and `lane-start`'s default of `claude` carries it
+  # until then — which is what it has always done.
+  lane-agent)
+    lane="${1-}"; [ -n "$lane" ] || die "usage: lane-agent <lane>" 64
+    [ "$#" -le 1 ] || die "lane-agent takes one lane: lane-agent <lane>" 64
+    check_lane_name "$lane"
+    log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15: one name under any case
+    la_out="$(lane_payload_field "$lane" agent)"; la_rc=$?
+    case "$la_rc" in
+      0) : ;;
+      8) exit 8 ;;
+      *) die "lane-agent could not read lane $lane's log (exit $la_rc). That is NOT 'this lane's record names no agent', and a caller that read it that way would launch the default agent over a lane another one paused (Amendment 7(d))." 1 ;;
+    esac
+    [ -n "$la_out" ] || exit 8
+    printf '%s\n' "$la_out"
+    ;;
+
+  lane-transcript)
+    lane="${1-}"; [ -n "$lane" ] || die "usage: lane-transcript <lane>" 64
+    [ "$#" -le 1 ] || die "lane-transcript takes one lane: lane-transcript <lane>" 64
+    check_lane_name "$lane"
+    log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15: one name under any case
+    lt_out="$(lane_payload_field "$lane" transcript)"; lt_rc=$?
+    case "$lt_rc" in
+      0) : ;;
+      8) exit 8 ;;
+      *) die "lane-transcript could not read lane $lane's log (exit $lt_rc). That is NOT 'this lane's record names no transcript' (Amendment 7(d))." 1 ;;
+    esac
+    [ -n "$lt_out" ] || exit 8
+    printf '%s\n' "$lt_out"
+    ;;
+
+  # THE LANE'S LAST LANE-KIND LINE, in FILE ORDER — `<verb><TAB><utc><TAB><session><TAB><payload>`.
+  # One caller: `lane-handoff --late`, which may only write the record a swap
+  # never left where that line is still a `STARTED` or a `RESUMED` older than
+  # the instant the late line claims. This log is APPEND-ONLY and file order is
+  # what every state read means by "last", so a `PAUSED` appended after the
+  # relaunch's `RESUMED` would make a lane that is RUNNING read as paused — and
+  # this read is how that is refused instead of written.
+  #
+  # IT IS THE LANE'S OWN LINES AND NOT A FORK'S, which is `lane_row_facts`' rule
+  # one function along (decision 8(c): a fork is never the lane).
+  lane-last)
+    lane="${1-}"; [ -n "$lane" ] || die "usage: lane-last <lane>" 64
+    [ "$#" -le 1 ] || die "lane-last takes one lane: lane-last <lane>" 64
+    check_lane_name "$lane"
+    log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15: one name under any case
+    ll_lines=""; ll_rc=0
+    ll_lines="$(lane_log_events "$lane")" || ll_rc=$?
+    [ "$ll_rc" = 0 ] || die "lane-last could not read lane $lane's log (exit $ll_rc). That is NOT 'this lane has no lane-kind line' (Amendment 7(d))." 1
+    ll_out="$(printf '%s\n' "$ll_lines" | awk -F"$US" -v OFS='	' '
+      $3 == "STARTED" || $3 == "PAUSED" || $3 == "RESUMED" || $3 == "ENDED" || $3 == "RETIRED" {
+        if (substr($8, 1, 5) == "fork ") next
+        v = $3; u = $1; s = $4; p = $8
+      }
+      END { if (v != "") print v, u, s, p }')"
+    [ -n "$ll_out" ] || exit 8
+    printf '%s\n' "$ll_out"
+    ;;
+
+  # THE WORKSPACE REPOSITORY'S PATH — the one resolver, printed. Amendment 9(a)
+  # is explicit that a second way to find one thing is a second answer, and
+  # `lane-handoff` needs this path to resolve the handoff cell of a row whose
+  # spelling is repository-relative. Every other reader of it is in this file.
+  workspace-root)
+    [ "$#" = 0 ] || die "workspace-root takes no arguments" 64
+    wr_out="$(lanes_workspace_root 2>/dev/null || :)"
+    [ -n "$wr_out" ] || die "$(lanes_workspace_why)" 1
+    printf '%s\n' "$wr_out"
+    ;;
+
   # The lane's RESUME TARGET, read robustly (Amendment 11 clause (d) rules 3
   # and 4): the last uuid in the published row's session cell WHATEVER SHAPE
   # THAT CELL IS IN, and failing that the session field of the lane's last
@@ -7701,6 +7978,6 @@ EOF
     ;;
 
   *)
-    die "unknown subcommand '$cmd' (verify-row|append-row-status|replace-in-row|append-session-id|append-line|add-row|commit|log|claim|release|who|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|session-lane|window-lane|lane-dir|lane-profile|last-session|forks|workstation|fetch-age|lanes|sibling-filter|resolve-repo|lane-objects|register-row|canon-lane|resolve-home)" 2
+    die "unknown subcommand '$cmd' (verify-row|append-row-status|replace-in-row|append-session-id|append-line|add-row|commit|log|claim|release|who|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|workstation|fetch-age|lanes|sibling-filter|resolve-repo|lane-objects|register-row|canon-lane|resolve-home)" 2
     ;;
 esac

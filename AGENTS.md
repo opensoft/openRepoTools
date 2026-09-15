@@ -3,7 +3,7 @@
 Three estate commands, `park`, `resume` and `status`; the lane tooling
 `lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates`, which came here
 with their history under lane-collision-protocol Amendment 9; and the
-`openRepoTools` that places all eleven files and creates the workspace they read.
+`openRepoTools` that places all twelve files and creates the workspace they read.
 **The verbs add no mechanics.**
 They find the estate and run its own `make park` / `make resume`, which run
 the Speckit git extension's scripts — one implementation, ruled 2026-09-09
@@ -208,8 +208,45 @@ Three rules, and none of them is negotiable:
 
 ```sh
 git submodule update --init upstream/openRepoShape
-python3 -m pytest tests -q
+tests/run.sh                      # the suite, serialized — pass any pytest argument
 ```
+
+**`tests/run.sh` IS HOW THIS SUITE IS RUN, and `python3 -m pytest tests -q` by
+hand is the thing it exists to stop.** The run is minutes of bash and hundreds
+of `git` processes, and several lanes build in sibling worktrees of one
+checkout: the wrapper waits for any live run, takes
+`${TMPDIR:-/tmp}/openrepotools-pytest.lock` (`flock` where there is one, a
+`mkdir` lock on macOS, which has none), waits again inside it, then runs
+`python3 -m pytest tests -q "$@"`. Every lane on one workstation must name the
+SAME lock file or there is no lock, which is the whole reason the path is
+written here as well as in the file.
+
+Two measured defects on 2026-09-14 (opensoft/openRepoTools#51), both of them
+inside a guard that had been copied into four briefs:
+
+```sh
+while pgrep -af 'python3 -m pytest' | grep -v pgrep >/dev/null; do sleep 20; done
+```
+
+It NEVER WAITED — under the harness `grep` is a shell function whose status is 1
+when its stdout is `/dev/null`, even where it matched, so four suites ran at
+once — and the pattern is unanchored, so it also matches the guard's own command
+line. Read `command grep` wherever an exit status matters. A poll ALONE is the
+second defect: every waiter starts the instant the run it watched ends, which is
+the same collision one step later. Anchored, split so it cannot match itself,
+and locked:
+
+```sh
+pat='^python3 -m pyt'"est"                       # split so it cannot match itself
+while [ "$(pgrep -f "$pat" | awk 'END { print NR + 0 }')" -gt 0 ]; do sleep 20; done
+flock "${TMPDIR:-/tmp}/openrepotools-pytest.lock" python3 -m pytest tests -q
+```
+
+`awk` AND NOT `pgrep -fc`, which is what `tests/run.sh` does and for the reason
+it gives: `-c` is not in every `pgrep` this repository runs under, and the
+count — never `pgrep`'s exit status — is what decides. The wrapper is the
+canonical implementation of this guard; the lines above are it in one place for
+a person with no checkout in front of them.
 
 `tests/test_lane_helpers.sh` is 122 KB of bash that arrived with the move;
 `tests/test_lane_helpers_suite.py` is what makes `pytest` run it, so it is one

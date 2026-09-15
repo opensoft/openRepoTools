@@ -75,6 +75,14 @@
 #                    the window name or a flag (Amendment 8)
 #   --yes            answer that question yes without asking, for a caller that
 #                    has already asked
+#   --agent <name>   WHICH AGENT resumes this lane (Amendment 17(c)). Default:
+#                    the agent of the lane's last `PAUSED` record, else
+#                    `claude`. `claude` with its transcript here resumes it by
+#                    id exactly as Amendment 6 has always done; every other
+#                    case launches the named agent with the handoff's TOP BLOCK
+#                    as its first prompt. The table is `claude` and `codex`; a
+#                    name it does not carry is a refusal naming the two, never a
+#                    guessed argv
 #   -h, --help
 #   --               everything after it is passed through to claude
 #
@@ -252,6 +260,13 @@
 #   LANES_GIT            the git binary THOSE calls use, so a test can hand them
 #                        a git that hangs without shadowing git for the script
 #   LANES_NO_GIT=1       write the handoff's stamp but commit nothing
+#   LANE_START_FRESH=1   a NEW session of this lane's agent, started with the
+#                        top block of the handoff the row names as its first
+#                        prompt — which is what a context clear IS. It is the
+#                        one seam `/ctx` uses (`lane-handoff --restart` respawns
+#                        the lane's own pane with it set, Amendment 17(f)), and
+#                        with it unset this command behaves exactly as it did
+#                        before Amendment 17
 #
 # It spells no absolute path of its own. Since Amendment 9(a) the register is
 # found through `$AGENT_PROTOCOL_ROOT/workspace.yaml` rather than beside this
@@ -547,11 +562,48 @@ step() { printf '%s: %s\n' "$prog" "$*" >&2; }
 plan() { printf '%s: PLAN %s\n' "$prog" "$*" >&2; }
 die()  { printf '%s: %s\n' "$prog" "$1" >&2; exit "${2:-1}"; }
 usage() { sed -n -e '1,2d' -e '/^#/!q' -e 's/^# \{0,1\}//' -e p "$RESOLVED"; }
-quoted() { printf '%q ' "$@" | sed 's/ $//'; }
+# EVERY ARGUMENT AS ONE SHELL WORD, WITHOUT `printf %q` AND WITHOUT A PIPE —
+# measured on the macOS job at `db206db` and `ac0c697`, where three cases of
+# this branch's own went red and no other platform could see it. One line, two
+# defects:
+#
+#   * `printf '%q '` RENDERS DIFFERENTLY UNDER BASH 3.2, which is what Apple
+#     ships and what that job runs (`/bin/bash` 3.2.57). Bash 4.4 and later
+#     give a multi-line argument back as `$'…\n…'` — one readable, runnable
+#     word; 3.2 has no such form and escapes every space and every byte of
+#     every multi-byte character with a backslash of its own. The one caller
+#     that passes a multi-line argument is the `--no-launch` print of a launch
+#     carrying the handoff's top block as its first prompt (Amendment 17(c)),
+#     and it got back neither a readable line nor a runnable one.
+#   * AND THE PIPE THROUGH `sed` MADE THAT FATAL RATHER THAN UGLY. Under
+#     `set -o pipefail` this function's status IS the pipeline's, and BSD `sed`
+#     in a UTF-8 locale (`LC_ALL=en_US.UTF-8` on that runner) refuses bytes
+#     that are not a valid sequence — `RE error: illegal byte sequence` — which
+#     is what 3.2's `%q` makes of the em dash every one of these documents is
+#     written with. `quoted` is a BARE command in the `--no-launch` branch, so
+#     `set -e` ended the command there: exit 1, and an empty stdout.
+#
+# So the quoting is this file's own, and it is the POSIX one every shell reads
+# the same way: a word of safe characters bare, anything else in single quotes
+# with its own single quotes spelled `'\''`. A newline inside single quotes IS
+# a newline, so the line stays readable as well as runnable, on either bash.
+quoted() {
+  q_sep=""
+  for q_a in "$@"; do
+    case "$q_a" in
+      '' | *[!A-Za-z0-9._/:=@%+,-]*)
+        printf "%s'%s'" "$q_sep" "${q_a//\'/\'\\\'\'}" ;;
+      *) printf '%s%s' "$q_sep" "$q_a" ;;
+    esac
+    q_sep=' '
+  done
+  return 0
+}
 
 # ------------------------------------------------------------------ arguments
 
 dry_run=0; no_launch=0; estate=""; dir_override=""; confirm=0; take_yes=0
+agent_flag=""
 positional=(); pass=()
 
 while [ $# -gt 0 ]; do
@@ -560,6 +612,14 @@ while [ $# -gt 0 ]; do
     --no-launch) no_launch=1; shift ;;
     --confirm)   confirm=1; shift ;;
     --yes)       take_yes=1; shift ;;
+    # AMENDMENT 17(c) — RESUME THIS LANE FROM ANY AGENT THAT CAN READ IT. A
+    # lane's state is model-neutral: the register row, the object log, the
+    # handoff with its Rule 3 resume prompt, the worktrees and branches. The
+    # transcript is ONE agent's convenience, and until this flag the only door
+    # into a lane launched `claude` and nothing else. Both spellings refuse an
+    # empty value, for the reason `--dir` states above.
+    --agent)     agent_flag="${2-}"; [ -n "$agent_flag" ] || die "--agent needs a name" 2; shift 2 ;;
+    --agent=*)   agent_flag="${1#--agent=}"; [ -n "$agent_flag" ] || die "--agent needs a name" 2; shift ;;
     # THE TWO SPELLINGS OF ONE FLAG GIVE ONE ANSWER, and these two did not
     # (#26, the review of `c3ebcfe`, `lane-start:707`). `--dir ""` refuses;
     # `--dir=` set the variable to nothing and fell through as if the operator
@@ -1721,6 +1781,235 @@ transcript_dirs() {
   [ "$DIR_REAL" = "$DIR" ] || printf '%s\n' "$PROJECTS_STATE/$(sanitize "$DIR_REAL")"
 }
 
+# ===================== AMENDMENT 17, adoption act 6: THE TRANSCRIPT FOLLOWS
+# ===================== THE LANE
+#
+# `transcript_dirs` above looks under THIS PROFILE's projects directory and
+# nowhere else, so a lane restarted under a NEW PROFILE after a usage limit
+# never resumed its conversation: it fell to the title fallback or to a new
+# session primed by a handoff the stuck session never refreshed.
+#
+# MEASURED FIRST, AND THE FACT SHRANK THE ACT (opensoft/openRepoTools#36, the
+# correction of 2026-09-14T12:35Z): on a launcher-configured workstation EVERY
+# profile's `projects/` is ONE shared directory —
+# `readlink -f ~/.claude-profiles/profiles/<org>/<team>/<any>/projects` →
+# `~/.claude-profiles/state/opensoft/projects` — so a transcript needs NO MOVE
+# to be resumed under another profile, and the whole act there is to SAY SO.
+# The move is for the workstation without that layout, where the two
+# directories are really two.
+#
+# WHY A MOVE AND NEVER A COPY: two live transcripts of one uuid diverge, and
+# nothing merges them. The pointer left behind says where it went.
+# THE PROFILE STORE'S ROOT IS THE DOCUMENTED ONE, NEVER `~/.claude-profiles`
+# SPELLED AGAIN (Copilot round 1 on openRepoTools#47). `$CLAUDE_PROFILES_HOME`
+# is in this repository's README table and is what `lanes-edit.sh`'s own profile
+# walk reads (`lanes-edit.sh:4381`); a second spelling here is a second answer
+# to "where are this person's profiles", and on a workstation that moved the
+# store it is the WRONG one — every scan below would find nothing, and a lane
+# resumed under another profile would start a new conversation beside a
+# transcript that was there all along.
+PROFILES_HOME="${CLAUDE_PROFILES_HOME:-$HOME/.claude-profiles}"
+
+profile_projects_dirs() {
+  # This profile's own first, then every other profile's. Team profiles sit two
+  # levels down, which is the same shape `lanes-edit.sh`'s `session_files` walks
+  # for the sessions beside them.
+  printf '%s\n' "$PROJECTS_STATE"
+  for ppd_d in "$PROFILES_HOME"/profiles/*/*/*/projects \
+               "$PROFILES_HOME"/profiles/*/*/projects \
+               "$PROFILES_HOME"/profiles/*/projects \
+               "$CLAUDE_HOME"/projects; do
+    [ -d "$ppd_d" ] && printf '%s\n' "$ppd_d"
+  done
+}
+
+# THE PHYSICAL PATH, WITHOUT `readlink -f` — which is not in the stock macOS
+# userland (Copilot round 1 on openRepoTools#47), where it exits 1 and a
+# fallback hands the path back UNRESOLVED. Two spellings of ONE directory then
+# compare as two directories, and the shared-`projects/` case below — which on
+# a launcher-configured workstation is EVERY case — would move a transcript
+# that never needed moving, on the platform this suite's own macOS job runs.
+# `cd -P` + `pwd -P` is the shell's own answer and is in every shell that
+# parses this file. A path that is not a directory comes back as it was given,
+# which is what the `readlink -f` fallback did.
+real_of() { ( CDPATH=''; cd -P -- "$1" 2>/dev/null && pwd -P ) || printf '%s\n' "$1"; }
+
+profile_of_projects_dir() {   # <…/<profile>/projects> -> the profile's name
+  popd_d="${1%/projects}"; popd_n="${popd_d##*/}"
+  case "$popd_n" in .claude|claude|"") printf 'default\n' ;; *) printf '%s\n' "$popd_n" ;; esac
+}
+
+# The transcript of one id under ONE projects directory, in either spelling of
+# the lane's path (a lane reached through a symlink has two).
+transcript_under() {   # <projects dir> <id>
+  tu_d="$1"; tu_id="$2"
+  for tu_s in "$(sanitize "$DIR")" "$(sanitize "$DIR_REAL")"; do
+    [ -f "$tu_d/$tu_s/$tu_id.jsonl" ] && { printf '%s\n' "$tu_d/$tu_s/$tu_id.jsonl"; return 0; }
+  done
+  return 1
+}
+
+# EVERY LIVE RECORD CARRYING AN ID, ACROSS EVERY PROFILE'S `sessions/`
+# (Amendment 18(h), in force 2026-09-14T13:15:18Z: *"A transcript (one session
+# id) is held by ONE live process"*). A pid is checked with `kill -0`, which is
+# this machine's own answer; a record whose process is gone holds nothing.
+# `<pid><TAB><tmux|bg><TAB><profile>` per holder.
+live_holders_of_id() {   # <id>
+  lho_id="$1"
+  for lho_f in "$PROFILES_HOME"/profiles/*/*/*/sessions/*.json \
+               "$PROFILES_HOME"/profiles/*/*/sessions/*.json \
+               "$PROFILES_HOME"/profiles/*/sessions/*.json \
+               "$CLAUDE_HOME"/sessions/*.json; do
+    [ -f "$lho_f" ] || continue
+    lho_blob="$(tr -d '\n' < "$lho_f" 2>/dev/null || :)"
+    case "$lho_blob" in *"\"sessionId\":\"$lho_id\""*) : ;; *) continue ;; esac
+    lho_pid="$(printf '%s' "$lho_blob" | grep -o '"pid":[0-9][0-9]*' | head -n1 | sed 's/.*://')"
+    [ -n "$lho_pid" ] || continue
+    kill -0 "$lho_pid" 2>/dev/null || continue
+    lho_where="$(printf '%s' "$lho_blob" | grep -o '"tmux":"[^"]*"' | head -n1 | sed 's/^"tmux":"//; s/"$//')"
+    [ -n "$lho_where" ] || lho_where=bg
+    lho_prof="${lho_f%/sessions/*}"; lho_prof="${lho_prof##*/}"
+    printf '%s\t%s\t%s\n' "$lho_pid" "$lho_where" "$lho_prof"
+  done
+}
+
+# PUTTING THE MOVE BACK. The transaction below is three writes, and the two
+# after the first each undo what came before them rather than leave a
+# transcript split across two profiles. It reads `follow_transcript`'s own
+# `ft_*` variables — one act, one set of names — and PRINTS what it could not
+# undo rather than returning a code, because a rollback that itself failed is
+# the one state nobody can infer from the outside and the refusal has to say it.
+ft_rollback() {
+  ftr_out=""
+  if [ "${ft_moved_sib:-0}" = 1 ]; then
+    mv -- "$ft_dest_dir/$ft_id" "$ft_sib" 2>/dev/null ||
+      ftr_out="the sibling directory is at $ft_dest_dir/$ft_id and could not be put back to $ft_sib"
+  fi
+  mv -- "$ft_dest_dir/$ft_id.jsonl" "$ft_f" 2>/dev/null ||
+    ftr_out="${ftr_out:+$ftr_out; }the transcript is at $ft_dest_dir/$ft_id.jsonl and could not be put back to $ft_f"
+  printf '%s' "$ftr_out"
+  return 0
+}
+
+# THE SEARCH, THE SAY AND THE MOVE. Sets `FOLLOW_FILE` (the transcript's path
+# HERE, after any move) and `FOLLOW_WHY` (a refusal), and returns 0 found, 8
+# nowhere, 2 refused. IT NEVER `die`s: a refusal inside `$( )` kills only the
+# substitution's subshell, and the caller would carry on with an empty answer —
+# which here would mean starting a second process on a transcript another live
+# one holds.
+FOLLOW_FILE=""; FOLLOW_WHY=""
+follow_transcript() {   # <id>
+  ft_id="$1"; FOLLOW_FILE=""; FOLLOW_WHY=""
+  ft_here_real="$(real_of "$PROJECTS_STATE")"
+  ft_shared=""
+  while IFS= read -r ft_d; do
+    [ -n "$ft_d" ] || continue
+    [ "$ft_d" = "$PROJECTS_STATE" ] && continue
+    ft_real="$(real_of "$ft_d")"
+    if [ "$ft_real" = "$ft_here_real" ]; then
+      # THE SHARED-DIRECTORY CASE, which on a launcher-configured workstation is
+      # every case: the other profile's `projects/` IS this one, so the
+      # transcript is already here and nothing is moved.
+      ft_shared="${ft_shared:+$ft_shared }$(profile_of_projects_dir "$ft_d")"
+      continue
+    fi
+    ft_f="$(transcript_under "$ft_d" "$ft_id" 2>/dev/null || :)"
+    [ -n "$ft_f" ] || continue
+    ft_prof="$(profile_of_projects_dir "$ft_d")"
+    # A UUID WHOSE HOLDER IS LIVE THERE IS A REFUSAL, NEVER A MOVE (Amendment
+    # 18(h)): moving the file out from under a running process, and then
+    # resuming the same id here, is two live processes on one transcript — the
+    # state measured on this lane on 2026-09-14 and the reason that clause
+    # exists.
+    ft_holders="$(live_holders_of_id "$ft_id")"
+    if [ -n "$ft_holders" ]; then
+      FOLLOW_WHY="transcript $ft_id is in profile $ft_prof's projects directory ($ft_d) and a LIVE process there holds it:
+$(printf '%s\n' "$ft_holders" | sed 's/^/      pid /; s/\t/ in /; s/\t/ under profile /')
+    A transcript is held by ONE live process (Amendment 18(h)): moving it here and resuming the id would make a second. Nothing was moved and nothing was launched.
+    End that process, or retire it: lane-end $LANE --retire <pid>"
+      return 2
+    fi
+    # THE MOVE: the `<uuid>.jsonl` and its sibling `<uuid>/` directory, into the
+    # SAME slug under this profile, with a pointer left where it was.
+    ft_dest_dir="$PROJECTS_STATE/$(basename -- "$(dirname -- "$ft_f")")"
+    ft_sib="${ft_f%.jsonl}"
+    # `--dry-run` MOVES NOTHING (Copilot round 1 on openRepoTools#47). This
+    # function runs long before the dry-run exit at the foot of the script, and
+    # a command whose last line is *nothing was renamed, written or launched*
+    # must not have moved a person's transcript out of another profile to get
+    # there. The plan is printed with both paths instead, and the caller says
+    # what it would have followed.
+    if (( dry_run )); then
+      plan "mv $ft_f $ft_dest_dir/$ft_id.jsonl (with its sibling $ft_id/, and a pointer left where it was)"
+      FOLLOW_WHY="dry-run:transcript $ft_id is in profile $ft_prof's projects directory ($ft_d) and WOULD be moved into $ft_dest_dir"
+      return 8
+    fi
+    mkdir -p -- "$ft_dest_dir" 2>/dev/null || {
+      FOLLOW_WHY="could not create $ft_dest_dir to move transcript $ft_id into"; return 2; }
+    # AN OCCUPIED DESTINATION IS REFUSED BEFORE ANYTHING MOVES (Copilot round 3
+    # on openRepoTools#47). `mv <dir> <existing dir>` does not fail — it moves
+    # the source INSIDE it — so a `<uuid>/` already sitting here would take the
+    # other profile's sidecar as `<uuid>/<uuid>/`, mark the sibling moved, and
+    # resume with the transcript's state split from the transcript. Nothing this
+    # command writes is worth guessing which of two `<uuid>` directories is the
+    # lane's, so it names what is there and stops. A name that is NOT a
+    # directory is left to the transaction below, where `mv` really does fail
+    # and the rollback puts the transcript back.
+    if [ -d "$ft_dest_dir/$ft_id" ] || [ -e "$ft_dest_dir/$ft_id.jsonl" ]; then
+      FOLLOW_WHY="transcript $ft_id is in profile $ft_prof's projects directory ($ft_d), and something ALREADY SITS where it would go: $ft_dest_dir/$ft_id$( [ -e "$ft_dest_dir/$ft_id.jsonl" ] && printf '.jsonl' ). Nothing was moved — a move onto an occupied name puts one transcript inside another, and which of the two is this lane's is not this command's to guess. Move that aside, or end the lane that owns it."
+      return 2
+    fi
+    if ! mv -- "$ft_f" "$ft_dest_dir/$ft_id.jsonl" 2>/dev/null; then
+      FOLLOW_WHY="could not move $ft_f into $ft_dest_dir (the transcript stays where it is, and this lane will not resume an id it cannot read)"
+      return 2
+    fi
+    # THE THREE WRITES ARE ONE TRANSACTION (Copilot round 1 on
+    # openRepoTools#47). The `.jsonl`, its sibling `<uuid>/` state directory and
+    # the pointer left behind are one act, and a HALF-DONE one is worse than
+    # none: a sibling orphaned in the other profile is state the resumed session
+    # silently loses, and a transcript gone from where a person will look for it
+    # with no pointer has had its only recovery trail deleted. So each of the
+    # two below is CHECKED, and a step that cannot complete puts back what the
+    # steps before it moved and refuses — naming the parts it could not put
+    # back, because a rollback that itself failed is the one state nobody can
+    # infer from the outside.
+    ft_moved_sib=0
+    if [ -d "$ft_sib" ]; then
+      if mv -- "$ft_sib" "$ft_dest_dir/$ft_id" 2>/dev/null; then
+        ft_moved_sib=1
+      else
+        ft_undone="$(ft_rollback)"
+        FOLLOW_WHY="transcript $ft_id moved into $ft_dest_dir, but its sibling state directory $ft_sib could NOT follow it — half a transcript is not one, so the move was put back. Nothing was launched.${ft_undone:+
+    WHAT COULD NOT BE PUT BACK: $ft_undone}"
+        return 2
+      fi
+    fi
+    # THE POINTER, WHERE THE FILE WAS: `<uuid>.jsonl.moved-to-<profile>-<UTC>`.
+    # A person looking for a transcript that is not where they left it is owed
+    # the sentence, in the directory they are standing in — so a pointer that
+    # cannot be written (a source directory that is read-only, say) undoes the
+    # move rather than completing it untraceably.
+    ft_to="${CLAUDE_PROFILE_NAME:-}"
+    [ -n "$ft_to" ] || ft_to="$(profile_of_projects_dir "$PROJECTS_STATE")"
+    ft_ptr="$ft_f.moved-to-$ft_to-$(date -u +%Y-%m-%dT%H%M%SZ)"
+    if ! printf 'moved to %s by %s at %s\n' "$ft_dest_dir" "$prog" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+         > "$ft_ptr" 2>/dev/null; then
+      rm -f -- "$ft_ptr" 2>/dev/null || :
+      ft_undone="$(ft_rollback)"
+      FOLLOW_WHY="transcript $ft_id could not be given its pointer at $ft_ptr, which is the only trail back to where it was — so the move was put back rather than left untraceable. Nothing was launched.${ft_undone:+
+    WHAT COULD NOT BE PUT BACK: $ft_undone}"
+      return 2
+    fi
+    step "transcript $ft_id was in profile $ft_prof's projects directory ($ft_d), which is NOT this profile's — moved into $ft_dest_dir, with a pointer left where it was (a copy would leave two live transcripts of one uuid diverge)"
+    FOLLOW_FILE="$ft_dest_dir/$ft_id.jsonl"
+    return 0
+  done <<EOF
+$(profile_projects_dirs)
+EOF
+  [ -z "$ft_shared" ] || FOLLOW_WHY="shared:$ft_shared"
+  return 8
+}
+
 # The transcript of ONE recorded session id, in this directory.
 recorded_transcript() {
   local id="$1" d
@@ -1781,6 +2070,94 @@ new_uuid() {
 lane_verb=STARTED
 lane_sid=""
 
+# ================= AMENDMENT 17(c): WHICH AGENT, AND WHAT IT IS LAUNCHED WITH
+#
+# *"`lane-start <repo> <n>` reads the row and the last `PAUSED`. Where the agent
+# asked for is the one that paused, and its transcript is here, it resumes
+# exactly as today (Amendment 6's case (a)). Otherwise — a different agent, or
+# no transcript here — it launches the named agent with THE HANDOFF'S TOP BLOCK
+# AS ITS FIRST PROMPT … With no `--agent` the default is the agent that paused;
+# with no `PAUSED` the default is `claude`."*
+#
+# THE DEFAULT COMES FROM THE RECORD, THROUGH THE ONE READ THAT ANSWERS FOR IT
+# (`lane-agent`, this amendment's sibling of `lane-dir`). 8 is "no record of
+# this amendment yet" — every lane until its own next handoff — and it is not a
+# failure: `claude` is what this command has always launched.
+AGENT=""; AGENT_EXPLICIT=0; AGENT_ID=""; RECORDED_AGENT=""; RECORDED_AGENT_READ=0
+read_recorded_agent() {
+  rra_out=""; rra_rc=0
+  rra_out="$("$LANES_EDIT" lane-agent "$LANE" 2>/dev/null)" || rra_rc=$?
+  RECORDED_AGENT_READ=1
+  case "$rra_rc" in
+    0) RECORDED_AGENT="$rra_out" ;;
+    8|2) RECORDED_AGENT="" ;;
+    # A READ THAT FAILED IS NOT "THIS LANE'S RECORD NAMES NO AGENT", and the
+    # helper says so in its own refusal: *"a caller that read it that way would
+    # launch the default agent over a lane another one paused"* (Amendment
+    # 7(d), `lanes-edit.sh`'s `lane-agent` arm). This used to `note` and launch
+    # `claude` anyway — the one act in this whole command that no later refusal
+    # can undo — so it refuses, and names the flag that goes past it, which is
+    # a person naming the agent rather than this command guessing at one.
+    *) die "\`$LANES_EDIT lane-agent $LANE\` failed (exit $rra_rc), so which agent paused this lane is UNKNOWN — and launching the default over a lane another agent paused is what Amendment 7(d) has this read refuse rather than answer. Run it by hand to see what it says, or name the agent: $prog --agent <name> …" 2 ;;
+  esac
+  return 0
+}
+if [ -n "$agent_flag" ]; then
+  AGENT="$agent_flag"; AGENT_EXPLICIT=1
+else
+  read_recorded_agent
+  if [ -n "$RECORDED_AGENT" ]; then AGENT="$RECORDED_AGENT"; fi
+  [ -n "$AGENT" ] || AGENT=claude
+  [ "$AGENT" = claude ] || AGENT_EXPLICIT=1
+fi
+case "$AGENT" in
+  *[!A-Za-z0-9._-]*|'') die "--agent takes a manifest key — letters, digits, '.', '_', '-' — and '$AGENT' is not one (Amendment 17(b))" 2 ;;
+esac
+# THE AGENT THIS LANE IS RUNNING, IN THE ENVIRONMENT OF THE SESSION IT STARTS
+# (Copilot round 2 on openRepoTools#47). `lane-handoff` derives the record's
+# `agent` sub-field from `$LANES_AGENT`, else `claude` — so a `codex` session
+# launched here would write `agent claude` at its own handoff and the next
+# `lane-start` would resume it with the wrong launcher, one record along. The
+# launch decides which agent this is; the launch is therefore what says so.
+export LANES_AGENT="$AGENT"
+# THE AGENT'S OWN RESUMABLE ID, where the record carries one. For `claude` that
+# is the transcript uuid the session cell already records and this script
+# already resumes; for another agent it is the one id a launch has in hand, and
+# it is what the row's session cell is appended with in that agent's spelling
+# (`Codex <id>`). `none` is an ANSWER — the agent has no resumable id — and is
+# not carried into the cell as if it were one.
+#
+# AND ONLY WHERE THE RECORD IS THAT AGENT'S (Copilot round 2 on
+# openRepoTools#47). `lane-transcript` answers for the LANE — its last `PAUSED`,
+# whichever agent wrote it — so a lane paused by `claude` and resumed with
+# `--agent codex` would take the CLAUDE uuid and append it to the row's session
+# cell spelled `Codex <uuid>`: an id no `codex` can resume, attributing this
+# lane's history to a conversation that is not it, in a cell nothing rewrites.
+if [ "$AGENT" != claude ]; then
+  [ "$RECORDED_AGENT_READ" = 1 ] || read_recorded_agent
+  if [ -n "$RECORDED_AGENT" ] && [ "$RECORDED_AGENT" != "$AGENT" ]; then
+    note "the lane's last handoff names agent $RECORDED_AGENT and this launch is $AGENT, so the recorded transcript is NOT carried into the row's session cell — that id is $RECORDED_AGENT's and $AGENT cannot resume it. This launch is recorded without an id of its own; the session's first act stamps the row with the one it gets."
+  else
+    at_out=""; at_rc=0
+    at_out="$("$LANES_EDIT" lane-transcript "$LANE" 2>/dev/null)" || at_rc=$?
+    case "$at_rc" in
+      0) [ "$at_out" = none ] || AGENT_ID="$at_out" ;;
+      8|2) : ;;
+      *) note "$LANES_EDIT lane-transcript $LANE failed (exit $at_rc) — the row's session cell will record this launch without the agent's own id" ;;
+    esac
+  fi
+fi
+# `LANE_START_FRESH=1` IS THE `/ctx` SEAM, and it is one sentence: *a NEW
+# session of this lane's agent, started with the top block of the handoff the
+# row names as its first prompt*. That is what a context clear IS, and it is why
+# `/ctx` does not simply resume the transcript it has just paused.
+# `lane-handoff --restart` respawns the lane's own pane with it set (Amendment
+# 17(f)); nothing else sets it, and with it unset this command behaves exactly
+# as it did before this amendment.
+fresh=0
+[ "${LANE_START_FRESH:-0}" = 1 ] && fresh=1
+first_prompt=0
+
 # AMENDMENT 11, EVIDENCE 4 — `--name "$LANE"` IS ON EVERY LAUNCH BRANCH, NOT
 # ONLY THE NEW-SESSION ONE. The session NAME is the lane's messaging address
 # (Amendment 2): `ListAgents`, `SendMessage`, `@<lane>` and the statusline all
@@ -1793,22 +2170,119 @@ lane_sid=""
 # after the lane, or the lane loses its address for the life of that session,
 # and there is no API to rename a running one from inside.
 new_sid=""
-if [ -n "$row_sid" ] && rec_file="$(recorded_transcript "$row_sid")"; then
-  # AMENDMENT 18(h), THE LAUNCH BRANCHES, AND THIS IS THE ONLY ONE WITH AN ID TO
-  # COUNT. The clause is *"the id it is about to resume or bind"*: this branch is
-  # the one that resumes an id, and it is asked INSIDE the branch rather than
-  # above the `if`, because above it the row's id is merely a candidate — the
-  # test on its own next line is what decides whether anything resumes it at all,
-  # and counting the holders of a transcript nobody is about to open would refuse
-  # a lane for a fact about a conversation it is not going to touch. The
-  # title-fallback branch resumes through the PICKER, whose transcript is not
-  # knowable here, and the new-session branch MINTS a fresh uuid; neither has an
-  # id, which is stated rather than left to be noticed.
+# ACT 6 — WHERE THE TRANSCRIPT IS, SAID RATHER THAN ASSUMED, and followed where
+# it is in another profile's directory. This runs BEFORE the branch below, so
+# `recorded_transcript` answers for a transcript this run has just moved here.
+rec_file=""
+if [ -n "$row_sid" ] && [ "$AGENT" = claude ] && (( ! fresh )); then
+  rec_file="$(recorded_transcript "$row_sid" 2>/dev/null || :)"
+  if [ -n "$rec_file" ]; then
+    # WHICH DIRECTORY IT WAS FOUND IN, and whether that directory is SHARED —
+    # `readlink -f` equal across profiles is what makes a profile switch need no
+    # move at all, and a person swapping accounts is owed that sentence rather
+    # than a silent success they cannot reason about.
+    shared_with=""
+    here_real="$(real_of "$PROJECTS_STATE")"
+    while IFS= read -r ppd; do
+      [ -n "$ppd" ] && [ "$ppd" != "$PROJECTS_STATE" ] || continue
+      [ "$(real_of "$ppd")" = "$here_real" ] || continue
+      shared_with="${shared_with:+$shared_with }$(profile_of_projects_dir "$ppd")"
+    done <<EOF
+$(profile_projects_dirs)
+EOF
+    step "transcript $row_sid found in this profile's projects directory ($PROJECTS_STATE)${shared_with:+, which IS the directory profile(s) $shared_with read too (one shared directory: a profile switch resumes this lane by id and moves nothing)}"
+  else
+    # `|| ft_rc=$?` AND NOT `; ft_rc=$?`: this script runs under `set -e`, so a
+    # function returning 8 as a bare command ENDS IT — with 8, which is this
+    # estate's code for "no record" and which a caller would read as a lane-start
+    # that found nothing rather than one that was never asked.
+    ft_rc=0
+    follow_transcript "$row_sid" || ft_rc=$?
+    case "$ft_rc" in
+      0) rec_file="$FOLLOW_FILE" ;;
+      2) die "$FOLLOW_WHY" 2 ;;
+      *) case "$FOLLOW_WHY" in
+           shared:*) note "no transcript for $row_sid under this directory in any profile's projects directory (profiles ${FOLLOW_WHY#shared:} share this one)" ;;
+           # `--dry-run` FOUND IT AND MOVED NOTHING. The run carries on as a
+           # lane whose transcript is not here — which is what it would be
+           # WITHOUT the move — because a dry run must not report a launch that
+           # depends on a write it did not make.
+           dry-run:*) note "--dry-run: ${FOLLOW_WHY#dry-run:}. Nothing was moved; the branch below is the one a lane with no transcript here takes" ;;
+         esac ;;
+    esac
+  fi
+fi
+
+# ---- THE LAUNCHER TABLE (Amendment 17(c)) -------------------------------
+#
+# ONE BRANCH PER AGENT, and a name this table does not carry is a REFUSAL that
+# names the ones it does — never a guess at an argv nobody has tested. The
+# table is deliberately short: `claude`, whose three cases are Amendment 6's
+# and are unchanged below, and `codex`, which takes its first prompt
+# positionally as `claude` does. A third agent is a row here and a test beside
+# it, and nothing else.
+if [ "$AGENT" != claude ]; then
+  case "$AGENT" in
+    codex)
+      # THE LAUNCHER IS ON PATH, OR NOTHING IS WRITTEN (Copilot round 3 on
+      # openRepoTools#47). The row, the object log and the Rule 3 stamp are all
+      # written BEFORE the `exec` at the foot of this command, so a `codex` this
+      # workstation does not have records the lane as RESUMED and then exits
+      # 127 — a false transition in two append-only files that a person has to
+      # repair by hand. The check is here, in 5a, which is before every write.
+      command -v "$AGENT" >/dev/null 2>&1 ||
+        die "this command's launcher table knows '$AGENT', and this workstation has no '$AGENT' on PATH. Nothing was written: the row, the object log and the handoff's Rule 3 stamp are all written before the launch, and a lane recorded as RESUMED by a launch that exits 127 is a false transition in two append-only files. Install it, or name an agent this workstation has: $prog --agent <name> …" 2
+      # `codex` KEEPS NO ID THIS COMMAND CAN PASS: it prints its own resumable
+      # id where it has one, so the lane's record carries whatever the last
+      # handoff wrote (`transcript <id>`) and the session's own first act
+      # corrects it. The top block is delivered positionally, which is the one
+      # thing both agents in this table have in common.
+      step "agent $AGENT — launching it with this lane's handoff top block as its first prompt (Amendment 17(c))"
+      cmd=("$AGENT")
+      lane_verb=RESUMED; lane_sid=unknown; first_prompt=1 ;;
+    *)
+      die "this command has no launcher for the agent '$AGENT'. It knows: claude (resume by id where its transcript is here, else a named new session with the handoff's top block as its first prompt) and codex (the top block as its first prompt). A lane is resumed by an agent whose launch this command has been taught and tested — never by a guessed argv (Amendment 17(c))." 2 ;;
+  esac
+elif [ -n "$row_sid" ] && [ -n "$rec_file" ]; then
+  # AMENDMENT 18(h), AND THIS IS THE ONLY LAUNCH BRANCH WITH AN ID TO COUNT
+  # (`main`, #52). The clause is *"the id it is about to resume or bind"*: this
+  # branch is the one that resumes an id, and the count is asked INSIDE it
+  # rather than above, because above it the row's id is merely a candidate —
+  # act 6's search on the lines above is what decides whether anything resumes
+  # it at all, and counting the holders of a transcript nobody is about to open
+  # would refuse a lane for a fact about a conversation it is not going to
+  # touch. The title-fallback branch resumes through the PICKER, whose
+  # transcript is not knowable here, and the new-session branch MINTS a fresh
+  # uuid; neither has an id, which is stated rather than left to be noticed.
   [ "$row_sid" != "$win_sid" ] && dup_check "$row_sid" "resume transcript $row_sid as lane $LANE"
   step "the row's current session is $row_sid and its transcript is here ($(basename -- "$rec_file")) — resuming it by id"
   (( holder_here )) && step "  (it is the session live in this window; --resume attaches to the same conversation)"
   cmd=("$CLAUDE_BIN" --name "$LANE" --resume "$row_sid")
   lane_verb=RESUMED; lane_sid="$row_sid"
+elif (( fresh )) || (( AGENT_EXPLICIT )); then
+  # `--agent claude` WITH NO TRANSCRIPT HERE, and the `/ctx` respawn: a NAMED
+  # NEW SESSION, with the handoff's top block as its first prompt. It skips the
+  # title fallback deliberately — a caller that named an agent, or a context
+  # clear that has just written a fresh top block, is asking for a new session
+  # of this lane and not for a picker filtered by a title.
+  fresh_why=""
+  (( fresh )) && fresh_why=" (LANE_START_FRESH=1: the /ctx respawn)"
+  step "agent claude — a new session named for the lane, with this lane's handoff top block as its first prompt$fresh_why"
+  cmd=("$CLAUDE_BIN" --name "$LANE")
+  lane_verb=RESUMED; lane_sid=unknown; first_prompt=1
+  if [ -n "$harness_sid" ]; then
+    note "the live session in this window ($harness_sid) is not resumed by this launch: a first prompt is delivered to a session that has none. The cell still records the session that is in the window."
+  elif [ "${LANE_START_SESSION_ID:-1}" != 0 ]; then
+    if new_sid="$(new_uuid)"; then
+      while recorded_transcript "$new_sid" >/dev/null 2>&1; do new_sid="$(new_uuid)"; done
+      cmd+=(--session-id "$new_sid")
+      lane_sid="$new_sid"
+      step "minted session id $new_sid — the row will carry it, so the next $prog resumes it by id"
+    else
+      new_sid=""
+      note "no uuid source (/proc/sys/kernel/random/uuid, uuidgen): the new session's own first act must stamp its id on the row"
+    fi
+  fi
 elif titled="$(titled_transcript)"; then
   transcript="${titled%%$'\t'*}"; found_title="${titled#*$'\t'}"
   [ -n "$row_sid" ] && note "the row's last session id $row_sid has no transcript for this directory — falling back to the title"
@@ -1870,6 +2344,39 @@ else
 fi
 cmd+=(${pass[@]+"${pass[@]}"})
 
+# A LANE WITH NO ROW IS A `STARTED`, WHATEVER BRANCH LAUNCHED IT (Copilot round
+# 1 on openRepoTools#47). Two branches above set the verb to RESUMED because
+# they are resuming a lane that PAUSED — `--agent <name>` and the `/ctx` seam —
+# and both are reachable for a lane the register has never carried, where
+# `add-row` is about to write the first row and the object log has no line at
+# all. A `RESUMED` opening that log is a line no reader can pair with a start,
+# in a file nothing rewrites.
+if [ "$row_count" = 0 ] && [ "$lane_verb" = RESUMED ]; then
+  lane_verb=STARTED
+  step "this lane has no row yet, so the record of this launch is a STARTED (there is nothing to have resumed)"
+fi
+
+# IS THERE A TRANSCRIPT UUID TO NAME AT ALL? (Amendment 8(d), R-A8-2.) Computed
+# HERE, with the launch decision that produced `lane_sid`, because three later
+# sections read it: the row's stamp (5), the object-log line (5b) and the
+# handoff's Rule 3 stamp (5c). It used to be computed between the first two,
+# which left the first reading a variable the last two shared.
+lane_sid_known=0
+[[ "$lane_sid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] && lane_sid_known=1
+
+# WHO THE TWO STAMPS NAME (Amendment 17(c)). For `claude` it is the uuid and
+# nothing else — `RESUMED by <uuid>`, the line Amendment 6(c), Amendment 8(d),
+# this file's own header and the manual all quote. For another agent it is
+# `<agent> <id>`, and `pending` where that agent's id is not knowable until it
+# prints one: the STATE cell and the handoff are histories of acts, and an act
+# that happened with an id nobody has yet is still an act that happened.
+stamp_who="${lane_sid:-unknown}"
+stamp_ok="$lane_sid_known"
+if [ "$AGENT" != claude ]; then
+  stamp_who="$AGENT ${AGENT_ID:-pending}"
+  stamp_ok=1
+fi
+
 # ------------------------------------------------------------- 5. the row
 
 utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -1896,6 +2403,16 @@ ws_why="$(lanes_workstation_why "${ws_pair##*	}")"
 [ -z "$ws_why" ] || die "$ws_why" 2
 env_name="$(basename -- "$CLAUDE_HOME")"
 case "$env_name" in .claude|claude) env_name=default ;; esac
+# THE AGENT'S OWN SPELLING IN THE ROW'S SESSION CELL (Amendment 17(c)): *"the
+# row's session cell keeps its history as Amendment 6 has it; its entries
+# already carry the agent's kind (`harness <uuid>`, `Codex <id>`)"*. The
+# register has spelled Codex sessions that way since 2026-09-05, so the table
+# is the register's own and not a new convention.
+AGENT_WORD="$AGENT"
+case "$AGENT" in
+  claude) AGENT_WORD=harness ;;
+  codex)  AGENT_WORD=Codex ;;
+esac
 user="$(id -un)"
 handoff="handoffs/$estate/session-handoff-$today-lane-$LANE.md"
 
@@ -1971,7 +2488,9 @@ else
   else
     did="window renamed, dir $DIR${record_window:+, window $record_window}, launching $(quoted "${cmd[@]}")"
   fi
-  status_text="$utc $lane_verb by ${lane_sid:-unknown} (lane $LANE) — lane-start on $ws: $did"
+  # `$stamp_who` is computed with the launch decision above: the uuid for
+  # Claude, `<agent> <id>` for any other agent (Amendment 17(c)).
+  status_text="$utc $lane_verb by $stamp_who (lane $LANE) — lane-start on $ws: $did"
   if (( dry_run )); then
     plan "lanes-edit.sh append-row-status $LANE \"$status_text\""
   else
@@ -2003,6 +2522,39 @@ else
     else
       note "the session cell was NOT stamped (this checkout's copy of the row does not carry $row_sid exactly once IN ITS SESSION CELL — it may be older than the published one). STAMP IT AS THIS SESSION'S FIRST ACT:"
       note "  $stamp_hint"
+    fi
+  fi
+
+  # AMENDMENT 17(c) — THE CELL, IN THE AGENT'S OWN SPELLING. A launch of an
+  # agent that is not Claude mints no transcript uuid and resumes none: the one
+  # id it has in hand is the `transcript <id>` the lane's own last handoff
+  # recorded (Amendment 17(b)), and the cell is appended with it as the register
+  # has spelled such entries since 2026-09-05 — `Codex <id>`.
+  #
+  # AND NOTHING IS APPENDED WHERE THERE IS NO ID. `pending` in the session cell
+  # would be the same defect clause (e) refuses in the session field of a log
+  # line: the cell is what Amendment 6(b) resumes from, and a placeholder there
+  # is a resume target nobody has. The row's STATE cell still records the act
+  # (`RESUMED by codex pending`), because that cell is a history of acts.
+  if [ "$AGENT" != claude ] && [ -n "$AGENT_ID" ]; then
+    agent_cell="$AGENT_WORD \`$AGENT_ID\`"
+    # THE ANCHOR IS THE PUBLISHED ROW'S LAST ID, which is the same anchor the
+    # minted-uuid append below uses and for the same reason: `append-session-id`
+    # refuses unless it occurs exactly once IN THE SESSION CELL, so a stale copy
+    # of the row is a refusal that prints the act rather than a corruption.
+    # `$cell_anchor` is NOT it — that variable is set only where a session is
+    # live in this window whose uuid the cell lacks (step 3b), which is never
+    # the case for a launch of an agent that is not Claude.
+    if [ -z "$row_sid" ]; then
+      note "the row's session cell records no id to append to, so this launch's $AGENT_WORD id is not in it. STAMP IT AS THIS SESSION'S FIRST ACT:"
+      note "  LANES_LANE=$LANE $LANES_EDIT append-session-id $LANE \"<the session cell's last id>\" \"→ $agent_cell\""
+    elif (( dry_run )); then
+      plan "lanes-edit.sh append-session-id $LANE '$row_sid' '→ $agent_cell'"
+    elif LANES_LANE="$LANE" "$LANES_EDIT" append-session-id "$LANE" "$row_sid" "→ $agent_cell" "session cell: $prog launched $AGENT for this lane"; then
+      step "session cell updated: $row_sid → $agent_cell"
+    else
+      note "the session cell was NOT extended with $agent_cell (this checkout's copy of the row may be older than the published one). STAMP IT AS THIS SESSION'S FIRST ACT:"
+      note "  LANES_LANE=$LANE $LANES_EDIT append-session-id $LANE \"<the session cell's last id>\" \"→ $agent_cell\""
     fi
   fi
 fi
@@ -2122,9 +2674,8 @@ lane_payload="home $home_nwo; estate $estate; dir $(quote_subfield "$DIR")"
 # name. That run reads the live record whose tmux target is this window, APPENDS
 # that uuid to the session cell through the cell-scoped edit, and only then
 # writes this line and the handoff's stamp, both carrying the real uuid.
-lane_sid_known=0
-[[ "$lane_sid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] && lane_sid_known=1
-
+# (`lane_sid_known` is computed with the launch decision above, which is where
+# `lane_sid` is decided and where the row's own stamp first reads it.)
 if (( ! lane_sid_known )); then
   note "no transcript uuid is knowable at this instant (the row's stamp says '${lane_sid:-unknown}'), so the lane's $lane_verb log line is NOT written: Amendment 7(b) makes that field a transcript uuid and only that, and the log is append-only. Nor is the handoff's Rule 3 stamp. BOTH are written by the first act that knows the uuid, which is this session's own:"
   note "  $prog --no-launch $self_args"
@@ -2270,10 +2821,16 @@ hs_resolve() {
 # Rule 3 record that answers nothing about who resumed, in the one document this
 # protocol cannot afford to rewrite; the note above names the act that writes it
 # together with the deferred log line, at the first instant either can be right.
-if [ "$lane_verb" = RESUMED ] && [ "$row_count" = 1 ] && (( lane_sid_known )); then
+# AND THE STAMP NAMES THE AGENT WHERE ONE WAS NAMED (Amendment 17(c)): *"the
+# Rule 3 resume prompt … single-use, and stamped `RESUMED by …` before anything
+# else, as Rule 3 requires"*. `$stamp_ok` is `$lane_sid_known` for Claude — the
+# rule R-A8-2 gives — and 1 for an agent whose id is its own kind of id, because
+# refusing that stamp would leave Rule 3 unstamped for every launch this
+# amendment exists to make.
+if [ "$lane_verb" = RESUMED ] && [ "$row_count" = 1 ] && (( stamp_ok )); then
   hs_cell="$(cell 7 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' || :)"
-  hs_stamp="RESUMED by $lane_sid (lane $LANE) at $utc — lane-start on $ws"
-  hs_subject="handoff($LANE@$ws): RESUMED by $lane_sid"
+  hs_stamp="RESUMED by $stamp_who (lane $LANE) at $utc — lane-start on $ws"
+  hs_subject="handoff($LANE@$ws): RESUMED by $stamp_who"
   hs_trailer="Lane: $LANE ($ws)"
   hs_file=""
   if [ -z "$hs_cell" ]; then
@@ -2289,7 +2846,13 @@ if [ "$lane_verb" = RESUMED ] && [ "$row_count" = 1 ] && (( lane_sid_known )); t
     # A handoff may be reached through the estate's `handoffs` symlink, so the
     # path git is given is the REAL one: a pathspec that leaves the repository
     # lexically is a pathspec git refuses, however plainly it is inside it.
-    hs_real="$(readlink -f -- "$hs_file" 2>/dev/null || printf '%s' "$hs_file")"
+    # `cd -P` AND NOT `readlink -f`, for the reason `real_of` gives above and
+    # `lane-handoff` gives one file over (Copilot round 3 on openRepoTools#47):
+    # an unresolved path here is a `hs_rel` git refuses as a pathspec, and the
+    # stamp is then written and never committed.
+    hs_dirreal="$( CDPATH=''; cd -P -- "$(dirname -- "$hs_file")" 2>/dev/null && pwd -P )" ||
+      hs_dirreal="$(dirname -- "$hs_file")"
+    hs_real="$hs_dirreal/$(basename -- "$hs_file")"
     hs_repo="$(git -C "$(dirname -- "$hs_real")" rev-parse --show-toplevel 2>/dev/null || :)"
     hs_rel="$hs_real"
     [ -n "$hs_repo" ] && hs_rel="${hs_real#"$hs_repo"/}"
@@ -2403,6 +2966,52 @@ if [ "$lane_verb" = RESUMED ] && [ "$row_count" = 1 ] && (( lane_sid_known )); t
       fi
       rm -rf -- "$hs_tmpd"
     fi
+  fi
+fi
+
+# ------------------------- 5d. the first prompt (Amendment 17(c) and (f))
+#
+# *"it launches the named agent with THE HANDOFF'S TOP BLOCK AS ITS FIRST
+# PROMPT (the Rule 3 resume prompt, read from the file the row names)"*.
+#
+# AFTER 5c, AND THAT ORDER IS THE WHOLE OF RULE 3. The block handed to the new
+# session is read AFTER this run has stamped `RESUMED by …` into the file, so
+# the session reads a prompt that already carries the record of its own resume —
+# and a `/ctx` respawn hands over the block `lane-handoff` wrote one step
+# earlier, which is the same bytes from the same file rather than a second copy
+# of them.
+#
+# THE TOP BLOCK IS THE HEAD OF THE FILE DOWN TO THE FIRST `---` RULE, which is
+# the marker every refresh writes between the fresh block and the history below
+# it, and 200 lines at the outside for a handoff that has none. A first prompt
+# is a prompt, not a document: the session reads the rest of the file itself,
+# and that is what "older sections below are history" means.
+handoff_top_block() {   # <file>
+  awk 'NR > 1 && $0 ~ /^---[ \t]*$/ { exit } { print } NR >= 200 { exit }' "$1"
+}
+
+if (( first_prompt )); then
+  fp_cell=""
+  if [ "$row_count" = 1 ]; then
+    fp_cell="$(cell 7 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' || :)"
+  else
+    fp_cell="$handoff"
+  fi
+  fp_file=""
+  [ -n "$fp_cell" ] && fp_file="$(hs_resolve "$fp_cell" 2>/dev/null || :)"
+  if [ -n "$fp_file" ] && [ -s "$fp_file" ]; then
+    fp_text="$(handoff_top_block "$fp_file")"
+    if [ -n "$fp_text" ]; then
+      cmd+=("$fp_text")
+      step "first prompt: the top block of $fp_cell ($(printf '%s\n' "$fp_text" | grep -c .) lines), delivered to $AGENT as its opening prompt"
+    else
+      note "the handoff the row names is empty at its head, so $AGENT is launched with no first prompt: $fp_file"
+    fi
+  else
+    # NEVER A REASON TO REFUSE THE LAUNCH, for the same reason a handoff that
+    # cannot be stamped is not: Rule 3's block is the RECORD a session resumes
+    # from, and a session with no prompt can still read the file itself.
+    note "the handoff the row names was not found${fp_cell:+ ('$fp_cell')}, so $AGENT is launched with no first prompt. Its first act is to read that file and stamp it (Rule 3)."
   fi
 fi
 
