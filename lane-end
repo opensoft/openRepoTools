@@ -699,6 +699,18 @@ EOF
   exit $?
 fi
 
+# THE SWEEP'S OWN FLAGS BELONG TO THE SWEEP (Copilot round 3 on #93). They are
+# parsed above for every invocation, and without this `lane-end <lane> --yes`
+# ran the ORDINARY ending — a line that reads like a confirmed sweep doing
+# something else entirely — while `lane-end <lane> --reason "<why>"` dropped the
+# reason on the floor. Neither is a typo this command may interpret.
+if [ -z "$retire_dormant" ]; then
+  [ "$sweep_yes" = 0 ] ||
+    die "--yes is the word that makes the SWEEP the act (Amendment 19(c)) and it belongs to --retire-dormant. Ending one lane needs no confirmation and takes none: $prog <lane>. Nothing was written." 2
+  [ -z "$sweep_reason" ] ||
+    die "--reason says why a repository's DORMANT ROWS are being retired (Amendment 19(c)) and it belongs to --retire-dormant; ending one lane writes its own closing line and would drop these words. Nothing was written: $prog <lane>, or $prog --retire-dormant <repo> --reason \"$sweep_reason\"." 2
+fi
+
 # A lane name is taken VERBATIM when one argument is given: the register
 # still carries lanes named before the `<repo>-<n>` rule (browser-ui-repair,
 # hermes-wallet-exercise), and their last act is exactly what this is for.

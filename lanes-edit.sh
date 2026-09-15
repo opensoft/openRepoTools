@@ -5332,7 +5332,14 @@ EOF2
       ENDED|RETIRED) lr_class=closed ;;
       LIVE) : ;;
       *)
-        if [ -n "$lr_row" ] && [ "$lr_lanekind" = 0 ]; then
+        # AND NEVER OVER A LIVENESS READ THAT FAILED (Copilot round 3 on #93).
+        # DORMANT is "no object log AND no live session on this workstation";
+        # where the session records could not be read, the second half was never
+        # established, and hiding the row on it would hide a lane somebody may
+        # be working in. The listing already SAYS the read failed (one screen
+        # up); this is what it does about it — leaves the class unset, so the
+        # row stays listed and the sweep is never offered it.
+        if [ -n "$lr_row" ] && [ "$lr_lanekind" = 0 ] && [ "$lr_live_rc" = 0 ]; then
           lr_class=dormant
           if mig_cell_is_phrase "$lr_was"; then
             case "${lr_was%% · *}" in
@@ -5524,15 +5531,24 @@ lane_groups() {   # <workstation> ; rows on stdin
 # (Amendment 7(d)).
 lane_position_rows() {   # 0 with the names · 1 where a source exists and could not be read
   [ -n "${LANES_FILE:-}" ] || return 0
+  # THE PUBLISHED REGISTER FIRST AND THE WORKING TREE SECOND — `register_text`'s
+  # own rule, asked for rather than restated (Copilot round 3 on #93). Gated on
+  # the working-tree FILE existing, this read skipped the published register
+  # entirely on a checkout that has none, and `next-free` then counted only the
+  # stdin rows and the archive.
+  #
+  # AND AN EMPTY ANSWER WHERE A SOURCE EXISTS IS A READ THAT FAILED (round 2):
+  # `register_text` ends in a `printf` and answers 0 whatever its `git show` or
+  # its `cat` did, so the status says nothing; what cannot happen is a source
+  # with bytes in it rendering as nothing.
+  if [ -f "$LANES_FILE" ] && [ ! -r "$LANES_FILE" ]; then return 1; fi
+  lpr_have=0
+  if [ -s "$LANES_FILE" ]; then lpr_have=1; fi
+  if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null; then lpr_have=1; fi
   lpr_reg=""
-  if [ -f "$LANES_FILE" ]; then
-    [ -r "$LANES_FILE" ] || return 1
+  if [ "$lpr_have" = 1 ]; then
     lpr_reg="$(register_text 2>/dev/null || :)"
-    # AN EMPTY ANSWER OUT OF A NON-EMPTY REGISTER IS A READ THAT FAILED
-    # (Copilot round 2 on #93). `register_text` ends in a `printf` and so
-    # answers 0 whatever its `git show` or its `cat` did; the one thing that
-    # cannot happen is a file with bytes in it rendering as nothing.
-    if [ -s "$LANES_FILE" ] && [ -z "$lpr_reg" ]; then return 1; fi
+    [ -n "$lpr_reg" ] || return 1
   fi
   lpr_arc=""
   lpr_arc="$(archive_text 2>/dev/null)" || return 1
@@ -7991,6 +8007,22 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     done
 
     # (c) REFUSAL 2 — a log that says the lane is somewhere.
+    #
+    # THE PUBLISHED LOG IS PROVED READABLE FIRST (Copilot round 3 on #93).
+    # `lane_log_events` ends in `git show … | parse_log_stream` and this file
+    # sets no `pipefail`, so a `git show` that FAILED is masked by the parser
+    # exiting 0 over empty input — and the lane then reads as having no
+    # lane-kind line at all, which is the one answer that lets the sweep
+    # through. The object is asked for by name instead, which is `cat-file -e`
+    # and then `show` with its own status.
+    rr_pubp=""
+    rr_pubp="$(log_path_ci "$rr_l")" ||
+      die "lane $rr_l's object log is published twice under names that differ only by case (above) — 15(d)'s hand merge. Nothing was written." 2
+    if [ "$NO_GIT" != 1 ] && have_remote_ref &&
+       git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$rr_pubp" 2>/dev/null; then
+      git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$rr_pubp" >/dev/null 2>&1 ||
+        die "lane $rr_l's published object log ($rr_pubp) exists on origin/$LANES_BRANCH and could not be read, so whether it carries a lane-kind line is not known — and that is NOT 'it has none' (Amendment 7(d)). Nothing was written." 1
+    fi
     rr_ev=""; rr_erc=0
     rr_ev="$(lane_log_events "$rr_l" 2>/dev/null)" || rr_erc=$?
     [ "$rr_erc" = 0 ] ||
@@ -8002,9 +8034,18 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     # that is behind; one that is AHEAD is legitimate, and there a `STARTED`
     # that exists only here would be invisible — the lane reading as dormant
     # while its own log says it is running.
+    # AND THE LOCAL ONE IS READ WITH THE SAME POSTURE (round 3): converted to an
+    # empty stream with `|| :`, a TRACKED log that exists here and will not open
+    # read as a lane with no lane-kind line — and the untracked-file guard below
+    # does not catch a tracked one.
     rr_lev=""
     rr_lf="$(log_file_for "$rr_l")"
-    [ -f "$rr_lf" ] && rr_lev="$(log_events "$rr_lf" 2>/dev/null || :)"
+    if [ -f "$rr_lf" ]; then
+      [ -r "$rr_lf" ] ||
+        die "lane $rr_l's object log $rr_lf exists in this checkout and could not be read, so whether it carries a lane-kind line is not known — and that is NOT 'it has none' (Amendment 7(d)). Nothing was written." 1
+      rr_lev="$(log_events "$rr_lf" 2>/dev/null)" ||
+        die "lane $rr_l's object log $rr_lf could not be parsed, so whether it carries a lane-kind line is not known (Amendment 7(d)). Nothing was written." 1
+    fi
     rr_open="$(printf '%s\n%s\n' "$rr_ev" "$rr_lev" | awk -F"$US" '$3 == "STARTED" || $3 == "PAUSED" || $3 == "RESUMED" { v = $3 } END { if (v != "") print v }')"
     [ -z "$rr_open" ] ||
       die "lane $rr_l's object log carries a $rr_open line, so it is not a dormant row — a parked lane is not dormant (Amendment 19(c)), and a lane whose log says it is running is a lane a person can still pick up. End it as itself: lane-end $rr_l. Nothing was written." 2

@@ -365,7 +365,20 @@ case "$rc" in
 		e_next="$(printf '' | "$LANES_EDIT" next-free "$here_repo" 2>/dev/null)" || e_rc=$?
 		if [ "$e_rc" != 0 ]; then e_next=""; fi
 		case "${e_next:-}" in '' | *[!0-9]*) e_next="" ;; esac
-		if [ -n "$e_next" ] && [ "$e_next" != 1 ]; then
+		# WHETHER THERE ARE HIDDEN ROWS IS ASKED, NOT INFERRED FROM THE NUMBER
+		# (Copilot round 3 on #93). `next-free != 1` was a proxy, and it is wrong
+		# for the register that holds ONE hidden row at position 2 or later:
+		# there the lowest free position really is 1, and the listing would have
+		# said "no lane is recorded" about a repository that has one. The
+		# `--closed` read answers it directly, and it is made HERE — on the path
+		# that has already found nothing to show — and nowhere else.
+		e_hidden=0
+		# `command grep`, BECAUSE THE EXIT STATUS IS THE ANSWER (AGENTS.md, the
+		# measured defect of openRepoTools#51: under the harness `grep` is a
+		# shell function whose status is 1 when its stdout is `/dev/null`, which
+		# is exactly what `-q` makes it).
+		if "$LANES_EDIT" lanes --closed ${args[@]+"${args[@]}"} 2>/dev/null | command grep -q .; then e_hidden=1; fi
+		if [ "$e_hidden" = 1 ]; then
 			say "no lane of $here_repo is LISTED — and that is not the same as none being recorded: closed and dormant lanes are left out (Amendment 19(b))."
 			say ""
 			say "  see them:            $prog --closed --prefix $here_repo"

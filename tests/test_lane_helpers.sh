@@ -9739,6 +9739,17 @@ run a19 "$END" --retire-dormant repo19e --reason=--why
 is    "the --reason=<why> spelling is accepted" "$rc" 0
 has   "…and the dry run carries it" "$out" "reason   : --why"
 
+# THE SWEEP'S OWN FLAGS BELONG TO THE SWEEP (Copilot round 3 on #93): parsed for
+# every invocation, `lane-end <lane> --yes` ran the ORDINARY ending — a line
+# that reads like a confirmed sweep doing something else — and `--reason` was
+# dropped on the floor.
+run a19 "$END" repo19-2 --yes
+is    "--yes without --retire-dormant is refused, not an ordinary ending" "$rc" 2
+has   "…saying which act the word belongs to" "$err" "belongs to --retire-dormant"
+run a19 "$END" repo19-2 --reason "because"
+is    "--reason without --retire-dormant is refused rather than dropped" "$rc" 2
+has   "…and offering the line that would have taken it" "$err" "--retire-dormant <repo> --reason"
+
 echo "== the workstation seam: unset, every writer reads the host =="
 
 # THE OTHER HALF OF R-A9-13. Every case above this line runs with
