@@ -1,22 +1,25 @@
 # SPDX-License-Identifier: Apache-2.0
 """`--install`'s artifacts that are not one of the ELEVEN files: the two
-skills at two paths each, the `/swap` command file at two more, and the one
-merged `SessionStart` entry.
+skills at two paths each, the `/swap` command file at two more, and the TWO
+merged hook entries.
 
 lane-collision-protocol Amendment 9(b), inheriting A8 Addendum 2's R-A8-5
 unvaried — the skill into the SHARED skills directory every profile reads
 through its own symlink, a copy into `~/.claude` for a bare `claude` run
-outside the launcher, and ONE merged entry in `~/.claude/settings.json`.
+outside the launcher, and the merged entries in `~/.claude/settings.json`:
+the `SessionStart` one, and — since Amendment 12 adoption act 3
+(opensoft/openRepoTools#25) — the `UserPromptSubmit` NAME GUARD beside it.
 
-WHY THE HOOK IS THE HARD ONE, and why most of this file is about it. Every
+WHY THE HOOKS ARE THE HARD ONES, and why most of this file is about them. Every
 other thing `--install` places is a whole file, so "already there and
-identical" is a `cmp`. The hook is one entry inside a file somebody else owns
+identical" is a `cmp`. A hook is one entry inside a file somebody else owns
 and two other programs also write, and its ONLY idempotence is an exact match
 on the command string. So the tests below are about the four answers that
-string can have — present, absent, differing, unreadable — and about the one
-rule that makes a wrong answer survivable: the merge is computed with the eleven
-files in hand, BEFORE any of them is placed, so a refusal costs a whole install
-rather than half of one.
+string can have — present, absent, differing, unreadable — asked of EACH entry,
+and about the one rule that makes a wrong answer survivable: both merges are
+computed with the eleven files in hand, BEFORE any of them is placed, so a
+refusal costs a whole install rather than half of one — and, since the pair,
+a settings file never passes through a state carrying one entry of the two.
 
 NO NETWORK: every run here is from the checkout, so nothing is fetched at all.
 """
@@ -52,6 +55,22 @@ HOOK_COMMAND = "~/projects/xFactory/lanes-edit.sh session-start || true"
 HOOK_MATCHER = "startup|resume|clear|fork"
 HOOK_TIMEOUT = 5
 
+#: AMENDMENT 12's SECOND ENTRY, adoption act 3: the NAME GUARD under
+#: `UserPromptSubmit`, `~/projects/xFactory/lanes-edit.sh guard`, timeout 5.
+#: Spelled once here for the reason the string above is, and with TWO
+#: deliberate differences from it that the tests below assert separately:
+#:
+#:   * NO `|| true`. On `SessionStart` that suffix is the whole safety property
+#:     — a hook that dies must not break the session it was meant to orient. On
+#:     `UserPromptSubmit` it would be the OPPOSITE of the mechanism: exit 2 is
+#:     what BLOCKS a prompt (code.claude.com/docs/en/hooks), and `cmd || true`
+#:     exits 0 for every code the command can produce. An entry copied WITH its
+#:     suffix is a guard that refuses nothing, silently, which is the exact
+#:     state Amendment 12 exists to end.
+#:   * NO MATCHER. `UserPromptSubmit` has no source to match on.
+GUARD_COMMAND = "~/projects/xFactory/lanes-edit.sh guard"
+GUARD_TIMEOUT = 5
+
 def skill_paths(home: Path) -> tuple[Path, Path]:
     return (home / ".claude-profiles" / "shared" / "skills" / "lane-swap" / "SKILL.md",
             home / ".claude" / "skills" / "lane-swap" / "SKILL.md")
@@ -61,14 +80,22 @@ def settings_of(home: Path) -> Path:
     return home / ".claude" / "settings.json"
 
 
-def session_start_commands(home: Path) -> list[str]:
+def hook_commands(home: Path, event: str) -> list[str]:
     data = json.loads(settings_of(home).read_text(encoding="utf-8"))
     out = []
-    for entry in data.get("hooks", {}).get("SessionStart", []):
+    for entry in data.get("hooks", {}).get(event, []):
         for hook in entry.get("hooks", []):
             if "command" in hook:
                 out.append(hook["command"])
     return out
+
+
+def session_start_commands(home: Path) -> list[str]:
+    return hook_commands(home, "SessionStart")
+
+
+def user_prompt_commands(home: Path) -> list[str]:
+    return hook_commands(home, "UserPromptSubmit")
 
 
 # --- the skill --------------------------------------------------------------
@@ -475,10 +502,10 @@ def test_a_differing_session_start_entry_refuses_and_places_nothing(tmp_path):
     (e)'s string, so merging would quietly add a SECOND entry and fire the hook
     twice.
 
-    AND THE COST IS A WHOLE INSTALL, NOT HALF OF ONE: the merge is computed
+    AND THE COST IS A WHOLE INSTALL, NOT HALF OF ONE: both merges are computed
     with the eleven files in hand, before any of them is placed, so the bin
     directory is untouched. That is the same all-or-nothing rule `--install`
-    already had, extended to the one artifact that is not a whole file.
+    already had, extended to the two artifacts that are not whole files.
     """
     hand = ('bash -lc \'"$HOME/projects/xFactory/lanes-edit.sh" session-start '
             '2>/dev/null || true\'')
@@ -589,7 +616,7 @@ def test_a_destination_that_cannot_be_written_refuses_before_anything_is_placed(
 
     Amendment 9(b) computes the merge in hand "so a merge that cannot be
     computed refuses having placed nothing". A filesystem offers no transaction
-    across eighteen artifacts, so nothing can make the last seven atomic with
+    across nineteen artifacts, so nothing can make the last eight atomic with
     the first eleven — but the failure that actually happens is not an exotic
     one, it
     is a directory that is not this installer's to write, and that question can
@@ -597,7 +624,7 @@ def test_a_destination_that_cannot_be_written_refuses_before_anything_is_placed(
 
     Without the check the run places eleven files and some of the remaining
     artifacts, then dies — leaving a host with commands installed,
-    no `SessionStart` entry, and an installer that reports the same "already
+    neither hook entry, and an installer that reports the same "already
     installed (unchanged)" for the eleven on every re-run while never reaching
     the one that failed.
     """
@@ -1162,3 +1189,153 @@ def test_an_entry_that_merely_names_the_same_file_is_no_conflict(tmp_path):
     result = run_cmd("--install", home=tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
     assert session_start_commands(tmp_path) == [other, HOOK_COMMAND]
+
+
+# --- Amendment 12's second entry: the UserPromptSubmit name guard ------------
+#
+# ADOPTION ACT 3, ratified 2026-09-13T18:20:44Z ("Ratify revision 2"):
+# "`openRepoTools --install` places the hook string under `UserPromptSubmit` in
+# the profile's `settings.json` beside the `SessionStart` one —
+# `~/projects/xFactory/lanes-edit.sh guard`, timeout 5". The cases below are
+# the pair's own, and each of them is a way the pair can go wrong that a single
+# entry could not.
+
+@NEEDS_JQ
+def test_the_guard_entry_is_byte_identical_to_amendment_12(tmp_path):
+    """THE STRING IS THE WHOLE MECHANISM HERE TOO, and the SHAPE is half of it.
+
+    `UserPromptSubmit` takes no `matcher` — there is no source to match on —
+    so the entry is `{"hooks": [ ... ]}` and nothing else, and an installer
+    that copied the `SessionStart` block wholesale would write a key the event
+    does not have.
+    """
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    data = json.loads(settings_of(tmp_path).read_text(encoding="utf-8"))
+    entries = data["hooks"]["UserPromptSubmit"]
+    assert len(entries) == 1, entries
+    assert "matcher" not in entries[0], (
+        "UserPromptSubmit has no source to match on; the key belongs to the "
+        "events that do")
+    assert entries[0]["hooks"] == [{"type": "command",
+                                    "command": GUARD_COMMAND,
+                                    "timeout": GUARD_TIMEOUT}]
+    assert GUARD_COMMAND in COMMAND.read_text(encoding="utf-8"), (
+        "the command string this test asserts on is the one the file writes")
+
+
+@NEEDS_JQ
+def test_the_guard_entry_carries_no_or_true_and_that_is_the_mechanism(tmp_path):
+    """`|| true` ON THIS ENTRY WOULD INSTALL A GUARD THAT REFUSES NOTHING.
+
+    Exit 2 is what BLOCKS a `UserPromptSubmit` prompt
+    (code.claude.com/docs/en/hooks) and `cmd || true` exits 0 for every code the
+    command can produce, so the suffix that is the `SessionStart` entry's whole
+    safety property is this one's whole defeat — and silently, which is the
+    exact state Amendment 12 exists to end. Asserted separately from the shape
+    above because copying the neighbouring string is the obvious way to write
+    this and the result would pass every other test in this file.
+    """
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    assert user_prompt_commands(tmp_path) == [GUARD_COMMAND]
+    assert "|| true" not in GUARD_COMMAND
+    assert "|| true" in HOOK_COMMAND, (
+        "the SessionStart entry keeps its suffix; only this one must not")
+
+
+@NEEDS_JQ
+def test_installing_twice_adds_one_guard_entry_and_not_two(tmp_path):
+    """Idempotent by EXACT MATCH, the same as the entry beside it — and firing
+    this hook twice is two refusals for one prompt."""
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    second = run_cmd("--install", home=tmp_path)
+    assert second.returncode == 0, second.stderr
+    assert user_prompt_commands(tmp_path) == [GUARD_COMMAND]
+    assert "UserPromptSubmit guard: already installed" in second.stdout
+
+
+@NEEDS_JQ
+def test_a_differing_guard_entry_refuses_and_places_nothing(tmp_path):
+    """A SECOND WRITER OF THIS VERY HOOK, and the same refusal its neighbour
+    makes: merging beside it would fire the name guard twice, which is two
+    refusals for one prompt, and repairing a setting a person meant is not an
+    installer's to do."""
+    rival = "~/bin/lane-hook.sh guard"
+    settings = settings_of(tmp_path)
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({"hooks": {"UserPromptSubmit": [
+        {"hooks": [{"type": "command", "command": rival, "timeout": 5}]}]}}),
+        encoding="utf-8")
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "a UserPromptSubmit entry that runs `guard` with a" in result.stderr
+    assert "DIFFERENT command string" in result.stderr
+    assert "NOTHING was installed" in result.stderr
+    assert GUARD_COMMAND in result.stderr, "the refusal prints the exact block"
+    assert user_prompt_commands(tmp_path) == [rival], "it changed the file"
+    assert not (tmp_path / ".local" / "bin").exists(), (
+        "the refusal must cost a whole install, not half of one")
+
+
+@NEEDS_JQ
+def test_an_entry_that_merely_names_guard_in_a_path_is_no_conflict(tmp_path):
+    """THE VERB IS WHAT COLLIDES, NOT THE FILE THAT CARRIES IT — R-A9-14's rule
+    one event over, and this is where it BITES rather than being a nicety.
+
+    `~/projects/xFactory/guard.sh` is a plain `UserPromptSubmit` hook a person's
+    settings may already carry, and this estate's do: the usage guard. Keyed on
+    `guard` as a substring it would be read as a competing writer of Amendment
+    12's hook and the whole install would refuse; keyed on the verb with a
+    boundary on both sides it is what it is — somebody's own setting, kept
+    exactly where it is, with ours added beside it.
+    """
+    other = "~/projects/xFactory/guard.sh"
+    settings = settings_of(tmp_path)
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({"hooks": {"UserPromptSubmit": [
+        {"hooks": [{"type": "command", "command": other, "timeout": 5}]}]}}),
+        encoding="utf-8")
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert user_prompt_commands(tmp_path) == [other, GUARD_COMMAND]
+
+
+@NEEDS_JQ
+def test_the_two_entries_are_one_all_or_nothing_merge(tmp_path):
+    """A SETTINGS FILE THAT TOOK ONE OF THE PAIR IS A HALF-INSTALL OF A HOOK
+    PAIR, and nothing on screen would say which half.
+
+    The conflict here is on the GUARD entry alone — the file's `SessionStart`
+    is empty and would merge cleanly — so this is the case that proves the
+    all-or-nothing rule covers the pair and not each entry separately. Both
+    merges are computed into one staged file before either is placed, so the
+    refusal leaves the settings file exactly as it was: no `SessionStart` entry
+    either.
+    """
+    rival = "~/bin/other.sh guard"
+    settings = settings_of(tmp_path)
+    settings.parent.mkdir(parents=True)
+    before = json.dumps({"model": "opus", "hooks": {"UserPromptSubmit": [
+        {"hooks": [{"type": "command", "command": rival, "timeout": 5}]}]}})
+    settings.write_text(before, encoding="utf-8")
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert settings.read_text(encoding="utf-8") == before, (
+        "the refusal wrote nothing at all")
+    assert session_start_commands(tmp_path) == [], (
+        "the SessionStart entry would have merged cleanly, and must not be "
+        "placed while its pair refuses")
+    assert not (tmp_path / ".local" / "bin").exists()
+
+
+@NEEDS_JQ
+def test_one_write_places_both_entries_in_one_file(tmp_path):
+    """ONE WRITE FOR THE TWO ENTRIES. They live in one file, and writing it
+    twice would move a person's settings through a state carrying one of the
+    pair — which is the half-install the test above refuses, reached by the
+    happy path instead of by a conflict."""
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert session_start_commands(tmp_path) == [HOOK_COMMAND]
+    assert user_prompt_commands(tmp_path) == [GUARD_COMMAND]
+    assert stat.S_IMODE(settings_of(tmp_path).stat().st_mode) == 0o600

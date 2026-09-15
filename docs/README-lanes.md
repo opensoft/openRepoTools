@@ -1488,6 +1488,228 @@ not a workstation, a row on a workstation that does not exist is a row no reader
 can match, and the log is never rewritten. `lanes-edit.sh` already carries six
 such lines in one lane's log, and they stay where they are.
 
+## The name guard and the lock (Amendment 12)
+
+**A lane session works only while three names are one**, and otherwise the
+prompt is refused. Ratified by Brett Heap 2026-09-13T18:20:44Z — *"Ratify
+revision 2"*, with M1 *"Type /rename into the pane"* — on his ruling of the same
+day, verbatim: *"we need the session name and the lane name always the same. we
+need a gaurd on this and is must stop and refuse to work if they are not the
+same"*.
+
+The three:
+
+1. the tmux **WINDOW** it runs in is named for a lane;
+2. the **SESSION's own name** — the live record's `name` — is that same name;
+3. the register **ROW** keyed by that name records this session's id as the
+   **LAST** id of its session cell (Amendment 6(b)).
+
+`lanes-edit.sh guard` is the `UserPromptSubmit` hook that reads them. Where they
+agree it is **silent and exits 0**; where they do not it **exits 2**, which is
+what blocks a prompt, and prints the triple as it stands and the ONE command
+that cures it, filled in. It is the only subcommand in that file that refuses a
+person's work.
+
+```console
+$ # what the person sees on a blocked prompt
+lanes-edit: THE NAME GUARD REFUSES THIS PROMPT (lane-collision-protocol Amendment 12). The three names:
+lanes-edit:   window   eagle:@12 'claude'
+lanes-edit:   session  d1ac715c-… 'openRepoTools-3' (nameSource user) pid 1924546 profile team-05f
+lanes-edit:   row      this window names no lane, so no row is keyed by it
+lanes-edit: this window is named 'claude', which is no lane, while the SESSION is named for lane openRepoTools-3 — …
+lanes-edit: run: lane-start --no-launch openRepoTools 3
+```
+
+### The table — one row per state, one cure each
+
+Every message prints the register's own spelling of the lane (Amendment 15) and
+every command is filled in, never `<repo> <n>`.
+
+| what it finds | what it does |
+|---|---|
+| the window is not a lane, the session name parses as `<repo>-<n>` | `lane-start --no-launch <repo> <n>` — **the 2026-09-10 case**, which ran for three days unrecorded |
+| neither name is a lane | refuses and says so: WHICH lane this work is is yours to name, and a guard that guessed would bind a window to a row nobody chose |
+| the window is a lane, this uuid is the row's last id, the session name is not a lane name | **THE LOCK RENAMES IT** (below) |
+| … and the session name differs from the row's **only by case** | the lock renames it to the ROW's spelling — a lane name is ONE name under any case (Amendment 15) |
+| … and the session name is ANOTHER lane's, set by a **person** after this window's binding | **THE OFFER** (below) |
+| the window is a lane, this uuid is IN the cell but not last | a SUPERSEDED transcript: exit, `lane-start <repo> <n>`, which resumes the id the row ends on |
+| the window is a lane, this uuid is in NO row | the harness minted a transcript with nobody acting: `lane-start --no-launch <repo> <n>`, the recording act, no relaunch |
+| the window's name matches TWO rows differing only by case | refuses naming both spellings and the merge, which is a person's act (Amendment 15(d)) |
+| not inside tmux at all | refuses: a lane RUNS in a tmux window named for it (Rule 4, Amendment 2) |
+
+### The lock
+
+Under the projects root the session name is **not the person's to set freely; it
+is the lane's** (clause (h), Brett Heap's D5). `lane-start` sets it at every
+launch (`--name "$LANE"` on all three branches), and where it drifts to a
+non-lane word the guard **renames it for you**: it types `/rename <lane>` into
+this session's own tmux pane, which is the only path a running session's name
+has (M1 — the docs name `--name` at launch, `/rename`, and `Ctrl+R` in the
+picker, and nothing else). That one prompt is refused so the rename lands first;
+send it again.
+
+The pane's **current command is asked first** and nothing is typed into a pane
+running anything else — `claude` and nothing else, which is M1's own word:
+`/rename openRepoTools-3` typed at a shell is a command that does not exist,
+typed into an editor it is text nobody wrote, and typed into a Node REPL it is
+input somebody has to clear. A pane whose command cannot be read is not typed
+into either — fail closed. Every outcome but a successful typing prints the line
+for you to type yourself, which is the cure and not a failure: on Eagle today
+two panes report `bash` (a session under a launcher wrapper), and those are
+exactly the windows where you will read it.
+
+**Which pane**: the one the live record names, and where the record names none
+— the harness has been seen to write no `tmux` field for a process plainly in a
+window — the pane this hook is itself running in, `tmux display-message -p
+'#{pane_id}'`. Both hooks run inside the session's own pane, so that is the same
+pane, asked of tmux rather than guessed.
+
+A `<lane> (N)` title is a **mismatch** (ratified decision D4) and the suffix is
+evidence: it is exactly what a rename into a title something else still holds
+mints, so another holder of that name was live. The note names
+`lanes-edit.sh forks <lane>` and `lane-end <lane> --retire <pid>` — never a
+`kill`, because stopping a process is the person's act and stays theirs
+(Amendment 11 clause (k) rule (e)).
+
+### The offer
+
+*"if the user does a rename, then we should offer to move to that lane or create
+a new lane if we do not have one as that name"* (D5, verbatim). A record whose
+`nameSource` is `user`, whose `name` is another lane's, and whose `nameSince` is
+later than this window's binding is a person saying **"this is that lane now"**
+— so the guard **asks** rather than guessing:
+
+```console
+lanes-edit: you renamed this session to openRepoShape-2 — lane openRepoShape-2 EXISTS, last session 8c31….
+lanes-edit: Reply `yes` to move this window to it (creating the lane if there is none: `lane-start --no-launch openRepoShape 2` is run for you, this window is renamed, the row created or this uuid appended, and openRepoTools-3 is marked MOVED).
+lanes-edit: Reply `no` to stay openRepoTools-3 — the session is renamed back with `/rename openRepoTools-3`.
+```
+
+The answer is the **next prompt**; it is consumed by the guard and never reaches
+the model, and anything but `yes` or `no` asks again. The pending offer is held
+per session id under `$CLAUDE_CONFIG_DIR/lanes/offers/<uuid>` and expires with
+the session. **An answer is a prompt**, so it waits behind the duplicate read
+below: while a second live process carries this transcript the answer is
+refused with that, and the offer is kept for the first prompt after the other
+process is retired — a `yes` consumed there would run `lane-start` out of a
+process that may not be writing at all, on a question the other one could
+equally have answered.
+
+**A lane named before Rule 4's `<repo>-<n>` form is offered, not run.** The
+register carries 22 of them, and `lane-start` needs such a lane's DIRECTORY,
+which nothing in the register, the window or the session says. So the offer
+says what it cannot fill in and `yes` refuses rather than running a command with
+a `<path>` placeholder in it: the move is
+`lane-start --no-launch --dir <that lane's checkout> <lane>`, yours to run with
+the path filled in, and the offer is kept so that `no` still answers it. On `yes` the **window is renamed first** and that order is
+load-bearing: `lane-start`'s step 3b veto 2 refuses to take the session live in
+a window named for another lane, which after a `yes` is exactly what this window
+is — without the rename the lane would be started and stamped with this
+transcript left out of its session cell.
+
+**And the LAST write of the `yes` is the guard's own**, because `lane-start`
+may not make it: its step 3b **veto 1** never takes a uuid that belongs to
+ANOTHER row (Amendment 11 clause (d) rule 1), and after the rename this uuid
+still belongs to the lane being left. So `lane-start` mints a fresh id for the
+new lane and the person's own transcript stays out of the cell — and the next
+prompt then finds a lane window whose row does not name this transcript and
+refuses, with a cure that vetoes for the same reason and changes nothing. A
+blocking hook that refuses for ever, on a state it created by obeying the
+person, is the worst outcome this surface has, so after `lane-start` returns
+the guard appends this uuid to the new lane's cell itself — with `lane-start`'s
+own anchor discipline, the PUBLISHED last id, so a stale copy of the row
+refuses rather than writing a cell that no longer matches. That is not a hole
+in veto 1: the veto exists for the take nobody asked for, and clause (h) rule
+4's limit is that the lock never moves a uuid between rows **without the
+person's `yes`** — here there is one, answered at this very prompt.
+
+### The duplicate read (Amendment 18(h))
+
+**A transcript is held by ONE live process.** The harness can fork one
+(`--fork-session`, minting a new id in a background pty host) or resume one
+twice, and the tooling refuses to build on either. Measured four times on
+2026-09-14, the last at 18:14Z: a `bg` record in one profile's `sessions/`
+beside the interactive record in ANOTHER's, both live, both carrying one
+`sessionId` — so the sweep is of **every** profile's directory, not the asking
+session's.
+
+The one live record this read passes over in silence is the harness's own
+**companion**: `kind: bg`, beside this window's own record, in the same
+profile's `sessions/` (Amendment 8, ruling (g) — *"records that share a
+`sessionId` are one session, not a queue of rival holders"*). The **kind** is
+what tells it from a second live process, not the profile: one profile can
+resume one transcript twice — no move, no swap, one command — and the
+interactive record that makes is 18(h)'s own case.
+
+`lanes-edit.sh transcript-holders <uuid>` is the read, and three surfaces share
+it rather than implementing the rule three times:
+
+* **the guard** refuses every prompt in a process that shares its id with
+  another live one, naming the pid, its window or `bg`, its profile, and the
+  retire act `lane-end <lane> --retire <pid>`;
+* **`lane-start`** counts the holders of the id it is about to resume or bind —
+  at the window-binding step and in the row-resume branch — and refuses rather
+  than appending such an id to the row or launching a second resume of it;
+* **`lane-end <lane> --retire <pid>`** retires a duplicate whose id **IS** the
+  row's own, which `forks` cannot see because its criterion is "an id the row
+  does NOT record". A duplicate is named by its **pid** and never by a uuid —
+  its uuid is the row's own and could not pick between the processes carrying
+  it; the uuid form is for a fork. The window's own session is refused **by
+  name**: retiring the session that IS the lane is how a lane loses the
+  conversation it is, and ending the lane is the bare `lane-end <lane>`. The
+  harness's own **companion** of that session is refused by name too: it is one
+  half of the live session, not a rival to it.
+
+A window is matched by **id AND session name** (Amendment 11(h)'s agreement
+rule) because tmux reuses window ids once a window is gone.
+
+### The `SessionStart` block's own line (clause (f))
+
+The `SessionStart` hook gains one line — `session name '<x>' was not the lane
+'<y>' — renamed` — and types the rename itself, so the first prompt already
+finds the three agreeing. It types over DRIFT only: a name a PERSON set to
+another lane's, newer than this window's binding, is clause (h) rule 2's
+instruction and this hook leaves it alone, says so, and lets the guard put the
+offer at the next prompt — otherwise a rename followed by a `/clear` would be
+undone before anyone was asked. It is that hook's **one act on a pane and its only act
+of any kind**: it stays read-only against the register and **always exits 0**,
+because a hook that fails is a hook that breaks the session it was meant to
+orient (R-A8-1). Where another live process carries this session id it **SAYS
+so** and names the retire act; the refusal is the guard's.
+
+### Fail closed, and the one bypass
+
+A mismatch refuses, and so does an **indeterminate read** — session records
+unreadable, tmux not answering, the register unreadable, a payload naming no
+`cwd` — naming the read, because a triple that cannot be verified is not a
+triple that agrees (clause (d)). The row is read from `origin/<branch>` as this
+checkout last had it (R19) and **the guard never fetches**: this hook runs at
+every prompt, and putting the network there would be R-A8-1's objection several
+times over.
+
+**There is no environment flag that turns it off.** `claude --safe-mode` runs
+with every hook disabled and is the one bypass — deliberate, visible in the
+prompt box, and **a session started that way is not a lane session**: it may not
+write the register or claim an object. The hook's `timeout 5` is the other way
+it can fail open, and it is the amendment's own number: a hook that exceeds its
+timeout is killed, and a killed hook does not exit 2.
+
+### Scope
+
+The guard applies to every session whose `cwd` is under `$PROJECTS_ROOT`
+(default `~/projects`), which is every estate session, and is **silent
+elsewhere** (D1): a name there is a title and nothing more. A **subagent's**
+prompt — hook input carrying `agent_id` — is exempt, because subagents do not
+submit prompts and the lane that runs them has already passed.
+
+Installing it is `openRepoTools --install`'s: the entry
+`~/projects/xFactory/lanes-edit.sh guard`, timeout 5, under
+`hooks.UserPromptSubmit` in `~/.claude/settings.json`, beside the `SessionStart`
+one. It carries **no `|| true`** — on `SessionStart` that suffix is the whole
+safety property, and here it would be the opposite of the mechanism, since
+`cmd || true` exits 0 for every code the command can produce and a guard that
+refuses nothing silently is the exact state this amendment exists to end.
+
 ## Hand edits
 
 After **any** hand edit made with an allowed tool (python read/write, `sed -i
@@ -1585,7 +1807,7 @@ link-estates                                          # repoints ~/projects/xFac
 ```
 
 **You are not asked to remember it: `--install` refuses** (A9 Addendum 4,
-R-A9-12). In its planning phase, before any of the eighteen artifacts is placed,
+R-A9-12). In its planning phase, before any of the nineteen artifacts is placed,
 it walks all eleven targets and dies naming every one that is not a regular file,
 what it is, and the one `rm` that clears them. `cp` FOLLOWS A SYMLINK, so an
 install over these would leave the two commands UNINSTALLED — the targets stay
