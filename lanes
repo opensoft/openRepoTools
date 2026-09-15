@@ -373,8 +373,23 @@ case "$rc" in
 			say "no lane of $here_repo is recorded."
 			say ""
 		fi
-		say "  next free position:  ${e_next:-1}"
-		say "  take it:             lane-start $here_repo ${e_next:-1}"
+		# A READ THAT FAILED IS NOT A POSITION OF 1 HERE EITHER. `2` is the
+		# un-upgraded workstation, whose `lanes-edit.sh` has no `next-free` at
+		# all, and 1 is what this branch offered before that read existed — so
+		# that one keeps the old answer. Any other non-zero is `next-free`
+		# REFUSING because a source it must count could not be read (Amendment
+		# 19(b)), and offering a number over it would hand out a position a
+		# retired row may hold — the one thing this whole amendment is for.
+		if [ -n "$e_next" ] || [ "$e_rc" = 0 ] || [ "$e_rc" = 2 ]; then
+			say "  next free position:  ${e_next:-1}"
+			say "  take it:             lane-start $here_repo ${e_next:-1}"
+		else
+			say "  the next free position could not be read: \`lanes-edit.sh next-free\` exited"
+			say "  $e_rc, and this listing will not offer a position over a read that did not"
+			say "  answer (Amendment 7(d)) — a row it missed is a position it would hand out"
+			say "  twice. Run it by hand to see what it says:"
+			say "    printf '' | $LANES_EDIT next-free $here_repo"
+		fi
 		say "  every lane:          $prog --all"
 	else
 		say "no lane is recorded${ws_name:+ that $ws_name can see}."
