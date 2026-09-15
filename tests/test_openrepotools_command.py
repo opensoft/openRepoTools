@@ -78,12 +78,23 @@ COMMAND_PATHS = tuple(f"commands/{n}.md" for n in COMMAND_NAMES)
 #: the command file.
 FETCHED = INSTALLED + SKILL_PATHS + COMMAND_PATHS
 
-#: EIGHTEEN ARTIFACTS, AND THE COUNT IS THE INVARIANT: eleven files in the bin
+#: NINETEEN ARTIFACTS, AND THE COUNT IS THE INVARIANT: eleven files in the bin
 #: directory, two skills in the shared skills directory, their two bare-run
-#: copies, one command file at that same pair of destinations, and one merged
-#: entry in `~/.claude/settings.json`. Derived from the three lists rather than
-#: restated, so adding a skill or a command moves it.
-ARTIFACTS = len(INSTALLED) + 2 * len(SKILL_NAMES) + 2 * len(COMMAND_NAMES) + 1
+#: copies, one command file at that same pair of destinations, and TWO merged
+#: entries in `~/.claude/settings.json`. Derived from the three lists rather
+#: than restated, so adding a skill or a command moves it.
+#:
+#: THE `+ 2` IS THE ONE TERM THAT IS NOT A LIST, and it moved from `+ 1` on
+#: 2026-09-14 for lane-collision-protocol Amendment 12 adoption act 3: the
+#: `UserPromptSubmit` NAME GUARD entry is placed beside the `SessionStart` one,
+#: in the same file, under the same all-or-nothing merge. There is no list of
+#: hook entries to derive it from — the two are different events with different
+#: shapes, one with a matcher and one without, and one carrying `|| true` where
+#: the other must not — so this is the number that is hand-kept, and the
+#: assertions below are what notice when it stops being true.
+HOOK_ENTRIES = 2
+ARTIFACTS = (len(INSTALLED) + 2 * len(SKILL_NAMES) + 2 * len(COMMAND_NAMES)
+             + HOOK_ENTRIES)
 
 USAGE_LINES = (
     "openRepoTools --install            install (or update) the eleven estate and",
@@ -99,7 +110,7 @@ pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
               WINDOWS_SKIP]
 
 #: `--install` HARD-REQUIRES `jq` SINCE lane-collision-protocol AMENDMENT 9(b):
-#: one of its eighteen artifacts is a merged entry inside a JSON file somebody
+#: two of its nineteen artifacts are merged entries inside a JSON file somebody
 #: else owns, and the clause has it refuse naming `jq` rather than rewriting
 #: that file by hand. So a run of `--install` on a host without `jq` is a
 #: REFUSAL BY DESIGN, and a test that asserts a successful placement there is
@@ -114,7 +125,7 @@ pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
 #: same fact and is deliberately unmarked.
 NEEDS_JQ = pytest.mark.skipif(
     shutil.which("jq") is None,
-    reason="`--install` merges one SessionStart entry with jq (Amendment 9(b))")
+    reason="`--install` merges two hook entries with jq (Amendment 9(b), Amendment 12 act 3)")
 
 
 def command_env(home: Path | None = None, env: dict | None = None) -> dict:
@@ -359,10 +370,12 @@ def test_installing_twice_changes_nothing(tmp_path):
     assert second.returncode == 0, second.stderr
     for name in INSTALLED:
         assert f"{name}: already installed at" in second.stdout, name
-    # EIGHTEEN, not eleven: the two skill copies, the two command-file copies
-    # and the hook entry each report `unchanged` too, and the count is the
+    # NINETEEN, not eleven: the two skill copies, the two command-file copies
+    # and BOTH hook entries each report `unchanged` too, and the count is the
     # invariant Amendment 9(b) names — derived from the three lists, never
-    # restated, so a new skill or command moves it.
+    # restated, so a new skill or command moves it. It was eighteen until
+    # Amendment 12 adoption act 3 put the name guard beside the SessionStart
+    # entry, which is the `HOOK_ENTRIES` term above.
     assert second.stdout.count("unchanged") == ARTIFACTS
 
 

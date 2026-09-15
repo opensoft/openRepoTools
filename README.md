@@ -241,33 +241,41 @@ a symlink, and an install through one leaves the command uninstalled and writes
 these bytes into whatever it points at. Then an `11 of 11 placed in <dir>` line,
 and the `export PATH=…` line if that directory is not on your `PATH`.
 
-It also places **seven things that are not files in that directory**: TWO
+It also places **eight things that are not files in that directory**: TWO
 SKILLS, `/lane-swap` and `/restart`, each at
 `${CLAUDE_PROFILES_HOME:-~/.claude-profiles}/shared/skills/<name>/SKILL.md`
 (one write every profile reads through its own symlink) and at
 `~/.claude/skills/<name>/SKILL.md` for a bare `claude` run outside the
 launcher; **one command file**, `/swap`, at that same pair of paths
 (`…/shared/commands/swap.md` and `~/.claude/commands/swap.md`), because
-`opensoft/workBenches#74` deletes the launcher's copy; and **one merged entry**
-under `hooks.SessionStart` in `~/.claude/settings.json`. That merge needs
-`jq`, never writes the file whole, writes it back at mode 600, and is
-idempotent by exact match on the entry's command string. That path must be a
+`opensoft/workBenches#74` deletes the launcher's copy; and **two merged
+entries** in `~/.claude/settings.json` — `lanes-edit.sh session-start` under
+`hooks.SessionStart`, and `lanes-edit.sh guard` under `hooks.UserPromptSubmit`,
+which is lane-collision-protocol Amendment 12's NAME GUARD: at every prompt it
+checks that the tmux window, the session's own name and the register row are
+one lane, and refuses the prompt when they are not. Those merges need
+`jq`, never write the file whole, write it back at mode 600, and are
+idempotent by exact match on each entry's command string. That path must be a
 REGULAR FILE: a symlink there — into a dotfiles checkout, say — is a refusal in
 the same planning phase, because `chmod` follows a link and the merge replaces
 what is at that path. The skills and the command file are 644 and that file 600
-on every run — including the run that finds the entry already there and changes
-no byte of it. An entry that runs `session-start` with a DIFFERENT string — a
-second writer of this very hook — a file it cannot parse, or a `hooks` that is
-not an object → it **refuses, prints the exact block, and places nothing at
-all**, because the merge is computed with the eleven files in hand before any
-of them is placed. An installer that repairs a file it does not understand is
-how you lose a setting you meant. It never writes a profile's own
-`settings.json`: the launcher owns that one.
+on every run — including the run that finds both entries already there and
+changes no byte of them. An entry that runs
+`session-start`, or one that runs `guard` as a whole argument, with a DIFFERENT
+string — a second writer of one of these hooks — a
+file it cannot parse, or a `hooks` that is not an object → it **refuses, prints
+the exact block, and places nothing at all**, because both merges are computed
+with the eleven files in hand before either is placed. An installer that
+repairs a file it does not understand is how you lose a setting you meant. Your
+own `UserPromptSubmit` hooks are left exactly where they are, which is why that
+arm keys on the VERB and not on the word anywhere in a path. It
+never writes a profile's own `settings.json`: the launcher owns that one.
 
-Eighteen artifacts, and the count is the invariant. It was sixteen until A11
+Nineteen artifacts, and the count is the invariant. It was sixteen until A11
 Addendum 4 ruling 9 gave `--install` a command-file list and `commands/swap.md`
 in it, at the same pair of paths a skill takes — because `opensoft/workBenches#74`
-deletes the launcher's copy and `/swap` would otherwise be installed by nobody.
+deletes the launcher's copy and `/swap` would otherwise be installed by nobody;
+and eighteen until Amendment 12 adoption act 3 added the name guard's entry.
 
 Run from a checkout it copies the files beside it and needs no network and no
 `gh` at all; run from stdin, as above, it fetches all of them at the same ref.
