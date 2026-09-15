@@ -7880,7 +7880,7 @@ retire_rows() {   # <lane>… [--reason "<why>"] [--writer <lane>]
       # THE CAP IS CLAUSE (c)'s 240, CUT BACK TO A SPACE — `cut_to_line`'s rule
       # and the migration's: `${s:0:n}` counts bytes wherever the locale is not
       # a UTF-8 one, and these cells are full of `·`, `—` and `→`.
-      rr_head="${rr_head:0:240}"
+      rr_head="${rr_head:0:236}"   # 236 + " ..." is the 240 clause (c) gives
       case "$rr_head" in *' '*) rr_head="${rr_head% *}" ;; esac
       rr_head="$rr_head ..."
     fi
@@ -7931,10 +7931,9 @@ retire_rows() {   # <lane>… [--reason "<why>"] [--writer <lane>]
     rr_wasrow="${rr_wasrow// · /; }"
     rr_line="$rr_reason; was: $rr_wasrow"
     if [ "${#rr_line}" -gt "$ROW_STATE_CAP" ]; then
-      rr_line="${rr_line:0:$ROW_STATE_CAP}"
+      rr_line="${rr_line:0:$((ROW_STATE_CAP - 4))}"
       case "$rr_line" in *' '*) rr_line="${rr_line% *}" ;; esac
       rr_line="$rr_line ..."
-      rr_line="${rr_line:0:$ROW_STATE_CAP}"
     fi
     row_state_check "RETIRED · $rr_line"
     rr_new="RETIRED · $rr_utc · $ROW_STATE_LINE"

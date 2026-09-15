@@ -8393,12 +8393,18 @@ hasnt "…while a CLOSED lane is hidden from the pick entirely (Amendment 19)" "
 hasnt "…and no question was asked" "$out$err" "which?"
 has   "…saying in terms why nothing was asked" "$out" "stdin is not a terminal"
 has   "…and offering the acts filled in, which is what an agent reads" "$out" "lane-start repoPick 6"
-# THE SAME ROWS AS A READ STILL SHOW THE CLOSED LANE, because `lanes` is the
-# read and this is a pick.
+# THE SAME ROWS AS A READ NO LONGER SHOW IT EITHER, since Amendment 19(b). The
+# pick hid a closed lane before the read did — a lane whose last act was its
+# last is not a lane a person picks — and now the read leaves it out too, and
+# puts it back under `--closed`, which the pick has no answer for. What has not
+# moved is the POSITION: closed or not, listed or not, `repoPick-5` holds 5.
 run env LANES_NO_FETCH=1 "$LANES_CMD" --prefix repoPick </dev/null
-has   "…while \`lanes\` still carries the closed lane, because that is the READ" "$out" "repoPick-5"
+hasnt "…and the listing no longer carries the closed lane either (Amendment 19(b))" "$out" "repoPick-5"
 has   "…and its footer offers the same next free position the pick does" "$out" "next free position:  6"
 has   "…and points at the word that binds one" "$out" "pick one:            lane"
+run env LANES_NO_FETCH=1 "$LANES_CMD" --closed --prefix repoPick </dev/null
+has   "…while --closed puts it back, because that is the READ" "$out" "repoPick-5"
+has   "…under a line saying which verb closed it" "$out" "closed: its object log ends with ENDED"
 
 # ------------------------------------------------------- one question, one answer
 if [ "$HAVE_PTY" = 0 ]; then
@@ -9636,6 +9642,17 @@ is    "a second archive-rows finds nothing to move" "$rc" 2
 has   "…and says so" "$err" "no row of repo19 has the state RETIRED"
 
 # THE WRAPPER RENDERS WHAT THE READ DECIDED, and nothing of its own.
+# A RETIRED POSITION IS NEVER REISSUED, and that is a REFUSAL and not only a
+# suggestion: `next-free` skips the archived numbers above, and `add-row` — the
+# act `lane-start <repo> <n>` makes — refuses a name the archive holds, because
+# that lane's object log is still there and is append-only.
+run a19 env LANES_LANE=repo19-2 "$E" add-row "| \`repo19-4\` | harness \`$A19_OLD\` | Eagle / test / brett | 2026-09-15 | none | none | LIVE |"
+is    "a lane name the archive holds is refused a second row" "$rc" 2
+has   "…naming the archive it is in" "$err" "lanes/archive/LANES-retired.md"
+has   "…and the log that makes it one lane" "$err" "lanes/log/repo19-4.md"
+run a19 env LANES_LANE=repo19-2 "$E" add-row "| \`repo19-6\` | harness \`$A19_OLD\` | Eagle / test / brett | 2026-09-15 | none | none | LIVE |"
+is    "…while the free position beside it is still added" "$rc" 0
+
 run a19 "$LANES_CMD" --prefix repo19 </dev/null
 has   "the listing says the closed and dormant rows are not in it" "$out" "closed and dormant lanes are not listed"
 hasnt "…and they are not" "$out" "repo19-7"
