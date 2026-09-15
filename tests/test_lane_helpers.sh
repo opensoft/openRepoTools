@@ -9661,6 +9661,22 @@ run a19 "$LANES_CMD" --closed --prefix repo19 </dev/null
 has   "--closed puts them back" "$out" "repo19-7"
 has   "…a closed one saying which line closed it" "$out" "closed: its object log ends with RETIRED"
 
+# AN UNTRACKED LOG IS SOMEBODY'S UNCOMMITTED WORK, and this sweep is ONE commit:
+# appending to it would put a peer's first lines into that commit under this
+# act's message (the finding `migrate-state-cells` took in round 2 of
+# openRepoTools#82, in the act with the same shape). A TRACKED file that is
+# dirty is already refused for the whole run; an untracked one is in neither of
+# `refuse_dirty_checkout`-s lists. `repo19-6` is the row the `add-row` case
+# above left behind: dormant, with no log — until this puts one beside it.
+A19_HEAD3="$(git -C "$A19_WIP" rev-parse HEAD)"
+printf '# lane repo19-6 — object log (seeded by a peer, uncommitted)\n' > "$A19_WIP/lanes/log/repo19-6.md"
+run a19 env LANES_LANE=repo19-2 "$E" retire-rows repo19-6
+is    "a dormant row whose object log is UNTRACKED is refused" "$rc" 2
+has   "…saying what that file is" "$err" "is NOT TRACKED"
+has   "…and naming the commit that settles it" "$err" "git -C"
+is    "…and nothing was written" "$(git -C "$A19_WIP" rev-parse HEAD)" "$A19_HEAD3"
+rm -f "$A19_WIP/lanes/log/repo19-6.md"
+
 echo "== the workstation seam: unset, every writer reads the host =="
 
 # THE OTHER HALF OF R-A9-13. Every case above this line runs with
