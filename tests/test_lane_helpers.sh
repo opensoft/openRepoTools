@@ -9119,18 +9119,23 @@ has   "…saying which cell the other reading would have overwritten" "$err" "ha
 has   "…and naming the escape a Markdown table wants" "$err" '\|'
 is    "…and the row is untouched" "$(grep '^| `repoA13-2`' "$LANES")" "$a13_amb"
 
-# THE SHARED CUT THE THREE ROW WRITERS CARRY, as a unit. It is what keeps a
+# THE SHARED CUT THE THREE ROW WRITERS CARRY, as a unit. The address is
+# `/^cut_to_line()/` and NOT `/^cut_to_line() {/`: an unescaped `{` in a BRE is
+# undefined by POSIX, and BSD `sed` — the macOS job's — answers nothing at all
+# for it, so all three of these cases came back EMPTY there while two of them
+# passed vacuously against an empty string (measured on `4df80b6`'s
+# `tests-macos`). The function's own line is unique without the brace. It is what keeps a
 # `dir` or a launch flag holding a `|` from reaching `set-row-state`, whose
 # contract refuses every pipe — a normal start would then rename the window and
 # fail to stamp the row (Copilot round 1 on openRepoTools#82).
-a13_cut="$(bash -c 'eval "$(sed -n "/^cut_to_line() {/,/^}/p" "$1")"; cut_to_line "$2"' _ "$OPENREPOTOOLS_BIN_DIR/lane-start" "launching claude --flag a|b; dir /x · y")"
+a13_cut="$(bash -c 'eval "$(sed -n "/^cut_to_line()/,/^}/p" "$1")"; cut_to_line "$2"' _ "$OPENREPOTOOLS_BIN_DIR/lane-start" "launching claude --flag a|b; dir /x · y")"
 is    "the shared cut spells a cell boundary as the broken bar" "$a13_cut" "launching claude --flag a¦b; dir /x; y"
 a13_long="$(awk 'BEGIN { s = ""; while (length(s) < 400) s = s "word "; print s }')"
-a13_cut2="$(bash -c 'eval "$(sed -n "/^cut_to_line() {/,/^}/p" "$1")"; cut_to_line "$2"' _ "$OPENREPOTOOLS_BIN_DIR/lane-start" "$a13_long")"
+a13_cut2="$(bash -c 'eval "$(sed -n "/^cut_to_line()/,/^}/p" "$1")"; cut_to_line "$2"' _ "$OPENREPOTOOLS_BIN_DIR/lane-start" "$a13_long")"
 is    "…and cuts a long line at a word boundary, inside the cap" \
       "$( [ "${#a13_cut2}" -le 240 ] && echo yes || echo "no ${#a13_cut2}" )" "yes"
 has   "…saying it was cut" "$a13_cut2" " ..."
-a13_cut3="$(bash -c 'eval "$(sed -n "/^cut_to_line() {/,/^}/p" "$1")"; cut_to_line "$2"' _ "$OPENREPOTOOLS_BIN_DIR/lane-start" "$(printf 'one\ntwo')")"
+a13_cut3="$(bash -c 'eval "$(sed -n "/^cut_to_line()/,/^}/p" "$1")"; cut_to_line "$2"' _ "$OPENREPOTOOLS_BIN_DIR/lane-start" "$(printf 'one\ntwo')")"
 is    "…and a newline, because a row is ONE line of a table (Copilot round 2)" "$a13_cut3" "one; two"
 hasnt "…never leaving half a character where the cut landed" "$a13_cut2" "wor ..."
 
