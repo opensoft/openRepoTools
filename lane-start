@@ -1855,7 +1855,7 @@ if [ "$bind_rc" = 0 ]; then
       ls_ask=yes
     elif [ -n "${LANE_START_HANDOFF_ANSWER+set}" ]; then
       step "$ls_bind_facts"
-      step "Ask it to hand off, then bind here? [y/N] ${LANE_START_HANDOFF_ANSWER:-<empty>}   (LANE_START_HANDOFF_ANSWER)"
+      step "ask it to hand off, then bind here? [y/N] ${LANE_START_HANDOFF_ANSWER:-<empty>}   (LANE_START_HANDOFF_ANSWER)"
       case "$LANE_START_HANDOFF_ANSWER" in y|Y|yes|YES|Yes) ls_ask=yes ;; *) ls_ask=no ;; esac
     elif [ -t 0 ]; then
       note "$ls_bind_facts"
