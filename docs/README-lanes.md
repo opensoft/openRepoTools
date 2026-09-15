@@ -2127,6 +2127,149 @@ the pid, where that process is (its window, or `bg`), the profile it is under,
 and the retire act — `lane-end <lane> --retire <pid>` — and nothing is moved and
 nothing is launched.
 
+## Crash-consistent lane recovery (openRepoTools#91)
+
+**A lane is `RUNNING`, `SWAPPING`, `SWAPPED` or `CLOSED`, and which of those it
+is WITH NO LIVE HOLDER is what says where its session stopped.** A session can
+run out of tokens before the handoff, after the handoff began and before it
+finished, or after it finished — and until this capability all three left the
+same evidence: a last lane-kind line that is a `STARTED`/`RESUMED` (which is
+also what a running lane looks like) or a `PAUSED` (which is also what a clean
+swap looks like). The two crash kinds had no word.
+
+Governed by `openspec/changes/add-crash-consistent-lane-worktree-recovery/` and
+tracked on [opensoft/openRepoTools#91](https://github.com/opensoft/openRepoTools/issues/91).
+It amends no protocol: **no sixth lane verb is added to the append-only log**.
+Amendment 7's `STARTED`, `PAUSED`, `RESUMED`, `ENDED` and `RETIRED` stand, and
+every reader of them — `swapped`, `lane-last`, `lane-dir`, `who`, `lane-end` —
+is untouched. What is new is a SNAPSHOT beside that history.
+
+### The four words, and the two crashes
+
+```text
+RUNNING --/handoff begins--> SWAPPING --record + row + handoff all landed--> SWAPPED
+   ^                                                                          |
+   +---------------- the act that confirms the next binding --------------—---+
+```
+
+| the snapshot says | a live holder? | what it means |
+|---|---|---|
+| `RUNNING` | yes | the lane is running — do not launch a second coordinator or a second writer |
+| `RUNNING` | **no** | **ungraceful stop**: the session died before any handoff began, so nothing was polled, refreshed or recorded |
+| `SWAPPING` | yes | a handoff is in flight — do not compete with it |
+| `SWAPPING` | **no** | **interrupted swap**: the handoff began and did not finish, so the record, the row and the handoff file may each be half done |
+| `SWAPPED` | no | the swap completed; the lane is resumable once its trees are read |
+| `SWAPPED` | yes | inconsistent — a swapped lane has no holder, and neither side is overwritten |
+| `CLOSED` | — | the lane is finished; a dirty or unpushed tree under it is a closure inconsistency and no cleanup is made |
+| any | **unreadable** | `indeterminate`. A holder that could not be established is NOT "no holder" (`R22`, Amendment 7(d)), and no crash is pronounced on a read nobody got. |
+
+### The fence
+
+Every transition carries a monotonic **generation** and a unique **operation
+id**, and `set-lane-state --expect …` is the compare-and-swap:
+
+```sh
+lanes-edit.sh lane-state <lane>                     # state, generation, operation, owner, updated
+lanes-edit.sh set-lane-state <lane> SWAPPING --expect RUNNING
+lanes-edit.sh set-lane-state <lane> SWAPPED  --expect SWAPPING \
+              --expect-generation <n> --expect-operation <id>
+```
+
+A finalizer whose state, generation or operation no longer matches writes
+NOTHING and exits **7** — the number this file already spends on `claim`'s
+CLAIM-LOST, and one meaning on it: *you lost the race*. That is what stops a
+`/handoff` that stalled for an hour from marking a lane `SWAPPED` after somebody
+has recovered and resumed it. A handoff that finds the lane still `SWAPPING`
+**takes it over** with a new generation and names the operation that never
+finished; nothing of that operation is undone.
+
+`RUNNING` is written by the act that CONFIRMS the binding and never by the
+SessionStart hook: `session-start` never writes, never touches the network and
+always exits 0 (Amendment 8, `R-A8-1`), and a hook that writes is a hook that
+can break the session it was meant to orient. So the snapshot follows the
+`STARTED`/`RESUMED` line `lane-start` writes, in `lanes-edit.sh`'s own
+`write_event`; `ENDED`/`RETIRED` become `CLOSED` there too.
+
+### Where it lives
+
+A LOCAL control root beside the lane's own checkouts — not the register (every
+write of that is a commit, a pull and a push, and a transition happens three
+times per handoff with no network), and not inside a git worktree (metadata
+there dirties a checkout and disappears with the very directory whose loss it
+explains). Three rungs, and never the caller's current directory:
+
+1. `$LANES_LANE_STATE_ROOT/<lane>` — the explicit override and the suite's seam;
+2. `<parent of the lane's recorded `dir`>/.lane-state/<lane>` — the same parent
+   the lane's own `.lane-worktrees/<lane>` root sits in, and `dir` is Amendment
+   11(c)'s recorded field rather than a guess;
+3. `$PROJECTS_ROOT/.lane-state/<lane>`.
+
+No rung answering is **8**, *this lane has no control root* — the ordinary
+answer for a lane that has not started under Amendment 11(c), and not a failure.
+Nothing is backfilled (Amendment 7(i)).
+
+Because the snapshot is filed under NOTHING — never committed, never leaving the
+machine that wrote it — `R-A11-14` does not reach it: a container with no
+`$LANES_WORKSTATION` still keeps a lifecycle it can recover itself from, while
+the register and object-log writes stop there exactly as they did.
+
+### The worktree inventory
+
+Every handoff polls the lane's writers in the two places a lane keeps them —
+`<checkout>/.claude/worktrees/<name>` and
+`<projects>/.lane-worktrees/<lane>/<name>` — and now records each one MACHINE
+READABLY beside the lane as well as in the handoff's WRITERS section:
+
+```sh
+lanes-edit.sh lane-trees <lane>
+# <id> <path> <branch> <head> <upstream> <dirty> <unpushed> <writer> <observed> <checkout>
+```
+
+The full `head` and the `upstream` are why this is not the prose section one
+more time: `%h` is an abbreviation that lengthens as a repository grows, and
+`0 unpushed` cannot be told from *this branch tracks nothing at all* without the
+upstream. Every field is an OBSERVATION and none of them is truth about git.
+
+### The reconciliation, which resets nothing
+
+```sh
+lanes-edit.sh lane-reconcile <lane>
+```
+
+It recomputes branch, HEAD, upstream, dirty and unpushed for every inventoried
+tree, reads `git worktree list --porcelain` in the lane's checkout and the
+directories under both lane roots, and prints one `TREE` line per tree with a
+classification: `ok`, `dirty`, `unpushed`, `dirty+unpushed`, `missing`,
+`possible-loss`, `not-a-checkout`, `unmanaged`, `stale-registration`. The last
+line is the `VERDICT`. `lane-start` prints the report before it writes anything,
+for any verdict that is not `running`, `resumable` or `closed`.
+
+**It reports and it resets nothing.** `park` CREATES NOTHING and `resume` RESETS
+NOTHING (`AGENTS.md` rule 1), so this read runs `git status`, `git log @{u}..`,
+`git rev-parse` and `git worktree list --porcelain` and nothing else:
+
+* a **missing** tree that was clean and published names the estate's own
+  `resume <Name>` as the only rebuild — and NAMES it rather than running it,
+  because that verb runs `make resume` across a whole estate and a report may
+  not do that as a side effect;
+* a missing tree whose last observation held dirty or unpushed work is
+  **possible-loss** and is never claimed to be reconstructable — no metadata
+  reconstructs a file's contents;
+* an **unmanaged** tree — one git registers, or one sitting under a lane root,
+  that no sidecar names — is reported and never deleted, adopted or overwritten:
+  which lane a tree belongs to is a person's to say;
+* a **stale-registration** names the `git worktree prune` that clears it, and
+  prunes nothing itself.
+
+### What a resumed session does with it
+
+Read the verdict first, then the trees, then `ListAgents` — the count is still
+what decides whether a writer is live (Amendment 17 Addendum 1 (i), and (k):
+one worktree, one writer). `ungraceful-stop` and `interrupted-swap` both mean
+**inspect every tree before relaunching anything**; the difference is that under
+`interrupted-swap` the record, the row and the handoff file may each be half
+written, so check all three rather than trusting the handoff's top block.
+
 ## Hand edits
 
 After **any** hand edit made with an allowed tool (python read/write, `sed -i

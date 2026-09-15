@@ -392,6 +392,97 @@ $sr_why" 2 ;;
 	eval "$sr_var=\$sr_out"
 }
 
+# ---------------- the crash-consistent lifecycle (opensoft/openRepoTools#91)
+#
+# A LANE IS `RUNNING`, `SWAPPING`, `SWAPPED` OR `CLOSED`, and this command owns
+# the two-phase transition in the middle of that: `SWAPPING` BEFORE any
+# preservation work begins, `SWAPPED` only after every mandatory write has
+# landed. What that buys is the one thing the `PAUSED` record alone could never
+# say — WHERE a session that ran out of tokens stopped. `RUNNING` with no live
+# holder is an ungraceful stop: nothing was polled, nothing was refreshed,
+# nothing was recorded. `SWAPPING` with no live holder is an INTERRUPTED SWAP:
+# some of those writes may have landed and some may not, and every worktree
+# below is preserved until a person has read them.
+#
+# THE LIFECYCLE NEVER REFUSES THE SWAP. `R-A11-11` is that a swap is never left
+# unwritten, and it binds this command: a control root that cannot be derived,
+# a fence another act moved, a snapshot that cannot be written — each of them
+# costs the LIFECYCLE and never the record. The handoff carries on and says
+# what it could not keep, exactly as it does for a dropped sub-field.
+lc_on=""; lc_gen=""; lc_op=""; lc_state=""
+
+lifecycle_begin() {
+	lc_on=""; lc_gen=""; lc_op=""; lc_state=""
+	lcb_now=""; lcb_rc=0
+	lcb_now="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-state "$lane" 2>/dev/null \
+		| awk -F"\t" '$1 == "state" { print $2; exit }')" || lcb_rc=$?
+	case "$lcb_rc" in
+	0 | 8) : ;;
+	*)
+		note "the lane lifecycle could not be read (\`$LANES_EDIT lane-state $lane\` exited $lcb_rc), so this handoff records no RUNNING -> SWAPPING -> SWAPPED transition. The swap itself goes on (\`R-A11-11\`) and the PAUSED record below is unaffected."
+		return 0 ;;
+	esac
+	[ -n "$lcb_now" ] || lcb_now=none
+	# AN INTERRUPTED SWAP IS TAKEN OVER, NOT COMPETED WITH. A lane still
+	# reading `SWAPPING` when a new handoff starts is one whose previous
+	# operation never finished; this one supersedes it with a NEW generation,
+	# which is precisely what refuses the old finalizer if it ever wakes up.
+	# The old operation id is named rather than lost.
+	if [ "$lcb_now" = SWAPPING ]; then
+		lcb_old="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-state "$lane" 2>/dev/null \
+			| awk -F"\t" '$1 == "operation" { print $2; exit }')"
+		note "lane $lane is still recorded SWAPPING from operation ${lcb_old:-unknown}, which never finished: this handoff SUPERSEDES it with a new generation, and that is what refuses the old finalizer if it ever returns. Nothing of that operation is undone here."
+	fi
+	lcb_out=""; lcb_src=0
+	lcb_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" set-lane-state "$lane" SWAPPING \
+		--expect "$lcb_now" --owner "${uuid:-none}" --agent "$agent" \
+		--profile "${profile_name:-none}" --kind "$handoff_kind" 2>/dev/null)" || lcb_src=$?
+	case "$lcb_src" in
+	0)
+		lc_on=1
+		lc_gen="$(printf '%s\n' "$lcb_out" | awk -F"\t" '$1 == "generation" { print $2; exit }')"
+		lc_op="$(printf '%s\n' "$lcb_out" | awk -F"\t" '$1 == "operation" { print $2; exit }')"
+		lc_state=SWAPPING
+		step "lifecycle: $lcb_now -> SWAPPING (generation $lc_gen, operation $lc_op)" ;;
+	7)
+		note "the lane lifecycle moved between reading it and taking it (it was $lcb_now and is not now), so this handoff records no transition and its worktree inventory carries no operation. Another process is acting on lane $lane: read it with \`$LANES_EDIT lane-reconcile $lane\` before relaunching anything. The swap itself goes on (\`R-A11-11\`)." ;;
+	1)
+		note "lane $lane has no lifecycle control root (its record names no directory, and \$PROJECTS_ROOT is not a directory here), so this handoff records no RUNNING -> SWAPPING -> SWAPPED transition and crash recovery for it stays incomplete. The swap itself goes on." ;;
+	*)
+		note "the lane lifecycle could not be taken to SWAPPING (\`set-lane-state\` exited $lcb_src). The swap goes on and records no transition." ;;
+	esac
+	return 0
+}
+
+# `SWAPPED` IS THE COMMIT POINT AND IT IS FENCED ON THIS OPERATION. A handoff
+# whose record, row and handoff file did not all land leaves the lane
+# `SWAPPING` and SAYS WHICH STEP IS UNFINISHED — because those three are
+# exactly what a resumed session needs to have found, and a lane called
+# `SWAPPED` on two of them is a lane whose recovery would skip the third.
+lifecycle_finish() {   # <what is unfinished, empty when nothing is>
+	[ -n "$lc_on" ] || return 0
+	if [ -n "${1-}" ]; then
+		lc_state=SWAPPING
+		note "the lane stays SWAPPING (generation $lc_gen, operation $lc_op): $1. A later session reads that as an INTERRUPTED SWAP and preserves every worktree, which is the honest record of what this act left."
+		return 0
+	fi
+	lcf_rc=0
+	LANES_NO_FETCH=1 "$LANES_EDIT" set-lane-state "$lane" SWAPPED \
+		--expect SWAPPING --expect-generation "$lc_gen" --expect-operation "$lc_op" \
+		--owner "${uuid:-none}" --agent "$agent" --profile "${profile_name:-none}" \
+		--kind "$handoff_kind" >/dev/null 2>&1 || lcf_rc=$?
+	case "$lcf_rc" in
+	0) lc_state=SWAPPED; step "lifecycle: SWAPPING -> SWAPPED (generation $lc_gen, operation $lc_op)" ;;
+	7)
+		lc_state=superseded
+		note "this handoff is NOT the act that finishes lane $lane: the lifecycle fence moved under it (another handoff, or a resume that took the lane) and a stale finalizer must never overwrite a newer owner. The PAUSED record, the row and the handoff file are all written; only the SWAPPED transition was refused." ;;
+	*)
+		lc_state=SWAPPING
+		note "the lane could not be recorded SWAPPED (\`set-lane-state\` exited $lcf_rc), so it stays SWAPPING and a later session reads it as an interrupted swap." ;;
+	esac
+	return 0
+}
+
 # ------------------------------------------------- 1. the identity triple
 #
 # THE WORKSTATION COMES FROM CONFIGURATION, NEVER FROM `hostname` (Amendment 11,
@@ -663,6 +754,19 @@ if [ "$do_late" = 1 ]; then
 	fi
 fi
 
+# ----------------- 2a. RUNNING -> SWAPPING, before any preservation work
+#
+# FIRST OF THE ACTS THAT CHANGE ANYTHING, and deliberately ahead of the poll,
+# the refresh and the record: a session that dies from here on leaves the lane
+# reading `SWAPPING`, which is the word for *the handoff began and did not
+# finish*. Taken any later, the window in which token exhaustion is
+# indistinguishable from an ungraceful stop is exactly the window in which the
+# writers are being polled — the longest part of the act.
+#
+# IT IS BELOW THE `--late` PRECONDITIONS ON PURPOSE. Those refuse and write
+# nothing at all, and a refusal must leave the lane exactly as it found it.
+lifecycle_begin
+
 # ------------------------------------------------ 3. poll the running writers
 #
 # Amendment 17(f): the top block *"LISTS EVERY WRITER THE LANE HAS RUNNING (its
@@ -707,6 +811,14 @@ poll_writer() {   # <path>
 	pw_dirty="$(printf '%s' "$pw_status" | grep -c . || :)"
 	pw_ahead="$(printf '%s' "$pw_unpushed" | grep -c . || :)"
 	pw_brief="$(brief_for "$pw_d" || printf '')"
+	# THE TWO FIELDS THE PROSE NEVER CARRIED (openRepoTools#91). `%h` is an
+	# ABBREVIATION — it lengthens as a repository grows and it is ambiguous
+	# across repositories — so the inventory records the full HEAD, which is
+	# what a later reconciliation compares; and the UPSTREAM, without which
+	# `0 unpushed` cannot be told from *this branch tracks nothing at all*.
+	pw_head="$(git -C "$pw_d" rev-parse HEAD 2>/dev/null || printf 'unknown')"
+	pw_up="$(git -C "$pw_d" rev-parse --abbrev-ref '@{u}' 2>/dev/null || printf 'none')"
+	[ "$pw_branch" = HEAD ] && pw_branch=detached
 	writer_count=$((writer_count + 1))
 	say ""
 	say "WRITER $pw_d — branch $pw_branch, last commit ${pw_last:-<none>}"
@@ -717,6 +829,21 @@ poll_writer() {   # <path>
 	printf -- '- `%s` — branch `%s`, last commit `%s`, %s dirty, %s unpushed; brief: %s\n' \
 		"$pw_d" "$pw_branch" "${pw_last:-<none>}" "$pw_dirty" "$pw_ahead" \
 		"${pw_brief:-(fill in: the brief this writer was given)}" >> "$writers_tmp"
+	# AND THE SAME OBSERVATION, MACHINE-READABLE, BESIDE THE LANE AND NOT INSIDE
+	# IT (openRepoTools#91). The WRITERS section above is what a person and the
+	# next session read; this is what `lane-reconcile` recomputes against after
+	# a crash, when there may be no session to read anything. It carries THIS
+	# handoff's generation and operation, so a tree recorded by a superseded
+	# operation is visible as one. It never fails the poll and never fails the
+	# swap: a lane with no control root simply keeps no inventory yet.
+	if [ -n "$lc_on" ]; then
+		LANES_NO_FETCH=1 "$LANES_EDIT" set-lane-tree "$lane" "$pw_d" \
+			--checkout "${dir:-unknown}" --branch "$pw_branch" --head "$pw_head" \
+			--upstream "$pw_up" --dirty "${pw_dirty:-0}" --unpushed "${pw_ahead:-0}" \
+			--writer "${uuid:-none}" --generation "$lc_gen" --operation "$lc_op" \
+			>/dev/null 2>&1 ||
+			note "the worktree inventory entry for $pw_d could not be written; this handoff's WRITERS section still names it, and \`lane-reconcile\` will report it as unmanaged rather than as lost."
+	fi
 	return 0
 }
 
@@ -923,12 +1050,22 @@ if [ "$do_late" = 1 ]; then
 	if LANES_LANE="$lane" LANES_SESSION="$uuid" "$LANES_EDIT" log PAUSED "lane:$lane" \
 		'→' "$late_payload" "$late_why" --utc "$late_at"; then
 		step "late PAUSED written, dated $late_at (before the relaunch, which is the only place it can go)"
+		# THE LATE RECORD'S MANDATORY SET IS TWO AND NOT THREE: the row is not
+		# flipped by this branch at all (it exits below), so requiring it would
+		# leave every late record reading as an interrupted swap for ever.
+		lc_unfinished=""
+		[ "$handoff_written" = 1 ] || lc_unfinished="the handoff file was not refreshed"
+		lifecycle_finish "$lc_unfinished"
 	else
+		lifecycle_finish "the late PAUSED record was refused by the helper"
 		die "the late PAUSED was NOT written (the helper refused it — its own message is above). Nothing else was done." 2
 	fi
 	say ""
 	say "LATE RECORD WRITTEN for lane $lane, dated $late_at. Now start the lane:"
 	say "  pclaude ${profile_name:-<profile>}"
+	if [ -n "$lc_on" ]; then
+		say "  lifecycle: $lc_state (generation $lc_gen, operation $lc_op) — lanes-edit.sh lane-reconcile $lane"
+	fi
 	exit 0
 fi
 
@@ -1021,6 +1158,26 @@ else
 	[ -z "$row_write_refused" ] || note "the row's state cell was NOT set to PAUSED (the write was refused — run it by hand to see what it says: lanes-edit.sh set-row-state $lane \"PAUSED · $hs_line\"). The restart line below carries --lane for that reason."
 fi
 
+# ------------------------- 4a. SWAPPING -> SWAPPED, the operation's commit point
+#
+# THE THREE WRITES THAT MUST HAVE LANDED, and they are the same three
+# `--restart` and `--exit` already gate on: the lane's `PAUSED` record (what
+# every launcher and every later reader takes its state from), the row (what
+# every OTHER lane reads) and the handoff file (whose top block is literally
+# the next session's first prompt). A lane called `SWAPPED` on two of those is
+# a lane whose recovery would skip the third, so the transition is made only on
+# all three and the state otherwise STAYS `SWAPPING` — which a later session
+# reads as an interrupted swap and answers by preserving every worktree.
+#
+# THE SWAP IS STILL REPORTED AND STILL RESTARTABLE (`R-A11-11`, *a swap is
+# never left unwritten*): this changes what the lane's lifecycle SAYS, never
+# whether the act completes.
+lc_unfinished=""
+[ "$record_written" = 1 ] || lc_unfinished="the lane's PAUSED record did not land"
+[ -z "$row_write_refused" ] || lc_unfinished="${lc_unfinished:+$lc_unfinished; }the row's state cell was not flipped"
+[ "$handoff_written" = 1 ] || lc_unfinished="${lc_unfinished:+$lc_unfinished; }the handoff file was not refreshed"
+lifecycle_finish "$lc_unfinished"
+
 # ------------------------------------------- 5. the restart line — one command
 if [ -n "$row_write_refused" ]; then
 	restart_cmd="pclaude --lane $lane ${profile_name:-<profile>}"
@@ -1033,6 +1190,10 @@ say ""
 say "READY — restart with: $restart_cmd$restart_note"
 say "  record: PAUSED lane:$lane → $payload"
 say "  agent $agent, transcript $transcript (lane-start --agent $agent resumes it)"
+if [ -n "$lc_on" ]; then
+	say "  lifecycle: $lc_state (generation $lc_gen, operation $lc_op) — lanes-edit.sh lane-reconcile $lane"
+	say "  inventory: $writer_count worktree(s) recorded — lanes-edit.sh lane-trees $lane"
+fi
 
 # -------------------------------------------- Amendment 17(f) / 18(d): the end
 #

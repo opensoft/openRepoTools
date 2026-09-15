@@ -241,6 +241,42 @@
 #   `into <repo> main` clause, and keying those on the repository they name
 #   reported 232 phantom merge holds where one was real.
 #
+# openRepoTools#91 — THE CRASH-CONSISTENT LANE LIFECYCLE AND THE INVENTORY
+#   lanes-edit.sh lane-state      <lane>
+#   lanes-edit.sh set-lane-state  <lane> <RUNNING|SWAPPING|SWAPPED|CLOSED> \
+#                                 [--expect <STATE|none>] [--expect-generation <n>] \
+#                                 [--expect-operation <id>] [--operation <id>] \
+#                                 [--owner <uuid>] [--agent <name>] [--profile <name>] \
+#                                 [--kind <word>]
+#   lanes-edit.sh lane-trees      <lane>
+#   lanes-edit.sh set-lane-tree   <lane> <worktree path> [--checkout <dir>] \
+#                                 [--branch <b>] [--head <sha>] [--upstream <ref>] \
+#                                 [--dirty <n>] [--unpushed <n>] [--writer <uuid>] \
+#                                 [--generation <n>] [--operation <id>]
+#   lanes-edit.sh lane-reconcile  <lane>
+#
+#   A lane is RUNNING, SWAPPING, SWAPPED or CLOSED, and WHICH OF THOSE IT IS
+#   WITH NO LIVE HOLDER is what says where its session stopped: `RUNNING` with
+#   no holder is an UNGRACEFUL STOP (nothing was handed off) and `SWAPPING`
+#   with no holder is an INTERRUPTED SWAP (the handoff began and did not
+#   finish). Every transition carries a monotonic `generation` and a unique
+#   `operation`, and `--expect*` is the compare-and-swap that refuses a stale
+#   finalizer with exit 7 rather than letting it overwrite a newer owner.
+#
+#   NO SIXTH LANE VERB IS ADDED TO THE APPEND-ONLY LOG. Amendment 7's five
+#   stand and every reader of them is untouched; this is a SNAPSHOT beside that
+#   history, local to the workstation, replaced atomically, and never committed
+#   — see the section above the dispatcher for where it lives and why it is
+#   neither in the register nor inside a git worktree.
+#
+#   `set-lane-tree` records ONE worktree of the lane — its path, checkout,
+#   branch, head, upstream, dirty and unpushed counts and writer — as an
+#   OBSERVATION; `lane-reconcile` recomputes every one of them and REPORTS the
+#   difference. It resets nothing, deletes nothing and creates nothing: a
+#   missing tree's only rebuild is the estate's own `resume <Name>`, and a
+#   missing tree that last held uncommitted work is reported as possible loss,
+#   because no metadata reconstructs a file's contents.
+#
 # EXIT CODES — every subcommand, one table, no two meanings on one number
 #   0  done
 #   1  environment (no register, no writer)
@@ -291,7 +327,12 @@
 #   5  an edit moved more than one line and was refused — or, Amendment 15, a
 #      lane's object log could not be renamed to the row's own spelling
 #   6  git add / commit / push failed
-#   7  CLAIM-LOST — another lane's claim landed on main first (`claim` only)
+#   7  ANOTHER ACT GOT THERE FIRST, and this one wrote nothing. `claim`:
+#      CLAIM-LOST, another lane's claim landed on main first.
+#      `set-lane-state`: the lifecycle fence did not match — the state, the
+#      generation or the operation id moved under this process — so a stale
+#      finalizer cannot overwrite a newer owner (openRepoTools#91). ONE
+#      MEANING ON THE NUMBER, in two places: you lost the race.
 #   8  no record — `who` found nothing; `lane-objects` has no log file for the
 #      lane; `live-holder` READ this workstation's session records and none of
 #      them holds it; `swapped` found no lane swapped on the workstation;
@@ -3605,6 +3646,19 @@ write_event() {
   we_rc=$?
   state_events_flush
   release_lock
+  # THE LIFECYCLE SNAPSHOT FOLLOWS THE LINE THAT WAS WRITTEN (openRepoTools#91),
+  # and it is here — in the writer, after the lock — for the reason
+  # `pause_subfields_check` is here: from ANY caller, over one implementation,
+  # rather than in each of the commands that write a lane-kind line. A
+  # `STARTED` or a `RESUMED` is the confirming act of a new owner and takes the
+  # lane to `RUNNING`; an `ENDED` or a `RETIRED` takes it to `CLOSED`; a
+  # `PAUSED` moves nothing, because the two-phase transition around it is
+  # `lane-handoff`'s and lands `SWAPPED` only once every mandatory write has.
+  # AFTER `release_lock`, because `acquire_lock` is a `mkdir` mutex and not a
+  # reentrant one. It never fails the event and it is silent for a lane with no
+  # control root, which is every lane that has not started under Amendment
+  # 11(c) — the cutover rule of Amendment 7(i), not a failure.
+  lane_state_follow "$we_lane" "$we_verb" "$we_pay" "$we_uuid"
   return "$we_rc"
 }
 
@@ -7502,6 +7556,538 @@ EOF
   return "$msc_rc"
 }
 
+# ============================================================================
+# THE CRASH-CONSISTENT LANE LIFECYCLE AND THE WORKTREE INVENTORY
+# (openspec/changes/add-crash-consistent-lane-worktree-recovery,
+#  opensoft/openRepoTools#91)
+# ============================================================================
+#
+# **A LANE IS `RUNNING`, `SWAPPING`, `SWAPPED` OR `CLOSED`, and which of those
+# it is, with no live holder, is what says where it stopped.** A session can
+# run out of tokens BEFORE the handoff, AFTER it began and before it finished,
+# or after it finished — and until this section those three left the same
+# evidence: a lane whose last lane-kind line was a `STARTED`/`RESUMED` (which
+# is also what a lane that is running looks like) or a `PAUSED` (which is also
+# what a clean swap looks like). The two crash kinds had no word.
+#
+# WHAT IS NEW AND WHAT IS NOT. Nothing about the append-only log changes: its
+# five lane verbs are Amendment 7's and no sixth is added here, so
+# `swapped_candidates`, `lane_row_facts`, `lane_payload_field`, `lane-last`,
+# `who` and `lane-end` read exactly what they read before. What is added is a
+# SNAPSHOT beside that history — one small file per lane, replaced atomically
+# under this file's own mutex — carrying the state word, a monotonic
+# GENERATION, the OPERATION ID of the transition in flight, and the owner. The
+# log stays the provenance; the snapshot is the cheap current-state read that
+# an append-only file cannot give a compare-and-swap.
+#
+# WHERE IT LIVES, AND WHY IT IS NOT IN THE REGISTER AND NOT IN A WORKTREE.
+#   * NOT IN THE REGISTER. `lanes/LANES.md` is one file shared by every lane on
+#     every workstation and every write of it is a commit, a pull --rebase and
+#     a push (Amendment 5). A transition is taken three times per handoff and
+#     must be able to happen with no network at all.
+#   * NOT INSIDE A GIT WORKTREE. Orchestration metadata written into a checkout
+#     dirties it, is committed by accident, and disappears with the very
+#     directory whose loss it is meant to explain.
+#   * SO: a LOCAL control root beside the lane's own checkouts, derived in this
+#     order and never from the caller's current directory —
+#       1. `$LANES_LANE_STATE_ROOT/<lane>`, the explicit override and the
+#          suite's seam;
+#       2. `<parent of the lane's recorded `dir`>/.lane-state/<lane>` — the
+#          same parent the lane's own `.lane-worktrees/<lane>` root sits in,
+#          and `dir` is Amendment 11(c)'s recorded field, not a guess;
+#       3. `$PROJECTS_ROOT/.lane-state/<lane>`, for a lane whose record names
+#          no directory yet.
+#     No answer is 8, "this lane has no control root", exactly as `lane-dir`
+#     answers 8 for a lane that has not started under Amendment 11 — and the
+#     pre-cutover lane is the ordinary case, not a failure (Amendment 7(i)).
+#
+# IT IS WRITTEN WHERE `R-A11-14` STOPS THE REGISTER AND THE OBJECT LOG. That
+# rule refuses a record FILED UNDER A WORKSTATION where no workstation is
+# configured, because such a record is unfindable by every restart of every
+# workstation. The snapshot is filed under nothing: it is local to the machine
+# that wrote it, it is never committed and it never leaves. So a container with
+# no `$LANES_WORKSTATION` still keeps a lifecycle it can recover itself from,
+# and these two writers are deliberately NOT in the dispatcher's workstation
+# guard above.
+#
+# THE FENCE. Every transition carries `generation` (monotonic) and
+# `operation` (unique to one handoff). `set-lane-state --expect` names the
+# state, and optionally the generation and the operation, the caller believes
+# it is moving from; the write happens only where all three still match, and
+# otherwise NOTHING is written and the exit is 7 — the estate's "another act
+# got there first", which is what `claim` already spends it on. That is the
+# whole of what stops a `/handoff` that stalled for an hour from marking a lane
+# `SWAPPED` after somebody has recovered and resumed it.
+#
+# WHO WRITES `RUNNING`. The confirming act, and never the SessionStart hook:
+# `session-start` NEVER WRITES, never touches the network and ALWAYS EXITS 0
+# (Amendment 8, R-A8-1), which is what makes it safe in front of every session
+# on the workstation. The act that actually proves lane, transcript, agent,
+# directory and binding is `lane-start` (with or without `--no-launch`), and
+# the proof it leaves is its `STARTED`/`RESUMED` line — so the snapshot follows
+# THAT line, in `write_event`, from any caller. `ENDED`/`RETIRED` become
+# `CLOSED` by the same rule. A `PAUSED` moves nothing: the two-phase transition
+# around it belongs to `lane-handoff`, which takes `SWAPPING` before it polls
+# anything and `SWAPPED` only after every mandatory write has landed.
+
+LANE_STATE_SCHEMA=1
+
+# The four words, and nothing else is one.
+lane_state_word_ok() {   # <word>
+  case "${1-}" in RUNNING|SWAPPING|SWAPPED|CLOSED) return 0 ;; esac
+  return 1
+}
+
+# THE CONTROL ROOT — the three rungs above, in order. 0 with the path (which
+# need not exist yet), 8 where no rung answers.
+lane_control_root() {   # <lane> [<a payload that may carry `dir`>]
+  lcr_lane="${1-}"; lcr_pay="${2-}"; lcr_dir=""; lcr_par=""
+  [ -n "$lcr_lane" ] || return 8
+  if [ -n "${LANES_LANE_STATE_ROOT:-}" ]; then
+    printf '%s/%s\n' "${LANES_LANE_STATE_ROOT%/}" "$lcr_lane"
+    return 0
+  fi
+  [ -n "$lcr_pay" ] && lcr_dir="$(payload_subfield "$lcr_pay" dir)"
+  if [ -z "$lcr_dir" ]; then
+    lcr_dir="$(lane_payload_field "$lcr_lane" dir 2>/dev/null || :)"
+  fi
+  case "$lcr_dir" in
+    /*) lcr_par="${lcr_dir%/*}" ;;
+    *)  lcr_par="" ;;
+  esac
+  if [ -n "$lcr_par" ] && [ -d "$lcr_par" ]; then
+    printf '%s/.lane-state/%s\n' "$lcr_par" "$lcr_lane"
+    return 0
+  fi
+  if [ -n "${PROJECTS_ROOT:-}" ] && [ -d "$PROJECTS_ROOT" ]; then
+    printf '%s/.lane-state/%s\n' "${PROJECTS_ROOT%/}" "$lcr_lane"
+    return 0
+  fi
+  return 8
+}
+
+# ONE FIELD OUT OF ONE OF THESE FILES. They are flat `key: value` lines and
+# nothing else — no nesting, no lists — so one `awk` reads every one of them
+# and a malformed file answers empty rather than half a value.
+lane_sidecar_field() {   # <file> <key>
+  [ -r "${1-}" ] || return 1
+  awk -v k="${2-}" '
+    BEGIN { k = k ": " }
+    substr($0, 1, length(k)) == k {
+      v = substr($0, length(k) + 1)
+      sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v)
+      print v; exit }' "$1"
+}
+
+# A VALUE IS ONE LINE OF `key: value`, so a newline or a leading space in one
+# would make the file unreadable by the reader above. Both are flattened here
+# rather than refused, because a value this can spoil is a branch name or a
+# path and losing the WHOLE record over one is the worse trade.
+lane_sidecar_value() {   # <value>
+  lsv="${1-}"
+  lsv="${lsv//$'\r'/ }"
+  lsv="${lsv//$'\n'/ }"
+  printf '%s' "$lsv"
+}
+
+# THE ATOMIC REPLACE. Written beside the target and renamed over it, so a
+# reader never sees half a snapshot and a full disk leaves the old one intact.
+lane_sidecar_put() {   # <file> ; the whole body on stdin
+  lsp_f="${1-}"; lsp_d="${lsp_f%/*}"
+  [ -n "$lsp_f" ] || return 1
+  mkdir -p -- "$lsp_d" 2>/dev/null || return 1
+  lsp_t="$lsp_f.tmp.$$"
+  cat > "$lsp_t" 2>/dev/null || { rm -f -- "$lsp_t" 2>/dev/null; return 1; }
+  mv -- "$lsp_t" "$lsp_f" 2>/dev/null || { rm -f -- "$lsp_t" 2>/dev/null; return 1; }
+  return 0
+}
+
+# AN OPERATION ID: unique to one transition, and shaped like the manifest key
+# every other sub-field of this estate is — letters, digits, `.`, `_`, `-` — so
+# that it can be carried in a payload, a filename and a commit subject without
+# a quoting rule of its own. There is no `uuidgen` on every workstation this
+# runs on, and a timestamp with the pid and two `$RANDOM`s behind it is unique
+# among the handfuls of transitions one lane takes in a day.
+lane_op_id() {
+  printf 'op-%s-%s-%s%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" "$$" "$RANDOM" "$RANDOM"
+}
+
+# THE SNAPSHOT, READ. `<key><TAB><value>` lines, which is what every caller
+# here parses with one `awk`. 0 with the fields, 8 where the lane has no
+# snapshot at all (the pre-cutover lane, and not a failure), 1 where the
+# control root could not be derived.
+lane_state_read() {   # <lane>
+  lsr_lane="${1-}"; lsr_root=""; lsr_rc=0
+  lsr_root="$(lane_control_root "$lsr_lane")" || lsr_rc=$?
+  [ "$lsr_rc" = 0 ] || return 1
+  lsr_f="$lsr_root/lane-state.yaml"
+  [ -r "$lsr_f" ] || return 8
+  lsr_schema="$(lane_sidecar_field "$lsr_f" schema)"
+  # AN UNKNOWN SCHEMA FAILS CLOSED (design decision: "conservative fail-closed
+  # behaviour for unknown versions"). A newer tooling's snapshot read by an
+  # older reader must not be reported as a lane in a state this reader knows.
+  case "$lsr_schema" in
+    "$LANE_STATE_SCHEMA") : ;;
+    *) printf 'state\tUNKNOWN-SCHEMA\n'; printf 'schema\t%s\n' "${lsr_schema:-<none>}"
+       printf 'file\t%s\n' "$lsr_f"; return 0 ;;
+  esac
+  for lsr_k in state generation operation owner agent profile workstation kind updated lane; do
+    printf '%s\t%s\n' "$lsr_k" "$(lane_sidecar_field "$lsr_f" "$lsr_k")"
+  done
+  printf 'file\t%s\n' "$lsr_f"
+  return 0
+}
+
+# One field of it, for the callers that want exactly one.
+lane_state_of() {   # <lane> <key>
+  lso_out=""; lso_rc=0
+  lso_out="$(lane_state_read "${1-}")" || lso_rc=$?
+  [ "$lso_rc" = 0 ] || return "$lso_rc"
+  printf '%s\n' "$lso_out" | awk -F'\t' -v k="${2-}" '$1 == k { print $2; exit }'
+}
+
+# THE SNAPSHOT, WRITTEN — the ONE writer, and every caller reaches it through
+# `set-lane-state`. `lsw_*` are its fields; an empty one is written as `none`,
+# which is an ANSWER and not a gap, on the same argument Amendment 17(b) gives
+# its `transcript` sub-field.
+lane_state_put() {   # <root> <lane> <state> <gen> <op> <owner> <agent> <profile> <ws> <kind>
+  lsw_root="$1"; lsw_lane="$2"; lsw_state="$3"; lsw_gen="$4"; lsw_op="$5"
+  lsw_owner="$6"; lsw_agent="$7"; lsw_prof="$8"; lsw_ws="$9"; shift 9; lsw_kind="${1-}"
+  { printf 'schema: %s\n'      "$LANE_STATE_SCHEMA"
+    printf 'lane: %s\n'        "$(lane_sidecar_value "$lsw_lane")"
+    printf 'state: %s\n'       "$lsw_state"
+    printf 'generation: %s\n'  "$lsw_gen"
+    printf 'operation: %s\n'   "${lsw_op:-none}"
+    printf 'owner: %s\n'       "${lsw_owner:-none}"
+    printf 'agent: %s\n'       "${lsw_agent:-none}"
+    printf 'profile: %s\n'     "${lsw_prof:-none}"
+    printf 'workstation: %s\n' "${lsw_ws:-none}"
+    printf 'kind: %s\n'        "${lsw_kind:-none}"
+    printf 'updated: %s\n'     "$(utc_now)"
+  } | lane_sidecar_put "$lsw_root/lane-state.yaml"
+}
+
+# THE LINE THAT WAS WRITTEN IS WHAT MOVES THE SNAPSHOT, and this is where the
+# two are kept from disagreeing: it is called by `write_event`, from any
+# caller, after the log line has landed. It is UNFENCED, deliberately — a
+# confirmed `STARTED`/`RESUMED` is the new owner arriving, and advancing the
+# generation there is exactly what refuses the stale finalizer of the swap it
+# replaced. It NEVER fails the event: a lane with no control root is silent,
+# because a lane that has not started under Amendment 11 has no directory to
+# derive one from and that is the ordinary pre-cutover case.
+lane_state_follow() {   # <lane> <verb> <payload> <uuid>
+  lsf_lane="${1-}"; lsf_verb="${2-}"; lsf_pay="${3-}"; lsf_uuid="${4-}"
+  lsf_new=""
+  case "$lsf_verb" in
+    STARTED|RESUMED) lsf_new=RUNNING ;;
+    ENDED|RETIRED)   lsf_new=CLOSED ;;
+    *) return 0 ;;
+  esac
+  lsf_root=""; lsf_rc=0
+  lsf_root="$(lane_control_root "$lsf_lane" "$lsf_pay")" || lsf_rc=$?
+  [ "$lsf_rc" = 0 ] || return 0
+  lsf_gen="$(lane_sidecar_field "$lsf_root/lane-state.yaml" generation 2>/dev/null || :)"
+  case "$lsf_gen" in ''|*[!0-9]*) lsf_gen=0 ;; esac
+  lsf_gen=$((lsf_gen + 1))
+  lsf_agent="$(payload_subfield "$lsf_pay" agent)"
+  lsf_prof="$(payload_subfield "$lsf_pay" profile)"
+  if lane_state_put "$lsf_root" "$lsf_lane" "$lsf_new" "$lsf_gen" "$(lane_op_id)" \
+       "$lsf_uuid" "${lsf_agent:-}" "${lsf_prof:-}" "$WS" ""; then
+    return 0
+  fi
+  note "the lane lifecycle snapshot at $lsf_root/lane-state.yaml could NOT be written (the $lsf_verb line itself landed). Crash recovery for lane $lsf_lane is incomplete until it can be: see \`lanes-edit.sh lane-reconcile $lsf_lane\`"
+  return 0
+}
+
+# ------------------------------------------------- the worktree inventory
+#
+# A TREE ID IS DERIVED FROM ITS PATH AND FROM NOTHING ELSE, so that a branch
+# renamed under a writer does not rename the record of the tree it is on. It is
+# the absolute path with every character outside the manifest-key set folded to
+# `-`, which is one file name per path and the same file name on every run.
+tree_id_for() {   # <absolute worktree path>
+  tif_p="$(printf '%s' "${1-}" | tr -c 'A-Za-z0-9._-' '-' | tr -s '-')"
+  while [ "${tif_p#-}" != "$tif_p" ]; do tif_p="${tif_p#-}"; done
+  while [ "${tif_p%-}" != "$tif_p" ]; do tif_p="${tif_p%-}"; done
+  # AND IT CAN NEVER OUTGROW A FILE NAME. A path deep enough to make this
+  # longer than the 255 bytes most filesystems take is a tree whose sidecar
+  # could not be created at all — silently, since the failure would be the
+  # shell's `>` and not this function's. The tail is what a reader recognises,
+  # so the head is what is dropped, and a `cksum` of the WHOLE path goes in
+  # front of it so that two trees sharing a tail keep two ids.
+  if [ "${#tif_p}" -gt 180 ]; then
+    tif_c="$(printf '%s' "${1-}" | cksum | awk '{print $1}')"
+    tif_p="c$tif_c-$(printf '%s' "$tif_p" | tail -c 180)"
+  fi
+  printf '%s\n' "$tif_p"
+}
+
+# ONE TREE'S SIDECAR. Every field is an OBSERVATION and none of them is truth
+# about git: `lane-reconcile` recomputes all of them and reports the
+# difference, which is the whole of design decision 6.
+lane_tree_put() {   # <root> <lane> <path> <checkout> <branch> <head> <upstream> <dirty> <unpushed> <writer> <gen> <op>
+  ltp_root="$1"; ltp_lane="$2"; ltp_path="$3"; ltp_co="$4"; ltp_branch="$5"
+  ltp_head="$6"; ltp_up="$7"; ltp_dirty="$8"; ltp_unp="$9"; shift 9
+  ltp_writer="${1-}"; ltp_gen="${2-}"; ltp_op="${3-}"
+  ltp_id="$(tree_id_for "$ltp_path")"
+  [ -n "$ltp_id" ] || return 1
+  { printf 'schema: %s\n'    "$LANE_STATE_SCHEMA"
+    printf 'lane: %s\n'      "$(lane_sidecar_value "$ltp_lane")"
+    printf 'tree: %s\n'      "$ltp_id"
+    printf 'path: %s\n'      "$(lane_sidecar_value "$ltp_path")"
+    printf 'checkout: %s\n'  "$(lane_sidecar_value "${ltp_co:-unknown}")"
+    printf 'branch: %s\n'    "$(lane_sidecar_value "${ltp_branch:-unknown}")"
+    printf 'head: %s\n'      "$(lane_sidecar_value "${ltp_head:-unknown}")"
+    printf 'upstream: %s\n'  "$(lane_sidecar_value "${ltp_up:-none}")"
+    printf 'dirty: %s\n'     "${ltp_dirty:-0}"
+    printf 'unpushed: %s\n'  "${ltp_unp:-0}"
+    printf 'writer: %s\n'    "${ltp_writer:-none}"
+    printf 'generation: %s\n' "${ltp_gen:-0}"
+    printf 'operation: %s\n' "${ltp_op:-none}"
+    printf 'observed: %s\n'  "$(utc_now)"
+  } | lane_sidecar_put "$ltp_root/trees/$ltp_id.yaml"
+}
+
+# EVERY RECORDED TREE, ONE PER LINE, US-separated:
+#   <id><US><path><US><branch><US><head><US><upstream><US><dirty><US><unpushed><US><writer><US><observed><US><checkout>
+# 0 with rows, 8 with none, 1 where no control root could be derived.
+lane_trees_list() {   # <lane>
+  ltl_root=""; ltl_rc=0; ltl_n=0
+  ltl_root="$(lane_control_root "${1-}")" || ltl_rc=$?
+  [ "$ltl_rc" = 0 ] || return 1
+  [ -d "$ltl_root/trees" ] || return 8
+  for ltl_f in "$ltl_root"/trees/*.yaml; do
+    [ -r "$ltl_f" ] || continue
+    ltl_n=$((ltl_n + 1))
+    printf '%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+      "$(lane_sidecar_field "$ltl_f" tree)"     "$US" \
+      "$(lane_sidecar_field "$ltl_f" path)"     "$US" \
+      "$(lane_sidecar_field "$ltl_f" branch)"   "$US" \
+      "$(lane_sidecar_field "$ltl_f" head)"     "$US" \
+      "$(lane_sidecar_field "$ltl_f" upstream)" "$US" \
+      "$(lane_sidecar_field "$ltl_f" dirty)"    "$US" \
+      "$(lane_sidecar_field "$ltl_f" unpushed)" "$US" \
+      "$(lane_sidecar_field "$ltl_f" writer)"   "$US" \
+      "$(lane_sidecar_field "$ltl_f" observed)" "$US" \
+      "$(lane_sidecar_field "$ltl_f" checkout)"
+  done
+  [ "$ltl_n" -gt 0 ] || return 8
+  return 0
+}
+
+# ------------------------------------------------ resume-time reconciliation
+#
+# IT REPORTS AND IT RESETS NOTHING. AGENTS.md rule 1 is the estate's: *"`park`
+# CREATES NOTHING and `resume` RESETS NOTHING"*, and never a `git reset`, a
+# `git stash`, a `git checkout -f` or a `worktree add --force` to make the next
+# run succeed. So this read runs `git status`, `git log @{u}..`, `git rev-parse`
+# and `git worktree list --porcelain` and NOTHING ELSE, names the act a person
+# takes, and leaves every tree exactly as it found it — a missing tree included,
+# whose rebuild is the estate's own `resume <Name>` and is a person's to run.
+
+# THE LANE'S TWO WORKTREE ROOTS — the same two `lane-handoff` polls, and they
+# are here rather than there so the poll and the reconciliation cannot come to
+# disagree about where a lane keeps its writers.
+lane_worktree_roots() {   # <lane> <the lane's checkout>
+  lwr_lane="${1-}"; lwr_dir="${2-}"
+  [ -n "$lwr_dir" ] || return 0
+  printf '%s/.claude/worktrees\n' "$lwr_dir"
+  printf '%s/.lane-worktrees/%s\n' "${lwr_dir%/*}" "$lwr_lane"
+  return 0
+}
+
+# What git says about one tree, NOW. `<branch><US><head><US><upstream><US><dirty><US><unpushed>`,
+# and nothing at all where the path is not a checkout.
+lane_tree_now() {   # <path>
+  ltn_p="${1-}"
+  [ -d "$ltn_p" ] || return 1
+  git -C "$ltn_p" rev-parse --git-dir >/dev/null 2>&1 || return 2
+  ltn_b="$(git -C "$ltn_p" rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
+  [ "$ltn_b" = HEAD ] && ltn_b=detached
+  ltn_h="$(git -C "$ltn_p" rev-parse HEAD 2>/dev/null || printf 'unknown')"
+  ltn_u="$(git -C "$ltn_p" rev-parse --abbrev-ref '@{u}' 2>/dev/null || printf 'none')"
+  ltn_d="$(git -C "$ltn_p" status --short 2>/dev/null | grep -c . || :)"
+  ltn_n="$(git -C "$ltn_p" log '@{u}..' --oneline 2>/dev/null | grep -c . || :)"
+  printf '%s%s%s%s%s%s%s%s%s\n' "$ltn_b" "$US" "$ltn_h" "$US" "${ltn_u:-none}" "$US" \
+    "${ltn_d:-0}" "$US" "${ltn_n:-0}"
+  return 0
+}
+
+lane_reconcile() {   # <lane>
+  lrc_lane="${1-}"
+  lrc_root=""; lrc_rc=0
+  lrc_root="$(lane_control_root "$lrc_lane")" || lrc_rc=$?
+  if [ "$lrc_rc" != 0 ]; then
+    note "lane $lrc_lane has no control root: its record names no directory (Amendment 11(c)) and \$PROJECTS_ROOT is not a directory here, so there is nothing to reconcile against. This is the pre-cutover answer, not a failure — the lane's next start or handoff creates one."
+    return 8
+  fi
+
+  # 1. THE SNAPSHOT.
+  lrc_state=""; lrc_gen=""; lrc_op=""; lrc_owner=""; lrc_upd=""
+  lrc_snap=""; lrc_srrc=0
+  lrc_snap="$(lane_state_read "$lrc_lane")" || lrc_srrc=$?
+  if [ "$lrc_srrc" = 0 ]; then
+    lrc_state="$(printf '%s\n' "$lrc_snap" | awk -F'\t' '$1 == "state" { print $2; exit }')"
+    lrc_gen="$(printf '%s\n' "$lrc_snap"   | awk -F'\t' '$1 == "generation" { print $2; exit }')"
+    lrc_op="$(printf '%s\n' "$lrc_snap"    | awk -F'\t' '$1 == "operation" { print $2; exit }')"
+    lrc_owner="$(printf '%s\n' "$lrc_snap" | awk -F'\t' '$1 == "owner" { print $2; exit }')"
+    lrc_upd="$(printf '%s\n' "$lrc_snap"   | awk -F'\t' '$1 == "updated" { print $2; exit }')"
+  else
+    lrc_state=NONE
+  fi
+  printf 'ROOT%s%s\n' "$US" "$lrc_root"
+  printf 'STATE%s%s%sgeneration %s%soperation %s%sowner %s%supdated %s\n' \
+    "$US" "$lrc_state" "$US" "${lrc_gen:-0}" "$US" "${lrc_op:-none}" "$US" \
+    "${lrc_owner:-none}" "$US" "${lrc_upd:-never}"
+
+  # 2. THE HOLDER. `live_holder`'s three answers are the contract every other
+  # caller here reads: 0 a holder, 8 none, anything else THE RECORDS COULD NOT
+  # BE READ — which is never "no holder" (R22, Amendment 7(d)). A holder that
+  # could not be established fails CLOSED: the verdict is `indeterminate` and
+  # no crash is pronounced on a read nobody got.
+  lrc_ids="$( { session_ids_of_lane "$lrc_lane" 2>/dev/null || :
+                session_ids_local_of_lane "$lrc_lane" 2>/dev/null || :; } | awk 'NF && !seen[$0]++')"
+  lrc_hold=""; lrc_hrc=0
+  lrc_hold="$(live_holder "$lrc_lane" "$lrc_ids" 2>/dev/null)" || lrc_hrc=$?
+  case "$lrc_hrc" in
+    0) printf 'HOLDER%slive%s%s\n' "$US" "$US" "$(printf '%s' "$lrc_hold" | tr "$US" ' ')" ;;
+    8) printf 'HOLDER%snone\n' "$US" ;;
+    *) printf 'HOLDER%sunknown%s%s\n' "$US" "$US" "${SESSION_FILES_ERR:-the session records of this workstation could not be read}" ;;
+  esac
+
+  # 3. THE TREES — the inventory, recomputed. A stored value is a COMPARISON
+  # POINT and never current truth.
+  lrc_dir="$(lane_payload_field "$lrc_lane" dir 2>/dev/null || :)"
+  lrc_seen=""; lrc_n=0; lrc_recover=0; lrc_dirty=0
+  while IFS="$US" read -r lrc_id lrc_p lrc_b lrc_h lrc_u lrc_d lrc_np lrc_w lrc_ob lrc_co; do
+    [ -n "${lrc_id:-}" ] || continue
+    lrc_n=$((lrc_n + 1))
+    lrc_seen="$lrc_seen $lrc_p "
+    lrc_now=""; lrc_nrc=0
+    lrc_now="$(lane_tree_now "$lrc_p")" || lrc_nrc=$?
+    if [ "$lrc_nrc" = 1 ]; then
+      # THE PATH IS GONE. Whether that is a tidy removal or a loss is decided
+      # by what the sidecar last SAW there, and metadata can reconstruct no
+      # file's contents: a tree that held uncommitted or unpublished work is
+      # POSSIBLE LOSS and is never claimed to be rebuildable.
+      case "${lrc_d:-0}${lrc_np:-0}" in
+        00) printf 'TREE%s%s%smissing%s%s%swas branch %s head %s; clean and published at %s; the estate parked record and `resume <Name>` are the only rebuild\n' \
+              "$US" "$lrc_id" "$US" "$US" "$lrc_p" "$US" "$lrc_b" "$lrc_h" "$lrc_ob" ;;
+        *)  printf 'TREE%s%s%spossible-loss%s%s%swas branch %s head %s with %s dirty and %s unpushed at %s; NOTHING here can reconstruct uncommitted files — do not recreate this path\n' \
+              "$US" "$lrc_id" "$US" "$US" "$lrc_p" "$US" "$lrc_b" "$lrc_h" "$lrc_d" "$lrc_np" "$lrc_ob" ;;
+      esac
+      lrc_recover=$((lrc_recover + 1))
+      continue
+    fi
+    if [ "$lrc_nrc" = 2 ]; then
+      printf 'TREE%s%s%snot-a-checkout%s%s%sthe path exists and git does not answer in it; it is left exactly as it is\n' \
+        "$US" "$lrc_id" "$US" "$US" "$lrc_p" "$US"
+      lrc_recover=$((lrc_recover + 1))
+      continue
+    fi
+    lrc_nb="$(printf '%s' "$lrc_now" | awk -F"$US" '{print $1}')"
+    lrc_nh="$(printf '%s' "$lrc_now" | awk -F"$US" '{print $2}')"
+    lrc_nu="$(printf '%s' "$lrc_now" | awk -F"$US" '{print $3}')"
+    lrc_nd="$(printf '%s' "$lrc_now" | awk -F"$US" '{print $4}')"
+    lrc_nn="$(printf '%s' "$lrc_now" | awk -F"$US" '{print $5}')"
+    lrc_class=ok
+    [ "${lrc_nd:-0}" -gt 0 ] && lrc_class=dirty
+    if [ "${lrc_nn:-0}" -gt 0 ]; then
+      if [ "$lrc_class" = dirty ]; then lrc_class=dirty+unpushed; else lrc_class=unpushed; fi
+    fi
+    [ "$lrc_class" = ok ] || lrc_dirty=$((lrc_dirty + 1))
+    lrc_moved=""
+    [ "$lrc_nb" = "$lrc_b" ] || lrc_moved="$lrc_moved; branch was $lrc_b and is $lrc_nb"
+    [ "$lrc_nh" = "$lrc_h" ] || lrc_moved="$lrc_moved; head was $lrc_h and is $lrc_nh"
+    [ "${lrc_nu:-none}" = "${lrc_u:-none}" ] || lrc_moved="$lrc_moved; upstream was ${lrc_u:-none} and is ${lrc_nu:-none}"
+    printf 'TREE%s%s%s%s%s%s%sbranch %s head %s upstream %s %s dirty %s unpushed; observed %s at %s%s\n' \
+      "$US" "$lrc_id" "$US" "$lrc_class" "$US" "$lrc_p" "$US" \
+      "$lrc_nb" "$lrc_nh" "${lrc_nu:-none}" "${lrc_nd:-0}" "${lrc_nn:-0}" \
+      "${lrc_d:-0}/${lrc_np:-0}" "$lrc_ob" "$lrc_moved"
+  done <<EOF
+$(lane_trees_list "$lrc_lane" 2>/dev/null || :)
+EOF
+
+  # 4. WHAT IS THERE AND IS IN NO SIDECAR — from git's own registrations and
+  # from the two lane roots on disk. It is REPORTED and never adopted, deleted
+  # or overwritten: which lane a tree belongs to is a person's to say.
+  lrc_unmanaged=0
+  if [ -n "$lrc_dir" ] && [ -d "$lrc_dir" ]; then
+    # THE CHECKOUT'S OWN ROW IS NOT AN UNMANAGED TREE, AND git ANSWERS WITH THE
+    # PHYSICAL PATH. A recorded `dir` reached through a symlink — which is how
+    # every estate with a `projects` link spells it — would otherwise not match
+    # the first row of `worktree list` and the lane's own checkout would be
+    # reported as a tree nobody manages. `cd -P` is the portable resolver here
+    # for the reason `lane-start`'s `real_of` gives: `readlink -f` is not in the
+    # stock macOS userland.
+    lrc_dirp="$( CDPATH=''; cd -P -- "$lrc_dir" 2>/dev/null && pwd -P )" || lrc_dirp=""
+    while IFS= read -r lrc_wl; do
+      case "$lrc_wl" in worktree\ *) : ;; *) continue ;; esac
+      lrc_wp="${lrc_wl#worktree }"
+      [ "$lrc_wp" = "$lrc_dir" ] && continue
+      [ -n "$lrc_dirp" ] && [ "$lrc_wp" = "$lrc_dirp" ] && continue
+      case "$lrc_seen" in *" $lrc_wp "*) continue ;; esac
+      if [ -d "$lrc_wp" ]; then
+        printf 'TREE%s%s%sunmanaged%s%s%sgit registers it in %s and no sidecar of this lane names it; it is left exactly as it is\n' \
+          "$US" "$(tree_id_for "$lrc_wp")" "$US" "$US" "$lrc_wp" "$US" "$lrc_dir"
+      else
+        printf 'TREE%s%s%sstale-registration%s%s%sgit registers it in %s and the directory is gone; `git -C %s worktree prune` is a person'\''s act\n' \
+          "$US" "$(tree_id_for "$lrc_wp")" "$US" "$US" "$lrc_wp" "$US" "$lrc_dir" "$lrc_dir"
+      fi
+      # NAMED ONCE. The on-disk sweep below walks the same two roots git
+      # registers these in, so a path reported here joins the seen set or a
+      # reader is told about one tree twice under two different reasons.
+      lrc_seen="$lrc_seen $lrc_wp "
+      lrc_unmanaged=$((lrc_unmanaged + 1))
+    done <<EOF
+$(git -C "$lrc_dir" worktree list --porcelain 2>/dev/null || :)
+EOF
+  fi
+  while IFS= read -r lrc_wr; do
+    [ -n "$lrc_wr" ] || continue
+    [ -d "$lrc_wr" ] || continue
+    for lrc_c in "$lrc_wr"/*; do
+      [ -d "$lrc_c" ] || continue
+      case "$lrc_seen" in *" $lrc_c "*) continue ;; esac
+      git -C "$lrc_c" rev-parse --git-dir >/dev/null 2>&1 || continue
+      printf 'TREE%s%s%sunmanaged%s%s%sit sits under this lane'\''s worktree root and no sidecar names it; it is left exactly as it is\n' \
+        "$US" "$(tree_id_for "$lrc_c")" "$US" "$US" "$lrc_c" "$US"
+      lrc_unmanaged=$((lrc_unmanaged + 1))
+    done
+  done <<EOF
+$(lane_worktree_roots "$lrc_lane" "$lrc_dir")
+EOF
+
+  # 5. THE VERDICT — the lifecycle word crossed with the holder, which is the
+  # whole of what tells the two crash kinds apart.
+  lrc_v=""; lrc_why=""
+  if [ "$lrc_hrc" != 0 ] && [ "$lrc_hrc" != 8 ]; then
+    lrc_v=indeterminate
+    lrc_why="this workstation's session records could not be read, so whether a holder is live is NOT established — which is not the same as none"
+  else
+    case "$lrc_state$lrc_hrc" in
+      RUNNING8)   lrc_v=ungraceful-stop; lrc_why="the lane is recorded RUNNING and no verified holder is live: the session stopped before any handoff began, so nothing was polled, refreshed or recorded — inspect every tree below before relaunching a writer" ;;
+      RUNNING0)   lrc_v=running;         lrc_why="a verified holder is live and the lane is RUNNING: do not launch a second coordinator or a second writer onto any tree below" ;;
+      SWAPPING8)  lrc_v=interrupted-swap; lrc_why="the lane is recorded SWAPPING and no verified holder is live: operation ${lrc_op:-none} began and did not finish, so the handoff, the row and the record may each be half done — every tree below is preserved for recovery" ;;
+      SWAPPING0)  lrc_v=swap-in-progress; lrc_why="operation ${lrc_op:-none} is running in a live holder: do not compete with it" ;;
+      SWAPPED8)   lrc_v=resumable;       lrc_why="the swap completed and no holder is live: the lane may be resumed once the trees below are read" ;;
+      SWAPPED0)   lrc_v=inconsistent;    lrc_why="the lane is recorded SWAPPED and a holder is LIVE: a swapped lane has no holder, so one of the two is wrong and neither is overwritten here" ;;
+      CLOSED8)    lrc_v=closed;          lrc_why="the lane is closed" ;;
+      CLOSED0)    lrc_v=inconsistent;    lrc_why="the lane is recorded CLOSED and a holder is LIVE" ;;
+      NONE*)      lrc_v=no-state;        lrc_why="this lane has no lifecycle snapshot: it has not started or handed off under this capability, so its crash kind cannot be told from its record (Amendment 7(i)'s cutover rule — nothing is backfilled)" ;;
+      *)          lrc_v=unknown-state;   lrc_why="the snapshot holds the state word '$lrc_state', which this reader does not know; nothing is assumed about it" ;;
+    esac
+    if [ "$lrc_v" = closed ] && [ "$lrc_dirty" -gt 0 ]; then
+      lrc_v=closure-inconsistent
+      lrc_why="the lane is recorded CLOSED and $lrc_dirty tree(s) below are dirty or unpushed: no cleanup is made here"
+    fi
+  fi
+  printf 'TREES%s%s inventoried%s%s dirty or unpushed%s%s require recovery%s%s unmanaged or stale\n' \
+    "$US" "$lrc_n" "$US" "$lrc_dirty" "$US" "$lrc_recover" "$US" "$lrc_unmanaged"
+  printf 'VERDICT%s%s%s%s\n' "$US" "$lrc_v" "$US" "$lrc_why"
+  return 0
+}
+
 # ---------------------------------------------------------------- subcommands
 
 cmd="${1-}"
@@ -9004,7 +9590,223 @@ EOF
     printf '%s\n' "$rh_out"
     ;;
 
+  # ---------- openRepoTools#91: the lifecycle, the inventory, the reconcile
+  #
+  # ALL FIVE ANSWER OUT OF THE LOCAL CONTROL ROOT and none of them touches the
+  # register, the object log or the network. The two WRITERS are deliberately
+  # absent from the dispatcher's workstation guard above (`R-A11-14` is about a
+  # record FILED UNDER A WORKSTATION; this one is filed under nothing and never
+  # leaves the machine that wrote it), and they take the same 64-for-usage
+  # contract every read Amendment 11 added takes, because they sit in front of
+  # a launch exactly as those do.
+  #
+  #   0   done
+  #   1   no control root could be derived, or it could not be written
+  #   2   a refusal of the arguments
+  #   7   THE FENCE DID NOT MATCH — another act got there first, which is what
+  #       this file already spends 7 on (`claim`'s CLAIM-LOST). Nothing was
+  #       written and the current state is printed.
+  #   8   there is no such record (no snapshot, no tree)
+  #  64   a usage error of this subcommand's own
+
+  lane-state)
+    lane="${1-}"; [ -n "$lane" ] || die "usage: lane-state <lane>" 64
+    [ "$#" -le 1 ] || die "lane-state takes one lane: lane-state <lane>" 64
+    check_lane_name "$lane"
+    log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    lst_out=""; lst_rc=0
+    lst_out="$(lane_state_read "$lane")" || lst_rc=$?
+    case "$lst_rc" in
+      0) : ;;
+      8) exit 8 ;;
+      *) die "lane $lane has no lifecycle control root: its record names no directory (Amendment 11(c)) and \$PROJECTS_ROOT is not a directory here. That is NOT 'this lane is in no state' — a read that could not be made is never an answer (Amendment 7(d))." 1 ;;
+    esac
+    printf '%s\n' "$lst_out"
+    ;;
+
+  set-lane-state)
+    lane="${1-}"; [ -n "$lane" ] || die "usage: set-lane-state <lane> <RUNNING|SWAPPING|SWAPPED|CLOSED> [--expect <STATE|none>] [--expect-generation <n>] [--expect-operation <id>] [--operation <id>] [--owner <uuid>] [--agent <name>] [--profile <name>] [--kind <word>]" 64
+    shift
+    sls_state="${1-}"; [ -n "$sls_state" ] || die "set-lane-state needs the state to move to: RUNNING, SWAPPING, SWAPPED or CLOSED" 64
+    shift
+    sls_exp=""; sls_expg=""; sls_expo=""; sls_op=""; sls_owner=""; sls_agent=""; sls_prof=""; sls_kind=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --expect)             sls_exp="${2-}";  [ -n "$sls_exp" ]  || die "--expect needs a state word, or 'none'" 64; shift 2 ;;
+        --expect=*)           sls_exp="${1#--expect=}"; shift ;;
+        --expect-generation)  sls_expg="${2-}"; [ -n "$sls_expg" ] || die "--expect-generation needs a number" 64; shift 2 ;;
+        --expect-generation=*) sls_expg="${1#--expect-generation=}"; shift ;;
+        --expect-operation)   sls_expo="${2-}"; [ -n "$sls_expo" ] || die "--expect-operation needs an operation id" 64; shift 2 ;;
+        --expect-operation=*) sls_expo="${1#--expect-operation=}"; shift ;;
+        --operation)          sls_op="${2-}";   [ -n "$sls_op" ]   || die "--operation needs an operation id" 64; shift 2 ;;
+        --operation=*)        sls_op="${1#--operation=}"; shift ;;
+        --owner)              sls_owner="${2-}"; [ "$#" -ge 2 ] || die "--owner needs a value" 64; shift 2 ;;
+        --owner=*)            sls_owner="${1#--owner=}"; shift ;;
+        --agent)              sls_agent="${2-}"; [ "$#" -ge 2 ] || die "--agent needs a value" 64; shift 2 ;;
+        --agent=*)            sls_agent="${1#--agent=}"; shift ;;
+        --profile)            sls_prof="${2-}"; [ "$#" -ge 2 ] || die "--profile needs a value" 64; shift 2 ;;
+        --profile=*)          sls_prof="${1#--profile=}"; shift ;;
+        --kind)               sls_kind="${2-}"; [ "$#" -ge 2 ] || die "--kind needs a value" 64; shift 2 ;;
+        --kind=*)             sls_kind="${1#--kind=}"; shift ;;
+        --)                   shift ;;
+        *)                    die "unknown option '$1' for set-lane-state" 64 ;;
+      esac
+    done
+    lane_state_word_ok "$sls_state" || die "'$sls_state' is not a lane lifecycle state: RUNNING, SWAPPING, SWAPPED and CLOSED are the four, and a fifth word in this file would be a state no reader of it knows" 64
+    [ -z "$sls_exp" ] || [ "$sls_exp" = none ] || lane_state_word_ok "$sls_exp" ||
+      die "--expect takes one of the four states, or 'none' for a lane that has no snapshot yet; '$sls_exp' is neither" 64
+    case "$sls_expg" in
+      '') : ;;
+      *[!0-9]*) die "--expect-generation takes a number; '$sls_expg' is not one" 64 ;;
+    esac
+    check_lane_name "$lane"
+    log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    sls_root=""; sls_rrc=0
+    sls_root="$(lane_control_root "$lane")" || sls_rrc=$?
+    [ "$sls_rrc" = 0 ] ||
+      die "lane $lane has no lifecycle control root, so there is nowhere to record that it is $sls_state: its record names no directory (Amendment 11(c)) and \$PROJECTS_ROOT is not a directory here. Set \$LANES_LANE_STATE_ROOT, or start the lane through lane-start so that its record carries a dir." 1
+    # THE FENCE, read under the same mutex the write takes, so that two
+    # transitions cannot both read the state before either writes it.
+    acquire_lock
+    sls_now=""; sls_nowg=""; sls_nowo=""
+    if [ -r "$sls_root/lane-state.yaml" ]; then
+      sls_now="$(lane_sidecar_field "$sls_root/lane-state.yaml" state)"
+      sls_nowg="$(lane_sidecar_field "$sls_root/lane-state.yaml" generation)"
+      sls_nowo="$(lane_sidecar_field "$sls_root/lane-state.yaml" operation)"
+    fi
+    sls_fence=""
+    [ -z "$sls_exp" ]  || [ "$sls_exp"  = "${sls_now:-none}" ] || sls_fence="state is ${sls_now:-none} and --expect named $sls_exp"
+    [ -z "$sls_expg" ] || [ "$sls_expg" = "${sls_nowg:-0}" ]   || sls_fence="${sls_fence:+$sls_fence; }generation is ${sls_nowg:-0} and --expect-generation named $sls_expg"
+    [ -z "$sls_expo" ] || [ "$sls_expo" = "${sls_nowo:-none}" ] || sls_fence="${sls_fence:+$sls_fence; }operation is ${sls_nowo:-none} and --expect-operation named $sls_expo"
+    if [ -n "$sls_fence" ]; then
+      release_lock
+      printf 'state\t%s\ngeneration\t%s\noperation\t%s\n' "${sls_now:-none}" "${sls_nowg:-0}" "${sls_nowo:-none}"
+      die "lane $lane did not move to $sls_state: $sls_fence. Another act got there first — a resume that advanced the generation, or a second handoff — and nothing was written. Re-read the state (lanes-edit.sh lane-state $lane) before deciding what this process should do; a stale finalizer must never overwrite a newer owner." 7
+    fi
+    case "$sls_nowg" in ''|*[!0-9]*) sls_nowg=0 ;; esac
+    # A TRANSITION THAT DOES NOT NAME A FIELD KEEPS IT, and does not blank it.
+    # `SWAPPED` is the same operation's commit point and `CLOSED` the end of a
+    # lane that was owned by somebody: writing `owner none` there would lose
+    # the one fact a later reconciliation compares a live holder against, out of
+    # a call that was only ever about the state word.
+    [ -n "$sls_owner" ] || sls_owner="$(lane_sidecar_field "$sls_root/lane-state.yaml" owner 2>/dev/null || :)"
+    [ -n "$sls_agent" ] || sls_agent="$(lane_sidecar_field "$sls_root/lane-state.yaml" agent 2>/dev/null || :)"
+    [ -n "$sls_prof" ]  || sls_prof="$(lane_sidecar_field "$sls_root/lane-state.yaml" profile 2>/dev/null || :)"
+    [ -n "$sls_kind" ]  || sls_kind="$(lane_sidecar_field "$sls_root/lane-state.yaml" kind 2>/dev/null || :)"
+    # WHICH TRANSITION ADVANCES THE GENERATION. A new owner or a new operation
+    # does (`RUNNING`, `SWAPPING`, `CLOSED`); the FINISH of an operation
+    # already in flight does not, because `SWAPPED` is the same operation
+    # reaching its commit point and a fence that moved under it would refuse
+    # the very finalizer that is entitled to write.
+    case "$sls_state" in
+      SWAPPED) sls_gen="$sls_nowg"; [ -n "$sls_op" ] || sls_op="${sls_nowo:-none}" ;;
+      *)       sls_gen=$((sls_nowg + 1)); [ -n "$sls_op" ] || sls_op="$(lane_op_id)" ;;
+    esac
+    if lane_state_put "$sls_root" "$lane" "$sls_state" "$sls_gen" "$sls_op" \
+         "$sls_owner" "$sls_agent" "$sls_prof" "$WS" "$sls_kind"; then
+      release_lock
+      printf 'state\t%s\ngeneration\t%s\noperation\t%s\n' "$sls_state" "$sls_gen" "$sls_op"
+    else
+      release_lock
+      die "lane $lane's lifecycle snapshot could not be written under $sls_root (the shell's own error is above). Nothing was changed: the snapshot is replaced atomically, so the one that was there is the one that is there." 1
+    fi
+    ;;
+
+  lane-trees)
+    lane="${1-}"; [ -n "$lane" ] || die "usage: lane-trees <lane>" 64
+    [ "$#" -le 1 ] || die "lane-trees takes one lane: lane-trees <lane>" 64
+    check_lane_name "$lane"
+    log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    ltr_out=""; ltr_rc=0
+    ltr_out="$(lane_trees_list "$lane")" || ltr_rc=$?
+    case "$ltr_rc" in
+      0) : ;;
+      8) exit 8 ;;
+      *) die "lane $lane has no lifecycle control root, so its worktree inventory could not be read. That is NOT 'this lane owns no worktree' (Amendment 7(d))." 1 ;;
+    esac
+    printf '%s\n' "$ltr_out"
+    ;;
+
+  set-lane-tree)
+    lane="${1-}"; [ -n "$lane" ] || die "usage: set-lane-tree <lane> <worktree path> [--checkout <dir>] [--branch <b>] [--head <sha>] [--upstream <ref>] [--dirty <n>] [--unpushed <n>] [--writer <uuid>] [--generation <n>] [--operation <id>]" 64
+    shift
+    slt_path="${1-}"; [ -n "$slt_path" ] || die "set-lane-tree needs the worktree's path" 64
+    shift
+    case "$slt_path" in /*) : ;; *) die "set-lane-tree takes an ABSOLUTE path: a relative one has no meaning to any later reader of this record, which is a different process in a different directory" 64 ;; esac
+    slt_co=""; slt_b=""; slt_h=""; slt_u=""; slt_d=""; slt_n=""; slt_w=""; slt_g=""; slt_op=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --checkout)    slt_co="${2-}"; [ "$#" -ge 2 ] || die "--checkout needs a value" 64; shift 2 ;;
+        --checkout=*)  slt_co="${1#--checkout=}"; shift ;;
+        --branch)      slt_b="${2-}"; [ "$#" -ge 2 ] || die "--branch needs a value" 64; shift 2 ;;
+        --branch=*)    slt_b="${1#--branch=}"; shift ;;
+        --head)        slt_h="${2-}"; [ "$#" -ge 2 ] || die "--head needs a value" 64; shift 2 ;;
+        --head=*)      slt_h="${1#--head=}"; shift ;;
+        --upstream)    slt_u="${2-}"; [ "$#" -ge 2 ] || die "--upstream needs a value" 64; shift 2 ;;
+        --upstream=*)  slt_u="${1#--upstream=}"; shift ;;
+        --dirty)       slt_d="${2-}"; [ "$#" -ge 2 ] || die "--dirty needs a value" 64; shift 2 ;;
+        --dirty=*)     slt_d="${1#--dirty=}"; shift ;;
+        --unpushed)    slt_n="${2-}"; [ "$#" -ge 2 ] || die "--unpushed needs a value" 64; shift 2 ;;
+        --unpushed=*)  slt_n="${1#--unpushed=}"; shift ;;
+        --writer)      slt_w="${2-}"; [ "$#" -ge 2 ] || die "--writer needs a value" 64; shift 2 ;;
+        --writer=*)    slt_w="${1#--writer=}"; shift ;;
+        --generation)  slt_g="${2-}"; [ "$#" -ge 2 ] || die "--generation needs a value" 64; shift 2 ;;
+        --generation=*) slt_g="${1#--generation=}"; shift ;;
+        --operation)   slt_op="${2-}"; [ "$#" -ge 2 ] || die "--operation needs a value" 64; shift 2 ;;
+        --operation=*) slt_op="${1#--operation=}"; shift ;;
+        --)            shift ;;
+        *)             die "unknown option '$1' for set-lane-tree" 64 ;;
+      esac
+    done
+    check_lane_name "$lane"
+    log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    slt_root=""; slt_rrc=0
+    slt_root="$(lane_control_root "$lane")" || slt_rrc=$?
+    [ "$slt_rrc" = 0 ] ||
+      die "lane $lane has no lifecycle control root, so its worktree inventory has nowhere to go: its record names no directory (Amendment 11(c)) and \$PROJECTS_ROOT is not a directory here." 1
+    # WHAT THE CALLER SAW BEATS WHAT THIS PROCESS SEES, because a poll and a
+    # record written from it are ONE observation and a second reading of the
+    # same tree a moment later is a different one. Where the caller passed
+    # nothing, the tree is read HERE through the same `lane_tree_now`
+    # `lane-reconcile` recomputes with, so the two cannot disagree.
+    if [ -z "$slt_b$slt_h$slt_u$slt_d$slt_n" ]; then
+      slt_now=""; slt_nrc=0
+      slt_now="$(lane_tree_now "$slt_path")" || slt_nrc=$?
+      if [ "$slt_nrc" = 0 ]; then
+        slt_b="$(printf '%s' "$slt_now" | awk -F"$US" '{print $1}')"
+        slt_h="$(printf '%s' "$slt_now" | awk -F"$US" '{print $2}')"
+        slt_u="$(printf '%s' "$slt_now" | awk -F"$US" '{print $3}')"
+        slt_d="$(printf '%s' "$slt_now" | awk -F"$US" '{print $4}')"
+        slt_n="$(printf '%s' "$slt_now" | awk -F"$US" '{print $5}')"
+      fi
+    fi
+    if lane_tree_put "$slt_root" "$lane" "$slt_path" "$slt_co" "$slt_b" "$slt_h" \
+         "$slt_u" "$slt_d" "$slt_n" "$slt_w" "$slt_g" "$slt_op"; then
+      printf '%s\n' "$(tree_id_for "$slt_path")"
+    else
+      die "the sidecar for $slt_path could not be written under $slt_root/trees (the shell's own error is above). The tree itself was not touched: this command reads worktrees and writes only its own record of them." 1
+    fi
+    ;;
+
+  lane-reconcile)
+    lane="${1-}"; [ -n "$lane" ] || die "usage: lane-reconcile <lane>" 64
+    [ "$#" -le 1 ] || die "lane-reconcile takes one lane: lane-reconcile <lane>" 64
+    check_lane_name "$lane"
+    log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    lane_reconcile "$lane"; lrec_rc=$?
+    case "$lrec_rc" in
+      0) : ;;
+      8) exit 8 ;;
+      *) die "lane $lane could not be reconciled (exit $lrec_rc)" 1 ;;
+    esac
+    ;;
+
   *)
-    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|migrate-state-cells|commit|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|canon-lane|resolve-home)" 2
+    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|migrate-state-cells|commit|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|canon-lane|resolve-home|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-reconcile)" 2
     ;;
 esac
