@@ -3494,6 +3494,93 @@ run   "$START" --dir "$HOME/projects/repoA" repoGH-1 --no-launch
 is    "…and that is the one case that still refuses" "$rc" 2
 has   "…naming the window that holds it" "$err" "is live in session"
 
+# -- 18(h) AND THE HARNESS'S OWN FENCE ON THE SAME FILE -----------------------
+#
+# MEASURED ON EAGLE 2026-09-15 against `claude` 2.1.270, in a scratch
+# configuration directory with a hand-made transcript and one fake record: a
+# `claude --resume <id>` whose id is carried by a live record whose `kind` is
+# anything but `interactive` prints
+#
+#   Error: Session <id> is running as a background session. Run `claude agents`
+#   to find its id, then `claude attach <id>` to open it, or `claude stop <id>`
+#   first to resume it here. Add --fork-session to branch off a copy instead.
+#
+# and exits 1 WITHOUT STARTING. The same probe with `"kind":"interactive"` got
+# past that check and failed later, on authentication — so a second INTERACTIVE
+# process on one transcript is a state the harness permits and only this tooling
+# refuses (18(h)), and a BACKGROUND one is a launch that cannot happen at all.
+#
+# THE COST OF NOT ASKING IT IS A FALSE `RESUMED`: the row, the object log and
+# the handoff stamp are written BEFORE the `exec`, so the lane is recorded as
+# resumed by a session that never started, and in a launcher-made window tmux
+# prints `[exited]` over the message and closes it — which is the defect this
+# lane was handed on 2026-09-15 ("pclaude --lane … exits and destroys the
+# window, AFTER lane-start records the lane").
+
+# IT IS A FENCE ON AN `exec`, SO IT IS ASKED WHERE ONE HAPPENS. Every case
+# below LAUNCHES — the fake `claude` logs its argv — because `--no-launch` and
+# `--dry-run` hand the harness nothing and must go on behaving exactly as
+# Amendment 8 ruling (g) has them behave (the two cases above this one).
+
+# (a) NOBODY HOLDS IT: the exact id is resumed, which is the control for the two
+#     refusals below.
+g_clear
+: > "$FAKE_CLAUDE_LOG"
+run   "$START" --dir "$HOME/projects/repoA" repoGH-1
+is    "with no live record at all the row's id is resumed" "$rc" 0
+is    "…by id, never by title" "$(launch_of "$(cat "$FAKE_CLAUDE_LOG")")" "--name repoGH-1 --resume $GH_ID"
+
+# (b) A LIVE BACKGROUND SESSION ON THE ID, IN ANOTHER TMUX SESSION: refused
+#     BEFORE the launch, with where it is and how to open it.
+g_clear
+: > "$FAKE_CLAUDE_LOG"
+write_record_g "$sessions_dir/g-bgjob.json" "$GH_ID" "$G_OUT" "$g_out_start" \
+  bg "othersess:@9.%9" "repoGH-1" - 1000
+run   "$START" --dir "$HOME/projects/repoA" repoGH-1
+is    "a live BACKGROUND session on that id refuses before the launch" "$rc" 1
+has   "…naming it" "$err" "a live BACKGROUND session already carries transcript $GH_ID"
+has   "…and what the harness itself would do with the launch" "$err" "would REFUSE to start against it"
+has   "…in the harness's own words" "$err" "is running as a background session"
+has   "…with the harness's own remedy" "$err" "claude attach <id>"
+has   "…and the window it is in, as a command to type" "$err" "tmux switch-client -t othersess:@9"
+has   "…beside this estate's retire act" "$err" "lane-end repoGH-1 --retire <pid>"
+is    "…and nothing is launched" "$(cat "$FAKE_CLAUDE_LOG")" ""
+
+# …and `--no-launch` in that same state opens no transcript, so it is 18(h)'s
+# count alone that answers there, exactly as it did before this fence.
+run   "$START" --dir "$HOME/projects/repoA" repoGH-1 --no-launch
+is    "…while --no-launch is still 18(h)'s own refusal and not the harness's" "$rc" 1
+has   "…naming the second process" "$err" "another live process already carries transcript $GH_ID"
+hasnt "…and not a launch nobody was making" "$err" "would REFUSE to start against it"
+
+# (c) THE SAME WINDOW, AND NOTHING ELSE: today's behaviour, unchanged. A lane
+#     whose own interactive session is in this window is resumed by id, and
+#     `--resume` attaches to the same conversation.
+g_clear
+: > "$FAKE_CLAUDE_LOG"
+write_record_g "$sessions_dir/g-here.json" "$GH_ID" "$G_PANE" "$g_pane_start" \
+  interactive "gwsess:@3.%3" "repoGH-1" user 1000
+run   "$START" --dir "$HOME/projects/repoA" repoGH-1
+is    "the lane live in THIS window is still not a collision" "$rc" 0
+is    "…and is resumed by its own id" "$(launch_of "$(cat "$FAKE_CLAUDE_LOG")")" "--name repoGH-1 --resume $GH_ID"
+
+# (d) …AND ITS `bg` COMPANION IS THE ONE THING THAT STOPS THAT LAUNCH, because
+#     the harness reads the KIND and not this tooling's verdict: a companion is
+#     `one session seen twice` here (Amendment 8 ruling (g), and it is still not
+#     a rival) and a background holder there.
+: > "$FAKE_CLAUDE_LOG"
+write_record_g "$sessions_dir/g-companion2.json" "$GH_ID" "$G_OUT" "$g_out_start" \
+  bg - "repoGH-1" - 1000
+run   "$START" --dir "$HOME/projects/repoA" repoGH-1
+is    "…but its bg COMPANION is a launch the harness would refuse, so this one does" "$rc" 1
+has   "…naming the kind that decides it" "$err" "kind bg"
+hasnt "…and never as a rival for the LANE, which it is not" "$err" "is live in session"
+is    "…nothing launched" "$(cat "$FAKE_CLAUDE_LOG")" ""
+run   "$START" --dir "$HOME/projects/repoA" repoGH-1 --no-launch
+is    "…and the binding act in that very window is untouched by it (ruling (g))" "$rc" 0
+has   "…it is still this window's own session" "$err" "already holds repoGH-1"
+g_clear
+
 # -- (g) window-session: the pane tree beats the newer record ----------------
 #
 # THE SIXTH COMMIT'S RULE, CORRECTED. `updatedAt` is a liveness HEARTBEAT, so
@@ -5863,6 +5950,12 @@ gd_run() {   # <session id> [<prompt>] [<cwd>]
   return 0
 }
 gd_keys() { grep -c 'send-keys' "$FAKE_TMUX_LOG" || :; }
+# THE PENDING OFFER'S FILE, NAMED WITH THE FIXTURES AND NOT WITH THE FIRST CASE
+# THAT ANSWERS ONE. Every mismatch below leaves a question pending, and a
+# question pending is the NEXT prompt consumed as its answer — so the cases that
+# are about something else clear it, and they can only do that if they can spell
+# it before the offer section defines it.
+GD_OFFER="$CLAUDE_CONFIG_DIR/lanes/offers/$GD_LANE_ID"
 # A rename a person made an hour ago is OLDER than the binding written a moment
 # ago; one an hour from now is newer. The clock is read once, in milliseconds.
 gd_now_ms="$(( $(date -u +%s) * 1000 ))"
@@ -5887,27 +5980,36 @@ err="$(cat "$SANDBOX/stderr")"
 is    "a SUBAGENT's prompt exits 0 — subagents do not submit prompts and the lane that runs them has passed" "$rc" 0
 is    "…silently" "$err" ""
 
-# ---- (b) ROW 3: THE LOCK RENAMES IT, AND SAYS SO.
+# ---- (b) ROW 3: A NAME THAT IS NO LANE NAME IS THE THREE-CHOICE OFFER.
+#
+# THE LOCK USED TO RENAME THIS ONE WITHOUT ASKING, and it no longer does: every
+# readable mismatch that is more than a difference of CASE is now an explicit
+# choice, and the rename is choice 3 — typed when a person picks it and not
+# before. The triple is still printed, and the prompt is still refused.
 gd_rec "$GD_LANE_ID" repogd-7e derived "$GD_OLD_MS"
 gd_before="$(gd_keys)"
+rm -f "$GD_OFFER"
 gd_run "$GD_LANE_ID"
 is    "a session named something that is no lane BLOCKS the prompt" "$rc" 2
 has   "…printing the triple as it stands" "$err" "THE NAME GUARD REFUSES THIS PROMPT"
 has   "…the window" "$err" "window   gdsess:@12 'repoGD-1'"
-has   "…the session, with the nameSource the lock turns on" "$err" "session  $GD_LANE_ID 'repogd-7e' (nameSource derived)"
+has   "…the session, with the nameSource it carries" "$err" "session  $GD_LANE_ID 'repogd-7e' (nameSource derived)"
 has   "…and the row it is measured against" "$err" "row      \`repoGD-1\` — last session $GD_LANE_ID"
-has   "…and THE LOCK renames it rather than asking a person to" "$err" "SO IT HAS BEEN RENAMED FOR YOU"
-is    "…by typing into this pane, once (M1: the only path a running session's name has)" "$(( $(gd_keys) - gd_before ))" 1
-has   "…the one line there is to type" "$(tail -n1 "$FAKE_TMUX_LOG")" "send-keys -t %12 /rename repoGD-1 Enter"
+has   "…and it is the OFFER, not a rename nobody asked for" "$err" "the lane and Claude session names disagree"
+has   "…whose choice 3 is that rename, named and not made" "$err" "3) adjust the session to lane repoGD-1"
+is    "…so NOTHING is typed into the pane until a person picks it" "$(gd_keys)" "$gd_before"
+rm -f "$GD_OFFER"
 
-# ---- D4: `<lane> (N)` IS A MISMATCH, AND THE SUFFIX IS EVIDENCE.
+# ---- D4: `<lane> (N)` IS A MISMATCH, AND THE SUFFIX IS EVIDENCE — which the
+# offer carries now, because that is where this state arrives.
 gd_rec "$GD_LANE_ID" "repoGD-1 (2)" user "$GD_OLD_MS"
 gd_run "$GD_LANE_ID"
 is    "a \`<lane> (N)\` title is a mismatch, not the lane (ratified decision D4)" "$rc" 2
-has   "…and the lock renames it to the lane" "$err" "SO IT HAS BEEN RENAMED FOR YOU"
+has   "…and the offer names the rename as the repair" "$err" "3) adjust the session to lane repoGD-1"
 has   "…with the note that a stale holder of the title was live when it was minted" "$err" "another holder of 'repoGD-1' was live"
 has   "…naming the retire act and never a kill (A11 clause (k) rule (e))" "$err" "lane-end repoGD-1 --retire <pid>"
 hasnt "…so no surface offers to kill a process" "$err" "kill $LIVE_PID"
+rm -f "$GD_OFFER"
 
 # ---- AMENDMENT 15: A LOWERCASE WINDOW IS THE SAME LANE, AND THE ROW'S
 # SPELLING IS WHAT EVERY MESSAGE AND EVERY TYPED COMMAND CARRIES.
@@ -5915,14 +6017,19 @@ export FAKE_TMUX_WINDOW_NAME=repogd-1
 export FAKE_TMUX_WINDOWS="gdsess:0	@12	repogd-1	%12	claude"
 gd_rec "$GD_LANE_ID" repogd-7e derived "$GD_OLD_MS"
 gd_before="$(gd_keys)"
+rm -f "$GD_OFFER"
 gd_run "$GD_LANE_ID"
 is    "a window spelled in another case resolves to the same row (Amendment 15)" "$rc" 2
 has   "…and every message prints the REGISTER's spelling" "$err" "row      \`repoGD-1\` — last session"
-has   "…including the command typed into the pane" "$(tail -n1 "$FAKE_TMUX_LOG")" "/rename repoGD-1"
+has   "…including the lane the offer's own choices name" "$err" "3) adjust the session to lane repoGD-1"
+rm -f "$GD_OFFER"
 gd_rec "$GD_LANE_ID" repogd-1 user "$GD_OLD_MS"
 gd_run "$GD_LANE_ID"
 is    "a session name that differs from the row ONLY by case is still renamed to the row's spelling" "$rc" 2
 has   "…saying why, in Amendment 15's own terms" "$err" "a lane name is ONE name under any case"
+has   "…and typing it, because THE LOCK is what a case difference still meets" "$(tail -n1 "$FAKE_TMUX_LOG")" "/rename repoGD-1"
+hasnt "…never the offer, which is for the mismatches a person has to decide" "$err" "Reply \`1\`, \`2\` or \`3\`"
+rm -f "$GD_OFFER"
 export FAKE_TMUX_WINDOW_NAME=repoGD-1
 export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
 
@@ -6056,21 +6163,94 @@ has   "…naming the read that did not happen" "$err" "tmux did not answer"
 has   "…and the one bypass" "$err" "claude --safe-mode"
 
 # ---- CLAUSE (h) RULE 2: THE OFFER, AND ITS THREE ANSWERS.
-GD_OFFER="$CLAUDE_CONFIG_DIR/lanes/offers/$GD_LANE_ID"
 gd_rec "$GD_LANE_ID" repoGD-2 user "$GD_NEW_MS"
 gd_before="$(gd_keys)"
 gd_run "$GD_LANE_ID"
-is    "a PERSON's rename to another lane's name is blocked, not obeyed" "$rc" 2
-has   "…and read as an instruction about the LANE (D5)" "$err" "you renamed this session to repoGD-2"
-has   "…saying whether that lane exists" "$err" "lane repoGD-2 EXISTS"
-has   "…with the two answers, and no third" "$err" "Reply \`yes\` to move this window to it"
-has   "…the other one" "$err" "Reply \`no\` to stay repoGD-1"
+is    "a PERSON's rename to another lane's name is offered, not silently obeyed" "$rc" 2
+has   "…with the warning" "$err" "the lane and Claude session names disagree"
+has   "…with explicit allow" "$err" "1) explicitly allow this lane"
+has   "…with lane-to-session repair" "$err" "2) adjust the lane to session repoGD-2"
+has   "…with session-to-lane repair" "$err" "3) adjust the session to lane repoGD-1"
 is    "…and the offer is written under the harness's own config directory, per session" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" yes
 is    "…and NOTHING is typed into the pane until a person answers" "$(gd_keys)" "$gd_before"
 gd_run "$GD_LANE_ID" "what does that mean?"
 is    "anything that is not an answer is refused, and the offer is asked again" "$rc" 2
-has   "…in the same two words" "$err" "Reply \`yes\` to move this window to repoGD-2"
+has   "…with the same numbered choices" "$err" "Reply \`1\`, \`2\` or \`3\`"
 is    "…and the offer is still pending" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" yes
+
+gd_run "$GD_LANE_ID" "1"
+is    "choice 1 explicitly allows this lane and consumes the answer" "$rc" 2
+has   "…and warns that the allowance is scoped" "$err" "explicitly allowed for this transcript"
+has   "…naming the exact pair it is scoped to" "$err" "while the lane remains repoGD-1 and the session remains 'repoGD-2'"
+is    "…the pending QUESTION having become a standing ANSWER in the same file" \
+      "$(sed -n 's/^mode=//p' "$GD_OFFER" 2>/dev/null)" allow
+
+gd_run "$GD_LANE_ID" "continue working"
+is    "the scoped allowance lets later prompts through" "$rc" 0
+has   "…while still warning, every prompt, that the two names disagree" "$err" "explicitly allowed for this transcript"
+has   "…and saying what ends the allowance" "$err" "only while the lane and session names stay unchanged"
+hasnt "…and never claiming to have REFUSED the prompt it has just let through" "$err" "REFUSES THIS PROMPT"
+
+# THE ALLOWANCE IS THE PAIR'S, NOT THE TRANSCRIPT'S. "If either name changes,
+# the allowance MUST no longer apply" — so a second rename is a second
+# question, and the standing answer is dropped rather than carried onto a
+# state nobody was asked about.
+gd_rec "$GD_LANE_ID" repoGD-4 user "$GD_NEW_MS"
+gd_run "$GD_LANE_ID" "carry on"
+is    "a CHANGED session name invalidates the allowance" "$rc" 2
+has   "…and the three choices are asked again" "$err" "Reply \`1\`, \`2\` or \`3\`"
+has   "…about the new name" "$err" "2) adjust the lane to session repoGD-4"
+is    "…the standing answer having gone back to a pending question" \
+      "$(sed -n 's/^mode=//p' "$GD_OFFER" 2>/dev/null)" name-drift
+
+# AND THE SAME PAIR AGREEING AGAIN ENDS IT TOO, without a prompt being spent:
+# the guard drops the file when the three names meet, so a rename BACK to the
+# allowed spelling is a fresh question and not a silent pass on an old answer.
+rm -f "$GD_OFFER"
+gd_rec "$GD_LANE_ID" repoGD-2 user "$GD_NEW_MS"
+gd_run "$GD_LANE_ID"
+gd_run "$GD_LANE_ID" "1"
+is    "choice 1 again, so there is an allowance to lose" "$rc" 2
+gd_rec "$GD_LANE_ID" repoGD-1 user "$GD_NEW_MS"
+gd_run "$GD_LANE_ID"
+is    "the three names agreeing again exits 0" "$rc" 0
+is    "…and the allowance is gone with the mismatch it allowed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
+
+# ---- AN ALLOWANCE IS NOT A BYPASS, AND THE UNSAFE STATES STILL REFUSE THROUGH
+# IT. The requirement keeps unreadable, ambiguous, duplicate and SUPERSEDED
+# identity blocking, so the allowance is honoured at the one row of the table it
+# was given for — a readable lane whose uuid is the row's LAST id — and not in
+# front of the table, where it would silence the two refusals below as well.
+GD_SUP_ID="aaaa0012-5555-4000-8000-aaaa00125555"
+"$E" add-row "| \`repoGD-5\` | harness \`$GD_LANE_ID\` → harness \`$GD_SUP_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoGD/v.md | ACTIVE |" >/dev/null 2>&1
+export FAKE_TMUX_WINDOW_NAME=repoGD-5
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-5	%12	claude"
+gd_rec "$GD_LANE_ID" repoGD-2 user "$GD_NEW_MS"
+mkdir -p "${GD_OFFER%/*}"
+{ printf 'mode=allow\n'; printf 'from=repoGD-5\n'; printf 'to=repoGD-2\n'
+  printf 'session=repoGD-2\n'; printf 'uuid=%s\n' "$GD_LANE_ID"; } > "$GD_OFFER"
+gd_run "$GD_LANE_ID"
+is    "an explicitly allowed mismatch does NOT allow a SUPERSEDED transcript" "$rc" 2
+has   "…which is what the refusal names" "$err" "SUPERSEDED transcript of lane repoGD-5"
+hasnt "…and nothing is let through on the allowance" "$err" "ALLOWS THIS PROMPT"
+rm -f "$GD_OFFER"
+export FAKE_TMUX_WINDOW_NAME=repoGD-1
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
+
+GD_FREE_OFFER="$CLAUDE_CONFIG_DIR/lanes/offers/$GD_FREE_ID"
+gd_rec "$GD_FREE_ID" repoGD-2 user "$GD_NEW_MS"
+{ printf 'mode=allow\n'; printf 'from=repoGD-1\n'; printf 'to=repoGD-2\n'
+  printf 'session=repoGD-2\n'; printf 'uuid=%s\n' "$GD_FREE_ID"; } > "$GD_FREE_OFFER"
+gd_run "$GD_FREE_ID"
+is    "…nor a transcript the row does not name at all" "$rc" 2
+has   "…which is what that refusal names" "$err" "does not name $GD_FREE_ID at all"
+hasnt "…and nothing is let through on the allowance" "$err" "ALLOWS THIS PROMPT"
+rm -f "$GD_FREE_OFFER"
+
+# THE QUESTION IS PENDING AGAIN FOR THE CASES BELOW, which answer it.
+gd_rec "$GD_LANE_ID" repoGD-2 user "$GD_NEW_MS"
+gd_run "$GD_LANE_ID"
+is    "the offer is pending again" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" yes
 
 # AN ANSWER IS A PROMPT, AND A PROMPT IN A DUPLICATED PROCESS IS REFUSED.
 # Clause (h) refuses "every prompt in a process that shares its session id with
@@ -6080,16 +6260,16 @@ is    "…and the offer is still pending" "$( [ -f "$GD_OFFER" ] && echo yes || 
 # in front of the answer, and the offer is KEPT for the prompt after the
 # duplicate is retired (Copilot round 1 on this PR).
 write_record_a12 "$gd_t2/dup-answer.json" "$GD_LANE_ID" "$GD_DUP" "$gd_dup_start" bg "-" "repoGD-1" - "$GD_OLD_MS"
-gd_run "$GD_LANE_ID" "yes"
+gd_run "$GD_LANE_ID" "2"
 is    "a pending offer is NOT answered while a second live process holds this transcript" "$rc" 2
 has   "…the duplicate being what the refusal names" "$err" "ANOTHER LIVE PROCESS CARRIES THIS SESSION ID"
 hasnt "…so nothing moved" "$err" "MOVED: this window is now lane"
 is    "…and the offer is kept, to be answered when the other process is retired" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" yes
 rm -f "$gd_t2/dup-answer.json"
 
-gd_run "$GD_LANE_ID" "no"
-is    "\`no\` is consumed and blocks that prompt too — an answer is not work" "$rc" 2
-has   "…renaming the session back" "$err" "STAYING repoGD-1"
+gd_run "$GD_LANE_ID" "3"
+is    "choice 3 is consumed and blocks that prompt too — an answer is not work" "$rc" 2
+has   "…adjusting the session to the lane" "$err" "ADJUSTED SESSION TO LANE repoGD-1"
 has   "…by typing it into the pane" "$(tail -n1 "$FAKE_TMUX_LOG")" "send-keys -t %12 /rename repoGD-1 Enter"
 is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
 
@@ -6102,8 +6282,8 @@ is    "the offer is made again at the next prompt, because the rename still stan
 # fire and this session reaches the new lane's session cell.
 export FAKE_TMUX_RENAME_STICKS=1 FAKE_TMUX_NAME_FILE="$SANDBOX/tmux-window-name"
 rm -f "$FAKE_TMUX_NAME_FILE"
-gd_run "$GD_LANE_ID" "yes"
-is    "\`yes\` is consumed and blocks that prompt" "$rc" 2
+gd_run "$GD_LANE_ID" "2"
+is    "choice 2 is consumed and blocks that prompt" "$rc" 2
 has   "…and this window is the other lane now" "$err" "MOVED: this window is now lane repoGD-2"
 has   "…the window renamed by lane-start's own act" "$(grep 'rename-window' "$FAKE_TMUX_LOG" | tail -n1)" "rename-window repoGD-2"
 has   "…this session appended to that lane's cell, which is what the next resume follows" \
@@ -6113,13 +6293,73 @@ has   "…this session appended to that lane's cell, which is what the next resu
 # one is repoGD-1's. Without this the new row would carry a FRESH id, the next
 # prompt would find a lane whose row does not name this transcript, and the
 # guard would refuse for ever on a state it created by obeying the person.
-has   "…the guard having made that one write itself, on the person's yes" "$err" "session cell now ends on $GD_LANE_ID"
+has   "…the guard having made that one write itself, on the person's choice 2" "$err" "session cell now ends on $GD_LANE_ID"
 has   "…and the lane it LEFT marked PAUSED, so the register says where the work went" \
       "$("$E" register-row repoGD-1 2>/dev/null || :)" "PAUSED · "
 has   "…naming the lane this window moved to (Amendment 13(a): the cell is SET, never appended to)" \
       "$("$E" register-row repoGD-1 2>/dev/null || :)" "this window moved to lane repoGD-2"
 is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
 unset FAKE_TMUX_RENAME_STICKS FAKE_TMUX_NAME_FILE
+
+# ---- CHOICE 3 IS A TYPED ACT, AND A PANE THAT WILL NOT TAKE IT LEAVES THE
+# QUESTION STANDING. M1's condition is the pane's current command: `/rename
+# <lane>` typed at a shell is a command that does not exist, so the guard types
+# NOTHING there — and because nothing was repaired and nothing was written, the
+# offer is KEPT and the line is printed for the person to type.
+export FAKE_TMUX_WINDOW_NAME=repoGD-1
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
+gd_rec "$GD_LANE_ID" repoGD-2 user "$GD_NEW_MS"
+gd_run "$GD_LANE_ID"
+is    "the offer is pending for the pane that will refuse the keys" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" yes
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	bash"
+gd_before="$(gd_keys)"
+gd_run "$GD_LANE_ID" "3"
+is    "choice 3 into a pane that is not running claude types nothing" "$(gd_keys)" "$gd_before"
+is    "…and blocks that prompt" "$rc" 2
+has   "…naming the command to type by hand" "$err" "Type it yourself: /rename repoGD-1"
+hasnt "…never reporting a rename it did not make" "$err" "ADJUSTED SESSION TO LANE"
+is    "…with the offer KEPT, because nothing was repaired" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" yes
+export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
+rm -f "$GD_OFFER"
+
+# ---- THE UNTITLED SESSION, which is the (b) table's own row for a name that
+# is no lane name at all — and the one the offer must be answerable in, because
+# choice 3 is its whole cure. A record with an EMPTY `name` reaches the offer
+# with nothing to put in `session=`, and an offer whose answer is dropped as
+# unreadable is a question that can never be answered: the guard would ask it,
+# refuse the reply, ask it again, for ever.
+write_record_a12 "$sessions_dir/gd.json" "$GD_LANE_ID" "$LIVE_PID" "$live_start" \
+  interactive "gdsess:@12.%12" "" - -
+gd_run "$GD_LANE_ID"
+is    "a session with NO name of its own is the offer too" "$rc" 2
+has   "…with choice 2 unavailable, because 'none' is no lane to move to" "$err" "2) adjust the lane to session — unavailable"
+has   "…and choice 3 filled in with the lane" "$err" "3) adjust the session to lane repoGD-1"
+gd_run "$GD_LANE_ID" "3"
+is    "…and choice 3 ANSWERS it rather than dropping the offer as unreadable" "$rc" 2
+has   "…typing the rename into the pane" "$err" "ADJUSTED SESSION TO LANE repoGD-1"
+hasnt "…never reading its own offer as corrupt" "$err" "could not be read"
+is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
+
+# ---- THE QUESTION ANSWERED MUST BE THE QUESTION ASKED (Copilot round 1 on
+# openRepoTools#87). The offer is held per TRANSCRIPT and the answer is a later
+# prompt, so the window and the session can both move under it — and every one
+# of the three choices would then act on a state nobody was shown. A stale offer
+# is DROPPED, this prompt is not consumed by it, and the table judges it afresh.
+rm -f "$GD_OFFER"
+gd_rec "$GD_LANE_ID" repoGD-2 user "$GD_NEW_MS"
+gd_run "$GD_LANE_ID"
+is    "the offer is pending against lane repoGD-1 and session repoGD-2" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" yes
+gd_rec "$GD_LANE_ID" repoGD-3 user "$GD_NEW_MS"
+gd_before="$(gd_keys)"
+gd_run "$GD_LANE_ID" "3"
+is    "an answer to a question the state has moved past is refused" "$rc" 2
+has   "…naming both, so a person can see what moved" "$err" "the pending question was about lane repoGD-1 and session 'repoGD-2'"
+has   "…and what it is now" "$err" "session 'repoGD-3'"
+is    "…typing nothing, because /rename would have named the wrong lane" "$(gd_keys)" "$gd_before"
+has   "…and the prompt is JUDGED rather than consumed: the question is asked again" "$err" "the lane and Claude session names disagree"
+has   "…about the state as it stands now" "$err" "2) adjust the lane to session repoGD-3"
+is    "…so a fresh question is pending" "$(sed -n 's/^to=//p' "$GD_OFFER" 2>/dev/null)" repoGD-3
+rm -f "$GD_OFFER"
 
 # ---- AMENDMENT 18(h): ONE LIVE PROCESS PER TRANSCRIPT.
 #
@@ -6243,17 +6483,17 @@ gd_rec "$GD_LANE_ID" legacy-ui user "$GD_NEW_MS"
 gd_before="$(gd_keys)"
 gd_run "$GD_LANE_ID"
 is    "a rename to a lane named before the \`<repo>-<n>\` rule is the offer too" "$rc" 2
-has   "…saying that lane exists" "$err" "lane legacy-ui EXISTS"
-has   "…and saying what it cannot fill in, rather than printing a placeholder as a command" "$err" "needs that lane's DIRECTORY"
-gd_run "$GD_LANE_ID" "yes"
-is    "\`yes\` refuses rather than running a command with a \`<path>\` in it" "$rc" 2
+has   "…saying that lane exists, and that choice 2 is the move to it" "$err" "2) adjust the lane to session legacy-ui (existing lane; last session"
+has   "…and the rename beside it, which is the repair that needs nothing filled in" "$err" "3) adjust the session to lane repoGD-1"
+gd_run "$GD_LANE_ID" "2"
+is    "choice 2 refuses rather than running a command with a \`<path>\` in it" "$rc" 2
 has   "…naming the act with the one word left to the person" "$err" "run: lane-start --no-launch --dir <that lane's checkout> legacy-ui"
 has   "…having moved and written nothing" "$err" "NOTHING has been renamed, moved or written"
 is    "…and typing nothing into the pane" "$(gd_keys)" "$gd_before"
-is    "…with the offer KEPT, because \`no\` still answers it" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" yes
-gd_run "$GD_LANE_ID" "no"
+is    "…with the offer KEPT, because the other two choices still answer it" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" yes
+gd_run "$GD_LANE_ID" "3"
 is    "…which it does" "$rc" 2
-has   "…staying the lane this window is" "$err" "STAYING repoGD-1"
+has   "…adjusting the session to the lane" "$err" "ADJUSTED SESSION TO LANE repoGD-1"
 is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
 
 # ---- THE OTHER TEXT A SESSION CELL CAN CARRY INSTEAD OF A UUID.
@@ -6271,8 +6511,8 @@ printf 'repoGD-1\n' > "$SANDBOX/tmux-window-name"
 gd_rec "$GD_LANE_ID" repoGD-4 user "$GD_NEW_MS"
 gd_run "$GD_LANE_ID"
 is    "a rename to a lane whose cell carries no uuid at all is the offer" "$rc" 2
-has   "…naming the lane it would move to" "$err" "you renamed this session to repoGD-4"
-gd_run "$GD_LANE_ID" "yes"
+has   "…naming the lane it would move to" "$err" "2) adjust the lane to session repoGD-4"
+gd_run "$GD_LANE_ID" "2"
 is    "…and \`yes\` moves the window" "$rc" 2
 has   "…saying so" "$err" "MOVED: this window is now lane repoGD-4"
 has   "…with the guard's own last write anchored on the cell's \`pending\` text" "$err" "session cell now ends on $GD_LANE_ID"
@@ -6308,7 +6548,7 @@ gdsess:9	@99	repoGD-1	%99	claude"
 # lines under a green Linux run. A record whose pid IS the pane's needs no
 # walk at all and is this window's on both.
 export FAKE_TMUX_PANE_PID="$LIVE_PID" FAKE_TMUX_PANE_ID="%99"
-write_record_a12 "$sessions_dir/gd.json" "$GD_LANE_ID" "$LIVE_PID" "$live_start" interactive "-" repogd-7e derived "$GD_OLD_MS"
+write_record_a12 "$sessions_dir/gd.json" "$GD_LANE_ID" "$LIVE_PID" "$live_start" interactive "-" repogd-1 derived "$GD_OLD_MS"
 gd_before="$(gd_keys)"
 gd_run "$GD_LANE_ID"
 is    "a live record with NO tmux target is still this window's, and the lock still renames it" "$rc" 2
@@ -6324,7 +6564,7 @@ export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude
 othersess:0	@5	repoGD-1	%5	claude
 gdsess:9	@99	repoGD-1	%99	claude"
 export FAKE_TMUX_PANE_PID="$LIVE_PID" FAKE_TMUX_PANE_ID="%99"
-write_record_a12 "$sessions_dir/gd.json" "$GD_LANE_ID" "$LIVE_PID" "$live_start" interactive "othersess:@5.%5" repogd-7e derived "$GD_OLD_MS"
+write_record_a12 "$sessions_dir/gd.json" "$GD_LANE_ID" "$LIVE_PID" "$live_start" interactive "othersess:@5.%5" repogd-1 derived "$GD_OLD_MS"
 gd_before="$(gd_keys)"
 gd_run "$GD_LANE_ID"
 is    "a stale target naming another window is not the pane the lock types into" "$(( $(gd_keys) - gd_before ))" 1
@@ -6339,8 +6579,14 @@ export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
 # typed into an editor is text nobody wrote. Neither half of that gate had a
 # case, and it is the only barrier between this hook and somebody else's process
 # (Copilot round 2 on this PR).
+#
+# THE NAME IN THESE CASES DIFFERS FROM THE ROW'S BY CASE ALONE, and that is what
+# reaches the LOCK now: every wider mismatch is the three-choice offer, which
+# types nothing until a person picks choice 3. The mechanism under test is the
+# PANE — which one, and whether it may be typed into at all — so the case-only
+# name is how these cases go on asking about it.
 export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	bash"
-gd_rec "$GD_LANE_ID" repogd-7e derived "$GD_OLD_MS"
+gd_rec "$GD_LANE_ID" repogd-1 derived "$GD_OLD_MS"
 gd_before="$(gd_keys)"
 gd_run "$GD_LANE_ID"
 is    "a pane running something other than claude is NOT typed into" "$(gd_keys)" "$gd_before"
@@ -6355,7 +6601,7 @@ has   "…with the line for the person to type in the lane's own pane" "$err" "/
 # word bought nothing and would have let a stray Node REPL take `/rename <lane>`
 # as input (Copilot round 4 on this PR).
 export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	node"
-gd_rec "$GD_LANE_ID" repogd-7e derived "$GD_OLD_MS"
+gd_rec "$GD_LANE_ID" repogd-1 derived "$GD_OLD_MS"
 gd_before="$(gd_keys)"
 gd_run "$GD_LANE_ID"
 is    "a pane running \`node\` is not typed into either" "$(gd_keys)" "$gd_before"
@@ -6364,7 +6610,7 @@ export FAKE_TMUX_WINDOWS="gdsess:0	@12	repoGD-1	%12	claude"
 # A PANE THAT COULD NOT BE ASKED IS THE OTHER HALF, and it fails the same way:
 # the record names a pane this window does not have, so the targeted read
 # resolves nothing and the gate has no answer to test.
-write_record_a12 "$sessions_dir/gd.json" "$GD_LANE_ID" "$LIVE_PID" "$live_start" interactive "gdsess:@12.%77" repogd-7e derived "$GD_OLD_MS"
+write_record_a12 "$sessions_dir/gd.json" "$GD_LANE_ID" "$LIVE_PID" "$live_start" interactive "gdsess:@12.%77" repogd-1 derived "$GD_OLD_MS"
 gd_before="$(gd_keys)"
 gd_run "$GD_LANE_ID"
 is    "a pane whose current command could not be read is not typed into either" "$(gd_keys)" "$gd_before"
@@ -7731,7 +7977,7 @@ ag_seed_log() {   # <lane> <payload tail>
   git -C "$WIP" push -q origin main
   return 0
 }
-for ag_l in repoAG-1 repoAG-2 repoAG-3 repoAG-4; do ag_seed_handoff "$ag_l"; done
+for ag_l in repoAG-1 repoAG-2 repoAG-3 repoAG-4 repoAG-5 repoAG-6; do ag_seed_handoff "$ag_l"; done
 git -C "$WIP" add -- handoffs/repoAG >/dev/null 2>&1
 git -C "$WIP" commit -q -m "seed the repoAG handoffs"
 git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
@@ -7740,10 +7986,58 @@ ag_row repoAG-1 "harness \`$HF2_ID\`"
 ag_row repoAG-2 "harness \`$HF2_ID\`"
 ag_row repoAG-3 "harness \`$HF2_ID\`"
 ag_row repoAG-4 "harness \`$HF2_ID\`"
+AG_STALE_ID="a17a0007-7777-4000-8000-a17a00077777"
+ag_row repoAG-5 "harness \`$HF2_ID\` → harness \`$AG_STALE_ID\`"
+ag_row repoAG-6 "harness \`$HF2_ID\` → harness \`$AG_STALE_ID\`"
 ag_seed_log repoAG-1 "agent codex; transcript $CODEX_ID"
 ag_seed_log repoAG-2 "agent codex; transcript $CODEX_ID"
 ag_seed_log repoAG-3 "agent claude; transcript $HF2_ID"
 ag_seed_log repoAG-4 "agent claude; transcript $HF2_ID"
+ag_seed_log repoAG-5 "agent claude; transcript $HF2_ID"
+ag_seed_log repoAG-6 "agent claude; transcript $HF2_ID"
+
+# The row can end in a harness/process id whose transcript was never minted
+# while the last PAUSED record still names the exact Claude transcript the
+# process continued. That is the live shape behind a `pclaude --lane …` pane
+# immediately printing `[exited]`: title fallback passed `--resume <lane>` to
+# Claude instead of the existing transcript UUID.
+ag_tdir="$HOME/.claude/projects/$(sanitize "$AG_DIR")"
+mkdir -p "$ag_tdir"
+printf '{"type":"user"}\n' > "$ag_tdir/$HF2_ID.jsonl"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="agsess:@41" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$AG_DIR" repoAG-5 --no-launch
+is    "a missing row-last transcript falls back to the same agent's PAUSED transcript" "$rc" 0
+is    "…resuming the exact transcript id, never the title picker" "$(launch_of "$out")" \
+      "claude --name repoAG-5 --resume $HF2_ID"
+has   "…saying why the PAUSED transcript superseded the dead row-last id" "$err" \
+      "last session id $AG_STALE_ID has no transcript here"
+has   "…and restoring that exact id to the end of the session cell for the next launch" \
+      "$(grep '^| `repoAG-5`' "$LANES")" \
+      "→ harness \`$HF2_ID\` (transcript uuid; restored from the lane's last PAUSED record)"
+# …AND THE LANE LIVE IN THIS WINDOW IS NEVER REPLACED BY IT (Copilot round 2 on
+# openRepoTools#87). `$harness_sid` is empty in TWO states and only one of them
+# is "no live session is being bound here": where the window's own session IS
+# the row's, step 3 says so with `holder_here` and step 3b takes nothing, so
+# that test alone let this fallback fire on the very shape it was written to
+# stand off — the lane live in THIS window, its transcript not under this
+# directory, an older PAUSED record beside it — and would have opened the older
+# conversation over the person's own.
+write_record_a12 "$sessions_dir/ag-live.json" "$AG_STALE_ID" "$LIVE_PID" "$live_start" \
+  interactive "agsess:@41.%41" "repoAG-6" user "$GD_OLD_MS"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="agsess:@41" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$AG_DIR" repoAG-6 --no-launch
+is    "the lane live in THIS window is not replaced by an older PAUSED transcript" "$rc" 0
+has   "…step 3 having found that session holding the lane here" "$err" "already holds repoAG-6"
+hasnt "…so the PAUSED id is NOT resumed over it" "$out" "--resume $HF2_ID"
+hasnt "…and the recovery does not even speak" "$err" "has no transcript here"
+has   "…the launch being a new session named for the lane, as it is without a transcript" "$out" "--name repoAG-6"
+rm -f "$sessions_dir/ag-live.json"
+
+# AND THE FIXTURE IS TAKEN BACK OUT. Every repoAG row records this same id, so a
+# transcript left lying in this directory would make `--agent claude with no
+# transcript here` a resume by id — which is the case below, and it is about a
+# lane that has none.
+rm -f "$ag_tdir/$HF2_ID.jsonl"
 
 : > "$FAKE_CODEX_LOG"
 export FAKE_CODEX_WATCH="$WIP/handoffs/repoAG/repoAG-1.md"
