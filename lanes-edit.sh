@@ -6689,6 +6689,27 @@ binding_is_here() {   # <host> <container> [legacy]
   binding_is_here_lc "$(lc "${1-}")" "$(lc "${2-}")" "${3-}"
 }
 
+# IS THIS THE SAME BINDING AS THE ONE THAT WAS READ? Five fields and not two
+# (Copilot round 7 on openRepoTools#83). A binding is `host`, `container` and
+# `window` — that is clause (b)'s own definition — and the UTC and session are
+# what tell one of them from the next at the same place. Compared on the UTC and
+# the session alone, a lane released and REBOUND within the same second by a
+# process carrying the same transcript id reads as unchanged, and the act that
+# follows the comparison (a forced `PAUSED`, or carrying on into a bind) lands
+# on a holder that arrived after the read. The log has a one-second UTC and this
+# estate resumes one transcript from several places, so neither field is
+# distinguishing on its own.
+#
+# TEN ARGUMENTS IN TWO GROUPS OF FIVE, in the order `binding` prints them.
+binding_identity_same() {   # <h1> <c1> <w1> <u1> <s1>  <h2> <c2> <w2> <u2> <s2>
+  [ "${1-}" = "${6-}" ] || return 1
+  [ "${2-}" = "${7-}" ] || return 1
+  [ "${3-}" = "${8-}" ] || return 1
+  [ "${4-}" = "${9-}" ] || return 1
+  [ "${5-}" = "${10-}" ] || return 1
+  return 0
+}
+
 # THE ONE EXCEPTION CLAUSE (b) CARVES OUT, AND ITS FENCE. *"Where the asker and
 # the binding share a tmux server (the launcher mounts one socket into every
 # container it starts on a host) and the binding's window no longer exists
@@ -9536,7 +9557,8 @@ EOF
       IFS="$US" read -r rh2_state rh2_host rh2_cont rh2_win rh2_utc rh2_sess rh2_rest <<EOF
 $rh_re
 EOF
-      if [ "$rh2_utc" != "$rh_utc" ] || [ "$rh2_sess" != "$rh_bsess" ]; then
+      if ! binding_identity_same "$rh_host" "$rh_cont" "$rh_win" "$rh_utc" "$rh_bsess" \
+                                 "$rh2_host" "$rh2_cont" "$rh2_win" "$rh2_utc" "$rh2_sess"; then
         die "lane $lane's binding CHANGED while this run was preparing to force it. It was window $rh_win in container $rh_cont on host $rh_host (session ${rh_bsess:-unknown}, $rh_utc); it is now ${rh2_state:-free}${rh2_win:+, window $rh2_win in container ${rh2_cont:-none} on host ${rh2_host:-unknown} (session ${rh2_sess:-unknown}, $rh2_utc)}. Nothing was written: a forced release names the session it acts for, and this one would have named a session that no longer holds the lane while releasing one that does. Read it and decide again:
     $SELF binding $lane" 2
       fi
@@ -9624,7 +9646,8 @@ EOF
           note "lane $lane is FREE — the binding was released while this request waited. Bind it."
           exit 0 ;;
         bound|requested)
-          if [ -n "$rh_utc2" ] && [ "$rh_utc2" != "$rh_utc" ]; then
+          if ! binding_identity_same "$rh_host" "$rh_cont" "$rh_win" "$rh_utc" "$rh_bsess" \
+                                     "$rh_host2" "$rh_cont2" "$rh_win2" "$rh_utc2" "$rh_bsess2"; then
             die "lane $lane was released and BOUND AGAIN while this request waited — its binding is now window ${rh_win2:-none} in container ${rh_cont2:-none} on host ${rh_host2:-unknown} (session ${rh_bsess2:-unknown}, $rh_utc2). The request this run wrote is answered and the lane is somebody else's: ask again, or take it up with that place." 2
           fi ;;
       esac

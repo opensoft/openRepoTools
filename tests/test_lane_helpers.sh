@@ -9467,6 +9467,7 @@ BIND14_ID="bb180014-1414-4000-8000-bb1800141414"
 BIND15_ID="bb180015-1515-4000-8000-bb1800151515"
 BIND16_ID="bb180016-1616-4000-8000-bb1800161616"
 BIND17_ID="bb180017-1717-4000-8000-bb1800171717"
+BIND18_ID="bb180018-1818-4000-8000-bb1800181818"
 BIND_REQ_ID="bb1800aa-aaaa-4000-8000-bb1800aaaaaa"
 BIND_DIR="$HOME/projects/repoBind"
 mkdir -p "$BIND_DIR"
@@ -9583,6 +9584,7 @@ echo "-- clause (b): the binding, read"
 "$E" add-row "| \`repoBind-14\` | harness \`$BIND14_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/14.md | ACTIVE |" >/dev/null 2>&1
 "$E" add-row "| \`repoBind-15\` | harness \`$BIND16_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/15.md | ACTIVE |" >/dev/null 2>&1
 "$E" add-row "| \`repoBind-17\` | harness \`$BIND17_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/17.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-18\` | harness \`$BIND18_ID\` | Raven / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/18.md | ACTIVE |" >/dev/null 2>&1
 # repoBind-2 — BOUND ON ANOTHER HOST. `raven` is a machine this workstation has
 # no session records of and no tmux server of, so its binding is UNKNOWN here
 # and never dead, whatever a `kill -0` of the pid it names would say.
@@ -9677,6 +9679,12 @@ write_record "$sessions_dir/bind13.json" "$BIND13_ID" "$LIVE_PID" "$live_start" 
 { printf '# lane repoBind-17 — object log (lane-collision-protocol Amendment 7)\n'
   printf 'STARTED — lane repoBind-17, session %s@Eagle, 2026-09-12T09:44:00Z, lane:repoBind-17 → home opensoft/repoBind; estate repoBind; dir %s; profile team-05a; window cloudsess:9 @66; host Eagle; os linux; container cloud-bench\n' "$BIND17_ID" "$BIND_DIR"
 } > "$LOGD/repoBind-17.md"
+# repoBind-18 — the rebind-within-one-second case: its UTC is FIXED so the peer
+# can reuse it, and its session is reused too, so only the WINDOW tells the new
+# binding from the old.
+{ printf '# lane repoBind-18 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-18, session %s@Raven, 2026-09-12T09:45:00Z, lane:repoBind-18 → home opensoft/repoBind; estate repoBind; dir /elsewhere; profile team-09z; window ravensess:3 @45; host raven; os macos; container none\n' "$BIND18_ID"
+} > "$LOGD/repoBind-18.md"
 git -C "$WIP" add -A -- lanes >/dev/null 2>&1
 git -C "$WIP" commit -q -m "seed the bindings Amendment 18 partitions"
 git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
@@ -9881,6 +9889,35 @@ is   "a container with no configured workstation cannot write the request at all
 has  "…in the one sentence every writer here refuses with" "$err" "is the CONTAINER'S id"
 run env -u LANES_WORKSTATION -u LANES_HOST LANES_IN_CONTAINER=1 LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 --force "why not"
 is   "…and neither can it force a release" "$rc" 2
+# A BINDING IS FIVE FIELDS AND NOT TWO (Copilot round 7). The forced release
+# names the session it acts for, out of a scan made before the uuid was resolved
+# and the why checked; compared on the UTC and the session alone, a lane
+# released and REBOUND within the same second by a process carrying the same
+# transcript id reads as unchanged, and the `PAUSED` lands on the holder that
+# arrived after the read. The log's UTC is one second wide and this estate
+# resumes one transcript from several places, so neither field distinguishes on
+# its own.
+bind_rebind() {   # <lane> <session> <the UTC to reuse> <the new window>
+  # ONE PUSH, BOTH LINES: a poll that caught the release alone would answer
+  # "the lane is FREE" and this case would never reach the comparison it is for.
+  git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
+  { printf 'PAUSED — lane %s, session %s@Raven, %s, lane:%s → swap; agent claude; transcript %s; host raven; os macos; container none\n' \
+      "$1" "$2" "$3" "$1" "$2"
+    printf 'RESUMED — lane %s, session %s@Raven, %s, lane:%s → home opensoft/repoBind; estate repoBind; dir /elsewhere; window %s; host raven; os macos; container none\n' \
+      "$1" "$2" "$3" "$1" "$4"
+  } >> "$CLONE2/lanes/log/$1.md"
+  git -C "$CLONE2" add -- "lanes/log/$1.md"
+  git -C "$CLONE2" commit -q -m "LOG($1@Raven): PAUSED then RESUMED"
+  git -C "$CLONE2" push -q origin main
+}
+( sleep 3; bind_rebind repoBind-18 "$BIND18_ID" "2026-09-12T09:45:00Z" "ravensess:4 @46" ) &
+BIND_REBINDER=$!
+run env LANES_SESSION="$BIND_REQ_ID" LANES_POLL_SECONDS=1 "$E" request-handoff repoBind-18 --wait 40
+wait "$BIND_REBINDER" 2>/dev/null
+is   "a lane released and REBOUND under the same session and the same UTC is still a rebind" "$rc" 2
+has  "…named as one" "$err" "released and BOUND AGAIN while this request waited"
+has  "…and it is the WINDOW that says so, which the UTC and the session could not" \
+     "$err" "window ravensess:4 @46"
 run env LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 --force "cloud-bench is not answering"
 is   "--force is a SECOND invocation and it releases the binding" "$rc" 0
 bind_forced="$(git -C "$WIP" show origin/main:lanes/log/repoBind-3.md | tail -n1)"
