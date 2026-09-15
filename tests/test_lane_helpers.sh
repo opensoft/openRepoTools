@@ -7724,6 +7724,12 @@ is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before
 is   "…and the far end is untouched" "$(wc -l < "$SANDBOX/faraway/log.md" | tr -d ' ')" 1
 rm -f "$LOGD/repoLink-1.md"
 printf '# lane repoLink-1 — object log (lane-collision-protocol Amendment 7)\n' > "$LOGD/repoLink-1.md"
+# AND COMMITTED, because an UNTRACKED source log is its own refusal now (round
+# 6) and would answer every case below this one instead of the one it asks.
+git -C "$WIP" add -- lanes/log/repoLink-1.md >/dev/null 2>&1
+git -C "$WIP" commit -q -m "commit the symlink-refusal lane's own log"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
 
 mv "$WIP/handoffs/repoLink/session-handoff-2026-09-12-lane-repoLink-1.md" "$SANDBOX/faraway/h.md"
 ln -s "$SANDBOX/faraway/h.md" "$WIP/handoffs/repoLink/session-handoff-2026-09-12-lane-repoLink-1.md"
@@ -7887,6 +7893,80 @@ is   "…the log at its new name" "$( [ -f "$LOGD/repoEdge-2.md" ] && echo yes )
 is   "…the handoff at its new name" \
      "$( [ -f "$WIP/handoffs/repoEdge/session-handoff-2026-09-12-lane-repoEdge-2.md" ] && echo yes )" "yes"
 has  "…and the alias table carries the pair" "$(cat "$WIP/lanes/aliases.tsv")" "$(printf 'repoEdge-1\trepoEdge-2\t20')"
+
+
+# ============ Copilot round 6 on openRepoTools#81 ============================
+
+# ---- A RENAMED IS SKIPPED BY THE ONE READER THAT TAKES THE LAST LANE-KIND
+# LINE WHATEVER IT IS. `swapped_candidates` names the verbs it skips, so a lane
+# whose LAST line is its rename must still read as PAUSED — otherwise `swapped`
+# loses it and `restart` cannot bring it back.
+REN9_ID="12ab34cd-16a9-4000-8000-12ab34cd16a9"
+add_seed_row "| \`repoRSw-1\` | harness \`$REN9_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | handoffs/repoRSw/x.md | ACTIVE |"
+{ printf '# lane repoRSw-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoRSw-1, session %s@Eagle, %s, lane:repoRSw-1 → home opensoft/repoRSw; estate repoRSw\n' "$REN9_ID" "$OLD_UTC"
+  printf 'PAUSED — lane repoRSw-1, session %s@Eagle, 2026-09-14T09:00:00Z, lane:repoRSw-1 → swap; window swsess:2; workstation Eagle\n' "$REN9_ID"
+} > "$LOGD/repoRSw-1.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed a swapped lane about to be renamed"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+run "$E" swapped Eagle
+has  "a PAUSED lane reads as swapped before the rename" "$out" "repoRSw-1"
+# ITS ROW NAMES A HANDOFF DIRECTORY NOTHING HAS CREATED, which is the ordinary
+# state of every lane before its first swap — `lane-start` puts the path in the
+# row and `lane-handoff` writes the file later — so this case also holds the
+# containment test to the nearest ancestor that EXISTS.
+run env LANES_SESSION="$REN9_ID" "$E" rename-lane repoRSw-1 repoRSw-2 --no-github
+is   "…and the rename goes through" "$rc" 0
+run "$E" swapped Eagle
+has  "…and it STILL reads as swapped, under its new name, with RENAMED as its last line" "$out" "repoRSw-2"
+hasnt "…and not under the old one" "$out" "repoRSw-1	" 
+run "$E" lane-last repoRSw-2
+has  "…while the last LANE-kind line a state read takes is still the PAUSED" "$out" "PAUSED"
+
+# ---- AN UNTRACKED OBJECT LOG OR HANDOFF IS SOMEBODY'S UNCOMMITTED WORK.
+#
+# `tracked_dirty` reports no untracked file, so the dirty-checkout refusal never
+# sees one — and this rename would MOVE it to a path it always stages.
+REN10_ID="12ab34cd-16b0-4000-8000-12ab34cd16b0"
+add_seed_row "| \`repoUnt-1\` | harness \`$REN10_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | handoffs/repoUnt/session-handoff-2026-09-12-lane-repoUnt-1.md | ACTIVE |"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the untracked-source lane"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+{ printf '# lane repoUnt-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoUnt-1, session %s@Eagle, %s, lane:repoUnt-1 → home opensoft/repoUnt; estate repoUnt\n' "$REN10_ID" "$OLD_UTC"
+} > "$LOGD/repoUnt-1.md"
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN10_ID" "$E" rename-lane repoUnt-1 repoUnt-2 --no-github
+is   "an UNTRACKED object log is refused, not moved into this commit" "$rc" 2
+has  "…because its lines have never been committed by anyone" "$err" "git does not track it"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+is   "…the log still under its own name" "$( [ -f "$LOGD/repoUnt-1.md" ] && echo yes )" "yes"
+git -C "$WIP" add -- "lanes/log/repoUnt-1.md" >/dev/null 2>&1
+git -C "$WIP" commit -q -m "commit the lane's own log, as the refusal asks"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+mkdir -p "$WIP/handoffs/repoUnt"
+printf 'Lane: repoUnt-1 — single-use resume prompt\n\n## RESUME\n' > "$WIP/handoffs/repoUnt/session-handoff-2026-09-12-lane-repoUnt-1.md"
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN10_ID" "$E" rename-lane repoUnt-1 repoUnt-2 --no-github
+is   "an UNTRACKED handoff is refused, not stamped into this commit" "$rc" 2
+has  "…for the same reason" "$err" "git does not track it"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+hasnt "…the handoff took no stamp" "$(cat "$WIP/handoffs/repoUnt/session-handoff-2026-09-12-lane-repoUnt-1.md")" "RENAMED from"
+git -C "$WIP" add -- handoffs >/dev/null 2>&1
+git -C "$WIP" commit -q -m "commit the lane's own handoff, as the refusal asks"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+run env LANES_SESSION="$REN10_ID" "$E" rename-lane repoUnt-1 repoUnt-2 --no-github
+is   "…and with both committed the rename goes through" "$rc" 0
+is   "…the log at its new name" "$( [ -f "$LOGD/repoUnt-2.md" ] && echo yes )" "yes"
+is   "…the handoff at its new name" \
+     "$( [ -f "$WIP/handoffs/repoUnt/session-handoff-2026-09-12-lane-repoUnt-2.md" ] && echo yes )" "yes"
 
 export FAKE_TMUX_WINDOWS="$A16_SAVE_WINDOWS"
 export FAKE_TMUX_WINDOW="$A16_SAVE_WINDOW"

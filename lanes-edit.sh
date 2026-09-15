@@ -5808,6 +5808,12 @@ swapped_candidates() {
     BEGIN { FS = sep }
     $6 !~ /^lane:/ { next }
     # AMENDMENT 13(b) — AND THE TWO NARRATIVE VERBS ARE NOT LANE-KIND STATE.
+    # AMENDMENT 16 ADDS THE THIRD, and it is the one reader that has to be told
+    # (Copilot round 6 on openRepoTools#81). `RENAMED` joined `is_note_verb` —
+    # lane-kind, and not a transition — but this awk names the verbs it skips
+    # rather than asking the predicate, so a lane whose LAST line was its rename
+    # stopped reading as PAUSED: `swapped` would not list it and `restart` would
+    # not find the lane it is meant to bring back.
     # This read takes a lane-s LAST lane-kind line whatever its verb is and then
     # asks whether it is a `PAUSED` carrying a swap payload; it is the ONE state
     # reader in this file that does not name the five verbs it wants. `NOTED`
@@ -5816,7 +5822,7 @@ swapped_candidates() {
     # have vanished from `swapped` — and `restart` reads `swapped` to find the
     # lane whose window name a new tmux session has lost. Skipped by name, here
     # and nowhere else, because every other reader already takes a whitelist.
-    $3 == "NOTED" || $3 == "RULED" { next }
+    $3 == "NOTED" || $3 == "RULED" || $3 == "RENAMED" { next }
     # AMENDMENT 15 — LOWER-CASED KEY, ORIGINAL SPELLING BESIDE IT. Which line is
     # a lane-s LAST is what decides whether that lane is SWAPPED at all, and
     # keyed on the raw `$2` a `PAUSED … swap;` under one spelling followed by a
@@ -8503,7 +8509,37 @@ Nothing was written." 2
     # RENAMING UNDER AN ANCIENT NAME WORK: `canon_lane` answers with the row's
     # own spelling, and with clause (e) behind it a name this lane was called
     # two renames ago renames the lane it is now.
-    rl_old="$(canon_lane "$rl_old")" || exit 2
+    rl_crc=0
+    rl_old="$(canon_lane "$rl_old")" || rl_crc=$?
+    # ONE CONDITION, ONE CODE (Copilot round 6 on openRepoTools#81). `canon_lane`
+    # answers 66 for an alias table it could not read so that `canon-lane`'s four
+    # callers can tell it from a refusal — but a flat `|| exit 2` here made THIS
+    # writer answer 2 or 1 for the same fault depending on whether the typed name
+    # happened to have a row of its own, because a name with one never reaches
+    # the table at all. Translated to this command's own 1, which is what its
+    # other two alias-read refusals already spend and what the amendment's
+    # fail-closed rule is about.
+    case "$rl_crc" in
+      0) : ;;
+      66) die "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read (${LANES_ALIAS_ERR:-unknown error}), and a rename whose alias table cannot be read is a rename whose old name may stop resolving — which is the one thing clause (e) promises for ever, so this fails closed. Nothing was written." 1 ;;
+      *) exit 2 ;;
+    esac
+
+    # ---- THE MUTEX IS TAKEN BEFORE THE CHECKS, NOT BETWEEN THEM AND THE WRITE
+    # (Copilot round 6 on openRepoTools#81). Every refusal below reads a row, a
+    # log path, the alias table and a handoff, and every one of them is a
+    # question about what is NOT there — so two renames on one workstation could
+    # both answer "the target is free", and the second would move its log over
+    # the first's and rewrite a row it read before the first commit. The lock is
+    # this workstation's serialiser and it costs nothing to take it early: it is
+    # not a write, every refusal below still writes nothing, and `cleanup`
+    # releases it on every path out, the two signals included.
+    #
+    # ACROSS WORKSTATIONS the arbiter is the same one Rule 1's claim has:
+    # whichever commit lands on `main` first. `commit_push`'s rebase brings the
+    # other's row and log in, and the loser's next attempt meets its own
+    # refusals — a row under `<new>`, a published log — with nothing written.
+    acquire_lock
 
     rl_oh="$(rows_named_ci "$rl_old" 2>/dev/null || :)"
     rl_on="$(printf '%s' "$rl_oh" | grep -c . || :)"
@@ -8649,6 +8685,17 @@ EOF
       if [ ! -f "$rl_log_old" ]; then
         die "lane $rl_old's object log at $rl_log_old is not a regular file. An append-only log is read whole for the rollback copy and appended to in place, and neither can be done to that — a FIFO there would block this write, and its lock, indefinitely. Nothing was written." 2
       fi
+      # AND GIT MUST ALREADY KNOW IT (Copilot round 6 on openRepoTools#81).
+      # `refuse_dirty_checkout` reads `tracked_dirty`, which reports no untracked
+      # file, so a peer's uncommitted `lanes/log/<old>.md` walked past it — and
+      # this rename would MOVE that file to a path it always stages, committing
+      # somebody else's lines under its own message. Round 3 kept the old path
+      # out of the pathspecs when it was untracked, which stopped `git add`
+      # failing and did nothing about the content.
+      if [ "$NO_GIT" != 1 ] \
+         && ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$rl_log_old_rel" >/dev/null 2>&1; then
+        die "lane $rl_old's object log at $rl_log_old_rel exists here and git does not track it, so its lines have never been committed by anyone — and this rename would move them to $rl_log_new_rel and commit them under its own message. Whoever wrote them commits them first: \`git -C $LANES_REPO add -- $rl_log_old_rel && git -C $LANES_REPO commit -m \"handoff(<lane>@<workstation>): <what>\"\`. Nothing was written." 2
+      fi
     fi
     if have_remote_ref; then
       rl_pub="$(log_path_ci "$rl_old")" || die "lane $rl_old's object log is published twice (above), and one lane is ONE lane under any case: its log is ONE file (Amendment 15). Merge them by hand (15(d)) and re-run. Nothing was written." 2
@@ -8792,10 +8839,34 @@ EOF
       # the pathspec. The directory's own `cd -P` is the resolution
       # `lane-start:2941` already makes for this very path, and for the same
       # reason it gives: `readlink -f` is not in the stock macOS userland.
+      #
+      # THE QUESTION IS PUT TO THE NEAREST ANCESTOR THAT EXISTS, which is the
+      # rule `openRepoTools --install` already states for its own targets. A row
+      # names a handoff before anything writes one — `lane-start` puts the path
+      # in the row at the lane's first launch and `lane-handoff` creates the file
+      # (and its estate directory) at the first swap — so `cd -P` of the leaf
+      # directory fails for every lane that has not swapped yet, and taking that
+      # failure as "outside the workspace" refused the ordinary case.
       if [ -n "${LANES_REPO:-}" ]; then
-        rl_hdir_real="$( CDPATH=''; cd -P -- "$(dirname -- "$rl_hfile")" 2>/dev/null && pwd -P )" || rl_hdir_real=""
         rl_repo_real="$( CDPATH=''; cd -P -- "$LANES_REPO" 2>/dev/null && pwd -P )" || rl_repo_real="$LANES_REPO"
+        rl_anc="$(dirname -- "$rl_hfile")"; rl_suffix=""; rl_hdir_real=""; rl_walk=0
+        while [ "$rl_walk" -lt 64 ]; do
+          if [ -d "$rl_anc" ]; then
+            rl_hdir_real="$( CDPATH=''; cd -P -- "$rl_anc" 2>/dev/null && pwd -P )" || rl_hdir_real=""
+            break
+          fi
+          case "$rl_anc" in */*) : ;; *) break ;; esac
+          rl_suffix="${rl_anc##*/}${rl_suffix:+/$rl_suffix}"
+          rl_anc="${rl_anc%/*}"
+          [ -n "$rl_anc" ] || rl_anc=/
+          rl_walk=$((rl_walk + 1))
+        done
+        # A `..` AMONG THE COMPONENTS THAT DO NOT EXIST RESOLVES TO NOTHING, so
+        # it is refused rather than guessed at: the physical answer is only the
+        # ancestor's, and the suffix is taken literally.
+        case "/$rl_suffix/" in *"/../"*) rl_hdir_real="" ;; esac
         if [ -n "$rl_hdir_real" ]; then
+          [ -n "$rl_suffix" ] && rl_hdir_real="$rl_hdir_real/$rl_suffix"
           case "$rl_hdir_real/" in
             "$rl_repo_real"/*)
               rl_hreal="$rl_hdir_real/$(basename -- "$rl_hfile")"
@@ -8848,6 +8919,15 @@ EOF
     fi
     rl_h_touch=0
     [ -n "$rl_h_rel" ] && [ -f "$rl_hfile" ] && rl_h_touch=1
+    # AND AN UNTRACKED HANDOFF IS SOMEBODY'S UNCOMMITTED WORK (Copilot round 6).
+    # It is a pathspec of this commit the moment it exists, and `tracked_dirty`
+    # never reports it, so another lane's half-written handoff would be stamped
+    # and committed under this rename's message — which is the one thing
+    # `--no-sweep` was made the default for.
+    if [ "$rl_h_touch" = 1 ] && [ "$NO_GIT" != 1 ] \
+       && ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$rl_h_rel" >/dev/null 2>&1; then
+      die "the handoff at $rl_h_rel exists here and git does not track it, so its lines have never been committed by anyone — and this rename would stamp it, move it and commit it under its own message. Whoever wrote it commits it first: \`git -C $LANES_REPO add -- $rl_h_rel && git -C $LANES_REPO commit -m \"handoff(<lane>@<workstation>): <what>\"\`. Nothing was written." 2
+    fi
 
     # ---- NOTHING ABOVE HAS WRITTEN A BYTE. The four moves follow, in one
     # commit, in the order the amendment lists them.
@@ -8880,7 +8960,6 @@ EOF
       rl_exempt+=("$rl_p")
     done
     refuse_dirty_checkout "rename lane $rl_old" ${rl_exempt[@]+"${rl_exempt[@]}"} "$LANES_PATH"
-    acquire_lock
     # THE CAPTURE IS GIVEN THE REGISTER AND NOTHING ELSE (Copilot round 3 on
     # openRepoTools#81). `handle_preexisting` runs `git add -- <paths>` on the
     # branch that captures a peer's uncommitted edit, and most of this write's
