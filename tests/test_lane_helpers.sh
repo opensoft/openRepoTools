@@ -2111,6 +2111,20 @@ before_renames="$(grep -c 'rename-window repoF-1' "$FAKE_TMUX_LOG" || :)"
 run "$START" repoF 1 --no-launch
 is   "…so lane-start REFUSES rather than taking a name that may be held" "$rc" 1
 is   "…and renames no window" "$(grep -c 'rename-window repoF-1' "$FAKE_TMUX_LOG" || :)" "$before_renames"
+# CLAIM --FORCE'S OWN LIVENESS READ FAILS CLOSED THE SAME WAY (Copilot's own
+# "closer look" on c82577e, PR #61): repoK-5's CLAIMED hold on
+# opensoft/repoK#99 is still untaken from the issue #30 section above, and
+# with the records tree still at 000 here, `holder_is_dead` cannot tell
+# repoK-5's terminal log apart from a live one — exactly the gap between
+# "confirmed live" (`HOLDER_LIVE_TERMINAL` alone) and "the read itself
+# failed" that fell through to the ordinary stale-claim test before this.
+run env LANES_LANE=repoK-6 "$E" claim "opensoft/repoK#99" --no-github --force
+is    "--force refuses a terminal-logged holder when liveness could not be read at all" "$rc" 2
+has   "…naming what its own log says" "$err" "lane repoK-5's own log ends RETIRED"
+has   "…and that this workstation could not read whether a live session backs it up" "$err" "could not read whether a live session still backs it up"
+has   "…in the words that stop a reader believing it is an ordinary stale claim" "$err" "That is NOT 'no live session holds it'"
+hasnt "…never reaching the ordinary stale-claim wording" "$err" "old (threshold"
+hasnt "…and nothing is written" "$(cat "$LOGD/repoK-6.md" 2>/dev/null)" "opensoft/repoK#99"
 chmod 755 "$profiles_root"
 run "$E" live-holder repoF-1
 is   "…while a readable tree still finds the live holder" "$rc" 0

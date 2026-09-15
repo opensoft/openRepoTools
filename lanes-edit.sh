@@ -2591,10 +2591,12 @@ claim_is_stale() {   # <lane> <object> <utc-of-the-claim> <its file> <its line>
 # Amendment 8 exists to prevent.
 HOLDER_DEAD_VERB=""
 HOLDER_LIVE_TERMINAL=""
+HOLDER_TERMINAL_UNKNOWN=""
 holder_is_dead() {   # <lane>
   hid_l="${1-}"; [ -n "$hid_l" ] || return 1
   HOLDER_DEAD_VERB=""
   HOLDER_LIVE_TERMINAL=""
+  HOLDER_TERMINAL_UNKNOWN=""
   hid_rc=0
   hid_verb="$(lane_log_events "$hid_l" 2>/dev/null | awk -F"$US" '
     ($3=="STARTED"||$3=="PAUSED"||$3=="RESUMED"||$3=="ENDED"||$3=="RETIRED") && substr($8,1,5)!="fork " { v=$3 }
@@ -2622,11 +2624,23 @@ holder_is_dead() {   # <lane>
     # from "this log terminated and a real session still answers for it",
     # and the second is refused on liveness alone wherever else this file
     # meets it (`repoK-3`'s own case, `lane-start`'s own refusal). Recorded
-    # here, ONLY for `hid_lrc = 0` (genuinely confirmed live — never for an
-    # unreadable records tree, which this lane answers for no better than
-    # "not established"), so `claim --force` can refuse it explicitly rather
-    # than ask `claim_is_stale` a question it was never built to answer.
-    [ "$hid_lrc" = 0 ] && HOLDER_LIVE_TERMINAL="$hid_verb"
+    # here, for `hid_lrc = 0` (genuinely confirmed live).
+    #
+    # AND AN UNREADABLE RECORDS TREE IS NEITHER (Copilot's own "closer look"
+    # on c82577e, PR #61): `hid_lrc` outside {0, 8} means this workstation
+    # could not read whether a live session backs the lane up at all — the
+    # exact reading every OTHER caller of `live_holder` already refuses on
+    # (the comment three lines up), and silently letting `claim_is_stale`
+    # answer instead would treat "I could not check" as "checked and clear"
+    # for the one shape (a terminal log) this file already distrusts enough
+    # to check in the first place. Recorded so the caller can refuse in
+    # these words rather than in the confirmed-live ones, which would
+    # misstate why.
+    if [ "$hid_lrc" = 0 ]; then
+      HOLDER_LIVE_TERMINAL="$hid_verb"
+    else
+      HOLDER_TERMINAL_UNKNOWN="$hid_verb"
+    fi
     return 1
   }
   HOLDER_DEAD_VERB="$hid_verb"
@@ -8470,6 +8484,18 @@ EOF
         # below, which is not why this one is refused.
         if [ -n "$HOLDER_LIVE_TERMINAL" ]; then
           die "--force refused: lane $h_lane's own log ends $HOLDER_LIVE_TERMINAL, but a live session on this workstation still backs it up — refused exactly as any other live holder's claim on $obj is. Rule 1: the lane stops and reports; it does not author a successor." 2
+        fi
+        # AND AN UNREADABLE RECORDS TREE IS REFUSED THE SAME WAY, NEVER ASKED
+        # claim_is_stale's QUESTION INSTEAD (Copilot's own "closer look" on
+        # c82577e, PR #61): "I could not check whether a live session backs
+        # this terminal log up" is not "checked and clear" — every OTHER
+        # caller of `live_holder` already refuses on a read this workstation
+        # could not make, and a terminal log is exactly the shape this branch
+        # exists to distrust; falling through to an age-only test here would
+        # let a workstation with no session records at all force a takeover
+        # `holder_is_dead` itself never established was safe.
+        if [ -n "$HOLDER_TERMINAL_UNKNOWN" ]; then
+          die "--force refused: lane $h_lane's own log ends $HOLDER_TERMINAL_UNKNOWN, and this workstation could not read whether a live session still backs it up. That is NOT 'no live session holds it' — refused for the same reason an unreadable read refuses the dead-lane path (issue #30), never assumed safe. Rule 1: the lane stops and reports; it does not author a successor." 2
         fi
         if ! claim_is_stale "$h_lane" "$obj" "$h_utc" "$h_file" "$h_line"; then
           die "--force refused: lane $h_lane's claim on $obj is $(age_of "$h_utc") old (threshold ${STALE_HOURS}h), or it is a PR, or that lane has since OPENED a PR naming it. Rule 1 makes a claim takeable only when it is stale, and lane $h_lane's own log does not end on ENDED or RETIRED either (or a live session on this workstation still holds it)." 2
