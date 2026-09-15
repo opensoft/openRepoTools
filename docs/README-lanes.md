@@ -1658,6 +1658,13 @@ governs.)
 valid**: readers treat its binding as *the window on the row's workstation*,
 which is what they read before. Nothing is backfilled.
 
+**"None of the three" means all three, not `host` alone.** The writer drops an
+offending sub-field on its own and keeps the line, so a line carrying a
+`container` and an `os` and no `host` is a MODERN line that lost one field — and
+reading it as pre-amendment would ignore the container it does carry. All three
+absent is the only shape that is really from before this clause; anything less
+is matched on host **and** container like every other modern line.
+
 ### What the launcher must export
 
 `opensoft/workBenches#77` — `claude-profile` and the bench shells export
@@ -1683,6 +1690,24 @@ lanes-edit.sh binding <lane>
 **Liveness is pronounced only from INSIDE the binding's own host and container**,
 where the pid namespace is the record's. From anywhere else a binding is
 **UNKNOWN, never dead**, whatever `kill -0` says — that is the seventh column.
+
+A **modern** record is matched on the machine's own hostname AND the container;
+the Rule 10 workstation name is accepted as the host only for a **pre-amendment**
+line, which has nothing else to be matched on. Clause (a)'s own fallback still
+works through that without a second rule: a writer inside a container with no
+`$LANES_HOST` writes the workstation name into `host`, and a reader in that same
+container computes the same name the same way.
+
+That column is also what the pick reads. `lane_groups` asks it **before** the
+state, so a row that reads `LIVE` because a live session record here names one
+of its ids — the records are shared between containers, and the pid that record
+names is in another namespace — is still filed **BOUND ELSEWHERE** when its
+binding is another place's. The act there is clause (c)'s request; and because
+watching a lane and taking it are two acts of which only the second is the
+collision, that branch also names the attach filled in wherever the window is
+live on this tmux server. A **parked** lane of another container is untouched by
+all of it: column 13 carries the locality of a binding that STANDS, and parking
+IS the handoff.
 
 **The one exception is the window**, and it is the eighth column. One host's
 launcher mounts ONE tmux socket into every container it starts, so where the

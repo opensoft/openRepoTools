@@ -4485,11 +4485,15 @@ lane_row_facts() {   # events on stdin, ONE LINE PER LANE
         # and this listing asks it of every lane).
         bh[l] = tolower(field($8, "host", 0)); if (bh[l] == "") bh[l] = tolower($5)
         bc[l] = tolower(field($8, "container", 0)); if (bc[l] == "") bc[l] = "none"
-        # A line written before clause (a) carries none of the three, and its
+        # A line written before clause (a) carries NONE OF THE THREE, and its
         # binding is *"the window on the row-s workstation"* — which has no
-        # container in it. Said here so the reader one layer up matches it on
-        # the host alone, exactly as `binding` does.
-        bl[l] = (field($8, "host", 0) == "" ? "legacy" : "")
+        # container in it. All three, and not the host alone: this writer drops
+        # an offending sub-field on its own and keeps the line, so a modern line
+        # missing only its host is modern and is matched on the container it
+        # does carry (Copilot round 2). Said here so the reader one layer up
+        # matches it exactly as `binding` does.
+        bl[l] = (field($8, "host", 0) == "" && field($8, "container", 0) == "" && \
+                 field($8, "os", 0) == "" ? "legacy" : "")
       }
       # Clause (d) rule 3-s second source, out of the same pass: the session
       # field of the lane-s last PAUSED or RESUMED, which is the resume target
@@ -5150,9 +5154,9 @@ lanes_rows() {
   # because `lc` is two processes and this is asked of every lane. The row
   # carries the BINDING-s host and container (lower-cased by the awk above) and
   # this is what they are compared against.
-  lr_me_host="$(lc "$LANES_HOST_NAME")"
-  lr_me_ws="$(lc "$WS")"
-  lr_me_cont="$(lc "$LANES_CONTAINER_NAME")"
+  LANES_HOST_LC="$(lc "$LANES_HOST_NAME")"
+  LANES_WS_LC="$(lc "$WS")"
+  LANES_CONTAINER_LC="$(lc "$LANES_CONTAINER_NAME")"
   # ONLY A LANE THE FORK MAP NAMES CAN HAVE A FORK (ruling 12). `lane_forks`
   # stays the ONE implementation of what a fork is and what disqualifies one;
   # this simply declines to ask it about the forty-five lanes of this estate
@@ -5366,12 +5370,22 @@ EOF2
     # matched on the host alone, which is clause (a)-s cutover sentence; and an
     # EMPTY value is a lane with no binding line at all, which changes nothing
     # about how it was filed before this column existed.
+    # AND ONLY WHERE THERE IS A BINDING TO BE LOCAL TO. The binding fields come
+    # from the last `STARTED`/`RESUMED` whatever released it since, so a PARKED
+    # lane still carries the host and container of the place that last ran it —
+    # and a lane parked in another container is AVAILABLE here, because parking
+    # IS the handoff (asserted since Amendment 18 Addendum 1). Column 13 means
+    # *the locality of a binding that stands*, and is empty where none does.
     lr_local=""
+    case "$lr_verb" in STARTED|RESUMED) : ;; *) lr_bhost="" ;; esac
     if [ -n "$lr_bhost" ]; then
       lr_local=elsewhere
-      if [ "$lr_bhost" = "$lr_me_host" ] || [ "$lr_bhost" = "$lr_me_ws" ]; then
-        if [ "$lr_blegacy" = legacy ] || [ "$lr_bcont" = "$lr_me_cont" ]; then lr_local=here; fi
-      fi
+      # THE RULE IS `binding_is_here`-s AND NOT A SECOND COPY OF IT (Copilot
+      # round 2 on openRepoTools#83 read the two and found them already
+      # diverging). The `_lc` form is the same function with the two `lc` forks
+      # taken off the front, because the awk above has lower-cased these values
+      # already and this is asked of every lane in the listing.
+      binding_is_here_lc "$lr_bhost" "$lr_bcont" "$lr_blegacy" && lr_local=here
     fi
     lr_out="${lr_out}${lr_utc:-0000}${US}${lr_l}	${lr_state}	${lr_w:-unknown}	${lr_pf:-none}	${lr_win:-none}	${lr_sid:-none}	${lr_d:-none}	${lr_obj:-none}	${lr_age}	${lr_restart}	${lr_home:-none}	${lr_fk}	${lr_local}
 "
@@ -5440,9 +5454,20 @@ lane_groups() {   # <workstation> ; rows on stdin
       # filed exactly as it was before the column existed, which is Amendment
       # 7(i)-s cutover rule for a field a reader may simply not have.
       loc = (NF >= 13 ? $13 : "")
-      if (st == "LIVE") g = "live"
+      # AND IT IS ASKED BEFORE THE STATE, INCLUDING OF A `LIVE` ROW (Copilot
+      # round 2 on openRepoTools#83). `LIVE` is a live session record HERE
+      # naming one of the row-s ids — and a record written in another container
+      # is readable here while the pid it names is in another namespace, so a
+      # `kill -0` that answers is answering about some other process. Clause (b)
+      # gives that binding to the place it is in: from here it is UNKNOWN, the
+      # act is clause (c)-s request, and the attach stays available to a person
+      # because `lane`-s elsewhere branch names it wherever that window is live
+      # on this tmux server. Column 13 is empty where no binding stands, so a
+      # PARKED lane of another container is untouched by this and is AVAILABLE,
+      # because parking IS the handoff.
+      if (loc == "elsewhere") g = "elsewhere"
+      else if (st == "LIVE") g = "live"
       else if (st == "PAUSED") g = "available"
-      else if (loc == "elsewhere") g = "elsewhere"
       else if (w == me) g = "available"
       else g = "elsewhere"
       print g "\t" $0
@@ -6343,7 +6368,16 @@ lane_binding_scan() {   # <lane> [<this session uuid>]
       # (No apostrophe anywhere in this comment: the whole program is a
       # single-quoted shell string, and one would end it — the same rule
       # `LANES_REGISTER_INDEX_AWK` states for its own.)
-      legacy = (field(b_pay, "host", 0) == "" ? "legacy" : "")
+      # LEGACY IS ALL THREE ABSENT, NOT `host` ALONE (Copilot round 2 on
+      # openRepoTools#83). The writer drops an offending sub-field on its own
+      # and keeps the line — `R-A11-11`-s posture — so a MODERN line can carry a
+      # container and an os and no host, and calling that one pre-amendment
+      # would ignore the container it does carry and let another container past
+      # the fence. All three absent is the only shape that is really a line from
+      # before this clause; anything less fails CLOSED, matched on host AND
+      # container like every other modern line.
+      legacy = (field(b_pay, "host", 0) == "" && field(b_pay, "container", 0) == "" && \
+                field(b_pay, "os", 0) == "" ? "legacy" : "")
       if (state == "free" || state == "released") { host = ""; cont = ""; win = ""; os = ""; legacy = "" }
       # A release by another session counts only where it came AFTER this
       # session-s own last line. One that came before it is a lane this session
@@ -6385,23 +6419,42 @@ lane_binding_scan() {   # <lane> [<this session uuid>]
 # `kill -0` says."* So the comparison is made ONCE, here, and every surface that
 # refuses on it reads the same answer.
 #
-# A PRE-18(a) LINE'S `host` IS THE ROW'S WORKSTATION and its container is
-# `none`, so a lane bound before this amendment on THIS workstation reads `here`
-# outside a container and `elsewhere` inside one — which is the honest answer and
-# is exactly the case the amendment was written for.
-binding_is_here() {   # <host> <container> [legacy]
-  [ "$(lc "${1-}")" = "$(lc "$LANES_HOST_NAME")" ] || [ "$(lc "${1-}")" = "$(lc "$WS")" ] || return 1
-  # A PRE-AMENDMENT LINE IS MATCHED ON THE HOST ALONE, which is clause (a)'s own
-  # cutover sentence and not a loosening of clause (b): such a line's binding is
-  # *"the window on the row's workstation, which is what they read today"*, and
-  # today's reading has no container in it. Matched on a container it never
-  # carried, every lane of an estate whose lines all predate this clause would
-  # read as another container's the moment the asker was in one — which is every
-  # bench session on a launcher-configured workstation, and a refusal of the
-  # whole estate on the day this lands.
-  [ "${3-}" = legacy ] && return 0
-  [ "$(lc "${2-}")" = "$(lc "$LANES_CONTAINER_NAME")" ] || return 1
+# A MODERN RECORD MATCHES ON BOTH, AND ON THE HOST'S OWN NAME (Copilot round 2
+# on openRepoTools#83). The `$WS` fallback below is clause (a)'s CUTOVER
+# affordance and nothing else: a line written before this amendment carries no
+# `host`, and its binding is *"the window on the row's workstation"* — so the
+# workstation's name is all such a line has to be matched on, and the container
+# it never carried is not asked for. A line that DOES carry the three is matched
+# on what it says: the machine's own hostname AND the container. Allowing `$WS`
+# there let a record whose `host` is another machine read as `here` wherever the
+# two names happened to coincide — and `lane-start` then skips the fence, which
+# is the one refusal this clause exists to make.
+#
+# CLAUSE (a)'s OWN FALLBACK STILL WORKS THROUGH IT: a writer inside a container
+# with no `$LANES_HOST` writes the Rule 10 workstation name into `host`, and a
+# reader in that same container computes the same name the same way, so the two
+# agree without this function having to guess which of the two names it is
+# looking at.
+#
+# TWO FORMS, ONE RULE. `binding_is_here` takes the record's values as they were
+# written; `binding_is_here_lc` takes them already lower-cased, for the listing,
+# which asks this of every lane and may not spend two processes a lane on `lc`.
+# The rule is in the second and the first is two `lc`s in front of it.
+LANES_HOST_LC=""; LANES_WS_LC=""; LANES_CONTAINER_LC=""
+binding_is_here_lc() {   # <host, lower-cased> <container, lower-cased> [legacy]
+  [ -n "$LANES_HOST_LC" ] || LANES_HOST_LC="$(lc "$LANES_HOST_NAME")"
+  [ -n "$LANES_WS_LC" ] || LANES_WS_LC="$(lc "$WS")"
+  [ -n "$LANES_CONTAINER_LC" ] || LANES_CONTAINER_LC="$(lc "$LANES_CONTAINER_NAME")"
+  if [ "${3-}" = legacy ]; then
+    [ "${1-}" = "$LANES_HOST_LC" ] || [ "${1-}" = "$LANES_WS_LC" ] || return 1
+    return 0
+  fi
+  [ "${1-}" = "$LANES_HOST_LC" ] || return 1
+  [ "${2-}" = "$LANES_CONTAINER_LC" ] || return 1
   return 0
+}
+binding_is_here() {   # <host> <container> [legacy]
+  binding_is_here_lc "$(lc "${1-}")" "$(lc "${2-}")" "${3-}"
 }
 
 # THE ONE EXCEPTION CLAUSE (b) CARVES OUT, AND ITS FENCE. *"Where the asker and

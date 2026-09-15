@@ -9075,6 +9075,10 @@ BIND6_ID="bb180006-6666-4000-8000-bb1800066666"
 BIND8_ID="bb180008-8888-4000-8000-bb1800088888"
 BIND9_ID="bb180009-9999-4000-8000-bb1800099999"
 BIND10_ID="bb180010-1010-4000-8000-bb1800101010"
+BIND11_ID="bb180011-1111-4000-8000-bb1800111111"
+BIND12_ID="bb180012-1212-4000-8000-bb1800121212"
+BIND13_ID="bb180013-1313-4000-8000-bb1800131313"
+BIND14_ID="bb180014-1414-4000-8000-bb1800141414"
 BIND_REQ_ID="bb1800aa-aaaa-4000-8000-bb1800aaaaaa"
 BIND_DIR="$HOME/projects/repoBind"
 mkdir -p "$BIND_DIR"
@@ -9172,6 +9176,10 @@ echo "-- clause (b): the binding, read"
 "$E" add-row "| \`repoBind-8\` | harness \`$BIND8_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/8.md | ACTIVE |" >/dev/null 2>&1
 "$E" add-row "| \`repoBind-9\` | harness \`$BIND9_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/9.md | ACTIVE |" >/dev/null 2>&1
 "$E" add-row "| \`repoBind-10\` | harness \`$BIND10_ID\` | Raven / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/10.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-11\` | harness \`$BIND11_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/11.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-12\` | harness \`$BIND12_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/12.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-13\` | harness \`$BIND13_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/13.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-14\` | harness \`$BIND14_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/14.md | ACTIVE |" >/dev/null 2>&1
 # repoBind-2 — BOUND ON ANOTHER HOST. `raven` is a machine this workstation has
 # no session records of and no tmux server of, so its binding is UNKNOWN here
 # and never dead, whatever a `kill -0` of the pid it names would say.
@@ -9226,6 +9234,32 @@ echo "-- clause (b): the binding, read"
 { printf '# lane repoBind-10 — object log (lane-collision-protocol Amendment 7)\n'
   printf 'STARTED — lane repoBind-10, session %s@Raven, 2026-09-12T09:38:00Z, lane:repoBind-10 → home opensoft/repoBind; estate repoBind; dir %s; profile team-09z; window ravensess:2 @44; host raven; os macos; container none\n' "$BIND10_ID" "$BIND_DIR"
 } > "$LOGD/repoBind-10.md"
+# repoBind-11 — A MODERN LINE WHOSE `host` IS THE WORKSTATION-S NAME and not
+# this machine-s. The `$WS` fallback is clause (a)-s CUTOVER affordance and
+# belongs to a line that carries none of the three; allowed for a modern one it
+# would call another machine-s binding `here` wherever the two names coincide.
+{ printf '# lane repoBind-11 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-11, session %s@Eagle, 2026-09-12T09:39:00Z, lane:repoBind-11 → home opensoft/repoBind; estate repoBind; dir %s; profile team-05a; window bindsess:0 @61; host Eagle; os linux; container none\n' "$BIND11_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-11.md"
+# repoBind-12 — A MODERN LINE MISSING ONLY ITS `host`, which the writer drops on
+# its own when a value would make the line unreadable. Read as pre-amendment it
+# would be matched on the host alone and the container it DOES carry ignored.
+{ printf '# lane repoBind-12 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-12, session %s@Eagle, 2026-09-12T09:40:00Z, lane:repoBind-12 → home opensoft/repoBind; estate repoBind; dir %s; profile team-05a; window cloudsess:6 @65; os linux; container cloud-bench\n' "$BIND12_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-12.md"
+# repoBind-13 — LIVE by a session record this place can READ and whose pid it
+# cannot judge: the binding is another container of this same host, and the
+# records are shared. `kill -0` there answers about some other process.
+{ printf '# lane repoBind-13 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-13, session %s@Eagle, 2026-09-12T09:41:00Z, lane:repoBind-13 → home opensoft/repoBind; estate repoBind; dir %s; profile team-05a; window cloudsess:4 @62; host Eagle; os linux; container cloud-bench\n' "$BIND13_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-13.md"
+write_record "$sessions_dir/bind13.json" "$BIND13_ID" "$LIVE_PID" "$live_start" "cloudsess:@62.%62" "repoBind-13" "busy"
+# repoBind-14 — a PRE-AMENDMENT line that NO case releases. repoBind-5 is the
+# other one and it is PAUSED half way through this section, which is what the
+# cutover assertion needs not to be.
+{ printf '# lane repoBind-14 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-14, session %s@Eagle, 2026-09-12T09:42:00Z, lane:repoBind-14 → home opensoft/repoBind; estate repoBind; dir %s; profile team-05a; window bindsess:0 @61\n' "$BIND14_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-14.md"
 git -C "$WIP" add -A -- lanes >/dev/null 2>&1
 git -C "$WIP" commit -q -m "seed the bindings Amendment 18 partitions"
 git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
@@ -9580,6 +9614,63 @@ is   "…and the session it was taken from is STILL refused, which is what claus
 has  "…naming the release it was taken by" "$err" "RELEASED BY SOMEBODY ELSE"
 has  "…and the why that release carried" "$err" "the bench it was in is gone"
 rm -f "$bind_guard_prof/bind6.json"
+
+echo "-- Copilot round 2: what makes a record LEGACY, whose host is whose, and a LIVE row this place may not pronounce on"
+
+# THE `$WS` FALLBACK IS CLAUSE (a)'s CUTOVER AFFORDANCE, not a second name for
+# this machine. A line that carries the three is matched on what it says: the
+# machine's own hostname AND the container.
+run env LANES_HOST=raven "$E" binding repoBind-11
+is   "a MODERN line whose host is another machine is elsewhere, even where \$LANES_WORKSTATION would have matched it" \
+     "$(printf '%s' "$out" | cut -f7)" "elsewhere"
+run env LANES_HOST=Eagle "$E" binding repoBind-11
+is   "…and here where the host it names IS this machine" "$(printf '%s' "$out" | cut -f7)" "here"
+# AND THE SAME LINE WITHOUT THE THREE IS MATCHED ON THE HOST ALONE, which is the
+# cutover rule and is what keeps a pre-amendment estate working.
+run env LANES_HOST=raven "$E" binding repoBind-14
+is   "a PRE-AMENDMENT line is matched on the row's workstation, which is all such a line has" \
+     "$(printf '%s' "$out" | cut -f7)" "here"
+
+# LEGACY IS ALL THREE ABSENT. The writer drops an offending sub-field on its own
+# and keeps the line, so a modern line missing only its host is modern — and the
+# container it DOES carry is what decides.
+run "$E" binding repoBind-12
+is   "a line carrying a container and an os but no host is NOT read as pre-amendment" \
+     "$(printf '%s' "$out" | cut -f7)" "elsewhere"
+is   "…and it is the container it carries that says so" "$(printf '%s' "$out" | cut -f2)" "cloud-bench"
+run env LANES_CONTAINER=cloud-bench "$E" binding repoBind-12
+is   "…so from inside that container the same line is this place's" "$(printf '%s' "$out" | cut -f7)" "here"
+
+# A `LIVE` ROW IS NOT THIS PLACE'S TO PRONOUNCE ON EITHER. `LIVE` is a live
+# session record HERE naming one of the row's ids — and a record written in
+# another container is readable here while the pid it names is in another
+# namespace, so a `kill -0` that answers is answering about some other process.
+run env LANES_NO_FETCH=1 "$E" lanes --lane repoBind-13
+is   "a live record of ANOTHER container still reads LIVE, because the records are shared" \
+     "$(printf '%s' "$out" | cut -f2)" "LIVE"
+is   "…and the read says this place may not pronounce on that binding" "$(printf '%s' "$out" | cut -f13)" "elsewhere"
+is   "…so the pick files it under BOUND ELSEWHERE and asks for the handoff, never LIVE HERE" \
+     "$(printf '%s' "$out" | "$E" lane-groups Eagle | cut -f1)" "elsewhere"
+run env LANES_CONTAINER=cloud-bench LANES_NO_FETCH=1 "$E" lanes --lane repoBind-13
+is   "…while from inside that container it is LIVE HERE, where the attach belongs" \
+     "$(printf '%s' "$out" | "$E" lane-groups Eagle | cut -f1)" "live"
+# AND A PARKED LANE OF ANOTHER CONTAINER IS UNTOUCHED BY ALL OF IT, because
+# parking IS the handoff: column 13 is the locality of a binding that STANDS.
+run env LANES_NO_FETCH=1 "$E" lanes --lane repoBind-5
+is   "a lane whose binding was released carries no locality at all" "$(printf '%s' "$out" | cut -f13)" ""
+is   "…and is AVAILABLE, wherever it was last run" \
+     "$(printf '%s' "$out" | "$E" lane-groups Eagle | cut -f1)" "available"
+# AND THE PERSON LOSES NOTHING: watching a lane and taking it are two acts, and
+# only the second is the collision. The elsewhere branch names the attach where
+# that window is live on this tmux server.
+bind_save_lanewins="${LANE_TMUX_WINDOWS-}"
+export LANE_TMUX_WINDOWS="$LANE_TMUX_WINDOWS
+$(printf '@62\tcloudsess\t4\t0')"
+run env -C "$BIND_DIR" PATH="$LANEBIN_PATH" "$LANE" repoBind-13 </dev/null
+is   "\`lane <name>\` on a lane bound in another container refuses rather than attaching blind" "$rc" 2
+has  "…naming the container it is bound in" "$err" "in container cloud-bench on host Eagle"
+has  "…and offering the WATCH, which starts nothing and takes nothing" "$err" "or WATCH it where it is"
+export LANE_TMUX_WINDOWS="$bind_save_lanewins"
 
 echo "-- clause (i): a LIVE lane's one act is the ATTACH, printed filled in"
 

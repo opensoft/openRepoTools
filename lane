@@ -937,6 +937,19 @@ go_elsewhere() {
 $ge_out
 EOF
 	ge_facts="lane $R_LANE is bound to window ${ge_win:-none} in container ${ge_cont:-none} on host ${ge_host:-unknown} (session ${ge_sess:-unknown}, last line ${ge_utc:-unknown}); this tmux server says that window is ${ge_wstate:-unknown}"
+	# AND WHERE THAT WINDOW IS LIVE ON THIS TMUX SERVER, THE ATTACH IS STILL
+	# OFFERED (Copilot round 2 on openRepoTools#83). A binding in another
+	# container of this host is not this place's to pronounce on — that is why
+	# the row is here rather than under LIVE HERE — but one host's launcher
+	# mounts ONE socket into every container it starts, so the pane exists and
+	# putting a terminal in front of it STARTS NOTHING. Watching a lane and
+	# taking it are two different acts, and only the second is the collision.
+	ge_watch=""
+	if [ "$ge_wstate" = live ] && split_window "$ge_win"; then
+		if [ -n "$(this_session)" ]; then ge_watch="tmux switch-client -t $W_SESS:$W_ID"
+		else ge_watch="tmux attach -t $W_SESS:$W_ID"
+		fi
+	fi
 	# A BINDING THIS HOST PROVES DEAD IS NOT A BINDING TO ASK ABOUT. One host's
 	# launcher mounts ONE tmux socket into every container it starts, so a
 	# window that is gone from this server is a pane no session can be in —
@@ -953,6 +966,7 @@ EOF
 	elif [ -t 0 ]; then
 		say ""
 		say "$ge_facts."
+		[ -z "$ge_watch" ] || say "to WATCH it where it is, which starts nothing:  $ge_watch"
 		printf 'ask it to hand off, then bind here? [y/N] '
 		IFS= read -r ge_answer || ge_answer=""
 		case "$(lc "$ge_answer")" in y | yes) ge_ask=yes ;; *) ge_ask=no ;; esac
@@ -969,7 +983,9 @@ EOF
         $prog --request-handoff $R_LANE
       or take it anyway, which is a SECOND invocation and never automatic, and
       which makes that place STOP loudly rather than silently:
-        $prog --force \"<why you are taking it>\" $R_LANE
+        $prog --force \"<why you are taking it>\" $R_LANE${ge_watch:+
+      or WATCH it where it is, which starts nothing and takes nothing:
+        $ge_watch}
       what the register says:  lanes --all
       who holds it:            lanes-edit.sh who --lane $R_LANE" 2
 	fi
