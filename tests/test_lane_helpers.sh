@@ -9533,6 +9533,19 @@ run env LANES_LANE=repoBind-1 LANES_SESSION="$BIND1_ID" "$E" log RESUMED "lane:r
 is   "a sub-field that is THERE and EMPTY is refused, because no reader can tell it from a pre-amendment line" "$rc" 2
 run env LANES_LANE=repoBind-1 LANES_SESSION="$BIND1_ID" "$E" log RESUMED "lane:repoBind-1" '→' "dir /x; host two words; os linux"
 is   "a host carrying a SPACE is refused: a space is Amendment 7(b)'s separator between two refs of one sub-field" "$rc" 2
+# AND THE LAUNCHER'S EXPORT IS HELD TO THE SAME FOUR WORDS (Copilot round 5).
+# `binding_subfields_check` refuses a caller-written `os` that is none of them;
+# the value this writer APPENDS comes from `$LANES_OS`, which is nobody's to
+# validate but this writer's — and it would otherwise persist on every binding
+# line a value the same file refuses when a caller supplies it. Dropped rather
+# than refused, because `host` and `container` are what clause (b) reads and a
+# lane-kind line is never lost over a field no reader decides anything by.
+run env LANES_OS=plan9 LANES_LANE=repoBind-1 LANES_SESSION="$BIND1_ID" "$E" log RESUMED "lane:repoBind-1" '→' "dir /x"
+is   "a launcher exporting an \`os\` that is none of the four words still writes the line" "$rc" 0
+bind_os_line="$(git -C "$WIP" show origin/main:lanes/log/repoBind-1.md | tail -n1)"
+hasnt "…without that value in it" "$bind_os_line" "os plan9"
+has   "…keeping the two fields clause (b) actually reads" "$bind_os_line" "; host Eagle"
+has   "…and saying which sub-field was dropped, and why" "$err" "DROPPED binding sub-field"
 
 echo "-- clause (b): the binding, read"
 

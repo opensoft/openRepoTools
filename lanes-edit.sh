@@ -4546,9 +4546,24 @@ binding_subfields_add() {   # <payload> ; prints the payload with the three appe
       bsa_drop="$bsa_drop $bsa_f=${bsa_v:-<empty>}"
       continue
     fi
+    # AND `os` IS ONE OF FOUR WORDS WHEREVER IT COMES FROM (Copilot round 5 on
+    # openRepoTools#83). `binding_subfields_check` refuses a caller-written `os`
+    # that is none of them; this path takes the LAUNCHER'S export, which is
+    # nobody's to validate but this writer's — `LANES_OS=plan9` would otherwise
+    # be persisted on every binding line as a value the same file refuses when a
+    # caller supplies it, in a log nothing rewrites. Dropped rather than
+    # refused, like every other value here: `host` and `container` are what
+    # clause (b) reads, and a lane-kind line is never lost over a field no
+    # reader decides anything by.
+    if [ "$bsa_f" = os ]; then
+      case "$bsa_v" in
+        linux|macos|wsl|windows) : ;;
+        *) bsa_drop="$bsa_drop os=$bsa_v"; continue ;;
+      esac
+    fi
     bsa_pay="${bsa_pay:+$bsa_pay; }$bsa_f $bsa_v"
   done
-  [ -z "$bsa_drop" ] || note "DROPPED binding sub-field (the line is still written, Amendment 18(a)):$bsa_drop — a value carrying a space, ',', ';', '\"' or ' — ' is a line this log's own parser could never read again"
+  [ -z "$bsa_drop" ] || note "DROPPED binding sub-field (the line is still written, Amendment 18(a)):$bsa_drop — a value carrying a space, ',', ';', '\"' or ' — ' is a line this log's own parser could never read again, and an \`os\` that is none of linux, macos, wsl, windows is a value this file's own writer refuses when a caller supplies it"
   printf '%s' "$bsa_pay"
 }
 
