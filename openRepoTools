@@ -37,8 +37,10 @@
 # the code belongs where code goes. It also places THREE skills, `/handoff`,
 # `/lane-swap` and `/restart`, at two paths each, THREE command files, `/handoff`,
 # `/ctx` and `/swap`, at that same pair of paths (A11 Addendum 4 ruling 9;
-# Amendment 17(a) and (f)), and merges one SessionStart entry into
-# `~/.claude/settings.json` (Amendment 9(b), A8 Addendum 2 R-A8-5): TWENTY-FIVE
+# Amendment 17(a) and (f)), and merges TWO hook entries into
+# `~/.claude/settings.json` — the `SessionStart` one (Amendment 9(b), A8
+# Addendum 2 R-A8-5) and, since lane-collision-protocol Amendment 12 adoption
+# act 3, the `UserPromptSubmit` NAME GUARD beside it: TWENTY-SIX
 # artifacts, and the count is the invariant.
 #
 # One install line for the whole toolset, so a second engineer gets the estate
@@ -69,8 +71,9 @@ usage() {
 openRepoTools --install            install (or update) the twelve estate and
                                    lane commands into ~/.local/bin, plus the
                                    /handoff, /lane-swap and /restart skills, the
-                                   /handoff, /ctx and /swap command files and the
-                                   SessionStart hook entry
+                                   /handoff, /ctx and /swap command files, the
+                                   SessionStart hook entry and the
+                                   UserPromptSubmit name guard
 openRepoTools wip init             create your workspace repository, clone it,
                                    seed it, and point this workstation at it
 openRepoTools --help | --version
@@ -122,10 +125,13 @@ and THREE COMMAND FILES at the matching pair,
 for `handoff`, `ctx` and `swap`. `handoff` is the act itself (Amendment 17(a));
 `/ctx` is `/handoff --restart` (clause (f)); `/swap` and `/lane-swap` are the
 aliases the amendment keeps so that nothing written about them stops working,
-and each adds nothing to the skill it names. It merges ONE `SessionStart` entry into
-`~/.claude/settings.json` (needs `jq`, and refuses rather than rewriting a file
-it cannot parse). It never writes a profile's own settings.json: the launcher
-owns that one.
+and each adds nothing to the skill it names. It merges TWO entries into
+`~/.claude/settings.json` — the `SessionStart` one and, since
+lane-collision-protocol Amendment 12, the `UserPromptSubmit` NAME GUARD, which
+refuses a prompt whose window, session name and register row are not one lane
+(needs `jq`, refuses rather than rewriting a file it cannot parse, and leaves
+every `UserPromptSubmit` hook of your own exactly where it is). It never writes
+a profile's own settings.json: the launcher owns that one.
 
 `/restart` is the INSIDE half of `restart` and has to be a skill: a running
 session cannot `exec` a launcher over itself, so it binds the window, stamps
@@ -297,9 +303,9 @@ mode_is() {   # <octal> <path>
 install_commands() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
 	local name target source verb placed=0
-	# ALL TWENTY-FIVE IN HAND BEFORE ANY IS PLACED. The twelve files, the
-	# three skills, the three command files, and the ONE artifact that is not a
-	# whole file — the merged `settings.json` —
+	# ALL TWENTY-SIX IN HAND BEFORE ANY IS PLACED. The twelve files, the
+	# three skills, the three command files, and the TWO artifacts that are not
+	# whole files — the two hook entries merged into one `settings.json` —
 	# are all computed here, so a fetch that failed replaces nothing and a merge
 	# that cannot be computed refuses having placed nothing. That last one is
 	# the same rule `--install` already had, extended to cover a merge: an
@@ -362,7 +368,7 @@ install_commands() {
 
 
 # =========================================================================
-# THE THIRTEEN ARTIFACTS THAT ARE NOT ONE OF THE TWELVE FILES
+# THE FOURTEEN ARTIFACTS THAT ARE NOT ONE OF THE TWELVE FILES
 # =========================================================================
 #
 # lane-collision-protocol Amendment 9(b), inheriting A8 Addendum 2's R-A8-5
@@ -380,13 +386,15 @@ install_commands() {
 #     run and preserves hook keys. This command never writes a profile's
 #     settings.json at all. One path, one writer, in both halves.
 #
-# TWENTY-FIVE ARTIFACTS, AND THE COUNT IS THE INVARIANT: twelve files in the bin
+# TWENTY-SIX ARTIFACTS, AND THE COUNT IS THE INVARIANT: twelve files in the bin
 # directory, three skills in the shared skills directory, their three bare-run
-# copies, THREE COMMAND FILES at those same two paths, and one merged entry in
+# copies, THREE COMMAND FILES at those same two paths, and TWO merged entries in
 # `~/.claude/settings.json`. It was twelve before Amendment 11 added `restart`,
 # `lanes` and the `/restart` skill, sixteen before ruling 9 added
-# `commands/swap.md` and eighteen before Amendment 17 added `lane-handoff`, the
-# `handoff` skill and the `/handoff` and `/ctx` command files; the count moves
+# `commands/swap.md`, eighteen before Amendment 12 adoption act 3 added the
+# `UserPromptSubmit` name guard beside the `SessionStart` entry, and nineteen
+# before Amendment 17 added `lane-handoff`, the `handoff` skill and the
+# `/handoff` and `/ctx` command files; the count moves
 # with the lists rather than being restated from memory.
 #
 # WHY A COMMAND FILE IS HERE AT ALL, WHEN ADOPTION ACT 6 SAYS THE LAUNCHER
@@ -453,6 +461,36 @@ hook_block_text() {
 BLOCK
 }
 
+#: THE SECOND HOOK — lane-collision-protocol AMENDMENT 12's NAME GUARD, adoption
+#: act 3 (opensoft/openRepoTools#25). Same shape, same file, same all-or-nothing
+#: merge, and TWO deliberate differences from the entry above:
+#:
+#:   * NO `|| true`. On `SessionStart` that suffix is the whole safety property —
+#:     a hook that dies must not break the session it was meant to orient. On
+#:     `UserPromptSubmit` it would be the OPPOSITE of the mechanism: exit 2 is
+#:     what BLOCKS a prompt (code.claude.com/docs/en/hooks), and `cmd || true`
+#:     exits 0 for every code the command can produce. Copying the string with
+#:     its suffix would have installed a guard that refuses nothing, silently,
+#:     which is the exact state Amendment 12 exists to end.
+#:   * NO MATCHER. `UserPromptSubmit` has no source to match on; the `matcher`
+#:     key belongs to the events that do.
+#:
+#: The `~/projects/xFactory/lanes-edit.sh` spelling is the estate's convention
+#: and `link-estates` places that link — the same path the entry above uses, so
+#: one workstation has one spelling of one file.
+GUARD_COMMAND='~/projects/xFactory/lanes-edit.sh guard'
+GUARD_TIMEOUT=5
+
+guard_block_text() {
+	cat <<'BLOCK'
+  {
+    "hooks": [
+      { "type": "command", "command": "~/projects/xFactory/lanes-edit.sh guard", "timeout": 5 }
+    ]
+  }
+BLOCK
+}
+
 # EVERY SKILL'S BYTES, by `--install`'s own rule: from the checkout beside this
 # file when run from one, else fetched at this same ref. ALL OF THEM IN HAND
 # BEFORE ANY IS PLACED, which is the same all-or-nothing rule the twelve files
@@ -486,23 +524,30 @@ collect_skills() {
 	return 0
 }
 
-# THE MERGE INTO `~/.claude/settings.json`, COMPUTED BEFORE ANYTHING IS PLACED.
-# It is the same all-or-nothing rule `--install` already has, extended to the
-# one artifact that is not a whole file: a merge that cannot be computed
-# refuses having placed nothing.
+# THE TWO MERGES INTO `~/.claude/settings.json`, COMPUTED BEFORE ANYTHING IS
+# PLACED. It is the same all-or-nothing rule `--install` already has, extended
+# to the two artifacts that are not whole files: a merge that cannot be
+# computed refuses having placed nothing — and since Amendment 12 adoption act
+# 3 the rule covers the PAIR, because a settings file that took the
+# `SessionStart` entry and refused the `UserPromptSubmit` guard is a half
+# install of a hook pair and nothing on screen would say which half.
 #
 #   * it is written with `jq`, and refuses naming `jq` where it is absent. This
 #     repository carries no JSON-handling code otherwise, so the dependency is
 #     named rather than assumed. It is not bash, so the macOS bash-3.2 parse
 #     gate is unaffected;
 #   * it NEVER writes the file whole and never replaces it: the file already
-#     carries a `UserPromptSubmit` hook, and a user's settings are not an
-#     installer's to own;
+#     carries a `UserPromptSubmit` hook of the person's own — the usage guard
+#     — and a user's settings are not an installer's to own. THAT IS WHY THE
+#     `UserPromptSubmit` ARM KEYS ON THE VERB `guard` AS A WHOLE ARGUMENT and
+#     not as a substring: this command adds an entry to an event a person is
+#     already using, and every entry already there stays exactly where it is;
 #   * it is idempotent by EXACT MATCH on the entry's `command` string;
-#   * an entry under SessionStart whose `command` DIFFERS, a file it cannot
-#     parse, or a `hooks` value that is not an object → refuse, print the exact
-#     block, place nothing. An installer that repairs a file it does not
-#     understand is how a person loses a setting they meant;
+#   * an entry under SessionStart whose `command` DIFFERS, one under
+#     UserPromptSubmit that RUNS `guard` with a different string, a file it
+#     cannot parse, or a `hooks` value that is not an object → refuse, print
+#     the exact block, place nothing. An installer that repairs a file it does
+#     not understand is how a person loses a setting they meant;
 #   * it WRITES THE FILE BACK AT MODE 600 — it sets that mode, it does not
 #     preserve one (F8 of the #24 review: a pre-existing file at 640 comes out
 #     600, measured). workBenches' setup-claude-profiles.sh writes this same
@@ -511,6 +556,7 @@ collect_skills() {
 #     an installer that widened it would be silently undone or would widen it
 #     behind that script's back.
 HOOK_PLAN=""      # "absent" | "present" | "nofile"
+GUARD_PLAN=""     # the same three, for Amendment 12's UserPromptSubmit entry
 HOOK_MERGED=""    # a staged whole file, ready to move into place
 
 # THE DESTINATIONS, PROVED WRITABLE BEFORE ANY OF THE TWELVE IS PLACED — every
@@ -597,7 +643,7 @@ $bad
         rm -f -- $paths"
 }
 
-# THE TWELVE TARGETS, PROVED PLACEABLE BEFORE ANY OF THE TWENTY-FIVE IS PLACED
+# THE TWELVE TARGETS, PROVED PLACEABLE BEFORE ANY OF THE TWENTY-SIX IS PLACED
 # (A9 Addendum 4, R-A9-12, ruled on F5 of the #24 review).
 #
 # `cp` FOLLOWS A SYMLINK. The loop below tests `[ -e "$target" ]`, compares
@@ -657,9 +703,9 @@ path_kind() {   # <path>
 # This answered "a regular file" with `return 1` and asked nothing else, so
 # every existing file counted as one `--install` may place over — and
 # `plan_skill_targets` let a READ-ONLY `SKILL.md` or command file through.
-# `install_commands` has already copied the eleven PATH files by the time
+# `install_commands` has already copied the twelve PATH files by the time
 # `place_skill_and_hook` reaches the `cp`, so an ordinary permission failure
-# there left a host with eleven of the eighteen artifacts placed, on the one
+# there left a host with twelve of the twenty-six artifacts placed, on the one
 # path in this file that promises all or none. A mode is not an exotic state
 # either: `chmod 444` on a file a person did not want overwritten is what a
 # person does.
@@ -798,15 +844,21 @@ $bad
 plan_hook_merge() {
 	local settings existing kind
 	settings="$(claude_home)/settings.json"
-	command -v jq >/dev/null 2>&1 || die "\`--install\` needs \`jq\` to merge one SessionStart entry into
+	command -v jq >/dev/null 2>&1 || die "\`--install\` needs \`jq\` to merge its TWO hook entries into
     $settings, and there is no \`jq\` on this PATH. It refuses rather than
     rewriting a JSON file by hand, and NOTHING was installed. Install jq, then
-    re-run. The entry it would have merged:
-$(hook_block_text)"
+    re-run. The entries it would have merged — the \`SessionStart\` one and
+    Amendment 12's \`UserPromptSubmit\` name guard, which are ONE all-or-nothing
+    merge:
+$(hook_block_text)
+$(guard_block_text)"
 
 	# WHAT IS AT THAT PATH, BEFORE A BYTE OF IT IS READ (#44 round 1,
-	# `openRepoTools:878`). This file is the eighteenth artifact and the only
-	# one no walk asked about, and the `present` arm now CHMODs it: `chmod`
+	# `openRepoTools:878`). This file carries the LAST TWO artifacts — the
+	# twenty-fifth and twenty-sixth — since Amendment 12 adoption act 3 put the
+	# name guard beside the `SessionStart` entry, and it is the only path no
+	# walk asked about; the
+	# `present` arm now CHMODs it, and `chmod`
 	# follows a symlink, so a `~/.claude/settings.json` linked into a dotfiles
 	# checkout had the 600 stamped on the file at the far end — an unrelated
 	# file re-moded by an installer that reported `already installed
@@ -820,7 +872,7 @@ $(hook_block_text)"
 	# place, which takes the DIRECTORY's write bit and not the file's, so a
 	# read-only `settings.json` is one this command may still merge into.
 	if kind="$(path_kind "$settings")"; then
-		die "\`--install\` merges one SessionStart entry into a REGULAR FILE, and this is not
+		die "\`--install\` merges its two hook entries into a REGULAR FILE, and this is not
     one:
     $settings — $kind
     A \`chmod\` follows a link, so the mode this installer stamps would land on
@@ -834,24 +886,29 @@ $(hook_block_text)"
 
 	workdir
 	HOOK_MERGED="$WORKDIR/settings.json"
+	local staged="$WORKDIR/settings.stage.json"
 
 	if [ ! -e "$settings" ]; then
-		HOOK_PLAN="nofile"
+		HOOK_PLAN="nofile"; GUARD_PLAN="nofile"
 		jq -n --arg c "$HOOK_COMMAND" --arg m "$HOOK_MATCHER" --argjson t "$HOOK_TIMEOUT" \
-			'{hooks: {SessionStart: [{matcher: $m, hooks: [{type: "command", command: $c, timeout: $t}]}]}}' \
+		      --arg g "$GUARD_COMMAND" --argjson gt "$GUARD_TIMEOUT" \
+			'{hooks: {SessionStart: [{matcher: $m, hooks: [{type: "command", command: $c, timeout: $t}]}],
+			          UserPromptSubmit: [{hooks: [{type: "command", command: $g, timeout: $gt}]}]}}' \
 			>"$HOOK_MERGED" || die "could not compose $settings; nothing was installed."
 		return 0
 	fi
 
-	jq -e . "$settings" >/dev/null 2>&1 || die "$settings is not valid JSON, so \`--install\` cannot merge one entry into it
-    and will not rewrite it. NOTHING was installed and nothing already installed was
-    replaced. Fix that file, then re-run. The entry it would have merged:
-$(hook_block_text)"
+	jq -e . "$settings" >/dev/null 2>&1 || die "$settings is not valid JSON, so \`--install\` cannot merge its two entries into
+    it and will not rewrite it. NOTHING was installed and nothing already installed was
+    replaced. Fix that file, then re-run. The entries it would have merged:
+$(hook_block_text)
+$(guard_block_text)"
 
 	jq -e '(has("hooks") | not) or (.hooks | type == "object")' "$settings" >/dev/null 2>&1 ||
-		die "$settings has a \`hooks\` that is not an object, so there is nothing to merge an
-    entry into. NOTHING was installed. The entry it would have merged:
-$(hook_block_text)"
+		die "$settings has a \`hooks\` that is not an object, so there is nothing to merge
+    either entry into. NOTHING was installed. The entries it would have merged:
+$(hook_block_text)
+$(guard_block_text)"
 
 	# THE THREE ANSWERS, in one read: our exact command already there; some
 	# OTHER SessionStart entry that runs `session-start` (a second writer of
@@ -883,11 +940,25 @@ $(hook_block_text)"
 		  elif ($cmds | map(select(test("session-start"))) | length) > 0 then "conflict"
 		  else "absent" end' "$settings" 2>/dev/null || printf 'error')"
 
+	# AND THE SAME THREE ANSWERS FOR AMENDMENT 12's ENTRY, keyed on its own verb.
+	#
+	# `guard` AS A WHOLE ARGUMENT, and not as a substring — the one place this
+	# read differs from the one above, and the difference is load-bearing. The
+	# `SessionStart` arm keys on `session-start`, a word that appears in nothing
+	# else; `guard` appears in `~/projects/xFactory/guard.sh`, a plain
+	# `UserPromptSubmit` hook a person's settings may already carry and one this
+	# installer must leave exactly where it is. So the test is the verb with a
+	# boundary on both sides: a command RUNNING `guard` collides, a file merely
+	# NAMED guard does not. That is R-A9-14's rule one event over — the verb is
+	# what collides; the file that carries it is not.
+	local existing_guard
+	existing_guard="$(jq -r --arg c "$GUARD_COMMAND" '
+		[ (.hooks.UserPromptSubmit // [])[]? | (.hooks // [])[]? | .command // empty ] as $cmds
+		| if ($cmds | index($c)) then "present"
+		  elif ($cmds | map(select(test("(^|\\s)guard(\\s|$)"))) | length) > 0 then "conflict"
+		  else "absent" end' "$settings" 2>/dev/null || printf 'error')"
+
 	case "$existing" in
-	present)
-		HOOK_PLAN="present"
-		cp -- "$settings" "$HOOK_MERGED"
-		;;
 	conflict)
 		die "$settings already carries a SessionStart entry that runs \`session-start\` with a
     DIFFERENT command string. Exact-string match is the only idempotence this entry
@@ -898,20 +969,51 @@ $(hook_block_text)
     (Amendment 9's adoption act 6 removes the hand-installed entry on each
     workstation before the first \`--install\` that carries this.)"
 		;;
-	absent)
-		HOOK_PLAN="absent"
+	present | absent) HOOK_PLAN="$existing" ;;
+	*) die "$settings could not be read for a SessionStart entry; nothing was installed." ;;
+	esac
+
+	case "$existing_guard" in
+	conflict)
+		die "$settings already carries a UserPromptSubmit entry that runs \`guard\` with a
+    DIFFERENT command string. Exact-string match is the only idempotence this entry
+    has, so merging would fire the name guard twice — two refusals for one prompt.
+    Repairing a setting a person meant is not an installer's to do, so
+    NOTHING was installed. Remove that entry, then re-run.
+    The entry this places, byte for byte:
+$(guard_block_text)"
+		;;
+	present | absent) GUARD_PLAN="$existing_guard" ;;
+	*) die "$settings could not be read for a UserPromptSubmit entry; nothing was installed." ;;
+	esac
+
+	# BOTH MERGES ARE COMPUTED BEFORE EITHER IS PLACED, into one staged file, so
+	# the all-or-nothing rule covers the PAIR: a settings file that took the
+	# SessionStart entry and refused the guard is a half-install of a hook pair,
+	# and nothing on screen would say which half.
+	cp -- "$settings" "$HOOK_MERGED" ||
+		die "could not stage $settings for merging; nothing was installed."
+	if [ "$HOOK_PLAN" = absent ]; then
 		jq --arg c "$HOOK_COMMAND" --arg m "$HOOK_MATCHER" --argjson t "$HOOK_TIMEOUT" '
 			.hooks = (.hooks // {})
 			| .hooks.SessionStart = ((.hooks.SessionStart // []) + [{
 				matcher: $m,
 				hooks: [{type: "command", command: $c, timeout: $t}]
-			  }])' "$settings" >"$HOOK_MERGED" ||
+			  }])' "$HOOK_MERGED" >"$staged" ||
 			die "could not merge the SessionStart entry into $settings; nothing was installed."
-		;;
-	*)
-		die "$settings could not be read for a SessionStart entry; nothing was installed."
-		;;
-	esac
+		mv -f -- "$staged" "$HOOK_MERGED" ||
+			die "could not stage the merged $settings; nothing was installed."
+	fi
+	if [ "$GUARD_PLAN" = absent ]; then
+		jq --arg c "$GUARD_COMMAND" --argjson t "$GUARD_TIMEOUT" '
+			.hooks = (.hooks // {})
+			| .hooks.UserPromptSubmit = ((.hooks.UserPromptSubmit // []) + [{
+				hooks: [{type: "command", command: $c, timeout: $t}]
+			  }])' "$HOOK_MERGED" >"$staged" ||
+			die "could not merge the UserPromptSubmit entry into $settings; nothing was installed."
+		mv -f -- "$staged" "$HOOK_MERGED" ||
+			die "could not stage the merged $settings; nothing was installed."
+	fi
 }
 
 # The thirteen placements, AFTER the twelve files and the merge are all in hand.
@@ -925,7 +1027,7 @@ place_skill_and_hook() {
 	# EVERY FAILURE HERE IS A `die`, never the shell's own 1. `--install`'s
 	# codes are this toolset's — 0 done, 1 findings printed, 2 a refusal — and
 	# an unguarded `mkdir` or `cp` under `set -e` exits 1, which reads as a
-	# report of findings from a command that placed twelve of twenty-five artifacts.
+	# report of findings from a command that placed twelve of twenty-six artifacts.
 	for target in "$shared_dir/SKILL.md" "$bare_dir/SKILL.md"; do
 		mkdir -p -- "$(dirname -- "$target")" ||
 			die "could not create $(dirname -- "$target") for the $name skill.
@@ -1016,8 +1118,8 @@ place_skill_and_hook() {
 		# round 1, the suppressed comment at `openRepoTools:880`): a
 		# `settings.json` this euid can write but does not own takes `jq` and
 		# every check `plan_hook_merge` puts to it, then refuses the mode
-		# stamp, with the eleven commands, the skills and the command files —
-		# seventeen of the eighteen artifacts — already placed. The guard that
+		# stamp, with the twelve commands, the skills and the command files —
+		# twenty-four of the twenty-six artifacts — already placed. The guard that
 		# would catch it first is the same `[ -O ]` `unplaceable_kind`'s own
 		# comment declines, for the same reason: no test in this suite can
 		# make a second account to own this file, and the check would refuse a
@@ -1032,9 +1134,21 @@ place_skill_and_hook() {
 			say "SessionStart hook: already installed in $settings (mode restored to 600)"
 		fi
 		;;
-	nofile | absent)
+	esac
+	case "$GUARD_PLAN" in
+	present)
+		# THE GUARD ENTRY'S OWN LINE, AND NO SECOND `chmod`: the mode belongs to
+		# the FILE and not to either entry, so the arm above has already asked
+		# for it on every run that reaches this one. Saying it twice would tell
+		# a person their settings were re-moded twice for one file.
+		say "UserPromptSubmit guard: already installed in $settings (unchanged)"
+		;;
+	esac
+	# ONE WRITE FOR THE TWO ENTRIES: they live in one file, and writing it twice
+	# would move a person's settings through a state carrying one of the pair.
+	if [ "$HOOK_PLAN" != present ] || [ "$GUARD_PLAN" != present ]; then
 		mkdir -p -- "$(dirname -- "$settings")" ||
-			die "could not create $(dirname -- "$settings") for the SessionStart entry."
+			die "could not create $(dirname -- "$settings") for the hook entries."
 		# WRITTEN THROUGH A TEMPORARY IN THE SAME DIRECTORY, then moved into
 		# place: `mktemp` + `chmod 600` + `mv -f`, which is what workBenches'
 		# `scripts/setup-claude-profiles.sh:167-194` does to this very file on
@@ -1053,13 +1167,15 @@ place_skill_and_hook() {
 			{ rm -f -- "$hook_tmp"; die "could not set mode 600 on the merged $settings."; }
 		mv -f -- "$hook_tmp" "$settings" ||
 			{ rm -f -- "$hook_tmp"; die "could not move the merged settings into $settings."; }
-		if [ "$HOOK_PLAN" = nofile ]; then
-			say "SessionStart hook: installed in $settings (the file was created, mode 600)"
-		else
-			say "SessionStart hook: merged into $settings (one entry added; written back at mode 600)"
-		fi
-		;;
-	esac
+		case "$HOOK_PLAN" in
+		nofile) say "SessionStart hook: installed in $settings (the file was created, mode 600)" ;;
+		absent) say "SessionStart hook: merged into $settings (one entry added; written back at mode 600)" ;;
+		esac
+		case "$GUARD_PLAN" in
+		nofile) say "UserPromptSubmit guard: installed in $settings (the file was created, mode 600)" ;;
+		absent) say "UserPromptSubmit guard: merged into $settings (one entry added; written back at mode 600)" ;;
+		esac
+	fi
 }
 # =========================================================================
 # `wip init` — THE ONE ACT THAT CREATES THE WORKSPACE THOSE COMMANDS READ

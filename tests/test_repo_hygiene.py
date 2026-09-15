@@ -1546,9 +1546,31 @@ def test_agents_md_is_short_enough_to_be_read():
     seen the working one still meets the old one in older briefs. The runnable
     form stays beneath it for a person with no checkout of this repository in
     front of them.
+
+    224 -> 228 on 2026-09-14, for THE ONE EXIT CODE THIS FILE NOW STATES
+    WRONG (lane-collision-protocol Amendment 12, opensoft/openRepoTools#25).
+    Four lines, and every one of them is behaviour rather than prose about
+    it. The paragraph promised, without qualification, that each of the four
+    "refuses with exit 1 naming `openRepoTools wip init` where that file does
+    not answer" — and `lanes-edit.sh guard` deliberately does not: it is a
+    `UserPromptSubmit` hook, only a 2 blocks a prompt
+    (code.claude.com/docs/en/hooks), and a 1 there would print the workspace
+    refusal and let the prompt THROUGH, which is the one failure clause (d)
+    forbids by name. An assistant reading the old sentence and getting a 2
+    back has no way to tell a blocked prompt from the "the object is held"
+    that 2 has meant here since Amendment 5, which is exactly what the
+    sentence beneath it — "never read a number without knowing which command
+    produced it" — exists to prevent, and it could not do that while the
+    clause above it named the wrong number for one of them.
+
+    228 + 255 MEET AT 259 on 2026-09-15, where this branch merged `main` at
+    `2faa883`. Four of the merged file's lines are Amendment 12's exit-code
+    correction and twelve are #51's `tests/run.sh` paragraph; neither is over
+    a line the other bought, and the cap is the count of what merged rather
+    than either side's number — the rule the 224 entry states.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 255, f"AGENTS.md is {len(lines)} lines; the cap is 255"
+    assert len(lines) <= 259, f"AGENTS.md is {len(lines)} lines; the cap is 259"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -1910,6 +1932,24 @@ def test_readme_is_short_enough_to_be_read():
     is this file — and both dated entries above stay, because each still
     names the lines it bought.
 
+    409 -> 417 on 2026-09-14, for lane-collision-protocol AMENDMENT 12's
+    SECOND HOOK ENTRY (ratified 2026-09-13T18:20:44Z, "Ratify revision 2";
+    adoption act 3, opensoft/openRepoTools#25). Eight lines, and the cap moves
+    with the TOOLSET as every entry above it does: `--install` now merges TWO
+    entries into `~/.claude/settings.json` rather than one, so the install
+    paragraph's "seven things that are not files in that directory" is eight,
+    the sentence that named one merged entry names two and says what the second
+    one DOES — at every prompt it checks that the tmux window, the session's own
+    name and the register row are one lane, and refuses the prompt when they are
+    not — the conflict sentence gains the `guard` arm, and one line says that a
+    person's own `UserPromptSubmit` hooks are left where they are, which is the
+    half of the contract the count cannot show. That last line is not prose
+    about the install: it is the reason the arm keys on the VERB and not on the
+    word anywhere in a path, and a reader whose settings already carry
+    `~/projects/xFactory/guard.sh` — this estate's usage guard, in every
+    profile — needs it before they run the command. The count below the
+    paragraph moves 18 -> 19 with them, in the one place it is stated here and
+    derived in `test_openrepotools_command.py`.
     409 -> 422 on 2026-09-14, for the FOUR FINDINGS of #40 — Copilot's review
     of the re-vendor at `8a36eb3`, filed here rather than taken there because
     they predate the pin move. Thirteen lines, and every one of them is
@@ -1966,9 +2006,31 @@ def test_readme_is_short_enough_to_be_read():
     writes the record BEFORE it respawns the pane, and that the new session
     comes up with the handoff's top block as its first prompt — which is the
     whole of why the word exists. Every dated entry above stays.
+
+    417 and 428 -> 436 on 2026-09-14, at the merge of this branch with `main`
+    @ `b5244e2`. Each side raised this cap for its own lines and every dated
+    entry above stays: Amendment 12's second hook entry bought 8 on this
+    branch, and #40's four findings and #44's first round bought 13 and 6 on
+    `main`. They meet in ONE paragraph, the install one, which both sides
+    rewrote — so the merged sentence carries both facts, the TWO merged
+    entries with the name guard's own sentence AND the regular-file rule with
+    the modes `--install` stamps — and a paragraph that says both is longer
+    than either half of it. The cap is the count of WHAT MERGED and not
+    either side's number, which is the rule the 2026-09-13 entry above states
+    in its own words.
+
+    436 + 434 MEET AT 472 on 2026-09-15, where this branch merged `main` at
+    `2faa883` (Amendment 12's `UserPromptSubmit` name guard, its artifact
+    accounting, and #44/#53 beneath it) on top of Amendment 17's six. The
+    artifact count is TWENTY-SIX, which is what the two sides' lists come to
+    together — twelve files, three skills at two paths, three command files at
+    two paths, and the two hook entries — and it is derived in
+    `tests/test_openrepotools_command.py` rather than believed here. The cap is
+    the count of what merged, not either side's number, and every dated entry
+    on both sides stays because each still names the lines it bought.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 434, f"README.md is {len(lines)} lines; the cap is 434"
+    assert len(lines) <= 472, f"README.md is {len(lines)} lines; the cap is 472"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
