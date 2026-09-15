@@ -277,31 +277,33 @@ fi
 #
 # M1's CONDITIONS ARE THE ONES `guard_type` MAKES, and they are not a taste: a
 # `/rename` typed at a shell is a command that does not exist, and typed into an
-# editor it is text nobody wrote. So the pane is the one the LIVE RECORD names —
-# `window-session` is the single implementation of that read (Amendment 11(h)) —
-# and it is typed into only where its current command is `claude`.
+# editor it is text nobody wrote. So the pane comes from the LANE's own live
+# record, and it is typed into only where that pane's current command is
+# `claude`.
 #
 # THE PANE IS NOT `$TMUX_PANE`. This command usually runs from a shell, and that
 # shell's pane is running the shell: a person who typed `lane-rename` at a
 # prompt is not typing into their own session, and the record is what says where
 # the session actually is.
+# THE PANE IS THE LANE'S OWN SESSION'S, NOT "WHATEVER IS LIVE IN THIS WINDOW"
+# (Copilot round 3 on openRepoTools#81). `window-session` answers about the
+# WINDOW: a second Claude session in another pane of it is a live interactive
+# record with the same target, and `/rename <new>` typed there renames somebody
+# else's conversation. `live-holder <lane>` answers about the LANE — it reads
+# only ids the lane's own ROW carries (Amendment 6(b)'s session cell), which is
+# the fact that makes the session this lane's — so that is the read, and the
+# window agreement test stays on top of it for the reason `guard_run` gives:
+# tmux REUSES window ids, so a record placed here by its pid can carry a target
+# another window now answers to.
 pane=""; sess_name=""
 if have_tmux && [ -n "$win_harness" ]; then
-	ws_out=""
-	ws_out="$("$LANES_EDIT" window-session "$win_harness" 2>/dev/null)" || ws_out=""
-	if [ -n "$ws_out" ]; then
-		# `<sid><US><tmux><US><name><US><pid><US><profile>`, the record's own
-		# fields — and the second is `<session>:<@id>.<%pane>`, a WINDOW target
-		# with the pane on the end of it.
-		#
-		# THE PANE IS TAKEN OUT OF IT, AND ONLY FROM A TARGET THAT NAMES THIS
-		# WINDOW — `guard_run`'s own rule, for the reason stated there: tmux
-		# REUSES window ids, so a record placed in this window by its pid can
-		# carry a target another window now answers to, and `/rename` typed
-		# into that one would land in somebody else's pane. Where it does not
-		# name this window the pane is left EMPTY and the line is printed.
-		rec_tgt="$(printf '%s' "$ws_out" | awk -F'\037' '{print $2}')"
-		sess_name="$(printf '%s' "$ws_out" | awk -F'\037' '{print $3}')"
+	lh_out=""
+	lh_out="$("$LANES_EDIT" live-holder "$new" 2>/dev/null)" || lh_out=""
+	if [ -n "$lh_out" ]; then
+		# `<sid><US><target><US><name><US><pid><US><verdict>`, `live_holder`'s
+		# own fields; the target is `<session>:<@id>.<%pane>`.
+		rec_tgt="$(printf '%s' "$lh_out" | awk -F'\037' '{print $2}')"
+		sess_name="$(printf '%s' "$lh_out" | awk -F'\037' '{print $3}')"
 		case "$rec_tgt" in none) rec_tgt="" ;; esac
 		if [ -n "$rec_tgt" ] && [ "${rec_tgt%.*}" = "$win_harness" ]; then
 			case "$rec_tgt" in *.%*) pane="${rec_tgt##*.}" ;; esac

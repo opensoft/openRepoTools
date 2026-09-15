@@ -7550,6 +7550,101 @@ is   "re-running the word after the write has landed exits 0" "$rc" 0
 has  "…saying the rename itself is already done" "$err" "already landed"
 is   "…and doing the half that is left: the window" "$(command grep -c 'rename-window repoRenW-3' "$FAKE_TMUX_LOG" || :)" 1
 
+
+# ============ Copilot round 3 on openRepoTools#81 ============================
+
+# ---- AN UNREADABLE ALIAS TABLE REFUSES THE READERS TOO, not only the writes.
+#
+# `canon_lane`'s answer is what `lane-start` decides "is this lane new" by, so
+# carrying on with the typed spelling is not a read-only shrug: a renamed lane
+# would read as new and get a SECOND row.
+ren_unread2="$WIP/lanes/aliases-unread2.tsv"
+printf 'someLane-1\tsomeLane-2\t2026-09-15T00:00:00Z\n' > "$ren_unread2"
+chmod 0000 "$ren_unread2"
+run env LANES_NO_FETCH=1 LANES_ALIASES_TSV="$ren_unread2" LANES_ALIASES_PATH=lanes/aliases-unread2.tsv \
+    "$E" canon-lane repoRen-4
+if [ "$rc" = 0 ]; then
+  skip "canon-lane refuses on an alias table it cannot read" "this filesystem let the read through"
+else
+  is    "canon-lane REFUSES on an alias table it cannot read" "$rc" 2
+  has   "…rather than answering the typed spelling" "$err" "NOT established"
+  hasnt "…and answers nothing at all" "$out" "repoRen"
+fi
+
+# ---- AND THE NAME GUARD REFUSES THE PROMPT ON IT (clause (d) is fail closed).
+gd_save_w="${FAKE_TMUX_WINDOW-}"; gd_save_n="${FAKE_TMUX_WINDOW_NAME-}"; gd_save_ws="${FAKE_TMUX_WINDOWS-}"
+# THE WINDOW CARRIES A NAME WITH NO ROW, which is what makes the guard ASK the
+# alias table at all: `repoRen-4` is a middle name of this lane's chain, so a
+# name that does have a row would be answered by the register alone and this
+# case would prove nothing.
+export FAKE_TMUX_WINDOW="rensess:@19"
+export FAKE_TMUX_WINDOW_NAME=repoRen-4
+export FAKE_TMUX_WINDOWS="$(printf 'rensess:0\t@19\trepoRen-4\t%%19\tclaude')"
+write_record_a12 "$sessions_dir/a16g.json" "$REN_ID" "$LIVE_PID" "$live_start" interactive "rensess:@19.%19" "repoRen-4" user "$GD_OLD_MS"
+out="$(printf '{"session_id":"%s","cwd":"%s/projects/repoRen","prompt":"do the work","hook_event_name":"UserPromptSubmit"}' "$REN_ID" "$HOME" \
+      | env LANES_ALIASES_TSV="$ren_unread2" LANES_ALIASES_PATH=lanes/aliases-unread2.tsv "$E" guard 2>"$SANDBOX/stderr")"; rc=$?
+err="$(cat "$SANDBOX/stderr")"
+if [ "$rc" = 0 ]; then
+  skip "the guard refuses a prompt on an alias table it cannot read" "this filesystem let the read through"
+else
+  is    "the guard REFUSES the prompt on an alias table it cannot read" "$rc" 2
+  has   "…because a triple that cannot be verified is not a triple that agrees" "$err" "could not be read"
+  hasnt "…and never sends a running lane to bind a row it already has" "$err" "lane-start --no-launch"
+fi
+rm -f "$sessions_dir/a16g.json"
+export FAKE_TMUX_WINDOW="$gd_save_w"; export FAKE_TMUX_WINDOW_NAME="$gd_save_n"; export FAKE_TMUX_WINDOWS="$gd_save_ws"
+chmod 0644 "$ren_unread2"; rm -f "$ren_unread2"
+
+# ---- A HANDOFF PATH THAT EXISTS AND IS NOT A REGULAR FILE IS REFUSED.
+REN6_ID="12ab34cd-16a6-4000-8000-12ab34cd16a6"
+mkdir -p "$WIP/handoffs/repoKind/session-handoff-2026-09-12-lane-repoKind-1.md"
+add_seed_row "| \`repoKind-1\` | harness \`$REN6_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | handoffs/repoKind/session-handoff-2026-09-12-lane-repoKind-1.md | ACTIVE |"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed a lane whose handoff path is a directory"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN6_ID" "$E" rename-lane repoKind-1 repoKind-2 --no-github
+is   "a handoff path that is a DIRECTORY is refused, not read as absent" "$rc" 2
+has  "…saying what it found there" "$err" "is not a regular file"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+rmdir "$WIP/handoffs/repoKind/session-handoff-2026-09-12-lane-repoKind-1.md"
+
+# ---- AN ALIAS TABLE PUBLISHED AND NOT PULLED IS REFUSED, NOT OVERWRITTEN.
+rm -f "$WIP/lanes/aliases.tsv"
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN6_ID" "$E" rename-lane repoKind-1 repoKind-2 --no-github
+is   "an alias table origin carries and this checkout does not is refused" "$rc" 2
+has  "…because appending here would drop every alias already published" "$err" "drop every alias already published"
+has  "…and it names the pull" "$err" "pull --rebase"
+is   "…with nothing written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+git -C "$WIP" checkout -- lanes/aliases.tsv
+
+# ---- THE LANE'S OWN SESSION KEEPS ITS FORMER NAME UNTIL ITS NEXT PROMPT,
+# AND IS STILL ITS HOLDER (Amendment 16(e) meeting Amendment 8's explicit-name
+# rule). Without this the rename's own window loses the `/rename` clause (f)
+# gives it, and `who` calls a running lane NOT LIVE.
+# `repoRen-4`, NOT `repoRen-1`: the first name of this chain is a row again —
+# a different lane — so a session named for it IS another lane's, which is the
+# case below. `repoRen-4` is the middle name and belongs to nobody else.
+write_record_a12 "$sessions_dir/a16h.json" "$REN_ID" "$LIVE_PID" "$live_start" interactive "rensess:@20.%20" "repoRen-4" user "$GD_OLD_MS"
+run "$E" live-holder repoRen-7
+is   "a live session still named for the lane's FORMER name is its holder" "$rc" 0
+has  "…named as the session it is" "$out" "$REN_ID"
+rm -f "$sessions_dir/a16h.json"
+
+# ---- AND A FORMER NAME THAT IS A ROW AGAIN IS ANOTHER LANE (the row wins).
+write_record_a12 "$sessions_dir/a16j.json" "$REN_ID" "$LIVE_PID" "$live_start" interactive "rensess:@20.%20" "repoRen-1" user "$GD_OLD_MS"
+run "$E" live-holder repoRen-7
+is   "…while a former name somebody has since taken as a LANE is not this one" "$rc" 8
+rm -f "$sessions_dir/a16j.json"
+
+# ---- AND A SESSION A PERSON NAMED FOR ANOTHER LANE IS STILL NOT (Amendment 8).
+write_record_a12 "$sessions_dir/a16i.json" "$REN_ID" "$LIVE_PID" "$live_start" interactive "rensess:@20.%20" "repoD-2" user "$GD_OLD_MS"
+run "$E" live-holder repoRen-7
+is   "…while a session named for a DIFFERENT lane is not a holder, as before" "$rc" 8
+rm -f "$sessions_dir/a16i.json"
+
 export FAKE_TMUX_WINDOWS="$A16_SAVE_WINDOWS"
 export FAKE_TMUX_WINDOW="$A16_SAVE_WINDOW"
 export FAKE_TMUX_WINDOW_NAME="$A16_SAVE_NAME"
