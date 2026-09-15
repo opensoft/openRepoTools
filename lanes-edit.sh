@@ -48,7 +48,7 @@
 #
 # USAGE
 #   lanes-edit.sh [--no-sweep|--sweep] verify-row         <lane>
-#   lanes-edit.sh [--no-sweep|--sweep] append-row-status  <lane> "<text>"
+#   lanes-edit.sh [--no-sweep|--sweep] set-row-state      <lane> "<STATE> · <one line>"
 #   lanes-edit.sh [--no-sweep|--sweep] replace-in-row     <lane> "<old>" "<new>" ["<why>"]
 #   lanes-edit.sh [--no-sweep|--sweep] append-session-id  <lane> "<anchor>" "<text to append>" ["<why>"]
 #                                        (the anchor is matched INSIDE THE
@@ -59,6 +59,40 @@
 #                                         "lane <name>" the text itself names)
 #   lanes-edit.sh [--no-sweep|--sweep] add-row            "<full | row |>"
 #   lanes-edit.sh                      commit             "<message>"         # commit a hand edit
+#   lanes-edit.sh                      migrate-state-cells [--yes]            # Amendment 13(e), once
+#
+# AMENDMENT 13 — THE ROW IS CURRENT STATE; THE LOG IS HISTORY
+#   lanes-edit.sh set-row-state <lane> "<STATE> · <one line>"
+#   lanes-edit.sh log NOTED lane:<lane> "<what the lane did, found, launched, left>"
+#   lanes-edit.sh log RULED lane:<lane> [→ <object>] "<Brett Heap's words, verbatim>"
+#   lanes-edit.sh history <lane> [--since <UTC>]
+#   lanes-edit.sh migrate-state-cells [--yes]
+#
+#   The `state` column holds ONE PHRASE — `<STATE> · <UTC> · <one line>` — and
+#   every write REPLACES it. `set-row-state` stamps the UTC itself; the STATE is
+#   one of LIVE, PAUSED, LANDING #<n>, LANDED, ENDED, RETIRED, HANDED OFF (Rule
+#   6's reading of the cell is unchanged and is now the whole of what the cell
+#   says at that moment), and the line is at most 240 characters (ratified
+#   decision O1) carrying neither a `|` nor a second ` · `.
+#
+#   `append-row-status` is RETIRED and refuses, naming these. It appended and
+#   never replaced, which is how the column that says where a lane IS came to
+#   hold 96,228 characters in one row and 7,016 in another after ONE day — a
+#   diary in a table nobody can read in the table.
+#
+#   THE NARRATIVE GOES TO THE LANE'S OWN LOG, under two Amendment 7 verbs that
+#   are lane-kind lines and NOT transitions: `NOTED` is a status note and
+#   `RULED` a ruling recorded verbatim, with the object it bears on as its
+#   payload where there is one. Neither ever changes a lane's state on any
+#   object or on itself — `who`, `lane-end`, `lanes` and `swapped` skip them
+#   exactly as they skip `STARTED` and `RESUMED` — and `history` prints them in
+#   file order, which is the diary the cell used to be.
+#
+#   `migrate-state-cells` is clause (e)'s ONE act, on Brett Heap's word: a DRY
+#   RUN by default, and with `--yes` one commit carrying the archive
+#   `lanes/archive/LANES-pre-amendment-13-<UTC>.md`, every lane's log and the
+#   register. It REFUSES when no cell holds a ` · ` entry, so a second run is a
+#   no-op that says so.
 #
 # AMENDMENT 7 — the per-lane object log (`lanes/log/<lane>.md`)
 #   lanes-edit.sh log     <VERB> <object> [→|← <payload>] ["<text>"] [--text "<t>"]
@@ -230,7 +264,8 @@
 #  64  usage — a caller's bad arguments to one of the reads Amendment 11 added
 #      (`window-lane`, `lane-dir`, `lane-profile`, `last-session`, `forks`,
 #      `workstation`, `fetch-age`, `lanes`, `session-lane`, and `swapped`, which
-#      took it first), and to Amendment 15's `canon-lane`, which takes the same
+#      took it first), to Amendment 13's `history`, and to Amendment 15's
+#      `canon-lane`, which takes the same
 #      contract because its four callers sit in front of a launch as those do. IT WAS IN NO TABLE AT ALL until this round (F-X16), while
 #      being the code the contract gives every one of those reads.
 #
@@ -260,6 +295,7 @@
 #   8  no record — `who` found nothing; `lane-objects` has no log file for the
 #      lane; `live-holder` READ this workstation's session records and none of
 #      them holds it; `swapped` found no lane swapped on the workstation;
+#      `history` READ the lane's log and it carries no `NOTED` or `RULED` line;
 #      `window-session` found no live session in the window. A read that could
 #      not be performed is never 8 (R22). `session-start` never exits 8, or
 #      anything but 0: it is a hook. `guard` never exits 8 either — it is a hook
@@ -815,6 +851,123 @@ row_split_session_cell() {   # <row>
   return 0
 }
 rstrip_spaces() { s="$1"; while [ "${s% }" != "$s" ]; do s="${s% }"; done; printf '%s' "$s"; }
+
+# --------------------------------------------- AMENDMENT 13: THE ROW IS STATE
+#
+# **THE ROW IS THE LANE'S CURRENT STATE, ONE LINE A PERSON CAN READ; ITS HISTORY
+# IS THE LANE'S OWN LOG** — lane-collision-protocol Amendment 13, in force
+# 2026-09-13T21:08:36Z. Clause (a): the `state` column holds ONE PHRASE,
+# `<STATE> · <UTC> · <one line>`, and every write REPLACES it. `set-row-state`
+# is the writer; `append-row-status` is RETIRED, so the cell can never grow into
+# a diary again. Measured on the day the amendment was drafted: the register was
+# 1,141,283 bytes over 46 rows, its longest row 96,228 characters, and this
+# lane's own cell 7,016 characters after ONE day of appending.
+#
+# WHERE THE CELL IS: SPLIT THE ROW ON ` | `, AND SIX SEPARATORS ARE THE PROOF.
+# A seven-column row has exactly six of them, and then the two readings of the
+# row — count six from the left, take the last cell from the right — are the
+# same text. A row with MORE has a ` | ` inside one of its cells, and nothing
+# here can tell WHICH cell it is in: the two readings disagree, and one of them
+# writes the new state over the row's handoff path. So more than six is a
+# REFUSAL naming the row, never a choice between them.
+#
+# MEASURED ON THE LIVE REGISTER, 2026-09-15 (1,335,595 bytes, 52 rows): 50 of
+# them carry exactly six separators and split cleanly. `openXfactory-2` carries
+# seven — one of them is inside its `objects owned` cell, so the two readings
+# disagree about the HANDOFF PATH — and `openxfactory-4` eight, both inside its
+# state cell. Those two are refused by name, and the fix is a person's: escape
+# the pipe as `\|`, which is how a Markdown table carries a literal one, in a
+# hand edit wrapped by `lanes-edit.sh commit`. A BARE `|` THAT IS NOT SPELLED
+# ` | ` IS HARMLESS and stays inside whichever cell holds it: the state cells of
+# `openRepoProject-1` and `openRepoTools-3` carry nineteen and four of them
+# (`'| true'`, a quoted shell fragment), and both of those rows split exactly.
+#
+# It splits from the LEFT for the reason `row_split_session_cell` does — the
+# cells that may carry a stray separator are the free-text ones at the end — and
+# the three pieces are asserted to reassemble into the row before anything is
+# written.
+RSS_HEAD=""; RSS_CELL=""; RSS_TAIL=""
+row_split_state_cell() {   # <row> — 0 with the pieces · 1 not a row · 2 ambiguous
+  rss_row="$1"; RSS_HEAD=""; RSS_CELL=""; RSS_TAIL=""
+  case "$rss_row" in "|"*) : ;; *) return 1 ;; esac
+  rss_body="$(rstrip_spaces "$rss_row")"
+  case "$rss_body" in *"|") : ;; *) return 1 ;; esac
+  # `${row:N}` AND NEVER `${row#"$body"}`. Removing a literal prefix walks every
+  # prefix length in turn, so a 90,751-character row cost ELEVEN SECONDS in that
+  # one expansion — measured 2026-09-15 against the live register's longest row,
+  # and it is the whole of what made a dry run of the migration take a minute
+  # and a half. A substring by offset is linear, and both `${#s}` and `${s:n}`
+  # count CHARACTERS, so the two agree on a row full of `·`, `—` and `→`.
+  rss_pad="${rss_row:${#rss_body}}"         # the row's own trailing spaces, kept
+  rss_inner="${rss_body%|}"                 # everything before the closing pipe
+  rss_n="$(count_occurrences "$rss_inner" " | ")" || return 1
+  [ "$rss_n" = 6 ] || return 2
+  rss_rest="$rss_inner"; rss_head=""; rss_i=0
+  while [ "$rss_i" -lt 6 ]; do
+    rss_one="${rss_rest%% | *}"
+    rss_head="$rss_head$rss_one | "
+    rss_rest="${rss_rest:$(( ${#rss_one} + 3 ))}"     # 3 = the separator
+    rss_i=$((rss_i + 1))
+  done
+  RSS_HEAD="$rss_head"; RSS_CELL="$rss_rest"; RSS_TAIL="|$rss_pad"
+  [ "$RSS_HEAD$RSS_CELL$RSS_TAIL" = "$rss_row" ] || { RSS_HEAD=""; RSS_CELL=""; RSS_TAIL=""; return 1; }
+  return 0
+}
+
+# How many ` | ` a row carries, for the refusal above to be able to say so.
+row_sep_count() {   # <row>
+  count_occurrences "$(rstrip_spaces "$1")" " | " 2>/dev/null || printf '?'
+}
+
+# Clause (a)'s seven states, and O1's cap on the one line beside them.
+ROW_STATES='LIVE, PAUSED, LANDING #<n>, LANDED, ENDED, RETIRED, HANDED OFF'
+ROW_STATE_CAP=240
+ROW_STATE=""; ROW_STATE_LINE=""
+state_word_is_valid() {   # <STATE>
+  case "${1-}" in
+    LIVE|PAUSED|LANDED|ENDED|RETIRED|'HANDED OFF') return 0 ;;
+    'LANDING #'*)
+      # Rule 6's reading of the cell is unchanged by Amendment 13 and is now the
+      # whole of what the cell says at that moment, so the number is checked:
+      # `LANDING #` with nothing after it is a merge hold no lane can pair with
+      # a PR.
+      case "${1#LANDING #}" in
+        '' | *[!0-9]*) return 1 ;;
+        *) return 0 ;;
+      esac ;;
+  esac
+  return 1
+}
+
+# `<STATE> · <one line>` → ROW_STATE and ROW_STATE_LINE, or a refusal. Every
+# test is made BEFORE the lock and before the row is touched, so a refusal
+# leaves the register exactly as it found it.
+row_state_check() {   # "<STATE> · <one line>"
+  rst_in="${1-}"; ROW_STATE=""; ROW_STATE_LINE=""
+  case "$rst_in" in
+    *' · '*) : ;;
+    *) die "the phrase is '<STATE> · <one line>' and this carries no ' · ' separator: '$rst_in'. The STATE is one of $ROW_STATES; the line says what the last act was, in at most $ROW_STATE_CAP characters. The narrative goes to the lane's own log — \`log NOTED\` / \`log RULED\` (Amendment 13(b))." 2 ;;
+  esac
+  ROW_STATE="${rst_in%% · *}"
+  ROW_STATE_LINE="${rst_in#* · }"
+  state_word_is_valid "$ROW_STATE" ||
+    die "'$ROW_STATE' is not one of Amendment 13(a)'s states ($ROW_STATES). The cell is the lane's CURRENT STATE and nothing else, so an eighth word is a state no reader of Rule 6 or of the listing knows." 2
+  [ -n "$ROW_STATE_LINE" ] ||
+    die "the phrase is '<STATE> · <one line>' and the line is empty: say what the last act was. A state with no line is a cell a person cannot read anything out of." 2
+  case "$ROW_STATE_LINE" in
+    *' · '*) die "the line may not contain ' · ': that separator is what divides the cell's three parts — '<STATE> · <UTC> · <one line>' — and a second one inside the line reads back as a fourth part. Use a semicolon: '$ROW_STATE_LINE'" 2 ;;
+    *'|'*)   die "the line may not contain '|': it would forge a cell boundary in the row, which is the one edit no reader of the register could recover from. Got: '$ROW_STATE_LINE'" 2 ;;
+  esac
+  if [ "${ROW_STATE_LINE//[$'\n\r']/}" != "$ROW_STATE_LINE" ]; then
+    die "the line is ONE line: a newline in it would split the row in two and every row after it would be read as a lane" 2
+  fi
+  # ${#s} COUNTS CHARACTERS and the cap is O1's 240 of them — these lines are
+  # full of `·`, `—` and `→`, so a byte count would refuse a line that is inside
+  # the cap and accept one that is not.
+  [ "${#ROW_STATE_LINE}" -le "$ROW_STATE_CAP" ] ||
+    die "the line is ${#ROW_STATE_LINE} characters and the cap is $ROW_STATE_CAP (Amendment 13, ratified decision O1). Shorten it, and put what will not fit in the lane's own log, which is where the history lives: LANES_LANE=<lane> lanes-edit.sh log NOTED lane:<lane> \"<what happened>\"" 2
+  return 0
+}
 
 # Prints the row's OWN spelling of a lane name that matches $1 ignoring case,
 # when exactly one row does. Attribution only — never used to pick the line an
@@ -1464,10 +1617,22 @@ utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 is_open_verb()   { case "$1" in CLAIMED|TAKEOVER|OPENED|LANDING|WITHDRAWN) return 0 ;; esac; return 1; }
 is_closed_verb() { case "$1" in RELEASED|CLAIM-LOST|CLOSED|LANDED) return 0 ;; esac; return 1; }
 is_lane_verb()   { case "$1" in STARTED|PAUSED|RESUMED|ENDED|RETIRED) return 0 ;; esac; return 1; }
+# AMENDMENT 13(b) — THE TWO NARRATIVE VERBS, AND THEY ARE OUTSIDE EVERY STATE
+# THERE IS. `NOTED` is a status note and `RULED` a ruling recorded verbatim;
+# both are lane-kind lines whose object is the lane itself, and NEITHER IS A
+# TRANSITION OF ANYTHING. So they are their own set rather than members of
+# `is_lane_verb`: every reader that computes a lane's state by the per-lane
+# last-line rule takes the five lane verbs by name, and a sixth and seventh
+# inside that predicate would have made the narrative move the lane — a `NOTED`
+# after a swap's `PAUSED` would have made a paused lane read as neither paused
+# nor running, which is the one thing `swapped` and `restart` are built on.
+# The one reader that took the LAST lane-kind line whatever it was is
+# `swapped_candidates`, and it skips these two by name for exactly that reason.
+is_note_verb()   { case "$1" in NOTED|RULED) return 0 ;; esac; return 1; }
 valid_verb() {
-  is_open_verb "$1" || is_closed_verb "$1" || is_lane_verb "$1"
+  is_open_verb "$1" || is_closed_verb "$1" || is_lane_verb "$1" || is_note_verb "$1"
 }
-VERB_LIST="CLAIMED RELEASED TAKEOVER CLOSED | OPENED LANDING LANDED WITHDRAWN | STARTED PAUSED RESUMED ENDED RETIRED | CLAIM-LOST"
+VERB_LIST="CLAIMED RELEASED TAKEOVER CLOSED | OPENED LANDING LANDED WITHDRAWN | STARTED PAUSED RESUMED ENDED RETIRED | CLAIM-LOST | NOTED RULED"
 
 check_lane_name() {
   case "${1-}" in
@@ -5132,6 +5297,16 @@ swapped_candidates() {
     function pos(pf, pn) { return pf "\034" sprintf("%09d", pn) }
     BEGIN { FS = sep }
     $6 !~ /^lane:/ { next }
+    # AMENDMENT 13(b) — AND THE TWO NARRATIVE VERBS ARE NOT LANE-KIND STATE.
+    # This read takes a lane-s LAST lane-kind line whatever its verb is and then
+    # asks whether it is a `PAUSED` carrying a swap payload; it is the ONE state
+    # reader in this file that does not name the five verbs it wants. `NOTED`
+    # and `RULED` are written into exactly the same lines and change nothing
+    # about where a lane is, so a lane that noted anything after its swap would
+    # have vanished from `swapped` — and `restart` reads `swapped` to find the
+    # lane whose window name a new tmux session has lost. Skipped by name, here
+    # and nowhere else, because every other reader already takes a whitelist.
+    $3 == "NOTED" || $3 == "RULED" { next }
     # AMENDMENT 15 — LOWER-CASED KEY, ORIGINAL SPELLING BESIDE IT. Which line is
     # a lane-s LAST is what decides whether that lane is SWAPPED at all, and
     # keyed on the raw `$2` a `PAUSED … swap;` under one spelling followed by a
@@ -6445,10 +6620,16 @@ guard_answer() {   # <offer file> <the prompt> <pane>
     note "MOVED: this window is now lane $ga_to — renamed, and stamped. The prompt that answered the question is consumed; send your work again."
     guard_bind_uuid "$ga_to" "$ga_from" || :
     if [ -n "$(row_of_lane "$ga_from" 2>/dev/null || :)" ]; then
-      if "$RESOLVED" append-row-status "$ga_from" "MOVED → $ga_to" >&2; then
-        note "…and $ga_from's row records \`MOVED → $ga_to\`."
+      # AMENDMENT 13(a) — THE STATE IS SET, NOT APPENDED. This window has just
+      # moved to another lane, so the lane it LEFT is not running in it any
+      # more: `PAUSED` is where that lane now is, and the line says where it
+      # went. It used to be an `append-row-status` of `MOVED → <lane>`, which
+      # left the cell saying two things at once — whatever state it opened with,
+      # and this.
+      if "$RESOLVED" set-row-state "$ga_from" "PAUSED · this window moved to lane $ga_to; the session named $ga_to answered yes at the guard" >&2; then
+        note "…and $ga_from's row now reads PAUSED, naming the move to $ga_to."
       else
-        note "…but $ga_from's row could NOT be marked (its writer's words are above). Run: lanes-edit.sh append-row-status $ga_from \"MOVED → $ga_to\""
+        note "…but $ga_from's row could NOT be marked (its writer's words are above). Run: lanes-edit.sh set-row-state $ga_from \"PAUSED · this window moved to lane $ga_to\""
       fi
     else
       note "…and the register has no row for $ga_from, so there is nothing to mark MOVED there."
@@ -6751,6 +6932,484 @@ gh_stale_claim_url() {
      -q '.comments[] | select(.body | test("CLAIMED — lane '"$gs_lane"'")) | .url' 2>/dev/null | tail -n1
 }
 
+# ------------------------------- AMENDMENT 13(e): THE MIGRATION, ONE ACT -----
+#
+# `migrate-state-cells` empties every `state` cell of its diary INTO the lane's
+# own log, once, on Brett Heap's word (ratified decision O3: after the writer
+# changes are installed on both workstations — a cell must stop growing before
+# it is emptied). It is a DRY RUN unless `--yes` is passed, and it REFUSES to
+# run at all when no cell holds a ` · ` entry, so a second run is a no-op that
+# says so.
+#
+# NOTHING IS DELETED. The appended narrative exists in git history AND in
+# `lanes/archive/LANES-pre-amendment-13-<UTC>.md`, written in this same commit,
+# AND in the logs — three times over, which is the posture Amendment 3 took
+# after the 2026-09-08 loss.
+#
+# WHAT A ROW BECOMES. Its cell is split on ` · ` into entries, in cell order
+# (the cell grew by appending, so that is oldest first). Each entry becomes one
+# line in `lanes/log/<lane>.md`: `RULED` where the entry begins with RULING,
+# RULINGS or RATIFIED, else `NOTED`; the entry's own leading timestamp becomes
+# the line's UTC field rather than being repeated inside its text, and every
+# other character of the entry is carried verbatim — including the ` — ` these
+# entries are full of, which the log's parser reads as prose because a
+# lane-kind line's free text is introduced by the ` — ` right after its object.
+# The cell is then REPLACED by the state derived from the LAST entry's leading
+# verb where that verb is one of clause (a)'s, else by `MIGRATED`.
+#
+# THE FOUR FIELDS THAT ARE NOT IN THE ENTRY come from the row: the UTC of an
+# entry that carries none is the row's `started` (a date-only `started` is read
+# as midnight UTC that day, and the register's older minute-precision form is
+# accepted as Amendment 7(b) already accepts it); the session is the LAST uuid
+# of the row's session cell; the workstation is the first `/`-separated part of
+# the row's own column.
+#
+# AND A ROW THAT CANNOT BE MIGRATED IS SKIPPED AND NAMED, never guessed at and
+# never half-written. Its cell keeps its history, so a re-run after the row is
+# fixed by hand migrates exactly that row. Five reasons, all of them visible in
+# the dry run: an ambiguous row (more than six ` | ` separators — see
+# `row_split_state_cell`); a row whose session cell holds NO transcript uuid, so
+# the line could only name `unknown` in the one field this log must never carry
+# it in; two rows whose lane names differ only by case (Amendment 15(d)'s hand
+# merge); a lane whose object log is two files, or is published under a
+# spelling this checkout does not have; and a name that is not a lane name.
+# Measured against the live register on 2026-09-15 (52 rows): 20 rows migrate,
+# 1 has no uuid, 2 are ambiguous, and 29 hold no ` · ` entry at all and are
+# already one phrase.
+#
+# THE WORKSTATION IS A TOKEN OR IT IS `unknown`. Twelve of the live register's
+# rows carry `<workstation? — owner fills>` in that column, and that placeholder
+# holds a ` — `: written into the `session <uuid>@<ws>` field it would put a
+# THIRD ` — ` in the line, ahead of the object, and the log's own parser would
+# read the verb and the fields out of the wrong halves for ever. So the column
+# is read up to its first ` / `, and anything that is not one plain token
+# (letters, digits, `.`, `_`, `-`) is recorded as `unknown` — which is inert
+# here: no reader computes a lane's state, its window or its workstation from a
+# narrative line (Amendment 13(b)).
+
+# THESE FOUR ASSIGN A GLOBAL AND RETURN, rather than printing — the idiom
+# `table_lookup` states one screen up, for the same reason: *"a function whose
+# answer is taken with `$( … )` forks, which is the cost this exists to avoid"*.
+# They are asked once PER ENTRY, and the live register holds 2,206 entries
+# across its twenty diary cells. Measured on a copy of it, 2026-09-15: the
+# printing form took 94 seconds of a dry run, five forks an entry; this one
+# takes eleven.
+MIG_LEAD_UTC=""
+MIG_LEAD=""
+MIG_TRIM=""
+
+# Spaces off BOTH ends, forking nothing — `rstrip_spaces` and its mirror in one
+# place, for the one caller that runs them thousands of times in a row.
+mig_trim() {   # <text> — sets MIG_TRIM
+  MIG_TRIM="${1-}"
+  while [ "${MIG_TRIM# }" != "$MIG_TRIM" ]; do MIG_TRIM="${MIG_TRIM# }"; done
+  while [ "${MIG_TRIM% }" != "$MIG_TRIM" ]; do MIG_TRIM="${MIG_TRIM% }"; done
+}
+
+# The entry's own leading timestamp, or empty. Matched at the very start of the
+# entry and nowhere else: a UTC in the middle of a sentence is prose.
+mig_lead_utc() {   # <entry> — sets MIG_LEAD_UTC
+  MIG_LEAD_UTC=""
+  case "${1-}" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z*) MIG_LEAD_UTC="${1:0:20}" ;;
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]Z*)             MIG_LEAD_UTC="${1:0:17}" ;;
+  esac
+}
+
+# The row's `started` cell as an instant the log's grammar can read: the UTC it
+# already is, else midnight on the date it opens with, else empty — the live
+# register spells that column `2026-09-02`, `2026-09-04 ~15:30Z` and
+# `2026-09-13T17:41Z` in different rows.
+mig_started_utc() {   # <the started cell>
+  mig_trim "${1-}"
+  mig_lead_utc "$MIG_TRIM"
+  [ -n "$MIG_LEAD_UTC" ] && { printf '%s' "$MIG_LEAD_UTC"; return 0; }
+  case "$MIG_TRIM" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*) printf '%sT00:00Z' "${MIG_TRIM:0:10}" ;;
+  esac
+}
+
+# Everything a leading state word or timestamp can hide behind, stripped: the
+# register writes `**LIVE**`, `> RULING …` and `` `PAUSED` `` in the same column.
+mig_strip_lead() {   # <text> — sets MIG_LEAD
+  MIG_LEAD="${1-}"
+  while :; do
+    case "$MIG_LEAD" in
+      ' '*|'*'*|'_'*|'`'*|'>'*|'#'*) MIG_LEAD="${MIG_LEAD#?}" ;;
+      *) break ;;
+    esac
+  done
+  mig_lead_utc "$MIG_LEAD"
+  [ -n "$MIG_LEAD_UTC" ] && { MIG_LEAD="${MIG_LEAD#"$MIG_LEAD_UTC"}"; MIG_LEAD="${MIG_LEAD# }"; }
+  return 0
+}
+
+# Clause (e)'s test: does this entry RECORD A RULING? Case-folded, because the
+# register spells it `RULING`, `Ruling` and `RULINGS` in the same week.
+# A CHARACTER CLASS PER LETTER, which is how a `case` matches without regard to
+# case in POSIX shell — and it forks nothing, where the `tr` it replaces forked
+# once per entry. `RULINGS` is `RULING*` already.
+mig_is_ruling() {   # <entry>
+  mig_strip_lead "${1:0:64}"
+  case "$MIG_LEAD" in
+    [Rr][Uu][Ll][Ii][Nn][Gg]* | [Rr][Aa][Tt][Ii][Ff][Ii][Ee][Dd]*) return 0 ;;
+  esac
+  return 1
+}
+
+# The current state the last entry names, or empty. The word must END where the
+# state word ends — `LIVELY` is not `LIVE` — and `LANDING #<n>` keeps its number,
+# because Rule 6's reading of this cell is unchanged by Amendment 13 and is now
+# the whole of what the cell says at that moment.
+mig_lead_state() {   # <entry>
+  mig_strip_lead "${1:0:64}"
+  mls="$MIG_LEAD"
+  case "$mls" in
+    'LANDING #'*)
+      mls_n="${mls#LANDING #}"
+      mls_d=""
+      while :; do
+        case "$mls_n" in
+          [0-9]*) mls_d="$mls_d${mls_n:0:1}"; mls_n="${mls_n:1}" ;;
+          *) break ;;
+        esac
+      done
+      [ -n "$mls_d" ] && printf 'LANDING #%s' "$mls_d"
+      return 0 ;;
+    'HANDED OFF' | 'HANDED OFF'[!A-Za-z0-9]*) printf 'HANDED OFF'; return 0 ;;
+    LIVE    | LIVE[!A-Za-z0-9]*)    printf 'LIVE';    return 0 ;;
+    PAUSED  | PAUSED[!A-Za-z0-9]*)  printf 'PAUSED';  return 0 ;;
+    LANDED  | LANDED[!A-Za-z0-9]*)  printf 'LANDED';  return 0 ;;
+    ENDED   | ENDED[!A-Za-z0-9]*)   printf 'ENDED';   return 0 ;;
+    RETIRED | RETIRED[!A-Za-z0-9]*) printf 'RETIRED'; return 0 ;;
+  esac
+  return 0
+}
+
+# IS THIS CELL ALREADY CLAUSE (a)'s PHRASE? `<STATE> · <UTC> · <one line>` —
+# exactly three parts, the first one of the seven states (or the migration's own
+# `MIGRATED`) and the second an instant.
+#
+# WITHOUT THIS THE MIGRATION READS ITS OWN OUTPUT AS A DIARY. The phrase it
+# writes carries two ` · ` of its own, so "the cell holds a ` · ` entry" is true
+# of every row the moment it has been migrated, and clause (e)'s refusal —
+# *"it REFUSES to run when no cell holds a ` · ` entry, so a second run is a
+# no-op that says so"* — could never fire on a register that had just been
+# migrated. Measured: the second run re-split every migrated cell into three
+# entries and would have appended them to the logs again.
+mig_cell_is_phrase() {   # <cell>
+  mcp="${1-}"
+  case "$mcp" in *' · '*) : ;; *) return 1 ;; esac
+  mcp_a="${mcp%% · *}"; mcp_r="${mcp#* · }"
+  case "$mcp_r" in *' · '*) : ;; *) return 1 ;; esac
+  mcp_b="${mcp_r%% · *}"; mcp_c="${mcp_r#* · }"
+  case "$mcp_c" in *' · '*) return 1 ;; esac       # a fourth part is not the phrase
+  [ -n "$mcp_c" ] || return 1
+  case "$mcp_a" in
+    MIGRATED) : ;;
+    *) state_word_is_valid "$mcp_a" || return 1 ;;
+  esac
+  mig_lead_utc "$mcp_b"
+  [ -n "$mcp_b" ] && [ "$MIG_LEAD_UTC" = "$mcp_b" ] || return 1
+  return 0
+}
+
+# The workstation field of a migrated line — see the paragraph above.
+mig_row_ws() {   # <the workstation column>
+  mrw="${1%% / *}"
+  mrw="$(rstrip_spaces "$mrw")"
+  case "$mrw" in
+    '' | *[!A-Za-z0-9._-]*) printf 'unknown' ;;
+    *) printf '%s' "$mrw" ;;
+  esac
+}
+
+# A BLOCK OF LINES APPENDED WITH THE SAME PROOF `append_text_line` MAKES FOR
+# ONE. A lane's whole migrated history is appended in a single act — the alt is
+# one call per entry, and on the live register that is hundreds of full copies
+# of a log and hundreds of `1 line appended to …` notes for what is one write.
+# The proof is the stronger of the two `append_text_line` states: the file
+# afterwards must be exactly its old bytes followed by exactly this block.
+append_text_block() {   # <target> <block, lines separated by newlines>
+  atb_t="$1"; atb_b="$2"
+  [ -n "$atb_b" ] || return 0
+  ATB_TMPD="$(mktemp -d)"
+  atb_pre="$ATB_TMPD/pre"
+  cat -- "$atb_t" > "$atb_pre"
+  atb_before="$(wc -l < "$atb_pre" | tr -d ' ')"
+  atb_n="$(printf '%s\n' "$atb_b" | wc -l | tr -d ' ')"
+  printf '%s\n' "$atb_b" >> "$atb_t"        # >> FOLLOWS the symlink
+  atb_after="$(wc -l < "$atb_t" | tr -d ' ')"
+  [ "$atb_after" -eq "$((atb_before + atb_n))" ] ||
+    die "append changed line count by $((atb_after - atb_before)) where $atb_n lines were appended; inspect $atb_t" 5
+  { cat -- "$atb_pre"; printf '%s\n' "$atb_b"; } | cmp -s -- "$atb_t" - ||
+    die "append rewrote existing bytes; inspect $atb_t" 5
+  note "$atb_n lines appended to $atb_t"
+}
+
+# The act itself. `<1>` writes; `<0>` is the dry run, which reads exactly the
+# same things, reports exactly the same rows, and touches nothing.
+migrate_state_cells() {   # <1 = the act, 0 = the dry run>
+  msc_do="${1:-0}"
+  msc_utc="$(utc_now)"
+  msc_tmp="$(mktemp -d)"
+  mkdir -p "$msc_tmp/block"
+  : > "$msc_tmp/report"; : > "$msc_tmp/skips"; : > "$msc_tmp/cells"; : > "$msc_tmp/targets"
+  msc_arch_rel="${LANES_PREFIX}archive/LANES-pre-amendment-13-$msc_utc.md"
+  msc_arch="$LANES_DIR/archive/LANES-pre-amendment-13-$msc_utc.md"
+
+  # THE FETCH FIRST (R30), AND A CHECKOUT THAT IS BEHIND IS REFUSED. This one
+  # act rewrites every row of the register and appends to every lane's log in a
+  # single commit; made against a register that is not the published one, each
+  # of those rewrites is a conflict for `commit_push`'s rebase to resolve, and
+  # the one it cannot resolve costs the whole migration its atomicity.
+  log_sync
+  if [ "$NO_GIT" != 1 ] && have_remote_ref; then
+    msc_behind="$(git -C "$LANES_REPO" rev-list --count "HEAD..origin/$LANES_BRANCH" 2>/dev/null || printf '')"
+    case "$msc_behind" in
+      '' | 0) : ;;
+      *) die "this checkout is $msc_behind commit(s) behind origin/$LANES_BRANCH. The migration rewrites EVERY row and every lane's log in ONE commit, so it is made against the published register or not at all. Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run. Nothing was written." 2 ;;
+    esac
+  fi
+  refuse_dirty_checkout "migrate-state-cells" "$LANES_PATH"
+
+  # TWO ROWS FOR ONE LANE UNDER TWO CASES ARE 15(d)'s HAND MERGE, and both of
+  # them are skipped rather than migrated into one log under a name that means
+  # two rows.
+  msc_dups="$(awk '
+    substr($0,1,1) == "|" {
+      p1 = index($0, "`"); if (p1 == 0) next
+      r = substr($0, p1 + 1); p2 = index(r, "`"); if (p2 == 0) next
+      print tolower(substr(r, 1, p2 - 1))
+    }' "$LANES_FILE" | LC_ALL=C sort | LC_ALL=C uniq -d)"
+
+  msc_rows=0; msc_ok=0; msc_lines=0; msc_noted=0; msc_ruled=0; msc_nodot=0; msc_skipped=0
+  msc_before=0; msc_after=0
+
+  while IFS="$(printf '\t')" read -r msc_n msc_lane; do
+    [ -n "${msc_n:-}" ] || continue
+    msc_rows=$((msc_rows + 1))
+    msc_why=""
+    case "$msc_lane" in
+      '' | *[!A-Za-z0-9._-]* | .* | -*) msc_why="'$msc_lane' is not a lane name (letters, digits, . _ -), so it names no log this writer would create" ;;
+    esac
+    if [ -z "$msc_why" ] && [ -n "$msc_dups" ]; then
+      msc_low="$(lc "$msc_lane")"
+      while IFS= read -r msc_d; do
+        [ -n "$msc_d" ] || continue
+        [ "$msc_d" = "$msc_low" ] && msc_why="the register holds more than one row whose lane name is $msc_lane under some case — one lane is ONE lane (Amendment 15), and the two are merged by hand into one row (15(d)) before either is migrated"
+      done <<EOF
+$msc_dups
+EOF
+    fi
+    msc_row="$(sed -n -e "${msc_n}p" "$LANES_FILE")"
+    if [ -z "$msc_why" ]; then
+      msc_rc=0; row_split_state_cell "$msc_row" || msc_rc=$?
+      case "$msc_rc" in
+        0) : ;;
+        2) msc_why="its row carries $(row_sep_count "$msc_row") ' | ' separators where a seven-column row carries 6, so which text is the state cell is not knowable from the row (escape the literal pipe inside a cell as \\| by hand, commit it, and re-run)" ;;
+        *) msc_why="its row does not open with '|' and end with '|'" ;;
+      esac
+    fi
+    if [ -z "$msc_why" ]; then
+      mig_trim "$RSS_CELL"; msc_cell="$MIG_TRIM"
+      msc_head="$RSS_HEAD"; msc_tail="$RSS_TAIL"
+      case "$msc_cell" in
+        *' · '*) : ;;
+        *) msc_nodot=$((msc_nodot + 1)); continue ;;
+      esac
+      if mig_cell_is_phrase "$msc_cell"; then msc_nodot=$((msc_nodot + 1)); continue; fi
+    fi
+    if [ -z "$msc_why" ]; then
+      # The row's own columns, walked from the LEFT out of the head this split
+      # already proved reassembles: 3 is `<workstation> / <env> / <user>` and 4
+      # is `started (UTC)`.
+      msc_h="${msc_head#| }"
+      msc_h="${msc_h#* | }"                    # past the lane cell
+      msc_h="${msc_h#* | }"                    # past the session cell
+      msc_c3="${msc_h%% | *}"                  # workstation / env / user
+      msc_c4="${msc_h#* | }"; msc_c4="${msc_c4%% | *}"   # started (UTC)
+      msc_ws="$(mig_row_ws "$msc_c3")"
+      msc_started="$(mig_started_utc "$msc_c4")"
+      [ -n "$msc_started" ] || msc_started="$msc_utc"
+      msc_uuid=""
+      if row_split_session_cell "$msc_row"; then
+        msc_uuid="$(printf '%s\n' "$RSC_CELL" | uuids_in_cell | tail -n1)"
+      fi
+      [ -n "$msc_uuid" ] ||
+        msc_why="its session cell holds no transcript uuid, and the session field of an event line is a transcript uuid and only that (Amendment 7(b)) — a migrated line naming 'unknown' there is wrong for ever in an append-only file. Read the cell and set the row by hand instead: lanes-edit.sh set-row-state $msc_lane \"<STATE> · <one line>\""
+    fi
+    if [ -z "$msc_why" ]; then
+      # The lane's log, found whatever its case, and never created beside one
+      # this checkout has not pulled (Amendment 15, `ensure_log`'s own guard).
+      msc_pub=""; msc_prc=0
+      msc_pub="$(log_path_ci "$msc_lane")" || msc_prc=$?
+      if [ "$msc_prc" != 0 ]; then
+        msc_why="its object log is published twice under names that differ only by case (above) — 15(d)'s hand merge"
+      else
+        msc_loc="$(log_files_named_ci "$msc_lane")"
+        msc_ln="$(printf '%s' "$msc_loc" | grep -c . || :)"
+        if [ "$msc_ln" -gt 1 ]; then
+          msc_why="this checkout holds $msc_ln object logs for it whose names differ only by case — 15(d)'s hand merge"
+        elif [ "$msc_ln" = 1 ]; then
+          msc_lf="$msc_loc"; msc_rel="${LANES_LOG_PREFIX}${msc_loc##*/}"
+          [ "${msc_rel##*/}" = "${msc_pub##*/}" ] ||
+            msc_why="its object log is published as $msc_pub while this checkout has ${msc_rel##*/} — a case-only rename whose commit never landed. Pull first, or merge them (15(d))"
+        else
+          msc_rel="$msc_pub"; msc_lf="$LANES_LOG_DIR/${msc_pub##*/}"
+        fi
+      fi
+    fi
+    if [ -n "$msc_why" ]; then
+      msc_skipped=$((msc_skipped + 1))
+      printf '  %-26s %s\n' "$msc_lane" "$msc_why" >> "$msc_tmp/skips"
+      continue
+    fi
+
+    # THE ENTRIES, IN CELL ORDER — which is oldest first, because the cell grew
+    # by appending.
+    #
+    # SPLIT BY `awk`, IN ONE PASS, and not by `${cell#* · }` in a loop. That
+    # expansion is the shortest-prefix form: bash walks every prefix length in
+    # turn, so its cost is quadratic in the DISTANCE TO THE MATCH — cheap while
+    # the entries are short and ruinous for one long entry near the end of a
+    # 94,341-character cell. Measured on this bash, 2026-09-15: six of those
+    # expansions over a 95,000-character string with no match at all take 16
+    # seconds. One pass of `awk` is linear in the cell whatever the entries look
+    # like. A register row is ONE LINE, so an entry can hold no newline and a
+    # line of this stream is exactly an entry.
+    : > "$msc_tmp/block/$msc_n"
+    msc_en=0; msc_last=""
+    while IFS= read -r msc_e; do
+      mig_trim "$msc_e"; msc_e="$MIG_TRIM"
+      if [ -n "$msc_e" ]; then
+        msc_last="$msc_e"
+        mig_lead_utc "$msc_e"; msc_eutc="$MIG_LEAD_UTC"
+        msc_text="$msc_e"
+        if [ -n "$msc_eutc" ]; then
+          msc_t2="${msc_e#"$msc_eutc"}"; mig_trim "$msc_t2"; msc_t2="$MIG_TRIM"
+          # AN ENTRY THAT IS NOTHING BUT A TIMESTAMP KEEPS IT AS ITS TEXT: a
+          # line whose free text is empty is a line with a dangling ` — `, and
+          # this log is never rewritten.
+          [ -n "$msc_t2" ] && msc_text="$msc_t2"
+        else
+          msc_eutc="$msc_started"
+        fi
+        if mig_is_ruling "$msc_e"; then msc_verb=RULED; msc_ruled=$((msc_ruled + 1))
+        else                            msc_verb=NOTED; msc_noted=$((msc_noted + 1)); fi
+        printf '%s — lane %s, session %s@%s, %s, lane:%s — %s\n' \
+          "$msc_verb" "$msc_lane" "$msc_uuid" "$msc_ws" "$msc_eutc" "$msc_lane" "$msc_text" >> "$msc_tmp/block/$msc_n"
+        msc_en=$((msc_en + 1)); msc_lines=$((msc_lines + 1))
+      fi
+    done <<EOF
+$(printf '%s\n' "$msc_cell" | awk '{ gsub(/ · /, "\n"); print }')
+EOF
+    if [ "$msc_en" = 0 ]; then
+      msc_nodot=$((msc_nodot + 1)); rm -f -- "$msc_tmp/block/$msc_n"; continue
+    fi
+
+    # THE CELL IT BECOMES — clause (e): the state the LAST entry's leading verb
+    # names, where that verb is one of clause (a)'s, else `MIGRATED`.
+    msc_state="$(mig_lead_state "$msc_last")"
+    [ -n "$msc_state" ] || msc_state=MIGRATED
+    msc_new="$msc_state · $msc_utc · history in $msc_rel"
+    printf '%s%s%s%s%s%s%s\n' "$msc_n" "$US" "$msc_new" "$US" "$msc_head" "$US" "$msc_tail" >> "$msc_tmp/cells"
+    printf '%s%s%s%s%s\n' "$msc_n" "$US" "$msc_lf" "$US" "$msc_rel" >> "$msc_tmp/targets"
+    printf '  %-26s %4s entries  %7s chars → %s\n' \
+      "$msc_lane" "$msc_en" "${#msc_cell}" "$msc_new" >> "$msc_tmp/report"
+    msc_ok=$((msc_ok + 1))
+    msc_before=$((msc_before + ${#msc_cell})); msc_after=$((msc_after + ${#msc_new}))
+  done <<EOF
+$(awk 'substr($0,1,1) == "|" {
+         p1 = index($0, "`"); if (p1 == 0) next
+         r = substr($0, p1 + 1); p2 = index(r, "`"); if (p2 == 0) next
+         printf "%d\t%s\n", NR, substr(r, 1, p2 - 1)
+       }' "$LANES_FILE")
+EOF
+
+  # ------------------------------------------------------------- the report
+  printf 'migrate-state-cells — %s (lane-collision-protocol Amendment 13(e))\n' \
+    "$( [ "$msc_do" = 1 ] && printf 'THE ACT' || printf 'DRY RUN, nothing is written' )"
+  printf '  register : %s\n' "$LANES_FILE"
+  printf '  archive  : %s\n' "$msc_arch_rel"
+  printf '  rows     : %s read · %s to migrate · %s already one phrase · %s skipped\n' \
+    "$msc_rows" "$msc_ok" "$msc_nodot" "$msc_skipped"
+  if [ "$msc_ok" -gt 0 ]; then
+    printf '\n  lane                      entries    cell now → the phrase it becomes\n'
+    cat -- "$msc_tmp/report"
+  fi
+  if [ "$msc_skipped" -gt 0 ]; then
+    printf '\n  SKIPPED — nothing is written for these rows and their cells keep every\n'
+    printf '  character, so a re-run after each is settled migrates exactly it:\n'
+    cat -- "$msc_tmp/skips"
+  fi
+  printf '\n  log lines: %s (%s NOTED, %s RULED) into %s log(s)\n' "$msc_lines" "$msc_noted" "$msc_ruled" "$msc_ok"
+  printf '  state cells: %s characters → %s\n' "$msc_before" "$msc_after"
+
+  # THE REFUSAL CLAUSE (e) ASKS FOR, and it is the same answer in both modes:
+  # a register whose cells hold no ` · ` entry has already been migrated (or
+  # never needed it), and a second run is a no-op that says so.
+  if [ "$msc_ok" = 0 ]; then
+    msc_left=""
+    [ "$msc_skipped" -gt 0 ] && msc_left=" The $msc_skipped row(s) listed above still hold theirs and are the ones this act cannot take; each is settled by the line beside it, and a re-run then migrates exactly those."
+    die "no cell holds a ' · ' entry this act can migrate: every row is already in Amendment 13(a)'s shape, or holds one phrase and no history.$msc_left The migration is ONE act and this was not it — nothing was written." 2
+  fi
+  if [ "$msc_do" != 1 ]; then
+    printf '\n  DRY RUN — nothing was written. Make it the one act with:  lanes-edit.sh migrate-state-cells --yes\n'
+    printf '  (Amendment 13(e): one commit carrying the archive, the logs and the register.)\n'
+    return 0
+  fi
+
+  # --------------------------------------------------------------- the write
+  #
+  # EVERYTHING BELOW IS ONE COMMIT OR NONE. The archive, the appended logs and
+  # the rewritten rows are made on disk first and published by the single
+  # `commit_push` at the end, so a refusal in the middle of them — a log whose
+  # append could not be proved, a row whose rewrite moved more than one line —
+  # leaves this checkout DIRTY and the register unpublished, which is what
+  # `git status` then shows and `git checkout -- lanes` undoes whole. Nothing is
+  # half-published, because the commit is the only thing that publishes; and a
+  # re-run on a checkout still holding that half is REFUSED by
+  # `refuse_dirty_checkout` above rather than made twice.
+  acquire_lock
+  handle_preexisting "$LANES_PATH"
+  mkdir -p -- "$LANES_DIR/archive" || die "could not create $LANES_DIR/archive — the archive is written BEFORE anything else changes, so nothing has been" 6
+  # A `>` REDIRECT, WHICH FOLLOWS A SYMLINK, and the source read whole first:
+  # this copy is the file's state before this act and it is one of the three
+  # places clause (e) keeps it.
+  cat -- "$LANES_FILE" > "$msc_arch" || die "could not write the archive $msc_arch — nothing else has been touched" 6
+  cmp -s -- "$LANES_FILE" "$msc_arch" || die "the archive $msc_arch is not byte for byte the register it was copied from; nothing else has been touched" 5
+  note "archive written: $msc_arch_rel"
+
+  msc_paths=("$LANES_PATH" "$msc_arch_rel")
+  while IFS="$US" read -r msc_n msc_lf msc_rel; do
+    [ -n "${msc_n:-}" ] || continue
+    if [ ! -f "$msc_lf" ]; then
+      mkdir -p -- "$LANES_LOG_DIR"
+      msc_base="${msc_lf##*/}"
+      printf '# lane %s — object log (lane-collision-protocol Amendment 7)\n' "${msc_base%.md}" > "$msc_lf"
+      note "created $msc_lf"
+    fi
+    append_text_block "$msc_lf" "$(cat -- "$msc_tmp/block/$msc_n")"
+    msc_paths+=("$msc_rel")
+  done <<EOF
+$(cat -- "$msc_tmp/targets")
+EOF
+
+  while IFS="$US" read -r msc_n msc_new msc_head msc_tail; do
+    [ -n "${msc_n:-}" ] || continue
+    replace_line "$msc_n" "$msc_head$msc_new $msc_tail"
+  done <<EOF
+$(cat -- "$msc_tmp/cells")
+EOF
+
+  msc_msg="LANES(migrate@$WS): Amendment 13(e) — $msc_ok state cells become one phrase; $msc_lines lines ($msc_noted NOTED, $msc_ruled RULED) into the lanes' own logs; pre-migration register archived"
+  commit_push "$msc_msg" "${msc_paths[@]}"
+  msc_rc=$?
+  release_lock
+  return "$msc_rc"
+}
+
 # ---------------------------------------------------------------- subcommands
 
 cmd="${1-}"
@@ -6771,7 +7430,7 @@ shift || :
 # front of every launch may not refuse, and one that answers nothing for a
 # workstation nobody configured is telling the truth.
 case "$cmd" in
-  append-row-status|replace-in-row|append-session-id|append-line|add-row|commit|log|claim|release)
+  replace-in-row|append-session-id|append-line|add-row|set-row-state|migrate-state-cells|commit|log|claim|release)
     ws_why="$(lanes_workstation_why "$WS_SOURCE")"
     [ -z "$ws_why" ] || die "$ws_why" 2 ;;
 esac
@@ -6818,25 +7477,63 @@ case "$cmd" in
       "$lane" "$n" "${#row}" "${row:0:200}" "$row_tail"
     ;;
 
+  # AMENDMENT 13(a) — RETIRED, AND THE REFUSAL IS THE WHOLE OF IT.
+  #
+  # This verb appended to the `state` cell and never replaced it, which is how a
+  # column defined as the lane's CURRENT STATE came to hold a diary: 96,228
+  # characters in one row, 7,016 in this lane's own after a single day, in a
+  # table nobody can read in the table. The cell can never grow again because
+  # the act that grew it is gone — not because every caller remembered.
+  #
+  # IT REFUSES BEFORE THE WORKSTATION GUARD AND BEFORE THE REGISTER IS EVEN
+  # LOOKED FOR (it is out of the dispatcher's writer list above), so a caller on
+  # a machine that has neither still learns what to run instead. Two acts
+  # replace it, and they are two because the cell held two things: the STATE,
+  # which is one phrase a person reads, and the NARRATIVE, which is history and
+  # belongs in the lane's own append-only log.
   append-row-status)
-    lane="${1-}"; text="${2-}"
-    [ -n "$lane" ] && [ -n "$text" ] || die "usage: append-row-status <lane> \"<text>\"" 2
-    # AMENDMENT 15 — THE ROW'S OWN SPELLING, BEFORE THE LOCK AND BEFORE THE
-    # EDIT. `row_line` below finds the same line either way; this is what the
-    # COMMIT SUBJECT and every message here then carry, and a register whose
-    # rows differ only by case is refused here rather than edited at random.
+    die "append-row-status is RETIRED (lane-collision-protocol Amendment 13(a), in force 2026-09-13T21:08:36Z). The state cell is ONE PHRASE — '<STATE> · <UTC> · <one line>' — and every write REPLACES it, so that the column that says where a lane IS can never grow into a diary again.
+  the STATE:      LANES_LANE=${1:-<lane>} lanes-edit.sh set-row-state ${1:-<lane>} \"<STATE> · <one line>\"
+                  ($ROW_STATES; the line at most $ROW_STATE_CAP characters)
+  the NARRATIVE:  LANES_LANE=${1:-<lane>} lanes-edit.sh log NOTED lane:${1:-<lane>} \"<what the lane did, found, launched, left>\"
+  a RULING:       LANES_LANE=${1:-<lane>} lanes-edit.sh log RULED lane:${1:-<lane>} [→ <object>] \"<Brett Heap's words, verbatim>\"
+  read it back:   lanes-edit.sh history ${1:-<lane>} [--since <UTC>]
+Nothing was written." 2
+    ;;
+
+  # AMENDMENT 13(a) — THE ONE WRITER OF THE STATE CELL. It stamps the UTC itself
+  # and REPLACES the cell, so what the column holds after this call is exactly
+  # `<STATE> · <UTC> · <one line>` and nothing of what it held before. The
+  # history is not lost by that: it is in git, and — after `migrate-state-cells`
+  # — in the lane's own log, which is the file built to hold it.
+  set-row-state)
+    lane="${1-}"; phrase="${2-}"
+    [ -n "$lane" ] && [ -n "$phrase" ] || die "usage: set-row-state <lane> \"<STATE> · <one line>\"   (STATE: $ROW_STATES)" 2
+    [ "$#" -le 2 ] || die "set-row-state takes TWO arguments: the lane, and the phrase as ONE quoted string — set-row-state <lane> \"<STATE> · <one line>\". Got $# ; the shell has split the phrase, so quote it." 2
+    # EVERY TEST OF THE PHRASE IS MADE FIRST — before the resolver, before the
+    # lock and before the row is read — so a refusal leaves this checkout, the
+    # mutex and the register exactly as it found them.
+    row_state_check "$phrase"
+    # AMENDMENT 15 — the row's own spelling, which is what the commit subject
+    # and every message below then carry.
     lane="$(canon_lane "$lane")" || exit 2
     acquire_lock; handle_preexisting
     n="$(row_line "$lane")" || exit 2
     row="$(sed -n -e "${n}p" "$LANES_FILE")"
-    trimmed="$(rstrip_spaces "$row")"
-    case "$trimmed" in
-      *"|") : ;;
-      *) die "row $n does not end with '|' — refusing to append a status" 2 ;;
+    srs_rc=0; row_split_state_cell "$row" || srs_rc=$?
+    case "$srs_rc" in
+      0) : ;;
+      2) die "lane $lane's row (line $n) carries $(row_sep_count "$row") ' | ' separators where a seven-column row carries 6, so WHICH TEXT IS THE STATE CELL is not knowable from the row: read from the left this write lands on one cell, read from the right on another, and one of those readings overwrites the row's handoff path. Nothing was written. A Markdown table carries a literal pipe ESCAPED — \`\\|\` — so find the unescaped ' | ' inside a cell of that row, escape it by hand with an allowed tool, commit it (\`LANES_LANE=$lane lanes-edit.sh commit \"escape a literal pipe in row $lane\"\`), and re-run." 2 ;;
+      *) die "lane $lane's row (line $n) does not open with '|' and end with '|', so it is not a row this writer can take apart. Nothing was written." 2 ;;
     esac
-    body="$(rstrip_spaces "${trimmed%|}")"
-    replace_line "$n" "$body · $text |"
-    msg="LANES($lane@$WS): status · $text"
+    srs_new="$ROW_STATE · $(utc_now) · $ROW_STATE_LINE"
+    srs_was="$(rstrip_spaces "$RSS_CELL")"
+    replace_line "$n" "$RSS_HEAD$srs_new $RSS_TAIL"
+    note "state cell REPLACED: ${#srs_was} chars → ${#srs_new} chars"
+    # THE WHOLE LINE IN THE SUBJECT, as `append-row-status` put its whole text
+    # there: the line is capped at 240 characters by the act above, and a
+    # subject cut at 72 loses exactly the tail that says what happened.
+    msg="LANES($lane@$WS): state · $ROW_STATE · $ROW_STATE_LINE"
     [ -n "$PRE_DIRTY_LANES" ] && msg="$msg + sweeps uncommitted edit to row $PRE_DIRTY_LANES"
     commit_push "$msg"
     ;;
@@ -6993,8 +7690,8 @@ case "$cmd" in
       if [ "$ar_n" -gt 0 ]; then
         ar_more=""
         [ "$ar_n" -gt 1 ] && ar_more=" Those $ar_n rows differ only by case and are themselves the refusal: merge them into one row first (Amendment 15(d))."
-        ar_where="Use append-row-status / replace-in-row on the row that is there."
-        [ "$ar_ln" = 0 ] && ar_where="That row is on origin/$LANES_BRANCH and this checkout has not pulled it, so adding one here would make two the moment this push rebases. Pull first — \`git -C $LANES_REPO pull --rebase\` — then use append-row-status / replace-in-row on the row that is there."
+        ar_where="Use set-row-state / replace-in-row on the row that is there."
+        [ "$ar_ln" = 0 ] && ar_where="That row is on origin/$LANES_BRANCH and this checkout has not pulled it, so adding one here would make two the moment this push rebases. Pull first — \`git -C $LANES_REPO pull --rebase\` — then use set-row-state / replace-in-row on the row that is there."
         die "lane '$lane_new' already has a row, spelled $(printf '%s\n' "$ar_all" | tr '\n' ' ')— a lane name is ONE name under any case (Amendment 15(a)), so a row under another case IS that lane's row and this would be a second one. $ar_where$ar_more" 2
       fi
     fi
@@ -7032,6 +7729,21 @@ case "$cmd" in
       fi
     fi
     commit_push "LANES(${LANES_LANE:-unknown}@$WS): $msg"
+    ;;
+
+  # AMENDMENT 13(e) — THE MIGRATION. A DRY RUN unless `--yes` is passed, and one
+  # act on Brett Heap's word when it is (ratified decision O3). Everything it
+  # does is argued above `migrate_state_cells`.
+  migrate-state-cells)
+    msc_yes=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --yes) msc_yes=1; shift ;;
+        --)    shift ;;
+        *)     die "usage: migrate-state-cells [--yes]   —  without --yes it is a DRY RUN that writes nothing; '$1' is neither" 2 ;;
+      esac
+    done
+    migrate_state_cells "$msc_yes"
     ;;
 
   log)
@@ -7099,7 +7811,42 @@ case "$cmd" in
     lane="$(canon_lane "$lane")" || exit 2
     home="$(resolve_home "$lane" "$home_override")" || exit $?
     obj="$(canon_object "$obj_raw" "$home")" || exit 2
-    if is_lane_verb "$verb"; then
+    # AMENDMENT 13(b) — THE TWO NARRATIVE VERBS, AND WHAT EACH OF THEM TAKES.
+    # `NOTED` is a status note about the lane; `RULED` is a ruling recorded
+    # VERBATIM, with the object it bears on as its payload where there is one.
+    # Both are lane-kind lines in Amendment 7's own `STARTED`/`RESUMED` form —
+    # object `lane:<lane>`, one token — and neither is a transition, so no
+    # reader's state moves because one was written. They are the cell's old
+    # diary, in the file built to hold it.
+    if is_note_verb "$verb"; then
+      is_lane_object "$obj" ||
+        die "'$verb' is a lane-kind line (Amendment 13(b)): its object is the LANE itself, lane:$lane, and not $obj. The object a ruling BEARS ON is its payload: LANES_LANE=$lane lanes-edit.sh log RULED lane:$lane → $obj \"<the words, verbatim>\"" 2
+      if [ -z "$text" ]; then
+        case "$verb" in
+          RULED) die "a RULED with no words is not a ruling. The text is the ruling, VERBATIM — it is what Amendment 13(b) put this verb in the log for: LANES_LANE=$lane lanes-edit.sh log RULED lane:$lane${payload:+ → $payload} \"<Brett Heap's words, verbatim>\"" 2 ;;
+          *)     die "a NOTED with no text is a note with nothing in it. The text is what the line is FOR — it is the narrative the state cell used to carry (Amendment 13(a)): LANES_LANE=$lane lanes-edit.sh log NOTED lane:$lane \"<what the lane did, found, launched, left>\"" 2 ;;
+        esac
+      fi
+      case "$verb" in
+        NOTED)
+          [ -z "$payload" ] ||
+            die "NOTED takes no payload: it is a note about the lane, and Amendment 13(b) gives it the object and the free text alone. Put it in the text — or, if it is a ruling about an object, write it as one: LANES_LANE=$lane lanes-edit.sh log RULED lane:$lane → $payload \"<the words>\"" 2 ;;
+        RULED)
+          if [ -n "$payload" ]; then
+            # `→` AND NOT `←`, because clause (b) spells the form `lane:<lane>[ →
+            # <object>]` and the arrow is the only thing that says which way the
+            # ruling points. AND THE OBJECT IS CANONICALISED like every other
+            # object this file writes (R20): a ruling recorded against `#29` in a
+            # lane whose home is `opensoft/openRepoTools` is a ruling about
+            # `opensoft/openRepoTools#29`, and one recorded against a legacy org
+            # spelling is a second key for one issue — which is the defect
+            # Amendment 7(a)'s alias table exists for.
+            [ "$ref" = '→' ] ||
+              die "RULED's payload is the object the ruling bears on and it is introduced by → (Amendment 13(b)): 'log RULED lane:$lane → <object> \"<the words>\"'. '←' points the other way and means nothing here." 2
+            payload="$(canon_object "$payload" "$home")" || exit 2
+          fi ;;
+      esac
+    elif is_lane_verb "$verb"; then
       is_lane_object "$obj" || die "'$verb' is a lane verb: its object is lane:<name>, not $obj" 2
     else
       ! is_lane_object "$obj" || die "'$verb' is an object verb: lane:<name> is not one of its objects" 2
@@ -7737,6 +8484,54 @@ EOF
     printf '%s\n' "$lt_out"
     ;;
 
+  # AMENDMENT 13(b) — THE DIARY THE CELL USED TO BE, IN THE FILE BUILT TO HOLD
+  # IT. A lane's `NOTED` and `RULED` lines in order — FILE order, which is the
+  # order that lane wrote them (R14), and never a sort on the UTC field: two
+  # workstations share no clock and this one has been measured jumping ±25s.
+  # `--since` is the one filter, and it compares the two instants after padding
+  # the register's older minute-precision form to seconds, so a line stamped
+  # `…T20:31Z` is on the right side of a `--since …T20:30:00Z`.
+  #
+  # 8 IS "THIS LANE HAS WRITTEN NO NARRATIVE", which a lane that has never taken
+  # a note and a lane with no log at all both are; a read that could not be made
+  # is never 8 (R22) and leaves through the die above it.
+  history)
+    lane=""; hi_since=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --since)   hi_since="${2-}"; [ -n "$hi_since" ] || die "--since needs a UTC instant" 64; shift 2 ;;
+        --since=*) hi_since="${1#--since=}"; [ -n "$hi_since" ] || die "--since needs a UTC instant" 64; shift ;;
+        --)        shift ;;
+        -*)        die "unknown option '$1' for history (history <lane> [--since <UTC>])" 64 ;;
+        *)         [ -z "$lane" ] || die "history takes ONE lane: history <lane> [--since <UTC>]" 64; lane="$1"; shift ;;
+      esac
+    done
+    [ -n "$lane" ] || die "usage: history <lane> [--since <UTC>]" 64
+    check_lane_name "$lane"
+    case "$hi_since" in
+      '') : ;;
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]Z | [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) : ;;
+      *) die "--since takes a UTC instant spelled as this log spells it, YYYY-MM-DDTHH:MM[:SS]Z — '$hi_since' is not one" 64 ;;
+    esac
+    log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    hi_lines=""; hi_rc=0
+    hi_lines="$(lane_log_events "$lane")" || hi_rc=$?
+    case "$hi_rc" in
+      0) : ;;
+      2) exit 2 ;;
+      *) die "history could not read lane $lane's log (exit $hi_rc). That is NOT 'this lane has written no narrative' — a read that failed is never an answer (Amendment 7(d))." 1 ;;
+    esac
+    hi_out="$(printf '%s\n' "$hi_lines" | awk -F"$US" -v since="$hi_since" '
+      function pad(u) { return (length(u) == 17) ? substr(u, 1, 16) ":00Z" : u }
+      $3 == "NOTED" || $3 == "RULED" {
+        if (since != "" && pad($1) < pad(since)) next
+        printf "%-20s  %-5s  %s%s\n", $1, $3, ($8 != "" ? $8 " — " : ""), $9
+      }')"
+    [ -n "$hi_out" ] || exit 8
+    printf '%s\n' "$hi_out"
+    ;;
+
   # THE LANE'S LAST LANE-KIND LINE, in FILE ORDER — `<verb><TAB><utc><TAB><session><TAB><payload>`.
   # One caller: `lane-handoff --late`, which may only write the record a swap
   # never left where that line is still a `STARTED` or a `RESUMED` older than
@@ -8108,6 +8903,6 @@ EOF
     ;;
 
   *)
-    die "unknown subcommand '$cmd' (verify-row|append-row-status|replace-in-row|append-session-id|append-line|add-row|commit|log|claim|release|who|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|canon-lane|resolve-home)" 2
+    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|migrate-state-cells|commit|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|canon-lane|resolve-home)" 2
     ;;
 esac

@@ -137,8 +137,15 @@ cd ~/projects/xFactory
 grep -n 'my-lane' LANES.md
 ./lanes-edit.sh verify-row my-lane          # first 200 / last 200 chars of the row
 
-# append to a row's state cell (the common case)
-./lanes-edit.sh append-row-status my-lane "LANDED PR #123 → abc1234 (2026-09-09T01:00Z)"
+# SET a row's state cell — the common case, and it REPLACES the cell
+# (Amendment 13(a)). The UTC is stamped by the writer.
+lanes-edit.sh set-row-state my-lane "LANDED · PR #123 merged as abc1234"
+
+# the NARRATIVE — what the lane did, found, launched, left — goes to the
+# lane's own log, never to the row (Amendment 13(b))
+LANES_LANE=my-lane lanes-edit.sh log NOTED lane:my-lane "rebased on main; the flake is the fixture's clock"
+LANES_LANE=my-lane lanes-edit.sh log RULED lane:my-lane → opensoft/openRepoTools#29 "Ratify as drafted"
+lanes-edit.sh history my-lane --since 2026-09-13T00:00Z
 
 # change one exact substring inside a row (must match exactly once).
 # The optional 4th argument becomes the commit subject — use it to record WHY.
@@ -384,17 +391,27 @@ manual.
 5. the row, through `lanes-edit.sh`: `add-row` when there is none under ANY
    case — it refuses one that exists under another and names it, and the
    liveness check above reaches the RESUME branch for that row rather than this
-   one (Amendment 15(a)) — state `STARTING`, session id `pending — set by the
-   session's first act`,
+   one (Amendment 15(a)) — state `LIVE · <UTC> · <verb> by <uuid> (lane <lane>)
+   — lane-start on <ws>: row created`, which is Amendment 13(a)'s phrase from
+   birth (it was the bare word `STARTING` while the cell was a diary), session
+   id `pending — set by the session's first act`,
    `<workstation> / <profile> / <user>` per Rule 10, handoff path
    `handoffs/<estate>/session-handoff-<date>-lane-<LANE>.md` — and
-   `append-row-status` when there is one. Never a hand edit. **That status is
+   `set-row-state` when there is one. Never a hand edit. **That state is
    Amendment 6(c)'s stamp**, written here rather than owed to the session
-   afterwards:
+   afterwards — and since Amendment 13(a) it REPLACES the cell rather than
+   being appended to it, with the UTC stamped by the writer:
 
    ```text
-   <UTC> RESUMED by <uuid> (lane <lane>) — lane-start on <ws>: window renamed, launching <the command>
+   LIVE · <UTC> · RESUMED by <uuid> (lane <lane>) — lane-start on <ws>: window renamed, launching <the command>; dir <dir>; window <ref>
    ```
+
+   **The launch clause comes first and clause (c)'s `dir` and `window` follow
+   it**, because the line is capped at 240 characters (Amendment 13, ratified
+   decision O1) and a line long enough to be cut must lose what a reader can
+   look up elsewhere: `dir` and `window` are sub-fields of this same act's
+   `STARTED`/`RESUMED` line in the lane's own log and columns of `lanes`, while
+   the exact command this run launched is written down nowhere else.
 
    The **tail states what happened**, so a `--no-launch` run ends `window
    renamed, no launch` and never claims to have launched anything.
@@ -441,9 +458,11 @@ rows is the same column.
 
 ### `lane-end <lane>`
 
-Appends `<UTC> lane-end on <workstation>: window closing; NOTHING IN FLIGHT`
-to the row, and **refuses (exit 2) while the row says something is still
-open**: if the last `LANDING` or `CLAIMED` in the state cell has no `LANDED`
+Sets the row's state cell to `ENDED · <UTC> · lane-end on <workstation>:
+window closing; NOTHING IN FLIGHT` — `RETIRED` under `--retire`, which since
+Amendment 13(a) is the same write and not a second one — and **refuses (exit 2)
+while the row says something is still open**: if the last `LANDING` or
+`CLAIMED` in the state cell has no `LANDED`
 or `RELEASED` after it, the lane still owns something and Rule 6 is holding
 other lanes' merges. It prints the offending excerpt and the two ways out —
 post the `LANDED`/`RELEASED` first, or `--force`, which ends the lane and says
@@ -579,6 +598,7 @@ unambiguously at the first space after it; payload sub-fields are separated by
 | issue | `CLAIMED`, `RELEASED`, `TAKEOVER ← <stale claim URL>`, `CLOSED → owner/repo#pr` |
 | PR | `OPENED ← owner/repo#i [owner/repo#j …]`, `LANDING`, `LANDED → <sha>`, `WITHDRAWN`, `CLOSED` |
 | lane | `STARTED`, `PAUSED`, `RESUMED`, `ENDED`, `RETIRED` |
+| narrative | `NOTED`, `RULED [→ <object>]` (Amendment 13(b)) |
 | race | `CLAIM-LOST → lane:<other>` |
 
 There is no `MERGED`: Rule 6's `LANDED → <sha>` is already the post-merge line.
@@ -590,7 +610,12 @@ STARTED — lane openRepoProject-1, session 09dd34d1-3afe-43a1-88fc-c33c92c08088
 ```
 
 `PAUSED`, `RESUMED`, `ENDED` and `RETIRED` carry the same `lane:<name>` object
-and no payload.
+and no payload. So do Amendment 13(b)'s `NOTED` and `RULED` — and `RULED` takes
+one optional payload, the object the ruling bears on: `RULED — lane <lane>,
+session <uuid>@<ws>, <UTC>, lane:<lane> → opensoft/openRepoTools#29 — <the
+words, verbatim>`. **Neither is a transition**, so neither ever changes a lane's
+state on any object or on itself: `who`, `lane-end`, `lanes` and `swapped` skip
+them exactly as they skip `STARTED` and `RESUMED`.
 
 **The `<lane>` field and the `lane:<name>` object are matched
 case-insensitively, and a writer writes the register row's spelling into both**
@@ -1333,7 +1358,7 @@ Installing it is user-local configuration, not part of this repository:
 **No new script and no new path.** `swapped`, `session-start`,
 `window-session` and `sibling-filter` are subcommands of the writer that already
 exists, and every one of them is a **read**: AGENTS.md rule 1's list of writers
-(`append-row-status`, `replace-in-row`, `append-line`, `add-row`, `log`,
+(`set-row-state`, `replace-in-row`, `append-line`, `add-row`, `log`,
 `claim`, `release`, `commit`) and rule 8's list of tooling paths are both
 unchanged by this amendment.
 
@@ -1798,6 +1823,101 @@ safety property, and here it would be the opposite of the mechanism, since
 `cmd || true` exits 0 for every code the command can produce and a guard that
 refuses nothing silently is the exact state this amendment exists to end.
 
+## The row is current state; the log is history (Amendment 13)
+
+**In force — ratified by Brett Heap 2026-09-13T21:08:36Z, verbatim "Ratify as
+drafted (Recommended)".** The `state` column was defined as a cell and used as
+a diary. Measured the day the amendment was drafted: the register was
+1,141,283 bytes over 46 rows, its longest row 96,228 characters, and one lane's
+cell 7,016 characters after a single day of appending — three different things
+in one column (the lane's CURRENT state, which Rule 6 reads; a running
+narrative; and rulings quoted verbatim), appended forever with ` · `, never
+replaced, in a table nobody can read in the table.
+
+### The cell is one phrase, and every write replaces it
+
+```text
+<STATE> · <UTC> · <one line>
+```
+
+`STATE` is one of `LIVE`, `PAUSED`, `LANDING #<n>`, `LANDED`, `ENDED`,
+`RETIRED`, `HANDED OFF`. **Rule 6 is unchanged** and is now the whole of what
+the cell says at that moment. The line is at most **240 characters** (ratified
+decision O1) and carries neither a `|` (it would forge a cell boundary) nor a
+second ` · ` (it would read back as a fourth part of the phrase).
+
+```sh
+lanes-edit.sh set-row-state my-lane "LANDING #123 · CI green; waiting on review"
+```
+
+The UTC is stamped by the writer, never passed in. `append-row-status` is
+**RETIRED** and refuses, naming this and the two verbs below: the cell can
+never grow again because the act that grew it is gone, not because every caller
+remembered.
+
+**Which text is the state cell** is decided by splitting the row on ` | `, and
+a seven-column row has exactly six of those separators. A row with more has a
+` | ` inside one of its cells, and the two readings of it — count six from the
+left, take the last cell from the right — disagree about which text to
+overwrite, so **that row is refused by name** rather than written at a guess.
+Measured on the live register 2026-09-15 (52 rows): 50 split cleanly, and the
+two that do not are cured by escaping the literal pipe as `\|`, the way a
+Markdown table carries one, in a hand edit wrapped by `lanes-edit.sh commit`.
+A bare `|` that is *not* spelled ` | ` is harmless and stays inside its cell.
+
+### The narrative goes to the lane's own log
+
+Two verbs join Amendment 7's, in the same file, with the same grammar:
+
+```text
+NOTED — lane <lane>, session <uuid>@<ws>, <UTC>, lane:<lane> — <what the lane did, found, launched, left>
+RULED — lane <lane>, session <uuid>@<ws>, <UTC>, lane:<lane>[ → <object>] — <Brett Heap's words, verbatim>
+```
+
+```sh
+LANES_LANE=my-lane lanes-edit.sh log NOTED lane:my-lane "rebased on main; the flake is the fixture's clock"
+LANES_LANE=my-lane lanes-edit.sh log RULED lane:my-lane → opensoft/openRepoTools#29 "Ratify as drafted (Recommended)"
+lanes-edit.sh history my-lane [--since <UTC>]
+```
+
+`NOTED` takes no payload; `RULED` takes one, the object it bears on, and that
+object is canonicalised through `repos.tsv` like every other object this
+tooling writes. **Neither is a transition of anything**, so neither ever moves
+a lane's state: `who`, `lane-end`, Amendment 11's `lanes` and `swapped` skip
+them exactly as they skip `STARTED` and `RESUMED`. `history` prints them in
+**file order**, which is the order the lane wrote them (R14), and exits 8 for a
+lane that has written none.
+
+### The migration — one act, on Brett Heap's word
+
+```sh
+lanes-edit.sh migrate-state-cells            # DRY RUN: reads everything, writes nothing
+lanes-edit.sh migrate-state-cells --yes      # the one act
+```
+
+Each row's cell is split on ` · ` into entries, oldest first. Each becomes one
+log line: `RULED` where the entry begins with `RULING`, `RULINGS` or
+`RATIFIED`, else `NOTED`; the entry's own leading timestamp becomes the line's
+UTC (a row's `started` where it carries none), the session is the **last uuid**
+of the row's session cell, and the workstation is the first `/`-separated part
+of the row's own column. The cell is then replaced by the state the **last**
+entry's leading verb names, else by `MIGRATED · <UTC> · history in
+lanes/log/<lane>.md`.
+
+**One commit** carries the archive `lanes/archive/LANES-pre-amendment-13-<UTC>.md`,
+every log it appended to, and the register — so the narrative exists three
+times over (git history, the archive, the logs), which is the posture
+Amendment 3 took after the 2026-09-08 loss. It **refuses** when no cell holds a
+` · ` entry it can migrate, so a second run is a no-op that says so.
+
+A row it cannot take is **skipped and named**, never half-written, and its cell
+keeps every character so that a re-run after the row is settled migrates
+exactly it. Five reasons: the row is ambiguous (above); its session cell holds
+no transcript uuid, so the line could only name `unknown` in the one field an
+append-only log must never carry it in; two rows differ only by case
+(Amendment 15(d)); the lane's log is two files or is published under a spelling
+this checkout does not have; or the first cell is not a lane name.
+
 ## The handoff (Amendment 17)
 
 **In force 2026-09-14T09:45:33Z** (revision 2, `/ctx` included), with Amendment
@@ -2013,7 +2133,7 @@ After **any** hand edit made with an allowed tool (python read/write, `sed -i
 --follow-symlinks`, a `>>` append), run
 `LANES_LANE=<lane> ./lanes-edit.sh commit "<message>"` **immediately** — don't
 leave it sitting uncommitted while you do something else. Prefer
-`append-row-status` / `replace-in-row` / `append-line` over a hand edit in the
+`set-row-state` / `replace-in-row` / `append-line` over a hand edit in the
 first place: they commit in the same call, so there is no window where the
 edit sits uncommitted at all.
 

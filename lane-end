@@ -33,9 +33,11 @@
 # ended too — their last act is exactly what this is for.
 #
 # OPTIONS
-#   --retire            also mark the state cell RETIRED <UTC> — the lane is
-#                       not coming back, as opposed to a window that is only
-#                       closing for the night
+#   --retire            write the state cell as RETIRED rather than ENDED — the
+#                       lane is not coming back, as opposed to a window that is
+#                       only closing for the night. Since Amendment 13(a) that
+#                       is the SAME write as the closing one (the cell is one
+#                       phrase that set-row-state replaces), not a second act
 #   --retire <pid|uuid> A DIFFERENT ACT, and it ends nothing: the DOOR to
 #                       Amendment 6(d)'s retire act for a live FORK of this
 #                       lane's transcript (Amendment 11 clause (k) rule (e) —
@@ -73,8 +75,11 @@
 #                       `lanes-edit.sh transcript-holders <uuid>` lists every
 #                       live process carrying one transcript, with its window,
 #                       its kind, its profile and which of the three it is.
-#   --state-was <text>  the exact text --retire should replace, for a row whose
-#                       state cell does not open with a single state word
+#   --state-was <text>  ACCEPTED AND IGNORED since Amendment 13(a). It named the
+#                       exact text `--retire` had to replace, back when the cell
+#                       was the row's history and retiring meant flipping the
+#                       one word it opened with. The cell is now one phrase and
+#                       the closing write carries RETIRED itself
 #   --force             end the lane even though its object log still shows
 #                       something open, and say so in the lines written
 #   --home owner/repo   the lane's home repo, for a PRE-CUTOVER lane whose log
@@ -1047,13 +1052,37 @@ elif [ "$in_flight" = 1 ]; then
     note "lane $LANE still has something in flight — the last $cell_word in its state cell has no LANDED or RELEASED after it:"
     note "  …${excerpt}…"
     note "the fix, in the order the protocol wants it:"
-    note "  lanes-edit.sh append-row-status $LANE \"LANDED — PR #<n> → <merge sha> (<UTC>)\"      # or RELEASED — …"
+    note "  lanes-edit.sh set-row-state $LANE \"LANDED · PR #<n> merged as <merge sha>\"      # or ENDED · …"
     note "  $prog $LANE$rflag"
     note "or end it anyway and record that you did: $prog $LANE --force$rflag"
     exit 2
   fi
   step "--force: ending with an open $cell_word in the state cell; the line written says so"
 fi
+
+# --- BEGIN shared one-line cut (lane-collision-protocol Amendment 13(a)) ---
+# BYTE-IDENTICAL IN `lane-start`, `lane-end` AND `lane-handoff`, the three
+# commands that write a row's state cell — the same trade the four lane helpers
+# already make for their workspace resolver, and for the same reason: a drifted
+# copy is TWO ANSWERS to one question, and "how long may this line be, and where
+# may it be cut" is one question.
+#
+# The cell's line is capped at 240 characters (ratified decision O1). A writer
+# that refused a line one character over would cost the row its stamp or its
+# closing write, so it is CUT here instead — and the last partial WORD goes with
+# it, which is what makes the cut safe: `${s:0:n}` counts BYTES wherever the
+# locale is not a UTF-8 one, and a byte offset can land inside the `—`, `·` and
+# `→` these lines are full of. Cutting back to the last space removes whatever
+# fragment the offset left. 230 and not 240, so the ` ...` marker fits inside
+# the cap however the two count.
+cut_to_line() {   # <line>
+  ctl="$1"
+  [ "${#ctl}" -gt 230 ] || { printf '%s' "$ctl"; return 0; }
+  ctl="${ctl:0:230}"
+  case "$ctl" in *' '*) ctl="${ctl% *}" ;; esac
+  printf '%s ...' "$ctl"
+}
+# --- END shared one-line cut ---
 
 # --------------------------------------------------------------- the write
 
@@ -1072,48 +1101,52 @@ ws_why="$(lanes_workstation_why "${ws_pair##*	}")"
 [ -z "$ws_why" ] || die "$ws_why" 2
 # The register line names the source it actually read (the log for a lane that
 # has one, the state cell for a pre-cutover lane) and the objects it read there.
-status_text="$utc lane-end on $ws: window closing; NOTHING IN FLIGHT"
+# AMENDMENT 13(a) — THE CLOSING WRITE IS THE WHOLE CELL, AND IT CARRIES THE
+# STATE WORD. The `state` column holds ONE PHRASE, `<STATE> · <UTC> · <one
+# line>`, and `set-row-state` stamps the UTC itself, so this builds the line
+# alone. `RETIRED` and `ENDED` are both clause (a) states, which is why
+# `--retire` no longer needs a second write of its own — see below.
+state_word=ENDED; (( retire )) && state_word=RETIRED
+state_line="lane-end on $ws: window closing; NOTHING IN FLIGHT"
 if [ "$in_flight" = 1 ] && [ "$have_log" = 1 ]; then
-  status_text="$utc lane-end on $ws: window closing; ENDED WITH --force while this lane's own object log still showed open: $open_objs"
+  # THE COUNT AND NOT THE LIST. Amendment 13(a)'s line is ONE line about the
+  # lane's state, and a lane forced closed over eleven open objects names them
+  # in 300 characters — measured in the suite's own `repoE-1`, which is exactly
+  # the row this write then could not make. The objects are in the ENDED line of
+  # the lane's own log, one section below, and in the refusal this `--force`
+  # overrode; the row says how many there were and where they are.
+  state_line="lane-end on $ws: window closing; ENDED WITH --force while this lane's own object log still showed $(printf '%s\n' "$open_list" | grep -c .) object(s) open; they are in lanes/log/$LANE.md"
 elif [ "$in_flight" = 1 ]; then
-  status_text="$utc lane-end on $ws: window closing; ENDED WITH --force while the state cell of $cell_source still showed an open $cell_word — read the cell above this line before trusting it"
+  state_line="lane-end on $ws: window closing; ENDED WITH --force while the state cell of $cell_source still showed an open $cell_word; read the archived cell before trusting it"
 fi
+# The cell's own separator never appears INSIDE the line, and a line over
+# Amendment 13's cap is cut here rather than costing the row its whole closing
+# write — the object log one section along carries the full text either way.
+state_line="${state_line// · /; }"
+state_line="$(cut_to_line "$state_line")"
 
 if (( dry_run )); then
-  plan "lanes-edit.sh append-row-status $LANE \"$status_text\""
+  plan "lanes-edit.sh set-row-state $LANE \"$state_word · $state_line\""
 else
-  LANES_LANE="$LANE" "$LANES_EDIT" append-row-status "$LANE" "$status_text"
-  step "row closed"
+  LANES_LANE="$LANE" "$LANES_EDIT" set-row-state "$LANE" "$state_word · $state_line"
+  step "row closed: $state_word"
 fi
 
 # ------------------------------------------------------------------ --retire
 
-# `--retire` marks the cell RETIRED, and does it by REPLACING THE STATE WORD
-# the cell opens with, not the whole cell: the cell is the row's history and
-# the register exists to keep it. A row written by lane-start opens with
-# `STARTING`, which is unique in the row by construction; anything else may
-# not be, and `replace-in-row` refuses unless the old text occurs exactly
-# once — which is why `--state-was` exists.
+# `--retire` USED TO BE A SECOND WRITE, and Amendment 13(a) is what removed it.
+# The cell was the row's history, so retiring a lane meant REPLACING THE STATE
+# WORD it opened with and leaving everything after that word alone —
+# `replace-in-row` with an anchor that had to occur exactly once in the row,
+# which is what `--state-was` existed to supply when the derived word did not.
+# The cell is now ONE PHRASE that every write replaces, so the closing write
+# above already carries `RETIRED` as its state and there is nothing left for a
+# second act to flip. `--state-was` is accepted and ignored, because a person
+# with the old habit must not be refused mid-teardown.
 if (( retire )); then
-  old="$state_was"
-  if [ -z "$old" ]; then
-    head_seg="${state_cell%% · *}"
-    old="${head_seg%% *}"
-    old="${old%[,;:.]}"
-  fi
-  [ -n "$old" ] || die "the state cell is empty, so there is no state word to replace — pass --state-was \"<exact text>\"" 2
-  new="RETIRED $utc"
-  if (( dry_run )); then
-    plan "lanes-edit.sh replace-in-row $LANE \"$old\" \"$new\" \"retired by lane-end on $ws\""
-  elif LANES_LANE="$LANE" "$LANES_EDIT" replace-in-row "$LANE" "$old" "$new" "retired by lane-end on $ws"; then
-    step "state cell now opens with $new"
-  else
-    note "the register refused to replace '$old' — it is not unique in that row."
-    note "pick an exact, unique opening text from the cell and re-run:"
-    note "  $prog $LANE --retire --state-was \"<exact text>\""
-    note "(the closing status line above was written; only the RETIRED mark is missing)"
-    exit 2
-  fi
+  [ -z "$state_was" ] ||
+    note "--state-was is no longer needed: Amendment 13(a) made the state cell one phrase that set-row-state REPLACES, so the closing write above already carries RETIRED. It was ignored."
+  (( dry_run )) || step "state cell reads RETIRED"
 fi
 
 # ------------------------------------------- the lane's own object log line
