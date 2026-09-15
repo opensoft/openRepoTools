@@ -2020,6 +2020,17 @@ fi
 # lines above and has asked nobody anything since; a second fetch on every lane
 # start would be a network round-trip bought for a window that is already this
 # narrow.
+# AND A DRY RUN HAS NOTHING TO RE-READ, BECAUSE IT DID NOTHING (Copilot round 3
+# on opensoft/openRepoTools#83). `request-handoff --dry-run` prints its plan and
+# answers 0 WITHOUT releasing anything, so an unconditional re-read here sees the
+# binding still standing and refuses — and `lane-start --dry-run
+# --request-handoff`, whose whole job is to print the plan, could never print
+# one. A plan is a statement about what WOULD happen; the fence that protects
+# the first act belongs to the run that takes it.
+if [ "$bind_recheck" = 1 ] && (( dry_run )); then
+  plan "read the binding again before the rename, and refuse if the lane moved while this run was taking it"
+  bind_recheck=0
+fi
 if [ "$bind_recheck" = 1 ]; then
   : > "$LS_TMP"
   bind_again=""; bind_again_rc=0

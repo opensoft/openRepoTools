@@ -780,19 +780,37 @@ LANES_FILE="${LANES_FILE:-$LANES_DIR/LANES.md}"
 WS_PAIR="$(lanes_workstation_pair)"
 WS="${WS_PAIR%%	*}"
 WS_SOURCE="${WS_PAIR##*	}"
-# AMENDMENT 18(a) — THE THREE FACTS BENEATH THE WORKSTATION'S NAME, read once
-# per run and AFTER `WS`, because the `host` fallback inside a container IS the
+# AMENDMENT 18(a) — THE THREE FACTS BENEATH THE WORKSTATION'S NAME, probed here
+# for the READS and probed AGAIN by the writer for every line it appends, and
+# always AFTER `WS`, because the `host` fallback inside a container IS the
 # workstation's name. Every one of them is a live read of this process's own
 # environment and kernel: nothing here is ever taken from a record.
-HOST_PAIR="$(lanes_host_pair)"
-LANES_HOST_NAME="${HOST_PAIR%%	*}"
-LANES_HOST_SOURCE="${HOST_PAIR##*	}"
-OS_PAIR="$(lanes_os_pair)"
-LANES_OS_NAME="${OS_PAIR%%	*}"
-LANES_OS_SOURCE="${OS_PAIR##*	}"
-CONTAINER_PAIR="$(lanes_container_pair)"
-LANES_CONTAINER_NAME="${CONTAINER_PAIR%%	*}"
-LANES_CONTAINER_SOURCE="${CONTAINER_PAIR##*	}"
+LANES_HOST_NAME=""; LANES_HOST_SOURCE=""
+LANES_OS_NAME=""; LANES_OS_SOURCE=""
+LANES_CONTAINER_NAME=""; LANES_CONTAINER_SOURCE=""
+# ONE FUNCTION PROBES ALL THREE, AND THE WRITER CALLS IT AGAIN AT THE WRITE
+# (Copilot round 3 on opensoft/openRepoTools#83). A process-start snapshot is
+# what every reader wants — the values cannot change under a short read — but
+# the sentence this file makes about them is *"read live at every write and
+# never cached"*, and a `request-handoff` can sit in a five-minute wait between
+# its start and a later act. The probe is two forks; making the words true costs
+# nothing and leaves nothing for a reader to have to reason about.
+lanes_binding_probe() {
+  HOST_PAIR="$(lanes_host_pair)"
+  LANES_HOST_NAME="${HOST_PAIR%%	*}"
+  LANES_HOST_SOURCE="${HOST_PAIR##*	}"
+  OS_PAIR="$(lanes_os_pair)"
+  LANES_OS_NAME="${OS_PAIR%%	*}"
+  LANES_OS_SOURCE="${OS_PAIR##*	}"
+  CONTAINER_PAIR="$(lanes_container_pair)"
+  LANES_CONTAINER_NAME="${CONTAINER_PAIR%%	*}"
+  LANES_CONTAINER_SOURCE="${CONTAINER_PAIR##*	}"
+  # The lower-cased cache the locality rule reads is derived from them, so it
+  # is dropped here rather than left saying what the probe used to say.
+  LANES_HOST_LC=""; LANES_WS_LC=""; LANES_CONTAINER_LC=""
+  return 0
+}
+lanes_binding_probe
 NO_GIT="${LANES_NO_GIT:-0}"
 LOCK="$LANES_DIR/.lanes-edit.lock"
 LOCK_HELD=0
@@ -4338,6 +4356,12 @@ pause_subfields_check() {   # <payload>
 binding_subfields_add() {   # <payload> ; prints the payload with the three appended
   bsa_pay="${1-}"
   bsa_drop=""
+  # READ LIVE AT THE WRITE, which is what this clause says and what the
+  # 2026-09-15T12:17Z measurement means: a container's `hostname` names THAT
+  # container for as long as it exists and names nothing afterwards. The globals
+  # are a process-start convenience for the reads; the line about to be appended
+  # to an append-only log takes the probe again.
+  lanes_binding_probe
   for bsa_f in host os container; do
     case "$bsa_f" in
       host)      bsa_v="$LANES_HOST_NAME" ;;

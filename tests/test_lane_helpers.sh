@@ -9672,6 +9672,17 @@ has  "…naming the container it is bound in" "$err" "in container cloud-bench o
 has  "…and offering the WATCH, which starts nothing and takes nothing" "$err" "or WATCH it where it is"
 export LANE_TMUX_WINDOWS="$bind_save_lanewins"
 
+# A DRY RUN PRINTS THE PLAN AND DOES NOTHING, INCLUDING THE RE-READ (Copilot
+# round 3). `request-handoff --dry-run` answers 0 without releasing anything, so
+# an unconditional re-read saw the binding still standing and refused — and the
+# one run whose whole job is to print the plan could never print one.
+run env -C "$BIND_DIR" LANES_SESSION="$BIND_REQ_ID" "$START" --dry-run --request-handoff --wait 5 repoBind-13 </dev/null
+is   "\`lane-start --dry-run --request-handoff\` prints a plan instead of refusing on a release it did not make" "$rc" 0
+has  "…the request it would make" "$err" "PLAN: "
+has  "…and the re-read it would make before the rename" "$err" "read the binding again before the rename"
+is   "…having written nothing to that lane's log" \
+     "$(git -C "$WIP" show origin/main:lanes/log/repoBind-13.md | grep -c 'HANDOFF-REQUESTED' || :)" 0
+
 echo "-- clause (i): a LIVE lane's one act is the ATTACH, printed filled in"
 
 # From the question Brett Heap asked 2026-09-14T13:47Z, verbatim *"how do i
