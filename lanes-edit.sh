@@ -111,10 +111,16 @@
 #   hook's JSON, takes the WINDOW from tmux, the SESSION's own name from the
 #   live record and the ROW from `origin/<branch>`, and where the three are not
 #   one name it REFUSES THE PROMPT (exit 2) with the triple and the one command
-#   that cures it. THE LOCK types `/rename <lane>` into this pane where the name
-#   has merely drifted; a PERSON's rename to another lane is an OFFER, answered
-#   `yes` or `no` at the next prompt. It is silent and cheap where the three
-#   agree, silent outside `$PROJECTS_ROOT` and silent for a subagent's prompt.
+#   that cures it. THE LOCK types `/rename <lane>` into this pane for the one
+#   drift that is not a decision — a name that differs from the row's only by
+#   CASE, which is the same lane under Amendment 15. EVERY OTHER READABLE
+#   MISMATCH IS AN OFFER OF THREE CHOICES, answered `1` (allow this lane for
+#   this transcript), `2` (adjust the lane to the session) or `3` (adjust the
+#   session to the lane, which types the `/rename`) at the next prompt; an
+#   answer to a question the state has moved past is dropped rather than acted
+#   on, and the unreadable, ambiguous, duplicate and superseded states still
+#   refuse outright. It is silent and cheap where the three agree, silent
+#   outside `$PROJECTS_ROOT` and silent for a subagent's prompt.
 #
 # AMENDMENT 18(h) — one live process per transcript
 #   lanes-edit.sh transcript-holders <uuid>      # every live process carrying it
@@ -6302,7 +6308,7 @@ guard_run() {   # <the hook's JSON, on stdin already read>
   # ---- AMENDMENT 18(h) — ONE LIVE PROCESS PER TRANSCRIPT, ASKED BEFORE THE
   # PENDING OFFER IS ANSWERED. Clause (h) refuses *"every prompt in a process
   # that shares its session id with another live one"*, and THE ANSWER TO THIS
-  # GUARD'S OWN QUESTION IS A PROMPT: a `yes` consumed here runs `lane-start`,
+  # GUARD'S OWN QUESTION IS A PROMPT: a `2` consumed here runs `lane-start`,
   # writes a register row and appends a uuid to a cell, out of a process that
   # may not be writing anything at all — and the offer is held per SESSION ID,
   # so the second process answers the first one's question. The offer is KEPT
@@ -6482,8 +6488,8 @@ guard_lock_rename() {   # <pane> <what is wrong with the name, as a clause>
 # honest; RUNNING it is not. `lane-start --no-launch --dir '<path>' legacy-ui`
 # refuses on a directory that does not exist, and the offer that ran it would
 # ask the same question at every prompt afterwards (Copilot round 1 on this PR).
-# So the offer SAYS what it cannot fill in and the `yes` refuses instead of
-# running it, with the offer kept so that `no` still answers.
+# So the offer SAYS what it cannot fill in and choice `2` refuses instead of
+# running it, with the offer kept so that `1` and `3` still answer it.
 guard_args_filled() {   # <lane>
   gaf_a="$(lane_start_args "$1")"
   case "$gaf_a" in *'<path>'*) return 1 ;; esac
@@ -6550,7 +6556,7 @@ guard_allow_active() {   # <offer file>
 
 # ------------- THE UUID INTO THE NEW LANE'S CELL, WHICH `lane-start` MAY NOT DO
 #
-# CLAUSE (h) RULE 2 NAMES THE END STATE AND RULE 3 REPEATS IT: after a `yes`,
+# CLAUSE (h) RULE 2 NAMES THE END STATE AND RULE 3 REPEATS IT: after choice 2,
 # *"window X, session X, ROW X STAMPED WITH THIS UUID"*. `lane-start --no-launch`
 # performs every other part of that and CANNOT perform this one, by a fence that
 # is right and stays: its step 3b VETO 1 — Amendment 11 clause (d) rule 1 —
@@ -6558,7 +6564,7 @@ guard_allow_active() {   # <offer file>
 # belongs to `$ga_from`'s. So it mints a fresh id for the new lane instead and
 # the person's own transcript is left out of the cell the next resume follows.
 #
-# MEASURED, AND IT IS A LOOP AND NOT A BLEMISH. In the suite: `yes` moved the
+# MEASURED, AND IT IS A LOOP AND NOT A BLEMISH. In the suite: choice `2` moved the
 # window to `repoGD-2`, whose row then read `STARTED by 7a01ae69…` while this
 # session was `aaaa0012-1111…`. The NEXT prompt therefore finds a lane window
 # whose row does not name this transcript — the last row of the (b) table — and
@@ -6566,12 +6572,13 @@ guard_allow_active() {   # <offer file>
 # reason and changes nothing. A blocking hook that refuses for ever, on a state
 # it created by obeying the person, is the worst outcome this surface has.
 #
-# SO THE GUARD MAKES THE LAST WRITE ITSELF, and only after the person's `yes`.
+# SO THE GUARD MAKES THE LAST WRITE ITSELF, and only after the person's `2`.
 # That is not a hole in veto 1: the veto exists for the take nobody asked for —
 # *"`lane-start openXfactory-5` typed from a window named `openRepoProject-1`"*,
 # Evidence 2(b) — and clause (h) rule 4's own limit is that the lock *"never
-# moves a uuid between rows WITHOUT the person's `yes`"*. Here there is one, on
-# the record, answered at this very prompt.
+# moves a uuid between rows WITHOUT the person's `yes`"*. Here there is one —
+# choice `2` is that yes in the numbered offer — on the record, answered at this
+# very prompt.
 #
 # THE ANCHOR DISCIPLINE IS `lane-start`'s, unvaried: the anchor is the PUBLISHED
 # last id, so a checkout whose copy of the row is older than the one that landed
@@ -6603,7 +6610,7 @@ guard_bind_uuid() {   # <the lane moved to> <the lane moved from>
     # wrote by hand, and `pending — set by the session's first act` for a row
     # `lane-start` has just CREATED with neither a minted uuid nor one it was
     # allowed to take (`lane-start:1914`). The second is exactly the state a
-    # `yes` to a brand-new lane can leave — veto 1 refuses this window's uuid
+    # `2` to a brand-new lane can leave — veto 1 refuses this window's uuid
     # because the source row still records it, and a run that minted none has
     # nothing else to write — so anchoring only on the first left the cure for
     # the loop unreachable in the one case the loop most needs it (Copilot
@@ -6844,7 +6851,7 @@ ssb_name_line() {   # <session uuid> <lane, or empty>
   # TO UNDO. Clause (f) types the rename for (h)1's case — DRIFT, a name that is
   # no lane's — while (h) rule 2 makes a record whose `nameSource` is `user`,
   # whose name is another lane's, and whose `nameSince` is later than this
-  # window's binding an INSTRUCTION, answered `yes` or `no` at the next prompt.
+  # window's binding an INSTRUCTION, answered `1`, `2` or `3` at the next prompt.
   # This hook runs on every startup, resume, clear and fork, so typing over such
   # a name would erase the person's choice before the guard could put the
   # question (Copilot round 4 on this PR): a rename, then a `/clear`, and the

@@ -2386,7 +2386,19 @@ fi
 # and put it back at the end of the cell below. A live session being bound in
 # this window still wins: step 3b has first-hand evidence and must never be
 # replaced by an older handoff.
-if [ -z "$rec_file" ] && [ -z "$harness_sid" ] && [ "$AGENT" = claude ] \
+#
+# AND "BEING BOUND" IS TWO VARIABLES, NOT ONE (Copilot round 2 on
+# openRepoTools#87). `$harness_sid` is set only where step 3b TAKES a session
+# the row does not name; where the window's live session IS the row's, step 3
+# has already said so with `holder_here` and `$harness_sid` stays empty — so
+# that test alone let this fallback fire on the one state it was written to
+# stand off: the lane live in THIS window, its transcript not under this
+# directory (the harness has been seen to keep one under another `cwd` key),
+# and an older PAUSED record beside it. It would have `--resume`d the older
+# conversation over the person's own, in the window they are sitting in. Both
+# halves of the evidence are asked for now.
+if [ -z "$rec_file" ] && [ -z "$harness_sid" ] && (( ! holder_here )) \
+   && [ "$AGENT" = claude ] \
    && [ "$RECORDED_AGENT" = claude ] && (( ! fresh )); then
   paused_sid=""; paused_rc=0
   paused_sid="$("$LANES_EDIT" lane-transcript "$LANE" 2>/dev/null)" || paused_rc=$?

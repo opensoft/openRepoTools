@@ -1665,9 +1665,8 @@ every command is filled in, never `<repo> <n>`.
 |---|---|
 | the window is not a lane, the session name parses as `<repo>-<n>` | `lane-start --no-launch <repo> <n>` — **the 2026-09-10 case**, which ran for three days unrecorded |
 | neither name is a lane | refuses and says so: WHICH lane this work is is yours to name, and a guard that guessed would bind a window to a row nobody chose |
-| the window is a lane, this uuid is the row's last id, the session name differs | **THE THREE-CHOICE OFFER** (below) |
-| … and the session name differs from the row's **only by case** | the lock renames it to the ROW's spelling — a lane name is ONE name under any case (Amendment 15) |
-| … and the session name is ANOTHER lane's, set by a **person** after this window's binding | **THE OFFER** (below) |
+| the window is a lane, this uuid is the row's last id, the session name differs **only by case** | the lock renames it to the ROW's spelling — a lane name is ONE name under any case (Amendment 15), so there is nothing here for a person to decide |
+| … and the session name differs by more than case — a non-lane word, a `<lane> (N)` title, another lane's name, no name at all | **THE THREE-CHOICE OFFER** (below), and NOTHING is typed until a person picks `3` |
 | the window is a lane, this uuid is IN the cell but not last | a SUPERSEDED transcript: exit, `lane-start <repo> <n>`, which resumes the id the row ends on |
 | the window is a lane, this uuid is in NO row | the harness minted a transcript with nobody acting: `lane-start --no-launch <repo> <n>`, the recording act, no relaunch |
 | the window's name matches TWO rows differing only by case | refuses naming both spellings and the merge, which is a person's act (Amendment 15(d)) |
@@ -1677,12 +1676,20 @@ every command is filled in, never `<repo> <n>`.
 
 Under the projects root the session name is **not the person's to set freely; it
 is the lane's** (clause (h), Brett Heap's D5). `lane-start` sets it at every
-launch (`--name "$LANE"` on all three branches), and where it drifts to a
-non-lane word the guard **renames it for you**: it types `/rename <lane>` into
-this session's own tmux pane, which is the only path a running session's name
-has (M1 — the docs name `--name` at launch, `/rename`, and `Ctrl+R` in the
-picker, and nothing else). That one prompt is refused so the rename lands first;
-send it again.
+launch (`--name "$LANE"` on all three branches), and **the lock is what answers
+the one drift that is not a decision**: a name that differs from the row's only
+by CASE, which is the same lane under Amendment 15. There the guard renames it
+for you — it types `/rename <lane>` into this session's own tmux pane, which is
+the only path a running session's name has (M1 — the docs name `--name` at
+launch, `/rename`, and `Ctrl+R` in the picker, and nothing else). That one
+prompt is refused so the rename lands first; send it again.
+
+**Every wider mismatch is the offer below and nothing is typed into the pane
+until a person picks `3`.** A session called `openrepotools-b9`, a
+`<lane> (2)` title, another lane's name, no name at all: which lane this
+conversation is is a decision, and the guard asks rather than renaming on the
+person's behalf. What follows about the PANE — which one, and whether it may be
+typed into at all — is the mechanism both the lock and choice `3` use.
 
 The pane's **current command is asked first** and nothing is typed into a pane
 running anything else — `claude` and nothing else, which is M1's own word:
@@ -1702,7 +1709,8 @@ pane, asked of tmux rather than guessed.
 
 A `<lane> (N)` title is a **mismatch** (ratified decision D4) and the suffix is
 evidence: it is exactly what a rename into a title something else still holds
-mints, so another holder of that name was live. The note names
+mints, so another holder of that name was live. That reading is printed **with
+the offer's three choices**, where this state now arrives, and it names
 `lanes-edit.sh forks <lane>` and `lane-end <lane> --retire <pid>` — never a
 `kill`, because stopping a process is the person's act and stays theirs
 (Amendment 11 clause (k) rule (e)).

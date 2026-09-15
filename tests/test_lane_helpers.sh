@@ -7957,7 +7957,7 @@ ag_seed_log() {   # <lane> <payload tail>
   git -C "$WIP" push -q origin main
   return 0
 }
-for ag_l in repoAG-1 repoAG-2 repoAG-3 repoAG-4 repoAG-5; do ag_seed_handoff "$ag_l"; done
+for ag_l in repoAG-1 repoAG-2 repoAG-3 repoAG-4 repoAG-5 repoAG-6; do ag_seed_handoff "$ag_l"; done
 git -C "$WIP" add -- handoffs/repoAG >/dev/null 2>&1
 git -C "$WIP" commit -q -m "seed the repoAG handoffs"
 git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
@@ -7968,11 +7968,13 @@ ag_row repoAG-3 "harness \`$HF2_ID\`"
 ag_row repoAG-4 "harness \`$HF2_ID\`"
 AG_STALE_ID="a17a0007-7777-4000-8000-a17a00077777"
 ag_row repoAG-5 "harness \`$HF2_ID\` → harness \`$AG_STALE_ID\`"
+ag_row repoAG-6 "harness \`$HF2_ID\` → harness \`$AG_STALE_ID\`"
 ag_seed_log repoAG-1 "agent codex; transcript $CODEX_ID"
 ag_seed_log repoAG-2 "agent codex; transcript $CODEX_ID"
 ag_seed_log repoAG-3 "agent claude; transcript $HF2_ID"
 ag_seed_log repoAG-4 "agent claude; transcript $HF2_ID"
 ag_seed_log repoAG-5 "agent claude; transcript $HF2_ID"
+ag_seed_log repoAG-6 "agent claude; transcript $HF2_ID"
 
 # The row can end in a harness/process id whose transcript was never minted
 # while the last PAUSED record still names the exact Claude transcript the
@@ -7992,6 +7994,25 @@ has   "…saying why the PAUSED transcript superseded the dead row-last id" "$er
 has   "…and restoring that exact id to the end of the session cell for the next launch" \
       "$(grep '^| `repoAG-5`' "$LANES")" \
       "→ harness \`$HF2_ID\` (transcript uuid; restored from the lane's last PAUSED record)"
+# …AND THE LANE LIVE IN THIS WINDOW IS NEVER REPLACED BY IT (Copilot round 2 on
+# openRepoTools#87). `$harness_sid` is empty in TWO states and only one of them
+# is "no live session is being bound here": where the window's own session IS
+# the row's, step 3 says so with `holder_here` and step 3b takes nothing, so
+# that test alone let this fallback fire on the very shape it was written to
+# stand off — the lane live in THIS window, its transcript not under this
+# directory, an older PAUSED record beside it — and would have opened the older
+# conversation over the person's own.
+write_record_a12 "$sessions_dir/ag-live.json" "$AG_STALE_ID" "$LIVE_PID" "$live_start" \
+  interactive "agsess:@41.%41" "repoAG-6" user "$GD_OLD_MS"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="agsess:@41" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$AG_DIR" repoAG-6 --no-launch
+is    "the lane live in THIS window is not replaced by an older PAUSED transcript" "$rc" 0
+has   "…step 3 having found that session holding the lane here" "$err" "already holds repoAG-6"
+hasnt "…so the PAUSED id is NOT resumed over it" "$out" "--resume $HF2_ID"
+hasnt "…and the recovery does not even speak" "$err" "has no transcript here"
+has   "…the launch being a new session named for the lane, as it is without a transcript" "$out" "--name repoAG-6"
+rm -f "$sessions_dir/ag-live.json"
+
 # AND THE FIXTURE IS TAKEN BACK OUT. Every repoAG row records this same id, so a
 # transcript left lying in this directory would make `--agent claude with no
 # transcript here` a resume by id — which is the case below, and it is about a
