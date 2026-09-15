@@ -3308,7 +3308,18 @@ LANES_ALIAS_ERR=""
 lane_alias_text() {
   if [ -n "$LANES_ALIAS_CACHE" ]; then printf '%s\n' "$LANES_ALIAS_CACHE"; return 0; fi
   lat_c="${SE_CACHE_FILE:+$SE_CACHE_FILE.aliases}"
-  if [ -n "$lat_c" ] && [ -s "$lat_c" ]; then cat -- "$lat_c"; return 0; fi
+  # THE CACHE'S OWN READ IS CHECKED (Copilot round 5 on openRepoTools#81). The
+  # `return 0` under an unchecked `cat` was the fail-closed rule with a hole in
+  # it: a cache this process wrote and cannot now read would answer EMPTY with
+  # status 0, and a former lane name would resolve as new — which is the one
+  # outcome every other branch of this function exists to refuse.
+  if [ -n "$lat_c" ] && [ -s "$lat_c" ]; then
+    cat -- "$lat_c" || {
+      LANES_ALIAS_ERR="the cached copy at $lat_c could not be read"
+      return 5
+    }
+    return 0
+  fi
   lat_t=""; LANES_ALIAS_ERR=""
   if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_ALIASES_PATH" 2>/dev/null; then
     lat_t="$(git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_ALIASES_PATH" 2>/dev/null)" || {
@@ -7847,6 +7858,12 @@ EOF
       if [ -L "$rl_log_old" ]; then
         die "lane $rl_old's object log at $rl_log_old is a SYMLINK. An append-only log is written in place — the RENAMED line would go through the link into whatever is at the far end, and the commit would record the link — so this rename is not made over one. Replace it with the file itself and re-run. Nothing was written." 2
       fi
+      # AND A REGULAR FILE, NOT MERELY NOT-A-SYMLINK (Copilot round 5). `ls`
+      # lists a FIFO like any other name, and the snapshot's `cat` of one BLOCKS
+      # — for ever, holding this lane's mutex — where a refusal costs a second.
+      if [ ! -f "$rl_log_old" ]; then
+        die "lane $rl_old's object log at $rl_log_old is not a regular file. An append-only log is read whole for the rollback copy and appended to in place, and neither can be done to that — a FIFO there would block this write, and its lock, indefinitely. Nothing was written." 2
+      fi
     fi
     if have_remote_ref; then
       rl_pub="$(log_path_ci "$rl_old")" || die "lane $rl_old's object log is published twice (above), and one lane is ONE lane under any case: its log is ONE file (Amendment 15). Merge them by hand (15(d)) and re-run. Nothing was written." 2
@@ -7869,6 +7886,32 @@ EOF
     # git staged only the link path.
     if [ -L "$LANES_ALIASES_TSV" ]; then
       die "$LANES_ALIASES_PATH is a SYMLINK at $LANES_ALIASES_TSV. The alias row is appended in place and a redirect follows a link, so it would be written at the far end while this commit recorded the link — and the alias is the one thing that makes a renamed lane's old name resolve for ever (Amendment 16(e)). Replace it with the file itself and re-run. Nothing was written." 2
+    fi
+    if [ -e "$LANES_ALIASES_TSV" ] && [ ! -f "$LANES_ALIASES_TSV" ]; then
+      die "$LANES_ALIASES_PATH at $LANES_ALIASES_TSV is not a regular file. The alias row is appended in place and the table is read whole for the rollback copy — a FIFO there would block this write, and its lock, indefinitely. Nothing was written." 2
+    fi
+    # AN EXISTING UNTRACKED TABLE IS SOMEBODY'S HAND EDIT (Copilot round 5 on
+    # openRepoTools#81). `refuse_dirty_checkout` reads `tracked_dirty`, which
+    # deliberately omits untracked files — so before this estate's FIRST rename
+    # an untracked `lanes/aliases.tsv` walked past the guard and its contents
+    # were appended to and committed inside this lane's rename. The only writer
+    # of that file is this command, and this command commits what it writes, so
+    # an untracked one was written by hand or left by a run that died.
+    if [ "$NO_GIT" != 1 ] && [ -f "$LANES_ALIASES_TSV" ] \
+       && ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$LANES_ALIASES_PATH" >/dev/null 2>&1; then
+      die "$LANES_ALIASES_PATH exists here and git does not track it, so it was written by hand or left behind by a run that died — and appending this rename's alias to it would commit somebody else's lines inside this lane's commit. \`rename-lane\` is the only writer of that file and it commits what it writes. Commit it or remove it, and re-run. Nothing was written." 2
+    fi
+    # AND A TABLE WHOSE LAST BYTE IS NOT A NEWLINE IS REFUSED (Copilot round 5).
+    # `append_text_line`'s `>>` would put this rename's record on the END of the
+    # previous line — and its own proof passes, because the bytes it builds to
+    # compare are concatenated the same way. The TSV parser then never sees the
+    # new alias at all: the rename would commit and the old name would not
+    # resolve, which is the one thing clause (e) promises. Refused rather than
+    # repaired, because appending a newline to a file this command did not write
+    # is an edit to somebody else's lines.
+    if [ -f "$LANES_ALIASES_TSV" ] && [ -s "$LANES_ALIASES_TSV" ] \
+       && [ "$(tail -c 1 -- "$LANES_ALIASES_TSV" | od -An -c | tr -d ' ')" != '\n' ]; then
+      die "$LANES_ALIASES_PATH does not end with a newline, so appending this rename's record would join it to the last line and the table's own parser would never see the new alias — the rename would land and '$rl_old' would stop resolving (Amendment 16(e)). Put a newline at its end and re-run. Nothing was written." 2
     fi
     if have_remote_ref && [ ! -f "$LANES_ALIASES_TSV" ] \
        && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_ALIASES_PATH" 2>/dev/null; then
@@ -7957,10 +8000,25 @@ EOF
         /*)    rl_hfile="$rl_hcell"; rl_hfile_new="$rl_hpath_new" ;;
         *)     rl_hfile="${LANES_REPO:+$LANES_REPO/}$rl_hcell"; rl_hfile_new="${LANES_REPO:+$LANES_REPO/}$rl_hpath_new" ;;
       esac
+      # THE CONTAINMENT TEST IS PHYSICAL (Copilot round 5 on openRepoTools#81).
+      # A string prefix accepts `handoffs/../../outside/x.md` and accepts a path
+      # whose PARENT is a symlink out of the checkout — both of which resolve
+      # outside it, so the file would be moved and stamped before git refused
+      # the pathspec. The directory's own `cd -P` is the resolution
+      # `lane-start:2941` already makes for this very path, and for the same
+      # reason it gives: `readlink -f` is not in the stock macOS userland.
       if [ -n "${LANES_REPO:-}" ]; then
-        case "$rl_hfile" in
-          "$LANES_REPO"/*) rl_h_rel="${rl_hfile#"$LANES_REPO"/}"; rl_h_rel_new="${rl_hfile_new#"$LANES_REPO"/}" ;;
-        esac
+        rl_hdir_real="$( CDPATH=''; cd -P -- "$(dirname -- "$rl_hfile")" 2>/dev/null && pwd -P )" || rl_hdir_real=""
+        rl_repo_real="$( CDPATH=''; cd -P -- "$LANES_REPO" 2>/dev/null && pwd -P )" || rl_repo_real="$LANES_REPO"
+        if [ -n "$rl_hdir_real" ]; then
+          case "$rl_hdir_real/" in
+            "$rl_repo_real"/*)
+              rl_hreal="$rl_hdir_real/$(basename -- "$rl_hfile")"
+              rl_h_rel="${rl_hreal#"$rl_repo_real"/}"
+              rl_h_rel_new="${rl_h_rel%/*}/$(basename -- "$rl_hpath_new")"
+              case "$rl_h_rel" in */*) : ;; *) rl_h_rel_new="$(basename -- "$rl_hpath_new")" ;; esac ;;
+          esac
+        fi
       fi
       # A HANDOFF OUTSIDE THE WORKSPACE REPOSITORY IS A REFUSAL, NOT A NOTE
       # (Copilot round 1 on openRepoTools#81). It used to be moved and stamped
@@ -7974,7 +8032,10 @@ EOF
       if [ -z "$rl_h_rel" ]; then
         die "lane $rl_old's row names the handoff '$rl_hcell', which resolves to $rl_hfile — outside the workspace repository ${LANES_REPO:-<unknown>}. A rename is FOUR MOVES IN ONE COMMIT (Amendment 16), and a commit cannot carry a file outside its own checkout, so this one would be three moves and a note. Move that handoff under $LANES_REPO — \`handoffs/<estate>/session-handoff-<date>-lane-$rl_old.md\` is the path \`lane-start\` computes — point the row's handoff column at it, and re-run. Nothing was written." 2
       fi
-      [ "$rl_hmove" = 1 ] && [ -e "$rl_hfile_new" ] && \
+      # `-L` BESIDE `-e`, because `-e` IS FALSE ON A DANGLING LINK (Copilot
+      # round 5) — and `mv` would then replace that link, destroying a path this
+      # rename does not own, exactly as the source-side tests already say.
+      [ "$rl_hmove" = 1 ] && { [ -e "$rl_hfile_new" ] || [ -L "$rl_hfile_new" ]; } && \
         die "the handoff would move to $rl_hfile_new and something is already there. That path belongs to lane $rl_new's own handoff and is not this rename's to overwrite. Move it aside and re-run. Nothing was written." 2
     fi
     # THE HANDOFF IS A PATHSPEC OF THIS COMMIT ONLY WHERE THERE IS A FILE TO

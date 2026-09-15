@@ -7761,6 +7761,108 @@ is   "the same rename then goes through" "$rc" 0
 is   "…and the row moved" "$(command grep -c '^| `repoLink-2`' "$LANES")" 1
 is   "…with the log at its new name" "$( [ -f "$LOGD/repoLink-2.md" ] && echo yes )" "yes"
 
+
+# ============ Copilot round 5 on openRepoTools#81 ============================
+
+REN8_ID="12ab34cd-16a8-4000-8000-12ab34cd16a8"
+mkdir -p "$WIP/handoffs/repoEdge" "$HOME/projects/outside"
+printf 'Lane: repoEdge-1 — single-use resume prompt\n\n## RESUME\n' > "$HOME/projects/outside/h.md"
+add_seed_row "| \`repoEdge-1\` | harness \`$REN8_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | handoffs/../../outside/h.md | ACTIVE |"
+{ printf '# lane repoEdge-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoEdge-1, session %s@Eagle, %s, lane:repoEdge-1 → home opensoft/repoEdge; estate repoEdge\n' "$REN8_ID" "$OLD_UTC"
+} > "$LOGD/repoEdge-1.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the round-5 edge lane"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+# ---- A HANDOFF THAT LEAVES THE WORKSPACE THROUGH `..` IS STILL OUTSIDE IT.
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN8_ID" "$E" rename-lane repoEdge-1 repoEdge-2 --no-github
+is   "a handoff that leaves the workspace through '..' is refused" "$rc" 2
+has  "…by the physical path, not by a string prefix" "$err" "outside the workspace repository"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+is   "…the far end untouched" "$(command grep -c 'RENAMED from' "$HOME/projects/outside/h.md" || :)" 0
+
+# ---- A DANGLING SYMLINK AT THE DESTINATION IS OCCUPIED, NOT ABSENT.
+"$E" replace-in-row repoEdge-1 "handoffs/../../outside/h.md" "handoffs/repoEdge/session-handoff-2026-09-12-lane-repoEdge-1.md" "point it inside the workspace" >/dev/null 2>&1
+printf 'Lane: repoEdge-1 — single-use resume prompt\n\n## RESUME\n' > "$WIP/handoffs/repoEdge/session-handoff-2026-09-12-lane-repoEdge-1.md"
+ln -s "$HOME/projects/outside/gone.md" "$WIP/handoffs/repoEdge/session-handoff-2026-09-12-lane-repoEdge-2.md"
+git -C "$WIP" add -A -- handoffs >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the dangling destination" >/dev/null 2>&1
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN8_ID" "$E" rename-lane repoEdge-1 repoEdge-2 --no-github
+is   "a DANGLING symlink at the handoff's destination is occupied" "$rc" 2
+has  "…and says something is already there" "$err" "already there"
+is   "…with nothing written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+git -C "$WIP" rm -q --cached -- handoffs/repoEdge/session-handoff-2026-09-12-lane-repoEdge-2.md >/dev/null 2>&1 || :
+rm -f "$WIP/handoffs/repoEdge/session-handoff-2026-09-12-lane-repoEdge-2.md"
+git -C "$WIP" commit -q -m "remove the dangling destination" >/dev/null 2>&1 || :
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main 2>/dev/null || :
+
+# ---- A FIFO AT THE OLD LOG PATH IS REFUSED RATHER THAN READ.
+#
+# `cat` of one BLOCKS, for ever, holding this lane's mutex.
+if command -v mkfifo >/dev/null 2>&1; then
+  ren_log_keep="$(cat "$LOGD/repoEdge-1.md")"
+  rm -f "$LOGD/repoEdge-1.md"
+  mkfifo "$LOGD/repoEdge-1.md"
+  ren_before="$(git -C "$WIP" rev-parse HEAD)"
+  run env LANES_SESSION="$REN8_ID" "$E" rename-lane repoEdge-1 repoEdge-2 --no-github
+  is   "a FIFO at the old log path is refused rather than read" "$rc" 2
+  has  "…saying a read of one would block this write and its lock" "$err" "not a regular file"
+  is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+  rm -f "$LOGD/repoEdge-1.md"
+  printf '%s\n' "$ren_log_keep" > "$LOGD/repoEdge-1.md"
+else
+  skip "a FIFO at the old log path is refused rather than read" "no mkfifo on this host"
+fi
+
+# ---- AN ALIAS TABLE WITH NO TRAILING NEWLINE IS REFUSED.
+#
+# `>>` would put this record on the END of the previous line, and
+# `append_text_line`'s own proof passes because it concatenates the same way —
+# so the parser would never see the alias and the old name would stop resolving.
+ren_alias_keep="$(cat "$WIP/lanes/aliases.tsv")"
+printf '%s' "$ren_alias_keep" > "$WIP/lanes/aliases.tsv"
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN8_ID" "$E" rename-lane repoEdge-1 repoEdge-2 --no-github
+is   "an alias table with no trailing newline is refused" "$rc" 2
+has  "…because the record would join the line before it" "$err" "does not end with a newline"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+git -C "$WIP" checkout -- lanes/aliases.tsv
+
+# ---- AN EXISTING UNTRACKED ALIAS TABLE IS SOMEBODY'S HAND EDIT.
+#
+# `tracked_dirty` deliberately omits untracked files, so the dirty-checkout
+# refusal never sees one.
+ren_alias_tracked="$(cat "$WIP/lanes/aliases.tsv")"
+git -C "$WIP" rm -q --cached -- lanes/aliases.tsv >/dev/null 2>&1
+git -C "$WIP" commit -q -m "make the alias table untracked for one case" >/dev/null 2>&1
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main 2>/dev/null || :
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN8_ID" "$E" rename-lane repoEdge-1 repoEdge-2 --no-github
+is   "an existing UNTRACKED alias table is refused" "$rc" 2
+has  "…because git does not track it and this command commits what it writes" "$err" "git does not track it"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+git -C "$WIP" add -- lanes/aliases.tsv >/dev/null 2>&1
+git -C "$WIP" commit -q -m "track the alias table again" >/dev/null 2>&1
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main 2>/dev/null || :
+
+# ---- AND WITH EVERY EDGE CLEARED, THE RENAME GOES THROUGH.
+run env LANES_SESSION="$REN8_ID" "$E" rename-lane repoEdge-1 repoEdge-2 --no-github
+is   "with every edge cleared the rename goes through" "$rc" 0
+is   "…the row moved" "$(command grep -c '^| `repoEdge-2`' "$LANES")" 1
+is   "…the log at its new name" "$( [ -f "$LOGD/repoEdge-2.md" ] && echo yes )" "yes"
+is   "…the handoff at its new name" \
+     "$( [ -f "$WIP/handoffs/repoEdge/session-handoff-2026-09-12-lane-repoEdge-2.md" ] && echo yes )" "yes"
+has  "…and the alias table carries the pair" "$(cat "$WIP/lanes/aliases.tsv")" "$(printf 'repoEdge-1\trepoEdge-2\t20')"
+
 export FAKE_TMUX_WINDOWS="$A16_SAVE_WINDOWS"
 export FAKE_TMUX_WINDOW="$A16_SAVE_WINDOW"
 export FAKE_TMUX_WINDOW_NAME="$A16_SAVE_NAME"
