@@ -73,7 +73,7 @@ workstation**.
 | the object logs | `<the checkout>/lanes/log/<lane>.md` — one per lane (Amendment 7) |
 | the alias table | two layers: `repos.tsv` shipped by openRepoTools and installed beside the commands, then `<the checkout>/lanes/repos.tsv` where you keep an override (Amendment 9(b)) |
 | who places the symlinks | `link-estates`, an installed command. It places the handoffs links, the register link and the `lanes-edit.sh` link — **and no longer the two `~/.local/bin` ones**, which `--install` owns |
-| who installs all of it | `openRepoTools --install` (eleven files, idempotent, all-or-nothing) |
+| who installs all of it | `openRepoTools --install` (twelve files, idempotent, all-or-nothing) |
 
 Why `main` of the workspace repository and not the aggregation's: the
 aggregation repo's `main` is PR-only (org rulesets `xFactory Tier-1 main
@@ -472,9 +472,30 @@ One argument is taken verbatim, so a lane named before the `<repo>-<n>` rule
 
 ```sh
 # from a checkout of opensoft/openRepoTools, where the suite lives now:
-bash tests/test_lane_helpers.sh     # ~900 assertions, ~3m, touches nothing real
-python3 -m pytest tests -q          # the same suite, under this repository's runner
+bash tests/test_lane_helpers.sh     # the shell suite alone, touches nothing real
+tests/run.sh                        # the same suite under pytest, SERIALIZED
 ```
+
+`tests/run.sh` is the way to run it wherever lanes share a workstation
+(opensoft/openRepoTools#51): it waits for any live run, takes
+`${TMPDIR:-/tmp}/openrepotools-pytest.lock` — `flock` where there is one, a
+`mkdir` lock on macOS, which has none — and only then runs `python3 -m pytest
+tests -q`. Four suites ran at once on Eagle on 2026-09-14 past a guard written
+`pgrep -af '…' | grep -v pgrep >/dev/null`, which never waits: `grep` there is
+a shell function whose status is 1 when its stdout is `/dev/null`. The guard
+that does wait is anchored, split so it cannot match its own command line, and
+followed by the lock:
+
+```sh
+pat='^python3 -m pyt'"est"
+while [ "$(pgrep -f "$pat" | awk 'END { print NR + 0 }')" -gt 0 ]; do sleep 20; done
+flock "${TMPDIR:-/tmp}/openrepotools-pytest.lock" python3 -m pytest tests -q
+```
+
+`awk` and not `pgrep -fc`: `-c` is not in every `pgrep` this toolset runs
+under, and it is the COUNT and never `pgrep`'s exit status that decides.
+`tests/run.sh` is the canonical implementation of this guard — the lines above
+are it in one place, for a person with no checkout in front of them.
 
 The suite copies the four commands and the shipped alias table into a sandbox
 BIN DIRECTORY, seeds a workspace repository with nothing but data in it, and
@@ -1777,6 +1798,215 @@ safety property, and here it would be the opposite of the mechanism, since
 `cmd || true` exits 0 for every code the command can produce and a guard that
 refuses nothing silently is the exact state this amendment exists to end.
 
+## The handoff (Amendment 17)
+
+**In force 2026-09-14T09:45:33Z** (revision 2, `/ctx` included), with Amendment
+18(d)'s `--exit` and Addendum 2's respawn line. **A HANDOFF IS THE SWAP, UNDER
+ONE NAME; A LANE RESUMES FROM ANY AGENT THAT CAN READ IT; AND `/ctx` IS THE
+WHOLE ACT IN ONE WORD.**
+
+### One act, three names
+
+| where you are | the word |
+|---|---|
+| in the lane's session | `/handoff [why]` — and `/swap` and `/lane-swap` are its aliases, kept so that nothing written about them stops working |
+| in a shell in the lane's window | `lane-handoff [why]`, placed on `PATH` by `openRepoTools --install` |
+| clearing the context | `/ctx`, which is `/handoff --restart` |
+
+The steps are Amendment 8(a)'s and Amendment 11's, unchanged: the identity
+triple fixed, the handoff file refreshed with a fresh Rule 3 top block, the
+writers polled, `PAUSED` written, the restart line printed. What differs between
+a context clear, a usage reset, a profile switch and handing the lane to someone
+else is only **why**, and the record's free text has always carried that. The
+word was wrong, not the act.
+
+The skill `skills/handoff/SKILL.md` is the single source of the act; the files at
+`skills/lane-swap/SKILL.md`, `commands/handoff.md`, `commands/ctx.md` and
+`commands/swap.md` name it and add nothing — two copies of one procedure that
+must stay byte-equal is the alternative the amendment rejects by name.
+
+### The record's two new sub-fields
+
+The `PAUSED` payload gains two beside Amendment 11(c)'s `window`, `dir` and
+`profile`:
+
+```text
+PAUSED — lane repoHF-1, session a17a0001-…@Eagle, 2026-09-14T17:05:11Z, lane:repoHF-1 → swap; window hfsess:0 @21; dir ~/projects/repoHF; profile team-05a; workstation Eagle; agent claude; transcript a17a0001-… — clear
+```
+
+- **`agent <name>`** — `claude`, `codex`, or the launcher's name for whatever
+  wrote the line. A **manifest key**: letters, digits, `.`, `_`, `-`. The
+  pattern is also how this sub-field gets the `; ` rule without a token of its
+  own, and `lane-start --agent` reads it back to choose a launcher.
+- **`transcript <id|none>`** — the agent's own resumable id where it has one.
+  `none` is an **answer**, not a gap.
+
+And the tooling writes a third beside them, `kind <in-process|respawn|unknown>`,
+because it is the one fact about the act that FOLLOWS the record and no later
+reader can infer it: **an in-process clear does not kill this lane's writers**
+(**Amendment 17 Addendum 1**, clauses (h)–(k), in force 2026-09-14T20:59:31Z).
+Measured here on 2026-09-14 — a harness `/clear` mints a new transcript id in the
+SAME process, so every subagent survives it and only its in-flight tool calls die
+(a `Bash` killed that way exits 137); the handoff written a minute earlier said
+*relaunch every writer below*, and the live count a minute later showed all five
+alive on their worktrees.
+
+| kind | what happened to the process | written by |
+|---|---|---|
+| `in-process` | it keeps running, and every writer with it | `lane-handoff --in-process` |
+| `respawn` | it is replaced or ended — the pane respawned, the session exited, a profile switch, a usage-reset relaunch | `--restart`, `--exit`, `--late` |
+| `unknown` | not this command's to know: a plain handoff may be followed by a `/clear` or by a relaunch | a plain `lane-handoff` |
+
+The same word is in the line's FREE TEXT after the why — `clear in-process`,
+`clear respawn`, `kind unknown` (clause (h)) — so the person reading the record
+reads it too. **THE KIND SAYS WHAT TO EXPECT AND NEVER WHAT TO DO** (j). What
+says what to do is clause (i), and it is the same in every kind: the `WRITERS`
+section is **a list to COUNT, not a list to relaunch** — `ListAgents` in Claude,
+the agent's equivalent elsewhere; a writer still live OWNS its worktree and is
+sent one message rather than relaunched; only a writer that is NOT live is
+relaunched, from where it stands. Where the count and the block disagree, **the
+count wins**: the block is what the paused session expected and the count is what
+is true. And one worktree is one writer's for as long as that writer is live (k).
+
+**The writer validates both** (`pause_subfields_check`, called from
+`write_event`) and refuses the line rather than writing a sub-field no reader can
+use: this log is append-only, and `lane-start` launches on what it reads back.
+
+Three reads answer for them, all read-only: `lanes-edit.sh lane-agent <lane>`,
+`lanes-edit.sh lane-transcript <lane>` and `lanes-edit.sh lane-last <lane>` (the
+lane's last lane-kind line as `<verb>	<utc>	<session>	<payload>`). `swapped`
+gains a sixth and a seventh field for the same two:
+
+```console
+$ lanes-edit.sh swapped Eagle
+repoHF-1	2026-09-14T17:05:11Z	hfsess:0 @21	~/projects/repoHF	team-05a	claude	a17a0001-…
+repoSW-1	2026-09-12T10:00:00Z	claude-team-05b-20260912102132-2699:0
+```
+
+The second row is every record written before an amendment: the fields are
+**empty rather than guessed**, and the two reads answer **8**. Nothing is
+backfilled (Amendment 7(i)); each lane cuts over at its own next handoff. **The
+first field before the first tab is still the lane**, which is the contract every
+reader of this output takes and what makes a sixth and a seventh safe to add.
+
+### The launcher table — `lane-start --agent <name>`
+
+`lane-start <repo> <n>` reads the row and the last `PAUSED`. With no `--agent`
+the default is **the agent that paused**; with no `PAUSED`, `claude`.
+
+| agent | what is launched |
+|---|---|
+| `claude`, its transcript here | `claude --name <lane> --resume <id>` — Amendment 6's case (a), unchanged |
+| `claude`, no transcript here (or `--agent claude` named, or `LANE_START_FRESH=1`) | `claude --name <lane> --session-id <fresh uuid> "<the handoff's top block>"` |
+| `codex` | `codex "<the handoff's top block>"`; its resumable id is read back where it prints one |
+| anything else | **a refusal naming the two it knows** — a lane is resumed by an agent whose launch has been taught and tested, never by a guessed argv |
+
+**The top block is the head of the handoff down to its first `---` rule** (200
+lines at the outside), and it is delivered **after** the Rule 3 stamp is written,
+so the session reads a prompt that already carries the record of its own resume.
+The stamp names the agent where the agent is not Claude — `RESUMED by codex
+<id> (lane <lane>) at <UTC>` — and the row's session cell is appended in that
+agent's own spelling, `harness <uuid>` / `Codex <id>` / `<agent> <id>`, which is
+how the register has spelled Codex sessions since 2026-09-05.
+
+### `/ctx` — one word, and everything after it is automatic
+
+`/ctx` (`/handoff --restart`) performs the handoff and then **restarts in
+place**: `tmux respawn-pane -k` on the lane's own pane, with a NEW session of the
+same agent whose **first prompt is the handoff's top block**. That block's
+`WRITERS` section lists every worktree the lane had running: its branch, its last
+commit, what it was holding, and the brief it was given, so the new session finds
+them rather than discovering them — and its first line is Addendum 1 (i)'s, the
+COUNT. **`/ctx` says which it did** (j): this one respawns, so the record says
+`kind respawn` and the count then finds none, which is what makes relaunching
+each one right. A `/ctx` that clears IN PLACE is the other kind and must say so
+(`--in-process`, `kind in-process`): the process survives, its writers survive
+with it, and the block says to EXPECT every writer below live.
+
+**The record comes first, always, and the record is THREE writes.** A `/ctx`
+**refuses before it kills anything** where the `PAUSED` line did not land, where
+the row was not flipped (the register would say RUNNING about a session that has
+just been replaced), or where the handoff could not be refreshed (its top block
+is literally the new session's first prompt, and a stale one hands over the
+instructions of another act). A pane is never respawned over an unrecorded lane.
+
+**The respawn line is `lane <lane>`**, and never `restart <lane>` — Amendment 18
+Addendum 2 (i-8): the respawn *"relaunches the lane's own pane with `lane <name>`
+(its parked branch is exactly Amendment 11(i)'s act), or through the launcher
+directly"*, and `restart` leaves the person's `PATH` with `openRepoTools#43`.
+`lane <name>` needs no profile argument: its parked branch reads the record the
+handoff has just written — the lane's recorded directory and profile — and asks
+nothing. **Where `lane` is not on `PATH`** (it arrives with #43, and this act
+shipped first) the line is `pclaude --lane <lane> <profile>`, the same act one
+door along, and a `lane` on `PATH` that is not this estate's word is passed over
+for it with a line saying so: a respawn is the one act no later refusal can undo,
+so the word is used only where it can be SEEN. `LANE_START_FRESH=1` is the one
+seam that says *a new session, primed by the top block* — which is what a
+context clear is, and why `/ctx` does not resume the transcript it has just
+paused. It rides in the ENVIRONMENT, so it survives `lane` handing the launch on
+to `lane-start` exactly as it survives the launcher doing so.
+
+`/handoff --exit requested by <uuid>@<host>/<container>` is the other end
+(Amendment 18(d)): after the record, `/exit` is typed into this lane's own pane
+and the session **ends**, because a handoff to another place is a handoff and
+not a restart.
+
+### `--late` — the record a swap never left
+
+A session that died at a usage limit wrote no `PAUSED`, and the lane's log still
+reads as running. `lane-handoff --late --at <UTC> [why]` writes that record after
+the fact — and **it is written from a shell BEFORE the relaunch**:
+
+```sh
+lane-handoff --late --at 2026-09-14T12:02:27Z "late; usage limit hit before the swap"
+pclaude <profile>      # and only then
+```
+
+**The rule, and it is the whole of why `--at` is required.** A lane's state is
+its log's last lane-kind line **in file order** (R14), and the log is
+append-only. A late `PAUSED` appended after the `RESUMED` that `lane-start`
+writes at the relaunch would make a lane that is **running** read as paused, in a
+file nothing rewrites. So a late line is **dated by its own field** — the moment
+the old session ended, which the caller names — and it is written only where the
+lane's last lane-kind line is a `STARTED` or `RESUMED` **older** than that
+instant. A last line that is already a `PAUSED`, an `ENDED`/`RETIRED`, or a
+`STARTED`/`RESUMED` at or after it is a **refusal that writes nothing** and names
+the act to take instead. Run from inside the session that has already been
+resumed, `--late` refuses: the honest record of the state that session holds is
+its own next `/handoff`.
+
+### The transcript follows the lane
+
+`lane-start`'s resume case (a) looked for `<the row's last id>.jsonl` only under
+the **current profile's** projects directory, so a lane restarted under a new
+profile after a usage limit never resumed its conversation.
+
+**Measured first, and the fact shrank the act** (2026-09-14T12:35Z): on a
+launcher-configured workstation every profile's `projects/` is ONE shared
+directory — `readlink -f ~/.claude-profiles/profiles/<org>/<team>/<any>/projects`
+→ `~/.claude-profiles/state/opensoft/projects`. So a transcript needs **no move**
+to be resumed under another profile. `lane-start` therefore **says where it found
+the transcript**, and says when that directory is shared:
+
+```text
+lane-start: transcript a17a…f3 found in this profile's projects directory
+(~/.claude/projects), which IS the directory profile(s) t3 read too (one
+shared directory: a profile switch resumes this lane by id and moves nothing)
+```
+
+Where the two profiles' `projects/` really are two directories — a workstation
+without the launcher's layout — the transcript is **moved** into this profile's
+(the `<uuid>.jsonl` and its sibling `<uuid>/` directory), a pointer
+`<uuid>.jsonl.moved-to-<profile>-<UTC>` is left where it was, and the move is
+said on one line. A **copy** would leave two live transcripts of one uuid to
+diverge, and nothing merges them.
+
+**A uuid whose holder is LIVE in the other profile is a refusal, never a move**
+(Amendment 18(h): a transcript is held by ONE live process). The refusal names
+the pid, where that process is (its window, or `bg`), the profile it is under,
+and the retire act — `lane-end <lane> --retire <pid>` — and nothing is moved and
+nothing is launched.
+
 ## Hand edits
 
 After **any** hand edit made with an allowed tool (python read/write, `sed -i
@@ -1829,7 +2059,7 @@ machine whose repository already exists it clones it, adds nothing to a seeded
 repository, writes the pointer file and runs `link-estates`:
 
 ```sh
-openRepoTools --install     # the eleven commands, the two skills and the hook entry
+openRepoTools --install     # the twelve commands, the three skills, the three command files and the hook entry
 openRepoTools wip init      # create or adopt the workspace, and link it
 ```
 
@@ -1874,8 +2104,8 @@ link-estates                                          # repoints ~/projects/xFac
 ```
 
 **You are not asked to remember it: `--install` refuses** (A9 Addendum 4,
-R-A9-12). In its planning phase, before any of the nineteen artifacts is placed,
-it walks all eleven targets and dies naming every one that is not a regular file,
+R-A9-12). In its planning phase, before any of the twenty-six artifacts is placed,
+it walks all twelve targets and dies naming every one that is not a regular file,
 what it is, and the one `rm` that clears them. `cp` FOLLOWS A SYMLINK, so an
 install over these would leave the two commands UNINSTALLED — the targets stay
 links — and would write the post-move bytes into `opensoft/brett-wip`'s working
