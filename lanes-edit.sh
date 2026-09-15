@@ -8361,6 +8361,25 @@ Nothing was written." 2
     # `origin` at all, and the published scan is the one the incident needed.
     if [ -n "$lane_new" ]; then
       log_sync
+      # AND THE ARCHIVE IS ASKED AS WELL (Amendment 19(b) and (d)). A row
+      # `archive-rows` has moved into `lanes/archive/LANES-retired.md` is still
+      # that lane's row: its object log is `lanes/log/<lane>.md` and that file is
+      # APPEND-ONLY, so a second lane under the same name would write its life
+      # into the first one's file and every read of that log — who held what,
+      # when it was claimed, which session paused it — would answer for two
+      # lanes at once. `next-free` never OFFERS such a position, because it
+      # counts the archive too; this is what refuses one that is typed by hand,
+      # which is the whole of "a retired `<repo>-<n>` is never reissued".
+      ar_arch="$(archive_text 2>/dev/null | awk -v want="$lane_new" '
+        substr($0,1,1) == "|" {
+          p1 = index($0, "`"); if (p1 == 0) next
+          r = substr($0, p1 + 1); p2 = index(r, "`"); if (p2 == 0) next
+          t = substr(r, 1, p2 - 1)
+          if (tolower(t) == tolower(want)) print t
+        }' || :)"
+      if [ -n "$ar_arch" ]; then
+        die "lane '$lane_new' is RETIRED: its row is in $LANES_ARCH_PATH, spelled $(printf '%s\n' "$ar_arch" | tr '\n' ' ')— and a retired position is NEVER REISSUED (Amendment 19(b)). That lane's object log is $(log_path_for "$lane_new") and it is append-only, so a second lane under this name would write its life into the first one's file and every read of that log would answer for two lanes at once. Take a free position instead — \`lanes --prefix <repo>\` prints the next one and the line that takes it. Nothing was written." 2
+      fi
       ar_hits="$(rows_named_ci_local "$lane_new")"
       ar_pub="$(rows_named_ci "$lane_new" 2>/dev/null || :)"
       ar_all="$(printf '%s\n%s\n' "$ar_hits" "$ar_pub" | grep -v '^$' | LC_ALL=C sort -u || :)"
