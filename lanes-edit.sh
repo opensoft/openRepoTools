@@ -2281,8 +2281,13 @@ LANES_ARCH_PATH="${LANES_ARCH_PATH:-${LANES_PREFIX}archive/$LANES_ARCH_NAME}"
 LANES_ARCH_FILE="${LANES_ARCH_FILE:-$LANES_DIR/archive/$LANES_ARCH_NAME}"
 archive_text() {
   if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_ARCH_PATH" 2>/dev/null; then
-    git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_ARCH_PATH" 2>/dev/null || :
-    return 0
+    # A PUBLISHED ARCHIVE THIS READ COULD NOT RENDER IS NOT AN EMPTY ARCHIVE.
+    # The rows in this file hold POSITIONS: read as absent, a retired
+    # `<repo>-<n>` comes back on offer, which is the one thing 19(d) exists to
+    # prevent. So a failed `show` falls through to this checkout's own copy and
+    # says it did, rather than answering silently with nothing.
+    if git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_ARCH_PATH" 2>/dev/null; then return 0; fi
+    note "the published $LANES_ARCH_PATH exists but could not be read — falling back to this checkout's copy of it"
   fi
   [ -f "$LANES_ARCH_FILE" ] && { cat -- "$LANES_ARCH_FILE" 2>/dev/null || :; }
   return 0
