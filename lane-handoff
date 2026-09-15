@@ -932,11 +932,50 @@ if [ "$do_late" = 1 ]; then
 	exit 0
 fi
 
+# --- BEGIN shared one-line cut (lane-collision-protocol Amendment 13(a)) ---
+# BYTE-IDENTICAL IN `lane-start`, `lane-end` AND `lane-handoff`, the three
+# commands that write a row's state cell — the same trade the four lane helpers
+# already make for their workspace resolver, and for the same reason: a drifted
+# copy is TWO ANSWERS to one question, and "what may this line contain, and
+# where may it be cut" is one question.
+#
+# FOUR THINGS THE CELL'S LINE MAY NOT CARRY, and `set-row-state` REFUSES all
+# four — which would cost the row its stamp or its closing write, so they are
+# fixed here rather than met there:
+#
+#   ` · `  the phrase's own separator. A second one reads back as a fourth part
+#          of `<STATE> · <UTC> · <one line>`; it is spelled `; `.
+#   `|`    a cell boundary in a Markdown table row. A launch command or a
+#          directory may legitimately hold one — `claude --flag 'a|b'`, a path
+#          with a pipe in it — and the row is where it would forge a column
+#          (Copilot round 1 on openRepoTools#82). It is spelled `¦`, the broken
+#          bar, which is not a separator anywhere here; the object log's own
+#          line keeps the character itself.
+#   CR/LF  a row is ONE LINE of a table, so a newline in this text would split
+#          it in two and every row after it would be read as a lane. Spelled
+#          `; ` for the same reason the separator is (Copilot round 2).
+#   >240   ratified decision O1's cap. Cut at 230 with the last partial WORD
+#          dropped, which is what makes the cut safe: `${s:0:n}` counts BYTES
+#          wherever the locale is not a UTF-8 one, and a byte offset can land
+#          inside the very characters above. 230 and not 240, so the ` ...`
+#          marker fits inside the cap however the two count.
+cut_to_line() {   # <line> — the row's one line, safe to hand to set-row-state
+  ctl="${1//$'\r'/ }"
+  ctl="${ctl//$'\n'/; }"
+  ctl="${ctl// · /; }"
+  ctl="${ctl//|/¦}"
+  [ "${#ctl}" -gt 230 ] || { printf '%s' "$ctl"; return 0; }
+  ctl="${ctl:0:230}"
+  case "$ctl" in *' '*) ctl="${ctl% *}" ;; esac
+  printf '%s ...' "$ctl"
+}
+# --- END shared one-line cut ---
+
 # ------------------------------------------------- (a) the object-log PAUSED
 record_written=0
 row_write_refused=""
 if [ -n "$ws_missing" ]; then
-	note "NOT WRITTEN: the PAUSED line, the LANES.md line and the row's state cell all stop where there is no configured workstation (clause (k) rule (d), \`R-A11-14\`). The handoff refreshed above names the gap, and the restart line below carries --lane, because a restart cannot resolve this lane from a row that was never flipped."
+	note "NOT WRITTEN: the PAUSED line, the LANES.md line and the row's state cell all stop where there is no configured workstation (clause (k) rule (d), \`R-A11-14\`). The handoff refreshed above names the gap, and the restart line below carries --lane, because a restart cannot resolve this lane from a row that was never set."
 	row_write_refused=1
 else
 	if LANES_LANE="$lane" LANES_SESSION="$uuid" "$LANES_EDIT" log PAUSED "lane:$lane" \
@@ -960,29 +999,26 @@ else
 	else
 		note "no transcript uuid is knowable for this lane, so neither the object log's PAUSED nor the register's file-level line was written — a record naming 'unknown' in that field is a record no restart can read (Amendment 11 clause (e)). The handoff file above is refreshed and is the whole of what this act left behind. Bind the session first:  lane-start --no-launch <repo> <n>"
 	fi
-	# (c) the row: flip its leading state word, DERIVED from the row itself —
-	# `replace-in-row` requires its anchor to occur exactly once, so a guessed
-	# word is a refusal rather than a corruption. The two shapes a state cell
-	# opens with are `| WORD ·` (a cell with history after it) and `| WORD |`
-	# (a cell with none), and the replacement keeps whichever punctuation the
-	# row itself carries.
-	state=""; state_new=""
-	state="$(printf '%s' "$row_line" | grep -o '| [A-Z][A-Z]* ·' | head -n 1)"
-	if [ -n "$state" ]; then state_new="| PAUSED ·"
-	else
-		state="$(printf '%s' "$row_line" | grep -o '| [A-Z][A-Z]* |' | head -n 1)"
-		[ -n "$state" ] && state_new="| PAUSED |"
-	fi
-	if [ -n "$state" ]; then
-		if LANES_LANE="$lane" "$LANES_EDIT" replace-in-row "$lane" "$state" "$state_new" "swap" >/dev/null 2>&1; then
-			LANES_LANE="$lane" "$LANES_EDIT" append-row-status "$lane" "PAUSED — $payload" >/dev/null 2>&1 || row_write_refused=1
-		else
-			row_write_refused=1
-		fi
-	else
-		row_write_refused=1
-	fi
-	[ -z "$row_write_refused" ] || note "the row's state cell was NOT flipped to PAUSED (its leading state word did not occur exactly once, or the write was refused). The restart line below carries --lane for that reason."
+	# (c) the row: ONE WRITE, which sets the whole cell (Amendment 13(a)).
+	#
+	# It used to be TWO, and both of them were guesses at a cell that was a
+	# history: `replace-in-row` flipping the leading state word — derived by
+	# grepping the row for `| WORD ·` or `| WORD |`, since the anchor had to
+	# occur exactly once or the write was refused — and then an
+	# `append-row-status` putting `PAUSED — <payload>` at the END of the same
+	# cell, so the row said PAUSED twice, in two places, with a day of narrative
+	# between them. The cell is now one phrase that `set-row-state` REPLACES, so
+	# a swap writes it once and there is no anchor to guess at: a row whose cell
+	# opens with anything at all, or with nothing, takes the same write.
+	#
+	# The payload carries the record's sub-fields (`swap; window …; dir …;
+	# profile …; agent …; transcript …`), which is exactly the line a person
+	# reading the row wants; a ` · ` inside it would read back as a fourth part
+	# of the phrase, and 240 characters is the cap (ratified decision O1) — the
+	# object-log line written above carries the full payload either way.
+	hs_line="$(cut_to_line "$payload")"
+	LANES_LANE="$lane" "$LANES_EDIT" set-row-state "$lane" "PAUSED · $hs_line" >/dev/null 2>&1 || row_write_refused=1
+	[ -z "$row_write_refused" ] || note "the row's state cell was NOT set to PAUSED (the write was refused — run it by hand to see what it says: lanes-edit.sh set-row-state $lane \"PAUSED · $hs_line\"). The restart line below carries --lane for that reason."
 fi
 
 # ------------------------------------------- 5. the restart line — one command
