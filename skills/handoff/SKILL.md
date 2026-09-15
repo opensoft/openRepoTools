@@ -499,9 +499,10 @@ if [[ "$kind" == unknown ]]; then why_text="$why kind unknown"; else why_text="$
 # guard behind it, not the fix.
 #
 # (a) AND (b) ARE THE TWO WRITES A MISSING WORKSTATION STOPS (ruling 11), and
-# the dispatcher guard would refuse them anyway — `lanes-edit.sh:4187-4192`
-# gates `log`, `append-line`, `append-row-status` and six more on a configured
-# workstation. Skipping them here means the skill says WHY once, in its own
+# the dispatcher guard would refuse them anyway — `lanes-edit.sh`'s dispatcher
+# gates `log`, `append-line`, `set-row-state` and every other writer on a
+# configured workstation (the list is the `case` above its `verify-row` arm; a
+# line number here would be stale the next time a verb joined it). Skipping them here means the skill says WHY once, in its own
 # words, instead of the helper saying it twice in the middle of a swap.
 if [[ -z "$ws_missing" ]]; then
 LANES_LANE="$lane" LANES_SESSION="$uuid" "$L" log PAUSED "lane:$lane" \
@@ -513,19 +514,33 @@ LANES_LANE="$lane" LANES_SESSION="$uuid" "$L" log PAUSED "lane:$lane" \
 # this line and the row's state cell, with the gap named in the handoff.
 "$L" append-line "PAUSED — lane $lane, session $uuid@$ws, $(date -u +%Y-%m-%dT%H:%M:%SZ), on <operator>'s word \"<sanitized verbatim>\"; <what's open, or NOTHING CLAIMED>; handoff refreshed"
 fi
-# (c) the row: flip its leading state word, DERIVED from the row itself. row_write_refused is what step 5
-# reads: empty on success, "1" the moment either write below does not.
-# TWO SHAPES, NOT ONE: a state cell with history after it opens `| WORD ·` and
-# one with none opens `| WORD |` — an ordinary fresh row is the second, and a
-# parser that knows only the first leaves `state` empty, so `replace-in-row`
-# has no anchor and the lane is left RUNNING with its handoff already written.
-# `lane-handoff` reads both and keeps whichever punctuation the row carries;
-# this is the same read.
-state="$(printf '%s' "$row" | grep -o '| [A-Z][A-Z]* ·' | head -n 1)"   # e.g. '| LIVE ·'
-state_new="| PAUSED ·"
-if [[ -z "$state" ]]; then
-  state="$(printf '%s' "$row" | grep -o '| [A-Z][A-Z]* |' | head -n 1)"  # e.g. '| ACTIVE |'
-  state_new="| PAUSED |"
+# (c) the row: ONE WRITE, which sets the whole state cell (Amendment 13(a)).
+# row_write_refused is what step 5 reads: empty on success, "1" the moment the
+# write below does not land.
+# IT USED TO BE TWO WRITES AND BOTH WERE GUESSES AT A CELL THAT WAS A HISTORY:
+# `replace-in-row` flipping the leading state word — found by grepping the row
+# for `| WORD ·`, or `| WORD |` for a cell with no history after it, because the
+# anchor had to occur exactly once — and then an `append-row-status` putting
+# `PAUSED — <payload>` at the END of the same cell, so the row said PAUSED twice
+# with a day of narrative between. The cell is now ONE PHRASE that
+# `set-row-state` replaces: no anchor, no second write, and a row whose cell
+# opens with anything at all takes the same call.
+# FOUR THINGS THE CELL'S LINE MAY NOT CARRY, and `set-row-state` refuses all
+# four: ` · ` (the phrase's own separator, spelled `; `), `|` (a cell boundary
+# in the row, spelled `¦` — a `dir` or a launch flag may hold one), CR and LF (a
+# row is ONE line of a table, so a newline would split it in two), and more than
+# ratified decision O1's 240 characters. The cut is at 230 with the last partial
+# WORD dropped, because `${s:0:n}` counts BYTES wherever the locale is not a
+# UTF-8 one and a byte offset can land inside `—`, `·` or `→`. This is
+# `cut_to_line` in `lane-start`, `lane-end` and `lane-handoff`, and it is kept
+# in step with them — a copy that dropped one of the four would be refused by
+# the writer where the command is not (Copilot round 4 on openRepoTools#82).
+hs_line="${payload//$'\r'/ }"
+hs_line="${hs_line//$'\n'/; }"
+hs_line="${hs_line// · /; }"
+hs_line="${hs_line//|/¦}"
+if [[ ${#hs_line} -gt 230 ]]; then
+  hs_line="${hs_line:0:230}"; hs_line="${hs_line% *} ..."
 fi
 row_write_refused=""
 # AND (c) IS A REGISTER WRITE TOO, so a missing workstation stops it as well and
@@ -537,23 +552,17 @@ row_write_refused=""
 # is corrected here rather than repeated.
 if [[ -n "$ws_missing" ]]; then
   row_write_refused=1
-  echo "NOT WRITTEN: the row's state cell stays as it is, because every register write from a container with no \$LANES_WORKSTATION stops (clause (k) rule (d)). The handoff refreshed in step 2 names this gap, and step 5 prints the restart command with --lane, because a restart cannot resolve this lane from a row that was never flipped."
+  echo "NOT WRITTEN: the row's state cell stays as it is, because every register write from a container with no \$LANES_WORKSTATION stops (clause (k) rule (d)). The handoff refreshed in step 2 names this gap, and step 5 prints the restart command with --lane, because a restart cannot resolve this lane from a row that was never set."
 else
-"$L" replace-in-row "$lane" "$state" "$state_new" "swap" || row_write_refused=1
-if [[ -z "$row_write_refused" ]]; then
-  "$L" append-row-status "$lane" "PAUSED — $payload" \
-    || row_write_refused=1
-fi
+"$L" set-row-state "$lane" "PAUSED · $hs_line" || row_write_refused=1
 fi
 ```
 
 If (a) still exits 2, re-run it with the free-text argument **dropped entirely** and say so in the report:
-the PAUSED line is what the launcher reads on restart, and step 4 is never left unwritten. If `$state` came
-back empty, re-read the row and take the first `| WORD ·` in it — `replace-in-row` requires exactly one
-occurrence and exits 2 on a guess. If (c) is still refused after that re-read — a rebase conflict, a push
-race, anything `replace-in-row`/`append-row-status` themselves report — leave `row_write_refused` set and
-say so in the report; step 5 reads it, because a restart cannot resolve this lane from a record that was
-never flipped to `PAUSED`.
+the PAUSED line is what the launcher reads on restart, and step 4 is never left unwritten. If (c) is
+refused — a rebase conflict, a push race, a row the writer calls ambiguous, anything `set-row-state` itself
+reports — leave `row_write_refused` set and say so in the report; step 5 reads it, because a restart cannot
+resolve this lane from a record that was never set to `PAUSED`.
 
 ## 5. Print the restart command — one command, no menu
 
@@ -608,7 +617,7 @@ SAME argv (`claude-profile`'s `action="${1:-list}"` falls through to `run` on an
 `list|login|status|run`, without shifting), and the long form is not deprecated. What changes is what this
 file prints. The profile argument is the only part the operator changes, and only when switching accounts.
 
-**`--lane <lane>` is printed only where step 4's row write was refused** — the row was never flipped to
+**`--lane <lane>` is printed only where step 4's row write was refused** — the row was never set to
 `PAUSED`, so a restart cannot resolve this lane from it and the operator must name it explicitly. `--lane`
 is a **leading** option to `claude-profile`, read before the action or the profile — measured in the
 launcher itself, *"the first token that is not one of them ends this loop"* — so it goes BEFORE the profile
