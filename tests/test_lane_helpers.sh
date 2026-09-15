@@ -8050,6 +8050,9 @@ has   "the skill's own record writer carries the kind sub-field too" "$hfsk" 'pa
 has   "…and the free text after the why, in the addendum's spelling" "$hfsk" "kind unknown"
 has   "…and it asks window-session with the harness's own spelling of the window" \
       "$hfsk" "#{session_name}:#{window_id}"
+has   "…and its row flip reads BOTH state-cell shapes, as the command does" \
+      "$hfsk" "| [A-Z][A-Z]* |"
+has   "…replacing with whichever punctuation the row itself carries" "$hfsk" '"$state" "$state_new" "swap"'
 has   "…and the measured fact that is the whole reason for the distinction" \
       "$hfsk" "mints a NEW TRANSCRIPT ID IN THE SAME PROCESS"
 has   "and the respawn line Addendum 2 (i-8) names: \`lane <lane>\`" "$hfsk" 'LANE_START_FRESH=1 lane $lane'

@@ -515,7 +515,18 @@ LANES_LANE="$lane" LANES_SESSION="$uuid" "$L" log PAUSED "lane:$lane" \
 fi
 # (c) the row: flip its leading state word, DERIVED from the row itself. row_write_refused is what step 5
 # reads: empty on success, "1" the moment either write below does not.
+# TWO SHAPES, NOT ONE: a state cell with history after it opens `| WORD ·` and
+# one with none opens `| WORD |` — an ordinary fresh row is the second, and a
+# parser that knows only the first leaves `state` empty, so `replace-in-row`
+# has no anchor and the lane is left RUNNING with its handoff already written.
+# `lane-handoff` reads both and keeps whichever punctuation the row carries;
+# this is the same read.
 state="$(printf '%s' "$row" | grep -o '| [A-Z][A-Z]* ·' | head -n 1)"   # e.g. '| LIVE ·'
+state_new="| PAUSED ·"
+if [[ -z "$state" ]]; then
+  state="$(printf '%s' "$row" | grep -o '| [A-Z][A-Z]* |' | head -n 1)"  # e.g. '| ACTIVE |'
+  state_new="| PAUSED |"
+fi
 row_write_refused=""
 # AND (c) IS A REGISTER WRITE TOO, so a missing workstation stops it as well and
 # says so ONCE rather than being refused twice by the helper. Ruling 11's
@@ -528,7 +539,7 @@ if [[ -n "$ws_missing" ]]; then
   row_write_refused=1
   echo "NOT WRITTEN: the row's state cell stays as it is, because every register write from a container with no \$LANES_WORKSTATION stops (clause (k) rule (d)). The handoff refreshed in step 2 names this gap, and step 5 prints the restart command with --lane, because a restart cannot resolve this lane from a row that was never flipped."
 else
-"$L" replace-in-row "$lane" "$state" "| PAUSED ·" "swap" || row_write_refused=1
+"$L" replace-in-row "$lane" "$state" "$state_new" "swap" || row_write_refused=1
 if [[ -z "$row_write_refused" ]]; then
   "$L" append-row-status "$lane" "PAUSED — $payload" \
     || row_write_refused=1
