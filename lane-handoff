@@ -61,9 +61,13 @@
 #              SAME PROCESS, so every subagent the lane has running lives
 #              through it and only its in-flight tool calls die. The record then
 #              says `kind in-process` and the top block tells the next session
-#              to RELAUNCH NONE OF THEM — because relaunching a writer that is
-#              still alive puts two of them on one worktree. Every other form is
-#              `kind respawn`: a new process, and its writers are gone.
+#              to EXPECT EVERY WRITER BELOW LIVE — an expectation and never an
+#              instruction, which is Addendum 1 (j): what to DO is clause (i)'s
+#              count, the same in every kind. Relaunching a writer that is still
+#              live puts two of them on one worktree (k). `--restart`, `--exit`
+#              and `--late` are `kind respawn`: a new process, and its writers
+#              are gone. A PLAIN handoff is `kind unknown`, because the act that
+#              follows it is not this command's to know.
 #
 # THE LATE RULE, stated here because it is the one rule of this command a
 # reader cannot derive from the amendment. A lane's state is its log's LAST
@@ -179,9 +183,11 @@ lane-handoff [--restart | --exit | --in-process] [--late --at <UTC>]
   --in-process            the clear that follows keeps THIS PROCESS running (a
                           harness /clear), so every writer this lane has running
                           survives it: the record says `kind in-process` and the
-                          top block tells the next session to relaunch NONE of
-                          them. Refused with --restart and --exit, which each
-                          replace the process. Default: `kind respawn`.
+                          top block tells the next session to EXPECT every
+                          writer below live — an expectation, never an
+                          instruction (Addendum 1 (j)). Refused with --restart,
+                          --exit and --late, which each mean the process ended.
+                          With none of the four the kind is `unknown`.
   --late --at <UTC>       write the record a swap never left, dated by the
                           moment the old session ended. Run it from a shell
                           BEFORE the relaunch; see --help's LATE RULE.
@@ -261,6 +267,14 @@ done
 # `pclaude`.
 [ "$do_late" = 1 ] && { [ "$do_restart" = 1 ] || [ "$do_exit" = 1 ]; } &&
 	die "--late is the record a swap never left, written from a shell BEFORE the relaunch: there is no session of this lane's to restart or exit. Write the late record first, then start the lane." 2
+# AND `--late --in-process` IS A CONTRADICTION IN ITS OWN TERMS (Copilot round 4
+# on openRepoTools#47). A late record is written for a session that has ALREADY
+# ENDED — that is what makes it late — and `--in-process` says THIS PROCESS KEPT
+# RUNNING. Taken together the kind block below would take the `in-process` arm
+# first and write a record telling the next session to expect writers live that
+# died with the process the record is about.
+[ "$do_late" = 1 ] && [ "$do_in_process" = 1 ] &&
+	die "--late and --in-process cannot both be true: a late record is written for a session that has ALREADY ENDED (that is what makes it late, and its writers went with it), while --in-process says THIS PROCESS KEPT RUNNING. A late record is \`kind respawn\`. Drop --in-process." 2
 
 # ------------------------------------------- THE KIND OF CLEAR THIS RECORDS
 #
@@ -472,9 +486,17 @@ fi
 # spelling is the canonical one, and it is what the window rename, the top
 # block, the payload, the object log's lane field and the restart line must all
 # carry; so it is taken ONCE, here, through the resolver `lane-start`,
-# `lane-end`, `lanes` and `restart` share. It is also where a `--lane` this
-# estate has no name for is refused — before the rename, so that a refusal
-# leaves the window exactly as it found it.
+# `lane-end`, `lanes` and `restart` share. It is also where an AMBIGUOUS
+# register is refused (15(d), through the fence above) and where a `--lane`
+# that is not a lane NAME at all is refused — both before the rename, so that a
+# refusal leaves the window exactly as it found it.
+#
+# WHAT IT IS NOT IS A CHECK THAT THE LANE HAS A ROW (Copilot round 4 on
+# openRepoTools#47). `canon_lane` answers with the TYPED spelling where no row
+# matches, deliberately — `lane-start` uses the same resolver for a lane it is
+# about to create — so a well-formed `--lane` this register has never carried
+# reaches the writes below and is named there, by the row read that cannot find
+# a handoff and by the row flip that finds no state cell to replace.
 sread lane_canon "'this lane has no row'" canon-lane "$lane"
 if [ -n "$lane_canon" ] && [ "$lane_canon" != "$lane" ]; then
 	step "lane $lane → $lane_canon (Amendment 15: the register row's spelling is canonical)"

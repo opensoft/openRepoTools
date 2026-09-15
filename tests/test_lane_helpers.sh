@@ -6903,6 +6903,9 @@ is    "--in-process with --restart is refused" "$rc" 2
 has   "…because each of those replaces the process the writers are children of" "$err" "THIS PROCESS KEEPS RUNNING"
 run env PATH="$A17PATH" "$HANDOFF_CMD" --lane repoHF-4 --in-process --exit x
 is    "…and so is --in-process with --exit" "$rc" 2
+run env PATH="$A17PATH" "$HANDOFF_CMD" --lane repoHF-4 --in-process --late --at "2026-09-14T12:02:27Z"
+is    "…and --in-process with --late, which is a contradiction in its own terms" "$rc" 2
+has   "…because a late record is written for a session that has ALREADY ended" "$err" "ALREADY ENDED"
 
 # ----------------------------------------------- 3. --late, and its one rule
 
