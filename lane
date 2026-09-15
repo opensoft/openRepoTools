@@ -1,0 +1,1259 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# lane — one word: the lanes, numbered, and the one you pick is bound.
+#
+#   lane                   the lanes of the checkout you are in, NUMBERED, and
+#                          ONE question: which?
+#   lane <name>            straight to that lane's branch, asking nothing
+#   lane <name> <profile>  the same, under another account (the late swap)
+#   lane --all             every repository, grouped
+#
+# Installed on PATH by `openRepoTools --install`. lane-collision-protocol
+# AMENDMENT 18 ADDENDUM 1, RATIFIED 2026-09-14T14:05:54Z verbatim "ratify the
+# addendum", out of Brett Heap's two messages of that morning, verbatim:
+#
+#   i dont understand in another window i want to attach to that lane. what
+#   command do i use to do that?
+#
+#   this is too hard for users. we need simple way to list the lanes and then
+#   pick one to bind.
+#
+# and his answer to what the word should be, interactive multi-choice, verbatim
+# "lane (Recommended)". Clause (i) is REFINED by it and not replaced: the
+# listing is the same listing, and what is new is the NUMBER in front of each
+# row and the one question under them.
+#
+# THREE BRANCHES, ONE PER STATE, AND THE STATE IS THE READ'S (clause (i-2)):
+#
+#   * AVAILABLE — PARKED, or a binding this host proves dead. It goes THROUGH
+#     THE LAUNCHER, in the lane's own recorded directory, under the profile the
+#     lane's own record names: `cd <dir> && exec pclaude --lane <lane>
+#     <profile>`. That is Brett Heap's refinement of 2026-09-14T14:1xZ, from his
+#     question *"when do i use lane vs restart … they seem almost the same to
+#     me"* — a bare `lane-start` under whatever profile the shell happens to
+#     carry is, outside a launcher session, the DEFAULT CONFIG DIRECTORY and
+#     therefore the wrong account. `lane <name> <profile>` names another one,
+#     which is the late-swap case and is exactly what `pclaude --lane <lane>
+#     <profile>` already takes.
+#   * LIVE HERE — the ATTACH, and NEVER A SECOND PROCESS (clause (h)). Inside
+#     tmux the lane's window is moved into this session and selected; outside
+#     tmux, `tmux attach -t <its session>:<@id>` — the window named in the
+#     attach itself, so no act between the fence and the terminal can land on
+#     another lane — with that window selected first.
+#     Nothing is launched, nothing is resumed and nothing is written: the
+#     session is already running and this word only puts a terminal in front of
+#     it. Measured 2026-09-14: the acts are `tmux move-window -a -s
+#     <session>:<@id>` and then `tmux select-window -t <session>:<@id>` — the
+#     `@id` on both, because an index is a name another window can be given
+#     between the read and the act — and where the window is already in this
+#     session the move is not made at all.
+#   * BOUND ELSEWHERE — clause (c)'s question, the handoff request. The request
+#     itself is `brettheap/new-workstation#38`'s act 4 and DOES NOT EXIST YET,
+#     so until it does this refuses and names where the lane is bound. It never
+#     offers a launch: a second session on a lane another workstation holds is
+#     the collision this whole protocol is about.
+#
+# CLOSED AND DORMANT LANES ARE HIDDEN (Amendment 19). A lane whose last act was
+# its last is not a lane a person picks, and a picker that offered one would be
+# offering to reopen something closed on purpose. They are still ROWS in
+# `lanes`, which is the read: this is a pick.
+#
+# IT IS A PICKER, AND THAT IS THE AMENDMENT AND NOT A DRIFT. Ratified decision 3
+# ruled "never a picker, never a menu" for `restart` and for `/restart`, and
+# Addendum 1 is the later word on a question that decision was not asked: a
+# person who has to type a lane name has to know one. THE COUNT IS STILL ONE
+# QUESTION — the listing, then `which?`, then the act — and with NO TERMINAL ON
+# STDIN there is no question at all: the listing prints, the acts are suggested
+# filled in, and the command exits having asked nothing (clause (i-3); an
+# agent's stdin is not a terminal, and every agent on this estate reads this
+# command's output rather than answering it).
+#
+# `restart` IS RETIRED AND THIS IS WHERE IT WENT (Amendment 18 Addendum 2,
+# ratified 2026-09-14T16:50:32Z verbatim "ratify", from Brett Heap's ruling
+# *"i think we can drop restart as a cli command and keep it inside a claude
+# session with /restart … lane does all the things a user wants"*). The
+# AVAILABLE branch below is `restart <lane>`'s whole act, moved here rather than
+# copied: the launcher path, the recorded directory, the recorded profile,
+# asking nothing. `/restart` is untouched — it is the INSIDE half, for a session
+# that started bare, and a session cannot exec a launcher over itself.
+#
+# EXIT CODES, in this family's convention (clause (f)'s, which excludes 3
+# because `lanes-edit.sh` already spends it on an unpushed commit and a code
+# that means two things is a code a caller cannot act on):
+#
+#   0  the lane was reached — this process replaced by the launcher, or the
+#      attach performed — or the listing printed, or the pick declined
+#   8  NO LANE TO PICK: nothing in scope that this word would offer
+#   2  REFUSED — no such lane, a lane bound elsewhere, no directory or profile
+#      recorded yet, no launcher on PATH, an answer that is not one of the
+#      choices, a recorded window that no longer resolves
+#   1  a read failed, which is never "there are no lanes" (Amendment 7(d))
+#   64 usage — an unknown option, or a flag with no value
+#
+#   $LANES_EDIT      the register's reader (default: lanes-edit.sh beside this)
+#   $PCLAUDE         the launcher         (default: pclaude, else claude-profile)
+#   $LANE_DRY_RUN=1  print the acts instead of performing them
+#
+# It writes nothing to the register and it never runs `claude` itself: every
+# launch goes through the launcher and therefore through `lane-start`, which is
+# what renames the window, stamps the row, extends the session cell, writes the
+# lane's `RESUMED` line and passes `--name <lane>` so the harness's record name
+# is the lane rather than a derived one.
+
+set -euo pipefail
+
+prog="${0##*/}"
+SELF="${BASH_SOURCE[0]:-$0}"
+selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
+TAB="$(printf '\t')"
+
+say()  { printf '%s\n' "$*"; }
+note() { printf '%s: %s\n' "$prog" "$*" >&2; }
+die()  { printf '\n%s: REFUSED: %s\n' "$prog" "$1" >&2; exit "${2:-2}"; }
+# THE ONE-LINE FUNCTION `lane-start:550` CARRIES, and for the same reason: a
+# `--dry-run` prints an act to be TYPED, and an unquoted one is not that act.
+# Clause (c) admits a directory with a space in it — it is written QUOTED and
+# read back unquoted — so `cd /p/my projects` is a line that cd's into `/p/my`.
+quoted() { printf '%q ' "$@" | sed 's/ $//'; }
+lc() { printf '%s' "${1-}" | tr 'A-Z' 'a-z'; }
+
+usage() {
+	cat <<'USAGE'
+lane [<name> [<profile>]] [--all] [--dir <path>] [--switch] [--dry-run]
+
+  lane             the lanes of the checkout you are in, numbered, and ONE
+                   question: which? Available lanes first (parked, or a binding
+                   this host proves dead), lanes LIVE HERE next with where each
+                   is, lanes bound elsewhere last; closed and dormant hidden.
+                   Outside every checkout: every repository, grouped.
+  lane <name>      straight to that lane's branch, asking nothing: available →
+                   the launcher, in its own directory and under its own
+                   recorded profile; LIVE HERE → its window, attached, never a
+                   second process; bound elsewhere → a refusal naming where.
+  lane <name> <profile>
+                   the same, under the profile you name rather than the one the
+                   record carries — the late swap, exactly as
+                   `pclaude --lane <lane> <profile>` takes it.
+
+  --all            every repository, grouped, whatever the cwd.
+  --dir <path>     the lane's checkout, for a lane whose record has none yet.
+                   Handed straight to the launcher. Not needed on the normal
+                   path, and it must not become the way a lane is reached.
+  --switch         attach with `tmux switch-client` instead of moving the
+                   lane's window into this session.
+  --dry-run        print the acts instead of performing them.
+  -h, --help       this.
+
+With NO TERMINAL ON STDIN it lists, suggests and asks nothing — an agent's
+stdin is not a terminal. `f` at the question opens a NEW lane at the next free
+position; `q` picks none.
+
+Exit: 0 reached, listed or declined · 8 nothing to pick · 2 refused ·
+1 a read failed · 64 usage.
+
+  $LANES_EDIT   the register's reader   (default: lanes-edit.sh beside this file)
+  $PCLAUDE      the launcher            (default: pclaude, else claude-profile)
+
+`lanes` is the same rows as a READ — every column, closed lanes included, no
+question. `/restart` is the act from INSIDE a running session, which cannot
+exec a launcher over itself. `lane-end <lane>` closes a lane.
+USAGE
+}
+
+# The helper, found the way `lanes` and `lane-start` find it: beside this
+# command first — `--install` places both in one directory — then on PATH. One
+# resolution, so a workstation with two copies never reads one and writes the
+# other.
+LANES_EDIT="${LANES_EDIT:-}"
+if [ -z "$LANES_EDIT" ]; then
+	if [ -x "$selfdir/lanes-edit.sh" ]; then LANES_EDIT="$selfdir/lanes-edit.sh"
+	else LANES_EDIT="$(command -v lanes-edit.sh 2>/dev/null || printf '')"
+	fi
+fi
+[ -n "$LANES_EDIT" ] && [ -x "$LANES_EDIT" ] || die "no register reader at ${LANES_EDIT:-lanes-edit.sh} — it is installed beside this
+    command by \`openRepoTools --install\`. Run that, or set \$LANES_EDIT." 2
+
+# ------------------------------------------------------------------ arguments
+
+all_given=0; switch=0; dry_run="${LANE_DRY_RUN:-0}"; dir_flag=""
+name=""; profile=""; positional=0; endopts=0
+# THE TWO ARGUMENTS ARE THE LANE AND THE PROFILE, IN THAT ORDER, and they are
+# taken in ONE place so that `--` can end the options without a second copy of
+# the rule. A lane name that opens with `-` is not a lane name (the fence below
+# refuses it, and so does `lanes-edit.sh`), so before `--` a `-`-led word is an
+# OPTION and is refused as one: `lane -repoA11-1` is 64, and `lane -- -repoA11-1`
+# is the fence's own 2, which is the refusal that says what a lane name is.
+take_arg() {
+	# AN ARGUMENT THAT WAS GIVEN AND IS EMPTY IS NOT "NO ARGUMENT" (Copilot round
+	# 12 on #45, `lane:234`). `lane ""` left `$name` empty, every guard below it
+	# read that as "no lane was named", and a malformed named invocation became a
+	# different question — the listing, and on a terminal the numbered pick. The
+	# helper's own whole-string fence refuses an empty lane name; this refuses it
+	# at the door, in the same terms, because the two arguments this word takes
+	# are a lane and a profile and neither of them is the empty string.
+	[ -n "$1" ] || die "$prog was given an EMPTY argument, which is not a lane name and not a
+    profile. A lane name is the register row's own spelling; the listing is the
+    bare word with no argument at all:
+      the lanes of this checkout:  $prog
+      that lane:                   $prog <name>" 64
+	positional=$((positional + 1))
+	case "$positional" in
+	1) name="$1" ;;
+	2) profile="$1" ;;
+	*) die "$prog takes a lane and an optional profile: $prog [<name> [<profile>]]" 64 ;;
+	esac
+}
+while [ $# -gt 0 ]; do
+	if [ "$endopts" = 1 ]; then take_arg "$1"; shift; continue; fi
+	case "$1" in
+	-h | --help) usage; exit 0 ;;
+	--all) all_given=1; shift ;;
+	--switch) switch=1; shift ;;
+	--dry-run) dry_run=1; shift ;;
+	--dir) dir_flag="${2-}"; [ -n "$dir_flag" ] || die "--dir needs a path" 64; shift 2 ;;
+	--dir=*) dir_flag="${1#--dir=}"; [ -n "$dir_flag" ] || die "--dir needs a path" 64; shift ;;
+	--) endopts=1; shift ;;
+	-*) die "unknown option '$1' — see $prog --help" 64 ;;
+	*) take_arg "$1"; shift ;;
+	esac
+done
+
+# `--all` IS THE LISTING'S SCOPE AND A NAME IS ONE LANE, so the two together are
+# a line that means two things — said rather than silently resolved either way,
+# which is the rule `lanes --all --prefix <repo>` took one file over.
+if [ "$all_given" = 1 ] && [ -n "$name" ]; then
+	die "--all is the LISTING's scope and \`$prog <name>\` names one lane; they are two
+    questions.
+      every repository:  $prog --all
+      that lane:         $prog $name" 64
+fi
+
+# A RELATIVE `--dir` NAMES TWO DIRECTORIES: this command `cd`s into the
+# directory and then `exec`s the launcher WITH THE SAME STRING, which
+# `lane-start` resolves a second time — from the new working directory. So it is
+# resolved ONCE, to what it meant where the operator typed it. A path that does
+# not exist is left exactly as typed, so the refusal that names it is unchanged.
+if [ -n "$dir_flag" ]; then
+	dir_abs="$(cd -- "$dir_flag" 2>/dev/null && pwd -P || printf '')"
+	[ -n "$dir_abs" ] && dir_flag="$dir_abs"
+fi
+
+# THE WHOLE STRING, AND IT IS `lanes-edit.sh`'s OWN RULE (`check_lane_name`).
+# `[A-Za-z0-9]*)` pins the FIRST CHARACTER and nothing else, so `repoA11-1 x`
+# and `repoA11-1/extra` reach the reads and come back as "no such lane" about a
+# string that is not a lane name at all.
+if [ -n "$name" ]; then
+	case "$name" in
+	"" | *[!A-Za-z0-9._-]* | .* | -*)
+		die "'$name' is not a lane name (letters, digits, . _ -, not opening with . or -)" 2 ;;
+	esac
+fi
+
+# ------------------------------------------------------------ the workstation
+#
+# FROM CONFIGURATION, NEVER FROM `hostname` (ratified decision 8(d)): read
+# through the helper, which is the one implementation the register's own writer
+# uses. A command that ran `hostname` here would name a workstation the register
+# has never heard of the moment it ran in a container.
+ws_pair="$("$LANES_EDIT" workstation 2>/dev/null || :)"
+ws="$(printf '%s' "$ws_pair" | cut -f1)"
+ws_src="$(printf '%s' "$ws_pair" | cut -f2)"
+
+# THE CONTAINER NOTICE, AND THIS IS THE SURFACE THAT NEEDS IT MOST. With no
+# `$LANES_WORKSTATION` inside a container the workstation is the CONTAINER'S id,
+# so no row is this workstation's — and the partition then puts EVERY lane under
+# BOUND ELSEWHERE, which is a listing that tells a person their own lanes are
+# somebody else's. Measured in this very repository on 2026-09-14, in a
+# container with the seam unset: one lane, filed elsewhere, with nothing on
+# screen to say why.
+#
+# THE SENTENCE IS ASKED FOR RATHER THAN RESTATED — `lanes` takes it the same way
+# and for the same reason (`lanes:253`): `lanes_workstation_why` is the one
+# wording the writers share, and a copy here would be the drift
+# `test_repo_hygiene.py` holds the four against. The helper prints it on stderr
+# and still answers on stdout, because a read in front of a launch may not
+# refuse; the read above discarded that stderr, so this asks for it again.
+#
+# SAID ONCE PER RUN, because BOTH surfaces that need it can be reached in ONE
+# run: the listing prints it under the rows, and the branch a mis-filed lane
+# takes prints it above its own refusal. A person who picked a number out of a
+# listing that had already explained itself does not need the paragraph twice.
+ws_notice_said=0
+ws_notice() {
+	[ "$ws_notice_said" = 0 ] || return 0
+	case "$ws_src" in
+	container-unset)
+		ws_notice_said=1
+		say ""
+		"$LANES_EDIT" workstation 2>&1 >/dev/null || : ;;
+	esac
+}
+
+# ------------------------------------------------------------------- the read
+#
+# THE SAME ROWS `lanes` RENDERS, THROUGH THE SAME READ. `lanes_rows` is the one
+# implementation of what a lane's row is (clause (h)'s rule, and A11 Addendum 4
+# ruling 7's for column 10); this word renders a SUBSET of them with a number in
+# front. A second read here would be a second thing to drift.
+#
+# LOCAL, LIKE EVERY READ IN THIS FAMILY: it sits in front of a launch and a
+# person typing one word wants an answer now. `lanes --fetch` is the refresh,
+# and it is one word away.
+#
+# AND THE CODE DECIDES, NOT THE EMPTINESS OF THE OUTPUT (Amendment 7(d), the
+# fail-closed family): `0` rows · `8` none · `2` A HELPER PREDATING THE READ ·
+# `64` a usage error of the read's own · anything else A READ THAT FAILED, which
+# is never "there are no lanes" and never a pick this word prints empty.
+ROWS_OUT=""
+# AND WHETHER THE PROOF WAS MADE AT ALL. `lanes_rows` says on STDERR — and goes
+# on answering — that this workstation's session records could not be read, in
+# which case its STATE column is the LOG'S VERB ALONE: *"a lane that is live may
+# show as IDLE or PAUSED here"* (`lanes-edit.sh:4628`). An `IDLE` row is
+# AVAILABLE only because this host PROVED the binding dead, and that is the
+# proof that did not happen — so launching one would start a second process on a
+# lane that may still be running, which is the collision clause (h) exists for
+# (Copilot round 1 on #45, `lane:777`). The sentence is caught here, where the
+# stderr is already being read, and `go_available` refuses on it.
+#
+# THREE STATES AND NOT TWO (Copilot round 3 on #45, `lane:322`): `0` the proof
+# was made · `1` the helper SAID it could not make it · `2` this command could
+# not read whether it did, because no temporary file could be made to capture
+# the helper's notes. `2` is not `0`: the fall-through Amendment 7(d) forbids is
+# exactly "I did not get the answer, so I will treat it as the good one".
+LIVENESS_UNREAD=0
+read_rows() {   # <args for `lanes-edit.sh lanes`>
+	local rr_rc=0 rr_err_file
+	rr_err_file="$(mktemp "${TMPDIR:-/tmp}/lane-read.XXXXXX" 2>/dev/null || printf '')"
+	if [ -n "$rr_err_file" ]; then
+		ROWS_OUT="$(LANES_NO_FETCH=1 "$LANES_EDIT" lanes "$@" 2>"$rr_err_file")" || rr_rc=$?
+		# The one expected sentence is dropped out of the stream rather than the
+		# stream being dropped for its sake: the helper also says HERE that this
+		# workstation's session records could not be read, which is the line
+		# telling a person that a lane showing IDLE may be live.
+		grep -v -e 'not fetching; reading origin/' -- "$rr_err_file" >&2 || :
+		# `-e`, LIKE THE LINE ABOVE IT: a pattern given as an OPERAND puts the
+		# `--` after one, and BSD's `getopt` reads that as a filename.
+		if grep -q -e "session records could not be read" -- "$rr_err_file"; then LIVENESS_UNREAD=1; fi
+		rm -f -- "$rr_err_file"
+	else
+		# NO TEMPORARY FILE, SO THE HELPER'S NOTES WENT STRAIGHT TO THE TERMINAL
+		# and this command cannot read them back — the same degradation `lanes`
+		# already names for its fetch line. What it must NOT do is read its own
+		# blindness as an answer: whether the liveness proof was made is UNKNOWN
+		# from here, and `go_available` treats unknown as unproved.
+		LIVENESS_UNREAD=2
+		ROWS_OUT="$(LANES_NO_FETCH=1 "$LANES_EDIT" lanes "$@")" || rr_rc=$?
+	fi
+	case "$rr_rc" in
+	0) return 0 ;;
+	8) ROWS_OUT=""; return 8 ;;
+	64) die "bad arguments for the lane read — see $prog --help" 64 ;;
+	2) die "the \`lanes-edit.sh\` on this workstation has no \`lanes\` subcommand, so it
+    predates lane-collision-protocol Amendment 11. That is not a failure and
+    nothing is wrong with the register — this workstation has not taken the
+    install yet. Take it:  openRepoTools --install" 2 ;;
+	*) die "$LANES_EDIT lanes failed (exit $rr_rc). That is NOT 'there are no lanes', and
+    this command will not offer a pick — or a lane — on an answer it did not get
+    (Amendment 7(d)). Run it by hand to see what it says, then re-run." 1 ;;
+	esac
+}
+
+# THE GROUPING IS THE HELPER'S AND NOT THIS RENDERER'S, for the reason column 10
+# is (A11 Addendum 4 ruling 7): two surfaces computing one partition is how they
+# come to disagree about which lanes are free. `lane-groups` reads the rows this
+# command has already paid for, on stdin, and answers `<group><TAB><row>`.
+# CALLED THROUGH `$( )`, SO ITS STATUS IS READ BY EVERY CALLER. A `die` inside a
+# command substitution exits the SUBSHELL and leaves this process carrying on
+# with an empty answer — the trap `lanes-edit.sh` states for `row_line` and
+# `canon_lane` — so every caller spells it `x="$(group_rows)" || exit $?`. The
+# refusal has already gone to stderr from inside the subshell; what the status
+# carries is that there WAS one.
+group_rows() {   # rows in $ROWS_OUT → `<group><TAB><row>`
+	local gr_rc=0 gr_out
+	gr_out="$(printf '%s\n' "$ROWS_OUT" | "$LANES_EDIT" lane-groups "$ws" 2>/dev/null)" || gr_rc=$?
+	# (`$gr_rc` is the helper's own, because `set -o pipefail` is on and the
+	# `printf` cannot fail.)
+	case "$gr_rc" in
+	0) printf '%s' "$gr_out" ;;
+	2) die "the \`lanes-edit.sh\` on this workstation has no \`lane-groups\` subcommand, so
+    it predates lane-collision-protocol Amendment 18 Addendum 1 and the pick
+    cannot be grouped here. That is not a failure and nothing is wrong with the
+    register. Take the install:  openRepoTools --install
+    Until then the same rows are a read:  lanes" 2 ;;
+	*) die "$LANES_EDIT lane-groups failed (exit $gr_rc). That is NOT 'no lane is
+    available' (Amendment 7(d)), and this command will not print a pick with a
+    group missing from it. Run it by hand to see what it says, then re-run." 1 ;;
+	esac
+}
+
+# ------------------------------------------------------------------ the scope
+#
+# THE BARE WORD INSIDE A LANE CHECKOUT NARROWS TO THAT REPOSITORY, exactly as
+# `lanes` does and for the settlement's own reason (2026-09-13T20:38:11Z,
+# verbatim "Narrow inside a checkout (Recommended)"). The narrowing is the
+# read's own: `--dir` is the checkout around the cwd, `--repo` is that
+# checkout's `origin`, and the two are an OR — a lane's home repository and the
+# checkout it sits in are not the same fact. `--prefix` is the third term and
+# the label fallback.
+#
+# THE REPOSITORY IS THE ONE `origin` NAMES and the directory's name is the
+# fallback: inside a worktree `basename $(git rev-parse --show-toplevel)` is the
+# WORKTREE's name, which narrows to a repository no lane can be named for.
+origin_nwo() {
+	local url nwo
+	url="$(git -C "${1:-.}" remote get-url origin 2>/dev/null || :)"
+	[ -n "$url" ] || return 1
+	nwo="$(printf '%s\n' "$url" | sed -E 's#\.git$##; s#^git@[^:]+:##; s#^ssh://[^/]+/##; s#^https?://[^/]+/##')"
+	printf '%s\n' "$nwo" | grep -qE '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || return 1
+	printf '%s\n' "$nwo"
+}
+
+here_repo=""; here_root=""; here_nwo=""
+scope_args=()
+if [ "$all_given" = 1 ]; then
+	scope_args=(--all)
+elif [ -z "$name" ]; then
+	here_root="$(git rev-parse --show-toplevel 2>/dev/null || :)"
+	if [ -n "$here_root" ]; then
+		here_nwo="$(origin_nwo "$here_root" 2>/dev/null || :)"
+		if [ -n "$here_nwo" ]; then here_repo="${here_nwo#*/}"; else here_repo="$(basename -- "$here_root")"; fi
+		scope_args=(--dir "$here_root" --prefix "$here_repo")
+		if [ -n "$here_nwo" ]; then scope_args+=(--repo "$here_nwo"); fi
+	fi
+fi
+
+# ------------------------------------------------------------ the row's parts
+#
+# Clause (j)'s ten columns and the read's two additions, in the read's order:
+#   1 lane · 2 state · 3 workstation · 4 profile · 5 window · 6 last uuid ·
+#   7 directory · 8 objects · 9 age · 10 the line that restarts it · 11 home ·
+#   12 live forks of its transcript
+R_LANE=""; R_STATE=""; R_WS=""; R_PF=""; R_WIN=""; R_SID=""; R_DIR=""
+R_OBJ=""; R_AGE=""; R_CMD=""; R_HOME=""; R_FK=""
+split_row() {   # <row>
+	IFS="$TAB" read -r R_LANE R_STATE R_WS R_PF R_WIN R_SID R_DIR R_OBJ R_AGE R_CMD R_HOME R_FK <<EOF
+${1-}
+EOF
+	case "${R_DIR:-none}" in none) R_DIR="" ;; esac
+	case "${R_PF:-none}" in none) R_PF="" ;; esac
+	case "${R_WIN:-none}" in none) R_WIN="" ;; esac
+	case "${R_HOME:-none}" in none) R_HOME="" ;; esac
+	case "${R_WS:-unknown}" in unknown) R_WS="" ;; esac
+	case "${R_FK:-}" in '' | *[!0-9]*) R_FK=0 ;; esac
+}
+
+# The repository a row is filed under, for the grouping: the home the log
+# records, and the lane name's `<repo>-` label where it records none. Amendment
+# 7 calls that prefix a label rather than a fact, which is why it is the
+# fallback here and never the override.
+row_repo() {   # <lane> <home>
+	if [ -n "${2-}" ]; then printf '%s' "${2#*/}"; return 0; fi
+	case "${1-}" in
+	*-*) printf '%s' "${1%-*}" ;;
+	*) printf '%s' "${1-}" ;;
+	esac
+}
+
+# ----------------------------------------------------------------- the window
+#
+# THE RECORD'S `tmux` FIELD IS `<session>:<@window>.<%pane>` and the two halves
+# this command needs are the SESSION NAME and the WINDOW ID. The id is what is
+# selected and moved; the session name is what the id is CHECKED AGAINST,
+# because tmux reissues `@` ids from `@0` when its server is replaced — measured
+# on this estate on 2026-09-13, where every one of five recorded windows was
+# `(gone)` and `@71` had since been handed to somebody else. Matching a dead ref
+# is how a lane binds to a stranger's pane, which is the fence clause (b)
+# already states for `window-lane`; this is that fence on the attach.
+W_SESS=""; W_ID=""
+split_window() {   # <window field>
+	W_SESS=""; W_ID=""
+	case "${1-}" in
+	*:*) : ;;
+	*) return 1 ;;
+	esac
+	W_SESS="${1%%:*}"
+	W_ID="${1#*:}"
+	W_ID="${W_ID%%.*}"
+	W_ID="${W_ID%% *}"
+	[ -n "$W_SESS" ] && [ -n "$W_ID" ] || return 1
+	return 0
+}
+
+tmux_here() { [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; }
+
+# THE SELECT IS PART OF THE FENCE AND NOT A COURTESY (Copilot round 1 on #45,
+# `lane:610`, critical). Every one of the four attach paths puts the terminal on
+# the lane's OWN window, and three of them do something after it — an `attach`,
+# a `switch-client`, a `move-window`. A select that FAILED and was swallowed
+# leaves the person on whatever window that session left current, which is
+# another lane: the id resolved a moment ago, at the fence above, and does not
+# now. So the failure is a refusal here, in one function, rather than four
+# `|| :`s and one guess.
+# THE TARGET IS SESSION-QUALIFIED, which is the same fence this command applies
+# everywhere else: an `@id` alone leaves tmux to pick the "best" session holding
+# that window, and picking is what the id-AND-session rule exists to stop
+# (Copilot round 2 on #45, `lane:666`). `<session>:<@id>` names both halves, so
+# the act is the one the record described or it is nothing.
+#
+# AND THE SESSION IS THE ONE THE WINDOW IS IN *NOW*. After a `move-window` the
+# window belongs to THIS session and the source may have closed itself behind
+# it, so a refusal naming `$W_SESS` would send a person to a session that is
+# gone (Copilot round 2, `lane:706`). Every caller passes the session it means.
+#
+# AND THE LINE IT OFFERS FIRST KEEPS THE WINDOW IT CHECKED (Copilot round 11 on
+# #45, `lane:499` and `lane:804`). `tmux attach -t <session>` alone lands on
+# whatever that session has since made current — which is the outcome this whole
+# fence exists to stop, offered in the refusal that exists to stop it. The
+# qualified form attaches AND selects in one act (measured, tmux 3.4: `attach -t
+# dst:@2` made `@2` current; `attach -t dst:@3` for a window of another session
+# refused with `can't find window: @3`), so it is either the lane or a refusal,
+# never another lane. The bare session stays UNDER it, said as what it is —
+# whatever that session now holds — because a person who wants it anyway is
+# entitled to type it knowing that.
+select_window_or_refuse() {   # <session> <@id> <what was already done, or "">
+	tmux select-window -t "$1:$2" 2>/dev/null && return 0
+	die "lane $R_LANE's window $2 could not be selected in session $1${3:+ ($3)}. It
+    resolved a moment ago, at the check above, and does not now — so going on
+    would put this terminal on whatever window that session left current, which
+    is another lane, and that is the one thing the id-AND-session fence exists
+    to stop.
+      what the register says now:            lanes --all
+      that window, if it is back:            tmux attach -t $1:$2
+      that session, whatever it now holds:   tmux attach -t $1" 2
+}
+tmux_field() {   # <target> <format>
+	command -v tmux >/dev/null 2>&1 || return 1
+	tmux display-message -p -t "$1" "$2" 2>/dev/null | head -n1
+}
+this_session() {
+	tmux_here || return 0
+	tmux display-message -p '#S' 2>/dev/null || :
+}
+
+# WHERE A LIVE LANE IS, in the words clause (i-1) uses: `window <n> of this
+# session`, or the session it is in, or `detached session <name>`. Read from
+# tmux and never from the record, because the record says where the window WAS.
+where_live() {   # <window field>
+	local wl_now wl_idx wl_att wl_this
+	split_window "${1-}" || { printf 'window %s (not a session:window this word can read)' "${1:-none}"; return 0; }
+	wl_now="$(tmux_field "$W_ID" '#{session_name}' 2>/dev/null || :)"
+	if [ -z "$wl_now" ] || [ "$wl_now" != "$W_SESS" ]; then
+		printf 'its recorded window %s does NOT resolve here now' "$1"
+		return 0
+	fi
+	wl_idx="$(tmux_field "$W_ID" '#{window_index}' 2>/dev/null || :)"
+	wl_this="$(this_session)"
+	if [ -n "$wl_this" ] && [ "$wl_this" = "$W_SESS" ]; then
+		printf 'window %s of this session' "${wl_idx:-?}"
+		return 0
+	fi
+	wl_att="$(tmux_field "$W_SESS" '#{session_attached}' 2>/dev/null || :)"
+	case "${wl_att:-0}" in
+	0 | '') printf 'detached session %s, window %s' "$W_SESS" "${wl_idx:-?}" ;;
+	*) printf 'session %s, window %s' "$W_SESS" "${wl_idx:-?}" ;;
+	esac
+}
+
+# ---------------------------------------------------------------- the branches
+
+# THE SAME RULE AS `group_rows`: read through `$( )`, so the caller takes the
+# status and exits on it rather than `exec`ing an empty string.
+launcher() {
+	local lp="${PCLAUDE:-}"
+	if [ -z "$lp" ]; then
+		lp="$(command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
+	fi
+	[ -n "$lp" ] || die "there is no launcher on PATH (neither \`pclaude\` nor \`claude-profile\`), and this
+    command will not run \`claude\` itself: every launch goes through the
+    launcher and therefore through \`lane-start\`, which is what renames the
+    window, stamps the row, extends the session cell and passes \`--name\` so
+    the harness's record name is the lane rather than a derived one. Install the
+    toolset and the launcher, then re-run." 2
+	printf '%s' "$lp"
+}
+
+# AVAILABLE — `restart <lane>`'s whole act, which is where that word went
+# (Amendment 18 Addendum 2). The directory and the profile are the LANE'S OWN
+# RECORD's, out of the row this command has already read: a launch typed
+# anywhere but in the lane's surviving window can learn neither from tmux,
+# because a window reuse or a rename destroys the `claude-<profile>-<ts>-<pid>`
+# session name that was the only place the profile ever appeared.
+go_available() {
+	local ga_dir="$R_DIR" ga_pf="$profile" ga_from="" ga_pclaude dir_for_hint pos lrepo ga_start
+	local ga_cmd ga_why
+	# A LANE IS AVAILABLE BECAUSE THIS HOST PROVED NOTHING IS RUNNING ON IT, and
+	# where the session records could not be read that proof was never made — IN
+	# EVERY STATE, `PAUSED` INCLUDED (Copilot round 4 on #45, `lane:560`).
+	#
+	# THE EXCEPTION ROUND 1 CARVED OUT WAS THE ROW MOST LIKELY TO COLLIDE, and
+	# the evidence is the sentence this file already quotes forty lines above:
+	# *"a lane that is live may show as IDLE OR PAUSED here"* (`lanes-edit.sh:4628`,
+	# the helper's own words). A live record BEATS the log's last verb — *"a lane
+	# whose session is running is LIVE whatever its last written line says;
+	# otherwise the verb answers"* (`lanes-edit.sh:4700`) — so when the live read
+	# fails the verb is ALL that is left, and `/lane-swap` writes the `PAUSED`
+	# line while its session is still on screen. "Parked by its own last line" was
+	# read as a proof; it is a line, and the proof is the read that did not
+	# happen. Every state refuses (clause (h), Amendment 7(d)).
+	if [ "$LIVENESS_UNREAD" != 0 ]; then
+		ga_why="this workstation's session records could NOT be read (the line above)"
+		case "$LIVENESS_UNREAD" in
+		2) ga_why="no temporary file could be made to read the helper's own notes back, so
+    whether those records answered is UNKNOWN from here" ;;
+		esac
+		die "lane $R_LANE reads ${R_STATE:-UNKNOWN}, and $ga_why — so nothing here has
+    PROVED that lane dead, and a lane that is LIVE shows as IDLE or PAUSED when
+    that proof is missing — the helper's own words (\`lanes-edit.sh:4628\`),
+    because a live record beats the log's last verb and the verb is all that is
+    left. This command will not start a second session on a lane that may
+    already be running (clause (h)); that is the collision the whole protocol is
+    about, and a record this command did not read is not an answer (Amendment
+    7(d)).
+      what is actually running:  lanes-edit.sh live-holder $R_LANE
+      fix the read and re-run:   lanes --all
+    A PAUSED row is no exception here: \`/lane-swap\` writes that line while its
+    session is still on screen, so it is the row most likely to be running." 2
+	fi
+	if [ -n "$dir_flag" ]; then ga_dir="$dir_flag"; fi
+	if [ -z "$ga_pf" ]; then ga_pf="$R_PF"; fi
+	# A PROFILE IS NEVER GUESSED. Until a lane has been started once under
+	# Amendment 11 its record carries none, and there is nothing here to derive
+	# one from that would not be a guess: the tmux session name is gone and the
+	# row does not carry it. Launching the WRONG profile is a launch into
+	# another account, so this refuses and names the two lines that work.
+	if [ -z "$ga_pf" ]; then
+		# QUOTED WHERE IT IS A PATH, LEGIBLE WHERE IT IS A PLACEHOLDER (Copilot
+		# round 8 on #45, `lane:612`). A recorded directory with a space in it —
+		# `/work/my lane` — printed bare makes `cd /work/my lane` two arguments, so
+		# the one line this refusal exists to hand over is a line that cannot be
+		# pasted. `%q` through `quoted`, the same helper the dry-run uses; the
+		# placeholder is left as words, because `\<the\ lane\'s\ checkout\>` is
+		# not a thing to type either.
+		dir_for_hint="<the lane's checkout>"
+		[ -z "$ga_dir" ] || dir_for_hint="$(quoted "$ga_dir")"
+		die "lane $R_LANE's record does not name a profile yet, and this command will not guess one:
+    a wrong profile is a launch into another account. It is recorded
+    by \`lane-start\` at the lane's next start and by \`/lane-swap\` at its next
+    swap (Amendment 11 clause (c); nothing is backfilled, Amendment 7(i)).
+
+    Name it yourself, which is the late-swap form this word already takes:
+      $prog $R_LANE <profile>
+    or, one line in the lane's own directory:
+      cd $dir_for_hint && pclaude --lane $R_LANE <profile>" 2
+	fi
+	if [ -z "$ga_dir" ]; then
+		# THE ACT PRINTED IS THE ONE `lane-start` TAKES FOR *THIS* LANE'S NAME
+		# (Copilot round 4 on #45, `lane:595`). A lane whose name is not
+		# `<repo>-<n>` — `browser-ui-repair`, a `--verbatim` row like any other — is
+		# started by the ONE-ARGUMENT form beside a `--dir` (`lane-start:601`), and
+		# appending a position to it names A DIFFERENT LANE: `lane-start
+		# browser-ui-repair 3` is `browser-ui-repair-3`. A refusal whose remedy
+		# records the directory of another lane is worse than no remedy at all.
+		pos="${R_LANE##*-}"; lrepo="${R_LANE%-*}"
+		ga_start="$lrepo $pos"
+		case "${pos%[A-Za-z]}" in '' | *[!0-9]*) ga_start="$R_LANE" ;; esac
+		die "lane $R_LANE's record does not name a directory yet, so this command does not
+    know where to \`cd\` — and a launch that lands in the right transcript and
+    the wrong directory loses the repository's CLAUDE.md and the lane's memory,
+    silently (Evidence 3). Name it once:
+      lane-start --dir <the lane's checkout> $ga_start
+    which RECORDS it in the lane's own log, so every later \`$prog $R_LANE\`
+    reads it back and no one has to be told again (Amendment 11 clause (c);
+    Evidence 7). For this run alone:
+      $prog --dir <the lane's checkout> $R_LANE${profile:+ $profile}" 2
+	fi
+	[ -d "$ga_dir" ] || die "lane $R_LANE's recorded directory does not exist here: $ga_dir
+    That is a refusal naming the path and NEVER a silent re-home: this command
+    will not fall back to a directory that merely has the right name, because
+    \`lane-start\` writes the lane's HOME from that directory's origin and every
+    later line inherits it. A lane parked on ANOTHER WORKSTATION records that
+    machine's path, and what brings the work here is that estate's own
+    \`resume <Name>\`. Then, or for a checkout you already have:
+      $prog --dir <path> $R_LANE" 2
+	ga_pclaude="$(launcher)" || exit $?
+	command -v lane-start >/dev/null 2>&1 || note "\`lane-start\` is not on PATH. The launcher will say what it does about that
+    on its first line; this command does not second-guess it, but a launch
+    without it writes no stamp and leaves the window as it is."
+	ga_cmd=("$ga_pclaude" --lane "$R_LANE")
+	if [ -n "$dir_flag" ]; then ga_cmd=("$ga_pclaude" --lane "$R_LANE" --dir "$dir_flag"); fi
+	ga_cmd+=("$ga_pf")
+	if [ -n "$profile" ]; then ga_from=" · profile named on the command line"
+	else ga_from=" · from the lane record"
+	fi
+	say "lane $R_LANE · dir $ga_dir · profile $ga_pf$ga_from"
+	if [ "$dry_run" = 1 ]; then
+		say "cd $(quoted "$ga_dir")"
+		say "exec $(quoted "${ga_cmd[@]}")"
+		say "--dry-run: nothing was launched"
+		exit 0
+	fi
+	cd -- "$ga_dir"
+	exec "${ga_cmd[@]}"
+}
+
+# LIVE HERE — THE ATTACH, AND NEVER A SECOND PROCESS (clause (h), clause (i-2)).
+# Nothing is launched and nothing is written: the session is running, and what a
+# person asked for is a terminal in front of it.
+go_live() {
+	local gl_this gl_now gl_says
+	if [ -n "$profile" ]; then
+		die "lane $R_LANE is LIVE HERE under profile ${R_PF:-<none recorded>}, and \`$prog <name>
+    <profile>\` names the profile to LAUNCH under — an attach starts nothing, so
+    there is no account for that argument to change. Changing a live lane's
+    account is a SWAP: \`/lane-swap\` in that session, then
+    \`$prog $R_LANE $profile\` once it is parked. Attach as it is:
+      $prog $R_LANE" 2
+	fi
+	command -v tmux >/dev/null 2>&1 || die "lane $R_LANE is live in ${R_WIN:-a window its record does not name} and there is no
+    \`tmux\` on PATH here, so this command cannot attach to it — and it will not
+    start a second session on a live lane instead (clause (h))." 2
+	split_window "$R_WIN" || die "lane $R_LANE is live, and its record's window field is '${R_WIN:-none}', which is not
+    a \`<session>:<@window>\` this command can attach to. Read the lane:  lanes --all" 2
+	# THE FENCE, AND IT IS THE ONE `window_lane` ALREADY STATES: an `@id` is
+	# matched only where the window now holding it reports the SAME SESSION the
+	# record named. tmux reissues ids from `@0` when its server is replaced, so
+	# attaching on the id alone binds this word to whatever pane has since been
+	# given it.
+	gl_now="$(tmux_field "$W_ID" '#{session_name}' 2>/dev/null || :)"
+	if [ -z "$gl_now" ] || [ "$gl_now" != "$W_SESS" ]; then
+		gl_says="the id $W_ID names no window on this tmux server at all"
+		if [ -n "$gl_now" ]; then gl_says="the id $W_ID is in session $gl_now and the record says $W_SESS"; fi
+		die "lane $R_LANE's recorded window $R_WIN does not resolve here now: $gl_says.
+    tmux reissues \`@\` ids from \`@0\` when its server is replaced, so attaching
+    on the id alone would put you in whatever pane has since been given it —
+    this command will not guess which window is the lane's.
+      its session, if it is still there:  tmux attach -t $W_SESS
+      what the register says now:         lanes --all" 2
+	fi
+	gl_this="$(this_session)"
+	if [ -z "$gl_this" ]; then
+		# OUTSIDE TMUX: the window is selected first, so the attach lands ON the
+		# lane rather than on whichever window that session left current.
+		say "lane $R_LANE is live in session $W_SESS — attaching (nothing is launched)"
+		if [ "$dry_run" = 1 ]; then
+			say "tmux select-window -t $W_SESS:$W_ID"
+			say "exec tmux attach -t $W_SESS:$W_ID"
+			say "--dry-run: nothing was attached"
+			exit 0
+		fi
+		# THE ATTACH NAMES THE WINDOW AND NOT ONLY THE SESSION (Copilot round 6 on
+		# #45, `lane:708`). A select and then an attach are TWO acts, and a window
+		# that closes between them leaves `attach -t <session>` on whatever that
+		# session has since made current — another lane, which is the one thing the
+		# id-AND-session fence exists to stop. MEASURED, tmux 3.4 on a private
+		# socket, 2026-09-14: with `dst` current on `@0`, `attach -t dst:@2`
+		# attached AND made `@2` current in ONE act, and `attach -t dst:@3` naming a
+		# window of ANOTHER session refused with `can't find window: @3`. The select
+		# above stays: it is this command's own refusal, in this command's words,
+		# while there is still a terminal to print it on — and the attach then
+		# resolves the same `<session>:<@id>` at the moment it acts.
+		select_window_or_refuse "$W_SESS" "$W_ID" ""
+		exec tmux attach -t "$W_SESS:$W_ID"
+	fi
+	if [ "$gl_this" = "$W_SESS" ]; then
+		say "lane $R_LANE is a window of this session — selecting it (nothing is launched)"
+		if [ "$dry_run" = 1 ]; then
+			say "tmux select-window -t $W_SESS:$W_ID"
+			say "--dry-run: nothing was selected"
+			exit 0
+		fi
+		select_window_or_refuse "$W_SESS" "$W_ID" ""
+		exit 0
+	fi
+	if [ "$switch" = 1 ]; then
+		# THE SELECT COMES FIRST AND THE SWITCH ONLY FOLLOWS ONE THAT WORKED
+		# (Copilot round 3 on #45, `lane:687`). `select-window` names the session it
+		# acts on and needs no client there, so the lane's own window is made that
+		# session's current window BEFORE this client is moved into it. Switching
+		# first and selecting after leaves a client that LOST THE RACE sitting on
+		# whatever window that session left current — another lane, and this
+		# terminal already in it — which is the one thing the id-AND-session fence
+		# exists to stop. Ordered this way a select that fails costs nothing: the
+		# client has not moved.
+		say "lane $R_LANE is in session $W_SESS — switching this client to it (nothing is launched)"
+		if [ "$dry_run" = 1 ]; then
+			say "tmux select-window -t $W_SESS:$W_ID"
+			say "tmux switch-client -t $W_SESS:$W_ID"
+			say "--dry-run: nothing was switched"
+			exit 0
+		fi
+		# AND THE SWITCH NAMES THE WINDOW, for the reason the attach does (Copilot
+		# round 7 on #45, `lane:738`): another client can make that session's
+		# current window something else between the select and the switch, and a
+		# `switch-client -t <session>` would then land this client on it. MEASURED,
+		# tmux 3.4 on a private socket, 2026-09-14: a client on `home`, `dst`
+		# current on `@1`, and `switch-client -t dst:@3` moved the client to `dst`
+		# AND made `@3` current in ONE act, while `switch-client -t dst:@999`
+		# refused with `can't find window: @999` and exit 1.
+		select_window_or_refuse "$W_SESS" "$W_ID" ""
+		tmux switch-client -t "$W_SESS:$W_ID" || die "lane $R_LANE's window $W_ID was selected in session $W_SESS, and \`tmux
+    switch-client -t $W_SESS:$W_ID\` then failed — so this client is still where
+    it was and nothing else was done. That session's current window IS the lane
+    now, which is the half that worked:
+      go there by hand:            tmux switch-client -t $W_SESS:$W_ID
+      or bring the window here:    $prog $R_LANE" 2
+		exit 0
+	fi
+	# THE MOVE, PROVED BY HAND ON 2026-09-14: `move-window -a -s <session>:<@id>`
+	# brings the window into THIS session after the current one, and
+	# `select-window -t <session>:<@id>` puts the terminal on it. A detached
+	# session whose only window moves closes itself, which is the tidy end of a
+	# lane that was left in one.
+	#
+	# THE SOURCE IS THE `@id` AND NEVER THE INDEX (Copilot round 4 on #45,
+	# `lane:715`). An index read one command before it is used is a name another
+	# window can be given in between, and the fence above proved the `@id` — not
+	# a number. MEASURED, tmux 3.4 on a private socket, 2026-09-14: with `w3` at
+	# `src:2`, killing it and opening another window at that index and then
+	# `move-window -a -s src:2` MOVED THE INTRUDER into the destination and
+	# exited 0 — the wrong window, here, silently — while `move-window -a -s
+	# src:@2` on that same estate refused with `can't find window: @2` and exit 1.
+	# tmux resolves a `<session>:<@id>` inside the session named or not at all,
+	# which is the whole of the fence, and a move that fails is a refusal: the
+	# select below runs only on one that worked.
+	say "lane $R_LANE is in session $W_SESS — moving its window here and selecting it (nothing is launched)"
+	if [ "$dry_run" = 1 ]; then
+		say "tmux move-window -a -s $W_SESS:$W_ID"
+		say "tmux select-window -t $gl_this:$W_ID"
+		say "--dry-run: nothing was moved"
+		exit 0
+	fi
+	tmux move-window -a -s "$W_SESS:$W_ID" || die "lane $R_LANE's window $W_ID could not be moved out of session $W_SESS into this one,
+    so NOTHING was moved and this terminal is where it was. It resolved a moment
+    ago, at the check above, and tmux refuses a \`<session>:<@id>\` whose window
+    is no longer in that session — which is the fence doing its work rather than
+    a fault.
+      what the register says now:            lanes --all
+      that window, if it is back:            tmux attach -t $W_SESS:$W_ID
+      that session, whatever it now holds:   tmux attach -t $W_SESS" 2
+	select_window_or_refuse "$gl_this" "$W_ID" "its window was moved here out of $W_SESS, which may have closed behind it"
+	exit 0
+}
+
+# BOUND ELSEWHERE — clause (c)'s question, and it is a REFUSAL until the request
+# exists. WHAT IT CAN NAME IS WHAT THE READ CARRIES: the row's workstation and
+# the window that lane's record last named. Amendment 18(a)'s `host` and
+# `container` sub-fields are `brettheap/new-workstation#38`'s own tooling to
+# write and no line in this estate carries one yet, so they are not named here —
+# a refusal that printed a field nobody writes would be naming an empty string
+# — and when they arrive they arrive in `lanes_rows`, which is where this line
+# would read them. What it never does is offer a launch: that is the collision.
+go_elsewhere() {
+	# AND THE CONTAINER NOTICE BELONGS HERE MOST OF ALL, not only under the
+	# listing. With no `$LANES_WORKSTATION` inside a container the workstation is
+	# the CONTAINER'S id, so NO row is this workstation's — and the partition then
+	# files a person's OWN lane under this heading, which makes the sentence below
+	# name a machine they are sitting at. `lane <name>` reaches this refusal
+	# WITHOUT passing through the listing, so a notice printed only beneath the
+	# rows never reaches the person who typed the name; and the pick reaches both,
+	# which is what `ws_notice`'s once-per-run guard is for. On stderr, because
+	# the refusal under it is.
+	ws_notice >&2
+	die "lane $R_LANE is bound on ${R_WS:-a workstation this row does not name}${R_WIN:+, window $R_WIN}${R_AGE:+, as of $R_AGE ago},
+    and this workstation cannot see another machine's tmux — so there is nothing
+    here to attach to, and a second session on it is the collision this protocol
+    exists to stop (clause (h)).
+
+    Clause (c)'s act is to ASK THAT WORKSTATION FOR THE HANDOFF. The request
+    itself is \`brettheap/new-workstation#38\`'s act 4 and does not exist yet:
+    until it does, the exit is a person on ${R_WS:-that workstation} parking it —
+    \`/lane-swap\` in that session — after which it is PARKED and \`$prog
+    $R_LANE\` takes it here.
+      what the register says:  lanes --all
+      who holds it:            lanes-edit.sh who --lane $R_LANE" 2
+}
+
+# A NEW LANE AT THE NEXT FREE POSITION — the `f` answer. The position comes from
+# the helper, over the rows this command has already read, so the number this
+# word offers and the one `lanes` prints cannot differ.
+go_new() {   # <repo>
+	local gn_repo="${1-}" gn_next gn_start gn_rc
+	local gn_cmd
+	[ -n "$gn_repo" ] || die "there is no repository in scope, so there is no position for \`f\` to take.
+    Stand in the lane's checkout, or name it:  lane-start <repo> <n>" 2
+	# THE STATUS IS READ, NOT DISCARDED (Copilot round 3 on #45, `lane:751`): a
+	# read that FAILED can still have printed digits before it did, and `|| :`
+	# handed them to the validation below as if they were an answer — a position
+	# this estate may well have taken, opened as a new lane.
+	gn_rc=0
+	gn_next="$(printf '%s\n' "$ROWS_OUT" | "$LANES_EDIT" next-free "$gn_repo" 2>/dev/null)" || gn_rc=$?
+	# AND `2` IS THE CONTRACT'S OWN CODE HERE TOO (Copilot round 12 on #45,
+	# `lane:873`). The LISTING has told the two apart since round 3 — an
+	# un-upgraded workstation is named as one and sent to the install, a read that
+	# FAILED is named by its code — and this path, which is the same read one
+	# answer later, collapsed both into "run it by hand". The person who typed `f`
+	# on a workstation that has not taken the install would have been told to read
+	# something that does not exist there.
+	if [ "$gn_rc" = 2 ]; then
+		die "\`f\` cannot open a lane here: this workstation's \`lanes-edit.sh\` has no
+    \`next-free\`, so it predates lane-collision-protocol Amendment 18 Addendum 1
+    and there is no position for it to take. That is not a failure and nothing is
+    wrong with the register — this workstation has not taken the install yet.
+    Take it:  openRepoTools --install" 2
+	fi
+	if [ "$gn_rc" != 0 ]; then
+		die "the next free position of $gn_repo could not be read: \`lanes-edit.sh next-free\`
+    exited $gn_rc. This command will not open a lane at a position it did not
+    get (Amendment 7(d)) — a number printed by a read that then failed is not an
+    answer. Read it:  lanes --prefix $gn_repo" 1
+	fi
+	case "${gn_next:-}" in
+	'' | *[!0-9]*) die "the next free position of $gn_repo could not be read, and this command will not
+    offer a position it did not get (Amendment 7(d)). Read it:  lanes --prefix $gn_repo" 1 ;;
+	esac
+	# BESIDE THIS COMMAND FIRST, THEN PATH — the rule this file already states
+	# for `$LANES_EDIT` fifty lines above, and for the same reason: `--install`
+	# places the two in ONE directory, and a workstation carrying two copies
+	# must not read its rows from one and open its lane with the other (Copilot
+	# round 1 on #45, `lane:701`).
+	if [ -x "$selfdir/lane-start" ]; then gn_start="$selfdir/lane-start"
+	else gn_start="$(command -v lane-start 2>/dev/null || printf '')"
+	fi
+	[ -n "$gn_start" ] || die "no \`lane-start\` on PATH, and it is what opens a lane — it is installed beside
+    this command by \`openRepoTools --install\`. Run that, then re-run." 2
+	# AND `--dir` GOES WITH IT. The flag is in this command's own parser and
+	# `lane-start` takes the same one, so dropping it here would open the new
+	# lane in a checkout the person did not name — silently, which is Evidence
+	# 3's loss (Copilot round 1 on #45, `lane:710`).
+	gn_cmd=("$gn_start")
+	if [ -n "$dir_flag" ]; then gn_cmd+=(--dir "$dir_flag"); fi
+	gn_cmd+=("$gn_repo" "$gn_next")
+	say "a new lane at $gn_repo-$gn_next${dir_flag:+ · dir $dir_flag}"
+	if [ "$dry_run" = 1 ]; then
+		say "exec $(quoted "${gn_cmd[@]}")"
+		say "--dry-run: nothing was started"
+		exit 0
+	fi
+	exec "${gn_cmd[@]}"
+}
+
+# THE ONE DISPATCH, so the three branches are chosen in ONE place whether the
+# lane was picked by number or named on the command line.
+go_row() {   # <group> <row>
+	split_row "$2"
+	case "$1" in
+	available) go_available ;;
+	live) go_live ;;
+	elsewhere) go_elsewhere ;;
+	*) die "lane $R_LANE is in state '${R_STATE:-unknown}', which this command has no branch
+    for. Read it:  lanes --all" 1 ;;
+	esac
+}
+
+# --------------------------------------------------------------- `lane <name>`
+#
+# A LANE NAME IS ONE NAME UNDER ANY CASE (Amendment 15), and the spelling the
+# REGISTER ROW carries is the canonical one. `canon-lane` answers that — one
+# resolver, shared — and every line below this one then speaks of the lane by
+# the row's own spelling: what is `cd`'d for, what is handed to the launcher as
+# `--lane`, what is attached to and what every refusal names.
+#
+# THE ONE-LANE READ FOLLOWS IT, on the canonical name: it reads ONE log rather
+# than the estate's, which is the whole reason that selector exists. THE
+# ESTATE-WIDE READ UNDER IT IS THE FALLBACK AND NOT THE RESOLVER — it fires only
+# where the one-lane read came back knowing NOTHING of the lane, which after
+# `canon-lane` means a workstation whose `lanes-edit.sh` predates Amendment 15
+# and answered 2 as an unknown subcommand. So the ordinary path pays for one
+# read, an un-upgraded one pays for two, and neither can give a different answer
+# from the other about which lane was meant.
+if [ -n "$name" ]; then
+	# AMENDMENT 15 FIRST, BECAUSE THE ROW'S SPELLING IS THE LANE'S NAME. *"A lane
+	# name is one name under any case"* (ratified 2026-09-14T00:07:18Z verbatim
+	# "Ratify as drafted"), and `lanes-edit.sh canon-lane` is the ONE resolver
+	# every command that takes a `<lane>` shares — for the reason clause (h) gives
+	# every other read here: four implementations of *which row is this name's* is
+	# how the four come to disagree about it. This is `restart`'s own call, moved
+	# here with the act under Amendment 18 Addendum 2.
+	#
+	# `2` IS TWO ANSWERS AND ONE OF THEM IS A REFUSAL. It is what a helper
+	# predating Amendment 15 spends on an unknown subcommand — silent, expected,
+	# and a fall-through — and it is also `canon-lane`'s OWN refusal for a
+	# register that spells one lane two ways, which no read below can resolve and
+	# which only a person's 15(d) merge settles. The two are told apart by the
+	# refusal's own words, which no un-upgraded helper emits, and the pair is
+	# RELAYED rather than reported as a read that failed.
+	cl_out=""; cl_rc=0
+	cl_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "$name" 2>/dev/null)" || cl_rc=$?
+	cl_why=""; cl_pair=0
+	if [ "$cl_rc" = 2 ]; then
+		cl_why="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "$name" 2>&1 >/dev/null || :)"
+		case "$cl_why" in *"Amendment 15(d)"*) cl_pair=1 ;; esac
+	fi
+	if [ "$cl_pair" = 1 ]; then
+		printf '%s\n' "$cl_why" >&2
+		die "the PUBLISHED register spells lane $name two ways (above), so no read under that
+    name is unambiguous and this command will not bind a lane it cannot name —
+    Amendment 15(d): merge the newer row's session id(s) into the older row's
+    session cell, in order, remove the newer row in the SAME commit naming both
+    spellings, and re-run. Nothing was launched and nothing was attached." 2
+	fi
+	# AND A RESOLVER THAT *FAILED* IS NOT "THE TYPED SPELLING WILL DO" (Copilot
+	# round 11 on #45, `lane:956`). Only two statuses are answers here: `0`, the
+	# row's own spelling, and the unknown-subcommand `2` of a helper predating
+	# Amendment 15, which is the documented fall-through to the estate-wide read
+	# below — told apart from `canon-lane`'s OWN 2 by the 15(d) words, one branch
+	# up. Anything else is a read that did not answer, and this command binds no
+	# lane under a name nothing established (Amendment 7(d), the same rule the row
+	# read, the grouping read and the position read each take in this file).
+	if [ "$cl_rc" != 0 ] && [ "$cl_rc" != 2 ]; then
+		die "the register's spelling of lane $name could not be read: \`lanes-edit.sh canon-lane\`
+    exited $cl_rc. A lane name is ONE name under any case (Amendment 15) and the
+    row's own spelling is the one every read and every write goes under — so
+    this command will not bind a lane under a spelling nothing has established
+    (Amendment 7(d)). Nothing was launched and nothing was attached.
+      run it by hand to see what it says:  $LANES_EDIT canon-lane $name
+      what the register says now:          lanes --all" 1
+	fi
+	if [ "$cl_rc" = 0 ] && [ -n "$cl_out" ] && [ "$cl_out" != "$name" ]; then
+		note "lane $name → $cl_out (Amendment 15: the register row's spelling is canonical)"
+		name="$cl_out"
+	fi
+	read_rows --lane "$name" || :
+	row="$(printf '%s\n' "$ROWS_OUT" | awk -F"$TAB" 'NF >= 2 { print; exit }')"
+	split_row "${row:-}"
+	state_now="$R_STATE"
+	case "${state_now:-}" in
+	'' | UNKNOWN | 'NO LOG')
+		# Nothing of this lane's own was found under the name the resolver
+		# returned — which on an upgraded workstation is the row's own spelling
+		# and on an older one is still the spelling that was typed. Ask the
+		# estate, where every spelling the register and the logs carry is a row.
+		all_rc=0
+		read_rows --all || all_rc=$?
+		match=""
+		if [ "$all_rc" = 0 ]; then
+			match="$(printf '%s\n' "$ROWS_OUT" | awk -F"$TAB" -v w="$(lc "$name")" 'NF >= 2 && tolower($1) == w { print; exit }')"
+		fi
+		if [ -n "$match" ]; then
+			row="$match"
+			split_row "$row"
+		elif [ -z "$state_now" ] || [ "$state_now" = UNKNOWN ]; then
+			die "no lane called '$name' is in the register or the logs.
+    The lanes of this checkout:  $prog
+    Every lane:                  $prog --all
+    Open a new one:              lane-start <repo> <n>" 2
+		fi ;;
+	esac
+	# The group is the helper's, over this one row, so a named lane and a picked
+	# one cannot take different branches — and a CLOSED lane has no group at all,
+	# which is the answer rather than a branch.
+	ROWS_OUT="$row"
+	grouped="$(group_rows | awk -F"$TAB" 'NF >= 2 { print; exit }')" || exit $?
+	[ -n "$grouped" ] || die "lane $R_LANE's last act was its last — the read calls it ${R_STATE:-closed} — so there
+    is nothing to bind. A closed lane is not reopened by picking it:
+      lane-start <repo> <n>
+    What it did:  lanes-edit.sh who --lane $R_LANE" 8
+	go_row "${grouped%%$TAB*}" "${grouped#*$TAB}"
+	exit 0
+fi
+
+# -------------------------------------------------------------------- the pick
+
+rows_rc=0
+read_rows ${scope_args[@]+"${scope_args[@]}"} || rows_rc=$?
+grouped_all=""
+if [ "$rows_rc" = 0 ]; then grouped_all="$(group_rows)" || exit $?; fi
+
+PICK_GROUP=(); PICK_ROW=()
+n=0
+# ONE HEADING PER STATE, IN CLAUSE (i-1)'s ORDER — available, live here, bound
+# elsewhere — and WITHIN a heading, grouped by repository wherever the listing
+# is not already one repository's. That is the `--all` half of (i-1): "every
+# repository, grouped". The read's own order is newest activity first and it is
+# kept inside each repository, which is why the sort carries the read's sequence
+# as its second key rather than re-ordering by name.
+render_group() {   # <group> <heading>
+	local rg_line rg_row rg_seq=0 rg_repo rg_last="" rg_list=""
+	while IFS= read -r rg_line; do
+		[ -n "$rg_line" ] || continue
+		case "$rg_line" in "$1$TAB"*) : ;; *) continue ;; esac
+		rg_row="${rg_line#*$TAB}"
+		split_row "$rg_row"
+		rg_seq=$((rg_seq + 1))
+		rg_list="${rg_list}$(row_repo "$R_LANE" "$R_HOME")$TAB$rg_seq$TAB$rg_row
+"
+	done <<EOF
+$grouped_all
+EOF
+	[ -n "$rg_list" ] || return 0
+	if [ -z "$here_repo" ]; then
+		rg_list="$(printf '%s' "$rg_list" | LC_ALL=C sort -t"$TAB" -k1,1 -k2,2n)"
+	fi
+	say ""
+	say "$2"
+	while IFS= read -r rg_line; do
+		[ -n "$rg_line" ] || continue
+		rg_repo="${rg_line%%$TAB*}"
+		rg_row="${rg_line#*$TAB}"; rg_row="${rg_row#*$TAB}"
+		split_row "$rg_row"
+		if [ -z "$here_repo" ] && [ "$rg_repo" != "$rg_last" ]; then
+			say "  $rg_repo"
+			rg_last="$rg_repo"
+		fi
+		n=$((n + 1))
+		PICK_GROUP+=("$1")
+		PICK_ROW+=("$rg_row")
+		case "$1" in
+		available) printf '  %2s  %-24s %-8s %-12s %s\n' "$n" "$R_LANE" "$R_STATE" "${R_PF:-no profile}" "${R_DIR:-no directory recorded}" ;;
+		live) printf '  %2s  %-24s %s\n' "$n" "$R_LANE" "$(where_live "$R_WIN")" ;;
+		*) printf '  %2s  %-24s %-8s %s\n' "$n" "$R_LANE" "${R_WS:-unknown}" "${R_WIN:+window $R_WIN}" ;;
+		esac
+		# A LIVE FORK OF A LANE'S TRANSCRIPT IS A DEFECT TO RETIRE AND NEVER A
+		# HOLDER (ratified decision 8(e)), and it is shown where a person is
+		# choosing what to bind. The one act is clause (k) rule (e)'s, and it is
+		# `lane-end`'s door rather than a read that names them.
+		case "$R_FK" in
+		0) : ;;
+		*) printf '      DEFECT: %s live fork(s) of this lane transcript — never a holder; retire each: lane-end %s --retire <pid|uuid>\n' "$R_FK" "$R_LANE" ;;
+		esac
+	done <<EOF
+$rg_list
+EOF
+}
+
+label=""
+if [ -n "$here_repo" ]; then label=" of $here_repo"; fi
+say "lanes$label, read locally — \`lanes --fetch\` refreshes first"
+render_group available "AVAILABLE — parked, or a binding this host proves dead"
+# AND WHERE THE PROOF WAS NOT READ, THIS HEADING SAYS WHAT IT COSTS (Copilot
+# round 5 on #45, `lanes-edit.sh:4829`). The partition itself is right and is
+# ONE read: `lane-groups` groups by the STATE column, and when the session
+# records could not be read that column is the LOG'S VERB ALONE — so every row
+# under this heading is unproven and `go_available` refuses each of them, in
+# every state (clause (h)). A listing that numbered them without a word would be
+# asking a person to pick an answer this command has already decided to refuse.
+avail_n="$n"
+if [ "$LIVENESS_UNREAD" != 0 ] && [ "$avail_n" != 0 ]; then
+	say ""
+	say "  NOTHING above can be launched from here until that read is fixed: the STATE"
+	say "  column is the log's own last verb, so a lane that is LIVE shows as IDLE or"
+	say "  PAUSED, and picking one of these is REFUSED rather than launched (clause (h),"
+	say "  Amendment 7(d)). A LIVE HERE lane below is unaffected — an attach starts"
+	say "  nothing."
+	say "    what is actually running:  lanes-edit.sh live-holder <lane>"
+	say "    fix the read and re-run:   lanes --all"
+fi
+render_group live "LIVE HERE — attach, never a second process"
+render_group elsewhere "BOUND ELSEWHERE — ask that workstation for the handoff"
+
+# AND WHEN IT CANNOT BE READ THE PICK SAYS SO (Copilot round 3 on #45,
+# `lane:960`). `|| :` collapsed every status of this read into an empty string
+# and the `f` answer then vanished from the question with nothing on screen to
+# say why — the same defect `lanes`'s footer had one file over, and the same
+# answer: `2` is an un-upgraded workstation and says so, anything else names the
+# code it got, and neither is a position of 1.
+next_free=""; next_free_rc=0
+if [ -n "$here_repo" ]; then
+	next_free="$(printf '%s\n' "$ROWS_OUT" | "$LANES_EDIT" next-free "$here_repo" 2>/dev/null)" || next_free_rc=$?
+	# THE STATUS DECIDES BEFORE THE TEXT DOES (Copilot round 5 on #45,
+	# `lane:1000`). A read that printed digits AND THEN FAILED passes the shape
+	# test below on its own output, so the fail-closed arm under it was skipped
+	# and `f` was offered at a position nothing answered for — which is the very
+	# thing `go_new` stopped doing one round earlier (round 3, `lane:751`). The
+	# offer and the answer read the same status now.
+	[ "$next_free_rc" = 0 ] || next_free=""
+	case "${next_free:-}" in '' | *[!0-9]*) next_free="" ;; esac
+fi
+
+if [ "$n" = 0 ]; then
+	say ""
+	say "no lane$label is available, live here or bound elsewhere."
+	say "  every lane, closed and dormant ones included:  lanes --all"
+fi
+if [ -n "$here_repo" ] && [ -z "$next_free" ]; then
+	say ""
+	case "$next_free_rc" in
+	2)
+		say "  \`f\` is not offered: this workstation's \`lanes-edit.sh\` has no \`next-free\`, so"
+		say "  it predates lane-collision-protocol Amendment 18 Addendum 1. Take the"
+		say "  install and the answer comes back:  openRepoTools --install" ;;
+	*)
+		say "  \`f\` is not offered: \`lanes-edit.sh next-free\` exited $next_free_rc and gave no"
+		say "  position, and this command will not offer one it did not get (Amendment"
+		say "  7(d)). Read it by hand:  lanes --prefix $here_repo" ;;
+	esac
+fi
+ws_notice
+
+# ONE QUESTION, AND ONLY WHERE THERE IS A TERMINAL TO ASK IT ON (clause (i-3)).
+# `[ -t 0 ]` is the whole test: an agent's stdin is not a terminal, and an agent
+# reading this output is owed the ACTS filled in rather than a prompt nothing
+# will answer.
+if [ ! -t 0 ]; then
+	say ""
+	say "nothing was asked: stdin is not a terminal. The acts, filled in:"
+	# AND THE ACTS CARRY THE `--dir` THIS RUN WAS GIVEN (Copilot round 5 on #45,
+	# `lane:1030`). The `f` answer has taken it since round 1 (`lane:710`), and an
+	# act PRINTED for a person to type that drops it opens the new lane in
+	# whatever checkout they happen to be standing in — Evidence 3's silent loss,
+	# at the one moment a lane is created. One surface performed the act and the
+	# other printed it; they spell it the same way now.
+	nt_dir=""; nt_sw=""
+	if [ -n "$dir_flag" ]; then nt_dir=" --dir $(quoted "$dir_flag")"; fi
+	# …AND `--switch`, WHICH IS A DIFFERENT ATTACH AND NOT A PREFERENCE (Copilot
+	# round 8 on #45, `lane:1123`). Typing back a `lane <name>` that lost it MOVES
+	# a live lane's window into this session instead of switching the client to
+	# it — a different act on somebody's terminal. It goes on the `lane` line
+	# alone: `lane-start` has no such flag.
+	if [ "$switch" = 1 ]; then nt_sw=" --switch"; fi
+	if [ "$n" != 0 ]; then printf '    %-34s %s\n' "$prog$nt_dir$nt_sw <name>" "the lane you want, from the list above"; fi
+	if [ -n "$next_free" ]; then printf '    %-34s %s\n' "lane-start$nt_dir $here_repo $next_free" "a new lane at the next free position"; fi
+	printf '    %-34s %s\n' "lanes --all" "every lane the register and the logs know"
+	if [ "$n" = 0 ]; then exit 8; fi
+	exit 0
+fi
+
+say ""
+if [ -n "$next_free" ]; then
+	if [ "$n" = 0 ]; then
+		printf 'which? [f = a new lane at the next free position (%s-%s), q] ' "$here_repo" "$next_free"
+	else
+		printf 'which? [1-%s, f = a new lane at the next free position (%s-%s), q] ' "$n" "$here_repo" "$next_free"
+	fi
+else
+	if [ "$n" = 0 ]; then exit 8; fi
+	printf 'which? [1-%s, q] ' "$n"
+fi
+# ONE ANSWER, READ ONCE (clause (i-1): "asks ONE question"). A picker that
+# re-asks is a process holding the terminal, which is the thing ratified
+# decision 3 refused: this reads one line, acts on it, and where it is not one
+# of the choices it says so and stops — the next act is a command the person
+# types.
+answer=""
+IFS= read -r answer || answer=q
+answer="${answer#"${answer%%[![:space:]]*}"}"
+answer="${answer%"${answer##*[![:space:]]}"}"
+
+case "$(lc "$answer")" in
+q | '')
+	say "nothing picked."
+	if [ "$n" = 0 ]; then exit 8; fi
+	exit 0 ;;
+f)
+	go_new "$here_repo" ;;
+esac
+case "$answer" in
+'' | *[!0-9]*)
+	die "'$answer' is not one of the choices. One answer is read and nothing is waiting
+    now: run \`$prog\` again, or name the lane — \`$prog <name>\`." 2 ;;
+esac
+# A DIGIT STRING TOO LONG TO BE A POSITION IS NOT A POSITION (Copilot round 12
+# on #45, `lane:1215`). `$(( 10#… ))` WRAPS at the shell's integer width —
+# `18446744073709551617` comes back as `1` — so an answer far outside `1-N`
+# could arrive at the range check as a number that IS in it and bind a lane
+# nobody picked, which is the wrong-lane outcome every fence in this file exists
+# to stop. The length is compared BEFORE the conversion, against the digits of
+# `$n` itself, because that is the widest answer the question offered.
+if [ "${#answer}" -gt "${#n}" ]; then
+	die "'$answer' is not in 1-$n. One answer is read and nothing is waiting now: run
+    \`$prog\` again, or name the lane — \`$prog <name>\`." 2
+fi
+pick=$((10#$answer))
+if [ "$pick" -lt 1 ] || [ "$pick" -gt "$n" ]; then
+	die "$pick is not in 1-$n. One answer is read and nothing is waiting now: run
+    \`$prog\` again, or name the lane — \`$prog <name>\`." 2
+fi
+i=$((pick - 1))
+go_row "${PICK_GROUP[$i]}" "${PICK_ROW[$i]}"
+exit 0

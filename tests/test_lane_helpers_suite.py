@@ -53,7 +53,33 @@ SUITE = REPO / "tests" / "test_lane_helpers.sh"
 #: thing it was written for — a helper that hangs on a lock or a network call
 #: must not hold a runner for six hours — it is just no longer tighter than
 #: the slowest platform this suite is required to pass on.
-TIMEOUT_SECONDS = 2400
+#:
+#: 2400 -> 3600 on 2026-09-15, AND FOR THE SAME REASON ONE ROUND LATER: the
+#: suite crossed it. Measured, `b9018c1` (#45 with Amendment 18 Addendum 1's
+#: section merged beside Amendment 17's, 2102 cases -> 2345):
+#:
+#:     tests-macos   03:18:03 -> 04:03:37, `1 failed, 654 passed in 2722.13s`
+#:                   and the one failure is this wrapper —
+#:                   `subprocess.TimeoutExpired: … timed out after 2400 seconds`
+#:     tests         16 min 47 s, green, the same 655 cases
+#:
+#: EVERY OTHER CASE IN THAT macOS JOB PASSED. What the bound caught was the
+#: suite being long on the slowest platform it must pass on, not a helper
+#: hanging — and a TimeoutExpired says nothing about which assertion was in
+#: flight, which is exactly the unreadable failure the paragraph above warns
+#: against. It is one number rather than a per-platform pair because a bound
+#: that is different where a person is not looking is a bound nobody can
+#: reason about: a loaded WORKSTATION is slow too, and a legitimate run of this
+#: same tree took 2129 s here with six sibling suites building beside it.
+#:
+#: THE HONEST FIX IS THE SUITE'S DURATION AND NOT THIS NUMBER — one bash file
+#: that runs real `git` several thousand times, serially, for 45 minutes — and
+#: it is opensoft/openRepoTools#77. This is the cap moving out of that work's
+#: way, not a decision that 45 minutes is fine.
+#:
+#: The job itself has no `timeout-minutes` in `.github/workflows/tests.yml`, so
+#: nothing under it bites before this does; GitHub's own default is 360 min.
+TIMEOUT_SECONDS = 3600
 
 
 @WINDOWS_SKIP
