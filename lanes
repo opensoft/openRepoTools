@@ -123,6 +123,8 @@ Exit: 0 rows · 8 none · 64 usage · 2 a helper predating Amendment 11 · 1 a r
 It writes nothing, launches nothing and asks nothing. `lane <name>` is what
 BINDS one — the launcher for a parked lane, the attach for one live here — and a
 bare `lane` is this listing as a numbered pick with one question under it.
+RENAMING one is `lane-rename <old> <new>`, a word of its own for the same reason
+(Amendment 16(h)); `lanes --rename` is refused and names it.
 USAGE
 }
 
@@ -167,6 +169,27 @@ while [ $# -gt 0 ]; do
 		[ -n "$val" ] || die "$flag needs a value — see $prog --help" 64
 		[ "$flag" = --prefix ] && here_repo="$val"
 		args+=("$flag" "$val"); narrowed=1; shift ;;
+	# AMENDMENT 16(h) — `lanes` STAYS READ-ONLY, AND THE REFUSAL NAMES THE WORD.
+	# Brett Heap's request of 2026-09-14 spelled the act on this command —
+	# verbatim *"maybe lanes --rename <current lane name> <new lane name>"* —
+	# and the ratified spelling is a word of its own, because Amendment 11(j)'s
+	# *"it writes nothing"* is what makes this listing safe to run in front of
+	# every launch, and one writing option would make that sentence untrue of
+	# the command rather than of the option. So the flag is answered rather
+	# than silently unknown: a person who reaches for it gets the act, not a
+	# usage line.
+	--rename | --rename=*)
+		rn_a="${2-}"; rn_b="${3-}"
+		[ "${1%%=*}" = "$1" ] || { rn_a="${1#--rename=}"; rn_b="${2-}"; }
+		die "\`lanes\` writes nothing, launches nothing and asks nothing (Amendment 11(j)), and a
+    rename is four files in one commit. The word is its own:
+
+        lane-rename ${rn_a:-<old>} ${rn_b:-<new>}
+
+    It moves the row, the object log, the handoff and lanes/aliases.tsv in ONE
+    commit, comments on every object the lane holds, renames the window and types
+    the \`/rename\` — and the old name resolves for ever afterwards, here included
+    (lane-collision-protocol Amendment 16)." 64 ;;
 	--) shift ;;
 	-*) die "unknown option '$1' — see $prog --help" 64 ;;
 	*) die "lanes takes no positional arguments; did you mean \`lane $1\`? — see $prog --help" 64 ;;

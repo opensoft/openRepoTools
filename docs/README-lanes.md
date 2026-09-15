@@ -73,7 +73,8 @@ workstation**.
 | the object logs | `<the checkout>/lanes/log/<lane>.md` — one per lane (Amendment 7) |
 | the alias table | two layers: `repos.tsv` shipped by openRepoTools and installed beside the commands, then `<the checkout>/lanes/repos.tsv` where you keep an override (Amendment 9(b)) |
 | who places the symlinks | `link-estates`, an installed command. It places the handoffs links, the register link and the `lanes-edit.sh` link — **and no longer the two `~/.local/bin` ones**, which `--install` owns |
-| who installs all of it | `openRepoTools --install` (twelve files, idempotent, all-or-nothing) |
+| who installs all of it | `openRepoTools --install` (thirteen files, idempotent, all-or-nothing) |
+| the lane alias table | `<the checkout>/lanes/aliases.tsv` — `<old><TAB><new><TAB><UTC>`, written by `lane-rename` and by nothing else, resolved by every reader that takes a lane name (Amendment 16(e)) |
 
 Why `main` of the workspace repository and not the aggregation's: the
 aggregation repo's `main` is PR-only (org rulesets `xFactory Tier-1 main
@@ -1798,6 +1799,113 @@ safety property, and here it would be the opposite of the mechanism, since
 `cmd || true` exits 0 for every code the command can produce and a guard that
 refuses nothing silently is the exact state this amendment exists to end.
 
+## Renaming a lane (Amendment 16)
+
+**In force 2026-09-14T09:24:35Z**, ratified verbatim *"Ratify as drafted
+(Recommended)"* on Brett Heap's request of the same day, verbatim: *"we need the
+ability to rename a lane. maybe lanes --rename <current lane name> <new lane
+name>."* **A LANE IS RENAMED BY ONE WORD, IN ONE COMMIT, AND ITS OLD NAME KEEPS
+RESOLVING FOR EVER.**
+
+Why it exists: on 2026-09-14 two lanes renamed themselves **by hand**, each as
+one `RENAMED` line appended to `LANES.md`. The lines are honest and they are all
+there is — the rows still carried the old keys, the logs and the handoffs the old
+names, and a reader of either lane's history had to know the rename to follow it.
+
+```sh
+lane-rename openxfactory-4-opendox-extraction openxfactory-4 "Brett Heap's word: shorten it"
+lane-rename hermes-wallet-exercise codeXfactory-2 --no-github
+lanes --rename a b        # REFUSED, and it names `lane-rename`
+```
+
+The first two lines above are the amendment's own **adoption act**, and they
+have not been run: clause (i) says the two hand renames of 2026-09-14 are *regularised by the
+adoption act, not re-done* — their rows, logs and handoffs moved by this command
+**on Brett Heap's word**, with their existing `RENAMED` lines in `LANES.md` left
+exactly where they are.
+
+### What one command does
+
+| # | clause | the move |
+|---|---|---|
+| 1 | (b) | the register row's key cell becomes `` `<new>` ``, and the text beside it gains `` *(ex `<old>`, renamed <UTC>)* `` — the form the register already uses for a lane named later than it started. Nothing else in the row changes; **the session cell keeps its history** (Amendment 6(b)) |
+| 2 | (c) | `lanes/log/<old>.md` → `lanes/log/<new>.md`, plus one line: `RENAMED — lane <new>, session <uuid>@<ws>, <UTC>, lane:<new> ← lane:<old> — <why>` |
+| 3 | (d) | the handoff the row names → the same date with `lane-<new>`, plus a Rule 3 stamp under its header block: `RENAMED from <old> by <uuid> (lane <new>) at <UTC>`. The row's handoff column follows |
+| 4 | (e) | `lanes/aliases.tsv` gains `<old><TAB><new><TAB><UTC>` |
+| 5 | (g) | **after** the commit lands, one GitHub comment per object the lane HOLDS, citing its sha — the same partition `who --lane` reports and `lane-end` refuses on. `--no-github` skips it |
+| 6 | (f) | the tmux window is renamed, and `/rename <new>` is typed into the lane's own pane (Amendment 12(h)'s M1 — the only path a running session's name has) |
+
+**The first four are ONE commit, refused or whole.** Any two of them apart is a
+state no reader can read: a row under `<new>` whose log is still `<old>.md` is a
+lane whose history `who --lane` cannot find, and an alias without the row it
+points at is a name that resolves to nothing.
+
+### The refusals — clause (a), before anything is written
+
+| the state | why |
+|---|---|
+| no row under `<old>` in any case, and none through an alias | a rename moves a row that exists; `lanes --all` lists the ones that do |
+| a row under `<new>` in any case | two rows for one name is what every writer here refuses (Amendment 15(a)) |
+| `<old>` and `<new>` are one name under any case | that is not a rename but a change to the row's own SPELLING, which every reader already resolves to — Amendment 15(d)'s hand act |
+| `<new>` is not `<repo>-<n>` and no `--verbatim` | Rule 4's form is what `lanes --prefix`, the next free position and `lane-start <repo> <n>` are computed from |
+| a **LIVE** session holds `<old>` in another window | its own name is locked to the lane and only it can change that (Amendment 12(h)); renaming from elsewhere would leave a running conversation named for a lane the register no longer has |
+| two rows under `<old>` differing only by case | there is no ONE row to rename (Amendment 15(d) merges them first) |
+| the alias table would gain a **cycle** | a chain that returns to its own start has no end to resolve to |
+| an unreadable register, log, handoff or alias table | fail closed, naming the read |
+
+Each of them says **"Nothing was written."** The command moves four files, and a
+half-done rename is not something a second run can finish.
+
+### The alias table, and the one seat every reader shares
+
+`lanes/aliases.tsv` lives beside the register — `<old><TAB><new><TAB><UTC>`,
+comments on `#` lines — and `lane-rename` is its only writer. It has **one
+layer**, unlike `repos.tsv`: a repository alias is an organisation's fact and a
+lane rename is one person's register moving, so openRepoTools ships none.
+
+Clause (e) lists the readers that resolve through it — `who`, `lanes`,
+`live-holder`, `history`, Rule 6 attribution, `lane-start`'s row lookup, the
+`SessionStart` block and Amendment 12's guard — and **that list is not built as a
+list.** Amendment 15 already put `canon_lane` in front of every one of them, so
+the resolution is hooked there, once:
+
+* **a name with no row** is looked up in the table, case-insensitively; a chain
+  (`a→b`, `b→c`) resolves to its end; **a row always wins over an alias**, because
+  a name that is a lane today IS that lane — which is also what makes renaming a
+  lane back to an old name readable;
+* **the lane field of every old log line** is resolved *on the way in*, in
+  `LOG_AWK`. Clause (c) is explicit that the lines above the `RENAMED` are never
+  rewritten, so a renamed lane's log holds its history under two names in one
+  file; read byte for byte, half of that lane's holds would be invisible to
+  `who --lane` and to `lane-end`'s refusal. One rule in the parse serves every
+  reader behind it;
+* **the tmux window's name.** A rename run from another window leaves that
+  window carrying the old name — and the name guard resolves it, **renames the
+  window itself** (one tmux call, unlike a session name), and types the
+  `/rename`. So a rename made from anywhere is finished by the lane at its next
+  prompt, with nobody typing anything.
+
+The old name resolves **for ever**: nothing in this toolset ever removes a row
+from that table.
+
+### `RENAMED` is a lane-kind verb that changes no state
+
+It joins Amendment 7's verb list as a lane verb — its object is `lane:<name>` —
+and it is outside the last-line rule **by construction**: every state read here
+enumerates the five verbs that do change state (`STARTED PAUSED RESUMED ENDED
+RETIRED`), so a lane's last `STARTED` or `PAUSED` is still its last one after a
+rename, which is what decides whether it is running, swapped or closed. It is not
+written by hand: `lanes-edit.sh log RENAMED …` is refused and names `lane-rename`,
+because a line on its own is exactly the 2026-09-14 hand rename this amendment
+replaces.
+
+### `lanes` stays read-only
+
+Amendment 11(j)'s *"it writes nothing"* is untouched (clause (h)). `lanes
+--rename` is refused with the one word to type — the flag is answered rather than
+left unknown, because the request that produced this amendment spelled it that
+way.
+
 ## The handoff (Amendment 17)
 
 **In force 2026-09-14T09:45:33Z** (revision 2, `/ctx` included), with Amendment
@@ -2059,7 +2167,7 @@ machine whose repository already exists it clones it, adds nothing to a seeded
 repository, writes the pointer file and runs `link-estates`:
 
 ```sh
-openRepoTools --install     # the twelve commands, the three skills, the three command files and the hook entry
+openRepoTools --install     # the thirteen commands, the three skills, the three command files and the hook entry
 openRepoTools wip init      # create or adopt the workspace, and link it
 ```
 
@@ -2104,8 +2212,8 @@ link-estates                                          # repoints ~/projects/xFac
 ```
 
 **You are not asked to remember it: `--install` refuses** (A9 Addendum 4,
-R-A9-12). In its planning phase, before any of the twenty-six artifacts is placed,
-it walks all twelve targets and dies naming every one that is not a regular file,
+R-A9-12). In its planning phase, before any of the twenty-seven artifacts is placed,
+it walks all thirteen targets and dies naming every one that is not a regular file,
 what it is, and the one `rm` that clears them. `cp` FOLLOWS A SYMLINK, so an
 install over these would leave the two commands UNINSTALLED — the targets stay
 links — and would write the post-move bytes into `opensoft/brett-wip`'s working

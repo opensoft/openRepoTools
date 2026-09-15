@@ -25,13 +25,15 @@
 # change (Amendment 9(b), and R-A9-1). The identity that survives is narrower
 # and truer.
 #
-# `--install` PLACES TWELVE FILES, not four: this file, `park`, `resume`,
+# `--install` PLACES THIRTEEN FILES, not four: this file, `park`, `resume`,
 # `status` (openRepoShape #82; the fourth under Brett Heap's RULING of
 # 2026-09-10 in this repository, "lets go with a fourth file"), `lane` and
 # `lanes` (lane-collision-protocol Amendment 18 Addendum 1 and Amendment 11's
 # ratified decision 6 — `lane` is where `restart` was, Addendum 2 having retired
 # that word from the PATH), `lane-handoff` (Amendment 17(a), ratified
-# 2026-09-14: the swap IS the handoff, and this is its shell form), and the four
+# 2026-09-14: the swap IS the handoff, and this is its shell form),
+# `lane-rename` (Amendment 16, ratified 2026-09-14: a lane is renamed by ONE
+# WORD, in ONE COMMIT, and its old name resolves for ever), and the four
 # lane helpers `lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates` with
 # the alias table `repos.tsv` they read — which came here from
 # `opensoft/brett-wip` with their history under Amendment 9(b), because a
@@ -42,7 +44,7 @@
 # merges TWO hook entries into
 # `~/.claude/settings.json` — the `SessionStart` one (Amendment 9(b), A8
 # Addendum 2 R-A8-5) and, since lane-collision-protocol Amendment 12 adoption
-# act 3, the `UserPromptSubmit` NAME GUARD beside it: TWENTY-SIX
+# act 3, the `UserPromptSubmit` NAME GUARD beside it: TWENTY-SEVEN
 # artifacts, and the count is the invariant.
 #
 # One install line for the whole toolset, so a second engineer gets the estate
@@ -70,7 +72,7 @@ die() { printf '\nREFUSED: %s\n' "$1" >&2; exit "${2:-2}"; }
 
 usage() {
 	cat <<'USAGE'
-openRepoTools --install            install (or update) the twelve estate and
+openRepoTools --install            install (or update) the thirteen estate and
                                    lane commands into ~/.local/bin, plus the
                                    /handoff, /lane-swap and /restart skills, the
                                    /handoff, /ctx and /swap command files, the
@@ -81,8 +83,8 @@ openRepoTools wip init             create your workspace repository, clone it,
 openRepoTools --help | --version
 
 `openRepoShape` is the standard's front door and scaffolds product
-repositories; this command scaffolds none. `--install` places twelve files
-beside each other — this command, the two verbs, the read-only view, the three
+repositories; this command scaffolds none. `--install` places thirteen files
+beside each other — this command, the two verbs, the read-only view, the four
 lane words, the four lane helpers and the alias table they read:
 
   park [<Name>]                    commit, push and RECORD an estate's open
@@ -113,6 +115,10 @@ lane words, the four lane helpers and the alias table they read:
                                    session a second place asked for the lane
   lane-end <lane>                  close it, and refuse while anything is in
                                    flight
+  lane-rename <old> <new>          rename it: the row, the object log, the
+                                   handoff and lanes/aliases.tsv in ONE commit,
+                                   one comment per object it holds, and the old
+                                   name resolving for ever (Amendment 16)
   lanes-edit.sh <verb> …           the register's and the object logs' only
                                    writer
   link-estates                     place the symlinks every lane path already
@@ -217,7 +223,7 @@ fetch_from_repo() {
 	return 1
 }
 
-# THE TWELVE FILES `--install` PLACES. One list, so the installer, the fetch
+# THE THIRTEEN FILES `--install` PLACES. One list, so the installer, the fetch
 # fallback and the tests cannot disagree about what a complete install is.
 # `openRepoTools` is first because it is the one a person types to get the
 # others.
@@ -253,7 +259,13 @@ fetch_from_repo() {
 # one word left as another arrived, which is why nothing below it is a number.
 # AND TWELVE SINCE AMENDMENT 17(a): `lane-handoff` is the swap's shell form,
 # placed beside the rest because it is a word a person has on PATH (#47).
-INSTALLABLES=(openRepoTools park resume status lane lanes lane-handoff lanes-edit.sh lane-start lane-end link-estates repos.tsv)
+# THIRTEEN SINCE AMENDMENT 16, ratified 2026-09-14T09:24:35Z verbatim "Ratify as
+# drafted (Recommended)": `lane-rename <old> <new>` is the word Brett Heap asked
+# for that day, and clause (h) is why it is a word rather than a `lanes` option —
+# `lanes` writes nothing, and a rename is four files in one commit. Its write is
+# `lanes-edit.sh rename-lane`; the word exists because the tmux window and the
+# session's own name are not a register writer's to touch (clause (f)).
+INSTALLABLES=(openRepoTools park resume status lane lanes lane-handoff lane-rename lanes-edit.sh lane-start lane-end link-estates repos.tsv)
 
 # ---------------------------------------------- THE WORDS THAT WERE RETIRED
 #
@@ -373,7 +385,7 @@ mode_is() {   # <octal> <path>
 install_commands() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
 	local name target source verb placed=0
-	# ALL TWENTY-SIX IN HAND BEFORE ANY IS PLACED. The twelve files, the
+	# ALL TWENTY-SEVEN IN HAND BEFORE ANY IS PLACED. The thirteen files, the
 	# three skills, the three command files, and the TWO artifacts that are not
 	# whole files — the two hook entries merged into one `settings.json` —
 	# are all computed here, so a fetch that failed replaces nothing and a merge
@@ -446,7 +458,7 @@ install_commands() {
 
 
 # =========================================================================
-# THE FOURTEEN ARTIFACTS THAT ARE NOT ONE OF THE TWELVE FILES
+# THE FOURTEEN ARTIFACTS THAT ARE NOT ONE OF THE THIRTEEN FILES
 # =========================================================================
 #
 # lane-collision-protocol Amendment 9(b), inheriting A8 Addendum 2's R-A8-5
@@ -464,7 +476,7 @@ install_commands() {
 #     run and preserves hook keys. This command never writes a profile's
 #     settings.json at all. One path, one writer, in both halves.
 #
-# TWENTY-SIX ARTIFACTS, AND THE COUNT IS THE INVARIANT: twelve files in the bin
+# TWENTY-SEVEN ARTIFACTS, AND THE COUNT IS THE INVARIANT: thirteen files in the bin
 # directory, three skills in the shared skills directory, their three bare-run
 # copies, THREE COMMAND FILES at those same two paths, and TWO merged entries in
 # `~/.claude/settings.json`. It was twelve before Amendment 11 added a SECOND
@@ -473,7 +485,8 @@ install_commands() {
 # `commands/swap.md`, eighteen before Amendment 12 adoption act 3 added the
 # `UserPromptSubmit` name guard beside the `SessionStart` entry, and nineteen
 # before Amendment 17 added `lane-handoff`, the `handoff` skill and the
-# `/handoff` and `/ctx` command files; the count moves
+# `/handoff` and `/ctx` command files, and twenty-six before Amendment 16 added
+# `lane-rename`; the count moves
 # with the lists rather than being restated from memory.
 #
 # WHY A COMMAND FILE IS HERE AT ALL, WHEN ADOPTION ACT 6 SAYS THE LAUNCHER
@@ -573,7 +586,7 @@ BLOCK
 
 # EVERY SKILL'S BYTES, by `--install`'s own rule: from the checkout beside this
 # file when run from one, else fetched at this same ref. ALL OF THEM IN HAND
-# BEFORE ANY IS PLACED, which is the same all-or-nothing rule the twelve files
+# BEFORE ANY IS PLACED, which is the same all-or-nothing rule the thirteen files
 # already have — a new `/restart` beside a `handoff` that could not be fetched
 # is a half-install that reads like a whole one.
 collect_skills() {
@@ -639,8 +652,8 @@ HOOK_PLAN=""      # "absent" | "present" | "nofile"
 GUARD_PLAN=""     # the same three, for Amendment 12's UserPromptSubmit entry
 HOOK_MERGED=""    # a staged whole file, ready to move into place
 
-# THE DESTINATIONS, PROVED WRITABLE BEFORE ANY OF THE TWELVE IS PLACED — every
-# directory the artifacts that are not one of the twelve files go into, derived
+# THE DESTINATIONS, PROVED WRITABLE BEFORE ANY OF THE THIRTEEN IS PLACED — every
+# directory the artifacts that are not one of the thirteen files go into, derived
 # from the two lists and NOT counted in this sentence. It said "THE THREE
 # DESTINATIONS" while the loop below built seven of them, which is the same
 # defect `collect_commands` names above: a number restated beside a list that
@@ -683,7 +696,7 @@ plan_skill_targets() {
 	# `~/.claude/skills/restart/SKILL.md` was followed and WRITTEN THROUGH: the
 	# skill stays uninstalled, the target stays a link, and the bytes land
 	# wherever it points. That is the same failure R-A9-12 was ruled on for the
-	# twelve in the bin directory, one directory along, and the ruling says
+	# thirteen in the bin directory, one directory along, and the ruling says
 	# nothing about which path it applies to.
 	#
 	# `unplaceable_kind` is asked rather than re-tested, because two copies of
@@ -723,7 +736,7 @@ $bad
         rm -f -- $paths"
 }
 
-# THE TWELVE TARGETS, PROVED PLACEABLE BEFORE ANY OF THE TWENTY-SIX IS PLACED
+# THE THIRTEEN TARGETS, PROVED PLACEABLE BEFORE ANY OF THE TWENTY-SEVEN IS PLACED
 # (A9 Addendum 4, R-A9-12, ruled on F5 of the #24 review).
 #
 # `cp` FOLLOWS A SYMLINK. The loop below tests `[ -e "$target" ]`, compares
@@ -748,7 +761,7 @@ $bad
 # `rm` that clears them — rather than leaving a person to remember a step.
 # WHAT IS AT A PATH, WHERE IT IS NOT A REGULAR FILE.
 # ONE implementation of R-A9-12's test, for every path this command writes: the
-# twelve in the bin directory, the six `SKILL.md`s (F-X17), the six command
+# thirteen in the bin directory, the six `SKILL.md`s (F-X17), the six command
 # files, and `~/.claude/settings.json` (#44 round 1, `openRepoTools:878`).
 # Prints what is there and returns 0; returns 1 — saying nothing — where the
 # path is absent or is a regular file.
@@ -783,9 +796,9 @@ path_kind() {   # <path>
 # This answered "a regular file" with `return 1` and asked nothing else, so
 # every existing file counted as one `--install` may place over — and
 # `plan_skill_targets` let a READ-ONLY `SKILL.md` or command file through.
-# `install_commands` has already copied the twelve PATH files by the time
+# `install_commands` has already copied the thirteen PATH files by the time
 # `place_skill_and_hook` reaches the `cp`, so an ordinary permission failure
-# there left a host with twelve of the twenty-six artifacts placed, on the one
+# there left a host with thirteen of the twenty-seven artifacts placed, on the one
 # path in this file that promises all or none. A mode is not an exotic state
 # either: `chmod 444` on a file a person did not want overwritten is what a
 # person does.
@@ -935,7 +948,7 @@ $(guard_block_text)"
 
 	# WHAT IS AT THAT PATH, BEFORE A BYTE OF IT IS READ (#44 round 1,
 	# `openRepoTools:878`). This file carries the LAST TWO artifacts — the
-	# twenty-fifth and twenty-sixth — since Amendment 12 adoption act 3 put the
+	# twenty-sixth and twenty-seventh — since Amendment 12 adoption act 3 put the
 	# name guard beside the `SessionStart` entry, and it is the only path no
 	# walk asked about; the
 	# `present` arm now CHMODs it, and `chmod`
@@ -1096,7 +1109,7 @@ $(guard_block_text)"
 	fi
 }
 
-# The thirteen placements, AFTER the twelve files and the merge are all in hand.
+# The thirteen placements, AFTER the thirteen files and the merge are all in hand.
 place_skill_and_hook() {
 	local shared_dir bare_dir settings target verb hook_tmp name
 	settings="$(claude_home)/settings.json"
@@ -1107,7 +1120,7 @@ place_skill_and_hook() {
 	# EVERY FAILURE HERE IS A `die`, never the shell's own 1. `--install`'s
 	# codes are this toolset's — 0 done, 1 findings printed, 2 a refusal — and
 	# an unguarded `mkdir` or `cp` under `set -e` exits 1, which reads as a
-	# report of findings from a command that placed twelve of twenty-six artifacts.
+	# report of findings from a command that placed thirteen of twenty-seven artifacts.
 	for target in "$shared_dir/SKILL.md" "$bare_dir/SKILL.md"; do
 		mkdir -p -- "$(dirname -- "$target")" ||
 			die "could not create $(dirname -- "$target") for the $name skill.
@@ -1132,7 +1145,7 @@ place_skill_and_hook() {
     the skills and the hook are not."
 		fi
 		# 644: a SKILL.md is a document a session READS, not a command. The
-		# twelve in the bin directory are stamped 755 for the reason that loop
+		# thirteen in the bin directory are stamped 755 for the reason that loop
 		# gives — "a copy that is not executable is not a command" — and
 		# that reason does not reach this file. Amendment 9(b) describes
 		# `--install` as stamping 755 "on everything it places" while
@@ -1154,7 +1167,7 @@ place_skill_and_hook() {
 	# reason a skill has two.
 	#
 	# 644 for the same reason a `SKILL.md` is: a command file is a document a
-	# session READS. The 755 argument belongs to the twelve in the bin
+	# session READS. The 755 argument belongs to the thirteen in the bin
 	# directory, where a copy that is not executable is not a command.
 	for name in "${COMMANDS[@]}"; do
 		for target in "$(skills_home)/shared/commands/$name.md" "$(claude_home)/commands/$name.md"; do
@@ -1198,8 +1211,8 @@ place_skill_and_hook() {
 		# round 1, the suppressed comment at `openRepoTools:880`): a
 		# `settings.json` this euid can write but does not own takes `jq` and
 		# every check `plan_hook_merge` puts to it, then refuses the mode
-		# stamp, with the twelve commands, the skills and the command files —
-		# twenty-four of the twenty-six artifacts — already placed. The guard that
+		# stamp, with the thirteen commands, the skills and the command files —
+		# twenty-five of the twenty-seven artifacts — already placed. The guard that
 		# would catch it first is the same `[ -O ]` `unplaceable_kind`'s own
 		# comment declines, for the same reason: no test in this suite can
 		# make a second account to own this file, and the check would refuse a

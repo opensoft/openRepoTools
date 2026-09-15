@@ -1,0 +1,301 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# lane-rename — a lane is renamed by ONE WORD, in ONE COMMIT, and its old name
+# keeps resolving for ever.
+#
+#   lane-rename <old> <new> ["<why>"]   rename the lane: the row, its object
+#                                       log, its handoff and lanes/aliases.tsv
+#                                       in one commit; then this window's name
+#                                       and this session's name
+#   lane-rename <old> <new> --verbatim  <new> need not be `<repo>-<n>`
+#   lane-rename <old> <new> --no-github skip the per-object comments
+#   lane-rename <old> <new> --no-tmux   write only; touch no window and no pane
+#
+# lane-collision-protocol **Amendment 16**, ratified 2026-09-14T09:24:35Z
+# verbatim *"Ratify as drafted (Recommended)"*, on Brett Heap's request of the
+# same day, verbatim: *"we need the ability to rename a lane. maybe lanes
+# --rename <current lane name> <new lane name>."* The spelling he chose is this
+# one — *"lane-rename <old> <new> (Recommended)"* — and `lanes` stays read-only
+# (clause (h), and Amendment 11(j) before it).
+#
+# WHY IT EXISTS: TWO RENAMES BY HAND IN ONE NIGHT. The register's rows are keyed
+# by lane name; so are `lanes/log/<lane>.md`, the handoff
+# `session-handoff-<date>-lane-<name>.md`, the tmux window, the session name
+# (Amendment 12's lock), every Rule 6 line's attribution, every other lane's log
+# line that names it, and the wire form `Lane: <lower> (<Canonical>)` on every
+# PR, issue and comment the lane ever wrote. Nothing renamed any of it. On
+# 2026-09-14 two lanes renamed themselves anyway, each as one `RENAMED` line
+# appended to `LANES.md` — *"the lines are honest and they are all there is"*.
+#
+# WHAT THIS COMMAND IS, AND WHAT IT IS NOT. The WRITE is
+# `lanes-edit.sh rename-lane`, which is where every refusal and all four moves
+# live: this file adds nothing to the register and nothing to any log. What it
+# adds is the two names a register writer may not touch (clause (f)):
+#
+#   * THE WINDOW, renamed with `tmux rename-window` when this window carries the
+#     old name — one tmux call any client may make, which is why `lane-start`
+#     makes exactly this one at every launch;
+#   * THE SESSION, whose name is LOCKED to the lane by Amendment 12(h) and which
+#     no API renames from outside it. The one path is `/rename <new>` typed into
+#     the lane's own pane (M1), and the conditions on typing at all are M1's: a
+#     pane whose current command is `claude`, and nothing else. Where they do not
+#     hold, the line is PRINTED — a lock that silently did nothing is a lock
+#     nobody knows is broken.
+#
+# RUN FROM ELSEWHERE IT STILL RENAMES THE LANE, and says what is left: clause
+# (f) is explicit that *"the window and session are the lane's to fix at its
+# next prompt, and the guard says so"*. Amendment 12's name guard does exactly
+# that, out of the same alias table: at the lane's next prompt it resolves the
+# window's former name to the lane's row, renames the window itself, and types
+# the `/rename`. So a rename made from another window is finished by the lane
+# without anybody typing anything.
+#
+# AND IT CANNOT BE RUN OVER A RUNNING LANE FROM OUTSIDE IT. Clause (a) refuses a
+# rename while a LIVE session holds `<old>` in another window, and that refusal
+# is the helper's, before anything is written — because the running session's
+# own name would then be a lane the register no longer carries, and that is the
+# state the name guard refuses every prompt over.
+#
+# EXIT CODES ARE THE HELPER'S, passed straight through: `0` done · `1` no
+# register, or a read that failed · `2` a refusal (clause (a), bad arguments, or
+# a `lanes-edit.sh` predating this amendment) · `3` the commit is local and this
+# attempt cannot confirm it reached origin · `4` the mutex · `5` a move refused
+# · `6` git. Never this file's own numbers: every one of them is decided in the
+# writer, and two tables of codes for one act is how they come to disagree.
+#
+#   $LANES_EDIT          the writer (default: lanes-edit.sh beside this file)
+#   $LANE_RENAME_NO_TMUX 1: the same as --no-tmux (the test seam)
+
+set -uo pipefail
+
+prog="${0##*/}"
+SELF="${BASH_SOURCE[0]:-$0}"
+selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
+
+say()  { printf '%s\n' "$*"; }
+step() { printf '%s: %s\n' "$prog" "$*" >&2; }
+note() { printf '%s: %s\n' "$prog" "$*" >&2; }
+die()  { printf '\n%s: REFUSED: %s\n' "$prog" "$1" >&2; exit "${2:-2}"; }
+# `tr`, not `${x,,}`: every file this repository ships is parsed under macOS
+# bash 3.2 in CI, where `${x,,}` is a syntax error.
+lc()   { printf '%s' "${1-}" | tr '[:upper:]' '[:lower:]'; }
+
+usage() {
+	cat <<'USAGE'
+lane-rename <old> <new> ["<why>"] [--verbatim] [--no-github] [--no-tmux]
+
+Rename a lane. ONE COMMIT, refused or whole (lane-collision-protocol Amendment
+16): the register row's key cell, `lanes/log/<old>.md` → `lanes/log/<new>.md`
+with a RENAMED line, the handoff the row names → the same date with
+`lane-<new>` plus a Rule 3 stamp, and `lanes/aliases.tsv` gains `<old> <new>`.
+Then one GitHub comment on every object the lane holds.
+
+THE OLD NAME KEEPS RESOLVING, for ever and in every reader: `who`, `lanes`,
+`live-holder`, `lane-start`, Rule 6 attribution, the SessionStart block and the
+name guard all resolve a lane name through `lanes/aliases.tsv` before they read.
+
+  --verbatim   accept a <new> that is not of the form <repo>-<n>. Rule 4's form
+               is what `lanes --prefix`, the next free position and
+               `lane-start <repo> <n>` are computed from, so a lane renamed out
+               of it loses all three; Amendment 11's `--dir` lanes are the
+               deliberate exception this flag exists for.
+  --no-github  make the commit and post no comment on any object the lane holds.
+  --no-tmux    write only: rename no window and type into no pane.
+  -h, --help   this.
+
+Run it IN THE LANE'S OWN WINDOW and the whole act is one command: the window is
+renamed and `/rename <new>` is typed into the pane. Run from anywhere else it
+renames the lane and says what is left — and the name guard finishes the window
+and the session at that lane's next prompt.
+
+A rename is REFUSED, before anything is written, where: there is no row under
+<old> in any case; a row exists under <new> in any case; <new> is not <repo>-<n>
+and --verbatim was not given; a LIVE session holds <old> in another window; two
+rows for <old> differ only by case; the alias table would gain a cycle; or a
+read could not be made.
+
+Exit: the writer's own codes — 0 done · 1 environment · 2 refused · 3 committed,
+not confirmed pushed · 4 mutex · 5 a move refused · 6 git.
+USAGE
+}
+
+# ------------------------------------------------------------- the arguments
+old=""; new=""; why=""; no_tmux="${LANE_RENAME_NO_TMUX:-0}"
+pass=()
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-h | --help)  usage; exit 0 ;;
+	--verbatim)   pass+=(--verbatim); shift ;;
+	--no-github)  pass+=(--no-github); shift ;;
+	--no-tmux)    no_tmux=1; shift ;;
+	--why)        why="${2-}"; [ -n "$why" ] || die "--why needs a reason" 2; shift 2 ;;
+	--why=*)      why="${1#--why=}"; [ -n "$why" ] || die "--why needs a reason" 2; shift ;;
+	--)           shift ;;
+	-*)           die "unknown option '$1' — see $prog --help" 2 ;;
+	*)
+		if   [ -z "$old" ]; then old="$1"
+		elif [ -z "$new" ]; then new="$1"
+		elif [ -z "$why" ]; then why="$1"
+		else die "$prog takes <old> <new> [\"<why>\"] — '$1' is one argument too many. See $prog --help" 2
+		fi
+		shift ;;
+	esac
+done
+[ -n "$old" ] && [ -n "$new" ] || { usage >&2; die "usage: $prog <old> <new> [\"<why>\"]" 2; }
+
+# ---------------------------------------------------------------- the writer
+#
+# Beside this command first — `--install` places both in one directory — then on
+# PATH. One resolution, so a workstation with two copies never reads one and
+# writes with the other.
+LANES_EDIT="${LANES_EDIT:-}"
+if [ -z "$LANES_EDIT" ]; then
+	if [ -x "$selfdir/lanes-edit.sh" ]; then LANES_EDIT="$selfdir/lanes-edit.sh"
+	else LANES_EDIT="$(command -v lanes-edit.sh 2>/dev/null || printf '')"
+	fi
+fi
+[ -n "$LANES_EDIT" ] && [ -x "$LANES_EDIT" ] || die "no register writer at ${LANES_EDIT:-lanes-edit.sh} — it is installed beside this
+    command by \`openRepoTools --install\`. Run that, or set \$LANES_EDIT." 1
+
+have_tmux() {
+	[ "$no_tmux" = 1 ] && return 1
+	[ -n "${TMUX:-}" ] || return 1
+	command -v tmux >/dev/null 2>&1
+}
+
+# ---------------------------------------------------------------- this window
+#
+# READ BEFORE THE WRITE, and only read. Amendment 16(f) turns on ONE question —
+# is this the lane's own window — and it is answered by the name this window
+# carries NOW, which the write below is about to make stale.
+#
+# TWO SPELLINGS, AND NEITHER IS DERIVED FROM THE OTHER (Amendment 11(c), as
+# `lane-start` states it): `#W` is the NAME, and `<session>:<@id>` is the ref
+# the harness's own session records are matched on, which is the one
+# `window-session` takes. `<session>:<index>` is a third spelling this command
+# has no question for, so it is not read.
+win_name=""; win_harness=""
+if have_tmux; then
+	win_name="$(tmux display-message -p '#W' 2>/dev/null || :)"
+	win_harness="$(tmux display-message -p '#{session_name}:#{window_id}' 2>/dev/null || :)"
+fi
+# THIS WINDOW IS THE LANE'S WHEN IT CARRIES ITS NAME. Compared without case
+# (Amendment 15) against BOTH names: `<old>`, which is the ordinary state, and
+# `<new>`, which is the state a re-run leaves — a rename whose write landed and
+# whose window rename did not is finished by running the same command again.
+here=0
+if [ -n "$win_name" ]; then
+	[ "$(lc "$win_name")" = "$(lc "$old")" ] && here=1
+	[ "$(lc "$win_name")" = "$(lc "$new")" ] && here=1
+fi
+
+# ------------------------------------------------------------------ the write
+#
+# EVERY REFUSAL IS THE WRITER'S, INCLUDING THE ONE ABOUT THIS WINDOW. Clause (a)
+# refuses a rename while a live session holds `<old>` elsewhere, and that read
+# is `live-holder`'s, which knows whether a record is `here` — so this file does
+# not ask the question twice and cannot answer it differently.
+step "renaming lane $old → $new (lane-collision-protocol Amendment 16)"
+rc=0
+"$LANES_EDIT" rename-lane "$old" "$new" ${why:+"$why"} ${pass[@]+"${pass[@]}"} || rc=$?
+if [ "$rc" != 0 ]; then
+	# THE WRITER HAS ALREADY SAID WHY, in its own words and with the act to
+	# take. Saying it again in different words is how two surfaces come to
+	# disagree about one refusal; the only thing added here is that NOTHING of
+	# this window's was touched, which is this file's own fact.
+	case "$rc" in
+	2) note "nothing was renamed here either: the window still carries '${win_name:-none}' and no pane was typed into." ;;
+	*) note "the write exited $rc (the writer's own code, above). This window was NOT touched — read what it said before re-running: a 3 means the commit is local and may already be on origin." ;;
+	esac
+	exit "$rc"
+fi
+
+# --------------------------------------------------- clause (f): the two names
+#
+# THE WINDOW FIRST, because it is the half that needs nobody. `rename-window`
+# also turns tmux's automatic-rename OFF for this window, which is what keeps
+# the name through the next command that runs in it — `lane-start` takes the
+# same call for the same reason.
+if [ "$here" = 1 ] && have_tmux && [ "$win_name" != "$new" ]; then
+	if tmux rename-window "$new" 2>/dev/null; then
+		say "  window renamed '$win_name' → '$new'"
+	else
+		note "tmux would not rename this window, so it still carries '$win_name'. Rename it yourself: tmux rename-window $new"
+	fi
+fi
+
+if [ "$here" != 1 ]; then
+	# FROM ELSEWHERE, THE LANE'S OWN NEXT PROMPT FINISHES IT (clause (f)). This
+	# is not a gap: the guard resolves the window's former name through the very
+	# alias table this rename just wrote, renames the window itself and types the
+	# `/rename`. What is printed is what a person would type if they got there
+	# first.
+	say ""
+	say "  This is not lane $new's own window${win_name:+ (it is named '$win_name')}, so its window and its session are"
+	say "  the lane's to fix — which the name guard does at its next prompt (Amendment 16(f)):"
+	say "      tmux rename-window $new        # in the lane's own window"
+	say "      /rename $new                   # typed in the lane's own session"
+	exit 0
+fi
+
+# --------------------------------------------- the session name (Amendment 12(h))
+#
+# M1's CONDITIONS ARE THE ONES `guard_type` MAKES, and they are not a taste: a
+# `/rename` typed at a shell is a command that does not exist, and typed into an
+# editor it is text nobody wrote. So the pane is the one the LIVE RECORD names —
+# `window-session` is the single implementation of that read (Amendment 11(h)) —
+# and it is typed into only where its current command is `claude`.
+#
+# THE PANE IS NOT `$TMUX_PANE`. This command usually runs from a shell, and that
+# shell's pane is running the shell: a person who typed `lane-rename` at a
+# prompt is not typing into their own session, and the record is what says where
+# the session actually is.
+pane=""; sess_name=""
+if have_tmux && [ -n "$win_harness" ]; then
+	ws_out=""
+	ws_out="$("$LANES_EDIT" window-session "$win_harness" 2>/dev/null)" || ws_out=""
+	if [ -n "$ws_out" ]; then
+		# `<sid><US><tmux><US><name><US><pid><US><profile>`, the record's own
+		# fields — and the second is `<session>:<@id>.<%pane>`, a WINDOW target
+		# with the pane on the end of it.
+		#
+		# THE PANE IS TAKEN OUT OF IT, AND ONLY FROM A TARGET THAT NAMES THIS
+		# WINDOW — `guard_run`'s own rule, for the reason stated there: tmux
+		# REUSES window ids, so a record placed in this window by its pid can
+		# carry a target another window now answers to, and `/rename` typed
+		# into that one would land in somebody else's pane. Where it does not
+		# name this window the pane is left EMPTY and the line is printed.
+		rec_tgt="$(printf '%s' "$ws_out" | awk -F'\037' '{print $2}')"
+		sess_name="$(printf '%s' "$ws_out" | awk -F'\037' '{print $3}')"
+		case "$rec_tgt" in none) rec_tgt="" ;; esac
+		if [ -n "$rec_tgt" ] && [ "${rec_tgt%.*}" = "$win_harness" ]; then
+			case "$rec_tgt" in *.%*) pane="${rec_tgt##*.}" ;; esac
+		fi
+	fi
+fi
+
+if [ -n "$sess_name" ] && [ "$(lc "$sess_name")" = "$(lc "$new")" ]; then
+	say "  the session in this window is already named '$sess_name'"
+	exit 0
+fi
+
+typed=0
+if [ -n "$pane" ] && have_tmux; then
+	cur="$(tmux display-message -p -t "$pane" '#{pane_current_command}' 2>/dev/null || :)"
+	case "$cur" in
+	claude)
+		if tmux send-keys -t "$pane" "/rename $new" Enter 2>/dev/null; then
+			typed=1
+			say "  /rename $new typed into $pane (Amendment 12(h) M1: the only path a running session's name has)"
+		fi ;;
+	esac
+fi
+if [ "$typed" = 0 ]; then
+	say ""
+	say "  The session's own name is LOCKED to the lane (Amendment 12(h)) and no API renames a"
+	say "  running one from outside it. Type this in lane $new's own session — or say nothing and"
+	say "  let the name guard type it at that lane's next prompt:"
+	say "      /rename $new"
+fi
+exit 0

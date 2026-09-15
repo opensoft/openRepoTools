@@ -53,10 +53,13 @@ COMMAND = REPO / "openRepoTools"
 #: — the launcher's path, the lane's own recorded directory and profile, asking
 #: nothing — plus the numbered pick, the attach and the handoff branch, so what
 #: a person is given is one word instead of two. `lane-handoff` joined beside it
-#: under Amendment 17(a), which is why the list is TWELVE.
+#: under Amendment 17(a), which made the list TWELVE; `lane-rename` joined it
+#: under Amendment 16 (ratified 2026-09-14T09:24:35Z), whose clause (h) is why
+#: it is a word rather than a `lanes` option — `lanes` writes nothing and a
+#: rename is four files in one commit — which is why the list is THIRTEEN.
 INSTALLED = ("openRepoTools", "park", "resume", "status", "lane", "lanes",
-             "lane-handoff", "lanes-edit.sh", "lane-start", "lane-end",
-             "link-estates", "repos.tsv")
+             "lane-handoff", "lane-rename", "lanes-edit.sh", "lane-start",
+             "lane-end", "link-estates", "repos.tsv")
 
 #: The skills `--install` also places, at two paths each, and the paths they are
 #: fetched from when there is no checkout to copy them out of (Amendment 9(b),
@@ -78,11 +81,11 @@ SKILL_PATH = SKILL_PATHS[0]
 COMMAND_NAMES = ("handoff", "ctx", "swap")
 COMMAND_PATHS = tuple(f"commands/{n}.md" for n in COMMAND_NAMES)
 
-#: Everything a stdin install has to fetch: the twelve files, the three skills
+#: Everything a stdin install has to fetch: the thirteen files, the three skills
 #: and the three command files.
 FETCHED = INSTALLED + SKILL_PATHS + COMMAND_PATHS
 
-#: TWENTY-SIX ARTIFACTS, AND THE COUNT IS THE INVARIANT: twelve files in the
+#: TWENTY-SEVEN ARTIFACTS, AND THE COUNT IS THE INVARIANT: thirteen files in the
 #: bin directory, three skills in the shared skills directory, their three
 #: bare-run copies, three command files at that same pair of destinations, and
 #: TWO merged entries in `~/.claude/settings.json`. Derived from the three
@@ -101,7 +104,7 @@ ARTIFACTS = (len(INSTALLED) + 2 * len(SKILL_NAMES) + 2 * len(COMMAND_NAMES)
              + HOOK_ENTRIES)
 
 USAGE_LINES = (
-    "openRepoTools --install            install (or update) the twelve estate and",
+    "openRepoTools --install            install (or update) the thirteen estate and",
     "openRepoTools wip init             create your workspace repository, clone it,",
     "openRepoTools --help | --version",
 )
@@ -114,7 +117,7 @@ pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
               WINDOWS_SKIP]
 
 #: `--install` HARD-REQUIRES `jq` SINCE lane-collision-protocol AMENDMENT 9(b):
-#: two of its twenty-six artifacts are merged entries inside a JSON file somebody
+#: two of its twenty-seven artifacts are merged entries inside a JSON file somebody
 #: else owns, and the clause has it refuse naming `jq` rather than rewriting
 #: that file by hand. So a run of `--install` on a host without `jq` is a
 #: REFUSAL BY DESIGN, and a test that asserts a successful placement there is
@@ -186,7 +189,7 @@ def test_help_prints_every_usage_line():
 
 
 def test_help_names_every_command_it_places_and_the_standards_front_door():
-    """`--install` places twelve files, and eleven of them are commands this one
+    """`--install` places thirteen files, and twelve of them are commands this one
     knows nothing about — so `--help` has to say what they are and where the
     rest is written down. A command a person has on PATH and cannot find
     written down is a command they will not use.
@@ -374,7 +377,7 @@ def test_installing_twice_changes_nothing(tmp_path):
     assert second.returncode == 0, second.stderr
     for name in INSTALLED:
         assert f"{name}: already installed at" in second.stdout, name
-    # TWENTY-SIX, not twelve: the six skill copies, the six command-file copies
+    # TWENTY-SEVEN, not thirteen: the six skill copies, the six command-file copies
     # and BOTH hook entries each report `unchanged` too, and the count is the
     # invariant Amendment 9(b) names — derived from the three lists, never
     # restated, so a new skill or command moves it. It was eighteen until
@@ -387,7 +390,7 @@ def test_installing_twice_changes_nothing(tmp_path):
 @NEEDS_JQ
 def test_install_replaces_a_copy_that_has_drifted(tmp_path, name):
     """Per file, and only the one that drifted: an install that rewrote all
-    twelve every time would have nothing to say about which one was stale."""
+    thirteen every time would have nothing to say about which one was stale."""
     assert run_cmd("--install", home=tmp_path).returncode == 0
     target = tmp_path / ".local" / "bin" / name
     target.write_text(target.read_text(encoding="utf-8") + "# drift\n",
