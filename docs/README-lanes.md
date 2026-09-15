@@ -409,14 +409,38 @@ manual.
    session's id is minted there and the row must record it. **Resume beats
    new**, because a rename into a title that is still held is exactly what mints
    `<LANE> (2)` and costs the lane its address (Amendment 2: the session name
-   *is* the messaging address). Three cases, in order: `exec claude --resume
+   *is* the messaging address). Four cases, in order: `exec claude --resume
    <id>`, where `<id>` is the **last** uuid in the row's session cell and this
    directory has its transcript (Amendment 6 — a lane is resumed by the id its
-   row records, never by its title); `exec claude --resume <LANE>` when no
-   recorded id resolves but a transcript here carries the custom title `<LANE>`,
-   which is the fallback and only filters the picker; and `exec claude --name
-   <LANE> --session-id <fresh uuid>` for a lane with no history here. Anything
-   after `--` is passed through to `claude`.
+   row records, never by its title); the same exact command using the same
+   agent's last `PAUSED … transcript <id>` when the row-last UUID has no
+   transcript, restoring that exact ID to the end of the session cell first;
+   `exec claude --resume <LANE>` when neither exact recorded id resolves but a
+   transcript here carries the custom title `<LANE>`, which is the fallback and
+   only filters the picker; and `exec claude --name <LANE> --session-id <fresh
+   uuid>` for a lane with no history here. A live session in the current window
+   remains authoritative over the PAUSED fallback. Anything after `--` is
+   passed through to `claude`.
+
+   **And the id it is about to resume is counted first, under two rules and not
+   one.** Amendment 18(h)'s is this tooling's: a second LIVE PROCESS on one
+   transcript is a refusal naming the pid and the retire act, and the harness
+   permits that state — measured 2026-09-15 against `claude` 2.1.270, a
+   `--resume` whose id a second *interactive* process holds starts anyway. The
+   other rule is the HARNESS'S OWN, asked here because it decides whether the
+   `exec` can happen at all: a `--resume <id>` whose id is carried by a live
+   record whose `kind` is anything but `interactive` — a `--bg` job, a
+   `bg-pty-host` child, the `bg` companion of Amendment 8 ruling (g) — prints
+   `Session <id> is running as a background session … Add --fork-session to
+   branch off a copy instead` and **exits 1 without starting**. Everything this
+   command writes — the row, the object log, the handoff stamp — is written
+   BEFORE the `exec`, so a launch the harness refuses leaves a lane recorded
+   `RESUMED` by a session that never existed, and in a window `pclaude --lane`
+   has just made, tmux prints `[exited]` over the message and closes it. So the
+   count is asked on both sides of the current-window test and the refusal names
+   where that session is (`tmux switch-client -t <window>`) and how to open it
+   (`claude agents`, `claude attach <id>`, `claude stop <id>`) beside
+   `lane-end <lane> --retire <pid>`.
 
    **The session cell it reads is the PUBLISHED one**, fetched, through the same
    `register-row` step 3 asks — like every other state read in this tooling. A
@@ -1578,12 +1602,11 @@ such lines in one lane's log, and they stay where they are.
 
 ## The name guard and the lock (Amendment 12)
 
-**A lane session works only while three names are one**, and otherwise the
-prompt is refused. Ratified by Brett Heap 2026-09-13T18:20:44Z — *"Ratify
-revision 2"*, with M1 *"Type /rename into the pane"* — on his ruling of the same
-day, verbatim: *"we need the session name and the lane name always the same. we
-need a gaurd on this and is must stop and refuse to work if they are not the
-same"*.
+**A lane session normally works while three names are one.** A readable,
+recoverable lane/session mismatch now pauses for an explicit choice; unreadable,
+ambiguous, duplicate, or superseded identity still refuses the prompt. Ratified
+by Brett Heap 2026-09-13T18:20:44Z — *"Ratify revision 2"*, with M1 *"Type
+/rename into the pane"*.
 
 The three:
 
@@ -1617,7 +1640,7 @@ every command is filled in, never `<repo> <n>`.
 |---|---|
 | the window is not a lane, the session name parses as `<repo>-<n>` | `lane-start --no-launch <repo> <n>` — **the 2026-09-10 case**, which ran for three days unrecorded |
 | neither name is a lane | refuses and says so: WHICH lane this work is is yours to name, and a guard that guessed would bind a window to a row nobody chose |
-| the window is a lane, this uuid is the row's last id, the session name is not a lane name | **THE LOCK RENAMES IT** (below) |
+| the window is a lane, this uuid is the row's last id, the session name differs | **THE THREE-CHOICE OFFER** (below) |
 | … and the session name differs from the row's **only by case** | the lock renames it to the ROW's spelling — a lane name is ONE name under any case (Amendment 15) |
 | … and the session name is ANOTHER lane's, set by a **person** after this window's binding | **THE OFFER** (below) |
 | the window is a lane, this uuid is IN the cell but not last | a SUPERSEDED transcript: exit, `lane-start <repo> <n>`, which resumes the id the row ends on |
@@ -1661,6 +1684,33 @@ mints, so another holder of that name was live. The note names
 
 ### The offer
 
+For a readable current lane/session mismatch, the guard now presents three
+numbered choices rather than choosing a repair automatically:
+
+1. **Allow this lane** — explicitly allow the current lane/session pair for
+   this transcript. Later prompts warn without blocking until either name
+   changes.
+2. **Adjust lane to session** — move the window and register binding to the
+   session's lane through the existing lane-start and UUID-anchor path.
+3. **Adjust session to lane** — type /rename <lane> into the verified Claude
+   pane. This choice never changes the register.
+
+The answer is the next prompt and is consumed by the guard. Invalid answers
+keep the offer pending. If the pane cannot accept choice 3, the guard prints
+the manual /rename command and keeps the offer. Choice 1 is stored per
+transcript under the session's offer directory and is invalidated when the
+lane, session name, or transcript changes.
+
+**And choice 1 is an answer to ONE row of the table above, honoured there and
+nowhere earlier.** It is read at the row it was given for — a readable lane
+whose uuid is the row's LAST id and whose session name is not the lane's — so
+an unreadable register, an ambiguous one, a duplicate live process, a
+SUPERSEDED transcript and a uuid the row does not name at all are refused
+through it, exactly as they are without it: an allowance is not a bypass. The
+three names agreeing again ends it too — that is one of them having changed —
+so the file is dropped and a later drift is a fresh question rather than a
+silent pass on an old answer.
+
 *"if the user does a rename, then we should offer to move to that lane or create
 a new lane if we do not have one as that name"* (D5, verbatim). A record whose
 `nameSource` is `user`, whose `name` is another lane's, and whose `nameSince` is
@@ -1668,20 +1718,20 @@ later than this window's binding is a person saying **"this is that lane now"**
 — so the guard **asks** rather than guessing:
 
 ```console
-lanes-edit: you renamed this session to openRepoShape-2 — lane openRepoShape-2 EXISTS, last session 8c31….
-lanes-edit: Reply `yes` to move this window to it (creating the lane if there is none: `lane-start --no-launch openRepoShape 2` is run for you, this window is renamed, the row created or this uuid appended, and openRepoTools-3 is marked MOVED).
-lanes-edit: Reply `no` to stay openRepoTools-3 — the session is renamed back with `/rename openRepoTools-3`.
+lanes-edit: WARNING: the lane and Claude session names disagree.
+lanes-edit: 1) explicitly allow this lane for this transcript
+lanes-edit: 2) adjust the lane to session openRepoShape-2
+lanes-edit: 3) adjust the session to lane openRepoTools-3 (types `/rename openRepoTools-3`)
+lanes-edit: Reply `1`, `2` or `3`.
 ```
 
-The answer is the **next prompt**; it is consumed by the guard and never reaches
-the model, and anything but `yes` or `no` asks again. The pending offer is held
-per session id under `$CLAUDE_CONFIG_DIR/lanes/offers/<uuid>` and expires with
-the session. **An answer is a prompt**, so it waits behind the duplicate read
-below: while a second live process carries this transcript the answer is
-refused with that, and the offer is kept for the first prompt after the other
-process is retired — a `yes` consumed there would run `lane-start` out of a
-process that may not be writing at all, on a question the other one could
-equally have answered.
+The numbered answer is the **next prompt**; it is consumed by the guard and
+never reaches the model. Anything other than `1`, `2` or `3` asks again.
+The pending offer is held per session id under
+`$CLAUDE_CONFIG_DIR/lanes/offers/<uuid>`. **An answer is a prompt**, so it
+waits behind the duplicate read below: while a second live process carries this
+transcript the answer is refused with that, and the offer is kept for the first
+prompt after the other process is retired.
 
 **A lane named before Rule 4's `<repo>-<n>` form is offered, not run.** The
 register carries 22 of them, and `lane-start` needs such a lane's DIRECTORY,
@@ -1689,7 +1739,7 @@ which nothing in the register, the window or the session says. So the offer
 says what it cannot fill in and `yes` refuses rather than running a command with
 a `<path>` placeholder in it: the move is
 `lane-start --no-launch --dir <that lane's checkout> <lane>`, yours to run with
-the path filled in, and the offer is kept so that `no` still answers it. On `yes` the **window is renamed first** and that order is
+the path filled in, and the offer is kept. On choice `2` the **window is renamed first** and that order is
 load-bearing: `lane-start`'s step 3b veto 2 refuses to take the session live in
 a window named for another lane, which after a `yes` is exactly what this window
 is — without the rename the lane would be started and stamped with this

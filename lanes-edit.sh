@@ -5912,14 +5912,20 @@ guard_lane_start() {
 G_WINREF=""; G_WINNAME=""; G_ID=""; G_NAME=""; G_SRC=""; G_PID=""; G_PROF=""
 G_ROW=""; G_LANE=""; G_SES_LANE=""
 GUARD_TRIPLE_DONE=0
-guard_triple() {
+#
+# THE HEADING IS AN ARGUMENT BECAUSE ONE CALLER DOES NOT REFUSE. An explicitly
+# allowed mismatch (choice 1 below) prints the same three names and then lets
+# the prompt through, and a line reading "THE NAME GUARD REFUSES THIS PROMPT"
+# over a prompt it has just allowed is the guard lying about its own act. Every
+# other caller passes nothing and gets the refusal heading unchanged.
+guard_triple() {   # [<heading>]
   [ "$GUARD_TRIPLE_DONE" = 0 ] || return 0
   GUARD_TRIPLE_DONE=1
   gt_s="${G_ID:-unknown} '${G_NAME:-none}'"
   [ -n "$G_SRC" ] && gt_s="$gt_s (nameSource $G_SRC)"
   [ -n "$G_PID" ] && gt_s="$gt_s pid $G_PID"
   [ -n "$G_PROF" ] && gt_s="$gt_s profile $G_PROF"
-  note "THE NAME GUARD REFUSES THIS PROMPT (lane-collision-protocol Amendment 12). The three names:"
+  note "${1:-THE NAME GUARD REFUSES THIS PROMPT (lane-collision-protocol Amendment 12). The three names:}"
   note "  window   ${G_WINREF:-not in tmux} '${G_WINNAME:-none}'"
   note "  session  $gt_s"
   note "  row      ${G_ROW:-not read}"
@@ -6146,8 +6152,18 @@ guard_run() {   # <the hook's JSON, on stdin already read>
   # triple still disagrees BECAUSE of the rename being answered — so this
   # cannot wait behind the table below. It DOES wait behind 18(h)'s count
   # above, for the reason stated there.
+  #
+  # AND AN `allow` FILE IS NOT A PENDING QUESTION, so it is not answered here:
+  # it is a STANDING ANSWER to one the person has already settled, and it is
+  # honoured at the row of the table that states the mismatch it allows — never
+  # in front of the table, where it would also silence the SUPERSEDED and the
+  # not-in-any-row refusals, which are states nobody allowed and which the
+  # amendment keeps closed (the requirement's own words: unreadable, ambiguous,
+  # duplicate or superseded identity still refuses).
   gr_off="$(guard_offer_file "$G_ID")"
-  if [ -f "$gr_off" ]; then
+  gr_mode=""
+  [ -f "$gr_off" ] && gr_mode="$(sed -n -e 's/^mode=//p' "$gr_off" 2>/dev/null | head -n1)"
+  if [ -f "$gr_off" ] && [ "$gr_mode" != allow ]; then
     guard_answer "$gr_off" "$gr_prompt" "$gr_pane"
     return 2
   fi
@@ -6193,16 +6209,32 @@ guard_run() {   # <the hook's JSON, on stdin already read>
       # THE THREE AGREE. Under Amendment 15 they agree under any case — and the
       # ROW's spelling is the one the session carries, so a name that differs
       # only by case is renamed to it rather than refused for ever.
+      # AND AN ALLOWANCE DIES WITH THE MISMATCH IT ALLOWED: the names agreeing
+      # again is one of the two names having CHANGED, which is the requirement's
+      # own condition for it no longer applying. Leaving the file would let a
+      # rename back to the allowed spelling pass silently on a decision the
+      # person made about a state they have since left.
+      [ -f "$gr_off" ] && [ "$gr_mode" = allow ] && rm -f -- "$gr_off"
       [ "$G_NAME" = "$G_LANE" ] && return 0
       guard_lock_rename "$gr_pane" "spells the lane '$G_NAME' where the register's row spells it '$G_LANE', and a lane name is ONE name under any case whose canonical spelling is the row's (Amendment 15)"
       return 2
     fi
-    if [ -n "$G_SES_LANE" ] && [ "$(lc "$G_SES_LANE")" != "$(lc "$G_LANE")" ] \
-       && [ "${G_SRC:-}" = user ] && guard_rename_is_newer "$G_LANE" "$gr_since"; then
-      guard_offer "$gr_off" "$gr_pane"
-      return 2
+    # ---- THE MISMATCH, AND THE ONE STATE THAT PASSES THROUGH IT. The
+    # allowance is honoured HERE and nowhere earlier: this is the row of the
+    # table it was given for — a readable current lane whose uuid is the row's
+    # LAST id and whose session name is not the lane's — so a superseded
+    # transcript, a uuid in no row, an ambiguous register and an unreadable
+    # read have all been refused above it, allowance or no allowance.
+    if [ "$gr_mode" = allow ] && guard_allow_active "$gr_off"; then
+      guard_triple "THE NAME GUARD ALLOWS THIS PROMPT ON AN EXPLICIT CHOICE (lane-collision-protocol Amendment 12). The three names:"
+      note "WARNING: this lane/session name mismatch was explicitly allowed for this transcript. It will remain allowed only while the lane and session names stay unchanged."
+      return 0
     fi
-    guard_lock_rename "$gr_pane" "is '${G_NAME:-none}', which is not the lane's name"
+    # AN ALLOWANCE THAT NO LONGER FITS IS DROPPED RATHER THAN CARRIED: either
+    # name having changed is exactly what invalidates it, and the person is
+    # asked again below.
+    [ "$gr_mode" = allow ] && rm -f -- "$gr_off"
+    guard_offer "$gr_off" "$gr_pane"
     return 2
   fi
 
@@ -6253,10 +6285,11 @@ guard_lock_rename() {   # <pane> <what is wrong with the name, as a clause>
     9) note "this pane is not running claude, so NOTHING was typed, for the reason above. Type it in the lane's own pane: /rename $G_LANE" ;;
     *) note "tmux would not take the keys, so NOTHING was typed. Type it yourself: /rename $G_LANE" ;;
   esac
-  glr_base="${G_NAME% (*)}"
-  if [ -n "$glr_base" ] && [ "$(lc "$glr_base")" = "$(lc "$G_LANE")" ] && [ "$glr_base" != "$G_NAME" ]; then
-    note "AND THE ' (N)' SUFFIX IS EVIDENCE: it is exactly what a rename into a title something else still holds mints, so another holder of '$G_LANE' was live when this session was named (Amendment 6(d), ratified decision D4). Naming them is a read of its own, kept off this hook's path because it costs about three seconds: \`lanes-edit.sh forks $G_LANE\`. Retiring one is \`lane-end $G_LANE --retire <pid>\`, which proves it is a fork, prints Amendment 6(d)'s act filled in, and ends, writes and kills nothing."
-  fi
+  # THE ' (N)' SUFFIX IS NOT READ HERE ANY MORE, and it is not lost: a name
+  # that differs from the lane by more than CASE no longer reaches this lock —
+  # it reaches the three-choice offer — and a name that differs only by case
+  # can carry no suffix. `guard_offer` prints ratified decision D4's reading of
+  # it, where the state that has one now arrives.
   return 2
 }
 
@@ -6285,30 +6318,53 @@ guard_args_filled() {   # <lane>
 guard_offer() {   # <offer file> <pane>
   go_f="${1-}"; go_pane="${2-}"
   mkdir -p -- "${go_f%/*}" 2>/dev/null || :
-  { printf 'from=%s\n' "$G_LANE"
+  { printf 'mode=name-drift\n'
+    printf 'from=%s\n' "$G_LANE"
     printf 'to=%s\n'   "$G_SES_LANE"
+    printf 'session=%s\n' "$G_NAME"
     printf 'uuid=%s\n' "$G_ID"
     printf 'utc=%s\n'  "$(utc_now)"
     printf 'window=%s\n' "$G_WINREF"
     printf 'pane=%s\n'   "$go_pane"
   } > "$go_f" 2>/dev/null || :
   guard_triple
-  go_row="$(row_of_lane "$G_SES_LANE" 2>/dev/null || :)"
-  if [ -n "$go_row" ]; then
-    go_last="$(last_session_id_of_lane "$G_SES_LANE" 2>/dev/null || :)"
-    note "you renamed this session to $G_SES_LANE — lane $G_SES_LANE EXISTS, last session ${go_last:-none recorded}."
+  note "WARNING: the lane and Claude session names disagree. This prompt is paused until you choose how to repair or explicitly allow this lane."
+  note "1) explicitly allow this lane for this transcript (future prompts warn but do not block while both names stay unchanged)"
+  if [ -n "$G_SES_LANE" ]; then
+    go_row="$(row_of_lane "$G_SES_LANE" 2>/dev/null || :)"
+    if [ -n "$go_row" ]; then
+      go_last="$(last_session_id_of_lane "$G_SES_LANE" 2>/dev/null || :)"
+      note "2) adjust the lane to session $G_SES_LANE (existing lane; last session ${go_last:-none recorded})"
+    else
+      note "2) adjust the lane to session $G_SES_LANE (create or move to this lane)"
+    fi
+    note "3) adjust the session to lane $G_LANE (types \`/rename $G_LANE\` into this pane)"
   else
-    note "you renamed this session to $G_SES_LANE — lane $G_SES_LANE DOES NOT EXIST yet."
+    note "2) adjust the lane to session — unavailable because '${G_NAME:-none}' is not a lane name the tooling can safely derive"
+    note "3) adjust the session to lane $G_LANE (types \`/rename $G_LANE\` into this pane)"
   fi
-  if guard_args_filled "$G_SES_LANE"; then
-    note "Reply \`yes\` to move this window to it (creating the lane if there is none: \`lane-start --no-launch $(lane_start_args "$G_SES_LANE")\` is run for you, this window is renamed, the row created or this uuid appended, and $G_LANE is marked MOVED)."
-  else
-    note "Reply \`yes\` and it will say what it cannot do: $G_SES_LANE is named before Rule 4's \`<repo>-<n>\` form, so \`lane-start\` needs that lane's DIRECTORY and nothing here knows which one it is. Moving this window to it is \`lane-start --no-launch --dir <that lane's checkout> $G_SES_LANE\`, yours to run with the path filled in."
+  # RATIFIED DECISION D4, WHERE THE STATE IT READS NOW ARRIVES. A `<lane> (N)`
+  # title is a mismatch and the SUFFIX IS EVIDENCE about another process, so it
+  # is said beside the choices rather than left for the person to notice.
+  go_base="${G_NAME% (*)}"
+  if [ -n "$go_base" ] && [ "$(lc "$go_base")" = "$(lc "$G_LANE")" ] && [ "$go_base" != "$G_NAME" ]; then
+    note "AND THE ' (N)' SUFFIX IS EVIDENCE: it is exactly what a rename into a title something else still holds mints, so another holder of '$G_LANE' was live when this session was named (Amendment 6(d), ratified decision D4). Naming them is a read of its own, kept off this hook's path because it costs about three seconds: \`lanes-edit.sh forks $G_LANE\`. Retiring one is \`lane-end $G_LANE --retire <pid>\`, which proves it is a fork, prints Amendment 6(d)'s act filled in, and ends, writes and kills nothing."
   fi
-  note "Reply \`no\` to stay $G_LANE — the session is renamed back with \`/rename $G_LANE\`."
-  note "The answer is the NEXT prompt, it is consumed here and never reaches the model, and anything but yes or no asks again. The offer expires with this session."
+  note "Reply \`1\`, \`2\` or \`3\`. The answer is the NEXT prompt, it is consumed here and never reaches the model; anything else asks again."
   [ -f "$go_f" ] || note "(the offer could not be written to $go_f, so the answer will be read as a fresh prompt and this question asked again — which is the safe direction)"
   return 2
+}
+
+# A choice of 1 is deliberately sticky only for the exact readable identity it
+# allowed. A renamed session, a different lane binding, or a new transcript
+# must come back through the numbered offer.
+guard_allow_active() {   # <offer file>
+  gaa_f="${1-}"
+  [ "$(sed -n -e 's/^mode=//p' "$gaa_f" 2>/dev/null | head -n1)" = allow ] || return 1
+  [ "$(sed -n -e 's/^from=//p' "$gaa_f" 2>/dev/null | head -n1)" = "$G_LANE" ] || return 1
+  [ "$(sed -n -e 's/^session=//p' "$gaa_f" 2>/dev/null | head -n1)" = "$G_NAME" ] || return 1
+  [ "$(sed -n -e 's/^uuid=//p' "$gaa_f" 2>/dev/null | head -n1)" = "$G_ID" ] || return 1
+  return 0
 }
 
 # ------------- THE UUID INTO THE NEW LANE'S CELL, WHICH `lane-start` MAY NOT DO
@@ -6395,23 +6451,51 @@ guard_bind_uuid() {   # <the lane moved to> <the lane moved from>
 # The answer, and it is the whole of clause (h) rule 2's second half.
 guard_answer() {   # <offer file> <the prompt> <pane>
   ga_f="${1-}"; ga_p="${2-}"; ga_pane="${3-}"
+  ga_mode="$(sed -n -e 's/^mode=//p' "$ga_f" 2>/dev/null | head -n1)"
   ga_from="$(sed -n -e 's/^from=//p' "$ga_f" 2>/dev/null | head -n1)"
   ga_to="$(sed -n -e 's/^to=//p' "$ga_f" 2>/dev/null | head -n1)"
+  ga_session="$(sed -n -e 's/^session=//p' "$ga_f" 2>/dev/null | head -n1)"
   ga_ans="$(printf '%s' "$ga_p" | tr 'A-Z' 'a-z' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-  if [ -z "$ga_from" ] || [ -z "$ga_to" ]; then
+  # THE OFFER IS READABLE WHEN IT NAMES ITS MODE AND THE LANE IT WAS MADE FOR,
+  # AND `session=` IS NOT PART OF THAT TEST. A session record carrying NO `name`
+  # at all is the (b) table's own untitled row and it reaches this offer with an
+  # empty name, so requiring one here made that state's offer UNANSWERABLE: the
+  # question was asked, the answer was dropped as unreadable, the next prompt
+  # asked it again, and choice 3 — the one that would have fixed it — could
+  # never be reached. An empty session name is a FACT about the session, and it
+  # is printed as `none` wherever this speaks.
+  if [ "$ga_mode" != name-drift ] || [ -z "$ga_from" ]; then
     rm -f -- "$ga_f"
     guard_refuse "the pending offer at $ga_f could not be read, so it has been dropped rather than answered on a guess. Send your prompt again and the question will be asked afresh."
     return 2
   fi
   case "$ga_ans" in
-  y|yes)
+  1)
+    if ! { printf 'mode=allow\n'
+      printf 'from=%s\n' "$ga_from"
+      printf 'to=%s\n' "$ga_to"
+      printf 'session=%s\n' "$ga_session"
+      printf 'uuid=%s\n' "$G_ID"
+      printf 'utc=%s\n' "$(utc_now)"
+    } > "$ga_f" 2>/dev/null; then
+      guard_refuse "the explicit allow could not be recorded at $ga_f, so the mismatch remains unapproved. Nothing was renamed or written; answer 1 again after the session state is writable."
+      return 2
+    fi
+    guard_triple
+    note "ALLOWED: this lane/session name mismatch is explicitly allowed for this transcript. This answer is consumed; send your work again. Future prompts will warn without blocking while the lane remains $ga_from and the session remains '${ga_session:-none}'."
+    return 2 ;;
+  2)
+    if [ -z "$ga_to" ]; then
+      guard_refuse "choice 2 is unavailable because the session name '${ga_session:-none}' is not a lane name the tooling can safely derive. Nothing was renamed or written; the offer is kept. Choose 1 or 3."
+      return 2
+    fi
     if ! guard_args_filled "$ga_to"; then
-      guard_refuse "lane $ga_to is named before Rule 4's \`<repo>-<n>\` form, so the act that moves this window to it cannot be filled in here: \`lane-start\` needs that lane's DIRECTORY and nothing in the register, the window or this session says which one it is. NOTHING has been renamed, moved or written, and the offer is KEPT — run it yourself with the path, or answer \`no\` to stay $ga_from." "lane-start --no-launch --dir <that lane's checkout> $ga_to"
+      guard_refuse "lane $ga_to is named before Rule 4's \`<repo>-<n>\` form, so choice 2 cannot be filled in here: \`lane-start\` needs that lane's DIRECTORY and nothing in the register, the window or this session says which one it is. NOTHING has been renamed, moved or written, and the offer is KEPT." "lane-start --no-launch --dir <that lane's checkout> $ga_to"
       return 2
     fi
     ga_start="$(guard_lane_start)"
     if [ -z "$ga_start" ] || [ ! -x "$ga_start" ]; then
-      guard_refuse "there is no \`lane-start\` beside this file or on PATH, so this window has NOT moved to $ga_to and NOTHING has been written. The offer is kept: answer \`yes\` again once it is installed (\`openRepoTools --install\`)."
+      guard_refuse "there is no \`lane-start\` beside this file or on PATH, so this window has NOT moved to $ga_to and NOTHING has been written. The offer is kept: answer \`2\` again once it is installed (\`openRepoTools --install\`)."
       return 2
     fi
     # THE WINDOW IS RENAMED FIRST, AND THAT ORDER IS LOAD-BEARING. Clause (h)
@@ -6437,7 +6521,7 @@ guard_answer() {   # <offer file> <the prompt> <pane>
     # shellcheck disable=SC2046
     "$ga_start" --no-launch $(lane_start_args "$ga_to") >&2 || ga_rc=$?
     if [ "$ga_rc" != 0 ]; then
-      guard_refuse "\`lane-start --no-launch $(lane_start_args "$ga_to")\` exited $ga_rc (its own words are above), so this window has NOT moved and $ga_from has NOT been marked MOVED. The offer is KEPT, so answer \`yes\` again once that refusal is settled, or \`no\` to stay $ga_from."
+      guard_refuse "\`lane-start --no-launch $(lane_start_args "$ga_to")\` exited $ga_rc (its own words are above), so this window has NOT moved and $ga_from has NOT been marked MOVED. The offer is KEPT, so answer \`2\` again once that refusal is settled, or choose \`3\` to rename the session back to $ga_from."
       return 2
     fi
     rm -f -- "$ga_f"
@@ -6454,20 +6538,24 @@ guard_answer() {   # <offer file> <the prompt> <pane>
       note "…and the register has no row for $ga_from, so there is nothing to mark MOVED there."
     fi
     return 2 ;;
-  n|no)
+  3)
     ga_trc=0
     guard_type "$ga_pane" "/rename $ga_from" || ga_trc=$?
-    rm -f -- "$ga_f"
     guard_triple
     case "$ga_trc" in
-      0) note "STAYING $ga_from: \`/rename $ga_from\` was typed into this pane ($ga_pane) and the window is untouched. The prompt that answered the question is consumed; send your work again." ;;
-      *) note "STAYING $ga_from, but the rename could NOT be typed into this pane, so the session is still named $ga_to and the guard will ask again at the next prompt. Type it yourself: /rename $ga_from" ;;
+      0) rm -f -- "$ga_f"; note "ADJUSTED SESSION TO LANE $ga_from: \`/rename $ga_from\` was typed into this pane ($ga_pane). The prompt that answered the question is consumed; send your work again." ;;
+      *) note "the rename could NOT be typed into this pane, so the session is still named '${ga_session:-none}'. NOTHING was written; the offer is kept. Type it yourself: /rename $ga_from" ;;
     esac
     return 2 ;;
   *)
     guard_triple
-    note "that is not an answer to the pending question, so it has been refused rather than acted on: this window is lane $ga_from and this session is named $ga_to."
-    note "Reply \`yes\` to move this window to $ga_to, or \`no\` to stay $ga_from."
+    note "that is not an answer to the pending question, so it has been refused rather than acted on: this window is lane $ga_from and this session is named '${ga_session:-none}'."
+    note "1) allow this lane for this transcript   2) adjust the lane to session ${ga_to:-${ga_session:-none}}   3) adjust the session to lane $ga_from (types \`/rename $ga_from\`)"
+    # THE SAME SENTENCE THE OFFER ENDS ON, because a question asked again is
+    # asked in the words it was asked in: a person who is being re-asked has
+    # just typed something else, and two spellings of one question is how they
+    # come to believe the second one takes different answers.
+    note "Reply \`1\`, \`2\` or \`3\`. The answer is the NEXT prompt, it is consumed here and never reaches the model; anything else asks again."
     return 2 ;;
   esac
 }
