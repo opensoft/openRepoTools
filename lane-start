@@ -126,11 +126,12 @@
 #      that window (tmux(1) rename-window), so the name survives the next
 #      command the window runs;
 #   5. the row: `lanes-edit.sh add-row` when there is none, otherwise
-#      `append-row-status`. Never a hand edit and never a whole-file write.
-#      THE STATUS IS AMENDMENT 6(c)'s STAMP, written here rather than owed to
-#      the session afterwards:
-#        <UTC> RESUMED by <uuid> (lane <lane>) — lane-start on <ws>: window
-#        renamed, launching <the command>
+#      `set-row-state`. Never a hand edit and never a whole-file write.
+#      THE STATE IS AMENDMENT 6(c)'s STAMP, written here rather than owed to
+#      the session afterwards, and since Amendment 13(a) it is the WHOLE cell
+#      (`<STATE> · <UTC> · <one line>`, the UTC stamped by the writer):
+#        LIVE · <UTC> · RESUMED by <uuid> (lane <lane>) — lane-start on <ws>:
+#        window renamed, launching <the command>; dir <dir>; window <ref>
 #      The TAIL states what happened, so a `--no-launch` run ends `window
 #      renamed, no launch` and never claims to have launched anything.
 #      `STARTED` where a new session takes the name, and the uuid is the one
@@ -2502,6 +2503,45 @@ case "$env_name" in .claude|claude) env_name=default ;; esac
 # already carry the agent's kind (`harness <uuid>`, `Codex <id>`)"*. The
 # register has spelled Codex sessions that way since 2026-09-05, so the table
 # is the register's own and not a new convention.
+# --- BEGIN shared one-line cut (lane-collision-protocol Amendment 13(a)) ---
+# BYTE-IDENTICAL IN `lane-start`, `lane-end` AND `lane-handoff`, the three
+# commands that write a row's state cell — the same trade the four lane helpers
+# already make for their workspace resolver, and for the same reason: a drifted
+# copy is TWO ANSWERS to one question, and "what may this line contain, and
+# where may it be cut" is one question.
+#
+# FOUR THINGS THE CELL'S LINE MAY NOT CARRY, and `set-row-state` REFUSES all
+# four — which would cost the row its stamp or its closing write, so they are
+# fixed here rather than met there:
+#
+#   ` · `  the phrase's own separator. A second one reads back as a fourth part
+#          of `<STATE> · <UTC> · <one line>`; it is spelled `; `.
+#   `|`    a cell boundary in a Markdown table row. A launch command or a
+#          directory may legitimately hold one — `claude --flag 'a|b'`, a path
+#          with a pipe in it — and the row is where it would forge a column
+#          (Copilot round 1 on openRepoTools#82). It is spelled `¦`, the broken
+#          bar, which is not a separator anywhere here; the object log's own
+#          line keeps the character itself.
+#   CR/LF  a row is ONE LINE of a table, so a newline in this text would split
+#          it in two and every row after it would be read as a lane. Spelled
+#          `; ` for the same reason the separator is (Copilot round 2).
+#   >240   ratified decision O1's cap. Cut at 230 with the last partial WORD
+#          dropped, which is what makes the cut safe: `${s:0:n}` counts BYTES
+#          wherever the locale is not a UTF-8 one, and a byte offset can land
+#          inside the very characters above. 230 and not 240, so the ` ...`
+#          marker fits inside the cap however the two count.
+cut_to_line() {   # <line> — the row's one line, safe to hand to set-row-state
+  ctl="${1//$'\r'/ }"
+  ctl="${ctl//$'\n'/; }"
+  ctl="${ctl// · /; }"
+  ctl="${ctl//|/¦}"
+  [ "${#ctl}" -gt 230 ] || { printf '%s' "$ctl"; return 0; }
+  ctl="${ctl:0:230}"
+  case "$ctl" in *' '*) ctl="${ctl% *}" ;; esac
+  printf '%s ...' "$ctl"
+}
+# --- END shared one-line cut ---
+
 AGENT_WORD="$AGENT"
 case "$AGENT" in
   claude) AGENT_WORD=harness ;;
@@ -2526,7 +2566,16 @@ else
 fi
 
 if [ "$row_count" = 0 ]; then
-  new_row="| \`$LANE\` | $session_cell | $ws / $env_name / $user | $started | none | $handoff | STARTING |"
+  # AMENDMENT 13(a) — A NEW ROW IS BORN IN THE PHRASE. The state cell opened
+  # with the bare word `STARTING` for as long as the cell was a diary; it is one
+  # phrase now — `<STATE> · <UTC> · <one line>` — and a row created outside that
+  # shape is a row the first `set-row-state` would be the only thing to fix.
+  # `LIVE` is the state, because this row is written by the act that takes the
+  # lane live in this window, and the line says which act and on which
+  # workstation.
+  new_line="$lane_verb by $stamp_who (lane $LANE) — lane-start on $ws: row created"
+  new_state="LIVE · $utc · $(cut_to_line "$new_line")"
+  new_row="| \`$LANE\` | $session_cell | $ws / $env_name / $user | $started | none | $handoff | $new_state |"
   if (( dry_run )); then
     plan "lanes-edit.sh add-row"
     plan "  $new_row"
@@ -2559,39 +2608,16 @@ else
     fi
   fi
 
-  # AMENDMENT 6(c)'s STAMP, WRITTEN HERE. The row's first act after a resume is
-  # `RESUMED by <transcript uuid>`, and under Amendment 6(b) that stamp is
-  # load-bearing: it is what the NEXT lane-start resumes, so a missed one is not
-  # bookkeeping debt, it is a lost lane. It used to be owed to the session that
-  # lane-start had just exec'd — which is a stamp nobody writes when the session
-  # dies at a usage reset before its first act, the shape this estate hits daily.
-  # The verb follows the launch decision, exactly as the object-log line does: a
-  # resume is RESUMED and a new session is STARTED, and the uuid is the one this
-  # run actually resumes or mints, read from the PUBLISHED row (R33) or from the
-  # record live in this window (step 3b).
-  # THE TAIL STATES WHAT HAPPENED (Amendment 8(d), F-B5). The old line said
-  # `launching <cmd>` unconditionally, so a `--no-launch` run stamped the row
-  # with a launch that by definition did not happen — and `--no-launch` is now
-  # the PRESCRIBED act twice over in clause (d) (the harness-mint append, and
-  # the deferred writes of the title-fallback path), so the defect would have
-  # become the common case rather than an edge. The head of the stamp — the
-  # part Amendment 6(b) and clause (d) quote, up to and including `lane-start on
-  # <ws>:` — is unchanged.
-  if (( no_launch )); then
-    did="window renamed, dir $DIR${record_window:+, window $record_window}, no launch"
-  else
-    did="window renamed, dir $DIR${record_window:+, window $record_window}, launching $(quoted "${cmd[@]}")"
-  fi
-  # `$stamp_who` is computed with the launch decision above: the uuid for
-  # Claude, `<agent> <id>` for any other agent (Amendment 17(c)).
-  status_text="$utc $lane_verb by $stamp_who (lane $LANE) — lane-start on $ws: $did"
-  if (( dry_run )); then
-    plan "lanes-edit.sh append-row-status $LANE \"$status_text\""
-  else
-    LANES_LANE="$LANE" "$LANES_EDIT" append-row-status "$LANE" "$status_text"
-    step "row status appended: $lane_verb by ${lane_sid:-unknown}"
-  fi
-
+  # AMENDMENT 8's RULE, FOLLOWED HERE TOO: THE CELL FIRST, THEN THE STAMP
+  # (Copilot round 5 on openRepoTools#82). The harness path above says it in
+  # those words — the stamp names a uuid, so the cell that carries the uuid is
+  # written first — and this path did the opposite: it stamped the minted id and
+  # THEN tried to append it, so a refused append left the row's state naming a
+  # session its own session cell does not carry. The resume target is the
+  # SESSION CELL and nothing else (Amendment 6(b)), so that never resumed the
+  # wrong conversation — it resumed the id the register knew — but the row said
+  # two things a reader has to reconcile. Written in this order the common path
+  # says one thing, and a refused append still prints the act that cures it.
   # An EXISTING row that is about to run a NEW session: append the minted id
   # after the cell's last id, so the next start resumes by id instead of by
   # title. The append is `replace-in-row`, which refuses unless its anchor
@@ -2617,6 +2643,69 @@ else
       note "the session cell was NOT stamped (this checkout's copy of the row does not carry $row_sid exactly once IN ITS SESSION CELL — it may be older than the published one). STAMP IT AS THIS SESSION'S FIRST ACT:"
       note "  $stamp_hint"
     fi
+  fi
+
+  # AMENDMENT 6(c)'s STAMP, WRITTEN HERE. The row's first act after a resume is
+  # `RESUMED by <transcript uuid>`, and under Amendment 6(b) that stamp is
+  # load-bearing: it is what the NEXT lane-start resumes, so a missed one is not
+  # bookkeeping debt, it is a lost lane. It used to be owed to the session that
+  # lane-start had just exec'd — which is a stamp nobody writes when the session
+  # dies at a usage reset before its first act, the shape this estate hits daily.
+  # The verb follows the launch decision, exactly as the object-log line does: a
+  # resume is RESUMED and a new session is STARTED, and the uuid is the one this
+  # run actually resumes or mints, read from the PUBLISHED row (R33) or from the
+  # record live in this window (step 3b).
+  # THE TAIL STATES WHAT HAPPENED (Amendment 8(d), F-B5). The old line said
+  # `launching <cmd>` unconditionally, so a `--no-launch` run stamped the row
+  # with a launch that by definition did not happen — and `--no-launch` is now
+  # the PRESCRIBED act twice over in clause (d) (the harness-mint append, and
+  # the deferred writes of the title-fallback path), so the defect would have
+  # become the common case rather than an edge. The head of the stamp — the
+  # part Amendment 6(b) and clause (d) quote, up to and including `lane-start on
+  # <ws>:` — is unchanged.
+  # AMENDMENT 13(a) — WHAT HAPPENED FIRST, AND THE PLACE IT HAPPENED AFTER IT.
+  # The tail used to read `window renamed, dir <dir>, window <ref>, launching
+  # <cmd>`, and under a 240-character cap (ratified decision O1) that order puts
+  # the ONE FACT THAT IS NOWHERE ELSE — the exact command this run launched —
+  # behind two that are recorded twice over: clause (c) writes `dir` and
+  # `window` into the lane's own log as sub-fields of this very act's
+  # `STARTED`/`RESUMED` line, and Amendment 11's listing prints both as columns.
+  # So the launch clause comes first and the two sub-fields follow it, and a
+  # line long enough to be cut loses what a reader can look up rather than what
+  # they cannot.
+  if (( no_launch )); then
+    did="window renamed, no launch"
+  else
+    did="window renamed, launching $(quoted "${cmd[@]}")"
+  fi
+  did="$did; dir $DIR${record_window:+; window $record_window}"
+  # `$stamp_who` is computed with the launch decision above: the uuid for
+  # Claude, `<agent> <id>` for any other agent (Amendment 17(c)).
+  # AMENDMENT 13(a) — THE STAMP IS THE CELL NOW, not another entry appended to
+  # it. The `state` column holds ONE PHRASE, `<STATE> · <UTC> · <one line>`, and
+  # `set-row-state` stamps the UTC itself — so this builds the line alone, and
+  # the `$utc` this run computed stays where it is still needed (the handoff's
+  # Rule 3 stamp and the log line).
+  #
+  # THE STATE IS `LIVE` EITHER WAY. A launch takes the lane live in this window;
+  # `--no-launch` is the recording act of a session that is already in it
+  # (Amendment 6(c)), so the lane is live in both branches and the tail says
+  # which one happened.
+  #
+  # AND THE LINE KEEPS `<verb> by <uuid>` WORD FOR WORD, because
+  # `row_stamp_is_unknown` reads exactly that pair out of this cell — Amendment
+  # 8(e)'s "first cure carries one condition", which tells a wrong lineage from
+  # the title fallback. A ` · ` inside the line would read back as a fourth part
+  # of the phrase, so it is spelled `; ` here rather than refused at the writer,
+  # and a line over the cap is cut rather than costing the row its whole stamp:
+  # what will not fit is in the object log, one line along.
+  state_line="$lane_verb by $stamp_who (lane $LANE) — lane-start on $ws: $did"
+  state_line="$(cut_to_line "$state_line")"
+  if (( dry_run )); then
+    plan "lanes-edit.sh set-row-state $LANE \"LIVE · $state_line\""
+  else
+    LANES_LANE="$LANE" "$LANES_EDIT" set-row-state "$LANE" "LIVE · $state_line"
+    step "row state set: LIVE · $lane_verb by ${lane_sid:-unknown}"
   fi
 
   # AMENDMENT 17(c) — THE CELL, IN THE AGENT'S OWN SPELLING. A launch of an

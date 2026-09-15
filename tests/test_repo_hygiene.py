@@ -278,6 +278,68 @@ def test_the_estate_commands_carry_the_same_estate_resolver_byte_for_byte():
     assert len(reference.splitlines()) > 100, "the marker moved, not the block"
 
 
+def test_the_three_row_writers_carry_the_same_one_line_cut_byte_for_byte():
+    """THE SAME DISCIPLINE ONE BLOCK DOWN, on Amendment 13(a)'s cut.
+
+    `lane-start`, `lane-end` and `lane-handoff` each write a row's `state` cell,
+    and the cell's line is capped at 240 characters (ratified decision O1). Each
+    is ONE file a person has on PATH, so the cut is copied rather than sourced,
+    exactly as the workspace resolver above is — and a copy that has drifted is
+    two answers to "how long may this line be, and where may it be cut".
+
+    The question is not cosmetic. `${s:0:n}` counts BYTES wherever the locale is
+    not a UTF-8 one, and these lines are full of `—`, `·` and `→`: a copy that
+    cut at a bare offset would put half a character in the register, and a copy
+    that cut at 239 and appended a three-byte `…` would write 242 bytes into a
+    240-byte cap and be REFUSED — which is how this block came to exist, from a
+    `lane-end --force` that could not close its own row (measured 2026-09-15).
+    """
+    def block(path: Path) -> str:
+        text = path.read_text(encoding="utf-8")
+        start = text.index("# --- BEGIN shared one-line cut")
+        end = text.index("# --- END shared one-line cut")
+        return text[start:end]
+
+    writers = ("lane-start", "lane-end", "lane-handoff")
+    blocks = {name: block(REPO / name) for name in writers}
+    reference = blocks["lane-start"]
+    for name, text in blocks.items():
+        assert text == reference, (
+            f"lane-start and {name} have drifted apart in the shared one-line "
+            f"cut (Amendment 13(a))")
+    assert "ctl=\"${ctl:0:230}\"" in reference, (
+        "the cut no longer bounds the line at 230, which is what leaves room "
+        "for the marker inside ratified decision O1's cap of 240")
+    assert "ctl=\"${ctl% *}\"" in reference, (
+        "the cut no longer drops the last partial word, which is the whole of "
+        "what keeps a byte offset from landing inside a character")
+    assert 'ctl="${ctl// \u00b7 /; }"' in reference, (
+        "the cut no longer replaces the phrase's own separator, which "
+        "`set-row-state` refuses inside the line")
+    assert "ctl=\"${ctl//$'\\n'/; }\"" in reference, (
+        "the cut no longer flattens a newline, and a row is ONE line of a "
+        "table: one in this text splits the row in two and every row after it "
+        "is read as a lane")
+    # AND THE SKILL'S OWN COPY CARRIES THE SAME FOUR. `/handoff` is the same act
+    # as `lane-handoff` under one name (Amendment 17(a)), so it writes the state
+    # cell too — and a copy that dropped one of the four would be REFUSED by the
+    # writer exactly where the command is not (Copilot round 4 on #82). It is
+    # prose in a skill rather than a shell function, so the substitutions are
+    # asserted rather than compared byte for byte.
+    skill = (REPO / "skills/handoff/SKILL.md").read_text(encoding="utf-8")
+    for spelling in ("hs_line=\"${payload//$'\\r'/ }\"",
+                     "hs_line=\"${hs_line//$'\\n'/; }\"",
+                     'hs_line="${hs_line// \u00b7 /; }"',
+                     'hs_line="${hs_line//|/\u00a6}"'):
+        assert spelling in skill, (
+            f"the /handoff skill's row write no longer carries {spelling}, so "
+            f"it can hand `set-row-state` a line that writer refuses")
+    assert 'ctl="${ctl//|/\u00a6}"' in reference, (
+        "the cut no longer replaces a `|`, which `set-row-state` refuses "
+        "because it would forge a cell boundary in the row — and a launch "
+        "flag or a directory may legitimately carry one")
+
+
 def test_the_lane_helpers_carry_the_same_workspace_resolver_byte_for_byte():
     """THE SAME DISCIPLINE AS THE ESTATE RESOLVER ABOVE, for the same reason,
     on the block lane-collision-protocol AMENDMENT 9(a) is made of.
