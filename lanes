@@ -92,7 +92,7 @@ die() { printf '\n%s: REFUSED: %s\n' "$prog" "$1" >&2; exit "${2:-64}"; }
 usage() {
 	cat <<'USAGE'
 lanes [--fetch] [--all] [--here] [--repo <owner/repo>] [--dir <path>]
-      [--prefix <repo>] [--ws <workstation>]
+      [--prefix <repo>] [--ws <workstation>] [--rename <old> <new>]
 
 Inside a lane checkout: THAT REPOSITORY's lanes, ending with the next free
 position and the exact `lane-start <repo> <n>` that takes it. Outside one: every
@@ -116,6 +116,14 @@ and age — and for a PAUSED lane, the exact command that restarts it.
                    home repository and the checkout it sits in are not the same
                    fact.
   --ws <name>      another workstation's lanes.
+  --rename <old> <new>
+                   REFUSED, and it names the word that does it:
+                   `lane-rename <old> <new>`. This command writes nothing
+                   (Amendment 11(j)) and a rename is four files in one commit,
+                   so the act is a word of its own (Amendment 16(h)) — the
+                   option is here because that is the spelling a person reaches
+                   for, and an option that is silently unknown answers them
+                   with a usage line instead of the act.
   -h, --help       this.
 
 Exit: 0 rows · 8 none · 64 usage · 2 a helper predating Amendment 11 · 1 a read failed.
