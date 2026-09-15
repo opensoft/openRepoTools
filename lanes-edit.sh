@@ -7814,6 +7814,20 @@ retire_rows() {   # <lane>… [--reason "<why>"] [--writer <lane>]
   [ -n "$rr_writer" ] ||
     die "retire-rows needs the lane doing the sweeping: LANES_LANE=<lane> lanes-edit.sh retire-rows … (or --writer <lane>). Every line it writes carries that lane's own transcript uuid in its session field, and a session field that is anything else is wrong for ever in an append-only log (Amendment 7(b))." 2
   check_lane_name "$rr_writer"
+  # THE REASON IS CHECKED ONCE, HERE, AND NEVER PER ROW. It goes into every cell
+  # this sweep rewrites, so a `|` or a second ` · ` in it is a refusal of the
+  # ARGUMENT, named as one — rather than `row_state_check` dying half-way down
+  # the scan with a message about a cell the caller never wrote. The cap is
+  # lower than the cell's own, because the row's last words go in beside it.
+  case "$rr_reason" in
+    *'|'*)   die "--reason may not contain '|': it would forge a cell boundary in every row this sweep rewrites. Got: '$rr_reason'" 2 ;;
+    *' · '*) die "--reason may not contain ' · ': that separator is what divides the state cell's three parts (Amendment 13(a)), and a second one reads back as a fourth part. Use a semicolon. Got: '$rr_reason'" 2 ;;
+  esac
+  if [ "${rr_reason//[$'\n\r']/}" != "$rr_reason" ]; then
+    die "--reason is ONE line: a newline in it would split a row in two and every row after it would be read as a lane" 2
+  fi
+  [ "${#rr_reason}" -le 180 ] ||
+    die "--reason is ${#rr_reason} characters. The cell's whole line is capped at $ROW_STATE_CAP (Amendment 13, ratified decision O1) and the row's OWN last words go in beside it, so a reason longer than 180 leaves nothing of them. Shorten it — the long version belongs in the lane's log." 2
 
   # R30 — THE FETCH FIRST, AND A CHECKOUT THAT IS BEHIND IS REFUSED, for the
   # reason the migration gives: this act rewrites several rows and appends to
