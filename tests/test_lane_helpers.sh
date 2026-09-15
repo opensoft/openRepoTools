@@ -344,12 +344,56 @@ cat > "$SANDBOX/fakebin/claude" <<'FAKE'
 printf '%s\n' "$*" >> "${FAKE_CLAUDE_LOG:-/dev/null}"
 FAKE
 
-chmod +x "$SANDBOX/fakebin/tmux" "$SANDBOX/fakebin/claude"
+# A FAKE `gh`, AND IT MAKES THIS SUITE SAFER RATHER THAN LOOSER (Copilot round 7
+# on openRepoTools#81). `LANES_NO_GITHUB=1` below stops every `gh` call this
+# helper would make, which is why there was no fake at all — and why Amendment
+# 16(g)'s POST-COMMIT COMMENT, the one act of `rename-lane` that happens after
+# the push, had no test: every case here switches it off. The fake is the way to
+# test it without reaching anything, and note what it changes for the rest of the
+# file: the fakebin is PREPENDED to `$PATH`, so until now a call that slipped
+# past `LANES_NO_GITHUB` would have found the WORKSTATION'S OWN `gh`. It cannot
+# now. Anything but the two comment forms `gh_comment` makes is a loud refusal.
+cat > "$SANDBOX/fakebin/gh" <<'FAKE'
+#!/usr/bin/env bash
+# `gh issue comment <n> --repo <owner/repo> --body-file -` and its `pr` twin are
+# the only calls this fake answers; the body arrives on stdin.
+fake_gh_kind="${1-}"; fake_gh_verb="${2-}"; shift 2 2>/dev/null || :
+case "$fake_gh_kind/$fake_gh_verb" in
+  issue/comment | pr/comment) : ;;
+  *)
+    printf 'FAKE gh REFUSED: %s %s — this suite reaches no GitHub surface
+'       "$fake_gh_kind" "$fake_gh_verb" >&2
+    exit 90 ;;
+esac
+fake_gh_n="${1-}"; fake_gh_repo=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) fake_gh_repo="${2-}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[ "${FAKE_GH_FAIL:-0}" = 1 ] && { printf 'FAKE gh: refusing on purpose
+' >&2; exit 1; }
+{ printf '=== %s %s %s %s
+' "$fake_gh_kind" "$fake_gh_verb" "$fake_gh_repo" "$fake_gh_n"
+  cat
+  printf '
+'
+} >> "${FAKE_GH_LOG:-/dev/null}"
+printf 'https://github.com/%s/issues/%s#issuecomment-%s
+'   "${fake_gh_repo:-owner/repo}" "${fake_gh_n:-0}" "$$"
+FAKE
+
+chmod +x "$SANDBOX/fakebin/tmux" "$SANDBOX/fakebin/claude" "$SANDBOX/fakebin/gh"
 export FAKE_TMUX_LOG="$SANDBOX/tmux.log" FAKE_CLAUDE_LOG="$SANDBOX/claude.log"
-: > "$FAKE_TMUX_LOG"; : > "$FAKE_CLAUDE_LOG"
+export FAKE_GH_LOG="$SANDBOX/gh.log"
+: > "$FAKE_TMUX_LOG"; : > "$FAKE_CLAUDE_LOG"; : > "$FAKE_GH_LOG"
 export TMUX="$SANDBOX/fake-tmux-socket,0,0"
 
-# Amendment 7: no test may reach GitHub, whatever a case forgets to pass.
+# Amendment 7: no test may reach GitHub, whatever a case forgets to pass. The
+# fake above is the second lock on the same door: this variable stops the call
+# being made, and the fake stops the workstation's own `gh` being what answers
+# it if a case switches the variable off on purpose — which exactly one does.
 export LANES_NO_GITHUB=1
 
 # Amendment 8, ruling (g): the harness exports `CLAUDE_CODE_SESSION_ID` into
@@ -7967,6 +8011,76 @@ is   "…and with both committed the rename goes through" "$rc" 0
 is   "…the log at its new name" "$( [ -f "$LOGD/repoUnt-2.md" ] && echo yes )" "yes"
 is   "…the handoff at its new name" \
      "$( [ -f "$WIP/handoffs/repoUnt/session-handoff-2026-09-12-lane-repoUnt-2.md" ] && echo yes )" "yes"
+
+
+# ---- CLAUSE (g): ONE COMMENT PER OBJECT THE LANE HOLDS, AFTER THE COMMIT.
+#
+# The one act of this command that happens AFTER the push, and the one every
+# case above switches off — so it is exercised here against the fake `gh` the
+# head of this file puts first on `$PATH`, with `LANES_NO_GITHUB=0` for this
+# case alone. Nothing reaches GitHub: the fake answers the two comment forms
+# `gh_comment` makes and REFUSES every other call loudly.
+REN11_ID="12ab34cd-16b1-4000-8000-12ab34cd16b1"
+add_seed_row "| \`repoCmt-1\` | harness \`$REN11_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | handoffs/repoCmt/x.md | ACTIVE |"
+{ printf '# lane repoCmt-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoCmt-1, session %s@Eagle, %s, lane:repoCmt-1 → home opensoft/repoCmt; estate repoCmt\n' "$REN11_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repoCmt-1, session %s@Eagle, %s, opensoft/repoCmt#11\n' "$REN11_ID" "$OLD_UTC"
+  printf 'OPENED — lane repoCmt-1, session %s@Eagle, %s, opensoft/repoCmt#12\n' "$REN11_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repoCmt-1, session %s@Eagle, %s, opensoft/repoCmt#13\n' "$REN11_ID" "$OLD_UTC"
+  printf 'RELEASED — lane repoCmt-1, session %s@Eagle, %s, opensoft/repoCmt#13\n' "$REN11_ID" "$OLD_UTC"
+} > "$LOGD/repoCmt-1.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the comment lane: two objects open, one released"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+: > "$FAKE_GH_LOG"
+run env LANES_NO_GITHUB=0 LANES_SESSION="$REN11_ID" "$E" rename-lane repoCmt-1 repoCmt-2
+is   "a rename with GitHub ON exits 0" "$rc" 0
+ren_sha="$(git -C "$WIP" rev-parse HEAD)"
+is   "…posting ONE comment per object the lane HOLDS, and no more" \
+     "$(command grep -c '^=== issue comment' "$FAKE_GH_LOG" || :)" 2
+has  "…on the first of them" "$(cat "$FAKE_GH_LOG")" "=== issue comment opensoft/repoCmt 11"
+has  "…and the second" "$(cat "$FAKE_GH_LOG")" "=== issue comment opensoft/repoCmt 12"
+hasnt "…never on the one it released, which it does not hold" "$(cat "$FAKE_GH_LOG")" "opensoft/repoCmt 13"
+has  "…the body in the amendment's own words" "$(cat "$FAKE_GH_LOG")" \
+     "Lane repoCmt-1 renamed repoCmt-2 at 20"
+has  "…with Rule 10's wire form, lower-case and canonical" "$(cat "$FAKE_GH_LOG")" \
+     "Lane: repocmt-2 (repoCmt-2)"
+has  "…citing the commit that carries the rename" "$(cat "$FAKE_GH_LOG")" "$ren_sha"
+has  "…and naming the table that keeps the old name resolving" "$(cat "$FAKE_GH_LOG")" \
+     "lanes/aliases.tsv\` resolves \`repoCmt-1\` to \`repoCmt-2\`"
+has  "…reporting each comment's URL" "$err" "comment posted on opensoft/repoCmt#11"
+
+# ---- AND A COMMENT THAT CANNOT BE POSTED LEAVES THE RENAME WHERE IT LANDED.
+#
+# The commit IS the rename (clause (g): the comment is posted AFTER it), so a
+# `gh` that refuses must warn and never undo anything.
+REN12_ID="12ab34cd-16b2-4000-8000-12ab34cd16b2"
+add_seed_row "| \`repoCmt-5\` | harness \`$REN12_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | handoffs/repoCmt/y.md | ACTIVE |"
+{ printf '# lane repoCmt-5 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoCmt-5, session %s@Eagle, %s, lane:repoCmt-5 → home opensoft/repoCmt; estate repoCmt\n' "$REN12_ID" "$OLD_UTC"
+  printf 'CLAIMED — lane repoCmt-5, session %s@Eagle, %s, opensoft/repoCmt#21\n' "$REN12_ID" "$OLD_UTC"
+} > "$LOGD/repoCmt-5.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the lane whose comment will fail"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+: > "$FAKE_GH_LOG"
+run env LANES_NO_GITHUB=0 FAKE_GH_FAIL=1 LANES_SESSION="$REN12_ID" "$E" rename-lane repoCmt-5 repoCmt-6
+is   "a rename whose comment cannot be posted still exits 0" "$rc" 0
+has  "…warning, and naming the object it could not reach" "$err" "could not be posted on: opensoft/repoCmt#21"
+has  "…saying the commit IS the rename and it has landed" "$err" "it has landed"
+is   "…with the row moved all the same" "$(command grep -c '^| `repoCmt-6`' "$LANES")" 1
+is   "…the log at its new name" "$( [ -f "$LOGD/repoCmt-6.md" ] && echo yes )" "yes"
+is   "…and the commit still on origin" \
+     "$(git -C "$WIP" rev-parse HEAD)" "$(git -C "$WIP" rev-parse origin/main)"
+is   "…and nothing was posted" "$(command grep -c '^=== ' "$FAKE_GH_LOG" || :)" 0
+
+# ---- AND THE FAKE REFUSES ANY OTHER GITHUB CALL, LOUDLY.
+run env FAKE_GH_LOG="$SANDBOX/gh-probe.log" gh repo view opensoft/openRepoTools
+is   "the fake gh refuses every call but the two comment forms" "$rc" 90
+has  "…saying this suite reaches no GitHub surface" "$err" "reaches no GitHub surface"
 
 export FAKE_TMUX_WINDOWS="$A16_SAVE_WINDOWS"
 export FAKE_TMUX_WINDOW="$A16_SAVE_WINDOW"
