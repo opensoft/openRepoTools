@@ -1641,6 +1641,23 @@ def test_agents_md_is_short_enough_to_be_read():
     a line the other bought, and the cap is the count of what merged rather
     than either side's number — the rule the 224 entry states.
 
+    265 -> 278 on 2026-09-15, for ONE BINDING PER LANE — lane-collision-protocol
+    AMENDMENT 18, ratified 2026-09-14T13:15:18Z, opensoft/openRepoTools#38. The
+    thirteen lines are a RULE and not prose, and they are the rule an assistant
+    gets WRONG if it is inferred rather than read: this tooling has always said
+    a lane whose recorded session is not live is a lane to take, and the one
+    thing that sentence never said is WHERE it may be said from. A pid does not
+    cross a pid namespace, so from another bench container on the same machine
+    the liveness read is meaningless and the honest answer is UNKNOWN — measured
+    on 2026-09-14, when pyBench read cloudBench's record, called a running lane
+    dead and started writing it from a second place. The paragraph names the
+    read that answers (`binding`), the one exception that makes a binding
+    elsewhere provably dead (a window gone from a shared tmux server), the act a
+    second place takes instead of taking (`--request-handoff`, and the wait),
+    the one word that overrides it and the fact that it is never automatic, and
+    the three variables the launcher owns. Every one of those is a thing an
+    assistant would otherwise do the opposite of.
+
     259 -> 265 the same day, for SIX LINES that stop this file prescribing a
     guard its own wrapper refuses to use (Copilot rounds 7 and 8 on #47). The
     snippet counted with `pgrep -fc`, which `tests/run.sh` deliberately does
@@ -1652,7 +1669,7 @@ def test_agents_md_is_short_enough_to_be_read():
     implementation, which is what an assistant reading either should reach for.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 265, f"AGENTS.md is {len(lines)} lines; the cap is 265"
+    assert len(lines) <= 278, f"AGENTS.md is {len(lines)} lines; the cap is 278"
 
 
 def test_readme_is_short_enough_to_be_read():

@@ -78,7 +78,7 @@ real_ws_path() {
 REAL_WS="$(real_ws_path 2>/dev/null || :)"
 cleanup() {
   # Every long-lived fixture process, because they now outlive the whole run by
-  # design (see `sleep 3000` below) and a suite that dies early must not leave
+  # design (see `$LIVE_SLEEP` below) and a suite that dies early must not leave
   # one behind. `kill` on an empty or already-reaped pid is a no-op here.
   [ -n "${LIVE_PID:-}" ] && kill "$LIVE_PID" 2>/dev/null
   [ -n "${G_PANE:-}" ] && kill "$G_PANE" 2>/dev/null
@@ -594,11 +594,31 @@ mkdir -p "$sessions_dir" "$HOME/.claude/sessions"
 # standing after that fix, which is the whole reason a suite fixes both at
 # once.)
 #
-# The number must exceed `TIMEOUT_SECONDS` (2400) or the suite can outlive its
-# own evidence on a runner slow enough to hit the bound; `cleanup` kills it on
-# every exit path, and the last assertion in this file checks it was still
-# running when the run ended.
-sleep 3000 & LIVE_PID=$!
+# The number must exceed `TIMEOUT_SECONDS` or the suite can outlive its own
+# evidence on a runner slow enough to hit the bound; `cleanup` kills it on every
+# exit path, and the last assertion in this file checks it was still running
+# when the run ended.
+#
+# AND IT IS DERIVED FROM THAT BOUND RATHER THAN WRITTEN BESIDE IT, because two
+# numbers about one thing is how they came to disagree. The comment above said
+# "(2400)" while `test_lane_helpers_suite.py` had long since raised
+# `TIMEOUT_SECONDS` to 3600, and the fixture stayed at a `sleep 3000` — under
+# the wrapper's own bound, so a run the wrapper was willing to wait for could
+# outlive it. MEASURED on the macOS job at `6950eaa`: 2615 passed, 27 failed,
+# and every one of the 27 downstream of this fixture — the guard's records, the
+# LIVE rows, the attach line, the pick's numbering — with the last assertion in
+# the file reporting it `gone`. The Amendment 18 section's ~180 cases are what
+# pushed that job past fifty minutes; the fixture is what should have followed
+# the bound and did not.
+#
+# Read out of the wrapper, with the wrapper's own default where it cannot be
+# read, and ten minutes of margin on top: the fixture now outlives any run the
+# wrapper is prepared to let finish, whatever either number becomes next.
+LIVE_BOUND="$(sed -n -e 's/^TIMEOUT_SECONDS = \([0-9][0-9]*\).*/\1/p' \
+  "$TESTS_DIR/test_lane_helpers_suite.py" 2>/dev/null | head -n 1)"
+case "${LIVE_BOUND:-}" in ''|*[!0-9]*) LIVE_BOUND=3600 ;; esac
+LIVE_SLEEP=$(( LIVE_BOUND + 600 ))
+sleep "$LIVE_SLEEP" & LIVE_PID=$!
 live_start="$(cut -d' ' -f22 "/proc/$LIVE_PID/stat" 2>/dev/null || printf '')"
 sleep 0.05 & DEAD_PID=$!
 wait "$DEAD_PID" 2>/dev/null
@@ -3279,9 +3299,9 @@ is    "an unknown option is refused" "$rc" 2
 # Two live processes: one stands in for the pane's own, the other is alive and
 # under no pane at all. Both are children of this shell, so neither is under the
 # OTHER — which is exactly the distinction the ruling turns on.
-sleep 3000 & G_PANE=$!
+sleep "$LIVE_SLEEP" & G_PANE=$!
 g_pane_start="$(cut -d' ' -f22 "/proc/$G_PANE/stat" 2>/dev/null || printf '')"
-sleep 3000 & G_OUT=$!
+sleep "$LIVE_SLEEP" & G_OUT=$!
 g_out_start="$(cut -d' ' -f22 "/proc/$G_OUT/stat" 2>/dev/null || printf '')"
 
 # The fields the older helpers never write: `kind`, an ABSENT `tmux` (which is
@@ -4380,8 +4400,8 @@ is "the fork column of the listing agrees with the \`forks\` read beside it" \
 # that column names is `lane <name>` since Amendment 18 Addendum 2 retired
 # `restart` from the PATH — one change, in the read, and both surfaces took it.
 run "$E" lanes --lane repoA11-1
-is "the read's row has twelve fields: clause (j)'s ten, then home and forks" \
-   "$(printf '%s' "$out" | awk -F'\t' '{print NF}')" 12
+is "the read's row has THIRTEEN fields: clause (j)'s ten, then home, forks and — since Amendment 18(b) — whether this place may pronounce on the binding" \
+   "$(printf '%s' "$out" | awk -F'\t' '{print NF}')" 13
 is "…and column 10 is the line that binds the lane, which both surfaces print" \
    "$(printf '%s' "$out" | awk -F'\t' '{print $10}')" "lane repoA11-1"
 run "$E" lanes --lane repoA11-2
@@ -5787,7 +5807,7 @@ echo "== Amendment 12: the name guard and the lock =="
 # duplicate at all: the guard exits 0, `lane-start` binds, and `lane-end
 # --retire` answers 8. Every Amendment 18(h) case here rests on this pid being
 # alive, so it is started here and killed at the end of the section.
-sleep 3000 & GD_DUP=$!
+sleep "$LIVE_SLEEP" & GD_DUP=$!
 gd_dup_start="$(cut -d' ' -f22 "/proc/$GD_DUP/stat" 2>/dev/null || printf '')"
 GD_SAVE_WINDOWS="${FAKE_TMUX_WINDOWS-}"
 GD_SAVE_WINDOW="${FAKE_TMUX_WINDOW-}"
@@ -8415,13 +8435,18 @@ else
   has   "…and selecting it in THIS session, which is where the move put it" \
         "$(cat "$LANE_TMUX_LOG")" "select-window -t picksess:@32"
   is    "…and launching nothing here either" "$(cat "$FAKE_PCLAUDE_LOG")" ""
-  # BOUND ELSEWHERE IS A REFUSAL NAMING WHERE, until #38's act 4 exists.
+  # BOUND ELSEWHERE IS CLAUSE (c)'s QUESTION, WHICH EXISTS NOW (Amendment 18,
+  # opensoft/openRepoTools#38). The pick's one question leads to it — clause
+  # (i-2) routes this branch there by name — so the terminal is answered TWICE
+  # here: the number, then the handoff question. Answered N it is the refusal
+  # this branch has always been, in the words clause (c) gives it.
   : > "$LANE_TMUX_LOG"; : > "$FAKE_PCLAUDE_LOG"
-  lane_pick 5 env -C "$PICK_DIR" "$LANE"
-  is    "answering with a lane bound ELSEWHERE refuses with 2" "$rc" 2
-  has   "…naming the workstation it is bound on" "$out" "bound on Raven"
-  has   "…and the act, which is clause (c)'s handoff and not a launch" "$out" "HANDOFF"
-  has   "…saying the request itself does not exist yet" "$out" "act 4 and does not exist yet"
+  lane_pick "$(printf '5\nn')" env -C "$PICK_DIR" "$LANE"
+  is    "answering with a lane bound ELSEWHERE asks clause (c)'s question, and N refuses with 2" "$rc" 2
+  has   "…naming the binding: the window, the container and the host" "$out" "in container none on host Raven"
+  has   "…and asking whether to ask that place for the handoff" "$out" "ask it to hand off, then bind here?"
+  has   "…the refusal naming the act that asks" "$out" "--request-handoff"
+  has   "…and the one word that overrides, which is a SECOND invocation" "$out" "--force"
   is    "…launching nothing at all" "$(cat "$FAKE_PCLAUDE_LOG")" ""
   is    "…and touching no tmux either" "$(cat "$LANE_TMUX_LOG")" ""
   # `f` IS A NEW LANE AT THE NEXT FREE POSITION, which is `lane-start`'s act and
@@ -8494,7 +8519,8 @@ is    "…and launching nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
 : > "$LANE_TMUX_LOG"
 run env PATH="$LANEBIN_PATH" "$LANE" repoPick-4 </dev/null
 is    "lane <name> on a lane bound elsewhere refuses with 2" "$rc" 2
-has   "…naming where it is bound" "$err" "bound on Raven"
+has   "…naming where it is bound, in clause (a)'s three facts" "$err" "in container none on host Raven"
+has   "…and, with no terminal to ask on, naming the flag that asks" "$err" "--request-handoff"
 is    "…and touching nothing" "$(cat "$LANE_TMUX_LOG")" ""
 # AND THE CONTAINER NOTICE REACHES THIS BRANCH, WHICH IS THE ONE THAT NEEDS IT
 # MOST. With no `$LANES_WORKSTATION` inside a container the workstation is the
@@ -8507,7 +8533,7 @@ is    "…and touching nothing" "$(cat "$LANE_TMUX_LOG")" ""
 # the row the unset seam turns into somebody else's.
 run env -u LANES_WORKSTATION LANES_IN_CONTAINER=1 PATH="$LANEBIN_PATH" "$LANE" repoPick-7 </dev/null
 is    "a lane of THIS host refuses as bound elsewhere once the seam is unset" "$rc" 2
-has   "…naming the workstation its row carries" "$err" "bound on Eagle"
+has   "…naming the workstation its row carries, which is its binding's host" "$err" "on host Eagle"
 has   "…and saying WHY this host is not that workstation" "$err" "LANES_WORKSTATION"
 has   "…in the one sentence its own writers refuse with" "$err" "is the CONTAINER"
 has   "…naming the launcher whose job the value is" "$err" "launcher"
@@ -9392,6 +9418,773 @@ is    "…and changed nothing" "$(git -C "$MIG_WIP" rev-list --count "$MIG_HEAD2
 run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --no-such-flag
 is    "an unknown flag is a refusal, not a silent dry run" "$rc" 2
 
+echo "== Amendment 18: ONE BINDING PER LANE — host/os/container, the ask, the wait, the force =="
+
+# **A LANE HAS ONE BINDING. THE RECORD SAYS WHERE IT IS — HOST, OS, CONTAINER,
+# WINDOW — AND A SECOND PLACE ASKS THE FIRST TO HAND OFF BEFORE IT BINDS.**
+# Ratified 2026-09-14T13:15:18Z as revision 4, verbatim "merge 37 and 78, ratify
+# revision 4"; brettheap/new-workstation#34/#35, opensoft/openRepoTools#38.
+#
+# THE DEFECT THESE CASES EXIST FOR is that a pid does not cross a pid namespace
+# and the tooling pretended it did: two bench containers on one host share the
+# profile directory, so pyBench reads a session record cloudBench wrote and
+# `kill -0`s a pid in cloudBench's namespace. Every case below that sets
+# `LANES_CONTAINER` is standing in the second bench.
+#
+# THE SEAMS ARE THE AMENDMENT'S OWN VARIABLES — `LANES_HOST`, `LANES_OS`,
+# `LANES_CONTAINER`, the three the launcher exports beside `LANES_WORKSTATION`
+# (opensoft/workBenches#77) — plus `LANES_IN_CONTAINER`, which this suite has
+# used to force the container probe since Amendment 11. Nothing here fakes a
+# container: it fakes the ONE bit that says whether this is one.
+# TWO OF THE THREE ARE PINNED FOR THIS SECTION, FOR THE REASON `LANES_WORKSTATION`
+# IS PINNED FOR THE WHOLE FILE (A9 Addendum 4, R-A9-13). Every seeded record
+# below spells a host and a container, and what is under test is THE REGISTER'S
+# READING of them — which binding is this place's, which is another container's,
+# which is another machine's. The host this suite actually runs on is not under
+# test in any of them, and taking the values from it made the section green in a
+# container called `cb999b9fd177` and red on a bare workstation. The FALLBACKS
+# are asserted directly, with `env -u`, three cases down — so pinning here
+# cannot hide a probe that stopped reading the host at all.
+export LANES_HOST=Eagle
+export LANES_CONTAINER=none
+BIND_SAVE_WINDOWS="${FAKE_TMUX_WINDOWS-}"
+BIND_SAVE_WINDOW="${FAKE_TMUX_WINDOW-}"
+BIND_SAVE_NAME="${FAKE_TMUX_WINDOW_NAME-}"
+BIND_SAVE_INDEX="${FAKE_TMUX_WINDOW_INDEX-}"
+BIND1_ID="bb180001-1111-4000-8000-bb1800011111"
+BIND2_ID="bb180002-2222-4000-8000-bb1800022222"
+BIND3_ID="bb180003-3333-4000-8000-bb1800033333"
+BIND4_ID="bb180004-4444-4000-8000-bb1800044444"
+BIND5_ID="bb180005-5555-4000-8000-bb1800055555"
+BIND6_ID="bb180006-6666-4000-8000-bb1800066666"
+BIND8_ID="bb180008-8888-4000-8000-bb1800088888"
+BIND9_ID="bb180009-9999-4000-8000-bb1800099999"
+BIND10_ID="bb180010-1010-4000-8000-bb1800101010"
+BIND11_ID="bb180011-1111-4000-8000-bb1800111111"
+BIND12_ID="bb180012-1212-4000-8000-bb1800121212"
+BIND13_ID="bb180013-1313-4000-8000-bb1800131313"
+BIND14_ID="bb180014-1414-4000-8000-bb1800141414"
+BIND15_ID="bb180015-1515-4000-8000-bb1800151515"
+BIND16_ID="bb180016-1616-4000-8000-bb1800161616"
+BIND17_ID="bb180017-1717-4000-8000-bb1800171717"
+BIND_REQ_ID="bb1800aa-aaaa-4000-8000-bb1800aaaaaa"
+BIND_DIR="$HOME/projects/repoBind"
+mkdir -p "$BIND_DIR"
+git init -q -b main "$BIND_DIR"
+git -C "$BIND_DIR" remote add origin "https://github.com/opensoft/repoBind.git"
+# THIS SECTION'S WINDOWS. `bindsess:0 @61` is the bound pane of the lane that is
+# HERE; `cloudsess:4 @62` is a window of the OTHER CONTAINER on this same host,
+# which resolves on this tmux server because one host's launcher mounts ONE
+# socket into every container it starts — that shared server is the whole reason
+# clause (b) has a window exception at all. `@63` is in NO table: it is the
+# binding whose window is GONE.
+export FAKE_TMUX_WINDOW="mysess:@60"
+export FAKE_TMUX_WINDOW_NAME=claude
+export FAKE_TMUX_WINDOW_INDEX=9
+export FAKE_TMUX_WINDOWS="mysess:9	@60	claude	%60	claude
+bindsess:0	@61	repoBind-1	%61	claude
+cloudsess:4	@62	repoBind-3	%62	claude"
+
+echo "-- clause (a): the three facts, and where each one came from"
+
+run "$E" workstation
+is   "workstation answers 0" "$rc" 0
+is   "…with EIGHT tab-separated fields: the workstation, the host, the os and the container, each with its source" \
+     "$(printf '%s' "$out" | awk -F'\t' '{print NF}')" 8
+is   "…the first two unchanged, which is the contract three commands already read with cut -f1/-f2" \
+     "$(printf '%s' "$out" | cut -f1,2)" "$(printf 'Eagle\tseam')"
+run env LANES_HOST=raven LANES_OS=macos LANES_CONTAINER=py-bench "$E" workstation
+is   "the launcher's three exports are read as the SEAM they are" \
+     "$(printf '%s' "$out" | cut -f3,4,5,6,7,8)" "$(printf 'raven\tseam\tmacos\tseam\tpy-bench\tseam')"
+# THE FALLBACKS, EACH ON ITS OWN, and the container bit is what selects between
+# them. OUTSIDE a container the host is `hostname -s` and the container is the
+# word `none`; INSIDE one with no export the host is THE RULE 10 WORKSTATION
+# NAME — because in this estate a workstation is one host and a container's own
+# `hostname` is its id — and the container is that hostname, which for Docker's
+# default is the id and is the one thing that tells two unnamed containers apart.
+run env -u LANES_HOST -u LANES_OS -u LANES_CONTAINER LANES_IN_CONTAINER=0 "$E" workstation
+is   "outside a container the host is \`hostname -s\`" \
+     "$(printf '%s' "$out" | cut -f3,4)" "$(printf '%s\thostname' "$(hostname -s 2>/dev/null || hostname)")"
+is   "…and the container is the word \`none\`, which is an answer and not a gap" \
+     "$(printf '%s' "$out" | cut -f7,8)" "$(printf 'none\toutside')"
+run env -u LANES_HOST -u LANES_OS -u LANES_CONTAINER LANES_IN_CONTAINER=1 "$E" workstation
+is   "INSIDE a container with no export the host is the Rule 10 workstation name, never this container's id" \
+     "$(printf '%s' "$out" | cut -f3,4)" "$(printf 'Eagle\tworkstation')"
+is   "…and the container is its OWN hostname, which is what tells two unnamed containers apart" \
+     "$(printf '%s' "$out" | cut -f7,8)" "$(printf '%s\thostname' "$(hostname -s 2>/dev/null || hostname)")"
+# THE OS PROBE ANSWERS ONE OF FOUR WORDS AND THIS RUNS ON THREE PLATFORMS, so
+# the assertion is the SET and not a value: the macOS job answers `macos`, a WSL
+# workstation `wsl`, a Linux container `linux`. What is pinned is that the probe
+# never invents a fifth word and never says `windows`, which clause (a) reserves
+# for a launcher on the Windows host itself — this toolset is bash and runs in
+# WSL2 there.
+run env -u LANES_OS "$E" workstation
+bind_os="$(printf '%s' "$out" | cut -f5)"
+case "$bind_os" in
+  linux|macos|wsl) ok "the kernel probe answers one of linux, macos, wsl (got $bind_os)" ;;
+  windows) bad "the kernel probe answers one of linux, macos, wsl" "it said 'windows', which only a launcher on the Windows host itself may write (clause (a))" ;;
+  *) bad "the kernel probe answers one of linux, macos, wsl" "got '$bind_os'" ;;
+esac
+is   "…and it says the answer was PROBED rather than exported" "$(printf '%s' "$out" | cut -f6)" kernel
+
+echo "-- clause (a): the sub-fields, written by the writer and read back"
+
+"$E" add-row "| \`repoBind-1\` | harness \`$BIND1_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/1.md | ACTIVE |" >/dev/null 2>&1
+run env LANES_LANE=repoBind-1 LANES_SESSION="$BIND1_ID" "$E" log STARTED "lane:repoBind-1" \
+    '→' "home opensoft/repoBind; estate repoBind; dir $BIND_DIR; profile team-05a; window bindsess:0 @61"
+is   "a STARTED is written" "$rc" 0
+bind_line="$(git -C "$WIP" show "origin/main:lanes/log/repoBind-1.md" | tail -n1)"
+has  "…carrying the host, which the WRITER appended and no boundary script computed" "$bind_line" "; host Eagle"
+has  "…the os" "$bind_line" "; os $bind_os"
+has  "…and the container" "$bind_line" "; container "
+has  "…after Amendment 11(c)'s three, which are untouched" "$bind_line" "; profile team-05a; window bindsess:0 @61; host "
+run env LANES_LANE=repoBind-1 LANES_SESSION="$BIND1_ID" "$E" log ENDED "lane:repoBind-1" --text "window closing"
+is   "an ENDED is written" "$rc" 0
+hasnt "…and carries NONE of the three: Amendment 11(c) keeps ENDED and RETIRED payload-free (edit 1 of six, R-A11-15), and a verb that RELEASES a binding has none to describe" \
+     "$(git -C "$WIP" show "origin/main:lanes/log/repoBind-1.md" | tail -n1)" "host "
+# AND THE WRITER IS THE GATE FOR A VALUE A CALLER WROTE ITSELF, for the reason
+# Amendment 17(b)'s two sub-fields are checked there: a payload is free text to
+# `write_event`, this log is append-only, and `binding` refuses launches on what
+# it reads back.
+run env LANES_LANE=repoBind-1 LANES_SESSION="$BIND1_ID" "$E" log RESUMED "lane:repoBind-1" '→' "dir /x; os plan9"
+is   "an \`os\` that is none of the four words is REFUSED" "$rc" 2
+has  "…naming the four" "$err" "one of linux, macos, wsl, windows"
+run env LANES_LANE=repoBind-1 LANES_SESSION="$BIND1_ID" "$E" log RESUMED "lane:repoBind-1" '→' "dir /x; host ; os linux"
+is   "a sub-field that is THERE and EMPTY is refused, because no reader can tell it from a pre-amendment line" "$rc" 2
+run env LANES_LANE=repoBind-1 LANES_SESSION="$BIND1_ID" "$E" log RESUMED "lane:repoBind-1" '→' "dir /x; host two words; os linux"
+is   "a host carrying a SPACE is refused: a space is Amendment 7(b)'s separator between two refs of one sub-field" "$rc" 2
+# AND THE LAUNCHER'S EXPORT IS HELD TO THE SAME FOUR WORDS (Copilot round 5).
+# `binding_subfields_check` refuses a caller-written `os` that is none of them;
+# the value this writer APPENDS comes from `$LANES_OS`, which is nobody's to
+# validate but this writer's — and it would otherwise persist on every binding
+# line a value the same file refuses when a caller supplies it. Dropped rather
+# than refused, because `host` and `container` are what clause (b) reads and a
+# lane-kind line is never lost over a field no reader decides anything by.
+run env LANES_OS=plan9 LANES_LANE=repoBind-1 LANES_SESSION="$BIND1_ID" "$E" log RESUMED "lane:repoBind-1" '→' "dir /x"
+is   "a launcher exporting an \`os\` that is none of the four words still writes the line" "$rc" 0
+bind_os_line="$(git -C "$WIP" show origin/main:lanes/log/repoBind-1.md | tail -n1)"
+hasnt "…without that value in it" "$bind_os_line" "os plan9"
+has   "…keeping the two fields clause (b) actually reads" "$bind_os_line" "; host Eagle"
+has   "…and saying which sub-field was dropped, and why" "$err" "DROPPED binding sub-field"
+
+echo "-- clause (b): the binding, read"
+
+"$E" add-row "| \`repoBind-2\` | harness \`$BIND2_ID\` | Raven / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/2.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-3\` | harness \`$BIND3_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/3.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-4\` | harness \`$BIND4_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/4.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-5\` | harness \`$BIND5_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/5.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-6\` | harness \`$BIND6_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/6.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-8\` | harness \`$BIND8_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/8.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-9\` | harness \`$BIND9_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/9.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-10\` | harness \`$BIND10_ID\` | Raven / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/10.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-11\` | harness \`$BIND11_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/11.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-12\` | harness \`$BIND12_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/12.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-13\` | harness \`$BIND13_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/13.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-14\` | harness \`$BIND14_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/14.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-15\` | harness \`$BIND16_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/15.md | ACTIVE |" >/dev/null 2>&1
+"$E" add-row "| \`repoBind-17\` | harness \`$BIND17_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoBind/17.md | ACTIVE |" >/dev/null 2>&1
+# repoBind-2 — BOUND ON ANOTHER HOST. `raven` is a machine this workstation has
+# no session records of and no tmux server of, so its binding is UNKNOWN here
+# and never dead, whatever a `kill -0` of the pid it names would say.
+{ printf '# lane repoBind-2 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-2, session %s@Raven, 2026-09-12T09:00:00Z, lane:repoBind-2 → home opensoft/repoBind; estate repoBind; dir %s; profile team-09z; window ravensess:2 @44; host raven; os macos; container none\n' "$BIND2_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-2.md"
+# repoBind-3 — ANOTHER CONTAINER ON THIS HOST, its window LIVE on the shared
+# tmux server. This is the measured case: two bench containers on Eagle share
+# the profile directory, so this workstation CAN read that record and must still
+# not pronounce on it.
+{ printf '# lane repoBind-3 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-3, session %s@Eagle, 2026-09-12T09:10:00Z, lane:repoBind-3 → home opensoft/repoBind; estate repoBind; dir %s; profile team-05a; window cloudsess:4 @62; host Eagle; os linux; container cloud-bench\n' "$BIND3_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-3.md"
+# repoBind-4 — ANOTHER CONTAINER ON THIS HOST whose window is GONE from the
+# shared server (`@63` is in no window table). Clause (b)'s ONE exception: the
+# pane a session must live in does not exist, so the binding is DEAD and
+# openRepoTools#30's takeover path applies as it stands.
+{ printf '# lane repoBind-4 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-4, session %s@Eagle, 2026-09-12T09:20:00Z, lane:repoBind-4 → home opensoft/repoBind; estate repoBind; dir %s; profile team-05a; window cloudsess:9 @63; host Eagle; os linux; container cloud-bench\n' "$BIND4_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-4.md"
+# repoBind-5 — A LINE WRITTEN BEFORE THIS AMENDMENT, carrying none of the three.
+# Clause (a): *"A line written before this amendment carries none of the three
+# and stays valid; readers treat its binding as the window on the row's
+# workstation, which is what they read today."*
+{ printf '# lane repoBind-5 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-5, session %s@Eagle, 2026-09-12T09:30:00Z, lane:repoBind-5 → home opensoft/repoBind; estate repoBind; dir %s; profile team-05a; window bindsess:0 @61\n' "$BIND5_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-5.md"
+# repoBind-6 — the lane that is LIVE HERE, for the attach line and the guard.
+{ printf '# lane repoBind-6 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-6, session %s@Eagle, 2026-09-12T09:35:00Z, lane:repoBind-6 → home opensoft/repoBind; estate repoBind; dir %s; profile team-05a; window bindsess:0 @61; host Eagle; os linux; container none\n' "$BIND6_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-6.md"
+# repoBind-8 — the binding that is THIS place's own, and a lane of its own for
+# it: `lane-start` on it REBINDS it, which is exactly what that case asserts,
+# and repoBind-6 has the guard and the attach cases after it which read the
+# binding seeded here. One lane per act, so no case rewrites another's premise.
+{ printf '# lane repoBind-8 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-8, session %s@Eagle, 2026-09-12T09:36:00Z, lane:repoBind-8 → home opensoft/repoBind; estate repoBind; dir %s; profile team-05a; window bindsess:0 @61; host Eagle; os linux; container none\n' "$BIND8_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-8.md"
+# repoBind-9 — THE PICKER-S OWN CASE, and it is the measured defect one surface
+# along: another container on THIS host, no live session record visible here, so
+# `lanes_rows` calls it IDLE — and an IDLE row filed by the workstation column
+# alone was offered as AVAILABLE and launched, making a second process on a lane
+# that is running. Left untouched by every other case here, because what it is
+# for is the partition.
+{ printf '# lane repoBind-9 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-9, session %s@Eagle, 2026-09-12T09:37:00Z, lane:repoBind-9 → home opensoft/repoBind; estate repoBind; dir %s; profile team-05a; window cloudsess:5 @64; host Eagle; os linux; container cloud-bench\n' "$BIND9_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-9.md"
+# repoBind-10 — a binding on ANOTHER HOST that no case releases, for the two
+# round-1 assertions that need one still standing after repoBind-2 has been
+# handed off and repoBind-3 forced: the window-id collision across tmux servers,
+# and the wait that must not overrun the bound it was given.
+{ printf '# lane repoBind-10 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-10, session %s@Raven, 2026-09-12T09:38:00Z, lane:repoBind-10 → home opensoft/repoBind; estate repoBind; dir %s; profile team-09z; window ravensess:2 @44; host raven; os macos; container none\n' "$BIND10_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-10.md"
+# repoBind-11 — A MODERN LINE WHOSE `host` IS THE WORKSTATION-S NAME and not
+# this machine-s. The `$WS` fallback is clause (a)-s CUTOVER affordance and
+# belongs to a line that carries none of the three; allowed for a modern one it
+# would call another machine-s binding `here` wherever the two names coincide.
+{ printf '# lane repoBind-11 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-11, session %s@Eagle, 2026-09-12T09:39:00Z, lane:repoBind-11 → home opensoft/repoBind; estate repoBind; dir %s; profile team-05a; window bindsess:0 @61; host Eagle; os linux; container none\n' "$BIND11_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-11.md"
+# repoBind-12 — A MODERN LINE MISSING ONLY ITS `host`, which the writer drops on
+# its own when a value would make the line unreadable. Read as pre-amendment it
+# would be matched on the host alone and the container it DOES carry ignored.
+{ printf '# lane repoBind-12 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-12, session %s@Eagle, 2026-09-12T09:40:00Z, lane:repoBind-12 → home opensoft/repoBind; estate repoBind; dir %s; profile team-05a; window cloudsess:6 @65; os linux; container cloud-bench\n' "$BIND12_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-12.md"
+# repoBind-13 — LIVE by a session record this place can READ and whose pid it
+# cannot judge: the binding is another container of this same host, and the
+# records are shared. `kill -0` there answers about some other process.
+{ printf '# lane repoBind-13 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-13, session %s@Eagle, 2026-09-12T09:41:00Z, lane:repoBind-13 → home opensoft/repoBind; estate repoBind; dir %s; profile team-05a; window cloudsess:4 @62; host Eagle; os linux; container cloud-bench\n' "$BIND13_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-13.md"
+write_record "$sessions_dir/bind13.json" "$BIND13_ID" "$LIVE_PID" "$live_start" "cloudsess:@62.%62" "repoBind-13" "busy"
+# repoBind-14 — a PRE-AMENDMENT line that NO case releases. repoBind-5 is the
+# other one and it is PAUSED half way through this section, which is what the
+# cutover assertion needs not to be.
+{ printf '# lane repoBind-14 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-14, session %s@Eagle, 2026-09-12T09:42:00Z, lane:repoBind-14 → home opensoft/repoBind; estate repoBind; dir %s; profile team-05a; window bindsess:0 @61\n' "$BIND14_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-14.md"
+# repoBind-15 — A BINDING IN ANOTHER CONTAINER WHOSE WINDOW ID IS THIS WINDOW-S.
+# tmux `@` ids are per-server and are reissued from `@0`, so two places can
+# carry the same one; the guard-s window disjunct compared it alone and would
+# have made a session here the answerer for somebody else-s request.
+{ printf '# lane repoBind-15 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-15, session %s@Eagle, 2026-09-12T09:43:00Z, lane:repoBind-15 → home opensoft/repoBind; estate repoBind; dir %s; profile team-05a; window bindsess:0 @61; host Eagle; os linux; container cloud-bench\n' "$BIND15_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-15.md"
+# repoBind-17 — A MODERN BINDING WHOSE WINDOW RESOLVES NOWHERE, and which no
+# other case rebinds: repoBind-4 is the takeover-path case and `lane-start`
+# takes it, which is what that case asserts and what makes its window resolve
+# again afterwards.
+{ printf '# lane repoBind-17 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoBind-17, session %s@Eagle, 2026-09-12T09:44:00Z, lane:repoBind-17 → home opensoft/repoBind; estate repoBind; dir %s; profile team-05a; window cloudsess:9 @66; host Eagle; os linux; container cloud-bench\n' "$BIND17_ID" "$BIND_DIR"
+} > "$LOGD/repoBind-17.md"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the bindings Amendment 18 partitions"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+run "$E" binding repoBind-2
+is   "a lane whose last lane-kind line is a STARTED is BOUND" "$rc" 0
+is   "…and the read is host, container, window, utc, session, os, where, window state" \
+     "$(printf '%s' "$out" | cut -f1,2,3,4)" "$(printf 'raven\tnone\travensess:2 @44\t2026-09-12T09:00:00Z')"
+is   "…naming the bound session, which is who a --force releases on behalf of" "$(printf '%s' "$out" | cut -f5)" "$BIND2_ID"
+is   "…and ANOTHER HOST is elsewhere: liveness is pronounced only from inside the binding's own host and container" \
+     "$(printf '%s' "$out" | cut -f7)" "elsewhere"
+is   "…with its window UNKNOWN and never dead, because this machine has no tmux server of Raven's" \
+     "$(printf '%s' "$out" | cut -f8)" "unknown"
+run "$E" binding repoBind-3
+is   "another CONTAINER on this host is elsewhere too — the pid namespace is not shared" \
+     "$(printf '%s' "$out" | cut -f7)" "elsewhere"
+is   "…while its window is LIVE, because one host's launcher mounts ONE tmux socket into every container it starts" \
+     "$(printf '%s' "$out" | cut -f8)" "live"
+run "$E" binding repoBind-4
+is   "…and a binding whose window is GONE from that shared server reads DEAD, which is clause (b)'s one exception" \
+     "$(printf '%s' "$out" | cut -f8)" "gone"
+run env LANES_CONTAINER=cloud-bench "$E" binding repoBind-3
+is   "from INSIDE that container the same binding is HERE, which is the only place liveness may be pronounced from" \
+     "$(printf '%s' "$out" | cut -f7)" "here"
+run "$E" binding repoBind-5
+is   "a line written before this amendment is still read" "$rc" 0
+is   "…its host taken from the row's own workstation, which is what every reader read before clause (a)" \
+     "$(printf '%s' "$out" | cut -f1)" "Eagle"
+is   "…its container the word \`none\`, never a guess" "$(printf '%s' "$out" | cut -f2)" "none"
+is   "…and its window the one the record names" "$(printf '%s' "$out" | cut -f3)" "bindsess:0 @61"
+is   "…so it reads HERE on the workstation whose row it is" "$(printf '%s' "$out" | cut -f7)" "here"
+# AND IT READS HERE FROM INSIDE A CONTAINER TOO, which is the other half of the
+# same cutover sentence and is the case that decides whether this amendment can
+# land at all. *"Readers treat its binding as the window on the row's
+# workstation, which is what they read today"* — and today's reading has no
+# container in it. Matched on a container it never carried, EVERY lane of this
+# estate would read as another container's the moment the asker was in one, and
+# every bench session on a launcher-configured workstation would be refused its
+# own lane on the day this lands.
+run env LANES_CONTAINER=py-bench "$E" binding repoBind-5
+is   "a PRE-AMENDMENT binding is matched on its HOST alone, so a bench session is not refused its own lane" \
+     "$(printf '%s' "$out" | cut -f7)" "here"
+run env LANES_CONTAINER=py-bench "$E" binding repoBind-6
+is   "…while a binding that DOES name a container is matched on it, which is the rule itself" \
+     "$(printf '%s' "$out" | cut -f7)" "elsewhere"
+run env -C "$BIND_DIR" LANES_CONTAINER=py-bench "$START" --no-launch repoBind 5 </dev/null
+is   "…and lane-start takes a pre-amendment lane from inside a container, exactly as it did before this clause" "$rc" 0
+run env LANES_LANE=repoBind-5 LANES_SESSION="$BIND5_ID" "$E" log PAUSED "lane:repoBind-5" '→' "swap; window bindsess:0 @61; agent claude; transcript $BIND5_ID"
+is   "a PAUSED is written" "$rc" 0
+run "$E" binding repoBind-5
+is   "…and the lane is then FREE: exit 8, which is an ANSWER and not a failure" "$rc" 8
+is   "…printing nothing, because there is no binding to print" "$out" ""
+run "$E" binding repoBindNoSuch-1
+is   "a lane with no log at all is free too, by the same 8" "$rc" 8
+
+echo "-- clause (c): a bound lane is started nowhere else"
+
+# THE REFUSAL, FROM A SECOND HOST'S POINT OF VIEW — and with no terminal on
+# stdin, which is every agent on this estate. Clause (c) names the flag there.
+run env -C "$BIND_DIR" "$START" --no-launch repoBind 2 </dev/null
+is   "a lane bound on ANOTHER HOST refuses, and 2 is a refusal and not an environment failure" "$rc" 2
+has  "…naming the binding: the window, the container, the host and the line's own UTC" "$err" "bound to window ravensess:2 @44 in container none on host raven"
+has  "…saying why this place may not pronounce it dead" "$err" "UNKNOWN and never dead"
+has  "…and naming the flag, because an agent's stdin is not a terminal to ask on" "$err" "--request-handoff"
+has  "…and the one word that overrides, which is a SECOND invocation" "$err" "--force"
+is   "…having renamed nothing" "$(grep -c 'rename-window repoBind-2' "$FAKE_TMUX_LOG" || :)" 0
+is   "…and written nothing to that lane's log" \
+     "$(git -C "$WIP" show origin/main:lanes/log/repoBind-2.md | grep -c 'HANDOFF-REQUESTED' || :)" 0
+run env -C "$BIND_DIR" "$START" --no-launch repoBind 3 </dev/null
+is   "a lane bound in ANOTHER CONTAINER on this same host refuses exactly the same way — this is the measured defect" "$rc" 2
+has  "…naming the container" "$err" "in container cloud-bench on host Eagle"
+# THE ONE EXCEPTION, AND IT IS NOT A WEAKENING: a window that is gone from the
+# shared server is a pane no session can be in.
+run env -C "$BIND_DIR" "$START" --no-launch repoBind 4 </dev/null
+is   "a binding whose window is GONE from this shared tmux server does NOT refuse: it is today's takeover path" "$rc" 0
+has  "…and it says so rather than passing in silence" "$err" "that window is GONE from this tmux server"
+# THE BINDING THAT IS THIS PLACE'S OWN IS NOT A SECOND BINDING.
+run env -C "$BIND_DIR" "$START" --no-launch repoBind 8 </dev/null
+is   "a lane whose binding is THIS host and container is not refused: liveness here is this place's to pronounce" "$rc" 0
+has  "…and the step says which read decided it" "$err" "liveness here is this place's to pronounce"
+
+echo "-- clause (c): the question, the request, the pane and the wait"
+
+# THE QUESTION IS ASKED WHERE THERE IS A TERMINAL, and its ANSWER decides. The
+# seam is this question's own variable and not `--confirm`'s: one run can reach
+# both, and a single seam would answer whichever came first.
+run env -C "$BIND_DIR" LANE_START_HANDOFF_ANSWER=n "$START" --no-launch repoBind 2 </dev/null
+is   "the question answered N refuses, exactly as no answer does" "$rc" 2
+has  "…and the question was actually asked, with the binding named in it" "$err" "ask it to hand off, then bind here? [y/N] n"
+is   "…and nothing was written to the lane's log" \
+     "$(git -C "$WIP" show origin/main:lanes/log/repoBind-2.md | grep -c 'HANDOFF-REQUESTED' || :)" 0
+
+# THE REQUEST IS WRITTEN FIRST, AND THAT ORDER IS THE CLAUSE'S: the line is
+# committed and PUSHED so that the bound session can read it FROM ANYWHERE, and
+# only then is a pane typed into — which is an optimisation of the same-host case
+# and never the request itself.
+bind_keys_before="$(grep -c 'send-keys' "$FAKE_TMUX_LOG" || :)"
+run env -C "$BIND_DIR" LANES_SESSION="$BIND_REQ_ID" "$START" --no-launch --request-handoff --wait 0 repoBind 2 </dev/null
+is   "the flag is the \`y\` for a caller with no terminal, and an empty wait still refuses" "$rc" 2
+bind_req_line="$(git -C "$WIP" show origin/main:lanes/log/repoBind-2.md | grep 'HANDOFF-REQUESTED' | tail -n1)"
+has  "…having written the request line FIRST, to the PUBLISHED log, before anything else was tried" "$bind_req_line" "HANDOFF-REQUESTED — lane repoBind-2"
+has  "…in the REQUESTER's own session field, which is whose act it is" "$bind_req_line" "session $BIND_REQ_ID@"
+has  "…carrying clause (c)'s payload: the asking host" "$bind_req_line" "→ by host Eagle"
+has  "…the asking container" "$bind_req_line" "; container none"
+has  "…the asking window" "$bind_req_line" "; window mysess:9 @60"
+has  "…and the wait it named" "$bind_req_line" "; wait 0s"
+is   "…and NOTHING was typed into a pane, because that binding's window is on a tmux server this one is not" \
+     "$(grep -c 'send-keys' "$FAKE_TMUX_LOG" || :)" "$bind_keys_before"
+has  "…the refusal saying so, and saying the request travelled through the pushed log instead" "$err" "no pane was typed into"
+has  "…and naming the two ways forward" "$err" "--force"
+
+# THE PANE IS TYPED INTO WHEN — AND ONLY WHEN — THE WINDOW ID RESOLVES ON THIS
+# SERVER, under Amendment 11(h)'s agreement rule. repoBind-3 is the other
+# container on this host, and its `@62` is in this tmux's window table.
+bind_keys_before="$(grep -c 'send-keys' "$FAKE_TMUX_LOG" || :)"
+run env LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 --no-wait
+is   "a request against a binding whose pane IS on this tmux server still refuses on an empty wait" "$rc" 2
+is   "…and types ONE line into that pane (Amendment 12's M1, the one mechanism a running session has)" \
+     "$(( $(grep -c 'send-keys' "$FAKE_TMUX_LOG" || :) - bind_keys_before ))" 1
+has  "…and the line is the handoff under --exit, naming who asked and from where" \
+     "$(tail -n1 "$FAKE_TMUX_LOG")" "send-keys -t @62 /handoff --exit requested by $BIND_REQ_ID@Eagle/none Enter"
+# AND A PANE RUNNING SOMETHING ELSE IS NOT TYPED INTO, which is M1's own
+# condition: `/handoff --exit` typed at a shell is a command that does not exist.
+export FAKE_TMUX_WINDOWS="mysess:9	@60	claude	%60	claude
+bindsess:0	@61	repoBind-1	%61	claude
+cloudsess:4	@62	repoBind-3	%62	bash
+cloudsess:6	@65	repoBind-12	%65	claude"
+bind_keys_before="$(grep -c 'send-keys' "$FAKE_TMUX_LOG" || :)"
+run env LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 --no-wait
+is   "…while a pane running something OTHER than claude is left alone" \
+     "$(grep -c 'send-keys' "$FAKE_TMUX_LOG" || :)" "$bind_keys_before"
+has  "…and the request says so rather than passing in silence" "$err" "running something other than \`claude\`"
+export FAKE_TMUX_WINDOWS="mysess:9	@60	claude	%60	claude
+bindsess:0	@61	repoBind-1	%61	claude
+cloudsess:4	@62	repoBind-3	%62	claude
+cloudsess:6	@65	repoBind-12	%65	claude"
+
+# THE WAIT ENDS WHEN THE RELEASE LANDS, and it lands FROM THE OTHER CLONE —
+# which is the only way this suite can prove the requester is reading
+# `origin/<branch>` and not its own working tree. The poll interval is the one
+# seam: a case that must watch a wait end cannot spend fifteen seconds a poll.
+bind_release() {   # <lane> <session>
+  git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
+  printf 'PAUSED — lane %s, session %s@Raven, %s, lane:%s → swap; agent claude; transcript %s; host raven; os macos; container none\n' \
+    "$1" "$2" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" >> "$CLONE2/lanes/log/$1.md"
+  git -C "$CLONE2" add -- "lanes/log/$1.md"
+  git -C "$CLONE2" commit -q -m "LOG($1@Raven): PAUSED"
+  git -C "$CLONE2" push -q origin main
+}
+( sleep 3; bind_release repoBind-2 "$BIND2_ID" ) &
+BIND_RELEASER=$!
+run env LANES_SESSION="$BIND_REQ_ID" LANES_POLL_SECONDS=1 "$E" request-handoff repoBind-2 --wait 40
+wait "$BIND_RELEASER" 2>/dev/null
+is   "a wait ended by a PAUSED the OTHER clone pushed exits 0: the lane is free and the requester may bind" "$rc" 0
+has  "…saying which fact ended it" "$err" "is FREE"
+run "$E" binding repoBind-2
+is   "…and the binding read agrees, because it is the same read" "$rc" 8
+
+echo "-- clause (e): the empty wait refuses, and only a word forces"
+
+run env LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 --no-wait
+is   "an empty wait is a REFUSAL and not a bind" "$rc" 2
+has  "…printing the binding" "$err" "bound to window cloudsess:4 @62 in container cloud-bench on host Eagle"
+has  "…the request and its UTC" "$err" "the request: 20"
+has  "…whether the pane was reachable and typed into" "$err" "the pane:    yes"
+has  "…and the one word that overrides" "$err" "--force \"<why you are taking it>\""
+run "$E" binding repoBind-3
+is   "…and it has NOT released the binding it could not obtain" "$rc" 0
+run env LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 --force
+is   "--force with no WHY is refused: the why is written into an append-only log and is what the bound session reads" "$rc" 2
+has  "…saying so" "$err" "--force takes a WHY"
+# AND A WHY WITHOUT `--force` IS REFUSED RATHER THAN IGNORED. Clause (c)'s
+# request line says WHO is asking and from WHERE and carries no sentence, so
+# words given to it are words a person believes they wrote into an append-only
+# log and nobody did.
+run env LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 taking this one
+is   "a WHY with no --force is refused rather than silently dropped" "$rc" 64
+has  "…saying the request line carries no sentence" "$err" "carries no sentence"
+has  "…and naming the act that does write one, with the words already in it" "$err" '--force "taking this one"'
+# THE WHOLE PLAN, PRINTED AND NOT PERFORMED (act 4's own line). A `--dry-run`
+# writes no line, types into no pane and waits for nothing.
+bind_keys_before="$(grep -c 'send-keys' "$FAKE_TMUX_LOG" || :)"
+bind_lines_before="$(git -C "$WIP" show origin/main:lanes/log/repoBind-3.md | grep -c . || :)"
+run env LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 --dry-run --wait 45
+is   "--dry-run exits 0" "$rc" 0
+has  "…printing the binding it would ask" "$err" "PLAN: lane repoBind-3 is bound to window"
+has  "…the line it would write, and that it goes FIRST" "$err" "log HANDOFF-REQUESTED lane:repoBind-3"
+has  "…the pane it would type into" "$err" "PLAN: tmux send-keys into @62"
+has  "…and the wait that follows, with the word that ends an empty one" "$err" "an empty wait REFUSES and names --force"
+is   "…having written NOTHING" "$(git -C "$WIP" show origin/main:lanes/log/repoBind-3.md | grep -c . || :)" "$bind_lines_before"
+is   "…and typed nothing into any pane" "$(grep -c 'send-keys' "$FAKE_TMUX_LOG" || :)" "$bind_keys_before"
+# AND THE WRITER GUARD REACHES IT, because `request-handoff` WRITES — it goes to
+# `write_event` directly rather than through `log`, so the dispatcher's own
+# refusal is the only thing between it and a line filed under a container id.
+# One field further along than the `session <uuid>@<ws>` that guard has always
+# protected: clause (a)'s `host` falls back to the Rule 10 workstation name,
+# which in this state IS that container id (Amendment 11 decision 8(d),
+# `R-A11-14`).
+run env -u LANES_WORKSTATION -u LANES_HOST LANES_IN_CONTAINER=1 LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 --no-wait
+is   "a container with no configured workstation cannot write the request at all" "$rc" 2
+has  "…in the one sentence every writer here refuses with" "$err" "is the CONTAINER'S id"
+run env -u LANES_WORKSTATION -u LANES_HOST LANES_IN_CONTAINER=1 LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 --force "why not"
+is   "…and neither can it force a release" "$rc" 2
+run env LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 --force "cloud-bench is not answering"
+is   "--force is a SECOND invocation and it releases the binding" "$rc" 0
+bind_forced="$(git -C "$WIP" show origin/main:lanes/log/repoBind-3.md | tail -n1)"
+has  "…writing a PAUSED in the REQUESTER'S OWN session field, which is what makes it a release and not an impersonation" \
+     "$bind_forced" "PAUSED — lane repoBind-3, session $BIND_REQ_ID@"
+has  "…on behalf of the session that held it" "$bind_forced" "on behalf of $BIND3_ID"
+has  "…naming who forced it, and from which host and container" "$bind_forced" "forced by $BIND_REQ_ID@Eagle/none"
+has  "…and the why the person gave" "$bind_forced" "cloud-bench is not answering"
+run "$E" binding repoBind-3
+is   "…so the lane is FREE and the second place may bind" "$rc" 8
+run env -C "$BIND_DIR" "$START" --no-launch repoBind 3 </dev/null
+is   "…which it now does, with nothing refused" "$rc" 0
+
+echo "-- clause (g): one more lane-kind verb, and every state reader skips it"
+
+run env LANES_LANE=repoBind-4 LANES_SESSION="$BIND_REQ_ID" "$E" log HANDOFF-REQUESTED "lane:repoBind-4" '→' "by host x; container none; window y; wait 5s"
+is   "a HANDOFF-REQUESTED is not written by hand" "$rc" 2
+has  "…and the refusal names the act that writes it" "$err" "request-handoff repoBind-4"
+run env FAKE_TMUX_WINDOW="bindsess:@61" LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-6 --no-wait
+is   "a request against a lane bound in THIS window is refused: a request is what a SECOND place makes of the first" "$rc" 2
+has  "…saying so" "$err" "binding IS this window"
+
+echo "-- Copilot round 1: the picker, the bound window's identity, the wait's bound, the forced release and the refusal that persists"
+
+# THE PARTITION IS THE MEASURED DEFECT ONE SURFACE ALONG. `lanes_rows` calls a
+# binding with no live record here IDLE, and `lane-groups` filed an IDLE row as
+# AVAILABLE on the workstation column alone — so another container's LIVE lane
+# on this same host was offered to be launched again, which is the collision
+# this whole amendment exists for, reached through the pick instead of through
+# `kill -0`.
+run env LANES_NO_FETCH=1 "$E" lanes --lane repoBind-9
+is   "a binding in another container of THIS host reads IDLE, because no live record here names it" \
+     "$(printf '%s' "$out" | cut -f2)" "IDLE"
+is   "…and the read says in its own column that this place may NOT pronounce on it" \
+     "$(printf '%s' "$out" | cut -f13)" "elsewhere"
+is   "…so the pick files it under BOUND ELSEWHERE and never offers to launch it" \
+     "$(printf '%s' "$out" | "$E" lane-groups Eagle | cut -f1)" "elsewhere"
+run env LANES_CONTAINER=cloud-bench LANES_NO_FETCH=1 "$E" lanes --lane repoBind-9
+is   "…while from INSIDE that container the same row is this place's to pronounce" \
+     "$(printf '%s' "$out" | cut -f13)" "here"
+is   "…and the pick offers it, because there the liveness read is the record's own namespace" \
+     "$(printf '%s' "$out" | "$E" lane-groups Eagle | cut -f1)" "available"
+# AND A ROW WITH NO COLUMN 13 IS FILED EXACTLY AS IT WAS BEFORE THE COLUMN
+# EXISTED — a lane with a row and no log, or a helper predating the read.
+# Amendment 7(i)'s cutover rule, for a field a reader may simply not have.
+is   "a row carrying no locality column at all is filed as it always was" \
+     "$(printf 'someRepo-9\tIDLE\tEagle\n' | "$E" lane-groups Eagle | cut -f1)" "available"
+is   "…and one that carries \`here\` is too" \
+     "$(printf 'someRepo-9\tIDLE\tEagle\t-\t-\t-\t-\t-\t-\t-\t-\t0\there\n' | "$E" lane-groups Eagle | cut -f1)" "available"
+is   "…while \`elsewhere\` moves it, whatever its workstation column says" \
+     "$(printf 'someRepo-9\tIDLE\tEagle\t-\t-\t-\t-\t-\t-\t-\t-\t0\telsewhere\n' | "$E" lane-groups Eagle | cut -f1)" "elsewhere"
+
+# THE SELF-WINDOW FENCE IS A LOCAL TEST AND IS ASKED ONLY WHERE THE BINDING IS
+# LOCAL. A tmux `@id` names a window on ONE server and tmux reissues them from
+# `@0`, so `@44` here and `@44` on Raven are not one window — and refusing the
+# request would leave that lane unaskable from the one place that needs to ask.
+run env FAKE_TMUX_WINDOW="mysess:@44" FAKE_TMUX_WINDOW_INDEX=2 LANES_SESSION="$BIND_REQ_ID" \
+    "$E" request-handoff repoBind-10 --no-wait
+hasnt "a window whose id matches ANOTHER HOST's binding is not mistaken for it" "$err" "binding IS this window"
+has   "…the request is made, as the second place's request always is" "$err" "REQUESTED: lane repoBind-10"
+
+# `--wait <s>` IS AN UPPER BOUND A PERSON NAMED, and the poll interval decides
+# only how often the log is asked. A fixed fifteen-second poll overran it.
+bind_t0="$(date -u +%s)"
+run env LANES_SESSION="$BIND_REQ_ID" LANES_POLL_SECONDS=30 "$E" request-handoff repoBind-10 --wait 2
+bind_t1="$(date -u +%s)"
+is   "a wait that ends empty refuses" "$rc" 2
+if [ "$(( bind_t1 - bind_t0 ))" -le 20 ]; then
+  ok "…within the bound it was given, not the poll interval it was not"
+else
+  bad "…within the bound it was given, not the poll interval it was not" "took $(( bind_t1 - bind_t0 ))s for --wait 2 with a 30s poll"
+fi
+
+# `lane-start --force` IS THE OTHER DOOR TO THE SAME ACT, and the fence takes it
+# through the one mechanism: no second implementation of the write, and the
+# binding is READ AGAIN before the first act with an effect, because a handoff
+# that landed is an observation and not a reservation (openRepoTools#84).
+run env -C "$BIND_DIR" LANES_SESSION="$BIND_REQ_ID" "$START" --no-launch --force "raven is offline" repoBind 10 </dev/null
+is   "lane-start --force takes a lane bound on another host, through request-handoff" "$rc" 0
+has  "…saying which act it took" "$err" "request-handoff repoBind-10 --force"
+has  "…and reading the binding AGAIN before the rename, which is the first act with an effect" "$err" "binding: still free after the handoff"
+bind_forced10="$(git -C "$WIP" show origin/main:lanes/log/repoBind-10.md | grep 'on behalf of' | tail -n1)"
+has  "…having written the on-behalf release" "$bind_forced10" "on behalf of $BIND10_ID"
+has  "…with the why the person gave" "$bind_forced10" "why raven is offline"
+
+echo "-- clauses (d) and (e): the bound session answers, at its own prompt"
+
+# THE GUARD IS THE OTHER HALF OF THE ACT. Clause (c) is the asking; this is the
+# answering, and it happens at a PROMPT BOUNDARY — *"a working session is never
+# interrupted"* (clause (f)): no Escape, no signal, no respawn from a requester.
+bind_guard_prof="$HOME/.claude-profiles/profiles/opensoft/team/t1/sessions"
+write_record "$bind_guard_prof/bind6.json" "$BIND6_ID" "$LIVE_PID" "$live_start" "bindsess:@61.%61" "repoBind-6" "busy"
+bind_hook='{"session_id":"%s","cwd":"%s","prompt":"do the work","hook_event_name":"UserPromptSubmit"}'
+bind_guard() {   # <session id>
+  out="$(printf "$bind_hook" "$1" "$BIND_DIR" | env FAKE_TMUX_WINDOW="bindsess:@61" FAKE_TMUX_WINDOW_NAME=repoBind-6 "$E" guard 2>"$SANDBOX/stderr")"; rc=$?
+  err="$(cat "$SANDBOX/stderr")"
+  return 0
+}
+bind_guard "$BIND6_ID"
+is   "with nothing pending the guard is SILENT and exits 0 — the property that makes a hook at every prompt bearable" "$rc" 0
+is   "…silently" "$err" ""
+bind_keys_before="$(grep -c 'send-keys' "$FAKE_TMUX_LOG" || :)"
+run env FAKE_TMUX_WINDOW="mysess:@60" LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-6 --no-wait
+is   "a second place asks for the lane that session is in" "$rc" 2
+bind_guard "$BIND6_ID"
+is   "…and the BOUND session's next prompt is refused, which is clause (d)" "$rc" 2
+has  "…naming the request, who asked, and from where" "$err" "A HANDOFF WAS REQUESTED for lane repoBind-6"
+has  "…naming the requester" "$err" "by $BIND_REQ_ID from container none on host Eagle"
+has  "…and saying that the handoff ENDS this session, because a handoff to another place is not a restart" "$err" "ENDS this session"
+is   "…having typed the handoff into its OWN pane, once (M1, the one mechanism a running session has)" \
+     "$(( $(grep -c 'send-keys' "$FAKE_TMUX_LOG" || :) - bind_keys_before ))" 2
+has  "…under --exit, with the why the clause spells" "$(tail -n1 "$FAKE_TMUX_LOG")" "send-keys -t %61 /handoff --exit requested by $BIND_REQ_ID@Eagle/none Enter"
+has  "…and it says nothing the person typed is lost" "$err" "type it again in the new place"
+# A REQUEST CHANGES NO STATE, which is clause (g)'s own sentence about the verb
+# it adds: every last-line reader skips it.
+run "$E" lane-last repoBind-6
+is   "…and the lane's LAST lane-kind line is still its STARTED: a request is not a state transition" \
+     "$(printf '%s' "$out" | cut -f1)" "STARTED"
+run "$E" binding repoBind-6
+is   "…so the lane is still BOUND, to the same window it was" "$(printf '%s' "$out" | cut -f3)" "bindsess:0 @61"
+
+# CLAUSE (e)'s OTHER HALF: a `PAUSED` this session did not write refuses EVERY
+# prompt from then on. *"Two places never both write a lane in silence; the
+# worst a `--force` can do is make the old place stop, loudly."*
+run env FAKE_TMUX_WINDOW="mysess:@60" LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-6 --force "the bench it was in is gone"
+is   "the second place forces the release" "$rc" 0
+bind_guard "$BIND6_ID"
+is   "…and the session it was taken from refuses its next prompt" "$rc" 2
+has  "…naming the line" "$err" "RELEASED BY SOMEBODY ELSE"
+has  "…who wrote it" "$err" "written by session $BIND_REQ_ID"
+has  "…the why they gave" "$err" "the bench it was in is gone"
+has  "…and that it is EVERY prompt from now on, not this one" "$err" "every prompt in this session is refused from here on"
+has  "…naming the exit, which is a handoff this session takes itself" "$err" "lane-handoff --exit"
+bind_guard "$BIND6_ID"
+is   "…and the prompt after it is refused too, which is what \"from then on\" means" "$rc" 2
+# AND IT PERSISTS PAST A THIRD PLACE BINDING THE LANE (Copilot round 1 on #83).
+# Read off the LATEST binding, the refusal stopped the moment somebody took the
+# lane the force had freed — the scan's release fields move on to the new line —
+# while clause (e) says every prompt from then on, until the person here hands
+# off or ends the session. The rule is asked of THIS session's own track: the
+# release another session wrote after this one's last line, wherever the lane
+# has been since.
+run env LANES_LANE=repoBind-6 LANES_SESSION="$BIND_REQ_ID" LANES_HOST=Eagle LANES_CONTAINER=py-bench \
+    "$E" log RESUMED "lane:repoBind-6" '→' "home opensoft/repoBind; estate repoBind; dir $BIND_DIR; profile team-05a; window mysess:9 @60"
+is   "a third place binds the lane the force freed" "$rc" 0
+run "$E" binding repoBind-6
+is   "…so the lane is BOUND again, to that place" "$(printf '%s' "$out" | cut -f5)" "$BIND_REQ_ID"
+bind_guard "$BIND6_ID"
+is   "…and the session it was taken from is STILL refused, which is what clause (e) says" "$rc" 2
+has  "…naming the release it was taken by" "$err" "RELEASED BY SOMEBODY ELSE"
+has  "…and the why that release carried" "$err" "the bench it was in is gone"
+rm -f "$bind_guard_prof/bind6.json"
+
+echo "-- Copilot round 2: what makes a record LEGACY, whose host is whose, and a LIVE row this place may not pronounce on"
+
+# THE `$WS` FALLBACK IS CLAUSE (a)'s CUTOVER AFFORDANCE, not a second name for
+# this machine. A line that carries the three is matched on what it says: the
+# machine's own hostname AND the container.
+run env LANES_HOST=raven "$E" binding repoBind-11
+is   "a MODERN line whose host is another machine is elsewhere, even where \$LANES_WORKSTATION would have matched it" \
+     "$(printf '%s' "$out" | cut -f7)" "elsewhere"
+run env LANES_HOST=Eagle "$E" binding repoBind-11
+is   "…and here where the host it names IS this machine" "$(printf '%s' "$out" | cut -f7)" "here"
+# AND THE SAME LINE WITHOUT THE THREE IS MATCHED ON THE HOST ALONE, which is the
+# cutover rule and is what keeps a pre-amendment estate working.
+run env LANES_HOST=raven "$E" binding repoBind-14
+is   "a PRE-AMENDMENT line is matched on the row's workstation, which is all such a line has" \
+     "$(printf '%s' "$out" | cut -f7)" "here"
+
+# LEGACY IS ALL THREE ABSENT. The writer drops an offending sub-field on its own
+# and keeps the line, so a modern line missing only its host is modern — and the
+# container it DOES carry is what decides.
+run "$E" binding repoBind-12
+is   "a line carrying a container and an os but no host is NOT read as pre-amendment" \
+     "$(printf '%s' "$out" | cut -f7)" "elsewhere"
+is   "…and it is the container it carries that says so" "$(printf '%s' "$out" | cut -f2)" "cloud-bench"
+run env LANES_CONTAINER=cloud-bench "$E" binding repoBind-12
+is   "…so from inside that container the same line is this place's" "$(printf '%s' "$out" | cut -f7)" "here"
+
+# A `LIVE` ROW IS NOT THIS PLACE'S TO PRONOUNCE ON EITHER. `LIVE` is a live
+# session record HERE naming one of the row's ids — and a record written in
+# another container is readable here while the pid it names is in another
+# namespace, so a `kill -0` that answers is answering about some other process.
+run env LANES_NO_FETCH=1 "$E" lanes --lane repoBind-13
+is   "a live record of ANOTHER container still reads LIVE, because the records are shared" \
+     "$(printf '%s' "$out" | cut -f2)" "LIVE"
+is   "…and the read says this place may not pronounce on that binding" "$(printf '%s' "$out" | cut -f13)" "elsewhere"
+is   "…so the pick files it under BOUND ELSEWHERE and asks for the handoff, never LIVE HERE" \
+     "$(printf '%s' "$out" | "$E" lane-groups Eagle | cut -f1)" "elsewhere"
+run env LANES_CONTAINER=cloud-bench LANES_NO_FETCH=1 "$E" lanes --lane repoBind-13
+is   "…while from inside that container it is LIVE HERE, where the attach belongs" \
+     "$(printf '%s' "$out" | "$E" lane-groups Eagle | cut -f1)" "live"
+# AND A PARKED LANE OF ANOTHER CONTAINER IS UNTOUCHED BY ALL OF IT, because
+# parking IS the handoff: column 13 is the locality of a binding that STANDS.
+run env LANES_NO_FETCH=1 "$E" lanes --lane repoBind-5
+is   "a lane whose binding was released carries no locality at all" "$(printf '%s' "$out" | cut -f13)" ""
+is   "…and is AVAILABLE, wherever it was last run" \
+     "$(printf '%s' "$out" | "$E" lane-groups Eagle | cut -f1)" "available"
+# AND THE PERSON LOSES NOTHING: watching a lane and taking it are two acts, and
+# only the second is the collision. The elsewhere branch names the attach where
+# that window is live on this tmux server.
+bind_save_lanewins="${LANE_TMUX_WINDOWS-}"
+export LANE_TMUX_WINDOWS="$LANE_TMUX_WINDOWS
+$(printf '@62\tcloudsess\t4\t0')"
+run env -C "$BIND_DIR" PATH="$LANEBIN_PATH" "$LANE" repoBind-13 </dev/null
+is   "\`lane <name>\` on a lane bound in another container refuses rather than attaching blind" "$rc" 2
+has  "…naming the container it is bound in" "$err" "in container cloud-bench on host Eagle"
+has  "…and offering the WATCH, which starts nothing and takes nothing" "$err" "or WATCH it where it is"
+export LANE_TMUX_WINDOWS="$bind_save_lanewins"
+
+# A DRY RUN PRINTS THE PLAN AND DOES NOTHING, INCLUDING THE RE-READ (Copilot
+# round 3). `request-handoff --dry-run` answers 0 without releasing anything, so
+# an unconditional re-read saw the binding still standing and refused — and the
+# one run whose whole job is to print the plan could never print one.
+run env -C "$BIND_DIR" LANES_SESSION="$BIND_REQ_ID" "$START" --dry-run --request-handoff --wait 5 repoBind-12 </dev/null
+is   "\`lane-start --dry-run --request-handoff\` prints a plan instead of refusing on a release it did not make" "$rc" 0
+has  "…the request it would make" "$err" "PLAN: "
+has  "…and the re-read it would make before the rename" "$err" "read the binding again before the rename"
+is   "…having written nothing to that lane's log" \
+     "$(git -C "$WIP" show origin/main:lanes/log/repoBind-12.md | grep -c 'HANDOFF-REQUESTED' || :)" 0
+
+echo "-- Copilot round 4: the window exception is a LOCAL test, and so is the guard's window disjunct"
+
+# `gone` IS THE ONE ANSWER THAT MAKES A BINDING ELSEWHERE READ DEAD, and it hands
+# `lane-start` and `lane` the takeover path. Judged on a host test that accepted
+# the Rule 10 workstation name for EVERY record, a MODERN line naming another
+# machine could be taken over here wherever the two names coincided.
+run env LANES_HOST=raven "$E" binding repoBind-17
+is   "a MODERN binding of another machine is elsewhere" "$(printf '%s' "$out" | cut -f7)" "elsewhere"
+is   "…and its window is UNKNOWN, never gone: this host has no tmux server of that machine's" \
+     "$(printf '%s' "$out" | cut -f8)" "unknown"
+run "$E" binding repoBind-17
+is   "…while from the machine it names, the same absent window IS the dead binding" \
+     "$(printf '%s' "$out" | cut -f8)" "gone"
+run env LANES_HOST=raven LANES_CONTAINER=py-bench "$E" binding repoBind-14
+is   "…and a PRE-AMENDMENT line is still matched on the row's workstation, which is all it has" \
+     "$(printf '%s' "$out" | cut -f7)" "here"
+# AND `gone` IS THE ID RESOLVING NOWHERE, NOT AN ID IN ANOTHER SESSION (Copilot
+# round 6). `lane <name>` MOVES a live lane's window into the asking session,
+# which leaves the record naming the session it came from while the very same
+# window, under the very same id, is alive one session along — and `gone` is the
+# one answer that hands `lane-start` and `lane` the takeover path. A running
+# lane read as a dead binding is a second process on it.
+bind_save_wins2="$FAKE_TMUX_WINDOWS"
+export FAKE_TMUX_WINDOWS="$FAKE_TMUX_WINDOWS
+movedsess:1	@66	repoBind-17	%66	claude"
+run "$E" binding repoBind-17
+is   "an id that resolves in ANOTHER session is UNKNOWN, never gone: a moved window is not a dead one" \
+     "$(printf '%s' "$out" | cut -f8)" "unknown"
+export FAKE_TMUX_WINDOWS="$bind_save_wins2"
+run "$E" binding repoBind-17
+is   "…while an id that resolves NOWHERE is the dead binding it always was" \
+     "$(printf '%s' "$out" | cut -f8)" "gone"
+
+# AND THE GUARD'S WINDOW DISJUNCT IS THREE TESTS AND NOT ONE. It exists for the
+# `/clear`, where the harness minted a new id and the binding's window is still
+# this one — but an `@id` compared alone would make THIS session the answerer
+# for a binding in another container that happens to carry the same number, and
+# the guard would type `/handoff --exit` into this pane for a request nobody
+# made of it.
+write_record "$bind_guard_prof/bind15.json" "$BIND16_ID" "$LIVE_PID" "$live_start" "bindsess:@61.%61" "repoBind-15" "busy"
+run env FAKE_TMUX_WINDOW="mysess:@60" LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-15 --no-wait
+is   "a third place asks for a lane bound in another container, whose window id is this window's" "$rc" 2
+bind_keys_before="$(grep -c 'send-keys' "$FAKE_TMUX_LOG" || :)"
+out="$(printf "$bind_hook" "$BIND16_ID" "$BIND_DIR" | env FAKE_TMUX_WINDOW="bindsess:@61" FAKE_TMUX_WINDOW_NAME=repoBind-15 "$E" guard 2>"$SANDBOX/stderr")"; rc=$?
+err="$(cat "$SANDBOX/stderr")"
+is   "…and a session here whose window merely SHARES that id does not answer it" "$rc" 0
+hasnt "…so it is not told to hand off" "$err" "A HANDOFF WAS REQUESTED"
+is   "…and nothing is typed into its pane" "$(grep -c 'send-keys' "$FAKE_TMUX_LOG" || :)" "$bind_keys_before"
+rm -f "$bind_guard_prof/bind15.json"
+
+echo "-- clause (i): a LIVE lane's one act is the ATTACH, printed filled in"
+
+# From the question Brett Heap asked 2026-09-14T13:47Z, verbatim *"how do i
+# start claude with that profile and that lane? do i use lane command?"*, about
+# a lane LIVE in a detached tmux session — where the listing named the session
+# and no act. A live lane is never started a second time: clause (h) is one live
+# process per transcript, and a `lane-start` on a running lane is exactly the
+# second one.
+write_record "$bind_guard_prof/bind6.json" "$BIND6_ID" "$LIVE_PID" "$live_start" "bindsess:@61.%61" "repoBind-6" "busy"
+run env LANES_NO_FETCH=1 "$E" lanes --lane repoBind-6
+is   "the lane reads LIVE" "$(printf '%s' "$out" | cut -f2)" "LIVE"
+is   "…and column 10 — the one act — is the ATTACH, with the session and window filled in, because this read runs inside tmux" \
+     "$(printf '%s' "$out" | cut -f10)" "tmux switch-client -t bindsess:@61"
+run env -u TMUX LANES_NO_FETCH=1 "$E" lanes --lane repoBind-6
+is   "…and OUTSIDE tmux the same act is the attach, which is the other of the two commands there are" \
+     "$(printf '%s' "$out" | cut -f10)" "tmux attach -t bindsess:@61"
+run env LANES_NO_FETCH=1 "$LANES_CMD" --prefix repoBind
+is   "the listing renders it" "$rc" 0
+has  "…as an ATTACH and never a bind, because the session is already running" "$out" "attach: tmux switch-client -t bindsess:@61"
+has  "…saying why in the same breath" "$out" "never a second lane-start on a running lane"
+hasnt "…and it never offers to start one" "$out" "bind it: lane-start"
+rm -f "$bind_guard_prof/bind6.json"
+
+# THE SECTION'S FIXTURES ARE PUT BACK, for the reason the Amendment 12 section
+# gives: this sits BETWEEN two others in one long file, and a section that left
+# the sandbox's window table and its two seams changed would be rewriting the
+# premise of every case after it from a distance.
+export FAKE_TMUX_WINDOWS="$BIND_SAVE_WINDOWS"
+export FAKE_TMUX_WINDOW="$BIND_SAVE_WINDOW"
+export FAKE_TMUX_WINDOW_NAME="$BIND_SAVE_NAME"
+export FAKE_TMUX_WINDOW_INDEX="$BIND_SAVE_INDEX"
+unset LANES_HOST LANES_CONTAINER
+
 echo "== the workstation seam: unset, every writer reads the host =="
 
 # THE OTHER HALF OF R-A9-13. Every case above this line runs with
@@ -9513,7 +10306,7 @@ is   "…and every log it did create is inside the sandbox workspace" \
 # 4, R-A9-11). A `sleep` that runs out of seconds before the suite runs out of
 # cases does not announce itself: it turns "a live holder …" into "no live
 # holder …" one case at a time, and 196 red lines say nothing about why. This
-# one line does. Red here and nowhere else means the bound at `sleep 3000` is
+# one line does. Red here and nowhere else means the bound at `$LIVE_SLEEP` is
 # what needs raising; red here beside two hundred others means it is why.
 is   "the liveness fixture was still running when the run ended" \
      "$(kill -0 "$LIVE_PID" 2>/dev/null && printf alive || printf gone)" alive

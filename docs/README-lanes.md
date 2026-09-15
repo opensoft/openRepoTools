@@ -1548,11 +1548,21 @@ falls to its next rung there rather than refusing.
 | `lanes-edit.sh session-lane <uuid>` | the lane whose register row's **session cell** names that transcript uuid. Adoption act 0's; it is the read the `SessionStart` hook already made. **0** the lane · **8** no row's cell names it · **64** usage — like every other read in this table, by A11 Addendum 4 ruling 1, which corrects act 0's `2` · **2** a helper predating the read |
 | `lanes-edit.sh last-session <lane>` | the lane's resume target: the last uuid in the published cell **whatever shape it is in**, and failing that the session of its last `PAUSED`/`RESUMED`. This is what `/restart`'s step 4 reads, by A11 Addendum 4 ruling 14, rather than clause (f)'s `register-row` alone — so a lane whose row was never stamped but whose log records the session it paused in still has a resume target |
 | `lanes-edit.sh forks <lane>` | the **live forks** of the lane's transcript — never holders, and a defect to retire |
-| `lanes-edit.sh lanes [--repo\|--dir\|--prefix\|--ws\|--lane\|--here\|--all\|--fetch]` | every lane, newest write first, tab-separated: clause (j)'s **ten columns in clause (j)'s order** — name, state, workstation, profile, window, last transcript uuid, directory, held objects, age, the line that binds it — then the read's own two, `home` and the count of live forks. `lanes` and `lane` each render the subset their surface needs (A11 Addendum 4 ruling 7), and column 10 is the read's so the two cannot offer different commands; since Amendment 18 Addendum 2 the word it names is `lane <name>`. **The one read whose default is local**, and `--lane <lane>` answers about one without walking the estate. `--prefix <repo>` is the LABEL fallback the checkout narrowing and `lane-start <repo>` both ask for, used only where a lane has neither a home nor a `dir` |
-| `lanes-edit.sh lane-groups [<ws>]` | **the rows on STDIN**, each with the group the pick puts it in: `available` (PARKED, or a binding that workstation proves dead), `live`, `elsewhere`. Closed and dormant rows are DROPPED (Amendment 19). It reads nothing itself — the caller has already paid for `lanes`, and two surfaces computing one partition is how they come to disagree |
+| `lanes-edit.sh lanes [--repo\|--dir\|--prefix\|--ws\|--lane\|--here\|--all\|--fetch]` | every lane, newest write first, tab-separated: clause (j)'s **ten columns in clause (j)'s order** — name, state, workstation, profile, window, last transcript uuid, directory, held objects, age, the line that binds it — then the read's own three, `home`, the count of live forks, and — since Amendment 18(b) — whether THIS place may pronounce on that binding (`here`, `elsewhere`, or empty for a row with no binding line at all), which is what `lane-groups` files an `IDLE` row by. `lanes` and `lane` each render the subset their surface needs (A11 Addendum 4 ruling 7), and column 10 is the read's so the two cannot offer different commands; since Amendment 18 Addendum 2 the word it names is `lane <name>`. **The one read whose default is local**, and `--lane <lane>` answers about one without walking the estate. `--prefix <repo>` is the LABEL fallback the checkout narrowing and `lane-start <repo>` both ask for, used only where a lane has neither a home nor a `dir` |
+| `lanes-edit.sh lane-groups [<ws>]` | **the rows on STDIN**, each with the group the pick puts it in: `available` (PARKED, or a binding that workstation **and container** prove dead), `live`, `elsewhere` — an `IDLE` row whose binding is another container on this same host is **elsewhere**, because IDLE means this host saw no live record and across that seam the pid it would have read is in another namespace (Amendment 18(b)). Closed and dormant rows are DROPPED (Amendment 19). It reads nothing itself — the caller has already paid for `lanes`, and two surfaces computing one partition is how they come to disagree |
 | `lanes-edit.sh next-free <repo>` | **the rows on STDIN**, and the LOWEST position no lane of that repository HAS EVER held — `ENDED` and `RETIRED` rows reserve theirs, because a lane's identity is its name and its object log `lanes/log/<lane>.md` is append-only, so a second lane at a retired position would write its life into the first one's file. The name before the position is compared whole, so `repo-foo-1` is no lane of `repo`. `lanes`'s footer and `lane`'s `f` answer both read it, so the two cannot offer different positions |
-| `lanes-edit.sh workstation` | `<name><TAB><source>` — `seam`, `hostname`, or `container-unset` |
+| `lanes-edit.sh binding <lane>` | where the lane is bound, and whether this place may pronounce on it: `<host> <container> <window> <utc> <session> <os> <here\|elsewhere> <live\|gone\|unknown>` (Amendment 18(b)). **0** bound · **8** free · **1** the log could not be read, which is never "this lane is free" |
+| `lanes-edit.sh workstation` | `<workstation> <source> <host> <source> <os> <source> <container> <source>` — eight tab-separated fields since Amendment 18(a), the first two unchanged. A source is `seam`, `hostname`, `workstation`, `kernel`, `outside`, or, for the workstation itself, `container-unset` |
 | `lanes-edit.sh fetch-age` | how old this checkout's answer is |
+
+**`request-handoff` is the one WRITE in that family** and is not a read at all:
+`lanes-edit.sh request-handoff <lane> [--wait <s>] [--session <uuid>]` writes
+clause (c)'s `HANDOFF-REQUESTED`, pushes it, types `/handoff --exit requested by
+…` into the bound pane where that pane is on this tmux server, and waits;
+`--force "<why>"` is clause (e)'s second invocation and releases the binding on
+its holder's behalf. **0** the lane is free — bind it · **2** the wait ended
+empty, or the request was refused · **8** the lane was already free · **1** a
+read failed.
 
 **`window-lane` owns the agreement rule, and it owns it once.** Existing-now is
 not enough on its own: a record naming `claude-y:0 @97`, met from the window that
@@ -1600,6 +1610,262 @@ naming the variable** — because a container's `hostname` is the container's id
 not a workstation, a row on a workstation that does not exist is a row no reader
 can match, and the log is never rewritten. `lanes-edit.sh` already carries six
 such lines in one lane's log, and they stay where they are.
+
+## One binding per lane (Amendment 18)
+
+**A lane has ONE binding. The record says where it is — host, OS, container,
+window — and a second place ASKS the first to hand off before it binds; nothing
+is taken silently.** Ratified by Brett Heap 2026-09-14T13:15:18Z, verbatim
+*"merge 37 and 78, ratify revision 4"*, on his observation of the same day:
+
+> we are working on lanes tooling … if I run a lane, then i am on a host running
+> macOS or linux or windows … and in all 3, i might be in a container. we should
+> probably note the host name, OS type and container name if there is one. so if
+> I am on wsl and I am in cloudBench and then move to pyBench, when I try to
+> restart in pyBench, it should ask me if I want to pause the lane on cloudBench.
+> we shoudl not allow two bindings to a lane … we need to send a signal to that
+> session to shutdown. once it is shutdown, then we alow the new connection to
+> bind
+
+### Why — a pid does not cross a pid namespace
+
+A lane's liveness is read from the harness's session records and a `kill -0` of
+the recorded pid. Both are **local** facts. Across workstations the tooling
+already said so — another machine's row is UNKNOWN and `who` says to ask that
+lane. Across **containers on one machine** it did not: two bench containers on
+Eagle share the profile directory, so pyBench can read a record cloudBench
+wrote and then `kill -0` a pid **in cloudBench's namespace**, which is either
+nothing or some other process. A lane live and writing in cloudBench read NOT
+LIVE from pyBench, and `lane-start` there took the name.
+
+### The three sub-fields
+
+`STARTED`, `RESUMED` and `PAUSED` carry three more, after Amendment 11(c)'s
+`dir`/`profile`/`window` and Amendment 17(b)'s `agent`/`transcript`:
+
+```text
+STARTED — lane openRepoTools-3, session d1ac715c-…@Eagle, 2026-09-15T12:38:51Z, lane:openRepoTools-3 → home opensoft/openRepoTools; estate openRepoTools; dir ~/projects/openRepoTools; profile team-05c; window claude-team-05c-…:0 @71; host eagle; os wsl; container cloud-bench
+```
+
+- **`host <name>`** — the MACHINE's short hostname **as it reads outside any
+  container**. The launcher exports it (`LANES_HOST`); a writer outside a
+  container reads `hostname -s`; a writer **inside** one with no export writes
+  the **Rule 10 workstation name**, because in this estate a workstation is one
+  host and a container's own `hostname` is its id.
+- **`os <linux|macos|wsl|windows>`** — the HOST's operating system as the person
+  means it. The launcher exports it (`LANES_OS`); with no export the kernel is
+  probed: `Darwin` → `macos`; `Linux` whose `/proc/version` names `microsoft` →
+  `wsl`; one naming `linuxkit` → `macos` (Docker Desktop's VM); any other
+  `Linux` → `linux`. **`windows` is written only by a launcher on the Windows
+  host itself** — this toolset is bash and runs in WSL2 there, so its own probe
+  never says it.
+- **`container <name|none>`** — the bench's name as the launcher exports it
+  (`LANES_CONTAINER`: `py-bench`, `cloud-bench`, …); inside a container with no
+  export, **that container's own `hostname`**, which for Docker's default is its
+  id and is the one thing that tells two unnamed containers apart; outside every
+  container, the word `none`.
+
+They are written by **`write_event`**, the one writer every caller goes through
+— `lane-start`'s `STARTED`/`RESUMED`, the handoff's `PAUSED`, and the forced
+release below — so no boundary script carries a copy of the probe. **A value is
+read live at every write and never carried across a run**: measured
+2026-09-15T12:17Z, when a bench container on this estate was recreated with a
+new hostname and its `~/.local/bin` went with it. A container's `hostname` names
+that container for as long as it exists and names nothing afterwards.
+
+**`ENDED` and `RETIRED` carry none of them.** Amendment 11(c) keeps those two
+payload-free — edit 1 of six, `R-A11-15` — and a verb that RELEASES a binding
+has no binding to describe. (Amendment 18's Adoption list names them in passing;
+the RULE, clause (a), names `STARTED`, `RESUMED` and `PAUSED`, and the rule
+governs.)
+
+**A line written before this amendment carries none of the three and stays
+valid**: readers treat its binding as *the window on the row's workstation*,
+which is what they read before. Nothing is backfilled.
+
+**"None of the three" means all three, not `host` alone.** The writer drops an
+offending sub-field on its own and keeps the line, so a line carrying a
+`container` and an `os` and no `host` is a MODERN line that lost one field — and
+reading it as pre-amendment would ignore the container it does carry. All three
+absent is the only shape that is really from before this clause; anything less
+is matched on host **and** container like every other modern line.
+
+### What the launcher must export
+
+`opensoft/workBenches#77` — `claude-profile` and the bench shells export
+`LANES_HOST`, `LANES_OS` and `LANES_CONTAINER` into **every session and every
+container they start**, beside the `LANES_WORKSTATION` they already export. The
+per-host act is nothing more than that export; this toolset only ever READS
+them, exactly as it reads `LANES_WORKSTATION`, and its fallbacks above are what
+answer until the export arrives.
+
+### The binding, and who may pronounce it dead
+
+A lane's **binding** is the `host`, `container` and `window` of its last
+lane-kind line that is `STARTED` or `RESUMED` **with no `PAUSED`, `ENDED` or
+`RETIRED` after it**. A lane whose last lane-kind line is one of those three, or
+which has none, is **FREE**.
+
+```sh
+lanes-edit.sh binding <lane>
+# <host> <container> <window> <utc> <session> <os> <here|elsewhere> <live|gone|unknown>
+# 0 bound · 8 free · 1 the log could not be read · 64 usage
+```
+
+**Liveness is pronounced only from INSIDE the binding's own host and container**,
+where the pid namespace is the record's. From anywhere else a binding is
+**UNKNOWN, never dead**, whatever `kill -0` says — that is the seventh column.
+
+A **modern** record is matched on the machine's own hostname AND the container;
+the Rule 10 workstation name is accepted as the host only for a **pre-amendment**
+line, which has nothing else to be matched on. Clause (a)'s own fallback still
+works through that without a second rule: a writer inside a container with no
+`$LANES_HOST` writes the workstation name into `host`, and a reader in that same
+container computes the same name the same way.
+
+That column is also what the pick reads. `lane_groups` asks it **before** the
+state, so a row that reads `LIVE` because a live session record here names one
+of its ids — the records are shared between containers, and the pid that record
+names is in another namespace — is still filed **BOUND ELSEWHERE** when its
+binding is another place's. The act there is clause (c)'s request; and because
+watching a lane and taking it are two acts of which only the second is the
+collision, that branch also names the attach filled in wherever the window is
+live on this tmux server. A **parked** lane of another container is untouched by
+all of it: column 13 carries the locality of a binding that STANDS, and parking
+IS the handoff.
+
+**The one exception is the window**, and it is the eighth column. One host's
+launcher mounts ONE tmux socket into every container it starts, so where the
+asker and the binding share a tmux server and the binding's window **no longer
+exists there**, the binding is **DEAD** — the pane a session must live in is
+gone. The window is matched by Amendment 11(h)'s agreement rule, the `<@id>`
+TOGETHER with its `<session>`, because tmux reuses ids once a window is gone.
+Amendment 6(d)'s retire act and openRepoTools#30's takeover path apply to that
+case as they stand. A window on another **host** is `unknown` and never `gone`:
+an id from another machine resolving here would be a coincidence.
+
+### The second place asks
+
+`lane-start <repo> <n>` and `lane <name>` run from a place that is not the
+binding — a different `host`, `container` or `window` — **REFUSE to bind**.
+Where stdin is a terminal they first ask, naming the binding:
+
+```text
+lane openRepoTools-3 is bound to window cloudsess:4 @62 in container cloud-bench
+on host eagle (session d1ac715c-…, last line 2026-09-15T12:39:07Z); this tmux
+server says that window is live.
+ask it to hand off, then bind here? [y/N]
+```
+
+A `y`, or the flag **`--request-handoff`** from a caller with no terminal (an
+agent's stdin is not one, and the refusal names the flag), is **the request**:
+
+```sh
+lanes-edit.sh request-handoff <lane> [--wait <s>] [--session <uuid>] [--no-wait]
+lanes-edit.sh request-handoff <lane> --force "<why>"
+# 0 the lane is free — bind it · 2 the wait ended empty, or refused
+# 8 the lane was already free · 1 a read failed · 64 usage
+```
+
+In the clause's own order, and the order is load-bearing:
+
+1. **The line is written and PUSHED first**, so the bound session can read it
+   from anywhere:
+   `HANDOFF-REQUESTED — lane <l>, session <requester uuid>@<ws>, <UTC>, lane:<l> → by host <h>; container <c>; window <w>; wait <n>s`.
+   `HANDOFF-REQUESTED` is a lane-kind verb that **changes no state**: every
+   last-line reader skips it, and `lane-last` after a request still answers
+   `STARTED`.
+2. **Then, and only where the bound pane is on THIS tmux server**, the requester
+   types `/handoff --exit requested by <uuid>@<host>/<container>` into it —
+   Amendment 12's M1, the one mechanism a running session has, and only while
+   that pane's current command is `claude`. It is an optimisation of the
+   same-host case and never the request: a session that never reads it answers
+   at its hook's next read of the pushed line.
+3. **Then it waits** — `--wait <s>`, default **300** — polling the published log
+   every fifteen seconds (`$LANES_POLL_SECONDS` is the test seam) for a
+   `PAUSED`, `ENDED` or `RETIRED` newer than the request. When one arrives the
+   lane is free and the requester binds as it would have.
+
+The **session field is the requester's own transcript uuid** and Amendment 7(b)
+admits nothing else there. Where none is knowable — a bare shell with no
+`$CLAUDE_CODE_SESSION_ID` and no live record for its window — the request is
+**refused** and names `--session <uuid>`, rather than writing the literal
+`unknown` into a log no later line can correct.
+
+### The bound session answers at its own prompt
+
+The prompt guard (Amendment 12) makes two more reads of the lane's own log:
+
+- **(d)** a `HANDOFF-REQUESTED` newer than this session's binding and not yet
+  answered → it **refuses that one prompt**, names who asked and from where, and
+  types `/handoff --exit requested by …` into its own pane. The handoff is
+  Amendment 17(a)'s, unchanged in its steps, and under `--exit` the session
+  **ENDS** — a handoff to another place is a handoff and not a restart. Nothing
+  the person typed is lost: the refused prompt is theirs to type again in the
+  new place.
+- **(e)** a `PAUSED` newer than the binding that **this session did not write**
+  → it refuses **every prompt from then on**, naming the line and who forced it,
+  until the person there hands off or ends the session.
+
+**A working session is never interrupted** (clause (f)): no `Escape`, no signal
+to the process, no `respawn-pane` from a requester. A hook fires at a prompt
+boundary; a session inside a long turn answers when that turn ends.
+
+### The wait ends with nothing — refuse, and only a word forces
+
+A wait that ends with no release is a **refusal, exit 2**, printing the facts a
+person needs: the binding (host, container, window, the line and its UTC), the
+request and its UTC, whether the pane was reachable and typed into, and the one
+word that overrides.
+
+**`--force` is a second invocation, never automatic**, and it takes a WHY. It
+writes
+
+```text
+PAUSED — lane <l>, session <requester uuid>@<ws>, <UTC>, lane:<l> → on behalf of <bound uuid>; forced by <uuid>@<host>/<container>; why <why>; host …; os …; container …
+```
+
+— the **writer's own session in the session field**, so it is not impersonation
+(the retired-lane release of 2026-09-13, openRepoTools#30, is the precedent) —
+and then binds. The why is written as a NAMED sub-field, `why <text>`, which
+clause (e) does not spell and which the log needs: every reader here matches a
+sub-field by the word it OPENS with, so a why beginning `host is unreachable`
+would be read as that line's `host`, refused by the writer's own check, and the
+person would be told about a field they did not write. The line's own three
+separators — `, `, `; `, ` — ` — are folded to a middle dot inside it rather
+than refused, because the person typed a sentence and not a grammar. The bound session, if it is alive after all, reads that line at
+its next prompt and stops, loudly. **Two places never both write a lane in
+silence.**
+
+### A live lane's one act is the attach
+
+A lane that is LIVE is never started a second time — clause (h) is one live
+process per transcript, and a `lane-start` or a `pclaude` on a running lane is
+exactly the second one. So `lanes` prints the act for it, filled in:
+
+```text
+openRepoTools-3            LIVE     Eagle      team-05c     bindsess:0 @61
+                           attach: tmux switch-client -t bindsess:@61   (it is LIVE — never a second lane-start on a running lane)
+```
+
+`tmux switch-client` inside tmux, `tmux attach` outside it. The target names the
+session **and** the window, because `attach -t <session>` alone lands on
+whatever that session has since made current — another lane. The choice between
+the two is made in the READ (`lanes_rows`, column 10), so `lanes` and `lane`
+cannot come to offer different acts for one row.
+
+### What `workstation` prints now
+
+```sh
+lanes-edit.sh workstation
+# <workstation> <source> <host> <source> <os> <source> <container> <source>
+```
+
+Eight tab-separated fields; the first two are unchanged, which is the contract
+`lanes`, `lane` and `lane-handoff` already read with `cut -f1`/`cut -f2`. Each
+source is `seam` (the launcher exported it), `hostname` (probed), `workstation`
+(a container with no export, writing the Rule 10 name for its host), `kernel`
+(the `uname` / `/proc/version` probe) or `outside` (no container).
 
 ## The name guard and the lock (Amendment 12)
 

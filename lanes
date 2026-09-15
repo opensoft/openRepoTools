@@ -98,7 +98,9 @@ Inside a lane checkout: THAT REPOSITORY's lanes, ending with the next free
 position and the exact `lane-start <repo> <n>` that takes it. Outside one: every
 lane the register and the lane logs know. Newest activity first: name, state,
 workstation, profile, tmux window, last transcript uuid, directory, held objects
-and age — and for a PAUSED lane, the exact command that restarts it.
+and age — and the ONE act for it: for a PAUSED lane the exact command that binds
+it, and for a LIVE one the exact `tmux` that attaches to it, because a lane that
+is running is never started a second time.
 
   --fetch          refresh from origin first. Without it the read is LOCAL and
                    the foot of the listing says how old this checkout's answer
@@ -378,7 +380,10 @@ printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
 	LANE STATE WHERE PROFILE WINDOW "LAST TRANSCRIPT" AGE DIRECTORY
 n=0
 defects=0
-while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_restart r_home r_fk; do
+# THE LAST NAME TAKES EVERY REMAINING FIELD, so `r_loc` — Amendment 18(b)'s
+# column 13 — is named here even though this listing does not render it: without
+# it column 13 arrives glued to the fork COUNT, and `0<TAB>here` is not a count.
+while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_restart r_home r_fk r_loc; do
 	[ -n "${r_lane:-}" ] || continue
 	printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
 		"$r_lane" "$r_state" "$r_ws" "$r_pf" "$r_win" "$r_sid" "$r_age" "$r_dir"
@@ -397,6 +402,14 @@ while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_
 	case "${r_restart:-none}" in
 	none | '') : ;;
 	lane\ *) printf '%-26s bind it: %s\n' "" "$r_restart" ;;
+	# A LIVE LANE'S ONE ACT IS THE ATTACH AND NEVER A SECOND PROCESS (Amendment
+	# 18 clause (i), on the question of 2026-09-14T13:47Z). The read chose
+	# between `switch-client` and `attach` — it knows whether this process is
+	# inside tmux — and filled the target in; this renderer says which kind of
+	# act it is, because "bind it" over a `tmux attach` would describe a binding
+	# that is not being made: the session is already running and this only puts
+	# a terminal in front of it.
+	tmux\ *) printf '%-26s attach: %s   (it is LIVE — never a second lane-start on a running lane)\n' "" "$r_restart" ;;
 	*) printf '%-26s bind it: %s   (no profile recorded yet; it is written at this lane next start or swap)\n' "" "$r_restart" ;;
 	esac
 	case "${r_fk:-0}" in
