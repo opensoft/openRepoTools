@@ -49,12 +49,38 @@ SHIPPED_BASH = ["openRepoTools", "park", "resume", "status", "restart", "lanes"]
 #: own refusal and release the lock rather than exiting where it stands.
 LANE_BASH = ["lanes-edit.sh", "lane-start", "lane-end", "link-estates"]
 
+#: `lane-handoff`, under lane-collision-protocol Amendment 17(a) — *"the act
+#: Amendment 8(a) calls the swap is the HANDOFF: `lane-handoff` on `PATH`
+#: (placed by `openRepoTools --install`) from a shell"*. It is shipped bash and
+#: `--install` places it, so it takes the shebang, the executable bit, the LF
+#: index, the bash-3.2 parse and the flag-spelling rule with the lane helpers.
+#:
+#: IT IS IN NEITHER LIST ABOVE, and each of them states its own reason. Not
+#: `SHIPPED_BASH`, because it does not `set -e`: `R-A11-11` is that a swap is
+#: never left unwritten, so a read that fails part-way through must reach this
+#: command's own refusal — or drop one sub-field and carry on — rather than
+#: exiting where it stands, which is `lanes-edit.sh`'s exception one file over.
+#: Not `LANE_BASH`, because it carries no copy of Amendment 9(a)'s workspace
+#: resolver: it resolves no workspace, and the one path it needs comes back
+#: from `lanes-edit.sh workspace-root`. That is the same "one implementation,
+#: several callers" rule `restart` and `lanes` are out of `LANE_BASH` for.
+HELPER_BASH = ["lane-handoff"]
+
 #: Every bash file this repository ships, for the claims that are about BASH
 #: and not about a command's failure discipline: the parse gate and the LF
 #: index. The moved suite is 196 KB of it and is in this list for the reason
 #: Amendment 9's act-3 obligation 4 gives — the macOS job parses it with bash
 #: 3.2, where a `${x,,}` that nobody ran is still a syntax error.
-ALL_BASH = SHIPPED_BASH + LANE_BASH + ["tests/test_lane_helpers.sh"]
+#:
+#: `tests/run.sh` (opensoft/openRepoTools#51) is bash for the same reason and
+#: is held to the same parse: it is the wrapper that takes the suite's lock,
+#: its `mkdir` fallback is there BECAUSE macOS has no `flock`, and a wrapper
+#: that does not parse on the platform its fallback exists for is no wrapper.
+#: It is in no list above — `--install` does not place it and nobody has it on
+#: PATH — so the mode and discipline rules those lists carry are not asked of
+#: it; this one is.
+ALL_BASH = (SHIPPED_BASH + LANE_BASH + HELPER_BASH
+            + ["tests/test_lane_helpers.sh", "tests/run.sh"])
 
 #: THE COMMANDS THAT CARRY THE SHARED ESTATE RESOLVER, byte for byte. Every
 #: estate command is one; the installer is not, it finds no estate.
@@ -81,15 +107,16 @@ def test_shipped_bash_is_executable_and_fails_loudly(name):
         "carry on with an unset variable")
 
 
-@pytest.mark.parametrize("name", LANE_BASH)
+@pytest.mark.parametrize("name", LANE_BASH + HELPER_BASH)
 def test_the_lane_helpers_are_executable_and_declare_their_discipline(name):
     """The lane helpers, held to what they are rather than to what the estate
     commands are (Amendment 9(b)).
 
     Same shebang and same executable bit — `--install` stamps 755 on everything
     it places, and a copy that is not executable is not a command. `set -u` is
-    the floor all four share; `set -e` is NOT required of `lanes-edit.sh`,
-    whose whole job is to hold a lock, reach its own refusal and release it.
+    the floor all five share; `set -e` is NOT required of `lanes-edit.sh`,
+    whose whole job is to hold a lock, reach its own refusal and release it,
+    nor of `lane-handoff`, whose whole job is to leave no swap unwritten.
     """
     script = REPO / name
     assert script.is_file()
@@ -122,6 +149,90 @@ def test_shipped_bash_parses_under_bash(name):
     proc = subprocess.run(["bash", "-n", str(REPO / name)],
                           capture_output=True, text=True, check=False)
     assert proc.returncode == 0, proc.stderr
+
+
+def test_the_macos_job_parses_every_bash_file_this_repository_ships():
+    """THE macOS PARSE STEP IS A HAND-WRITTEN LIST, AND A HAND-WRITTEN LIST IS
+    A THING SOMEBODY FORGETS.
+
+    That step is the only place the README's claim — that Apple's stock
+    `/bin/bash`, 3.2, is enough for every bash file here — is actually asked of
+    bash 3.2. The test above runs on whatever `bash` the runner has, which on
+    the Linux jobs is 5.x, and `mapfile`, `${x,,}` and `declare -A` all parse
+    there. One command per file, because `bash -n a b` parses `a` and hands `b`
+    to it as `$1`, so a file appended to somebody else's line is never read at
+    all — which is why this is a per-name check and not a substring search for
+    the step.
+
+    Held here rather than trusted, because the omission has no symptom: the job
+    goes green, and what it proves is quietly one file smaller than it says.
+    `lane-handoff` arrived under Amendment 17(a) as the twelfth placed file and
+    was not in that list; nothing anywhere said so.
+    """
+    workflow = (REPO / ".github" / "workflows" / "tests.yml").read_text(
+        encoding="utf-8")
+    parsed = {line.strip()[len("/bin/bash -n "):]
+              for line in workflow.splitlines()
+              if line.strip().startswith("/bin/bash -n ")}
+    assert parsed, "the macOS job no longer runs `/bin/bash -n` at all"
+    missing = [name for name in ALL_BASH if name not in parsed]
+    assert not missing, (
+        "the macOS job's `/bin/bash -n` step does not parse every bash file "
+        "this repository ships, so the bash-3.2 claim is untested for:\n  "
+        + "\n  ".join(missing))
+
+
+#: THE FILES `--install` PLACES, READ OUT OF THE INSTALLER'S OWN LIST rather
+#: than restated here. `openRepoTools` declares them once — *"One list, so the
+#: installer, the fetch and the report cannot disagree"* — and deriving from it
+#: is what makes the rule below hold for the NEXT file this repository ships
+#: without anyone remembering to come here.
+def _installables() -> list[str]:
+    text = (REPO / "openRepoTools").read_text(encoding="utf-8")
+    match = re.search(r"^INSTALLABLES=\(([^)]*)\)$", text, re.MULTILINE)
+    assert match, "openRepoTools no longer declares `INSTALLABLES=( … )`"
+    names = match.group(1).split()
+    assert len(names) > 1, "INSTALLABLES parsed as one entry; the shape moved"
+    return names
+
+
+def test_every_placed_file_carries_in_the_index_the_mode_it_is_placed_with():
+    """A COMMAND THAT IS NOT EXECUTABLE IS NOT A COMMAND, AND THE INDEX IS
+    WHERE A FRESH CLONE READS THAT FROM.
+
+    `--install` stamps 755 on everything it places, so an installed copy runs
+    whatever the checkout says. What does NOT is the checkout itself: `./park`
+    from a clone, and the `cp -p` the lane suite copies `lane-handoff` with,
+    both take the mode git recorded.
+
+    WHAT THIS TEST IS DERIVED FROM, AND WHY IT IS ASKED OF THE INDEX. The first
+    `lane-handoff` commit under Amendment 17(a) landed 100644 and the lane
+    suite's own `chmod` hid it; `e25b54c` made it 100755 and added this row, so
+    the mode is now git's and the fixture reads it back rather than making it.
+    The two tests above are PER-NAME, and a name nobody added to either of them
+    is a name neither one asks about — which is the whole reason this one reads
+    the installer's own `INSTALLABLES` list instead of a list restated here.
+    (Any finding that says `lane-handoff` is 100644 is reading this paragraph
+    and not the index: `git ls-files -s lane-handoff` is the answer.)
+
+    The data file is the exception and is named as one: `repos.tsv` is read,
+    never run.
+    """
+    names = _installables()
+    proc = subprocess.run(["git", "ls-files", "-s", "--", *names],
+                          cwd=str(REPO), capture_output=True, text=True,
+                          check=True)
+    modes = {row.split("\t", 1)[1]: row.split(" ", 1)[0]
+             for row in proc.stdout.splitlines()}
+    assert sorted(modes) == sorted(names), (
+        f"`--install` names a file git does not track: {sorted(set(names) - set(modes))}")
+    for name in names:
+        want = "100644" if name.endswith(".tsv") else "100755"
+        assert modes[name] == want, (
+            f"{name} is {modes[name]} in the index and `--install` places it "
+            f"as {want}. For a command that is `git update-index --chmod=+x "
+            f"{name}`; a file that is DATA rather than a command wants the "
+            f"rule above it widened, not this one loosened")
 
 
 def test_the_estate_commands_carry_the_same_estate_resolver_byte_for_byte():
@@ -825,8 +936,8 @@ def test_the_documents_say_what_status_is_and_is_not():
         text = (REPO / name).read_text(encoding="utf-8")
         assert "`status`" in text, f"{name} never names the fourth command"
     readme = (REPO / "README.md").read_text(encoding="utf-8")
-    assert "ELEVEN files" in readme, "README.md does not count the eleven files"
-    assert "11 of 11 placed" in readme, (
+    assert "TWELVE files" in readme, "README.md does not count the twelve files"
+    assert "12 of 12 placed" in readme, (
         "README.md does not show the count line `--install` actually prints")
     status = (REPO / "status").read_text(encoding="utf-8")
     assert "--no-optional-locks" in status, (
@@ -1407,6 +1518,35 @@ def test_agents_md_is_short_enough_to_be_read():
     only way either of them is ever allowed to be right, and the entry
     above stays because its ten lines are still the ten in rule 4.
 
+    224 -> 243 on 2026-09-14, for ONE SUITE AT A TIME WHERE LANES SHARE A
+    WORKSTATION, and every one of the nineteen is a thing an agent MEETS on
+    this repository rather than prose about it. Measured that day: six lanes
+    build in sibling worktrees of this checkout, and FOUR SUITES RAN AT ONCE
+    under the guard they had all been given — `pgrep -af 'python3 -m pytest' |
+    grep -v pgrep >/dev/null`, which never waits where `grep` is the harness's
+    own shell function whose status is 1 when its stdout is `/dev/null`, and
+    whose unanchored pattern also matches the guard's own command line. The
+    lines are the working form (an anchored `pgrep -fc`, its pattern split so
+    it cannot match itself, and a `flock` so the waiters cannot all start
+    together), the two defects it exists for, and the sentence that makes it
+    usable at all — every lane on the workstation must name the SAME lock
+    file. An assistant told only "run pytest" starts the fifth suite, and this
+    run is minutes of bash and hundreds of `git` processes.
+
+    243 -> 255 the same day, when those nineteen lines gained a COMMAND to
+    point at (opensoft/openRepoTools#51). Prose that shows a guard is prose
+    somebody retypes, and the four suites that ran at once had each retyped
+    it; `tests/run.sh` is the guard written ONCE, and the twelve lines are the
+    shape of naming it: the wrapper as the first thing the testing section
+    says to run, what it does (waits, takes
+    `${TMPDIR:-/tmp}/openrepotools-pytest.lock`, `flock` or a `mkdir` lock on
+    macOS, waits again inside it), the sentence that makes a lock a lock at
+    all -- every lane on one workstation names the SAME file -- and the broken
+    guard kept as the thing being corrected, because an assistant that has
+    seen the working one still meets the old one in older briefs. The runnable
+    form stays beneath it for a person with no checkout of this repository in
+    front of them.
+
     224 -> 228 on 2026-09-14, for THE ONE EXIT CODE THIS FILE NOW STATES
     WRONG (lane-collision-protocol Amendment 12, opensoft/openRepoTools#25).
     Four lines, and every one of them is behaviour rather than prose about
@@ -1422,9 +1562,25 @@ def test_agents_md_is_short_enough_to_be_read():
     sentence beneath it — "never read a number without knowing which command
     produced it" — exists to prevent, and it could not do that while the
     clause above it named the wrong number for one of them.
+
+    228 + 255 MEET AT 259 on 2026-09-15, where this branch merged `main` at
+    `2faa883`. Four of the merged file's lines are Amendment 12's exit-code
+    correction and twelve are #51's `tests/run.sh` paragraph; neither is over
+    a line the other bought, and the cap is the count of what merged rather
+    than either side's number — the rule the 224 entry states.
+
+    259 -> 265 the same day, for SIX LINES that stop this file prescribing a
+    guard its own wrapper refuses to use (Copilot rounds 7 and 8 on #47). The
+    snippet counted with `pgrep -fc`, which `tests/run.sh` deliberately does
+    not: `-c` is not in every `pgrep` this repository runs under, and the count
+    — never `pgrep`'s exit status — is what decides. A document that shows a
+    person a non-portable form of the very guard the wrapper exists to make
+    portable is worse than one that shows none, and the six lines are the
+    correction plus the sentence naming the wrapper as the canonical
+    implementation, which is what an assistant reading either should reach for.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 228, f"AGENTS.md is {len(lines)} lines; the cap is 228"
+    assert len(lines) <= 265, f"AGENTS.md is {len(lines)} lines; the cap is 265"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -1843,6 +1999,24 @@ def test_readme_is_short_enough_to_be_read():
     they wrote. Every dated entry above stays, and none of these six is over a
     line one of them bought.
 
+    428 -> 434 on 2026-09-14, for lane-collision-protocol AMENDMENT 17,
+    ratified that day, and its tooling (#36) — SIX LINES on top of the
+    twenty-six above, measured after this branch merged `main` at `b5244e2`
+    rather than either side's own number, which is the rule the 409 entry
+    states. All six are in § "Install" and every one is a fact a person MEETS:
+    the file count moved 11 -> 12 because `lane-handoff` is a word the
+    amendment puts on PATH (clause (a): *"`lane-handoff` on `PATH` (placed by
+    `openRepoTools --install`) from a shell"*), so the sentences carrying that
+    number and the `12 of 12 placed` line a person reads back off their own
+    terminal all move with it; the skill list is three rather than two and the
+    command-file list three rather than one, because the act was renamed
+    `handoff` with `lane-swap` kept as an alias naming it, and because `/ctx` is
+    `/handoff --restart`; and the artifact count is 25. The lines that earn
+    their place are the last four: a reader who types `/ctx` needs to know it
+    writes the record BEFORE it respawns the pane, and that the new session
+    comes up with the handoff's top block as its first prompt — which is the
+    whole of why the word exists. Every dated entry above stays.
+
     417 and 428 -> 436 on 2026-09-14, at the merge of this branch with `main`
     @ `b5244e2`. Each side raised this cap for its own lines and every dated
     entry above stays: Amendment 12's second hook entry bought 8 on this
@@ -1854,9 +2028,19 @@ def test_readme_is_short_enough_to_be_read():
     than either half of it. The cap is the count of WHAT MERGED and not
     either side's number, which is the rule the 2026-09-13 entry above states
     in its own words.
+
+    436 + 434 MEET AT 472 on 2026-09-15, where this branch merged `main` at
+    `2faa883` (Amendment 12's `UserPromptSubmit` name guard, its artifact
+    accounting, and #44/#53 beneath it) on top of Amendment 17's six. The
+    artifact count is TWENTY-SIX, which is what the two sides' lists come to
+    together — twelve files, three skills at two paths, three command files at
+    two paths, and the two hook entries — and it is derived in
+    `tests/test_openrepotools_command.py` rather than believed here. The cap is
+    the count of what merged, not either side's number, and every dated entry
+    on both sides stays because each still names the lines it bought.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 436, f"README.md is {len(lines)} lines; the cap is 436"
+    assert len(lines) <= 472, f"README.md is {len(lines)} lines; the cap is 472"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
@@ -2123,7 +2307,22 @@ FORK_ACT_LINE = re.compile(r"^.*(?:live FORK|live fork\(s\)).*$", re.M)
 #: The two halves of the `/lane-swap` skill that must spell the launch the same
 #: way: the `restart_cmd=` the skill EXECUTES into its printed line, and the
 #: prose three paragraphs below that explains it.
-SWAP_SKILL = "skills/lane-swap/SKILL.md"
+#: THE SKILL THAT CARRIES THE ACT, READ OUT OF THE INSTALLER'S OWN
+#: `SKILL_NAME` rather than spelled here. Amendment 17(a) renamed the act from
+#: `lane-swap` to `handoff` and left an ALIAS FILE at the old path — one that
+#: restates no step, by the rule `tests/test_install_skill_and_hook.py` holds —
+#: so a constant spelled here went on reading a file with nothing in it to
+#: check, and every assertion below passed on an emptiness. The installer
+#: declares the canonical name once; this follows it, and the next rename moves
+#: both together.
+def _canonical_skill_path() -> str:
+    text = (REPO / "openRepoTools").read_text(encoding="utf-8")
+    match = re.search(r'^SKILL_NAME="([A-Za-z0-9._-]+)"$', text, re.MULTILINE)
+    assert match, "openRepoTools no longer declares `SKILL_NAME=\"…\"`"
+    return f"skills/{match.group(1)}/SKILL.md"
+
+
+SWAP_SKILL = _canonical_skill_path()
 
 
 def test_the_swap_skill_snippet_and_its_prose_spell_the_same_command():
@@ -2503,7 +2702,7 @@ def test_no_shipped_bash_opens_a_case_inside_a_command_substitution(name):
     not' ;; esac)` against `did not` - twice, and green on every GNU runner.
 
     A `bash -n` ON A GNU RUNNER PARSES IT, which is why this is a text rule
-    rather than a parse gate: all eleven files already pass `bash -n` in CI,
+    rather than a parse gate: all twelve files already pass `bash -n` in CI,
     and the macOS job is the only place the defect exists. The fix is one line
     each time - hoist the `case` above the assertion and read the variable it
     sets - so the rule is held for every bash file this repository ships
@@ -2637,3 +2836,63 @@ def test_the_rule_6_register_scan_takes_its_alias_table_from_the_environment():
         "answers `newline in string ... at source line 1` and exits 2, and "
         "`who --landing` then reports every merge hold in the estate as "
         "`none open`")
+
+
+def test_the_suite_wrapper_takes_one_lock_and_names_it_where_agents_read_it():
+    """ONE SUITE AT A TIME WHERE LANES SHARE A WORKSTATION, and the lock has to
+    be the SAME lock in every lane or there is no lock at all
+    (opensoft/openRepoTools#51, measured 2026-09-14T20:4xZ on Eagle).
+
+    Four `python3 -m pytest tests -q` runs were live at once in four worktrees,
+    every one of them past a guard that had been copied into four briefs:
+
+        while pgrep -af 'python3 -m pytest' | grep -v pgrep >/dev/null; do sleep 20; done
+
+    It never waited. Under the harness `grep` is a shell FUNCTION, and its
+    status with stdout on `/dev/null` is 1 even where it matched — the same
+    pipeline captured into a variable returned 0 and six lines. The collision
+    is not a shared path (the suite redirects `$HOME` and `$TMPDIR`); it is
+    TIME: a suite that takes 18 minutes alone takes far longer four-wide and
+    trips every wrapper's timeout around it.
+
+    So the guard is written once, in `tests/run.sh`, and three things about it
+    are held here rather than trusted, because each has already been got wrong:
+
+      * THE LOCK PATH IS THE ESTATE'S, spelled the same in the wrapper and in
+        `AGENTS.md`. A lane that locks a different file locks nothing.
+      * THE PATTERN IS ANCHORED AND SPLIT, so it counts real runs and cannot
+        match the guard's own command line.
+      * `AGENTS.md` NAMES THE WRAPPER as the way to run the suite, because a
+        document that only shows `python3 -m pytest` is the document all four
+        of those runs were following.
+    """
+    wrapper = REPO / "tests" / "run.sh"
+    assert wrapper.is_file(), "tests/run.sh is the way this suite is run"
+    text = wrapper.read_text(encoding="utf-8")
+    agents = (REPO / "AGENTS.md").read_text(encoding="utf-8")
+
+    lock = '${TMPDIR:-/tmp}/openrepotools-pytest.lock'
+    assert lock in text, f"the wrapper must take {lock}"
+    assert lock in agents, (
+        f"AGENTS.md must name {lock}: every lane on one workstation locks the "
+        "same file or there is no lock")
+    assert "tests/run.sh" in agents, (
+        "AGENTS.md must name tests/run.sh as the way to run the suite")
+
+    assert "'^python3 -m pyt'" in text, (
+        "the pgrep pattern must be anchored and split so it cannot match its "
+        "own command line")
+    # THE BROKEN FORM MAY BE QUOTED AND MUST NOT BE RUN. It is in the
+    # wrapper's own head as the defect being corrected, which is worth
+    # keeping: an assistant that has met the working guard still meets the
+    # old one in older briefs. So the rule is asked of the CODE lines only.
+    code = [ln for ln in text.splitlines()
+            if ln.strip() and not ln.lstrip().startswith("#")]
+    assert not any("| grep -v pgrep" in ln for ln in code), (
+        "that guard never waits where `grep` is a shell function whose status "
+        "is 1 with stdout on /dev/null — which is the harness every lane runs in")
+
+    assert "flock" in text and "mkdir " in text, (
+        "macOS ships no `flock`, so the wrapper needs the `mkdir` lock as its "
+        "fallback — that platform is the one the fallback exists for")
+    assert "python3 -m pytest tests -q" in text
