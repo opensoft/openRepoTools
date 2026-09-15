@@ -1772,12 +1772,18 @@ word that overrides.
 writes
 
 ```text
-PAUSED — lane <l>, session <requester uuid>@<ws>, <UTC>, lane:<l> → on behalf of <bound uuid>; forced by <uuid>@<host>/<container>; <why>; host …; os …; container …
+PAUSED — lane <l>, session <requester uuid>@<ws>, <UTC>, lane:<l> → on behalf of <bound uuid>; forced by <uuid>@<host>/<container>; why <why>; host …; os …; container …
 ```
 
 — the **writer's own session in the session field**, so it is not impersonation
 (the retired-lane release of 2026-09-13, openRepoTools#30, is the precedent) —
-and then binds. The bound session, if it is alive after all, reads that line at
+and then binds. The why is written as a NAMED sub-field, `why <text>`, which
+clause (e) does not spell and which the log needs: every reader here matches a
+sub-field by the word it OPENS with, so a why beginning `host is unreachable`
+would be read as that line's `host`, refused by the writer's own check, and the
+person would be told about a field they did not write. The line's own three
+separators — `, `, `; `, ` — ` — are folded to a middle dot inside it rather
+than refused, because the person typed a sentence and not a grammar. The bound session, if it is alive after all, reads that line at
 its next prompt and stops, loudly. **Two places never both write a lane in
 silence.**
 

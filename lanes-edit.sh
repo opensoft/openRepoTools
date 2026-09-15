@@ -8336,11 +8336,24 @@ EOF
     $SELF request-handoff $lane --force \"<why>\"" 2
       rh_uuid="$(requester_uuid "$rh_sess")" || rh_uuid=""
       [ -n "$rh_uuid" ] || die "--force writes a \`PAUSED\` in THE REQUESTER'S OWN session field — that is what makes it a release on behalf of the bound session rather than an impersonation of it (Amendment 18(e); the 2026-09-13 retired-lane release, opensoft/openRepoTools#30, is the precedent) — and no transcript uuid is knowable here. Name it: --session <uuid>, or run this from inside the session that wants the lane. Nothing was written." 2
-      # THE `, ` IS THE LINE'S OWN FIELD SEPARATOR AND THE WHY IS A PAYLOAD
-      # SUB-FIELD, so it is folded to `; ` here rather than refused by the
-      # writer: the person typed a sentence, not a grammar.
-      rh_why_clean="$(printf '%s' "$rh_why" | sed 's/ — /; /g; s/, /; /g')"
-      rh_fpay="on behalf of ${rh_bsess:-unknown}; forced by $rh_uuid@$LANES_HOST_NAME/$LANES_CONTAINER_NAME; $rh_why_clean"
+      # THE PERSON TYPED A SENTENCE, NOT A GRAMMAR — so the three separators
+      # this line is built out of are folded rather than refused: `, ` divides
+      # an event line's four FIELDS, ` — ` divides the verb from the fields and
+      # the fields from the free text, and `; ` divides one SUB-FIELD from the
+      # next. A middle dot is none of them, and it is the separator this
+      # estate's own register rows already use.
+      #
+      # AND THE WHY IS WRITTEN AS A NAMED SUB-FIELD, `why <text>`, which clause
+      # (e) does not spell and which the log needs. The clause's `; <why the
+      # person gave>` is a sub-field with no name, and every reader here matches
+      # a sub-field by the word it OPENS with: a why beginning `host is
+      # unreachable` would be read as this line's `host`, refused by the
+      # writer's own check, and the person would be told about a field they did
+      # not write. Named, it can collide with nothing, the words are still
+      # exactly the ones they typed, and `why` is a name no reader in this file
+      # parses.
+      rh_why_clean="$(printf '%s' "$rh_why" | sed 's/ — / · /g; s/, / · /g; s/; / · /g')"
+      rh_fpay="on behalf of ${rh_bsess:-unknown}; forced by $rh_uuid@$LANES_HOST_NAME/$LANES_CONTAINER_NAME; why $rh_why_clean"
       if [ "$rh_dry" = 1 ]; then
         note "PLAN: $SELF log PAUSED lane:$lane → \"$rh_fpay\"   (as session $rh_uuid)"
         note "PLAN: then bind — the lane reads free from that line on"
@@ -9000,6 +9013,6 @@ EOF
     ;;
 
   *)
-    die "unknown subcommand '$cmd' (verify-row|append-row-status|replace-in-row|append-session-id|append-line|add-row|commit|log|claim|release|who|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|canon-lane|resolve-home)" 2
+    die "unknown subcommand '$cmd' (verify-row|append-row-status|replace-in-row|append-session-id|append-line|add-row|commit|log|claim|release|who|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|canon-lane|resolve-home)" 2
     ;;
 esac

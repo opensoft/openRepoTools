@@ -648,17 +648,6 @@ while [ $# -gt 0 ]; do
     # empty value, for the reason `--dir` states above.
     --agent)     agent_flag="${2-}"; [ -n "$agent_flag" ] || die "--agent needs a name" 2; shift 2 ;;
     --agent=*)   agent_flag="${1#--agent=}"; [ -n "$agent_flag" ] || die "--agent needs a name" 2; shift ;;
-    # THE TWO SPELLINGS OF ONE FLAG GIVE ONE ANSWER, and these two did not
-    # (#26, the review of `c3ebcfe`, `lane-start:707`). `--dir ""` refuses;
-    # `--dir=` set the variable to nothing and fell through as if the operator
-    # had not named a directory at all — so the rungs below it ran, and one of
-    # them is `$PROJECTS_ROOT/<repo>`: `lane-start --dir= <repo> <n>` started in
-    # a checkout the operator had not asked for instead of refusing a path they
-    # had not given. `restart:151` — the same flag, on the sibling command —
-    # has carried the guard on both spellings all along, which is what makes
-    # this a divergence rather than a decision. Held for every flag in this
-    # estate by `test_the_two_spellings_of_a_flag_refuse_the_same_empty_value`,
-    # derived from the arms themselves rather than from a list.
     # AMENDMENT 18(c) AND (e) — THE SECOND PLACE'S THREE WORDS, and each of
     # them is an ANSWER to a question this command would otherwise ask. A
     # caller with no terminal on stdin cannot be asked (an agent's is not one),
@@ -671,6 +660,17 @@ while [ $# -gt 0 ]; do
     --force=*)   force_why="${1#--force=}"; [ -n "$force_why" ] || die "--force takes the WHY you are taking a lane another place is bound to (Amendment 18(e))" 2; shift ;;
     --wait)      handoff_wait="${2-}"; [ -n "$handoff_wait" ] || die "--wait needs a number of seconds" 2; shift 2 ;;
     --wait=*)    handoff_wait="${1#--wait=}"; [ -n "$handoff_wait" ] || die "--wait needs a number of seconds" 2; shift ;;
+    # THE TWO SPELLINGS OF ONE FLAG GIVE ONE ANSWER, and these two did not
+    # (#26, the review of `c3ebcfe`, `lane-start:707`). `--dir ""` refuses;
+    # `--dir=` set the variable to nothing and fell through as if the operator
+    # had not named a directory at all — so the rungs below it ran, and one of
+    # them is `$PROJECTS_ROOT/<repo>`: `lane-start --dir= <repo> <n>` started in
+    # a checkout the operator had not asked for instead of refusing a path they
+    # had not given. `restart:151` — the same flag, on the sibling command —
+    # has carried the guard on both spellings all along, which is what makes
+    # this a divergence rather than a decision. Held for every flag in this
+    # estate by `test_the_two_spellings_of_a_flag_refuse_the_same_empty_value`,
+    # derived from the arms themselves rather than from a list.
     --dir)       dir_override="${2-}"; [ -n "$dir_override" ] || die "--dir needs a path" 2; shift 2 ;;
     --dir=*)     dir_override="${1#--dir=}"; [ -n "$dir_override" ] || die "--dir needs a path" 2; shift ;;
     --estate)    estate="${2-}"; [ -n "$estate" ] || die "--estate needs a name" 2; shift 2 ;;

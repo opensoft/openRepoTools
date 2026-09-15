@@ -23,20 +23,17 @@ amendments — and `docs/README-lanes.md` is its manual. **The code is here; the
 data is not.**
 
 **A LANE HAS ONE BINDING** (Amendment 18, in force 2026-09-14): the `host`,
-`container` and `window` of its last `STARTED`/`RESUMED`, written into the
-record beside Amendment 11(c)'s `dir`/`profile`/`window` and read back by
+`container` and `window` of its last `STARTED`/`RESUMED`, read back by
 `lanes-edit.sh binding <lane>`. **Liveness is pronounced only from inside that
 binding's own host and container** — a pid does not cross a pid namespace, so
 from another container on the same machine a binding is UNKNOWN and never dead,
-whatever `kill -0` says; the one exception is a window that is gone from a tmux
-server the two share. A second place therefore ASKS
-(`lanes-edit.sh request-handoff <lane>`, or `--request-handoff` on `lane-start`
-and `lane`) and waits, and only `--force` — a second invocation, never automatic
-— releases a binding on its holder's behalf. The three facts come from
-`LANES_HOST`, `LANES_OS` and `LANES_CONTAINER`, which the workBenches launcher
-exports beside `LANES_WORKSTATION`; this toolset READS them and never writes
-them, and its fallbacks (`hostname -s`, the kernel probe, the container's own
-`hostname`) are what answer until that export reaches a workstation. Every one of the four finds the register, the logs and the
+whatever `kill -0` says; the one exception is a window gone from a tmux server
+the two share. A second place ASKS (`--request-handoff`, or `lanes-edit.sh
+request-handoff`) and waits; only `--force`, a second invocation and never
+automatic, releases a binding on its holder's behalf. `LANES_HOST`, `LANES_OS`
+and `LANES_CONTAINER` are the launcher's to export beside `LANES_WORKSTATION`.
+
+Every one of the four finds the register, the logs and the
 handoffs through `$AGENT_PROTOCOL_ROOT/workspace.yaml`'s `repository:` and
 `path:`, never from its own location on disk, and refuses with exit 1 naming
 `openRepoTools wip init` where that file does not answer — with ONE exception,

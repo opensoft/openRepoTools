@@ -127,6 +127,7 @@ lc() { printf '%s' "${1-}" | tr 'A-Z' 'a-z'; }
 usage() {
 	cat <<'USAGE'
 lane [<name> [<profile>]] [--all] [--dir <path>] [--switch] [--dry-run]
+     [--request-handoff | --force <why>] [--wait <s>]
 
   lane             the lanes of the checkout you are in, numbered, and ONE
                    question: which? Available lanes first (parked, or a binding
