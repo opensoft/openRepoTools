@@ -63,7 +63,13 @@
 #                           in, so this act TERMs the pair (the bg-pty-host
 #                           parent and its child, never the lane's own live
 #                           session, which it refuses to touch) and reports
-#                           the pids it signalled;
+#                           the pids it signalled. Named by the PARENT or
+#                           CHILD PID and never by the transcript uuid
+#                           (Copilot round 9, PR #61) — the same reason a
+#                           DUPLICATE below never is: the uuid IS the row's
+#                           own and cannot distinguish two process-table
+#                           holders (or a duplicate beside a not-yet-bound
+#                           fork) that carry the identical id;
 #                         * a DUPLICATE — any other live process carrying the
 #                           row's own id, found by SESSION RECORD
 #                           (opensoft/openRepoTools#39, Amendment 12/#52),
@@ -751,11 +757,20 @@ LIVE
     # emptied `$dh_uuid`). The unit separator is not IFS whitespace, so it
     # never collapses — the same reason `live-holder`'s own line below already
     # reads with it.
+    # PID ONLY, NEVER THE TRANSCRIPT UUID (Copilot round 9, PR #61): a
+    # duplicate holder is documented as PID-addressed, and matching `dr_uuid`
+    # too made the row's own transcript id a valid target — which cannot
+    # DISTINGUISH between multiple process-table holders of one transcript
+    # (two separate stray `bg-pty-host` duplicates, or a duplicate beside a
+    # not-yet-bound fork under the same id, all carry the identical uuid),
+    # so a uuid match silently picked whichever row this loop reached first.
+    # The uuid form stays reserved for a title-based FORK above, whose id is
+    # one the row does NOT record and so cannot repeat across rows the way a
+    # duplicate holder's row-recorded id can.
     while IFS=$'\037' read -r dr_parent dr_child dr_uuid; do
       [ -n "${dr_parent:-}" ] || continue
       if [ "$dr_parent" = "$retire_target" ] \
-         || { [ -n "$dr_child" ] && [ "$dr_child" = "$retire_target" ]; } \
-         || [ "$(printf '%s' "$dr_uuid" | tr 'A-F' 'a-f')" = "$(printf '%s' "$retire_target" | tr 'A-F' 'a-f')" ]; then
+         || { [ -n "$dr_child" ] && [ "$dr_child" = "$retire_target" ]; }; then
         dh_parent="$dr_parent"; dh_child="$dr_child"; dh_uuid="$dr_uuid"
         break
       fi
@@ -934,6 +949,24 @@ DUPES
         *) die "$LANES_EDIT transcript-holders $dup_id exited $thh_rc, so whether '$retire_target' is a live duplicate of lane $LANE's own transcript could NOT be read — which is not 'it is not one'." 1 ;;
       esac
       if [ "$thh_rc" = 0 ]; then
+        # WHICH PROFILES HAVE AN INTERACTIVE HOLDER, FIRST (Copilot round 10,
+        # PR #61) — a `kind: bg` row is Amendment 8 ruling (g)'s companion
+        # ONLY beside an interactive record IN THE SAME PROFILE; a `kind: bg`
+        # row in a profile with no interactive row of its own is not anyone's
+        # proven companion and stays a candidate "other" (round 9's own fix
+        # read EVERY `kind: bg` row as a companion, which also excluded a
+        # genuine duplicate in a DIFFERENT profile — exactly `transcript_
+        # holders`' own `duplicate` case, "any record at all in ANOTHER
+        # profile's sessions/", which this PR's own repoGD fixture already
+        # exercises). Built in its own pass because a row's verdict alone
+        # cannot answer this from OUTSIDE any bound window: every row here
+        # reads `unrelated` in that case, `companion` included.
+        dup_int_profs=""
+        while IFS=$'\037' read -r ip_pid ip_kind ip_tgt ip_prof ip_where ip_verdict ip_file; do
+          [ -n "${ip_pid:-}" ] || continue
+          [ "$ip_kind" = bg ] && continue
+          case "$dup_int_profs" in *" $ip_prof "*) : ;; *) dup_int_profs="${dup_int_profs} $ip_prof " ;; esac
+        done <<<"$dup_rows"
         while IFS=$'\037' read -r dr_pid dr_kind dr_tgt dr_prof dr_where dr_verdict dr_file; do
           [ -n "${dr_pid:-}" ] || continue
           # A WINDOW THAT COULD NOT BE ASKED ABOUT IS UNKNOWN AND NOT DEAD
@@ -948,10 +981,22 @@ DUPES
           if [ "$dr_own" = 1 ] && [ "$dr_kind" != bg ]; then
             dup_own="${dup_own:+$dup_own }$dr_pid"
           fi
-          # NOT lane $LANE's OWN KNOWN LIVE PID, proved above by `live-holder`
-          # (Copilot round 8 follow-up): that pid is accounted for whatever
-          # `transcript_holders` verdicts it here, `unrelated` included.
-          if [ -z "$lh_pid" ] || [ "$dr_pid" != "$lh_pid" ]; then
+          dr_is_comp=0
+          if [ "$dr_verdict" = companion ]; then
+            dr_is_comp=1
+          elif [ "$dr_kind" = bg ]; then
+            case "$dup_int_profs" in *" $dr_prof "*) dr_is_comp=1 ;; esac
+          fi
+          # NEITHER lane $LANE's OWN KNOWN LIVE PID (proved above by
+          # `live-holder`, Copilot round 8 follow-up: that pid is accounted
+          # for whatever `transcript_holders` verdicts it here, `unrelated`
+          # included) NOR ITS HARNESS COMPANION (Copilot round 9, refined
+          # round 10: the companion test above, not `dr_kind = bg` alone —
+          # so a stranger pid against a lane with nothing wrong keeps
+          # answering 8, never a false "a duplicate exists" 2, while a
+          # `kind: bg` row in a DIFFERENT profile with no interactive row
+          # of its own still counts as one).
+          if { [ -z "$lh_pid" ] || [ "$dr_pid" != "$lh_pid" ]; } && [ "$dr_is_comp" = 0 ]; then
             dup_other=1
           fi
           if [ "$dr_pid" = "$retire_target" ]; then
@@ -965,7 +1010,21 @@ DUPES
             # session that IS the lane (Copilot round 2 on this PR). It is held
             # separately so the refusal below can say WHICH thing the pid is,
             # rather than falling through to "neither" and naming nothing.
-            if [ "$dr_verdict" = companion ]; then
+            #
+            # `$dr_is_comp` (Copilot rounds 9 AND 10, PR #61), NOT `dr_verdict`
+            # ALONE: the verdict is `companion` only when `lane-end` runs from
+            # WITHIN the lane's own bound window (the one context where
+            # `th_here_prof` is set at all) — run the ordinary way, a plain
+            # script, every row here verdicts `unrelated` instead, `companion`
+            # included, and round 9's first fix read `dr_kind = bg` alone as
+            # the fallback signal — which ALSO excluded a genuine `kind: bg`
+            # duplicate in a DIFFERENT profile (`transcript_holders`' own
+            # `duplicate` case), since a companion is proven only BESIDE an
+            # interactive holder of this id IN THE SAME PROFILE, never by
+            # kind alone. `$dr_is_comp`, computed above against every
+            # interactive row's own profile, is the one test both routings
+            # (this one and `dup_other`'s) now share.
+            if [ "$dr_is_comp" = 1 ]; then
               dup_comp="$dr_pid"; dup_comp_kind="${dr_kind:-interactive}"
               dup_comp_prof="$dr_prof"
             else
@@ -1061,7 +1120,7 @@ DUPES
     if [ -z "$fk_rows" ] && [ -z "${dh_rows:-}" ] && [ -z "$dup_other" ]; then
       die "nothing of any kind is live for lane $LANE on this workstation, so there is nothing to retire: no FORK of its transcript (an id the row does not record, ratified decision 8(e)), no live DUPLICATE HOLDER of the id it does in the process table (Amendment 18(h), opensoft/openRepoTools#39), and no live DUPLICATE of it by session record either (Amendment 18(h))." 8
     fi
-    die "'$retire_target' is neither the session id nor the pid of a live fork of lane $LANE, nor the pid or transcript id of a live duplicate holder of its own transcript in the process table, nor the pid of a live duplicate of it by session record. Naming an act against something that is none of this lane's is how the wrong conversation gets retitled and the wrong process gets stopped, so nothing is named. Pick one of the ids or pids above." 2
+    die "'$retire_target' is neither the session id nor the pid of a live fork of lane $LANE, nor the pid (parent or child) of a live duplicate holder of its own transcript in the process table, nor the pid of a live duplicate of it by session record. Naming an act against something that is none of this lane's is how the wrong conversation gets retitled and the wrong process gets stopped, so nothing is named. Pick one of the ids or pids above." 2
   fi
 
   # AMENDMENT 6(d), FILLED IN — and it is TWO acts because 6(d) is two, one per

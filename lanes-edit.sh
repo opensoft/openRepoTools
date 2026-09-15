@@ -4849,46 +4849,52 @@ DHPLINE
           # child slot stays empty; the parent is still reported and retirable
           # on its own.
           #
-          # A SECOND CANDIDATE MUST ALSO PROVE IT RESUMES THIS SAME TRANSCRIPT
-          # (Copilot round 8, PR #61): being in `dhp_cand_fence` only proves a
-          # child is SOME `--fork-session` process, not THIS one's — a wrapper
-          # with more than one such child could otherwise attach a different
-          # transcript's fork to this parent's row. Counted FIRST, because the
-          # ordinary shape (one wrapper, one child — Amendment 8 ruling (g)'s
-          # own `bg` companion is the only sibling this file documents) must
-          # keep working exactly as `lane-end`'s own race case proves it does:
-          # a SOLE fenced candidate is accepted on the fence alone, with no
-          # `ps -p` call on it at all, so a child already unreadable by the
-          # time discovery runs (the exact race the pre-kill recheck below
-          # exists to catch a step later) is still named and still retirable.
-          # Only with TWO OR MORE fenced candidates is the ambiguity real, and
-          # only then is each put through the identical per-candidate `ps`
-          # read and exact-path-component `--resume` match the parent above
-          # just proved itself with, against the SAME `$dhp_id_lc`; a `ps -p`
-          # miss on one of several is skipped for the next rather than
-          # guessed, and NONE matching leaves the child empty rather than
-          # naming an unverified one — the parent is still reported and
-          # retirable on its own either way.
-          dhp_kid_n=0; dhp_kid_first=""
+          # EVERY FENCED CANDIDATE MUST PROVE IT RESUMES THIS SAME TRANSCRIPT
+          # BEFORE IT IS NAMED, and a `ps -p` MISS IS NOT THE SAME VERDICT AS A
+          # CONFIRMED MISMATCH (Copilot round 8 AND round 9, PR #61: the first
+          # pass here trusted a SOLE fenced candidate on the fence alone,
+          # which round 9 found true a wrapper with exactly one child for a
+          # DIFFERENT transcript could exploit). Both facts are proven in one
+          # pass, never two:
+          #   * a candidate whose `ps -p` reads and whose `--resume` token
+          #     matches `$dhp_id_lc` exactly is VERIFIED — accepted at once,
+          #     however many other candidates there are;
+          #   * a candidate whose `ps -p` reads but whose `--resume` does NOT
+          #     match is a CONFIRMED MISMATCH — a different transcript's fork,
+          #     and it is never named, however few other candidates there are;
+          #   * a candidate whose `ps -p` MISSES (empty output — the ordinary
+          #     "already gone by the time this scan asks" race, not a
+          #     confirmed anything) is neither: it is held as a FALLBACK, and
+          #     named only if it is the SOLE fallback with no verified
+          #     candidate elsewhere. This is what keeps `lane-end`'s own race
+          #     case working — a child already unreadable by the time
+          #     discovery runs is still named here, for the pre-kill recheck
+          #     a step later to catch honestly — while a wrapper's one child
+          #     for another transcript, which DOES read, is never mistaken
+          #     for it.
+          # Two or more unresolved fallbacks are left unnamed rather than
+          # guessed between; the parent is still reported and retirable on
+          # its own in every one of these shapes.
+          dhp_verified=""; dhp_fallback=""; dhp_fallback_n=0
           for dhp_c in $dhp_kids; do
             case "$dhp_cand_fence" in *" $dhp_c "*) : ;; *) continue ;; esac
-            dhp_kid_n=$((dhp_kid_n + 1))
-            [ -n "$dhp_kid_first" ] || dhp_kid_first="$dhp_c"
+            dhp_c_line=""; dhp_c_psrc=0
+            dhp_c_line="$(ps -o args= -p "$dhp_c" 2>/dev/null)" || dhp_c_psrc=$?
+            if [ -z "$dhp_c_line" ]; then
+              dhp_fallback_n=$((dhp_fallback_n + 1))
+              [ -n "$dhp_fallback" ] || dhp_fallback="$dhp_c"
+              continue
+            fi
+            [ "$dhp_c_psrc" = 0 ] || return 1
+            dhp_c_args_lc="$(printf '%s' "$dhp_c_line" | tr 'A-F' 'a-f')"
+            case "$dhp_c_args_lc" in *"--fork-session"*"--resume "*) : ;; *) continue ;; esac
+            dhp_c_resume="${dhp_c_args_lc#*--resume }"; dhp_c_resume="${dhp_c_resume%% *}"
+            case "$dhp_c_resume" in */"$dhp_id_lc.jsonl") dhp_verified="$dhp_c"; break ;; esac
           done
-          if [ "$dhp_kid_n" = 1 ]; then
-            dhp_child="$dhp_kid_first"
-          elif [ "$dhp_kid_n" -gt 1 ]; then
-            for dhp_c in $dhp_kids; do
-              case "$dhp_cand_fence" in *" $dhp_c "*) : ;; *) continue ;; esac
-              dhp_c_line=""; dhp_c_psrc=0
-              dhp_c_line="$(ps -o args= -p "$dhp_c" 2>/dev/null)" || dhp_c_psrc=$?
-              [ -n "$dhp_c_line" ] || continue
-              [ "$dhp_c_psrc" = 0 ] || return 1
-              dhp_c_args_lc="$(printf '%s' "$dhp_c_line" | tr 'A-F' 'a-f')"
-              case "$dhp_c_args_lc" in *"--fork-session"*"--resume "*) : ;; *) continue ;; esac
-              dhp_c_resume="${dhp_c_args_lc#*--resume }"; dhp_c_resume="${dhp_c_resume%% *}"
-              case "$dhp_c_resume" in */"$dhp_id_lc.jsonl") dhp_child="$dhp_c"; break ;; esac
-            done
+          if [ -n "$dhp_verified" ]; then
+            dhp_child="$dhp_verified"
+          elif [ "$dhp_fallback_n" = 1 ]; then
+            dhp_child="$dhp_fallback"
           fi
           dhp_out="${dhp_out}${dhp_pid}${US}${dhp_child}${US}${dhp_id}
 "

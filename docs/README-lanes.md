@@ -764,9 +764,16 @@ this rule — Rule 6 governs PRs, with its own thirty minutes. An object is take
 to be a PR once some lane has written `OPENED` on it, which is the only
 offline evidence there is and exactly the evidence Rule 1 cares about.
 `--force` takes over a stale claim — or, per the dead-lane exception just
-below, a dead lane's hold of any verb — and nothing else, writing
-`TAKEOVER ← <the stale claim's comment URL>`; `TAKEOVER` is itself an open
-verb, so no second line is needed to say the taker holds it.
+below, a dead lane's hold of any verb — and nothing else, writing one of TWO
+payload forms for either reason (Copilot round 9, PR #61: this sentence
+named only one). `TAKEOVER ← <the stale claim's comment URL>` when the hold
+taken over was itself a `CLAIMED` posted as a GitHub comment and that
+comment can still be found; `TAKEOVER ← lane:<the dispossessed lane>`
+whenever it cannot — always true for a dead lane's own `OPENED`, `LANDING`,
+`WITHDRAWN` or earlier `TAKEOVER` (none of those was ever a `CLAIMED`
+comment to find), and also true under `--no-github` or a search that simply
+comes up empty. `TAKEOVER` is itself an open verb, so no second line is
+needed either way to say the taker holds it.
 
 **Or the holder's LANE is dead, whatever the verb** (opensoft/openRepoTools#30).
 Staleness answers Rule 1's own question about one claim; it says nothing about
