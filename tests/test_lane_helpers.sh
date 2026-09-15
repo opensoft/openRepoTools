@@ -9396,6 +9396,18 @@ has  "…the pane it would type into" "$err" "PLAN: tmux send-keys into @62"
 has  "…and the wait that follows, with the word that ends an empty one" "$err" "an empty wait REFUSES and names --force"
 is   "…having written NOTHING" "$(git -C "$WIP" show origin/main:lanes/log/repoBind-3.md | grep -c . || :)" "$bind_lines_before"
 is   "…and typed nothing into any pane" "$(grep -c 'send-keys' "$FAKE_TMUX_LOG" || :)" "$bind_keys_before"
+# AND THE WRITER GUARD REACHES IT, because `request-handoff` WRITES — it goes to
+# `write_event` directly rather than through `log`, so the dispatcher's own
+# refusal is the only thing between it and a line filed under a container id.
+# One field further along than the `session <uuid>@<ws>` that guard has always
+# protected: clause (a)'s `host` falls back to the Rule 10 workstation name,
+# which in this state IS that container id (Amendment 11 decision 8(d),
+# `R-A11-14`).
+run env -u LANES_WORKSTATION -u LANES_HOST LANES_IN_CONTAINER=1 LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 --no-wait
+is   "a container with no configured workstation cannot write the request at all" "$rc" 2
+has  "…in the one sentence every writer here refuses with" "$err" "is the CONTAINER'S id"
+run env -u LANES_WORKSTATION -u LANES_HOST LANES_IN_CONTAINER=1 LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 --force "why not"
+is   "…and neither can it force a release" "$rc" 2
 run env LANES_SESSION="$BIND_REQ_ID" "$E" request-handoff repoBind-3 --force "cloud-bench is not answering"
 is   "--force is a SECOND invocation and it releases the binding" "$rc" 0
 bind_forced="$(git -C "$WIP" show origin/main:lanes/log/repoBind-3.md | tail -n1)"

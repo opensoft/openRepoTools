@@ -7428,12 +7428,21 @@ shift || :
 # (Amendment 11, decision 8(d), `R-A11-14`). ONE GUARD AT THE DISPATCHER rather
 # than one per writer: `WS` is built into every event line's `session <uuid>@<ws>`
 # and into every commit subject this file writes, so a container id reaches the
-# append-only log through any of nine subcommands, and nine copies of one rule is
-# how eight of them would come to disagree. The READS are untouched — a read in
+# append-only log through any of the TEN subcommands listed below (nine until
+# Amendment 18 added `request-handoff`), and ten copies of one rule is how nine
+# of them would come to disagree. The READS are untouched — a read in
 # front of every launch may not refuse, and one that answers nothing for a
 # workstation nobody configured is telling the truth.
 case "$cmd" in
-  append-row-status|replace-in-row|append-session-id|append-line|add-row|commit|log|claim|release)
+  # `request-handoff` JOINS THE LIST BECAUSE IT WRITES (Amendment 18(c)/(e)). It
+  # reaches `write_event` directly rather than through `log`, so the dispatcher
+  # guard is the only place that stops it filing a `HANDOFF-REQUESTED` or a
+  # forced `PAUSED` under a container id — and one field further along than the
+  # `session <uuid>@<ws>` this guard has always protected, clause (a)'s own
+  # `host` falls back to THE RULE 10 WORKSTATION NAME, which in this state is
+  # that same container id. Nine writers, one guard, exactly as the paragraph
+  # below says.
+  append-row-status|replace-in-row|append-session-id|append-line|add-row|commit|log|claim|release|request-handoff)
     ws_why="$(lanes_workstation_why "$WS_SOURCE")"
     [ -z "$ws_why" ] || die "$ws_why" 2 ;;
 esac
