@@ -534,6 +534,12 @@ add_seed_row "| \`repoM-1\` | harness \`$MLIVE_ID\` | Eagle / test / brett | 202
 # in its case; repoK-1/3 above exercise RETIRED only.
 add_seed_row "| \`repoN-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoN/x.md | ACTIVE |"
 add_seed_row "| \`repoN-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoN/x.md | ACTIVE |"
+# repoT-1 — Copilot round 12, PR #61 (the open thread on eea55a7, issue #30's
+# own race): RETIRED and no live session, exactly like repoL-1, so a takeover
+# is granted on the same stale, pre-fetch terms; repoT-2 is the taker, and the
+# peer resumes repoT-1 between that grant and the takeover's own push landing.
+add_seed_row "| \`repoT-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoT/x.md | ACTIVE |"
+add_seed_row "| \`repoT-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoT/x.md | ACTIVE |"
 add_seed_row "| \`repoH-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoH/x.md | ACTIVE |"
 add_seed_row "| \`repoH-2\` | harness \`$DEAD_ID\` | Raven / test / brett | 2026-09-11T00:00Z | none | handoffs/repoH/y.md | ACTIVE |"
 add_seed_row "| \`repoP-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoP/x.md | ACTIVE · LANDING #7 into repoP main |"
@@ -787,6 +793,14 @@ NOW_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'CLAIMED — lane repoN-1, session %s@Eagle, %s, opensoft/repoN#7\n' "$DEAD_ID" "$NOW_UTC"
   printf 'ENDED — lane repoN-1, session %s@Eagle, %s, lane:repoN-1\n' "$DEAD_ID" "$NOW_UTC"
 } > "$WIP/lanes/log/repoN-1.md"
+# repoT-1 — Copilot round 12, PR #61: dead exactly as repoL-1 (RETIRED, no live
+# session, one OPENED PR left behind). The CLAIM-LOST section below has a peer
+# clone RESUME it mid-race, after this baseline is what both clones start from.
+{ printf '# lane repoT-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoT-1, session %s@Eagle, %s, lane:repoT-1 → home opensoft/repoT; estate repoT\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'OPENED — lane repoT-1, session %s@Eagle, %s, opensoft/repoT#1 ← opensoft/repoT#0\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repoT-1, session %s@Eagle, %s, lane:repoT-1\n' "$DEAD_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoT-1.md"
 git -C "$WIP" add -- lanes/log
 git -C "$WIP" commit -q -m "seed two object logs"
 git -C "$WIP" push -q origin main
@@ -1568,6 +1582,33 @@ is   "…with the register left clean" "$(git -C "$WIP" status --porcelain -- la
 run "$E" who "opensoft/repoH#70"
 is   "…and exactly one lane holds the object" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 1
 has  "…the one that landed first" "$out" "HOLDS    lane repoH-2"
+
+# --------------------- issue #30's OWN race (Copilot round 12, PR #61): the
+# open thread on eea55a7, lanes-edit.sh:7440. The dead-lane verdict is read
+# ONCE, before the claim's first pull — and nothing about the OBJECT has to
+# change for that verdict to go stale, because a RESUMED line is the LANE's
+# own log, never an event `claim_rescan_hook`'s rival scan reads. repoT-1 is
+# dead exactly as repoL-1 (seeded above); the peer resumes it on the SAME
+# stale-pre-fetch trick the CLAIM-LOST races above use — pushed to origin
+# before this claim runs, but invisible to its own pre-check under
+# LANES_NO_FETCH=1, so the takeover is granted on knowledge that is already
+# out of date by the time its own push loop rebases onto what really landed.
+git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
+printf 'RESUMED — lane repoT-1, session %s@Eagle, %s, lane:repoT-1\n' "$DEAD_ID" "$(utc_at +1M)" >> "$CLONE2/lanes/log/repoT-1.md"
+git -C "$CLONE2" add -- lanes/log/repoT-1.md
+git -C "$CLONE2" commit -q -m "LOG(repoT-1@Eagle): RESUMED"
+git -C "$CLONE2" push -q origin main
+
+run env LANES_LANE=repoT-2 LANES_NO_FETCH=1 "$E" claim "opensoft/repoT#1" --no-github --force
+is   "a dead-lane takeover whose source RESUMES before the push lands aborts, exit 7" "$rc" 7
+has  "…naming the lane that is alive again" "$err" "lane repoT-1 is no longer confirmed dead"
+has  "…and citing Rule 1 rather than completing the takeover" "$err" "stop and report; do not author a successor"
+has  "…writing CLAIM-LOST in the taker's own log" "$(cat "$LOGD/repoT-2.md" 2>/dev/null)" "CLAIM-LOST — lane repoT-2, session "
+has  "…pointing at the revived lane with the lane: form" "$(cat "$LOGD/repoT-2.md")" "opensoft/repoT#1 → lane:repoT-1"
+has  "…the abandon note says WHY, never that a rival claim landed first" "$(cat "$LOGD/repoT-2.md")" "abandoned: repoT-1 is no longer dead, takeover withdrawn before landing"
+run "$E" who "opensoft/repoT#1"
+is   "…and the object is still repoT-1's own — the taker never wrote a TAKEOVER" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 1
+has  "…held by the revived lane itself" "$out" "HOLDS    lane repoT-1"
 
 # ------------------------------------- the row's cells, by header position
 

@@ -7071,10 +7071,27 @@ EOF
 
 claim_rescan_hook() {
   CLAIM_WINNER=""
+  CLAIM_REVIVED=""
   # The pull has just moved `origin/<branch>`, and OUR commit is not on it —
   # so everything this read can see landed before ours, which is the whole
   # test. Flush the cache first: the ref moved a moment ago.
   state_events_flush
+  # ISSUE #30's OWN RACE (Copilot round 12, PR #61): the dead-lane verdict was
+  # read ONCE, before this claim's first pull, and nothing about $CLAIM_OBJ has
+  # to change for that verdict to go stale — a RESUMED line is the LANE's own
+  # log, never an event on the object the scan below reads, so that scan alone
+  # can never catch a source lane waking back up. Re-run the SAME check the
+  # takeover was granted on, on every rebase this loop makes, and abandon
+  # exactly as a landed rival does the moment it no longer answers dead. A
+  # stale-claim takeover carries no such verdict to revalidate — `claim_is_stale`'s
+  # age does not run backwards — so this runs only where `CLAIM_SKIP_DEAD` says
+  # the skip was issue #30's.
+  if [ -n "$CLAIM_SKIP_DEAD" ] && [ -n "$CLAIM_SKIP" ] && ! holder_is_dead "$CLAIM_SKIP"; then
+    note "lane $CLAIM_SKIP is no longer confirmed dead — a live session or a fresher RESUMED record was found before this takeover's push landed"
+    CLAIM_WINNER="$CLAIM_SKIP"
+    CLAIM_REVIVED=1
+    return 7
+  fi
   # CASE-INSENSITIVE ON BOTH EXCLUSIONS (Amendment 15), for the reason `claim`-s
   # own pre-check carries it: these two remove THIS lane and the lane it is
   # taking over from the set of rivals, and the row each removes carries whatever
@@ -7523,7 +7540,7 @@ case "$cmd" in
     home="$(resolve_home "$lane" "$home_override")" || exit $?
     obj="$(canon_object "$obj_raw" "$home")" || exit 2
     ! is_lane_object "$obj" || die "a lane is not a claimable object" 2
-    takeover_payload=""; takeover_note=""; takeover_from=""; takeover_reason_phrase=""
+    takeover_payload=""; takeover_note=""; takeover_from=""; takeover_reason_phrase=""; takeover_dead=""
     # CASE-INSENSITIVE, FOR THE SAME REASON THE KEY ABOVE IS LOWER-CASED
     # (Amendment 15). This is the lane REMOVING ITSELF from the holders of the
     # object it is about to claim, and the row it removes carries whatever
@@ -7550,6 +7567,7 @@ EOF
       # this branch; it is refused (as today) below wherever it says no.
       if holder_is_dead "$h_lane"; then
         takeover_from="$h_lane"
+        takeover_dead=1
         takeover_note="lane $h_lane is dead (log ends $HOLDER_DEAD_VERB, no live session on this workstation, issue #30)"
         # A DIFFERENT PHRASE FOR THE PUBLIC COMMENT (Copilot round 3, PR #61):
         # the formatter below used to say every takeover was "of the stale
@@ -7579,7 +7597,15 @@ EOF
         takeover_note="stale claim by lane $h_lane, posted $h_utc, no PR after ${STALE_HOURS}h"
         takeover_reason_phrase=" (takeover of the stale claim held by lane $takeover_from)"
       fi
-      if [ "$NO_GITHUB" = 1 ]; then
+      # THE LOOKUP NAMES A "CLAIMED —" COMMENT, SO IT ONLY ANSWERS FOR ONE
+      # (Copilot round 12, PR #61): a dead lane's OPENED/LANDING/WITHDRAWN/
+      # TAKEOVER hold can carry an EARLIER claimed comment of its own, from
+      # before that lane progressed past it, and `gh_stale_claim_url` would
+      # happily hand back that superseded comment's URL — citing a claim that
+      # is not the hold this TAKEOVER displaces. Only a currently-CLAIMED hold
+      # is that comment's own hold; every other dead-lane verb takes the lane
+      # fallback, exactly as `--no-github` already does.
+      if [ "$NO_GITHUB" = 1 ] || [ "$h_verb" != CLAIMED ]; then
         takeover_payload="lane:$h_lane"
       else
         takeover_payload="$(gh_stale_claim_url "$obj" "$h_lane")"
@@ -7599,7 +7625,7 @@ EOF
     #    landed first and this one has lost.
     uuid="$(session_for "$lane")"
     utc="$(utc_now)"
-    CLAIM_OBJ="$obj"; CLAIM_LANE="$lane"; CLAIM_SKIP="$takeover_from"
+    CLAIM_OBJ="$obj"; CLAIM_LANE="$lane"; CLAIM_SKIP="$takeover_from"; CLAIM_SKIP_DEAD="$takeover_dead"
     CP_AFTER_REBASE=claim_rescan_hook
     # A line written with --no-github is NOT a Rule 1 claim until its GitHub
     # comment exists, and it says so on its face rather than in a habit.
@@ -7611,13 +7637,19 @@ EOF
     fi
     wrc=$?
     CP_AFTER_REBASE=""
+    CLAIM_SKIP_DEAD=""
 
     # 5. lost: Rule 1 says the lane STOPS AND REPORTS. The claim is abandoned,
     #    never queued — Rule 7's queueing is for substrates, which this
     #    amendment does not touch.
     if [ "$wrc" = 7 ]; then
-      note "CLAIM LOST — lane $CLAIM_WINNER's claim on $obj landed on main first. Rule 1: stop and report; do not author a successor."
-      write_event "$lane" CLAIM-LOST "$obj" "→" "lane:$CLAIM_WINNER" "abandoned: $CLAIM_WINNER landed its claim first" "$(utc_now)" "$uuid"
+      if [ -n "$CLAIM_REVIVED" ]; then
+        note "TAKEOVER ABANDONED — lane $CLAIM_WINNER is alive again. Rule 1: stop and report; do not author a successor."
+        write_event "$lane" CLAIM-LOST "$obj" "→" "lane:$CLAIM_WINNER" "abandoned: $CLAIM_WINNER is no longer dead, takeover withdrawn before landing" "$(utc_now)" "$uuid"
+      else
+        note "CLAIM LOST — lane $CLAIM_WINNER's claim on $obj landed on main first. Rule 1: stop and report; do not author a successor."
+        write_event "$lane" CLAIM-LOST "$obj" "→" "lane:$CLAIM_WINNER" "abandoned: $CLAIM_WINNER landed its claim first" "$(utc_now)" "$uuid"
+      fi
       who_object "$obj" || :
       exit 7
     fi
