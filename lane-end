@@ -880,38 +880,49 @@ DUPES
     # #61): that status conflates "already gone" (fine — the goal was never
     # the signal, it was the duplicate not existing) with "no permission"
     # (a real failure), and a caller that always reads exit 0 here cannot
-    # tell a genuine retirement from a duplicate still running. A brief
-    # settle first — SIGTERM is not always instant.
+    # tell a genuine retirement from a duplicate still running.
     #
     # `kill -0`'S OWN FAILURE HAS THE SAME TWO ANSWERS CONFLATED, ONE LEVEL
     # DOWN (Copilot round 13, PR #61): ESRCH (truly gone) and EPERM (still
     # there, just not ours to signal) both read as "gone" here, so a TERM
     # this process had no permission to deliver in the first place could be
     # reported RETIRED over a duplicate still running. `kill -0` STAYS the
-    # primary check — it is a raw syscall, answers instantly, and every
-    # genuinely-gone case (the whole suite's own fixtures included) settles
-    # inside the same brief pause this file already gave it — and `ps -p`
-    # is asked ONLY where `kill -0` already says gone, to catch the one case
+    # primary check — it is a raw syscall and answers instantly — and `ps -p`
+    # is asked only where `kill -0` already says gone, to catch the one case
     # that disagrees: a pid EPERM hid from the syscall but a process listing
     # can still see. Trusting `ps -p` as primary measured slower and flakier
     # under this suite's own concurrent load than the syscall it would have
     # replaced (forking `ps` itself competes for the CPU the dying process
     # needs), so it is the fallback and never the first question.
-    sleep 0.1
-    dh_p_gone=1
-    if kill -0 "$dh_parent" 2>/dev/null; then
-      dh_p_gone=0
-    elif ps -p "$dh_parent" >/dev/null 2>&1; then
-      dh_p_gone=0
-    fi
+    #
+    # A BOUNDED RETRY, NOT ONE FIXED PAUSE (Copilot round 13, PR #61,
+    # hardened after measurement): a single 0.1s settle is long enough for
+    # every genuinely-gone case under ordinary load, but this suite runs on a
+    # shared, multi-lane workstation where CPU contention from a SIBLING
+    # lane's own concurrent run is normal, not exceptional. Measured directly
+    # against this suite's own fixtures: this exact check, unchanged, reported
+    # a just-TERMed `sleep` fixture "STILL ALIVE despite TERM delivered" at a
+    # load average past 13, and clean at a load average under 2 — SIGTERM
+    # delivery and reaping both wait on the scheduler under contention, and
+    # both `kill -0` and `ps -p` agreed it was still there, so this was never
+    # about which check is asked. `dh_settle_gone` polls up to two seconds
+    # (twenty tries, 0.1s apart) and returns the instant BOTH checks agree the
+    # pid is gone, so the common, unloaded case still resolves in one pass.
+    dh_settle_gone() {   # <pid> — 0 once confirmed gone, 1 if still found
+      dsg_tries=0
+      while [ "$dsg_tries" -lt 20 ]; do
+        if ! kill -0 "$1" 2>/dev/null && ! ps -p "$1" >/dev/null 2>&1; then
+          return 0
+        fi
+        dsg_tries=$((dsg_tries + 1))
+        sleep 0.1
+      done
+      return 1
+    }
+    dh_p_gone=1; dh_settle_gone "$dh_parent" || dh_p_gone=0
     dh_c_gone=1
     if [ -n "$dh_child" ]; then
-      dh_c_gone=1
-      if kill -0 "$dh_child" 2>/dev/null; then
-        dh_c_gone=0
-      elif ps -p "$dh_child" >/dev/null 2>&1; then
-        dh_c_gone=0
-      fi
+      dh_c_gone=1; dh_settle_gone "$dh_child" || dh_c_gone=0
     fi
     dh_p_msg="gone"
     [ "$dh_p_gone" = 1 ] || dh_p_msg="STILL ALIVE, TERM withheld: argv no longer matched"
