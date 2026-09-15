@@ -7933,6 +7933,19 @@ retire_rows() {   # <lane>… [--reason "<why>"] [--writer <lane>]
     if [ "$rr_ln2" = 1 ] && [ "$rr_loc" != "$(log_file_for "$rr_l")" ]; then
       die "lane $rr_l's object log is here as ${rr_loc##*/} while the row spells the lane $rr_l, so the first write to it RENAMES the file (Amendment 15) — and this sweep is one commit over several lanes, which is not the commit that rename belongs in. Take it first with a write of that lane's own (\`LANES_LANE=$rr_l lanes-edit.sh log NOTED lane:$rr_l \"<what it was>\"\`), then re-run. Nothing was written." 2
     fi
+    # AN UNTRACKED LOG IS SOMEBODY'S UNCOMMITTED WORK, AND THIS ACT WOULD
+    # COMMIT IT — the finding `migrate-state-cells` took in round 2 of
+    # openRepoTools#82, and this sweep has the same shape. A TRACKED log that is
+    # dirty is already refused for the whole run by `refuse_dirty_checkout`
+    # above, which exempts the register alone; an untracked file is in neither
+    # of its lists, so appending here would put a peer's first lines into this
+    # sweep's one commit under this sweep's message. (A dormant row usually has
+    # no log at all — but a migrated one has a log of NOTED lines, and that is
+    # the file this meets.)
+    if [ "$rr_ln2" = 1 ] && [ "$NO_GIT" != 1 ] &&
+       ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$(log_path_for "$rr_l")" >/dev/null 2>&1; then
+      die "lane $rr_l's object log $(log_path_for "$rr_l") exists in this checkout but is NOT TRACKED — somebody's uncommitted work, which this sweep would commit inside its own commit and under its own message. Commit it first (\`git -C $LANES_REPO commit -m \"<what it is>\" -- $(log_path_for "$rr_l")\`) and re-run. Nothing was written." 2
+    fi
     rr_pub=""; rr_prc=0
     rr_pub="$(log_path_ci "$rr_l")" || rr_prc=$?
     [ "$rr_prc" = 0 ] ||
@@ -8030,6 +8043,15 @@ archive_rows() {   # <repo> <1 = the act, 0 = the dry run>
       esac
     fi
     refuse_dirty_checkout "archive-rows" "$LANES_PATH" "$LANES_ARCH_PATH"
+    # THE SAME RULE FOR THE ARCHIVE ITSELF: an untracked one is a file this act
+    # did not create, and appending to it would commit somebody else's lines
+    # inside this move (openRepoTools#82, round 2). An archive this act creates
+    # is untracked for the seconds between the write and the commit, which is
+    # why the test is made HERE — before anything is written.
+    if [ -f "$LANES_ARCH_FILE" ] && [ "$NO_GIT" != 1 ] &&
+       ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$LANES_ARCH_PATH" >/dev/null 2>&1; then
+      die "$LANES_ARCH_PATH exists in this checkout but is NOT TRACKED — somebody's uncommitted work, which this move would commit inside its own commit. Commit it first (\`git -C $LANES_REPO commit -m \"<what it is>\" -- $LANES_ARCH_PATH\`) and re-run. Nothing was written." 2
+    fi
     acquire_lock
     handle_preexisting "$LANES_PATH"
   fi
