@@ -2041,12 +2041,16 @@ if [ "$bind_recheck" = 1 ]; then
     8) step "binding: still free after the handoff — taking it" ;;
     0)
       IFS=$'\t' read -r ba_host ba_cont ba_win ba_utc ba_sess ba_os ba_where ba_wstate <<<"$bind_again"
-      if [ "$ba_where" = here ] && [ "$ba_win" = "$record_window" ]; then
-        step "binding: this window took it while this run waited — carrying on"
-      else
-        die "lane $LANE was released and BOUND AGAIN while this run was taking it: it is now window ${ba_win:-none} in container ${ba_cont:-none} on host ${ba_host:-unknown} (session ${ba_sess:-unknown}, ${ba_utc:-unknown}). The handoff this run asked for LANDED — that place did hand off — and somebody else bound the lane before this run reached its first act. Nothing has been renamed, written or launched. Ask again, or take it up with that place:
-      $prog --request-handoff $self_args" 2
-      fi ;;
+      # ANY BINDING SEEN HERE IS THE RACE, INCLUDING ONE AT THIS VERY WINDOW
+      # (Copilot round 6 on opensoft/openRepoTools#83). This run has written no
+      # `STARTED`/`RESUMED` of its own yet — that is three steps further on —
+      # and it reached this read only by asking a binding ELSEWHERE to release,
+      # so a binding standing at this window now cannot be this invocation's.
+      # It can only be a CONCURRENT one that bound while this one waited, which
+      # is the two-processes-one-lane this re-read exists to catch; accepting it
+      # by window equality let both carry on and launch.
+      die "lane $LANE was released and BOUND AGAIN while this run was taking it: it is now window ${ba_win:-none} in container ${ba_cont:-none} on host ${ba_host:-unknown} (session ${ba_sess:-unknown}, ${ba_utc:-unknown}). The handoff this run asked for LANDED — that place did hand off — and somebody else bound the lane before this run reached its first act. This run has written no binding of its own yet, so that one is not this invocation's: a binding at THIS window is a second invocation IN it, which is the same race one pane closer. Nothing has been renamed, written or launched. Ask again, or take it up with that place:
+      $prog --request-handoff $self_args" 2 ;;
     2) note "this \`lanes-edit.sh\` has no \`binding\`, so whether the lane moved again while this run waited is not known here; carrying on." ;;
     *) die "$LANES_EDIT binding $LANE exited $bind_again_rc on the re-read before the rename, so whether this lane is still free could NOT be established — and that is not 'it is'. Nothing has been renamed, written or launched." 1 ;;
   esac
@@ -2780,8 +2784,20 @@ if [ "$row_count" = 0 ]; then
     plan "lanes-edit.sh add-row"
     plan "  $new_row"
   else
-    LANES_LANE="$LANE" "$LANES_EDIT" add-row "$new_row"
-    step "row added"
+    # THE SAME RULE AS THE STAMP ONE SCREEN DOWN, and the opposite ANSWER. A
+    # bare command under `set -e` dies with the helper's own code and no
+    # sentence of its own; this one is read. But a lane with no ROW is not a
+    # lane with an unwritten stamp — every other lane's liveness read, every
+    # crossing check and the next `lane-start` all key on that row — so this is
+    # a refusal that says so, before the window is anything but renamed.
+    ar_rc=0
+    LANES_LANE="$LANE" "$LANES_EDIT" add-row "$new_row" || ar_rc=$?
+    if [ "$ar_rc" = 0 ]; then
+      step "row added"
+    else
+      die "the register row for $LANE was NOT added ($LANES_EDIT add-row exited $ar_rc; its own words are above). This window has been renamed and NOTHING else has been written — no session cell, no object log, no launch: a lane with no row is a lane no other lane's liveness read, crossing check or \`lane-start\` can see. Settle that refusal and re-run, or add it by hand:
+    LANES_LANE=$LANE $LANES_EDIT add-row '$new_row'" "$ar_rc"
+    fi
   fi
 else
   # AMENDMENT 8 — THE CELL FIRST, THEN THE STAMP. The harness minted a
@@ -2901,11 +2917,28 @@ else
   # what will not fit is in the object log, one line along.
   state_line="$lane_verb by $stamp_who (lane $LANE) — lane-start on $ws: $did"
   state_line="$(cut_to_line "$state_line")"
+  # AND ITS STATUS IS READ, BECAUSE THIS FILE RUNS UNDER `set -e`. A bare
+  # command here is a launch that DIES on the helper's refusal — exit 5, "an
+  # edit moved more than one line", straight out of the shell with no sentence
+  # of its own and the pane gone before anybody can read the helper's. Measured
+  # in this suite: `without --confirm nothing is asked` came back 5, from a row
+  # write nobody had asked to be fatal.
+  #
+  # AND IT IS A NOTE, NEVER A REFUSAL. The row's stamp is the RECORD of a resume
+  # and not its licence — the same rule Amendment 6(c) and the handoff's Rule 3
+  # stamp already take here — so a stamp that could not be written prints the
+  # act that writes it and the lane still starts.
   if (( dry_run )); then
     plan "lanes-edit.sh set-row-state $LANE \"LIVE · $state_line\""
   else
-    LANES_LANE="$LANE" "$LANES_EDIT" set-row-state "$LANE" "LIVE · $state_line"
-    step "row state set: LIVE · $lane_verb by ${lane_sid:-unknown}"
+    srs_rc=0
+    LANES_LANE="$LANE" "$LANES_EDIT" set-row-state "$LANE" "LIVE · $state_line" || srs_rc=$?
+    if [ "$srs_rc" = 0 ]; then
+      step "row state set: LIVE · $lane_verb by ${lane_sid:-unknown}"
+    else
+      note "the row's state cell was NOT set (exit $srs_rc — the helper's own words are above), and the launch is not refused for it: the stamp is the record of this act, not its licence. Set it by hand:"
+      note "  LANES_LANE=$LANE $LANES_EDIT set-row-state $LANE \"LIVE · $state_line\""
+    fi
   fi
 
   # AMENDMENT 17(c) — THE CELL, IN THE AGENT'S OWN SPELLING. A launch of an

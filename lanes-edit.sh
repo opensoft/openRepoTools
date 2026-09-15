@@ -6729,8 +6729,27 @@ binding_window_state() {   # <host> <window sub-field> [legacy]
   case "$bws_id" in @[0-9]*) : ;; *) printf 'unknown\n'; return 0 ;; esac
   command -v tmux >/dev/null 2>&1 || { printf 'unknown\n'; return 0; }
   bws_now="$(tmux_window_field "$bws_id" '#{session_name}' 2>/dev/null || :)"
+  # `gone` IS THE ID RESOLVING NOWHERE, AND NOTHING ELSE (Copilot round 6 on
+  # openRepoTools#83). An id that resolves in ANOTHER session is two different
+  # facts wearing one answer: tmux reuses ids, so it may be a stranger's
+  # window — and `lane <name>` MOVES a live lane's window into the asking
+  # session (Addendum 1 (i-2)), which leaves the record naming the session it
+  # came from while the very same window, with the very same id, is alive one
+  # session along. Answered `gone`, that move would make a RUNNING lane read as
+  # a dead binding, and `gone` is the one answer that hands `lane-start` and
+  # `lane` the takeover path: a second process on a lane whose window a person
+  # had just pulled in front of themselves.
+  #
+  # So the two are separated and only the first is DEAD. The second is
+  # `unknown` — not this place's to pronounce, which is clause (b)'s own posture
+  # everywhere else — and it costs the takeover path exactly the case where an
+  # id has been reused, which was never a proof of death either. The RECORD
+  # going stale under a move is a real gap and it is filed, not papered over
+  # here: `lane` writes nothing to the register by design (Addendum 1), so
+  # keeping that field current is an act somebody has to rule on
+  # (opensoft/openRepoTools#95).
   [ -n "$bws_now" ] || { printf 'gone\n'; return 0; }
-  [ "$bws_now" = "${bws_ref%%:*}" ] || { printf 'gone\n'; return 0; }
+  [ "$bws_now" = "${bws_ref%%:*}" ] || { printf 'unknown\n'; return 0; }
   printf 'live\n'
   return 0
 }

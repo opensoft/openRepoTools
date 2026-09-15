@@ -78,7 +78,7 @@ real_ws_path() {
 REAL_WS="$(real_ws_path 2>/dev/null || :)"
 cleanup() {
   # Every long-lived fixture process, because they now outlive the whole run by
-  # design (see `sleep 3000` below) and a suite that dies early must not leave
+  # design (see `$LIVE_SLEEP` below) and a suite that dies early must not leave
   # one behind. `kill` on an empty or already-reaped pid is a no-op here.
   [ -n "${LIVE_PID:-}" ] && kill "$LIVE_PID" 2>/dev/null
   [ -n "${G_PANE:-}" ] && kill "$G_PANE" 2>/dev/null
@@ -594,11 +594,31 @@ mkdir -p "$sessions_dir" "$HOME/.claude/sessions"
 # standing after that fix, which is the whole reason a suite fixes both at
 # once.)
 #
-# The number must exceed `TIMEOUT_SECONDS` (2400) or the suite can outlive its
-# own evidence on a runner slow enough to hit the bound; `cleanup` kills it on
-# every exit path, and the last assertion in this file checks it was still
-# running when the run ended.
-sleep 3000 & LIVE_PID=$!
+# The number must exceed `TIMEOUT_SECONDS` or the suite can outlive its own
+# evidence on a runner slow enough to hit the bound; `cleanup` kills it on every
+# exit path, and the last assertion in this file checks it was still running
+# when the run ended.
+#
+# AND IT IS DERIVED FROM THAT BOUND RATHER THAN WRITTEN BESIDE IT, because two
+# numbers about one thing is how they came to disagree. The comment above said
+# "(2400)" while `test_lane_helpers_suite.py` had long since raised
+# `TIMEOUT_SECONDS` to 3600, and the fixture stayed at a `sleep 3000` — under
+# the wrapper's own bound, so a run the wrapper was willing to wait for could
+# outlive it. MEASURED on the macOS job at `6950eaa`: 2615 passed, 27 failed,
+# and every one of the 27 downstream of this fixture — the guard's records, the
+# LIVE rows, the attach line, the pick's numbering — with the last assertion in
+# the file reporting it `gone`. The Amendment 18 section's ~180 cases are what
+# pushed that job past fifty minutes; the fixture is what should have followed
+# the bound and did not.
+#
+# Read out of the wrapper, with the wrapper's own default where it cannot be
+# read, and ten minutes of margin on top: the fixture now outlives any run the
+# wrapper is prepared to let finish, whatever either number becomes next.
+LIVE_BOUND="$(sed -n -e 's/^TIMEOUT_SECONDS = \([0-9][0-9]*\).*/\1/p' \
+  "$TESTS_DIR/test_lane_helpers_suite.py" 2>/dev/null | head -n 1)"
+case "${LIVE_BOUND:-}" in ''|*[!0-9]*) LIVE_BOUND=3600 ;; esac
+LIVE_SLEEP=$(( LIVE_BOUND + 600 ))
+sleep "$LIVE_SLEEP" & LIVE_PID=$!
 live_start="$(cut -d' ' -f22 "/proc/$LIVE_PID/stat" 2>/dev/null || printf '')"
 sleep 0.05 & DEAD_PID=$!
 wait "$DEAD_PID" 2>/dev/null
@@ -3279,9 +3299,9 @@ is    "an unknown option is refused" "$rc" 2
 # Two live processes: one stands in for the pane's own, the other is alive and
 # under no pane at all. Both are children of this shell, so neither is under the
 # OTHER — which is exactly the distinction the ruling turns on.
-sleep 3000 & G_PANE=$!
+sleep "$LIVE_SLEEP" & G_PANE=$!
 g_pane_start="$(cut -d' ' -f22 "/proc/$G_PANE/stat" 2>/dev/null || printf '')"
-sleep 3000 & G_OUT=$!
+sleep "$LIVE_SLEEP" & G_OUT=$!
 g_out_start="$(cut -d' ' -f22 "/proc/$G_OUT/stat" 2>/dev/null || printf '')"
 
 # The fields the older helpers never write: `kind`, an ABSENT `tmux` (which is
@@ -5787,7 +5807,7 @@ echo "== Amendment 12: the name guard and the lock =="
 # duplicate at all: the guard exits 0, `lane-start` binds, and `lane-end
 # --retire` answers 8. Every Amendment 18(h) case here rests on this pid being
 # alive, so it is started here and killed at the end of the section.
-sleep 3000 & GD_DUP=$!
+sleep "$LIVE_SLEEP" & GD_DUP=$!
 gd_dup_start="$(cut -d' ' -f22 "/proc/$GD_DUP/stat" 2>/dev/null || printf '')"
 GD_SAVE_WINDOWS="${FAKE_TMUX_WINDOWS-}"
 GD_SAVE_WINDOW="${FAKE_TMUX_WINDOW-}"
@@ -10098,6 +10118,22 @@ is   "…while from the machine it names, the same absent window IS the dead bin
 run env LANES_HOST=raven LANES_CONTAINER=py-bench "$E" binding repoBind-14
 is   "…and a PRE-AMENDMENT line is still matched on the row's workstation, which is all it has" \
      "$(printf '%s' "$out" | cut -f7)" "here"
+# AND `gone` IS THE ID RESOLVING NOWHERE, NOT AN ID IN ANOTHER SESSION (Copilot
+# round 6). `lane <name>` MOVES a live lane's window into the asking session,
+# which leaves the record naming the session it came from while the very same
+# window, under the very same id, is alive one session along — and `gone` is the
+# one answer that hands `lane-start` and `lane` the takeover path. A running
+# lane read as a dead binding is a second process on it.
+bind_save_wins2="$FAKE_TMUX_WINDOWS"
+export FAKE_TMUX_WINDOWS="$FAKE_TMUX_WINDOWS
+movedsess:1	@66	repoBind-17	%66	claude"
+run "$E" binding repoBind-17
+is   "an id that resolves in ANOTHER session is UNKNOWN, never gone: a moved window is not a dead one" \
+     "$(printf '%s' "$out" | cut -f8)" "unknown"
+export FAKE_TMUX_WINDOWS="$bind_save_wins2"
+run "$E" binding repoBind-17
+is   "…while an id that resolves NOWHERE is the dead binding it always was" \
+     "$(printf '%s' "$out" | cut -f8)" "gone"
 
 # AND THE GUARD'S WINDOW DISJUNCT IS THREE TESTS AND NOT ONE. It exists for the
 # `/clear`, where the harness minted a new id and the binding's window is still
@@ -10270,7 +10306,7 @@ is   "…and every log it did create is inside the sandbox workspace" \
 # 4, R-A9-11). A `sleep` that runs out of seconds before the suite runs out of
 # cases does not announce itself: it turns "a live holder …" into "no live
 # holder …" one case at a time, and 196 red lines say nothing about why. This
-# one line does. Red here and nowhere else means the bound at `sleep 3000` is
+# one line does. Red here and nowhere else means the bound at `$LIVE_SLEEP` is
 # what needs raising; red here beside two hundred others means it is why.
 is   "the liveness fixture was still running when the run ended" \
      "$(kill -0 "$LIVE_PID" 2>/dev/null && printf alive || printf gone)" alive
