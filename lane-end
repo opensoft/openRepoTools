@@ -1090,8 +1090,8 @@ fi
 # copy is TWO ANSWERS to one question, and "what may this line contain, and
 # where may it be cut" is one question.
 #
-# THREE THINGS THE CELL'S LINE MAY NOT CARRY, and `set-row-state` REFUSES all
-# three — which would cost the row its stamp or its closing write, so they are
+# FOUR THINGS THE CELL'S LINE MAY NOT CARRY, and `set-row-state` REFUSES all
+# four — which would cost the row its stamp or its closing write, so they are
 # fixed here rather than met there:
 #
 #   ` · `  the phrase's own separator. A second one reads back as a fourth part
@@ -1102,13 +1102,18 @@ fi
 #          (Copilot round 1 on openRepoTools#82). It is spelled `¦`, the broken
 #          bar, which is not a separator anywhere here; the object log's own
 #          line keeps the character itself.
+#   CR/LF  a row is ONE LINE of a table, so a newline in this text would split
+#          it in two and every row after it would be read as a lane. Spelled
+#          `; ` for the same reason the separator is (Copilot round 2).
 #   >240   ratified decision O1's cap. Cut at 230 with the last partial WORD
 #          dropped, which is what makes the cut safe: `${s:0:n}` counts BYTES
 #          wherever the locale is not a UTF-8 one, and a byte offset can land
 #          inside the very characters above. 230 and not 240, so the ` ...`
 #          marker fits inside the cap however the two count.
 cut_to_line() {   # <line> — the row's one line, safe to hand to set-row-state
-  ctl="${1// · /; }"
+  ctl="${1//$'\r'/ }"
+  ctl="${ctl//$'\n'/; }"
+  ctl="${ctl// · /; }"
   ctl="${ctl//|/¦}"
   [ "${#ctl}" -gt 230 ] || { printf '%s' "$ctl"; return 0; }
   ctl="${ctl:0:230}"

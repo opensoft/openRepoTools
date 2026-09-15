@@ -9130,6 +9130,8 @@ a13_cut2="$(bash -c 'eval "$(sed -n "/^cut_to_line() {/,/^}/p" "$1")"; cut_to_li
 is    "…and cuts a long line at a word boundary, inside the cap" \
       "$( [ "${#a13_cut2}" -le 240 ] && echo yes || echo "no ${#a13_cut2}" )" "yes"
 has   "…saying it was cut" "$a13_cut2" " ..."
+a13_cut3="$(bash -c 'eval "$(sed -n "/^cut_to_line() {/,/^}/p" "$1")"; cut_to_line "$2"' _ "$OPENREPOTOOLS_BIN_DIR/lane-start" "$(printf 'one\ntwo')")"
+is    "…and a newline, because a row is ONE line of a table (Copilot round 2)" "$a13_cut3" "one; two"
 hasnt "…never leaving half a character where the cut landed" "$a13_cut2" "wor ..."
 
 # ---- (b) `append-row-status` is RETIRED, and the refusal names both acts.
@@ -9269,10 +9271,27 @@ is    "…and left no staging directory behind either (Copilot round 1)" \
       "$(ls -d "$TMPDIR"/tmp.* 2>/dev/null | grep -c . || :)" "$a13_tmp_before"
 is    "…not even a commit" "$(git -C "$MIG_WIP" rev-parse HEAD)" "$MIG_HEAD0"
 
+# AN UNTRACKED TARGET LOG IS SOMEBODY'S UNCOMMITTED WORK (Copilot round 2 on
+# openRepoTools#82): a TRACKED one that is dirty is already refused for the whole
+# run by `refuse_dirty_checkout`, which reads staged and unstaged alike, but an
+# untracked file is in neither list and this act would commit its first lines
+# inside the migration's own commit, under the migration's message.
+printf '# lane repoMig-4 — object log (seeded by a peer, uncommitted)\n' > "$MIG_WIP/lanes/log/repoMig-4.md"
+run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells
+is    "…a row whose object log is untracked is SKIPPED, not committed for its author" "$rc" 0
+has   "…naming the file and whose it is" "$out" "exists here but is NOT TRACKED"
+has   "…and counting it among the skipped" "$out" "1 skipped"
+git -C "$MIG_WIP" add -- lanes/log/repoMig-4.md >/dev/null 2>&1
+git -C "$MIG_WIP" commit -q -m "the peer commits its own log, as the refusal asks"
+git -C "$MIG_WIP" push -q origin main 2>/dev/null || :
+# THE BASELINE MOVES WITH IT: the peer's commit is a commit, and the "one commit"
+# this act makes is counted from where the act starts, not from the seed.
+MIG_HEAD1="$(git -C "$MIG_WIP" rev-parse HEAD)"
+
 run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --yes
 is    "the act exits 0" "$rc" 0
 is    "…and it is ONE commit (Rule 9), not one per row" \
-      "$(git -C "$MIG_WIP" rev-list --count "$MIG_HEAD0"..HEAD)" 1
+      "$(git -C "$MIG_WIP" rev-list --count "$MIG_HEAD1"..HEAD)" 1
 has   "…whose subject says what it did" "$(git -C "$MIG_WIP" log -1 --format=%s)" "Amendment 13(e)"
 is    "…carrying the archive, all four logs and the register, and nothing else" \
       "$(git -C "$MIG_WIP" show --name-only --format= HEAD | grep -c .)" 6
@@ -9315,7 +9334,7 @@ has   "…and what came after it" "$out" "PAUSED for the night"
 run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --yes
 is    "a SECOND run refuses: the migration is ONE act" "$rc" 2
 has   "…saying the register is already in the shape" "$err" "already in Amendment 13(a)'s shape"
-is    "…and changed nothing" "$(git -C "$MIG_WIP" rev-list --count "$MIG_HEAD0"..HEAD)" 1
+is    "…and changed nothing" "$(git -C "$MIG_WIP" rev-list --count "$MIG_HEAD1"..HEAD)" 1
 run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --no-such-flag
 is    "an unknown flag is a refusal, not a silent dry run" "$rc" 2
 

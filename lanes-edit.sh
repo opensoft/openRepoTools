@@ -7186,6 +7186,25 @@ migrate_state_cells() {   # <1 = the act, 0 = the dry run>
   fi
   refuse_dirty_checkout "migrate-state-cells" "$LANES_PATH"
 
+  # THE MUTEX COMES BEFORE THE SCAN, NOT BETWEEN THE SCAN AND THE WRITE (Copilot
+  # round 2 on openRepoTools#82). This act reads every row's LINE NUMBER and its
+  # cell, and then rewrites those lines BY NUMBER: a peer's `add-row` or
+  # `replace-in-row` landing in this checkout between the two moves the lines
+  # under it, and `replace_line` then rewrites the wrong row — its one-line proof
+  # holds for the line it was given, not for the row a person meant. So the scan
+  # and the write happen inside ONE hold of the lock, and the register's
+  # pre-existing edit is captured BEFORE the scan rather than after it, so what
+  # is read is what is committed.
+  #
+  # THE DRY RUN TAKES NO LOCK AT ALL. It writes nothing, so a row that moves
+  # under it costs a report one line of accuracy and nothing else — and a read
+  # that holds the estate's one register mutex for the seconds this scan takes
+  # is a read that blocks every lane's write to say what it would have done.
+  if [ "$msc_do" = 1 ]; then
+    acquire_lock
+    handle_preexisting "$LANES_PATH"
+  fi
+
   # TWO ROWS FOR ONE LANE UNDER TWO CASES ARE 15(d)'s HAND MERGE, and both of
   # them are skipped rather than migrated into one log under a name that means
   # two rows.
@@ -7274,8 +7293,20 @@ EOF
           msc_why="this checkout holds $msc_ln object logs for it whose names differ only by case — 15(d)'s hand merge"
         elif [ "$msc_ln" = 1 ]; then
           msc_lf="$msc_loc"; msc_rel="${LANES_LOG_PREFIX}${msc_loc##*/}"
-          [ "${msc_rel##*/}" = "${msc_pub##*/}" ] ||
+          if [ "${msc_rel##*/}" != "${msc_pub##*/}" ]; then
             msc_why="its object log is published as $msc_pub while this checkout has ${msc_rel##*/} — a case-only rename whose commit never landed. Pull first, or merge them (15(d))"
+          elif [ "$NO_GIT" != 1 ] && ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$msc_rel" >/dev/null 2>&1; then
+            # AN UNTRACKED LOG IS SOMEBODY'S UNCOMMITTED WORK, AND THIS ACT WOULD
+            # COMMIT IT (Copilot round 2 on openRepoTools#82). A log that is
+            # TRACKED and dirty is already refused for the whole run by
+            # `refuse_dirty_checkout` above, which exempts the register alone and
+            # reads staged and unstaged alike; an untracked file is in neither of
+            # those lists, so appending to it here would put a peer's first lines
+            # into this migration's one commit under this migration's message.
+            # The row is skipped and the file named, exactly as the other five
+            # reasons are, and its cell keeps every character.
+            msc_why="its object log ${msc_rel} exists here but is NOT TRACKED — somebody's uncommitted work, which this act would commit inside the migration's own commit. Commit it first (\`git -C $LANES_REPO commit -m \"<what it is>\" -- $msc_rel\`) and re-run"
+          fi
         else
           msc_rel="$msc_pub"; msc_lf="$LANES_LOG_DIR/${msc_pub##*/}"
         fi
@@ -7390,6 +7421,10 @@ EOF
 
   # --------------------------------------------------------------- the write
   #
+  # THE LOCK IS ALREADY HELD and the register already captured — both were taken
+  # BEFORE the scan, so the line numbers rewritten below are the ones this
+  # invocation read (Copilot round 2 on openRepoTools#82).
+  #
   # EVERYTHING BELOW IS ONE COMMIT OR NONE. The archive, the appended logs and
   # the rewritten rows are made on disk first and published by the single
   # `commit_push` at the end, so a refusal in the middle of them — a log whose
@@ -7399,8 +7434,6 @@ EOF
   # half-published, because the commit is the only thing that publishes; and a
   # re-run on a checkout still holding that half is REFUSED by
   # `refuse_dirty_checkout` above rather than made twice.
-  acquire_lock
-  handle_preexisting "$LANES_PATH"
   mkdir -p -- "$LANES_DIR/archive" || die "could not create $LANES_DIR/archive — the archive is written BEFORE anything else changes, so nothing has been" 6
   # A `>` REDIRECT, WHICH FOLLOWS A SYMLINK, and the source read whole first:
   # this copy is the file's state before this act and it is one of the three
