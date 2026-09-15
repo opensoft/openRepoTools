@@ -440,9 +440,14 @@ followed by the lock:
 
 ```sh
 pat='^python3 -m pyt'"est"
-while [ "$(pgrep -fc "$pat")" -gt 0 ]; do sleep 20; done
+while [ "$(pgrep -f "$pat" | awk 'END { print NR + 0 }')" -gt 0 ]; do sleep 20; done
 flock "${TMPDIR:-/tmp}/openrepotools-pytest.lock" python3 -m pytest tests -q
 ```
+
+`awk` and not `pgrep -fc`: `-c` is not in every `pgrep` this toolset runs
+under, and it is the COUNT and never `pgrep`'s exit status that decides.
+`tests/run.sh` is the canonical implementation of this guard — the lines above
+are it in one place, for a person with no checkout in front of them.
 
 The suite copies the four commands and the shipped alias table into a sandbox
 BIN DIRECTORY, seeds a workspace repository with nothing but data in it, and

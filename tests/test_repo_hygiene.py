@@ -1568,9 +1568,19 @@ def test_agents_md_is_short_enough_to_be_read():
     correction and twelve are #51's `tests/run.sh` paragraph; neither is over
     a line the other bought, and the cap is the count of what merged rather
     than either side's number — the rule the 224 entry states.
+
+    259 -> 265 the same day, for SIX LINES that stop this file prescribing a
+    guard its own wrapper refuses to use (Copilot rounds 7 and 8 on #47). The
+    snippet counted with `pgrep -fc`, which `tests/run.sh` deliberately does
+    not: `-c` is not in every `pgrep` this repository runs under, and the count
+    — never `pgrep`'s exit status — is what decides. A document that shows a
+    person a non-portable form of the very guard the wrapper exists to make
+    portable is worse than one that shows none, and the six lines are the
+    correction plus the sentence naming the wrapper as the canonical
+    implementation, which is what an assistant reading either should reach for.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 259, f"AGENTS.md is {len(lines)} lines; the cap is 259"
+    assert len(lines) <= 265, f"AGENTS.md is {len(lines)} lines; the cap is 265"
 
 
 def test_readme_is_short_enough_to_be_read():

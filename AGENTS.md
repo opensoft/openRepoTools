@@ -238,9 +238,15 @@ and locked:
 
 ```sh
 pat='^python3 -m pyt'"est"                       # split so it cannot match itself
-while [ "$(pgrep -fc "$pat")" -gt 0 ]; do sleep 20; done
+while [ "$(pgrep -f "$pat" | awk 'END { print NR + 0 }')" -gt 0 ]; do sleep 20; done
 flock "${TMPDIR:-/tmp}/openrepotools-pytest.lock" python3 -m pytest tests -q
 ```
+
+`awk` AND NOT `pgrep -fc`, which is what `tests/run.sh` does and for the reason
+it gives: `-c` is not in every `pgrep` this repository runs under, and the
+count — never `pgrep`'s exit status — is what decides. The wrapper is the
+canonical implementation of this guard; the lines above are it in one place for
+a person with no checkout in front of them.
 
 `tests/test_lane_helpers.sh` is 122 KB of bash that arrived with the move;
 `tests/test_lane_helpers_suite.py` is what makes `pytest` run it, so it is one
