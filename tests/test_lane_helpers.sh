@@ -8031,6 +8031,49 @@ run env -u TMUX PATH="$LANEBIN_PATH" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/c
 is    "…and a helper with no canon-lane at all still binds the lane" "$rc" 0
 has   "…through the launcher, as it always did" "$(cat "$FAKE_PCLAUDE_LOG")" "argv=--lane repoPick-1 team-05a"
 
+# ---- THE LAST THREE OF THE SAME THREE FAMILIES ------------------------------
+#
+# Copilot round 12 on #45: `lane:873`, `lane:1215`, `lane:234`.
+#
+# `f`'s OWN READ TELLS THE TWO STATUSES APART, as the listing has since round 3:
+# an un-upgraded workstation is named as one and sent to the install; a read
+# that FAILED is named by its code. Both were "run it by hand" here.
+if [ "$HAVE_PTY" = 0 ]; then
+  skip "the f answer names an un-upgraded workstation as one" "$NO_PTY_WHY"
+else
+  : > "$FAKE_PCLAUDE_LOG"
+  lane_pick f env -C "$PICK_DIR" REAL_LANES_EDIT="$E" LANES_EDIT="$SANDBOX/nfold" "$LANE" --dry-run
+  is    "answering \`f\` where next-free is MISSING refuses with the contract's 2" "$rc" 2
+  has   "…saying the workstation predates the addendum rather than that a read broke" "$out" "predates lane-collision-protocol Amendment 18"
+  has   "…and naming the one act that fixes it" "$out" "openRepoTools --install"
+  is    "…starting nothing" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+fi
+
+# AN ANSWER TOO LONG TO BE A POSITION IS NOT ONE, and the length is compared
+# BEFORE `$(( 10# ))` gets it: that conversion WRAPS at the shell's integer
+# width, so `18446744073709551617` arrives at the range check as `1` and binds a
+# lane nobody picked — the wrong-lane outcome every fence in this file stops.
+if [ "$HAVE_PTY" = 0 ]; then
+  skip "an answer that wraps the shell's integer width is refused" "$NO_PTY_WHY"
+else
+  : > "$FAKE_PCLAUDE_LOG"; : > "$LANE_TMUX_LOG"
+  lane_pick 18446744073709551617 env -C "$PICK_DIR" "$LANE"
+  is    "an answer wider than the shell's integers refuses with 2" "$rc" 2
+  has   "…saying it is not in the range the question offered" "$out" "is not in 1-"
+  is    "…and binding nothing, which is what wrapping would have done" \
+        "$(cat "$FAKE_PCLAUDE_LOG")$(cat "$LANE_TMUX_LOG")" ""
+fi
+
+# AND AN ARGUMENT THAT WAS GIVEN AND IS EMPTY IS NOT "NO ARGUMENT": `lane ""`
+# fell through every `[ -n "$name" ]` below it and became the LISTING — a
+# malformed named invocation silently answering a different question.
+run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" "$LANE" "" </dev/null
+is    "an empty lane name is the contract's 64 and never the listing" "$rc" 64
+has   "…saying which argument was empty" "$err" "EMPTY argument"
+hasnt "…and never rendering the listing instead" "$out" "AVAILABLE"
+run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" "$LANE" --all "" </dev/null
+is    "…and the same beside --all" "$rc" 64
+
 echo "== the workstation seam: unset, every writer reads the host =="
 
 # THE OTHER HALF OF R-A9-13. Every case above this line runs with

@@ -185,6 +185,18 @@ name=""; profile=""; positional=0; endopts=0
 # OPTION and is refused as one: `lane -repoA11-1` is 64, and `lane -- -repoA11-1`
 # is the fence's own 2, which is the refusal that says what a lane name is.
 take_arg() {
+	# AN ARGUMENT THAT WAS GIVEN AND IS EMPTY IS NOT "NO ARGUMENT" (Copilot round
+	# 12 on #45, `lane:234`). `lane ""` left `$name` empty, every guard below it
+	# read that as "no lane was named", and a malformed named invocation became a
+	# different question — the listing, and on a terminal the numbered pick. The
+	# helper's own whole-string fence refuses an empty lane name; this refuses it
+	# at the door, in the same terms, because the two arguments this word takes
+	# are a lane and a profile and neither of them is the empty string.
+	[ -n "$1" ] || die "$prog was given an EMPTY argument, which is not a lane name and not a
+    profile. A lane name is the register row's own spelling; the listing is the
+    bare word with no argument at all:
+      the lanes of this checkout:  $prog
+      that lane:                   $prog <name>" 64
 	positional=$((positional + 1))
 	case "$positional" in
 	1) name="$1" ;;
@@ -866,6 +878,20 @@ go_new() {   # <repo>
 	# this estate may well have taken, opened as a new lane.
 	gn_rc=0
 	gn_next="$(printf '%s\n' "$ROWS_OUT" | "$LANES_EDIT" next-free "$gn_repo" 2>/dev/null)" || gn_rc=$?
+	# AND `2` IS THE CONTRACT'S OWN CODE HERE TOO (Copilot round 12 on #45,
+	# `lane:873`). The LISTING has told the two apart since round 3 — an
+	# un-upgraded workstation is named as one and sent to the install, a read that
+	# FAILED is named by its code — and this path, which is the same read one
+	# answer later, collapsed both into "run it by hand". The person who typed `f`
+	# on a workstation that has not taken the install would have been told to read
+	# something that does not exist there.
+	if [ "$gn_rc" = 2 ]; then
+		die "\`f\` cannot open a lane here: this workstation's \`lanes-edit.sh\` has no
+    \`next-free\`, so it predates lane-collision-protocol Amendment 18 Addendum 1
+    and there is no position for it to take. That is not a failure and nothing is
+    wrong with the register — this workstation has not taken the install yet.
+    Take it:  openRepoTools --install" 2
+	fi
 	if [ "$gn_rc" != 0 ]; then
 		die "the next free position of $gn_repo could not be read: \`lanes-edit.sh next-free\`
     exited $gn_rc. This command will not open a lane at a position it did not
@@ -1212,6 +1238,17 @@ case "$answer" in
 	die "'$answer' is not one of the choices. One answer is read and nothing is waiting
     now: run \`$prog\` again, or name the lane — \`$prog <name>\`." 2 ;;
 esac
+# A DIGIT STRING TOO LONG TO BE A POSITION IS NOT A POSITION (Copilot round 12
+# on #45, `lane:1215`). `$(( 10#… ))` WRAPS at the shell's integer width —
+# `18446744073709551617` comes back as `1` — so an answer far outside `1-N`
+# could arrive at the range check as a number that IS in it and bind a lane
+# nobody picked, which is the wrong-lane outcome every fence in this file exists
+# to stop. The length is compared BEFORE the conversion, against the digits of
+# `$n` itself, because that is the widest answer the question offered.
+if [ "${#answer}" -gt "${#n}" ]; then
+	die "'$answer' is not in 1-$n. One answer is read and nothing is waiting now: run
+    \`$prog\` again, or name the lane — \`$prog <name>\`." 2
+fi
 pick=$((10#$answer))
 if [ "$pick" -lt 1 ] || [ "$pick" -gt "$n" ]; then
 	die "$pick is not in 1-$n. One answer is read and nothing is waiting now: run
