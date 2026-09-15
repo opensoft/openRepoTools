@@ -2288,6 +2288,11 @@ archive_text() {
     # says it did, rather than answering silently with nothing.
     if git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_ARCH_PATH" 2>/dev/null; then return 0; fi
     note "the published $LANES_ARCH_PATH exists but could not be read — falling back to this checkout's copy of it"
+    # AND WHERE THERE IS NO COPY TO FALL BACK TO, THE READ FAILED (Copilot round
+    # 2 on #93). Answering 0 with no rows there says "the archive is empty"
+    # about a file `origin` is holding, and the position of every row in it
+    # comes back on offer.
+    [ -f "$LANES_ARCH_FILE" ] || return 1
   fi
   # AND THE LOCAL COPY IS THE SAME RULE ONE RUNG DOWN: a file that is THERE and
   # will not open is a read that FAILED, and its rows hold positions. Saying
@@ -5136,6 +5141,16 @@ lanes_rows() {
   # one parameter expansion — instead of `printf | awk` per lane per table,
   # which for fifty lanes was a hundred and fifty processes spent reading
   # strings this shell was already holding.
+  # AN ARCHIVE THAT CANNOT BE READ IS SAID, NOT SWALLOWED (Copilot round 2 on
+  # #93). The two pipelines below end in `awk`, whose status is its own, so a
+  # failed `archive_text` inside them is invisible — and what goes missing is
+  # the CLOSED rows the archive holds. A listing may not refuse (it sits in
+  # front of a launch), so it says it, exactly as it says a session-record read
+  # that failed; the POSITION is the half that must not guess, and
+  # `lane_next_free` refuses there rather than offering one over a partial read.
+  if ! archive_text >/dev/null 2>&1; then
+    note "$LANES_ARCH_PATH exists and could not be read, so the RETIRED rows it holds are not in this listing — and \`next-free\` will refuse a position rather than offer one over a partial read."
+  fi
   lr_index="$GS$(lanes_register_index 2>/dev/null | tr '\n' "$GS" || :)"
   lr_local_index="$GS$(lanes_register_index --local 2>/dev/null | tr '\n' "$GS" || :)"
   lr_facts_t="$GS$(printf '%s\n' "$lr_facts" | tr '\n' "$GS")"
@@ -5448,6 +5463,14 @@ lane_groups() {   # <workstation> ; rows on stdin
   awk -F'\t' -v me="$(short_ws "${1:-$WS}")" '
     NF >= 3 {
       st = $2
+      # THE CLASS FIRST, AND THAT IS AMENDMENT 19 ARRIVING IN COLUMN 13 (Copilot
+      # round 2 on #93). A DORMANT row-s STATE is `NO LOG`, which is in no list
+      # below, so the state test alone let one through wherever the rows come
+      # from a read that does not hide them — `lanes --closed`, and `lane
+      # <name>`-s own `--lane` read, which is never filtered because its caller
+      # named the lane. The class is the read-s answer to exactly this question.
+      cls = (NF >= 13 ? $13 : "")
+      if (cls == "closed" || cls == "dormant") next
       if (st == "ENDED" || st == "RETIRED" || st == "CLOSED" || st == "DORMANT") next
       w = tolower($3); sub(/\..*$/, "", w)
       if (st == "LIVE") g = "live"
@@ -5505,6 +5528,11 @@ lane_position_rows() {   # 0 with the names · 1 where a source exists and could
   if [ -f "$LANES_FILE" ]; then
     [ -r "$LANES_FILE" ] || return 1
     lpr_reg="$(register_text 2>/dev/null || :)"
+    # AN EMPTY ANSWER OUT OF A NON-EMPTY REGISTER IS A READ THAT FAILED
+    # (Copilot round 2 on #93). `register_text` ends in a `printf` and so
+    # answers 0 whatever its `git show` or its `cat` did; the one thing that
+    # cannot happen is a file with bytes in it rendering as nothing.
+    if [ -s "$LANES_FILE" ] && [ -z "$lpr_reg" ]; then return 1; fi
   fi
   lpr_arc=""
   lpr_arc="$(archive_text 2>/dev/null)" || return 1
@@ -7893,22 +7921,26 @@ retire_rows() {   # <lane>… [--reason "<why>"] [--writer <lane>]
   fi
   refuse_dirty_checkout "retire-rows" "$LANES_PATH"
 
-  # THE LIVE READ IS FAIL-CLOSED. `lanes_rows` degrades to the log's verb when
-  # this workstation's session records cannot be read, because a LISTING may not
-  # refuse; a WRITE that retired a row out from under the session still writing
-  # it is the other kind of mistake entirely.
-  rr_live=""; rr_live_rc=0
-  rr_live="$(live_session_ids 2>/dev/null)" || rr_live_rc=$?
-  [ "$rr_live_rc" = 0 ] ||
-    die "this workstation's session records could not be read, so whether any of these lanes is LIVE HERE is not known — and clause (c) refuses a lane a live session holds. A read that failed is not 'nothing is live' (Amendment 7(d)). Nothing was written." 1
-  rr_fence=" $(printf '%s\n' "$rr_live" | awk -F"$US" 'NF { print tolower($1) }' | tr '\n' ' ')"
-
   # THE MUTEX COMES BEFORE THE SCAN, not between the scan and the write: this
   # act reads every row's LINE NUMBER and rewrites those lines by number, and a
   # peer's `add-row` landing in between moves them under it (the finding
   # `migrate-state-cells` took in round 2 of openRepoTools#82).
   acquire_lock
   handle_preexisting "$LANES_PATH"
+
+  # THE LIVE READ IS FAIL-CLOSED, AND IT IS TAKEN INSIDE THE LOCK (Copilot round
+  # 2 on #93). `lanes_rows` degrades to the log's verb when this workstation's
+  # session records cannot be read, because a LISTING may not refuse; a WRITE
+  # that retired a row out from under the session still writing it is the other
+  # kind of mistake entirely — and a snapshot taken BEFORE the mutex is a
+  # snapshot a lane can go live behind: `lane-start` appends its id to the row
+  # under this same lock, so the scan would read that new id and compare it with
+  # a fence that predates it.
+  rr_live=""; rr_live_rc=0
+  rr_live="$(live_session_ids 2>/dev/null)" || rr_live_rc=$?
+  [ "$rr_live_rc" = 0 ] ||
+    die "this workstation's session records could not be read, so whether any of these lanes is LIVE HERE is not known — and clause (c) refuses a lane a live session holds. A read that failed is not 'nothing is live' (Amendment 7(d)). Nothing was written." 1
+  rr_fence=" $(printf '%s\n' "$rr_live" | awk -F"$US" 'NF { print tolower($1) }' | tr '\n' ' ')"
 
   rr_utc="$(utc_now)"
   rr_tmp="$(mktemp -d)"
@@ -7963,7 +7995,17 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     rr_ev="$(lane_log_events "$rr_l" 2>/dev/null)" || rr_erc=$?
     [ "$rr_erc" = 0 ] ||
       die "lane $rr_l's object log could not be read (exit $rr_erc), so whether it carries a lane-kind line is not known — and that is NOT 'this lane has no log' (Amendment 7(d)). Nothing was written." 1
-    rr_open="$(printf '%s\n' "$rr_ev" | awk -F"$US" '$3 == "STARTED" || $3 == "PAUSED" || $3 == "RESUMED" { v = $3 } END { if (v != "") print v }')"
+    # AND THIS CHECKOUT'S OWN COPY OF THAT LOG (Copilot round 2 on #93), for the
+    # reason the session ids are read from both rows: `lane_log_events` answers
+    # out of `origin/<branch>` (R19), and a log line committed here and not yet
+    # pushed is on no origin at all. The `behind` guard above refuses a checkout
+    # that is behind; one that is AHEAD is legitimate, and there a `STARTED`
+    # that exists only here would be invisible — the lane reading as dormant
+    # while its own log says it is running.
+    rr_lev=""
+    rr_lf="$(log_file_for "$rr_l")"
+    [ -f "$rr_lf" ] && rr_lev="$(log_events "$rr_lf" 2>/dev/null || :)"
+    rr_open="$(printf '%s\n%s\n' "$rr_ev" "$rr_lev" | awk -F"$US" '$3 == "STARTED" || $3 == "PAUSED" || $3 == "RESUMED" { v = $3 } END { if (v != "") print v }')"
     [ -z "$rr_open" ] ||
       die "lane $rr_l's object log carries a $rr_open line, so it is not a dormant row — a parked lane is not dormant (Amendment 19(c)), and a lane whose log says it is running is a lane a person can still pick up. End it as itself: lane-end $rr_l. Nothing was written." 2
 
@@ -8495,14 +8537,40 @@ Nothing was written." 2
       # committed here and not yet pushed was invisible to this check and its
       # name came back on offer. The local file is read beside it, exactly as
       # the row scan below reads `rows_named_ci_local` beside `rows_named_ci`.
-      ar_arch="$( { archive_text 2>/dev/null || :
-                    [ -f "$LANES_ARCH_FILE" ] && { cat -- "$LANES_ARCH_FILE" 2>/dev/null || :; }
-                  } | awk -v want="$lane_new" '
+      #
+      # AND A READ THAT FAILED IS A REFUSAL, not an empty archive (round 2): the
+      # whole point of this check is that a retired identity is never reissued,
+      # and "I could not read the file that says which ones are retired" is not
+      # "none of them are" (Amendment 7(d)).
+      ar_pubarc=""; ar_arch_rc=0
+      ar_pubarc="$(archive_text 2>/dev/null)" || ar_arch_rc=1
+      ar_locarc=""
+      if [ -f "$LANES_ARCH_FILE" ]; then
+        ar_locarc="$(cat -- "$LANES_ARCH_FILE" 2>/dev/null)" || ar_arch_rc=1
+      fi
+      [ "$ar_arch_rc" = 0 ] ||
+        die "$LANES_ARCH_PATH exists and could not be read, so whether '$lane_new' is a name this estate has RETIRED is not known — and a retired position is never reissued (Amendment 19(b)). A read that failed is not 'it is not retired' (Amendment 7(d)). Fix the read and re-run; nothing was written." 1
+      # THE POSITION AND NOT ONLY THE NAME (round 2). `lane_next_free` reserves
+      # `repo-4` and `repo-4a` as ONE position — "a lane may be re-cut and a
+      # re-cut position is not free" — so a name test alone let `repo-4a`
+      # through against a retired `repo-4`, which is the same identity by the
+      # rule that hands the numbers out. The key is that rule, restated here in
+      # awk over the two archives.
+      ar_arch="$(printf '%s\n%s\n' "$ar_pubarc" "$ar_locarc" | awk -v want="$lane_new" '
+        function key(n,   h, p) {
+          p = n; sub(/^.*-/, "", p); sub(/[A-Za-z]$/, "", p)
+          h = n; sub(/-[^-]*$/, "", h)
+          if (h == n) return ""
+          if (p !~ /^[0-9]+$/) return ""
+          return tolower(h) "-" (p + 0)
+        }
+        BEGIN { wk = key(want) }
         substr($0,1,1) == "|" {
           p1 = index($0, "`"); if (p1 == 0) next
           r = substr($0, p1 + 1); p2 = index(r, "`"); if (p2 == 0) next
           t = substr(r, 1, p2 - 1)
-          if (tolower(t) == tolower(want)) print t
+          if (tolower(t) == tolower(want)) { print t; next }
+          if (wk != "" && key(t) == wk) print t
         }' | LC_ALL=C sort -u || :)"
       if [ -n "$ar_arch" ]; then
         die "lane '$lane_new' is RETIRED: its row is in $LANES_ARCH_PATH, spelled $(printf '%s\n' "$ar_arch" | tr '\n' ' ')— and a retired position is NEVER REISSUED (Amendment 19(b)). That lane's object log is $(log_path_for "$lane_new") and it is append-only, so a second lane under this name would write its life into the first one's file and every read of that log would answer for two lanes at once. Take a free position instead — \`lanes --prefix <repo>\` prints the next one and the line that takes it. Nothing was written." 2

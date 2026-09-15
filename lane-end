@@ -585,6 +585,24 @@ if [ -n "$retire_dormant" ]; then
   [ -f "$LANES_FILE" ] || die "no register at $LANES_FILE — the workspace repository $(lanes_ws_yaml) names carries no lanes/LANES.md. \`openRepoTools wip init\` seeds one (it is idempotent); or set LANES_FILE" 1
   [ -x "$LANES_EDIT" ] || die "no register writer at $LANES_EDIT — \`lanes-edit.sh\` is installed beside this command by \`openRepoTools --install\`. Run that, or set LANES_EDIT" 1
 
+  # THE REASON IS CHECKED BEFORE THE DRY RUN IS PRINTED (Copilot round 2 on
+  # #93). `retire_rows` refuses a reason that would forge a cell, and it is
+  # reached only under `--yes` — so a dry run over a bad reason printed a clean
+  # preview of an act that could not run, which is the one thing a preview may
+  # not do. The rules are the writer's own (Amendment 13(a) and ratified
+  # decision O1) and the refusal names the argument.
+  if [ -n "$sweep_reason" ]; then
+    case "$sweep_reason" in
+      *'|'*)   die "--reason may not contain '|': it would forge a cell boundary in every row this sweep rewrites. Got: '$sweep_reason'" 2 ;;
+      *' · '*) die "--reason may not contain ' · ': that separator is what divides the state cell's three parts (Amendment 13(a)), and a second one reads back as a fourth part. Use a semicolon. Got: '$sweep_reason'" 2 ;;
+    esac
+    if [ "${sweep_reason//[$'\n\r']/}" != "$sweep_reason" ]; then
+      die "--reason is ONE line: a newline in it would split a row in two and every row after it would be read as a lane" 2
+    fi
+    [ "${#sweep_reason}" -le 180 ] ||
+      die "--reason is ${#sweep_reason} characters. The cell's whole line is capped at 240 (Amendment 13, ratified decision O1) and the row's OWN last words go in beside it, so a reason longer than 180 leaves nothing of them. Shorten it — the long version belongs in the lane's log." 2
+  fi
+
   # THE READ IS FETCHED. Every other listing in this family is local by design —
   # it sits in front of a person who is waiting — but this one sits in front of
   # a WRITE, and a dormant row is a row about which this checkout's copy may be
@@ -668,7 +686,13 @@ EOF
   # AN `&&` LIST WHOSE TEST FAILS IS A FAILING COMMAND, and this script runs
   # under `set -e`: written as `[ -n "$x" ] && rd_argv+=(…)` a run with no
   # `--reason` would exit here, silently, having printed the whole dry run.
-  if [ -n "$sweep_reason" ]; then rd_argv+=(--reason "$sweep_reason"); fi
+  #
+  # AND IT IS FORWARDED AS ONE ARGUMENT (Copilot round 2 on #93). Split as
+  # `--reason <why>`, the documented spelling for a reason that BEGINS with a
+  # dash — `--reason=--why`, which this parser accepts — arrived at the writer
+  # as two words, and the writer refuses a dash-led value there by design. So
+  # the confirmed act refused what the dry run had just accepted.
+  if [ -n "$sweep_reason" ]; then rd_argv+=("--reason=$sweep_reason"); fi
   rd_argv+=(--writer "$LANES_LANE")
   step "the one commit: $LANES_EDIT ${rd_argv[*]}"
   "$LANES_EDIT" "${rd_argv[@]}"

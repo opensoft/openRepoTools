@@ -9523,6 +9523,13 @@ is    "…and it is in neither class" "$(a19_field "$out" repo19b-1 13)" "none"
 run a19 "$E" lanes --lane repo19-4
 is    "--lane answers about a DORMANT row without --closed" "$rc" 0
 is    "…and says it is dormant" "$(a19_field "$out" repo19-4 13)" "dormant"
+# AND THE PICK DROPS IT ON THE CLASS, NOT ON THE STATE WORD (Copilot round 2 on
+# #93): a dormant row's state is `NO LOG`, which is in none of `lane_groups`'s
+# lists, so a row arriving from a read that does not hide it — this one, or
+# `--closed` — was grouped as available and `lane <name>` would have offered to
+# bind it.
+is    "…and the pick drops it on the class, whatever its state word is" \
+      "$(printf '%s\n' "$out" | a19 "$E" lane-groups Eagle)" ""
 
 # THE NEXT FREE POSITION IS COMPUTED OVER EVERY ROW, hidden ones included: 1, 2,
 # 3, 4, 5 and 7 are held, so the lowest free one is 6 — read from the DEFAULT
@@ -9705,6 +9712,32 @@ run a19 env LANES_LANE=repo19-2 "$E" archive-rows repo19c
 is    "a row of the repository that cannot be taken apart refuses the whole move" "$rc" 2
 has   "…counting the separators it found" "$err" "' | ' separators where a seven-column row carries 6"
 has   "…and naming the hand edit that settles it" "$err" "Escape the literal pipe"
+
+# AN EMPTY LISTING IS NOT AN EMPTY REGISTER (Copilot round 2 on #93). A
+# repository whose every row is hidden lists nothing, and a footer that then
+# offered position 1 would hand out a number a dormant row holds — the one thing
+# 19(b) exists to prevent. `repo19e` is such a repository: one row, no log, a
+# cell that is not the phrase.
+run a19 env LANES_LANE=repo19-2 "$E" add-row "| \`repo19e-1\` | harness \`$A19_OLD\` | Eagle / test / brett | 2026-08-20 | none | none | dormant; nothing pushed |"
+is    "the seeded dormant-only repository takes its row" "$rc" 0
+run a19 "$LANES_CMD" --prefix repo19e </dev/null
+is    "a repository whose every row is hidden still exits 8" "$rc" 8
+has   "…saying the difference between LISTED and recorded" "$out" "is LISTED — and that is not the same as none being recorded"
+has   "…pointing at the flag that shows them" "$out" "--closed --prefix repo19e"
+has   "…and offering the position the hidden row does NOT hold" "$out" "next free position:  2"
+hasnt "…never the one it does" "$out" "next free position:  1"
+
+# THE DRY RUN IS A PREVIEW OF THE ACT, so the reason is checked before it prints
+# (Copilot round 2 on #93) — and the `=` spelling, which is the documented way
+# to give a reason that begins with a dash, survives to the writer as ONE
+# argument instead of arriving there as two and being refused.
+run a19 "$END" --retire-dormant repo19e --reason "a | pipe"
+is    "a reason that would forge a cell is refused BEFORE the dry run prints" "$rc" 2
+has   "…naming the character" "$err" "may not contain '|'"
+hasnt "…and no preview was printed over it" "$out" "DRY RUN, nothing is written"
+run a19 "$END" --retire-dormant repo19e --reason=--why
+is    "the --reason=<why> spelling is accepted" "$rc" 0
+has   "…and the dry run carries it" "$out" "reason   : --why"
 
 echo "== the workstation seam: unset, every writer reads the host =="
 

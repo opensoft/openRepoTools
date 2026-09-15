@@ -352,11 +352,29 @@ case "$rc" in
 8)
 	if [ -n "$here_repo" ]; then
 		# AN EMPTY REPOSITORY STILL GETS THE ANSWER A PERSON CAME FOR: the next
-		# free position is 1, and the line that takes it is printed filled in.
-		say "no lane of $here_repo is recorded."
-		say ""
-		say "  next free position:  1"
-		say "  take it:             lane-start $here_repo 1"
+		# free position, and the line that takes it, printed filled in.
+		#
+		# AND AN EMPTY LISTING IS NO LONGER AN EMPTY REGISTER (Copilot round 2 on
+		# #93). Since Amendment 19(b) a repository whose every row is CLOSED or
+		# DORMANT lists NOTHING — and its positions are all taken. Printing
+		# "next free position: 1" there would hand out a number a retired lane
+		# holds, which is the one thing 19(b) exists to prevent. So the position
+		# is ASKED FOR rather than assumed: `next-free` reads the register and
+		# the archive itself, so it answers over an empty listing.
+		e_next=""; e_rc=0
+		e_next="$(printf '' | "$LANES_EDIT" next-free "$here_repo" 2>/dev/null)" || e_rc=$?
+		if [ "$e_rc" != 0 ]; then e_next=""; fi
+		case "${e_next:-}" in '' | *[!0-9]*) e_next="" ;; esac
+		if [ -n "$e_next" ] && [ "$e_next" != 1 ]; then
+			say "no lane of $here_repo is LISTED — and that is not the same as none being recorded: closed and dormant lanes are left out (Amendment 19(b))."
+			say ""
+			say "  see them:            $prog --closed --prefix $here_repo"
+		else
+			say "no lane of $here_repo is recorded."
+			say ""
+		fi
+		say "  next free position:  ${e_next:-1}"
+		say "  take it:             lane-start $here_repo ${e_next:-1}"
 		say "  every lane:          $prog --all"
 	else
 		say "no lane is recorded${ws_name:+ that $ws_name can see}."
