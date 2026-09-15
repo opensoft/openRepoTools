@@ -30,15 +30,19 @@ The system SHALL store lane and tree lifecycle metadata outside Git worktree dir
 - **THEN** no tracked or untracked orchestration file is added inside the associated Git worktree
 
 ### Requirement: Running ownership is confirmed
-The system SHALL write `RUNNING` only after SessionStart confirms the canonical lane, transcript or session, agent, coordinator directory, and exclusive binding.
+The system SHALL write `RUNNING` only from the act that confirms the canonical lane, transcript or session, agent, coordinator directory, and exclusive binding, and SHALL NOT write it from a read-only session-start report. See design decision 9: in this repository the confirming act is the lane start that records the binding, and the SessionStart hook never writes.
 
-#### Scenario: Launcher dies before SessionStart
-- **WHEN** a resume command begins but no replacement SessionStart is confirmed
+#### Scenario: Launcher dies before the binding is recorded
+- **WHEN** a resume command begins but no replacement binding is confirmed and recorded
 - **THEN** the system does not record the lane as `RUNNING`
 
+#### Scenario: A read-only session-start report runs
+- **WHEN** the session-start hook reports on a lane
+- **THEN** it writes no lifecycle state, makes no network call, and exits successfully
+
 #### Scenario: Confirmed replacement starts
-- **WHEN** SessionStart proves the replacement owns the expected lane and binding
-- **THEN** the system atomically records `RUNNING` with that owner and generation
+- **WHEN** the confirming act proves the replacement owns the expected lane and binding
+- **THEN** the system atomically records `RUNNING` with that owner and a newly advanced generation
 
 ### Requirement: Swap uses a two-phase lifecycle
 The system SHALL transition a running lane to `SWAPPING` before `/swap` performs preservation work and SHALL transition it to `SWAPPED` only after every mandatory inventory, writer, handoff, and pause-record step succeeds.
@@ -77,6 +81,10 @@ Before launching replacement writers, the system SHALL compare lane and tree sid
 - **WHEN** persisted state is `RUNNING` and no verified owner remains live
 - **THEN** the system reports an ungraceful stop and inspects every inventoried and discovered worktree before permitting recovery
 
+#### Scenario: Liveness cannot be established
+- **WHEN** the holder records cannot be read at all
+- **THEN** the system reports that liveness is not established and pronounces neither crash kind, because a read that failed is not an answer
+
 #### Scenario: Swapping state has no holder
 - **WHEN** persisted state is `SWAPPING` and no verified owner remains live
 - **THEN** the system reports the interrupted operation ID and preserves all trees for recovery
@@ -93,8 +101,12 @@ Before launching replacement writers, the system SHALL compare lane and tree sid
 The lane system SHALL delegate worktree reconstruction to the existing estate resume mechanism and SHALL not hand-roll worktree creation, WIP commits, resets, or force operations.
 
 #### Scenario: Parked worktree is missing
-- **WHEN** an inventoried worktree is absent and the estate parked record authorizes reconstruction at durable commits
-- **THEN** the system names or invokes the estate `resume` path according to its existing contract
+- **WHEN** an inventoried worktree is absent and its last observation recorded no dirty or unpushed work
+- **THEN** the system reports it as missing and NAMES the estate `resume` path as the only rebuild, without running it (design decision 14)
+
+#### Scenario: A stale worktree registration is discovered
+- **WHEN** a repository registers a worktree whose directory is gone
+- **THEN** the system reports the stale registration and names the `git worktree prune` that clears it, and prunes nothing itself
 
 #### Scenario: Potentially uncommitted worktree is missing
 - **WHEN** a missing worktree's last evidence indicates dirty or unpublished work without a durable parked commit

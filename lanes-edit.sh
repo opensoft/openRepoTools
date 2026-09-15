@@ -7809,6 +7809,16 @@ tree_id_for() {   # <absolute worktree path>
   tif_p="$(printf '%s' "${1-}" | tr -c 'A-Za-z0-9._-' '-' | tr -s '-')"
   while [ "${tif_p#-}" != "$tif_p" ]; do tif_p="${tif_p#-}"; done
   while [ "${tif_p%-}" != "$tif_p" ]; do tif_p="${tif_p%-}"; done
+  # AND IT CAN NEVER OUTGROW A FILE NAME. A path deep enough to make this
+  # longer than the 255 bytes most filesystems take is a tree whose sidecar
+  # could not be created at all — silently, since the failure would be the
+  # shell's `>` and not this function's. The tail is what a reader recognises,
+  # so the head is what is dropped, and a `cksum` of the WHOLE path goes in
+  # front of it so that two trees sharing a tail keep two ids.
+  if [ "${#tif_p}" -gt 180 ]; then
+    tif_c="$(printf '%s' "${1-}" | cksum | awk '{print $1}')"
+    tif_p="c$tif_c-$(printf '%s' "$tif_p" | tail -c 180)"
+  fi
   printf '%s\n' "$tif_p"
 }
 
@@ -8015,6 +8025,10 @@ EOF
         printf 'TREE%s%s%sstale-registration%s%s%sgit registers it in %s and the directory is gone; `git -C %s worktree prune` is a person'\''s act\n' \
           "$US" "$(tree_id_for "$lrc_wp")" "$US" "$US" "$lrc_wp" "$US" "$lrc_dir" "$lrc_dir"
       fi
+      # NAMED ONCE. The on-disk sweep below walks the same two roots git
+      # registers these in, so a path reported here joins the seen set or a
+      # reader is told about one tree twice under two different reasons.
+      lrc_seen="$lrc_seen $lrc_wp "
       lrc_unmanaged=$((lrc_unmanaged + 1))
     done <<EOF
 $(git -C "$lrc_dir" worktree list --porcelain 2>/dev/null || :)
@@ -9663,6 +9677,15 @@ EOF
       die "lane $lane did not move to $sls_state: $sls_fence. Another act got there first — a resume that advanced the generation, or a second handoff — and nothing was written. Re-read the state (lanes-edit.sh lane-state $lane) before deciding what this process should do; a stale finalizer must never overwrite a newer owner." 7
     fi
     case "$sls_nowg" in ''|*[!0-9]*) sls_nowg=0 ;; esac
+    # A TRANSITION THAT DOES NOT NAME A FIELD KEEPS IT, and does not blank it.
+    # `SWAPPED` is the same operation's commit point and `CLOSED` the end of a
+    # lane that was owned by somebody: writing `owner none` there would lose
+    # the one fact a later reconciliation compares a live holder against, out of
+    # a call that was only ever about the state word.
+    [ -n "$sls_owner" ] || sls_owner="$(lane_sidecar_field "$sls_root/lane-state.yaml" owner 2>/dev/null || :)"
+    [ -n "$sls_agent" ] || sls_agent="$(lane_sidecar_field "$sls_root/lane-state.yaml" agent 2>/dev/null || :)"
+    [ -n "$sls_prof" ]  || sls_prof="$(lane_sidecar_field "$sls_root/lane-state.yaml" profile 2>/dev/null || :)"
+    [ -n "$sls_kind" ]  || sls_kind="$(lane_sidecar_field "$sls_root/lane-state.yaml" kind 2>/dev/null || :)"
     # WHICH TRANSITION ADVANCES THE GENERATION. A new owner or a new operation
     # does (`RUNNING`, `SWAPPING`, `CLOSED`); the FINISH of an operation
     # already in flight does not, because `SWAPPED` is the same operation

@@ -9392,6 +9392,330 @@ is    "…and changed nothing" "$(git -C "$MIG_WIP" rev-list --count "$MIG_HEAD2
 run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --no-such-flag
 is    "an unknown flag is a refusal, not a silent dry run" "$rc" 2
 
+echo "== openRepoTools#91: the crash-consistent lifecycle and the worktree inventory =="
+
+# A LANE IS `RUNNING`, `SWAPPING`, `SWAPPED` OR `CLOSED`, AND WHICH OF THOSE IT
+# IS WITH NO LIVE HOLDER IS WHAT SAYS WHERE ITS SESSION STOPPED. Governed by
+# `openspec/changes/add-crash-consistent-lane-worktree-recovery/` and tracked on
+# opensoft/openRepoTools#91.
+#
+# EVERYTHING THIS SECTION ADDS IS ITS OWN — its own repository, its own
+# worktrees, its own lanes and its own handoffs — so that it can be read, moved
+# or merged in one piece. It reuses `$HANDOFF_CMD` from the Amendment 17
+# section above (the same installed copy) and nothing else of it.
+
+RC_ID="91aa0001-1111-4000-8000-91aa00011111"
+RC_ID2="91aa0002-2222-4000-8000-91aa00022222"
+RC_LIVE="91aa0003-3333-4000-8000-91aa00033333"
+
+RC_DIR="$HOME/projects/repoRC"
+mkdir -p "$RC_DIR"
+git init -q -b main "$RC_DIR"
+git -C "$RC_DIR" config user.email "test@example.invalid"
+git -C "$RC_DIR" config user.name "lane helper tests"
+git -C "$RC_DIR" remote add origin "https://github.com/opensoft/repoRC.git"
+printf 'seed\n' > "$RC_DIR/a.txt"
+git -C "$RC_DIR" add -A >/dev/null 2>&1
+git -C "$RC_DIR" commit -q -m "the lane's own first commit"
+
+# ONE WRITER WORKTREE, A REAL ONE — `git worktree add` in the lane's own
+# checkout, which is what the reconciliation reads back out of
+# `git worktree list --porcelain`.
+mkdir -p "$RC_DIR/.claude/worktrees"
+git -C "$RC_DIR" worktree add -q -b feat/rc1 "$RC_DIR/.claude/worktrees/w1" >/dev/null 2>&1
+printf 'uncommitted\n' > "$RC_DIR/.claude/worktrees/w1/b.txt"
+
+mkdir -p "$WIP/handoffs/repoRC"
+rc_seed_handoff() {   # <lane>
+  { printf 'Lane: %s (team-01a, session %s) — single-use resume prompt: stamp RESUMED-by before acting (lane-collision-protocol rule 3)\n' "$1" "$RC_ID"
+    printf '\n'
+    printf 'Seeded for the openRepoTools#91 cases.\n'
+  } > "$WIP/handoffs/repoRC/$1.md"
+}
+rc_row() {   # <lane> <session cell> [<handoff cell>]
+  "$E" add-row "| \`$1\` | $2 | Eagle / test / brett | 2026-09-15T00:00Z | none | ${3:-handoffs/repoRC/$1.md} | ACTIVE |" >/dev/null 2>&1
+}
+rc_seed_log() {   # <lane> [<extra line>…]
+  rc_l="$1"; shift
+  { printf '# lane %s — object log (lane-collision-protocol Amendment 7)\n' "$rc_l"
+    printf 'STARTED — lane %s, session %s@Eagle, 2026-09-15T00:00:00Z, lane:%s → home opensoft/repoRC; dir %s; profile team-01a\n' \
+      "$rc_l" "$RC_ID" "$rc_l" "$RC_DIR"
+    for rc_x in "$@"; do printf '%s\n' "$rc_x"; done
+  } > "$LOGD/$rc_l.md"
+  git -C "$WIP" add -- "lanes/log/$rc_l.md"
+  git -C "$WIP" commit -q -m "LOG($rc_l@Eagle): seed"
+  git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+  git -C "$WIP" push -q origin main
+  return 0
+}
+for rc_l in repoRC-1 repoRC-2 repoRC-3 repoRC-4 repoRC-5 repoRC-6; do
+  rc_seed_handoff "$rc_l"
+done
+git -C "$WIP" add -- handoffs/repoRC >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the openRepoTools#91 handoffs"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+rc_row repoRC-1 "harness \`$RC_ID\`"
+rc_row repoRC-2 "harness \`$RC_ID\`"
+rc_row repoRC-3 "harness \`$RC_ID\`"
+rc_row repoRC-4 "harness \`$RC_LIVE\`"
+rc_row repoRC-5 "harness \`$RC_ID\`"
+# THE LANE WHOSE HANDOFF CANNOT BE FOUND — its row names a path that is not
+# there, which is how the "one mandatory write did not land" case is made
+# without breaking anything else.
+rc_row repoRC-6 "harness \`$RC_ID\`" "handoffs/repoRC/nowhere-at-all.md"
+for rc_l in repoRC-1 repoRC-2 repoRC-3 repoRC-4 repoRC-5 repoRC-6; do
+  rc_seed_log "$rc_l"
+done
+
+RC_STATE_ROOT="$HOME/projects/.lane-state"
+
+# ------------------------------------- 1. nothing is backfilled, and 8 says so
+
+run "$E" lane-state repoRC-1
+is    "a lane that has never transitioned has no snapshot, and that is 8 and not a failure" "$rc" 8
+run "$E" lane-trees repoRC-1
+is    "…and no inventory either" "$rc" 8
+run "$E" lane-reconcile repoRC-1
+is    "lane-reconcile still answers for it" "$rc" 0
+has   "…with the verdict that names the cutover rule rather than guessing a crash" "$out" "no-state"
+is    "…and nothing was created on disk by a read" \
+      "$( [ -e "$RC_STATE_ROOT/repoRC-1" ] && echo made || echo none )" none
+
+# ---------------------- 2. the confirming act writes RUNNING, and the hook never does
+
+run env LANES_LANE=repoRC-1 LANES_SESSION="$RC_ID" "$E" log RESUMED lane:repoRC-1 '→' "dir $RC_DIR; profile team-01a" "relaunched"
+is    "a RESUMED is written" "$rc" 0
+run "$E" lane-state repoRC-1
+is    "…and the lane is RUNNING: the confirming act writes it, not the SessionStart hook (Amendment 8, R-A8-1)" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "state" { print $2 }')" RUNNING
+is    "…at generation 1, because a new owner advances the fence" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "generation" { print $2 }')" 1
+is    "…owned by the session the line names" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "owner" { print $2 }')" "$RC_ID"
+is    "…and the profile the payload carried" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "profile" { print $2 }')" team-01a
+
+rc_snap_sum="$(cksum < "$RC_STATE_ROOT/repoRC-1/lane-state.yaml")"
+printf '{"session_id":"%s","source":"startup","cwd":"%s"}' "$RC_ID" "$RC_DIR" | "$E" session-start >/dev/null 2>&1
+is    "the SessionStart hook writes NO lifecycle state — it never writes at all (R-A8-1)" \
+      "$(cksum < "$RC_STATE_ROOT/repoRC-1/lane-state.yaml")" "$rc_snap_sum"
+
+run env LANES_LANE=repoRC-1 LANES_SESSION="$RC_ID" "$E" log ENDED lane:repoRC-1 "finished"
+run "$E" lane-state repoRC-1
+is    "an ENDED closes the lifecycle too" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "state" { print $2 }')" CLOSED
+
+# --------------------------------------------------- 3. the two crash kinds
+
+run "$E" set-lane-state repoRC-2 RUNNING --owner "$RC_ID" --agent claude --profile team-01a
+is    "set-lane-state writes the first snapshot for a lane that has none" "$rc" 0
+run "$E" lane-reconcile repoRC-2
+has   "RUNNING with no live holder is an UNGRACEFUL STOP — the session died before any handoff began" \
+      "$out" "ungraceful-stop"
+has   "…and the report says so in the words a resumed session acts on" "$out" "before any handoff began"
+run "$E" set-lane-state repoRC-2 SWAPPING --expect RUNNING
+is    "…the lane moves to SWAPPING" "$rc" 0
+rc_gen="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "generation" { print $2 }')"
+rc_op="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "operation" { print $2 }')"
+run "$E" lane-reconcile repoRC-2
+has   "SWAPPING with no live holder is an INTERRUPTED SWAP — the handoff began and did not finish" \
+      "$out" "interrupted-swap"
+has   "…naming the operation that never finished" "$out" "$rc_op"
+has   "…and saying the three writes may each be half done" "$out" "may each be half done"
+
+# THE HOLDER IS THE OTHER HALF OF EVERY VERDICT, and a record this workstation
+# really has is what makes one live.
+write_record_ns "$sessions_dir/live-rc91.json" "$RC_LIVE" "$LIVE_PID" "$live_start" "rcsess:@31.%31" "repoRC-4" "user" "busy"
+run "$E" set-lane-state repoRC-4 RUNNING --owner "$RC_LIVE" --agent claude
+run "$E" lane-reconcile repoRC-4
+has   "RUNNING with a live holder is a lane that is RUNNING, and not a crash" "$out" "VERDICT"
+hasnt "…and never an ungraceful stop" "$out" "ungraceful-stop"
+run "$E" set-lane-state repoRC-4 SWAPPING --expect RUNNING
+run "$E" lane-reconcile repoRC-4
+has   "SWAPPING with a live holder is a swap in flight, not an interrupted one" "$out" "swap-in-progress"
+hasnt "…and is never reported as interrupted" "$out" "interrupted-swap"
+
+# ------------------------------------------------------------- 4. the fence
+
+run "$E" set-lane-state repoRC-2 SWAPPING --expect none
+is    "a transition whose --expect no longer matches is refused with 7, the estate's 'another act got there first'" "$rc" 7
+has   "…naming what it found against what was expected" "$err" "state is SWAPPING and --expect named none"
+run "$E" lane-state repoRC-2
+is    "…and nothing was written: the generation is where it was" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "generation" { print $2 }')" "$rc_gen"
+
+run "$E" set-lane-state repoRC-2 SWAPPED --expect SWAPPING --expect-generation "$rc_gen" --expect-operation "op-no-such-operation"
+is    "a STALE FINALIZER — the right state and generation, another operation — is refused" "$rc" 7
+has   "…and says a stale finalizer must never overwrite a newer owner" "$err" "must never overwrite a newer owner"
+run "$E" set-lane-state repoRC-2 SWAPPED --expect SWAPPING --expect-generation "$rc_gen" --expect-operation "$rc_op"
+is    "the operation that owns the transition finishes it" "$rc" 0
+is    "…and SWAPPED keeps the generation, because it is the same operation reaching its commit point" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "generation" { print $2 }')" "$rc_gen"
+run "$E" lane-state repoRC-2
+is    "…and a transition that named no owner KEPT the one that was there" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "owner" { print $2 }')" "$RC_ID"
+run "$E" lane-reconcile repoRC-2
+has   "a swapped lane with no holder is resumable" "$out" "resumable"
+
+# A COMPETING RESUME ADVANCES THE GENERATION, and that is what refuses the old
+# swap's finalizer if it ever wakes — the whole point of the fence.
+run "$E" set-lane-state repoRC-3 RUNNING --owner "$RC_ID"
+run "$E" set-lane-state repoRC-3 SWAPPING --expect RUNNING
+rc3_gen="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "generation" { print $2 }')"
+rc3_op="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "operation" { print $2 }')"
+run env LANES_LANE=repoRC-3 LANES_SESSION="$RC_ID2" "$E" log RESUMED lane:repoRC-3 '→' "dir $RC_DIR; profile team-01b" "somebody recovered it"
+is    "a recovery resumes the lane while a swap is still recorded in flight" "$rc" 0
+run "$E" lane-state repoRC-3
+is    "…taking it RUNNING under a NEW generation" \
+      "$( [ "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "generation" { print $2 }')" -gt "$rc3_gen" ] && echo advanced || echo stuck )" advanced
+run "$E" set-lane-state repoRC-3 SWAPPED --expect SWAPPING --expect-generation "$rc3_gen" --expect-operation "$rc3_op"
+is    "…so the interrupted swap's own finalizer is refused when it returns" "$rc" 7
+run "$E" lane-state repoRC-3
+is    "…and the lane it would have marked SWAPPED is still RUNNING" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "state" { print $2 }')" RUNNING
+
+# ------------------- 5. the handoff: SWAPPING before the poll, SWAPPED after
+
+run "$E" set-lane-state repoRC-5 RUNNING --owner "$RC_ID" --agent claude --profile team-01a
+run env LANE_HANDOFF_NO_TMUX=1 LANES_EDIT="$E" CLAUDE_CODE_SESSION_ID="$RC_ID" \
+    CLAUDE_PROFILE_NAME=team-01a "$HANDOFF_CMD" --lane repoRC-5 clear
+is    "lane-handoff exits 0" "$rc" 0
+rc5_err="$err"
+has   "…taking the lane RUNNING -> SWAPPING" "$rc5_err" "lifecycle: RUNNING -> SWAPPING"
+has   "…and SWAPPING -> SWAPPED once every mandatory write has landed" "$rc5_err" "lifecycle: SWAPPING -> SWAPPED"
+is    "…in that order, and SWAPPING BEFORE the writers are polled: a session that dies during the poll must not read as an ungraceful stop" \
+      "$(printf '%s\n' "$rc5_err" | awk '/lifecycle: RUNNING -> SWAPPING/ { s = NR } /writers polled:/ { p = NR } END { print (s > 0 && p > 0 && s < p) ? "before" : "not-before" }')" "before"
+run "$E" lane-state repoRC-5
+is    "the lane is SWAPPED" "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "state" { print $2 }')" SWAPPED
+is    "…and the record's kind is on the snapshot too" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "kind" { print $2 }')" unknown
+
+run "$E" lane-trees repoRC-5
+is    "the handoff took a machine-readable inventory" "$rc" 0
+rc5_tree="$(printf '%s\n' "$out" | head -n 1)"
+is    "…naming the writer's worktree" "$(printf '%s' "$rc5_tree" | awk -F'\037' '{print $2}')" "$RC_DIR/.claude/worktrees/w1"
+is    "…its branch" "$(printf '%s' "$rc5_tree" | awk -F'\037' '{print $3}')" "feat/rc1"
+is    "…its FULL head, which an abbreviated %h is not (it lengthens as a repository grows)" \
+      "$(printf '%s' "$rc5_tree" | awk -F'\037' '{print $4}')" \
+      "$(git -C "$RC_DIR/.claude/worktrees/w1" rev-parse HEAD)"
+is    "…its upstream, without which 0 unpushed cannot be told from 'tracks nothing'" \
+      "$(printf '%s' "$rc5_tree" | awk -F'\037' '{print $5}')" none
+is    "…its dirty count" "$(printf '%s' "$rc5_tree" | awk -F'\037' '{print $6}')" 1
+is    "…its unpushed count" "$(printf '%s' "$rc5_tree" | awk -F'\037' '{print $7}')" 0
+is    "…the writer that held it" "$(printf '%s' "$rc5_tree" | awk -F'\037' '{print $8}')" "$RC_ID"
+is    "…and the checkout it belongs to" "$(printf '%s' "$rc5_tree" | awk -F'\037' '{print $10}')" "$RC_DIR"
+is    "the sidecar is BESIDE the lane and never inside the worktree it describes" \
+      "$( [ -e "$RC_DIR/.claude/worktrees/w1/lane-state.yaml" ] || [ -e "$RC_DIR/.claude/worktrees/w1/.lane-state" ] && echo inside || echo beside )" beside
+is    "…so the worktree it describes is no dirtier for having been recorded" \
+      "$(git -C "$RC_DIR/.claude/worktrees/w1" status --short | grep -c .)" 1
+
+# THE FOURTH WINDOW: the replacement has not started yet, so the lane stays
+# SWAPPED and nothing has written RUNNING on a launcher's behalf.
+run "$E" lane-reconcile repoRC-5
+has   "between the handoff and the next session the lane is resumable, not running" "$out" "resumable"
+has   "…and the dirty writer worktree is reported as dirty" "$out" "dirty"
+run env LANES_LANE=repoRC-5 LANES_SESSION="$RC_ID2" "$E" log RESUMED lane:repoRC-5 '→' "dir $RC_DIR; profile team-09z" "the next session"
+run "$E" lane-state repoRC-5
+is    "…and only the confirming act takes it back to RUNNING" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "state" { print $2 }')" RUNNING
+is    "PROFILE ROTATION IS NOT LANE IDENTITY: the new profile is recorded" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "profile" { print $2 }')" team-09z
+run "$E" lane-trees repoRC-5
+is    "…and the same worktree inventory comes back under it, at the same control root" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '{print $2}' | head -n 1)" "$RC_DIR/.claude/worktrees/w1"
+
+# ---------- 6. one mandatory write missing leaves the lane SWAPPING, honestly
+
+run "$E" set-lane-state repoRC-6 RUNNING --owner "$RC_ID" --agent claude --profile team-01a
+run env LANE_HANDOFF_NO_TMUX=1 LANES_EDIT="$E" CLAUDE_CODE_SESSION_ID="$RC_ID" \
+    CLAUDE_PROFILE_NAME=team-01a "$HANDOFF_CMD" --lane repoRC-6 clear
+is    "a handoff whose handoff file cannot be found still completes (R-A11-11: a swap is never left unwritten)" "$rc" 0
+has   "…and still prints the restart line" "$out" "READY — restart with:"
+run "$E" lane-state repoRC-6
+is    "…but the lane stays SWAPPING, because one of the three mandatory writes did not land" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "state" { print $2 }')" SWAPPING
+run "$E" lane-reconcile repoRC-6
+has   "…which a later session reads as an interrupted swap and not as a clean handoff" "$out" "interrupted-swap"
+
+# ------------------------------------ 7. what the reconciliation classifies
+
+# A tree that is GONE and was last seen holding work is POSSIBLE LOSS, and a
+# tree that is gone and was clean and published is MISSING: no metadata
+# reconstructs a file's contents, and the two must never read the same.
+run "$E" set-lane-tree repoRC-5 "$RC_DIR/.claude/worktrees/lost" --checkout "$RC_DIR" \
+    --branch feat/lost --head 0123456789abcdef0123456789abcdef01234567 --upstream origin/feat/lost --dirty 4 --unpushed 2
+is    "set-lane-tree records a tree from the caller's own observation" "$rc" 0
+run "$E" set-lane-tree repoRC-5 "$RC_DIR/.claude/worktrees/tidy" --checkout "$RC_DIR" \
+    --branch feat/tidy --head 89abcdef0123456789abcdef0123456789abcdef --upstream origin/feat/tidy --dirty 0 --unpushed 0
+# An UNMANAGED tree: git registers it and no sidecar of this lane names it.
+git -C "$RC_DIR" worktree add -q -b feat/rc-unmanaged "$RC_DIR/.claude/worktrees/unmanaged" >/dev/null 2>&1
+# A STALE REGISTRATION: git still holds the path and the directory is gone.
+git -C "$RC_DIR" worktree add -q -b feat/rc-stale "$RC_DIR/.claude/worktrees/stale" >/dev/null 2>&1
+rm -rf "$RC_DIR/.claude/worktrees/stale"
+# A DETACHED HEAD, which a branch name cannot describe.
+git -C "$RC_DIR" worktree add -q --detach "$RC_DIR/.claude/worktrees/detached" >/dev/null 2>&1
+run "$E" set-lane-tree repoRC-5 "$RC_DIR/.claude/worktrees/detached" --checkout "$RC_DIR"
+
+run "$E" lane-reconcile repoRC-5
+rc5_rep="$out"
+has   "a missing tree that last held dirty or unpushed work is POSSIBLE LOSS" "$rc5_rep" "possible-loss"
+has   "…and says plainly that nothing here reconstructs uncommitted files" "$rc5_rep" "NOTHING here can reconstruct uncommitted files"
+has   "a missing tree that was clean and published is MISSING, and names the estate's own resume as the only rebuild" \
+      "$rc5_rep" "the estate parked record and \`resume <Name>\` are the only rebuild"
+has   "a tree git registers that no sidecar names is UNMANAGED" "$rc5_rep" "unmanaged"
+has   "…and is left exactly as it is" "$rc5_rep" "it is left exactly as it is"
+has   "a registration whose directory is gone is a STALE REGISTRATION" "$rc5_rep" "stale-registration"
+has   "…naming the prune that clears it, which is a person's act" "$rc5_rep" "worktree prune"
+has   "a detached HEAD is recorded and reported as detached, not as a branch" "$rc5_rep" "detached"
+has   "the stored observation is a COMPARISON POINT and the report says what git says NOW" "$rc5_rep" "observed"
+is    "every discovered tree is named ONCE, whichever of the two sweeps found it" \
+      "$(printf '%s\n' "$rc5_rep" | awk -F'\037' '$1 == "TREE" && $5 ~ /worktrees\/unmanaged$/' | grep -c .)" 1
+
+# AND IT RESET NOTHING. This is the claim the whole read exists under:
+# `park` CREATES NOTHING and `resume` RESETS NOTHING (AGENTS.md rule 1).
+is    "the dirty writer's uncommitted file survived the reconciliation" \
+      "$( [ -f "$RC_DIR/.claude/worktrees/w1/b.txt" ] && echo kept || echo gone )" kept
+is    "…the unmanaged worktree was not deleted" \
+      "$( [ -d "$RC_DIR/.claude/worktrees/unmanaged" ] && echo kept || echo gone )" kept
+is    "…the stale registration was not pruned" \
+      "$(git -C "$RC_DIR" worktree list --porcelain | grep -c 'worktrees/stale$')" 1
+is    "…and no missing path was recreated" \
+      "$( [ -e "$RC_DIR/.claude/worktrees/lost" ] && echo made || echo none )" none
+
+# ------------------------------- 8. a schema this reader does not know is closed
+
+printf 'schema: 999\nstate: WONDERLAND\n' > "$RC_STATE_ROOT/repoRC-3/lane-state.yaml"
+run "$E" lane-state repoRC-3
+has   "a snapshot written by a newer tooling is UNKNOWN-SCHEMA and never a state this reader acts on" "$out" "UNKNOWN-SCHEMA"
+run "$E" lane-reconcile repoRC-3
+has   "…and the verdict says nothing is assumed about it" "$out" "unknown-state"
+
+# ------------------------------------------ 9. the usage contract of the five
+
+run "$E" lane-state
+is    "lane-state with no lane is 64, the code every read in front of a launch spends" "$rc" 64
+run "$E" set-lane-state repoRC-5 NOWHERE
+is    "a fifth state word is refused" "$rc" 64
+has   "…naming the four there are" "$err" "RUNNING, SWAPPING, SWAPPED and CLOSED are the four"
+run "$E" set-lane-tree repoRC-5 relative/path
+is    "a relative worktree path is refused: no later reader shares this process's directory" "$rc" 64
+run "$E" lane-reconcile repoRC-5 extra-argument
+is    "lane-reconcile takes one lane" "$rc" 64
+
+# ------------- 10. lane-start prints the recovery report before it writes anything
+
+run "$E" set-lane-state repoRC-2 RUNNING --owner "$RC_ID" --agent claude --profile team-01a
+run "$START" repoRC 2 --no-launch
+is    "lane-start on a lane whose last session stopped ungracefully still starts it" "$rc" 0
+has   "…and says so first: the report is printed BEFORE the row and the log are written" "$err" "LANE RECOVERY"
+has   "…with the crash kind" "$err" "ungraceful-stop"
+has   "…and the line that says nothing was touched" "$err" "Nothing here was reset, recreated or deleted"
+run "$E" lane-state repoRC-2
+is    "…and the lane it just bound is RUNNING under the act that confirmed it" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "state" { print $2 }')" RUNNING
+
+
 echo "== the workstation seam: unset, every writer reads the host =="
 
 # THE OTHER HALF OF R-A9-13. Every case above this line runs with

@@ -28,4 +28,8 @@ None. This repository has no existing OpenSpec capability specifications; curren
 
 Tracked by [opensoft/openRepoTools#91](https://github.com/opensoft/openRepoTools/issues/91), with the existing `openRepoTools-3` Claude lane as the active implementation owner.
 
+**Delivered in the first implementation**: the lifecycle snapshot with its generation and operation fence (`lane-state`, `set-lane-state`), the machine-readable worktree inventory taken at every handoff (`set-lane-tree`, `lane-trees`), the resume reconciliation that reports and resets nothing (`lane-reconcile`, printed by `lane-start` before it writes anything), the two-phase `/swap`, and `RUNNING` written by the act that confirms the binding. Design decisions 9 to 15 record where each of these departs from the decisions above and why.
+
+**Not yet delivered**: the coordinator-base invariant and its staged enforcement, the inventory of shape-governed feature worktrees beyond the two roots a lane already owns, and any replication of this state to a second workstation. Each remains a task in `tasks.md`, and the lifecycle is local to one machine until they land.
+
 The change affects `lane`, `lanes`, `lane-start`, `lane-handoff`, `/swap`/`/handoff`, the SessionStart integration, `lanes-edit.sh`, lane status rendering, and lane helper tests. It integrates with—but does not replace—the workspace register, handoff documents, `git worktree` plumbing, openRepoShape/Speckit worktree conventions, and estate `park`, `status`, and `resume` commands. Existing lane records and ad hoc writer worktrees require an explicit compatibility and migration path.

@@ -1050,12 +1050,22 @@ if [ "$do_late" = 1 ]; then
 	if LANES_LANE="$lane" LANES_SESSION="$uuid" "$LANES_EDIT" log PAUSED "lane:$lane" \
 		'→' "$late_payload" "$late_why" --utc "$late_at"; then
 		step "late PAUSED written, dated $late_at (before the relaunch, which is the only place it can go)"
+		# THE LATE RECORD'S MANDATORY SET IS TWO AND NOT THREE: the row is not
+		# flipped by this branch at all (it exits below), so requiring it would
+		# leave every late record reading as an interrupted swap for ever.
+		lc_unfinished=""
+		[ "$handoff_written" = 1 ] || lc_unfinished="the handoff file was not refreshed"
+		lifecycle_finish "$lc_unfinished"
 	else
+		lifecycle_finish "the late PAUSED record was refused by the helper"
 		die "the late PAUSED was NOT written (the helper refused it — its own message is above). Nothing else was done." 2
 	fi
 	say ""
 	say "LATE RECORD WRITTEN for lane $lane, dated $late_at. Now start the lane:"
 	say "  pclaude ${profile_name:-<profile>}"
+	if [ -n "$lc_on" ]; then
+		say "  lifecycle: $lc_state (generation $lc_gen, operation $lc_op) — lanes-edit.sh lane-reconcile $lane"
+	fi
 	exit 0
 fi
 
@@ -1148,6 +1158,26 @@ else
 	[ -z "$row_write_refused" ] || note "the row's state cell was NOT set to PAUSED (the write was refused — run it by hand to see what it says: lanes-edit.sh set-row-state $lane \"PAUSED · $hs_line\"). The restart line below carries --lane for that reason."
 fi
 
+# ------------------------- 4a. SWAPPING -> SWAPPED, the operation's commit point
+#
+# THE THREE WRITES THAT MUST HAVE LANDED, and they are the same three
+# `--restart` and `--exit` already gate on: the lane's `PAUSED` record (what
+# every launcher and every later reader takes its state from), the row (what
+# every OTHER lane reads) and the handoff file (whose top block is literally
+# the next session's first prompt). A lane called `SWAPPED` on two of those is
+# a lane whose recovery would skip the third, so the transition is made only on
+# all three and the state otherwise STAYS `SWAPPING` — which a later session
+# reads as an interrupted swap and answers by preserving every worktree.
+#
+# THE SWAP IS STILL REPORTED AND STILL RESTARTABLE (`R-A11-11`, *a swap is
+# never left unwritten*): this changes what the lane's lifecycle SAYS, never
+# whether the act completes.
+lc_unfinished=""
+[ "$record_written" = 1 ] || lc_unfinished="the lane's PAUSED record did not land"
+[ -z "$row_write_refused" ] || lc_unfinished="${lc_unfinished:+$lc_unfinished; }the row's state cell was not flipped"
+[ "$handoff_written" = 1 ] || lc_unfinished="${lc_unfinished:+$lc_unfinished; }the handoff file was not refreshed"
+lifecycle_finish "$lc_unfinished"
+
 # ------------------------------------------- 5. the restart line — one command
 if [ -n "$row_write_refused" ]; then
 	restart_cmd="pclaude --lane $lane ${profile_name:-<profile>}"
@@ -1160,6 +1190,10 @@ say ""
 say "READY — restart with: $restart_cmd$restart_note"
 say "  record: PAUSED lane:$lane → $payload"
 say "  agent $agent, transcript $transcript (lane-start --agent $agent resumes it)"
+if [ -n "$lc_on" ]; then
+	say "  lifecycle: $lc_state (generation $lc_gen, operation $lc_op) — lanes-edit.sh lane-reconcile $lane"
+	say "  inventory: $writer_count worktree(s) recorded — lanes-edit.sh lane-trees $lane"
+fi
 
 # -------------------------------------------- Amendment 17(f) / 18(d): the end
 #
