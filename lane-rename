@@ -88,8 +88,9 @@ lane-rename <old> <new> ["<why>"] [--verbatim] [--no-github] [--no-tmux]
 Rename a lane. ONE COMMIT, refused or whole (lane-collision-protocol Amendment
 16): the register row's key cell, `lanes/log/<old>.md` → `lanes/log/<new>.md`
 with a RENAMED line, the handoff the row names → the same date with
-`lane-<new>` plus a Rule 3 stamp, and `lanes/aliases.tsv` gains `<old> <new>`.
-Then one GitHub comment on every object the lane holds.
+`lane-<new>` plus a Rule 3 stamp, and `lanes/aliases.tsv` gains one TAB-separated
+record, `<old>	<new>	<UTC of the rename>`. Then one GitHub comment on every
+object the lane holds.
 
 THE OLD NAME KEEPS RESOLVING, for ever and in every reader: `who`, `lanes`,
 `live-holder`, `lane-start`, Rule 6 attribution, the SessionStart block and the
@@ -167,8 +168,9 @@ have_tmux() {
 # ---------------------------------------------------------------- this window
 #
 # READ BEFORE THE WRITE, and only read. Amendment 16(f) turns on ONE question —
-# is this the lane's own window — and it is answered by the name this window
-# carries NOW, which the write below is about to make stale.
+# is this the lane's own window — and the two facts it is answered from are read
+# here, before the write, because a write that refuses must leave this window
+# exactly as it found it.
 #
 # TWO SPELLINGS, AND NEITHER IS DERIVED FROM THE OTHER (Amendment 11(c), as
 # `lane-start` states it): `#W` is the NAME, and `<session>:<@id>` is the ref
@@ -180,15 +182,26 @@ if have_tmux; then
 	win_name="$(tmux display-message -p '#W' 2>/dev/null || :)"
 	win_harness="$(tmux display-message -p '#{session_name}:#{window_id}' 2>/dev/null || :)"
 fi
-# THIS WINDOW IS THE LANE'S WHEN IT CARRIES ITS NAME. Compared without case
-# (Amendment 15) against BOTH names: `<old>`, which is the ordinary state, and
-# `<new>`, which is the state a re-run leaves — a rename whose write landed and
-# whose window rename did not is finished by running the same command again.
+# THIS WINDOW IS THE LANE'S WHEN ITS NAME RESOLVES TO THE LANE, and that is a
+# question for the RESOLVER and not for a string compare (Copilot round 1 on
+# openRepoTools#81). Compared against the typed `<old>` alone, a lane currently
+# called `B` renamed through an OLDER name `A` left `here` at 0 — the window is
+# named `B` — so the command skipped both the window rename and the `/rename` in
+# the lane's own window, which is the one place clause (f) says they happen.
+#
+# `canon-lane` answers it for every spelling at once: `<old>`, `<new>`, any
+# older alias, and any case of them (Amendment 15). It is asked AFTER the write,
+# because the write is what puts `<old> → <new>` in the table — before it, a
+# window named `<old>` resolves to `<old>`, which is exactly as true and answers
+# a different question.
 here=0
-if [ -n "$win_name" ]; then
-	[ "$(lc "$win_name")" = "$(lc "$old")" ] && here=1
-	[ "$(lc "$win_name")" = "$(lc "$new")" ] && here=1
-fi
+window_is_lane() {   # <the lane the window must be>
+	wil_want="$1"
+	[ -n "$win_name" ] || return 1
+	[ "$(lc "$win_name")" = "$(lc "$wil_want")" ] && return 0
+	wil_canon="$("$LANES_EDIT" canon-lane "$win_name" 2>/dev/null)" || return 1
+	[ -n "$wil_canon" ] && [ "$(lc "$wil_canon")" = "$(lc "$wil_want")" ]
+}
 
 # ------------------------------------------------------------------ the write
 #
@@ -200,6 +213,25 @@ step "renaming lane $old → $new (lane-collision-protocol Amendment 16)"
 rc=0
 "$LANES_EDIT" rename-lane "$old" "$new" ${why:+"$why"} ${pass[@]+"${pass[@]}"} || rc=$?
 if [ "$rc" != 0 ]; then
+	# THE RENAME MAY ALREADY HAVE LANDED, AND THEN THIS IS THE REPAIR RUN
+	# (Copilot round 1 on openRepoTools#81). The two acts below are the two a
+	# register writer may not make, and either of them can fail on its own —
+	# tmux refusing the rename, a pane not running `claude` — with the commit
+	# already on `origin`. Re-running the same command was the documented cure
+	# and it could not work: the writer resolves `<old>` through the alias it
+	# just wrote, finds `<new>`'s row, and refuses. So the refusal is ASKED
+	# WHICH ONE IT IS: where `<old>` already resolves to `<new>`, the write is
+	# done and what is left is this file's half, which then runs. Anything else
+	# is a real refusal and is passed through untouched.
+	if [ "$rc" = 2 ]; then
+		landed="$("$LANES_EDIT" canon-lane "$old" 2>/dev/null)" || landed=""
+		if [ -n "$landed" ] && [ "$(lc "$landed")" = "$(lc "$new")" ]; then
+			step "the rename itself has already landed — '$old' resolves to $new — so this run is the window and the session only (Amendment 16(f))"
+			rc=0
+		fi
+	fi
+fi
+if [ "$rc" != 0 ]; then
 	# THE WRITER HAS ALREADY SAID WHY, in its own words and with the act to
 	# take. Saying it again in different words is how two surfaces come to
 	# disagree about one refusal; the only thing added here is that NOTHING of
@@ -210,6 +242,8 @@ if [ "$rc" != 0 ]; then
 	esac
 	exit "$rc"
 fi
+
+window_is_lane "$new" && here=1
 
 # --------------------------------------------------- clause (f): the two names
 #

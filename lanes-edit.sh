@@ -691,8 +691,55 @@ release_lock() {
   return 0
 }
 
+# ====================================================== AMENDMENT 16 =======
+#
+# THE RENAME'S UNDO, AND WHY IT IS A TRAP AND NOT A LINE BEFORE EACH `die`.
+#
+# `rename-lane` is ONE COMMIT, REFUSED OR WHOLE, and its refusals all happen
+# before the first byte — but the four MOVES themselves can still fail on a
+# filesystem: a `mv` across a mount, a handoff this user may not write, a disk
+# that fills between the log and the alias table. Copilot round 1 on
+# openRepoTools#81 named the state that left: *"the log has already been moved
+# and its `RENAMED` line appended, and this `die` exits without rolling either
+# change back"* — a half-renamed checkout, which is exactly what the contract
+# says cannot happen and what no re-run can finish.
+#
+# So the writes are made against a SNAPSHOT taken before the first of them, and
+# every exit path between the first write and the commit restores it. It hangs
+# off `cleanup`, not off each `die`, for the reason `replace_line` makes
+# unavoidable: that function dies inside itself when its own proof fails, and a
+# caller cannot put a line after it. `cleanup` runs on EXIT and on the two
+# signals, so one hook covers every way out, the shell's included.
+#
+# THE REGISTER IS NOT IN IT. `replace_line` builds the new file in a temporary
+# directory and proves it — one line added, one removed, the same line count —
+# BEFORE it writes a byte of `LANES.md`, so the register is never half-written
+# and there is nothing there to restore.
+RL_ACTIVE=0; RL_SNAP=""
+RL_LOG_OLD=""; RL_LOG_NEW=""; RL_H_OLD=""; RL_H_NEW=""
+RL_ALIAS=""; RL_ALIAS_EXISTED=0
+rename_undo() {
+  [ "$RL_ACTIVE" = 1 ] || return 0
+  RL_ACTIVE=0
+  [ -n "$RL_LOG_NEW" ] && [ -f "$RL_LOG_NEW" ] && rm -f -- "$RL_LOG_NEW"
+  [ -n "$RL_LOG_OLD" ] && [ -n "$RL_SNAP" ] && [ -f "$RL_SNAP/log" ] && cat -- "$RL_SNAP/log" > "$RL_LOG_OLD"
+  if [ -n "$RL_H_NEW" ] && [ "$RL_H_NEW" != "$RL_H_OLD" ] && [ -f "$RL_H_NEW" ]; then rm -f -- "$RL_H_NEW"; fi
+  [ -n "$RL_H_OLD" ] && [ -n "$RL_SNAP" ] && [ -f "$RL_SNAP/handoff" ] && cat -- "$RL_SNAP/handoff" > "$RL_H_OLD"
+  if [ -n "$RL_ALIAS" ]; then
+    if [ "$RL_ALIAS_EXISTED" = 1 ]; then
+      [ -n "$RL_SNAP" ] && [ -f "$RL_SNAP/aliases" ] && cat -- "$RL_SNAP/aliases" > "$RL_ALIAS"
+    else
+      rm -f -- "$RL_ALIAS"
+    fi
+  fi
+  note "the rename was rolled back: the object log, the handoff and ${LANES_ALIASES_PATH:-lanes/aliases.tsv} are as they were, and nothing was committed. A rename is ONE commit, refused or whole (Amendment 16)."
+  return 0
+}
+
 cleanup() {
+  rename_undo
   if [ "$LOCK_HELD" = 1 ]; then release_lock; fi
+  [ -n "${RL_SNAP:-}" ] && [ -d "${RL_SNAP:-}" ] && rm -rf -- "$RL_SNAP"
   [ -n "${TMPD:-}" ] && [ -d "${TMPD:-}" ] && rm -rf -- "$TMPD"
   [ -n "${SE_CACHE_FILE:-}" ] && rm -f -- "$SE_CACHE_FILE" "$SE_CACHE_FILE".* 2>/dev/null
   return 0
@@ -1858,58 +1905,44 @@ object_slug()    { case "$1" in *:openspec/changes/*) printf '%s\n' "${1##*/}" ;
 # `match()` is used for every multi-byte separator: RSTART and RLENGTH are in
 # the same units as each other whatever the locale, and a hard-coded byte
 # offset for " — " is not.
-# AMENDMENT 16(e) — THE LANE FIELD IS RESOLVED ON THE WAY IN, AND THE LINES ON
-# DISK ARE NEVER TOUCHED.
+# AMENDMENT 16(e) — A LINE'S LANE IS THE LANE OF THE FILE IT IS IN, and that is
+# the whole of the rule.
 #
 # Clause (c) is explicit that a rename rewrites none of the lines above it:
 # *"the lines above it — which still say `lane <old>` — are never rewritten"*.
-# So after a rename the lane's own log holds its whole history under two names,
-# in one file, about one lane — the exact shape Amendment 15 met when one lane's
-# log spelled it two ways, and the exact failure: `lane_objects`, `superseded_by`,
+# So after a rename a lane's log holds its whole history under two names, in one
+# file, about one lane — the exact shape Amendment 15 met when one lane's log
+# spelled it two ways, and the exact failure: `lane_objects`, `superseded_by`,
 # `holders_of`, `lane_row_facts` and `first_landed_of` all key on this field, so
 # read byte for byte HALF A RENAMED LANE'S HOLDS BECOME INVISIBLE — `who --lane`
 # calls a held object free and `lane-end` ends a lane that holds one.
 #
-# Resolved HERE, in the parse, rather than in each of those five: this is the one
-# place every one of them gets the field from, so one rule serves all of them and
-# no reader had to be taught about renames at all. The `lane:<name>` OBJECT of a
-# lane-kind line takes the same resolution, for the same reason — it is the same
-# name in the same line.
+# THE FIRST ANSWER WAS AN ALIAS LOOKUP IN THIS PARSE, AND IT WAS THE WRONG ONE
+# (Copilot round 1 on openRepoTools#81). A rename FREES the old name — no row
+# carries it, so `lane_next_free` hands the position out and a NEW lane can be
+# called it — and from that moment the field `lane <old>` is ambiguous: it is
+# the renamed lane's history in one file and the new lane's present in another.
+# No amount of resolving a NAME tells those apart, because the name is the same.
 #
-# THE MAP ARRIVES AS A FILE AND NOT AS `-v` (the rule `who_landing` states, and
-# its measurement): `awk -v` carries ONE LINE, and a table of renames is many.
-# `AF` is the alias table as `origin/<branch>` has it, materialised by
-# `alias_awkfile` below; empty means there is none, which is every estate that
-# has never renamed a lane and costs exactly one `if`.
+# THE FILE DOES. Amendment 7's first sentence is one file per lane, single
+# writer, and Amendment 15 makes its name the row's own spelling — so
+# `lanes/log/<lane>.md` IS the statement of which lane every line in it belongs
+# to, it MOVES with the rename (clause (c)), and it needs no table to read. The
+# field stays on the line as the spelling somebody typed; the FILE is what the
+# readers are keyed on. That also settles, with nothing added, the two spellings
+# of one lane Amendment 15 had to reason about line by line.
 LOG_AWK='
 function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
-# The end of a name-s alias chain, or the name itself. `vis` is an extra
-# parameter, which is awk-s way of spelling a local array: a CYCLE (refused at
-# write time, so reachable only by a hand edit) answers the name unchanged
-# rather than spinning, and the walk is bounded at 32 hops besides.
-function lcanon(nm,   cur, lk, i, vis) {
-  cur = nm
-  for (i = 0; i < 32; i++) {
-    lk = tolower(cur)
-    if (lk in vis) return nm
-    if (!(lk in ALIAS)) break
-    vis[lk] = 1; cur = ALIAS[lk]
-  }
-  return cur
-}
-BEGIN {
-  if (AF != "") {
-    while ((getline aln < AF) > 0) {
-      if (aln ~ /^[ \t]*#/) continue
-      an = split(aln, AFLD, "\t")
-      if (an < 2) continue
-      ak = AFLD[1]; av = AFLD[2]
-      gsub(/^[ \t]+|[ \t]+$/, "", ak); gsub(/^[ \t]+|[ \t]+$/, "", av)
-      if (ak == "" || av == "") continue
-      ALIAS[tolower(ak)] = av
-    }
-    close(AF)
-  }
+# The lane a FILE belongs to: its base name without `.md`. `FN` is the
+# repo-relative path `remote_log_events` hands in; `FILENAME` is awk-s own for a
+# file read from disk. Computed once per file rather than per line.
+function filelane(   f, n, parts) {
+  f = (FN != "" ? FN : FILENAME)
+  if (f == "") return ""
+  n = split(f, parts, "/")
+  f = parts[n]
+  sub(/\.[Mm][Dd]$/, "", f)
+  return f
 }
 # A LINE IS NEVER DROPPED SILENTLY. This log is append-only and nothing in it
 # is ever rewritten, so a line no parser can read is a hold no tool will
@@ -1919,6 +1952,7 @@ function bad(why,   f) {
   printf "unreadable: %s:%d (%s)\n", f, FNR, why > "/dev/stderr"
   nbad++
 }
+FNR == 1 { FL = "" }
 {
   line = $0
   if (line ~ /^[ \t]*#/ || line ~ /^[ \t]*$/) next
@@ -1964,44 +1998,21 @@ function bad(why,   f) {
       else { payload = trim(rest) }
     }
   }
-  lane = lcanon(lane)
-  if (substr(obj, 1, 5) == "lane:") obj = "lane:" lcanon(substr(obj, 6))
+  if (FL == "") FL = filelane()
+  if (FL != "") {
+    # THE LANE-KIND OBJECT IS THE WRITING LANE AND NOTHING ELSE (Amendment
+    # 7(b)), so it follows the same rule: `lane:<old>` in a renamed lane-s own
+    # log is that lane under the name it had, and `who lane:<name>` asks
+    # `canon_object` -> `canon_lane` of the name it was given, which lands on
+    # the same answer from the other side.
+    lane = FL
+    if (substr(obj, 1, 5) == "lane:") obj = "lane:" FL
+  }
   printf "%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%s%c%d\n", utc, 31, lane, 31, verb, 31, uuid, 31, ws, 31, obj, 31, ref, 31, payload, 31, txt, 31, (FN != "" ? FN : FILENAME), 31, FNR
 }
 END { if (nbad > 0) printf "%d unreadable line(s) above — an append-only log is never rewritten, so a line no parser reads is a hold no tool will mention again\n", nbad > "/dev/stderr" }'
 
-parse_log_stream() { alias_awkfile; awk -v FN="${1:-}" -v AF="$LANES_ALIAS_AWKFILE" "$LOG_AWK"; }
-
-# THE ALIAS TABLE AS A FILE `LOG_AWK` CAN READ, resolved ONCE per invocation.
-# `lane_alias_text` always leaves the cache non-empty — a comment line where
-# there are no aliases — so the second and every later call here is one `[ -s ]`
-# test, which is what keeps this off the cost of `state_events`' 45 `git show`s.
-# Empty means "asked, and this estate has no table"; the flag is what tells that
-# apart from "not asked yet", because an empty PATH handed to awk's `getline`
-# would be stdin.
-LANES_ALIAS_AWKFILE=""
-LANES_ALIAS_AWKASKED=0
-alias_awkfile() {
-  [ "$LANES_ALIAS_AWKASKED" = 1 ] && return 0
-  LANES_ALIAS_AWKASKED=1
-  LANES_ALIAS_AWKFILE=""
-  aaf_c="${SE_CACHE_FILE:+$SE_CACHE_FILE.aliases}"
-  if [ -n "$aaf_c" ]; then
-    # THE `[ -s ]` COMES FIRST AND IT IS NOT A MICRO-OPTIMISATION. `remote_log_events`
-    # runs `git show … | parse_log_stream` PER LOG FILE, and the right side of a
-    # pipeline is its own subshell — so the flag above resets for every one of an
-    # estate's forty-odd logs, and building the cache the slow way each time would
-    # be forty extra processes per state read. The cache is never written empty
-    # (`lane_alias_text` puts a comment line there where there are no aliases), so
-    # a non-empty file IS the answer and the builder is only ever reached once.
-    [ -s "$aaf_c" ] || lane_alias_text >/dev/null 2>&1 || :
-    [ -s "$aaf_c" ] && { LANES_ALIAS_AWKFILE="$aaf_c"; return 0; }
-  fi
-  if [ -n "${LANES_ALIASES_TSV:-}" ] && [ -f "$LANES_ALIASES_TSV" ]; then
-    LANES_ALIAS_AWKFILE="$LANES_ALIASES_TSV"
-  fi
-  return 0
-}
+parse_log_stream() { awk -v FN="${1:-}" "$LOG_AWK"; }
 
 log_files() {
   for le_f in "$LANES_LOG_DIR"/*.md; do
@@ -2021,8 +2032,7 @@ $(log_files)
 EOF
   fi
   [ "${#le_files[@]}" -gt 0 ] || return 0
-  alias_awkfile
-  awk -v FN="" -v AF="$LANES_ALIAS_AWKFILE" "$LOG_AWK" "${le_files[@]}"
+  awk -v FN="" "$LOG_AWK" "${le_files[@]}"
 }
 
 # Is there an `origin/<branch>` to read from at all? Outside a repository, and
@@ -3214,15 +3224,31 @@ rows_named_ci() {   # <typed name>
 # one from the working tree and the other from `origin` could see an alias whose
 # row has not arrived here, or a row whose alias has not.
 LANES_ALIAS_CACHE=""
+LANES_ALIAS_ERR=""
+# A READ THAT FAILED IS NOT AN EMPTY TABLE (Copilot round 1 on openRepoTools#81).
+# `cat … 2>/dev/null || :` made a permission or IO fault on `lanes/aliases.tsv`
+# indistinguishable from an estate that has never renamed a lane — and the two
+# have opposite consequences: the second means a name resolves to itself, while
+# the first means a name whose row moved resolves to NOTHING, so a reader misses
+# that lane's whole history and `rename-lane` validates its cycle test against a
+# table it could not read. Clause (e) promises the old name resolves FOR EVER, so
+# this fails CLOSED: 5, with the reason in `LANES_ALIAS_ERR`, which the writer
+# turns into a refusal and every reader says out loud.
 lane_alias_text() {
   if [ -n "$LANES_ALIAS_CACHE" ]; then printf '%s\n' "$LANES_ALIAS_CACHE"; return 0; fi
   lat_c="${SE_CACHE_FILE:+$SE_CACHE_FILE.aliases}"
   if [ -n "$lat_c" ] && [ -s "$lat_c" ]; then cat -- "$lat_c"; return 0; fi
-  lat_t=""
+  lat_t=""; LANES_ALIAS_ERR=""
   if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_ALIASES_PATH" 2>/dev/null; then
-    lat_t="$(git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_ALIASES_PATH" 2>/dev/null || :)"
+    lat_t="$(git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_ALIASES_PATH" 2>/dev/null)" || {
+      LANES_ALIAS_ERR="git show origin/$LANES_BRANCH:$LANES_ALIASES_PATH failed, and the object is there"
+      return 5
+    }
   elif [ -n "${LANES_ALIASES_TSV:-}" ] && [ -f "$LANES_ALIASES_TSV" ]; then
-    lat_t="$(cat -- "$LANES_ALIASES_TSV" 2>/dev/null || :)"
+    lat_t="$(cat -- "$LANES_ALIASES_TSV" 2>/dev/null)" || {
+      LANES_ALIAS_ERR="$LANES_ALIASES_TSV is there and could not be read"
+      return 5
+    }
   fi
   # AND THE EMPTY ANSWER IS CACHED TOO, as one comment line in the table's own
   # grammar. An estate that has never renamed a lane is the ordinary case, and
@@ -3246,8 +3272,6 @@ lane_alias_text() {
 # just wrote is the one the comments below it are computed with.
 lane_alias_flush() {
   LANES_ALIAS_CACHE=""
-  LANES_ALIAS_AWKFILE=""
-  LANES_ALIAS_AWKASKED=0
   laf_c="${SE_CACHE_FILE:+$SE_CACHE_FILE.aliases}"
   [ -n "$laf_c" ] && rm -f -- "$laf_c"
   return 0
@@ -3264,26 +3288,35 @@ lane_alias_flush() {
 #                  at the end (a chain `new → old → x` ends at `x` and still
 #                  closes, because the new row is appended last and wins the
 #                  key `old`).
+#   5 + nothing    the table could not be READ (fail closed; `LANES_ALIAS_ERR`)
 #
 # Case-insensitive on both sides (Amendment 15). THE LAST ROW FOR A KEY WINS:
 # the file is append-ordered, and a name renamed away, minted again and renamed
 # again has two rows of which the later is the answer a reader today needs.
-# A CYCLE IS REFUSED AT WRITE TIME (clause (e)) and so can only arrive here by a
-# hand edit; the walk still stops where the cycle closes rather than spinning,
-# answers 3 rather than a name, and is bounded at 32 hops besides — a table that
-# is wrong must not be able to hang every command on the workstation.
+#
+# THE WALK IS BOUNDED BY THE TABLE AND NOT BY A NUMBER (Copilot round 1 on
+# openRepoTools#81). It was `for (i = 0; i < 32; i++)`, which is a CAP on a
+# valid chain as well as on a cycle: an estate that renamed one lane thirty-three
+# times would have its earliest names resolve to an INTERMEDIATE one, which has
+# no row, so `canon_lane` would answer a name nothing carries and clause (e)'s
+# "for ever" would quietly end at hop 32. The `seen` set is what guarantees
+# termination — every hop consumes one key of a finite map — so the bound is the
+# number of keys plus one, which no honest chain can exceed and no cycle can
+# reach without closing first.
 lane_alias_target() {   # <typed name> [<forbidden name>]
-  lane_alias_text | awk -F'\t' -v want="$1" -v stop="${2-}" '
+  lat_out="$(lane_alias_text)" || return 5
+  printf '%s\n' "$lat_out" | awk -F'\t' -v want="$1" -v stop="${2-}" '
     /^[ \t]*#/ { next }
     NF >= 2 {
       k = $1; v = $2
       gsub(/^[ \t]+|[ \t]+$/, "", k); gsub(/^[ \t]+|[ \t]+$/, "", v)
       if (k == "" || v == "") next
+      if (!(tolower(k) in map)) nmap++
       map[tolower(k)] = v
     }
     END {
       cur = want; ls = tolower(stop)
-      for (i = 0; i < 32; i++) {
+      for (i = 0; i <= nmap; i++) {
         lk = tolower(cur)
         if (stop != "" && lk == ls) { hit = 1; break }
         if (lk in seen) { cyc = 1; break }
@@ -3297,18 +3330,70 @@ lane_alias_target() {   # <typed name> [<forbidden name>]
     }'
 }
 
+# ONE HOP, and the reason it exists apart from the walk above: "a ROW WINS OVER
+# AN ALIAS" has to be asked at EVERY hop and not only at the start (Copilot round
+# 1). After `A → B`, a lane legitimately minted under the name `A` again — the
+# position `A` freed is one `lane_next_free` will hand out — makes `A` both a row
+# and an alias key, and a chain `C → A` must then stop AT `A`, which is a lane,
+# rather than carry on to `B`, which is a different one. Walking hop by hop in
+# the shell is what lets the row test sit between the hops; the chains this
+# estate writes are one or two long, and `register_text` is cached, so the cost
+# is an awk per hop over a table of a few lines.
+#   0 + the next name · 1 + nothing · 5 the table could not be read
+lane_alias_hop() {   # <name>
+  lah_out="$(lane_alias_text)" || return 5
+  printf '%s\n' "$lah_out" | awk -F'\t' -v want="$1" '
+    /^[ \t]*#/ { next }
+    NF >= 2 {
+      k = $1; v = $2
+      gsub(/^[ \t]+|[ \t]+$/, "", k); gsub(/^[ \t]+|[ \t]+$/, "", v)
+      if (k == "" || v == "") next
+      map[tolower(k)] = v
+    }
+    END { if (tolower(want) in map) { print map[tolower(want)]; exit 0 } exit 1 }'
+}
+
+# lane_alias_keys — every key of the table, one per line, as written. The one
+# caller is `rename-lane`, which refuses a `<new>` that is already a key
+# (Copilot round 1): a row under a former name TAKES PRECEDENCE over the alias,
+# so minting one deliberately would end that former name's resolution — the one
+# thing clause (e) promises never happens.
+lane_alias_keys() {
+  lak_out="$(lane_alias_text)" || return 5
+  printf '%s\n' "$lak_out" | awk -F'\t' '
+    /^[ \t]*#/ { next }
+    NF >= 2 { k = $1; gsub(/^[ \t]+|[ \t]+$/, "", k); if (k != "") print k }'
+}
+
 # Every ROW SPELLING that answers for <typed>: its own rows, and where it has
-# none, the rows of the end of its alias chain. A ROW WINS OVER AN ALIAS, always
-# — a name that is a lane today IS that lane, which is also what makes renaming
-# a lane BACK to a name readable. Used by `canon_lane` below and by the guard's
-# window and session lookups, which are the two seats that read a row from a
-# name without going through `canon_lane`.
+# none, the rows of the first name along its alias chain that HAS one. Used by
+# `canon_lane` below and by the guard's window and session lookups, which are
+# the two seats that read a row from a name without going through `canon_lane`.
+#
+# A ROW WINS OVER AN ALIAS, AT EVERY HOP AND NOT ONLY AT THE START (Copilot
+# round 1 on openRepoTools#81). A name that is a lane today IS that lane — which
+# is what makes renaming a lane BACK to a name readable — and the chain has to
+# be walked with that test BETWEEN the hops, because an alias key can become a
+# row again: `A → B` frees the name `A`, `lane_next_free` hands that position
+# out, and a later `C → A` must then answer `A`, the lane, rather than running
+# on to `B`, which is a different one. Taking only the END of the chain answered
+# `B` and lost `C`'s own lane.
+#
+# The loop is bounded by a `seen` list rather than by a number, for
+# `lane_alias_target`'s reason: every hop consumes one key of a finite table.
 rows_named_ci_alias() {   # <typed name>
   rna_hits="$(rows_named_ci "$1" 2>/dev/null || :)"
   if [ -n "$rna_hits" ]; then printf '%s\n' "$rna_hits"; return 0; fi
-  rna_to="$(lane_alias_target "$1" 2>/dev/null || :)"
-  [ -n "$rna_to" ] || return 0
-  rows_named_ci "$rna_to" 2>/dev/null || :
+  rna_cur="$1"; rna_seen="$US$(lc "$1")$US"
+  while :; do
+    rna_next="$(lane_alias_hop "$rna_cur" 2>/dev/null)" || return 0
+    [ -n "$rna_next" ] || return 0
+    case "$rna_seen" in *"$US$(lc "$rna_next")$US"*) return 0 ;; esac
+    rna_seen="$rna_seen$(lc "$rna_next")$US"
+    rna_hits="$(rows_named_ci "$rna_next" 2>/dev/null || :)"
+    if [ -n "$rna_hits" ]; then printf '%s\n' "$rna_hits"; return 0; fi
+    rna_cur="$rna_next"
+  done
 }
 
 # canon_lane <typed> — the name every `<lane>` argument and `$LANES_LANE` is
@@ -3363,6 +3448,14 @@ canon_lane() {   # <typed name>
     cl_al="$(lane_alias_target "$cl_want" 2>/dev/null)" || cl_arc=$?
     if [ "$cl_arc" = 3 ]; then
       note "${LANES_ALIASES_PATH:-lanes/aliases.tsv} resolves '$cl_want' in a CYCLE, so it names no lane at all: a rename chain that returns to its own start has no end to resolve to. \`rename-lane\` refuses to write one, so this table was edited by hand — take the offending row out of it. Carrying on with '$cl_want' exactly as typed."
+    elif [ "$cl_arc" = 5 ]; then
+      # A READ THAT FAILED, SAID OUT LOUD (Copilot round 1). This function
+      # cannot refuse — every `<lane>` argument on the workstation passes
+      # through it and a register that is fine must not be unusable because a
+      # table beside it is not — but it must never let an unreadable table read
+      # as "this name is nobody's former name", which is the silence that loses
+      # a lane's whole history to `who --lane`.
+      note "${LANES_ALIASES_PATH:-lanes/aliases.tsv} COULD NOT BE READ (${LANES_ALIAS_ERR:-unknown error}), so whether '$cl_want' is a FORMER name of some lane is NOT established — which is not the same as it not being one (Amendment 16(e)). Carrying on with '$cl_want' exactly as typed; every WRITE that asks this table refuses instead."
     elif [ -n "$cl_al" ]; then
       cl_out="$cl_al"
     fi
@@ -7509,6 +7602,24 @@ case "$cmd" in
       die "'$rl_new' is not of the form <repo>-<n> (Rule 4), and a lane renamed out of that form loses the next free position, the \`lane-start <repo> <n>\` that takes it and the whole of \`lanes --prefix\`. A lane deliberately named otherwise — Amendment 11's \`--dir\` lanes are the ones there are — is renamed with --verbatim. Nothing was written." 2
     fi
 
+    # A `<new>` THAT IS ALREADY AN ALIAS KEY IS REFUSED (Copilot round 1 on
+    # openRepoTools#81). A row wins over an alias at every hop — that is what
+    # makes a name that is a lane today BE that lane — so minting a row under a
+    # name some other lane was renamed AWAY from would end that lane's old name
+    # resolving, which is the one thing clause (e) promises never happens. The
+    # refusal is here, at the one writer that can do it deliberately; a row
+    # minted under a freed name by `lane-start` is a different act and the
+    # readers handle it by the row-wins rule itself.
+    rl_krc=0
+    rl_keys="$(lane_alias_keys 2>/dev/null)" || rl_krc=$?
+    if [ "$rl_krc" = 5 ]; then
+      die "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read (${LANES_ALIAS_ERR:-unknown error}), and a rename whose alias table cannot be read is a rename whose old name may stop resolving — which is the one thing clause (e) promises for ever, so this fails closed. Nothing was written." 1
+    fi
+    rl_kmatch="$(printf '%s\n' "$rl_keys" | awk -v w="$rl_new" 'BEGIN { lw = tolower(w) } NF && tolower($0) == lw { print; exit }')"
+    if [ -n "$rl_kmatch" ]; then
+      die "'$rl_new' is already a FORMER name in ${LANES_ALIASES_PATH:-lanes/aliases.tsv} (spelled '$rl_kmatch'), and a row under it would take precedence over that alias — which would end a lane's old name resolving, the one thing Amendment 16(e) promises for ever. Pick a name no lane has ever been called. Nothing was written." 2
+    fi
+
     # A CYCLE, ASKED OF THE TABLE AS IT WILL BE (clause (e)). Adding `<old> →
     # <new>` closes one exactly when the chain from `<new>` reaches `<old>`,
     # anywhere along it — the new row is appended last and wins the key.
@@ -7518,7 +7629,7 @@ case "$cmd" in
       0 | 1) : ;;
       3) die "${LANES_ALIASES_PATH:-lanes/aliases.tsv} already resolves '$rl_new' in a CYCLE, so nothing can be added through it until that row is taken out by hand. \`rename-lane\` writes no cycle, so this table was hand-edited. Nothing was written." 2 ;;
       4) die "renaming $rl_old to $rl_new would close a CYCLE in ${LANES_ALIASES_PATH:-lanes/aliases.tsv}: '$rl_new' already resolves back through '$rl_old', and a chain that returns to its own start has no end for a reader to resolve to (Amendment 16(e)). Nothing was written." 2 ;;
-      *) die "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read, and a rename whose alias table cannot be read is a rename whose old name may stop resolving — which is the one thing clause (e) promises for ever, so this fails closed. Nothing was written." 1 ;;
+      *) die "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read (${LANES_ALIAS_ERR:-unknown error}), and a rename whose alias table cannot be read is a rename whose old name may stop resolving — which is the one thing clause (e) promises for ever, so this fails closed. Nothing was written." 1 ;;
     esac
 
     # THE SESSION FIELD OF THE `RENAMED` LINE IS A TRANSCRIPT UUID AND ONLY
@@ -7558,9 +7669,23 @@ EOF
     # ---- THE FOUR PATHS, ALL COMPUTED BEFORE ANYTHING MOVES.
     rl_log_new_rel="$(log_path_for "$rl_new")"
     rl_log_new="$(log_file_for "$rl_new")"
-    [ ! -e "$rl_log_new" ] || die "$rl_log_new_rel already exists in this checkout while lane '$rl_new' has no row: that file is not this rename's to write into, and appending one lane's history to another's is the one thing an append-only log cannot be walked back from. Nothing was written." 2
-    if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$rl_log_new_rel" 2>/dev/null; then
-      die "$rl_log_new_rel is published on origin/$LANES_BRANCH while lane '$rl_new' has no row — renaming into it would merge two lanes' histories into one append-only file. Nothing was written." 2
+    # THE TARGET LOG IS LOOKED FOR UNDER ANY CASE, here and on `origin`
+    # (Copilot round 1 on openRepoTools#81). The exact-path test missed an
+    # orphan `lanes/log/<NEW>.md` of another spelling on a case-SENSITIVE
+    # filesystem — Linux and WSL2, where this estate runs — and a rename into it
+    # would leave two case-variant histories for one lane, which is the state
+    # Amendment 15(d) makes a hand merge. `log_files_named_ci` and the published
+    # `ls-tree` scan are the same two reads every other case question here uses.
+    rl_nlocal="$(log_files_named_ci "$rl_new")"
+    if [ -n "$rl_nlocal" ]; then
+      die "lane '$rl_new' has no row and this checkout already carries $(printf '%s\n' "$rl_nlocal" | tr '\n' ' ')— an object log under that name, in some case. That file is not this rename's to write into, and appending one lane's history to another's is the one thing an append-only log cannot be walked back from. Nothing was written." 2
+    fi
+    if have_remote_ref; then
+      rl_npub="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" 2>/dev/null \
+        | awk -v want="$rl_log_new_rel" 'BEGIN { w = tolower(want) } tolower($0) == w')"
+      if [ -n "$rl_npub" ]; then
+        die "$(printf '%s\n' "$rl_npub" | tr '\n' ' ')is published on origin/$LANES_BRANCH while lane '$rl_new' has no row — renaming into it would merge two lanes' histories into one append-only file. Nothing was written." 2
+      fi
     fi
     rl_lfhits="$(log_files_named_ci "$rl_old")"
     rl_lfn="$(printf '%s' "$rl_lfhits" | grep -c . || :)"
@@ -7665,13 +7790,26 @@ EOF
           "$LANES_REPO"/*) rl_h_rel="${rl_hfile#"$LANES_REPO"/}"; rl_h_rel_new="${rl_hfile_new#"$LANES_REPO"/}" ;;
         esac
       fi
+      # A HANDOFF OUTSIDE THE WORKSPACE REPOSITORY IS A REFUSAL, NOT A NOTE
+      # (Copilot round 1 on openRepoTools#81). It used to be moved and stamped
+      # and then left OUT of the commit, because a git commit cannot carry a
+      # file outside its own checkout — so "four moves, one commit" was not true
+      # of that row, and a failure afterwards had nothing to roll the outside
+      # file back from. The register's handoff column is repo-relative
+      # everywhere this estate writes it (`handoffs/<estate>/…`, the path
+      # `lane-start` computes), so a row naming one elsewhere is a hand edit,
+      # and the exit is to put the file where the row's own convention puts it.
+      if [ -z "$rl_h_rel" ]; then
+        die "lane $rl_old's row names the handoff '$rl_hcell', which resolves to $rl_hfile — outside the workspace repository ${LANES_REPO:-<unknown>}. A rename is FOUR MOVES IN ONE COMMIT (Amendment 16), and a commit cannot carry a file outside its own checkout, so this one would be three moves and a note. Move that handoff under $LANES_REPO — \`handoffs/<estate>/session-handoff-<date>-lane-$rl_old.md\` is the path \`lane-start\` computes — point the row's handoff column at it, and re-run. Nothing was written." 2
+      fi
       [ "$rl_hmove" = 1 ] && [ -e "$rl_hfile_new" ] && \
         die "the handoff would move to $rl_hfile_new and something is already there. That path belongs to lane $rl_new's own handoff and is not this rename's to overwrite. Move it aside and re-run. Nothing was written." 2
     fi
     # THE HANDOFF IS A PATHSPEC OF THIS COMMIT ONLY WHERE THERE IS A FILE TO
     # COMMIT. `git add` FAILS on a pathspec matching nothing at all, and a row
     # that names a handoff nobody ever wrote is ordinary — every lane has one
-    # until its first swap.
+    # until its first swap. A row that names one which cannot be READ is a
+    # different thing and is refused below, with the log already snapshotted.
     rl_h_touch=0
     [ -n "$rl_h_rel" ] && [ -f "$rl_hfile" ] && rl_h_touch=1
 
@@ -7688,12 +7826,27 @@ EOF
     capture_register_edit "${rl_paths[@]}"
     handle_preexisting "${rl_paths[@]}"
 
+    # ---- THE SNAPSHOT, BEFORE THE FIRST BYTE. Every exit path from here to the
+    # commit restores it (`rename_undo`, hooked into `cleanup`), because the
+    # four moves are one act and a filesystem can refuse the third of them.
+    RL_SNAP="$(mktemp -d)" || die "no temporary directory could be made under ${TMPDIR:-/tmp}, and this write is not made without somewhere to put the copy that undoes it. Nothing was written." 1
+    [ -n "$rl_log_old" ] && { cat -- "$rl_log_old" > "$RL_SNAP/log" || die "lane $rl_old's object log at $rl_log_old could not be read, so there is no copy to roll back to and this rename is not started. Nothing was written." 5; }
+    [ "$rl_h_touch" = 1 ] && { cat -- "$rl_hfile" > "$RL_SNAP/handoff" || die "the handoff at $rl_hfile is named by the row and could not be READ, so it can be neither stamped nor rolled back — and a rename that moved it unstamped is three moves and a half (Amendment 16(d)). Fix the permission, or point the row's column at a handoff that is there, and re-run. Nothing was written." 5; }
+    RL_ALIAS="$LANES_ALIASES_TSV"; RL_ALIAS_EXISTED=0
+    if [ -f "$LANES_ALIASES_TSV" ]; then
+      RL_ALIAS_EXISTED=1
+      cat -- "$LANES_ALIASES_TSV" > "$RL_SNAP/aliases" || die "$LANES_ALIASES_PATH is there and could not be read, so there is no copy to roll back to. Nothing was written." 5
+    fi
+    RL_LOG_OLD="$rl_log_old"; RL_LOG_NEW="$rl_log_new"
+    RL_H_OLD=""; RL_H_NEW=""
+    RL_ACTIVE=1
+
     # (c) THE LOG — moved, then appended to. The lines above the new one still
     # say `lane <old>` and are NEVER rewritten (clause (c)): this file is
     # append-only and those lines are what happened. `LOG_AWK` resolves the
     # field on the way in, so every reader sees one lane.
     if [ -n "$rl_log_old" ]; then
-      mv -- "$rl_log_old" "$rl_log_new" || die "could not rename $rl_log_old to $rl_log_new. NOTHING ELSE HAS BEEN WRITTEN — the row, the handoff and the alias table are untouched and the log is where it was. Rename it by hand and re-run." 5
+      mv -- "$rl_log_old" "$rl_log_new" || die "could not rename $rl_log_old to $rl_log_new." 5
       note "$rl_log_old_rel → $rl_log_new_rel"
     else
       [ -d "$LANES_LOG_DIR" ] || mkdir -p -- "$LANES_LOG_DIR"
@@ -7718,36 +7871,39 @@ EOF
       note "the handoff the row names is not at $rl_hfile, so nothing was moved or stamped and the row's handoff column is left exactly as it is. If it turns up, rename it — $rl_hcell → $rl_hpath_new — and stamp it: $rl_hstamp"
     else
       if [ "$rl_hmove" = 1 ]; then
-        mv -- "$rl_hfile" "$rl_hfile_new" || die "could not rename $rl_hfile to $rl_hfile_new. The log is already renamed and its RENAMED line appended, and NOTHING IS COMMITTED: move the handoff by hand and re-run \`lanes-edit.sh commit\`, or put the log back. Nothing has been pushed." 5
+        RL_H_OLD="$rl_hfile"; RL_H_NEW="$rl_hfile_new"
+        mv -- "$rl_hfile" "$rl_hfile_new" || die "could not rename $rl_hfile to $rl_hfile_new." 5
         note "$rl_hcell → $rl_hpath_new"
         rl_hdone=1
       else
         rl_hfile_new="$rl_hfile"
+        RL_H_OLD="$rl_hfile"; RL_H_NEW="$rl_hfile"
         note "the handoff $rl_hcell is not named \`…-lane-$rl_old.md\`, so it has no lane in its name to rename; it is stamped where it is (Amendment 16(d))"
       fi
+      # A STAMP THAT CANNOT BE WRITTEN IS A REFUSAL (Copilot round 1 on
+      # openRepoTools#81). It used to be a `note`, and the rename went on to
+      # commit — leaving a handoff MOVED and UNSTAMPED, which is clause (d) done
+      # by half, in the one document Rule 3 says the next session reads first.
+      # The redirect is checked for the same reason: this file runs `set -u` and
+      # not `set -e`, so an unwritable handoff would otherwise reach the
+      # "stamped" note having written nothing.
       rl_hat="$(awk 'NR > 1 && /^[[:space:]]*$/ { print NR; exit }' "$rl_hfile_new" 2>/dev/null || :)"
       [ -n "$rl_hat" ] || rl_hat=1
-      rl_htmpd="$(mktemp -d)"
-      if cat -- "$rl_hfile_new" > "$rl_htmpd/pre" 2>/dev/null; then
-        { head -n "$rl_hat" -- "$rl_htmpd/pre"
-          printf '%s\n' "$rl_hstamp"
-          tail -n "+$((rl_hat + 1))" -- "$rl_htmpd/pre"
-        } > "$rl_htmpd/out"
-        if [ "$(sed -n -e "$((rl_hat + 1))p" "$rl_htmpd/out")" = "$rl_hstamp" ] &&
-           { head -n "$rl_hat" -- "$rl_htmpd/out"; tail -n "+$((rl_hat + 2))" -- "$rl_htmpd/out"; } | cmp -s - "$rl_htmpd/pre"
-        then
-          cat -- "$rl_htmpd/out" > "$rl_hfile_new"     # the redirect FOLLOWS the symlink
-          note "handoff stamped at line $((rl_hat + 1)) of $rl_hpath_new: $rl_hstamp"
-        else
-          note "the handoff could not be stamped without rewriting a byte of it, so it was NOT stamped. Add this line under its header block by hand: $rl_hstamp"
-        fi
-      else
-        note "the handoff could not be read, so it was NOT stamped. Add this line under its header block by hand: $rl_hstamp"
+      rl_htmpd="$(mktemp -d)" || die "no temporary directory could be made under ${TMPDIR:-/tmp} for the handoff's Rule 3 stamp." 1
+      cat -- "$rl_hfile_new" > "$rl_htmpd/pre" 2>/dev/null || { rm -rf -- "$rl_htmpd"; die "the handoff at $rl_hfile_new could not be read, so Rule 3's stamp cannot be written and this rename is not made without it." 5; }
+      { head -n "$rl_hat" -- "$rl_htmpd/pre"
+        printf '%s\n' "$rl_hstamp"
+        tail -n "+$((rl_hat + 1))" -- "$rl_htmpd/pre"
+      } > "$rl_htmpd/out"
+      if [ "$(sed -n -e "$((rl_hat + 1))p" "$rl_htmpd/out")" != "$rl_hstamp" ] ||
+         ! { head -n "$rl_hat" -- "$rl_htmpd/out"; tail -n "+$((rl_hat + 2))" -- "$rl_htmpd/out"; } | cmp -s - "$rl_htmpd/pre"
+      then
+        rm -rf -- "$rl_htmpd"
+        die "the handoff at $rl_hfile_new cannot take Rule 3's stamp without rewriting a byte of it, and a handoff written whole from anything but its own bytes is the act that lost two lanes' rows on 2026-09-08. The line it wants under its header block is: $rl_hstamp" 5
       fi
+      cat -- "$rl_htmpd/out" > "$rl_hfile_new" || { rm -rf -- "$rl_htmpd"; die "the handoff at $rl_hfile_new could not be written, so Rule 3's stamp is not there and this rename is not made without it." 5; }
       rm -rf -- "$rl_htmpd"
-      if [ -z "$rl_h_rel" ]; then
-        note "the handoff is outside the workspace repository ($rl_hfile_new), so it is moved and stamped but is NOT in this commit; commit it where it lives."
-      fi
+      note "handoff stamped at line $((rl_hat + 1)) of $rl_hpath_new: $rl_hstamp"
     fi
     # The row's handoff column follows the file, and only where the file
     # actually moved: a column pointed at a path nothing moved to is a column
@@ -7763,9 +7919,10 @@ EOF
       { printf '# lanes/aliases.tsv — lane-collision-protocol Amendment 16(e)\n'
         printf '# <old lane>\t<new lane>\t<UTC of the rename>\n'
         printf '# Appended by `lanes-edit.sh rename-lane` and by nothing else. Every reader of a\n'
-        printf '# lane name resolves through it, case-insensitively; a chain resolves to its end;\n'
-        printf '# a cycle is refused at write time; the LAST row for a key wins.\n'
-      } > "$LANES_ALIASES_TSV"
+        printf '# lane name resolves through it, case-insensitively; a chain resolves to its end,\n'
+        printf '# stopping at any name that is a ROW again; a cycle is refused at write time; the\n'
+        printf '# LAST row for a key wins.\n'
+      } > "$LANES_ALIASES_TSV" || die "$LANES_ALIASES_PATH could not be created, and a rename without its alias row is a lane whose old name stops resolving (Amendment 16(e))." 5
       note "created $LANES_ALIASES_PATH"
     fi
     append_text_line "$(printf '%s\t%s\t%s' "$rl_old" "$rl_new" "$rl_utc")" "$LANES_ALIASES_TSV"
@@ -7774,6 +7931,12 @@ EOF
     # itself untouched and `row_line` still finds the lane under its old name.
     replace_line "$rl_n" "$rl_newrow"
 
+    # EVERY ONE OF THE FOUR IS ON DISK. From here a failure is git's, and
+    # `commit_push` owns its own recovery — the four files stay WHOLE and
+    # uncommitted, which is what every writer in this file leaves behind on a
+    # push that could not be confirmed, and is not the half-renamed state the
+    # undo exists for.
+    RL_ACTIVE=0
     rl_msg="LANES($rl_new@$WS): RENAMED lane $rl_old → $rl_new (Amendment 16) — the row, $rl_log_new_rel, the handoff and $LANES_ALIASES_PATH in one commit"
     [ -n "$PRE_DIRTY_LANES" ] && rl_msg="$rl_msg + sweeps uncommitted edit to row $PRE_DIRTY_LANES"
     commit_push "$rl_msg" "${rl_paths[@]}"

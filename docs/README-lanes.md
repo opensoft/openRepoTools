@@ -1831,7 +1831,7 @@ exactly where they are.
 | 1 | (b) | the register row's key cell becomes `` `<new>` ``, and the text beside it gains `` *(ex `<old>`, renamed <UTC>)* `` — the form the register already uses for a lane named later than it started. Nothing else in the row changes; **the session cell keeps its history** (Amendment 6(b)) |
 | 2 | (c) | `lanes/log/<old>.md` → `lanes/log/<new>.md`, plus one line: `RENAMED — lane <new>, session <uuid>@<ws>, <UTC>, lane:<new> ← lane:<old> — <why>` |
 | 3 | (d) | the handoff the row names → the same date with `lane-<new>`, plus a Rule 3 stamp under its header block: `RENAMED from <old> by <uuid> (lane <new>) at <UTC>`. The row's handoff column follows |
-| 4 | (e) | `lanes/aliases.tsv` gains `<old><TAB><new><TAB><UTC>` |
+| 4 | (e) | `lanes/aliases.tsv` gains one TAB-separated record, `<old><TAB><new><TAB><UTC>` |
 | 5 | (g) | **after** the commit lands, one GitHub comment per object the lane HOLDS, citing its sha — the same partition `who --lane` reports and `lane-end` refuses on. `--no-github` skips it |
 | 6 | (f) | the tmux window is renamed, and `/rename <new>` is typed into the lane's own pane (Amendment 12(h)'s M1 — the only path a running session's name has) |
 
@@ -1851,10 +1851,20 @@ points at is a name that resolves to nothing.
 | a **LIVE** session holds `<old>` in another window | its own name is locked to the lane and only it can change that (Amendment 12(h)); renaming from elsewhere would leave a running conversation named for a lane the register no longer has |
 | two rows under `<old>` differing only by case | there is no ONE row to rename (Amendment 15(d) merges them first) |
 | the alias table would gain a **cycle** | a chain that returns to its own start has no end to resolve to |
-| an unreadable register, log, handoff or alias table | fail closed, naming the read |
+| `<new>` is already an alias **key** | a row wins over an alias, so a row under a name some other lane was renamed away from would END that lane's old name resolving |
+| `lanes/log/<new>.md` exists in **any case**, here or on `origin` | one lane's history appended to another's is the one thing an append-only log cannot be walked back from |
+| the row's handoff is **outside the workspace repository** | a commit cannot carry a file outside its own checkout, so the rename would be three moves and a note |
+| an unreadable register, log, handoff or alias table | fail closed, naming the read — an alias table that cannot be READ is not an estate with no renames |
 
 Each of them says **"Nothing was written."** The command moves four files, and a
 half-done rename is not something a second run can finish.
+
+And a filesystem can still refuse the third of four moves. Every write between
+the first byte and the commit is made against a **snapshot** taken before it, and
+every exit path — a `die`, a signal, the shell — restores it: the log, the
+handoff and `lanes/aliases.tsv` go back to what they were and nothing is
+committed. The register is not in the snapshot and does not need to be:
+`replace_line` proves the new file before it writes a byte of `LANES.md`.
 
 ### The alias table, and the one seat every reader shares
 
@@ -1869,10 +1879,15 @@ Clause (e) lists the readers that resolve through it — `who`, `lanes`,
 list.** Amendment 15 already put `canon_lane` in front of every one of them, so
 the resolution is hooked there, once:
 
-* **a name with no row** is looked up in the table, case-insensitively; a chain
-  (`a→b`, `b→c`) resolves to its end; **a row always wins over an alias**, because
-  a name that is a lane today IS that lane — which is also what makes renaming a
-  lane back to an old name readable;
+* **a name with no row** is looked up in the table, case-insensitively, and the
+  chain (`a→b`, `b→c`) is walked to its end — stopping at **the first name along
+  it that has a row**, because **a row wins over an alias at every hop**, not only
+  at the start. That is what makes renaming a lane back to an old name readable,
+  and it is what keeps a lane legitimately minted under a freed name (`a→b` frees
+  `a`, and the next free position hands it out) as its own lane rather than a
+  second reading of `b`. The walk is bounded by the table's own size, never by a
+  fixed number of hops: a chain longer than the cap would otherwise resolve to an
+  intermediate name and clause (e)'s "for ever" would quietly end there;
 * **the lane field of every old log line** is resolved *on the way in*, in
   `LOG_AWK`. Clause (c) is explicit that the lines above the `RENAMED` are never
   rewritten, so a renamed lane's log holds its history under two names in one
