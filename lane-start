@@ -2758,7 +2758,7 @@ else
     elif LANES_LANE="$LANE" "$LANES_EDIT" append-session-id "$LANE" "$row_sid" "→ $restored_cell" "session cell: restored $restored_sid from the lane's last PAUSED record"; then
       step "session cell updated: $row_sid → $restored_sid (the exact transcript from the lane's last PAUSED record)"
     else
-      note "the session cell was NOT extended with recovered transcript $restored_sid (this checkout's copy of the row may be older than the published one). STAMP IT AS THIS SESSION'S FIRST ACT:"
+      note "the session cell was NOT extended with recovered transcript $restored_sid (this checkout's copy of the row may be older than the published one). The launch is unaffected and so is the NEXT one: this recovery reads the lane's last PAUSED record and not the cell, so it finds the same transcript again and prints this same act — the row keeps naming an id no transcript answers to until somebody runs it. STAMP IT AS THIS SESSION'S FIRST ACT:"
       note "  $restored_hint"
     fi
   fi

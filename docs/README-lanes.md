@@ -1761,16 +1761,16 @@ prompt after the other process is retired.
 **A lane named before Rule 4's `<repo>-<n>` form is offered, not run.** The
 register carries 22 of them, and `lane-start` needs such a lane's DIRECTORY,
 which nothing in the register, the window or the session says. So the offer
-says what it cannot fill in and `yes` refuses rather than running a command with
-a `<path>` placeholder in it: the move is
+says what it cannot fill in and choice `2` refuses rather than running a command
+with a `<path>` placeholder in it: the move is
 `lane-start --no-launch --dir <that lane's checkout> <lane>`, yours to run with
 the path filled in, and the offer is kept. On choice `2` the **window is renamed first** and that order is
 load-bearing: `lane-start`'s step 3b veto 2 refuses to take the session live in
-a window named for another lane, which after a `yes` is exactly what this window
-is — without the rename the lane would be started and stamped with this
+a window named for another lane, which after choice `2` is exactly what this
+window is — without the rename the lane would be started and stamped with this
 transcript left out of its session cell.
 
-**And the LAST write of the `yes` is the guard's own**, because `lane-start`
+**And the LAST write of choice `2` is the guard's own**, because `lane-start`
 may not make it: its step 3b **veto 1** never takes a uuid that belongs to
 ANOTHER row (Amendment 11 clause (d) rule 1), and after the rename this uuid
 still belongs to the lane being left. So `lane-start` mints a fresh id for the
@@ -1783,8 +1783,8 @@ the guard appends this uuid to the new lane's cell itself — with `lane-start`'
 own anchor discipline, the PUBLISHED last id, so a stale copy of the row
 refuses rather than writing a cell that no longer matches. That is not a hole
 in veto 1: the veto exists for the take nobody asked for, and clause (h) rule
-4's limit is that the lock never moves a uuid between rows **without the
-person's `yes`** — here there is one, answered at this very prompt.
+4's limit is that the lock never moves a uuid between rows **without the person
+saying so** — here they have, in the answer given at this very prompt.
 
 ### The duplicate read (Amendment 18(h))
 

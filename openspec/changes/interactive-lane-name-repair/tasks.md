@@ -10,7 +10,7 @@
 
 - [x] 2.1 Add shell coverage for the three choices, invalid answers, scoped allow, lane-to-session moves, and session-to-lane `/rename` typing.
 - [x] 2.2 Add regression coverage proving unreadable, superseded, duplicate, and ambiguous identity states still block.
-- [ ] 2.3 Run the canonical `tests/run.sh` focused tests and update user-facing lane documentation for the new prompt behavior.
+- [x] 2.3 Run the canonical `tests/run.sh` focused tests and update user-facing lane documentation for the new prompt behavior.
 
 ## 3. Exact lane relaunch
 

@@ -6320,6 +6320,27 @@ has   "…typing the rename into the pane" "$err" "ADJUSTED SESSION TO LANE repo
 hasnt "…never reading its own offer as corrupt" "$err" "could not be read"
 is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
 
+# ---- THE QUESTION ANSWERED MUST BE THE QUESTION ASKED (Copilot round 1 on
+# openRepoTools#87). The offer is held per TRANSCRIPT and the answer is a later
+# prompt, so the window and the session can both move under it — and every one
+# of the three choices would then act on a state nobody was shown. A stale offer
+# is DROPPED, this prompt is not consumed by it, and the table judges it afresh.
+rm -f "$GD_OFFER"
+gd_rec "$GD_LANE_ID" repoGD-2 user "$GD_NEW_MS"
+gd_run "$GD_LANE_ID"
+is    "the offer is pending against lane repoGD-1 and session repoGD-2" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" yes
+gd_rec "$GD_LANE_ID" repoGD-3 user "$GD_NEW_MS"
+gd_before="$(gd_keys)"
+gd_run "$GD_LANE_ID" "3"
+is    "an answer to a question the state has moved past is refused" "$rc" 2
+has   "…naming both, so a person can see what moved" "$err" "the pending question was about lane repoGD-1 and session 'repoGD-2'"
+has   "…and what it is now" "$err" "session 'repoGD-3'"
+is    "…typing nothing, because /rename would have named the wrong lane" "$(gd_keys)" "$gd_before"
+has   "…and the prompt is JUDGED rather than consumed: the question is asked again" "$err" "the lane and Claude session names disagree"
+has   "…about the state as it stands now" "$err" "2) adjust the lane to session repoGD-3"
+is    "…so a fresh question is pending" "$(sed -n 's/^to=//p' "$GD_OFFER" 2>/dev/null)" repoGD-3
+rm -f "$GD_OFFER"
+
 # ---- AMENDMENT 18(h): ONE LIVE PROCESS PER TRANSCRIPT.
 #
 # THE SHAPE MEASURED FOUR TIMES ON 2026-09-14, the last at 18:14Z: a `bg` record

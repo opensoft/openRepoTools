@@ -6339,8 +6339,14 @@ guard_run() {   # <the hook's JSON, on stdin already read>
   gr_mode=""
   [ -f "$gr_off" ] && gr_mode="$(sed -n -e 's/^mode=//p' "$gr_off" 2>/dev/null | head -n1)"
   if [ -f "$gr_off" ] && [ "$gr_mode" != allow ]; then
-    guard_answer "$gr_off" "$gr_prompt" "$gr_pane"
-    return 2
+    # 3 IS "THE OFFER WAS STALE AND HAS BEEN DROPPED", and it is the one answer
+    # that does not consume the prompt: the table below judges it, which asks
+    # the question again where the mismatch still stands and refuses where the
+    # state has become one the amendment keeps closed.
+    gr_arc=0
+    guard_answer "$gr_off" "$gr_prompt" "$gr_pane" || gr_arc=$?
+    [ "$gr_arc" = 3 ] || return 2
+    gr_mode=""
   fi
 
   # ---- AMENDMENT 18 CLAUSES (d) AND (e) PLUG IN HERE, AND NOT IN THIS PULL
@@ -6643,6 +6649,23 @@ guard_answer() {   # <offer file> <the prompt> <pane>
     rm -f -- "$ga_f"
     guard_refuse "the pending offer at $ga_f could not be read, so it has been dropped rather than answered on a guess. Send your prompt again and the question will be asked afresh."
     return 2
+  fi
+  # AND THE QUESTION BEING ANSWERED MUST STILL BE THE QUESTION THAT WAS ASKED
+  # (Copilot round 1 on openRepoTools#87). The file is keyed by TRANSCRIPT, and
+  # a prompt is a later moment: between the offer and its answer the window can
+  # be renamed to another lane and the session renamed by hand, and every one of
+  # the three choices then acts on a state nobody was shown — `2` moves to a
+  # destination derived from a session name that has gone, `3` types `/rename`
+  # for a lane this window no longer is, and `1` records an allowance for a pair
+  # that does not exist. So the stored identity is compared with the live one,
+  # and a stale offer is DROPPED rather than answered: this prompt is not
+  # consumed, it is judged by the table below, which asks again where the
+  # mismatch still stands and refuses where the state has become one of the
+  # unsafe ones. 3 is that status, and `guard_run` is its only caller.
+  if [ "$ga_from" != "$G_LANE" ] || [ "$ga_session" != "$G_NAME" ]; then
+    rm -f -- "$ga_f"
+    note "the pending question was about lane $ga_from and session '${ga_session:-none}', and this window is now lane ${G_LANE:-none} with session '${G_NAME:-none}' — so the offer has been DROPPED rather than answered on a state you were never shown. Nothing was renamed or written. This prompt is judged afresh below."
+    return 3
   fi
   case "$ga_ans" in
   1)
