@@ -832,22 +832,44 @@ DUPES
     # `--resume ` — up to the next space or the end of argv — is what the
     # harness actually resumed, and that is the only thing compared now.
     dh_uuid_lc="$(printf '%s' "$dh_uuid" | tr 'A-F' 'a-f')"
-    dh_p_sent=0
+    dh_p_match=0
     dh_p_args="$(ps -o args= -p "$dh_parent" 2>/dev/null | tr 'A-F' 'a-f')" || dh_p_args=""
-    case "$dh_p_args" in *"--fork-session"*"--resume "*)
+    # `--fork-session ` WITH ITS OWN TRAILING SPACE (Copilot round 11, PR
+    # #61): a bare substring also matches `--fork-session-helper` or any
+    # other flag that merely STARTS WITH this text — never the process this
+    # recheck means. The real invocation always has a boundary (a space,
+    # then `--resume`) right after this flag, so requiring it here rules the
+    # false one out the same way `--resume ` already rules out
+    # `--resume-file` beside it.
+    case "$dh_p_args" in *"--fork-session "*"--resume "*)
       dh_p_resume="${dh_p_args#*--resume }"; dh_p_resume="${dh_p_resume%% *}"
-      case "$dh_p_resume" in */"$dh_uuid_lc.jsonl") dh_p_sent=1 ;; esac
+      case "$dh_p_resume" in */"$dh_uuid_lc.jsonl") dh_p_match=1 ;; esac
     esac
-    [ "$dh_p_sent" = 1 ] && { kill -TERM "$dh_parent" 2>/dev/null || :; }
-    dh_c_sent=1
+    # THE SIGNAL'S OWN EXIT STATUS, KEPT APART FROM "DID ARGV MATCH" (Copilot
+    # round 11, PR #61): folding both into one `dh_p_sent` flag and
+    # swallowing `kill`'s status (`|| :`) made a `kill -TERM` that failed
+    # outright — wrong owner, or the pid reaped in the gap since the recheck
+    # above — indistinguishable from one truly delivered. The message below
+    # must be able to say "nothing was sent" (retrying TERM cannot help;
+    # look at who owns the pid) apart from "TERM was sent and ignored" (a
+    # KILL, or more time, is the next step) — that needs both bits kept.
+    dh_p_killed=0
+    if [ "$dh_p_match" = 1 ]; then
+      kill -TERM "$dh_parent" 2>/dev/null && dh_p_killed=1
+    fi
+    dh_c_match=1
+    dh_c_killed=1
     if [ -n "$dh_child" ]; then
-      dh_c_sent=0
+      dh_c_match=0
+      dh_c_killed=0
       dh_c_args="$(ps -o args= -p "$dh_child" 2>/dev/null | tr 'A-F' 'a-f')" || dh_c_args=""
-      case "$dh_c_args" in *"--fork-session"*"--resume "*)
+      case "$dh_c_args" in *"--fork-session "*"--resume "*)
         dh_c_resume="${dh_c_args#*--resume }"; dh_c_resume="${dh_c_resume%% *}"
-        case "$dh_c_resume" in */"$dh_uuid_lc.jsonl") dh_c_sent=1 ;; esac
+        case "$dh_c_resume" in */"$dh_uuid_lc.jsonl") dh_c_match=1 ;; esac
       esac
-      [ "$dh_c_sent" = 1 ] && { kill -TERM "$dh_child" 2>/dev/null || :; }
+      if [ "$dh_c_match" = 1 ]; then
+        kill -TERM "$dh_child" 2>/dev/null && dh_c_killed=1
+      fi
     fi
     # VERIFIED GONE, NOT ASSUMED FROM `kill`'S OWN STATUS (Copilot round 4, PR
     # #61): that status conflates "already gone" (fine — the goal was never
@@ -864,12 +886,14 @@ DUPES
     fi
     dh_p_msg="gone"
     [ "$dh_p_gone" = 1 ] || dh_p_msg="STILL ALIVE, TERM withheld: argv no longer matched"
-    [ "$dh_p_gone" = 1 ] || [ "$dh_p_sent" = 0 ] || dh_p_msg="STILL ALIVE despite TERM delivered"
+    [ "$dh_p_gone" = 1 ] || [ "$dh_p_match" = 0 ] || [ "$dh_p_killed" = 1 ] || dh_p_msg="STILL ALIVE, TERM NOT SENT: the signal itself failed (check ownership/permissions) — this is not the process ignoring TERM, it never received one"
+    [ "$dh_p_gone" = 1 ] || [ "$dh_p_match" = 0 ] || [ "$dh_p_killed" = 0 ] || dh_p_msg="STILL ALIVE despite TERM delivered"
     note "pid $dh_parent (bg-pty-host): $dh_p_msg"
     if [ -n "$dh_child" ]; then
       dh_c_msg="gone"
       [ "$dh_c_gone" = 1 ] || dh_c_msg="STILL ALIVE, TERM withheld: argv no longer matched"
-      [ "$dh_c_gone" = 1 ] || [ "$dh_c_sent" = 0 ] || dh_c_msg="STILL ALIVE despite TERM delivered"
+      [ "$dh_c_gone" = 1 ] || [ "$dh_c_match" = 0 ] || [ "$dh_c_killed" = 1 ] || dh_c_msg="STILL ALIVE, TERM NOT SENT: the signal itself failed (check ownership/permissions) — this is not the process ignoring TERM, it never received one"
+      [ "$dh_c_gone" = 1 ] || [ "$dh_c_match" = 0 ] || [ "$dh_c_killed" = 0 ] || dh_c_msg="STILL ALIVE despite TERM delivered"
       note "pid $dh_child (child): $dh_c_msg"
     fi
     if [ "$dh_p_gone" = 1 ] && [ "$dh_c_gone" = 1 ]; then

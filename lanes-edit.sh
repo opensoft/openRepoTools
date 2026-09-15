@@ -2168,15 +2168,21 @@ lane_objects() {
     # SUPERSEDED, WITHOUT ORDERING TWO FILES AGAINST EACH OTHER (R14), AND ONLY
     # WHILE THE TAKEOVER STILL STANDS (R18): another lane has a TAKEOVER on the
     # object AS ITS OWN LAST LINE, and this lane has written nothing on it since
-    # — the last line here is still the CLAIMED that was taken. A TAKEOVER is
-    # never removed from an append-only log, so testing for one ANYWHERE in the
-    # file of the taker kept superseding these claims for ever: after that lane
-    # released the object and this one legitimately re-claimed it, `who` called
-    # the object FREE and a third lane was not refused. A TAKEOVER displaces a
-    # CLAIMED and nothing else (`claim --force` refuses every other verb), so
-    # that is the whole of the test; any later line of this lane is it speaking
-    # after the fact and is reported as it stands. The two lines sit in two
-    # different lanes, whose files share no clock, and this asks for none.
+    # — the last line here is still the open verb that TAKEOVER took. A
+    # TAKEOVER is never removed from an append-only log, so testing for one
+    # ANYWHERE in the file of the taker kept superseding these claims for ever:
+    # after that lane released the object and this one legitimately re-claimed
+    # it, `who` called the object FREE and a third lane was not refused.
+    # STALE UNTIL PR #61 (Copilot round 11): this paragraph itself said "a
+    # TAKEOVER displaces a CLAIMED and nothing else", singular, after the
+    # dead-lane exception of issue #30 had already widened what the awk
+    # fragment above tests. A TAKEOVER displaces CLAIMED (the ordinary
+    # stale-claim shape of decision 8(e)) or, per that dead-lane exception, a
+    # TAKEOVER, OPENED, LANDING or WITHDRAWN left by another lane (`claim
+    # --force` refuses every other verb) — that full set is the whole of the
+    # test; any later line of this lane is it speaking after the fact and is
+    # reported as it stands. The two lines sit in two different lanes, whose
+    # files share no clock, and this asks for none.
     END { for (kk in ov) if (ov[kk] == "TAKEOVER") {
             split(kk, aa, SUBSEP); oo = aa[1]; ll = on[kk]
             if (!(oo in tp) || op[kk] >= tp[oo]) { tp[oo] = op[kk]; tlane[oo] = ll; tutc[oo] = ou[kk] } }
@@ -2391,13 +2397,19 @@ claim_is_stale() {   # <lane> <object> <utc-of-the-claim> <its file> <its line>
 # refused exactly as an untaken CLAIMED is: "refuse where the holder is live"
 # is not a special case here, it is this same rule. A `live_holder` read that
 # FAILS is not "confirmed live" (fail closed for the log half, as every other
-# reader of this stream does) — but a RETIRED verdict this workstation simply
-# cannot check against any records at all is not held back either, or issue
-# #30 would stay exactly as unfixed as it is today for the one case it is
-# about: only an ACTUAL live record (rc 0) withholds the takeover.
+# reader of this stream does) — but nor is it "confirmed dead": a RETIRED
+# verdict this workstation simply cannot check against any records at all is
+# HELD BACK exactly as a live one is, because issue #30's fix must never be
+# LESS safe than the check it sits beside. STALE UNTIL PR #61 (Copilot round
+# 11): this paragraph used to say such a read "is not held back either",
+# which described the opposite of the fail-closed rule the code below it
+# already enforced — only an ACTUAL, CONFIRMED-EMPTY read (`live_holder` exit
+# 8, never a bare rc 0 check) allows the takeover that every other outcome,
+# read failures included, withholds.
 #
 # 0 dead-and-confirmed (`HOLDER_DEAD_VERB` names the verdict), 1 not — refuse
-# as before.
+# as before. (This is `holder_is_dead`'s OWN return code, a different space
+# from the three `live_holder` answers just above it.)
 #
 # A LINE WHOSE PAYLOAD OPENS `fork ` IS NEVER THE LANE'S OWN VERB (Copilot
 # round 8, PR #61) — the same exclusion `lane_row_facts` already makes (above,
@@ -4807,7 +4819,14 @@ duplicate_holder_pids() {   # <lane>
     read -r dhp_pid_chk dhp_ppid dhp_args <<DHPLINE
 $dhp_line
 DHPLINE
-    case "$dhp_args" in *"--fork-session"*"--resume "*) : ;; *) continue ;; esac
+    # `--fork-session ` WITH ITS OWN TRAILING SPACE (Copilot round 11, PR
+    # #61): a bare substring also matches `--fork-session-helper` or any
+    # other flag that merely STARTS WITH this text, which is never the
+    # process this scan means — the real invocation always has a boundary
+    # (a space, then `--resume`) right after this flag, so requiring it
+    # rules the false one out the same way the `--resume ` half already
+    # rules out `--resume-file` beside it.
+    case "$dhp_args" in *"--fork-session "*"--resume "*) : ;; *) continue ;; esac
     case "$dhp_cand_fence" in *" $dhp_ppid "*) continue ;; esac
     dhp_args_lc="$(printf '%s' "$dhp_args" | tr 'A-F' 'a-f')"
     # THE ACTUAL `--resume` VALUE, NOT A GLOB THAT CAN SPAN OTHER ARGUMENTS
@@ -4887,7 +4906,9 @@ DHPLINE
             fi
             [ "$dhp_c_psrc" = 0 ] || return 1
             dhp_c_args_lc="$(printf '%s' "$dhp_c_line" | tr 'A-F' 'a-f')"
-            case "$dhp_c_args_lc" in *"--fork-session"*"--resume "*) : ;; *) continue ;; esac
+            # `--fork-session ` WITH ITS OWN TRAILING SPACE (Copilot round 11,
+            # PR #61) — same fix, same reason as the parent's own check above.
+            case "$dhp_c_args_lc" in *"--fork-session "*"--resume "*) : ;; *) continue ;; esac
             dhp_c_resume="${dhp_c_args_lc#*--resume }"; dhp_c_resume="${dhp_c_resume%% *}"
             case "$dhp_c_resume" in */"$dhp_id_lc.jsonl") dhp_verified="$dhp_c"; break ;; esac
           done
