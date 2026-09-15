@@ -888,7 +888,7 @@ if [ -z "${LANES_FILE:-}" ]; then die "$(lanes_workspace_why)" 1; fi
 cl_out=""; cl_rc=0
 cl_out="$("$LANES_EDIT" canon-lane "$LANE" 2>/dev/null)" || cl_rc=$?
 cl_why=""; cl_pair=0
-[ "$cl_rc" = 2 ] && cl_why="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "$LANE" 2>&1 >/dev/null || :)"
+case "$cl_rc" in 2 | 66) cl_why="$(LANES_NO_FETCH=1 "$LANES_EDIT" canon-lane "$LANE" 2>&1 >/dev/null || :)" ;; esac
 case "$cl_why" in *"Amendment 15(d)"*) cl_pair=1 ;; esac
 case "$cl_rc" in
   0)
@@ -901,6 +901,16 @@ case "$cl_rc" in
       printf '%s\n' "$cl_why" >&2
       die "the PUBLISHED register spells lane $LANE two ways (above), so no read and no write under that name is unambiguous and nothing here picks one — Amendment 15(d): merge the newer row's session id(s) into the older row's session cell, in order, remove the newer row in the SAME commit naming both spellings, push, and re-run. Nothing was launched, renamed or written." 2
     fi ;;
+  66)
+    # AMENDMENT 16(e) — THE ALIAS TABLE COULD NOT BE READ, AND THAT IS NOT A
+    # SPELLING QUESTION (Copilot round 4 on openRepoTools#81). `lanes/aliases.tsv`
+    # is what makes a lane's OLD name resolve to its row, so a table nobody can
+    # read makes a RENAMED lane look like a lane nobody has — and the next line
+    # of this command is the one that decides whether to add a row. Carrying on
+    # with the typed name there is a SECOND row for a lane that has been running
+    # all day, which is the duplicate Amendment 15(a) exists to refuse.
+    printf '%s\n' "$cl_why" >&2
+    die "lane $LANE's name could not be resolved: ${LANES_EDIT##*/} could not read the lane alias table (above, exit 66). Amendment 16(e) makes a renamed lane's old name resolve through that file for ever, so a name it cannot answer for may be a lane that is already running under another one — and this command would add a second row for it. Fix the read and re-run. Nothing was launched, renamed or written." 2 ;;
   *) note "$LANES_EDIT canon-lane $LANE failed (exit $cl_rc) — carrying on with the name as typed, which the register may spell differently" ;;
 esac
 

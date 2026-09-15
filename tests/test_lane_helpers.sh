@@ -7566,7 +7566,7 @@ run env LANES_NO_FETCH=1 LANES_ALIASES_TSV="$ren_unread2" LANES_ALIASES_PATH=lan
 if [ "$rc" = 0 ]; then
   skip "canon-lane refuses on an alias table it cannot read" "this filesystem let the read through"
 else
-  is    "canon-lane REFUSES on an alias table it cannot read" "$rc" 2
+  is    "canon-lane REFUSES on an alias table it cannot read" "$rc" 66
   has   "…rather than answering the typed spelling" "$err" "NOT established"
   hasnt "…and answers nothing at all" "$out" "repoRen"
 fi
@@ -7644,6 +7644,122 @@ write_record_a12 "$sessions_dir/a16i.json" "$REN_ID" "$LIVE_PID" "$live_start" i
 run "$E" live-holder repoRen-7
 is   "…while a session named for a DIFFERENT lane is not a holder, as before" "$rc" 8
 rm -f "$sessions_dir/a16i.json"
+
+
+# ============ Copilot round 4 on openRepoTools#81 ============================
+
+# ---- THE ALIAS-READ REFUSAL HAS ITS OWN EXIT CODE, because 2 already carries
+# two meanings to the four commands that read `canon-lane`.
+ren_unread3="$WIP/lanes/aliases-unread3.tsv"
+printf 'someLane-1\tsomeLane-2\t2026-09-15T00:00:00Z\n' > "$ren_unread3"
+chmod 0000 "$ren_unread3"
+run env LANES_NO_FETCH=1 LANES_ALIASES_TSV="$ren_unread3" LANES_ALIASES_PATH=lanes/aliases-unread3.tsv \
+    "$E" canon-lane repoRen-4
+if [ "$rc" = 0 ]; then
+  skip "canon-lane spends EX_NOINPUT on a table it cannot read" "this filesystem let the read through"
+else
+  is   "canon-lane spends 66 (EX_NOINPUT) on a table it cannot read, never 2" "$rc" 66
+  # ---- AND live-holder FAILS CLOSED ON IT rather than answering 'no holder'.
+  write_record_a12 "$sessions_dir/a16k.json" "$REN_ID" "$LIVE_PID" "$live_start" interactive "rensess:@21.%21" "repoRen-4" user "$GD_OLD_MS"
+  run env LANES_NO_FETCH=1 LANES_ALIASES_TSV="$ren_unread3" LANES_ALIASES_PATH=lanes/aliases-unread3.tsv \
+      "$E" live-holder repoRen-7
+  is   "live-holder fails CLOSED on a table it cannot read" "$rc" 1
+  hasnt "…rather than answering 8, which reads as 'no live session holds it'" "$rc" 8
+  has  "…naming the read that could not be made" "$err" "could not be read"
+  rm -f "$sessions_dir/a16k.json"
+  # ---- AND lane-start REFUSES rather than adding a second row.
+  mkdir -p "$HOME/projects/repoRen"
+  run env LANES_NO_FETCH=1 LANES_ALIASES_TSV="$ren_unread3" LANES_ALIASES_PATH=lanes/aliases-unread3.tsv \
+      "$START" --no-launch --dir "$HOME/projects/repoRen" repoRen-4
+  is   "lane-start REFUSES a name it cannot resolve through the alias table" "$rc" 2
+  has  "…saying it would add a second row for a lane that is running" "$err" "second row"
+fi
+chmod 0644 "$ren_unread3"; rm -f "$ren_unread3"
+
+# ---- A SYMLINKED OBJECT LOG, HANDOFF OR ALIAS TABLE IS REFUSED.
+#
+# All three are written IN PLACE with a redirect or an append, which follows a
+# link: the bytes would land at the far end while the commit recorded the link.
+REN7_ID="12ab34cd-16a7-4000-8000-12ab34cd16a7"
+mkdir -p "$SANDBOX/faraway" "$WIP/handoffs/repoLink"
+printf '# lane repoLink-1 — object log (lane-collision-protocol Amendment 7)\n' > "$SANDBOX/faraway/log.md"
+printf 'Lane: repoLink-1 — single-use resume prompt\n\n## RESUME\n' > "$WIP/handoffs/repoLink/session-handoff-2026-09-12-lane-repoLink-1.md"
+add_seed_row "| \`repoLink-1\` | harness \`$REN7_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | handoffs/repoLink/session-handoff-2026-09-12-lane-repoLink-1.md | ACTIVE |"
+git -C "$WIP" add -A -- lanes handoffs >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the symlink-refusal lane"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+ln -s "$SANDBOX/faraway/log.md" "$LOGD/repoLink-1.md"
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN7_ID" "$E" rename-lane repoLink-1 repoLink-2 --no-github
+is   "a SYMLINKED object log is refused" "$rc" 2
+has  "…because an append-only log is written in place" "$err" "is a SYMLINK"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+is   "…and the far end is untouched" "$(wc -l < "$SANDBOX/faraway/log.md" | tr -d ' ')" 1
+rm -f "$LOGD/repoLink-1.md"
+printf '# lane repoLink-1 — object log (lane-collision-protocol Amendment 7)\n' > "$LOGD/repoLink-1.md"
+
+mv "$WIP/handoffs/repoLink/session-handoff-2026-09-12-lane-repoLink-1.md" "$SANDBOX/faraway/h.md"
+ln -s "$SANDBOX/faraway/h.md" "$WIP/handoffs/repoLink/session-handoff-2026-09-12-lane-repoLink-1.md"
+run env LANES_SESSION="$REN7_ID" "$E" rename-lane repoLink-1 repoLink-2 --no-github
+is   "a SYMLINKED handoff is refused" "$rc" 2
+has  "…because Rule 3's stamp is written in place" "$err" "is a SYMLINK"
+hasnt "…and the far end took no stamp" "$(cat "$SANDBOX/faraway/h.md")" "RENAMED from"
+rm -f "$WIP/handoffs/repoLink/session-handoff-2026-09-12-lane-repoLink-1.md"
+mv "$SANDBOX/faraway/h.md" "$WIP/handoffs/repoLink/session-handoff-2026-09-12-lane-repoLink-1.md"
+
+ren_alias_real="$WIP/lanes/aliases.tsv"
+mv "$ren_alias_real" "$SANDBOX/faraway/aliases.tsv"
+ln -s "$SANDBOX/faraway/aliases.tsv" "$ren_alias_real"
+run env LANES_SESSION="$REN7_ID" "$E" rename-lane repoLink-1 repoLink-2 --no-github
+is   "a SYMLINKED alias table is refused" "$rc" 2
+has  "…because the alias row is appended in place" "$err" "is a SYMLINK"
+rm -f "$ren_alias_real"
+mv "$SANDBOX/faraway/aliases.tsv" "$ren_alias_real"
+
+# ---- AN UNCOMMITTED ALIAS TABLE IS SOMEBODY ELSE'S HALF-FINISHED RENAME.
+printf 'peerLane-1\tpeerLane-2\t2026-09-15T00:00:00Z\n' >> "$ren_alias_real"
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_SESSION="$REN7_ID" "$E" rename-lane repoLink-1 repoLink-2 --no-github
+is   "a DIRTY alias table refuses the rename rather than being swept into it" "$rc" 2
+has  "…naming the file that is not this write's" "$err" "aliases.tsv"
+is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+git -C "$WIP" checkout -- lanes/aliases.tsv
+
+# ---- THE REGISTER IS IN THE ROLLBACK TOO.
+#
+# `commit_push` can die on `git add` or `git commit` BEFORE any commit exists,
+# and the row is written before it. A `pre-commit` hook that refuses is the
+# smallest honest way to reach that branch: no commit is made, so all FOUR must
+# come back — the register with them, or the checkout is left in a split rename.
+ren_reg_before="$(cat "$LANES")"
+ren_log_before="$(cat "$LOGD/repoLink-1.md")"
+ren_alias_before="$(cat "$ren_alias_real")"
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+mkdir -p "$WIP/.git/hooks"
+printf '#!/bin/sh\nexit 1\n' > "$WIP/.git/hooks/pre-commit"
+chmod 755 "$WIP/.git/hooks/pre-commit"
+run env LANES_SESSION="$REN7_ID" "$E" rename-lane repoLink-1 repoLink-2 --no-github
+rm -f "$WIP/.git/hooks/pre-commit"
+is   "a commit that never happens leaves NOTHING renamed" "$rc" 6
+is   "…the register back, row and all" "$(cat "$LANES")" "$ren_reg_before"
+is   "…the object log back under its own name" "$(cat "$LOGD/repoLink-1.md" 2>/dev/null)" "$ren_log_before"
+is   "…and no log under the new one" "$( [ -e "$LOGD/repoLink-2.md" ] && echo yes || echo no )" "no"
+is   "…the alias table back" "$(cat "$ren_alias_real")" "$ren_alias_before"
+is   "…the handoff back under its own name" \
+     "$( [ -f "$WIP/handoffs/repoLink/session-handoff-2026-09-12-lane-repoLink-1.md" ] && echo yes )" "yes"
+is   "…and nothing committed" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+is   "…with nothing left staged for the next writer to commit by accident" \
+     "$(git -C "$WIP" diff --cached --name-only | grep -c . || :)" 0
+has  "…and it says the rename was rolled back" "$err" "rolled back"
+
+# ---- AND THE SAME RENAME THEN GOES THROUGH, which is what "refused or whole"
+# is worth: a refusal leaves a checkout a re-run can use.
+run env LANES_SESSION="$REN7_ID" "$E" rename-lane repoLink-1 repoLink-2 --no-github
+is   "the same rename then goes through" "$rc" 0
+is   "…and the row moved" "$(command grep -c '^| `repoLink-2`' "$LANES")" 1
+is   "…with the log at its new name" "$( [ -f "$LOGD/repoLink-2.md" ] && echo yes )" "yes"
 
 export FAKE_TMUX_WINDOWS="$A16_SAVE_WINDOWS"
 export FAKE_TMUX_WINDOW="$A16_SAVE_WINDOW"
