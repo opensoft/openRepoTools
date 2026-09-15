@@ -1,5 +1,7 @@
 ## ADDED Requirements
 
+Capability `lane-worktree-recovery`, tracked in [opensoft/openRepoTools#91](https://github.com/opensoft/openRepoTools/issues/91). Where a requirement below is narrower than the brainstorm that proposed it, the reason is a numbered decision in `design.md`.
+
 ### Requirement: Canonical lane worktree inventory
 The system SHALL maintain a structured inventory for every worktree owned by a lane, rooted or indexed beneath the worktree root derived from the lane's stable repository and estate identity. The inventory SHALL remain discoverable without parsing handoff prose or trusting the caller's current directory.
 

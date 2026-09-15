@@ -172,6 +172,14 @@ backfilled. This keeps decision 2's actual rule — *the sidecar is an index ove
 shape-governed paths, which are never moved* — and spells it for this
 repository.
 
+**And it is only half of the brainstorm's "derivable lane root".** That document
+asks for a root resolved *"without relying on a historical absolute path"*, and
+rung 2 is exactly such a path: Amendment 11(c)'s recorded `dir`. It is a
+RECORDED fact rather than a guess or the caller's current directory, which is
+what makes it safe to act on — but resolving the root from `home owner/repo`
+and the estate, with no recorded path at all, is the coordinator-base work of
+tasks 1.2 and 5.3 and is not in this implementation.
+
 ### 12. No sixth lane verb is added to the append-only log
 
 Decision 3's alternative (derive everything from events) was rejected there for
@@ -209,6 +217,16 @@ of a report. `lane-reconcile` runs `git status`, `git log @{u}..`,
 `git rev-parse` and `git worktree list --porcelain` and nothing else; it never
 deletes, resets, force-adds or prunes, and a stale worktree registration is
 reported with the `git worktree prune` that clears it rather than pruned.
+
+**Nor does the report take the lane lock.** The brainstorm has resume *"acquire
+the lane lock"* before it reconciles; the lock here is the register's own mutex,
+and taking it for a READ would serialize every launch on the workstation behind
+every register write for the length of a `git worktree list` in each of a
+lane's checkouts. The lock is taken where it decides something — around the
+read of the fence and the replacement of the snapshot together, in
+`set-lane-state`, so two transitions cannot both read the state before either
+writes it. A report that raced a transition would print a state one moment
+stale, which is what the `VERDICT` line is for.
 
 ### 15. An unreadable holder is `indeterminate`, and never a crash
 
