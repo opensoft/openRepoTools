@@ -701,7 +701,13 @@ is   "a new lane launches with --name" "$(launch_of "$out")" "claude --name repo
 has  "a new lane mints a session id for itself" "$out" "--session-id "
 has  "a new lane renames the window" "$(cat "$FAKE_TMUX_LOG")" "rename-window repoA-7"
 is   "a new lane gets exactly one row" "$(grep -c '^| `repoA-7`' "$LANES")" 1
-has  "the new row starts STARTING" "$(grep '^| `repoA-7`' "$LANES")" "| STARTING |"
+# AMENDMENT 13(a) — A NEW ROW IS BORN IN THE PHRASE, not with the bare word
+# `STARTING` the cell used to open with: `<STATE> · <UTC> · <one line>`, so that
+# no row ever exists outside the shape `set-row-state` is the only writer of.
+a13_new="$(grep '^| `repoA-7`' "$LANES")"
+has  "the new row's state cell is Amendment 13's phrase" "$a13_new" "| LIVE · 20"
+has  "…whose line names the act that created it" "$a13_new" "lane-start on Eagle: row created |"
+hasnt "…and never the bare word the cell used to open with" "$a13_new" "| STARTING |"
 has  "the new row's session cell names the minted session" "$(grep '^| `repoA-7`' "$LANES")" "(minted by lane-start,"
 hasnt "…so it no longer says 'pending'" "$(grep '^| `repoA-7`' "$LANES")" "pending — set by the session's first act"
 has  "…and it is the very id claude was given" "$(grep '^| `repoA-7`' "$LANES")" "$REPOA7_SID"
@@ -725,7 +731,7 @@ has  "a free lane appends a status, not a row" "$(git -C "$WIP" log --oneline -1
 # `--no-launch` run still ends `no launch` and never claims to have launched
 # anything.
 has  "the appended status says what it did — and a --no-launch run never says it launched (F-B5)" "$(grep '^| `repoA-1`' "$LANES")" ", no launch"
-has  "…with clause (c)'s directory and window in the tail, for the person reading the row" "$(grep '^| `repoA-1`' "$LANES")" "window renamed, dir $HOME/projects/repoA, window "
+has  "…with clause (c)'s directory and window in the tail, for the person reading the row" "$(grep '^| `repoA-1`' "$LANES")" "; dir $HOME/projects/repoA; window "
 hasnt "…so the stamp of a run that launched nothing claims no launch" "$(grep '^| `repoA-1`' "$LANES")" "no launch, launching"
 
 run "$START" repoA 2 --no-launch
@@ -798,7 +804,12 @@ REPOA14_SID="$(minted_of "$out")"
 is   "an existing row with a stale id starts a new session" "$(launch_of "$out")" "claude --name repoA-14"
 has  "…and the session cell is stamped with the minted id, AFTER the old id's code span" "$(grep '^| `repoA-14`' "$LANES")" "harness \`$GHOST2_ID\` → harness \`$REPOA14_SID\`"
 hasnt "…never inside it, which a replace at a bare-uuid anchor would do (F-B1)" "$(grep '^| `repoA-14`' "$LANES")" "\`$GHOST2_ID → "
-has  "…in its own register commit" "$(git -C "$WIP" log --oneline -1 -- lanes/LANES.md)" "session cell: lane-start minted $REPOA14_SID"
+# ITS OWN REGISTER COMMIT, AND THE ONE BEFORE THE STAMP (Copilot round 5 on
+# openRepoTools#82): Amendment 8's rule is THE CELL FIRST, THEN THE STAMP — the
+# stamp names a uuid, so the cell that carries it is written first — and this
+# path used to do the opposite. Both commits are asserted, in that order.
+has  "…in its own register commit" "$(git -C "$WIP" log --format=%s -- lanes/LANES.md | head -n2 | tail -n1)" "session cell: lane-start minted $REPOA14_SID"
+has  "…with the state stamp committed after it, naming the same id" "$(git -C "$WIP" log --format=%s -n1 -- lanes/LANES.md)" "state · LIVE · STARTED by $REPOA14_SID"
 
 # And the loop closes: run it again, and the id just written is resumed by id.
 printf '{"type":"user"}\n' > "$tdir/$REPOA14_SID.jsonl"
@@ -828,7 +839,7 @@ is   "lane-end --help exits 0" "$rc" 0
 run "$END" repoD-1
 is   "an open LANDING is refused" "$rc" 2
 has  "…naming what it found" "$err" "the last LANDING in its state cell"
-has  "…and the fix" "$err" "append-row-status repoD-1"
+has  "…and the fix" "$err" "set-row-state repoD-1"
 hasnt "…and nothing is written" "$(grep '^| `repoD-1`' "$LANES")" "lane-end on"
 
 run "$END" repoD-2
@@ -844,7 +855,7 @@ has  "…and says so in the register" "$(grep '^| `repoD-1`' "$LANES")" "ENDED W
 
 run "$END" repoA-7 --retire
 is   "--retire exits 0" "$rc" 0
-has  "…and the state cell now opens RETIRED" "$(grep '^| `repoA-7`' "$LANES")" "| RETIRED 20"
+has  "…and the state cell now reads RETIRED, in Amendment 13(a)'s phrase" "$(grep '^| `repoA-7`' "$LANES")" "| RETIRED · 20"
 has  "…while the history it had is still there" "$(grep '^| `repoA-7`' "$LANES")" "window closing; NOTHING IN FLIGHT"
 is   "…and the window is never renamed" "$(grep -c 'rename-window repoA-7$' "$FAKE_TMUX_LOG")" 1
 
@@ -859,7 +870,7 @@ is   "lane-end --dry-run writes nothing" "$(git -C "$WIP" rev-parse HEAD)" "$bef
 
 run "$END" browser-ui-repair --retire
 is   "a lane named before the <repo>-<n> rule can still be ended" "$rc" 0
-has  "…verbatim, and retired" "$(grep '^| `browser-ui-repair`' "$LANES")" "| RETIRED 20"
+has  "…verbatim, and retired" "$(grep '^| `browser-ui-repair`' "$LANES")" "| RETIRED · 20"
 
 
 echo "== Amendment 7: the per-lane object log =="
@@ -1771,7 +1782,12 @@ has   "…writing an ENDED whose free text is 'forced; open: <object list>'" "$L
 has   "…naming the object that was open" "$LX_LINE" "opensoft/repoX#11"
 is    "…with ' — ' occurring exactly twice, which is the clause (b) guarantee" "$(printf '%s' "$LX_LINE" | grep -o ' — ' | grep -c .)" 2
 hasnt "…and never an empty verb where a verb belongs" "$LX_LINE" "while  was"
-has   "…while the register's line names the log it read, not the state cell" "$(grep '^| `repoX-1`' "$LANES")" "own object log still showed open:"
+# AMENDMENT 13(a) — THE COUNT AND THE PATH, NOT THE LIST. The line is one line
+# and capped at 240 characters (ratified decision O1); a lane forced closed over
+# eleven open objects named them in 300. The objects are in the ENDED line of
+# the lane's own log, which is where this line now points.
+has   "…while the register's line names the log it read, not the state cell" "$(grep '^| `repoX-1`' "$LANES")" "own object log still showed"
+has   "…and names the log the objects are in, since the line itself is capped" "$(grep '^| `repoX-1`' "$LANES")" "they are in lanes/log/repoX-1.md"
 
 # The writer ENFORCES the grammar rather than hoping for it.
 run env LANES_LANE=repoX-1 "$E" release "opensoft/repoX#11" "one — two" --no-github
@@ -1978,8 +1994,8 @@ hasnt "…so no ENDED line is missing from a closed lane" "$(cat "$LOGD/repoZH-1
 # working tree that a fetch does not move.
 "$E" add-row "| \`repoZZ-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoZZ/x.md | IDLE, NOTHING CLAIMED |" >/dev/null 2>&1
 git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
-( LANES_WORKSPACE_ROOT="$CLONE2" LANES_LANE=repoZZ-1 "$E" append-row-status repoZZ-1 \
-    "2026-09-11T05:00Z LANDING #8 into repoZZ main" ) >/dev/null 2>&1
+( LANES_WORKSPACE_ROOT="$CLONE2" LANES_LANE=repoZZ-1 "$E" set-row-state repoZZ-1 \
+    "LANDING #8 · into repoZZ main, posted by the peer" ) >/dev/null 2>&1
 is    "the peer's LANDING is on origin/main and not in this checkout's row" "$(grep '^| `repoZZ-1`' "$LANES" | grep -c 'LANDING #8' || :)" 0
 run   "$END" repoZZ-1
 is    "lane-end refuses a merge hold that only the PUBLISHED row shows" "$rc" 2
@@ -2490,20 +2506,23 @@ unset FAKE_TMUX_WINDOW
 
 # ---- R-A8-4: THE UUID APPEND IS CELL-SCOPED, AND THIS IS WHY -------------
 #
-# The row above has now been stamped TWICE, so it carries `$HW_NEW` three
-# times: once in its session cell and once in each Amendment 6(c) stamp
-# (`RESUMED by <uuid> …`; a stamp that really launches carries it twice, in
-# `launching claude --resume <uuid>` as well). That is the real shape of
-# `openRepoProject-1`'s own row on `origin/main`, measured 2026-09-12 — three
-# occurrences of the current uuid and three of the previous one — and it is the
-# shape on which the whole-row anchor refuses. The second harness event for any
-# lane this tool has stamped is therefore the common case, not an edge.
+# The row above has now been stamped TWICE, and it carries `$HW_NEW` more than
+# once: in its session cell, and in the Amendment 6(c) stamp the cell holds
+# (`RESUMED by <uuid> …`). It used to be THREE times — one per stamp, because
+# every stamp was APPENDED — which is the shape `openRepoProject-1`'s own row
+# had on `origin/main`, measured 2026-09-12: three occurrences of the current
+# uuid and three of the previous one. Amendment 13(a) REPLACES the cell on every
+# write, so the stamps no longer accumulate and the count is two.
+#
+# TWO IS STILL NOT ONE, which is the whole of what this case is for: the
+# whole-row anchor refuses on it exactly as it refused on three, and the act
+# that can extend the session cell is therefore still the cell-scoped one.
 hu_row="$(grep '^| `repoHU-1`' "$LANES")"
-is    "two stamps later, the row carries that uuid three times — openRepoProject-1's own shape" \
-      "$(printf '%s' "$hu_row" | grep -o "$HW_NEW" | grep -c .)" 3
+is    "two stamps later, the row carries that uuid twice — the cell and the one stamp it keeps" \
+      "$(printf '%s' "$hu_row" | grep -o "$HW_NEW" | grep -c .)" 2
 run   env LANES_LANE=repoHU-1 "$E" replace-in-row repoHU-1 "$HW_NEW" "$HW_NEW → harness nope"
 is    "replace-in-row REFUSES it, and its whole-row rule is unchanged" "$rc" 2
-has   "…counting the occurrences it found" "$err" "occurs 3 times"
+has   "…counting the occurrences it found" "$err" "occurs 2 times"
 is    "…and writing nothing" "$(grep '^| `repoHU-1`' "$LANES")" "$hu_row"
 
 # The harness mints a THIRD transcript in the same window — a second usage
@@ -2517,8 +2536,12 @@ run   "$START" --dir "$HOME/projects/repoA" repoHU-1 --no-launch
 is    "lane-start appends the new transcript anyway, because the act is cell-scoped" "$rc" 0
 has   "…the session cell now ends on the third transcript" \
       "$(grep '^| `repoHU-1`' "$LANES")" "→ harness $HW_NEW2 (transcript uuid; profile t1)"
-is    "…the previous uuid's three occurrences are untouched, stamp included" \
-      "$(grep '^| `repoHU-1`' "$LANES" | grep -o "$HW_NEW" | grep -c .)" 3
+# THE SESSION CELL IS A HISTORY AND THE STATE CELL IS NOT (Amendment 13(c) and
+# (a)): the previous uuid stays exactly where Amendment 6(b) put it, in the
+# session cell, while the stamp that named it has been REPLACED by this one. It
+# used to be three occurrences — the cell plus two appended stamps.
+is    "…the previous uuid stays in the session cell, which Amendment 13 leaves alone" \
+      "$(grep '^| `repoHU-1`' "$LANES" | grep -o "$HW_NEW" | grep -c .)" 1
 is    "…the row is still one line" "$(grep -c '^| `repoHU-1`' "$LANES")" 1
 is    "…and the launch resumes the id the cell now ends on" "$out" "claude --name repoHU-1 --resume $HW_NEW2"
 unset FAKE_TMUX_WINDOW
@@ -2708,7 +2731,7 @@ is    "a lane that takes a NEW session still exits 0" "$rc" 0
 has   "…and its stamp reads STARTED, not RESUMED" "$(grep '^| `repoHU-2`' "$LANES")" "STARTED by $HU2_SID (lane repoHU-2) — lane-start on"
 run   "$START" repoA 1 --no-launch
 has   "…while a resume-by-id lane's stamp reads RESUMED by that id" "$(grep '^| `repoA-1`' "$LANES")" "RESUMED by $DEAD_ID (lane repoA-1) — lane-start on"
-has   "…and the --no-launch tail behind it states what really happened" "$(grep '^| `repoA-1`' "$LANES")" "RESUMED by $DEAD_ID (lane repoA-1) — lane-start on $LANES_WORKSTATION: window renamed, dir "
+has   "…and the --no-launch tail behind it states what really happened" "$(grep '^| `repoA-1`' "$LANES")" "RESUMED by $DEAD_ID (lane repoA-1) — lane-start on $LANES_WORKSTATION: window renamed, no launch; dir "
 
 # ---- R-A8-2: ONE record written, TWO deferred, and the act that settles them
 #
@@ -2777,7 +2800,7 @@ rm -f "$sessions_dir/live-dw.json"
 #
 # THE REJECTION IS SCOPED BY THE COMMIT, NOT BY THE DIRECTORY. In the first case
 # the handoff repo IS the register's checkout, so a blanket refusal of `push -C
-# $WIP` would fail `append-row-status` instead — and `lane-start` runs under
+# $WIP` would fail `set-row-state` instead — and `lane-start` runs under
 # `set -e`, so it would never reach the handoff block the case is about.
 # Amendment 8(d) gives the stamp commit the subject `handoff(<lane>@<ws>): …`,
 # which no register write carries, and the push follows its own commit
@@ -3058,7 +3081,7 @@ export FAKE_TMUX_WINDOW_NAME=repoSU-1
 ss_run "$SU_OLD" resume
 is   "a superseded transcript of a normally-resumable lane is cured by a real lane-start" "$(printf '%s\n' "$out" | head -n1)" \
      "WARNING: this is a superseded transcript of lane repoSU-1; the live one is $SU_CUR; you resumed $SU_OLD — exit this session and run: lane-start repoSU 1"
-"$E" append-row-status repoSU-1 "2026-09-12T23:00:00Z RESUMED by unknown (lane repoSU-1) — lane-start on Eagle: window renamed, no launch" >/dev/null 2>&1
+"$E" set-row-state repoSU-1 "LIVE · RESUMED by unknown (lane repoSU-1) — lane-start on Eagle: window renamed, no launch" >/dev/null 2>&1
 ss_run "$SU_OLD" resume
 has  "…but one whose NEWEST row stamp says unknown is cured by the RECORDING act" "$out" "run: lane-start --no-launch repoSU 1"
 has  "…saying why, in the row's own word" "$out" "which the row records as \`unknown\`"
@@ -3574,7 +3597,7 @@ kill "$G_PANE" "$G_OUT" 2>/dev/null || :
 # AMENDMENT 8, RULING (h) — THE WRITER NEVER BLOCKS THE ESTATE
 #
 # On 2026-09-12 at ~01:44Z an ssh `git-receive-pack` hung for five minutes AFTER
-# its push had landed, with `lanes-edit.sh append-row-status` inside it holding
+# its push had landed, with a `lanes-edit.sh` row write inside it holding
 # the mutex the whole time. Every lane on Eagle was blocked until the ssh was
 # killed by hand.
 # -------------------------------------------------------------------------
@@ -3598,7 +3621,7 @@ exec git "$@"
 FAKE
 chmod +x "$SANDBOX/hanggit" "$SANDBOX/peekgit"
 
-run env LANES_GIT="$SANDBOX/hanggit" LANES_GIT_TIMEOUT=2 "$E" append-row-status repoGH-1 "2026-09-12T20:00Z HUNGPUSH"
+run env LANES_GIT="$SANDBOX/hanggit" LANES_GIT_TIMEOUT=2 "$E" set-row-state repoGH-1 "LIVE · HUNGPUSH"
 if [ "$HAVE_TIMEOUT" = 1 ]; then
   is    "a push that hangs past the timeout exits 3" "$rc" 3
   has   "…saying so, with the budget it was given" "$err" "TIMED OUT after 2s"
@@ -3619,7 +3642,7 @@ has   "…which is the row, really written" "$(grep '^| `repoGH-1`' "$LANES")" "
 sleep 0.05 & H_DEAD=$!
 wait "$H_DEAD" 2>/dev/null || :
 mkdir -p "$H_LOCK"; printf '%s\n' "$H_DEAD" > "$H_LOCK/pid"
-run "$E" append-row-status repoGH-1 "2026-09-12T20:01Z AFTERDEADLOCK"
+run "$E" set-row-state repoGH-1 "LIVE · AFTERDEADLOCK"
 is    "a lock whose holder is dead is taken over" "$rc" 0
 has   "…with one line saying whose it was" "$err" "taking over"
 has   "…and naming the pid that is gone" "$err" "(pid $H_DEAD) is gone"
@@ -3630,7 +3653,7 @@ has   "…the write then happens" "$(grep '^| `repoGH-1`' "$LANES")" "AFTERDEADL
 # lock while the push is running.
 PEEK_LOCK="$H_LOCK" PEEK_OUT="$SANDBOX/peek.pid" \
   env PEEK_LOCK="$H_LOCK" PEEK_OUT="$SANDBOX/peek.pid" LANES_GIT="$SANDBOX/peekgit" \
-  "$E" append-row-status repoGH-1 "2026-09-12T20:02Z PEEK" >/dev/null 2>&1 || :
+  "$E" set-row-state repoGH-1 "LIVE · PEEK" >/dev/null 2>&1 || :
 h_peek="$(cat "$SANDBOX/peek.pid" 2>/dev/null || printf '')"
 # THE `case` IS HOISTED OUT OF THE `$( )`, and it has to be (A9 Addendum 4,
 # R-A9-11). Bash 3.2's parser reads the `)` that closes a case PATTERN as the
@@ -3653,7 +3676,7 @@ h_t0=$SECONDS
 # bound available this case cannot be run at all rather than run unbounded and
 # hang the suite behind its own fixture.
 if [ "$HAVE_TIMEOUT" = 1 ]; then
-  timeout 3 "$E" append-row-status repoGH-1 "2026-09-12T20:03Z NEVER" >/dev/null 2>"$SANDBOX/h.err" || :
+  timeout 3 "$E" set-row-state repoGH-1 "LIVE · NEVER" >/dev/null 2>"$SANDBOX/h.err" || :
   is    "a lock whose holder is ALIVE is not taken over" "$(grep -c 'taking over' "$SANDBOX/h.err" || :)" "0"
   # …and a signal STOPS the writer. `trap cleanup EXIT INT TERM` ran the handler
   # and then resumed the wait: measured, SIGTERM at 8s and the process still going
@@ -3671,7 +3694,7 @@ rm -rf "$H_LOCK"
 # EARLIER ONE ORIGIN HAS SINCE OVERTAKEN.
 #
 # Observed on Eagle, three to four times in one hour on 2026-09-13/14 while
-# several lanes wrote the register concurrently: `append-row-status` /
+# several lanes wrote the register concurrently: `set-row-state` /
 # `append-line` printed "rebase conflict on origin/main — nothing was
 # pushed" for a commit that WAS on origin by the time anyone read the line —
 # carried out by the very next lanes-edit.sh write through this same shared
@@ -3726,7 +3749,7 @@ exec git "\$@"
 FAKE
 chmod +x "$SANDBOX/racegit"
 
-run env LANES_GIT="$SANDBOX/racegit" "$E" append-row-status repoRC-1 "RACE-RETRY-WINS"
+run env LANES_GIT="$SANDBOX/racegit" "$E" set-row-state repoRC-1 "LIVE · RACE-RETRY-WINS"
 is    "a peer landing between this attempt's pull and its push still exits 0" "$rc" 0
 has   "…the message names attempt 2, the one that actually pushed" "$err" "pushed origin/main (attempt 2)"
 hasnt "…never claiming attempt 1 pushed it" "$err" "pushed origin/main (attempt 1)"
@@ -3751,7 +3774,7 @@ git -C "$CLONE2" add -- lanes/LANES.md
 git -C "$CLONE2" commit -q -m "LANES(repoRC-1@Raven): peer rewrites the same row"
 git -C "$CLONE2" push -q origin main
 
-run "$E" append-row-status repoRC-1 "OURS-CONFLICT"
+run "$E" set-row-state repoRC-1 "LIVE · OURS-CONFLICT"
 is    "a peer's rewrite of the SAME row is a real conflict: exit 3" "$rc" 3
 has   "…REBASE CONFLICT is still named" "$err" "REBASE CONFLICT on origin/main"
 has   "…the abort runs and says the tree is clean" "$err" "rebase ABORTED — the worktree is clean and NOT mid-rebase"
@@ -4572,11 +4595,11 @@ FAKE_TMUX_WINDOW="a11start:@42" FAKE_TMUX_WINDOW_INDEX=3 FAKE_TMUX_WINDOW_NAME=r
   CLAUDE_PROFILE_NAME=team-05a run "$START" repoA11b 1 --no-launch
 is   "lane-start exits 0 on a second start of the same lane" "$rc" 0
 has  "the row's stamp states clause (c)'s two facts for a person, in its TAIL" \
-     "$(grep '^| `repoA11b-1`' "$LANES")" "dir $HOME/projects/repoA11b, window a11start:3 @42"
+     "$(grep '^| `repoA11b-1`' "$LANES")" "dir $HOME/projects/repoA11b; window a11start:3 @42"
 has  "…and that tail still says what actually happened, so --no-launch never claims a launch" \
      "$(grep '^| `repoA11b-1`' "$LANES")" ", no launch"
 has  "…while its HEAD is Amendment 8(d)'s and is untouched" \
-     "$(grep '^| `repoA11b-1`' "$LANES")" "(lane repoA11b-1) — lane-start on Eagle: window renamed, dir "
+     "$(grep '^| `repoA11b-1`' "$LANES")" "(lane repoA11b-1) — lane-start on Eagle: window renamed, no launch; dir "
 # NO PROFILE IS NO SUB-FIELD, never a guessed one (Amendment 7(i)).
 mkdir -p "$HOME/projects/repoA11c"
 git init -q -b main "$HOME/projects/repoA11c"
@@ -6250,9 +6273,11 @@ has   "…this session appended to that lane's cell, which is what the next resu
 # one is repoGD-1's. Without this the new row would carry a FRESH id, the next
 # prompt would find a lane whose row does not name this transcript, and the
 # guard would refuse for ever on a state it created by obeying the person.
-has   "…the guard having made that one write itself, on the person's yes" "$err" "session cell now ends on $GD_LANE_ID"
-has   "…and the lane it LEFT marked, so the register says where the work went" \
-      "$("$E" register-row repoGD-1 2>/dev/null || :)" "MOVED → repoGD-2"
+has   "…the guard having made that one write itself, on the person's choice 2" "$err" "session cell now ends on $GD_LANE_ID"
+has   "…and the lane it LEFT marked PAUSED, so the register says where the work went" \
+      "$("$E" register-row repoGD-1 2>/dev/null || :)" "PAUSED · "
+has   "…naming the lane this window moved to (Amendment 13(a): the cell is SET, never appended to)" \
+      "$("$E" register-row repoGD-1 2>/dev/null || :)" "this window moved to lane repoGD-2"
 is    "…and the offer is consumed" "$( [ -f "$GD_OFFER" ] && echo yes || echo no )" no
 unset FAKE_TMUX_RENAME_STICKS FAKE_TMUX_NAME_FILE
 
@@ -6721,7 +6746,7 @@ has   "…it APPENDED a status rather than adding a row" \
 has   "…and the stamp it appended carries the canonical spelling" \
       "$(grep '^| `repoCase-1`' "$LANES")" "(lane repoCase-1)"
 has   "…having found the checkout by its real directory name, not the typed one" \
-      "$(grep '^| `repoCase-1`' "$LANES")" "dir $HOME/projects/repoCase,"
+      "$(grep '^| `repoCase-1`' "$LANES")" "dir $HOME/projects/repoCase;"
 
 # THE LOG FILE IS THE ROW'S SPELLING, AND THE RENAME IS PART OF THE WRITE.
 is    "the lane's log is now named for the row" \
@@ -6814,7 +6839,7 @@ hasnt "…never to the spelling the directory would give" "$(cat "$FAKE_TMUX_LOG
 is    "…with no second row added under either spelling" \
       "$(grep -c '^| `repoMix-1`' "$LANES")" 0
 has   "…and the lane's directory is still the CHECKOUT's own spelling, which the row does not carry" \
-      "$(grep '^| `repoMIX-1`' "$LANES")" "dir $HOME/projects/repoMix,"
+      "$(grep '^| `repoMIX-1`' "$LANES")" "dir $HOME/projects/repoMix"
 
 # A TRANSCRIPT TITLED IN THE OTHER CASE IS STILL THIS LANE'S, AND IS RESUMED.
 # The row's id has no transcript here, so this is the TITLE fallback — the
@@ -7744,10 +7769,19 @@ git -C "$WIP" add -- handoffs/repoHF/repoHF-11.md >/dev/null 2>&1
 git -C "$WIP" commit -q -m "seed repoHF-11's handoff"
 git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
 git -C "$WIP" push -q origin main
-# A STATE CELL NO ANCHOR MATCHES: `replace-in-row` is given a word derived from
-# the row itself, and a lower-case one is derived from nothing — which is the
-# refusal, not a guess.
-"$E" add-row "| \`repoHF-11\` | harness \`$HF_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoHF/repoHF-11.md | running |" >/dev/null 2>&1
+# A ROW WHOSE CELLS ARE NOT UNAMBIGUOUS, which since Amendment 13(a) is what a
+# refused row write looks like. It used to be a state cell no anchor matched —
+# `replace-in-row` was given a state word derived from the row itself and a
+# lower-case `running` derived nothing — and that refusal is gone with the act:
+# `set-row-state` REPLACES the cell whatever it says. What it will not do is
+# write over a row carrying a seventh ` | `, because which text is the state
+# cell is then not knowable from the row. SEEDED and not added, because the
+# writer refuses to create this state (the line it would need carries a `|`).
+add_seed_row "| \`repoHF-11\` | harness \`$HF_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoHF/repoHF-11.md | running · a | b |"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed a row whose state cell holds a literal ' | ', which no row write can take"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
 : > "$FAKE_TMUX_A17_LOG"
 export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-11.md"
 run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
@@ -8297,9 +8331,10 @@ has   "the skill's own record writer carries the kind sub-field too" "$hfsk" 'pa
 has   "…and the free text after the why, in the addendum's spelling" "$hfsk" "kind unknown"
 has   "…and it asks window-session with the harness's own spelling of the window" \
       "$hfsk" "#{session_name}:#{window_id}"
-has   "…and its row flip reads BOTH state-cell shapes, as the command does" \
-      "$hfsk" "| [A-Z][A-Z]* |"
-has   "…replacing with whichever punctuation the row itself carries" "$hfsk" '"$state" "$state_new" "swap"'
+has   "…and its row write SETS the whole cell, as the command does (Amendment 13(a))" \
+      "$hfsk" 'set-row-state "$lane" "PAUSED · $hs_line"'
+has   "…with the line cut where a cut cannot land inside a character" "$hfsk" 'hs_line="${hs_line% *} ..."'
+hasnt "…and never the anchor the two writes it replaced had to guess at" "$hfsk" '"$state" "$state_new" "swap"'
 has   "…and the measured fact that is the whole reason for the distinction" \
       "$hfsk" "mints a NEW TRANSCRIPT ID IN THE SAME PROCESS"
 has   "and the respawn line Addendum 2 (i-8) names: \`lane <lane>\`" "$hfsk" 'LANE_START_FRESH=1 lane $lane'
@@ -9278,6 +9313,336 @@ has   "…saying which argument was empty" "$err" "EMPTY argument"
 hasnt "…and never rendering the listing instead" "$out" "AVAILABLE"
 run env -C "$PICK_DIR" PATH="$LANEBIN_PATH" "$LANE" --all "" </dev/null
 is    "…and the same beside --all" "$rc" 64
+
+echo "== Amendment 13: the row is current state, the log is history =="
+
+# THE CHECKOUT IS COMMITTED FIRST, for the reason the workstation-seam section
+# below gives: the cases above leave handoff files uncommitted in the sandbox
+# workspace on purpose, and `lanes-edit.sh` REFUSES an object-log write on a
+# checkout it cannot rebase. These cases are about the row and the log, so the
+# refusal is put out of the way rather than met.
+git -C "$WIP" add -A >/dev/null 2>&1
+git -C "$WIP" commit -q -m "commit the sandbox's pending handoffs before the Amendment 13 cases" >/dev/null 2>&1 || :
+git -C "$WIP" pull -q --rebase origin main >/dev/null 2>&1 || :
+git -C "$WIP" push -q origin main >/dev/null 2>&1 || :
+
+A13_ID="aaaa0013-1313-4000-8000-aaaa00131313"
+"$E" add-row "| \`repoA13-1\` | harness \`$A13_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoA13/x.md | LIVE · 2026-09-14T00:00:00Z · the row is born in the phrase |" >/dev/null 2>&1
+
+# ---- (a) `set-row-state` REPLACES the cell, and stamps the UTC itself.
+run env LANES_LANE=repoA13-1 "$E" set-row-state repoA13-1 "LANDING #29 · CI green; waiting on review"
+is    "set-row-state writes the cell" "$rc" 0
+a13_row="$(grep '^| `repoA13-1`' "$LANES")"
+has   "…the STATE opens it" "$a13_row" "| LANDING #29 · "
+has   "…UTC-stamped by the WRITER, never passed in" "$a13_row" "| LANDING #29 · $(date -u +%Y-)"
+has   "…and the one line closes it" "$a13_row" " · CI green; waiting on review |"
+hasnt "…and what the cell said before is REPLACED, not appended to" "$a13_row" "the row is born in the phrase"
+is    "…so the cell is three parts and stays three parts" \
+      "$(printf '%s' "$a13_row" | awk -F' \\| ' '{ c = $NF; sub(/ \|$/, "", c); n = split(c, p, / · /); print n }')" 3
+is    "…and it is BOUNDED: 240 for the line, plus the state and the instant" \
+      "$(printf '%s' "$a13_row" | awk -F' \\| ' '{ c = $NF; sub(/ \|$/, "", c); print (length(c) <= 280 ? "yes" : "no " length(c)) }')" "yes"
+
+run "$E" set-row-state repoA13-1 "BUSY · doing things"
+is    "an unknown STATE is refused" "$rc" 2
+has   "…naming the seven there are" "$err" "LIVE, PAUSED, LANDING #<n>, LANDED, ENDED, RETIRED, HANDED OFF"
+run "$E" set-row-state repoA13-1 "LANDING # · no number"
+is    "a LANDING with no PR number is refused — Rule 6 reads this cell" "$rc" 2
+a13_long="$(awk 'BEGIN { s = ""; while (length(s) < 241) s = s "x"; print s }')"
+run "$E" set-row-state repoA13-1 "LIVE · $a13_long"
+is    "a line over the cap is refused" "$rc" 2
+has   "…naming the cap ratified decision O1 set" "$err" "the cap is 240"
+has   "…and where the rest of it goes" "$err" "log NOTED"
+run "$E" set-row-state repoA13-1 "LIVE · a | b"
+is    "a line carrying a cell boundary is refused" "$rc" 2
+run "$E" set-row-state repoA13-1 "LIVE · one · two"
+is    "a line carrying the phrase's own separator is refused" "$rc" 2
+run "$E" set-row-state repoA13-1 "LIVE"
+is    "a phrase with no line at all is refused" "$rc" 2
+is    "…and none of those five refusals touched the row" "$(grep '^| `repoA13-1`' "$LANES")" "$a13_row"
+
+# A ROW WHOSE CELLS ARE NOT UNAMBIGUOUS IS REFUSED, NOT WRITTEN OVER. Seeded as
+# it exists in the live register — a literal ` | ` inside a cell — because no
+# writer here can create one: `set-row-state` refuses the very line that would.
+add_seed_row "| \`repoA13-2\` | harness \`$A13_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoA13/y.md | LIVE · a | b inside the cell |"
+git -C "$WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed a row whose state cell holds a literal ' | '" >/dev/null 2>&1
+git -C "$WIP" pull -q --rebase origin main >/dev/null 2>&1 || :
+git -C "$WIP" push -q origin main >/dev/null 2>&1
+a13_amb="$(grep '^| `repoA13-2`' "$LANES")"
+run "$E" set-row-state repoA13-2 "LIVE · this must not be written"
+is    "a row with more than six ' | ' separators is refused" "$rc" 2
+has   "…counting what it found against what a seven-column row has" "$err" "separators where a seven-column row carries 6"
+has   "…saying which cell the other reading would have overwritten" "$err" "handoff path"
+has   "…and naming the escape a Markdown table wants" "$err" '\|'
+is    "…and the row is untouched" "$(grep '^| `repoA13-2`' "$LANES")" "$a13_amb"
+
+# THE SHARED CUT THE THREE ROW WRITERS CARRY, as a unit. The address is
+# `/^cut_to_line()/` and NOT `/^cut_to_line() {/`: an unescaped `{` in a BRE is
+# undefined by POSIX, and BSD `sed` — the macOS job's — answers nothing at all
+# for it, so all three of these cases came back EMPTY there while two of them
+# passed vacuously against an empty string (measured on `4df80b6`'s
+# `tests-macos`). The function's own line is unique without the brace. It is what keeps a
+# `dir` or a launch flag holding a `|` from reaching `set-row-state`, whose
+# contract refuses every pipe — a normal start would then rename the window and
+# fail to stamp the row (Copilot round 1 on openRepoTools#82).
+a13_cut="$(bash -c 'eval "$(sed -n "/^cut_to_line()/,/^}/p" "$1")"; cut_to_line "$2"' _ "$OPENREPOTOOLS_BIN_DIR/lane-start" "launching claude --flag a|b; dir /x · y")"
+is    "the shared cut spells a cell boundary as the broken bar" "$a13_cut" "launching claude --flag a¦b; dir /x; y"
+a13_long="$(awk 'BEGIN { s = ""; while (length(s) < 400) s = s "word "; print s }')"
+a13_cut2="$(bash -c 'eval "$(sed -n "/^cut_to_line()/,/^}/p" "$1")"; cut_to_line "$2"' _ "$OPENREPOTOOLS_BIN_DIR/lane-start" "$a13_long")"
+is    "…and cuts a long line at a word boundary, inside the cap" \
+      "$( [ "${#a13_cut2}" -le 240 ] && echo yes || echo "no ${#a13_cut2}" )" "yes"
+has   "…saying it was cut" "$a13_cut2" " ..."
+a13_cut3="$(bash -c 'eval "$(sed -n "/^cut_to_line()/,/^}/p" "$1")"; cut_to_line "$2"' _ "$OPENREPOTOOLS_BIN_DIR/lane-start" "$(printf 'one\ntwo')")"
+is    "…and a newline, because a row is ONE line of a table (Copilot round 2)" "$a13_cut3" "one; two"
+hasnt "…never leaving half a character where the cut landed" "$a13_cut2" "wor ..."
+
+# ---- (b) `append-row-status` is RETIRED, and the refusal names both acts.
+run "$E" append-row-status repoA13-1 "anything at all"
+is    "append-row-status refuses" "$rc" 2
+has   "…naming the amendment that retired it" "$err" "Amendment 13(a)"
+has   "…naming set-row-state for the STATE" "$err" "set-row-state repoA13-1"
+has   "…naming log NOTED for the narrative" "$err" "log NOTED lane:repoA13-1"
+has   "…naming log RULED for a ruling" "$err" "log RULED lane:repoA13-1"
+has   "…and history for reading it back" "$err" "history repoA13-1"
+has   "…and saying plainly that nothing was written" "$err" "Nothing was written"
+
+# ---- (c) NOTED and RULED are written, and NEITHER IS A TRANSITION.
+LANES_LANE=repoA13-1 LANES_SESSION="$A13_ID" "$E" log STARTED "lane:repoA13-1" "→" "home opensoft/repoA13" >/dev/null 2>&1
+run env LANES_LANE=repoA13-1 LANES_SESSION="$A13_ID" "$E" log NOTED "lane:repoA13-1" "rebased on main; the flake is the fixture's clock"
+is    "a NOTED is written" "$rc" 0
+has   "…as a lane-kind line whose object is the lane itself" "$(cat "$LOGD/repoA13-1.md")" \
+      "NOTED — lane repoA13-1, session $A13_ID@Eagle"
+run env LANES_LANE=repoA13-1 LANES_SESSION="$A13_ID" "$E" log RULED "lane:repoA13-1" "→" "openrepotools#29" "Ratify as drafted (Recommended)"
+is    "a RULED is written" "$rc" 0
+has   "…with the object it bears on as its payload, CANONICALISED through repos.tsv" "$(cat "$LOGD/repoA13-1.md")" \
+      "lane:repoA13-1 → opensoft/openRepoTools#29 — Ratify as drafted (Recommended)"
+
+run env LANES_LANE=repoA13-1 LANES_SESSION="$A13_ID" "$E" log NOTED "opensoft/openRepoTools#29" "a note about an issue"
+is    "a NOTED whose object is not the lane is refused" "$rc" 2
+has   "…pointing at the payload where an object belongs" "$err" "log RULED lane:repoA13-1 → opensoft/openRepoTools#29"
+run env LANES_LANE=repoA13-1 LANES_SESSION="$A13_ID" "$E" log NOTED "lane:repoA13-1" "→" "opensoft/openRepoTools#29" "x"
+is    "a NOTED with a payload is refused" "$rc" 2
+run env LANES_LANE=repoA13-1 LANES_SESSION="$A13_ID" "$E" log NOTED "lane:repoB-1" "a note about somebody else's lane"
+is    "a NOTED whose object is ANOTHER lane is refused (Copilot round 5)" "$rc" 2
+has   "…because a note is written into the log of the lane it names" "$err" "lane:repoA13-1, not lane:repoB-1"
+is    "…and nothing was written to that lane's log" "$(cat "$LOGD/repoB-1.md" 2>/dev/null | grep -c 'somebody else' || :)" 0
+run env LANES_LANE=repoA13-1 LANES_SESSION="$A13_ID" "$E" log RULED "lane:repoA13-1"
+is    "a RULED with no words is refused" "$rc" 2
+has   "…because the words ARE the ruling" "$err" "verbatim"
+run env LANES_LANE=repoA13-1 LANES_SESSION="$A13_ID" "$E" log RULED "lane:repoA13-1" "←" "opensoft/openRepoTools#29" "x"
+is    "a RULED pointed the other way is refused" "$rc" 2
+
+run "$E" who --lane repoA13-1
+has   "who --lane is unmoved by two narrative lines in the log" "$out" "none open"
+run "$E" lanes
+is    "…and the listing's state column is still the lane's last LANE verb" \
+      "$(printf '%s\n' "$out" | grep '^repoA13-1' | head -n1 | cut -f2)" "IDLE"
+
+LANES_LANE=repoA13-1 LANES_SESSION="$A13_ID" "$E" log PAUSED "lane:repoA13-1" "→" "swap; window a13sess:0; workstation Eagle; dir /x; profile team-a13" >/dev/null 2>&1
+run "$E" swapped Eagle
+has   "a swapped lane is listed" "$out" "repoA13-1"
+LANES_LANE=repoA13-1 LANES_SESSION="$A13_ID" "$E" log NOTED "lane:repoA13-1" "a note taken after the swap, which is not a transition" >/dev/null 2>&1
+run "$E" swapped Eagle
+has   "…and a NOTED written AFTER the swap does not un-swap it (Amendment 13(b))" "$out" "repoA13-1"
+run "$E" lane-last repoA13-1
+has   "…nor does it become the lane's last lane-kind line" "$out" "PAUSED"
+
+# THE PHRASE'S LINE IS PROSE, AND `lane-end` READS THE STATE (Copilot round 1
+# on openRepoTools#82). The one path that still decides a merge hold from words
+# — a lane with no object log — scanned the WHOLE cell, so an Amendment 13
+# phrase whose line legitimately says "waiting for LANDING #7" was a false hold
+# that refused to close the lane. A LEGACY DIARY CELL IS UNCHANGED.
+"$E" add-row "| \`repoA13-3\` | harness \`$A13_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoA13/p.md | LIVE · 2026-09-14T00:00:00Z · waiting for LANDING #7 to go green |" >/dev/null 2>&1
+run "$END" repoA13-3
+is    "a phrase whose LINE mentions a landing is not a hold" "$rc" 0
+has   "…and the lane is closed" "$(grep '^| `repoA13-3`' "$LANES")" "| ENDED · "
+"$E" add-row "| \`repoA13-4\` | harness \`$A13_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoA13/q.md | LANDING #9 · 2026-09-14T00:00:00Z · CI green; waiting on review |" >/dev/null 2>&1
+run "$END" repoA13-4
+is    "…while a phrase whose STATE is LANDING still is one (Rule 6, unchanged)" "$rc" 2
+has   "…named as what it read" "$err" "the last LANDING in its state cell"
+"$E" add-row "| \`repoA13-5\` | harness \`$A13_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoA13/r.md | ACTIVE · 2026-09-12T10:00Z LANDING #7 into repoA13 main |" >/dev/null 2>&1
+run "$END" repoA13-5
+is    "…and a LEGACY diary cell is still scanned whole" "$rc" 2
+# THE SECOND FIELD BEING AN INSTANT IS NOT ENOUGH (Copilot round 4 on
+# openRepoTools#82). A legacy diary whose second entry is nothing but a
+# timestamp has the phrase's SHAPE and none of its meaning: narrowing the scan
+# to `ACTIVE` there would close a pre-cutover lane over an open landing, and
+# narrowing is the fail-OPEN direction. The first field must be one of the
+# amendment's own states too.
+"$E" add-row "| \`repoA13-6\` | harness \`$A13_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoA13/s.md | ACTIVE · 2026-09-12T10:00:00Z · LANDING #7 into repoA13 main |" >/dev/null 2>&1
+run "$END" repoA13-6
+is    "a diary whose second entry is only an instant is not the phrase" "$rc" 2
+has   "…so its landing still holds the lane" "$err" "the last LANDING in its state cell"
+# AND EXACTLY THREE PARTS, WITH THE THIRD NOT EMPTY (Copilot round 5): a FOURTH
+# ` · ` is a history after the phrase's first two fields, and narrowing to the
+# state there would close a lane over the landing in that history.
+"$E" add-row "| \`repoA13-7\` | harness \`$A13_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoA13/t.md | LIVE · 2026-09-14T00:00:00Z · a note · 2026-09-14T01:00:00Z LANDING #7 into repoA13 main |" >/dev/null 2>&1
+run "$END" repoA13-7
+is    "a cell with a FOURTH part is a diary, not the phrase" "$rc" 2
+has   "…so the landing in its history still holds the lane" "$err" "the last LANDING in its state cell"
+
+# ---- (d) `history` — the diary the cell used to be.
+run "$E" history repoA13-1
+is    "history exits 0 for a lane that has written a narrative" "$rc" 0
+is    "…printing it in FILE order, oldest first" \
+      "$(printf '%s\n' "$out" | head -n1 | awk '{ print $2 }')" "NOTED"
+has   "…the ruling with the object it bears on" "$out" "RULED  opensoft/openRepoTools#29 — Ratify as drafted (Recommended)"
+hasnt "…and never a lane-kind transition, which is not narrative" "$out" "STARTED"
+hasnt "…and never the swap record either" "$out" "swap; window"
+run "$E" history repoB-1
+is    "a lane that has written no narrative is 8, not a failure" "$rc" 8
+run "$E" history repoA13-1 --since yesterday
+is    "a --since that is not an instant is a usage refusal (64)" "$rc" 64
+run "$E" history
+is    "…and so is history with no lane" "$rc" 64
+
+# ---- (e) `migrate-state-cells` — clause (e)'s ONE act, on its own register.
+#
+# ITS OWN WORKSPACE, and that is not tidiness: this act rewrites EVERY row of
+# the register it is pointed at and appends to every lane's log. Run against the
+# suite's own sandbox register it would rewrite the fixtures of every case above
+# and below it, and what it is being tested for — that it takes a whole register
+# at once — is exactly what makes that unsafe. `LANES_WORKSPACE_ROOT` is the
+# seam Amendment 9(a) left for pointing a helper at another sandbox.
+MIG_ORIGIN="$SANDBOX/a13-origin.git"; MIG_WIP="$SANDBOX/a13wip"
+git init -q --bare -b main "$MIG_ORIGIN"
+git clone -q "$MIG_ORIGIN" "$MIG_WIP" 2>/dev/null
+git -C "$MIG_WIP" config user.email "test@example.invalid"
+git -C "$MIG_WIP" config user.name  "lane helper tests"
+mkdir -p "$MIG_WIP/lanes/log"
+MIG_ID1="aaaa0014-1414-4000-8000-aaaa00141414"
+MIG_ID2="aaaa0015-1515-4000-8000-aaaa00151515"
+{
+  printf '# LANES.md — the migration sandbox\n\n'
+  printf '| lane | session id | workstation / env / user | started (UTC) | objects owned | handoff path | state |\n'
+  printf '|---|---|---|---|---|---|---|\n'
+  # THREE ROWS, MIXED ENTRIES: one whose FIRST entry carries no UTC of its own
+  # (it takes the row's `started`), one RULING, and a last entry whose leading
+  # verb is one of clause (a)'s so the new cell is derived rather than MIGRATED.
+  printf '| `repoMig-1` | harness `%s` → harness `%s` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoMig/x.md | ACTIVE · 2026-09-12T10:00:00Z opened the PR and it went green · 2026-09-12T11:00:00Z RULING: "land it as drafted" · 2026-09-12T12:00:00Z PAUSED for the night |\n' "$MIG_ID1" "$MIG_ID2"
+  printf '| `repoMig-2` | harness `%s` | Eagle / test / brett | 2026-09-11 | none | handoffs/repoMig/y.md | LIVE |\n' "$MIG_ID1"
+  printf '| `repoMig-3` | harness `%s` | Raven / test / brett | 2026-09-11 | none | handoffs/repoMig/z.md | ACTIVE · RATIFIED "as drafted" · 2026-09-13T08:00:00Z LANDED — PR #7 → abc1234 |\n' "$MIG_ID1"
+  # A FOURTH, whose last entry's leading word is no state at all: its cell
+  # becomes `MIGRATED`, which is clause (e)'s own word for "the state is in the
+  # log now" and is not one of clause (a)'s seven.
+  printf '| `repoMig-4` | harness `%s` | Eagle / test / brett | 2026-09-12 | none | handoffs/repoMig/w.md | ACTIVE · 2026-09-13T09:00:00Z rebased and re-ran the suite |\n' "$MIG_ID1"
+  # A FIFTH, already in clause (a)'s shape: this act leaves it alone, and the
+  # report counts it apart from the one-word cells, which are NOT in the shape
+  # (Copilot round 1 on openRepoTools#82).
+  printf '| `repoMig-5` | harness `%s` | Eagle / test / brett | 2026-09-12 | none | handoffs/repoMig/v.md | LIVE \302\267 2026-09-14T00:00:00Z \302\267 already the phrase |\n' "$MIG_ID1"
+  # A SIXTH, whose last entry opens `LANDING #123abc`: the number ends where the
+  # word ends, so that is NO landing and the cell becomes `MIGRATED` rather than
+  # a merge hold Rule 6 would read (Copilot round 1 on openRepoTools#82).
+  printf '| `repoMig-6` | harness `%s` | Eagle / test / brett | 2026-09-12 | none | handoffs/repoMig/u.md | ACTIVE \302\267 2026-09-13T10:00:00Z LANDING #123abc is not a number |\n' "$MIG_ID1"
+} > "$MIG_WIP/lanes/LANES.md"
+git -C "$MIG_WIP" add -A >/dev/null 2>&1
+git -C "$MIG_WIP" commit -q -m "seed the migration sandbox"
+git -C "$MIG_WIP" push -q -u origin main
+MIG_HEAD0="$(git -C "$MIG_WIP" rev-parse HEAD)"
+
+a13_tmp_before="$(ls -d "$TMPDIR"/tmp.* 2>/dev/null | grep -c . || :)"
+run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells
+is    "the migration is a DRY RUN by default" "$rc" 0
+has   "…saying so" "$out" "DRY RUN, nothing is written"
+has   "…naming the archive it would write" "$out" "lanes/archive/LANES-pre-amendment-13-"
+has   "…counting the rows it would take" "$out" "6 read · 4 to migrate · 1 already the phrase · 1 one word, no history · 0 skipped"
+has   "…and saying what a one-word cell still owes, since it is NOT the phrase" "$out" "the next set-row-state on each writes it"
+has   "…and the lines it would write" "$out" "log lines: 11 (9 NOTED, 2 RULED)"
+has   "…with the phrase each cell becomes" "$out" "→ PAUSED · "
+is    "…and it wrote NOTHING" "$(git -C "$MIG_WIP" status --porcelain | grep -c . || :)" 0
+is    "…and left no staging directory behind either (Copilot round 1)" \
+      "$(ls -d "$TMPDIR"/tmp.* 2>/dev/null | grep -c . || :)" "$a13_tmp_before"
+is    "…not even a commit" "$(git -C "$MIG_WIP" rev-parse HEAD)" "$MIG_HEAD0"
+
+# AN UNTRACKED TARGET LOG IS SOMEBODY'S UNCOMMITTED WORK (Copilot round 2 on
+# openRepoTools#82): a TRACKED one that is dirty is already refused for the whole
+# run by `refuse_dirty_checkout`, which reads staged and unstaged alike, but an
+# untracked file is in neither list and this act would commit its first lines
+# inside the migration's own commit, under the migration's message.
+printf '# lane repoMig-4 — object log (seeded by a peer, uncommitted)\n' > "$MIG_WIP/lanes/log/repoMig-4.md"
+run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells
+is    "…a row whose object log is untracked is SKIPPED, not committed for its author" "$rc" 0
+has   "…naming the file and whose it is" "$out" "exists here but is NOT TRACKED"
+has   "…and counting it among the skipped" "$out" "1 skipped"
+git -C "$MIG_WIP" add -- lanes/log/repoMig-4.md >/dev/null 2>&1
+git -C "$MIG_WIP" commit -q -m "the peer commits its own log, as the refusal asks"
+git -C "$MIG_WIP" push -q origin main 2>/dev/null || :
+# THE BASELINE MOVES WITH IT: the peer's commit is a commit, and the "one commit"
+# this act makes is counted from where the act starts, not from the seed.
+MIG_HEAD1="$(git -C "$MIG_WIP" rev-parse HEAD)"
+
+run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --yes
+is    "the act exits 0" "$rc" 0
+is    "…and it is ONE commit (Rule 9), not one per row" \
+      "$(git -C "$MIG_WIP" rev-list --count "$MIG_HEAD1"..HEAD)" 1
+has   "…whose subject says what it did" "$(git -C "$MIG_WIP" log -1 --format=%s)" "Amendment 13(e)"
+is    "…carrying the archive, all four logs and the register, and nothing else" \
+      "$(git -C "$MIG_WIP" show --name-only --format= HEAD | grep -c .)" 6
+is    "the pre-migration register is archived" \
+      "$(ls "$MIG_WIP/lanes/archive" | grep -c '^LANES-pre-amendment-13-.*\.md$' || :)" 1
+is    "…byte for byte as it was" \
+      "$(git -C "$MIG_WIP" show "$MIG_HEAD0:lanes/LANES.md" | cmp -s - "$MIG_WIP/lanes/archive/$(ls "$MIG_WIP/lanes/archive" | head -n1)" && echo same || echo different)" "same"
+mig_log1="$(cat "$MIG_WIP/lanes/log/repoMig-1.md")"
+has   "an entry with no UTC of its own takes the row's started (clause (e))" "$mig_log1" \
+      "NOTED — lane repoMig-1, session $MIG_ID2@Eagle, 2026-09-11T00:00Z, lane:repoMig-1 — ACTIVE"
+has   "…an entry with one keeps it, and its text is verbatim" "$mig_log1" \
+      "2026-09-12T10:00:00Z, lane:repoMig-1 — opened the PR and it went green"
+has   "…an entry beginning RULING is a RULED, under its OWN leading UTC" "$mig_log1" \
+      'RULED — lane repoMig-1, session '"$MIG_ID2"'@Eagle, 2026-09-12T11:00:00Z, lane:repoMig-1 — RULING: "land it as drafted"'
+is    "…the session is the LAST uuid of the row's session cell" \
+      "$(printf '%s\n' "$mig_log1" | grep -c "session $MIG_ID1@" || :)" 0
+mig_log3="$(cat "$MIG_WIP/lanes/log/repoMig-3.md")"
+has   "…and the workstation is the row's OWN column, not the one running the act" "$mig_log3" "@Raven,"
+has   "…an entry beginning RATIFIED is a RULED too" "$mig_log3" 'RULED — lane repoMig-3'
+has   "…and an entry with no timestamp of its own takes the row's started" "$mig_log3" \
+      'RULED — lane repoMig-3, session '"$MIG_ID1"'@Raven, 2026-09-11T00:00Z, lane:repoMig-3 — RATIFIED "as drafted"'
+has   "…and a text carrying its own \" — \" survives verbatim" "$mig_log3" "LANDED — PR #7 → abc1234"
+
+mig_reg="$(cat "$MIG_WIP/lanes/LANES.md")"
+has   "the cell is REPLACED by the state its last entry names" "$mig_reg" "| PAUSED · "
+has   "…LANDED where the last entry says LANDED" "$mig_reg" "| LANDED · "
+has   "…and by MIGRATED where the last entry's leading word is no state at all" "$mig_reg" "| MIGRATED · "
+is    "…and \`LANDING #123abc\` derives no landing, because the number ends where the word does" \
+      "$(grep '^| `repoMig-6`' "$MIG_WIP/lanes/LANES.md" | grep -c '| MIGRATED · ' || :)" 1
+has   "…every migrated cell pointing at the log that now holds its history" "$mig_reg" "history in lanes/log/repoMig-1.md |"
+hasnt "…with the diary gone from the row" "$mig_reg" "opened the PR and it went green"
+has   "…and a cell that was already one phrase is untouched" "$mig_reg" "| LIVE |"
+
+# THE MIGRATED LINE IS BOUNDED BY THE SAME CAP THE WRITER ENFORCES (Copilot
+# round 5): this cell is built directly, not through `set-row-state`, and it
+# carries a PATH whose length is the lane's name — which `check_lane_name`
+# bounds in characters and not in length.
+MIG_LONG="repoMig-$(awk 'BEGIN { s = ""; while (length(s) < 230) s = s "x"; print s }')"
+printf '| `%s` | harness `%s` | Eagle / test / brett | 2026-09-12 | none | h | ACTIVE · 2026-09-13T10:00:00Z a long-named lane |\n' "$MIG_LONG" "$MIG_ID1" >> "$MIG_WIP/lanes/LANES.md"
+git -C "$MIG_WIP" add -A >/dev/null 2>&1
+git -C "$MIG_WIP" commit -q -m "seed a lane whose name alone is longer than the cap"
+git -C "$MIG_WIP" push -q origin main 2>/dev/null || :
+run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --yes
+is    "a lane whose name alone overruns the cap still migrates" "$rc" 0
+# TWO LINES, AND THE SPLIT IS NOT A STYLE CHOICE: `grep` and the awk program's
+# `\|` on ONE line is what `test_no_shipped_bash_reaches_for_gnu_only_utilities_unaccompanied`
+# reads as a BRE alternation handed to `grep`, which is a GNU extension BSD
+# matches literally without saying so. The `\|` here is awk's own escape inside
+# an ERE and never reaches `grep` — so the row is taken first, and the awk that
+# splits it runs on its own line.
+mig_long_row="$(grep "^| \`$MIG_LONG\`" "$MIG_WIP/lanes/LANES.md")"
+mig_long_cell="$(printf '%s' "$mig_long_row" | awk -F' \\| ' '{ c = $NF; sub(/ \|$/, "", c); n = split(c, p, / · /); print (length(p[3]) <= 240 ? "yes" : "no " length(p[3])) }')"
+is    "…with its line inside ratified decision O1's 240 characters" "$mig_long_cell" "yes"
+has   "…and the line says it was cut" "$(grep "^| \`$MIG_LONG\`" "$MIG_WIP/lanes/LANES.md")" " ..."
+MIG_HEAD2="$(git -C "$MIG_WIP" rev-parse HEAD)"
+
+run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" history repoMig-1 --since 2026-09-12T11:00:00Z
+is    "history reads the migrated narrative" "$rc" 0
+hasnt "…--since drops every entry older than the instant" "$out" "opened the PR"
+has   "…and keeps the instant itself" "$out" "land it as drafted"
+has   "…and what came after it" "$out" "PAUSED for the night"
+
+run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --yes
+is    "a SECOND run refuses: the migration is ONE act" "$rc" 2
+has   "…saying the register is already in the shape" "$err" "already in Amendment 13(a)'s shape"
+is    "…and changed nothing" "$(git -C "$MIG_WIP" rev-list --count "$MIG_HEAD2"..HEAD)" 0
+run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --no-such-flag
+is    "an unknown flag is a refusal, not a silent dry run" "$rc" 2
 
 echo "== the workstation seam: unset, every writer reads the host =="
 
