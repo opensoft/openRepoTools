@@ -1250,6 +1250,13 @@ has  "…also a TAKEOVER, over the same dead lane" "$(cat "$LOGD/repoK-2.md")" "
 
 run "$E" who "opensoft/repoK#5"
 has  "…so the taker now holds the PR" "$out" "HOLDS    lane repoK-2"
+# EXACTLY ONE HOLDER (Copilot round 7, PR #61, the issue #30 case itself):
+# a dead lane's OPENED is an open verb, not a CLAIMED, and superseded_by's
+# early exit used to answer "not superseded" for every verb but CLAIMED —
+# so holders_of never dropped repoK-1's own OPENED line and who reported
+# BOTH lanes holding one object, the exact collision #30 was filed to end.
+is   "…and exactly ONE lane holds it, not two" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 1
+hasnt "…repoK-1's own dead OPENED is not also reported as a live hold" "$out" "HOLDS    lane repoK-1"
 
 run env LANES_LANE=repoK-4 "$E" claim "opensoft/repoK#15" --no-github --force
 is   "--force still refuses a lane whose log ends RETIRED when a live session backs it up" "$rc" 2
@@ -4562,6 +4569,29 @@ is   "…and the still-live \$LIVE_PID is of course untouched" "$(kill -0 "$LIVE
 run "$END" repoM-1 --retire 777777
 is   "…and a pid that is neither a fork nor a duplicate holder is refused, exit 8" "$rc" 8
 has  "…naming both reads" "$err" "no fork and no duplicate holder"
+
+# ------------------- issue #39 continued, Copilot round 7: a pid that exited
+# in the race between discovery and the pre-kill signal must not abort the
+# script under set -euo pipefail — `x=$(ps ...) || x=''` is the fix; a bare
+# assignment aborted on the pipeline's own (pipefail) failure before kill -0's
+# verification and the per-pid report ever ran. `duplicate-holder`'s own
+# discovery never calls `ps -p` on the CHILD (only `pgrep -P` on the parent),
+# so omitting the child from THIS call's fake `ps` table — while discovery
+# still finds the pair via pgrep alone — is exactly "gone by the time the
+# pre-kill recheck asks", without needing a stateful fake.
+sleep 3000 & RACE_PARENT=$!
+sleep 3000 & RACE_CHILD=$!
+FAKE_PS_RACE="$(printf '%s\t%s\t%s' \
+  "$RACE_PARENT" 1 "claude --session-id $MLIVE_ID --fork-session --resume /nonexistent/projects/$MLIVE_ID.jsonl")"
+FAKE_PGREP_F_RACE="$(printf '%s\n%s' "$LIVE_PID" "$RACE_PARENT")"
+FAKE_PGREP_CHILDREN_RACE="$(printf '%s\t%s' "$RACE_CHILD" "$RACE_PARENT")"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_RACE" FAKE_PS_RECORDS="$FAKE_PS_RACE" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_RACE" \
+  "$END" repoM-1 --retire "$RACE_PARENT"
+is   "a ps -p miss on the pre-kill recheck does not abort the script (exit 1, partial, not a crash)" "$rc" 1
+has  "…the parent, present throughout, is still TERMed, verified and reported" "$err" "pid $RACE_PARENT (bg-pty-host): gone"
+has  "…and the child a ps -p miss could not find is reported honestly" "$err" "pid $RACE_CHILD (child): STILL ALIVE"
+is   "…and that child, never having matched, is of course still running" "$(kill -0 "$RACE_CHILD" 2>/dev/null && echo alive)" "alive"
+kill "$RACE_PARENT" "$RACE_CHILD" 2>/dev/null || :
 
 # --------------------------- clause (c): lane-start RECORDS dir and profile
 mkdir -p "$HOME/projects/repoA11b"

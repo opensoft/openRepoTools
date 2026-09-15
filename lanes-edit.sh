@@ -2124,7 +2124,8 @@ lane_objects() {
             split(kk, aa, SUBSEP); oo = aa[1]; ll = on[kk]
             if (!(oo in tp) || op[kk] >= tp[oo]) { tp[oo] = op[kk]; tlane[oo] = ll; tutc[oo] = ou[kk] } }
           for (i = 1; i <= n; i++) { o = byn[i]
-            sup = ((o in tlane) && verb[o] == "CLAIMED") ? tlane[o] "@" tutc[o] : ""
+            supv = ((o in tlane) && (verb[o] == "CLAIMED" || verb[o] == "TAKEOVER" || verb[o] == "OPENED" || verb[o] == "LANDING" || verb[o] == "WITHDRAWN"))
+            sup = supv ? tlane[o] "@" tutc[o] : ""
             printf "%s%c%s%c%s%c%s%c%s\n", utc[o], 31, verb[o], 31, o, 31, (ref[o] ? ref[o] " " pay[o] : ""), 31, sup } }'
 }
 
@@ -2149,7 +2150,19 @@ lane_objects() {
 # position picks which one is NAMED; both are holders either way, and that
 # conflict is visible in `who` rather than resolved here (see README, "Known").
 superseded_by() {   # <object> <lane> <that lane's own last verb on it>
-  [ "${3-}" = CLAIMED ] || return 0
+  # ANY OPEN VERB, NOT ONLY CLAIMED (Copilot round 7, PR #61, issue #30): a
+  # dead lane's TAKEOVER — decision 8(e)'s stale-CLAIMED case is still the
+  # common one, but opensoft/openRepoTools#30 added a dead-lane TAKEOVER that
+  # displaces an OPENED, LANDING, WITHDRAWN or an earlier TAKEOVER too, exactly
+  # the verbs `is_open_verb` already lists. Gating this early return on
+  # `= CLAIMED` alone left every one of those un-superseded: `holders_of`
+  # counted the dead lane's own OPENED as a live hold beside the taker's
+  # TAKEOVER, and `who` reported two holders of one object — the very
+  # collision #30 exists to end.
+  case "${3-}" in
+    CLAIMED|TAKEOVER|OPENED|LANDING|WITHDRAWN) : ;;
+    *) return 0 ;;
+  esac
   # AMENDMENT 15 — `tolower` ON BOTH SIDES, exactly as `lane_objects` above
   # reads the same stream: the lane field of a log line carries the spelling
   # that was typed on the day, and one lane's two spellings are one lane. The

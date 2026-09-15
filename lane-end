@@ -785,7 +785,7 @@ DUPES
     # harness actually resumed, and that is the only thing compared now.
     dh_uuid_lc="$(printf '%s' "$dh_uuid" | tr 'A-F' 'a-f')"
     dh_p_sent=0
-    dh_p_args="$(ps -o args= -p "$dh_parent" 2>/dev/null | tr 'A-F' 'a-f')"
+    dh_p_args="$(ps -o args= -p "$dh_parent" 2>/dev/null | tr 'A-F' 'a-f')" || dh_p_args=""
     case "$dh_p_args" in *"--fork-session"*"--resume "*)
       dh_p_resume="${dh_p_args#*--resume }"; dh_p_resume="${dh_p_resume%% *}"
       case "$dh_p_resume" in */"$dh_uuid_lc.jsonl") dh_p_sent=1 ;; esac
@@ -794,7 +794,7 @@ DUPES
     dh_c_sent=1
     if [ -n "$dh_child" ]; then
       dh_c_sent=0
-      dh_c_args="$(ps -o args= -p "$dh_child" 2>/dev/null | tr 'A-F' 'a-f')"
+      dh_c_args="$(ps -o args= -p "$dh_child" 2>/dev/null | tr 'A-F' 'a-f')" || dh_c_args=""
       case "$dh_c_args" in *"--fork-session"*"--resume "*)
         dh_c_resume="${dh_c_args#*--resume }"; dh_c_resume="${dh_c_resume%% *}"
         case "$dh_c_resume" in */"$dh_uuid_lc.jsonl") dh_c_sent=1 ;; esac
