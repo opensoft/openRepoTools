@@ -305,9 +305,13 @@ def test_the_three_row_writers_carry_the_same_one_line_cut_byte_for_byte():
     assert "ctl=\"${ctl% *}\"" in reference, (
         "the cut no longer drops the last partial word, which is the whole of "
         "what keeps a byte offset from landing inside a character")
-    assert 'ctl="${1// \u00b7 /; }"' in reference, (
+    assert 'ctl="${ctl// \u00b7 /; }"' in reference, (
         "the cut no longer replaces the phrase's own separator, which "
         "`set-row-state` refuses inside the line")
+    assert "ctl=\"${ctl//$'\\n'/; }\"" in reference, (
+        "the cut no longer flattens a newline, and a row is ONE line of a "
+        "table: one in this text splits the row in two and every row after it "
+        "is read as a lane")
     assert 'ctl="${ctl//|/\u00a6}"' in reference, (
         "the cut no longer replaces a `|`, which `set-row-state` refuses "
         "because it would forge a cell boundary in the row — and a launch "
