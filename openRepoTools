@@ -441,6 +441,19 @@ receipt_add() {   # <name> <destination> — 0, or 1 with $RECEIPT_WHY set
 # later version appends. Reading "at least four" rather than "exactly four" is
 # what lets a fifth column arrive without this half having to be taught about
 # it first.
+#
+# AND A ROW WHOSE FILE IS NO LONGER AT THAT PATH IS NOT KEPT (Copilot round 1
+# on #103). `receipt_forget` runs AFTER the `rm` it accompanies, so a write
+# that fails in the instant between them leaves the receipt naming a path this
+# installer's copy has left — and nothing would ever clear it. This makes that
+# window CLOSE BY ITSELF: the next `--install` reads the same file, finds
+# nothing at that path, and drops the row. It is also what stops the receipt
+# growing for ever with the bin directories and profile roots people delete.
+#
+# `-L` BESIDE `-e`, for the reason `retire_commands` gives one function down:
+# `-e` is false for a DANGLING symlink, and a link is something AT that path
+# whatever it points at. Dropping the row of one would be this file deciding
+# that a link somebody made is nothing.
 receipt_rows_except() {   # <receipt> <destinations file> <staged file>
 	local row="" rest="" dest=""
 	[ -f "$1" ] && [ ! -L "$1" ] || return 0
@@ -452,6 +465,7 @@ receipt_rows_except() {   # <receipt> <destinations file> <staged file>
 		rest="${row#*"$RECEIPT_TAB"}"
 		dest="${rest%%"$RECEIPT_TAB"*}"
 		if grep -qFx -e "$dest" -- "$2"; then continue; fi
+		[ -e "$dest" ] || [ -L "$dest" ] || continue
 		printf '%s\n' "$row" >>"$3" || return 1
 	done <"$1"
 	return 0
@@ -583,18 +597,29 @@ receipt_verdict() {   # <target> — placed | edited | unknown, always 0
 # that still names a removed path would answer `edited` about whatever somebody
 # puts there next — which is the safe direction, and still a sentence about
 # their file that is not true.
+#
+# NOT ONE OF ITS FAILURES IS SILENT (Copilot round 1 on #103, `openRepoTools:660`).
+# Three of the four steps here used to `return 0` on a write that failed — a
+# full disk while staging, a data directory that went away between the read and
+# the write — so the receipt could keep a live row for a path the `rm` above had
+# just emptied and NOTHING on screen would say so. Every one of them now reaches
+# the same note, and the note names the repair: `receipt_rows_except` drops a
+# row whose file is gone, so the next `--install` clears it whatever happened
+# here. Still never a `die`: the retirement has already done its work.
 receipt_forget() {   # <destination>
-	local file="" kept="" dests=""
+	local file="" kept="" dests="" dropped=1
 	file="$(receipt_file)"
 	[ -f "$file" ] && [ ! -L "$file" ] || return 0
 	workdir
 	kept="$WORKDIR/receipt-kept"
 	dests="$WORKDIR/receipt-forget"
-	: >"$kept" 2>/dev/null || return 0
-	printf '%s\n' "$1" >"$dests" 2>/dev/null || return 0
-	receipt_rows_except "$file" "$dests" "$kept" || return 0
-	receipt_replace "$kept" ||
-		receipt_note "$file" "its row for $1 could not be dropped"
+	if : >"$kept" 2>/dev/null && printf '%s\n' "$1" >"$dests" 2>/dev/null &&
+		receipt_rows_except "$file" "$dests" "$kept" &&
+		receipt_replace "$kept"; then
+		dropped=0
+	fi
+	[ "$dropped" = 0 ] ||
+		receipt_note "$file" "its row for $1 could not be dropped, so it still names a path this installer's copy has left — the next \`--install\` drops it, because a row whose file is gone is not kept"
 	return 0
 }
 

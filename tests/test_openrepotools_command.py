@@ -934,6 +934,36 @@ def test_installing_twice_leaves_no_duplicate_rows(tmp_path):
 
 
 @NEEDS_JQ
+def test_a_row_whose_file_is_gone_is_not_kept(tmp_path):
+    """THE WINDOW CLOSES BY ITSELF (Copilot round 1 on #103).
+
+    `receipt_forget` runs AFTER the `rm` it accompanies, so a write that fails
+    in the instant between them would leave the receipt naming a path this
+    installer's copy has left — and a row nothing ever clears is a row that
+    answers a question about whatever somebody puts there next. The merge drops
+    a row whose file is gone, so the next `--install` repairs it whatever
+    happened, and the receipt does not grow for ever with the bin directories
+    and profile roots people delete.
+    """
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    receipt = receipt_path(tmp_path)
+    ghost = tmp_path / ".local" / "bin" / "a-word-that-left"
+    with receipt.open("a", encoding="utf-8") as handle:
+        handle.write(f"a-word-that-left\t{ghost}"
+                     f"\t{hashlib.sha256(b'the bytes it placed').hexdigest()}"
+                     "\t2026-09-15T04:04:16Z\n")
+    assert len(receipt_rows(tmp_path)) == ARTIFACTS - HOOK_ENTRIES + 1
+
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert not [row for row in receipt_rows(tmp_path) if row[1] == str(ghost)], (
+        "a row for a path with nothing at it survived an install:\n"
+        + receipt.read_text(encoding="utf-8"))
+    assert len(receipt_rows(tmp_path)) == ARTIFACTS - HOOK_ENTRIES, (
+        "and the rows of the files that ARE there were kept")
+
+
+@NEEDS_JQ
 def test_the_receipt_keeps_the_rows_of_a_directory_it_no_longer_writes(tmp_path):
     """OTHER ROWS ARE KEPT, and the reason is the retirement.
 
