@@ -72,6 +72,10 @@ Every ownership transition SHALL carry a monotonically advancing generation and 
 - **WHEN** an inventory write names a generation or operation the lane has already moved past
 - **THEN** the system refuses the write, changes no recorded observation, and directs the caller to re-read the lane
 
+#### Scenario: Two writers record the same tree at once
+- **WHEN** an inventory observation is written while another run holds the lane transition lock
+- **THEN** the write waits for that lock before replacing the sidecar, whether or not it names a generation and operation to compare
+
 #### Scenario: Delayed swap finalizer
 - **WHEN** an old `/swap` process attempts to record `SWAPPED` after another recovery or resume has advanced the generation
 - **THEN** the system refuses the stale finalizer without changing current state
@@ -94,6 +98,10 @@ Before launching replacement writers, the system SHALL compare lane and tree sid
 #### Scenario: Liveness cannot be established
 - **WHEN** the holder records cannot be read at all
 - **THEN** the system reports that liveness is not established and pronounces neither crash kind, because a read that failed is not an answer
+
+#### Scenario: The lifecycle snapshot cannot be read
+- **WHEN** a lane's persisted state record exists at its control root and cannot be read
+- **THEN** the system reports the state as unreadable and the outcome as indeterminate, and never as a lane that has no persisted state
 
 #### Scenario: Swapping state has no holder
 - **WHEN** persisted state is `SWAPPING` and no verified owner remains live

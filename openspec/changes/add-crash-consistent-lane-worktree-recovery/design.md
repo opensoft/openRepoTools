@@ -307,6 +307,43 @@ in this checkout, the ordinary state after a merged branch is deleted — the
 configured upstream with `unknown` unpushed, never the `0` that reads as
 *everything here is published*.
 
+## Decisions taken in the sixth review round (capped at two rounds; see `tasks.md` section 7)
+
+### 19. An unreadable snapshot is `indeterminate`, exactly as an unreadable holder is
+
+Decision 15 gave the HOLDER read three answers and made the third
+`indeterminate`. The SNAPSHOT read one file earlier had two: `lane_state_read`
+answered 8 — *this lane has no snapshot* — for a record that exists and cannot
+be opened, and `lane_reconcile` mapped every non-zero read to `NONE`, whose
+verdict is `no-state`: the cutover answer that tells a launcher this lane never
+ran under this capability and there is nothing to recover. A permission or an
+I/O error therefore came out of the report as a clearance, which is fail-OPEN on
+a crash pronouncement — the one class this change exists to close.
+
+So the two cases are told apart at the read: **9** where the record is there and
+could not be opened, 8 where there is none. `lane-state` spends the same 9 at
+the CLI (8 stays *there is none*, which every launcher answers by going on), and
+`lane-reconcile` reports the state word `UNREADABLE` with the verdict
+`indeterminate`. `[ -L ]` sits beside `[ -e ]` in that test because a dangling
+symlink is `-e` false: the name is there and the bytes are not, which is
+present-and-unreadable and not absent.
+
+### 20. Every sidecar write is serialized, fence or no fence
+
+`set-lane-tree` took the lane mutex only when the caller named a
+`--generation`/`--operation` to compare. The atomic temp-file rename underneath
+it stops a reader seeing half a file and stops nothing else, so an UNFENCED
+observation — a person's, or a caller that names no transition — could land
+after a newer fenced one and replace it, leaving the inventory holding a reading
+older than the transition recorded beside it. The mutex is now taken for every
+write of these files, with the generation/operation comparison unchanged for the
+callers that name one.
+
+It is taken AFTER the observation and not before it, for the reason decision 14
+keeps `lane-reconcile` out of the lock entirely: `lane_tree_now` runs
+`git status` and `git rev-list` in somebody's checkout, and what must be
+serialized is the compare and the write, not the reading of a repository.
+
 ## Risks / Trade-offs
 
 - **[Risk] Lane-first discovery conflicts with feature-first Speckit paths** → Use a sidecar index over shape-governed paths; do not move governed trees.

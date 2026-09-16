@@ -366,6 +366,14 @@
 #      not be performed is never 8 (R22). `session-start` never exits 8, or
 #      anything but 0: it is a hook. `guard` never exits 8 either — it is a hook
 #      too, and a BLOCKING one, so its two codes are 0 and 2 (see 2 above).
+#   9  THE RECORD IS THERE AND COULD NOT BE READ, which is the other half of 8
+#      and never 8 itself (Copilot round 6 on openRepoTools#97). `lane-state`
+#      spends it for a lifecycle snapshot that EXISTS at the control root and
+#      cannot be opened — a permission, an I/O error, a name whose bytes are
+#      gone. 8 says *this lane has no snapshot*, which a launcher answers by
+#      going on; 9 says *this lane may be mid-crash and nobody could look*,
+#      which it answers by reading the lane by hand. One number could not carry
+#      both, and the one that was carrying both was 8 (R22, Amendment 7(d)).
 #
 # --no-sweep (DEFAULT, added 2026-09-09 after 0d84d34/a1f2438 swept another
 #   lane's uncommitted hand edit into an unrelated commit): every mutating
@@ -7910,14 +7918,31 @@ lane_op_id() {
 
 # THE SNAPSHOT, READ. `<key><TAB><value>` lines, which is what every caller
 # here parses with one `awk`. 0 with the fields, 8 where the lane has no
-# snapshot at all (the pre-cutover lane, and not a failure), 1 where the
-# control root could not be derived.
+# snapshot at all (the pre-cutover lane, and not a failure), 9 where a snapshot
+# IS there and could not be read, 1 where the control root could not be derived.
+#
+# THE 9 IS THE POINT OF THIS ROUND (Copilot round 6 on openRepoTools#97). A bare
+# `[ -r ] || return 8` answered *this lane has no snapshot* for a file that
+# exists and cannot be opened, and `lane_reconcile` maps every non-zero read to
+# `NONE` — so a permission or an I/O error came out of the report as `no-state`,
+# the verdict that tells a launcher this lane was never migrated and there is
+# nothing to recover. That is fail-OPEN on a crash pronouncement, which is the
+# whole class this capability exists to close: a read that failed is never an
+# answer (R22, Amendment 7(d)), and the two cases are told apart here so that
+# every caller above can tell them apart too.
+#
+# `[ -L ]` BESIDE `[ -e ]`, because a DANGLING SYMLINK is `-e` false: the name
+# is there and the bytes are not, which is exactly *present and unreadable* and
+# would otherwise fall through to the 8.
 lane_state_read() {   # <lane>
   lsr_lane="${1-}"; lsr_root=""; lsr_rc=0
   lsr_root="$(lane_control_root "$lsr_lane")" || lsr_rc=$?
   [ "$lsr_rc" = 0 ] || return 1
   lsr_f="$lsr_root/lane-state.yaml"
-  [ -r "$lsr_f" ] || return 8
+  if [ ! -r "$lsr_f" ]; then
+    if [ -e "$lsr_f" ] || [ -L "$lsr_f" ]; then return 9; fi
+    return 8
+  fi
   # AN UNKNOWN SCHEMA FAILS CLOSED (design decision: "conservative fail-closed
   # behaviour for unknown versions"), through the ONE test every writer of these
   # files takes too. A newer tooling's snapshot read by an older reader must not
@@ -8295,8 +8320,17 @@ lane_reconcile() {   # <lane>
     lrc_op="$(printf '%s\n' "$lrc_snap"    | awk -F'\t' '$1 == "operation" { print $2; exit }')"
     lrc_owner="$(printf '%s\n' "$lrc_snap" | awk -F'\t' '$1 == "owner" { print $2; exit }')"
     lrc_upd="$(printf '%s\n' "$lrc_snap"   | awk -F'\t' '$1 == "updated" { print $2; exit }')"
-  else
+  elif [ "$lrc_srrc" = 8 ]; then
     lrc_state=NONE
+  else
+    # A SNAPSHOT THAT IS THERE AND COULD NOT BE READ IS NOT A LANE THAT HAS
+    # NONE (Copilot round 6 on openRepoTools#97). Every non-zero read used to
+    # land on `NONE` here, and `NONE` is the verdict `no-state` — *this lane
+    # never started under this capability, there is nothing to recover* — which
+    # a launcher answers by going straight on. That is fail-OPEN on a crash
+    # pronouncement, the one class this capability exists to close. A read
+    # nobody got is `indeterminate` below, exactly as an unreadable HOLDER is.
+    lrc_state=UNREADABLE
   fi
   printf 'ROOT%s%s\n' "$US" "$lrc_root"
   printf 'STATE%s%s%sgeneration %s%soperation %s%sowner %s%supdated %s\n' \
@@ -8483,6 +8517,7 @@ EOF
       SWAPPED0)   lrc_v=inconsistent;    lrc_why="the lane is recorded SWAPPED and a holder is LIVE: a swapped lane has no holder, so one of the two is wrong and neither is overwritten here" ;;
       CLOSED8)    lrc_v=closed;          lrc_why="the lane is closed" ;;
       CLOSED0)    lrc_v=inconsistent;    lrc_why="the lane is recorded CLOSED and a holder is LIVE" ;;
+      UNREADABLE*) lrc_v=indeterminate;  lrc_why="this lane's lifecycle snapshot at $lrc_root/lane-state.yaml IS THERE and could not be read, so where its session stopped is NOT established — which is not the same as a lane that has none, and is no clearance to relaunch anything (R22, Amendment 7(d): a read that failed is never an answer). Read that file by hand; if you know what wrote it, move it aside and this lane's next transition writes a fresh one" ;;
       NONE*)      lrc_v=no-state;        lrc_why="this lane has no lifecycle snapshot: it has not started or handed off under this capability, so its crash kind cannot be told from its record (Amendment 7(i)'s cutover rule — nothing is backfilled)" ;;
       *)          lrc_v=unknown-state;   lrc_why="the snapshot holds the state word '$lrc_state', which this reader does not know; nothing is assumed about it" ;;
     esac
@@ -10016,6 +10051,9 @@ EOF
   #       this file already spends 7 on (`claim`'s CLAIM-LOST). Nothing was
   #       written and the current state is printed.
   #   8   there is no such record (no snapshot, no tree)
+  #   9   THE RECORD IS THERE AND COULD NOT BE READ, which is never 8 (Copilot
+  #       round 6 on #97). 8 tells a launcher *this lane was never migrated, go
+  #       on*; 9 tells it *this lane may be mid-crash and nobody could look*.
   #  64   a usage error of this subcommand's own
 
   lane-state)
@@ -10029,6 +10067,7 @@ EOF
     case "$lst_rc" in
       0) : ;;
       8) exit 8 ;;
+      9) die "lane $lane HAS a lifecycle snapshot at its control root and it could not be read. That is NOT 'this lane has no snapshot' — 8 says that, and a launcher answers an 8 by going on, which over an unreadable record would be a launch made in ignorance of a crash nobody could look at (R22, Amendment 7(d)). Read it by hand: $(lane_control_root "$lane" 2>/dev/null || printf '<no control root>')/lane-state.yaml" 9 ;;
       *) die "lane $lane has no lifecycle control root: its record names no directory (Amendment 11(c)) and \$PROJECTS_ROOT is not a directory here. That is NOT 'this lane is in no state' — a read that could not be made is never an answer (Amendment 7(d))." 1 ;;
     esac
     printf '%s\n' "$lst_out"
@@ -10228,9 +10267,25 @@ EOF
     # between the compare and the record. A caller that names NEITHER is making
     # an observation of its own — a person, or the read above — and has no fence
     # to fail.
-    slt_lk=0
+    #
+    # AND THE MUTEX IS TAKEN WHETHER OR NOT THERE IS A FENCE TO CHECK (Copilot
+    # round 6 on #97). It used to be taken only for a FENCED write, which left
+    # the unfenced ones — a person's `set-lane-tree`, a caller that named no
+    # transition — racing every other writer of the same sidecar: the atomic
+    # rename below stops a reader seeing half a file and stops nothing else, so
+    # an unfenced observation could land after a newer fenced one and replace
+    # it, and the inventory would then hold a reading older than the transition
+    # recorded beside it. One mutex over every write of these files, and the
+    # generation/operation comparison stays what it was for the callers that
+    # name one.
+    #
+    # IT IS TAKEN HERE AND NOT ABOVE THE OBSERVATION, because the observation
+    # runs `git status` and `git rev-list` in somebody's checkout and this lock
+    # is the whole workstation's (design decision 14, and the same argument that
+    # keeps `lane-reconcile` out of it): what must be serialized is the compare
+    # and the write, not the reading of a repository.
+    acquire_lock
     if [ -n "$slt_g" ] || [ -n "$slt_op" ]; then
-      acquire_lock; slt_lk=1
       if ! lane_sidecar_schema_ok "$slt_root/lane-state.yaml"; then
         release_lock
         die "the worktree $slt_path was NOT recorded for lane $lane: its lifecycle snapshot records a schema this helper does not write, so the generation and operation this observation names cannot be compared with anything. Nothing was written. Upgrade this workstation's lanes-edit.sh." 1
@@ -10252,15 +10307,15 @@ EOF
     # reason the snapshot is not: a record written by a newer tooling is one
     # this helper cannot read, so it is not one this helper may replace.
     if ! lane_sidecar_schema_ok "$slt_root/trees/$(tree_id_for "$slt_path").yaml"; then
-      if [ "$slt_lk" = 1 ]; then release_lock; fi
+      release_lock
       die "the worktree $slt_path was NOT recorded for lane $lane: its sidecar under $slt_root/trees records a schema this helper does not write, and a record it cannot read is one it cannot safely replace. Nothing was written. Upgrade this workstation's lanes-edit.sh." 1
     fi
     if lane_tree_put "$slt_root" "$lane" "$slt_path" "$slt_co" "$slt_b" "$slt_h" \
          "$slt_u" "$slt_d" "$slt_n" "$slt_w" "$slt_g" "$slt_op"; then
-      if [ "$slt_lk" = 1 ]; then release_lock; fi
+      release_lock
       printf '%s\n' "$(tree_id_for "$slt_path")"
     else
-      if [ "$slt_lk" = 1 ]; then release_lock; fi
+      release_lock
       die "the sidecar for $slt_path could not be written under $slt_root/trees (the shell's own error is above). The tree itself was not touched: this command reads worktrees and writes only its own record of them." 1
     fi
     ;;

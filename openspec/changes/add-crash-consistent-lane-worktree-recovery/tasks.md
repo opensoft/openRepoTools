@@ -76,3 +76,93 @@ stands in its place today.
   invalid repository identity and a repeated idempotent migration do not.
 - **Cross-workstation replication** remains the open question the design states.
   The snapshot is local to one machine by decision 10.
+
+### The sixth review round, and where each of its fourteen findings went
+
+Automated review rounds are capped at **two per pull request** (Brett Heap's
+ruling of 2026-09-16), and this change is at round six. That round was therefore
+TRIAGED rather than taken: the two findings that are safety holes this capability
+could not land with are in the branch, and the other twelve are filed as issues,
+claimed by this lane, and named below with what each costs and what decides it.
+Nothing is left as a comment thread and nothing is left unnamed.
+
+**Taken on this branch.**
+
+- **An unreadable lifecycle snapshot is no longer read as a lane that has none.**
+  `lane_state_read` answers **9** for a record that IS there and cannot be
+  opened, `lane-state` exits 9 rather than the 8 a launcher goes past, and
+  `lane-reconcile` reports `UNREADABLE` / `indeterminate`. Fail-OPEN on a crash
+  pronouncement is the one class this change exists to close (`R22`,
+  Amendment 7(d)).
+- **Every inventory write is serialized under the lane mutex.** `set-lane-tree`
+  took it only for a FENCED write; the atomic rename underneath stops a reader
+  seeing half a file and stops nothing else, so an unfenced observation could
+  land after a newer fenced one and replace it.
+
+**Filed, claimed, and deferred.**
+
+- **`opensoft/openRepoTools#113` — the four reads that still turn a failure into
+  an answer.** The holder ids (`|| :`, so an unreadable register reads as *no
+  holder* and a crash is pronounced on liveness nobody established), an
+  unreadable tree sidecar (`[ -r ] || continue`, so a record nobody can read and
+  no record at all are one silence — and one such sidecar alone answers *this
+  lane owns no worktree*), `git config --get branch.<b>.remote` (`|| :`, so a
+  failed read fabricates the local upstream `./<merge>`), and `git worktree list
+  --porcelain` (`|| :`, so a checkout whose registrations cannot be read looks
+  exactly like one with none and the report can still say `resumable`). Each
+  costs a wrong verdict or an omitted tree on exactly the machine a recovery is
+  running on; what decides them is whether `indeterminate` is the answer at
+  every one of these reads, as it already is at the holder's — a decision for
+  the round that also settles how `lane-trees` carries a row it could not read.
+- **`opensoft/openRepoTools#114` — the inventory fence, and the partial
+  observation.** `SWAPPING -> SWAPPED` keeps the generation AND the operation by
+  design (decision 13), so `set-lane-tree --generation G --operation O` still
+  succeeds after that operation was finalized and a delayed poll overwrites the
+  completed inventory; and the *all five empty* guard means `--dirty 1` alone
+  files `upstream none, 0 unpushed` for a tree nobody read, which is the
+  clean-and-published shape decision 18 removed from the other path. The cost is
+  a superseded or invented reading that nothing downstream can tell from a
+  current one; what decides the first is whether the lifecycle STATE joins the
+  compare-and-swap (at minimum `SWAPPING`) or the operation id is invalidated at
+  finalization, and the second is whether a partial observation is a usage
+  refusal or is completed from one `lane_tree_now`.
+- **`opensoft/openRepoTools#115` — validation beyond the `schema:` line.**
+  `lane_sidecar_schema_ok` asks one question, so a truncated `schema: 1` file
+  with no state and no generation passes it: readers emit empty fields and
+  writers replace it, which is the act decision 17 refuses for an UNKNOWN schema
+  performed against a known one whose content is not valid. The cost is the one
+  loss no later reader can undo; what decides it is which keys, types and
+  identity each kind of sidecar requires, and whether a malformed record of a
+  known schema takes the same refusal path an unknown schema takes.
+- **`opensoft/openRepoTools#116` — the tree's identity.** `tree_id_for` folds
+  every character outside the manifest-key set to `-` and squeezes repeats, so
+  `/tmp/a/b` and `/tmp/a-b` share one sidecar and a lane with two valid trees
+  loses one from the inventory and from every classification; and the recorded
+  `checkout` is never compared with the repository git reports, so a path
+  occupied by a different checkout on the same branch at the same commit reads
+  `ok` and a recovery relaunches a writer into it. Both cost a tree that is
+  silently the wrong tree; what decides them is an injective id — or the `cksum`
+  prefix on every path rather than on long ones only — WITH a migration for the
+  sidecars already on disk, and a repository identity that is stable across a
+  clone and answerable for a worktree.
+- **`opensoft/openRepoTools#117` — what the READY line and the report claim.**
+  `writer_count` rises before the observation and the sidecar write are known to
+  have worked, so the READY line says *N worktree(s) recorded* for trees
+  `lane-trees` does not carry; and the seen-set is seeded from every sidecar
+  before the registration sweep, so a tree that WAS inventoried and whose
+  directory is gone is reported `missing`/`possible-loss` and never
+  `stale-registration`, with the `git worktree prune` remedy omitted and the
+  estate's `resume` left to fail on it. The cost is a completeness signal a
+  recovery operator should not trust; what decides the second is the tension
+  with *one tree, one row* (`612ba5c`) — whether one row can carry both facts,
+  or the registered-but-gone case is decided before the path is deduplicated.
+- **`opensoft/openRepoTools#118` — `lane-handoff` takes a `CLOSED` lane to
+  `SWAPPING`.** `--expect` asks only *has the lane moved since I read it*, so
+  every state is a legal source for the swap transition and a terminal lane is
+  reopened, polled, and finished at `SWAPPED` with a `PAUSED` record appended.
+  The cost is a lifecycle that says a swap is what last happened to a lane that
+  was ended; what decides it is a ruling rather than a guard, because
+  `R-A11-11` binds this command — *a swap is never left unwritten* — so refusing
+  the handoff would be the first time the lifecycle stopped the swap, and
+  declining the transition silently would leave a `PAUSED` record beside a
+  `CLOSED` snapshot.

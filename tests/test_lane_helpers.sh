@@ -10244,6 +10244,87 @@ is    "…as the tree it is, and never as one nobody manages" \
 is    "…and the lane's own checkout is still not a tree either, whichever spelling names it" \
       "$(printf '%s\n' "$out" | awk -F'\037' -v d="$RC_DIR" '$1 == "TREE" && $4 == d' | grep -c .)" 0
 
+# ---- 12. the two safety holes of the sixth round (Copilot round 6 on #97)
+#
+# BOTH OF THESE ARE THE SAME RULE READ IN TWO PLACES. A snapshot that IS THERE
+# and cannot be read was answered as *this lane has no snapshot*, which is the
+# verdict a launcher goes straight past; and an inventory write that named no
+# fence took no mutex at all, so the file every other writer of it is serialized
+# on was the one file two writers could race. The rest of that round's findings
+# are filed as issues and named in the change's `tasks.md` section 7: rounds are
+# capped at two per pull request, and these two are what could not wait.
+
+rc_seed_handoff repoRC-9
+git -C "$WIP" add -- handoffs/repoRC >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed repoRC-9's handoff" >/dev/null 2>&1 || :
+rc_row repoRC-9 "harness \`$RC_ID\`"
+rc_seed_log repoRC-9
+
+# (a) A SNAPSHOT THAT IS THERE AND CANNOT BE READ IS NOT A LANE THAT HAS NONE.
+# THE FIXTURE IS A DANGLING SYMLINK and not a `chmod 000`, deliberately: a suite
+# run as root reads a mode-000 file and the case would go red on the one host
+# shape it was written to be harmless on. A broken link is *the name is there
+# and the bytes are not* on every host and every uid — and it is `[ -e ]` FALSE,
+# which is the exact corner the reader now asks `[ -L ]` about.
+mkdir -p "$RC_STATE_ROOT/repoRC-9"
+ln -s "$SANDBOX/no-such-snapshot-91" "$RC_STATE_ROOT/repoRC-9/lane-state.yaml"
+run "$E" lane-state repoRC-9
+is    "a lifecycle snapshot that exists and cannot be read is 9, never the 8 that means there is none" "$rc" 9
+has   "…saying which of the two it is" "$err" "it could not be read"
+has   "…and citing the rule a failed read answers to" "$err" "R22"
+run "$E" lane-reconcile repoRC-9
+is    "…the reconciliation still answers for it" "$rc" 0
+is    "…with the state word that says nobody read it" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "STATE" { print $2 }')" "UNREADABLE"
+is    "…and the verdict is INDETERMINATE: no crash is pronounced on a read nobody got" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "indeterminate"
+hasnt "…and never 'no-state', which is the answer a launcher goes straight past" "$out" "no-state"
+is    "…and the file nobody could read was not replaced, moved or deleted by a read" \
+      "$( [ -L "$RC_STATE_ROOT/repoRC-9/lane-state.yaml" ] && echo kept || echo gone )" kept
+
+# AND THE OTHER HALF OF THE PAIR, on the same lane and the same control root, so
+# that the two answers differ in nothing but whether the file is there: a lane
+# that really has NO snapshot is still 8 and still `no-state` (Amendment 7(i)'s
+# cutover rule — nothing is backfilled).
+rm -f "$RC_STATE_ROOT/repoRC-9/lane-state.yaml"
+run "$E" lane-state repoRC-9
+is    "a lane that has no snapshot at all is 8, exactly as before" "$rc" 8
+run "$E" lane-reconcile repoRC-9
+is    "…and its verdict is the cutover one" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "no-state"
+
+# (b) EVERY INVENTORY WRITE IS SERIALIZED, FENCE OR NO FENCE. `set-lane-tree`
+# took the mutex only when a caller named `--generation`/`--operation`; the
+# atomic rename underneath it stops a reader seeing half a file and stops
+# nothing else, so an UNFENCED observation could land after a newer fenced one
+# and replace it. The lock is held here by a pid that is alive — `$LIVE_PID`,
+# the fixture the last case of this file asserts is still running — so it cannot
+# be stolen as a dead holder's, and `timeout`'s own 124 is the proof the writer
+# was still WAITING for it rather than exiting early on something else.
+if [ "$HAVE_TIMEOUT" = 1 ]; then
+  mkdir -p "$H_LOCK"; printf '%s\n' "$LIVE_PID" > "$H_LOCK/pid"
+  LANES_NO_FETCH=1 timeout 3 "$E" set-lane-tree repoRC-9 "$RC_DIR/.claude/worktrees/w1" \
+    --checkout "$RC_DIR" --branch feat/rc1 --head "$rc5_w1head" --upstream none \
+    --dirty 1 --unpushed 0 >/dev/null 2>&1
+  rc9_lk=$?
+  is    "an UNFENCED inventory write WAITS on the lane mutex another run holds" "$rc9_lk" 124
+  run "$E" lane-trees repoRC-9
+  is    "…so nothing of it was written while that run held the lock" "$rc" 8
+  rm -rf "$H_LOCK"
+  run env LANES_NO_FETCH=1 "$E" set-lane-tree repoRC-9 "$RC_DIR/.claude/worktrees/w1" \
+    --checkout "$RC_DIR" --branch feat/rc1 --head "$rc5_w1head" --upstream none \
+    --dirty 1 --unpushed 0
+  is    "…and the same write lands the moment the mutex is free" "$rc" 0
+  run "$E" lane-trees repoRC-9
+  is    "…which is the inventory this lane then holds" \
+        "$(printf '%s\n' "$out" | awk -F'\037' '{print $2}' | head -n 1)" "$RC_DIR/.claude/worktrees/w1"
+else
+  skip  "an UNFENCED inventory write WAITS on the lane mutex another run holds" "$NO_TIMEOUT_WHY"
+  skip  "…so nothing of it was written while that run held the lock" "$NO_TIMEOUT_WHY"
+  skip  "…and the same write lands the moment the mutex is free" "$NO_TIMEOUT_WHY"
+  skip  "…which is the inventory this lane then holds" "$NO_TIMEOUT_WHY"
+fi
+
 
 echo "== the workstation seam: unset, every writer reads the host =="
 

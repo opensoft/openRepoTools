@@ -2220,6 +2220,7 @@ RUNNING --/handoff begins--> SWAPPING --record + row + handoff all landed--> SWA
 | `SWAPPED` | yes | inconsistent — a swapped lane has no holder, and neither side is overwritten |
 | `CLOSED` | — | the lane is finished; a dirty or unpushed tree under it is a closure inconsistency and no cleanup is made |
 | any | **unreadable** | `indeterminate`. A holder that could not be established is NOT "no holder" (`R22`, Amendment 7(d)), and no crash is pronounced on a read nobody got. |
+| **unreadable** | — | `indeterminate` again, and for the same rule read one file earlier: a snapshot that IS THERE and cannot be opened is not a lane that has none. `lane-state` exits **9** for it, never the **8** that means *this lane has no snapshot, go on*. |
 
 ### The fence
 
