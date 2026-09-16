@@ -285,6 +285,25 @@ alias naming it, and added the `/handoff` and `/ctx` command files.
 `/ctx` is `/handoff --restart`: the record first, then this lane's own pane
 respawned with a new session whose first prompt is that handoff's top block.
 
+**And it writes down what it placed.** A RECEIPT — one row of
+`<name> <destination> <sha256> <UTC>` per regular file, at
+`${OPENREPOTOOLS_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/openRepoTools}/installed.tsv`,
+0644, replaced whole through a temporary in the same directory — is what a
+later `--install` reads before it RETIRES a word (#57). A digest that still
+matches is a copy this installer wrote, and it is removed; one that has MOVED
+is your edit of it, named and left with the `rm` printed for you; a path with
+no row at all falls back to the `Installed on PATH by` header in the file's own
+text, exactly as it does today, so nothing that works now stops working. A
+row's subject is its DESTINATION: a run replaces the row of every destination
+it placed and keeps every other one, so moving `$OPENREPOTOOLS_BIN_DIR` does
+not throw away the evidence for the copies in the old directory. The receipt is
+not a twenty-seventh artifact and carries no row for itself, and the two hook
+entries get none either — an entry inside somebody else's JSON file is not a
+file this command placed — so twenty-six artifacts come to twenty-four rows.
+A receipt it cannot write — a directory it may not create, a symlink at that
+path, neither `sha256sum` nor `shasum` — is ONE LINE saying so and never a
+refused install.
+
 Run from a checkout it copies the files beside it and needs no network and no
 `gh` at all; run from stdin, as above, it fetches all of them at the same ref.
 The API is tried before the raw URL, because `gh` is authenticated and works
@@ -295,6 +314,7 @@ where `raw.githubusercontent.com` is blocked.
 | `$OPENREPOTOOLS_REPO` | `opensoft/openRepoTools` | the `owner/name` to fetch from — a fork or a mirror, named once |
 | `$OPENREPOTOOLS_REF` | `main` | the ref to fetch it at |
 | `$OPENREPOTOOLS_BIN_DIR` | `~/.local/bin` | where `--install` puts the twelve |
+| `$OPENREPOTOOLS_DATA_DIR` | `${XDG_DATA_HOME:-~/.local/share}/openRepoTools` | where `--install` writes the receipt of what it placed |
 | `$AGENT_PROTOCOL_ROOT` | `~/.agents` | where `workspace.yaml` lives — the one pointer to your data |
 | `$CLAUDE_PROFILES_HOME` | `~/.claude-profiles` | the profiles root `--install` places the shared skills under |
 | `$LANES_WORKSTATION` | — | this workstation's name, exported by the workBenches launcher. Outside a container it defaults to `hostname -s`; **inside one with no value every writer refuses**, because a container id is not a workstation and the log is never rewritten (Amendment 11, decision 8(d)) |

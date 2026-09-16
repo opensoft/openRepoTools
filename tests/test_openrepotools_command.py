@@ -24,12 +24,14 @@ verb, no `--doctor` and no `setup.sh`.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
 import stat
 import subprocess
 
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -146,10 +148,22 @@ def command_env(home: Path | None = None, env: dict | None = None) -> dict:
     variable is inherited from the developer's own shell. A suite that
     installed a skill into a person's live profile set would be a suite nobody
     could run twice.
+
+    AND `$XDG_DATA_HOME` IS CLEARED FOR THAT SAME REASON (#57). Since
+    `--install` writes its receipt to
+    `${OPENREPOTOOLS_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/openRepoTools}`,
+    a developer who exports `$XDG_DATA_HOME` — and on a Linux desktop that is
+    a normal thing to have exported — would have this suite writing into their
+    real data directory however carefully `$HOME` was redirected. Cleared, the
+    default applies, the default hangs off `$HOME`, and every byte lands in
+    `tmp_path`. `$OPENREPOTOOLS_DATA_DIR` is cleared with the rest of the
+    `$OPENREPOTOOLS_*` family, so a developer's own shell cannot move what
+    these tests assert about.
     """
     environ = dict(os.environ)
     for name in ("OPENREPOTOOLS_REF", "OPENREPOTOOLS_REPO",
-                 "OPENREPOTOOLS_BIN_DIR", "CLAUDE_PROFILES_HOME",
+                 "OPENREPOTOOLS_BIN_DIR", "OPENREPOTOOLS_DATA_DIR",
+                 "XDG_DATA_HOME", "CLAUDE_PROFILES_HOME",
                  "CLAUDE_USER_DIR", "AGENT_PROTOCOL_ROOT", "PROJECTS_DIR"):
         environ.pop(name, None)
     if home is not None:
@@ -233,7 +247,8 @@ def test_help_names_every_variable_it_reads():
     the usage does not name is a variable nobody finds."""
     result = run_cmd("--help")
     for name in ("$OPENREPOTOOLS_REPO", "$OPENREPOTOOLS_REF",
-                 "$OPENREPOTOOLS_BIN_DIR", "$AGENT_PROTOCOL_ROOT",
+                 "$OPENREPOTOOLS_BIN_DIR", "$OPENREPOTOOLS_DATA_DIR",
+                 "$XDG_DATA_HOME", "$AGENT_PROTOCOL_ROOT",
                  "$CLAUDE_PROFILES_HOME", "$PROJECTS_DIR"):
         assert name in result.stdout, name
 
@@ -626,6 +641,322 @@ def test_the_retirement_prints_a_removal_that_can_be_pasted(tmp_path, name):
         "the removal is printed quoted, because the path has a space in it:\n"
         + result.stdout)
     assert f"rm {mine}\n" not in result.stdout
+
+
+# --- the receipt of what it placed ------------------------------------------
+
+#: THE RECEIPT'S PATH UNDER A REDIRECTED `$HOME`. `command_env` clears
+#: `$XDG_DATA_HOME` as well as `$OPENREPOTOOLS_DATA_DIR`, so what these tests
+#: exercise is the DEFAULT — `~/.local/share/openRepoTools/installed.tsv` — and
+#: it lands inside `tmp_path` because `$HOME` does.
+def receipt_path(home: Path) -> Path:
+    return home / ".local" / "share" / "openRepoTools" / "installed.tsv"
+
+
+def receipt_rows(home: Path) -> list:
+    """The receipt as a list of `(name, destination, sha256, utc)` tuples."""
+    return [tuple(line.split("\t"))
+            for line in receipt_path(home).read_text(
+                encoding="utf-8").splitlines() if line]
+
+
+def placed_files(home: Path) -> dict:
+    """Every REGULAR FILE an `--install` into `home` places, by destination.
+
+    Derived from the same three lists the artifact count is, and it comes to
+    `ARTIFACTS - HOOK_ENTRIES`: the two hook entries are entries inside
+    somebody else's JSON file rather than files this command placed, so they
+    get no row. The NAME beside each is the word `--install` prints on the line
+    that places it — `park`, `handoff`, `/ctx` — because one name is a skill
+    AND a command file at four different paths, which is why the row's subject
+    is its destination.
+    """
+    files = {str(home / ".local" / "bin" / name): name for name in INSTALLED}
+    for name in SKILL_NAMES:
+        for root in (home / ".claude-profiles" / "shared", home / ".claude"):
+            files[str(root / "skills" / name / "SKILL.md")] = name
+    for name in COMMAND_NAMES:
+        for root in (home / ".claude-profiles" / "shared", home / ".claude"):
+            files[str(root / "commands" / f"{name}.md")] = f"/{name}"
+    return files
+
+
+@NEEDS_JQ
+def test_install_writes_a_receipt_of_every_file_it_placed(tmp_path):
+    """ONE ROW PER PLACED FILE, WITH THE DIGEST OF THE BYTES THAT ARE THERE
+    (#57).
+
+    The only evidence `retire_commands` had that a file on a PATH was one this
+    installer wrote is the `Installed on PATH by ` header — a content
+    substring, which Copilot's round-3 review of #45 named at
+    `openRepoTools:263` and which a person's own script can carry by having
+    been copied from an old installation. A receipt is the evidence that
+    substring is not: the digest of what this run actually placed, at the path
+    it placed it.
+
+    Twenty-four rows, not twenty-six: the two hook entries are entries inside
+    `~/.claude/settings.json` and not files this command placed, and the
+    receipt carries no row for itself either.
+    """
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    receipt = receipt_path(tmp_path)
+    assert receipt.is_file(), result.stdout
+    assert stat.S_IMODE(receipt.stat().st_mode) == 0o644, (
+        "the receipt is a record of what is on a PATH and not a secret, and "
+        "the mode is stamped on the temporary so it is never wider for an "
+        "instant")
+    rows = receipt_rows(tmp_path)
+    expected = placed_files(tmp_path)
+    assert len(rows) == ARTIFACTS - HOOK_ENTRIES == len(expected), (
+        f"{len(rows)} rows for {len(expected)} placed files:\n" + receipt.read_text(encoding="utf-8"))
+    for name, destination, digest, utc in rows:
+        assert destination in expected, f"a row for a file nothing placed: {destination}"
+        assert name == expected[destination], destination
+        assert digest == hashlib.sha256(
+            Path(destination).read_bytes()).hexdigest(), (
+            f"the row for {destination} carries a digest of other bytes")
+        datetime.strptime(utc, "%Y-%m-%dT%H:%M:%SZ")
+    assert {row[1] for row in rows} == set(expected)
+    assert f"receipt: {len(rows)} placed files recorded in {receipt}" \
+        in result.stdout, (
+        "a file written without a line is a file nobody can ask about:\n"
+        + result.stdout)
+
+
+@pytest.mark.parametrize("name", RETIRED)
+@NEEDS_JQ
+def test_a_retirement_reads_the_receipt_before_the_header(tmp_path, name):
+    """AND THE RECEIPT IS STRONGER THAN THE HEADER, WHICH IS THE WHOLE POINT.
+
+    The file here carries NO marker at all — nothing a `grep` could find — and
+    it is still removed, because a row of this installer's own receipt says
+    those exact bytes were placed at that exact path. That is ownership
+    evidence rather than a searchable substring (#57, on Copilot round 3 of
+    #45 at `openRepoTools:263`).
+
+    And the row goes with the file: a receipt that still named the path would
+    answer `edited` about whatever somebody puts there next.
+    """
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    stale = bin_dir / name
+    stale.write_text("#!/usr/bin/env bash\n"
+                     f"# {name}, with no banner of any kind in it\n"
+                     "echo stale\n", encoding="utf-8")
+    stale.chmod(0o755)
+    receipt = receipt_path(tmp_path)
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(
+        f"{name}\t{stale}\t{hashlib.sha256(stale.read_bytes()).hexdigest()}"
+        "\t2026-09-15T04:04:16Z\n", encoding="utf-8")
+
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert not stale.exists(), (
+        f"the receipt names `{name}` and its digest still matches, and it is "
+        "still on PATH:\n" + result.stdout)
+    assert f"{name}: RETIRED" in result.stdout, result.stdout
+    assert "receipt carries its digest" in result.stdout, (
+        "the line says which evidence removed it, because the two kinds are "
+        f"not the same claim:\n{result.stdout}")
+    assert not [row for row in receipt_rows(tmp_path) if row[1] == str(stale)], (
+        "the row of a file that is no longer there was kept:\n"
+        + receipt.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("name", RETIRED)
+@NEEDS_JQ
+def test_a_file_the_receipt_no_longer_recognises_is_named_and_left(tmp_path, name):
+    """A DIGEST THAT HAS MOVED IS SOMEBODY'S EDIT, AND IT OUTRANKS THE MARKER.
+
+    This file carries the header — `grep` finds it, and today's fallback would
+    delete it — and the receipt says the bytes at that path are NOT the ones it
+    placed. So it is a person's edit of an installed command, or their own file
+    at a path one used to be at, and either way not this installer's to remove:
+    named, left exactly as it is, with the one line that removes it printed for
+    them, like every other file this installer did not write.
+
+    Its row is KEPT, because the file is: a receipt drops a row when the file
+    goes, not when it stops matching.
+    """
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    mine = bin_dir / name
+    mine.write_text(
+        "#!/usr/bin/env bash\n"
+        "# Installed on PATH by `openRepoTools --install`, and then edited.\n"
+        "echo my own edit\n", encoding="utf-8")
+    mine.chmod(0o755)
+    before = mine.read_bytes()
+    receipt = receipt_path(tmp_path)
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(
+        f"{name}\t{mine}\t{hashlib.sha256(b'the bytes it placed').hexdigest()}"
+        "\t2026-09-15T04:04:16Z\n", encoding="utf-8")
+
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert mine.is_file() and mine.read_bytes() == before, (
+        "a file whose digest the receipt does not recognise was deleted on the "
+        "strength of the header substring the receipt exists to replace:\n"
+        + result.stdout)
+    assert f"{name}: RETIRED" in result.stdout
+    assert "no longer holds the bytes this installer's receipt recorded" \
+        in result.stdout, result.stdout
+    assert f'rm -f -- "{mine}"' in result.stdout, (
+        "the act is the person's, so the line is printed filled in:\n"
+        + result.stdout)
+    assert [row for row in receipt_rows(tmp_path) if row[1] == str(mine)], (
+        "the row of a file that is still there was dropped:\n"
+        + receipt.read_text(encoding="utf-8"))
+
+
+@NEEDS_JQ
+def test_a_receipt_it_cannot_write_is_a_note_and_never_a_refusal(tmp_path):
+    """FAIL CLOSED, OUT LOUD, IN ONE LINE, AND CARRY ON (#57).
+
+    The commands, the skills and the hook entries are what a person asked for.
+    A record of them this installer could not write is its problem and not
+    theirs — and the header marker is still there for a later retirement to
+    fall back to, which is exactly the population that fallback exists for. So
+    the install SUCCEEDS and says where it could not write, why, and what that
+    costs.
+
+    A regular file where the data directory goes, because that is a `mkdir -p`
+    that cannot succeed for any user, root included.
+    """
+    blocked = tmp_path / "blocked"
+    blocked.write_text("a file where the data directory goes\n",
+                       encoding="utf-8")
+    result = run_cmd("--install", home=tmp_path,
+                     env={"OPENREPOTOOLS_DATA_DIR": str(blocked / "data")})
+    assert result.returncode == 0, result.stdout + result.stderr
+    for name in INSTALLED:
+        assert (tmp_path / ".local" / "bin" / name).is_file(), name
+    assert f"openRepoTools: {len(INSTALLED)} of {len(INSTALLED)} placed" \
+        in result.stdout
+    assert f"receipt: NOT written to {blocked / 'data' / 'installed.tsv'}" \
+        in result.stdout, result.stdout
+    assert f"{blocked} is not a directory" in result.stdout, (
+        "the note says WHY, because a person who cannot see the reason cannot "
+        f"fix it:\n{result.stdout}")
+    assert "falls back to the `Installed on PATH by` header" in result.stdout
+    assert "$OPENREPOTOOLS_DATA_DIR" in result.stdout, (
+        "and names the way out")
+    assert "REFUSED" not in result.stderr
+
+
+@NEEDS_JQ
+def test_a_receipt_that_is_a_symlink_is_not_written_through(tmp_path):
+    """THE SAME RULE EVERY OTHER PATH IN THIS FILE IS HELD TO.
+
+    `mv -f` replaces the LINK rather than what it points at, so a receipt
+    written over one silently swaps a person's link for a regular file — which
+    is what `cp` through a link does, in the other direction. It is named and
+    left, like every other path this installer did not make, and the install is
+    untouched.
+    """
+    data = tmp_path / "data"
+    data.mkdir()
+    elsewhere = tmp_path / "somewhere-else.tsv"
+    elsewhere.write_text("mine\n", encoding="utf-8")
+    (data / "installed.tsv").symlink_to(elsewhere)
+
+    result = run_cmd("--install", home=tmp_path,
+                     env={"OPENREPOTOOLS_DATA_DIR": str(data)})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (data / "installed.tsv").is_symlink(), (
+        "the link was replaced by a regular file:\n" + result.stdout)
+    assert elsewhere.read_text(encoding="utf-8") == "mine\n", (
+        "and the bytes were written through it")
+    assert f"receipt: NOT written to {data / 'installed.tsv'}" in result.stdout
+    assert f"it is a symlink to {elsewhere}" in result.stdout, result.stdout
+    for name in INSTALLED:
+        assert (tmp_path / ".local" / "bin" / name).is_file(), name
+
+
+@NEEDS_JQ
+def test_a_digest_it_cannot_take_is_a_note_too(tmp_path):
+    """AND NEITHER DIGEST TOOL IS A HARD DEPENDENCY.
+
+    `sha256sum` is GNU and a stock macOS ships none; `shasum -a 256` is the
+    spelling that is there instead. A machine that can answer with NEITHER — or
+    one where the call fails, which is what the shims here are — still gets its
+    commands, its skills and its hook entries, and the note says why the record
+    of them is missing. An installer that refused to install because it could
+    not write its own bookkeeping would have the priorities backwards.
+    """
+    shim = tmp_path / "shims"
+    shim.mkdir()
+    for name in ("sha256sum", "shasum"):
+        (shim / name).write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        (shim / name).chmod(0o755)
+    result = run_cmd("--install", home=tmp_path,
+                     env={"PATH": f"{shim}{os.pathsep}{os.environ['PATH']}"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    for name in INSTALLED:
+        assert (tmp_path / ".local" / "bin" / name).is_file(), name
+    assert not receipt_path(tmp_path).exists(), (
+        "a receipt was written out of digests nothing could take:\n"
+        + result.stdout)
+    assert f"receipt: NOT written to {receipt_path(tmp_path)}" in result.stdout
+    assert "could not be digested" in result.stdout, result.stdout
+    assert "REFUSED" not in result.stderr
+
+
+@NEEDS_JQ
+def test_installing_twice_leaves_no_duplicate_rows(tmp_path):
+    """A ROW'S SUBJECT IS ITS DESTINATION, AND A RUN REPLACES THE ROW OF EVERY
+    DESTINATION IT PLACED.
+
+    An installer that APPENDED would grow a file with twelve more rows every
+    run and would answer a retirement out of whichever one it read first.
+
+    WHAT DOES CHANGE ON THE SECOND RUN IS THE UTC, and that is deliberate: the
+    stamp says when the run RECORDED the row, not when those bytes were first
+    placed, which is the honest reading of a column written by a run that
+    verified a file it did not rewrite. `test_installing_twice_changes_nothing`
+    is about the bin directory and the artifacts — the lines each placement
+    prints — and the receipt is not one of them.
+    """
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    first = receipt_rows(tmp_path)
+    second_run = run_cmd("--install", home=tmp_path)
+    assert second_run.returncode == 0, second_run.stderr
+    second = receipt_rows(tmp_path)
+    assert len(second) == len(first) == ARTIFACTS - HOOK_ENTRIES
+    assert len({row[1] for row in second}) == len(second), (
+        "a destination has two rows:\n"
+        + receipt_path(tmp_path).read_text(encoding="utf-8"))
+    assert {row[:3] for row in second} == {row[:3] for row in first}, (
+        "the second run changed a name or a digest")
+
+
+@NEEDS_JQ
+def test_the_receipt_keeps_the_rows_of_a_directory_it_no_longer_writes(tmp_path):
+    """OTHER ROWS ARE KEPT, and the reason is the retirement.
+
+    A person who moves `$OPENREPOTOOLS_BIN_DIR` still has the copies in the old
+    one, and a later retirement that walks that directory is exactly the run
+    that needs this evidence. A receipt keyed on the NAME would have dropped
+    those rows the moment the same name was placed somewhere else.
+    """
+    first_dir = tmp_path / "bin-one"
+    second_dir = tmp_path / "bin-two"
+    assert run_cmd("--install", home=tmp_path,
+                   env={"OPENREPOTOOLS_BIN_DIR": str(first_dir)}).returncode == 0
+    assert run_cmd("--install", home=tmp_path,
+                   env={"OPENREPOTOOLS_BIN_DIR": str(second_dir)}).returncode == 0
+    destinations = {row[1] for row in receipt_rows(tmp_path)}
+    for name in INSTALLED:
+        assert str(first_dir / name) in destinations, (
+            f"the row for the copy still in {first_dir} was dropped")
+        assert str(second_dir / name) in destinations, name
+    # The twelve skill and command files are at the same paths both times, so
+    # they are REPLACED rather than added: twenty-four plus one more bin
+    # directory.
+    assert len(receipt_rows(tmp_path)) == ARTIFACTS - HOOK_ENTRIES + len(INSTALLED)
 
 
 @NEEDS_JQ
