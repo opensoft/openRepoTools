@@ -224,8 +224,9 @@ suite queuing up to 1h20 behind the workstation lock described below):
    push to main, nightly at 04:17Z, and on `workflow_dispatch`. A red nightly
    or main `tests-macos` is a follow-up issue, never a revert. `parse-macos`
    is the one piece of the old per-push job that never left: it runs the
-   bash-3.2 parse below on every push, gated on nothing, because that parse
-   is worthless on Linux's bash 5.
+   bash-3.2 parse below on every `pull_request` push and every push to main
+   — the same two triggers as the three jobs above it, never gated on the
+   label — because that parse is worthless on Linux's bash 5.
 2. **COPILOT REVIEW IS CAPPED AT TWO ROUNDS PER PULL REQUEST.** Rounds one
    and two are taken; a finding after that is filed as an issue and the PR
    lands regardless.
