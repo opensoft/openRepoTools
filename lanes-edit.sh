@@ -764,7 +764,8 @@ release_lock() {
 # and there is nothing there to restore.
 RL_ACTIVE=0; RL_SNAP=""; RL_HEAD_BEFORE=""
 RL_LOG_OLD=""; RL_LOG_NEW=""; RL_H_OLD=""; RL_H_NEW=""
-RL_ALIAS=""; RL_ALIAS_EXISTED=0; RL_REG=""; RL_PATHS_FOR_UNDO=""
+RL_ALIAS=""; RL_ALIAS_EXISTED=0; RL_REG=""
+RL_PATHS_FOR_UNDO=()
 rename_undo() {
   [ "$RL_ACTIVE" = 1 ] || return 0
   RL_ACTIVE=0
@@ -801,8 +802,17 @@ rename_undo() {
   # `git add` that succeeded and a `git commit` that did not leaves the four
   # paths staged, so restoring only the working tree would leave the rename in
   # the index for the next writer to commit by accident.
-  if [ -n "$RL_REG" ] && [ "$NO_GIT" != 1 ] && [ -n "${RL_PATHS_FOR_UNDO:-}" ]; then
-    git -C "$LANES_REPO" reset -q HEAD -- ${RL_PATHS_FOR_UNDO} 2>/dev/null || :
+  # THE PATHSPECS STAY AN ARRAY (Copilot round 8 on openRepoTools#81). Flattened
+  # into one string and expanded unquoted, a handoff under `handoffs/team
+  # notes/…` — a path this estate supports, and the one every other line here
+  # quotes — became `handoffs/team` and `notes/…`, two pathspecs that match
+  # nothing. AND `git reset` SAYS NOTHING ABOUT ONE IT CANNOT MATCH: measured,
+  # it resets the paths it does match, leaves that file staged and exits 0, so
+  # the `|| :` above was never reached and no line of output said so. The
+  # rename then stayed in the index for the next writer to commit by accident,
+  # which is the half-transaction this whole snapshot exists to prevent.
+  if [ -n "$RL_REG" ] && [ "$NO_GIT" != 1 ] && [ "${#RL_PATHS_FOR_UNDO[@]}" -gt 0 ]; then
+    git -C "$LANES_REPO" reset -q HEAD -- "${RL_PATHS_FOR_UNDO[@]}" 2>/dev/null || :
   fi
   note "the rename was rolled back: the object log, the handoff and ${LANES_ALIASES_PATH:-lanes/aliases.tsv} are as they were, and nothing was committed. A rename is ONE commit, refused or whole (Amendment 16)."
   return 0
@@ -3130,7 +3140,7 @@ live_holder() {
       lh_brc=0
       lh_bres="$(rows_named_ci_alias "$base" 2>/dev/null)" || lh_brc=$?
       if [ "$lh_brc" != 0 ]; then
-        SESSION_FILES_ERR="${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read (${LANES_ALIAS_ERR:-unknown error}), so whether the session named '$base' carries a FORMER name of lane $lane could not be established (Amendment 16(e))"
+        SESSION_FILES_ERR="${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read ($(lane_alias_err)), so whether the session named '$base' carries a FORMER name of lane $lane could not be established (Amendment 16(e))"
         rm -f -- "$lh_match"
         return 1
       fi
@@ -3457,6 +3467,33 @@ rows_named_ci() {   # <typed name>
 # row has not arrived here, or a row whose alias has not.
 LANES_ALIAS_CACHE=""
 LANES_ALIAS_ERR=""
+# THE REASON IS WRITTEN WHERE THE PARENT CAN READ IT, and that is not a
+# nicety: every caller of `lane_alias_text` reaches it through a COMMAND
+# SUBSTITUTION — `lane_alias_hop`, `lane_alias_target` and `lane_alias_keys`
+# are all taken with `$( )`, and `rows_named_ci_alias` is taken with one by
+# `canon_lane` — so a variable set here dies with the subshell, and every
+# refusal below printed `(unknown error)`: fail-closed, and silent about what
+# to fix. It goes in a file beside the events cache, which `cleanup` already
+# sweeps (`rm -f -- "$SE_CACHE_FILE".*`), exactly as `SE_WARN_FILE` carries a
+# warning raised inside the same kind of substitution. The variable is kept as
+# the answer for a process that has no temporary file at all — `mktemp` can
+# fail, and `SE_CACHE_FILE` is empty when it does.
+lane_alias_fail() {   # <reason>
+  LANES_ALIAS_ERR="${1-}"
+  laf_f="${SE_CACHE_FILE:+$SE_CACHE_FILE.aliaserr}"
+  [ -n "$laf_f" ] && printf '%s' "${1-}" > "$laf_f" 2>/dev/null
+  return 0
+}
+# AND IT IS NOT ITS OWN FALLBACK. The file is the reason THIS process last
+# failed with; the variable is the reason THIS SHELL last failed with; and
+# where there is neither, the sentence still has to read as English, so the
+# words are spelled out here rather than left to a caller's `${x:-…}`.
+lane_alias_err() {
+  lae_f="${SE_CACHE_FILE:+$SE_CACHE_FILE.aliaserr}"
+  if [ -n "$lae_f" ] && [ -s "$lae_f" ]; then cat -- "$lae_f"; return 0; fi
+  printf '%s' "${LANES_ALIAS_ERR:-unknown error}"
+  return 0
+}
 # A READ THAT FAILED IS NOT AN EMPTY TABLE (Copilot round 1 on openRepoTools#81).
 # `cat … 2>/dev/null || :` made a permission or IO fault on `lanes/aliases.tsv`
 # indistinguishable from an estate that has never renamed a lane — and the two
@@ -3476,22 +3513,50 @@ lane_alias_text() {
   # outcome every other branch of this function exists to refuse.
   if [ -n "$lat_c" ] && [ -s "$lat_c" ]; then
     cat -- "$lat_c" || {
-      LANES_ALIAS_ERR="the cached copy at $lat_c could not be read"
+      lane_alias_fail "the cached copy at $lat_c could not be read"
       return 5
     }
     return 0
   fi
+  # A FRESH READ BEGINS HERE, so the reason the LAST one failed with goes: the
+  # file outlives the subshell that wrote it on purpose, and an answer kept
+  # past the read it belongs to is the stale kind of honesty.
   lat_t=""; LANES_ALIAS_ERR=""
+  lat_e="${SE_CACHE_FILE:+$SE_CACHE_FILE.aliaserr}"
+  [ -n "$lat_e" ] && rm -f -- "$lat_e"
   if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_ALIASES_PATH" 2>/dev/null; then
     lat_t="$(git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_ALIASES_PATH" 2>/dev/null)" || {
-      LANES_ALIAS_ERR="git show origin/$LANES_BRANCH:$LANES_ALIASES_PATH failed, and the object is there"
+      lane_alias_fail "git show origin/$LANES_BRANCH:$LANES_ALIASES_PATH failed, and the object is there"
       return 5
     }
   elif [ -n "${LANES_ALIASES_TSV:-}" ] && [ -f "$LANES_ALIASES_TSV" ]; then
     lat_t="$(cat -- "$LANES_ALIASES_TSV" 2>/dev/null)" || {
-      LANES_ALIAS_ERR="$LANES_ALIASES_TSV is there and could not be read"
+      lane_alias_fail "$LANES_ALIASES_TSV is there and could not be read"
       return 5
     }
+  elif [ -n "${LANES_ALIASES_TSV:-}" ] \
+       && { [ -e "$LANES_ALIASES_TSV" ] || [ -L "$LANES_ALIASES_TSV" ]; }; then
+    # SOMETHING IS THERE AND IT IS NOT A TABLE (Copilot round 8 on
+    # openRepoTools#81). A directory, a FIFO, a socket or a DANGLING symlink at
+    # this path makes `-f` false, and the branch was simply skipped: the empty
+    # answer below was cached and handed back with status 0, so a former lane
+    # name read as NEW — and `lane-start` then appends a SECOND row for a lane
+    # that has been running all day, which is Amendment 15(a)'s duplicate
+    # arrived at through a READ. `-L` is asked beside `-e` because `-e` is FALSE
+    # on a dangling link, the same pair the handoff's destination test uses.
+    #
+    # AND THE READER'S RULE IS NARROWER THAN THE WRITER'S, deliberately. The
+    # writer refuses a LIVE symlink to a regular file as well, because it
+    # appends in place and a redirect follows one into whatever is at the far
+    # end; a reader that follows the same link gets the table's own bytes and is
+    # right to, so `-f` above answers it and says nothing. What is refused here
+    # is only what cannot be READ — which is why the two say different words.
+    if [ -L "$LANES_ALIASES_TSV" ]; then
+      lane_alias_fail "$LANES_ALIASES_TSV is a symlink whose target is not a regular file"
+    else
+      lane_alias_fail "$LANES_ALIASES_TSV exists and is not a regular file"
+    fi
+    return 5
   fi
   # AND THE EMPTY ANSWER IS CACHED TOO, as one comment line in the table's own
   # grammar. An estate that has never renamed a lane is the ordinary case, and
@@ -3515,6 +3580,9 @@ lane_alias_text() {
 # just wrote is the one the comments below it are computed with.
 lane_alias_flush() {
   LANES_ALIAS_CACHE=""
+  LANES_ALIAS_ERR=""
+  laf_e="${SE_CACHE_FILE:+$SE_CACHE_FILE.aliaserr}"
+  [ -n "$laf_e" ] && rm -f -- "$laf_e"
   laf_c="${SE_CACHE_FILE:+$SE_CACHE_FILE.aliases}"
   [ -n "$laf_c" ] && rm -f -- "$laf_c"
   return 0
@@ -3695,7 +3763,7 @@ canon_lane() {   # <typed name>
   # and appends a SECOND row — the duplicate Amendment 15(a) exists to refuse.
   # R22's rule governs: a read that could not be performed is never an answer.
   if [ "$cl_rc" = 5 ]; then
-    note "${LANES_ALIASES_PATH:-lanes/aliases.tsv} COULD NOT BE READ (${LANES_ALIAS_ERR:-unknown error}), so whether '$cl_want' is a FORMER name of some lane is NOT established — which is not the same as it not being one (Amendment 16(e))."
+    note "${LANES_ALIASES_PATH:-lanes/aliases.tsv} COULD NOT BE READ ($(lane_alias_err)), so whether '$cl_want' is a FORMER name of some lane is NOT established — which is not the same as it not being one (Amendment 16(e))."
     note "Nothing is read or written under a name this register cannot resolve: a rename's alias would be invisible, and a lane that has one would read as new. Fix the read — the table is ${LANES_ALIASES_TSV:-<no path>} here and ${LANES_ALIASES_PATH:-lanes/aliases.tsv} on origin/$LANES_BRANCH — and re-run."
     # 66 AND NOT 2, BECAUSE 2 ALREADY MEANS SOMETHING TO FOUR CALLERS (Copilot
     # round 4). `lane-start`, `lane-end`, `lane` and `lane-handoff` each read
@@ -3730,7 +3798,7 @@ canon_lane() {   # <typed name>
       # UNREACHABLE BY THE PATH ABOVE, which already refused a 5 — kept because
       # this arm is the second reader of the same table and a silent
       # disagreement between two readers of one file is worth a line of code.
-      note "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read (${LANES_ALIAS_ERR:-unknown error})."
+      note "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read ($(lane_alias_err))."
       return 66
     elif [ -n "$cl_al" ]; then
       cl_out="$cl_al"
@@ -6828,7 +6896,7 @@ guard_run() {   # <the hook's JSON, on stdin already read>
   gr_arc=0
   gr_hits="$(rows_named_ci_alias "$G_WINNAME" 2>/dev/null)" || gr_arc=$?
   if [ "$gr_arc" = 5 ]; then
-    guard_refuse "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read (${LANES_ALIAS_ERR:-unknown error}), so whether this window's name '$G_WINNAME' is a FORMER name of a lane could not be established — and an indeterminate read refuses (Amendment 12(d), Amendment 16(e)). $(guard_bypass)"
+    guard_refuse "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read ($(lane_alias_err)), so whether this window's name '$G_WINNAME' is a FORMER name of a lane could not be established — and an indeterminate read refuses (Amendment 12(d), Amendment 16(e)). $(guard_bypass)"
     return 2
   fi
   gr_n="$(printf '%s' "$gr_hits" | grep -c . || :)"
@@ -6867,7 +6935,7 @@ guard_run() {   # <the hook's JSON, on stdin already read>
   gr_sarc=0
   gr_snhits="$(rows_named_ci_alias "$G_NAME" 2>/dev/null)" || gr_sarc=$?
   if [ "$gr_sarc" = 5 ]; then
-    guard_refuse "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read (${LANES_ALIAS_ERR:-unknown error}), so whether this session's name '${G_NAME:-none}' is a FORMER name of a lane could not be established — and an indeterminate read refuses (Amendment 12(d), Amendment 16(e)). $(guard_bypass)"
+    guard_refuse "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read ($(lane_alias_err)), so whether this session's name '${G_NAME:-none}' is a FORMER name of a lane could not be established — and an indeterminate read refuses (Amendment 12(d), Amendment 16(e)). $(guard_bypass)"
     return 2
   fi
   gr_snn="$(printf '%s' "$gr_snhits" | grep -c . || :)"
@@ -8521,7 +8589,7 @@ Nothing was written." 2
     # fail-closed rule is about.
     case "$rl_crc" in
       0) : ;;
-      66) die "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read (${LANES_ALIAS_ERR:-unknown error}), and a rename whose alias table cannot be read is a rename whose old name may stop resolving — which is the one thing clause (e) promises for ever, so this fails closed. Nothing was written." 1 ;;
+      66) die "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read ($(lane_alias_err)), and a rename whose alias table cannot be read is a rename whose old name may stop resolving — which is the one thing clause (e) promises for ever, so this fails closed. Nothing was written." 1 ;;
       *) exit 2 ;;
     esac
 
@@ -8587,7 +8655,7 @@ Nothing was written." 2
     rl_krc=0
     rl_keys="$(lane_alias_keys 2>/dev/null)" || rl_krc=$?
     if [ "$rl_krc" = 5 ]; then
-      die "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read (${LANES_ALIAS_ERR:-unknown error}), and a rename whose alias table cannot be read is a rename whose old name may stop resolving — which is the one thing clause (e) promises for ever, so this fails closed. Nothing was written." 1
+      die "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read ($(lane_alias_err)), and a rename whose alias table cannot be read is a rename whose old name may stop resolving — which is the one thing clause (e) promises for ever, so this fails closed. Nothing was written." 1
     fi
     rl_kmatch="$(printf '%s\n' "$rl_keys" | awk -v w="$rl_new" 'BEGIN { lw = tolower(w) } NF && tolower($0) == lw { print; exit }')"
     if [ -n "$rl_kmatch" ]; then
@@ -8603,7 +8671,7 @@ Nothing was written." 2
       0 | 1) : ;;
       3) die "${LANES_ALIASES_PATH:-lanes/aliases.tsv} already resolves '$rl_new' in a CYCLE, so nothing can be added through it until that row is taken out by hand. \`rename-lane\` writes no cycle, so this table was hand-edited. Nothing was written." 2 ;;
       4) die "renaming $rl_old to $rl_new would close a CYCLE in ${LANES_ALIASES_PATH:-lanes/aliases.tsv}: '$rl_new' already resolves back through '$rl_old', and a chain that returns to its own start has no end for a reader to resolve to (Amendment 16(e)). Nothing was written." 2 ;;
-      *) die "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read (${LANES_ALIAS_ERR:-unknown error}), and a rename whose alias table cannot be read is a rename whose old name may stop resolving — which is the one thing clause (e) promises for ever, so this fails closed. Nothing was written." 1 ;;
+      *) die "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read ($(lane_alias_err)), and a rename whose alias table cannot be read is a rename whose old name may stop resolving — which is the one thing clause (e) promises for ever, so this fails closed. Nothing was written." 1 ;;
     esac
 
     # THE SESSION FIELD OF THE `RENAMED` LINE IS A TRANSCRIPT UUID AND ONLY
@@ -8992,7 +9060,7 @@ EOF
     cat -- "$LANES_FILE" > "$RL_SNAP/register" || die "the register at $LANES_FILE could not be read, so there is no copy to roll back to. Nothing was written." 5
     RL_LOG_OLD="$rl_log_old"; RL_LOG_NEW="$rl_log_new"
     RL_H_OLD=""; RL_H_NEW=""
-    RL_PATHS_FOR_UNDO="${rl_paths[*]}"
+    RL_PATHS_FOR_UNDO=("${rl_paths[@]}")
     RL_ACTIVE=1
 
     # (c) THE LOG — moved, then appended to. The lines above the new one still

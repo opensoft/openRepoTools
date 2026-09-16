@@ -7603,8 +7603,12 @@ run env LANES_NO_FETCH=1 LANES_SESSION="$REN3_ID" \
 if [ "$rc" = 0 ]; then
   skip "an unreadable alias table refuses the write" "this filesystem let the read through (running as a user that ignores the mode)"
 else
-  is   "an alias table that cannot be READ refuses the write" "$rc" 1
-  has  "…rather than reading as an estate with no renames" "$err" "could not be read"
+  is    "an alias table that cannot be READ refuses the write" "$rc" 1
+  has   "…rather than reading as an estate with no renames" "$err" "could not be read"
+  has   "…naming the table and the read that failed" \
+        "$err" "aliases-unreadable.tsv is there and could not be read"
+  hasnt "…and never 'unknown error', which is what a reason lost to a subshell said" \
+        "$err" "unknown error"
   is   "…and nothing was written" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
 fi
 chmod 0644 "$ren_unread"; rm -f "$ren_unread"
@@ -8081,6 +8085,110 @@ is   "…and nothing was posted" "$(command grep -c '^=== ' "$FAKE_GH_LOG" || :)
 run env FAKE_GH_LOG="$SANDBOX/gh-probe.log" gh repo view opensoft/openRepoTools
 is   "the fake gh refuses every call but the two comment forms" "$rc" 90
 has  "…saying this suite reaches no GitHub surface" "$err" "reaches no GitHub surface"
+
+
+# ============ Copilot round 8 on openRepoTools#81 ============================
+
+# ---- THE READER'S FALLBACK REFUSES A PATH THAT IS NOT A TABLE, and the reason
+# it is worth a round of its own is that the old behaviour failed OPEN.
+#
+# With no alias blob on `origin`, `-f` is false for a directory, a FIFO and a
+# dangling link alike, so the branch was simply SKIPPED: `# no lane aliases` was
+# cached and handed back with status 0, and a FORMER lane name then read as NEW.
+# Each shape is put to both readers that matter — `canon-lane`, which is clause
+# (e)'s one seat, and `lane-start`, which is what would append the second row.
+# `repoRen-4` is the MIDDLE name of this section's chain and belongs to nobody,
+# so the table is the only thing that can answer for it.
+mkdir -p "$HOME/projects/repoRen"
+ren_kind_tsv="$WIP/lanes/aliases-kind.tsv"
+ren_kind() {   # <what is at the path>
+  run env LANES_NO_FETCH=1 LANES_ALIASES_TSV="$ren_kind_tsv" \
+      LANES_ALIASES_PATH=lanes/aliases-kind.tsv "$E" canon-lane repoRen-4
+  is    "an alias table that is $1 refuses the read" "$rc" 66
+  has   "…saying what is at the path instead" "$err" "not a regular file"
+  hasnt "…and never 'unknown error', which is what a reason lost to a subshell said" \
+        "$err" "unknown error"
+  hasnt "…and answers no lane name at all" "$out" "repoRen"
+  run env LANES_NO_FETCH=1 LANES_ALIASES_TSV="$ren_kind_tsv" \
+      LANES_ALIASES_PATH=lanes/aliases-kind.tsv \
+      "$START" --no-launch --dir "$HOME/projects/repoRen" repoRen-4
+  is    "…and lane-start refuses over $1 rather than adding a row" "$rc" 2
+  has   "…saying it would be a second row for a lane that is running" "$err" "second row"
+}
+mkdir -p "$ren_kind_tsv"
+ren_kind "a DIRECTORY"
+rmdir "$ren_kind_tsv"
+ln -s "$WIP/lanes/no-table-is-here.tsv" "$ren_kind_tsv"
+ren_kind "a DANGLING SYMLINK"
+rm -f "$ren_kind_tsv"
+if command -v mkfifo >/dev/null 2>&1; then
+  mkfifo "$ren_kind_tsv"
+  ren_kind "a FIFO"
+  rm -f "$ren_kind_tsv"
+else
+  skip "an alias table that is a FIFO refuses the read" "no mkfifo on this host"
+fi
+
+# ---- AND A LIVE LINK TO A REAL TABLE IS STILL READ, because the reader's rule
+# is narrower than the writer's on purpose: the writer refuses a symlink because
+# it APPENDS in place and a redirect follows one, while a reader that follows
+# the same link gets the table's own bytes and is right to.
+printf 'farLane-1\tfarLane-2\t2026-09-15T00:00:00Z\n' > "$WIP/lanes/aliases-far.tsv"
+ln -s "$WIP/lanes/aliases-far.tsv" "$ren_kind_tsv"
+run env LANES_NO_FETCH=1 LANES_ALIASES_TSV="$ren_kind_tsv" \
+    LANES_ALIASES_PATH=lanes/aliases-kind.tsv "$E" canon-lane farLane-1
+is   "a symlink to a table that IS one is read, not refused" "$rc" 0
+is   "…answering the name that table names" "$out" "farLane-2"
+rm -f "$ren_kind_tsv" "$WIP/lanes/aliases-far.tsv"
+
+# ---- THE UNDO'S PATHSPECS SURVIVE A SPACE IN A PATH.
+#
+# Flattened into one string and expanded unquoted, `handoffs/team notes/…` was
+# TWO pathspecs that match nothing — and `git reset` is SILENT about a pathspec
+# it cannot match, so the reset did not happen for that file and the rename
+# stayed STAGED for the next writer to commit by accident: half a transaction,
+# left behind by the mechanism that exists to leave none.
+REN13_ID="12ab34cd-16b3-4000-8000-12ab34cd16b3"
+REN13_H="handoffs/team notes/session-handoff-2026-09-12-lane-repoSpc-1.md"
+REN13_H_NEW="handoffs/team notes/session-handoff-2026-09-12-lane-repoSpc-2.md"
+mkdir -p "$WIP/handoffs/team notes"
+printf 'Lane: repoSpc-1 — single-use resume prompt\n\n## RESUME\n' > "$WIP/$REN13_H"
+add_seed_row "| \`repoSpc-1\` | harness \`$REN13_ID\` | Eagle / test / brett | 2026-09-12T00:00Z | none | $REN13_H | ACTIVE |"
+{ printf '# lane repoSpc-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoSpc-1, session %s@Eagle, %s, lane:repoSpc-1 → home opensoft/repoSpc; estate repoSpc\n' "$REN13_ID" "$OLD_UTC"
+} > "$LOGD/repoSpc-1.md"
+git -C "$WIP" add -A -- lanes handoffs >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed a lane whose handoff lives under a directory with a space"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+ren_reg_before="$(cat "$LANES")"
+ren_log_before="$(cat "$LOGD/repoSpc-1.md")"
+ren_alias_before="$(cat "$WIP/lanes/aliases.tsv" 2>/dev/null || :)"
+ren_before="$(git -C "$WIP" rev-parse HEAD)"
+mkdir -p "$WIP/.git/hooks"
+printf '#!/bin/sh\nexit 1\n' > "$WIP/.git/hooks/pre-commit"
+chmod 755 "$WIP/.git/hooks/pre-commit"
+run env LANES_SESSION="$REN13_ID" "$E" rename-lane repoSpc-1 repoSpc-2 --no-github
+rm -f "$WIP/.git/hooks/pre-commit"
+is   "a rename rolled back over a path with a SPACE commits nothing" "$rc" 6
+is   "…the register back" "$(cat "$LANES")" "$ren_reg_before"
+is   "…the object log back under its own name" "$(cat "$LOGD/repoSpc-1.md" 2>/dev/null)" "$ren_log_before"
+is   "…the alias table back" "$(cat "$WIP/lanes/aliases.tsv" 2>/dev/null || :)" "$ren_alias_before"
+is   "…the handoff back under its own name, space and all" \
+     "$( [ -f "$WIP/$REN13_H" ] && [ ! -e "$WIP/$REN13_H_NEW" ] && echo yes )" "yes"
+is   "…HEAD unmoved" "$(git -C "$WIP" rev-parse HEAD)" "$ren_before"
+is   "…and NOTHING left staged, which is what a split pathspec leaves behind" \
+     "$(git -C "$WIP" diff --cached --name-only | command grep -c . || :)" 0
+
+# ---- AND THE SAME RENAME THEN GOES THROUGH, spaces and all.
+run env LANES_SESSION="$REN13_ID" "$E" rename-lane repoSpc-1 repoSpc-2 --no-github
+is   "the same rename then goes through" "$rc" 0
+is   "…moving the handoff under the spaced directory" \
+     "$( [ -f "$WIP/$REN13_H_NEW" ] && [ ! -e "$WIP/$REN13_H" ] && echo yes )" "yes"
+is   "…and the row names it there" "$(command grep -c "$REN13_H_NEW" "$LANES")" 1
+has  "…in ONE commit that carries the spaced path" \
+     "$(git -C "$WIP" show --name-only --format= HEAD)" "$REN13_H_NEW"
+
 
 export FAKE_TMUX_WINDOWS="$A16_SAVE_WINDOWS"
 export FAKE_TMUX_WINDOW="$A16_SAVE_WINDOW"
