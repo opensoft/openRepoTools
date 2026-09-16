@@ -1223,6 +1223,64 @@ def test_a_second_writer_of_this_hook_refuses_whatever_file_carries_it(tmp_path)
 
 
 @NEEDS_JQ
+def test_our_own_entry_beside_a_rival_refuses_rather_than_reading_present(tmp_path):
+    """`conflict` BEATS `present`, AND THE ORDER IS THE WHOLE OF #59.
+
+    `present` was asked FIRST, so a settings file carrying our exact entry AND a
+    second writer of the same hook answered `present`: `--install` added
+    nothing, said nothing, and the person kept two writers of one hook — the
+    state the arm above exists to refuse — with the run reporting success.
+
+    NOTHING WAS INSTALLED TWICE BY SUCH A RUN, which is why it went unnoticed:
+    with the exact entry already there, there is nothing to add and the file is
+    unchanged. The defect is that the state was never NAMED, and that somebody
+    who runs `--install` expecting it to police this hook was told everything
+    was fine. The cost of naming it is this repository's own rule: `conflict`
+    refuses the WHOLE install (R-A9-12), so a workstation carrying a rival
+    cannot install or update any artifact until the rival is gone — which is
+    already the answer a file with no entry of ours gets.
+
+    THE REFUSAL NAMES BOTH, and here that is not a nicety. This file carries our
+    entry as well as the rival, so "remove that entry" with nothing named is a
+    line a person can read as "remove the block this installer just printed",
+    which would take the working entry away and leave the second writer.
+
+    The two halves of the same read are asserted beside this: the rival ALONE
+    still refuses (the test above), and our entry alone still answers `present`,
+    silently (`test_installing_twice_adds_one_entry_and_not_two`).
+    """
+    rival = "~/bin/lane-hook.sh session-start || true"
+    settings = settings_of(tmp_path)
+    settings.parent.mkdir(parents=True)
+    before = json.dumps({"hooks": {"SessionStart": [
+        {"matcher": HOOK_MATCHER,
+         "hooks": [{"type": "command", "command": HOOK_COMMAND,
+                    "timeout": HOOK_TIMEOUT}]},
+        {"matcher": HOOK_MATCHER,
+         "hooks": [{"type": "command", "command": rival, "timeout": 5}]}]}},
+        indent=2)
+    settings.write_text(before, encoding="utf-8")
+    os.chmod(settings, 0o644)
+
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "a SessionStart entry that runs `session-start` with a" in result.stderr
+    assert "DIFFERENT command string" in result.stderr
+    assert rival in result.stderr, (
+        "the refusal must NAME the rival: this file carries ours too, and "
+        "'remove that entry' would otherwise be ambiguous\n" + result.stderr)
+    assert HOOK_COMMAND in result.stderr, "the refusal prints the exact block"
+    assert "NOTHING was installed" in result.stderr
+    assert settings.read_text(encoding="utf-8") == before, "it changed the file"
+    assert stat.S_IMODE(settings.stat().st_mode) == 0o644, (
+        "the `present` arm's mode stamp ran on a file the merge refused")
+    assert not (tmp_path / ".local" / "bin").exists(), (
+        "the refusal must cost a whole install, not half of one")
+    for target in skill_paths(tmp_path):
+        assert not target.exists(), target
+
+
+@NEEDS_JQ
 def test_an_entry_that_merely_names_the_same_file_is_no_conflict(tmp_path):
     """…AND THE OTHER HALF OF THE SAME RULING. `lanes-edit.sh who` under
     `SessionStart` is somebody's own setting: it writes nothing, it is not this
@@ -1322,6 +1380,50 @@ def test_a_differing_guard_entry_refuses_and_places_nothing(tmp_path):
     assert "NOTHING was installed" in result.stderr
     assert GUARD_COMMAND in result.stderr, "the refusal prints the exact block"
     assert user_prompt_commands(tmp_path) == [rival], "it changed the file"
+    assert not (tmp_path / ".local" / "bin").exists(), (
+        "the refusal must cost a whole install, not half of one")
+
+
+@NEEDS_JQ
+def test_our_own_guard_entry_beside_a_rival_refuses_the_same_way(tmp_path):
+    """THE SAME ORDER ON THIS ARM, IN THE SAME COMMIT (#59).
+
+    The two reads are one question asked of two events, and the whole reason
+    they are a byte-for-byte mirror is that an arm answering something the other
+    does not is how a person comes to be policed for one entry of a pair and not
+    for the other. So the ordering #59 fixes is the pair's, not the
+    `SessionStart` arm's: with our guard entry beside a second writer of this
+    very hook, the run refuses, names the rival as well as the block it would
+    have placed, and installs nothing — two refusals for one prompt is the harm
+    either way round, and it does not become harmless because one of the two
+    writers is ours.
+    """
+    rival = "~/bin/other.sh guard"
+    settings = settings_of(tmp_path)
+    settings.parent.mkdir(parents=True)
+    before = json.dumps({"model": "opus", "hooks": {"UserPromptSubmit": [
+        {"hooks": [{"type": "command", "command": GUARD_COMMAND,
+                    "timeout": GUARD_TIMEOUT}]},
+        {"hooks": [{"type": "command", "command": rival, "timeout": 5}]}]}},
+        indent=2)
+    settings.write_text(before, encoding="utf-8")
+    os.chmod(settings, 0o644)
+
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "a UserPromptSubmit entry that runs `guard` with a" in result.stderr
+    assert "DIFFERENT command string" in result.stderr
+    assert rival in result.stderr, (
+        "the refusal must NAME the rival: this file carries ours too\n"
+        + result.stderr)
+    assert GUARD_COMMAND in result.stderr, "the refusal prints the exact block"
+    assert "NOTHING was installed" in result.stderr
+    assert settings.read_text(encoding="utf-8") == before, "it changed the file"
+    assert stat.S_IMODE(settings.stat().st_mode) == 0o644, (
+        "the `present` arm's mode stamp ran on a file the merge refused")
+    assert session_start_commands(tmp_path) == [], (
+        "the SessionStart entry would have merged cleanly, and must not be "
+        "placed while its pair refuses")
     assert not (tmp_path / ".local" / "bin").exists(), (
         "the refusal must cost a whole install, not half of one")
 

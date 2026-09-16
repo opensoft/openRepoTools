@@ -812,8 +812,26 @@ install_commands() {
 			if [ -e "$target" ]; then verb="updated at $target"; else verb="installed at $target"; fi
 			cp -- "$source" "$target"
 		fi
-		# Stamped every time: a copy that is not executable is not a command.
-		chmod 755 "$target"
+		# STAMPED EVERY TIME, AND ITS FAILURE IS A REFUSAL (#48). A copy that is
+		# not executable is not a command, and this was the ONE mode stamp in
+		# this file with no `die` beside it: under `set -e` a failure here left
+		# the shell's own 1, which this toolset spends on "findings were
+		# printed", as the answer from a run that was refusing with the commands
+		# before it already placed.
+		#
+		# AND NO OWNERSHIP PREFLIGHT IN FRONT OF IT, which is the decision
+		# `unplaceable_kind` already carries — search "WHAT `-w` DOES NOT PROVE"
+		# for the whole of it. `[ -O ]` is the question that would catch this
+		# first, and it is a guard no test in this suite can reach and one that
+		# would refuse a root `--install` into another user's home, where the
+		# stamp does in fact succeed. R-A9-15 is the ruling that a guard nobody
+		# can test is a guard nobody can rely on, so the stamp's own failure is
+		# the refusal, naming the file it could not mode.
+		chmod 755 "$target" ||
+			die "could not set mode 755 on $target, so that command is not executable.
+    Whatever the lines above report is placed; this one has its bytes and not its
+    mode, and the skills, the command files and the hook entries are not placed at
+    all."
 		placed=$((placed + 1))
 		say "$name: $verb"
 	done
@@ -1324,6 +1342,29 @@ $bad
     data.)"
 }
 
+# THE RIVALS THEMSELVES, FOR A REFUSAL TO NAME (#59). It is the conflict half of
+# the read in `plan_hook_merge` with the answer taken off: every command under
+# this event that runs this hook's verb AND IS NOT OURS, one per line and
+# indented into the refusal's block.
+#
+# ONE IMPLEMENTATION FOR BOTH ENTRIES, for the reason `unplaceable_kind` is one:
+# what differs between the two arms is the EVENT, OUR OWN STRING and the VERB a
+# rival is recognised by, and a second copy of this is how one arm comes to name
+# what the other cannot.
+#
+# IT MATTERS NOW IN A WAY IT DID NOT BEFORE. With `conflict` beating `present`, a
+# refused file may carry OUR entry as well as the rival — so "remove that entry"
+# with nothing named is a remedy a person can read as "remove the one this
+# installer just printed", which would leave the second writer exactly where it
+# is and take the working entry away instead.
+hook_rivals() {   # <settings> <event> <our command> <verb pattern>
+	jq -r --arg e "$2" --arg c "$3" --arg v "$4" '
+		[ (.hooks[$e] // [])[]? | (.hooks // [])[]? | .command // empty ]
+		| map(select(. != $c and test($v)))
+		| map("        " + .) | join("\n")' "$1" 2>/dev/null ||
+		printf '        (that file could not be re-read to name them)'
+}
+
 plan_hook_merge() {
 	local settings existing kind
 	settings="$(claude_home)/settings.json"
@@ -1417,10 +1458,31 @@ $(guard_block_text)"
 	# the same hook verb — and was merged beside, which fires the hook twice,
 	# the one harm the clause names. The verb is what collides; the file that
 	# carries it is not.
-	existing="$(jq -r --arg c "$HOOK_COMMAND" '
+	#
+	# AND THE RIVAL IS ASKED ABOUT FIRST, WHICH IS THE WHOLE OF #59. `present`
+	# was tested first, so a settings file carrying our exact entry AND a second
+	# writer of the same hook answered `present`: `--install` added nothing,
+	# said nothing, and left a person with the two writers this arm exists to
+	# refuse, with the run reporting success. Nothing was installed twice by
+	# such a run — with the exact entry there, there is nothing to add — but the
+	# state was never NAMED, and somebody who runs `--install` expecting it to
+	# police this hook was told everything was fine.
+	#
+	# WHICH IS WHY THE RIVAL TEST EXCLUDES OUR OWN STRING (`. != $c`) rather
+	# than being asked second: our entry is no rival to itself, and an arm that
+	# read it as one would refuse every re-run of `--install` on a workstation
+	# that had already taken it. `present` keeps the rest of its meaning — our
+	# entry there and nothing competing with it — and `conflict` means what it
+	# says whatever else the file carries.
+	#
+	# THE VERB IS SPELLED ONCE, in `hook_verb` here and `guard_verb` below: the
+	# answer and the list of rivals the refusal prints are the same question
+	# asked twice, and a pattern written twice is a pair that drifts.
+	local hook_verb='session-start'
+	existing="$(jq -r --arg c "$HOOK_COMMAND" --arg v "$hook_verb" '
 		[ (.hooks.SessionStart // [])[]? | (.hooks // [])[]? | .command // empty ] as $cmds
-		| if ($cmds | index($c)) then "present"
-		  elif ($cmds | map(select(test("session-start"))) | length) > 0 then "conflict"
+		| if ($cmds | map(select(. != $c and test($v))) | length) > 0 then "conflict"
+		  elif ($cmds | index($c)) then "present"
 		  else "absent" end' "$settings" 2>/dev/null || printf 'error')"
 
 	# AND THE SAME THREE ANSWERS FOR AMENDMENT 12's ENTRY, keyed on its own verb.
@@ -1434,20 +1496,32 @@ $(guard_block_text)"
 	# boundary on both sides: a command RUNNING `guard` collides, a file merely
 	# NAMED guard does not. That is R-A9-14's rule one event over — the verb is
 	# what collides; the file that carries it is not.
-	local existing_guard
-	existing_guard="$(jq -r --arg c "$GUARD_COMMAND" '
+	#
+	# THE ORDER IS THE ONE ABOVE'S, FOR THE REASON ABOVE (#59), and so is every
+	# other byte of this read: the two arms differ in the EVENT, in OUR OWN
+	# STRING and in the verb a rival is recognised by, and in nothing else. An
+	# arm that answered a question the other does not is how a person comes to
+	# be refused for one entry of a pair and not for the other.
+	local existing_guard guard_verb='(^|\s)guard(\s|$)'
+	existing_guard="$(jq -r --arg c "$GUARD_COMMAND" --arg v "$guard_verb" '
 		[ (.hooks.UserPromptSubmit // [])[]? | (.hooks // [])[]? | .command // empty ] as $cmds
-		| if ($cmds | index($c)) then "present"
-		  elif ($cmds | map(select(test("(^|\\s)guard(\\s|$)"))) | length) > 0 then "conflict"
+		| if ($cmds | map(select(. != $c and test($v))) | length) > 0 then "conflict"
+		  elif ($cmds | index($c)) then "present"
 		  else "absent" end' "$settings" 2>/dev/null || printf 'error')"
 
 	case "$existing" in
 	conflict)
 		die "$settings already carries a SessionStart entry that runs \`session-start\` with a
-    DIFFERENT command string. Exact-string match is the only idempotence this entry
-    has, so merging would fire the hook twice — and repairing a setting a person
-    meant is not an installer's to do. NOTHING was installed.
-    Remove that entry, then re-run. The entry this places, byte for byte:
+    DIFFERENT command string:
+$(hook_rivals "$settings" SessionStart "$HOOK_COMMAND" "$hook_verb")
+    Exact-string match is the only idempotence this entry has, so merging would fire
+    the hook twice — and repairing a setting a person meant is not an installer's to
+    do. A SECOND WRITER REFUSES WHETHER OR NOT OUR OWN ENTRY IS BESIDE IT: two writers
+    of one hook is the state this arm exists to refuse, and a file carrying both is
+    that state. NOTHING was installed.
+    Remove EVERY entry listed above — all of them are second writers of this hook,
+    and one left behind refuses the next run the same way — but not the block below,
+    which is this installer's own. Then re-run. The entry this places, byte for byte:
 $(hook_block_text)
     (Amendment 9's adoption act 6 removes the hand-installed entry on each
     workstation before the first \`--install\` that carries this.)"
@@ -1459,10 +1533,15 @@ $(hook_block_text)
 	case "$existing_guard" in
 	conflict)
 		die "$settings already carries a UserPromptSubmit entry that runs \`guard\` with a
-    DIFFERENT command string. Exact-string match is the only idempotence this entry
-    has, so merging would fire the name guard twice — two refusals for one prompt.
-    Repairing a setting a person meant is not an installer's to do, so
-    NOTHING was installed. Remove that entry, then re-run.
+    DIFFERENT command string:
+$(hook_rivals "$settings" UserPromptSubmit "$GUARD_COMMAND" "$guard_verb")
+    Exact-string match is the only idempotence this entry has, so merging would fire
+    the name guard twice — two refusals for one prompt. Repairing a setting a person
+    meant is not an installer's to do, and A SECOND WRITER REFUSES WHETHER OR NOT OUR
+    OWN ENTRY IS BESIDE IT: two writers of one hook is that state either way. So
+    NOTHING was installed. Remove EVERY entry listed above — all of them are second
+    writers of this hook, and one left behind refuses the next run the same way —
+    but not the block below, which is this installer's own. Then re-run.
     The entry this places, byte for byte:
 $(guard_block_text)"
 		;;
