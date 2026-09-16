@@ -2431,6 +2431,23 @@ if [ -n "$op_flag" ]; then
     die "--operation $op_flag is not lane $LANE's current restart operation, which is ${ri_op:-none} (state ${ri_state:-none}, generation ${ri_gen:-0}). A stale supervisor must never launch against a newer operation — nothing was renamed, written or started. Read it with:  lanes-edit.sh restart-intent $LANE" 2
 fi
 case "$ri_state" in
+  # AN INTENT THIS READER CANNOT UNDERSTAND REFUSES THE LAUNCH, AND DOES NOT
+  # QUIETLY RESUME (Copilot round 1 on openRepoTools#121). `lanes-edit.sh`
+  # answers `UNKNOWN-SCHEMA` where a newer tooling wrote the record, and that
+  # answer used to fall through this `case` to the ordinary resume-source
+  # resolution below — which is the SAFE half of the decision (it authorises no
+  # fresh session) sitting on top of the UNSAFE one: the lane whose intent that
+  # is has just had its pane killed by a `/ctx`, and the resume source waiting
+  # there is the transcript that `/ctx` PAUSED. Falling through would resume it.
+  # That is openRepoTools#94 exactly, reached down a second road.
+  #
+  # So it is a refusal, in the one shape Amendment 7(d) gives: a read that could
+  # not be made is never an answer. It costs a person the lane until the
+  # workstation's `lanes-edit.sh` is new enough to read the file — and the
+  # message says both ways out, which is what makes that recoverable rather than
+  # a wall.
+  UNKNOWN-SCHEMA)
+    die "lane $LANE has a restart intent this \`lanes-edit.sh\` cannot read: its schema is one this version does not know (\`lanes-edit.sh restart-intent $LANE\` answers UNKNOWN-SCHEMA). That is NOT 'no restart is in flight' — a read that could not be made is never an answer (Amendment 7(d)) — and starting anyway would resolve an ordinary resume source, which for a lane whose /ctx just killed its pane is the transcript that /ctx PAUSED. Nothing was renamed, written or started. Update this workstation's openRepoTools so it can read that record, or remove the intent once you know no restart is in flight:  lanes-edit.sh restart-intent $LANE" 2 ;;
   pending|starting)
     if [ "$ri_mode" = fresh-from-handoff ]; then
       # THE DIRECTORY IS COMPARED BEFORE ANYTHING IS TAKEN. `real_of` is this

@@ -9514,6 +9514,25 @@ EOF
     # THE FENCE, read under the same mutex the write takes, so that two
     # transitions cannot both read the intent before either writes it.
     acquire_lock
+    # A SCHEMA THIS WRITER DOES NOT KNOW IS NOT ITS RECORD TO REPLACE (Copilot
+    # round 1 on openRepoTools#121). The READ side already fails closed on one —
+    # it answers `UNKNOWN-SCHEMA` rather than reporting a launch it cannot
+    # understand — and the WRITE side walked straight past it: the fields it
+    # knows were copied forward, the ones it does not were dropped, and the file
+    # came out stamped `schema: 1`. A newer tooling's intent would have been
+    # silently rewritten as an older one's, which is the read-side protection
+    # undone by the other half of the same command. This is checked INSIDE the
+    # lock, with the fence, because the file may be replaced between a read and
+    # a write, and it refuses with 2 — not 7 — because 7 is *another act got
+    # there first, re-read and decide* and this is *this copy of the tooling
+    # must not touch this file at all*.
+    if [ -r "$sri_f" ]; then
+      sri_nows="$(lane_sidecar_field "$sri_f" schema 2>/dev/null || :)"
+      if [ -n "$sri_nows" ] && [ "$sri_nows" != "$LANE_RESTART_SCHEMA" ]; then
+        release_lock
+        die "lane $lane's restart intent is schema '$sri_nows' and this \`lanes-edit.sh\` writes schema $LANE_RESTART_SCHEMA. Nothing was written: taking a transition over it would copy forward the fields this version knows, drop the ones it does not, and stamp the file as an older schema — which is a newer tooling's record quietly replaced by an older one. Read it with a helper that knows that schema, or remove $sri_f once you know no restart is in flight." 2
+      fi
+    fi
     sri_now=""; sri_nowg=""; sri_nowo=""; sri_nowa=""
     if [ -r "$sri_f" ]; then
       sri_now="$(lane_sidecar_field "$sri_f" state)"

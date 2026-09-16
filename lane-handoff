@@ -215,8 +215,12 @@ lane-handoff [--restart | --exit | --in-process] [--late --at <UTC>]
                           requested by <uuid>@<host>/<container>.
 
 Exit: 0 written · 2 refused · 1 a read failed.
-      --supervise adds: 3 the launch failed and there was no terminal here to
-      offer the retry on · 4 indeterminate (a live child, readiness unconfirmed).
+      --supervise adds: 3 the launch failed before readiness and there was no
+      terminal here to offer the retry on · 4 the same, for a launch that ran
+      PAST the readiness deadline still alive and only then ended (the record
+      carries INDETERMINATE and the intent is retryable either way) · 143 and
+      129, a supervisor sent SIGTERM or SIGHUP, which marks the intent failed,
+      kills nothing, and says whether the child was still running.
 USAGE
 }
 
@@ -602,8 +606,13 @@ supervise_watch() {   # <lane> <operation> <generation> <pid file> <new> <old> <
 	# answer and not a failure. Nothing is killed (Amendment 8(f): ending
 	# somebody's process is not a boundary script's act), nothing is retried,
 	# and the lane is NOT marked running.
+	# FENCED ON THE GENERATION LIKE EVERY OTHER WRITE THIS OBSERVER MAKES. It is
+	# the same argument Copilot's round 1 makes about the failure write: an
+	# observer whose lane has moved on must not publish its verdict over a newer
+	# generation's record, and `$sw_gen` is the generation the supervisor
+	# CLAIMED rather than whatever is on disk by now.
 	LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$sw_lane" starting \
-		--expect starting --expect-operation "$sw_op" \
+		--expect starting --expect-operation "$sw_op" --expect-generation "$sw_gen" \
 		--reason "INDETERMINATE: ${sw_waited}s elapsed (deadline ${SUPERVISE_READY_SECONDS}s) with the child alive and readiness unconfirmed; ${READY_WHY:-no evidence}" >/dev/null 2>&1 || :
 	return 4
 }
@@ -661,12 +670,22 @@ supervise_argv() {   # <lane> <operation>
 # nobody will answer.
 #
 # 3 = reported, no terminal · 10 = reported, ask the person.
+# THE FAILURE IS FENCED ON THE GENERATION TOO, AND ON THE ONE THIS SUPERVISOR
+# CLAIMED (Copilot round 1 on openRepoTools#121). The readiness finalizer has
+# always carried `--expect-generation`; this write did not, so a supervisor
+# whose lane had moved on could publish its old failure over a newer
+# generation's record. The number has to be the one captured AT THE CLAIM and
+# not the one on disk now — re-reading it would read the newer generation and
+# match it, which is the stale write the fence exists to refuse.
 supervise_failed() {   # <lane> <operation> <reason>
 	sf_lane="$1"; sf_op="$2"; sf_why="$3"
+	sf_fence=()
+	[ -n "$SV_CLAIMED_GEN" ] && sf_fence=(--expect-generation "$SV_CLAIMED_GEN")
 	LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$sf_lane" failed \
 		--expect 'starting|pending' --expect-operation "$sf_op" \
+		${sf_fence[@]+"${sf_fence[@]}"} \
 		--reason "$sf_why" >/dev/null 2>&1 ||
-		note "the restart intent could not be marked failed (another operation may hold this lane now). Read it:  $prog --restart-status --lane $sf_lane"
+		note "the restart intent could not be marked failed — its state, operation or generation moved, so this supervisor's failure is not the current one to publish. Read it:  $prog --restart-status --lane $sf_lane"
 	say ""
 	say "RESTART FAILED — lane $sf_lane, operation $sf_op"
 	say "  $sf_why"
@@ -708,8 +727,25 @@ supervise_prompt() {   # <lane> <operation>
 # again under the same operation, generation, digest, directory and mode — the
 # spec's idempotent retry — and never because a child that ended is relaunched
 # on its own.
+# THE CHILD, AS ONE WORD, so the two spellings of its launch differ only in the
+# redirection that hands it this pane's stdin. It reads `sr_dir`, `sr_op`,
+# `sr_pidf` and `SUPERVISE_CMD` from the run it is called inside.
+supervise_child() {
+	( trap - INT QUIT
+	  if [ -n "$sr_dir" ] && [ "$sr_dir" != none ]; then
+		cd -- "$sr_dir" || exit 127
+	  fi
+	  LANE_START_FRESH=1 LANE_RESTART_OPERATION="$sr_op" \
+		exec sh -c 'printf "%s\n" "$$" > "$1"; shift; exec "$@"' _ "$sr_pidf" "${SUPERVISE_CMD[@]}" )
+}
+
 supervise_run() {   # <lane> <operation>
 	sr_lane="$1"; sr_op="$2"
+	# THIS PANE'S OWN STDIN, SAVED, so the background child below can be given
+	# it back. Where fd 0 cannot be duplicated the child is started without it,
+	# which is what a foreground child would have had anyway on such a shell.
+	SV_STDIN_SAVED=0
+	if exec 9<&0 2>/dev/null; then SV_STDIN_SAVED=1; fi
 	sr_pidf="$(mktemp "${TMPDIR:-/tmp}/lane-supervisor.XXXXXX" 2>/dev/null || printf '')"
 	[ -n "$sr_pidf" ] || die "no temporary file could be made to record the launch's pid, and without it this supervisor cannot tell a child that died from one that is starting. Nothing was started." 2
 	SV_PIDFILE="$sr_pidf"
@@ -735,6 +771,13 @@ supervise_run() {   # <lane> <operation>
 		*) die "lane $sr_lane's restart intent could not be claimed (\`set-restart-intent\` exited $sr_crc), and this supervisor will not launch without a fenced hold on operation $sr_op. Nothing was started." 2 ;;
 		esac
 		ri_load "$sr_lane" >/dev/null 2>&1 || :
+		# THE GENERATION THIS SUPERVISOR HOLDS, taken once, here, where the claim
+		# has just succeeded and the record is this act's. Every later write of
+		# this operation is fenced on THIS number rather than on whatever the file
+		# says at the time, which is what makes a superseded supervisor's write
+		# refuse instead of landing.
+		SV_CLAIMED_GEN="${RI_GEN:-0}"
+		case "$SV_CLAIMED_GEN" in '' | *[!0-9]*) SV_CLAIMED_GEN=0 ;; esac
 
 		if ! supervise_argv "$sr_lane" "$sr_op"; then
 			supervise_failed "$sr_lane" "$sr_op" "there is no launcher and no lane-start on PATH here, so nothing could be started"
@@ -757,21 +800,51 @@ supervise_run() {   # <lane> <operation>
 		say "  this supervisor stays in the pane: whatever the launch does, it will say so here."
 		say ""
 		: > "$sr_pidf"
-		supervise_watch "$sr_lane" "$sr_op" "${RI_GEN:-0}" "$sr_pidf" "$RI_NEW" "$RI_OLD" "$RI_PANE" &
+		supervise_watch "$sr_lane" "$sr_op" "$SV_CLAIMED_GEN" "$sr_pidf" "$RI_NEW" "$RI_OLD" "$RI_PANE" &
 		sr_watch=$!
 		sr_status=0
+		# THE CHILD RUNS IN THE BACKGROUND AND THIS PROCESS `wait`s ON IT, and
+		# that is not a preference either: **bash defers a trap until the
+		# foreground command it is running returns**. Measured — a `TERM` sent
+		# to a shell running `sleep 20` in the foreground does not reach its
+		# `TERM` trap for the whole twenty seconds, and the same shell with the
+		# sleep backgrounded and `wait`ed runs the trap in the same second. A
+		# supervisor whose child is an interactive Claude runs for hours, so a
+		# foreground child means the signal handling above would never fire when
+		# it is needed, which is the whole of Copilot round 1's finding.
+		#
+		# TWO THINGS A BACKGROUND JOB LOSES, AND BOTH ARE PUT BACK, because the
+		# child here is an interactive terminal program and neither loss is
+		# survivable for one:
+		#
+		#   * ITS STDIN. With job control off — which is every non-interactive
+		#     bash — an asynchronous command's stdin is redirected from
+		#     `/dev/null`. Measured. So fd 9 holds this pane's own stdin, saved
+		#     before the loop, and the child is started with `<&9`.
+		#   * ITS `INT` AND `QUIT`. Bash sets both to SIG_IGN for an
+		#     asynchronous command, and SIG_IGN SURVIVES `exec` — so Claude
+		#     would come up with Ctrl-C dead, in the pane a person just cleared
+		#     the context of. Measured: `SigIgn 0000000000000006` on the child
+		#     without the reset, `0000000000000000` with it. `trap - INT QUIT`
+		#     in the subshell restores the disposition this shell was entered
+		#     with, which is the default, and it does so even though this shell
+		#     has since set `trap '' INT` for itself.
+		#
 		# THE PID IS WRITTEN BY THE PROCESS THAT BECOMES THE CHILD, and `sh -c`
 		# is how, on bash 3.2 as well as on a modern one: `$$` inside it is
 		# that shell's pid, and the `exec` on the next word makes that pid the
 		# launch's own. `$BASHPID` would be the one-liner and macOS ships bash
 		# 3.2, which does not have it.
-		if [ -n "$sr_dir" ] && [ "$sr_dir" != none ]; then
-			( cd -- "$sr_dir" && LANE_START_FRESH=1 LANE_RESTART_OPERATION="$sr_op" \
-				exec sh -c 'printf "%s\n" "$$" > "$1"; shift; exec "$@"' _ "$sr_pidf" "${SUPERVISE_CMD[@]}" ) || sr_status=$?
+		# `9<&-` CLOSES THE SAVED COPY IN THE CHILD once it has become its
+		# stdin: the pane's descriptor is this process's bookkeeping and is no
+		# part of the environment an interactive Claude should be handed.
+		if [ "$SV_STDIN_SAVED" = 1 ]; then
+			supervise_child <&9 9<&- &
 		else
-			LANE_START_FRESH=1 LANE_RESTART_OPERATION="$sr_op" \
-				sh -c 'printf "%s\n" "$$" > "$1"; shift; exec "$@"' _ "$sr_pidf" "${SUPERVISE_CMD[@]}" || sr_status=$?
+			supervise_child &
 		fi
+		sr_child=$!
+		wait "$sr_child" || sr_status=$?
 		kill "$sr_watch" 2>/dev/null
 		wait "$sr_watch" 2>/dev/null
 		# WHAT THE RECORD SAYS NOW IS WHAT DECIDES, and never this process's
@@ -784,13 +857,38 @@ supervise_run() {   # <lane> <operation>
 			say "  A session that exited on purpose is not relaunched here — that is \`lane $sr_lane\`."
 			return 0
 		fi
+		# AND WHETHER IT WENT THROUGH `INDETERMINATE` IS PART OF THE ANSWER
+		# (Copilot round 1 on openRepoTools#121). The usage block promises
+		# `4 indeterminate`, and no path returned it: the observer's `return 4`
+		# is read by nothing, because the observer runs in the background and
+		# this process decides from the RECORD. So the record decides that too.
+		#
+		# THE `failed` TRANSITION STAYS, and it is the half Copilot asked to
+		# remove. `INDETERMINATE` is the answer for a child that is ALIVE at the
+		# deadline — the supervisor keeps waiting, kills nothing and marks
+		# nothing — and this branch is reached only once that child has EXITED.
+		# A launch that ended having never been confirmed is a failed launch by
+		# every reading, and it is retryable; leaving the intent `starting`
+		# there would wedge the lane in the one state neither a retry nor the
+		# next `/ctx` can move, which is the defect the signal handling above
+		# exists to close. What was owed was the DISTINCTION, and it is the
+		# exit status and the reason, not a different transition.
 		sr_why="the launch ended with status $sr_status before readiness was confirmed"
+		sr_end=3
 		case "$RI_REASON" in
-		INDETERMINATE:*) sr_why="the launch ran without readiness evidence and then ended with status $sr_status; $RI_REASON" ;;
+		INDETERMINATE:*)
+			sr_why="the launch was INDETERMINATE — it ran past the readiness deadline still alive, then ended with status $sr_status; $RI_REASON"
+			sr_end=4 ;;
 		esac
 		supervise_failed "$sr_lane" "$sr_op" "$sr_why"
 		sr_fs=$?
-		[ "$sr_fs" = 10 ] || return "$sr_fs"
+		# `10` IS "ASK THE PERSON" AND EVERY OTHER VALUE IS THE STATUS TO LEAVE
+		# WITH — except that an indeterminate end reports 4 rather than the 3
+		# `supervise_failed` returns for "reported, no terminal here".
+		if [ "$sr_fs" != 10 ]; then
+			[ "$sr_fs" = 3 ] && return "$sr_end"
+			return "$sr_fs"
+		fi
 		supervise_prompt "$sr_lane" "$sr_op" || return $?
 	done
 }
@@ -941,10 +1039,21 @@ fi
 # own front door. Where there is no terminal there is nobody to hold it for, and
 # the status is simply returned.
 SV_PIDFILE=""
+SV_SIGNALLED=0
+# EMPTY UNTIL A CLAIM HAS BEEN MADE, and then the generation that claim held.
+# A signal arriving before the claim must not fence a write on `0` — on a
+# workstation with openRepoTools#91 the lane's generation is whatever it is,
+# and `--expect-generation 0` against it would refuse the very write that keeps
+# the lane out of the wedged `starting` state.
+SV_CLAIMED_GEN=""
 sv_on_exit() {
 	sv_hs=$?
 	[ -z "$SV_PIDFILE" ] || rm -f -- "$SV_PIDFILE" 2>/dev/null
 	[ "$sv_hs" = 0 ] && return 0
+	# A SUPERVISOR SOMEBODY SIGNALLED AWAY IS NOT ONE ANYBODY IS WAITING TO
+	# READ. Holding the pane open for an Enter after a `tmux kill-pane` is a
+	# pane that will not close.
+	[ "$SV_SIGNALLED" = 1 ] && return 0
 	[ "${LANE_SUPERVISOR_NO_PROMPT:-0}" = 1 ] && return 0
 	[ -t 0 ] || return 0
 	printf '\n%s: this pane is held open so the lines above can be read (exit %s). Press Enter to close it. ' "$prog" "$sv_hs" >&2
@@ -952,8 +1061,80 @@ sv_on_exit() {
 	return 0
 }
 
+# A SUPERVISOR THAT IS SIGNALLED AWAY LEAVES A RECOVERABLE RECORD, AND KILLS
+# NOTHING (Copilot round 1 on openRepoTools#121). With only an `EXIT` trap, a
+# `TERM` to the pane root — `tmux kill-pane`, a logout, a person's `kill` —
+# ended this process with the intent still `starting`, which is the ONE state
+# nothing can recover from by itself: `--supervise` refuses to launch from it
+# (a second session of one lane is Amendment 18(h)'s collision), and the next
+# `/ctx` refuses too, because `--expect 'none|ready|failed'` is what stops an
+# ordinary context clear superseding an operation in flight. The lane was wedged
+# until somebody edited the file by hand, and `--restart-status` said
+# `IN FLIGHT: a supervisor holds this operation` about a supervisor that was
+# gone.
+#
+# SO THE SIGNAL WRITES `failed`, WHICH IS THE RETRYABLE END. It is honest —
+# this supervisor confirmed nothing — and it is safe even where the child is
+# still alive, because a retry is a NEW `--supervise` and that mode's own gate
+# reads `live-holder` before it launches anything and refuses on a live one,
+# naming `lane-end <lane> --retire <pid>`. The reason records which signal it
+# was and whether the child was still running, so the person reading
+# `--restart-status` from another window is told the thing that decides what to
+# do next.
+#
+# AND IT NEVER KILLS THE CHILD (Amendment 8(f): ending somebody's process is not
+# a boundary script's act). Where the signal was `tmux kill-pane` the child goes
+# with the pane anyway; where it was not, a running Claude is not this script's
+# to end.
+sv_signal() {   # <signal name> <exit status>
+	SV_SIGNALLED=1
+	# A SIGNAL BEFORE THIS PROCESS KNOWS WHICH OPERATION IT IS SUPERVISING has no
+	# record to write and says so: the traps are installed at the top of the mode,
+	# ahead of the arguments being checked, because a supervisor that could be
+	# signalled between those two lines and leave nothing behind is the same gap
+	# one instruction wide.
+	if [ -z "$lane" ] || [ -z "$operation" ]; then
+		say ""
+		say "$prog: SIG$1 before this supervisor had a lane and an operation to supervise — nothing was claimed, nothing was started and nothing is left behind."
+		exit "$2"
+	fi
+	sv_sg_child=""; sv_sg_alive="no child had been started"
+	if [ -n "$SV_PIDFILE" ] && [ -r "$SV_PIDFILE" ]; then
+		sv_sg_child="$(head -n 1 -- "$SV_PIDFILE" 2>/dev/null | tr -dc '0-9')"
+	fi
+	if [ -n "$sv_sg_child" ]; then
+		if kill -0 "$sv_sg_child" 2>/dev/null; then
+			sv_sg_alive="the launch (pid $sv_sg_child) was STILL RUNNING and was not killed"
+		else
+			sv_sg_alive="the launch (pid $sv_sg_child) had already ended"
+		fi
+	fi
+	sv_sg_fence=()
+	[ -n "$SV_CLAIMED_GEN" ] && sv_sg_fence=(--expect-generation "$SV_CLAIMED_GEN")
+	LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$lane" failed \
+		--expect 'pending|starting' --expect-operation "$operation" \
+		${sv_sg_fence[@]+"${sv_sg_fence[@]}"} \
+		--reason "the supervisor was sent SIG$1 before readiness was confirmed; $sv_sg_alive" \
+		>/dev/null 2>&1 || :
+	say ""
+	say "$prog: SIG$1 — this supervisor is leaving operation $operation on lane $lane."
+	say "  $sv_sg_alive."
+	say "  The restart intent is \`failed\` and retryable, and nothing was killed:"
+	say "    read it: $(quoted "$SELF_ABS") --restart-status --lane $lane"
+	say "    retry:   $(quoted "$SELF_ABS") --supervise --lane $lane --operation $operation"
+	exit "$2"
+}
+
 if [ "$do_supervise" = 1 ]; then
 	trap sv_on_exit EXIT
+	# `INT` IS THE CHILD'S AND NOT THIS PROCESS'S. Ctrl-C reaches the whole
+	# foreground process group, and a supervisor that exited on it would tear
+	# the pane down under a Claude that was merely interrupted — so this process
+	# ignores it and the child's own subshell puts it back to default before the
+	# exec, which is the one thing that keeps Ctrl-C working in that pane.
+	trap '' INT
+	trap 'sv_signal TERM 143' TERM
+	trap 'sv_signal HUP 129' HUP
 	[ -n "$lane" ] || die "--supervise needs the lane: $prog --supervise --lane <lane> --operation <id>" 2
 	[ -n "$operation" ] || die "--supervise needs the operation it was started for: $prog --supervise --lane $lane --operation <id>. A supervisor that took whatever intent it found would be a supervisor that launches a lane for an act somebody else is in the middle of." 2
 

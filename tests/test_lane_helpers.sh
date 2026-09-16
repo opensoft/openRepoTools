@@ -10018,11 +10018,31 @@ rm -f "$SV_STATE/repoSV-1/restart-intent.yaml.bak"
 run "$E" restart-intent repoSV-1
 is   "an intent whose schema this reader does not know still reads" "$rc" 0
 has  "…and says so rather than reporting a state it does not understand" "$out" "UNKNOWN-SCHEMA"
+# AND NO LAUNCH GOES AHEAD AT ALL (Copilot round 1 on openRepoTools#121). An
+# intent this reader cannot understand used to fall through to the ordinary
+# resume-source resolution, which is the SAFE half of the decision sitting on
+# top of the unsafe one: it authorises no FRESH session, and the resume source
+# waiting for a lane whose /ctx just killed its pane is the transcript that /ctx
+# PAUSED. That is openRepoTools#94 reached down a second road, so it refuses —
+# a read that could not be made is never an answer (Amendment 7(d)).
 : > "$FAKE_CLAUDE_LOG"
 run env PATH="$A17PATH" FAKE_TMUX_WINDOW="svsess:@31" CLAUDE_PROFILE_NAME=team-05a \
     "$START" --dir "$SV_DIR" repoSV-1 --no-launch
-is   "…and no launch treats it as authorising a fresh session" "$rc" 0
-has  "…so the ordinary resume source decides" "$out" "--resume"
+is   "…and a launch of that lane REFUSES rather than resolving a resume source" "$rc" 2
+has  "…saying a read that could not be made is not 'no restart in flight'" "$err" "Amendment 7(d)"
+has  "…and naming what resuming anyway would have opened" "$err" "the transcript that /ctx PAUSED"
+hasnt "…and resolving no resume source at all" "$out" "--resume"
+has  "…while naming both ways out of it" "$err" "Update this workstation's openRepoTools"
+
+# AND THE WRITER WILL NOT REPLACE IT EITHER. The read side failing closed while
+# the write side copied its known fields forward and stamped `schema: 1` over
+# the rest is the read-side protection undone by the other half of one command.
+run "$E" set-restart-intent repoSV-1 failed --expect starting --reason "over a schema this writer does not know"
+is   "a transition over an unknown schema is refused" "$rc" 2
+has  "…naming the schema it found and the one it writes" "$err" "is schema '99'"
+has  "…and what it would have cost" "$err" "quietly replaced by an older one"
+is   "…leaving the record untouched" \
+     "$(grep -c '^schema: 99' "$SV_STATE/repoSV-1/restart-intent.yaml" || :)" 1
 # PUT IT BACK, because the supervisor cases below are asked on this same lane:
 # a `starting` intent is what proves a second supervisor refuses rather than
 # launching a second session of one lane.
@@ -10329,6 +10349,25 @@ run "$E" restart-intent repoSV-3
 has  "…under the same operation" "$out" "$SV_OP"
 has  "…with the attempt incremented" "$out" "$(printf 'attempt\t2')"
 
+# EVERY WRITE THIS SUPERVISOR MAKES OF ITS OWN OPERATION IS FENCED ON THE
+# GENERATION TOO (Copilot round 1 on openRepoTools#121). The readiness finalizer
+# always carried `--expect-generation`; the failure write, the signal write and
+# the INDETERMINATE note did not, so a supervisor whose lane had moved on could
+# publish an old verdict over a newer generation's record — the stale-finalizer
+# shape, reached from the failure side instead of the success side.
+#
+# AND THE NUMBER IS THE ONE CLAIMED, NOT THE ONE ON DISK. Re-reading it at write
+# time would read the NEWER generation and match it, which is exactly the write
+# the fence exists to refuse; `SV_CLAIMED_GEN` is taken once, where the claim
+# succeeded. This is asserted over the source because the property is *no write
+# is left unfenced* — a behaviour case can only ever show that the writes it
+# happens to name are fenced.
+is   "every fenced intent write in lane-handoff fences on the generation as well as the operation" \
+     "$(grep -c -- '--expect-generation "' "$SRC_DIR/lane-handoff" || :)" \
+     "$(grep -c -- '--expect-operation "' "$SRC_DIR/lane-handoff" || :)"
+is   "…and that is not vacuously none of them" \
+     "$( [ "$(grep -c -- '--expect-generation "' "$SRC_DIR/lane-handoff" || :)" -ge 4 ] && echo yes || echo no )" yes
+
 # ------------------------- 6. the supervisor: a launch that BECOMES READY
 
 SV_READY_SRC="$SANDBOX/sv-ready-record.json"
@@ -10427,8 +10466,22 @@ chmod +x "$SV_BIN/pclaude-quiet"
 run env PATH="$SVPATH" PCLAUDE="$SV_BIN/pclaude-quiet" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" \
     LANE_SUPERVISOR_READY_SECONDS=4 "$SV_LANE_HANDOFF" \
     --supervise --lane repoSV-3 --operation "$SV_OP"
-is   "a child that stays alive without readiness evidence is INDETERMINATE, not running" "$rc" 3
+is   "a child that stays alive without readiness evidence is INDETERMINATE, not running" "$rc" 4
 has  "…and the supervisor says which it was" "$out" "INDETERMINATE"
+# 4 AND NOT 3, WHICH IS THE DISTINCTION THE USAGE BLOCK PROMISES AND NO PATH
+# USED TO RETURN (Copilot round 1 on openRepoTools#121). The observer's own
+# `return 4` is read by nothing — it runs in the background and the record is
+# what decides — so the record decides this too. The `failed` TRANSITION stays:
+# INDETERMINATE is the answer for a child that is ALIVE at the deadline, and
+# this branch is reached only once that child has exited, which is a launch that
+# ended having never been confirmed and is retryable. Leaving it `starting`
+# would wedge the lane in the one state neither a retry nor the next /ctx can
+# move.
+has  "…as a launch that ran PAST the deadline and only then ended" "$out" "ran past the readiness deadline still alive"
+run env PATH="$SVPATH" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" \
+    "$SV_LANE_HANDOFF" --restart-status --lane repoSV-3
+is   "…and the retry surface is open on it" "$rc" 0
+has  "…as a failed restart with one line to retry" "$out" "RETRY:"
 run "$E" restart-intent repoSV-3
 hasnt "…the lane was never marked ready on a launch nothing proved" "$out" "$(printf 'state\tready')"
 has  "…the deadline is in the record for a reader in another window" "$out" "INDETERMINATE"
