@@ -1629,7 +1629,13 @@ wip_fetch_template_file() {
 wip_init() {
 	local config target checkout ref rel dest seeded=0 owed=0 kind
 	local existing_repo existing_path
-	local ancestor rest comp staged_mode
+	local ancestor rest comp staged_mode index_tag
+	# THE TEMPLATE PATHS THIS CHECKOUT HAS IN HEAD AND NOT ON DISK, because the
+	# index marks them `skip-worktree` (#69). Counted as well as collected, for
+	# the reason `written` is: an empty array expanded as `"${sparse_paths[@]}"`
+	# is an UNBOUND VARIABLE under `set -u` in the bash 3.2 macOS ships.
+	local sparse=0 sparse_paths
+	sparse_paths=()
 	# THE PATHS THE SEED OWES THIS CHECKOUT, which is what step 8 stages and
 	# commits and the whole of what it commits: the ones step 7 wrote (`seeded`)
 	# and the ones an earlier run wrote and could not commit (`owed`). Two
@@ -2086,6 +2092,44 @@ $(sed -e 's/^/    /' -- "$WIP_LAST_OUT")
     Commit, stash or remove that path, then re-run:
         openRepoTools wip init"
 				fi
+			else
+				# ---- A PATH HEAD CARRIES THAT IS NOT ON DISK BECAUSE THE INDEX
+				# SAYS SO IS NAMED, NOT SEEDED AND NOT SILENTLY PASSED (#69).
+				#
+				# `skip-worktree` — which is also what `git sparse-checkout`
+				# sets — tells git not to compare the worktree at that path at
+				# all: HEAD carries it, the stage-0 entry carries it, `git
+				# status` is clean, and the file is nonetheless physically
+				# absent. That answers this branch's question exactly as a
+				# person's own deliberate `git rm` does, and the principle above
+				# still stands — a template path HEAD already carries is the
+				# person's, and this command has never modified a committed file
+				# — so it is still not seeded, not written into and not
+				# committed for. What it is not is INVISIBLE: the run would
+				# otherwise print "the workspace already carries every template
+				# file" and write the pointer file, while a file this command
+				# seeds and the lane tooling reads is not on disk. So it is
+				# counted and said, and the person decides.
+				#
+				# `ls-files -v`'s tag is `S` for skip-worktree and the LOWERCASE
+				# `s` where that entry is also assume-unchanged — `-v`'s
+				# lowercase means assume-unchanged, whatever the letter — and
+				# BOTH are this case. `h`, assume-unchanged ALONE, is not: that
+				# bit is a person telling git to stop stat-ing a path they own
+				# and keep on disk, not a checkout that never materialized one,
+				# and naming it "skip-worktree" would be false. An ordinary
+				# tracked path whose file a person simply deleted is `H`, which
+				# `git status` reports for itself.
+				if [ ! -e "$checkout/$rel" ] && [ ! -L "$checkout/$rel" ]; then
+					index_tag="$(git -C "$checkout" ls-files -v -- "$rel" 2>/dev/null |
+						awk 'NR == 1 { print $1 }' || :)"
+					case "$index_tag" in
+					S | s)
+						sparse=$((sparse + 1))
+						sparse_paths+=("$rel")
+						;;
+					esac
+				fi
 			fi
 			continue
 		fi
@@ -2106,6 +2150,15 @@ $(sed -e 's/^/    /' -- "$WIP_LAST_OUT")
 		say "  seeded $seeded of ${#WIP_TEMPLATE_FILES[@]} template files from $SHAPE_REPOSITORY @ $ref"
 	else
 		say "  the workspace already carries every template file; none was replaced"
+	fi
+	# THE ONE LINE #69 IS FOR, and the whole of what this command does about it.
+	if [ "$sparse" -gt 0 ]; then
+		for rel in "${sparse_paths[@]}"; do
+			say "  $rel: HEAD carries it, the index marks it skip-worktree, and it is not on disk"
+		done
+		say "      (a sparse checkout leaves a tracked path there and off the disk; nothing"
+		say "       was written or committed at it. \`git update-index --no-skip-worktree --\`"
+		say "       that path, or \`git sparse-checkout\`, is what brings it back.)"
 	fi
 
 	# ---- step 8: COMMIT AND PUSH — AND THAT PUSH IS THE RULESET PROBE.

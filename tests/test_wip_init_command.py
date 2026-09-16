@@ -1277,6 +1277,60 @@ def test_a_template_path_staged_at_another_mode_is_refused_not_restaged(
         "the pointer file was written by a run that refused")
 
 
+def test_a_skip_worktree_template_path_is_named_and_never_seeded(tmp_path):
+    """A PATH HEAD CARRIES AND THE DISK DOES NOT IS NOT THE SAME AS A PATH
+    THAT IS SIMPLY THERE (#69).
+
+    `skip-worktree` — which is also what `git sparse-checkout` sets — tells
+    git not to compare the worktree at that path at all: HEAD carries it, the
+    stage-0 entry carries it, `git status` is clean, and the file is
+    physically absent. That answered step 7's outer question exactly as a
+    person's own deliberate `git rm` does, so the run `continue`d past it,
+    counted it as neither seeded nor owed, printed "the workspace already
+    carries every template file" and wrote the pointer file — while a
+    template path this command seeds, and the lane tooling reads, was not on
+    disk at all.
+
+    The principle above still stands, so the answer is not to seed over it:
+    a template path HEAD already carries is the person's, and this command
+    has never modified a committed file. What it stops being is INVISIBLE.
+    It is named in the summary, in one line, and nothing is written, staged
+    or committed for it.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout = adopted_checkout(tmp_path, home, env)
+    before_head = head_of(checkout)
+
+    lanes = checkout / "lanes" / "LANES.md"
+    subprocess.run(["git", "-C", str(checkout), "update-index",
+                    "--skip-worktree", "--", "lanes/LANES.md"], check=True)
+    lanes.unlink()
+    clean = subprocess.run(["git", "-C", str(checkout), "status", "--porcelain"],
+                           capture_output=True, text=True, check=True)
+    assert clean.stdout == "", (
+        f"skip-worktree is supposed to make this invisible to status: "
+        f"{clean.stdout!r}")
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ("lanes/LANES.md: HEAD carries it, the index marks it "
+            "skip-worktree, and it is not on disk") in result.stdout, (
+        result.stdout)
+    assert not lanes.exists(), (
+        "the seed wrote into a path the index keeps off the disk")
+    assert staged_in(checkout) == "", (
+        f"something was staged for it: {staged_in(checkout)!r}")
+    assert head_of(checkout) == before_head, (
+        "a commit was made for a path HEAD already carries")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed for a path HEAD already carries")
+    # AND THE RUN STILL FINISHES: this is a line to read, not a refusal.
+    assert (home / ".agents" / "workspace.yaml").exists(), (
+        "the run stopped over a path it only had to name")
+
+
 # --- one answer to one question, across the seam between two toolsets -------
 
 #: (name, the two yaml lines as a template, whether both sides must ACCEPT).
