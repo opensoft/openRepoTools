@@ -553,6 +553,33 @@ def adopted_checkout(tmp_path: Path, home: Path, env: dict) -> Path:
     return checkout
 
 
+def adopted_checkout_without(tmp_path: Path, home: Path, env: dict,
+                             rel: str = "handoffs/README.md"):
+    """An adopted checkout HEAD no longer carries `rel` in, and the template's
+    own bytes at that path — `(checkout, template_bytes, head)`.
+
+    EVERY TEST THAT REACHES STEP 7'S OWED-CANDIDATE BRANCH NEEDS THE SAME
+    THREE THINGS, and building them once per test is how two of them come to
+    differ in a way nobody meant. Step 7's outer test asks `HEAD:$rel` before
+    anything else, so a template path HEAD still carries never reaches that
+    branch at all: removing it from HEAD — committed and pushed, the way a
+    person's own `git rm` leaves a workspace — is the only way in. The bytes
+    are read BEFORE the removal because they are what this command's own seed
+    wrote there, which is exactly what "an earlier run's own leftover" looks
+    like, and `head` is what every refusal below is then checked against. The
+    step 6a test takes it too, for the one of the three it does need: a
+    template file that is genuinely missing, so "nothing was written" is a
+    question the checkout can answer.
+    """
+    checkout = adopted_checkout(tmp_path, home, env)
+    template_bytes = (checkout / rel).read_text(encoding="utf-8")
+    for args in (["rm", "-q", "--", rel],
+                 ["commit", "-q", "-m", f"somebody removed {rel}"],
+                 ["push", "-q", "origin", "HEAD:main"]):
+        subprocess.run(["git", "-C", str(checkout), *args], check=True)
+    return checkout, template_bytes, head_of(checkout)
+
+
 @pytest.mark.parametrize("state", ["untracked", "modified", "deleted"])
 def test_an_adopted_checkout_with_unrelated_changes_is_refused(tmp_path, state):
     """`git add -A -- .` PUBLISHED WHATEVER THE WORKTREE HAPPENED TO CARRY
@@ -804,16 +831,8 @@ def test_a_staged_edit_at_a_missing_path_is_refused_even_when_the_worktree_reads
     """
     home = tmp_path / "home"
     env = fake_gh(tmp_path)
-    checkout = adopted_checkout(tmp_path, home, env)
-    # What the template substitutes to, captured from the first run's own
-    # seed before the path is removed from HEAD below.
-    template_bytes = (checkout / "handoffs" / "README.md").read_text(
-        encoding="utf-8")
-    for args in (["rm", "-q", "--", "handoffs/README.md"],
-                 ["commit", "-q", "-m", "somebody removed the handoffs README"],
-                 ["push", "-q", "origin", "HEAD:main"]):
-        subprocess.run(["git", "-C", str(checkout), *args], check=True)
-    before_head = head_of(checkout)
+    checkout, template_bytes, before_head = adopted_checkout_without(
+        tmp_path, home, env)
 
     foreign = checkout / "handoffs" / "README.md"
     foreign.parent.mkdir(parents=True, exist_ok=True)
@@ -865,14 +884,8 @@ def test_a_symlink_at_a_missing_template_path_is_refused_not_followed(
     """
     home = tmp_path / "home"
     env = fake_gh(tmp_path)
-    checkout = adopted_checkout(tmp_path, home, env)
-    template_bytes = (checkout / "handoffs" / "README.md").read_text(
-        encoding="utf-8")
-    for args in (["rm", "-q", "--", "handoffs/README.md"],
-                 ["commit", "-q", "-m", "somebody removed the handoffs README"],
-                 ["push", "-q", "origin", "HEAD:main"]):
-        subprocess.run(["git", "-C", str(checkout), *args], check=True)
-    before_head = head_of(checkout)
+    checkout, template_bytes, before_head = adopted_checkout_without(
+        tmp_path, home, env)
 
     link = checkout / "handoffs" / "README.md"
     link.parent.mkdir(parents=True, exist_ok=True)
@@ -1115,15 +1128,11 @@ def test_a_git_status_this_command_cannot_run_is_refused_not_read_as_clean(
     """
     home = tmp_path / "home"
     env = fake_gh(tmp_path)
-    checkout = adopted_checkout(tmp_path, home, env)
     # A template file the workspace no longer has, so this run HAS a byte to
     # write the moment the gate lets it through — the thing the assertion
-    # below can then look for.
-    for args in (["rm", "-q", "--", "handoffs/README.md"],
-                 ["commit", "-q", "-m", "somebody removed the handoffs README"],
-                 ["push", "-q", "origin", "HEAD:main"]):
-        subprocess.run(["git", "-C", str(checkout), *args], check=True)
-    before_head = head_of(checkout)
+    # below can then look for. (Its template bytes are not this test's
+    # question: what it asks is whether anything was written at all.)
+    checkout, _, before_head = adopted_checkout_without(tmp_path, home, env)
     (checkout / ".git" / "index").write_bytes(b"not an index at all, garbage\n")
 
     result = run_wip(home, extra=env)
@@ -1241,14 +1250,8 @@ def test_a_template_path_staged_at_another_mode_is_refused_not_restaged(
     """
     home = tmp_path / "home"
     env = fake_gh(tmp_path)
-    checkout = adopted_checkout(tmp_path, home, env)
-    template_bytes = (checkout / "handoffs" / "README.md").read_text(
-        encoding="utf-8")
-    for args in (["rm", "-q", "--", "handoffs/README.md"],
-                 ["commit", "-q", "-m", "somebody removed the handoffs README"],
-                 ["push", "-q", "origin", "HEAD:main"]):
-        subprocess.run(["git", "-C", str(checkout), *args], check=True)
-    before_head = head_of(checkout)
+    checkout, template_bytes, before_head = adopted_checkout_without(
+        tmp_path, home, env)
 
     owed = checkout / "handoffs" / "README.md"
     owed.parent.mkdir(parents=True, exist_ok=True)
