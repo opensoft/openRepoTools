@@ -10017,6 +10017,234 @@ is    "…and the lane it just bound is RUNNING under the act that confirmed it"
       "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "state" { print $2 }')" RUNNING
 
 
+# ---- 11. the six fences of the review round (Copilot round 5 on #97)
+#
+# EACH OF THESE IS ONE OF THE FENCES THIS CAPABILITY EXISTS FOR, and every one
+# of them was a hole in the first implementation: a follow-up that read the
+# generation and replaced the snapshot outside the mutex and outside any fence
+# of its own; two writers that walked straight past the fail-closed schema check
+# the reader beside them keeps; an inventory whose generation and operation were
+# written into every sidecar and compared with nothing; a handoff that made a
+# second observation of its own, with its own error handling; an inventory
+# reader that read every `*.yaml` under `trees/` whatever it claimed to be; and
+# an observation that turned a git read which FAILED into `unknown`, `none` or a
+# `0` that reads as *everything here is published*.
+#
+# The cases below write object-log lines, and `lanes-edit.sh` refuses a write on
+# a checkout it cannot rebase. The sections above leave refreshed handoffs
+# uncommitted on purpose, because those cases are about them; this one is about
+# the fences, so the checkout is committed first and that refusal is out of the
+# way — the same thing the workstation-seam section below does, for the same
+# reason.
+git -C "$WIP" add -A >/dev/null 2>&1
+git -C "$WIP" commit -q -m "commit the sandbox's pending handoffs before the fence cases" >/dev/null 2>&1 || :
+
+# (a) A SNAPSHOT THIS HELPER CANNOT READ IS NEVER REPLACED BY ONE IT CAN.
+# `repoRC-3` carries the `schema: 999` file section 8 wrote. A reader that fails
+# closed beside a writer that reads the raw fields and renames its own file over
+# the top protects nothing: the record an older helper could not read is exactly
+# the record it would destroy, and no later reader can undo that.
+rc3_sum="$(cksum < "$RC_STATE_ROOT/repoRC-3/lane-state.yaml")"
+run "$E" set-lane-state repoRC-3 RUNNING --owner "$RC_ID"
+is    "a writer meeting a snapshot whose schema it does not write REFUSES" "$rc" 1
+has   "…naming what it found" "$err" "records schema 999"
+is    "…and the file it would have replaced is byte for byte what it was" \
+      "$(cksum < "$RC_STATE_ROOT/repoRC-3/lane-state.yaml")" "$rc3_sum"
+run env LANES_LANE=repoRC-3 LANES_SESSION="$RC_ID" "$E" log RESUMED lane:repoRC-3 '→' "dir $RC_DIR; profile team-01a" "a resume that meets a snapshot it cannot read"
+is    "…the event line itself still lands, because the lifecycle never fails the event" "$rc" 0
+has   "…and the follow-up says why it wrote nothing" "$err" "schema this helper does not write"
+is    "…having left that snapshot alone too" \
+      "$(cksum < "$RC_STATE_ROOT/repoRC-3/lane-state.yaml")" "$rc3_sum"
+
+# (b) A FOLLOW-UP WHOSE LANE MOVED UNDER IT WRITES NOTHING. The window is real
+# and it is not small: `write_event` appends the line, commits it and pushes it
+# BEFORE the snapshot is moved, and a lane can be recovered by somebody else
+# inside it. The `post-commit` hook below is that somebody — it moves the
+# snapshot by hand, with no helper and no mutex, in the middle of the write — so
+# this case is a SCHEDULE and not a race.
+rc_seed_handoff repoRC-7
+git -C "$WIP" add -- handoffs/repoRC >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed repoRC-7's handoff" >/dev/null 2>&1 || :
+rc_row repoRC-7 "harness \`$RC_ID\`"
+rc_seed_log repoRC-7
+run "$E" set-lane-state repoRC-7 RUNNING --owner "$RC_ID" --agent claude --profile team-01a
+is    "the lane a delayed write will be about is RUNNING" "$rc" 0
+mkdir -p "$WIP/.git/hooks"
+cat > "$WIP/.git/hooks/post-commit" <<HOOK
+#!/bin/sh
+[ -f "$SANDBOX/rc7-interleave" ] || exit 0
+rm -f "$SANDBOX/rc7-interleave"
+printf 'schema: 1\nlane: repoRC-7\nstate: SWAPPING\ngeneration: 9\noperation: op-somebody-elses-recovery\nowner: $RC_ID2\nagent: claude\nprofile: team-09z\nworkstation: Eagle\nkind: clear\nupdated: 2026-09-15T12:00:00Z\n' > "$RC_STATE_ROOT/repoRC-7/lane-state.yaml"
+exit 0
+HOOK
+chmod +x "$WIP/.git/hooks/post-commit"
+: > "$SANDBOX/rc7-interleave"
+run env LANES_LANE=repoRC-7 LANES_SESSION="$RC_ID2" "$E" log RESUMED lane:repoRC-7 '→' "dir $RC_DIR; profile team-09z" "a resume overtaken while it was being written"
+rc7_err="$err"
+is    "the delayed RESUMED's own line still lands" "$rc" 0
+has   "…and the follow-up says the lane moved under it" "$rc7_err" "the lane lifecycle moved under this RESUMED"
+run "$E" lane-state repoRC-7
+is    "…the lane another act took to SWAPPING mid-write is STILL SWAPPING" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "state" { print $2 }')" SWAPPING
+is    "…at the generation that act gave it, never overwritten by a write that began before it" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "generation" { print $2 }')" 9
+rm -f "$WIP/.git/hooks/post-commit"
+
+# (c) AN OBSERVATION FILED UNDER AN OPERATION THE LANE HAS MOVED PAST IS
+# REFUSED. The pair was written into every sidecar from the first commit of this
+# capability and read by nothing, so a handoff that stalled while a recovery
+# advanced the lane filed its superseded poll straight over the current one.
+run "$E" lane-state repoRC-5
+rc5_gen="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "generation" { print $2 }')"
+rc5_op="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "operation" { print $2 }')"
+rc5_w1head="$(git -C "$RC_DIR/.claude/worktrees/w1" rev-parse HEAD)"
+run "$E" set-lane-tree repoRC-5 "$RC_DIR/.claude/worktrees/w1" --checkout "$RC_DIR" \
+    --branch feat/rc1 --head 0000000000000000000000000000000000000000 --upstream none \
+    --dirty 0 --unpushed 0 --generation "$rc5_gen" --operation op-a-superseded-handoff
+is    "an inventory write whose operation is not the lane's is refused with 7" "$rc" 7
+has   "…saying a superseded reading is not filed where the current one belongs" "$err" "superseded reading"
+run "$E" lane-trees repoRC-5
+is    "…and the reading that was there is the one that is there" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$2 ~ /worktrees\/w1$/ { print $4 }')" "$rc5_w1head"
+run "$E" set-lane-tree repoRC-5 "$RC_DIR/.claude/worktrees/w1" --checkout "$RC_DIR" \
+    --branch feat/rc1 --head "$rc5_w1head" --upstream none --dirty 1 --unpushed 0 \
+    --generation "$rc5_gen" --operation "$rc5_op"
+is    "…while the operation the lane IS on records its observation" "$rc" 0
+
+# (d) ONE IMPLEMENTATION OF THE OBSERVATION, and the proof is a value only that
+# one produces. A branch whose upstream is CONFIGURED and whose remote-tracking
+# ref is not in this checkout — the ordinary state of a branch whose remote was
+# deleted after its merge — has `unknown` unpushed, never the `0` that a
+# `git log @{u}.. | grep -c .` of the caller's own answers and that reads as
+# *everything here is published*.
+git -C "$RC_DIR/.claude/worktrees/w1" config branch.feat/rc1.remote origin
+git -C "$RC_DIR/.claude/worktrees/w1" config branch.feat/rc1.merge refs/heads/feat/rc1
+run "$E" lane-tree-now "$RC_DIR/.claude/worktrees/w1"
+is    "lane-tree-now answers for a real checkout" "$rc" 0
+is    "…naming the upstream that IS configured rather than 'none'" \
+      "$(printf '%s' "$out" | awk -F'\037' '{print $3}')" "origin/feat/rc1"
+is    "…and 'unknown' for a count against a ref this checkout does not have" \
+      "$(printf '%s' "$out" | awk -F'\037' '{print $5}')" "unknown"
+run "$E" lane-tree-now "$RC_DIR/.claude/worktrees/there-is-nothing-here"
+is    "…8 where there is no checkout at the path" "$rc" 8
+run "$E" lane-tree-now relative/path
+is    "…and 64 for a relative path, which names whatever directory the caller happens to be in" "$rc" 64
+# A BRANCH WITH NO COMMIT YET IS A STATE, NOT A BROKEN REPOSITORY — and it is
+# the one `rev-parse --abbrev-ref HEAD` refuses exactly as it refuses a corrupt
+# HEAD, so `symbolic-ref` is what tells the two apart. Outside both lane roots,
+# so it joins nobody's sweep.
+mkdir -p "$HOME/projects/rc-unborn"
+git init -q -b main "$HOME/projects/rc-unborn"
+run "$E" lane-tree-now "$HOME/projects/rc-unborn"
+is    "a branch with no commit yet is answered, not refused" "$rc" 0
+is    "…with 'unborn' for the head no commit has given it" \
+      "$(printf '%s' "$out" | awk -F'\037' '{print $2}')" "unborn"
+is    "…and the branch it is on all the same" \
+      "$(printf '%s' "$out" | awk -F'\037' '{print $1}')" "main"
+
+run env LANE_HANDOFF_NO_TMUX=1 LANES_EDIT="$E" CLAUDE_CODE_SESSION_ID="$RC_ID2" \
+    CLAUDE_PROFILE_NAME=team-09z "$HANDOFF_CMD" --lane repoRC-7 clear
+is    "a handoff over a lane another act left SWAPPING still completes" "$rc" 0
+has   "…and its WRITERS section carries the helper's own reading of that writer" "$out" "unknown unpushed"
+run "$E" lane-trees repoRC-7
+is    "…which is the reading its sidecar carries too, because the two are ONE observation" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$2 ~ /worktrees\/w1$/ { print $7 }')" "unknown"
+run env LANES_LANE=repoRC-7 LANES_SESSION="$RC_ID" "$E" log RESUMED lane:repoRC-7 '→' "dir $RC_DIR; profile team-01a" "the next session"
+run "$E" lane-reconcile repoRC-7
+has   "…and an inventory taken under an earlier generation SAYS so, rather than reading as current" \
+      "$out" "observed under generation"
+is    "…while the tree whose unpushed count cannot be made is classed by that, never as published" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "TREE" && $4 ~ /worktrees\/w1$/ { print $3 }')" \
+      "dirty+unpushed-unknown"
+
+# (e) A TREE SIDECAR THIS READER DOES NOT KNOW IS SAID AND NEVER PARSED. Until
+# this round every `*.yaml` under `trees/` was read field by field whatever it
+# claimed to be — so a record written by a newer tooling was reported as an
+# ordinary observation, in fields this reader was guessing at.
+run "$E" lane-trees repoRC-5
+rc5_w1_id="$(printf '%s\n' "$out" | awk -F'\037' '$2 ~ /worktrees\/w1$/ { print $1 }')"
+is    "the writer's sidecar has an id derived from its path" \
+      "$( [ -n "$rc5_w1_id" ] && echo yes || echo no )" "yes"
+printf 'schema: 999\ntree: %s\npath: %s\nbranch: feat/wonderland\ndirty: 0\nunpushed: 0\n' \
+  "$rc5_w1_id" "$RC_DIR/.claude/worktrees/w1" > "$RC_STATE_ROOT/repoRC-5/trees/$rc5_w1_id.yaml"
+run "$E" lane-reconcile repoRC-5
+is    "a tree sidecar written by a newer tooling is UNKNOWN-SCHEMA, not an observation" \
+      "$(printf '%s\n' "$out" | awk -F'\037' -v id="$rc5_w1_id" '$1 == "TREE" && $2 == id { print $3 }')" "unknown-schema"
+hasnt "…and none of its fields is read, so nothing is compared against them" "$out" "feat/wonderland"
+rc5w1_sum="$(cksum < "$RC_STATE_ROOT/repoRC-5/trees/$rc5_w1_id.yaml")"
+run "$E" set-lane-tree repoRC-5 "$RC_DIR/.claude/worktrees/w1" --checkout "$RC_DIR" \
+    --branch feat/rc1 --head "$rc5_w1head" --upstream none --dirty 1 --unpushed 0
+is    "…and the writer refuses to replace a record it cannot read" "$rc" 1
+is    "…so that file is byte for byte what it was" \
+      "$(cksum < "$RC_STATE_ROOT/repoRC-5/trees/$rc5_w1_id.yaml")" "$rc5w1_sum"
+
+# (f) A GIT READ THAT FAILED IS NEVER COMPLETED WITH A CLEAN-LOOKING VALUE. The
+# fixture is a real worktree whose HEAD git can no longer resolve: `rev-parse
+# --git-dir` still answers there — which is all the first implementation asked —
+# and every read after it fails, which used to produce `branch unknown, head
+# unknown, upstream none, 0 dirty, 0 unpushed`: a record a later reconciliation
+# reads as clean and published.
+git -C "$RC_DIR" worktree add -q -b feat/rc-broken "$RC_DIR/.claude/worktrees/broken" >/dev/null 2>&1
+printf 'ref: refs/heads/\n' > "$RC_DIR/.git/worktrees/broken/HEAD"
+run "$E" lane-tree-now "$RC_DIR/.claude/worktrees/broken"
+is    "an observation git could not complete is 1" "$rc" 1
+is    "…and prints NOTHING, rather than a branch and two zero counts" "$out" ""
+has   "…naming the act a person takes" "$err" "git -C $RC_DIR/.claude/worktrees/broken status"
+run "$E" set-lane-tree repoRC-5 "$RC_DIR/.claude/worktrees/broken" --checkout "$RC_DIR"
+is    "…and nothing is recorded for a tree this process could not read" "$rc" 1
+run "$E" lane-trees repoRC-5
+is    "…so the inventory gained no row for it" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$2 ~ /worktrees\/broken$/' | grep -c .)" 0
+run "$E" set-lane-tree repoRC-5 "$RC_DIR/.claude/worktrees/broken" --checkout "$RC_DIR" \
+    --branch feat/rc-broken --head 2222222222222222222222222222222222222222 \
+    --upstream none --dirty 3 --unpushed 1
+is    "a caller's OWN observation of it is still recorded: the refusal is about INVENTING one" "$rc" 0
+run "$E" lane-reconcile repoRC-5
+is    "…and the reconciliation reports it UNREADABLE, neither clean nor missing" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "TREE" && $4 ~ /worktrees\/broken$/ { print $3 }')" "unreadable"
+has   "…assuming nothing about what it holds" "$out" "NOTHING is assumed about it"
+is    "…and it was left exactly as it is, like every other tree this read names" \
+      "$( [ -d "$RC_DIR/.claude/worktrees/broken" ] && echo kept || echo gone )" "kept"
+
+# (g) ONE TREE, ONE ROW, THROUGH HOWEVER MANY SPELLINGS OF ITS PATH. The report
+# reads three sources that do not agree about spelling: a sidecar holds the path
+# its poll was given, `git worktree list --porcelain` answers with the PHYSICAL
+# path, and the on-disk sweep walks the recorded `dir`. Every estate with a
+# `projects` symlink reaches its checkouts through it — and on macOS `$TMPDIR`
+# and `$HOME` live under `/var`, which IS a symlink to `/private/var`, which is
+# how the four cases of section 7 above went red on that runner alone at
+# `612ba5c`: every tree was reported TWICE, once as the tree it is and once as a
+# tree nobody manages. `612ba5c` resolved the lane's OWN checkout for this exact
+# reason and left the trees under it unresolved. The lane below reaches the same
+# checkout through a link, so the defect is reproducible on every platform.
+RC_LINK="$HOME/projects/repoRCL"
+ln -s "$RC_DIR" "$RC_LINK"
+rc_seed_handoff repoRC-8
+git -C "$WIP" add -- handoffs/repoRC >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed repoRC-8's handoff" >/dev/null 2>&1 || :
+rc_row repoRC-8 "harness \`$RC_ID\`"
+{ printf '# lane repoRC-8 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoRC-8, session %s@Eagle, 2026-09-15T00:00:00Z, lane:repoRC-8 → home opensoft/repoRC; dir %s; profile team-01a\n' \
+    "$RC_ID" "$RC_LINK"
+} > "$LOGD/repoRC-8.md"
+git -C "$WIP" add -- "lanes/log/repoRC-8.md" >/dev/null 2>&1
+git -C "$WIP" commit -q -m "LOG(repoRC-8@Eagle): seed"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+run "$E" set-lane-state repoRC-8 RUNNING --owner "$RC_ID" --agent claude --profile team-01a
+is    "a lane whose recorded directory reaches its checkout through a link is RUNNING" "$rc" 0
+run "$E" set-lane-tree repoRC-8 "$RC_LINK/.claude/worktrees/w1" --checkout "$RC_LINK" \
+    --branch feat/rc1 --head "$rc5_w1head" --upstream none --dirty 1 --unpushed 0
+is    "…and its writer is recorded under the spelling the poll was given" "$rc" 0
+run "$E" lane-reconcile repoRC-8
+is    "a tree recorded through a linked path is named ONCE, not once as itself and once as unmanaged" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "TREE" && $4 ~ /worktrees\/w1$/' | grep -c .)" 1
+is    "…as the tree it is, and never as one nobody manages" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "TREE" && $4 ~ /worktrees\/w1$/ && $3 == "unmanaged"' | grep -c .)" 0
+is    "…and the lane's own checkout is still not a tree either, whichever spelling names it" \
+      "$(printf '%s\n' "$out" | awk -F'\037' -v d="$RC_DIR" '$1 == "TREE" && $4 == d' | grep -c .)" 0
+
+
 echo "== the workstation seam: unset, every writer reads the host =="
 
 # THE OTHER HALF OF R-A9-13. Every case above this line runs with

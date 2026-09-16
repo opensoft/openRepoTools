@@ -439,11 +439,21 @@ lifecycle_begin() {
 		--profile "${profile_name:-none}" --kind "$handoff_kind" 2>/dev/null)" || lcb_src=$?
 	case "$lcb_src" in
 	0)
-		lc_on=1
 		lc_gen="$(printf '%s\n' "$lcb_out" | awk -F"\t" '$1 == "generation" { print $2; exit }')"
 		lc_op="$(printf '%s\n' "$lcb_out" | awk -F"\t" '$1 == "operation" { print $2; exit }')"
-		lc_state=SWAPPING
-		step "lifecycle: $lcb_now -> SWAPPING (generation $lc_gen, operation $lc_op)" ;;
+		# THE FENCE THIS RUN WILL FINISH WITH, READ BACK BEFORE IT IS TRUSTED.
+		# Every later call carries both — the finalizer as `--expect-generation`
+		# and `--expect-operation`, each tree sidecar as the operation that
+		# recorded it — and an empty one there is a flag with no value, which
+		# the writer refuses. Better to record no transition at all than to
+		# record trees against an operation nobody can match.
+		if [ -z "$lc_gen" ] || [ -z "$lc_op" ]; then
+			note "the lane was taken to SWAPPING and the helper named no generation or no operation back, so this handoff records no fence and takes no inventory. Read the state by hand: $LANES_EDIT lane-state $lane"
+		else
+			lc_on=1
+			lc_state=SWAPPING
+			step "lifecycle: $lcb_now -> SWAPPING (generation $lc_gen, operation $lc_op)"
+		fi ;;
 	7)
 		note "the lane lifecycle moved between reading it and taking it (it was $lcb_now and is not now), so this handoff records no transition and its worktree inventory carries no operation. Another process is acting on lane $lane: read it with \`$LANES_EDIT lane-reconcile $lane\` before relaunching anything. The swap itself goes on (\`R-A11-11\`)." ;;
 	1)
@@ -804,21 +814,43 @@ poll_writer() {   # <path>
 	pw_d="$1"
 	[ -d "$pw_d" ] || return 0
 	git -C "$pw_d" rev-parse --git-dir >/dev/null 2>&1 || return 0
-	pw_branch="$(git -C "$pw_d" rev-parse --abbrev-ref HEAD 2>/dev/null || printf '?')"
+	# THE OBSERVATION IS THE HELPER'S, AND THIS COMMAND MAKES NONE OF ITS OWN
+	# (Copilot round 5 on openRepoTools#97). `lanes-edit.sh lane-tree-now` is the
+	# one implementation of *what git says about this tree right now* — the same
+	# function `lane-reconcile` recomputes with — so the WRITERS section a person
+	# reads and the sidecar a recovery reads are ONE reading, with one error
+	# handling behind them. The five fields it answers with are the five the
+	# record carries: branch, full head, upstream, dirty and unpushed.
+	#
+	# `%h` IS NOT AMONG THEM, and that is the point of the full head: an
+	# abbreviation lengthens as a repository grows and is ambiguous across
+	# repositories, while the upstream is what tells `0 unpushed` from *this
+	# branch tracks nothing at all*.
+	#
+	# AND A READING NOBODY COULD MAKE IS SAID, NOT INVENTED. Where the helper
+	# refuses — git failing inside a checkout, or a lanes-edit.sh predating this
+	# read, which answers 2 for a subcommand it has never heard of — every field
+	# is `?`, no sidecar is filed, and the section says so. A `none` here and a
+	# `0` there is exactly the clean-looking record this round removed.
+	pw_obs=""; pw_orc=0
+	pw_obs="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-tree-now "$pw_d" 2>/dev/null)" || pw_orc=$?
+	pw_branch='?'; pw_head=unknown; pw_up='?'; pw_dirty='?'; pw_ahead='?'
+	if [ "$pw_orc" = 0 ]; then
+		pw_branch="$(printf '%s' "$pw_obs" | awk -F'\037' '{print $1}')"
+		pw_head="$(printf '%s' "$pw_obs" | awk -F'\037' '{print $2}')"
+		pw_up="$(printf '%s' "$pw_obs" | awk -F'\037' '{print $3}')"
+		pw_dirty="$(printf '%s' "$pw_obs" | awk -F'\037' '{print $4}')"
+		pw_ahead="$(printf '%s' "$pw_obs" | awk -F'\037' '{print $5}')"
+	else
+		note "the observation of $pw_d could not be made (\`$LANES_EDIT lane-tree-now\` exited $pw_orc), so this writer is listed with what could not be read rather than with a clean-looking reading of it, and no inventory entry is filed for it. The lines below are still printed from this checkout, and the swap goes on (\`R-A11-11\`)."
+	fi
+	# The LISTING, which is prose and not the record: the actual lines a person
+	# reads under the counts above. `|| :` and not a failure, for the reason the
+	# note above gives — this is what is left to show when the reading refused.
 	pw_last="$(git -C "$pw_d" log -1 --format='%h %s' 2>/dev/null || :)"
 	pw_status="$(git -C "$pw_d" status --short 2>/dev/null || :)"
 	pw_unpushed="$(git -C "$pw_d" log '@{u}..' --oneline 2>/dev/null || :)"
-	pw_dirty="$(printf '%s' "$pw_status" | grep -c . || :)"
-	pw_ahead="$(printf '%s' "$pw_unpushed" | grep -c . || :)"
 	pw_brief="$(brief_for "$pw_d" || printf '')"
-	# THE TWO FIELDS THE PROSE NEVER CARRIED (openRepoTools#91). `%h` is an
-	# ABBREVIATION — it lengthens as a repository grows and it is ambiguous
-	# across repositories — so the inventory records the full HEAD, which is
-	# what a later reconciliation compares; and the UPSTREAM, without which
-	# `0 unpushed` cannot be told from *this branch tracks nothing at all*.
-	pw_head="$(git -C "$pw_d" rev-parse HEAD 2>/dev/null || printf 'unknown')"
-	pw_up="$(git -C "$pw_d" rev-parse --abbrev-ref '@{u}' 2>/dev/null || printf 'none')"
-	[ "$pw_branch" = HEAD ] && pw_branch=detached
 	writer_count=$((writer_count + 1))
 	say ""
 	say "WRITER $pw_d — branch $pw_branch, last commit ${pw_last:-<none>}"
@@ -836,13 +868,13 @@ poll_writer() {   # <path>
 	# handoff's generation and operation, so a tree recorded by a superseded
 	# operation is visible as one. It never fails the poll and never fails the
 	# swap: a lane with no control root simply keeps no inventory yet.
-	if [ -n "$lc_on" ]; then
+	if [ -n "$lc_on" ] && [ "$pw_orc" = 0 ]; then
 		LANES_NO_FETCH=1 "$LANES_EDIT" set-lane-tree "$lane" "$pw_d" \
 			--checkout "${dir:-unknown}" --branch "$pw_branch" --head "$pw_head" \
-			--upstream "$pw_up" --dirty "${pw_dirty:-0}" --unpushed "${pw_ahead:-0}" \
+			--upstream "$pw_up" --dirty "$pw_dirty" --unpushed "$pw_ahead" \
 			--writer "${uuid:-none}" --generation "$lc_gen" --operation "$lc_op" \
 			>/dev/null 2>&1 ||
-			note "the worktree inventory entry for $pw_d could not be written; this handoff's WRITERS section still names it, and \`lane-reconcile\` will report it as unmanaged rather than as lost."
+			note "the worktree inventory entry for $pw_d could not be written — the helper refused it, and a refusal of 7 there is this handoff's own fence: the lane's generation or operation moved while this poll was being taken, so a superseded reading was not filed over the current one. This handoff's WRITERS section still names the tree, and \`$LANES_EDIT lane-reconcile $lane\` says what the inventory holds."
 	fi
 	return 0
 }

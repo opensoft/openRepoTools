@@ -62,7 +62,15 @@ The system SHALL transition a running lane to `SWAPPING` before `/swap` performs
 - **THEN** the same operation atomically records `SWAPPED` before printing that the lane is ready to resume
 
 ### Requirement: Transitions are generation-fenced
-Every ownership transition SHALL carry a monotonically advancing generation and unique operation ID, and a transition finalizer SHALL succeed only when its expected state, generation, and operation ID still match.
+Every ownership transition SHALL carry a monotonically advancing generation and unique operation ID, and a transition finalizer SHALL succeed only when its expected state, generation, and operation ID still match. Every write that follows a recorded act SHALL be serialized under the one transition lock and refused when the lane has moved past the state that write observed.
+
+#### Scenario: A lifecycle write is overtaken while it lands
+- **WHEN** the lane's state, generation, or operation changes between the moment a lifecycle-moving event is recorded and the moment its current-state snapshot is updated
+- **THEN** the snapshot is left exactly as the later act wrote it, the recorded event still stands, and the overtaken write reports what it found
+
+#### Scenario: An observation is filed under a superseded operation
+- **WHEN** an inventory write names a generation or operation the lane has already moved past
+- **THEN** the system refuses the write, changes no recorded observation, and directs the caller to re-read the lane
 
 #### Scenario: Delayed swap finalizer
 - **WHEN** an old `/swap` process attempts to record `SWAPPED` after another recovery or resume has advanced the generation
@@ -98,6 +106,10 @@ Before launching replacement writers, the system SHALL compare lane and tree sid
 #### Scenario: Unknown tree is discovered
 - **WHEN** Git or the filesystem contains a worktree beneath the lane root that is absent from the inventory
 - **THEN** the system reports it as unmanaged and does not delete, overwrite, or automatically assign it
+
+#### Scenario: A tree cannot be read
+- **WHEN** Git answers in a tree's path and one of the reads an observation is made of fails
+- **THEN** the system reports the tree as unreadable, records no observation of it, and assumes neither clean nor dirty state for it
 
 ### Requirement: Missing worktrees are rebuilt only from durable records
 The lane system SHALL delegate worktree reconstruction to the existing estate resume mechanism and SHALL not hand-roll worktree creation, WIP commits, resets, or force operations.
@@ -135,3 +147,7 @@ The system SHALL create structured state for a legacy lane only from an explicit
 #### Scenario: Migration encounters an unknown path
 - **WHEN** legacy evidence names a path that cannot be verified against the expected repository
 - **THEN** the system refuses to adopt the path and leaves existing files unchanged
+
+#### Scenario: A sidecar records a schema this tooling does not write
+- **WHEN** a lane snapshot or a tree sidecar records a schema version this tooling does not write
+- **THEN** every reader reports it as unknown without interpreting any other field of it, and every writer refuses to replace it rather than overwriting a record it cannot read

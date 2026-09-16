@@ -238,6 +238,75 @@ be established therefore yields the verdict `indeterminate` and no crash is
 pronounced on a read nobody got. `RESUMING` remains unpersisted, as decision 5
 proposes.
 
+## Decisions taken in the review round (Copilot round 5 on opensoft/openRepoTools#97)
+
+### 16. EVERY lifecycle write is serialized and fenced, the follow-up included
+
+The first implementation fenced `set-lane-state` and left the follow-up at the
+foot of `write_event` unfenced *deliberately* — a confirmed `STARTED`/`RESUMED`
+is a new owner arriving, and advancing the generation over the `SWAPPING` it
+supersedes is exactly what the fence is for. What that argument missed is that
+the two cases are the same act read at different moments. `write_event` appends
+the line, commits it and pushes it before the snapshot is moved, and a lane can
+be recovered by somebody else inside that window: a `RUNNING` written out of an
+event that landed minutes ago would then overwrite a `SWAPPING` that began
+since, which is precisely the overwrite the generation exists to refuse.
+
+So the follow-up reads the snapshot under the same mutex `set-lane-state`
+takes, and compares it with the PRE-IMAGE `write_event` took before its own
+line existed — state, generation and operation in one string. Equal means this
+write is the newest act on the lane and it proceeds; unequal means another act
+got there first and NOTHING is written, with the lane named so a person can read
+it. The mutex is taken **without dying for it**: the event line is already on
+disk, so a lock nobody could take within 20 seconds costs the snapshot and says
+so, never the event (`R-A11-11`).
+
+### 17. A sidecar this helper cannot read is one it must not replace
+
+`lane_state_read` fails closed for a schema version it does not know, and both
+writers beside it read the raw fields and renamed their own file over the top —
+so an older helper meeting a newer tooling's snapshot destroyed a record it
+could not even read, and nothing later can undo that. The fail-closed contract
+therefore binds the WRITERS too: `set-lane-state`, `set-lane-tree` and the
+`write_event` follow-up each ask the schema first and refuse (exit 1) rather
+than replace. The refusal is 1 and not 7 — 7 says a race was lost and invites
+the caller to re-read and try again, and no re-read makes an unknown schema
+readable. The inventory READER gained the same rule: `lane-trees` reports an
+unknown sidecar by its id, path and schema and reads not one other field of it,
+and `lane-reconcile` classifies it `unknown-schema` rather than recomputing git
+against fields it is guessing at.
+
+**And the inventory's own fence is compared rather than merely recorded.** Every
+tree sidecar carried the generation and operation it was written under from the
+first commit of this change, and nothing read them: a handoff that stalled while
+a recovery advanced the lane filed its superseded poll straight over the current
+one. `set-lane-tree` now compares both with the lane's snapshot under the mutex
+and refuses with **7**; and where an observation is legitimately older than the
+lane's current generation, `lane-reconcile` says so on the tree's own line.
+
+### 18. One implementation of the observation, and an incomplete one is never completed
+
+`lane-handoff` computed its own branch, head, upstream, dirty and unpushed for
+every writer it polled and handed all five to `set-lane-tree` — a second
+implementation of `lane_tree_now` with its own error handling, so the WRITERS
+section a person reads and the sidecar a recovery reads could disagree about
+what git said. The observation is now one function behind one read verb,
+`lanes-edit.sh lane-tree-now <path>`, and the handoff records what it answers.
+
+That one function no longer converts a git read which FAILED into a value.
+Every read after the first `rev-parse --git-dir` used to end in
+`|| printf 'unknown'`, `|| printf 'none'` or a count that fell back to `0`, so a
+partially unreadable repository produced a record that looked CLEAN AND
+PUBLISHED — and a later reconciliation comparing against it would call a tree
+holding work `missing` rather than `possible-loss`. A failed read is now an
+incomplete observation that prints nothing, which `set-lane-tree` refuses to
+file and `lane-reconcile` reports as `unreadable`. Two states are answers rather
+than failures and are spelled: `unborn` for a branch with no commit yet, and —
+for a branch whose upstream is configured while its remote-tracking ref is not
+in this checkout, the ordinary state after a merged branch is deleted — the
+configured upstream with `unknown` unpushed, never the `0` that reads as
+*everything here is published*.
+
 ## Risks / Trade-offs
 
 - **[Risk] Lane-first discovery conflicts with feature-first Speckit paths** → Use a sidecar index over shape-governed paths; do not move governed trees.

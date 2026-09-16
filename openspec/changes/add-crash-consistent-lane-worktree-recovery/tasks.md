@@ -63,11 +63,14 @@ stands in its place today.
 - **4.2 — duplicate refusal.** `lane-reconcile` REPORTS a live holder;
   `lane-start`'s existing duplicate refusals are unchanged, and no new refusal
   is added by this change.
-- **6.2 — races.** Competing swaps, competing resumes and stale finalizers each
-  have a case; a live duplicate WRITER on one worktree does not.
+- **6.2 — races.** Competing swaps, competing resumes, stale finalizers, a
+  lifecycle write overtaken between its event line and its snapshot, and an
+  inventory write filed under a superseded operation each have a case; a live
+  duplicate WRITER on one worktree does not.
 - **6.3 — worktrees.** Dirty, unpushed, missing-and-clean, missing-with-work,
-  unknown, stale-registration and detached HEAD each have a case;
-  shape-governed paths do not, because 2.2 does not.
+  unknown, stale-registration, detached HEAD, a tree git answers in and cannot
+  be read through, and a sidecar whose schema this tooling does not write each
+  have a case; shape-governed paths do not, because 2.2 does not.
 - **6.4 — migration.** A lane with no snapshot answering 8 everywhere, and a
   snapshot created by the first transition that runs, both have cases; an
   invalid repository identity and a repeated idempotent migration do not.

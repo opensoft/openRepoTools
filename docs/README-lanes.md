@@ -2280,13 +2280,36 @@ READABLY beside the lane as well as in the handoff's WRITERS section:
 
 ```sh
 lanes-edit.sh lane-trees <lane>
-# <id> <path> <branch> <head> <upstream> <dirty> <unpushed> <writer> <observed> <checkout>
+# <id> <path> <branch> <head> <upstream> <dirty> <unpushed> <writer> <observed> <checkout> <generation> <operation> <schema>
+lanes-edit.sh lane-tree-now <worktree path>
+# <branch> <head> <upstream> <dirty> <unpushed>   — what git says about one tree NOW
 ```
 
 The full `head` and the `upstream` are why this is not the prose section one
 more time: `%h` is an abbreviation that lengthens as a repository grows, and
 `0 unpushed` cannot be told from *this branch tracks nothing at all* without the
 upstream. Every field is an OBSERVATION and none of them is truth about git.
+
+**`lane-tree-now` is the one implementation of that observation**, and the
+handoff, the sidecar and the reconciliation all go through it, so the WRITERS
+section a person reads and the record a recovery reads can never be two
+different readings. It does not convert a git read that FAILED into a
+clean-looking value: `unknown`/`none`/`0` are answers, and a read that could not
+be made exits **1** and prints nothing (`R22`, Amendment 7(d)). Two states are
+answers rather than failures and are spelled as such — a branch with no commit
+yet has `unborn` for its head, and a branch whose upstream is configured but
+whose remote-tracking ref is not in this checkout (the ordinary state after a
+merged branch is deleted) records that configured upstream with `unknown`
+unpushed, never the `0` that reads as *everything here is published*.
+
+**A sidecar this helper cannot read is one it will not replace.** A snapshot or
+a tree record carrying a schema this version does not write is reported as
+`UNKNOWN-SCHEMA` by every reader and REFUSED by every writer (exit 1), rather
+than overwritten by a record an older helper can understand — the one act no
+later reader can undo. And `set-lane-tree --generation/--operation` is COMPARED
+with the lane's own snapshot under the mutex before the record is filed, so a
+poll taken under an operation a recovery has since superseded is refused with
+**7** instead of being filed over the current inventory.
 
 ### The reconciliation, which resets nothing
 
@@ -2297,10 +2320,12 @@ lanes-edit.sh lane-reconcile <lane>
 It recomputes branch, HEAD, upstream, dirty and unpushed for every inventoried
 tree, reads `git worktree list --porcelain` in the lane's checkout and the
 directories under both lane roots, and prints one `TREE` line per tree with a
-classification: `ok`, `dirty`, `unpushed`, `dirty+unpushed`, `missing`,
-`possible-loss`, `not-a-checkout`, `unmanaged`, `stale-registration`. The last
-line is the `VERDICT`. `lane-start` prints the report before it writes anything,
-for any verdict that is not `running`, `resumable` or `closed`.
+classification: `ok`, `dirty`, `unpushed`, `unpushed-unknown`,
+`dirty+unpushed`, `dirty+unpushed-unknown`, `missing`, `possible-loss`,
+`not-a-checkout`, `unreadable`, `unknown-schema`, `unmanaged`,
+`stale-registration`. The last line is the `VERDICT`. `lane-start` prints the
+report before it writes anything, for any verdict that is not `running`,
+`resumable` or `closed`.
 
 **It reports and it resets nothing.** `park` CREATES NOTHING and `resume` RESETS
 NOTHING (`AGENTS.md` rule 1), so this read runs `git status`, `git log @{u}..`,
@@ -2315,9 +2340,21 @@ NOTHING (`AGENTS.md` rule 1), so this read runs `git status`, `git log @{u}..`,
   reconstructs a file's contents;
 * an **unmanaged** tree — one git registers, or one sitting under a lane root,
   that no sidecar names — is reported and never deleted, adopted or overwritten:
-  which lane a tree belongs to is a person's to say;
+  which lane a tree belongs to is a person's to say. One tree is named ONCE
+  however many spellings of its path reach the report: a sidecar holds the path
+  its poll was given, `git worktree list --porcelain` answers with the physical
+  path, and the on-disk sweep walks the recorded `dir`, so every comparison
+  resolves both sides — without which every tree of an estate that reaches its
+  checkouts through a `projects` symlink is reported twice, the second time as a
+  tree nobody manages;
 * a **stale-registration** names the `git worktree prune` that clears it, and
-  prunes nothing itself.
+  prunes nothing itself;
+* an **unreadable** tree is one git answers in and cannot be read through —
+  nothing is assumed about it, in either direction, and the line names the
+  `git -C <path> status` a person runs;
+* an **unknown-schema** tree is a sidecar written by a newer tooling: it is
+  named, and not one field of it is read, because a value taken out of a record
+  whose shape this reader is guessing at is worse than no value.
 
 ### What a resumed session does with it
 
