@@ -2219,7 +2219,22 @@ RESTART FAILED — lane openRepoTools-3, operation ctx-20260915T210412Z-41233-11
 Where there is a terminal it then asks once — `[r = retry, q = leave it]` — and a
 retry is **the same operation**: the same generation, digest, directory, profile
 and launch mode, with the attempt count incremented. Where there is no terminal
-it exits 3 and says so. A deadline that expires with the child still ALIVE is a
+it exits 3 — or **4**, where the launch ran past the readiness deadline still
+alive and only then ended, which the record says as well.
+
+**And a supervisor somebody kills leaves the same retryable record.** `SIGTERM`
+or `SIGHUP` — a `tmux kill-pane`, a logout, a person's `kill` — mark the intent
+`failed` with a reason naming the signal and **whether the child was still
+running**, print the read and retry lines, and exit 143 or 129. Nothing is killed
+(Amendment 8(f)). Without that, a signalled supervisor left the intent `starting`,
+which is the one state nothing recovers from by itself: a retry refuses to launch
+from it, the next `/ctx` refuses to supersede it, and `--restart-status` reports
+`IN FLIGHT: a supervisor holds this operation` about a supervisor that is gone.
+
+Ctrl-C in that pane belongs to the **session**, not to the supervisor: the
+supervisor ignores `SIGINT` so that interrupting Claude cannot tear the pane down
+under it, and the launch is started with `INT` and `QUIT` put back to their
+defaults so the keystroke reaches the session itself. A deadline that expires with the child still ALIVE is a
 third answer, `INDETERMINATE`: nothing is killed (Amendment 8(f) — ending
 somebody's process is not a boundary script's act), nothing is retried, the lane
 is not marked running, and the reason goes into the record, because an interactive
