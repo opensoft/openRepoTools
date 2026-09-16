@@ -1234,6 +1234,81 @@ def test_an_ancestor_of_a_template_path_that_is_not_a_directory_is_refused(
         "the pointer file was written by a run that refused")
 
 
+@pytest.mark.parametrize("state", ["checked-out", "deinitialized"])
+def test_a_submodule_at_a_template_paths_ancestor_is_refused(tmp_path, state):
+    """A DIRECTORY THAT IS ANOTHER REPOSITORY'S IS NOT THIS ONE'S TO WRITE IN
+    (Copilot round 2 on PR #101, against the ancestor walk's own diff).
+
+    A tracked SUBMODULE at `handoffs` is a gitlink in this repository and a
+    whole repository on disk, so the walk's symlink and not-a-directory
+    questions both pass it: `-d` is true and `-L` is false. Step 6a sees a
+    clean worktree, because a clean submodule reports nothing, and every
+    presence test in step 7 answers false, because a gitlink carries no
+    `handoffs/README.md` for `:$rel` or `HEAD:$rel` to find. The MISSING
+    branch then wrote this run's template bytes INSIDE that nested repository
+    and the `git add` two steps later answered `fatal: Pathspec … is in
+    submodule …` — with the bytes already there.
+
+    Both shapes, because the index is what makes it a submodule and only one
+    of them is on disk: a checked-out submodule has its own `.git`, and a
+    `deinit`ed one is an empty directory with nothing in it at all — and
+    `git add` fails identically for both.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout = adopted_checkout(tmp_path, home, env)
+
+    # A repository of somebody's own, mounted where the template wants a
+    # directory. `protocol.file.allow` because git refuses a local-path
+    # submodule without it since 2.38 (CVE-2022-39253).
+    nested = tmp_path / "a-nested-repository"
+    nested.mkdir()
+    for args in (["init", "-q", "-b", "main", str(nested)],
+                 ["-C", str(nested), "config", "user.email", "wip@example.invalid"],
+                 ["-C", str(nested), "config", "user.name", "wip init tests"]):
+        subprocess.run(["git", *args], check=True)
+    (nested / "file.txt").write_text("somebody's own nested work\n", encoding="utf-8")
+    for args in (["add", "-A"], ["commit", "-q", "-m", "a nested repository"]):
+        subprocess.run(["git", "-C", str(nested), *args], check=True)
+
+    subprocess.run(["git", "-C", str(checkout), "rm", "-q", "-r", "--",
+                    "handoffs"], check=True)
+    subprocess.run(["git", "-C", str(checkout), "-c",
+                    "protocol.file.allow=always", "submodule", "add", "-q",
+                    str(nested), "handoffs"], check=True)
+    for args in (["commit", "-q", "-m", "handoffs is a submodule here"],
+                 ["push", "-q", "origin", "HEAD:main"]):
+        subprocess.run(["git", "-C", str(checkout), *args], check=True)
+    if state == "deinitialized":
+        subprocess.run(["git", "-C", str(checkout), "-c",
+                        "protocol.file.allow=always", "submodule", "deinit",
+                        "-f", "--", "handoffs"], check=True)
+        assert not (checkout / "handoffs" / ".git").exists()
+    before_head = head_of(checkout)
+    clean = subprocess.run(["git", "-C", str(checkout), "status", "--porcelain"],
+                           capture_output=True, text=True, check=True)
+    assert clean.stdout == "", (
+        f"a clean submodule is supposed to be invisible to status: "
+        f"{clean.stdout!r}")
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"{checkout / 'handoffs'} is another git repository" in \
+        result.stderr, result.stderr
+    assert "handoffs/README.md sits under it" in result.stderr, result.stderr
+    assert not (checkout / "handoffs" / "README.md").exists(), (
+        "the seed wrote into somebody else's repository")
+    assert staged_in(checkout) == "", (
+        f"the refusal staged {staged_in(checkout)!r}")
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+    assert not (home / ".agents" / "workspace.yaml").exists(), (
+        "the pointer file was written by a run that refused")
+
+
 def test_a_template_path_staged_at_another_mode_is_refused_not_restaged(
         tmp_path):
     """`cat-file -p` PRINTS A BLOB'S BYTES AND NEVER ITS MODE (#63).

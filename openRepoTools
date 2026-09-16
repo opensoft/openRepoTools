@@ -1629,7 +1629,7 @@ wip_fetch_template_file() {
 wip_init() {
 	local config target checkout ref rel dest seeded=0 owed=0 kind
 	local existing_repo existing_path
-	local ancestor rest comp staged_mode index_tag
+	local ancestor rest comp staged_mode index_tag ancestor_mode
 	# THE TEMPLATE PATHS THIS CHECKOUT HAS IN HEAD AND NOT ON DISK, because the
 	# index marks them `skip-worktree` (#69). Counted as well as collected, for
 	# the reason `written` is: an empty array expanded as `"${sparse_paths[@]}"`
@@ -1921,6 +1921,41 @@ $(sed -e 's/^/    /' -- "$WIP_LAST_OUT")
     so this run can neither create that directory nor write the file inside it. Nothing beyond
     this run's own template bytes was written into that checkout, and nothing was staged.
     Replace that component with a real directory, then re-run:
+        openRepoTools wip init"
+			fi
+			# AND A DIRECTORY THAT IS ANOTHER REPOSITORY'S IS NOT THIS ONE'S TO
+			# WRITE IN (#101 round 2, on this walk's own diff). A tracked
+			# SUBMODULE at `handoffs` is a gitlink in this repository and a
+			# whole repository on disk: `-d` is true, `-L` is false, step 6a
+			# sees a CLEAN worktree because a clean submodule reports nothing,
+			# and every presence test below answers false because a gitlink
+			# carries no `handoffs/README.md` for `:$rel` or `HEAD:$rel` to
+			# find. So the MISSING branch wrote this run's template bytes
+			# INSIDE somebody's nested repository, and the `git add` two steps
+			# later answered `fatal: Pathspec … is in submodule …` — after the
+			# bytes had landed there, in a repository this command has no
+			# business in and does not clean up.
+			#
+			# ASKED OF THE INDEX, because that is what makes it a submodule and
+			# it is true whether or not the thing is checked out: a `deinit`ed
+			# submodule is an EMPTY directory with no `.git` in it at all, and
+			# the `git add` fails exactly the same way. `$4` is the path column
+			# of `ls-files -s` and every component here comes from
+			# `$WIP_TEMPLATE_FILES`, which is nine fixed ASCII paths, so it is
+			# never a quoted or split field. The `.git` test beside it catches
+			# the other shape — a nested repository nobody tracked, which an
+			# ignore rule can hide from step 6a as well.
+			ancestor_mode="$(git -C "$checkout" ls-files -s -- "$ancestor" 2>/dev/null |
+				awk -v p="$ancestor" '$4 == p { print $1; exit }' || :)"
+			if [ "$ancestor_mode" = "160000" ] || [ -e "$checkout/$ancestor/.git" ]; then
+				die "$checkout/$ancestor is another git repository's working tree — a submodule of this
+    one, or a clone somebody left there — and the template's $rel sits under it. A seed commit
+    is this repository's own files: bytes written in there belong to that repository, this one
+    cannot stage them (\`git add\` answers \`Pathspec … is in submodule …\`), and this command
+    does not write into a repository it was never pointed at. Nothing beyond this run's own
+    template bytes was written into that checkout, and nothing was staged.
+    Move that repository aside, or seed a workspace that does not carry one at $ancestor, then
+    re-run:
         openRepoTools wip init"
 			fi
 		done
