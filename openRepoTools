@@ -1629,6 +1629,7 @@ wip_fetch_template_file() {
 wip_init() {
 	local config target checkout ref rel dest seeded=0 owed=0 kind
 	local existing_repo existing_path
+	local ancestor rest comp
 	# THE PATHS THE SEED OWES THIS CHECKOUT, which is what step 8 stages and
 	# commits and the whole of what it commits: the ones step 7 wrote (`seeded`)
 	# and the ones an earlier run wrote and could not commit (`owed`). Two
@@ -1854,6 +1855,69 @@ $(sed -e 's/^/    /' -- "$WIP_LAST_OUT")
 	workdir
 	for rel in "${WIP_TEMPLATE_FILES[@]}"; do
 		dest="$WORKDIR/tpl-$(printf '%s' "$rel" | tr '/' '_')"
+		# ---- THE PATH'S OWN ANCESTORS ARE ASKED ABOUT FIRST, AND A SYMLINK AT
+		# ONE OF THEM IS REFUSED BEFORE ANY BRANCH BELOW OPENS, CREATES OR
+		# WRITES THROUGH IT (#62).
+		#
+		# `path_kind` below asks what is at `$rel` ITSELF; nothing asked what is
+		# at `handoffs`, `lanes`, `lanes/log` or `workspaces` — every directory
+		# component the ${#WIP_TEMPLATE_FILES[@]} template paths have. An
+		# adopted checkout can carry a TRACKED symlink at one of those: a person
+		# whose `handoffs` is a link into another tree of their own, committed,
+		# which step 6a sees as a clean worktree because it IS what HEAD says.
+		# Every test the branches below make then answers as though nothing were
+		# at `$rel` at all — `[ -e ]` and `[ -L ]` are false when the link's
+		# target holds no such file, and git has no notion of a path INSIDE a
+		# tracked symlink, so `:$rel`, `HEAD:$rel` and `ls-files -u` are false
+		# too — and the MISSING branch is reached: its `mkdir -p` succeeds
+		# without creating anything, because the link resolves to a directory
+		# that is already there, and its `cp` then writes this run's template
+		# bytes through the link, OUTSIDE this checkout if that is where the
+		# link leads. Only the `git add` two steps later notices, with
+		# `fatal: … is beyond a symbolic link` — after the bytes have landed
+		# somewhere this command was never pointed at.
+		#
+		# AND AN ANCESTOR THAT IS NOT A DIRECTORY AT ALL IS REFUSED IN THE SAME
+		# WALK, because the same MISSING branch meets it one line earlier: a
+		# regular file committed at `handoffs` fails that `mkdir -p`, and a
+		# failing `mkdir` under this file's `set -e` exits 1 — the code this
+		# toolset spends on "findings were printed" — from a run that meant to
+		# refuse with 2 and never printed a word about why.
+		#
+		# `unusable_dir_kind` IS NOT THIS QUESTION, which is why this walk is
+		# written rather than that one called: it climbs UP to the nearest
+		# ancestor that EXISTS and asks whether a file can be created there, so
+		# a symlink to a directory that is really there answers it `-d`, `-w`
+		# and `-x` — usable — and it never looks at the components below. This
+		# walk goes DOWN the exact relative path and asks what each component
+		# IS.
+		ancestor=""
+		rest=""
+		case "$rel" in */*) rest="${rel%/*}" ;; esac
+		while [ -n "$rest" ]; do
+			case "$rest" in
+			*/*) comp="${rest%%/*}"; rest="${rest#*/}" ;;
+			*) comp="$rest"; rest="" ;;
+			esac
+			ancestor="${ancestor:+$ancestor/}$comp"
+			if [ -L "$checkout/$ancestor" ]; then
+				die "$checkout/$ancestor is $(path_kind "$checkout/$ancestor"), and the template's
+    $rel sits under it — so a \`mkdir -p\` there creates nothing and the \`cp\` that follows
+    writes this run's template bytes through that link, outside this checkout if that is
+    where it leads. A seed commit is the template's own bytes at a REGULAR FILE inside this
+    checkout, and nothing else there could be. Nothing beyond this run's own template bytes was
+    written into that checkout, and nothing was staged.
+    Replace that component with a real directory, then re-run:
+        openRepoTools wip init"
+			fi
+			if [ -e "$checkout/$ancestor" ] && [ ! -d "$checkout/$ancestor" ]; then
+				die "$checkout/$ancestor is not a directory, and the template's $rel sits under it —
+    so this run can neither create that directory nor write the file inside it. Nothing beyond
+    this run's own template bytes was written into that checkout, and nothing was staged.
+    Replace that component with a real directory, then re-run:
+        openRepoTools wip init"
+			fi
+		done
 		if [ -e "$checkout/$rel" ] || [ -L "$checkout/$rel" ] ||
 			git -C "$checkout" cat-file -e ":$rel" 2>/dev/null ||
 			git -C "$checkout" cat-file -e "HEAD:$rel" 2>/dev/null ||

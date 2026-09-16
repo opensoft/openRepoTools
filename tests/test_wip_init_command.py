@@ -1142,6 +1142,75 @@ def test_a_git_status_this_command_cannot_run_is_refused_not_read_as_clean(
         "the pointer file was written by a run that refused")
 
 
+@pytest.mark.parametrize("ancestor", ["symlink", "regular-file"])
+def test_an_ancestor_of_a_template_path_that_is_not_a_directory_is_refused(
+        tmp_path, ancestor):
+    """THE LEAF WAS ASKED ABOUT AND ITS PARENTS WERE NOT (#62).
+
+    `path_kind` asks what is at `$rel` itself; nothing asked what is at
+    `handoffs`, and an adopted checkout can carry a TRACKED symlink there —
+    a person whose `handoffs` is a link into another tree of their own,
+    committed, which step 6a reads as a clean worktree because it IS what
+    HEAD says. Every test step 7 then makes answers as though nothing were at
+    `handoffs/README.md` at all: `[ -e ]` and `[ -L ]` are false where the
+    link's target holds no such file, and git has no notion of a path inside
+    a tracked symlink, so `:$rel`, `HEAD:$rel` and `ls-files -u` are false
+    too. The MISSING branch was reached, its `mkdir -p` created nothing
+    (the link resolves to a directory that is already there) and its `cp`
+    wrote this run's template bytes THROUGH the link, outside the checkout —
+    and only the `git add` two steps later noticed, with
+    `fatal: … is beyond a symbolic link`, after the bytes had landed.
+
+    A regular file committed at that same component is the same walk's other
+    answer: there the `mkdir -p` FAILS, and a failing `mkdir` under this
+    file's `set -e` exits 1 — the code this toolset spends on "findings were
+    printed" — from a run that meant to refuse with 2 and never said why.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout = adopted_checkout(tmp_path, home, env)
+    outside = tmp_path / "another-tree-of-their-own"
+    outside.mkdir()
+    # IN HEAD, which is what makes step 6a see a clean worktree and hand this
+    # to step 7 — the state the finding is about.
+    subprocess.run(["git", "-C", str(checkout), "rm", "-q", "-r", "--",
+                    "handoffs"], check=True)
+    if ancestor == "symlink":
+        (checkout / "handoffs").symlink_to(outside)
+    else:
+        (checkout / "handoffs").write_text(
+            "a file where the template wants a directory\n", encoding="utf-8")
+    for args in (["add", "--", "handoffs"],
+                 ["commit", "-q", "-m", "handoffs is not a directory here"],
+                 ["push", "-q", "origin", "HEAD:main"]):
+        subprocess.run(["git", "-C", str(checkout), *args], check=True)
+    before_head = head_of(checkout)
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    if ancestor == "symlink":
+        assert f"{checkout / 'handoffs'} is a symlink to {outside}" in \
+            result.stderr, result.stderr
+        assert list(outside.iterdir()) == [], (
+            f"the seed wrote through the link: {list(outside.iterdir())}")
+    else:
+        assert f"{checkout / 'handoffs'} is not a directory" in result.stderr, (
+            result.stderr)
+        assert (checkout / "handoffs").read_text(encoding="utf-8") == \
+            "a file where the template wants a directory\n", (
+            "the person's own file at that component was written over")
+    assert "handoffs/README.md sits under it" in result.stderr, result.stderr
+    assert staged_in(checkout) == "", (
+        f"the refusal staged {staged_in(checkout)!r}")
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+    assert not (home / ".agents" / "workspace.yaml").exists(), (
+        "the pointer file was written by a run that refused")
+
+
 # --- one answer to one question, across the seam between two toolsets -------
 
 #: (name, the two yaml lines as a template, whether both sides must ACCEPT).
