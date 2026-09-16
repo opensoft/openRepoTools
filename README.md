@@ -114,7 +114,22 @@ lanes                            # this checkout's lanes, and the next free one
 lanes --all                      # every lane the register and the logs know
 lane-start openRepoShape 2       # name the window, register the row, launch
 lane-end openRepoShape-2         # close it, refusing while anything is in flight
+lane-rename openRepoShape-2 openRepoShape-7   # rename it: row, log, handoff and
+                                 # lanes/aliases.tsv in ONE commit
 ```
+
+**A lane is renamed by one word, in one commit, and its old name resolves for
+ever** — lane-collision-protocol Amendment 16, on Brett Heap's request of
+2026-09-14, verbatim *"we need the ability to rename a lane"*. `lane-rename`
+moves the register row's key cell, `lanes/log/<old>.md`, the handoff the row
+names and `lanes/aliases.tsv` in ONE commit, refused or whole; appends a
+`RENAMED` line to the log; posts one comment on every object the lane holds;
+renames the tmux window and types the `/rename` into the lane's own pane. Every
+reader that takes a lane name — `who`, `lanes`, `lane-start`, Rule 6
+attribution, the `SessionStart` block, the name guard, and the lane field of
+every old log line — resolves through that alias table, case-insensitively, so
+nothing written under the old name is ever lost. `lanes --rename` is refused and
+names the word: `lanes` writes nothing.
 
 **`lane` is the one word a person needs, and it is Brett Heap's own.**
 2026-09-14, verbatim: *"this is too hard for users. we need simple way to list
@@ -220,13 +235,14 @@ gh api repos/opensoft/openRepoTools/contents/openRepoTools \
     -H 'Accept: application/vnd.github.raw' | bash -s -- --install
 ```
 
-It places TWELVE files into `~/.local/bin` — `openRepoTools`, `park`, `resume`,
-`status`, `lane`, `lanes`, `lane-handoff`, `lanes-edit.sh`, `lane-start`,
-`lane-end`, `link-estates` and the alias table `repos.tsv` — 755, idempotently: a
+It places THIRTEEN files into `~/.local/bin` — `openRepoTools`, `park`, `resume`,
+`status`, `lane`, `lanes`, `lane-handoff`, `lane-rename`, `lanes-edit.sh`,
+`lane-start`, `lane-end`, `link-estates` and the alias table `repos.tsv` — 755,
+idempotently: a
 second run prints `already installed … (unchanged)` per file, one whose bytes have
 drifted prints `updated at`, and one whose bytes were right and whose MODE was not
 prints `(mode restored to 755)`: the mode is stamped on every artifact on every
-run, whether or not the bytes moved. ALL TWELVE ARE IN HAND BEFORE ANY IS
+run, whether or not the bytes moved. ALL THIRTEEN ARE IN HAND BEFORE ANY IS
 PLACED, so a fetch that failed replaces nothing and names the file it could not
 get. A mode stamp that FAILS is a refusal naming the file it could not mode
 (exit 2), never the shell's own 1: every `chmod` this command performs goes
@@ -241,7 +257,7 @@ THAT EXISTS, so a bin directory that is not there yet is refused for the parent
 that would not take it, and a create needs a directory's search bit as well as
 its write bit. A refusal creates none of those directories either. `cp` follows
 a symlink, and an install through one leaves the command uninstalled and writes
-these bytes into whatever it points at. Then a `12 of 12 placed in <dir>` line,
+these bytes into whatever it points at. Then a `13 of 13 placed in <dir>` line,
 and the `export PATH=…` line if that directory is not on your `PATH`.
 
 It also places **fourteen things that are not files in that directory**: THREE
@@ -270,7 +286,7 @@ changes no byte of them. An entry that runs
 string — a second writer of one of these hooks — a
 file it cannot parse, or a `hooks` that is not an object → it **refuses, prints
 the exact block, and places nothing at all**, because both merges are computed
-with the twelve files in hand before either is placed. An installer that
+with the thirteen files in hand before either is placed. An installer that
 repairs a file it does not understand is how you lose a setting you meant.
 A SECOND WRITER REFUSES WHETHER OR NOT OUR OWN ENTRY IS BESIDE IT: the read asks
 for a rival BEFORE it asks whether ours is already there, so a file carrying
@@ -281,7 +297,7 @@ own `UserPromptSubmit` hooks are left exactly where they are, which is why that
 arm keys on the VERB and not on the word anywhere in a path. It
 never writes a profile's own `settings.json`: the launcher owns that one.
 
-Twenty-six artifacts, and the count is the invariant. It was sixteen until A11
+Twenty-seven artifacts, and the count is the invariant. It was sixteen until A11
 Addendum 4 ruling 9 gave `--install` a command-file list and `commands/swap.md`
 in it, at the same pair of paths a skill takes — because `opensoft/workBenches#74`
 deletes the launcher's copy and `/swap` would otherwise be installed by nobody;
@@ -292,6 +308,10 @@ on `PATH`, moved the skill's steps to `handoff` with `lane-swap` kept as an
 alias naming it, and added the `/handoff` and `/ctx` command files.
 `/ctx` is `/handoff --restart`: the record first, then this lane's own pane
 respawned with a new session whose first prompt is that handoff's top block.
+Twenty-six until **Amendment 16** (ratified the same day) put `lane-rename` on
+`PATH`: a lane is renamed by one word, in one commit — the row, the object log,
+the handoff and `lanes/aliases.tsv` — and its old name resolves for ever
+afterwards, in every reader that takes a lane name.
 
 Run from a checkout it copies the files beside it and needs no network and no
 `gh` at all; run from stdin, as above, it fetches all of them at the same ref.
@@ -302,7 +322,7 @@ where `raw.githubusercontent.com` is blocked.
 |---|---|---|
 | `$OPENREPOTOOLS_REPO` | `opensoft/openRepoTools` | the `owner/name` to fetch from — a fork or a mirror, named once |
 | `$OPENREPOTOOLS_REF` | `main` | the ref to fetch it at |
-| `$OPENREPOTOOLS_BIN_DIR` | `~/.local/bin` | where `--install` puts the twelve |
+| `$OPENREPOTOOLS_BIN_DIR` | `~/.local/bin` | where `--install` puts the thirteen |
 | `$AGENT_PROTOCOL_ROOT` | `~/.agents` | where `workspace.yaml` lives — the one pointer to your data |
 | `$CLAUDE_PROFILES_HOME` | `~/.claude-profiles` | the profiles root `--install` places the shared skills under |
 | `$LANES_WORKSTATION` | — | this workstation's name, exported by the workBenches launcher. Outside a container it defaults to `hostname -s`; **inside one with no value every writer refuses**, because a container id is not a workstation and the log is never rewritten (Amendment 11, decision 8(d)) |

@@ -996,6 +996,11 @@ if [ -n "$name" ]; then
 	# up. Anything else is a read that did not answer, and this command binds no
 	# lane under a name nothing established (Amendment 7(d), the same rule the row
 	# read, the grouping read and the position read each take in this file).
+	# AND 66 IS THE ONE THAT HAS A NAME (Amendment 16(e), Copilot round 4 on
+	# openRepoTools#81): the lane ALIAS table could not be read, so a former name
+	# resolves to nothing and this command would bind a lane under a spelling
+	# that may belong to a row under another one. It falls into the refusal below
+	# with every other unanswered read, which is where it belongs.
 	if [ "$cl_rc" != 0 ] && [ "$cl_rc" != 2 ]; then
 		die "the register's spelling of lane $name could not be read: \`lanes-edit.sh canon-lane\`
     exited $cl_rc. A lane name is ONE name under any case (Amendment 15) and the
