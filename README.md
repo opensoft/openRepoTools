@@ -228,7 +228,10 @@ drifted prints `updated at`, and one whose bytes were right and whose MODE was n
 prints `(mode restored to 755)`: the mode is stamped on every artifact on every
 run, whether or not the bytes moved. ALL TWELVE ARE IN HAND BEFORE ANY IS
 PLACED, so a fetch that failed replaces nothing and names the file it could not
-get. A target that is **not a regular file, or not one this user can write** — a
+get. A mode stamp that FAILS is a refusal naming the file it could not mode
+(exit 2), never the shell's own 1: every `chmod` this command performs goes
+through the same door every other refusal here does. A target that is **not a
+regular file, or not one this user can write** — a
 symlink left by the pre-move `link-estates`, a directory, a file somebody made
 read-only — is a refusal in that same planning phase, naming every one of them,
 what it is, and the `rm` that clears them (`rm -f` takes a read-only file: a
@@ -268,7 +271,12 @@ string — a second writer of one of these hooks — a
 file it cannot parse, or a `hooks` that is not an object → it **refuses, prints
 the exact block, and places nothing at all**, because both merges are computed
 with the twelve files in hand before either is placed. An installer that
-repairs a file it does not understand is how you lose a setting you meant. Your
+repairs a file it does not understand is how you lose a setting you meant.
+A SECOND WRITER REFUSES WHETHER OR NOT OUR OWN ENTRY IS BESIDE IT: the read asks
+for a rival BEFORE it asks whether ours is already there, so a file carrying
+both is refused and the refusal names the rival as well as the block — it used
+to answer `already installed` for that file and leave the two writers of one
+hook exactly where they were. Your
 own `UserPromptSubmit` hooks are left exactly where they are, which is why that
 arm keys on the VERB and not on the word anywhere in a path. It
 never writes a profile's own `settings.json`: the launcher owns that one.
