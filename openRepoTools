@@ -1116,8 +1116,9 @@ $(hook_rivals "$settings" SessionStart "$HOOK_COMMAND" "$hook_verb")
     do. A SECOND WRITER REFUSES WHETHER OR NOT OUR OWN ENTRY IS BESIDE IT: two writers
     of one hook is the state this arm exists to refuse, and a file carrying both is
     that state. NOTHING was installed.
-    Remove the entry above — not the block below, which is this installer's own —
-    then re-run. The entry this places, byte for byte:
+    Remove EVERY entry listed above — all of them are second writers of this hook,
+    and one left behind refuses the next run the same way — but not the block below,
+    which is this installer's own. Then re-run. The entry this places, byte for byte:
 $(hook_block_text)
     (Amendment 9's adoption act 6 removes the hand-installed entry on each
     workstation before the first \`--install\` that carries this.)"
@@ -1135,8 +1136,9 @@ $(hook_rivals "$settings" UserPromptSubmit "$GUARD_COMMAND" "$guard_verb")
     the name guard twice — two refusals for one prompt. Repairing a setting a person
     meant is not an installer's to do, and A SECOND WRITER REFUSES WHETHER OR NOT OUR
     OWN ENTRY IS BESIDE IT: two writers of one hook is that state either way. So
-    NOTHING was installed. Remove the entry above — not the block below, which is
-    this installer's own — then re-run.
+    NOTHING was installed. Remove EVERY entry listed above — all of them are second
+    writers of this hook, and one left behind refuses the next run the same way —
+    but not the block below, which is this installer's own. Then re-run.
     The entry this places, byte for byte:
 $(guard_block_text)"
 		;;

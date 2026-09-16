@@ -663,8 +663,13 @@ def unguarded_mode_stamps(lines: list[str]) -> list[str]:
     #102). A stamp written `chmod 755 "$x" || true` carries a `||` and is the
     exact defect this rule exists to stop — a mode-stamp failure that is not a
     refusal — so the text after the `||` has to name `die`, on that line or, for
-    the two-line spelling this file uses, on the one below it. `{ rm -f -- …;
-    die …; }` is that handler too, which is why it is a word and not a prefix.
+    the two-line spelling this file uses, on the one below it.
+
+    AND `die` HAS TO BE THE COMMAND THE HANDLER RUNS (round 2), not a word
+    inside it: `|| echo die` names it and refuses nothing. So it is matched at a
+    command position — the start of the handler, or after the `;`, `&&`, `||` or
+    `{` that begins one — which is what makes `{ rm -f -- …; die …; }`, the
+    spelling the settings file's temporary needs, a handler this accepts.
     """
     out = []
     for number, line in enumerate(lines, 1):
@@ -673,7 +678,7 @@ def unguarded_mode_stamps(lines: list[str]) -> list[str]:
         handler = line.split("||", 1)[1] if "||" in line else ""
         if line.rstrip().endswith("||"):
             handler = lines[number] if number < len(lines) else ""
-        if not re.search(r"\bdie\b", handler):
+        if not re.search(r"(?:^|[;&|{(])\s*die\b", handler.strip()):
             out.append(f"{number}: {line.strip()}")
     return out
 
@@ -706,6 +711,9 @@ def test_every_mode_stamp_in_this_command_fails_through_die():
         '1: chmod 755 "$target"'], "an unguarded stamp is not caught"
     assert unguarded_mode_stamps(['\tchmod 755 "$target" || true']) == [
         '1: chmod 755 "$target" || true'], "`|| true` is a handler, not a refusal"
+    assert unguarded_mode_stamps(['\tchmod 755 "$target" || echo die']) == [
+        '1: chmod 755 "$target" || echo die'], (
+        "`die` has to be the command the handler RUNS, not a word inside it")
     assert unguarded_mode_stamps(['\tchmod 644 "$t" || die "no."']) == []
     assert unguarded_mode_stamps(['\tchmod 600 "$t" ||',
                                   '\t\t{ rm -f -- "$t"; die "no."; }']) == [], (
