@@ -269,7 +269,9 @@ entries** in `~/.claude/settings.json` — `lanes-edit.sh session-start` under
 `hooks.SessionStart`, and `lanes-edit.sh guard` under `hooks.UserPromptSubmit`,
 which is lane-collision-protocol Amendment 12's NAME GUARD: at every prompt it
 checks that the tmux window, the session's own name and the register row are
-one lane, and refuses the prompt when they are not. Those merges need
+one lane, and warns with an explicit repair/allow choice when a readable
+lane/session name mismatch occurs; unsafe or ambiguous identity states still
+refuse the prompt. Those merges need
 `jq`, never write the file whole, write it back at mode 600, and are
 idempotent by exact match on each entry's command string. That path must be a
 REGULAR FILE: a symlink there — into a dotfiles checkout, say — is a refusal in
