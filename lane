@@ -48,11 +48,17 @@
 #     `@id` on both, because an index is a name another window can be given
 #     between the read and the act — and where the window is already in this
 #     session the move is not made at all.
-#   * BOUND ELSEWHERE — clause (c)'s question, the handoff request. The request
-#     itself is `brettheap/new-workstation#38`'s act 4 and DOES NOT EXIST YET,
-#     so until it does this refuses and names where the lane is bound. It never
-#     offers a launch: a second session on a lane another workstation holds is
-#     the collision this whole protocol is about.
+#   * BOUND ELSEWHERE — clause (c)'s question, the handoff request, which
+#     `opensoft/openRepoTools#38` builds and this word now asks: *"lane <l> is
+#     bound to window <w> in <container> on <host> … ask it to hand off, then
+#     bind here? [y/N]"*. A `y` (or `--request-handoff` where there is no
+#     terminal) writes the request to the lane's log, pushes it, types
+#     `/handoff --exit requested by …` into that pane where it is on this tmux
+#     server, and WAITS; when the release lands the lane is free and this word
+#     takes the AVAILABLE branch with it. An empty wait refuses with the facts
+#     and names `--force`, which is a second invocation and never automatic. It
+#     never offers a launch on a lane still bound: that is the collision this
+#     whole protocol is about.
 #
 # CLOSED AND DORMANT LANES ARE HIDDEN (Amendment 19). A lane whose last act was
 # its last is not a lane a person picks, and a picker that offered one would be
@@ -121,6 +127,7 @@ lc() { printf '%s' "${1-}" | tr 'A-Z' 'a-z'; }
 usage() {
 	cat <<'USAGE'
 lane [<name> [<profile>]] [--all] [--dir <path>] [--switch] [--dry-run]
+     [--request-handoff | --force <why>] [--wait <s>]
 
   lane             the lanes of the checkout you are in, numbered, and ONE
                    question: which? Available lanes first (parked, or a binding
@@ -142,6 +149,15 @@ lane [<name> [<profile>]] [--all] [--dir <path>] [--switch] [--dry-run]
                    path, and it must not become the way a lane is reached.
   --switch         attach with `tmux switch-client` instead of moving the
                    lane's window into this session.
+  --request-handoff
+                   for a lane BOUND ELSEWHERE: ask that place to hand it off
+                   and wait, without being asked first. The `y` to this word's
+                   own question, for a caller with no terminal.
+  --force <why>    take a lane bound elsewhere anyway — a SECOND invocation,
+                   never automatic. The <why> goes into the lane's append-only
+                   log and is what the bound session reads when it refuses
+                   every prompt from then on (Amendment 18(e)).
+  --wait <s>       how long to wait for the handoff (default 300).
   --dry-run        print the acts instead of performing them.
   -h, --help       this.
 
@@ -178,6 +194,9 @@ fi
 
 all_given=0; switch=0; dry_run="${LANE_DRY_RUN:-0}"; dir_flag=""
 name=""; profile=""; positional=0; endopts=0
+# AMENDMENT 18(c)/(e) — the two answers to the BOUND ELSEWHERE branch's one
+# question, for a caller with no terminal to be asked on, and the wait's length.
+request_flag=0; force_why=""; handoff_wait=300
 # THE TWO ARGUMENTS ARE THE LANE AND THE PROFILE, IN THAT ORDER, and they are
 # taken in ONE place so that `--` can end the options without a second copy of
 # the rule. A lane name that opens with `-` is not a lane name (the fence below
@@ -211,6 +230,11 @@ while [ $# -gt 0 ]; do
 	--all) all_given=1; shift ;;
 	--switch) switch=1; shift ;;
 	--dry-run) dry_run=1; shift ;;
+	--request-handoff) request_flag=1; shift ;;
+	--force) force_why="${2-}"; [ -n "$force_why" ] || die "--force takes the WHY you are taking a lane another place is bound to: it is written into that lane's append-only log and it is the sentence the bound session reads when it refuses every prompt from then on (Amendment 18(e))" 64; shift 2 ;;
+	--force=*) force_why="${1#--force=}"; [ -n "$force_why" ] || die "--force takes the WHY you are taking a lane another place is bound to (Amendment 18(e))" 64; shift ;;
+	--wait) handoff_wait="${2-}"; [ -n "$handoff_wait" ] || die "--wait needs a number of seconds" 64; shift 2 ;;
+	--wait=*) handoff_wait="${1#--wait=}"; [ -n "$handoff_wait" ] || die "--wait needs a number of seconds" 64; shift ;;
 	--dir) dir_flag="${2-}"; [ -n "$dir_flag" ] || die "--dir needs a path" 64; shift 2 ;;
 	--dir=*) dir_flag="${1#--dir=}"; [ -n "$dir_flag" ] || die "--dir needs a path" 64; shift ;;
 	--) endopts=1; shift ;;
@@ -218,6 +242,17 @@ while [ $# -gt 0 ]; do
 	*) take_arg "$1"; shift ;;
 	esac
 done
+
+case "$handoff_wait" in '' | *[!0-9]*) die "--wait takes a whole number of seconds; '$handoff_wait' is not one" 64 ;; esac
+# TWO ANSWERS TO ONE QUESTION ARE NOT AN ANSWER. `--request-handoff` asks the
+# place that holds the lane to release it and waits; `--force` releases it on
+# that place's behalf without asking. Together they say both, and which one a
+# run took would be decided by the order of two arms rather than by the person.
+[ "$request_flag" = 1 ] && [ -n "$force_why" ] &&
+	die "--request-handoff ASKS the place that holds this lane to hand it off and waits for
+    it; --force takes it without asking and makes that place stop loudly
+    (Amendment 18(e)). They are two different acts on somebody else's session —
+    pick one." 64
 
 # `--all` IS THE LISTING'S SCOPE AND A NAME IS ONE LANE, so the two together are
 # a line that means two things — said rather than silently resolved either way,
@@ -427,12 +462,19 @@ fi
 #
 # Clause (j)'s ten columns and the read's two additions, in the read's order:
 #   1 lane · 2 state · 3 workstation · 4 profile · 5 window · 6 last uuid ·
-#   7 directory · 8 objects · 9 age · 10 the line that restarts it · 11 home ·
-#   12 live forks of its transcript
+#   7 directory · 8 objects · 9 age · 10 the one act for it · 11 home ·
+#   12 live forks of its transcript · 13 whether this place may pronounce on
+#   that binding (Amendment 18(b): `here`, `elsewhere`, or empty for a row with
+#   no binding line at all)
+#
+# THE LAST NAME MUST BE THE LAST COLUMN, and that is not a style point: `read`
+# puts every remaining field into its final variable, so a column added to the
+# read and not to this list arrives glued to the one before it. Column 12 is a
+# COUNT and column 13 a word, and `0<TAB>here` is neither.
 R_LANE=""; R_STATE=""; R_WS=""; R_PF=""; R_WIN=""; R_SID=""; R_DIR=""
-R_OBJ=""; R_AGE=""; R_CMD=""; R_HOME=""; R_FK=""
+R_OBJ=""; R_AGE=""; R_CMD=""; R_HOME=""; R_FK=""; R_LOC=""
 split_row() {   # <row>
-	IFS="$TAB" read -r R_LANE R_STATE R_WS R_PF R_WIN R_SID R_DIR R_OBJ R_AGE R_CMD R_HOME R_FK <<EOF
+	IFS="$TAB" read -r R_LANE R_STATE R_WS R_PF R_WIN R_SID R_DIR R_OBJ R_AGE R_CMD R_HOME R_FK R_LOC <<EOF
 ${1-}
 EOF
 	case "${R_DIR:-none}" in none) R_DIR="" ;; esac
@@ -831,15 +873,26 @@ go_live() {
 	exit 0
 }
 
-# BOUND ELSEWHERE — clause (c)'s question, and it is a REFUSAL until the request
-# exists. WHAT IT CAN NAME IS WHAT THE READ CARRIES: the row's workstation and
-# the window that lane's record last named. Amendment 18(a)'s `host` and
-# `container` sub-fields are `brettheap/new-workstation#38`'s own tooling to
-# write and no line in this estate carries one yet, so they are not named here —
-# a refusal that printed a field nobody writes would be naming an empty string
-# — and when they arrive they arrive in `lanes_rows`, which is where this line
-# would read them. What it never does is offer a launch: that is the collision.
+# BOUND ELSEWHERE — CLAUSE (c)'s QUESTION, WHICH EXISTS NOW. This word never
+# offers a launch here: a second session on a lane another place holds is the
+# collision the whole protocol is about. What it offers is the REQUEST — *"the
+# second place asks"* — and the request is `lanes-edit.sh request-handoff`,
+# which writes the line, pushes it, types `/handoff --exit requested by …` into
+# the bound pane where that pane is on this tmux server, and waits. The
+# mechanism is there and the QUESTION is here, in this word's own terms, because
+# `lane-start` asks it in its own and one mechanism with two doors is the rule
+# clause (h) gives every read in this family.
+#
+# THE GROUPING PUT THIS LANE HERE BY THE REGISTER'S WORKSTATION COLUMN; THE
+# BINDING READ IS WHAT THE QUESTION IS ASKED ABOUT. The two can disagree — a row
+# filed on another workstation whose log's last lane-kind line released the
+# binding is FREE, and asking a place that is not holding it for a handoff it
+# cannot give is a question nobody can answer. So the read decides, and an
+# already-free lane goes to the available branch it belonged in.
 go_elsewhere() {
+	local ge_out="" ge_rc=0 ge_ask="" ge_answer="" ge_facts=""
+	local ge_host ge_cont ge_win ge_utc ge_sess ge_os ge_where ge_wstate
+	local ge_rh ge_rh_rc
 	# AND THE CONTAINER NOTICE BELONGS HERE MOST OF ALL, not only under the
 	# listing. With no `$LANES_WORKSTATION` inside a container the workstation is
 	# the CONTAINER'S id, so NO row is this workstation's — and the partition then
@@ -850,18 +903,113 @@ go_elsewhere() {
 	# which is what `ws_notice`'s once-per-run guard is for. On stderr, because
 	# the refusal under it is.
 	ws_notice >&2
-	die "lane $R_LANE is bound on ${R_WS:-a workstation this row does not name}${R_WIN:+, window $R_WIN}${R_AGE:+, as of $R_AGE ago},
-    and this workstation cannot see another machine's tmux — so there is nothing
-    here to attach to, and a second session on it is the collision this protocol
-    exists to stop (clause (h)).
-
-    Clause (c)'s act is to ASK THAT WORKSTATION FOR THE HANDOFF. The request
-    itself is \`brettheap/new-workstation#38\`'s act 4 and does not exist yet:
-    until it does, the exit is a person on ${R_WS:-that workstation} parking it —
-    \`/lane-swap\` in that session — after which it is PARKED and \`$prog
-    $R_LANE\` takes it here.
+	# LOCAL, LIKE EVERY READ IN THIS WORD, and the fetch that matters is one
+	# layer down rather than missing: this read decides WHAT to ask and which
+	# facts to print, and `request-handoff` — the act it leads to — fetches for
+	# itself before it writes a line, so a binding this checkout has not pulled
+	# the release of answers 8 there and this branch takes the available one.
+	# The other direction is `lane-start`'s: it reads the binding after a fetch
+	# before it binds anything, so nothing is taken on a stale answer either.
+	ge_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" binding "$R_LANE" 2>/dev/null)" || ge_rc=$?
+	case "$ge_rc" in
+	0) : ;;
+	8)
+		note "lane $R_LANE's row is filed on ${R_WS:-another workstation}, and its own log says the binding has been RELEASED — so there is nothing there to ask for and this is an available lane after all (Amendment 18(b))."
+		go_available
+		return 0 ;;
+	2)
+		die "lane $R_LANE is bound on ${R_WS:-a workstation this row does not name}${R_WIN:+, window $R_WIN}, and
+    this workstation's \`lanes-edit.sh\` has no \`binding\` read, so it predates
+    lane-collision-protocol Amendment 18 and cannot ask that place for the
+    handoff. That is not a failure and nothing is wrong with the register —
+    this workstation has not taken the install yet. Take it:
+      openRepoTools --install
+    Until then the exit is a person on ${R_WS:-that workstation} parking it:
+    \`/handoff\` in that session, after which \`$prog $R_LANE\` takes it here." 2 ;;
+	*)
+		die "where lane $R_LANE is bound could not be read: \`lanes-edit.sh binding\` exited
+    $ge_rc. That is NOT 'it is bound nowhere' (Amendment 7(d)), and this command
+    will not ask a place it cannot name for a handoff — nor bind a lane on an
+    answer it did not get. Run it by hand to see what it says:
+      $LANES_EDIT binding $R_LANE" 1 ;;
+	esac
+	IFS="$TAB" read -r ge_host ge_cont ge_win ge_utc ge_sess ge_os ge_where ge_wstate <<EOF
+$ge_out
+EOF
+	ge_facts="lane $R_LANE is bound to window ${ge_win:-none} in container ${ge_cont:-none} on host ${ge_host:-unknown} (session ${ge_sess:-unknown}, last line ${ge_utc:-unknown}); this tmux server says that window is ${ge_wstate:-unknown}"
+	# AND WHERE THAT WINDOW IS LIVE ON THIS TMUX SERVER, THE ATTACH IS STILL
+	# OFFERED (Copilot round 2 on openRepoTools#83). A binding in another
+	# container of this host is not this place's to pronounce on — that is why
+	# the row is here rather than under LIVE HERE — but one host's launcher
+	# mounts ONE socket into every container it starts, so the pane exists and
+	# putting a terminal in front of it STARTS NOTHING. Watching a lane and
+	# taking it are two different acts, and only the second is the collision.
+	ge_watch=""
+	if [ "$ge_wstate" = live ] && split_window "$ge_win"; then
+		if [ -n "$(this_session)" ]; then ge_watch="tmux switch-client -t $W_SESS:$W_ID"
+		else ge_watch="tmux attach -t $W_SESS:$W_ID"
+		fi
+	fi
+	# A BINDING THIS HOST PROVES DEAD IS NOT A BINDING TO ASK ABOUT. One host's
+	# launcher mounts ONE tmux socket into every container it starts, so a
+	# window that is gone from this server is a pane no session can be in —
+	# clause (b)'s one exception, and the takeover path this word already has.
+	if [ "$ge_wstate" = gone ]; then
+		note "$ge_facts — and a window that is gone from this tmux server is clause (b)'s one DEAD binding, because one host's launcher mounts one socket into every container it starts. Taking it here."
+		go_available
+		return 0
+	fi
+	if [ -n "$force_why" ]; then
+		ge_ask=force
+	elif [ "$request_flag" = 1 ]; then
+		ge_ask=yes
+	elif [ -t 0 ]; then
+		say ""
+		say "$ge_facts."
+		[ -z "$ge_watch" ] || say "to WATCH it where it is, which starts nothing:  $ge_watch"
+		printf 'ask it to hand off, then bind here? [y/N] '
+		IFS= read -r ge_answer || ge_answer=""
+		case "$(lc "$ge_answer")" in y | yes) ge_ask=yes ;; *) ge_ask=no ;; esac
+	else
+		ge_ask=no-terminal
+	fi
+	if [ "$ge_ask" = no ] || [ "$ge_ask" = no-terminal ]; then
+		die "$ge_facts.
+    A lane has ONE binding and this is not it (Amendment 18(b)), so nothing here
+    was launched, attached or written. Liveness is pronounced only from inside
+    that binding's own host and container — from here it is UNKNOWN and never
+    dead, whatever a \`kill -0\` of a pid in another namespace would say.
+      ask that place for the handoff, and wait for it:
+        $prog --request-handoff $R_LANE
+      or take it anyway, which is a SECOND invocation and never automatic, and
+      which makes that place STOP loudly rather than silently:
+        $prog --force \"<why you are taking it>\" $R_LANE${ge_watch:+
+      or WATCH it where it is, which starts nothing and takes nothing:
+        $ge_watch}
       what the register says:  lanes --all
       who holds it:            lanes-edit.sh who --lane $R_LANE" 2
+	fi
+	ge_rh=("$LANES_EDIT" request-handoff "$R_LANE")
+	if [ "$ge_ask" = force ]; then ge_rh+=(--force "$force_why")
+	else ge_rh+=(--wait "$handoff_wait")
+	fi
+	[ "$dry_run" = 0 ] || ge_rh+=(--dry-run)
+	say "$(quoted "${ge_rh[@]}")"
+	ge_rh_rc=0
+	"${ge_rh[@]}" || ge_rh_rc=$?
+	case "$ge_rh_rc" in
+	0 | 8) say "lane $R_LANE is free — taking it here." ;;
+	2) die "the handoff was not obtained (the facts and the \`--force\` line are above), so lane
+    $R_LANE is still bound elsewhere and nothing here was launched or attached." 2 ;;
+	*) die "\`$LANES_EDIT request-handoff $R_LANE\` exited $ge_rh_rc, which is neither 'the lane is
+    free' nor the refusal that says it is not. Nothing was launched or attached." 1 ;;
+	esac
+	if [ "$dry_run" = 1 ]; then
+		say "--dry-run: nothing was requested, launched or attached"
+		exit 0
+	fi
+	go_available
+	return 0
 }
 
 # A NEW LANE AT THE NEXT FREE POSITION — the `f` answer. The position comes from
@@ -1202,6 +1350,14 @@ if [ ! -t 0 ]; then
 	# it — a different act on somebody's terminal. It goes on the `lane` line
 	# alone: `lane-start` has no such flag.
 	if [ "$switch" = 1 ]; then nt_sw=" --switch"; fi
+	# …AND AMENDMENT 18(c)/(e)'s THREE, on the same rule. A suggested line that
+	# lost `--request-handoff` asks a person to type a command that refuses; one
+	# that lost `--force` asks them to type a command that does not take the
+	# lane. Both are acts on somebody else's session, so neither is a preference
+	# to be dropped.
+	if [ "$request_flag" = 1 ]; then nt_sw="$nt_sw --request-handoff"; fi
+	if [ -n "$force_why" ]; then nt_sw="$nt_sw --force $(quoted "$force_why")"; fi
+	if [ "$handoff_wait" != 300 ]; then nt_sw="$nt_sw --wait $handoff_wait"; fi
 	if [ "$n" != 0 ]; then printf '    %-34s %s\n' "$prog$nt_dir$nt_sw <name>" "the lane you want, from the list above"; fi
 	if [ -n "$next_free" ]; then printf '    %-34s %s\n' "lane-start$nt_dir $here_repo $next_free" "a new lane at the next free position"; fi
 	printf '    %-34s %s\n' "lanes --all" "every lane the register and the logs know"
