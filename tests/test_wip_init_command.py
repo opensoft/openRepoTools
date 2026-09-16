@@ -1280,6 +1280,59 @@ def test_a_template_path_staged_at_another_mode_is_refused_not_restaged(
         "the pointer file was written by a run that refused")
 
 
+@pytest.mark.parametrize("how", ["untracked", "staged-then-chmod"])
+def test_an_executable_template_path_is_refused_not_seeded_at_100755(
+        tmp_path, how):
+    """THE INDEX IS ONLY HALF THE MODE (Copilot round 1 on PR #101, against
+    the #63 fix's own diff).
+
+    Step 8 stages from the WORKTREE, so an owed candidate whose file carries
+    the execute bit is recorded in the seed commit as `100755` and pushed —
+    and it reaches that point two ways the stage-0 mode question never sees:
+    an UNTRACKED template path whose bytes match the template and whose file
+    somebody chmod'ed, and a path staged `100644` whose worktree file got the
+    bit afterwards. This command copies the template's own bytes from a 0644
+    file and has never chmod'ed anything it wrote, so an executable file at a
+    template path is not its leftover whatever its bytes say.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout, template_bytes, before_head = adopted_checkout_without(
+        tmp_path, home, env)
+
+    owed = checkout / "handoffs" / "README.md"
+    owed.parent.mkdir(parents=True, exist_ok=True)
+    owed.write_text(template_bytes, encoding="utf-8")
+    if how == "staged-then-chmod":
+        # Staged at the mode this command itself writes, so the stage-0 check
+        # is satisfied and only the worktree's own bit is left to catch it.
+        subprocess.run(["git", "-C", str(checkout), "add", "--",
+                        "handoffs/README.md"], check=True)
+        assert staged_mode_in(checkout, "handoffs/README.md") == "100644"
+    owed.chmod(0o755)
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"{owed} is executable" in result.stderr, result.stderr
+    assert oct(owed.stat().st_mode & 0o777) == "0o755", (
+        "the refusal changed the person's own mode")
+    assert owed.read_text(encoding="utf-8") == template_bytes, (
+        "the worktree file was written over")
+    if how == "staged-then-chmod":
+        assert staged_mode_in(checkout, "handoffs/README.md") == "100644", (
+            "what was staged was changed by a run that refused")
+    else:
+        assert staged_in(checkout) == "", (
+            f"the refusal staged {staged_in(checkout)!r}")
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+    assert not (home / ".agents" / "workspace.yaml").exists(), (
+        "the pointer file was written by a run that refused")
+
+
 def test_a_skip_worktree_template_path_is_named_and_never_seeded(tmp_path):
     """A PATH HEAD CARRIES AND THE DISK DOES NOT IS NOT THE SAME AS A PATH
     THAT IS SIMPLY THERE (#69).

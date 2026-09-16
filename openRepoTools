@@ -2023,6 +2023,39 @@ $(sed -e 's/^/    /' -- "$WIP_LAST_OUT")
     Commit, stash or unstage that path, then re-run:
         openRepoTools wip init"
 				fi
+				# AND THE WORKTREE CARRIES A MODE OF ITS OWN, which is the half
+				# the index question below cannot see (#101 round 1, on the #63
+				# fix's own diff). Step 8 stages from the WORKTREE, so an owed
+				# candidate whose file is EXECUTABLE goes into the seed commit
+				# as `100755` — and it reaches here two ways the stage-0
+				# question never asks about: an UNTRACKED template path whose
+				# bytes match and whose file somebody chmod'ed, and a path
+				# staged `100644` whose worktree file got the bit afterwards.
+				# This command copies the template's own bytes from a 0644 file
+				# and has never chmod'ed anything it wrote, so an executable
+				# file at a template path is not its leftover whatever its
+				# bytes say — it is somebody's own, and this branch's answer to
+				# that is a refusal.
+				#
+				# ASKED ONLY WHERE GIT WOULD RECORD IT. On a filesystem that
+				# reports every file executable, `git clone` sets
+				# `core.fileMode=false` and git stages `100644` regardless; a
+				# refusal there would refuse every re-run on that mount over a
+				# bit that means nothing, so the config that decides it is
+				# asked. Unset is TRUE, which is why only an explicit `false`
+				# stands the refusal down.
+				if [ -x "$checkout/$rel" ] &&
+					[ "$(git -C "$checkout" config --get core.fileMode 2>/dev/null || :)" != "false" ]
+				then
+					die "$checkout/$rel is executable, and every file in $SHAPE_REPOSITORY's
+    $WIP_TEMPLATE_DIR is a plain 100644 — this command copies the template's own bytes from a
+    0644 file and has never chmod'ed anything it wrote, so an executable file at a template
+    path is somebody's own, whatever its bytes say. Staging it would record 100755 in the seed
+    commit and push that to $target's main. Nothing beyond this run's own template bytes was
+    written into that checkout, and nothing was staged.
+    \`chmod 644\` that path, or commit, stash or remove it, then re-run:
+        openRepoTools wip init"
+				fi
 				# AND WHAT IS STAGED IS A MODE AS WELL AS A BLOB (#63). The
 				# index comparison this branch makes below is
 				# `cat-file -p ":$rel"`, which prints a blob's BYTES and never
