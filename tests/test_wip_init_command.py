@@ -1149,9 +1149,12 @@ def test_a_git_status_this_command_cannot_run_is_refused_not_read_as_clean(
     # file corrupt`) depends on how it is corrupt and on the version. What the
     # refusal owes a person is the `fatal:` line naming the index, and that is
     # what is asserted.
-    assert "fatal:" in result.stderr and "index" in result.stderr, (
+    assert "fatal:" in result.stderr, (
         f"the refusal dropped the only sentence that says why:\n"
         f"{result.stderr}")
+    assert "index" in result.stderr, (
+        f"git's sentence reached the person but says nothing about the index "
+        f"it could not read:\n{result.stderr}")
     assert not (checkout / "handoffs" / "README.md").exists(), (
         "a template byte was written past the gate that could not be asked")
     assert head_of(checkout) == before_head, (
