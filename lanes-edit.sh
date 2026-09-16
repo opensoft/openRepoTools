@@ -5358,6 +5358,20 @@ EOF2
     # listing is not showing is a row it may not pay for — and it walks a table
     # of its own rather than the one above, which every lane in the estate walks
     # once (ruling 12: the measurement is in `LANES_REGISTER_INDEX_AWK`).
+    #
+    # AND A ROW THE CELLS PASS DID NOT SEE IS NOT A ROW WITH NO CELL. The two
+    # passes read ONE register text, so every row in the table above is in this
+    # one; a row in the first and not the second is a read that answered
+    # differently the second time, and an EMPTY cell read as an answer would
+    # make `mig_cell_is_phrase` false and class the row DORMANT — hiding a row
+    # whose cell may say PAUSED and offering it to the sweep, which is the one
+    # thing 13(a) is in this rule for. `lr_cellrow` carries whether the pass saw
+    # it, and the class below is not decided without it (Amendment 7(d), the
+    # same posture round 3 gave the liveness read). It is the PUBLISHED pass
+    # that carries it, because the published row is the only one the class is
+    # ever decided on — `lr_row` is `lr_ixl` and a row this checkout alone has
+    # is in no class either way.
+    lr_cellrow=0
     if [ "$lr_lanekind" = 0 ] && [ -n "$lr_ixl$lr_lixl" ]; then
       if [ "$lr_cells_built" = 0 ]; then
         lr_cells="$GS$(lanes_register_index --cells 2>/dev/null | tr '\n' "$GS" || :)"
@@ -5365,6 +5379,7 @@ EOF2
         lr_cells_built=1
       fi
       if table_lookup "$lr_cells" "$lr_ll"; then
+        lr_cellrow=1
         IFS="$US" read -r lr_was lr_flags <<EOF2
 $LOOKUP_OUT
 EOF2
@@ -5412,7 +5427,8 @@ EOF2
         # be working in. The listing already SAYS the read failed (one screen
         # up); this is what it does about it — leaves the class unset, so the
         # row stays listed and the sweep is never offered it.
-        if [ -n "$lr_row" ] && [ "$lr_lanekind" = 0 ] && [ "$lr_live_rc" = 0 ]; then
+        if [ -n "$lr_row" ] && [ "$lr_lanekind" = 0 ] && [ "$lr_live_rc" = 0 ] &&
+           [ "$lr_cellrow" = 1 ]; then
           lr_class=dormant
           # A LOG THIS CHECKOUT HAS AND `origin` HAS NOT IS STILL AN OBJECT LOG.
           case "$lr_logfiles" in
