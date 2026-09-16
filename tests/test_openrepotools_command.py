@@ -822,10 +822,11 @@ def test_install_writes_a_receipt_of_every_file_it_placed(tmp_path):
     assert result.returncode == 0, result.stderr
     receipt = receipt_path(tmp_path)
     assert receipt.is_file(), result.stdout
-    assert stat.S_IMODE(receipt.stat().st_mode) == 0o644, (
-        "the receipt is a record of what is on a PATH and not a secret, and "
-        "the mode is stamped on the temporary so it is never wider for an "
-        "instant")
+    assert stat.S_IMODE(receipt.stat().st_mode) == 0o600, (
+        "the receipt is born at mktemp's 0600 and no chmod touches it: every "
+        "chmod this command performs must fail through die (#48), and a "
+        "receipt that cannot be written is a note and never a refusal (#57), "
+        "so the one mode both rules allow is the one mktemp gives")
     rows = receipt_rows(tmp_path)
     expected = placed_files(tmp_path)
     assert len(rows) == ARTIFACTS - HOOK_ENTRIES == len(expected), (

@@ -476,13 +476,19 @@ receipt_rows_except() {   # <receipt> <destinations file> <staged file>
 	return 0
 }
 
-# THE WRITE ITSELF: `mktemp` in the same directory, `chmod`, `mv -f`. It is the
-# shape `place_skill_and_hook` writes `settings.json` with and for the same
-# reason — a half-written receipt is a receipt that says a file is not this
-# installer's — with one difference, the mode. 0644 and not 0600: this is a
-# record of what is on a PATH, not a secret, and it is stamped on the TEMPORARY
-# so the file never exists at a wider mode than that for an instant, whatever
-# the umask.
+# THE WRITE ITSELF: `mktemp` in the same directory, `mv -f`. It is the shape
+# `place_skill_and_hook` writes `settings.json` with and for the same reason —
+# a half-written receipt is a receipt that says a file is not this installer's.
+# AND NO `chmod`: the receipt's mode is the 0600 `mktemp` gives the temporary,
+# whatever the umask, which is `settings.json`'s mode too. Two rules meet here
+# and this is how both are kept. #48 (PR #102) rules that EVERY `chmod` this
+# command performs fails through `die` — a mode-stamp failure is a refusal —
+# and `tests/test_openrepotools_command.py` reads the script's text to hold
+# every site to it; #57 rules that a receipt this command cannot write is a
+# NOTE and never a refused install. A stamp that may not `die` and may not
+# fall silent is a stamp that must not exist, and 0600 wants none: this is one
+# account's evidence, read by that account's own retirements, and nothing else
+# reads it.
 #
 # `mv -f` DOES NOT FOLLOW A SYMLINK — it replaces the link itself — which is
 # why `receipt_record` refuses one BEFORE reaching this: silently swapping a
@@ -495,7 +501,6 @@ receipt_replace() {   # <staged file> — 0, or 1 having changed nothing
 	mkdir -p -- "$dir" 2>/dev/null || return 1
 	tmp="$(mktemp -- "$dir/installed.tsv.XXXXXX" 2>/dev/null)" || return 1
 	cp -- "$1" "$tmp" 2>/dev/null || { rm -f -- "$tmp"; return 1; }
-	chmod 644 "$tmp" 2>/dev/null || { rm -f -- "$tmp"; return 1; }
 	mv -f -- "$tmp" "$file" 2>/dev/null || { rm -f -- "$tmp"; return 1; }
 	return 0
 }
