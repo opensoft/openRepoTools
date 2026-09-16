@@ -60,6 +60,29 @@
 #   lanes-edit.sh [--no-sweep|--sweep] add-row            "<full | row |>"
 #   lanes-edit.sh                      commit             "<message>"         # commit a hand edit
 #   lanes-edit.sh                      migrate-state-cells [--yes]            # Amendment 13(e), once
+#   lanes-edit.sh                      retire-rows        <lane>… [--reason "<why>"] [--writer <lane>]
+#   lanes-edit.sh                      archive-rows       <repo> [--yes]      # Amendment 19(d)
+#
+# AMENDMENT 19 — A CLOSED OR DORMANT LANE LEAVES THE LISTING
+#   lanes-edit.sh lanes [--closed]                 # CLOSED and DORMANT rows too
+#   lane-end --retire-dormant <repo> [--reason "<why>"] [--yes]
+#   lanes-edit.sh archive-rows <repo> [--yes]
+#
+#   CLOSED is a lane whose object log's last lane-kind line is `ENDED` or
+#   `RETIRED`; DORMANT is a ROW WITH NO OBJECT LOG and no live session here —
+#   the rows that predate Amendment 7 and that no `lane-end` can close, because
+#   it wants a live session or a log to write into. `lanes` lists neither by
+#   default; `--closed` adds them, and the NEXT FREE POSITION is computed over
+#   every row of the repository — the hidden ones and the archive included — so
+#   a retired `<repo>-<n>` is never reissued.
+#
+#   `lane-end --retire-dormant <repo>` is a DRY RUN that names every dormant row
+#   of that repository with its start, its workstation and its state cell's
+#   head, and FLAGS the cells that say the work was unpushed, lost, a loss or
+#   owed, or that still say LIVE. With `--yes` it is ONE commit — `retire-rows`
+#   below it — creating each lane's log with a single `RETIRED` line that
+#   carries the row's own last words, and setting the row's state to
+#   `RETIRED · <UTC> · <why>; was: <head>`.
 #
 # AMENDMENT 13 — THE ROW IS CURRENT STATE; THE LOG IS HISTORY
 #   lanes-edit.sh set-row-state <lane> "<STATE> · <one line>"
@@ -1037,6 +1060,60 @@ replace_line() {
   [ "$stat" = "$(printf '1\t1')" ] || die "edit touched more than one line (numstat: ${stat:-none}); refusing" 5
   cat -- "$out" > "$LANES_FILE"   # redirect FOLLOWS the symlink
   note "line $n rewritten in $LANES_FILE"
+}
+
+# LINES REMOVED AND NOTHING ELSE TOUCHED — `replace_line`'s proof, for the one
+# act that takes rows OUT of the register (Amendment 19(d): `archive-rows`
+# MOVES a repository's RETIRED rows to `lanes/archive/LANES-retired.md`). The
+# rows are appended to the archive FIRST and removed here second, so a refusal
+# between the two leaves the register whole and the archive holding a copy —
+# never the other way round, which would be the one order that loses a row.
+#
+# THE NUMBERS ARE THE PROOF: exactly N fewer lines, and `git diff --numstat`
+# showing N deleted and ZERO added. A deletion that also rewrote a line would
+# pass a line count and fail this.
+delete_lines() {   # <line numbers, one per line, any order>
+  dl_list="$1"
+  dl_n="$(printf '%s\n' "$dl_list" | grep -c . || :)"
+  [ "$dl_n" -gt 0 ] || return 0
+  TMPD="$(mktemp -d)"
+  dl_pre="$TMPD/pre"; dl_out="$TMPD/out"
+  cat -- "$LANES_FILE" > "$dl_pre"
+  dl_before="$(wc -l < "$dl_pre" | tr -d ' ')"
+  # `awk -v` CARRIES ONE LINE, AND THIS LIST IS MANY — the finding `who_landing`
+  # took in round 5 of A9 Addendum 4 (R-A9-11), re-made here and answered by
+  # `tests-macos` at `758a536` with six red lines and nothing saying why. A
+  # `-v name=value` is processed as if it were a STRING LITERAL, and a string
+  # literal cannot span lines: macOS's awk (one-true-awk) refuses it outright —
+  # `awk: newline in string … at source line 1`, exit 2, NO OUTPUT AT ALL —
+  # while gawk and mawk accept it silently, so no Linux job and no workstation
+  # here can see it. What it cost is exactly what it cost there: an empty
+  # `$dl_out`, a line count that fails its own proof, and `archive-rows --yes`
+  # dying 5 with the rows already in the archive and the register untouched.
+  # `ENVIRON` has no such restriction and is POSIX awk, so the list goes through
+  # the environment of this one command, which is the spelling `who_landing`
+  # settled on. Asserted on every platform by a shim that IS the one-true-awk
+  # rule (`tests/test_lane_helpers.sh`, the `repo19d` case).
+  #
+  # AND THE PASS IS READ WITH ITS OWN STATUS. An awk that failed writes an empty
+  # file, and an empty file is not "no rows matched" (Amendment 7(d)) — it is a
+  # read that failed, and it must say so rather than arrive at the line-count
+  # proof as a wrong number, which is the shape the macOS job had to be
+  # reverse-engineered from.
+  if ! LANES_DROP_LINES="$dl_list" awk '
+    BEGIN { k = split(ENVIRON["LANES_DROP_LINES"], a, "\n")
+            for (i = 1; i <= k; i++) if (a[i] != "") drop[a[i] + 0] = 1 }
+    !(NR in drop)' "$dl_pre" > "$dl_out"; then
+    die "the pass that removes $dl_n row(s) from $LANES_FILE failed, so what the register would become is not known — and that is not an empty register (Amendment 7(d)). Nothing was removed; the rows are in $LANES_ARCH_PATH and the register is whole." 5
+  fi
+  dl_after="$(wc -l < "$dl_out" | tr -d ' ')"
+  [ "$dl_after" -eq "$((dl_before - dl_n))" ] ||
+    die "removing $dl_n row(s) changed the line count by $((dl_before - dl_after)); refusing" 5
+  dl_stat="$(git --no-pager diff --no-index --numstat -- "$dl_pre" "$dl_out" 2>/dev/null | head -n1 | cut -f1,2)"
+  [ "$dl_stat" = "$(printf '0\t%s' "$dl_n")" ] ||
+    die "the removal added or rewrote lines (numstat: ${dl_stat:-none}); refusing" 5
+  cat -- "$dl_out" > "$LANES_FILE"   # redirect FOLLOWS the symlink
+  note "$dl_n row(s) removed from $LANES_FILE"
 }
 
 # $2 is the file to append to, defaulting to the register. Amendment 7's
@@ -2214,6 +2291,45 @@ register_text() {
       rm -f -- "$rt_c.${BASHPID:-$$}"
   fi
   printf '%s\n' "$LANES_REGISTER_CACHE"
+}
+
+# ------------------------- AMENDMENT 19(d): THE ARCHIVE IS PART OF THE READ
+#
+# `archive-rows <repo>` moves a repository's RETIRED rows out of the register
+# and into `lanes/archive/LANES-retired.md`, and the amendment is explicit about
+# who follows them: *"every reader of the next free position and `lanes
+# --closed` read the archive too"*. So the archive is read exactly as the
+# register is — `origin/<branch>` first (R19), this checkout second — and its
+# ABSENCE IS SILENCE: a register nobody has archived from has no such file, and
+# that is the ordinary case rather than an error.
+#
+# It is NOT cached the way `register_text` is: this file is the small one (the
+# rows nobody reads day to day), and it is read once per listing.
+LANES_ARCH_NAME="LANES-retired.md"
+LANES_ARCH_PATH="${LANES_ARCH_PATH:-${LANES_PREFIX}archive/$LANES_ARCH_NAME}"
+LANES_ARCH_FILE="${LANES_ARCH_FILE:-$LANES_DIR/archive/$LANES_ARCH_NAME}"
+archive_text() {
+  if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_ARCH_PATH" 2>/dev/null; then
+    # A PUBLISHED ARCHIVE THIS READ COULD NOT RENDER IS NOT AN EMPTY ARCHIVE.
+    # The rows in this file hold POSITIONS: read as absent, a retired
+    # `<repo>-<n>` comes back on offer, which is the one thing 19(d) exists to
+    # prevent. So a failed `show` falls through to this checkout's own copy and
+    # says it did, rather than answering silently with nothing.
+    if git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_ARCH_PATH" 2>/dev/null; then return 0; fi
+    note "the published $LANES_ARCH_PATH exists but could not be read — falling back to this checkout's copy of it"
+    # AND WHERE THERE IS NO COPY TO FALL BACK TO, THE READ FAILED (Copilot round
+    # 2 on #93). Answering 0 with no rows there says "the archive is empty"
+    # about a file `origin` is holding, and the position of every row in it
+    # comes back on offer.
+    [ -f "$LANES_ARCH_FILE" ] || return 1
+  fi
+  # AND THE LOCAL COPY IS THE SAME RULE ONE RUNG DOWN: a file that is THERE and
+  # will not open is a read that FAILED, and its rows hold positions. Saying
+  # nothing here would put a retired `<repo>-<n>` back on offer.
+  if [ -f "$LANES_ARCH_FILE" ]; then
+    cat -- "$LANES_ARCH_FILE" 2>/dev/null || return 1
+  fi
+  return 0
 }
 
 # Each lane's LAST line on <object>, as
@@ -4829,7 +4945,7 @@ EOF
 # a listing shows, because a lane may have a row and no log (pre-cutover) or a
 # log and a row that has been closed.
 register_lanes() {
-  register_text | awk '
+  { register_text; archive_text; } | awk '
     substr($0,1,1) == "|" {
       p1 = index($0, "`"); if (p1 == 0) next
       rest = substr($0, p1 + 1); p2 = index(rest, "`"); if (p2 == 0) next
@@ -4850,6 +4966,31 @@ register_lanes() {
 # the workstation, and `uuids_in_cell`'s shape match — restated here in awk
 # because a reader comparing the two must be able to see both.
 LANES_REGISTER_INDEX_AWK='
+    # THE STATE CELL IS THE SEVENTH, AND SIX ` | ` SEPARATORS ARE THE PROOF —
+    # `row_split_state_cell` in awk, for the same reason the three reads above
+    # are restated here: this pass already holds the row, and a second read of
+    # the same megabyte to ask what the cell says would cost the listing what
+    # ruling 12 spent this function to save. The rule is that files: split from
+    # the left, six separators or it is not knowable WHICH text is the state
+    # cell, and then the last piece is it. More than six returns EMPTY rather
+    # than a guess — the writer refuses that row outright, and a reader that
+    # picked one of the two readings would be filing a lane by the wrong text.
+    function cell_state(row,   body, rest, i, cnt) {
+      sub(/[ \t]+$/, "", row)
+      if (substr(row, 1, 1) != "|") return ""
+      if (substr(row, length(row), 1) != "|") return ""
+      body = substr(row, 1, length(row) - 1)
+      rest = body; cnt = 0
+      while (cnt < 6) {
+        i = index(rest, " | ")
+        if (i == 0) return ""
+        rest = substr(rest, i + 3)
+        cnt++
+      }
+      if (index(rest, " | ") > 0) return ""
+      return rest
+    }
+    function trim(t) { sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t); return t }
     substr($0, 1, 1) != "|" { next }
     {
       p1 = index($0, "`"); if (p1 == 0) next
@@ -4858,6 +4999,13 @@ LANES_REGISTER_INDEX_AWK='
       n = split($0, c, "|")
       ses = (n >= 3 ? c[3] : "")
       ws  = (n >= 4 ? c[4] : "")
+      # COLUMN 4, `started (UTC)`, AS THE ROW SPELLS IT. The live register
+      # writes that column three ways — `2026-09-02`, `2026-09-04 ~15:30Z` and
+      # `2026-09-13T17:41Z` — and this carries the text, not an instant: the
+      # sweep prints it for a person to read, and `mig_started_utc` is the one
+      # place that turns it into a UTC.
+      started = (n >= 5 ? trim(c[5]) : "")
+      gsub(/\t/, " ", started)
       sub(/^[ \t]+/, "", ws); sub(/[ \t]+$/, "", ws)
       sub(/ *\/.*$/, "", ws)
       sub(/[ \t].*$/, "", ws)
@@ -4871,22 +5019,82 @@ LANES_REGISTER_INDEX_AWK='
         s2 = substr(s2, RSTART + RLENGTH)
       }
       sub(/ $/, "", ids)
+      # THE STATE CELL: ITS HEAD, AND THE WORDS A SWEEP MUST NOT PASS OVER
+      # SILENTLY (Amendment 19(b) and (c)). The head is what `lanes --closed`
+      # shows for a dormant row and what its `RETIRED` line carries as
+      # `was:`, so the row-s own last words survive the sweep that closes it;
+      # the flags are read from the WHOLE cell and not from the head, because
+      # the five words that matter — the work was unpushed, lost, a loss, owed,
+      # or the cell still says LIVE — sit at the end of cells thousands of
+      # characters long on the register this was written for.
+      # CUT BACK TO A SPACE: `substr` counts bytes in some awks and characters
+      # in others, and a cut mid-character would put half a `—` into a log line
+      # that is append-only. Dropping the last (possibly torn) word costs a word
+      # and can never do that.
+      #
+      # AND THESE TWO ARE A TABLE OF THEIR OWN (`--cells`), NEVER THE ONE THE
+      # LISTING SCANS PER LANE — ruling 12 again, measured. `table_lookup` walks
+      # the whole table for every lane, so a free-text field of up to 280
+      # characters per row is paid for N times: on a register of 132 rows one
+      # `lanes --prefix <repo>` went from 14 s to 42 s with `head` and `flags`
+      # in this table, which is what put the pick past the 60-second terminal
+      # case in CI. The four short facts every row needs stay here; the two long
+      # ones are asked for BELOW THE NARROWING FILTER and only for a row with no
+      # object log, which is the only row that has anything to say with them
+      # (Amendment 19(a)).
+      if (!cells) {
+        print tolower(lane) sep lane sep ws sep wss sep ids sep started
+        next
+      }
+      cell = cell_state($0)
+      gsub(/\t/, " ", cell)
+      cell = trim(cell)
+      head = cell
+      if (length(head) > 280) {
+        head = substr(head, 1, 280)
+        sub(/[^ ]*$/, "", head)
+        head = trim(head)
+        if (head == "") head = substr(cell, 1, 200)
+        head = head " ..."
+      }
+      lcell = tolower(cell)
+      flags = ""
+      if (lcell ~ /(^|[^a-z])unpushed([^a-z]|$)/) flags = flags "unpushed,"
+      if (lcell ~ /(^|[^a-z])lost([^a-z]|$)/)     flags = flags "lost,"
+      if (lcell ~ /(^|[^a-z])loss([^a-z]|$)/)     flags = flags "loss,"
+      if (lcell ~ /(^|[^a-z])owe[sd]([^a-z]|$)/)  flags = flags "owes,"
+      if (lcell ~ /(^|[^a-z])live([^a-z]|$)/)     flags = flags "LIVE,"
+      sub(/,$/, "", flags)
       # KEYED ON THE LANE NAME LOWER-CASED, because `lane_named_ci` is the rule
       # everywhere else in this file: the register spells one lane three ways in
       # a week, and the names this listing joins on come from the LOG files.
       # (No apostrophe in this comment: the whole program is a single-quoted
       # shell string, and one would end it.)
-      print tolower(lane) sep lane sep ws sep wss sep ids
+      print tolower(lane) sep head sep flags
     }'
 # `--local` READS THIS CHECKOUT'S REGISTER instead of the published one, which
 # is `session_ids_local_of_lane`'s source and is unioned with the published ids
 # for the same fail-closed reason that read gives: an id this checkout knows and
 # `origin/main` does not yet is one more reason to refuse, never to allow.
-lanes_register_index() {   # [--local]
-  if [ "${1-}" = --local ]; then
-    awk -v sep="$US" "$LANES_REGISTER_INDEX_AWK" "$LANES_FILE" 2>/dev/null
+# `--cells` IS THE OTHER HALF OF THE SAME PASS: `<lane>` and the state cell-s
+# head and flag words, and nothing else. It is a separate call because it is a
+# separate COST — see the awk above — and the listing asks for it only where a
+# row has no object log to speak for it.
+lanes_register_index() {   # [--local] [--cells]
+  lri_local=0; lri_cells=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --local) lri_local=1; shift ;;
+      --cells) lri_cells=1; shift ;;
+      *) break ;;
+    esac
+  done
+  if [ "$lri_local" = 1 ]; then
+    { cat -- "$LANES_FILE" 2>/dev/null || :
+      [ -f "$LANES_ARCH_FILE" ] && { cat -- "$LANES_ARCH_FILE" 2>/dev/null || :; }
+    } | awk -v sep="$US" -v cells="$lri_cells" "$LANES_REGISTER_INDEX_AWK" 2>/dev/null
   else
-    register_text | awk -v sep="$US" "$LANES_REGISTER_INDEX_AWK"
+    { register_text; archive_text; } | awk -v sep="$US" -v cells="$lri_cells" "$LANES_REGISTER_INDEX_AWK"
   fi
 }
 
@@ -4913,6 +5121,7 @@ lanes_register_index() {   # [--local]
 # `openRepoTools#28` says must be SAID rather than filed twice.
 lanes_rows() {
   lr_repo=""; lr_dir=""; lr_ws="$WS"; lr_here=0; lr_all=0; lr_one=""; lr_prefix=""
+  lr_closed=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --repo)   lr_repo="${2-}";   shift 2 || return 64 ;;
@@ -4922,6 +5131,12 @@ lanes_rows() {
       --lane)   lr_one="${2-}";    shift 2 || return 64 ;;
       --here)   lr_here=1; shift ;;
       --all)    lr_all=1; shift ;;
+      # AMENDMENT 19(b) — `--closed` ADDS the CLOSED and the DORMANT rows, and
+      # it COMBINES with everything rather than replacing it: with `--all` it is
+      # every repository-s closed lanes, with `--here` this workstation-s. So it
+      # is deliberately NOT cleared by the `--all` reset below, which exists to
+      # undo a NARROWING; this flag widens.
+      --closed) lr_closed=1; shift ;;
       *) return 64 ;;
     esac
   done
@@ -4982,7 +5197,22 @@ lanes_rows() {
   # one parameter expansion — instead of `printf | awk` per lane per table,
   # which for fifty lanes was a hundred and fifty processes spent reading
   # strings this shell was already holding.
+  # AN ARCHIVE THAT CANNOT BE READ IS SAID, NOT SWALLOWED (Copilot round 2 on
+  # #93). The two pipelines below end in `awk`, whose status is its own, so a
+  # failed `archive_text` inside them is invisible — and what goes missing is
+  # the CLOSED rows the archive holds. A listing may not refuse (it sits in
+  # front of a launch), so it says it, exactly as it says a session-record read
+  # that failed; the POSITION is the half that must not guess, and
+  # `lane_next_free` refuses there rather than offering one over a partial read.
+  if ! archive_text >/dev/null 2>&1; then
+    note "$LANES_ARCH_PATH exists and could not be read, so the RETIRED rows it holds are not in this listing — and \`next-free\` will refuse a position rather than offer one over a partial read."
+  fi
   lr_index="$GS$(lanes_register_index 2>/dev/null | tr '\n' "$GS" || :)"
+  # THE CELLS ARE BUILT ON FIRST USE AND NOT BEFORE (see `lanes_register_index
+  # --cells`): a listing whose every row has an object log never asks for them,
+  # and the two passes that build them are two `awk`s over a register this
+  # function has already rendered once.
+  lr_cells=""; lr_lcells=""; lr_cells_built=0
   lr_local_index="$GS$(lanes_register_index --local 2>/dev/null | tr '\n' "$GS" || :)"
   lr_facts_t="$GS$(printf '%s\n' "$lr_facts" | tr '\n' "$GS")"
   # THE LIVE SCAN, AND WHAT A LISTING DOES WHEN IT FAILS (#26, the review of
@@ -5008,6 +5238,15 @@ lanes_rows() {
   lr_fork_map=""
   lr_fork_map="$(fork_map 2>/dev/null)" || lr_fork_rc=$?
   lr_fork_titles=" $(printf '%s\n' "$lr_fork_map" | awk -F"$US" 'NF { print $1 }' | tr '\n' ' ')"
+  # THE LOG FILES THIS CHECKOUT HAS, LOWER-CASED, AS ONE FENCE (Copilot round 4
+  # on #93). `state_events` reads the PUBLISHED logs (R19), so a log committed
+  # here and not yet pushed is not in the facts pass at all — and DORMANT is
+  # "no object log", which that lane has. The sweep reads the local log for
+  # exactly this reason since round 3, and the read and the writer may not
+  # disagree about the amendment's own condition. One `ls` for the whole
+  # listing, matched with a `case` per lane, and lower-cased because a lane name
+  # is ONE name under any case (Amendment 15).
+  lr_logfiles=" $(ls -- "$LANES_LOG_DIR" 2>/dev/null | awk '{ print tolower($0) }' | tr '\n' ' ')"
   if [ "$lr_live_rc" != 0 ] || [ "$lr_fork_rc" != 0 ]; then
     note "this workstation's session records could not be read, so the STATE column below is the LOG's verb alone: a lane that is live may show as IDLE or PAUSED here, and no fork of any lane is established either way. Fix the read and re-run before acting on a restart line."
   fi
@@ -5015,25 +5254,41 @@ lanes_rows() {
   while IFS="$US" read -r lr_ll lr_l; do
     [ -n "$lr_l" ] || continue
     lr_verb=""; lr_utc=""; lr_w=""; lr_d=""; lr_pf=""; lr_win=""; lr_home=""; lr_logsid=""; lr_obj=""
+    # DOES THIS LANE HAVE AN OBJECT LOG AT ALL? `lane_row_facts` emits a line
+    # for every lane whose log carries one of Amendment 7-s five lane verbs, so
+    # this lookup — which the listing makes anyway — is the answer, and
+    # Amendment 19(a)-s DORMANT is built on it below.
+    lr_lanekind=0
     if table_lookup "$lr_facts_t" "$lr_ll"; then
+      lr_lanekind=1
       IFS="$US" read -r lr_fl lr_verb lr_utc lr_w lr_d lr_pf lr_win lr_home lr_logsid lr_obj <<EOF2
 $LOOKUP_OUT
 EOF2
     fi
     # THE ROW'S THREE FACTS, OUT OF THE ONE PASS: is there a row at all, whose
     # workstation it names, and which transcript uuids its session cell carries.
-    lr_ixl=""; lr_rw=""; lr_rws=""; lr_ids_sp=""
+    # AND ITS `started` CELL (Amendment 19(b)), which `--closed` prints for a
+    # CLOSED row as well as a dormant one and which is a date rather than free
+    # text. Its state cell's HEAD and FLAGS are NOT here — they are the one
+    # table this loop does not walk per lane, and they are fetched below the
+    # narrowing filter for the rows that have no log to speak for them.
+    lr_ixl=""; lr_rw=""; lr_rws=""; lr_ids_sp=""; lr_start=""; lr_was=""; lr_flags=""
     if table_lookup "$lr_index" "$lr_ll"; then
-      IFS="$US" read -r lr_ixl lr_rw lr_rws lr_ids_sp <<EOF2
+      IFS="$US" read -r lr_ixl lr_rw lr_rws lr_ids_sp lr_start <<EOF2
 $LOOKUP_OUT
 EOF2
     fi
-    lr_lixl=""; lr_lrw=""; lr_lrws=""; lr_lids_sp=""
+    lr_lixl=""; lr_lrw=""; lr_lrws=""; lr_lids_sp=""; lr_lstart=""; lr_lwas=""; lr_lflags=""
     if table_lookup "$lr_local_index" "$lr_ll"; then
-      IFS="$US" read -r lr_lixl lr_lrw lr_lrws lr_lids_sp <<EOF2
+      IFS="$US" read -r lr_lixl lr_lrw lr_lrws lr_lids_sp lr_lstart <<EOF2
 $LOOKUP_OUT
 EOF2
     fi
+    # THE PUBLISHED ROW-S WORDS WIN AND THIS CHECKOUT-S ANSWER ONLY FILLS IN
+    # (R19): a row this checkout has added and not yet pushed has no published
+    # text at all, and showing nothing about it would hide the newest row on the
+    # workstation that made it.
+    [ -n "$lr_start" ] || lr_start="$lr_lstart"
     # THE REGISTER'S OWN WORKSTATION COLUMN WINS where the row has one: it is
     # what every other read in this file compares, and a lane may have a row
     # here and its last log line from another machine.
@@ -5080,9 +5335,18 @@ EOF2
     # 12): this ran `printf | grep -qx` once for every live record for every
     # lane. The fence is built once above; the lookup of the WINDOW is an awk,
     # and it only happens for a lane that is actually live.
+    # THE IDS OF BOTH ROWS, AND THAT IS FAIL-CLOSED (Copilot round 1 on #93).
+    # The published cell is R19's source for everything else here, but a lane
+    # whose `append-session-id` has landed in THIS checkout and not yet been
+    # pushed has its current transcript in the local row alone — and
+    # `live_session_ids` can see that very session running. Read from the
+    # published cell only, such a lane is not LIVE, which under Amendment 19(a)
+    # makes it DORMANT: hidden from the listing and offered to the sweep while
+    # somebody is working in it. Both sets are asked, and either one naming a
+    # live record is LIVE.
     lr_state=""
     lr_live_win=""
-    for lr_one_id in $lr_ids_sp; do
+    for lr_one_id in $lr_ids_sp $lr_lids_sp; do
       case "$lr_live_fence" in
         *" $lr_one_id "*)
           lr_state=LIVE
@@ -5110,6 +5374,104 @@ EOF2
         *)       lr_state="$([ -n "$lr_row" ] && printf 'NO LOG' || printf 'UNKNOWN')" ;;
       esac
     fi
+    # THE STATE CELL-S HEAD AND FLAGS, FOR THE ROWS THEY ARE ABOUT — a row with
+    # NO OBJECT LOG (Amendment 19(a)). It is the only row whose cell is all the
+    # listing has: one with a log has the log, and `lanes` prints neither field
+    # for it. The lookup is HERE, below the narrowing filter, because a row this
+    # listing is not showing is a row it may not pay for — and it walks a table
+    # of its own rather than the one above, which every lane in the estate walks
+    # once (ruling 12: the measurement is in `LANES_REGISTER_INDEX_AWK`).
+    #
+    # AND A ROW THE CELLS PASS DID NOT SEE IS NOT A ROW WITH NO CELL. The two
+    # passes read ONE register text, so every row in the table above is in this
+    # one; a row in the first and not the second is a read that answered
+    # differently the second time, and an EMPTY cell read as an answer would
+    # make `mig_cell_is_phrase` false and class the row DORMANT — hiding a row
+    # whose cell may say PAUSED and offering it to the sweep, which is the one
+    # thing 13(a) is in this rule for. `lr_cellrow` carries whether the pass saw
+    # it, and the class below is not decided without it (Amendment 7(d), the
+    # same posture round 3 gave the liveness read). It is the PUBLISHED pass
+    # that carries it, because the published row is the only one the class is
+    # ever decided on — `lr_row` is `lr_ixl` and a row this checkout alone has
+    # is in no class either way.
+    lr_cellrow=0
+    if [ "$lr_lanekind" = 0 ] && [ -n "$lr_ixl$lr_lixl" ]; then
+      if [ "$lr_cells_built" = 0 ]; then
+        lr_cells="$GS$(lanes_register_index --cells 2>/dev/null | tr '\n' "$GS" || :)"
+        lr_lcells="$GS$(lanes_register_index --local --cells 2>/dev/null | tr '\n' "$GS" || :)"
+        lr_cells_built=1
+      fi
+      if table_lookup "$lr_cells" "$lr_ll"; then
+        lr_cellrow=1
+        IFS="$US" read -r lr_was lr_flags <<EOF2
+$LOOKUP_OUT
+EOF2
+      fi
+      if table_lookup "$lr_lcells" "$lr_ll"; then
+        IFS="$US" read -r lr_lwas lr_lflags <<EOF2
+$LOOKUP_OUT
+EOF2
+      fi
+      [ -n "$lr_was" ]   || lr_was="$lr_lwas"
+      [ -n "$lr_flags" ] || lr_flags="$lr_lflags"
+    fi
+    # ------- AMENDMENT 19(a): THE TWO STATES BELOW PARKED, AND WHO IS IN THEM
+    #
+    # CLOSED is a lane whose own log has FINISHED — its last lane-kind line is
+    # `ENDED` or `RETIRED`, which is exactly what the block above has just put
+    # in `lr_state`. DORMANT is a row with NO OBJECT LOG and no live session
+    # here: the fourteen rows of openxFactory that ran before Amendment 7 gave
+    # every lane a log, that no `lane-end` can close because it wants a live
+    # session or a log to write into, and that sat at the top of every `lanes`
+    # while the next free position was read past them.
+    #
+    # "NO OBJECT LOG" IS ASKED OF THE FACTS TABLE AND NOT OF THE FILESYSTEM:
+    # `lr_lanekind` is that lookup, made once at the top of this loop, where a
+    # `git cat-file` per lane would have the listing pay for the whole estate to
+    # answer about the rows it is going to hide.
+    #
+    # AND THE REGISTER-S OWN CLAIM IS HONOURED (Amendment 13(a): the row says
+    # where a lane IS, in one line). A cell that is the phrase and whose state
+    # word is neither `ENDED`, `RETIRED` nor the migration-s `MIGRATED` says the
+    # lane is somewhere — PAUSED, LANDING, HANDED OFF — and hiding that row
+    # would hide a lane a person can still pick up, which is the opposite of
+    # what this amendment is for. It is the one way a row with no log is NOT
+    # dormant, and `mig_cell_is_phrase` is the same test the migration makes of
+    # the same cell rather than a second reading of it.
+    lr_class=""
+    case "$lr_state" in
+      ENDED|RETIRED) lr_class=closed ;;
+      LIVE) : ;;
+      *)
+        # AND NEVER OVER A LIVENESS READ THAT FAILED (Copilot round 3 on #93).
+        # DORMANT is "no object log AND no live session on this workstation";
+        # where the session records could not be read, the second half was never
+        # established, and hiding the row on it would hide a lane somebody may
+        # be working in. The listing already SAYS the read failed (one screen
+        # up); this is what it does about it — leaves the class unset, so the
+        # row stays listed and the sweep is never offered it.
+        if [ -n "$lr_row" ] && [ "$lr_lanekind" = 0 ] && [ "$lr_live_rc" = 0 ] &&
+           [ "$lr_cellrow" = 1 ]; then
+          lr_class=dormant
+          # A LOG THIS CHECKOUT HAS AND `origin` HAS NOT IS STILL AN OBJECT LOG.
+          case "$lr_logfiles" in
+            *" $lr_ll.md "*) lr_class="" ;;
+          esac
+          if mig_cell_is_phrase "$lr_was"; then
+            case "${lr_was%% · *}" in
+              ENDED|RETIRED|MIGRATED) : ;;
+              *) lr_class="" ;;
+            esac
+          fi
+        fi ;;
+    esac
+    # NEITHER IS LISTED BY DEFAULT (clause (b)) and `--closed` adds them back.
+    # `--lane <name>` IS NEVER FILTERED: it is the narrowest selector there is
+    # and its caller has NAMED the lane, so a closed lane asked about by name
+    # answers about itself instead of reading as a lane that does not exist —
+    # which is what `lane <name>`, `lane-start` and the handoff would all have
+    # been told by an empty answer.
+    if [ -n "$lr_class" ] && [ "$lr_closed" = 0 ] && [ -z "$lr_one" ]; then continue; fi
     [ -n "$lr_obj" ] || lr_obj="none open"
     lr_age="$([ -n "$lr_utc" ] && age_of "$lr_utc" "$lr_now" || printf 'age unknown')"
     # THE TWO SETS `lane_forks` WOULD OTHERWISE RE-READ THE REGISTER FOR, handed
@@ -5146,6 +5508,16 @@ EOF2
     # while a line that cannot be typed is worse than a column that says
     # `none`. Every other state gets `none`: a lane whose last act was its last
     # is not a lane a person restarts.
+    #
+    # AND A **LIVE** LANE GETS THE ATTACH, which is the same word (Amendment 18
+    # Addendum 1 (i-1): a lane live HERE is attached to and never started a
+    # second time, and `lane <name>` is the word that does it). `lanes` is the
+    # READ a person makes in front of a launch, and for the one row where the
+    # act is "go to it" the column said `none` — so the listing named an act for
+    # a paused lane and none at all for the lane already running, which is the
+    # row a person is likeliest to want. LIVE here means live on THIS
+    # workstation: the session records are local files, so a lane running on
+    # Raven is never LIVE in this column and never offered an attach from Eagle.
     lr_restart=none
     if [ "$lr_state" = PAUSED ]; then
       if [ -z "$lr_pf" ] || [ "$lr_pf" = none ]; then
@@ -5153,8 +5525,17 @@ EOF2
       else
         lr_restart="lane $lr_l"
       fi
+    elif [ "$lr_state" = LIVE ]; then
+      lr_restart="lane $lr_l"
     fi
-    lr_out="${lr_out}${lr_utc:-0000}${US}${lr_l}	${lr_state}	${lr_w:-unknown}	${lr_pf:-none}	${lr_win:-none}	${lr_sid:-none}	${lr_d:-none}	${lr_obj:-none}	${lr_age}	${lr_restart}	${lr_home:-none}	${lr_fk}
+    # COLUMNS 13 TO 16 ARE AMENDMENT 19-S, AND THEY GO AT THE END for the
+    # reason `swapped_lanes` gives its sixth and seventh: the first field before
+    # the first tab is the contract every reader of this output takes, and each
+    # of the others is read by its own index. 13 is the CLASS — `closed`,
+    # `dormant` or empty — so that the sweep and the listing partition the rows
+    # ONE way; 14 the row-s `started` cell, 15 its state cell-s head and 16 the
+    # flag words found in the whole of that cell.
+    lr_out="${lr_out}${lr_utc:-0000}${US}${lr_l}	${lr_state}	${lr_w:-unknown}	${lr_pf:-none}	${lr_win:-none}	${lr_sid:-none}	${lr_d:-none}	${lr_obj:-none}	${lr_age}	${lr_restart}	${lr_home:-none}	${lr_fk}	${lr_class:-none}	${lr_start:-unknown}	${lr_was:-none}	${lr_flags:-none}
 "
   done <<EOF
 $lr_names
@@ -5205,6 +5586,14 @@ lane_groups() {   # <workstation> ; rows on stdin
   awk -F'\t' -v me="$(short_ws "${1:-$WS}")" '
     NF >= 3 {
       st = $2
+      # THE CLASS FIRST, AND THAT IS AMENDMENT 19 ARRIVING IN COLUMN 13 (Copilot
+      # round 2 on #93). A DORMANT row-s STATE is `NO LOG`, which is in no list
+      # below, so the state test alone let one through wherever the rows come
+      # from a read that does not hide them — `lanes --closed`, and `lane
+      # <name>`-s own `--lane` read, which is never filtered because its caller
+      # named the lane. The class is the read-s answer to exactly this question.
+      cls = (NF >= 13 ? $13 : "")
+      if (cls == "closed" || cls == "dormant") next
       if (st == "ENDED" || st == "RETIRED" || st == "CLOSED" || st == "DORMANT") next
       w = tolower($3); sub(/\..*$/, "", w)
       if (st == "LIVE") g = "live"
@@ -5239,9 +5628,63 @@ lane_groups() {   # <workstation> ; rows on stdin
 # reading under which `openxfactory-4-opendox-extraction` has no position at
 # all. The comparison is case-insensitive on both sides, like every other lookup
 # of a lane name in this file (Amendment 15).
+# EVERY ROW OF THE REGISTER AND OF THE ARCHIVE, AS BARE NAMES — the rows the
+# listing HIDES since Amendment 19(b), and the rows `archive-rows` has moved out
+# of the register altogether under 19(d). Both are read out of THIS CHECKOUT-s
+# files and neither is fetched: the rows on stdin already carry the published
+# register (the caller has just rendered it), and this union can only move the
+# position UP, which is the direction a position may safely move. `next-free`
+# is exempt from the workspace guard, so no workspace at all is silence here.
+# THE PUBLISHED ONES, WITH THIS CHECKOUT'S AS THE FALLBACK (Copilot round 1 on
+# #93). Reading only the local files missed a row that is on `origin/<branch>`
+# and not yet pulled here: hidden from the stdin rows by clause (b) and absent
+# from this union, its position came back on offer — which is the one thing
+# 19(b) exists to prevent. `register_text` and `archive_text` are the same two
+# reads the listing makes, in R19's order.
+#
+# AND A SOURCE THAT EXISTS AND CANNOT BE READ IS A REFUSAL, not an empty set: a
+# position is handed out ONCE, and a read that failed is never an answer
+# (Amendment 7(d)).
+lane_position_rows() {   # 0 with the names · 1 where a source exists and could not be read
+  [ -n "${LANES_FILE:-}" ] || return 0
+  # THE PUBLISHED REGISTER FIRST AND THE WORKING TREE SECOND — `register_text`'s
+  # own rule, asked for rather than restated (Copilot round 3 on #93). Gated on
+  # the working-tree FILE existing, this read skipped the published register
+  # entirely on a checkout that has none, and `next-free` then counted only the
+  # stdin rows and the archive.
+  #
+  # AND AN EMPTY ANSWER WHERE A SOURCE EXISTS IS A READ THAT FAILED (round 2):
+  # `register_text` ends in a `printf` and answers 0 whatever its `git show` or
+  # its `cat` did, so the status says nothing; what cannot happen is a source
+  # with bytes in it rendering as nothing.
+  if [ -f "$LANES_FILE" ] && [ ! -r "$LANES_FILE" ]; then return 1; fi
+  lpr_have=0
+  if [ -s "$LANES_FILE" ]; then lpr_have=1; fi
+  if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_PATH" 2>/dev/null; then lpr_have=1; fi
+  lpr_reg=""
+  if [ "$lpr_have" = 1 ]; then
+    lpr_reg="$(register_text 2>/dev/null || :)"
+    [ -n "$lpr_reg" ] || return 1
+  fi
+  lpr_arc=""
+  lpr_arc="$(archive_text 2>/dev/null)" || return 1
+  printf '%s\n%s\n' "$lpr_reg" "$lpr_arc" | awk '
+    substr($0,1,1) == "|" {
+      p1 = index($0, "`"); if (p1 == 0) next
+      r = substr($0, p1 + 1); p2 = index(r, "`"); if (p2 == 0) next
+      print substr(r, 1, p2 - 1)
+    }' 2>/dev/null || return 1
+  return 0
+}
+
 lane_next_free() {   # <repo> ; rows on stdin
   [ -n "${1-}" ] || return 64
-  awk -F'\t' -v r="$1" '
+  lnf_more=""
+  if ! lnf_more="$(lane_position_rows)"; then
+    note "the register or the archive of retired rows exists and could not be read, so the rows this position must avoid are not all known. A position is handed out ONCE and a read that failed is not an answer (Amendment 7(d)), so none is offered."
+    return 1
+  fi
+  { cat; printf '%s\n' "$lnf_more"; } | awk -F'\t' -v r="$1" '
     BEGIN { rl = tolower(r) }
     $1 != "" {
       # THE WHOLE NAME BEFORE THE POSITION IS COMPARED, NOT A PREFIX (Copilot
@@ -7620,6 +8063,471 @@ EOF
   return "$msc_rc"
 }
 
+# ------------------- AMENDMENT 19(c): THE SWEEP, ONE COMMIT OR NONE ---------
+#
+# `lane-end --retire-dormant <repo>` is the word a person types, the dry run
+# they read and the `--yes` they answer with; THIS is the write underneath it.
+# It is a verb of its own because the sweep touches many rows and many logs and
+# is ONE commit — the shape `migrate-state-cells` has one screen up, for the
+# same reason: a half-published sweep is a register whose rows and whose logs
+# disagree about which lanes are finished.
+#
+# WHAT IT WRITES PER LANE, and clause (c) spells it out character by character:
+#   `lanes/log/<lane>.md` gains ONE line —
+#     RETIRED — lane <lane>, session <uuid>@<ws>, <UTC>, lane:<lane>
+#       → retired-dormant by lane <writer>; reason <why>; was: <the cell's head>
+#   and the row's state cell becomes  `RETIRED · <UTC> · <why>; was: <head>`.
+#
+# THE PAYLOAD ON A `RETIRED` IS THIS AMENDMENT'S OWN. Amendment 7(b) gives
+# `RETIRED` no payload and Amendment 11 clause (c) keeps it that way — which is
+# why `lane-end`'s fork retire is a DOOR that writes nothing at all. Amendment
+# 19 is later, ratified as drafted, and spells this line out in full: the row's
+# own last words are carried into the log so that nothing the row said is lost
+# when the row stops saying it. That is the whole of the exception, and it is
+# this line and no other.
+#
+# THE CELL IS AMENDMENT 13(a)'s PHRASE, NOT CLAUSE (c)'s LITERAL TEXT. Clause
+# (c) writes the cell as `RETIRED <UTC> · <why> · was: <head>` — four parts
+# where 13(a)'s cell has three, and a first word of `RETIRED <UTC>`, which is a
+# state no reader of Rule 6 or of the listing knows. The phrase that carries the
+# same four facts under the grammar every other writer obeys is
+# `RETIRED · <UTC> · <why>; was: <head>`, and it goes through `row_state_check`
+# — the gate `set-row-state` uses — so the 240-character cap, the `|` and the
+# second ` · ` are refused here exactly as they are there. The `|` a legacy cell
+# may carry is replaced by `/` in the ROW (it would forge a cell boundary) and
+# kept VERBATIM in the log line, which is not a table.
+#
+# THE THREE REFUSALS ARE CLAUSE (c)'s: a lane a live session holds on this
+# workstation, a row whose log already carries a lane-kind line other than
+# `ENDED`/`RETIRED` (a parked lane is not dormant), and — in `lane-end`, which
+# is the word that finds them — a repository with no dormant row at all.
+# ANY ONE OF THEM REFUSES THE WHOLE RUN, before a byte is written: this is one
+# commit, so it is one decision.
+retire_rows() {   # <lane>… [--reason "<why>"] [--writer <lane>]
+  rr_reason=""; rr_writer="${LANES_LANE:-}"; rr_lanes=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      # A FLAG IS NOT A VALUE (Copilot round 1 on #93). `--reason --writer x`
+      # took `--writer` as the reason and swept with it, and the writer the
+      # caller named was never read — a malformed line that RAN. A value
+      # beginning with `-` is refused and the `=` spelling named for the reason
+      # that legitimately starts with one.
+      --reason)   case "${2-}" in '' | -*) die "--reason needs the words that say why, and '${2-}' is a flag — so the reason was left out. Spell a reason that really begins with a dash as --reason=<why>." 2 ;; esac
+                  rr_reason="$2"; shift 2 ;;
+      --reason=*) rr_reason="${1#--reason=}"; [ -n "$rr_reason" ] || die "--reason needs the words that say why" 2; shift ;;
+      --writer)   case "${2-}" in '' | -*) die "--writer needs the lane doing the sweeping, and '${2-}' is a flag — so the lane was left out." 2 ;; esac
+                  rr_writer="$2"; shift 2 ;;
+      --writer=*) rr_writer="${1#--writer=}"; [ -n "$rr_writer" ] || die "--writer needs the lane doing the sweeping" 2; shift ;;
+      --)         shift ;;
+      -*)         die "unknown option '$1' for retire-rows (usage: retire-rows <lane>… [--reason \"<why>\"] [--writer <lane>])" 2 ;;
+      *)          check_lane_name "$1"; rr_lanes="$rr_lanes $1"; shift ;;
+    esac
+  done
+  [ -n "$rr_lanes" ] ||
+    die "usage: retire-rows <lane>… [--reason \"<why>\"] [--writer <lane>]
+  The lanes are DORMANT rows — a row with no object log and no live session
+  (Amendment 19(a)). The word that FINDS them, shows the dry run and asks for
+  the person's --yes is:  lane-end --retire-dormant <repo>" 2
+  [ -n "$rr_reason" ] || rr_reason="dormant row swept under Amendment 19(c)"
+  [ -n "$rr_writer" ] ||
+    die "retire-rows needs the lane doing the sweeping: LANES_LANE=<lane> lanes-edit.sh retire-rows … (or --writer <lane>). Every line it writes carries that lane's own transcript uuid in its session field, and a session field that is anything else is wrong for ever in an append-only log (Amendment 7(b))." 2
+  check_lane_name "$rr_writer"
+  # THE REASON IS CHECKED ONCE, HERE, AND NEVER PER ROW. It goes into every cell
+  # this sweep rewrites, so a `|` or a second ` · ` in it is a refusal of the
+  # ARGUMENT, named as one — rather than `row_state_check` dying half-way down
+  # the scan with a message about a cell the caller never wrote. The cap is
+  # lower than the cell's own, because the row's last words go in beside it.
+  case "$rr_reason" in
+    *'|'*)   die "--reason may not contain '|': it would forge a cell boundary in every row this sweep rewrites. Got: '$rr_reason'" 2 ;;
+    *' · '*) die "--reason may not contain ' · ': that separator is what divides the state cell's three parts (Amendment 13(a)), and a second one reads back as a fourth part. Use a semicolon. Got: '$rr_reason'" 2 ;;
+  esac
+  if [ "${rr_reason//[$'\n\r']/}" != "$rr_reason" ]; then
+    die "--reason is ONE line: a newline in it would split a row in two and every row after it would be read as a lane" 2
+  fi
+  [ "${#rr_reason}" -le 180 ] ||
+    die "--reason is ${#rr_reason} characters. The cell's whole line is capped at $ROW_STATE_CAP (Amendment 13, ratified decision O1) and the row's OWN last words go in beside it, so a reason longer than 180 leaves nothing of them. Shorten it — the long version belongs in the lane's log." 2
+
+  # R30 — THE FETCH FIRST, AND A CHECKOUT THAT IS BEHIND IS REFUSED, for the
+  # reason the migration gives: this act rewrites several rows and appends to
+  # several logs in ONE commit, and made against a register that is not the
+  # published one each of those is a conflict for `commit_push`'s rebase.
+  log_sync
+  rr_writer="$(canon_lane "$rr_writer")" || exit 2
+  rr_uuid="$(session_for "$rr_writer" 2>/dev/null || :)"
+  valid_uuid "$rr_uuid" ||
+    die "the sweeping lane $rr_writer has no transcript uuid to write: \$LANES_SESSION is unset and its row's session cell holds none. Amendment 7(b) gives the session field a transcript uuid and ONLY that, and this log is append-only, so nothing is written. Run it from the lane's own session, or pass the id: LANES_SESSION=<uuid> LANES_LANE=$rr_writer lanes-edit.sh retire-rows …" 2
+  if [ "$NO_GIT" != 1 ] && have_remote_ref; then
+    rr_behind="$(git -C "$LANES_REPO" rev-list --count "HEAD..origin/$LANES_BRANCH" 2>/dev/null || printf '')"
+    case "$rr_behind" in
+      '' | 0) : ;;
+      *) die "this checkout is $rr_behind commit(s) behind origin/$LANES_BRANCH. The sweep is ONE commit over several rows and several logs, so it is made against the published register or not at all. Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run. Nothing was written." 2 ;;
+    esac
+  fi
+  refuse_dirty_checkout "retire-rows" "$LANES_PATH"
+
+  # THE MUTEX COMES BEFORE THE SCAN, not between the scan and the write: this
+  # act reads every row's LINE NUMBER and rewrites those lines by number, and a
+  # peer's `add-row` landing in between moves them under it (the finding
+  # `migrate-state-cells` took in round 2 of openRepoTools#82).
+  acquire_lock
+  handle_preexisting "$LANES_PATH"
+
+  # THE LIVE READ IS FAIL-CLOSED, AND IT IS TAKEN INSIDE THE LOCK (Copilot round
+  # 2 on #93). `lanes_rows` degrades to the log's verb when this workstation's
+  # session records cannot be read, because a LISTING may not refuse; a WRITE
+  # that retired a row out from under the session still writing it is the other
+  # kind of mistake entirely — and a snapshot taken BEFORE the mutex is a
+  # snapshot a lane can go live behind: `lane-start` appends its id to the row
+  # under this same lock, so the scan would read that new id and compare it with
+  # a fence that predates it.
+  rr_live=""; rr_live_rc=0
+  rr_live="$(live_session_ids 2>/dev/null)" || rr_live_rc=$?
+  [ "$rr_live_rc" = 0 ] ||
+    die "this workstation's session records could not be read, so whether any of these lanes is LIVE HERE is not known — and clause (c) refuses a lane a live session holds. A read that failed is not 'nothing is live' (Amendment 7(d)). Nothing was written." 1
+  rr_fence=" $(printf '%s\n' "$rr_live" | awk -F"$US" 'NF { print tolower($1) }' | tr '\n' ' ')"
+
+  rr_utc="$(utc_now)"
+  rr_tmp="$(mktemp -d)"
+  : > "$rr_tmp/plan"; : > "$rr_tmp/report"
+  rr_n=0; rr_names=""
+  rr_seen=""
+  for rr_lane in $rr_lanes; do
+    rr_l="$(canon_lane "$rr_lane")" || exit 2          # Amendment 15
+    # A LANE NAMED TWICE IS A REFUSAL AND NOT A SECOND LINE. The log is
+    # append-only: a duplicate in the argument list would put the same `RETIRED`
+    # line into it twice, in one commit, and no later line could take it back.
+    # Compared on the RESOLVED name, so the two spellings of one lane are one
+    # lane here as they are everywhere else (Amendment 15).
+    case " $rr_seen " in
+      *" $rr_l "*) die "lane $rr_l is named twice in this sweep. Its log is append-only, so a second pass over it would write the same RETIRED line again and nothing could take it back. Name each lane once. Nothing was written." 2 ;;
+    esac
+    rr_seen="$rr_seen $rr_l"
+    rr_ln="$(row_line "$rr_l")" || exit 2              # one row, exactly
+    rr_row="$(sed -n -e "${rr_ln}p" "$LANES_FILE")"
+    rr_rc=0; row_split_state_cell "$rr_row" || rr_rc=$?
+    case "$rr_rc" in
+      0) : ;;
+      2) die "lane $rr_l's row (line $rr_ln) carries $(row_sep_count "$rr_row") ' | ' separators where a seven-column row carries 6, so WHICH TEXT IS THE STATE CELL is not knowable from the row — and this act both READS that cell (the words it carries into the log) and REWRITES it. Escape the literal pipe inside that cell as \| by hand, commit it, and re-run. Nothing was written." 2 ;;
+      *) die "lane $rr_l's row (line $rr_ln) does not open with '|' and end with '|', so it is not a row this writer can take apart. Nothing was written." 2 ;;
+    esac
+    mig_trim "$RSS_CELL"; rr_cell="$MIG_TRIM"
+    rr_head="$rr_cell"
+    if [ "${#rr_head}" -gt 240 ]; then
+      # THE CAP IS CLAUSE (c)'s 240, CUT BACK TO A SPACE — `cut_to_line`'s rule
+      # and the migration's: `${s:0:n}` counts bytes wherever the locale is not
+      # a UTF-8 one, and these cells are full of `·`, `—` and `→`.
+      rr_head="${rr_head:0:236}"   # 236 + " ..." is the 240 clause (c) gives
+      case "$rr_head" in *' '*) rr_head="${rr_head% *}" ;; esac
+      rr_head="$rr_head ..."
+    fi
+
+    # (c) REFUSAL 1 — a live session here.
+    # BOTH ROWS' IDS, for the reason `lanes_rows` gives one screen up: an id
+    # this checkout has committed and not yet pushed is on no published cell,
+    # and this is the FAIL-CLOSED half of the same question (Copilot round 1 on
+    # #93).
+    rr_ids="$(session_ids_of_lane "$rr_l" 2>/dev/null || :)
+$(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
+    for rr_id in $rr_ids; do
+      case "$rr_fence" in
+        *" $rr_id "*) die "lane $rr_l has a LIVE session on this workstation (transcript $rr_id), so it is not a dormant row: clause (c) refuses a lane a live session holds, and retiring it would take the row out from under the conversation that IS the lane. End it the ordinary way when it is done — lane-end $rr_l. Nothing was written." 2 ;;
+      esac
+    done
+
+    # (c) REFUSAL 2 — a log that says the lane is somewhere.
+    #
+    # THE PUBLISHED LOG IS PROVED READABLE FIRST (Copilot round 3 on #93).
+    # `lane_log_events` ends in `git show … | parse_log_stream` and this file
+    # sets no `pipefail`, so a `git show` that FAILED is masked by the parser
+    # exiting 0 over empty input — and the lane then reads as having no
+    # lane-kind line at all, which is the one answer that lets the sweep
+    # through. The object is asked for by name instead, which is `cat-file -e`
+    # and then `show` with its own status.
+    rr_pubp=""
+    rr_pubp="$(log_path_ci "$rr_l")" ||
+      die "lane $rr_l's object log is published twice under names that differ only by case (above) — 15(d)'s hand merge. Nothing was written." 2
+    if [ "$NO_GIT" != 1 ] && have_remote_ref &&
+       git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$rr_pubp" 2>/dev/null; then
+      git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$rr_pubp" >/dev/null 2>&1 ||
+        die "lane $rr_l's published object log ($rr_pubp) exists on origin/$LANES_BRANCH and could not be read, so whether it carries a lane-kind line is not known — and that is NOT 'it has none' (Amendment 7(d)). Nothing was written." 1
+    fi
+    rr_ev=""; rr_erc=0
+    rr_ev="$(lane_log_events "$rr_l" 2>/dev/null)" || rr_erc=$?
+    [ "$rr_erc" = 0 ] ||
+      die "lane $rr_l's object log could not be read (exit $rr_erc), so whether it carries a lane-kind line is not known — and that is NOT 'this lane has no log' (Amendment 7(d)). Nothing was written." 1
+    # AND THIS CHECKOUT'S OWN COPY OF THAT LOG (Copilot round 2 on #93), for the
+    # reason the session ids are read from both rows: `lane_log_events` answers
+    # out of `origin/<branch>` (R19), and a log line committed here and not yet
+    # pushed is on no origin at all. The `behind` guard above refuses a checkout
+    # that is behind; one that is AHEAD is legitimate, and there a `STARTED`
+    # that exists only here would be invisible — the lane reading as dormant
+    # while its own log says it is running.
+    # AND THE LOCAL ONE IS READ WITH THE SAME POSTURE (round 3): converted to an
+    # empty stream with `|| :`, a TRACKED log that exists here and will not open
+    # read as a lane with no lane-kind line — and the untracked-file guard below
+    # does not catch a tracked one.
+    rr_lev=""
+    rr_lf="$(log_file_for "$rr_l")"
+    if [ -f "$rr_lf" ]; then
+      [ -r "$rr_lf" ] ||
+        die "lane $rr_l's object log $rr_lf exists in this checkout and could not be read, so whether it carries a lane-kind line is not known — and that is NOT 'it has none' (Amendment 7(d)). Nothing was written." 1
+      rr_lev="$(log_events "$rr_lf" 2>/dev/null)" ||
+        die "lane $rr_l's object log $rr_lf could not be parsed, so whether it carries a lane-kind line is not known (Amendment 7(d)). Nothing was written." 1
+    fi
+    rr_open="$(printf '%s\n%s\n' "$rr_ev" "$rr_lev" | awk -F"$US" '$3 == "STARTED" || $3 == "PAUSED" || $3 == "RESUMED" { v = $3 } END { if (v != "") print v }')"
+    [ -z "$rr_open" ] ||
+      die "lane $rr_l's object log carries a $rr_open line, so it is not a dormant row — a parked lane is not dormant (Amendment 19(c)), and a lane whose log says it is running is a lane a person can still pick up. End it as itself: lane-end $rr_l. Nothing was written." 2
+
+    # (c) REFUSAL 3 — THE ROW ITSELF SAYING THE LANE IS SOMEWHERE, which is the
+    # same test the listing makes and is re-proved here rather than trusted
+    # (Copilot round 1 on #93). Amendment 13(a) makes the state cell the lane's
+    # CURRENT STATE: a cell that is the phrase and names anything but `ENDED`,
+    # `RETIRED` or the migration's `MIGRATED` is a row `lanes` does not hide
+    # either, and the writer and the read must not disagree about which rows are
+    # dormant — that is the defect clause (h) and A11 Addendum 4 ruling 7 both
+    # exist to prevent.
+    if mig_cell_is_phrase "$rr_cell"; then
+      case "${rr_cell%% · *}" in
+        ENDED | RETIRED | MIGRATED) : ;;
+        *) die "lane $rr_l's row says ${rr_cell%% · *}: its state cell is Amendment 13(a)'s phrase — '$rr_cell' — and that cell is the lane's CURRENT STATE, so this is not a dormant row and \`lanes\` does not hide it either. A lane the register says is somewhere is ended as itself (lane-end $rr_l) or its cell is corrected first (set-row-state). Nothing was written." 2 ;;
+      esac
+    fi
+
+    # AMENDMENT 15 — the log this write appends to is the row's own spelling,
+    # and a case-only rename is a write of its own rather than one this sweep
+    # smuggles into a commit that names something else. Both halves of
+    # `ensure_log`'s question are asked HERE, in the scan, so the refusal comes
+    # before any byte is written rather than half-way through the run.
+    rr_loc="$(log_files_named_ci "$rr_l")"
+    rr_ln2="$(printf '%s' "$rr_loc" | grep -c . || :)"
+    [ "$rr_ln2" -le 1 ] ||
+      die "lane $rr_l has $rr_ln2 object logs in this checkout whose names differ only by case: $(printf '%s\n' "$rr_loc" | tr '\n' ' ')— one lane is ONE lane under any case (Amendment 15) and no read of it is unambiguous. Merge them by hand into $(log_file_for "$rr_l") (15(d)) and re-run. Nothing was written." 2
+    if [ "$rr_ln2" = 1 ] && [ "$rr_loc" != "$(log_file_for "$rr_l")" ]; then
+      die "lane $rr_l's object log is here as ${rr_loc##*/} while the row spells the lane $rr_l, so the first write to it RENAMES the file (Amendment 15) — and this sweep is one commit over several lanes, which is not the commit that rename belongs in. Take it first with a write of that lane's own (\`LANES_LANE=$rr_l lanes-edit.sh log NOTED lane:$rr_l \"<what it was>\"\`), then re-run. Nothing was written." 2
+    fi
+    # AN UNTRACKED LOG IS SOMEBODY'S UNCOMMITTED WORK, AND THIS ACT WOULD
+    # COMMIT IT — the finding `migrate-state-cells` took in round 2 of
+    # openRepoTools#82, and this sweep has the same shape. A TRACKED log that is
+    # dirty is already refused for the whole run by `refuse_dirty_checkout`
+    # above, which exempts the register alone; an untracked file is in neither
+    # of its lists, so appending here would put a peer's first lines into this
+    # sweep's one commit under this sweep's message. (A dormant row usually has
+    # no log at all — but a migrated one has a log of NOTED lines, and that is
+    # the file this meets.)
+    if [ "$rr_ln2" = 1 ] && [ "$NO_GIT" != 1 ] &&
+       ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$(log_path_for "$rr_l")" >/dev/null 2>&1; then
+      die "lane $rr_l's object log $(log_path_for "$rr_l") exists in this checkout but is NOT TRACKED — somebody's uncommitted work, which this sweep would commit inside its own commit and under its own message. Commit it first (\`git -C $LANES_REPO commit -m \"<what it is>\" -- $(log_path_for "$rr_l")\`) and re-run. Nothing was written." 2
+    fi
+    # THE PUBLISHED PATH IS THE ONE THE READABILITY PROBE ALREADY RESOLVED —
+    # `log_path_ci` is a `ls-tree` of the whole log directory and this loop runs
+    # per lane, so asking it twice for one lane is a second read of the same
+    # tree for the same answer.
+    rr_pub="$rr_pubp"
+    if [ "${rr_pub##*/}" != "$(log_path_for "$rr_l")" ] && [ "$rr_pub" != "$(log_path_for "$rr_l")" ] && [ "$rr_ln2" = 0 ]; then
+      die "lane $rr_l's object log is published as $rr_pub and this checkout does not have it: writing one here now would leave TWO files for one lane (Amendment 15). Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run. Nothing was written." 2
+    fi
+
+    # THE LINE AND THE CELL, BOTH BUILT AND BOTH CHECKED BEFORE ANYTHING IS
+    # WRITTEN. `row_state_check` dies on a cap, a `|` or a second ` · `, so it
+    # is asked HERE — in the scan — and never with the register half-rewritten.
+    rr_pay="retired-dormant by lane $rr_writer; reason $rr_reason; was: $rr_head"
+    event_line RETIRED "$rr_l" "$rr_uuid" "$rr_utc" "lane:$rr_l" '→' "$rr_pay" > "$rr_tmp/line.$rr_ln"
+    rr_wasrow="$(printf '%s' "$rr_head" | tr '|' '/')"
+    rr_wasrow="${rr_wasrow// · /; }"
+    rr_line="$rr_reason; was: $rr_wasrow"
+    if [ "${#rr_line}" -gt "$ROW_STATE_CAP" ]; then
+      rr_line="${rr_line:0:$((ROW_STATE_CAP - 4))}"
+      case "$rr_line" in *' '*) rr_line="${rr_line% *}" ;; esac
+      rr_line="$rr_line ..."
+    fi
+    row_state_check "RETIRED · $rr_line"
+    rr_new="RETIRED · $rr_utc · $ROW_STATE_LINE"
+    printf '%s%s%s%s%s%s%s%s%s\n' "$rr_ln" "$US" "$rr_l" "$US" "$rr_new" "$US" "$RSS_HEAD" "$US" "$RSS_TAIL" >> "$rr_tmp/plan"
+    printf '  %-26s %s\n' "$rr_l" "$rr_new" >> "$rr_tmp/report"
+    rr_names="$rr_names $rr_l"
+    rr_n=$((rr_n + 1))
+  done
+
+  # --------------------------------------------------------------- the write
+  #
+  # THE LOGS FIRST AND THE ROWS SECOND, and all of it published by the single
+  # `commit_push` at the end: a refusal in the middle leaves this checkout dirty
+  # and the register unpublished, which `git status` shows and
+  # `git checkout -- lanes` undoes whole. Nothing is half-published, because the
+  # commit is the only thing that publishes.
+  rr_paths=("$LANES_PATH")
+  while IFS="$US" read -r rr_ln rr_l rr_new rr_head2 rr_tail; do
+    [ -n "${rr_ln:-}" ] || continue
+    ensure_log "$rr_l"
+    append_text_block "$(log_file_for "$rr_l")" "$(cat -- "$rr_tmp/line.$rr_ln")"
+    rr_paths+=("$(log_path_for "$rr_l")")
+  done <<EOF
+$(cat -- "$rr_tmp/plan")
+EOF
+  while IFS="$US" read -r rr_ln rr_l rr_new rr_head2 rr_tail; do
+    [ -n "${rr_ln:-}" ] || continue
+    replace_line "$rr_ln" "$rr_head2$rr_new $rr_tail"
+  done <<EOF
+$(cat -- "$rr_tmp/plan")
+EOF
+
+  printf 'retire-rows — %s lane(s) RETIRED (lane-collision-protocol Amendment 19(c))\n' "$rr_n"
+  printf '  writer   : lane %s, session %s@%s\n' "$rr_writer" "$rr_uuid" "$WS"
+  printf '  reason   : %s\n' "$rr_reason"
+  printf '\n  lane                       the cell it becomes\n'
+  cat -- "$rr_tmp/report"
+  rm -rf -- "$rr_tmp"
+
+  rr_msg="LANES(retire-dormant@$WS): Amendment 19(c) — $rr_n dormant row(s) RETIRED by lane $rr_writer;$rr_names; reason $rr_reason"
+  commit_push "$rr_msg" "${rr_paths[@]}"
+  rr_crc=$?
+  release_lock
+  return "$rr_crc"
+}
+
+# ------------------- AMENDMENT 19(d): THE ARCHIVE, A SECOND ACT ON A SECOND
+#                     WORD
+#
+# `archive-rows <repo>` MOVES every `RETIRED` row of `<repo>` out of
+# `lanes/LANES.md` and into `lanes/archive/LANES-retired.md`, in ONE commit
+# whose message names each lane moved. Rule 9 holds either way — a row is one
+# `git show` away — so this is for a register a person wants SHORTER and is
+# never a requirement, and nothing reads a row differently for having moved:
+# `register_lanes`, `lanes_register_index` and `lane_position_rows` all read
+# the archive beside the register, which is the amendment's own sentence
+# (*"every reader of the next free position and `lanes --closed` read the
+# archive too"*). A retired `<repo>-<n>` is never reissued.
+#
+# WHICH ROWS: the lane name's head — everything before its LAST hyphen — is the
+# repository, compared without regard to case, which is `lane_next_free`'s rule
+# for the same question and not a second one; and the state cell names `RETIRED`
+# by `mig_lead_state`, the one reader of a cell's leading state word, so a
+# legacy cell and Amendment 13's phrase are read by the same code.
+archive_rows() {   # <repo> <1 = the act, 0 = the dry run>
+  ar_repo="$1"; ar_do="${2:-0}"
+  ar_rl="$(lc "$ar_repo")"
+  log_sync
+  if [ "$ar_do" = 1 ]; then
+    if [ "$NO_GIT" != 1 ] && have_remote_ref; then
+      ar_behind="$(git -C "$LANES_REPO" rev-list --count "HEAD..origin/$LANES_BRANCH" 2>/dev/null || printf '')"
+      case "$ar_behind" in
+        '' | 0) : ;;
+        *) die "this checkout is $ar_behind commit(s) behind origin/$LANES_BRANCH. The move is ONE commit carrying the register and the archive, so it is made against the published register or not at all. Pull first — \`git -C $LANES_REPO pull --rebase\` — and re-run. Nothing was written." 2 ;;
+      esac
+    fi
+    # THE ARCHIVE IS NOT EXEMPT (Copilot round 4 on #93). It was, because this
+    # act writes it — but `handle_preexisting` captures the REGISTER alone, so a
+    # tracked edit somebody else left in the archive rode into this commit under
+    # this act's message. And it is what makes a half-done move safe: if the
+    # append lands and `delete_lines` or the commit does not, the archive is
+    # dirty and the next run REFUSES by name instead of appending the same rows
+    # a second time.
+    refuse_dirty_checkout "archive-rows" "$LANES_PATH"
+    # THE SAME RULE FOR THE ARCHIVE ITSELF: an untracked one is a file this act
+    # did not create, and appending to it would commit somebody else's lines
+    # inside this move (openRepoTools#82, round 2). An archive this act creates
+    # is untracked for the seconds between the write and the commit, which is
+    # why the test is made HERE — before anything is written.
+    if [ -f "$LANES_ARCH_FILE" ] && [ "$NO_GIT" != 1 ] &&
+       ! git -C "$LANES_REPO" ls-files --error-unmatch -- "$LANES_ARCH_PATH" >/dev/null 2>&1; then
+      die "$LANES_ARCH_PATH exists in this checkout but is NOT TRACKED — somebody's uncommitted work, which this move would commit inside its own commit. Commit it first (\`git -C $LANES_REPO commit -m \"<what it is>\" -- $LANES_ARCH_PATH\`) and re-run. Nothing was written." 2
+    fi
+    acquire_lock
+    handle_preexisting "$LANES_PATH"
+  fi
+
+  # THE REGISTER IS READ WITH ITS OWN STATUS (Copilot round 4 on #93). Inside
+  # the here-document below, a failed `awk` — an unreadable register — is
+  # discarded, the loop gets no rows, and the act reports "no row of <repo> has
+  # the state RETIRED" about a file it never read. An unreadable source is never
+  # an empty set (Amendment 7(d)).
+  ar_scan=""
+  ar_scan="$(awk 'substr($0,1,1) == "|" {
+         p1 = index($0, "`"); if (p1 == 0) next
+         r = substr($0, p1 + 1); p2 = index(r, "`"); if (p2 == 0) next
+         printf "%d\t%s\n", NR, substr(r, 1, p2 - 1)
+       }' "$LANES_FILE")" ||
+    die "the register $LANES_FILE could not be read, so which of $ar_repo's rows are RETIRED is not known — and that is not 'none of them are' (Amendment 7(d)). Nothing was written." 1
+
+  ar_tmp="$(mktemp -d)"
+  : > "$ar_tmp/rows"; : > "$ar_tmp/nums"; : > "$ar_tmp/names"
+  ar_n=0
+  while IFS="$(printf '\t')" read -r ar_num ar_lane; do
+    [ -n "${ar_num:-}" ] || continue
+    case "$(lc "$ar_lane")" in
+      "$ar_rl"-*) : ;;
+      *) continue ;;
+    esac
+    ar_head="$ar_lane"; ar_head="${ar_head%-*}"
+    [ "$(lc "$ar_head")" = "$ar_rl" ] || continue
+    ar_row="$(sed -n -e "${ar_num}p" "$LANES_FILE")"
+    # A ROW OF THIS REPOSITORY THAT CANNOT BE TAKEN APART IS A REFUSAL, NOT A
+    # SKIP (Copilot round 1 on #93). This act says it moves EVERY `RETIRED` row
+    # of `<repo>`; a row whose ` | ` count hides which text is the state cell
+    # may BE one, and moving the others while saying nothing about it is a
+    # partial act reported as a whole one.
+    ar_src=0; row_split_state_cell "$ar_row" || ar_src=$?
+    if [ "$ar_src" != 0 ]; then
+      rm -rf -- "$ar_tmp"
+      die "lane $ar_lane is $ar_repo's and its row (line $ar_num) carries $(row_sep_count "$ar_row") ' | ' separators where a seven-column row carries 6, so whether its state is RETIRED is not knowable from the row — and this act moves EVERY retired row of a repository or none of them. Escape the literal pipe inside that cell as \| by hand, commit it (\`LANES_LANE=$ar_lane lanes-edit.sh commit \"escape a literal pipe in row $ar_lane\"\`), and re-run. Nothing was written." 2
+    fi
+    mig_trim "$RSS_CELL"
+    [ "$(mig_lead_state "$MIG_TRIM")" = RETIRED ] || continue
+    printf '%s\n' "$ar_row" >> "$ar_tmp/rows"
+    printf '%s\n' "$ar_num" >> "$ar_tmp/nums"
+    printf '%s\n' "$ar_lane" >> "$ar_tmp/names"
+    ar_n=$((ar_n + 1))
+  done <<EOF
+$ar_scan
+EOF
+
+  printf 'archive-rows %s — %s (lane-collision-protocol Amendment 19(d))\n' \
+    "$ar_repo" "$( [ "$ar_do" = 1 ] && printf 'THE ACT' || printf 'DRY RUN, nothing is written' )"
+  printf '  register : %s\n' "$LANES_FILE"
+  printf '  archive  : %s\n' "$LANES_ARCH_PATH"
+  printf '  rows     : %s RETIRED row(s) of %s\n' "$ar_n" "$ar_repo"
+  if [ "$ar_n" -gt 0 ]; then
+    printf '\n'
+    awk '{ print "  " $0 }' "$ar_tmp/names"
+  fi
+  if [ "$ar_n" = 0 ]; then
+    rm -rf -- "$ar_tmp"
+    die "no row of $ar_repo has the state RETIRED, so there is nothing to archive — this act moves finished rows and never anything else. \`lanes --closed --prefix $ar_repo\` shows what that repository's rows say; \`lane-end --retire-dormant $ar_repo\` is what RETIRES its dormant ones. Nothing was written." 2
+  fi
+  if [ "$ar_do" != 1 ]; then
+    printf '\n  DRY RUN — nothing was written. Make it the one act with:  lanes-edit.sh archive-rows %s --yes\n' "$ar_repo"
+    rm -rf -- "$ar_tmp"
+    return 0
+  fi
+
+  # THE ARCHIVE IS WRITTEN FIRST AND THE ROWS REMOVED SECOND, for the reason
+  # `delete_lines` gives: a refusal between the two leaves a copy in the archive
+  # and the register whole, and never a row in neither file.
+  mkdir -p -- "$LANES_DIR/archive" ||
+    die "could not create $LANES_DIR/archive — the archive is written before anything is removed, so nothing has been" 6
+  if [ ! -f "$LANES_ARCH_FILE" ]; then
+    {
+      printf '# LANES-retired.md — rows RETIRED out of `lanes/LANES.md`\n\n'
+      printf 'lane-collision-protocol Amendment 19(d). These lanes are finished. Their\n'
+      printf 'positions are NEVER REISSUED: every reader of the next free position and\n'
+      printf '`lanes --closed` read this file beside the register.\n\n'
+      printf '| lane | session id | workstation / env / user | started (UTC) | objects owned | handoff path | state |\n'
+      printf '|---|---|---|---|---|---|---|\n'
+    } > "$LANES_ARCH_FILE" ||
+      die "could not write $LANES_ARCH_FILE — nothing has been removed from the register" 6
+    note "created $LANES_ARCH_FILE"
+  fi
+  append_text_block "$LANES_ARCH_FILE" "$(cat -- "$ar_tmp/rows")"
+  delete_lines "$(cat -- "$ar_tmp/nums")"
+
+  ar_msg="LANES(archive@$WS): Amendment 19(d) — $ar_n RETIRED row(s) of $ar_repo moved to $LANES_ARCH_PATH: $(tr '\n' ' ' < "$ar_tmp/names")"
+  rm -rf -- "$ar_tmp"
+  commit_push "$ar_msg" "$LANES_PATH" "$LANES_ARCH_PATH"
+  ar_crc=$?
+  release_lock
+  return "$ar_crc"
+}
+
 # ---------------------------------------------------------------- subcommands
 
 cmd="${1-}"
@@ -7640,7 +8548,7 @@ shift || :
 # front of every launch may not refuse, and one that answers nothing for a
 # workstation nobody configured is telling the truth.
 case "$cmd" in
-  replace-in-row|append-session-id|append-line|add-row|set-row-state|migrate-state-cells|commit|log|claim|release)
+  replace-in-row|append-session-id|append-line|add-row|set-row-state|migrate-state-cells|retire-rows|archive-rows|commit|log|claim|release)
     ws_why="$(lanes_workstation_why "$WS_SOURCE")"
     [ -z "$ws_why" ] || die "$ws_why" 2 ;;
 esac
@@ -7656,7 +8564,16 @@ case "$cmd" in
   # at yet is not a reason to refuse them — the same exemption `session-start`
   # has had since it was written, and the same one `guard` joined under
   # Amendment 12(d), each for its own reason.
-  session-start|guard|lane-groups|next-free) : ;;
+  # AND THE RETIRED VERB IS EXEMPT TOO (Copilot round 4 on openRepoTools#82,
+  # suppressed comment `lanes-edit.sh:7525`). `append-row-status` is out of the
+  # WRITER list above and says so of itself — *"it refuses before the
+  # workstation guard and before the register is even looked for"* — but this
+  # second guard caught it all the same: on a machine with no configured
+  # workspace the caller got the workspace refusal (exit 1) instead of the
+  # RETIREMENT refusal (exit 2) naming the two acts that replace it. A
+  # compatibility refusal that only fires where the register is already
+  # reachable is not one.
+  session-start|guard|lane-groups|next-free|append-row-status) : ;;
   *)
     if [ -z "$LANES_REPO" ] || [ -z "$LANES_DIR" ]; then
       die "$(lanes_workspace_why)" 1
@@ -7892,6 +8809,58 @@ Nothing was written." 2
     # `origin` at all, and the published scan is the one the incident needed.
     if [ -n "$lane_new" ]; then
       log_sync
+      # AND THE ARCHIVE IS ASKED AS WELL (Amendment 19(b) and (d)). A row
+      # `archive-rows` has moved into `lanes/archive/LANES-retired.md` is still
+      # that lane's row: its object log is `lanes/log/<lane>.md` and that file is
+      # APPEND-ONLY, so a second lane under the same name would write its life
+      # into the first one's file and every read of that log — who held what,
+      # when it was claimed, which session paused it — would answer for two
+      # lanes at once. `next-free` never OFFERS such a position, because it
+      # counts the archive too; this is what refuses one that is typed by hand,
+      # which is the whole of "a retired `<repo>-<n>` is never reissued".
+      # BOTH COPIES OF THE ARCHIVE (Copilot round 1 on #93): `archive_text`
+      # answers with the PUBLISHED file wherever there is one, so a move
+      # committed here and not yet pushed was invisible to this check and its
+      # name came back on offer. The local file is read beside it, exactly as
+      # the row scan below reads `rows_named_ci_local` beside `rows_named_ci`.
+      #
+      # AND A READ THAT FAILED IS A REFUSAL, not an empty archive (round 2): the
+      # whole point of this check is that a retired identity is never reissued,
+      # and "I could not read the file that says which ones are retired" is not
+      # "none of them are" (Amendment 7(d)).
+      ar_pubarc=""; ar_arch_rc=0
+      ar_pubarc="$(archive_text 2>/dev/null)" || ar_arch_rc=1
+      ar_locarc=""
+      if [ -f "$LANES_ARCH_FILE" ]; then
+        ar_locarc="$(cat -- "$LANES_ARCH_FILE" 2>/dev/null)" || ar_arch_rc=1
+      fi
+      [ "$ar_arch_rc" = 0 ] ||
+        die "$LANES_ARCH_PATH exists and could not be read, so whether '$lane_new' is a name this estate has RETIRED is not known — and a retired position is never reissued (Amendment 19(b)). A read that failed is not 'it is not retired' (Amendment 7(d)). Fix the read and re-run; nothing was written." 1
+      # THE POSITION AND NOT ONLY THE NAME (round 2). `lane_next_free` reserves
+      # `repo-4` and `repo-4a` as ONE position — "a lane may be re-cut and a
+      # re-cut position is not free" — so a name test alone let `repo-4a`
+      # through against a retired `repo-4`, which is the same identity by the
+      # rule that hands the numbers out. The key is that rule, restated here in
+      # awk over the two archives.
+      ar_arch="$(printf '%s\n%s\n' "$ar_pubarc" "$ar_locarc" | awk -v want="$lane_new" '
+        function key(n,   h, p) {
+          p = n; sub(/^.*-/, "", p); sub(/[A-Za-z]$/, "", p)
+          h = n; sub(/-[^-]*$/, "", h)
+          if (h == n) return ""
+          if (p !~ /^[0-9]+$/) return ""
+          return tolower(h) "-" (p + 0)
+        }
+        BEGIN { wk = key(want) }
+        substr($0,1,1) == "|" {
+          p1 = index($0, "`"); if (p1 == 0) next
+          r = substr($0, p1 + 1); p2 = index(r, "`"); if (p2 == 0) next
+          t = substr(r, 1, p2 - 1)
+          if (tolower(t) == tolower(want)) { print t; next }
+          if (wk != "" && key(t) == wk) print t
+        }' | LC_ALL=C sort -u || :)"
+      if [ -n "$ar_arch" ]; then
+        die "lane '$lane_new' is RETIRED: its row is in $LANES_ARCH_PATH, spelled $(printf '%s\n' "$ar_arch" | tr '\n' ' ')— and a retired position is NEVER REISSUED (Amendment 19(b)). That lane's object log is $(log_path_for "$lane_new") and it is append-only, so a second lane under this name would write its life into the first one's file and every read of that log would answer for two lanes at once. Take a free position instead — \`lanes --prefix <repo>\` prints the next one and the line that takes it. Nothing was written." 2
+      fi
       ar_hits="$(rows_named_ci_local "$lane_new")"
       ar_pub="$(rows_named_ci "$lane_new" 2>/dev/null || :)"
       ar_all="$(printf '%s\n%s\n' "$ar_hits" "$ar_pub" | grep -v '^$' | LC_ALL=C sort -u || :)"
@@ -7939,6 +8908,32 @@ Nothing was written." 2
       fi
     fi
     commit_push "LANES(${LANES_LANE:-unknown}@$WS): $msg"
+    ;;
+
+  # AMENDMENT 19(c) — THE SWEEP'S WRITE. `lane-end --retire-dormant <repo>` is
+  # the word that finds the dormant rows, shows the dry run and takes the
+  # person's `--yes`; this is the one commit under it, and it re-proves every
+  # refusal for itself rather than trusting the caller's list.
+  retire-rows)
+    retire_rows ${1+"$@"}
+    ;;
+
+  # AMENDMENT 19(d) — THE ARCHIVE. A DRY RUN unless `--yes` is passed, like the
+  # migration beside it, and one commit naming each lane moved when it is.
+  archive-rows)
+    ar_repo=""; ar_yes=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --yes)     ar_yes=1; shift ;;
+        --dry-run) ar_yes=0; shift ;;
+        --)        shift ;;
+        -*)        die "unknown option '$1' for archive-rows (usage: archive-rows <repo> [--yes])" 2 ;;
+        *)         [ -z "$ar_repo" ] || die "archive-rows takes ONE repository: archive-rows <repo> [--yes]" 2
+                   ar_repo="$1"; shift ;;
+      esac
+    done
+    [ -n "$ar_repo" ] || die "usage: archive-rows <repo> [--yes]   —  without --yes it is a DRY RUN that writes nothing" 2
+    archive_rows "$ar_repo" "$ar_yes"
     ;;
 
   # AMENDMENT 13(e) — THE MIGRATION. A DRY RUN unless `--yes` is passed, and one
@@ -8880,12 +9875,12 @@ EOF
     lns_args=(); lns_fetch=0
     while [ $# -gt 0 ]; do
       case "$1" in
-        --repo|--dir|--ws|--lane|--prefix) [ -n "${2-}" ] || die "$1 needs a value (usage: lanes [--repo <owner/repo>] [--dir <path>] [--prefix <repo>] [--ws <workstation>] [--lane <lane>] [--here] [--all] [--fetch])" 64
+        --repo|--dir|--ws|--lane|--prefix) [ -n "${2-}" ] || die "$1 needs a value (usage: lanes [--repo <owner/repo>] [--dir <path>] [--prefix <repo>] [--ws <workstation>] [--lane <lane>] [--here] [--all] [--closed] [--fetch])" 64
                            lns_args+=("$1" "$2"); shift 2 ;;
-        --all|--here)      lns_args+=("$1"); shift ;;
+        --all|--here|--closed) lns_args+=("$1"); shift ;;
         --fetch)           lns_fetch=1; shift ;;
         --)                shift ;;
-        *)                 die "unknown argument '$1' for lanes (usage: lanes [--repo <owner/repo>] [--dir <path>] [--prefix <repo>] [--ws <workstation>] [--here] [--all] [--fetch])" 64 ;;
+        *)                 die "unknown argument '$1' for lanes (usage: lanes [--repo <owner/repo>] [--dir <path>] [--prefix <repo>] [--ws <workstation>] [--here] [--all] [--closed] [--fetch])" 64 ;;
       esac
     done
     # THE ONE READ IN THIS FILE WHOSE DEFAULT IS LOCAL (SPEC rev 4 §15). Every
@@ -8952,7 +9947,7 @@ EOF
     case "$lns_rc" in
       0)  : ;;
       8)  exit 8 ;;
-      64) die "usage: lanes [--repo <owner/repo>] [--dir <path>] [--prefix <repo>] [--ws <workstation>] [--here] [--all]" 64 ;;
+      64) die "usage: lanes [--repo <owner/repo>] [--dir <path>] [--prefix <repo>] [--ws <workstation>] [--here] [--all] [--closed]" 64 ;;
       *)  die "the lane listing could not be read (exit $lns_rc)" 1 ;;
     esac
     [ -n "$lns_out" ] || exit 8
@@ -9123,6 +10118,6 @@ EOF
     ;;
 
   *)
-    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|migrate-state-cells|commit|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|canon-lane|resolve-home)" 2
+    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|canon-lane|resolve-home)" 2
     ;;
 esac

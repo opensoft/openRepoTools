@@ -91,8 +91,8 @@ die() { printf '\n%s: REFUSED: %s\n' "$prog" "$1" >&2; exit "${2:-64}"; }
 
 usage() {
 	cat <<'USAGE'
-lanes [--fetch] [--all] [--here] [--repo <owner/repo>] [--dir <path>]
-      [--prefix <repo>] [--ws <workstation>]
+lanes [--fetch] [--all] [--here] [--closed] [--repo <owner/repo>]
+      [--dir <path>] [--prefix <repo>] [--ws <workstation>]
 
 Inside a lane checkout: THAT REPOSITORY's lanes, ending with the next free
 position and the exact `lane-start <repo> <n>` that takes it. Outside one: every
@@ -110,6 +110,16 @@ and age — and for a PAUSED lane, the exact command that restarts it.
                    for exactly this rather than rendering a listing of its own.
   --here           only this workstation's lanes. This was the default before
                    Amendment 11 Addendum 4 ruling 6 and is an option now.
+  --closed         add the CLOSED and the DORMANT lanes, which this listing
+                   leaves out by default (Amendment 19(b)). CLOSED is a lane
+                   whose object log's last lane-kind line is ENDED or RETIRED;
+                   DORMANT is a row with NO object log and no live session here
+                   — a lane from before Amendment 7, or one whose log was never
+                   created. Each gets a second line saying which it is, when it
+                   started, what its state cell still says, and whether that
+                   cell says the work was unpushed, lost or owed. It combines
+                   with --all, --here and the narrowing flags; the NEXT FREE
+                   POSITION below always counts them, listed or not.
   --repo <o/r>     only lanes whose register home is that repository.
   --dir <path>     only lanes whose recorded directory is that path.
                    --repo and --dir together are an OR, not an AND: a lane's
@@ -136,6 +146,7 @@ fi
     command by \`openRepoTools --install\`. Run that, or set \$LANES_EDIT." 1
 
 do_fetch=0
+closed=0            # 1 once `--closed` has been seen
 narrowed=0          # 1 once anything has narrowed the listing
 all_given=0         # 1 once `--all` has been seen, wherever in the line it was
 # THE REPOSITORY THIS LISTING IS ABOUT, where it is about one. Set from the
@@ -158,6 +169,13 @@ while [ $# -gt 0 ]; do
 	# that names a repository it did not narrow to is worse than no count.
 	--all) args+=(--all); narrowed=0; here_repo=""; all_given=1; shift ;;
 	--here) args+=(--here); narrowed=1; shift ;;
+	# `--closed` IS NOT A NARROWING AND MUST NOT LOOK LIKE ONE. It widens the
+	# listing, so it neither sets `narrowed` nor joins `args` here: the array
+	# being empty is what the checkout narrowing below is gated on, and a flag
+	# sitting in it would stop `lanes --closed` inside a checkout meaning "this
+	# repository's lanes, the closed ones included". It is appended after that
+	# block instead.
+	--closed) closed=1; shift ;;
 	--repo | --dir | --ws | --prefix)
 		[ -n "${2-}" ] || die "$1 needs a value — see $prog --help" 64
 		[ "$1" = --prefix ] && here_repo="$2"
@@ -222,6 +240,8 @@ if [ "$narrowed" = 0 ] && [ ${#args[@]} -eq 0 ]; then
 		[ -n "$here_nwo" ] && args+=(--repo "$here_nwo")
 	fi
 fi
+
+if [ "$closed" = 1 ]; then args+=(--closed); fi
 
 ws_pair="$("$LANES_EDIT" workstation 2>/dev/null || :)"
 ws_name="$(printf '%s' "$ws_pair" | cut -f1)"
@@ -332,11 +352,57 @@ case "$rc" in
 8)
 	if [ -n "$here_repo" ]; then
 		# AN EMPTY REPOSITORY STILL GETS THE ANSWER A PERSON CAME FOR: the next
-		# free position is 1, and the line that takes it is printed filled in.
-		say "no lane of $here_repo is recorded."
-		say ""
-		say "  next free position:  1"
-		say "  take it:             lane-start $here_repo 1"
+		# free position, and the line that takes it, printed filled in.
+		#
+		# AND AN EMPTY LISTING IS NO LONGER AN EMPTY REGISTER (Copilot round 2 on
+		# #93). Since Amendment 19(b) a repository whose every row is CLOSED or
+		# DORMANT lists NOTHING — and its positions are all taken. Printing
+		# "next free position: 1" there would hand out a number a retired lane
+		# holds, which is the one thing 19(b) exists to prevent. So the position
+		# is ASKED FOR rather than assumed: `next-free` reads the register and
+		# the archive itself, so it answers over an empty listing.
+		e_next=""; e_rc=0
+		e_next="$(printf '' | "$LANES_EDIT" next-free "$here_repo" 2>/dev/null)" || e_rc=$?
+		if [ "$e_rc" != 0 ]; then e_next=""; fi
+		case "${e_next:-}" in '' | *[!0-9]*) e_next="" ;; esac
+		# WHETHER THERE ARE HIDDEN ROWS IS ASKED, NOT INFERRED FROM THE NUMBER
+		# (Copilot round 3 on #93). `next-free != 1` was a proxy, and it is wrong
+		# for the register that holds ONE hidden row at position 2 or later:
+		# there the lowest free position really is 1, and the listing would have
+		# said "no lane is recorded" about a repository that has one. The
+		# `--closed` read answers it directly, and it is made HERE — on the path
+		# that has already found nothing to show — and nowhere else.
+		e_hidden=0
+		# `command grep`, BECAUSE THE EXIT STATUS IS THE ANSWER (AGENTS.md, the
+		# measured defect of openRepoTools#51: under the harness `grep` is a
+		# shell function whose status is 1 when its stdout is `/dev/null`, which
+		# is exactly what `-q` makes it).
+		if "$LANES_EDIT" lanes --closed ${args[@]+"${args[@]}"} 2>/dev/null | command grep -q .; then e_hidden=1; fi
+		if [ "$e_hidden" = 1 ]; then
+			say "no lane of $here_repo is LISTED — and that is not the same as none being recorded: closed and dormant lanes are left out (Amendment 19(b))."
+			say ""
+			say "  see them:            $prog --closed --prefix $here_repo"
+		else
+			say "no lane of $here_repo is recorded."
+			say ""
+		fi
+		# A READ THAT FAILED IS NOT A POSITION OF 1 HERE EITHER. `2` is the
+		# un-upgraded workstation, whose `lanes-edit.sh` has no `next-free` at
+		# all, and 1 is what this branch offered before that read existed — so
+		# that one keeps the old answer. Any other non-zero is `next-free`
+		# REFUSING because a source it must count could not be read (Amendment
+		# 19(b)), and offering a number over it would hand out a position a
+		# retired row may hold — the one thing this whole amendment is for.
+		if [ -n "$e_next" ] || [ "$e_rc" = 0 ] || [ "$e_rc" = 2 ]; then
+			say "  next free position:  ${e_next:-1}"
+			say "  take it:             lane-start $here_repo ${e_next:-1}"
+		else
+			say "  the next free position could not be read: \`lanes-edit.sh next-free\` exited"
+			say "  $e_rc, and this listing will not offer a position over a read that did not"
+			say "  answer (Amendment 7(d)) — a row it missed is a position it would hand out"
+			say "  twice. Run it by hand to see what it says:"
+			say "    printf '' | $LANES_EDIT next-free $here_repo"
+		fi
 		say "  every lane:          $prog --all"
 	else
 		say "no lane is recorded${ws_name:+ that $ws_name can see}."
@@ -378,7 +444,13 @@ printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
 	LANE STATE WHERE PROFILE WINDOW "LAST TRANSCRIPT" AGE DIRECTORY
 n=0
 defects=0
-while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_restart r_home r_fk; do
+# COLUMNS 13 TO 16 ARE AMENDMENT 19'S — the row's CLASS (`closed`, `dormant`
+# or `none`), its `started` cell, its state cell's head and the flag words in
+# that cell — and they are read here for the reason every field of this row is
+# read by its own index: a reader that stopped at twelve would take all four of
+# them as the TWELFTH, and the twelfth is the fork count this listing prints a
+# DEFECT for.
+while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_restart r_home r_fk r_class r_start r_was r_flags; do
 	[ -n "${r_lane:-}" ] || continue
 	printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
 		"$r_lane" "$r_state" "$r_ws" "$r_pf" "$r_win" "$r_sid" "$r_age" "$r_dir"
@@ -394,10 +466,44 @@ while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_
 	# `pclaude --lane <lane> <profile>` form where the record carries no profile
 	# yet — is stated once, in `lanes_rows`, and rendered here. The word it
 	# prints is `lane <name>` since Amendment 18 Addendum 2 retired `restart`.
+	# AND THE WORD IS THE SAME WORD FOR A **LIVE** LANE, under its own label:
+	# `lane <name>` ATTACHES to a lane live on this workstation and never starts
+	# a second process (Amendment 18 Addendum 1 (i-1)). The command is the read's
+	# (column 10); which of the two things it is doing is the STATE's, so the
+	# label is chosen here and the command is not.
 	case "${r_restart:-none}" in
 	none | '') : ;;
-	lane\ *) printf '%-26s bind it: %s\n' "" "$r_restart" ;;
+	lane\ *)
+		if [ "${r_state:-}" = LIVE ]; then
+			printf '%-26s attach it: %s\n' "" "$r_restart"
+		else
+			printf '%-26s bind it: %s\n' "" "$r_restart"
+		fi ;;
 	*) printf '%-26s bind it: %s   (no profile recorded yet; it is written at this lane next start or swap)\n' "" "$r_restart" ;;
+	esac
+	# THE SECOND LINE A CLOSED OR DORMANT ROW GETS (Amendment 19(b)), and one
+	# is here only under `--closed`. A CLOSED lane is shown with the closing
+	# line's verb (the STATE column) and its time (the AGE column); a DORMANT
+	# row as `NO LOG` with its START DATE and its STATE CELL'S HEAD — the row's
+	# own last words, which are the only thing it has left to say for itself and
+	# exactly what the sweep carries into the log it creates for it. The FLAGS
+	# are that sweep's: a cell saying the work was unpushed, lost, a loss or
+	# owed, or still saying LIVE.
+	case "${r_class:-none}" in
+	closed)
+		printf '%-26s closed: its object log ends with %s; started %s\n' \
+			"" "$r_state" "${r_start:-unknown}" ;;
+	dormant)
+		r_tail="${r_was:-none}"
+		if [ "${#r_tail}" -gt 140 ]; then r_tail="${r_tail:0:140} …"; fi
+		r_fl=""
+		case "${r_flags:-none}" in
+		none | '') : ;;
+		*) r_fl="; FLAGS $r_flags" ;;
+		esac
+		printf '%-26s DORMANT: no object log and no live session here; started %s%s\n' \
+			"" "${r_start:-unknown}" "$r_fl"
+		printf '%-26s was: %s\n' "" "$r_tail" ;;
 	esac
 	case "${r_fk:-0}" in
 	0 | '') : ;;
@@ -463,6 +569,12 @@ elif [ "$do_fetch" = 1 ]; then
 	say "$n lane(s)${here_repo:+ of $here_repo}, as of a fetch just now."
 else
 	say "$n lane(s)${here_repo:+ of $here_repo}, read locally — no fetch; this checkout last heard from origin $("$LANES_EDIT" fetch-age 2>/dev/null || printf 'unknown'). \`$prog --fetch\` refreshes first."
+fi
+# CLOSED AND DORMANT LANES ARE NOT IN THE COUNT ABOVE, and a listing that did
+# not say so would read as a register with nothing finished in it. The hint is
+# printed whenever they were left out, which is every run without `--closed`.
+if [ "$closed" = 0 ]; then
+	say "  closed and dormant lanes are not listed (Amendment 19(b)):  $prog --closed"
 fi
 if [ -n "$here_repo" ] && [ -n "$next" ]; then
 	say ""

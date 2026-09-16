@@ -576,7 +576,7 @@ YAML
 sessions_dir="$HOME/.claude-profiles/profiles/opensoft/team/t1/sessions"
 mkdir -p "$sessions_dir" "$HOME/.claude/sessions"
 
-# 3000 SECONDS, AND THE NUMBER IS TIED TO THE RUNNER'S OWN BOUND (A9 Addendum
+# 4200 SECONDS, AND THE NUMBER IS TIED TO THE RUNNER'S OWN BOUND (A9 Addendum
 # 4, R-A9-11). This process IS the liveness fixture: every "a live holder …"
 # case from here to the foot of the file asks whether it is still running, and
 # `lane-start`'s own refusals name its pid. On macOS it is the ONLY thing they
@@ -586,7 +586,7 @@ mkdir -p "$sessions_dir" "$HOME/.claude/sessions"
 #
 # At `sleep 300` this fixture outlived the suite on Linux (136 s here, 229 s
 # under pytest) and ran out of seconds INSIDE it on anything slower. The macOS
-# job takes ~900 s for this file alone, so the fixture died a third of the way
+# job took ~900 s for this file alone then, so the fixture died a third of the way
 # in and every liveness case after that point got a quiet, plausible-looking
 # wrong answer. Measured, by starting it already reaped: 196 of 998. (It was
 # not the largest cause of the 438 at `d3d59b5` — `lanes-edit.sh`'s padded `wc`
@@ -594,11 +594,21 @@ mkdir -p "$sessions_dir" "$HOME/.claude/sessions"
 # standing after that fix, which is the whole reason a suite fixes both at
 # once.)
 #
-# The number must exceed `TIMEOUT_SECONDS` (2400) or the suite can outlive its
-# own evidence on a runner slow enough to hit the bound; `cleanup` kills it on
-# every exit path, and the last assertion in this file checks it was still
-# running when the run ended.
-sleep 3000 & LIVE_PID=$!
+# THE NUMBER MUST EXCEED `TIMEOUT_SECONDS`, AND AT 3000 IT NO LONGER DID.
+# `tests/test_lane_helpers_suite.py` lets this file run for 3600 s before it
+# kills it — raised from 2400 when the macOS job spent 2722 s in here — so a
+# fixture bounded at 3000 expired 600 s INSIDE a run the wrapper was still
+# waiting on: the suite was licensed to outlive its own evidence, which is the
+# one thing this bound exists to prevent. It did, at `758a536`: tests-macos
+# reached the Amendment 19 section — the last 5% of this file — with the
+# fixture already reaped, and four of that job's ten red lines are the LIVE
+# lane's attach and the sweep's live-session refusal reading `none`. 4200 is
+# 3600 plus ten minutes of slack; `cleanup` kills it on every exit path, and
+# the last assertion in this file checks it was still running when the run
+# ended. THE PAIR IS ASSERTED, not merely written down twice: the wrapper reads
+# this line and refuses a bound that does not exceed its own timeout, so the
+# next person to raise one is told to raise the other.
+sleep 4200 & LIVE_PID=$!
 live_start="$(cut -d' ' -f22 "/proc/$LIVE_PID/stat" 2>/dev/null || printf '')"
 sleep 0.05 & DEAD_PID=$!
 wait "$DEAD_PID" 2>/dev/null
@@ -4467,8 +4477,8 @@ is "the fork column of the listing agrees with the \`forks\` read beside it" \
 # that column names is `lane <name>` since Amendment 18 Addendum 2 retired
 # `restart` from the PATH — one change, in the read, and both surfaces took it.
 run "$E" lanes --lane repoA11-1
-is "the read's row has twelve fields: clause (j)'s ten, then home and forks" \
-   "$(printf '%s' "$out" | awk -F'\t' '{print NF}')" 12
+is "the read's row has sixteen fields: clause (j)'s ten, then home and forks, then Amendment 19's four" \
+   "$(printf '%s' "$out" | awk -F'\t' '{print NF}')" 16
 is "…and column 10 is the line that binds the lane, which both surfaces print" \
    "$(printf '%s' "$out" | awk -F'\t' '{print $10}')" "lane repoA11-1"
 run "$E" lanes --lane repoA11-2
@@ -5529,12 +5539,22 @@ git -C "$WIP" push -q origin main
 # assertions are about the estate-wide listing. They were bare and were the four
 # red ones at `0303baa` — the listing they read was "no lane of <this checkout>
 # is recorded", which is the right answer to a question they were not asking.
+# AMENDMENT 19(b) AMENDS THIS PAIR. Until 2026-09-14 an ENDED or RETIRED lane
+# was still a ROW in the listing and only lost column 10; the amendment takes it
+# out of the listing altogether — *"`lanes` lists neither CLOSED nor DORMANT
+# lanes by default"* — and `--closed` is what puts it back. The column-10 half is
+# unchanged and is asserted where the row now is.
 run "$LANES_CMD" --all </dev/null
-has   "an ENDED lane is still a row in the listing" "$out" "repoFX20-1"
+hasnt "an ENDED lane LEAVES the listing (Amendment 19(b) amends clause (j))" "$out" "repoFX20-1"
+hasnt "…and so does a RETIRED one" "$out" "repoFX20-2"
+has   "…while a PAUSED lane is still in it" "$out" "repoA11-1"
+has   "…with the line that binds it, so the column still means something" "$out" "bind it: lane repoA11-1"
+run "$LANES_CMD" --all --closed </dev/null
+has   "…and --closed puts the ENDED lane back" "$out" "repoFX20-1"
 hasnt "…with no line that binds it, because column 10 is a PAUSED lane's" "$out" "lane repoFX20-1"
-has   "a RETIRED lane is still a row too" "$out" "repoFX20-2"
+has   "…and the RETIRED one too" "$out" "repoFX20-2"
 hasnt "…and gets no line that binds it either" "$out" "lane repoFX20-2"
-has   "…while a PAUSED lane still gets one, so the column still means something" "$out" "bind it: lane repoA11-1"
+has   "…each under a line saying which verb closed it" "$out" "closed: its object log ends with"
 run "$LANES_CMD" --here </dev/null
 hasnt "a lane of ANOTHER workstation is not in the --here listing" "$out" "repoA11-3"
 run "$LANES_CMD" --all </dev/null
@@ -8605,7 +8625,12 @@ chmod +x "$SANDBOX/nfbroke"
 # lane-groups` decides it, over the rows both words already have, so the two
 # surfaces cannot come to disagree about which lanes are free — the rule that
 # put column 10 in the read (A11 Addendum 4 ruling 7).
-run env LANES_NO_FETCH=1 "$E" lanes --prefix repoPick
+# `--closed`, SINCE AMENDMENT 19(b): the listing no longer carries a CLOSED
+# lane at all, and the two assertions below are about what `lane-groups` and
+# `next-free` do WITH one — the partition dropping it, and its position staying
+# reserved. Read without it, both would be asserting over rows that no longer
+# hold an ENDED lane, and would pass while proving nothing.
+run env LANES_NO_FETCH=1 "$E" lanes --closed --prefix repoPick
 is   "the rows of the seeded repository read" "$rc" 0
 PICK_ROWS="$out"
 pick_group_of() { printf '%s\n' "$PICK_GROUPS" | awk -F'\t' -v l="$1" '$2 == l { print $1; exit }'; }
@@ -8672,12 +8697,18 @@ hasnt "…while a CLOSED lane is hidden from the pick entirely (Amendment 19)" "
 hasnt "…and no question was asked" "$out$err" "which?"
 has   "…saying in terms why nothing was asked" "$out" "stdin is not a terminal"
 has   "…and offering the acts filled in, which is what an agent reads" "$out" "lane-start repoPick 6"
-# THE SAME ROWS AS A READ STILL SHOW THE CLOSED LANE, because `lanes` is the
-# read and this is a pick.
+# THE SAME ROWS AS A READ NO LONGER SHOW IT EITHER, since Amendment 19(b). The
+# pick hid a closed lane before the read did — a lane whose last act was its
+# last is not a lane a person picks — and now the read leaves it out too, and
+# puts it back under `--closed`, which the pick has no answer for. What has not
+# moved is the POSITION: closed or not, listed or not, `repoPick-5` holds 5.
 run env LANES_NO_FETCH=1 "$LANES_CMD" --prefix repoPick </dev/null
-has   "…while \`lanes\` still carries the closed lane, because that is the READ" "$out" "repoPick-5"
+hasnt "…and the listing no longer carries the closed lane either (Amendment 19(b))" "$out" "repoPick-5"
 has   "…and its footer offers the same next free position the pick does" "$out" "next free position:  6"
 has   "…and points at the word that binds one" "$out" "pick one:            lane"
+run env LANES_NO_FETCH=1 "$LANES_CMD" --closed --prefix repoPick </dev/null
+has   "…while --closed puts it back, because that is the READ" "$out" "repoPick-5"
+has   "…under a line saying which verb closed it" "$out" "closed: its object log ends with ENDED"
 
 # ------------------------------------------------------- one question, one answer
 if [ "$HAVE_PTY" = 0 ]; then
@@ -9685,6 +9716,450 @@ has   "…saying the register is already in the shape" "$err" "already in Amendm
 is    "…and changed nothing" "$(git -C "$MIG_WIP" rev-list --count "$MIG_HEAD2"..HEAD)" 0
 run env LANES_WORKSPACE_ROOT="$MIG_WIP" "$E" migrate-state-cells --no-such-flag
 is    "an unknown flag is a refusal, not a silent dry run" "$rc" 2
+
+echo "== Amendment 19: a closed or dormant lane leaves the listing =="
+
+# ITS OWN WORKSPACE, for `migrate-state-cells`'s reason one section up: this
+# section RETIRES a whole repository's dormant rows and creates their logs, and
+# pointed at the suite's own register it would close fixtures the cases above
+# and below it are built on. `LANES_WORKSPACE_ROOT` is the seam Amendment 9(a)
+# left for pointing a helper at another sandbox.
+#
+# THE SEED IS THE AMENDMENT'S OWN: a live lane, a parked one, an ended one and
+# THREE ROWS WITH NO LOG — the population measured on openxFactory on
+# 2026-09-14, where `lanes` listed nineteen rows for five lanes and fourteen of
+# them said `NO LOG`. Two of the three carry their own last words about work
+# that never left the workstation; the third still says `LIVE` and is not.
+A19_ORIGIN="$SANDBOX/a19-origin.git"; A19_WIP="$SANDBOX/a19wip"
+git init -q --bare -b main "$A19_ORIGIN"
+git clone -q "$A19_ORIGIN" "$A19_WIP" 2>/dev/null
+git -C "$A19_WIP" config user.email "test@example.invalid"
+git -C "$A19_WIP" config user.name  "lane helper tests"
+mkdir -p "$A19_WIP/lanes/log"
+A19_ID="aaaa0019-1919-4000-8000-aaaa00191919"
+A19_OLD="aaaa0020-2020-4000-8000-aaaa00202020"
+{
+  printf '# LANES.md — the Amendment 19 sandbox\n\n'
+  printf '| lane | session id | workstation / env / user | started (UTC) | objects owned | handoff path | state |\n'
+  printf '|---|---|---|---|---|---|---|\n'
+  # LIVE: the row names the transcript this suite's own live process carries, so
+  # it is live ON THIS WORKSTATION — which is what makes it not dormant however
+  # little else it has, and what the sweep refuses by name.
+  printf '| `repo19-1` | harness `%s` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repo19/1.md | LIVE \302\267 2026-09-11T00:00:00Z \302\267 running |\n' "$LIVE_ID"
+  # PARKED: its own log says PAUSED, which is the "a parked lane is not dormant"
+  # refusal clause (c) names.
+  printf '| `repo19-2` | harness `%s` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repo19/2.md | PAUSED \302\267 2026-09-11T00:00:00Z \302\267 swapped for the night |\n' "$A19_ID"
+  # ENDED: its log has finished, which is CLOSED.
+  # ITS CELL CARRIES TWO OF THE FLAG WORDS ON PURPOSE: a row that has a log is a
+  # row whose LOG speaks for it, and the pair of free-text fields below must not
+  # be read — or paid for — on its account.
+  printf '| `repo19-3` | harness `%s` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repo19/3.md | ENDED \302\267 2026-09-11T00:00:00Z \302\267 window closing; the scratch branch was unpushed and is lost |\n' "$A19_OLD"
+  # THREE ROWS WITH NO LOG AT ALL — DORMANT, and each carrying its own last
+  # words: unpushed work, an owed handoff, and one that still says LIVE.
+  printf '| `repo19-4` | harness `%s` | Eagle / test / brett | 2026-08-27 | none | none | ENDED WITHOUT PUSHING — loss risk; work unpushed on branch feat/x |\n' "$A19_OLD"
+  printf '| `repo19-5` | harness `%s` | Raven / test / brett | 2026-08-28 | none | none | dormant since 2026-09-02; owes a handoff |\n' "$A19_OLD"
+  printf '| `repo19-7` | harness `%s` | Eagle / test / brett | 2026-08-29 | none | none | LIVE |\n' "$A19_OLD"
+  # A SEVENTH ROW, IN ANOTHER REPOSITORY, WITH NO LOG AND A 13(a) PHRASE THAT
+  # SAYS `PAUSED`: the register says where that lane IS (Amendment 13(a)), so it
+  # is NOT dormant and the listing keeps it. Without this rule the migration's
+  # own output — which writes a row's state into the cell and its diary into a
+  # log of NOTED lines — would hide every migrated row that is merely parked.
+  printf '| `repo19b-1` | harness `%s` | Eagle / test / brett | 2026-09-01 | none | none | PAUSED \302\267 2026-09-13T00:00:00Z \302\267 migrated; history in lanes/log/repo19b-1.md |\n' "$A19_OLD"
+} > "$A19_WIP/lanes/LANES.md"
+{ printf '# lane repo19-2 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repo19-2, session %s@Eagle, 2026-09-11T00:00:00Z, lane:repo19-2 → home opensoft/repo19\n' "$A19_ID"
+  printf 'PAUSED — lane repo19-2, session %s@Eagle, 2026-09-11T01:00:00Z, lane:repo19-2\n' "$A19_ID"
+} > "$A19_WIP/lanes/log/repo19-2.md"
+{ printf '# lane repo19-3 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repo19-3, session %s@Eagle, 2026-09-11T00:00:00Z, lane:repo19-3\n' "$A19_OLD"
+  printf 'ENDED — lane repo19-3, session %s@Eagle, 2026-09-11T02:00:00Z, lane:repo19-3 — window closing; NOTHING IN FLIGHT\n' "$A19_OLD"
+} > "$A19_WIP/lanes/log/repo19-3.md"
+git -C "$A19_WIP" add -A >/dev/null 2>&1
+git -C "$A19_WIP" commit -q -m "seed the Amendment 19 sandbox"
+git -C "$A19_WIP" push -q -u origin main
+A19_HEAD0="$(git -C "$A19_WIP" rev-parse HEAD)"
+
+a19() { env LANES_WORKSPACE_ROOT="$A19_WIP" "$@"; }
+a19_field() {   # <rows> <lane> <field number>
+  printf '%s\n' "$1" | awk -F'\t' -v l="$2" -v f="$3" '$1 == l { print $f; exit }'
+}
+
+# ---- (a) and (b): the two states below PARKED, and who is in the listing.
+run a19 "$E" lanes --prefix repo19
+is    "the default listing exits 0" "$rc" 0
+A19_DEF="$out"
+is    "…and holds the two rows that are neither closed nor dormant" \
+      "$(printf '%s\n' "$A19_DEF" | grep -c . || :)" 2
+has   "…the live one" "$A19_DEF" "repo19-1"
+has   "…and the parked one" "$A19_DEF" "repo19-2"
+hasnt "a CLOSED lane is not in the default listing (Amendment 19(b))" "$A19_DEF" "repo19-3"
+hasnt "…nor is a DORMANT row" "$A19_DEF" "repo19-4"
+hasnt "…nor the one that owes a handoff" "$A19_DEF" "repo19-5"
+hasnt "…nor the one whose cell still says LIVE" "$A19_DEF" "repo19-7"
+
+run a19 "$E" lanes --closed --prefix repo19
+is    "--closed exits 0" "$rc" 0
+A19_ALL="$out"
+is    "…and lists six: the two the default had, plus the four it left out" \
+      "$(printf '%s\n' "$A19_ALL" | grep -c . || :)" 6
+is    "a lane whose log's last lane-kind line is ENDED is CLOSED" "$(a19_field "$A19_ALL" repo19-3 13)" "closed"
+is    "a row with no object log and no live session is DORMANT" "$(a19_field "$A19_ALL" repo19-4 13)" "dormant"
+is    "…and its state word is still NO LOG, which is what the amendment shows it as" \
+      "$(a19_field "$A19_ALL" repo19-4 2)" "NO LOG"
+is    "…and the row carries its own start date for the sweep to print" \
+      "$(a19_field "$A19_ALL" repo19-4 14)" "2026-08-27"
+has   "…and its state cell's head, verbatim" "$(a19_field "$A19_ALL" repo19-4 15)" "work unpushed on branch feat/x"
+is    "…and the flag words found in that cell" "$(a19_field "$A19_ALL" repo19-4 16)" "unpushed,loss"
+is    "…an owed handoff is a flag too" "$(a19_field "$A19_ALL" repo19-5 16)" "owes"
+is    "…and a cell that still says LIVE" "$(a19_field "$A19_ALL" repo19-7 16)" "LIVE"
+is    "a LIVE lane is in neither class, whatever else the row lacks" "$(a19_field "$A19_ALL" repo19-1 13)" "none"
+is    "…and its line carries the ATTACH, which is the same word (Amendment 18 Addendum 1)" \
+      "$(a19_field "$A19_ALL" repo19-1 10)" "lane repo19-1"
+is    "a PAUSED lane is in neither class either" "$(a19_field "$A19_ALL" repo19-2 13)" "none"
+
+# THE TWO FREE-TEXT FIELDS ARE NOT READ FOR A ROW THAT HAS A LOG, and that is
+# what makes this listing affordable. `table_lookup` walks the WHOLE table for
+# EVERY lane in the estate, so a field of up to 280 characters per row is paid
+# for N times over: with the state cell's head and its flag words in that table,
+# one `lanes --prefix <repo>` over a register of 132 rows took 42 s where this
+# branch's parent took 14 — and `lane`'s pick, which prints nothing until that
+# read returns, then sat past the 60-second terminal case in CI. Fifty
+# assertions failed on it, the first three of them the pick's own, on every
+# platform: no output, no question, killed.
+#
+# They are a table of their own now (`lanes_register_index --cells`), built on
+# first use and asked for BELOW the narrowing filter, and only for a row with NO
+# OBJECT LOG — the only row whose cell is all the listing has to show. THESE
+# FOUR ARE THE CASE THAT CATCHES IT, and they are the structure rather than a
+# stopwatch: a clock assertion on a shared runner is a flake, while a row that
+# has a log carrying its cell's text is the defect itself, in one field.
+is    "a row whose lane HAS an object log carries no state-cell head" \
+      "$(a19_field "$A19_ALL" repo19-2 15)" "none"
+is    "…and the CLOSED row the same, whose own cell says unpushed and lost" \
+      "$(a19_field "$A19_ALL" repo19-3 15)" "none"
+is    "…nor the flag words those two say, however alarming they are" \
+      "$(a19_field "$A19_ALL" repo19-3 16)" "none"
+is    "…while its started date IS carried, because the closed line prints it" \
+      "$(a19_field "$A19_ALL" repo19-3 14)" "2026-09-11T00:00Z"
+
+# A ROW WITH NO LOG WHOSE CELL IS THE PHRASE AND SAYS `PAUSED` IS NOT DORMANT:
+# Amendment 13(a) makes that cell the lane's current state, and a listing that
+# hid it would hide a lane a person can still pick up.
+run a19 "$E" lanes --prefix repo19b
+is    "a no-log row whose 13(a) cell says PAUSED is still listed" "$rc" 0
+has   "…by name" "$out" "repo19b-1"
+is    "…and it is in neither class" "$(a19_field "$out" repo19b-1 13)" "none"
+
+# `--lane <name>` IS NEVER FILTERED: its caller has named the lane, and an empty
+# answer would read as "there is no such lane".
+run a19 "$E" lanes --lane repo19-4
+is    "--lane answers about a DORMANT row without --closed" "$rc" 0
+is    "…and says it is dormant" "$(a19_field "$out" repo19-4 13)" "dormant"
+# AND THE PICK DROPS IT ON THE CLASS, NOT ON THE STATE WORD (Copilot round 2 on
+# #93): a dormant row's state is `NO LOG`, which is in none of `lane_groups`'s
+# lists, so a row arriving from a read that does not hide it — this one, or
+# `--closed` — was grouped as available and `lane <name>` would have offered to
+# bind it.
+is    "…and the pick drops it on the class, whatever its state word is" \
+      "$(printf '%s\n' "$out" | a19 "$E" lane-groups Eagle)" ""
+
+# THE NEXT FREE POSITION IS COMPUTED OVER EVERY ROW, hidden ones included: 1, 2,
+# 3, 4, 5 and 7 are held, so the lowest free one is 6 — read from the DEFAULT
+# listing, which is where a person's `lanes` footer reads it from.
+is    "the next free position counts the rows the listing hides" \
+      "$(printf '%s\n' "$A19_DEF" | a19 "$E" next-free repo19)" "6"
+
+# ---- (c) the sweep: the DRY RUN first, and it writes nothing.
+run a19 "$END" --retire-dormant repo19
+is    "the sweep is a DRY RUN by default" "$rc" 0
+has   "…saying so" "$out" "DRY RUN, nothing is written"
+has   "…counting the dormant rows" "$out" "dormant  : 3 row(s)"
+has   "…naming each of them" "$out" "repo19-4"
+has   "…with the start its row records" "$out" "2026-08-27"
+has   "…and the workstation it ran on" "$out" "Raven"
+has   "…and the row on the other workstation" "$out" "repo19-5"
+has   "…FLAGGING the cell that says the work was unpushed" "$out" "FLAG repo19-4"
+has   "…with the words that earned the flag" "$out" "unpushed,loss"
+has   "…and the row's own last words under it" "$out" "was: ENDED WITHOUT PUSHING — loss risk"
+hasnt "a LIVE lane is not in the sweep" "$out" "repo19-1"
+hasnt "…and neither is a parked one" "$out" "repo19-2"
+hasnt "…nor one that has already ended" "$out" "repo19-3"
+has   "…and it prints the one line that makes it the act" "$out" "--retire-dormant repo19"
+is    "…and it wrote NOTHING" "$(git -C "$A19_WIP" status --porcelain | grep -c . || :)" 0
+is    "…not even a commit" "$(git -C "$A19_WIP" rev-parse HEAD)" "$A19_HEAD0"
+
+# THE WRITER IS A LANE AND IT IS NOT GUESSED (Amendment 7(b)): every line the
+# sweep appends carries the SWEEPING lane's transcript uuid.
+run a19 env LANES_LANE= "$END" --retire-dormant repo19 --yes
+is    "--yes with no lane to write as is refused" "$rc" 2
+has   "…naming the session field that needs it" "$err" "Amendment 7(b)"
+is    "…and it wrote nothing either" "$(git -C "$A19_WIP" rev-parse HEAD)" "$A19_HEAD0"
+
+# ---- (c) the act: ONE commit, three logs, three cells.
+run a19 env LANES_LANE=repo19-2 "$END" --retire-dormant repo19 \
+      --reason "pre-Amendment-7 row; no log and no session" --yes
+is    "--yes exits 0" "$rc" 0
+has   "…saying it is the act" "$out" "THE ACT"
+has   "…and reporting the cell each row becomes" "$out" "RETIRED · "
+is    "…in ONE commit" "$(git -C "$A19_WIP" rev-list --count "$A19_HEAD0"..HEAD)" 1
+has   "…whose subject names the amendment and the count" \
+      "$(git -C "$A19_WIP" log -1 --format=%s)" "Amendment 19(c) — 3 dormant row(s) RETIRED"
+is    "…and NO file outside lanes/ is in it (clause (c))" \
+      "$(git -C "$A19_WIP" show --name-only --format= HEAD | grep -c -v '^lanes/' || :)" 0
+is    "…which is the register and the three logs, and nothing else" \
+      "$(git -C "$A19_WIP" show --name-only --format= HEAD | grep -c . || :)" 4
+is    "the log a dormant row never had is created" "$([ -f "$A19_WIP/lanes/log/repo19-4.md" ] && printf yes)" "yes"
+A19_LINE="$(grep '^RETIRED' "$A19_WIP/lanes/log/repo19-4.md" || :)"
+has   "…with ONE RETIRED line naming the lane" "$A19_LINE" "RETIRED — lane repo19-4,"
+has   "…whose session field is the WRITER's transcript uuid (Amendment 7(b))" "$A19_LINE" "session $A19_ID@Eagle"
+has   "…and whose payload says who swept it" "$A19_LINE" "→ retired-dormant by lane repo19-2"
+has   "…with the reason" "$A19_LINE" "reason pre-Amendment-7 row; no log and no session"
+has   "…and the row's own last words, carried in verbatim" "$A19_LINE" "was: ENDED WITHOUT PUSHING — loss risk; work unpushed on branch feat/x"
+is    "…and it is ONE line, because a log is append-only and this row had none" \
+      "$(grep -c '^RETIRED' "$A19_WIP/lanes/log/repo19-4.md" || :)" 1
+A19_ROW="$(grep '^| `repo19-4`' "$A19_WIP/lanes/LANES.md" || :)"
+has   "the row's state cell becomes the RETIRED phrase" "$A19_ROW" "| RETIRED · 2"
+has   "…carrying the reason" "$A19_ROW" "pre-Amendment-7 row; no log and no session; was:"
+has   "…and the words the cell had" "$A19_ROW" "was: ENDED WITHOUT PUSHING"
+is    "…and the three rows are all of them" \
+      "$(grep -c '| RETIRED · ' "$A19_WIP/lanes/LANES.md" || :)" 3
+is    "the parked lane's row is untouched" \
+      "$(grep -c 'PAUSED · 2026-09-11T00:00:00Z · swapped for the night' "$A19_WIP/lanes/LANES.md" || :)" 1
+
+# A SECOND RUN IS A NO-OP THAT SAYS SO — nothing to do is said, not done.
+A19_HEAD1="$(git -C "$A19_WIP" rev-parse HEAD)"
+run a19 env LANES_LANE=repo19-2 "$END" --retire-dormant repo19 --yes
+is    "a second sweep finds nothing dormant" "$rc" 8
+has   "…and says so rather than doing something" "$err" "no row of repo19 is DORMANT"
+is    "…having written nothing" "$(git -C "$A19_WIP" rev-parse HEAD)" "$A19_HEAD1"
+
+# THE TWO REFUSALS, ASKED OF THE WRITER ITSELF — it re-proves them rather than
+# trusting the list `lane-end` handed it.
+run a19 env LANES_LANE=repo19-2 "$E" retire-rows repo19-1
+is    "a lane a live session holds here is refused" "$rc" 2
+has   "…naming the transcript that is live" "$err" "LIVE session on this workstation"
+run a19 env LANES_LANE=repo19-2 "$E" retire-rows repo19-2
+is    "a PARKED lane is refused: a parked lane is not dormant" "$rc" 2
+has   "…naming the line in its log that says so" "$err" "carries a PAUSED line"
+# AND THE ROW'S OWN CLAIM IS RE-PROVED BY THE WRITER, not trusted from the list
+# `lane-end` handed it: the listing does not hide a no-log row whose 13(a) cell
+# says the lane is somewhere, and the two must not disagree about which rows are
+# dormant (Copilot round 1 on #93).
+run a19 env LANES_LANE=repo19-2 "$E" retire-rows repo19b-1
+is    "a no-log row whose 13(a) cell says PAUSED is refused too" "$rc" 2
+has   "…naming the cell that says it" "$err" "Amendment 13(a)'s phrase"
+has   "…and the act that does end such a lane" "$err" "lane-end repo19b-1"
+# A FLAG IS NOT A VALUE: `--reason --yes` took the word that makes it the act as
+# the reason, fell back to the dry run and exited 0 (Copilot round 1 on #93).
+run a19 "$END" --retire-dormant repo19 --reason --yes
+is    "a --reason whose value is a flag is refused" "$rc" 2
+has   "…saying the reason was left out" "$err" "is a flag"
+has   "…and naming the spelling for a reason that begins with a dash" "$err" "--reason=<why>"
+is    "…and neither refusal wrote anything" "$(git -C "$A19_WIP" rev-parse HEAD)" "$A19_HEAD1"
+
+# THE LISTING AFTER THE SWEEP: the three are CLOSED now, by their own logs.
+run a19 "$E" lanes --prefix repo19
+is    "the default listing is the same two lanes" "$(printf '%s\n' "$out" | grep -c . || :)" 2
+run a19 "$E" lanes --closed --prefix repo19
+is    "…and --closed still has all six" "$(printf '%s\n' "$out" | grep -c . || :)" 6
+is    "a swept row is CLOSED now, out of its own log" "$(a19_field "$out" repo19-4 13)" "closed"
+is    "…and its state is the log's own verb" "$(a19_field "$out" repo19-4 2)" "RETIRED"
+
+# ---- (d) the archive: a second act on a second word.
+run a19 "$E" archive-rows repo19
+is    "archive-rows is a DRY RUN by default" "$rc" 0
+has   "…saying so" "$out" "DRY RUN, nothing is written"
+has   "…counting the RETIRED rows it would move" "$out" "3 RETIRED row(s) of repo19"
+is    "…and writing nothing" "$(git -C "$A19_WIP" rev-parse HEAD)" "$A19_HEAD1"
+run a19 env LANES_LANE=repo19-2 "$E" archive-rows repo19 --yes
+is    "archive-rows --yes exits 0" "$rc" 0
+is    "…in ONE commit" "$(git -C "$A19_WIP" rev-list --count "$A19_HEAD1"..HEAD)" 1
+has   "…whose message names each lane moved" \
+      "$(git -C "$A19_WIP" log -1 --format=%s)" "repo19-4 repo19-5 repo19-7"
+is    "…and the rows are out of the register" \
+      "$(grep -c '^| `repo19-[457]`' "$A19_WIP/lanes/LANES.md" || :)" 0
+is    "…and into the archive" \
+      "$(grep -c '^| `repo19-[457]`' "$A19_WIP/lanes/archive/LANES-retired.md" || :)" 3
+is    "…with every other row left where it was" \
+      "$(grep -c '^| `' "$A19_WIP/lanes/LANES.md" || :)" 4
+run a19 "$E" lanes --closed --prefix repo19
+is    "the --closed listing reads the archive too (Amendment 19(d))" \
+      "$(printf '%s\n' "$out" | grep -c . || :)" 6
+is    "…and an archived row is still CLOSED" "$(a19_field "$out" repo19-7 13)" "closed"
+run a19 "$E" lanes --prefix repo19
+is    "…while the default listing is still the two" "$(printf '%s\n' "$out" | grep -c . || :)" 2
+is    "the next free position STILL skips the archived numbers" \
+      "$(printf '%s\n' "$out" | a19 "$E" next-free repo19)" "6"
+run a19 "$E" archive-rows repo19
+is    "a second archive-rows finds nothing to move" "$rc" 2
+has   "…and says so" "$err" "no row of repo19 has the state RETIRED"
+
+# THE WRAPPER RENDERS WHAT THE READ DECIDED, and nothing of its own.
+# A RETIRED POSITION IS NEVER REISSUED, and that is a REFUSAL and not only a
+# suggestion: `next-free` skips the archived numbers above, and `add-row` — the
+# act `lane-start <repo> <n>` makes — refuses a name the archive holds, because
+# that lane's object log is still there and is append-only.
+run a19 env LANES_LANE=repo19-2 "$E" add-row "| \`repo19-4\` | harness \`$A19_OLD\` | Eagle / test / brett | 2026-09-15 | none | none | LIVE |"
+is    "a lane name the archive holds is refused a second row" "$rc" 2
+has   "…naming the archive it is in" "$err" "lanes/archive/LANES-retired.md"
+has   "…and the log that makes it one lane" "$err" "lanes/log/repo19-4.md"
+run a19 env LANES_LANE=repo19-2 "$E" add-row "| \`repo19-6\` | harness \`$A19_OLD\` | Eagle / test / brett | 2026-09-15 | none | none | LIVE |"
+is    "…while the free position beside it is still added" "$rc" 0
+
+run a19 "$LANES_CMD" --prefix repo19 </dev/null
+has   "the listing says the closed and dormant rows are not in it" "$out" "closed and dormant lanes are not listed"
+hasnt "…and they are not" "$out" "repo19-7"
+has   "a LIVE lane's line prints the attach, which is the same word" "$out" "attach it: lane repo19-1"
+run a19 "$LANES_CMD" --closed --prefix repo19 </dev/null
+has   "--closed puts them back" "$out" "repo19-7"
+has   "…a closed one saying which line closed it" "$out" "closed: its object log ends with RETIRED"
+
+# AN UNTRACKED LOG IS SOMEBODY'S UNCOMMITTED WORK, and this sweep is ONE commit:
+# appending to it would put a peer's first lines into that commit under this
+# act's message (the finding `migrate-state-cells` took in round 2 of
+# openRepoTools#82, in the act with the same shape). A TRACKED file that is
+# dirty is already refused for the whole run; an untracked one is in neither of
+# `refuse_dirty_checkout`-s lists. `repo19-6` is the row the `add-row` case
+# above left behind: dormant, with no log — until this puts one beside it.
+A19_HEAD3="$(git -C "$A19_WIP" rev-parse HEAD)"
+printf '# lane repo19-6 — object log (seeded by a peer, uncommitted)\n' > "$A19_WIP/lanes/log/repo19-6.md"
+run a19 env LANES_LANE=repo19-2 "$E" retire-rows repo19-6
+is    "a dormant row whose object log is UNTRACKED is refused" "$rc" 2
+has   "…saying what that file is" "$err" "is NOT TRACKED"
+has   "…and naming the commit that settles it" "$err" "git -C"
+is    "…and nothing was written" "$(git -C "$A19_WIP" rev-parse HEAD)" "$A19_HEAD3"
+rm -f "$A19_WIP/lanes/log/repo19-6.md"
+
+# A ROW OF THIS REPOSITORY THAT CANNOT BE TAKEN APART IS A REFUSAL AND NOT A
+# SKIP (Copilot round 1 on #93): `archive-rows` says it moves EVERY `RETIRED`
+# row of a repository, and a row whose ` | ` count hides which text is the state
+# cell may BE one — so moving the others and saying nothing about it would
+# report a partial act as a whole one. Its own repository, so nothing above is
+# disturbed.
+printf '| `repo19c-1` | harness `%s` | Eagle / test / brett | 2026-09-01 | none | a | b | RETIRED \302\267 2026-09-14T00:00:00Z \302\267 finished |\n' "$A19_OLD" >> "$A19_WIP/lanes/LANES.md"
+git -C "$A19_WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$A19_WIP" commit -q -m "a row whose state cell hides behind an extra separator"
+git -C "$A19_WIP" push -q origin main
+run a19 env LANES_LANE=repo19-2 "$E" archive-rows repo19c
+is    "a row of the repository that cannot be taken apart refuses the whole move" "$rc" 2
+has   "…counting the separators it found" "$err" "' | ' separators where a seven-column row carries 6"
+has   "…and naming the hand edit that settles it" "$err" "Escape the literal pipe"
+
+# `awk -v` CARRIES ONE LINE, AND `delete_lines` HANDS IT MANY — the defect
+# `who_landing` took in round 5 of A9 Addendum 4 (R-A9-11) and this amendment's
+# one row-REMOVING write made again. A `-v name=value` is processed as if it
+# were a string literal and a string literal cannot span lines: one-true-awk,
+# which is macOS's `/usr/bin/awk`, refuses it outright — `awk: newline in
+# string … at source line 1`, exit 2, NO OUTPUT AT ALL — while gawk and mawk
+# accept it silently. So at `758a536` `archive-rows --yes` wrote the archive,
+# read an EMPTY rewrite of the register, failed its own line-count proof and
+# died 5, and six of tests-macos' ten red lines were that one line of awk,
+# invisible on Linux and on every workstation this is written on.
+#
+# THE SHIM IS THAT RULE AND NOTHING ELSE: a `-v` whose value carries a newline
+# is refused exactly as one-true-awk refuses it, and everything else `exec`s
+# the real awk. On PATH for the act below, it asserts on EVERY platform what
+# only tests-macos could see — and it is asserted itself two cases down, so a
+# shim that had stopped biting could not make this pass vacuously.
+A19_BWK="$SANDBOX/bwkawk"
+mkdir -p "$A19_BWK"
+{ printf '#!/usr/bin/env bash\n'
+  printf 'REAL=%s\n' "$(command -v awk)"
+  cat <<'FAKE'
+prev=""
+for a in "$@"; do
+  case "$a" in
+    -v?*) v="${a#-v}" ;;
+    *) if [ "$prev" = "-v" ]; then v="$a"; else prev="$a"; continue; fi ;;
+  esac
+  case "$v" in
+    *"
+"*) printf 'awk: newline in string %s... at source line 1\n' "${v%%=*}" >&2; exit 2 ;;
+  esac
+  prev="$a"
+done
+exec "$REAL" "$@"
+FAKE
+} > "$A19_BWK/awk"
+chmod +x "$A19_BWK/awk"
+
+run env PATH="$A19_BWK:$PATH" awk -v x="$(printf 'a\nb')" 'BEGIN { print "ran" }' </dev/null
+is    "the one-true-awk shim refuses a -v value that spans lines" "$rc" 2
+has   "…in one-true-awk's own words" "$err" "newline in string"
+hasnt "…and the program never ran" "$out" "ran"
+run env PATH="$A19_BWK:$PATH" awk -v x=one 'BEGIN { print x }' </dev/null
+is    "…while a one-line -v goes straight through to the real awk" "$out" "one"
+
+# Its own repository again, so nothing above is disturbed, and TWO rows so the
+# removal is a set and not a single line.
+printf '| `repo19d-1` | harness `%s` | Eagle / test / brett | 2026-09-01 | none | none | RETIRED \302\267 2026-09-14T00:00:00Z \302\267 finished |\n' "$A19_OLD" >> "$A19_WIP/lanes/LANES.md"
+printf '| `repo19d-2` | harness `%s` | Eagle / test / brett | 2026-09-02 | none | none | RETIRED \302\267 2026-09-14T00:00:00Z \302\267 finished |\n' "$A19_OLD" >> "$A19_WIP/lanes/LANES.md"
+git -C "$A19_WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$A19_WIP" commit -q -m "two retired rows, for the awk that refuses a multi-line -v"
+git -C "$A19_WIP" push -q origin main
+A19_HEAD4="$(git -C "$A19_WIP" rev-parse HEAD)"
+A19_ROWS4="$(grep -c '^| `' "$A19_WIP/lanes/LANES.md" || :)"
+run a19 env PATH="$A19_BWK:$PATH" LANES_LANE=repo19-2 "$E" archive-rows repo19d --yes
+is    "archive-rows --yes exits 0 under an awk that refuses a multi-line -v" "$rc" 0
+is    "…in ONE commit" "$(git -C "$A19_WIP" rev-list --count "$A19_HEAD4"..HEAD)" 1
+is    "…and the rows are out of the register" \
+      "$(grep -c '^| `repo19d-' "$A19_WIP/lanes/LANES.md" || :)" 0
+is    "…and into the archive" \
+      "$(grep -c '^| `repo19d-' "$A19_WIP/lanes/archive/LANES-retired.md" || :)" 2
+is    "…with every other row left where it was" \
+      "$(grep -c '^| `' "$A19_WIP/lanes/LANES.md" || :)" "$((A19_ROWS4 - 2))"
+
+# AN EMPTY LISTING IS NOT AN EMPTY REGISTER (Copilot round 2 on #93). A
+# repository whose every row is hidden lists nothing, and a footer that then
+# offered position 1 would hand out a number a dormant row holds — the one thing
+# 19(b) exists to prevent. `repo19e` is such a repository: one row, no log, a
+# cell that is not the phrase.
+run a19 env LANES_LANE=repo19-2 "$E" add-row "| \`repo19e-1\` | harness \`$A19_OLD\` | Eagle / test / brett | 2026-08-20 | none | none | dormant; nothing pushed |"
+is    "the seeded dormant-only repository takes its row" "$rc" 0
+run a19 "$LANES_CMD" --prefix repo19e </dev/null
+is    "a repository whose every row is hidden still exits 8" "$rc" 8
+has   "…saying the difference between LISTED and recorded" "$out" "is LISTED — and that is not the same as none being recorded"
+has   "…pointing at the flag that shows them" "$out" "--closed --prefix repo19e"
+has   "…and offering the position the hidden row does NOT hold" "$out" "next free position:  2"
+hasnt "…never the one it does" "$out" "next free position:  1"
+
+# THE DRY RUN IS A PREVIEW OF THE ACT, so the reason is checked before it prints
+# (Copilot round 2 on #93) — and the `=` spelling, which is the documented way
+# to give a reason that begins with a dash, survives to the writer as ONE
+# argument instead of arriving there as two and being refused.
+run a19 "$END" --retire-dormant repo19e --reason "a | pipe"
+is    "a reason that would forge a cell is refused BEFORE the dry run prints" "$rc" 2
+has   "…naming the character" "$err" "may not contain '|'"
+hasnt "…and no preview was printed over it" "$out" "DRY RUN, nothing is written"
+run a19 "$END" --retire-dormant repo19e --reason=--why
+is    "the --reason=<why> spelling is accepted" "$rc" 0
+has   "…and the dry run carries it" "$out" "reason   : --why"
+
+# THE SWEEP'S OWN FLAGS BELONG TO THE SWEEP (Copilot round 3 on #93): parsed for
+# every invocation, `lane-end <lane> --yes` ran the ORDINARY ending — a line
+# that reads like a confirmed sweep doing something else — and `--reason` was
+# dropped on the floor.
+run a19 "$END" repo19-2 --yes
+is    "--yes without --retire-dormant is refused, not an ordinary ending" "$rc" 2
+has   "…saying which act the word belongs to" "$err" "belongs to --retire-dormant"
+run a19 "$END" repo19-2 --reason "because"
+is    "--reason without --retire-dormant is refused rather than dropped" "$rc" 2
+has   "…and offering the line that would have taken it" "$err" "--retire-dormant <repo> --reason"
+
+# A LOG THIS CHECKOUT HAS AND `origin` HAS NOT IS STILL AN OBJECT LOG (Copilot
+# round 4 on #93). `state_events` reads the PUBLISHED logs, so a log committed
+# here and not yet pushed is in no fact this listing has — and the sweep reads
+# the local log since round 3, so the read and the writer would have disagreed
+# about the amendment's own "no object log" on a checkout that is ahead.
+printf '# lane repo19e-1 — object log (written here, not yet pushed)\n' > "$A19_WIP/lanes/log/repo19e-1.md"
+run a19 "$E" lanes --closed --prefix repo19e
+is    "a row whose object log exists only in this checkout is NOT dormant" "$(a19_field "$out" repo19e-1 13)" "none"
+run a19 "$E" lanes --prefix repo19e
+is    "…so the default listing carries it" "$rc" 0
+has   "…by name" "$out" "repo19e-1"
+rm -f "$A19_WIP/lanes/log/repo19e-1.md"
+run a19 "$E" lanes --prefix repo19e
+is    "…and with the file gone it is dormant again, which is the same rule reading the other way" "$rc" 8
 
 echo "== the workstation seam: unset, every writer reads the host =="
 

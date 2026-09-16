@@ -28,6 +28,7 @@ that file.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 
@@ -80,6 +81,36 @@ SUITE = REPO / "tests" / "test_lane_helpers.sh"
 #: The job itself has no `timeout-minutes` in `.github/workflows/tests.yml`, so
 #: nothing under it bites before this does; GitHub's own default is 360 min.
 TIMEOUT_SECONDS = 3600
+
+
+#: THE SUITE'S LIVENESS FIXTURE MUST OUTLIVE THE BOUND ABOVE, and at `758a536`
+#: it did not. `tests/test_lane_helpers.sh` starts one `sleep <n> & LIVE_PID=$!`
+#: and every "a live holder …" case in that file — on macOS, where there is no
+#: `/proc`, ALL of them — is `kill -0` on that pid. At `sleep 3000` against a
+#: 3600 s timeout the wrapper was still waiting on a run whose evidence had
+#: already expired 600 s earlier, and the suite answered "no live holder" for
+#: cases that had a live holder: four of tests-macos' ten red lines at that
+#: commit, in the last 5% of the file, with nothing in the output saying why.
+#:
+#: A comment in each file saying "keep these two in step" is what was there
+#: before, and it did not survive TIMEOUT_SECONDS being raised from 2400. This
+#: reads the bash line and REFUSES the pair, so raising one without the other
+#: is red in seconds on every platform rather than red in an hour on one.
+def test_the_liveness_fixture_outlives_the_suite_timeout():
+    hit = [ln for ln in SUITE.read_text(encoding="utf-8").splitlines()
+           if "LIVE_PID=$!" in ln]
+    assert len(hit) == 1, (
+        "expected exactly one liveness fixture in tests/test_lane_helpers.sh, "
+        f"found {len(hit)}: {hit}")
+    m = re.search(r"\bsleep\s+(\d+)\s*&\s*LIVE_PID=\$!", hit[0])
+    assert m, f"the liveness fixture is no longer a bounded sleep: {hit[0]!r}"
+    bound = int(m.group(1))
+    assert bound > TIMEOUT_SECONDS, (
+        f"the liveness fixture is bounded at {bound}s while this wrapper lets "
+        f"the suite run for TIMEOUT_SECONDS={TIMEOUT_SECONDS}s, so the suite is "
+        "licensed to outlive its own evidence: every liveness case after "
+        f"{bound}s would read 'no live holder' and say nothing about why. "
+        "Raise the sleep in tests/test_lane_helpers.sh above this bound.")
 
 
 @WINDOWS_SKIP

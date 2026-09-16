@@ -1650,9 +1650,24 @@ def test_agents_md_is_short_enough_to_be_read():
     portable is worse than one that shows none, and the six lines are the
     correction plus the sentence naming the wrapper as the canonical
     implementation, which is what an assistant reading either should reach for.
+
+    265 -> 276 on 2026-09-16, for ELEVEN LINES that name the one portability
+    rule this repository keeps paying for twice (opensoft/openRepoTools#93).
+    `awk -v name=value` carries ONE LINE: the value is processed as a string
+    literal, and macOS's one-true-awk refuses a newline in one outright — exit
+    2, no output — while `gawk` and `mawk` take it silently. `who_landing` paid
+    for it once (R-A9-11) and left the finding in a code comment where only a
+    reader of that function meets it; `delete_lines` re-made it in #93 and
+    tests-macos answered with six red lines whose message was about a line
+    count. The bash-3.2 paragraph above it is the same kind of rule and is
+    already here for the same reason — a constraint only one job can see
+    belongs where it is read BEFORE the code is written, not after CI is red —
+    and the eleven lines are that rule, the two rounds as evidence, the two
+    spellings that are correct (`ENVIRON`, or a second file with `NR == FNR`),
+    and the suite case that now makes a third round red on every platform.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 265, f"AGENTS.md is {len(lines)} lines; the cap is 265"
+    assert len(lines) <= 276, f"AGENTS.md is {len(lines)} lines; the cap is 276"
 
 
 def test_readme_is_short_enough_to_be_read():
