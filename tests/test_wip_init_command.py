@@ -518,6 +518,17 @@ def staged_in(checkout: Path) -> str:
     return done.stdout
 
 
+def staged_mode_in(checkout: Path, rel: str) -> str:
+    """The MODE of `rel`'s stage-0 entry, or "" where the index has none.
+
+    `git ls-files -s` is where a staged mode is legible at all: `cat-file -p`
+    prints a blob's bytes and never its mode, which is the whole of #63.
+    """
+    done = subprocess.run(["git", "-C", str(checkout), "ls-files", "-s", "--", rel],
+                          capture_output=True, text=True, check=True)
+    return done.stdout.split()[0] if done.stdout.strip() else ""
+
+
 def adopted_checkout(tmp_path: Path, home: Path, env: dict) -> Path:
     """A workspace repository this workstation ADOPTS: created, seeded and
     pushed by an earlier run, carrying a file of the person's own on `main`,
@@ -1203,6 +1214,61 @@ def test_an_ancestor_of_a_template_path_that_is_not_a_directory_is_refused(
     assert "handoffs/README.md sits under it" in result.stderr, result.stderr
     assert staged_in(checkout) == "", (
         f"the refusal staged {staged_in(checkout)!r}")
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+    assert not (home / ".agents" / "workspace.yaml").exists(), (
+        "the pointer file was written by a run that refused")
+
+
+def test_a_template_path_staged_at_another_mode_is_refused_not_restaged(
+        tmp_path):
+    """`cat-file -p` PRINTS A BLOB'S BYTES AND NEVER ITS MODE (#63).
+
+    The owed-candidate branch trusted the index the moment its blob matched
+    the template — so a path a person had staged with `git add --chmod=+x`,
+    byte-identical to the template and executable, read as "the index carries
+    the template". Step 8's `git add` then restaged that path from the
+    WORKTREE, at the worktree's own mode, and committed it: their `100755`
+    replaced by `100644` without a word.
+
+    Every file in `templates/workspace-root/` is a plain `100644` and this
+    command has never chmod'ed anything it wrote, so a stage-0 entry at any
+    other mode is somebody's own — which in this branch is a refusal, the
+    same answer the bytes themselves already get, and not a thing to stage
+    over.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout = adopted_checkout(tmp_path, home, env)
+    template_bytes = (checkout / "handoffs" / "README.md").read_text(
+        encoding="utf-8")
+    for args in (["rm", "-q", "--", "handoffs/README.md"],
+                 ["commit", "-q", "-m", "somebody removed the handoffs README"],
+                 ["push", "-q", "origin", "HEAD:main"]):
+        subprocess.run(["git", "-C", str(checkout), *args], check=True)
+    before_head = head_of(checkout)
+
+    owed = checkout / "handoffs" / "README.md"
+    owed.parent.mkdir(parents=True, exist_ok=True)
+    owed.write_text(template_bytes, encoding="utf-8")
+    subprocess.run(["git", "-C", str(checkout), "add", "--chmod=+x", "--",
+                    "handoffs/README.md"], check=True)
+    # `--chmod` moves the INDEX and leaves the worktree file alone, which is
+    # the whole shape: the bytes match on both sides and only the mode does
+    # not.
+    assert staged_mode_in(checkout, "handoffs/README.md") == "100755"
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert (f"{checkout} has handoffs/README.md staged with mode 100755"
+            in result.stderr), result.stderr
+    assert staged_mode_in(checkout, "handoffs/README.md") == "100755", (
+        "the person's staged mode was replaced by the worktree's")
+    assert owed.read_text(encoding="utf-8") == template_bytes, (
+        "the worktree file was written over")
     assert head_of(checkout) == before_head, (
         "a commit was made despite the refusal")
     assert remote_main(tmp_path) == before_head, (

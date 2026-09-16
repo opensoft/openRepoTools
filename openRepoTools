@@ -1629,7 +1629,7 @@ wip_fetch_template_file() {
 wip_init() {
 	local config target checkout ref rel dest seeded=0 owed=0 kind
 	local existing_repo existing_path
-	local ancestor rest comp
+	local ancestor rest comp staged_mode
 	# THE PATHS THE SEED OWES THIS CHECKOUT, which is what step 8 stages and
 	# commits and the whole of what it commits: the ones step 7 wrote (`seeded`)
 	# and the ones an earlier run wrote and could not commit (`owed`). Two
@@ -2014,6 +2014,39 @@ $(sed -e 's/^/    /' -- "$WIP_LAST_OUT")
     worktree after being added, and not this command's to overwrite or commit over. Nothing
     beyond this run's own template bytes was written into that checkout, and nothing
     already staged was changed.
+    Commit, stash or unstage that path, then re-run:
+        openRepoTools wip init"
+				fi
+				# AND WHAT IS STAGED IS A MODE AS WELL AS A BLOB (#63). The
+				# index comparison this branch makes below is
+				# `cat-file -p ":$rel"`, which prints a blob's BYTES and never
+				# its mode — so a template path a person staged with
+				# `git add --chmod=+x`, byte-identical to the template and
+				# executable, passed it as "the index carries the template", and
+				# step 8's `git add` then restaged that path from the worktree
+				# at the worktree's own mode: their `100755` silently replaced
+				# by `100644` and committed. Every file in $SHAPE_REPOSITORY's
+				# $WIP_TEMPLATE_DIR is a plain `100644`, and this command has
+				# never chmod'ed anything it wrote, so a stage-0 entry at any
+				# other mode is NOT an earlier run's leftover whatever its bytes
+				# say — it is somebody's own, which in this branch is the same
+				# refusal the bytes themselves get below and not a thing to
+				# stage over. Asked BEFORE the fetch, with the branch's other
+				# local questions: the answer does not depend on the template's
+				# bytes, and a machine that cannot reach the network deserves
+				# the refusal that names the real reason rather than one about
+				# a fetch. A mode this command could not READ is refused too: an
+				# unreadable answer is never a matching one.
+				if git -C "$checkout" cat-file -e ":$rel" 2>/dev/null; then
+					staged_mode="$(git -C "$checkout" ls-files -s -- "$rel" 2>/dev/null |
+						awk 'NR == 1 { print $1 }' || :)"
+					[ "$staged_mode" = "100644" ] ||
+						die "$checkout has $rel staged with mode ${staged_mode:-<unreadable>}, and every file in
+    $SHAPE_REPOSITORY's $WIP_TEMPLATE_DIR is a plain 100644 — this command has never chmod'ed
+    anything it wrote, so a mode of its own at that path is somebody's own \`git add\`, not an
+    earlier run's leftover, whatever the staged bytes say. Staging this run's copy over it would
+    replace that mode with the worktree's and commit the change. Nothing beyond this run's own
+    template bytes was written into that checkout, and nothing already staged was changed.
     Commit, stash or unstage that path, then re-run:
         openRepoTools wip init"
 				fi
