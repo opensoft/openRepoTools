@@ -963,6 +963,41 @@ def test_a_row_whose_file_is_gone_is_not_kept(tmp_path):
         "and the rows of the files that ARE there were kept")
 
 
+@pytest.mark.parametrize("kind", ["directory", "symlink"])
+@NEEDS_JQ
+def test_a_row_whose_path_is_no_longer_a_regular_file_is_not_kept(tmp_path, kind):
+    """AND WHAT IS KEPT IS WHAT COULD HAVE BEEN WRITTEN (Copilot round 2 on
+    #103).
+
+    A row is evidence about a REGULAR FILE this installer placed — that is
+    `receipt_add`'s own test — so a destination that has become a directory or
+    a symlink is a path the file the row is about is not at. The first shape of
+    the rule above asked only "is there anything at all at that path", which
+    kept those rows; the two halves now spell one test.
+    """
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    gone = tmp_path / "bin-elsewhere" / "park"
+    gone.parent.mkdir(parents=True)
+    gone.write_text("#!/usr/bin/env bash\necho an older copy\n", encoding="utf-8")
+    receipt = receipt_path(tmp_path)
+    with receipt.open("a", encoding="utf-8") as handle:
+        handle.write(f"park\t{gone}"
+                     f"\t{hashlib.sha256(gone.read_bytes()).hexdigest()}"
+                     "\t2026-09-15T04:04:16Z\n")
+    gone.unlink()
+    if kind == "directory":
+        gone.mkdir()
+    else:
+        gone.symlink_to(tmp_path / ".local" / "bin" / "park")
+
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert not [row for row in receipt_rows(tmp_path) if row[1] == str(gone)], (
+        f"a row was kept for a path that is now a {kind}:\n"
+        + receipt.read_text(encoding="utf-8"))
+    assert len(receipt_rows(tmp_path)) == ARTIFACTS - HOOK_ENTRIES
+
+
 @NEEDS_JQ
 def test_the_receipt_keeps_the_rows_of_a_directory_it_no_longer_writes(tmp_path):
     """OTHER ROWS ARE KEPT, and the reason is the retirement.

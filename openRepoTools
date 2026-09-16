@@ -446,14 +446,19 @@ receipt_add() {   # <name> <destination> — 0, or 1 with $RECEIPT_WHY set
 # on #103). `receipt_forget` runs AFTER the `rm` it accompanies, so a write
 # that fails in the instant between them leaves the receipt naming a path this
 # installer's copy has left — and nothing would ever clear it. This makes that
-# window CLOSE BY ITSELF: the next `--install` reads the same file, finds
-# nothing at that path, and drops the row. It is also what stops the receipt
-# growing for ever with the bin directories and profile roots people delete.
+# window CLOSE BY ITSELF: the next `--install` reads the same file, finds that
+# file gone, and drops the row. It is also what stops the receipt growing for
+# ever with the bin directories and profile roots people delete.
 #
-# `-L` BESIDE `-e`, for the reason `retire_commands` gives one function down:
-# `-e` is false for a DANGLING symlink, and a link is something AT that path
-# whatever it points at. Dropping the row of one would be this file deciding
-# that a link somebody made is nothing.
+# WHAT IS KEPT IS WHAT COULD HAVE BEEN WRITTEN: a REGULAR FILE THAT IS NOT A
+# LINK, which is `receipt_add`'s own test one function up, spelled the same way
+# (Copilot round 2 on #103, `openRepoTools:468`). The first shape of this asked
+# `[ -e ] || [ -L ]` — "is there anything at all at that path" — which kept the
+# row of a destination that had become a directory, a socket, a FIFO or a
+# symlink. A row is evidence about a REGULAR FILE this installer placed, and
+# where one of those sits at that path the file it is evidence about is not
+# there; the two halves now say that in one sentence each rather than two
+# different ones.
 receipt_rows_except() {   # <receipt> <destinations file> <staged file>
 	local row="" rest="" dest=""
 	[ -f "$1" ] && [ ! -L "$1" ] || return 0
@@ -465,7 +470,7 @@ receipt_rows_except() {   # <receipt> <destinations file> <staged file>
 		rest="${row#*"$RECEIPT_TAB"}"
 		dest="${rest%%"$RECEIPT_TAB"*}"
 		if grep -qFx -e "$dest" -- "$2"; then continue; fi
-		[ -e "$dest" ] || [ -L "$dest" ] || continue
+		[ -f "$dest" ] && [ ! -L "$dest" ] || continue
 		printf '%s\n' "$row" >>"$3" || return 1
 	done <"$1"
 	return 0
