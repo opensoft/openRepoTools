@@ -1080,6 +1080,68 @@ def test_a_template_path_with_an_unresolved_merge_conflict_is_refused(tmp_path):
         "something was pushed despite the refusal")
 
 
+# --- the four hardening gaps of #49, #62, #63 and #69 -----------------------
+
+def test_a_git_status_this_command_cannot_run_is_refused_not_read_as_clean(
+        tmp_path):
+    """AN EMPTY CHANGE LIST FROM A FAILED `git status` IS NOT "NOTHING
+    UNRELATED" (#49).
+
+    Step 6a asked the question as
+    `git … status … 2>/dev/null | sed … || :`. The redirect threw away git's
+    own diagnostic and the `|| :` turned any non-zero exit of the pipeline —
+    under this file's `set -o pipefail`, `git status`'s own — into a plain
+    empty string, which is exactly what a clean checkout produces. So a
+    checkout this command could not even PUT the question to passed the one
+    gate that exists to refuse before a byte is written, and step 7 wrote
+    template bytes into it.
+
+    A corrupt `.git/index` is the cheapest real shape of that: `rev-parse`
+    still answers, so step 6's own checks pass and the run reaches step 6a,
+    and `git status` exits 128 with `fatal: index file corrupt`. The refusal
+    carries git's own words under it, the way the clone and the commit
+    already do.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout = adopted_checkout(tmp_path, home, env)
+    # A template file the workspace no longer has, so this run HAS a byte to
+    # write the moment the gate lets it through — the thing the assertion
+    # below can then look for.
+    for args in (["rm", "-q", "--", "handoffs/README.md"],
+                 ["commit", "-q", "-m", "somebody removed the handoffs README"],
+                 ["push", "-q", "origin", "HEAD:main"]):
+        subprocess.run(["git", "-C", str(checkout), *args], check=True)
+    before_head = head_of(checkout)
+    (checkout / ".git" / "index").write_bytes(b"not an index at all, garbage\n")
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "REFUSED:" in result.stderr, result.stderr
+    assert f"could not ask git what {checkout} carries" in result.stderr, (
+        result.stderr)
+    assert "What it said:" in result.stderr, result.stderr
+    assert "    | " in result.stderr, (
+        f"the refusal kept none of git's own stderr:\n{result.stderr}")
+    # GIT'S OWN SENTENCE, not one particular wording of it: which one a corrupt
+    # index draws (`bad signature`, `index file smaller than expected`, `index
+    # file corrupt`) depends on how it is corrupt and on the version. What the
+    # refusal owes a person is the `fatal:` line naming the index, and that is
+    # what is asserted.
+    assert "fatal:" in result.stderr and "index" in result.stderr, (
+        f"the refusal dropped the only sentence that says why:\n"
+        f"{result.stderr}")
+    assert not (checkout / "handoffs" / "README.md").exists(), (
+        "a template byte was written past the gate that could not be asked")
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+    assert not (home / ".agents" / "workspace.yaml").exists(), (
+        "the pointer file was written by a run that refused")
+
+
 # --- one answer to one question, across the seam between two toolsets -------
 
 #: (name, the two yaml lines as a template, whether both sides must ACCEPT).

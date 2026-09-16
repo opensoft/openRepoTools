@@ -1483,14 +1483,22 @@ wip_derive_team() {
 # it is printed UNDER the refusal — the shape `fetch_from_repo`'s refusal
 # already has, where it names both ways it tried.
 #
-# STDOUT IS STILL DROPPED: `gh repo clone` and `git commit` are chatty on
-# success and this command's own `say` lines are the report. It is the WORDS OF
-# A FAILURE that were being thrown away, not progress.
+# STDOUT IS STILL DROPPED FROM THE REPORT, and it is now dropped INTO A FILE
+# rather than into `/dev/null`: `gh repo clone` and `git commit` are chatty on
+# success and this command's own `say` lines are what a person reads, so nothing
+# here ever prints it. It is the WORDS OF A FAILURE that were being thrown away,
+# not progress. The file is what lets a command whose OUTPUT is the answer — step
+# 6a's `git status`, #49 — run through this one wrapper instead of carrying a
+# second copy of the stderr-capture below: `$WIP_LAST_OUT` names it, it lives in
+# the workdir the `EXIT` trap removes, and it is rewritten by every call, so a
+# caller reads it before making the next one.
 WIP_LAST_ERR=""
-wip_quietly() {   # <command> [args…] — 0 or 1, with stderr in $WIP_LAST_ERR
+WIP_LAST_OUT=""
+wip_quietly() {   # <command> [args…] — 0 or 1, stderr in $WIP_LAST_ERR, stdout AT $WIP_LAST_OUT
 	workdir
 	WIP_LAST_ERR=""
-	if "$@" >/dev/null 2>"$WORKDIR/cmd-err"; then
+	WIP_LAST_OUT="$WORKDIR/cmd-out"
+	if "$@" >"$WIP_LAST_OUT" 2>"$WORKDIR/cmd-err"; then
 		return 0
 	fi
 	WIP_LAST_ERR="$(tail -n 6 -- "$WORKDIR/cmd-err" 2>/dev/null | sed -e 's/^/    | /')"
@@ -1800,15 +1808,35 @@ $WIP_LAST_ERR"
 	# half-finished run is safe. `--untracked-files=all` because git collapses an
 	# untracked DIRECTORY to one line otherwise, and `handoffs/` is not a path
 	# any exclusion below spells.
-	local status_args unrelated
+	#
+	# AND A `git status` THIS COMMAND COULD NOT RUN IS A REFUSAL, NEVER A CLEAN
+	# ANSWER (#49). The question was asked as
+	# `… 2>/dev/null | sed … || :`, which discarded git's own diagnostic and then
+	# turned ANY failure of the pipeline — under this file's `set -o pipefail`,
+	# `git status`'s own: a corrupt index, an unreadable `.git`, a submodule
+	# error — into a plain empty string. An empty change list is exactly what
+	# "nothing unrelated, proceed" looks like, so a checkout this command could
+	# not even ASK about was read as clean and step 7 wrote template bytes into
+	# it, past the one gate that exists to refuse before a byte is written. The
+	# run is `wip_quietly`'s now: its stdout is the change list, read from
+	# `$WIP_LAST_OUT` and never from a capture a failure can empty, and its
+	# stderr is git's own words under the refusal — the shape every other
+	# failure in this function already has.
+	local status_args
 	status_args=(status --porcelain --untracked-files=all -- .)
 	for rel in "${WIP_TEMPLATE_FILES[@]}"; do
 		status_args+=(":(exclude)$rel")
 	done
-	unrelated="$(git -C "$checkout" "${status_args[@]}" 2>/dev/null | sed -e 's/^/    /' || :)"
-	if [ -n "$unrelated" ]; then
+	wip_quietly git -C "$checkout" "${status_args[@]}" ||
+		die "could not ask git what $checkout carries, so this run cannot tell whether that
+    checkout holds anything this command did not write — and it will not seed a checkout
+    it could not put that question to. NOTHING was written into that checkout on this run
+    and nothing was staged.
+    What it said:
+$WIP_LAST_ERR"
+	if [ -s "$WIP_LAST_OUT" ]; then
 		die "$checkout carries changes this command did not write:
-$unrelated
+$(sed -e 's/^/    /' -- "$WIP_LAST_OUT")
     A seed commit is $SHAPE_REPOSITORY's $WIP_TEMPLATE_DIR and nothing else, and the
     push that follows it goes straight to $target's main — so anything else
     staged beside it is somebody's unfinished work published. NOTHING was written
