@@ -68,7 +68,15 @@ LANE_BASH = ["lanes-edit.sh", "lane-start", "lane-end", "link-estates"]
 #: resolver: it resolves no workspace, and the one path it needs comes back
 #: from `lanes-edit.sh workspace-root`. That is the same "one implementation,
 #: several callers" rule `restart` and `lanes` are out of `LANE_BASH` for.
-HELPER_BASH = ["lane-handoff"]
+#:
+#: `lane-rename` joins it under Amendment 16, ratified 2026-09-14T09:24:35Z, for
+#: BOTH of those reasons unchanged. It does not `set -e`: clause (f)'s two acts
+#: — the tmux window and the typed `/rename` — follow a write that has already
+#: landed, and a command that exited where it stood would leave the register
+#: renamed and the window carrying a name the register no longer has, which is
+#: the one state Amendment 12's guard refuses every prompt over. And it carries
+#: no workspace resolver either: its whole write is `lanes-edit.sh rename-lane`.
+HELPER_BASH = ["lane-handoff", "lane-rename"]
 
 #: Every bash file this repository ships, for the claims that are about BASH
 #: and not about a command's failure discipline: the parse gate and the LF
@@ -1002,8 +1010,9 @@ def test_the_documents_say_what_status_is_and_is_not():
         text = (REPO / name).read_text(encoding="utf-8")
         assert "`status`" in text, f"{name} never names the fourth command"
     readme = (REPO / "README.md").read_text(encoding="utf-8")
-    assert "TWELVE files" in readme, "README.md does not count the twelve files"
-    assert "12 of 12 placed" in readme, (
+    assert "THIRTEEN files" in readme, (
+        "README.md does not count the thirteen files")
+    assert "13 of 13 placed" in readme, (
         "README.md does not show the count line `--install` actually prints")
     status = (REPO / "status").read_text(encoding="utf-8")
     assert "--no-optional-locks" in status, (
@@ -2127,6 +2136,14 @@ def test_readme_is_short_enough_to_be_read():
     `tests/test_openrepotools_command.py` rather than believed here. The cap is
     the count of what merged, not either side's number, and every dated entry
     on both sides stays because each still names the lines it bought.
+
+    THE CAP DOES NOT MOVE FOR AMENDMENT 16 (2026-09-15), and that is worth one
+    sentence rather than none: `lane-rename` is a THIRTEENTH file on PATH and a
+    TWENTY-SEVENTH artifact — every count above moves with it, derived in
+    `tests/test_openrepotools_command.py` as this entry says — and the fifteen
+    lines it buys in § "The lane tooling" and § "Install" fit inside 472. A cap
+    is a budget and not a target: an entry that raised it by fifteen because
+    fifteen lines were written would make the number mean nothing.
     """
     lines = (REPO / "README.md").read_text().splitlines()
     assert len(lines) <= 472, f"README.md is {len(lines)} lines; the cap is 472"
