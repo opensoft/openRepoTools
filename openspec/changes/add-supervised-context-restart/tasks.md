@@ -7,6 +7,29 @@ The first implementation pass landed the transaction, the supervisor, the exact 
 - **A new operation inherited the last one's per-operation fields.** `set-restart-intent` keeps every field a transition does not name, which is what lets the supervisor write `starting` without blanking the digest. Five of the fields belong to ONE operation, though, and two of those are what the readiness predicate is built on: an inherited `new_transcript` is a uuid the new launch will never mint, so readiness could only run to its deadline; an inherited `old_transcript` is the wrong uuid to be *distinct from*, and being distinct from it is the check that catches `#94` itself. `old_transcript`, `new_transcript`, `attempt`, `reason` and `created` now fall back to nothing when the operation changes, and a caller that names one still wins.
 - **`lane-start` nagged on every launch of every lane on a workstation whose `lanes-edit.sh` predates this change.** The estate's read fence is *"`0` an answer, `8` NO ANSWER and `2` a helper predating the read — both of those fall to the next rung"*; the restart-intent read treated `2` as a read that FAILED and printed a note. It is silent now, and only an unclassified code is said.
 - **`--restart-status` told a reader that `lanes-edit.sh` has no `lane-state` when the lane merely has no snapshot.** The exits are told apart now (`8` the lane, `2` the helper, anything else a read that failed), which matters the day `#97` lands.
+- **The readiness deadline counted SLEEPS and called them seconds.** `supervise_watch` added 2 per turn, which counts the `sleep` and never the `live-holder` read between two of them — and that read resolves the lane, reads the published row and scans every session record this workstation has. So the design's *"waits up to 60 seconds"* was sixty seconds **plus thirty register reads**, and the `INDETERMINATE` line then reported a number that had never elapsed to the one person reading it. The deadline is wall clock now and the reason carries the true elapsed beside the deadline it was measured against; the counted sleeps are kept as the floor, so a workstation whose `date` cannot answer, or whose clock steps backwards, still terminates the loop.
+
+**THE ONE FLAKY CASE, AND ITS VERDICT: a defect in `lanes-edit.sh`, not a race and not this change's code.**
+
+The case is the Amendment 15 one, `--confirm in a window named for this lane in ANOTHER case exits 0` — `expected [0], got [5]` — and 5 is the code `lanes-edit.sh` dies with when a write cannot prove what it did.
+
+`replace_line` proves it touched exactly one line by demanding `1 1` from `git diff --no-index --numstat`. **An edit that changes nothing produces no output at all**, so the comparison was against an empty string and the act died `5` with `numstat: none`: the guard reading *nothing changed* as *more than one line changed*, which are opposite facts. And it is reached by ordinary use, not by a contrivance — `set-row-state` writes `<STATE> · $(utc_now) · <line>` and `utc_now` is SECONDS, so two stamps of one state phrase inside a second are byte-identical. Two `lane-start --no-launch` runs of one lane in one window are exactly that pair, and that is what the `--confirm` case does.
+
+Measured directly, eight identical writes in a loop against the shipped `lanes-edit.sh`:
+
+```
+1: rc=0   2: rc=0   3: rc=5   4: rc=5   5: rc=5   6: rc=5   7: rc=0   8: rc=5
+   lanes-edit: edit touched more than one line (numstat: none); refusing
+```
+
+Ten against the fixed one: `rc=0` every time, the unchanged ones saying `line N … is already exactly what this write asked for — nothing rewritten` and `nothing staged … — no commit made`.
+
+So the fix is in `replace_line`: a result byte-identical to the file it would replace is a write that is **done**, not a proof that failed. It returns 0, writes nothing, and says so; `commit_push` already handled *nothing staged* on its own line, and none of the four callers wanted the file to DIFFER — they wanted it to SAY something. `set-row-state` reads a `REPLACE_LINE_NOOP` flag so its own note says `UNCHANGED` rather than announcing a replacement that did not happen. A case pins it by construction rather than by racing the clock (`replace-in-row` with the same text on both sides is identical whatever the second is). On a workstation the old behaviour was a lane stamped twice in one second being told its write was refused, while the register already said precisely what the caller asked for.
+
+**Two suite defects found beside it, and fixed in the same file:**
+
+- **Two supervisor cases asserted an ORDER with a stopwatch.** §6 and §6a gave their fake child a fixed `sleep 8`, so the observer had to complete two 2-second sleeps, two `live-holder` polls and its write inside those eight seconds, with nothing ordering the two events. Both children now wait for the file the observer writes (`state: ready`; a `reason` naming `INDETERMINATE`) under a bounded cap, so the case asserts the order it is about and is faster in the ordinary run. (They were green in the baseline run; the stopwatch is a flake waiting rather than the one that fired.)
+- **`trap cleanup EXIT INT TERM` cleaned up on `TERM` and RETURNED.** `tests/run.sh` states the rule for its own lock — *"a handler that only cleans up and RETURNS releases the lock while this suite carries on running"* — and one handler on all three broke it here in the other direction. Measured: a `TERM` removed `$SANDBOX` and the run carried on against a sandbox that was gone, every case after it `env: '…/bin/lane-start': No such file or directory`, printing `1567 passed, 233 failed`. A killed run that reports two hundred failures is a transcript that lies about this repository. `INT` and `TERM` exit 130 and 143 now; `EXIT` still returns, because the status it carries is the suite's own.
 
 **Deferred, with the reason:**
 

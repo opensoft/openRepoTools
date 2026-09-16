@@ -87,7 +87,20 @@ cleanup() {
   [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ] && rm -rf -- "$SANDBOX"
   return 0
 }
-trap cleanup EXIT INT TERM
+# AND A SIGNAL HANDLER THAT CLEANS UP MUST ALSO EXIT. `tests/run.sh` states
+# this rule for its own lock — *"a handler that only cleans up and RETURNS
+# releases the lock while this suite carries on running, which is the collision
+# the lock exists for"* — and one handler on all three signals broke it here in
+# the other direction. Measured 2026-09-16: a `TERM` sent to a run somebody
+# wanted stopped removed `$SANDBOX` and then RETURNED, so the run carried on
+# against a sandbox that was gone — every case after it `env:
+# '.../bin/lane-start': No such file or directory` — and it printed
+# `1567 passed, 233 failed`. A killed run that reports two hundred failures is a
+# transcript that lies about this repository, and somebody reads those.
+# `EXIT` still returns, because the status it carries is the suite's own.
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 
 export HOME="$SANDBOX/home"
 export TMPDIR="$SANDBOX/tmp"
@@ -9432,6 +9445,37 @@ is    "…so the cell is three parts and stays three parts" \
 is    "…and it is BOUNDED: 240 for the line, plus the state and the instant" \
       "$(printf '%s' "$a13_row" | awk -F' \\| ' '{ c = $NF; sub(/ \|$/, "", c); print (length(c) <= 280 ? "yes" : "no " length(c)) }')" "yes"
 
+# ---- (a2) A WRITE WHOSE RESULT IS THE LINE ALREADY THERE IS DONE, NOT REFUSED.
+#
+# MEASURED 2026-09-16, and it is why the Amendment 15 `--confirm` case above
+# went red about one run in two with `expected [0], got [5]`. `replace_line`
+# proves it touched exactly one line by demanding `1 1` from
+# `git diff --no-index --numstat`; an edit that changes NOTHING produces no
+# output at all, the comparison was against an empty string, and the act died 5
+# with `numstat: none` — the guard reading "nothing changed" as "more than one
+# line changed", which are opposite facts.
+#
+# IT IS REACHED BY ORDINARY USE. `set-row-state` writes
+# `<STATE> · $(utc_now) · <line>` and `utc_now` is SECONDS, so two stamps of one
+# state phrase inside a second are byte-identical — which is two
+# `lane-start --no-launch` runs of one lane in one window, the pair the
+# `--confirm` case makes. Eight such writes in a loop against the shipped
+# `lanes-edit.sh` gave five exit 5 and three exit 0, decided by nothing but
+# where the second boundary fell.
+#
+# THIS CASE DOES NOT RACE THE CLOCK TO SAY SO. `replace-in-row` with the same
+# text on both sides is byte-identical BY CONSTRUCTION, whatever the second is,
+# so what is asserted is the property and not a coincidence.
+a13_noop_before="$(grep '^| `repoA13-1`' "$LANES")"
+run env LANES_LANE=repoA13-1 "$E" replace-in-row repoA13-1 \
+    "CI green; waiting on review" "CI green; waiting on review"
+is    "a write whose result is the line already there exits 0" "$rc" 0
+has   "…saying the line already reads exactly that" "$err" "already exactly what this write asked for"
+has   "…and that there is nothing to commit" "$err" "nothing staged"
+is    "…leaving the row byte for byte as it was" "$(grep '^| `repoA13-1`' "$LANES")" "$a13_noop_before"
+is    "…and the checkout clean, so the next write is not refused for it" \
+      "$(git -C "$WIP" status --porcelain -- lanes/LANES.md | grep -c . || :)" 0
+
 run "$E" set-row-state repoA13-1 "BUSY · doing things"
 is    "an unknown STATE is refused" "$rc" 2
 has   "…naming the seven there are" "$err" "LIVE, PAUSED, LANDING #<n>, LANDED, ENDED, RETIRED, HANDED OFF"
@@ -10048,10 +10092,17 @@ SV_LANE_HANDOFF="$OPENREPOTOOLS_BIN_DIR/lane-handoff"
 # `%33` IS THE BARE FORM tmux itself exports, and the intent's pane is the live
 # record's `svsess:@33.%33`: the two agree component-wise, which is the
 # comparison `pane_agrees` makes, and asserting it here is the positive half of
-# the `%3`-is-not-`%33` case further down. A case that wants to DISAGREE sets
-# `TMUX_PANE` again after this one, and the later assignment is the one `env`
-# keeps.
+# the `%3`-is-not-`%33` case further down. A case that wants to DISAGREE names
+# its OWN `TMUX_PANE` in place of this one rather than a second assignment to
+# the same name after it: `env A=1 A=2` keeping the later is true of every
+# `env` this runs under and is written down nowhere, and a case whose meaning
+# rests on that is a case nobody can read.
 SV_PANE='%33'
+# AND THE INTENT FILE THE TWO LONG-LIVED FAKES BELOW WAIT ON, which is where
+# the supervisor's observer writes its verdict. `LANES_LANE_STATE_ROOT` is
+# `$SV_STATE` for this whole section, so `lane_control_root` resolves on its
+# first rung and the path is knowable from here.
+export SV_INTENT="$SV_STATE/repoSV-3/restart-intent.yaml"
 : > "$FAKE_CLAUDE_LOG"
 run env PATH="$A17PATH" FAKE_TMUX_WINDOW="svsess:@31" CLAUDE_PROFILE_NAME=team-05a \
     "$START" --dir "$SV_DIR" repoSV-2 --no-launch
@@ -10101,6 +10152,30 @@ run env PATH="$A17PATH" FAKE_TMUX_WINDOW="svsess:@31" CLAUDE_PROFILE_NAME=team-0
 is   "a handoff that changed since the intent was written blocks the launch" "$rc" 2
 has  "…saying the top block is the first prompt" "$err" "FIRST PROMPT"
 git -C "$WIP" checkout -- handoffs/repoSV/repoSV-2.md 2>/dev/null || :
+
+# ONE DIGEST, THREE COMMANDS, AND IT HAD BETTER BE ONE FUNCTION. `lanes-edit.sh`
+# RECORDS the handoff's digest into the intent, `lane-start` VERIFIES it before
+# it launches, and `lane-handoff` verifies it again before a supervisor claims
+# the operation — three installed files with no library between them, which is
+# this estate's shape (`lane_control_root` is shared with openRepoTools#91 the
+# same way, byte for byte, and design decision 14 says so in as many words).
+#
+# THE TWO CASES ABOVE ALREADY PROVE TWO OF THEM AGREE BY BEHAVIOUR — the launch
+# went through while the file was untouched and refused the moment a line was
+# appended — so what is left to pin is that the third is the same act, and that
+# "the same" means the BODY and not the name. A copy that drifted would not fail
+# loudly: it would RECORD one digest and VERIFY another, and every launch after
+# it would refuse a handoff nobody had changed.
+sv_fn_body() {   # <file> <function name> — its body, indentation normalised
+  awk -v f="$2" 'index($0, f "()") == 1 { on = 1 } on { sub(/^[ \t]+/, ""); print } on && $0 == "}" { exit }' "$1" | tail -n +2
+}
+sv_dig_canon="$(sv_fn_body "$SRC_DIR/lanes-edit.sh" lane_handoff_digest)"
+is   "the digest lanes-edit.sh records with is a function with a body" \
+     "$( [ "$(printf '%s' "$sv_dig_canon" | grep -c 'sha256sum' || :)" -ge 1 ] && echo yes || echo no )" yes
+is   "…and the one lane-start verifies a launch with is that same body" \
+     "$(sv_fn_body "$SRC_DIR/lane-start" handoff_digest_of)" "$sv_dig_canon"
+is   "…and the one lane-handoff refuses a stale operation with is too" \
+     "$(sv_fn_body "$SRC_DIR/lane-handoff" handoff_digest)" "$sv_dig_canon"
 
 # A `ready` INTENT IS HISTORY AND AUTHORISES NOTHING.
 run "$E" set-restart-intent repoSV-2 ready --expect pending --expect-operation op-94
@@ -10197,14 +10272,14 @@ run env PATH="$SVPATH" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" "$SV_LAN
 is   "a supervisor whose intent is already \`starting\` refuses rather than starting a second session" "$rc" 2
 has  "…citing the one-transcript-one-process rule" "$err" "Amendment 18(h)"
 
-run env PATH="$SVPATH" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" TMUX_PANE='%99' "$SV_LANE_HANDOFF" \
+run env PATH="$SVPATH" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE='%99' "$SV_LANE_HANDOFF" \
     --supervise --lane repoSV-3 --operation "$SV_OP"
 is   "a supervisor in a pane the intent does not name refuses" "$rc" 2
 has  "…naming both panes" "$err" "svsess:@33.%33"
 # AND THE COMPARISON IS COMPONENT-WISE, NOT A SUFFIX. `%3` is a SUFFIX of
 # `%33`, so a `case ... in *"$TMUX_PANE")` accepted a supervisor in pane 3 for
 # an intent written for pane 33 — the wrong window, decided by string tail.
-run env PATH="$SVPATH" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" TMUX_PANE='%3' "$SV_LANE_HANDOFF" \
+run env PATH="$SVPATH" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE='%3' "$SV_LANE_HANDOFF" \
     --supervise --lane repoSV-3 --operation "$SV_OP"
 is   "…and a pane whose id is a SUFFIX of the intent's is still another pane" "$rc" 2
 has  "…named as the disagreement it is" "$err" "and this supervisor is in %3"
@@ -10263,7 +10338,20 @@ cat > "$SV_BIN/pclaude-ok" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${FAKE_SVLAUNCH_LOG:-/dev/null}"
 cp "$SV_READY_SRC" "$SV_READY_DST"
-sleep "${FAKE_SVLAUNCH_SLEEP:-8}"
+# THE CHILD OUTLIVES THE OBSERVER'S VERDICT, AND WAITS FOR THE VERDICT RATHER
+# THAN FOR A NUMBER OF SECONDS. The case is about an ORDER — the observer
+# confirms readiness, and the session exits LATER — and `sleep 8` asserted that
+# order with a stopwatch. The observer's poll is a `lanes-edit.sh live-holder`,
+# which resolves the lane, reads the published row and scans every session
+# record this workstation has; two of those while another lane runs this same
+# suite cost more than the eight seconds the child was given, and the case went
+# red on a machine that was merely busy. Waiting on the file the observer
+# writes makes the ORDER the assertion, and is faster in the ordinary case.
+i=0
+while [ "$i" -lt "${FAKE_SVLAUNCH_CAP:-60}" ]; do
+  grep -q '^state: ready' "${SV_INTENT:-/nonexistent}" 2>/dev/null && break
+  i=$((i + 1)); sleep 1
+done
 exit 0
 FAKE
 chmod +x "$SV_BIN/pclaude-ok"
@@ -10271,7 +10359,7 @@ export SV_READY_SRC SV_READY_DST="$sessions_dir/live-sv-new.json"
 "$E" set-restart-intent repoSV-3 pending --expect failed --new-transcript "$SV_NEW" >/dev/null 2>&1
 : > "$FAKE_SVLAUNCH_LOG"
 run env PATH="$SVPATH" PCLAUDE="$SV_BIN/pclaude-ok" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" \
-    LANE_SUPERVISOR_READY_SECONDS=20 FAKE_SVLAUNCH_SLEEP=8 "$SV_LANE_HANDOFF" \
+    LANE_SUPERVISOR_READY_SECONDS=20 "$SV_LANE_HANDOFF" \
     --supervise --lane repoSV-3 --operation "$SV_OP"
 is   "a launch that comes up and is CONFIRMED exits 0 when its session later ends" "$rc" 0
 has  "…saying the replacement was confirmed" "$out" "was CONFIRMED"
@@ -10321,14 +10409,23 @@ has  "…because --restart mints its own" "$err" "MINTS its own operation"
 cat > "$SV_BIN/pclaude-quiet" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${FAKE_SVLAUNCH_LOG:-/dev/null}"
-sleep "${FAKE_SVLAUNCH_SLEEP:-7}"
+# ALIVE UNTIL THE DEADLINE HAS BEEN DECLARED, and not for a fixed count of
+# seconds, for the reason `pclaude-ok` above gives. This child must still be
+# running when the observer's deadline expires — that is what INDETERMINATE
+# MEANS — and must then exit, because a supervisor blocked on its child is only
+# able to report once the child is gone.
+i=0
+while [ "$i" -lt "${FAKE_SVLAUNCH_CAP:-60}" ]; do
+  grep -q 'INDETERMINATE' "${SV_INTENT:-/nonexistent}" 2>/dev/null && break
+  i=$((i + 1)); sleep 1
+done
 exit 0
 FAKE
 chmod +x "$SV_BIN/pclaude-quiet"
 "$E" set-restart-intent repoSV-3 pending --expect ready >/dev/null 2>&1
 : > "$FAKE_SVLAUNCH_LOG"
 run env PATH="$SVPATH" PCLAUDE="$SV_BIN/pclaude-quiet" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" \
-    LANE_SUPERVISOR_READY_SECONDS=4 FAKE_SVLAUNCH_SLEEP=8 "$SV_LANE_HANDOFF" \
+    LANE_SUPERVISOR_READY_SECONDS=4 "$SV_LANE_HANDOFF" \
     --supervise --lane repoSV-3 --operation "$SV_OP"
 is   "a child that stays alive without readiness evidence is INDETERMINATE, not running" "$rc" 3
 has  "…and the supervisor says which it was" "$out" "INDETERMINATE"

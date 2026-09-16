@@ -537,10 +537,32 @@ ready_check() {   # <lane> <pid file> <expected new transcript|""> <old transcri
 # start.
 supervise_watch() {   # <lane> <operation> <generation> <pid file> <new> <old> <pane>
 	sw_lane="$1"; sw_op="$2"; sw_gen="$3"; sw_pidf="$4"; sw_new="$5"; sw_old="$6"; sw_pane="$7"
+	# THE DEADLINE IS WALL CLOCK, NOT A COUNT OF SLEEPS. This loop used to add
+	# 2 per turn and call that the elapsed time, which counts only the `sleep`
+	# and never the work between two of them — and the work is a `live-holder`
+	# read that resolves the lane, reads the published row and scans every
+	# session record this workstation has. On a loaded machine that is seconds,
+	# so a "60-second" deadline was sixty seconds PLUS thirty register reads,
+	# and the INDETERMINATE line then reported a number that had never elapsed.
+	# The design's promise is *"waits up to 60 seconds"* and a person waiting on
+	# a pane is owed the number they were told.
+	#
+	# THE COUNTED SLEEPS ARE KEPT AS THE FLOOR, so this loop terminates on a
+	# workstation whose `date` cannot answer or whose clock steps backwards:
+	# the wait is the GREATER of what was slept and what the clock says, and a
+	# clock that goes backwards simply leaves the counted sleeps deciding.
+	sw_t0="$(date +%s 2>/dev/null | tr -dc '0-9')"
+	sw_slept=0
 	sw_waited=0
 	while [ "$sw_waited" -lt "$SUPERVISE_READY_SECONDS" ]; do
 		sleep 2
-		sw_waited=$((sw_waited + 2))
+		sw_slept=$((sw_slept + 2))
+		sw_waited="$sw_slept"
+		sw_now="$(date +%s 2>/dev/null | tr -dc '0-9')"
+		if [ -n "$sw_t0" ] && [ -n "$sw_now" ] && [ "$sw_now" -gt "$sw_t0" ]; then
+			sw_el=$((sw_now - sw_t0))
+			[ "$sw_el" -gt "$sw_waited" ] && sw_waited="$sw_el"
+		fi
 		sw_rc=0
 		ready_check "$sw_lane" "$sw_pidf" "$sw_new" "$sw_old" "$sw_pane" || sw_rc=$?
 		case "$sw_rc" in
@@ -582,7 +604,7 @@ supervise_watch() {   # <lane> <operation> <generation> <pid file> <new> <old> <
 	# and the lane is NOT marked running.
 	LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$sw_lane" starting \
 		--expect starting --expect-operation "$sw_op" \
-		--reason "INDETERMINATE: ${SUPERVISE_READY_SECONDS}s elapsed with the child alive and readiness unconfirmed; ${READY_WHY:-no evidence}" >/dev/null 2>&1 || :
+		--reason "INDETERMINATE: ${sw_waited}s elapsed (deadline ${SUPERVISE_READY_SECONDS}s) with the child alive and readiness unconfirmed; ${READY_WHY:-no evidence}" >/dev/null 2>&1 || :
 	return 4
 }
 
@@ -1753,10 +1775,12 @@ if [ "$do_restart" = 1 ]; then
 	# supervisor is a mode of a command that is already installed, and a person
 	# still has one word, `lane`.
 	#
-	# THE DEVIATION IS WRITTEN DOWN rather than taken quietly: it is decision 5
-	# of `openspec/changes/add-supervised-context-restart/design.md`, and the
-	# protocol text that would ratify it is task 7.4's, unwritten as this
-	# lands.
+	# THE DEVIATION IS WRITTEN DOWN rather than taken quietly: it is decisions
+	# 10 and 11 of `openspec/changes/add-supervised-context-restart/design.md`
+	# — 10 for the supervisor being a MODE of this command rather than the new
+	# installed word decision 5 proposed, 11 for neither of (i-8)'s two doors
+	# being taken at THIS level — and the protocol text that would ratify it is
+	# task 7.4's, unwritten as this lands.
 
 	# ---- THE PRE-KILL COMMIT POINT: THE RESTART INTENT (openRepoTools#94)
 	#

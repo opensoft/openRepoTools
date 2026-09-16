@@ -1022,6 +1022,10 @@ lane_from_text() {
 # `git diff --no-index --numstat` (must be exactly 1 added / 1 deleted).
 replace_line() {
   n="$1"; newline="$2"
+  # 1 where the line was already exactly what was asked for and nothing was
+  # written. A caller that prints what it did reads this rather than announcing
+  # a replacement that did not happen.
+  REPLACE_LINE_NOOP=0
   TMPD="$(mktemp -d)"
   pre="$TMPD/pre"; out="$TMPD/out"
   cat -- "$LANES_FILE" > "$pre"
@@ -1033,6 +1037,33 @@ replace_line() {
   } > "$out"
   after="$(wc -l < "$out" | tr -d ' ')"
   [ "$before" = "$after" ] || die "line count changed ($before -> $after); refusing" 5
+  # A LINE THAT IS ALREADY EXACTLY WHAT WAS ASKED FOR IS A WRITE THAT IS DONE,
+  # AND NOT A PROOF THAT FAILED (measured 2026-09-16, `lanes-edit.sh`). The
+  # `numstat` below proves this edit touched ONE line by demanding `1 1` from
+  # `git diff --no-index` — and an edit that changes nothing produces NO OUTPUT
+  # AT ALL, so `$stat` came back empty, the equality was false, and the act
+  # died 5 with `numstat: none`. The guard read "nothing changed" as "more than
+  # one line changed", which are opposite facts.
+  #
+  # IT IS REACHED BY ORDINARY USE AND NOT BY A CONTRIVANCE. `set-row-state`
+  # writes `<STATE> · $(utc_now) · <line>` and `utc_now` is seconds, so two
+  # stamps of the SAME state phrase inside one second are byte-identical — two
+  # `lane-start --no-launch` runs of one lane in one window, which is exactly
+  # what `tests/test_lane_helpers.sh`'s Amendment 15 `--confirm` case does, and
+  # what made it fail about one run in two with `expected [0], got [5]`. On a
+  # workstation it is a lane stamped twice in a second being told its write was
+  # refused, when the register already says precisely what the caller asked for.
+  #
+  # THE CALLERS ARE SAFE WITH IT: nothing is written, so `commit_push` finds
+  # nothing staged and says so on its own line, and every one of the four
+  # callers (`set-row-state`, `append-session-id`, `replace-in-row` and
+  # `migrate-state-cells`) wanted the file to SAY something rather than to
+  # differ from what it said.
+  if cmp -s -- "$pre" "$out"; then
+    REPLACE_LINE_NOOP=1
+    note "line $n of $LANES_FILE is already exactly what this write asked for — nothing rewritten, and nothing to commit"
+    return 0
+  fi
   stat="$(git --no-pager diff --no-index --numstat -- "$pre" "$out" 2>/dev/null | head -n1 | cut -f1,2)"
   [ "$stat" = "$(printf '1\t1')" ] || die "edit touched more than one line (numstat: ${stat:-none}); refusing" 5
   cat -- "$out" > "$LANES_FILE"   # redirect FOLLOWS the symlink
@@ -7957,7 +7988,16 @@ Nothing was written." 2
     srs_new="$ROW_STATE · $(utc_now) · $ROW_STATE_LINE"
     srs_was="$(rstrip_spaces "$RSS_CELL")"
     replace_line "$n" "$RSS_HEAD$srs_new $RSS_TAIL"
-    note "state cell REPLACED: ${#srs_was} chars → ${#srs_new} chars"
+    # WHAT IT SAYS IS WHAT HAPPENED, and the two are not the same act. A state
+    # phrase stamped twice inside one second is byte-identical — `utc_now` is
+    # seconds — so the row already reads exactly this, nothing is written, and
+    # "REPLACED" beside `replace_line`'s own "nothing rewritten" would be two
+    # lines of one output contradicting each other.
+    if [ "${REPLACE_LINE_NOOP:-0}" = 1 ]; then
+      note "state cell UNCHANGED: it already reads exactly this ${#srs_new} chars, to the second"
+    else
+      note "state cell REPLACED: ${#srs_was} chars → ${#srs_new} chars"
+    fi
     # THE WHOLE LINE IN THE SUBJECT, as `append-row-status` put its whole text
     # there: the line is capped at 240 characters by the act above, and a
     # subject cut at 72 loses exactly the tail that says what happened.
