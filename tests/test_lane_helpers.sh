@@ -9948,6 +9948,44 @@ run env LANES_LANE_STATE_ROOT= PROJECTS_ROOT=/nonexistent-projects-root \
 is   "…and there is nowhere to write one either" "$rc" 1
 has  "…naming the seam that gives it one" "$err" "LANES_LANE_STATE_ROOT"
 
+# A NEW OPERATION INHERITS NOTHING OF THE LAST ONE'S.
+#
+# A TRANSITION KEEPS THE FIELDS IT DOES NOT NAME — that is what lets the
+# supervisor write `starting` without blanking the handoff digest every later
+# launch is fenced on. But five of the fields belong to ONE OPERATION and not
+# to the lane, and a second `/ctx` that inherited them would read `attempt 3`
+# and `reason "the launcher exited 127"` about a restart that is over. Two of
+# them are worse than untidy, because the readiness predicate is built on the
+# pair: an inherited `new_transcript` is a uuid the new launch will never mint,
+# so readiness can only run to its deadline; an inherited `old_transcript` is
+# the wrong uuid to be DISTINCT FROM, and being distinct from it is the check
+# that catches openRepoTools#94 — a replacement that came up resuming the very
+# transcript the /ctx paused.
+run "$E" set-restart-intent repoSV-4 pending --expect none \
+    --operation op-first --generation 1 --mode fresh-from-handoff \
+    --agent claude --dir "$SV_DIR" --handoff "$SV_HANDOFF" --old-transcript "$SV_OLD"
+is   "a lane's first restart operation is written" "$rc" 0
+run "$E" set-restart-intent repoSV-4 failed --expect pending --expect-operation op-first \
+    --bump-attempt --new-transcript "$SV_NEW" --reason "the launcher exited 127"
+is   "…it fails, with an attempt, an expected transcript and a bounded reason" "$rc" 0
+run "$E" set-restart-intent repoSV-4 pending --expect 'none|ready|failed' \
+    --operation op-second --generation 2 --mode fresh-from-handoff \
+    --agent claude --dir "$SV_DIR" --handoff "$SV_HANDOFF" --old-transcript "$SV_PAUSED"
+is   "a second /ctx over a FAILED restart mints a second operation" "$rc" 0
+run "$E" restart-intent repoSV-4
+has  "…and its attempt count is its own" "$out" "$(printf 'attempt\t0')"
+hasnt "…carrying no failure reason from the operation before it" "$out" "exited 127"
+hasnt "…and not the transcript that operation's launch was preparing" "$out" "$SV_NEW"
+has  "…while the facts it NAMED are written" "$out" "$(printf 'old_transcript\t%s' "$SV_PAUSED")"
+has  "…and the ones it did not name, but which belong to the LANE, are kept" \
+     "$out" "$(printf 'handoff\t%s' "$SV_HANDOFF")"
+run "$E" set-restart-intent repoSV-4 pending --expect pending --operation op-third
+is   "a third operation, naming nothing but itself" "$rc" 0
+run "$E" restart-intent repoSV-4
+has  "…records no transcript of the restart before it, because 'none' is an answer and another operation's uuid is a lie" \
+     "$out" "$(printf 'old_transcript\tnone')"
+has  "…and still the lane's own handoff" "$out" "$(printf 'handoff\t%s' "$SV_HANDOFF")"
+
 # ------------------------- 2. openRepoTools#94: the fresh launch, from the FILE
 
 SV_LANE_HANDOFF="$OPENREPOTOOLS_BIN_DIR/lane-handoff"

@@ -2,6 +2,12 @@
 
 The first implementation pass landed the transaction, the supervisor, the exact fresh launch and the retry surface — the path `opensoft/openRepoTools#94` measured breaking — and deliberately did **not** land the prerequisite lifecycle work, the machine-readable staged payload, the crash-point matrix or the protocol amendment. Ticked boxes below are implemented AND covered by cases in `tests/test_lane_helpers.sh`; unticked ones are open, and the three that were rewritten rather than ticked-as-written say so in their own line.
 
+**Found in the review pass, and fixed here rather than left for a later one:**
+
+- **A new operation inherited the last one's per-operation fields.** `set-restart-intent` keeps every field a transition does not name, which is what lets the supervisor write `starting` without blanking the digest. Five of the fields belong to ONE operation, though, and two of those are what the readiness predicate is built on: an inherited `new_transcript` is a uuid the new launch will never mint, so readiness could only run to its deadline; an inherited `old_transcript` is the wrong uuid to be *distinct from*, and being distinct from it is the check that catches `#94` itself. `old_transcript`, `new_transcript`, `attempt`, `reason` and `created` now fall back to nothing when the operation changes, and a caller that names one still wins.
+- **`lane-start` nagged on every launch of every lane on a workstation whose `lanes-edit.sh` predates this change.** The estate's read fence is *"`0` an answer, `8` NO ANSWER and `2` a helper predating the read — both of those fall to the next rung"*; the restart-intent read treated `2` as a read that FAILED and printed a note. It is silent now, and only an unclassified code is said.
+- **`--restart-status` told a reader that `lanes-edit.sh` has no `lane-state` when the lane merely has no snapshot.** The exits are told apart now (`8` the lane, `2` the helper, anything else a read that failed), which matters the day `#97` lands.
+
 **Deferred, with the reason:**
 
 - **§1 entirely** — it consumes `add-crash-consistent-lane-worktree-recovery`'s lane lock, generation and operation, which are on `feat/crash-consistent-lane-worktree-recovery` and not on `main`. The restart intent is a sibling sidecar under the *same* control root (design decision 14) so nothing here blocks on that merge and nothing re-implements it; §1's fail-closed work belongs in that change's own pass.

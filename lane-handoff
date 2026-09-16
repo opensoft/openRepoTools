@@ -894,7 +894,13 @@ if [ "$do_status" = 1 ]; then
 		| awk -F'\t' '$1 == "state" { print $2; exit }')" || rst_lrc=$?
 	case "$rst_lrc" in
 	0) say "lifecycle   ${rst_ls:-none} (lanes-edit.sh lane-state $lane)" ;;
-	*) say "lifecycle   not recorded here — this lanes-edit.sh has no \`lane-state\` (opensoft/openRepoTools#91 has not landed on this workstation)" ;;
+	# 8 IS THIS LANE HAVING NO SNAPSHOT and 2 IS THE HELPER HAVING NO WORD FOR
+	# ONE, and telling the two apart matters the day #91 lands: a reader shown
+	# "this lanes-edit.sh has no lane-state" about a helper that has one would
+	# go looking for an installation problem that is not there.
+	8) say "lifecycle   no snapshot for this lane yet (\`$LANES_EDIT lane-state $lane\` answers 8)" ;;
+	2) say "lifecycle   not recorded here — this lanes-edit.sh has no \`lane-state\` (opensoft/openRepoTools#91 has not landed on this workstation)" ;;
+	*) say "lifecycle   could not be read (\`$LANES_EDIT lane-state $lane\` exited $rst_lrc), which is NOT 'there is none' (Amendment 7(d))" ;;
 	esac
 	case "$RI_STATE" in
 	failed)   say ""; say "RETRY:   $(quoted "$SELF_ABS") --supervise --lane $lane --operation ${RI_OP:-<id>}" ;;

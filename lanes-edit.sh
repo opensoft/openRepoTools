@@ -9520,9 +9520,35 @@ EOF
     sri_pane="$(sri_keep pane "$sri_pane")"
     sri_win="$(sri_keep window "$sri_win")"
     sri_hf="$(sri_keep handoff "$sri_hf")"
-    sri_old="$(sri_keep old_transcript "$sri_old")"
-    sri_new="$(sri_keep new_transcript "$sri_new")"
-    sri_reason="$(sri_keep reason "$sri_reason")"
+    # …EXCEPT WHERE THE OPERATION ITSELF HAS CHANGED, and then five of these
+    # fields are not this act's facts at all. `old_transcript`,
+    # `new_transcript`, `attempt`, `reason` and `created` are scoped to ONE
+    # operation: the transcript that restart paused, the transcript its launch
+    # was preparing, how many times THAT launch was tried, why THAT one failed,
+    # and when THAT intent was made. Carrying them into the next operation is
+    # how a brand-new `/ctx` comes out reading `attempt 3` and `reason "the
+    # launcher exited 127"` from a restart that is over — and two of them are
+    # worse than cosmetic, because the supervisor's readiness predicate is
+    # built on exactly this pair:
+    #
+    #   * an inherited `new_transcript` is a uuid THIS launch will never mint,
+    #     so readiness can only run to its deadline and report indeterminate;
+    #   * an inherited `old_transcript` is the wrong uuid to be distinct FROM,
+    #     and that check is the one that catches openRepoTools#94 itself — a
+    #     replacement that came up resuming the transcript this `/ctx` paused.
+    #     Comparing it against some earlier restart's transcript would let the
+    #     measured defect through the very predicate written to catch it.
+    #
+    # A caller that names one of the five still wins; this only decides what an
+    # UNNAMED field falls back to, and `none` is an answer where another
+    # operation's value is a lie.
+    sri_newop=0
+    [ "$sri_op" = "${sri_nowo:-none}" ] || sri_newop=1
+    if [ "$sri_newop" != 1 ]; then
+      sri_old="$(sri_keep old_transcript "$sri_old")"
+      sri_new="$(sri_keep new_transcript "$sri_new")"
+      sri_reason="$(sri_keep reason "$sri_reason")"
+    fi
     # THE DIGEST IS COMPUTED HERE WHERE THE CALLER NAMED A HANDOFF AND NO
     # DIGEST, so that there is ONE implementation of *what this handoff was
     # when the intent was made* and a caller cannot accidentally record a
@@ -9544,10 +9570,19 @@ EOF
       :
     elif [ "$sri_bump" = 1 ]; then
       sri_att=$((sri_nowa + 1))
+    elif [ "$sri_newop" = 1 ]; then
+      sri_att=0
     else
       sri_att="$sri_nowa"
     fi
-    sri_created="$(lane_sidecar_field "$sri_f" created 2>/dev/null || :)"
+    # AND `created` IS THIS OPERATION'S OWN, for the same reason: it is read as
+    # *when this restart was taken*, and a new operation inheriting the last
+    # one's timestamp says a `/ctx` happened at a moment it did not.
+    if [ "$sri_newop" = 1 ]; then
+      sri_created=""
+    else
+      sri_created="$(lane_sidecar_field "$sri_f" created 2>/dev/null || :)"
+    fi
     if lane_restart_put "$sri_root" "$lane" "$sri_state" "$sri_gen" "$sri_op" \
          "$sri_mode" "$sri_agent" "$sri_prof" "$sri_dir" "$sri_pane" "$sri_win" \
          "$sri_hf" "$sri_dig" "$sri_old" "$sri_new" "$sri_att" "$sri_reason" \

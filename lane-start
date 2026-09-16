@@ -2408,12 +2408,19 @@ case "$ri_rc" in
     ri_hf="$(printf '%s\n'    "$ri_out" | awk -F'\t' '$1 == "handoff" { print $2; exit }')"
     ri_dig="$(printf '%s\n'   "$ri_out" | awk -F'\t' '$1 == "digest" { print $2; exit }')" ;;
   # 8 IS AN ANSWER — this lane has no restart in flight, which is every
-  # ordinary launch — and 1 is a lane with no control root, which is the
-  # pre-cutover lane and not a failure either. Anything else is a read that
-  # FAILED, and a read that failed is never an answer (Amendment 7(d)): it is
-  # said, and the other two sources still decide, because refusing every launch
-  # on a helper that could not answer is not a safety property.
-  8|1) : ;;
+  # ordinary launch — 1 is a lane with no control root, which is the
+  # pre-cutover lane and not a failure either, and 2 IS A HELPER THAT PREDATES
+  # THIS READ: the estate's fence is one sentence and `lane-handoff` spells it
+  # out at its own register reads — *"`0` an answer, `8` NO ANSWER and `2` a
+  # helper predating the read — both of those fall to the next rung"*. An
+  # installed `lanes-edit.sh` from before openRepoTools#94 answers 2 from its
+  # unknown-subcommand arm, and a note printed on EVERY launch of EVERY lane on
+  # such a workstation is noise about a state that is simply the old one.
+  # Anything else is a read that FAILED, and a read that failed is never an
+  # answer (Amendment 7(d)): it is said, and the other two sources still
+  # decide, because refusing every launch on a helper that could not answer is
+  # not a safety property.
+  8|1|2) : ;;
   *) note "$LANES_EDIT restart-intent $LANE failed (exit $ri_rc) — this launch reads no restart intent, so a /ctx in flight for this lane is NOT visible here. If a context clear was just taken, run it again once the read works." ;;
 esac
 # AN `--operation` NAMES THE INTENT IT BELONGS TO, AND ONLY THAT ONE.
