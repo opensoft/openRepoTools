@@ -2090,8 +2090,12 @@ how the register has spelled Codex sessions since 2026-09-05.
 ### `/ctx` — one word, and everything after it is automatic
 
 `/ctx` (`/handoff --restart`) performs the handoff and then **restarts in
-place**: `tmux respawn-pane -k` on the lane's own pane, with a NEW session of the
-same agent whose **first prompt is the handoff's top block**. That block's
+place**: `tmux respawn-pane -k` on the lane's own pane, and what comes up is a
+NEW session of the same agent whose **first prompt is the handoff's top block**.
+What tmux starts is not that session but a SUPERVISOR that launches it — the two
+subsections below are why, and they are `openRepoTools#94` — so the sentence
+holds end to end and no longer holds only as far as tmux accepting a command.
+That block's
 `WRITERS` section lists every worktree the lane had running: its branch, its last
 commit, what it was holding, and the brief it was given, so the new session finds
 them rather than discovering them — and its first line is Addendum 1 (i)'s, the
