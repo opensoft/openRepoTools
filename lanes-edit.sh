@@ -6777,12 +6777,17 @@ binding_window_state() {   # <host> <window sub-field> [legacy]
   # (opensoft/openRepoTools#95).
   #
   # AND AN EMPTY ANSWER IS TWO FACTS, OF WHICH ONLY ONE IS DEAD (Copilot round 9
-  # on openRepoTools#83). `tmux display-message -t <@id>` exits 1 with NOTHING on
-  # stdout both where the id resolves nowhere and where there is no server to ask
-  # at all — a container the host's socket was never mounted into, a server not
-  # started yet, a `$TMUX_TMPDIR` that differs, a socket this user cannot read.
-  # `command -v tmux` catches only the workstation that has no tmux BINARY, and
-  # the two are not the same workstation. Read as `gone`, the second one makes
+  # on openRepoTools#83). `bws_now` comes back EMPTY both where the id resolves
+  # nowhere and where there is NO SERVER TO ASK AT ALL — a container the host's
+  # socket was never mounted into, a server not started yet, a `$TMUX_TMPDIR`
+  # that differs, a socket this user cannot read. AND THE STATUS IS NOT THE
+  # DISCRIMINATOR: measured on tmux 3.4, an id that resolves nowhere on a server
+  # that IS there answers `0` with an empty stdout, while no server at all
+  # answers 1 with an empty stdout and `error connecting to … (No such file or
+  # directory)` on stderr — which `tmux_window_field` sends to `/dev/null` and
+  # this read discards with `|| :`. `command -v tmux` catches only the
+  # workstation that has no tmux BINARY, and the two are not the same
+  # workstation. Read as `gone`, the second one makes
   # EVERY binding of every other container on this host read DEAD — the one
   # answer that hands `lane-start` and `lane` the takeover path — which is this
   # clause's own collision reached through its own exception, on the very estate

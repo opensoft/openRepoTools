@@ -10466,10 +10466,13 @@ run "$E" binding repoBind-17
 is   "…while an id that resolves NOWHERE is the dead binding it always was" \
      "$(printf '%s' "$out" | cut -f8)" "gone"
 # AND A TMUX THAT CANNOT BE ASKED IS NOT A DEAD WINDOW EITHER (Copilot round 9).
-# `tmux display-message -t <@id>` exits 1 with an empty stdout BOTH where the id
-# resolves nowhere and where there is no server to ask — a container the host's
-# socket was never mounted into, a server not started yet, a `$TMUX_TMPDIR` that
-# differs. `command -v tmux` catches only the machine with no BINARY. Read as
+# The read comes back EMPTY BOTH where the id resolves nowhere and where there is
+# no server to ask — a container the host's socket was never mounted into, a
+# server not started yet, a `$TMUX_TMPDIR` that differs — and the STATUS tells
+# them apart no better: measured on tmux 3.4, an id resolving nowhere on a server
+# that IS there answers `0` and an empty stdout, no server at all answers 1 and
+# an empty stdout. `command -v tmux` catches only the machine with no BINARY,
+# which is why this fixture has a tmux that IS there and answers nothing. Read as
 # `gone`, the second one makes every binding of every other container on this
 # host read DEAD, which is the one answer that hands `lane-start` and `lane` the
 # takeover path — this clause's own collision, through its own exception.
