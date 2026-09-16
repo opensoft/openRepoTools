@@ -656,6 +656,28 @@ def test_a_mode_stamp_the_bin_loop_cannot_make_reads_as_a_refusal(tmp_path):
         "run that refused")
 
 
+def unguarded_mode_stamps(lines: list[str]) -> list[str]:
+    """Every `chmod` line in `lines` whose failure does not reach `die`.
+
+    THE HANDLER IS WHAT IS READ, AND NOT THE BARE `||` (Copilot round 1 on
+    #102). A stamp written `chmod 755 "$x" || true` carries a `||` and is the
+    exact defect this rule exists to stop — a mode-stamp failure that is not a
+    refusal — so the text after the `||` has to name `die`, on that line or, for
+    the two-line spelling this file uses, on the one below it. `{ rm -f -- …;
+    die …; }` is that handler too, which is why it is a word and not a prefix.
+    """
+    out = []
+    for number, line in enumerate(lines, 1):
+        if not line.strip().startswith("chmod "):
+            continue
+        handler = line.split("||", 1)[1] if "||" in line else ""
+        if line.rstrip().endswith("||"):
+            handler = lines[number] if number < len(lines) else ""
+        if not re.search(r"\bdie\b", handler):
+            out.append(f"{number}: {line.strip()}")
+    return out
+
+
 def test_every_mode_stamp_in_this_command_fails_through_die():
     """AND THE RULE IS ASKED OF EVERY SITE, NOT ONLY THE ONE ABOVE (#48).
 
@@ -664,20 +686,30 @@ def test_every_mode_stamp_in_this_command_fails_through_die():
     reason `test_repo_hygiene.py` asks its questions per name rather than of a
     list somebody keeps. Read out of the script's text, because a `chmod` that
     cannot fail in this suite is a `chmod` no run here reaches.
+
+    AND THE RULE IS PROVED TO HAVE TEETH in the same breath, against lines
+    written here: a check that accepted any `||` would accept `|| true`, which
+    is a handler and not a refusal.
     """
     lines = COMMAND.read_text(encoding="utf-8").splitlines()
-    stamps = [(number, line) for number, line in enumerate(lines, 1)
-              if line.strip().startswith("chmod ")]
+    stamps = [line for line in lines if line.strip().startswith("chmod ")]
     assert len(stamps) >= 5, (
         f"this command performs {len(stamps)} mode stamps; the shape this test "
         "reads has moved and it is now proving less than it says")
-    unguarded = [f"{number}: {line.strip()}" for number, line in stamps
-                 if "||" not in line]
+    unguarded = unguarded_mode_stamps(lines)
     assert not unguarded, (
         "every `chmod` this command performs must fail through `die` — exit 2 "
         "and a REFUSED line naming the target — never the shell's own 1 under "
         "`set -e`, which this toolset spends on \"findings were printed\":\n  "
         + "\n  ".join(unguarded))
+    assert unguarded_mode_stamps(['\tchmod 755 "$target"']) == [
+        '1: chmod 755 "$target"'], "an unguarded stamp is not caught"
+    assert unguarded_mode_stamps(['\tchmod 755 "$target" || true']) == [
+        '1: chmod 755 "$target" || true'], "`|| true` is a handler, not a refusal"
+    assert unguarded_mode_stamps(['\tchmod 644 "$t" || die "no."']) == []
+    assert unguarded_mode_stamps(['\tchmod 600 "$t" ||',
+                                  '\t\t{ rm -f -- "$t"; die "no."; }']) == [], (
+        "the two-line spelling this file uses must read as guarded")
 
 
 @pytest.mark.parametrize("name", RETIRED)
