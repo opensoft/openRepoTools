@@ -518,6 +518,17 @@ def staged_in(checkout: Path) -> str:
     return done.stdout
 
 
+def staged_mode_in(checkout: Path, rel: str) -> str:
+    """The MODE of `rel`'s stage-0 entry, or "" where the index has none.
+
+    `git ls-files -s` is where a staged mode is legible at all: `cat-file -p`
+    prints a blob's bytes and never its mode, which is the whole of #63.
+    """
+    done = subprocess.run(["git", "-C", str(checkout), "ls-files", "-s", "--", rel],
+                          capture_output=True, text=True, check=True)
+    return done.stdout.split()[0] if done.stdout.strip() else ""
+
+
 def adopted_checkout(tmp_path: Path, home: Path, env: dict) -> Path:
     """A workspace repository this workstation ADOPTS: created, seeded and
     pushed by an earlier run, carrying a file of the person's own on `main`,
@@ -540,6 +551,33 @@ def adopted_checkout(tmp_path: Path, home: Path, env: dict) -> Path:
         subprocess.run(["git", "-C", str(checkout), *args], check=True)
     (home / ".agents" / "workspace.yaml").unlink()
     return checkout
+
+
+def adopted_checkout_without(tmp_path: Path, home: Path, env: dict,
+                             rel: str = "handoffs/README.md"):
+    """An adopted checkout HEAD no longer carries `rel` in, and the template's
+    own bytes at that path — `(checkout, template_bytes, head)`.
+
+    EVERY TEST THAT REACHES STEP 7'S OWED-CANDIDATE BRANCH NEEDS THE SAME
+    THREE THINGS, and building them once per test is how two of them come to
+    differ in a way nobody meant. Step 7's outer test asks `HEAD:$rel` before
+    anything else, so a template path HEAD still carries never reaches that
+    branch at all: removing it from HEAD — committed and pushed, the way a
+    person's own `git rm` leaves a workspace — is the only way in. The bytes
+    are read BEFORE the removal because they are what this command's own seed
+    wrote there, which is exactly what "an earlier run's own leftover" looks
+    like, and `head` is what every refusal below is then checked against. The
+    step 6a test takes it too, for the one of the three it does need: a
+    template file that is genuinely missing, so "nothing was written" is a
+    question the checkout can answer.
+    """
+    checkout = adopted_checkout(tmp_path, home, env)
+    template_bytes = (checkout / rel).read_text(encoding="utf-8")
+    for args in (["rm", "-q", "--", rel],
+                 ["commit", "-q", "-m", f"somebody removed {rel}"],
+                 ["push", "-q", "origin", "HEAD:main"]):
+        subprocess.run(["git", "-C", str(checkout), *args], check=True)
+    return checkout, template_bytes, head_of(checkout)
 
 
 @pytest.mark.parametrize("state", ["untracked", "modified", "deleted"])
@@ -793,16 +831,8 @@ def test_a_staged_edit_at_a_missing_path_is_refused_even_when_the_worktree_reads
     """
     home = tmp_path / "home"
     env = fake_gh(tmp_path)
-    checkout = adopted_checkout(tmp_path, home, env)
-    # What the template substitutes to, captured from the first run's own
-    # seed before the path is removed from HEAD below.
-    template_bytes = (checkout / "handoffs" / "README.md").read_text(
-        encoding="utf-8")
-    for args in (["rm", "-q", "--", "handoffs/README.md"],
-                 ["commit", "-q", "-m", "somebody removed the handoffs README"],
-                 ["push", "-q", "origin", "HEAD:main"]):
-        subprocess.run(["git", "-C", str(checkout), *args], check=True)
-    before_head = head_of(checkout)
+    checkout, template_bytes, before_head = adopted_checkout_without(
+        tmp_path, home, env)
 
     foreign = checkout / "handoffs" / "README.md"
     foreign.parent.mkdir(parents=True, exist_ok=True)
@@ -854,14 +884,8 @@ def test_a_symlink_at_a_missing_template_path_is_refused_not_followed(
     """
     home = tmp_path / "home"
     env = fake_gh(tmp_path)
-    checkout = adopted_checkout(tmp_path, home, env)
-    template_bytes = (checkout / "handoffs" / "README.md").read_text(
-        encoding="utf-8")
-    for args in (["rm", "-q", "--", "handoffs/README.md"],
-                 ["commit", "-q", "-m", "somebody removed the handoffs README"],
-                 ["push", "-q", "origin", "HEAD:main"]):
-        subprocess.run(["git", "-C", str(checkout), *args], check=True)
-    before_head = head_of(checkout)
+    checkout, template_bytes, before_head = adopted_checkout_without(
+        tmp_path, home, env)
 
     link = checkout / "handoffs" / "README.md"
     link.parent.mkdir(parents=True, exist_ok=True)
@@ -1078,6 +1102,426 @@ def test_a_template_path_with_an_unresolved_merge_conflict_is_refused(tmp_path):
         "a commit was made despite the refusal")
     assert remote_main(tmp_path) == before_head, (
         "something was pushed despite the refusal")
+
+
+# --- the four hardening gaps of #49, #62, #63 and #69 -----------------------
+
+def test_a_git_status_this_command_cannot_run_is_refused_not_read_as_clean(
+        tmp_path):
+    """AN EMPTY CHANGE LIST FROM A FAILED `git status` IS NOT "NOTHING
+    UNRELATED" (#49).
+
+    Step 6a asked the question as
+    `git … status … 2>/dev/null | sed … || :`. The redirect threw away git's
+    own diagnostic and the `|| :` turned any non-zero exit of the pipeline —
+    under this file's `set -o pipefail`, `git status`'s own — into a plain
+    empty string, which is exactly what a clean checkout produces. So a
+    checkout this command could not even PUT the question to passed the one
+    gate that exists to refuse before a byte is written, and step 7 wrote
+    template bytes into it.
+
+    A corrupt `.git/index` is the cheapest real shape of that: `rev-parse`
+    still answers, so step 6's own checks pass and the run reaches step 6a,
+    and `git status` exits 128 with `fatal: index file corrupt`. The refusal
+    carries git's own words under it, the way the clone and the commit
+    already do.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    # A template file the workspace no longer has, so this run HAS a byte to
+    # write the moment the gate lets it through — the thing the assertion
+    # below can then look for. (Its template bytes are not this test's
+    # question: what it asks is whether anything was written at all.)
+    checkout, _, before_head = adopted_checkout_without(tmp_path, home, env)
+    (checkout / ".git" / "index").write_bytes(b"not an index at all, garbage\n")
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "REFUSED:" in result.stderr, result.stderr
+    assert f"could not ask git what {checkout} carries" in result.stderr, (
+        result.stderr)
+    assert "What it said:" in result.stderr, result.stderr
+    assert "    | " in result.stderr, (
+        f"the refusal kept none of git's own stderr:\n{result.stderr}")
+    # GIT'S OWN SENTENCE, not one particular wording of it: which one a corrupt
+    # index draws (`bad signature`, `index file smaller than expected`, `index
+    # file corrupt`) depends on how it is corrupt and on the version. What the
+    # refusal owes a person is the `fatal:` line naming the index, and that is
+    # what is asserted.
+    assert "fatal:" in result.stderr, (
+        f"the refusal dropped the only sentence that says why:\n"
+        f"{result.stderr}")
+    assert "index" in result.stderr, (
+        f"git's sentence reached the person but says nothing about the index "
+        f"it could not read:\n{result.stderr}")
+    assert not (checkout / "handoffs" / "README.md").exists(), (
+        "a template byte was written past the gate that could not be asked")
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+    assert not (home / ".agents" / "workspace.yaml").exists(), (
+        "the pointer file was written by a run that refused")
+
+
+@pytest.mark.parametrize("ancestor", ["symlink", "regular-file"])
+def test_an_ancestor_of_a_template_path_that_is_not_a_directory_is_refused(
+        tmp_path, ancestor):
+    """THE LEAF WAS ASKED ABOUT AND ITS PARENTS WERE NOT (#62).
+
+    `path_kind` asks what is at `$rel` itself; nothing asked what is at
+    `handoffs`, and an adopted checkout can carry a TRACKED symlink there —
+    a person whose `handoffs` is a link into another tree of their own,
+    committed, which step 6a reads as a clean worktree because it IS what
+    HEAD says. Every test step 7 then makes answers as though nothing were at
+    `handoffs/README.md` at all: `[ -e ]` and `[ -L ]` are false where the
+    link's target holds no such file, and git has no notion of a path inside
+    a tracked symlink, so `:$rel`, `HEAD:$rel` and `ls-files -u` are false
+    too. The MISSING branch was reached, its `mkdir -p` created nothing
+    (the link resolves to a directory that is already there) and its `cp`
+    wrote this run's template bytes THROUGH the link, outside the checkout —
+    and only the `git add` two steps later noticed, with
+    `fatal: … is beyond a symbolic link`, after the bytes had landed.
+
+    A regular file committed at that same component is the same walk's other
+    answer: there the `mkdir -p` FAILS, and a failing `mkdir` under this
+    file's `set -e` exits 1 — the code this toolset spends on "findings were
+    printed" — from a run that meant to refuse with 2 and never said why.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout = adopted_checkout(tmp_path, home, env)
+    outside = tmp_path / "another-tree-of-their-own"
+    outside.mkdir()
+    # IN HEAD, which is what makes step 6a see a clean worktree and hand this
+    # to step 7 — the state the finding is about.
+    subprocess.run(["git", "-C", str(checkout), "rm", "-q", "-r", "--",
+                    "handoffs"], check=True)
+    if ancestor == "symlink":
+        (checkout / "handoffs").symlink_to(outside)
+    else:
+        (checkout / "handoffs").write_text(
+            "a file where the template wants a directory\n", encoding="utf-8")
+    for args in (["add", "--", "handoffs"],
+                 ["commit", "-q", "-m", "handoffs is not a directory here"],
+                 ["push", "-q", "origin", "HEAD:main"]):
+        subprocess.run(["git", "-C", str(checkout), *args], check=True)
+    before_head = head_of(checkout)
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    if ancestor == "symlink":
+        assert f"{checkout / 'handoffs'} is a symlink to {outside}" in \
+            result.stderr, result.stderr
+        assert list(outside.iterdir()) == [], (
+            f"the seed wrote through the link: {list(outside.iterdir())}")
+    else:
+        assert f"{checkout / 'handoffs'} is not a directory" in result.stderr, (
+            result.stderr)
+        assert (checkout / "handoffs").read_text(encoding="utf-8") == \
+            "a file where the template wants a directory\n", (
+            "the person's own file at that component was written over")
+    assert "handoffs/README.md sits under it" in result.stderr, result.stderr
+    assert staged_in(checkout) == "", (
+        f"the refusal staged {staged_in(checkout)!r}")
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+    assert not (home / ".agents" / "workspace.yaml").exists(), (
+        "the pointer file was written by a run that refused")
+
+
+def test_a_staged_entry_whose_blob_is_gone_is_refused_not_read_as_no_entry(
+        tmp_path):
+    """`cat-file -e ":$rel"` ANSWERS FALSE IN TWO STATES (Copilot round 3 on
+    PR #101, against the staged-mode guard's own diff).
+
+    It resolves the name through the index and then looks the OBJECT up, so it
+    fails both where there is no stage-0 entry and where there is one whose
+    blob the object store has lost. Gating on it spent the second as though it
+    were the first: the mode guard was skipped, the index comparison took its
+    "no entry" arm, and a worktree that reads back as the template was
+    accepted — after which step 8's `git add` replaced what the person had
+    staged with this run's copy and said nothing. Measured before the fix: the
+    staged sha changes.
+
+    `ls-files -s` reads the index and never the object store, so presence is
+    its answer, and an entry whose blob cannot be read is refused on its own
+    terms.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout, template_bytes, before_head = adopted_checkout_without(
+        tmp_path, home, env)
+
+    foreign = checkout / "handoffs" / "README.md"
+    foreign.parent.mkdir(parents=True, exist_ok=True)
+    foreign.write_text("this is somebody's own staged edit\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(checkout), "add", "--",
+                    "handoffs/README.md"], check=True)
+    staged_sha = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", ":handoffs/README.md"],
+        capture_output=True, text=True, check=True).stdout.strip()
+    # …the worktree now reads back as the template, which is what made the old
+    # "no entry" arm accept it…
+    foreign.write_text(template_bytes, encoding="utf-8")
+    # …and the object behind the index entry is gone, which is what made the
+    # entry look absent.
+    (checkout / ".git" / "objects" / staged_sha[:2] / staged_sha[2:]).unlink()
+    gone = subprocess.run(
+        ["git", "-C", str(checkout), "cat-file", "-e", ":handoffs/README.md"],
+        capture_output=True, text=True, check=False)
+    assert gone.returncode != 0, "the blob was supposed to be unreadable now"
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "cannot read what is staged there" in result.stderr, result.stderr
+    still = subprocess.run(
+        ["git", "-C", str(checkout), "ls-files", "-s", "--",
+         "handoffs/README.md"], capture_output=True, text=True, check=True)
+    assert staged_sha in still.stdout, (
+        f"the person's staged entry was replaced: {still.stdout!r}")
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+    assert not (home / ".agents" / "workspace.yaml").exists(), (
+        "the pointer file was written by a run that refused")
+
+
+@pytest.mark.parametrize("state", ["checked-out", "deinitialized"])
+def test_a_submodule_at_a_template_paths_ancestor_is_refused(tmp_path, state):
+    """A DIRECTORY THAT IS ANOTHER REPOSITORY'S IS NOT THIS ONE'S TO WRITE IN
+    (Copilot round 2 on PR #101, against the ancestor walk's own diff).
+
+    A tracked SUBMODULE at `handoffs` is a gitlink in this repository and a
+    whole repository on disk, so the walk's symlink and not-a-directory
+    questions both pass it: `-d` is true and `-L` is false. Step 6a sees a
+    clean worktree, because a clean submodule reports nothing, and every
+    presence test in step 7 answers false, because a gitlink carries no
+    `handoffs/README.md` for `:$rel` or `HEAD:$rel` to find. The MISSING
+    branch then wrote this run's template bytes INSIDE that nested repository
+    and the `git add` two steps later answered `fatal: Pathspec … is in
+    submodule …` — with the bytes already there.
+
+    Both shapes, because the index is what makes it a submodule and only one
+    of them is on disk: a checked-out submodule has its own `.git`, and a
+    `deinit`ed one is an empty directory with nothing in it at all — and
+    `git add` fails identically for both.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout = adopted_checkout(tmp_path, home, env)
+
+    # A repository of somebody's own, mounted where the template wants a
+    # directory. `protocol.file.allow` because git refuses a local-path
+    # submodule without it since 2.38 (CVE-2022-39253).
+    nested = tmp_path / "a-nested-repository"
+    nested.mkdir()
+    for args in (["init", "-q", "-b", "main", str(nested)],
+                 ["-C", str(nested), "config", "user.email", "wip@example.invalid"],
+                 ["-C", str(nested), "config", "user.name", "wip init tests"]):
+        subprocess.run(["git", *args], check=True)
+    (nested / "file.txt").write_text("somebody's own nested work\n", encoding="utf-8")
+    for args in (["add", "-A"], ["commit", "-q", "-m", "a nested repository"]):
+        subprocess.run(["git", "-C", str(nested), *args], check=True)
+
+    subprocess.run(["git", "-C", str(checkout), "rm", "-q", "-r", "--",
+                    "handoffs"], check=True)
+    subprocess.run(["git", "-C", str(checkout), "-c",
+                    "protocol.file.allow=always", "submodule", "add", "-q",
+                    str(nested), "handoffs"], check=True)
+    for args in (["commit", "-q", "-m", "handoffs is a submodule here"],
+                 ["push", "-q", "origin", "HEAD:main"]):
+        subprocess.run(["git", "-C", str(checkout), *args], check=True)
+    if state == "deinitialized":
+        subprocess.run(["git", "-C", str(checkout), "-c",
+                        "protocol.file.allow=always", "submodule", "deinit",
+                        "-f", "--", "handoffs"], check=True)
+        assert not (checkout / "handoffs" / ".git").exists()
+    before_head = head_of(checkout)
+    clean = subprocess.run(["git", "-C", str(checkout), "status", "--porcelain"],
+                           capture_output=True, text=True, check=True)
+    assert clean.stdout == "", (
+        f"a clean submodule is supposed to be invisible to status: "
+        f"{clean.stdout!r}")
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"{checkout / 'handoffs'} is another git repository" in \
+        result.stderr, result.stderr
+    assert "handoffs/README.md sits under it" in result.stderr, result.stderr
+    assert not (checkout / "handoffs" / "README.md").exists(), (
+        "the seed wrote into somebody else's repository")
+    assert staged_in(checkout) == "", (
+        f"the refusal staged {staged_in(checkout)!r}")
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+    assert not (home / ".agents" / "workspace.yaml").exists(), (
+        "the pointer file was written by a run that refused")
+
+
+def test_a_template_path_staged_at_another_mode_is_refused_not_restaged(
+        tmp_path):
+    """`cat-file -p` PRINTS A BLOB'S BYTES AND NEVER ITS MODE (#63).
+
+    The owed-candidate branch trusted the index the moment its blob matched
+    the template — so a path a person had staged with `git add --chmod=+x`,
+    byte-identical to the template and executable, read as "the index carries
+    the template". Step 8's `git add` then restaged that path from the
+    WORKTREE, at the worktree's own mode, and committed it: their `100755`
+    replaced by `100644` without a word.
+
+    Every file in `templates/workspace-root/` is a plain `100644` and this
+    command has never chmod'ed anything it wrote, so a stage-0 entry at any
+    other mode is somebody's own — which in this branch is a refusal, the
+    same answer the bytes themselves already get, and not a thing to stage
+    over.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout, template_bytes, before_head = adopted_checkout_without(
+        tmp_path, home, env)
+
+    owed = checkout / "handoffs" / "README.md"
+    owed.parent.mkdir(parents=True, exist_ok=True)
+    owed.write_text(template_bytes, encoding="utf-8")
+    subprocess.run(["git", "-C", str(checkout), "add", "--chmod=+x", "--",
+                    "handoffs/README.md"], check=True)
+    # `--chmod` moves the INDEX and leaves the worktree file alone, which is
+    # the whole shape: the bytes match on both sides and only the mode does
+    # not.
+    assert staged_mode_in(checkout, "handoffs/README.md") == "100755"
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert (f"{checkout} has handoffs/README.md staged with mode 100755"
+            in result.stderr), result.stderr
+    assert staged_mode_in(checkout, "handoffs/README.md") == "100755", (
+        "the person's staged mode was replaced by the worktree's")
+    assert owed.read_text(encoding="utf-8") == template_bytes, (
+        "the worktree file was written over")
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+    assert not (home / ".agents" / "workspace.yaml").exists(), (
+        "the pointer file was written by a run that refused")
+
+
+@pytest.mark.parametrize("how", ["untracked", "staged-then-chmod"])
+def test_an_executable_template_path_is_refused_not_seeded_at_100755(
+        tmp_path, how):
+    """THE INDEX IS ONLY HALF THE MODE (Copilot round 1 on PR #101, against
+    the #63 fix's own diff).
+
+    Step 8 stages from the WORKTREE, so an owed candidate whose file carries
+    the execute bit is recorded in the seed commit as `100755` and pushed —
+    and it reaches that point two ways the stage-0 mode question never sees:
+    an UNTRACKED template path whose bytes match the template and whose file
+    somebody chmod'ed, and a path staged `100644` whose worktree file got the
+    bit afterwards. This command copies the template's own bytes from a 0644
+    file and has never chmod'ed anything it wrote, so an executable file at a
+    template path is not its leftover whatever its bytes say.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout, template_bytes, before_head = adopted_checkout_without(
+        tmp_path, home, env)
+
+    owed = checkout / "handoffs" / "README.md"
+    owed.parent.mkdir(parents=True, exist_ok=True)
+    owed.write_text(template_bytes, encoding="utf-8")
+    if how == "staged-then-chmod":
+        # Staged at the mode this command itself writes, so the stage-0 check
+        # is satisfied and only the worktree's own bit is left to catch it.
+        subprocess.run(["git", "-C", str(checkout), "add", "--",
+                        "handoffs/README.md"], check=True)
+        assert staged_mode_in(checkout, "handoffs/README.md") == "100644"
+    owed.chmod(0o755)
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert f"{owed} is executable" in result.stderr, result.stderr
+    assert oct(owed.stat().st_mode & 0o777) == "0o755", (
+        "the refusal changed the person's own mode")
+    assert owed.read_text(encoding="utf-8") == template_bytes, (
+        "the worktree file was written over")
+    if how == "staged-then-chmod":
+        assert staged_mode_in(checkout, "handoffs/README.md") == "100644", (
+            "what was staged was changed by a run that refused")
+    else:
+        assert staged_in(checkout) == "", (
+            f"the refusal staged {staged_in(checkout)!r}")
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+    assert not (home / ".agents" / "workspace.yaml").exists(), (
+        "the pointer file was written by a run that refused")
+
+
+def test_a_skip_worktree_template_path_is_named_and_never_seeded(tmp_path):
+    """A PATH HEAD CARRIES AND THE DISK DOES NOT IS NOT THE SAME AS A PATH
+    THAT IS SIMPLY THERE (#69).
+
+    `skip-worktree` — which is also what `git sparse-checkout` sets — tells
+    git not to compare the worktree at that path at all: HEAD carries it, the
+    stage-0 entry carries it, `git status` is clean, and the file is
+    physically absent. That answered step 7's outer question exactly as a
+    person's own deliberate `git rm` does, so the run `continue`d past it,
+    counted it as neither seeded nor owed, printed "the workspace already
+    carries every template file" and wrote the pointer file — while a
+    template path this command seeds, and the lane tooling reads, was not on
+    disk at all.
+
+    The principle above still stands, so the answer is not to seed over it:
+    a template path HEAD already carries is the person's, and this command
+    has never modified a committed file. What it stops being is INVISIBLE.
+    It is named in the summary, in one line, and nothing is written, staged
+    or committed for it.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout = adopted_checkout(tmp_path, home, env)
+    before_head = head_of(checkout)
+
+    lanes = checkout / "lanes" / "LANES.md"
+    subprocess.run(["git", "-C", str(checkout), "update-index",
+                    "--skip-worktree", "--", "lanes/LANES.md"], check=True)
+    lanes.unlink()
+    clean = subprocess.run(["git", "-C", str(checkout), "status", "--porcelain"],
+                           capture_output=True, text=True, check=True)
+    assert clean.stdout == "", (
+        f"skip-worktree is supposed to make this invisible to status: "
+        f"{clean.stdout!r}")
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ("lanes/LANES.md: HEAD carries it, the index marks it "
+            "skip-worktree, and it is not on disk") in result.stdout, (
+        result.stdout)
+    assert not lanes.exists(), (
+        "the seed wrote into a path the index keeps off the disk")
+    assert staged_in(checkout) == "", (
+        f"something was staged for it: {staged_in(checkout)!r}")
+    assert head_of(checkout) == before_head, (
+        "a commit was made for a path HEAD already carries")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed for a path HEAD already carries")
+    # AND THE RUN STILL FINISHES: this is a line to read, not a refusal.
+    assert (home / ".agents" / "workspace.yaml").exists(), (
+        "the run stopped over a path it only had to name")
 
 
 # --- one answer to one question, across the seam between two toolsets -------
