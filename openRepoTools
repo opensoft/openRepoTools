@@ -1629,7 +1629,7 @@ wip_fetch_template_file() {
 wip_init() {
 	local config target checkout ref rel dest seeded=0 owed=0 kind
 	local existing_repo existing_path
-	local ancestor rest comp staged_mode index_tag ancestor_mode
+	local ancestor rest comp staged_mode staged_entry index_tag ancestor_mode
 	# THE TEMPLATE PATHS THIS CHECKOUT HAS IN HEAD AND NOT ON DISK, because the
 	# index marks them `skip-worktree` (#69). Counted as well as collected, for
 	# the reason `written` is: an empty array expanded as `"${sparse_paths[@]}"`
@@ -2112,13 +2112,47 @@ $(sed -e 's/^/    /' -- "$WIP_LAST_OUT")
 				# local questions: the answer does not depend on the template's
 				# bytes, and a machine that cannot reach the network deserves
 				# the refusal that names the real reason rather than one about
-				# a fetch. A mode this command could not READ is refused too: an
-				# unreadable answer is never a matching one.
-				if git -C "$checkout" cat-file -e ":$rel" 2>/dev/null; then
-					staged_mode="$(git -C "$checkout" ls-files -s -- "$rel" 2>/dev/null |
-						awk 'NR == 1 { print $1 }' || :)"
+				# a fetch.
+				# AND THE INDEX IS ASKED OF THE INDEX (#101 round 3, on this
+				# guard's own diff). `cat-file -e ":$rel"` answers false in TWO
+				# states — no stage-0 entry at all, and an entry whose BLOB the
+				# object store has lost — because it resolves the name through
+				# the index and then looks the OBJECT up. Gating on it spent the
+				# second state as though it were the first: the mode guard was
+				# skipped, the comparison below took its "no entry" arm, a
+				# worktree that reads back as the template was accepted, and
+				# step 8's `add` replaced what the person had staged with this
+				# run's copy — measured, the staged sha changes and the `add`
+				# reports nothing. `ls-files -s` reads the index and never the
+				# object store, so presence is ITS answer now; a read that FAILS
+				# is a refusal rather than an empty index, which is #49's own
+				# lesson one question over; and an entry whose blob cannot be
+				# read gets its own refusal, because an entry this command
+				# cannot READ is not one it may stage over. `$3` is the stage
+				# column and `$4` the path — every path here comes from
+				# `$WIP_TEMPLATE_FILES`, nine fixed ASCII paths.
+				if staged_entry="$(git -C "$checkout" ls-files -s -- "$rel" 2>/dev/null)"; then
+					staged_mode="$(printf '%s\n' "$staged_entry" |
+						awk -v p="$rel" '$3 == "0" && $4 == p { print $1; exit }')"
+				else
+					die "could not read what $checkout has staged at $rel, so this run cannot tell whether
+    anything is staged there at all — and an index this command could not read is never an
+    empty one. Nothing beyond this run's own template bytes was written into that checkout,
+    and nothing already staged was changed.
+    Check that checkout (\`git status\`), then re-run:
+        openRepoTools wip init"
+				fi
+				if [ -n "$staged_mode" ]; then
+					git -C "$checkout" cat-file -e ":$rel" 2>/dev/null ||
+						die "$checkout has $rel staged and this command cannot read what is staged there: the
+    index carries an entry and git's object store has no blob behind it. An entry this command
+    cannot READ is not one it may stage over — step 8's \`git add\` would replace it with this
+    run's copy, silently, and commit that. Nothing beyond this run's own template bytes was
+    written into that checkout, and nothing already staged was changed.
+    Repair that object (\`git fsck\`), or commit, stash or unstage that path, then re-run:
+        openRepoTools wip init"
 					[ "$staged_mode" = "100644" ] ||
-						die "$checkout has $rel staged with mode ${staged_mode:-<unreadable>}, and every file in
+						die "$checkout has $rel staged with mode $staged_mode, and every file in
     $SHAPE_REPOSITORY's $WIP_TEMPLATE_DIR is a plain 100644 — this command has never chmod'ed
     anything it wrote, so a mode of its own at that path is somebody's own \`git add\`, not an
     earlier run's leftover, whatever the staged bytes say. Staging this run's copy over it would
@@ -2147,7 +2181,7 @@ $(sed -e 's/^/    /' -- "$WIP_LAST_OUT")
 				# whose bytes are not the template fails it exactly as the
 				# worktree's would.
 				if cmp -s -- "$dest" "$checkout/$rel" &&
-					{ ! git -C "$checkout" cat-file -e ":$rel" 2>/dev/null ||
+					{ [ -z "$staged_mode" ] ||
 					git -C "$checkout" cat-file -p ":$rel" 2>/dev/null |
 						cmp -s -- "$dest" -; }
 				then

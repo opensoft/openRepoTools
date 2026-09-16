@@ -1234,6 +1234,65 @@ def test_an_ancestor_of_a_template_path_that_is_not_a_directory_is_refused(
         "the pointer file was written by a run that refused")
 
 
+def test_a_staged_entry_whose_blob_is_gone_is_refused_not_read_as_no_entry(
+        tmp_path):
+    """`cat-file -e ":$rel"` ANSWERS FALSE IN TWO STATES (Copilot round 3 on
+    PR #101, against the staged-mode guard's own diff).
+
+    It resolves the name through the index and then looks the OBJECT up, so it
+    fails both where there is no stage-0 entry and where there is one whose
+    blob the object store has lost. Gating on it spent the second as though it
+    were the first: the mode guard was skipped, the index comparison took its
+    "no entry" arm, and a worktree that reads back as the template was
+    accepted — after which step 8's `git add` replaced what the person had
+    staged with this run's copy and said nothing. Measured before the fix: the
+    staged sha changes.
+
+    `ls-files -s` reads the index and never the object store, so presence is
+    its answer, and an entry whose blob cannot be read is refused on its own
+    terms.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout, template_bytes, before_head = adopted_checkout_without(
+        tmp_path, home, env)
+
+    foreign = checkout / "handoffs" / "README.md"
+    foreign.parent.mkdir(parents=True, exist_ok=True)
+    foreign.write_text("this is somebody's own staged edit\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(checkout), "add", "--",
+                    "handoffs/README.md"], check=True)
+    staged_sha = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", ":handoffs/README.md"],
+        capture_output=True, text=True, check=True).stdout.strip()
+    # …the worktree now reads back as the template, which is what made the old
+    # "no entry" arm accept it…
+    foreign.write_text(template_bytes, encoding="utf-8")
+    # …and the object behind the index entry is gone, which is what made the
+    # entry look absent.
+    (checkout / ".git" / "objects" / staged_sha[:2] / staged_sha[2:]).unlink()
+    gone = subprocess.run(
+        ["git", "-C", str(checkout), "cat-file", "-e", ":handoffs/README.md"],
+        capture_output=True, text=True, check=False)
+    assert gone.returncode != 0, "the blob was supposed to be unreadable now"
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "cannot read what is staged there" in result.stderr, result.stderr
+    still = subprocess.run(
+        ["git", "-C", str(checkout), "ls-files", "-s", "--",
+         "handoffs/README.md"], capture_output=True, text=True, check=True)
+    assert staged_sha in still.stdout, (
+        f"the person's staged entry was replaced: {still.stdout!r}")
+    assert head_of(checkout) == before_head, (
+        "a commit was made despite the refusal")
+    assert remote_main(tmp_path) == before_head, (
+        "something was pushed despite the refusal")
+    assert not (home / ".agents" / "workspace.yaml").exists(), (
+        "the pointer file was written by a run that refused")
+
+
 @pytest.mark.parametrize("state", ["checked-out", "deinitialized"])
 def test_a_submodule_at_a_template_paths_ancestor_is_refused(tmp_path, state):
     """A DIRECTORY THAT IS ANOTHER REPOSITORY'S IS NOT THIS ONE'S TO WRITE IN
