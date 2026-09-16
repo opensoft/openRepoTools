@@ -6775,7 +6775,27 @@ binding_window_state() {   # <host> <window sub-field> [legacy]
   # here: `lane` writes nothing to the register by design (Addendum 1), so
   # keeping that field current is an act somebody has to rule on
   # (opensoft/openRepoTools#95).
-  [ -n "$bws_now" ] || { printf 'gone\n'; return 0; }
+  #
+  # AND AN EMPTY ANSWER IS TWO FACTS, OF WHICH ONLY ONE IS DEAD (Copilot round 9
+  # on openRepoTools#83). `tmux display-message -t <@id>` exits 1 with NOTHING on
+  # stdout both where the id resolves nowhere and where there is no server to ask
+  # at all — a container the host's socket was never mounted into, a server not
+  # started yet, a `$TMUX_TMPDIR` that differs, a socket this user cannot read.
+  # `command -v tmux` catches only the workstation that has no tmux BINARY, and
+  # the two are not the same workstation. Read as `gone`, the second one makes
+  # EVERY binding of every other container on this host read DEAD — the one
+  # answer that hands `lane-start` and `lane` the takeover path — which is this
+  # clause's own collision reached through its own exception, on the very estate
+  # the exception was written for. The contract three lines above already says
+  # *"no tmux to ask"* is `unknown`; this is the code saying it too.
+  #
+  # SO THE SERVER IS ASKED A QUESTION THAT DOES NOT MENTION THE ID, and only a
+  # server that ANSWERS may pronounce. One extra fork, and only on the read that
+  # was about to say DEAD.
+  if [ -z "$bws_now" ]; then
+    tmux list-windows -a -F '#{window_id}' >/dev/null 2>&1 || { printf 'unknown\n'; return 0; }
+    printf 'gone\n'; return 0
+  fi
   [ "$bws_now" = "${bws_ref%%:*}" ] || { printf 'unknown\n'; return 0; }
   printf 'live\n'
   return 0

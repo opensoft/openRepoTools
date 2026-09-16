@@ -1768,6 +1768,15 @@ Amendment 6(d)'s retire act and openRepoTools#30's takeover path apply to that
 case as they stand. A window on another **host** is `unknown` and never `gone`:
 an id from another machine resolving here would be a coincidence.
 
+**And so is a window this place cannot ASK about** — no tmux binary, no server
+running, a socket this user cannot read, a `$TMUX_TMPDIR` that differs. `tmux`
+answers an id that resolves nowhere and a server that is not there with the SAME
+empty line, and only one of the two is a dead pane; so the server is asked a
+question that does not mention the id, and a server that does not answer leaves
+the binding `unknown`. The alternative is a container the host's socket was
+never mounted into pronouncing every other container's lane DEAD, which is this
+clause's own collision arriving through its own exception.
+
 ### The second place asks
 
 `lane-start <repo> <n>` and `lane <name>` run from a place that is not the

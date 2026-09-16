@@ -10465,6 +10465,25 @@ export FAKE_TMUX_WINDOWS="$bind_save_wins2"
 run "$E" binding repoBind-17
 is   "…while an id that resolves NOWHERE is the dead binding it always was" \
      "$(printf '%s' "$out" | cut -f8)" "gone"
+# AND A TMUX THAT CANNOT BE ASKED IS NOT A DEAD WINDOW EITHER (Copilot round 9).
+# `tmux display-message -t <@id>` exits 1 with an empty stdout BOTH where the id
+# resolves nowhere and where there is no server to ask — a container the host's
+# socket was never mounted into, a server not started yet, a `$TMUX_TMPDIR` that
+# differs. `command -v tmux` catches only the machine with no BINARY. Read as
+# `gone`, the second one makes every binding of every other container on this
+# host read DEAD, which is the one answer that hands `lane-start` and `lane` the
+# takeover path — this clause's own collision, through its own exception.
+mkdir -p "$SANDBOX/deadtmux"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$SANDBOX/deadtmux/tmux"
+chmod +x "$SANDBOX/deadtmux/tmux"
+run env PATH="$SANDBOX/deadtmux:$PATH" "$E" binding repoBind-17
+is   "a tmux that answers NOTHING is no server to ask, which is unknown and never dead" \
+     "$(printf '%s' "$out" | cut -f8)" "unknown"
+is   "…and the binding it could not pronounce on still reads BOUND, to the place it names" \
+     "$(printf '%s' "$out" | cut -f3)" "cloudsess:9 @66"
+run env PATH="$SANDBOX/deadtmux:$PATH" "$E" binding repoBind-15
+is   "…and a LIVE window of this server reads unknown there too, rather than live" \
+     "$(printf '%s' "$out" | cut -f8)" "unknown"
 
 # AND THE GUARD'S WINDOW DISJUNCT IS THREE TESTS AND NOT ONE. It exists for the
 # `/clear`, where the harness minted a new id and the binding's window is still
