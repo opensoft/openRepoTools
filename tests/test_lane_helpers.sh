@@ -87,7 +87,20 @@ cleanup() {
   [ -n "${SANDBOX:-}" ] && [ -d "$SANDBOX" ] && rm -rf -- "$SANDBOX"
   return 0
 }
-trap cleanup EXIT INT TERM
+# AND A SIGNAL HANDLER THAT CLEANS UP MUST ALSO EXIT. `tests/run.sh` states
+# this rule for its own lock — *"a handler that only cleans up and RETURNS
+# releases the lock while this suite carries on running, which is the collision
+# the lock exists for"* — and one handler on all three signals broke it here in
+# the other direction. Measured 2026-09-16: a `TERM` sent to a run somebody
+# wanted stopped removed `$SANDBOX` and then RETURNED, so the run carried on
+# against a sandbox that was gone — every case after it `env:
+# '.../bin/lane-start': No such file or directory` — and it printed
+# `1567 passed, 233 failed`. A killed run that reports two hundred failures is a
+# transcript that lies about this repository, and somebody reads those.
+# `EXIT` still returns, because the status it carries is the suite's own.
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 
 export HOME="$SANDBOX/home"
 export TMPDIR="$SANDBOX/tmp"
@@ -7659,12 +7672,26 @@ is    "…and nothing was written" "$(grep -c '^RESUMED' "$LOGD/repoHF-7.md")" 0
 
 # ------------------------------------------ 2. /ctx — the record, then the pane
 
-# WHICH `lane` THE COMMAND CAN SEE IS THE QUESTION IN THREE OF THE CASES BELOW
-# (Amendment 18 Addendum 2 (i-8)), so each of them runs on a PATH THIS FILE
-# BUILT rather than on whatever the workstation happens to carry:
-# `openRepoTools#43` places `lane` in `~/.local/bin`, and a case that asked
-# "what happens where there is no `lane`" against a workstation that has one
-# would go green on the answer to a different question.
+# WHAT TMUX IS ASKED TO START CHANGED WITH `openRepoTools#94`, and these three
+# cases are where that is held. It used to be THE LAUNCH: `lane <name>` where
+# that word was on PATH, `pclaude --lane <lane> <profile>` where it was not,
+# with `LANE_START_FRESH=1` in front of it — so this command had to decide
+# which of Amendment 18 Addendum 2 (i-8)'s two doors it could SEE, and had to
+# read a `lane` on PATH to find out whether it was even this estate's word.
+#
+# NONE OF THAT IS HERE ANY MORE. What tmux starts is this command's own
+# `--supervise` mode, BY ABSOLUTE PATH, and the supervisor takes (i-8)'s second
+# door one level down. So the three cases below run THE SAME ACT on three
+# different PATHs — no `lane`, this estate's `lane`, somebody else's `lane` —
+# and the assertion is that the respawn line is the same every time. That is a
+# stronger property than the one they held before: a respawn is the one act no
+# later refusal can undo, and what it starts now depends on nothing a person's
+# shell profile can change.
+#
+# Each still runs on a PATH THIS FILE BUILT rather than on whatever the
+# workstation happens to carry: `openRepoTools#43` places `lane` in
+# `~/.local/bin`, and a case that asked "what happens where there is no `lane`"
+# against a workstation that has one would go green on a different question.
 a17_path_without() {   # <word> — this section's PATH with every directory that holds <word> taken out
   a17p_want="$1"
   printf '%s' "$A17PATH" | tr ':' '\n' | while IFS= read -r a17p_d; do
@@ -7683,67 +7710,77 @@ run env PATH="$A17PATH_NOLANE" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION
 is    "lane-handoff --restart exits 0" "$rc" 0
 a17_tmux="$(cat "$FAKE_TMUX_A17_LOG")"
 has   "…respawning the lane's own pane" "$a17_tmux" "respawn-pane -k -t hfsess:@21.%21"
-# WITH NO `lane` ON PATH — which is this sandbox, and every workstation until
-# `openRepoTools#43` places that word — the line is the launcher's, which is
-# the door Amendment 18 Addendum 2 (i-8) leaves open in the same sentence that
-# names `lane <name>`: *"or through the launcher directly"*. The case below
-# asks for the word itself, where it is there to be seen.
-has   "…with no \`lane\` on PATH, through the launcher, with --lane BEFORE the profile" "$a17_tmux" "pclaude --lane repoHF-5 team-05a"
-has   "…and the seam that makes the new session a FRESH one primed by the top block" "$a17_tmux" "LANE_START_FRESH=1"
+# WITH NO `lane` ON PATH — which is this sandbox — the respawn is the
+# supervisor, and it is spelled as an ABSOLUTE PATH because a respawned pane's
+# `PATH` is whatever the person's shell profile makes of it.
+has   "…into this command's own supervisor, for one named operation" \
+      "$a17_tmux" "lane-handoff --supervise --lane repoHF-5 --operation"
+is    "…by ABSOLUTE path, never a word a respawned pane's PATH resolves" \
+      "$(printf '%s\n' "$a17_tmux" | awk '{ for (i = 1; i <= NF; i++) if ($i == "--supervise") { t = $(i - 1); print (substr(t, 1, 1) == "/") ? "abs" : t; exit } }')" "abs"
+has   "…with the workstation written INTO the command string, because tmux hands the server's environment" \
+      "$a17_tmux" "LANES_WORKSTATION=Eagle"
+hasnt "…and never the launch itself, which is what took the pane with it (openRepoTools#94)" \
+      "$a17_tmux" "pclaude --lane repoHF-5 team-05a"
+hasnt "…nor the environment seam that was measured not arriving" "$a17_tmux" "LANE_START_FRESH=1"
+run   "$E" restart-intent repoHF-5
+is    "…and the restart intent the supervisor launches from reads back" "$rc" 0
+has   "…as pending, for the operation the respawn line names" "$out" "$(printf 'state\tpending')"
+has   "…in the mode that authorises a fresh session" "$out" "$(printf 'mode\tfresh-from-handoff')"
 hasnt "…never \`restart <lane>\`, which Addendum 2 takes off the person's PATH" "$a17_tmux" "restart repoHF-5"
 is    "THE RECORD WAS WRITTEN BEFORE THE RESPAWN, which is what the fake could see" \
       "$(printf '%s\n' "$a17_tmux" | grep -o 'paused-lines=[0-9]*' | head -n1)" "paused-lines=1"
 has   "…and the record is the lane's own PAUSED" "$(cat "$LOGD/repoHF-5.md")" "lane:repoHF-5 → swap;"
 
-# AMENDMENT 18 ADDENDUM 2 (i-8) AND ITS ADOPTION LINE — *"opensoft/
-# openRepoTools#36 (`/ctx`) respawns with `lane <name>`"*. Where the word is on
-# PATH it is the word that is typed, with NO profile argument: `lane <name>`
-# reads the record this act has just written for the lane's directory and
-# profile, and asks nothing.
+# THIS ESTATE'S OWN `lane` ON PATH, AND IT CHANGES NOTHING (openRepoTools#94).
+# Amendment 18 Addendum 2 (i-8)'s adoption line — *"opensoft/openRepoTools#36
+# (`/ctx`) respawns with `lane <name>`"* — is the door this command used to
+# take, and #94 is what it cost: `lane` is the HUMAN DISPATCHER, whose valid
+# outcomes include attaching to a live session without launching anything, and
+# the fresh-session requirement it was handed was an environment variable the
+# launcher's own `tmux new-session` dropped on the way through. The clause's
+# two doors are kept ONE LEVEL DOWN — the supervisor takes the second, the
+# launcher directly — and its ground (*"no word is kept on `PATH` for it
+# alone"*) is honoured exactly, because the supervisor is a MODE of a command
+# that is already installed.
 #
-# THE FAKE CARRIES THE STRING EVERY BASH FILE THIS TOOLSET SHIPS CARRIES,
-# because that is what `lane-handoff` reads it for: `lane` is an ordinary
-# English word, and a pane respawned over somebody else's `lane` is a pane the
-# person cannot get back.
+# THE FAKE IS STILL PLACED, because the property under test is that it makes NO
+# DIFFERENCE: the word is on PATH, executable, and named exactly as the estate
+# names it, and the respawn line is the same line as the case above. The
+# bounded 8 KB read that used to classify this file — and the padding that
+# proved its SIGPIPE corner (Copilot round 3 on openRepoTools#47) — are gone
+# with the probe that needed them: nothing reads `lane` any more.
 mkdir -p "$SANDBOX/a17lane"
 cat > "$SANDBOX/a17lane/lane" <<'FAKE'
 #!/usr/bin/env bash
 # lane — the word, as lane-collision-protocol Amendment 18 Addendum 1 names it
 printf '%s\n' "$*" >> "${FAKE_LANE_LOG:-/dev/null}"
 FAKE
-# AND IT IS LARGER THAN THE BOUNDED READ (Copilot round 3 on openRepoTools#47).
-# The word is recognised by `head -c 8192 < file | grep …`, and under
-# `set -o pipefail` a `grep -q` that exits on the match leaves `head` writing
-# into a closed pipe: SIGPIPE, 141, and the estate's OWN `lane` classified as
-# somebody else's. The marker is in the first line; the padding below is what
-# makes `head` still have something to write when `grep` has seen it.
-{ printf '# padding, so this file is larger than the bounded read:\n'
-  i=0
-  while [ "$i" -lt 400 ]; do
-    printf '# %s\n' "................................................................"
-    i=$((i + 1))
-  done
-} >> "$SANDBOX/a17lane/lane"
 chmod +x "$SANDBOX/a17lane/lane"
+: > "${FAKE_LANE_LOG:-/dev/null}"
 : > "$FAKE_TMUX_A17_LOG"
 export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-8.md"
 run env PATH="$SANDBOX/a17lane:$A17PATH_NOLANE" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
     CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-8 --restart clear
 is    "with \`lane\` on PATH, lane-handoff --restart exits 0" "$rc" 0
 a17_lane_tmux="$(cat "$FAKE_TMUX_A17_LOG")"
-has   "…and the respawn line is \`lane <lane>\` — that word, resolved where it was found" \
+has   "…and the respawn line is the SAME supervisor, with this estate's own \`lane\` sitting on PATH" \
+      "$a17_lane_tmux" "lane-handoff --supervise --lane repoHF-8 --operation"
+hasnt "…never the human dispatcher, whose valid outcomes include attaching to a live session" \
       "$a17_lane_tmux" "a17lane/lane repoHF-8"
-has   "…still with the FRESH seam, which rides in the environment and survives the hand-on to lane-start" \
-      "$a17_lane_tmux" "LANE_START_FRESH=1"
-hasnt "…and with no profile argument: \`lane <name>\` reads the record for it" "$a17_lane_tmux" "repoHF-8 team-05a"
-hasnt "…never the launcher, where the word itself is there to be typed" "$a17_lane_tmux" "pclaude --lane repoHF-8"
+hasnt "…nor the environment seam the launcher's tmux new-session drops" "$a17_lane_tmux" "LANE_START_FRESH=1"
+hasnt "…never the launcher at this level either — that is the supervisor's door, one down" \
+      "$a17_lane_tmux" "pclaude --lane repoHF-8"
 hasnt "…and never \`restart <lane>\`" "$a17_lane_tmux" "restart repoHF-8"
 is    "…the record still written BEFORE the respawn" \
       "$(printf '%s\n' "$a17_lane_tmux" | grep -o 'paused-lines=[0-9]*' | head -n1)" "paused-lines=1"
 
-# A `lane` ON PATH THAT IS NOT THIS ESTATE'S WORD IS PASSED OVER FOR THE
-# LAUNCHER, and said. The safe side of the two is the one that still starts the
-# lane: a respawn is the one act no later refusal can undo.
+# SOMEBODY ELSE'S `lane` ON PATH, AND IT CHANGES NOTHING EITHER. This case used
+# to be the dangerous one: `lane` is an ordinary English word, a pane respawned
+# over a stranger's `lane` is a pane the person cannot get back, and the command
+# read the file's first 8 KB for this toolset's own marker to tell the two
+# apart. That read is gone because the choice it fed is gone — the respawn line
+# names this command's own absolute path — so a foreign `lane` is not passed
+# over, not classified, and not mentioned. It is simply never consulted.
 mkdir -p "$SANDBOX/a17foreign"
 cat > "$SANDBOX/a17foreign/lane" <<'FAKE'
 #!/usr/bin/env bash
@@ -7757,9 +7794,12 @@ run env PATH="$SANDBOX/a17foreign:$A17PATH_NOLANE" FAKE_TMUX_WINDOW="hfsess:@21"
     CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-9 --restart clear
 is    "a \`lane\` that is not this estate's word still exits 0" "$rc" 0
 a17_foreign_tmux="$(cat "$FAKE_TMUX_A17_LOG")"
-has   "…respawning through the launcher instead" "$a17_foreign_tmux" "pclaude --lane repoHF-9 team-05a"
-hasnt "…and never through the word it could not recognise" "$a17_foreign_tmux" "a17foreign/lane repoHF-9"
-has   "…saying which \`lane\` it passed over" "$err" "is not this estate's word"
+has   "…respawning into the same supervisor as the other two PATHs" \
+      "$a17_foreign_tmux" "lane-handoff --supervise --lane repoHF-9 --operation"
+hasnt "…and never through the word it does not read" "$a17_foreign_tmux" "a17foreign/lane repoHF-9"
+hasnt "…nor through the launcher at this level" "$a17_foreign_tmux" "pclaude --lane repoHF-9"
+hasnt "…and with nothing to SAY about a stranger's word, because nothing consulted it" \
+      "$err" "is not this estate's word"
 
 # A RECORD THAT CANNOT BE WRITTEN REFUSES BEFORE ANYTHING IS KILLED. repoHF-2's
 # row carries only `session_…` footer ids, so no transcript uuid is knowable and
@@ -8371,18 +8411,39 @@ has   "…and the unknown one, which a plain handoff cannot know (Addendum 1 (h)
       "$hfsk" "THIS HANDOFF CANNOT KNOW WHICH KIND FOLLOWED IT"
 has   "the skill's own record writer carries the kind sub-field too" "$hfsk" 'payload="$payload; kind $kind"'
 has   "…and the free text after the why, in the addendum's spelling" "$hfsk" "kind unknown"
-has   "…and it asks window-session with the harness's own spelling of the window" \
-      "$hfsk" "#{session_name}:#{window_id}"
 has   "…and its row write SETS the whole cell, as the command does (Amendment 13(a))" \
       "$hfsk" 'set-row-state "$lane" "PAUSED · $hs_line"'
 has   "…with the line cut where a cut cannot land inside a character" "$hfsk" 'hs_line="${hs_line% *} ..."'
 hasnt "…and never the anchor the two writes it replaced had to guess at" "$hfsk" '"$state" "$state_new" "swap"'
 has   "…and the measured fact that is the whole reason for the distinction" \
       "$hfsk" "mints a NEW TRANSCRIPT ID IN THE SAME PROCESS"
-has   "and the respawn line Addendum 2 (i-8) names: \`lane <lane>\`" "$hfsk" 'LANE_START_FRESH=1 lane $lane'
-has   "…with the launcher as the door the same clause leaves open" "$hfsk" "pclaude --lane \$lane"
-has   "…chosen by whether that word is on PATH, which is the choice the command makes in code" \
+# openRepoTools#94 — THE SKILL'S `/ctx` STEP IS ONE COMMAND, AND CARRIES NO
+# RECIPE OF ITS OWN. It used to spell out the destructive tail in shell —
+# `tmux respawn-pane -k -t "$pane" "LANE_START_FRESH=1 lane $lane"`, chosen by
+# `if command -v lane` — for a session to run against its own pane. On
+# 2026-09-15T20:59Z that is what ran, with two environment assignments the model
+# added on the spot, and the pane came back RESUMING the transcript the handoff
+# had just paused. Two copies of one procedure that must stay byte-equal is the
+# rejected alternative everywhere else in this file, and the one place it was
+# allowed is the one place a session kills its own pane.
+#
+# THE ASSERTIONS ARE THEREFORE ABOUT ABSENCE AS MUCH AS PRESENCE, and the
+# absent ones are `hasnt` on the EXECUTABLE forms: the file still QUOTES the old
+# line, in the paragraph that explains why it is gone, so a `has` on the string
+# alone would go green on the obituary.
+has   "the skill's /ctx step is the one command that owns the act" "$hfsk" 'lane-handoff --restart "$why"'
+has   "…and where the old recipe appears at all, it is as the thing that was REMOVED" \
+      "$hfsk" "THE TMUX RECIPE THAT USED TO BE HERE IS GONE"
+hasnt "…with no \`command -v lane\` choosing between two doors in prose" \
       "$hfsk" 'if command -v lane >/dev/null 2>&1; then'
+hasnt "…and no window read of its own left to feed one" "$hfsk" "#{session_name}:#{window_id}"
+has   "…naming what tmux is asked to start instead, by absolute path" \
+      "$hfsk" "lane-handoff --supervise --lane <lane> --operation <id>"
+has   "…and saying why an environment seam could not carry the fresh session" \
+      "$hfsk" "tmux SERVER's environment"
+has   "…with the restart intent as the fourth gate before the kill" "$hfsk" "RESTART INTENT written to"
+has   "…and \`lane <name>\` kept as the PERSON's door and not as this one" \
+      "$hfsk" "IS STILL A PERSON'S DOOR AND IS NO LONGER THIS ONE"
 hasnt "…which is never \`restart <lane>\`" "$hfsk" 'respawn-pane -k -t "$pane" "restart'
 
 echo "== Amendment 18 Addendum 1: the word \`lane\`, the numbered pick, the three branches =="
@@ -9384,6 +9445,37 @@ is    "…so the cell is three parts and stays three parts" \
 is    "…and it is BOUNDED: 240 for the line, plus the state and the instant" \
       "$(printf '%s' "$a13_row" | awk -F' \\| ' '{ c = $NF; sub(/ \|$/, "", c); print (length(c) <= 280 ? "yes" : "no " length(c)) }')" "yes"
 
+# ---- (a2) A WRITE WHOSE RESULT IS THE LINE ALREADY THERE IS DONE, NOT REFUSED.
+#
+# MEASURED 2026-09-16, and it is why the Amendment 15 `--confirm` case above
+# went red about one run in two with `expected [0], got [5]`. `replace_line`
+# proves it touched exactly one line by demanding `1 1` from
+# `git diff --no-index --numstat`; an edit that changes NOTHING produces no
+# output at all, the comparison was against an empty string, and the act died 5
+# with `numstat: none` — the guard reading "nothing changed" as "more than one
+# line changed", which are opposite facts.
+#
+# IT IS REACHED BY ORDINARY USE. `set-row-state` writes
+# `<STATE> · $(utc_now) · <line>` and `utc_now` is SECONDS, so two stamps of one
+# state phrase inside a second are byte-identical — which is two
+# `lane-start --no-launch` runs of one lane in one window, the pair the
+# `--confirm` case makes. Eight such writes in a loop against the shipped
+# `lanes-edit.sh` gave five exit 5 and three exit 0, decided by nothing but
+# where the second boundary fell.
+#
+# THIS CASE DOES NOT RACE THE CLOCK TO SAY SO. `replace-in-row` with the same
+# text on both sides is byte-identical BY CONSTRUCTION, whatever the second is,
+# so what is asserted is the property and not a coincidence.
+a13_noop_before="$(grep '^| `repoA13-1`' "$LANES")"
+run env LANES_LANE=repoA13-1 "$E" replace-in-row repoA13-1 \
+    "CI green; waiting on review" "CI green; waiting on review"
+is    "a write whose result is the line already there exits 0" "$rc" 0
+has   "…saying the line already reads exactly that" "$err" "already exactly what this write asked for"
+has   "…and that there is nothing to commit" "$err" "nothing staged"
+is    "…leaving the row byte for byte as it was" "$(grep '^| `repoA13-1`' "$LANES")" "$a13_noop_before"
+is    "…and the checkout clean, so the next write is not refused for it" \
+      "$(git -C "$WIP" status --porcelain -- lanes/LANES.md | grep -c . || :)" 0
+
 run "$E" set-row-state repoA13-1 "BUSY · doing things"
 is    "an unknown STATE is refused" "$rc" 2
 has   "…naming the seven there are" "$err" "LIVE, PAUSED, LANDING #<n>, LANDED, ENDED, RETIRED, HANDED OFF"
@@ -9770,6 +9862,630 @@ is    "…and no pane was respawned for a lane no read of it is unambiguous abou
       "$(grep -c 'respawn-pane' "$FAKE_TMUX_A17_LOG")" 0
 is    "…and no log was written for either spelling" \
       "$(ls "$LOGD" | grep -ci '^repohf-13\.md$' || :)" 0
+
+
+# =====================================================================
+# openRepoTools#94 — THE SUPERVISED CONTEXT RESTART
+#
+# WHAT WAS MEASURED, AND WHAT THESE CASES HOLD. On 2026-09-15T20:59Z `/ctx`
+# wrote its record, respawned its own pane with `LANE_START_FRESH=1 … lane
+# <lane>` — and the pane came up `claude --name <lane> --resume <the uuid it
+# had just paused>`. The seam was an ENVIRONMENT variable and the launcher
+# re-creates its child through `tmux new-session`, which hands a command the
+# SERVER's environment and not the client's. Nothing noticed, because what tmux
+# had started WAS the launch: a launch that ends takes the pane with it.
+#
+# So the cases below are about three things and not one:
+#   * the FRESH SESSION is decided by a FILE and not by an environment — the
+#     row's last uuid may have a transcript, the lane's last PAUSED may name
+#     another that also has one, and neither is resumed;
+#   * the intent is written BEFORE the pane is killed, and a pane is never
+#     respawned without one;
+#   * TMUX ACCEPTING A COMMAND IS NOT A STARTED SESSION — the thing tmux starts
+#     is a supervisor, it runs the launch as a child, and a child that dies
+#     leaves a process in the pane saying so.
+#
+# EVERYTHING HERE IS ITS OWN — its own bin, its own fakes, its own lanes, its
+# own control root — so it can be read, moved or merged in one piece.
+
+SV_BIN="$SANDBOX/svbin"
+mkdir -p "$SV_BIN"
+SV_STATE="$SANDBOX/lane-state"
+mkdir -p "$SV_STATE"
+export LANES_LANE_STATE_ROOT="$SV_STATE"
+
+SV_DIR="$HOME/projects/repoSV"
+mkdir -p "$SV_DIR"
+git init -q -b main "$SV_DIR"
+git -C "$SV_DIR" remote add origin "https://github.com/opensoft/repoSV.git"
+
+SV_OLD="5f000001-1111-4000-8000-5f0000011111"
+SV_PAUSED="5f000002-2222-4000-8000-5f0000022222"
+SV_NEW="5f000003-3333-4000-8000-5f0000033333"
+
+# BOTH RESUME SOURCES EXIST ON DISK, which is the whole point of the #94 case:
+# the row's last uuid has a transcript here, AND the lane's last PAUSED names a
+# second one that also has a transcript here (PR #87's recovery source). A
+# fresh launch must take neither.
+sv_tdir="$HOME/.claude/projects/$(sanitize "$SV_DIR")"
+mkdir -p "$sv_tdir"
+printf '{"type":"user"}\n' > "$sv_tdir/$SV_OLD.jsonl"
+printf '{"type":"user"}\n' > "$sv_tdir/$SV_PAUSED.jsonl"
+
+mkdir -p "$WIP/handoffs/repoSV"
+SV_HANDOFF="$WIP/handoffs/repoSV/repoSV-1.md"
+{ printf 'Lane: repoSV-1 (team-05a, session %s) — single-use resume prompt: stamp RESUMED-by before acting (lane-collision-protocol rule 3)\n' "$SV_OLD"
+  printf '\n'
+  printf '## RESUME PROMPT — the top block of repoSV-1\n'
+} > "$SV_HANDOFF"
+for sv_n in 2 3 4; do
+  { printf 'Lane: repoSV-%s (team-05a, session %s) — single-use resume prompt: stamp RESUMED-by before acting (lane-collision-protocol rule 3)\n' "$sv_n" "$SV_OLD"
+    printf '\n'
+    printf '## RESUME PROMPT — the top block of repoSV-%s\n' "$sv_n"
+  } > "$WIP/handoffs/repoSV/repoSV-$sv_n.md"
+done
+git -C "$WIP" add -- handoffs/repoSV >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the repoSV handoffs"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+for sv_l in repoSV-1 repoSV-2 repoSV-3 repoSV-4; do
+  "$E" add-row "| \`$sv_l\` | harness \`$SV_OLD\` | Eagle / test / brett | 2026-09-15T00:00Z | none | handoffs/repoSV/$sv_l.md | ACTIVE |" >/dev/null 2>&1
+done
+# Row 2 and 3 name the handoff of lane 1, which is fine: only lane 1's launch
+# reads a top block here.
+sv_seed_log() {   # <lane>
+  { printf '# lane %s — object log (lane-collision-protocol Amendment 7)\n' "$1"
+    printf 'STARTED — lane %s, session %s@Eagle, 2026-09-15T09:00:00Z, lane:%s → home opensoft/repoSV; estate repoSV; dir %s\n' \
+      "$1" "$SV_OLD" "$1" "$SV_DIR"
+    printf 'PAUSED — lane %s, session %s@Eagle, 2026-09-15T10:00:00Z, lane:%s → swap; dir %s; profile team-05a; workstation Eagle; agent claude; transcript %s; kind respawn\n' \
+      "$1" "$SV_OLD" "$1" "$SV_DIR" "$SV_PAUSED"
+  } > "$LOGD/$1.md"
+  git -C "$WIP" add -- "lanes/log/$1.md"
+  git -C "$WIP" commit -q -m "LOG($1@Eagle): seed"
+  git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+  git -C "$WIP" push -q origin main
+  return 0
+}
+for sv_l in repoSV-1 repoSV-2 repoSV-3; do sv_seed_log "$sv_l"; done
+
+# ---------------------------------------- 1. the intent store, on its own
+
+run "$E" restart-intent repoSV-1
+is   "a lane with no /ctx in flight has no restart intent" "$rc" 8
+
+run "$E" set-restart-intent repoSV-1 flying
+is   "a fifth state word is refused" "$rc" 64
+has  "…naming the four there are" "$err" "pending, starting, failed and ready"
+
+run "$E" set-restart-intent repoSV-1 pending --dir relative/path
+is   "a relative --dir is refused" "$rc" 64
+has  "…because the reader of this record stands somewhere else" "$err" "ABSOLUTE path"
+
+run "$E" set-restart-intent repoSV-1 pending --operation 'op one; two'
+is   "an operation id that is not a manifest key is refused" "$rc" 64
+has  "…because a later reader compares it for equality" "$err" "manifest key"
+run "$E" set-restart-intent repoSV-1 pending --profile "$(printf 'a\nb')"
+is   "…and so is a profile carrying a newline, in a file of one line per field" "$rc" 64
+
+run "$E" set-restart-intent repoSV-1 pending --expect 'none|ready|failed' \
+    --operation op-test-1 --generation 3 --mode fresh-from-handoff \
+    --agent claude --profile team-05a --dir "$SV_DIR" --pane 'svsess:@31.%31' \
+    --handoff "$SV_HANDOFF" --old-transcript "$SV_OLD"
+is   "a pending restart intent is written over 'none'" "$rc" 0
+has  "…and reports the operation it minted" "$out" "op-test-1"
+run "$E" restart-intent repoSV-1
+is   "…and reads back" "$rc" 0
+has  "…as pending" "$out" "$(printf 'state\tpending')"
+has  "…carrying the generation it was fenced on" "$out" "$(printf 'generation\t3')"
+has  "…and the launch mode that authorises a fresh session" "$out" "$(printf 'mode\tfresh-from-handoff')"
+is   "…with a digest of the handoff, computed by the writer" \
+     "$( [ "$(printf '%s\n' "$out" | awk -F'\t' '$1=="digest"{print length($2)}')" -gt 16 ] && echo yes || echo no )" yes
+is   "…and no field that could carry a credential" \
+     "$(printf '%s\n' "$out" | grep -Eci 'token|secret|password|key' || :)" 0
+
+run "$E" set-restart-intent repoSV-1 pending --expect 'none|ready|failed' --operation op-test-2
+is   "a second /ctx does not supersede an operation in flight" "$rc" 7
+has  "…saying which state refused it" "$err" "the intent is pending and --expect named"
+run "$E" restart-intent repoSV-1
+has  "…and the first operation still owns the lane" "$out" "op-test-1"
+
+run "$E" set-restart-intent repoSV-1 starting --expect starting --expect-operation op-test-1
+is   "a compare-and-swap whose expected state is wrong writes nothing" "$rc" 7
+run "$E" set-restart-intent repoSV-1 starting --expect pending --expect-operation op-elsewhere
+is   "…and so does one whose expected OPERATION is wrong" "$rc" 7
+has  "…naming the operation that really holds it" "$err" "operation is op-test-1"
+
+run "$E" set-restart-intent repoSV-1 starting --expect pending --expect-operation op-test-1 --expect-generation 3 --attempt 1
+is   "the supervisor's claim takes pending -> starting under the fence" "$rc" 0
+run "$E" restart-intent repoSV-1
+has  "…and the fields it did not name are KEPT, not blanked" "$out" "$(printf 'handoff\t%s' "$SV_HANDOFF")"
+has  "…including the transcript the /ctx paused" "$out" "$(printf 'old_transcript\t%s' "$SV_OLD")"
+
+run "$E" set-restart-intent repoSV-1 failed --expect starting --expect-operation op-test-1 --reason "the launcher exited 127"
+is   "a failed launch is recorded against the same operation" "$rc" 0
+run "$E" set-restart-intent repoSV-1 starting --expect failed --expect-operation op-test-1 --bump-attempt
+is   "…and the retry increments the attempt count rather than minting a new operation" "$rc" 0
+has  "…still the same operation" "$out" "op-test-1"
+has  "…attempt 2" "$out" "$(printf 'attempt\t2')"
+
+# A SCHEMA THIS READER DOES NOT KNOW FAILS CLOSED. A newer tooling's intent read
+# by an older reader must not be reported as a launch this reader knows how to
+# make — the same rule `lane-state` takes, for the same reason.
+sed -i.bak 's/^schema: .*/schema: 99/' "$SV_STATE/repoSV-1/restart-intent.yaml" 2>/dev/null || \
+  sed -i '' 's/^schema: .*/schema: 99/' "$SV_STATE/repoSV-1/restart-intent.yaml" 2>/dev/null || :
+rm -f "$SV_STATE/repoSV-1/restart-intent.yaml.bak"
+run "$E" restart-intent repoSV-1
+is   "an intent whose schema this reader does not know still reads" "$rc" 0
+has  "…and says so rather than reporting a state it does not understand" "$out" "UNKNOWN-SCHEMA"
+# AND NO LAUNCH GOES AHEAD AT ALL (Copilot round 1 on openRepoTools#121). An
+# intent this reader cannot understand used to fall through to the ordinary
+# resume-source resolution, which is the SAFE half of the decision sitting on
+# top of the unsafe one: it authorises no FRESH session, and the resume source
+# waiting for a lane whose /ctx just killed its pane is the transcript that /ctx
+# PAUSED. That is openRepoTools#94 reached down a second road, so it refuses —
+# a read that could not be made is never an answer (Amendment 7(d)).
+: > "$FAKE_CLAUDE_LOG"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="svsess:@31" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$SV_DIR" repoSV-1 --no-launch
+is   "…and a launch of that lane REFUSES rather than resolving a resume source" "$rc" 2
+has  "…saying a read that could not be made is not 'no restart in flight'" "$err" "Amendment 7(d)"
+has  "…and naming what resuming anyway would have opened" "$err" "the transcript that /ctx PAUSED"
+hasnt "…and resolving no resume source at all" "$out" "--resume"
+has  "…while naming both ways out of it" "$err" "Update this workstation's openRepoTools"
+
+# AND THE WRITER WILL NOT REPLACE IT EITHER. The read side failing closed while
+# the write side copied its known fields forward and stamped `schema: 1` over
+# the rest is the read-side protection undone by the other half of one command.
+run "$E" set-restart-intent repoSV-1 failed --expect starting --reason "over a schema this writer does not know"
+is   "a transition over an unknown schema is refused" "$rc" 2
+has  "…naming the schema it found and the one it writes" "$err" "is schema '99'"
+has  "…and what it would have cost" "$err" "quietly replaced by an older one"
+is   "…leaving the record untouched" \
+     "$(grep -c '^schema: 99' "$SV_STATE/repoSV-1/restart-intent.yaml" || :)" 1
+# PUT IT BACK, because the supervisor cases below are asked on this same lane:
+# a `starting` intent is what proves a second supervisor refuses rather than
+# launching a second session of one lane.
+sed -i.bak 's/^schema: .*/schema: 1/' "$SV_STATE/repoSV-1/restart-intent.yaml" 2>/dev/null || \
+  sed -i '' 's/^schema: .*/schema: 1/' "$SV_STATE/repoSV-1/restart-intent.yaml" 2>/dev/null || :
+rm -f "$SV_STATE/repoSV-1/restart-intent.yaml.bak"
+
+# A LANE WITH NO CONTROL ROOT IS A READ THAT COULD NOT BE MADE, and never
+# 'this lane has no restart in flight' (Amendment 7(d)).
+run env LANES_LANE_STATE_ROOT= PROJECTS_ROOT=/nonexistent-projects-root "$E" restart-intent repoSV-4
+is   "a lane with no control root is a failed read and not an empty answer" "$rc" 1
+has  "…saying which two rungs answered nothing" "$err" "names no directory"
+run env LANES_LANE_STATE_ROOT= PROJECTS_ROOT=/nonexistent-projects-root \
+    "$E" set-restart-intent repoSV-4 pending --expect none
+is   "…and there is nowhere to write one either" "$rc" 1
+has  "…naming the seam that gives it one" "$err" "LANES_LANE_STATE_ROOT"
+
+# A NEW OPERATION INHERITS NOTHING OF THE LAST ONE'S.
+#
+# A TRANSITION KEEPS THE FIELDS IT DOES NOT NAME — that is what lets the
+# supervisor write `starting` without blanking the handoff digest every later
+# launch is fenced on. But five of the fields belong to ONE OPERATION and not
+# to the lane, and a second `/ctx` that inherited them would read `attempt 3`
+# and `reason "the launcher exited 127"` about a restart that is over. Two of
+# them are worse than untidy, because the readiness predicate is built on the
+# pair: an inherited `new_transcript` is a uuid the new launch will never mint,
+# so readiness can only run to its deadline; an inherited `old_transcript` is
+# the wrong uuid to be DISTINCT FROM, and being distinct from it is the check
+# that catches openRepoTools#94 — a replacement that came up resuming the very
+# transcript the /ctx paused.
+run "$E" set-restart-intent repoSV-4 pending --expect none \
+    --operation op-first --generation 1 --mode fresh-from-handoff \
+    --agent claude --dir "$SV_DIR" --handoff "$SV_HANDOFF" --old-transcript "$SV_OLD"
+is   "a lane's first restart operation is written" "$rc" 0
+run "$E" set-restart-intent repoSV-4 failed --expect pending --expect-operation op-first \
+    --bump-attempt --new-transcript "$SV_NEW" --reason "the launcher exited 127"
+is   "…it fails, with an attempt, an expected transcript and a bounded reason" "$rc" 0
+run "$E" set-restart-intent repoSV-4 pending --expect 'none|ready|failed' \
+    --operation op-second --generation 2 --mode fresh-from-handoff \
+    --agent claude --dir "$SV_DIR" --handoff "$SV_HANDOFF" --old-transcript "$SV_PAUSED"
+is   "a second /ctx over a FAILED restart mints a second operation" "$rc" 0
+run "$E" restart-intent repoSV-4
+has  "…and its attempt count is its own" "$out" "$(printf 'attempt\t0')"
+hasnt "…carrying no failure reason from the operation before it" "$out" "exited 127"
+hasnt "…and not the transcript that operation's launch was preparing" "$out" "$SV_NEW"
+has  "…while the facts it NAMED are written" "$out" "$(printf 'old_transcript\t%s' "$SV_PAUSED")"
+has  "…and the ones it did not name, but which belong to the LANE, are kept" \
+     "$out" "$(printf 'handoff\t%s' "$SV_HANDOFF")"
+run "$E" set-restart-intent repoSV-4 pending --expect pending --operation op-third
+is   "a third operation, naming nothing but itself" "$rc" 0
+run "$E" restart-intent repoSV-4
+has  "…records no transcript of the restart before it, because 'none' is an answer and another operation's uuid is a lie" \
+     "$out" "$(printf 'old_transcript\tnone')"
+has  "…and still the lane's own handoff" "$out" "$(printf 'handoff\t%s' "$SV_HANDOFF")"
+
+# ------------------------- 2. openRepoTools#94: the fresh launch, from the FILE
+
+SV_LANE_HANDOFF="$OPENREPOTOOLS_BIN_DIR/lane-handoff"
+# THE PANE EVERY SUPERVISOR CASE BELOW STANDS IN, PINNED RATHER THAN INHERITED.
+# `$TMUX_PANE` is set by tmux in every pane, and this suite is very often run
+# INSIDE one — so without this the supervisor reads the pane of whatever window
+# the person or the harness happens to be in, disagrees with the pane the
+# intent names, and every case after the pane check refuses for a reason the
+# case was not written to test. A suite that is green on a workstation outside
+# tmux and red inside one is a suite that tests the workstation.
+#
+# `%33` IS THE BARE FORM tmux itself exports, and the intent's pane is the live
+# record's `svsess:@33.%33`: the two agree component-wise, which is the
+# comparison `pane_agrees` makes, and asserting it here is the positive half of
+# the `%3`-is-not-`%33` case further down. A case that wants to DISAGREE names
+# its OWN `TMUX_PANE` in place of this one rather than a second assignment to
+# the same name after it: `env A=1 A=2` keeping the later is true of every
+# `env` this runs under and is written down nowhere, and a case whose meaning
+# rests on that is a case nobody can read.
+SV_PANE='%33'
+# AND THE INTENT FILE THE TWO LONG-LIVED FAKES BELOW WAIT ON, which is where
+# the supervisor's observer writes its verdict. `LANES_LANE_STATE_ROOT` is
+# `$SV_STATE` for this whole section, so `lane_control_root` resolves on its
+# first rung and the path is knowable from here.
+export SV_INTENT="$SV_STATE/repoSV-3/restart-intent.yaml"
+: > "$FAKE_CLAUDE_LOG"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="svsess:@31" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$SV_DIR" repoSV-2 --no-launch
+is   "without a restart intent, a lane whose row uuid has a transcript resumes it" "$rc" 0
+has  "…exactly as Amendment 6 has always done" "$out" "--resume $SV_OLD"
+
+# THE CASE openRepoTools#94 ASKS FOR, and it is stronger than the issue's own
+# wording: the environment carries NOTHING — no LANE_START_FRESH — the row's
+# last uuid has a transcript here, and the lane's last PAUSED names a SECOND
+# transcript that also has one (PR #87's recovery source, so this case holds
+# when that lands too). The only thing saying "fresh" is the file.
+run "$E" set-restart-intent repoSV-2 pending --expect 'none|ready|failed' \
+    --operation op-94 --generation 1 --mode fresh-from-handoff \
+    --agent claude --profile team-05a --dir "$SV_DIR" \
+    --handoff "$WIP/handoffs/repoSV/repoSV-2.md" --old-transcript "$SV_OLD"
+is   "a /ctx writes its intent before anything is killed" "$rc" 0
+: > "$FAKE_CLAUDE_LOG"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="svsess:@31" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$SV_DIR" repoSV-2 --no-launch
+is   "with a pending restart intent and NO LANE_START_FRESH, the launch is a new session" "$rc" 0
+hasnt "…never a resume of the transcript the /ctx paused" "$out" "--resume $SV_OLD"
+hasnt "…never a resume of the transcript its last PAUSED names either" "$out" "--resume $SV_PAUSED"
+hasnt "…never a resume of anything at all" "$out" "--resume"
+has  "…named for the lane" "$out" "--name repoSV-2"
+has  "…and primed by the handoff's top block" "$out" "the top block of repoSV-2"
+has  "…saying which authority decided it" "$err" "restart intent op-94"
+
+# AND THE INTENT OUTRANKS A CONFLICT RATHER THAN SUBSTITUTING FOR IT.
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="svsess:@31" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$SV_DIR" --operation op-not-this-one repoSV-2 --no-launch
+is   "a launch naming another operation is refused" "$rc" 2
+has  "…naming the one that really holds the lane" "$err" "op-94"
+
+SV_OTHER="$HOME/projects/repoSVX"
+mkdir -p "$SV_OTHER"
+git init -q -b main "$SV_OTHER"
+git -C "$SV_OTHER" remote add origin "https://github.com/opensoft/repoSV.git"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="svsess:@31" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$SV_OTHER" repoSV-2 --no-launch
+is   "a launch in a checkout the intent does not name is refused" "$rc" 2
+has  "…citing the silent loss a wrong directory is" "$err" "Evidence 3"
+
+# A CHANGED HANDOFF BLOCKS THE LAUNCH, because its top block IS the first prompt.
+printf 'appended after the intent was written\n' >> "$WIP/handoffs/repoSV/repoSV-2.md"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="svsess:@31" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$SV_DIR" repoSV-2 --no-launch
+is   "a handoff that changed since the intent was written blocks the launch" "$rc" 2
+has  "…saying the top block is the first prompt" "$err" "FIRST PROMPT"
+git -C "$WIP" checkout -- handoffs/repoSV/repoSV-2.md 2>/dev/null || :
+
+# ONE DIGEST, THREE COMMANDS, AND IT HAD BETTER BE ONE FUNCTION. `lanes-edit.sh`
+# RECORDS the handoff's digest into the intent, `lane-start` VERIFIES it before
+# it launches, and `lane-handoff` verifies it again before a supervisor claims
+# the operation — three installed files with no library between them, which is
+# this estate's shape (`lane_control_root` is shared with openRepoTools#91 the
+# same way, byte for byte, and design decision 14 says so in as many words).
+#
+# THE TWO CASES ABOVE ALREADY PROVE TWO OF THEM AGREE BY BEHAVIOUR — the launch
+# went through while the file was untouched and refused the moment a line was
+# appended — so what is left to pin is that the third is the same act, and that
+# "the same" means the BODY and not the name. A copy that drifted would not fail
+# loudly: it would RECORD one digest and VERIFY another, and every launch after
+# it would refuse a handoff nobody had changed.
+sv_fn_body() {   # <file> <function name> — its body, indentation normalised
+  awk -v f="$2" 'index($0, f "()") == 1 { on = 1 } on { sub(/^[ \t]+/, ""); print } on && $0 == "}" { exit }' "$1" | tail -n +2
+}
+sv_dig_canon="$(sv_fn_body "$SRC_DIR/lanes-edit.sh" lane_handoff_digest)"
+is   "the digest lanes-edit.sh records with is a function with a body" \
+     "$( [ "$(printf '%s' "$sv_dig_canon" | grep -c 'sha256sum' || :)" -ge 1 ] && echo yes || echo no )" yes
+is   "…and the one lane-start verifies a launch with is that same body" \
+     "$(sv_fn_body "$SRC_DIR/lane-start" handoff_digest_of)" "$sv_dig_canon"
+is   "…and the one lane-handoff refuses a stale operation with is too" \
+     "$(sv_fn_body "$SRC_DIR/lane-handoff" handoff_digest)" "$sv_dig_canon"
+
+# A `ready` INTENT IS HISTORY AND AUTHORISES NOTHING.
+run "$E" set-restart-intent repoSV-2 ready --expect pending --expect-operation op-94
+is   "readiness is recorded against the operation" "$rc" 0
+: > "$FAKE_CLAUDE_LOG"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="svsess:@31" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$SV_DIR" repoSV-2 --no-launch
+is   "a confirmed restart authorises no further fresh launch" "$rc" 0
+has  "…so the next lane <name> is an ordinary resume" "$out" "--resume"
+
+# `--fresh` IS THE ARGUMENT BESIDE THE VARIABLE, for a caller with no launcher
+# between it and here.
+: > "$FAKE_CLAUDE_LOG"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="svsess:@31" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$SV_DIR" --fresh repoSV-2 --no-launch
+is   "--fresh takes a new session with no environment and no intent" "$rc" 0
+hasnt "…resuming nothing" "$out" "--resume"
+has  "…and saying which of the three said so" "$err" "(--fresh)"
+
+# --------------- 3. the transaction: the intent is written BEFORE the kill
+
+# ITS OWN FAKE TMUX, logging the respawn and recording how many restart intents
+# the lane's control root held at the instant tmux was asked. Amendment 17(f) is
+# an ORDER, and an order is proved by what the second act could see of the first.
+cat > "$SV_BIN/tmux" <<'FAKE'
+#!/usr/bin/env bash
+case "${1-}" in
+  send-keys|respawn-pane)
+    printf '%s' "$*" >> "${FAKE_TMUX_SV_LOG:-/dev/null}"
+    printf ' | intents=%s\n' \
+      "$(ls "${FAKE_TMUX_SV_WATCH:-/nonexistent}" 2>/dev/null | grep -c '^restart-intent.yaml$' || printf 0)" \
+      >> "${FAKE_TMUX_SV_LOG:-/dev/null}"
+    exit "${FAKE_TMUX_SV_RC:-0}" ;;
+esac
+exec "${FAKE_TMUX_REAL:?}" "$@"
+FAKE
+chmod +x "$SV_BIN/tmux"
+export FAKE_TMUX_SV_LOG="$SANDBOX/tmux-sv.log"
+export FAKE_TMUX_SV_WATCH="$SV_STATE/repoSV-3"
+: > "$FAKE_TMUX_SV_LOG"
+SVPATH="$SV_BIN:$A17PATH"
+
+write_record_ns "$sessions_dir/live-sv.json" "$SV_OLD" "$LIVE_PID" "$live_start" "svsess:@33.%33" "repoSV-3" "user" "busy"
+run env PATH="$SVPATH" FAKE_TMUX_WINDOW="svsess:@33" CLAUDE_CODE_SESSION_ID="$SV_OLD" \
+    CLAUDE_PROFILE_NAME=team-05a "$SV_LANE_HANDOFF" --lane repoSV-3 --restart clear
+is   "lane-handoff --restart exits 0" "$rc" 0
+sv_tmux="$(cat "$FAKE_TMUX_SV_LOG")"
+has  "…respawning the lane's own pane" "$sv_tmux" "respawn-pane -k -t svsess:@33.%33"
+has  "…into this command's own supervisor, by absolute path" "$sv_tmux" "lane-handoff --supervise --lane repoSV-3 --operation"
+hasnt "…and never into the human dispatcher, whose valid outcomes include attaching" "$sv_tmux" " lane repoSV-3"
+has  "…threading the workstation into the command string, because tmux hands the SERVER's environment" "$sv_tmux" "LANES_WORKSTATION=Eagle"
+is   "…and the restart intent was on disk BEFORE tmux was asked to kill anything" \
+     "$(printf '%s' "$sv_tmux" | sed -n 's/.*intents=\([0-9]*\).*/\1/p' | head -n 1)" 1
+run "$E" restart-intent repoSV-3
+is   "…the intent reads back" "$rc" 0
+has  "…as pending, claimed by nobody yet" "$out" "$(printf 'state\tpending')"
+has  "…naming the pane the /ctx respawned" "$out" "$(printf 'pane\tsvsess:@33.%%33')"
+has  "…the transcript it paused" "$out" "$(printf 'old_transcript\t%s' "$SV_OLD")"
+has  "…and the launch mode that authorises a fresh session" "$out" "$(printf 'mode\tfresh-from-handoff')"
+SV_OP3="$(printf '%s\n' "$out" | awk -F'\t' '$1=="operation"{print $2}')"
+is   "…with an operation of its own" "$( [ -n "$SV_OP3" ] && echo yes || echo no )" yes
+
+# A SECOND /ctx OVER AN OPERATION IN FLIGHT REFUSES, AND KILLS NOTHING.
+: > "$FAKE_TMUX_SV_LOG"
+run env PATH="$SVPATH" FAKE_TMUX_WINDOW="svsess:@33" CLAUDE_CODE_SESSION_ID="$SV_OLD" \
+    CLAUDE_PROFILE_NAME=team-05a "$SV_LANE_HANDOFF" --lane repoSV-3 --restart clear
+is   "a second /ctx over an operation in flight is refused" "$rc" 2
+has  "…saying an ordinary context clear never supersedes one" "$err" "never supersedes an operation"
+is   "…and the pane was NOT respawned" "$(grep -c 'respawn-pane' "$FAKE_TMUX_SV_LOG")" 0
+
+# A TMUX THAT REFUSES LEAVES THE OLD PROCESS ALIVE AND THE INTENT PENDING.
+"$E" set-restart-intent repoSV-3 ready --expect pending >/dev/null 2>&1
+: > "$FAKE_TMUX_SV_LOG"
+run env PATH="$SVPATH" FAKE_TMUX_SV_RC=1 FAKE_TMUX_WINDOW="svsess:@33" \
+    CLAUDE_CODE_SESSION_ID="$SV_OLD" CLAUDE_PROFILE_NAME=team-05a \
+    "$SV_LANE_HANDOFF" --lane repoSV-3 --restart clear
+is   "a tmux that refuses the respawn is a refusal and not a silent success" "$rc" 2
+has  "…saying nothing was killed" "$err" "Nothing was killed"
+has  "…and naming the line that hands the pane over once tmux will take it" "$err" "--supervise --lane repoSV-3"
+run "$E" restart-intent repoSV-3
+has  "…with the intent left pending for the supervisor that never arrived" "$out" "$(printf 'state\tpending')"
+
+# --------------------------------- 4. the supervisor: refusals before a launch
+
+SV_OP="$(printf '%s\n' "$out" | awk -F'\t' '$1=="operation"{print $2}')"
+run env PATH="$SVPATH" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" "$SV_LANE_HANDOFF" \
+    --supervise --lane repoSV-3 --operation op-stale
+is   "a supervisor started for a stale operation refuses" "$rc" 2
+has  "…naming the operation that really holds the lane" "$err" "$SV_OP"
+hasnt "…and launches nothing" "$err" "restarting (operation"
+
+run env PATH="$SVPATH" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" "$SV_LANE_HANDOFF" \
+    --supervise --lane repoSV-1 --operation op-test-1
+is   "a supervisor whose intent is already \`starting\` refuses rather than starting a second session" "$rc" 2
+has  "…citing the one-transcript-one-process rule" "$err" "Amendment 18(h)"
+
+run env PATH="$SVPATH" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE='%99' "$SV_LANE_HANDOFF" \
+    --supervise --lane repoSV-3 --operation "$SV_OP"
+is   "a supervisor in a pane the intent does not name refuses" "$rc" 2
+has  "…naming both panes" "$err" "svsess:@33.%33"
+# AND THE COMPARISON IS COMPONENT-WISE, NOT A SUFFIX. `%3` is a SUFFIX of
+# `%33`, so a `case ... in *"$TMUX_PANE")` accepted a supervisor in pane 3 for
+# an intent written for pane 33 — the wrong window, decided by string tail.
+run env PATH="$SVPATH" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE='%3' "$SV_LANE_HANDOFF" \
+    --supervise --lane repoSV-3 --operation "$SV_OP"
+is   "…and a pane whose id is a SUFFIX of the intent's is still another pane" "$rc" 2
+has  "…named as the disagreement it is" "$err" "and this supervisor is in %3"
+
+run env PATH="$SVPATH" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" "$SV_LANE_HANDOFF" \
+    --supervise --lane repoSV-3 --operation "$SV_OP"
+is   "a supervisor that finds a live holder refuses to make a second one" "$rc" 2
+has  "…naming the retire act and never a kill" "$err" "lane-end repoSV-3 --retire"
+
+rm -f "$sessions_dir/live-sv.json"
+run env PATH="$SVPATH" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" "$SV_LANE_HANDOFF" \
+    --supervise --lane repoSV-3
+is   "a supervisor with no operation refuses" "$rc" 2
+has  "…because one that took whatever it found would launch into somebody else's act" "$err" "--operation <id>"
+
+# ------------------------------- 5. the supervisor: a launch that FAILS
+
+cat > "$SV_BIN/pclaude-fail" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FAKE_SVLAUNCH_LOG:-/dev/null}"
+exit 127
+FAKE
+chmod +x "$SV_BIN/pclaude-fail"
+export FAKE_SVLAUNCH_LOG="$SANDBOX/svlaunch.log"
+: > "$FAKE_SVLAUNCH_LOG"
+run env PATH="$SVPATH" PCLAUDE="$SV_BIN/pclaude-fail" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" \
+    LANE_SUPERVISOR_READY_SECONDS=4 "$SV_LANE_HANDOFF" \
+    --supervise --lane repoSV-3 --operation "$SV_OP"
+is   "a launcher that exits nonzero is a FAILED restart and not a started one" "$rc" 3
+has  "…and the supervisor was still there to say so" "$out" "RESTART FAILED"
+has  "…naming the status the launch ended with" "$out" "status 127"
+has  "…offering the retry, in one line" "$out" "--supervise --lane repoSV-3 --operation $SV_OP"
+has  "…and saying the handoff is intact" "$out" "handoff it wrote is intact"
+is   "…the launch really was attempted" "$(grep -c -- "--lane repoSV-3" "$FAKE_SVLAUNCH_LOG")" 1
+run "$E" restart-intent repoSV-3
+has  "…the intent is failed" "$out" "$(printf 'state\tfailed')"
+has  "…still the same operation" "$out" "$SV_OP"
+has  "…the attempt counted" "$out" "$(printf 'attempt\t1')"
+has  "…and the reason bounded and recorded" "$out" "before readiness was confirmed"
+
+# THE RETRY IS THE SAME OPERATION, NOT A NEW ONE.
+run env PATH="$SVPATH" PCLAUDE="$SV_BIN/pclaude-fail" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" \
+    LANE_SUPERVISOR_READY_SECONDS=4 "$SV_LANE_HANDOFF" \
+    --supervise --lane repoSV-3 --operation "$SV_OP"
+is   "a retry of a failed restart runs" "$rc" 3
+run "$E" restart-intent repoSV-3
+has  "…under the same operation" "$out" "$SV_OP"
+has  "…with the attempt incremented" "$out" "$(printf 'attempt\t2')"
+
+# EVERY WRITE THIS SUPERVISOR MAKES OF ITS OWN OPERATION IS FENCED ON THE
+# GENERATION TOO (Copilot round 1 on openRepoTools#121). The readiness finalizer
+# always carried `--expect-generation`; the failure write, the signal write and
+# the INDETERMINATE note did not, so a supervisor whose lane had moved on could
+# publish an old verdict over a newer generation's record — the stale-finalizer
+# shape, reached from the failure side instead of the success side.
+#
+# AND THE NUMBER IS THE ONE CLAIMED, NOT THE ONE ON DISK. Re-reading it at write
+# time would read the NEWER generation and match it, which is exactly the write
+# the fence exists to refuse; `SV_CLAIMED_GEN` is taken once, where the claim
+# succeeded. This is asserted over the source because the property is *no write
+# is left unfenced* — a behaviour case can only ever show that the writes it
+# happens to name are fenced.
+is   "every fenced intent write in lane-handoff fences on the generation as well as the operation" \
+     "$(grep -c -- '--expect-generation "' "$SRC_DIR/lane-handoff" || :)" \
+     "$(grep -c -- '--expect-operation "' "$SRC_DIR/lane-handoff" || :)"
+is   "…and that is not vacuously none of them" \
+     "$( [ "$(grep -c -- '--expect-generation "' "$SRC_DIR/lane-handoff" || :)" -ge 4 ] && echo yes || echo no )" yes
+
+# ------------------------- 6. the supervisor: a launch that BECOMES READY
+
+SV_READY_SRC="$SANDBOX/sv-ready-record.json"
+write_record_ns "$SV_READY_SRC" "$SV_NEW" "$LIVE_PID" "$live_start" "svsess:@33.%33" "repoSV-3" "user" "busy"
+"$E" append-session-id repoSV-3 "$SV_OLD" "→ harness \`$SV_NEW\`" >/dev/null 2>&1
+cat > "$SV_BIN/pclaude-ok" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FAKE_SVLAUNCH_LOG:-/dev/null}"
+cp "$SV_READY_SRC" "$SV_READY_DST"
+# THE CHILD OUTLIVES THE OBSERVER'S VERDICT, AND WAITS FOR THE VERDICT RATHER
+# THAN FOR A NUMBER OF SECONDS. The case is about an ORDER — the observer
+# confirms readiness, and the session exits LATER — and `sleep 8` asserted that
+# order with a stopwatch. The observer's poll is a `lanes-edit.sh live-holder`,
+# which resolves the lane, reads the published row and scans every session
+# record this workstation has; two of those while another lane runs this same
+# suite cost more than the eight seconds the child was given, and the case went
+# red on a machine that was merely busy. Waiting on the file the observer
+# writes makes the ORDER the assertion, and is faster in the ordinary case.
+i=0
+while [ "$i" -lt "${FAKE_SVLAUNCH_CAP:-60}" ]; do
+  grep -q '^state: ready' "${SV_INTENT:-/nonexistent}" 2>/dev/null && break
+  i=$((i + 1)); sleep 1
+done
+exit 0
+FAKE
+chmod +x "$SV_BIN/pclaude-ok"
+export SV_READY_SRC SV_READY_DST="$sessions_dir/live-sv-new.json"
+"$E" set-restart-intent repoSV-3 pending --expect failed --new-transcript "$SV_NEW" >/dev/null 2>&1
+: > "$FAKE_SVLAUNCH_LOG"
+run env PATH="$SVPATH" PCLAUDE="$SV_BIN/pclaude-ok" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" \
+    LANE_SUPERVISOR_READY_SECONDS=20 "$SV_LANE_HANDOFF" \
+    --supervise --lane repoSV-3 --operation "$SV_OP"
+is   "a launch that comes up and is CONFIRMED exits 0 when its session later ends" "$rc" 0
+has  "…saying the replacement was confirmed" "$out" "was CONFIRMED"
+has  "…and refusing to relaunch a session that exited on purpose" "$out" "is not relaunched here"
+run "$E" restart-intent repoSV-3
+has  "…the intent is ready" "$out" "$(printf 'state\tready')"
+has  "…naming the transcript readiness was proved on" "$out" "$SV_NEW"
+has  "…which is NOT the one the /ctx paused" "$out" "$(printf 'old_transcript\t%s' "$SV_OLD")"
+rm -f "$SV_READY_DST"
+
+# A `ready` OPERATION IS HISTORY: a supervisor started for it again refuses.
+run env PATH="$SVPATH" PCLAUDE="$SV_BIN/pclaude-ok" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" \
+    "$SV_LANE_HANDOFF" --supervise --lane repoSV-3 --operation "$SV_OP"
+is   "a confirmed restart is not launched a second time" "$rc" 2
+has  "…and the door to the lane is the one word a person has" "$err" "lane repoSV-3"
+
+# ------------------------------------------- 7. the status surface
+
+run env PATH="$SVPATH" "$SV_LANE_HANDOFF" --restart-status --lane repoSV-3
+is   "the status surface reads" "$rc" 0
+has  "…the lane" "$out" "lane        repoSV-3"
+has  "…the intent and its attempt" "$out" "intent      ready"
+has  "…the operation and generation" "$out" "operation   $SV_OP"
+has  "…the handoff" "$out" "handoff     "
+has  "…both transcripts" "$out" "transcript  old $SV_OLD"
+has  "…and what is open on it" "$out" "DONE: this restart was confirmed"
+run env PATH="$SVPATH" "$SV_LANE_HANDOFF" --restart-status --lane repoSV-2
+has  "…and a lane whose lanes-edit.sh has no lifecycle says so rather than leaving it blank" \
+     "$out" "lifecycle   "
+
+run env PATH="$SVPATH" "$SV_LANE_HANDOFF" --restart-status --lane repoSV-3 --restart
+is   "--restart-status and --restart together are refused" "$rc" 2
+has  "…because one reads and the other writes the record" "$err" "Ask for one."
+run env PATH="$SVPATH" "$SV_LANE_HANDOFF" --supervise --restart-status --lane repoSV-3
+is   "--supervise and --restart-status together are refused" "$rc" 2
+run env PATH="$SVPATH" "$SV_LANE_HANDOFF" --restart --lane repoSV-3 --operation "$SV_OP" clear
+is   "--operation outside --supervise is refused rather than silently discarded" "$rc" 2
+has  "…because --restart mints its own" "$err" "MINTS its own operation"
+
+# ------------------- 6a. the third answer: INDETERMINATE, and nothing is killed
+#
+# A CHILD THAT IS ALIVE AND UNCONFIRMED IS NOT A FAILURE AND NOT A SUCCESS. The
+# deadline expires, the observer writes what it could not prove, and nothing is
+# killed — Amendment 8(f): ending somebody's process is not a boundary script's
+# act. Here the child then exits on its own, which is the only way a supervisor
+# blocked on it ever gets to report.
+cat > "$SV_BIN/pclaude-quiet" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FAKE_SVLAUNCH_LOG:-/dev/null}"
+# ALIVE UNTIL THE DEADLINE HAS BEEN DECLARED, and not for a fixed count of
+# seconds, for the reason `pclaude-ok` above gives. This child must still be
+# running when the observer's deadline expires — that is what INDETERMINATE
+# MEANS — and must then exit, because a supervisor blocked on its child is only
+# able to report once the child is gone.
+i=0
+while [ "$i" -lt "${FAKE_SVLAUNCH_CAP:-60}" ]; do
+  grep -q 'INDETERMINATE' "${SV_INTENT:-/nonexistent}" 2>/dev/null && break
+  i=$((i + 1)); sleep 1
+done
+exit 0
+FAKE
+chmod +x "$SV_BIN/pclaude-quiet"
+"$E" set-restart-intent repoSV-3 pending --expect ready >/dev/null 2>&1
+: > "$FAKE_SVLAUNCH_LOG"
+run env PATH="$SVPATH" PCLAUDE="$SV_BIN/pclaude-quiet" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" \
+    LANE_SUPERVISOR_READY_SECONDS=4 "$SV_LANE_HANDOFF" \
+    --supervise --lane repoSV-3 --operation "$SV_OP"
+is   "a child that stays alive without readiness evidence is INDETERMINATE, not running" "$rc" 4
+has  "…and the supervisor says which it was" "$out" "INDETERMINATE"
+# 4 AND NOT 3, WHICH IS THE DISTINCTION THE USAGE BLOCK PROMISES AND NO PATH
+# USED TO RETURN (Copilot round 1 on openRepoTools#121). The observer's own
+# `return 4` is read by nothing — it runs in the background and the record is
+# what decides — so the record decides this too. The `failed` TRANSITION stays:
+# INDETERMINATE is the answer for a child that is ALIVE at the deadline, and
+# this branch is reached only once that child has exited, which is a launch that
+# ended having never been confirmed and is retryable. Leaving it `starting`
+# would wedge the lane in the one state neither a retry nor the next /ctx can
+# move.
+has  "…as a launch that ran PAST the deadline and only then ended" "$out" "ran past the readiness deadline still alive"
+run env PATH="$SVPATH" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" \
+    "$SV_LANE_HANDOFF" --restart-status --lane repoSV-3
+is   "…and the retry surface is open on it" "$rc" 0
+has  "…as a failed restart with one line to retry" "$out" "RETRY:"
+run "$E" restart-intent repoSV-3
+hasnt "…the lane was never marked ready on a launch nothing proved" "$out" "$(printf 'state\tready')"
+has  "…the deadline is in the record for a reader in another window" "$out" "INDETERMINATE"
+
 
 # ------------------------------------------------------- nothing real touched
 #

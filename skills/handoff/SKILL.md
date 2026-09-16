@@ -634,40 +634,50 @@ Steps 1–5 are the whole act for a plain `/handoff`. The two flags add ONE act 
 and both refuse where step 4's `PAUSED` line did not land: *"a `/ctx` whose record could not be written
 REFUSES before it kills anything (a pane is never respawned over an unrecorded lane)"* (Amendment 17(f)).
 
-**`/ctx` (`/handoff --restart`) — the context clear, and the person types nothing else.** The lane's own
-pane is respawned through the launcher with a NEW session of the same agent, and that session's first
-prompt is the top block step 2 just wrote:
+**`/ctx` (`/handoff --restart`) — the context clear, and the person types nothing else.** IT IS ONE COMMAND
+AND THIS STEP DOES NOT SPELL IT OUT IN SHELL:
 
 ```sh
-# the pane is the LIVE RECORD'S own `tmux` field — `<session>:<@id>.%<pane>` —
-# because that is the pane the session is really in.
-# AND IT IS ASKED WITH `<session>:<@id>`, NOT `@id` ALONE: that is the HARNESS's
-# own `tmux` field, which is what `window-session` matches a record on, and the
-# three spellings of one window are never derived from each other
-# (`lane-start:975-984`, and `lane-handoff` reads it the same way).
-pane="$("$L" window-session "$(tmux display-message -p '#{session_name}:#{window_id}')" | awk -F'\037' '{print $2}')"
-# `lane <name>` where this workstation has that word, and the launcher where it
-# does not: `lane-handoff --restart` makes exactly this choice, in code.
-if command -v lane >/dev/null 2>&1; then
-  tmux respawn-pane -k -t "$pane" "LANE_START_FRESH=1 lane $lane"
-else
-  tmux respawn-pane -k -t "$pane" "LANE_START_FRESH=1 pclaude --lane $lane ${CLAUDE_PROFILE_NAME:-<profile>}"
-fi
+lane-handoff --restart "$why"
 ```
 
-`respawn-pane -k` replaces the pane's process, so the act survives the death of the session that started it.
-`LANE_START_FRESH=1` is the one seam: it tells `lane-start` *a NEW session of this lane's agent, started with
-the top block of the handoff the row names as its first prompt* — which is what a context clear IS, and it is
-why `/ctx` does not simply resume the transcript it has just paused. It is an ENVIRONMENT seam and not an
-argument, so it survives `lane` handing the launch on to `lane-start` exactly as it survives the launcher
-doing so. **The respawn line is `lane <lane>` and never `restart <lane>`** (Amendment 18 Addendum 2, in force
-2026-09-14T16:50:32Z, clause (i-8): the respawn *"relaunches the lane's own pane with `lane <name>` (its
-parked branch is exactly Amendment 11(i)'s act), or through the launcher directly"*, and `restart` leaves the
-person's `PATH` with `opensoft/openRepoTools#43`). `lane <name>` needs no profile argument: its parked branch
-reads the record step 4 just wrote — the lane's recorded directory and profile — and asks nothing. **Where
-`lane` is not on `PATH`** (it arrives with #43, and this act shipped first) the line is `pclaude --lane
-<lane> <profile>`, the same act one door along: a respawn is the one act no later refusal can undo, so the
-word is used only where it can be seen on `PATH`.
+**THE TMUX RECIPE THAT USED TO BE HERE IS GONE, AND `opensoft/openRepoTools#94` IS WHY.** This step used to
+carry an executable respawn — `tmux respawn-pane -k -t "$pane" "LANE_START_FRESH=1 lane $lane"` — for a
+session to run itself. On 2026-09-15T20:59Z that is what ran, with two extra environment assignments the
+model added on the spot, and what came up in the pane was `claude --name <lane> --resume <the uuid the
+handoff had just paused>`: the same conversation resumed by id, not a fresh session primed by the block
+step 2 had just written, and no process left in the pane to notice. Two things were wrong and only one of
+them was the recipe:
+
+- **`LANE_START_FRESH=1` is an ENVIRONMENT seam and it does not cross the launcher.** `claude-profile`
+  re-creates its child through tmux, and a command tmux starts gets the tmux SERVER's environment, not the
+  caller's — the launcher's own code says so and threads six values into the command string for exactly
+  that reason. The fresh-session requirement was not one of them. It is now a RESTART INTENT written to
+  disk under the lane's own control root before anything is killed, and `lane-start` reads it back whatever
+  the environment did.
+- **A prose recipe is a second implementation of the destructive tail.** Two copies of one procedure that
+  must stay byte-equal is the rejected alternative everywhere else in this file, and the one place it was
+  allowed is the one place a session kills its own pane.
+
+So the whole of `/ctx`'s end is the one command above, and `lane-handoff` owns it: the restart intent
+written and read back as a FOURTH gate beside the `PAUSED` line, the row and the handoff; the pane
+respawned with `lane-handoff --supervise --lane <lane> --operation <id>` **by absolute path**; the
+supervisor claiming that intent, running the launch as its CHILD through the launcher, confirming the
+replacement came up, and STAYING IN THE PANE with a diagnostic and a retry when it did not.
+
+**WHAT TO DO WITH WHAT IT PRINTS.** Exit 0 is the pane handed over — this session is about to be killed by
+the command it just ran, and there is nothing after it. Exit 2 is a REFUSAL and this pane is exactly as it
+was: read the line, it names which of the four writes did not land, or says a restart is already in flight
+(`lane-handoff --restart-status --lane <lane>` reads that one), or that tmux would not take the pane. In
+every refusal the record is already written, so the fallback is the printed restart line and never a second
+`--restart`.
+
+**`lane <name>` IS STILL A PERSON'S DOOR AND IS NO LONGER THIS ONE** (Amendment 18 Addendum 2 (i-8) names
+two doors: `lane <name>`, *"or through the launcher directly"*). The supervisor takes the second, because
+`lane` is a HUMAN DISPATCHER whose valid outcomes include attaching to a live session without launching
+anything — and because it was the door #94 came through. The clause's own ground is kept: *"no word is
+kept on `PATH` for it alone"*, and none is — the supervisor is a mode of `lane-handoff`, which is already
+installed.
 
 **`/ctx` SAYS WHICH IT DID** (Addendum 1 (j)). The respawn above replaces the pane's process, so every writer
 of this lane dies with it: the kind is `respawn`, and the count the next session makes first then finds none,

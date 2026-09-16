@@ -2090,8 +2090,12 @@ how the register has spelled Codex sessions since 2026-09-05.
 ### `/ctx` — one word, and everything after it is automatic
 
 `/ctx` (`/handoff --restart`) performs the handoff and then **restarts in
-place**: `tmux respawn-pane -k` on the lane's own pane, with a NEW session of the
-same agent whose **first prompt is the handoff's top block**. That block's
+place**: `tmux respawn-pane -k` on the lane's own pane, and what comes up is a
+NEW session of the same agent whose **first prompt is the handoff's top block**.
+What tmux starts is not that session but a SUPERVISOR that launches it — the two
+subsections below are why, and they are `openRepoTools#94` — so the sentence
+holds end to end and no longer holds only as far as tmux accepting a command.
+That block's
 `WRITERS` section lists every worktree the lane had running: its branch, its last
 commit, what it was holding, and the brief it was given, so the new session finds
 them rather than discovering them — and its first line is Addendum 1 (i)'s, the
@@ -2101,28 +2105,135 @@ each one right. A `/ctx` that clears IN PLACE is the other kind and must say so
 (`--in-process`, `kind in-process`): the process survives, its writers survive
 with it, and the block says to EXPECT every writer below live.
 
-**The record comes first, always, and the record is THREE writes.** A `/ctx`
-**refuses before it kills anything** where the `PAUSED` line did not land, where
-the row was not flipped (the register would say RUNNING about a session that has
-just been replaced), or where the handoff could not be refreshed (its top block
-is literally the new session's first prompt, and a stale one hands over the
-instructions of another act). A pane is never respawned over an unrecorded lane.
+**The record comes first, always, and the record is FOUR writes** (it was three
+until `openRepoTools#94`). A `/ctx` **refuses before it kills anything** where the
+`PAUSED` line did not land, where the row was not flipped (the register would say
+RUNNING about a session that has just been replaced), where the handoff could not
+be refreshed (its top block is literally the new session's first prompt, and a
+stale one hands over the instructions of another act), **or where the restart
+intent could not be written and read back**. A pane is never respawned over an
+unrecorded lane, and a pane respawned with no intent is a pane whose supervisor
+has nothing to launch from — the same unrecorded restart one step along.
 
-**The respawn line is `lane <lane>`**, and never `restart <lane>` — Amendment 18
-Addendum 2 (i-8): the respawn *"relaunches the lane's own pane with `lane <name>`
-(its parked branch is exactly Amendment 11(i)'s act), or through the launcher
-directly"*, and `restart` leaves the person's `PATH` with `openRepoTools#43`.
-`lane <name>` needs no profile argument: its parked branch reads the record the
-handoff has just written — the lane's recorded directory and profile — and asks
-nothing. **Where `lane` is not on `PATH`** (it arrives with #43, and this act
-shipped first) the line is `pclaude --lane <lane> <profile>`, the same act one
-door along, and a `lane` on `PATH` that is not this estate's word is passed over
-for it with a line saying so: a respawn is the one act no later refusal can undo,
-so the word is used only where it can be SEEN. `LANE_START_FRESH=1` is the one
-seam that says *a new session, primed by the top block* — which is what a
-context clear is, and why `/ctx` does not resume the transcript it has just
-paused. It rides in the ENVIRONMENT, so it survives `lane` handing the launch on
-to `lane-start` exactly as it survives the launcher doing so.
+#### The restart intent — what makes the new session a FRESH one
+
+`opensoft/openRepoTools#94`, measured on Eagle at 2026-09-15T20:59Z: `/ctx` wrote
+its record, respawned its own pane with `LANE_START_FRESH=1 … lane <lane>`, and
+what came up was `claude --name <lane> --resume <the uuid it had just paused>` —
+the same conversation, not a fresh one. `lane-start` was right (both of its
+`(( ! fresh ))` gates were in the installed copy), `lane` was right (its available
+branch ends in a plain `exec`), and the variable simply never arrived. The
+launcher re-creates its child through tmux, and **a command tmux starts gets the
+tmux SERVER's environment, not the caller's** — `claude-profile`'s own code says
+so, which is why it writes six values into the command string explicitly. The
+seventh was never written, so it was never there.
+
+An environment cannot cross a boundary another repository owns. **A file can.**
+Before anything is killed, `/ctx` writes a RESTART INTENT under the lane's own
+control root — the same root `openRepoTools#91`'s lifecycle snapshot uses,
+resolved the same three ways (`$LANES_LANE_STATE_ROOT`, the checkout's parent
+`.lane-state/<lane>`, `$PROJECTS_ROOT/.lane-state/<lane>`):
+
+```
+$ lanes-edit.sh restart-intent openRepoTools-3
+state            pending
+generation       7
+operation        ctx-20260915T210412Z-41233-1187
+mode             fresh-from-handoff
+agent            claude
+profile          max-001
+dir              /…/openRepoTools
+pane             claude-…:@6.%6
+handoff          /…/handoffs/openRepoTools/…md
+digest           9f2c…
+old_transcript   4135b2c9-…
+new_transcript   none
+attempt          0
+```
+
+It carries no credential and there is no field for one. `lane-start` reads it back
+and **the intent is the authority**: with a `pending` or `starting` intent whose
+mode is `fresh-from-handoff`, the launch is a new session named for the lane and
+primed by the handoff's top block, whatever the row's last uuid or the lane's last
+`PAUSED` record name and whether or not any environment variable survived. A
+`ready` intent is history and authorises nothing, which is what makes the next
+`lane <name>` an ordinary resume. `LANE_START_FRESH=1` still works and is no longer
+the authority; `lane-start --fresh` is the same thing as an argument, for a caller
+with no launcher between it and there.
+
+Two refusals rather than substitutions: an intent naming another checkout, or an
+`--operation` that is not the lane's current one, is a refusal that renames
+nothing and starts nothing — and a handoff whose **digest** has changed since the
+intent was written blocks the launch, because that file's top block IS the first
+prompt.
+
+#### The supervisor — what tmux actually starts
+
+The pane is respawned with `lane-handoff --supervise --lane <lane> --operation
+<id>`, **by absolute path**, because a respawned pane's `PATH` is whatever the
+person's shell profile makes of it. It is a MODE of a command that is already
+installed and not a thirteenth word: Amendment 18 Addendum 2 (i-8) is explicit
+that *"no word is kept on `PATH` for it alone"*, which is the ground on which
+`restart` was taken off `PATH` in the first place.
+
+What the supervisor does, in order:
+
+1. **claims** the intent — `pending`/`failed` → `starting`, compare-and-swap on
+   the operation and the generation, so a stale supervisor writes nothing;
+2. refuses before launching anything on a stale operation, a `starting` or
+   `ready` one, a pane the intent does not name, a changed handoff digest, or a
+   live holder of the lane (Amendment 18(h): a second session of one lane is the
+   collision the whole protocol is about — and the act it prints is
+   `lane-end <lane> --retire <pid>`, never a kill);
+3. **runs the launch as its CHILD** — `pclaude --lane <lane> <profile>`, which is
+   (i-8)'s second door, falling to `lane-start --fresh --operation <id>` where
+   there is no launcher or the record names no profile. Never `lane <name>`: that
+   is the human dispatcher, and attaching to a live session is one of its valid
+   outcomes;
+4. **confirms readiness** from a read-only predicate — the child alive, exactly
+   one live holder of this lane, its transcript the new one and not the paused
+   one, in the pane the intent names — and only then marks the intent `ready` and
+   moves `SWAPPED → RUNNING` where this workstation has `openRepoTools#91`'s
+   lifecycle. Tmux accepting a command is **not** a started session, and nothing
+   here treats it as one;
+5. **stays in the pane**, whatever happens. Amendment 11's own invariant is *"No
+   path the launcher opened exits the pane"*, and `/ctx` was the one path that
+   did: what tmux used to start was the launch itself, so a launch that failed
+   took the pane with it.
+
+#### The retry surface
+
+A launch that never reaches readiness leaves the intent `failed` with a bounded
+reason, and the supervisor prints the stage, the fact that the handoff is intact,
+and three lines — retry, read, by hand:
+
+```
+RESTART FAILED — lane openRepoTools-3, operation ctx-20260915T210412Z-41233-1187
+  the launch ended with status 127 before readiness was confirmed
+
+  retry:   lane-handoff --supervise --lane openRepoTools-3 --operation ctx-…
+  read it: lane-handoff --restart-status --lane openRepoTools-3
+  by hand: lane openRepoTools-3
+```
+
+Where there is a terminal it then asks once — `[r = retry, q = leave it]` — and a
+retry is **the same operation**: the same generation, digest, directory, profile
+and launch mode, with the attempt count incremented. Where there is no terminal
+it exits 3 and says so. A deadline that expires with the child still ALIVE is a
+third answer, `INDETERMINATE`: nothing is killed (Amendment 8(f) — ending
+somebody's process is not a boundary script's act), nothing is retried, the lane
+is not marked running, and the reason goes into the record, because an interactive
+child owns the pane's screen.
+
+`lane-handoff --restart-status --lane <lane>` reads all of it from any window —
+the lane, the intent and its attempt, the operation and generation, the mode, the
+agent and profile, the checkout, the pane, the handoff and its digest, both
+transcripts, the bounded failure reason, and what act is open on it.
+
+**A second `/ctx` never supersedes a restart in flight.** With the intent
+`pending` or `starting`, an ordinary `/ctx` refuses *before* the kill and names
+the status command. Taking over an abandoned operation is an explicit act and not
+an automatic one.
 
 `/handoff --exit requested by <uuid>@<host>/<container>` is the other end
 (Amendment 18(d)): after the record, `/exit` is typed into this lane's own pane
