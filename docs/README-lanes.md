@@ -1889,7 +1889,14 @@ Eight tab-separated fields; the first two are unchanged, which is the contract
 `lanes`, `lane` and `lane-handoff` already read with `cut -f1`/`cut -f2`. Each
 source is `seam` (the launcher exported it), `hostname` (probed), `workstation`
 (a container with no export, writing the Rule 10 name for its host), `kernel`
-(the `uname` / `/proc/version` probe) or `outside` (no container).
+(the `uname` / `/proc/version` probe) or `outside` (no container) — **and, for
+the WORKSTATION field alone, `container-unset`**, which is Rule 10's own answer
+where this IS a container and nothing exported `$LANES_WORKSTATION`: the NAME
+still answers there, because a read in front of every launch may not refuse,
+while every WRITER refuses on it by name. It predates this clause and the reads
+table above has carried it all along; a reader holding this paragraph to five
+words would reject a valid eight-field line from exactly the containers this
+amendment is about.
 
 ## The name guard and the lock (Amendment 12)
 
