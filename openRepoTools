@@ -2042,10 +2042,13 @@ $(sed -e 's/^/    /' -- "$WIP_LAST_OUT")
 				# `core.fileMode=false` and git stages `100644` regardless; a
 				# refusal there would refuse every re-run on that mount over a
 				# bit that means nothing, so the config that decides it is
-				# asked. Unset is TRUE, which is why only an explicit `false`
-				# stands the refusal down.
+				# asked. Unset is TRUE — the read answers 1 and nothing, which
+				# is not `false`, so the refusal stands: an answer this command
+				# could not get is never permission to publish a mode. `--bool`
+				# because git's own spelling of false is `false`, `no`, `off` or
+				# `0` and this compares one string.
 				if [ -x "$checkout/$rel" ] &&
-					[ "$(git -C "$checkout" config --get core.fileMode 2>/dev/null || :)" != "false" ]
+					[ "$(git -C "$checkout" config --bool --get core.fileMode 2>/dev/null || :)" != "false" ]
 				then
 					die "$checkout/$rel is executable, and every file in $SHAPE_REPOSITORY's
     $WIP_TEMPLATE_DIR is a plain 100644 — this command copies the template's own bytes from a
