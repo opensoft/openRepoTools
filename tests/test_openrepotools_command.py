@@ -600,6 +600,86 @@ def test_a_copy_whose_bytes_are_right_and_whose_mode_is_not_says_so(tmp_path):
                 in result.stdout, other
 
 
+@NEEDS_JQ
+def test_a_mode_stamp_the_bin_loop_cannot_make_reads_as_a_refusal(tmp_path):
+    """THE ONE MODE STAMP IN THIS COMMAND THAT HAD NO `die` BESIDE IT (#48).
+
+    `--install`'s codes are this toolset's — 0 done, 1 findings printed, 2 a
+    refusal — and an unguarded `chmod` under `set -e` exits with the shell's own
+    1 from a run that is refusing, with the commands before it already placed.
+    Every other stamp in the file already died; this loop's did not.
+
+    WHY IT CAN FAIL AT ALL, AND WHY NOTHING PREFLIGHTS IT. `-w` proves this euid
+    may write a file's CONTENTS and `chmod` wants its OWNER, so a group- or
+    ACL-writable file owned by another account passes every planning check and
+    refuses the stamp. The question that would catch it first is `[ -O ]`, and
+    it is declined for the reason written beside `unplaceable_kind` (search
+    "WHAT `-w` DOES NOT PROVE") and ruled in R-A9-15: no fixture here can make a
+    second account to own the target, and it would refuse a root `--install`
+    into another user's home, where the stamp does in fact succeed.
+
+    SO THE FAILURE ITSELF IS WHAT IS TESTED, through a `chmod` first on `$PATH`
+    that refuses ONE path and is the real one for every other — the same way
+    this suite answers a `gh` it cannot call and a `jq` it must do without.
+    Ownership is what this stands in for; a fixture cannot make the ownership,
+    and the stamp's own failure is the same failure either way.
+    """
+    real = shutil.which("chmod")
+    if real is None:
+        pytest.skip("no real `chmod` on PATH for the fake to defer to")
+    bin_dir = tmp_path / ".local" / "bin"
+    refused = bin_dir / INSTALLED[1]
+    shim = tmp_path / "fake-chmod"
+    shim.mkdir()
+    (shim / "chmod").write_text(
+        "#!/bin/sh\n"
+        'for arg in "$@"; do\n'
+        f'\tif [ "$arg" = "{refused}" ]; then\n'
+        "\t\tprintf 'fake chmod: this one is not ours to mode\\n' >&2\n"
+        "\t\texit 1\n"
+        "\tfi\n"
+        "done\n"
+        f'exec {real} "$@"\n', encoding="utf-8")
+    (shim / "chmod").chmod(0o755)
+
+    result = run_cmd("--install", home=tmp_path,
+                     env={"PATH": f"{shim}{os.pathsep}{os.environ['PATH']}"})
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "REFUSED:" in result.stderr, result.stderr
+    assert f"could not set mode 755 on {refused}" in result.stderr, result.stderr
+    assert (bin_dir / INSTALLED[0]).is_file(), (
+        "the run refused before it reached the file whose stamp fails")
+    assert not (bin_dir / INSTALLED[2]).exists(), (
+        "the loop carried on past a mode stamp it could not make")
+    assert not (tmp_path / ".claude").exists(), (
+        "the skills, the command files or the hook entries were placed by a "
+        "run that refused")
+
+
+def test_every_mode_stamp_in_this_command_fails_through_die():
+    """AND THE RULE IS ASKED OF EVERY SITE, NOT ONLY THE ONE ABOVE (#48).
+
+    The bin loop's was the stamp nobody guarded, and a test that proves only
+    that stamp is a test the NEXT unguarded one walks straight past — the same
+    reason `test_repo_hygiene.py` asks its questions per name rather than of a
+    list somebody keeps. Read out of the script's text, because a `chmod` that
+    cannot fail in this suite is a `chmod` no run here reaches.
+    """
+    lines = COMMAND.read_text(encoding="utf-8").splitlines()
+    stamps = [(number, line) for number, line in enumerate(lines, 1)
+              if line.strip().startswith("chmod ")]
+    assert len(stamps) >= 5, (
+        f"this command performs {len(stamps)} mode stamps; the shape this test "
+        "reads has moved and it is now proving less than it says")
+    unguarded = [f"{number}: {line.strip()}" for number, line in stamps
+                 if "||" not in line]
+    assert not unguarded, (
+        "every `chmod` this command performs must fail through `die` — exit 2 "
+        "and a REFUSED line naming the target — never the shell's own 1 under "
+        "`set -e`, which this toolset spends on \"findings were printed\":\n  "
+        + "\n  ".join(unguarded))
+
+
 @pytest.mark.parametrize("name", RETIRED)
 @NEEDS_JQ
 def test_the_retirement_prints_a_removal_that_can_be_pasted(tmp_path, name):
