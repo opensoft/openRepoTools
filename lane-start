@@ -91,6 +91,16 @@
 #                    as its first prompt. The table is `claude` and `codex`; a
 #                    name it does not carry is a refusal naming the two, never a
 #                    guessed argv
+#   --fresh          A NEW SESSION of this lane's agent, primed by the handoff's
+#                    top block, whatever transcript the row names — the
+#                    fresh-session mode as an ARGUMENT rather than as an
+#                    environment variable (openRepoTools#94). The lane's own
+#                    pending restart intent outranks it; a conflicting one is a
+#                    refusal and never a substitution
+#   --operation <id> the restart operation this launch belongs to, passed by the
+#                    pane supervisor. The intent named by it is the one this run
+#                    reads; an id that is not the lane's current operation is a
+#                    refusal
 #   -h, --help
 #   --               everything after it is passed through to claude
 #
@@ -271,11 +281,13 @@
 #   LANES_NO_GIT=1       write the handoff's stamp but commit nothing
 #   LANE_START_FRESH=1   a NEW session of this lane's agent, started with the
 #                        top block of the handoff the row names as its first
-#                        prompt — which is what a context clear IS. It is the
-#                        one seam `/ctx` uses (`lane-handoff --restart` respawns
-#                        the lane's own pane with it set, Amendment 17(f)), and
-#                        with it unset this command behaves exactly as it did
-#                        before Amendment 17
+#                        prompt — which is what a context clear IS. It was
+#                        `/ctx`'s one seam under Amendment 17(f) and it still
+#                        works; it is NO LONGER THE AUTHORITY (openRepoTools#94):
+#                        the lane's own restart intent outranks it and `--fresh`
+#                        stands beside it, because an environment variable does
+#                        not survive the launcher's `tmux new-session` and this
+#                        command was measured being reached without it
 #
 # It spells no absolute path of its own. Since Amendment 9(a) the register is
 # found through `$AGENT_PROTOCOL_ROOT/workspace.yaml` rather than beside this
@@ -612,7 +624,7 @@ quoted() {
 # ------------------------------------------------------------------ arguments
 
 dry_run=0; no_launch=0; estate=""; dir_override=""; confirm=0; take_yes=0
-agent_flag=""
+agent_flag=""; fresh_flag=0; op_flag=""
 positional=(); pass=()
 
 while [ $# -gt 0 ]; do
@@ -629,6 +641,24 @@ while [ $# -gt 0 ]; do
     # empty value, for the reason `--dir` states above.
     --agent)     agent_flag="${2-}"; [ -n "$agent_flag" ] || die "--agent needs a name" 2; shift 2 ;;
     --agent=*)   agent_flag="${1#--agent=}"; [ -n "$agent_flag" ] || die "--agent needs a name" 2; shift ;;
+    # `--fresh` — THE FRESH-SESSION MODE AS AN ARGUMENT, and it exists because
+    # the environment seam it stands beside cannot be relied on to arrive
+    # (openRepoTools#94, measured on Eagle 2026-09-15T20:59Z). `/ctx` set
+    # `LANE_START_FRESH=1` in the command it respawned the pane with, the
+    # launcher re-created the child through `tmux new-session`, and tmux hands
+    # a command the SERVER's environment and not the client's — so this
+    # command was reached with the variable gone and resumed the very
+    # transcript the context clear had just paused. An ARGUMENT survives an
+    # `exec`; it does not survive a re-creation either, which is why the
+    # DURABLE RESTART INTENT below outranks both. This flag is for the caller
+    # that reaches this command directly.
+    --fresh)     fresh_flag=1; shift ;;
+    # THE OPERATION THIS LAUNCH BELONGS TO (openRepoTools#94). The supervisor
+    # passes it so that this run reads the intent it was started for and no
+    # other, and so that a launch arriving with a STALE operation refuses
+    # rather than consuming a newer lane's intent.
+    --operation)   op_flag="${2-}"; [ -n "$op_flag" ] || die "--operation needs an operation id" 2; shift 2 ;;
+    --operation=*) op_flag="${1#--operation=}"; [ -n "$op_flag" ] || die "--operation needs an operation id" 2; shift ;;
     # THE TWO SPELLINGS OF ONE FLAG GIVE ONE ANSWER, and these two did not
     # (#26, the review of `c3ebcfe`, `lane-start:707`). `--dir ""` refuses;
     # `--dir=` set the variable to nothing and fell through as if the operator
@@ -1918,6 +1948,21 @@ profile_projects_dirs() {
 # parses this file. A path that is not a directory comes back as it was given,
 # which is what the `readlink -f` fallback did.
 real_of() { ( CDPATH=''; cd -P -- "$1" 2>/dev/null && pwd -P ) || printf '%s\n' "$1"; }
+# THE HANDOFF'S DIGEST, spelled exactly as `lanes-edit.sh` spells it, because
+# the two are compared: this file is what the intent recorded and what a launch
+# verifies, and two implementations of one digest is one implementation too
+# many. `none` where the workstation has neither tool — an ANSWER, meaning *not
+# checked here*, never *unchanged*.
+handoff_digest_of() {   # <file>
+  [ -r "${1-}" ] || { printf 'none\n'; return 0; }
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -- "$1" 2>/dev/null | awk '{print $1; exit}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 -- "$1" 2>/dev/null | awk '{print $1; exit}'
+  else
+    printf 'none\n'
+  fi
+}
 
 profile_of_projects_dir() {   # <…/<profile>/projects> -> the profile's name
   popd_d="${1%/projects}"; popd_n="${popd_d##*/}"
@@ -2232,16 +2277,112 @@ if [ "$AGENT" != claude ]; then
     esac
   fi
 fi
-# `LANE_START_FRESH=1` IS THE `/ctx` SEAM, and it is one sentence: *a NEW
-# session of this lane's agent, started with the top block of the handoff the
-# row names as its first prompt*. That is what a context clear IS, and it is why
-# `/ctx` does not simply resume the transcript it has just paused.
-# `lane-handoff --restart` respawns the lane's own pane with it set (Amendment
-# 17(f)); nothing else sets it, and with it unset this command behaves exactly
-# as it did before this amendment.
+# ------------- THE FRESH SESSION, AND WHICH OF ITS THREE SOURCES IS AUTHORITY
+#
+# A CONTEXT CLEAR IS ONE SENTENCE — *a NEW session of this lane's agent,
+# started with the top block of the handoff the row names as its first prompt* —
+# and it is why `/ctx` does not simply resume the transcript it has just paused.
+# What changed on 2026-09-15 is not the sentence but WHO SAYS IT.
+#
+# `LANE_START_FRESH=1` WAS THE SEAM AND IS NO LONGER THE AUTHORITY
+# (openRepoTools#94, measured on Eagle 2026-09-15T20:59Z). `/ctx` respawned the
+# lane's own pane with the variable set, and this command was reached WITHOUT
+# it: `claude-profile` re-creates the child through tmux, and its own code says
+# the rule — *"`tmux new-session` hands the command the SERVER's environment,
+# not this client's, so a variable the operator exported in their own shell
+# reaches the child only if it is written into the command string"*. It threads
+# six values explicitly and this was never one of them. The gates below were
+# correct and were simply never reached with `fresh` set; the lane resumed the
+# uuid it had just paused, and the record said an act had happened that had not.
+#
+# SO THE AUTHORITY IS A FILE, and the three sources are read in this order:
+#
+#   1. THE LANE'S OWN RESTART INTENT — `lanes-edit.sh restart-intent <lane>`,
+#      written under the lane's control root BEFORE the old process was killed
+#      and read back here whatever the environment did. It is the only channel
+#      that crosses a boundary another repository owns, because it is on disk
+#      rather than in an environment. Only `pending` and `starting` authorise a
+#      launch: a `ready` intent is HISTORY (which is what makes an ordinary
+#      `lane <name>` after a successful `/ctx` an ordinary resume), and a
+#      `failed` one is the supervisor's to retry, which moves it back to
+#      `starting` first.
+#   2. `--fresh`, for the caller that reaches this command directly and has no
+#      launcher between it and here.
+#   3. `LANE_START_FRESH=1`, kept exactly as it was so that nothing written
+#      about it stops working, and no longer trusted to arrive.
+#
+# AND AN INTENT THAT DISAGREES WITH THIS RUN IS A REFUSAL, NEVER A SUBSTITUTION
+# (spec: *the operation launch refuses without substituting the conflicting
+# value*). An intent naming another directory is an intent for a lane in
+# another checkout, and launching this one in it is Evidence 3's silent loss of
+# the repository's CLAUDE.md and the lane's memory; an `--operation` that is not
+# the lane's current one is a supervisor acting for an operation that has been
+# superseded.
 fresh=0
-[ "${LANE_START_FRESH:-0}" = 1 ] && fresh=1
+fresh_why=""
 first_prompt=0
+ri_state=""; ri_op=""; ri_gen=""; ri_mode=""; ri_dir=""; ri_hf=""; ri_dig=""; ri_rc=0
+ri_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$LANE" 2>/dev/null)" || ri_rc=$?
+case "$ri_rc" in
+  0)
+    ri_state="$(printf '%s\n' "$ri_out" | awk -F'\t' '$1 == "state" { print $2; exit }')"
+    ri_op="$(printf '%s\n'    "$ri_out" | awk -F'\t' '$1 == "operation" { print $2; exit }')"
+    ri_gen="$(printf '%s\n'   "$ri_out" | awk -F'\t' '$1 == "generation" { print $2; exit }')"
+    ri_mode="$(printf '%s\n'  "$ri_out" | awk -F'\t' '$1 == "mode" { print $2; exit }')"
+    ri_dir="$(printf '%s\n'   "$ri_out" | awk -F'\t' '$1 == "dir" { print $2; exit }')"
+    ri_hf="$(printf '%s\n'    "$ri_out" | awk -F'\t' '$1 == "handoff" { print $2; exit }')"
+    ri_dig="$(printf '%s\n'   "$ri_out" | awk -F'\t' '$1 == "digest" { print $2; exit }')" ;;
+  # 8 IS AN ANSWER — this lane has no restart in flight, which is every
+  # ordinary launch — and 1 is a lane with no control root, which is the
+  # pre-cutover lane and not a failure either. Anything else is a read that
+  # FAILED, and a read that failed is never an answer (Amendment 7(d)): it is
+  # said, and the other two sources still decide, because refusing every launch
+  # on a helper that could not answer is not a safety property.
+  8|1) : ;;
+  *) note "$LANES_EDIT restart-intent $LANE failed (exit $ri_rc) — this launch reads no restart intent, so a /ctx in flight for this lane is NOT visible here. If a context clear was just taken, run it again once the read works." ;;
+esac
+# AN `--operation` NAMES THE INTENT IT BELONGS TO, AND ONLY THAT ONE.
+if [ -n "$op_flag" ]; then
+  [ -n "$ri_state" ] ||
+    die "--operation $op_flag was given and lane $LANE has no restart intent to match it against (the read above says what answered). A supervised launch is made for ONE operation and this one cannot be found: nothing was renamed, nothing was written and no session was started. Read it with:  lanes-edit.sh restart-intent $LANE" 2
+  [ "$op_flag" = "$ri_op" ] ||
+    die "--operation $op_flag is not lane $LANE's current restart operation, which is ${ri_op:-none} (state ${ri_state:-none}, generation ${ri_gen:-0}). A stale supervisor must never launch against a newer operation — nothing was renamed, written or started. Read it with:  lanes-edit.sh restart-intent $LANE" 2
+fi
+case "$ri_state" in
+  pending|starting)
+    if [ "$ri_mode" = fresh-from-handoff ]; then
+      # THE DIRECTORY IS COMPARED BEFORE ANYTHING IS TAKEN. `real_of` is this
+      # file's own resolver, so a symlinked projects root does not read as a
+      # disagreement it is not.
+      if [ -n "$ri_dir" ] && [ "$ri_dir" != none ] && [ "$(real_of "$ri_dir")" != "$(real_of "$DIR")" ]; then
+        die "lane $LANE's restart intent (operation ${ri_op:-none}, state $ri_state) names checkout $ri_dir and this launch stands in $DIR. That is a conflict and not a preference: a launch that lands in the right transcript and the wrong directory loses the repository's CLAUDE.md and the lane's memory, silently (Evidence 3). Nothing was renamed, written or started. Launch it where the intent says, or read the intent:  lanes-edit.sh restart-intent $LANE" 2
+      fi
+      # THE HANDOFF'S DIGEST IS VERIFIED ON EVERY LAUNCH (spec: *a changed or
+      # missing handoff blocks launch and retry*), because the top block of
+      # that file is literally this launch's first prompt and a file that has
+      # moved under the intent is a different instruction. A `none` digest is
+      # *not checked here* — a workstation with neither `sha256sum` nor
+      # `shasum` — and says so rather than passing silently.
+      if [ -n "$ri_hf" ] && [ "$ri_hf" != none ] && [ -n "$ri_dig" ] && [ "$ri_dig" != none ]; then
+        ri_now="$(handoff_digest_of "$ri_hf")"
+        if [ "$ri_now" != "$ri_dig" ]; then
+          die "lane $LANE's handoff has changed since its restart intent was written: the intent records digest $ri_dig for $ri_hf and that file now digests $ri_now. The top block of that file is this launch's FIRST PROMPT, so launching now would hand the new session the block of a handoff the /ctx did not write. Nothing was renamed, written or started (operation ${ri_op:-none}). Take the handoff again:  lane-handoff --restart" 2
+        fi
+      fi
+      fresh=1
+      fresh_why=" (restart intent ${ri_op:-none}, state $ri_state: the /ctx respawn)"
+    else
+      note "lane $LANE has a restart intent in state $ri_state whose mode is '${ri_mode:-none}' and not 'fresh-from-handoff', so it authorises no fresh session here; this launch resolves its own resume source."
+    fi ;;
+esac
+if (( ! fresh )) && [ "$fresh_flag" = 1 ]; then
+  fresh=1
+  fresh_why=" (--fresh)"
+fi
+if (( ! fresh )) && [ "${LANE_START_FRESH:-0}" = 1 ]; then
+  fresh=1
+  fresh_why=" (LANE_START_FRESH=1: the /ctx respawn)"
+fi
 
 # AMENDMENT 11, EVIDENCE 4 — `--name "$LANE"` IS ON EVERY LAUNCH BRANCH, NOT
 # ONLY THE NEW-SESSION ONE. The session NAME is the lane's messaging address
@@ -2350,8 +2491,6 @@ elif (( fresh )) || (( AGENT_EXPLICIT )); then
   # title fallback deliberately — a caller that named an agent, or a context
   # clear that has just written a fresh top block, is asking for a new session
   # of this lane and not for a picker filtered by a title.
-  fresh_why=""
-  (( fresh )) && fresh_why=" (LANE_START_FRESH=1: the /ctx respawn)"
   step "agent claude — a new session named for the lane, with this lane's handoff top block as its first prompt$fresh_why"
   cmd=("$CLAUDE_BIN" --name "$LANE")
   lane_verb=RESUMED; lane_sid=unknown; first_prompt=1
@@ -3186,6 +3325,40 @@ if (( first_prompt )); then
     # from, and a session with no prompt can still read the file itself.
     note "the handoff the row names was not found${fp_cell:+ ('$fp_cell')}, so $AGENT is launched with no first prompt. Its first act is to read that file and stamp it (Rule 3)."
   fi
+fi
+
+# --------- 5c. the transcript this launch is about to make, INTO THE INTENT
+#
+# THE SUPERVISOR CANNOT CONFIRM WHAT IT WAS NEVER TOLD (openRepoTools#94). Its
+# readiness predicate asks whether the EXPECTED new transcript exists and is
+# bound to this lane; the only process that knows which uuid that is, is this
+# one, and only after 5a minted it. So it is written back into the intent
+# before the `exec` — the last act this command takes that the supervisor can
+# read — and the state goes with it: `starting` is *a launch was prepared for
+# this operation*, and the lane stays wherever its lifecycle already had it
+# until readiness is CONFIRMED.
+#
+# THE WRITE IS FENCED ON THE OPERATION AND ON NOTHING ELSE. A launch that has
+# been superseded between 5a and here writes nothing, and says so: the exit 7
+# is the intent telling this run that a newer operation owns the lane.
+#
+# IT NEVER FAILS THE LAUNCH. A supervisor that cannot read the expected uuid
+# falls back to its other evidence and to its timeout, which is an
+# INDETERMINATE and not a false RUNNING; refusing the launch here would trade a
+# confirmable start for no start at all.
+if (( fresh )) && [ -n "$ri_op" ] && (( ! no_launch )) && (( ! dry_run )); then
+  ri_new="$lane_sid"
+  [ -n "$ri_new" ] && [ "$ri_new" != unknown ] || ri_new="${new_sid:-}"
+  ri_wrc=0
+  LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$LANE" starting \
+    --expect 'pending|starting' --expect-operation "$ri_op" \
+    ${ri_new:+--new-transcript "$ri_new"} \
+    --reason "lane-start prepared the launch" >/dev/null 2>&1 || ri_wrc=$?
+  case "$ri_wrc" in
+    0) step "restart intent $ri_op: starting${ri_new:+, expected transcript $ri_new}" ;;
+    7) note "the restart intent moved under this launch (another operation owns lane $LANE now). The launch goes on — it is the one this pane was respawned for — but its supervisor will read the newer operation and will not mark this one ready." ;;
+    *) note "the restart intent could not be updated (set-restart-intent exited $ri_wrc), so the supervisor has no expected transcript to confirm against and will fall to its timeout. The launch is unaffected." ;;
+  esac
 fi
 
 # ---------------------------------------------------------------- 6. launch

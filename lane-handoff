@@ -188,6 +188,19 @@ lane-handoff [--restart | --exit | --in-process] [--late --at <UTC>]
                           instruction (Addendum 1 (j)). Refused with --restart,
                           --exit and --late, which each mean the process ended.
                           With none of the four the kind is `unknown`.
+  --supervise             THE PANE SUPERVISOR, started by --restart's respawn
+                          and not typed by a person: it claims the lane's
+                          restart intent, launches the replacement as its own
+                          CHILD, confirms readiness before anything is called
+                          running, and STAYS IN THE PANE with the diagnostic and
+                          a retry when the launch fails. Needs --lane and
+                          --operation.
+  --restart-status        read the lane's restart intent — its operation,
+                          generation, attempt, state, handoff, digest,
+                          transcripts and bounded failure reason — and print the
+                          act that is open on it. Reads only. Needs --lane.
+  --operation <id>        the restart operation --supervise was started for. An
+                          id that is not the lane's current one is a refusal.
   --late --at <UTC>       write the record a swap never left, dated by the
                           moment the old session ended. Run it from a shell
                           BEFORE the relaunch; see --help's LATE RULE.
@@ -202,13 +215,16 @@ lane-handoff [--restart | --exit | --in-process] [--late --at <UTC>]
                           requested by <uuid>@<host>/<container>.
 
 Exit: 0 written · 2 refused · 1 a read failed.
+      --supervise adds: 3 the launch failed and there was no terminal here to
+      offer the retry on · 4 indeterminate (a live child, readiness unconfirmed).
 USAGE
 }
 
 # ------------------------------------------------------------------ arguments
 
-do_restart=0; do_exit=0; do_late=0; do_in_process=0
+do_restart=0; do_exit=0; do_late=0; do_in_process=0; do_supervise=0; do_status=0
 late_at=""; lane=""; agent=""; transcript=""; writers_file=""; dir_flag=""
+operation=""
 why=""
 
 # A FLAG WHERE A VALUE BELONGS IS REFUSED, in this command as in `park`,
@@ -236,6 +252,19 @@ while [ $# -gt 0 ]; do
 	# says *relaunch every writer* puts a second writer on a worktree the first
 	# one still holds.
 	--in-process) do_in_process=1; shift ;;
+	# THE OTHER HALF OF `--restart`, AND THE SAME COMMAND ON PURPOSE
+	# (openRepoTools#94). `--supervise` is what tmux starts in the respawned
+	# pane: it claims the restart intent `--restart` wrote, launches the
+	# replacement as a CHILD, confirms readiness and stays in the pane when
+	# anything goes wrong. It is a MODE and not a thirteenth installed word,
+	# because Amendment 18 Addendum 2 (i-8) is explicit that *"no word is kept
+	# on `PATH` for it alone"* — which is the ground on which `restart` was
+	# taken off it. `--restart-status` is the read-only surface over the same
+	# record.
+	--supervise) do_supervise=1; shift ;;
+	--restart-status) do_status=1; shift ;;
+	--operation) operation="$(flag_value --operation "${2-}")"; shift 2 ;;
+	--operation=*) operation="${1#--operation=}"; shift ;;
 	--at) late_at="$(flag_value --at "${2-}")"; shift 2 ;;
 	--at=*) late_at="${1#--at=}"; shift ;;
 	--lane) lane="$(flag_value --lane "${2-}")"; shift 2 ;;
@@ -259,6 +288,28 @@ done
 # (Amendment 18(d)); asking for both is asking the same pane to do two opposite
 # things, and whichever ran second would run against a pane the first had
 # already replaced.
+# AND THE TWO MODES THAT ARE NOT HANDOFFS AT ALL ARE ASKED FOR ALONE
+# (openRepoTools#94). `--supervise` is the pane's own root process after a
+# `/ctx` and `--restart-status` is a read; neither writes a PAUSED record, and a
+# caller that asked for one of them beside `--restart` is asking this command to
+# hand off a lane and to be the thing that catches the handoff, in one process.
+for lh_mode_a in supervise:$do_supervise status:$do_status; do
+	[ "${lh_mode_a#*:}" = 1 ] || continue
+	for lh_mode_b in restart:$do_restart exit:$do_exit late:$do_late in-process:$do_in_process; do
+		[ "${lh_mode_b#*:}" = 1 ] || continue
+		die "--${lh_mode_a%%:*} is not a handoff and --${lh_mode_b%%:*} is: the first is the pane's own process after a /ctx (or a read of what that /ctx left), and the second writes the record. Ask for one." 2
+	done
+done
+[ "$do_supervise" = 1 ] && [ "$do_status" = 1 ] &&
+	die "--supervise launches and --restart-status reads; ask for one." 2
+# AND `--operation` NAMES THE ACT `--supervise` WAS STARTED FOR, so it is
+# meaningless anywhere else — and worse than meaningless on `--restart`, whose
+# own tail MINTS an operation: a value given there would be silently discarded,
+# which is the shape of thing a person only finds out about from a record that
+# does not say what they typed.
+[ -n "$operation" ] && [ "$do_supervise" != 1 ] &&
+	die "--operation names the restart operation a supervisor was started for, and only --supervise reads it. --restart MINTS its own operation and would discard this one silently; every other mode has none. Drop it, or run:  $prog --supervise --lane <lane> --operation $operation" 2
+
 [ "$do_restart" = 1 ] && [ "$do_exit" = 1 ] &&
 	die "--restart and --exit are two different ends for one act: --restart respawns this lane's own pane (Amendment 17(f), the lane stays here) and --exit ends the session (Amendment 18(d), the lane goes elsewhere). Pick one." 2
 # AND `--late` IS NEITHER OF THEM. It is written BEFORE the relaunch by a shell
@@ -349,6 +400,593 @@ have_tmux() {
 	[ "${LANE_HANDOFF_NO_TMUX:-0}" = 1 ] && return 1
 	command -v tmux >/dev/null 2>&1
 }
+
+# THIS COMMAND'S OWN ABSOLUTE PATH, because tmux starts the supervisor and a
+# respawned pane's `PATH` is whatever the person's shell profile makes of it —
+# which is one of the ways a respawn comes up with a word that is not this
+# estate's.
+SELF_ABS="$selfdir/${SELF##*/}"
+
+# THE HANDOFF'S DIGEST, spelled as `lanes-edit.sh` and `lane-start` spell it:
+# all three compare the same number, so there is ONE implementation of it and
+# not three. `none` is an ANSWER — this workstation has neither tool — and it
+# means *not checked here*, never *unchanged*.
+handoff_digest() {   # <file>
+	[ -r "${1-}" ] || { printf 'none\n'; return 0; }
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum -- "$1" 2>/dev/null | awk '{print $1; exit}'
+	elif command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 -- "$1" 2>/dev/null | awk '{print $1; exit}'
+	else
+		printf 'none\n'
+	fi
+}
+
+# A PANE REF IS COMPARED COMPONENT-WISE, NEVER AS A SUFFIX OR A PREFIX. The
+# three spellings are `<session>:<@id>`, `<session>:<@id>.%<pane>` and, in
+# `$TMUX_PANE`, the bare `%<pane>` — and a `case` on `*"$x"` accepts `%16` for
+# `%6` and a `case` on `"$x"*` accepts `@331` for `@33`. Both are the wrong
+# window, and this comparison decides whether a second session of a lane gets
+# started in one. Empty on either side is NOT a disagreement: a comparison that
+# cannot be made is said rather than failed shut, which is what the callers do
+# with it.
+pane_agrees() {   # <a> <b>
+	pa_a="${1-}"; pa_b="${2-}"
+	[ -n "$pa_a" ] && [ -n "$pa_b" ] || return 0
+	[ "$pa_a" != none ] && [ "$pa_b" != none ] || return 0
+	[ "$pa_a" = "$pa_b" ] && return 0
+	# A BARE `%<pane>` on either side is compared against the other's pane
+	# component and against nothing else.
+	case "$pa_a" in
+	%*) case "$pa_b" in *.%*) [ "$pa_a" = "${pa_b##*.}" ] && return 0 ;; esac; return 1 ;;
+	esac
+	case "$pa_b" in
+	%*) case "$pa_a" in *.%*) [ "$pa_b" = "${pa_a##*.}" ] && return 0 ;; esac; return 1 ;;
+	esac
+	# Otherwise both name a window; one may also name a pane, and a record that
+	# names only the window agrees with an intent that names the pane inside it.
+	case "$pa_a" in *.%*) pa_aw="${pa_a%.*}" ;; *) pa_aw="$pa_a" ;; esac
+	case "$pa_b" in *.%*) pa_bw="${pa_b%.*}" ;; *) pa_bw="$pa_b" ;; esac
+	[ "$pa_aw" = "$pa_bw" ]
+}
+
+# ---------------------------------------------------- the readiness predicate
+#
+# READ-ONLY, AND POSITIVE. It asks five things and every one of them must
+# answer, because the failure this exists to stop is a launch that was ACCEPTED
+# and never happened:
+#
+#   1. the child this supervisor started is still alive;
+#   2. this workstation's session records name a LIVE HOLDER of the lane;
+#   3. exactly ONE of them — a second is Amendment 18(h)'s collision, and a
+#      restart that confirmed itself while two processes answered for one lane
+#      would be the tooling making the very thing the protocol refuses;
+#   4. that holder's transcript is the one `lane-start` said it was about to
+#      make — and, where it said nothing, at least one that is NOT the
+#      transcript the `/ctx` paused, which is the spec's *a transcript distinct
+#      from the old transcript*;
+#   5. it is in the pane the intent was written for, where both are knowable.
+#
+# IT WRITES NOTHING, AND IT NEEDS NOTHING FROM THE `SessionStart` HOOK, whose
+# read-only, network-free, always-zero contract is load-bearing (`R-A8-1`,
+# ratified) and is untouched by any of this.
+#
+# THE CHILD'S PID COMES OUT OF A FILE and not out of a variable, because the
+# child is started in the FOREGROUND (below) and this predicate runs in a
+# background observer that has no way to be told it otherwise. An empty file is
+# *the child has not got as far as recording itself*, which is not the same as
+# *the child is gone*.
+#
+# 0 ready · 1 not yet (the reason is on `READY_WHY`) · 2 the child is gone.
+ready_check() {   # <lane> <pid file> <expected new transcript|""> <old transcript|""> <pane|"">
+	rc_lane="$1"; rc_pidf="$2"; rc_new="$3"; rc_old="$4"; rc_pane="$5"
+	READY_WHY=""; READY_SID=""
+	rc_pid=""
+	[ -r "$rc_pidf" ] && rc_pid="$(head -n 1 -- "$rc_pidf" 2>/dev/null | tr -dc '0-9')"
+	if [ -z "$rc_pid" ]; then
+		READY_WHY="the child has not recorded its pid yet"
+		return 1
+	fi
+	kill -0 "$rc_pid" 2>/dev/null || { READY_WHY="the child (pid $rc_pid) is gone"; return 2; }
+	rc_out=""; rc_rc=0
+	rc_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" live-holder "$rc_lane" 2>/dev/null)" || rc_rc=$?
+	case "$rc_rc" in
+	0) : ;;
+	8) READY_WHY="no live session record names lane $rc_lane yet"; return 1 ;;
+	*) READY_WHY="this workstation's session records could not be read (live-holder exited $rc_rc), which is NOT 'nothing is live'"; return 1 ;;
+	esac
+	rc_n="$(printf '%s\n' "$rc_out" | grep -c . || :)"
+	if [ "${rc_n:-0}" != 1 ]; then
+		READY_WHY="$rc_n live holders answer for lane $rc_lane and readiness needs exactly one (Amendment 18(h))"
+		return 1
+	fi
+	rc_sid="$(printf '%s\n' "$rc_out" | awk -F'\037' '{print $1; exit}')"
+	rc_tgt="$(printf '%s\n' "$rc_out" | awk -F'\037' '{print $2; exit}')"
+	READY_SID="$rc_sid"
+	if [ -n "$rc_new" ] && [ "$rc_new" != none ]; then
+		if [ "$rc_sid" != "$rc_new" ]; then
+			READY_WHY="the live holder's transcript is $rc_sid and this launch was preparing $rc_new"
+			return 1
+		fi
+	elif [ -n "$rc_old" ] && [ "$rc_old" != none ] && [ "$rc_sid" = "$rc_old" ]; then
+		READY_WHY="the live holder's transcript is $rc_sid, which is the one this /ctx paused — that is a resume and not a fresh session"
+		return 1
+	fi
+	if ! pane_agrees "$rc_pane" "$rc_tgt"; then
+		READY_WHY="the live holder is in $rc_tgt and the intent names pane $rc_pane"
+		return 1
+	fi
+	return 0
+}
+
+# ------------------------------------------------- the observer, and the wait
+#
+# THE CHILD RUNS IN THE FOREGROUND AND THIS PROCESS WAITS ON IT. That order is
+# not a preference: the child is an interactive terminal program, and a
+# background child in a shell with no job control cannot read the terminal at
+# all. So the OBSERVATION goes into the background instead — one subshell that
+# polls the read-only predicate above and, the moment it answers, makes the one
+# fenced write that turns this restart into a confirmed one. That is the
+# design's *separate observation path*, and it is why nothing is printed over a
+# running Claude's screen: the observer WRITES its verdict, and
+# `--restart-status` from any other window is where it is read.
+#
+# EVERY TWO SECONDS AND NOT EVERY ONE: the predicate's middle question goes
+# through `lanes-edit.sh live-holder`, which reads the register, and sixty of
+# those in a minute is sixty git processes behind a session that is trying to
+# start.
+supervise_watch() {   # <lane> <operation> <generation> <pid file> <new> <old> <pane>
+	sw_lane="$1"; sw_op="$2"; sw_gen="$3"; sw_pidf="$4"; sw_new="$5"; sw_old="$6"; sw_pane="$7"
+	sw_waited=0
+	while [ "$sw_waited" -lt "$SUPERVISE_READY_SECONDS" ]; do
+		sleep 2
+		sw_waited=$((sw_waited + 2))
+		sw_rc=0
+		ready_check "$sw_lane" "$sw_pidf" "$sw_new" "$sw_old" "$sw_pane" || sw_rc=$?
+		case "$sw_rc" in
+		2) return 3 ;;          # the child is gone; the supervisor has its status
+		0)
+			# THE FINALIZER, FENCED ON THIS OPERATION AND THIS GENERATION. A
+			# stale observer of a superseded operation writes nothing: exit 7
+			# is the intent refusing it, and that refusal is the whole point of
+			# the fence.
+			sw_frc=0
+			LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$sw_lane" ready \
+				--expect starting --expect-operation "$sw_op" --expect-generation "$sw_gen" \
+				--new-transcript "${READY_SID:-$sw_new}" \
+				--reason "readiness confirmed after ${sw_waited}s" >/dev/null 2>&1 || sw_frc=$?
+			if [ "$sw_frc" != 0 ]; then
+				note "lane $sw_lane came up and the restart intent could NOT be marked ready (exit $sw_frc): the session is running and the record does not say so. Read it:  $prog --restart-status --lane $sw_lane"
+				return 5
+			fi
+			# AND THE LANE'S OWN LIFECYCLE WHERE THIS WORKSTATION HAS ONE
+			# (openRepoTools#91): `SWAPPED -> RUNNING`, on the same act. A
+			# `lanes-edit.sh` without `lane-state` answers 2 from its
+			# unknown-subcommand arm and this is SILENT — the lane simply has
+			# no lifecycle snapshot to move, which is the pre-cutover case and
+			# not a failure.
+			sw_lrc=0
+			LANES_NO_FETCH=1 "$LANES_EDIT" set-lane-state "$sw_lane" RUNNING \
+				--expect SWAPPED >/dev/null 2>&1 || sw_lrc=$?
+			case "$sw_lrc" in
+			0 | 1 | 2) : ;;
+			7) note "lane $sw_lane's lifecycle moved under this restart, so the SWAPPED -> RUNNING transition was refused: the restart intent is ready and the lifecycle is somebody else's now. Read it:  $LANES_EDIT lane-reconcile $sw_lane" ;;
+			*) note "lane $sw_lane came up and its lifecycle could not be moved to RUNNING (set-lane-state exited $sw_lrc). The restart intent IS ready; the lifecycle snapshot is behind it." ;;
+			esac
+			return 0 ;;
+		esac
+	done
+	# THE DEADLINE, WITH THE CHILD STILL ALIVE — INDETERMINATE, which is a THIRD
+	# answer and not a failure. Nothing is killed (Amendment 8(f): ending
+	# somebody's process is not a boundary script's act), nothing is retried,
+	# and the lane is NOT marked running.
+	LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$sw_lane" starting \
+		--expect starting --expect-operation "$sw_op" \
+		--reason "INDETERMINATE: ${SUPERVISE_READY_SECONDS}s elapsed with the child alive and readiness unconfirmed; ${READY_WHY:-no evidence}" >/dev/null 2>&1 || :
+	return 4
+}
+
+# THE CHILD'S ARGV, out of the intent and out of nothing else — the spec's *no
+# picker, attach, select, current-directory, title, or default-profile
+# resolution*, and never the human-facing `lane` dispatcher, whose valid
+# outcomes include attaching to something instead of launching.
+#
+# THE LAUNCHER FIRST, because it is what configures the ACCOUNT: `pclaude
+# --lane <lane> <profile>` is the same act `lane`'s available branch makes, one
+# door along, and `lane-start` is what it runs. Where this workstation has no
+# launcher, or the intent records no profile to hand one, the supervisor runs
+# `lane-start` itself with the fresh mode as an ARGUMENT — the narrow operation
+# launch, and the only path on which `--operation` can be passed at all, since
+# the launcher forwards no argument of its own.
+#
+# EITHER WAY THE FRESH SESSION IS THE INTENT'S TO DECIDE AND NOT THIS ARGV'S:
+# `lane-start` reads the same file and goes fresh with no flag and no variable
+# set. The flag and the variable are set here anyway, because a launch that
+# says what it is in three places is a launch whose defect capture can be read
+# — and because on the launcher path they are the only two that even reach it.
+supervise_argv() {   # <lane> <operation>
+	sa_lane="$1"; sa_op="$2"
+	SUPERVISE_CMD=(); SUPERVISE_VIA=""
+	sa_launcher="${PCLAUDE:-}"
+	if [ -z "$sa_launcher" ]; then
+		sa_launcher="$(command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
+	fi
+	if [ -n "$sa_launcher" ] && [ -n "$RI_PROFILE" ] && [ "$RI_PROFILE" != none ]; then
+		SUPERVISE_CMD=("$sa_launcher" --lane "$sa_lane" "$RI_PROFILE")
+		SUPERVISE_VIA="the launcher ($sa_launcher), which configures the account and runs lane-start"
+		return 0
+	fi
+	sa_start=""
+	if [ -x "$selfdir/lane-start" ]; then sa_start="$selfdir/lane-start"
+	else sa_start="$(command -v lane-start 2>/dev/null || printf '')"
+	fi
+	[ -n "$sa_start" ] || return 1
+	SUPERVISE_CMD=("$sa_start" --fresh --operation "$sa_op")
+	[ -n "$RI_DIR" ] && [ "$RI_DIR" != none ] && SUPERVISE_CMD+=(--dir "$RI_DIR")
+	SUPERVISE_CMD+=("$sa_lane")
+	if [ -n "$sa_launcher" ]; then
+		SUPERVISE_VIA="lane-start directly ($sa_start) — this lane's record names no profile, so there is nothing to tell the launcher which account to come up in"
+	else
+		SUPERVISE_VIA="lane-start directly ($sa_start) — there is no launcher on PATH here"
+	fi
+	return 0
+}
+
+# THE FAILURE SURFACE. The supervisor is STILL IN THE PANE, which is the whole
+# of what this change is for, and what it offers is one line to retry and one
+# to walk away with. A pane with no terminal — the suite, a `--supervise` run
+# from a script — is told the same thing and gets exit 3 rather than a read
+# nobody will answer.
+#
+# 3 = reported, no terminal · 10 = reported, ask the person.
+supervise_failed() {   # <lane> <operation> <reason>
+	sf_lane="$1"; sf_op="$2"; sf_why="$3"
+	LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$sf_lane" failed \
+		--expect 'starting|pending' --expect-operation "$sf_op" \
+		--reason "$sf_why" >/dev/null 2>&1 ||
+		note "the restart intent could not be marked failed (another operation may hold this lane now). Read it:  $prog --restart-status --lane $sf_lane"
+	say ""
+	say "RESTART FAILED — lane $sf_lane, operation $sf_op"
+	say "  $sf_why"
+	say ""
+	say "  The old session is gone (this pane was respawned for the restart) and the"
+	say "  handoff it wrote is intact: its top block is still the first prompt the next"
+	say "  session gets, and nothing of the lane has been lost."
+	say ""
+	say "  retry:   $(quoted "$SELF_ABS") --supervise --lane $sf_lane --operation $sf_op"
+	say "  read it: $(quoted "$SELF_ABS") --restart-status --lane $sf_lane"
+	say "  by hand: lane $sf_lane"
+	say ""
+	if [ "${LANE_SUPERVISOR_NO_PROMPT:-0}" = 1 ] || [ ! -t 0 ]; then
+		note "there is no terminal here to offer the retry on, so this supervisor exits 3 rather than blocking on a read nobody will answer. The intent is \`failed\` and carries the reason; the three lines above are the whole of what to do next."
+		return 3
+	fi
+	return 10
+}
+
+# THE ONE QUESTION THIS COMMAND EVER ASKS, and it asks it only where a person is
+# looking at the pane. `r` retries the SAME operation; anything else leaves the
+# pane to the person, with the intent `failed` and every line above still on
+# screen.
+supervise_prompt() {   # <lane> <operation>
+	printf '%s: retry this restart? [r = retry, q = leave it] ' "$prog" >&2
+	sp_ans=""
+	IFS= read -r sp_ans || { printf '\n' >&2; return 3; }
+	case "$sp_ans" in
+	r | R | retry) return 0 ;;
+	*)
+		say ""
+		say "left as it is. The intent stays \`failed\` and this pane is yours:"
+		say "  retry:   $(quoted "$SELF_ABS") --supervise --lane $1 --operation $2"
+		return 3 ;;
+	esac
+}
+
+# THE SUPERVISOR PROPER. It loops only because a RETRY is the same launch made
+# again under the same operation, generation, digest, directory and mode — the
+# spec's idempotent retry — and never because a child that ended is relaunched
+# on its own.
+supervise_run() {   # <lane> <operation>
+	sr_lane="$1"; sr_op="$2"
+	sr_pidf="$(mktemp "${TMPDIR:-/tmp}/lane-supervisor.XXXXXX" 2>/dev/null || printf '')"
+	[ -n "$sr_pidf" ] || die "no temporary file could be made to record the launch's pid, and without it this supervisor cannot tell a child that died from one that is starting. Nothing was started." 2
+	SV_PIDFILE="$sr_pidf"
+	while : ; do
+		# ---- the claim: `pending`/`failed` -> `starting`, fenced on the
+		# operation AND the generation. It is INSIDE the loop because a retry
+		# is a second claim of the same operation and must take the fence
+		# again: between the failure and the `r` a person may have started the
+		# lane by hand, and the retry must lose that race rather than win it.
+		ri_load "$sr_lane" >/dev/null 2>&1 || :
+		case "$RI_STATE" in
+		pending) sr_att=(--attempt=1) ;;
+		failed)  sr_att=(--bump-attempt) ;;
+		*) die "lane $sr_lane's restart intent is '${RI_STATE:-none}' and this supervisor can only launch from \`pending\` or \`failed\`. Nothing was started. Read it:  $prog --restart-status --lane $sr_lane" 2 ;;
+		esac
+		sr_crc=0
+		LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$sr_lane" starting \
+			--expect "$RI_STATE" --expect-operation "$sr_op" --expect-generation "${RI_GEN:-0}" \
+			"${sr_att[@]}" --reason "supervisor claimed the operation" >/dev/null 2>&1 || sr_crc=$?
+		case "$sr_crc" in
+		0) : ;;
+		7) die "lane $sr_lane's restart intent moved between reading it and claiming it: another act owns operation $sr_op now. Nothing was started. Read it:  $prog --restart-status --lane $sr_lane" 2 ;;
+		*) die "lane $sr_lane's restart intent could not be claimed (\`set-restart-intent\` exited $sr_crc), and this supervisor will not launch without a fenced hold on operation $sr_op. Nothing was started." 2 ;;
+		esac
+		ri_load "$sr_lane" >/dev/null 2>&1 || :
+
+		if ! supervise_argv "$sr_lane" "$sr_op"; then
+			supervise_failed "$sr_lane" "$sr_op" "there is no launcher and no lane-start on PATH here, so nothing could be started"
+			sr_fs=$?
+			[ "$sr_fs" = 10 ] || return "$sr_fs"
+			supervise_prompt "$sr_lane" "$sr_op" || return $?
+			continue
+		fi
+		sr_dir="$RI_DIR"
+		if [ -n "$sr_dir" ] && [ "$sr_dir" != none ] && [ ! -d "$sr_dir" ]; then
+			supervise_failed "$sr_lane" "$sr_op" "the intent's checkout $sr_dir does not exist here, so the launch was not made"
+			sr_fs=$?
+			[ "$sr_fs" = 10 ] || return "$sr_fs"
+			supervise_prompt "$sr_lane" "$sr_op" || return $?
+			continue
+		fi
+		say "lane $sr_lane — restarting (operation $sr_op, attempt ${RI_ATTEMPT:-1})"
+		say "  through $SUPERVISE_VIA"
+		say "  first prompt: the top block of ${RI_HANDOFF:-the handoff this lane names}"
+		say "  this supervisor stays in the pane: whatever the launch does, it will say so here."
+		say ""
+		: > "$sr_pidf"
+		supervise_watch "$sr_lane" "$sr_op" "${RI_GEN:-0}" "$sr_pidf" "$RI_NEW" "$RI_OLD" "$RI_PANE" &
+		sr_watch=$!
+		sr_status=0
+		# THE PID IS WRITTEN BY THE PROCESS THAT BECOMES THE CHILD, and `sh -c`
+		# is how, on bash 3.2 as well as on a modern one: `$$` inside it is
+		# that shell's pid, and the `exec` on the next word makes that pid the
+		# launch's own. `$BASHPID` would be the one-liner and macOS ships bash
+		# 3.2, which does not have it.
+		if [ -n "$sr_dir" ] && [ "$sr_dir" != none ]; then
+			( cd -- "$sr_dir" && LANE_START_FRESH=1 LANE_RESTART_OPERATION="$sr_op" \
+				exec sh -c 'printf "%s\n" "$$" > "$1"; shift; exec "$@"' _ "$sr_pidf" "${SUPERVISE_CMD[@]}" ) || sr_status=$?
+		else
+			LANE_START_FRESH=1 LANE_RESTART_OPERATION="$sr_op" \
+				sh -c 'printf "%s\n" "$$" > "$1"; shift; exec "$@"' _ "$sr_pidf" "${SUPERVISE_CMD[@]}" || sr_status=$?
+		fi
+		kill "$sr_watch" 2>/dev/null
+		wait "$sr_watch" 2>/dev/null
+		# WHAT THE RECORD SAYS NOW IS WHAT DECIDES, and never this process's
+		# memory of what it started: the observer is the only thing that ever
+		# had positive evidence, and it wrote that evidence down.
+		ri_load "$sr_lane" >/dev/null 2>&1 || :
+		if [ "$RI_STATE" = ready ]; then
+			say ""
+			say "lane $sr_lane: the replacement session was CONFIRMED (operation $sr_op, transcript ${RI_NEW:-unrecorded}) and has now exited."
+			say "  A session that exited on purpose is not relaunched here — that is \`lane $sr_lane\`."
+			return 0
+		fi
+		sr_why="the launch ended with status $sr_status before readiness was confirmed"
+		case "$RI_REASON" in
+		INDETERMINATE:*) sr_why="the launch ran without readiness evidence and then ended with status $sr_status; $RI_REASON" ;;
+		esac
+		supervise_failed "$sr_lane" "$sr_op" "$sr_why"
+		sr_fs=$?
+		[ "$sr_fs" = 10 ] || return "$sr_fs"
+		supervise_prompt "$sr_lane" "$sr_op" || return $?
+	done
+}
+
+# ============ THE PANE SUPERVISOR AND THE RESTART STATUS (openRepoTools#94)
+#
+# WHY A PROCESS STAYS IN THE PANE. `/ctx` respawned its own pane and treated
+# tmux ACCEPTING the command as proof a session had started. Tmux accepting a
+# command says nothing about whether the child resolved a profile, executed
+# Claude, stayed alive, or consumed the handoff it was supposed to. On
+# 2026-09-15 the preservation side completed, the old process was killed, and
+# what came back was not the act the record says — with nothing in the pane to
+# notice, because the thing tmux started was the launch itself and a launch
+# that ends takes the pane with it.
+#
+# THE PROTOCOL ALREADY ASKS FOR THIS IN SO MANY WORDS. Amendment 11's own
+# invariant is **"No path the launcher opened exits the pane"** (clause (b),
+# with its width, closed under `R-A11-16`); `/ctx` opened a path that did. The
+# supervisor is that invariant kept for the one act that had no one keeping it:
+# it is the pane's root process, it launches the real thing as a CHILD, and
+# whatever the child does the pane still has a process in it that can say what
+# happened and offer the retry.
+#
+# AND IT IS NOT A NEW WORD ON `PATH` (Amendment 18 Addendum 2 (i-8): *"no word
+# is kept on `PATH` for it alone"*, which is the ground on which `restart` was
+# removed from the installed set). It is a MODE of the command that already
+# owns the `/ctx` transaction, invoked by absolute path — tmux must not depend
+# on the respawned pane's `PATH` — and a person still has exactly one word,
+# `lane`.
+#
+# WHAT IT NEVER DOES: it never kills the child (Amendment 8(f): ending
+# somebody's process is not a boundary script's act), it never relaunches a
+# child that exited AFTER readiness, it never runs a picker, it never
+# rediscovers a launch choice from the current directory, the window title or a
+# rotating default, and it never marks a lane running on anything but positive
+# evidence.
+#
+# SUPERVISOR EXIT CODES, and they are contract:
+#   0  the child became ready and has since exited normally, or the operator
+#      ended the supervisor after a reported outcome
+#   2  REFUSED before launching anything — a stale operation, a mismatched
+#      pane, an intent that is not this lane's, an ambiguous live holder
+#   3  the launch FAILED before readiness and there was no terminal here to
+#      offer the retry on (the intent is `failed` and carries the reason)
+#   4  the launch was INDETERMINATE: the child is alive and readiness could not
+#      be confirmed inside the deadline. Nothing was killed and nothing was
+#      marked running
+
+# HOW LONG READINESS IS WAITED FOR. Sixty seconds is the design's number and a
+# slow workstation's transcript can take a few of them; the seam is for the
+# suite, which must not spend a minute proving a timeout.
+SUPERVISE_READY_SECONDS="${LANE_SUPERVISOR_READY_SECONDS:-60}"
+case "$SUPERVISE_READY_SECONDS" in '' | *[!0-9]*) SUPERVISE_READY_SECONDS=60 ;; esac
+
+# ONE FIELD OF THE LANE'S RESTART INTENT. Empty where there is none, which
+# every caller below tests for rather than guessing at.
+ri_field() {   # <lane> <key>
+	LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$1" 2>/dev/null \
+		| awk -F'\t' -v k="$2" '$1 == k { print $2; exit }'
+}
+
+# THE WHOLE INTENT ONCE, into `RI_*`. 0 where there is one, 8 where there is
+# not, 1 where the read FAILED — which is never the same as "there is none"
+# (Amendment 7(d)).
+ri_load() {   # <lane>
+	RI_STATE=""; RI_OP=""; RI_GEN=""; RI_MODE=""; RI_AGENT=""; RI_PROFILE=""
+	RI_DIR=""; RI_PANE=""; RI_WINDOW=""; RI_HANDOFF=""; RI_DIGEST=""
+	RI_OLD=""; RI_NEW=""; RI_ATTEMPT=""; RI_REASON=""; RI_FILE=""
+	ril_out=""; ril_rc=0
+	ril_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$1" 2>/dev/null)" || ril_rc=$?
+	case "$ril_rc" in
+	0) : ;;
+	8) return 8 ;;
+	*) return 1 ;;
+	esac
+	RI_STATE="$(printf '%s\n' "$ril_out"   | awk -F'\t' '$1 == "state" { print $2; exit }')"
+	RI_OP="$(printf '%s\n' "$ril_out"      | awk -F'\t' '$1 == "operation" { print $2; exit }')"
+	RI_GEN="$(printf '%s\n' "$ril_out"     | awk -F'\t' '$1 == "generation" { print $2; exit }')"
+	RI_MODE="$(printf '%s\n' "$ril_out"    | awk -F'\t' '$1 == "mode" { print $2; exit }')"
+	RI_AGENT="$(printf '%s\n' "$ril_out"   | awk -F'\t' '$1 == "agent" { print $2; exit }')"
+	RI_PROFILE="$(printf '%s\n' "$ril_out" | awk -F'\t' '$1 == "profile" { print $2; exit }')"
+	RI_DIR="$(printf '%s\n' "$ril_out"     | awk -F'\t' '$1 == "dir" { print $2; exit }')"
+	RI_PANE="$(printf '%s\n' "$ril_out"    | awk -F'\t' '$1 == "pane" { print $2; exit }')"
+	RI_WINDOW="$(printf '%s\n' "$ril_out"  | awk -F'\t' '$1 == "window" { print $2; exit }')"
+	RI_HANDOFF="$(printf '%s\n' "$ril_out" | awk -F'\t' '$1 == "handoff" { print $2; exit }')"
+	RI_DIGEST="$(printf '%s\n' "$ril_out"  | awk -F'\t' '$1 == "digest" { print $2; exit }')"
+	RI_OLD="$(printf '%s\n' "$ril_out"     | awk -F'\t' '$1 == "old_transcript" { print $2; exit }')"
+	RI_NEW="$(printf '%s\n' "$ril_out"     | awk -F'\t' '$1 == "new_transcript" { print $2; exit }')"
+	RI_ATTEMPT="$(printf '%s\n' "$ril_out" | awk -F'\t' '$1 == "attempt" { print $2; exit }')"
+	RI_REASON="$(printf '%s\n' "$ril_out"  | awk -F'\t' '$1 == "reason" { print $2; exit }')"
+	RI_FILE="$(printf '%s\n' "$ril_out"    | awk -F'\t' '$1 == "file" { print $2; exit }')"
+	return 0
+}
+
+# THE STATUS SURFACE — read-only, and the whole of what an operator needs to
+# tell a preservation failure, a tmux refusal, a launcher failure, an immediate
+# child exit, an indeterminate readiness and a confirmed run apart.
+if [ "$do_status" = 1 ]; then
+	[ -n "$lane" ] || die "--restart-status needs the lane: $prog --restart-status --lane <lane>" 2
+	rst_rc=0
+	ri_load "$lane" || rst_rc=$?
+	case "$rst_rc" in
+	8) say "lane $lane has no restart intent: no /ctx is in flight for it."; exit 0 ;;
+	1) die "lane $lane's restart intent could not be read (\`$LANES_EDIT restart-intent $lane\` failed). That is NOT 'there is none' — a read that failed is never an answer (Amendment 7(d))." 1 ;;
+	esac
+	say "lane        $lane"
+	say "intent      $RI_STATE (attempt ${RI_ATTEMPT:-0})"
+	say "operation   ${RI_OP:-none}   generation ${RI_GEN:-0}"
+	say "mode        ${RI_MODE:-none}"
+	say "agent       ${RI_AGENT:-none}   profile ${RI_PROFILE:-none}"
+	say "dir         ${RI_DIR:-none}"
+	say "pane        ${RI_PANE:-none}   window ${RI_WINDOW:-none}"
+	say "handoff     ${RI_HANDOFF:-none}"
+	say "digest      ${RI_DIGEST:-none}"
+	say "transcript  old ${RI_OLD:-none} → new ${RI_NEW:-none}"
+	say "reason      ${RI_REASON:-none}"
+	say "file        ${RI_FILE:-none}"
+	# THE LANE'S OWN LIFECYCLE BESIDE IT WHERE THE HELPER HAS ONE
+	# (openRepoTools#91). Where it does not, the line says so rather than
+	# leaving a reader to wonder which of the two they are looking at.
+	rst_ls=""; rst_lrc=0
+	rst_ls="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-state "$lane" 2>/dev/null \
+		| awk -F'\t' '$1 == "state" { print $2; exit }')" || rst_lrc=$?
+	case "$rst_lrc" in
+	0) say "lifecycle   ${rst_ls:-none} (lanes-edit.sh lane-state $lane)" ;;
+	*) say "lifecycle   not recorded here — this lanes-edit.sh has no \`lane-state\` (opensoft/openRepoTools#91 has not landed on this workstation)" ;;
+	esac
+	case "$RI_STATE" in
+	failed)   say ""; say "RETRY:   $(quoted "$SELF_ABS") --supervise --lane $lane --operation ${RI_OP:-<id>}" ;;
+	pending)  say ""; say "NOT YET CLAIMED: no supervisor has taken this operation. The pane it was written for may never have been respawned." ;;
+	starting) say ""; say "IN FLIGHT: a supervisor holds this operation. Do not start a second one — read the pane it is in (${RI_PANE:-pane not recorded})." ;;
+	ready)    say ""; say "DONE: this restart was confirmed. It authorises no further launch; an ordinary \`lane $lane\` resumes the lane." ;;
+	esac
+	exit 0
+fi
+
+# THE PANE IS HELD OPEN ON EVERY NON-ZERO EXIT OF THIS MODE, refusals
+# included. Amendment 11's invariant is *"No path the launcher opened exits the
+# pane"*, and a supervisor that refused before launching and then returned would
+# leave tmux printing `[exited]` over the one message that says why — which is
+# the shape of the defect this whole mode exists to close, reached through its
+# own front door. Where there is no terminal there is nobody to hold it for, and
+# the status is simply returned.
+SV_PIDFILE=""
+sv_on_exit() {
+	sv_hs=$?
+	[ -z "$SV_PIDFILE" ] || rm -f -- "$SV_PIDFILE" 2>/dev/null
+	[ "$sv_hs" = 0 ] && return 0
+	[ "${LANE_SUPERVISOR_NO_PROMPT:-0}" = 1 ] && return 0
+	[ -t 0 ] || return 0
+	printf '\n%s: this pane is held open so the lines above can be read (exit %s). Press Enter to close it. ' "$prog" "$sv_hs" >&2
+	IFS= read -r sv_ignored || :
+	return 0
+}
+
+if [ "$do_supervise" = 1 ]; then
+	trap sv_on_exit EXIT
+	[ -n "$lane" ] || die "--supervise needs the lane: $prog --supervise --lane <lane> --operation <id>" 2
+	[ -n "$operation" ] || die "--supervise needs the operation it was started for: $prog --supervise --lane $lane --operation <id>. A supervisor that took whatever intent it found would be a supervisor that launches a lane for an act somebody else is in the middle of." 2
+
+	# ---- the operation this supervisor was started for, and no other
+	sv_rc=0
+	ri_load "$lane" || sv_rc=$?
+	case "$sv_rc" in
+	8) die "lane $lane has no restart intent, so there is nothing for operation $operation to launch. Nothing was started. A /ctx whose intent could not be written should have refused before it killed anything — read the lane:  $prog --restart-status --lane $lane" 2 ;;
+	1) die "lane $lane's restart intent could not be read (\`$LANES_EDIT restart-intent $lane\` failed). That is NOT 'there is none', and this supervisor will not launch a session for an operation it could not verify (Amendment 7(d)). Nothing was started." 1 ;;
+	esac
+	[ "$RI_OP" = "$operation" ] ||
+		die "operation $operation is not lane $lane's current restart operation, which is ${RI_OP:-none} (intent ${RI_STATE:-none}, generation ${RI_GEN:-0}). A stale supervisor never launches against a newer operation: nothing was started. Read it:  $prog --restart-status --lane $lane" 2
+	case "$RI_STATE" in
+	pending | failed) : ;;
+	starting) die "lane $lane's restart operation $operation is already \`starting\` — a supervisor holds it, in ${RI_PANE:-a pane this record does not name}. A second one would launch a second session of one lane, which is the collision this whole protocol is about (Amendment 18(h)). Nothing was started." 2 ;;
+	ready)    die "lane $lane's restart operation $operation is already \`ready\`: that restart was confirmed and this record authorises no further launch. Nothing was started. To open the lane:  lane $lane" 2 ;;
+	*)        die "lane $lane's restart intent is in state '${RI_STATE:-none}', which this supervisor does not know how to launch from. Nothing was started." 2 ;;
+	esac
+	[ "$RI_MODE" = fresh-from-handoff ] ||
+		die "lane $lane's restart intent names launch mode '${RI_MODE:-none}' and this supervisor makes only 'fresh-from-handoff' launches. Nothing was started." 2
+
+	# ---- the pane: this supervisor is IN the pane the intent was written for
+	#
+	# A SUPERVISOR IN THE WRONG PANE WOULD PUT A SECOND SESSION OF THIS LANE
+	# SOMEWHERE THE LANE IS NOT. The intent records the pane `/ctx` respawned;
+	# `$TMUX_PANE` is where this process actually is. They are compared where
+	# both are knowable, and a comparison that CANNOT be made is said rather than
+	# assumed — this runs under a fake tmux in the suite and under none at all
+	# where a person invoked it by hand.
+	sv_pane_here="${TMUX_PANE:-}"
+	pane_agrees "$RI_PANE" "$sv_pane_here" ||
+		die "lane $lane's restart intent was written for pane $RI_PANE and this supervisor is in $sv_pane_here. Nothing was started: a launch here would put this lane's session in a pane the lane's own record does not name, and that record is what every other reader goes by." 2
+
+	# ---- the handoff's digest: the first prompt is that file, and only that file
+	if [ -n "$RI_HANDOFF" ] && [ "$RI_HANDOFF" != none ] && [ -n "$RI_DIGEST" ] && [ "$RI_DIGEST" != none ]; then
+		sv_now="$(handoff_digest "$RI_HANDOFF")"
+		[ "$sv_now" = "$RI_DIGEST" ] ||
+			die "lane $lane's handoff has changed since operation $operation was written: the intent records $RI_DIGEST for $RI_HANDOFF and it now digests $sv_now. The top block of that file is the new session's FIRST PROMPT, so launching now would deliver a block this /ctx did not write. Nothing was started. Take the handoff again:  $prog --restart" 2
+	fi
+
+	# ---- a live holder makes this ambiguous, and ambiguity refuses
+	#
+	# `live-holder` answers who is running this lane NOW. A supervisor that
+	# launched behind one would be Amendment 18(h)'s second binding, made by the
+	# tooling itself. A read that FAILED is not "nobody is": it refuses too,
+	# because this is the one moment a second process gets created.
+	sv_hold=""; sv_hrc=0
+	sv_hold="$(LANES_NO_FETCH=1 "$LANES_EDIT" live-holder "$lane" 2>/dev/null)" || sv_hrc=$?
+	case "$sv_hrc" in
+	0) [ -z "$sv_hold" ] ||
+		die "lane $lane already has a live holder, so this supervisor will not start a second session of it (Amendment 18(h)):
+$sv_hold
+Nothing was started. If that process is a leftover of an earlier attempt, retire it first — \`lane-end $lane --retire <pid>\` — then retry:  $prog --supervise --lane $lane --operation $operation" 2 ;;
+	8 | 2) : ;;
+	*) die "lane $lane's live holders could not be read (\`$LANES_EDIT live-holder $lane\` exited $sv_hrc), so whether this lane is already running is UNKNOWN from here — and a read that failed is never an answer (Amendment 7(d)). This supervisor will not create a second process on a lane that may be live. Nothing was started." 1 ;;
+	esac
+
+	supervise_run "$lane" "$operation"
+	exit $?
+fi
+
 
 # EVERY READ OF THE REGISTER GOES THROUGH ONE FENCE, and Amendment 7(d) is the
 # whole of it: `0` an answer, `8` NO ANSWER and `2` a helper predating the read
@@ -1090,79 +1728,121 @@ if [ "$do_restart" = 1 ]; then
 	# session running this command is killed BY the command it just wrote the
 	# record for.
 	#
-	# THE RESPAWN LINE IS `lane <lane>`, AND NEVER `restart <lane>` (Amendment 18
-	# Addendum 2, in force 2026-09-14T16:50:32Z, clause (i-8): *"The respawn
-	# after `/ctx` (Amendment 17(f)) relaunches the lane's own pane with `lane
-	# <name>` (its parked branch is exactly Amendment 11(i)'s act), or through
-	# the launcher directly"*, and its adoption line: *"opensoft/openRepoTools#36
-	# (`/ctx`) respawns with `lane <name>`"*). `lane <name>` needs no profile
-	# argument from here: its parked branch reads the record THIS COMMAND JUST
-	# WROTE — the lane's recorded directory and profile — and asks nothing.
+	# WHAT THE RESPAWN LINE USED TO BE, AND WHY IT IS NOT THAT ANY MORE.
+	# Amendment 18 Addendum 2 (i-8) names two doors for this act: *"relaunches
+	# the lane's own pane with `lane <name>` (its parked branch is exactly
+	# Amendment 11(i)'s act), or through the launcher directly"*. This command
+	# respawned with the first of them, and openRepoTools#94 is what that cost:
+	# `lane` is a HUMAN DISPATCHER whose valid outcomes include attaching to an
+	# existing session without launching anything, and the fresh-session
+	# requirement it was asked to carry was an environment variable that the
+	# launcher's own `tmux new-session` dropped on the way through.
 	#
-	# AND THE LAUNCHER IS THE DOOR THE SAME CLAUSE LEAVES OPEN, for the
-	# workstation where that word is not installed yet: `lane` arrives with
-	# opensoft/openRepoTools#43 and this command ships before it. A respawn is
-	# the one act no later refusal can undo — the pane's process is already dead
-	# when the new command fails — so the word is used only where it can be SEEN
-	# on `PATH` here, and everywhere else the line is `pclaude --lane <lane>
-	# <profile>`, the same act one door along. `--lane` is a LEADING option, read
-	# before the action and the profile, so it goes BEFORE the profile and never
-	# after it.
-	lane_word=""
-	lane_word_path="$(command -v lane 2>/dev/null || printf '')"
-	if [ -n "$lane_word_path" ] && [ -f "$lane_word_path" ] && [ -r "$lane_word_path" ]; then
-		# THE WORD THIS ESTATE PLACES, AND NOT EVERY `lane` ON A PATH. `pclaude`
-		# is nobody else's name; `lane` is an ordinary English word, and a pane
-		# respawned over somebody else's `lane` is a pane the person loses with
-		# no way back. So the file is read for the string every bash file this
-		# toolset ships carries, and a `lane` that is not this estate's takes
-		# the launcher — which is the SAFE side of the two: the same act, one
-		# door along, rather than a killed pane.
-		# READ THROUGH A REDIRECT and not `head -c … -- <file>`: the macOS job
-		# runs this suite under BSD `head`, whose option handling is its own,
-		# and a portability question is not one to answer inside the act that
-		# kills a pane.
-		# `grep` READS ALL OF IT, AND `-q` IS WHY IT MUST (Copilot round 3 on
-		# openRepoTools#47). Under `set -o pipefail` the pipeline's status is
-		# the last non-zero one, and `grep -q` exits the instant it matches —
-		# so `head` writing the rest of a word larger than 8192 bytes takes
-		# SIGPIPE, 141 wins over grep's 0, and the estate's OWN `lane` is
-		# classified as somebody else's. The redirect costs nothing and the
-		# input is bounded by `head` already.
-		if head -c 8192 < "$lane_word_path" 2>/dev/null | grep 'lane-collision-protocol' >/dev/null 2>&1; then
-			lane_word="$lane_word_path"
-		else
-			note "there is a \`lane\` on PATH ($lane_word_path) that is not this estate's word (its head names no lane-collision-protocol), so the respawn goes through the launcher instead — the door Amendment 18 Addendum 2 (i-8) leaves open."
-		fi
-	fi
-	# THE FIRST PROMPT IS THE HANDOFF'S TOP BLOCK, and it is delivered by
-	# `lane-start` rather than carried through this argv. `LANE_START_FRESH=1`
-	# is the one seam: it says *a NEW session of this lane's agent, started with
-	# the top block of the handoff the row names as its first prompt* — which is
-	# exactly what a context clear is, and it is why `/ctx` does not simply
-	# resume the transcript it just paused. One mechanism, read in one place
-	# (`lane-start`'s 5a), so the prompt a respawn delivers and the prompt an
-	# `--agent` launch delivers are the same bytes from the same file. It is an
-	# ENVIRONMENT seam and not an argument, so it survives `lane` handing the
-	# launch on to `lane-start` exactly as it survives the launcher doing so.
-	if [ -n "$lane_word" ]; then
-		launch_line="LANE_START_FRESH=1 $(quoted "$lane_word" "$lane")"
-	else
-		launcher="${PCLAUDE:-}"
-		if [ -z "$launcher" ]; then
-			launcher="$(command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
-		fi
-		[ -n "$launcher" ] ||
-			die "the record is written and there is neither \`lane\` nor a launcher on PATH (pclaude, claude-profile), so this pane was NOT respawned. Start the lane yourself: $restart_cmd" 2
-		[ -n "$profile_name" ] ||
-			die "the record is written and this lane's record names no profile, so the launcher cannot be told which account to come up in and the pane was NOT respawned. Start it yourself, naming the profile: pclaude --lane $lane <profile>" 2
-		launch_line="LANE_START_FRESH=1 $(quoted "$launcher" --lane "$lane" "$profile_name")"
-	fi
+	# BOTH DOORS ARE KEPT, ONE LEVEL DOWN. What tmux starts now is this
+	# command's `--supervise` mode, and what the SUPERVISOR starts is (i-8)'s
+	# second door — `pclaude --lane <lane> <profile>`, the launcher directly —
+	# falling to `lane-start` itself where this workstation has no launcher or
+	# the lane's record names no profile. The ground of (i-8) is honoured
+	# exactly: *"no word is kept on `PATH` for it alone"*, and none is — the
+	# supervisor is a mode of a command that is already installed, and a person
+	# still has one word, `lane`.
+	#
+	# THE DEVIATION IS WRITTEN DOWN rather than taken quietly: it is decision 5
+	# of `openspec/changes/add-supervised-context-restart/design.md`, and the
+	# protocol text that would ratify it is task 7.4's, unwritten as this
+	# lands.
+
+	# ---- THE PRE-KILL COMMIT POINT: THE RESTART INTENT (openRepoTools#94)
+	#
+	# THE FRESH SESSION IS WRITTEN DOWN BEFORE ANYTHING IS KILLED, and that is
+	# the whole of this change. `LANE_START_FRESH=1` in the respawn's command
+	# string was the seam and it was measured NOT ARRIVING: `claude-profile`
+	# re-creates the child through `tmux new-session`, and tmux hands a command
+	# the SERVER's environment and not the client's — the launcher's own code
+	# says so, which is why it threads six values into the command string
+	# explicitly and why a seventh nobody thought to thread simply vanished.
+	# The pane came back resuming the transcript this act had just paused.
+	#
+	# SO THE REQUIREMENT BECOMES A FILE. The intent is written under the lane's
+	# own control root, carries the lane, generation, operation, old
+	# transcript, agent, profile, checkout, pane, handoff path and DIGEST and
+	# the launch mode, and `lane-start` reads it back whatever the environment
+	# did. It is the one channel that crosses a boundary another repository
+	# owns.
+	#
+	# AND IT IS A GATE, LIKE THE THREE ABOVE IT. Amendment 17(f) is an order —
+	# *a `/ctx` whose record could not be written REFUSES before it kills
+	# anything* — and after this change the intent IS part of that record: a
+	# pane respawned with no intent is a pane whose supervisor has nothing to
+	# launch from, which is the same unrecorded restart one step along. It
+	# therefore refuses here, with the old process still alive, rather than
+	# after it is dead.
+	#
+	# THE GENERATION COMES FROM THE LANE'S LIFECYCLE WHERE THIS WORKSTATION HAS
+	# ONE (openRepoTools#91's `lane-state`), so the two fences are one number;
+	# where it has none the intent carries 0 and fences on its own operation
+	# alone, which is what a workstation before that change can honestly say.
+	ri_gen=0
+	ri_g_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-state "$lane" 2>/dev/null \
+		| awk -F'\t' '$1 == "generation" { print $2; exit }')" || :
+	case "${ri_g_out:-}" in '' | *[!0-9]*) ri_gen=0 ;; *) ri_gen="$ri_g_out" ;; esac
+	operation="$(printf 'ctx-%s-%s-%s' "$(date -u +%Y%m%dT%H%M%SZ)" "$$" "${RANDOM:-0}")"
+	ri_args=(set-restart-intent "$lane" pending
+		--expect 'none|ready|failed'
+		--operation "$operation" --generation "$ri_gen"
+		--mode fresh-from-handoff
+		--agent "$agent" --pane "$target"
+		--old-transcript "${transcript:-none}")
+	[ -n "$profile_name" ] && ri_args+=(--profile "$profile_name")
+	case "$dir" in /*) ri_args+=(--dir "$dir") ;; esac
+	case "$handoff_file" in /*) ri_args+=(--handoff "$handoff_file") ;; esac
+	[ -n "$window_ref" ] && ri_args+=(--window "$window_ref")
+	ri_wrc=0
+	LANES_NO_FETCH=1 "$LANES_EDIT" "${ri_args[@]}" >/dev/null 2>&1 || ri_wrc=$?
+	case "$ri_wrc" in
+	0) : ;;
+	7) die "lane $lane already has a restart in flight (its intent is \`pending\` or \`starting\`), so this /ctx did NOT replace the pane: an ordinary context clear never supersedes an operation somebody else is in the middle of. The record above IS written. Read what is open:  $prog --restart-status --lane $lane" 2 ;;
+	*) die "the lane's PAUSED record, row and handoff are all written and the RESTART INTENT could not be (\`set-restart-intent\` exited $ri_wrc), so this pane is left exactly as it is. The intent is what tells the new session it is a FRESH one primed by the handoff's top block, and a pane respawned without it comes up resuming the transcript this act just paused — which is openRepoTools#94, measured. Restart by hand once it can be written:  $restart_cmd" 2 ;;
+	esac
+	# READ BACK BEFORE THE KILL, because a write that reported success and a
+	# record a second process can read are not the same fact, and the process
+	# that could fix the difference is the one about to die.
+	ri_back="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$lane" 2>/dev/null \
+		| awk -F'\t' '$1 == "operation" { print $2; exit }')" || :
+	[ "$ri_back" = "$operation" ] ||
+		die "the restart intent was written and reads back as operation '${ri_back:-nothing}' rather than $operation, so this pane is left exactly as it is: the supervisor would launch for an operation this act does not own. The record above IS written. Restart by hand:  $restart_cmd" 2
+	say "  restart intent $operation written (generation $ri_gen, mode fresh-from-handoff)"
+
+	# ---- THE RESPAWN, INTO A SUPERVISOR AND NOT INTO THE LAUNCH ITSELF
+	#
+	# WHAT TMUX STARTS IS A PROCESS THAT STAYS. The old line respawned the pane
+	# with the launch, so a launch that failed took the pane with it and left
+	# an empty dead window where a person's lane had been — against Amendment
+	# 11's own invariant, *"No path the launcher opened exits the pane"*. The
+	# supervisor is that invariant kept for the one act that had nobody
+	# keeping it: it claims the intent, runs the launch as its CHILD, confirms
+	# readiness, and on any failure stays in the pane with the diagnostic and
+	# the retry.
+	#
+	# BY ABSOLUTE PATH, because a respawned pane's `PATH` is whatever the
+	# person's shell profile makes of it, and a respawn is the one act no later
+	# refusal can undo. It is checked for existence HERE, while this process is
+	# still alive to say so.
+	[ -x "$SELF_ABS" ] ||
+		die "the record and the restart intent are written and this command cannot find itself at $SELF_ABS to hand the pane to, so nothing was respawned: tmux starts the supervisor by absolute path because a respawned pane's PATH is not this one's. Restart by hand:  $restart_cmd" 2
+	# AND THE ENVIRONMENT THE SUPERVISOR NEEDS IS WRITTEN INTO THE COMMAND
+	# STRING, for exactly the reason #94 exists: the workstation name is what
+	# every register write from the new session is filed under (`R-A11-14`),
+	# and tmux would otherwise hand the pane whatever the SERVER has.
+	launch_line="$(quoted "$SELF_ABS" --supervise --lane "$lane" --operation "$operation")"
+	[ -n "$ws" ] && launch_line="LANES_WORKSTATION=$(quoted "$ws") $launch_line"
 	say "  respawning $target: $launch_line"
 	if tmux respawn-pane -k -t "$target" "$launch_line" 2>/dev/null; then
-		say "  respawned (the new session's first prompt is this handoff's top block)"
+		say "  respawned into the supervisor — it launches the fresh session, confirms it came up, and stays in this pane if it did not"
 	else
-		die "the record is written and \`tmux respawn-pane -k -t $target\` was refused, so this pane is exactly as it was. Start the lane yourself: $restart_cmd" 2
+		die "the record and the restart intent are written and \`tmux respawn-pane -k -t $target\` was refused, so this pane is exactly as it was and the lane's restart intent is \`pending\` for operation $operation. Nothing was killed. Start it yourself:  $restart_cmd
+    or hand this pane to the supervisor once tmux will take it:
+      $launch_line" 2
 	fi
 	exit 0
 fi
