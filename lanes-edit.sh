@@ -9423,18 +9423,28 @@ EOF
     sri_exp=""; sri_expg=""; sri_expo=""; sri_op=""; sri_gen=""; sri_mode=""
     sri_agent=""; sri_prof=""; sri_dir=""; sri_pane=""; sri_win=""; sri_hf=""
     sri_dig=""; sri_old=""; sri_new=""; sri_att=""; sri_bump=0; sri_reason=""
+    # THE TWO SPELLINGS OF ONE FLAG GIVE ONE ANSWER (#26, the review of
+    # `c3ebcfe`, and `lane-start` carries the same paragraph at its own
+    # arguments). `--flag ""` refused an empty value here and `--flag=` took
+    # one, so the `=` spelling of an empty operation, generation, attempt or
+    # expectation read as ABSENT — and every rung below the flag then ran on a
+    # value the operator DID give: an `--expect=` would have fenced on nothing,
+    # an `--expect-operation=` would have claimed an operation it was not
+    # entitled to. The six that refuse an empty value refuse it in both
+    # spellings; the ones below that take `[ "$#" -ge 2 ]` deliberately ACCEPT
+    # an empty value in both, because `none` is an answer for those fields.
     while [ $# -gt 0 ]; do
       case "$1" in
         --expect)              sri_exp="${2-}";  [ -n "$sri_exp" ]  || die "--expect needs a state word, 'none', or a '|'-separated set of them" 64; shift 2 ;;
-        --expect=*)            sri_exp="${1#--expect=}"; shift ;;
+        --expect=*)            sri_exp="${1#--expect=}"; [ -n "$sri_exp" ] || die "--expect needs a state word, 'none', or a '|'-separated set of them" 64; shift ;;
         --expect-generation)   sri_expg="${2-}"; [ -n "$sri_expg" ] || die "--expect-generation needs a number" 64; shift 2 ;;
-        --expect-generation=*) sri_expg="${1#--expect-generation=}"; shift ;;
+        --expect-generation=*) sri_expg="${1#--expect-generation=}"; [ -n "$sri_expg" ] || die "--expect-generation needs a number" 64; shift ;;
         --expect-operation)    sri_expo="${2-}"; [ -n "$sri_expo" ] || die "--expect-operation needs an operation id" 64; shift 2 ;;
-        --expect-operation=*)  sri_expo="${1#--expect-operation=}"; shift ;;
+        --expect-operation=*)  sri_expo="${1#--expect-operation=}"; [ -n "$sri_expo" ] || die "--expect-operation needs an operation id" 64; shift ;;
         --operation)           sri_op="${2-}";   [ -n "$sri_op" ]   || die "--operation needs an operation id" 64; shift 2 ;;
-        --operation=*)         sri_op="${1#--operation=}"; shift ;;
+        --operation=*)         sri_op="${1#--operation=}"; [ -n "$sri_op" ] || die "--operation needs an operation id" 64; shift ;;
         --generation)          sri_gen="${2-}";  [ -n "$sri_gen" ]  || die "--generation needs a number" 64; shift 2 ;;
-        --generation=*)        sri_gen="${1#--generation=}"; shift ;;
+        --generation=*)        sri_gen="${1#--generation=}"; [ -n "$sri_gen" ] || die "--generation needs a number" 64; shift ;;
         --mode)                sri_mode="${2-}"; [ "$#" -ge 2 ] || die "--mode needs a value" 64; shift 2 ;;
         --mode=*)              sri_mode="${1#--mode=}"; shift ;;
         --agent)               sri_agent="${2-}"; [ "$#" -ge 2 ] || die "--agent needs a value" 64; shift 2 ;;
@@ -9456,7 +9466,7 @@ EOF
         --new-transcript)      sri_new="${2-}"; [ "$#" -ge 2 ] || die "--new-transcript needs a value" 64; shift 2 ;;
         --new-transcript=*)    sri_new="${1#--new-transcript=}"; shift ;;
         --attempt)             sri_att="${2-}"; [ -n "$sri_att" ] || die "--attempt needs a number" 64; shift 2 ;;
-        --attempt=*)           sri_att="${1#--attempt=}"; shift ;;
+        --attempt=*)           sri_att="${1#--attempt=}"; [ -n "$sri_att" ] || die "--attempt needs a number" 64; shift ;;
         --bump-attempt)        sri_bump=1; shift ;;
         --reason)              sri_reason="${2-}"; [ "$#" -ge 2 ] || die "--reason needs a value" 64; shift 2 ;;
         --reason=*)            sri_reason="${1#--reason=}"; shift ;;
