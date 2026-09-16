@@ -576,7 +576,7 @@ YAML
 sessions_dir="$HOME/.claude-profiles/profiles/opensoft/team/t1/sessions"
 mkdir -p "$sessions_dir" "$HOME/.claude/sessions"
 
-# 3000 SECONDS, AND THE NUMBER IS TIED TO THE RUNNER'S OWN BOUND (A9 Addendum
+# 4200 SECONDS, AND THE NUMBER IS TIED TO THE RUNNER'S OWN BOUND (A9 Addendum
 # 4, R-A9-11). This process IS the liveness fixture: every "a live holder …"
 # case from here to the foot of the file asks whether it is still running, and
 # `lane-start`'s own refusals name its pid. On macOS it is the ONLY thing they
@@ -586,7 +586,7 @@ mkdir -p "$sessions_dir" "$HOME/.claude/sessions"
 #
 # At `sleep 300` this fixture outlived the suite on Linux (136 s here, 229 s
 # under pytest) and ran out of seconds INSIDE it on anything slower. The macOS
-# job takes ~900 s for this file alone, so the fixture died a third of the way
+# job took ~900 s for this file alone then, so the fixture died a third of the way
 # in and every liveness case after that point got a quiet, plausible-looking
 # wrong answer. Measured, by starting it already reaped: 196 of 998. (It was
 # not the largest cause of the 438 at `d3d59b5` — `lanes-edit.sh`'s padded `wc`
@@ -594,11 +594,21 @@ mkdir -p "$sessions_dir" "$HOME/.claude/sessions"
 # standing after that fix, which is the whole reason a suite fixes both at
 # once.)
 #
-# The number must exceed `TIMEOUT_SECONDS` (2400) or the suite can outlive its
-# own evidence on a runner slow enough to hit the bound; `cleanup` kills it on
-# every exit path, and the last assertion in this file checks it was still
-# running when the run ended.
-sleep 3000 & LIVE_PID=$!
+# THE NUMBER MUST EXCEED `TIMEOUT_SECONDS`, AND AT 3000 IT NO LONGER DID.
+# `tests/test_lane_helpers_suite.py` lets this file run for 3600 s before it
+# kills it — raised from 2400 when the macOS job spent 2722 s in here — so a
+# fixture bounded at 3000 expired 600 s INSIDE a run the wrapper was still
+# waiting on: the suite was licensed to outlive its own evidence, which is the
+# one thing this bound exists to prevent. It did, at `758a536`: tests-macos
+# reached the Amendment 19 section — the last 5% of this file — with the
+# fixture already reaped, and four of that job's ten red lines are the LIVE
+# lane's attach and the sweep's live-session refusal reading `none`. 4200 is
+# 3600 plus ten minutes of slack; `cleanup` kills it on every exit path, and
+# the last assertion in this file checks it was still running when the run
+# ended. THE PAIR IS ASSERTED, not merely written down twice: the wrapper reads
+# this line and refuses a bound that does not exceed its own timeout, so the
+# next person to raise one is told to raise the other.
+sleep 4200 & LIVE_PID=$!
 live_start="$(cut -d' ' -f22 "/proc/$LIVE_PID/stat" 2>/dev/null || printf '')"
 sleep 0.05 & DEAD_PID=$!
 wait "$DEAD_PID" 2>/dev/null
@@ -10034,6 +10044,70 @@ run a19 env LANES_LANE=repo19-2 "$E" archive-rows repo19c
 is    "a row of the repository that cannot be taken apart refuses the whole move" "$rc" 2
 has   "…counting the separators it found" "$err" "' | ' separators where a seven-column row carries 6"
 has   "…and naming the hand edit that settles it" "$err" "Escape the literal pipe"
+
+# `awk -v` CARRIES ONE LINE, AND `delete_lines` HANDS IT MANY — the defect
+# `who_landing` took in round 5 of A9 Addendum 4 (R-A9-11) and this amendment's
+# one row-REMOVING write made again. A `-v name=value` is processed as if it
+# were a string literal and a string literal cannot span lines: one-true-awk,
+# which is macOS's `/usr/bin/awk`, refuses it outright — `awk: newline in
+# string … at source line 1`, exit 2, NO OUTPUT AT ALL — while gawk and mawk
+# accept it silently. So at `758a536` `archive-rows --yes` wrote the archive,
+# read an EMPTY rewrite of the register, failed its own line-count proof and
+# died 5, and six of tests-macos' ten red lines were that one line of awk,
+# invisible on Linux and on every workstation this is written on.
+#
+# THE SHIM IS THAT RULE AND NOTHING ELSE: a `-v` whose value carries a newline
+# is refused exactly as one-true-awk refuses it, and everything else `exec`s
+# the real awk. On PATH for the act below, it asserts on EVERY platform what
+# only tests-macos could see — and it is asserted itself two cases down, so a
+# shim that had stopped biting could not make this pass vacuously.
+A19_BWK="$SANDBOX/bwkawk"
+mkdir -p "$A19_BWK"
+{ printf '#!/usr/bin/env bash\n'
+  printf 'REAL=%s\n' "$(command -v awk)"
+  cat <<'FAKE'
+prev=""
+for a in "$@"; do
+  case "$a" in
+    -v?*) v="${a#-v}" ;;
+    *) if [ "$prev" = "-v" ]; then v="$a"; else prev="$a"; continue; fi ;;
+  esac
+  case "$v" in
+    *"
+"*) printf 'awk: newline in string %s... at source line 1\n' "${v%%=*}" >&2; exit 2 ;;
+  esac
+  prev="$a"
+done
+exec "$REAL" "$@"
+FAKE
+} > "$A19_BWK/awk"
+chmod +x "$A19_BWK/awk"
+
+run env PATH="$A19_BWK:$PATH" awk -v x="$(printf 'a\nb')" 'BEGIN { print "ran" }' </dev/null
+is    "the one-true-awk shim refuses a -v value that spans lines" "$rc" 2
+has   "…in one-true-awk's own words" "$err" "newline in string"
+hasnt "…and the program never ran" "$out" "ran"
+run env PATH="$A19_BWK:$PATH" awk -v x=one 'BEGIN { print x }' </dev/null
+is    "…while a one-line -v goes straight through to the real awk" "$out" "one"
+
+# Its own repository again, so nothing above is disturbed, and TWO rows so the
+# removal is a set and not a single line.
+printf '| `repo19d-1` | harness `%s` | Eagle / test / brett | 2026-09-01 | none | none | RETIRED \302\267 2026-09-14T00:00:00Z \302\267 finished |\n' "$A19_OLD" >> "$A19_WIP/lanes/LANES.md"
+printf '| `repo19d-2` | harness `%s` | Eagle / test / brett | 2026-09-02 | none | none | RETIRED \302\267 2026-09-14T00:00:00Z \302\267 finished |\n' "$A19_OLD" >> "$A19_WIP/lanes/LANES.md"
+git -C "$A19_WIP" add -A -- lanes >/dev/null 2>&1
+git -C "$A19_WIP" commit -q -m "two retired rows, for the awk that refuses a multi-line -v"
+git -C "$A19_WIP" push -q origin main
+A19_HEAD4="$(git -C "$A19_WIP" rev-parse HEAD)"
+A19_ROWS4="$(grep -c '^| `' "$A19_WIP/lanes/LANES.md" || :)"
+run a19 env PATH="$A19_BWK:$PATH" LANES_LANE=repo19-2 "$E" archive-rows repo19d --yes
+is    "archive-rows --yes exits 0 under an awk that refuses a multi-line -v" "$rc" 0
+is    "…in ONE commit" "$(git -C "$A19_WIP" rev-list --count "$A19_HEAD4"..HEAD)" 1
+is    "…and the rows are out of the register" \
+      "$(grep -c '^| `repo19d-' "$A19_WIP/lanes/LANES.md" || :)" 0
+is    "…and into the archive" \
+      "$(grep -c '^| `repo19d-' "$A19_WIP/lanes/archive/LANES-retired.md" || :)" 2
+is    "…with every other row left where it was" \
+      "$(grep -c '^| `' "$A19_WIP/lanes/LANES.md" || :)" "$((A19_ROWS4 - 2))"
 
 # AN EMPTY LISTING IS NOT AN EMPTY REGISTER (Copilot round 2 on #93). A
 # repository whose every row is hidden lists nothing, and a footer that then

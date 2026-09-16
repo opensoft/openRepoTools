@@ -1080,9 +1080,32 @@ delete_lines() {   # <line numbers, one per line, any order>
   dl_pre="$TMPD/pre"; dl_out="$TMPD/out"
   cat -- "$LANES_FILE" > "$dl_pre"
   dl_before="$(wc -l < "$dl_pre" | tr -d ' ')"
-  awk -v list="$dl_list" '
-    BEGIN { k = split(list, a, "\n"); for (i = 1; i <= k; i++) if (a[i] != "") drop[a[i] + 0] = 1 }
-    !(NR in drop)' "$dl_pre" > "$dl_out"
+  # `awk -v` CARRIES ONE LINE, AND THIS LIST IS MANY — the finding `who_landing`
+  # took in round 5 of A9 Addendum 4 (R-A9-11), re-made here and answered by
+  # `tests-macos` at `758a536` with six red lines and nothing saying why. A
+  # `-v name=value` is processed as if it were a STRING LITERAL, and a string
+  # literal cannot span lines: macOS's awk (one-true-awk) refuses it outright —
+  # `awk: newline in string … at source line 1`, exit 2, NO OUTPUT AT ALL —
+  # while gawk and mawk accept it silently, so no Linux job and no workstation
+  # here can see it. What it cost is exactly what it cost there: an empty
+  # `$dl_out`, a line count that fails its own proof, and `archive-rows --yes`
+  # dying 5 with the rows already in the archive and the register untouched.
+  # `ENVIRON` has no such restriction and is POSIX awk, so the list goes through
+  # the environment of this one command, which is the spelling `who_landing`
+  # settled on. Asserted on every platform by a shim that IS the one-true-awk
+  # rule (`tests/test_lane_helpers.sh`, the `repo19d` case).
+  #
+  # AND THE PASS IS READ WITH ITS OWN STATUS. An awk that failed writes an empty
+  # file, and an empty file is not "no rows matched" (Amendment 7(d)) — it is a
+  # read that failed, and it must say so rather than arrive at the line-count
+  # proof as a wrong number, which is the shape the macOS job had to be
+  # reverse-engineered from.
+  if ! LANES_DROP_LINES="$dl_list" awk '
+    BEGIN { k = split(ENVIRON["LANES_DROP_LINES"], a, "\n")
+            for (i = 1; i <= k; i++) if (a[i] != "") drop[a[i] + 0] = 1 }
+    !(NR in drop)' "$dl_pre" > "$dl_out"; then
+    die "the pass that removes $dl_n row(s) from $LANES_FILE failed, so what the register would become is not known — and that is not an empty register (Amendment 7(d)). Nothing was removed; the rows are in $LANES_ARCH_PATH and the register is whole." 5
+  fi
   dl_after="$(wc -l < "$dl_out" | tr -d ' ')"
   [ "$dl_after" -eq "$((dl_before - dl_n))" ] ||
     die "removing $dl_n row(s) changed the line count by $((dl_before - dl_after)); refusing" 5

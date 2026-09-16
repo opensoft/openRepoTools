@@ -254,6 +254,17 @@ slow test rather than no test at all. Everything shipped here is parsed under
 macOS **bash 3.2** in CI, where `${x,,}`, `mapfile`, `declare -A` and
 `local -n` are syntax errors — write `tr '[:upper:]' '[:lower:]'` and a loop.
 
+**`awk -v name=value` CARRIES ONE LINE.** The value is processed as a string
+literal and one cannot span lines: macOS's `awk` is the one-true-awk, which
+refuses a newline in one outright — `awk: newline in string …`, exit **2**, **no
+output at all** — while `gawk` and `mawk` accept it silently, so no Linux job and
+no workstation here sees it. Two CI rounds so far, `who_landing`'s alias table
+(R-A9-11) and `delete_lines`' row list (#93), and both read as something else: an
+empty answer, then a proof failing on a number nobody could explain. Pass a
+multi-line table through the **environment** and read `ENVIRON["…"]`, or through
+a second input file with `NR == FNR`. The suite's `repo19d` case puts a shim
+that IS that rule on `PATH`, so the next one is red everywhere, not on one job.
+
 Without the submodule the command tests SKIP, naming that first line; they
 never fail, because a fork's first `pytest` going red on a missing submodule is
 a fork nobody finishes. Everything here is bash and runs on macOS, Linux and
