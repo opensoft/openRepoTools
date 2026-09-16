@@ -5002,6 +5002,21 @@ LANES_REGISTER_INDEX_AWK='
       # in others, and a cut mid-character would put half a `—` into a log line
       # that is append-only. Dropping the last (possibly torn) word costs a word
       # and can never do that.
+      #
+      # AND THESE TWO ARE A TABLE OF THEIR OWN (`--cells`), NEVER THE ONE THE
+      # LISTING SCANS PER LANE — ruling 12 again, measured. `table_lookup` walks
+      # the whole table for every lane, so a free-text field of up to 280
+      # characters per row is paid for N times: on a register of 132 rows one
+      # `lanes --prefix <repo>` went from 14 s to 42 s with `head` and `flags`
+      # in this table, which is what put the pick past the 60-second terminal
+      # case in CI. The four short facts every row needs stay here; the two long
+      # ones are asked for BELOW THE NARROWING FILTER and only for a row with no
+      # object log, which is the only row that has anything to say with them
+      # (Amendment 19(a)).
+      if (!cells) {
+        print tolower(lane) sep lane sep ws sep wss sep ids sep started
+        next
+      }
       cell = cell_state($0)
       gsub(/\t/, " ", cell)
       cell = trim(cell)
@@ -5026,19 +5041,31 @@ LANES_REGISTER_INDEX_AWK='
       # a week, and the names this listing joins on come from the LOG files.
       # (No apostrophe in this comment: the whole program is a single-quoted
       # shell string, and one would end it.)
-      print tolower(lane) sep lane sep ws sep wss sep ids sep started sep head sep flags
+      print tolower(lane) sep head sep flags
     }'
 # `--local` READS THIS CHECKOUT'S REGISTER instead of the published one, which
 # is `session_ids_local_of_lane`'s source and is unioned with the published ids
 # for the same fail-closed reason that read gives: an id this checkout knows and
 # `origin/main` does not yet is one more reason to refuse, never to allow.
-lanes_register_index() {   # [--local]
-  if [ "${1-}" = --local ]; then
+# `--cells` IS THE OTHER HALF OF THE SAME PASS: `<lane>` and the state cell-s
+# head and flag words, and nothing else. It is a separate call because it is a
+# separate COST — see the awk above — and the listing asks for it only where a
+# row has no object log to speak for it.
+lanes_register_index() {   # [--local] [--cells]
+  lri_local=0; lri_cells=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --local) lri_local=1; shift ;;
+      --cells) lri_cells=1; shift ;;
+      *) break ;;
+    esac
+  done
+  if [ "$lri_local" = 1 ]; then
     { cat -- "$LANES_FILE" 2>/dev/null || :
       [ -f "$LANES_ARCH_FILE" ] && { cat -- "$LANES_ARCH_FILE" 2>/dev/null || :; }
-    } | awk -v sep="$US" "$LANES_REGISTER_INDEX_AWK" 2>/dev/null
+    } | awk -v sep="$US" -v cells="$lri_cells" "$LANES_REGISTER_INDEX_AWK" 2>/dev/null
   else
-    { register_text; archive_text; } | awk -v sep="$US" "$LANES_REGISTER_INDEX_AWK"
+    { register_text; archive_text; } | awk -v sep="$US" -v cells="$lri_cells" "$LANES_REGISTER_INDEX_AWK"
   fi
 }
 
@@ -5152,6 +5179,11 @@ lanes_rows() {
     note "$LANES_ARCH_PATH exists and could not be read, so the RETIRED rows it holds are not in this listing — and \`next-free\` will refuse a position rather than offer one over a partial read."
   fi
   lr_index="$GS$(lanes_register_index 2>/dev/null | tr '\n' "$GS" || :)"
+  # THE CELLS ARE BUILT ON FIRST USE AND NOT BEFORE (see `lanes_register_index
+  # --cells`): a listing whose every row has an object log never asks for them,
+  # and the two passes that build them are two `awk`s over a register this
+  # function has already rendered once.
+  lr_cells=""; lr_lcells=""; lr_cells_built=0
   lr_local_index="$GS$(lanes_register_index --local 2>/dev/null | tr '\n' "$GS" || :)"
   lr_facts_t="$GS$(printf '%s\n' "$lr_facts" | tr '\n' "$GS")"
   # THE LIVE SCAN, AND WHAT A LISTING DOES WHEN IT FAILS (#26, the review of
@@ -5206,18 +5238,20 @@ EOF2
     fi
     # THE ROW'S THREE FACTS, OUT OF THE ONE PASS: is there a row at all, whose
     # workstation it names, and which transcript uuids its session cell carries.
-    # AND ITS `started` CELL, ITS STATE CELL-S HEAD AND THE FLAG WORDS IN IT,
-    # out of the same pass (Amendment 19(b) and (c)): the three facts the sweep
-    # and `--closed` show about a row that has no log to show anything else.
+    # AND ITS `started` CELL (Amendment 19(b)), which `--closed` prints for a
+    # CLOSED row as well as a dormant one and which is a date rather than free
+    # text. Its state cell's HEAD and FLAGS are NOT here — they are the one
+    # table this loop does not walk per lane, and they are fetched below the
+    # narrowing filter for the rows that have no log to speak for them.
     lr_ixl=""; lr_rw=""; lr_rws=""; lr_ids_sp=""; lr_start=""; lr_was=""; lr_flags=""
     if table_lookup "$lr_index" "$lr_ll"; then
-      IFS="$US" read -r lr_ixl lr_rw lr_rws lr_ids_sp lr_start lr_was lr_flags <<EOF2
+      IFS="$US" read -r lr_ixl lr_rw lr_rws lr_ids_sp lr_start <<EOF2
 $LOOKUP_OUT
 EOF2
     fi
     lr_lixl=""; lr_lrw=""; lr_lrws=""; lr_lids_sp=""; lr_lstart=""; lr_lwas=""; lr_lflags=""
     if table_lookup "$lr_local_index" "$lr_ll"; then
-      IFS="$US" read -r lr_lixl lr_lrw lr_lrws lr_lids_sp lr_lstart lr_lwas lr_lflags <<EOF2
+      IFS="$US" read -r lr_lixl lr_lrw lr_lrws lr_lids_sp lr_lstart <<EOF2
 $LOOKUP_OUT
 EOF2
     fi
@@ -5226,8 +5260,6 @@ EOF2
     # text at all, and showing nothing about it would hide the newest row on the
     # workstation that made it.
     [ -n "$lr_start" ] || lr_start="$lr_lstart"
-    [ -n "$lr_was" ]   || lr_was="$lr_lwas"
-    [ -n "$lr_flags" ] || lr_flags="$lr_lflags"
     # THE REGISTER'S OWN WORKSTATION COLUMN WINS where the row has one: it is
     # what every other read in this file compares, and a lane may have a row
     # here and its last log line from another machine.
@@ -5312,6 +5344,32 @@ EOF2
         STARTED|RESUMED) lr_state=IDLE ;;
         *)       lr_state="$([ -n "$lr_row" ] && printf 'NO LOG' || printf 'UNKNOWN')" ;;
       esac
+    fi
+    # THE STATE CELL-S HEAD AND FLAGS, FOR THE ROWS THEY ARE ABOUT — a row with
+    # NO OBJECT LOG (Amendment 19(a)). It is the only row whose cell is all the
+    # listing has: one with a log has the log, and `lanes` prints neither field
+    # for it. The lookup is HERE, below the narrowing filter, because a row this
+    # listing is not showing is a row it may not pay for — and it walks a table
+    # of its own rather than the one above, which every lane in the estate walks
+    # once (ruling 12: the measurement is in `LANES_REGISTER_INDEX_AWK`).
+    if [ "$lr_lanekind" = 0 ] && [ -n "$lr_ixl$lr_lixl" ]; then
+      if [ "$lr_cells_built" = 0 ]; then
+        lr_cells="$GS$(lanes_register_index --cells 2>/dev/null | tr '\n' "$GS" || :)"
+        lr_lcells="$GS$(lanes_register_index --local --cells 2>/dev/null | tr '\n' "$GS" || :)"
+        lr_cells_built=1
+      fi
+      if table_lookup "$lr_cells" "$lr_ll"; then
+        IFS="$US" read -r lr_was lr_flags <<EOF2
+$LOOKUP_OUT
+EOF2
+      fi
+      if table_lookup "$lr_lcells" "$lr_ll"; then
+        IFS="$US" read -r lr_lwas lr_lflags <<EOF2
+$LOOKUP_OUT
+EOF2
+      fi
+      [ -n "$lr_was" ]   || lr_was="$lr_lwas"
+      [ -n "$lr_flags" ] || lr_flags="$lr_lflags"
     fi
     # ------- AMENDMENT 19(a): THE TWO STATES BELOW PARKED, AND WHO IS IN THEM
     #

@@ -9446,7 +9446,10 @@ A19_OLD="aaaa0020-2020-4000-8000-aaaa00202020"
   # refusal clause (c) names.
   printf '| `repo19-2` | harness `%s` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repo19/2.md | PAUSED \302\267 2026-09-11T00:00:00Z \302\267 swapped for the night |\n' "$A19_ID"
   # ENDED: its log has finished, which is CLOSED.
-  printf '| `repo19-3` | harness `%s` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repo19/3.md | ENDED \302\267 2026-09-11T00:00:00Z \302\267 window closing |\n' "$A19_OLD"
+  # ITS CELL CARRIES TWO OF THE FLAG WORDS ON PURPOSE: a row that has a log is a
+  # row whose LOG speaks for it, and the pair of free-text fields below must not
+  # be read — or paid for — on its account.
+  printf '| `repo19-3` | harness `%s` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repo19/3.md | ENDED \302\267 2026-09-11T00:00:00Z \302\267 window closing; the scratch branch was unpushed and is lost |\n' "$A19_OLD"
   # THREE ROWS WITH NO LOG AT ALL — DORMANT, and each carrying its own last
   # words: unpushed work, an owed handoff, and one that still says LIVE.
   printf '| `repo19-4` | harness `%s` | Eagle / test / brett | 2026-08-27 | none | none | ENDED WITHOUT PUSHING — loss risk; work unpushed on branch feat/x |\n' "$A19_OLD"
@@ -9509,6 +9512,31 @@ is    "a LIVE lane is in neither class, whatever else the row lacks" "$(a19_fiel
 is    "…and its line carries the ATTACH, which is the same word (Amendment 18 Addendum 1)" \
       "$(a19_field "$A19_ALL" repo19-1 10)" "lane repo19-1"
 is    "a PAUSED lane is in neither class either" "$(a19_field "$A19_ALL" repo19-2 13)" "none"
+
+# THE TWO FREE-TEXT FIELDS ARE NOT READ FOR A ROW THAT HAS A LOG, and that is
+# what makes this listing affordable. `table_lookup` walks the WHOLE table for
+# EVERY lane in the estate, so a field of up to 280 characters per row is paid
+# for N times over: with the state cell's head and its flag words in that table,
+# one `lanes --prefix <repo>` over a register of 132 rows took 42 s where this
+# branch's parent took 14 — and `lane`'s pick, which prints nothing until that
+# read returns, then sat past the 60-second terminal case in CI. Fifty
+# assertions failed on it, the first three of them the pick's own, on every
+# platform: no output, no question, killed.
+#
+# They are a table of their own now (`lanes_register_index --cells`), built on
+# first use and asked for BELOW the narrowing filter, and only for a row with NO
+# OBJECT LOG — the only row whose cell is all the listing has to show. THESE
+# FOUR ARE THE CASE THAT CATCHES IT, and they are the structure rather than a
+# stopwatch: a clock assertion on a shared runner is a flake, while a row that
+# has a log carrying its cell's text is the defect itself, in one field.
+is    "a row whose lane HAS an object log carries no state-cell head" \
+      "$(a19_field "$A19_ALL" repo19-2 15)" "none"
+is    "…and the CLOSED row the same, whose own cell says unpushed and lost" \
+      "$(a19_field "$A19_ALL" repo19-3 15)" "none"
+is    "…nor the flag words those two say, however alarming they are" \
+      "$(a19_field "$A19_ALL" repo19-3 16)" "none"
+is    "…while its started date IS carried, because the closed line prints it" \
+      "$(a19_field "$A19_ALL" repo19-3 14)" "2026-09-11T00:00Z"
 
 # A ROW WITH NO LOG WHOSE CELL IS THE PHRASE AND SAYS `PAUSED` IS NOT DORMANT:
 # Amendment 13(a) makes that cell the lane's current state, and a listing that
