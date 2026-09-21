@@ -1,0 +1,41 @@
+{
+  "case": "invalid-parent",
+  "expected_code": "ownership-conflict",
+  "events": [
+    {
+      "type": "PreToolUse",
+      "tool_name": "Agent",
+      "tool_use_id": "tool-invalid-parent",
+      "session_id": "11111111-1111-4111-8111-111111111111",
+      "transcript_path": "fixture://coordinator",
+      "cwd": "fixture://worktree",
+      "hook_event_name": "PreToolUse",
+      "prompt_id": "prompt-invalid-parent",
+      "agent_id": "agent-does-not-exist",
+      "agent_type": "general-purpose",
+      "tool_input": {"subagent_type": "worker"}
+    },
+    {
+      "type": "SubagentStart",
+      "agent_id": "agent-invalid-parent",
+      "session_id": "11111111-1111-4111-8111-111111111111",
+      "transcript_path": "fixture://coordinator",
+      "cwd": "fixture://worktree",
+      "permission_mode": "default",
+      "hook_event_name": "SubagentStart",
+      "agent_type": "worker"
+    },
+    {
+      "type": "system",
+      "subtype": "task_started",
+      "task_id": "task-invalid-parent",
+      "description": "fixture worker",
+      "uuid": "event-invalid-parent",
+      "session_id": "11111111-1111-4111-8111-111111111111",
+      "task_type": "local_agent",
+      "prompt_id": "prompt-invalid-parent"
+    }
+  ],
+  "expected_status": "unresolved",
+  "expected_reason": "unknown"
+}

@@ -1,7 +1,98 @@
 ---
 name: handoff
-description: "/handoff (aliases /swap, /lane-swap; /ctx is /handoff --restart) hands this lane off — for a context clear, a usage reset, a profile switch, or a handoff another place requested. It fixes the identity triple, refreshes the handoff with a fresh Rule 3 top block listing every running writer, polls the writers, writes the PAUSED record with the window, the lane's directory, the profile, the agent and its transcript, and prints the one restart command (lane-collision-protocol Amendment 8(a), amended by Amendments 11, 17 and 18(d))."
+description: "Managed lanes use external lane-managed operations; this skill retains the historical /handoff, /swap, /lane-swap, and /ctx compatibility procedure for unmanaged lanes only."
 ---
+
+## Mode selection: managed versus unmanaged
+
+First determine whether the lane has durable managed ownership. The managed
+owner is authoritative even when its supervisor/daemon is stopped; a failed or
+unknown ownership read is not permission to launch legacy work.
+
+### Managed lanes (opt in explicitly)
+
+Do not run the historical procedure below for a managed lane. Native/live
+support is experimental and `UNVERIFIED`; the approved native contract in
+`specs/001-separate-swap-ctx-handoff/contracts/managed-control.md` governs the
+rebuild. These external control-client forms exist, but syntax is not proof of
+complete native integration:
+
+```sh
+lane-swap <lane> --profile <profile>
+lane-managed swap <lane> --profile <profile>
+lane-managed handoff <lane> --checkpoint <checkpoint>
+lane-managed release <lane> --operation-id <operation-id> --generation <generation>
+```
+
+The current checkout has incomplete parser, daemon, controller, and runtime
+integration. Until the selected runtime Gate 0 and native lifecycle evidence
+are proven, unsupported or inconclusive managed operations must refuse before
+source interruption. This skill never turns a parser response or fake-runtime
+result into a supported workflow and never falls back to the historical
+procedure for a managed lane.
+
+Pass the current `--generation <generation>` on other managed mutations too.
+
+Managed handoff records only an explicitly supplied checkpoint reference.
+It does not generate a checkpoint, pause or interrupt participants, restart a
+process, change account/UUID, alter claims, dispatch input, or release work.
+Recording a reference does not validate its contents or prove a lifecycle
+transition. Never invoke this skill's document-writing procedure during
+managed swap or worker restart.
+
+The approved architecture has one coordinator with native Agent/Task children.
+Children have actual native identities and current-run evidence under the
+coordinator, not separate account sessions or external open/release calls.
+Swap must fence admission, terminal-stop current children/tools, prove durable
+worker-state clearing and old-writer exclusion, then restore the exact parent
+conversation under the selected authorized same-family profile, held before
+inference. Preserve definitions, model, effort, tools, permissions, workspace,
+dirty/untracked work, and lineage claims. Swap makes zero new model requests
+and creates no written handoff, summary, checkpoint, commit, or push.
+
+Safely stopped unfinished children are `resume-pending` for a tested exact
+continuation candidate or `restart-pending` for a new run until explicit
+release. Only correlated post-release native events prove `exact-resumed` or
+`restarted`; send acceptance or coordinator readiness proves neither.
+Model-assisted restart uses native records and coordinator context without a
+written handoff. Report its model usage separately from account control and
+never claim old conversation/identity preservation for a new run. Completed
+work stays `completed`; uncertain identity, stop, effects, or task correlation
+stays `unresolved` with no replay or duplicate writer.
+
+Managed ctx keeps the current account and requires a caller checkpoint plus a
+deliberate `hold` or `restart` policy. `hold` retains stopped native records,
+parent links, and claims without promising live children survive parent exit;
+fresh-coordinator release does not release them. `restart` creates a fresh
+coordinator UUID/lineage and may request new native tasks only after release;
+it never exact-rebinds a child to another parent. Native ctx integration is
+incomplete: the public parser and daemon wire accept the explicit
+`--workers hold`/`--workers restart` policy, while the controller currently
+refuses `restart` for independent participants until native restart admission
+and lineage transfer are implemented and correlated. Wire acceptance is not
+lifecycle support. See `commands/ctx.md`; do not use the superseded mapping
+path.
+
+For an explicit message, the client accepts
+`lane-managed submit <lane> --recipient-id <coordinator-id> --payload <reference>`.
+The native contract queues coordinator input while held or fenced; it defines
+no per-child mailbox. `shutdown` must retain the managed owner, control
+service/endpoint, and claims. Only explicit `unenroll` removes them after
+authoritative coordinator/child/tool quiescence and effect resolution.
+
+Parent startup or a returned Agent tool does not prove child safety. Native
+background children require tracked current-run lifecycle/tool/effect facts;
+teams require separate validation, and detached effects need separate
+exclusion. Missing startup-orphan, account, permission, ownership, or stop
+evidence must refuse or keep the lane held. Fake-runtime evidence does not
+verify native/live support; scoped live validation needs separate authorization.
+
+### Unmanaged legacy compatibility (historical procedure)
+
+For a lane without durable managed ownership, the aliases below retain the
+original executable handoff behavior and records. They are not a fallback for
+managed lanes: legacy `lane`, `lane-start`, and handoff refuse a managed-owned
+lane.
 
 <!-- PROMPTS TO THE PERSON: 1 — step 3, and only when a writer still holds
      unpushed work and has not replied. It was 3 before A8 Addendum 2 (R-A8-7):
@@ -9,7 +100,7 @@ description: "/handoff (aliases /swap, /lane-swap; /ctx is /handoff --restart) h
      all DERIVED here now, and step 5 prints one command, never a menu. If a
      step below cannot derive something, it stops and says so — it does not ask. -->
 
-# `/handoff` — hand this lane off (the swap, the context clear, the handoff)
+# `/handoff` — hand this unmanaged lane off (historical compatibility)
 
 Lane-collision-protocol **Amendment 8(a) as Amendment 17(a) names it**: *"the act Amendment 8(a) calls the
 swap is the HANDOFF"*. One act, three names — `/handoff` here, `/swap` and `/lane-swap` as its aliases, and

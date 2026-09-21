@@ -260,23 +260,24 @@ def test_the_shipped_command_is_an_alias_and_restates_no_step(name):
 
 @NEEDS_JQ
 def test_the_alias_skill_names_the_act_and_restates_no_step():
-    """AMENDMENT 17(a) KEPT `/lane-swap` — *"so that nothing written about them
-    stops working"* — AS AN ALIAS AND NOT AS A SECOND COPY.
+    """The lane-swap skill exposes managed swap and preserves legacy access.
 
-    The steps moved to `skills/handoff/SKILL.md` with their history; the file at
-    the old path names the skill that now carries them and adds nothing. This is
-    the same rule the command files take, one directory along, and it is what
-    makes "same steps, same record" true by construction rather than by
-    somebody keeping two files byte-equal.
+    The separate-operation feature supersedes the old one-act alias contract:
+    managed lanes use the external swap surface, while unmanaged lanes retain
+    the historical handoff behavior explicitly described in the skill.
     """
     text = (REPO / "skills/lane-swap/SKILL.md").read_text(encoding="utf-8")
     assert "\nname: lane-swap\n" in text, "the alias keeps its own invocable name"
-    assert "`handoff` skill" in text, "the alias must name the skill it invokes"
-    skill = (REPO / SKILL_PATH).read_text(encoding="utf-8")
-    for heading in ("## 1.", "## 2.", "## 3.", "## 4.", "## 5."):
-        assert heading in skill, f"the skill lost {heading} — this test is stale"
-        assert heading not in text, (
-            f"skills/lane-swap/SKILL.md restates {heading}; it is an alias")
+    assert "lane-managed swap" in text
+    assert "historical" in text.lower()
+    assert "unmanaged" in text.lower()
+    assert "silent fallback" in text.lower()
+    assert "--workers hold" in text
+    assert "--workers restart" in text
+    assert "wire accepts" in text.lower()
+    assert "native integration" in text.lower()
+    assert "refuses" in text.lower()
+    assert "parser does not accept `--workers restart`" not in text.lower()
 
 
 @NEEDS_JQ

@@ -41,6 +41,180 @@ Governing protocol: `~/.agents/protocols/lane-collision-protocol.md` — Rule 9
 2026-09-09; **Amendment 5, 2026-09-10** (the register lives in the person's
 workspace repository).
 
+## Managed lane operations (opt in explicitly)
+
+Native/live support is **experimental and UNVERIFIED**. This section describes
+the approved native rebuild and the control-client syntax present in this
+checkout; it is not a verified live operating procedure. The source records
+`openspec/changes/separate-swap-ctx-handoff/native-subagent-decision.md`,
+`specs/001-separate-swap-ctx-handoff/contracts/managed-control.md`, and
+`specs/001-separate-swap-ctx-handoff/contracts/recovery-lifecycle.md` define
+the approved behavior and acceptance requirements. Those feature records are
+not installed with the commands and may not be published. Native
+controller/daemon/CLI integration and selected-runtime startup-orphan evidence
+remain required; scaffolding and fake-runtime tests do not establish live
+capability.
+
+A durable managed owner controls one coordinator execution lineage through
+an external supervisor. Native Agent/Task children belong to that coordinator
+and are tracked through actual native IDs, parent/task links, current
+invocations, and lifecycle/tool events. There are no independently logged-in
+child sessions, invented per-child top-level UUIDs, child mailboxes, or
+external child open/release operations. Coordinator resume alone does not
+prove full graph restoration or complete child context preservation.
+
+The lineage owns the workspace claim whenever any member may write, even with
+a read-only coordinator. Children in that workspace inherit its claim; an
+isolated child worktree needs an additional exact claim owned by the lineage.
+Claims exclude other lineages, realpath aliases, and overlapping directories.
+Completed children stay complete, but their completion alone does not free a
+lineage claim. Preserve claims while any writer/effect is unresolved, and
+preserve dirty and untracked files. Each child's actual identity must enforce
+its immutable tool/permission policy; an unknown identity cannot inherit write
+access.
+
+Managed ownership survives supervisor death. Legacy `lane`, `lane-start`, and
+`lane-handoff`/`/handoff` must refuse a managed-owned or unknown lane. Enrollment
+and legacy launch share atomic exclusion; a live or unknown legacy holder
+must refuse enrollment. Schema-v1 prototype records are not native state:
+refuse with `schema-mismatch`/`migration-required` rather than silently adopting
+them. No migration command is provided by this contract.
+
+### Managed commands
+
+These are experimental client/parser forms for explicitly enrolled lanes, not
+a supported live workflow in the current checkout. Supply the current
+`--generation <generation>` for mutations; obtain the operation ID
+from the durable operation being addressed, never invent a replacement ID to
+retry an uncertain action.
+
+```sh
+lane-managed status <lane>
+lane-swap <lane> --profile <profile>
+lane-managed swap <lane> --profile <profile>
+lane-managed handoff <lane> --checkpoint <checkpoint>
+lane-managed submit <lane> --recipient-id <coordinator-id> --payload <reference>
+lane-managed release <lane> --operation-id <operation-id> --generation <generation>
+lane-managed recover <lane> --operation-id <operation-id> --generation <generation>
+lane-managed shutdown <lane>
+lane-managed unenroll <lane>
+```
+
+`lane-swap` is the thin Bash 3.2-compatible primary and keeps a literal lane
+named `swap` as data. The approved swap changes only to an explicitly selected
+authorized profile in the same transcript-storage family. It must fence
+admission, seal the native ledger, terminal-stop every current child and tool,
+prove durable worker-state clearing and old-coordinator/writer exclusion, then
+restore the exact coordinator conversation promptlessly under the target
+account. Validate account, permissions, model/effort, custom-agent definitions,
+tools, workspace, and launch settings while retaining claims. A profile/account
+change does not change the configured model. No new model request, generated
+summary, checkpoint, written handoff, commit, or push is a swap prerequisite or
+part of account control.
+
+The actual SDK-selected executable, version, digest, and launch mode need a
+tested startup-orphan hold boundary. Parent initialization, idle state,
+stream-json mode, or a promptless connection alone does not prove that native
+children cannot wake before release. Gate 0 remains unverified; missing
+evidence must refuse before source shutdown. An accepted stop request, parent
+exit, or OS suspension also does not prove old child/tool/effect quiescence.
+
+At `ready-held`, release has not occurred. Worker reports must distinguish:
+
+| Disposition | Required meaning/evidence |
+| --- | --- |
+| `resume-pending` | Safely stopped unfinished child with a tested exact-continuation candidate; still held before release. |
+| `restart-pending` | Safely stopped unfinished child needs a new native run; release/restart has not yet established one. |
+| `exact-resumed` | Post-release current-run continuation event correlated to the original native identity and coordinator parent. |
+| `restarted` | Post-release new native task event correlated to the coordinator, old task, restart attempt, current invocation, definition, permissions, and tool/process facts. No claim of old conversation or identity preservation. |
+| `unresolved` | Required identity, stop, effect, or restart correlation is missing or contradictory. |
+| `completed` | Authoritative completed work remains complete and is never replayed. |
+
+`release` is the explicit inference boundary for the matching held operation
+and generation. After it, the coordinator may receive one mechanically
+composed instruction using existing native task IDs/statuses and context to
+continue or restart unfinished work. No semantic handoff document, generated
+summary, or checkpoint is written. Report that normal model use separately
+from zero-new-model-request account control. `accepted-send` is only transport
+acceptance; it proves neither a resumed nor a restarted child. Reconcile
+partial results and uncertain sends from native events without automatic
+replay or duplicate writers. `recover` never implicitly releases or restarts;
+`status` is observational.
+
+Native background children need recorded task identities and current-run
+lifecycle/tool/effect evidence. Return of the launching Agent tool does not
+complete a child still running in the background. Native teams require their
+own validation; Agent/Task evidence does not establish team support. Unmanaged
+detached shell processes and remote effects need separate accounting and
+exclusion; a background flag does not make them tracked native children.
+
+### Separate ctx, handoff, and shutdown boundaries
+
+The approved native ctx forms below are explicit parser/wire forms, not proof
+of an available native workflow. The parser and wire accept both `hold` and
+`restart`; the current runtime/native integration is unsupported and must
+refuse before source effects when its capability and safety gates are not
+proven. Do not treat syntax acceptance as an implementation claim, route
+native children through an unverified mapping path, or bypass validation with
+JSON.
+
+```text
+lane-managed ctx <lane> --checkpoint <checkpoint> --workers hold
+lane-managed ctx <lane> --checkpoint <checkpoint> --workers restart
+```
+
+Ctx keeps the current account and requires a caller-supplied checkpoint. It
+proves old-writer exclusion before creating a fresh fixed-UUID coordinator,
+held before inference. `hold` retains stopped old native records, parent
+links, claims, and unresolved effects; it does not promise live children
+survive parent shutdown, and fresh-coordinator release does not release them.
+`restart` creates a fresh execution lineage and coordinator UUID while keeping
+the durable lane owner/generation, then may request new native child tasks
+only after explicit release. Old task parent links remain immutable: no exact
+cross-parent rebind. Preserve definitions and permissions, transfer claims
+atomically with no gap, and correlate new task events without claiming old
+conversation identity. These behaviors still require native integration and
+validation.
+
+`handoff` records only an explicit caller-supplied checkpoint reference and
+has no lifecycle effects: no pause, interruption, restart, account/UUID
+change, claim alteration, dispatch, or release. Recording the reference does
+not validate its contents. Swap and worker restart never invoke handoff.
+`submit` addresses the coordinator and must queue while held/fenced; there is
+no native child mailbox. These controls serialize against active operations.
+
+`shutdown` must boundedly stop the controlled lineage while retaining the
+durable managed owner, control service/endpoint, generation, claims, and
+unresolved effects so status/recovery/unenrollment remain reachable. It is
+not unenrollment. Only explicit `unenroll`, after authoritative coordinator,
+native-child, and tool quiescence plus detached-effect resolution and exact
+claim-removal proof, may remove the managed owner and claims. Unknown facts
+retain ownership and a held/indeterminate result.
+
+Missing exact parent identity, unsupported setup-token profiles, ambiguous
+account/permission/ownership, stale operations, or missing safety evidence
+must refuse. Never silently fall back to legacy launch/handoff. Live
+validation requires separate authorization; this documentation makes no live
+auth, quota, network, or supported-runtime claim.
+
+`/swap` and `/lane-swap` are token-free managed entry points only when a
+frontend proves interception before model dispatch. Otherwise use the external
+command. For a lane without durable managed ownership, the historical aliases
+remain intact and the handoff skill is the executable legacy source of truth;
+that operational compatibility is not a managed fallback.
+
+The managed state and control socket are local runtime state below the
+workspace Git common directory, with private owner/mode and no symlinked path
+components. Other hosts treat a durable managed projection as owned or
+unknown, never as absent. Consult the managed status/operation record before
+using a legacy front door.
+
+## Unmanaged legacy lane compatibility (historical protocol)
+
+The remainder of this manual documents the original register and lane
+workflow for lanes that have no durable managed owner. It remains readable for
+existing aliases and records; it does not override the managed boundary above.
+
 ## Why
 
 `LANES.md` is the estate's live-lane register (protocol Rule 4). Many
@@ -73,7 +247,7 @@ workstation**.
 | the object logs | `<the checkout>/lanes/log/<lane>.md` — one per lane (Amendment 7) |
 | the alias table | two layers: `repos.tsv` shipped by openRepoTools and installed beside the commands, then `<the checkout>/lanes/repos.tsv` where you keep an override (Amendment 9(b)) |
 | who places the symlinks | `link-estates`, an installed command. It places the handoffs links, the register link and the `lanes-edit.sh` link — **and no longer the two `~/.local/bin` ones**, which `--install` owns |
-| who installs all of it | `openRepoTools --install` (thirteen files, idempotent, all-or-nothing) |
+| who installs all of it | `openRepoTools --install` (twenty files and thirty-four total artifacts, idempotent, all-or-nothing) |
 | the lane alias table | `<the checkout>/lanes/aliases.tsv` — `<old><TAB><new><TAB><UTC>`, written by `lane-rename` and by nothing else, resolved by every reader that takes a lane name (Amendment 16(e)) |
 
 Why `main` of the workspace repository and not the aggregation's: the
@@ -518,6 +692,7 @@ One argument is taken verbatim, so a lane named before the `<repo>-<n>` rule
 # from a checkout of opensoft/openRepoTools, where the suite lives now:
 bash tests/test_lane_helpers.sh     # the shell suite alone, touches nothing real
 tests/run.sh                        # the same suite under pytest, SERIALIZED
+tests/run.sh --parallel-safe       # isolated focused run; coordinate concurrency
 ```
 
 `tests/run.sh` is the way to run it wherever lanes share a workstation
@@ -540,6 +715,17 @@ flock "${TMPDIR:-/tmp}/openrepotools-pytest.lock" python3 -m pytest tests -q
 under, and it is the COUNT and never `pgrep`'s exit status that decides.
 `tests/run.sh` is the canonical implementation of this guard — the lines above
 are it in one place, for a person with no checkout in front of them.
+
+For independent read-only validation in multiple worktrees, use
+`tests/run.sh --parallel-safe`. That explicit mode gives the run private
+`HOME`, `TMPDIR`, XDG directories, runtime sockets, protocol/projects roots,
+compatibility directories, pytest temporary storage, and disables pytest's
+cache and Python bytecode writes. Isolation does not bound resource contention:
+coordinate at most two focused runs initially, measure duration/timeouts before
+increasing that limit, and keep expensive lane-helper/full suites serialized
+without focused jobs beside them. Freeze the files a selector reads. The
+ordinary command remains the serialized workstation-wide path; neither mode
+makes concurrent source edits safe.
 
 The suite copies the four commands and the shipped alias table into a sandbox
 BIN DIRECTORY, seeds a workspace repository with nothing but data in it, and
@@ -2374,7 +2560,7 @@ machine whose repository already exists it clones it, adds nothing to a seeded
 repository, writes the pointer file and runs `link-estates`:
 
 ```sh
-openRepoTools --install     # the thirteen commands, the three skills, the three command files and the hook entry
+openRepoTools --install     # the twenty command/data files, three skills, three command files and two hook entries
 openRepoTools wip init      # create or adopt the workspace, and link it
 ```
 
@@ -2419,8 +2605,8 @@ link-estates                                          # repoints ~/projects/xFac
 ```
 
 **You are not asked to remember it: `--install` refuses** (A9 Addendum 4,
-R-A9-12). In its planning phase, before any of the twenty-seven artifacts is placed,
-it walks all thirteen targets and dies naming every one that is not a regular file,
+R-A9-12). In its planning phase, before any of the thirty-four artifacts is placed,
+it walks all twenty command/data targets and dies naming every one that is not a regular file,
 what it is, and the one `rm` that clears them. `cp` FOLLOWS A SYMLINK, so an
 install over these would leave the two commands UNINSTALLED — the targets stay
 links — and would write the post-move bytes into `opensoft/brett-wip`'s working

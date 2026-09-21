@@ -1,0 +1,4 @@
+{"event":"terminal-stop","status":"stopped","reason":"stoppedByUser","child_resume":false}
+{"event":"durable-worker-state-clear","state_key":"internal.running_background_tasks","cleared":true}
+{"event":"target-connect","inference_fenced":true}
+{"event":"terminal-cleared","stoppedByUser":true,"child_resume":false,"restored_orphans":0,"wake":false,"enqueue":false,"model_query":false}

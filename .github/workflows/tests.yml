@@ -66,7 +66,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: tests
-        run: python3 -m pytest tests -q
+        run: tests/run.sh
 
   # THE SKIP PATH, PROVED. A fork's first command is `git clone` without
   # `--recurse-submodules` and then `pytest`, and if that goes RED the fork is
@@ -101,7 +101,7 @@ jobs:
           fi
 
       - name: the suite skips rather than fails
-        run: python3 -m pytest tests -q -rs
+        run: tests/run.sh -rs
 
   # THE SAME SUITE ON WINDOWS, because a person on Windows still CLONES this
   # repository and reads it. What this job proves is the checkout — that the
@@ -226,6 +226,7 @@ jobs:
           /bin/bash -n lane
           /bin/bash -n lanes
           /bin/bash -n lane-handoff
+          /bin/bash -n lane-swap
           /bin/bash -n lane-rename
           /bin/bash -n lanes-edit.sh
           /bin/bash -n lane-start
@@ -285,4 +286,4 @@ jobs:
           git --version; python3 --version
 
       - name: tests
-        run: python3 -m pytest tests -q
+        run: tests/run.sh

@@ -4784,9 +4784,9 @@ has   "a missing dir is SAID rather than omitted in silence" "$SWSK_TEXT" "NO di
 has   "the skill ends with the /rename act (R-A11-16)" "$SWSK_TEXT" "type /rename <lane>"
 has   "…on act 0's MERGED sha, which is the premise that moved" "$SWSK_TEXT" "3719d97"
 # (f) THE ALIAS IS IN THE DESCRIPTION — clause (g).
-has   "the description names the aliases" "$SWSK_TEXT" "aliases /swap, /lane-swap"
-has   "…and the word a context clear uses" "$SWSK_TEXT" "/ctx is /handoff --restart"
-has   "…and the amendments that amended it" "$SWSK_TEXT" "amended by Amendments 11, 17 and 18(d)"
+has   "the description names the unmanaged compatibility aliases" "$SWSK_TEXT" "historical /handoff, /swap, /lane-swap, and /ctx compatibility procedure"
+has   "…and the word a context clear uses" "$SWSK_TEXT" "Managed ctx keeps the current account and requires a caller checkpoint"
+has   "…and the amendments that amended it" "$SWSK_TEXT" "Amendment 17(f)"
 # RULING 11 — the container case stops the WRITES, not the swap.
 hasnt "a container with no workstation no longer exits at step 1" "$SWSK_TEXT" 'export LANES_WORKSTATION=<this host name>"
   exit 2'
@@ -9403,16 +9403,17 @@ is    "…which still holds exactly what it held" \
 hfsk="$(cat "$SRC_DIR/skills/handoff/SKILL.md")"
 lssk="$(cat "$SRC_DIR/skills/lane-swap/SKILL.md")"
 swcmd="$(cat "$SRC_DIR/commands/swap.md")"
-hfcmd="$(cat "$SRC_DIR/commands/handoff.md")"
-ctxcmd="$(cat "$SRC_DIR/commands/ctx.md")"
-has   "the handoff skill is the act itself" "$hfsk" "# \`/handoff\` — hand this lane off"
-has   "…and names the shell form as the same steps" "$hfsk" "\`lane-handoff\` is these same steps as one command"
-has   "the lane-swap skill is an ALIAS of it" "$lssk" "Invoke the \`handoff\` skill now"
+hfcmd="$(tr '\n' ' ' < "$SRC_DIR/commands/handoff.md" | tr -s ' ')"
+ctxcmd="$(tr '\n' ' ' < "$SRC_DIR/commands/ctx.md" | tr -s ' ')"
+has   "the handoff skill is the unmanaged historical compatibility act" "$hfsk" "# \`/handoff\` — hand this unmanaged lane off (historical compatibility)"
+has   "…and scopes the legacy procedure to unmanaged lanes" "$hfsk" "For a lane without durable managed ownership, the aliases below retain"
+has   "…and names the shell form as the same steps" "$hfsk" "From a shell, \`lane-handoff\` is these same steps as one command"
+has   "the lane-swap skill names its unmanaged alias" "$lssk" "their historical, operational aliases of \`/handoff\`"
 hasnt "…restating none of its steps" "$lssk" "## 4. Write the swap record"
-has   "the /swap command names the same skill" "$swcmd" "Invoke the \`handoff\` skill now"
-has   "the /handoff command names it too" "$hfcmd" "Invoke the \`handoff\` skill now"
-has   "and /ctx is that skill with --restart" "$ctxcmd" "with \`--restart\`"
-has   "…which is what the amendment calls it" "$ctxcmd" "/ctx\` is \`/handoff --restart\`"
+has   "the /swap command names the same skill" "$swcmd" "historical alias of"
+has   "the /handoff command names it too" "$hfcmd" "retain their historical aliases and invoke the legacy handoff skill"
+has   "and /ctx names the explicit legacy restart form" "$ctxcmd" "retains its historical meaning as \`/handoff --restart\`"
+has   "…and invokes the legacy handoff skill" "$ctxcmd" "and invokes the legacy \`handoff\` skill"
 has   "the skill carries Amendment 17(b)'s two sub-fields where the record is written" "$hfsk" "agent \$agent_name; transcript \$transcript_id"
 has   "…and the WRITERS section in its top block" "$hfsk" "**WRITERS at <UTC>**"
 has   "the skill's top block carries Addendum 1 (i)'s count, in the same words the command writes" \
@@ -10843,6 +10844,1625 @@ is   "the suite never created a log outside the sandbox" \
      "$(ls "$REAL_WS/lanes/log" 2>/dev/null | grep -c '^repo[A-Z]' || :)" 0
 is   "the suite never wrote the real register" \
      "$(cat "$REAL_WS/lanes/LANES.md" 2>/dev/null | grep -c '^| `repo[A-Z]' || :)" 0
+
+# ================================================================ T018 managed
+# T018 — legacy commands consult the optional managed controller at their last
+# read-only boundary.  This fixture deliberately uses a second workspace and
+# a fake `lane-managed` on PATH: it proves the command contract without tmux,
+# Claude, auth, a network, or the controller's implementation.  The helper's
+# only legacy-check answers are the protocol's answers: 8 is confirmed absence;
+# 0 is a managed or pending owner; every other result (including malformed
+# output with status 0) is an unknown read and must fail closed.
+T18_ROOT="$SANDBOX/t018-managed"
+T18_PROTOCOL="$T18_ROOT/protocol"
+T18_WS="$T18_ROOT/workspace"
+T18_PROJECTS="$T18_ROOT/projects"
+T18_ORIGIN="$T18_ROOT/workspace-origin.git"
+T18_MODE_FILE="$T18_ROOT/helper-mode"
+T18_HELPER_LOG="$T18_ROOT/helper.log"
+T18_HELPER="$SANDBOX/fakebin/lane-managed"
+T18_REG="$T18_WS/lanes/LANES.md"
+T18_LANE="repoT18-1"
+T18_MANAGED_LANE="repoT18-9"
+T18_PROJECTION_LANE="repoT18-6"
+T18_ID="t0180001-1111-4000-8000-t01800011111"
+T18_WORKER_ID="b0180002-2222-4000-8000-b01800022222"
+T18_WORKER_NAME="worker-t018"
+T18_HANDOFF="handoffs/repoT18/session-handoff-t018-lane-repoT18-1.md"
+T18_LOG="$T18_WS/lanes/log/$T18_LANE.md"
+T18_PROJECT="$T18_PROJECTS/repoT18"
+T18_ROSTER_FILE="$T18_ROOT/durable-roster"
+# Bind managed validation to the real long-lived runner started by the common
+# fixture.  On platforms without procfs, live_start is intentionally empty;
+# that is the portable start-token value used by the liveness reader as well.
+T18_RUNNER_PID="$LIVE_PID"
+T18_RUNNER_START_TOKEN="$live_start"
+
+mkdir -p "$T18_PROTOCOL" "$T18_PROJECTS"
+git init -q --bare -b main "$T18_ORIGIN"
+git clone -q "$T18_ORIGIN" "$T18_WS" 2>/dev/null
+git -C "$T18_WS" config user.email "t018@example.invalid"
+git -C "$T18_WS" config user.name "T018 fake helper"
+mkdir -p "$T18_WS/lanes/log" "$T18_WS/handoffs/repoT18"
+{
+  printf 'repository: %s\n' "$T18_ORIGIN"
+  printf 'path: %s\n' "$T18_WS"
+} > "$T18_PROTOCOL/workspace.yaml"
+{
+  printf '# T018 LANES.md\n\n'
+  printf '| lane | session id | workstation / env / user | started (UTC) | objects owned | handoff path | state |\n'
+  printf '|---|---|---|---|---|---|---|\n'
+  printf '| `repoT18-1` | harness `%s` | Eagle / test / brett | 2026-09-16T00:00Z | none | %s | PAUSED |\n' \
+         "$T18_ID" "$T18_HANDOFF"
+  printf '| `repoT18-9` | harness `%s` | Eagle / test / brett | 2026-09-16T00:00Z | none | %s | MANAGED OWNER · daemon-t018 |\n' \
+         "$T18_ID" "handoffs/repoT18/session-handoff-t018-lane-repoT18-9.md"
+  printf '| `%s` | harness `%s` | Eagle / test / brett | 2026-09-16T00:00Z | none | handoffs/repoT18/session-handoff-t018-lane-%s.md | PAUSED |\n' \
+         "$T18_PROJECTION_LANE" "$T18_ID" "$T18_PROJECTION_LANE"
+} > "$T18_REG"
+{
+  printf '# lane %s — T018 fake object log\n' "$T18_LANE"
+  printf 'STARTED — lane %s, session %s@Eagle, 2026-09-16T00:00:00Z, lane:%s → home opensoft/repoT18; estate repoT18; dir %s; profile team-05a; window t18sess:0 @181\n' \
+         "$T18_LANE" "$T18_ID" "$T18_LANE" "$T18_PROJECT"
+  printf 'PAUSED — lane %s, session %s@Eagle, 2026-09-16T00:01:00Z, lane:%s → swap; dir %s; profile team-05a; workstation Eagle\n' \
+         "$T18_LANE" "$T18_ID" "$T18_LANE" "$T18_PROJECT"
+} > "$T18_LOG"
+printf 'Lane: %s (team-05a, session %s) — T018 fake handoff\n\n' \
+       "$T18_LANE" "$T18_ID" > "$T18_WS/$T18_HANDOFF"
+T18_MANAGED_LOG="$T18_WS/lanes/log/$T18_MANAGED_LANE.md"
+{
+  printf '# lane %s — T018 managed projection log\n' "$T18_MANAGED_LANE"
+  printf 'STARTED — lane %s, session %s@Eagle, 2026-09-16T00:00:00Z, lane:%s → home opensoft/repoT18; estate repoT18; dir %s; profile team-05a; window t18sess:0 @181\n' \
+         "$T18_MANAGED_LANE" "$T18_ID" "$T18_MANAGED_LANE" "$T18_PROJECT"
+  printf 'PAUSED — lane %s, session %s@Eagle, 2026-09-16T00:01:00Z, lane:%s → swap; dir %s; profile team-05a; workstation Eagle\n' \
+         "$T18_MANAGED_LANE" "$T18_ID" "$T18_MANAGED_LANE" "$T18_PROJECT"
+} > "$T18_MANAGED_LOG"
+git -C "$T18_WS" add -- lanes handoffs
+git -C "$T18_WS" commit -q -m "seed T018 managed interlock fixture"
+git -C "$T18_WS" push -q origin main
+
+git init -q -b main "$T18_PROJECT"
+git -C "$T18_PROJECT" config user.email "t018@example.invalid"
+git -C "$T18_PROJECT" config user.name "T018 fake helper"
+printf '# T018 project\n' > "$T18_PROJECT/README.md"
+git -C "$T18_PROJECT" add README.md
+git -C "$T18_PROJECT" commit -q -m "seed T018 project"
+git -C "$T18_PROJECT" remote add origin "https://github.com/opensoft/repoT18.git"
+{
+  printf 'lane=%s\n' "$T18_LANE"
+  printf 'participant_uuid=%s\n' "$T18_WORKER_ID"
+  printf 'session_name=%s\n' "$T18_WORKER_NAME"
+  printf 'runner_pid=%s\n' "$LIVE_PID"
+  printf 'runner_start_token=%s\n' "$T18_RUNNER_START_TOKEN"
+} > "$T18_ROSTER_FILE"
+
+: > "$T18_HELPER_LOG"
+printf 'managed\n' > "$T18_MODE_FILE"
+cat > "$T18_HELPER" <<'FAKE'
+#!/usr/bin/env bash
+# T018 fake managed-controller read seam.  It logs only the attempted read;
+# state and side-effect assertions stay in the parent shell.
+t18_op="${1-}"
+if [ "$#" -gt 0 ]; then shift; fi
+t18_lane="${LANE_MANAGED_TEST_LANE:-unknown}"
+t18_bound=""
+t18_uuid=""
+t18_name=""
+t19_pid=""
+t19_start=""
+t19_lease=""
+t19_request=""
+t19_pending=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --lane) t18_lane="${2-}"; shift 2 ;;
+    --bound-lane) t18_bound="${2-}"; shift 2 ;;
+    --participant-uuid) t18_uuid="${2-}"; shift 2 ;;
+    --session-name) t18_name="${2-}"; shift 2 ;;
+    --pid) t19_pid="${2-}"; shift 2 ;;
+    --lease-id) t19_lease="${2-}"; shift 2 ;;
+    --request-id) t19_request="${2-}"; shift 2 ;;
+    --pending-launch) t19_pending=1; shift ;;
+    *) shift ;;
+  esac
+done
+printf 'op=%s lane=%s bound=%s uuid=%s name=%s pid=%s token=%s lease=%s pending=%s\n' \
+  "$t18_op" "$t18_lane" "$t18_bound" "$t18_uuid" "$t18_name" \
+  "$t19_pid" "$t19_start" "$t19_lease" "$t19_pending" \
+  >> "${LANE_MANAGED_TEST_LOG:-/dev/null}"
+t18_mode="$(sed -n '1p' "${LANE_MANAGED_TEST_MODE:-/dev/null}" 2>/dev/null || :)"
+t19_process_token() {
+  t19_token="$(cut -d' ' -f22 "/proc/$1/stat" 2>/dev/null || :)"
+  if [ -z "$t19_token" ]; then
+    t19_token="$(ps -p "$1" -o lstart= 2>/dev/null | sed 's/^ *//' || :)"
+  fi
+  printf '%s\n' "$t19_token"
+}
+t19_process_parent() {
+  t19_parent="$(awk '{print $4; exit}' "/proc/$1/stat" 2>/dev/null || :)"
+  if [ -z "$t19_parent" ]; then
+    t19_parent="$(ps -p "$1" -o ppid= 2>/dev/null | sed 's/^ *//' || :)"
+  fi
+  printf '%s\n' "$t19_parent"
+}
+    case "$t18_op" in
+  legacy-check)
+    if [ -n "${LANE_MANAGED_TEST_T19_STATE:-}" ] && [ -s "$LANE_MANAGED_TEST_T19_STATE" ]; then
+      t19_state_mode="$(sed -n 's/^mode=//p' "$LANE_MANAGED_TEST_T19_STATE" 2>/dev/null | head -n1)"
+      case "$t19_state_mode" in
+        managed|pending-launch|pending-binding|pending_managed) exit 0 ;;
+        *) exit 8 ;;
+      esac
+    fi
+    case "$t18_mode" in
+      absent) exit 8 ;;
+      absent-empty) exit 8 ;;
+      managed) printf '{"mode":"managed","lane":"%s","owner":"daemon-t018"}\n' "$t18_lane"; exit 0 ;;
+      managed-empty) exit 0 ;;
+      pending) printf '{"mode":"pending-launch","lane":"%s","owner":"launcher-t018"}\n' "$t18_lane"; exit 0 ;;
+      t019-race-managed|t019-begin-busy|t019-begin-success|t019-pending|t019-bind-failure|t019-begin-malformed|t019-bind-malformed|t019-dry-run|t019-chain-direct|t019-chain-wrong|t019-chain-sibling|t019-chain-nondirect|t019-chain-live) exit 8 ;;
+      error) printf 'T018 fake helper could not read durable owner\n' >&2; exit 1 ;;
+      unknown) printf 'this-is-not-a-managed-state-frame\n'; exit 0 ;;
+      *) printf 'T018 fake helper mode is unknown: %s\n' "$t18_mode" >&2; exit 1 ;;
+    esac
+    ;;
+  legacy-begin)
+    t19_state="${LANE_MANAGED_TEST_T19_STATE:-/dev/null}"
+    t19_events="${LANE_MANAGED_TEST_T19_EVENTS:-}"
+    t19_marker="${LANE_MANAGED_TEST_T19_MARKER:-}"
+    t19_event() {
+      [ -n "$t19_events" ] || return 0
+      printf '%s\n' "$*" >> "$t19_events"
+    }
+    t19_json_busy() {
+      printf '{"ok":false,"code":"busy","error":"managed request was refused"}\n'
+      exit 3
+    }
+    t19_json_unknown() {
+      printf '{"ok":false,"code":"unknown","error":"managed request was refused"}\n'
+      exit 1
+    }
+    t19_state_mode=""
+    [ -z "$t19_state" ] || t19_state_mode="$(sed -n 's/^mode=//p' "$t19_state" 2>/dev/null | head -n1)"
+    t19_start="$(t19_process_token "$t19_pid")"
+    t19_parent_token="$(t19_process_token "$PPID")"
+    t19_pid_match=no
+    [ "$t19_pid" = "$PPID" ] && t19_pid_match=yes
+    t19_start_match=no
+    [ -n "$t19_parent_token" ] && [ "$t19_start" = "$t19_parent_token" ] && t19_start_match=yes
+    t19_event "begin lane=$t18_lane pid=$t19_pid token=$t19_start pending=$t19_pending parent=$PPID pid_matches_parent=$t19_pid_match start_matches_parent=$t19_start_match"
+    case "$t18_mode" in
+      managed|managed-empty|pending|t019-race-managed|t019-begin-busy) t19_json_busy ;;
+      t019-begin-unknown) t19_json_unknown ;;
+      error|unknown) t19_json_unknown ;;
+    esac
+    t19_cli_request="$t19_request"
+    if [ "$t18_mode" = t019-begin-malformed ]; then
+      if [ "$t19_pending" = 1 ]; then
+        printf '{"ok":true,"result":{"lease_id":"%s"}}\n' "$t19_lease"
+      else
+        printf '{"ok":true}\n'
+      fi
+      exit 0
+    fi
+    if [ -n "$t19_state_mode" ]; then
+      t19_json_busy
+    fi
+    if [ -z "$t19_pid" ] || [ -z "$t19_start" ]; then
+      t19_json_unknown
+    fi
+    t19_lease="${LANE_MANAGED_TEST_T19_LEASE:-t019-lease}"
+    t19_request="${LANE_MANAGED_TEST_T19_REQUEST:-t019-request}"
+    [ -n "$t19_cli_request" ] && t19_response_request="$t19_cli_request" || t19_response_request="$t19_request"
+    t19_host="${LANE_MANAGED_TEST_T19_HOST:-Eagle}"
+    if [ "$t19_pending" = 1 ]; then
+      printf 'mode=pending-launch\nlane=%s\nlane_key=%s\npid=%s\nstart_token=%s\nrequest_id=%s\nlease_id=%s\nhost=%s\n' \
+        "$t18_lane" "$(printf '%s' "$t18_lane" | tr 'A-Z' 'a-z')" "$t19_pid" "$t19_start" \
+        "$t19_request" "$t19_lease" "$t19_host" > "$t19_state"
+      [ -z "$t19_marker" ] || : > "$t19_marker"
+      t19_event "begin-complete mode=pending-launch lease=$t19_lease"
+      printf '{"ok":true,"result":{"created_at":1,"host":"%s","lane":"%s","lane_key":"%s","lease_id":"%s","mode":"pending-launch","pid":%s,"request_id":"%s"}}\n' \
+        "$t19_host" "$t18_lane" "$(printf '%s' "$t18_lane" | tr 'A-Z' 'a-z')" \
+        "$t19_lease" "$t19_pid" "$t19_response_request"
+      exit 0
+    fi
+    printf 'mode=legacy-lease\nlane=%s\nlane_key=%s\npid=%s\nstart_token=%s\nhost=%s\n' \
+      "$t18_lane" "$(printf '%s' "$t18_lane" | tr 'A-Z' 'a-z')" "$t19_pid" "$t19_start" "$t19_host" > "$t19_state"
+    [ -z "$t19_marker" ] || : > "$t19_marker"
+    t19_event "begin-complete mode=legacy-lease"
+    printf '{"ok":true,"result":{"created_at":1,"host":"%s","lane":"%s","lane_key":"%s","mode":"legacy-lease","pid":%s}}\n' \
+      "$t19_host" "$t18_lane" "$(printf '%s' "$t18_lane" | tr 'A-Z' 'a-z')" "$t19_pid"
+    exit 0
+    ;;
+  pending-launch-bind)
+    t19_state="${LANE_MANAGED_TEST_T19_STATE:-}"
+    t19_events="${LANE_MANAGED_TEST_T19_EVENTS:-}"
+    t19_event() {
+      [ -n "$t19_events" ] || return 0
+      printf '%s\n' "$*" >> "$t19_events"
+    }
+    t19_start="$(t19_process_token "$t19_pid")"
+    t19_event "bind lane=$t18_lane lease=$t19_lease pid=$t19_pid token=$t19_start parent=$PPID"
+    t19_state_mode=""
+    t19_state_lease=""
+    t19_state_pid=""
+    t19_state_token=""
+    t19_target_parent=""
+    t19_parent_start=""
+    t19_lineage_match=yes
+    t19_chain_lineage_required=no
+    case "$t18_mode" in
+      t019-chain-*) t19_chain_lineage_required=yes; t19_lineage_match=no ;;
+    esac
+    if [ -n "$t19_state" ] && [ -s "$t19_state" ]; then
+      t19_state_mode="$(sed -n 's/^mode=//p' "$t19_state" 2>/dev/null | head -n1)"
+      t19_state_lease="$(sed -n 's/^lease_id=//p' "$t19_state" 2>/dev/null | head -n1)"
+      t19_state_pid="$(sed -n 's/^pid=//p' "$t19_state" 2>/dev/null | head -n1)"
+      t19_state_token="$(sed -n 's/^start_token=//p' "$t19_state" 2>/dev/null | head -n1)"
+    fi
+    if [ "$t18_mode" = t019-bind-malformed ]; then
+      printf '{"ok":true}\n'
+      exit 0
+    fi
+    if [ "$t18_mode" = t019-bind-failure ] || [ "$t18_mode" = t019-chain-wrong ]; then
+      printf '{"ok":false,"code":"ownership-conflict","error":"managed request was refused"}\n'
+      exit 5
+    fi
+    if [ "$t19_state_mode" != pending-launch ] || [ "$t19_lease" != "$t19_state_lease" ] \
+        || [ -z "$t19_pid" ] || [ -z "$t19_start" ] || [ "$t19_pid" = "$t19_state_pid" ] \
+        || [ "$t19_start" = "$t19_state_token" ]; then
+      printf '{"ok":false,"code":"ownership-conflict","error":"managed request was refused"}\n'
+      exit 5
+    fi
+    if [ "$t19_chain_lineage_required" = yes ]; then
+      t19_target_parent="$(t19_process_parent "$t19_pid")"
+      if [ -n "$t19_target_parent" ] && [ "$t19_target_parent" = "$t19_state_pid" ]; then
+        t19_parent_start="$(t19_process_token "$t19_target_parent")"
+        if [ -n "$t19_parent_start" ] && [ "$t19_parent_start" = "$t19_state_token" ]; then
+          t19_lineage_match=yes
+        fi
+      fi
+    fi
+    t19_event "bind-lineage pid=$t19_pid parent=$t19_target_parent parent_start=$t19_parent_start state_pid=$t19_state_pid lineage=$t19_lineage_match"
+    t19_target_token="$t19_start"
+    if [ "$t19_lineage_match" != yes ] || [ -z "$t19_target_token" ] || [ "$t19_start" != "$t19_target_token" ] || ! kill -0 "$t19_pid" 2>/dev/null; then
+      printf '{"ok":false,"code":"ownership-conflict","error":"managed request was refused"}\n'
+      exit 5
+    fi
+    printf 'mode=legacy-lease\nlane=%s\nlane_key=%s\npid=%s\nstart_token=%s\nhost=%s\n' \
+      "$t18_lane" "$(printf '%s' "$t18_lane" | tr 'A-Z' 'a-z')" "$t19_pid" "$t19_start" \
+      "${LANE_MANAGED_TEST_T19_HOST:-Eagle}" > "$t19_state"
+    t19_event "bind-complete mode=legacy-lease lease=$t19_lease"
+    printf '{"ok":true,"result":{"created_at":2,"host":"%s","lane":"%s","lane_key":"%s","mode":"legacy-lease","pid":%s}}\n' \
+      "${LANE_MANAGED_TEST_T19_HOST:-Eagle}" "$t18_lane" \
+      "$(printf '%s' "$t18_lane" | tr 'A-Z' 'a-z')" "$t19_pid"
+    exit 0
+    ;;
+  pending-launch-abort)
+    t19_state="${LANE_MANAGED_TEST_T19_STATE:-}"
+    t19_events="${LANE_MANAGED_TEST_T19_EVENTS:-}"
+    t19_event() {
+      [ -n "$t19_events" ] || return 0
+      printf '%s\n' "$*" >> "$t19_events"
+    }
+    t19_event "abort lane=$t18_lane lease=$t19_lease"
+    t19_state_lease=""
+    [ -z "$t19_state" ] || t19_state_lease="$(sed -n 's/^lease_id=//p' "$t19_state" 2>/dev/null | head -n1)"
+    if [ -z "$t19_state" ] || [ ! -s "$t19_state" ] || [ "$t19_lease" != "$t19_state_lease" ]; then
+      printf '{"ok":false,"code":"ownership-conflict","error":"managed request was refused"}\n'
+      exit 5
+    fi
+    : > "$t19_state"
+    t19_event "abort-complete lease=$t19_lease"
+    printf '{"ok":true,"result":{"aborted":true,"lane":"%s","lease_id":"%s"}}\n' \
+      "$t18_lane" "$t19_lease"
+    exit 0
+    ;;
+  start)
+    t19_state="${LANE_MANAGED_TEST_T19_STATE:-}"
+    if [ -n "$t19_state" ] && [ -s "$t19_state" ]; then
+      printf '{"ok":false,"code":"busy","error":"managed request was refused"}\n'
+      exit 3
+    fi
+    printf '{"ok":true,"result":{"mode":"managed","lane":"%s"}}\n' "$t18_lane"
+    exit 0
+    ;;
+  roster-validate)
+    case "$t18_mode" in
+      roster-valid)
+        t18_expected_lane="$(sed -n 's/^lane=//p' "${LANE_MANAGED_TEST_ROSTER:-/dev/null}" 2>/dev/null | head -n1)"
+        t18_expected_uuid="$(sed -n 's/^participant_uuid=//p' "${LANE_MANAGED_TEST_ROSTER:-/dev/null}" 2>/dev/null | head -n1)"
+        t18_expected_name="$(sed -n 's/^session_name=//p' "${LANE_MANAGED_TEST_ROSTER:-/dev/null}" 2>/dev/null | head -n1)"
+        t18_expected_pid="$(sed -n 's/^runner_pid=//p' "${LANE_MANAGED_TEST_ROSTER:-/dev/null}" 2>/dev/null | head -n1)"
+        t18_expected_start="$(sed -n 's/^runner_start_token=//p' "${LANE_MANAGED_TEST_ROSTER:-/dev/null}" 2>/dev/null | head -n1)"
+        if [ "$t18_lane" = "$t18_expected_lane" ] && [ "$t18_bound" = "$t18_expected_lane" ] \
+            && [ "$t18_uuid" = "$t18_expected_uuid" ] \
+            && [ "$t18_name" = "$t18_expected_name" ] \
+            && [ "${LANE_SESSION_NAME:-}" = "$t18_expected_name" ] \
+            && [ "${LANE_MANAGED_RUNNER_PID:-}" = "$t18_expected_pid" ] \
+            && [ "${LANE_MANAGED_RUNNER_START_TOKEN:-}" = "$t18_expected_start" ] \
+            && kill -0 "$t18_expected_pid" 2>/dev/null; then
+          # This is the native coordinator-lineage response envelope.  The
+          # older {valid,lane,participant,session} shape below is deliberately
+          # kept as a negative migration case: it belonged to the superseded
+          # independent-worker prototype and must not be upgraded by the
+          # prompt guard.
+          printf '{"schema":2,"schema_version":2,"architecture":"native-coordinator-lineage","request_id":"t018-roster-request","ok":true,"valid":true,"mode":"managed","lane":"%s","bound_lane":"%s","participant_uuid":"%s","session_name":"%s","participant":"%s","session":"%s","owner":"daemon-t018","generation":1,"result":{"mode":"managed","lane":"%s","bound_lane":"%s","participant_uuid":"%s","session_name":"%s","owner":"daemon-t018","generation":1}}\n' \
+            "$t18_bound" "$t18_bound" "$t18_uuid" "$t18_name" \
+            "$t18_uuid" "$t18_name" "$t18_bound" "$t18_bound" \
+            "$t18_uuid" "$t18_name"
+          exit 0
+        fi
+        printf 'T018 fake roster rejected forged participant binding\n' >&2
+        exit 2
+        ;;
+      roster-independent-worker)
+        t18_expected_lane="$(sed -n 's/^lane=//p' "${LANE_MANAGED_TEST_ROSTER:-/dev/null}" 2>/dev/null | head -n1)"
+        t18_expected_uuid="$(sed -n 's/^participant_uuid=//p' "${LANE_MANAGED_TEST_ROSTER:-/dev/null}" 2>/dev/null | head -n1)"
+        t18_expected_name="$(sed -n 's/^session_name=//p' "${LANE_MANAGED_TEST_ROSTER:-/dev/null}" 2>/dev/null | head -n1)"
+        # This legacy/simple response is intentionally incompatible with the
+        # native coordinator schema.  Keep it as a real refusal witness.
+        printf '{"valid":true,"lane":"%s","participant":"%s","session":"%s"}\n' \
+          "$t18_expected_lane" "$t18_expected_uuid" "$t18_expected_name"
+        exit 0
+        ;;
+      roster-absent) exit 8 ;;
+      roster-unknown) printf 'T018 fake roster frame is malformed\n'; exit 0 ;;
+      roster-error) printf 'T018 fake roster could not be read\n' >&2; exit 1 ;;
+      roster-mismatch-lane)
+        t18_expected_uuid="$(sed -n 's/^participant_uuid=//p' "${LANE_MANAGED_TEST_ROSTER:-/dev/null}" 2>/dev/null | head -n1)"
+        t18_expected_name="$(sed -n 's/^session_name=//p' "${LANE_MANAGED_TEST_ROSTER:-/dev/null}" 2>/dev/null | head -n1)"
+        printf '{"schema":2,"schema_version":2,"architecture":"native-coordinator-lineage","request_id":"t018-roster-request","ok":true,"valid":true,"mode":"managed","lane":"repoT18-forged","bound_lane":"repoT18-forged","participant_uuid":"%s","session_name":"%s","participant":"%s","session":"%s","owner":"daemon-t018","generation":1,"result":{"mode":"managed","lane":"repoT18-forged","bound_lane":"repoT18-forged","participant_uuid":"%s","session_name":"%s","owner":"daemon-t018","generation":1}}\n' \
+          "$t18_expected_uuid" "$t18_expected_name" "$t18_expected_uuid" "$t18_expected_name" \
+          "$t18_expected_uuid" "$t18_expected_name"
+        exit 0
+        ;;
+      roster-mismatch-uuid)
+        t18_expected_lane="$(sed -n 's/^lane=//p' "${LANE_MANAGED_TEST_ROSTER:-/dev/null}" 2>/dev/null | head -n1)"
+        t18_expected_name="$(sed -n 's/^session_name=//p' "${LANE_MANAGED_TEST_ROSTER:-/dev/null}" 2>/dev/null | head -n1)"
+        printf '{"schema":2,"schema_version":2,"architecture":"native-coordinator-lineage","request_id":"t018-roster-request","ok":true,"valid":true,"mode":"managed","lane":"%s","bound_lane":"%s","participant_uuid":"forged-participant-t018","session_name":"%s","participant":"forged-participant-t018","session":"%s","owner":"daemon-t018","generation":1,"result":{"mode":"managed","lane":"%s","bound_lane":"%s","participant_uuid":"forged-participant-t018","session_name":"%s","owner":"daemon-t018","generation":1}}\n' \
+          "$t18_expected_lane" "$t18_expected_lane" "$t18_expected_name" "$t18_expected_name" \
+          "$t18_expected_lane" "$t18_expected_lane" "$t18_expected_name"
+        exit 0
+        ;;
+      roster-duplicate-lane)
+        t18_expected_name="$(sed -n 's/^session_name=//p' "${LANE_MANAGED_TEST_ROSTER:-/dev/null}" 2>/dev/null | head -n1)"
+        t18_expected_uuid="$(sed -n 's/^participant_uuid=//p' "${LANE_MANAGED_TEST_ROSTER:-/dev/null}" 2>/dev/null | head -n1)"
+        printf '{"mode":"managed","lane":"%s","bound_lane":"%s","lane":"repoT18-forged","participant_uuid":"%s","session_name":"%s","owner":"daemon-t018"}\n' \
+          "$T18_LANE" "$T18_LANE" "$t18_expected_uuid" "$t18_expected_name"
+        exit 0
+        ;;
+      *) printf 'T018 fake roster mode is unknown: %s\n' "$t18_mode" >&2; exit 1 ;;
+    esac
+    ;;
+  *)
+    printf 'T018 fake helper does not implement %s\n' "$t18_op" >&2
+    exit 2
+    ;;
+esac
+FAKE
+chmod 755 "$T18_HELPER"
+
+t18_env() {
+  env \
+    AGENT_PROTOCOL_ROOT="$T18_PROTOCOL" \
+    LANES_WORKSPACE_ROOT="$T18_WS" LANES_REPO="$T18_WS" \
+    LANES_DIR="$T18_WS/lanes" LANES_FILE="$T18_REG" \
+    LANES_PATH="lanes/LANES.md" LANES_EDIT="$E" \
+    PROJECTS_ROOT="$T18_PROJECTS" LANES_NO_FETCH=1 LANES_NO_GITHUB=1 \
+    LANES_WORKSTATION=Eagle LANES_NO_GIT=1 \
+    LANE_MANAGED_TEST_MODE="$T18_MODE_FILE" \
+    LANE_MANAGED_TEST_LOG="$T18_HELPER_LOG" \
+    LANE_MANAGED_TEST_ROSTER="$T18_ROSTER_FILE" \
+    LANE_MANAGED_TEST_LANE="$T18_LANE" \
+    PATH="$SANDBOX/fakebin:$OPENREPOTOOLS_BIN_DIR:$PATH" "$@"
+}
+t18_mode() { printf '%s\n' "$1" > "$T18_MODE_FILE"; }
+t18_reset_observers() {
+  : > "$T18_HELPER_LOG"
+  : > "$FAKE_TMUX_LOG"
+  : > "$FAKE_PCLAUDE_LOG"
+  : > "$FAKE_CLAUDE_LOG"
+}
+t18_snapshot() {
+  T18_BEFORE_HEAD="$(git -C "$T18_WS" rev-parse HEAD)"
+  T18_BEFORE_REG="$(cksum < "$T18_REG")"
+  T18_BEFORE_LOG="$(cat "$T18_LOG")"
+  T18_BEFORE_HANDOFF="$(cat "$T18_WS/$T18_HANDOFF")"
+  T18_BEFORE_TMUX="$(cat "$FAKE_TMUX_LOG")"
+  T18_BEFORE_PCLAUDE="$(cat "$FAKE_PCLAUDE_LOG" 2>/dev/null || :)"
+  T18_BEFORE_CLAUDE="$(cat "$FAKE_CLAUDE_LOG")"
+}
+t18_assert_unchanged() {
+  is "T018 $1 leaves the register commit untouched" \
+     "$(git -C "$T18_WS" rev-parse HEAD)" "$T18_BEFORE_HEAD"
+  is "T018 $1 leaves LANES.md untouched" "$(cksum < "$T18_REG")" "$T18_BEFORE_REG"
+  is "T018 $1 leaves the object log untouched" "$(cat "$T18_LOG")" "$T18_BEFORE_LOG"
+  is "T018 $1 leaves the handoff untouched" "$(cat "$T18_WS/$T18_HANDOFF")" "$T18_BEFORE_HANDOFF"
+  is "T018 $1 renames no window" "$(cat "$FAKE_TMUX_LOG")" "$T18_BEFORE_TMUX"
+  is "T018 $1 launches no pclaude" "$(cat "$FAKE_PCLAUDE_LOG" 2>/dev/null || :)" "$T18_BEFORE_PCLAUDE"
+  is "T018 $1 launches no Claude" "$(cat "$FAKE_CLAUDE_LOG")" "$T18_BEFORE_CLAUDE"
+}
+t18_read_count() {
+  command grep -E -c '^op=legacy-check ' "$T18_HELPER_LOG" 2>/dev/null || :
+}
+t18_roster_read_count() {
+  command grep -E -c 'op=roster-validate' "$T18_HELPER_LOG" 2>/dev/null || :
+}
+
+# A durable managed owner blocks the direct `lane` exec immediately before its
+# cwd/launcher mutation.  The same 0 answer covers a pending-launch owner.
+t18_mode managed
+t18_reset_observers
+t18_snapshot
+run t18_env PCLAUDE="$SANDBOX/fakebin/pclaude" "$LANE" "$T18_LANE"
+is   "T018 managed owner refuses direct lane exec" "$rc" 2
+has  "T018 direct lane refusal names managed ownership" "$err" "managed"
+is   "T018 direct lane reads legacy-check once" "$(t18_read_count)" 1
+t18_assert_unchanged "managed direct lane"
+
+# The canonical legacy-check result is exit-only: an empty stdout with status 0
+# still means managed ownership is present and must refuse before launch.
+t18_mode managed-empty
+t18_reset_observers
+t18_snapshot
+run t18_env PCLAUDE="$SANDBOX/fakebin/pclaude" "$LANE" "$T18_LANE"
+is   "T018 empty status-0 managed check refuses direct lane exec" "$rc" 2
+has  "T018 empty status-0 refusal names managed ownership" "$err" "managed"
+is   "T018 empty status-0 direct lane reads legacy-check once" "$(t18_read_count)" 1
+t18_assert_unchanged "empty status-0 managed direct lane"
+
+t18_mode pending
+t18_reset_observers
+t18_snapshot
+run t18_env PCLAUDE="$SANDBOX/fakebin/pclaude" "$LANE" "$T18_LANE"
+is   "T018 pending owner refuses direct lane exec" "$rc" 2
+has  "T018 pending direct lane refusal names ownership" "$err" "managed"
+is   "T018 pending direct lane reads legacy-check once" "$(t18_read_count)" 1
+t18_assert_unchanged "pending direct lane"
+
+# A read result of 8 is the sole compatibility answer.  With no durable owner,
+# lane-start may cross its first mutation boundary (the fake tmux rename).
+t18_mode absent-empty
+t18_reset_observers
+t18_snapshot
+run t18_env FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+    FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_PROFILE_NAME=team-05a \
+    LANE_START_SESSION_ID=0 "$START" repoT18 2 --no-launch
+is   "T018 absent managed marker keeps legacy lane-start compatible" "$rc" 0
+is   "T018 absent lane-start reads legacy-check once" "$(t18_read_count)" 1
+has  "T018 absent lane-start crosses its rename boundary" "$(cat "$FAKE_TMUX_LOG")" "rename-window repoT18-2"
+
+# A helper read failure and a malformed status-0 frame are not absence.  Both
+# refuse before lane-start's rename, write, or launch; this catches the common
+# `|| :` regression where an unknown owner becomes a free lane.
+for t18_bad_mode in error unknown; do
+  t18_mode "$t18_bad_mode"
+  t18_reset_observers
+  t18_snapshot
+  run t18_env FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+      FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_PROFILE_NAME=team-05a \
+      LANE_START_SESSION_ID=0 "$START" repoT18 1 --no-launch
+  case "$t18_bad_mode" in
+    error)  t18_bad_rc=1 ;;
+    unknown) t18_bad_rc=2 ;;
+  esac
+  is   "T018 $t18_bad_mode managed read fails closed" "$rc" "$t18_bad_rc"
+  is   "T018 $t18_bad_mode reads legacy-check once" "$(t18_read_count)" 1
+  t18_assert_unchanged "$t18_bad_mode managed read"
+done
+
+# A nonempty helper frame without a managed marker is still a status-0
+# legacy-check result.  The contract is exit-only, so it is treated as managed
+# ownership and refuses before the first side effect on every legacy front
+# door; stdout is not a permission-bearing JSON body.
+for t18_malformed_frontdoor in lane lane-handoff; do
+  t18_mode unknown
+  t18_reset_observers
+  t18_snapshot
+  case "$t18_malformed_frontdoor" in
+    lane)
+      run t18_env PCLAUDE="$SANDBOX/fakebin/pclaude" "$LANE" "$T18_LANE"
+      ;;
+    lane-handoff)
+      run t18_env FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+          FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_CODE_SESSION_ID="$T18_ID" \
+          CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane "$T18_LANE" --restart clear
+      ;;
+  esac
+  is   "T018 $t18_malformed_frontdoor nonempty no-marker helper output refuses" "$rc" 2
+  has  "T018 $t18_malformed_frontdoor malformed output fails closed" "$err" "managed"
+  is   "T018 $t18_malformed_frontdoor reads legacy-check once" "$(t18_read_count)" 1
+  t18_assert_unchanged "$t18_malformed_frontdoor malformed helper output"
+done
+
+# The handoff's canonical/rename path has the same refusal boundary.  It must
+# not refresh the handoff, append PAUSED, rename a window, or respawn a pane
+# after a managed owner read answered 0.
+t18_mode managed
+t18_reset_observers
+t18_snapshot
+run t18_env FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+    FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_CODE_SESSION_ID="$T18_ID" \
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane "$T18_LANE" --restart clear
+is   "T018 managed owner refuses lane-handoff before canonical mutation" "$rc" 2
+has  "T018 lane-handoff refusal names managed ownership" "$err" "managed"
+is   "T018 lane-handoff reads legacy-check once" "$(t18_read_count)" 1
+t18_assert_unchanged "managed lane-handoff"
+
+# An actually missing optional helper is still the legacy-compatible case when
+# its durable LANES projection has no managed marker.  This direct lane run
+# proves absence is not accidentally represented by a fake helper's 8 alone.
+mv "$T18_HELPER" "$T18_HELPER.disabled"
+t18_mode absent
+t18_reset_observers
+run t18_env PCLAUDE="$SANDBOX/fakebin/pclaude" "$LANE" "$T18_LANE"
+is   "T018 missing optional helper keeps unmanaged legacy lane compatible" "$rc" 0
+is   "T018 missing helper performs no helper read" "$(t18_read_count)" 0
+has  "T018 missing helper reaches the legacy launcher" "$(cat "$FAKE_PCLAUDE_LOG")" "--lane $T18_LANE"
+
+# A missing helper is NOT permission to launch through a durable managed LANES
+# projection.  The row state is a projection-only marker for another host, so
+# no local helper is needed to refuse it before tmux rename.
+t18_reset_observers
+t18_snapshot
+run t18_env FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+    FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_PROFILE_NAME=team-05a \
+    LANE_START_SESSION_ID=0 "$START" repoT18 9 --no-launch
+is   "T018 missing helper refuses durable managed LANES projection" "$rc" 2
+has  "T018 projection-only refusal names durable managed owner" "$err" "projection"
+is   "T018 projection-only refusal performs no helper read" "$(t18_read_count)" 0
+t18_assert_unchanged "missing helper managed projection"
+mv "$T18_HELPER.disabled" "$T18_HELPER"
+
+# ======================================================= T018 managed guard
+# The managed guard gets its identity from the SDK worker boundary, not from a
+# legacy LANES last-session UUID or a tmux window.  The fake roster itself is a
+# durable fixture: it checks the exact UUID, distinct session name, bound lane,
+# runner PID and start token rather than trusting those environment hints.
+T18_GUARD_SESSIONS="$HOME/.claude-profiles/profiles/opensoft/team/t018/sessions"
+T18_GUARD_FILE="$T18_GUARD_SESSIONS/worker.json"
+mkdir -p "$T18_GUARD_SESSIONS"
+t18_guard_record() {
+  t18_record_id="$1"
+  t18_record_name="$2"
+  t18_record_target="${3-}"
+  t18_record_tmux=""
+  [ -n "$t18_record_target" ] && t18_record_tmux=",\"tmux\":\"$t18_record_target\""
+  printf '{"pid":%s,"sessionId":"%s","cwd":"%s","procStart":"%s","kind":"interactive"%s,"name":"%s","nameSource":"derived","nameSince":9000,"status":"busy","updatedAt":9000}\n' \
+    "$T18_RUNNER_PID" "$t18_record_id" "$T18_PROJECT" "$T18_RUNNER_START_TOKEN" \
+    "$t18_record_tmux" "$t18_record_name" > "$T18_GUARD_FILE"
+}
+t18_guard_run() {   # <hook session id> <cwd> [env assignments/options]
+  t18_guard_id="$1"
+  t18_guard_cwd="$2"
+  shift 2
+  out="$(printf '{"session_id":"%s","cwd":"%s","prompt":"work","hook_event_name":"UserPromptSubmit"}\n' \
+      "$t18_guard_id" "$t18_guard_cwd" | t18_env "$@" "$E" guard 2>"$SANDBOX/stderr")"
+  rc=$?
+  err="$(cat "$SANDBOX/stderr")"
+}
+t18_guard_hook_intact() {
+  is "T018 UserPromptSubmit guard remains installed" "$(cksum < "$E")" "$T18_GUARD_HOOK_SUM"
+  is "T018 guard command remains executable" "$( [ -x "$E" ] && echo yes || echo no )" yes
+}
+T18_GUARD_HOOK_SUM="$(cksum < "$E")"
+
+# Managed validation runs before the legacy no-tmux/session-name checks.  The
+# native worker UUID and its session name are intentionally different from the
+# row's legacy UUID/name; durable roster validation is the authority here.
+rm -f "$T18_GUARD_FILE"
+t18_mode roster-valid
+t18_reset_observers
+t18_guard_run "$T18_WORKER_ID" "$T18_PROJECT" \
+    TMUX= LANES_LANE="$T18_LANE" LANE_MANAGED_BOUND_LANE="$T18_LANE" \
+    LANE_SESSION_NAME="$T18_WORKER_NAME" CLAUDE_SESSION_NAME="$T18_WORKER_NAME" \
+    CLAUDE_CODE_SESSION_ID="$T18_WORKER_ID" \
+    LANE_MANAGED_RUNNER_PID="$T18_RUNNER_PID" \
+    LANE_MANAGED_RUNNER_START_TOKEN="$T18_RUNNER_START_TOKEN"
+is   "T018 valid managed worker passes without tmux or legacy session UUID" "$rc" 0
+is   "T018 valid managed guard reads roster once" "$(t18_roster_read_count)" 1
+has  "T018 valid managed guard forwards the native UUID/name and bound lane" \
+     "$(cat "$T18_HELPER_LOG")" \
+     "op=roster-validate lane=$T18_LANE bound=$T18_LANE uuid=$T18_WORKER_ID name=$T18_WORKER_NAME"
+is   "T018 valid managed guard types nothing into tmux" "$(cat "$FAKE_TMUX_LOG")" ""
+is   "T018 valid managed guard is silent" "$err" ""
+t18_guard_hook_intact
+
+# The superseded independent-worker response shape is not a compatibility
+# alias.  A valid-looking simple envelope must refuse with migration-required
+# semantics rather than being reinterpreted as a coordinator roster.
+rm -f "$T18_GUARD_FILE"
+t18_mode roster-independent-worker
+t18_reset_observers
+t18_guard_run "$T18_WORKER_ID" "$T18_PROJECT" \
+    TMUX= LANES_LANE="$T18_LANE" LANE_MANAGED_BOUND_LANE="$T18_LANE" \
+    LANE_SESSION_NAME="$T18_WORKER_NAME" CLAUDE_SESSION_NAME="$T18_WORKER_NAME" \
+    CLAUDE_CODE_SESSION_ID="$T18_WORKER_ID" \
+    LANE_MANAGED_RUNNER_PID="$T18_RUNNER_PID" \
+    LANE_MANAGED_RUNNER_START_TOKEN="$T18_RUNNER_START_TOKEN"
+is   "T018 superseded independent-worker roster is refused" "$rc" 2
+is   "T018 superseded independent-worker roster reads once" "$(t18_roster_read_count)" 1
+has  "T018 superseded independent-worker refusal names malformed roster" "$err" "malformed"
+is   "T018 superseded independent-worker guard types nothing into tmux" "$(cat "$FAKE_TMUX_LOG")" ""
+t18_guard_hook_intact
+
+# A status-0 managed response whose participant name matches is not enough to
+# enroll the prompt.  Lane and UUID are independent proof fields: each bad
+# response must block before the legacy no-tmux/session checks rather than let
+# the matching name mask the invalid field.
+for t18_mismatch in roster-mismatch-lane roster-mismatch-uuid; do
+  rm -f "$T18_GUARD_FILE"
+  t18_mode "$t18_mismatch"
+  t18_reset_observers
+  t18_guard_run "$T18_WORKER_ID" "$T18_PROJECT" \
+      TMUX= LANES_LANE="$T18_LANE" LANE_MANAGED_BOUND_LANE="$T18_LANE" \
+      LANE_SESSION_NAME="$T18_WORKER_NAME" CLAUDE_SESSION_NAME="$T18_WORKER_NAME" \
+      CLAUDE_CODE_SESSION_ID="$T18_WORKER_ID" \
+      LANE_MANAGED_RUNNER_PID="$T18_RUNNER_PID" \
+      LANE_MANAGED_RUNNER_START_TOKEN="$T18_RUNNER_START_TOKEN"
+  is   "T018 matching-name $t18_mismatch blocks invalid roster proof" "$rc" 2
+  is   "T018 matching-name $t18_mismatch reads roster once" "$(t18_roster_read_count)" 1
+  case "$t18_mismatch" in
+    roster-mismatch-lane)
+      has  "T018 matching-name $t18_mismatch refusal names the requested durable lane" "$err" \
+           "did not bind the participant to requested lane '$T18_LANE'; exact durable lane proof is missing."
+      ;;
+    roster-mismatch-uuid)
+      has  "T018 matching-name $t18_mismatch refusal names the requested durable UUID" "$err" \
+           "did not bind the exact hook participant UUID '$T18_WORKER_ID'; durable UUID proof is missing."
+      ;;
+  esac
+  is   "T018 matching-name $t18_mismatch types nothing into tmux" "$(cat "$FAKE_TMUX_LOG")" ""
+  t18_guard_hook_intact
+done
+
+# Duplicate lineage keys are ambiguous evidence even when the first spelling
+# happens to match the requested lane.  The guard must not accept the first
+# occurrence and ignore a conflicting durable field later in the frame.
+rm -f "$T18_GUARD_FILE"
+t18_mode roster-duplicate-lane
+t18_reset_observers
+t18_guard_run "$T18_WORKER_ID" "$T18_PROJECT" \
+    TMUX= LANES_LANE="$T18_LANE" LANE_MANAGED_BOUND_LANE="$T18_LANE" \
+    LANE_SESSION_NAME="$T18_WORKER_NAME" CLAUDE_SESSION_NAME="$T18_WORKER_NAME" \
+    CLAUDE_CODE_SESSION_ID="$T18_WORKER_ID" \
+    LANE_MANAGED_RUNNER_PID="$T18_RUNNER_PID" \
+    LANE_MANAGED_RUNNER_START_TOKEN="$T18_RUNNER_START_TOKEN"
+is   "T023 duplicate managed roster lane blocks the prompt" "$rc" 2
+is   "T023 duplicate managed roster reads once" "$(t18_roster_read_count)" 1
+has  "T023 duplicate managed roster refusal names malformed state" "$err" "malformed"
+is   "T023 duplicate managed roster types nothing into tmux" "$(cat "$FAKE_TMUX_LOG")" ""
+t18_guard_hook_intact
+
+# An environment lane is only a locator.  A forged value cannot turn the same
+# worker into a participant for another lane because the durable roster rejects
+# the lane/binding pair before any legacy action.
+rm -f "$T18_GUARD_FILE"
+t18_mode roster-valid
+t18_reset_observers
+t18_guard_run "$T18_WORKER_ID" "$T18_PROJECT" \
+    TMUX= LANES_LANE=repoT18-forged LANE_MANAGED_BOUND_LANE=repoT18-forged \
+    LANE_SESSION_NAME="$T18_WORKER_NAME" CLAUDE_SESSION_NAME="$T18_WORKER_NAME" \
+    CLAUDE_CODE_SESSION_ID="$T18_WORKER_ID" \
+    LANE_MANAGED_RUNNER_PID="$T18_RUNNER_PID" \
+    LANE_MANAGED_RUNNER_START_TOKEN="$T18_RUNNER_START_TOKEN"
+is   "T018 forged managed lane hint blocks the prompt" "$rc" 2
+is   "T018 forged lane still reaches the durable roster once" "$(t18_roster_read_count)" 1
+has  "T018 forged lane refusal names roster validation" "$err" "roster"
+is   "T018 forged lane guard types nothing into tmux" "$(cat "$FAKE_TMUX_LOG")" ""
+t18_guard_hook_intact
+
+# A malformed status-0 roster response is unknown, not a successful managed
+# validation.  It blocks with UserPromptSubmit's required status 2 even without
+# tmux, preserving the guard's fail-closed behavior.
+rm -f "$T18_GUARD_FILE"
+t18_mode roster-unknown
+t18_reset_observers
+t18_guard_run "$T18_WORKER_ID" "$T18_PROJECT" \
+    TMUX= LANES_LANE="$T18_LANE" LANE_MANAGED_BOUND_LANE="$T18_LANE" \
+    LANE_SESSION_NAME="$T18_WORKER_NAME" CLAUDE_SESSION_NAME="$T18_WORKER_NAME" \
+    CLAUDE_CODE_SESSION_ID="$T18_WORKER_ID" \
+    LANE_MANAGED_RUNNER_PID="$T18_RUNNER_PID" \
+    LANE_MANAGED_RUNNER_START_TOKEN="$T18_RUNNER_START_TOKEN"
+is   "T018 unknown managed roster blocks before legacy no-tmux refusal" "$rc" 2
+is   "T018 unknown roster is read once" "$(t18_roster_read_count)" 1
+has  "T018 unknown roster refusal names malformed/unknown state" "$err" "unknown"
+is   "T018 unknown roster guard types nothing into tmux" "$(cat "$FAKE_TMUX_LOG")" ""
+t18_guard_hook_intact
+
+# Exit 8 means confirmed unmanaged, so the existing legacy UUID/name path still
+# runs unchanged.  This record deliberately uses the row's old UUID/name and a
+# real fake tmux window to exercise that fallback rather than the managed path.
+t18_guard_record "$T18_ID" "$T18_LANE" "t18sess:@181.%181"
+t18_mode roster-absent
+t18_reset_observers
+t18_guard_run "$T18_ID" "$T18_PROJECT" \
+    TMUX="$SANDBOX/fake-tmux-socket,0,0" FAKE_TMUX_WINDOW="t18sess:@181" \
+    FAKE_TMUX_WINDOW_NAME="$T18_LANE" FAKE_TMUX_WINDOW_INDEX=0 \
+    FAKE_TMUX_WINDOWS="t18sess:0	@181	$T18_LANE	%181	claude" \
+    LANE_SESSION_NAME="$T18_LANE" CLAUDE_SESSION_NAME="$T18_LANE" \
+    CLAUDE_CODE_SESSION_ID="$T18_ID" \
+    LANE_MANAGED_RUNNER_PID="$T18_RUNNER_PID" \
+    LANE_MANAGED_RUNNER_START_TOKEN="$T18_RUNNER_START_TOKEN"
+is   "T018 confirmed unmanaged guard continues legacy checks" "$rc" 0
+is   "T018 confirmed unmanaged guard reads roster once" "$(t18_roster_read_count)" 1
+has  "T018 confirmed unmanaged guard sends the native legacy identity" \
+     "$(cat "$T18_HELPER_LOG")" "uuid=$T18_ID name=$T18_LANE"
+is   "T018 confirmed unmanaged guard types nothing when already aligned" "$(cat "$FAKE_TMUX_LOG")" ""
+is   "T018 confirmed unmanaged guard is silent" "$err" ""
+t18_guard_hook_intact
+rm -f "$T18_GUARD_FILE"
+
+# ======================================================= T019 legacy lease
+# T019's hidden lease calls are integration seams: the fake helper persists a
+# bounded owner record and emits the same JSON shape as lane-managed's internal
+# begin/bind/abort operations.  Callers provide only a PID; the helper derives
+# and verifies its process-start identity internally.  The wrappers below turn
+# the existing tmux, lanes-edit and launcher fakes into an ordering witness
+# without touching a real terminal or launcher.
+T19_ROOT="$T18_ROOT/t019"
+T19_EVENTS="$T19_ROOT/events.log"
+T19_STATE="$T19_ROOT/owner.state"
+T19_MARKER="$T19_ROOT/begin.marker"
+T19_EDIT="$T19_ROOT/lanes-edit-wrapper"
+T19_TMUX_BASE="$T19_ROOT/tmux.base"
+T19_PCLAUDE_BASE="$T19_ROOT/pclaude.base"
+T19_LEASE="t019-lease-fixed"
+T19_REQUEST="t019-request-fixed"
+T19_PENDING_LANE="repoT18-3"
+T19_ABORT_LANE="repoT18-4"
+T19_PROJECTION_LANE="$T18_PROJECTION_LANE"
+T19_PROJECTION_DAEMON="daemon-t019"
+T19_PROJECTION_GENERATION="7"
+T19_PROJECTION_ALT_DAEMON="daemon-t019-other"
+T19_PROJECTION_BASE_REG="$T19_ROOT/projection.base"
+mkdir -p "$T19_ROOT"
+cp "$T18_REG" "$T19_PROJECTION_BASE_REG"
+T19_PROJECTION_ROW="$(command grep "^| \`$T19_PROJECTION_LANE\`" "$T19_PROJECTION_BASE_REG")"
+T19_PROJECTION_MARKER="managed-owner mode=managed daemon=$T19_PROJECTION_DAEMON generation=$T19_PROJECTION_GENERATION bound-lane=$T19_PROJECTION_LANE"
+
+cat > "$T19_EDIT" <<'FAKE'
+#!/usr/bin/env bash
+t19_edit_op="${1-}"
+case "$t19_edit_op" in
+  add-row|append-line|append-session-id|commit|log|set-row-state)
+    if [ -e "${T19_MARKER:-/nonexistent}" ]; then
+      printf 'edit-after-begin op=%s args=%s\n' "$t19_edit_op" "$*" >> "${T19_EVENTS:-/dev/null}"
+    else
+      printf 'edit-before-begin op=%s args=%s\n' "$t19_edit_op" "$*" >> "${T19_EVENTS:-/dev/null}"
+    fi
+    ;;
+esac
+exec "${T19_REAL_EDIT:?}" "$@"
+FAKE
+chmod 755 "$T19_EDIT"
+
+mv "$SANDBOX/fakebin/tmux" "$T19_TMUX_BASE"
+cat > "$SANDBOX/fakebin/tmux" <<'FAKE'
+#!/usr/bin/env bash
+case "${1-}" in
+  attach-session|kill-pane|kill-window|move-window|rename-window|select-window|send-keys|switch-client)
+    if [ -e "${T19_MARKER:-/nonexistent}" ]; then
+      printf 'tmux-after-begin args=%s\n' "$*" >> "${T19_EVENTS:-/dev/null}"
+    else
+      printf 'tmux-before-begin args=%s\n' "$*" >> "${T19_EVENTS:-/dev/null}"
+    fi
+    ;;
+esac
+exec "${T19_REAL_TMUX:?}" "$@"
+FAKE
+chmod 755 "$SANDBOX/fakebin/tmux"
+
+mv "$SANDBOX/fakebin/pclaude" "$T19_PCLAUDE_BASE"
+cat > "$SANDBOX/fakebin/pclaude" <<'FAKE'
+#!/usr/bin/env bash
+if [ -e "${T19_MARKER:-/nonexistent}" ]; then
+  printf 'exec-after-begin pid=%s argv=%s\n' "$$" "$*" >> "${T19_EVENTS:-/dev/null}"
+else
+  printf 'exec-before-begin pid=%s argv=%s\n' "$$" "$*" >> "${T19_EVENTS:-/dev/null}"
+fi
+exec "${T19_REAL_PCLAUDE:?}" "$@"
+FAKE
+chmod 755 "$SANDBOX/fakebin/pclaude"
+
+t19_env() {
+  env \
+    AGENT_PROTOCOL_ROOT="$T18_PROTOCOL" \
+    LANES_WORKSPACE_ROOT="$T18_WS" LANES_REPO="$T18_WS" \
+    LANES_DIR="$T18_WS/lanes" LANES_FILE="$T18_REG" \
+    LANES_PATH="lanes/LANES.md" LANES_EDIT="$T19_EDIT" \
+    PROJECTS_ROOT="$T18_PROJECTS" LANES_NO_FETCH=1 LANES_NO_GITHUB=1 \
+    LANES_WORKSTATION=Eagle LANES_NO_GIT=1 \
+    LANE_MANAGED="$T18_HELPER" \
+    LANE_MANAGED_TEST_MODE="$T18_MODE_FILE" \
+    LANE_MANAGED_TEST_LOG="$T18_HELPER_LOG" \
+    LANE_MANAGED_TEST_ROSTER="$T18_ROSTER_FILE" \
+    LANE_MANAGED_TEST_LANE="$T18_LANE" \
+    LANE_MANAGED_TEST_T19_STATE="$T19_STATE" \
+    LANE_MANAGED_TEST_T19_EVENTS="$T19_EVENTS" \
+    LANE_MANAGED_TEST_T19_MARKER="$T19_MARKER" \
+    LANE_MANAGED_TEST_T19_LEASE="$T19_LEASE" \
+    LANE_MANAGED_TEST_T19_REQUEST="$T19_REQUEST" \
+    LANE_MANAGED_TEST_T19_HOST=Eagle \
+    T19_EVENTS="$T19_EVENTS" T19_MARKER="$T19_MARKER" \
+    T19_REAL_EDIT="$E" \
+    T19_REAL_TMUX="$T19_TMUX_BASE" \
+    T19_REAL_PCLAUDE="$T19_PCLAUDE_BASE" \
+    PATH="$SANDBOX/fakebin:$OPENREPOTOOLS_BIN_DIR:$PATH" "$@"
+}
+t19_mode() { t18_mode "$1"; }
+t19_reset() {
+  : > "$T19_EVENTS"
+  : > "$T19_STATE"
+  rm -f "$T19_MARKER"
+  : > "$T18_HELPER_LOG"
+  : > "$FAKE_TMUX_LOG"
+  : > "$FAKE_PCLAUDE_LOG"
+  : > "$FAKE_CLAUDE_LOG"
+}
+t19_state_field() {
+  sed -n "s/^$1=//p" "$T19_STATE" 2>/dev/null | head -n1
+}
+t19_event_line() {
+  command grep -n -E "$1" "$T19_EVENTS" 2>/dev/null | head -n1 | cut -d: -f1
+}
+t19_first_side_effect() {
+  command grep -n -E '^(tmux|edit|exec)-(before|after)-begin ' "$T19_EVENTS" 2>/dev/null | head -n1 | cut -d: -f1
+}
+t19_assert_begin_precedes_side_effect() {
+  t19_begin_line="$(t19_event_line '^begin-complete ')"
+  t19_side_line="$(t19_first_side_effect)"
+  is "T019 legacy-begin precedes first legacy side effect" \
+     "$( [ -n "$t19_begin_line" ] && [ -n "$t19_side_line" ] && [ "$t19_begin_line" -lt "$t19_side_line" ] && echo yes || echo no )" yes
+  is "T019 no side effect occurred before legacy-begin" \
+     "$(command grep -E -c '^(tmux|edit|exec)-before-begin ' "$T19_EVENTS" 2>/dev/null || :)" 0
+}
+
+# A normal direct exec takes the exact shell PID to the atomic legacy-begin
+# boundary; lane-managed derives the process-start identity internally, and the
+# launcher is reached only after the lease has been durably acquired.
+t19_mode t019-begin-success
+t19_reset
+run t19_env PCLAUDE="$SANDBOX/fakebin/pclaude" "$LANE" "$T18_LANE"
+is   "T019 direct lane begin succeeds" "$rc" 0
+has  "T019 direct lane uses the legacy lease begin call" "$(cat "$T19_EVENTS")" "begin lane=$T18_LANE"
+has  "T019 direct lane passes the exact shell PID" "$(cat "$T19_EVENTS")" "pid_matches_parent=yes"
+has  "T019 direct lane reaches exec only after begin" "$(cat "$T19_EVENTS")" "exec-after-begin"
+is   "T019 direct lane persists a legacy lease" "$(t19_state_field mode)" legacy-lease
+t19_assert_begin_precedes_side_effect
+: > "$T19_STATE"
+rm -f "$T19_MARKER"
+
+# A zero status with an unusable legacy-begin envelope is not a successful
+# ownership admission.  The front door must refuse before the launcher and
+# leave no guessed lease behind.
+t19_mode t019-begin-malformed
+t19_reset
+t18_snapshot
+run t19_env PCLAUDE="$SANDBOX/fakebin/pclaude" "$LANE" "$T18_LANE"
+is   "T023 malformed ordinary legacy-begin output refuses" "$rc" 1
+has  "T023 malformed ordinary begin names the malformed response" "$err" "malformed"
+is   "T023 malformed ordinary begin leaves no legacy owner" "$(wc -c < "$T19_STATE" | tr -d ' ')" 0
+is   "T023 malformed ordinary begin crosses no legacy side effect" \
+     "$(command grep -E -c '^(tmux|edit|exec)-(before|after)-begin ' "$T19_EVENTS" 2>/dev/null || :)" 0
+t18_assert_unchanged "T023 malformed ordinary legacy-begin"
+
+# The pending launcher capability is the same fail-closed boundary: a lease
+# identifier by itself is not enough to authorize a later bind.
+t19_reset
+t18_snapshot
+run t19_env FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+    FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_PROFILE_NAME=team-05a \
+    LANE_START_SESSION_ID=0 "$START" repoT18 3 --no-launch
+is   "T023 malformed pending legacy-begin output refuses" "$rc" 1
+has  "T023 malformed pending begin names the malformed response" "$err" "malformed"
+is   "T023 malformed pending begin leaves no legacy owner" "$(wc -c < "$T19_STATE" | tr -d ' ')" 0
+is   "T023 malformed pending begin prints no command" "$out" ""
+t18_assert_unchanged "T023 malformed pending legacy-begin"
+
+# A managed-owner race at the atomic begin boundary refuses all three legacy
+# front doors before their first tmux, register, handoff, or exec mutation.
+for t19_frontdoor in lane lane-start lane-handoff; do
+  t19_mode t019-race-managed
+  t19_reset
+  t18_snapshot
+  case "$t19_frontdoor" in
+    lane)
+      run t19_env PCLAUDE="$SANDBOX/fakebin/pclaude" "$LANE" "$T18_LANE"
+      ;;
+    lane-start)
+      run t19_env FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+          FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_PROFILE_NAME=team-05a \
+          LANE_START_SESSION_ID=0 "$START" repoT18 2 --no-launch
+      ;;
+    lane-handoff)
+      run t19_env FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+          FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_CODE_SESSION_ID="$T18_ID" \
+          CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane "$T18_LANE" --restart clear
+      ;;
+  esac
+  is   "T019 $t19_frontdoor managed begin race refuses" "$rc" 2
+  has  "T019 $t19_frontdoor attempts legacy-begin" "$(cat "$T19_EVENTS")" "begin lane="
+  t18_assert_unchanged "T019 $t19_frontdoor managed begin race"
+  is   "T019 $t19_frontdoor leaves no lease after managed race" "$(wc -c < "$T19_STATE" | tr -d ' ')" 0
+done
+
+# `--no-launch` owns a durable pending lease after its helper exits.  The
+# pending owner is still an enrollment conflict, and only a later bind of the
+# exact verified launcher PID can replace it with a legacy lease.  The helper
+# derives the target PID's process-start identity while holding the lease.
+t19_mode t019-pending
+t19_reset
+t18_snapshot
+run t19_env FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+    FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_PROFILE_NAME=team-05a \
+    LANE_START_SESSION_ID=0 "$START" repoT18 3 --no-launch
+is   "T019 no-launch pending begin exits cleanly" "$rc" 0
+has  "T019 no-launch calls begin with pending-launch" "$(cat "$T18_HELPER_LOG")" \
+     "op=legacy-begin lane=$T19_PENDING_LANE"
+has  "T019 no-launch marks the pending begin request" "$(cat "$T18_HELPER_LOG")" "pending=1"
+is   "T019 no-launch leaves pending owner after helper exit" "$(t19_state_field mode)" pending-launch
+is   "T019 no-launch lease id is durable and fixed" "$(t19_state_field lease_id)" "$T19_LEASE"
+t19_assert_begin_precedes_side_effect
+
+T19_PENDING_BEFORE="$(cksum < "$T19_STATE")"
+run t19_env "$T18_HELPER" start --lane "$T19_PENDING_LANE"
+is   "T019 enrollment between begin and launcher remains refused" "$rc" 3
+is   "T019 enrollment race returns the exact busy JSON" "$out" '{"ok":false,"code":"busy","error":"managed request was refused"}'
+is   "T019 enrollment race does not replace pending lease" "$(cksum < "$T19_STATE")" "$T19_PENDING_BEFORE"
+
+T19_LAUNCHER_PID="$LIVE_PID"
+run t19_env "$T18_HELPER" pending-launch-bind --lane "$T19_PENDING_LANE" \
+    --lease-id "$T19_LEASE" --pid "$T19_LAUNCHER_PID"
+is   "T019 verified parent bind succeeds" "$rc" 0
+is   "T019 bind returns exact legacy lease JSON" "$out" \
+     '{"ok":true,"result":{"created_at":2,"host":"Eagle","lane":"repoT18-3","lane_key":"repot18-3","mode":"legacy-lease","pid":'"$T19_LAUNCHER_PID"'}}'
+is   "T019 bind replaces pending owner" "$(t19_state_field mode)" legacy-lease
+is   "T019 bind records verified parent PID" "$(t19_state_field pid)" "$T19_LAUNCHER_PID"
+has  "T019 bind uses the exact pending lease id" "$(cat "$T19_EVENTS")" "bind lane=$T19_PENDING_LANE lease=$T19_LEASE pid=$T19_LAUNCHER_PID"
+has  "T019 bind emits its exact completion event" "$(cat "$T19_EVENTS")" "bind-complete mode=legacy-lease lease=$T19_LEASE"
+: > "$T19_STATE"
+rm -f "$T19_MARKER"
+
+# A status-0 bind with no ownership envelope is also unknown.  The exact
+# pending lease must be aborted before the no-launch boundary can report the
+# malformed helper, and no command may be printed.
+t19_mode t019-bind-malformed
+t19_reset
+t18_snapshot
+run t19_env FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+    FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_PROFILE_NAME=team-05a \
+    LANE_START_SESSION_ID=0 "$START" repoT18 3 --no-launch
+is   "T023 malformed pending bind output refuses" "$rc" 1
+has  "T023 malformed pending bind names the malformed response" "$err" "malformed"
+is   "T023 malformed pending bind aborts the exact lease" \
+     "$(command grep -E -c '^abort-complete lease=' "$T19_EVENTS" 2>/dev/null || :)" 1
+is   "T023 malformed pending bind leaves no owner" "$(wc -c < "$T19_STATE" | tr -d ' ')" 0
+is   "T023 malformed pending bind prints no command" "$out" ""
+t18_assert_unchanged "T023 malformed pending bind"
+
+# A failed bind does not silently clear or replace a pending owner.  The
+# recovery path must abort that exact lease, and a wrong lease id cannot clear
+# it.  The fake's JSON is the same bounded internal response shape.
+t19_mode t019-bind-failure
+t19_reset
+run t19_env "$T18_HELPER" legacy-begin --lane "$T19_ABORT_LANE" --pid "$$" --pending-launch
+is   "T019 bind-failure fixture creates a pending lease" "$rc" 0
+is   "T019 bind-failure fixture records pending mode" "$(t19_state_field mode)" pending-launch
+run t19_env "$T18_HELPER" pending-launch-bind --lane "$T19_ABORT_LANE" \
+    --lease-id "$T19_LEASE" --pid "$T19_LAUNCHER_PID"
+is   "T019 failed bind refuses" "$rc" 5
+is   "T019 failed bind returns exact ownership refusal JSON" "$out" \
+     '{"ok":false,"code":"ownership-conflict","error":"managed request was refused"}'
+T19_ABORT_BEFORE="$(cksum < "$T19_STATE")"
+run t19_env "$T18_HELPER" pending-launch-abort --lane "$T19_ABORT_LANE" --lease-id wrong-lease
+is   "T019 wrong abort lease refuses" "$rc" 5
+is   "T019 wrong abort leaves pending owner intact" "$(cksum < "$T19_STATE")" "$T19_ABORT_BEFORE"
+run t19_env "$T18_HELPER" pending-launch-abort --lane "$T19_ABORT_LANE" --lease-id "$T19_LEASE"
+is   "T019 exact abort succeeds after bind failure" "$rc" 0
+is   "T019 abort returns exact JSON" "$out" \
+     '{"ok":true,"result":{"aborted":true,"lane":"repoT18-4","lease_id":"'"$T19_LEASE"'"}}'
+is   "T019 exact abort clears pending owner" "$(wc -c < "$T19_STATE" | tr -d ' ')" 0
+has  "T019 abort names the exact pending lease" "$(cat "$T19_EVENTS")" "abort-complete lease=$T19_LEASE"
+
+# Dry-run is plan-only: it performs no hidden begin, does not create a pending
+# lease, and crosses none of the legacy mutation boundaries.
+t19_mode t019-dry-run
+t19_reset
+t18_snapshot
+run t19_env FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+    FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_PROFILE_NAME=team-05a \
+    LANE_START_SESSION_ID=0 "$START" --dry-run repoT18 5
+is   "T019 lane-start dry-run exits cleanly" "$rc" 0
+is   "T019 dry-run does not call legacy-begin" "$(command grep -E -c '^op=legacy-begin ' "$T18_HELPER_LOG" 2>/dev/null || :)" 0
+is   "T019 dry-run acquires no lease" "$(wc -c < "$T19_STATE" | tr -d ' ')" 0
+is   "T019 dry-run crosses no legacy mutation boundary" "$(wc -c < "$T19_EVENTS" | tr -d ' ')" 0
+t18_assert_unchanged "T019 dry-run"
+
+mv "$SANDBOX/fakebin/tmux" "$SANDBOX/fakebin/tmux.t019-wrapper"
+mv "$T19_TMUX_BASE" "$SANDBOX/fakebin/tmux"
+mv "$SANDBOX/fakebin/pclaude" "$SANDBOX/fakebin/pclaude.t019-wrapper"
+mv "$T19_PCLAUDE_BASE" "$SANDBOX/fakebin/pclaude"
+
+# ==================================================== T019 managed projection
+# The human-facing register carries one exact, durable managed-owner marker so
+# a host without the local runtime still sees ownership.  Keep these cases on
+# a dedicated fixture row and restore the baseline between scenarios: the
+# projection tests exercise real lanes-edit.sh writers, but never commit or
+# push the temporary register edit.
+T19_PROJECTION_TMP="$T19_ROOT/projection.tmp"
+t19_projection_command() {
+  t18_env LANES_EDIT="$E" "$@"
+}
+t19_projection_restore() {
+  cp "$T19_PROJECTION_BASE_REG" "$T18_REG"
+}
+t19_projection_write_cell() {
+  t19_projection_cell="${1-}"
+  awk -v replacement="$t19_projection_cell" '
+    {
+      line = $0
+      if (line ~ /\| PAUSED \|$/) {
+        sub(/\| PAUSED \|$/, "", line)
+        line = line "| " replacement " |"
+      }
+      print line
+    }
+  ' "$T19_PROJECTION_BASE_REG" > "$T19_PROJECTION_TMP"
+  mv "$T19_PROJECTION_TMP" "$T18_REG"
+}
+t19_projection_write_marker_state() {
+  t19_projection_marker_state="${1-}"
+  t19_projection_write_cell \
+    "LIVE · 2026-09-16T00:00:00Z · $t19_projection_marker_state"
+}
+t19_projection_snapshot() {
+  T19_PROJECTION_BEFORE_REG="$(cksum < "$T18_REG")"
+}
+t19_projection_assert_unchanged() {
+  is "T019 $1 leaves the projection register unchanged" \
+     "$(cksum < "$T18_REG")" "$T19_PROJECTION_BEFORE_REG"
+}
+t19_projection_refusal() {
+  case "$rc" in
+    1|2) printf 'refused\n' ;;
+    *) printf '%s\n' "$rc" ;;
+  esac
+}
+
+# managed-owner writes the exact marker fields and is idempotent for the same
+# owner.  A second identical request must not rewrite even the row timestamp.
+t19_projection_restore
+run t19_projection_command "$E" managed-owner "$T19_PROJECTION_LANE" \
+    --mode managed --daemon-id "$T19_PROJECTION_DAEMON" \
+    --generation "$T19_PROJECTION_GENERATION" \
+    --bound-lane "$T19_PROJECTION_LANE"
+is   "T019 managed-owner writes the projection" "$rc" 0
+has  "T019 projection carries the exact managed marker" \
+     "$(command grep "^| \`$T19_PROJECTION_LANE\`" "$T18_REG")" \
+     "$T19_PROJECTION_MARKER"
+is   "T019 projection marker appears exactly once" \
+     "$(command grep -F -c -- "$T19_PROJECTION_MARKER" "$T18_REG" 2>/dev/null || :)" 1
+T19_PROJECTION_AFTER_SET="$(cksum < "$T18_REG")"
+run t19_projection_command "$E" managed-owner "$T19_PROJECTION_LANE" \
+    --mode managed --daemon-id "$T19_PROJECTION_DAEMON" \
+    --generation "$T19_PROJECTION_GENERATION" \
+    --bound-lane "$T19_PROJECTION_LANE"
+is   "T019 identical managed-owner is idempotent" "$rc" 0
+is   "T019 idempotent managed-owner preserves the marker" \
+     "$(cksum < "$T18_REG")" "$T19_PROJECTION_AFTER_SET"
+has  "T019 idempotent response names the existing projection" "$err" \
+     "already carries the requested managed owner projection"
+
+# A different owner cannot replace a valid marker.  Malformed and ambiguous
+# marker text also fails closed before the writer can replace the row.
+t19_projection_restore
+run t19_projection_command "$E" managed-owner "$T19_PROJECTION_LANE" \
+    --mode managed --daemon-id "$T19_PROJECTION_DAEMON" \
+    --generation "$T19_PROJECTION_GENERATION" \
+    --bound-lane "$T19_PROJECTION_LANE"
+is   "T019 conflict fixture writes the canonical marker" "$rc" 0
+t19_projection_snapshot
+run t19_projection_command "$E" managed-owner "$T19_PROJECTION_LANE" \
+    --mode managed --daemon-id "$T19_PROJECTION_ALT_DAEMON" \
+    --generation "$T19_PROJECTION_GENERATION" \
+    --bound-lane "$T19_PROJECTION_LANE"
+is   "T019 conflicting managed-owner refuses" "$rc" 2
+t19_projection_assert_unchanged "conflicting managed-owner"
+
+for t19_projection_bad in malformed unknown; do
+  t19_projection_restore
+  case "$t19_projection_bad" in
+    malformed)
+      t19_projection_write_marker_state \
+        "managed-owner mode=managed daemon=$T19_PROJECTION_DAEMON generation=not-a-generation bound-lane=$T19_PROJECTION_LANE" ;;
+    unknown)
+      t19_projection_write_marker_state \
+        "managed-owner mode=managed daemon=$T19_PROJECTION_DAEMON generation=$T19_PROJECTION_GENERATION" ;;
+  esac
+  t19_projection_snapshot
+  run t19_projection_command "$E" managed-owner "$T19_PROJECTION_LANE" \
+      --mode managed --daemon-id "$T19_PROJECTION_DAEMON" \
+      --generation "$T19_PROJECTION_GENERATION" \
+      --bound-lane "$T19_PROJECTION_LANE"
+  is   "T019 $t19_projection_bad marker fails closed" \
+       "$(t19_projection_refusal)" refused
+  t19_projection_assert_unchanged "$t19_projection_bad marker"
+done
+
+# Generic register writers are not an unenrollment authority.  Neither a state
+# replacement nor a duplicate add-row may overwrite a valid managed marker.
+t19_projection_restore
+run t19_projection_command "$E" managed-owner "$T19_PROJECTION_LANE" \
+    --mode managed --daemon-id "$T19_PROJECTION_DAEMON" \
+    --generation "$T19_PROJECTION_GENERATION" \
+    --bound-lane "$T19_PROJECTION_LANE"
+is   "T019 generic-writer fixture writes the marker" "$rc" 0
+t19_projection_snapshot
+run t19_projection_command "$E" set-row-state "$T19_PROJECTION_LANE" \
+    "PAUSED · generic writer attempted overwrite"
+is   "T019 set-row-state cannot overwrite managed marker" "$rc" 2
+t19_projection_assert_unchanged "set-row-state managed marker"
+run t19_projection_command "$E" add-row "$T19_PROJECTION_ROW"
+is   "T019 add-row cannot overwrite managed marker" "$rc" 2
+t19_projection_assert_unchanged "add-row managed marker"
+
+# Clearing requires the exact owner identity and an explicit authoritative
+# unenrollment.  Every mismatch leaves the marker byte-for-byte intact.
+t19_projection_restore
+run t19_projection_command "$E" managed-owner "$T19_PROJECTION_LANE" \
+    --mode managed --daemon-id "$T19_PROJECTION_DAEMON" \
+    --generation "$T19_PROJECTION_GENERATION" \
+    --bound-lane "$T19_PROJECTION_LANE"
+is   "T019 clear fixture writes the marker" "$rc" 0
+t19_projection_snapshot
+run t19_projection_command "$E" managed-clear "$T19_PROJECTION_LANE" \
+    --mode managed --daemon-id "$T19_PROJECTION_DAEMON" \
+    --generation "$T19_PROJECTION_GENERATION" \
+    --bound-lane "$T19_PROJECTION_LANE"
+is   "T019 managed-clear requires authoritative unenrollment" "$rc" 2
+t19_projection_assert_unchanged "unauthoritative managed-clear"
+
+for t19_clear_mismatch in daemon generation bound-lane; do
+  t19_projection_restore
+  run t19_projection_command "$E" managed-owner "$T19_PROJECTION_LANE" \
+      --mode managed --daemon-id "$T19_PROJECTION_DAEMON" \
+      --generation "$T19_PROJECTION_GENERATION" \
+      --bound-lane "$T19_PROJECTION_LANE"
+  is   "T019 $t19_clear_mismatch mismatch fixture writes the marker" "$rc" 0
+  case "$t19_clear_mismatch" in
+    daemon)      t19_clear_daemon="$T19_PROJECTION_ALT_DAEMON"; t19_clear_generation="$T19_PROJECTION_GENERATION"; t19_clear_bound="$T19_PROJECTION_LANE" ;;
+    generation)  t19_clear_daemon="$T19_PROJECTION_DAEMON"; t19_clear_generation=8; t19_clear_bound="$T19_PROJECTION_LANE" ;;
+    bound-lane)  t19_clear_daemon="$T19_PROJECTION_DAEMON"; t19_clear_generation="$T19_PROJECTION_GENERATION"; t19_clear_bound=repoT18-7 ;;
+  esac
+  t19_projection_snapshot
+  run t19_projection_command "$E" managed-clear "$T19_PROJECTION_LANE" \
+      --mode managed --daemon-id "$t19_clear_daemon" \
+      --generation "$t19_clear_generation" --bound-lane "$t19_clear_bound" \
+      --authoritative-unenroll
+  is   "T019 managed-clear rejects $t19_clear_mismatch mismatch" "$rc" 2
+  t19_projection_assert_unchanged "managed-clear $t19_clear_mismatch mismatch"
+done
+
+t19_projection_restore
+run t19_projection_command "$E" managed-owner "$T19_PROJECTION_LANE" \
+    --mode managed --daemon-id "$T19_PROJECTION_DAEMON" \
+    --generation "$T19_PROJECTION_GENERATION" \
+    --bound-lane "$T19_PROJECTION_LANE"
+is   "T019 exact-clear fixture writes the marker" "$rc" 0
+run t19_projection_command "$E" managed-clear "$T19_PROJECTION_LANE" \
+    --mode managed --daemon-id "$T19_PROJECTION_DAEMON" \
+    --generation "$T19_PROJECTION_GENERATION" \
+    --bound-lane "$T19_PROJECTION_LANE" --authoritative-unenroll
+is   "T019 exact managed-clear succeeds" "$rc" 0
+is   "T019 exact managed-clear removes the marker" \
+     "$(command grep -F -c -- "$T19_PROJECTION_MARKER" "$T18_REG" 2>/dev/null || :)" 0
+has  "T019 exact managed-clear records unenrollment" \
+     "$(command grep "^| \`$T19_PROJECTION_LANE\`" "$T18_REG")" "ENDED ·"
+T19_PROJECTION_AFTER_CLEAR="$(cksum < "$T18_REG")"
+run t19_projection_command "$E" managed-clear "$T19_PROJECTION_LANE" \
+    --mode managed --daemon-id "$T19_PROJECTION_DAEMON" \
+    --generation "$T19_PROJECTION_GENERATION" \
+    --bound-lane "$T19_PROJECTION_LANE" --authoritative-unenroll
+is   "T019 clear of an already-cleared marker refuses" "$rc" 2
+is   "T019 repeated clear leaves the cleared row unchanged" \
+     "$(cksum < "$T18_REG")" "$T19_PROJECTION_AFTER_CLEAR"
+
+# A hinted but malformed marker and a row without the state-cell ` · `
+# delimiter are unknown in the helper-absent compatibility path, never the
+# confirmed-absence answer 8.  A valid marker is still detected on a host that
+# has no local lane-managed runtime.
+mv "$T18_HELPER" "$T18_HELPER.projection-disabled"
+for t19_projection_bad_cell in malformed no-delimiter empty-owner bound-lane-mismatch; do
+  t19_projection_restore
+  case "$t19_projection_bad_cell" in
+    malformed)
+      t19_projection_write_marker_state \
+        "managed-owner mode=managed daemon=$T19_PROJECTION_DAEMON generation=not-a-generation bound-lane=$T19_PROJECTION_LANE" ;;
+    no-delimiter)
+      t19_projection_write_cell \
+        "LIVE managed-owner mode=managed daemon=$T19_PROJECTION_DAEMON generation=$T19_PROJECTION_GENERATION bound-lane=$T19_PROJECTION_LANE" ;;
+    empty-owner)
+      t19_projection_write_cell "MANAGED OWNER · " ;;
+    bound-lane-mismatch)
+      t19_projection_write_marker_state \
+        "managed-owner mode=managed daemon=$T19_PROJECTION_DAEMON generation=$T19_PROJECTION_GENERATION bound-lane=repoT18-7" ;;
+  esac
+  t18_reset_observers
+  t18_snapshot
+  run t18_env LANES_WORKSTATION=Raven "$LANE" "$T19_PROJECTION_LANE"
+  is   "T019 absent-helper $t19_projection_bad_cell marker is unknown" "$rc" 1
+  has  "T019 absent-helper $t19_projection_bad_cell names unknown ownership" "$err" "unknown"
+  is   "T019 absent-helper $t19_projection_bad_cell performs no helper read" \
+       "$(t18_read_count)" 0
+  t18_assert_unchanged "absent-helper $t19_projection_bad_cell marker"
+done
+
+# The writer shares the same projection grammar.  A malformed legacy marker
+# must be unknown, rather than an empty owner that can be mistaken for a
+# durable managed binding.
+for t19_projection_bad_writer in empty-owner bound-lane-mismatch; do
+  t19_projection_restore
+  case "$t19_projection_bad_writer" in
+    empty-owner)
+      t19_projection_write_cell "MANAGED OWNER · " ;;
+    bound-lane-mismatch)
+      t19_projection_write_marker_state \
+        "managed-owner mode=managed daemon=$T19_PROJECTION_DAEMON generation=$T19_PROJECTION_GENERATION bound-lane=repoT18-7" ;;
+  esac
+  t19_projection_snapshot
+  run t19_projection_command "$E" managed-owner "$T19_PROJECTION_LANE" \
+      --mode managed --daemon-id "$T19_PROJECTION_DAEMON" \
+      --generation "$T19_PROJECTION_GENERATION" \
+      --bound-lane "$T19_PROJECTION_LANE"
+  is   "T023 $t19_projection_bad_writer projection parser fails closed" "$rc" 1
+  has  "T023 $t19_projection_bad_writer projection parser names unknown ownership" "$err" "unknown"
+  t19_projection_assert_unchanged "$t19_projection_bad_writer writer parser"
+done
+
+t19_projection_restore
+run t18_env LANES_EDIT="$E" "$E" managed-owner "$T19_PROJECTION_LANE" \
+    --mode managed --daemon-id "$T19_PROJECTION_DAEMON" \
+    --generation "$T19_PROJECTION_GENERATION" \
+    --bound-lane "$T19_PROJECTION_LANE"
+is   "T019 valid projection capture succeeds without helper" "$rc" 0
+t18_reset_observers
+t18_snapshot
+run t18_env LANES_WORKSTATION=Raven "$LANE" "$T19_PROJECTION_LANE"
+is   "T019 valid projection remains detected without local runtime" "$rc" 2
+has  "T019 valid projection refusal names durable ownership" "$err" "projection"
+t18_assert_unchanged "valid projection without helper"
+
+# Keep one shared, canonical pipe-delimited register row as the parser witness
+# for all three legacy front doors below.  It has exactly the six ` | `
+# separators of a seven-column LANES row and carries the complete managed-owner
+# marker in its state cell; no command gets a private or synthetic projection.
+T19_PROJECTION_SHARED_ROW="$(command grep "^| \`$T19_PROJECTION_LANE\`" "$T18_REG")"
+T19_PROJECTION_SHARED_PIPES="$(printf '%s\n' "$T19_PROJECTION_SHARED_ROW" | awk '{ rest=$0; n=0; while ((p=index(rest, " | ")) > 0) { n++; rest=substr(rest, p + 3) } print n }')"
+is   "T019 shared projection row has six pipe delimiters" "$T19_PROJECTION_SHARED_PIPES" 6
+T19_PROJECTION_SHARED_FIELDS="$(printf '%s\n' "$T19_PROJECTION_SHARED_ROW" | awk -F'|' '{print NF}')"
+is   "T019 shared projection row has nine awk fields for seven columns" \
+     "$T19_PROJECTION_SHARED_FIELDS" 9
+has  "T019 shared projection row carries the exact managed marker" \
+     "$T19_PROJECTION_SHARED_ROW" "$T19_PROJECTION_MARKER"
+
+# The same durable marker is authoritative to a remote host, even though that
+# host has no local runtime/socket.  All three legacy front doors must refuse
+# before their first side effect.
+for t19_remote_frontdoor in lane lane-start lane-handoff; do
+  t18_reset_observers
+  t18_snapshot
+  case "$t19_remote_frontdoor" in
+    lane)
+      run t18_env LANES_WORKSTATION=Raven PCLAUDE="$SANDBOX/fakebin/pclaude" \
+          "$LANE" "$T19_PROJECTION_LANE"
+      ;;
+    lane-start)
+      run t18_env LANES_WORKSTATION=Raven \
+          FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+          FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_PROFILE_NAME=team-05a \
+          LANE_START_SESSION_ID=0 "$START" repoT18 6 --no-launch
+      ;;
+    lane-handoff)
+      run t18_env LANES_WORKSTATION=Raven \
+          FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+          FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_CODE_SESSION_ID="$T18_ID" \
+          CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" \
+          --lane "$T19_PROJECTION_LANE" --restart clear
+      ;;
+  esac
+  is   "T019 remote $t19_remote_frontdoor refuses durable projection" "$rc" 2
+  has  "T019 remote $t19_remote_frontdoor refusal names projection" "$err" "projection"
+  is   "T019 remote $t19_remote_frontdoor performs no helper read" \
+       "$(t18_read_count)" 0
+  t18_assert_unchanged "remote $t19_remote_frontdoor projection"
+done
+mv "$T18_HELPER.projection-disabled" "$T18_HELPER"
+t19_projection_restore
+
+# ================================================ T019 launcher-chain bind
+# A normal `lane` launch crosses one real process boundary: the lane shell
+# acquires a pending capability, execs the external launcher, and that launcher
+# starts `lane-start` as its direct child.  The child must bind its own PID and
+# its actual parent/start identity before the first tmux/register/exec act.  A
+# competing enrollment is attempted from the wrapper while the capability is
+# still pending; it must remain refused throughout that boundary.
+T19_CHAIN_EVENTS="$T19_ROOT/chain.events"
+T19_CHAIN_READY="$T19_ROOT/chain.ready"
+T19_CHAIN_RELEASE="$T19_ROOT/chain.release"
+T19_CHAIN_CAP="$T19_ROOT/chain.cap"
+T19_CHAIN_SIBLING_OUT="$T19_ROOT/chain.sibling.out"
+T19_CHAIN_SIBLING_ERR="$T19_ROOT/chain.sibling.err"
+T19_CHAIN_LANE_OUT="$T19_ROOT/chain.lane.out"
+T19_CHAIN_LANE_ERR="$T19_ROOT/chain.lane.err"
+T19_CHAIN_ENROLL_OUT="$T19_ROOT/chain.enroll.out"
+T19_CHAIN_BASE_REG="$T19_ROOT/chain.register.base"
+T19_CHAIN_BASE_LOG="$T19_ROOT/chain.log.base"
+T19_CHAIN_BASE_HANDOFF="$T19_ROOT/chain.handoff.base"
+T19_CHAIN_BASE_TMUX="$T19_ROOT/tmux.chain.base"
+T19_CHAIN_BASE_PCLAUDE="$T19_ROOT/pclaude.chain.base"
+cp "$T19_PROJECTION_BASE_REG" "$T19_CHAIN_BASE_REG"
+cp "$T18_LOG" "$T19_CHAIN_BASE_LOG"
+cp "$T18_WS/$T18_HANDOFF" "$T19_CHAIN_BASE_HANDOFF"
+cp "$SANDBOX/fakebin/tmux" "$T19_CHAIN_BASE_TMUX"
+cp "$SANDBOX/fakebin/pclaude" "$T19_CHAIN_BASE_PCLAUDE"
+
+t19_chain_reset() {
+  cp "$T19_CHAIN_BASE_REG" "$T18_REG"
+  cp "$T19_CHAIN_BASE_LOG" "$T18_LOG"
+  cp "$T19_CHAIN_BASE_HANDOFF" "$T18_WS/$T18_HANDOFF"
+  : > "$T19_EVENTS"
+  : > "$T19_CHAIN_EVENTS"
+  : > "$T19_STATE"
+  rm -f "$T19_MARKER" "$T19_CHAIN_READY" "$T19_CHAIN_RELEASE" "$T19_CHAIN_CAP"
+  rm -f "$T19_CHAIN_SIBLING_OUT" "$T19_CHAIN_SIBLING_ERR"
+  rm -f "$T19_CHAIN_LANE_OUT" "$T19_CHAIN_LANE_ERR" "$T19_CHAIN_ENROLL_OUT"
+  : > "$T18_HELPER_LOG"
+  : > "$FAKE_TMUX_LOG"
+  : > "$FAKE_PCLAUDE_LOG"
+  : > "$FAKE_CLAUDE_LOG"
+}
+t19_chain_side_effect_line() {
+  command grep -n -E '^(chain-side-effect|edit-after-begin|exec-after-begin) ' \
+    "$T19_EVENTS" 2>/dev/null | head -n1 | cut -d: -f1
+}
+t19_chain_assert_no_legacy_side_effect() {
+  is "T019 $1 crosses no legacy side-effect boundary" \
+     "$(command grep -E -c '^(chain-side-effect|edit-after-begin|exec-after-begin) ' \
+       "$T19_EVENTS" 2>/dev/null || :)" 0
+}
+
+# The tmux wrapper records the mutation boundary while delegating all reads to
+# the existing fake.  The pclaude wrapper is an actual process: it records the
+# inherited capability, tests enrollment while pending, and then starts the
+# child lane-start process.
+cat > "$SANDBOX/fakebin/tmux" <<'FAKE'
+#!/usr/bin/env bash
+case "${1-}" in
+  attach-session|kill-pane|kill-window|move-window|rename-window|select-window|send-keys|switch-client)
+    if [ -e "${T19_MARKER:-/nonexistent}" ]; then
+      printf 'chain-side-effect-after-begin kind=tmux args=%s\n' "$*" >> "${T19_EVENTS:-/dev/null}"
+    else
+      printf 'chain-side-effect-before-begin kind=tmux args=%s\n' "$*" >> "${T19_EVENTS:-/dev/null}"
+    fi
+    ;;
+esac
+exec "${T19_REAL_CHAIN_TMUX:?}" "$@"
+FAKE
+chmod 755 "$SANDBOX/fakebin/tmux"
+cat > "$SANDBOX/fakebin/pclaude" <<'FAKE'
+#!/usr/bin/env bash
+t19_chain_append() { printf '%s\n' "$*" >> "${T19_CHAIN_EVENTS:?}"; }
+t19_chain_append "chain-wrapper pid=$$ parent=$PPID mode=${T19_CHAIN_MODE-} creator=${LANE_MANAGED_PENDING_CREATOR_PID-} lease=${LANE_MANAGED_PENDING_LEASE_ID-} request=${LANE_MANAGED_PENDING_REQUEST_ID-}"
+t19_chain_enroll_rc=0
+"${T19_CHAIN_HELPER:?}" start --lane "${LANE_MANAGED_PENDING_LANE:?}" > "${T19_CHAIN_ENROLL_OUT:?}" 2>&1 || t19_chain_enroll_rc=$?
+printf 'chain-enrollment rc=%s lane=%s\n' "$t19_chain_enroll_rc" "${LANE_MANAGED_PENDING_LANE-}" >> "${T19_EVENTS:?}"
+case "${T19_CHAIN_MODE-}" in
+  t019-chain-direct)
+    "${T19_CHAIN_START:?}" repoT18 1
+    t19_chain_rc=$?
+    printf 'chain-child-result mode=direct rc=%s\n' "$t19_chain_rc" >> "${T19_EVENTS:?}"
+    exit "$t19_chain_rc"
+    ;;
+  t019-chain-wrong)
+    LANE_MANAGED_PENDING_CREATOR_PID="$PPID" "${T19_CHAIN_START:?}" repoT18 1
+    t19_chain_rc=$?
+    printf 'chain-child-result mode=wrong rc=%s\n' "$t19_chain_rc" >> "${T19_EVENTS:?}"
+    exit "$t19_chain_rc"
+    ;;
+  t019-chain-nondirect)
+    sh -c '"$1" repoT18 1' chain-intermediary "${T19_CHAIN_START:?}"
+    t19_chain_rc=$?
+    printf 'chain-child-result mode=nondirect rc=%s\n' "$t19_chain_rc" >> "${T19_EVENTS:?}"
+    exit "$t19_chain_rc"
+    ;;
+  t019-chain-sibling)
+    printf 'lane=%s\nlease=%s\nrequest=%s\ncreator=%s\n' \
+      "${LANE_MANAGED_PENDING_LANE-}" "${LANE_MANAGED_PENDING_LEASE_ID-}" \
+      "${LANE_MANAGED_PENDING_REQUEST_ID-}" "${LANE_MANAGED_PENDING_CREATOR_PID-}" \
+      > "${T19_CHAIN_CAP:?}"
+    : > "${T19_CHAIN_READY:?}"
+    while [ ! -e "${T19_CHAIN_RELEASE:?}" ]; do sleep 0.01; done
+    printf 'chain-child-result mode=sibling rc=0\n' >> "${T19_EVENTS:?}"
+    exit 0
+    ;;
+  *)
+    t19_chain_append "chain-wrapper-unknown mode=${T19_CHAIN_MODE-}"
+    exit 90
+    ;;
+esac
+FAKE
+chmod 755 "$SANDBOX/fakebin/pclaude"
+
+t19_mode t019-chain-direct
+t19_chain_reset
+run t19_env \
+    FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+    FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_PROFILE_NAME=team-05a \
+    LANE_START_SESSION_ID=0 \
+    PCLAUDE="$SANDBOX/fakebin/pclaude" \
+    T19_CHAIN_MODE=t019-chain-direct T19_CHAIN_START="$START" \
+    T19_CHAIN_EVENTS="$T19_CHAIN_EVENTS" T19_CHAIN_ENROLL_OUT="$T19_CHAIN_ENROLL_OUT" \
+    T19_CHAIN_HELPER="$T18_HELPER" T19_REAL_CHAIN_TMUX="$T19_CHAIN_BASE_TMUX" \
+    "$LANE" "$T18_LANE"
+is   "T019 direct launcher chain exits cleanly" "$rc" 0
+has  "T019 lane begins a pending capability before pclaude" "$(cat "$T19_EVENTS")" \
+     "begin-complete mode=pending-launch"
+has  "T019 pclaude wrapper receives the pending creator" "$(cat "$T19_CHAIN_EVENTS")" \
+     "chain-wrapper pid="
+has  "T019 enrollment during launcher gap is refused" "$(cat "$T19_EVENTS")" \
+     "chain-enrollment rc=3 lane=$T18_LANE"
+has  "T019 child binds its own PID with direct lineage" "$(cat "$T19_EVENTS")" \
+     "bind-lineage pid="
+has  "T019 direct child lineage is verified" "$(cat "$T19_EVENTS")" "lineage=yes"
+has  "T019 launcher chain reaches child after atomic bind" "$(cat "$T19_EVENTS")" \
+     "chain-child-result mode=direct rc=0"
+is   "T019 direct chain leaves a bound legacy lease" "$(t19_state_field mode)" legacy-lease
+t19_chain_wrapper_pid="$(sed -n 's/^chain-wrapper pid=\([0-9][0-9]*\).*$/\1/p' "$T19_CHAIN_EVENTS" | head -n1)"
+t19_chain_creator_pid="$(sed -n 's/^chain-wrapper .* creator=\([0-9][0-9]*\).*$/\1/p' "$T19_CHAIN_EVENTS" | head -n1)"
+t19_chain_bound_pid="$(t19_state_field pid)"
+is   "T019 wrapper PID is the pending creator PID" "$t19_chain_wrapper_pid" "$t19_chain_creator_pid"
+is   "T019 bound PID is different from pending creator" \
+     "$( [ -n "$t19_chain_bound_pid" ] && [ "$t19_chain_bound_pid" != "$t19_chain_creator_pid" ] && printf yes || printf no )" yes
+t19_chain_begin_line="$(t19_event_line '^begin-complete mode=pending-launch')"
+t19_chain_enroll_line="$(t19_event_line '^chain-enrollment ')"
+t19_chain_bind_line="$(t19_event_line '^bind-lineage ')"
+t19_chain_side_line="$(t19_chain_side_effect_line)"
+is   "T019 pending begin precedes enrollment and bind" \
+     "$( [ -n "$t19_chain_begin_line" ] && [ -n "$t19_chain_enroll_line" ] && \
+         [ -n "$t19_chain_bind_line" ] && [ "$t19_chain_begin_line" -lt "$t19_chain_enroll_line" ] && \
+         [ "$t19_chain_enroll_line" -lt "$t19_chain_bind_line" ] && printf yes || printf no )" yes
+is   "T019 child bind precedes first tmux/register side effect" \
+     "$( [ -n "$t19_chain_bind_line" ] && [ -n "$t19_chain_side_line" ] && \
+         [ "$t19_chain_bind_line" -lt "$t19_chain_side_line" ] && printf yes || printf no )" yes
+t19_chain_reset
+
+# A wrong creator assertion cannot authorize a bind.  The helper deliberately
+# rejects this mode, and lane-start must abort the exact pending lease before
+# any side effect rather than falling through to an ordinary begin.
+for t19_chain_bad in t019-chain-wrong t019-chain-nondirect; do
+  t19_mode "$t19_chain_bad"
+  t19_chain_reset
+  run t19_env \
+      FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+      FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_PROFILE_NAME=team-05a \
+      LANE_START_SESSION_ID=0 \
+      PCLAUDE="$SANDBOX/fakebin/pclaude" \
+      T19_CHAIN_MODE="$t19_chain_bad" T19_CHAIN_START="$START" \
+      T19_CHAIN_EVENTS="$T19_CHAIN_EVENTS" T19_CHAIN_ENROLL_OUT="$T19_CHAIN_ENROLL_OUT" \
+      T19_CHAIN_HELPER="$T18_HELPER" T19_REAL_CHAIN_TMUX="$T19_CHAIN_BASE_TMUX" \
+      "$LANE" "$T18_LANE"
+  is   "T019 $t19_chain_bad lineage refusal exits with 2" "$rc" 2
+  has  "T019 $t19_chain_bad aborts the exact pending lease" "$(cat "$T19_EVENTS")" \
+       "abort-complete lease=$T19_LEASE"
+  is   "T019 $t19_chain_bad leaves no pending owner" \
+       "$(wc -c < "$T19_STATE" | tr -d ' ')" 0
+  t19_chain_assert_no_legacy_side_effect "$t19_chain_bad"
+done
+
+# A sibling lane-start process gets the same capability values but is not the
+# direct child of the pclaude process that owns the pending creator PID.  Start
+# both children from this shell so the sibling's actual parent is observable;
+# the wrapper waits until the sibling has refused before it exits.
+t19_mode t019-chain-sibling
+t19_chain_reset
+t19_chain_sibling_orchestrator() {
+  t19_chain_lane_rc=99
+  t19_chain_sibling_rc=99
+  t19_env \
+      FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+      FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_PROFILE_NAME=team-05a \
+      LANE_START_SESSION_ID=0 \
+      PCLAUDE="$SANDBOX/fakebin/pclaude" \
+      T19_CHAIN_MODE=t019-chain-sibling T19_CHAIN_START="$START" \
+      T19_CHAIN_EVENTS="$T19_CHAIN_EVENTS" T19_CHAIN_READY="$T19_CHAIN_READY" \
+      T19_CHAIN_RELEASE="$T19_CHAIN_RELEASE" T19_CHAIN_CAP="$T19_CHAIN_CAP" \
+      T19_CHAIN_ENROLL_OUT="$T19_CHAIN_ENROLL_OUT" T19_CHAIN_HELPER="$T18_HELPER" \
+      T19_REAL_CHAIN_TMUX="$T19_CHAIN_BASE_TMUX" \
+      "$LANE" "$T18_LANE" > "$T19_CHAIN_LANE_OUT" 2> "$T19_CHAIN_LANE_ERR" &
+  t19_chain_lane_pid=$!
+  t19_chain_wait=0
+  while [ ! -e "$T19_CHAIN_READY" ] && [ "$t19_chain_wait" -lt 200 ]; do
+    sleep 0.01
+    t19_chain_wait=$((t19_chain_wait + 1))
+  done
+  if [ ! -e "$T19_CHAIN_READY" ]; then
+    : > "$T19_CHAIN_RELEASE"
+    wait "$t19_chain_lane_pid" 2>/dev/null || :
+    return 1
+  fi
+  t19_chain_cap_lane="$(sed -n 's/^lane=//p' "$T19_CHAIN_CAP" | head -n1)"
+  t19_chain_cap_lease="$(sed -n 's/^lease=//p' "$T19_CHAIN_CAP" | head -n1)"
+  t19_chain_cap_request="$(sed -n 's/^request=//p' "$T19_CHAIN_CAP" | head -n1)"
+  t19_chain_cap_creator="$(sed -n 's/^creator=//p' "$T19_CHAIN_CAP" | head -n1)"
+  t19_env \
+      FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+      FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_PROFILE_NAME=team-05a \
+      LANE_START_SESSION_ID=0 \
+      T19_CHAIN_MODE=t019-chain-sibling T19_CHAIN_START="$START" \
+      T19_CHAIN_EVENTS="$T19_CHAIN_EVENTS" T19_CHAIN_ENROLL_OUT="$T19_CHAIN_ENROLL_OUT" \
+      T19_CHAIN_HELPER="$T18_HELPER" T19_REAL_CHAIN_TMUX="$T19_CHAIN_BASE_TMUX" \
+      LANE_MANAGED_PENDING_LANE="$t19_chain_cap_lane" \
+      LANE_MANAGED_PENDING_LEASE_ID="$t19_chain_cap_lease" \
+      LANE_MANAGED_PENDING_REQUEST_ID="$t19_chain_cap_request" \
+      LANE_MANAGED_PENDING_CREATOR_PID="$t19_chain_cap_creator" \
+      "$START" repoT18 1 > "$T19_CHAIN_SIBLING_OUT" 2> "$T19_CHAIN_SIBLING_ERR"
+  t19_chain_sibling_rc=$?
+  : > "$T19_CHAIN_RELEASE"
+  wait "$t19_chain_lane_pid"
+  t19_chain_lane_rc=$?
+  return 0
+}
+t19_chain_sibling_orchestrator
+is   "T019 sibling launcher process refuses inherited pending lease" \
+     "$t19_chain_sibling_rc" 2
+is   "T019 sibling chain wrapper can finish after refusal" "$t19_chain_lane_rc" 0
+has  "T019 sibling refusal aborts exact pending lease" "$(cat "$T19_EVENTS")" \
+     "abort-complete lease=$T19_LEASE"
+has  "T019 sibling lineage is recorded as unverified" "$(cat "$T19_EVENTS")" \
+     "lineage=no"
+is   "T019 sibling leaves no lease after exact abort" \
+     "$(wc -c < "$T19_STATE" | tr -d ' ')" 0
+t19_chain_assert_no_legacy_side_effect sibling
+t19_chain_reset
+
+# Existing-live attach is not a launch admission.  It performs the managed
+# read, selects/attaches the genuine live holder, and does not call begin or
+# pending bind or conflict with that holder's already-running legacy lease.
+T19_CHAIN_LIVE_FILE="$sessions_dir/t019-chain-live.json"
+printf '{"pid":%s,"sessionId":"%s","cwd":"%s","procStart":"%s","tmux":"t18sess:@181.%%181","name":"%s","nameSource":"user","status":"busy"}\n' \
+  "$LIVE_PID" "$T18_ID" "$T18_PROJECT" "$live_start" "$T18_LANE" > "$T19_CHAIN_LIVE_FILE"
+t19_mode t019-chain-live
+t19_chain_reset
+printf 'mode=legacy-lease\nlane=%s\nlane_key=%s\npid=%s\nstart_token=%s\nhost=Eagle\n' \
+  "$T18_LANE" "$(printf '%s' "$T18_LANE" | tr 'A-Z' 'a-z')" \
+  "$LIVE_PID" "$live_start" > "$T19_STATE"
+T19_CHAIN_LIVE_STATE_BEFORE="$(cksum < "$T19_STATE")"
+run t19_env \
+    FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME="$T18_LANE" \
+    FAKE_TMUX_WINDOW_INDEX=0 \
+    FAKE_TMUX_WINDOWS="t18sess:0\t@181\t$T18_LANE\t%181\tclaude" \
+    T19_REAL_CHAIN_TMUX="$T19_CHAIN_BASE_TMUX" \
+    PCLAUDE="$SANDBOX/fakebin/pclaude" "$LANE" "$T18_LANE"
+is   "T019 existing-live lane attach succeeds" "$rc" 0
+is   "T019 live attach performs one managed ownership read" \
+     "$(t18_read_count)" 1
+is   "T019 live attach does not call legacy-begin" \
+     "$(command grep -E -c '^op=legacy-begin ' "$T18_HELPER_LOG" 2>/dev/null || :)" 0
+is   "T019 live attach does not call pending bind" \
+     "$(command grep -E -c '^op=pending-launch-bind ' "$T18_HELPER_LOG" 2>/dev/null || :)" 0
+is   "T019 live attach creates no new lease" \
+     "$(cksum < "$T19_STATE")" "$T19_CHAIN_LIVE_STATE_BEFORE"
+is   "T019 live attach launches no pclaude" "$(cat "$FAKE_PCLAUDE_LOG")" ""
+rm -f "$T19_CHAIN_LIVE_FILE"
+t19_chain_reset
+
+# Restore the ordinary fakes before the suite's final host-integrity checks.
+mv "$SANDBOX/fakebin/tmux" "$T19_ROOT/tmux.chain-wrapper"
+mv "$T19_CHAIN_BASE_TMUX" "$SANDBOX/fakebin/tmux"
+mv "$SANDBOX/fakebin/pclaude" "$T19_ROOT/pclaude.chain-wrapper"
+mv "$T19_CHAIN_BASE_PCLAUDE" "$SANDBOX/fakebin/pclaude"
+
 # BOTH OF THEM READ A PIPE, and the second one did not until A9 Addendum 4
 # (R-A9-13, F3). `grep -c PATTERN FILE` on a file that is not there prints
 # NOTHING and exits 2, so with no `~/.agents/workspace.yaml` on the host

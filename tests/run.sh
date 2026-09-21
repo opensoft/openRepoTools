@@ -49,6 +49,16 @@ set -uo pipefail
 
 prog="${0##*/}"
 
+# The normal invocation remains serialized for callers that want the historical
+# workstation-wide contract.  `--parallel-safe` is an explicit opt-in for
+# independent worktrees: it gives this pytest process private ambient state and
+# disables every cache that would otherwise write into the checkout.
+parallel_safe=0
+if [ "${1-}" = "--parallel-safe" ]; then
+  parallel_safe=1
+  shift
+fi
+
 # THE REPOSITORY ROOT, so the suite runs the same from anywhere. `cd -P` is
 # the portable physical path: `readlink -f` is not in the stock macOS userland.
 cd -P -- "$(dirname -- "$0")/.." 2>/dev/null || {
@@ -57,6 +67,65 @@ cd -P -- "$(dirname -- "$0")/.." 2>/dev/null || {
 }
 
 LOCK="${TMPDIR:-/tmp}/openrepotools-pytest.lock"
+
+run_parallel_safe() {
+  if [ -d /tmp ] && [ -w /tmp ]; then
+    parallel_tmp="/tmp"
+  else
+    parallel_tmp="${TMPDIR:-/tmp}"
+  fi
+  # Keep the sandbox prefix short: several managed-socket tests exercise the
+  # host's 104-byte AF_UNIX path limit.
+  parallel_root="$(mktemp -d "$parallel_tmp/ot.XXXXXX")" || {
+    printf '%s: cannot create the parallel test sandbox under %s\n' \
+      "$prog" "$parallel_tmp" >&2
+    return 1
+  }
+  trap 'rm -rf -- "$parallel_root"' EXIT
+  mkdir -m 700 \
+    "$parallel_root/home" \
+    "$parallel_root/tmp" \
+    "$parallel_root/runtime" \
+    "$parallel_root/config" \
+    "$parallel_root/cache" \
+    "$parallel_root/state" \
+    "$parallel_root/agents" \
+    "$parallel_root/projects" \
+    "$parallel_root/claude" \
+    "$parallel_root/claude-profiles" \
+    "$parallel_root/bin" \
+    "$parallel_root/pytest-tmp" 2>/dev/null || {
+      printf '%s: cannot initialize the parallel test sandbox %s\n' \
+        "$prog" "$parallel_root" >&2
+      return 1
+    }
+
+  # The suite's subprocesses already use temporary homes in their fixtures;
+  # these defaults close the remaining ambient-state holes for tests or tools
+  # that inherit the wrapper environment without supplying one of their own.
+  export HOME="$parallel_root/home"
+  export TMPDIR="$parallel_root/tmp"
+  export XDG_RUNTIME_DIR="$parallel_root/runtime"
+  export XDG_CONFIG_HOME="$parallel_root/config"
+  export XDG_CACHE_HOME="$parallel_root/cache"
+  export XDG_STATE_HOME="$parallel_root/state"
+  export AGENT_PROTOCOL_ROOT="$parallel_root/agents"
+  export PROJECTS_DIR="$parallel_root/projects"
+  export CLAUDE_USER_DIR="$parallel_root/claude"
+  export CLAUDE_PROFILES_HOME="$parallel_root/claude-profiles"
+  export OPENREPOTOOLS_BIN_DIR="$parallel_root/bin"
+  export PYTHONDONTWRITEBYTECODE=1
+
+  printf '%s: python3 -m pytest tests -q -p no:cacheprovider --basetemp %s %s\n' \
+    "$prog" "$parallel_root/pytest-tmp" "${*:-}" >&2
+  python3 -m pytest tests -q -p no:cacheprovider \
+    --basetemp "$parallel_root/pytest-tmp" ${1+"$@"}
+}
+
+if [ "$parallel_safe" = 1 ]; then
+  run_parallel_safe ${1+"$@"}
+  exit $?
+fi
 
 # SPLIT SO IT CANNOT MATCH ITSELF, anchored so it counts only real runs.
 pat='^python3 -m pyt'"est"

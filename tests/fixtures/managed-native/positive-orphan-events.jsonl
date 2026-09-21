@@ -1,0 +1,5 @@
+{"event":"persisted-record-load","state_key":"internal.running_background_tasks","count":1}
+{"event":"restored-orphans","source":"running_background_tasks","target":"restoredOrphans","count":1}
+{"event":"child-parent-wake","source":"restoredOrphans","count":1}
+{"event":"enqueuePendingNotification","queue":"pending-notifications","count":1}
+{"event":"model-query-attempt","source":"default-orphan-wake","count":1}

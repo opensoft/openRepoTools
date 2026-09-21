@@ -570,6 +570,506 @@ note() { printf '%s: %s\n' "$prog" "$*" >&2; }
 step() { printf '%s: %s\n' "$prog" "$*" >&2; }
 plan() { printf '%s: PLAN %s\n' "$prog" "$*" >&2; }
 die()  { printf '%s: %s\n' "$prog" "$1" >&2; exit "${2:-1}"; }
+
+# Optional managed-owner capability.  Only a confirmed absence (resolver
+# status 8, or `legacy-check` status 8) keeps legacy compatibility.  The
+# helper's status 0 means a durable managed/pending owner is present; every
+# other helper status is an unknown read and fails closed.  This read-only
+# boundary does not wait behind the managed operation lock.
+lane_managed_path() {
+  local lm_candidate lm_found
+  if [ "${LANE_MANAGED+x}" = x ]; then
+    lm_candidate="${LANE_MANAGED-}"
+    [ -n "$lm_candidate" ] || return 1
+    case "$lm_candidate" in
+      */*) [ -x "$lm_candidate" ] || return 1; printf '%s\n' "$lm_candidate"; return 0 ;;
+    esac
+    lm_found="$(command -v "$lm_candidate" 2>/dev/null || printf '')"
+    [ -n "$lm_found" ] && [ -x "$lm_found" ] || return 1
+    printf '%s\n' "$lm_found"
+    return 0
+  fi
+  if [ -e "$SCRIPT_DIR/lane-managed" ]; then
+    [ -x "$SCRIPT_DIR/lane-managed" ] || return 1
+    printf '%s\n' "$SCRIPT_DIR/lane-managed"
+    return 0
+  fi
+  lm_found="$(command -v lane-managed 2>/dev/null || printf '')"
+  if [ -n "$lm_found" ]; then
+    [ -x "$lm_found" ] || return 1
+    printf '%s\n' "$lm_found"
+    return 0
+  fi
+  return 8
+}
+
+managed_projection_check() {   # <canonical lane>; 0 conflict, 8 absent, other unknown
+  local mp_lane="${1-}" mp_row mp_rc
+  if mp_row="$(LANES_NO_FETCH=1 "$LANES_EDIT" register-row "$mp_lane" 2>/dev/null)"; then
+    :
+  else
+    mp_rc=$?
+    [ "$mp_rc" = 8 ] && return 8
+    return 1
+  fi
+  # `register-row`'s empty successful output is the no-row answer in this
+  # compatibility boundary.  Preserve 8 as confirmed projection absence;
+  # malformed/non-empty rows still go through the marker parser and fail
+  # closed when they cannot be trusted.
+  [ -n "$mp_row" ] || return 8
+	mp_rc=0
+	printf '%s\n' "$mp_row" | awk -F'|' '
+    function trim(v) { sub(/^[[:space:]]+/, "", v); sub(/[[:space:]]+$/, "", v); return v }
+    {
+      if ($0 !~ /^\|/ || $0 !~ /\|[[:space:]]*$/) { result = 1; next }
+      rest = $0; n = 0
+      while ((p = index(rest, " | ")) > 0) {
+        n++
+        rest = substr(rest, p + 3)
+      }
+      if (n != 6 || NF != 9) { result = 1; next }
+      s = tolower($0)
+      if (s ~ /managed[ _-](owner|binding)/ ||
+          s ~ /mode[ _-]*=[ _-]*managed/ ||
+          s ~ /managed[ _-]*:/) marker = 1
+      if (!marker) next
+      state = trim($8)
+      if (state ~ /^MANAGED OWNER · [A-Za-z0-9][A-Za-z0-9._-]*$/ ||
+          state ~ /^managed owner · [A-Za-z0-9][A-Za-z0-9._-]*$/) {
+        result = 0
+        next
+      }
+      if (state !~ /^LIVE · [^ ]+ · managed-owner mode=managed daemon=[A-Za-z0-9][A-Za-z0-9._-]* generation=[0-9][0-9]* bound-lane=[A-Za-z0-9][A-Za-z0-9._-]*$/) {
+        result = 1
+        next
+      }
+      field_count = split(state, fields, " ")
+      generation = ""
+      bound_lane = ""
+      for (i = 1; i <= field_count; i++)
+        if (fields[i] ~ /^generation=/) generation = substr(fields[i], 12)
+        else if (fields[i] ~ /^bound-lane=/) bound_lane = substr(fields[i], 12)
+      row_lane = trim($2)
+      if (row_lane ~ /^`[A-Za-z0-9][A-Za-z0-9._-]*`$/)
+        row_lane = substr(row_lane, 2, length(row_lane) - 2)
+      else
+        row_lane = ""
+      if (generation == "" || generation + 0 <= 0 || bound_lane == "" ||
+          row_lane == "" || tolower(row_lane) != tolower(bound_lane)) result = 1
+      else result = 0
+    }
+	END { if (!marker) exit(result == 1 ? 1 : 8); exit(result == 1 ? 1 : 0) }' || mp_rc=$?
+  case "$mp_rc" in
+    0) return 0 ;;
+    8) return 8 ;;
+    *) return 1 ;;
+  esac
+}
+
+managed_legacy_check() {   # <canonical lane>
+  local ml_lane="${1-}" ml_path ml_resolve ml_rc
+  if ml_path="$(lane_managed_path)"; then
+    :
+  else
+    ml_resolve=$?
+    if [ "$ml_resolve" = 8 ]; then
+      if managed_projection_check "$ml_lane"; then
+        ml_rc=0
+      else
+        ml_rc=$?
+      fi
+      case "$ml_rc" in
+        0) die "lane $ml_lane has a durable managed owner/binding in the LANES projection; legacy lane access is refused" 2 ;;
+        8) return 0 ;;
+        *) die "lane-managed is absent and the LANES managed-owner projection could not be read for lane $ml_lane" 1 ;;
+      esac
+    fi
+    die "lane-managed could not be resolved for lane $ml_lane (exit $ml_resolve), so durable ownership is unknown" 1
+  fi
+  if "$ml_path" legacy-check --lane "$ml_lane" >/dev/null 2>&1; then
+    ml_rc=0
+  else
+    ml_rc=$?
+  fi
+  case "$ml_rc" in
+    0) die "lane $ml_lane has durable managed or pending ownership; legacy lane access is refused" 2 ;;
+    8) return 0 ;;
+    *) die "lane-managed legacy-check failed for lane $ml_lane (exit $ml_rc), so durable ownership is unknown" 1 ;;
+  esac
+}
+
+# The managed read above is deliberately non-atomic.  Cross the legacy
+# mutation boundary with the helper's PID/process-identity lease immediately before
+# the first legacy act.  A missing helper remains compatible only after the
+# same durable LANES projection read has confirmed that no managed marker is
+# present; an installed helper that cannot acquire the lease fails closed.
+LEGACY_BEGIN_ACTIVE=0
+LEGACY_PENDING=0
+LEGACY_OWNER_PID=""
+LEGACY_REQUEST_ID=""
+LEGACY_LEASE_ID=""
+LEGACY_PARENT_PID=""
+
+legacy_request_id() {   # <lane>; deterministic for this helper process
+  local lr_lane="${1-}" lr_stamp
+  lr_stamp="$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null || printf 'unknown')"
+  printf 'legacy-%s-%s-%s' "$lr_lane" "$$" "$lr_stamp"
+}
+
+legacy_begin_failure() {   # <lane> <operation> <status>; never returns
+  local lbf_lane="${1-}" lbf_operation="${2-}" lbf_rc="${3-}"
+  case "$lbf_rc" in
+    2 | 3 | 5) die "lane-managed $lbf_operation refused legacy lane $lbf_lane (exit $lbf_rc); no legacy side effect was performed" 2 ;;
+    *) die "lane-managed $lbf_operation could not establish legacy ownership for lane $lbf_lane (exit $lbf_rc), so ownership is unknown; no legacy side effect was performed" 1 ;;
+  esac
+}
+
+legacy_validate_begin_response() {   # <response> <lane> <pid> <pending> <request>
+  local lvr_response="${1-}" lvr_lane="${2-}" lvr_pid="${3-}"
+  local lvr_pending="${4-0}" lvr_request="${5-}"
+  [ -n "$lvr_response" ] || return 1
+  case "$lvr_response" in
+    *$'\n'* | *$'\r'*) return 1 ;;
+  esac
+  printf '%s\n' "$lvr_response" | awk \
+    -v expected_lane="$lvr_lane" -v expected_pid="$lvr_pid" \
+    -v pending="$lvr_pending" -v expected_request="$lvr_request" '
+    BEGIN { valid = 1; lines = 0 }
+    function count_match(text, pattern, rest, count) {
+      rest = text; count = 0
+      while (match(rest, pattern)) {
+        count++
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+      return count
+    }
+    function string_field(text, key, pattern, tail, quote) {
+      pattern = "\"" key "\"[[:space:]]*:[[:space:]]*\""
+      if (count_match(text, pattern) != 1) return ""
+      match(text, pattern)
+      tail = substr(text, RSTART + RLENGTH)
+      quote = index(tail, "\"")
+      if (!quote) return ""
+      return substr(tail, 1, quote - 1)
+    }
+    function all_string_fields(text, key, wanted, pattern, rest, tail, quote, value, count) {
+      pattern = "\"" key "\"[[:space:]]*:[[:space:]]*\""
+      rest = text; count = 0
+      while (match(rest, pattern)) {
+        tail = substr(rest, RSTART + RLENGTH)
+        quote = index(tail, "\"")
+        if (!quote) return 0
+        value = substr(tail, 1, quote - 1)
+        count++
+        if (value != wanted) return 0
+        rest = substr(tail, quote + 1)
+      }
+      return count > 0
+    }
+    {
+      lines++
+      if ($0 !~ /^\{.*\}$/) { valid = 0; next }
+      if (count_match($0, "\"ok\"[[:space:]]*:[[:space:]]*true([,}])") != 1 ||
+          count_match($0, "\"ok\"[[:space:]]*:[[:space:]]*false([,}])") != 0 ||
+          count_match($0, "\"result\"[[:space:]]*:[[:space:]]*[{]") != 1) valid = 0
+      if (string_field($0, "lane") != expected_lane ||
+          string_field($0, "mode") != (pending == 1 ? "pending-launch" : "legacy-lease") ||
+          count_match($0, "\"pid\"[[:space:]]*:[[:space:]]*" expected_pid "[[:space:]]*([,}])") != 1) valid = 0
+      if (pending == 1) {
+        lease = string_field($0, "lease_id")
+        if (lease !~ /^[A-Za-z0-9._-]+$/ || !all_string_fields($0, "request_id", expected_request)) valid = 0
+      } else if (count_match($0, "\"lease_id\"[[:space:]]*:") != 0) valid = 0
+    }
+    END { exit(lines == 1 && valid ? 0 : 1) }'
+}
+
+legacy_extract_lease_id() {   # <one-line helper response>; sets LEGACY_LEASE_ID
+  local lel_response="${1-}" lel_id
+  [ -n "$lel_response" ] || return 1
+  case "$lel_response" in
+    *$'\n'* | *$'\r'*) return 1 ;;
+  esac
+  # The ownership mutators return one JSON envelope.  The opaque lease id is
+  # the only value this shell must carry to bind/abort; no state is duplicated.
+  lel_id="$(printf '%s\n' "$lel_response" | sed -n 's/.*"lease_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9._-][A-Za-z0-9._-]*\)".*/\1/p')"
+  [ -n "$lel_id" ] || return 1
+  LEGACY_LEASE_ID="$lel_id"
+  return 0
+}
+
+legacy_begin() {   # <canonical lane> [pending-launch=0|1]
+  local lb_lane="${1-}" lb_pending="${2:-0}"
+  local lb_path lb_resolve lb_rc lb_output lb_tmp
+  local -a lb_args
+  [ "${dry_run:-0}" = 1 ] && return 0
+  case "$lb_pending" in
+    0 | 1) : ;;
+    *) die "internal legacy ownership request for lane $lb_lane is malformed" 1 ;;
+  esac
+  if lb_path="$(lane_managed_path)"; then
+    :
+  else
+    lb_resolve=$?
+    if [ "$lb_resolve" = 8 ]; then
+      # The optional helper's absence is safe only when the durable projection
+      # also answers absent.  Never turn an unreadable projection into a lease.
+      if managed_projection_check "$lb_lane"; then
+        die "lane $lb_lane has a durable managed owner/binding in the LANES projection; legacy ownership acquisition is refused" 2
+      else
+        lb_rc=$?
+      fi
+      case "$lb_rc" in
+        8) return 0 ;;
+        *) die "lane-managed is absent and the LANES managed-owner projection could not be read for lane $lb_lane; legacy ownership is unknown" 1 ;;
+      esac
+    fi
+    die "lane-managed could not be resolved for lane $lb_lane (exit $lb_resolve), so legacy ownership is unknown" 1
+  fi
+  LEGACY_OWNER_PID="$$"
+  LEGACY_PENDING=0
+  LEGACY_REQUEST_ID=""
+  LEGACY_LEASE_ID=""
+  lb_args=(legacy-begin --lane "$lb_lane" --pid "$LEGACY_OWNER_PID")
+  if [ "$lb_pending" = 1 ]; then
+    LEGACY_PENDING=1
+    LEGACY_REQUEST_ID="$(legacy_request_id "$lb_lane")"
+    lb_args+=(--pending-launch --request-id "$LEGACY_REQUEST_ID")
+  fi
+  # Invoke the helper as a direct child of this shell.  Capturing its stdout
+  # with command substitution would insert a subshell between the exact owner
+  # PID (`$$`) and the helper, making a valid process identity look unrelated.
+  lb_tmp="$(mktemp "${TMPDIR:-/tmp}/lane-managed-begin.XXXXXX" 2>/dev/null || printf '')"
+  [ -n "$lb_tmp" ] || die "could not create a private legacy-begin response file for lane $lb_lane; no legacy side effect was performed" 1
+  if "$lb_path" "${lb_args[@]}" >"$lb_tmp" 2>/dev/null; then
+    lb_rc=0
+  else
+    lb_rc=$?
+  fi
+  lb_output="$(cat "$lb_tmp" 2>/dev/null || printf '')"
+  rm -f "$lb_tmp"
+  if [ "$lb_rc" != 0 ]; then
+    legacy_begin_failure "$lb_lane" legacy-begin "$lb_rc"
+  fi
+  if [ "$lb_pending" = 1 ]; then
+    legacy_validate_begin_response "$lb_output" "$lb_lane" "$LEGACY_OWNER_PID" 1 "$LEGACY_REQUEST_ID" ||
+      die "lane-managed legacy-begin returned a malformed pending lease for lane $lb_lane; the lease cannot be bound or safely aborted" 1
+    legacy_extract_lease_id "$lb_output" || die "lane-managed legacy-begin returned a malformed pending lease for lane $lb_lane; the lease cannot be bound or safely aborted" 1
+  else
+    legacy_validate_begin_response "$lb_output" "$lb_lane" "$LEGACY_OWNER_PID" 0 "" ||
+      die "lane-managed legacy-begin returned a malformed ownership response for lane $lb_lane; no legacy side effect was performed" 1
+  fi
+  LEGACY_BEGIN_ACTIVE=1
+  return 0
+}
+
+legacy_parent_identity() {   # sets LEGACY_PARENT_PID from the actual PPID
+  local lpi_parent="${PPID-}"
+  # An override is accepted only as an assertion of the actual parent; it may
+  # not turn an arbitrary live process into a launcher binding.
+  if [ "${LANE_MANAGED_PARENT_PID+x}" = x ]; then
+    [ -n "${LANE_MANAGED_PARENT_PID-}" ] || return 1
+    lpi_parent="$LANE_MANAGED_PARENT_PID"
+  elif [ "${LANE_START_PARENT_PID+x}" = x ]; then
+    [ -n "${LANE_START_PARENT_PID-}" ] || return 1
+    lpi_parent="$LANE_START_PARENT_PID"
+  fi
+  [ "$lpi_parent" = "$PPID" ] || return 1
+  case "$lpi_parent" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  [ "$lpi_parent" -gt 1 ] 2>/dev/null || return 1
+  kill -0 "$lpi_parent" 2>/dev/null || return 1
+  LEGACY_PARENT_PID="$lpi_parent"
+  return 0
+}
+
+legacy_pending_abort() {   # <canonical lane>; exact lease only, no fallback
+  local lpa_lane="${1-}" lpa_path lpa_rc
+  local -a lpa_args
+  [ "$LEGACY_BEGIN_ACTIVE" = 1 ] && [ "$LEGACY_PENDING" = 1 ] || return 0
+  [ -n "$LEGACY_LEASE_ID" ] || return 1
+  if lpa_path="$(lane_managed_path)"; then
+    :
+  else
+    lpa_rc=$?
+    return 1
+  fi
+  lpa_args=(pending-launch-abort --lane "$lpa_lane" --lease-id "$LEGACY_LEASE_ID" --request-id "$LEGACY_REQUEST_ID")
+  "$lpa_path" "${lpa_args[@]}" >/dev/null 2>&1
+}
+
+legacy_pending_bind() {   # <canonical lane>; binds or aborts the exact pending lease
+  local lpb_lane="${1-}" lpb_path lpb_rc lpb_output lpb_malformed=0
+  local -a lpb_args
+  [ "$LEGACY_BEGIN_ACTIVE" = 1 ] && [ "$LEGACY_PENDING" = 1 ] || return 0
+  if legacy_parent_identity; then
+    :
+  else
+    if legacy_pending_abort "$lpb_lane"; then
+      die "lane-start --no-launch could not verify its live parent launcher PID from PPID ${PPID-}; the exact pending lease was aborted, so no command was printed" 1
+    else
+      die "lane-start --no-launch could not verify its live parent launcher PID from PPID ${PPID-}, and the exact pending lease could not be aborted; ownership is unknown and no command was printed" 1
+    fi
+  fi
+  if lpb_path="$(lane_managed_path)"; then
+    :
+  else
+    lpb_rc=$?
+    if legacy_pending_abort "$lpb_lane"; then
+      die "lane-start --no-launch could not resolve lane-managed to bind the pending lease for lane $lpb_lane; the exact lease was aborted, so no command was printed" 1
+    else
+      die "lane-start --no-launch could not resolve lane-managed to bind the pending lease for lane $lpb_lane, and the exact lease could not be aborted; ownership is unknown and no command was printed" 1
+    fi
+  fi
+  lpb_args=(pending-launch-bind --lane "$lpb_lane" --lease-id "$LEGACY_LEASE_ID" --pid "$LEGACY_PARENT_PID" --request-id "$LEGACY_REQUEST_ID" --bind-purpose no-launch)
+  if lpb_output="$("$lpb_path" "${lpb_args[@]}" 2>/dev/null)"; then
+    if legacy_validate_begin_response "$lpb_output" "$lpb_lane" "$LEGACY_PARENT_PID" 0 ""; then
+      return 0
+    fi
+    lpb_malformed=1
+  else
+    lpb_rc=$?
+  fi
+  [ "$lpb_malformed" = 1 ] && lpb_rc=1
+  if legacy_pending_abort "$lpb_lane"; then
+    if [ "$lpb_malformed" = 1 ]; then
+      die "lane-managed pending-launch-bind returned a malformed ownership response for lane $lpb_lane; the exact lease was aborted and no command was printed" 1
+    fi
+    case "$lpb_rc" in
+      2 | 3 | 5) die "lane-managed pending-launch-bind refused the exact pending lease for lane $lpb_lane (exit $lpb_rc); the lease was aborted and no command was printed" 2 ;;
+      *) die "lane-managed pending-launch-bind failed for lane $lpb_lane (exit $lpb_rc); the exact lease was aborted and no command was printed" 1 ;;
+    esac
+  fi
+  die "lane-managed pending-launch-bind failed for lane $lpb_lane (exit $lpb_rc), and the exact pending lease could not be aborted; ownership is unknown and no command was printed" 1
+}
+
+# Adopt the pending capability exported by `lane` across the external launcher
+# boundary.  The helper must be a direct child of this lane-start shell (H -> S
+# in the launcher chain), so its stdout is captured through a private file rather
+# than command substitution.  For a real launch S is the requested owner and
+# replaces itself with the child; for --no-launch S exits after printing and the
+# inherited creator C is the process that executes that printed command.
+legacy_inherited_pending_bind() {   # <canonical lane>; 8 means no capability
+  local lip_lane="${1-}" lip_env_lane lip_lease lip_request lip_creator
+  local lip_path lip_resolve lip_rc lip_bind_rc lip_output lip_tmp lip_target_pid
+  local lip_malformed=0
+  local lip_seen=0
+  local -a lip_args
+  if [ "${LANE_MANAGED_PENDING_LANE+x}" = x ] ||
+     [ "${LANE_MANAGED_PENDING_LEASE_ID+x}" = x ] ||
+     [ "${LANE_MANAGED_PENDING_REQUEST_ID+x}" = x ] ||
+     [ "${LANE_MANAGED_PENDING_CREATOR_PID+x}" = x ]; then
+    lip_seen=1
+  fi
+  [ "$lip_seen" = 1 ] || return 8
+  lip_env_lane="${LANE_MANAGED_PENDING_LANE-}"
+  lip_lease="${LANE_MANAGED_PENDING_LEASE_ID-}"
+  lip_request="${LANE_MANAGED_PENDING_REQUEST_ID-}"
+  lip_creator="${LANE_MANAGED_PENDING_CREATOR_PID-}"
+  [ -n "$lip_env_lane" ] && [ "$lip_env_lane" = "$lip_lane" ] || die "inherited pending legacy ownership names lane '${lip_env_lane:-<empty>}' but this launcher is starting lane $lip_lane; the capability is unknown and no side effect was performed" 1
+  case "$lip_lease" in
+    '' | *[!A-Za-z0-9._-]*) die "inherited pending legacy ownership for lane $lip_lane has a malformed opaque lease ID; ownership is unknown and no side effect was performed" 1 ;;
+  esac
+  case "$lip_request" in
+    '' | *[!A-Za-z0-9._-]*) die "inherited pending legacy ownership for lane $lip_lane has a malformed request ID; ownership is unknown and no side effect was performed" 1 ;;
+  esac
+  case "$lip_creator" in
+    '' | *[!0-9]*) die "inherited pending legacy ownership for lane $lip_lane has a malformed creator PID; ownership is unknown and no side effect was performed" 1 ;;
+  esac
+  [ "$lip_creator" -gt 1 ] 2>/dev/null || die "inherited pending legacy ownership for lane $lip_lane has an invalid creator PID; ownership is unknown and no side effect was performed" 1
+
+  # Keep the exact lease in the existing abort path until bind succeeds.  A
+  # failed bind must never fall through to an unrelated ordinary lease.
+  LEGACY_BEGIN_ACTIVE=1
+  LEGACY_PENDING=1
+  LEGACY_OWNER_PID="$lip_creator"
+  LEGACY_REQUEST_ID="$lip_request"
+  LEGACY_LEASE_ID="$lip_lease"
+  if lip_path="$(lane_managed_path)"; then
+    :
+  else
+    lip_resolve=$?
+    if legacy_pending_abort "$lip_lane"; then
+      die "lane-start could not resolve lane-managed to bind the inherited pending lease for lane $lip_lane; the exact lease was aborted, so no side effect was performed" 1
+    else
+      die "lane-start could not resolve lane-managed to bind the inherited pending lease for lane $lip_lane (exit $lip_resolve), and the exact lease could not be aborted; ownership is unknown and no side effect was performed" 1
+    fi
+  fi
+  if (( no_launch )); then
+    # S is about to exit after printing the command; the external launcher C
+    # named by the inherited capability must own the durable lease instead.
+    lip_target_pid="$lip_creator"
+  else
+    # S remains alive by exec-replacing itself with the launched command.
+    lip_target_pid="$$"
+  fi
+  lip_args=(pending-launch-bind --lane "$lip_lane" --lease-id "$lip_lease" --pid "$lip_target_pid" --request-id "$lip_request" --bind-purpose inherited-parent-launcher)
+  lip_tmp="$(mktemp "${TMPDIR:-/tmp}/lane-managed-bind.XXXXXX" 2>/dev/null || printf '')"
+  if [ -z "$lip_tmp" ]; then
+    if legacy_pending_abort "$lip_lane"; then
+      die "could not create a private pending-launch-bind response file for lane $lip_lane; the exact lease was aborted and no side effect was performed" 1
+    else
+      die "could not create a private pending-launch-bind response file for lane $lip_lane, and the exact lease could not be aborted; ownership is unknown and no side effect was performed" 1
+    fi
+  fi
+  # Do not put the helper in command substitution: that creates a subshell
+  # between the helper H and this lane-start process S and breaks the OS parent
+  # proof.  The file is private, consumed after the child exits, and removed on
+  # both success and failure paths below.
+  if "$lip_path" "${lip_args[@]}" >"$lip_tmp" 2>/dev/null; then
+    lip_bind_rc=0
+  else
+    lip_bind_rc=$?
+  fi
+  lip_output="$(cat "$lip_tmp" 2>/dev/null || printf '')"
+  rm -f "$lip_tmp"
+  if [ "$lip_bind_rc" = 0 ]; then
+    if legacy_validate_begin_response "$lip_output" "$lip_lane" "$lip_target_pid" 0 ""; then
+      # Consume the inherited capability only after the exact requested PID
+      # has been accepted by lane-managed.  The durable owner is S for a
+      # normal exec and C for --no-launch.
+      LEGACY_PENDING=0
+      LEGACY_OWNER_PID="$lip_target_pid"
+      unset LANE_MANAGED_PENDING_LANE LANE_MANAGED_PENDING_LEASE_ID LANE_MANAGED_PENDING_REQUEST_ID LANE_MANAGED_PENDING_CREATOR_PID
+      return 0
+    fi
+    lip_malformed=1
+  fi
+  [ "$lip_malformed" = 1 ] && lip_bind_rc=1
+  if legacy_pending_abort "$lip_lane"; then
+    if [ "$lip_malformed" = 1 ]; then
+      die "lane-managed pending-launch-bind returned a malformed ownership response for lane $lip_lane; the exact lease was aborted and no side effect was performed" 1
+    fi
+    case "$lip_bind_rc" in
+      2 | 3 | 5) die "lane-managed pending-launch-bind refused the inherited pending lease for lane $lip_lane (exit $lip_bind_rc); the exact lease was aborted and no side effect was performed" 2 ;;
+      *) die "lane-managed pending-launch-bind failed for lane $lip_lane (exit $lip_bind_rc); the exact lease was aborted and no side effect was performed" 1 ;;
+    esac
+  fi
+  die "lane-managed pending-launch-bind failed for lane $lip_lane (exit $lip_bind_rc), and the exact inherited pending lease could not be aborted; ownership is unknown and no side effect was performed" 1
+}
+
+# Cross the final read/mutation boundary.  An inherited pending capability is
+# bound first because `legacy-check` intentionally reports any pending owner as
+# present; after the atomic bind it reports the ordinary legacy lease as absent.
+# A direct lane-start with no inherited capability keeps the existing ordinary
+# or --no-launch pending begin path.
+legacy_prepare() {   # <canonical lane>
+  local lp_lane="${1-}" lp_inherited_rc
+  if legacy_inherited_pending_bind "$lp_lane"; then
+    managed_legacy_check "$lp_lane"
+    return 0
+  else
+    lp_inherited_rc=$?
+  fi
+  [ "$lp_inherited_rc" = 8 ] || return "$lp_inherited_rc"
+  managed_legacy_check "$lp_lane"
+  if (( no_launch )); then
+    legacy_begin "$lp_lane" 1
+  else
+    legacy_begin "$lp_lane" 0
+  fi
+}
+
 usage() { sed -n -e '1,2d' -e '/^#/!q' -e 's/^# \{0,1\}//' -e p "$RESOLVED"; }
 # EVERY ARGUMENT AS ONE SHELL WORD, WITHOUT `printf %q` AND WITHOUT A PIPE —
 # measured on the macOS job at `db206db` and `ac0c697`, where three cases of
@@ -1908,6 +2408,12 @@ if (( confirm )); then
         fi
         note "$bare_why. Nothing has been renamed and nothing has been written. Starting Claude with no lane — to take it later, run: $prog $self_args"
         bare=("$CLAUDE_BIN" ${pass[@]+"${pass[@]}"})
+        # Even the bare fallback is a launch boundary.  Read the durable
+        # managed marker immediately before printing or executing it; a
+        # managed/pending owner must not be bypassed by --confirm=N.
+        if (( ! dry_run )); then
+          legacy_prepare "$LANE"
+        fi
         if (( no_launch )); then
           # The launcher asked for a command to exec; it gets the bare one, on
           # stdout, exactly as it would have got the lane's.
@@ -1928,6 +2434,13 @@ if (( confirm )); then
 fi
 
 # ------------------------------------------------------- 4. name the window
+
+if (( ! dry_run )); then
+  # This is the last read before the first legacy side effect (`tmux
+  # rename-window`).  A launcher-inherited pending capability is atomically
+  # bound here; a direct invocation retains the ordinary or --no-launch begin.
+  legacy_prepare "$LANE"
+fi
 
 if (( dry_run )); then
   plan "tmux rename-window $LANE   (also turns automatic-rename off for this window)"

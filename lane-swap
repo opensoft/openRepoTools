@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# Thin external entry point for the managed swap transport.  This wrapper has
+# no model, account, credential, or handoff behavior of its own.
+
+set -u
+
+usage() {
+	cat <<'EOF'
+usage: lane-swap <lane> --profile <profile> [transport options]
+
+transport options:
+  -h, --help
+  --generation <value>
+  --request-id <value>
+  --socket <path>
+  --connect-timeout <seconds>
+  --operation-timeout <seconds>
+  --body <json>
+  --body-json <json>
+  --operation-id <id>
+  --source-profile <profile>
+EOF
+}
+
+die() {
+	echo "lane-swap: $*" >&2
+	usage >&2
+	exit 2
+}
+
+if [ "$#" -eq 1 ]; then
+	case "$1" in
+		--help|-h)
+			usage
+			exit 0
+			;;
+	esac
+fi
+
+if [ "$#" -lt 1 ]; then
+	die "lane is required"
+fi
+
+lane=$1
+shift
+case "$lane" in
+    ""|-*) die "lane is missing or starts with '-'" ;;
+esac
+
+profile=
+seen_profile=0
+seen_options=
+forwarded=()
+
+mark_seen() {
+    case " $seen_options " in
+        *" $1 "*) die "duplicate option: $1" ;;
+    esac
+    seen_options="$seen_options $1"
+}
+
+while [ "$#" -gt 0 ]; do
+    option=$1
+    shift
+    case "$option" in
+        --profile)
+            [ "$seen_profile" -eq 0 ] || die "duplicate option: --profile"
+            [ "$#" -gt 0 ] || die "--profile requires a value"
+            profile=$1
+            shift
+            case "$profile" in
+                ""|-*) die "--profile value is missing or starts with '-'" ;;
+            esac
+            seen_profile=1
+            ;;
+        --generation|--request-id|--socket|--connect-timeout|\
+        --operation-timeout|--body|--body-json|--operation-id|--source-profile)
+            mark_seen "$option"
+            [ "$#" -gt 0 ] || die "$option requires a value"
+            value=$1
+            shift
+            [ -n "$value" ] || die "$option value is empty"
+            case "$value" in
+                -*) die "$option value starts with '-'" ;;
+            esac
+            forwarded+=("$option" "$value")
+            ;;
+        *)
+            die "unknown option or extra argument: $option"
+            ;;
+    esac
+done
+
+[ "$seen_profile" -eq 1 ] || die "--profile is required"
+
+# Prefer the installed sibling, then the command available on PATH.  The
+# delegated command receives the lane as a positional value; in particular,
+# a lane literally named "swap" is not treated as another subcommand.
+case "$0" in
+    */*)
+        script_dir=${0%/*}
+        [ -n "$script_dir" ] || script_dir=.
+        ;;
+    *)
+        script_dir=.
+        ;;
+esac
+
+target=$script_dir/lane-managed
+if [ ! -x "$target" ]; then
+    target=$(command -v lane-managed 2>/dev/null || true)
+fi
+[ -n "$target" ] || die "lane-managed is not installed beside this command or on PATH"
+[ -x "$target" ] || die "lane-managed target is not executable: $target"
+
+exec "$target" swap "$lane" --profile "$profile" ${forwarded[@]+"${forwarded[@]}"}

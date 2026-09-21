@@ -43,9 +43,9 @@ COMMAND = REPO / "openRepoTools"
 #: helpers from the README's one line and nothing depends on anyone's dotfiles.
 #: `openRepoTools` is first because it is the one a person types to get the
 #: others; the last five came here from `opensoft/brett-wip` with their history
-#: under lane-collision-protocol Amendment 9(b), and `repos.tsv` is data placed
-#: at 755 with the commands because `--install` has one list, one destination
-#: and one mode.
+#: under lane-collision-protocol Amendment 9(b). `repos.tsv` and the seven named
+#: Python modules are imported/read as data and stay at 644; the shell/CLI
+#: entrypoints, including the two managed front doors, stay executable at 755.
 #:
 #: `lane` TAKES `restart`'s PLACE AND THE COUNT DOES NOT MOVE (Amendment 18
 #: Addendum 1, the word, and Addendum 2, the retirement — ratified
@@ -56,10 +56,29 @@ COMMAND = REPO / "openRepoTools"
 #: under Amendment 17(a), which made the list TWELVE; `lane-rename` joined it
 #: under Amendment 16 (ratified 2026-09-14T09:24:35Z), whose clause (h) is why
 #: it is a word rather than a `lanes` option — `lanes` writes nothing and a
-#: rename is four files in one commit — which is why the list is THIRTEEN.
+#: rename is four files in one commit — which is why the legacy list was
+#: THIRTEEN. The managed-session feature adds two front doors and seven Python
+#: implementation modules beside them, bringing the install list to TWENTY-TWO.
 INSTALLED = ("openRepoTools", "park", "resume", "status", "lane", "lanes",
              "lane-handoff", "lane-rename", "lanes-edit.sh", "lane-start",
-             "lane-end", "link-estates", "repos.tsv")
+             "lane-end", "link-estates", "repos.tsv", "lane-managed",
+             "lane-swap", "lane_managed_state.py", "lane_managed_profiles.py",
+             "lane_managed_controller.py", "lane_managed_sdk.py",
+             "lane_managed_daemon.py", "lane_managed_swap.py",
+             "lane_managed_children.py")
+
+# Exact non-executable inventory. Keep this explicit: a broad suffix or
+# wildcard would silently change a future installable's security mode.
+DATA_INSTALLABLES = (
+    "repos.tsv", "lane_managed_state.py", "lane_managed_profiles.py",
+    "lane_managed_controller.py", "lane_managed_sdk.py",
+    "lane_managed_daemon.py", "lane_managed_swap.py",
+    "lane_managed_children.py",
+)
+INSTALLABLE_MODES = {
+    name: (0o644 if name in DATA_INSTALLABLES else 0o755)
+    for name in INSTALLED
+}
 
 #: The skills `--install` also places, at two paths each, and the paths they are
 #: fetched from when there is no checkout to copy them out of (Amendment 9(b),
@@ -81,11 +100,11 @@ SKILL_PATH = SKILL_PATHS[0]
 COMMAND_NAMES = ("handoff", "ctx", "swap")
 COMMAND_PATHS = tuple(f"commands/{n}.md" for n in COMMAND_NAMES)
 
-#: Everything a stdin install has to fetch: the thirteen files, the three skills
+#: Everything a stdin install has to fetch: the twenty-two files, the three skills
 #: and the three command files.
 FETCHED = INSTALLED + SKILL_PATHS + COMMAND_PATHS
 
-#: TWENTY-SEVEN ARTIFACTS, AND THE COUNT IS THE INVARIANT: thirteen files in the
+#: THIRTY-SIX ARTIFACTS, AND THE COUNT IS THE INVARIANT: twenty-two files in the
 #: bin directory, three skills in the shared skills directory, their three
 #: bare-run copies, three command files at that same pair of destinations, and
 #: TWO merged entries in `~/.claude/settings.json`. Derived from the three
@@ -104,7 +123,7 @@ ARTIFACTS = (len(INSTALLED) + 2 * len(SKILL_NAMES) + 2 * len(COMMAND_NAMES)
              + HOOK_ENTRIES)
 
 USAGE_LINES = (
-    "openRepoTools --install            install (or update) the thirteen estate and",
+    "openRepoTools --install            install (or update) the twenty-two estate and",
     "openRepoTools wip init             create your workspace repository, clone it,",
     "openRepoTools --help | --version",
 )
@@ -117,7 +136,7 @@ pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
               WINDOWS_SKIP]
 
 #: `--install` HARD-REQUIRES `jq` SINCE lane-collision-protocol AMENDMENT 9(b):
-#: two of its twenty-seven artifacts are merged entries inside a JSON file somebody
+#: two of its thirty-six artifacts are merged entries inside a JSON file somebody
 #: else owns, and the clause has it refuse naming `jq` rather than rewriting
 #: that file by hand. So a run of `--install` on a host without `jq` is a
 #: REFUSAL BY DESIGN, and a test that asserts a successful placement there is
@@ -126,7 +145,7 @@ pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
 #: reason `AGENTS.md` gives for the submodule SKIP.
 #:
 #: The tests NOT marked are the ones that never reach the merge: the refusals,
-#: `--help`, `--version`, and `test_install_places_all_nine_or_none`, which is
+#: `--help`, `--version`, and `test_install_places_all_twenty_one_or_none`, which is
 #: refused at `collect_commands` before `plan_hook_merge` is called at all.
 #: `test_without_jq_it_refuses_and_places_nothing` is the positive case for the
 #: same fact and is deliberately unmarked.
@@ -189,8 +208,9 @@ def test_help_prints_every_usage_line():
 
 
 def test_help_names_every_command_it_places_and_the_standards_front_door():
-    """`--install` places thirteen files, and twelve of them are commands this one
-    knows nothing about — so `--help` has to say what they are and where the
+    """`--install` places twenty-two files. The two managed-session front doors and
+    seven implementation modules join twelve legacy commands this one knows
+    nothing about — so `--help` has to say what they are and where the
     rest is written down. A command a person has on PATH and cannot find
     written down is a command they will not use.
 
@@ -205,7 +225,10 @@ def test_help_names_every_command_it_places_and_the_standards_front_door():
     assert result.returncode == 0, result.stderr
     for line in ("park [<Name>]", "resume [<Name>]", "status [<Name>]",
                  "lane-start <repo> <n>", "lane-end <lane>",
-                 "lanes-edit.sh <verb>", "link-estates", "repos.tsv"):
+                 "lane-managed <operation>",
+                 "lane-swap <lane> --profile <p>",
+                 "lanes-edit.sh <verb>", "link-estates", "repos.tsv",
+                 "lane_managed_*.py", "lane_managed_daemon.py"):
         assert line in result.stdout, line
     assert "`openRepoShape` is the standard's front door" in result.stdout
     assert "this command scaffolds none" in result.stdout
@@ -346,7 +369,7 @@ def test_install_refuses_a_second_argument_and_installs_nothing(tmp_path):
 
 @NEEDS_JQ
 def test_install_writes_an_executable_copy(tmp_path):
-    """All NINE files, each 755 and byte-identical to this checkout's.
+    """All TWENTY-TWO files have their explicit inventory mode and are byte-identical.
 
     A `park` that is not executable is not a command, and a `park` that is a
     near-copy is a command whose refusals nobody reviewed — so the bytes are
@@ -357,13 +380,35 @@ def test_install_writes_an_executable_copy(tmp_path):
     for name in INSTALLED:
         target = tmp_path / ".local" / "bin" / name
         assert target.is_file(), result.stdout + f" (missing {name})"
-        assert stat.S_IMODE(target.stat().st_mode) == 0o755, name
+        assert stat.S_IMODE(target.stat().st_mode) == INSTALLABLE_MODES[name], name
         assert target.read_bytes() == (REPO / name).read_bytes(), name
         assert f"{name}: installed at" in result.stdout
     assert f"openRepoTools: {len(INSTALLED)} of {len(INSTALLED)} placed" \
         in result.stdout, (
         "a person reading eight lines cannot tell whether a ninth was meant "
         "to be there; the count says so")
+
+
+@NEEDS_JQ
+def test_install_stamps_data_modules_non_executable_and_commands_executable(tmp_path):
+    """The seven exact data artifacts are 644; every other installed artifact is 755.
+
+    The Python files are imported beside the shell entrypoints and must not be
+    advertised as commands by an executable mode. The two managed front doors
+    remain executable, and the assertion is derived from the exact inventory
+    above rather than a filename suffix heuristic.
+    """
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    for name, expected in INSTALLABLE_MODES.items():
+        target = tmp_path / ".local" / "bin" / name
+        assert stat.S_IMODE(target.stat().st_mode) == expected, name
+    assert all(
+        stat.S_IMODE((tmp_path / ".local" / "bin" / name).stat().st_mode) == 0o644
+        for name in DATA_INSTALLABLES
+    )
+    assert stat.S_IMODE((tmp_path / ".local" / "bin" / "lane-managed").stat().st_mode) == 0o755
+    assert stat.S_IMODE((tmp_path / ".local" / "bin" / "lane-swap").stat().st_mode) == 0o755
 
 
 @NEEDS_JQ
@@ -377,7 +422,7 @@ def test_installing_twice_changes_nothing(tmp_path):
     assert second.returncode == 0, second.stderr
     for name in INSTALLED:
         assert f"{name}: already installed at" in second.stdout, name
-    # TWENTY-SEVEN, not thirteen: the six skill copies, the six command-file copies
+    # THIRTY-SIX, not twenty-two: the six skill copies, the six command-file copies
     # and BOTH hook entries each report `unchanged` too, and the count is the
     # invariant Amendment 9(b) names — derived from the three lists, never
     # restated, so a new skill or command moves it. It was eighteen until
@@ -390,7 +435,7 @@ def test_installing_twice_changes_nothing(tmp_path):
 @NEEDS_JQ
 def test_install_replaces_a_copy_that_has_drifted(tmp_path, name):
     """Per file, and only the one that drifted: an install that rewrote all
-    thirteen every time would have nothing to say about which one was stale."""
+    twenty-two every time would have nothing to say about which one was stale."""
     assert run_cmd("--install", home=tmp_path).returncode == 0
     target = tmp_path / ".local" / "bin" / name
     target.write_text(target.read_text(encoding="utf-8") + "# drift\n",
@@ -573,7 +618,7 @@ def test_install_retires_only_after_the_placement_it_migrates_to(tmp_path, name)
 
 @NEEDS_JQ
 def test_a_copy_whose_bytes_are_right_and_whose_mode_is_not_says_so(tmp_path):
-    """THE ELEVEN HAVE ALWAYS BEEN STAMPED EVERY TIME, AND THE LINE DID NOT SAY
+    """THE TWENTY-TWO HAVE ALWAYS BEEN STAMPED EVERY TIME, AND THE LINE DID NOT SAY
     SO (#40, finding 2).
 
     `chmod 755` sits outside the bytes comparison here — a copy that is not
@@ -601,6 +646,30 @@ def test_a_copy_whose_bytes_are_right_and_whose_mode_is_not_says_so(tmp_path):
             assert f"{other}: already installed at " \
                    f"{tmp_path / '.local' / 'bin' / other} (unchanged)" \
                 in result.stdout, other
+
+
+@pytest.mark.parametrize(
+    ("name", "wrong_mode"),
+    (("lane_managed_state.py", 0o755),
+     ("lane_managed_swap.py", 0o755),
+     ("lane_managed_children.py", 0o755),
+     ("lane-managed", 0o644)),
+)
+@NEEDS_JQ
+def test_install_re_stamps_each_explicit_bin_mode(tmp_path, name, wrong_mode):
+    """A matching copy with either mode drift is repaired without rewriting bytes."""
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    target = tmp_path / ".local" / "bin" / name
+    before = target.read_bytes()
+    expected = INSTALLABLE_MODES[name]
+    os.chmod(target, wrong_mode)
+
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert stat.S_IMODE(target.stat().st_mode) == expected
+    assert target.read_bytes() == before
+    assert f"{name}: already installed at {target} (mode restored to {expected:03o})" \
+        in result.stdout, result.stdout
 
 
 @NEEDS_JQ
@@ -823,7 +892,7 @@ def fake_github(tmp_path, served_names) -> dict:
     """A fake `gh` serving exactly `served_names`, and a `curl` that refuses.
 
     Factored out of the fixture so one test can WITHHOLD a file: `--install`
-    places all four or none, and the only way to prove "or none" is a server
+    places all twenty-two or none, and the only way to prove "or none" is a server
     that cannot answer for one of them.
     """
     served = tmp_path / "served"
@@ -865,35 +934,57 @@ def offline_github(tmp_path):
     `fetch_from_repo` tries `gh api` before the raw URL, so a `gh` that
     answers the calls the command makes is the whole of the server these tests
     need: `contents/<command>` comes back as this checkout's own bytes for each
-    of the four files `--install` places. `curl` is shadowed by a script that
+    of the twenty-two files `--install` places. `curl` is shadowed by a script that
     exits 1 — belt and braces, so that a fake `gh` which stopped matching could
     never quietly become a real request to raw.githubusercontent.com.
     """
     return fake_github(tmp_path, FETCHED)
 
 
-def test_install_places_all_nine_or_none(tmp_path):
+@pytest.mark.parametrize(
+    "withheld_name",
+    (
+        "park",
+        "lane-managed",
+        "lane-swap",
+        "lane_managed_state.py",
+        "lane_managed_profiles.py",
+        "lane_managed_controller.py",
+        "lane_managed_sdk.py",
+        "lane_managed_daemon.py",
+        "lane_managed_swap.py",
+        "lane_managed_children.py",
+    ),
+)
+def test_install_places_all_twenty_two_or_none(tmp_path, withheld_name):
     """ALL IN HAND BEFORE ANY IS PLACED (openRepoShape #82, F10 of the review
     on its #83). One file at a time, dying on the first fetch that failed,
-    leaves a person with a NEW `openRepoTools` and no `park` — a half-install
+    leaves a person with a NEW `openRepoTools` without a required companion — a half-install
     that prints `installed at` and is not one — with nothing on screen to say
-    which of the four were missing.
+    which of the twenty-two were missing.
 
-    Run from stdin with `park` withheld: NOTHING is placed, nothing already
-    there is replaced, and the refusal names the file it could not fetch.
+    Run from stdin with each required managed-session artifact withheld in
+    turn: NOTHING is placed, nothing already there is replaced, and the
+    refusal names the file it could not fetch.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     # TWO older copies, so "nothing was replaced" is a claim with witnesses
     # rather than an empty directory: the file the fetch COULD have served
-    # (`openRepoTools`) and the WORKING COMMAND whose absence upstream is what
-    # aborted the run (`park`). A person whose `park` still works must have it
-    # afterwards.
+    # (`openRepoTools`) and a WORKING COMMAND (`park`). A person's existing
+    # commands must remain intact after the missing artifact aborts the run.
     (bin_dir / "openRepoTools").write_text("# an older copy\n",
                                            encoding="utf-8")
     (bin_dir / "park").write_text("# an older park that still works\n",
                                   encoding="utf-8")
-    withheld = fake_github(tmp_path, [n for n in FETCHED if n != "park"])
+    before = {
+        path.name: path.read_bytes()
+        for path in bin_dir.iterdir()
+        if path.is_file()
+    }
+    withheld = fake_github(
+        tmp_path, [n for n in FETCHED if n != withheld_name]
+    )
     result = subprocess.run(
         ["bash", "-s", "--", "--install"], capture_output=True, text=True,
         check=False, input=COMMAND.read_text(encoding="utf-8"),
@@ -902,16 +993,21 @@ def test_install_places_all_nine_or_none(tmp_path):
                         env={**withheld,
                              "OPENREPOTOOLS_BIN_DIR": str(bin_dir)}))
     assert result.returncode == 2, result.stdout + result.stderr
-    assert "could not fetch park" in result.stderr
+    assert f"could not fetch {withheld_name}" in result.stderr
     assert "NOTHING was installed" in result.stderr
     assert "nothing already installed was replaced" in result.stderr
-    assert (bin_dir / "openRepoTools").read_text(encoding="utf-8") == \
-        "# an older copy\n", "the older copy was replaced by a half-install"
-    assert (bin_dir / "park").read_text(encoding="utf-8") == \
-        "# an older park that still works\n", (
-        "a working `park` was overwritten by a run that could not fetch one")
-    assert not (bin_dir / "resume").exists()
-    assert not (bin_dir / "status").exists()
+    after = {
+        path.name: path.read_bytes()
+        for path in bin_dir.iterdir()
+        if path.is_file()
+    }
+    assert after == before, "an existing file changed during a failed install"
+    assert sorted(path.name for path in bin_dir.iterdir()) == sorted(before)
+    for target_root in (tmp_path / ".claude", tmp_path / ".claude-profiles",
+                        tmp_path / ".agents"):
+        assert not target_root.exists(), (
+            f"a failed install created an artifact under {target_root.name}"
+        )
     assert "placed" not in result.stdout
 
 
@@ -953,7 +1049,7 @@ def test_install_from_stdin_fetches_itself_into_a_live_workdir(offline_github,
 
     Run from stdin there is no file to copy from — not for this command, not
     for its three siblings and not for the four lane helpers, the alias table
-    or the skill — so `install_commands` fetches each of the ten at this ref
+    or the skill — so `install_commands` fetches each of the twenty-two at this ref
     into a temporary directory. THAT DIRECTORY HAS TO STILL BE THERE:
     `workdir()` sets its EXIT trap in the main shell rather than inside a
     `$(...)` subshell, whose trap would fire the instant the substitution
@@ -979,7 +1075,7 @@ def test_install_from_stdin_fetches_itself_into_a_live_workdir(offline_github,
     for name in INSTALLED:
         target = bin_dir / name
         assert target.is_file(), result.stdout + result.stderr + f" ({name})"
-        assert stat.S_IMODE(target.stat().st_mode) == 0o755, name
+        assert stat.S_IMODE(target.stat().st_mode) == INSTALLABLE_MODES[name], name
         assert target.read_bytes() == (REPO / name).read_bytes(), name
         assert f"{name}: installed at" in result.stdout
 

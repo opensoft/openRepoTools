@@ -1,24 +1,52 @@
 ---
 name: "Handoff"
-description: "/handoff hands this lane off — the act /swap and /lane-swap also name, and the one /ctx runs before it restarts the pane"
+description: "Experimental managed checkpoint record only; retain the historical handoff workflow for unmanaged lanes"
 category: Lane
-tags: [lane, handoff, swap, ctx, lane-collision-protocol]
+tags: [lane, handoff, swap, ctx, managed]
 ---
 
-**Invoke the `handoff` skill now and follow every step of it, in order, to the end.**
+## Managed lanes (opt in explicitly)
 
-That is the whole of this command, and the arguments typed after `/handoff` are its `why` and its flags:
+Native/live support remains experimental and `UNVERIFIED`. The control client
+accepts the following syntax; it does not certify the native lifecycle
+integration. The current managed runtime path is incomplete, so unsupported or
+inconclusive managed operations must refuse before source interruption rather
+than fall back to the legacy procedure. Managed handoff is a
+checkpoint-recording operation only:
 
-- `/handoff [why]` — the swap, the reset, the profile switch. The why is free text: `clear`, `reset`,
-  `switch`, `handoff to <who>`.
-- `/handoff --restart` — the same act with the restart attached. `/ctx` is its short name and runs the same
-  skill: the record first, then the lane's own pane respawned through the launcher with this handoff's top
-  block as the new session's first prompt (Amendment 17(f)).
-- `/handoff --exit requested by <uuid>@<host>/<container>` — the handoff another place requested: the record,
-  then `/exit` typed into this lane's own pane, because a handoff to another place is a handoff and not a
-  restart (Amendment 18(d)).
+```sh
+lane-managed handoff <lane> --checkpoint <checkpoint>
+```
 
-Lane-collision-protocol **Amendment 17(a)**, in force 2026-09-14T09:45:33Z: one act, three names, and
-`lane-handoff` on `PATH` for the same steps from a shell. The steps are not restated here — the skill is the
-single source of the act, and two copies of one procedure that must stay byte-equal is the rejected
-alternative.
+Pass the current `--generation <generation>` for the managed owner.
+The checkpoint reference must be supplied by the caller. The supervisor records
+it and returns; it does not pause or interrupt participants, restart a process,
+change the account/profile, acquire or release a writer claim, dispatch a
+message, or invoke `release`. A managed handoff is not evidence that swap or
+ctx completed. Invalid checkpoint input or a stale generation refuses without
+changing lifecycle state; recording a reference does not validate its contents.
+
+Swap and worker restart never invoke handoff or generate a written handoff,
+summary, or checkpoint. A supported implementation has one coordinator and
+native children, with exact parent restore during swap. Safely stopped
+unfinished children remain `resume-pending` or `restart-pending` until explicit
+release; `exact-resumed` and `restarted` require correlated post-release native
+events. A checkpoint record proves none of those lifecycle facts.
+
+For an explicit user message, the client syntax is
+`lane-managed submit <lane> --recipient-id <coordinator-id> --payload <reference>`.
+The native contract addresses the coordinator and queues input while held or
+fenced; there is no independent child mailbox. Native dispatch integration
+remains unverified. Ctx's distinct hold/restart policies remain planned as
+described in `commands/ctx.md`. `shutdown` retains the managed owner, control
+service/endpoint, and claims; only explicit `unenroll`, after authoritative
+quiescence and effect resolution, removes them. Handoff changes none of these.
+
+## Unmanaged legacy compatibility
+
+Without durable managed ownership, `/handoff [why]`, `/swap`, and
+`/lane-swap` retain their historical aliases and invoke the legacy handoff
+skill. `/ctx` retains its historical restart form. These aliases remain for
+existing unmanaged records and do not silently become managed operations.
+Legacy `lane`, `lane-start`, and handoff surfaces refuse a managed-owned lane
+rather than falling back to a second owner.

@@ -1,0 +1,4536 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Bounded local control client/server for managed lanes.
+
+``lane-managed`` is deliberately a transport boundary.  The durable state,
+profile resolver, and controller modules remain the authorities for those
+concerns; this file validates a request, sends one bounded JSON frame, and
+passes the request to an injected handler.  Keeping the handler seam small is
+also useful to the fake-runtime tests: a fake can exercise framing without
+pretending that it proves live Claude capability.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import contextlib
+import errno
+import hashlib
+import inspect
+import json
+import math
+import os
+import re
+import socket
+import stat
+import subprocess
+import sys
+import time
+import uuid
+from pathlib import Path
+from typing import Any, Callable, Mapping, Optional, Sequence
+
+
+MAX_FRAME_BYTES = 1024 * 1024
+CONNECT_TIMEOUT = 5.0
+OPERATION_TIMEOUT = 120.0
+MAX_RESPONSE_HISTORY = 32
+# The wire protocol is the native coordinator-lineage protocol.  Version 1
+# described the superseded independent child-runner/mailbox prototype and is
+# intentionally not a compatibility alias here.
+SCHEMA_VERSION = 2
+SCHEMA_ARCHITECTURE = "native-coordinator-lineage"
+NATIVE_SCHEMA_VERSION = SCHEMA_VERSION
+NATIVE_ARCHITECTURE = SCHEMA_ARCHITECTURE
+
+_OPERATIONS = (
+    "start",
+    "status",
+    "submit",
+    "swap",
+    "ctx",
+    "handoff",
+    "recover",
+    "release",
+    "shutdown",
+    "unenroll",
+)
+_NATIVE_ADMISSION_OPERATION = "native-admission-intent"
+_INTERNAL_OPERATIONS = (
+    "legacy-check",
+    "legacy-begin",
+    "pending-launch-bind",
+    "pending-launch-abort",
+    "roster-validate",
+)
+# These operations belonged to the independent child-runner/mailbox
+# prototype.  Keep their wire names recognizable so direct callers receive a
+# stable migration refusal, but do not expose them as public argparse
+# subcommands or route them to the old controller methods.
+_OBSOLETE_OPERATIONS = frozenset({"add-worker", "complete-worker"})
+_OWNERSHIP_OPERATIONS = frozenset(
+    {"legacy-begin", "pending-launch-bind", "pending-launch-abort"}
+)
+_REQUEST_OPERATIONS = frozenset(
+    _OPERATIONS + _INTERNAL_OPERATIONS + tuple(_OBSOLETE_OPERATIONS)
+    + (_NATIVE_ADMISSION_OPERATION,)
+)
+_REQUIRED_REQUEST_KEYS = frozenset(
+    {
+        "schema", "schema_version", "architecture", "request_id", "lane",
+        "generation", "operation", "body",
+    }
+)
+_REQUEST_KEYS = frozenset(_REQUIRED_REQUEST_KEYS)
+_MAX_ID_BYTES = 256
+_MAX_LANE_BYTES = 128
+_MAX_TOKEN_BYTES = 256
+# The roster check is intentionally a read-only projection.  Keep the
+# accepted request aliases small and explicit so a caller cannot smuggle a
+# second identity source into the durable check.
+_ROSTER_BODY_KEYS = frozenset({
+    "participant_uuid", "participant", "session_uuid", "session_id",
+    "participant_id", "session_name", "session", "name", "bound_lane",
+    "runner_pid", "pid", "runner_start_token", "start_token",
+    "runner_pgid", "pgid", "process_group_id", "process_identity",
+})
+_ROSTER_RUNTIME_KEYS = frozenset({
+    "version", "daemon_id", "generation", "lane", "lane_key", "host",
+    "pid", "start_token", "pgid", "process_domain", "socket_path",
+    "timestamp",
+})
+# Process-incarnation lookup is deliberately shorter than an operation
+# deadline.  It is a read-only fallback for platforms without procfs and may
+# never leave an ownership command waiting indefinitely on ``ps``.
+PROCESS_IDENTITY_TIMEOUT = 1.0
+
+
+class ManagedCLIError(RuntimeError):
+    """A sanitized transport, protocol, or command refusal."""
+
+    def __init__(self, code: str, message: str, exit_code: int = 1) -> None:
+        self.code = str(code)
+        self.message = str(message)
+        self.exit_code = int(exit_code)
+        super().__init__(self.message)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"code": self.code, "message": self.message}
+
+
+# Short aliases make the transport seam convenient to import without creating
+# a second exception hierarchy for callers that use the protocol terminology.
+CLIError = ManagedCLIError
+ProtocolError = ManagedCLIError
+
+
+class _RuntimeSocketNotReady(ManagedCLIError):
+    """An exact newly spawned runtime is published before its socket bind."""
+
+    def __init__(self) -> None:
+        super().__init__("unknown", "managed daemon socket is not ready", 1)
+
+
+def _invalid(message: str) -> ManagedCLIError:
+    return ManagedCLIError("invalid", message, 2)
+
+
+def _timeout(message: str) -> ManagedCLIError:
+    return ManagedCLIError("timeout", message, 1)
+
+
+def _bounded_timeout(value: Any, label: str, maximum: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise _invalid(label + " must be a finite positive number")
+    result = float(value)
+    if not math.isfinite(result) or result <= 0:
+        raise _invalid(label + " must be a finite positive number")
+    if result > maximum:
+        raise _invalid(label + " must not exceed %.1f seconds" % maximum)
+    return result
+
+
+def _bounded_text(value: Any, label: str, *, max_bytes: int = _MAX_ID_BYTES) -> str:
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise _invalid(label + " is invalid")
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeEncodeError:
+        raise _invalid(label + " is invalid")
+    if size > max_bytes:
+        raise _invalid(label + " is too long")
+    return value
+
+
+def _canonical_lane(value: Any) -> str:
+    """Use the state module's validator when available."""
+
+    value = _bounded_text(value, "lane", max_bytes=_MAX_LANE_BYTES)
+    try:
+        from lane_managed_state import canonical_lane
+    except (ImportError, ModuleNotFoundError):
+        canonical_lane = None
+    if callable(canonical_lane):
+        try:
+            return canonical_lane(value)
+        except Exception as error:
+            code = getattr(error, "code", "invalid")
+            raise ManagedCLIError(str(code), "lane name is invalid", 2)
+    if value in {".", ".."} or "/" in value or "\\" in value:
+        raise _invalid("lane name is invalid")
+    return value
+
+
+def _mapping(value: Any, label: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise _invalid(label + " must be an object")
+    try:
+        return dict(value)
+    except (TypeError, ValueError):
+        raise _invalid(label + " must be an object")
+
+
+def _json_safe(value: Any) -> Any:
+    try:
+        json.dumps(value, allow_nan=False)
+    except (TypeError, ValueError, OverflowError):
+        raise _invalid("request contains a non-JSON value")
+    return value
+
+
+def encode_frame(obj: Mapping[str, Any], max_bytes: int = MAX_FRAME_BYTES) -> bytes:
+    """Encode exactly one bounded newline-delimited JSON object."""
+
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 1:
+        raise _invalid("frame limit is invalid")
+    if not isinstance(obj, Mapping):
+        raise _invalid("frame must contain one JSON object")
+    try:
+        encoded = json.dumps(
+            dict(obj),
+            ensure_ascii=True,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8") + b"\n"
+    except (TypeError, ValueError, OverflowError):
+        raise _invalid("frame is not valid JSON")
+    if len(encoded) > max_bytes:
+        raise ManagedCLIError("invalid", "frame exceeds the one MiB limit", 2)
+    return encoded
+
+
+def _read_limited(stream: Any, limit: int) -> bytes | str:
+    try:
+        return stream.readline(limit + 1)
+    except TypeError:
+        # Small test streams sometimes expose readline() without a size
+        # argument.  Their read() seam remains bounded.
+        return stream.read(limit + 1)
+
+
+def _validate_frame_limit(max_bytes: Any) -> int:
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 1:
+        raise _invalid("frame limit is invalid")
+    return max_bytes
+
+
+def _decode_frame(payload: bytes, max_bytes: int) -> dict[str, Any]:
+    """Decode one complete bounded wire frame."""
+
+    if len(payload) > max_bytes:
+        raise _invalid("frame exceeds the one MiB limit")
+    if not payload or not payload.endswith(b"\n"):
+        raise _invalid("control frame is incomplete")
+    line = payload[:-1]
+    if not line or b"\n" in line or b"\r" in line:
+        raise _invalid("control frame must be one JSON line")
+
+    def reject_constant(_value: str) -> None:
+        raise ValueError("non-finite JSON number")
+
+    try:
+        decoded = line.decode("utf-8")
+        value = json.loads(decoded, parse_constant=reject_constant)
+    except (UnicodeDecodeError, ValueError, TypeError):
+        raise _invalid("control frame is not valid JSON")
+    if not isinstance(value, dict):
+        raise _invalid("control frame must contain one JSON object")
+    return value
+
+
+def read_frame(stream: Any, max_bytes: int = MAX_FRAME_BYTES) -> dict[str, Any]:
+    """Read and validate one newline-terminated object from ``stream``."""
+
+    max_bytes = _validate_frame_limit(max_bytes)
+    try:
+        raw = _read_limited(stream, max_bytes)
+    except socket.timeout:
+        raise _timeout("timed out waiting for a control frame")
+    except (OSError, ValueError):
+        raise ManagedCLIError("transport", "could not read control frame", 1)
+    if isinstance(raw, str):
+        try:
+            payload = raw.encode("utf-8")
+        except UnicodeEncodeError:
+            raise _invalid("control frame is not UTF-8")
+    elif isinstance(raw, (bytes, bytearray)):
+        payload = bytes(raw)
+    else:
+        raise ManagedCLIError("transport", "control stream returned invalid data", 1)
+    return _decode_frame(payload, max_bytes)
+
+
+def _read_socket_frame(connection: Any, max_bytes: int, deadline: float) -> dict[str, Any]:
+    """Read one frame with an absolute deadline, not idle recv timeouts."""
+
+    max_bytes = _validate_frame_limit(max_bytes)
+    buffered = bytearray()
+    while True:
+        remaining = _remaining(deadline, "managed operation timed out")
+        # Never ask recv for more than the amount that can still be accepted;
+        # a peer that omits a newline is rejected as soon as it crosses the
+        # bounded frame size.
+        recv_size = min(65536, max_bytes - len(buffered) + 1)
+        try:
+            connection.settimeout(remaining)
+            chunk = connection.recv(recv_size)
+        except socket.timeout:
+            raise _timeout("managed operation timed out")
+        except OSError:
+            raise ManagedCLIError("transport", "managed socket I/O failed", 1)
+        if not chunk:
+            raise _invalid("control frame is incomplete")
+        if not isinstance(chunk, (bytes, bytearray)):
+            raise ManagedCLIError("transport", "control stream returned invalid data", 1)
+        chunk = bytes(chunk)
+        newline = chunk.find(b"\n")
+        if newline >= 0:
+            candidate = bytes(buffered) + chunk[: newline + 1]
+            # Pipelining is deliberately outside this one-request boundary;
+            # reject bytes after the first frame instead of silently ignoring
+            # an extra command.
+            if newline + 1 != len(chunk):
+                raise _invalid("control frame must contain one JSON line")
+            return _decode_frame(candidate, max_bytes)
+        buffered.extend(chunk)
+        if len(buffered) > max_bytes:
+            raise _invalid("frame exceeds the one MiB limit")
+
+
+async def _read_async_socket_frame(
+    connection: Any, max_bytes: int, deadline: float
+) -> dict[str, Any]:
+    """Read one frame on the daemon's persistent event loop."""
+
+    max_bytes = _validate_frame_limit(max_bytes)
+    buffered = bytearray()
+    loop = asyncio.get_running_loop()
+    while True:
+        remaining = _remaining(deadline, "managed operation timed out")
+        recv_size = min(65536, max_bytes - len(buffered) + 1)
+        try:
+            chunk = await asyncio.wait_for(
+                loop.sock_recv(connection, recv_size), timeout=remaining
+            )
+        except asyncio.TimeoutError:
+            raise _timeout("managed operation timed out")
+        except OSError:
+            raise ManagedCLIError("transport", "managed socket I/O failed", 1)
+        if not chunk:
+            raise _invalid("control frame is incomplete")
+        newline = chunk.find(b"\n")
+        if newline >= 0:
+            candidate = bytes(buffered) + chunk[: newline + 1]
+            if newline + 1 != len(chunk):
+                raise _invalid("control frame must contain one JSON line")
+            return _decode_frame(candidate, max_bytes)
+        buffered.extend(chunk)
+        if len(buffered) > max_bytes:
+            raise _invalid("frame exceeds the one MiB limit")
+
+
+def _socket_path(value: Any) -> Path:
+    if isinstance(value, Path):
+        path = value
+    elif isinstance(value, str):
+        path = Path(value)
+    else:
+        raise _invalid("socket path is invalid")
+    if not path.is_absolute() or "\x00" in str(path):
+        raise _invalid("socket path must be absolute")
+    # AF_UNIX paths are bounded by the host kernel.  104 is conservative for
+    # Linux and leaves room for implementations with a shorter sockaddr.
+    if len(os.fsencode(str(path))) >= 104:
+        raise _invalid("socket path is too long")
+    return path
+
+
+def _uid() -> Optional[int]:
+    getuid = getattr(os, "getuid", None)
+    return int(getuid()) if getuid is not None else None
+
+
+def _lstat(path: Path) -> Optional[os.stat_result]:
+    """Return lstat data, distinguishing a missing component from failure."""
+
+    try:
+        return path.lstat()
+    except OSError as error:
+        if error.errno == errno.ENOENT:
+            return None
+        raise ManagedCLIError("permission", "socket path cannot be inspected", 1)
+
+
+def _check_path_chain(path: Path) -> None:
+    """Reject symlink/non-directory ancestors without resolving them."""
+
+    current = path
+    while True:
+        info = _lstat(current)
+        if info is not None:
+            if stat.S_ISLNK(info.st_mode):
+                raise ManagedCLIError("permission", "socket path has a symlink ancestor", 1)
+            if not stat.S_ISDIR(info.st_mode):
+                raise ManagedCLIError("permission", "socket path parent is not a directory", 1)
+        if current == current.parent:
+            return
+        current = current.parent
+
+
+def _secure_dir(path: Path, *, create: bool = False) -> None:
+    if create and _lstat(path) is None:
+        try:
+            path.mkdir(mode=0o700, exist_ok=False)
+        except FileExistsError:
+            pass
+        except OSError:
+            raise ManagedCLIError("permission", "could not create socket parent", 1)
+    try:
+        info = path.lstat()
+    except OSError:
+        raise ManagedCLIError("permission", "socket parent is unavailable", 1)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise ManagedCLIError("permission", "socket parent must be a real directory", 1)
+    if _uid() is not None and info.st_uid != _uid():
+        raise ManagedCLIError("permission", "socket parent is not owned by the current user", 1)
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        raise ManagedCLIError("permission", "socket parent must be owner-only", 1)
+
+
+def _prepare_socket_parent(path: Path) -> None:
+    parent = path.parent
+    # Detect every symlink ancestor without imposing private permissions on
+    # shared system ancestors such as /tmp.  The immediate socket parent is
+    # checked for owner-only mode after any missing components are created.
+    _check_path_chain(parent)
+    current = parent
+    missing: list[Path] = []
+    while _lstat(current) is None:
+        missing.append(current)
+        if current == current.parent:
+            break
+        current = current.parent
+    for directory in reversed(missing):
+        try:
+            directory.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+        except OSError:
+            raise ManagedCLIError("permission", "could not create socket parent", 1)
+    _check_path_chain(parent)
+    _secure_dir(parent)
+
+
+def _validate_client_parent(path: Path, *, require_private: bool) -> None:
+    """Validate a client path without following a symlinked directory."""
+
+    _check_path_chain(path.parent)
+    if require_private:
+        _secure_dir(path.parent)
+
+
+def _validate_request(request: Any) -> dict[str, Any]:
+    value = _mapping(request, "request")
+    missing = _REQUIRED_REQUEST_KEYS.difference(value)
+    if missing:
+        raise _invalid("request is missing required fields")
+    # Do not normalize old envelopes into the native shape.  In particular,
+    # schema 1 was a different ownership model with per-child runners and
+    # mailboxes; accepting it here would permit a caller to smuggle that
+    # prototype through a new daemon.  Unknown top-level fields are rejected
+    # for the same reason: this boundary has no migration semantics.
+    unknown = set(value).difference(_REQUEST_KEYS)
+    if unknown:
+        raise ManagedCLIError("schema-mismatch", "request shape is unsupported", 2)
+    if (
+        type(value.get("schema")) is not int
+        or value.get("schema") != SCHEMA_VERSION
+        or type(value.get("schema_version")) is not int
+        or value.get("schema_version") != NATIVE_SCHEMA_VERSION
+        or value.get("architecture") != NATIVE_ARCHITECTURE
+    ):
+        raise ManagedCLIError("schema-mismatch", "request schema is unsupported", 2)
+    _bounded_text(value.get("request_id"), "request ID")
+    _canonical_lane(value.get("lane"))
+    generation = value.get("generation")
+    if isinstance(generation, bool) or not isinstance(generation, (str, int, float)):
+        raise _invalid("generation is invalid")
+    if isinstance(generation, float) and not math.isfinite(generation):
+        raise _invalid("generation is invalid")
+    if isinstance(generation, str) and not generation:
+        raise _invalid("generation is invalid")
+    operation = _bounded_text(value.get("operation"), "operation")
+    if operation not in _REQUEST_OPERATIONS:
+        raise _invalid("operation is unsupported")
+    if operation in _OBSOLETE_OPERATIONS:
+        raise ManagedCLIError(
+            "migration-required",
+            "independent child-runner operation requires migration",
+            7,
+        )
+    _mapping(value.get("body"), "request body")
+    return value
+
+
+def _remaining(deadline: float, label: str) -> float:
+    value = deadline - time.monotonic()
+    if value <= 0:
+        raise _timeout(label)
+    return value
+
+
+def request_socket(
+    socket_path: str | os.PathLike[str],
+    request: Mapping[str, Any],
+    *,
+    connect_timeout: float = CONNECT_TIMEOUT,
+    operation_timeout: float = OPERATION_TIMEOUT,
+    max_bytes: int = MAX_FRAME_BYTES,
+    deadline: Optional[float] = None,
+) -> dict[str, Any]:
+    """Send one request to an owner-only Unix socket and receive one response."""
+
+    path = _socket_path(socket_path)
+    connect_timeout = _bounded_timeout(connect_timeout, "connect timeout", CONNECT_TIMEOUT)
+    operation_timeout = _bounded_timeout(
+        operation_timeout, "operation timeout", OPERATION_TIMEOUT
+    )
+    validated = _validate_request(request)
+    frame = encode_frame(validated, max_bytes=max_bytes)
+    # Connect, send, and receive share one absolute operation deadline.  The
+    # connect timeout is only a cap for the initial nonblocking-style socket
+    # wait; it must not reset the caller's budget before the request is sent.
+    if deadline is None:
+        deadline = time.monotonic() + operation_timeout
+    else:
+        if isinstance(deadline, bool):
+            raise _invalid("operation deadline is invalid")
+        try:
+            deadline = float(deadline)
+        except (OverflowError, TypeError, ValueError):
+            raise _invalid("operation deadline is invalid")
+        if not math.isfinite(deadline):
+            raise _invalid("operation deadline is invalid")
+    # The client follows the same owner-only parent rule as the server.  A
+    # missing endpoint is still allowed to reach ``connect`` so a caller gets
+    # a bounded transport result, but no symlinked/shared parent is accepted.
+    _validate_client_parent(path, require_private=True)
+    try:
+        info = _lstat(path)
+    except ManagedCLIError:
+        raise _runtime_refusal("permission-mismatch")
+    if info is not None:
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISSOCK(info.st_mode):
+            raise ManagedCLIError("permission", "managed socket is not a Unix socket", 1)
+        if _uid() is not None and info.st_uid != _uid():
+            raise ManagedCLIError("permission", "managed socket is not owner-owned", 1)
+        _validate_client_parent(path, require_private=True)
+        if stat.S_IMODE(info.st_mode) & 0o077:
+            raise ManagedCLIError("permission", "managed socket is not owner-only", 1)
+
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    response: dict[str, Any]
+    try:
+        client.settimeout(min(connect_timeout, _remaining(deadline, "managed operation timed out")))
+        try:
+            client.connect(str(path))
+        except socket.timeout:
+            raise _timeout("managed socket connection timed out")
+        except OSError:
+            raise ManagedCLIError("transport", "could not connect to managed socket", 1)
+        try:
+            client.settimeout(_remaining(deadline, "managed operation timed out"))
+            client.sendall(frame)
+            response = _read_socket_frame(client, max_bytes, deadline)
+        except socket.timeout:
+            raise _timeout("managed operation timed out")
+        except ManagedCLIError:
+            raise
+        except OSError:
+            raise ManagedCLIError("transport", "managed socket I/O failed", 1)
+    finally:
+        client.close()
+
+    # A path can be replaced between the preflight lstat and connect.  Check
+    # the actual endpoint again before trusting a response; a missing path is
+    # retained as a transport failure for real sockets but remains compatible
+    # with injected socket seams used by tests.
+    final_info = _lstat(path)
+    if final_info is not None:
+        if stat.S_ISLNK(final_info.st_mode) or not stat.S_ISSOCK(final_info.st_mode):
+            raise ManagedCLIError("permission", "managed socket is not a Unix socket", 1)
+        if _uid() is not None and final_info.st_uid != _uid():
+            raise ManagedCLIError("permission", "managed socket is not owner-owned", 1)
+        _validate_client_parent(path, require_private=True)
+        if stat.S_IMODE(final_info.st_mode) & 0o077:
+            raise ManagedCLIError("permission", "managed socket is not owner-only", 1)
+
+    if response.get("request_id") != validated["request_id"]:
+        raise ManagedCLIError("invalid", "response request ID does not match", 2)
+    return response
+
+
+def _run_awaitable(value: Any, deadline: Optional[float] = None) -> Any:
+    if not inspect.isawaitable(value):
+        return value
+
+    async def await_value() -> Any:
+        if deadline is None:
+            return await value
+        timeout = _remaining(deadline, "managed operation timed out")
+        try:
+            return await asyncio.wait_for(value, timeout=timeout)
+        except asyncio.TimeoutError:
+            raise _timeout("managed operation timed out")
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(await_value())
+    # This synchronous entry point must never manufacture a second event loop
+    # or hide a live controller task in a helper thread.  The daemon-facing
+    # owner of a persistent loop can await the same handler directly; callers
+    # that invoke this one-shot seam from an active loop get a stable refusal.
+    raise ManagedCLIError(
+        "unsupported", "async handler requires its owning event loop", 1
+    )
+
+
+def _handler_call(
+    handler: Callable[[Mapping[str, Any]], Any],
+    request: Mapping[str, Any],
+    deadline: Optional[float] = None,
+) -> Any:
+    """Invoke the one handler seam, bounding both sync and async handlers."""
+
+    if not callable(handler):
+        method = getattr(handler, "handle", None)
+        if callable(method):
+            handler = method
+        else:
+            raise ManagedCLIError("unsupported", "managed request handler is unavailable", 1)
+
+    # Controller implementations can receive the absolute deadline and stop
+    # their own awaits/side effects cooperatively.  Existing tiny fakes keep
+    # the original one-argument shape; inspect before invocation so a handler
+    # TypeError is never retried (which could duplicate a mutation).
+    pass_deadline = False
+    try:
+        parameters = inspect.signature(handler).parameters.values()
+        pass_deadline = any(
+            parameter.name == "deadline"
+            or parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+    except (TypeError, ValueError):
+        pass_deadline = False
+
+    if pass_deadline:
+        result = handler(request, deadline=deadline)
+    else:
+        result = handler(request)
+    # Synchronous handlers are intentionally inline: a deadline cannot safely
+    # terminate arbitrary Python code that might still be mutating state.  A
+    # real controller should use an owning persistent event loop and an async
+    # handler; finite dictionary-returning fakes remain a useful test seam.
+    return _run_awaitable(result, deadline)
+
+
+def _handler_target(handler: Any) -> Callable[..., Any]:
+    """Return the one callable owned by the configured handler seam."""
+
+    if callable(handler):
+        return handler
+    method = getattr(handler, "handle", None)
+    if callable(method):
+        return method
+    raise ManagedCLIError("unsupported", "managed request handler is unavailable", 1)
+
+
+def _handler_accepts_deadline(handler: Callable[..., Any]) -> bool:
+    try:
+        parameters = inspect.signature(handler).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        parameter.name == "deadline"
+        or parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters
+    )
+
+
+async def _handler_call_async(
+    handler: Any,
+    request: Mapping[str, Any],
+    deadline: float,
+) -> Any:
+    """Invoke an async daemon handler on the daemon's one owning loop.
+
+    The daemon never puts an arbitrary synchronous handler in a worker thread:
+    a thread could continue mutating durable state after the transport has
+    returned a timeout.  Small synchronous fakes are therefore run inline,
+    while production handlers should return an awaitable.  ``wait_for`` waits
+    for cancellation to propagate, including a handler's reconciliation
+    cleanup, before this coroutine returns and another request is admitted.
+    """
+
+    target = _handler_target(handler)
+    if _handler_accepts_deadline(target):
+        result = target(request, deadline=deadline)
+    else:
+        result = target(request)
+    if inspect.isawaitable(result):
+        try:
+            timeout = _remaining(deadline, "managed operation timed out")
+        except BaseException:
+            # A coroutine was created but cannot be admitted after the
+            # deadline.  Close it when possible so no detached work survives.
+            close = getattr(result, "close", None)
+            if callable(close):
+                close()
+            raise
+        try:
+            return await asyncio.wait_for(result, timeout=timeout)
+        except asyncio.TimeoutError:
+            # asyncio.wait_for cancels and awaits the child before raising;
+            # this is the quiescence boundary for the next mutation.
+            raise _timeout("managed operation timed out")
+    if time.monotonic() > deadline:
+        raise _timeout("managed operation timed out")
+    return result
+
+
+def _error_response(
+    request_id: Any, error: BaseException, generation: Any = None
+) -> dict[str, Any]:
+    code = getattr(error, "code", "unknown")
+    # Error text is intentionally constant.  A controller/adapter exception
+    # can carry a profile, session, payload, or credential in its message.
+    # Stable callers use ``code``; they never need that detail on the wire.
+    response = {
+        "schema": SCHEMA_VERSION,
+        "schema_version": NATIVE_SCHEMA_VERSION,
+        "architecture": NATIVE_ARCHITECTURE,
+        "request_id": request_id,
+        "ok": False,
+        "code": str(code),
+        "error": "managed request was refused",
+    }
+    if generation is not None:
+        response["generation"] = generation
+    return response
+
+
+def _normalise_response(
+    request: Mapping[str, Any], raw: Any, *, handler: Any = None
+) -> dict[str, Any]:
+    if raw is None:
+        raw = {}
+    if isinstance(raw, Mapping) and "ok" in raw:
+        response = dict(raw)
+    else:
+        response = {"ok": True, "result": raw}
+    # A handler is not allowed to relabel a legacy response as native by
+    # overwriting its marker.  Missing marker fields are supplied for the
+    # deliberately tiny injected-handler seam; any field that is present
+    # must already agree with the native wire contract, with schema values
+    # requiring the exact integer type (not ``2.0`` or ``True``).
+    if "schema" in response and (
+        type(response.get("schema")) is not int
+        or response.get("schema") != SCHEMA_VERSION
+    ):
+        raise ManagedCLIError("schema-mismatch", "handler response schema is unsupported", 2)
+    if "schema_version" in response and (
+        type(response.get("schema_version")) is not int
+        or response.get("schema_version") != NATIVE_SCHEMA_VERSION
+    ):
+        raise ManagedCLIError(
+            "schema-mismatch", "handler response schema version is unsupported", 2
+        )
+    if "architecture" in response and response.get("architecture") != NATIVE_ARCHITECTURE:
+        raise ManagedCLIError(
+            "schema-mismatch", "handler response architecture is unsupported", 2
+        )
+    response["schema"] = SCHEMA_VERSION
+    response["schema_version"] = NATIVE_SCHEMA_VERSION
+    response["architecture"] = NATIVE_ARCHITECTURE
+    if "request_id" in response and response["request_id"] != request["request_id"]:
+        raise ManagedCLIError("invalid", "handler response request ID does not match", 2)
+    response["request_id"] = request["request_id"]
+    response.setdefault("generation", request["generation"])
+    if not isinstance(response.get("ok"), bool):
+        raise ManagedCLIError("invalid", "handler response has invalid ok flag", 2)
+    _json_safe(response)
+    response = _force_unverified_status(request, response, handler)
+    encode_frame(response)
+    return response
+
+
+def _force_unverified_status(
+    request: Mapping[str, Any], response: dict[str, Any], handler: Any
+) -> dict[str, Any]:
+    if request.get("operation") != "status":
+        return response
+    # No implementation in this CLI is a genuine live capability evidence
+    # source.  A fake/injected handler may report useful roster data, but it
+    # cannot promote the live SDK state by returning a "verified" string.
+    if response.get("ok"):
+        result = response.get("result")
+        if isinstance(result, Mapping):
+            result_copy = dict(result)
+        else:
+            result_copy = {"value": result}
+        result_copy["live_sdk"] = "UNVERIFIED"
+        result_copy["live_capability"] = "UNVERIFIED"
+        result_copy["capability_status"] = "experimental"
+        result_copy["experimental"] = True
+        response["result"] = result_copy
+    # Keep the top-level field available to simple shell consumers too.
+    response["live_sdk"] = "UNVERIFIED"
+    response["live_capability"] = "UNVERIFIED"
+    response["capability_status"] = "experimental"
+    response["experimental"] = True
+    return response
+
+
+def _legacy_exit_code(response: Any) -> Optional[int]:
+    """Apply the private legacy ownership read convention.
+
+    The private read is intentionally stricter than the public command
+    envelope: only an affirmative, boolean presence answer is actionable.
+    Any refusal, missing field, conflicting field, or non-boolean value is
+    ownership-unknown and therefore returns ``None`` to the caller.
+    """
+
+    if not isinstance(response, Mapping) or response.get("ok") is not True:
+        return None
+    sources: list[Mapping[str, Any]] = [response]
+    result = response.get("result")
+    if isinstance(result, Mapping):
+        sources.append(result)
+
+    explicit: list[bool] = []
+    derived: list[bool] = []
+    for source in sources:
+        for key in ("present", "owner_present", "managed_owner_present", "pending_binding_present"):
+            if key not in source:
+                continue
+            value = source.get(key)
+            if not isinstance(value, bool):
+                return None
+            explicit.append(value)
+        flags: list[bool] = []
+        for key in ("managed_owner", "pending_binding"):
+            if key in source:
+                value = source.get(key)
+                if not isinstance(value, bool):
+                    return None
+                flags.append(value)
+        if flags:
+            derived.append(any(flags))
+    if explicit and any(value != explicit[0] for value in explicit):
+        return None
+    if derived and any(value != derived[0] for value in derived):
+        return None
+    if explicit and derived and explicit[0] != derived[0]:
+        return None
+    if not explicit and not derived:
+        return None
+    present = explicit[0] if explicit else derived[0]
+    return 0 if present else 8
+
+
+def _roster_refusal(code: str = "unknown") -> ManagedCLIError:
+    """Create a stable, value-free roster validation refusal."""
+
+    if code not in {
+        "invalid", "unknown", "ownership-conflict", "stale-generation",
+        "permission-mismatch", "unsupported", "schema-mismatch", "migration-required",
+    }:
+        code = "unknown"
+    return ManagedCLIError(
+        code,
+        "managed roster validation is not confirmed",
+        2 if code in {"invalid", "schema-mismatch", "migration-required"} else 1,
+    )
+
+
+def _roster_pick_alias(
+    source: Mapping[str, Any], keys: Sequence[str], label: str,
+    *, required: bool = True,
+) -> Any:
+    """Read one value from equivalent spellings and reject disagreement."""
+
+    values = [source[key] for key in keys if key in source]
+    if not values:
+        if required:
+            raise _roster_refusal("invalid")
+        return None
+    first = values[0]
+    if any(value != first for value in values[1:]):
+        raise _roster_refusal("invalid")
+    return first
+
+
+def _roster_request_values(
+    request: Mapping[str, Any],
+) -> tuple[str, str, str, dict[str, Any]]:
+    """Validate the guard's small roster request without trusting hints."""
+
+    body = _mapping(request.get("body"), "request body")
+    if any(not isinstance(key, str) or key not in _ROSTER_BODY_KEYS for key in body):
+        raise _roster_refusal("invalid")
+    participant_uuid = _roster_pick_alias(
+        body,
+        ("participant_uuid", "participant", "session_uuid", "session_id"),
+        "participant UUID",
+    )
+    session_name = _roster_pick_alias(
+        body, ("session_name", "session", "name"), "session name"
+    )
+    try:
+        participant_uuid = _bounded_text(
+            participant_uuid, "participant UUID", max_bytes=_MAX_ID_BYTES
+        )
+        session_name = _bounded_text(
+            session_name, "session name", max_bytes=_MAX_ID_BYTES
+        )
+    except ManagedCLIError:
+        raise _roster_refusal("invalid")
+
+    try:
+        lane = _canonical_lane(request.get("lane"))
+    except ManagedCLIError:
+        raise _roster_refusal("invalid")
+    bound_lane = _roster_pick_alias(
+        body, ("bound_lane",), "bound lane", required=False
+    )
+    if bound_lane is None:
+        bound_lane = lane
+    try:
+        bound_lane = _canonical_lane(bound_lane)
+    except ManagedCLIError:
+        raise _roster_refusal("invalid")
+    if bound_lane.casefold() != lane.casefold():
+        raise _roster_refusal("ownership-conflict")
+
+    # Optional process fields are consistency checks only.  The live process
+    # identity is always read again from ``process_identity``/the OS below;
+    # no caller/environment token becomes proof merely by being present.
+    context: dict[str, Any] = {}
+    context_pid = _roster_pick_alias(
+        body, ("runner_pid", "pid"), "runner PID", required=False
+    )
+    context_token = _roster_pick_alias(
+        body, ("runner_start_token", "start_token"),
+        "runner start identity", required=False
+    )
+    context_group = _roster_pick_alias(
+        body, ("runner_pgid", "pgid", "process_group_id"),
+        "runner process group", required=False
+    )
+    nested_identity = body.get("process_identity")
+    if nested_identity is not None:
+        if not isinstance(nested_identity, Mapping):
+            raise _roster_refusal("invalid")
+        nested = dict(nested_identity)
+        if any(not isinstance(key, str) for key in nested):
+            raise _roster_refusal("invalid")
+        nested_pid = _roster_pick_alias(
+            nested, ("runner_pid", "pid"), "runner PID", required=False
+        )
+        nested_token = _roster_pick_alias(
+            nested, ("runner_start_token", "start_token", "process_start_token"),
+            "runner start identity", required=False
+        )
+        nested_group = _roster_pick_alias(
+            nested, ("runner_pgid", "pgid", "process_group_id"),
+            "runner process group", required=False
+        )
+        for label, current, replacement in (
+            ("runner PID", context_pid, nested_pid),
+            ("runner start identity", context_token, nested_token),
+            ("runner process group", context_group, nested_group),
+        ):
+            if current is not None and replacement is not None and current != replacement:
+                raise _roster_refusal("invalid")
+            if current is None:
+                if label == "runner PID":
+                    context_pid = replacement
+                elif label == "runner start identity":
+                    context_token = replacement
+                else:
+                    context_group = replacement
+    if context_pid is not None:
+        if isinstance(context_pid, bool) or not isinstance(context_pid, int) or context_pid <= 0:
+            raise _roster_refusal("invalid")
+        context["pid"] = context_pid
+    if context_token is not None:
+        try:
+            context["start_token"] = _bounded_text(
+                context_token, "runner start identity", max_bytes=_MAX_TOKEN_BYTES
+            )
+        except ManagedCLIError:
+            raise _roster_refusal("invalid")
+    if context_group is not None:
+        if isinstance(context_group, bool) or not isinstance(context_group, int) or context_group <= 0:
+            raise _roster_refusal("invalid")
+        context["pgid"] = context_group
+    if ("pid" in context) != ("start_token" in context):
+        raise _roster_refusal("invalid")
+    return participant_uuid, session_name, bound_lane, context
+
+
+@contextlib.contextmanager
+def _state_shared_read_context(state_store: Any, deadline: Optional[float]) -> Any:
+    """Hold only a bounded shared state read lock, when the store exposes one."""
+
+    lock = getattr(state_store, "locked", None)
+    if not callable(lock):
+        # Small injected read-only stores need not implement the filesystem
+        # lock seam.  The production ManagedStateStore does, and is handled
+        # with an absolute deadline below.
+        yield state_store
+        return
+    try:
+        if deadline is None:
+            try:
+                context = lock(shared=True)
+            except TypeError:
+                # Compatibility with a deliberately tiny injected read seam;
+                # do not use this fallback for a deadline-bearing call.
+                context = lock()
+        else:
+            _remaining(deadline, "managed roster read timed out")
+            try:
+                context = lock(shared=True, deadline=deadline)
+            except TypeError:
+                raise ManagedCLIError(
+                    "unsupported", "managed roster read lock has no deadline", 1
+                )
+    except ManagedCLIError:
+        raise
+    except Exception:
+        raise _roster_refusal("unknown")
+    try:
+        with context:
+            yield state_store
+    except ManagedCLIError:
+        raise
+    except Exception:
+        raise _roster_refusal("unknown")
+
+
+_ROSTER_READ_UNAVAILABLE = object()
+
+
+def _roster_read_method(
+    state_store: Any, names: Sequence[str], *arguments: Any,
+) -> Any:
+    """Call the first explicitly read-only store seam available."""
+
+    for name in names:
+        method = getattr(state_store, name, None)
+        if not callable(method):
+            continue
+        try:
+            return method(*arguments)
+        except (KeyError, FileNotFoundError, NotADirectoryError):
+            return None
+        except Exception:
+            raise _roster_refusal("unknown")
+    return _ROSTER_READ_UNAVAILABLE
+
+
+def _roster_read_snapshot(
+    state_store: Any, *, deadline: Optional[float] = None,
+) -> tuple[Any, Any, Any]:
+    """Read owner, runtime, and controller projection under one shared read."""
+
+    if deadline is not None:
+        _remaining(deadline, "managed roster read timed out")
+    if isinstance(state_store, Mapping):
+        owner = state_store.get("owner.json", state_store.get("owner"))
+        runtime = state_store.get("runtime.json", state_store.get("runtime"))
+        controller = state_store.get(
+            "controller.json",
+            state_store.get("controller", state_store.get("roster")),
+        )
+        return owner, runtime, controller
+
+    validate = getattr(state_store, "validate_layout", None)
+    if callable(validate):
+        try:
+            validate()
+        except Exception:
+            raise _roster_refusal("unknown")
+
+    identity = getattr(state_store, "identity", None)
+    state_root = getattr(identity, "state_root", None)
+    read_path = getattr(state_store, "_read_path", None)
+    if state_root is not None and callable(read_path):
+        try:
+            root = Path(state_root)
+            owner_path = root / "owner.json"
+            owner_info = owner_path.lstat()
+        except FileNotFoundError:
+            # No owner file is the only filesystem-level confirmed absence.
+            return None, None, None
+        except OSError:
+            raise _roster_refusal("unknown")
+        if stat.S_ISLNK(owner_info.st_mode) or not stat.S_ISREG(owner_info.st_mode):
+            raise _roster_refusal("permission-mismatch")
+        with _state_shared_read_context(state_store, deadline):
+            try:
+                owner = read_path(owner_path)
+                runtime = read_path(root / "runtime.json")
+                controller = read_path(root / "controller.json")
+            except Exception:
+                raise _roster_refusal("unknown")
+        if deadline is not None:
+            _remaining(deadline, "managed roster read timed out")
+        return owner, runtime, controller
+
+    # Narrow in-memory seams used by direct tests can expose read methods
+    # rather than a WorkspaceIdentity.  Keep those calls beneath a shared
+    # lock when one is available and never call a controller status method,
+    # which could acquire a mutation/global operation lock.
+    with _state_shared_read_context(state_store, deadline):
+        cached_owner = getattr(state_store, "owner_record", _ROSTER_READ_UNAVAILABLE)
+        if callable(cached_owner):
+            cached_owner = _ROSTER_READ_UNAVAILABLE
+        owner = _roster_read_method(state_store, ("read_owner",),)
+        if owner is _ROSTER_READ_UNAVAILABLE:
+            if cached_owner is not _ROSTER_READ_UNAVAILABLE:
+                owner = cached_owner
+            else:
+                owner = getattr(state_store, "owner", _ROSTER_READ_UNAVAILABLE)
+                if callable(owner):
+                    owner = _ROSTER_READ_UNAVAILABLE
+        if owner is _ROSTER_READ_UNAVAILABLE:
+            owner = _roster_read_method(state_store, ("read_json",), "owner.json")
+        if owner is _ROSTER_READ_UNAVAILABLE:
+            raise _roster_refusal("unsupported")
+        if owner is None or owner == {}:
+            return owner, None, None
+
+        runtime = _roster_read_method(state_store, ("read_runtime",),)
+        if runtime is _ROSTER_READ_UNAVAILABLE:
+            runtime = _roster_read_method(state_store, ("read_json",), "runtime.json")
+        if runtime is _ROSTER_READ_UNAVAILABLE:
+            runtime = getattr(state_store, "runtime", None)
+
+        controller = _roster_read_method(
+            state_store, ("read_controller", "read_roster"),
+        )
+        if controller is _ROSTER_READ_UNAVAILABLE:
+            controller = getattr(state_store, "controller", _ROSTER_READ_UNAVAILABLE)
+        if controller is _ROSTER_READ_UNAVAILABLE:
+            controller = getattr(state_store, "roster", _ROSTER_READ_UNAVAILABLE)
+        if controller is _ROSTER_READ_UNAVAILABLE:
+            controller = _roster_read_method(
+                state_store, ("read_json",), "controller.json"
+            )
+        if controller is _ROSTER_READ_UNAVAILABLE:
+            controller = _roster_read_method(state_store, ("read_json",), "roster.json")
+        if controller is _ROSTER_READ_UNAVAILABLE:
+            controller = None
+    if deadline is not None:
+        _remaining(deadline, "managed roster read timed out")
+    return owner, None if runtime is _ROSTER_READ_UNAVAILABLE else runtime, controller
+
+
+def _roster_owner_projection(
+    owner: Any, request: Mapping[str, Any], bound_lane: str,
+    identity: Any = None,
+) -> Optional[dict[str, Any]]:
+    """Validate the current managed owner, or classify confirmed legacy absence."""
+
+    if owner is None or owner == {}:
+        return None
+    if not isinstance(owner, Mapping):
+        raise _roster_refusal("invalid")
+    value = dict(owner)
+    mode = value.get("mode")
+    if mode == "legacy-lease":
+        # A complete ordinary legacy lease is confirmed unmanaged for this
+        # managed roster read.  A partial lease is corruption, not absence.
+        required = {
+            "mode", "pid", "start_token", "pgid", "lane", "lane_key",
+            "host", "created_at",
+        }
+        if not required.issubset(value):
+            raise _roster_refusal("invalid")
+        try:
+            lane = _canonical_lane(value["lane"])
+            _bounded_text(value["start_token"], "legacy owner identity", max_bytes=_MAX_TOKEN_BYTES)
+            host = _bounded_text(value["host"], "owner host", max_bytes=_MAX_ID_BYTES)
+        except ManagedCLIError:
+            raise _roster_refusal("invalid")
+        if (
+            isinstance(value["pid"], bool) or not isinstance(value["pid"], int)
+            or value["pid"] <= 0
+            or isinstance(value["pgid"], bool) or not isinstance(value["pgid"], int)
+            or value["pgid"] <= 0
+            or value.get("lane_key") != lane.casefold()
+            or not isinstance(value.get("created_at"), (int, float))
+            or isinstance(value.get("created_at"), bool)
+        ):
+            raise _roster_refusal("invalid")
+        return None
+    if mode != "managed":
+        # Pending launch is still an ownership binding, but it has no current
+        # roster to prove.  It must not be downgraded to exit-8 absence.
+        raise _roster_refusal("ownership-conflict")
+    required = {
+        "mode", "daemon_id", "generation", "lane", "lane_key", "host",
+        "process_domain", "created_at",
+    }
+    if not required.issubset(value):
+        raise _roster_refusal("invalid")
+    daemon_id = value.get("daemon_id")
+    try:
+        daemon_id = _bounded_text(daemon_id, "managed owner ID", max_bytes=_MAX_ID_BYTES)
+    except ManagedCLIError:
+        raise _roster_refusal("invalid")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", daemon_id):
+        raise _roster_refusal("invalid")
+    generation = value.get("generation")
+    if isinstance(generation, bool) or not isinstance(generation, int) or generation < 1:
+        raise _roster_refusal("invalid")
+    try:
+        owner_lane = _canonical_lane(value.get("lane"))
+    except ManagedCLIError:
+        raise _roster_refusal("invalid")
+    lane_key = value.get("lane_key")
+    if not isinstance(lane_key, str) or lane_key != owner_lane.casefold():
+        raise _roster_refusal("invalid")
+    if owner_lane.casefold() != request["lane"].casefold() or bound_lane.casefold() != owner_lane.casefold():
+        raise _roster_refusal("ownership-conflict")
+    try:
+        host = _bounded_text(value.get("host"), "owner host", max_bytes=_MAX_ID_BYTES)
+    except ManagedCLIError:
+        raise _roster_refusal("invalid")
+    try:
+        process_domain = _bounded_text(
+            value.get("process_domain"),
+            "owner process domain",
+            max_bytes=_MAX_TOKEN_BYTES,
+        )
+        local_process_domain = _current_process_domain()
+    except ManagedCLIError:
+        raise _roster_refusal("unknown")
+    if process_domain != local_process_domain:
+        raise _roster_refusal("unknown")
+    if identity is not None and getattr(identity, "host", host) != host:
+        raise _roster_refusal("ownership-conflict")
+    created_at = value.get("created_at")
+    if isinstance(created_at, bool) or not isinstance(created_at, (int, float)):
+        raise _roster_refusal("invalid")
+    try:
+        if not math.isfinite(float(created_at)):
+            raise ValueError
+    except (OverflowError, TypeError, ValueError):
+        raise _roster_refusal("invalid")
+    return {
+        "mode": "managed",
+        "daemon_id": daemon_id,
+        "generation": generation,
+        "lane": owner_lane,
+        "lane_key": lane_key,
+        "host": host,
+        "process_domain": process_domain,
+        "created_at": created_at,
+    }
+
+
+def _roster_runtime_projection(
+    runtime: Any, owner: Mapping[str, Any], request: Mapping[str, Any],
+    identity: Any = None,
+) -> dict[str, Any]:
+    """Validate the exact durable runtime projection without opening a socket."""
+
+    if not isinstance(runtime, Mapping) or set(runtime) != set(_ROSTER_RUNTIME_KEYS):
+        raise _roster_refusal("invalid")
+    value = dict(runtime)
+    if value.get("version") != 1:
+        raise _roster_refusal("invalid")
+    daemon_id = value.get("daemon_id")
+    try:
+        daemon_id = _bounded_text(daemon_id, "runtime daemon ID", max_bytes=_MAX_ID_BYTES)
+        lane = _canonical_lane(value.get("lane"))
+        host = _bounded_text(value.get("host"), "runtime host", max_bytes=_MAX_ID_BYTES)
+        start_token = _bounded_text(
+            value.get("start_token"), "runtime start identity", max_bytes=_MAX_TOKEN_BYTES
+        )
+        socket_value = _socket_path(value.get("socket_path"))
+    except ManagedCLIError:
+        raise _roster_refusal("invalid")
+    try:
+        process_domain = _bounded_text(
+            value.get("process_domain"),
+            "runtime process domain",
+            max_bytes=_MAX_TOKEN_BYTES,
+        )
+        local_process_domain = _current_process_domain()
+    except ManagedCLIError:
+        raise _roster_refusal("unknown")
+    if process_domain != local_process_domain:
+        raise _roster_refusal("unknown")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", daemon_id):
+        raise _roster_refusal("invalid")
+    generation = value.get("generation")
+    pid = value.get("pid")
+    pgid = value.get("pgid")
+    timestamp = value.get("timestamp")
+    if (
+        isinstance(generation, bool) or not isinstance(generation, int) or generation < 1
+        or isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0
+        or isinstance(pgid, bool) or not isinstance(pgid, int) or pgid <= 0
+        or not isinstance(value.get("lane_key"), str)
+        or value.get("lane_key") != lane.casefold()
+        or not isinstance(timestamp, (int, float)) or isinstance(timestamp, bool)
+    ):
+        raise _roster_refusal("invalid")
+    try:
+        if not math.isfinite(float(timestamp)):
+            raise ValueError
+    except (OverflowError, TypeError, ValueError):
+        raise _roster_refusal("invalid")
+    owner_host = owner.get("host")
+    if owner.get("process_domain") != process_domain:
+        raise _roster_refusal("unknown")
+    if (
+        daemon_id != owner["daemon_id"]
+        or generation != owner["generation"]
+        or lane.casefold() != request["lane"].casefold()
+        or (owner_host is not None and host != owner_host)
+    ):
+        raise _roster_refusal("stale-generation" if generation != owner["generation"] else "ownership-conflict")
+    if identity is not None:
+        if getattr(identity, "lane_key", request["lane"].casefold()) != request["lane"].casefold():
+            raise _roster_refusal("ownership-conflict")
+        identity_host = getattr(identity, "host", host)
+        if identity_host != host:
+            raise _roster_refusal("ownership-conflict")
+    try:
+        canonical_socket = socket_value.resolve(strict=False)
+    except (OSError, RuntimeError):
+        raise _roster_refusal("invalid")
+    if canonical_socket != socket_value:
+        raise _roster_refusal("permission-mismatch")
+    expected_generation = request.get("generation")
+    if expected_generation not in (None, 0, "0") and expected_generation != generation:
+        raise _roster_refusal("stale-generation")
+    return value
+
+
+def _roster_session_name(item: Mapping[str, Any]) -> str:
+    """Extract one durable native session name and reject conflicting copies."""
+
+    candidates: list[Any] = []
+    for source in (item, item.get("metadata")):
+        if not isinstance(source, Mapping):
+            continue
+        for key in ("session_name", "session", "name"):
+            if key in source:
+                candidates.append(source[key])
+        for nested_key in ("runner_spec", "runner", "runner_process"):
+            nested = source.get(nested_key)
+            if isinstance(nested, Mapping):
+                for key in ("session_name", "session", "name"):
+                    if key in nested:
+                        candidates.append(nested[key])
+    if not candidates or any(value != candidates[0] for value in candidates[1:]):
+        raise _roster_refusal("invalid")
+    try:
+        return _bounded_text(candidates[0], "stored session name", max_bytes=_MAX_ID_BYTES)
+    except ManagedCLIError:
+        raise _roster_refusal("invalid")
+
+
+def _roster_runner_process(item: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Locate the durable runner process evidence for one participant."""
+
+    sources: list[Any] = [item.get("runner_process"), item.get("process")]
+    metadata = item.get("metadata")
+    if isinstance(metadata, Mapping):
+        sources.extend(
+            [metadata.get("runner_process"), metadata.get("process"), metadata.get("runner")]
+        )
+        evidence = metadata.get("evidence")
+        if isinstance(evidence, Mapping):
+            sources.extend([evidence.get("process"), evidence.get("runner_process")])
+        runner_spec = metadata.get("runner_spec")
+        if isinstance(runner_spec, Mapping):
+            sources.extend([runner_spec.get("runner_process"), runner_spec.get("process")])
+    for source in sources:
+        if source is not None:
+            if not isinstance(source, Mapping):
+                raise _roster_refusal("invalid")
+            return source
+    raise _roster_refusal("unknown")
+
+
+def _roster_validate_runner(
+    process: Mapping[str, Any], context: Mapping[str, Any], *,
+    process_identity: Optional[Callable[..., Any]],
+    deadline: Optional[float],
+) -> tuple[int, str]:
+    """Require the target runner's live PID/start identity at the guard edge."""
+
+    pid = _roster_pick_alias(
+        process, ("pid", "runner_pid"), "runner PID"
+    )
+    token = _roster_pick_alias(
+        process,
+        ("process_start_token", "start_token", "runner_start_token"),
+        "runner start identity",
+    )
+    # The prompt-admission proof must carry the canonical owned process-group
+    # evidence.  A missing group, a synthetic string, or an omitted ownership
+    # bit is unknown; accepting it would let a same-PID runner pass without
+    # proving that it is still in the enrolled process group.
+    pgid = _roster_pick_alias(
+        process, ("process_group_id", "pgid", "runner_pgid"),
+        "runner process group"
+    )
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        raise _roster_refusal("invalid")
+    try:
+        token = _bounded_text(token, "runner start identity", max_bytes=_MAX_TOKEN_BYTES)
+    except ManagedCLIError:
+        raise _roster_refusal("invalid")
+    if isinstance(pgid, bool) or not isinstance(pgid, int) or pgid <= 0:
+        raise _roster_refusal("invalid")
+    if process.get("process_group_owned") is not True:
+        raise _roster_refusal("unknown")
+    if process.get("exited") is True or process.get("group_excluded") is True:
+        raise _roster_refusal("stale-generation")
+    if context:
+        if context.get("pid") != pid or context.get("start_token") != token:
+            raise _roster_refusal("ownership-conflict")
+        if "pgid" in context and context["pgid"] != pgid:
+            raise _roster_refusal("ownership-conflict")
+    alive, actual_token, actual_group = _observe_process_identity(
+        pid, process_identity=process_identity, deadline=deadline
+    )
+    if not alive or not isinstance(actual_token, str):
+        raise _roster_refusal("unknown")
+    if actual_token != token:
+        raise _roster_refusal("ownership-conflict")
+    if actual_group != pgid:
+        raise _roster_refusal("ownership-conflict")
+    return pid, token
+
+
+def _roster_controller_participants(
+    controller: Any, owner_generation: int,
+) -> list[Mapping[str, Any]]:
+    """Read the current, non-archived durable participant roster."""
+
+    # The prompt guard consumes only the versioned native durable envelope.
+    # A bare list, an old ``schema`` field, or the former ``roster`` alias is
+    # not enough to establish ownership and is never upgraded in place.
+    if not isinstance(controller, Mapping):
+        raise _roster_refusal("schema-mismatch")
+    if (
+        "schema" in controller
+        or type(controller.get("schema_version")) is not int
+        or controller.get("schema_version") != NATIVE_SCHEMA_VERSION
+        or controller.get("architecture") != NATIVE_ARCHITECTURE
+        or "roster" in controller
+        or "participants" not in controller
+    ):
+        raise _roster_refusal("schema-mismatch")
+    generation = controller.get("generation")
+    if generation is None or (
+        type(generation) is not int or generation != owner_generation
+    ):
+        raise _roster_refusal("stale-generation")
+    participants = controller.get("participants")
+    if not isinstance(participants, list) or not participants:
+        raise _roster_refusal("invalid")
+    result: list[Mapping[str, Any]] = []
+    ids: set[str] = set()
+    sessions: set[str] = set()
+    names: list[str] = []
+    for item in participants:
+        if not isinstance(item, Mapping):
+            raise _roster_refusal("invalid")
+        metadata = item.get("metadata")
+        if metadata is not None and not isinstance(metadata, Mapping):
+            raise _roster_refusal("invalid")
+        participant_id = item.get("participant_id", item.get("id"))
+        if participant_id is not None:
+            try:
+                participant_id = _bounded_text(
+                    participant_id, "participant ID", max_bytes=_MAX_ID_BYTES
+                )
+            except ManagedCLIError:
+                raise _roster_refusal("invalid")
+            if participant_id in ids:
+                raise _roster_refusal("invalid")
+            ids.add(participant_id)
+        session_uuid = _roster_pick_alias(
+            item, ("session_id", "session_uuid", "native_session_id", "uuid"),
+            "participant UUID",
+        )
+        try:
+            session_uuid = _bounded_text(
+                session_uuid, "participant UUID", max_bytes=_MAX_ID_BYTES
+            )
+        except ManagedCLIError:
+            raise _roster_refusal("invalid")
+        folded_session = session_uuid.casefold()
+        if folded_session in sessions:
+            raise _roster_refusal("invalid")
+        sessions.add(folded_session)
+        state = item.get("state")
+        if state is not None and (
+            not isinstance(state, str) or state.casefold() in {"completed", "stopped"}
+        ):
+            raise _roster_refusal("stale-generation" if isinstance(state, str) else "invalid")
+        name = _roster_session_name(item)
+        names.append(name)
+        result.append(item)
+    if len(set(names)) != len(names):
+        raise _roster_refusal("ownership-conflict")
+    return result
+
+
+def durable_roster_handler(
+    request: Mapping[str, Any], *, state_store: Any = None,
+    env: Optional[Mapping[str, str]] = None, helper: Any = None,
+    runner: Optional[Callable[..., Any]] = None,
+    deadline: Optional[float] = None,
+    process_identity: Optional[Callable[..., Any]] = None,
+) -> dict[str, Any]:
+    """Validate one managed participant using bounded durable reads only."""
+
+    validated = _validate_request(request)
+    if validated.get("operation") != "roster-validate":
+        raise _roster_refusal("invalid")
+    participant_uuid, session_name, bound_lane, context = _roster_request_values(validated)
+    if deadline is not None:
+        _remaining(deadline, "managed roster read timed out")
+    if state_store is None:
+        try:
+            state_store = _resolve_state_store(
+                validated, env=env, helper=helper, runner=runner
+            )
+        except ManagedCLIError as error:
+            if getattr(error, "code", None) == "absent" or getattr(error, "exit_code", None) == 8:
+                return {"ok": True, "absent": True}
+            raise _roster_refusal("unknown")
+    owner, runtime, controller = _roster_read_snapshot(state_store, deadline=deadline)
+    # Some supported in-memory state adapters expose their already-read owner
+    # projection as ``owner_record`` while their generic snapshot seam reports
+    # an absent file.  Prefer that explicit durable projection when present;
+    # never synthesize ownership from an environment hint or a guessed lane.
+    if owner is None and not isinstance(state_store, Mapping):
+        owner_projection_hint = getattr(state_store, "owner_record", None)
+        if isinstance(owner_projection_hint, Mapping) and owner_projection_hint:
+            owner = owner_projection_hint
+    identity = getattr(state_store, "identity", None)
+    owner_projection = _roster_owner_projection(
+        owner, validated, bound_lane, identity
+    )
+    if owner_projection is None:
+        return {"ok": True, "absent": True}
+    if runtime is None:
+        raise _roster_refusal("unknown")
+    runtime_projection = _roster_runtime_projection(
+        runtime, owner_projection, validated, identity
+    )
+    participants = _roster_controller_participants(
+        controller, owner_projection["generation"]
+    )
+    target: Optional[Mapping[str, Any]] = None
+    for item in participants:
+        candidate = _roster_pick_alias(
+            item,
+            ("session_id", "session_uuid", "native_session_id", "uuid"),
+            "participant UUID",
+        )
+        if isinstance(candidate, str) and candidate.casefold() == participant_uuid.casefold():
+            if target is not None:
+                raise _roster_refusal("ownership-conflict")
+            target = item
+    if target is None:
+        raise _roster_refusal("ownership-conflict")
+    target_name = _roster_session_name(target)
+    if target_name != session_name:
+        raise _roster_refusal("ownership-conflict")
+    process = _roster_runner_process(target)
+    _roster_validate_runner(
+        process, context, process_identity=process_identity, deadline=deadline
+    )
+    if deadline is not None:
+        _remaining(deadline, "managed roster read timed out")
+    # Keep the guard response deliberately small: it proves the exact fields
+    # that lanes-edit.sh consumes, without returning PID/start-token/process
+    # evidence or any other session/runtime metadata.
+    result = {
+        "mode": "managed",
+        "lane": owner_projection["lane"],
+        "bound_lane": bound_lane,
+        "participant_uuid": participant_uuid,
+        "session_name": session_name,
+        "owner": owner_projection["daemon_id"],
+        "generation": owner_projection["generation"],
+    }
+    response = {
+        "ok": True,
+        "valid": True,
+        "mode": result["mode"],
+        "lane": result["lane"],
+        "bound_lane": result["bound_lane"],
+        "participant_uuid": result["participant_uuid"],
+        "session_name": result["session_name"],
+        "participant": result["participant_uuid"],
+        "session": result["session_name"],
+        "owner": result["owner"],
+        "generation": result["generation"],
+        "result": result,
+    }
+    del runtime_projection
+    return response
+
+
+# Keep operation-name aliases for callers that import the internal check as a
+# function, while the CLI route remains hidden from public help.
+roster_validate = durable_roster_handler
+managed_roster_validate = durable_roster_handler
+
+
+def _roster_exit_code(response: Any) -> Optional[int]:
+    """Apply the private roster convention: valid 0, absent 8, otherwise fail."""
+
+    if not isinstance(response, Mapping) or response.get("ok") is not True:
+        if isinstance(response, Mapping):
+            # The prompt hook has one refusal surface: an unproven roster is
+            # a guard refusal (exit 2).  Preserve exit 8 exclusively for the
+            # explicit confirmed-absence path above; an unknown identity must
+            # never fall through to the generic transport code 1.
+            code = _response_code(response)
+            return 2 if code == "unknown" else _response_exit_code(response)
+        return None
+    sources: list[Mapping[str, Any]] = [response]
+    result = response.get("result")
+    if isinstance(result, Mapping):
+        sources.append(result)
+    absent: list[bool] = []
+    valid: list[bool] = []
+    for source in sources:
+        for key, values in (("absent", absent), ("valid", valid)):
+            if key not in source:
+                continue
+            value = source.get(key)
+            if not isinstance(value, bool):
+                return None
+            values.append(value)
+    if absent and any(value != absent[0] for value in absent):
+        return None
+    if valid and any(value != valid[0] for value in valid):
+        return None
+    if absent and valid and absent[0] == valid[0]:
+        return None
+    if absent:
+        return 8 if absent[0] else None
+    if not valid or valid[0] is not True:
+        return None
+    required = ("mode", "lane", "bound_lane", "participant_uuid", "session_name", "owner")
+    # A simple legacy response may be accepted by the shell helper, but the
+    # production durable route always emits the managed fields above.
+    if not all(any(key in source for source in sources) for key in required):
+        return None
+    return 0
+
+
+def _owner_presence(record: Any) -> bool:
+    """Classify a validated durable owner projection without exposing it."""
+
+    if record is None:
+        return False
+    if not isinstance(record, Mapping):
+        raise ManagedCLIError("unknown", "managed ownership evidence is malformed", 1)
+    if not record:
+        return False
+    mode = record.get("mode")
+    if mode == "managed":
+        daemon_id = record.get("daemon_id")
+        if daemon_id is not None and (
+            not isinstance(daemon_id, str) or not daemon_id or "\x00" in daemon_id
+        ):
+            raise ManagedCLIError("unknown", "managed ownership evidence is malformed", 1)
+        generation = record.get("generation")
+        if generation is not None and (
+            isinstance(generation, bool) or not isinstance(generation, int) or generation < 1
+        ):
+            raise ManagedCLIError("unknown", "managed ownership evidence is malformed", 1)
+        return True
+    if mode == "legacy-lease":
+        # The private check asks whether managed ownership blocks a legacy
+        # side effect.  A legacy lease is not itself managed ownership.
+        return False
+    if mode in {
+        "pending-launch",
+        "pending-managed",
+        "managed-pending",
+        "pending-binding",
+        "pending_binding",
+    }:
+        return True
+    if mode == "pending":
+        binding = record.get("binding")
+        if record.get("managed") is True or (
+            isinstance(binding, Mapping) and binding.get("managed") is True
+        ):
+            return True
+        raise ManagedCLIError("unknown", "managed ownership evidence is ambiguous", 1)
+    if mode in (None, ""):
+        raise ManagedCLIError("unknown", "managed ownership evidence is incomplete", 1)
+    raise ManagedCLIError("unknown", "managed ownership evidence is unsupported", 1)
+
+
+def _durable_owner_record(
+    request: Mapping[str, Any],
+    *,
+    state_store: Any = None,
+    env: Optional[Mapping[str, str]] = None,
+    helper: Any = None,
+    runner: Optional[Callable[..., Any]] = None,
+) -> Any:
+    """Read the state owner record without creating or mutating state."""
+
+    if state_store is None:
+        try:
+            from lane_managed_state import ManagedStateStore, resolve_workspace
+
+            identity = resolve_workspace(
+                request["lane"], env=env, helper=helper, runner=runner
+            )
+            state_store = ManagedStateStore(identity)
+        except Exception as error:
+            if getattr(error, "code", None) == "absent" or getattr(
+                error, "returncode", None
+            ) == 8:
+                return None
+            raise ManagedCLIError("unknown", "managed ownership could not be read", 1)
+
+    if isinstance(state_store, Mapping):
+        return state_store.get("owner.json", state_store.get("owner"))
+
+    validate = getattr(state_store, "validate_layout", None)
+    if callable(validate):
+        try:
+            validate()
+        except Exception:
+            raise ManagedCLIError("unknown", "managed ownership could not be read", 1)
+    identity = getattr(state_store, "identity", None)
+    state_root = getattr(identity, "state_root", None)
+    read_path = getattr(state_store, "_read_path", None)
+    if state_root is None or not callable(read_path):
+        # A narrow injected store may expose only a read method.  The real
+        # ManagedStateStore is handled above through ``_read_path`` precisely
+        # because its public read_json method creates a missing layout.
+        reader = getattr(state_store, "read_json", None)
+        if callable(reader):
+            try:
+                return reader("owner.json")
+            except (KeyError, FileNotFoundError):
+                return None
+            except Exception:
+                raise ManagedCLIError("unknown", "managed ownership could not be read", 1)
+        raise ManagedCLIError("unsupported", "managed ownership reader is unavailable", 1)
+    try:
+        # Calling ManagedStateStore.read_json would run ensure_layout(), which
+        # creates missing state.  The private path reader is deliberately used
+        # only after validate_layout() so this check remains read-only.
+        return read_path(Path(state_root) / "owner.json")
+    except Exception:
+        raise ManagedCLIError("unknown", "managed ownership could not be read", 1)
+
+
+def durable_legacy_handler(
+    request: Mapping[str, Any],
+    *,
+    state_store: Any = None,
+    env: Optional[Mapping[str, str]] = None,
+    helper: Any = None,
+    runner: Optional[Callable[..., Any]] = None,
+) -> dict[str, Any]:
+    """Return an affirmative read-only managed-ownership projection.
+
+    This is the production legacy-check seam.  It imports the state module's
+    workspace/store authorities and never creates layouts, acquires a writer,
+    launches a process, or reads credentials.
+    """
+
+    validated = _validate_request(request)
+    if validated.get("operation") != "legacy-check":
+        raise _invalid("legacy ownership reader received another operation")
+    record = _durable_owner_record(
+        validated, state_store=state_store, env=env, helper=helper, runner=runner
+    )
+    return {"ok": True, "present": _owner_presence(record)}
+
+
+# Keep a concise name for integrations that use the operation name as the
+# callable while retaining the descriptive production handler above.
+legacy_check = durable_legacy_handler
+
+
+def _state_error(error: BaseException) -> ManagedCLIError:
+    """Translate state-layer failures to stable, value-free CLI errors."""
+
+    raw_code = getattr(error, "code", "unknown")
+    code = str(raw_code)
+    if code == "unsafe-state":
+        code = "permission-mismatch"
+    elif code in {"absent", "permission"}:
+        code = "unknown" if code == "absent" else "permission-mismatch"
+    elif code not in {
+        "invalid",
+        "unknown",
+        "busy",
+        "ownership-conflict",
+        "profile-mismatch",
+        "unsupported",
+        "loader-failed",
+        "account-mismatch",
+        "permission-mismatch",
+        "uncertain-effect",
+        "stale-generation",
+    }:
+        code = "unknown"
+    return ManagedCLIError(code, "managed ownership operation was refused", 1)
+
+
+def _process_pid_alive(pid: Any) -> bool:
+    """Return a conservative live-process answer without invoking a shell."""
+
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # The process exists, but its identity still has to be read below.
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _process_group_id(pid: Any) -> Optional[int]:
+    """Read the live process group ID without invoking a shell."""
+
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return None
+    getpgid = getattr(os, "getpgid", None)
+    if not callable(getpgid):
+        return None
+    try:
+        group = int(getpgid(pid))
+    except (OSError, TypeError, ValueError):
+        return None
+    return group if group > 0 else None
+
+
+def _process_identity(
+    pid: int, *, deadline: Optional[float] = None
+) -> tuple[bool, Optional[str], Optional[int]]:
+    """Read the current PID incarnation using procfs, then bounded ``ps``.
+
+    The returned token is intentionally opaque.  It is compared byte-for-byte
+    with the caller's token before any legacy ownership mutation is admitted.
+    A missing or malformed identity is unknown, never an assertion that a PID
+    has been safely reused.
+    """
+
+    if not _process_pid_alive(pid):
+        return False, None, None
+    pgid = _process_group_id(pid)
+    if os.name == "posix":
+        try:
+            raw = Path("/proc/%d/stat" % pid).read_text(encoding="utf-8")
+            # The command name may contain spaces or parentheses.  Fields
+            # after the final ')' begin with proc-stat field 3; field 22 is
+            # therefore offset 19 in that suffix.
+            suffix = raw.rsplit(")", 1)[-1].split()
+            if len(suffix) > 19 and re.fullmatch(r"[0-9]+", suffix[19]):
+                return True, suffix[19], pgid
+        except (OSError, UnicodeError, ValueError):
+            pass
+
+    timeout = PROCESS_IDENTITY_TIMEOUT
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return True, None, pgid
+        timeout = min(timeout, remaining)
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "lstart="],
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return True, None, pgid
+    if getattr(result, "returncode", 1) != 0:
+        return True, None, pgid
+    output = getattr(result, "stdout", None)
+    if not isinstance(output, str):
+        return True, None, pgid
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if len(lines) != 1:
+        return True, None, pgid
+    token = lines[0]
+    if not token or len(token.encode("utf-8", errors="ignore")) > _MAX_TOKEN_BYTES:
+        return True, None, pgid
+    if "\x00" in token:
+        return True, None, pgid
+    return True, token, pgid
+
+
+def _coerce_process_identity(
+    value: Any, pid: int
+) -> tuple[bool, Optional[str], Optional[int]]:
+    """Accept the small direct-test identity seam without weakening checks."""
+
+    if isinstance(value, str):
+        return True, value, _process_group_id(pid)
+    if isinstance(value, Mapping):
+        supplied_pid = value.get("pid")
+        if supplied_pid is not None and supplied_pid != pid:
+            return False, None, None
+        alive = value.get("alive", value.get("is_alive", value.get("live", True)))
+        if not isinstance(alive, bool):
+            return False, None, None
+        token = None
+        for key in ("start_token", "start_identity", "process_start_token", "token", "identity"):
+            if key in value:
+                token = value.get(key)
+                break
+        raw_group = value.get("process_group_id", value.get("pgid"))
+        if raw_group is None:
+            group = _process_group_id(pid)
+        elif isinstance(raw_group, bool) or not isinstance(raw_group, int) or raw_group <= 0:
+            group = None
+        else:
+            group = raw_group
+        return alive, token if isinstance(token, str) else None, group
+    if isinstance(value, (tuple, list)) and len(value) in (2, 3, 4):
+        first, second = value[0], value[1]
+        third = value[2] if len(value) == 3 else None
+        group = third if isinstance(third, int) and not isinstance(third, bool) and third > 0 else None
+        if isinstance(first, bool):
+            if group is None and isinstance(second, int) and not isinstance(second, bool):
+                group, second = second, third
+            return first, second if isinstance(second, str) else None, group
+        if isinstance(second, bool):
+            if group is None and isinstance(third, int) and not isinstance(third, bool):
+                group = third
+            return second, first if isinstance(first, str) else None, group
+        if isinstance(first, int) and first == pid:
+            return True, second if isinstance(second, str) else None, group
+        return False, None, None
+    if isinstance(value, bool):
+        return value, None, _process_group_id(pid)
+    # A tiny object seam is convenient for direct callers while retaining the
+    # same strict mapping of live identity fields.
+    alive = getattr(value, "alive", getattr(value, "is_alive", None))
+    token = None
+    for key in ("start_token", "start_identity", "process_start_token", "token", "identity"):
+        candidate = getattr(value, key, None)
+        if candidate is not None:
+            token = candidate
+            break
+    if isinstance(alive, bool):
+        group = getattr(value, "process_group_id", getattr(value, "pgid", None))
+        if group is None:
+            group = _process_group_id(pid)
+        if isinstance(group, bool) or not isinstance(group, int) or group <= 0:
+            group = None
+        return alive, token if isinstance(token, str) else None, group
+    return False, None, None
+
+
+def _process_identity_provider(process_identity: Optional[Callable[..., Any]]) -> Callable[..., Any]:
+    """Resolve the one process-identity seam used by ownership reads."""
+
+    provider: Any = process_identity or _process_identity
+    if not callable(provider):
+        method = getattr(provider, "process_identity", None)
+        if callable(method):
+            provider = method
+        else:
+            raise ManagedCLIError("unsupported", "process identity is unavailable", 1)
+    return provider
+
+
+def _observe_process_identity(
+    pid: int,
+    *,
+    process_identity: Optional[Callable[..., Any]] = None,
+    deadline: Optional[float] = None,
+) -> tuple[bool, Optional[str], Optional[int]]:
+    """Read one process identity without converting reuse/death to an error."""
+
+    provider = _process_identity_provider(process_identity)
+    try:
+        if deadline is not None:
+            _remaining(deadline, "managed operation timed out")
+        if _handler_accepts_deadline(provider):
+            observed = provider(pid, deadline=deadline)
+        else:
+            observed = provider(pid)
+        result = _coerce_process_identity(observed, pid)
+    except ManagedCLIError:
+        raise
+    except Exception:
+        raise ManagedCLIError("unknown", "managed process identity is not confirmed", 1)
+    if deadline is not None:
+        _remaining(deadline, "managed operation timed out")
+    return result
+
+
+def _verify_process_identity(
+    pid: int,
+    expected_token: Optional[str] = None,
+    *,
+    process_identity: Optional[Callable[..., Any]] = None,
+    deadline: Optional[float] = None,
+    expected_group_id: Optional[int] = None,
+) -> tuple[str, int]:
+    """Read a live PID incarnation and optionally match a published token."""
+
+    alive, actual_token, actual_group = _observe_process_identity(
+        pid,
+        process_identity=process_identity,
+        deadline=deadline,
+    )
+    if (
+        not alive
+        or not isinstance(actual_token, str)
+        or isinstance(actual_group, bool)
+        or not isinstance(actual_group, int)
+        or actual_group <= 0
+    ):
+        raise ManagedCLIError("unknown", "managed process identity is not confirmed", 1)
+    try:
+        _bounded_text(actual_token, "process identity", max_bytes=_MAX_TOKEN_BYTES)
+    except ManagedCLIError:
+        raise ManagedCLIError("unknown", "managed process identity is not confirmed", 1)
+    if expected_token is not None and actual_token != expected_token:
+        raise ManagedCLIError("ownership-conflict", "managed process identity does not match", 1)
+    if expected_group_id is not None and actual_group != expected_group_id:
+        raise ManagedCLIError("ownership-conflict", "managed process group identity does not match", 1)
+    return actual_token, actual_group
+
+
+def _process_parent_id(pid: Any, *, deadline: Optional[float] = None) -> Optional[int]:
+    """Read one process's direct parent without trusting request metadata."""
+
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return None
+    if os.name == "posix":
+        try:
+            raw = Path("/proc/%d/stat" % pid).read_text(encoding="utf-8")
+            # The process name can contain spaces and closing parentheses.  In
+            # proc-stat, the suffix after the final ')' starts at field 3;
+            # field 4 (the direct parent PID) is therefore suffix[1].
+            suffix = raw.rsplit(")", 1)[-1].split()
+            if len(suffix) > 1 and re.fullmatch(r"[0-9]+", suffix[1]):
+                parent = int(suffix[1])
+                return parent if parent > 0 else None
+        except (OSError, UnicodeError, ValueError):
+            pass
+
+    timeout = PROCESS_IDENTITY_TIMEOUT
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        timeout = min(timeout, remaining)
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "ppid="],
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    if getattr(result, "returncode", 1) != 0:
+        return None
+    output = getattr(result, "stdout", None)
+    if not isinstance(output, str):
+        return None
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if len(lines) != 1 or not re.fullmatch(r"[0-9]+", lines[0]):
+        return None
+    parent = int(lines[0])
+    return parent if parent > 0 else None
+
+
+def _observed_parent_id(value: Any) -> Any:
+    """Extract an injected direct-parent observation, if one was supplied."""
+
+    if isinstance(value, Mapping):
+        for key in (
+            "parent_pid",
+            "parent_process_id",
+            "ppid",
+            "direct_parent_pid",
+        ):
+            if key in value:
+                return value.get(key)
+        return None
+    if isinstance(value, (tuple, list)) and len(value) == 4:
+        # The fourth item is an optional direct-parent field in the explicit
+        # test seam; the historical two/three-item shapes remain unchanged.
+        return value[3]
+    for key in (
+        "parent_pid",
+        "parent_process_id",
+        "ppid",
+        "direct_parent_pid",
+    ):
+        candidate = getattr(value, key, None)
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def _observe_process_lineage(
+    pid: int,
+    *,
+    process_identity: Optional[Callable[..., Any]] = None,
+    deadline: Optional[float] = None,
+) -> tuple[bool, Optional[str], Optional[int], Optional[int]]:
+    """Read identity and direct parent from one authoritative OS observation."""
+
+    provider = _process_identity_provider(process_identity)
+    try:
+        if deadline is not None:
+            _remaining(deadline, "managed operation timed out")
+        if _handler_accepts_deadline(provider):
+            observed = provider(pid, deadline=deadline)
+        else:
+            observed = provider(pid)
+        alive, token, group = _coerce_process_identity(observed, pid)
+        raw_parent = _observed_parent_id(observed)
+        if raw_parent is None and alive:
+            raw_parent = _process_parent_id(pid, deadline=deadline)
+        if (
+            isinstance(raw_parent, bool)
+            or not isinstance(raw_parent, int)
+            or raw_parent <= 0
+        ):
+            parent = None
+        else:
+            parent = raw_parent
+    except ManagedCLIError:
+        raise
+    except Exception:
+        raise ManagedCLIError("unknown", "managed process lineage is not confirmed", 1)
+    if deadline is not None:
+        _remaining(deadline, "managed operation timed out")
+    return alive, token, group, parent
+
+
+def _state_lock_context(state_store: Any, deadline: Optional[float]) -> Any:
+    """Acquire the store lock with the caller's original absolute deadline."""
+
+    lock = getattr(state_store, "locked", None)
+    if not callable(lock):
+        raise ManagedCLIError("unsupported", "managed ownership lock is unavailable", 1)
+    if deadline is not None:
+        _remaining(deadline, "managed operation timed out")
+        try:
+            parameters = inspect.signature(lock).parameters.values()
+        except (TypeError, ValueError):
+            raise ManagedCLIError(
+                "unsupported", "managed ownership lock deadline is unknown", 1
+            )
+        accepts_deadline = any(
+            parameter.name == "deadline"
+            or parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+        if not accepts_deadline:
+            # An ownership mutation cannot wait on an unbounded lock.  The
+            # read-owner compatibility below is intentionally separate from
+            # this deadline requirement; a legacy lock signature is unknown,
+            # not permission to spend the caller's budget indefinitely.
+            raise ManagedCLIError(
+                "unsupported", "managed ownership lock has no deadline", 1
+            )
+        context = lock(deadline=deadline)
+    else:
+        context = lock()
+    return context
+
+
+def _state_call_locked(
+    state_store: Any,
+    method_name: str,
+    kwargs: Mapping[str, Any],
+    *,
+    deadline: Optional[float] = None,
+) -> Any:
+    """Call a state method while an outer ownership lock is held."""
+
+    method = getattr(state_store, method_name, None)
+    if not callable(method):
+        raise ManagedCLIError("unsupported", "managed ownership state API is unavailable", 1)
+    if deadline is not None:
+        _remaining(deadline, "managed operation timed out")
+    result = method(**dict(kwargs))
+    if deadline is not None:
+        _remaining(deadline, "managed operation timed out")
+    return result
+
+
+def _state_mutation(
+    state_store: Any,
+    method_name: str,
+    kwargs: Mapping[str, Any],
+    *,
+    deadline: Optional[float] = None,
+) -> Any:
+    """Run one state mutation under its absolute-deadline lock."""
+
+    context = _state_lock_context(state_store, deadline)
+    try:
+        with context:
+            return _state_call_locked(
+                state_store, method_name, kwargs, deadline=deadline
+            )
+    except ManagedCLIError:
+        raise
+    except Exception as error:
+        raise _state_error(error)
+
+
+def _read_owner_locked(state_store: Any) -> Any:
+    """Read the strict owner projection while the caller's lock is held."""
+
+    if isinstance(state_store, Mapping):
+        return state_store.get("owner.json", state_store.get("owner", {}))
+    reader = getattr(state_store, "read_owner", None)
+    if callable(reader):
+        return reader()
+    reader = getattr(state_store, "read_json", None)
+    if callable(reader):
+        try:
+            return reader("owner.json")
+        except (KeyError, FileNotFoundError, NotADirectoryError):
+            return {}
+    loader = getattr(state_store, "_load_owner", None)
+    if callable(loader):
+        return loader()
+    # Compatibility for narrow in-memory stores that expose a materialized
+    # owner projection but no reader method.  Prefer the explicit read APIs
+    # above whenever both are present; a stale cached attribute must not mask
+    # the durable owner.
+    for name in ("owner_record", "owner"):
+        value = getattr(state_store, name, None)
+        if value is not None and not callable(value):
+            return value
+    raise ManagedCLIError("unsupported", "managed ownership reader is unavailable", 1)
+
+
+def _process_group_absent(pgid: Any) -> bool:
+    """Return true only for an authoritative ESRCH process-group answer."""
+
+    if isinstance(pgid, bool) or not isinstance(pgid, int) or pgid <= 0:
+        return False
+    killpg = getattr(os, "killpg", None)
+    if not callable(killpg):
+        return False
+    try:
+        killpg(pgid, 0)
+    except OSError as error:
+        return error.errno == errno.ESRCH
+    return False
+
+
+def _old_legacy_holder_is_excluded(
+    owner: Mapping[str, Any],
+    *,
+    process_identity: Optional[Callable[..., Any]] = None,
+    deadline: Optional[float] = None,
+) -> None:
+    """Prove a prior ordinary legacy holder cannot still own the lane."""
+
+    pid = owner.get("pid")
+    token = owner.get("start_token")
+    pgid = owner.get("pgid")
+    if (
+        isinstance(pid, bool)
+        or not isinstance(pid, int)
+        or pid <= 0
+        or not isinstance(token, str)
+        or not token
+        or isinstance(pgid, bool)
+        or not isinstance(pgid, int)
+        or pgid <= 0
+    ):
+        raise ManagedCLIError("unknown", "managed legacy ownership is not confirmed", 1)
+    try:
+        _bounded_text(token, "legacy start token", max_bytes=_MAX_TOKEN_BYTES)
+    except ManagedCLIError:
+        raise ManagedCLIError("unknown", "managed legacy ownership is not confirmed", 1)
+    alive, actual_token, actual_group = _observe_process_identity(
+        pid,
+        process_identity=process_identity,
+        deadline=deadline,
+    )
+    if alive:
+        # A matching incarnation is still the holder.  A missing token is an
+        # unknown answer; only a known differing token proves PID reuse.
+        if not isinstance(actual_token, str):
+            raise ManagedCLIError("unknown", "managed legacy ownership is not confirmed", 1)
+        if actual_token == token:
+            raise ManagedCLIError("ownership-conflict", "managed legacy ownership is active", 1)
+        # A live PID with no readable process-group identity is still an
+        # unknown holder.  Do not let an ESRCH answer for the recorded group
+        # erase a lease while the replacement process's group is unverified.
+        if (
+            isinstance(actual_group, bool)
+            or not isinstance(actual_group, int)
+            or actual_group <= 0
+        ):
+            raise ManagedCLIError("unknown", "managed legacy ownership is not confirmed", 1)
+        # This is a direct, authoritative live-member answer.  The killpg
+        # probe below covers descendants and races where the PID was reused
+        # into another group; a matching group cannot be absent.
+        if actual_group == pgid:
+            raise ManagedCLIError("ownership-conflict", "managed legacy ownership is active", 1)
+    if deadline is not None:
+        _remaining(deadline, "managed operation timed out")
+    if not _process_group_absent(pgid):
+        raise ManagedCLIError("unknown", "managed legacy ownership is not confirmed", 1)
+
+
+def _legacy_begin_mutation(
+    state_store: Any,
+    *,
+    pid: int,
+    start_token: str,
+    pgid: int,
+    deadline: Optional[float] = None,
+    process_identity: Optional[Callable[..., Any]] = None,
+) -> Any:
+    """Reconcile one stale legacy lease and begin a new one atomically."""
+
+    context = _state_lock_context(state_store, deadline)
+    try:
+        with context:
+            owner = _read_owner_locked(state_store)
+            if owner is None:
+                owner = {}
+            if not isinstance(owner, Mapping):
+                raise ManagedCLIError("unknown", "managed legacy ownership is not confirmed", 1)
+            mode = owner.get("mode")
+            if mode == "legacy-lease":
+                same_holder = (
+                    owner.get("pid") == pid
+                    and owner.get("start_token") == start_token
+                    and owner.get("pgid") == pgid
+                )
+                if not same_holder:
+                    _old_legacy_holder_is_excluded(
+                        owner,
+                        process_identity=process_identity,
+                        deadline=deadline,
+                    )
+                    _state_call_locked(
+                        state_store,
+                        "release_legacy",
+                        {
+                            "pid": owner.get("pid"),
+                            "start_token": owner.get("start_token"),
+                            "pgid": owner.get("pgid"),
+                        },
+                        deadline=deadline,
+                    )
+            # managed and pending-launch owners are deliberately handed to
+            # begin_legacy, whose state authority refuses them.  In
+            # particular, pending launches are never auto-cleared here.
+            return _state_call_locked(
+                state_store,
+                "begin_legacy",
+                {"pid": pid, "start_token": start_token, "pgid": pgid},
+                deadline=deadline,
+            )
+    except ManagedCLIError:
+        raise
+    except Exception as error:
+        raise _state_error(error)
+
+
+def _pending_bind_mutation(
+    state_store: Any,
+    *,
+    lease_id: str,
+    pid: int,
+    request_id: str,
+    lane: str,
+    bind_purpose: str = "no-launch",
+    deadline: Optional[float] = None,
+    process_identity: Optional[Callable[..., Any]] = None,
+) -> Any:
+    """Bind a pending helper lease only to its observed launch lineage.
+
+    ``lane-start --no-launch`` creates the pending record in the child helper
+    and then asks its parent launcher to bind.  The ordinary path binds the
+    exact direct child requested by the caller.  The inherited parent-launcher
+    path is different: the executing helper (H) must be the direct child of
+    the lane-start shell (S), and S must be the direct child of the pending
+    creator/launcher (C).  A normal exec binds the exact requested S, while
+    ``--no-launch`` binds the exact requested C so the lease survives S's
+    exit.  All identities are re-read from the process table under one outer
+    lock immediately before the exact state mutation.  A PID, token, or
+    process group supplied by the caller is never lineage evidence.
+    """
+
+    context = _state_lock_context(state_store, deadline)
+    try:
+        with context:
+            owner = _read_owner_locked(state_store)
+            if not isinstance(owner, Mapping):
+                raise ManagedCLIError(
+                    "unknown", "pending launch ownership is not confirmed", 1
+                )
+            if (
+                owner.get("mode") != "pending-launch"
+                or owner.get("lease_id") != lease_id
+                or owner.get("request_id") != request_id
+                or ("lane" in owner and owner.get("lane") != lane)
+                or (
+                    bind_purpose == "inherited-parent-launcher"
+                    and owner.get("lane") != lane
+                )
+            ):
+                raise ManagedCLIError(
+                    "ownership-conflict", "pending launch lease does not match", 1
+                )
+            creator_pid = owner.get("pid")
+            creator_token = owner.get("start_token")
+            if (
+                isinstance(creator_pid, bool)
+                or not isinstance(creator_pid, int)
+                or creator_pid <= 0
+                or not isinstance(creator_token, str)
+                or not creator_token
+            ):
+                raise ManagedCLIError(
+                    "unknown", "pending launch ownership is not confirmed", 1
+                )
+            try:
+                _bounded_text(
+                    creator_token,
+                    "pending creator identity",
+                    max_bytes=_MAX_TOKEN_BYTES,
+                )
+            except ManagedCLIError:
+                raise ManagedCLIError(
+                    "unknown", "pending launch ownership is not confirmed", 1
+                )
+
+            if bind_purpose == "inherited-parent-launcher":
+                # In this mode the CLI process itself (H) must be a direct
+                # child of the lane-start shell (S), and S must be the direct
+                # child of the pending creator/launcher (C).  The requested
+                # PID selects the exact valid target: S for a normal exec (S
+                # remains alive by replacing itself with the launched
+                # command), or C for --no-launch (S exits after printing, so
+                # the lease must survive S's exit).  No ancestor walk or
+                # shared-PGID shortcut is valid.
+                helper_pid = os.getpid()
+                (
+                    helper_alive,
+                    helper_token,
+                    helper_pgid,
+                    shell_pid,
+                ) = _observe_process_lineage(
+                    helper_pid,
+                    process_identity=process_identity,
+                    deadline=deadline,
+                )
+                if (
+                    not helper_alive
+                    or not isinstance(helper_token, str)
+                    or not helper_token
+                    or isinstance(helper_pgid, bool)
+                    or not isinstance(helper_pgid, int)
+                    or helper_pgid <= 0
+                    or not isinstance(shell_pid, int)
+                    or shell_pid <= 0
+                ):
+                    raise ManagedCLIError(
+                        "unknown", "pending launch ownership is not confirmed", 1
+                    )
+                (
+                    shell_alive,
+                    shell_token,
+                    shell_pgid,
+                    shell_parent_pid,
+                ) = _observe_process_lineage(
+                    shell_pid,
+                    process_identity=process_identity,
+                    deadline=deadline,
+                )
+                if (
+                    not shell_alive
+                    or not isinstance(shell_token, str)
+                    or not shell_token
+                    or isinstance(shell_pgid, bool)
+                    or not isinstance(shell_pgid, int)
+                    or shell_pgid <= 0
+                    or shell_parent_pid != creator_pid
+                ):
+                    raise ManagedCLIError(
+                        "ownership-conflict",
+                        "pending launch shell is not the creator's direct child",
+                        1,
+                    )
+                target_token, target_pgid = _verify_process_identity(
+                    creator_pid,
+                    expected_token=creator_token,
+                    process_identity=process_identity,
+                    deadline=deadline,
+                )
+                if pid == shell_pid:
+                    target_token, target_pgid = shell_token, shell_pgid
+                elif pid != creator_pid:
+                    raise ManagedCLIError(
+                        "ownership-conflict",
+                        "inherited pending launch target is not its shell or creator",
+                        1,
+                    )
+
+                # Re-read H/S/C immediately before CAS.  This closes the
+                # observable race between the first lineage read and the
+                # durable state mutation while retaining the same outer lock.
+                (
+                    helper_alive_again,
+                    helper_token_again,
+                    helper_pgid_again,
+                    shell_pid_again,
+                ) = _observe_process_lineage(
+                    helper_pid,
+                    process_identity=process_identity,
+                    deadline=deadline,
+                )
+                (
+                    shell_alive_again,
+                    shell_token_again,
+                    shell_pgid_again,
+                    shell_parent_pid_again,
+                ) = _observe_process_lineage(
+                    shell_pid,
+                    process_identity=process_identity,
+                    deadline=deadline,
+                )
+                creator_token_again, creator_pgid_again = _verify_process_identity(
+                    creator_pid,
+                    expected_token=creator_token,
+                    process_identity=process_identity,
+                    deadline=deadline,
+                )
+                if pid == shell_pid:
+                    target_token_again, target_pgid_again = (
+                        shell_token_again,
+                        shell_pgid_again,
+                    )
+                else:
+                    target_token_again, target_pgid_again = (
+                        creator_token_again,
+                        creator_pgid_again,
+                    )
+                if (
+                    not helper_alive_again
+                    or not isinstance(helper_token_again, str)
+                    or not helper_token_again
+                    or helper_token_again != helper_token
+                    or isinstance(helper_pgid_again, bool)
+                    or not isinstance(helper_pgid_again, int)
+                    or helper_pgid_again <= 0
+                    or helper_pgid_again != helper_pgid
+                    or shell_pid_again != shell_pid
+                    or not shell_alive_again
+                    or not isinstance(shell_token_again, str)
+                    or not shell_token_again
+                    or shell_token_again != shell_token
+                    or isinstance(shell_pgid_again, bool)
+                    or not isinstance(shell_pgid_again, int)
+                    or shell_pgid_again <= 0
+                    or shell_pgid_again != shell_pgid
+                    or shell_parent_pid_again != creator_pid
+                    or target_token_again != target_token
+                    or target_pgid_again != target_pgid
+                ):
+                    raise ManagedCLIError(
+                        "ownership-conflict",
+                        "pending launch lineage changed",
+                        1,
+                    )
+            else:
+                # The helper must still be the exact live child whose lease
+                # is in the record.  Its direct parent is observed from the
+                # OS rather than a request/environment assertion.  Sharing a
+                # process group is intentionally not a substitute.
+                (
+                    creator_alive,
+                    observed_creator_token,
+                    _creator_group,
+                    observed_parent_pid,
+                ) = _observe_process_lineage(
+                    creator_pid,
+                    process_identity=process_identity,
+                    deadline=deadline,
+                )
+                if not creator_alive or not isinstance(observed_creator_token, str):
+                    raise ManagedCLIError(
+                        "unknown", "pending launch ownership is not confirmed", 1
+                    )
+                if observed_creator_token != creator_token:
+                    raise ManagedCLIError(
+                        "ownership-conflict", "pending launch creator has changed", 1
+                    )
+                if observed_parent_pid != pid:
+                    raise ManagedCLIError(
+                        "ownership-conflict", "pending launch parent is not the launcher", 1
+                    )
+
+                # The target is independently live, with a fresh token and
+                # PGID; neither field is accepted from the request body.  The
+                # exact target tuple is passed to the state authority while
+                # the outer lock remains held, leaving no release/bind gap.
+                target_token, target_pgid = _verify_process_identity(
+                    pid,
+                    process_identity=process_identity,
+                    deadline=deadline,
+                )
+            return _state_call_locked(
+                state_store,
+                "bind_pending_launch",
+                {
+                    "lease_id": lease_id,
+                    "pid": pid,
+                    "start_token": target_token,
+                    "pgid": target_pgid,
+                },
+                deadline=deadline,
+            )
+    except ManagedCLIError:
+        raise
+    except Exception as error:
+        raise _state_error(error)
+
+
+def _validate_pending_bind_purpose(body: Mapping[str, Any]) -> str:
+    """Validate and canonicalize the pending-launch bind purpose."""
+
+    values: list[str] = []
+    for key in ("bind_purpose", "bind_mode", "purpose"):
+        if key not in body:
+            continue
+        value = _bounded_text(body.get(key), "pending bind purpose", max_bytes=_MAX_ID_BYTES)
+        values.append(value.casefold().replace("_", "-"))
+    if values and any(value != values[0] for value in values):
+        raise _invalid("pending bind purpose is conflicting")
+    if values and values[0] not in {
+        "no-launch",
+        "parent-launcher",
+        "inherited-parent-launcher",
+        "launcher-parent",
+    }:
+        raise _invalid("pending bind purpose is unsupported")
+    if values and values[0] == "inherited-parent-launcher":
+        return "inherited-parent-launcher"
+    return "no-launch"
+
+
+def _redact_ownership_result(value: Any) -> Any:
+    """Retain safe lease projection fields while never returning tokens."""
+
+    if isinstance(value, Mapping):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            lowered = key_text.casefold().replace("-", "_")
+            if any(
+                marker in lowered
+                for marker in ("token", "secret", "password", "credential", "api_key")
+            ):
+                continue
+            result[key_text] = _redact_ownership_result(item)
+        return result
+    if isinstance(value, (list, tuple)):
+        return [_redact_ownership_result(item) for item in value]
+    return value
+
+
+def _resolve_state_store(
+    request: Mapping[str, Any],
+    *,
+    env: Optional[Mapping[str, str]] = None,
+    helper: Any = None,
+    runner: Optional[Callable[..., Any]] = None,
+) -> Any:
+    """Resolve the durable state store through its supported module API."""
+
+    try:
+        from lane_managed_state import ManagedStateStore, resolve_workspace
+
+        identity = resolve_workspace(
+            request["lane"], env=env, helper=helper, runner=runner
+        )
+        return ManagedStateStore(identity)
+    except ManagedCLIError:
+        raise
+    except Exception as error:
+        raise _state_error(error)
+
+
+def _runtime_refusal(code: str = "unknown") -> ManagedCLIError:
+    """Return a value-free refusal for failed daemon discovery."""
+
+    if code not in {"unknown", "permission-mismatch", "unsupported", "invalid"}:
+        code = "unknown"
+    return ManagedCLIError(code, "managed daemon discovery is not confirmed", 1)
+
+
+def _runtime_owner_record(
+    state_store: Any, *, deadline: Optional[float] = None
+) -> Any:
+    """Read the exact owner projection through the bounded state API."""
+
+    if isinstance(state_store, Mapping):
+        return state_store.get("owner.json", state_store.get("owner"))
+    reader = getattr(state_store, "read_owner", None)
+    if not callable(reader):
+        raise _runtime_refusal("unsupported")
+    if deadline is not None:
+        if not _handler_accepts_deadline(reader):
+            raise _runtime_refusal("unsupported")
+        return reader(deadline=deadline)
+    return reader()
+
+
+def _runtime_component(value: Any, label: str) -> str:
+    """Validate a persisted one-component runtime identifier."""
+
+    value = _bounded_text(value, label, max_bytes=_MAX_ID_BYTES)
+    if (
+        value in {".", ".."}
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", value)
+    ):
+        raise _runtime_refusal("invalid")
+    return value
+
+
+def _current_process_domain() -> str:
+    """Derive the local native PID domain without trusting environment data."""
+
+    if sys.platform.startswith("linux"):
+        try:
+            machine_id = Path("/etc/machine-id").read_text(encoding="ascii").strip()
+            namespace = os.readlink("/proc/self/ns/pid").strip()
+        except (OSError, UnicodeError, ValueError):
+            raise _runtime_refusal("unknown")
+        if (
+            not machine_id
+            or any(character not in "0123456789abcdefABCDEF" for character in machine_id)
+            or not re.fullmatch(r"pid:\[[0-9]+\]", namespace)
+        ):
+            raise _runtime_refusal("unknown")
+        return "linux:%s:%s" % (machine_id, namespace)
+    # The state/daemon contract names non-Linux's native local domain
+    # explicitly.  It is still compared byte-for-byte with the record.
+    return "native"
+
+
+def _validate_runtime_owner_record(
+    owner: Any, request: Mapping[str, Any], local_process_domain: str
+) -> Mapping[str, Any]:
+    """Validate the exact managed owner paired with a runtime record."""
+
+    if not isinstance(owner, Mapping) or owner.get("mode") != "managed":
+        raise _runtime_refusal()
+    required = {
+        "mode", "daemon_id", "generation", "lane", "lane_key", "host",
+        "process_domain", "created_at",
+    }
+    if set(owner) != required:
+        raise _runtime_refusal("invalid")
+    try:
+        daemon_id = _runtime_component(owner.get("daemon_id"), "owner daemon ID")
+        owner_lane = _canonical_lane(owner.get("lane"))
+        host = _runtime_component(owner.get("host"), "owner host")
+        process_domain = _bounded_text(
+            owner.get("process_domain"),
+            "owner process domain",
+            max_bytes=_MAX_TOKEN_BYTES,
+        )
+    except ManagedCLIError:
+        raise _runtime_refusal("invalid")
+    generation = owner.get("generation")
+    created_at = owner.get("created_at")
+    if (
+        isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or generation < 1
+        or owner.get("lane_key") != owner_lane.casefold()
+        or owner_lane.casefold() != request["lane"].casefold()
+        or isinstance(created_at, bool)
+        or not isinstance(created_at, (int, float))
+    ):
+        raise _runtime_refusal("invalid")
+    try:
+        if not math.isfinite(float(created_at)):
+            raise ValueError
+    except (OverflowError, TypeError, ValueError):
+        raise _runtime_refusal("invalid")
+    if process_domain != local_process_domain:
+        raise _runtime_refusal("unknown")
+    return {
+        "mode": "managed",
+        "daemon_id": daemon_id,
+        "generation": generation,
+        "lane": owner_lane,
+        "lane_key": owner_lane.casefold(),
+        "host": host,
+        "process_domain": process_domain,
+        "created_at": created_at,
+    }
+
+
+def _validate_runtime_endpoint(
+    value: Any, *, allow_missing: bool = False, allow_unready: bool = False
+) -> tuple[Path, bool]:
+    """Validate the published owner-only endpoint without following aliases."""
+
+    try:
+        path = _socket_path(value)
+        canonical = path.resolve(strict=False)
+    except ManagedCLIError:
+        raise _runtime_refusal("invalid")
+    except (OSError, RuntimeError):
+        raise _runtime_refusal("invalid")
+    if str(canonical) != str(path):
+        raise _runtime_refusal("permission-mismatch")
+    try:
+        _validate_client_parent(path, require_private=True)
+        info = _lstat(path)
+    except ManagedCLIError as error:
+        raise _runtime_refusal(
+            "permission-mismatch" if error.code == "permission" else "unknown"
+        )
+    if info is None:
+        if allow_missing:
+            return path, True
+        raise _runtime_refusal()
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISSOCK(info.st_mode):
+        raise _runtime_refusal("permission-mismatch")
+    if _uid() is not None and info.st_uid != _uid():
+        raise _runtime_refusal("permission-mismatch")
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        # A newly spawned daemon binds before applying the owner-only mode.
+        # Only the exact-child discovery path may wait through that narrow
+        # startup window; an already-published runtime remains a hard refusal.
+        if allow_unready:
+            return path, True
+        raise _runtime_refusal("permission-mismatch")
+    return path, False
+
+
+_STARTUP_SOCKET_ERRORS = frozenset(
+    error for error in (
+        getattr(errno, "ECONNREFUSED", None),
+        getattr(errno, "ENOENT", None),
+        getattr(errno, "ENOTCONN", None),
+        getattr(errno, "ECONNRESET", None),
+        getattr(errno, "ECONNABORTED", None),
+        getattr(errno, "EAGAIN", None),
+        getattr(errno, "EINPROGRESS", None),
+    ) if error is not None
+)
+
+
+def _probe_runtime_socket(
+    path: Path, *, deadline: Optional[float], allow_startup: bool
+) -> None:
+    """Prove an owner-only endpoint is listening before returning it.
+
+    A Unix socket pathname can exist after ``bind`` and after ``chmod`` but
+    before ``listen``.  A connect probe is the only client-side evidence that
+    the endpoint is actually accepting connections.  The probe sends no
+    frame; callers therefore still have exactly one request attempt after
+    readiness is proven.
+    """
+
+    try:
+        _validate_client_parent(path, require_private=True)
+        info = _lstat(path)
+    except ManagedCLIError:
+        raise _runtime_refusal("permission-mismatch")
+    if info is None:
+        if allow_startup:
+            raise _RuntimeSocketNotReady()
+        raise _runtime_refusal()
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISSOCK(info.st_mode):
+        raise _runtime_refusal("permission-mismatch")
+    if _uid() is not None and info.st_uid != _uid():
+        raise _runtime_refusal("permission-mismatch")
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        if allow_startup:
+            raise _RuntimeSocketNotReady()
+        raise _runtime_refusal("permission-mismatch")
+    identity = (int(info.st_dev), int(info.st_ino))
+
+    probe: Optional[socket.socket] = None
+    try:
+        try:
+            probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        except (OSError, TypeError, ValueError):
+            raise _runtime_refusal("unsupported")
+        timeout = CONNECT_TIMEOUT
+        if deadline is not None:
+            timeout = min(timeout, _remaining(deadline, "managed socket readiness timed out"))
+        probe.settimeout(timeout)
+        try:
+            probe.connect(str(path))
+        except socket.timeout:
+            if allow_startup:
+                raise _RuntimeSocketNotReady()
+            raise _runtime_refusal()
+        except OSError as error:
+            if allow_startup and getattr(error, "errno", None) in _STARTUP_SOCKET_ERRORS:
+                raise _RuntimeSocketNotReady()
+            raise _runtime_refusal()
+    except ManagedCLIError:
+        raise
+    except (OSError, TypeError, ValueError):
+        raise _runtime_refusal()
+    finally:
+        if probe is not None:
+            try:
+                probe.close()
+            except Exception:
+                pass
+
+    # Do not trust a successful probe if the pathname changed while it was in
+    # flight.  A replacement endpoint is foreign evidence, not another
+    # startup phase to poll.
+    try:
+        _validate_client_parent(path, require_private=True)
+        final_info = _lstat(path)
+    except ManagedCLIError:
+        raise _runtime_refusal("permission-mismatch")
+    if final_info is None:
+        if allow_startup:
+            raise _RuntimeSocketNotReady()
+        raise _runtime_refusal()
+    if (
+        stat.S_ISLNK(final_info.st_mode)
+        or not stat.S_ISSOCK(final_info.st_mode)
+        or (_uid() is not None and final_info.st_uid != _uid())
+        or stat.S_IMODE(final_info.st_mode) & 0o077
+        or (int(final_info.st_dev), int(final_info.st_ino)) != identity
+    ):
+        raise _runtime_refusal("permission-mismatch")
+
+
+def _validate_runtime_record(
+    request: Mapping[str, Any],
+    runtime: Any,
+    owner: Any,
+    *,
+    process_identity: Optional[Callable[..., Any]] = None,
+    deadline: Optional[float] = None,
+    expected_daemon_id: Optional[str] = None,
+    expected_pid: Optional[int] = None,
+    expected_socket: Optional[Path] = None,
+) -> tuple[Path, dict[str, Any]]:
+    """Check runtime schema, exact owner identity, process incarnation, socket."""
+
+    if not isinstance(runtime, Mapping):
+        raise _runtime_refusal("invalid")
+    value = dict(runtime)
+    required = {
+        "version", "daemon_id", "generation", "lane", "lane_key", "host",
+        "pid", "start_token", "pgid", "process_domain", "socket_path",
+        "timestamp",
+    }
+    if set(value) != required:
+        raise _runtime_refusal("invalid")
+    if value.get("version") != 1:
+        raise _runtime_refusal("invalid")
+    raw_daemon_id = value.get("daemon_id")
+    if expected_daemon_id is not None and raw_daemon_id != expected_daemon_id:
+        # During exact-child startup, a published ID other than the one sent
+        # to this child is foreign evidence.  Classify it as an unknown
+        # ownership result before applying the public component validator;
+        # importantly, never probe or send to that runtime.
+        raise _runtime_refusal()
+    daemon_id = _runtime_component(raw_daemon_id, "runtime daemon ID")
+    generation = value.get("generation")
+    if (
+        isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or generation < 1
+    ):
+        raise _runtime_refusal("invalid")
+    pid = value.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        raise _runtime_refusal("invalid")
+    pgid = value.get("pgid")
+    if isinstance(pgid, bool) or not isinstance(pgid, int) or pgid <= 0:
+        raise _runtime_refusal("invalid")
+    start_token = value.get("start_token")
+    if not isinstance(start_token, str):
+        raise _runtime_refusal("invalid")
+    try:
+        _bounded_text(start_token, "runtime start token", max_bytes=_MAX_TOKEN_BYTES)
+    except ManagedCLIError:
+        raise _runtime_refusal("invalid")
+    lane = value.get("lane")
+    try:
+        if _canonical_lane(lane).casefold() != request["lane"].casefold():
+            raise _runtime_refusal()
+    except ManagedCLIError:
+        raise _runtime_refusal("invalid")
+    lane_key = value.get("lane_key")
+    if not isinstance(lane_key, str) or lane_key != request["lane"].casefold():
+        raise _runtime_refusal("invalid")
+    host = value.get("host")
+    try:
+        _runtime_component(host, "runtime host")
+    except ManagedCLIError:
+        raise _runtime_refusal("invalid")
+    process_domain = value.get("process_domain")
+    try:
+        process_domain = _bounded_text(
+            process_domain, "runtime process domain", max_bytes=_MAX_TOKEN_BYTES
+        )
+        local_process_domain = _current_process_domain()
+    except ManagedCLIError:
+        raise _runtime_refusal("unknown")
+    if process_domain != local_process_domain:
+        raise _runtime_refusal("unknown")
+    timestamp = value.get("timestamp")
+    if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)):
+        raise _runtime_refusal("invalid")
+    try:
+        if not math.isfinite(float(timestamp)):
+            raise _runtime_refusal("invalid")
+    except (OverflowError, TypeError, ValueError):
+        raise _runtime_refusal("invalid")
+    if expected_daemon_id is not None and daemon_id != expected_daemon_id:
+        raise _runtime_refusal()
+    if expected_pid is not None and pid != expected_pid:
+        raise _runtime_refusal()
+    exact_child_startup = (
+        expected_daemon_id is not None
+        and expected_pid is not None
+        and expected_socket is not None
+    )
+    path, socket_missing = _validate_runtime_endpoint(
+        value.get("socket_path"),
+        allow_missing=exact_child_startup,
+        allow_unready=exact_child_startup,
+    )
+    if expected_socket is not None and path != expected_socket:
+        raise _runtime_refusal()
+
+    owner_projection = _validate_runtime_owner_record(
+        owner, request, local_process_domain
+    )
+    if (
+        owner_projection["daemon_id"] != daemon_id
+        or owner_projection["generation"] != generation
+        or owner_projection["host"] != host
+        or owner_projection["process_domain"] != process_domain
+    ):
+        raise _runtime_refusal()
+    _verify_process_identity(
+        pid,
+        start_token,
+        process_identity=process_identity,
+        deadline=deadline,
+        expected_group_id=pgid,
+    )
+    if socket_missing:
+        # All durable and process identities have already matched the exact
+        # child requested by this invocation.  Its daemon may publish runtime
+        # before bind, before chmod, or before listen; only that narrow
+        # startup window is retryable.
+        raise _RuntimeSocketNotReady()
+    _probe_runtime_socket(
+        path, deadline=deadline, allow_startup=exact_child_startup
+    )
+    return path, value
+
+
+def _read_runtime_discovery(
+    request: Mapping[str, Any],
+    *,
+    state_store: Any = None,
+    env: Optional[Mapping[str, str]] = None,
+    helper: Any = None,
+    runner: Optional[Callable[..., Any]] = None,
+    process_identity: Optional[Callable[..., Any]] = None,
+    deadline: Optional[float] = None,
+    expected_daemon_id: Optional[str] = None,
+    expected_pid: Optional[int] = None,
+    expected_socket: Optional[Path] = None,
+) -> Optional[tuple[Path, dict[str, Any]]]:
+    """Read and validate one daemon runtime record.
+
+    ``None`` is the sole confirmed-absence answer.  Every malformed, stale,
+    inaccessible, or unsupported record is a refusal and must not trigger a
+    default-path fallback or a second enrollment attempt.
+    """
+
+    if deadline is not None:
+        _remaining(deadline, "managed operation timed out")
+    if state_store is None:
+        state_store = _resolve_state_store(request, env=env, helper=helper, runner=runner)
+    reader = getattr(state_store, "read_runtime", None)
+    if not callable(reader):
+        raise _runtime_refusal("unsupported")
+    try:
+        # Keep the owner/runtime snapshot coherent beneath one bounded shared
+        # read lock.  ``ManagedStateStore.read_runtime`` accepts the original
+        # absolute deadline itself; narrow adapters are called under the
+        # explicit shared context, which is released before endpoint/PID
+        # validation and socket probing begin.
+        with _state_shared_read_context(state_store, deadline):
+            if deadline is not None and _handler_accepts_deadline(reader):
+                runtime = reader(deadline=deadline)
+            else:
+                runtime = reader()
+            owner = _runtime_owner_record(
+                state_store,
+                deadline=deadline,
+            )
+    except ManagedCLIError as error:
+        if error.code in {"invalid", "permission-mismatch", "unsupported"}:
+            raise _runtime_refusal(error.code)
+        raise _runtime_refusal()
+    except Exception:
+        raise _runtime_refusal()
+    if deadline is not None:
+        _remaining(deadline, "managed operation timed out")
+    if runtime is None:
+        # Validate a present owner record enough to reject corrupted state;
+        # an empty owner is the normal confirmed-no-runtime case.
+        if owner not in (None, {}):
+            if not isinstance(owner, Mapping):
+                raise _runtime_refusal("invalid")
+            if owner.get("mode") == "managed":
+                _validate_runtime_owner_record(
+                    owner, request, _current_process_domain()
+                )
+            else:
+                try:
+                    _owner_presence(owner)
+                except ManagedCLIError:
+                    raise _runtime_refusal("invalid")
+        return None
+    return _validate_runtime_record(
+        request,
+        runtime,
+        owner,
+        process_identity=process_identity,
+        deadline=deadline,
+        expected_daemon_id=expected_daemon_id,
+        expected_pid=expected_pid,
+        expected_socket=expected_socket,
+    )
+
+
+def _default_socket_path(
+    lane: str,
+    env: Optional[Mapping[str, str]] = None,
+    *,
+    state_store: Any = None,
+) -> Path:
+    """Derive one deterministic, short, private AF_UNIX endpoint.
+
+    The durable runtime record remains authoritative after this derivation.
+    ``XDG_RUNTIME_DIR`` is accepted only when it is an existing private real
+    directory.  Without it, a per-user private namespace below ``/tmp`` is
+    created by the normal secure socket-parent path.  The socket filename is
+    the first 32 hex characters of SHA-256 over common-dir, host, and lane so
+    it remains below conservative AF_UNIX pathname limits.
+    """
+
+    identity = getattr(state_store, "identity", None)
+    common_dir = getattr(identity, "common_dir", None)
+    host = getattr(identity, "host", None)
+    if common_dir is None or host is None:
+        raise _runtime_refusal("unsupported")
+    try:
+        common = Path(common_dir)
+        if not common.is_absolute():
+            raise _runtime_refusal("invalid")
+        common_text = str(common.resolve(strict=False))
+        host_text = _bounded_text(str(host).casefold(), "runtime host", max_bytes=128)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        raise _runtime_refusal("invalid")
+    lane_text = _canonical_lane(lane).casefold()
+    digest = hashlib.sha256(
+        (common_text + "\x00" + host_text + "\x00" + lane_text).encode("utf-8")
+    ).hexdigest()[:32]
+
+    merged = dict(os.environ)
+    if env is not None:
+        merged.update({str(key): str(value) for key, value in env.items()})
+    xdg_value = merged.get("XDG_RUNTIME_DIR")
+    using_os_tmp_fallback = False
+    if xdg_value:
+        try:
+            base = Path(xdg_value)
+            if not base.is_absolute():
+                raise _runtime_refusal("invalid")
+            _check_path_chain(base)
+            _secure_dir(base)
+        except (TypeError, ValueError, OSError):
+            raise _runtime_refusal("permission-mismatch")
+        # A caller-controlled runtime directory can be valid yet too deep for
+        # AF_UNIX's pathname limit.  Do not shorten it by hashing away its
+        # trusted namespace: use the same deterministic OS temp namespace as
+        # the no-XDG path, after the XDG directory itself has passed all
+        # ownership checks.  This also ignores a hostile/long TMPDIR value.
+        candidate = base / (digest + ".sock")
+        if len(os.fsencode(str(candidate))) >= 104:
+            using_os_tmp_fallback = True
+            uid = _uid()
+            if uid is None:
+                raise _runtime_refusal("unsupported")
+            try:
+                trusted_tmp = Path("/tmp").resolve(strict=True)
+                info = _lstat(trusted_tmp)
+                if (
+                    info is None
+                    or stat.S_ISLNK(info.st_mode)
+                    or not stat.S_ISDIR(info.st_mode)
+                ):
+                    raise _runtime_refusal("permission-mismatch")
+                _check_path_chain(trusted_tmp)
+            except (OSError, RuntimeError):
+                raise _runtime_refusal("permission-mismatch")
+            base = trusted_tmp / ("openrepotools-managed-%d" % uid)
+    else:
+        using_os_tmp_fallback = True
+        uid = _uid()
+        if uid is None:
+            raise _runtime_refusal("unsupported")
+        try:
+            # macOS commonly exposes /tmp as a symlink to /private/tmp.  Use
+            # the resolved, existing OS temp directory as the trusted base;
+            # appending the private namespace before validation would reject
+            # the platform's normal layout or accidentally follow an alias.
+            trusted_tmp = Path("/tmp").resolve(strict=True)
+            info = _lstat(trusted_tmp)
+            if info is None or stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise _runtime_refusal("permission-mismatch")
+            _check_path_chain(trusted_tmp)
+        except (OSError, RuntimeError):
+            raise _runtime_refusal("permission-mismatch")
+        base = trusted_tmp / ("openrepotools-managed-%d" % uid)
+    try:
+        path = _socket_path(base / (digest + ".sock"))
+        if using_os_tmp_fallback:
+            _prepare_socket_parent(path)
+        return path
+    except ManagedCLIError:
+        raise _runtime_refusal("invalid")
+
+
+def _sanitize_boot_environment(env: Mapping[str, str]) -> dict[str, str]:
+    """Remove credential/provider overrides before starting the supervisor."""
+
+    sensitive_exact = {
+        "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
+        "CLAUDE_API_KEY", "CLAUDE_AUTH_TOKEN", "AUTH_TOKEN", "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_SECURITY_TOKEN",
+        "GOOGLE_APPLICATION_CREDENTIALS", "ANTHROPIC_API_URL",
+        "ANTHROPIC_BASE_URL", "ANTHROPIC_BEDROCK_BASE_URL",
+        "ANTHROPIC_VERTEX_BASE_URL", "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_PROVIDER", "CLAUDE_PROVIDER",
+        "AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_DEFAULT_REGION", "AWS_REGION",
+        "AWS_BEDROCK_REGION", "BEDROCK_REGION", "BEDROCK_MODEL_ID",
+        "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_REGION", "CLOUD_ML_REGION",
+        "VERTEXAI_PROJECT", "VERTEXAI_LOCATION",
+    }
+    result: dict[str, str] = {}
+    for raw_key, raw_value in env.items():
+        key = str(raw_key)
+        upper = key.upper()
+        if (
+            upper in sensitive_exact
+            or "API_KEY" in upper
+            or "AUTH_TOKEN" in upper
+            or "OAUTH_TOKEN" in upper
+            or "SECRET" in upper
+            or "PASSWORD" in upper
+            or upper.endswith("_TOKEN")
+        ):
+            continue
+        # Provider and endpoint overrides are not needed to discover/start a
+        # supervisor and can smuggle credential-bearing routing state.
+        if upper.startswith("ANTHROPIC_") and any(
+            marker in upper for marker in ("BASE_URL", "API_URL", "PROVIDER")
+        ):
+            continue
+        result[key] = str(raw_value)
+    return result
+
+
+def _spawned_process_alive(process: Any) -> bool:
+    poll = getattr(process, "poll", None)
+    if callable(poll):
+        try:
+            return poll() is None
+        except Exception:
+            return False
+    pid = getattr(process, "pid", None)
+    return _process_pid_alive(pid)
+
+
+def _stop_spawned_process(process: Any, deadline: float) -> None:
+    """Best-effort bounded cleanup for a child that never published runtime."""
+
+    poll = getattr(process, "poll", None)
+    if callable(poll):
+        try:
+            # A non-None poll result is authoritative child termination.  If
+            # polling itself fails, continue to the terminate seam rather
+            # than treating an unknown child as safely gone.
+            if poll() is not None:
+                return
+        except Exception:
+            pass
+    elif not _spawned_process_alive(process):
+        return
+    terminate = getattr(process, "terminate", None)
+    if callable(terminate):
+        try:
+            terminate()
+        except Exception:
+            return
+    wait = getattr(process, "wait", None)
+    if not callable(wait):
+        return
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return
+    try:
+        wait(timeout=min(CONNECT_TIMEOUT, remaining))
+    except Exception:
+        pass
+
+
+def _spawn_supervisor_and_discover(
+    request: Mapping[str, Any],
+    *,
+    socket_path: Path,
+    connect_timeout: float,
+    deadline: float,
+    env: Optional[Mapping[str, str]] = None,
+    state_store: Any = None,
+) -> Path:
+    """Spawn one foreground daemon and wait for its exact runtime record."""
+
+    _remaining(deadline, "managed supervisor startup timed out")
+    lane = _canonical_lane(request["lane"])
+    daemon_script = Path(__file__).resolve().with_name("lane_managed_daemon.py")
+    if not daemon_script.is_file() or daemon_script.is_symlink():
+        raise ManagedCLIError("unsupported", "managed daemon executable is unavailable", 1)
+    daemon_id = "daemon-" + uuid.uuid4().hex
+    _runtime_component(daemon_id, "daemon ID")
+    socket_path = _socket_path(socket_path)
+    argv = [
+        str(sys.executable),
+        str(daemon_script),
+        "--serve",
+        "--opt-in",
+        "--lane", lane,
+        "--socket", str(socket_path),
+        "--daemon-id", daemon_id,
+    ]
+    if len(argv) > 16 or any(len(str(item).encode("utf-8")) > _MAX_ID_BYTES for item in argv):
+        raise ManagedCLIError("invalid", "managed supervisor arguments are too long", 2)
+    child_env = _sanitize_boot_environment(dict(os.environ if env is None else env))
+    try:
+        process = subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+            env=child_env,
+        )
+    except (OSError, ValueError):
+        raise ManagedCLIError("unsupported", "managed supervisor could not start", 1)
+    pid = getattr(process, "pid", None)
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        _stop_spawned_process(process, time.monotonic() + CONNECT_TIMEOUT)
+        raise ManagedCLIError("unknown", "managed supervisor identity is unavailable", 1)
+
+    if deadline <= time.monotonic():
+        _stop_spawned_process(process, deadline)
+        raise _timeout("managed supervisor startup timed out")
+    # ``deadline`` is the caller's original absolute operation deadline.  Do
+    # not reset it after spawning; discovery and the eventual control request
+    # consume the same bounded budget.
+    # Readiness is part of the caller's one absolute operation budget.  A
+    # short connect timeout bounds each probe, but must not create a second
+    # startup deadline that can reject a child before the original deadline.
+    boot_deadline = deadline
+    while True:
+        if time.monotonic() >= boot_deadline:
+            _stop_spawned_process(process, boot_deadline)
+            raise _timeout("managed supervisor startup timed out")
+        if not _spawned_process_alive(process):
+            _stop_spawned_process(process, boot_deadline)
+            raise ManagedCLIError("unknown", "managed supervisor exited before discovery", 1)
+        remaining = min(0.05, boot_deadline - time.monotonic())
+        try:
+            discovered = _read_runtime_discovery(
+                request,
+                state_store=state_store,
+                env=env,
+                expected_daemon_id=daemon_id,
+                expected_pid=pid,
+                expected_socket=socket_path,
+                deadline=deadline,
+            )
+        except _RuntimeSocketNotReady:
+            # The exact child has proved its owner/PID/token/PGID, and only
+            # the endpoint bind is still pending.  Recheck until the original
+            # startup deadline; a regular file, symlink, stale identity, or
+            # another daemon never takes this branch.
+            time.sleep(max(0.001, remaining))
+            continue
+        except ManagedCLIError as error:
+            # A record that exists but is malformed/stale is a hard refusal;
+            # only ``None`` means the child has not published runtime yet.
+            _stop_spawned_process(process, boot_deadline)
+            raise error
+        if discovered is not None:
+            return discovered[0]
+        time.sleep(max(0.001, remaining))
+
+
+def durable_ownership_handler(
+    request: Mapping[str, Any],
+    *,
+    state_store: Any = None,
+    env: Optional[Mapping[str, str]] = None,
+    helper: Any = None,
+    runner: Optional[Callable[..., Any]] = None,
+    deadline: Optional[float] = None,
+    process_identity: Optional[Callable[..., Any]] = None,
+) -> dict[str, Any]:
+    """Route internal ownership mutations to the durable state API only.
+
+    PID-only ownership is accepted only after the process start token and
+    process-group identity are re-read at this boundary.  The state mutation
+    then runs beneath the store's absolute-deadline lock, so a caller that
+    timed out waiting for a writer cannot mutate later in the background.
+    """
+
+    validated = _validate_request(request)
+    operation = validated.get("operation")
+    if operation not in _OWNERSHIP_OPERATIONS:
+        raise _invalid("ownership handler received another operation")
+    body = _mapping(validated.get("body"), "request body")
+    if operation in {"legacy-begin", "pending-launch-bind"} and (
+        "start_token" in body
+        or "pgid" in body
+        or "process_group_id" in body
+        or "parent_pid" in body
+        or "parent_process_id" in body
+        or "parent_start_token" in body
+        or "parent_verified" in body
+    ):
+        raise _invalid("process identity is derived from the live PID")
+    bind_purpose = "no-launch"
+    if operation == "pending-launch-bind":
+        bind_purpose = _validate_pending_bind_purpose(body)
+    if deadline is not None:
+        _remaining(deadline, "managed operation timed out")
+    if state_store is None:
+        state_store = _resolve_state_store(
+            validated, env=env, helper=helper, runner=runner
+        )
+
+    try:
+        if operation == "legacy-begin":
+            pid = body.get("pid")
+            if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+                raise _invalid("legacy ownership arguments are invalid")
+            # The caller supplies only a PID.  Deriving the token here avoids
+            # trusting a shell-provided value and keeps Linux procfs and
+            # portable ps identities in one authoritative domain.
+            start_token, pgid = _verify_process_identity(
+                pid,
+                process_identity=process_identity,
+                deadline=deadline,
+            )
+            if body.get("pending_launch") is True:
+                record = _state_mutation(
+                    state_store,
+                    "begin_pending_launch",
+                    {
+                        "request_id": validated["request_id"],
+                        "pid": pid,
+                        "start_token": start_token,
+                        "pgid": pgid,
+                    },
+                    deadline=deadline,
+                )
+            else:
+                record = _legacy_begin_mutation(
+                    state_store,
+                    pid=pid,
+                    start_token=start_token,
+                    pgid=pgid,
+                    deadline=deadline,
+                    process_identity=process_identity,
+                )
+        elif operation == "pending-launch-bind":
+            lease_id = body.get("lease_id")
+            pid = body.get("pid")
+            if (
+                not isinstance(lease_id, str)
+                or not lease_id
+                or isinstance(pid, bool)
+                or not isinstance(pid, int)
+                or pid <= 0
+            ):
+                raise _invalid("pending-launch bind arguments are invalid")
+            _bounded_text(lease_id, "lease ID", max_bytes=_MAX_ID_BYTES)
+            record = _pending_bind_mutation(
+                state_store,
+                lease_id=lease_id,
+                pid=pid,
+                request_id=validated["request_id"],
+                lane=_canonical_lane(validated["lane"]),
+                bind_purpose=bind_purpose,
+                deadline=deadline,
+                process_identity=process_identity,
+            )
+        else:
+            lease_id = body.get("lease_id")
+            if not isinstance(lease_id, str) or not lease_id:
+                raise _invalid("pending-launch abort arguments are invalid")
+            _bounded_text(lease_id, "lease ID", max_bytes=_MAX_ID_BYTES)
+            record = _state_mutation(
+                state_store,
+                "abort_pending_launch",
+                {"lease_id": lease_id},
+                deadline=deadline,
+            )
+    except ManagedCLIError:
+        raise
+    except Exception as error:
+        raise _state_error(error)
+    if deadline is not None:
+        _remaining(deadline, "managed operation timed out")
+    return {"ok": True, "result": _redact_ownership_result(record)}
+
+
+def serve_once(
+    socket_path: str | os.PathLike[str],
+    handler: Callable[[Mapping[str, Any]], Any],
+    *,
+    connect_timeout: float = CONNECT_TIMEOUT,
+    operation_timeout: float = OPERATION_TIMEOUT,
+    max_bytes: int = MAX_FRAME_BYTES,
+) -> dict[str, Any]:
+    """Serve exactly one bounded request, then remove the ephemeral socket."""
+
+    path = _socket_path(socket_path)
+    connect_timeout = _bounded_timeout(connect_timeout, "connect timeout", CONNECT_TIMEOUT)
+    operation_timeout = _bounded_timeout(
+        operation_timeout, "operation timeout", OPERATION_TIMEOUT
+    )
+    max_bytes = _validate_frame_limit(max_bytes)
+    _prepare_socket_parent(path)
+    # Existing files, stale sockets, and live sockets all belong to another
+    # owner until an external reconciliation step removes them.  In
+    # particular, never unlink a listener merely to make bind succeed.
+    if _lstat(path) is not None:
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            raise ManagedCLIError("permission", "managed socket path is a symlink", 1)
+        raise ManagedCLIError("busy", "managed socket path is already occupied", 1)
+
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    response: dict[str, Any]
+    bound_identity: Optional[tuple[int, int]] = None
+    try:
+        try:
+            server.bind(str(path))
+            os.chmod(str(path), 0o600, follow_symlinks=False)
+            server.listen(1)
+            server.settimeout(connect_timeout)
+        except OSError:
+            raise ManagedCLIError("transport", "could not bind managed socket", 1)
+        try:
+            info = path.lstat()
+        except OSError:
+            raise ManagedCLIError("permission", "managed socket disappeared", 1)
+        if (
+            stat.S_ISLNK(info.st_mode)
+            or not stat.S_ISSOCK(info.st_mode)
+            or (_uid() is not None and info.st_uid != _uid())
+            or stat.S_IMODE(info.st_mode) & 0o077
+        ):
+            raise ManagedCLIError("permission", "managed socket is not owner-only", 1)
+        bound_identity = (int(info.st_dev), int(info.st_ino))
+
+        try:
+            connection, _address = server.accept()
+        except socket.timeout:
+            raise _timeout("timed out waiting for managed client")
+        except OSError:
+            raise ManagedCLIError("transport", "could not accept managed client", 1)
+        with connection:
+            deadline = time.monotonic() + operation_timeout
+            try:
+                connection.settimeout(_remaining(deadline, "managed operation timed out"))
+                request = _read_socket_frame(connection, max_bytes, deadline)
+                request = _validate_request(request)
+                if time.monotonic() > deadline:
+                    raise _timeout("managed operation timed out")
+                raw = _handler_call(handler, request, deadline)
+                if time.monotonic() > deadline:
+                    raise _timeout("managed operation timed out")
+                response = _normalise_response(request, raw, handler=handler)
+            except Exception as error:
+                request_id = request.get("request_id") if "request" in locals() and isinstance(request, Mapping) else None
+                generation = request.get("generation") if "request" in locals() and isinstance(request, Mapping) else None
+                response = _error_response(request_id, error, generation)
+            try:
+                connection.settimeout(_remaining(deadline, "managed operation timed out"))
+                connection.sendall(encode_frame(response, max_bytes=max_bytes))
+            except ManagedCLIError:
+                # An inline synchronous test handler may finish after the
+                # deadline.  The client has already received its bounded
+                # timeout; there is no safe second mutation or retry here.
+                pass
+            except socket.timeout:
+                # The peer may have gone away after its own deadline.  There
+                # is no second channel on which to report this, so finish the
+                # one-shot server without replacing the response/error code.
+                pass
+            except OSError:
+                pass
+    finally:
+        server.close()
+        try:
+            # Only remove the inode this invocation successfully bound.  If a
+            # handler or another process replaced the pathname, leave that
+            # owner's socket untouched.
+            current = path.lstat()
+            identity = (int(current.st_dev), int(current.st_ino))
+            if (
+                bound_identity is not None
+                and identity == bound_identity
+                and stat.S_ISSOCK(current.st_mode)
+            ):
+                path.unlink()
+        except OSError:
+            pass
+    return response
+
+
+def _stop_requested(stop_event: Any) -> bool:
+    if stop_event is None:
+        return False
+    checker = getattr(stop_event, "is_set", None)
+    try:
+        return bool(checker()) if callable(checker) else False
+    except Exception:
+        # A broken stop signal cannot be allowed to alter the socket owner or
+        # skip request admission.  The daemon continues until shutdown.
+        return False
+
+
+async def _send_daemon_response(
+    connection: socket.socket,
+    response: Mapping[str, Any],
+    *,
+    max_bytes: int,
+    deadline: float,
+    fallback_timeout: float,
+) -> None:
+    """Send one response without allowing a peer to wedge the owner loop."""
+
+    frame = encode_frame(response, max_bytes=max_bytes)
+    loop = asyncio.get_running_loop()
+    try:
+        send_deadline = deadline
+        timeout = _remaining(send_deadline, "managed operation timed out")
+    except ManagedCLIError:
+        # A handler may have needed bounded reconciliation after cancellation.
+        # Communicate that refusal when the client is still present, using a
+        # fresh transport-only bound; never wait unboundedly after the effect
+        # deadline and never admit another request before this send finishes.
+        send_deadline = time.monotonic() + min(fallback_timeout, OPERATION_TIMEOUT)
+        try:
+            timeout = _remaining(send_deadline, "managed response timed out")
+        except ManagedCLIError:
+            return
+    try:
+        await asyncio.wait_for(loop.sock_sendall(connection, frame), timeout=timeout)
+    except asyncio.TimeoutError:
+        return
+    except (ManagedCLIError, OSError):
+        return
+
+
+async def _serve_daemon_loop(
+    server: socket.socket,
+    handler: Any,
+    *,
+    connect_timeout: float,
+    operation_timeout: float,
+    max_bytes: int,
+    max_requests: Optional[int],
+    stop_event: Any,
+) -> list[dict[str, Any]]:
+    """Run every request on one persistent asyncio loop.
+
+    Requests are deliberately admitted sequentially.  In particular, an
+    async handler cancelled by its operation deadline is awaited by
+    ``_handler_call_async`` before this loop accepts the next mutation.  This
+    keeps adapter readers and connections alive between requests while making
+    cancellation/reconciliation a real admission barrier.
+    """
+
+    loop = asyncio.get_running_loop()
+    server.setblocking(False)
+    responses: list[dict[str, Any]] = []
+    served = 0
+    while max_requests is None or served < max_requests:
+        if _stop_requested(stop_event):
+            break
+        try:
+            connection, _address = await asyncio.wait_for(
+                loop.sock_accept(server),
+                timeout=min(connect_timeout, 0.10),
+            )
+        except asyncio.TimeoutError:
+            continue
+        except OSError:
+            raise ManagedCLIError("transport", "could not accept managed client", 1)
+
+        connection.setblocking(False)
+        request: Optional[dict[str, Any]] = None
+        operation: Optional[str] = None
+        response: dict[str, Any]
+        deadline = time.monotonic() + operation_timeout
+        try:
+            request = _validate_request(
+                await _read_async_socket_frame(connection, max_bytes, deadline)
+            )
+            operation = request.get("operation")
+            raw = await _handler_call_async(handler, request, deadline)
+            if time.monotonic() > deadline:
+                raise _timeout("managed operation timed out")
+            response = _normalise_response(request, raw, handler=handler)
+        except Exception as error:
+            request_id = request.get("request_id") if request is not None else None
+            generation = request.get("generation") if request is not None else None
+            response = _error_response(request_id, error, generation)
+            if request is not None:
+                response = _force_unverified_status(request, response, handler)
+
+        try:
+            await _send_daemon_response(
+                connection,
+                response,
+                max_bytes=max_bytes,
+                deadline=deadline,
+                fallback_timeout=connect_timeout,
+            )
+        finally:
+            connection.close()
+        responses.append(response)
+        # ``serve_daemon`` is normally indefinite.  Keep only a small bounded
+        # diagnostic return history so a long-lived owner never accumulates
+        # every full response (each response may itself approach the frame
+        # limit).  Finite ``max_requests`` callers retain their recent bounded
+        # results, including the existing two-request fixture seam.
+        if len(responses) > MAX_RESPONSE_HISTORY:
+            del responses[: len(responses) - MAX_RESPONSE_HISTORY]
+        served += 1
+        # Shutdown is a quiescence request, not daemon retirement: keep the
+        # control service, runtime record, and managed owner available after a
+        # successful response.  Only authoritative unenrollment retires this
+        # loop; refused/uncertain unenrollment remains serviceable for retry.
+        if operation == "unenroll" and response.get("ok") is True:
+            break
+    return responses
+
+
+def serve_daemon(
+    socket_path: str | os.PathLike[str],
+    handler: Any,
+    *,
+    connect_timeout: float = CONNECT_TIMEOUT,
+    operation_timeout: float = OPERATION_TIMEOUT,
+    max_bytes: int = MAX_FRAME_BYTES,
+    max_requests: Optional[int] = None,
+    stop_event: Any = None,
+    on_ready: Optional[Callable[[], Any]] = None,
+) -> list[dict[str, Any]]:
+    """Serve managed requests on one persistent asyncio event loop.
+
+    ``max_requests`` and ``stop_event`` are bounded embedding seams for
+    supervised tests and orderly shutdown.  A production owner normally
+    leaves both unset and sends the public ``shutdown`` operation through the
+    same socket.  This synchronous wrapper owns exactly one ``asyncio.run``
+    for the daemon lifetime; no request creates a second loop.
+    """
+
+    path = _socket_path(socket_path)
+    connect_timeout = _bounded_timeout(connect_timeout, "connect timeout", CONNECT_TIMEOUT)
+    operation_timeout = _bounded_timeout(
+        operation_timeout, "operation timeout", OPERATION_TIMEOUT
+    )
+    max_bytes = _validate_frame_limit(max_bytes)
+    if max_requests is not None and (
+        isinstance(max_requests, bool)
+        or not isinstance(max_requests, int)
+        or max_requests < 0
+    ):
+        raise _invalid("max requests is invalid")
+    if on_ready is not None and not callable(on_ready):
+        raise _invalid("managed transport readiness callback is unavailable")
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        raise ManagedCLIError(
+            "unsupported", "managed daemon must own its event loop", 1
+        )
+
+    _prepare_socket_parent(path)
+    if _lstat(path) is not None:
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            raise ManagedCLIError("permission", "managed socket path is a symlink", 1)
+        raise ManagedCLIError("busy", "managed socket path is already occupied", 1)
+
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    bound_identity: Optional[tuple[int, int]] = None
+    try:
+        try:
+            server.bind(str(path))
+            os.chmod(str(path), 0o600, follow_symlinks=False)
+            server.listen(16)
+        except (OSError, TypeError):
+            raise ManagedCLIError("transport", "could not bind managed socket", 1)
+        info = _lstat(path)
+        if info is None:
+            raise ManagedCLIError("permission", "managed socket disappeared", 1)
+        if (
+            stat.S_ISLNK(info.st_mode)
+            or not stat.S_ISSOCK(info.st_mode)
+            or (_uid() is not None and info.st_uid != _uid())
+            or stat.S_IMODE(info.st_mode) & 0o077
+        ):
+            raise ManagedCLIError("permission", "managed socket is not owner-only", 1)
+        bound_identity = (int(info.st_dev), int(info.st_ino))
+        if on_ready is not None:
+            try:
+                ready_result = on_ready()
+            except ManagedCLIError:
+                raise
+            except Exception:
+                raise ManagedCLIError(
+                    "unknown", "managed transport readiness could not be published", 1
+                )
+            if inspect.isawaitable(ready_result):
+                close = getattr(ready_result, "close", None)
+                if callable(close):
+                    close()
+                raise ManagedCLIError(
+                    "unsupported", "managed transport readiness callback must be synchronous", 1
+                )
+        return asyncio.run(
+            _serve_daemon_loop(
+                server,
+                handler,
+                connect_timeout=connect_timeout,
+                operation_timeout=operation_timeout,
+                max_bytes=max_bytes,
+                max_requests=max_requests,
+                stop_event=stop_event,
+            )
+        )
+    finally:
+        server.close()
+        try:
+            current = path.lstat()
+            identity = (int(current.st_dev), int(current.st_ino))
+            if (
+                bound_identity is not None
+                and identity == bound_identity
+                and stat.S_ISSOCK(current.st_mode)
+            ):
+                path.unlink()
+        except OSError:
+            pass
+
+
+# A descriptive alias is useful to supervisors that call the long-lived
+# server by its conventional name; both names retain the same single-loop
+# implementation and inode-safe lifecycle.
+serve_forever = serve_daemon
+
+
+def _parse_generation(value: str) -> Any:
+    try:
+        return int(value, 10)
+    except (TypeError, ValueError):
+        return value
+
+
+def _parse_pid(value: str) -> int:
+    try:
+        pid = int(value, 10)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("pid is invalid")
+    if pid <= 0:
+        raise argparse.ArgumentTypeError("pid is invalid")
+    return pid
+
+
+def _parse_json_object(value: Any, label: str) -> dict[str, Any]:
+    """Decode one explicit CLI JSON object without accepting an array/scalar."""
+
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        raise _invalid(label + " is not valid JSON")
+    return _mapping(parsed, label)
+
+
+def _validate_cli_lane_namespace(
+    namespace: argparse.Namespace, parser: argparse.ArgumentParser
+) -> None:
+    positional = getattr(namespace, "lane_positional", None)
+    option = getattr(namespace, "lane", None)
+    if positional is None and option is None:
+        parser.error("lane is required")
+    if positional is None or option is None:
+        return
+    try:
+        positional_lane = _canonical_lane(positional)
+        option_lane = _canonical_lane(option)
+    except ManagedCLIError:
+        parser.error("lane is invalid")
+    if positional_lane.casefold() != option_lane.casefold():
+        parser.error("invalid: positional lane and --lane disagree")
+
+
+class _ManagedArgumentParser(argparse.ArgumentParser):
+    """Argument parser that rejects ambiguous lane spellings immediately."""
+
+    def parse_args(
+        self,
+        args: Optional[Sequence[str]] = None,
+        namespace: Optional[argparse.Namespace] = None,
+    ) -> argparse.Namespace:
+        # Keep every unrecognised token as a parser refusal.  In particular,
+        # ctx has no legacy positional or option-based mapping spelling.
+        parsed, extras = self.parse_known_args(args=args, namespace=namespace)
+        if extras:
+            self.error("unrecognized arguments: %s" % " ".join(extras))
+        if hasattr(parsed, "lane_positional") or hasattr(parsed, "lane"):
+            _validate_cli_lane_namespace(parsed, self)
+        return parsed
+
+
+def _add_common_options(parser: argparse.ArgumentParser) -> None:
+    # The documented surface is ``lane-managed <operation> <lane>``.  Keep
+    # ``--lane`` as a compatibility spelling for callers that already build
+    # wire envelopes, and reject conflicting dual spellings below.
+    parser.add_argument("lane_positional", nargs="?", metavar="lane")
+    parser.add_argument("--lane", dest="lane", help="canonical managed lane name")
+    parser.add_argument(
+        "--generation", type=_parse_generation, default=0,
+        help="expected lane generation",
+    )
+    parser.add_argument("--request-id", dest="request_id", help="durable request ID")
+    parser.add_argument("--socket", dest="socket_path", help="owner-only Unix socket path")
+    parser.add_argument("--connect-timeout", type=float, default=CONNECT_TIMEOUT)
+    parser.add_argument("--operation-timeout", type=float, default=OPERATION_TIMEOUT)
+    parser.add_argument(
+        "--body",
+        "--body-json",
+        dest="body_json",
+        help="JSON object merged into the operation body",
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = _ManagedArgumentParser(
+        prog="lane-managed",
+        description=(
+            "bounded managed-lane control client; live SDK capability is "
+            "UNVERIFIED and experimental"
+        ),
+    )
+    subparsers = parser.add_subparsers(
+        dest="command", required=True, parser_class=_ManagedArgumentParser
+    )
+    for operation in _OPERATIONS:
+        command = subparsers.add_parser(operation, help=operation + " managed lane")
+        command.set_defaults(operation=operation)
+        _add_common_options(command)
+        command.add_argument("--operation-id", dest="operation_id")
+        if operation in {"start"}:
+            command.add_argument(
+                "--opt-in",
+                dest="opt_in",
+                action="store_true",
+                help="explicitly authorize starting the managed supervisor",
+            )
+            command.add_argument("--coordinator-id", dest="coordinator_id")
+            command.add_argument("--session-id", dest="session_id")
+            command.add_argument("--parent-id", dest="parent_id")
+            command.add_argument("--task-id", dest="task_id")
+            command.add_argument("--mailbox-id", dest="mailbox_id")
+            command.add_argument("--participants", dest="participants_json")
+        if operation == "submit":
+            command.add_argument("--recipient-id", "--recipient", dest="recipient_id")
+            command.add_argument("--sender-id", "--sender", dest="sender_id")
+            command.add_argument("--task-id", dest="task_id")
+            command.add_argument("--payload-ref", "--payload", dest="payload_ref")
+        if operation == "add-worker":
+            command.add_argument(
+                "--participant-id", "--participant", "--worker-id",
+                dest="participant_id",
+            )
+            command.add_argument("--session-id", "--session-uuid", dest="session_id")
+            command.add_argument("--parent-id", dest="parent_id")
+            command.add_argument("--task-id", dest="task_id")
+            command.add_argument("--mailbox-id", dest="mailbox_id")
+            command.add_argument("--role", dest="role")
+            command.add_argument("--kind", dest="kind")
+            command.add_argument(
+                "--runner-spec", "--runner-spec-json", dest="runner_spec_json"
+            )
+        if operation == "complete-worker":
+            command.add_argument(
+                "--participant-id", "--participant", "--worker-id",
+                dest="participant_id",
+            )
+            command.add_argument(
+                "--evidence", "--completion-evidence", "--evidence-json",
+                dest="evidence_json",
+            )
+        if operation == "swap":
+            command.add_argument("--profile", "--target-profile", dest="profile")
+            command.add_argument("--source-profile", dest="source_profile")
+        if operation == "ctx":
+            command.add_argument("--checkpoint", dest="checkpoint", required=True)
+            command.add_argument(
+                "--workers", "--worker-policy", dest="worker_policy",
+                choices=("hold", "restart"), required=True,
+            )
+        if operation == "handoff":
+            command.add_argument("--checkpoint", dest="checkpoint", required=True)
+    # This is an internal read used by legacy front doors.  Keep it out of
+    # normal help so users do not mistake its exit-8 absence answer for a
+    # public operation success, but retain a complete bounded envelope for
+    # callers that need to query an already-running owner daemon.
+    legacy = subparsers.add_parser("legacy-check", help=argparse.SUPPRESS)
+    legacy.set_defaults(operation="legacy-check")
+    _add_common_options(legacy)
+    begin = subparsers.add_parser("legacy-begin", help=argparse.SUPPRESS)
+    begin.set_defaults(operation="legacy-begin")
+    _add_common_options(begin)
+    begin.add_argument("--pid", type=_parse_pid, required=True)
+    begin.add_argument("--pending-launch", dest="pending_launch", action="store_true")
+
+    bind = subparsers.add_parser("pending-launch-bind", help=argparse.SUPPRESS)
+    bind.set_defaults(operation="pending-launch-bind")
+    _add_common_options(bind)
+    bind.add_argument("--lease-id", dest="lease_id", required=True)
+    bind.add_argument("--pid", type=_parse_pid, required=True)
+    bind.add_argument(
+        "--bind-purpose",
+        "--purpose",
+        dest="bind_purpose",
+        help=argparse.SUPPRESS,
+    )
+
+    abort = subparsers.add_parser("pending-launch-abort", help=argparse.SUPPRESS)
+    abort.set_defaults(operation="pending-launch-abort")
+    _add_common_options(abort)
+    abort.add_argument("--lease-id", dest="lease_id", required=True)
+
+    # Read-only UserPromptSubmit guard seam.  It is hidden from public help;
+    # lanes-edit.sh supplies the exact participant UUID, session name, and
+    # bound lane before it falls back to legacy tmux/session inference.
+    roster = subparsers.add_parser("roster-validate", help=argparse.SUPPRESS)
+    roster.set_defaults(operation="roster-validate")
+    _add_common_options(roster)
+    roster.add_argument(
+        "--participant-uuid", "--participant", dest="participant_uuid", required=True
+    )
+    roster.add_argument(
+        "--session-name", "--session", dest="session_name", required=True
+    )
+    roster.add_argument("--bound-lane", dest="bound_lane")
+    return parser
+
+
+def _body_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    body: dict[str, Any] = {}
+    body_from_json: dict[str, Any] = {}
+    raw_body = getattr(args, "body_json", None)
+    if raw_body is not None:
+        try:
+            parsed = json.loads(raw_body)
+        except (TypeError, ValueError):
+            raise _invalid("body is not valid JSON")
+        body_from_json = _mapping(parsed, "body")
+        body = dict(body_from_json)
+
+    for attr, key in (
+        ("operation_id", "operation_id"),
+        ("coordinator_id", "coordinator_id"),
+        ("session_id", "session_id"),
+        ("parent_id", "parent_id"),
+        ("task_id", "task_id"),
+        ("mailbox_id", "mailbox_id"),
+        ("participants_json", "participants"),
+        ("recipient_id", "recipient_id"),
+        ("sender_id", "sender_id"),
+        ("payload_ref", "payload_ref"),
+        ("profile", "profile"),
+        ("source_profile", "source_profile"),
+        ("pid", "pid"),
+        ("lease_id", "lease_id"),
+        ("bind_purpose", "bind_purpose"),
+        ("participant_id", "participant_id"),
+        ("role", "role"),
+        ("kind", "kind"),
+        ("runner_spec_json", "runner_spec"),
+        ("evidence_json", "evidence"),
+        ("checkpoint", "checkpoint"),
+        ("worker_policy", "worker_policy"),
+        ("participant_uuid", "participant_uuid"),
+        ("session_name", "session_name"),
+        ("bound_lane", "bound_lane"),
+    ):
+        value = getattr(args, attr, None)
+        if value is None:
+            continue
+        if attr in {
+            "lease_id", "participant_id", "session_id", "role", "kind",
+            "checkpoint",
+        }:
+            value = _bounded_text(value, attr.replace("_", " "), max_bytes=_MAX_ID_BYTES)
+        elif attr == "pid":
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise _invalid("pid is invalid")
+        if attr == "participants_json":
+            try:
+                value = json.loads(value)
+            except (TypeError, ValueError):
+                raise _invalid("participants is not valid JSON")
+        elif attr in {"runner_spec_json", "evidence_json"}:
+            value = _parse_json_object(value, attr.replace("_json", ""))
+        body[key] = value
+    if args.command == "ctx":
+        # Context rollover has a deliberately small, explicit CLI shape.  It
+        # is request validation only; the daemon/controller still owns every
+        # lifecycle and runtime decision.
+        if "worker_policy" in body_from_json:
+            raw_policy = body_from_json["worker_policy"]
+            explicit_policy = getattr(args, "worker_policy", None)
+            if (
+                not isinstance(raw_policy, str)
+                or raw_policy not in {"hold", "restart"}
+                or raw_policy != explicit_policy
+            ):
+                raise _invalid("ctx body worker_policy must match --workers")
+        if "checkpoint" not in body:
+            raise _invalid("ctx requires an explicit checkpoint")
+        policy = body.get("worker_policy")
+        if not isinstance(policy, str) or policy not in {"hold", "restart"}:
+            raise _invalid("ctx worker policy is unsupported")
+        if "mapping" in body:
+            raise _invalid("ctx does not accept worker mappings")
+        if any(key not in {"checkpoint", "worker_policy"}
+               for key in body):
+            raise _invalid("ctx body contains unsupported fields")
+    elif args.command == "handoff":
+        if "checkpoint" not in body:
+            raise _invalid("handoff requires an explicit checkpoint")
+        if any(key != "checkpoint" for key in body):
+            raise _invalid("handoff accepts only a checkpoint")
+    if args.command in _OWNERSHIP_OPERATIONS and "start_token" in body:
+        raise _invalid("start token is derived from the live PID")
+    if "opt_in" in body:
+        if not getattr(args, "opt_in", False) or body.pop("opt_in") is not True:
+            raise _invalid("opt-in requires the start flag")
+    if getattr(args, "pending_launch", False):
+        body["pending_launch"] = True
+    if getattr(args, "opt_in", False):
+        # The flag, not caller-supplied JSON, is the only authority for the
+        # boot/enrollment path.  Carry the affirmative bit in the start
+        # envelope after parsing so the owner can apply its own policy.
+        if args.command != "start":
+            raise _invalid("opt-in is valid only for start")
+        body["opt_in"] = True
+    return body
+
+
+def _request_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    positional = getattr(args, "lane_positional", None)
+    option = getattr(args, "lane", None)
+    if positional is None and option is None:
+        raise _invalid("lane is required")
+    if positional is not None and option is not None:
+        positional_lane = _canonical_lane(positional)
+        option_lane = _canonical_lane(option)
+        if positional_lane.casefold() != option_lane.casefold():
+            raise _invalid("positional lane and --lane disagree")
+        lane = positional_lane
+    else:
+        lane = _canonical_lane(positional if positional is not None else option)
+    request_id = getattr(args, "request_id", None) or uuid.uuid4().hex
+    _bounded_text(request_id, "request ID")
+    generation: Any = getattr(args, "generation", "0")
+    if isinstance(generation, str):
+        # Preserve caller spelling for durable generation comparisons, but use
+        # an integer when the CLI was given a simple numeric value.
+        if generation.isdigit():
+            generation = int(generation)
+    elif isinstance(generation, bool) or not isinstance(generation, (int, float)):
+        raise _invalid("generation is invalid")
+    if isinstance(generation, float) and not math.isfinite(generation):
+        raise _invalid("generation is invalid")
+    body = _body_from_args(args)
+    request = {
+        "schema": SCHEMA_VERSION,
+        "schema_version": NATIVE_SCHEMA_VERSION,
+        "architecture": NATIVE_ARCHITECTURE,
+        "request_id": request_id,
+        "lane": lane,
+        "generation": generation,
+        "operation": args.command,
+        "body": body,
+    }
+    request = _validate_request(request)
+    # Validate the exact serialized envelope even when ``main`` is using its
+    # injected in-process handler rather than the socket client.
+    encode_frame(request)
+    return request
+
+
+def _print_response(response: Mapping[str, Any]) -> None:
+    try:
+        output = json.dumps(
+            dict(response), ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        )
+    except (TypeError, ValueError):
+        output = json.dumps(
+            {"schema": SCHEMA_VERSION, "schema_version": NATIVE_SCHEMA_VERSION,
+             "architecture": NATIVE_ARCHITECTURE,
+             "request_id": response.get("request_id"),
+             "ok": False, "code": "invalid", "error": "response is not JSON"},
+            separators=(",", ":"),
+        )
+    print(output)
+
+
+_REFUSAL_EXIT_CODES = {
+    "invalid": 2,
+    "schema-mismatch": 2,
+    "migration-required": 7,
+    "busy": 3,
+    "stale-generation": 4,
+    "ownership-conflict": 5,
+    "profile-mismatch": 6,
+    "unsupported": 7,
+    "loader-failed": 8,
+    "uncertain-effect": 9,
+    "live-unverified": 10,
+}
+
+
+def _response_code(response: Mapping[str, Any]) -> Optional[str]:
+    for key in ("refusal_code", "code"):
+        value = response.get(key)
+        if isinstance(value, str) and value:
+            return value
+    error = response.get("error")
+    if isinstance(error, Mapping):
+        value = error.get("code")
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _response_exit_code(response: Mapping[str, Any]) -> int:
+    if response.get("ok") is True:
+        return 0
+    code = _response_code(response)
+    return _REFUSAL_EXIT_CODES.get(code or "", 1)
+
+
+def main(
+    argv: Optional[Sequence[str]] = None,
+    handler: Optional[Callable[[Mapping[str, Any]], Any]] = None,
+) -> int:
+    """Run one client command; ``handler`` is the test/embedding seam."""
+
+    parser = build_parser()
+    try:
+        args = parser.parse_args(list(argv) if argv is not None else None)
+        request = _request_from_args(args)
+        if handler is not None:
+            operation_timeout = _bounded_timeout(
+                args.operation_timeout, "operation timeout", OPERATION_TIMEOUT
+            )
+            deadline = time.monotonic() + operation_timeout
+            try:
+                raw = _handler_call(handler, request, deadline)
+                if time.monotonic() > deadline:
+                    raise _timeout("managed operation timed out")
+                response = _normalise_response(request, raw, handler=handler)
+            except Exception as error:
+                response = _error_response(
+                    request["request_id"], error, request.get("generation")
+                )
+                response = _force_unverified_status(request, response, handler)
+        else:
+            # An explicit ``--socket`` is the only direct endpoint override.
+            # Otherwise public operations must use the durable runtime record;
+            # an environment hint or a guessed default is not ownership
+            # evidence and must not bypass discovery.
+            socket_path = args.socket_path
+            if args.command in _OWNERSHIP_OPERATIONS and not socket_path:
+                # These front-door mutations must acquire the durable state
+                # lock directly before any legacy side effect.  They do not
+                # route through a fake/model/runtime socket.
+                try:
+                    operation_timeout = _bounded_timeout(
+                        args.operation_timeout,
+                        "operation timeout",
+                        OPERATION_TIMEOUT,
+                    )
+                    deadline = time.monotonic() + operation_timeout
+                    raw = _handler_call(
+                        durable_ownership_handler, request, deadline
+                    )
+                    if time.monotonic() > deadline:
+                        raise _timeout("managed operation timed out")
+                    response = _normalise_response(
+                        request, raw, handler=durable_ownership_handler
+                    )
+                except Exception as error:
+                    response = _error_response(
+                        request["request_id"], error, request.get("generation")
+                    )
+            elif not socket_path and args.command == "legacy-check":
+                # A local durable read is useful to legacy front doors before
+                # a daemon socket exists.  It remains a read-only state
+                # handler; public operations still require their owner socket.
+                try:
+                    raw = durable_legacy_handler(request)
+                    response = _normalise_response(
+                        request, raw, handler=durable_legacy_handler
+                    )
+                except Exception as error:
+                    print(
+                        "lane-managed: unknown: managed ownership is not confirmed",
+                        file=sys.stderr,
+                    )
+                    return 1
+            elif not socket_path and args.command == "roster-validate":
+                # The prompt guard must be able to validate a managed worker
+                # before a daemon endpoint is selected.  Keep this route on
+                # the durable read-only projection; environment hints never
+                # become process/session evidence here.
+                try:
+                    operation_timeout = _bounded_timeout(
+                        args.operation_timeout,
+                        "operation timeout",
+                        OPERATION_TIMEOUT,
+                    )
+                    deadline = time.monotonic() + operation_timeout
+                    raw = _handler_call(
+                        durable_roster_handler, request, deadline
+                    )
+                    if time.monotonic() > deadline:
+                        raise _timeout("managed roster read timed out")
+                    response = _normalise_response(
+                        request, raw, handler=durable_roster_handler
+                    )
+                except Exception as error:
+                    response = _error_response(
+                        request["request_id"], error, request.get("generation")
+                    )
+            else:
+                if socket_path:
+                    try:
+                        response = request_socket(
+                            socket_path,
+                            request,
+                            connect_timeout=args.connect_timeout,
+                            operation_timeout=args.operation_timeout,
+                        )
+                    except ManagedCLIError:
+                        if args.command == "legacy-check":
+                            print(
+                                "lane-managed: unknown: managed ownership is not confirmed",
+                                file=sys.stderr,
+                            )
+                            return 1
+                        raise
+                else:
+                    if args.command not in _OPERATIONS:
+                        raise ManagedCLIError("invalid", "managed socket path is required", 2)
+                    operation_timeout = _bounded_timeout(
+                        args.operation_timeout,
+                        "operation timeout",
+                        OPERATION_TIMEOUT,
+                    )
+                    connect_timeout = _bounded_timeout(
+                        args.connect_timeout,
+                        "connect timeout",
+                        CONNECT_TIMEOUT,
+                    )
+                    deadline = time.monotonic() + operation_timeout
+                    state_store = _resolve_state_store(request)
+                    discovered = _read_runtime_discovery(
+                        request,
+                        state_store=state_store,
+                        deadline=deadline,
+                    )
+                    if discovered is None:
+                        if args.command != "start" or not getattr(args, "opt_in", False):
+                            raise _runtime_refusal()
+                        socket_path = _default_socket_path(
+                            request["lane"], state_store=state_store
+                        )
+                        socket_path = _spawn_supervisor_and_discover(
+                            request,
+                            socket_path=socket_path,
+                            connect_timeout=connect_timeout,
+                            deadline=deadline,
+                            state_store=state_store,
+                        )
+                    else:
+                        socket_path = discovered[0]
+                    remaining_operation = _remaining(
+                        deadline, "managed operation timed out"
+                    )
+                    operation_timeout = min(operation_timeout, remaining_operation)
+                    request_kwargs = {
+                        "connect_timeout": min(connect_timeout, remaining_operation),
+                        "operation_timeout": operation_timeout,
+                    }
+                    # Keep the one absolute boot deadline when the real
+                    # transport is selected, while retaining the tiny
+                    # one-shot request seam used by embedding callers.
+                    if _handler_accepts_deadline(request_socket):
+                        request_kwargs["deadline"] = deadline
+                    response = request_socket(socket_path, request, **request_kwargs)
+        if args.command == "legacy-check":
+            legacy_code = _legacy_exit_code(response)
+            if legacy_code is None:
+                print(
+                    "lane-managed: unknown: managed ownership is not confirmed",
+                    file=sys.stderr,
+                )
+                return 1
+            # The internal convention is an exit-only read.  Do not print the
+            # public JSON response, whose success meaning is intentionally
+            # different from exit 8 confirmed absence.
+            return legacy_code
+        if args.command == "roster-validate":
+            roster_code = _roster_exit_code(response)
+            if roster_code is None:
+                print(
+                    "lane-managed: unknown: managed roster is not confirmed",
+                    file=sys.stderr,
+                )
+                return 1
+            # Exit 8 is the sole confirmed-unmanaged/absent answer.  Keep its
+            # stdout empty because lanes-edit.sh treats any output as an
+            # invalid absence proof.
+            if roster_code == 8:
+                return 8
+            _print_response(response)
+            return roster_code
+        _print_response(response)
+        return _response_exit_code(response)
+    except ManagedCLIError as error:
+        # Keep diagnostics stable and value-free.  Error messages from an
+        # adapter/controller are not safe to echo because they may include a
+        # profile name, session ID, payload reference, or credential.
+        print("lane-managed: %s: managed request failed" % error.code, file=sys.stderr)
+        return error.exit_code
+    except Exception:
+        # Never relay arbitrary handler/JSON exceptions: their text may carry
+        # an environment value or payload reference.
+        print("lane-managed: unknown: managed request failed", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

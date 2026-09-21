@@ -14,12 +14,14 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from conftest import REPO, WINDOWS_SKIP
+from test_openrepotools_command import DATA_INSTALLABLES, INSTALLABLE_MODES, INSTALLED
 
 #: EVERY BASH FILE THIS REPOSITORY SHIPS, and nothing else is one. Each is a
 #: file a person has on their PATH — the installer, the two estate verbs, the
@@ -93,6 +95,21 @@ HELPER_BASH = ["lane-handoff", "lane-rename"]
 #: it; this one is.
 ALL_BASH = (SHIPPED_BASH + LANE_BASH + HELPER_BASH
             + ["tests/test_lane_helpers.sh", "tests/run.sh"])
+
+
+@pytest.mark.parametrize("name", INSTALLED)
+def test_installed_artifact_modes_use_the_explicit_inventory(name):
+    """Installed shell/front-door files stay 755; exact data files stay 644.
+
+    Keep the mode contract derived from the same exact inventory used by the
+    installer tests. In particular, do not turn every `.py` path into a
+    blanket exception: only the seven imported modules named there, together
+    with `repos.tsv`, are data artifacts.
+    """
+    path = REPO / name
+    assert stat.S_IMODE(path.stat().st_mode) == INSTALLABLE_MODES[name], name
+    if name in DATA_INSTALLABLES:
+        assert not (path.stat().st_mode & stat.S_IXUSR), name
 
 #: THE COMMANDS THAT CARRY THE SHARED ESTATE RESOLVER, byte for byte. Every
 #: estate command is one; the installer is not, it finds no estate.
@@ -212,10 +229,10 @@ def test_every_placed_file_carries_in_the_index_the_mode_it_is_placed_with():
     """A COMMAND THAT IS NOT EXECUTABLE IS NOT A COMMAND, AND THE INDEX IS
     WHERE A FRESH CLONE READS THAT FROM.
 
-    `--install` stamps 755 on everything it places, so an installed copy runs
-    whatever the checkout says. What does NOT is the checkout itself: `./park`
-    from a clone, and the `cp -p` the lane suite copies `lane-handoff` with,
-    both take the mode git recorded.
+    `--install` stamps the exact mode selected for each installable, so an
+    installed copy has the mode the checkout declares. What does NOT is the
+    checkout itself: `./park` from a clone, and the `cp -p` the lane suite
+    copies `lane-handoff` with, both take the mode git recorded.
 
     WHAT THIS TEST IS DERIVED FROM, AND WHY IT IS ASKED OF THE INDEX. The first
     `lane-handoff` commit under Amendment 17(a) landed 100644 and the lane
@@ -227,8 +244,9 @@ def test_every_placed_file_carries_in_the_index_the_mode_it_is_placed_with():
     (Any finding that says `lane-handoff` is 100644 is reading this paragraph
     and not the index: `git ls-files -s lane-handoff` is the answer.)
 
-    The data file is the exception and is named as one: `repos.tsv` is read,
-    never run.
+    `repos.tsv` and the seven named managed Python modules are the explicit data
+    inventory; they are read, never run. The mode expectation below derives
+    from that same exact inventory rather than a suffix or blanket waiver.
     """
     names = _installables()
     proc = subprocess.run(["git", "ls-files", "-s", "--", *names],
@@ -239,7 +257,7 @@ def test_every_placed_file_carries_in_the_index_the_mode_it_is_placed_with():
     assert sorted(modes) == sorted(names), (
         f"`--install` names a file git does not track: {sorted(set(names) - set(modes))}")
     for name in names:
-        want = "100644" if name.endswith(".tsv") else "100755"
+        want = f"100{INSTALLABLE_MODES[name]:03o}"
         assert modes[name] == want, (
             f"{name} is {modes[name]} in the index and `--install` places it "
             f"as {want}. For a command that is `git update-index --chmod=+x "
@@ -1659,9 +1677,17 @@ def test_agents_md_is_short_enough_to_be_read():
     portable is worse than one that shows none, and the six lines are the
     correction plus the sentence naming the wrapper as the canonical
     implementation, which is what an assistant reading either should reach for.
+
+    265 -> 292 on 2026-09-18, for EXACTLY TWENTY-SEVEN lines: fourteen lines
+    preserve the named Speckit team-role and model-platform assignments, and
+    thirteen lines document the explicit `tests/run.sh --parallel-safe` mode,
+    including its isolated roots and concurrency limits. The cap moves for
+    these load-bearing workflow rules rather than for explanatory prose; the
+    existing AGENTS.md content remains intact and its dated rationale stays
+    here so the next addition must name the rule it buys.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 265, f"AGENTS.md is {len(lines)} lines; the cap is 265"
+    assert len(lines) <= 292, f"AGENTS.md is {len(lines)} lines; the cap is 292"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -2930,8 +2956,9 @@ def test_the_rule_6_register_scan_takes_its_alias_table_from_the_environment():
 
 
 def test_the_suite_wrapper_takes_one_lock_and_names_it_where_agents_read_it():
-    """ONE SUITE AT A TIME WHERE LANES SHARE A WORKSTATION, and the lock has to
-    be the SAME lock in every lane or there is no lock at all
+    """The default suite is serialized, with an explicit isolated mode for
+    concurrent read-only runs; the shared lock has to be the SAME lock in every
+    default-mode lane or there is no lock at all
     (opensoft/openRepoTools#51, measured 2026-09-14T20:4xZ on Eagle).
 
     Four `python3 -m pytest tests -q` runs were live at once in four worktrees,
@@ -2987,3 +3014,19 @@ def test_the_suite_wrapper_takes_one_lock_and_names_it_where_agents_read_it():
         "macOS ships no `flock`, so the wrapper needs the `mkdir` lock as its "
         "fallback — that platform is the one the fallback exists for")
     assert "python3 -m pytest tests -q" in text
+
+    # Parallel execution is opt-in and must isolate every ambient write root
+    # that the suite or its subprocesses can otherwise inherit.  Keep the
+    # default lock assertions above: safe mode supplements the workstation
+    # contract; it does not silently weaken it.
+    assert "--parallel-safe" in text and "run_parallel_safe" in text
+    assert "-p no:cacheprovider" in text and "--basetemp" in text
+    for assignment in (
+        'export HOME=', 'export TMPDIR=', 'export XDG_RUNTIME_DIR=',
+        'export XDG_CONFIG_HOME=', 'export XDG_CACHE_HOME=',
+        'export XDG_STATE_HOME=', 'export AGENT_PROTOCOL_ROOT=',
+        'export PROJECTS_DIR=', 'export PYTHONDONTWRITEBYTECODE=1',
+    ):
+        assert assignment in text, (
+            f"parallel-safe mode must isolate {assignment.rstrip('=')}"
+        )

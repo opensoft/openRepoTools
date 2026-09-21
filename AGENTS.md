@@ -1,5 +1,19 @@
 # Working in openRepoTools
 
+## Speckit Team Roles
+
+For feature `001-separate-swap-ctx-handoff`, preserve these named team role
+assignments throughout the Speckit workflow:
+
+- Astra is the architecture lead.
+- Sol High is the orchestration lead.
+- Luna Max is the implementation writer for the defined Speckit tasks.
+
+The active agent platform supplies the models: use Codex models when operating
+in Codex and Claude models when operating in Claude. Do not substitute one
+platform for the other. Keep these assignments intact across planning,
+implementation, validation, handoff, and review.
+
 Three estate commands, `park`, `resume` and `status`; the lane tooling
 `lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates`, which came here
 with their history under lane-collision-protocol Amendment 9; and the
@@ -209,6 +223,7 @@ Three rules, and none of them is negotiable:
 ```sh
 git submodule update --init upstream/openRepoShape
 tests/run.sh                      # the suite, serialized — pass any pytest argument
+tests/run.sh --parallel-safe      # isolated focused run; coordinate concurrency
 ```
 
 **`tests/run.sh` IS HOW THIS SUITE IS RUN, and `python3 -m pytest tests -q` by
@@ -247,6 +262,18 @@ it gives: `-c` is not in every `pgrep` this repository runs under, and the
 count — never `pgrep`'s exit status — is what decides. The wrapper is the
 canonical implementation of this guard; the lines above are it in one place for
 a person with no checkout in front of them.
+
+When several independent worktrees need validation at the same time, use the
+explicit `tests/run.sh --parallel-safe` form. It creates a private short-path
+sandbox for `HOME`, `TMPDIR`, XDG config/cache/state, runtime sockets,
+`AGENT_PROTOCOL_ROOT`, projects, Claude compatibility directories, and pytest's
+temporary directory; it also disables the pytest cache and bytecode writes.
+Isolation does not limit CPU, memory or process contention. Coordinate at most
+two focused runs initially, and keep the expensive lane-helper and full suites
+serialized without focused runs beside them. Increase concurrency only after
+measuring duration and timeout behavior. Freeze the files a selector reads;
+this mode does not make concurrent source edits safe. The ordinary invocation
+remains the serialized workstation-wide contract.
 
 `tests/test_lane_helpers.sh` is 122 KB of bash that arrived with the move;
 `tests/test_lane_helpers_suite.py` is what makes `pytest` run it, so it is one

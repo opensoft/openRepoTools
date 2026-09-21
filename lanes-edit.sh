@@ -58,6 +58,8 @@
 #                                        (attribution: $LANES_LANE, else the
 #                                         "lane <name>" the text itself names)
 #   lanes-edit.sh [--no-sweep|--sweep] add-row            "<full | row |>"
+#   lanes-edit.sh managed-owner      <lane> --mode managed --daemon-id <id> --generation <n> --bound-lane <lane>
+#   lanes-edit.sh managed-clear      <lane> --mode managed --daemon-id <id> --generation <n> --bound-lane <lane> --authoritative-unenroll
 #   lanes-edit.sh                      commit             "<message>"         # commit a hand edit
 #   lanes-edit.sh                      migrate-state-cells [--yes]            # Amendment 13(e), once
 #
@@ -735,6 +737,580 @@ die() {
   exit "${2:-1}"
 }
 note() { printf 'lanes-edit: %s\n' "$*" >&2; }
+
+# Optional managed ownership capability.  Resolution distinguishes a helper
+# that is genuinely absent (the only legacy-compatibility case) from an
+# explicit or installed helper that cannot be used.  `legacy-check` returns 0
+# when a durable managed/pending owner is present and 8 when the marker was
+# read and is absent; every other status is an unknown read and fails closed.
+# The read boundary is deliberately independent of this script's operation
+# lock, so the UserPromptSubmit hook never waits for a writer or SDK roundtrip.
+lane_managed_path() {
+  lm_candidate=""
+  lm_found=""
+  if [ "${LANE_MANAGED+x}" = x ]; then
+    lm_candidate="${LANE_MANAGED-}"
+    [ -n "$lm_candidate" ] || return 1
+    case "$lm_candidate" in
+      */*) [ -x "$lm_candidate" ] || return 1; printf '%s\n' "$lm_candidate"; return 0 ;;
+    esac
+    lm_found="$(command -v "$lm_candidate" 2>/dev/null || printf '')"
+    [ -n "$lm_found" ] && [ -x "$lm_found" ] || return 1
+    printf '%s\n' "$lm_found"
+    return 0
+  fi
+  if [ -e "$SCRIPT_DIR/lane-managed" ]; then
+    [ -x "$SCRIPT_DIR/lane-managed" ] || return 1
+    printf '%s\n' "$SCRIPT_DIR/lane-managed"
+    return 0
+  fi
+  lm_found="$(command -v lane-managed 2>/dev/null || printf '')"
+  if [ -n "$lm_found" ]; then
+    [ -x "$lm_found" ] || return 1
+    printf '%s\n' "$lm_found"
+    return 0
+  fi
+  return 8
+}
+
+MANAGED_PROJECTION_MODE=""
+MANAGED_PROJECTION_DAEMON=""
+MANAGED_PROJECTION_GENERATION=""
+MANAGED_PROJECTION_LANE=""
+
+managed_projection_component_valid() {   # <path-safe component>
+  local mpc_value="${1-}"
+  case "$mpc_value" in
+    '' | .* | -* | *[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  [ "${#mpc_value}" -le 128 ] || return 1
+  return 0
+}
+
+managed_projection_generation_valid() {   # <positive decimal integer>
+  local mpg_value="${1-}"
+  case "$mpg_value" in
+    '' | *[!0-9]* | 0) return 1 ;;
+  esac
+  while [ "${mpg_value#0}" != "$mpg_value" ]; do
+    mpg_value="${mpg_value#0}"
+  done
+  [ -n "$mpg_value" ] || return 1
+  MANAGED_PROJECTION_GENERATION="$mpg_value"
+  return 0
+}
+
+managed_projection_hint() {   # <row>; 0 means a managed marker is visible
+  printf '%s\n' "${1-}" | awk '
+    { s = tolower($0)
+      if (s ~ /managed[ _-](owner|binding)/ ||
+          s ~ /mode[ _-]*=[ _-]*managed/ ||
+          s ~ /managed[ _-]*:/) found = 1
+    }
+    END { exit(found ? 0 : 8) }'
+}
+
+managed_projection_parse_row() {   # <row>; 0 valid marker, 8 absent, other unknown
+  local mppr_row="${1-}" mppr_split mppr_cell mppr_text mppr_line mppr_fields mppr_hint mppr_row_lane
+  MANAGED_PROJECTION_MODE=""
+  MANAGED_PROJECTION_DAEMON=""
+  MANAGED_PROJECTION_GENERATION=""
+  MANAGED_PROJECTION_LANE=""
+  mppr_hint=8
+  if managed_projection_hint "$mppr_row"; then
+    mppr_hint=0
+  else
+    mppr_hint=$?
+  fi
+  mppr_split=0
+  row_split_state_cell "$mppr_row" || mppr_split=$?
+  case "$mppr_split" in
+    0) : ;;
+    2) [ "$mppr_hint" = 0 ] && return 1; return 8 ;;
+    *) [ "$mppr_hint" = 0 ] && return 1; return 8 ;;
+  esac
+  # A row without any managed-owner vocabulary is an ordinary legacy row and
+  # is the confirmed-absent projection result.  Once that vocabulary appears,
+  # however, every table/state delimiter and every owner field is evidence that
+  # must parse; no malformed marker may be downgraded to absence.  The split
+  # above intentionally runs first so projection writers retain RSS_HEAD and
+  # RSS_TAIL when replacing an ordinary row.
+  [ "$mppr_hint" = 0 ] || { [ "$mppr_hint" = 8 ] && return 8; return 1; }
+  mppr_cell="$(rstrip_spaces "$RSS_CELL")"
+  case "$mppr_cell" in
+    'MANAGED OWNER · '* | 'managed owner · '*)
+      # Keep the historical shorthand, but never treat an empty owner token
+      # as a valid durable binding.
+      mppr_text="${mppr_cell#* · }"
+      case "$mppr_text" in
+        '' | *[!A-Za-z0-9._-]*) return 1 ;;
+      esac
+      return 0
+      ;;
+    *' · '*) mppr_text="${mppr_cell#* · }" ;;
+    *) return 1 ;;
+  esac
+  case "$mppr_text" in
+    *' · '*) mppr_line="${mppr_text#* · }" ;;
+    *)
+      return 1 ;;
+  esac
+  case "$mppr_line" in
+    managed-owner\ *) : ;;
+    *) return 1 ;;
+  esac
+  mppr_fields="$(printf '%s\n' "$mppr_line" | sed -n \
+    's/^managed-owner mode=\([^[:space:]]*\) daemon=\([^[:space:]]*\) generation=\([^[:space:]]*\) bound-lane=\([^[:space:]]*\)$/\1|\2|\3|\4/p')"
+  [ -n "$mppr_fields" ] || return 1
+  IFS='|' read -r MANAGED_PROJECTION_MODE \
+    MANAGED_PROJECTION_DAEMON MANAGED_PROJECTION_GENERATION \
+    MANAGED_PROJECTION_LANE <<EOF
+$mppr_fields
+EOF
+  [ "$MANAGED_PROJECTION_MODE" = managed ] || return 1
+  managed_projection_component_valid "$MANAGED_PROJECTION_DAEMON" || return 1
+  managed_projection_generation_valid "$MANAGED_PROJECTION_GENERATION" || return 1
+  managed_projection_component_valid "$MANAGED_PROJECTION_LANE" || return 1
+  mppr_row_lane="$(printf '%s\n' "$RSS_HEAD" | awk -F'|' '{ cell=$2; sub(/^[[:space:]]+/, "", cell); sub(/[[:space:]]+$/, "", cell); sub(/^`/, "", cell); sub(/`$/, "", cell); print cell }')"
+  managed_projection_component_valid "$mppr_row_lane" || return 1
+  [ "$(lc "$mppr_row_lane")" = "$(lc "$MANAGED_PROJECTION_LANE")" ] || return 1
+  return 0
+}
+
+managed_projection_read() {   # <canonical lane>; 0 marker, 8 absent, other unknown
+  local mpr_lane="${1-}" mpr_row mpr_rc
+  if mpr_row="$(row_of_lane "$mpr_lane" 2>/dev/null)"; then
+    :
+  else
+    mpr_rc=$?
+    return "${mpr_rc:-1}"
+  fi
+  # `row_of_lane` is an awk pipeline and therefore exits 0 even when it
+  # printed no row.  An empty result is the published register's confirmed
+  # absence (8), not an unreadable projection; callers need this distinction
+  # so a new legacy lane remains compatible when the optional helper is absent.
+  [ -n "$mpr_row" ] || return 8
+  managed_projection_parse_row "$mpr_row"
+}
+
+managed_projection_check() {   # <canonical lane>; 0 conflict, 8 absent, other unknown
+  managed_projection_read "${1-}"
+}
+
+managed_projection_marker() {   # <daemon> <generation> <bound lane>
+  printf 'managed-owner mode=managed daemon=%s generation=%s bound-lane=%s' \
+    "$1" "$2" "$3"
+}
+
+managed_projection_parse_args() {   # common options for the projection verbs
+  MPO_MODE=""
+  MPO_DAEMON=""
+  MPO_GENERATION=""
+  MPO_BOUND_LANE=""
+  MPO_AUTHORITATIVE=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --mode)
+        [ "$#" -ge 2 ] || die "--mode needs a value" 2
+        [ -z "$MPO_MODE" ] || die "--mode was supplied more than once" 2
+        MPO_MODE="$2"; shift 2 ;;
+      --mode=*)
+        [ -z "$MPO_MODE" ] || die "--mode was supplied more than once" 2
+        MPO_MODE="${1#--mode=}"; [ -n "$MPO_MODE" ] || die "--mode needs a value" 2; shift ;;
+      --daemon-id|--daemon)
+        [ "$#" -ge 2 ] || die "$1 needs a value" 2
+        [ -z "$MPO_DAEMON" ] || die "$1 was supplied more than once" 2
+        MPO_DAEMON="$2"; shift 2 ;;
+      --daemon-id=*|--daemon=*)
+        [ -z "$MPO_DAEMON" ] || die "daemon id was supplied more than once" 2
+        MPO_DAEMON="${1#*=}"; [ -n "$MPO_DAEMON" ] || die "daemon id needs a value" 2; shift ;;
+      --generation)
+        [ "$#" -ge 2 ] || die "--generation needs a value" 2
+        [ -z "$MPO_GENERATION" ] || die "--generation was supplied more than once" 2
+        MPO_GENERATION="$2"; shift 2 ;;
+      --generation=*)
+        [ -z "$MPO_GENERATION" ] || die "--generation was supplied more than once" 2
+        MPO_GENERATION="${1#--generation=}"; [ -n "$MPO_GENERATION" ] || die "--generation needs a value" 2; shift ;;
+      --bound-lane)
+        [ "$#" -ge 2 ] || die "--bound-lane needs a value" 2
+        [ -z "$MPO_BOUND_LANE" ] || die "--bound-lane was supplied more than once" 2
+        MPO_BOUND_LANE="$2"; shift 2 ;;
+      --bound-lane=*)
+        [ -z "$MPO_BOUND_LANE" ] || die "--bound-lane was supplied more than once" 2
+        MPO_BOUND_LANE="${1#--bound-lane=}"; [ -n "$MPO_BOUND_LANE" ] || die "--bound-lane needs a value" 2; shift ;;
+      --authoritative-unenroll)
+        [ "$MPO_AUTHORITATIVE" = 0 ] || die "--authoritative-unenroll was supplied more than once" 2
+        MPO_AUTHORITATIVE=1; shift ;;
+      --)
+        shift
+        [ "$#" = 0 ] || die "unexpected argument '$1'" 2 ;;
+      *) die "unknown projection option '$1'" 2 ;;
+    esac
+  done
+}
+
+managed_projection_validate_args() {   # <lane>; validates MPO_* and canonicalizes lane
+  local mpv_lane="${1-}" mpv_bound
+  [ "$MPO_MODE" = managed ] || die "managed projection mode must be exactly 'managed'" 2
+  managed_projection_component_valid "$MPO_DAEMON" ||
+    die "daemon id must be one path-safe component (letters, digits, . _ -; at most 128 characters)" 2
+  managed_projection_generation_valid "$MPO_GENERATION" ||
+    die "generation must be a positive decimal integer" 2
+  # Store the canonical decimal form used by the row marker.  This keeps
+  # idempotent owner writes and exact clears stable when a caller supplies
+  # leading zeroes (the parser applies the same normalization).
+  MPO_GENERATION="$MANAGED_PROJECTION_GENERATION"
+  [ -n "$MPO_BOUND_LANE" ] || die "--bound-lane needs a lane name" 2
+  check_lane_name "$mpv_lane"
+  check_lane_name "$MPO_BOUND_LANE"
+  mpv_bound="$(canon_lane "$MPO_BOUND_LANE")" || exit 2
+  [ "$(lc "$mpv_bound")" = "$(lc "$mpv_lane")" ] ||
+    die "--bound-lane '$MPO_BOUND_LANE' does not name the projected lane '$mpv_lane'" 2
+  MPO_BOUND_LANE="$mpv_lane"
+}
+
+managed_projection_existing_guard() {   # <lane> <operation>; refuses existing/malformed markers
+  local mpeg_lane="${1-}" mpeg_operation="${2-}" mpeg_rc
+  managed_projection_read "$mpeg_lane" || mpeg_rc=$?
+  if [ -z "${mpeg_rc:-}" ]; then
+    mpeg_rc=0
+  fi
+  case "$mpeg_rc" in
+    8) return 0 ;;
+    0) die "$mpeg_operation cannot replace durable managed ownership for lane $mpeg_lane; use managed-clear after authoritative unenrollment" 2 ;;
+    *) die "$mpeg_operation cannot verify the existing managed projection for lane $mpeg_lane (exit $mpeg_rc); ownership is unknown and nothing was written" 1 ;;
+  esac
+}
+
+managed_projection_state_check() {   # generated `<STATE> · <UTC> · <marker>` cell
+  local mpsc_state="${1-}" mpsc_word mpsc_line
+  mpsc_word="${mpsc_state%% · *}"
+  state_word_is_valid "$mpsc_word" ||
+    die "managed projection generated an invalid row state '$mpsc_word'; nothing was written" 1
+  mpsc_line="${mpsc_state#* · }"
+  [ -n "$mpsc_line" ] ||
+    die "managed projection generated an empty state line; nothing was written" 1
+  case "$mpsc_line" in
+    *'|'*) die "managed projection state contains '|', which would forge a table boundary; nothing was written" 1 ;;
+  esac
+  case "$mpsc_line" in
+    *$'\n'* | *$'\r'*) die "managed projection state must be one line; nothing was written" 1 ;;
+  esac
+  [ "${#mpsc_line}" -le "$ROW_STATE_CAP" ] ||
+    die "managed projection state exceeds the $ROW_STATE_CAP character cap; nothing was written" 2
+}
+
+managed_projection_set() {   # <lane> <all projection options>
+  local mps_lane="${1-}" mps_n mps_row mps_rc mps_marker mps_state
+  shift
+  [ -n "$mps_lane" ] || die "usage: managed-owner <lane> --mode managed --daemon-id <id> --generation <n> --bound-lane <lane>" 2
+  managed_projection_parse_args "$@"
+  check_lane_name "$mps_lane"
+  mps_lane="$(canon_lane "$mps_lane")" || exit 2
+  managed_projection_validate_args "$mps_lane"
+  [ "$MPO_AUTHORITATIVE" = 0 ] || die "--authoritative-unenroll is only valid for managed-clear" 2
+
+  acquire_lock; handle_preexisting
+  mps_n="$(row_line "$mps_lane")" || exit 2
+  mps_row="$(sed -n -e "${mps_n}p" "$LANES_FILE")"
+  mps_marker="$(managed_projection_marker "$MPO_DAEMON" "$MPO_GENERATION" "$MPO_BOUND_LANE")"
+  managed_projection_parse_row "$mps_row" || mps_rc=$?
+  if [ -z "${mps_rc:-}" ]; then mps_rc=0; fi
+  case "$mps_rc" in
+    0)
+      if [ "$MANAGED_PROJECTION_MODE" = managed ] &&
+         [ "$MANAGED_PROJECTION_DAEMON" = "$MPO_DAEMON" ] &&
+         [ "$MANAGED_PROJECTION_GENERATION" = "$MPO_GENERATION" ] &&
+         [ "$MANAGED_PROJECTION_LANE" = "$MPO_BOUND_LANE" ]; then
+        note "lane $mps_lane already carries the requested managed owner projection; nothing was written"
+        return 0
+      fi
+      die "lane $mps_lane already carries a different durable managed owner projection; use managed-clear after authoritative unenrollment" 2
+      ;;
+    8)
+      [ -n "$RSS_HEAD" ] && [ -n "$RSS_TAIL" ] ||
+        die "lane $mps_lane's row is not an unambiguous seven-column table, so the managed owner projection cannot replace its state cell safely; nothing was written" 2
+      ;;
+    *) die "lane $mps_lane's existing managed projection is malformed or unreadable; ownership is unknown and nothing was written" 1 ;;
+  esac
+  # The managed projection is the one deliberate three-part state cell:
+  # `<STATE> · <UTC> · managed-owner ...`.  Its fields were validated above
+  # and the marker is generated here, so do not pass it through the generic
+  # writer check, whose one-line payload rule correctly rejects a second
+  # separator for ordinary writers.  Generic set-row-state/add-row remain
+  # guarded by row_state_check and managed_projection_read.
+  mps_state="LIVE · $(utc_now) · $mps_marker"
+  managed_projection_state_check "$mps_state"
+  replace_line "$mps_n" "$RSS_HEAD$mps_state $RSS_TAIL"
+  msg="LANES($mps_lane@$WS): managed owner projection · daemon $MPO_DAEMON · generation $MPO_GENERATION"
+  [ -n "$PRE_DIRTY_LANES" ] && msg="$msg + sweeps uncommitted edit to row $PRE_DIRTY_LANES"
+  commit_push "$msg"
+}
+
+managed_projection_clear() {   # <lane> <all projection options> --authoritative-unenroll
+  local mpc_lane="${1-}" mpc_n mpc_row mpc_rc mpc_state
+  shift
+  [ -n "$mpc_lane" ] || die "usage: managed-clear <lane> --mode managed --daemon-id <id> --generation <n> --bound-lane <lane> --authoritative-unenroll" 2
+  managed_projection_parse_args "$@"
+  check_lane_name "$mpc_lane"
+  mpc_lane="$(canon_lane "$mpc_lane")" || exit 2
+  managed_projection_validate_args "$mpc_lane"
+  [ "$MPO_AUTHORITATIVE" = 1 ] || die "managed-clear requires --authoritative-unenroll; only an authoritative unenrollment may clear durable managed ownership" 2
+
+  acquire_lock; handle_preexisting
+  mpc_n="$(row_line "$mpc_lane")" || exit 2
+  mpc_row="$(sed -n -e "${mpc_n}p" "$LANES_FILE")"
+  managed_projection_parse_row "$mpc_row" || mpc_rc=$?
+  if [ -z "${mpc_rc:-}" ]; then mpc_rc=0; fi
+  case "$mpc_rc" in
+    0) : ;;
+    8) die "lane $mpc_lane has no durable managed owner projection to clear; refusing an unauthoritative no-op" 2 ;;
+    *) die "lane $mpc_lane's managed owner projection is malformed or unreadable; ownership is unknown and it was not cleared" 1 ;;
+  esac
+  [ "$MANAGED_PROJECTION_MODE" = "$MPO_MODE" ] &&
+    [ "$MANAGED_PROJECTION_DAEMON" = "$MPO_DAEMON" ] &&
+    [ "$MANAGED_PROJECTION_GENERATION" = "$MPO_GENERATION" ] &&
+  [ "$MANAGED_PROJECTION_LANE" = "$MPO_BOUND_LANE" ] ||
+    die "managed-clear identity does not match lane $mpc_lane's durable owner projection; nothing was cleared" 2
+  mpc_state="ENDED · $(utc_now) · unenrolled"
+  managed_projection_state_check "$mpc_state"
+  replace_line "$mpc_n" "$RSS_HEAD$mpc_state $RSS_TAIL"
+  msg="LANES($mpc_lane@$WS): managed owner projection cleared after authoritative unenrollment"
+  [ -n "$PRE_DIRTY_LANES" ] && msg="$msg + sweeps uncommitted edit to row $PRE_DIRTY_LANES"
+  commit_push "$msg"
+}
+
+managed_absent_response_valid() {   # <response>
+  mar_response="${1-}"
+  [ -z "$mar_response" ] && return 0
+  printf '%s\n' "$mar_response" | awk '{ if ($0 !~ /^[[:space:]]*$/) bad = 1 } END { exit(bad ? 1 : 0) }'
+}
+
+managed_legacy_check() {   # <canonical lane>
+  ml_lane="${1-}"
+  if ml_path="$(lane_managed_path)"; then
+    :
+  else
+    ml_resolve=$?
+    if [ "$ml_resolve" = 8 ]; then
+      if managed_projection_check "$ml_lane"; then
+        ml_rc=0
+      else
+        ml_rc=$?
+      fi
+      case "$ml_rc" in
+        0) die "lane $ml_lane has a durable managed owner/binding in the LANES projection; legacy lane access is refused" 2 ;;
+        8) return 0 ;;
+        *) die "lane-managed is absent and the LANES managed-owner projection could not be read for lane $ml_lane" 1 ;;
+      esac
+    fi
+    die "lane-managed could not be resolved for lane $ml_lane (exit $ml_resolve), so durable ownership is unknown" 1
+  fi
+  if "$ml_path" legacy-check --lane "$ml_lane" >/dev/null 2>&1; then
+    ml_rc=0
+  else
+    ml_rc=$?
+  fi
+  case "$ml_rc" in
+    0) die "lane $ml_lane has durable managed or pending ownership; legacy lane access is refused" 2 ;;
+    8) return 0 ;;
+    *) die "lane-managed legacy-check failed for lane $ml_lane (exit $ml_rc), so durable ownership is unknown" 1 ;;
+  esac
+}
+
+# Read-only managed roster validation for the UserPromptSubmit hook.  A
+# managed helper may report a valid participant (0), a confirmed unmanaged /
+# absent marker (8), or a participant refusal (2).  Unknown helper/read
+# failures are converted to the hook's blocking status 2.  A valid managed
+# response is the complete proof boundary: it supplies the durable lane,
+# distinct session name and exact participant UUID, so the caller can return
+# before legacy tmux/session inference.
+managed_roster_response_valid() {   # <response>
+  local mrr_response="${1-}"
+  printf '%s\n' "$mrr_response" | awk '
+    function key_count(text, key, pattern, rest, count) {
+      pattern = "\"" key "\"[[:space:]]*:"
+      rest = text; count = 0
+      while (match(rest, pattern)) {
+        count++
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+      return count
+    }
+    function string_consistent(text, key, pattern, rest, tail, quote, value, first, count) {
+      pattern = "\"" key "\"[[:space:]]*:[[:space:]]*\""
+      rest = text; count = 0; first = ""
+      while (match(rest, pattern)) {
+        tail = substr(rest, RSTART + RLENGTH)
+        quote = index(tail, "\"")
+        if (!quote) return 0
+        value = substr(tail, 1, quote - 1)
+        count++
+        if (count == 1) first = value
+        else if (value != first) return 0
+        rest = substr(tail, quote + 1)
+      }
+      return count > 0
+    }
+    BEGIN { good = 1; lines = 0 }
+    { lines++
+      # Only the native coordinator-lineage envelope is proof.  The former
+      # {valid,lane,participant,session} response was the independent-worker
+      # prototype; accepting it here would silently migrate the wrong owner
+      # model through the prompt guard.
+      managed = ($0 ~ /"schema"[[:space:]]*:[[:space:]]*2([,}])/ &&
+                 $0 ~ /"schema_version"[[:space:]]*:[[:space:]]*2([,}])/ &&
+                 $0 ~ /"architecture"[[:space:]]*:[[:space:]]*"native-coordinator-lineage"/ &&
+                 $0 ~ /"ok"[[:space:]]*:[[:space:]]*true([,}])/ &&
+                 $0 ~ /"valid"[[:space:]]*:[[:space:]]*true([,}])/ &&
+                 $0 ~ /"result"[[:space:]]*:[[:space:]]*[{]/ &&
+                 $0 ~ /"mode"[[:space:]]*:[[:space:]]*"managed"/ &&
+                 $0 ~ /"lane"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_.-]+"/ &&
+                 $0 ~ /"bound_lane"[[:space:]]*:[[:space:]]*"[A-Za-z0-9_.-]+"/ &&
+                 $0 ~ /"participant_uuid"[[:space:]]*:[[:space:]]*"[^"]+"/ &&
+                 $0 ~ /"session_name"[[:space:]]*:[[:space:]]*"[^"]+"/ &&
+                 $0 ~ /"owner"[[:space:]]*:[[:space:]]*"[^"]+"/)
+      if ($0 !~ /^\{.*\}$/ || !managed) good = 0
+      if (managed &&
+          (key_count($0, "schema") != 1 || key_count($0, "schema_version") != 1 ||
+           key_count($0, "architecture") != 1 || key_count($0, "ok") != 1 ||
+           key_count($0, "valid") != 1 || key_count($0, "result") != 1 ||
+           $0 !~ /"generation"[[:space:]]*:[[:space:]]*[1-9][0-9]*([,}])/)) good = 0
+      # Production managed responses repeat the proof fields in the compact
+      # top-level envelope and its result object.  Repetition is fine only
+      # when every copy agrees; a later conflicting key is malformed evidence.
+      if (managed &&
+          (!string_consistent($0, "mode") || !string_consistent($0, "lane") ||
+           !string_consistent($0, "bound_lane") || !string_consistent($0, "participant_uuid") ||
+           !string_consistent($0, "session_name") || !string_consistent($0, "owner"))) good = 0
+    }
+    END { exit(lines == 1 && good ? 0 : 1) }'
+}
+
+managed_roster_response_fields() {   # <response> -> mode US lane US bound US uuid US name
+  local mrf_response="${1-}"
+  printf '%s\n' "$mrf_response" | awk -v sep="$US" '
+    function field(key, s, p, q) {
+      p = index($0, "\"" key "\"")
+      if (!p) return ""
+      s = substr($0, p + length(key) + 2)
+      sub(/^[[:space:]]*:[[:space:]]*"/, "", s)
+      q = index(s, "\"")
+      if (!q) return ""
+      return substr(s, 1, q - 1)
+    }
+    {
+      mode = field("mode")
+      lane = field("lane")
+      bound = field("bound_lane")
+      uuid = field("participant_uuid")
+      name = field("session_name")
+      if (mode == "" && $0 ~ /"valid"[[:space:]]*:[[:space:]]*true([,}])/) mode = "managed"
+      if (bound == "") bound = lane
+      if (uuid == "") uuid = field("participant")
+      if (name == "") name = field("session")
+      print mode sep lane sep bound sep uuid sep name
+    }'
+}
+
+managed_roster_validate() {   # <candidate lane> <participant uuid> <candidate session name>
+  local mr_lane="${1-}" mr_uuid="${2-}" mr_name="${3-}"
+  local mr_path mr_resolve mr_proj_rc mr_out mr_rc mr_mode
+  local mr_bound_lane mr_bound_copy mr_bound_uuid mr_bound_name
+  local -a mr_args
+  G_MANAGED_CAPABILITY="unknown"
+  if mr_path="$(lane_managed_path)"; then
+    G_MANAGED_CAPABILITY="present"
+  else
+    mr_resolve=$?
+    if [ "$mr_resolve" = 8 ]; then
+      G_MANAGED_CAPABILITY="absent"
+      # A missing helper is compatible only after the published LANES
+      # projection confirms that this candidate lane is not managed.  The
+      # caller performs the same check after legacy lane inference when no
+      # explicit managed context was available yet.
+      if [ -n "$mr_lane" ]; then
+        if managed_projection_check "$mr_lane"; then
+          guard_refuse "lane-managed is absent, but the LANES projection carries durable managed owner/binding for lane $mr_lane; legacy prompt validation cannot proceed. $(guard_bypass)"
+          return 2
+        else
+          mr_proj_rc=$?
+        fi
+        case "$mr_proj_rc" in
+          8) return 8 ;;
+          *) guard_refuse "lane-managed is absent and the LANES managed-owner projection could not be read for lane $mr_lane (exit $mr_proj_rc), so ownership is unknown. $(guard_bypass)"; return 2 ;;
+        esac
+      fi
+      return 8
+    fi
+    guard_refuse "lane-managed could not be resolved (exit $mr_resolve), so durable managed owner and roster membership are unknown (Amendment 12(d)). $(guard_bypass)"
+    return 2
+  fi
+
+  mr_args=(roster-validate --participant-uuid "$mr_uuid" --session-name "$mr_name")
+  if [ -n "$mr_lane" ]; then
+    mr_args+=(--lane "$mr_lane" --bound-lane "$mr_lane")
+  fi
+  if mr_out="$("$mr_path" "${mr_args[@]}" 2>&1)"; then
+    mr_rc=0
+  else
+    mr_rc=$?
+  fi
+  case "$mr_rc" in
+    0)
+      if ! managed_roster_response_valid "$mr_out"; then
+        guard_refuse "lane-managed roster validation returned a malformed managed response, so durable owner, exact participant UUID, distinct session name and bound lane are unknown (Amendment 12(d)). $(guard_bypass)"
+        return 2
+      fi
+      IFS="$US" read -r mr_mode mr_bound_lane mr_bound_copy mr_bound_uuid mr_bound_name <<EOF
+$(managed_roster_response_fields "$mr_out")
+EOF
+      if [ -z "$mr_bound_lane" ] || [ "$mr_bound_lane" != "$mr_bound_copy" ]; then
+        guard_refuse "lane-managed roster validation returned different lane and bound-lane values; exact durable lane proof is missing. $(guard_bypass)"
+        return 2
+      fi
+      if [ -n "$mr_lane" ] && [ "$mr_bound_lane" != "$mr_lane" ]; then
+        guard_refuse "lane-managed roster validation did not bind the participant to requested lane '$mr_lane'; exact durable lane proof is missing. $(guard_bypass)"
+        return 2
+      fi
+      if [ -n "$mr_uuid" ] && [ "$(lc "$mr_bound_uuid")" != "$(lc "$mr_uuid")" ]; then
+        guard_refuse "lane-managed roster validation did not bind the exact hook participant UUID '$mr_uuid'; durable UUID proof is missing. $(guard_bypass)"
+        return 2
+      fi
+      if [ -n "$mr_name" ] && [ "$mr_bound_name" != "$mr_name" ]; then
+        guard_refuse "lane-managed roster validation did not bind the distinct session name '$mr_name'; durable session-name proof is missing. $(guard_bypass)"
+        return 2
+      fi
+      if [ -z "$mr_bound_uuid" ] || [ -z "$mr_bound_name" ]; then
+        guard_refuse "lane-managed roster validation did not bind participant '$mr_uuid' with distinct session name '${mr_name:-none}' to the requested lane '${mr_lane:-none}'; exact durable owner/roster proof is missing. $(guard_bypass)"
+        return 2
+      fi
+      G_MANAGED=1
+      G_MANAGED_LANE="$mr_bound_lane"
+      G_MANAGED_NAME="$mr_bound_name"
+      G_MANAGED_UUID="$mr_bound_uuid"
+      G_LANE="$G_MANAGED_LANE"
+      G_NAME="$G_MANAGED_NAME"
+      G_ID="$(lc "$G_MANAGED_UUID")"
+      return 0
+      ;;
+    8)
+      if ! managed_absent_response_valid "$mr_out"; then
+        guard_refuse "lane-managed roster validation returned an invalid absence response, so managed ownership is unknown (Amendment 12(d)). $(guard_bypass)"
+        return 2
+      fi
+      return 8
+      ;;
+    2)
+      guard_refuse "the durable managed roster refused participant '$mr_uuid' with session name '${mr_name:-none}' bound to lane '${mr_lane:-none}'; the exact enrolled UUID, distinct session name and lane binding were not all verified. $(guard_bypass)"
+      return 2
+      ;;
+    *)
+      guard_refuse "lane-managed roster validation failed for lane '${mr_lane:-none}' (exit $mr_rc), so durable owner, exact participant UUID, distinct session name and bound lane are unknown (Amendment 12(d)). $(guard_bypass)"
+      return 2
+      ;;
+  esac
+}
 
 # AMENDMENT 8, ruling (h): THE LOCK NAMES ITS HOLDER, so a lock nobody holds can
 # be told from a lock somebody does. The directory alone could only be aged out,
@@ -6691,6 +7267,10 @@ guard_lane_start() {
 # one command, which is F-B6's rule — filled in, never `<repo> <n>`.
 G_WINREF=""; G_WINNAME=""; G_ID=""; G_NAME=""; G_SRC=""; G_PID=""; G_PROF=""
 G_ROW=""; G_LANE=""; G_SES_LANE=""
+# Managed guard state is kept separate from the legacy tmux/session inference.
+# A successful managed probe returns before that inference so independent
+# worker UUIDs do not have to be the row's legacy last-session UUID.
+G_MANAGED=0; G_MANAGED_CAPABILITY="unknown"; G_MANAGED_LANE=""; G_MANAGED_NAME=""; G_MANAGED_UUID=""
 # AMENDMENT 16(f) — the former name this window still carried, and whether the
 # guard managed to rename the window to the lane's current one.
 G_WIN_WAS=""; G_WIN_FIXED=0
@@ -6800,7 +7380,8 @@ guard_run() {   # <the hook's JSON, on stdin already read>
   fi
   under_projects_root "$gr_cwd" "${PROJECTS_ROOT:-$HOME/projects}" || return 0
 
-  G_ID="$(lc "$(jstr "$gr_json" session_id)")"
+  gr_session_id="$(jstr "$gr_json" session_id)"
+  G_ID="$(lc "$gr_session_id")"
   gr_prompt="$(jstr "$gr_json" prompt)"
 
   # ---- THE WORKSPACE. Every other subcommand dies 1 here (the dispatcher's
@@ -6811,6 +7392,27 @@ guard_run() {   # <the hook's JSON, on stdin already read>
     guard_refuse "the ROW cannot be read, so the triple cannot be verified — and a triple that cannot be verified is not a triple that agrees (Amendment 12(d)). $(lanes_workspace_why) $(guard_bypass)"
     return 2
   fi
+
+  # Managed workers do not necessarily have a tmux window or a legacy live
+  # record.  Probe the durable roster first, using environment/JSON values
+  # only as locators; the helper must prove the exact hook UUID, distinct
+  # session name, bound lane and runner ownership.  A valid managed response
+  # returns before every legacy tmux/session check.  Exit 8 is the sole
+  # confirmed-unmanaged result and continues into the unchanged legacy path.
+  gr_managed_lane="${LANE_MANAGED_BOUND_LANE:-${LANE_MANAGED_LANE:-}}"
+  [ -n "$gr_managed_lane" ] || gr_managed_lane="$(jstr "$gr_json" bound_lane)"
+  [ -n "$gr_managed_lane" ] || gr_managed_lane="$(jstr "$gr_json" lane)"
+  [ -n "$gr_managed_lane" ] || gr_managed_lane="${LANES_LANE:-}"
+  gr_managed_name="${LANE_MANAGED_SESSION_NAME:-${LANE_SESSION_NAME:-${CLAUDE_SESSION_NAME:-}}}"
+  [ -n "$gr_managed_name" ] || gr_managed_name="$(jstr "$gr_json" session_name)"
+  [ -n "$gr_managed_name" ] || gr_managed_name="$(jstr "$gr_json" name)"
+  gr_managed_rc=0
+  managed_roster_validate "$gr_managed_lane" "$gr_session_id" "$gr_managed_name" || gr_managed_rc=$?
+  case "$gr_managed_rc" in
+    0) return 0 ;;
+    8) : ;;
+    *) return 2 ;;
+  esac
 
   # ---- (b)'s LAST ROW: NOT INSIDE TMUX AT ALL (D2, "Refuse").
   here_context
@@ -6925,6 +7527,24 @@ guard_run() {   # <the hook's JSON, on stdin already read>
   fi
   if [ "$gr_n" = 1 ]; then G_LANE="$gr_hits"
   elif lane_shaped "$G_WINNAME"; then G_LANE="$G_WINNAME"
+  fi
+
+  # When the optional helper was confirmed absent before the legacy reads,
+  # recheck the published row now that its canonical lane is known.  A remote
+  # managed projection is still an ownership conflict; an unreadable
+  # projection is unknown and blocks.  This remains a read-only check and is
+  # before the former-name tmux rename below.
+  if [ "$G_MANAGED_CAPABILITY" = absent ] && [ -n "$G_LANE" ]; then
+    if managed_projection_check "$G_LANE"; then
+      guard_refuse "lane-managed is absent, but the LANES projection carries durable managed owner/binding for lane $G_LANE; legacy prompt validation cannot proceed. $(guard_bypass)"
+      return 2
+    else
+      gr_proj_rc=$?
+    fi
+    case "$gr_proj_rc" in
+      8) : ;;
+      *) guard_refuse "lane-managed is absent and the LANES managed-owner projection could not be read for lane $G_LANE (exit $gr_proj_rc), so ownership is unknown. $(guard_bypass)"; return 2 ;;
+    esac
   fi
 
   # ---- AMENDMENT 16(f) — AND THE WINDOW IS RENAMED HERE, not merely reported.
@@ -8342,7 +8962,7 @@ shift || :
 # front of every launch may not refuse, and one that answers nothing for a
 # workstation nobody configured is telling the truth.
 case "$cmd" in
-  replace-in-row|append-session-id|append-line|add-row|set-row-state|migrate-state-cells|commit|log|claim|release|rename-lane)
+  replace-in-row|append-session-id|append-line|add-row|set-row-state|managed-owner|managed-clear|migrate-state-cells|commit|log|claim|release|rename-lane)
     ws_why="$(lanes_workstation_why "$WS_SOURCE")"
     [ -z "$ws_why" ] || die "$ws_why" 2 ;;
 esac
@@ -8438,6 +9058,10 @@ Nothing was written." 2
       2) die "lane $lane's row (line $n) carries $(row_sep_count "$row") ' | ' separators where a seven-column row carries 6, so WHICH TEXT IS THE STATE CELL is not knowable from the row: read from the left this write lands on one cell, read from the right on another, and one of those readings overwrites the row's handoff path. Nothing was written. A Markdown table carries a literal pipe ESCAPED — \`\\|\` — so find the unescaped ' | ' inside a cell of that row, escape it by hand with an allowed tool, commit it (\`LANES_LANE=$lane lanes-edit.sh commit \"escape a literal pipe in row $lane\"\`), and re-run." 2 ;;
       *) die "lane $lane's row (line $n) does not open with '|' and end with '|', so it is not a row this writer can take apart. Nothing was written." 2 ;;
     esac
+    # Validate the row's table shape before the managed projection fence.  A
+    # malformed row has the protocol's refusal answer (2), not an ownership
+    # read failure (1); this check is read-only and still precedes the write.
+    managed_projection_existing_guard "$lane" "set-row-state"
     srs_new="$ROW_STATE · $(utc_now) · $ROW_STATE_LINE"
     srs_was="$(rstrip_spaces "$RSS_CELL")"
     replace_line "$n" "$RSS_HEAD$srs_new $RSS_TAIL"
@@ -8450,6 +9074,18 @@ Nothing was written." 2
     commit_push "$msg"
     ;;
 
+  # T019 — managed execution state is authoritative outside this human-facing
+  # register, but its durable owner/binding is projected here through this
+  # sole writer.  The marker remains a valid legacy state phrase (`LIVE`), so
+  # old readers can still parse the row; legacy writers refuse to replace it.
+  managed-owner)
+    managed_projection_set "$@"
+    ;;
+
+  managed-clear)
+    managed_projection_clear "$@"
+    ;;
+
   replace-in-row)
     lane="${1-}"; old="${2-}"; new="${3-}"; why="${4-}"
     [ -n "$lane" ] && [ -n "$old" ] || die "usage: replace-in-row <lane> \"<old>\" \"<new>\" [\"<why>\"]" 2
@@ -8457,6 +9093,7 @@ Nothing was written." 2
     acquire_lock; handle_preexisting
     n="$(row_line "$lane")" || exit 2
     row="$(sed -n -e "${n}p" "$LANES_FILE")"
+    managed_projection_existing_guard "$lane" "replace-in-row"
     c="$(count_occurrences "$row" "$old")" || exit 2
     [ "$c" = 1 ] || die "'$old' occurs $c times in lane $lane's row (line $n); exactly 1 required" 2
     # NOT `${row/"$old"/"$new"}` (A9 Addendum 4, R-A9-11). Bash 4.3 and later
@@ -8973,6 +9610,7 @@ EOF
     # `handle_preexisting` commit what is already there, they do not edit it.
     rl_n="$(row_line "$rl_old")" || exit 2
     rl_row="$(sed -n -e "${rl_n}p" "$LANES_FILE")"
+    managed_projection_existing_guard "$rl_old" "rename-lane"
     case "$rl_row" in *"|"*) : ;; *) die "lane $rl_old's row (line $rl_n) has no '|' at all; refusing to touch it. Nothing was written." 2 ;; esac
     rl_rest="${rl_row#*|}"
     case "$rl_rest" in *"|"*) : ;; *) die "lane $rl_old's row (line $rl_n) has one cell and no second '|'; refusing to touch it. Nothing was written." 2 ;; esac
@@ -9522,6 +10160,11 @@ EOF
     lane="${LANES_LANE:-}"
     [ -n "$lane" ] || die "claim needs the lane: LANES_LANE=<lane> lanes-edit.sh claim <object>" 2
     check_lane_name "$lane"
+    # `claim --force` (and ordinary legacy claims) must not cross a durable
+    # managed/pending owner.  The ownership fence below follows the claim's
+    # argument/canonical-home reads, but remains before its holder scan, lock,
+    # log write or commit; it is not used by managed projection verbs such as
+    # `set-row-state` and `log`.
     obj_raw=""; force=0; home_override=""
     while [ $# -gt 0 ]; do
       case "$1" in
@@ -9562,6 +10205,13 @@ EOF
     home="$(resolve_home "$lane" "$home_override")" || exit $?
     obj="$(canon_object "$obj_raw" "$home")" || exit 2
     ! is_lane_object "$obj" || die "a lane is not a claimable object" 2
+    # The argument, canonical-home and published-state reads above establish
+    # the legacy operation's exact target before the ownership fence.  They
+    # have no legacy write/launch side effect, while this check still runs
+    # before the holder scan, log append, commit or push; this ordering keeps
+    # protocol-defined duplicate/canonical/home refusals from being masked by
+    # a compatibility projection read.
+    managed_legacy_check "$lane"
     takeover_payload=""; takeover_note=""; takeover_from=""
     # CASE-INSENSITIVE, FOR THE SAME REASON THE KEY ABOVE IS LOWER-CASED
     # (Amendment 15). This is the lane REMOVING ITSELF from the holders of the
@@ -10552,6 +11202,6 @@ EOF
     ;;
 
   *)
-    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|canon-lane|resolve-home)" 2
+    die "unknown subcommand '$cmd' (verify-row|set-row-state|managed-owner|managed-clear|append-row-status|replace-in-row|append-session-id|append-line|add-row|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|canon-lane|resolve-home)" 2
     ;;
 esac

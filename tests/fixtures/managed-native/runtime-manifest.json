@@ -1,0 +1,63 @@
+{
+  "schema": "managed-native-gate0/v1",
+  "kind": "selected-runtime-reference",
+  "selected": {
+    "sdk": {
+      "package": "claude-agent-sdk",
+      "version": "0.2.153",
+      "path": "site-packages/claude_agent_sdk"
+    },
+    "cli": {
+      "path": "_bundled/claude",
+      "version": "2.1.273",
+      "sha256": "6c752e2cc7c110c9df15f26d8d134d438c5ae95dbd610efc1a308bf7f9c5f6c1"
+    },
+    "mode": "stream-json",
+    "auth": "none",
+    "network": "blocked"
+  },
+  "actual_observation": {
+    "status": "OPEN",
+    "capability": "UNVERIFIED",
+    "support_claim": false,
+    "reason": "The selected SDK/CLI startup path has not been exercised in this no-auth harness.",
+    "positive_orphan": {
+      "status": "UNVERIFIED",
+      "refusal": "No selected bundled CLI startup or model-attempt observation was run."
+    },
+    "terminal_cleared": {
+      "status": "UNVERIFIED",
+      "refusal": "No selected bundled CLI startup or no-wake observation was run."
+    }
+  },
+  "control_evidence": {
+    "kind": "extracted-fixture-only",
+    "selected_runtime_control_runner": {
+      "path": "tests/probes/managed_gate0.py",
+      "positive_orphan_case": "positive-orphan",
+      "terminal_cleared_case": "terminal-cleared",
+      "delegated_runner": "tests/probes/managed_native_loopback.py",
+      "public_fixture_boundary": "not-exposed",
+      "lifecycle_event_surface": "selected-cli-stream-json-schema-unavailable",
+      "terminal_cleared_negative_gate": "stop_task-source-request",
+      "support_claim": false
+    },
+    "positive_orphan": {
+      "status": "not-exercised",
+      "persisted_record_load": "not-exercised",
+      "notification_enqueue": "not-exercised",
+      "child_parent_wake": "not-exercised",
+      "model_query_attempt": "not-exercised",
+      "support_claim": false
+    },
+    "terminal_cleared": {
+      "status": "not-exercised",
+      "terminal_state_clear": "not-exercised",
+      "target_connect": "not-exercised",
+      "restored_orphans": "not-exercised",
+      "notification_enqueue": "not-exercised",
+      "model_query_attempt": "not-exercised",
+      "support_claim": false
+    }
+  }
+}

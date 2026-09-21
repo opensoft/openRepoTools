@@ -1,0 +1,35 @@
+{
+  "registry": {
+    "task_type": "local_agent",
+    "id": "local-agent-foreground-001",
+    "status": "running"
+  },
+  "subagent_start": {
+    "agent_id": "local-agent-foreground-001",
+    "agent_type": "general-purpose"
+  },
+  "routes": [
+    {
+      "kind": "local_agent_foreground",
+      "supported": true,
+      "operation": "stop_task",
+      "task_id": "local-agent-foreground-001"
+    },
+    {
+      "kind": "runtime_tracked_background_task",
+      "supported": true,
+      "operation": "stop_task",
+      "task_id": "background-task-001"
+    },
+    {
+      "kind": "local_bash",
+      "supported": false,
+      "operation": "unsupported"
+    },
+    {
+      "kind": "remote_agent",
+      "supported": false,
+      "operation": "unsupported"
+    }
+  ]
+}

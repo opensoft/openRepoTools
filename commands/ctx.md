@@ -1,40 +1,77 @@
 ---
 name: "Ctx"
-description: "/ctx clears this lane's context in one word: the handoff is written, then this lane's own pane is respawned with a new session whose first prompt is that handoff's top block"
+description: "Experimental planned native ctx hold/restart with incomplete integration; historical /ctx alias for unmanaged lanes"
 category: Lane
-tags: [lane, ctx, handoff, swap, lane-collision-protocol]
+tags: [lane, ctx, handoff, swap, managed]
 ---
 
-**Invoke the `handoff` skill now with `--restart`, and follow every step of it, in order, to the end.**
+## Managed lanes (opt in explicitly)
 
-`/ctx` is `/handoff --restart` and nothing else. Lane-collision-protocol **Amendment 17 clause (f)**, folded
-in on Brett Heap's word of 2026-09-14, verbatim: *"the /ctx should also run the first prompt and restart all.
-so the user only does /ctx and it is all automatic from there"* — and ratified the same day as revision 2.
+Native/live support is experimental and `UNVERIFIED`. The approved `ctx`
+contract creates a fresh coordinator context under the current account from
+an explicit caller-supplied checkpoint. The mapping-free `hold` and `restart`
+forms are now complete at the public CLI/daemon wire boundary, but that wire
+acceptance is not native lifecycle support. Missing controller or runtime
+capability must fail closed rather than route through legacy handoff or the
+superseded mapping path:
 
-What that means in order, and the order is the rule:
+```text
+lane-managed ctx <lane> --checkpoint <checkpoint> --workers hold
+lane-managed ctx <lane> --checkpoint <checkpoint> --workers restart
+```
 
-1. the identity triple is fixed, the handoff file is refreshed with a fresh Rule 3 top block that **lists
-   every writer this lane has running** (its worktree, its branch, its brief, what it had committed), the
-   writers are polled, and `PAUSED` is written with Amendment 11(c)'s sub-fields, Amendment 17(b)'s `agent`
-   and `transcript`, and `clear` as its why;
-2. **then** the lane's own pane is respawned through the launcher — `tmux respawn-pane -k`, so the act
-   survives the death of the session that started it — with a NEW session of the same agent whose FIRST
-   PROMPT is that top block, run without anyone typing it;
-3. that session stamps `RESUMED by …` first, as Rule 3 requires, then **COUNTS the live writers** —
-   `ListAgents`, the agent's equivalent elsewhere — because the block's `WRITERS` section is a list to COUNT
-   and not a list to relaunch (Amendment 17 Addendum 1 (i), in force 2026-09-14T20:59:31Z). A writer still
-   live OWNS its worktree and is told, not relaunched; only a writer that is NOT live is relaunched, from
-   where it stood.
+Integration gap: the public parser and daemon route accept only the explicit,
+mapping-free checkpoint plus `hold`/`restart` policy. They do not accept a
+worker mapping or a body override that changes the selected policy. The
+controller currently refuses `restart` for independent participants until
+native restart admission and lineage transfer are implemented and correlated;
+wire acceptance does not claim that lifecycle support. CLI, daemon,
+controller, and runtime must implement the approved native contract together.
 
-**`/ctx` says which it did** (Addendum 1 (j)). This one respawns the pane, so the process every writer was a
-child of is gone, the record says `kind respawn`, and the count then finds none — which is what makes
-relaunching each one right. A clear that happens IN PLACE keeps that process and its writers with it: that
-one is `--in-process`, `kind in-process`, and its block says to EXPECT every writer below live. Either way
-the kind says what to expect and never what to do.
+Under the approved contract in
+`specs/001-separate-swap-ctx-handoff/contracts/managed-control.md`, the worker
+policy is mandatory:
 
-**A `/ctx` whose record could not be written REFUSES before it kills anything.** A pane is never respawned
-over an unrecorded lane — and the record is three writes, not one: if the `PAUSED` line did not land, or the
-row was not flipped, or the handoff's top block (which is the new session's first prompt) could not be
-refreshed, this pane stays exactly as it is and the reason is printed.
+- `hold` stops and retains old native task records, parent links, claims, and
+  unresolved effects. It does not promise live children survive parent
+  shutdown. Releasing the fresh coordinator does not release those workers.
+- `restart` creates a fresh coordinator UUID and execution lineage from the
+  supplied checkpoint, keeping the durable lane owner and its generation.
+  New native tasks may be requested only after explicit release. This is not
+  exact cross-parent continuation; old task parent identities never change.
 
-No picker, no title fallback, no second command: the one word is the whole act.
+Before creating the fresh held coordinator, prove old-writer exclusion and
+safe current-run child/tool stop boundaries. Preserve definitions, model,
+effort, tools, permissions, dirty/untracked work, and lineage claims. An atomic
+claim transfer must leave no ownership gap. Missing or contradictory evidence
+keeps the lane held or indeterminate.
+
+Explicit release syntax already exists in the control client:
+
+```sh
+lane-managed release <lane> --operation-id <operation-id> --generation <generation>
+```
+
+Release is a separate inference boundary, never implicit in ctx. Under the
+restart policy, safely stopped unfinished work stays `restart-pending` until
+release and correlated new native task events prove `restarted`. A send
+acknowledgement is insufficient; uncertainty is `unresolved`, and completed
+work stays completed. Preserve task/attempt correlation without claiming old
+conversation or identity preservation or replaying uncertain effects.
+
+Ctx does not switch accounts or generate a checkpoint. Worker restart writes
+no handoff; `commands/handoff.md` is a separate checkpoint-only request with
+no lifecycle effect. `shutdown` retains the managed owner, control service, and
+claims; `unenroll` is explicit and requires proven quiescence. Native background
+children and teams need capability evidence for their actual runtime; detached
+or unknown effects cannot be treated as stopped from parent exit alone.
+Fake tests do not verify native/live support, and legacy behavior is never a
+fallback for a managed-owned lane.
+
+## Unmanaged legacy compatibility
+
+For a lane without durable managed ownership, `/ctx` retains its historical
+meaning as `/handoff --restart` and invokes the legacy `handoff` skill. This
+alias remains operational and executable for unmanaged lanes and existing
+records. Legacy `lane`, `lane-start`, and handoff surfaces refuse a
+managed-owned lane rather than launching a second owner.
