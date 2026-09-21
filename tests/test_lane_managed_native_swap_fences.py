@@ -41,6 +41,7 @@ class _DurableTakeover:
         self.boundary = boundary
         self.fixture: Any = None
         self.fired = False
+        self.failure: Optional[Exception] = None
         self.claims_before: Optional[list[dict[str, Any]]] = None
         self.owner_before: Optional[dict[str, Any]] = None
         self.owner_after: Optional[dict[str, Any]] = None
@@ -49,6 +50,14 @@ class _DurableTakeover:
         self.fixture = fixture
 
     def replace_owner(self) -> None:
+        try:
+            self._replace_owner()
+        except Exception as exc:
+            # Preserve the fault before the public boundary sanitizes it.
+            self.failure = exc
+            raise
+
+    def _replace_owner(self) -> None:
         if self.fired:
             return
         if self.fixture is None:
@@ -201,6 +210,21 @@ def test_native_swap_owner_replacement_fences_each_awaited_boundary(
         provider = NativeSwapEvidenceProvider()
 
     with _harness(tmp_path, provider=provider, runtime=runtime) as fixture:
+        # Recovery needs the real daemon endpoint, which this harness does
+        # not publish as part of its start/serve setup.
+        registered = fixture.daemon.register_runtime(fixture.socket_path)
+        owner = fixture.state.read_owner()
+        published = fixture.state.read_runtime()
+        assert isinstance(published, Mapping)
+        assert published == registered
+        assert owner["mode"] == "managed"
+        assert owner["daemon_id"] == fixture.daemon.daemon_id
+        for key in ("daemon_id", "generation", "process_domain", "lane_key", "host"):
+            assert published[key] == owner[key]
+        assert tuple(published[key] for key in (
+            "daemon_id", "generation", "pid", "start_token", "pgid", "process_domain",
+        )) == fixture.daemon.discovery_identity
+        assert published["socket_path"] == str(fixture.socket_path.resolve())
         takeover.arm(fixture)
         runtime.takeover = takeover.replace_owner
         if isinstance(provider, _TakeoverEvidenceProvider):
@@ -216,7 +240,10 @@ def test_native_swap_owner_replacement_fences_each_awaited_boundary(
             {"profile": "team-b"},
         )
         _assert_fenced_refusal(first)
-        assert takeover.fired is True
+        assert takeover.fired is True, (
+            f"takeover at {boundary!r} did not fire; "
+            f"helper exception={takeover.failure!r}; response={first!r}"
+        )
         assert takeover.owner_before is not None
         assert takeover.owner_after is not None
         assert takeover.owner_after["generation"] == takeover.owner_before["generation"]

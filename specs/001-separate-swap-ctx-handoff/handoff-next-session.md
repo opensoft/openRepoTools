@@ -2,6 +2,16 @@
 
 ## 2026-09-21 takeover
 
+Published checkpoint: `5e940f00ec4b1d82dc9be0510b94b881316db631` on
+`origin/001-separate-swap-ctx-handoff`. A subsequent T012 fixture correction
+publishes the supervisor runtime identity before simulated owner takeover;
+the five fence cases plus native-swap integration now report **19 passed**.
+See `verification.md` for frozen artifacts and limits. T012 remains open.
+The next unblocked diagnostic slice is the 12 native-worker observation
+integration failures (watermark and source-operation binding); native ctx
+still needs the contract/emitter work below. Keep the broader 34-failure run
+as historical evidence, not a count recomputed from this focused success.
+
 The user authorized continuation in the existing feature worktree. See the
 [takeover record](../../openspec/changes/separate-swap-ctx-handoff/takeover-2026-09-21.md)
 for preservation evidence, current role ownership, the refused workspace-log
@@ -28,8 +38,9 @@ Current continuation order (supersedes the older assignments below):
    retrying the sanctioned takeover-log publication. No hand-written registry
    or workspace-config repair is authorized.
 
-No task closure, production capability, installation, commit, push, or merge
-is claimed by this checkpoint. The preserved September 18 instructions below
+No task closure, production capability, installation, or merge is claimed.
+Commit/push authorization covers the published checkpoints above, not release.
+The preserved September 18 instructions below
 describe their historical snapshot, not current writer assignments.
 
 ## Preserved 2026-09-18 checkpoint

@@ -5,7 +5,47 @@ slice, or passing fake test is not full acceptance. `tasks.md` remains the
 implementation task authority; this document identifies the evidence needed
 to close the feature without reducing its scope.
 
-## 2026-09-21 takeover — diagnostic checkpoint; 34 failures remain
+## 2026-09-21 follow-up — owner-fence fixture repaired
+
+The user authorized committing/pushing the takeover checkpoint and continuing
+the next implementation step. Checkpoint
+`5e940f00ec4b1d82dc9be0510b94b881316db631` was pushed and verified on
+`origin/001-separate-swap-ctx-handoff`. The bounded T012 follow-up changes only
+the native-swap fence test and checkpoint documents, not production behavior.
+
+A diagnostic helper retained and re-raised the original takeover exception.
+All five cases reproduced `fixture runtime identity is unavailable`: the
+shared start/serve harness did not publish supervisor discovery, so recovery
+was never reached. Diagnostic result: **5 failed, 2,195 deselected**, **20.76
+seconds**; artifact `openrepotools-sol-fences-diag.wC5RED/fences-diagnostic.xml`,
+SHA-256 `035205a174bec3243845bbff1bd4ab33d1b1b6997707fd2b2a209a1e43a48431`.
+
+The fence-local setup now calls the real daemon `register_runtime` API after
+socket readiness and asserts the published owner/generation/domain/process/
+socket identity before arming the fault. Recovery, exact exclusion validation,
+claims, all five boundary effect limits, and retry/no-replay assertions remain
+unchanged. Astra's bounded review found no blocking issue. The injected
+exclusion remains a simulated test fault, not proof of live supervisor death.
+
+Command: `tests/run.sh --parallel-safe -k
+'test_lane_managed_native_swap_fences or test_lane_managed_native_swap_integration'
+--junitxml=<private-artifact>/fences-integration.xml` in `py-bench`.
+Result: **19 passed, 0 failed/errors/skips, 2,181 deselected**, **63.79 seconds**.
+Artifact: `openrepotools-sol-fences-final.swVB3F/fences-integration.xml`.
+XML SHA-256: `5e40071b98941e09165c77fb6c63ee0ce0836d1a6e9a4d2d96cd776fea4e6465`.
+Source/mode manifest SHA-256 values:
+`149aaae83d567112d041c105090bce3e3dae22bcc42a65fa8943a64e4e92dda6` and
+`69273419db6da571565b75a8514dc1ca42d42cb2dded187752af1ab1d0f4a720`.
+The frozen source and modes compare equal before and after the run.
+
+This closes the five reproduced fixture failures only, not T012 or a release
+gate. The latest **broad** census is still the 34-failure snapshot below; do
+not manufacture a new broad count by subtracting this focused result. Native
+ctx/restoration, worker-observation integration, persistent recovery/pump, and
+legacy/full serialized gates remain open. No authenticated probe or installed
+cutover was performed.
+
+## 2026-09-21 takeover — prior broad diagnostic checkpoint; 34 failures
 
 Implementation continues under the user-authorized
 [takeover record](../../openspec/changes/separate-swap-ctx-handoff/takeover-2026-09-21.md).
