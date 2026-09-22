@@ -1871,6 +1871,17 @@ _PARTICIPANT_STATES = frozenset({"reserved", "held", "active", "completed", "sto
 _MAILBOX_STATES = frozenset(
     {"queued", "fenced", "dispatch-intent", "acknowledged", "uncertain"}
 )
+_NATIVE_CHILD_DISPATCH_ROUTE = "coordinator-native-active-child"
+_NATIVE_DISPATCH_BINDING_FIELDS = frozenset(
+    {
+        "request_semantics", "request_content_digest", "native_target",
+        "physical_recipient", "actual_route", "effective_policy",
+        "routing_binding_digest",
+    }
+)
+_SUBMIT_RESULT_MUTABLE_FIELDS = frozenset(
+    {"state", "dispatch_attempt", "runtime_ack", "operation_id"}
+)
 _OPERATION_PHASES = frozenset(
     {
         "preflight",
@@ -2117,13 +2128,14 @@ class ManagedController:
                 )
 
         interrupt_digest = native_swap.get("interrupt_intent_digest")
-        if interrupt_digest is not None:
+        archive_digest = native_swap.get("source_archive_digest")
+        if archive_digest is None and interrupt_digest is not None:
             selection = operation.metadata.get("coordinator_interrupt_selection")
             if (not isinstance(selection, Mapping)
                     or _digest(selection) != interrupt_digest):
                 raise _error(
                     "stale-generation",
-                    "native swap interrupt evidence is not joined to its selection",
+                    "native swap interrupt evidence is not joined to its live selection",
                 )
         if "graph-drained" in evidence and interrupt_digest is None:
             raise _error(
@@ -2187,15 +2199,27 @@ class ManagedController:
                     "native swap release binding is not joined to its operation",
                 )
 
-        archive_digest = native_swap.get("source_archive_digest")
         if archive_digest is None:
             return
-        archive = self._native_source_archives.get(native_swap.get("source_archive_id"))
+        archive_id = native_swap.get("source_archive_id")
+        if not isinstance(archive_id, str) or not archive_id:
+            raise _error("stale-generation", "native swap source archive ID is unavailable")
+        archive = self._native_source_archives.get(archive_id)
         if not isinstance(archive, Mapping):
             raise _error("stale-generation", "native swap source archive is unavailable")
+        if (archive.get("archive_id") != archive_id
+                or archive.get("snapshot_digest") != archive_digest
+                or archive.get("operation_id") != operation.operation_id
+                or archive.get("source_identity") != native_swap.get("source_identity")):
+            raise _error(
+                "ownership-conflict",
+                "native swap source archive is not joined to the swap operation",
+            )
         snapshot = archive.get("snapshot")
         if not isinstance(snapshot, Mapping):
             raise _error("invalid", "native swap source archive snapshot is malformed")
+        if snapshot.get("generation") != operation.generation:
+            raise _error("stale-generation", "native swap source archive generation changed")
         archived_context = snapshot.get("native_context")
         captured_context = native_swap.get("source_context")
         if (not isinstance(archived_context, Mapping)
@@ -2218,12 +2242,27 @@ class ManagedController:
             )
         archived_operations = snapshot.get("operations")
         archived_source = None
+        archived_swap = None
         if isinstance(archived_operations, list):
             archived_source = next(
                 (
                     item for item in archived_operations
                     if isinstance(item, Mapping)
                     and item.get("operation_id") == source_operation_id
+                ),
+                None,
+            )
+        if not isinstance(archived_source, Mapping):
+            raise _error(
+                "ownership-conflict",
+                "native swap archive has no exact source operation",
+            )
+        if isinstance(archived_operations, list):
+            archived_swap = next(
+                (
+                    item for item in archived_operations
+                    if isinstance(item, Mapping)
+                    and item.get("operation_id") == operation.operation_id
                 ),
                 None,
             )
@@ -2237,6 +2276,68 @@ class ManagedController:
                 "ownership-conflict",
                 "native swap source archive startup changed",
             )
+        if not isinstance(archived_swap, Mapping):
+            raise _error(
+                "ownership-conflict",
+                "native swap archive has no exact swap operation",
+            )
+        if archived_swap.get("generation") != operation.generation:
+            raise _error("stale-generation", "native swap archived swap generation changed")
+        archived_swap_metadata = archived_swap.get("metadata")
+        archived_selection = (
+            archived_swap_metadata.get("coordinator_interrupt_selection")
+            if isinstance(archived_swap_metadata, Mapping) else None
+        )
+        if (not isinstance(archived_selection, Mapping)
+                or _digest(archived_selection) != interrupt_digest):
+            raise _error(
+                "stale-generation",
+                "native swap interrupt evidence is not joined to archived selection",
+            )
+        archived_selection = _native_exact_fields(
+            archived_selection,
+            (
+                "operation_id", "interrupt_id", "fence_epoch",
+                "request_epoch_id", "capability_digest",
+            ),
+            "native swap archived interrupt selection",
+        )
+        if archived_selection["operation_id"] != operation.operation_id:
+            raise _error("ownership-conflict", "native swap archived selection operation changed")
+        if archived_selection["interrupt_id"] != native_swap.get("interrupt_id"):
+            raise _error("ownership-conflict", "native swap archived selection interrupt changed")
+        if archived_selection["request_epoch_id"] != native_swap.get("request_epoch_id"):
+            raise _error("stale-generation", "native swap archived selection epoch changed")
+        if archived_selection["capability_digest"] != native_swap.get(
+                "source_runtime_identity_digest"
+        ):
+            raise _error("ownership-conflict", "native swap archived selection capability changed")
+        archived_interrupts = snapshot.get("coordinator_interrupts")
+        interrupt_record = (
+            archived_interrupts.get(archived_selection["interrupt_id"])
+            if isinstance(archived_interrupts, Mapping) else None
+        )
+        if not isinstance(interrupt_record, Mapping):
+            raise _error("ownership-conflict", "native swap archived interrupt is unavailable")
+        if (interrupt_record.get("interrupt_id") != archived_selection["interrupt_id"]
+                or interrupt_record.get("digest") != _digest(interrupt_record.get("frame"))):
+            raise _error("invalid", "native swap archived interrupt record changed")
+        interrupt_frame = interrupt_record.get("frame")
+        archived_interrupt = (
+            interrupt_frame.get("interrupt")
+            if isinstance(interrupt_frame, Mapping) else None
+        )
+        if not isinstance(archived_interrupt, Mapping):
+            raise _error("invalid", "native swap archived interrupt frame is malformed")
+        for key in (
+                "operation_id", "interrupt_id", "fence_epoch",
+                "request_epoch_id", "capability_digest",
+        ):
+            if archived_interrupt.get(key) != archived_selection[key]:
+                raise _error(
+                    "ownership-conflict",
+                    "native swap archived interrupt selection changed",
+                )
 
     def _record(self) -> Dict[str, Any]:
         for participant in list(self._participants.values()) + list(self._archived_participants.values()):
@@ -2287,6 +2388,7 @@ class ManagedController:
             current_context=self._native_context,
         )
         self._validate_native_child_identity_joins()
+        self._validate_native_dispatch_bindings()
         ledger = {
             "native_invocation_history": self._native_invocation_history,
             "native_invocation_rollovers": self._native_invocation_rollovers,
@@ -2629,6 +2731,7 @@ class ManagedController:
         self._load_native_invocation_history(raw)
         self._load_native_source_archives(raw)
         self._validate_native_child_identity_joins()
+        self._validate_native_dispatch_bindings()
         # Source archives are loaded last because the operation-side join
         # needs their immutable snapshots.  Re-run the controller-owned
         # native-swap joins after every complete reload; validating provider
@@ -2964,6 +3067,654 @@ class ManagedController:
             if isinstance(record, Mapping)
             and isinstance(record.get("observation"), Mapping)
         }
+
+    def _native_dispatch_observation_records_locked(self) -> List[Mapping[str, Any]]:
+        """Return current and retained child observations without retargeting."""
+        result: List[Mapping[str, Any]] = []
+        seen: Dict[str, Any] = {}
+
+        def add(values: Any) -> None:
+            if not isinstance(values, Mapping):
+                return
+            for key, value in values.items():
+                if not isinstance(value, Mapping):
+                    continue
+                observation_id = value.get("observation_id", key)
+                if not isinstance(observation_id, str) or not observation_id:
+                    continue
+                prior = seen.get(observation_id)
+                if prior is not None:
+                    if _json_value(prior) != _json_value(value):
+                        raise _error(
+                            "invalid",
+                            "native dispatch observation history is inconsistent",
+                        )
+                    continue
+                seen[observation_id] = value
+                result.append(value)
+
+        add(self._native_child_observations)
+        for history in self._native_invocation_history.values():
+            if isinstance(history, Mapping):
+                add(history.get("native_child_observations"))
+        for archive in self._native_source_archives.values():
+            snapshot = archive.get("snapshot") if isinstance(archive, Mapping) else None
+            if isinstance(snapshot, Mapping):
+                add(snapshot.get("native_child_observations"))
+        return result
+
+    def _native_dispatch_admission_locked(
+            self, admission_id: str,
+    ) -> Optional[Mapping[str, Any]]:
+        """Find the immutable admission in live or retained source history."""
+        matches: List[Mapping[str, Any]] = []
+
+        def add(values: Any) -> None:
+            if not isinstance(values, Mapping):
+                return
+            for value in values.values():
+                admission = value.get("admission") if isinstance(value, Mapping) else None
+                if isinstance(admission, Mapping) and admission.get("admission_id") == admission_id:
+                    matches.append(admission)
+
+        add(self._native_admissions)
+        for history in self._native_invocation_history.values():
+            if isinstance(history, Mapping):
+                add(history.get("admissions"))
+        for archive in self._native_source_archives.values():
+            snapshot = archive.get("snapshot") if isinstance(archive, Mapping) else None
+            if isinstance(snapshot, Mapping):
+                add(snapshot.get("native_admissions"))
+        if not matches:
+            return None
+        first = matches[0]
+        if any(_json_value(item) != _json_value(first) for item in matches[1:]):
+            raise _error("ownership-conflict", "native dispatch admission history changed")
+        return first
+
+    def _native_dispatch_source_context_locked(
+            self, source_identity: Mapping[str, Any],
+    ) -> Optional[Mapping[str, Any]]:
+        """Resolve the authoritative source context without using a new target."""
+        matches: List[Mapping[str, Any]] = []
+
+        def add(value: Any) -> None:
+            if not isinstance(value, Mapping):
+                return
+            candidate_identity = self._native_source_identity(
+                source_identity.get("owner_generation"), value,
+            )
+            if candidate_identity == dict(source_identity):
+                matches.append(value)
+
+        add(self._native_context)
+        for history in self._native_invocation_history.values():
+            if isinstance(history, Mapping):
+                add(history.get("context"))
+        for archive in self._native_source_archives.values():
+            snapshot = archive.get("snapshot") if isinstance(archive, Mapping) else None
+            if isinstance(snapshot, Mapping):
+                add(snapshot.get("native_context"))
+        if not matches:
+            return None
+
+        def projection(value: Mapping[str, Any]) -> Any:
+            result = _json_value(value)
+            if not isinstance(result, dict):
+                raise _error("invalid", "native dispatch source context is malformed")
+            # A source archive is captured at the fence and therefore differs
+            # from the live context only in this lifecycle bit.
+            result["fenced"] = False
+            return result
+
+        first = projection(matches[0])
+        if any(projection(value) != first for value in matches[1:]):
+            raise _error("ownership-conflict", "native dispatch source context changed")
+        return matches[0]
+
+    @staticmethod
+    def _native_dispatch_permission_binding(
+            admission: Mapping[str, Any], definition_facts: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        custom_definition = admission.get("custom_definition")
+        if not isinstance(custom_definition, Mapping):
+            raise _error("invalid", "native dispatch custom definition is malformed")
+        permission = {
+            key: definition_facts.get(key)
+            for key in (
+                "tools", "model", "effort", "permissionMode",
+                "permissions", "writable_paths",
+            )
+        }
+        return {
+            "agent_type": admission.get("agent_type"),
+            "custom_definition_digest": _digest(custom_definition),
+            "definition_digest": admission.get("definition_digest"),
+            "trusted_definition_digest": admission.get("trusted_definition_digest"),
+            "permission_digest": _digest(permission),
+        }
+
+    def _native_dispatch_definition_binding_locked(
+            self, admission: Mapping[str, Any], *, context: Optional[Mapping[str, Any]],
+    ) -> Dict[str, Any]:
+        agent_type = admission.get("agent_type")
+        if not isinstance(agent_type, str) or not agent_type:
+            raise _error("invalid", "native dispatch agent type is malformed")
+        facts = None
+        if isinstance(context, Mapping):
+            definitions = context.get("definitions")
+            if isinstance(definitions, Mapping):
+                facts = definitions.get(agent_type)
+        if facts is None:
+            custom_definition = admission.get("custom_definition")
+            if not isinstance(custom_definition, Mapping):
+                raise _error("invalid", "native dispatch definition is unavailable")
+            facts = {
+                key: custom_definition.get(key)
+                for key in (
+                    "tools", "model", "effort", "permissionMode",
+                    "permissions", "writable_paths",
+                )
+            }
+        if not isinstance(facts, Mapping):
+            raise _error("permission-mismatch", "native dispatch definition facts are unavailable")
+        binding = self._native_dispatch_permission_binding(admission, facts)
+        for key in (
+            "agent_type", "definition_digest", "trusted_definition_digest",
+        ):
+            if not isinstance(binding[key], str) or not binding[key]:
+                raise _error("invalid", "native dispatch definition binding is incomplete")
+        for key in ("definition_digest", "trusted_definition_digest"):
+            self._native_child_digest_field(
+                binding[key], "native dispatch " + key,
+            )
+        self._native_child_digest_field(
+            binding["custom_definition_digest"],
+            "native dispatch custom definition digest",
+        )
+        self._native_child_digest_field(
+            binding["permission_digest"], "native dispatch permission digest",
+        )
+        return binding
+
+    def _native_dispatch_target_locked(
+            self, selector: str, task_id: Optional[str], generation: Any,
+    ) -> Dict[str, Any]:
+        """Resolve one active joined child; caller names never become authority."""
+        context = self._native_context
+        if context is None:
+            raise _error("unknown", "native child target is not joined")
+        source_identity = self._native_source_identity(generation, context)
+        matching: List[Mapping[str, Any]] = []
+        for record in self._native_dispatch_observation_records_locked():
+            observation = record.get("observation")
+            child = observation.get("child") if isinstance(observation, Mapping) else None
+            if not isinstance(observation, Mapping) or not isinstance(child, Mapping):
+                continue
+            selector_matches = (
+                child.get("agent_id") == selector
+                or child.get("task_id") == selector
+            )
+            if not selector_matches:
+                continue
+            if task_id is not None and child.get("task_id") != task_id:
+                continue
+            matching.append(record)
+        if not matching:
+            raise _error("unknown", "native child target is not joined")
+
+        latest: Dict[str, Mapping[str, Any]] = {}
+        for record in matching:
+            run_id = record.get("child_run_id")
+            observation = record.get("observation")
+            watermark = observation.get("observation_watermark") if isinstance(observation, Mapping) else None
+            if not isinstance(run_id, str) or not isinstance(watermark, int):
+                raise _error("invalid", "native dispatch child run binding is malformed")
+            prior = latest.get(run_id)
+            prior_observation = prior.get("observation") if isinstance(prior, Mapping) else None
+            prior_watermark = (
+                prior_observation.get("observation_watermark")
+                if isinstance(prior_observation, Mapping) else None
+            )
+            if prior is None or watermark > prior_watermark:
+                latest[run_id] = record
+
+        current: List[Mapping[str, Any]] = []
+        stale = False
+        for record in latest.values():
+            observation = record["observation"]
+            child = observation["child"]
+            if observation.get("source_identity") != source_identity:
+                stale = True
+                continue
+            if child.get("invocation_id") != context.get("invocation_id"):
+                stale = True
+                continue
+            if child.get("status") != "active" or observation.get("terminal_outcome") is not None:
+                stale = True
+                continue
+            current.append(record)
+        if len(current) != 1:
+            if stale:
+                raise _error("stale-generation", "native child target is no longer current")
+            raise _error("invalid", "native child target is ambiguous")
+        record = current[0]
+        observation = record["observation"]
+        child = observation["child"]
+        admission = self._native_dispatch_admission_locked(child["admission_id"])
+        if admission is None:
+            raise _error("ownership-conflict", "native child target admission is unavailable")
+        definition_binding = self._native_dispatch_definition_binding_locked(
+            admission, context=context,
+        )
+        if definition_binding["trusted_definition_digest"] != child["trusted_definition_digest"]:
+            raise _error("permission-mismatch", "native child target definition changed")
+        source_operation = self._native_child_source_operation_locked(context)
+        return {
+            "source_identity": _json_value(source_identity),
+            "lineage_id": source_identity["lineage_id"],
+            "lineage_generation": source_identity["lineage_generation"],
+            "coordinator_session_uuid": source_identity["session_uuid"],
+            "runner_incarnation": source_identity["runner_incarnation"],
+            "source_operation_id": source_operation.operation_id,
+            "child_run_id": record["child_run_id"],
+            "observation_id": observation["observation_id"],
+            "observation_watermark": observation["observation_watermark"],
+            "admission_id": child["admission_id"],
+            "admission_watermark": admission["watermark"],
+            "tool_use_id": child["tool_use_id"],
+            "agent_id": child["agent_id"],
+            "task_id": child["task_id"],
+            "parent_agent_id": child["parent_agent_id"],
+            "invocation_id": child["invocation_id"],
+            "lineage_incarnation": child["lineage_incarnation"],
+            "trusted_definition_digest": child["trusted_definition_digest"],
+            "start_watermark": child["start_watermark"],
+            "task_start_event": _json_value(child["task_start_event"]),
+            "definition_binding": definition_binding,
+        }
+
+    def _native_dispatch_observation_for_target_locked(
+            self, target: Mapping[str, Any],
+    ) -> Optional[Mapping[str, Any]]:
+        matches = [
+            record for record in self._native_dispatch_observation_records_locked()
+            if record.get("child_run_id") == target.get("child_run_id")
+            and record.get("observation_id") == target.get("observation_id")
+        ]
+        if not matches:
+            return None
+        first = matches[0]
+        if any(_json_value(item) != _json_value(first) for item in matches[1:]):
+            raise _error("invalid", "native dispatch target history is inconsistent")
+        return first
+
+    @staticmethod
+    def _native_dispatch_metadata_classified(metadata: Any) -> bool:
+        return (
+            isinstance(metadata, Mapping)
+            and bool(_NATIVE_DISPATCH_BINDING_FIELDS.intersection(metadata))
+        )
+
+    def _native_dispatch_result_classified(self, result: Any) -> bool:
+        if not isinstance(result, Mapping):
+            return False
+        metadata = result.get("metadata")
+        if self._native_dispatch_metadata_classified(metadata):
+            return True
+        if not isinstance(metadata, Mapping):
+            return False
+        semantics = metadata.get("request_semantics")
+        selector = semantics.get("recipient_id") if isinstance(semantics, Mapping) else None
+        return (
+            isinstance(selector, str)
+            and selector not in self._participants
+            and selector not in self._archived_participants
+        )
+
+    def _validate_submit_request_result(
+            self, request_id: str, request: Mapping[str, Any],
+    ) -> Optional[Tuple[MailboxEntry, Mapping[str, Any]]]:
+        if request.get("kind") != "submit" or request.get("result") is None:
+            return None
+        result = request.get("result")
+        if not isinstance(result, Mapping):
+            raise _error("invalid", "submit request result is not a mailbox snapshot")
+        message_id = result.get("message_id")
+        if not isinstance(message_id, str) or not message_id:
+            raise _error("invalid", "submit request result has no mailbox ID")
+        mailbox = self._mailboxes.get(message_id)
+        if mailbox is None:
+            raise _error("invalid", "submit request result points to a missing mailbox")
+        expected = mailbox.to_dict()
+        if result.get("request_id") != request_id:
+            raise _error("invalid", "submit request result request ID changed")
+        for field, expected_value in expected.items():
+            if field in _SUBMIT_RESULT_MUTABLE_FIELDS:
+                continue
+            if field not in result or _json_value(result[field]) != expected_value:
+                raise _error(
+                    "invalid",
+                    "submit request result immutable mailbox binding changed",
+                )
+        if (not self._native_dispatch_result_classified(result)
+                and not self._native_dispatch_metadata_classified(mailbox.metadata)):
+            generic_content = {
+                "recipient_id": mailbox.recipient_id,
+                "payload_ref": mailbox.payload_ref,
+                "sender_id": mailbox.sender_id,
+                "task_id": mailbox.task_id,
+                "generation": mailbox.generation,
+            }
+            if request.get("digest") != _digest(generic_content):
+                raise _error(
+                    "invalid",
+                    "unmarked submit request digest is not generic caller content",
+                )
+        return mailbox, result
+
+    def _validated_submit_retry(
+            self, request_id: str, seen: Mapping[str, Any],
+    ) -> MailboxEntry:
+        request = self._requests.get(request_id)
+        if not isinstance(request, Mapping):
+            raise _error("invalid", "stored submit request is missing")
+        pair = self._validate_submit_request_result(request_id, request)
+        if pair is None:
+            raise _error("invalid", "stored submit request result is missing")
+        mailbox, result = pair
+        if _json_value(seen) != _json_value(result):
+            raise _error("invalid", "stored submit request result changed")
+        request_native = self._native_dispatch_result_classified(result)
+        mailbox_native = self._native_dispatch_metadata_classified(mailbox.metadata)
+        if request_native != mailbox_native:
+            raise _error("invalid", "submit request and mailbox route bindings disagree")
+        if mailbox_native:
+            self._validate_native_dispatch_entry(mailbox)
+        # Return the authenticated current mailbox row.  Dispatch state and
+        # acknowledgements are mutable and are not replay authority.
+        return MailboxEntry.from_dict(mailbox.to_dict())
+
+    def _validate_native_dispatch_entry(
+        self, entry: MailboxEntry, *, require_current: bool = False,
+    ) -> bool:
+        metadata = entry.metadata
+        if not self._native_dispatch_metadata_classified(metadata):
+            return False
+        if "native_target" not in metadata:
+            raise _error("invalid", "native dispatch binding marker is missing")
+        expected_fields = {
+            "request_semantics", "request_content_digest", "native_target",
+            "physical_recipient", "actual_route", "effective_policy",
+            "routing_binding_digest",
+        }
+        if set(metadata) != expected_fields:
+            raise _error("invalid", "native dispatch metadata fields are malformed")
+        semantics = _native_exact_fields(
+            metadata["request_semantics"],
+            ("recipient_id", "payload_ref", "sender_id", "task_id", "generation"),
+            "native dispatch request semantics",
+        )
+        expected_semantics = {
+            "recipient_id": semantics["recipient_id"],
+            "payload_ref": entry.payload_ref,
+            "sender_id": entry.sender_id,
+            "task_id": entry.task_id,
+            "generation": entry.generation,
+        }
+        if semantics != expected_semantics:
+            raise _error("invalid", "native dispatch caller semantics changed")
+        request_digest = self._native_child_digest_field(
+            metadata["request_content_digest"],
+            "native dispatch request content digest",
+        )
+        if request_digest != _digest(semantics):
+            raise _error("invalid", "native dispatch caller digest changed")
+        request = self._requests.get(entry.request_id)
+        if (not isinstance(request, Mapping)
+                or request.get("kind") != "submit"
+                or request.get("digest") != request_digest):
+            raise _error("invalid", "native dispatch request ledger binding changed")
+
+        target = _native_exact_fields(
+            metadata["native_target"],
+            (
+                "source_identity", "source_operation_id", "child_run_id",
+                "lineage_id", "lineage_generation", "coordinator_session_uuid",
+                "runner_incarnation",
+                "observation_id", "observation_watermark", "admission_id",
+                "admission_watermark", "tool_use_id", "agent_id", "task_id",
+                "parent_agent_id", "invocation_id", "lineage_incarnation",
+                "trusted_definition_digest", "start_watermark", "task_start_event",
+                "definition_binding",
+            ),
+            "native dispatch target",
+        )
+        source_identity = _native_exact_fields(
+            target["source_identity"],
+            (
+                "owner_generation", "lineage_id", "lineage_generation",
+                "session_uuid", "runner_incarnation", "invocation_id",
+            ),
+            "native dispatch target source identity",
+        )
+        if source_identity["owner_generation"] != entry.generation:
+            raise _error("stale-generation", "native dispatch target generation changed")
+        for key in ("lineage_id", "session_uuid", "runner_incarnation", "invocation_id"):
+            _id(source_identity[key], "native dispatch target " + key)
+        for key in ("child_run_id", "trusted_definition_digest"):
+            self._native_child_digest_field(target[key], "native dispatch target " + key)
+        for key in ("observation_id", "source_operation_id", "admission_id", "tool_use_id", "agent_id", "task_id", "invocation_id"):
+            _id(target[key], "native dispatch target " + key)
+        for key in ("observation_watermark", "admission_watermark", "lineage_incarnation", "start_watermark"):
+            _native_positive_generation(target[key], "native dispatch target " + key)
+        if target["parent_agent_id"] is not None:
+            _id(target["parent_agent_id"], "native dispatch target parent_agent_id")
+        if semantics["recipient_id"] not in {
+                target["agent_id"], target["task_id"]
+        }:
+            raise _error(
+                "ownership-conflict",
+                "native dispatch caller selector is not the bound child",
+            )
+        if (semantics["task_id"] is not None
+                and semantics["task_id"] != target["task_id"]):
+            raise _error(
+                "ownership-conflict",
+                "native dispatch caller task is not the bound child task",
+            )
+        _native_exact_fields(
+            target["task_start_event"],
+            ("event_uuid", "watermark", "task_type"),
+            "native dispatch target task start event",
+        )
+        definition_binding = _native_exact_fields(
+            target["definition_binding"],
+            (
+                "agent_type", "custom_definition_digest", "definition_digest",
+                "trusted_definition_digest", "permission_digest",
+            ),
+            "native dispatch definition binding",
+        )
+        for key in (
+            "custom_definition_digest", "definition_digest",
+            "trusted_definition_digest", "permission_digest",
+        ):
+            self._native_child_digest_field(
+                definition_binding[key], "native dispatch definition " + key,
+            )
+        _id(definition_binding["agent_type"], "native dispatch definition agent_type")
+
+        observation_record = self._native_dispatch_observation_for_target_locked(target)
+        if observation_record is None:
+            raise _error("stale-generation", "native dispatch target history is unavailable")
+        observation = observation_record.get("observation")
+        child = observation.get("child") if isinstance(observation, Mapping) else None
+        if not isinstance(observation, Mapping) or not isinstance(child, Mapping):
+            raise _error("invalid", "native dispatch target observation is malformed")
+        observed_target = {
+            "source_identity": observation.get("source_identity"),
+            "lineage_id": source_identity["lineage_id"],
+            "lineage_generation": source_identity["lineage_generation"],
+            "coordinator_session_uuid": source_identity["session_uuid"],
+            "runner_incarnation": source_identity["runner_incarnation"],
+            "source_operation_id": observation_record.get("source_operation_id"),
+            "child_run_id": observation_record.get("child_run_id"),
+            "observation_id": observation.get("observation_id"),
+            "observation_watermark": observation.get("observation_watermark"),
+            "admission_id": child.get("admission_id"),
+            "tool_use_id": child.get("tool_use_id"),
+            "agent_id": child.get("agent_id"),
+            "task_id": child.get("task_id"),
+            "parent_agent_id": child.get("parent_agent_id"),
+            "invocation_id": child.get("invocation_id"),
+            "lineage_incarnation": child.get("lineage_incarnation"),
+            "trusted_definition_digest": child.get("trusted_definition_digest"),
+            "start_watermark": child.get("start_watermark"),
+            "task_start_event": child.get("task_start_event"),
+        }
+        if any(target.get(key) != observed_target.get(key) for key in observed_target):
+            raise _error("ownership-conflict", "native dispatch target binding changed")
+        admission = self._native_dispatch_admission_locked(child["admission_id"])
+        if admission is None:
+            raise _error("ownership-conflict", "native dispatch target admission is unavailable")
+        if target["admission_watermark"] != admission.get("watermark"):
+            raise _error(
+                "ownership-conflict",
+                "native dispatch admission watermark changed",
+            )
+        source_context = self._native_dispatch_source_context_locked(source_identity)
+        if source_context is None:
+            raise _error(
+                "ownership-conflict",
+                "native dispatch source context is unavailable",
+            )
+        current_context = self._native_context
+        binding_context = (
+            source_context
+            if isinstance(source_context, Mapping)
+            else current_context
+        )
+        expected_definition = self._native_dispatch_definition_binding_locked(
+            admission, context=binding_context,
+        )
+        if definition_binding != expected_definition:
+            raise _error("permission-mismatch", "native dispatch definition binding changed")
+
+        physical = _native_exact_fields(
+            metadata["physical_recipient"],
+            ("participant_id", "session_uuid", "mailbox_id", "route_kind"),
+            "native dispatch physical recipient",
+        )
+        physical_participant = self._participants.get(physical["participant_id"])
+        if physical_participant is None:
+            physical_participant = self._archived_participants.get(physical["participant_id"])
+        if physical_participant is None or physical_participant.session_id != physical["session_uuid"]:
+            raise _error("ownership-conflict", "native dispatch physical recipient changed")
+        if physical["mailbox_id"] != entry.message_id:
+            raise _error("ownership-conflict", "native dispatch mailbox binding changed")
+        if physical["participant_id"] != entry.recipient_id:
+            raise _error(
+                "ownership-conflict",
+                "native dispatch physical recipient is not the mailbox recipient",
+            )
+        parent = admission.get("parent")
+        if (not isinstance(parent, Mapping)
+                or physical["session_uuid"] != parent.get("session_id")):
+            raise _error(
+                "ownership-conflict",
+                "native dispatch physical session is not the target parent",
+            )
+        if physical["route_kind"] != _NATIVE_CHILD_DISPATCH_ROUTE:
+            raise _error("unsupported", "native dispatch route kind is unavailable")
+        if metadata["actual_route"] != _NATIVE_CHILD_DISPATCH_ROUTE:
+            raise _error("unsupported", "native dispatch route changed")
+        policy = _native_exact_fields(
+            metadata["effective_policy"],
+            ("definition_binding", "parent_read_only"),
+            "native dispatch effective policy",
+        )
+        if (policy["definition_binding"] != definition_binding
+                or type(policy["parent_read_only"]) is not bool):
+            raise _error("permission-mismatch", "native dispatch effective policy changed")
+        source_lineage = source_context.get("lineage")
+        if (not isinstance(source_lineage, Mapping)
+                or policy["parent_read_only"] != source_lineage.get("read_only")):
+            raise _error(
+                "permission-mismatch",
+                "native dispatch read-only policy is not source lineage policy",
+            )
+        routing_binding = {
+            "native_target": target,
+            "physical_recipient": physical,
+            "actual_route": metadata["actual_route"],
+            "effective_policy": policy,
+        }
+        routing_digest = self._native_child_digest_field(
+            metadata["routing_binding_digest"],
+            "native dispatch routing binding digest",
+        )
+        if routing_digest != _digest(routing_binding):
+            raise _error("invalid", "native dispatch routing binding digest changed")
+
+        if require_current:
+            context = self._native_context
+            if not isinstance(context, Mapping):
+                raise _error("stale-generation", "native dispatch coordinator context changed")
+            current_identity = self._native_source_identity(entry.generation, context)
+            if current_identity != source_identity:
+                raise _error("stale-generation", "native dispatch lineage changed")
+            latest = [
+                record for record in self._native_dispatch_observation_records_locked()
+                if record.get("child_run_id") == target["child_run_id"]
+            ]
+            latest.sort(
+                key=lambda record: record["observation"]["observation_watermark"]
+            )
+            if not latest or latest[-1].get("observation_id") != target["observation_id"]:
+                raise _error("stale-generation", "native dispatch child observation is stale")
+            current_observation = latest[-1]["observation"]
+            current_child = current_observation["child"]
+            if (current_child.get("status") != "active"
+                    or current_observation.get("terminal_outcome") is not None):
+                raise _error("stale-generation", "native dispatch child is no longer active")
+            coordinator = self._participants.get(self._coordinator_id or "")
+            if (coordinator is None
+                    or physical["participant_id"] != coordinator.participant_id
+                    or physical["session_uuid"] != coordinator.session_id):
+                raise _error("stale-generation", "native dispatch coordinator recipient changed")
+        return True
+
+    def _validate_native_dispatch_bindings(self) -> None:
+        validated: set[str] = set()
+        for request_id, request in self._requests.items():
+            pair = self._validate_submit_request_result(request_id, request)
+            if pair is None:
+                continue
+            mailbox, result = pair
+            request_native = self._native_dispatch_result_classified(result)
+            mailbox_native = self._native_dispatch_metadata_classified(mailbox.metadata)
+            if request_native != mailbox_native:
+                raise _error(
+                    "invalid",
+                    "submit request and mailbox route bindings disagree",
+                )
+            if request_native:
+                self._validate_native_dispatch_entry(mailbox)
+                validated.add(mailbox.message_id)
+        for entry in self._mailboxes.values():
+            if not self._native_dispatch_metadata_classified(entry.metadata):
+                continue
+            request = self._requests.get(entry.request_id)
+            if not isinstance(request, Mapping) or request.get("kind") != "submit":
+                raise _error("invalid", "native dispatch mailbox has no submit request")
+            pair = self._validate_submit_request_result(entry.request_id, request)
+            if pair is None or pair[0].message_id != entry.message_id:
+                raise _error("invalid", "native dispatch mailbox request binding is missing")
+            if not self._native_dispatch_result_classified(pair[1]):
+                raise _error("invalid", "native dispatch request binding is missing")
+            if entry.message_id not in validated:
+                self._validate_native_dispatch_entry(entry)
 
     def _native_child_join_observation(
             self, observation: Any, *, context: Mapping[str, Any],
@@ -9932,7 +10683,12 @@ class ManagedController:
                 )
             except NativeSwapContractError as exc:
                 raise _error(exc.code, exc.message) from exc
-        if operation.phase == "released":
+        # A completed operation may be historical released state or a
+        # nonreleased held/shutdown history.  Only the former carries the
+        # six-stage release proof and must be revalidated unchanged.
+        if operation.phase == "released" or (
+            operation.phase == "complete" and raw.get("state") == "released"
+        ):
             try:
                 _require_native_swap_stages(
                     evidence,
@@ -9941,7 +10697,9 @@ class ManagedController:
                 )
             except NativeSwapContractError as exc:
                 raise _error(exc.code, exc.message) from exc
-        if raw.get("state") == "released" and operation.phase != "released":
+        if raw.get("state") == "released" and operation.phase not in {
+            "released", "complete",
+        }:
             raise _error("stale-generation", "native swap released state is not joined to phase")
         for key in ("worker_dispositions",):
             if not isinstance(raw[key], Mapping):
@@ -15752,8 +16510,6 @@ class ManagedController:
         payload_ref = _opaque_payload_reference(payload_ref)
         expected_generation = self._generation if generation is None else generation
         self._check_generation(expected_generation)
-        if recipient_id not in self._participants:
-            raise _error("unknown", "recipient participant is not enrolled")
         if task_id is not None:
             task_id = _id(task_id, "task_id", required=False)
         content = {
@@ -15763,25 +16519,78 @@ class ManagedController:
             "task_id": task_id,
             "generation": expected_generation,
         }
-        active = self._active_operation()
+        request_content_digest = _digest(content)
         seen = self._request_seen(request_id, content, "submit")
         if seen is not None:
             if isinstance(seen, Mapping):
-                return MailboxEntry.from_dict(seen)
+                return self._validated_submit_retry(request_id, seen)
             raise _error("invalid", "stored mailbox result is invalid")
+
+        native_target: Optional[Dict[str, Any]] = None
+        if recipient_id not in self._participants:
+            native_target = self._native_dispatch_target_locked(
+                recipient_id, task_id, expected_generation,
+            )
+            coordinator = self._participants.get(self._coordinator_id or "")
+            if coordinator is None:
+                raise _error("ownership-conflict", "native dispatch coordinator is unavailable")
+        else:
+            coordinator = None
+
         active = self._active_operation()
         state = "fenced" if active is not None and active.phase in _FENCED_PHASES else "queued"
+        operation_id = active.operation_id if active is not None else None
+        if native_target is not None and operation_id is None:
+            released = self._operations.get(self._active_operation_id or "")
+            if (released is not None
+                    and released.generation == expected_generation
+                    and released.phase == "released"):
+                operation_id = released.operation_id
         entry = MailboxEntry(
             message_id="msg-" + uuid.uuid4().hex,
             request_id=request_id,
             sender_id=sender_id,
-            recipient_id=recipient_id,
+            recipient_id=(
+                coordinator.participant_id
+                if native_target is not None and coordinator is not None
+                else recipient_id
+            ),
             task_id=task_id,
             payload_ref=payload_ref,
             state=state,
             generation=expected_generation,
-            operation_id=active.operation_id if active is not None else None,
+            operation_id=operation_id,
         )
+        if native_target is not None and coordinator is not None:
+            context = self._native_context
+            if not isinstance(context, Mapping):
+                raise _error("unsupported", "native dispatch context is unavailable")
+            physical_recipient = {
+                "participant_id": coordinator.participant_id,
+                "session_uuid": coordinator.session_id,
+                "mailbox_id": entry.message_id,
+                "route_kind": _NATIVE_CHILD_DISPATCH_ROUTE,
+            }
+            actual_route = _NATIVE_CHILD_DISPATCH_ROUTE
+            effective_policy = {
+                "definition_binding": copy.deepcopy(native_target["definition_binding"]),
+                "parent_read_only": context["lineage"]["read_only"],
+            }
+            routing_binding = {
+                "native_target": copy.deepcopy(native_target),
+                "physical_recipient": physical_recipient,
+                "actual_route": actual_route,
+                "effective_policy": effective_policy,
+            }
+            entry.metadata = {
+                "request_semantics": _json_value(content),
+                "request_content_digest": request_content_digest,
+                "native_target": _json_value(native_target),
+                "physical_recipient": physical_recipient,
+                "actual_route": actual_route,
+                "effective_policy": _json_value(effective_policy),
+                "routing_binding_digest": _digest(routing_binding),
+            }
         self._mailboxes[entry.message_id] = entry
         self._save_request_result(request_id, entry.to_dict())
         self._persist({"event": "submit", "message_id": entry.message_id,
@@ -15975,6 +16784,20 @@ class ManagedController:
             # recipient.  A daemon may have awaited a runtime idle check
             # since it read candidates; a concurrent fence therefore refuses
             # here before a dispatch-intent is written.
+            candidates = self._dispatchable_mailboxes(operation, recipient_id)
+            if candidates and self._native_dispatch_metadata_classified(
+                    candidates[0].metadata
+            ):
+                self._validate_native_dispatch_entry(
+                    candidates[0], require_current=True,
+                )
+                # The controller has no identity-bound native active-child
+                # route.  Refuse before resolver, dispatch-intent, or the
+                # generic coordinator transport; the queued item is retained.
+                raise _error(
+                    "unsupported",
+                    "native active-child dispatch is unavailable",
+                )
             entry = self._next_mailbox(operation, recipient_id)
             if entry is None:
                 uncertain = self._dispatch_uncertain_for(

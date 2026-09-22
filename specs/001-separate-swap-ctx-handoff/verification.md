@@ -5,6 +5,224 @@ slice, or passing fake test is not full acceptance. `tasks.md` remains the
 implementation task authority; this document identifies the evidence needed
 to close the feature without reducing its scope.
 
+## September 22 continuation baseline and release disposition
+
+### Bounded routing and archive correction
+
+Luna implemented immutable native-child caller/transport bindings, exact
+retry-before-lookup behavior, reload validation, and refusal before unsupported
+delivery. Partial or removed metadata, changed accepted-result snapshots,
+double-stripped bindings, and rehashed identity/policy mismatches refuse.
+After source archive commitment, historical swap validation uses that exact
+archive's swap interrupt selection; live selection remains mandatory before
+commitment and is still cleared on invocation rollover.
+
+Astra approved the bounded static correction at controller SHA-256
+`175bc190b483ecce67e1e65a01ba7190b4f36173166c0d3b4c12777e2b719272`.
+The first frozen candidate diagnostic reported **100 passed, 3 failed, 2,129
+deselected**, **89.95 seconds**. It includes the previous six modules, the new
+native-child-routing module, and bounded generic submit/reload/recovery cases.
+The native pump and original child-routing positive case passed. Failures were
+the known native-unenroll ownership conflict and two new test-assertion defects:
+checking a message ID among dictionary keys, and expecting live selection
+clearing immediately at release rather than at the next invocation rollover.
+
+JUnit SHA-256: `9d166ccb7f0664432d0614e87dc8aa0bbf71c6a9b66835e58bd1aace253bda23`.
+Content/mode manifests were unchanged before/after, respectively
+`26b0107daea7c28300686115d93d523d0ff57c5da4fdfba26d3812e138c8dedc` and
+`e86386105b42d952b5125bf50d357f5bb19931e66d8c762ecacaa294fb89b307`.
+Private evidence is in `py-bench` under
+`/home/brett/.local/state/openRepoTools/takeovers/2026-09-21-swap-ctx-handoff/sol-routing-focused-100p3f.ARyzUK`.
+An earlier positional-selector invocation unintentionally selected the whole
+suite and was terminated; it supplies no acceptance result. The completed
+diagnostic used the wrapper's bounded `-k` selector.
+
+The corrected frozen rerun used the same selector and added a dedicated
+post-cleanup archive reload case. Result: **103 passed, 1 failed, 2,129
+deselected**, **104.08 seconds**. The sole failure is the known persistent CLI
+native-unenroll `ownership-conflict`; routing, socket, pump, swap archive,
+generic submit, reload, and selected recovery cases passed. The controller
+digest above is unchanged; only the two corrected test files were overlaid.
+JUnit SHA-256: `ce1762ec2fd0509a4723782f90b87ffeddf2f9a163ae5201869c257bd0fdfcb0`;
+log: `9fb58852b5a682a0e0a09f0eaaa60e3c0aac2b9fa0a1e81e49e3fe351da96789`.
+Content/mode manifests matched before/after:
+`85e666bfd30d87a8c5d7675e1b58c9dfc8dac8084180e6eeb09f870ec6b21b47` and
+`e86386105b42d952b5125bf50d357f5bb19931e66d8c762ecacaa294fb89b307`.
+Durable evidence is `sol-routing-focused-103p1f.qjUYRg` beside the preceding
+private evidence directory. These isolated diagnostics do not replace the
+serialized full suite, legacy/platform gates, or authenticated runtime proof.
+No task is newly closed and activation remains blocked.
+Strict OpenSpec validation of `separate-swap-ctx-handoff` and `git diff --check`
+both passed on the actual feature worktree after the correction.
+
+### Starting baseline and preserved release decision
+
+Speckit prerequisites resolve this existing feature and its tasks, plan,
+research, contracts, and quickstart. The specification-quality checklist is
+38/38. Release checklists remain open: compatibility 6/22, lifecycle 6/29,
+ownership 6/24, security 6/25, and testing 6/27. The user explicitly requested
+implementation of the known-incomplete completion plan; no checklist was
+silently completed or used as runtime support evidence.
+
+Sol's frozen six-module diagnostic ran in `py-bench` through
+`tests/run.sh --parallel-safe`, selecting transport accept, native worker
+boundaries, native swap pump, persistent CLI lifecycle, native swap integration,
+and native swap fences. It reported **60 passed, 3 failed, 2,153 deselected**
+in **79.84 seconds**. JUnit: `openrepotools-sol-six-module.ncwndk/six-module.xml`,
+SHA-256 `617bd15fa98d6e6eedb678fd2223d6d331251fd312d819c5920eb98c13b4de29`.
+Content/mode manifest SHA-256 values are
+`0e4517cfd44619c8cefd1803eeeecdcc6947015de3a958e7c0698a0628a36621` and
+`a158011ed589705b9f69ae535f9962305a7ac536902f9183a09d3a8bfc2622a0`;
+pre/post source and mode manifests compare equal after excluding run outputs.
+The pinned submodule was present at
+`39d5c986fcfac1a160474bfe91c5f1c37fccc72c`.
+
+The inherited historical-shutdown and transport corrections passed their
+selected regressions. Three integration requirements still failed:
+
+- Persistent executable CLI lifecycle reaches successful swap recovery,
+  target release, and shutdown, then unenrollment refuses ownership conflict.
+  Static review found participant-only claim cleanup omits native lineage
+  claims; the state-store refusal is correct. Native claim release/recovery
+  and daemon ownership finalization need coordinated implementation.
+- The native pump sends B exactly once but cannot send C. One bounded
+  diagnostic exposed `stale-generation`: native swap interrupt evidence is
+  not joined to its selection. Diagnostic JUnit SHA-256:
+  `34d646f360a3461a10e56f3457c44f77cc51085036a8451c275f40a225902335`.
+  It reported one failed case and 2,215 deselected in 11.43 seconds.
+- A joined native-child target is refused as an unenrolled participant at
+  submit. Luna's T013/T018 routing correction is being reviewed and needs
+  separate candidate evidence.
+
+This is a focused baseline, not a new broad census or release gate. The user
+subsequently chose to **keep the guarantees, prepare upstream runtime
+requirements, and leave activation blocked until supported**. See the
+[requirements packet](../../openspec/changes/separate-swap-ctx-handoff/runtime-support-requirements.md).
+No authenticated probe, installation, merge, runtime support, or new task
+closure is claimed by this result.
+
+## 2026-09-21 worker/recovery implementation and runtime feasibility
+
+The next authorized slice started at published checkpoint
+`0d14ffb425fea4ce1a847fd545b9124aea0f441b`. Sol remained the sole diagnostic
+executor; Luna implemented bounded fixture corrections and Astra reviewed
+their authority boundaries. No production safety guard or positive requirement
+was relaxed.
+
+Command in `py-bench`: `tests/run.sh --parallel-safe -k
+'test_lane_managed_native_worker_boundaries or test_lane_managed_native_swap_pump or test_lane_managed_cli_persistent_lifecycle'
+--junitxml=<private-artifact>/worker-pump-followup.xml`.
+
+The pre-edit frozen baseline reported **13 passed, 15 failed, 2,172 deselected**
+in **45.58 seconds**; XML
+`openrepotools-sol-worker-pump-baseline.AX3mDH/worker-pump-baseline.xml`, SHA-256
+`9d3c35eab86233c902c80d11f1518563c5c191bd01dfb13ca2a86152ac08a2c9`.
+
+The first corrected snapshot reported **25 passed, 4 failed, 2,172 deselected**
+in **36.36 seconds**. Artifact
+`openrepotools-sol-worker-pump-followup.DpEcfE/worker-pump-followup.xml`, SHA-256
+`facd98b837dac83099321c7d93d17404932dde995d96e51e598ad981dcffca90`.
+Source/mode manifest hashes are
+`0793e133b810354071ee96934ed59918d50f681ed457b41c32e469bf3c857dba` and
+`ea21b347a0c9618e8c9fe72963cd638da48452a90f05c9c03233e3e3fd8432ec`.
+Pre/post source and modes compare equal in both runs. The extra case covers
+an observation exactly at the child-start watermark as well as one before it.
+
+The manual-ingestion fixture now supplies its missing immutable startup and
+mailbox source join, explicitly labeled synthetic and checked by real reload
+validation. A correlated TaskProgress advances the ledger beyond child start.
+Wrong source identity and before/equal watermark rejection still assert no
+durable mutation. The positive child-route case remains unchanged and fails
+because native children are not yet resolved by `submit`; physical coordinator
+queueing needs the full durable semantic-target binding contract, not a generic
+parent-send fallback.
+
+The CLI now distinguishes a refused new request ID from resuming the original
+operation ID after a shutdown crash. Its first follow-up still timed out before
+reaching those assertions. The pump follow-up exposed an incorrect rollover
+expectation for B, the replacement runner's first invocation, and a remaining
+socket failure. Later evidence must verify those corrections separately.
+
+The subsequent five-module frozen diagnostic added
+`test_lane_managed_native_swap_integration` and
+`test_lane_managed_native_swap_fences` to that selector and reported
+**44 passed, 4 failed, 2,153 deselected**, **123.81 seconds**. XML
+`openrepotools-sol-five-module.d6EyPg/five-module.xml` has SHA-256
+`52eb5209935ab311d6708f960e2fecd406e9ee072e7ca85fa2e05e962e684b52`.
+Source/modes remained unchanged and strict OpenSpec validation passed. The
+durable copy is `sol-five-module-evidence.8CYrkI` under the same private
+takeover directory. This snapshot aligns the CLI fixture's server/subprocess
+budgets to 10/15 seconds and corrects B to an initial target invocation and C
+to the sole same-runner rollover; production deadlines are unchanged.
+
+The CLI now passes same-ID recovery and target release, then refuses shutdown
+with `stale-generation`. Both pump cases still fail with socket resets, without
+a captured server exception. The unchanged positive native-route requirement
+is the fourth failure. The worker-observation cases and existing swap/fence
+modules pass in this snapshot. These deeper failures remain open, not waived
+by the fixture corrections or by strict artifact validation.
+
+Architecture tracing found a concrete shutdown conflict: shutdown completes
+the prior swap, while native-swap validation rejected its preserved released
+state under phase `complete`. Historical acceptance must retain the complete
+six-stage evidence validation, release joins, and source archive rather than
+erase the released state. The CLI fault injector also must not reinject the
+source-shutdown fault during a later target shutdown.
+
+The transport's repeated `wait_for(sock_accept(...))` cancellation is a
+source-backed candidate for the unexplained resets: a timeout can discard an
+accepted connection before the waiting server consumes it. A persistent accept
+task with non-cancelling poll intervals needs deterministic boundary and
+pending/completed cleanup coverage before this is claimed fixed.
+
+### Bounded production corrections and regression baselines
+
+The controller now permits completed historical released swaps while requiring
+their unchanged full six-stage proof. Completed held swaps remain a distinct
+case with no fabricated release proof. A source-only one-shot shutdown fault
+keeps the CLI fixture's later target shutdown meaningful. New cases cover real
+shutdown/reload, missing historical release evidence, altered source identity,
+and held-target shutdown. The unchanged guards continue to validate all archive
+and release-identity joins.
+
+The listener now owns the accepted socket synchronously in a Unix readability
+callback before signaling readiness. Non-cancelling polling preserves that
+pending accept; stop/cancellation closes unconsumed sockets, removes its reader,
+and retrieves errors. Sequential handling and operation deadlines are unchanged.
+Twelve deterministic transport cases cover poll retention, single response,
+pending/completed cleanup, cancellation before publication without yielding,
+handler cancellation, retryable/fatal accept errors, and stale callbacks.
+These prove ownership invariants, not reproduction of a kernel scheduling race.
+
+The new history/CLI regression was run against the old controller/transport
+with only the corrected test files overlaid on the prior frozen snapshot:
+**3 failed, 2,200 deselected**, **38.73 seconds**, each reaching shutdown's
+`stale-generation` refusal. Artifact
+`openrepotools-sol-history-red.03KfOg/history-red.xml`, SHA-256
+`67314cf27e25c5296981b8ef5d27f4a7c34f085cfada42a349c0637ae1aeb349`.
+
+The baseline transport test instruments both old and new polling surfaces and
+asserts cancellation at the poll boundary separately from shutdown cleanup.
+Against the old transport it reported **1 failed, 2,215 deselected**, **10.99
+seconds**, on `poll timeout cancelled the accept`, not a watchdog timeout.
+Artifact: `openrepotools-sol-transport-red.EzgW0i/transport-red.xml`, SHA-256
+`a3b6aa1df9b2ba500b583d353f598e938be92d90a2748239c1156b0278a38309`.
+
+Astra reviewed both production boundaries and the final tests without a
+blocking finding. Candidate results must still be reported separately; neither
+baseline failure nor review constitutes a passing gate.
+
+The pinned-runtime audit and one bounded no-auth positive-orphan probe are
+recorded in `live-validation.md`. The probe is **inconclusive**, not production
+support. Baseline, follow-up, and probe artifacts were copied without overwrite
+to private durable bundle `sol-worker-pump-evidence.vq19mi` under the takeover
+artifact directory; hashes, modes, and symlink targets were verified.
+
+This is a focused diagnostic, not a new broad census or serialized release
+gate. Native ctx/restoration and production evidence remain open; no task
+checkbox, governance approval, authenticated canary, installation, or merge
+is claimed.
+
 ## 2026-09-21 follow-up — owner-fence fixture repaired
 
 The user authorized committing/pushing the takeover checkpoint and continuing

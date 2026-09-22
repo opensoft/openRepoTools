@@ -7,7 +7,7 @@ transitions are production objects.  The runtime is the existing SDK-shaped
 offline adapter with only two observations added for this tranche:
 
 * a busy status envelope can keep the first post-release mailbox queued; and
-* the first ordinary rollover send can hold the next pump tick long enough to
+* the first target send can hold the next pump tick long enough to
   observe that the following mailbox was not coalesced into the same send.
 
 No durable operation, reservation, history, or positive native result is
@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from test_lane_managed_native_swap_integration import (
+    EVIDENCE_STAGES,
     NativeSwapEvidenceProvider,
     NativeSwapRuntime,
     _harness,
@@ -47,11 +48,11 @@ def _wait_until(predicate: Any, *, timeout: float = 2.0) -> None:
 class PumpNativeSwapRuntime(NativeSwapRuntime):
     """Existing native runtime fixture with deterministic pump observations."""
 
-    def __init__(self, *, hold_after_first_rollover: bool = True) -> None:
+    def __init__(self, *, hold_after_first_target_send: bool = True) -> None:
         super().__init__()
         self.pump_hold = False
         self.status_runner_override: str | None = None
-        self.hold_after_first_rollover = hold_after_first_rollover
+        self.hold_after_first_target_send = hold_after_first_target_send
 
     async def status(self, participant_id: str) -> dict[str, Any]:
         value = await super().status(participant_id)
@@ -80,10 +81,10 @@ class PumpNativeSwapRuntime(NativeSwapRuntime):
     ) -> dict[str, Any]:
         result = await super().send(participant_id, message_id, payload_ref)
         # The first send is the real A startup invocation.  Holding after the
-        # first later send (B) makes the daemon obtain a fresh busy observation
+        # first target send (B) makes the daemon obtain a fresh busy observation
         # before it can consider C; it does not synthesize a reservation or
         # alter the durable operation.
-        if self.hold_after_first_rollover and len(self.send_calls) == 2:
+        if self.hold_after_first_target_send and len(self.send_calls) == 2:
             self.pump_hold = True
         return result
 
@@ -238,13 +239,51 @@ def test_native_swap_release_pumps_held_b_and_c_once_across_reload(
         after_b = fixture.state.read_json("controller.json")
         assert _mailbox(after_b, b_id)["state"] == "acknowledged"
         assert _mailbox(after_b, c_id)["state"] in {"fenced", "queued"}
-        _assert_delivered_rollover(after_b, b_id)
+        # The swap deliberately clears the live native context before target
+        # activation.  B is therefore the target's first invocation binding,
+        # not an A->B rollover; C is the first same-runner rollover.
+        assert len(runtime.prepare_requests) == 0
+        rollovers = after_b.get("native_invocation_rollovers")
+        assert isinstance(rollovers, Mapping)
+        assert not any(
+            isinstance(row, Mapping) and row.get("next_mailbox_id") == b_id
+            for row in rollovers.values()
+        )
+        b_operation = _operation(after_b, operation_id)
+        b_native_swap = b_operation["metadata"]["native_swap"]
+        b_context = after_b.get("native_context")
+        assert isinstance(b_context, Mapping)
+        assert b_context["invocation_id"] == b_id
+        assert b_context["runner_incarnation"] == b_native_swap[
+            "target_runner_instance_id"
+        ]
+        coordinator = next(
+            item for item in after_b["participants"]
+            if item["participant_id"] == "coordinator"
+        )
+        assert coordinator["metadata"]["runner_instance_id"] == b_context[
+            "runner_incarnation"
+        ]
+        startup = b_operation["metadata"]["native_startup"]
+        assert startup["invocation_id"] == b_id
+        assert startup["invocation_bound"] is True
+        archives = after_b.get("native_source_archives")
+        assert isinstance(archives, Mapping) and len(archives) == 1
+        archive = archives.get(b_native_swap["source_archive_id"])
+        assert isinstance(archive, Mapping)
+        assert archive["operation_id"] == operation_id
+        assert archive["snapshot_digest"] == b_native_swap["source_archive_digest"]
+        assert archive["source_identity"] == b_native_swap["source_identity"]
+        source_context = archive["snapshot"]["native_context"]
+        assert source_context["invocation_id"] == runtime.send_calls[0]["message_id"]
+        assert source_context["runner_incarnation"] == b_native_swap[
+            "source_identity"
+        ]["runner_incarnation"]
         assert len(runtime.gate_receipts) == 1
-        assert len(runtime.prepare_requests) == 1
 
         # A fresh idle observation lets the ordinary daemon pump consume the
-        # exact next reservation.  It is not a recovery callback or a second
-        # release, and no replacement reservation is allowed.
+        # exact next rollover reservation.  It is not a recovery callback or a
+        # second release, and no replacement reservation is allowed.
         runtime.pump_hold = False
         _wait_until(
             lambda: any(call["message_id"] == c_id for call in runtime.send_calls)
@@ -253,23 +292,29 @@ def test_native_swap_release_pumps_held_b_and_c_once_across_reload(
         assert send_ids.count(b_id) == 1
         assert send_ids.count(c_id) == 1
         assert len(runtime.gate_receipts) == 1
-        assert len(runtime.prepare_requests) == 2
+        assert len(runtime.prepare_requests) == 1
         assert len({
             request["reservation_id"] for request in runtime.prepare_requests
-        }) == 2
+        }) == 1
+        c_rollover = _rollover_for(
+            fixture.state.read_json("controller.json"), c_id
+        )
+        assert c_rollover["prior_invocation_id"] == b_id
+        assert c_rollover["prior_mailbox_id"] == b_id
+        assert c_rollover["next_invocation_id"] == c_id
 
         completed = fixture.state.read_json("controller.json")
+        assert completed.get("native_source_archives") == archives
         assert _operation(completed, operation_id)["phase"] == "released"
         assert _operation(completed, operation_id)["release_count"] == 1
         assert _mailbox(completed, c_id)["state"] == "acknowledged"
-        _assert_delivered_rollover(completed, b_id)
         _assert_delivered_rollover(completed, c_id)
         context = completed.get("native_context")
         assert isinstance(context, Mapping)
         assert context["invocation_id"] == c_id
         histories = completed.get("native_invocation_history")
         assert isinstance(histories, Mapping)
-        assert len(histories) == 2
+        assert len(histories) == 1
         claims_before_reload = copy.deepcopy(fixture.state.read_lineage_claims())
         snapshot_before_reload = copy.deepcopy(completed)
         send_count_before_reload = len(runtime.send_calls)
@@ -311,7 +356,7 @@ def test_native_swap_pump_stale_runner_keeps_held_mail_queued_without_gate_repla
     """A stale runtime runner status fences pump admission, not the release gate."""
 
     provider = NativeSwapEvidenceProvider()
-    runtime = PumpNativeSwapRuntime(hold_after_first_rollover=False)
+    runtime = PumpNativeSwapRuntime(hold_after_first_target_send=False)
     with _harness(tmp_path, provider=provider, runtime=runtime) as fixture:
         operation_id = _ready_held_swap(fixture)
         b = _submit_held(fixture, "native-pump-stale-b", "opaque://native-pump-stale-b")

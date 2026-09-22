@@ -5,6 +5,124 @@ below ran without credentials or network access. Scripted gateway controls
 below establish a bounded interrupt candidate. Authenticated acceptance is
 **NOT RUN** and full Gate 0 acceptance remains incomplete.
 
+## 2026-09-21 pinned-runtime feasibility audit
+
+September 22 architecture recheck: Astra verified the same installed SDK
+`0.2.153` and bundled CLI digest and found no supported producer for the
+missing authorities listed below. The documented session-storage append/load
+boundary records persistence but does not define durable orphan-ineligibility
+or a correlated loaded-and-held receipt. OpenTelemetry export can drop spans
+or lose buffered data on a crash, so it cannot certify a gap-free zero-dispatch
+interval. A task-terminal event remains distinct from run completion. This
+read-only audit ran no new account/model probe and makes no support claim.
+
+Discovery references:
+[Python API](https://code.claude.com/docs/en/agent-sdk/python#methods),
+[session storage](https://code.claude.com/docs/en/agent-sdk/session-storage),
+and [telemetry flushing](https://code.claude.com/docs/en/agent-sdk/observability#flush-telemetry-from-short-lived-calls).
+These current documentation pages do not certify the pinned package. Native
+ctx additionally needs its own entry-to-drained proof before shutdown; neither
+swap metadata nor a later adoption receipt supplies that authority.
+
+### Required runtime support for activation
+
+The next compatibility decision needs supported observations with these
+semantics; these are requirements, not invented runtime event names:
+
+| Boundary | Required observation |
+| --- | --- |
+| Control entry | Start observation before preflight/fencing and cover parent, child, continuation, retry, and orphan dispatch attempts. |
+| Run drain | Account for the sealed roster, pending admissions, tools/effects, and parent continuations independently of interrupt acceptance. |
+| Durable worker state | Identify the persisted revision where stopped workers cannot autonomously resume or enqueue restart notifications; retain their history. |
+| Held target load | Identify the exact parent UUID and loaded conversation revision, reconcile orphans, and hold all inference until explicit release. |
+| Control exit | Provide an ordered, gap-free request-attempt count through the actual release boundary, with gaps/crash uncertainty explicitly represented. |
+
+Each observation must carry the supported schema/runtime pin, process
+incarnation, and monotonic sequence and join the existing operation,
+lineage/session/invocation, interrupt, target, and release identities. Recovery
+needs readback without replaying controls. Native ctx needs a separate source
+entry-to-drain binding followed by a fresh held-coordinator receipt.
+
+The [TypeScript control-response reference](https://code.claude.com/docs/en/agent-sdk/typescript#sdkcontrolinterruptresponse)
+offers one bounded lead: `interrupt_receipt_v1` and
+`interrupt_cancel_queued_v1` describe main-thread queued messages, excluding
+subagent messages. Their documented version floors precede the pinned CLI,
+but advertisement and behavior on the selected configuration still need
+inspection. An empty receipt cannot prove run drain or orphan clearing.
+Preserving a receipt is a possible adapter improvement; enabling queue
+cancellation requires an explicit cancellation-policy decision. Neither
+enables production swap by itself, and no SDK upgrade or runtime fork was
+introduced by this audit.
+
+Release options are to retain these guarantees and obtain supported upstream
+observations/equivalents, or explicitly amend the product guarantees through
+OpenSpec. The September 22 implementation request did not choose weakened
+guarantees. Production providers therefore remain disabled. A narrower request
+observation promise alone cannot settle unknown writer/effect or orphan state.
+
+The user authorized implementing the parallel offline-integration and runtime
+feasibility recommendation. This investigation does not authorize authenticated
+account changes, installation, or enabling production capability.
+
+Astra inspected the retained isolated Python SDK **0.2.153** package and
+verified its bundled CLI SHA-256 still equals
+`6c752e2cc7c110c9df15f26d8d134d438c5ae95dbd610efc1a308bf7f9c5f6c1`.
+The audit identifies three distinct unresolved authorities:
+
+- **Worker/orphan clearing:** the package's
+  `claude_agent_sdk/_internal/query.py::_track_task_lifecycle` explicitly
+  distinguishes an empty tracked-task set from a completed run: a settled task
+  can still have a pending parent continuation. It identifies a CLI run-boundary
+  signal as necessary and does not accept the background-task snapshot as a
+  complete inventory. `stop_task` acknowledgement and terminal notification
+  therefore cannot supply durable worker/orphan clearing.
+- **Exact held parent load:** `ClaudeSDKClient.get_server_info` returns cached
+  initialization metadata; `get_context_usage` reports aggregate usage. Neither
+  is an exact, correlated parent-load receipt before release. UUID/history
+  observed after release remains a separate fact.
+- **Continuous request observation:** the scripted loopback gateway counts
+  arrivals within its own endpoint scope. That observation does not cover every
+  runtime dispatch attempt or establish a production continuous observer.
+
+Current [official Python API documentation](https://code.claude.com/docs/en/agent-sdk/python)
+and [session documentation](https://code.claude.com/docs/en/agent-sdk/sessions)
+were checked as discovery references, not as capability certification for this
+pinned package. No SDK upgrade or undocumented runtime control was introduced.
+
+Production provider wiring stays disabled until an authoritative supported
+source supplies distinct, correlated durable worker/orphan-clear, run-boundary,
+held-parent-load, and continuous-dispatch observations required by the existing
+contracts. A run boundary alone does not prove durable state clearing.
+An injected positive test response or a quiet probe interval cannot replace
+those sources. This is an evidence-gap disposition, not an approved scope
+reduction or an assertion that all possible runtimes lack these capabilities.
+
+### Bounded positive-orphan probe
+
+One no-auth probe ran on September 21 at 21:41:08–21:41:32 UTC with
+`--control-mode positive-orphan`, without `--release-target`. The exact SDK and
+CLI pins above and the existing image
+`sha256:bca9ff191ad16f350ccfff349c9dd59e7accde7d9da77e709cea349fcb2b7a8d`
+were retained. The disposable sandbox had no network, host mounts, or real
+credentials; its source used only scripted loopback responses. No image was
+pulled. Pre/post source, mode, SDK/CLI, and image checks matched. The owned
+container was removed and independently confirmed absent.
+
+The source had unfinished worker records before the requested owned-process
+crash. Source-process-group and tracked-sleeper exclusion were observed after
+the crash; forced cleanup is not graceful stop or durable state-clear evidence.
+The target initialized with the source UUID and remained held without release,
+with zero observed target loopback requests. Exact parent loading, persisted
+record loading, orphan restoration, wake, and notification enqueue remain
+unknown. The continuous control-entry epoch was not selected for this arm.
+
+The report classifies the positive-orphan lifecycle surface as unsupported,
+with `verdict=inconclusive` and `support_claim=false`. Silence does not establish
+absence of wake or a production-wide absence of inference attempts. No task or
+acceptance checkbox is closed. Private artifact
+`openrepotools-sol-orphan-probe.53Wbay/report.json` has SHA-256
+`e3bcf6fab21409417beb24e1591430ab63f94bda2c85deccbb2ad03d522890b5`.
+
 ## 2026-09-18 bounded busy-parent loopback observation
 
 After explicit approval, one busy-parent run used the same disposable exact

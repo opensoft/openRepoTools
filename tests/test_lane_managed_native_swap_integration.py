@@ -30,7 +30,7 @@ from typing import Any, Iterator, Mapping
 
 import pytest
 
-from lane_managed_controller import ManagedController
+from lane_managed_controller import ControllerError, ManagedController
 from lane_managed_daemon import ManagedDaemon, serve_daemon
 from lane_managed_state import ManagedStateStore, resolve_workspace
 from lane_managed_swap import (
@@ -831,7 +831,17 @@ class NativeSwapRuntime(RolloverRuntime):
         self._opened[participant_id] = copy.deepcopy(current)
         await self._persist_typed_process_excluded(participant_id, current)
         if self.crash_boundary == "shutdown":
-            raise RuntimeError("injected shutdown crash after effect")
+            source_runner_instance_id = (
+                self.open_calls[0].get("runner_instance_id")
+                if self.open_calls and isinstance(self.open_calls[0], Mapping)
+                else None
+            )
+            if current["runner_instance_id"] == source_runner_instance_id:
+                # This fault models the source shutdown boundary exactly once.
+                # The recovered target is a distinct runner and must remain
+                # usable for the enclosing lifecycle shutdown.
+                self.crash_boundary = None
+                raise RuntimeError("injected source shutdown crash after effect")
         return current
 
     async def release(
@@ -2001,6 +2011,24 @@ def test_native_swap_all_six_stages_release_and_reload_never_releases_again(
             item for item in durable["operations"]
             if item["operation_id"] == operation_id
         )["metadata"]["native_swap"]
+        released_operation = next(
+            item for item in durable["operations"]
+            if item["operation_id"] == operation_id
+        )
+        assert isinstance(
+            released_operation["metadata"].get("coordinator_interrupt_selection"),
+            Mapping,
+        )
+        archive = durable["native_source_archives"][native_swap["source_archive_id"]]
+        archived_swap = next(
+            item for item in archive["snapshot"]["operations"]
+            if item["operation_id"] == operation_id
+        )
+        archived_selection = archived_swap["metadata"].get(
+            "coordinator_interrupt_selection"
+        )
+        assert isinstance(archived_selection, Mapping)
+        assert native_swap["interrupt_intent_digest"] == _digest(archived_selection)
         # The runtime's released acknowledgement carries the canonical
         # boundary receipt under its evidence object.  The controller stores
         # that validated receipt in the native-swap metadata projection while
@@ -2027,3 +2055,184 @@ def test_native_swap_all_six_stages_release_and_reload_never_releases_again(
         assert len(reloaded_runtime.gate_receipts) == 1
         assert fixture.state.read_json("controller.json") == before_retry
         assert fixture.state.read_lineage_claims() == claims_before
+
+
+def test_native_swap_archive_selection_validates_after_live_selection_cleanup(
+        tmp_path: Path,
+) -> None:
+    """Archived selection remains authoritative after rollover cleanup."""
+
+    provider = NativeSwapEvidenceProvider()
+    runtime = NativeSwapRuntime()
+    with _harness(tmp_path, provider=provider, runtime=runtime) as fixture:
+        _start_and_release(fixture)
+        swapped = fixture.request(
+            "native-swap-archive-selection-cleanup", "swap",
+            {"profile": "team-b"},
+        )
+        assert swapped["ok"] is True, json.dumps(swapped, sort_keys=True)
+        operation_id = swapped["result"]["operation_id"]
+        released = fixture.request(
+            "native-swap-archive-selection-cleanup-release", "release",
+            {"operation_id": operation_id},
+        )
+        assert released["ok"] is True, json.dumps(released, sort_keys=True)
+        assert released["result"]["phase"] == "released"
+
+        durable = fixture.state.read_json("controller.json")
+        operation = next(
+            item for item in durable["operations"]
+            if item["operation_id"] == operation_id
+        )
+        native_swap = operation["metadata"]["native_swap"]
+        archive = durable["native_source_archives"][
+            native_swap["source_archive_id"]
+        ]
+        archived_swap = next(
+            item for item in archive["snapshot"]["operations"]
+            if item["operation_id"] == operation_id
+        )
+        archived_selection = archived_swap["metadata"].get(
+            "coordinator_interrupt_selection"
+        )
+        assert isinstance(archived_selection, Mapping)
+        assert native_swap["interrupt_intent_digest"] == _digest(archived_selection)
+
+        cleaned = copy.deepcopy(durable)
+        cleaned_operation = next(
+            item for item in cleaned["operations"]
+            if item["operation_id"] == operation_id
+        )
+        del cleaned_operation["metadata"]["coordinator_interrupt_selection"]
+        fixture.state.write_json("controller.json", cleaned)
+
+        reloaded_runtime = _reload_fixture_controller(fixture)
+        reloaded = fixture.state.read_json("controller.json")
+        reloaded_operation = next(
+            item for item in reloaded["operations"]
+            if item["operation_id"] == operation_id
+        )
+        assert "coordinator_interrupt_selection" not in reloaded_operation[
+            "metadata"
+        ]
+        reloaded_native_swap = reloaded_operation["metadata"]["native_swap"]
+        reloaded_archive = reloaded["native_source_archives"][
+            reloaded_native_swap["source_archive_id"]
+        ]
+        reloaded_archived_swap = next(
+            item for item in reloaded_archive["snapshot"]["operations"]
+            if item["operation_id"] == operation_id
+        )
+        reloaded_selection = reloaded_archived_swap["metadata"].get(
+            "coordinator_interrupt_selection"
+        )
+        assert isinstance(reloaded_selection, Mapping)
+        assert reloaded_native_swap["interrupt_intent_digest"] == _digest(
+            reloaded_selection
+        )
+        release_calls = len(reloaded_runtime.release_calls)
+        repeat = fixture.request(
+            "native-swap-archive-selection-cleanup-release", "release",
+            {"operation_id": operation_id},
+        )
+        assert repeat["ok"] is True, json.dumps(repeat, sort_keys=True)
+        assert repeat["result"]["phase"] == "released"
+        assert len(reloaded_runtime.release_calls) == release_calls
+
+
+@pytest.mark.parametrize(
+    ("corruption", "expected_code"),
+    (
+        ("missing-release-boundary", "unsupported"),
+        ("tampered-source-identity", "ownership-conflict"),
+    ),
+)
+def test_completed_native_swap_history_keeps_proof_and_identity_joins(
+        tmp_path: Path, corruption: str, expected_code: str,
+) -> None:
+    """Completed release history remains fully validated on controller reload."""
+
+    provider = NativeSwapEvidenceProvider()
+    runtime = NativeSwapRuntime()
+    with _harness(tmp_path, provider=provider, runtime=runtime) as fixture:
+        _start_and_release(fixture)
+        swapped = fixture.request(
+            "native-swap-completed-history", "swap", {"profile": "team-b"}
+        )
+        assert swapped["ok"] is True, json.dumps(swapped, sort_keys=True)
+        operation_id = swapped["result"]["operation_id"]
+        released = fixture.request(
+            "native-swap-completed-history-release", "release",
+            {"operation_id": operation_id},
+        )
+        assert released["ok"] is True, json.dumps(released, sort_keys=True)
+        assert released["result"]["phase"] == "released"
+
+        shutdown = fixture.request(
+            "native-swap-completed-history-shutdown", "shutdown"
+        )
+        assert shutdown["ok"] is True, json.dumps(shutdown, sort_keys=True)
+        assert shutdown["result"]["phase"] == "complete"
+
+        # The uncorrupted completed release must reload before the negative
+        # mutation below; this is the durable history produced by shutdown.
+        _reload_fixture_controller(fixture)
+        durable = fixture.state.read_json("controller.json")
+        operation = next(
+            item for item in durable["operations"]
+            if item["operation_id"] == operation_id
+        )
+        assert operation["phase"] == "complete"
+        native_swap = operation["metadata"]["native_swap"]
+        assert native_swap["state"] == "released"
+
+        if corruption == "missing-release-boundary":
+            del native_swap["native_swap_evidence"]["release-boundary"]
+        else:
+            native_swap["source_identity"]["runner_incarnation"] = (
+                "tampered-source-runner"
+            )
+        fixture.state.write_json("controller.json", durable)
+
+        with pytest.raises(ControllerError) as refused:
+            _reload_fixture_controller(fixture)
+        assert refused.value.code == expected_code
+
+
+def test_completed_held_native_swap_reloads_without_release_proof(
+        tmp_path: Path,
+) -> None:
+    """A held target may complete shutdown without becoming released history."""
+
+    provider = NativeSwapEvidenceProvider()
+    runtime = NativeSwapRuntime()
+    with _harness(tmp_path, provider=provider, runtime=runtime) as fixture:
+        _start_and_release(fixture)
+        swapped = fixture.request(
+            "native-swap-completed-held", "swap", {"profile": "team-b"}
+        )
+        assert swapped["ok"] is True, json.dumps(swapped, sort_keys=True)
+        operation_id = swapped["result"]["operation_id"]
+        release_calls_before = len(runtime.release_calls)
+        assert swapped["result"]["phase"] == "ready-held"
+
+        shutdown = fixture.request(
+            "native-swap-completed-held-shutdown", "shutdown"
+        )
+        assert shutdown["ok"] is True, json.dumps(shutdown, sort_keys=True)
+        assert shutdown["result"]["phase"] == "complete"
+        assert len(runtime.open_calls) == 2
+        assert len(runtime.shutdown_calls) == 2
+        assert len(runtime.release_calls) == release_calls_before
+
+        _reload_fixture_controller(fixture)
+        durable = fixture.state.read_json("controller.json")
+        operation = next(
+            item for item in durable["operations"]
+            if item["operation_id"] == operation_id
+        )
+        assert operation["phase"] == "complete"
+        native_swap = operation["metadata"]["native_swap"]
+        assert native_swap["state"] == "ready-held"
+        assert set(native_swap["native_swap_evidence"]) == set(EVIDENCE_STAGES[:4])
+        assert native_swap["release_id"] is None

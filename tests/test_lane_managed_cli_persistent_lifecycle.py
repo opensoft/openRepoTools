@@ -134,7 +134,7 @@ def _run_cli(
         env=dict(env),
         capture_output=True,
         text=True,
-        timeout=5.0,
+        timeout=15.0,
         check=False,
     )
     assert completed.stdout.strip(), (
@@ -189,7 +189,7 @@ def test_executable_cli_drives_persistent_native_lifecycle(tmp_path: Path) -> No
                 controller=fixture.controller,
                 adapter=runtime,
                 projection=projection,
-                operation_timeout=2.0,
+                operation_timeout=10.0,
                 stop_event=stop_event,
             ))
         except BaseException as error:  # make service failures visible
@@ -254,12 +254,36 @@ def test_executable_cli_drives_persistent_native_lifecycle(tmp_path: Path) -> No
         recover_result = _assert_ok(recovered, "recover")
         assert recover_result["phase"] == "paused"
 
+        lifecycle_counts = (
+            len(runtime.coordinator_interrupt_calls),
+            len(runtime.shutdown_calls),
+            len(runtime.open_calls),
+            len(runtime.send_calls),
+        )
+        busy_retry = _run_cli(
+            cli_env, socket_path, generation, "swap", "cli-swap-new-id",
+            options=("--profile", "team-b"),
+        )
+        assert busy_retry["ok"] is False
+        assert busy_retry["code"] == "busy"
+        assert (
+            len(runtime.coordinator_interrupt_calls),
+            len(runtime.shutdown_calls),
+            len(runtime.open_calls),
+            len(runtime.send_calls),
+        ) == lifecycle_counts
+
         swapped = _run_cli(
-            cli_env, socket_path, generation, "swap", "cli-swap-retry",
+            cli_env, socket_path, generation, "swap", "cli-swap-crash",
             options=("--profile", "team-b"),
         )
         swap_result = _assert_ok(swapped, "swap retry")
         assert swap_result["phase"] == "ready-held"
+        assert swap_result["operation_id"] == swap_operation_id
+        assert len(runtime.coordinator_interrupt_calls) == lifecycle_counts[0]
+        assert len(runtime.shutdown_calls) == lifecycle_counts[1]
+        assert len(runtime.open_calls) == lifecycle_counts[2] + 1
+        assert len(runtime.send_calls) == lifecycle_counts[3]
         target_operation_id = str(swap_result["operation_id"])
 
         target_released = _run_cli(

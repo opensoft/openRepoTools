@@ -3732,6 +3732,62 @@ async def _send_daemon_response(
         return
 
 
+class _DaemonAccept:
+    """Own one Unix accept independently of the coroutine consuming it.
+
+    The transport exclusively owns the listening descriptor's reader. Store
+    the socket synchronously before signalling readiness: cancellation must
+    never strand a socket inside an asyncio accept future/task.
+    """
+
+    def __init__(self, loop: Any, server: socket.socket) -> None:
+        self.loop = loop
+        self.server = server
+        self.fd = server.fileno()
+        self.ready = loop.create_future()
+        self.connection = None
+        self._registered = False
+        loop.add_reader(self.fd, self._readable)
+        self._registered = True
+
+    def _disarm(self) -> None:
+        if self._registered:
+            self._registered = False
+            self.loop.remove_reader(self.fd)
+
+    def _readable(self) -> None:
+        # A callback already queued before removal must not accept again or
+        # remove the next accept's reader on this same descriptor.
+        if not self._registered or self.ready.done():
+            return
+        try:
+            self.connection, _address = self.server.accept()
+        except (BlockingIOError, InterruptedError):
+            return
+        except OSError as error:
+            self._disarm()
+            self.ready.set_exception(error)
+            return
+        self._disarm()
+        self.ready.set_result(None)
+
+    def take(self) -> socket.socket:
+        self.ready.result()
+        connection = self.connection
+        self.connection = None
+        return connection
+
+    def close(self) -> None:
+        self._disarm()
+        if not self.ready.done():
+            self.ready.cancel()
+        elif not self.ready.cancelled():
+            self.ready.exception()  # Retrieve errors even when stop wins.
+        if self.connection is not None:
+            self.connection.close()
+            self.connection = None
+
+
 async def _serve_daemon_loop(
     server: socket.socket,
     handler: Any,
@@ -3755,65 +3811,82 @@ async def _serve_daemon_loop(
     server.setblocking(False)
     responses: list[dict[str, Any]] = []
     served = 0
-    while max_requests is None or served < max_requests:
-        if _stop_requested(stop_event):
-            break
-        try:
-            connection, _address = await asyncio.wait_for(
-                loop.sock_accept(server),
-                timeout=min(connect_timeout, 0.10),
-            )
-        except asyncio.TimeoutError:
-            continue
-        except OSError:
-            raise ManagedCLIError("transport", "could not accept managed client", 1)
+    pending_accept = None
+    connection = None
+    try:
+        while max_requests is None or served < max_requests:
+            if _stop_requested(stop_event):
+                break
+            try:
+                if pending_accept is None:
+                    pending_accept = _DaemonAccept(loop, server)
+                # Poll only the stop signal; never cancel an accept at the
+                # timeout boundary, where it may already own a client socket.
+                done, _pending = await asyncio.wait(
+                    {pending_accept.ready}, timeout=min(connect_timeout, 0.10),
+                )
+                if _stop_requested(stop_event):
+                    break
+                if not done:
+                    continue
+                connection = pending_accept.take()
+                pending_accept.close()
+                pending_accept = None
+            except OSError:
+                raise ManagedCLIError("transport", "could not accept managed client", 1)
 
-        connection.setblocking(False)
-        request: Optional[dict[str, Any]] = None
-        operation: Optional[str] = None
-        response: dict[str, Any]
-        deadline = time.monotonic() + operation_timeout
-        try:
-            request = _validate_request(
-                await _read_async_socket_frame(connection, max_bytes, deadline)
-            )
-            operation = request.get("operation")
-            raw = await _handler_call_async(handler, request, deadline)
-            if time.monotonic() > deadline:
-                raise _timeout("managed operation timed out")
-            response = _normalise_response(request, raw, handler=handler)
-        except Exception as error:
-            request_id = request.get("request_id") if request is not None else None
-            generation = request.get("generation") if request is not None else None
-            response = _error_response(request_id, error, generation)
-            if request is not None:
-                response = _force_unverified_status(request, response, handler)
+            connection.setblocking(False)
+            request: Optional[dict[str, Any]] = None
+            operation: Optional[str] = None
+            response: dict[str, Any]
+            deadline = time.monotonic() + operation_timeout
+            try:
+                request = _validate_request(
+                    await _read_async_socket_frame(connection, max_bytes, deadline)
+                )
+                operation = request.get("operation")
+                raw = await _handler_call_async(handler, request, deadline)
+                if time.monotonic() > deadline:
+                    raise _timeout("managed operation timed out")
+                response = _normalise_response(request, raw, handler=handler)
+            except Exception as error:
+                request_id = request.get("request_id") if request is not None else None
+                generation = request.get("generation") if request is not None else None
+                response = _error_response(request_id, error, generation)
+                if request is not None:
+                    response = _force_unverified_status(request, response, handler)
 
-        try:
-            await _send_daemon_response(
-                connection,
-                response,
-                max_bytes=max_bytes,
-                deadline=deadline,
-                fallback_timeout=connect_timeout,
-            )
-        finally:
+            try:
+                await _send_daemon_response(
+                    connection,
+                    response,
+                    max_bytes=max_bytes,
+                    deadline=deadline,
+                    fallback_timeout=connect_timeout,
+                )
+            finally:
+                connection.close()
+                connection = None
+            responses.append(response)
+            # ``serve_daemon`` is normally indefinite.  Keep only a small bounded
+            # diagnostic return history so a long-lived owner never accumulates
+            # every full response (each response may itself approach the frame
+            # limit).  Finite ``max_requests`` callers retain their recent bounded
+            # results, including the existing two-request fixture seam.
+            if len(responses) > MAX_RESPONSE_HISTORY:
+                del responses[: len(responses) - MAX_RESPONSE_HISTORY]
+            served += 1
+            # Shutdown is a quiescence request, not daemon retirement: keep the
+            # control service, runtime record, and managed owner available after a
+            # successful response.  Only authoritative unenrollment retires this
+            # loop; refused/uncertain unenrollment remains serviceable for retry.
+            if operation == "unenroll" and response.get("ok") is True:
+                break
+    finally:
+        if connection is not None:
             connection.close()
-        responses.append(response)
-        # ``serve_daemon`` is normally indefinite.  Keep only a small bounded
-        # diagnostic return history so a long-lived owner never accumulates
-        # every full response (each response may itself approach the frame
-        # limit).  Finite ``max_requests`` callers retain their recent bounded
-        # results, including the existing two-request fixture seam.
-        if len(responses) > MAX_RESPONSE_HISTORY:
-            del responses[: len(responses) - MAX_RESPONSE_HISTORY]
-        served += 1
-        # Shutdown is a quiescence request, not daemon retirement: keep the
-        # control service, runtime record, and managed owner available after a
-        # successful response.  Only authoritative unenrollment retires this
-        # loop; refused/uncertain unenrollment remains serviceable for retry.
-        if operation == "unenroll" and response.get("ok") is True:
-            break
+        if pending_accept is not None:
+            pending_accept.close()
     return responses
 
 

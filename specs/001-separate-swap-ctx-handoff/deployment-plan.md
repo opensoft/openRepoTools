@@ -1,5 +1,69 @@
 # Fastest path to deployment
 
+## September 22 execution sequence
+
+The user requested implementation of the completion/deployment plan on
+September 22. This section supersedes the historical scheduling checkpoints
+below; [tasks.md](tasks.md) remains the only executable task list. Existing
+architecture and capability requirements still apply.
+
+The user subsequently chose to preserve the guarantees, prepare the
+[upstream runtime requirements](../../openspec/changes/separate-swap-ctx-handoff/runtime-support-requirements.md),
+and leave activation blocked until supported. Continue independent offline
+corrections and retain the deployment sequence below as gated future work.
+No guarantee reduction, authenticated canary, or installed cutover follows
+from this decision.
+
+Lane `swap-rebuild-codex` holds this OpenSpec change through the sanctioned
+workspace claim at `3577c1154efb20d208033e2a17b50c6e99dff409`.
+Astra owns architecture review, Sol High owns orchestration and test execution,
+and Luna Max owns implementation. Use Codex models in this execution. Keep
+requests bounded, reuse these roles, and attach evidence to existing task IDs.
+
+1. Verify the inherited transport-accept and historical-swap shutdown fixes
+   with the worker/pump/persistent-lifecycle/swap/fence diagnostic on one frozen
+   snapshot. Preserve uncommitted work and distinguish this result from the
+   earlier 34-failure census. Sol is the sole test executor.
+2. In parallel, establish whether supported runtime observations can satisfy
+   worker/orphan clearing, run completion, exact parent loading while held,
+   and continuous dispatch observation. Astra records a concrete supported
+   interface or the missing boundary. Repeating quiet probes cannot establish
+   an absent observation. Native ctx needs its own pre-shutdown evidence.
+3. Complete native child semantic routing and durable coordinator transport
+   bindings under T013/T018, then the remaining swap/release/recovery and
+   ctx/restoration tasks against the established runtime contracts. Preserve
+   pending entries and exact retries; unavailable routing refuses before send.
+4. Agree one lifecycle authority and migration/landing order with recovery
+   PR #97 and supervised-context PR #121. Both were open and conflicting at
+   the planning read. Reconcile the semantic transition conflict before
+   resolving textual merges. Command migration and external integration
+   decisions remain explicit entries in the governance review.
+5. Freeze the resulting candidate and run T027/T028/T029 through the serialized
+   `tests/run.sh` in the declared bench, with the pinned submodule present.
+   Isolated diagnostics remain diagnostics. Require platform CI, requirement
+   reconciliation, and bounded real-account evidence for T031/T032.
+6. Review and merge in the agreed dependency order. Rehearse installation and
+   rollback in a disposable environment, then install the exact merge revision
+   from a clean checkout of that revision with
+   `OPENREPOTOOLS_REF=<merge-sha> ./openRepoTools --install` in the selected
+   canary scope. The installer itself must come from that revision: an older
+   installed command has an older file inventory even when its fetch ref is
+   changed. Include commands, Python modules, skills, hooks, and settings
+   in inventory verification; bin-directory isolation alone is insufficient.
+7. Expand only after canary swap/release/recovery and legacy checks pass.
+   Record installed revisions, runtime pins, destinations, and results before
+   archiving the change. Rollback preserves journals and claims and uses
+   tooling compatible with the durable state.
+
+Named disposable accounts, lane, permitted effects, and installation destination
+must be established before their corresponding live actions. This execution
+request does not select those missing values or make unknown runtime evidence
+true. The first scheduling milestone is the focused candidate result and
+Astra's feasibility decision; completion requires passing release gates and
+verified installation.
+
+## Historical planning and checkpoints
+
 Date: 2026-09-17. Execution sequence for the existing feature
 `001-separate-swap-ctx-handoff`; [tasks.md](tasks.md) remains the sole
 implementation task list. This plan does not authorize deployment or change

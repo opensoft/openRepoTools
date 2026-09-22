@@ -27,7 +27,7 @@ from collections.abc import Mapping
 
 import pytest
 
-from lane_managed_controller import ControllerError, ManagedController, _digest
+from lane_managed_controller import ControllerError, MailboxEntry, ManagedController, _digest
 from lane_managed_sdk import (
     NativeLineageLedger,
     _event_to_mapping,
@@ -45,6 +45,7 @@ from test_lane_managed_sdk import (
     _native_start,
     _native_stop,
     _native_task_notification,
+    _native_task_progress,
     _native_task_started,
 )
 
@@ -286,6 +287,62 @@ def _fenced_contract_observation(
     }
 
 
+def _complete_manual_source_binding(store, context):
+    """Complete a synthetic released fixture; this is not runtime evidence.
+
+    These fixtures already fixed their invocation before startup/mailbox
+    binding existed. Public submit allocates a new ID, and startup preparation
+    cannot retrofit the old operation after the fenced fixture begins swap.
+    Retain the existing source and validate the completed snapshot on reload.
+    """
+
+    record = copy.deepcopy(store.read_json("controller.json"))
+    sources = [
+        item for item in record["operations"]
+        if item["mode"] == "start" and item["phase"] == "released"
+    ]
+    assert len(sources) == 1
+    source = sources[0]
+    lineage = context["lineage"]
+    assert source["generation"] == lineage["owner_generation"]
+    assert "native_startup" not in source["metadata"]
+    assert not any(
+        item["message_id"] == context["invocation_id"]
+        for item in record["mailboxes"]
+    )
+    source["metadata"]["native_startup"] = {
+        "schema_version": 2,
+        "architecture": "native-coordinator-lineage",
+        "record_kind": "coordinator-startup",
+        "participant_id": record["coordinator_id"],
+        "session_id": lineage["session_uuid"],
+        "runner_incarnation": context["runner_incarnation"],
+        "lineage_id": lineage["lineage_id"],
+        "lineage_generation": lineage["lineage_generation"],
+        "lineage": copy.deepcopy(lineage),
+        "definitions": copy.deepcopy(context["definitions"]),
+        "invocation_id": context["invocation_id"],
+        "invocation_bound": True,
+    }
+    record["mailboxes"].append(MailboxEntry(
+        message_id=context["invocation_id"],
+        request_id="manual-source-invocation",
+        recipient_id=record["coordinator_id"],
+        payload_ref="payload://manual-source-invocation",
+        state="acknowledged",
+        generation=source["generation"],
+        operation_id=source["operation_id"],
+        dispatch_attempt=1,
+        runtime_ack={"message_id": context["invocation_id"], "accepted": True},
+    ).to_dict())
+    store.write_json("controller.json", record)
+    reloaded = ManagedController(store)
+    assert reloaded.status()["native_context"] == context
+    resolved = reloaded._native_child_source_operation_locked(context)
+    assert resolved.operation_id == source["operation_id"]
+    assert store.read_json("controller.json") == record
+
+
 async def _connected_joined_child(tmp_path, managed_workspace):
     """Build one real owner/controller/store plus one joined SDK child."""
 
@@ -308,6 +365,7 @@ async def _connected_joined_child(tmp_path, managed_workspace):
         definitions,
         invocation_watermark=1,
     )
+    _complete_manual_source_binding(store, context)
     assert callable(adapter.admission_callback)
     ledger = NativeLineageLedger(
         lineage.session_uuid,
@@ -336,8 +394,14 @@ async def _connected_joined_child(tmp_path, managed_workspace):
     assert await hooks["SubagentStart"][0].hooks[0](
         _native_start(NATIVE_AGENT), None, {"signal": None}
     ) == {}
+    # A later correlated fact advances the observation cursor without
+    # changing the actual TaskStarted-before-SubagentStart event order.
+    assert ledger.observe(_event_to_mapping(_native_task_progress(
+        NATIVE_TASK, "task-progress-native-1", tool_use_id=NATIVE_TOOL,
+    ))) is None
     snapshot = ledger.snapshot()
     assert _child_record(snapshot)["task_id"] == NATIVE_TASK
+    assert snapshot["event_cursor"] > _child_record(snapshot)["lineage_incarnation"]["start_watermark"]
     assert callable(adapter.observation_callback)
     return daemon, controller, store, adapter, lineage, context, ledger, snapshot
 
@@ -511,20 +575,28 @@ def test_joined_native_target_uses_coordinator_mailbox_and_unsupported_route_doe
     assert not hasattr(adapter, "query")
 
 
+@pytest.mark.parametrize("start_offset", [
+    pytest.param(-1, id="before-child-start"),
+    pytest.param(0, id="equal-child-start"),
+])
 def test_ingestion_contract_manual_frame_rejects_lower_watermark_and_wrong_source_identity(
-    tmp_path, managed_workspace
+    tmp_path, managed_workspace, start_offset
 ):
     """Manual ingestion remains bound to the current child run/context."""
 
     values = asyncio.run(_persist_joined_observation(tmp_path, managed_workspace))
     _daemon, _controller, _store, adapter, _lineage, _context, _ledger, _snapshot, observation, frame, _ack = values
+    before = _store.read_json("controller.json")
 
     stale = copy.deepcopy(frame)
     stale["observation"]["observation_id"] = "observation-stale-watermark"
-    stale["observation"]["observation_watermark"] = stale["observation"]["child"]["start_watermark"]
+    stale["observation"]["observation_watermark"] = (
+        stale["observation"]["child"]["start_watermark"] + start_offset
+    )
     with pytest.raises(Exception) as watermark_error:
         asyncio.run(adapter.observation_callback(stale))
     assert watermark_error.value.code in {"stale-generation", "invalid"}
+    assert _store.read_json("controller.json") == before
 
     foreign = copy.deepcopy(frame)
     foreign["observation"]["observation_id"] = "observation-foreign-source"
@@ -532,6 +604,7 @@ def test_ingestion_contract_manual_frame_rejects_lower_watermark_and_wrong_sourc
     with pytest.raises(Exception) as source_error:
         asyncio.run(adapter.observation_callback(foreign))
     assert source_error.value.code in {"ownership-conflict", "stale-generation", "invalid"}
+    assert _store.read_json("controller.json") == before
 
 
 @pytest.mark.parametrize(
@@ -814,6 +887,7 @@ def test_ingestion_contract_fenced_active_observation_refuses_as_sealed(
     controller, store, lineage, admission, context, _operation_id = _fenced_authority(
         tmp_path
     )
+    _complete_manual_source_binding(store, context)
     observation = _fenced_contract_observation(
         context,
         lineage,
