@@ -4,7 +4,8 @@
 
 This experiment is separate from the no-auth Gate 0 baseline. It uses a
 loopback Messages endpoint and a literal dummy API key, never a real profile,
-account, network, model service, transcript body, or request body. It can
+account, network, or model service. Reports contain no transcript or request
+bodies. It can
 report observed native stop facts, but it always reports support_claim as
 false and never grants production capability.
 
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, field
+import errno
 import hashlib
 import json
 import os
@@ -27,6 +29,7 @@ from pathlib import Path
 import re
 import selectors
 import signal
+import stat
 import subprocess
 import tempfile
 import threading
@@ -46,6 +49,13 @@ MAX_HTTP_BODY = 1024 * 1024
 MAX_REQUESTS = 32
 MAX_RUNTIME_OUTPUT = 4 * 1024 * 1024
 MAX_RUNTIME_SECONDS = 70
+MAX_NATIVE_TASK_EVIDENCE = 64
+MAX_NATIVE_TASK_TOKEN = 256
+MAX_HISTORY_CONTENT_BYTES = 64 * 1024
+MAX_HISTORY_SCAN_FILES = 128
+MAX_HISTORY_SCAN_ENTRIES = 512
+MAX_HISTORY_SCAN_DEPTH = 12
+MAX_HISTORY_SCAN_BYTES = 8 * MAX_HISTORY_CONTENT_BYTES
 BUSY_PARENT_BARRIER_TIMEOUT = 15.0
 SOURCE_AGENT_NAME = "gate0-worker"
 SOURCE_AGENT_TOOL_ID = "toolu-gate0-agent"
@@ -54,6 +64,69 @@ SOURCE_PROMPT_MARKER = "Run the bounded native background worker."
 TARGET_RELEASE_MARKER = "Continue the bounded native worker after release."
 STOP_THEN_RESUME_V1 = "stop-then-resume-v1"
 V1_SAVED_EDIT = b"stop-then-resume-v1 deterministic saved edit\n"
+
+NATIVE_TASK_PHASES = {
+    "source/setup",
+    "source/drain",
+    "target/startup",
+}
+NATIVE_TASK_EVENT_TYPES = {
+    "system",
+    "event",
+    "control_response",
+}
+NATIVE_TASK_SUBTYPES = {
+    "task_started",
+    "task_progress",
+    "task_updated",
+    "task_notification",
+}
+NATIVE_TASK_TYPES = {"local_agent"}
+NATIVE_TASK_STATUSES = {
+    "started",
+    "running",
+    "progress",
+    "stopped",
+    "completed",
+    "failed",
+    "cancelled",
+    "error",
+}
+NATIVE_TASK_TERMINAL_STATUSES = {
+    "stopped",
+    "completed",
+    "failed",
+    "cancelled",
+    "error",
+}
+NATIVE_TASK_RECORD_SCHEMA = "native-task-observation-v1"
+NATIVE_TASK_PROVENANCES = {
+    "offline-observation",
+    "source-observed",
+    "target-observed",
+    "source-terminal-seed",
+}
+HISTORY_ATTRIBUTIONS = {"observed", "candidate", "unattributed"}
+HISTORY_UNKNOWN_REASONS = {
+    "missing",
+    "missing-parent",
+    "missing-child",
+    "unattributed-child-history",
+    "malformed",
+    "invalid-limit",
+    "oversized",
+    "symlink",
+    "outside-root",
+    "not-regular",
+    "read-failed",
+    "unstable",
+    "scan-overflow",
+    "ambiguous",
+    "identity-unavailable",
+    "uncorrelated",
+    "no-follow-unavailable",
+    "nonblock-unavailable",
+}
 
 def digest(value: object) -> str | None:
     """Digest identifiers without retaining their values in evidence."""
@@ -2133,7 +2206,7 @@ def replace_resume_sentinel(arguments: list[str], session_id: str) -> list[str]:
 
 
 def safe_event(event: object) -> dict[str, object]:
-    """Reduce native output to statuses/digests, never content or prompts."""
+    """Reduce native output to statuses/digests, never report content/prompts."""
     if not isinstance(event, Mapping):
         return {"frame": "unparsed"}
     response = event.get("response")
@@ -2151,6 +2224,1113 @@ def safe_event(event: object) -> dict[str, object]:
         "agent_id_digest": digest(agent_id),
         "request_id": bool(response.get("request_id")),
     }
+
+
+def _native_raw_field(event: object, key: str) -> tuple[object | None, str | None]:
+    if not isinstance(event, Mapping):
+        return None, None
+    values: list[object] = []
+    value = event.get(key)
+    if value is not None:
+        values.append(value)
+    response = event.get("response")
+    if isinstance(response, Mapping):
+        value = response.get(key)
+        if value is not None:
+            values.append(value)
+    if not values:
+        return None, None
+    if any(value != values[0] for value in values[1:]):
+        return values[0], "conflicting-field"
+    return values[0], None
+
+
+def _native_event_value(event: object, key: str) -> object | None:
+    value, _ = _native_raw_field(event, key)
+    return value
+
+
+def _native_allowlisted_token(
+    event: object,
+    *,
+    field: str,
+    keys: tuple[str, ...],
+    allowed: set[str],
+    unknown_fields: list[str],
+) -> str | None:
+    value = None
+    for key in keys:
+        value, error = _native_raw_field(event, key)
+        if error:
+            unknown_fields.append("conflicting-" + field)
+        if value is not None:
+            break
+    if value is None:
+        if field != "task-type" or not (
+            _native_event_value(event, "subtype") == "task_notification"
+        ):
+            unknown_fields.append("missing-" + field)
+        return None
+    if not isinstance(value, str) or not value or len(value) > MAX_NATIVE_TASK_TOKEN:
+        unknown_fields.append("malformed-" + field)
+        return None
+    if value not in allowed:
+        unknown_fields.append("unrecognized-" + field)
+        return None
+    return value
+
+
+def _native_identity_digest(
+    event: object,
+    field: str,
+    *,
+    trusted_sanitized: bool = False,
+) -> tuple[str | None, bool, str | None]:
+    """Return only an identity digest, presence, and a sanitized error code."""
+
+    if (
+        trusted_sanitized and isinstance(event, Mapping)
+        and event.get("record_schema") == NATIVE_TASK_RECORD_SCHEMA
+        and field + "_seen" in event
+    ):
+        seen = event.get(field + "_seen") is True
+        value = event.get(field + "_digest")
+        if not seen:
+            return None, False, None
+        if (
+            isinstance(value, str)
+            and len(value) == 64
+            and re.fullmatch(r"[0-9a-f]{64}", value)
+        ):
+            return value, True, None
+        return None, True, "malformed-identity"
+    raw_field = "uuid" if field == "event_uuid" else field
+    value, error = _native_raw_field(event, raw_field)
+    if error:
+        return None, False, "conflicting-identity"
+    if value is None:
+        return None, False, None
+    if not isinstance(value, str) or not value or len(value) > MAX_NATIVE_TASK_TOKEN:
+        return None, False, "malformed-identity"
+    return digest(value), True, None
+
+
+def _native_source_identity_digest(
+    source_identity: Mapping[str, object] | None,
+    field: str,
+) -> tuple[str | None, bool, str | None]:
+    if not isinstance(source_identity, Mapping):
+        return None, False, None
+    value = source_identity.get(field)
+    if value is None:
+        return None, False, None
+    if not isinstance(value, str) or not value or len(value) > MAX_NATIVE_TASK_TOKEN:
+        return None, False, "malformed-identity"
+    return digest(value), True, None
+
+
+def _native_event_token(event: object, field: str) -> str | None:
+    if not isinstance(event, Mapping):
+        return None
+    if isinstance(event.get(field), str):
+        return event[field]
+    aliases = {
+        "event_type": ("type",),
+        "event_subtype": ("subtype",),
+        "task_type": ("task_type",),
+        "status": ("status",),
+    }
+    for key in aliases.get(field, ()):
+        value, error = _native_raw_field(event, key)
+        if error:
+            return None
+        if isinstance(value, str):
+            return value
+    return None
+
+
+def _native_join_compatible(current: Mapping[str, object], prior: Mapping[str, object]) -> bool:
+    for field in ("session_id", "task_id"):
+        current_digest, current_seen, _ = _native_identity_digest(
+            current, field, trusted_sanitized=True
+        )
+        prior_digest, prior_seen, _ = _native_identity_digest(
+            prior, field, trusted_sanitized=True
+        )
+        if not current_seen or not prior_seen or current_digest != prior_digest:
+            return False
+    for field in ("agent_id", "tool_use_id"):
+        current_digest, current_seen, _ = _native_identity_digest(
+            current, field, trusted_sanitized=True
+        )
+        prior_digest, prior_seen, _ = _native_identity_digest(
+            prior, field, trusted_sanitized=True
+        )
+        if current_seen != prior_seen or (current_seen and current_digest != prior_digest):
+            return False
+    current_type = _native_event_token(current, "task_type")
+    prior_type = _native_event_token(prior, "task_type")
+    return not (current_type and prior_type and current_type != prior_type)
+
+
+def _native_correlation_class(
+    current: Mapping[str, object],
+    prior: Mapping[str, object] | None,
+) -> str:
+    status = _native_event_token(current, "status")
+    if (
+        status not in NATIVE_TASK_TERMINAL_STATUSES
+        or _native_event_token(current, "event_subtype") != "task_notification"
+        or not isinstance(prior, Mapping)
+        or current.get("incomplete") is True
+    ):
+        return "live-or-unresolved"
+    if _native_event_token(prior, "event_subtype") != "task_notification":
+        return "live-or-unresolved"
+    for event in (current, prior):
+        for field in ("session_id", "task_id"):
+            _, seen, error = _native_identity_digest(
+                event, field, trusted_sanitized=True
+            )
+            if error or not seen:
+                return "live-or-unresolved"
+        _, _, error = _native_identity_digest(
+            event, "event_uuid", trusted_sanitized=True
+        )
+        if error:
+            return "live-or-unresolved"
+    if not _native_join_compatible(current, prior):
+        return "live-or-unresolved"
+    if _native_event_token(prior, "status") != status:
+        return "live-or-unresolved"
+    current_uuid, current_seen, _ = _native_identity_digest(
+        current, "event_uuid", trusted_sanitized=True
+    )
+    prior_uuid, prior_seen, _ = _native_identity_digest(
+        prior, "event_uuid", trusted_sanitized=True
+    )
+    if current_seen and prior_seen and current_uuid == prior_uuid:
+        return "replay-compatible"
+    return "terminal-correlation-only"
+
+
+def sanitize_native_task_lifecycle_event(
+    event: object,
+    *,
+    phase: str,
+    observation_sequence: int,
+    source_identity: Mapping[str, object] | None = None,
+    prior_event: Mapping[str, object] | None = None,
+    provenance: str = "offline-observation",
+) -> dict[str, object]:
+    """Return one bounded native-task observation without raw event values."""
+
+    unknown_fields: list[str] = []
+    if phase not in NATIVE_TASK_PHASES:
+        unknown_fields.append("invalid-phase")
+        safe_phase = "unknown"
+    else:
+        safe_phase = phase
+    if type(observation_sequence) is not int or observation_sequence < 1:
+        unknown_fields.append("invalid-observation-sequence")
+        safe_sequence: int | None = None
+    else:
+        safe_sequence = observation_sequence
+    if provenance not in NATIVE_TASK_PROVENANCES:
+        unknown_fields.append("invalid-provenance")
+        safe_provenance = "offline-observation"
+    else:
+        safe_provenance = provenance
+
+    event_type = _native_allowlisted_token(
+        event,
+        field="event-type",
+        keys=("type",),
+        allowed=NATIVE_TASK_EVENT_TYPES,
+        unknown_fields=unknown_fields,
+    )
+    event_subtype = _native_allowlisted_token(
+        event,
+        field="event-subtype",
+        keys=("subtype",),
+        allowed=NATIVE_TASK_SUBTYPES,
+        unknown_fields=unknown_fields,
+    )
+    task_type = _native_allowlisted_token(
+        event,
+        field="task-type",
+        keys=("task_type",),
+        allowed=NATIVE_TASK_TYPES,
+        unknown_fields=unknown_fields,
+    )
+    status = _native_allowlisted_token(
+        event,
+        field="status",
+        keys=("status",),
+        allowed=NATIVE_TASK_STATUSES,
+        unknown_fields=unknown_fields,
+    )
+
+    identities: dict[str, tuple[str | None, bool]] = {}
+    for field in (
+        "session_id",
+        "task_id",
+        "event_uuid",
+        "tool_use_id",
+        "agent_id",
+    ):
+        value_digest, seen, error = _native_identity_digest(event, field)
+        if error:
+            unknown_fields.append(error)
+        identities[field] = (value_digest, seen)
+
+    source_target_correlation: dict[str, str] = {}
+    source_identity_available = isinstance(source_identity, Mapping)
+    for field in ("session_id", "task_id", "agent_id"):
+        current_digest, current_seen = identities[field]
+        source_digest, source_seen, error = _native_source_identity_digest(
+            source_identity, field
+        )
+        if error:
+            unknown_fields.append(error)
+        if current_seen and source_seen:
+            if current_digest == source_digest:
+                source_target_correlation[field] = "match"
+            else:
+                source_target_correlation[field] = "mismatch"
+                unknown_fields.append("identity-conflict")
+        else:
+            source_target_correlation[field] = "unknown"
+            if source_identity_available and (source_seen or current_seen):
+                unknown_fields.append("identity-unresolved")
+
+    evidence: dict[str, object] = {
+        "record_schema": NATIVE_TASK_RECORD_SCHEMA,
+        "provenance": safe_provenance,
+        "phase": safe_phase,
+        "observation_sequence": safe_sequence,
+        "event_type": event_type,
+        "event_subtype": event_subtype,
+        "task_type": task_type,
+        "status": status,
+        "source_target_correlation": source_target_correlation,
+        "correlation_class": "live-or-unresolved",
+        "unknown_fields": sorted(set(unknown_fields)),
+        "incomplete": bool(unknown_fields),
+        "support_claim": False,
+    }
+    for field, (value_digest, seen) in identities.items():
+        evidence[field + "_seen"] = seen
+        evidence[field + "_digest"] = value_digest
+    evidence["correlation_class"] = _native_correlation_class(evidence, prior_event)
+    if (
+        status in NATIVE_TASK_TERMINAL_STATUSES
+        and prior_event is not None
+        and safe_phase == "target/startup"
+        and evidence["correlation_class"] == "live-or-unresolved"
+    ):
+        unknown_fields.append("terminal-correlation-unresolved")
+        evidence["unknown_fields"] = sorted(set(unknown_fields))
+        evidence["incomplete"] = True
+    return evidence
+
+
+def record_native_task_lifecycle_event(
+    frame: object,
+    runtime: dict[str, object],
+) -> dict[str, object] | None:
+    """Record a bounded sanitized native-task event in an existing runtime."""
+
+    subtype = _native_event_value(frame, "subtype")
+    if subtype not in NATIVE_TASK_SUBTYPES:
+        return None
+    if runtime.get("native_task_recording_enabled", True) is not True:
+        return None
+    sequence = int(runtime.get("native_task_observation_sequence", 0)) + 1
+    runtime["native_task_observation_sequence"] = sequence
+    events = runtime.setdefault("native_task_evidence", [])
+    if not isinstance(events, list):
+        events = []
+        runtime["native_task_evidence"] = events
+        runtime["native_task_evidence_overflow"] = True
+        _append_native_task_reason(runtime, "malformed-recorder")
+    limit = runtime.get("native_task_evidence_limit", MAX_NATIVE_TASK_EVIDENCE)
+    if type(limit) is not int or limit < 1 or limit > MAX_NATIVE_TASK_EVIDENCE:
+        runtime["native_task_evidence_overflow"] = True
+        _append_native_task_reason(runtime, "invalid-evidence-limit")
+        return None
+    if len(events) >= limit:
+        runtime["native_task_evidence_overflow"] = True
+        _append_native_task_reason(runtime, "native-task-evidence-overflow")
+        return None
+    if (
+        runtime.get("lifecycle_phase") == "target/startup"
+        and "native_task_source_terminal_seed" in runtime
+    ):
+        source_seed = runtime.get("native_task_source_terminal_seed")
+        prior_event = (
+            source_seed
+            if (
+                isinstance(source_seed, Mapping)
+                and source_seed.get("provenance") == "source-terminal-seed"
+            )
+            else None
+        )
+    else:
+        prior_event = (
+            runtime.get("native_task_last_observation")
+            if isinstance(runtime.get("native_task_last_observation"), Mapping)
+            else None
+        )
+    evidence = sanitize_native_task_lifecycle_event(
+        frame,
+        phase=str(runtime.get("lifecycle_phase", "unknown")),
+        observation_sequence=sequence,
+        source_identity=(
+            runtime.get("source_identity")
+            if isinstance(runtime.get("source_identity"), Mapping)
+            else None
+        ),
+        prior_event=prior_event,
+        provenance=str(runtime.get("lifecycle_provenance", "offline-observation")),
+    )
+    events.append(evidence)
+    runtime["native_task_last_observation"] = evidence
+    if evidence.get("incomplete"):
+        for reason in (
+            evidence.get("unknown_fields", [])
+            if isinstance(evidence.get("unknown_fields"), list)
+            else ["incomplete-native-task-event"]
+        ):
+            _append_native_task_reason(runtime, str(reason))
+    return evidence
+
+
+def _append_native_task_reason(runtime: dict[str, object], reason: str) -> None:
+    reasons = runtime.setdefault("native_task_evidence_unknown_reasons", [])
+    if not isinstance(reasons, list):
+        reasons = []
+        runtime["native_task_evidence_unknown_reasons"] = reasons
+    if reason not in reasons and len(reasons) < MAX_NATIVE_TASK_EVIDENCE:
+        reasons.append(reason)
+
+
+def source_terminal_lifecycle_seed(
+    runtime: Mapping[str, object],
+) -> dict[str, object] | None:
+    events = runtime.get("native_task_evidence", [])
+    if not isinstance(events, list):
+        return None
+    for event in reversed(events):
+        if not isinstance(event, Mapping):
+            continue
+        if (
+            event.get("record_schema") != NATIVE_TASK_RECORD_SCHEMA
+            or event.get("phase") != "source/drain"
+            or event.get("provenance") != "source-observed"
+            or event.get("event_subtype") != "task_notification"
+            or event.get("status") not in NATIVE_TASK_TERMINAL_STATUSES
+            or event.get("incomplete") is True
+            or event.get("session_id_seen") is not True
+            or event.get("task_id_seen") is not True
+        ):
+            continue
+        seed = dict(event)
+        seed["provenance"] = "source-terminal-seed"
+        return seed
+    return None
+
+
+def native_task_lifecycle_report(runtime: Mapping[str, object]) -> dict[str, object]:
+    """Build the report attachment for bounded native-task observations."""
+
+    events = runtime.get("native_task_evidence", [])
+    events = [event for event in events if isinstance(event, Mapping)] \
+        if isinstance(events, list) else []
+    unknown_reasons: list[str] = []
+    configured_reasons = runtime.get("native_task_evidence_unknown_reasons", [])
+    if isinstance(configured_reasons, list):
+        unknown_reasons.extend(str(reason) for reason in configured_reasons)
+    for event in events:
+        fields = event.get("unknown_fields")
+        if isinstance(fields, list):
+            unknown_reasons.extend(str(field) for field in fields)
+    incomplete = bool(runtime.get("native_task_evidence_overflow")) or any(
+        event.get("incomplete") is True for event in events
+    )
+    if runtime.get("native_task_evidence_overflow"):
+        unknown_reasons.append("native-task-evidence-overflow")
+    if not events and not incomplete:
+        observation_status = "not-observed"
+    else:
+        observation_status = "unknown" if incomplete else "observed"
+    return {
+        "observation_status": observation_status,
+        "event_count": len(events),
+        "observation_sequence_max": max(
+            (
+                event.get("observation_sequence")
+                for event in events
+                if type(event.get("observation_sequence")) is int
+            ),
+            default=0,
+        ),
+        "overflow": bool(runtime.get("native_task_evidence_overflow")),
+        "incomplete": incomplete,
+        "seed_provenance": runtime.get("native_task_seed_provenance", "none"),
+        "source_terminal_seed_index": runtime.get(
+            "native_task_source_terminal_index"
+        ),
+        "unknown_reasons": sorted(set(unknown_reasons))[:MAX_NATIVE_TASK_EVIDENCE],
+        "events": [dict(event) for event in events],
+        "support_claim": False,
+    }
+
+
+def _history_boundary(value: object, fallback: str) -> tuple[str, bool]:
+    if not isinstance(value, str) or not value or len(value) > 96:
+        return fallback, False
+    if re.fullmatch(r"[a-z0-9][a-z0-9/_-]*", value) is None:
+        return fallback, False
+    return value, True
+
+
+def _history_input_record(
+    value: object,
+    *,
+    role: str,
+    max_bytes: int,
+) -> tuple[bytes | None, str, str | None]:
+    default_attribution = "observed" if role == "parent" else "candidate"
+    if value is None:
+        return None, default_attribution, "missing-" + role
+    attribution = default_attribution
+    if isinstance(value, Mapping):
+        supplied_attribution = value.get("attribution")
+        if supplied_attribution is not None:
+            if supplied_attribution not in HISTORY_ATTRIBUTIONS:
+                return None, "unattributed", "malformed"
+            attribution = str(supplied_attribution)
+        if value.get("status") == "unknown":
+            reason = value.get("reason")
+            if reason in HISTORY_UNKNOWN_REASONS:
+                return None, attribution, str(reason)
+            return None, attribution, "malformed"
+        value = value.get("content")
+    if not isinstance(value, (bytes, bytearray)):
+        return None, attribution, "malformed"
+    content = bytes(value)
+    if len(content) > max_bytes:
+        return None, attribution, "oversized"
+    return content, attribution, None
+
+
+def compare_history_content_integrity(
+    before: Mapping[str, object],
+    after: Mapping[str, object],
+    *,
+    before_boundary: str = "source-excluded/pre-release",
+    after_boundary: str = "post-startup-before-cleanup",
+    max_bytes: int = MAX_HISTORY_CONTENT_BYTES,
+) -> dict[str, object]:
+    """Compare bounded parent/child bytes without returning paths or bodies."""
+
+    safe_before_boundary, before_boundary_valid = _history_boundary(
+        before_boundary, "unknown"
+    )
+    safe_after_boundary, after_boundary_valid = _history_boundary(
+        after_boundary, "unknown"
+    )
+    unknown_reasons: list[str] = []
+    if not before_boundary_valid or not after_boundary_valid:
+        unknown_reasons.append("malformed")
+    if type(max_bytes) is not int or max_bytes < 1 or max_bytes > MAX_HISTORY_CONTENT_BYTES:
+        max_bytes = MAX_HISTORY_CONTENT_BYTES
+        unknown_reasons.append("invalid-limit")
+    if not isinstance(before, Mapping):
+        before = {}
+        unknown_reasons.append("malformed")
+    if not isinstance(after, Mapping):
+        after = {}
+        unknown_reasons.append("malformed")
+
+    roles: dict[str, object] = {}
+    for role in ("parent", "child"):
+        before_content, before_attribution, before_error = _history_input_record(
+            before.get(role), role=role, max_bytes=max_bytes
+        )
+        after_content, after_attribution, after_error = _history_input_record(
+            after.get(role), role=role, max_bytes=max_bytes
+        )
+        if before_error:
+            unknown_reasons.append(before_error)
+        if after_error:
+            unknown_reasons.append(after_error)
+        attribution = before_attribution
+        if before_attribution != after_attribution:
+            unknown_reasons.append("attribution-changed")
+            attribution = "unattributed"
+        association = (
+            "observed-link" if attribution == "observed" else "unattributed"
+        )
+        content_integrity = "unknown"
+        prefix_integrity = "unknown"
+        checked_prefix_bytes = 0
+        if before_content is not None and after_content is not None:
+            content_integrity = (
+                "preserved" if before_content == after_content else "changed"
+            )
+            # Every accepted file is bounded by max_bytes, so the complete
+            # observed before image is the checked prefix.  This does not
+            # imply that bytes beyond that bounded image were retained.
+            checked_prefix_bytes = len(before_content)
+            prefix_integrity = (
+                "preserved"
+                if len(after_content) >= checked_prefix_bytes
+                and after_content[:checked_prefix_bytes] == before_content
+                else "changed"
+            )
+        roles[role] = {
+            "attribution": attribution,
+            "association": association,
+            "before_status": "observed" if before_content is not None else "unknown",
+            "after_status": "observed" if after_content is not None else "unknown",
+            "before_size": len(before_content) if before_content is not None else None,
+            "after_size": len(after_content) if after_content is not None else None,
+            "before_digest": (
+                hashlib.sha256(before_content).hexdigest()
+                if before_content is not None else None
+            ),
+            "after_digest": (
+                hashlib.sha256(after_content).hexdigest()
+                if after_content is not None else None
+            ),
+            "content_integrity": content_integrity,
+            "prefix_integrity": prefix_integrity,
+            "checked_prefix_bytes": checked_prefix_bytes,
+            "prefix_scope": "complete-bounded-before-observation",
+        }
+    return {
+        "observation_status": "unknown" if unknown_reasons else "observed",
+        "before_boundary": safe_before_boundary,
+        "after_boundary": safe_after_boundary,
+        "roles": roles,
+        "unknown_reasons": sorted(set(unknown_reasons)),
+        "history_scope": "bounded-regular-file-bytes",
+        "runtime_loaded_or_restored": "unverified",
+        "support_claim": False,
+    }
+
+
+def _history_unknown_record(reason: str, attribution: str) -> dict[str, object]:
+    return {
+        "status": "unknown",
+        "reason": reason if reason in HISTORY_UNKNOWN_REASONS else "malformed",
+        "attribution": attribution,
+    }
+
+
+def _history_file_signature(file_stat: os.stat_result) -> tuple[int, ...]:
+    return (
+        file_stat.st_dev,
+        file_stat.st_ino,
+        file_stat.st_mode,
+        file_stat.st_size,
+        file_stat.st_mtime_ns,
+        file_stat.st_ctime_ns,
+    )
+
+
+def _capture_history_file(
+    root: Path,
+    relative_path: object,
+    *,
+    attribution: str,
+    max_bytes: int,
+) -> dict[str, object]:
+    """Read one stable bounded regular file through a no-follow descriptor."""
+
+    if type(max_bytes) is not int or max_bytes < 1 or max_bytes > MAX_HISTORY_CONTENT_BYTES:
+        return _history_unknown_record("invalid-limit", attribution)
+    if not isinstance(relative_path, (str, Path)):
+        return _history_unknown_record("missing", attribution)
+    relative = Path(relative_path)
+    if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+        return _history_unknown_record("outside-root", attribution)
+
+    root_fd: int | None = None
+    current_fd: int | None = None
+    try:
+        root_resolved = root.resolve(strict=True)
+        candidate = root.joinpath(relative)
+        cursor = root
+        for part in relative.parts:
+            cursor = cursor / part
+            if cursor.is_symlink():
+                return _history_unknown_record("symlink", attribution)
+        resolved = candidate.resolve(strict=True)
+        try:
+            resolved.relative_to(root_resolved)
+        except ValueError:
+            return _history_unknown_record("outside-root", attribution)
+
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        nonblock = getattr(os, "O_NONBLOCK", 0)
+        if not nofollow:
+            return _history_unknown_record("no-follow-unavailable", attribution)
+        if not nonblock:
+            return _history_unknown_record("nonblock-unavailable", attribution)
+        directory = getattr(os, "O_DIRECTORY", 0)
+        root_fd = os.open(
+            str(root), os.O_RDONLY | directory | nofollow | nonblock
+        )
+        current_fd = root_fd
+        parts = relative.parts
+        for index, part in enumerate(parts):
+            flags = os.O_RDONLY | nofollow | nonblock
+            if index < len(parts) - 1:
+                flags |= directory
+            next_fd = os.open(part, flags, dir_fd=current_fd)
+            if current_fd != root_fd:
+                os.close(current_fd)
+            current_fd = next_fd
+
+        before_stat = os.fstat(current_fd)
+        if not stat.S_ISREG(before_stat.st_mode):
+            return _history_unknown_record("not-regular", attribution)
+        if before_stat.st_size > max_bytes:
+            return _history_unknown_record("oversized", attribution)
+
+        content_parts: list[bytes] = []
+        total = 0
+        read_limit = max_bytes + 1
+        while total < read_limit:
+            chunk = os.read(current_fd, min(65536, read_limit - total))
+            if not chunk:
+                break
+            content_parts.append(chunk)
+            total += len(chunk)
+        content = b"".join(content_parts)
+        after_stat = os.fstat(current_fd)
+        if (
+            len(content) > max_bytes
+            or len(content) != before_stat.st_size
+            or _history_file_signature(before_stat)
+            != _history_file_signature(after_stat)
+        ):
+            return _history_unknown_record(
+                "oversized" if len(content) > max_bytes else "unstable",
+                attribution,
+            )
+    except FileNotFoundError:
+        return _history_unknown_record("missing", attribution)
+    except OSError as exc:
+        return _history_unknown_record(
+            "symlink" if exc.errno == errno.ELOOP else "read-failed",
+            attribution,
+        )
+    finally:
+        if current_fd is not None and current_fd != root_fd:
+            try:
+                os.close(current_fd)
+            except OSError:
+                pass
+        if root_fd is not None:
+            try:
+                os.close(root_fd)
+            except OSError:
+                pass
+    return {
+        "status": "observed",
+        "content": content,
+        "attribution": attribution,
+    }
+
+
+def _history_path_component(value: object) -> str | None:
+    if not isinstance(value, str) or not value or len(value) > 256:
+        return None
+    if "\x00" in value or "/" in value or "\\" in value:
+        return None
+    if value in {".", ".."}:
+        return None
+    return value
+
+
+def _history_parent_session_observed(content: bytes, session_id: str) -> bool:
+    """Check only top-level JSONL ``sessionId`` metadata, never message bodies."""
+
+    try:
+        lines = content.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return False
+    matched = False
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except (TypeError, ValueError):
+            return False
+        if not isinstance(entry, Mapping):
+            return False
+        if entry.get("sessionId") == session_id:
+            matched = True
+    return matched
+
+
+def _history_sidecar_link(
+    content: bytes,
+    source_identity: Mapping[str, object],
+) -> bool:
+    """Read only the SDK sidecar's top-level camel-case linkage fields."""
+
+    try:
+        metadata = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, TypeError, ValueError):
+        return False
+    if not isinstance(metadata, Mapping):
+        return False
+    tool_use_id = metadata.get("toolUseId")
+    parent_agent_id = metadata.get("parentAgentId")
+    if not isinstance(tool_use_id, str) and not isinstance(parent_agent_id, str):
+        return False
+    expected_tool_use_id = source_identity.get("tool_use_id")
+    expected_parent_agent_id = source_identity.get("parent_agent_id")
+    tool_use_id_expected = isinstance(expected_tool_use_id, str)
+    parent_agent_id_expected = isinstance(expected_parent_agent_id, str)
+    if not tool_use_id_expected and not parent_agent_id_expected:
+        return False
+    if tool_use_id_expected and (
+        not isinstance(tool_use_id, str) or tool_use_id != expected_tool_use_id
+    ):
+        return False
+    if parent_agent_id_expected and (
+        not isinstance(parent_agent_id, str)
+        or parent_agent_id != expected_parent_agent_id
+    ):
+        return False
+    return True
+
+
+def _discover_history_paths(
+    root: Path,
+    source_identity: Mapping[str, object] | None,
+    *,
+    max_bytes: int,
+) -> dict[str, object]:
+    candidates: dict[str, list[tuple[Path, str]]] = {
+        "parent": [],
+        "child": [],
+    }
+    if not isinstance(source_identity, Mapping):
+        return {"candidates": candidates, "reason": "identity-unavailable"}
+    identity = {
+        field: source_identity.get(field)
+        for field in (
+            "session_id",
+            "task_id",
+            "agent_id",
+            "tool_use_id",
+            "parent_agent_id",
+        )
+    }
+    session_text = _history_path_component(identity.get("session_id"))
+    if session_text is None:
+        return {"candidates": candidates, "reason": "identity-unavailable"}
+    root = Path(root)
+    scanned_files = 0
+    scanned_entries = 0
+    scanned_bytes = 0
+    projects_root = root / "projects"
+    try:
+        projects_stat = os.lstat(projects_root)
+    except FileNotFoundError:
+        return {"candidates": candidates, "reason": None}
+    except OSError:
+        return {"candidates": candidates, "reason": "scan-overflow"}
+    if stat.S_ISLNK(projects_stat.st_mode) or not stat.S_ISDIR(projects_stat.st_mode):
+        return {"candidates": candidates, "reason": "scan-overflow"}
+
+    project_names: list[str] = []
+    try:
+        with os.scandir(projects_root) as project_entries:
+            for entry in project_entries:
+                scanned_entries += 1
+                if scanned_entries > MAX_HISTORY_SCAN_ENTRIES:
+                    return {"candidates": candidates, "reason": "scan-overflow"}
+                project_names.append(entry.name)
+    except OSError:
+        return {"candidates": candidates, "reason": "scan-overflow"}
+
+    for project_name in sorted(project_names):
+        project_path = projects_root / project_name
+        try:
+            project_stat = os.lstat(project_path)
+        except OSError:
+            return {"candidates": candidates, "reason": "scan-overflow"}
+        if stat.S_ISLNK(project_stat.st_mode) or not stat.S_ISDIR(project_stat.st_mode):
+            continue
+        project_relative = Path("projects") / project_name
+        parent_path = project_relative / (session_text + ".jsonl")
+        parent_probe = _capture_history_file(
+            root,
+            parent_path,
+            attribution="candidate",
+            max_bytes=max_bytes,
+        )
+        if parent_probe.get("status") == "observed":
+            parent_content = parent_probe.get("content")
+            parent_attribution = (
+                "observed"
+                if isinstance(parent_content, bytes)
+                and _history_parent_session_observed(parent_content, session_text)
+                else "candidate"
+            )
+            candidates["parent"].append((parent_path, parent_attribution))
+        elif parent_probe.get("reason") != "missing":
+            candidates["parent"].append((parent_path, "candidate"))
+
+        child_root = project_path / session_text / "subagents"
+        stack: list[tuple[Path, int]] = [(child_root, 0)]
+        while stack:
+            directory, depth = stack.pop()
+            try:
+                directory_stat = os.lstat(directory)
+            except FileNotFoundError:
+                continue
+            except OSError:
+                return {"candidates": candidates, "reason": "scan-overflow"}
+            if stat.S_ISLNK(directory_stat.st_mode):
+                return {"candidates": candidates, "reason": "scan-overflow"}
+            if not stat.S_ISDIR(directory_stat.st_mode):
+                continue
+            names: list[str] = []
+            try:
+                with os.scandir(directory) as directory_entries:
+                    for entry in directory_entries:
+                        scanned_entries += 1
+                        if scanned_entries > MAX_HISTORY_SCAN_ENTRIES:
+                            return {"candidates": candidates, "reason": "scan-overflow"}
+                        names.append(entry.name)
+            except OSError:
+                return {"candidates": candidates, "reason": "scan-overflow"}
+            for name in sorted(names):
+                entry_path = directory / name
+                try:
+                    entry_stat = os.lstat(entry_path)
+                except OSError:
+                    return {"candidates": candidates, "reason": "scan-overflow"}
+                if stat.S_ISLNK(entry_stat.st_mode):
+                    continue
+                if stat.S_ISDIR(entry_stat.st_mode):
+                    if depth < MAX_HISTORY_SCAN_DEPTH:
+                        stack.append((entry_path, depth + 1))
+                    continue
+                if not stat.S_ISREG(entry_stat.st_mode):
+                    continue
+                if not name.startswith("agent-") or not name.endswith(".jsonl"):
+                    continue
+                scanned_files += 1
+                if scanned_files > MAX_HISTORY_SCAN_FILES:
+                    return {"candidates": candidates, "reason": "scan-overflow"}
+                agent_id = name[len("agent-") : -len(".jsonl")]
+                if not agent_id:
+                    continue
+                relative = entry_path.relative_to(root)
+                sidecar_relative = relative.with_name(
+                    relative.name[: -len(".jsonl")] + ".meta.json"
+                )
+                sidecar = _capture_history_file(
+                    root,
+                    sidecar_relative,
+                    attribution="candidate",
+                    max_bytes=max_bytes,
+                )
+                sidecar_content = sidecar.get("content")
+                scanned_bytes += (
+                    len(sidecar_content) if isinstance(sidecar_content, bytes) else 0
+                )
+                if scanned_bytes > MAX_HISTORY_SCAN_BYTES:
+                    return {"candidates": candidates, "reason": "scan-overflow"}
+                native_join = agent_id == identity.get("agent_id")
+                sidecar_link = (
+                    isinstance(sidecar_content, bytes)
+                    and _history_sidecar_link(sidecar_content, identity)
+                )
+                candidates["child"].append(
+                    (
+                        relative,
+                        "observed" if native_join and sidecar_link else "candidate",
+                    )
+                )
+    return {
+        "candidates": candidates,
+        "reason": None,
+    }
+
+
+def _select_history_candidate(
+    candidates: list[tuple[Path, str]],
+    *,
+    exclude: Path | None = None,
+) -> tuple[Path | None, str, str | None]:
+    filtered = [(path, attribution) for path, attribution in candidates if path != exclude]
+    observed = [(path, attribution) for path, attribution in filtered if attribution == "observed"]
+    if len(observed) == 1:
+        path, _ = observed[0]
+        return path, "observed", None
+    if len(observed) > 1:
+        return None, "unattributed", "ambiguous"
+    if len(filtered) == 1:
+        path, attribution = filtered[0]
+        return path, attribution, None
+    if len(filtered) > 1:
+        return None, "unattributed", "ambiguous"
+    return None, "unattributed", "missing"
+
+
+def _revalidate_observed_history_link(
+    record: Mapping[str, object],
+    root: Path,
+    relative_path: Path | None,
+    source_identity: Mapping[str, object] | None,
+    *,
+    child: bool,
+    max_bytes: int,
+) -> dict[str, object]:
+    if (
+        record.get("status") != "observed"
+        or record.get("attribution") != "observed"
+        or not isinstance(source_identity, Mapping)
+        or relative_path is None
+    ):
+        return dict(record)
+    if child:
+        sidecar_relative = relative_path.with_name(
+            relative_path.name[: -len(".jsonl")] + ".meta.json"
+        )
+        sidecar = _capture_history_file(
+            root,
+            sidecar_relative,
+            attribution="candidate",
+            max_bytes=max_bytes,
+        )
+        content = sidecar.get("content")
+        linked = isinstance(content, bytes) and _history_sidecar_link(
+            content, source_identity
+        )
+    else:
+        content = record.get("content")
+        linked = isinstance(content, bytes) and _history_parent_session_observed(
+            content, str(source_identity.get("session_id"))
+        )
+    if not linked:
+        return _history_unknown_record("uncorrelated", "unattributed")
+    return dict(record)
+
+
+def capture_runtime_history_records(
+    root: Path,
+    *,
+    source_identity: Mapping[str, object] | None,
+    max_bytes: int = MAX_HISTORY_CONTENT_BYTES,
+) -> dict[str, object]:
+    """Discover source-linked candidates; never accept caller attribution claims."""
+
+    discovery = _discover_history_paths(
+        Path(root), source_identity, max_bytes=max_bytes
+    )
+    candidates = discovery.get("candidates", {})
+    candidates = candidates if isinstance(candidates, Mapping) else {}
+    parent_path, parent_attribution, parent_reason = _select_history_candidate(
+        candidates.get("parent", [])
+        if isinstance(candidates.get("parent"), list)
+        else []
+    )
+    child_path, child_attribution, child_reason = _select_history_candidate(
+        candidates.get("child", [])
+        if isinstance(candidates.get("child"), list)
+        else [],
+        exclude=parent_path,
+    )
+    scan_reason = discovery.get("reason")
+    if scan_reason in {"identity-unavailable", "scan-overflow"}:
+        parent_record = _history_unknown_record(str(scan_reason), "unattributed")
+        child_record = _history_unknown_record(str(scan_reason), "unattributed")
+    else:
+        parent_record = (
+            _capture_history_file(
+                Path(root),
+                parent_path,
+                attribution=parent_attribution,
+                max_bytes=max_bytes,
+            )
+            if parent_path is not None
+            else _history_unknown_record(
+                "missing-parent" if parent_reason == "missing" else str(parent_reason),
+                parent_attribution,
+            )
+        )
+        child_record = (
+            _capture_history_file(
+                Path(root),
+                child_path,
+                attribution=child_attribution,
+                max_bytes=max_bytes,
+            )
+            if child_path is not None
+            else _history_unknown_record(
+                "unattributed-child-history"
+                if child_reason == "missing" else str(child_reason),
+                child_attribution,
+            )
+        )
+        parent_record = _revalidate_observed_history_link(
+            parent_record,
+            Path(root),
+            parent_path,
+            source_identity,
+            child=False,
+            max_bytes=max_bytes,
+        )
+        child_record = _revalidate_observed_history_link(
+            child_record,
+            Path(root),
+            child_path,
+            source_identity,
+            child=True,
+            max_bytes=max_bytes,
+        )
+    return {"parent": parent_record, "child": child_record}
+
+
+def capture_bounded_history_records(
+    root: Path,
+    *,
+    parent_path: object = None,
+    child_path: object = None,
+    max_bytes: int = MAX_HISTORY_CONTENT_BYTES,
+) -> dict[str, object]:
+    """Read explicitly selected paths only for offline safety regressions."""
+
+    parent_record = _capture_history_file(
+        Path(root),
+        parent_path,
+        attribution="observed",
+        max_bytes=max_bytes,
+    )
+    child_record = (
+        _capture_history_file(
+            Path(root),
+            child_path,
+            attribution="candidate",
+            max_bytes=max_bytes,
+        )
+        if child_path is not None
+        else _history_unknown_record("unattributed-child-history", "candidate")
+    )
+    return {"parent": parent_record, "child": child_record}
 
 
 def validate_isolation(record: Mapping[str, object]) -> None:
@@ -2610,6 +3790,7 @@ def observe_frame(frame: object, runtime: dict[str, object]) -> None:
         "task_started", "task_progress", "task_updated", "task_notification"
     }:
         runtime["native_task_events"] = int(runtime["native_task_events"]) + 1
+        record_native_task_lifecycle_event(frame, runtime)
     task_id = frame.get("task_id")
     if subtype == "task_started" and task_id and frame.get("task_type") == "local_agent":
         if str(task_id) != runtime.get("actual_task_id"):
@@ -2618,6 +3799,10 @@ def observe_frame(frame: object, runtime: dict[str, object]) -> None:
         runtime["actual_task_id"] = str(task_id)
         agent_id = find_value(frame, ("agent_id",))
         runtime["task_agent_id"] = str(agent_id) if agent_id else None
+        tool_use_id = _native_event_value(frame, "tool_use_id")
+        runtime["task_tool_use_id"] = (
+            str(tool_use_id) if isinstance(tool_use_id, str) else None
+        )
     if (runtime.get("actual_task_id") and task_id == runtime.get("actual_task_id")
             and subtype == "task_notification" and frame.get("status") == "stopped"):
         # A stopped task is not automatically a stopped Bash tool.
@@ -3061,6 +4246,19 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
     )
     for name in ("home", "config", "xdg", "work"):
         (root / name).mkdir(parents=True, exist_ok=True)
+    def history_snapshot(source_runtime: Mapping[str, object]) -> dict[str, object]:
+        source_identity = {
+            "session_id": source_runtime.get("session_id"),
+            "task_id": source_runtime.get("actual_task_id"),
+            "agent_id": source_runtime.get("task_agent_id"),
+            "tool_use_id": source_runtime.get("task_tool_use_id"),
+            "parent_agent_id": source_runtime.get("parent_agent_id"),
+        }
+        return capture_runtime_history_records(
+            root / "config",
+            source_identity=source_identity,
+        )
+
     v1_ledger = StopThenResumeV1Ledger(root / "work") if v1_mode else None
     if v1_ledger is not None:
         v1_ledger.prepare()
@@ -3103,10 +4301,21 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
         "frames_seen": 0,
         "unparsed_frames": 0,
         "native_task_events": 0,
+        "lifecycle_phase": "source/setup",
+        "native_task_evidence": [],
+        "native_task_evidence_limit": MAX_NATIVE_TASK_EVIDENCE,
+        "native_task_evidence_overflow": False,
+        "native_task_observation_sequence": 0,
+        "native_task_last_observation": None,
+        "native_task_evidence_unknown_reasons": [],
+        "native_task_recording_enabled": True,
+        "lifecycle_provenance": "source-observed",
+        "source_identity": None,
         "target_wake_evidence": 0,
         "task_started": False,
         "actual_task_id": None,
         "task_agent_id": None,
+        "task_tool_use_id": None,
         "task_terminal_observed": False,
         "source_parent_result_seen": False,
         "source_parent_result_origin": None,
@@ -3145,6 +4354,17 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
         "frames_seen": 0,
         "unparsed_frames": 0,
         "native_task_events": 0,
+        "lifecycle_phase": "target/startup",
+        "native_task_evidence": [],
+        "native_task_evidence_limit": MAX_NATIVE_TASK_EVIDENCE,
+        "native_task_evidence_overflow": False,
+        "native_task_observation_sequence": 0,
+        "native_task_last_observation": None,
+        "native_task_evidence_unknown_reasons": [],
+        "native_task_recording_enabled": True,
+        "lifecycle_provenance": "target-observed",
+        "source_identity": None,
+        "native_task_seed_provenance": "none",
         "target_wake_evidence": 0,
         "startup_observation_active": True,
         "startup_activity_observed": False,
@@ -3193,6 +4413,9 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
         "successful_result_seen": False,
         "successful_result_session_id": None,
     }
+    history_active_snapshot: dict[str, object] = {}
+    history_pre_release_snapshot: dict[str, object] = {}
+    history_post_startup_snapshot: dict[str, object] = {}
     tracked_fixture_processes: list[dict[str, object]] = []
     source_alive_before_harness_cleanup = False
     try:
@@ -3257,6 +4480,7 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
             )
             source_runtime["active_fixture_observed"] = active_fixture
             if v1_ledger is not None and active_fixture:
+                history_active_snapshot = history_snapshot(source_runtime)
                 v1_ledger.record_pre_stop_facts(
                     parent_identity={
                         "session_id": source_runtime.get("session_id"),
@@ -3362,6 +4586,7 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
                     source_runtime["records_observed_before_crash"] = bool(
                         source_store_before_crash.get("file_count", 0)
                     )
+                    source_runtime["lifecycle_phase"] = "source/drain"
                     gateway.set_phase("source-crash")
                     source_runtime["crash_requested"] = True
                     source_runtime["crash_parent_process_exited"] = (
@@ -3379,6 +4604,7 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
                 elif control_entry_admitted:
                     # Drain/hold policy begins before the selected control.
                     # A parent inference triggered by it is separately counted.
+                    source_runtime["lifecycle_phase"] = "source/drain"
                     gateway.set_phase("source-drain")
                     gateway.mark_stop_requested()
                     if control_mode == "interrupt":
@@ -3433,6 +4659,7 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
                         gateway.release_busy_parent_barrier()
                         source_runtime["busy_parent_barrier_cleanup_requested"] = True
         if gateway.phase == "source":
+            source_runtime["lifecycle_phase"] = "source/drain"
             gateway.set_phase("source-drain")
     finally:
         if busy_parent_before_control:
@@ -3484,8 +4711,27 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
                     "pg_kill_observed": source_alive_before_harness_cleanup,
                 },
             )
+            history_pre_release_snapshot = history_snapshot(source_runtime)
 
     session_id = source_runtime.get("session_id")
+    target_runtime["source_identity"] = {
+        "session_id": session_id,
+        "task_id": source_runtime.get("actual_task_id"),
+        "agent_id": source_runtime.get("task_agent_id"),
+    }
+    if v1_mode:
+        source_terminal_seed = source_terminal_lifecycle_seed(source_runtime)
+        target_runtime["native_task_source_terminal_seed"] = source_terminal_seed
+        target_runtime["native_task_source_terminal_index"] = (
+            source_terminal_seed.get("observation_sequence")
+            if isinstance(source_terminal_seed, Mapping)
+            else None
+        )
+        target_runtime["native_task_last_observation"] = None
+        target_runtime["native_task_seed_provenance"] = (
+            "source-terminal-seed"
+            if source_terminal_seed is not None else "unavailable"
+        )
     target_arguments: list[object] = []
     v1_source_manifest: dict[str, object] = {}
     if v1_ledger is not None and isinstance(session_id, str) and session_id:
@@ -3596,7 +4842,13 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
                 "successful_result_session_id": target_runtime.get(
                     "successful_result_session_id"
                 ),
+                "native_task_lifecycle": native_task_lifecycle_report(
+                    target_runtime
+                ),
             }
+            if v1_mode:
+                history_post_startup_snapshot = history_snapshot(source_runtime)
+            target_runtime["native_task_recording_enabled"] = False
             if v1_mode:
                 launch_snapshot = gateway.snapshot()
                 startup_requests = [
@@ -3913,6 +5165,23 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
         and target_runtime.get("successful_result_seen")
         and target_result_same_source_uuid
     )
+    history_integrity: object = "not-selected"
+    if v1_mode:
+        history_integrity = {
+            "active_to_pre_release": compare_history_content_integrity(
+                history_active_snapshot,
+                history_pre_release_snapshot,
+                before_boundary="active-source",
+                after_boundary="source-excluded/pre-release",
+            ),
+            "pre_release_to_post_startup": compare_history_content_integrity(
+                history_pre_release_snapshot,
+                history_post_startup_snapshot,
+                before_boundary="source-excluded/pre-release",
+                after_boundary="post-startup-before-cleanup",
+            ),
+            "support_claim": False,
+        }
     if v1_ledger is not None and target_launched:
         v1_ledger.record_target_facts(
             parent_identity={
@@ -3998,6 +5267,7 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
             else "unknown"
         ),
         "verdict": "inconclusive",
+        "history_integrity": history_integrity,
         "runtime": {
             "sdk_version": expected["sdk_version"],
             "selected_cli_path": expected["selected_cli"],
@@ -4092,6 +5362,7 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
             "read_failed": bool(source_runtime.get("read_failed")),
             "store": source_store,
             "control_events": dict(source_runtime.get("control_events", {})),
+            "native_task_lifecycle": native_task_lifecycle_report(source_runtime),
         },
         "stop": {
             **stop_observation,
@@ -4156,6 +5427,7 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
             "history_query_gate": target_runtime.get(
                 "history_query_gate"
             ) if v1_mode else "not-selected",
+            "native_task_lifecycle": native_task_lifecycle_report(target_runtime),
             "read_failed": bool(target_runtime.get("read_failed")),
             "messages_posts": target_posts,
             "count_tokens_posts": target_phase.get(

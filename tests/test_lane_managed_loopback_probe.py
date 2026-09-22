@@ -7,6 +7,7 @@ do not start a gateway, Claude, Docker, a model service, or any network listener
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import runpy
 import threading
@@ -2167,3 +2168,726 @@ def test_stop_then_resume_v1_truncated_observation_blocks_source_and_query_gates
     assert ledger.report()["unknown_effect_baseline_valid"] is False
     assert query_gate["history_query_allowed"] is False
     assert "startup-reader-error" in query_gate["reason_codes"]
+
+
+def test_stop_then_resume_v1_native_task_evidence_is_sanitized_and_correlated():
+    event = {
+        "type": "system",
+        "subtype": "task_notification",
+        "task_type": "local_agent",
+        "status": "completed",
+        "session_id": "session-secret",
+        "task_id": "task-secret",
+        "uuid": "event-secret",
+        "tool_use_id": "tool-secret",
+        "agent_id": "agent-secret",
+        "body": "private transcript body",
+        "path": "/private/history/path",
+    }
+
+    evidence = PROBE["sanitize_native_task_lifecycle_event"](
+        event,
+        phase="target/startup",
+        observation_sequence=12,
+        source_identity={
+            "session_id": "session-secret",
+            "task_id": "task-secret",
+            "agent_id": "agent-secret",
+        },
+        prior_event=dict(event),
+    )
+
+    assert evidence["phase"] == "target/startup"
+    assert evidence["observation_sequence"] == 12
+    assert evidence["event_type"] == "system"
+    assert evidence["event_subtype"] == "task_notification"
+    assert evidence["task_type"] == "local_agent"
+    assert evidence["status"] == "completed"
+    assert evidence["session_id_seen"] is True
+    assert evidence["task_id_seen"] is True
+    assert evidence["event_uuid_seen"] is True
+    assert evidence["tool_use_id_seen"] is True
+    assert evidence["agent_id_seen"] is True
+    assert evidence["source_target_correlation"] == {
+        "session_id": "match",
+        "task_id": "match",
+        "agent_id": "match",
+    }
+    assert evidence["correlation_class"] == "replay-compatible"
+    assert evidence["support_claim"] is False
+    assert evidence["task_id_digest"] == hashlib.sha256(
+        b"task-secret"
+    ).hexdigest()
+    assert evidence["agent_id_digest"] == hashlib.sha256(
+        b"agent-secret"
+    ).hexdigest()
+
+    encoded = json.dumps(evidence, sort_keys=True)
+    assert "session-secret" not in encoded
+    assert "task-secret" not in encoded
+    assert "event-secret" not in encoded
+    assert "tool-secret" not in encoded
+    assert "agent-secret" not in encoded
+    assert "private transcript body" not in encoded
+    assert "/private/history/path" not in encoded
+
+
+def test_stop_then_resume_v1_native_task_evidence_marks_unresolved_join_without_proof():
+    evidence = PROBE["sanitize_native_task_lifecycle_event"](
+        {
+            "type": "system",
+            "subtype": "task_progress",
+            "task_type": "local_agent",
+            "status": "running",
+            "task_id": "new-task",
+        },
+        phase="source/drain",
+        observation_sequence=4,
+        source_identity={"task_id": "old-task"},
+    )
+
+    assert evidence["source_target_correlation"]["task_id"] == "mismatch"
+    assert evidence["correlation_class"] == "live-or-unresolved"
+    assert evidence["incomplete"] is True
+    assert evidence["agent_id_seen"] is False
+    assert evidence["agent_id_digest"] is None
+    assert evidence["event_uuid_seen"] is False
+    assert evidence["event_uuid_digest"] is None
+    assert evidence["support_claim"] is False
+
+
+def test_stop_then_resume_v1_terminal_correlation_rejects_conflicting_tool_join():
+    event = {
+        "type": "system",
+        "subtype": "task_notification",
+        "task_type": "local_agent",
+        "status": "completed",
+        "session_id": "session-secret",
+        "task_id": "task-secret",
+        "uuid": "event-secret",
+        "tool_use_id": "tool-new",
+    }
+    evidence = PROBE["sanitize_native_task_lifecycle_event"](
+        event,
+        phase="target/startup",
+        observation_sequence=3,
+        source_identity={
+            "session_id": "session-secret",
+            "task_id": "task-secret",
+        },
+        prior_event=dict(event, tool_use_id="tool-old"),
+    )
+
+    assert evidence["correlation_class"] == "live-or-unresolved"
+    assert evidence["incomplete"] is True
+    assert "identity-conflict" not in evidence["unknown_fields"]
+    assert evidence["support_claim"] is False
+
+
+def test_stop_then_resume_v1_malformed_terminal_cannot_be_replay_compatible():
+    evidence = PROBE["sanitize_native_task_lifecycle_event"](
+        {
+            "type": "system",
+            "subtype": "task_notification",
+            "task_type": "local_agent",
+            "status": "completed",
+            "session_id": "session-secret",
+            "task_id": {"not": "an-id"},
+            "uuid": "event-secret",
+        },
+        phase="target/startup",
+        observation_sequence=4,
+        prior_event={
+            "type": "system",
+            "subtype": "task_notification",
+            "task_type": "local_agent",
+            "status": "completed",
+            "session_id": "session-secret",
+            "task_id": "task-secret",
+            "uuid": "event-secret",
+        },
+    )
+
+    assert evidence["correlation_class"] == "live-or-unresolved"
+    assert evidence["incomplete"] is True
+    assert "malformed-identity" in evidence["unknown_fields"]
+    assert evidence["support_claim"] is False
+
+
+def test_stop_then_resume_v1_conflicting_envelope_fields_are_unresolved():
+    evidence = PROBE["sanitize_native_task_lifecycle_event"](
+        {
+            "type": "system",
+            "subtype": "task_notification",
+            "response": {"subtype": "task_progress"},
+            "task_type": "local_agent",
+            "status": "completed",
+            "session_id": "session-secret",
+            "task_id": "task-secret",
+            "uuid": "event-secret",
+        },
+        phase="source/drain",
+        observation_sequence=5,
+        prior_event={
+            "type": "system",
+            "subtype": "task_notification",
+            "task_type": "local_agent",
+            "status": "completed",
+            "session_id": "session-secret",
+            "task_id": "task-secret",
+            "uuid": "event-secret",
+        },
+    )
+
+    assert evidence["incomplete"] is True
+    assert "conflicting-event-subtype" in evidence["unknown_fields"]
+    assert evidence["correlation_class"] == "live-or-unresolved"
+
+
+def test_stop_then_resume_v1_history_integrity_reports_bounded_parent_child_prefixes():
+    result = PROBE["compare_history_content_integrity"](
+        {
+            "parent": b"parent-history-before\n",
+            "child": b"child-history-before\n",
+        },
+        {
+            "parent": b"parent-history-before\nappend-after-startup\n",
+            "child": b"child-history-before\n",
+        },
+        before_boundary="source-excluded/pre-release",
+        after_boundary="post-startup-before-cleanup",
+    )
+
+    assert result["observation_status"] == "observed"
+    assert result["before_boundary"] == "source-excluded/pre-release"
+    assert result["after_boundary"] == "post-startup-before-cleanup"
+    assert result["support_claim"] is False
+    assert result["runtime_loaded_or_restored"] == "unverified"
+    assert result["roles"]["parent"]["content_integrity"] == "changed"
+    assert result["roles"]["parent"]["prefix_integrity"] == "preserved"
+    assert result["roles"]["child"]["content_integrity"] == "preserved"
+    assert result["roles"]["child"]["prefix_integrity"] == "preserved"
+
+    encoded = json.dumps(result, sort_keys=True)
+    assert "parent-history-before" not in encoded
+    assert "child-history-before" not in encoded
+    assert "append-after-startup" not in encoded
+    assert "/private/history/path" not in encoded
+
+
+@pytest.mark.parametrize(
+    "before, after, reason",
+    [
+        (
+            {"parent": b"parent-only"},
+            {"parent": b"parent-only"},
+            "missing-child",
+        ),
+        (
+            {"parent": b"123456789", "child": b"child"},
+            {"parent": b"123456789", "child": b"child"},
+            "oversized",
+        ),
+    ],
+)
+def test_stop_then_resume_v1_history_integrity_fails_closed_for_unknown_records(
+    before, after, reason
+):
+    kwargs = {"max_bytes": 8} if reason == "oversized" else {}
+    result = PROBE["compare_history_content_integrity"](
+        before,
+        after,
+        **kwargs,
+    )
+
+    assert result["observation_status"] == "unknown"
+    assert result["support_claim"] is False
+    assert result["runtime_loaded_or_restored"] == "unverified"
+    assert reason in result["unknown_reasons"]
+
+
+def test_stop_then_resume_v1_native_task_recorder_attaches_report_and_bounds_overflow():
+    runtime = {
+        "frames_seen": 0,
+        "unparsed_frames": 0,
+        "native_task_events": 0,
+        "startup_observation_active": True,
+        "startup_activity_observed": False,
+        "startup_activity_kinds": [],
+        "startup_unclassified_lifecycle_count": 0,
+        "lifecycle_phase": "target/startup",
+        "source_identity": {
+            "session_id": "session-secret",
+            "task_id": "task-secret",
+            "agent_id": "agent-secret",
+        },
+        "native_task_evidence_limit": 1,
+    }
+    first = {
+        "type": "system",
+        "subtype": "task_notification",
+        "task_type": "local_agent",
+        "status": "completed",
+        "session_id": "session-secret",
+        "task_id": "task-secret",
+        "uuid": "event-secret",
+        "agent_id": "agent-secret",
+    }
+
+    PROBE["observe_frame"](first, runtime)
+    PROBE["observe_frame"](dict(first, uuid="event-secret-2"), runtime)
+    report = PROBE["native_task_lifecycle_report"](runtime)
+
+    assert report["event_count"] == 1
+    assert report["overflow"] is True
+    assert report["observation_status"] == "unknown"
+    assert "native-task-evidence-overflow" in report["unknown_reasons"]
+    assert report["events"][0]["phase"] == "target/startup"
+    assert report["events"][0]["observation_sequence"] == 1
+    assert report["support_claim"] is False
+
+
+def test_stop_then_resume_v1_native_task_recorder_marks_malformed_identity_incomplete():
+    runtime = {
+        "frames_seen": 0,
+        "unparsed_frames": 0,
+        "native_task_events": 0,
+        "lifecycle_phase": "source/drain",
+        "native_task_evidence": [],
+        "native_task_evidence_limit": 4,
+    }
+
+    PROBE["observe_frame"](
+        {
+            "type": "system",
+            "subtype": "task_progress",
+            "task_type": "local_agent",
+            "status": "running",
+            "task_id": {"raw": "not-an-identity"},
+            "uuid": ["malformed"],
+        },
+        runtime,
+    )
+    report = PROBE["native_task_lifecycle_report"](runtime)
+
+    assert report["observation_status"] == "unknown"
+    assert report["incomplete"] is True
+    assert "malformed-identity" in report["unknown_reasons"]
+    assert report["support_claim"] is False
+
+
+def _native_lifecycle_runtime(*, phase, provenance, seed=None):
+    return {
+        "frames_seen": 0,
+        "unparsed_frames": 0,
+        "native_task_events": 0,
+        "lifecycle_phase": phase,
+        "native_task_evidence": [],
+        "native_task_evidence_limit": 8,
+        "native_task_evidence_overflow": False,
+        "native_task_observation_sequence": 0,
+        "native_task_last_observation": None,
+        "native_task_source_terminal_seed": seed,
+        "native_task_source_terminal_index": (
+            seed.get("observation_sequence")
+            if isinstance(seed, dict)
+            else None
+        ),
+        "native_task_evidence_unknown_reasons": [],
+        "native_task_recording_enabled": True,
+        "lifecycle_provenance": provenance,
+        "source_identity": {
+            "session_id": "session-source",
+            "task_id": "task-source",
+            "agent_id": "agent-source",
+        },
+        "control_events": {},
+        "session_id": None,
+        "initialize_succeeded": False,
+        "task_started": False,
+        "actual_task_id": None,
+        "task_agent_id": None,
+        "task_terminal_observed": False,
+        "stopped_notification": False,
+        "tool_terminal": False,
+        "source_parent_result_seen": False,
+        "source_parent_result_origin": None,
+        "successful_result_seen": False,
+        "successful_result_session_id": None,
+        "successful_result_uuid_digest": None,
+    }
+
+
+def test_stop_then_resume_v1_source_terminal_seed_survives_target_observations():
+    source = _native_lifecycle_runtime(
+        phase="source/setup", provenance="source-observed"
+    )
+    PROBE["observe_frame"](
+        {
+            "type": "system",
+            "subtype": "task_started",
+            "task_type": "local_agent",
+            "status": "started",
+            "session_id": "session-source",
+            "task_id": "task-source",
+            "agent_id": "agent-source",
+            "uuid": "source-started",
+        },
+        source,
+    )
+    source["lifecycle_phase"] = "source/drain"
+    PROBE["observe_frame"](
+        {
+            "type": "system",
+            "subtype": "task_notification",
+            "status": "completed",
+            "session_id": "session-source",
+            "task_id": "task-source",
+            "agent_id": "agent-source",
+            "uuid": "source-terminal",
+        },
+        source,
+    )
+    seed = PROBE["source_terminal_lifecycle_seed"](source)
+
+    assert seed is not None
+    assert seed["provenance"] == "source-terminal-seed"
+    assert seed["incomplete"] is False
+
+    target = _native_lifecycle_runtime(
+        phase="target/startup", provenance="target-observed", seed=seed
+    )
+    for event_uuid in ("target-first", "source-terminal"):
+        PROBE["observe_frame"](
+            {
+                "type": "system",
+                "subtype": "task_notification",
+                "status": "completed",
+                "session_id": "session-source",
+                "task_id": "task-source",
+                "agent_id": "agent-source",
+                "uuid": event_uuid,
+            },
+            target,
+        )
+
+    classes = [
+        event["correlation_class"]
+        for event in target["native_task_evidence"]
+    ]
+    assert classes == ["terminal-correlation-only", "replay-compatible"]
+    assert target["native_task_source_terminal_seed"] is seed
+    assert target["native_task_last_observation"] is not seed
+
+
+def test_stop_then_resume_v1_target_duplicates_without_source_seed_stay_unresolved():
+    target = _native_lifecycle_runtime(
+        phase="target/startup", provenance="target-observed"
+    )
+    event = {
+        "type": "system",
+        "subtype": "task_notification",
+        "status": "completed",
+        "session_id": "session-source",
+        "task_id": "task-source",
+        "agent_id": "agent-source",
+        "uuid": "duplicate-terminal",
+    }
+    PROBE["observe_frame"](event, target)
+    PROBE["observe_frame"](dict(event), target)
+
+    classes = [
+        observed["correlation_class"]
+        for observed in target["native_task_evidence"]
+    ]
+    assert classes == ["live-or-unresolved", "live-or-unresolved"]
+    assert "replay-compatible" not in classes
+
+
+def test_stop_then_resume_v1_history_integrity_keeps_child_candidate_unattributed():
+    result = PROBE["compare_history_content_integrity"](
+        {
+            "parent": {
+                "content": b"parent-history-before\n",
+                "attribution": "observed",
+            },
+            "child": {
+                "content": b"child-history-before\n",
+                "attribution": "candidate",
+            },
+        },
+        {
+            "parent": {
+                "content": b"parent-history-before\n",
+                "attribution": "observed",
+            },
+            "child": {
+                "content": b"child-history-before\n",
+                "attribution": "candidate",
+            },
+        },
+    )
+
+    assert result["observation_status"] == "observed"
+    assert result["roles"]["child"]["attribution"] == "candidate"
+    assert result["roles"]["child"]["association"] == "unattributed"
+    assert result["roles"]["child"]["prefix_integrity"] == "preserved"
+    assert result["roles"]["parent"]["before_digest"] == hashlib.sha256(
+        b"parent-history-before\n"
+    ).hexdigest()
+    assert result["support_claim"] is False
+
+
+def test_stop_then_resume_v1_history_capture_rejects_symlink_escape(tmp_path):
+    root = tmp_path / "history"
+    root.mkdir()
+    (root / "parent.history").write_bytes(b"parent-history-before\n")
+    outside = tmp_path / "outside.history"
+    outside.write_bytes(b"outside-history\n")
+    try:
+        (root / "child.history").symlink_to(outside)
+    except OSError:
+        pytest.skip("symlink creation is unavailable")
+
+    captured = PROBE["capture_bounded_history_records"](
+        root,
+        parent_path="parent.history",
+        child_path="child.history",
+    )
+    result = PROBE["compare_history_content_integrity"](captured, captured)
+
+    assert result["observation_status"] == "unknown"
+    assert "symlink" in result["unknown_reasons"]
+    assert str(root) not in json.dumps(result, sort_keys=True)
+
+
+def test_stop_then_resume_v1_history_capture_discovers_source_linked_records(tmp_path):
+    root = tmp_path / "config"
+    session_id = "session-auto"
+    project_dir = root / "projects" / "sanitized-cwd"
+    session_dir = project_dir / session_id / "subagents"
+    session_dir.mkdir(parents=True)
+    (project_dir / (session_id + ".jsonl")).write_bytes(
+        json.dumps({"sessionId": session_id, "record": "parent"}).encode()
+    )
+    (session_dir / "agent-agent-auto.jsonl").write_bytes(
+        json.dumps(
+            {
+                "sessionId": session_id,
+                "status": "completed",
+            }
+        ).encode()
+    )
+    (session_dir / "agent-agent-auto.meta.json").write_bytes(
+        json.dumps({"toolUseId": "tool-auto"}).encode()
+    )
+
+    captured = PROBE["capture_runtime_history_records"](
+        root,
+        source_identity={
+            "session_id": session_id,
+            "task_id": "task-auto",
+            "agent_id": "agent-auto",
+            "tool_use_id": "tool-auto",
+        },
+    )
+    result = PROBE["compare_history_content_integrity"](captured, captured)
+
+    assert captured["parent"]["status"] == "observed"
+    assert captured["child"]["status"] == "observed"
+    assert captured["child"]["attribution"] == "observed"
+    assert result["observation_status"] == "observed"
+    assert result["roles"]["child"]["association"] == "observed-link"
+    assert result["support_claim"] is False
+
+
+def test_stop_then_resume_v1_history_discovery_uses_top_level_schema_only(tmp_path):
+    root = tmp_path / "config"
+    session_id = "session-schema"
+    project_dir = root / "projects" / "sanitized-cwd"
+    session_dir = project_dir / session_id / "subagents"
+    session_dir.mkdir(parents=True)
+    (project_dir / (session_id + ".jsonl")).write_bytes(
+        json.dumps({"message": {"sessionId": session_id}}).encode()
+    )
+    (session_dir / "agent-agent-schema.jsonl").write_bytes(b"child\n")
+    (session_dir / "agent-agent-schema.meta.json").write_bytes(
+        json.dumps({"tool_use_id": "not-the-sdk-field"}).encode()
+    )
+
+    captured = PROBE["capture_runtime_history_records"](
+        root,
+        source_identity={
+            "session_id": session_id,
+            "agent_id": "agent-schema",
+        },
+    )
+    result = PROBE["compare_history_content_integrity"](captured, captured)
+
+    assert captured["parent"]["status"] == "observed"
+    assert captured["parent"]["attribution"] == "candidate"
+    assert captured["child"]["status"] == "observed"
+    assert captured["child"]["attribution"] == "candidate"
+    assert result["roles"]["parent"]["association"] == "unattributed"
+    assert result["roles"]["child"]["association"] == "unattributed"
+    assert result["support_claim"] is False
+
+
+def test_stop_then_resume_v1_sidecar_link_requires_known_native_join():
+    assert not PROBE["_history_sidecar_link"](
+        json.dumps({"toolUseId": "tool-auto"}).encode(),
+        {"session_id": "session-auto", "agent_id": "agent-auto"},
+    )
+
+
+def test_stop_then_resume_v1_sidecar_link_accepts_exact_known_join():
+    assert PROBE["_history_sidecar_link"](
+        json.dumps(
+            {
+                "toolUseId": "tool-auto",
+                "parentAgentId": "agent-parent",
+            }
+        ).encode(),
+        {
+            "session_id": "session-auto",
+            "tool_use_id": "tool-auto",
+            "parent_agent_id": "agent-parent",
+        },
+    )
+
+
+def test_stop_then_resume_v1_sidecar_link_rejects_known_join_conflict():
+    assert not PROBE["_history_sidecar_link"](
+        json.dumps(
+            {
+                "toolUseId": "tool-auto",
+                "parentAgentId": "agent-other",
+            }
+        ).encode(),
+        {
+            "session_id": "session-auto",
+            "tool_use_id": "tool-auto",
+            "parent_agent_id": "agent-parent",
+        },
+    )
+
+
+def test_stop_then_resume_v1_history_discovery_bounds_directory_entries(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "config"
+    child_root = root / "projects" / "sanitized-cwd" / "session-overflow" / "subagents"
+    child_root.mkdir(parents=True)
+    monkeypatch.setitem(
+        PROBE["capture_runtime_history_records"].__globals__,
+        "MAX_HISTORY_SCAN_ENTRIES",
+        1,
+    )
+    (child_root / "first").write_bytes(b"one")
+    (child_root / "second").write_bytes(b"two")
+
+    captured = PROBE["capture_runtime_history_records"](
+        root,
+        source_identity={"session_id": "session-overflow"},
+    )
+
+    assert captured["parent"]["status"] == "unknown"
+    assert captured["child"]["status"] == "unknown"
+    assert captured["parent"]["reason"] == "scan-overflow"
+    assert captured["child"]["reason"] == "scan-overflow"
+
+
+def test_stop_then_resume_v1_history_capture_refuses_fifo_without_blocking(tmp_path):
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("FIFO creation is unavailable")
+    root = tmp_path / "history"
+    root.mkdir()
+    fifo = root / "history.fifo"
+    os.mkfifo(fifo)
+
+    captured = PROBE["capture_bounded_history_records"](
+        root,
+        parent_path="history.fifo",
+    )
+
+    assert captured["parent"]["status"] == "unknown"
+    assert captured["parent"]["reason"] == "not-regular"
+
+
+def test_stop_then_resume_v1_history_capture_fails_closed_without_nofollow(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "history"
+    root.mkdir()
+    (root / "parent.history").write_bytes(b"parent")
+    monkeypatch.delattr(PROBE["os"], "O_NOFOLLOW", raising=False)
+
+    captured = PROBE["capture_bounded_history_records"](
+        root,
+        parent_path="parent.history",
+    )
+
+    assert captured["parent"]["status"] == "unknown"
+    assert captured["parent"]["reason"] == "no-follow-unavailable"
+
+
+def test_stop_then_resume_v1_history_capture_bounds_bytes_and_reports_raw_digest(tmp_path):
+    root = tmp_path / "history"
+    root.mkdir()
+    (root / "parent.history").write_bytes(b"123456789")
+    (root / "child.history").write_bytes(b"child")
+
+    oversized = PROBE["capture_bounded_history_records"](
+        root,
+        parent_path="parent.history",
+        child_path="child.history",
+        max_bytes=8,
+    )
+    oversized_result = PROBE["compare_history_content_integrity"](
+        oversized, oversized, max_bytes=8
+    )
+    assert oversized_result["observation_status"] == "unknown"
+    assert "oversized" in oversized_result["unknown_reasons"]
+
+    (root / "parent.history").write_bytes(b"1234")
+    bounded = PROBE["capture_bounded_history_records"](
+        root,
+        parent_path="parent.history",
+        child_path="child.history",
+        max_bytes=8,
+    )
+    bounded_result = PROBE["compare_history_content_integrity"](
+        bounded, bounded, max_bytes=8
+    )
+    assert bounded_result["roles"]["parent"]["before_digest"] == hashlib.sha256(
+        b"1234"
+    ).hexdigest()
+
+
+def test_stop_then_resume_v1_native_raw_identity_fields_are_not_authoritative():
+    evidence = PROBE["sanitize_native_task_lifecycle_event"](
+        {
+            "type": "system",
+            "subtype": "task_notification",
+            "task_type": "local_agent",
+            "status": "completed",
+            "record_schema": "native-task-observation-v1",
+            "session_id_seen": True,
+            "session_id_digest": hashlib.sha256(b"forged-session").hexdigest(),
+            "task_id_seen": True,
+            "task_id_digest": hashlib.sha256(b"forged-task").hexdigest(),
+            "uuid_seen": True,
+            "uuid_digest": hashlib.sha256(b"forged-event").hexdigest(),
+            "body": {
+                "session_id": "nested-session",
+                "task_id": "nested-task",
+            },
+        },
+        phase="source/drain",
+        observation_sequence=1,
+    )
+
+    assert evidence["session_id_seen"] is False
+    assert evidence["task_id_seen"] is False
+    assert evidence["event_uuid_seen"] is False
+    assert evidence["correlation_class"] == "live-or-unresolved"

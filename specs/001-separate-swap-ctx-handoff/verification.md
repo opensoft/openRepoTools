@@ -71,6 +71,90 @@ Final strict OpenSpec validation and `git diff --check` passed. Probe/test
 hashes remained unchanged. The original evidence manifest was verified after
 copying the private artifacts to durable state; see `live-validation.md`.
 
+### Startup-event/history follow-up: test-first baseline
+
+Checkpoint `6c3cbfa` was committed and pushed before this follow-up began.
+Sol froze the five new diagnostic tests and ran
+`tests/run.sh --parallel-safe -k 'native_task_evidence or history_integrity'`:
+**5 failed, 2,253 deselected**. Two failures were the absent lifecycle-sanitizer
+helper; three were the absent history-integrity helper. This is the expected
+red phase, not runtime or release evidence. Source and mode manifests matched
+before/after; the probe retained the previous candidate hash.
+
+Private artifact basename: `openrepotools-sol-t003-t004-red.8NeqDc`.
+Test SHA-256: `d338c5b9b0338f680ec3f6a393c78dae3f336503f760dfc6f22f1bd9ece99f63`.
+JUnit SHA-256: `3eab6adad45f55750e5939c6246199547f4f75b3f56873b2d5a5722827a06f0e`.
+The first frozen implementation passed **124 tests, 2,140 deselected** across
+both probe modules, but static review rejected it for unwired runtime history
+discovery, unbounded/racy file reads, overly broad identity extraction,
+correlation against preceding target rather than source events, and a history
+snapshot taken after the optional query. Passing helper tests did not establish
+the actual observation path. No runtime experiment used that candidate.
+
+Superseded candidate probe SHA-256:
+`98776f4a4f5fb7467b1ef23f34eef9a5d2c6780a3d2397f8e4e61ea7b80a9b7f`;
+test SHA-256: `6a11737e3352aa886b95427853e8ae22b4a48e7d4d477c39125e138bd0c28ce7`.
+Private artifact basename: `openrepotools-sol-t003-t004-green.sVG97I`.
+JUnit SHA-256: `16b8eae7dd0cf5e8a0e2214db5ecba59fa556897bce8e91c7d6bf5d6e6021d1d`.
+Source and mode manifests matched before/after.
+
+The next frozen candidate reported **131 passed, 1 failed, 2,140 deselected**.
+The failing directory-entry-limit fixture expected `scan-overflow` but observed
+`missing-parent`; source and mode manifests again matched. Static review also
+required an immutable source-terminal correlation reference and separate source
+event completeness from target replay classification. No runtime probe used
+this intermediate candidate either.
+
+Intermediate probe SHA-256:
+`a3851a4ba3383559ee2dea46cf166b131dbe0492640b340bbad6fbc77fbcbda1`;
+test SHA-256: `f923c77aa470bf9a243e253ff34b725063fe324f34bcbedeb660a3274b71f015`.
+Private artifact basename: `openrepotools-sol-t003-t004-corrected.G6LyTf`.
+JUnit SHA-256: `81feec8846acc887b76202835b2c9874eb12b0fc1d4c8fba67792f6f0de0894d`.
+A subsequent frozen diagnostic passed **134 tests, 2,140 deselected** in
+12.97 seconds, with identical pre/post content and mode manifests. Review
+confirmed the path, seed and snapshot corrections but required one final
+sidecar-attribution fix: absent expected linkage must not promote candidate
+child bytes to observed. This candidate was not runtime-tested.
+
+Intermediate probe SHA-256:
+`2ada9b98f433d40a8897c9b0389f818dfe3ee6a020b79767cf88fc0199313699`;
+test SHA-256: `9e0a3051f48249eb6db710348a3b68f924604d5b3f7fa99303a8b45943477924`.
+Private artifact basename: `openrepotools-sol-t003-t004-final.jQVIcq`.
+JUnit SHA-256: `15dd3ab76f558751e862ce30f45e973cd358a3838872880cc3ddd90d1b9dbe69`.
+### Final startup-event/history diagnostic
+
+The final sidecar-attribution correction passed **137 tests, 2,140 deselected**
+in 12.35 seconds through the same frozen two-module diagnostic selector.
+Content and mode manifests matched before/after. Root inspected the final
+linkage correction following Astra's qualified approval for isolated execution;
+OpenSpec strict validation and `git diff --check` passed.
+
+- Probe SHA-256: `6d934b044939c9a01c54f333a4c9c2b77a1219fad55adf312d1ac7426fa1d53d`.
+- Test SHA-256: `ad86a7090baeea1280c212959b0fba9eae51bdfa26f397ea2c5c72a4da5df9b7`.
+- JUnit SHA-256: `a46dd0b760b52ced86375736fab98a0a92b5e08a410584baef7ff6a28beeb42f`.
+
+Sol then ran one explicit-release arm against the unchanged runtime/image pins
+and isolation. The startup event was `task_notification/stopped`, matching the
+source terminal's session/task digests. Its tool-use ID was absent while the
+source supplied one; agent identity was absent and the event UUID differed.
+The immutable source seed was observation 4. These facts remain
+`live-or-unresolved`, not exact replay or child recovery. UUID difference alone
+is not the unresolved-join reason. The extra history query remained blocked.
+
+The measured parent and candidate-child original byte prefixes survived both
+stop and startup. The candidate child is still unattributed, and stored bytes
+do not prove runtime loading. Parent termination remained harness-enforced;
+complete source containment and actual accounts remain unverified. Detailed
+sizes, boundaries and report hashes are in [live-validation.md](live-validation.md).
+
+Durable private artifact basename: `openrepotools-sol-t003-t004-sidecar.e63Nfv`.
+Artifact manifest SHA-256:
+`f616066d799bd6da4dfec016c3a3e057eea9096ee1d6a06de8bf4ed11352360e`.
+The copy was manifest-verified, with directories `0700` and files `0600`.
+This completes the bounded diagnostic follow-up, not whole T003/T004 or release
+acceptance. The full serialized/platform/legacy suites were not rerun, public
+v1 remains unimplemented, and no installation or production activation occurred.
+
 ### Deferred native unenroll correction (static review)
 
 Astra identified three native/legacy mismatches to cover in T014/T024: the

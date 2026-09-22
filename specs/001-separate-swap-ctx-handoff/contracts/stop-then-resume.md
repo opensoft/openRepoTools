@@ -103,3 +103,28 @@ This fixture can establish ordering and scoped observations, not actual-account
 support or unrestricted complete host containment. Its report always carries
 `support_claim: false`. Authenticate no account, switch no real profile, and
 activate no live lane on the strength of this experiment.
+
+### Startup-event and stored-history diagnostic follow-up
+
+The first release arm observed a startup task event and therefore skipped its
+history query. Under T003/T004, capture bounded, sanitized lifecycle facts:
+observed event kind/status, digested native identities, local observation order,
+and source/target identity matches only where those fields actually exist.
+Missing, ambiguous or truncated observations remain explicit. Never log event
+bodies, transcript text, raw identifiers or local history paths.
+
+Observe the source history while active, again after source exclusion before
+target creation, and after the bounded startup observation before cleanup.
+Attribute parent/child histories only through observed identity/link evidence;
+filename-only matches remain candidates. Record bounded content
+integrity and, where history legitimately grows, preservation of the original
+byte prefix. An unreadable, missing, changed, oversized or uncorrelated history
+is not preserved by assumption. Stored bytes remaining intact does not prove
+the runtime loaded them or resumed the associated child.
+
+Keep the existing sticky startup-activity gate: even a source-correlated
+terminal notification does not prove all restored work has been reconciled.
+This diagnostic adds no history query, restart, launch retry, production
+capability or automatic release permission. A safe progression rule requires
+separate authoritative evidence; this observation slice cannot supply one by
+relabeling a task event.

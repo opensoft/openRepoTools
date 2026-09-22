@@ -88,6 +88,66 @@ preparation/release/recovery, complete source-domain evidence and child/history
 reconciliation remain outstanding. No new target-held/orphan-clear obligation
 is imposed on v1 by this inconclusive result.
 
+### Startup-event/history follow-up: measured preservation, unresolved recovery
+
+The final follow-up passed **137 focused tests** before one explicit-release
+arm ran against the same SDK `0.2.153`, CLI `2.1.273` and immutable image above.
+Isolation and cleanup were verified again: dummy credentials, no network or
+host mounts, read-only root, bounded resources, and removal of only the owned
+sandbox. No other runtime arm, real account, install or busy-parent variation
+was run in this follow-up. Previous negative/withheld arms remain historical.
+
+Source events were `task_started`, `task_progress`, `task_updated`, then
+`task_notification/stopped`. The target emitted one startup
+`task_notification/stopped`. Its session/task digests match source terminal
+observation 4, but its tool-use ID is absent where the source supplied one.
+Neither event supplies an agent ID, and their event UUIDs differ. The recorder
+uses the immutable source terminal as its comparison reference and reports
+`live-or-unresolved`; the matching task/status does not prove complete recovery
+or no pending work. Different UUIDs alone do not establish that classification.
+
+History is discovered under the pinned runtime's `config/projects/<project>/`
+layout, with bounded no-follow regular-file reads and structural metadata only.
+Each prefix comparison covers the complete accepted earlier file, not just its
+first few kilobytes. Reads exceeding the 64-KiB per-file cap remain unknown.
+
+| Boundary | Parent, observed session link | Candidate child, unattributed |
+| --- | --- | --- |
+| Active source → source excluded/pre-release | 52,974 → 52,974 bytes; content unchanged | 7,562 → 32,580 bytes; original 7,562-byte prefix preserved |
+| Pre-release → post-startup, before query/cleanup | 52,974 → 55,317 bytes; original 52,974-byte prefix preserved | 32,580 → 32,580 bytes; content unchanged |
+
+These observations establish bounded storage preservation only. The child file
+does not have a proven native identity join; neither row proves loaded context
+or resumed execution. The saved edit remained unchanged. Exact parent session
+identity was observed, but the startup event kept the extra history query
+blocked (`history_query_count: 0`), so restoration remains **inconclusive** and
+`support_claim: false`.
+
+The scripted endpoint received four source-setup requests, zero source-drain
+requests and zero target requests. The continuous control-entry epoch and busy
+arm were not enabled; this is not a full-interval no-inference or quota test.
+Native interrupt/child/tool terminal facts remain separate from
+`pg_kill_observed: true`: the harness excluded the parent, and
+`source_termination_task_completed: false` forbids calling termination task
+completion. Source scope is still `tracked-fixture-only`.
+
+Durable private evidence:
+`${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools/diagnostics/openrepotools-sol-t003-t004-sidecar.e63Nfv`.
+`commands.txt` records exact invocations; copy manifests and private modes were
+verified. Final probe/test/JUnit hashes are in [verification.md](verification.md).
+
+- Runtime report SHA-256: `de026a8f6d175e0aef916cc209d0de809f59d1a9cfb6db9d6648fd0ff3be2f1a`.
+- Lifecycle/history report SHA-256: `4eb95ab22fc7162d610d07a9c13ba4efab768ca97c26faba5550c998ac3a75bc`.
+- Stop-facts report SHA-256: `768cffedc5d477373bdfa6587e5cd6734345fca6b3771c895510acb521d10684`.
+- Artifact manifest SHA-256: `f616066d799bd6da4dfec016c3a3e057eea9096ee1d6a06de8bf4ed11352360e`.
+
+Next required evidence is an authoritative source task/tool/agent-to-history
+join and bounded post-release reconciliation that can account for startup work,
+alongside a supported complete source-containment domain. Do not remove the
+startup guard based on a matching stopped notification or preserved files.
+Public preparation/release/recovery, native unenroll, broad regressions and
+deployment gates remain outstanding.
+
 ## 2026-09-21 pinned-runtime feasibility audit (strict mode)
 
 September 22 architecture recheck: Astra verified the same installed SDK

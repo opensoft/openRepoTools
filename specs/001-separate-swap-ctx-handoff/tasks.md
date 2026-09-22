@@ -91,6 +91,14 @@ tasks remain scoped to their recorded snapshots and do not accept v1 behavior.
   native child/tracked shell, source observations, delayed target creation,
   exact after-release resume and unknown-effect refusal. Preserve all existing
   probe semantics and keep `support_claim: false`.
+  The first experiment is recorded at checkpoint `6c3cbfa`; its follow-up is
+  bounded sanitized startup-event correlation and parent/child stored-history
+  integrity evidence under the same contract. Preserve the startup-activity
+  guard and distinguish bytes retained from history actually loaded. Neither
+  diagnostic closes these tasks or authorizes public lifecycle integration.
+  That follow-up is implemented and measured in `verification.md`: 137 focused
+  tests plus one isolated release run, preserved bounded prefixes, unresolved
+  native joins and restoration. The startup query guard remains unchanged.
 - T009–T014: after the experiment establishes the required seams, implement
   and test stored mode routing, source proof, immutable history manifest,
   `ready-to-resume`, durable release-before-launch, SDK release-authorized

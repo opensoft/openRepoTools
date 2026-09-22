@@ -24,6 +24,18 @@ Do not remove the task-event guard or revive strict held-load requirements to
 make this result look successful. Correlate the event/history and establish
 the supported source containment domain before public integration.
 
+Follow-up checkpoint: the startup-event/history diagnostic now passes **137
+focused tests** and has one new isolated release run. Startup reported a stopped
+task matching source session/task, but omitted the source's tool-use identity;
+agent identity remains absent. Parent and candidate-child original file prefixes
+were preserved. Candidate child attribution, exact runtime loading and complete
+source containment remain unproven, and the query guard stayed closed. See the
+final hashes and durable `openrepotools-sol-t003-t004-sidecar.e63Nfv` evidence in
+`verification.md` and `live-validation.md`. No more diagnostic helper work is
+needed merely to repeat this observation: next establish authoritative native
+identity/history joins and post-release reconciliation, with the source-domain
+proof still required. Public v1 and activation remain blocked.
+
 ## 2026-09-21 takeover
 
 Published checkpoint: `5e940f00ec4b1d82dc9be0510b94b881316db631` on

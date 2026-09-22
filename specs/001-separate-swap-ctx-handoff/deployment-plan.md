@@ -31,6 +31,15 @@ and correlate startup child/history evidence, then implement the public
 mode-specific lifecycle. No public option, production activation or deployment
 is claimed by the probe.
 
+The startup-event/history follow-up is also implemented and measured: **137
+focused tests** pass, and the new isolated release run preserved the measured
+history prefixes. The startup stopped notification matches source session/task
+but lacks the source tool-use join; child identity and runtime restoration stay
+unverified. Continue with authoritative joins, startup reconciliation and source
+containment, not another uninstrumented quiet-window run. Evidence is in
+`live-validation.md`; the public lifecycle and downstream release gates remain
+unchanged.
+
 ## Earlier September 22 execution sequence (strict mode)
 
 The user requested implementation of the completion/deployment plan on
