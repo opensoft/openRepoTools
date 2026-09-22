@@ -1,5 +1,18 @@
 # Design: Native Claude Subagent Session Operations
 
+## Current mode-specific amendment
+
+The approved [stop-then-resume-v1 decision](stop-then-resume-decision.md)
+introduces a distinct opt-in path: prepare and safely stop the source, retain
+claims, report `ready-to-resume` without creating a target, then persist explicit
+release authority before exact target resume. Read the linked
+[v1 contract](../../../specs/001-separate-swap-ctx-handoff/contracts/stop-then-resume.md)
+for ordering, recovery and proof obligations. All held-target and six-stage
+flows below remain strict mode, not an implementation shortcut for v1.
+Neither omission of a mode nor an old record selects v1. The first delivery
+gate is its own bounded pinned-runtime experiment, not reuse of a probe that
+starts the target before release.
+
 ## Context
 
 The shipped lane workflow couples account swap, context reset, and semantic

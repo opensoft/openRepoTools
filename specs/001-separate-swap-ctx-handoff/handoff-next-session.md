@@ -1,5 +1,29 @@
 # Swap rebuild — implementation handoff
 
+## Current September 22 direction
+
+The approved [stop-then-resume-v1 decision](../../openspec/changes/separate-swap-ctx-handoff/stop-then-resume-decision.md)
+and [contract](contracts/stop-then-resume.md) supersede the strict-only scheduling
+below. Work stays in this feature/worktree with Astra architecture, Sol High
+sole test execution, and Luna Max implementation. Implement the bounded v1
+experiment before broad public lifecycle changes; target creation must happen
+only after explicit release. Preserve strict-mode evidence and old records.
+The independent native unenroll ownership-conflict fix remains in scope.
+Current results and concrete blockers belong in `verification.md` and
+`live-validation.md`; no installation or live canary is implied.
+
+V1 checkpoint: its probe and regression tests are implemented. The frozen
+candidate passed 113 focused tests, then ran explicit-release, unknown-effect
+and withheld-release arms against SDK 0.2.153 / CLI 2.1.273. Release ordering,
+saved-edit preservation and refusals were observed. A startup task event blocked
+the extra history query; exact parent history and native child recovery remain
+unproven. Parent termination was harness-enforced, not natural graph shutdown.
+Use the final hashes and scope in `verification.md`; the public v1 lifecycle,
+unenroll correction, broad regression gates and installation remain undone.
+Do not remove the task-event guard or revive strict held-load requirements to
+make this result look successful. Correlate the event/history and establish
+the supported source containment domain before public integration.
+
 ## 2026-09-21 takeover
 
 Published checkpoint: `5e940f00ec4b1d82dc9be0510b94b881316db631` on

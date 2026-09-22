@@ -3,7 +3,93 @@
 Status: **INCOMPLETE — LIVE UNVERIFIED**. A written implementation, reviewed
 slice, or passing fake test is not full acceptance. `tasks.md` remains the
 implementation task authority; this document identifies the evidence needed
-to close the feature without reducing its scope.
+to close the feature against its approved, explicitly versioned contracts.
+
+## September 22 approved stop-then-resume tranche
+
+The [v1 decision](../../openspec/changes/separate-swap-ctx-handoff/stop-then-resume-decision.md)
+supersedes the earlier keep-all-target-guarantees direction only for a new
+explicit mode. No target process is created before release; preparation is
+`ready-to-resume`, not restored-and-held. Strict mode and existing records
+retain their evidence gates. Source containment, history, claims and unknown
+effects remain safety requirements in both modes.
+
+Implementation begins with a distinct isolated runtime fixture under T003/T004.
+The independent native unenroll correction under T014/T024 was inspected but
+deferred to keep the first v1 experiment on the critical path. Existing
+focused results below remain a baseline, not results of these new changes.
+Broad release tests, real accounts, production activation and installation
+remain unverified; no checkbox is closed by this governance amendment.
+
+### V1 test-first baseline
+
+Sol ran the frozen probe-only diagnostic through
+`tests/run.sh --parallel-safe -k test_lane_managed_loopback_probe` with private
+JUnit output. Result: **61 passed, 2 failed, 2,172 deselected, 5.92 seconds**.
+Both new tests failed on the expected missing `StopThenResumeV1Ledger` in the
+unchanged harness. This is red-phase evidence, not acceptance or a runtime run.
+Pre/post source and mode manifests matched. Private artifact basename:
+`openrepotools-sol-v1-probe-red.Yidz4g` in the bench temporary directory.
+JUnit SHA-256:
+`cf7434f101215c406395e060c709b4ea87e2d077bc01147253f420508b73be79`.
+
+An intermediate frozen diagnostic selected both loopback and Gate 0 probe tests:
+**99 passed, 2,140 deselected, 7.27 seconds**. Pre/post content and mode manifests
+matched; private artifact basename `openrepotools-sol-v1-probe-mid.clZCSn`.
+JUnit SHA-256:
+`a9175556c4c1550551d09190a7d4b51e16773231468cf165b4e0f77d3930d7bb`.
+This precedes fixes for unknown process observations, source parser uncertainty,
+negative-arm baseline validity and directory-sync failure. It is not the final
+candidate or runtime evidence.
+
+### Frozen v1 candidate and bounded runtime results
+
+Final focused diagnostic:
+`tests/run.sh --parallel-safe -k 'test_lane_managed_loopback_probe or test_lane_managed_probe'`
+with private JUnit output: **113 passed, 2,140 deselected, 5.57 seconds**.
+Content and mode manifests matched before/after. This includes the source
+truncation/read-failure gate correction after the 112-pass pre-correction
+snapshot; only the final hashes below identify the runtime-tested candidate.
+
+- Probe SHA-256: `a77f6df765e032fcc815942d6c9ba28af09d4888ca01527fde2827f999cb077b`.
+- Test SHA-256: `b6aa64f7395948b0eb32ce311e0d33a14672029c1418a55659c96d3cadf22e49`.
+- JUnit SHA-256: `bad514dee853f9e1226b94dd9e467b125951daacaee1d2bcde9bb9d5f66d76c9`.
+
+The [three isolated runtime arms](live-validation.md) demonstrate persisted
+release-before-target ordering, saved-edit preservation, an otherwise-valid
+unknown-effect refusal and no target without release. The release arm observed
+the same parent session UUID, but a startup task event caused the history query
+to be skipped; restoration remains **inconclusive**. Native child/tool/sleeper
+stop observations are separate from harness-enforced parent termination.
+Complete source containment, parent/child history restoration and actual
+accounts remain unverified. The public v1 lifecycle is not implemented or
+enabled. This completes a bounded T003/T004 investigation slice only, not those
+whole tasks or T027–T032 acceptance. Native unenroll and the historical broad
+regression failures remain open; the full serialized/platform/legacy gates
+were not rerun. The preexisting bootstrap directories remain untouched.
+Final strict OpenSpec validation and `git diff --check` passed. Probe/test
+hashes remained unchanged. The original evidence manifest was verified after
+copying the private artifacts to durable state; see `live-validation.md`.
+
+### Deferred native unenroll correction (static review)
+
+Astra identified three native/legacy mismatches to cover in T014/T024: the
+legacy claim helper omits native lineage/child-worktree claims; recovery's
+legacy claim-index matcher can mistake native claims for absent ones; and
+removing the coordinator while retaining live native context can fail reload
+with `native context coordinator changed`. The last is a concrete candidate
+for the recorded CLI failure, not a freshly reproduced diagnosis.
+
+The bounded repair needs exact claim snapshots and stop/effect proof before
+any release, durable child-worktree-before-lineage progress, preserved source
+history before workspace authority is removed, and atomic retirement of live
+native records before coordinator removal. Native state release APIs are not
+idempotent; recovery must reconcile the exact persisted intent and index,
+not catch-and-ignore a second release. Final daemon cleanup must preserve or
+restore the exact discovery endpoint if the same owner remains after a failed
+clear; read back mutation-succeeded/journal-failed cases before restoration.
+Never recreate a cleared owner or overwrite a changed endpoint. These changes
+and their crash-window tests are not yet implemented in this tranche.
 
 ## September 22 continuation baseline and release disposition
 
@@ -32,7 +118,7 @@ Content/mode manifests were unchanged before/after, respectively
 `26b0107daea7c28300686115d93d523d0ff57c5da4fdfba26d3812e138c8dedc` and
 `e86386105b42d952b5125bf50d357f5bb19931e66d8c762ecacaa294fb89b307`.
 Private evidence is in `py-bench` under
-`/home/brett/.local/state/openRepoTools/takeovers/2026-09-21-swap-ctx-handoff/sol-routing-focused-100p3f.ARyzUK`.
+`${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools/takeovers/2026-09-21-swap-ctx-handoff/sol-routing-focused-100p3f.ARyzUK`.
 An earlier positional-selector invocation unintentionally selected the whole
 suite and was terminated; it supplies no acceptance result. The completed
 diagnostic used the wrapper's bounded `-k` selector.

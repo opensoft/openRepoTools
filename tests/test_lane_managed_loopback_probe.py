@@ -1620,3 +1620,550 @@ def test_safe_event_keeps_only_sanitized_identity_and_status_fields():
 
 def test_safe_event_classifies_malformed_frame_without_retaining_content():
     assert PROBE["safe_event"]("private raw frame") == {"frame": "unparsed"}
+
+
+def test_stop_then_resume_v1_requires_persisted_release_before_target_creation(tmp_path):
+    ledger = PROBE["StopThenResumeV1Ledger"](tmp_path / "workspace")
+    parent_identity = {
+        "session_id": "parent-session-1",
+        "result_uuid_digest": "source-result-digest",
+    }
+    prepared = ledger.prepare(
+        parent_identity=parent_identity,
+        pre_stop_history={"watermark": 7, "record_digest": "history-digest"},
+    )
+
+    assert prepared["mode"] == "stop-then-resume-v1"
+    assert prepared["phase"] == "preflight"
+    assert prepared["target_created"] is False
+    assert ledger.snapshot()["request_identity"]["mode"] == "stop-then-resume-v1"
+    assert ledger.snapshot()["operation_metadata"]["mode"] == "stop-then-resume-v1"
+
+    with pytest.raises(RuntimeError, match="release-authorized"):
+        ledger.record_target_facts(
+            parent_identity=parent_identity,
+            retained_history=True,
+            edit_hash=prepared["edit_hash"],
+        )
+    assert ledger.snapshot()["target_created"] is False
+
+    ledger.record_source_facts(
+        native={
+            "interrupt_sent": True,
+            "interrupt_receipt": True,
+            "child_terminal": True,
+            "tool_terminal": True,
+            "unknown_effects": [],
+        },
+        harness={
+            "parent_process_exited": True,
+            "tracked_processes_excluded": True,
+            "pg_kill_observed": True,
+        },
+    )
+    release = ledger.request_release(explicit=True)
+
+    assert release["authorized"] is True
+    assert release["release_persisted"] is True
+    assert ledger.release_path.exists()
+    assert ledger.snapshot()["target_created"] is False
+    assert ledger.record_launch_intent()["target_launch_intent_persisted"] is True
+
+    ledger.record_target_facts(
+        parent_identity={
+            "session_id": "parent-session-1",
+            "result_uuid_digest": "different-target-event",
+        },
+        retained_history=True,
+        edit_hash=prepared["edit_hash"],
+        result_identity_observed=True,
+    )
+    report = ledger.report()
+
+    assert report["restoration_verdict"] == "positive"
+    assert report["exact_parent_identity"] == "observed"
+    assert report["pre_stop_history_retained"] == "observed"
+    assert report["retained_history_scope"] == "parent-boundary-markers-only"
+    assert report["child_history_retained"] == "unverified"
+    assert report["edit_unchanged"] is True
+    assert report["source_native_facts"] != report["harness_cleanup_facts"]
+    assert report["source_termination_task_completed"] is False
+    assert report["support_claim"] is False
+
+
+def test_stop_then_resume_v1_explicit_release_refuses_unknown_effect_without_target(tmp_path):
+    ledger = PROBE["StopThenResumeV1Ledger"](tmp_path / "workspace")
+    parent_identity = {"session_id": "parent-session-2"}
+    ledger.prepare(
+        parent_identity=parent_identity,
+        pre_stop_history={"watermark": 11, "record_digest": "history-digest"},
+    )
+    ledger.record_source_facts(
+        native={
+            "interrupt_sent": True,
+            "interrupt_receipt": True,
+            "child_terminal": True,
+            "tool_terminal": True,
+            "unknown_effects": ["untracked-writer"],
+        },
+        harness={
+            "parent_process_exited": True,
+            "tracked_processes_excluded": True,
+            "pg_kill_observed": True,
+        },
+    )
+
+    refusal = ledger.request_release(explicit=True)
+    report = ledger.report()
+
+    assert refusal["release_requested"] is True
+    assert refusal["authorized"] is False
+    assert refusal["reason_code"] == "unknown-effects"
+    assert refusal["release_persisted"] is False
+    assert refusal["ready_to_resume"] is False
+    assert refusal["target_creation_authorized"] is False
+    assert report["target_created"] is False
+    assert report["restoration_verdict"] == "inconclusive"
+    assert report["reason_codes"] == ["unknown-effects"]
+    assert report["support_claim"] is False
+
+
+def test_stop_then_resume_v1_wrong_parent_identity_is_inconclusive(tmp_path):
+    ledger = PROBE["StopThenResumeV1Ledger"](tmp_path / "workspace")
+    source_identity = {"session_id": "parent-session-3"}
+    ledger.prepare(
+        parent_identity=source_identity,
+        pre_stop_history={"watermark": 13},
+    )
+    ledger.record_source_facts(
+        native={
+            "interrupt_sent": True,
+            "interrupt_receipt": True,
+            "child_terminal": True,
+            "tool_terminal": True,
+            "unknown_effects": [],
+        },
+        harness={
+            "parent_process_exited": True,
+            "tracked_processes_excluded": True,
+            "pg_kill_observed": True,
+        },
+    )
+    assert ledger.request_release(explicit=True)["authorized"] is True
+    assert ledger.record_launch_intent()["target_launch_intent_persisted"] is True
+
+    ledger.record_target_facts(
+        parent_identity={"session_id": "different-parent"},
+        retained_history=True,
+        edit_hash=ledger.snapshot()["edit_hash"],
+        result_identity_observed=True,
+    )
+    report = ledger.report()
+
+    assert report["restoration_verdict"] == "inconclusive"
+    assert report["exact_parent_identity"] == "unknown"
+    assert report["pre_stop_history_retained"] == "observed"
+    assert report["support_claim"] is False
+
+
+def test_stop_then_resume_v1_missing_retained_history_is_inconclusive(tmp_path):
+    ledger = PROBE["StopThenResumeV1Ledger"](tmp_path / "workspace")
+    parent_identity = {"session_id": "parent-session-4"}
+    ledger.prepare(
+        parent_identity=parent_identity,
+        pre_stop_history={"watermark": 17},
+    )
+    ledger.record_source_facts(
+        native={
+            "interrupt_sent": True,
+            "interrupt_receipt": True,
+            "child_terminal": True,
+            "tool_terminal": True,
+            "unknown_effects": [],
+        },
+        harness={
+            "parent_process_exited": True,
+            "tracked_processes_excluded": True,
+            "pg_kill_observed": True,
+        },
+    )
+    assert ledger.request_release(explicit=True)["authorized"] is True
+    assert ledger.record_launch_intent()["target_launch_intent_persisted"] is True
+
+    ledger.record_target_facts(
+        parent_identity=parent_identity,
+        retained_history=False,
+        edit_hash=ledger.snapshot()["edit_hash"],
+        result_identity_observed=True,
+    )
+    report = ledger.report()
+
+    assert report["restoration_verdict"] == "inconclusive"
+    assert report["exact_parent_identity"] == "observed"
+    assert report["pre_stop_history_retained"] == "unknown"
+    assert report["support_claim"] is False
+
+
+def test_stop_then_resume_v1_rechecks_boundary_and_late_unknown_effect(tmp_path):
+    ledger = PROBE["StopThenResumeV1Ledger"](tmp_path / "workspace")
+    parent_identity = {"session_id": "parent-session-5"}
+    ledger.prepare(
+        parent_identity=parent_identity,
+        pre_stop_history={"watermark": 19},
+    )
+    ledger.record_source_facts(
+        native={
+            "interrupt_sent": True,
+            "interrupt_receipt": True,
+            "child_terminal": True,
+            "tool_terminal": True,
+            "unknown_effects": [],
+        },
+        harness={
+            "parent_process_exited": True,
+            "tracked_processes_excluded": True,
+            "pg_kill_observed": True,
+        },
+    )
+    assert ledger.request_release(explicit=True)["authorized"] is True
+    late_refusal = ledger.request_release(
+        explicit=True,
+        unknown_effect=True,
+    )
+
+    assert late_refusal["authorized"] is False
+    assert late_refusal["reason_code"] == "unknown-effects"
+    assert ledger.report()["restoration_verdict"] == "inconclusive"
+
+    state = json.loads(ledger.state_path.read_text(encoding="utf-8"))
+    state["source_parent_identity_digest"] = "tampered"
+    ledger.state_path.write_text(json.dumps(state), encoding="utf-8")
+    recovered = PROBE["StopThenResumeV1Ledger"](ledger.workspace)
+    report = recovered.report()
+
+    assert report["release_authorized"] is False
+    assert report["target_creation_authorized"] is False
+    assert report["restoration_verdict"] == "inconclusive"
+    assert report["support_claim"] is False
+
+
+def test_stop_then_resume_v1_recovery_rejects_tampered_history_binding(tmp_path):
+    ledger = PROBE["StopThenResumeV1Ledger"](tmp_path / "workspace")
+    ledger.prepare(
+        parent_identity={"session_id": "parent-session-6"},
+        pre_stop_history={"watermark": 23},
+    )
+    ledger.record_source_facts(
+        native={
+            "interrupt_sent": True,
+            "interrupt_receipt": True,
+            "child_terminal": True,
+            "tool_terminal": True,
+            "unknown_effects": [],
+        },
+        harness={
+            "parent_process_exited": True,
+            "tracked_processes_excluded": True,
+            "pg_kill_observed": True,
+        },
+    )
+    assert ledger.request_release(explicit=True)["authorized"] is True
+
+    state = json.loads(ledger.state_path.read_text(encoding="utf-8"))
+    state["operation_metadata"]["pre_stop_history_digest"] = "tampered"
+    ledger.state_path.write_text(json.dumps(state), encoding="utf-8")
+    recovered = PROBE["StopThenResumeV1Ledger"](ledger.workspace)
+
+    assert recovered.report()["release_authorized"] is False
+    assert recovered.report()["release_persisted"] is False
+    assert recovered.report()["restoration_verdict"] == "inconclusive"
+
+
+def _v1_history_gate_observation(**overrides):
+    observation = {
+        "initialize_succeeded": True,
+        "target_alive": True,
+        "session_identity_observed": False,
+        "session_identity_mismatch": False,
+        "resume_spec_bound": True,
+        "source_manifest_bound": True,
+        "parent_messages_since_launch": 0,
+        "child_messages_since_launch": 0,
+        "native_task_events": 0,
+        "startup_parent_result_observed": False,
+        "generic_startup_activity_observed": False,
+        "reader_error": False,
+        "unparsed_frames": 0,
+        "unclassified_lifecycle_events": 0,
+        "quiet_window_observed": True,
+    }
+    observation.update(overrides)
+    return observation
+
+
+@pytest.mark.parametrize(
+    ("name", "overrides", "reason"),
+    [
+        (
+            "parent-post",
+            {"parent_messages_since_launch": 1},
+            "startup-parent-message-observed",
+        ),
+        (
+            "child-post",
+            {"child_messages_since_launch": 1},
+            "startup-child-message-observed",
+        ),
+        (
+            "task-event",
+            {"native_task_events": 1},
+            "startup-task-event-observed",
+        ),
+        (
+            "activity-then-terminal",
+            {"generic_startup_activity_observed": True},
+            "startup-assistant-or-tool-activity-observed",
+        ),
+        (
+            "reader-error",
+            {"reader_error": True},
+            "startup-reader-error",
+        ),
+    ],
+)
+def test_stop_then_resume_v1_history_gate_skips_on_startup_activity(
+    name, overrides, reason
+):
+    del name
+    result = PROBE["assess_v1_history_query_gate"](
+        _v1_history_gate_observation(**overrides)
+    )
+
+    assert result["history_query_allowed"] is False
+    assert result["history_query_skipped"] is True
+    assert reason in result["reason_codes"]
+    assert result["support_claim"] is False
+
+
+def test_stop_then_resume_v1_history_gate_allows_one_quiet_query_without_echoed_uuid():
+    result = PROBE["assess_v1_history_query_gate"](
+        _v1_history_gate_observation()
+    )
+
+    assert result["history_query_allowed"] is True
+    assert result["history_query_skipped"] is False
+    assert result["quiet_window_observed"] is True
+    assert result["support_claim"] is False
+
+
+def test_stop_then_resume_v1_history_gate_rejects_observed_session_mismatch():
+    result = PROBE["assess_v1_history_query_gate"](
+        _v1_history_gate_observation(
+            session_identity_observed=True,
+            session_identity_mismatch=True,
+        )
+    )
+
+    assert result["history_query_allowed"] is False
+    assert "target-session-identity-mismatch" in result["reason_codes"]
+
+
+def test_owned_identity_observation_error_is_unknown_not_absent():
+    identity = {"pid": "not-a-pid", "starttime": "unknown"}
+
+    assert PROBE["_identity_status"](identity) == "unknown"
+    assert PROBE["fixture_processes_alive"]([identity]) is None
+
+
+def test_stop_then_resume_v1_source_reader_and_protocol_facts_block_release(tmp_path):
+    ledger = PROBE["StopThenResumeV1Ledger"](tmp_path / "workspace")
+    ledger.prepare(
+        parent_identity={"session_id": "parent-session-reader"},
+        pre_stop_history={"watermark": 29},
+    )
+    ledger.record_source_facts(
+        native={
+            "interrupt_sent": True,
+            "interrupt_receipt": True,
+            "child_terminal": True,
+            "tool_terminal": True,
+            "unknown_effects": [],
+            "read_failed": True,
+            "unparsed_frames": 1,
+            "protocol_errors": ["unexpected-messages-state"],
+        },
+        harness={
+            "parent_process_exited": True,
+            "tracked_processes_excluded": True,
+            "pg_kill_observed": True,
+        },
+    )
+
+    refusal = ledger.request_release(explicit=True)
+    report = ledger.report()
+
+    assert refusal["authorized"] is False
+    assert refusal["reason_code"] == "source-not-ready"
+    assert report["source_native_facts"]["read_failed"] is True
+    assert report["source_native_facts"]["unparsed_frames"] == 1
+    assert report["source_native_facts"]["protocol_errors"] == [
+        "unexpected-messages-state"
+    ]
+    assert report["target_created"] is False
+    assert report["support_claim"] is False
+
+
+def test_stop_then_resume_v1_unknown_effect_requires_valid_otherwise_arm(tmp_path):
+    ledger = PROBE["StopThenResumeV1Ledger"](tmp_path / "workspace")
+    ledger.prepare(
+        parent_identity={"session_id": "parent-session-negative"},
+        pre_stop_history={"watermark": 31},
+    )
+    ledger.record_source_facts(
+        native={
+            "interrupt_sent": True,
+            "interrupt_receipt": True,
+            "child_terminal": True,
+            "tool_terminal": True,
+            "unknown_effects": ["injected-unknown-effect"],
+            "read_failed": True,
+        },
+        harness={
+            "parent_process_exited": True,
+            "tracked_processes_excluded": True,
+            "pg_kill_observed": True,
+        },
+    )
+
+    refusal = ledger.request_release(explicit=True)
+    report = ledger.report()
+
+    assert refusal["authorized"] is False
+    assert refusal["reason_code"] == "unknown-effect-setup-inconclusive"
+    assert report["unknown_effect_baseline_valid"] is False
+    assert report["unknown_effect_refusal_demonstrated"] is False
+    assert report["reason_codes"] == ["unknown-effect-setup-inconclusive"]
+    assert report["target_created"] is False
+
+
+def test_stop_then_resume_v1_durability_failure_blocks_release_authorization(tmp_path):
+    ledger = PROBE["StopThenResumeV1Ledger"](tmp_path / "workspace")
+    ledger.prepare(
+        parent_identity={"session_id": "parent-session-durable"},
+        pre_stop_history={"watermark": 37},
+    )
+    ledger.record_source_facts(
+        native={
+            "interrupt_sent": True,
+            "interrupt_receipt": True,
+            "child_terminal": True,
+            "tool_terminal": True,
+            "unknown_effects": [],
+        },
+        harness={
+            "parent_process_exited": True,
+            "tracked_processes_excluded": True,
+            "pg_kill_observed": True,
+        },
+    )
+
+    def fail_sync(_path):
+        raise RuntimeError("durable directory sync failed")
+
+    ledger._sync_directory = fail_sync
+    with pytest.raises(RuntimeError, match="durable directory sync failed"):
+        ledger.request_release(explicit=True)
+
+    assert ledger.snapshot()["release_authorized"] is False
+    assert ledger.snapshot()["target_creation_authorized"] is False
+
+
+def test_stop_then_resume_v1_launch_intent_enters_starting_before_target_facts(tmp_path):
+    ledger = PROBE["StopThenResumeV1Ledger"](tmp_path / "workspace")
+    ledger.prepare(
+        parent_identity={"session_id": "parent-session-order"},
+        pre_stop_history={"watermark": 41},
+    )
+    ledger.record_source_facts(
+        native={
+            "interrupt_sent": True,
+            "interrupt_receipt": True,
+            "child_terminal": True,
+            "tool_terminal": True,
+            "unknown_effects": [],
+        },
+        harness={
+            "parent_process_exited": True,
+            "tracked_processes_excluded": True,
+            "pg_kill_observed": True,
+        },
+    )
+    assert ledger.request_release(explicit=True)["authorized"] is True
+    assert ledger.record_launch_intent()["phase"] == "target-starting"
+    assert ledger.snapshot()["target_created"] is False
+
+
+def test_stop_then_resume_v1_startup_activity_is_sticky_but_init_setup_is_allowed():
+    runtime = {
+        "init_request": "target-init",
+        "startup_observation_active": True,
+        "startup_activity_observed": False,
+        "startup_activity_kinds": [],
+        "startup_unclassified_lifecycle_count": 0,
+    }
+
+    PROBE["_observe_v1_startup_frame"](
+        {
+            "type": "control_response",
+            "response": {"request_id": "target-init", "subtype": "success"},
+        },
+        runtime,
+    )
+    assert runtime["startup_activity_observed"] is False
+
+    PROBE["_observe_v1_startup_frame"](
+        {"type": "assistant", "message": {"role": "assistant"}},
+        runtime,
+    )
+    PROBE["_observe_v1_startup_frame"](
+        {"type": "system", "subtype": "task_notification", "status": "completed"},
+        runtime,
+    )
+
+    assert runtime["startup_activity_observed"] is True
+    assert runtime["startup_activity_kinds"] == ["assistant"]
+
+
+def test_stop_then_resume_v1_truncated_observation_blocks_source_and_query_gates(tmp_path):
+    ledger = PROBE["StopThenResumeV1Ledger"](tmp_path / "workspace")
+    ledger.prepare(
+        parent_identity={"session_id": "parent-session-truncated"},
+        pre_stop_history={"watermark": 43},
+    )
+    ledger.record_source_facts(
+        native={
+            "interrupt_sent": True,
+            "interrupt_receipt": True,
+            "child_terminal": True,
+            "tool_terminal": True,
+            "unknown_effects": ["injected-unknown-effect"],
+            "read_failed": True,
+            "unparsed_frames": 0,
+            "protocol_errors": [],
+        },
+        harness={
+            "parent_process_exited": True,
+            "tracked_processes_excluded": True,
+            "pg_kill_observed": True,
+        },
+    )
+    refusal = ledger.request_release(explicit=True)
+    query_gate = PROBE["assess_v1_history_query_gate"](
+        _v1_history_gate_observation(reader_error=True)
+    )
+
+    assert ledger.snapshot()["ready_to_resume"] is False
+    assert refusal["reason_code"] == "unknown-effect-setup-inconclusive"
+    assert ledger.report()["unknown_effect_baseline_valid"] is False
+    assert query_gate["history_query_allowed"] is False
+    assert "startup-reader-error" in query_gate["reason_codes"]

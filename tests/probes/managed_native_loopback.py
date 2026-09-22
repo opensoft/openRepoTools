@@ -52,12 +52,689 @@ SOURCE_AGENT_TOOL_ID = "toolu-gate0-agent"
 SOURCE_TOOL_ID = "toolu-gate0-bash"
 SOURCE_PROMPT_MARKER = "Run the bounded native background worker."
 TARGET_RELEASE_MARKER = "Continue the bounded native worker after release."
+STOP_THEN_RESUME_V1 = "stop-then-resume-v1"
+V1_SAVED_EDIT = b"stop-then-resume-v1 deterministic saved edit\n"
 
 def digest(value: object) -> str | None:
     """Digest identifiers without retaining their values in evidence."""
     if value is None:
         return None
     return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+
+
+def _canonical_digest(value: object) -> str:
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _parent_identity_digest(identity: Mapping[str, object] | None) -> str | None:
+    """Bind equality to the observed session UUID, not a result event UUID."""
+    if not isinstance(identity, Mapping):
+        return None
+    session_id = identity.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        return None
+    return _canonical_digest({"session_id": session_id})
+
+
+class StopThenResumeV1Ledger:
+    """Small durable ledger for the opt-in stop-then-resume experiment.
+
+    This ledger deliberately keeps native source observations separate from
+    harness cleanup observations.  A process-group kill can be recorded as
+    cleanup evidence, but it cannot satisfy native completion or release
+    authorization by itself.
+    """
+
+    def __init__(self, workspace: Path):
+        self.workspace = Path(workspace)
+        self.state_path = self.workspace / ".stop-then-resume-v1.json"
+        self.release_path = self.workspace / ".stop-then-resume-v1.release.json"
+        self.edit_path = self.workspace / "saved-edit.txt"
+        self._state: dict[str, object] = {}
+        if self.state_path.exists():
+            self._state = json.loads(self.state_path.read_text(encoding="utf-8"))
+            self._reconcile_release_boundary()
+
+    @staticmethod
+    def _sync_directory(path: Path) -> None:
+        try:
+            directory_fd = os.open(path, os.O_RDONLY)
+        except OSError as exc:
+            raise RuntimeError("durable directory sync unavailable") from exc
+        try:
+            os.fsync(directory_fd)
+        except OSError as exc:
+            raise RuntimeError("durable directory sync failed") from exc
+        finally:
+            os.close(directory_fd)
+
+    def _persist(self) -> None:
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=str(self.workspace),
+            prefix=".stop-then-resume-v1.",
+            suffix=".tmp",
+            delete=False,
+        )
+        temporary_name = temporary.name
+        try:
+            os.chmod(temporary_name, 0o600)
+            json.dump(self._state, temporary, sort_keys=True, separators=(",", ":"))
+            temporary.flush()
+            os.fsync(temporary.fileno())
+            temporary.close()
+            os.replace(temporary_name, self.state_path)
+            self._sync_directory(self.workspace)
+        except BaseException:
+            temporary.close()
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
+            raise
+
+    def _reconcile_release_boundary(self) -> None:
+        if not self._state or not self.release_path.exists():
+            return
+        boundary = json.loads(self.release_path.read_text(encoding="utf-8"))
+        expected = self._release_boundary()
+        if (
+            boundary != expected
+            or not self._state.get("ready_to_resume")
+            or bool(self._state.get("unknown_effects"))
+            or not self._state.get("source_parent_identity_digest")
+            or not self._state.get("pre_stop_history_digest")
+        ):
+            self._state["phase"] = "indeterminate"
+            self._state["ready_to_resume"] = False
+            self._state["release_persisted"] = False
+            self._state["release_authorized"] = False
+            self._state["target_creation_authorized"] = False
+            self._state["reason_codes"] = ["release-boundary-mismatch"]
+            return
+        self._state["release_persisted"] = True
+        self._state["release_authorized"] = True
+        self._state["target_creation_authorized"] = not bool(
+            self._state.get("target_launch_intent_persisted")
+        )
+        if not self._state.get("target_created"):
+            self._state["phase"] = "release-authorized"
+
+    def _release_boundary(self) -> dict[str, object]:
+        return {
+            "mode": STOP_THEN_RESUME_V1,
+            "edit_hash": self._state.get("edit_hash"),
+            "request_identity_digest": _canonical_digest(
+                self._state.get("request_identity", {})
+            ),
+            "operation_metadata_digest": _canonical_digest(
+                self._state.get("operation_metadata", {})
+            ),
+            "source_parent_identity_digest": self._state.get(
+                "source_parent_identity_digest"
+            ),
+            "pre_stop_history_digest": self._state.get("pre_stop_history_digest"),
+            "source_facts_digest": _canonical_digest(
+                self._state.get("source_native_facts", {})
+            ),
+            "harness_facts_digest": _canonical_digest(
+                self._state.get("harness_cleanup_facts", {})
+            ),
+            "unknown_effects": list(self._state.get("unknown_effects", [])),
+        }
+
+    def _release_boundary_matches(self) -> bool:
+        if not self.release_path.exists():
+            return False
+        try:
+            return (
+                json.loads(self.release_path.read_text(encoding="utf-8"))
+                == self._release_boundary()
+            )
+        except (OSError, ValueError):
+            return False
+
+    def _copy_state(self) -> dict[str, object]:
+        return json.loads(json.dumps(self._state, sort_keys=True))
+
+    def prepare(
+        self,
+        *,
+        parent_identity: Mapping[str, object] | None = None,
+        pre_stop_history: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        if self._state:
+            return self.snapshot()
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        if self.edit_path.exists():
+            if self.edit_path.read_bytes() != V1_SAVED_EDIT:
+                raise RuntimeError("saved edit is not the deterministic v1 edit")
+        else:
+            self.edit_path.write_bytes(V1_SAVED_EDIT)
+        edit_hash = hashlib.sha256(self.edit_path.read_bytes()).hexdigest()
+        parent_digest = _parent_identity_digest(parent_identity)
+        history_digest = _canonical_digest(pre_stop_history) if pre_stop_history else None
+        self._state = {
+            "mode": STOP_THEN_RESUME_V1,
+            "phase": "preflight",
+            "request_identity": {
+                "mode": STOP_THEN_RESUME_V1,
+                "parent_identity_digest": parent_digest,
+            },
+            "operation_metadata": {
+                "mode": STOP_THEN_RESUME_V1,
+                "edit_hash": edit_hash,
+                "pre_stop_history_digest": history_digest,
+                "resume_arguments_digest": None,
+                "source_manifest_digest": None,
+            },
+            "edit_hash": edit_hash,
+            "pre_stop_history_digest": history_digest,
+            "source_parent_identity_digest": parent_digest,
+            "target_parent_identity_digest": None,
+            "source_result_event_uuid_digest": None,
+            "target_result_event_uuid_digest": None,
+            "target_result_identity_observed": False,
+            "source_native_facts": {},
+            "harness_cleanup_facts": {},
+            "unknown_effects": [],
+            "unknown_effect_baseline_valid": False,
+            "unknown_effect_refusal_demonstrated": False,
+            "ready_to_resume": False,
+            "release_requested": False,
+            "release_persisted": False,
+            "release_authorized": False,
+            "target_creation_authorized": False,
+            "target_created": False,
+            "target_launch_intent_persisted": False,
+            "retained_history_observed": False,
+            "retained_history_scope": "parent-boundary-markers-only",
+            "edit_unchanged": True,
+            "source_termination_task_completed": False,
+            "reason_codes": [],
+        }
+        self._persist()
+        return self.snapshot()
+
+    def record_pre_stop_facts(
+        self,
+        *,
+        parent_identity: Mapping[str, object],
+        pre_stop_history: Mapping[str, object],
+        result_uuid_digest: str | None = None,
+    ) -> dict[str, object]:
+        if not self._state:
+            raise RuntimeError("v1 ledger is not prepared")
+        parent_digest = _parent_identity_digest(parent_identity)
+        history_digest = _canonical_digest(pre_stop_history)
+        self._state["source_parent_identity_digest"] = parent_digest
+        self._state["pre_stop_history_digest"] = history_digest
+        self._state["source_result_event_uuid_digest"] = result_uuid_digest
+        request_identity = self._state["request_identity"]
+        assert isinstance(request_identity, dict)
+        request_identity["parent_identity_digest"] = parent_digest
+        operation_metadata = self._state["operation_metadata"]
+        assert isinstance(operation_metadata, dict)
+        operation_metadata["pre_stop_history_digest"] = history_digest
+        self._persist()
+        return self.snapshot()
+
+    def record_source_facts(
+        self,
+        *,
+        native: Mapping[str, object],
+        harness: Mapping[str, object],
+    ) -> dict[str, object]:
+        if not self._state:
+            raise RuntimeError("v1 ledger is not prepared")
+        unknown_effects = native.get("unknown_effects", [])
+        if not isinstance(unknown_effects, list):
+            unknown_effects = ["malformed-unknown-effects"]
+        unknown_effects = [str(effect) for effect in unknown_effects]
+        unparsed_frames = native.get("unparsed_frames", 0)
+        if type(unparsed_frames) is not int or unparsed_frames < 0:
+            unparsed_frames = -1
+        protocol_errors = native.get("protocol_errors", [])
+        if not isinstance(protocol_errors, list):
+            protocol_errors = ["malformed-protocol-errors"]
+        protocol_errors = [str(error) for error in protocol_errors]
+        read_failed = native.get("read_failed") is True
+        self._state["source_native_facts"] = {
+            "interrupt_sent": bool(native.get("interrupt_sent")),
+            "interrupt_receipt": bool(native.get("interrupt_receipt")),
+            "child_terminal": bool(native.get("child_terminal")),
+            "tool_terminal": bool(native.get("tool_terminal")),
+            "unknown_effects": unknown_effects,
+            "read_failed": read_failed,
+            "unparsed_frames": unparsed_frames,
+            "protocol_errors": protocol_errors,
+        }
+        self._state["harness_cleanup_facts"] = {
+            "parent_process_exited": bool(harness.get("parent_process_exited")),
+            "tracked_processes_excluded": bool(harness.get("tracked_processes_excluded")),
+            "pg_kill_observed": bool(harness.get("pg_kill_observed")),
+        }
+        self._state["unknown_effects"] = unknown_effects
+        native_complete = all(
+            bool(self._state["source_native_facts"].get(name))
+            for name in ("interrupt_sent", "interrupt_receipt", "child_terminal", "tool_terminal")
+        )
+        harness_excluded = all(
+            bool(self._state["harness_cleanup_facts"].get(name))
+            for name in ("parent_process_exited", "tracked_processes_excluded")
+        )
+        base_reasons: list[str] = []
+        if not native_complete:
+            base_reasons.append("source-native-terminal-proof-incomplete")
+        if not harness_excluded:
+            base_reasons.append("source-harness-exclusion-incomplete")
+        if not self._state.get("source_parent_identity_digest"):
+            base_reasons.append("source-parent-identity-not-observed")
+        if not self._state.get("pre_stop_history_digest"):
+            base_reasons.append("source-pre-stop-history-not-observed")
+        if read_failed:
+            base_reasons.append("source-read-failed")
+        if unparsed_frames != 0:
+            base_reasons.append("source-unparsed-frame-observed")
+        if protocol_errors:
+            base_reasons.append("source-protocol-error-observed")
+        baseline_valid = not base_reasons
+        self._state["unknown_effect_baseline_valid"] = baseline_valid
+        ready = bool(
+            native_complete
+            and harness_excluded
+            and self._state.get("source_parent_identity_digest")
+            and self._state.get("pre_stop_history_digest")
+            and not unknown_effects
+            and baseline_valid
+        )
+        self._state["ready_to_resume"] = ready
+        self._state["phase"] = "ready-to-resume" if ready else "indeterminate"
+        if not baseline_valid:
+            self._state["release_persisted"] = False
+            self._state["release_authorized"] = False
+            self._state["target_creation_authorized"] = False
+        if unknown_effects and baseline_valid:
+            self._state["release_persisted"] = False
+            self._state["release_authorized"] = False
+            self._state["target_creation_authorized"] = False
+            self._state["reason_codes"] = ["unknown-effects"]
+        elif base_reasons:
+            self._state["reason_codes"] = sorted(set(base_reasons))
+            if unknown_effects:
+                self._state["reason_codes"].append(
+                    "unknown-effect-setup-inconclusive"
+                )
+        self._persist()
+        return self.snapshot()
+
+    def bind_resume_spec(
+        self,
+        *,
+        resume_arguments: list[object],
+        source_manifest: Mapping[str, object],
+    ) -> dict[str, object]:
+        if not self._state:
+            raise RuntimeError("v1 ledger is not prepared")
+        arguments_digest = _canonical_digest(resume_arguments)
+        manifest_digest = _canonical_digest(source_manifest)
+        metadata = self._state["operation_metadata"]
+        assert isinstance(metadata, dict)
+        existing_arguments = metadata.get("resume_arguments_digest")
+        existing_manifest = metadata.get("source_manifest_digest")
+        if (
+            existing_arguments not in {None, arguments_digest}
+            or existing_manifest not in {None, manifest_digest}
+        ):
+            self._state["phase"] = "indeterminate"
+            self._state["reason_codes"] = ["resume-spec-mismatch"]
+            self._persist()
+            raise RuntimeError("resume specification changed")
+        metadata["resume_arguments_digest"] = arguments_digest
+        metadata["source_manifest_digest"] = manifest_digest
+        self._persist()
+        return self.snapshot()
+
+    def resume_spec_matches(
+        self,
+        *,
+        resume_arguments: list[object],
+        source_manifest: Mapping[str, object],
+    ) -> bool:
+        metadata = self._state.get("operation_metadata", {})
+        if not isinstance(metadata, Mapping):
+            return False
+        return bool(
+            metadata.get("resume_arguments_digest")
+            == _canonical_digest(resume_arguments)
+            and metadata.get("source_manifest_digest")
+            == _canonical_digest(source_manifest)
+        )
+
+    def request_release(
+        self,
+        *,
+        explicit: bool,
+        unknown_effect: bool = False,
+    ) -> dict[str, object]:
+        if not self._state:
+            raise RuntimeError("v1 ledger is not prepared")
+        self._state["release_requested"] = bool(explicit)
+        if not explicit:
+            self._persist()
+            return {
+                "release_requested": False,
+                "authorized": False,
+                "release_persisted": False,
+                "ready_to_resume": bool(self._state.get("ready_to_resume")),
+                "target_creation_authorized": False,
+                "reason_code": "explicit-release-required",
+            }
+        if unknown_effect and not self._state.get("unknown_effects"):
+            self._state["unknown_effects"] = ["unknown-effect-arm"]
+        if self._state.get("unknown_effects"):
+            self._state["ready_to_resume"] = False
+            self._state["phase"] = "indeterminate"
+            self._state["release_persisted"] = False
+            self._state["release_authorized"] = False
+            self._state["target_creation_authorized"] = False
+            if self._state.get("unknown_effect_baseline_valid"):
+                self._state["reason_codes"] = ["unknown-effects"]
+                self._state["unknown_effect_refusal_demonstrated"] = True
+                reason_code = "unknown-effects"
+            else:
+                self._state["reason_codes"] = [
+                    "unknown-effect-setup-inconclusive"
+                ]
+                reason_code = "unknown-effect-setup-inconclusive"
+            self._persist()
+            return {
+                "release_requested": True,
+                "authorized": False,
+                "release_persisted": False,
+                "ready_to_resume": False,
+                "target_creation_authorized": False,
+                "reason_code": reason_code,
+            }
+        if (
+            self._state.get("target_launch_intent_persisted")
+            and not self._state.get("target_created")
+        ):
+            self._state["phase"] = "indeterminate"
+            self._state["target_creation_authorized"] = False
+            self._state["reason_codes"] = ["target-launch-indeterminate"]
+            self._persist()
+            return {
+                "release_requested": True,
+                "authorized": False,
+                "release_persisted": bool(self._state.get("release_persisted")),
+                "ready_to_resume": False,
+                "target_creation_authorized": False,
+                "reason_code": "target-launch-indeterminate",
+            }
+        if self._state.get("release_authorized") and self.release_path.exists():
+            if self.release_path.read_text(encoding="utf-8") != json.dumps(
+                self._release_boundary(), sort_keys=True, separators=(",", ":")
+            ):
+                self._state["phase"] = "indeterminate"
+                self._state["ready_to_resume"] = False
+                self._state["release_persisted"] = False
+                self._state["release_authorized"] = False
+                self._state["target_creation_authorized"] = False
+                self._state["reason_codes"] = ["release-boundary-mismatch"]
+                self._persist()
+                return {
+                    "release_requested": True,
+                    "authorized": False,
+                    "release_persisted": False,
+                    "ready_to_resume": False,
+                    "target_creation_authorized": False,
+                    "reason_code": "release-boundary-mismatch",
+                }
+            self._persist()
+            return {
+                "release_requested": True,
+                "authorized": True,
+                "release_persisted": True,
+                "ready_to_resume": bool(self._state.get("ready_to_resume")),
+                "target_creation_authorized": bool(
+                    self._state.get("target_creation_authorized")
+                ),
+            }
+        if not self._state.get("ready_to_resume"):
+            self._state["phase"] = "indeterminate"
+            self._state["reason_codes"] = ["source-not-ready"]
+            self._persist()
+            return {
+                "release_requested": True,
+                "authorized": False,
+                "release_persisted": False,
+                "ready_to_resume": False,
+                "target_creation_authorized": False,
+                "reason_code": "source-not-ready",
+            }
+        boundary = self._release_boundary()
+        if self.release_path.exists():
+            existing = json.loads(self.release_path.read_text(encoding="utf-8"))
+            if existing != boundary:
+                self._state["phase"] = "indeterminate"
+                self._state["reason_codes"] = ["release-boundary-mismatch"]
+                self._persist()
+                return {
+                    "release_requested": True,
+                    "authorized": False,
+                    "release_persisted": False,
+                    "ready_to_resume": False,
+                    "target_creation_authorized": False,
+                    "reason_code": "release-boundary-mismatch",
+                }
+            self._sync_directory(self.workspace)
+        else:
+            with self.release_path.open("x", encoding="utf-8") as boundary_file:
+                os.chmod(self.release_path, 0o600)
+                json.dump(boundary, boundary_file, sort_keys=True, separators=(",", ":"))
+                boundary_file.flush()
+                os.fsync(boundary_file.fileno())
+            self._sync_directory(self.workspace)
+        self._state["release_persisted"] = True
+        self._state["release_authorized"] = True
+        self._state["target_creation_authorized"] = True
+        self._state["phase"] = "release-authorized"
+        self._state["reason_codes"] = []
+        self._persist()
+        return {
+            "release_requested": True,
+            "authorized": True,
+            "release_persisted": True,
+            "ready_to_resume": True,
+            "target_creation_authorized": True,
+        }
+
+    def record_launch_intent(self) -> dict[str, object]:
+        if not (
+            self._state.get("release_authorized")
+            and self._state.get("release_persisted")
+            and self._state.get("target_creation_authorized")
+            and self.release_path.exists()
+        ):
+            raise RuntimeError("target launch intent is not release-authorized")
+        if not self._release_boundary_matches():
+            self._state["phase"] = "indeterminate"
+            self._state["ready_to_resume"] = False
+            self._state["release_persisted"] = False
+            self._state["release_authorized"] = False
+            self._state["target_creation_authorized"] = False
+            self._state["reason_codes"] = ["release-boundary-mismatch"]
+            self._persist()
+            raise RuntimeError("release boundary is not current")
+        if self._state.get("target_launch_intent_persisted"):
+            return self.snapshot()
+        self._state["target_launch_intent_persisted"] = True
+        self._state["target_creation_authorized"] = False
+        self._state["phase"] = "target-starting"
+        self._persist()
+        return self.snapshot()
+
+    def record_target_facts(
+        self,
+        *,
+        parent_identity: Mapping[str, object],
+        retained_history: bool,
+        edit_hash: str | None,
+        result_uuid_digest: str | None = None,
+        result_identity_observed: bool = False,
+        retained_history_scope: str = "parent-boundary-markers-only",
+        target_created: bool = True,
+    ) -> dict[str, object]:
+        if target_created and not (
+            self._state.get("release_authorized")
+            and self._state.get("release_persisted")
+            and self.release_path.exists()
+            and self._state.get("target_launch_intent_persisted")
+            and self._release_boundary_matches()
+        ):
+            raise RuntimeError("target creation is not release-authorized")
+        self._state["target_created"] = bool(target_created)
+        self._state["target_parent_identity_digest"] = _parent_identity_digest(
+            parent_identity
+        )
+        self._state["target_result_event_uuid_digest"] = result_uuid_digest
+        self._state["target_result_identity_observed"] = bool(
+            result_identity_observed
+        )
+        self._state["retained_history_observed"] = bool(retained_history)
+        self._state["retained_history_scope"] = retained_history_scope
+        self._state["edit_unchanged"] = bool(edit_hash == self._state.get("edit_hash"))
+        if target_created:
+            self._state["phase"] = "released"
+        self._persist()
+        return self.snapshot()
+
+    def snapshot(self) -> dict[str, object]:
+        return self._copy_state()
+
+    def report(self) -> dict[str, object]:
+        current_edit_hash = None
+        if self.edit_path.exists():
+            current_edit_hash = hashlib.sha256(self.edit_path.read_bytes()).hexdigest()
+        edit_unchanged = current_edit_hash == self._state.get("edit_hash")
+        exact_parent_identity = bool(
+            self._state.get("source_parent_identity_digest")
+            and self._state.get("target_parent_identity_digest")
+            and self._state.get("source_parent_identity_digest")
+            == self._state.get("target_parent_identity_digest")
+        )
+        history_retained = bool(
+            self._state.get("pre_stop_history_digest")
+            and self._state.get("retained_history_observed")
+        )
+        boundary_matches = False
+        if self.release_path.exists():
+            try:
+                boundary_matches = (
+                    json.loads(self.release_path.read_text(encoding="utf-8"))
+                    == self._release_boundary()
+                )
+            except (OSError, ValueError):
+                boundary_matches = False
+        release_valid = bool(
+            self._state.get("release_authorized")
+            and self._state.get("release_persisted")
+            and self._state.get("target_launch_intent_persisted")
+            and boundary_matches
+            and not self._state.get("unknown_effects")
+        )
+        unknown_effects = list(self._state.get("unknown_effects", []))
+        reason_codes = list(self._state.get("reason_codes", []))
+        if unknown_effects:
+            reason_codes = [
+                "unknown-effects"
+                if self._state.get("unknown_effect_refusal_demonstrated")
+                else "unknown-effect-setup-inconclusive"
+            ]
+        elif not reason_codes and not (
+            release_valid
+            and self._state.get("target_created")
+            and exact_parent_identity
+            and self._state.get("target_result_identity_observed")
+            and history_retained
+            and edit_unchanged
+        ):
+            reason_codes = ["exact-restoration-not-observed"]
+        return {
+            "mode": STOP_THEN_RESUME_V1,
+            "request_identity": self._state.get("request_identity", {}),
+            "operation_metadata": self._state.get("operation_metadata", {}),
+            "resume_spec_bound": bool(
+                isinstance(self._state.get("operation_metadata"), Mapping)
+                and self._state["operation_metadata"].get(
+                    "resume_arguments_digest"
+                )
+                and self._state["operation_metadata"].get(
+                    "source_manifest_digest"
+                )
+            ),
+            "phase": self._state.get("phase", "indeterminate"),
+            "ready_to_resume": bool(self._state.get("ready_to_resume")),
+            "release_requested": bool(self._state.get("release_requested")),
+            "release_persisted": bool(self._state.get("release_persisted")),
+            "release_authorized": bool(self._state.get("release_authorized")),
+            "target_creation_authorized": bool(self._state.get("target_creation_authorized")),
+            "target_launch_intent_persisted": bool(
+                self._state.get("target_launch_intent_persisted")
+            ),
+            "target_created": bool(self._state.get("target_created")),
+            "restoration_verdict": (
+                "positive"
+                if release_valid
+                and self._state.get("target_created")
+                and exact_parent_identity
+                and self._state.get("target_result_identity_observed")
+                and history_retained
+                and edit_unchanged
+                else "inconclusive"
+            ),
+            "exact_parent_identity": "observed" if exact_parent_identity else "unknown",
+            "target_result_identity": (
+                "observed"
+                if self._state.get("target_result_identity_observed")
+                else "unknown"
+            ),
+            "pre_stop_history_retained": "observed" if history_retained else "unknown",
+            "retained_history_scope": self._state.get(
+                "retained_history_scope", "parent-boundary-markers-only"
+            ),
+            "child_history_retained": "unverified",
+            "source_result_event_uuid_digest": self._state.get(
+                "source_result_event_uuid_digest"
+            ),
+            "target_result_event_uuid_digest": self._state.get(
+                "target_result_event_uuid_digest"
+            ),
+            "edit_hash": self._state.get("edit_hash"),
+            "edit_unchanged": edit_unchanged,
+            "unknown_effects": unknown_effects,
+            "unknown_effect_baseline_valid": bool(
+                self._state.get("unknown_effect_baseline_valid")
+            ),
+            "unknown_effect_refusal_demonstrated": bool(
+                self._state.get("unknown_effect_refusal_demonstrated")
+            ),
+            "source_native_facts": self._state.get("source_native_facts", {}),
+            "harness_cleanup_facts": self._state.get("harness_cleanup_facts", {}),
+            "source_proof_scope": "tracked-fixture-only",
+            "source_termination_task_completed": False,
+            "reason_codes": reason_codes,
+            "support_claim": False,
+        }
 
 
 def route(path: str) -> str:
@@ -1190,6 +1867,81 @@ def assess_target_hold_observation(
     }
 
 
+def assess_v1_history_query_gate(
+    observation: Mapping[str, object],
+) -> dict[str, object]:
+    """Authorize one v1 history query only after a clean startup window."""
+    reasons: list[str] = []
+    if observation.get("initialize_succeeded") is not True:
+        reasons.append("target-init-not-observed")
+    if observation.get("target_alive") is not True:
+        reasons.append("target-not-alive-at-history-gate")
+    if observation.get("session_identity_mismatch") is True:
+        reasons.append("target-session-identity-mismatch")
+    elif (
+        observation.get("session_identity_observed") is not True
+        and observation.get("session_identity_observed") is not False
+    ):
+        reasons.append("target-session-identity-observation-invalid")
+    if observation.get("resume_spec_bound") is not True:
+        reasons.append("exact-resume-spec-not-bound")
+    if observation.get("source_manifest_bound") is not True:
+        reasons.append("source-manifest-not-bound")
+
+    for name, reason in (
+        ("parent_messages_since_launch", "startup-parent-message-observed"),
+        ("child_messages_since_launch", "startup-child-message-observed"),
+    ):
+        count = observation.get(name)
+        if type(count) is not int or count < 0:
+            reasons.append("%s-invalid" % name.replace("_since_launch", ""))
+        elif count:
+            reasons.append(reason)
+
+    native_task_events = observation.get("native_task_events")
+    if type(native_task_events) is not int or native_task_events < 0:
+        reasons.append("startup-task-event-count-invalid")
+    elif native_task_events:
+        reasons.append("startup-task-event-observed")
+
+    if observation.get("startup_parent_result_observed") is True:
+        reasons.append("startup-parent-result-observed")
+    elif observation.get("startup_parent_result_observed") is not False:
+        reasons.append("startup-parent-result-observation-invalid")
+    if observation.get("generic_startup_activity_observed") is True:
+        reasons.append("startup-assistant-or-tool-activity-observed")
+    elif observation.get("generic_startup_activity_observed") is not False:
+        reasons.append("startup-activity-observation-invalid")
+    if observation.get("reader_error") is True:
+        reasons.append("startup-reader-error")
+    elif observation.get("reader_error") is not False:
+        reasons.append("startup-reader-observation-invalid")
+
+    unparsed_frames = observation.get("unparsed_frames")
+    if type(unparsed_frames) is not int or unparsed_frames < 0:
+        reasons.append("startup-unparsed-frame-count-invalid")
+    elif unparsed_frames:
+        reasons.append("startup-unparsed-frame-observed")
+    unclassified = observation.get("unclassified_lifecycle_events")
+    if type(unclassified) is not int or unclassified < 0:
+        reasons.append("startup-unclassified-lifecycle-count-invalid")
+    elif unclassified:
+        reasons.append("startup-unclassified-lifecycle-observed")
+    if observation.get("quiet_window_observed") is not True:
+        reasons.append("startup-quiet-window-not-observed")
+
+    allowed = not reasons
+    return {
+        "observation_scope": "v1-target-startup-after-release",
+        "history_query_allowed": allowed,
+        "history_query_skipped": not allowed,
+        "quiet_window_observed": observation.get("quiet_window_observed") is True,
+        "verdict": "inconclusive",
+        "support_claim": False,
+        "reason_codes": sorted(set(reasons)),
+    }
+
+
 def _control_event_observed(
     observation: Mapping[str, object],
     name: str,
@@ -1745,6 +2497,68 @@ def observe_control_event(subtype: object, runtime: dict[str, object]) -> None:
     ) + 1
 
 
+def _contains_assistant_or_tool_activity(value: object, depth: int = 0) -> bool:
+    if depth > 8:
+        return False
+    if isinstance(value, Mapping):
+        if value.get("role") in {"assistant", "tool"}:
+            return True
+        if value.get("type") in {
+            "assistant", "tool", "tool_use", "tool_result", "tool_error",
+        }:
+            return True
+        return any(
+            _contains_assistant_or_tool_activity(child, depth + 1)
+            for child in value.values()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(
+            _contains_assistant_or_tool_activity(child, depth + 1)
+            for child in value
+        )
+    return False
+
+
+def _observe_v1_startup_frame(frame: Mapping[str, object], runtime: dict[str, object]) -> None:
+    if "startup_activity_observed" not in runtime:
+        return
+    if runtime.get("startup_observation_active") is not True:
+        return
+    response = frame.get("response")
+    response = response if isinstance(response, Mapping) else {}
+    subtype = frame.get("subtype") or response.get("subtype")
+    request_id = response.get("request_id")
+    known_init = (
+        frame.get("type") == "control_response"
+        and request_id == runtime.get("init_request")
+    ) or (
+        frame.get("type") == "system"
+        and subtype in {"init", "system_init", "init_success"}
+    )
+    if known_init:
+        return
+    if _contains_assistant_or_tool_activity(frame):
+        runtime["startup_activity_observed"] = True
+        kinds = runtime.setdefault("startup_activity_kinds", [])
+        if isinstance(kinds, list):
+            kind = frame.get("type") or subtype or "unknown"
+            if str(kind) not in kinds:
+                kinds.append(str(kind))
+    if frame.get("type") in {
+        "system", "control_response", "control_request", "event",
+    }:
+        known_subtypes = {
+            "success", "error", "init", "system_init", "init_success",
+            "message_start", "message_delta", "message_stop",
+            "task_started", "task_progress", "task_updated",
+            "task_notification",
+        }
+        if isinstance(subtype, str) and subtype not in known_subtypes:
+            runtime["startup_unclassified_lifecycle_count"] = int(
+                runtime.get("startup_unclassified_lifecycle_count", 0)
+            ) + 1
+
+
 def observe_frame(frame: object, runtime: dict[str, object]) -> None:
     """Consume one native frame, retaining only lifecycle facts/digests."""
 
@@ -1752,6 +2566,7 @@ def observe_frame(frame: object, runtime: dict[str, object]) -> None:
         runtime["unparsed_frames"] = int(runtime["unparsed_frames"]) + 1
         return
     runtime["frames_seen"] = int(runtime["frames_seen"]) + 1
+    _observe_v1_startup_frame(frame, runtime)
     response = frame.get("response")
     response = response if isinstance(response, Mapping) else {}
     subtype = frame.get("subtype") or response.get("subtype")
@@ -1841,6 +2656,7 @@ def read_frames(
             if chunk:
                 buffers[key.fileobj].extend(chunk)
                 if sum(len(value) for value in buffers.values()) > MAX_RUNTIME_OUTPUT:
+                    runtime["read_failed"] = True
                     runtime["reason_codes"].append("runtime-output-limit")
                     return
             else:
@@ -1957,22 +2773,43 @@ def capture_owned_fixture_processes(root_pid: int) -> list[dict[str, object]]:
 
 
 def _identity_alive(identity: Mapping[str, object]) -> bool:
+    return _identity_status(identity) == "alive"
+
+
+def _identity_status(identity: Mapping[str, object]) -> str:
+    """Classify an owned PID without turning observation failure into absence."""
     pid = identity.get("pid")
     starttime = identity.get("starttime")
     if not isinstance(pid, int) or not isinstance(starttime, str):
-        return False
-    current = _proc_identity(pid)
-    return bool(
-        current
-        and current.get("starttime") == starttime
-        and current.get("state") not in {"Z", "X", "x"}
-    )
+        return "unknown"
+    try:
+        stat = (Path("/proc") / str(pid) / "stat").read_text(
+            encoding="utf-8", errors="replace"
+        )
+        close = stat.rfind(")")
+        if close < 0:
+            return "unknown"
+        fields = stat[close + 2:].split()
+        if len(fields) <= 19:
+            return "unknown"
+    except FileNotFoundError:
+        return "absent"
+    except OSError:
+        return "unknown"
+    if fields[19] != starttime:
+        return "replaced"
+    if fields[0] in {"Z", "X", "x"}:
+        return "terminal"
+    return "alive"
 
 
 def fixture_processes_alive(identities: list[Mapping[str, object]]) -> bool | None:
     if not identities:
         return None
-    return any(_identity_alive(identity) for identity in identities)
+    statuses = [_identity_status(identity) for identity in identities]
+    if "unknown" in statuses:
+        return None
+    return "alive" in statuses
 
 
 def terminate_owned_fixture_processes(
@@ -1984,9 +2821,16 @@ def terminate_owned_fixture_processes(
         return False
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        live = [identity for identity in identities if _identity_alive(identity)]
+        statuses = [_identity_status(identity) for identity in identities]
+        if "unknown" in statuses:
+            return False
+        live = [
+            identity
+            for identity, status in zip(identities, statuses)
+            if status == "alive"
+        ]
         if not live:
-            return True
+            return all(status in {"absent", "replaced", "terminal"} for status in statuses)
         for identity in live:
             pid = identity.get("pid")
             if not isinstance(pid, int):
@@ -2000,7 +2844,11 @@ def terminate_owned_fixture_processes(
                 except (ProcessLookupError, OSError):
                     pass
         time.sleep(.1)
-    return not any(_identity_alive(identity) for identity in identities)
+    statuses = [_identity_status(identity) for identity in identities]
+    return (
+        "unknown" not in statuses
+        and all(status in {"absent", "replaced", "terminal"} for status in statuses)
+    )
 
 
 def process_has_sleep(
@@ -2155,7 +3003,13 @@ def is_successful_parent_result(frame: object) -> bool:
 def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
     """Run source stop and target-held initialize inside the sandbox."""
 
+    mode = expected.get("mode")
+    if mode not in {None, STOP_THEN_RESUME_V1}:
+        raise ValueError("unknown probe mode")
+    v1_mode = mode == STOP_THEN_RESUME_V1
     control_mode = str(expected.get("control_mode", "stopped"))
+    if v1_mode and control_mode == "stopped":
+        control_mode = "interrupt"
     if control_mode not in {
         "stopped", "interrupt", "crash-left-unfinished",
         "positive-orphan", "terminal-cleared",
@@ -2172,6 +3026,16 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
         "positive-orphan": "crash-owned-process-group",
     }[control_mode]
     release_target = bool(expected.get("release_target", False))
+    explicit_release = bool(expected.get("explicit_release", False))
+    unknown_effect = bool(expected.get("unknown_effect", False))
+    if v1_mode and release_target:
+        raise ValueError("stop-then-resume-v1 requires explicit release")
+    if unknown_effect and (not v1_mode or not explicit_release):
+        raise ValueError(
+            "unknown-effect negative arm requires stop-then-resume-v1 and explicit release"
+        )
+    if v1_mode and control_mode != "interrupt":
+        raise ValueError("stop-then-resume-v1 requires interrupt control")
     control_entry_before_settle = bool(
         expected.get("control_entry_before_settle", False)
     )
@@ -2191,9 +3055,15 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
             "busy-parent-before-control cannot combine with settled-parent arm"
         )
 
-    root = Path("/tmp/managed-loopback")
+    root = Path(
+        tempfile.mkdtemp(prefix="managed-loopback-v1-")
+        if v1_mode else "/tmp/managed-loopback"
+    )
     for name in ("home", "config", "xdg", "work"):
         (root / name).mkdir(parents=True, exist_ok=True)
+    v1_ledger = StopThenResumeV1Ledger(root / "work") if v1_mode else None
+    if v1_ledger is not None:
+        v1_ledger.prepare()
     env = {
         "PATH": "/usr/local/bin:/usr/bin:/bin",
         "HOME": str(root / "home"),
@@ -2276,6 +3146,19 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
         "unparsed_frames": 0,
         "native_task_events": 0,
         "target_wake_evidence": 0,
+        "startup_observation_active": True,
+        "startup_activity_observed": False,
+        "startup_activity_kinds": [],
+        "startup_unclassified_lifecycle_count": 0,
+        "startup_quiet_window_observed": False,
+        "startup_parent_result_observed": False,
+        "startup_parent_messages_since_launch": 0,
+        "startup_child_messages_since_launch": 0,
+        "gateway_request_index_at_launch": None,
+        "history_query_gate": None,
+        "history_query_skipped": False,
+        "history_query_skip_reasons": [],
+        "history_query_count": 0,
         "source_parent_result_seen": False,
         "source_parent_result_origin": None,
         "successful_result_seen": False,
@@ -2311,6 +3194,7 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
         "successful_result_session_id": None,
     }
     tracked_fixture_processes: list[dict[str, object]] = []
+    source_alive_before_harness_cleanup = False
     try:
         source = subprocess.Popen(
             [binary] + list(expected["arguments"]), env=env, cwd=root / "work",
@@ -2372,6 +3256,20 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
                 and process_seen is True
             )
             source_runtime["active_fixture_observed"] = active_fixture
+            if v1_ledger is not None and active_fixture:
+                v1_ledger.record_pre_stop_facts(
+                    parent_identity={
+                        "session_id": source_runtime.get("session_id"),
+                    },
+                    pre_stop_history={
+                        "store": observe_store(root / "config"),
+                        "source_frames_seen": source_runtime.get("frames_seen"),
+                        "gateway_request_count": gateway.request_count,
+                    },
+                    result_uuid_digest=source_runtime.get(
+                        "successful_result_uuid_digest"
+                    ),
+                )
             if active_fixture:
                 control_entry_admitted = not busy_parent_before_control
                 if busy_parent_before_control:
@@ -2545,12 +3443,70 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
                 source_runtime.get("crash_parent_process_exited")
             )
         else:
+            source_alive_before_harness_cleanup = bool(
+                source is not None and source.poll() is None
+            )
             source_runtime["source_parent_process_exited"] = terminate(source)
         if source_selector is not None:
             source_selector.close()
         source_store = observe_store(root / "config")
+        if v1_ledger is not None:
+            tracked_excluded = False
+            if tracked_fixture_processes:
+                tracked_excluded = terminate_owned_fixture_processes(
+                    tracked_fixture_processes
+                )
+            source_gateway_snapshot = gateway.snapshot()
+            v1_ledger.record_source_facts(
+                native={
+                    "interrupt_sent": bool(source_runtime.get("interrupt_sent")),
+                    "interrupt_receipt": bool(
+                        source_runtime.get("interrupt_receipt")
+                    ),
+                    "child_terminal": bool(
+                        source_runtime.get("task_terminal_observed")
+                    ),
+                    "tool_terminal": bool(source_runtime.get("tool_terminal")),
+                    "unknown_effects": (
+                        ["unknown-effect-arm"] if unknown_effect else []
+                    ),
+                    "read_failed": bool(source_runtime.get("read_failed")),
+                    "unparsed_frames": source_runtime.get("unparsed_frames", 0),
+                    "protocol_errors": source_gateway_snapshot.get(
+                        "protocol_errors", []
+                    ),
+                },
+                harness={
+                    "parent_process_exited": bool(
+                        source_runtime.get("source_parent_process_exited")
+                    ),
+                    "tracked_processes_excluded": tracked_excluded,
+                    "pg_kill_observed": source_alive_before_harness_cleanup,
+                },
+            )
 
     session_id = source_runtime.get("session_id")
+    target_arguments: list[object] = []
+    v1_source_manifest: dict[str, object] = {}
+    if v1_ledger is not None and isinstance(session_id, str) and session_id:
+        target_arguments = replace_resume_sentinel(
+            list(expected["resume_arguments"]), session_id
+        )
+        v1_snapshot = v1_ledger.snapshot()
+        v1_source_manifest = {
+            "edit_hash": v1_snapshot.get("edit_hash"),
+            "source_parent_identity_digest": v1_snapshot.get(
+                "source_parent_identity_digest"
+            ),
+            "source_native_facts": v1_snapshot.get("source_native_facts", {}),
+            "harness_cleanup_facts": v1_snapshot.get(
+                "harness_cleanup_facts", {}
+            ),
+        }
+        v1_ledger.bind_resume_spec(
+            resume_arguments=target_arguments,
+            source_manifest=v1_source_manifest,
+        )
     target_launched = False
     target_hold_complete = False
     busy_parent_admitted = (
@@ -2569,6 +3525,17 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
             )
         )
     )
+    v1_release: dict[str, object] | None = None
+    v1_release_authorized = False
+    if v1_ledger is not None:
+        v1_release = v1_ledger.request_release(
+            explicit=explicit_release,
+            unknown_effect=unknown_effect,
+        )
+        v1_release_authorized = bool(v1_release.get("authorized"))
+        source_resume_admitted = bool(
+            source_resume_admitted and v1_release_authorized
+        )
     if (
         session_id
         and source_runtime.get("source_parent_process_exited")
@@ -2580,11 +3547,23 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
                 and source_runtime.get("records_observed_before_crash")
             )
         )
+        and (not v1_mode or v1_release_authorized)
     ):
-        gateway.set_phase("target-held")
-        target_arguments = replace_resume_sentinel(
-            list(expected["resume_arguments"]), str(session_id)
-        )
+        if v1_mode:
+            # The opt-in target is created only after the durable release
+            # boundary. Its startup belongs to target-release, not a
+            # pre-release target-held window.
+            gateway.release_control_entry_epoch(next_phase="target-release")
+        else:
+            gateway.set_phase("target-held")
+        target_start_request_index = gateway.snapshot()["request_count"]
+        target_runtime["gateway_request_index_at_launch"] = target_start_request_index
+        if not target_arguments:
+            target_arguments = replace_resume_sentinel(
+                list(expected["resume_arguments"]), str(session_id)
+            )
+        if v1_ledger is not None:
+            v1_ledger.record_launch_intent()
         target = subprocess.Popen(
             [binary] + target_arguments, env=env, cwd=root / "work",
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -2618,12 +3597,109 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
                     "successful_result_session_id"
                 ),
             }
-            if release_target and target.poll() is None and target_runtime[
+            if v1_mode:
+                launch_snapshot = gateway.snapshot()
+                startup_requests = [
+                    request
+                    for request in launch_snapshot["requests"]
+                    if (
+                        request.get("request_index", 0) > target_start_request_index
+                        and request.get("route") == "/v1/messages"
+                    )
+                ]
+                target_runtime["startup_parent_messages_since_launch"] = sum(
+                    1
+                    for request in startup_requests
+                    if not request.get("agent_header_present")
+                )
+                target_runtime["startup_child_messages_since_launch"] = sum(
+                    1
+                    for request in startup_requests
+                    if request.get("agent_header_present")
+                )
+                target_runtime["startup_parent_result_observed"] = bool(
+                    target_runtime.get("source_parent_result_seen")
+                )
+                target_session = target_runtime.get("session_id")
+                session_observed = isinstance(target_session, str) and bool(
+                    target_session
+                )
+                target_runtime["startup_quiet_window_observed"] = bool(
+                    target.poll() is None
+                    and not target_runtime.get("read_failed")
+                )
+                target_runtime["startup_observation_active"] = False
+                startup_gate = assess_v1_history_query_gate({
+                    "initialize_succeeded": target_runtime[
+                        "initialize_succeeded"
+                    ],
+                    "target_alive": target.poll() is None,
+                    "session_identity_observed": session_observed,
+                    "session_identity_mismatch": bool(
+                        session_observed
+                        and target_session != session_id
+                    ),
+                    "resume_spec_bound": bool(
+                        v1_ledger is not None
+                        and v1_ledger.resume_spec_matches(
+                            resume_arguments=target_arguments,
+                            source_manifest=v1_source_manifest,
+                        )
+                    ),
+                    "source_manifest_bound": bool(
+                        v1_ledger is not None
+                        and v1_ledger.resume_spec_matches(
+                            resume_arguments=target_arguments,
+                            source_manifest=v1_source_manifest,
+                        )
+                    ),
+                    "parent_messages_since_launch": target_runtime[
+                        "startup_parent_messages_since_launch"
+                    ],
+                    "child_messages_since_launch": target_runtime[
+                        "startup_child_messages_since_launch"
+                    ],
+                    "native_task_events": target_runtime[
+                        "native_task_events"
+                    ],
+                    "startup_parent_result_observed": target_runtime[
+                        "startup_parent_result_observed"
+                    ],
+                    "generic_startup_activity_observed": target_runtime[
+                        "startup_activity_observed"
+                    ],
+                    "reader_error": bool(target_runtime.get("read_failed")),
+                    "unparsed_frames": target_runtime["unparsed_frames"],
+                    "unclassified_lifecycle_events": target_runtime[
+                        "startup_unclassified_lifecycle_count"
+                    ],
+                    "quiet_window_observed": target_runtime[
+                        "startup_quiet_window_observed"
+                    ],
+                })
+                target_runtime["history_query_gate"] = startup_gate
+                if startup_gate["history_query_allowed"]:
+                    target_runtime["release_requested"] = True
+                    target_runtime["history_query_count"] = 1
+                    target_runtime["startup_observation_active"] = False
+                    target_runtime["successful_result_seen"] = False
+                    target_runtime["successful_result_session_id"] = None
+                    target_runtime["successful_result_uuid_digest"] = None
+                    send_frame(target, target_release_frame())
+                    read_frames(
+                        target, target_selector, target_buffers, target_runtime,
+                        time.monotonic() + 8,
+                    )
+                    target_runtime["release_read_complete"] = True
+                else:
+                    target_runtime["history_query_skipped"] = True
+                    target_runtime["history_query_skip_reasons"] = list(
+                        startup_gate["reason_codes"]
+                    )
+            elif release_target and target.poll() is None and target_runtime[
                 "initialize_succeeded"
             ]:
-                # The held window is complete. A separate phase now permits
-                # exactly one ordinary query, so its request is not confused
-                # with load-time inference.
+                # Legacy strict mode retains its held window and query gate.
                 gateway.release_control_entry_epoch(next_phase="target-release")
                 target_runtime["release_requested"] = True
                 target_runtime["successful_result_seen"] = False
@@ -2837,6 +3913,22 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
         and target_runtime.get("successful_result_seen")
         and target_result_same_source_uuid
     )
+    if v1_ledger is not None and target_launched:
+        v1_ledger.record_target_facts(
+            parent_identity={
+                "session_id": target_runtime.get("successful_result_session_id"),
+            },
+            retained_history=release_history_complete,
+            edit_hash=str(v1_ledger.snapshot().get("edit_hash")),
+            result_uuid_digest=target_runtime.get(
+                "successful_result_uuid_digest"
+            ),
+            result_identity_observed=bool(
+                target_runtime.get("successful_result_seen")
+                and target_runtime.get("successful_result_session_id") == session_id
+            ),
+            retained_history_scope="parent-boundary-markers-only",
+        )
     unfinished_child_control = {
         "mode": control_mode,
         "control_action": control_action,
@@ -2882,7 +3974,7 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
         "exact_parent_load": "unknown",
         "internal_wake_evidence": "unknown",
     }
-    return {
+    report = {
         "schema": "lane-managed-loopback/v1",
         "experiment": "synthetic-gateway",
         "gateway_mode": "synthetic-loopback-dummy-api-key",
@@ -2924,6 +4016,12 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
                 else "owned-source-process-group-crash"
             ),
             "release_target": release_target,
+            "probe_mode": mode,
+            "explicit_release": explicit_release,
+            "unknown_effect": unknown_effect,
+            "release_boundary_persisted": bool(
+                v1_release and v1_release.get("release_persisted")
+            ) if v1_mode else "not-selected",
             "control_entry_before_settle": control_entry_before_settle,
             "busy_parent_before_control": busy_parent_before_control,
             "gateway_mode": "synthetic-loopback-dummy-api-key",
@@ -3003,9 +4101,15 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
         "target": {
             "resume_requested": bool(session_id),
             "resume_admitted": source_resume_admitted,
-            "initialize_only": True,
+            "initialize_only": "not-applicable" if v1_mode else True,
+            "startup_phase": (
+                "startup-after-release" if v1_mode else "target-held"
+            ),
+            "held_window": "not-applicable" if v1_mode else "observed",
             "launched": target_launched,
-            "hold_complete": target_hold_complete,
+            "hold_complete": (
+                "not-applicable" if v1_mode else target_hold_complete
+            ),
             "initialize_succeeded": bool(target_hold_snapshot["initialize_succeeded"]),
             "session_id_seen": bool(target_hold_snapshot.get("session_id")),
             "session_id_digest": digest(target_hold_snapshot.get("session_id")),
@@ -3033,6 +4137,25 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
             "observed_wake_subtype_frame_count": target_hold_snapshot[
                 "target_wake_evidence"
             ],
+            "target_wake_evidence_usable": False,
+            "startup_activity_observed": target_runtime.get(
+                "startup_activity_observed", "not-selected"
+            ) if v1_mode else "not-selected",
+            "startup_activity_kinds": target_runtime.get(
+                "startup_activity_kinds", []
+            ) if v1_mode else "not-selected",
+            "history_query_skipped": bool(
+                target_runtime.get("history_query_skipped")
+            ) if v1_mode else "not-selected",
+            "history_query_skip_reasons": list(
+                target_runtime.get("history_query_skip_reasons", [])
+            ) if v1_mode else "not-selected",
+            "history_query_count": target_runtime.get(
+                "history_query_count", 0
+            ) if v1_mode else "not-selected",
+            "history_query_gate": target_runtime.get(
+                "history_query_gate"
+            ) if v1_mode else "not-selected",
             "read_failed": bool(target_runtime.get("read_failed")),
             "messages_posts": target_posts,
             "count_tokens_posts": target_phase.get(
@@ -3050,7 +4173,22 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
             "process_exited": bool(target_runtime.get("target_process_exited")),
         },
         "target_release": {
-            "requested": release_target,
+            "requested": explicit_release if v1_mode else release_target,
+            "history_query_requested": bool(
+                target_runtime.get("release_requested")
+            ) if v1_mode else release_target,
+            "history_query_skipped": bool(
+                target_runtime.get("history_query_skipped")
+            ) if v1_mode else "not-selected",
+            "history_query_skip_reasons": list(
+                target_runtime.get("history_query_skip_reasons", [])
+            ) if v1_mode else "not-selected",
+            "history_query_count": target_runtime.get(
+                "history_query_count", 0
+            ) if v1_mode else "not-selected",
+            "startup_phase": (
+                "startup-after-release" if v1_mode else "target-held"
+            ),
             "phase_messages_posts": target_release_posts,
             "parent_messages_posts": target_release_parent_posts,
             "plain_end_turn_observed": target_release_plain_end_turn,
@@ -3066,7 +4204,10 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
             ),
             "target_result_same_source_uuid": target_result_same_source_uuid,
             "eventual_continuity_observed": release_continuity_observed,
-            "continuity_scope": "eventual-history-only",
+            "continuity_scope": (
+                "parent-boundary-markers-only"
+                if v1_mode else "eventual-history-only"
+            ),
             "support_claim": False,
         },
         "endpoint": {
@@ -3146,6 +4287,16 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
             )
             + (["target-release-continuity-not-observed"]
                if release_target and not release_continuity_observed else [])
+            + (
+                [str(v1_release.get("reason_code"))]
+                if v1_release and v1_release.get("reason_code")
+                else []
+            )
+            + (
+                list(target_runtime.get("history_query_skip_reasons", []))
+                if v1_mode
+                else []
+            )
             + (["owned-writer-exclusion-not-observed"]
                if unfinished_mode
                and not source_runtime.get("observed_owned_processes_excluded")
@@ -3158,6 +4309,9 @@ def runtime_observe(expected: Mapping[str, object]) -> dict[str, object]:
             + snapshot["protocol_errors"]
         )),
     }
+    if v1_ledger is not None:
+        report["stop_then_resume_v1"] = v1_ledger.report()
+    return report
 
 
 SELECT_RUNTIME = r"""
@@ -3275,6 +4429,9 @@ def probe(
     release_target: bool = False,
     control_entry_before_settle: bool = False,
     busy_parent_before_control: bool = False,
+    mode: str | None = None,
+    explicit_release: bool = False,
+    unknown_effect: bool = False,
 ) -> dict[str, object]:
     """Run one disposable synthetic-gateway experiment."""
 
@@ -3283,6 +4440,25 @@ def probe(
         "positive-orphan", "terminal-cleared",
     }:
         raise ValueError("unknown source control mode")
+    if mode not in {None, STOP_THEN_RESUME_V1}:
+        raise ValueError("unknown probe mode")
+    if mode is None and (explicit_release or unknown_effect):
+        raise ValueError(
+            "explicit release flags require stop-then-resume-v1"
+        )
+    if mode == STOP_THEN_RESUME_V1:
+        if release_target:
+            raise ValueError(
+                "stop-then-resume-v1 uses explicit release, not release-target"
+            )
+        if unknown_effect and not explicit_release:
+            raise ValueError(
+                "unknown-effect negative arm requires explicit release"
+            )
+        if control_mode == "stopped":
+            control_mode = "interrupt"
+        if control_mode != "interrupt":
+            raise ValueError("stop-then-resume-v1 requires interrupt control")
     if control_entry_before_settle and control_mode != "interrupt":
         raise ValueError(
             "control-entry-before-settle is only valid for interrupt control"
@@ -3299,6 +4475,9 @@ def probe(
     selected = dict(selected)
     selected["control_mode"] = control_mode
     selected["release_target"] = bool(release_target)
+    selected["mode"] = mode
+    selected["explicit_release"] = bool(explicit_release)
+    selected["unknown_effect"] = bool(unknown_effect)
     selected["control_entry_before_settle"] = bool(control_entry_before_settle)
     selected["busy_parent_before_control"] = bool(busy_parent_before_control)
     image_id = json.loads(run("docker", "image", "inspect", image).stdout)[0]["Id"]
@@ -3386,6 +4565,9 @@ def probe(
                 "agent_configured": True,
                 "control_mode": control_mode,
                 "release_target": bool(release_target),
+                "mode": mode,
+                "explicit_release": bool(explicit_release),
+                "unknown_effect": bool(unknown_effect),
                 "control_entry_before_settle": bool(
                     control_entry_before_settle
                 ),
@@ -3473,6 +4655,22 @@ def main() -> None:
         help="after the held initialize window, issue one bounded target query",
     )
     parser.add_argument(
+        "--mode",
+        choices=(STOP_THEN_RESUME_V1,),
+        default=None,
+        help="opt in to the persisted stop-then-resume-v1 experiment",
+    )
+    parser.add_argument(
+        "--explicit-release",
+        action="store_true",
+        help="persist the v1 release boundary before creating the target",
+    )
+    parser.add_argument(
+        "--unknown-effect",
+        action="store_true",
+        help="v1 negative arm: inject an unresolved effect and refuse release",
+    )
+    parser.add_argument(
         "--control-entry-before-settle",
         action="store_true",
         help=(
@@ -3499,6 +4697,9 @@ def main() -> None:
                 release_target=args.release_target,
                 control_entry_before_settle=args.control_entry_before_settle,
                 busy_parent_before_control=args.busy_parent_before_control,
+                mode=args.mode,
+                explicit_release=args.explicit_release,
+                unknown_effect=args.unknown_effect,
             )
         except Exception as exc:
             report.write(json.dumps({

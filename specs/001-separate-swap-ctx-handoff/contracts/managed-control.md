@@ -1,5 +1,10 @@
 # Managed Native-Lineage Control Contract
 
+Mode scope: [stop-then-resume-v1](stop-then-resume.md) has a separate approved
+prepare/release boundary. Target-held and six-stage swap clauses below describe
+strict mode; they are not silently relaxed for existing records. V1's public
+wire/schema implementation remains gated by its own fixture and source proof.
+
 This contract is for the approved native-subagent revision. A managed lane has
 one coordinator execution lineage. Native Agent/Task children remain children
 of that lineage; they are not independently launched workers, independently

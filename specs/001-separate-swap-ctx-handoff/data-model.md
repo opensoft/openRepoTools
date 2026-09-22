@@ -1,5 +1,16 @@
 # Data Model: Native Lineage Lane Operations
 
+## V1 schema amendment
+
+The [stop-then-resume contract](contracts/stop-then-resume.md) specifies a
+distinct stored `stop-then-resume-v1` discriminator, digest-bound history
+manifest, source-exclusion evidence and release-authorized launch intent.
+`ready-to-resume` means no target exists; it is not `ready-held`. Exact field
+schemas require implementation tests before use. Existing `native_swap`
+six-stage records and absent mode fields retain their old interpretation;
+they are never implicitly migrated to v1. The model below continues to describe
+those strict records unless explicitly amended by the linked v1 contract.
+
 All records carry `schema_version`, a canonical lane, owner/lane generation,
 lineage generation, and an operation or event correlation where applicable.
 Records are stored in the

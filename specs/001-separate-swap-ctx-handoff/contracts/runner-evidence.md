@@ -1,5 +1,10 @@
 # Native Coordinator / Subagent Lineage Evidence Contract
 
+Mode scope: [stop-then-resume-v1](stop-then-resume.md) needs an explicitly
+release-authorized startup path. The held startup and six-stage swap evidence
+below remain strict-mode requirements; v1 cannot satisfy them with synthetic
+clear/hold receipts. Source exclusion and effect evidence remain mandatory.
+
 This is the single evidence boundary between `ManagedController` and the
 Claude runtime adapter. Test doubles implement this boundary, but a fake
 runtime never establishes live native capability. The adapter may control one

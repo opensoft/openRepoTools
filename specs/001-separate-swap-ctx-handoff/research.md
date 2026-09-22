@@ -1,5 +1,11 @@
 # Research: Native Lineage Lane Operations
 
+Current scope amendment: [stop-then-resume-v1](contracts/stop-then-resume.md)
+defers all target startup until explicit release. The held-load/orphan-clear
+research below remains evidence for strict mode. V1 needs its own source
+containment and after-release restoration evidence; the amendment does not
+change the installed runtime or turn historical unknowns into observations.
+
 ## Decision: one top-level coordinator, native children
 
 Keep Claude's native Agent/Task workflow. The managed boundary owns one exact

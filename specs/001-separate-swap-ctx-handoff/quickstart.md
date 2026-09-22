@@ -1,5 +1,10 @@
 # Native-Lineage Experimental Quickstart
 
+This is the existing **strict-mode** fake-runtime flow. The approved
+[stop-then-resume-v1 experiment](contracts/stop-then-resume.md) instead creates
+no target until explicit release. It is not yet a public `lane-swap` option;
+its bounded observations belong in [live-validation.md](live-validation.md).
+
 Status: **experimental and unverified**. This page describes the fake-runtime
 acceptance flow; it is not live Claude evidence, account authorization, or a
 claim that native child restoration works for an untested runtime.

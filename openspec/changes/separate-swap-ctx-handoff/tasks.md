@@ -1,5 +1,13 @@
 ## 1. Proposal review and governance
 
+The [2026-09-22 v1 decision](stop-then-resume-decision.md) authorizes a narrower
+target boundary for an explicit `stop-then-resume-v1` mode. References below to
+pre-release exact loading, durable orphan clearing and held target proofs
+remain strict-mode reviews. V1 instead requires no target creation until
+release and its own source-containment and exact-after-release evidence.
+The approval does not close integration, protocol-publication or release gates.
+The linked Speckit tasks remain the only executable task list.
+
 This is a governance and implementation-handoff checklist, not an executable
 implementation task list. The shared OpenSpec/Speckit protocol assigns
 executable tasks to exactly one later Speckit feature. Artifact completeness is

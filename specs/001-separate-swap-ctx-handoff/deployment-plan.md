@@ -1,6 +1,37 @@
 # Fastest path to deployment
 
-## September 22 execution sequence
+## Current direction: stop-then-resume v1
+
+Brett subsequently approved implementing the
+[stop-then-resume recommendation](../../openspec/changes/separate-swap-ctx-handoff/stop-then-resume-decision.md).
+This supersedes the earlier guarantee-preservation scheduling decision below
+for a new explicit v1 mode only. Strict mode and its historical records retain
+their full guarantees and upstream requirements.
+
+V1 first needs its own isolated runtime experiment with saved edits, unfinished
+child/tool work, source exclusion/effect accounting and **no target creation
+until release**. The existing probe's `--release-target` sends a later query;
+it does not defer process creation and cannot be reused as v1 acceptance.
+Then implement mode-specific preparation, release-authorized exact startup and
+recovery against the measured boundary. Unknown source writers/effects remain
+a blocker even though pre-release target held-loading is no longer required.
+
+The native unenroll ownership-conflict correction remains an independent
+prerequisite under T014/T024; it is deferred until after the first v1 experiment.
+All subsequent regression, sibling integration, platform CI,
+authenticated canary, installation and rollback gates below still apply.
+No live account, lane or install destination has been selected by this approval.
+
+The first v1 experiment is now implemented and executed: 113 focused tests
+passed; three isolated arms demonstrated release-before-start ordering and
+refusal behavior. Restoration remains inconclusive because target startup
+emitted a task event and the probe correctly sent no additional history query.
+See [live-validation.md](live-validation.md). Next establish source containment
+and correlate startup child/history evidence, then implement the public
+mode-specific lifecycle. No public option, production activation or deployment
+is claimed by the probe.
+
+## Earlier September 22 execution sequence (strict mode)
 
 The user requested implementation of the completion/deployment plan on
 September 22. This section supersedes the historical scheduling checkpoints

@@ -2,10 +2,22 @@
 
 **Feature Branch**: `001-separate-swap-ctx-handoff`
 **Created**: 2026-09-16
-**Status**: Approved architecture revision; implementation re-planning required
+**Status**: Approved v1 amendment; experimental implementation, activation gated
 **Governing Change**: [separate-swap-ctx-handoff](../../openspec/changes/separate-swap-ctx-handoff/proposal.md)
 
 ## Authority and history
+
+**2026-09-22 amendment:** the approved
+[stop-then-resume-v1 decision](../../openspec/changes/separate-swap-ctx-handoff/stop-then-resume-decision.md)
+and [contract](contracts/stop-then-resume.md) add an opt-in mode that defers
+target startup and exact loading until explicit release. Its pre-release
+outcome is `ready-to-resume`, with no target process. Requirements and scenarios
+below concerning held target loading, durable orphan-clear and six-stage
+target proofs remain strict-mode requirements; existing records keep them.
+Both modes preserve source exclusion, no competing writer, exact parent
+history, local edits, permissions and uncertain-effect refusal. The first v1
+acceptance step is a distinct bounded pinned-runtime experiment; activation
+and actual-account support are not implied by this amendment.
 
 The [approved native-subagent decision](../../openspec/changes/separate-swap-ctx-handoff/native-subagent-decision.md)
 is authoritative for this specification. The feature keeps Claude's native

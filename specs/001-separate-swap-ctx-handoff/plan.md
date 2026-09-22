@@ -4,6 +4,28 @@
 
 Deployment sequencing and release gates: [Fastest path to deployment](deployment-plan.md).
 
+## Current v1 implementation tranche (2026-09-22)
+
+The approved [stop-then-resume decision](../../openspec/changes/separate-swap-ctx-handoff/stop-then-resume-decision.md)
+and [v1 contract](contracts/stop-then-resume.md) govern a separate opt-in mode.
+Target-held and six-stage flows in this plan remain strict mode. Preserve
+their behavior and historical records; do not remove their gates to enable v1.
+
+First extend the bounded pinned-runtime fixture: saved workspace edit,
+unfinished child and tracked shell, source exclusion/effect observations,
+no target until explicit release, exact after-release parent resume, and
+unknown-effect negative arm. Keep the report incapable of granting support.
+If essential source exclusion or history evidence remains unavailable, retain
+the concrete blocker before exposing successful public v1 preparation/release.
+
+Then implement a stored mode-specific state machine, request deduplication,
+history manifest, release-authorized SDK startup, mode-aware recovery and
+status. Reuse source archives and claims but do not confuse a controller record
+archive with transcript preservation. Production capability stays fail-closed
+until measured evidence and the existing regression/integration/canary gates.
+Native unenroll claim ordering/discovery recovery is an independent release
+prerequisite under T014/T024 and may be corrected alongside the fixture.
+
 The bounded internal stop transaction is specified in
 [native-stop.md](contracts/native-stop.md). Its implementation does not enable
 held restore or close the live runtime gate.

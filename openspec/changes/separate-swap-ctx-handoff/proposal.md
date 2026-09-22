@@ -2,6 +2,15 @@
 
 ## Status and governing intent
 
+**2026-09-22 scope amendment:** the approved
+[stop-then-resume-v1 decision](stop-then-resume-decision.md) adds an explicitly
+selected mode with no target runtime until release and a `ready-to-resume`
+pre-release outcome. The loaded-and-held target, durable orphan-clear and
+six-stage target-evidence requirements below remain the strict-mode contract;
+they are not v1 requirements or silently removed from historical records.
+Source exclusion, exclusive claims and uncertain-effect safety remain required
+in both modes. Production activation remains evidence-gated.
+
 **Current approved revision:** [retain native Claude subagents](native-subagent-decision.md).
 Brett's 2026-09-16 decision is authoritative for this change: keep native
 subagents, prefer exact native continuation, and allow model-assisted worker

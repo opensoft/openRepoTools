@@ -5,7 +5,90 @@ below ran without credentials or network access. Scripted gateway controls
 below establish a bounded interrupt candidate. Authenticated acceptance is
 **NOT RUN** and full Gate 0 acceptance remains incomplete.
 
-## 2026-09-21 pinned-runtime feasibility audit
+## 2026-09-22 v1 experiment scope
+
+The approved [stop-then-resume decision](../../openspec/changes/separate-swap-ctx-handoff/stop-then-resume-decision.md)
+creates a separate experimental mode. Its experiment must defer target process
+creation until explicit release, preserve a saved edit, exercise an unfinished
+native child and tracked shell, and refuse unknown effects. The older harness
+starts a target in its held phase, so its results do not establish v1 ordering.
+See [the experiment contract](contracts/stop-then-resume.md).
+
+Current pre-experiment audit: SDK `0.2.153`, bundled CLI `2.1.273`, SHA-256
+`6c752e2cc7c110c9df15f26d8d134d438c5ae95dbd610efc1a308bf7f9c5f6c1`.
+The existing harness is credential-free, network-isolated and bounded, but
+its tracked sleeper/PGID observations do not prove complete host writer or
+external-effect exclusion. Harness-enforced termination must be recorded
+separately from native lifecycle stop. Authenticated acceptance and production
+activation remain unverified.
+
+### Executed v1 diagnostic: ordering demonstrated, restoration inconclusive
+
+Sol executed three arms from a frozen candidate after **113 focused tests
+passed**. All used the pinned SDK/CLI above and existing immutable image
+`sha256:bca9ff191ad16f350ccfff349c9dd59e7accde7d9da77e709cea349fcb2b7a8d`.
+Each container had network disabled, read-only root, dropped capabilities,
+no host mounts, bounded resources, a sterile environment and only a dummy key.
+Only its own disposable container was removed. Reports were private (`0600`
+inside `0700` directories). No real account or installation was changed.
+
+| Arm | Release boundary | Target created | Observation |
+| --- | --- | --- | --- |
+| Explicit release | Persisted before launch intent and process creation | Yes | Same parent session UUID observed; history query skipped on `startup-task-event-observed`; exact restoration inconclusive |
+| Explicit release plus unknown effect | Refused; no persisted authorization | No | `unknown-effects`, with otherwise-valid source baseline; refusal demonstrated |
+| Release withheld | Not authorized | No | `explicit-release-required` |
+
+Each arm made four **source setup** requests to the scripted local endpoint,
+zero observed source-drain requests, and zero target requests. These were
+settled-parent cases with an unfinished native child and tracked shell, not
+busy-parent or actual quota-limit tests. The continuous control-entry epoch
+was not enabled in these runs; do not claim a full-interval zero-request proof.
+
+Native interrupt receipt, current child/tool terminal evidence and tracked
+sleeper exit were observed. Parent exclusion was **harness-enforced**:
+`harness_cleanup_facts.pg_kill_observed` is true. The separate
+`stop.forced_cleanup: false` concerns tracked-tool cleanup and does not prove
+the parent exited naturally. Source coverage remains `tracked-fixture-only`.
+Complete host/supervisor/escaped-writer exclusion is unproven.
+
+The deterministic saved edit remained unchanged, SHA-256
+`8b37cb1112307d5fc9b61b2cf1b8afaf9770a96ba5fe54de3db7069046e48889`.
+The resumed target emitted the same parent **session UUID**, while source and
+target result-event UUIDs differed as expected. A native task event appeared
+during startup, so the probe sent no additional history query. This does not
+establish whether that event represents replayed history or live restored work.
+Parent history retention and exact loader proof remain unknown; child history
+remains unverified. Every arm retains `verdict: inconclusive` and
+`support_claim: false`.
+
+Use the `stop_then_resume_v1` subrecord for this mode's conclusion. The generic
+harness envelope also carries old strict-mode/unselected orphan-clear and
+held-target assessments; those are not v1 acceptance requirements. The probe's
+`released` phase means its explicit diagnostic boundary crossed, not that the
+production lifecycle or full restoration contract passed.
+
+Private artifact basename: `openrepotools-sol-v1-final.7cLFa6` in the bench
+temporary directory; `commands.txt` retains exact invocations. Positive-arm
+report SHA-256:
+`99ee1126314b327606e78f39dab39cab9871e6db334fd406c21c18b50250305c`;
+unknown-effect report:
+`d99553afe66d5a219d8e5fc1c59747b5ad71ec0ce383e3578048c368c5e0c647`;
+withheld-release report:
+`fc101ad9851d731dae4e78fa427dfe07d5858d47dc87f592db3d8f911ff3d352`.
+Artifact manifest SHA-256:
+`2eab3112a74b9f551a94612bc78ba78adcb53f5827e08fb20a28bd18e208bf52`.
+An unchanged, manifest-verified durable copy is preserved under
+`${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools/diagnostics/openrepotools-sol-v1-final.7cLFa6`.
+
+Implemented surface: `tests/probes/managed_native_loopback.py --mode
+stop-then-resume-v1`, with `--explicit-release` and optional `--unknown-effect`.
+The existing `--release-target` has different semantics and cannot be combined
+with v1. **This is a probe option, not a public `lane-swap` mode.** Public v1
+preparation/release/recovery, complete source-domain evidence and child/history
+reconciliation remain outstanding. No new target-held/orphan-clear obligation
+is imposed on v1 by this inconclusive result.
+
+## 2026-09-21 pinned-runtime feasibility audit (strict mode)
 
 September 22 architecture recheck: Astra verified the same installed SDK
 `0.2.153` and bundled CLI digest and found no supported producer for the
@@ -56,8 +139,10 @@ introduced by this audit.
 
 Release options are to retain these guarantees and obtain supported upstream
 observations/equivalents, or explicitly amend the product guarantees through
-OpenSpec. The September 22 implementation request did not choose weakened
-guarantees. Production providers therefore remain disabled. A narrower request
+OpenSpec. The initial September 22 implementation request did not choose weakened
+guarantees. The later v1 amendment above changes target ordering only for the
+new explicit mode. Production providers remain disabled pending their own proof.
+A narrower request
 observation promise alone cannot settle unknown writer/effect or orphan state.
 
 The user authorized implementing the parallel offline-integration and runtime

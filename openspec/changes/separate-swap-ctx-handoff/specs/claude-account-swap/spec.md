@@ -8,6 +8,49 @@ proven safe. A swap is an account transition, not a semantic handoff.
 
 ## ADDED Requirements
 
+### Requirement: Explicit stop-then-resume v1 defers target creation until release
+
+Under the approved [v1 decision](../../stop-then-resume-decision.md), the system
+SHALL distinguish explicitly selected `stop-then-resume-v1` from existing
+strict native swap. The target-held, pre-release exact-loading, durable orphan
+clear, and six-stage target-proof requirements elsewhere in this specification
+SHALL apply to strict mode, not v1. Both modes SHALL preserve source exclusion,
+history, files, ownership, permissions, and uncertain-effect safety. Old or
+unmarked records SHALL NOT be reinterpreted as v1. Graceful child/tool
+drain-before-parent-shutdown ordering elsewhere below SHALL remain strict-only;
+v1 MAY mechanically contain unfinished work before complete drain, but SHALL
+prove full source exclusion and reconcile effects before readiness. Termination
+SHALL NOT mean successful task completion.
+
+#### Scenario: Source quota is exhausted
+
+- **WHEN** an operator selects v1 with a supported source containment boundary
+- **THEN** mechanical stop SHALL require no source model prompt, generated
+  handoff, or natural completion of the unfinished task
+- **AND** unknown writers or effects SHALL prevent readiness and target launch.
+
+#### Scenario: Source is safely stopped and target is selected
+
+- **WHEN** source exclusion, history and effect checks pass before release
+- **THEN** the operation SHALL report `ready-to-resume`, retain claims, and
+  create no target runtime
+- **AND** it SHALL NOT claim the target session has loaded or workers resumed.
+
+#### Scenario: Explicit release precedes exact loading
+
+- **WHEN** a matching release passes fresh ownership, source and history checks
+- **THEN** its bound authorization and launch intent SHALL be durable before
+  target creation and exact parent resume
+- **AND** target inference MAY occur after that authorization, while uncertain
+  startup SHALL retain claims and SHALL NOT trigger a replacement startup or
+  fresh conversation fallback.
+
+#### Scenario: Only process disappearance is known
+
+- **WHEN** tracked PIDs disappear but writer/effect ownership is incomplete
+- **THEN** v1 SHALL remain unsupported or indeterminate and SHALL NOT launch a
+  target, label unknown runtime state cleared, or replay uncertain work.
+
 ### Requirement: Managed enrollment and session-lineage ownership are explicit
 
 The system SHALL require explicit managed enrollment. The external supervisor

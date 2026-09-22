@@ -1,5 +1,10 @@
 # Native Coordinator / Child Transcript Preflight Contract
 
+Mode scope: [stop-then-resume-v1](stop-then-resume.md) preserves and revalidates
+exact history before release but loads it only after release authorization.
+The pre-release loaded-and-held/orphan-clear requirements below remain strict
+mode. Transcript presence alone grants neither v1 readiness nor child recovery.
+
 The profile resolver supplies read-only profile, transcript, native-child, and
 process facts. The controller decides whether those facts authorize a
 lifecycle transition. Neither public request fields nor a `trusted: true`

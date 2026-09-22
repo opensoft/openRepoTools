@@ -6,6 +6,39 @@ hidden model work, semantic handoff, or lifecycle changes.
 
 ## ADDED Requirements
 
+### Requirement: V1 release authorizes target startup rather than unholding a loaded target
+
+The approved [v1 decision](../../stop-then-resume-decision.md) SHALL add an
+explicit `stop-then-resume-v1` mode. Pre-release target-held/loading and
+six-stage target-evidence clauses below SHALL remain strict-mode requirements.
+The same scope applies to graceful child/tool drain and durable state clearing
+before parent exit: v1 MAY mechanically contain unfinished source work first,
+but complete exclusion and effect reconciliation SHALL precede readiness.
+V1 SHALL prepare an exact resume intent with no target runtime and SHALL retain
+one lineage's claims across activation and subsequent execution. Claim release
+SHALL require proven completion or safe explicit unenrollment.
+Context and handoff semantics SHALL remain unchanged.
+
+#### Scenario: Operator has not released a prepared v1 swap
+
+- **WHEN** a v1 operation is `ready-to-resume`
+- **THEN** status SHALL distinguish prepared intent from actual restoration
+- **AND** no target process, target model request, child restart or pump SHALL
+  be started by status, retry or recovery.
+
+#### Scenario: Child activity begins during release-authorized startup
+
+- **WHEN** the target runtime restores native work after explicit release
+- **THEN** child outcomes SHALL be reconciled from correlated runtime events
+- **AND** additional restart instructions SHALL NOT be sent while automatic
+  recovery or external effects remain uncertain.
+
+#### Scenario: Existing strict record is recovered
+
+- **WHEN** release or recovery reads an old or unmarked operation
+- **THEN** it SHALL retain its original strict contract and SHALL NOT opt into
+  v1, discard historical proof, or bypass a missing strict-runtime capability.
+
 ### Requirement: Swap preserves the coordinator conversation and native lineage
 
 The system SHALL define `swap` as selecting an explicitly requested

@@ -81,6 +81,37 @@ written handoff.
 
 ## Dependencies and Parallel Work
 
+### Approved v1 tranche within these existing tasks
+
+The [v1 contract](contracts/stop-then-resume.md) extends this sole task list;
+there is no second feature or parallel executable checklist. Historical closed
+tasks remain scoped to their recorded snapshots and do not accept v1 behavior.
+
+- T003/T004: first add the distinct no-auth v1 probe and test its saved edit,
+  native child/tracked shell, source observations, delayed target creation,
+  exact after-release resume and unknown-effect refusal. Preserve all existing
+  probe semantics and keep `support_claim: false`.
+- T009–T014: after the experiment establishes the required seams, implement
+  and test stored mode routing, source proof, immutable history manifest,
+  `ready-to-resume`, durable release-before-launch, SDK release-authorized
+  startup and no-replay recovery. Strict six-stage behavior stays unchanged.
+- T015–T019: reconcile restored child events before additional dispatch and
+  report prepared intent separately from actual target/child restoration.
+- T014/T024: correct native unenroll cleanup with exact child-worktree then
+  lineage-claim release, authoritative stop/effect checks and recoverable
+  discovery/owner finalization.
+- T025/T026: their historical closure does not cover new public mode/help;
+  reopen them when public v1 behavior is implemented, not for a probe alone.
+- T027–T032: verify v1 separately. T030's historical unsupported disposition
+  remains history, not a pass of the new experiment. Record new evidence in
+  `live-validation.md`; all live support and deployment gates remain open.
+
+For this initial v1 experiment, the prerequisite is a frozen T003/T004 harness
+and its focused tests, followed by the bounded selected-runtime observation.
+The held-swap and T009–T014-before-T030 dependencies below describe strict-mode
+acceptance, not this initial v1 experiment. Broader T027–T032 gates still apply
+to subsequent public integration and activation.
+
 - T001/T003 may run in parallel; T002 depends on T001, and T004 on T003.
 - T005/T006 and T007/T008 may run alongside SDK evidence work.
 - T009-T014 require T002, T004, T006, and T008. T009 is authored and

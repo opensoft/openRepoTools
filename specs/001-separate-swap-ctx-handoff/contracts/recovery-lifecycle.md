@@ -1,5 +1,10 @@
 # Native-Lineage Recovery and Lifecycle Contract
 
+Mode scope: [stop-then-resume-v1](stop-then-resume.md) requires recovery to route
+by its stored discriminator and never create a target before explicit release.
+Held-target/six-stage recovery below remains strict mode. Omitted markers and
+old records never opt into v1. All shared ownership/no-replay safeguards apply.
+
 Recovery reconciles one recorded coordinator execution lineage. It never
 turns a failed operation into a swap, invents a child runner, or treats the
 absence of a supervisor as proof that the native graph stopped. This contract
