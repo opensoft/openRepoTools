@@ -2274,7 +2274,7 @@ the fact — and **it is written from a shell BEFORE the relaunch**:
 
 ```sh
 lane-handoff --late --at 2026-09-14T12:02:27Z "late; usage limit hit before the swap"
-pclaude <profile>      # and only then
+lclaude <profile>      # and only then; use pclaude --lane <lane> if lclaude is unavailable
 ```
 
 **The rule, and it is the whole of why `--at` is required.** A lane's state is
