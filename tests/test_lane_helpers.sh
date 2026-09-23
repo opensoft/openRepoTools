@@ -8597,12 +8597,18 @@ write_record_ns "$sessions_dir/live-a17.json" "$HF_ID" "$LIVE_PID" "$live_start"
 # ------------------------------------- 1. the record, and its two sub-fields
 
 export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-1.md"
+cat > "$SANDBOX/a17bin/lclaude" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FAKE_PCLAUDE_LOG:-/dev/null}"
+FAKE
+chmod +x "$SANDBOX/a17bin/lclaude"
 run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
     CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-1 clear
 is    "lane-handoff exits 0" "$rc" 0
 # ITS OWN STDOUT, KEPT: `$out` is whatever the LAST `run` left, and there is a
 # `swapped` read between this run and the assertions at the foot of this block.
 hf1_out="$out"
+rm "$SANDBOX/a17bin/lclaude"
 hf1_log="$(cat "$LOGD/repoHF-1.md")"
 has   "…writing the lane's PAUSED line" "$hf1_log" "PAUSED — lane repoHF-1, session $HF_ID@Eagle"
 has   "…whose payload opens 'swap;', which is what \`swapped\` matches on" "$hf1_log" "lane:repoHF-1 → swap;"
@@ -8612,7 +8618,7 @@ has   "…its profile" "$hf1_log" "profile team-05a"
 has   "…and Amendment 17(b)'s two: the agent" "$hf1_log" "agent claude"
 has   "…and the transcript" "$hf1_log" "transcript $HF_ID"
 has   "…with the why as the line's free text" "$hf1_log" " — clear"
-has   "the restart line is printed, and it is one command" "$hf1_out" "READY — restart with: pclaude team-05a"
+has   "the lane-aware restart line is printed when lclaude is installed" "$hf1_out" "READY — restart with: lclaude team-05a"
 has   "…naming the agent the next start will use" "$hf1_out" "lane-start --agent claude resumes it"
 
 run   "$E" swapped Eagle
@@ -8735,6 +8741,11 @@ A17PATH_NOLANE="$(a17_path_without_lane)"
 
 : > "$FAKE_TMUX_A17_LOG"
 export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-5.md"
+cat > "$SANDBOX/a17bin/lclaude" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FAKE_PCLAUDE_LOG:-/dev/null}"
+FAKE
+chmod +x "$SANDBOX/a17bin/lclaude"
 run env PATH="$A17PATH_NOLANE" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
     CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-5 --restart clear
 is    "lane-handoff --restart exits 0" "$rc" 0
@@ -8745,7 +8756,8 @@ has   "…respawning the lane's own pane" "$a17_tmux" "respawn-pane -k -t hfsess
 # the door Amendment 18 Addendum 2 (i-8) leaves open in the same sentence that
 # names `lane <name>`: *"or through the launcher directly"*. The case below
 # asks for the word itself, where it is there to be seen.
-has   "…with no \`lane\` on PATH, through the launcher, with --lane BEFORE the profile" "$a17_tmux" "pclaude --lane repoHF-5 team-05a"
+has   "…with no \`lane\` on PATH, through lclaude, with --lane BEFORE the profile" "$a17_tmux" "lclaude --lane repoHF-5 team-05a"
+rm "$SANDBOX/a17bin/lclaude"
 has   "…and the seam that makes the new session a FRESH one primed by the top block" "$a17_tmux" "LANE_START_FRESH=1"
 hasnt "…never \`restart <lane>\`, which Addendum 2 takes off the person's PATH" "$a17_tmux" "restart repoHF-5"
 is    "THE RECORD WAS WRITTEN BEFORE THE RESPAWN, which is what the fake could see" \

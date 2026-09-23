@@ -92,7 +92,7 @@
 #   64 usage — an unknown option, or a flag with no value
 #
 #   $LANES_EDIT      the register's reader (default: lanes-edit.sh beside this)
-#   $PCLAUDE         the launcher         (default: pclaude, else claude-profile)
+#   $PCLAUDE         the launcher         (default: lclaude, else pclaude, else claude-profile)
 #   $LANE_DRY_RUN=1  print the acts instead of performing them
 #
 # It writes nothing to the register and it never runs `claude` itself: every
@@ -153,7 +153,7 @@ Exit: 0 reached, listed or declined · 8 nothing to pick · 2 refused ·
 1 a read failed · 64 usage.
 
   $LANES_EDIT   the register's reader   (default: lanes-edit.sh beside this file)
-  $PCLAUDE      the launcher            (default: pclaude, else claude-profile)
+  $PCLAUDE      the launcher            (default: lclaude, else pclaude, else claude-profile)
 
 `lanes` is the same rows as a READ — every column, closed lanes included, no
 question. `/restart` is the act from INSIDE a running session, which cannot
@@ -562,9 +562,9 @@ where_live() {   # <window field>
 launcher() {
 	local lp="${PCLAUDE:-}"
 	if [ -z "$lp" ]; then
-		lp="$(command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
+		lp="$(command -v lclaude 2>/dev/null || command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
 	fi
-	[ -n "$lp" ] || die "there is no launcher on PATH (neither \`pclaude\` nor \`claude-profile\`), and this
+	[ -n "$lp" ] || die "there is no launcher on PATH (neither \`lclaude\`, \`pclaude\`, nor \`claude-profile\`), and this
     command will not run \`claude\` itself: every launch goes through the
     launcher and therefore through \`lane-start\`, which is what renames the
     window, stamps the row, extends the session cell and passes \`--name\` so
