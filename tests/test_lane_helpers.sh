@@ -4529,7 +4529,11 @@ run "$E" lanes --lane repoA11-1
 ONE_ROW="$out"
 run "$E" lanes --all
 ALL_ROW="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "repoA11-1" { print; exit }')"
-is "one lane read alone is the same row the estate listing gives it" "$ONE_ROW" "$ALL_ROW"
+# Column 9 is a relative time. Two consecutive reads can cross a minute
+# boundary; compare the parser's stable fields rather than the clock tick.
+stable_lane_row() { printf '%s\n' "$1" | awk -F'\t' -v OFS='\t' '{$9="<time>"; print}'; }
+is "one lane read alone is the same row the estate listing gives it" \
+   "$(stable_lane_row "$ONE_ROW")" "$(stable_lane_row "$ALL_ROW")"
 
 # ------------------- ruling 8: `lane-end --retire <pid|uuid>` IS THE ONE ACT
 #

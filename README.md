@@ -211,15 +211,12 @@ gh repo clone opensoft/workBenches && cd workBenches && ./setup.sh
 lclaude --lane <repo>-<n> <profile>
 ```
 
-On an older installation without `lclaude`, `wip init` prints the compatible
-`pclaude --lane <repo>-<n> <profile>` form instead.
-
 `./setup.sh` runs `openRepoTools --install` and then `openRepoTools wip init`
 for you, each best-effort, so neither is a line you have to know to type. Its
 two preconditions are `gh auth login` — `wip init` derives your login from
 `gh api user` — and `~/.local/bin` on your `PATH`, which that script exports
 and which needs a restarted terminal. `pclaude list` names the profiles;
-`<repo>-<n>` is the lane naming rule.
+`<repo>-<n>` is the lane naming rule; without `lclaude`, `wip init` prints `pclaude --lane <repo>-<n> <profile>` instead.
 
 On a host that has this toolset without workBenches, the same two acts by
 hand, in this order, because the second refuses where no openRepoTools is
