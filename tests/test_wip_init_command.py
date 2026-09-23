@@ -194,7 +194,8 @@ def run_wip(home: Path, *args: str, extra: dict | None = None,
 
 # --- the whole path, where the person may create the repository -------------
 
-def test_wip_init_creates_clones_seeds_pushes_and_points_at_it(tmp_path):
+@pytest.mark.parametrize("has_lclaude", [False, True])
+def test_wip_init_creates_clones_seeds_pushes_and_points_at_it(tmp_path, has_lclaude):
     """Steps 2 to 10 in one run, and every one of them checked.
 
     The seed is checked for its SUBSTITUTED bytes rather than its presence: a
@@ -203,7 +204,13 @@ def test_wip_init_creates_clones_seeds_pushes_and_points_at_it(tmp_path):
     about that.
     """
     home = tmp_path / "home"
-    result = run_wip(home, extra=fake_gh(tmp_path))
+    environment = fake_gh(tmp_path)
+    environment["PATH"] = f"{tmp_path / 'fake-path'}{os.pathsep}/usr/bin{os.pathsep}/bin"
+    if has_lclaude:
+        launcher = tmp_path / "fake-path" / "lclaude"
+        launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        launcher.chmod(0o755)
+    result = run_wip(home, extra=environment)
     assert result.returncode == 0, result.stdout + result.stderr
 
     checkout = home / "projects" / "brettheap-wip"
@@ -230,7 +237,9 @@ def test_wip_init_creates_clones_seeds_pushes_and_points_at_it(tmp_path):
     assert remote.stdout.strip(), "the seed never landed on main"
     assert "pushed the seed" in result.stdout
 
-    assert "pclaude run <profile> --lane <repo>-<n>" in result.stdout
+    expected_command = ("lclaude --lane <repo>-<n> <profile>" if has_lclaude
+                        else "pclaude --lane <repo>-<n> <profile>")
+    assert expected_command in result.stdout
 
 
 def test_wip_init_is_idempotent_and_a_second_run_writes_nothing(tmp_path):

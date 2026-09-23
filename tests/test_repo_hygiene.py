@@ -888,7 +888,7 @@ def test_the_readme_carries_the_two_line_onboarding_chain():
     assert "gh repo clone opensoft/workBenches && cd workBenches && ./setup.sh" \
         in readme, (
         "README.md does not carry Amendment 9(e)'s first line, byte for byte")
-    assert "pclaude run <profile> --lane <repo>-<n>" in readme, (
+    assert "lclaude --lane <repo>-<n> <profile>" in readme, (
         "README.md does not carry Amendment 9(e)'s second line")
     assert "gh auth login" in readme, (
         "README.md names neither of the chain's two preconditions: `wip init` "

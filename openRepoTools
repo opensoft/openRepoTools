@@ -2494,7 +2494,11 @@ $WIP_LAST_ERR"
 	# a function of the workspace repository.
 	say ""
 	say "Done. The next step is one line:"
-	say "    pclaude run <profile> --lane <repo>-<n>"
+	if command -v lclaude >/dev/null 2>&1; then
+		say "    lclaude --lane <repo>-<n> <profile>"
+	else
+		say "    pclaude --lane <repo>-<n> <profile>"
+	fi
 	say ""
 	say "  <profile>   \`pclaude list\` names them"
 	say "  <repo>-<n>  the lane naming rule: the repository the lane is homed on,"

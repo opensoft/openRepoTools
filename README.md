@@ -208,8 +208,11 @@ is one of this repository's (lane-collision-protocol Amendment 9(e)):
 
 ```sh
 gh repo clone opensoft/workBenches && cd workBenches && ./setup.sh
-pclaude run <profile> --lane <repo>-<n>
+lclaude --lane <repo>-<n> <profile>
 ```
+
+On an older installation without `lclaude`, `wip init` prints the compatible
+`pclaude --lane <repo>-<n> <profile>` form instead.
 
 `./setup.sh` runs `openRepoTools --install` and then `openRepoTools wip init`
 for you, each best-effort, so neither is a line you have to know to type. Its
