@@ -916,6 +916,11 @@ payload="$payload; agent $agent; transcript $transcript"
 payload="$payload; kind $handoff_kind"
 [ -z "$refused" ] || note "DROPPED sub-field (not appended, and the line is still written):$refused"
 
+# A lane-aware launcher is required for restarts. An explicit lane keeps the
+# pclaude fallback safe across both old and new launcher installations.
+lane_profile_word="pclaude --lane $lane"
+command -v lclaude >/dev/null 2>&1 && lane_profile_word=lclaude
+
 # ------------------------------------------------------------ the LATE branch
 if [ "$do_late" = 1 ]; then
 	late_payload="$payload; late $late_at"
@@ -928,7 +933,7 @@ if [ "$do_late" = 1 ]; then
 	fi
 	say ""
 	say "LATE RECORD WRITTEN for lane $lane, dated $late_at. Now start the lane:"
-	say "  pclaude ${profile_name:-<profile>}"
+	say "  $lane_profile_word ${profile_name:-<profile>}"
 	exit 0
 fi
 
@@ -1023,10 +1028,14 @@ fi
 
 # ------------------------------------------- 5. the restart line — one command
 if [ -n "$row_write_refused" ]; then
-	restart_cmd="pclaude --lane $lane ${profile_name:-<profile>}"
+	if [ "$lane_profile_word" = lclaude ]; then
+		restart_cmd="lclaude --lane $lane ${profile_name:-<profile>}"
+	else
+		restart_cmd="$lane_profile_word ${profile_name:-<profile>}"
+	fi
 	restart_note=" (the row was not flipped, so the lane must be named explicitly)"
 else
-	restart_cmd="pclaude ${profile_name:-<profile>}"
+	restart_cmd="$lane_profile_word ${profile_name:-<profile>}"
 	restart_note=""
 fi
 say ""
@@ -1150,12 +1159,12 @@ if [ "$do_restart" = 1 ]; then
 	else
 		launcher="${PCLAUDE:-}"
 		if [ -z "$launcher" ]; then
-			launcher="$(command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
+			launcher="$(command -v lclaude 2>/dev/null || command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
 		fi
 		[ -n "$launcher" ] ||
-			die "the record is written and there is neither \`lane\` nor a launcher on PATH (pclaude, claude-profile), so this pane was NOT respawned. Start the lane yourself: $restart_cmd" 2
+			die "the record is written and there is neither \`lane\` nor a launcher on PATH (lclaude, pclaude, claude-profile), so this pane was NOT respawned. Start the lane yourself: $restart_cmd" 2
 		[ -n "$profile_name" ] ||
-			die "the record is written and this lane's record names no profile, so the launcher cannot be told which account to come up in and the pane was NOT respawned. Start it yourself, naming the profile: pclaude --lane $lane <profile>" 2
+			die "the record is written and this lane's record names no profile, so the launcher cannot be told which account to come up in and the pane was NOT respawned. Start it yourself, naming the profile: $restart_cmd" 2
 		launch_line="LANE_START_FRESH=1 $(quoted "$launcher" --lane "$lane" "$profile_name")"
 	fi
 	say "  respawning $target: $launch_line"

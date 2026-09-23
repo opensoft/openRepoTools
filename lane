@@ -562,9 +562,9 @@ where_live() {   # <window field>
 launcher() {
 	local lp="${PCLAUDE:-}"
 	if [ -z "$lp" ]; then
-		lp="$(command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
+		lp="$(command -v lclaude 2>/dev/null || command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
 	fi
-	[ -n "$lp" ] || die "there is no launcher on PATH (neither \`pclaude\` nor \`claude-profile\`), and this
+	[ -n "$lp" ] || die "there is no launcher on PATH (neither \`lclaude\`, \`pclaude\`, nor \`claude-profile\`), and this
     command will not run \`claude\` itself: every launch goes through the
     launcher and therefore through \`lane-start\`, which is what renames the
     window, stamps the row, extends the session cell and passes \`--name\` so
