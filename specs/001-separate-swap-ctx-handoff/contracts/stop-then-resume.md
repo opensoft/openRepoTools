@@ -38,6 +38,65 @@ The source capability must describe the actual launch/containment domain and
 whether any external supervisor can recreate the runtime. The implementation
 must refuse unsupported configurations before changing the running source.
 
+### Source-containment and restart domain
+
+The source exclusion binding covers `operation_id`, `source_invocation_id`,
+`owner_generation`, `lineage_id`, `lineage_generation`, `session_uuid`,
+`runner_incarnation`, and `daemon_incarnation`, plus the sealed source roster
+and the OS domain identity. The process domain is the source runner's original
+owned POSIX process group (PGID), corroborated by its launch SID and
+process-start identity. SID is launch-identity evidence; it does not widen
+`killpg` authority. Every admitted native child, tool, descendant, and writer
+must be accounted for within that PGID.
+
+Membership and escape coverage must span the whole source launch-to-exclusion
+interval, including reparented or detached writers and transitions after the
+admission fence. A preflight descendant snapshot is insufficient: an already
+running tool can change PGID later. A descendant that changes PGID or calls
+`setsid`, or any gap that prevents complete interval coverage, is outside the
+candidate domain and refuses support.
+
+The restart domain also includes every `ManagedDaemon` and adapter path that
+could create or adopt the source runner again. Before interrupt or shutdown,
+the current lane-owning supervisor must durably record a restart-deny fence
+bound to the exact `operation_id` and `source_invocation_id` as well as the
+source binding above. The fence is authoritative only when every source
+creation, recovery, fresh-adapter, daemon-takeover, and external-supervisor path
+enforces it before launch. A fence checked only by the old adapter is
+insufficient. A changed daemon incarnation must read and enforce the same
+durable fence; an unknown external restarter or an unenforced creation path
+makes the source capability unsupported.
+
+Only the current lane-owning `ManagedDaemon` may produce the
+source-exclusion observation. It joins the durable fence and sealed roster to a
+supported OS domain witness for the same runner incarnation and source
+invocation. Each observation carries a fresh, strictly increasing sequence or
+watermark bound to the operation and fence. Before readiness and again at
+release, the observation must show: the fence is durable and enforced by every
+creation path; no source launch is pending or authorized; the original PGID has
+no members; interval-wide membership/escape coverage is complete; all admitted
+writers and effects are reconciled; and the daemon incarnation and domain
+binding still match. An interrupt receipt, parent PID exit, empty PGID without
+complete interval coverage, SID alone, or a daemon identity alone is not a
+pass.
+
+If any binding, witness, external-supervisor policy, or restart path is absent
+or ambiguous before a stop is dispatched, refuse during preflight without
+interrupting or shutting down the source. If stop may have been dispatched and
+the evidence is lost, conflicting, or no longer joined to the same binding,
+retain the operation and claims as `indeterminate`; do not create a target,
+retry stop, or release. The current runner evidence producer reports only its
+own PID/PGID and does not establish complete group membership or all-path
+restart fencing, so the current production disposition is unsupported.
+
+The loopback container is not a positive source-exclusion witness. It runs the
+source, target, and observer in one container, uses temporary history storage,
+removes the container after reporting, and its isolation check does not inspect
+`HostConfig.RestartPolicy`. Its output is diagnostic only and retains
+`support_claim: false`. Any future source-only harness or container requires a
+separate scoped design; this contract does not treat container exit as positive
+production containment evidence.
+
 Before readiness, require observed exclusion of that whole source domain and
 reconciled effects. Killing an owned PGID, interrupt ACK, missing PID, or
 terminal parent Agent tool event alone is insufficient. Never treat missing

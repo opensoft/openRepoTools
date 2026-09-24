@@ -13,6 +13,26 @@ Neither omission of a mode nor an old record selects v1. The first delivery
 gate is its own bounded pinned-runtime experiment, not reuse of a probe that
 starts the target before release.
 
+## Bite 4 diagnostic status
+
+The proposed [source-only diagnostic design](../../../specs/001-separate-swap-ctx-handoff/contracts/source-only-diagnostic.md)
+and [five-bite operator runbook](../../../specs/001-separate-swap-ctx-handoff/runbook.md)
+define a bounded experiment with separate source and target containers, an
+external observer/custodian, source removal before target creation, immutable
+source history plus an exact-byte target copy, and durable release before one
+exact-parent target launch. T047/T048 and the T049 diagnostic query mode passed
+architecture review and formal offline gates. The separately authorized
+thirteenth runtime run exited 2, INCONCLUSIVE with
+`effect-or-observer-uncertain`, after source stop/removal and target-state
+volume creation but before copy, release, or target launch. The inner source
+exception was not retained; an unbound `parent_uuid` reference in the
+legacy/source initializer is a deterministic static cause candidate, not a
+directly proven historical exception. T050 is the approved future-only
+correction. No fourteenth run is authorized. This does not create a positive
+production containment witness or change activation authority.
+`support_claim: false` remains required; Bite 5 and production support remain
+pending/unsupported.
+
 ## Context
 
 The shipped lane workflow couples account swap, context reset, and semantic
@@ -605,6 +625,80 @@ The existing released same-runner invocation rollover and its
 tranche begins only after that rollover integration; it does not consume,
 replace, or generalize that reservation.
 
+### Historical T047 bounded source terminal-task seed — future-only diagnostic
+
+The ninth Bite 4 result was INCONCLUSIVE before release because its source
+terminal seed was unavailable and its report projection did not retain the
+reason. T047 repairs that diagnostic handoff only; it does not rewrite the
+ninth-run evidence, change Bite 3 containment requirements, or enable public
+lifecycle support. Astra's architecture review and Sol's 210-test formal
+offline gate passed. The separately authorized tenth Bite 4 attempt ran once
+and was INCONCLUSIVE before release/target creation because hook evidence was
+incomplete. At that historical checkpoint its authorization was consumed and
+no eleventh attempt had yet been authorized. T048 and the later separately
+authorized eleventh run are recorded below; that later one-run authorization
+is now consumed. No cleanup or twelfth attempt is authorized. Bite 5 remains
+pending and production unsupported.
+
+The source enables bounded `SubagentStart`/`SubagentStop` hook observation and
+sanitizes SDK lifecycle subtypes with their actual optional-field shapes. A
+`task_started` event is a source/setup or source/drain observation before the
+terminal event. A transferable v2 seed keeps the started event, terminal
+`task_notification`, and agent proof in separate digest-only envelope fields.
+The terminal observation stays unchanged: source-side
+`source_target_correlation` remains all `unknown` until target evidence
+exists. Session/task proof must join the active source runtime and the exact
+started task. The agent proof is either direct started-event evidence or a
+hook binding exact on session and tool-use ID, with task ID also checked when
+present. An unresolved early hook may be joined later only from those exact
+digests; missing callback tool IDs, ambiguous/reused task or agent bindings,
+conflicts, hook errors, malformed evidence, and overflow fail closed. No
+single-child/cardinality or transcript-path inference is permitted.
+
+Target correlation uses the terminal event's exact subtype, status, session,
+and task. Missing SDK-optional `task_type`, `agent_id`, or `tool_use_id`
+remains unknown rather than being synthesized; a present conflicting optional
+agent/tool ID refuses correlation. `task_updated.patch.status` is recorded,
+including `killed`, and a top-level/patch conflict is incomplete, but a
+task_updated-only sequence is not promoted to a terminal seed in this bounded
+tranche. The lifecycle record schema is v2 because its target-correlation
+shape explicitly includes `tool_use_id`.
+
+The private source projection binds a bounded unavailable reason, lifecycle
+and hook summaries, and path-free ID-join diagnostics (tool-ID seen/missing,
+mismatch, and exact-link candidate counts) into the source-phase digest. No
+raw identifiers, hook payloads, local paths, or transcript bodies are carried.
+These fields improve diagnosis only; the existing sticky startup gate remains
+unchanged and a source seed cannot satisfy or bypass it.
+
+### T048 SDK-sidecar bridge and eleventh-run observation
+
+T048 preserves structurally valid mismatched hook callbacks as unresolved,
+task-ID-free observations and retains bounded, digest-only callback/input/
+current-task identity diagnostics. At source finalization, the v3 seed can use
+a distinct, strictly validated SDK-sidecar proof after bounded no-follow
+scanning, unique parent Agent `toolUseId` binding, top-level parent/child
+session-and-agent checks, and exact `SubagentStop` transcript-path proof.
+Missing or ambiguous metadata, conflicts, unsafe files, malformed JSON, and
+scan overflow remain unavailable. Astra's architecture review passed and
+Sol's 243-test formal selector passed with zero failures/errors/skips. Frozen
+code hashes and complete artifact digests are in the linked verification
+record.
+
+The separately authorized eleventh runtime attempt used the available source
+seed and established a release candidate. It reached durable release, target
+launch, target creation, and final custody, but exited 2 with
+`startup-task-event-observed`. The target showed one complete stopped
+`task_notification` matching session/task; optional agent/tool identity was
+unknown and the UUID differed. The sticky gate correctly skipped history
+query. No parent/child startup messages or loaded-history proof were observed;
+the negative arm did not run. Source and target harness stop/removal were
+exit 137. This is INCONCLUSIVE, not a Bite 3 or Bite 5 verdict. The eleventh
+authorization is consumed; 17 volumes and the older stopped containers remain
+preserved. No cleanup, retry, or twelfth attempt is authorized. Next is
+read-only protocol investigation; any progression-rule change requires
+separate governance.
+
 ## Tool, process, and effect safety
 
 The native child ledger is separate from a generic ToolGuard ledger. Tool
@@ -729,3 +823,65 @@ The existing Speckit tasks remain the sole implementation task list.
   continuation, and what minimum mechanical records permit safe restart?
 * Which existing recovery/context owner will host the explicit record modes and
   migration refusal for the old independent prototype?
+
+### T049 separate terminal-task diagnostic progression
+
+The twelfth Bite 4 observation remains historical `INCONCLUSIVE` with
+`startup-task-event-observed`; its authorized run and the separately
+authorized cleanup are complete. Bite 5 remains pending and production remains
+unsupported. T049 defines an offline-only candidate for one bounded diagnostic
+history query under an explicitly selected target profile. The existing
+`strict-v1` default and `assess_v1_history_query_gate` behavior remain
+unchanged. The exception is selected and fingerprinted separately; it cannot
+be inferred from a source seed or from the strict gate refusing.
+
+The candidate admits only one complete, exact `system/task_notification` with
+`status=stopped` that matches a validated stopped source task by parent session
+and task ID. The task event's public frame has no origin field; a present
+origin is a conflict. A missing target `task_type` remains missing; the
+validated source `task_started` record supplies the `local_agent` constraint.
+One successful injected startup result must have explicit
+`origin.kind=task-notification`, exact parent session, and no error, abort, or
+deferred tool evidence. Assistant/tool activity, other lifecycle events,
+unexpected frames or routes, partial/unparsed output, observer gaps, request
+arrivals during startup, or ambiguity refuse the query.
+
+Before target launch, the gateway begins bounded request-arrival observation
+and stays held. A single separately authorized query uses a fresh private
+nonce distinct from an unpredictable response challenge and an explicit human
+origin. The gateway requires one parent request with valid model and dummy
+authorization, and the source prompt marker, exact Agent use and matching
+result in that same ordered message list before the nonce. It writes only the
+challenge, and records successful write/message-ID evidence. Completion
+requires the fresh exact-parent human-origin challenge result, stream EOF,
+closed gateway/request windows, no in-flight or unexpected arrivals, and no
+later native task events. This is terminal-correlation-only: bounded retained
+source facts reached the target model request and the fresh challenge returned.
+Full history restoration remains unproved; replay, quiescence, and child
+restoration also remain outside the evidence.
+
+The T049 candidate is architecture approved and Sol's canonical focused gate
+passed 420 tests, with 2,168 deselected and zero failures. The separately
+authorized thirteenth run did not reach its copy/release/query stages and
+remains INCONCLUSIVE. T049 does not authorize a fourteenth runtime attempt,
+cleanup, deployment, or production support claim. Bite 5 remains pending.
+
+### T050 future-only source-report failure correction
+
+T050 records a future-only offline correction after the thirteenth run's
+source-report schema failure. Remove the unbound `parent_uuid` reference from
+the legacy/source runtime initializer and publish generic fallback
+`error_site` evidence as only an allowlisted component/function and integer
+line; do not expose exception messages, paths, or locals. Immediately after
+source `_runtime_exec` returns, persist the exact mapping and source
+invocation/container/report digests in a private append-once envelope before
+source stop/removal or target-volume creation. Validate schema, phase,
+`support_claim=false`, `target_code_reached=false`, and exact source bindings
+before progression. Invalid fallback reports remain private and return the
+fixed public `source-runtime-report-invalid` INCONCLUSIVE result through
+quarantine. An otherwise-valid explicit `target_code_reached=true` remains a
+FAIL; absent or unknown reach remains INCONCLUSIVE. Astra approved the
+architecture and Sol's canonical offline gate passed 427 tests, 2,168
+deselected, zero failures. This repairs future behavior only: the thirteenth
+run remains INCONCLUSIVE, no fourteenth run is authorized, Bite 5 is pending,
+and production remains unsupported.

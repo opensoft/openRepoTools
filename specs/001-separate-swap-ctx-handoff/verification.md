@@ -5,6 +5,1125 @@ slice, or passing fake test is not full acceptance. `tasks.md` remains the
 implementation task authority; this document identifies the evidence needed
 to close the feature against its approved, explicitly versioned contracts.
 
+## Latest checkpoint — thirteenth Bite 4 INCONCLUSIVE; T050 architecture APPROVED; offline gate PASS
+
+The user authorized exactly one thirteenth Bite 4 run. Sol reviewed and froze
+the command; it exited 2 after about 20 seconds with overall
+`INCONCLUSIVE`, `bite5_decision=pending-review`,
+`production_disposition=unsupported`, and `support_claim=false`. The positive
+arm was INCONCLUSIVE with `effect-or-observer-uncertain`,
+`observer_complete=false`, `cleanup_complete=false`, and
+`release_candidate_ready=false`. The negative arm was not run; its reasons
+were `positive-release-candidate-not-established`,
+`positive-cleanup-incomplete`, and `positive-observer-incomplete`. No target
+container was created. Quarantine found zero labeled containers and removed no
+volumes; two unattached labeled volumes, one source-state and one target-state,
+remain preserved. No replay of the thirteenth run or cleanup is authorized.
+The one-run fourteenth diagnostic authorization and its pending post-push Sol
+preflight/command review and required command seal are recorded below.
+
+The source container was observed running after the source phase, then stopped
+and removed. The target-state volume was created, after which source-report
+schema validation failed before copy, release, or target-container creation.
+The sealed artifacts do not retain the inner source exception. The unbound
+`parent_uuid` reference in the legacy/source runtime initializer is a
+deterministic static cause candidate, not a directly proven historical
+exception. The sealed manifest SHA-256 is
+`5815a42167d5a772131368264111f9cb124f726fe33e101dee318eb3f8bd9d23`; sanitized
+stdout is `cd94d74854d88431c178b17b8893179e34b8821034e4570f02986051a86f374a`,
+private source report is
+`55d8311397fa473ee85612ea0e95c60ce6aa0caee074d2f360632964b6ab146e`, and the
+abort ledger is
+`b898eabb9f181fdcbf8a0c00d11f36090417d9ad62059bc8a183072d8ba557a8`. Runtime
+pins were SDK 0.2.153, CLI 2.1.273 with SHA-256
+`6c752e2cc7c110c9df15f26d8d134d438c5ae95dbd610efc1a308bf7f9c5f6c1`, and
+immutable image SHA-256
+`a26ded22be5a5f7e187b6e59d926dc49108b668d1e5a6227681025ecb09c7094`. No event
+indices were present in sealed artifacts.
+
+T050 is a future-only offline correction. It removes the unbound initializer,
+adds allowlisted component/function/line-only `error_site` metadata to generic
+fallbacks, and persists the exact returned source report in a private,
+append-once bounded envelope with invocation/container/report digests directly
+after `_runtime_exec` and before source stop/removal or target-volume
+creation. Schema, phase, support claim, target reach, and source bindings are
+validated before progression. Malformed/fallback reports produce the fixed
+public `source-runtime-report-invalid` INCONCLUSIVE result through quarantine
+while retaining private evidence. An otherwise-valid explicit
+`target_code_reached=true` remains FAIL; absent or unknown reach evidence
+remains INCONCLUSIVE. Astra approved T050. Sol's canonical focused gate passed
+427 tests, 2,168 deselected, zero failures; JUnit SHA-256 is
+`f887c8d09ccfd49c1a59165b2cf59c4102d108d1655821382266e38267619633`. The user
+has since authorized exactly one fourteenth full diagnostic run, pending push,
+Sol's post-push preflight/command review, and the required command seal. Do not
+run before these are complete.
+This authorization grants no cleanup or deployment authority and does not
+establish production support or decide Bite 5.
+
+## Historical checkpoint — T049 architecture APPROVED; scoped gate PASS
+
+Astra approved the T049 diagnostic-only architecture. Sol's expanded canonical
+scoped gate passed: 420 passed, 2,168 deselected, zero failed. The selected
+diagnostic was ready for a separately authorized runtime test; that offline
+gate did not grant authorization. The existing `strict-v1` default remains
+unchanged. At that checkpoint the twelfth Bite 4 run remained historical
+INCONCLUSIVE with `startup-task-event-observed`; the later thirteenth
+authorization and result are recorded above. Bite 5 remains pending and
+production remains unsupported.
+
+Frozen T049 source hashes are native probe
+`0469e76f6d8755b5e77f242d9faaa02e0a503df0410338d4205f4109085a0c68`, two-domain
+harness `35353d2546fd57c0f0967062f0e2a0afdbe69b6fe47645ef7246b1dfa8da285f`,
+loopback tests `518d28013a68e24b71ff7a51f68a7a1267a5046f49d1ace56dd03d79c4412b6a`,
+and T049 harness tests
+`30aafebe54dd1c91176ace94d81138c3cacc0e56544f6882f3b8ae252376ee3a`. The
+420-test scoped JUnit, stdout, and stderr digests are respectively
+`0cab98c25f027f1997a41fa46c70aa33657e2bad4249484590d94d183542a56c`,
+`8ae52e932ce0cc549343cfd3b98f6e1524784d005f43601f845456178481090c`, and
+`ff8cafb88544fd8aea6f652c617812d975ceb22443788fbfa82a957e96d317cc`.
+
+The full repository suite ran once: 2,560 passed, 28 failed, zero skipped,
+five warnings, in 3,951.61 seconds. It used the pre-fix loopback test hash
+`f2580cd01a347390a51242a088ed72766999fc56ca404624708eca5e640ee947`; the ten
+stale loopback fixtures have since been fixed and the expanded scoped gate is
+green. Fourteen native context/restoration failures hit the unchanged
+unsupported controller gate. Of the other four failures, an isolated
+three-node rerun passed the CLI unsafe-parent and daemon-route cases, while the
+CLI persistent-lifecycle case still failed on an ownership conflict; the shell
+aggregate was not rerun. The full-suite JUnit digest is
+`48e559aaffe2078dc550bdfaf48792b338577b1cf50baa8827b736943f960a2f`; the
+isolated three-node rerun JUnit digest is
+`828f1b9277375ad703cd07d5f5f6400d080bb5d18ca27c2143b08c0c959291b1`. The full
+suite has not been rerun after the fixture fixes. These results do not
+establish a green full suite, a baseline cause for the remaining failures, or
+a runtime-conclusive Bite 4.
+
+## Thirteenth full Bite 4 run — INCONCLUSIVE; one-run authorization consumed
+
+The full-run public report selected explicit release but granted no support
+claim. The positive arm stopped after source stop/removal and target-state
+volume creation because the source runtime report did not match the expected
+source-phase schema. The source process was observed running after its phase,
+then stopped and removed. There are no event indices in the sealed artifacts.
+Copy, release, target launch, and negative-arm execution were not reached. The
+failure is INCONCLUSIVE rather than FAIL because no specific runtime contract
+violation was established from the retained report; its inner source exception
+was not retained. Static review identified the unbound `parent_uuid`
+initializer as a deterministic cause candidate only. The source correction is
+future-only and does not rewrite this run.
+
+The preserved inventory is zero labeled containers and two unattached labeled
+volumes (one source-state and one target-state). No cleanup, retry, or
+fourteenth authorization occurred. Exact artifact hashes, runtime pins, and
+negative-arm conditions are in the latest checkpoint above. Bite 5 remains
+pending and production remains unsupported.
+
+## Historical runtime checkpoint — post-twelfth-run cleanup complete; Bite 4 INCONCLUSIVE; Bite 5 pending
+
+The separately authorized twelfth full Bite 4 invocation ran once and exited
+2. Its sanitized report uses schema
+`openrepotools-bite4-two-domain-report/v1`, with
+`diagnostic_status=INCONCLUSIVE`, `bite5_decision=pending-review`,
+`production_disposition=unsupported`, and `support_claim=false`. The positive
+arm is inconclusive with reason `startup-task-event-observed`,
+`observer_complete=true`, `release_candidate_ready=true`, and
+`cleanup_complete=false`; the negative arm did not run.
+
+The T048 source terminal seed was available. Source stop event 34 and target
+stop event 151 were harness/engine enforced with exit 137 and `oom=false`;
+source removal was event 36. Exact copy verification was event 92, and
+pre-release custody event 119 reported `exact_match=true`. Durable release,
+launch intent, and target create were events 120, 121, and 123. Target removal
+was event 153, final helper removal was event 179, and event 180 persisted
+final custody. Target initialization was bound to the same source parent UUID.
+One complete stopped `system/task_notification` matched session/task; optional
+agent/tool identity was unknown and its event UUID differed from the source parent.
+
+The gate recorded `successful_result_seen=true` and
+`history_query_allowed=false`; `history_query_sent=false` and
+`read_complete=false`, with no query or read sent. No
+parent/child startup messages were observed. The terminal-correlation-only
+event does not prove replay or that no new execution occurred, and there is no
+loaded-history proof. Final custody retained the saved edit and linked source
+parent-history prefix. The target parent JSONL grew from 52,825 to 55,372 bytes
+and `other_config_mutation_count=1`, so this custody result does not establish
+whole target-tree immutability.
+
+The generic negative-arm reason `positive-release-candidate-not-established`
+is misleading: `release_candidate_ready=true`, and the actual unmet
+prerequisite was `cleanup_complete=false` after the INCONCLUSIVE run's
+resources were preserved. This does not change the negative arm's `not-run`
+status.
+
+The sealed result digest is
+`4289f073b7c8508633f13c829d0ed670c813f917480ff106bd0525d14ee24294`. Frozen
+source hashes are native probe
+`cec4b4f5010e4e9c56c08492b1a12692689b8160ba0f213b779adc75e44819dc`, harness
+`bb5161ba852aaa7f83c314d171b3929dcbca07c106b8899ee514f085ee111a77`, and
+tests `eb462ac654390785bc45fd0e84b0b1f675dc539c6ea89e62bc95c5e0db65c29b`.
+The run used SDK `0.2.153`, CLI `2.1.273` with SHA-256
+`6c752e2cc7c110c9df15f26d8d134d438c5ae95dbd610efc1a308bf7f9c5f6c1`, and
+Docker client/server `29.8.1`/`29.6.2`.
+
+Runtime artifact SHA-256 values:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Input artifact | `70c0bbff9e65bfaa3a5e668bab0daf3858084755128cf0797560e37fde0475b7` |
+| Private command artifact | `5129bfccefd7b1436fe22c3d507bbc731170725214ba0ed7d4e6808f24dcef17` |
+| Stdout | `7b89fa542e6865d6bcf8301dfa8919acddee6ae2fb5de6bbb43f591af4bb2cb2` |
+| Sanitized report | `13264ba136af4e85c7dd3939546c52469c6887743dad454b578ab4fa1c1f210f` |
+| Arm result | `21dc04c163dd68ad30898238820257afbdab11cbcbe0bb8e37846f5d6274ce89` |
+| Empty stderr | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| Artifact manifest (36 entries) | `36a2c41c89c804e0dfd2a884eae4f6ac38d4c90d1cec4049d4f0d19d7de82c7b` |
+
+The restricted evidence bundle contained 37 files (including the manifest),
+16 directories, no symlinks, file mode 0600, and directory mode 0700. The
+parsed public report and stdout JSON matched; the report contained no detected
+raw UUID, path, or run label. The preserved engine inventory is 19 volumes
+(12 source-state, seven target-state), four older stopped Bite 4 containers
+plus one stopped
+metadata diagnostic container, zero running containers, and no current target
+container; this is the pre-cleanup inventory observed for the sealed run. After
+separate explicit authorization, Sol High completed exact allowlisted cleanup
+on 2026-09-24. Preflight found 19 labeled local diagnostic volumes (12
+source-state, seven target-state) and five stopped containers (four Bite 4,
+one read-only metadata diagnostic), with no running containers or unrelated
+attachments. Postflight confirmed all 24 allowlisted resources absent. The
+sealed bundle and all 36 manifest entries are unchanged; no prune, evidence
+deletion, or unrelated removal occurred. The private mode-0600 allowlist
+artifact SHA-256 is
+`d6ea783b66a4bee326ee23b83d80a82797f2f633db19831b131b0ac4cd0a4d78`. The
+twelfth run authorization is consumed. At that historical checkpoint no
+thirteenth attempt was authorized; the later one-run authorization and result
+are recorded above. Bite 4 remains INCONCLUSIVE, Bite 5 remains pending, and production remains
+unsupported. Astra confirms that the sticky gate behaved as specified; the
+absent Bite 3 OS witness and all-path restart fence prevent a PASS or
+production claim.
+
+## Historical checkpoint — T048 architecture/offline PASS; eleventh runtime INCONCLUSIVE
+
+T048's bounded callback/task-tool mismatch handling and SDK-sidecar identity
+bridge passed Astra's final architecture review and Sol's formal offline gate.
+Sol ran
+`tests/run.sh --parallel-safe -k 'two_domain or native_task or native_hook or hook_ack or source_terminal_seed'`:
+243 selected tests passed, 2,270 were deselected, and there were zero
+failures/errors/skips. Frozen SHA-256 values:
+native probe `cec4b4f5010e4e9c56c08492b1a12692689b8160ba0f213b779adc75e44819dc`,
+test module `eb462ac654390785bc45fd0e84b0b1f675dc539c6ea89e62bc95c5e0db65c29b`,
+and harness `bb5161ba852aaa7f83c314d171b3929dcbca07c106b8899ee514f085ee111a77`.
+Formal T048 artifact SHA-256 values are: collection
+`faccee4f683353b8b045ca4cabcde9577dc21a1b940b29d507c238ba8a28c303`,
+collection stderr
+`258d41b4b0c044e6cca80eef34923db708a89381a2b2a46f68b22fa20c6e7839`, stdout
+`3b07ba258bc296c94bf7821c273fa484d916d59e8fd2f8e1d87361324f337924`, stderr
+`5777718cd72f663c66e07c986b898d7cbb20a60fdb16fcd7413ad28bfa68d448`, JUnit
+`8dccdf14e7d332638b5e8d54a906d490e6744f57826d8c1729448e843113b113`, and
+pre/post hash-file `a098b8811734559984d5bda556730ea03283d9a9a348d3e2e75c295476bab662`.
+No host-absolute artifact path is recorded here.
+
+The separately authorized eleventh Bite 4 run was executed once and exited 2,
+INCONCLUSIVE with `startup-task-event-observed`. Its authorization is
+consumed. The T048 offline pass does not change or upgrade any historical
+runtime result. Seventeen volumes (11 source-state, six target-state), five
+older stopped containers, zero running containers, and zero current target
+containers remain preserved. No cleanup, retry, or twelfth attempt is
+authorized. Bite 4/Bite 5 remain open and production remains unsupported.
+
+### Eleventh full Bite 4 runtime — executed once; INCONCLUSIVE
+
+The v3 source seed was available through the SDK-sidecar proof and the source
+projection set `release_candidate_ready=true`. Source stop/removal was
+harness/engine enforced with exit 137; exact copy, pre-release custody, and
+final custody were preserved. Durable release, target launch-intent, and
+target-create records occurred at events 120, 121, and 123. The target harness
+stopped/removed with exit 137. One complete stopped target
+`task_notification` matched session/task; optional agent/tool identity remained
+unknown and the UUID differed. The sticky startup gate skipped the history
+query after observing the task event. No parent/child startup messages were
+observed; the negative arm did not run. This is INCONCLUSIVE under Bite 3 and
+does not prove loaded history or production containment.
+
+Event 180 records final custody. The sealed result digest is
+`9403d9910279ec0c6f047f53dc4d1c672751e90bb63d637985803c8202f04e5f`. The
+private evidence bundle is identified as
+`openrepotools-bite4-eleventh-preflight.YKJSLl` (35 files mode 0600; 16
+directories mode 0700). Runtime artifact SHA-256 values:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Input artifact | `439d6f044995bc84d5f73ae905970e9f64fbaca4f81871698cf530f0ffd718b0` |
+| Stdout | `f47cb555d77747029072db22e63fba03d57b37e0d1e582d684057446d3ed6f04` |
+| Sanitized report | `0220f77e4d0f5a6b98e0e06f5f2bbc1bf23117c548215eac0637ecc43fcb1e21` |
+| Arm result | `5b19526a07fc5100e0cb33dec785fe14191c3de601e41d66ab4be09936da6320` |
+| Empty stderr | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+
+The preserved engine inventory is 17 volumes (11 source-state, six
+target-state), five older stopped containers, zero running containers, and no
+current target container. No cleanup, retry, or twelfth run occurred or is
+authorized. Astra's post-run assessment is that the sticky gate behaved
+correctly under Bite 3; no replay or loaded-history proof was observed. The
+next step is read-only protocol investigation and separate governance if a
+progression-rule change is proposed.
+
+## Historical checkpoint — T047 offline PASS; tenth runtime INCONCLUSIVE
+
+T047's bounded source-native terminal-seed repair passed Astra's final
+architecture review and Sol's formal offline gate. Frozen SHA-256 values:
+native probe `86470ec387152debb46e507ba5e325117bf23d29e41808a65ad967654bfe0586`,
+harness `bb5161ba852aaa7f83c314d171b3929dcbca07c106b8899ee514f085ee111a77`,
+and tests `5b417c029a7ab3ed934d1787069c6965ccd4acf3a345bdf5d80a2144286c21e4`.
+
+Sol ran
+`tests/run.sh --parallel-safe -k 'two_domain or native_task or native_hook or hook_ack or source_terminal_seed'`:
+210 selected from 2,480 collected; 210 passed, 2,270 deselected, zero
+failures/errors/skips, in 13.02s. The private temporary artifact bundle
+`openrepotools-t047-offline.rA7s0z` was mode 0700. SHA-256 values: stdout
+`ec7e33e0d3f55753f594cd1c4b9c027d989a0db32bb0587218ef8ebc0288bb50`, stderr
+`11e3656d6e5fd8889282c3d6e5700459b11db45aa0cc1071bac1e2470e49fb8f`, final
+collection `c7280e86e115ce135c5d6d3bbb8b7c7f17e18629c832676af2aceca0c951f370`,
+and pre/post hash-file `6d1ec8f6b9b49c89d278b369c87aa8ebe5202167abc2c7b3c0a41776a58d74c9`.
+No JUnit digest was supplied. Luna's separate focused development smoke passed
+207 tests with 2,273 deselected; it is not the formal gate.
+
+At the T047 checkpoint, the separately authorized tenth Bite 4 attempt had
+run once and exited 2 with an INCONCLUSIVE result. The tenth authorization was
+consumed; no cleanup or eleventh attempt had yet been authorized. That
+restriction is historical; the current one-attempt authorization appears in
+the latest T048 checkpoint above. The offline gate and runtime observation do
+not establish production containment.
+
+### Tenth full Bite 4 attempt — executed once; INCONCLUSIVE
+
+The positive result reason was
+`source-native-task-terminal-seed-unavailable`, with detailed reason
+`terminal-task-hook-evidence-incomplete`. The lifecycle v2 projection retained
+four complete events: one started task with a tool-use ID, and one hook
+callback rejected as `hook-tool-use-id-mismatch`; zero hook callbacks were
+stored or joined. The source stop/removal was harness/engine enforced with
+exit 137, not natural graph shutdown. Exact copy, pre-release identity-linked
+history custody, and final saved-edit/history-prefix custody were retained.
+No release or target-launch ledger, target runtime container, or positive
+release candidate was established; the negative arm did not run.
+
+The event ledger covers events 1–145; event 146 persists the final result with
+sealed digest
+`addefcf9282109879c5fd1eaa74a199eb03949e8b81ed8c13b4728a837db8258`.
+Inventory is 15 preserved volumes (10 source-state, five target-state), the
+same five older stopped containers, zero running, and no tenth-run container.
+No cleanup occurred.
+
+Tenth-run artifact SHA-256 values:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Private exact-input digest | `c03ce448efa8b305bb76da9dfe5cd376e2cbae15bb121374e37bd0a92f90038f` |
+| Sanitized report | `f759c4a570a5cb3f37d762dc1805d53a7d731c964ab8e151efdc66d3cd6a30e5` |
+| Stdout | `dab4a30620c9bb78c55a59770ad9e541739169877102b3639b5b914c85de0909` |
+| Arm-result artifact | `c78bb531f2ca3a0b6d026c3e974e847f18ac6ff7007594ab93d7a2f4e321e409` |
+
+Stderr was empty. The private py-bench evidence bundle is identified as
+`openrepotools-bite4-tenth-preflight.7EHz5N`; its directories were mode 0700
+and files mode 0600. No host-absolute artifact path is recorded here.
+
+Astra's post-run interpretation is that the hook mismatch rejection was
+correctly fail-closed. The pinned SDK only forwards an optional callback tool
+ID and does not guarantee that it equals the selected task's tool ID. Because
+the retained summary omits the rejected hook event kind and associated
+digests, the evidence cannot distinguish a different tool role, task, or
+association. This is not evidence of a CLI defect. Any future investigation
+should retain bounded rejected-hook kind/order and separate callback, input,
+current-task, session, and tool digests, then seek an authoritative structured
+bridge. Do not relax exact equality or infer a join from cardinality. At that
+historical tenth-run checkpoint, an eleventh attempt was not yet authorized.
+
+## Historical checkpoint — ninth Bite 4 run; INCONCLUSIVE
+
+The one authorized ninth full Bite 4 attempt ran once and exited 2 with a
+sanitized public report whose `support_claim` is false. The positive arm is
+INCONCLUSIVE with reason `source-native-task-terminal-seed-unavailable`,
+`observer_complete=true`, `release_candidate_ready=false`, and
+`cleanup_complete=false`. The negative arm was not run; a positive release
+candidate was not established.
+
+Source stop/removal, exact source-to-target copy, identity-linked pre-release
+parent-history custody, and final custody of the copied volumes were observed.
+The source parent exited and tracked fixtures were excluded, but
+source-container shutdown was harness/engine enforced with exit 137. This is
+not natural graph shutdown or production containment evidence. The source
+projection reported the terminal seed unavailable but omitted the detailed
+unavailable-reason envelope, so the exact missing identity/event condition is
+unknown. The target-state volume was copied; there was no release or
+target-launch ledger and no target runtime container.
+
+The observer ledger covers events 1–145. Public event 146 is
+`final-custody-result-persisted` and carries sealed arm-result digest
+`982c9efb8b22b97d78e5eac557834523bb542edf7bc6dec5928bed93445a7aeb`. This
+sealed digest is distinct from the arm-result artifact digest and the
+pre-release custody digest below. T046's available-seed transfer, target
+fingerprint validation/correlation/startup/history query, and negative arm
+remain unexercised. The offline closure remains valid. Bite 5 remains pending;
+production remains unsupported.
+
+Current inventory is 13 volumes (nine source-state and four target-state),
+five older stopped containers (four Bite 4 and one metadata diagnostic), zero
+running, and no ninth-run container. No cleanup or retry occurred. The
+ninth-run authorization was consumed at that checkpoint; no tenth attempt
+was then authorized, and no cleanup occurred.
+
+Frozen source hashes: harness
+`b0f01d529771eab2d7ebd1738b8702e25bfc2b9fc446e7236548088cad63338e`, native
+probe `1042153b8f768f1bce772bc42d3f923b3d05d7a3fb944070c5327b7b5624c77d`, and
+tests `d4242957190624b76d652457bd9b0376e99d3d2985820666021845356b016c33`.
+The selected SDK was 0.2.153, selected CLI 2.1.273 with SHA-256
+`6c752e2cc7c110c9df15f26d8d134d438c5ae95dbd610efc1a308bf7f9c5f6c1`, and
+immutable image
+`sha256:a26ded22be5a5f7e187b6e59d926dc49108b668d1e5a6227681025ecb09c7094`.
+
+Ninth-run artifact SHA-256 values:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Private preflight exact-input digest | `f2700df1e1c3bb515628bbb321482dd2a3d41f6e129dd5e3319798ce5b221411` |
+| Sanitized public report | `ba0d4bff43ff68dcae0331766daa82e5e554ddc6f75d83664c8c59c19c3a8430` |
+| Stdout | `8e2d1a7af7958af3bca894783abd99f30b1698f7d052eb4603724455ea24d071` |
+| Empty stderr | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| Arm-result artifact | `dd53208829c62bfc951ff563205eb2118169a86edf6c46fb15646c1ec8ff9972` |
+| Source-stop ledger | `0abab1d9f8fa0963651bcca0997ab57cb0d4bac54a2191b5dd09f5761cf54343` |
+| Source-removal ledger | `fce8e002e8bc5636c59710f5759c26f317d14e64923e6e31c28b8429e6d89dd1` |
+| Source-container stop record | `a4059c65e7af7c558e418fc2bdddd6f420d06fbea086166b78585f0168d3dee9` |
+| Embedded source manifest | `1e13464eb9f664079240230d243d97233c3dda278e6953fe022dd040ee1ac585` |
+| Pre-release custody | `e1efcf62a0cb22bdb3c968e64271c938a32a49e9f1428dd4b33bf74b0ce0bf0c` |
+| Sealed arm-result digest in event 146 | `982c9efb8b22b97d78e5eac557834523bb542edf7bc6dec5928bed93445a7aeb` |
+
+The restricted artifact set contained 27 files and 16 directories; files were
+mode 0600 and directories mode 0700. Raw paths and runtime IDs remain in the
+private evidence store.
+
+## Historical checkpoint — eighth Bite 4 run; INCONCLUSIVE
+
+The single user-authorized eighth full Bite 4 attempt ran once with the
+T043/T044-hash-guarded command in `runbook.md`. The outer process exited 2 and
+the sanitized public report is INCONCLUSIVE; the corrected image-ID sanitizer
+passed. The positive arm is INCONCLUSIVE with
+`startup-task-event-observed`, `observer_complete=true`,
+`release_candidate_ready=true`, and `cleanup_complete=false`. The negative arm
+did not run.
+
+The run observed source stop/exclusion, exact source-to-target copy,
+pre-release identity-linked parent-history custody, durable release,
+exact-parent target initialization/start/stop/removal, and final saved-edit
+and history custody. The bounded target startup snapshot recorded one
+`system/task_notification`, status `stopped`, provenance `target-observed`,
+sequence 1, and matching session correlation. Task/agent identity remained
+unknown, source terminal seed was unavailable, and identity was unresolved;
+the snapshot is unknown/incomplete. No assistant/tool activity, parent/child
+messages, or gateway routes were observed. The sticky history-query gate
+correctly skipped its query because the startup task event was observed. This
+does not satisfy Bite 3's PASS criteria and is not a Bite 5 verdict.
+
+The run added two preserved volumes. Current inventory is eleven volumes
+(eight source-state, three target-state), four older stopped Bite 4 containers
+plus one stopped metadata diagnostic container, zero running, and no
+eighth-run containers. No cleanup or retry occurred. The eighth authorization
+is consumed; no ninth run or cleanup is authorized. Production remains
+unsupported.
+
+Frozen hashes used for the attempt: harness
+`a3852a6969599c1b605edb60a371069d6de9f41317a9082cd69c0e65ab800c62`, native
+probe `bf7032097ba264aa199e6f0555d4ab4412c85043b0b12e674a8a4461722d78e9`, and
+tests `c23f6a3d91aafc33dd056b67d89034363c7ba6ecea494389b519b6897fd698fd`.
+Private artifact SHA-256: manifest
+`3626f45bdea3b9932b5debbf7e946df7ad7ed5a47a83f552caf47334ba88ddd4`, public
+report `eba9d0dc0646697af4f453d6881d95d3055d97935a8d53b070ea034cfaee5383`,
+stdout `ae51147de5c27869769f49a9e715864f9f3cff3d2be78fff9b36e2d938cfaba3`, arm
+result `641242a7fe2625e0b978463d7a3c7aabab4bf3b053378d665e564ae89929be32`,
+release ledger `fcc6faabe0b0446dcf5cef5d763b17b9587c13e74798ed90eaeebd5709246e6c`,
+and target-launch ledger
+`808af1888b195193807600ad8192c43123888da1d7f1f79a1904e4fc475dfe60`. Raw
+paths and runtime IDs remain in the restricted evidence record.
+
+## Historical checkpoint — T042 seventh run; arm INCONCLUSIVE, public report packaging FAIL
+
+The single user-authorized seventh full Bite 4 attempt ran once with the
+reviewed T041-hash-guarded command. The outer command exited 1 because report
+packaging raised `private-identifier-in-report`: `args.image` was the immutable
+image ID and the report intentionally publishes that same value at
+`identities.image_id`. Sol and Astra confirmed that this is a sanitizer false
+positive, not a runtime identity violation. The private positive arm remains
+INCONCLUSIVE with `startup-task-event-observed`; the negative arm did not run.
+
+The positive arm observed source stop/exclusion, exact source-to-target copy,
+pre-release identity-linked parent history custody, durable release, target
+startup/stop/removal, and final custody. The exact parent UUID matched. One
+native task event occurred at target startup, so the sticky gate skipped the
+history query; no parent/child messages, history read failure, or protocol
+errors were observed. `release_candidate_ready` was true and
+`cleanup_complete` false. This is not PASS under Bite 3 and does not decide
+Bite 5.
+
+The attempt added two preserved volumes and left no seventh-run container.
+At that checkpoint inventory was nine engine volumes (seven source-state, two
+target-state) and five older stopped containers, with zero running. No cleanup
+or eighth attempt was authorized at that checkpoint. Private artifact SHA-256: manifest
+`537b3741de9c42e6ba9428f343d22a68e3196556e3755107a0c468f4e756902e`, public
+report `3db0840883f58d5dfd88fe727cb29e0df7e8977cd7c126f84ffdffb7dee025e9`,
+stdout `e2ef15dee6b3b6884d6d36fb1d237d3ff862be6448a055512650ad683683bbed`, arm
+result `6cee6803105e5668c166a340660624d99050e5df292f5c3b939502c2c0df30c5`,
+release ledger `44d97078a835f12ddb7931f4e79778ed81a4da34f22df5efd4f71ce1fbd80807`,
+and target-launch ledger
+`8024b9967ee5f20fc5a103e6b191cc81f91f7c974f0d2e4301266a8e0db4a6f8`.
+The 37 private artifact files were mode 0600; raw paths and runtime IDs remain
+in the restricted evidence record.
+
+The future-only sanitizer correction retains `args.image` and the resolved
+image ID in the private-value set, validates a full resolver-matched
+`sha256:<64 hex>` value, and masks only `identities.image_id` in a copied scan
+projection. The generic private-value check is unchanged. The target runtime
+also emits a bounded detached startup task-lifecycle snapshot after the initial
+read and before any optional history query, with `target-observed` provenance
+and unavailable source-seed provenance. The sticky gate inputs and refusal
+branch are unchanged. Astra's integrated architecture review passed. Sol's
+canonical `tests/run.sh --parallel-safe -k two_domain` gate passed **151 tests,
+0 failures/errors/skips in 9.749s**, including the 14 metadata cases. Frozen
+hashes are harness
+`a3852a6969599c1b605edb60a371069d6de9f41317a9082cd69c0e65ab800c62`, native
+probe `bf7032097ba264aa199e6f0555d4ab4412c85043b0b12e674a8a4461722d78e9`, and
+tests `c23f6a3d91aafc33dd056b67d89034363c7ba6ecea494389b519b6897fd698fd`.
+Private gate artifact SHA-256: stdout
+`a02ce67b08de9dfe3a363fba88e6f9bda1115a9559cc1d294bc2e6f9ef2f05bf`, stderr
+`d6e0c18bc312a3a3e5e716b798c52292f5a23568cebabee3b20ea8c487be42e5`, JUnit
+`d77e2bae637e5ae217d42cf74f6de4396f855a013c7b200885c8375f759eb470`.
+This is future-only offline evidence; it does not change the seventh run's
+underlying INCONCLUSIVE arm, repair its public artifact, or validate a runtime.
+It did not itself authorize an eighth run; the separate eighth authorization
+and result are recorded in the latest checkpoint above.
+
+## Historical checkpoint — T040 metadata scan and T041 offline gate PASS
+
+Sol executed the separately authorized stat-only scan against the sixth
+attempt's preserved source-state volume. The diagnostic exited 0 and reported
+nine files, 14 directories, and 394,590 total file bytes. The largest
+identified file was a config `.json` of 306,896 bytes. The scanner read no file
+contents. The selected volume was mounted read-only; its contents remain
+unchanged while engine attachment metadata changed for the new diagnostic
+container. Current inventory is seven engine volumes and five stopped
+containers, zero running. The diagnostic container/artifacts remain preserved;
+there was no cleanup or repeat.
+
+Private artifact SHA-256: manifest
+`aa3c4c235afa931507b6dedd28939e43e97c1cd212901c48c7d2150ec016499d`, public
+JSON `af7b84e3145e6596044d767c164ca0ddec573ae25c93a1d2ba886de96f22ab68`, and
+private JSON `c0f0b0a74d970562782cff6106aeb29fdf1d4b6768d70798c2e34a65df29e0f2`.
+The exact scanner and runner hashes are in `runbook.md`; raw paths, names, and
+IDs remain in Sol's restricted evidence record.
+
+T041 now separates fixture-tree byte limits from history evidence: the
+candidate uses 512 KiB per fixture file and 2 MiB per complete tree, with
+`MAX_HISTORY_CONTENT_BYTES` unchanged at 64 KiB and
+`MAX_HISTORY_SCAN_BYTES` unchanged at 512 KiB. Manifest, copy/re-manifest,
+pre-release/final custody, and target prestart all use the same tree defaults.
+Synthetic regressions cover the measured large JSON through exact copy,
+manifest, pre-release and final custody; exact and cap+1 file/aggregate
+bounds; and refusal of an oversized history prefix. Astra's formal architecture
+review passed. Sol's canonical `tests/run.sh --parallel-safe -k two_domain`
+gate passed **144 selected tests, 0 failures/errors/skips in 14.434s**. Frozen
+hashes are native probe
+`a0379e325db46d599d5e3d98c3b25f4200036ae8e08eb1a618d43d59d4f5b069`, harness
+`9f8a71fe30e370e6569bf7db2ec2466cb9338ca8aa89a001f39215a32f1de28c`, and
+tests `fa29dffec7c86131152dcee8b116e02f2a772130177d3d4fb25cb406a915b6b5`.
+Private gate artifact SHA-256: stdout
+`cecc5ecbbd849fe2a7ae66e63728eaf45fbc7a580130c3a553fe472af2283356`, stderr
+`e8e31f13e4582ffc1e0a2ce36474cdd0547620d2020024e5c8e9af934dfe9847`, and
+JUnit `a4d994ae3288ceb50023edb79e408e22d73954c7664aa2e3f12a4ec0386ff8a8`.
+
+At this T041 checkpoint, one seventh full Bite 4 attempt was authorized after
+the review, offline gate, and fresh preflight passed; exact-command review was
+still pending. The run is recorded in the current T042 checkpoint above.
+
+## 2026-09-23 historical checkpoint — T036/T037/T038 offline PASS; fifth run INCONCLUSIVE
+
+Astra's targeted T036 and T037 reviews passed. T036 adds a frozen trusted
+startup wrapper that takes two bounded `/proc/self/mountinfo` captures for
+source, every helper, and target. The external observer binds each capture to
+the exact container/image/run/role/start identity and engine create/start
+evidence before uploads and again before SDK/helper work. Parsing checks the
+controlled mount destinations, effective mount and superblock options, exact
+sizes, ancestor overmounts, duplicates, completeness, and bounds. Attach
+transport remains tracked through verified stop. Unsafe policy findings are
+FAIL only after identity/event binding and durable capture; malformed or
+uncertain evidence is INCONCLUSIVE and prevents further work. T037 preserves
+volumes and sanitized leftovers on normal FAIL/INCONCLUSIVE returns and
+uncertain finalization; cleanup requires fully successful custody.
+
+Sol's frozen `tests/run.sh --parallel-safe -k two_domain` gate passed **110
+tests, 2,293 deselected**. Frozen SHA-256 hashes:
+
+- `tests/probes/managed_two_domain.py`:
+  `6a459bbf647f1d4bca463cc0c3eadfe7c377fe955c8059deeaea032fc9fbdb5f`
+- `tests/probes/managed_native_loopback.py`:
+  `e8b876e7322579067fb0903513fc33358c496d110c3bcaf25cb481b440979287`
+- `tests/test_lane_managed_loopback_probe.py`:
+  `faccfdd533d39c5f91730446320e2b9f8850850d295b7f4d20c6b495922dbfce`
+
+The T036/T037 gate is offline only; it does not establish the Bite 3
+production producer. The fifth full Bite 4 attempt was executed once and
+ended INCONCLUSIVE before source start because Docker inspect reported
+`StdinOnce=true` while the T036 host validator expected false. No wrapper,
+SDK, history, custody, release, or target ran. The new Created source
+container and attached source-state volume were preserved. Total inventory is
+five source-state volumes and three stopped source containers (two Created,
+one Exited 137), zero running; no cleanup/retry occurred. Full sanitized
+result and artifact digests are in `live-validation.md`.
+
+## T038 interactive-stdio correction — reviewed; offline gate passed
+
+The future-only T038 correction pins the Docker-created wrapper profile as
+`OpenStdin=true`, `AttachStdin=true`, `Tty=false`, and `StdinOnce=true` in both
+host wrapper checks and the native active-witness validator. The harness keeps
+one tracked attach across both challenge stages; EOF/transport loss refuses
+without reconnect or replay. Host diagnostics now distinguish image-ID
+mismatch from wrapper-configuration mismatch. The strict `StdinOnce` value
+matches Docker CLI's `--interactive` configuration
+([`opts.go`](https://github.com/docker/cli/blob/master/cli/command/container/opts.go)).
+
+Astra's targeted review passed. Sol's frozen `tests/run.sh --parallel-safe -k
+two_domain` gate passed **127 tests, 2,293 deselected in 10.07s**. Frozen
+SHA-256 hashes:
+
+- `tests/probes/managed_two_domain.py`:
+  `9f8a71fe30e370e6569bf7db2ec2466cb9338ca8aa89a001f39215a32f1de28c`
+- `tests/probes/managed_native_loopback.py`:
+  `7454e747791ddfb45f9d506b1a2999d6df5f4c714dcb064cf7be0dffb8db9d22`
+- `tests/test_lane_managed_loopback_probe.py`:
+  `c143d192c9efcbb1e7dc9591047f8307ba87cd9abdec35e7ed82df1a08154fea`
+
+Private gate artifact digests: JUnit
+`288eee4d45f4f0f7e281b578935518d30339eaeba7c220db000739e12eceb14c`, stdout
+`a389bcb58b3a4801fca1704dffa992a6af4cf075699663a62088b6180339ef91`, stderr
+`2cc91d3ad93459e516f0b35eb81793b2bc43b25c18242c24966c7bf72113469c`, and
+log `077579550ba653f7559c9c74ee8d443ea95014d55c7d1180996e1b5b5bef2048`.
+These offline artifacts remain in the restricted executor record.
+
+## Sixth-run preflight, command review, and runtime result
+
+Sol's new preflight passed for SDK 0.2.153, selected bundled CLI 2.1.273 with
+SHA-256 `6c752e2cc7c110c9df15f26d8d134d438c5ae95dbd610efc1a308bf7f9c5f6c1`,
+local image ID
+`sha256:bca9ff191ad16f350ccfff349c9dd59e7accde7d9da77e709cea349fcb2b7a8d`,
+and Docker client/daemon 29.8.1/29.6.2. It verified the reserved private
+parent is mode 0700, the experiment child is absent, the exact-input record is
+mode 0600, and pinned SDK, Docker socket, and frozen source are visible inside
+`py-bench`. It created no runtime object. The exact interpreter, private
+parent path, and raw runtime identities remain in Sol's restricted record.
+The distinct command in `runbook.md` passed Sol's outer and nested `bash -n`
+checks before execution. The outer block
+SHA-256 is `29b64b76dd70659b5db62ddfb7227508f2579ca14f276df3d898fe7624bfb08a`;
+the nested body SHA-256 is
+`97a4d5a7e849dcb0bbef1624fe78d5cc6407c68e9da0e9ead972962b371f861f`. Root GO
+was issued and Sol ran the command once. Preserve all earlier resources. No
+cleanup or further runtime is authorized.
+
+The sixth full Bite 4 attempt exited 2 with **INCONCLUSIVE**. The source SDK
+phase returned; the observer recorded source running and then source stop and
+removal with durable intents. Target-state volume creation occurred only after
+source removal. The first custody COPY helper failed its metadata manifest
+scan at `_manifest_summary(args.source)` with Docker exec exit 1 and
+`RuntimeError: two-domain file size limit exceeded` at the configured 64 KiB
+per-file bound. This occurred before verified copy, pre-release history
+custody, durable release, target-container creation/start, or negative arm.
+The positive arm was `effect-or-observer-uncertain` plus
+`quarantine-container-preserved-for-custody-review`; the negative arm was NOT
+RUN (`positive-release-candidate-not-established`). Quarantine stopped and
+preserved the COPY helper. Two run-owned volumes (source and target state) and
+one Exited helper were preserved. Aggregate inventory is seven volumes (six
+source-state, one target-state) and four stopped containers (two Created, two
+Exited), zero running. No cleanup or retry occurred. The sixth authorization
+is consumed, no seventh full Bite 4 attempt is authorized, Bite 5 is pending, and production is
+unsupported. The exact oversized relative path awaits read-only diagnosis;
+do not infer a history mismatch or inspect/mount the preserved volume
+writably.
+
+Private SHA-256: report
+`2cca888a2b65170087c500432a7c7a6c26eacdd58509dff3774b8c0ae05db84d`, stdout
+`ccc773ab9cbc36157388e32d232cbe2b4305be249082d81ab900c92ec9d3eb9d`, empty
+stderr `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`,
+abort ledger `d0e98156493112d2b17642c5fee39cc41efb46f3bcaf4b315ffe22a0147d6121`,
+and private artifact manifest
+`7711540cb5e09a7f5ccb4be6e61658624ba4086efde827ddbdb93c0902e2e25e` (16
+files independently matched; mode 0600). Machine-specific paths and raw IDs
+stay in Sol's restricted record.
+
+The proposed follow-up is a separate stat-only metadata candidate, not a
+seventh full Bite 4 attempt. Scanner offline, Astra architecture, Sol command,
+and fresh read-only preflight gates have passed. It has not been authorized or
+run.
+`tests/probes/inspect_two_domain_volume_metadata.py` scans only the sixth
+attempt's source-state volume through a proposed read-only, volume-nocopy
+mount, never reads evidence file contents, and reports relative paths only in
+private output. A separate public projection validates and removes paths. The
+candidate deliberately reports files above 65,536 bytes and large aggregate
+size instead of rejecting them; this does not widen the custody helper's
+existing limit. Candidate hashes and operator protocol are in `runbook.md`.
+No resource was changed for this candidate.
+
+## T040 metadata diagnostic candidate — preparation checkpoint (historical)
+
+Sol ran the scanner-only selector `tests/run.sh --parallel-safe -k
+two_domain_metadata`: **14 passed, 2,420 deselected in 5.94s**. This gate
+covered synthetic metadata fixtures only; it did not call Docker or inspect a
+volume. Scanner and test hashes were unchanged before and after the gate:
+
+- `tests/probes/inspect_two_domain_volume_metadata.py`:
+  `fbff3be87a288501d64d977e91d37ba01f5bb43ad596e211e1ca691ea9f81c39`
+- exact scanner source embedded in the proposed Docker `Config.Cmd`:
+  `abbe57cc78fdfe4b613df7c421af8447b10fa00bd4edd4ff0c21c4f3029dc683`
+- `tests/test_two_domain_metadata_diagnostic.py`:
+  `110d007b80c262536c2c0a1d3d39e2e35981735b96e12b05a381c76a7d48e49c`
+
+Private output digests: stdout
+`1c8829ae7060d1f65193f5c6d4ba55d7091a205aa52da7f7e983536b2bce2f7f`, stderr
+`b1c681ff340ae5c55c6132ed809a2c27d9e092b7e25df9e33e0645ee98f9aa12`, and
+JUnit `d3cd1b85cd9a597a18a25491a6303896a8f30bfdac334eb2c9e1fdbdc985d7de`.
+Astra's architecture review and Sol's exact command review passed; the outer
+and nested shell checks and all six Python heredoc parses passed. Fresh
+read-only preflight verified seven labelled volumes, four stopped containers,
+zero running attachments, the selected source volume's expected local
+driver/labels/options, and no diagnostic container. This remains preparation
+only: no runtime authorization has been given and no Docker create/start/stop
+or volume scan occurred. Bite 4 remains INCONCLUSIVE and Bite 5 remains
+pending.
+
+Sol's reviewed command hashes: outer block
+`fb0b719fe8df74d2f7eee5ed8c04fe3f81a4384204f1b100034799347c75df2f` and nested
+body `c518a912e6310c505cb73483f5b0d8aa9751a59c40e161d5be5d46688d082be4`.
+
+## T033 future-only observer correction — architecture reviewed; offline gate passed
+
+Astra's targeted architecture review passed the future-only Docker volume
+observer correction. The correction requires a nonempty `Actor.ID`, rejects a
+conflicting top-level `id`, and does not infer identity from volume attributes.
+Before release, it waits for exact planned mount/unmount counts with a bounded
+timeout and checks both independent event streams for health before snapshot.
+Sol ran `tests/run.sh --parallel-safe -k two_domain`: **39 passed, 2,293
+deselected in 9.47s**. JUnit SHA-256:
+`91b1b34dc62cf8e34035eea99b6bbdb37b3675518f1585fa469f220be580c6ba`; log
+SHA-256:
+`b62a03373d1fd2950579083ab6275d8b720143e8b7d5f4f9495fa5dcd1ec467e`.
+
+- `tests/probes/managed_two_domain.py` SHA-256:
+  `1aa5f6f35beea569aa6c4f206cb7dcd08f9ee9d4cdea1bee5bc268ef34cd06b6`
+- `tests/probes/managed_native_loopback.py` SHA-256:
+  `4634749f9f42b566baf54bb1f089211792b83b55b43734dfed55a56473813695`
+- `tests/test_lane_managed_loopback_probe.py` SHA-256:
+  `5f5869655cc046674dbd697e3f816fd28ea66e38c0f4a0203225d1695d5e2bca`
+
+Private JUnit/log artifacts remain in the restricted execution record; no
+private path or raw runtime identity is copied here. This is an offline-only
+gate for the future observer repair. It did not call Docker or the SDK, did not
+retry Bite 4, did not inspect or clean the preserved volume, and does not
+runtime-verify the repair. At the T033 checkpoint Bite 4 still had only the original INCONCLUSIVE
+pre-source result; the separately authorized follow-up and later create-only
+smoke are recorded below. Bite 5 remains pending and production remains
+unsupported.
+
+## Newly authorized Bite 4 follow-up — INCONCLUSIVE at source-container creation
+
+After T033's offline correction, the user explicitly authorized one new
+bounded Bite 4 runtime. This was a distinct follow-up, not a replay of the
+original aborted invocation. Sol's fresh read-only preflight passed for SDK
+`0.2.153`, CLI `2.1.273` (SHA-256
+`6c752e2cc7c110c9df15f26d8d134d438c5ae95dbd610efc1a308bf7f9c5f6c1`), and
+local image ID
+`sha256:bca9ff191ad16f350ccfff349c9dd59e7accde7d9da77e709cea349fcb2b7a8d`.
+Astra's read-only assessment found no concrete blocker: the first attempt had
+not launched or stopped a source, and its preserved volume had no attached
+containers. The old volume remained outside the new run's identity set.
+
+The corrected volume observer progressed past volume create, but Docker
+source-container creation failed with exit 125. The exact daemon stderr was not
+retained, so the cause is unconfirmed. Sol's read-only diagnosis found a
+moderate-to-high-confidence candidate command-builder defect: a writable
+`--mount type=volume` contains an explicit `rw` token. This is an inference,
+not confirmed daemon output. Astra agrees the correction should be future-only
+and offline-verified before any further runtime can be considered.
+
+The host harness exited 2 with `INCONCLUSIVE`, `support_claim=false`, and
+production unsupported. The positive arm had
+`release_candidate_ready=false`, `observer_complete=false`, and
+`cleanup_complete=false`; the negative arm was NOT RUN. No source container or
+SDK/runtime started, and no source history, release, target, or startup event
+was produced. There were zero run-labelled containers and two preserved
+`source-state` volumes (one from each distinct attempt). No cleanup or retry
+occurred. The outer stderr file is empty (SHA-256
+`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`), but the
+exact daemon create error is absent.
+
+The consumed command and frozen hashes are in `runbook.md`; the separate
+run's artifacts are documented in `live-validation.md`. SHA-256: stdout
+`794f6e7e954cf5bd2a39da185878ab6c42754e18c64c0f3cc6d91e01ded7350f`, report
+`08ab7467fe46d4ef1bf3a53216ff67b86fcdb8e3ed40913ccc03aba0ef273a96`, abort
+ledger `9dff73fb5cd0b7f2adf9d6a3e089359efa74d64709233a26ead37fc5998defb7`,
+and quarantine `b6cd550366b186fd3166561ef3b00875d664efc555ba152705ff6414dbea6e3e`.
+The frozen harness/helper/test hashes remain unchanged at
+`1aa5f6f35beea569aa6c4f206cb7dcd08f9ee9d4cdea1bee5bc268ef34cd06b6`,
+`4634749f9f42b566baf54bb1f089211792b83b55b43734dfed55a56473813695`, and
+`5f5869655cc046674dbd697e3f816fd28ea66e38c0f4a0203225d1695d5e2bca`.
+At the T033 checkpoint, no third runtime had yet been authorized. The later
+third attempt and result are recorded below. Production remains unsupported.
+
+## T034 future-only Docker mount/error-report correction — reviewed; offline gate passed
+
+Astra reviewed and passed the future-only correction. The isolated two-domain
+command builder omits an access token for writable engine-volume mounts and
+uses only readonly for read-only mounts. Docker failure stderr is capped at
+4,096 retained bytes and its exit status is written only to the private,
+mode-0600 arm-abort ledger as base64; the public report remains sanitized.
+Astra's stated limits are retained: subprocess capture itself is unbounded,
+and timeout or pre-arm failures do not use this stderr-recording path. This
+corrects future diagnostics only; it does not confirm the cause of the prior
+Docker exit 125.
+
+Sol ran tests/run.sh --parallel-safe -k two_domain in py-bench: 41 passed,
+2,293 deselected in 9.09s. The first candidate gate had 40 passed and one
+failed because a redundant assertion expected /source instead of the actual
+final token dst=/source; the exact mount-string assertions passed. The
+assertion was corrected and Sol reran the frozen selector successfully. JUnit
+SHA-256: edb34b8404e20b3e8815e1b17a9b12f2b4347bfc1a75c6b1cebb0183cf552963;
+log SHA-256: 9376fd78c8c29678af02aefaa57c38d73bbefc7d0cf4bf0290fbe2d82e72b1f0.
+
+Frozen candidate SHA-256 values are harness
+c5c183cb215ecf56f3ff028dd2e4175364a1d7f2720df6fcff29e9baadc7cdac, shared
+probe/helper 4634749f9f42b566baf54bb1f089211792b83b55b43734dfed55a56473813695,
+and tests
+3f7c5f63af5331d7bdc4116b04535bc6f549bb852b05a68cef318b115ab9e1ac.
+Private JUnit and log paths remain in Sol's restricted evidence store. No
+Docker command, SDK runtime, cleanup, or further Bite 4 attempt ran during this
+correction. The executed runtime candidate hashes in runbook.md and
+live-validation.md remain historical. At this T034 correction checkpoint Bite 4 was not completed and no third
+runtime had yet been authorized. The later single third-attempt authorization
+and result are recorded below; no cleanup or Bite 5 verdict is authorized.
+
+## 2026-09-22 T034 isolated Docker-create smoke — narrow PASS
+
+After the T034 offline correction passed review and tests, the user separately
+authorized one isolated Docker-create smoke. Sol used the exact frozen
+_container_create_command source variant (harness SHA-256
+c5c183cb215ecf56f3ff028dd2e4175364a1d7f2720df6fcff29e9baadc7cdac) with the
+pinned local image ID
+sha256:bca9ff191ad16f350ccfff349c9dd59e7accde7d9da77e709cea349fcb2b7a8d.
+Docker created one fresh run-labelled container with one fresh labelled
+engine-managed volume. Independent inspection confirmed Created state,
+Running=false, and the writable volume mount RW=true. The container was never
+started; no SDK/runtime or network activity occurred.
+
+Sol removed only this smoke-owned container and volume, then independently
+verified both were absent. The two pre-existing source-state volumes were
+untouched, and zero run-labelled containers remained. This PASS establishes
+only that the current builder's create specification is accepted and has the
+expected writable mount. It does not confirm that the earlier exit-125 failure
+was caused by its former rw token because the exact prior daemon stderr was not
+retained. It is not a Bite 4 source/target experiment and did not change the then-current
+Bite 4 INCONCLUSIVE results or pending Bite 5 decision. At that smoke
+checkpoint no third full runtime had been authorized; the later one-run grant
+and result are recorded below. No cleanup or Bite 5 verdict is authorized.
+
+Private evidence SHA-256 values: commands
+f6136e05ab0e834d41682e655c41c79f005d88786aaae5347f7806819badd517; inspect
+5cad66170547b9a015dbbf2abd2791210f7bcb2b8718e6fe3f384deb3de7be0d; cleanup
+3f15320367ab36900f00fe8e3ac19e292ab96081018b70556265077c90ba50d3. Raw
+container/volume IDs and private paths remain in Sol's restricted record.
+
+## Third full Bite 4 run — INCONCLUSIVE before source startup
+
+The user authorized one third full Bite 4 attempt after Astra's read-only
+pre-run assessment and Sol's fresh preflight passed. Sol used T034 frozen
+hashes: harness c5c183cb215ecf56f3ff028dd2e4175364a1d7f2720df6fcff29e9baadc7cdac,
+helper 4634749f9f42b566baf54bb1f089211792b83b55b43734dfed55a56473813695,
+and test 3f7c5f63af5331d7bdc4116b04535bc6f549bb852b05a68cef318b115ab9e1ac.
+The harness exited 2 with INCONCLUSIVE before source startup.
+
+The newly created source container inspected as Created, Running=false, Pid=0,
+with Docker's exact unset-time sentinel `0001-01-01T00:00:00Z` for both start
+and finish. HostConfig.Tmpfs listed exactly /tmp
+and /opt/loopback, but Mounts listed only the writable /opt/state volume.
+The validator raised two-domain tmpfs destination mismatch because it
+prematurely required configured tmpfs to appear as active Mounts entries.
+Quarantine then refused to remove the never-started container because no die
+event was available, reporting quarantine-die-event-unconfirmed. The source
+container and its volume were preserved; the two older volumes remain
+untouched. Total engine inventory is three labelled source-state volumes and
+one run-labelled Created source container. No SDK/runtime, history, release,
+target, negative arm, cleanup, or retry occurred. The positive arm was
+effect-or-observer-uncertain; the negative arm was NOT RUN. This is not a Bite
+5 verdict. The third authorization is consumed; no fourth run is authorized.
+
+Private hashes: abort ledger
+ff62f4fa6026ef1bf3af4cf5af5b5bcacb322e809ce7c198265770e25ce50388;
+quarantine
+8c55e5d370934f22c612fb5e0cb126a023979349f131fcce551c3173c6c1848e;
+report
+e95ab2c945d6048cc454b32f0d949d8d65082ea65cf633c321e311289d6419cc;
+stdout
+34eea213ed27b67ee5ecf99a7dc1162e6fa6e35b2308a66265a8f6417c2a022d; empty
+stderr
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.
+Raw IDs and exact private paths are kept only in the restricted execution
+record.
+
+## T035 future-only correction — architecture reviewed; offline gate passed
+
+The opt-in two-domain candidate now has a strict Created-state predicate that
+accepts Docker's exact zero-time sentinel (`0001-01-01T00:00:00Z`) only with
+Created, Running=false, and Pid=0. Before start, the validator accepts the
+exact configured tmpfs profile when Docker omits tmpfs from active Mounts and
+the expected state volume is the only mount. The start wrapper inspects and
+revalidates immediately after `docker start`, before any SDK/helper exec; a
+running record without tmpfs Mounts evidence refuses. Failure quarantine
+preserves a corroborated never-started Created container without waiting for a
+die event, while a recorded start attempt or observed start event remains
+uncertain.
+
+Focused regressions cover the exact Docker sentinel and rejected missing,
+null, empty, and malformed time values; partial/extra/conflicting mounts;
+running-without-tmpfs refusal before exec; and confirmed versus ambiguous
+Created-state quarantine. Astra's targeted architecture review passed. Sol ran
+the canonical `tests/run.sh --parallel-safe -k two_domain` selector in
+`py-bench`: **59 passed, 2,293 deselected in 6.74s**.
+
+Frozen SHA-256:
+
+- `tests/probes/managed_two_domain.py`:
+  `cb026d5e31ec7e619934b0bbba28e9f2a7ccad124c20c06b07938d6c7f9ec0dd`
+- `tests/probes/managed_native_loopback.py`:
+  `efac7b5ead8a9e61061058b55fba9679b8d6a926e8874118cea06401b9b71ea5`
+- `tests/test_lane_managed_loopback_probe.py`:
+  `f89b12b6a5906a4627c07f2fd5142d424ed46a16c9b74bd48a8ff30b5068f11b`
+
+Private gate artifacts: JUnit
+`0c54381c4e908e2852428d9283208e31c44310efc51fed2a48d6b141e34d4e3a`,
+stdout `643ad7f52573d4d473e2b3e52a9f4c3e9649015251507213230dcab6389a1386`,
+and stderr
+`9106fc921eb50718d353a772621be8258951e030e543fc2d35f512ae0a9b7407`.
+This is an uncommitted future-only diagnostic correction and offline gate; it
+does not runtime-verify Bite 4 or establish the Bite 3 producer. At the time of
+this gate no later runtime had occurred; the separately authorized fourth
+attempt is recorded next.
+
+## Fourth full Bite 4 run — INCONCLUSIVE before any container exec
+
+The user-authorized fourth run used the frozen T035 harness/helper/test hashes
+above, pinned SDK 0.2.153 / CLI 2.1.273, and the immutable local image. It
+exited 2 with `INCONCLUSIVE` after the source container started. The first
+post-start `validate_two_domain_isolation` in `_install_observer_files`
+rejected Docker inspect `Mounts` because active `/tmp` and `/opt/loopback`
+tmpfs entries were missing, despite `HostConfig.Tmpfs` listing those exact
+configured destinations. It failed closed before any `docker exec`, CLI/probe
+copy, SDK/runtime, source history, release, target, or negative arm.
+
+The positive arm reported `effect-or-observer-uncertain`,
+`release_candidate_ready=false`, `cleanup_complete=false`, and
+`observer_complete=false`, with quarantine reason
+`quarantine-container-preserved-for-custody-review`. Quarantine stopped the
+new source container and preserved it as Exited 137 with its attached new
+source-state volume. The three old volumes and old Created container were
+untouched; the first two old volumes are unattached, and the third remains
+RW-referenced by the old Created container. Current inventory is four
+source-state volumes, two source containers (one Created, one Exited 137), and
+zero running containers. Nothing was removed; no cleanup or retry occurred.
+The fourth authorization is consumed; no fifth attempt is authorized. Bite 4
+remains INCONCLUSIVE, Bite 5 is pending, and production is unsupported.
+
+Astra confirms the fail-closed result is correct: missing active Mounts
+evidence is not proof tmpfs is absent. Future evidence requires exact-container
+mountinfo or a reviewed trusted pre-SDK attestation; do not relax the validator
+silently.
+
+Private SHA-256: stdout
+`2b09daf7efac84ba5386ab5578cfe14da3ec76bc1ddc415fc4d9835180dffc4c`, empty
+stderr `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`,
+abort `7a1c95d9bfb92cd3cf427f495626c6d39cd7e0a60043b3742db7c8a93e07ca8b`,
+quarantine `f44acfbe54965a6bc8a2f15ee186122ceced3a19c7286d014e11f6e0c505338a`,
+stop `635884ddb9445b6bc297e9ba1967b75b3097f9fafecf0be5a7fbc96ffb5ab79a`,
+manifest `8bd8faa64245210d6c8a7cd2ac801e0798a300852f87a51f25aa640fd931cb80`,
+and report `45a92030725db92a51c3f84b92ebd97561b8b7e2b40d8117f1162ca92a7c82f0`.
+Raw paths and IDs remain private.
+
+### Fourth-run root-cause and blocker audit — historical pre-T036/T037 checkpoint
+
+The observed failure is an evidence mismatch, not proof that tmpfs was absent.
+T035's exception applies only to an independently confirmed never-started
+`Created` container. The running-state branch in
+`tests/probes/managed_native_loopback.py:3538-3544` still requires each expected
+tmpfs destination to appear in top-level Docker `Mounts`. In the fourth run,
+`HostConfig.Tmpfs` contained the exact `/tmp` and `/opt/loopback` configuration,
+while top-level `Mounts` omitted both. Docker CLI issue
+[#3974](https://github.com/docker/cli/issues/3974) documents that `--tmpfs`
+uses the `HostConfig.Tmpfs` field separately from the top-level `Mounts`
+representation used for bind and volume mounts. That API split explains why
+the inspect fields can differ; the missing `Mounts` entries do not settle
+whether the active mounts existed. The fourth run failed this deterministic
+first post-start check before any container `exec`. The same validator and
+start sequence serve source, helper, and target containers, so this is a
+shared role blocker; the helper and target roles were not reached in that run.
+
+**T036 is the next technical gate.** Keep the check fail-closed and add a
+bounded witness from a frozen trusted startup wrapper, read before any SDK or
+helper work. It should read `/proc/self/mountinfo` in the container's own
+mount namespace; the [Linux kernel proc documentation](https://www.kernel.org/doc/html/v6.9/filesystems/proc.html#proc-pid-mountinfo-information-about-mounts)
+defines its mount-point, per-mount-option, filesystem, and superblock-option
+fields. The external observer must bind the witness and digest to the exact
+container ID, image digest, run identity, and start epoch. Validate the exact
+role-specific tmpfs destinations, effective access and execution options,
+size bounds, and duplicate absence. Require a second fresh witness before the
+SDK/helper handoff as well. Missing, oversized, stale, duplicate, or ambiguous
+evidence refuses; `HostConfig.Tmpfs` alone is never an active-mount waiver.
+
+**T037 is also required before another run can be considered.** Read-only
+control-flow review found normal `fail`/`inconclusive` arm returns that still
+call `_remove_run_volumes`: the pre-release gate at
+`tests/probes/managed_two_domain.py:2353`, the unproven negative-refusal path
+at `:2465`, and the final target result path at `:2680`. The design contract
+requires a failed arm to preserve stopped containers and all volumes for
+manual custody review (`contracts/source-only-diagnostic.md`, “On any failed
+arm”). Make every normal `fail` or `inconclusive` return persist its bounded
+result and preserve run-owned volumes; only a fully successful custody path
+may cross the cleanup boundary. Add focused offline cases proving those
+failure paths do not request deletion or record cleanup complete, alongside a
+successful-custody boundary case.
+
+No source SDK/history/custody/release/target phase was exercised after the
+post-start check, so this audit establishes no later runtime failure. Startup
+event/history-query concerns remain conditional, and the separate Bite 3
+production producer is still absent. At this earlier audit checkpoint, four
+source-state volumes and two source containers were preserved, and no fifth
+runtime or cleanup was authorized. Subsequent T036/T037/T038 work and fifth-
+run history appear in the dated sections above; Bite 5 remains pending and
+production remains unsupported.
+
+
+## Bite 4 two-domain harness — offline gate passed; pre-source abort
+
+Sol High ran the frozen focused offline selector
+`tests/run.sh --parallel-safe -k two_domain`: **26 passed, 2,293 deselected**.
+JUnit SHA-256 is
+`3ed1d389eca432b5101303e816b1a26879aa928e448da3f2790315621e81c8c1`; log
+SHA-256 is
+`1b4fd09ad4ba87db6ac717a31bd1f9b402c47e9cee5e5127e8a1bdd37a3e403d`.
+Private artifacts are retained in Sol's restricted artifact store; its path is
+kept in the private execution record.
+This is focused offline evidence only. The test gate made no Docker or SDK
+runtime calls. Sol's separate read-only runtime preflight passed. The later
+host harness invocation exited INCONCLUSIVE before starting the selected SDK
+source phase; the bounded Bite 4 source/release/target experiment did not occur.
+Bite 4 is **NOT COMPLETED** and Bite 5 remains pending.
+
+- `tests/probes/managed_two_domain.py` SHA-256:
+  `e092869a765cee41987f4be0d1019ab8223f1ede37814d52c543709d78bf3354`
+- `tests/probes/managed_native_loopback.py` SHA-256:
+  `4634749f9f42b566baf54bb1f089211792b83b55b43734dfed55a56473813695`
+- `tests/test_lane_managed_loopback_probe.py` SHA-256:
+  `33349e8a3349fff06a51816ea938cc5305996baacfc407ec7713dfcd464e9c28`
+
+This historical 26-test offline result applies to the preceding probe/test
+hashes; T033's later 39-test run above covers the future-only observer repair.
+Neither offline result is a Bite 4 runtime observation, establishes production
+containment, or changes `support_claim=false`.
+
+The separate read-only runtime preflight selected SDK 0.2.153 / CLI 2.1.273
+(CLI SHA-256
+`6c752e2cc7c110c9df15f26d8d134d438c5ae95dbd610efc1a308bf7f9c5f6c1`) and
+verified local image `py-bench:brett` as immutable image ID
+`sha256:bca9ff191ad16f350ccfff349c9dd59e7accde7d9da77e709cea349fcb2b7a8d`.
+The resolved SDK interpreter and private artifact paths are in Sol's private
+preflight record. The bounded runtime invocation is in `runbook.md`.
+
+The initial outer-shell setup failed before the harness because interpreter
+and private-directory variables expanded empty; no experiment effect occurred.
+The corrected command launched the harness once. It exited 2 with report
+`INCONCLUSIVE`, `support_claim: false`, and production disposition
+`unsupported`. The positive arm stopped on
+`effect-or-observer-uncertain`; the abort ledger reported no externally
+observed volume-create event. Read-only diagnosis found exactly one volume
+create event in the engine history window, with its actor ID matching the
+preserved `source-state` volume, but event attributes contained only the
+driver, not custom run/role labels. A label-filtered `docker events` query
+therefore returned no event, although a current volume inspection showed the
+expected labels. This establishes an observer/filter mismatch on this engine;
+it does not establish that Docker omitted volume creation.
+
+The run left zero run-labelled containers and one labelled `source-state`
+volume, preserved for manual review. No source SDK runtime/history, release,
+target, or startup ran; the negative arm was not run. Quarantine removed zero
+resources, cleanup was false, and observer completion was false. No cleanup of
+the preserved old volume is authorized. The read-only diagnosis is complete: the volume event
+history had one create event whose actor ID matched the preserved volume, but
+the event attributes exposed only the driver. A run-label-filtered event query
+returned no rows despite current inspection confirming the labels. The
+diagnostic `INCONCLUSIVE` report is not the Bite 5 verdict. Astra's targeted
+architecture review of the offline correction passed. A later user
+authorization for one distinct follow-up and Astra's read-only pre-run
+assessment are recorded above; the follow-up awaits Sol's execution. This does
+not authorize cleanup or further retries. Details and artifact hashes are in
+[`live-validation.md`](live-validation.md). No Bite 5 decision has been made.
+
+## Bite 2 frozen opt-in hook diagnostic — 2026-09-22
+
+`--observe-native-hooks` is explicit and default-off. The focused probe records
+bounded sanitized SubagentStart/Stop facts with neutral once-only ACKs; null or
+pre-task joins remain partial/unresolved, while mismatched events, sessions,
+tool IDs, stale/reused agents and malformed input refuse. Hook facts do not
+promote task terminal/effect state, bypass the sticky startup guard, or add a
+history query; `support_claim=false` remains invariant.
+
+Sol's red baseline was 8 new failures, 137 passed, 2,140 deselected; the
+frozen green result was **153 passed, 2,140 deselected, 9.22 seconds**. The
+approved parallel-safe exception was diagnostic-only because six unrelated
+pytest processes blocked serialized entry; this is not the full release gate.
+Probe SHA-256 `b02ca7ec99f4cfca5aee44e31ac74739d7cffb12ee5f4c8cfb650968f5884a35`;
+test SHA-256 `bc1de523aabd0bf4ecad08ebd3c2329481778d8e03cdf8ad97499a4bd48ad763`;
+JUnit `e7e2cf93fb07cbfab408ab469cc9944fe1aa07a200dcff54320ef4b854888667`;
+manifest `f1541fb387325dc15ffabf11f46d9babc7f958bdd98bebf79d6ac83bf0e22395`;
+private artifact basename `openrepotools-sol-bite2-green.Fn1pT3`.
+
+No runtime test, production change, account activation, commit, or push was
+performed. This proves only partial/local hook correlation. The hook-to-history
+sidecar bridge and real-runtime observation remain **UNVERIFIED**; no stored
+fact is treated as loaded context. Astra reviewed and passed the Bite 3
+containment/restart definition below. This historical note predates the Bite 4
+two-domain design and offline gate recorded above; the bounded runtime is now
+pending separately. The current producer still does not supply Bite 3's
+containment/restart proof, so production remains unsupported regardless of the
+diagnostic runtime result.
+
+## Bite 3 source-containment and restart-domain definition — 2026-09-22
+
+Planning-only contract update in `contracts/stop-then-resume.md`. The selected
+candidate binds operation and source-invocation IDs, owner/lineage generations,
+source session, runner incarnation, daemon incarnation, sealed roster, and the
+original owned POSIX PGID. SID corroborates launch identity but does not widen
+PGID authority. Membership/escape coverage must span launch through exclusion,
+including reparented writers and PGID/`setsid` changes after admission fencing.
+The current lane-owning daemon must durably fence every source creation,
+recovery, adapter replacement and takeover path before interrupt/shutdown;
+monotonic source-exclusion observations join that fence to a supported OS-domain
+witness. Missing coverage refuses before stop; lost or conflicting evidence
+after stop may have been dispatched leaves the operation indeterminate, retains
+claims, and creates no target.
+
+Static boundary inspection found no authoritative producer for this contract:
+`popen_runner` establishes a new session, `_process_evidence` reports only the
+runner PID/PGID, and `_RunnerConnection.close` signals the original PGID and
+checks its liveness without proving complete membership or escape coverage.
+The daemon identity does not prove that every fresh-adapter or external
+recreation path consumes a durable restart fence. The loopback probe is also
+not a positive witness: source, target, and observer share one container;
+history is temporary; cleanup removes that container; and `validate_isolation`
+does not check `HostConfig.RestartPolicy`. Current production disposition is
+therefore **unsupported preflight refusal**. No test or runtime experiment was
+run for this planning update. A source-only harness requires a separate scoped
+design, and the existing loopback report keeps `support_claim: false`.
+
 ## September 22 approved stop-then-resume tranche
 
 The [v1 decision](../../openspec/changes/separate-swap-ctx-handoff/stop-then-resume-decision.md)
@@ -1728,3 +2847,30 @@ Do not combine pass counts from different revisions into a release total.
 Record subsequent terminal results with selectors, revision/dirty-file hashes,
 and any skipped coverage. A queued or silent live handle is neither a pass
 nor a reason to restart the same run.
+
+## T046 source-to-target native task seed — offline PASS
+
+The future-only implementation emits a bounded digest-only terminal task
+seed from the source phase and binds it to the source parent and invocation.
+The source-phase digest, release and target-launch intents, and target-spec
+fingerprint all bind the same seed digest. Missing or incomplete
+session/task/agent linkage is INCONCLUSIVE before release and target creation.
+The target validates the complete fingerprint before any CLI subprocess and
+uses the seed with the existing strict native-task correlation logic; the
+sticky startup gate is unchanged.
+
+Astra's architecture review passed. Sol ran the canonical
+`tests/run.sh --parallel-safe -k two_domain --junitxml=<private-output>` in
+`py-bench`: 155 selected, 0 failures, 0 errors, 0 skips, 5.715s. Frozen source
+hashes: native probe
+`1042153b8f768f1bce772bc42d3f923b3d05d7a3fb944070c5327b7b5624c77d`, harness
+`b0f01d529771eab2d7ebd1738b8702e25bfc2b9fc446e7236548088cad63338e`, tests
+`d4242957190624b76d652457bd9b0376e99d3d2985820666021845356b016c33`. Private
+stdout SHA-256 `c814255cf7389dc648e5fd716f5b51ea3e3315f2fbbfe01a3e43f221a7bc47f1`,
+stderr `86f6eb7619462ab78a90aa0abc9b742ff92b177ad917fcadb536263132880278`,
+and JUnit `77c40a78dbb69b6e586e6f037f3906b2c61b1cc1a16e9ab77b2c666d1b4dc9c4`.
+The ninth runtime attempt exercised the source-native-task-terminal-seed-
+unavailable refusal. This did not exercise available-seed transfer, target
+fingerprint validation/correlation/startup/history query, or the negative arm.
+The eighth result remains historically INCONCLUSIVE, and Bite 5 remains
+pending. At the T046 checkpoint, no tenth run was authorized.
