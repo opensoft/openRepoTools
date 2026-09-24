@@ -3,23 +3,28 @@
 **Status: T046 passed its architecture/offline gates. T047, T048, and T049
 passed Astra architecture review and Sol's canonical offline gates. T050 is
 architecture approved and its focused gate passed 427 tests, 2,168 deselected,
-zero failures.** The user authorized exactly one thirteenth Bite 4 run; it
-exited 2, INCONCLUSIVE with `effect-or-observer-uncertain` after source
-stop/removal and target-state volume creation but before copy, release, or
-target creation. The inner source exception was not retained. An unbound
-`parent_uuid` reference in the legacy/source runtime initializer is a
-deterministic static cause candidate, not a directly proven historical
-exception. Its authorization is consumed; two unattached labeled volumes
-remain preserved. The user has since authorized exactly one fourteenth full
-diagnostic run, pending push, Sol's post-push preflight/command review, and the
-required command seal. This authorization permits no cleanup or deployment.
-Bite 5 remains pending
-and production unsupported. The source-only term describes
-the source containment domain, not the whole experiment: a separate target
-domain may start only after source exclusion, history custody, and durable
-explicit release. The thirteenth result does not establish production
-capability, loaded-history proof, or Bite 3 acceptance. The Bite 3
-requirements in [stop-then-resume.md](stop-then-resume.md) remain authoritative.
+zero failures.** The user-authorized fourteenth Bite 4 run used commit
+`a260975` and preflight seal SHA-256
+`3341446309398552f83ae0094145584f6ceee1c14064e34f08d67a5b6860c835`. It
+exited 2, INCONCLUSIVE with `target-history-query-result-incomplete`.
+Source stop/removal, copy, history custody, durable release, target
+launch/stop/removal, and final custody occurred. The exact-parent human-origin
+query result and one assistant frame were observed, and the gateway saw one
+valid parent `/v1/messages` request/response, no nested tool, and a successful
+response write. One extra parsed JSON mapping of unknown type/subtype/order
+made `unexpected_frame_count=1` and `read_complete=false`; it may have arrived
+during bounded shutdown drain. `unparsed=0` and `read_failed=false`. The
+negative arm did not run solely because of `positive-cleanup-incomplete`.
+There are zero labeled containers and four unattached old/new source-state and
+target-state volumes. The one-run authorization is consumed. No further
+runtime, cleanup, retry, or deployment is authorized. Bite 5 remains pending,
+production remains unsupported, and the fourteenth result does not establish
+Bite 3 acceptance or loaded-history proof. The thirteenth-run record follows
+below and remains historical. The source-only term describes the source
+containment domain, not the whole experiment: a separate target domain may
+start only after source exclusion, history custody, and durable explicit
+release. The Bite 3 requirements in [stop-then-resume.md](stop-then-resume.md)
+remain authoritative.
 
 The twelfth run and its separately authorized post-run cleanup remain in the
 historical record below: all 19 volumes and five stopped containers in that
@@ -27,7 +32,52 @@ exact allowlist were removed, with its sealed bundle and 36-entry manifest
 unchanged. That cleanup did not include the two volumes preserved by the later
 thirteenth run.
 
-## Thirteenth-run observation — INCONCLUSIVE
+## Fourteenth-run observation — INCONCLUSIVE
+
+The run exited 2 with positive reason
+`target-history-query-result-incomplete`. Exact-parent human-origin result
+and one assistant frame were observed; the gateway received exactly one valid
+parent `/v1/messages` request and wrote its response successfully, with no
+nested tool. An extra successfully parsed JSON mapping of unknown
+type/subtype/order was seen during the active window, possibly during bounded
+shutdown drain. `unexpected_frame_count=1`, `read_complete=false`,
+`unparsed=0`, and `read_failed=false`. The query is incomplete; this is not
+a runtime contract violation or a PASS or known FAIL. The negative arm did
+not run solely because of `positive-cleanup-incomplete`.
+
+Source stop/removal, copy, history custody, durable release, target
+launch/stop/removal, and final custody occurred. Astra matched all 48 sealed
+file hashes and sizes. Source removal sequence 36 preceded release 120, target
+intent 121, and create 123; target removal was sequence 153. Both exits 137
+were harness-enforced. The exact 52,825-byte source-parent prefix and saved
+edit were retained. Target transcript was 58,164 bytes with one other
+configuration mutation; whole-tree immutability is not established. No known
+FAIL was found. Bite 3's OS witness and all-path restart fence remain absent,
+so Bite 5 cannot PASS.
+
+Zero labeled containers and four unattached volumes remain: old/new
+source-state and target-state. The one-run authorization is consumed; no
+further runtime, cleanup, retry, or deployment is authorized. Production
+remains unsupported.
+
+Commit `a260975`; preflight seal SHA-256
+`3341446309398552f83ae0094145584f6ceee1c14064e34f08d67a5b6860c835`.
+Manifest `4623db6214ed86a01a1887dfd424400458ab950eff9fc16b9fb9905f6962f7de`;
+report `8658716287e2bcf8c28b12d422d06c4ed54ad5cdcd096ddcb4dd8945c7893309`;
+stdout `636a1622fd9302f038d897f09eafebf0d788f65d00c1a52cc854c0a099cb341d`;
+source envelope `05c34a747add6748b4b3a77c26f2ef72581270edf9d8a3f4ef5e91db8df037e7`;
+arm ledger `a0b1443107fd35aee12faea673ccab49e89a29984cb94a70e18d998185a9b804`;
+inventory `af391f032af5d6d9c41e40572689ff11b4f9fc3627d6a00e483494ee845ea507`.
+
+Any future frame-evidence work is offline and requires architecture review
+first. Persist the target report privately before teardown, project only
+bounded ordered header facts (including query-read versus shutdown-drain
+stage), and keep unknown discriminators private. Do not retain bodies, paths,
+or content, and do not relax refusal until an extra frame is identified
+against the pinned schema. `rate_limit_event` and `turn_duration` are
+plausible SDK metadata examples only, not observations.
+
+## Historical thirteenth-run observation — INCONCLUSIVE
 
 The user authorized exactly one run; Sol reviewed and froze the command. It
 exited 2 after about 20 seconds. The sanitized report records overall
@@ -570,9 +620,9 @@ The thirteenth run remains historical INCONCLUSIVE. Its sealed report did not
 retain the inner source exception; the unbound `parent_uuid` reference in the
 legacy/source initializer is a deterministic static cause candidate, not a
 directly proven historical exception. T050 changes future offline behavior
-only and grants no runtime authority. A separate user authorization now covers
-exactly one fourteenth diagnostic run after push, pending Sol preflight/command
-review, and required command seal; no cleanup or deployment is authorized.
+only and grants no runtime authority. The separate user authorization was
+consumed by the fourteenth run, whose INCONCLUSIVE result is recorded at the
+top. No further runtime, cleanup, or deployment is authorized.
 
 Remove that unbound initializer and limit generic fallback `error_site` to an
 allowlisted component/function and integer line from the probe traceback; do

@@ -1,30 +1,34 @@
 # Five-bite runbook: source containment and exact-parent resume
 
-**Latest state (2026-09-24): bites 1–3 are complete; none of thirteen full
-Bite 4 runs produced a PASS. The user authorized exactly one thirteenth run;
-Sol reviewed and froze its command. It exited 2 after about 20 seconds,
-INCONCLUSIVE with positive reason `effect-or-observer-uncertain`; the negative
-arm was not run and no target container was created. Source stop/removal and
-target-state volume creation preceded source-report schema validation failure;
-copy and release were not reached. Zero labeled containers and two unattached
-labeled volumes (one source-state, one target-state) remain preserved. No
-replay of the thirteenth run or cleanup is authorized. The user has since
-authorized exactly one fourteenth full diagnostic run, pending push, Sol's
-post-push preflight/command review, and the required command seal; do not start
-it before these are complete. This authorization grants no cleanup or
-deployment authority. T050's
-future-only source-report correction passed Astra architecture review and
-Sol's canonical focused gate: 427 passed, 2,168 deselected, zero failures.
-The thirteenth run remains INCONCLUSIVE, Bite 5 remains pending review, and
-production remains unsupported.** This is the operator sequence and record for
-the bounded diagnostic. The source-only containment domain (the source phase
-of the two-domain experiment) and separate post-release target design are in
-[source-only-diagnostic.md](contracts/source-only-diagnostic.md). Bite 4 must
-use two separate runtime domains: source first, then target after verified
-source stop, history custody, and durable explicit release. The source is
-stopped and removed before the target container is created. Sol High is the
-sole test and runtime executor. No live account, credentials, external
-network, install, deployment, or production activation is authorized.
+**Latest state (2026-09-24): bites 1–3 are complete; none of fourteen full
+Bite 4 runs produced a PASS. The fourteenth run used commit `a260975` and
+preflight seal SHA-256
+`3341446309398552f83ae0094145584f6ceee1c14064e34f08d67a5b6860c835`. It
+exited 2, INCONCLUSIVE with positive reason
+`target-history-query-result-incomplete`. Source stop/removal, copy, history
+custody, durable release, target launch/stop/removal, and final custody
+occurred. The exact-parent human-origin query result and one assistant frame
+were observed; the gateway saw one valid parent `/v1/messages` request and
+response, no nested tool, and a successful response write. One additional
+successfully parsed JSON mapping of unknown type/subtype/order made
+`unexpected_frame_count=1` and `read_complete=false`; it may have appeared
+during bounded shutdown drain. Unparsed frames were zero and the reader did
+not fail. The query remains INCOMPLETE; no PASS or known FAIL was established.
+The negative arm did not run solely because of
+`positive-cleanup-incomplete`. The current inventory is zero labeled
+containers and four unattached volumes (old and new source-state and
+target-state). The one-run authorization is consumed; no further run, cleanup,
+retry, or deployment is authorized. Bite 5 remains pending and production
+unsupported. T050's future-only source-report correction passed Astra
+architecture review and Sol's canonical focused gate: 427 passed, 2,168
+deselected, zero failures.** This is the operator sequence and record for the
+bounded diagnostic. The source-only containment domain (the source phase of
+the two-domain experiment) and separate post-release target design are in
+[source-only-diagnostic.md](contracts/source-only-diagnostic.md). Bite 4 uses
+two separate runtime domains: source first, then target after verified source
+stop, history custody, and durable explicit release. Sol High is the sole
+test and runtime executor. No live account, credentials, external network,
+installation, deployment, cleanup, or production activation is authorized.
 
 T049's separate diagnostic-only query mode is architecture APPROVED; its
 expanded canonical scoped gate passed (420 passed, 2,168 deselected, zero
@@ -187,19 +191,69 @@ result are recorded below.
 | 1. Evidence map | Inventory SDK lifecycle fields, current hook/runner evidence, and the limits of existing probe observations. | **Complete.** The handoff's Bite 1 map records source locations and the limits of hook, process-group, and history observations. |
 | 2. Opt-in hook diagnostic | Add bounded default-off native hook observation and offline correlation coverage. | **Complete.** Frozen focused snapshot: 153 passed, 2,140 deselected. Hashes and scope are in `verification.md`. This is local diagnostic evidence only. |
 | 3. Containment and restart definition | Define operation-bound source domain, membership/escape coverage, durable all-path restart fencing, observation freshness, and fail-closed outcomes. | **Complete.** Astra reviewed and passed the contract. Current production producer is absent; preflight remains unsupported. |
-| 4. Bounded two-domain experiment | Observe source stop and history preservation, then durable explicit release, then one exact-parent target startup in a separate container. | **Not completed.** The twelfth attempt reached release, target creation, and final custody but remained INCONCLUSIVE with `startup-task-event-observed`; the sticky gate withheld its query. The separately authorized thirteenth attempt exited 2, INCONCLUSIVE with `effect-or-observer-uncertain`, after source stop/removal and target-state volume creation but before copy/release/target-container creation. Its inner source exception was not retained. Zero labeled containers and two unattached labeled volumes remain preserved. The twelfth and thirteenth run authorizations are consumed; the user has authorized exactly one fourteenth run, pending post-push Sol preflight and command review. No cleanup or deployment authority is granted. History loading, Bite 3 containment, and whole-history restoration remain unproved. |
-| 5. Evidence decision | Reconcile Bite 4 artifacts against Bite 3 and decide the next authorized step. | **Pending.** The thirteenth result is INCONCLUSIVE, not a Bite 5 verdict. The separately authorized fourteenth diagnostic run is pending push and Sol's post-push preflight/command review. Assess its evidence afterward; any progression-rule change requires separate governance and authorization. No cleanup or production authorization is implied. |
+| 4. Bounded two-domain experiment | Observe source stop and history preservation, then durable explicit release, then one exact-parent target startup in a separate container. | **Not completed.** The twelfth run remained INCONCLUSIVE at `startup-task-event-observed`; the thirteenth remained INCONCLUSIVE before copy/release/target creation with `effect-or-observer-uncertain`; the fourteenth reached target launch and final custody but remained INCONCLUSIVE with `target-history-query-result-incomplete`. Its exact-parent human-origin result and one assistant frame were observed; one additional parsed JSON mapping of unknown type/subtype/order made the read incomplete. No PASS or known FAIL was established. Zero labeled containers and four unattached old/new source/target volumes remain preserved. All fourteen run authorizations are consumed; no further run, cleanup, retry, or deployment is authorized. Bite 3 containment, whole-history restoration, and Bite 5 remain unproved. |
+| 5. Evidence decision | Reconcile Bite 4 artifacts against Bite 3 and decide the next authorized step. | **Pending.** The fourteenth result is INCONCLUSIVE, not a Bite 5 verdict. Review its incomplete query evidence alongside Bite 3 requirements; the missing OS witness and all-path restart fence prevent a Bite 5 PASS. No further runtime, cleanup, or production action is authorized. |
 
 Statements below that say no fifth, sixth, seventh, eighth, ninth, tenth,
 eleventh, twelfth, or thirteenth run was authorized record earlier
-checkpoints. The seventh through thirteenth attempts and the separately
+checkpoints. The seventh through fourteenth attempts and the separately
 authorized metadata read have run once and are recorded below; their
 authorizations are consumed. The twelfth-run cleanup covered only its exact
-allowlist. The thirteenth run left two unattached labeled volumes, which remain
-preserved; no cleanup is authorized. Do not replay a command or infer a Bite 5
-verdict from metadata or runtime evidence.
+allowlist. The thirteenth and fourteenth runs left two unattached labeled
+volumes each; all four remain preserved and no cleanup is authorized. Do not
+replay a command or infer a Bite 5 verdict from metadata or runtime evidence.
 
-## Thirteenth full Bite 4 runtime — INCONCLUSIVE; authorization consumed
+## Fourteenth full Bite 4 run — INCONCLUSIVE; authorization consumed
+
+The user-authorized fourteenth run used commit `a260975` and preflight seal
+SHA-256 `3341446309398552f83ae0094145584f6ceee1c14064e34f08d67a5b6860c835`.
+It exited 2 with positive reason `target-history-query-result-incomplete`.
+The exact-parent human-origin query result and one assistant frame were seen.
+The gateway saw exactly one valid parent `/v1/messages` request/response, no
+nested tool, and a successful response write.
+
+The CLI reader also parsed one extra JSON mapping during the active diagnostic
+window; its type was neither assistant nor result, and exact type/subtype/order
+were not retained. It may have appeared during bounded shutdown drain.
+`unexpected_frame_count=1`, `read_complete=false`, `unparsed=0`, and
+`read_failed=false`. This leaves the query incomplete, without a PASS or
+known FAIL finding. The negative arm did not run solely because of
+`positive-cleanup-incomplete`.
+
+The source was stopped and removed, copy and history custody completed, and
+durable release, target launch/stop/removal, and final custody occurred. Astra
+verified all 48 sealed file hashes and sizes. Source removal sequence 36
+preceded release 120, target intent 121, and target creation 123; target
+removal was sequence 153. Both source and target exits were 137 and
+harness-enforced. The exact 52,825-byte source-parent prefix and saved edit
+were retained. The target transcript was 58,164 bytes and had one other
+configuration mutation, so this does not establish whole-tree immutability.
+No runtime contract violation was found. The missing Bite 3 OS witness and
+all-path restart fence mean Bite 5 cannot PASS.
+
+Current inventory is zero labeled containers and four unattached volumes:
+old and new source-state and target-state volumes. No cleanup, retry, or
+deployment is authorized; the one-run authorization is consumed, and no
+further runtime is authorized. Bite 5 remains pending and production remains
+unsupported.
+
+Seal manifest SHA-256:
+`4623db6214ed86a01a1887dfd424400458ab950eff9fc16b9fb9905f6962f7de`.
+Report `8658716287e2bcf8c28b12d422d06c4ed54ad5cdcd096ddcb4dd8945c7893309`;
+stdout `636a1622fd9302f038d897f09eafebf0d788f65d00c1a52cc854c0a099cb341d`;
+source envelope `05c34a747add6748b4b3a77c26f2ef72581270edf9d8a3f4ef5e91db8df037e7`;
+arm ledger `a0b1443107fd35aee12faea673ccab49e89a29984cb94a70e18d998185a9b804`;
+inventory `af391f032af5d6d9c41e40572689ff11b4f9fc3627d6a00e483494ee845ea507`.
+
+The bounded next diagnostic evidence need is a private, ordered projection of
+every target-query frame header: type/subtype, schema, origin, session
+correlation, and whether it arrived during query read or shutdown drain. Do not
+retain frame bodies, paths, or content, and do not relax refusal for any extra
+frame. Plausible SDK metadata such as `rate_limit_event` or
+`turn_duration` was not observed; identify any discriminator against the
+pinned schema before changing interpretation.
+
+## Historical thirteenth full Bite 4 runtime — INCONCLUSIVE; authorization consumed
 
 The user authorized exactly one run and Sol reviewed/froze the command. It
 exited 2 after about 20 seconds. The public report is overall INCONCLUSIVE,
@@ -1468,12 +1522,11 @@ remains pending; no verdict has been made.
 
 ## Bite 4 operator sequence
 
-All thirteen full-attempt commands/results above are historical and must not
-be repeated. Their authorizations are consumed. A separate user authorization
-covers exactly one fourteenth run, pending push and Sol's post-push preflight
-and command review; this operator sequence documents the procedure but grants
-no additional runtime authority. Do not run before review. No cleanup or
-deployment is authorized.
+All fourteen full-attempt commands/results above are historical and must
+not be replayed. Their authorizations are consumed. No fifteenth run, cleanup,
+retry, or deployment is authorized. This operator sequence documents
+procedures only; it grants no runtime authority. The T14 read remains
+INCONCLUSIVE, Bite 5 remains pending, and production remains unsupported.
 
 1. **Freeze and identify.** Sol records the code revision and hashes of the
    probe, tests, image ID, SDK version, selected CLI version and full binary

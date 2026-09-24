@@ -1,22 +1,51 @@
 # Swap rebuild — implementation handoff
 
-## Latest checkpoint — thirteenth Bite 4 INCONCLUSIVE; T050 offline correction approved
+## Latest checkpoint — fourteenth Bite 4 INCONCLUSIVE; T050 offline correction approved
 
-The user authorized exactly one thirteenth Bite 4 run; Sol reviewed and froze
-the command. It exited 2 after about 20 seconds, INCONCLUSIVE, with positive
-reason `effect-or-observer-uncertain`; the negative arm was not run and no
-target container was created. Source stop/removal and target-state volume
-creation occurred before source-report schema validation failed, before copy,
-release, or target creation. The inner source exception was not retained. The
-unbound `parent_uuid` reference in the legacy/source initializer is a
-deterministic static cause candidate, not directly proven historical cause.
-The inventory is zero labeled containers and two unattached labeled volumes
-(one source-state, one target-state); no cleanup or replay of the thirteenth
-run is authorized. The user has since authorized exactly one fourteenth full
-diagnostic run, pending push, Sol's post-push preflight/command review, and the
-required command seal. Do not run before all are complete; this authorization
-does not include cleanup or deployment. Bite 5 remains pending and production
-unsupported.
+The one user-authorized fourteenth run used commit `a260975` and preflight seal
+SHA-256 `3341446309398552f83ae0094145584f6ceee1c14064e34f08d67a5b6860c835`.
+It exited 2 with positive reason `target-history-query-result-incomplete`.
+Source stop/removal, copy, history custody, durable release, target launch,
+target stop/removal, and final custody occurred. The exact-parent human-origin
+query result and one assistant frame were observed. The gateway saw exactly
+one valid parent `/v1/messages` request/response, no nested tool, and a
+successful response write.
+
+The CLI reader also parsed one extra JSON mapping during the active window.
+Its type was neither assistant nor result, and exact type, subtype, and order
+were not retained; it may have arrived during bounded shutdown drain.
+`unexpected_frame_count=1`, `read_complete=false`, `unparsed=0`, and
+`read_failed=false`. The query is incomplete; this is not a runtime contract
+violation finding and establishes no PASS or known FAIL. The negative arm was
+not run solely because of `positive-cleanup-incomplete`.
+
+Astra's sealed review matched all 48 file hashes and sizes. Source removal
+sequence 36 preceded release 120, target intent 121, and target creation 123;
+target removal was sequence 153. Source and target exits were 137 and
+harness-enforced. The exact 52,825-byte source-parent prefix and saved edit
+were retained. Target transcript size was 58,164 bytes with one other
+configuration mutation, so whole-tree immutability is not established. Current
+inventory is zero labeled containers and four unattached old/new
+source-state/target-state volumes. The one-run authorization is consumed; no
+further run, cleanup, retry, or deployment is authorized. Bite 5 remains
+pending and production unsupported.
+
+Seal manifest SHA-256:
+`4623db6214ed86a01a1887dfd424400458ab950eff9fc16b9fb9905f6962f7de`.
+Report `8658716287e2bcf8c28b12d422d06c4ed54ad5cdcd096ddcb4dd8945c7893309`;
+stdout `636a1622fd9302f038d897f09eafebf0d788f65d00c1a52cc854c0a099cb341d`;
+source envelope `05c34a747add6748b4b3a77c26f2ef72581270edf9d8a3f4ef5e91db8df037e7`;
+arm ledger `a0b1443107fd35aee12faea673ccab49e89a29984cb94a70e18d998185a9b804`;
+inventory `af391f032af5d6d9c41e40572689ff11b4f9fc3627d6a00e483494ee845ea507`.
+
+Any future diagnostic needs a bounded ordered projection of every target-query
+frame header, including type/subtype, schema, origin, session correlation, and
+query-read versus shutdown-drain stage. Persist the exact target report
+privately before teardown, following T050's source-report pattern. Do not
+retain bodies, paths, or content; keep unknown discriminators private and the
+extra-frame refusal unchanged until a type is identified against the pinned
+schema. `rate_limit_event` and `turn_duration` are plausible SDK metadata
+examples only, not observations.
 
 T050 is a future-only correction approved by Astra. It removes the unbound
 initializer, adds allowlisted error-site metadata, privately persists and
@@ -358,32 +387,39 @@ thirteenth-run volumes, which remain preserved; no cleanup is authorized.
 Only PASS under Bite 3's evidence criteria permits public v1 lifecycle
 implementation. No deployment or activation is authorized.
 
-## Next-session action — pending fourteenth-run preflight
+## Next-session action — read-only fourteenth-run evidence assessment
 
 Start in this existing worktree and branch. Read this checkpoint together with
 [`contracts/source-only-diagnostic.md`](contracts/source-only-diagnostic.md),
 [`runbook.md`](runbook.md), [`live-validation.md`](live-validation.md), and
-[`verification.md`](verification.md). T050's implementation and formal gate
-are frozen; the thirteenth run remains INCONCLUSIVE and its authorization is
-consumed. A separate user authorization covers exactly one fourteenth full
-diagnostic run after push and pending Sol preflight/command review. Do not
-execute it before that review. This authorization does not permit cleanup or
-deployment; the two unattached thirteenth-run volumes remain preserved, and
-the twelfth run's separate cleanup does not cover them. Preserve the sealed
-evidence, artifacts, and uncommitted/untracked files. Bite 5 remains pending
-required evidence.
+[`verification.md`](verification.md). The fourteenth one-run authorization
+is consumed. Its result is INCONCLUSIVE because the target query reader saw an
+additional parsed mapping frame of unknown type/order; do not treat this as a
+known runtime violation or relax the extra-frame refusal. Four unattached
+old/new source/target volumes remain preserved. No further runtime, cleanup,
+retry, or deployment is authorized.
+
+Review the bounded frame-header evidence need described above and T051 in
+`tasks.md`: exact target report persistence before teardown, ordered
+header-only facts with query-read versus shutdown-drain stage, and offline
+privacy/boundary tests, subject to Astra architecture review. Keep the current
+gate unchanged until any discriminator is identified against the pinned
+schema. Bite 3's OS witness/all-path restart fence remains absent, so Bite 5
+cannot PASS. Preserve the sealed evidence and all inherited/current files.
 
 Do not infer Bite 4 completion, production containment, or a Bite 5 verdict
-from T050's offline gate or either INCONCLUSIVE runtime. Any proposed
-protocol or gate change requires a separate review and authorization. Commit
-and push have separate user authorization; this update does not perform them.
-Do not deploy or activate public v1 lifecycle behavior.
+from T050's offline gate or the fourteenth or earlier INCONCLUSIVE runs. Any
+proposed protocol or gate change requires a separate review and authorization.
+These result documents should be committed and pushed under the existing user
+authorization; this documentation turn did not perform the landing. Do not
+deploy or activate public v1 lifecycle behavior.
 
 Maintain the named roles: Astra is architecture lead, Sol High is runtime and
 offline-gate executor, and Luna Max is implementation writer. Preserve all
-uncommitted and untracked files. Do not commit, push, deploy, activate public
-v1 lifecycle behavior, or mark Bite 5 passed, failed, or inconclusive without
-the required evidence and an explicit decision record.
+remaining uncommitted and untracked files through the authorized landing step.
+Do not deploy, activate public v1 lifecycle behavior, or mark Bite 5 passed,
+failed, or inconclusive without the required evidence and an explicit decision
+record.
 
 ## Historical next-session start — 2026-09-22 checkpoint
 

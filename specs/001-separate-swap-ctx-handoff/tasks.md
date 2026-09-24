@@ -8,12 +8,15 @@ and `openspec/changes/separate-swap-ctx-handoff/`.
 request. Live validation remains `NOT RUN — UNVERIFIED` until an authorized
 experiment completes and its evidence is assessed.
 
-**Current Bite 4 authorization (2026-09-24)**: The user has authorized exactly
-one fourteenth full diagnostic run, pending push, Sol's post-push
-preflight/command review, and the required command seal. Do not run before
-these are complete. The thirteenth run remains
-INCONCLUSIVE and its two unattached labeled volumes remain preserved. This
-authorization grants no cleanup or deployment authority.
+**Current Bite 4 status (2026-09-24)**: The one-run fourteenth
+authorization has been consumed. Its result is INCONCLUSIVE with positive
+reason `target-history-query-result-incomplete`; the query saw one extra
+parsed frame, so no PASS or known FAIL was established. The negative arm did
+not run solely because of `positive-cleanup-incomplete`. Zero labeled
+containers and four unattached old/new source/target volumes remain preserved.
+No further run, cleanup, retry, or deployment is authorized. Bite 5 remains
+pending and production unsupported. See `verification.md` for sealed hashes
+and the full frame evidence.
 
 The coordinator-wide interrupt contract is test-first within the existing
 task set: T009 defines the durable/fake-runtime cases, T010–T014 implement
@@ -573,6 +576,21 @@ still apply to subsequent public integration and activation.
   JUnit SHA-256 is
   `f887c8d09ccfd49c1a59165b2cf59c4102d108d1655821382266e38267619633`.
   At T050 completion no fourteenth run had been authorized; the later separate
-  user authorization for exactly one run is recorded at the top of this file.
+  user authorization and consumed fourteenth-run result are recorded at the
+  top of this file.
   Bite 5 remains pending and production unsupported. No runtime, Docker,
   cleanup, commit, push, or deployment is part of T050.
+
+- [ ] T051 Add offline-only, bounded ordered query-frame header evidence after
+  Astra architecture review. Project every target-query frame's type, subtype,
+  schema, origin, session correlation, and stage (query read or shutdown drain)
+  without retaining bodies, paths, or content; keep unknown discriminators in
+  private evidence and persist the exact target report privately before
+  teardown, following T050's source-report pattern. Add offline tests for an
+  extra frame before/after the result, shutdown-drain frames, malformed
+  headers, overflow, and privacy. Preserve the current fail-closed refusal for
+  every extra frame until its discriminator is identified against the pinned
+  schema; `rate_limit_event` and `turn_duration` are examples only, not
+  observed types. Do not use this task to alter Bite 3, Bite 5, production, or
+  runtime authority. The fourteenth run remains INCONCLUSIVE; no further run,
+  cleanup, or deployment is authorized.

@@ -5,7 +5,62 @@ slice, or passing fake test is not full acceptance. `tasks.md` remains the
 implementation task authority; this document identifies the evidence needed
 to close the feature against its approved, explicitly versioned contracts.
 
-## Latest checkpoint — thirteenth Bite 4 INCONCLUSIVE; T050 architecture APPROVED; offline gate PASS
+## Latest checkpoint — fourteenth Bite 4 INCONCLUSIVE
+
+The user-authorized fourteenth run used commit `a260975` and preflight seal
+SHA-256 `3341446309398552f83ae0094145584f6ceee1c14064e34f08d67a5b6860c835`.
+It exited 2 with positive reason `target-history-query-result-incomplete`.
+Source stop/removal, copy, history custody, durable release, target launch,
+target stop/removal, and final custody occurred. The exact-parent human-origin
+query result and one assistant frame were observed; the gateway saw exactly
+one valid parent `/v1/messages` request and response, no nested tool, and a
+successful response write.
+
+During the active diagnostic window the CLI reader also parsed one additional
+JSON mapping whose type was neither assistant nor result. Its type, subtype,
+and order were not retained; it may have arrived during bounded shutdown
+drain. `unexpected_frame_count=1` and `read_complete=false`; `unparsed=0` and
+`read_failed=false`. This makes the query incomplete and the result
+INCONCLUSIVE; it is not evidence of a runtime contract violation or a PASS or
+FAIL. The negative arm did not run solely because of
+`positive-cleanup-incomplete`.
+
+Astra's sealed review matched all 48 file hashes and sizes. Source removal
+sequence 36 preceded release 120, target intent 121, and target creation 123;
+target removal was sequence 153. Both source and target exits were 137 and
+harness-enforced. The exact 52,825-byte source-parent prefix and saved edit
+were retained. The target transcript was 58,164 bytes with one other
+configuration mutation, so whole-tree immutability is not established. No
+known FAIL was found. Bite 3's OS witness and all-path restart fence remain
+absent, so Bite 5 cannot PASS.
+
+T051 is an unchecked offline task: after Astra architecture review, capture a
+bounded ordered header-only projection of each target-query frame, including
+type/subtype, schema, origin, session correlation, and query-read versus
+shutdown-drain stage. Persist the exact target report privately before
+teardown. Keep bodies, paths, and content out of evidence, and keep refusal
+for every extra frame until its discriminator is identified against the
+pinned schema.
+
+The current inventory is zero labeled containers and four unattached volumes
+(old and new source-state and target-state volumes). No cleanup, retry, or
+deployment is authorized. The one-run authorization is consumed; no further
+run is authorized. Bite 5 remains pending and production remains unsupported.
+
+Seal manifest SHA-256:
+`4623db6214ed86a01a1887dfd424400458ab950eff9fc16b9fb9905f6962f7de`.
+Report SHA-256:
+`8658716287e2bcf8c28b12d422d06c4ed54ad5cdcd096ddcb4dd8945c7893309`.
+Sanitized stdout SHA-256:
+`636a1622fd9302f038d897f09eafebf0d788f65d00c1a52cc854c0a099cb341d`.
+Source envelope SHA-256:
+`05c34a747add6748b4b3a77c26f2ef72581270edf9d8a3f4ef5e91db8df037e7`.
+Arm ledger SHA-256:
+`a0b1443107fd35aee12faea673ccab49e89a29984cb94a70e18d998185a9b804`.
+Inventory SHA-256:
+`af391f032af5d6d9c41e40572689ff11b4f9fc3627d6a00e483494ee845ea507`.
+
+## Historical checkpoint — thirteenth Bite 4 INCONCLUSIVE; T050 architecture APPROVED; offline gate PASS
 
 The user authorized exactly one thirteenth Bite 4 run. Sol reviewed and froze
 the command; it exited 2 after about 20 seconds with overall
@@ -18,9 +73,9 @@ were `positive-release-candidate-not-established`,
 `positive-cleanup-incomplete`, and `positive-observer-incomplete`. No target
 container was created. Quarantine found zero labeled containers and removed no
 volumes; two unattached labeled volumes, one source-state and one target-state,
-remain preserved. No replay of the thirteenth run or cleanup is authorized.
-The one-run fourteenth diagnostic authorization and its pending post-push Sol
-preflight/command review and required command seal are recorded below.
+remain preserved. At that checkpoint, no replay or cleanup was authorized.
+The separate fourteenth-run authorization and its consumed INCONCLUSIVE result
+are recorded in the latest checkpoint above.
 
 The source container was observed running after the source phase, then stopped
 and removed. The target-state volume was created, after which source-report
@@ -53,12 +108,10 @@ while retaining private evidence. An otherwise-valid explicit
 `target_code_reached=true` remains FAIL; absent or unknown reach evidence
 remains INCONCLUSIVE. Astra approved T050. Sol's canonical focused gate passed
 427 tests, 2,168 deselected, zero failures; JUnit SHA-256 is
-`f887c8d09ccfd49c1a59165b2cf59c4102d108d1655821382266e38267619633`. The user
-has since authorized exactly one fourteenth full diagnostic run, pending push,
-Sol's post-push preflight/command review, and the required command seal. Do not
-run before these are complete.
-This authorization grants no cleanup or deployment authority and does not
-establish production support or decide Bite 5.
+`f887c8d09ccfd49c1a59165b2cf59c4102d108d1655821382266e38267619633`. T050's
+offline gate did not itself authorize a runtime; the separately authorized
+fourteenth run and its INCONCLUSIVE result are recorded in the latest
+checkpoint. Neither result establishes production support or decides Bite 5.
 
 ## Historical checkpoint — T049 architecture APPROVED; scoped gate PASS
 

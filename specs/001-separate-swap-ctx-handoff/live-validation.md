@@ -5,25 +5,68 @@ below ran without credentials or network access. Scripted gateway controls
 below establish a bounded interrupt candidate. Authenticated acceptance is
 **NOT RUN** and full Gate 0 acceptance remains incomplete.
 
-Latest Bite 4 status: none of thirteen runs produced a PASS. The user
-authorized exactly one thirteenth run, and Sol reviewed/froze the command. It
-exited 2 after about 20 seconds, INCONCLUSIVE with positive reason
-`effect-or-observer-uncertain`; the negative arm was not run. Source
-stop/removal and target-state volume creation preceded source-report schema
-validation failure, before copy, release, or target-container creation. Its
-inner source exception was not retained. Zero labeled containers and two
-unattached labeled volumes (one source-state, one target-state) remain
-preserved. No replay of the thirteenth run or cleanup is authorized. The user
-has since authorized exactly one fourteenth full diagnostic run, pending
-push, Sol's post-push preflight/command review, and the required command seal;
-do not start before all are complete. The authorization grants no cleanup or
-deployment authority.
+Latest Bite 4 status: none of fourteen runs produced a PASS. The one
+user-authorized fourteenth run used commit `a260975` and preflight seal
+SHA-256 `3341446309398552f83ae0094145584f6ceee1c14064e34f08d67a5b6860c835`.
+It exited 2, INCONCLUSIVE with `target-history-query-result-incomplete`.
+The exact-parent human-origin result and one assistant frame were observed;
+the gateway saw exactly one valid parent `/v1/messages` request/response, no
+nested tool, and a successful response write. One additional parsed JSON
+mapping of unknown type/subtype/order made `unexpected_frame_count=1` and
+`read_complete=false`; it may have arrived during bounded shutdown drain.
+`unparsed=0` and `read_failed=false`. The query is incomplete; no PASS or
+known FAIL was established. The negative arm did not run solely because of
+`positive-cleanup-incomplete`.
+Source stop/removal, copy, history custody, durable release, target
+launch/stop/removal, and final custody occurred. Inventory is zero labeled
+containers and four unattached old/new source-state and target-state volumes.
+The one-run authorization is consumed. No further runtime, cleanup, retry, or
+deployment is authorized. Bite 5 remains pending and production unsupported.
 T050's future-only source-report correction has Astra architecture approval
 and Sol's 427-pass canonical offline gate (2,168 deselected, zero failures).
-The historical thirteenth result remains INCONCLUSIVE; Bite 5 is pending and
-production remains unsupported.
 
-## Thirteenth full Bite 4 runtime — INCONCLUSIVE
+## Fourteenth full Bite 4 runtime — INCONCLUSIVE; authorization consumed
+
+Astra's sealed review matched all 48 file hashes and sizes. Source removal
+sequence 36 preceded durable release 120, target intent 121, and target
+creation 123; target removal was sequence 153. Source and target exits were
+137 and harness-enforced. The exact 52,825-byte source-parent prefix and saved
+edit were retained. Target transcript size was 58,164 bytes with one other
+configuration mutation; therefore this run does not establish whole-tree
+immutability.
+
+The gateway observed exactly one valid parent `/v1/messages` request and
+response, no nested tool, and a successful response write. The exact-parent
+human-origin query result and one assistant frame were seen. During the active
+window, the CLI reader parsed one additional JSON mapping whose type was
+neither assistant nor result. Its exact type/subtype/order were not retained;
+it may have arrived during bounded shutdown drain. The reader reported
+`unexpected_frame_count=1`, `read_complete=false`, `unparsed=0`, and
+`read_failed=false`. This is an incomplete observation, not evidence of a
+runtime contract violation or a PASS or known FAIL. The negative arm was not
+run solely because of `positive-cleanup-incomplete`.
+
+The source stop/removal, copy, history custody, durable release, target
+launch/stop/removal, and final custody phases completed. Four unattached
+volumes remain (old and new source-state and target-state); no labeled
+containers remain. No cleanup, retry, or deployment is authorized, and no
+further runtime is authorized. Bite 3's OS witness/all-path restart fence is
+absent, so a Bite 5 PASS is unavailable. Production remains unsupported.
+
+Sealed manifest SHA-256:
+`4623db6214ed86a01a1887dfd424400458ab950eff9fc16b9fb9905f6962f7de`.
+Report: `8658716287e2bcf8c28b12d422d06c4ed54ad5cdcd096ddcb4dd8945c7893309`.
+Sanitized stdout: `636a1622fd9302f038d897f09eafebf0d788f65d00c1a52cc854c0a099cb341d`.
+Source envelope: `05c34a747add6748b4b3a77c26f2ef72581270edf9d8a3f4ef5e91db8df037e7`.
+Arm ledger: `a0b1443107fd35aee12faea673ccab49e89a29984cb94a70e18d998185a9b804`.
+Inventory: `af391f032af5d6d9c41e40572689ff11b4f9fc3627d6a00e483494ee845ea507`.
+
+The next offline task is to design bounded, ordered header evidence for each
+target-query frame, including query-read versus shutdown-drain stage, and
+persist the exact target report privately before teardown. Do not include
+bodies, paths, or content, and do not relax the refusal for extra frames.
+
+## Historical thirteenth full Bite 4 runtime — INCONCLUSIVE
 
 The public report records overall `INCONCLUSIVE`,
 `bite5_decision=pending-review`, `production_disposition=unsupported`, and
