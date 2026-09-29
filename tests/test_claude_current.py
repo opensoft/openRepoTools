@@ -599,8 +599,10 @@ def test_help_and_an_unknown_argument(box):
 
 @pytest.mark.parametrize("name", ["TIMEOUT", "VERSION_TIMEOUT", "UPDATE_TIMEOUT", "LOCK_WAIT"])
 def test_a_malformed_bound_is_refused_before_anything_runs(box, name):
+    """64, the usage status, and not 1: a launcher reports 1 as "no Claude
+    Code", which a typo in a bound is not (opensoft/workBenches#121)."""
     result = box.run(**{f"CLAUDE_CURRENT_{name}": "soon"})
-    assert result.returncode == 1
+    assert result.returncode == 64
     assert f"CLAUDE_CURRENT_{name} must be a whole number" in result.stderr
     assert box.npm_log.read_text() == ""
 

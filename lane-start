@@ -2657,11 +2657,12 @@ cmd+=(${pass[@]+"${pass[@]}"})
 # (opensoft/workBenches#119). `claude-current --porcelain` reads npm's published
 # version, updates the user-writable install when every copy is behind, and
 # answers with an absolute path it has run `--version` on. Its exit 2 is a
-# refusal (every copy still behind npm) and its 1 an environment with nothing
-# runnable; either ends this run with the same status, before the row, the log
-# and the handoff are written, which is where the launcher table's own PATH
-# check sits for the same reason. Its stderr is the operator's to read and goes
-# straight through. Never under `--no-launch`, which launches nothing and is
+# refusal (every copy still behind npm) and ends this run with 2; any other
+# failure (1, nothing runnable; 64, a malformed setting) ends it with 1, the
+# environment status. Either way the run ends before the row, the log and the
+# handoff are written, which is where the launcher table's own PATH check sits
+# for the same reason. Its stderr is the operator's to read and goes straight
+# through. Never under `--no-launch`, which launches nothing and is
 # the first act INSIDE a running session, and never under `--dry-run`, which
 # must not update anything.
 if [ "$AGENT" = claude ] && (( lane_claude_resolve )) && (( ! no_launch )); then
@@ -2675,7 +2676,7 @@ if [ "$AGENT" = claude ] && (( lane_claude_resolve )) && (( ! no_launch )); then
     case "$lcc_rc" in
       0) : ;;
       2) die "claude-current refused the launch (exit 2, its reason above): the newest Claude Code installed is behind the one npm publishes. Nothing was written: the row, the object log and the handoff's Rule 3 stamp all come after this. CLAUDE_ALLOW_STALE=1 $prog … launches it anyway, or CLAUDE_BIN=<path> pins one." 2 ;;
-      *) die "claude-current found no Claude Code to launch (exit $lcc_rc, its reason above). Nothing was written: the row, the object log and the handoff's Rule 3 stamp all come after this." 1 ;;
+      *) die "claude-current named no Claude Code to launch (exit $lcc_rc, its reason above). Nothing was written: the row, the object log and the handoff's Rule 3 stamp all come after this." 1 ;;
     esac
     lcc_path=""; lcc_version=""; lcc_status=""
     while IFS= read -r lcc_line; do

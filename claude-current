@@ -62,9 +62,11 @@
 # EXIT
 #   0   resolved: verified, ahead or unverified, and stale only under
 #       CLAUDE_ALLOW_STALE=1
-#   1   no runnable Claude Code at all, or a malformed setting
+#   1   no runnable Claude Code at all
 #   2   refused: every candidate is still behind npm after the update attempt
-#   64  usage
+#   64  usage: an argument it does not know, or a CLAUDE_CURRENT_* bound that
+#       is not a whole number of seconds. Kept apart from 1, which a launcher
+#       reports as "no Claude Code" (opensoft/workBenches#121)
 #
 # ENVIRONMENT
 #   CLAUDE_ALLOW_STALE=1             launch a stale candidate anyway, and say so
@@ -113,7 +115,8 @@ first when every installed copy is behind. Never resolved through PATH.
                 (status is verified, ahead, unverified or stale)
   --offline     no npm read and no update: the newest installed copy, unverified
 
-Exit 0 resolved, 1 nothing runnable, 2 refused as stale, 64 usage.
+Exit 0 resolved, 1 nothing runnable, 2 refused as stale, 64 usage or a
+malformed CLAUDE_CURRENT_* bound.
 CLAUDE_ALLOW_STALE=1 launches a stale copy anyway. The CLAUDE_CURRENT_*
 variables and the hand-off to lane-start are in docs/README-claude-current.md.
 USAGE
@@ -156,7 +159,7 @@ for setting in TIMEOUT VERSION_TIMEOUT UPDATE_TIMEOUT LOCK_WAIT; do
 	eval "setting_value=\${$setting}"
 	# shellcheck disable=SC2154
 	posint "$setting_value" ||
-		die "CLAUDE_CURRENT_$setting must be a whole number of seconds above 0, and it is '$setting_value'" 1
+		die "CLAUDE_CURRENT_$setting must be a whole number of seconds above 0, and it is '$setting_value'" 64
 done
 NATIVE_DIR="${CLAUDE_CURRENT_NATIVE_DIR:-$HOME/.local/share/claude/versions}"
 CACHE_DIR="${CLAUDE_CURRENT_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/openrepotools}"

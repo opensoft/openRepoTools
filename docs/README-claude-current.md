@@ -95,9 +95,10 @@ stderr carries one line saying what was chosen, for example
 `claude-current: claude 2.1.284 (verified against npm 2.1.284) at <path>`.
 A refusal prints nothing on stdout.
 
-**Exit.** 0 resolved; 1 no runnable Claude Code at all, or a malformed
-setting; 2 refused, because every candidate is still behind npm after the
-update; 64 usage.
+**Exit.** 0 resolved; 1 no runnable Claude Code at all; 2 refused, because
+every candidate is still behind npm after the update; 64 usage, including a
+`CLAUDE_CURRENT_*` bound that is not a whole number of seconds. 64 is kept
+apart from 1 because a launcher reports 1 as "no Claude Code".
 
 | Variable | Default | What it is |
 |---|---|---|
@@ -153,10 +154,10 @@ and the launch, and before step 5 writes anything:
 - Exit 0: the launch command's first word becomes the absolute path.
   `CLAUDE_BIN` and `CLAUDE_RESOLVED_BIN` are exported with that path, and one
   line says `launching claude <version> (<status>) at <path>`.
-- Exit 2 ends `lane-start` with 2 and exit 1 with 1. Either way the row, the
-  object log and the handoff's Rule 3 stamp are not written. The window has
-  already been renamed for the lane by step 4, as it has for the launcher
-  table's own check on the agent's command.
+- Exit 2 ends `lane-start` with 2, and any other failure with 1. Either way
+  the row, the object log and the handoff's Rule 3 stamp are not written. The
+  window has already been renamed for the lane by step 4, as it has for the
+  launcher table's own check on the agent's command.
 - With no `claude-current` installed, one note says so, and `CLAUDE_BIN`
   (`claude` from `PATH` when unset) is launched unchecked, as before.
 - `--dry-run` prints a `PLAN` line naming the call and runs nothing, because

@@ -297,6 +297,7 @@ def test_a_refusal_ends_the_run_with_2_before_anything_is_written(box):
 
 @pytest.mark.parametrize("fake", [
     {"FAKE_CC_RC": "1"},
+    {"FAKE_CC_RC": "64"},
     {"FAKE_CC_RAW": "not porcelain"},
     {"FAKE_CC_PATH": "relative/claude"},
     {"FAKE_CC_PATH": "/nonexistent/claude-current-test/claude"},
