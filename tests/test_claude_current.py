@@ -336,7 +336,7 @@ def test_nothing_installed_is_installed_into_the_user_prefix(box):
     assert (fields["path"], fields["status"]) == (str(box.prefix / "bin" / "claude"), "verified")
 
 
-def _hold_lock(box: Sandbox, seconds: int, then: str = ":") -> subprocess.Popen:
+def _hold_lock(box: Sandbox, seconds: float, then: str = ":") -> subprocess.Popen:
     """Hold the update lock the way a second launch would, then run `then`."""
     lock = box.cache / "claude-current.lock"
     if shutil.which("flock"):
@@ -363,6 +363,30 @@ def test_a_launch_waits_for_another_launchs_update_and_does_not_repeat_it(box):
         holder.wait(timeout=30)
     assert result.returncode == 0, result.stderr
     assert porcelain(result)["status"] == "verified"
+    assert "updated by another launch" in result.stderr
+    assert len(box.installs()) == 1, "only the other launch installed"
+
+
+def test_a_copy_ahead_of_npm_that_appears_during_the_wait_is_ahead(box):
+    """Copilot on #134: after the wait only an EQUAL copy was accepted, so a
+    copy newer than npm that another launch installed meanwhile (npm moved on
+    while this launch waited) reached the stale refusal, although the same
+    copy is `ahead` before any wait. The other launch takes the lock, installs
+    2.1.285 a second and a half later, and still holds the lock when this
+    launch's four-second wait runs out."""
+    box.user_copy("2.1.283")
+    installer = (f'"{box.bin / "npm"}" install -g --prefix "{box.prefix}" '
+                 f'{PACKAGE}@2.1.285 >/dev/null 2>&1; sleep 8')
+    holder = _hold_lock(box, 1.5, then=installer)
+    try:
+        result = box.run("--porcelain", CLAUDE_CURRENT_LOCK_WAIT="4")
+    finally:
+        holder.kill()
+        holder.wait(timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert porcelain(result)["status"] == "ahead"
+    assert porcelain(result)["version"] == "2.1.285"
+    assert "(ahead of npm 2.1.284)" in result.stderr
     assert "updated by another launch" in result.stderr
     assert len(box.installs()) == 1, "only the other launch installed"
 

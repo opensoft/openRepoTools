@@ -655,6 +655,13 @@ if pick equal "$PUBLISHED"; then
 	release_lock
 	answer verified "claude $CHOSEN_VERSION (verified against npm $PUBLISHED) at $CHOSEN_PATH, updated by another launch"
 fi
+# The same two answers as before the wait, in the same order: a copy newer
+# than npm that appeared while this launch waited is `ahead` here too, and not
+# a reason to update again or to refuse (Copilot on #134).
+if pick ahead "$PUBLISHED"; then
+	release_lock
+	answer ahead "claude $CHOSEN_VERSION (ahead of npm $PUBLISHED) at $CHOSEN_PATH, updated by another launch"
+fi
 if [ "$locked" = 1 ]; then
 	if [ -n "$native_path" ]; then
 		update_native || :
