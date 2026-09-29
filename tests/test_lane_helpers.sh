@@ -8806,7 +8806,9 @@ cat > "$SANDBOX/a17bin/lclaude" <<'FAKE'
 printf '%s\n' "$*" >> "${FAKE_PCLAUDE_LOG:-/dev/null}"
 FAKE
 chmod +x "$SANDBOX/a17-launcher-only/lclaude"
-run env PATH="$SANDBOX/a17-launcher-only:$A17PATH_NOLANE" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+# A prior section exports PCLAUDE as an explicit override. This case asks
+# about PATH fallback, so remove that override for this invocation only.
+run env -u PCLAUDE PATH="$SANDBOX/a17-launcher-only:$A17PATH_NOLANE" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
     CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-5 --restart clear
 is    "lane-handoff --restart exits 0" "$rc" 0
 a17_tmux="$(cat "$FAKE_TMUX_A17_LOG")"
