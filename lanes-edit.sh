@@ -2563,7 +2563,20 @@ add_row_retirement_rescan() {
     return 1
   }
   if [ -n "$ar_rebased_hits" ]; then
-    note "lane $ADD_ROW_LANE was retired by a peer before this add-row could push (archive: $(printf '%s' "$ar_rebased_hits" | tr '\n' ' ')); refusing to publish the rebased add-row commit"
+    # The rejected add-row is already a local commit on top of the peer's
+    # archive. Leaving it at HEAD would let the next unrelated registry write
+    # push it. Remove ONLY this invocation's exact appended line and commit
+    # that compensation locally; any swept pre-existing edit stays intact.
+    ar_lines="$(command grep -nFx -- "$ADD_ROW_TEXT" "$LANES_FILE" 2>/dev/null)" || {
+      note "the rejected row could not be found exactly in $LANES_FILE; the local add-row commit must be repaired before any later push"
+      return 1
+    }
+    case "$ar_lines" in *$'\n'*) note "more than one exact copy of the rejected row exists; refusing automatic compensation"; return 1 ;; esac
+    ar_line="${ar_lines%%:*}"
+    delete_lines "$ar_line"
+    git -C "$LANES_REPO" -c "$CP_EXACT" add -- "$LANES_PATH" || return 1
+    git -C "$LANES_REPO" -c "$CP_EXACT" commit -q -m "LANES($ADD_ROW_LANE@$WS): cancel add-row rejected by peer retirement" -- "$LANES_PATH" || return 1
+    note "lane $ADD_ROW_LANE was retired by a peer before this add-row could push (archive: $(printf '%s' "$ar_rebased_hits" | tr '\n' ' ')); the rejected row was removed in a compensating LOCAL commit. Neither commit was pushed."
     return 2
   fi
 }
@@ -9628,6 +9641,7 @@ Nothing was written." 2
     msg="LANES(${lane_new:-${LANES_LANE:-unknown}}@$WS): add row"
     [ -n "$PRE_DIRTY_LANES" ] && msg="$msg + sweeps uncommitted edit to row $PRE_DIRTY_LANES"
     ADD_ROW_LANE="$lane_new"
+    ADD_ROW_TEXT="$row"
     CP_AFTER_REBASE=add_row_retirement_rescan
     commit_push "$msg"
     ar_push_rc=$?

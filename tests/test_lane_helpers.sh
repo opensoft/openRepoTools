@@ -11477,8 +11477,16 @@ run a19 env PATH="$SANDBOX/racebin:$PATH" A19_WIP="$A19_WIP" A19_PEER="$A19_PEER
     LANES_LANE=repo19-2 "$E" add-row "| \`repo19race-1\` | harness \`$A19_OLD\` | Eagle / test / brett | 2026-09-29 | none | none | LIVE |"
 is    "an add-row losing to a peer retirement refuses to push" "$rc" 2
 has   "…naming the peer retirement" "$err" "was retired by a peer"
+is    "…and the rejected local HEAD no longer has its row" \
+      "$(grep -c '^| `repo19race-1`' "$A19_WIP/lanes/LANES.md" || :)" 0
 is    "…and the remote has no resurrected active row" \
       "$(git -C "$A19_PEER" show origin/main:lanes/LANES.md | grep -c '^| `repo19race-1`' || :)" 0
+run a19 env LANES_LANE=repo19-2 "$E" add-row "| \`repo19race-2\` | harness \`$A19_OLD\` | Eagle / test / brett | 2026-09-29 | none | none | LIVE |"
+is    "a later unrelated add-row can still push" "$rc" 0
+is    "…without carrying the retired row into the published register" \
+      "$(git -C "$A19_WIP" show origin/main:lanes/LANES.md | grep -c '^| `repo19race-1`' || :)" 0
+is    "…while publishing the unrelated row" \
+      "$(git -C "$A19_WIP" show origin/main:lanes/LANES.md | grep -c '^| `repo19race-2`' || :)" 1
 
 echo "== the workstation seam: unset, every writer reads the host =="
 
