@@ -9977,6 +9977,16 @@ run env PATH="$LANEBIN_PATH" LANE_TMUX_WINDOWS="$(printf '@31\tpicksess\t3\t1\tc
     "$LANE" repoPick-2 </dev/null
 is    "a local-only successor UUID still permits verified live attach" "$rc" 0
 has   "…and repairs its generic window" "$(cat "$LANE_TMUX_LOG")" "rename-window -t picksess:@31 repoPick-2"
+# The local successor must extend the published history, not merely end in
+# the live UUID. A divergent first UUID cannot justify renaming the window.
+PICK2_OTHER="dddd0002-2222-4000-8000-dddd00028888"
+sed "s/$PICK2_ID/$PICK2_OTHER/" "$LANES" > "$SANDBOX/pick-divergent"
+cp "$SANDBOX/pick-divergent" "$LANES"
+: > "$LANE_TMUX_LOG"; : > "$LANE_TMUX_NAME_FILE"
+run env PATH="$LANEBIN_PATH" LANE_TMUX_WINDOWS="$(printf '@31\tpicksess\t3\t1\tclaude\n@32\tdetsess\t7\t0\trepoPick-3\n')" \
+    "$LANE" repoPick-2 </dev/null
+is    "a divergent local UUID history refuses live attach" "$rc" 2
+is    "…without renaming the window" "$(cat "$LANE_TMUX_LOG")" ""
 cp "$SANDBOX/pick-before-local-stamp" "$LANES"
 write_record "$sessions_dir/pick-here.json" "$PICK2_ID" "$LIVE_PID" "$live_start" "picksess:@31.%31" "repoPick-2" "busy"
 : > "$LANE_TMUX_LOG"; : > "$LANE_TMUX_NAME_FILE"
@@ -11431,6 +11441,15 @@ has   "…naming the partial move" "$err" "already in lanes/archive/LANES-retire
 is    "…without appending a duplicate archived row" \
       "$(grep -c '^| `repo19-4`' "$A19_WIP/lanes/archive/LANES-retired.md" || :)" 1
 is    "…or moving HEAD" "$(git -C "$A19_WIP" rev-parse HEAD)" "$A19_PARTIAL_HEAD"
+
+# A row whose extra separator makes the state cell unparseable must not be
+# hidden as DORMANT; the operator needs to see and repair the malformed row.
+printf '| `repo19bad-1` | harness `%s` | Eagle / test / brett | 2026-09-29 | none | none | PAUSED | extra |\n' "$A19_OLD" >> "$A19_WIP/lanes/LANES.md"
+git -C "$A19_WIP" add -- lanes/LANES.md
+git -C "$A19_WIP" commit -q -m "seed malformed state-cell row"
+git -C "$A19_WIP" push -q origin main
+run a19 "$LANES_CMD" --prefix repo19bad </dev/null
+has   "an unparseable state cell remains visible for repair" "$out" "repo19bad-1"
 
 # Publish an archive-only peer commit just as add-row reaches its rebase. The
 # preflight saw no retired repo19race-1; the post-rebase fence must stop push.

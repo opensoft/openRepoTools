@@ -5660,6 +5660,9 @@ LANES_REGISTER_INDEX_AWK='
         next
       }
       cell = cell_state($0)
+      # An invalid column boundary is NOT an empty state cell. Leave this row
+      # out of the cells index so the caller keeps it unclassified and visible.
+      if (cell == "") next
       gsub(/\t/, " ", cell)
       cell = trim(cell)
       head = cell

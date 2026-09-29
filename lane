@@ -753,7 +753,7 @@ go_live() {
 	0)
 		gl_local_cell="$(printf '%s\n' "$gl_local_row" | awk -F'|' 'NR == 1 { print $3 }')"
 		gl_local_last="$(printf '%s\n' "$gl_local_cell" | grep -Eoi '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tail -n1 || :)"
-		gl_local_ids="$(printf '%s\n' "$gl_local_cell" | grep -Eoi '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tr 'A-F' 'a-f' | tr '\n' ' ' || :)" ;;
+		gl_local_ids="$(printf '%s\n' "$gl_local_cell" | grep -Eoi '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tr 'A-F' 'a-f' | tr '\n' ' ' || :)" ;;
 	8) gl_local_last=""; gl_local_ids="" ;;
 	*) die "lane $R_LANE's local register row could not be read (exit $gl_local_rc). Nothing was renamed or attached." 2 ;;
 	esac
