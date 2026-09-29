@@ -3,6 +3,9 @@
 # the newest version npm publishes, verified with `--version`, and it is named
 # by an ABSOLUTE PATH. `claude` is never resolved through PATH.
 #
+# Installed on PATH by `openRepoTools --install`, beside `lane-start`, which
+# calls it.
+#
 # Why it exists (opensoft/workBenches#119, Brett Heap's rulings of 2026-09-29):
 # a lane started on an old Claude Code, and nothing noticed. Two installs
 # competed on PATH, the image's copy frozen at the image build and the user's
@@ -166,10 +169,27 @@ is_version() { [[ "${1:-}" =~ $version_re ]]; }
 
 # ------------------------------------------------------------ small helpers
 
+# kill_tree <pid>: the process and every process below it. Each one is stopped
+# before its children are listed, so none of them can start another while the
+# tree is walked, then sent TERM and continued so that it can act on it.
+# `pgrep -P` is on Linux and macOS alike; without it only <pid> is signalled.
+kill_tree() {
+	local child
+	kill -STOP "$1" 2>/dev/null || return 0
+	for child in $(pgrep -P "$1" 2>/dev/null); do
+		kill_tree "$child"
+	done
+	kill -TERM "$1" 2>/dev/null || :
+	kill -CONT "$1" 2>/dev/null || :
+}
+
 # run_bounded <seconds> <command> [args...]: the command's own status, or 124
 # when it ran out of time. GNU `timeout`, else Homebrew's `gtimeout`, else a
-# watchdog, because a stock macOS ships neither. The watchdog's output goes to
-# /dev/null so that it never holds a caller's command substitution open.
+# watchdog, because a stock macOS ships neither. The watchdog ends the WHOLE
+# tree, as `timeout` ends its process group: a command's own children (npm's
+# lifecycle processes, a script's `sleep`) would otherwise keep the caller's
+# command substitution open after the command itself was killed. The
+# watchdog's own output goes to /dev/null for the same reason.
 run_bounded() {
 	local secs="$1" pid dog rc=0
 	shift
@@ -183,10 +203,10 @@ run_bounded() {
 	fi
 	"$@" &
 	pid=$!
-	( sleep "$secs"; kill -TERM "$pid" 2>/dev/null ) >/dev/null 2>&1 &
+	( sleep "$secs"; kill_tree "$pid" ) >/dev/null 2>&1 &
 	dog=$!
 	wait "$pid" || rc=$?
-	kill "$dog" 2>/dev/null || :
+	kill_tree "$dog"
 	wait "$dog" 2>/dev/null || :
 	[ "$rc" = 143 ] && rc=124
 	return "$rc"
@@ -393,14 +413,24 @@ EOF
 
 lock_fd_open=0
 mkdir_lock=""
+lock_why=""
 
+# take_lock: 0 with the lock held, or 1 with lock_why saying why not.
 take_lock() {
-	local waited=0 d owner
-	mkdir -p -- "$CACHE_DIR" 2>/dev/null || return 1
+	local waited=0 d owner reaped
+	if ! mkdir -p -- "$CACHE_DIR" 2>/dev/null; then
+		lock_why="the update lock's directory $CACHE_DIR could not be created"
+		return 1
+	fi
+	lock_why="the update lock $LOCK_FILE was not free within ${LOCK_WAIT}s"
 	if command -v flock >/dev/null 2>&1; then
-		exec 9>>"$LOCK_FILE" || return 1
+		if ! exec 9>>"$LOCK_FILE"; then
+			lock_why="the update lock $LOCK_FILE could not be opened"
+			return 1
+		fi
 		lock_fd_open=1
 		if flock -w "$LOCK_WAIT" 9; then
+			lock_why=""
 			return 0
 		fi
 		exec 9>&-
@@ -409,19 +439,40 @@ take_lock() {
 	fi
 	# No flock on a stock macOS: a mkdir lock whose owner writes its pid, so a
 	# lock left by a process that died is taken over, not waited out.
+	#
+	# ONE LAUNCH REMOVES A DEAD OWNER'S LOCK, and it holds a second directory,
+	# the reaper, while it looks again. Two launches that both read the same
+	# dead pid would otherwise both remove "the stale lock", and the second
+	# removal would take the lock the first had just made, so both would
+	# update at once. Under the reaper the lock is removed only while it still
+	# names the pid that was seen dead. A reaper left by a launch killed in
+	# those few lines blocks the takeover, and the refusal names it.
 	d="$LOCK_FILE.d"
 	while ! mkdir -- "$d" 2>/dev/null; do
 		owner="$(cat -- "$d/pid" 2>/dev/null || :)"
-		if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
-			rm -rf -- "$d"
-			continue
+		if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null &&
+			mkdir -- "$d.reap" 2>/dev/null; then
+			reaped=0
+			if [ "$(cat -- "$d/pid" 2>/dev/null || :)" = "$owner" ] &&
+				rm -rf -- "$d" 2>/dev/null && [ ! -e "$d" ]; then
+				reaped=1
+			fi
+			rmdir -- "$d.reap" 2>/dev/null || :
+			# Taken over: try for the lock at once. Not taken over (another
+			# launch got there first, or the lock would not go): wait as usual.
+			[ "$reaped" = 1 ] && continue
 		fi
-		[ "$waited" -lt "$LOCK_WAIT" ] || return 1
+		if [ "$waited" -ge "$LOCK_WAIT" ]; then
+			[ -d "$d.reap" ] &&
+				lock_why="$lock_why, and $d.reap, the directory a launch holds while it removes a dead owner's lock, is still there: remove it if no launch is running"
+			return 1
+		fi
 		sleep 1
 		waited=$((waited + 1))
 	done
 	printf '%s\n' "$$" >"$d/pid"
 	mkdir_lock="$d"
+	lock_why=""
 	return 0
 }
 
@@ -544,11 +595,8 @@ fi
 # Every candidate is behind, or there is none. Update under the lock, and read
 # again after taking it: another launch may have updated while this one waited.
 locked=0
-lock_why=""
 if take_lock; then
 	locked=1
-else
-	lock_why="the update lock $LOCK_FILE was not free within ${LOCK_WAIT}s"
 fi
 collect
 if pick equal "$PUBLISHED"; then

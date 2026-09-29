@@ -377,6 +377,20 @@ def test_a_lock_that_is_never_free_is_a_refusal_that_names_it(box):
     assert box.installs() == []
 
 
+def test_a_lock_directory_that_cannot_be_made_is_named_as_that(box):
+    """Not as a lock somebody else holds: nobody does, and waiting would not
+    help. A regular file where a parent directory should be refuses the
+    `mkdir -p` whoever runs it, root included."""
+    box.user_copy("2.1.283")
+    blocker = box.root / "not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+    result = box.run(CLAUDE_CURRENT_CACHE_DIR=str(blocker / "cache"))
+    assert result.returncode == 2, result.stderr
+    assert f"the update lock's directory {blocker / 'cache'} could not be created" in result.stderr
+    assert "was not free" not in result.stderr
+    assert box.installs() == []
+
+
 # --- Ask 5: refuse, with one escape ------------------------------------------
 
 def test_a_launch_still_behind_after_the_update_is_refused(box):
@@ -431,6 +445,104 @@ def test_npm_that_hangs_is_bounded_by_the_timeout(box):
     assert result.returncode == 0, result.stderr
     assert porcelain(result)["status"] == "unverified"
     assert "took longer than 1s" in result.stderr
+
+
+def path_without(box: Sandbox, *names: str) -> str:
+    """The sandbox's PATH, with every command the host's PATH finds except
+    `names`: how a stock macOS looks to this command (no `timeout`, no
+    `gtimeout`, no `flock`) on any host, so the fallbacks run everywhere."""
+    shadow = box.root / ("path-without-" + "-".join(names))
+    shadow.mkdir()
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        if not directory or not os.path.isdir(directory):
+            continue
+        try:
+            entries = list(os.scandir(directory))
+        except OSError:
+            continue
+        for entry in entries:
+            target = shadow / entry.name
+            if entry.name in names or target.exists() or target.is_symlink():
+                continue
+            try:
+                runnable = entry.is_file() and os.access(entry.path, os.X_OK)
+            except OSError:
+                continue
+            if runnable:
+                target.symlink_to(entry.path)
+    for name in names:
+        assert not (shadow / name).exists()
+    return f"{box.bin}{os.pathsep}{shadow}"
+
+
+def test_the_watchdog_ends_a_hung_commands_children_too(box):
+    """Copilot on #134: with no `timeout` and no `gtimeout` the watchdog killed
+    only the command, and the command's own child (here the fake npm's
+    `sleep 30`) kept the command substitution open for all thirty seconds.
+    The watchdog now ends the whole tree, as `timeout` ends its group."""
+    box.user_copy("2.1.283")
+    started = time.monotonic()
+    result = box.run("--porcelain", FAKE_NPM_VIEW_SLEEP="30", CLAUDE_CURRENT_TIMEOUT="1",
+                     PATH=path_without(box, "timeout", "gtimeout"))
+    elapsed = time.monotonic() - started
+    assert elapsed < 15, f"the watchdog did not end the tree: {elapsed:.1f}s"
+    assert result.returncode == 0, result.stderr
+    assert porcelain(result)["status"] == "unverified"
+    assert "npm view took longer than 1s" in result.stderr
+
+
+def _dead_pid() -> int:
+    proc = subprocess.Popen(["true"])
+    proc.wait()
+    return proc.pid
+
+
+def test_a_mkdir_lock_whose_owner_died_is_taken_over(box):
+    """No `flock`: the lock is a directory holding its owner's pid, and a pid
+    that is no longer running is a lock nobody holds."""
+    box.user_copy("2.1.283")
+    lock = box.cache / "claude-current.lock.d"
+    lock.mkdir()
+    (lock / "pid").write_text(f"{_dead_pid()}\n")
+    result = box.run("--porcelain", CLAUDE_CURRENT_LOCK_WAIT="5",
+                     PATH=path_without(box, "flock"))
+    assert result.returncode == 0, result.stderr
+    assert porcelain(result)["status"] == "verified"
+    assert len(box.installs()) == 1
+    assert not lock.exists(), "the lock was not released"
+    assert not (box.cache / "claude-current.lock.d.reap").exists()
+
+
+def test_a_dead_owners_lock_another_launch_is_reaping_is_left_to_it(box):
+    """Copilot on #134: two launches that both saw one dead owner each removed
+    "the stale lock", and the second removal took the first one's new lock.
+    Only the launch holding the reaper directory removes it, so a launch that
+    finds the reaper taken leaves the lock alone and waits."""
+    box.user_copy("2.1.283")
+    lock = box.cache / "claude-current.lock.d"
+    lock.mkdir()
+    (lock / "pid").write_text(f"{_dead_pid()}\n")
+    reaper = box.cache / "claude-current.lock.d.reap"
+    reaper.mkdir()
+    result = box.run(CLAUDE_CURRENT_LOCK_WAIT="1", PATH=path_without(box, "flock"))
+    assert result.returncode == 2, result.stderr
+    assert lock.is_dir(), "a launch removed a lock another launch was reaping"
+    assert "was not free within 1s" in result.stderr
+    assert f"{reaper}, the directory a launch holds while it removes a dead owner's lock" in result.stderr
+    assert box.installs() == []
+
+
+def test_a_live_mkdir_lock_is_waited_on_and_never_removed(box):
+    box.user_copy("2.1.283")
+    lock = box.cache / "claude-current.lock.d"
+    lock.mkdir()
+    (lock / "pid").write_text(f"{os.getpid()}\n")
+    result = box.run(CLAUDE_CURRENT_LOCK_WAIT="1", PATH=path_without(box, "flock"))
+    assert result.returncode == 2, result.stderr
+    assert (lock / "pid").read_text() == f"{os.getpid()}\n"
+    assert "was not free within 1s" in result.stderr
+    assert "the directory a launch holds" not in result.stderr
+    assert box.installs() == []
 
 
 def test_offline_reads_no_npm_and_installs_nothing(box):
