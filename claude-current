@@ -1,0 +1,585 @@
+#!/usr/bin/env bash
+# claude-current: the Claude Code executable a launch should start. That is
+# the newest version npm publishes, verified with `--version`, and it is named
+# by an ABSOLUTE PATH. `claude` is never resolved through PATH.
+#
+# Why it exists (opensoft/workBenches#119, Brett Heap's rulings of 2026-09-29):
+# a lane started on an old Claude Code, and nothing noticed. Two installs
+# competed on PATH, the image's copy frozen at the image build and the user's
+# own npm copy, and a session that had run 2.1.283 for twenty hours lacked a
+# model a fresh `claude` listed. The home ruling puts the resolver here,
+# installed by `openRepoTools --install`. Point 2 is verbatim "for 2, we can
+# run update on every start, this ensures we have the latest models", so every
+# launch runs this check.
+#
+# USAGE
+#   claude-current [--porcelain] [--offline]
+#   claude-current --help
+#
+# WHAT IT DOES
+#   1. Reads the published version with `npm view @anthropic-ai/claude-code
+#      version`, bounded by $CLAUDE_CURRENT_TIMEOUT seconds (default 10).
+#      --offline skips this step and step 3.
+#   2. Reads each installed candidate's `--version`, by absolute path, in this
+#      order:
+#        - the newest native version in $CLAUDE_CURRENT_NATIVE_DIR (default
+#          ~/.local/share/claude/versions), by its x.y.z name;
+#        - <user npm prefix>/bin/claude. The prefix is $CLAUDE_CURRENT_NPM_PREFIX,
+#          else $NPM_CONFIG_PREFIX, else $npm_config_prefix, else the
+#          `prefix=` line of ~/.npmrc, else ~/.npm-global;
+#        - ~/.local/bin/claude;
+#        - each entry of $CLAUDE_CURRENT_SYSTEM_CANDIDATES (default
+#          /usr/local/bin/claude:/usr/bin/claude, the image's copies).
+#      A path that resolves to one already read is read once, and the first
+#      spelling, the user-writable one, is kept.
+#   3. When every candidate is behind the published version, or there is none,
+#      it updates the user-writable install under a lock and reads again. A
+#      native install gets `claude update`. When that does not reach the
+#      published version, or there is no native install, it runs
+#      `npm install -g --prefix <user prefix> @anthropic-ai/claude-code@<published>`
+#      and then the package's own install.cjs if `--version` still differs,
+#      because npm 12 skips the package's native-binary hook. A second launch
+#      waits on the lock and reads again before it updates anything itself.
+#   4. Picks the first candidate whose version EQUALS the published one
+#      (verified). Else it picks the newest candidate AHEAD of it (ahead).
+#      Else it refuses (stale), unless CLAUDE_ALLOW_STALE=1, when it picks the
+#      newest (stale). When npm could not be read, it picks the newest
+#      candidate (unverified).
+#
+# OUTPUT
+#   stdout   the absolute path, one line. With --porcelain, exactly four
+#            lines: path=<absolute path>, version=<x.y.z>,
+#            published=<x.y.z, or empty>, and
+#            status=<verified|ahead|unverified|stale>. A refusal prints nothing
+#            on stdout.
+#   stderr   one line saying what was chosen, for example
+#            "claude-current: claude 2.1.284 (verified against npm 2.1.284) at <path>".
+#            An update prints its own progress there too.
+#
+# EXIT
+#   0   resolved: verified, ahead or unverified, and stale only under
+#       CLAUDE_ALLOW_STALE=1
+#   1   no runnable Claude Code at all, or a malformed setting
+#   2   refused: every candidate is still behind npm after the update attempt
+#   64  usage
+#
+# ENVIRONMENT
+#   CLAUDE_ALLOW_STALE=1             launch a stale candidate anyway, and say so
+#   CLAUDE_CURRENT_NPM               the npm to run (default: npm)
+#   CLAUDE_CURRENT_NODE              the node that runs install.cjs (default: node)
+#   CLAUDE_CURRENT_TIMEOUT           seconds for `npm view` (default 10)
+#   CLAUDE_CURRENT_VERSION_TIMEOUT   seconds for each `--version` (default 10)
+#   CLAUDE_CURRENT_UPDATE_TIMEOUT    seconds for each update command (default 300)
+#   CLAUDE_CURRENT_LOCK_WAIT         seconds to wait for another launch's update
+#                                    (default 330)
+#   CLAUDE_CURRENT_CACHE_DIR         where the lock lives (default
+#                                    ${XDG_CACHE_HOME:-~/.cache}/openrepotools)
+#   CLAUDE_CURRENT_NPM_PREFIX        the user npm prefix, see step 2
+#   CLAUDE_CURRENT_NATIVE_DIR        the native versions directory, see step 2
+#   CLAUDE_CURRENT_SYSTEM_CANDIDATES colon-separated image paths, see step 2.
+#                                    Set it empty for none.
+#
+# HANDING THE RESULT ON (docs/README-claude-current.md)
+#   A launcher that starts the path exports CLAUDE_BIN=<path>,
+#   CLAUDE_RESOLVED_BIN=<the same path> and CLAUDE_VERIFIED_VERSION=<version>.
+#   `lane-start` records `claude <version>` on the register's launch line and
+#   keeps CLAUDE_VERIFIED_VERSION out of the session's environment. A later
+#   launch that finds CLAUDE_BIN equal to CLAUDE_RESOLVED_BIN, with no
+#   CLAUDE_VERIFIED_VERSION, knows the value was inherited from a session and
+#   is not an operator's pin, and resolves again.
+#
+# Bash 3.2 safe (macOS): no mapfile, no associative arrays, no readlink -f,
+# no GNU-only flags; `timeout`, else `gtimeout`, else a watchdog; `flock`, else
+# a mkdir lock.
+
+set -euo pipefail
+
+prog="claude-current"
+PACKAGE="@anthropic-ai/claude-code"
+
+usage() {
+	cat <<'USAGE'
+claude-current [--porcelain] [--offline]
+claude-current --help
+
+Print the absolute path of the Claude Code a launch should start: the version
+npm publishes, verified with --version, updating the user-writable install
+first when every installed copy is behind. Never resolved through PATH.
+
+  --porcelain   four lines on stdout: path=, version=, published=, status=
+                (status is verified, ahead, unverified or stale)
+  --offline     no npm read and no update: the newest installed copy, unverified
+
+Exit 0 resolved, 1 nothing runnable, 2 refused as stale, 64 usage.
+CLAUDE_ALLOW_STALE=1 launches a stale copy anyway. The CLAUDE_CURRENT_*
+variables and the hand-off to lane-start are in docs/README-claude-current.md.
+USAGE
+}
+
+say() { printf '%s: %s\n' "$prog" "$*" >&2; }
+die() { printf '%s: %s\n' "$prog" "$1" >&2; exit "${2:-1}"; }
+
+porcelain=0
+offline=0
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--porcelain) porcelain=1 ;;
+		--offline) offline=1 ;;
+		-h | --help) usage; exit 0 ;;
+		*)
+			printf '%s: unknown argument: %s\n' "$prog" "$1" >&2
+			usage >&2
+			exit 64 ;;
+	esac
+	shift
+done
+
+# ------------------------------------------------------------------ settings
+
+posint() {
+	case "${1:-}" in
+		'' | *[!0-9]*) return 1 ;;
+	esac
+	[ "$1" -gt 0 ]
+}
+
+NPM="${CLAUDE_CURRENT_NPM:-npm}"
+NODE="${CLAUDE_CURRENT_NODE:-node}"
+TIMEOUT="${CLAUDE_CURRENT_TIMEOUT:-10}"
+VERSION_TIMEOUT="${CLAUDE_CURRENT_VERSION_TIMEOUT:-10}"
+UPDATE_TIMEOUT="${CLAUDE_CURRENT_UPDATE_TIMEOUT:-300}"
+LOCK_WAIT="${CLAUDE_CURRENT_LOCK_WAIT:-330}"
+for setting in TIMEOUT VERSION_TIMEOUT UPDATE_TIMEOUT LOCK_WAIT; do
+	eval "setting_value=\${$setting}"
+	# shellcheck disable=SC2154
+	posint "$setting_value" ||
+		die "CLAUDE_CURRENT_$setting must be a whole number of seconds above 0, and it is '$setting_value'" 1
+done
+NATIVE_DIR="${CLAUDE_CURRENT_NATIVE_DIR:-$HOME/.local/share/claude/versions}"
+CACHE_DIR="${CLAUDE_CURRENT_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/openrepotools}"
+LOCK_FILE="$CACHE_DIR/claude-current.lock"
+
+# A version is x.y.z, optionally with a pre-release or build tail.
+version_re='^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$'
+core_re='^[0-9]+\.[0-9]+\.[0-9]+$'
+is_version() { [[ "${1:-}" =~ $version_re ]]; }
+
+# ------------------------------------------------------------ small helpers
+
+# run_bounded <seconds> <command> [args...]: the command's own status, or 124
+# when it ran out of time. GNU `timeout`, else Homebrew's `gtimeout`, else a
+# watchdog, because a stock macOS ships neither. The watchdog's output goes to
+# /dev/null so that it never holds a caller's command substitution open.
+run_bounded() {
+	local secs="$1" pid dog rc=0
+	shift
+	if command -v timeout >/dev/null 2>&1; then
+		timeout "$secs" "$@" || rc=$?
+		return "$rc"
+	fi
+	if command -v gtimeout >/dev/null 2>&1; then
+		gtimeout "$secs" "$@" || rc=$?
+		return "$rc"
+	fi
+	"$@" &
+	pid=$!
+	( sleep "$secs"; kill -TERM "$pid" 2>/dev/null ) >/dev/null 2>&1 &
+	dog=$!
+	wait "$pid" || rc=$?
+	kill "$dog" 2>/dev/null || :
+	wait "$dog" 2>/dev/null || :
+	[ "$rc" = 143 ] && rc=124
+	return "$rc"
+}
+
+# numcmp <a> <b>: -1, 0 or 1 for two digit strings, compared as numbers of any
+# length without integer arithmetic (the same rule as workBenches #109).
+numcmp() {
+	local x="$1" y="$2"
+	x="${x#"${x%%[!0]*}"}"
+	y="${y#"${y%%[!0]*}"}"
+	x="${x:-0}"
+	y="${y:-0}"
+	if [ "${#x}" -ne "${#y}" ]; then
+		if [ "${#x}" -gt "${#y}" ]; then echo 1; else echo -1; fi
+		return 0
+	fi
+	if [ "$x" = "$y" ]; then echo 0; return 0; fi
+	if [[ "$x" > "$y" ]]; then echo 1; else echo -1; fi
+}
+
+# vercmp <a> <b>: -1, 0 or 1. Numeric on the x.y.z core. Then a version with no
+# pre-release tag beats one with a tag, and two tags compare as strings. Build
+# metadata (+...) is ignored.
+vercmp() {
+	local a="${1%%+*}" b="${2%%+*}" ac bc ap="" bp="" ar br i c
+	ac="${a%%-*}"
+	bc="${b%%-*}"
+	case "$a" in *-*) ap="${a#*-}" ;; esac
+	case "$b" in *-*) bp="${b#*-}" ;; esac
+	for i in 1 2 3; do
+		ar="${ac%%.*}"
+		br="${bc%%.*}"
+		c="$(numcmp "$ar" "$br")"
+		[ "$c" = 0 ] || { echo "$c"; return 0; }
+		ac="${ac#*.}"
+		bc="${bc#*.}"
+	done
+	if [ "$ap" = "$bp" ]; then echo 0; return 0; fi
+	if [ -z "$ap" ]; then echo 1; return 0; fi
+	if [ -z "$bp" ]; then echo -1; return 0; fi
+	if [[ "$ap" > "$bp" ]]; then echo 1; else echo -1; fi
+}
+
+# physical <path>: the path with every symlink resolved, without `readlink -f`,
+# which BSD `readlink` did not take until macOS 12.3.
+physical() {
+	local p="$1" link n=0 dir
+	while [ -L "$p" ] && [ "$n" -lt 40 ]; do
+		link="$(readlink -- "$p")" || break
+		case "$link" in
+			/*) p="$link" ;;
+			*) p="$(dirname -- "$p")/$link" ;;
+		esac
+		n=$((n + 1))
+	done
+	dir="$(cd -P -- "$(dirname -- "$p")" 2>/dev/null && pwd)" || {
+		printf '%s\n' "$p"
+		return 0
+	}
+	printf '%s/%s\n' "$dir" "$(basename -- "$p")"
+}
+
+# read_version <path>: the first version on the first line of `<path> --version`.
+read_version() {
+	local out="" v
+	out="$(run_bounded "$VERSION_TIMEOUT" "$1" --version 2>/dev/null </dev/null)" || return 1
+	v="$(printf '%s\n' "$out" | sed -n -e '1s/^[^0-9]*\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*[-+0-9A-Za-z.]*\).*$/\1/p')"
+	is_version "$v" || return 1
+	printf '%s\n' "$v"
+}
+
+# ----------------------------------------------------------- the candidates
+
+# The user npm prefix: the one place an update may write.
+npm_user_prefix() {
+	local p=""
+	if [ -n "${CLAUDE_CURRENT_NPM_PREFIX:-}" ]; then
+		p="$CLAUDE_CURRENT_NPM_PREFIX"
+	elif [ -n "${NPM_CONFIG_PREFIX:-}" ]; then
+		p="$NPM_CONFIG_PREFIX"
+	elif [ -n "${npm_config_prefix:-}" ]; then
+		p="$npm_config_prefix"
+	elif [ -r "$HOME/.npmrc" ]; then
+		p="$(sed -n -e 's/^[[:space:]]*prefix[[:space:]]*=[[:space:]]*//p' "$HOME/.npmrc" | tail -n 1)"
+		p="${p%"${p##*[![:space:]]}"}"
+		p="${p%\"}"
+		p="${p#\"}"
+	fi
+	case "$p" in
+		'~') p="$HOME" ;;
+		'~/'*) p="$HOME/${p#'~/'}" ;;
+		'${HOME}'*) p="$HOME${p#'${HOME}'}" ;;
+		'$HOME'*) p="$HOME${p#'$HOME'}" ;;
+	esac
+	p="${p%/}"
+	[ -n "$p" ] || p="$HOME/.npm-global"
+	printf '%s\n' "$p"
+}
+USER_PREFIX="$(npm_user_prefix)"
+
+# native_newest: the executable regular file with the highest x.y.z name in the
+# native versions directory (workBenches #109's ordering), or nothing.
+native_newest() {
+	local f name best="" bestv=""
+	[ -d "$NATIVE_DIR" ] || return 0
+	for f in "$NATIVE_DIR"/*; do
+		[ -f "$f" ] && [ -x "$f" ] && [ ! -L "$f" ] || continue
+		name="${f##*/}"
+		[[ "$name" =~ $core_re ]] || continue
+		if [ -z "$best" ] || [ "$(vercmp "$name" "$bestv")" = 1 ]; then
+			best="$f"
+			bestv="$name"
+		fi
+	done
+	printf '%s' "$best"
+}
+
+cands=""       # one "<path><TAB><version>" line per candidate, in order
+seen=$'\n'     # the physical paths already read
+native_path="" # the native candidate, when there is one
+
+add_candidate() {
+	local p="$1" real v
+	case "$p" in /*) ;; *) return 0 ;; esac
+	[ -f "$p" ] && [ -x "$p" ] || return 0
+	real="$(physical "$p")"
+	case "$seen" in *$'\n'"$real"$'\n'*) return 0 ;; esac
+	seen="$seen$real"$'\n'
+	v="$(read_version "$p")" || return 0
+	cands="$cands$p"$'\t'"$v"$'\n'
+}
+
+collect() {
+	local p old_ifs
+	cands=""
+	seen=$'\n'
+	native_path="$(native_newest)"
+	add_candidate "$native_path"
+	add_candidate "$USER_PREFIX/bin/claude"
+	add_candidate "$HOME/.local/bin/claude"
+	old_ifs="$IFS"
+	set -f
+	IFS=:
+	for p in ${CLAUDE_CURRENT_SYSTEM_CANDIDATES-/usr/local/bin/claude:/usr/bin/claude}; do
+		IFS="$old_ifs"
+		add_candidate "$p"
+		IFS=:
+	done
+	IFS="$old_ifs"
+	set +f
+}
+
+# pick <mode> [<published>]: sets CHOSEN_PATH and CHOSEN_VERSION, or returns 1.
+#   equal    the first candidate whose version equals <published>
+#   ahead    the newest candidate newer than <published>
+#   newest   the newest candidate at all (the first of equal ones)
+pick() {
+	local mode="$1" ref="${2:-}" p v c best="" bestv=""
+	while IFS=$'\t' read -r p v; do
+		[ -n "$p" ] || continue
+		case "$mode" in
+			equal)
+				if [ "$(vercmp "$v" "$ref")" = 0 ]; then
+					CHOSEN_PATH="$p"
+					CHOSEN_VERSION="$v"
+					return 0
+				fi
+				continue ;;
+			ahead)
+				[ "$(vercmp "$v" "$ref")" = 1 ] || continue ;;
+		esac
+		if [ -z "$best" ]; then
+			best="$p"
+			bestv="$v"
+			continue
+		fi
+		c="$(vercmp "$v" "$bestv")"
+		if [ "$c" = 1 ]; then
+			best="$p"
+			bestv="$v"
+		fi
+	done <<EOF
+$cands
+EOF
+	[ -n "$best" ] || return 1
+	CHOSEN_PATH="$best"
+	CHOSEN_VERSION="$bestv"
+	return 0
+}
+
+installed_summary() {
+	local p v out=""
+	while IFS=$'\t' read -r p v; do
+		[ -n "$p" ] || continue
+		out="${out:+$out; }$v at $p"
+	done <<EOF
+$cands
+EOF
+	printf '%s' "${out:-none}"
+}
+
+# ------------------------------------------------------------ the lock
+
+lock_fd_open=0
+mkdir_lock=""
+
+take_lock() {
+	local waited=0 d owner
+	mkdir -p -- "$CACHE_DIR" 2>/dev/null || return 1
+	if command -v flock >/dev/null 2>&1; then
+		exec 9>>"$LOCK_FILE" || return 1
+		lock_fd_open=1
+		if flock -w "$LOCK_WAIT" 9; then
+			return 0
+		fi
+		exec 9>&-
+		lock_fd_open=0
+		return 1
+	fi
+	# No flock on a stock macOS: a mkdir lock whose owner writes its pid, so a
+	# lock left by a process that died is taken over, not waited out.
+	d="$LOCK_FILE.d"
+	while ! mkdir -- "$d" 2>/dev/null; do
+		owner="$(cat -- "$d/pid" 2>/dev/null || :)"
+		if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+			rm -rf -- "$d"
+			continue
+		fi
+		[ "$waited" -lt "$LOCK_WAIT" ] || return 1
+		sleep 1
+		waited=$((waited + 1))
+	done
+	printf '%s\n' "$$" >"$d/pid"
+	mkdir_lock="$d"
+	return 0
+}
+
+release_lock() {
+	if [ "$lock_fd_open" = 1 ]; then
+		flock -u 9 2>/dev/null || :
+		exec 9>&-
+		lock_fd_open=0
+	fi
+	if [ -n "$mkdir_lock" ]; then
+		rm -rf -- "$mkdir_lock"
+		mkdir_lock=""
+	fi
+}
+trap release_lock EXIT
+
+# ------------------------------------------------------------ the update
+
+update_why=""
+
+update_native() {
+	local rc=0
+	say "updating the native install toward $PUBLISHED: $native_path update"
+	run_bounded "$UPDATE_TIMEOUT" "$native_path" update </dev/null >&2 9>&- || rc=$?
+	[ "$rc" = 0 ] || update_why="\`$native_path update\` exited $rc"
+	return "$rc"
+}
+
+update_npm() {
+	local rc=0 v hook
+	if ! command -v "$NPM" >/dev/null 2>&1; then
+		update_why="there is no npm ('$NPM') to install $PACKAGE@$PUBLISHED with"
+		return 1
+	fi
+	if ! mkdir -p -- "$USER_PREFIX" 2>/dev/null; then
+		update_why="the user npm prefix $USER_PREFIX could not be created"
+		return 1
+	fi
+	say "updating $USER_PREFIX to claude $PUBLISHED: $NPM install -g --prefix $USER_PREFIX $PACKAGE@$PUBLISHED"
+	run_bounded "$UPDATE_TIMEOUT" "$NPM" install -g --prefix "$USER_PREFIX" --no-fund --no-audit \
+		"$PACKAGE@$PUBLISHED" </dev/null >&2 9>&- || rc=$?
+	if [ "$rc" != 0 ]; then
+		update_why="\`$NPM install -g --prefix $USER_PREFIX $PACKAGE@$PUBLISHED\` exited $rc"
+		return "$rc"
+	fi
+	# npm 12's install-script policy skips the package's native-binary hook, so
+	# the launcher it links can be a stub until that hook runs. The shared image
+	# runs the same hook by hand (workBenches base-image/install-ai-clis.sh).
+	v="$(read_version "$USER_PREFIX/bin/claude" || :)"
+	hook="$USER_PREFIX/lib/node_modules/$PACKAGE/install.cjs"
+	if [ "$v" != "$PUBLISHED" ] && [ -f "$hook" ]; then
+		say "running the package's own install hook, which npm skipped: $NODE $hook"
+		rc=0
+		run_bounded "$UPDATE_TIMEOUT" "$NODE" "$hook" </dev/null >&2 9>&- || rc=$?
+		[ "$rc" = 0 ] || update_why="the package's install hook ($hook) exited $rc"
+	fi
+	return 0
+}
+
+# ------------------------------------------------------------ the answer
+
+PUBLISHED=""
+CHOSEN_PATH=""
+CHOSEN_VERSION=""
+
+answer() { # <status> <stderr line>
+	say "$2"
+	if [ "$porcelain" = 1 ]; then
+		printf 'path=%s\nversion=%s\npublished=%s\nstatus=%s\n' \
+			"$CHOSEN_PATH" "$CHOSEN_VERSION" "$PUBLISHED" "$1"
+	else
+		printf '%s\n' "$CHOSEN_PATH"
+	fi
+	exit 0
+}
+
+none_installed() { # <why>
+	die "no runnable Claude Code was found by absolute path ($1). Looked in: $NATIVE_DIR, $USER_PREFIX/bin/claude, $HOME/.local/bin/claude and ${CLAUDE_CURRENT_SYSTEM_CANDIDATES-/usr/local/bin/claude:/usr/bin/claude}. Install it with: npm install -g --prefix $USER_PREFIX $PACKAGE" 1
+}
+
+collect
+
+if [ "$offline" = 1 ]; then
+	pick newest || none_installed "--offline reads no npm and installs nothing"
+	answer unverified "claude $CHOSEN_VERSION at $CHOSEN_PATH (--offline: not checked against npm)"
+fi
+
+published_why=""
+if ! command -v "$NPM" >/dev/null 2>&1; then
+	published_why="there is no npm ('$NPM') to ask"
+else
+	view_rc=0
+	view_out="$(run_bounded "$TIMEOUT" "$NPM" view "$PACKAGE" version --prefer-online 2>/dev/null </dev/null)" || view_rc=$?
+	if [ "$view_rc" = 124 ]; then
+		published_why="npm view took longer than ${TIMEOUT}s"
+	elif [ "$view_rc" != 0 ]; then
+		published_why="npm view exited $view_rc"
+	else
+		view_last="$(printf '%s\n' "$view_out" | sed -n -e '$p' | tr -d "'\"[:space:]")"
+		if is_version "$view_last"; then
+			PUBLISHED="$view_last"
+		else
+			published_why="npm view answered '$view_out'"
+		fi
+	fi
+fi
+
+if [ -z "$PUBLISHED" ]; then
+	pick newest || none_installed "and npm could not be read: $published_why"
+	answer unverified "UNVERIFIED: could not reach npm ($published_why); launching claude $CHOSEN_VERSION at $CHOSEN_PATH"
+fi
+
+if pick equal "$PUBLISHED"; then
+	answer verified "claude $CHOSEN_VERSION (verified against npm $PUBLISHED) at $CHOSEN_PATH"
+fi
+if pick ahead "$PUBLISHED"; then
+	answer ahead "claude $CHOSEN_VERSION (ahead of npm $PUBLISHED) at $CHOSEN_PATH"
+fi
+
+# Every candidate is behind, or there is none. Update under the lock, and read
+# again after taking it: another launch may have updated while this one waited.
+locked=0
+lock_why=""
+if take_lock; then
+	locked=1
+else
+	lock_why="the update lock $LOCK_FILE was not free within ${LOCK_WAIT}s"
+fi
+collect
+if pick equal "$PUBLISHED"; then
+	release_lock
+	answer verified "claude $CHOSEN_VERSION (verified against npm $PUBLISHED) at $CHOSEN_PATH, updated by another launch"
+fi
+if [ "$locked" = 1 ]; then
+	if [ -n "$native_path" ]; then
+		update_native || :
+		collect
+	fi
+	if ! pick equal "$PUBLISHED" && ! pick ahead "$PUBLISHED"; then
+		update_npm || :
+		collect
+	fi
+	release_lock
+	if pick equal "$PUBLISHED"; then
+		answer verified "claude $CHOSEN_VERSION (verified against npm $PUBLISHED) at $CHOSEN_PATH, updated"
+	fi
+	if pick ahead "$PUBLISHED"; then
+		answer ahead "claude $CHOSEN_VERSION (ahead of npm $PUBLISHED) at $CHOSEN_PATH, updated"
+	fi
+fi
+
+why="${lock_why:-${update_why:-the update ran and still did not produce $PUBLISHED}}"
+if ! pick newest; then
+	none_installed "and installing $PUBLISHED did not produce one: $why"
+fi
+if [ "${CLAUDE_ALLOW_STALE:-}" = 1 ]; then
+	answer stale "STALE: claude $CHOSEN_VERSION at $CHOSEN_PATH is behind npm $PUBLISHED ($why); launching it because CLAUDE_ALLOW_STALE=1"
+fi
+fix="npm install -g --prefix $USER_PREFIX $PACKAGE@$PUBLISHED"
+[ -n "$native_path" ] && fix="$native_path update, or $fix"
+die "REFUSED: npm publishes claude $PUBLISHED and the newest installed is $CHOSEN_VERSION at $CHOSEN_PATH, and the update did not produce $PUBLISHED ($why). Installed: $(installed_summary). Fix: $fix. CLAUDE_ALLOW_STALE=1 launches $CHOSEN_VERSION anyway." 2

@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+# claude-restart-check: one green line when the Claude Code session this runs
+# under was started from a binary that has since been replaced on disk, or
+# runs an older version than the one installed. Nothing otherwise.
+#
+# Why it exists (opensoft/workBenches#119, Brett Heap's added scope of
+# 2026-09-29): a running session keeps the binary it loaded. When a launch's
+# update or the CLI's own auto-updater replaces that binary, every session
+# already running must say so at its prompt, the way the CLI's own update
+# notice does. The CLI's native line cannot be written from outside, so the
+# shared status line prints this command's line at the top of its panel. It
+# WARNS AND NEVER ACTS: no kill and no automatic /ctx, because a working
+# session is never interrupted (lane-collision-protocol Amendment 18).
+#
+# USAGE
+#   claude-restart-check [--running <version>] [--pid <pid>]
+#   claude-restart-check --help
+#
+#   --running <version>  the version the session reports, from the status
+#                        line's JSON `version` field
+#   --pid <pid>          where the walk to the claude process starts (default:
+#                        this command's parent). The status line passes its own
+#                        $PPID, the `/bin/sh -c` that Claude starts it under.
+#
+# HOW IT DECIDES, cheaply, because it runs at every status line render
+#   - Walks at most three processes, from --pid up through its parents, to
+#     the first one whose /proc/<pid>/exe is a Claude Code binary: a native
+#     version file (.../claude/versions/<x.y.z>) or the npm package's
+#     .../node_modules/@anthropic-ai/<dir>/bin/claude.exe.
+#   - The binary was REPLACED when that exe link ends in " (deleted)". npm
+#     renames the old package directory before it deletes it, so the exe path
+#     cannot be used to read the running version.
+#   - The INSTALLED version is read from disk: the highest x.y.z name in the
+#     native versions directory, or `version` in the npm package's
+#     package.json at its canonical path.
+#   - It warns when the binary was replaced, or when the installed version is
+#     newer than the running one (--running, else the native file's name).
+#   It reads /proc and two small files. It reaches no network and runs no
+#   binary, so the render is not slowed by a `claude --version`.
+#
+# OUTPUT
+#   Nothing, or exactly one line:
+#     RESTART NEEDED: running <old>, installed <new>; /ctx at your next breakpoint
+#   in green, or plain when NO_COLOR is set.
+#
+# EXIT
+#   0 always, including a host with no /proc such as macOS, where it prints
+#   nothing, because a status line must never break on this. 64 only for an
+#   argument it does not know.
+#
+# ENVIRONMENT
+#   CLAUDE_RESTART_CHECK_PROC  the process table to read (default /proc), the
+#                              test seam
+#   NO_COLOR                   plain text, no ANSI colour
+#
+# `set -u` and NOT `set -e`, deliberately, for lane-handoff's reason one file
+# over: every read here may fail (a process gone mid-walk, a file unreadable),
+# and each failure must reach this command's own "print nothing, exit 0"
+# rather than end the status line's render with a non-zero status.
+
+set -u
+
+prog="claude-restart-check"
+
+usage() {
+	cat <<'USAGE'
+claude-restart-check [--running <version>] [--pid <pid>]
+claude-restart-check --help
+
+Print one green "RESTART NEEDED: running <old>, installed <new>; /ctx at your
+next breakpoint" line when the Claude Code session above this process runs a
+binary since replaced on disk, or one older than the version installed; print
+nothing otherwise. Always exits 0 (64 for an unknown argument). Reads /proc
+(CLAUDE_RESTART_CHECK_PROC) and never acts on the session.
+USAGE
+}
+
+running=""
+start_pid=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--running)
+			[ $# -ge 2 ] || { usage >&2; exit 64; }
+			running="$2"
+			shift 2 ;;
+		--running=*)
+			running="${1#--running=}"
+			shift ;;
+		--pid)
+			[ $# -ge 2 ] || { usage >&2; exit 64; }
+			start_pid="$2"
+			shift 2 ;;
+		--pid=*)
+			start_pid="${1#--pid=}"
+			shift ;;
+		-h | --help)
+			usage
+			exit 0 ;;
+		*)
+			printf '%s: unknown argument: %s\n' "$prog" "$1" >&2
+			usage >&2
+			exit 64 ;;
+	esac
+done
+
+PROC="${CLAUDE_RESTART_CHECK_PROC:-/proc}"
+[ -n "$start_pid" ] || start_pid="$PPID"
+case "$start_pid" in
+	'' | *[!0-9]*) exit 0 ;;
+esac
+[ -d "$PROC" ] || exit 0
+
+version_re='^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$'
+core_re='^[0-9]+\.[0-9]+\.[0-9]+$'
+is_version() { [[ "${1:-}" =~ $version_re ]]; }
+
+# numcmp and vercmp are claude-current's, byte for byte, so the two commands
+# agree on which version is newer.
+numcmp() {
+	local x="$1" y="$2"
+	x="${x#"${x%%[!0]*}"}"
+	y="${y#"${y%%[!0]*}"}"
+	x="${x:-0}"
+	y="${y:-0}"
+	if [ "${#x}" -ne "${#y}" ]; then
+		if [ "${#x}" -gt "${#y}" ]; then echo 1; else echo -1; fi
+		return 0
+	fi
+	if [ "$x" = "$y" ]; then echo 0; return 0; fi
+	if [[ "$x" > "$y" ]]; then echo 1; else echo -1; fi
+}
+
+vercmp() {
+	local a="${1%%+*}" b="${2%%+*}" ac bc ap="" bp="" ar br i c
+	ac="${a%%-*}"
+	bc="${b%%-*}"
+	case "$a" in *-*) ap="${a#*-}" ;; esac
+	case "$b" in *-*) bp="${b#*-}" ;; esac
+	for i in 1 2 3; do
+		ar="${ac%%.*}"
+		br="${bc%%.*}"
+		c="$(numcmp "$ar" "$br")"
+		[ "$c" = 0 ] || { echo "$c"; return 0; }
+		ac="${ac#*.}"
+		bc="${bc#*.}"
+	done
+	if [ "$ap" = "$bp" ]; then echo 0; return 0; fi
+	if [ -z "$ap" ]; then echo 1; return 0; fi
+	if [ -z "$bp" ]; then echo -1; return 0; fi
+	if [[ "$ap" > "$bp" ]]; then echo 1; else echo -1; fi
+}
+
+is_claude_binary() { # <exe target, " (deleted)" already removed>
+	case "$1" in
+		*/claude/versions/*) return 0 ;;
+		*/node_modules/@anthropic-ai/*/bin/claude.exe) return 0 ;;
+		*/node_modules/@anthropic-ai/*/bin/claude) return 0 ;;
+	esac
+	return 1
+}
+
+parent_of() {
+	awk '/^PPid:/ { print $2; exit }' "$PROC/$1/status" 2>/dev/null
+}
+
+# The highest x.y.z name among the executable regular files of one directory.
+highest_in() {
+	local f name best=""
+	for f in "$1"/*; do
+		[ -f "$f" ] && [ -x "$f" ] && [ ! -L "$f" ] || continue
+		name="${f##*/}"
+		[[ "$name" =~ $core_re ]] || continue
+		if [ -z "$best" ] || [ "$(vercmp "$name" "$best")" = 1 ]; then
+			best="$name"
+		fi
+	done
+	printf '%s' "$best"
+}
+
+package_version() {
+	sed -n -e 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*$/\1/p' "$1" 2>/dev/null | head -n 1
+}
+
+pid="$start_pid"
+exe=""
+target=""
+found=0
+steps=0
+while [ "$steps" -lt 3 ]; do
+	case "$pid" in
+		'' | 0 | *[!0-9]*) break ;;
+	esac
+	exe="$(readlink -- "$PROC/$pid/exe" 2>/dev/null)" || exe=""
+	target="${exe% (deleted)}"
+	if [ -n "$target" ] && is_claude_binary "$target"; then
+		found=1
+		break
+	fi
+	pid="$(parent_of "$pid")" || pid=""
+	steps=$((steps + 1))
+done
+[ "$found" = 1 ] || exit 0
+
+replaced=0
+[ "$exe" = "$target" ] || replaced=1
+
+installed=""
+from_path=""
+case "$target" in
+	*/claude/versions/*)
+		installed="$(highest_in "${target%/*}")"
+		from_path="${target##*/}" ;;
+	*/node_modules/@anthropic-ai/*)
+		installed="$(package_version "${target%%/node_modules/@anthropic-ai/*}/node_modules/@anthropic-ai/claude-code/package.json")"
+		if [ "$replaced" = 0 ]; then
+			from_path="$(package_version "${target%/bin/*}/package.json")"
+		fi ;;
+esac
+
+is_version "$running" || running="$from_path"
+is_version "$running" || running=""
+is_version "$installed" || installed=""
+
+newer=0
+if [ -n "$installed" ] && [ -n "$running" ] && [ "$(vercmp "$installed" "$running")" = 1 ]; then
+	newer=1
+fi
+[ "$replaced" = 1 ] || [ "$newer" = 1 ] || exit 0
+
+line="RESTART NEEDED: running ${running:-an older build}, installed ${installed:-a newer build}; /ctx at your next breakpoint"
+if [ -n "${NO_COLOR:-}" ]; then
+	printf '%s\n' "$line"
+else
+	printf '\033[32m%s\033[0m\n' "$line"
+fi
+exit 0
