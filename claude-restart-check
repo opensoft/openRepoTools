@@ -3,6 +3,9 @@
 # under was started from a binary that has since been replaced on disk, or
 # runs an older version than the one installed. Nothing otherwise.
 #
+# Installed on PATH by `openRepoTools --install`, for workBenches' shared
+# status line to call.
+#
 # Why it exists (opensoft/workBenches#119, Brett Heap's added scope of
 # 2026-09-29): a running session keeps the binary it loaded. When a launch's
 # update or the CLI's own auto-updater replaces that binary, every session
