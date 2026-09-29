@@ -8656,7 +8656,8 @@ write_record_ns "$sessions_dir/live-a17.json" "$HF_ID" "$LIVE_PID" "$live_start"
 # ------------------------------------- 1. the record, and its two sub-fields
 
 export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-1.md"
-cat > "$SANDBOX/a17bin/lclaude" <<'FAKE'
+mkdir -p "$SANDBOX/a17-launcher-only"
+cat > "$SANDBOX/a17-launcher-only/lclaude" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${FAKE_PCLAUDE_LOG:-/dev/null}"
 FAKE
@@ -8804,8 +8805,8 @@ cat > "$SANDBOX/a17bin/lclaude" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${FAKE_PCLAUDE_LOG:-/dev/null}"
 FAKE
-chmod +x "$SANDBOX/a17bin/lclaude"
-run env PATH="$A17PATH_NOLANE" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+chmod +x "$SANDBOX/a17-launcher-only/lclaude"
+run env PATH="$SANDBOX/a17-launcher-only:$A17PATH_NOLANE" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
     CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-5 --restart clear
 is    "lane-handoff --restart exits 0" "$rc" 0
 a17_tmux="$(cat "$FAKE_TMUX_A17_LOG")"
@@ -8816,7 +8817,7 @@ has   "…respawning the lane's own pane" "$a17_tmux" "respawn-pane -k -t hfsess
 # names `lane <name>`: *"or through the launcher directly"*. The case below
 # asks for the word itself, where it is there to be seen.
 has   "…with no \`lane\` on PATH, through lclaude, with --lane BEFORE the profile" "$a17_tmux" "lclaude --lane repoHF-5 team-05a"
-rm "$SANDBOX/a17bin/lclaude"
+rm "$SANDBOX/a17-launcher-only/lclaude"
 has   "…and the seam that makes the new session a FRESH one primed by the top block" "$a17_tmux" "LANE_START_FRESH=1"
 hasnt "…never \`restart <lane>\`, which Addendum 2 takes off the person's PATH" "$a17_tmux" "restart repoHF-5"
 is    "THE RECORD WAS WRITTEN BEFORE THE RESPAWN, which is what the fake could see" \
