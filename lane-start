@@ -252,7 +252,25 @@
 #                        ~/.local/bin) — searched for lanes-edit.sh
 #   CLAUDE_CONFIG_DIR    the profile whose sessions/ and projects/ are read
 #   CLAUDE_PROJECTS_DIR  default $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects
-#   CLAUDE_BIN           default `claude` from PATH
+#   CLAUDE_BIN           the Claude Code to launch. Unset, it is the absolute
+#                        path `claude-current --porcelain` answers, the one
+#                        beside this command or in $OPENREPOTOOLS_BIN_DIR and
+#                        never one on PATH: npm's published version, updated
+#                        first when every copy is behind, and a stale one
+#                        REFUSED with exit 2 before anything is written
+#                        (opensoft/workBenches#119). `claude` from PATH only
+#                        where no claude-current is installed. Set, it is a pin
+#                        and launched as it is, unless it equals
+#                        CLAUDE_RESOLVED_BIN with no CLAUDE_VERIFIED_VERSION:
+#                        that is an earlier launch's answer inherited through a
+#                        session's environment, and it is resolved again
+#   CLAUDE_RESOLVED_BIN  the path a resolution chose, exported beside CLAUDE_BIN
+#   CLAUDE_VERIFIED_VERSION  the version a launcher's own claude-current read
+#                        for CLAUDE_BIN (equal to CLAUDE_RESOLVED_BIN): recorded
+#                        as `claude <version>` on the log line, and removed
+#                        before the launch so no session inherits it
+#   CLAUDE_ALLOW_STALE=1 claude-current answers with a stale copy instead of
+#                        refusing it; docs/README-claude-current.md has the rest
 #   LANE_START_SESSION_ID  0 turns off minting a uuid for a new session (and
 #                        therefore turns off writing it into the row)
 #   LANE_START_ANSWER    answers `--confirm`'s question without a terminal —
@@ -560,7 +578,47 @@ LANES_EDIT="${LANES_EDIT:-$(lanes_edit_default)}"
 PROJECTS_ROOT="${PROJECTS_ROOT:-$HOME/projects}"
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 PROJECTS_STATE="${CLAUDE_PROJECTS_DIR:-$CLAUDE_HOME/projects}"
+
+# WHICH CLAUDE CODE A LAUNCH STARTS (opensoft/workBenches#119, Brett Heap
+# 2026-09-29, verbatim "for 2, we can run update on every start, this ensures
+# we have the latest models"). Decided here, from the environment as it
+# arrived, and acted on at the foot of 5a, once the agent and the launch are
+# known. Three shapes, and docs/README-claude-current.md has the contract:
+#   * CLAUDE_BIN unset: resolve through `claude-current`, the one `--install`
+#     places beside this command;
+#   * CLAUDE_BIN equal to CLAUDE_RESOLVED_BIN with no CLAUDE_VERIFIED_VERSION:
+#     an earlier launch's answer, inherited through a session's environment.
+#     It is not an operator's pin, so it is resolved again;
+#   * anything else is a pin and is launched as it is. A pin that a launcher's
+#     own `claude-current` produced carries CLAUDE_VERIFIED_VERSION, which is
+#     recorded on the log line as `claude <version>`.
+# CLAUDE_VERIFIED_VERSION is read once and removed, so it never reaches the
+# session: a launch from inside that session must resolve again.
+lane_claude_version=""
+lane_claude_resolve=0
+if [ -z "${CLAUDE_BIN:-}" ]; then
+  lane_claude_resolve=1
+elif [ "$CLAUDE_BIN" = "${CLAUDE_RESOLVED_BIN:-}" ]; then
+  if [ -n "${CLAUDE_VERIFIED_VERSION:-}" ]; then
+    lane_claude_version="$CLAUDE_VERIFIED_VERSION"
+  else
+    lane_claude_resolve=1
+  fi
+fi
+unset CLAUDE_VERIFIED_VERSION
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+
+# `claude-current` is looked for where `--install` puts it and NEVER on PATH:
+# beside this command, else in $OPENREPOTOOLS_BIN_DIR. A sandbox that copies
+# this command somewhere without it, as the lane suite does, then launches the
+# `claude` its own PATH names, and no test reaches a real npm.
+lane_claude_current() {
+  local d
+  [ -x "$SCRIPT_DIR/claude-current" ] && { printf '%s\n' "$SCRIPT_DIR/claude-current"; return 0; }
+  d="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
+  [ -x "$d/claude-current" ] && { printf '%s\n' "$d/claude-current"; return 0; }
+  return 1
+}
 
 LS_TMP=""
 cleanup() { [ -n "${LS_TMP:-}" ] && rm -f -- "$LS_TMP"; return 0; }
@@ -2595,6 +2653,54 @@ else
 fi
 cmd+=(${pass[@]+"${pass[@]}"})
 
+# THE CLAUDE CODE TO START, AND A STALE ONE IS REFUSED HERE, BEFORE ANY WRITE
+# (opensoft/workBenches#119). `claude-current --porcelain` reads npm's published
+# version, updates the user-writable install when every copy is behind, and
+# answers with an absolute path it has run `--version` on. Its exit 2 is a
+# refusal (every copy still behind npm) and its 1 an environment with nothing
+# runnable; either ends this run with the same status, before the row, the log
+# and the handoff are written, which is where the launcher table's own PATH
+# check sits for the same reason. Its stderr is the operator's to read and goes
+# straight through. Never under `--no-launch`, which launches nothing and is
+# the first act INSIDE a running session, and never under `--dry-run`, which
+# must not update anything.
+if [ "$AGENT" = claude ] && (( lane_claude_resolve )) && (( ! no_launch )); then
+  if ! lcc_cmd="$(lane_claude_current)"; then
+    note "no claude-current beside this command or in ${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}, so $CLAUDE_BIN is launched as it is (through PATH, where it is a bare name), unchecked against npm; openRepoTools --install places claude-current"
+  elif (( dry_run )); then
+    plan "$lcc_cmd --porcelain   (chooses the Claude Code to launch; not run under --dry-run, because it may update one)"
+  else
+    lcc_rc=0
+    lcc_out="$("$lcc_cmd" --porcelain </dev/null)" || lcc_rc=$?
+    case "$lcc_rc" in
+      0) : ;;
+      2) die "claude-current refused the launch (exit 2, its reason above): the newest Claude Code installed is behind the one npm publishes. Nothing was written: the row, the object log and the handoff's Rule 3 stamp all come after this. CLAUDE_ALLOW_STALE=1 $prog … launches it anyway, or CLAUDE_BIN=<path> pins one." 2 ;;
+      *) die "claude-current found no Claude Code to launch (exit $lcc_rc, its reason above). Nothing was written: the row, the object log and the handoff's Rule 3 stamp all come after this." 1 ;;
+    esac
+    lcc_path=""; lcc_version=""; lcc_status=""
+    while IFS= read -r lcc_line; do
+      case "$lcc_line" in
+        path=*)    [ -n "$lcc_path" ]    || lcc_path="${lcc_line#path=}" ;;
+        version=*) [ -n "$lcc_version" ] || lcc_version="${lcc_line#version=}" ;;
+        status=*)  [ -n "$lcc_status" ]  || lcc_status="${lcc_line#status=}" ;;
+      esac
+    done <<LCC
+$lcc_out
+LCC
+    case "$lcc_path" in
+      /*) [ -x "$lcc_path" ] ||
+            die "claude-current answered '$lcc_path', which is not an executable file. Nothing was written." 1 ;;
+      *) die "claude-current exited 0 without an absolute path= line (it printed '$lcc_out'). Nothing was written." 1 ;;
+    esac
+    cmd[0]="$lcc_path"
+    CLAUDE_BIN="$lcc_path"
+    CLAUDE_RESOLVED_BIN="$lcc_path"
+    export CLAUDE_BIN CLAUDE_RESOLVED_BIN
+    lane_claude_version="$lcc_version"
+    step "launching claude ${lcc_version:-of an unknown version} (${lcc_status:-no status}) at $lcc_path, as claude-current chose"
+  fi
+fi
+
 # A LANE WITH NO ROW IS A `STARTED`, WHATEVER BRANCH LAUNCHED IT (Copilot round
 # 1 on openRepoTools#47). Two branches above set the verb to RESUMED because
 # they are resuming a lane that PAUSED — `--agent <name>` and the `/ctx` seam —
@@ -3012,6 +3118,19 @@ esac
 lane_payload="home $home_nwo; estate $estate; dir $(quote_subfield "$DIR")"
 [ -n "$lane_profile" ] && lane_payload="$lane_payload; profile $(quote_subfield "$lane_profile")"
 [ -n "$record_window" ] && lane_payload="$lane_payload; window $record_window"
+# `claude <version>`: the Claude Code this launch starts, as claude-current read
+# it here or as a launcher's own claude-current handed it on
+# (opensoft/workBenches#119). In hand only then, so appended only then, for
+# the reason given above; and a version is digits, dots and a tag, so a value
+# that is not one is left out rather than written into a line nothing rewrites.
+lane_claude_version_re='^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$'
+if [ "$AGENT" = claude ] && [ -n "$lane_claude_version" ]; then
+  if [[ "$lane_claude_version" =~ $lane_claude_version_re ]]; then
+    lane_payload="$lane_payload; claude $lane_claude_version"
+  else
+    note "the Claude Code version '$lane_claude_version' is not x.y.z, so the lane's log line carries no \`claude\` sub-field"
+  fi
+fi
 
 # AMENDMENT 8(d), R-A8-2 — `unknown` NEVER REACHES THE OBJECT LOG, AND THE RULE
 # IS THE CONDITION RATHER THAN THE PATH. Amendment 7(b): the `session` field is
