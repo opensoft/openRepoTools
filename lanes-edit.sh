@@ -1248,7 +1248,11 @@ delete_lines() {   # <line numbers, one per line, any order>
   dl_stat="$(git --no-pager diff --no-index --numstat -- "$dl_pre" "$dl_out" 2>/dev/null | head -n1 | cut -f1,2)"
   [ "$dl_stat" = "$(printf '0\t%s' "$dl_n")" ] ||
     die "the removal added or rewrote lines (numstat: ${dl_stat:-none}); refusing" 5
-  cat -- "$dl_out" > "$LANES_FILE"   # redirect FOLLOWS the symlink
+  # The redirection follows the register symlink, but its status is still a
+  # write fence. An unwritable target must not let archive-rows commit the
+  # appended archive while the source rows remain in the register.
+  cat -- "$dl_out" > "$LANES_FILE" ||
+    die "could not write the rewritten register $LANES_FILE. The archive may have been appended locally, but no commit was made; resolve that partial move before retrying." 5
   note "$dl_n row(s) removed from $LANES_FILE"
 }
 
@@ -9221,7 +9225,7 @@ EOF
   fi
   while IFS= read -r ar_lane; do
     [ -n "$ar_lane" ] || continue
-    if printf '%s\n' "$ar_existing" | grep -qixF -- "$ar_lane"; then
+    if printf '%s\n' "$ar_existing" | command grep -qixF -- "$ar_lane"; then
       die "lane $ar_lane is already in $LANES_ARCH_PATH while still present in the register. Resolve that partial archive move before retrying; nothing was written." 2
     fi
   done < "$ar_tmp/names"

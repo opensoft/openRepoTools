@@ -11128,6 +11128,25 @@ is    "archive-rows is a DRY RUN by default" "$rc" 0
 has   "…saying so" "$out" "DRY RUN, nothing is written"
 has   "…counting the RETIRED rows it would move" "$out" "3 RETIRED row(s) of repo19"
 is    "…and writing nothing" "$(git -C "$A19_WIP" rev-parse HEAD)" "$A19_HEAD1"
+# The archive is written before the register is shortened. If the register
+# target is read-only, the failed redirection must stop the act before a commit
+# can publish archive rows beside their still-present register rows.
+A19_REGISTER="$A19_WIP/lanes/LANES.md"
+A19_ARCHIVE="$A19_WIP/lanes/archive/LANES-retired.md"
+chmod a-w "$A19_REGISTER"
+if [ -w "$A19_REGISTER" ]; then
+  skip "read-only register write refusal" "this runner can still write a-w files"
+else
+  run a19 env LANES_LANE=repo19-2 "$E" archive-rows repo19 --yes
+  is    "a failed register rewrite stops archive-rows" "$rc" 5
+  has   "…naming the register write failure" "$err" "could not write the rewritten register"
+  is    "…without committing the partial archive move" "$(git -C "$A19_WIP" rev-parse HEAD)" "$A19_HEAD1"
+  is    "…and without removing the original register rows" \
+        "$(command grep -c '^| `repo19-[457]`' "$A19_REGISTER" || :)" 3
+fi
+chmod u+w "$A19_REGISTER"
+rm -f -- "$A19_ARCHIVE"
+is    "the fixture is clean before the successful archive act" "$(git -C "$A19_WIP" status --porcelain)" ""
 run a19 env LANES_LANE=repo19-2 "$E" archive-rows repo19 --yes
 is    "archive-rows --yes exits 0" "$rc" 0
 is    "…in ONE commit" "$(git -C "$A19_WIP" rev-list --count "$A19_HEAD1"..HEAD)" 1
@@ -11350,7 +11369,15 @@ git -C "$A19_WIP" add -- lanes/LANES.md
 git -C "$A19_WIP" commit -q -m "seed a partially recovered archive move"
 git -C "$A19_WIP" push -q origin main
 A19_PARTIAL_HEAD="$(git -C "$A19_WIP" rev-parse HEAD)"
+# The workstation exports a grep wrapper whose status differs when a caller
+# uses -q. Only `command grep` is the predicate the archive writer can trust.
+grep() {
+  if [ "${1-}" = -qixF ]; then return 1; fi
+  command grep "$@"
+}
+export -f grep
 run a19 env LANES_LANE=repo19-2 "$E" archive-rows repo19 --yes
+unset -f grep
 is    "a retry refuses a lane already in the archive" "$rc" 2
 has   "…naming the partial move" "$err" "already in lanes/archive/LANES-retired.md"
 is    "…without appending a duplicate archived row" \
