@@ -41,9 +41,10 @@
 #     tmux, `tmux attach -t <its session>:<@id>` — the window named in the
 #     attach itself, so no act between the fence and the terminal can land on
 #     another lane — with that window selected first.
-#     Nothing is launched, nothing is resumed and nothing is written: the
-#     session is already running and this word only puts a terminal in front of
-#     it. Measured 2026-09-14: the acts are `tmux move-window -a -s
+#     Nothing is launched or resumed and no register/log write is made: the
+#     session is already running. If its window has a generic name, the picker
+#     verifies the live transcript against the row and repairs that tmux name
+#     before attaching. Measured 2026-09-14: the attach acts are `tmux move-window -a -s
 #     <session>:<@id>` and then `tmux select-window -t <session>:<@id>` — the
 #     `@id` on both, because an index is a name another window can be given
 #     between the read and the act — and where the window is already in this
@@ -92,7 +93,7 @@
 #   64 usage — an unknown option, or a flag with no value
 #
 #   $LANES_EDIT      the register's reader (default: lanes-edit.sh beside this)
-#   $PCLAUDE         the launcher         (default: pclaude, else claude-profile)
+#   $PCLAUDE         the launcher         (default: lclaude, else pclaude, else claude-profile)
 #   $LANE_DRY_RUN=1  print the acts instead of performing them
 #
 # It writes nothing to the register and it never runs `claude` itself: every
@@ -107,6 +108,7 @@ prog="${0##*/}"
 SELF="${BASH_SOURCE[0]:-$0}"
 selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 TAB="$(printf '\t')"
+US="$(printf '\037')"
 
 say()  { printf '%s\n' "$*"; }
 note() { printf '%s: %s\n' "$prog" "$*" >&2; }
@@ -153,7 +155,7 @@ Exit: 0 reached, listed or declined · 8 nothing to pick · 2 refused ·
 1 a read failed · 64 usage.
 
   $LANES_EDIT   the register's reader   (default: lanes-edit.sh beside this file)
-  $PCLAUDE      the launcher            (default: pclaude, else claude-profile)
+  $PCLAUDE      the launcher            (default: lclaude, else pclaude, else claude-profile)
 
 `lanes` is the same rows as a READ — every column, closed lanes included, no
 question. `/restart` is the act from INSIDE a running session, which cannot
@@ -570,9 +572,9 @@ where_live() {   # <window field>
 launcher() {
 	local lp="${PCLAUDE:-}"
 	if [ -z "$lp" ]; then
-		lp="$(command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
+		lp="$(command -v lclaude 2>/dev/null || command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
 	fi
-	[ -n "$lp" ] || die "there is no launcher on PATH (neither \`pclaude\` nor \`claude-profile\`), and this
+	[ -n "$lp" ] || die "there is no launcher on PATH (neither \`lclaude\`, \`pclaude\`, nor \`claude-profile\`), and this
     command will not run \`claude\` itself: every launch goes through the
     launcher and therefore through \`lane-start\`, which is what renames the
     window, stamps the row, extends the session cell and passes \`--name\` so
@@ -701,10 +703,11 @@ go_available() {
 }
 
 # LIVE HERE — THE ATTACH, AND NEVER A SECOND PROCESS (clause (h), clause (i-2)).
-# Nothing is launched and nothing is written: the session is running, and what a
-# person asked for is a terminal in front of it.
+# No register or log is written. A verified generic tmux window name may be
+# repaired; the session is already running and the attach starts nothing.
 go_live() {
-	local gl_this gl_now gl_says
+	local gl_this gl_now gl_says gl_row gl_cell gl_last gl_record gl_rc
+	local gl_sid gl_target gl_name gl_pid gl_profile gl_windows gl_id gl_other_name
 	if [ -n "$profile" ]; then
 		die "lane $R_LANE is LIVE HERE under profile ${R_PF:-<none recorded>}, and \`$prog <name>
     <profile>\` names the profile to LAUNCH under — an attach starts nothing, so
@@ -733,6 +736,65 @@ go_live() {
     this command will not guess which window is the lane's.
       its session, if it is still there:  tmux attach -t $W_SESS
       what the register says now:         lanes --all" 2
+	fi
+	# A window ID is not enough to make this the lane. A /clear or profile
+	# switch can leave a live transcript newer than the row, and a renamed
+	# session can belong to another lane. The prompt guard would refuse both;
+	# do not conceal either mismatch by renaming the window on the way in.
+	gl_row="$("$LANES_EDIT" register-row "$R_LANE" 2>/dev/null)" ||
+		die "lane $R_LANE has no readable register row, so its live window cannot be bound safely. Read it with: lanes --all" 2
+	gl_cell="$(printf '%s\n' "$gl_row" | awk -F'|' 'NR == 1 { print $3 }')"
+	gl_last="$(printf '%s\n' "$gl_cell" | grep -Eoi '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tail -n1 || :)"
+	gl_rc=0
+	gl_record="$("$LANES_EDIT" window-session "$W_SESS:$W_ID" 2>/dev/null)" || gl_rc=$?
+	[ "$gl_rc" = 0 ] && [ -n "$gl_record" ] ||
+		die "lane $R_LANE's window $W_SESS:$W_ID has no provable live session (record read exit $gl_rc). Nothing was renamed or attached. In that window, repair the binding with: lane-start --no-launch $R_LANE" 2
+	IFS="$US" read -r gl_sid gl_target gl_name gl_pid gl_profile <<EOF
+$gl_record
+EOF
+	if [ -z "$gl_last" ] || [ "$(lc "$gl_sid")" != "$(lc "$gl_last")" ] ||
+	   [ "$(lc "$gl_name")" != "$(lc "$R_LANE")" ]; then
+		die "lane $R_LANE's window $W_SESS:$W_ID holds transcript ${gl_sid:-unknown} named '${gl_name:-none}', but the row's last transcript is ${gl_last:-none}. Nothing was renamed or attached. In that window, record the live transcript with: lane-start --no-launch $R_LANE" 2
+	fi
+	# tmux permits duplicate names. Distinct @window IDs are the units here:
+	# one linked window may be visible in more than one session.
+	gl_windows="$(tmux list-windows -a -F "#{window_id}${TAB}#{window_name}" 2>/dev/null)" ||
+		die "tmux could not list window names, so uniqueness of $R_LANE is unknown. Nothing was renamed or attached." 2
+	while IFS="$TAB" read -r gl_id gl_other_name; do
+		[ -n "$gl_id" ] || continue
+		if [ "$gl_id" != "$W_ID" ] && [ "$(lc "$gl_other_name")" = "$(lc "$R_LANE")" ]; then
+			die "another tmux window ($gl_id) is already named $gl_other_name. Lane window names must be unique in this tmux server; nothing was renamed or attached." 2
+		fi
+	done <<EOF
+$gl_windows
+EOF
+	gl_name="$(tmux_field "$W_SESS:$W_ID" '#{window_name}' 2>/dev/null || :)"
+	[ -n "$gl_name" ] || die "tmux could not read the name of $W_SESS:$W_ID; nothing was renamed or attached." 2
+	if [ "$gl_name" != "$R_LANE" ]; then
+		if [ "$(lc "$gl_name")" != "$(lc "$R_LANE")" ]; then
+			# A tmux name may contain spaces or punctuation that a lane name
+			# cannot. Such a name cannot have a register row; only ask the
+			# register when the name is lane-shaped.
+			case "$gl_name" in
+			"" | *[!A-Za-z0-9._-]* | .* | -*) : ;;
+			*)
+				gl_rc=0
+				"$LANES_EDIT" register-row "$gl_name" >/dev/null 2>&1 || gl_rc=$?
+				case "$gl_rc" in
+				0) die "window $W_SESS:$W_ID is named $gl_name, which has its own lane row. Renaming it to $R_LANE would take another lane's tmux address; nothing was renamed or attached." 2 ;;
+				8) : ;;
+				*) die "whether window name $gl_name belongs to another lane could not be read (exit $gl_rc). Nothing was renamed or attached." 2 ;;
+				esac ;;
+			esac
+		fi
+		if [ "$dry_run" = 1 ]; then
+			say "tmux rename-window -t $W_SESS:$W_ID $R_LANE (currently '$gl_name')"
+		else
+			tmux rename-window -t "$W_SESS:$W_ID" "$R_LANE" ||
+				die "tmux could not rename $W_SESS:$W_ID to $R_LANE; nothing was attached." 2
+			[ "$(tmux_field "$W_SESS:$W_ID" '#{window_name}' 2>/dev/null || :)" = "$R_LANE" ] ||
+				die "the rename of $W_SESS:$W_ID did not read back as $R_LANE; nothing was attached." 2
+		fi
 	fi
 	gl_this="$(this_session)"
 	if [ -z "$gl_this" ]; then
@@ -1004,6 +1066,11 @@ if [ -n "$name" ]; then
 	# up. Anything else is a read that did not answer, and this command binds no
 	# lane under a name nothing established (Amendment 7(d), the same rule the row
 	# read, the grouping read and the position read each take in this file).
+	# AND 66 IS THE ONE THAT HAS A NAME (Amendment 16(e), Copilot round 4 on
+	# openRepoTools#81): the lane ALIAS table could not be read, so a former name
+	# resolves to nothing and this command would bind a lane under a spelling
+	# that may belong to a row under another one. It falls into the refusal below
+	# with every other unanswered read, which is where it belongs.
 	if [ "$cl_rc" != 0 ] && [ "$cl_rc" != 2 ]; then
 		die "the register's spelling of lane $name could not be read: \`lanes-edit.sh canon-lane\`
     exited $cl_rc. A lane name is ONE name under any case (Amendment 15) and the
