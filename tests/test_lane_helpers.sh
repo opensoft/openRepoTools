@@ -754,6 +754,21 @@ is   "--dry-run leaves LANES.md byte-identical" "$(cksum < "$LANES")" "$before_s
 is   "--dry-run renames no window" "$(grep -c 'repoA-7' "$FAKE_TMUX_LOG")" 0
 has  "--dry-run says what it would add" "$err" "PLAN lanes-edit.sh add-row"
 
+cat > "$SANDBOX/retired-before-rename" <<'WRAP'
+#!/usr/bin/env bash
+if [ "${1-}" = retired-identity ] && [ "${2-}" = repoA-7 ]; then
+  printf 'repoA-7\n'
+  exit 0
+fi
+exec "${REAL_LANES_EDIT:?}" "$@"
+WRAP
+chmod +x "$SANDBOX/retired-before-rename"
+run env LANES_EDIT="$SANDBOX/retired-before-rename" REAL_LANES_EDIT="$E" \
+    "$START" --dry-run repoA 7
+is   "a newly retired position refuses before tmux rename" "$rc" 2
+has  "…naming the retired identity" "$err" "repoA-7 is RETIRED"
+is   "…without changing the window" "$(grep -c 'repoA-7' "$FAKE_TMUX_LOG")" 0
+
 run env FAKE_TMUX_WINDOWS="$(printf 'othersess:0\t@99\tREPOA-8\n')" \
     "$START" --dry-run repoA 8
 is   "an AVAILABLE launch refuses a duplicate lane window name" "$rc" 2
@@ -9948,6 +9963,22 @@ run env PATH="$LANEBIN_PATH" LANES_EDIT="$SANDBOX/lane-no-fetch" REAL_LANES_EDIT
     "$LANE" repoPick-2 </dev/null
 is    "LIVE attachment keeps both register-row probes local" "$rc" 0
 has   "…and still repairs the generic name" "$(cat "$LANE_TMUX_LOG")" "rename-window -t picksess:@31 repoPick-2"
+# The live session may have been stamped only in this checkout: origin still
+# names the old UUID, while the local row and session record agree on the new.
+PICK2_NEW="dddd0002-2222-4000-8000-dddd00029999"
+cp "$LANES" "$SANDBOX/pick-before-local-stamp"
+awk -v old="$PICK2_ID" -v newer="$PICK2_NEW" '
+  index($0, "`repoPick-2`") { sub(old, old "`, resumed `" newer) }
+  { print }
+' "$SANDBOX/pick-before-local-stamp" > "$LANES"
+write_record "$sessions_dir/pick-here.json" "$PICK2_NEW" "$LIVE_PID" "$live_start" "picksess:@31.%31" "repoPick-2" "busy"
+: > "$LANE_TMUX_LOG"; : > "$LANE_TMUX_NAME_FILE"
+run env PATH="$LANEBIN_PATH" LANE_TMUX_WINDOWS="$(printf '@31\tpicksess\t3\t1\tclaude\n@32\tdetsess\t7\t0\trepoPick-3\n')" \
+    "$LANE" repoPick-2 </dev/null
+is    "a local-only successor UUID still permits verified live attach" "$rc" 0
+has   "…and repairs its generic window" "$(cat "$LANE_TMUX_LOG")" "rename-window -t picksess:@31 repoPick-2"
+cp "$SANDBOX/pick-before-local-stamp" "$LANES"
+write_record "$sessions_dir/pick-here.json" "$PICK2_ID" "$LIVE_PID" "$live_start" "picksess:@31.%31" "repoPick-2" "busy"
 : > "$LANE_TMUX_LOG"; : > "$LANE_TMUX_NAME_FILE"
 run env PATH="$LANEBIN_PATH" LANE_TMUX_WINDOWS="$(printf '@31\tpicksess\t3\t1\tClaude Code\n')" \
     "$LANE" repoPick-2 </dev/null
@@ -11400,6 +11431,35 @@ has   "…naming the partial move" "$err" "already in lanes/archive/LANES-retire
 is    "…without appending a duplicate archived row" \
       "$(grep -c '^| `repo19-4`' "$A19_WIP/lanes/archive/LANES-retired.md" || :)" 1
 is    "…or moving HEAD" "$(git -C "$A19_WIP" rev-parse HEAD)" "$A19_PARTIAL_HEAD"
+
+# Publish an archive-only peer commit just as add-row reaches its rebase. The
+# preflight saw no retired repo19race-1; the post-rebase fence must stop push.
+A19_PEER="$SANDBOX/a19-peer"
+git clone -q "$A19_ORIGIN" "$A19_PEER" 2>/dev/null
+git -C "$A19_PEER" config user.email "test@example.invalid"
+git -C "$A19_PEER" config user.name "lane helper tests"
+cat > "$SANDBOX/git-archive-race" <<'WRAP'
+#!/usr/bin/env bash
+if [ "${1-}" = -C ] && [ "${2-}" = "$A19_WIP" ] && [ "${3-}" = pull ] &&
+   [ ! -e "$A19_RACE_MARKER" ]; then
+  : > "$A19_RACE_MARKER"
+  printf '| `repo19race-1` | peer | Eagle | 2026-09-29 | none | none | RETIRED |\n' >> "$A19_PEER/lanes/archive/LANES-retired.md"
+  "$REAL_GIT" -C "$A19_PEER" add -- lanes/archive/LANES-retired.md || exit 1
+  "$REAL_GIT" -C "$A19_PEER" commit -q -m 'peer retires repo19race-1' || exit 1
+  "$REAL_GIT" -C "$A19_PEER" push -q origin main || exit 1
+fi
+exec "$REAL_GIT" "$@"
+WRAP
+chmod +x "$SANDBOX/git-archive-race"
+mkdir -p "$SANDBOX/racebin"
+cp "$SANDBOX/git-archive-race" "$SANDBOX/racebin/git"
+run a19 env PATH="$SANDBOX/racebin:$PATH" A19_WIP="$A19_WIP" A19_PEER="$A19_PEER" \
+    A19_RACE_MARKER="$SANDBOX/a19-raced" REAL_GIT="$(command -v git)" \
+    LANES_LANE=repo19-2 "$E" add-row "| \`repo19race-1\` | harness \`$A19_OLD\` | Eagle / test / brett | 2026-09-29 | none | none | LIVE |"
+is    "an add-row losing to a peer retirement refuses to push" "$rc" 2
+has   "…naming the peer retirement" "$err" "was retired by a peer"
+is    "…and the remote has no resurrected active row" \
+      "$(git -C "$A19_PEER" show origin/main:lanes/LANES.md | grep -c '^| `repo19race-1`' || :)" 0
 
 echo "== the workstation seam: unset, every writer reads the host =="
 

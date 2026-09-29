@@ -2532,6 +2532,42 @@ archive_text() {
   return 0
 }
 
+# A retired name OR its numeric position is unavailable, even when a recut
+# suffix changes the spelling. Inspect both published and unpushed archives.
+retired_identity_hits() { # <lane>; stdout: matching retired spellings
+  ri_lane="$1"
+  ri_pub="$(archive_text 2>/dev/null)" || return 1
+  ri_local=""
+  if [ -f "$LANES_ARCH_FILE" ]; then
+    ri_local="$(cat -- "$LANES_ARCH_FILE" 2>/dev/null)" || return 1
+  fi
+  printf '%s\n%s\n' "$ri_pub" "$ri_local" | awk -v want="$ri_lane" '
+    function key(n,   h, p) {
+      p = n; sub(/^.*-/, "", p); sub(/[A-Za-z]$/, "", p)
+      h = n; sub(/-[^-]*$/, "", h)
+      if (h == n || p !~ /^[0-9]+$/) return ""
+      return tolower(h) "-" (p + 0)
+    }
+    BEGIN { wk = key(want) }
+    substr($0,1,1) == "|" {
+      p1 = index($0, "`"); if (!p1) next
+      r = substr($0, p1 + 1); p2 = index(r, "`"); if (!p2) next
+      t = substr(r, 1, p2 - 1)
+      if (tolower(t) == tolower(want) || (wk != "" && key(t) == wk)) print t
+    }' | LC_ALL=C sort -u
+}
+
+add_row_retirement_rescan() {
+  ar_rebased_hits="$(retired_identity_hits "$ADD_ROW_LANE")" || {
+    note "the archive could not be read after rebase; refusing to push add-row for $ADD_ROW_LANE"
+    return 1
+  }
+  if [ -n "$ar_rebased_hits" ]; then
+    note "lane $ADD_ROW_LANE was retired by a peer before this add-row could push (archive: $(printf '%s' "$ar_rebased_hits" | tr '\n' ' ')); refusing to publish the rebased add-row commit"
+    return 2
+  fi
+}
+
 # Each lane's LAST line on <object>, as
 #   utc  lane  verb  uuid  ws  object  ref  payload  text  file  line
 #
@@ -9566,36 +9602,8 @@ Nothing was written." 2
       # whole point of this check is that a retired identity is never reissued,
       # and "I could not read the file that says which ones are retired" is not
       # "none of them are" (Amendment 7(d)).
-      ar_pubarc=""; ar_arch_rc=0
-      ar_pubarc="$(archive_text 2>/dev/null)" || ar_arch_rc=1
-      ar_locarc=""
-      if [ -f "$LANES_ARCH_FILE" ]; then
-        ar_locarc="$(cat -- "$LANES_ARCH_FILE" 2>/dev/null)" || ar_arch_rc=1
-      fi
-      [ "$ar_arch_rc" = 0 ] ||
+      ar_arch="$(retired_identity_hits "$lane_new")" ||
         die "$LANES_ARCH_PATH exists and could not be read, so whether '$lane_new' is a name this estate has RETIRED is not known — and a retired position is never reissued (Amendment 19(b)). A read that failed is not 'it is not retired' (Amendment 7(d)). Fix the read and re-run; nothing was written." 1
-      # THE POSITION AND NOT ONLY THE NAME (round 2). `lane_next_free` reserves
-      # `repo-4` and `repo-4a` as ONE position — "a lane may be re-cut and a
-      # re-cut position is not free" — so a name test alone let `repo-4a`
-      # through against a retired `repo-4`, which is the same identity by the
-      # rule that hands the numbers out. The key is that rule, restated here in
-      # awk over the two archives.
-      ar_arch="$(printf '%s\n%s\n' "$ar_pubarc" "$ar_locarc" | awk -v want="$lane_new" '
-        function key(n,   h, p) {
-          p = n; sub(/^.*-/, "", p); sub(/[A-Za-z]$/, "", p)
-          h = n; sub(/-[^-]*$/, "", h)
-          if (h == n) return ""
-          if (p !~ /^[0-9]+$/) return ""
-          return tolower(h) "-" (p + 0)
-        }
-        BEGIN { wk = key(want) }
-        substr($0,1,1) == "|" {
-          p1 = index($0, "`"); if (p1 == 0) next
-          r = substr($0, p1 + 1); p2 = index(r, "`"); if (p2 == 0) next
-          t = substr(r, 1, p2 - 1)
-          if (tolower(t) == tolower(want)) { print t; next }
-          if (wk != "" && key(t) == wk) print t
-        }' | LC_ALL=C sort -u || :)"
       if [ -n "$ar_arch" ]; then
         die "lane '$lane_new' is RETIRED: its row is in $LANES_ARCH_PATH, spelled $(printf '%s\n' "$ar_arch" | tr '\n' ' ')— and a retired position is NEVER REISSUED (Amendment 19(b)). That lane's object log is $(log_path_for "$lane_new") and it is append-only, so a second lane under this name would write its life into the first one's file and every read of that log would answer for two lanes at once. Take a free position instead — \`lanes --prefix <repo>\` prints the next one and the line that takes it. Nothing was written." 2
       fi
@@ -9616,7 +9624,12 @@ Nothing was written." 2
     append_text_line "$row"
     msg="LANES(${lane_new:-${LANES_LANE:-unknown}}@$WS): add row"
     [ -n "$PRE_DIRTY_LANES" ] && msg="$msg + sweeps uncommitted edit to row $PRE_DIRTY_LANES"
+    ADD_ROW_LANE="$lane_new"
+    CP_AFTER_REBASE=add_row_retirement_rescan
     commit_push "$msg"
+    ar_push_rc=$?
+    CP_AFTER_REBASE=""
+    exit "$ar_push_rc"
     ;;
 
   commit)
@@ -11486,6 +11499,27 @@ EOF
     rr_row="$(row_of_lane "$lane")"
     [ -n "$rr_row" ] || exit 8
     printf '%s\n' "$rr_row"
+    ;;
+
+  # This checkout's row can be ahead of origin after a local transcript stamp.
+  # The live attach checks both copies; an unreadable local row is not absence.
+  register-row-local)
+    lane="${1-}"; [ -n "$lane" ] || die "usage: register-row-local <lane>" 2
+    check_lane_name "$lane"
+    rr_row="$(row_of_lane_local "$lane")" || die "could not read local register row for $lane" 1
+    [ -n "$rr_row" ] || exit 8
+    case "$rr_row" in *$'\n'*) die "more than one local row names $lane" 2 ;; esac
+    printf '%s\n' "$rr_row"
+    ;;
+
+  # 0 with archived spellings, 8 absent, 1 when either archive cannot be read.
+  retired-identity)
+    lane="${1-}"; [ -n "$lane" ] || die "usage: retired-identity <lane>" 2
+    check_lane_name "$lane"
+    log_sync
+    rr_hits="$(retired_identity_hits "$lane")" || die "could not read the lane archive" 1
+    [ -n "$rr_hits" ] || exit 8
+    printf '%s\n' "$rr_hits"
     ;;
 
   # R-A11-7 — THE HOOK'S OWN uuid → lane READ, EXPOSED. `lane_of_session` has

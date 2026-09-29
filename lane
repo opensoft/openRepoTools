@@ -707,6 +707,7 @@ go_available() {
 # repaired; the session is already running and the attach starts nothing.
 go_live() {
 	local gl_this gl_now gl_says gl_row gl_cell gl_last gl_record gl_rc
+	local gl_local_row gl_local_cell gl_local_last gl_pub_ids gl_local_ids gl_row_ok gl_local_rc
 	local gl_sid gl_target gl_name gl_pid gl_profile gl_windows gl_id gl_other_name
 	if [ -n "$profile" ]; then
 		die "lane $R_LANE is LIVE HERE under profile ${R_PF:-<none recorded>}, and \`$prog <name>
@@ -745,6 +746,17 @@ go_live() {
 		die "lane $R_LANE has no readable register row, so its live window cannot be bound safely. Read it with: lanes --all" 2
 	gl_cell="$(printf '%s\n' "$gl_row" | awk -F'|' 'NR == 1 { print $3 }')"
 	gl_last="$(printf '%s\n' "$gl_cell" | grep -Eoi '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tail -n1 || :)"
+	gl_pub_ids="$(printf '%s\n' "$gl_cell" | grep -Eoi '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tr 'A-F' 'a-f' | tr '\n' ' ' || :)"
+	gl_local_rc=0
+	gl_local_row="$("$LANES_EDIT" register-row-local "$R_LANE" 2>/dev/null)" || gl_local_rc=$?
+	case "$gl_local_rc" in
+	0)
+		gl_local_cell="$(printf '%s\n' "$gl_local_row" | awk -F'|' 'NR == 1 { print $3 }')"
+		gl_local_last="$(printf '%s\n' "$gl_local_cell" | grep -Eoi '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tail -n1 || :)"
+		gl_local_ids="$(printf '%s\n' "$gl_local_cell" | grep -Eoi '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tr 'A-F' 'a-f' | tr '\n' ' ' || :)" ;;
+	8) gl_local_last=""; gl_local_ids="" ;;
+	*) die "lane $R_LANE's local register row could not be read (exit $gl_local_rc). Nothing was renamed or attached." 2 ;;
+	esac
 	gl_rc=0
 	gl_record="$("$LANES_EDIT" window-session "$W_SESS:$W_ID" 2>/dev/null)" || gl_rc=$?
 	[ "$gl_rc" = 0 ] && [ -n "$gl_record" ] ||
@@ -752,9 +764,21 @@ go_live() {
 	IFS="$US" read -r gl_sid gl_target gl_name gl_pid gl_profile <<EOF
 $gl_record
 EOF
-	if [ -z "$gl_last" ] || [ "$(lc "$gl_sid")" != "$(lc "$gl_last")" ] ||
-	   [ "$(lc "$gl_name")" != "$(lc "$R_LANE")" ]; then
-		die "lane $R_LANE's window $W_SESS:$W_ID holds transcript ${gl_sid:-unknown} named '${gl_name:-none}', but the row's last transcript is ${gl_last:-none}. Nothing was renamed or attached. In that window, record the live transcript with: lane-start --no-launch $R_LANE" 2
+	# A local stamp can be newer than the published row. Accept only a copy
+	# whose UUID history extends the other; divergent histories are not proof.
+	gl_row_ok=0
+	if [ "$(lc "$gl_sid")" = "$(lc "$gl_last")" ]; then
+		if [ "$gl_local_rc" = 8 ]; then
+			gl_row_ok=1
+		else
+			case " $gl_pub_ids" in " $gl_local_ids"*) gl_row_ok=1 ;; esac
+		fi
+	fi
+	if [ "$(lc "$gl_sid")" = "$(lc "$gl_local_last")" ]; then
+		case " $gl_local_ids" in " $gl_pub_ids"*) gl_row_ok=1 ;; esac
+	fi
+	if [ "$gl_row_ok" != 1 ] || [ "$(lc "$gl_name")" != "$(lc "$R_LANE")" ]; then
+		die "lane $R_LANE's window $W_SESS:$W_ID holds transcript ${gl_sid:-unknown} named '${gl_name:-none}', but the published/local row ends in ${gl_last:-none}/${gl_local_last:-none}, or their UUID histories diverge. Nothing was renamed or attached. In that window, record the live transcript with: lane-start --no-launch $R_LANE" 2
 	fi
 	# tmux permits duplicate names. Distinct @window IDs are the units here:
 	# one linked window may be visible in more than one session.

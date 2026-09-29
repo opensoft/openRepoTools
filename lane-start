@@ -1929,6 +1929,16 @@ fi
 
 # ------------------------------------------------------- 4. name the window
 
+# Step 3 fetched the published register. Before changing a tmux name, prove
+# this identity was not retired (including an unpushed local archive row).
+retired_rc=0
+retired_hits="$(LANES_NO_FETCH=1 "$LANES_EDIT" retired-identity "$LANE" 2>/dev/null)" || retired_rc=$?
+case "$retired_rc" in
+  8) : ;;
+  0) die "lane $LANE is RETIRED (archive: $retired_hits). Nothing was renamed or written; choose a free position." 2 ;;
+  *) die "the lane archive could not be checked for $LANE (exit $retired_rc). Nothing was renamed or written." 1 ;;
+esac
+
 # A lane name is a tmux-window address. tmux itself allows two distinct
 # windows to carry one name, so check the whole server before taking it. A
 # linked window may appear in several sessions with the same @id; that is one
