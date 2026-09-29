@@ -29,7 +29,8 @@
 #          ~/.local/share/claude/versions), by its x.y.z name;
 #        - <user npm prefix>/bin/claude. The prefix is $CLAUDE_CURRENT_NPM_PREFIX,
 #          else $NPM_CONFIG_PREFIX, else $npm_config_prefix, else the
-#          `prefix=` line of ~/.npmrc, else ~/.npm-global;
+#          `prefix=` line of ~/.npmrc, else ~/.npm-global. A relative one is
+#          taken under $HOME;
 #        - ~/.local/bin/claude;
 #        - each entry of $CLAUDE_CURRENT_SYSTEM_CANDIDATES (default
 #          /usr/local/bin/claude:/usr/bin/claude, the image's copies).
@@ -343,6 +344,12 @@ npm_user_prefix() {
 	esac
 	p="${p%/}"
 	[ -n "$p" ] || p="$HOME/.npm-global"
+	# A relative prefix is anchored at $HOME, so the path npm installs into is
+	# the path read back, and the same one whichever directory asks.
+	case "$p" in
+		/*) ;;
+		*) p="$HOME/$p" ;;
+	esac
 	printf '%s\n' "$p"
 }
 USER_PREFIX="$(npm_user_prefix)"

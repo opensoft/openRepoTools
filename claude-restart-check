@@ -252,6 +252,12 @@ npm_user_prefix() {
 	esac
 	p="${p%/}"
 	[ -n "$p" ] || p="$HOME/.npm-global"
+	# A relative prefix is anchored at $HOME, so the path npm installs into is
+	# the path read back, and the same one whichever directory asks.
+	case "$p" in
+		/*) ;;
+		*) p="$HOME/$p" ;;
+	esac
 	printf '%s\n' "$p"
 }
 

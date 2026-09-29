@@ -42,7 +42,8 @@ absolute path, in this order, and runs each one's `--version`:
    x.y.z name (workBenches #109's ordering);
 2. `<user npm prefix>/bin/claude`. The prefix is `$CLAUDE_CURRENT_NPM_PREFIX`,
    else `$NPM_CONFIG_PREFIX`, else `$npm_config_prefix`, else the `prefix=`
-   line of `~/.npmrc`, else `~/.npm-global`;
+   line of `~/.npmrc`, else `~/.npm-global`. A relative prefix is taken under
+   `$HOME`, so the path npm installs into is the path read back;
 3. `~/.local/bin/claude`;
 4. the image's copies, `/usr/local/bin/claude` and `/usr/bin/claude`
    (`$CLAUDE_CURRENT_SYSTEM_CANDIDATES`, colon-separated; set it empty for

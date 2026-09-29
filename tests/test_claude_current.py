@@ -184,9 +184,10 @@ class Sandbox:
         return env
 
     def run(self, *args: str, timeout: float = 60, **extra: str) -> subprocess.CompletedProcess:
+        """From inside the sandbox, so nothing relative lands in the checkout."""
         return subprocess.run([str(CMD), *args], env=self.env(**extra),
-                              capture_output=True, text=True, timeout=timeout,
-                              check=False)
+                              cwd=str(self.root), capture_output=True, text=True,
+                              timeout=timeout, check=False)
 
     def installs(self) -> list[str]:
         return [line for line in self.npm_log.read_text().splitlines()
@@ -643,6 +644,25 @@ def test_the_user_prefix_is_read_from_the_npmrc_prefix_line(box):
     (box.home / ".npmrc").write_text("fund=false\nprefix = ~/tools/npm\n")
     result = box.run("--porcelain", CLAUDE_CURRENT_NPM_PREFIX="")
     assert porcelain(result)["path"] == str(box.home / "tools" / "npm" / "bin" / "claude")
+
+
+@pytest.mark.parametrize("where", ["environment", ".npmrc"])
+def test_a_relative_user_prefix_is_taken_under_home(box, where):
+    """Copilot on #134: npm takes a relative `--prefix` and installs there, and
+    the candidate read back was then refused as not absolute, so the update
+    worked and the launch exited 1. Both commands anchor it at $HOME."""
+    env = {"CLAUDE_CURRENT_NPM_PREFIX": ""}
+    if where == "environment":
+        env["NPM_CONFIG_PREFIX"] = "rel-prefix"
+    else:
+        (box.home / ".npmrc").write_text("prefix=rel-prefix\n")
+    result = box.run("--porcelain", **env)
+    assert result.returncode == 0, result.stderr
+    fields = porcelain(result)
+    assert (fields["path"], fields["status"]) == (
+        str(box.home / "rel-prefix" / "bin" / "claude"), "verified")
+    assert box.installs() == [
+        f"install -g --prefix {box.home / 'rel-prefix'} --no-fund --no-audit {PACKAGE}@2.1.284"]
 
 
 # --- usage --------------------------------------------------------------------

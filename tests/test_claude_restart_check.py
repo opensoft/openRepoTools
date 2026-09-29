@@ -85,8 +85,9 @@ class Proc:
         full["NPM_CONFIG_PREFIX"] = str(self.prefix)
         full["CLAUDE_RESTART_CHECK_PROC"] = str(self.proc)
         full.update(env)
-        return subprocess.run([str(CMD), *args], env=full, capture_output=True,
-                              text=True, timeout=30, check=False)
+        return subprocess.run([str(CMD), *args], env=full, cwd=str(self.root),
+                              capture_output=True, text=True, timeout=30,
+                              check=False)
 
 
 @pytest.fixture
@@ -220,6 +221,18 @@ def test_the_native_directory_is_the_one_claude_current_reads(table):
     result = table.run("--running", "2.1.283", "--pid", "100", NO_COLOR="1",
                        CLAUDE_CURRENT_NATIVE_DIR=str(elsewhere))
     assert result.stdout == restart("2.1.283", "2.1.290") + "\n"
+
+
+def test_a_relative_user_prefix_is_read_under_home(table):
+    """The same anchor claude-current installs under (Copilot on #134)."""
+    table.native("2.1.283")
+    pkg = (table.root / "home" / "rel-prefix" / "lib" / "node_modules"
+           / "@anthropic-ai" / "claude-code")
+    pkg.mkdir(parents=True)
+    (pkg / "package.json").write_text('{\n  "version": "2.1.284"\n}\n')
+    status_line_tree(table, str(table.versions / "2.1.283"))
+    result = table.run("--pid", "100", NO_COLOR="1", NPM_CONFIG_PREFIX="rel-prefix")
+    assert result.stdout == restart("2.1.283", "2.1.284") + "\n"
 
 
 def test_no_home_reads_only_the_running_install(table):
