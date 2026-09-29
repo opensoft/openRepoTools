@@ -173,46 +173,89 @@ is_version() { [[ "${1:-}" =~ $version_re ]]; }
 
 # ------------------------------------------------------------ small helpers
 
-# kill_tree <pid>: the process and every process below it. Each one is stopped
-# before its children are listed, so none of them can start another while the
-# tree is walked, then sent TERM and continued so that it can act on it.
-# `pgrep -P` is on Linux and macOS alike; without it only <pid> is signalled.
+# Seconds a command that ignores TERM is given before it is sent KILL, so a
+# bound is a bound whatever the command does with the first signal.
+KILL_GRACE=5
+
+# kill_tree <pid> [<signal>]: the process and every process below it, and the
+# pids it signalled, one per line on stdout. Each one is stopped before its
+# children are listed, so none of them can start another while the tree is
+# walked, then sent <signal> (default TERM) and continued so that it can act
+# on it. `pgrep -P` is on Linux and macOS alike; without it only <pid> is
+# signalled.
 kill_tree() {
-	local child
+	local child sig="${2:-TERM}"
 	kill -STOP "$1" 2>/dev/null || return 0
+	printf '%s\n' "$1"
 	for child in $(pgrep -P "$1" 2>/dev/null); do
-		kill_tree "$child"
+		kill_tree "$child" "$sig"
 	done
-	kill -TERM "$1" 2>/dev/null || :
+	kill -"$sig" "$1" 2>/dev/null || :
 	kill -CONT "$1" 2>/dev/null || :
+}
+
+# running <pid>: 0 while <pid> has not exited. A zombie has exited and waits
+# only to be reaped, which in a container whose first process reaps nothing
+# can be for ever, so it is not running. Without `ps`, a pid that answers
+# `kill -0` is taken as running.
+running() {
+	local st
+	kill -0 "$1" 2>/dev/null || return 1
+	st="$(ps -o stat= -p "$1" 2>/dev/null)" || return 0
+	case "$st" in *Z*) return 1 ;; esac
+	return 0
 }
 
 # run_bounded <seconds> <command> [args...]: the command's own status, or 124
 # when it ran out of time. GNU `timeout`, else Homebrew's `gtimeout`, else a
-# watchdog, because a stock macOS ships neither. The watchdog ends the WHOLE
-# tree, as `timeout` ends its process group: a command's own children (npm's
-# lifecycle processes, a script's `sleep`) would otherwise keep the caller's
-# command substitution open after the command itself was killed. The
-# watchdog's own output goes to /dev/null for the same reason.
+# watchdog, because a stock macOS ships neither. Every branch sends TERM at
+# the bound and KILL $KILL_GRACE seconds later to what is still running:
+# `-k` for the two commands, and for the watchdog the whole tree it signalled.
+# The watchdog ends the WHOLE tree, as `timeout` ends its process group: a
+# command's own children (npm's lifecycle processes, a script's `sleep`)
+# would otherwise keep the caller's command substitution open after the
+# command itself was killed. The watchdog's own output goes to /dev/null for
+# the same reason.
 run_bounded() {
-	local secs="$1" pid dog rc=0
+	local secs="$1" pid dog rc=0 flag
 	shift
 	if command -v timeout >/dev/null 2>&1; then
-		timeout "$secs" "$@" || rc=$?
-		return "$rc"
+		timeout -k "$KILL_GRACE" "$secs" "$@" || rc=$?
+	elif command -v gtimeout >/dev/null 2>&1; then
+		gtimeout -k "$KILL_GRACE" "$secs" "$@" || rc=$?
+	else
+		# WHOEVER MAKES $flag FIRST DECIDES: the watchdog, when the time is up,
+		# or this function, when the command ended first. So this function
+		# never kills a watchdog half way through its TERM and KILL, and a
+		# watchdog that wakes after the command ended signals nothing. Where no
+		# flag can be made at all, the watchdog acts and this function stops it.
+		flag="${TMPDIR:-/tmp}/claude-current.bound.$$.$RANDOM"
+		"$@" &
+		pid=$!
+		(
+			sleep "$secs"
+			if ! mkdir -- "$flag" 2>/dev/null && [ -d "$flag" ]; then exit 0; fi
+			tree="$(kill_tree "$pid")"
+			n=0
+			while [ "$n" -lt "$KILL_GRACE" ]; do
+				alive=""
+				for p in $tree; do running "$p" && alive=1; done
+				[ -n "$alive" ] || exit 0
+				sleep 1
+				n=$((n + 1))
+			done
+			for p in $tree; do kill -KILL "$p" 2>/dev/null || :; done
+		) >/dev/null 2>&1 &
+		dog=$!
+		wait "$pid" || rc=$?
+		if mkdir -- "$flag" 2>/dev/null || [ ! -d "$flag" ]; then
+			kill_tree "$dog" >/dev/null
+		fi
+		wait "$dog" 2>/dev/null || :
+		rmdir -- "$flag" 2>/dev/null || :
+		[ "$rc" = 143 ] && rc=124
 	fi
-	if command -v gtimeout >/dev/null 2>&1; then
-		gtimeout "$secs" "$@" || rc=$?
-		return "$rc"
-	fi
-	"$@" &
-	pid=$!
-	( sleep "$secs"; kill_tree "$pid" ) >/dev/null 2>&1 &
-	dog=$!
-	wait "$pid" || rc=$?
-	kill_tree "$dog"
-	wait "$dog" 2>/dev/null || :
-	[ "$rc" = 143 ] && rc=124
+	[ "$rc" = 137 ] && rc=124
 	return "$rc"
 }
 

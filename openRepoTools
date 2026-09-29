@@ -1207,7 +1207,9 @@ $(guard_block_text)"
 	fi
 }
 
-# The thirteen placements, AFTER the fifteen files and the merge are all in hand.
+# The fourteen artifacts that are not bin-directory files, in thirteen writes
+# (the two hook entries go into settings.json in one), AFTER the fifteen files
+# and the merge are all in hand.
 place_skill_and_hook() {
 	local shared_dir bare_dir settings target verb hook_tmp name
 	settings="$(claude_home)/settings.json"

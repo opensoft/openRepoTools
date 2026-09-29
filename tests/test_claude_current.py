@@ -67,6 +67,7 @@ FAKE_NPM = r"""#!/usr/bin/env bash
 printf '%s\n' "$*" >> "${FAKE_NPM_LOG:-/dev/null}"
 case "${1:-}" in
   view)
+    if [ -n "${FAKE_NPM_VIEW_IGNORE_TERM:-}" ]; then trap '' TERM; fi
     [ -n "${FAKE_NPM_VIEW_SLEEP:-}" ] && sleep "$FAKE_NPM_VIEW_SLEEP"
     [ "${FAKE_NPM_VIEW_RC:-0}" = 0 ] || exit "$FAKE_NPM_VIEW_RC"
     printf '%s\n' "${FAKE_NPM_PUBLISHED:-}" ;;
@@ -514,6 +515,26 @@ def test_the_watchdog_ends_a_hung_commands_children_too(box):
                      PATH=path_without(box, "timeout", "gtimeout"))
     elapsed = time.monotonic() - started
     assert elapsed < 15, f"the watchdog did not end the tree: {elapsed:.1f}s"
+    assert result.returncode == 0, result.stderr
+    assert porcelain(result)["status"] == "unverified"
+    assert "npm view took longer than 1s" in result.stderr
+
+
+@pytest.mark.parametrize("fallback", [False, True], ids=["host", "watchdog"])
+def test_a_command_that_ignores_term_is_killed_after_the_grace(box, fallback):
+    """Copilot on #134: TERM was the only signal, so a command that ignored it
+    (with its children) held the launch for as long as it liked. KILL follows
+    five seconds later on every branch: `timeout -k` on a host that has it,
+    and the watchdog's own on one that does not."""
+    box.user_copy("2.1.283")
+    env = {"FAKE_NPM_VIEW_SLEEP": "30", "FAKE_NPM_VIEW_IGNORE_TERM": "1",
+           "CLAUDE_CURRENT_TIMEOUT": "1"}
+    if fallback:
+        env["PATH"] = path_without(box, "timeout", "gtimeout")
+    started = time.monotonic()
+    result = box.run("--porcelain", **env)
+    elapsed = time.monotonic() - started
+    assert elapsed < 20, f"KILL never came: {elapsed:.1f}s"
     assert result.returncode == 0, result.stderr
     assert porcelain(result)["status"] == "unverified"
     assert "npm view took longer than 1s" in result.stderr

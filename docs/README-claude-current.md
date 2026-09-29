@@ -123,7 +123,8 @@ apart from 1 because a launcher reports 1 as "no Claude Code".
 The timeouts use `timeout`, else Homebrew's `gtimeout`, else a watchdog of its
 own, because a stock macOS ships neither. The watchdog ends the command's whole
 process tree, as `timeout` ends its process group, so a child npm started
-cannot hold the answer open past the bound.
+cannot hold the answer open past the bound. On every branch a command that
+ignores TERM is sent KILL five seconds later.
 
 ## The hand-off
 

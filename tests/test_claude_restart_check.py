@@ -113,6 +113,19 @@ def test_a_binary_npm_replaced_under_the_session_asks_for_a_restart(table):
     assert result.stdout == restart("2.1.283", "2.1.284") + "\n"
 
 
+def test_a_minified_package_json_is_read_too(table):
+    """Copilot on #134: only a `"version"` key on a line of its own was read,
+    so a minified package.json gave no installed version and a behind session
+    no notice. Pretty or minified, the first "version" is the one."""
+    exe = table.npm_package("2.1.283")
+    (exe.parent.parent / "package.json").write_text(
+        '{"name":"@anthropic-ai/claude-code","version":"2.1.284",'
+        '"bin":{"claude":"bin/claude.exe"},"engines":{"node":">=18"}}')
+    status_line_tree(table, str(exe))
+    result = table.run("--running", "2.1.283", "--pid", "100", NO_COLOR="1")
+    assert result.stdout == restart("2.1.283", "2.1.284") + "\n"
+
+
 def test_the_line_is_green_unless_no_color_is_set(table):
     table.npm_package("2.1.284")
     status_line_tree(table, table.replaced_npm_exe())
