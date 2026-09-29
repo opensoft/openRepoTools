@@ -256,6 +256,14 @@ def _started_line(box: Sandbox) -> str:
     return lines[0]
 
 
+def _claude_fields(box: Sandbox) -> list[str]:
+    """The `claude <version>` sub-fields of the lane's STARTED payload. Asked
+    by name and never by position: other amendments append sub-fields of their
+    own (Amendment 18's `host`, `os` and `container` follow this one)."""
+    payload = _started_line(box).split(" → ", 1)[1]
+    return [f for f in payload.split("; ") if f.startswith("claude ")]
+
+
 def test_an_unset_claude_bin_launches_what_claude_current_names(box):
     stub = box.resolver()
     result = box.start()
@@ -274,9 +282,8 @@ def test_the_log_line_records_the_version_claude_current_read(box):
     box.resolver()
     result = box.start()
     assert result.returncode == 0, result.stderr
-    line = _started_line(box)
-    assert line.endswith(f"; claude {VERSION}"), line
-    assert "lane:repoZ-1 → home opensoft/repoZ; " in line, line
+    assert _claude_fields(box) == [f"claude {VERSION}"], _started_line(box)
+    assert "lane:repoZ-1 → home opensoft/repoZ; " in _started_line(box)
 
 
 def test_a_refusal_ends_the_run_with_2_before_anything_is_written(box):
@@ -323,7 +330,7 @@ def test_a_launchers_verified_version_is_trusted_recorded_and_removed(box):
     runs = box.claude_runs()
     assert runs.startswith(f"ran {box.resolved}: --name {LANE}"), runs
     assert "env CLAUDE_VERIFIED_VERSION=<unset>\n" in runs
-    assert _started_line(box).endswith("; claude 2.1.290")
+    assert _claude_fields(box) == ["claude 2.1.290"], _started_line(box)
 
 
 def test_an_operator_pin_is_launched_as_it_is_and_records_no_version(box):
@@ -333,7 +340,7 @@ def test_an_operator_pin_is_launched_as_it_is_and_records_no_version(box):
     assert result.returncode == 0, result.stderr
     assert box.resolver_calls() == ""
     assert box.claude_runs().startswith(f"ran {pinned}: --name {LANE}")
-    assert "; claude " not in _started_line(box)
+    assert _claude_fields(box) == [], _started_line(box)
 
 
 def test_a_version_beside_a_different_resolved_path_is_not_the_pins(box):
@@ -347,7 +354,7 @@ def test_a_version_beside_a_different_resolved_path_is_not_the_pins(box):
     assert result.returncode == 0, result.stderr
     assert box.resolver_calls() == ""
     assert "env CLAUDE_VERIFIED_VERSION=<unset>\n" in box.claude_runs()
-    assert "; claude " not in _started_line(box)
+    assert _claude_fields(box) == [], _started_line(box)
 
 
 def test_an_inherited_resolution_is_resolved_again(box):
@@ -359,7 +366,7 @@ def test_an_inherited_resolution_is_resolved_again(box):
     assert result.returncode == 0, result.stderr
     assert box.resolver_calls() == f"{stub} --porcelain\n"
     assert box.claude_runs().startswith(f"ran {box.resolved}: --name {LANE}")
-    assert _started_line(box).endswith(f"; claude {VERSION}")
+    assert _claude_fields(box) == [f"claude {VERSION}"], _started_line(box)
 
 
 def test_dry_run_plans_the_resolution_and_runs_nothing(box):
@@ -392,7 +399,7 @@ def test_no_resolver_beside_it_launches_the_path_claude_and_says_so(box):
     assert box.resolver_calls() == ""
     assert box.claude_runs().startswith(f"ran {box.path_claude}: --name {LANE}")
     assert "no claude-current beside this command" in result.stderr
-    assert "; claude " not in _started_line(box)
+    assert _claude_fields(box) == [], _started_line(box)
 
 
 def test_the_resolver_is_found_in_the_bin_dir_when_not_beside_it(box):
@@ -409,7 +416,7 @@ def test_a_version_that_is_not_one_is_left_off_the_log_line(box):
     result = box.start(FAKE_CC_VERSION="2.1; rm")
     assert result.returncode == 0, result.stderr
     assert "is not x.y.z" in result.stderr
-    assert "; claude " not in _started_line(box)
+    assert _claude_fields(box) == [], _started_line(box)
 
 
 def test_another_agent_never_asks_claude_current(box):
@@ -419,3 +426,28 @@ def test_another_agent_never_asks_claude_current(box):
     assert result.returncode == 0, result.stderr
     assert box.resolver_calls() == ""
     assert box.claude_runs().startswith(f"ran {box.fakebin / 'codex'}: ")
+
+
+def test_a_confirm_answered_no_launches_the_resolved_claude_bare(box):
+    """Copilot on #134: the bare launch a `--confirm` answered No takes came
+    before the resolution and started `claude` from PATH. It resolves too."""
+    stub = box.resolver()
+    before = box.commits()
+    result = box.start("--confirm", LANE_START_ANSWER="n")
+    assert result.returncode == 0, result.stderr
+    assert "is NOT taken" in result.stderr
+    assert box.resolver_calls() == f"{stub} --porcelain\n"
+    runs = box.claude_runs()
+    assert runs.startswith(f"ran {box.resolved}: \n"), runs
+    assert f"env CLAUDE_RESOLVED_BIN={box.resolved}\n" in runs
+    assert box.commits() == before
+
+
+def test_a_confirm_answered_no_is_refused_when_stale(box):
+    box.resolver()
+    before = box.commits()
+    result = box.start("--confirm", LANE_START_ANSWER="n", FAKE_CC_RC="2")
+    assert result.returncode == 2, result.stderr
+    assert "claude-current refused the launch (exit 2" in result.stderr
+    assert box.claude_runs() == ""
+    assert box.commits() == before

@@ -33,13 +33,18 @@
 #   - The binary was REPLACED when that exe link ends in " (deleted)". npm
 #     renames the old package directory before it deletes it, so the exe path
 #     cannot be used to read the running version.
-#   - The INSTALLED version is read from disk: the highest x.y.z name in the
-#     native versions directory, or `version` in the npm package's
-#     package.json at its canonical path.
+#   - The INSTALLED version is read from disk, as the highest of: the running
+#     install's own (the highest x.y.z name beside a native version file, or
+#     `version` in the npm package's package.json at its canonical path), the
+#     native versions directory ($CLAUDE_CURRENT_NATIVE_DIR, default
+#     ~/.local/share/claude/versions), and the package in the user npm prefix,
+#     found the way claude-current finds it. So a session on the npm copy is
+#     told about a newer native install, which the next launch starts.
 #   - It warns when the binary was replaced, or when the installed version is
 #     newer than the running one (--running, else the native file's name).
-#   It reads /proc and two small files. It reaches no network and runs no
-#   binary, so the render is not slowed by a `claude --version`.
+#   It reads /proc, a directory listing and a few small files. It reaches no
+#   network and runs no binary, so the render is not slowed by a
+#   `claude --version`.
 #
 # OUTPUT
 #   Nothing, or exactly one line:
@@ -54,6 +59,9 @@
 # ENVIRONMENT
 #   CLAUDE_RESTART_CHECK_PROC  the process table to read (default /proc), the
 #                              test seam
+#   CLAUDE_CURRENT_NATIVE_DIR, CLAUDE_CURRENT_NPM_PREFIX, NPM_CONFIG_PREFIX
+#                              where the installs are, read as claude-current
+#                              reads them
 #   NO_COLOR                   plain text, no ANSI colour
 #
 # `set -u` and NOT `set -e`, deliberately, for lane-handoff's reason one file
@@ -117,8 +125,8 @@ version_re='^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$'
 core_re='^[0-9]+\.[0-9]+\.[0-9]+$'
 is_version() { [[ "${1:-}" =~ $version_re ]]; }
 
-# numcmp and vercmp are claude-current's, byte for byte, so the two commands
-# agree on which version is newer.
+# numcmp, precmp and vercmp are claude-current's, byte for byte, so the two
+# commands agree on which version is newer.
 numcmp() {
 	local x="$1" y="$2"
 	x="${x#"${x%%[!0]*}"}"
@@ -131,6 +139,42 @@ numcmp() {
 	fi
 	if [ "$x" = "$y" ]; then echo 0; return 0; fi
 	if [[ "$x" > "$y" ]]; then echo 1; else echo -1; fi
+}
+
+# precmp <a> <b>: -1, 0 or 1 for two pre-release tags, by SemVer 2.0.0 rule 11:
+# dot-separated identifiers from the left; digits-only ones compare as numbers
+# and sort before the others, which compare in byte order (LC_ALL=C); when
+# every shared identifier is equal, the tag with fewer identifiers is lower.
+# So beta.9 < beta.10, and alpha < alpha.1 < alpha.beta.
+precmp() {
+	local a="$1" b="$2" x y xn yn c
+	while [ -n "$a" ] || [ -n "$b" ]; do
+		[ -n "$a" ] || { echo -1; return 0; }
+		[ -n "$b" ] || { echo 1; return 0; }
+		x="${a%%.*}"
+		y="${b%%.*}"
+		case "$a" in *.*) a="${a#*.}" ;; *) a="" ;; esac
+		case "$b" in *.*) b="${b#*.}" ;; *) b="" ;; esac
+		xn=1
+		yn=1
+		case "$x" in '' | *[!0-9]*) xn=0 ;; esac
+		case "$y" in '' | *[!0-9]*) yn=0 ;; esac
+		if [ "$xn$yn" = 11 ]; then
+			c="$(numcmp "$x" "$y")"
+		elif [ "$xn$yn" = 10 ]; then
+			c=-1
+		elif [ "$xn$yn" = 01 ]; then
+			c=1
+		elif [ "$x" = "$y" ]; then
+			c=0
+		elif (LC_ALL=C; [[ "$x" < "$y" ]]); then
+			c=-1
+		else
+			c=1
+		fi
+		[ "$c" = 0 ] || { echo "$c"; return 0; }
+	done
+	echo 0
 }
 
 vercmp() {
@@ -150,7 +194,7 @@ vercmp() {
 	if [ "$ap" = "$bp" ]; then echo 0; return 0; fi
 	if [ -z "$ap" ]; then echo 1; return 0; fi
 	if [ -z "$bp" ]; then echo -1; return 0; fi
-	if [[ "$ap" > "$bp" ]]; then echo 1; else echo -1; fi
+	precmp "$ap" "$bp"
 }
 
 is_claude_binary() { # <exe target, " (deleted)" already removed>
@@ -184,6 +228,33 @@ package_version() {
 	sed -n -e 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*$/\1/p' "$1" 2>/dev/null | head -n 1
 }
 
+# The user npm prefix, found the way claude-current finds it (byte for byte),
+# because that is the prefix a launch updates and starts from.
+npm_user_prefix() {
+	local p=""
+	if [ -n "${CLAUDE_CURRENT_NPM_PREFIX:-}" ]; then
+		p="$CLAUDE_CURRENT_NPM_PREFIX"
+	elif [ -n "${NPM_CONFIG_PREFIX:-}" ]; then
+		p="$NPM_CONFIG_PREFIX"
+	elif [ -n "${npm_config_prefix:-}" ]; then
+		p="$npm_config_prefix"
+	elif [ -r "$HOME/.npmrc" ]; then
+		p="$(sed -n -e 's/^[[:space:]]*prefix[[:space:]]*=[[:space:]]*//p' "$HOME/.npmrc" | tail -n 1)"
+		p="${p%"${p##*[![:space:]]}"}"
+		p="${p%\"}"
+		p="${p#\"}"
+	fi
+	case "$p" in
+		'~') p="$HOME" ;;
+		'~/'*) p="$HOME/${p#'~/'}" ;;
+		'${HOME}'*) p="$HOME${p#'${HOME}'}" ;;
+		'$HOME'*) p="$HOME${p#'$HOME'}" ;;
+	esac
+	p="${p%/}"
+	[ -n "$p" ] || p="$HOME/.npm-global"
+	printf '%s\n' "$p"
+}
+
 pid="$start_pid"
 exe=""
 target=""
@@ -207,18 +278,33 @@ done
 replaced=0
 [ "$exe" = "$target" ] || replaced=1
 
+# THE INSTALLED VERSION IS THE HIGHEST ONE A LAUNCH COULD START, from every
+# install claude-current reads that has its version on disk: the running
+# binary's own, the native versions directory and the user npm prefix's
+# package. A session on the npm copy is behind a newer native install, which
+# the next launch starts (Copilot on opensoft/openRepoTools#134).
 installed=""
 from_path=""
+consider() { # <version>: kept when it is higher than the one in hand
+	is_version "${1:-}" || return 0
+	if [ -z "$installed" ] || [ "$(vercmp "$1" "$installed")" = 1 ]; then
+		installed="$1"
+	fi
+}
 case "$target" in
 	*/claude/versions/*)
-		installed="$(highest_in "${target%/*}")"
+		consider "$(highest_in "${target%/*}")"
 		from_path="${target##*/}" ;;
 	*/node_modules/@anthropic-ai/*)
-		installed="$(package_version "${target%%/node_modules/@anthropic-ai/*}/node_modules/@anthropic-ai/claude-code/package.json")"
+		consider "$(package_version "${target%%/node_modules/@anthropic-ai/*}/node_modules/@anthropic-ai/claude-code/package.json")"
 		if [ "$replaced" = 0 ]; then
 			from_path="$(package_version "${target%/bin/*}/package.json")"
 		fi ;;
 esac
+if [ -n "${HOME:-}" ]; then
+	consider "$(highest_in "${CLAUDE_CURRENT_NATIVE_DIR:-$HOME/.local/share/claude/versions}")"
+	consider "$(package_version "$(npm_user_prefix)/lib/node_modules/@anthropic-ai/claude-code/package.json")"
+fi
 
 is_version "$running" || running="$from_path"
 is_version "$running" || running=""

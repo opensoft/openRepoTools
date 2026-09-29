@@ -64,6 +64,10 @@ It then asks npm, bounded by `$CLAUDE_CURRENT_TIMEOUT` seconds:
 | still behind, `CLAUDE_ALLOW_STALE=1` | the newest candidate, and says `STALE` | `stale` |
 
 An equal candidate beats a newer one. `ahead` is a launch, not a refusal.
+"Newer" is SemVer's order, in both commands alike: numeric on x.y.z, a
+release above its own pre-releases, and pre-release identifiers compared
+one by one, numbers as numbers (`beta.9` before `beta.10`) and words in byte
+order. Build metadata after a `+` is ignored.
 
 **The update runs under a lock** at
 `${XDG_CACHE_HOME:-~/.cache}/openrepotools/claude-current.lock`: `flock` where
@@ -143,7 +147,8 @@ an inherited answer from an operator's pin:
 ## `lane-start`
 
 `lane-start` applies that table at the end of step 5a, once it knows the agent
-and the launch, and before step 5 writes anything:
+and the launch, and before step 5 writes anything (and in one earlier launch,
+below):
 
 - It looks for `claude-current` beside itself, then in
   `$OPENREPOTOOLS_BIN_DIR` (default `~/.local/bin`), and never on `PATH`. A
@@ -178,11 +183,9 @@ A pinned launch records no version, and neither does a line written by the
 deferred `--no-launch` act. A value that is not x.y.z is left off with a note,
 because the log is append-only.
 
-One path is not covered yet. A `--confirm` answered No launches
-`$CLAUDE_BIN` bare, without a lane, and it does not ask `claude-current`: an
-unset `CLAUDE_BIN` there is still `claude` from `PATH`. Through
-`claude-profile`, which hands on its own resolved path, that launch is
-current anyway.
+A `--confirm` answered No launches Claude bare, without a lane and writing
+nothing, and that launch resolves the same way, refusal included. It is the
+one launch that happens before step 4.
 
 ## `claude-restart-check`
 
@@ -205,8 +208,13 @@ It warns when either of these holds:
   names a directory that no longer exists, and it cannot give the running
   version.
 - **The installed version is newer than the running one.** The installed
-  version is the highest x.y.z name in the native versions directory, or the
-  `version` in the npm package's `package.json` at its canonical path. The
+  version is the highest of three, each read from disk: the running install's
+  own (the highest x.y.z name beside a native version file, or the `version`
+  in the npm package's `package.json` at its canonical path), the native
+  versions directory (`$CLAUDE_CURRENT_NATIVE_DIR`, default
+  `~/.local/share/claude/versions`), and the package in the user npm prefix,
+  found the way `claude-current` finds it. So a session on the npm copy is
+  told about a newer native install, which the next launch starts. The
   running version is `--running` (the status line JSON's `version`), else the
   native file's own name.
 
@@ -217,9 +225,9 @@ RESTART NEEDED: running 2.1.283, installed 2.1.284; /ctx at your next breakpoint
 ```
 
 It never acts. There is no kill and no automatic `/ctx`, because a working
-session is never interrupted. It reads `/proc` and two small files, reaches no
-network and runs no binary, so the render is not slowed by a `claude
---version`. It always exits 0, on a host with no `/proc` such as macOS too,
+session is never interrupted. It reads `/proc`, one directory listing and a
+few small files, reaches no network and runs no binary, so the render is not
+slowed by a `claude --version`. It always exits 0, on a host with no `/proc` such as macOS too,
 where it prints nothing: a status line must never break on this. 64 is kept
 for an argument it does not know. `CLAUDE_RESTART_CHECK_PROC` (default
 `/proc`) is the test seam.

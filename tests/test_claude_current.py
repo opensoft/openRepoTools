@@ -656,10 +656,47 @@ def _function(text: str, name: str) -> str:
     return match.group(0)
 
 
-@pytest.mark.parametrize("name", ["numcmp", "vercmp"])
+@pytest.mark.parametrize("name", ["numcmp", "precmp", "vercmp", "npm_user_prefix"])
 def test_both_commands_order_versions_with_the_same_code(name):
-    """One idea of "newer" in both commands: a restart notice that disagreed
-    with the resolver about which version is newer would contradict it."""
+    """One idea of "newer" in both commands, and one idea of where the user
+    npm copy is: a restart notice that disagreed with the resolver about
+    either would contradict it."""
     current = (REPO / "claude-current").read_text(encoding="utf-8")
     check = (REPO / "claude-restart-check").read_text(encoding="utf-8")
     assert _function(current, name) == _function(check, name)
+
+
+#: (a, b, vercmp a b). The pre-release rows are SemVer 2.0.0 rule 11's own
+#: example chain, 1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-alpha.beta < 1.0.0-beta
+#: < 1.0.0-beta.2 < 1.0.0-beta.11 < 1.0.0-rc.1 < 1.0.0, plus the case Copilot
+#: raised on #134: beta.9 against beta.10 as strings put beta.9 ahead.
+VERSION_ORDER = [
+    ("2.1.284", "2.1.284", "0"),
+    ("2.1.10", "2.1.9", "1"),
+    ("2.1.9", "2.1.10", "-1"),
+    ("10.0.0", "9.99.99", "1"),
+    ("2.1.284-beta.9", "2.1.284-beta.10", "-1"),
+    ("2.1.284-beta.10", "2.1.284-beta.9", "1"),
+    ("1.0.0-alpha", "1.0.0-alpha.1", "-1"),
+    ("1.0.0-alpha.1", "1.0.0-alpha.beta", "-1"),
+    ("1.0.0-alpha.beta", "1.0.0-beta", "-1"),
+    ("1.0.0-beta", "1.0.0-beta.2", "-1"),
+    ("1.0.0-beta.2", "1.0.0-beta.11", "-1"),
+    ("1.0.0-beta.11", "1.0.0-rc.1", "-1"),
+    ("1.0.0-rc.1", "1.0.0", "-1"),
+    ("1.0.0", "1.0.0-rc.1", "1"),
+    ("1.0.0-Beta", "1.0.0-alpha", "-1"),
+    ("1.0.0-rc.1+build.5", "1.0.0-rc.1", "0"),
+]
+
+
+@pytest.mark.parametrize("a,b,want", VERSION_ORDER)
+def test_versions_are_ordered_by_semver(a, b, want):
+    """vercmp as claude-current carries it, run on its own. Byte order for
+    the alphanumeric identifiers, so `Beta` sorts before `alpha` in every
+    locale, which is SemVer's rule and not the locale's."""
+    text = (REPO / "claude-current").read_text(encoding="utf-8")
+    funcs = "".join(_function(text, n) for n in ("numcmp", "precmp", "vercmp"))
+    result = subprocess.run(["bash", "-c", funcs + 'vercmp "$1" "$2"', "_", a, b],
+                            capture_output=True, text=True, timeout=30, check=False)
+    assert (result.returncode, result.stdout) == (0, want + "\n"), result.stderr

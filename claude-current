@@ -231,8 +231,44 @@ numcmp() {
 	if [[ "$x" > "$y" ]]; then echo 1; else echo -1; fi
 }
 
+# precmp <a> <b>: -1, 0 or 1 for two pre-release tags, by SemVer 2.0.0 rule 11:
+# dot-separated identifiers from the left; digits-only ones compare as numbers
+# and sort before the others, which compare in byte order (LC_ALL=C); when
+# every shared identifier is equal, the tag with fewer identifiers is lower.
+# So beta.9 < beta.10, and alpha < alpha.1 < alpha.beta.
+precmp() {
+	local a="$1" b="$2" x y xn yn c
+	while [ -n "$a" ] || [ -n "$b" ]; do
+		[ -n "$a" ] || { echo -1; return 0; }
+		[ -n "$b" ] || { echo 1; return 0; }
+		x="${a%%.*}"
+		y="${b%%.*}"
+		case "$a" in *.*) a="${a#*.}" ;; *) a="" ;; esac
+		case "$b" in *.*) b="${b#*.}" ;; *) b="" ;; esac
+		xn=1
+		yn=1
+		case "$x" in '' | *[!0-9]*) xn=0 ;; esac
+		case "$y" in '' | *[!0-9]*) yn=0 ;; esac
+		if [ "$xn$yn" = 11 ]; then
+			c="$(numcmp "$x" "$y")"
+		elif [ "$xn$yn" = 10 ]; then
+			c=-1
+		elif [ "$xn$yn" = 01 ]; then
+			c=1
+		elif [ "$x" = "$y" ]; then
+			c=0
+		elif (LC_ALL=C; [[ "$x" < "$y" ]]); then
+			c=-1
+		else
+			c=1
+		fi
+		[ "$c" = 0 ] || { echo "$c"; return 0; }
+	done
+	echo 0
+}
+
 # vercmp <a> <b>: -1, 0 or 1. Numeric on the x.y.z core. Then a version with no
-# pre-release tag beats one with a tag, and two tags compare as strings. Build
+# pre-release tag beats one with a tag, and two tags compare by precmp. Build
 # metadata (+...) is ignored.
 vercmp() {
 	local a="${1%%+*}" b="${2%%+*}" ac bc ap="" bp="" ar br i c
@@ -251,7 +287,7 @@ vercmp() {
 	if [ "$ap" = "$bp" ]; then echo 0; return 0; fi
 	if [ -z "$ap" ]; then echo 1; return 0; fi
 	if [ -z "$bp" ]; then echo -1; return 0; fi
-	if [[ "$ap" > "$bp" ]]; then echo 1; else echo -1; fi
+	precmp "$ap" "$bp"
 }
 
 # physical <path>: the path with every symlink resolved, without `readlink -f`,

@@ -76,7 +76,13 @@ class Proc:
             f.chmod(0o755)
 
     def run(self, *args: str, **env: str) -> subprocess.CompletedProcess:
-        full = {k: v for k, v in os.environ.items() if k != "NO_COLOR"}
+        """The installs are read from `$HOME` and the user npm prefix as
+        claude-current reads them, so both point into this fixture and every
+        seam the host exports is dropped."""
+        full = {k: v for k, v in os.environ.items()
+                if k != "NO_COLOR" and not k.startswith(("CLAUDE_", "NPM_CONFIG_", "npm_config_"))}
+        full["HOME"] = str(self.root / "home")
+        full["NPM_CONFIG_PREFIX"] = str(self.prefix)
         full["CLAUDE_RESTART_CHECK_PROC"] = str(self.proc)
         full.update(env)
         return subprocess.run([str(CMD), *args], env=full, capture_output=True,
@@ -175,6 +181,57 @@ def test_the_walk_starts_at_the_parent_by_default(table):
     table.process(os.getpid(), 200, "/usr/bin/python3")
     result = table.run("--running", "2.1.283", NO_COLOR="1")
     assert result.stdout == restart("2.1.283", "2.1.284") + "\n"
+
+
+def test_an_npm_session_behind_a_newer_native_install_asks(table):
+    """Copilot on #134: the installed version was read only from the running
+    binary's own family, so an npm 2.1.283 session beside a native 2.1.284
+    said nothing, and the next launch starts the native one."""
+    exe = table.npm_package("2.1.283")
+    table.native("2.1.284")
+    status_line_tree(table, str(exe))
+    result = table.run("--running", "2.1.283", "--pid", "100", NO_COLOR="1")
+    assert result.stdout == restart("2.1.283", "2.1.284") + "\n"
+
+
+def test_a_native_session_behind_the_user_npm_copy_asks(table):
+    table.native("2.1.283")
+    table.npm_package("2.1.284")
+    status_line_tree(table, str(table.versions / "2.1.283"))
+    result = table.run("--pid", "100", NO_COLOR="1")
+    assert result.stdout == restart("2.1.283", "2.1.284") + "\n"
+
+
+def test_an_older_install_in_the_other_family_is_no_reason(table):
+    exe = table.npm_package("2.1.284")
+    table.native("2.1.280")
+    status_line_tree(table, str(exe))
+    assert table.run("--running", "2.1.284", "--pid", "100").stdout == ""
+
+
+def test_the_native_directory_is_the_one_claude_current_reads(table):
+    exe = table.npm_package("2.1.283")
+    elsewhere = table.root / "native-elsewhere"
+    elsewhere.mkdir()
+    newer = elsewhere / "2.1.290"
+    newer.write_text("#!/bin/sh\n")
+    newer.chmod(0o755)
+    status_line_tree(table, str(exe))
+    result = table.run("--running", "2.1.283", "--pid", "100", NO_COLOR="1",
+                       CLAUDE_CURRENT_NATIVE_DIR=str(elsewhere))
+    assert result.stdout == restart("2.1.283", "2.1.290") + "\n"
+
+
+def test_no_home_reads_only_the_running_install(table):
+    exe = table.npm_package("2.1.284")
+    table.native("2.1.290")
+    status_line_tree(table, str(exe))
+    env = {k: v for k, v in os.environ.items() if k != "HOME"}
+    env["CLAUDE_RESTART_CHECK_PROC"] = str(table.proc)
+    result = subprocess.run(["env", "-u", "HOME", str(CMD), "--running", "2.1.284",
+                             "--pid", "100"], env=env, capture_output=True,
+                            text=True, timeout=30, check=False)
+    assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
 
 
 def test_no_claude_above_it_prints_nothing(table):
