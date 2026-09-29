@@ -95,7 +95,7 @@
 #
 # Bash 3.2 safe (macOS): no mapfile, no associative arrays, no readlink -f,
 # no GNU-only flags; `timeout`, else `gtimeout`, else a watchdog; `flock`, else
-# a mkdir lock.
+# a symlink lock.
 
 set -euo pipefail
 
@@ -451,7 +451,7 @@ EOF
 # ------------------------------------------------------------ the lock
 
 lock_fd_open=0
-mkdir_lock=""
+link_lock=""
 lock_why=""
 
 # take_lock: 0 with the lock held, or 1 with lock_why saying why not.
@@ -476,8 +476,11 @@ take_lock() {
 		lock_fd_open=0
 		return 1
 	fi
-	# No flock on a stock macOS: a mkdir lock whose owner writes its pid, so a
-	# lock left by a process that died is taken over, not waited out.
+	# No flock on a stock macOS: the lock is a SYMLINK whose text names its
+	# owner, `pid=<pid>`. `ln -s` makes it and publishes the owner in one
+	# atomic act, so a launch killed at any point leaves either no lock or a
+	# lock that names it, never an ownerless one every later launch would wait
+	# on. A lock whose owner is no longer running is taken over, not waited out.
 	#
 	# ONE LAUNCH REMOVES A DEAD OWNER'S LOCK, and it holds a second directory,
 	# the reaper, while it looks again. Two launches that both read the same
@@ -486,14 +489,23 @@ take_lock() {
 	# update at once. Under the reaper the lock is removed only while it still
 	# names the pid that was seen dead. A reaper left by a launch killed in
 	# those few lines blocks the takeover, and the refusal names it.
-	d="$LOCK_FILE.d"
-	while ! mkdir -- "$d" 2>/dev/null; do
-		owner="$(cat -- "$d/pid" 2>/dev/null || :)"
+	d="$LOCK_FILE.l"
+	while :; do
+		if ln -s "pid=$$" "$d" 2>/dev/null; then
+			[ "$(readlink -- "$d" 2>/dev/null || :)" = "pid=$$" ] && break
+			# A directory at that path: `ln` put the link inside it.
+			rm -f -- "$d/pid=$$" 2>/dev/null || :
+			lock_why="$d is a directory and not this command's lock: remove it"
+			return 1
+		fi
+		owner="$(readlink -- "$d" 2>/dev/null || :)"
+		owner="${owner#pid=}"
+		case "$owner" in '' | *[!0-9]*) owner="" ;; esac
 		if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null &&
 			mkdir -- "$d.reap" 2>/dev/null; then
 			reaped=0
-			if [ "$(cat -- "$d/pid" 2>/dev/null || :)" = "$owner" ] &&
-				rm -rf -- "$d" 2>/dev/null && [ ! -e "$d" ]; then
+			if [ "$(readlink -- "$d" 2>/dev/null || :)" = "pid=$owner" ] &&
+				rm -f -- "$d" 2>/dev/null && [ ! -L "$d" ]; then
 				reaped=1
 			fi
 			rmdir -- "$d.reap" 2>/dev/null || :
@@ -509,8 +521,7 @@ take_lock() {
 		sleep 1
 		waited=$((waited + 1))
 	done
-	printf '%s\n' "$$" >"$d/pid"
-	mkdir_lock="$d"
+	link_lock="$d"
 	lock_why=""
 	return 0
 }
@@ -521,9 +532,11 @@ release_lock() {
 		exec 9>&-
 		lock_fd_open=0
 	fi
-	if [ -n "$mkdir_lock" ]; then
-		rm -rf -- "$mkdir_lock"
-		mkdir_lock=""
+	if [ -n "$link_lock" ]; then
+		if [ "$(readlink -- "$link_lock" 2>/dev/null || :)" = "pid=$$" ]; then
+			rm -f -- "$link_lock"
+		fi
+		link_lock=""
 	fi
 }
 trap release_lock EXIT

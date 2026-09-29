@@ -61,6 +61,8 @@ esac
 #: launcher linked from `<p>/bin/claude` into `lib/node_modules` — and, with
 #: `$FAKE_NPM_HOOK_NEEDED=1`, leaves the launcher a stub until the package's
 #: `install.cjs` has run, which is npm 12's skipped native-binary hook.
+#: `$FAKE_NPM_INSTALL_HOOK` is shell run at the start of an install, while the
+#: launch that runs it holds the update lock.
 FAKE_NPM = r"""#!/usr/bin/env bash
 printf '%s\n' "$*" >> "${FAKE_NPM_LOG:-/dev/null}"
 case "${1:-}" in
@@ -70,6 +72,7 @@ case "${1:-}" in
     printf '%s\n' "${FAKE_NPM_PUBLISHED:-}" ;;
   install)
     [ "${FAKE_NPM_INSTALL_RC:-0}" = 0 ] || { echo "npm ERR! fake failure" >&2; exit "$FAKE_NPM_INSTALL_RC"; }
+    if [ -n "${FAKE_NPM_INSTALL_HOOK:-}" ]; then eval "$FAKE_NPM_INSTALL_HOOK"; fi
     prefix=""; spec=""
     while [ $# -gt 0 ]; do
       case "$1" in
@@ -339,8 +342,8 @@ def _hold_lock(box: Sandbox, seconds: int, then: str = ":") -> subprocess.Popen:
     if shutil.which("flock"):
         script = f'exec 9>>"{lock}"; flock 9; touch "{box.root}/held"; sleep {seconds}; {then}'
     else:
-        script = (f'mkdir "{lock}.d"; echo $$ > "{lock}.d/pid"; touch "{box.root}/held"; '
-                  f'sleep {seconds}; {then}; rm -rf "{lock}.d"')
+        script = (f'ln -s "pid=$$" "{lock}.l"; touch "{box.root}/held"; '
+                  f'sleep {seconds}; {then}; rm -f "{lock}.l"')
     proc = subprocess.Popen(["bash", "-c", script], env=box.env())
     deadline = time.monotonic() + 10
     while not (box.root / "held").exists():
@@ -497,20 +500,56 @@ def _dead_pid() -> int:
     return proc.pid
 
 
-def test_a_mkdir_lock_whose_owner_died_is_taken_over(box):
-    """No `flock`: the lock is a directory holding its owner's pid, and a pid
+def _link_lock(box: Sandbox, pid: int) -> Path:
+    """The lock as a launch without `flock` makes it: a symlink whose text
+    names its owner."""
+    lock = box.cache / "claude-current.lock.l"
+    lock.symlink_to(f"pid={pid}")
+    return lock
+
+
+def test_a_link_lock_whose_owner_died_is_taken_over(box):
+    """No `flock`: the lock is a symlink whose text names its owner, and a pid
     that is no longer running is a lock nobody holds."""
     box.user_copy("2.1.283")
-    lock = box.cache / "claude-current.lock.d"
-    lock.mkdir()
-    (lock / "pid").write_text(f"{_dead_pid()}\n")
+    lock = _link_lock(box, _dead_pid())
     result = box.run("--porcelain", CLAUDE_CURRENT_LOCK_WAIT="5",
                      PATH=path_without(box, "flock"))
     assert result.returncode == 0, result.stderr
     assert porcelain(result)["status"] == "verified"
     assert len(box.installs()) == 1
-    assert not lock.exists(), "the lock was not released"
-    assert not (box.cache / "claude-current.lock.d.reap").exists()
+    assert not lock.is_symlink(), "the lock was not released"
+    assert not (box.cache / "claude-current.lock.l.reap").exists()
+
+
+def test_the_link_lock_names_its_owner_while_it_is_held(box):
+    """Copilot on #134: a directory lock was made first and given its owner's
+    pid a line later, so a launch killed between the two left a lock with no
+    owner, which every later launch waited on and refused. `ln -s` makes the
+    lock and names the owner in one act. Observed from inside the update: the
+    fake npm reads the lock while the launch that holds it is installing."""
+    box.user_copy("2.1.283")
+    seen = box.root / "seen-lock"
+    lock = box.cache / "claude-current.lock.l"
+    result = box.run("--porcelain", PATH=path_without(box, "flock"),
+                     FAKE_NPM_INSTALL_HOOK=f'readlink "{lock}" > "{seen}"')
+    assert result.returncode == 0, result.stderr
+    assert seen.read_text().startswith("pid="), seen.read_text()
+    assert int(seen.read_text().strip()[4:]) > 0
+    assert not lock.is_symlink(), "the lock was not released"
+
+
+def test_a_directory_at_the_lock_path_is_refused_not_taken(box):
+    """`ln -s` onto a directory puts the link inside it and succeeds, which
+    would be a lock this launch believes it holds and nobody else can see."""
+    box.user_copy("2.1.283")
+    stray = box.cache / "claude-current.lock.l"
+    stray.mkdir()
+    result = box.run(CLAUDE_CURRENT_LOCK_WAIT="1", PATH=path_without(box, "flock"))
+    assert result.returncode == 2, result.stderr
+    assert f"{stray} is a directory and not this command's lock" in result.stderr
+    assert list(stray.iterdir()) == [], "the link it made inside was left behind"
+    assert box.installs() == []
 
 
 def test_a_dead_owners_lock_another_launch_is_reaping_is_left_to_it(box):
@@ -519,27 +558,23 @@ def test_a_dead_owners_lock_another_launch_is_reaping_is_left_to_it(box):
     Only the launch holding the reaper directory removes it, so a launch that
     finds the reaper taken leaves the lock alone and waits."""
     box.user_copy("2.1.283")
-    lock = box.cache / "claude-current.lock.d"
-    lock.mkdir()
-    (lock / "pid").write_text(f"{_dead_pid()}\n")
-    reaper = box.cache / "claude-current.lock.d.reap"
+    lock = _link_lock(box, _dead_pid())
+    reaper = box.cache / "claude-current.lock.l.reap"
     reaper.mkdir()
     result = box.run(CLAUDE_CURRENT_LOCK_WAIT="1", PATH=path_without(box, "flock"))
     assert result.returncode == 2, result.stderr
-    assert lock.is_dir(), "a launch removed a lock another launch was reaping"
+    assert lock.is_symlink(), "a launch removed a lock another launch was reaping"
     assert "was not free within 1s" in result.stderr
     assert f"{reaper}, the directory a launch holds while it removes a dead owner's lock" in result.stderr
     assert box.installs() == []
 
 
-def test_a_live_mkdir_lock_is_waited_on_and_never_removed(box):
+def test_a_live_link_lock_is_waited_on_and_never_removed(box):
     box.user_copy("2.1.283")
-    lock = box.cache / "claude-current.lock.d"
-    lock.mkdir()
-    (lock / "pid").write_text(f"{os.getpid()}\n")
+    lock = _link_lock(box, os.getpid())
     result = box.run(CLAUDE_CURRENT_LOCK_WAIT="1", PATH=path_without(box, "flock"))
     assert result.returncode == 2, result.stderr
-    assert (lock / "pid").read_text() == f"{os.getpid()}\n"
+    assert os.readlink(lock) == f"pid={os.getpid()}"
     assert "was not free within 1s" in result.stderr
     assert "the directory a launch holds" not in result.stderr
     assert box.installs() == []
@@ -610,11 +645,15 @@ def test_a_malformed_bound_is_refused_before_anything_runs(box, name):
 # --- the file itself ------------------------------------------------------------
 
 #: The rules `tests/test_repo_hygiene.py` holds every listed bash file to,
-#: asked of the two #119 commands, which its lists do not name yet (that file
-#: is another open pull request's, opensoft/openRepoTools#93, so this one
-#: calls its rules rather than editing its lists).
+#: asked of the two #119 commands, which its lists do not name yet. That file
+#: is being changed by another open pull request, opensoft/openRepoTools#93,
+#: so this one calls its per-file rules rather than editing its lists. Once #93
+#: lands, `claude-current` belongs in its `SHIPPED_BASH` (`set -euo pipefail`)
+#: and `claude-restart-check` in its `HELPER_BASH` (`set -u`, no workspace
+#: resolver), and this list and the LF check below go (Copilot on #134).
 HYGIENE_RULES = [
     hygiene.test_shipped_bash_parses_under_bash,
+    hygiene.test_the_two_spellings_of_a_flag_refuse_the_same_empty_value,
     hygiene.test_no_shipped_bash_ends_its_options_after_an_operand,
     hygiene.test_no_shipped_bash_leaves_a_variable_name_to_bash_3_2s_locale,
     hygiene.test_no_shipped_bash_quotes_the_replacement_half_of_a_substitution,
@@ -642,6 +681,18 @@ def test_claude_current_fails_loudly_and_claude_restart_check_never_does():
     assert not [line for line in code if re.match(r"\s*set\s+-[a-z]*e", line)], (
         "claude-restart-check must not `set -e`: a failed read has to reach its "
         "own 'print nothing, exit 0', not end the status line's render")
+
+
+def test_both_commands_are_tracked_with_lf_in_the_index():
+    """`test_every_shipped_bash_file_is_tracked_with_lf`, which reads its
+    names from `ALL_BASH`, asked of these two."""
+    proc = subprocess.run(["git", "ls-files", "--eol", "--", "claude-current",
+                           "claude-restart-check"], cwd=str(REPO),
+                          capture_output=True, text=True, check=True)
+    rows = proc.stdout.splitlines()
+    assert len(rows) == 2, proc.stdout
+    for row in rows:
+        assert "i/lf" in row, f"not LF in the index:\n    {row}"
 
 
 def test_the_macos_job_parses_both_commands_with_bash_3_2():
