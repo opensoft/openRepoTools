@@ -4045,6 +4045,10 @@ git -C "$WIP" push -q origin main
 #   a11live:0  is LIVE and reports @200       — a ref reused since the record
 #   a11gone:0  is in no line at all           — the window is gone
 export FAKE_TMUX_WINDOWS="$(printf 'a11sess:0\t@71\trepoA11-1\na11live:0\t@200\tclaude\na11named:0\t@88\trepoA11-2\n')"
+# A launcher dry run from the suite's separate `testsess` window must not
+# borrow a lane name already owned by @71. Tests of unrelated precedence and
+# workstation refusals use the same live refs with that other name generic.
+A11_WINDOWS_NO_LANE="$(printf 'a11sess:0\t@71\tclaude\na11live:0\t@200\tclaude\na11named:0\t@88\trepoA11-2\n')"
 
 # ---------------------------------------------------------------- lane-dir
 run "$E" lane-dir repoA11-1
@@ -4238,7 +4242,7 @@ has  "…and saying why a container id is not a workstation" "$err" "is the CONT
 hasnt "…and writes nothing" "$(git -C "$WIP" log --format=%s -n1)" "RESUMED lane:repoA11-1"
 run env -u LANES_WORKSTATION LANES_IN_CONTAINER=1 "$E" register-row repoA11-1
 is   "…while a READ in the same container is untouched" "$rc" 0
-run env -u LANES_WORKSTATION LANES_IN_CONTAINER=1 "$START" --dry-run repoA11 1
+run env -u LANES_WORKSTATION LANES_IN_CONTAINER=1 FAKE_TMUX_WINDOWS="$A11_WINDOWS_NO_LANE" "$START" --dry-run repoA11 1
 is   "lane-start refuses there too, BEFORE the row and before the log" "$rc" 2
 has  "…in the same words, from the one place they are written" "$err" "LANES_WORKSTATION"
 run "$E" workstation Eagle
@@ -4927,12 +4931,12 @@ is "…and with nothing anywhere the sub-field is simply absent" \
    "$(skill_win_of '' '' '' '')" ""
 
 # ---------------------------- clause (c): the DIRECTORY PRECEDENCE, four rungs
-run "$START" --dry-run repoA11 1
+run env FAKE_TMUX_WINDOWS="$A11_WINDOWS_NO_LANE" "$START" --dry-run repoA11 1
 is   "lane-start finds the lane's directory without --dir, from its own record" "$rc" 0
 has  "…naming the rung that answered" "$err" "from the swap record"
 has  "…and planning the cd into it, which Evidence 3 makes load-bearing for CLAUDE.md and the lane's memory" "$err" "cd $A11_DIR"
 # RUNG 1 BEATS THE RECORD: the operator's word is first.
-run "$START" --dry-run --dir "$HOME/projects/repoA" repoA11 1
+run env FAKE_TMUX_WINDOWS="$A11_WINDOWS_NO_LANE" "$START" --dry-run --dir "$HOME/projects/repoA" repoA11 1
 has  "--dir beats the record, because rung 1 is the operator's own word" "$err" "cd $HOME/projects/repoA"
 # RUNG 3: a lane with a STARTED that carries a dir and no swap record at all.
 { printf '# lane repoA11-7 — object log (lane-collision-protocol Amendment 7)\n'
@@ -5214,6 +5218,10 @@ printf 'cwd=%s argv=%s\n' "$PWD" "$*" >> "${FAKE_PCLAUDE_LOG:-/dev/null}"
 FAKE
 chmod +x "$SANDBOX/fakebin/pclaude"
 export FAKE_PCLAUDE_LOG="$SANDBOX/pclaude.log"
+# The host may have a real `lclaude` on PATH. The picker deliberately prefers
+# it in production, so pin its documented $PCLAUDE seam to this suite's fake
+# when asserting the exact argv handed to a launcher.
+export PCLAUDE="$SANDBOX/fakebin/pclaude"
 : > "$FAKE_PCLAUDE_LOG"
 
 # THE LANE-NAME FENCE IS THE HELPER'S OWN, and it was a first-character test
