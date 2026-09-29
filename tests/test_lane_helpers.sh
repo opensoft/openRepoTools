@@ -763,7 +763,7 @@ fi
 exec "${REAL_LANES_EDIT:?}" "$@"
 WRAP
 chmod +x "$SANDBOX/retired-before-rename"
-run env LANES_EDIT="$SANDBOX/retired-before-rename" REAL_LANES_EDIT="$E" \
+run env LANES_EDIT="$SANDBOX/retired-before-rename" REAL_LANES_EDIT="$OPENREPOTOOLS_BIN_DIR/lanes-edit.sh" \
     "$START" --dry-run repoA 7
 is   "a newly retired position refuses before tmux rename" "$rc" 2
 has  "…naming the retired identity" "$err" "repoA-7 is RETIRED"
