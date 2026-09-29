@@ -9931,6 +9931,23 @@ run env PATH="$LANEBIN_PATH" LANE_TMUX_WINDOWS="$(printf '@31\tpicksess\t3\t1\tc
 is    "a live lane in a claude-named window is repaired before attach" "$rc" 0
 has   "…renaming the exact window, not the caller's current one" "$(cat "$LANE_TMUX_LOG")" "rename-window -t picksess:@31 repoPick-2"
 has   "…then selecting that window" "$(cat "$LANE_TMUX_LOG")" "select-window -t picksess:@31"
+# Attaching to a LIVE HERE row is a local read. Both register-row probes must
+# keep the picker's no-fetch seam, including the probe of the old generic name.
+cat > "$SANDBOX/lane-no-fetch" <<'FAKE'
+#!/usr/bin/env bash
+if [ "${1-}" = register-row ] && [ "${LANES_NO_FETCH:-0}" != 1 ]; then
+  printf 'unexpected fetch-capable register-row\n' >&2
+  exit 7
+fi
+exec "${REAL_LANES_EDIT:?}" "$@"
+FAKE
+chmod +x "$SANDBOX/lane-no-fetch"
+: > "$LANE_TMUX_LOG"; : > "$LANE_TMUX_NAME_FILE"
+run env PATH="$LANEBIN_PATH" LANES_EDIT="$SANDBOX/lane-no-fetch" REAL_LANES_EDIT="$E" \
+    LANE_TMUX_WINDOWS="$(printf '@31\tpicksess\t3\t1\tclaude\n@32\tdetsess\t7\t0\trepoPick-3\n')" \
+    "$LANE" repoPick-2 </dev/null
+is    "LIVE attachment keeps both register-row probes local" "$rc" 0
+has   "…and still repairs the generic name" "$(cat "$LANE_TMUX_LOG")" "rename-window -t picksess:@31 repoPick-2"
 : > "$LANE_TMUX_LOG"; : > "$LANE_TMUX_NAME_FILE"
 run env PATH="$LANEBIN_PATH" LANE_TMUX_WINDOWS="$(printf '@31\tpicksess\t3\t1\tClaude Code\n')" \
     "$LANE" repoPick-2 </dev/null

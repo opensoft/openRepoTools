@@ -741,7 +741,7 @@ go_live() {
 	# switch can leave a live transcript newer than the row, and a renamed
 	# session can belong to another lane. The prompt guard would refuse both;
 	# do not conceal either mismatch by renaming the window on the way in.
-	gl_row="$("$LANES_EDIT" register-row "$R_LANE" 2>/dev/null)" ||
+	gl_row="$(LANES_NO_FETCH=1 "$LANES_EDIT" register-row "$R_LANE" 2>/dev/null)" ||
 		die "lane $R_LANE has no readable register row, so its live window cannot be bound safely. Read it with: lanes --all" 2
 	gl_cell="$(printf '%s\n' "$gl_row" | awk -F'|' 'NR == 1 { print $3 }')"
 	gl_last="$(printf '%s\n' "$gl_cell" | grep -Eoi '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tail -n1 || :)"
@@ -779,7 +779,7 @@ EOF
 			"" | *[!A-Za-z0-9._-]* | .* | -*) : ;;
 			*)
 				gl_rc=0
-				"$LANES_EDIT" register-row "$gl_name" >/dev/null 2>&1 || gl_rc=$?
+				LANES_NO_FETCH=1 "$LANES_EDIT" register-row "$gl_name" >/dev/null 2>&1 || gl_rc=$?
 				case "$gl_rc" in
 				0) die "window $W_SESS:$W_ID is named $gl_name, which has its own lane row. Renaming it to $R_LANE would take another lane's tmux address; nothing was renamed or attached." 2 ;;
 				8) : ;;
