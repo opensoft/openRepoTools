@@ -8,7 +8,7 @@ and `openspec/changes/separate-swap-ctx-handoff/`.
 request. Live validation remains `NOT RUN — UNVERIFIED` until an authorized
 experiment completes and its evidence is assessed.
 
-**Current Bite 4 status (2026-09-24)**: The one-run fourteenth
+**Historical Bite 4 status (2026-09-24)**: The one-run fourteenth
 authorization has been consumed. Its result is INCONCLUSIVE with positive
 reason `target-history-query-result-incomplete`; the query saw one extra
 parsed frame, so no PASS or known FAIL was established. The negative arm did
@@ -594,3 +594,121 @@ still apply to subsequent public integration and activation.
   observed types. Do not use this task to alter Bite 3, Bite 5, production, or
   runtime authority. The fourteenth run remains INCONCLUSIVE; no further run,
   cleanup, or deployment is authorized.
+
+## CLI supervised-jobs capability — September 26 shared-container amendment
+
+The user requested implementation after one real seat-move probe showed exact
+CLI parent/native-child continuation with one surviving scratch J1. That probe
+used a model preflight before release and did not exercise a complete late A
+tool response, an OS exclusion witness, or a production supervisor. Its
+wrong-parent and duplicate-contender fault probes exposed missing ownership
+guards. The new `claude-cli-supervised-jobs-v1` capability is distinct from
+historical SDK/PGID v1 and strict modes; none of the old fourteen Bite 4
+results is reclassified. Public activation remains fail-closed.
+
+The September 26 user constraint supersedes the dedicated-container target:
+the shared container and unrelated sessions must stay running. T054–T057 below
+now cover graceful per-session exit and isolated launches. T053's completed
+offline ledger scope is unchanged; no existing result certifies this topology.
+
+- [X] T052 Record the prospective OpenSpec decision, capability contract and
+  FR/SC/data-model amendments for a persistent L1 supervisor, separate old
+  CLI and admitted-job domains, exact-parent owner claim, restart-deny,
+  resource reservations, model-free preparation and explicit release. Keep
+  older mode records byte-compatible and old evidence conclusions unchanged.
+- [X] T053 Implement an internal optional private durable ledger under the
+  existing managed state lock: exact parent/owner/generation/manifest binding,
+  one claimant, source restart-deny, directly admitted persistent job IDs with
+  output/result/effect watermarks and resource reservations, and at-most-once
+  release and target launch intents. Wrong parent, stale generation, changed
+  intent, duplicate claimant and unknown effect refuse before a side effect.
+  Add focused reload and concurrent-process tests. No public success route.
+- [ ] T054 Implement the [Linux subreaper provider](contracts/linux-session-subreaper.md)
+  and test exact per-session source admission/exit evidence
+  and the durable owner/restart fence for the shared-container graceful path.
+  Claim exact parent/lane/generation before source spawn; journal namespace/
+  start identity or owned child handle and every pending creation/recovery
+  intent. Account for the pinned foreground CLI/native-child/helper/tool
+  lifecycle and reconcile effects; parent exit, silence and PID scans alone
+  cannot pass. Refused/uncertain exit, escaped/unknown descendants or lost
+  journal block B. Prove container and independent session C remain running
+  while a directly admitted persistent job retains identity/output. No
+  container stop/kill/restart, broad user/shared-group kill, host Docker broker
+  or privileged cgroup prerequisite. Preserve the dormant Docker candidate;
+  forced per-session recovery requires a separate future gate.
+- [ ] T055 Integrate the distinct capability with the independent supervisor
+  job runner/MCP and pinned per-session CLI launcher. Pin the effective
+  foreground-only policy with both background-disable variables, native
+  Read/Glob/Grep/Agent/SendMessage only, no native Edit/Write/Bash/PowerShell,
+  disabled external-session/team routing and only the
+  authenticated job endpoint. Preserve workspace editing through admitted MCP
+  jobs and verify an actual edit plus conflicting-write refusal; a command
+  PreToolUse hook alone is not a fail-closed reservation gate. Use immutable
+  per-runtime settings/MCP files, isolated profile/auth bindings and scoped
+  job credentials distinct from supervisor authority; replace the candidate's
+  fixed shared-path assumptions. No shared overwrite or broad credential/env
+  change may affect another session. Keep the supervisor/jobs independent of
+  A while permitting placement in the same container. Integrate model-free
+  external control and validate `/swap` routing: optional wrap-up occurs before
+  control entry, and a prompt/turn ending is not CLI exit. A bounded graceful
+  exit deadline ends in refusal/retained claims if unmet; never request another
+  model turn after control entry. After verified
+  graceful exit and history/job/worktree reconciliation, persist ready with
+  no B; explicit release authorizes one exact-parent B spawn. Unknown startup,
+  child message or effects retains claims and forbids replay.
+  Add authenticated native `SubagentStart`/`SubagentStop` observations and a
+  measured fail-closed Agent admission fence; seal and reconcile the complete
+  child roster against Agent calls, saved histories, parent results and effects.
+  Report child response ended, task completed, interrupted and unknown as
+  separate facts. Add source-bound `StopFailure.error=rate_limit` and fresh
+  profile-keyed usage triggers; pane text is diagnostic only. Deliver a
+  versioned service-authored job/child/Git transition packet to B before its
+  first model turn, with provisional file observations while jobs continue.
+  Any optional manager AI summary remains non-authoritative.
+  Route every lane MCP job operation through the persistent lanes service,
+  which authorizes and journals it before forwarding to the execution-group
+  supervisor. Remove the prototype's direct lane-to-job-supervisor socket;
+  prove scoped credentials cannot bypass the service. After B resumes only
+  the parent, provide task records for safely unfinished A children and have
+  B start NEW native children with new IDs. Retain old IDs only for evidence
+  and link old-to-new without reporting exact child resume.
+- [ ] T056 Exercise the shared-container integrated matrix: independent Claude
+  A and C in the SAME container; A's foreground child and natural CLI exit;
+  original supervisor job identity/output persists; C/container/config/auth
+  stay intact; B resumes A's exact parent once after verified exit,
+  reconciliation and explicit release. Cover completed versus unfinished
+  children and saved context versus successful task completion. Negative
+  cases block B on uncertain/refused exit, unknown descendants, duplicate
+  source/target claims, stale A dispatch/restart, launcher restart/lost journal,
+  changed manifest/profile, late effects, reservation conflicts, lost ACK and
+  crash cutpoints. Verify counts, exact histories and retained uncertainty.
+  Exercise an early trigger, exhaustion during cooperative wrap-up, and an
+  already exhausted source; distinguish parent StopFailure from child stop,
+  missing/racing child hooks, a stale usage sample, pane-only limit text,
+  continuing jobs and file changes after the initial inventory. Verify no
+  second source model request after control entry, no other lane/container
+  interruption, no automatic Git cleanup of user work, and no B release on
+  an unknown child or effect.
+  Verify all external start/status/output/wait/cancel requests traverse the
+  lanes service, existing EGS jobs retain their IDs and output across A/B,
+  and new B children have new native IDs and no replayed external effects.
+  Report offline fakes separately from actual pinned CLI lifecycle evidence;
+  the latest user deployment instruction authorizes validation. Record the
+  concrete canary before any user-operated seat move.
+- [ ] T057 Review measured shared-container platform/runtime capability, full
+  canonical regression/CI, installation and rollback. Rehearse per-runtime
+  configuration isolation and preservation of C, jobs and claims through
+  rollback. Require a separately scoped installed authenticated canary before
+  enabling public `claude-cli-supervised-jobs-v1`; publish only the measured
+  graceful-session configuration. The later user instruction authorizes
+  deployment; account seat movement remains user-operated and forced recovery
+  remains outside the selected mechanism.
+
+  The current governing decision separately permits a staged versioned opt-in
+  deployment for the named canary lane (`team05d` to `team05j`) after the
+  shared-route/dependency, real CLI/fault, installation/rollback and installed
+  authenticated-canary gates pass. Preserve the full canonical failure census
+  and open native `ctx`/restoration acceptance assertions; only individually
+  mapped failures in the unreachable refused native-`ctx` route are outside
+  that stage. Shared-path or unexplained failures block it. A scoped deployment
+  leaves T057, general rollout and feature completion open.

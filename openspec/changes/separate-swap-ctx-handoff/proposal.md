@@ -2,6 +2,37 @@
 
 ## Status and governing intent
 
+**2026-09-30 selected CLI correction:** `claude-cli-supervised-jobs-v1`
+resumes only the parent conversation. Safely unfinished source subagents end
+with A and are reconstructed as new B subagents with new IDs, using the
+service's task/history/job/filesystem packet. Existing execution-group OS
+jobs keep their identities and continue. Every lane external command/edit
+goes through the persistent lanes service to the execution-group supervisor;
+the prototype's direct MCP-to-supervisor socket is not the selected route.
+Older exact-child continuation language below remains historical SDK/strict
+scope and is not a CLI-capability acceptance requirement.
+
+**2026-09-26 shared-container amendment:** the
+[Claude CLI supervised-jobs decision](claude-cli-supervised-jobs-decision.md)
+now targets a graceful per-session swap inside the existing long-lived
+container, which hosts many independent Claude sessions and must stay running.
+A completes foreground wrap-up and exits its CLI; the launcher verifies the
+exact runtime and known session activity, durably fences A's generation and
+reconciles history/jobs before one explicit exact-parent B release. Persistent
+supervisor jobs and unrelated session C stay live. Uncertain exit or descendants
+block B; forced per-session recovery remains a separate gated mechanism.
+Container stop/kill/restart, broad process kills and shared config/auth mutation
+are forbidden. The supervisor may remain in the container independently of A.
+
+This supersedes the dedicated Docker source-container choice, whose code and
+evidence remain a dormant historical candidate. T053's offline ledger evidence
+is unchanged; T054–T057 stay open. Existing strict/SDK/PGID records and all
+fourteen Bite 4 outcomes retain their meaning. Public activation remains gated;
+the later user instruction authorizes implementation, validation and deployment
+with Astra thinking and Sol implementing. Concrete canary identities and any
+user-operated account seat change remain explicit. The initial Linux witness
+is a dedicated per-session child subreaper under the current contract.
+
 **2026-09-22 scope amendment:** the approved
 [stop-then-resume-v1 decision](stop-then-resume-decision.md) adds an explicitly
 selected mode with no target runtime until release and a `ready-to-resume`

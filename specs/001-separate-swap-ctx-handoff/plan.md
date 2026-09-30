@@ -6,6 +6,52 @@ Deployment sequencing and release gates: [Fastest path to deployment](deployment
 
 ## Current v1 implementation tranche (2026-09-22)
 
+### Current CLI capability: graceful swap in a shared container (2026-09-26)
+
+The [governing amendment](../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md)
+and [contract](contracts/claude-cli-supervised-jobs.md) select a per-session
+source lifetime for `claude-cli-supervised-jobs-v1`. The shared container hosts
+many independent Claude sessions and stays running; L1 may remain there with
+independent admitted jobs. No container stop/kill/restart or broad user/shared
+process-group signal belongs to swap. The dedicated Docker implementation is
+a dormant superseded candidate, not a host-broker/cgroup prerequisite.
+
+A performs foreground wrap-up and then exits the actual CLI. The launcher
+claims exact parent/lane/generation before spawn, journals its owned runtime
+identity, fences every managed restart and verifies exit plus accounted
+foreground child/helper/tool lifecycle. PID death or returning to a prompt is
+insufficient. Per-runtime immutable config/profile/auth bindings protect other
+sessions. Jobs preserve ID/output/reservations independently of A. Unknown
+exit/descendants, lost journal or uncertain effects block B. Forced recovery
+is a separate gated mechanism, outside the initial supported path.
+
+For this CLI capability, only A's parent conversation resumes on B. A's
+native children stop with A; safely unfinished tasks become `restart-pending`
+and B starts new native children with new IDs from the service-authored
+transition packet. Old IDs remain correlation evidence. Supervisor-admitted
+OS jobs are the entities that continue with their original IDs and output.
+All lane external commands/edits must pass through the persistent lanes
+service to the execution-group supervisor. The current MCP bridge calls a
+per-lane supervisor socket directly, so the gateway and no-bypass gate are
+still implementation work under T055–T056.
+
+T054–T057 remain open. Follow [deployment-plan.md](deployment-plan.md) for the
+bounded next fixture: independent A and C in the same container; A naturally
+exits with foreground-child evidence while C and an admitted job continue;
+after reconciliation one explicit release starts B on A's exact parent.
+Negative arms cover uncertain exit, duplicate claims, stale A and launcher
+restart. T053 ledger evidence is unchanged and supplies no shared-topology
+certification. The later user instruction authorizes completing and deploying
+this path, with Astra thinking and Sol implementing. Use the concrete
+[Linux subreaper provider contract](contracts/linux-session-subreaper.md).
+The governing decision allows a staged versioned opt-in deployment for the
+named canary lane after its shared-route/dependency and installed-runtime
+gates pass. Full-suite native `ctx`/restoration requirements remain open with
+their assertions intact; full T057/general rollout is a separate gate. See
+the release scope and failure census in [verification.md](verification.md).
+
+### Original SDK/PGID v1 tranche (retained separately)
+
 The approved [stop-then-resume decision](../../openspec/changes/separate-swap-ctx-handoff/stop-then-resume-decision.md)
 and [v1 contract](contracts/stop-then-resume.md) govern a separate opt-in mode.
 Target-held and six-stage flows in this plan remain strict mode. Preserve
@@ -54,8 +100,10 @@ of applicable safety assertions.
 The Speckit workflow for this feature keeps the following assignments:
 
 - **Astra** — architecture lead.
-- **Sol High** — orchestration lead.
-- **Luna Max** — implementation writer for the defined Speckit tasks.
+- **Sol** — current implementation lead, per the latest explicit user instruction.
+- **Sol High** — orchestration role retained for coordination.
+- The earlier Luna implementation assignment is historical for this tranche;
+  the latest user instruction takes precedence.
 
 The active agent platform supplies the models: Codex models when operating in
 Codex, Claude models when operating in Claude. These named assignments are

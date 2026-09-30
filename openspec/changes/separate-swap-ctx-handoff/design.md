@@ -1,5 +1,42 @@
 # Design: Native Claude Subagent Session Operations
 
+## Current CLI capability: graceful sessions in a shared container
+
+The [September 26 decision](claude-cli-supervised-jobs-decision.md) and
+[current contract](../../../specs/001-separate-swap-ctx-handoff/contracts/claude-cli-supervised-jobs.md)
+select per-session lifecycle control for `claude-cli-supervised-jobs-v1`.
+The shared container, unrelated Claude sessions and admitted supervisor jobs
+stay running. The supervisor can remain there, independent of A's lifetime.
+The dedicated Docker provider is a dormant historical candidate, not the
+selected runtime boundary; host broker/cgroup provisioning is not a dependency.
+
+The launcher admits one exact parent/lane/generation before spawn and journals
+its owned runtime identity. A performs optional foreground wrap-up before
+control entry and then exits the CLI through a validated graceful path. A turn
+ending or returning to the prompt is not exit. The exact runtime's exit plus
+measured foreground policy, accounted CLI/helper/child lifecycles, durable
+restart fence and reconciled histories/effects establish readiness. PID death
+alone, host PID scans or hooks cannot prove all activity ended. Any lost
+identity, journal gap, escaped/unknown child or refused exit prevents B.
+Forced recovery is separately gated; no container-wide or broad process kill
+is a fallback.
+
+Each runtime has immutable configuration and profile/auth references and a
+scoped job credential, separate from supervisor authority. Shared filenames
+or global environment changes cannot alter unrelated sessions. Explicit
+release persists one exact-parent B startup after reconciliation; duplicate
+claimants and stale A actions refuse. Supervised jobs keep their IDs/output
+and reservations. Context restoration does not prove model completion.
+
+T054–T057 retain their open status. Their next fixture must exercise A and an
+independent C in the same container, a foreground child and continuing admitted
+job, then one release of B after verified natural exit. Negative cases cover
+uncertain exit, duplicate B, stale A and launcher restart. The later user deployment instruction assigns Astra architecture and
+Sol implementation. The Linux provider uses a dedicated child-subreaper wrapper
+per session under the linked contract; no broad process or container action is
+introduced. Prior scratch seat-move and Docker results keep their narrow
+scope; the T053 ledger is not shared-container runtime certification.
+
 ## Current mode-specific amendment
 
 The approved [stop-then-resume-v1 decision](stop-then-resume-decision.md)
@@ -47,6 +84,18 @@ This design governs the linked `001-separate-swap-ctx-handoff` feature. It is a
 compatibility contract and evidence plan, not proof that a particular Claude
 release supports every boundary below. A runtime or participant kind that
 cannot pass the gates refuses before planned shutdown.
+
+**Selected shared-container CLI delivery (September 30 correction):** only
+the coordinator conversation resumes by exact ID. Safely unfinished native
+children from the source CLI are reconstructed as new children with new IDs
+after the target coordinator receives the service's task/filesystem packet.
+The exact-child continuation language below describes the older SDK/strict
+candidate and is not an acceptance route for `claude-cli-supervised-jobs-v1`.
+Persistent OS jobs are different: they keep their IDs and execution while
+the source CLI exits. Every lane external command/edit request goes through
+the persistent lanes service to the execution-group supervisor. The current
+prototype's direct MCP-to-supervisor job socket must be replaced before the
+selected capability is activated.
 
 The [coordinator interrupt decision](coordinator-interrupt-decision.md) governs
 the selected stop candidate. Its

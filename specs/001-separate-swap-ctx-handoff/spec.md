@@ -7,6 +7,25 @@
 
 ## Authority and history
 
+**2026-09-26 shared-container capability:** the
+[governing decision](../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md)
+and [contract](contracts/claude-cli-supervised-jobs.md) define explicit
+`claude-cli-supervised-jobs-v1` under `stop-then-resume-v1`. The shared container
+and unrelated Claude sessions stay running. The initial path supports A's
+foreground wrap-up followed by actual graceful CLI exit; exact-runtime and
+complete supported child/helper/tool evidence plus a durable owner/restart
+fence and reconciliation precede one explicit B release. Supervisor jobs
+persist independently; L1 may remain inside the container. Unknown exit or
+descendants block B. Forced per-session recovery remains separately gated.
+The dedicated Docker candidate is dormant history; host broker/cgroup access
+is not a prerequisite. T053 evidence is unchanged; T054–T057 remain open.
+Strict/SDK/PGID records retain their own interpretation. This capability stays
+unavailable until measured runtime and integration gates pass.
+The governing decision permits a staged, versioned opt-in installation for the
+named canary lane after its shared-route/dependency and installed-runtime gates
+pass. Native `ctx`/restoration acceptance assertions and the full-suite failure
+census remain intact; this stage does not close T057 or authorize general rollout.
+
 **2026-09-22 amendment:** the approved
 [stop-then-resume-v1 decision](../../openspec/changes/separate-swap-ctx-handoff/stop-then-resume-decision.md)
 and [contract](contracts/stop-then-resume.md) add an opt-in mode that defers
@@ -91,6 +110,13 @@ release, it may issue an ordinary model instruction through the
 coordinator/native interface to restart the child from existing native
 conversation and task records. A restart is reported as a restart, not as proof
 of the old conversation or identity.
+
+For the selected `claude-cli-supervised-jobs-v1` path, the user has chosen the
+restart branch for every safely unfinished child: B resumes only the parent
+conversation and starts NEW native children with new IDs. Exact child
+continuation remains historical SDK/strict-mode scope and is not an acceptance
+claim for this CLI capability. Existing supervisor OS jobs retain their IDs
+and continue independently of A and B.
 
 **Why this priority**: The coordinator alone is not a faithful restoration of
 the user's lane. Honest worker-level outcomes protect unfinished work while
@@ -535,8 +561,76 @@ checkpoint, worker, claim, and inference effects independently.
   release; identify the four worker dispositions; distinguish tracked native
   background tasks from unmanaged detached effects; publish tested runtime and
   participant kinds; and label all unverified capability claims explicitly.
+- **FR-036**: A CLI source with persistent supervisor jobs MUST use the
+  explicit `claude-cli-supervised-jobs-v1` capability inside
+  `stop-then-resume-v1`; missing capability markers retain the original
+  SDK/PGID interpretation. Its runtime version, executable digest, settings,
+  permissions and exact-parent launch manifest MUST be pinned independently.
+- **FR-037**: Every managed external command/edit request MUST travel from
+  the lane through the persistent lanes service to the execution-group
+  supervisor; the lane MUST have no direct execution-group job socket. The
+  service MUST authorize and durably admit each persistent job before the
+  supervisor spawns it into a separate owned job domain with a durable job ID,
+  launch intent and registered resource reservations. It MUST add authoritative
+  process-start identity, status/result/effect evidence as those facts become
+  observable. A detached process discovered after launch MUST NOT be adopted
+  as such a job. A live or uncertain job reservation MUST survive account
+  transfer and prevent conflicting B writes or duplicate execution.
+- **FR-038**: A durable operation/generation owner claim and source restart-deny
+  fence MUST serialize every old runtime creation/recovery path, B contender,
+  job command and target launch. A wrong parent, stale generation, changed
+  manifest/profile or second contender MUST refuse before side effects.
+- **FR-039**: The source exclusion witness MUST cover the complete old runtime
+  domain and every restart route while allowing only admitted persistent jobs
+  to survive. Parent PID death, seat denial, hook output, PGID/SID snapshot,
+  transcript presence and dirty-file status MUST NOT independently prove it.
+- **FR-040**: The preparation controller under this capability MUST initiate
+  zero new model requests; already-in-flight A activity MUST be excluded and
+  reconciled before readiness. It MUST retain exact parent/child history and
+  worktree claims, and publish
+  `ready-to-resume` with no target runtime. Explicit release MUST durably bind
+  one target launch intent before direct CLI exact-parent resume. Unknown
+  startup/effect outcomes MUST remain indeterminate without automatic retry.
+  A five-hour-limit wrap-up MAY occur under A before control entry. Its
+  final response or return to a prompt MUST NOT be treated as CLI exit. The
+  initial supported path MUST observe graceful exit of the exact admitted
+  runtime and account for pinned foreground child/helper/tool lifecycles.
+  Refused exit, unknown descendants or missing identity/journal MUST block B;
+  forced per-session recovery is a separate gated mechanism.
+- **FR-041**: For `claude-cli-supervised-jobs-v1`, B MUST reconcile each
+  persistent job and source child task before starting a replacement child.
+  B resumes only the exact parent; each safely unfinished child is
+  `restart-pending` until a NEW native child with a NEW ID is observed.
+  The old child ID is evidence, not an execution handle or an `exact-resumed`
+  claim. Existing supervisor OS jobs keep their IDs, process/output custody
+  and reservations. No unknown job, child message or external effect is
+  replayed from a missing transcript result.
+
+- **FR-042**: The shared container and unrelated Claude sessions MUST remain
+  running through swap, release and rollback. Container stop/kill/restart,
+  broad per-user or shared-process-group kills are forbidden. The supervisor
+  MAY remain in the container with a lifetime independent of A; host Docker
+  broker/cgroup privileges or relocation to WSL MUST NOT be prerequisites.
+- **FR-043**: Source admission MUST atomically claim exact parent/lane/generation
+  before spawn and journal owned child handle or namespace/start identity.
+  Duplicate parent admission MUST refuse. Launcher recovery MUST enforce the
+  same durable fence or retain uncertainty. A/B configuration, MCP files and
+  profile/auth references MUST be immutable per runtime, with scoped job
+  credentials separate from supervisor authority. Shared-path overwrite or
+  broad credential/environment mutation MUST NOT affect another session.
 
 ### Key Entities
+
+- **Persistent job record**: A supervisor-admitted execution with stable ID,
+  OS-domain identity, result custody, effect state and live resource
+  reservations that outlast the source Claude runtime.
+- **CLI owner claim**: One exact-parent operation and generation binding with
+  source restart-deny and one target launch authorization; a hook or seat
+  state is not this claim.
+- **Source exclusion witness**: A fresh supervisor observation joining the
+  same source identity, complete supported session-activity coverage and
+  enforced restart fence before target readiness or release for the CLI
+  capability; original modes retain their own OS-domain requirements.
 
 - **Coordinator lineage**: The canonical lane binding and one native
   coordinator conversation, including its native child Agent/task graph,
@@ -614,6 +708,21 @@ checkpoint, worker, claim, and inference effects independently.
 - **SC-011**: Public help/status documentation distinguishes swap, ctx,
   handoff, release, worker dispositions, tracked versus unmanaged background
   effects, tested runtime boundaries, and unverified live capability status.
+- **SC-012**: In a valid race between two concurrent target claimants, exactly
+  one may acquire the durable owner claim and launch intent. Wrong-parent and
+  stale-generation attempts create zero new owners or launch intents. Source
+  recreation after fencing and unknown effects dispatch zero work.
+- **SC-013**: In the SAME shared container, independent Claude A and C run;
+  A exits naturally with observed foreground child/helper lifecycle while the
+  original supervisor job retains identity and advances output. C/container
+  remain running, configuration/auth isolation and dirty/untracked files plus
+  job reservations are preserved. Unknown exit or descendants prevent B.
+- **SC-014**: An integrated pinned direct-CLI run creates no B before exact A
+  exit, reconciliation and explicit release, then resumes A's exact parent
+  once. Native child continuation uses saved history without repeating
+  completed work; original job results are read without re-execution. Negative
+  duplicate-target, stale-A and launcher-restart cases retain the fence. Saved
+  context, resumed context and successful model-task completion are distinct.
 
 ## Assumptions
 

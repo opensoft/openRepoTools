@@ -1,6 +1,182 @@
-# Fastest path to deployment
+# Completion and deployment plan
 
-## Current direction: stop-then-resume v1
+## Current delivery plan: `claude-cli-supervised-jobs-v1` (September 26)
+
+[Tasks T052–T057](tasks.md) own implementation; the
+[current contract](contracts/claude-cli-supervised-jobs.md) defines acceptance.
+Astra leads architecture and Sol implementation under the latest explicit user
+instruction to deploy lane swap. Use the active platform's models at the effort
+appropriate to each task.
+
+**Delivery target:** a graceful per-session swap in the existing shared
+container. It hosts many independent Claude CLI sessions and **must stay
+running**. A finishes optional foreground wrap-up, exits its CLI, and the
+launcher verifies exact-runtime exit and reconciles session activity before
+one explicit release starts B on A's exact parent. Admitted supervisor jobs
+and unrelated Claude session C continue. No container stop/kill/restart, broad
+user/shared-process-group kill or shared configuration/auth mutation is allowed.
+The supervisor may stay in the container with a lifetime independent of A.
+Only the parent Claude conversation resumes. Unfinished native child tasks
+are reconstructed as NEW children under B with new IDs; the old IDs are
+evidence. Existing execution-group OS jobs continue with their original IDs.
+All lane external commands/edits route through the lanes service to the
+execution-group supervisor; the current direct MCP-to-supervisor socket is
+an implementation gap under T055.
+
+The dedicated Docker provider is a dormant superseded candidate. Preserve
+its code and evidence; its host broker, Engine identity, cgroup access and
+retained parent are not prerequisites for this delivery. No supervisor move
+to WSL or another host is required. Forced per-session recovery remains a
+separate future gated mechanism; the initial path blocks takeover if graceful
+exit or complete activity accounting cannot be established.
+
+**Evidence status:** T052 documentation and T053 private ledger remain
+complete; T054–T057 stay open. The seven-test T053 ledger result, later 44-test
+private Docker/runner gate and scratch OS/CLI probes retain their original
+scope. They do not certify shared-container exit or effective foreground-child
+policy. The current private launcher still assumes fixed settings/MCP paths;
+T055 must isolate those per runtime. Full-suite failures recorded in
+[verification.md](verification.md) remain unresolved. The earlier correction changed documents only. The latest user instruction
+now authorizes completing implementation, validation and deployment; use the
+[Linux subreaper implementation contract](contracts/linux-session-subreaper.md)
+for T054. Account seat movement remains user-operated for the named canary.
+
+### Dependency and acceptance sequence
+
+| Task | Required work | Evidence to close the gate |
+| --- | --- | --- |
+| T054 | Exact per-session launch/exit identity and durable source owner/restart fence, including recovery | Known foreground CLI/helper/child activity ends with supported graceful exit; unknown activity blocks B; container, C and admitted job remain alive. |
+| T055 | Integrate supervisor job runner/MCP, isolated CLI manifests and prepare/release | Source claim precedes spawn; per-runtime settings/auth cannot collide; ready has no B; one release starts the exact parent once. |
+| T056 | Integrated shared-container positive and fault fixtures | Exit, history, jobs, C continuity and dispatch counts are observed; uncertain exit, duplicate targets, stale A and launcher restart fail closed. |
+| T057 | Review, full regression/CI, install/rollback and separately scoped authenticated canary | Exact installed revision and measured CLI/configuration tuple, original job result and child continuation, no duplicate writer; opt-in activation only after PASS. |
+
+T054 needs a genuinely admitted job, so implement T055's minimal independent
+runner early and reuse it in MCP integration. No scratch outside process can
+substitute for its identity, durable intent and result custody. These rows
+order existing tasks rather than create another checklist.
+
+### First implementation slice
+
+Admit A through one launcher from initial entry, claiming exact parent/lane/
+generation before spawn. Journal an owned child handle or namespace/start
+identity, runtime incarnation, immutable configuration/profile references and
+pending actions. Every source/target create, restart, recovery or adoption
+path consumes the same durable fence. Duplicate parent admission refuses
+before spawn. An unmanaged running CLI cannot be retrospectively adopted.
+
+Pin and validate foreground-only native Claude work; persistent shell work
+uses the supervisor. Verify actual CLI/helper/child lifecycles for the pinned
+configuration. A final model response, completed task, quota notice or return
+to a prompt does not mean the CLI exited. Observe actual graceful exit and
+account for known descendants, tool/transcript writers and already accepted
+effects. PID death, silence or host process scans alone cannot prove coverage.
+Unknown/escaped descendants, lost launcher journal, refused exit or unreadable
+identity block B and preserve claims; there is no forced-stop fallback here.
+
+Use runtime-specific immutable MCP/settings files, distinct profile/auth
+bindings and a generation-scoped job credential separate from supervisor
+credentials. Replace the private launcher's fixed shared file assumptions.
+Changing A/B must not overwrite C's files or change broad user credentials or
+environment. The initial native roster is Read/Glob/Grep/Agent/SendMessage;
+same-parent native-child continuation is awaited under the background-task
+disable policy, and external-session routing is disabled. Workspace
+mutations use admitted MCP jobs, with a demonstrated edit and conflicting-write
+refusal. Native Edit/Write are omitted to avoid reliance on fail-open command
+hooks. Read operations do not claim a stable snapshot of a live job's files.
+
+Provide an external model-free control entry plus a validated `/swap` route.
+The prior slash-hook diagnostic only established a bounded interception;
+returning a prompt or hook result supplies no exit evidence. Optional bounded
+wrap-up happens while A still owns the session, before control entry. Prepare
+itself uses no model request; early swap can request only the supported graceful
+exit path within a recorded bounded deadline; timeout/refusal retains claims
+and blocks B. No model wrap-up is requested after control entry. Durable fencing and
+reconciliation precede `ready-to-resume`; one explicit release is journaled
+before B creation. Unknown startup acknowledgment prohibits replacement.
+
+### Next planned fixture: A and C in the same container
+
+Implement and execute the bounded fixture under the user's deployment
+instruction, recording expected evidence and exact scope first. Account seat
+movement remains a concrete user-operated action on the named canary.
+
+1. Launch independent Claude sessions A and C inside the SAME existing
+   long-lived container through the candidate session launcher. Record exact
+   container/session identities and separate config/auth bindings; C has an
+   independent observable activity marker. Register dirty/untracked fixtures.
+2. Save at least one native foreground child history under A; the fuller
+   T056 matrix covers completed and unfinished children. Admit a continuing
+   supervisor job with stable ID, runtime identity, launch counter, output
+   custody and resource reservation. It has no dependency on A's terminal.
+3. Let A finish its supported foreground wrap-up and actually exit naturally.
+   Observe the exact CLI exit and correlated child/helper/tool lifecycle.
+   C and the container stay running, while the original job's output advances.
+   A saved context and a completed model task are distinct assertions.
+4. Persist the source-generation fence, reconcile pending launches, histories,
+   effects, jobs and worktree claims, and observe `ready-to-resume` with B absent.
+   Verify stale A commands/restarts refuse and C's config/auth remains unchanged.
+5. Explicitly release B once on A's exact parent. Verify actual parent/profile,
+   B's service-authored task and filesystem packet, NEW child IDs for safely
+   unfinished tasks, job identity/result readback and no duplicate worker,
+   job or target. Completed children are not relaunched.
+
+Negative arms must keep B absent on refused/uncertain exit, unknown/escaped
+children, lost runtime identity/journal, competing B/source claims, stale A
+actions and launcher restart with unresolved intent. Also cover changed
+manifest/profile, late A effects, reserved-path conflicts, lost ACK and crashes
+around admission, exit, fence, release, startup and result delivery. Intact
+recovery may observe the same intent; it never infers permission to spawn again.
+
+### Evidence layers and release
+
+Offline tests use the canonical `tests/run.sh` wrapper and establish ledger,
+identity and refusal behavior with fakes. They cannot establish real Claude
+foreground-child/exit behavior. Bounded actual CLI observations must measure
+that behavior in the shared topology. The authenticated installed canary
+then proves account identity, exact parent resume and new-child task recovery through the same
+production route. Report each layer independently with exact source/runtime/
+configuration hashes, expected assertions, observed identities/counters and
+PASS/FAIL/INCONCLUSIVE. Missing evidence never becomes PASS.
+
+For the user's named-lane deployment, the governing decision permits a
+versioned opt-in installation with source `team05d` and target `team05j` after
+passing shared-route and invoked-dependency tests, applicable actual CLI/fault
+evidence, strict OpenSpec validation and isolated install/rollback rehearsal.
+Record the full canonical regression census on the frozen candidate. Retain
+positive native `ctx`/restoration acceptance assertions and individually map
+any remaining failures to that unreachable, explicitly refused route; they
+remain open requirements. An unexplained failure, shared-path/dependency
+regression or altered native refusal boundary blocks this stage. Activate only
+the named lane after its installed authenticated canary passes. This stage
+changes no defaults/global activation and does not complete T057 or the feature.
+
+Before general rollout, complete review, strict OpenSpec validation, full regression
+and applicable platform CI on a frozen candidate. Rehearse isolated install
+and rollback, including per-session configuration and a surviving job. Preserve
+the existing suite failure census and fix required failures before acceptance;
+focused passes do not replace that general-rollout gate. The latest user deployment instruction covers the necessary installation work. Runtime support remains disabled until the installed
+canary passes; publish only its measured graceful-session configuration.
+
+For that later canary, bind one disposable lane, A/B profiles, independent C,
+allowed effects and bounded actions. Preserve seats until source exit and
+reconciliation establish ready; only then perform the specifically authorized
+seat change and explicit B release. Earlier seat-move authorizations are not
+retry permission. No target model preflight runs during preparation.
+
+Rollback disables new admissions/target launches while retaining compatible
+supervisor control, jobs, journals, claims and reservations. It must leave the
+shared container and C running, avoid shared config/auth mutation and never
+restart A, clear uncertainty or reset files. T057 closes only with installation,
+rollback and canary evidence; broader OpenSpec archival still requires all
+governed work to land or be explicitly dispositioned.
+
+## Historical plans and evidence
+
+The sections below retain earlier SDK/PGID and strict-mode scheduling records.
+Follow the current delivery sequence above for this CLI capability. Historical
+runtime approvals, support claims and next-step statements do not apply to it.
+
+## Earlier stop-then-resume v1 plan (historical SDK path)
 
 Brett subsequently approved implementing the
 [stop-then-resume recommendation](../../openspec/changes/separate-swap-ctx-handoff/stop-then-resume-decision.md).
@@ -308,3 +484,235 @@ The next useful scheduling checkpoint is the Gate 0 result plus the native
 integration failure census. Until then, a deployment date would hide the
 largest uncertainty. Report gates completed, tasks with evidence and the next
 blocking dependency instead of an unsupported percentage.
+
+## Superseded dedicated-container delivery plan (September 26)
+
+This section preserves the earlier plan as history. Its Docker-only target,
+host prerequisites and forced-stop directions are superseded by the current
+shared-container plan above and must not be executed for this capability.
+
+[Speckit tasks T052–T057](tasks.md) remain the sole implementation checklist;
+this is their dependency and release sequence. The
+[historical Docker contract](contracts/historical-docker-source-container.md) defines
+acceptance. Astra owns architecture, Sol High orchestration and evidence,
+and Luna Max implementation, using Codex models in this execution.
+
+**Delivery target:** one explicitly supported Linux Docker configuration in
+which a lane keeps its admitted shell jobs and files while a replacement
+Claude runtime resumes its exact parent session under another profile.
+Native children continue through that parent; background Claude tasks are
+disabled. Initial release is opt-in. Unsupported configurations refuse before
+disrupting A. This milestone does not declare the whole older feature complete.
+
+Start with the observed local Linux Engine 29.6.2/cgroupfs/cgroup-v2 topology
+and pinned Claude 2.1.283 candidate; record the remaining kernel, image and
+policy bindings before testing. These version observations are not certification.
+
+**Current evidence:** T052 documentation and T053 private ledger are complete;
+T054–T057 remain open. The latest private provider/adapter/runner focused gate
+passed 44 offline tests. A model-free host-namespace helper retained a custom cgroup parent,
+observed a detached source writer stop, and observed an outside job continue.
+It did not use the production broker or an admitted persistent job. The
+earlier seat-move probe used a scratch controller. Neither establishes the
+integrated capability. The full repository suite has unresolved recorded
+failures; see [verification.md](verification.md). Historical SDK/PGID results
+remain INCONCLUSIVE.
+
+The current implementation adds a private Engine transport/adapter, host
+custody candidate, read-only host preflight, and a T053-backed runner whose
+OS job domain is an injected trusted interface. No authenticated host IPC,
+concrete job-cgroup process backend, waiting-entrypoint release, admitted
+Engine exec path, or production supervisor/CLI bridge is implemented. The
+controller cannot attest the Engine host: its cgroup mount is read-only, and
+the Docker socket's peer PID is not visible even in the attempted disposable
+host-namespace helper. The operator must identify where this Engine runs and
+the service boundary available there before a production broker can be
+placed. Retaining the private parent in the helper does not resolve that
+authority gap.
+
+The pinned CLI's restricted mode ignores user/project/local customization.
+An isolated fake-API diagnostic found that an explicit local plugin loads one
+namespaced command; typing `/swap` was normalized to `/swap:swap` and a
+`UserPromptExpansion` hook matching `swap:swap` blocked before any fake API
+request. A matcher for `swap` alone missed and caused eight fake API retries.
+The event exposes the normalized prompt, not independently attested raw
+keystrokes. This is CLI mechanism evidence only, not an installed, authenticated
+or exhausted-quota `/swap` route. Preserve the external local control entry
+until the complete command and failure behavior pass the T055 gates.
+
+### Dependency order and evidence gates
+
+| Order / task | Deliverable | Required evidence before advancing |
+| --- | --- | --- |
+| 1 — T054 feasibility; T055 runner prerequisite | Trusted Engine-host broker, real Docker adapter, retained source parent and minimal production job runner backed by T053 | On the selected host, an admitted job survives source exclusion with its identity/output intact; the source domain becomes empty and retired-generation restart attempts refuse. |
+| 2 — finish T054; integrate T055 | All managed mutation paths fenced; scoped MCP job tools; pinned Claude launcher; model-free prepare, reconciliation and explicit release | Production components pass the model-free integrated path and reject missing evidence. CLI launch/tool-policy observations are recorded separately from simulated behavior. |
+| 3 — T056 | Deterministic fault matrix over the integrated controller and production OS components | Each fault has an expected refusal, retained uncertainty or successful recovery; launch counters, history and resource reservations support the result. |
+| 4 — T057 before merge | Frozen candidate, review, green regression/CI, isolated install and rollback rehearsal | Exact revision and complete installed inventory recorded; public activation still disabled. |
+| 5 — T057 canary and rollout | Install the reviewed merge revision into the named canary scope; run the authorized account transition | Actual parent/account and native-child continuation, surviving job result, no duplicate launch, no late A effects, preserved files. Enable only the measured configuration after PASS. |
+
+**Runner dependency:** T054 cannot close with the scratch outside process.
+Implement T055's minimal supervisor job runner early, alongside the T054
+broker, and reuse that runner in MCP integration. This scheduling overlap
+does not complete T055 or introduce another implementation task list.
+
+### First implementation slice and feasibility decisions
+
+Preserve the dirty worktree and private evidence. Astra first reviews the
+broker's Engine-host identity, authentication, privileges and parent-cgroup
+lifecycle. Sol maps every managed create/start/exec/unpause/update/restart,
+recovery and replacement path to the durable fence. Luna then implements one
+bounded path: provision an empty parent, journal creation, start the waiting
+entrypoint, attest actual membership, run a source writer, fence and stop A,
+and observe `populated 0` through the same retained parent while a T053-admitted
+job continues outside it. Include reparenting/`setsid` and an admitted Engine
+exec task. Source-domain configuration and escape checks remain mandatory.
+
+Resolve these feasibility questions before expanding the integration:
+
+- Can a production host service retain and authenticate the witness on this
+  Engine host? The current controller's namespace cannot see host PIDs.
+  Record install/startup/restart/empty-parent disposal authority. The temporary
+  privileged cleanup helper is not a production design. Broker restart must
+  either re-establish custody under the contract or retain uncertainty; a new
+  empty parent with the same path is not recovery evidence.
+- Can the pinned CLI expose the required effective parent/child tool policy
+  and exact-session/account observations? Test what the installed binary
+  exposes before relying on flags in `lane_managed_claude_launch.py`. Defer
+  observations requiring authentication to the scoped canary and identify
+  them explicitly. Do not fill missing observations with a supplied manifest.
+- Can `/swap` reach the supervisor without a model turn, including exhausted
+  quota? Specify and test the actual CLI integration and an external local
+  control entry for an unresponsive CLI. A model-expanded slash prompt does
+  not satisfy this requirement. An unsupported in-CLI route needs a recorded
+  product decision before claiming `/swap` is delivered.
+
+If a required observation is unavailable, record that specific capability
+gap before another full run. Do not repeatedly rerun unchanged probes or
+weaken acceptance to obtain PASS.
+
+### T055 integration and T056 fault coverage
+
+Use the same admitted source launcher from initial lane entry onward; a live
+unmanaged CLI cannot be adopted retrospectively. Keep the supervisor/job
+domain outside A. Expose authenticated `run/status/output/wait/cancel` through
+one MCP bridge with a generation-scoped credential. Check registration and
+resource reservations for file tools as well as job launches: B and its
+children cannot edit a live job's reserved resources. Jobs may still write
+at readiness, so dirty/untracked inventories must identify their observation
+point and reservations rather than claim a stable filesystem snapshot.
+
+Route early `/swap`, natural CLI completion after wrap-up and forced stop
+into the same prepare/exclude/reconcile/release transaction. Preparation must
+work without quota or a final handoff message. Specify bounded command/IPC
+deadlines and the observation-only recovery action for each timeout. Existing
+supervised jobs continue independently; stop or result-delivery uncertainty
+cannot trigger job replay.
+
+T056 covers two foreground native-child histories, completed versus unfinished
+children, multiple registered dirty/untracked worktrees, conflicting file
+writes, graceful and incomplete wrap-up, a late complete A response, competing
+B owners, wrong parent/profile, stale generation, broker reload, daemon loss,
+lost ACK and crashes around admission, spawn, exclusion, release, startup and
+result delivery. Measure dispatch counts and identities. The guarantee is
+at-most-once dispatch with explicit uncertainty; arbitrary shell commands do
+not acquire an exactly-once external-effect guarantee.
+
+### Test layers and result recording
+
+| Layer | What it establishes | What remains for later |
+| --- | --- | --- |
+| Offline `tests/run.sh` selectors | Ledger, protocol, fault handling and simulated CLI histories/responses | Actual Docker exclusion and actual Claude behavior |
+| Explicit model-free OS integration | Production broker/runner, host membership, source stop, surviving jobs and restart denial | Authenticated resume, child continuation and real account identity |
+| Installed authenticated canary | Actual pinned Claude and account transition through the production route | Support for any untested runtime or host configuration |
+
+Keep privileged Docker fixtures explicit and isolated from the default offline
+suite. Sol is the test executor. Use serialized `tests/run.sh` for code tests;
+host tests were authorized for this checkout. Initialize the pinned submodule
+for the full gate. Review the existing failure census early, fix shared causes,
+and run affected selectors before the final full suite. A focused pass or a
+documented baseline failure cannot substitute for the required full-suite pass.
+Preserve existing platform CI; portable command checks do not certify the
+Linux Docker provider on other platforms.
+
+Each run records task, exact source revision or file-hash manifest, runtime
+and host configuration, fixture, bounded actions/deadlines, expected assertions,
+actual observations, outcome and artifact digests in `verification.md`.
+Keep credentials and transcript bodies private. PASS requires every declared
+assertion; a verified violation is FAIL; missing evidence is INCONCLUSIVE.
+A negative case passes when its expected refusal is observed, but does not
+establish successful recovery. Before retrying, name the defect or missing
+evidence, the correction and the focused check proving it. Relevant changes
+invalidate the affected gate's evidence.
+
+Implementation checkpoints may precede the canary; acceptance claims that need
+actual Claude behavior stay open until that runtime evidence exists. Check off
+each Speckit task only against its full criteria, not its scheduling row here.
+
+### T057 merge, installation and rollout
+
+First complete review, regression, strict OpenSpec validation and applicable
+CI on the frozen candidate, and rehearse installation/rollback in isolated
+destinations. Resolve shared lifecycle/claim changes against the merge base,
+including the recorded unenroll prerequisite, before landing. Merge the code
+with public activation disabled; the authenticated canary is the subsequent
+activation gate, so it is not a circular prerequisite for that merge.
+
+Use a clean checkout of the merge revision and its own installer:
+`OPENREPOTOOLS_REF=<merge-sha> ./openRepoTools --install`. Verify the exact
+commands, Python modules, skills, hooks, settings, host service and pinned
+image/runtime artifacts required by the new route. Isolate configuration and
+service destinations as well as the bin directory during rehearsal. Produce
+the concrete lane-entry, `/swap`, status, release and recovery commands in
+`quickstart.md`; its current historical examples are not this capability.
+Any merge-time change requires the affected validation again.
+
+After a passing installed canary, record the supported host/Engine/cgroup
+driver/CLI/image/configuration tuple and enable only its explicit opt-in route.
+Record installed hashes, activation scope and operator instructions. Keep
+unsupported hosts rejected. T057 closes only with that deployment evidence;
+archive the broader OpenSpec change only when all of its governed work has
+landed or been explicitly dispositioned.
+
+Rollback first disables new admissions and target launches while keeping
+compatible supervisor/job control available. Preserve the current jobs,
+journals, claims, reservations and source evidence. Restore the previous
+inventory only if it can read that durable state; otherwise retain compatible
+recovery tooling with activation disabled. Rehearse this with a live job and
+an indeterminate operation. Rollback must not clear claims, restart A or
+reset files. Disposal of retained sources and empty cgroup parents is a
+separately scoped operation after evidence and effects are reconciled.
+
+### Seat movement and installed canary
+
+Keep seats unchanged during T054–T056. Before the T057 canary, bind one
+disposable lane, source profile A, target profile B, permitted file/job effects,
+installation destinations and a bounded run scope. Prepare the concrete
+commands and evidence collector before obtaining any missing live authorization;
+previous seat-move approvals are not an open-ended retry allowance.
+
+1. Start A through the managed launcher. Register worktrees, preserve deliberate
+   dirty/untracked fixtures, save two foreground child histories and admit one
+   continuing job with a unique marker and launch counter. Record which child
+   is complete and which is eligible for explicit continuation.
+2. Trigger early `/swap`; reaching a real usage limit is unnecessary for this
+   canary. T056 separately tests completed/incomplete wrap-up control paths;
+   simulated wrap-up does not certify the service's allowance behavior.
+3. Wait for durable `ready-to-resume`: A is excluded, its restart fence holds,
+   histories and effects are reconciled, job reservations persist and B is
+   absent. Only then tell the operator to move the seat from A to B once.
+4. After operator confirmation, revalidate the witness and ownership and
+   explicitly release one exact-parent B launch. No target model preflight
+   occurs during preparation. A delay or failed access check leaves the lane
+   waiting or indeterminate; it does not authorize another launch.
+   Attach to the returned target-starting custodian for the exact fresh trust
+   dialog, then use `observe-target` until that same launch's SessionStart is
+   authenticated and B input is admitted. A lost release response uses this
+   observation path; it never triggers a second launch.
+5. Verify actual parent/account identity and native continuation of the eligible
+   child; the completed child is not relaunched. B reads the original job's
+   result without restarting it. Check launch counts, saved history prefixes,
+   dirty/untracked files, reservations and absence of late A writes/dispatch.
+   Capture evidence before any permitted cleanup.
+
+On FAIL or INCONCLUSIVE, leave activation disabled and preserve recovery state.
+A further account test follows a diagnosed correction and a scoped authorization.

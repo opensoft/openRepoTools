@@ -1,12 +1,136 @@
 ## Purpose
 
 Specify the opt-in, externally supervised Claude account swap governed by
-[`separate-swap-ctx-handoff`](../../proposal.md). The capability preserves the
-coordinator's native conversation and the native subagents that belong to its
-execution lineage, while refusing any participant or effect that cannot be
-proven safe. A swap is an account transition, not a semantic handoff.
+[`separate-swap-ctx-handoff`](../../proposal.md). The selected CLI capability
+resumes the coordinator's native conversation and preserves native-subagent
+task/history evidence to start new children for unfinished work, while
+refusing any participant or effect that cannot be proven safe. Persistent
+execution-group jobs retain their identities. A swap is an account transition,
+not a semantic handoff.
 
 ## ADDED Requirements
+
+### Requirement: Named-lane CLI deployment preserves wider acceptance gates
+
+A staged deployment of `claude-cli-supervised-jobs-v1` SHALL be versioned and
+explicitly selected for the named canary lane. It SHALL require passing frozen
+shared-route and invoked-dependency regressions, applicable actual CLI/fault
+evidence, isolated installation/rollback and an installed authenticated canary.
+It SHALL preserve the full canonical regression census and open native `ctx`
+and restoration acceptance assertions. Only individually mapped failures in
+the unreachable, explicitly refused native-`ctx` route MAY remain outside this
+staged gate. An unexplained or shared-path failure SHALL block deployment.
+The stage SHALL NOT enable defaults/global activation or claim T057, general
+rollout, repository release or complete-feature acceptance.
+
+#### Scenario: Native context acceptance remains incomplete
+
+- **GIVEN** the native-`ctx` route refuses before effects and its positive
+  acceptance tests remain failing open requirements
+- **WHEN** the separately selected shared-session swap passes every applicable
+  named-lane gate
+- **THEN** only that versioned named-lane capability MAY be activated
+- **AND** the full-suite failures and wider acceptance gates SHALL remain
+  explicitly open with their original assertions retained.
+
+### Requirement: A supervised CLI job capability has a distinct durable authority
+
+The system SHALL select `claude-cli-supervised-jobs-v1` only by an explicit
+capability discriminator inside `stop-then-resume-v1`. An absent or different
+capability SHALL keep its existing contract and record interpretation. The
+direct CLI executable/version/configuration tuple SHALL be pinned independently
+of SDK-selected CLI evidence. The durable lane supervisor SHALL own one
+compare-and-set operation/generation claim, the source runtime and restart-deny
+fence, registered worktrees, and separately admitted persistent jobs. It SHALL
+not acquire an arbitrary detached process after the fact. A job admitted
+before spawn SHALL retain its ID, output/result references, effect watermark
+and resource reservations across the account change. Unknown or incomplete
+jobs SHALL block conflicting writes and replay.
+
+For this CLI capability, the managed lane's external commands and edits SHALL
+enter the persistent lanes service, which validates owner generation,
+operation fence, request identity and worktree reservations before forwarding
+to the execution-group supervisor. The lane SHALL NOT address the execution-
+group job socket directly. Only the coordinator conversation SHALL resume by
+its exact Claude session ID. Native subagents from A SHALL NOT be represented
+as resumed on B; each safely unfinished task SHALL receive a new native child
+with a new ID after B receives the service's transition packet. Old child IDs
+remain evidence for task linkage. Separately admitted supervisor OS jobs
+SHALL keep running with their original IDs, outputs and reservations.
+
+Source exclusion SHALL prove the old CLI/runtime domain empty and every old
+creation/recovery route fenced while allowing only accounted supervisor jobs
+to continue. A hook, seat revocation, parent PID exit, transcript snapshot or
+one process-group sample SHALL NOT serve as that witness. Wrong parent, stale
+generation, changed profile/manifest, unknown descendant and competing target
+claim SHALL refuse before B starts. The preparation controller SHALL initiate
+zero new model requests and create no target. Any old source request already
+in flight remains source-domain activity until excluded and reconciled. An
+exact-operation explicit release SHALL
+durably authorize one target launch before direct CLI exact-parent resume;
+uncertain launch or job effects SHALL be observed, not retried automatically.
+
+The selected initial path SHALL preserve the shared container and unrelated
+Claude sessions. It SHALL NOT stop, kill, restart or replace the container,
+kill all processes for a user or signal a shared process group. The supervisor
+MAY remain inside the container with independent job and control lifetimes.
+Host Docker/cgroup authority SHALL NOT be a prerequisite for this path.
+Forced per-session recovery SHALL remain separately gated and unavailable
+without its own evidence.
+
+The launcher SHALL claim the exact source parent/lane/generation before spawn,
+retain namespace/start identity or its owned child handle with a durable
+journal, and reject duplicate parent admission. Every runtime SHALL have
+immutable per-session configuration and profile/auth bindings with a scoped
+job credential distinct from supervisor authority; shared-path overwrite or
+broad credential/environment mutation SHALL NOT affect unrelated sessions.
+
+#### Scenario: A supervised job and unrelated session survive graceful exit
+
+- **GIVEN** A and independent Claude session C share a running container
+- **WHEN** A completes foreground wrap-up and its exact admitted CLI exits
+- **THEN** the container and C SHALL remain running and the same supervisor job
+  SHALL retain its identity, output and reservations without another spawn
+- **AND** B SHALL start once on A's exact parent only after verified exit,
+  complete supported session-activity accounting, reconciliation and release.
+
+#### Scenario: B reconstructs children while a persistent job continues
+
+- **GIVEN** A's unfinished native child and an independently admitted OS job
+- **WHEN** B resumes the exact parent conversation on the target account
+- **THEN** the job keeps its existing ID and execution-group process
+- **AND** B starts a new native child with a new ID from the service's
+  task, history, filesystem and job-result packet
+- **AND** all new external job requests travel through the lanes service.
+
+#### Scenario: Wrap-up returns to a prompt without exiting the CLI
+
+- **WHEN** A produces a final response, quota notice or prompt after wrap-up
+- **THEN** the supervisor SHALL NOT treat it as runtime exit or authorize B
+- **AND** it SHALL require observed exact CLI exit and measured foreground
+  child/helper lifecycle coverage, history and effect reconciliation.
+
+#### Scenario: Graceful exit or descendant coverage is uncertain
+
+- **WHEN** exit is refused, a child escapes or is unaccounted for, or the
+  launcher loses its runtime identity or durable journal
+- **THEN** the operation SHALL block readiness and B while preserving jobs,
+  claims, unrelated sessions and the container
+- **AND** it SHALL NOT infer exclusion from parent death or force a broad stop.
+
+#### Scenario: Old source or second target races B
+
+- **WHEN** A attempts a tool or restart after its durable fence, or two B
+  contenders claim the same parent/generation
+- **THEN** old-source dispatch and every second claim SHALL refuse without a
+  job, target runtime, or transcript writer being created.
+
+#### Scenario: Crash crosses release or job effect
+
+- **WHEN** the supervisor reloads an uncertain job result, exclusion witness,
+  release intent or target launch intent
+- **THEN** it SHALL reconcile the existing ID and effect before proceeding
+- **AND** it SHALL NOT replay a job, release, target startup or child message.
 
 ### Requirement: Explicit stop-then-resume v1 defers target creation until release
 
@@ -18,13 +142,13 @@ SHALL apply to strict mode, not v1. Both modes SHALL preserve source exclusion,
 history, files, ownership, permissions, and uncertain-effect safety. Old or
 unmarked records SHALL NOT be reinterpreted as v1. Graceful child/tool
 drain-before-parent-shutdown ordering elsewhere below SHALL remain strict-only;
-v1 MAY mechanically contain unfinished work before complete drain, but SHALL
+the original SDK/PGID v1 MAY mechanically contain unfinished work before complete drain, but SHALL
 prove full source exclusion and reconcile effects before readiness. Termination
 SHALL NOT mean successful task completion.
 
 #### Scenario: Source quota is exhausted
 
-- **WHEN** an operator selects v1 with a supported source containment boundary
+- **WHEN** an operator selects the original SDK/PGID v1 with a supported source containment boundary
 - **THEN** mechanical stop SHALL require no source model prompt, generated
   handoff, or natural completion of the unfinished task
 - **AND** unknown writers or effects SHALL prevent readiness and target launch.
