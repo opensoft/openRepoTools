@@ -308,12 +308,14 @@ def test_executable_cli_drives_persistent_native_lifecycle(tmp_path: Path) -> No
             cli_env, socket_path, generation, "status", "cli-status-stopped"
         )
         assert _assert_ok(after_shutdown, "status after shutdown")["phase"] is None
+        assert len(fixture.state.read_lineage_claims()) == 1
 
         unenrolled = _run_cli(
             cli_env, socket_path, generation, "unenroll", "cli-unenroll"
         )
         unenroll_result = _assert_ok(unenrolled, "unenroll")
         assert unenroll_result["owner_cleared"] is True
+        assert fixture.state.read_lineage_claims() == []
     finally:
         stop_event.set()
         service_thread.join(timeout=5.0)

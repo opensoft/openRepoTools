@@ -35,7 +35,6 @@ from test_lane_managed_daemon import (
     _native_start_body,
     _start_request,
     _stop_server_thread,
-    _wait_for_socket,
 )
 from test_lane_managed_controller_rollover import RolloverRuntime
 
@@ -706,6 +705,7 @@ def test_public_socket_real_state_retains_busy_a_then_delivers_b_c_once(
     api = _load_cli_api()
     socket_path = tmp_path / "managed-rollover.sock"
     stop_event = threading.Event()
+    ready_event = threading.Event()
     errors: list[BaseException] = []
 
     def serve() -> None:
@@ -715,6 +715,7 @@ def test_public_socket_real_state_retains_busy_a_then_delivers_b_c_once(
                 daemon,
                 operation_timeout=2.0,
                 stop_event=stop_event,
+                on_ready=ready_event.set,
             )
         except BaseException as error:
             errors.append(error)
@@ -723,7 +724,6 @@ def test_public_socket_real_state_retains_busy_a_then_delivers_b_c_once(
         target=serve, name="managed-public-rollover", daemon=True
     )
     thread.start()
-    _wait_for_socket(socket_path, thread)
 
     def request(
             request_id: str, operation: str, body_value: Mapping[str, Any]
@@ -742,6 +742,10 @@ def test_public_socket_real_state_retains_busy_a_then_delivers_b_c_once(
         )
 
     try:
+        assert ready_event.wait(5.0), (
+            "managed public socket did not reach verified listen readiness: "
+            + repr(errors)
+        )
         started = request("public-start", "start", {})
         assert started["ok"] is True, json.dumps(started, sort_keys=True)
         operation_id = started["result"]["operation_id"]

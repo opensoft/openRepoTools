@@ -23,6 +23,7 @@ from typing import Any, Iterator, Mapping
 
 import pytest
 
+from lane_managed_controller import ManagedController, Participant
 from test_lane_managed_native_swap_integration import (
     NativeSwapHarness,
     NativeSwapEvidenceProvider,
@@ -686,13 +687,33 @@ def test_native_ctx_fresh_spec_strips_inherited_native_swap_target(
         source_coordinator = _participant(source, str(source["coordinator_id"]))
         source_spec = source_coordinator["metadata"]["runner_spec"]
         assert source_spec["fingerprint"]["native_config"]["native_swap_target"] is True
-        held = _ctx_request(
-            fixture, "native-ctx-strip-marker", "hold", CTX_CHECKPOINT_HOLD
+        # The fresh-spec derivation remains testable without granting the
+        # still unsupported public native ctx lifecycle.
+        fresh_spec = ManagedController._ctx_fresh_spec(
+            Participant.from_dict(source_coordinator),
+            "session-fresh-native-ctx", "coordinator-fresh-native-ctx",
+            "native-ctx-fresh",
         )
-        target = fixture.state.read_json("controller.json")
-        target_spec = _target_spec(target, held["result"]["operation_id"])
-        target_config = target_spec["fingerprint"]["native_config"]
-        assert "native_swap_target" not in target_config
+        assert "native_swap_target" not in fresh_spec["fingerprint"]["native_config"]
+        assert source_spec["fingerprint"]["native_config"]["native_swap_target"] is True
+
+        before_claims = fixture.state.read_lineage_claims()
+        before_calls = (
+            len(runtime.open_calls), len(runtime.coordinator_interrupt_calls),
+            len(runtime.shutdown_calls), len(runtime.send_calls),
+        )
+        refused = fixture.request(
+            "native-ctx-strip-marker", "ctx",
+            {"checkpoint": CTX_CHECKPOINT_HOLD, "worker_policy": "hold"},
+        )
+        assert refused["ok"] is False
+        assert refused["code"] == "unsupported"
+        assert fixture.state.read_json("controller.json") == source
+        assert fixture.state.read_lineage_claims() == before_claims
+        assert (
+            len(runtime.open_calls), len(runtime.coordinator_interrupt_calls),
+            len(runtime.shutdown_calls), len(runtime.send_calls),
+        ) == before_calls
 
 
 @pytest.mark.parametrize("crash_boundary", ["before-open", "after-open"])

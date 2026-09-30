@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""External, model-free control for the opt-in shared-session CLI capability."""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import select
+import sys
+import termios
+import time
+import tty
+from pathlib import Path
+
+from lane_managed_cli_runtime import SUPPORTED_MODEL_SELECTIONS, validate_runtime_launch
+from lane_managed_cli_source import SourceCustodianLauncher, SourceCustodyError, request
+from lane_managed_state import ManagedStateError, ManagedStateStore, resolve_workspace
+from lane_managed_supervised_jobs import ClaudeCliSupervisedJobsLedger
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="lane-managed-cli",
+        description="Opt-in shared-container Claude CLI session control; never stops the container",
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    start = commands.add_parser("start", help="enroll and start one new named managed CLI lane")
+    start.add_argument("lane")
+    start.add_argument("--source-profile", required=True)
+    start.add_argument("--target-profile", required=True)
+    start.add_argument("--parent-uuid", required=True)
+    start.add_argument("--mode", choices=("fresh", "resume"), default="fresh")
+    start.add_argument("--model", choices=SUPPORTED_MODEL_SELECTIONS,
+                       help="explicit Claude model alias for both source and target launches")
+    start.add_argument("--cwd", required=True)
+    ready = commands.add_parser("ready", help="observe source drain and reconcile saved work")
+    ready.add_argument("lane")
+    ready.add_argument("operation_id")
+    release = commands.add_parser("release", help="explicitly launch the exact saved target")
+    release.add_argument("lane")
+    release.add_argument("operation_id")
+    observe = commands.add_parser("observe-target", help="observe and adopt the existing target launch")
+    observe.add_argument("lane")
+    observe.add_argument("operation_id")
+    status = commands.add_parser("status", help="read a lane's private capability ledger")
+    status.add_argument("lane")
+    manifest = commands.add_parser("verify-launch", help="verify one immutable runtime launch")
+    manifest.add_argument("manifest")
+    custodian = commands.add_parser("custodian-status", help="challenge one exact source custodian")
+    custodian.add_argument("directory")
+    attach = commands.add_parser("attach", help="attach one terminal to an admitted source PTY")
+    attach.add_argument("directory")
+    return parser
+
+
+def _hook_observe(directory: str) -> int:
+    # Command hooks receive one JSON object on stdin.  The callback runs as a
+    # child of the exact Claude CLI; the custodian checks SO_PEERCRED ancestry.
+    data = sys.stdin.buffer.read(128 * 1024 + 1)
+    if len(data) > 128 * 1024:
+        print("Managed lane prompt was not admitted.", file=sys.stderr)
+        return 2
+    prompt_hook = False
+    try:
+        event = json.loads(data)
+        if not isinstance(event, dict):
+            raise ValueError("hook event is malformed")
+        prompt_hook = event.get("hook_event_name") == "UserPromptSubmit"
+        launcher = SourceCustodianLauncher(directory)
+        credential = launcher._credential()
+        if event.get("hook_event_name") == "SessionStart":
+            request(Path(directory), credential, "session-start", event=event)
+        elif prompt_hook:
+            request(Path(directory), credential, "prompt-begin", event=event)
+        elif event.get("hook_event_name") in {"Stop", "StopFailure"}:
+            begun = request(Path(directory), credential, "stop-begin")
+            request(Path(directory), credential, "stop-event", event=event,
+                    ticket=begun["ticket"], turn_sequence=begun["turn_sequence"])
+        else:
+            raise ValueError("hook event is unsupported")
+        return 0
+    except (OSError, ValueError, KeyError, SourceCustodyError):
+        # No stdout or stderr enters a model turn.  Missing observations keep
+        # the owned terminal busy and therefore prevent /swap.
+        print("Managed lane prompt was not admitted.", file=sys.stderr)
+        return 2
+
+
+def _attach(directory: str) -> int:
+    launcher = SourceCustodianLauncher(directory)
+    observed = launcher.challenge()
+    if observed.get("source") is None or observed.get("source_exit") is not None:
+        raise SourceCustodyError("admitted source is not running")
+    lock_path = Path(directory) / "attach.lock"
+    lock_fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    original = None
+    command_prefix = bytearray()
+    line_start = True
+
+    def forward(typed: bytes) -> None:
+        nonlocal line_start
+        if typed:
+            launcher.tty_write(typed)
+            line_start = typed[-1:] in {b"\r", b"\n"}
+
+    def intercept_swap() -> None:
+        from lane_managed_cli_control import control_request
+        control_file = Path(directory) / "control.json"
+        try:
+            binding = json.loads(control_file.read_bytes())
+            if set(binding) != {"socket", "credential_file", "parent_uuid", "runtime_id"}:
+                raise ValueError("control binding fields changed")
+            state = launcher.challenge()
+            if (state.get("prompt_ready") is not True or
+                    state.get("clean_empty_line") is not True or
+                    state.get("submission_pending") is not False or
+                    state.get("turn_busy") is not False or
+                    state.get("source_exit") is not None):
+                raise SourceCustodyError("/swap is available only at the exact CLI idle prompt")
+            result = control_request(binding["socket"], binding["credential_file"],
+                                     "prepare", {"parent_uuid": binding["parent_uuid"],
+                                                 "runtime_id": binding["runtime_id"]})
+            if result.get("operation_id") is None:
+                raise SourceCustodyError("swap preparation did not return an operation")
+            launcher.request_exit(operation_id=result["operation_id"],
+                                  parent_uuid=binding["parent_uuid"],
+                                  runtime_id=binding["runtime_id"])
+        except (OSError, ValueError, KeyError, SourceCustodyError, ManagedStateError) as exc:
+            os.write(sys.stdout.fileno(), ("\r\n/swap refused: %s\r\n" % exc).encode())
+
+    def route(typed: bytes) -> bool:
+        nonlocal line_start
+        for byte in typed:
+            single = bytes((byte,))
+            if command_prefix:
+                if single in {b"\r", b"\n"} and bytes(command_prefix) == b"/swap":
+                    command_prefix.clear()
+                    intercept_swap()
+                    line_start = True
+                    continue
+                if single in {b"\r", b"\n"} and bytes(command_prefix) == b"/help":
+                    command_prefix.clear()
+                    os.write(sys.stdout.fileno(),
+                             b"\r\n[managed terminal] /swap prepares the exact account handoff; "
+                             b"Ctrl-] detaches. Use lane-managed-cli ready, release, and "
+                             b"observe-target for the explicit handoff.\r\n")
+                    line_start = True
+                    continue
+                candidate = bytes(command_prefix) + single
+                if (any(command.startswith(candidate) for command in (b"/swap", b"/help")) and
+                        single not in {b"\r", b"\n"}):
+                    command_prefix.append(byte)
+                    continue
+                forward(bytes(command_prefix) + single)
+                command_prefix.clear()
+                continue
+            if line_start and single == b"/":
+                command_prefix.append(byte)
+                continue
+            if single == b"\x1d":  # Ctrl-] detaches without affecting Claude.
+                return False
+            forward(single)
+        return True
+    try:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise SourceCustodyError("another terminal is attached to this source") from exc
+        input_fd, output_fd = sys.stdin.fileno(), sys.stdout.fileno()
+        if os.isatty(input_fd):
+            original = termios.tcgetattr(input_fd)
+            tty.setraw(input_fd)
+            size = fcntl.ioctl(input_fd, termios.TIOCGWINSZ, b"\0" * 8)
+            import struct
+            rows, columns, _, _ = struct.unpack("HHHH", size)
+            launcher.tty_resize(rows, columns)
+        while True:
+            frame = launcher.tty_read()
+            if frame:
+                os.write(output_fd, frame)
+            state = launcher.challenge()
+            if state.get("source_exit") is not None and not frame:
+                return 0
+            readable, _, _ = select.select([input_fd], [], [], 0.02)
+            if readable:
+                typed = os.read(input_fd, 4096)
+                if not typed:
+                    return 0
+                if not route(typed):
+                    return 0
+    finally:
+        if original is not None:
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, original)
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
+def main(argv: list[str] | None = None) -> int:
+    raw_args = sys.argv[1:] if argv is None else argv
+    if raw_args[:1] == ["hook-observe"]:
+        return _hook_observe(raw_args[1]) if len(raw_args) == 2 else 1
+    arguments = _parser().parse_args(raw_args)
+    try:
+        if arguments.command == "status":
+            store = ManagedStateStore(resolve_workspace(arguments.lane))
+            result = ClaudeCliSupervisedJobsLedger(store).status()
+            # Status is deliberately concise and contains no credentials or
+            # transcript data.  A full ledger is private to its supervisor.
+            result = {"capability": result["capability"], "lane": result["lane"],
+                      "claim_generation": result["claim_generation"],
+                      "current_claim": result["current_claim"],
+                      "operations": {key: {"phase": value["phase"],
+                                           "parent_uuid": value["parent_uuid"],
+                                           "uncertainty": value["uncertainty"]}
+                                     for key, value in result["operations"].items()}}
+        elif arguments.command in {"start", "ready", "release", "observe-target"}:
+            from lane_managed_cli_control import (control_endpoint, control_request,
+                                                  start_supervisor)
+            if arguments.command == "start":
+                endpoint = start_supervisor(arguments.lane)
+                payload = {"source_profile": arguments.source_profile,
+                           "target_profile": arguments.target_profile,
+                           "parent_uuid": arguments.parent_uuid,
+                           "launch_mode": arguments.mode}
+                payload["cwd"] = arguments.cwd
+                if arguments.model is not None:
+                    payload["model"] = arguments.model
+                method = "start"
+            else:
+                endpoint = control_endpoint(arguments.lane)
+                payload = {"operation_id": arguments.operation_id}
+                method = {"ready": "reconcile", "release": "release",
+                          "observe-target": "observe-target"}[arguments.command]
+            result = control_request(endpoint["socket"], endpoint["credential_file"],
+                                     method, payload)
+        elif arguments.command == "verify-launch":
+            value = json.loads(Path(arguments.manifest).read_bytes())
+            result = validate_runtime_launch(value)
+            result = {"schema": result["schema"], "runtime_id": result["runtime_id"],
+                      "parent_uuid": result["parent_uuid"],
+                      "profile_ref": result["profile_ref"],
+                      "launch_mode": result["launch_mode"], "valid": True}
+        elif arguments.command == "custodian-status":
+            result = SourceCustodianLauncher(arguments.directory).challenge()
+        elif arguments.command == "attach":
+            return _attach(arguments.directory)
+        else:
+            raise SourceCustodyError("unsupported shared-session control command")
+    except (ManagedStateError, SourceCustodyError, OSError, ValueError) as exc:
+        print("lane-managed-cli: %s" % exc, file=sys.stderr)
+        return 2
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

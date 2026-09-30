@@ -13590,6 +13590,15 @@ class ManagedController:
         if not isinstance(raw, Mapping):
             raise _error("invalid", "current coordinator runner specification is missing")
         spec = _safe_runner_projection(raw, "current coordinator runner specification")
+        fingerprint = spec.get("fingerprint")
+        if isinstance(fingerprint, Mapping):
+            native_config = fingerprint.get("native_config")
+            if isinstance(native_config, Mapping) and "native_swap_target" in native_config:
+                updated_config = dict(native_config)
+                updated_config.pop("native_swap_target")
+                spec["fingerprint"] = {
+                    **dict(fingerprint), "native_config": updated_config,
+                }
         spec.pop("resume", None)
         spec["mode"] = "fresh"
         spec["fresh"] = True
@@ -15327,6 +15336,18 @@ class ManagedController:
             raise _error("invalid", "native swap pre-release evidence digest is malformed")
         source_identity = native_swap.get("source_identity")
         participant = self._participants.get(self._coordinator_id or "")
+        if participant is None and operation.phase in {"released", "complete"}:
+            source_startup = native_swap.get("source_startup")
+            participant_id = (
+                source_startup.get("participant_id")
+                if isinstance(source_startup, Mapping) else None
+            )
+            archived = self._archived_participants.get(participant_id)
+            if (archived is not None and archived.state.casefold() == "stopped"
+                    and isinstance(archived.metadata.get("shutdown_evidence"), Mapping)):
+                # Completed swap history still needs its exact release binding
+                # after a proven shutdown archives the target participant.
+                participant = archived
         if not isinstance(source_identity, Mapping) or participant is None:
             raise _error("ownership-conflict", "native swap release target is unavailable")
         target_runner = native_swap.get("target_runner_incarnation")
@@ -18334,6 +18355,27 @@ class ManagedController:
                             }
                         else:
                             unresolved.append(participant_id)
+                native_claim = operation.metadata.get("native_unenroll_claim")
+                if native_claim is not None:
+                    if not isinstance(native_claim, Mapping):
+                        raise _error("invalid", "native unenroll claim intent is malformed")
+                    self._native_unenroll_owner_locked(native_claim, generation)
+                    claim_reader = getattr(self.store, "read_lineage_claims", None)
+                    if not callable(claim_reader):
+                        raise _error("unsupported", "native claim recovery authority is unavailable")
+                    claims = claim_reader()
+                    if not isinstance(claims, list) or any(
+                            not isinstance(claim, Mapping) for claim in claims):
+                        raise _error("invalid", "native claim recovery index is malformed")
+                    matching = [claim for claim in claims if claim == native_claim]
+                    if len(matching) > 1 or any(
+                            claim.get("lane_key") == native_claim.get("lane_key")
+                            and claim != native_claim for claim in claims):
+                        raise _error("ownership-conflict", "native unenroll claim index changed")
+                    if matching:
+                        unresolved.append("native-lineage")
+                    else:
+                        operation.metadata["native_unenroll_state"] = "complete"
                 if unresolved:
                     operation.phase = "indeterminate"
                     operation.metadata["recovery_required"] = True
@@ -20210,6 +20252,77 @@ class ManagedController:
                 raise
             raise _error("uncertain-effect", "shutdown outcome is uncertain")
 
+    def _native_unenroll_owner_locked(
+            self, claim: Mapping[str, Any], generation: int) -> None:
+        """Bind claim cleanup to the constructor-trusted current daemon."""
+        expected_daemon = (
+            self._coordinator_interrupt_daemon_id or self._native_stop_daemon_id
+        )
+        owner_reader = getattr(self.store, "read_owner", None)
+        if not expected_daemon or not callable(owner_reader):
+            raise _error("unsupported", "native unenroll owner authority is unavailable")
+        owner = owner_reader()
+        if (not isinstance(owner, Mapping)
+                or owner.get("mode") != "managed"
+                or owner.get("daemon_id") != expected_daemon
+                or owner.get("generation") != generation
+                or claim.get("owner_generation") != generation
+                or owner.get("lane") != claim.get("lane")
+                or (owner.get("lineage_id") is not None
+                    and owner.get("lineage_id") != claim.get("lineage_id"))
+                or (owner.get("coordinator_session_uuid") is not None
+                    and owner.get("coordinator_session_uuid") !=
+                    claim.get("coordinator_session_uuid"))):
+            raise _error("ownership-conflict", "native unenroll owner changed")
+
+    def _native_unenroll_claim_locked(self, generation: int) -> Optional[Dict[str, Any]]:
+        """Resolve the one durable native workspace claim before unenrollment."""
+        if not self._has_native_lifecycle_state():
+            return None
+        startups = [
+            operation.metadata.get("native_startup")
+            for operation in self._operations.values()
+            if isinstance(operation.metadata.get("native_startup"), Mapping)
+        ]
+        if not startups:
+            raise _error("unsupported", "native unenroll has no durable startup lineage")
+        lineages = [LineageRecord.from_dict(startup["lineage"])
+                    for startup in startups if isinstance(startup.get("lineage"), Mapping)]
+        if len(lineages) != len(startups) or any(
+                lineage.to_dict() != lineages[0].to_dict() for lineage in lineages):
+            raise _error("ownership-conflict", "native unenroll lineage changed")
+        lineage = lineages[0]
+        if lineage.owner_generation != generation:
+            raise _error("stale-generation", "native unenroll lineage owner changed")
+        claim = lineage.workspace_claim
+        self._native_unenroll_owner_locked(claim, generation)
+        claim_reader = getattr(self.store, "read_lineage_claims", None)
+        if not callable(claim_reader):
+            raise _error("unsupported", "native unenroll claim authority is unavailable")
+        claims = claim_reader()
+        if not isinstance(claims, list) or any(
+                not isinstance(item, Mapping) for item in claims):
+            raise _error("invalid", "native unenroll claim index is malformed")
+        matching = [item for item in claims if item == claim]
+        if len(matching) > 1 or any(
+                item.get("lane_key") == claim.get("lane_key")
+                and item != claim
+                for item in claims):
+            raise _error("ownership-conflict", "native unenroll has changed or child claims")
+        if matching:
+            if not callable(getattr(self.store, "release_lineage_claim", None)):
+                raise _error("unsupported", "native lineage release authority is unavailable")
+            return _json_value(claim)
+        completed = any(
+            operation.mode == "unenroll" and operation.phase == "complete"
+            and operation.metadata.get("native_unenroll_claim") == claim
+            and operation.metadata.get("native_unenroll_state") == "complete"
+            for operation in self._operations.values()
+        )
+        if not completed:
+            raise _error("ownership-conflict", "native unenroll workspace claim is absent")
+        return None
+
     @_transactional
     def unenroll(self, generation: Any) -> Dict[str, Any]:
         """Clear the controller roster only after durable stop/exclusion proof.
@@ -20293,6 +20406,7 @@ class ManagedController:
             if evidence.get("tools_quiescent") is not True and evidence.get("quiescent") is not True:
                 raise _error("uncertain-effect", "unenroll tools are not quiescent")
 
+        native_claim = self._native_unenroll_claim_locked(generation)
         operation = Operation(
             operation_id="op-" + uuid.uuid4().hex,
             request_id="unenroll-" + uuid.uuid4().hex,
@@ -20310,6 +20424,8 @@ class ManagedController:
                     for item in scoped
                 },
                 "shutdown_proven": True,
+                **({"native_unenroll_claim": native_claim,
+                    "native_unenroll_state": "pending"} if native_claim is not None else {}),
             },
         )
         self._operations[operation.operation_id] = operation
@@ -20335,6 +20451,27 @@ class ManagedController:
                     "operation_id": operation.operation_id,
                     "participant_id": participant.participant_id,
                 })
+            if native_claim is not None:
+                release = getattr(self.store, "release_lineage_claim", None)
+                if not callable(release):
+                    raise _error("unsupported", "native lineage release authority is unavailable")
+                operation.metadata["native_unenroll_state"] = "release-in-progress"
+                self._persist({"event": "unenroll-native-claim-intent",
+                               "operation_id": operation.operation_id})
+                try:
+                    release(
+                        native_claim["lineage_id"],
+                        coordinator_session_uuid=native_claim.get("coordinator_session_uuid"),
+                        owner_generation=generation,
+                        lineage_generation=native_claim["lineage_generation"],
+                        authoritative=True,
+                    )
+                except Exception as exc:
+                    raise _error(getattr(exc, "code", "uncertain-effect"),
+                                 "native lineage claim release refused: %s" % exc) from exc
+                operation.metadata["native_unenroll_state"] = "complete"
+                self._persist({"event": "unenroll-native-claim-released",
+                               "operation_id": operation.operation_id})
             operation.phase = "complete"
             operation.metadata["unenrolled"] = True
             for participant in participants:
