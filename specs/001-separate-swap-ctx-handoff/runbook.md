@@ -1,5 +1,53 @@
 # Five-bite runbook: source containment and exact-parent resume
 
+The prospective [CLI supervised-jobs capability](contracts/claude-cli-supervised-jobs.md)
+has a separate implementation sequence in T052–T057 and separate verification
+gates. This five-bite record remains the historical SDK/PGID diagnostic; its
+fourteen inconclusive runs do not certify the new capability or authorize a
+new runtime experiment.
+
+For the current CLI capability, follow the
+[completion and deployment plan](deployment-plan.md#current-delivery-plan-claude-cli-supervised-jobs-v1-september-26),
+including its T054–T057 gates. A future canary and its account seat sequence
+require separate authorization.
+The initial path keeps the shared container, independent session C and
+supervisor jobs running while A finishes foreground work and actually exits
+its CLI. Exact-runtime/known-child lifecycle evidence and durable fencing plus
+reconciliation precede B's explicit release. A prompt or parent PID death
+alone does not suffice; uncertain exit blocks takeover. The supervisor may
+remain in-container. No container-wide or broad process kill, host broker
+prerequisite or forced-recovery fallback applies. The September 30 ruling
+authorizes the documentation checkpoint only; the
+[Linux subreaper contract](contracts/linux-session-subreaper.md) governs future
+implementation. Select and record concrete canary identities only when a
+future canary is authorized, before any account seat move.
+
+## Explicit Sonnet selection — source candidate only
+
+The current source candidate accepts `lane-managed-cli start --model sonnet`.
+Leaving the option out preserves legacy v1 manifests; selecting it creates a
+strict v2 manifest and binds the same alias into source intent, target launch,
+target reuse and release validation. Offline tests cover the exact argv and
+those bindings. This proves only that the requested alias is carried through
+the supported CLI path; it does not prove the provider used Sonnet. Keep the
+automatic classifier and fallback safeguards enabled, record the effective
+model on any separately authorized future run, and stop if it differs from the
+requested alias. Do not rewrite or replay the historical blocked request to
+evade a safeguard. Follow the applicable documented recovery path and assess
+any new refusal; Anthropic's [model-switching guidance](https://support.claude.com/en/articles/16049681-why-claude-switched-models-in-your-conversation-with-opus-5-or-opus-5-5)
+does not impose a universal support-reply prerequisite. The optional
+false-positive report remains unsubmitted and is not evidence of an
+account-wide restriction. This source candidate is unqualified for private
+installation or live use; the local `live_execution_allowed: false` plan flag
+is not a provider account lock.
+
+## Historical SDK/PGID diagnostic record
+
+The remaining five-bite procedures and evidence describe the earlier isolated
+diagnostic, not current shared-container operation. They cannot be used as a
+container-stop recipe for the current capability.
+
+
 **Latest state (2026-09-24): bites 1–3 are complete; none of fourteen full
 Bite 4 runs produced a PASS. The fourteenth run used commit `a260975` and
 preflight seal SHA-256
@@ -1520,7 +1568,7 @@ stderr excerpt is capped at 4,096 retained bytes, subprocess capture itself is
 unbounded, and timeout/pre-arm failures do not use the capture path. Bite 5
 remains pending; no verdict has been made.
 
-## Bite 4 operator sequence
+## Historical Bite 4 operator sequence
 
 All fourteen full-attempt commands/results above are historical and must
 not be replayed. Their authorizations are consumed. No fifteenth run, cleanup,

@@ -1,5 +1,20 @@
 # Native-Lineage Experimental Quickstart
 
+The prospective [Claude CLI supervised-jobs capability](contracts/claude-cli-supervised-jobs.md)
+has no runnable quickstart yet. The commands below do not exercise its
+persistent jobs, source containment or direct CLI exact-parent resume; T052–T057
+and their verification gates govern that separate path.
+
+Its current delivery target is graceful per-session exit in a shared
+container that stays running. Follow the
+[delivery plan](deployment-plan.md#current-delivery-plan-claude-cli-supervised-jobs-v1-september-26)
+for the planned A/C shared-container fixture and explicit B release after
+verified exit/reconciliation. Supervisor jobs persist independently; the
+supervisor may stay in the container. A wrap-up prompt is not CLI exit, and
+unknown activity blocks takeover. No container stop/kill/restart or broad
+process kill is a recovery command. Forced recovery is not available. T054–T057
+remain open; no command below installs or activates this path.
+
 This is the existing **strict-mode** fake-runtime flow. The approved
 [stop-then-resume-v1 experiment](contracts/stop-then-resume.md) instead creates
 no target until explicit release. It is not yet a public `lane-swap` option;

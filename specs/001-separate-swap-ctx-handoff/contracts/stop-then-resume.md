@@ -2,6 +2,16 @@
 
 Authority: [approved decision](../../../openspec/changes/separate-swap-ctx-handoff/stop-then-resume-decision.md).
 
+The prospective [Claude CLI supervised-jobs capability](claude-cli-supervised-jobs.md)
+is an explicit source capability under this lifecycle. Its separately admitted
+persistent jobs use a per-session graceful-exit binding in the shared
+container, which stays running with unrelated sessions. Exact-runtime exit,
+accounted foreground activity, a durable owner/restart fence and reconciliation
+are required; uncertain exit blocks B and forced recovery is separately gated.
+The original PGID and mechanical-stop requirements below govern original v1
+records only. They do not authorize a shared-group/container stop for this new
+capability; neither path is production-approved yet.
+
 ## Scope and compatibility
 
 The explicit discriminator is `stop-then-resume-v1`. It selects a new

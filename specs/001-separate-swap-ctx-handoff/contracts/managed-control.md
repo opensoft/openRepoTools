@@ -1,5 +1,17 @@
 # Managed Native-Lineage Control Contract
 
+The prospective [Claude CLI supervised-jobs capability](claude-cli-supervised-jobs.md)
+defines additional private ownership, job and CLI-resume evidence for an
+explicitly selected source capability. This document's existing wire and
+strict-mode rules retain their original meaning; no current public route
+selects the prospective capability. Its current initial path is graceful
+per-session CLI exit inside a shared container: exact-runtime lifecycle and
+journal evidence, durable owner/restart fence, no B before reconciliation and
+explicit release. Container-wide actions or broad process kills are forbidden;
+uncertain exit blocks B. L1 and jobs may stay in that container independently
+of A. Per-runtime config/auth isolation is required; forced recovery is a
+separate future gate.
+
 Mode scope: [stop-then-resume-v1](stop-then-resume.md) has a separate approved
 prepare/release boundary. Target-held and six-stage swap clauses below describe
 strict mode; they are not silently relaxed for existing records. V1's public

@@ -1,5 +1,942 @@
 # Implementation Verification Record
 
+## September 30 rulings and checkpoint
+
+The decision, contract, deployment plan and tasks now record native Claude
+history custody, the idle-boundary Stop-hook wrap-up and exact-PID graceful exit
+plan, native editing tools, service-routed external jobs, operator-selected
+canary profiles, the derived QA Postgres/SQLite index and the deferred mid-turn
+Agent admission fence. `openspec validate separate-swap-ctx-handoff --strict`
+passed; `git diff --check` passed for the eight amended decision documents.
+
+The runtime launch policy allows native Edit, Write and NotebookEdit and denies
+exactly Bash and PowerShell. The canonical offline selector
+`tests/run.sh --parallel-safe -k 'lane_managed_cli_source or lane_managed_cli_model_binding or lane_managed_docker_source'`
+passed 57 tests with 2,718 deselected. This result does not measure pinned CLI
+2.1.286 StopFailure, Stop-block continuation, idle SIGTERM/SessionEnd,
+resumed SessionStart packet delivery or foreground Agent/parent Stop ordering.
+The code still pins 2.1.283; no real CLI, canary, seat movement, private
+installation or merge was authorized by this checkpoint. T054–T057 remain
+open, and T058 is a separate non-gating index follow-up.
+
+## T054 registry custody and fresh-challenge correction — September 30, 2026
+
+The shared-session source candidate now initializes the cross-lane parent
+registry under its lock with a durable identity and content digest. It retains
+existing claims during first-time legacy wrapping, then refuses a missing,
+corrupted or identity-mismatched registry instead of treating loss as a new
+empty registry. A cross-process fixture shows the second claim is refused
+before its simulated spawn after the data file is lost. The source-exclusion
+witness digest now binds the fresh
+custodian challenge nonce; repeated valid challenges produce distinct proofs,
+and a replayed challenge still refuses.
+
+Astra reviewed the bounded correction and found no actionable issue. The
+canonical wrapper's focused source/custody/control/vertical selector passed
+60 tests (2,715 deselected), and the installed-route/persistent-lifecycle/
+supervised-ledger selector passed 15 tests (2,760 deselected). Both used
+`tests/run.sh --parallel-safe -k ...`; `git diff --check` passed. These are
+offline and local process results. No new authenticated CLI canary, account
+seat movement, installation, full regression census or merge occurred.
+T054 remains open pending its remaining runtime evidence; T055–T057 and the
+native-child and service-to-EGS integration gates remain open.
+
+## Explicit Sonnet launch binding — offline source increment; 2026-09-27
+
+The new source candidate adds optional `lane-managed-cli start --model sonnet`
+support. Legacy launches retain their v1 manifest; explicit selection uses a
+strict v2 manifest whose non-null model and argv are validated, and whose
+selection is carried through persisted source intent, target creation/reuse,
+and release checks. The public parser rejects unsupported aliases and direct
+control input rejects explicit null or unsupported model values before
+enrollment. This binds a requested alias only; effective provider model,
+classifier recovery, fresh profile/holder preflight, lane registration, and
+live operation remain unverified.
+
+Inside `py-bench`, the canonical wrapper
+`tests/run.sh --parallel-safe -k test_lane_managed_cli_model_binding` reported
+**9 passed, 2,760 deselected** (2.43s; exec session 61040). The consuming
+selector
+`tests/run.sh --parallel-safe -k 'test_lane_managed_cli_control or test_lane_managed_cli_source or test_lane_managed_cli_vertical or test_lane_managed_cli_installed_route'`
+reported **40 passed, 2,727 deselected** (18.67s; exec session 51054). The
+consuming tests use local fake CLI fixtures; no provider request or live
+canary ran. These focused results do not qualify this source for private
+installation and do not replace the full canonical census. The prior full v7
+result remains red at 2,746 passed / 14 failed; it was not rerun here.
+
+## Installed v8; live canary interrupted; cleanup complete — September 27, 19:28 UTC
+
+Candidate `swap-001-20260927-45f3f22dff08` is privately installed and verified,
+NOT activated. 153-file freeze SHA-256:
+45f3f22dff08c90ce7ed8b9ecc324629f13e9b338fef01595577a85e6a4821fa.
+Only tests/test_lane_managed_daemon_rollover.py changed after red full v7:
+the fixture now uses the verified on_ready callback, preserving every behavior
+assertion. Complete rollover12 and hygiene183 passed; JUnit SHA-256
+205aa2739255af60fc40cd23831270000505afb022e88fa8015a6c62e6c59fa2.
+Astra approved fixture-only composite qualification and root independently
+verified the sole delta. Full v7 remains 2,746 passed /14 failed; do not call
+it green. Native13 are unchanged and open. Installation verified43 files,
+two hooks, all48 checked ambient paths unchanged and private imports.
+
+Distinct lane `swap-canary-20260927-v7` was canonically published and started
+once with parent67229fc9-a472-411c-b283-ee39739fc55e, runtime
+8d3e0a72-bb83-4aac-bcaf-451411112a19, source team05d/targetteam05j.
+One source prompt was sent. Native Agent toolu_01THaqf7uuat35CuEH1hecST was
+interrupted by Claude's safety classifier; the CLI automatically fell back
+from Opus5.5 to4.8. Root did not select fallback, resend, replay or bypass.
+Partial child a4830bdb39663cb31 has8 transcript records and zero tool calls.
+The parent tried one read-only job_status, received ownership-conflict, then
+completed an authenticated Stop summary with1 hook/no errors. Its inference
+that a job existed was incorrect: ledger jobs/operations, runner files and
+job-domain records are all empty; no job-launch marker or release barrier.
+This attempt is FAIL before admitted-job continuity and swap preparation.
+
+A exited by the exact owned idle /exit, code0, full ECHILD/drained, no new
+assistant model message during cleanup. Independent C run
+e5b73dad-45e4-4a0f-b751-b5dfeaa1fefa survived A exit with its exact identity,
+then exited code0 through its run-bound sentinel. Shared container identity,
+start time and restart count are unchanged. No active test/probe/Claude A/B/C
+remains for this attempt. Preserve its supervisor/state/evidence; no new
+attempt or task replay around the classifier. Canonical row is published
+PAUSED with this result. Seat remains last confirmed team05d; no seat move
+was requested or performed. Team05j has not launched.
+
+Evidence is under the current host-local root's attempt-v7 directory:
+canary-final-disposition.json, failed-native-child/, canary-A-cleanup-result.json,
+canary-C-final.json; installation/composite evidence are at the parent root.
+The earlier failed v6 job remains terminal at its original domain deadline;
+its reservation and supervisor are retained, never manually cleared. The live
+authenticated same-child/admitted-job swap proof, Native13, T054–T057 and
+all general rollout gates remain open. Latest user seat question was answered:
+keep team05d; no move is needed while the live proof is blocked.
+
+## V7 census complete; one fixture race under correction — September 27
+
+Full canonical v7 census finished: 2,746 passed / 14 failed / 0 skipped /
+0 errors, 2,760 cases in 3,725.84 seconds. Exact expected coverage is complete;
+all 153 frozen hashes/modes are unchanged. JUnit SHA-256:
+60ebd6e4db3f241171224e96989e5b4d15a8ec0b6a30f6b54bb6d78aa278ea83.
+Native13 names/reasons match exactly. The additional failure is
+`test_public_socket_real_state_retains_busy_a_then_delivers_b_c_once` at its
+initial public-start: the client correctly refused a socket not yet owner-only.
+The fixture waited for pathname existence, which can precede bind→chmod0600→
+listen→verification completion. Production exposes an on_ready callback after
+all those steps. Astra confirmed this race; Sol owns fixture correction and
+exclusive focused test slot. No v7 private install or live canary occurred.
+
+Retain the red full census and its unqualified analysis. Astra confirmed the
+existing staged policy permits a reviewed fixture-only correction plus complete
+consuming/hygiene confirmation with unchanged production/dependency bytes; this
+must be separately recorded, never called a green full suite or a waived extra
+failure. Production changes or unexplained failures require reassessment.
+Root will freeze the corrected inventory and verify its evidence before any
+private installation. The distinct next canary stays unregistered/unstarted.
+Native13, T054–T057 and global rollout remain open. Seat stays team05d, target
+team05j; no move is needed for automated tests. Actual source exclusion and
+durable readiness must precede the operator seat-move request.
+
+## V7 full census active; v6 job terminal — September 27, 18:51 UTC
+
+Canonical v7 full census remains running: exec63753, wrapper2924270,
+pytest2971479. Source/tests are frozen; observe this existing run. It is in
+its long shell integration case, not queued now. No v7 installation or live
+canary has been dispatched. The distinct attempt-v7 runbook and read-only
+snapshot helper are prepared. Exact full coverage/failure mapping/no drift
+still gate installation. Native13 and T054–T057 remain open.
+
+The failed v6 original job reached the execution domain's existing one-hour
+limit. The integrity-validated terminal witness records exit -9 and
+subtree_empty=true, untruncated output, and before/after local-worktree
+inventories. The command PID2667795 is absent; worker2667779 is an exited
+zombie awaiting supervisor reap. This was the existing domain deadline, not
+an operator cancellation or signal. Last heartbeat718; no script timeout or
+success marker, no result file, and no release barrier. Preserve supervisor,
+ledger/reservation and evidence; do not clear reservations manually or replay.
+No successful swap, B observation or result consumption is claimed.
+Evidence: canary-job-terminal-v6.json, canary-v6-job-terminal/; terminal record
+SHA-256 7c072ebef78d73d113e60c3158035e2848a33f828e6adf3ef8ce4682944f5898.
+A and C remain normally exited; shared container identity unchanged. Seat is
+still team05d. The shared WIP checkout had no tracked changes before this
+checkpoint; preserved untracked data remain intact.
+
+## Frozen v7 census queued — September 27, 18:13 UTC
+
+Sol's role-aware profile discovery correction passed 50 focused and 53
+consuming tests. Read-only discovery against the deployed 418-config layout
+and completed A transcript passed: no current holders, unknown holders or
+ambiguity. Live-holder preservation is covered synthetically, not by that
+zero-holder observation. Astra approved final static review. Strict OpenSpec
+and both diff checks passed. Source/tests are frozen.
+
+Candidate `swap-001-20260927-09217183d6c2`, 153-file manifest SHA-256
+`09217183d6c21ffe1525c0d0b9b219806a3346586cdda0c1a161145e26e10bec`.
+Only `lane_managed_profiles.py` and `tests/test_lane_managed_profiles.py`
+changed from v6. Private v7 plan/inventory are prepared, NOT installed.
+Root owns the sole feature test/probe slot. Canonical full wrapper PID2924270,
+exec63753, launched at18:12:54 UTC and is queued behind external pytest
+PID2896180 in another lane's openxFactory scratch checkout. Observe this
+existing handle; never start a second census because the log is quiet.
+`full-census-v7-run.json`, log, eventual JUnit and before/after manifests are
+under the current host-local evidence root. Exact failure mapping/no drift
+must qualify before copy; native13 remain open.
+
+Failed v6 A/C remain gracefully exited. Preserve supervisor2634526 and its
+original job worker2667779, actual command2667795 (start token ending26503128)
+to its predeclared timeout; no barrier, replay or manual reservation clearing.
+The current canary row was canonically published PAUSED with the refusal.
+A future distinct canary is prepared but unregistered/unstarted under
+`attempt-v7/`: lane `swap-canary-20260927-v7`, parent
+`67229fc9-a472-411c-b283-ee39739fc55e`, nonce`04bb5dd7ab2fdf72ebe2dd80`,
+new workspace/barrier and same bounded scripts. Bind terminal30x100, wait for
+exact trust selection before separate Enter. No model/config/profile mutation
+or runtime launch has occurred for v7. Seat remains team05d, targetteam05j;
+operator move still requires actual source exclusion and durable readiness.
+
+## V6 cleanup complete — September 27, 18:03 UTC
+
+A exited through its owned idle `/exit`: code0, exact source reaped and
+custodian `drained=true` (full ECHILD). This is failed-canary cleanup evidence,
+not swap readiness. Original job PID2667779 with start token ending26503115
+survived outside A's subtree, heartbeat102; C and container unchanged at that
+checkpoint. C then exited normally through its run-bound sentinel, code0;
+its manager and CLI are no longer live. No A/B/C CLI or live probe remains.
+
+Preserve original supervisor PID2634526, job, ledger/reservation, both private
+installed versions and all evidence. The job must reach its existing
+3,600-second bound; do not create the barrier, relaunch it or manually clear
+its reservation. Revalidate exact identity before any process action. No
+swap operation, durable ready, target launch, seat move or activation occurred.
+Astra approved this disposition. Root returned the sole focused test slot to
+Sol for the discovery correction after Astra's traversal contract; read-only
+actual deployed-layout discovery must qualify before another full census.
+A subsequent canary must use distinct session/job/workspace scope; this failed
+attempt cannot be replayed. Evidence: `canary-cleanup-v6.json`,
+`canary-v6-cleanup-source-exited/`, `canary-C-final-v6.json`.
+
+## V6 installed canary checkpoint — September 27, 18:01 UTC
+
+The full canonical v6 census completed: **2,735 passed / 13 failed / 0 skipped**,
+2,748 test cases. All thirteen failure names/reasons match the retained native
+ctx/restoration requirements. All 153 frozen files remained unchanged. Coverage
+normalizes only the single live-holder test's `os.getpid()` parameter; raw ID
+differences are retained. JUnit SHA-256:
+`f97d79d7c691805c037f77aa28e2c5b54ee358fb178453d4f3e4c898b75cc45a`.
+
+Private `swap-001-20260927-75da487cfaa3` is installed and verified: 43 file
+copies, two hooks, all 48 checked ambient paths unchanged, private import
+resolution. It is NOT activated. Installed v5/v6 remain immutable.
+
+Real A started once through the installed command, runtime
+`e7ab1361-ade4-4eac-a7fe-fbd03d7dfd77`, parent
+`38ce6d48-9543-4080-9660-c7e9c311aa0b`. One native Agent child
+`a6e5eb77ea8c06edf` admitted original job
+`canary-job-a81bd43dcf5516394f7e737c` once (PID2667779), read status/output and
+returned. Actual authenticated Stop completed: one successful native Stop hook
+summary plus integrity-valid custodian turn1 begin/event digests. Raw Stop
+payload/ticket are not retained, so field predicates are validator-backed,
+not independently replayable. Astra qualified this derived evidence.
+
+**The one `/swap` refused before preparing an operation:**
+`profile storage tree contains a symlinked config path`. The first encountered
+path is the existing legacy `profiles/opensoft-max-brett-heap` alias; normal
+shared commands/rules/skills/agents and state directories are also symlinks.
+The discovery walk rejects every directory link except `projects`. No profile
+links were changed. Ledger operations remain empty; no source exit, target
+launch or seat move occurred. V6 canary is FAIL before swap preparation.
+
+At this checkpoint A PID2635049, custodian PID2635007, original job PID2667779
+and independent C PID2623355 (manager2623266) remain live. Attached terminal
+exec44345 belongs to A. Never signal these numeric PIDs without checking their
+recorded start identities. Root owns cleanup/evidence; Astra designs the
+profile-discovery correction, Sol implements after direction. Do not restart
+or hotpatch the existing v6 supervisor, replay the job, create its release
+barrier, or start B. The job has its original 3,600-second bound. Seat team05d,
+target team05j. Request movement only after a future valid source exit plus
+durable readiness; this failed attempt has neither.
+
+Retain two scoped limitations: default80-column trust selector redraw omitted
+label text and failed closed; reattaching the SAME source at30x100 produced
+full Yes selection, then separate Enter passed. Claude automatically fell back
+from Opus5.5 to4.8 after the child returned. No task replay or manual fallback
+was sent; no one-provider-request claim is made. Exact child tool correlation,
+job launch intent/started records, heartbeat41→74 and unchanged C/container
+witnesses are in the host-local `canary-v6-before-swap` and
+`canary-v6-swap-refused` evidence. Native13, T054–T057 and general rollout remain
+open. Earlier queued/running census text below is historical.
+
+## Frozen v6 census — launched September 27 at 16:36 UTC
+
+Astra approved the one-line production correction and installed-first-use
+regression. Repository first-use tests passed 2; private installed executable
+first-use passed 1; the combined control/vertical/installed scope passed 15.
+Strict OpenSpec and both diff checks passed. The distinct C-v2 observer check
+also passed without starting a CLI. Source and tests are frozen.
+
+Frozen inventory: 153 files, SHA-256
+`75da487cfaa3f9ca82cfdb28391fbfd343d5acf62221b0481c7cc44a72932470`.
+Only `lane_managed_cli_control.py`, `tests/test_lane_managed_cli_vertical.py`
+and `tests/test_lane_managed_cli_installed_route.py` differ from v5. Candidate
+`swap-001-20260927-75da487cfaa3` has prepared private plan/inventory v6 and is
+NOT installed. The new full canonical census must qualify it first.
+
+Root owns the sole feature test/probe slot. The existing full wrapper PID is
+992769, exec session 94463; its basetemp is recorded in the host-local run
+JSON. At the latest observation the wrapper was queued
+by the canonical guard behind live pytest PID743421 in another lane's scratch
+checkout. Observe the existing handle and exact process identity; do not restart
+on silence, a status file or an observation timeout. Private artifacts are
+`full-census-v6-run.json`, `full-census-v6.log`, eventual `full-census-v6.xml`,
+and frozen before/after manifests. Previous real C is terminal; no canary A/B
+CLI or job has started. Seat remains team05d.
+
+
+## Current checkpoint — WIP recovered; first-start defect under correction
+
+The user approved the one-time shared-WIP reconciliation. Recovery
+`cc320dc6b2bb7720d977a985e02f8b4c9a40900f` was pushed normally and verified
+as an ancestor of fetched remote `ecf29f5955334241b7950acd9a4473ec8421b813`.
+Both histories, all 53 published lane rows and all 610 untracked files were
+preserved. The exact canary row is published and canonical readback passed.
+The older dirty-file/rebase blockers below are resolved historical evidence.
+
+Private v5 remains immutable and unactivated. Its first real public `start`
+attempt failed before enrollment: start_supervisor's recursive mkdir created
+new host/lane ancestors with mode 0755; the child correctly refused unsafe
+state before creating an owner, credential, session intent or Claude runtime.
+Read-only validation reproduced the exact refusal. No source/target Claude,
+model turn, admitted job or seat move occurred; no blind retry was performed.
+The proven-empty newly created scaffold was preserved by atomic rename into
+owner-private `.git/openrepotools-recovery/swap-canary-v5-empty-eagle`, with
+UID/device/inode/mode evidence. Existing state was neither chmodded nor deleted.
+
+Independent C ran once, was observed idle with its exact identity throughout
+the failed start, and exited normally on the run-bound /exit sentinel (code 0).
+Its manager and CLI are no longer live. The shared py-bench identity, start
+time and restart count remained unchanged. The startup observer's null-CLI
+race is separately recorded; a distinct future witness script is prepared.
+This closes the v5 live attempt as FAIL before source admission, not a swap PASS.
+
+Sol is correcting canonical private-layout initialization and adding public
+first-use/unsafe-preexisting regressions; Astra reviews. Sol owns focused
+validation; root owns the next freeze, full canonical v6 census and scoped
+installation. Changed production bytes require that new census; the earlier
+fixture-only composite allowance cannot be reused. Native13 and T054–T057
+remain open. Seat remains team05d, target team05j. Request the move only after
+exact A exit and durable readiness on a subsequently gated candidate.
+
+Artifacts under the current host-local evidence root: `wip-recovery-approved.json`,
+`canary-registration-plan.json`, `canary-A-first-start-failure-v5.json`,
+`canary-v5-scaffold-preservation.json` and `canary-C-final-v5.json`.
+
+
+## Historical v5 installation and publication preparation
+
+The staged private copy is verified. Candidate
+`swap-001-20260927-7e4e6694a135` is installed beneath the host-local evidence
+root's `private-install/versions/` directory. It is **not activated**, and no
+authenticated canary source, target, job or independent C has started.
+
+Full serialized v4 remains a **red census: 2,731 passed, 14 failed, 0 skipped**
+(2,745 tests; pytest reports 3,913.586 seconds). All 153 frozen hashes/modes
+stayed unchanged. `full-census-v4.xml` SHA-256 is
+`aa0e2e789f7f8af01771c11ac46c5c5ee51958e44e3f304bcc3a36c6cd930be7`.
+Thirteen exact native ctx/restoration nodes and reasons match the retained
+baseline; only Python object addresses in two zero-open messages were normalized.
+Those thirteen requirements remain open. The other node was the legacy wrapper:
+3,221 passed / 2 failed, both T019 existing-live attach and ownership-read checks.
+
+Sol corrected one fixture value: literal backslash-t text became actual TAB
+columns for targeted fake tmux lookup. Astra reviewed the exact line; all
+positive attach/read and no-effect assertions remained unchanged. The bounded
+before/after diagnostic SHA-256 is
+`3ffa34f66d6103edff337894f880d19de12e037886df7360625dac55db95b45d`.
+The complete canonical legacy-wrapper plus all repository hygiene confirmation
+then passed **184 tests, 2,561 deselected, 0 failures, 0 skipped** in 2,884.54
+seconds. `legacy-confirmation-v5.xml` SHA-256 is
+`b8b7afc0d446fd29d149ec08e350da45e983b0dce3c74ac187dbdb5f06d58dfd`.
+The wrapper's passing assertions require its full shell run to exit zero and
+report a zero-failure footer. Do not infer or sum a new green full-census total.
+
+V5 inventory `frozen-legacy-v5-before.json` SHA-256 is
+`7e4e6694a1350569a1f0db0e52296f1473cdf75ba7094af06b274c00b6e7f830`.
+Only `tests/test_lane_helpers.sh` differs from v4, at SHA-256
+`1c6c22d5e756c3e81c7bb4b075e545fa9060219a16bcacea3d4ee603ea187f32`;
+production, installed, dependency and test-framework files are identical. All
+153 v5 hashes/modes stayed unchanged through confirmation. Bash syntax and diff
+checks passed; strict OpenSpec passed before the unchanged governed candidate
+froze. The actual pinned CLI hash was rechecked before private installation.
+Astra confirmed the staged decision permits joining retained full red v4 with
+this complete fixture-only scoped confirmation and unchanged production bytes.
+General rollout/T057 still requires its full regression/CI gates.
+
+Private installation ran the frozen checkout's real `openRepoTools --install`
+with all three destinations scoped. Verification passed **43 copied files and
+2 merged hook entries**, with no missing or unexpected files. All 48 listed
+ambient paths matched their before-install hashes/modes/links. This is the
+checked installer footprint, not a claim about every file on the workstation.
+`private-install-verification-v5.json` SHA-256 is
+`df8123a65e6b137e3bec4829e9c410d68d6620aa96ce146e2d8c7c6d502eced0`.
+The installed front door exposes `observe-target`; its five loaded managed
+modules resolve inside the private version. `installed-cli-resolution-v5.json`
+SHA-256 is `8010099282165fe335667e526b61835f07af0be9c027d655ed3ca1651cfd1ed7`.
+No global selector or general activation was changed.
+
+Canonical canary `add-row` created local WIP commit
+`05a8b084641833cd938c506cf1b16d3bedb0822f`; exact local row readback matches the
+plan. Its push was rejected six times as non-fast-forward, and the helper exited
+3 because the unrelated dirty
+`handoffs/xFactory/session-handoff-2026-09-05-lane-opsXfactory-1.md` prevents its
+rebase. That file's hash was unchanged by the attempt. The refusal log SHA-256
+is `e4eaf0a46a27ce662baab475cec84cd5f0173e3270aa976cb334ffee72aa1996`.
+The row was **not published by this attempt**. Do not enroll from the unpublished
+row, add it again, hand-rebase, stash/reset or commit another lane's handoff.
+The user has been asked to have its owner checkpoint it. After that, re-read
+state and use the canonical publication workflow before any canary launch.
+
+`deployment-checkpoint-v5.json` joins the evidence and pending action. Seat
+remains team05d, target team05j; no move has been requested. Actual authenticated
+Stop, native same-child continuation, persistent-job swap, independent-C
+survival and operator-gated release remain required canary evidence.
+
+Final focused source/control/custody/installed-route/vertical validation passed
+**47 tests, 2,698 deselected, 20.491 seconds**. Its JUnit is
+`startup-combined-focused-5.xml`, SHA-256
+`8ba093597239bbf5d634be7fd221553d2bdc6e172d395a485ee2cb613b757d90`.
+Coverage includes split/stale trust selectors, blank input, malformed and lost
+prompt hooks, pending target attachment, lost release ACK recovery, adoption
+ownership takeover, local help/parser routing, private installed rollback,
+initial socket bind/listen readiness and lost start ACK after the source
+actually started. Start is never replayed. Tests use a single original
+custodian identity and five-second absolute startup deadline, propagated
+through connect, send, receive and final response checks.
+
+The final real pinned CLI trusted and fresh-untrusted probes both passed
+SessionStart, idle readiness, owned normal exit code 0 and ECHILD drain:
+
+| Private artifact | SHA-256 |
+| --- | --- |
+| `trusted-startup-exit-managed-v8.json` | `ad76a739f73fb6b1ed2a4c72eed07438ba50a161b76c135a190528784d4b19ed` |
+| `untrusted-startup-exit-managed-v8.json` | `d8cf022bbf44ab232f2fa42b79510f35d29aa1168270d97beb42140713fbbe83` |
+
+The untrusted run explicitly records the exact managed route and no submitted
+model prompt. These are fake-auth offline probes using the previously described
+seccomp isolation; provider attempts were not measured. Actual authenticated
+Stop and native child continuation remain canary gates. Runtime manifest
+SHA-256 values are respectively
+`912a6ef9625c7b6943d2c931847e5624a9807e29a39e189ff6ffde19f3d8e299`
+and `8c11509f764c39e4abc4aa78bc56248aec70371a49ba166d7212d597de03716b`.
+The current freeze records exact source/runtime/control/proxy/probe bytes.
+
+Earlier diagnostics and failed focused runs remain retained, not counted as
+acceptance. One new in-process fixture omitted its fake executable, briefly
+reached real CLI onboarding and timed out; it sent no model prompt. The fixture
+now explicitly selects the fake. Sol verified its exact test-owned processes
+were dead zombies under init, with no active descendant. No zero-outbound
+attempt claim is made. A subsequent failure exposed the real socket bind/listen
+race; the final focused gate covers its bounded initial-challenge correction.
+
+Pinned static trust review identified a 150 ms chooser remount resetting focus
+to No. The managed input route settles before Down, requires a fresh Yes, and
+revokes permission on later No or incomplete selection across split output.
+Private `pinned-trust-chooser-static-review.json` verifies four 800-byte slice
+digests against CLI SHA-256
+`1859583ce32920595c61ef868bee52e1b1594f7486db209935e01f1e5e804ae2`;
+its SHA-256 is
+`794544449d8e4e217bd1ff6c00edd8433226bcad95f2ef2b13642413aef87df3`.
+V1-v3 installation plans remain blocked historical candidates. Evidence below
+retains the scope and candidate actually measured.
+
+## September 27 resumed shared-route evidence — intermediate
+
+The separate WIP/project regression now uses the real workspace helper, a
+local WIP Git repository and a separate linked project worktree. Integrated
+tests exercise repeated A-to-B-to-A swaps, persistent job consumption and a
+second edit against that worktree. They exposed and corrected two defects:
+readiness captured reservations before terminal settlement, and an active
+target consuming a completed source job did not release its reservation.
+Settlement now precedes the fresh history snapshot and authenticated terminal
+observations settle against the current owner/generation with a ledger CAS.
+Private terminal receipts preserve trusted completion across later edits;
+missing or altered receipts refuse. Astra's read-only review found no concrete
+correctness defect in these changes.
+
+The following focused runs use the canonical wrapper. They overlap earlier
+runs and must not be summed into a feature acceptance total.
+
+| Private JUnit | Result | SHA-256 |
+| --- | --- | --- |
+| `active-jobs-2.xml` | 23 passed; 16.287 s | `182e7a91b8af531146af56d71cfe6d16bafb4f46da648334c2b6f1bf43138f7a` |
+| `terminal-receipt-1.xml` | 1 passed; 3.067 s | `fbee3808e6d024171dde0063dc8fb96c86c44f783e45c1cf8737b424514d5c7a` |
+| `packaging-corrections.xml` | 2 passed; 2.004 s | `7004649533e0b455ca4c272dd1d31f8fed9b35a923570ded89e566ae8b7f7172` |
+| `installed-route-2.xml` | 1 passed; 6.293 s | `2926ba94abfeb9399cb2eee8bcdc88a95ff913a87b077dca74705becf05bf380` |
+| `prompt-stop-order-2.xml` | 18 passed, 2,715 deselected | `9117961382efb05250f00e5af81c3aea85a59031abb127905b20bced456ef97e` |
+
+The installation test scopes all three destinations, runs the installed
+supervisor/source/job stack and switches a private selector v1-to-v2-to-v1.
+Both versions contain the same candidate bytes. The original source/job
+identities, claims and immutable v1 launch references survive. This proves
+private installation and selection rollback, not older-version compatibility
+or an authenticated account transition. Packaging failures were corrected by
+recording the nine new installable files with their required Git modes and
+condensing the README to its existing size limit; assertions are unchanged.
+
+The real managed CLI probe initially could not create a bubblewrap namespace
+on this host. An explicit probe-only seccomp mode denies non-AF_UNIX sockets,
+io_uring and pidfd descriptor acquisition after checking inherited descriptors.
+Its IPv4/IPv6 denial and AF_UNIX self-check pass. This is bounded process socket
+isolation, not filesystem confinement or proof of zero attempted requests.
+The pinned real CLI passed initial `SessionStart`, idle prompt, owned `/exit`,
+normal exit code 0 and exact ECHILD drain. Production launch arguments,
+environment and manifest construction were used with isolated fake auth.
+`managed-cli-seccomp-order-fixed.json` SHA-256 is
+`9110a6a668ae7ff8f6ee27fc434040bbbf895b8e35f429c4aef34aec9a19821c`;
+its runtime manifest SHA-256 is
+`21970ba47332ef57b79c22c02374c6cb0bd7c35d252bbef8ebe971f326ba84e8`.
+This does not prove Stop/StopFailure, a foreground model turn, native child
+continuation, authentication or zero attempted provider requests. It exposed
+terminal title cursor formatting and prompt-before-SessionStart ordering;
+both were corrected with explicit regressions. The corresponding post-turn
+prompt-before-Stop correction passed source, integrated and installed-route
+regressions, including wrong-ticket rejection. Prompt observations are reset
+on each submitted turn and cannot grant readiness before the exact Stop or
+StopFailure event settles that turn. Astra also inspected the pinned binary's
+parent Stop payload construction: the background-task/cron arrays, initial
+false stop-hook flag and omission of the parent agent ID match the validation
+contract. That static check does not substitute for a real callback. No
+authenticated A/B session, seat move, canary admission or global installation
+has occurred.
+
+Artifacts are host-local under
+`${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools/deployment-evidence/shared-session-resume-20260926T235017Z`.
+The frozen full census completed through serialized `tests/run.sh`:
+**2,719 passed, 14 failed, 0 skipped, in 3,691.56 seconds**. Private output is
+`full-census.log`; `full-census.xml` SHA-256 is
+`79671a91e3b8dd2f3b011166c187b386d30ec57fe2d590324a1b9105e946b06d`.
+Its 153-file source/test/installer/documentation inventory is recorded in
+`frozen-census-before.json`, SHA-256
+`53038e68db2534340772504e170152e756cdfe56fe754ad12f071978607a71df`.
+All 153 hashes and modes remained unchanged through the run. Strict OpenSpec
+validation passed after that freeze. Thirteen failures match the exact known
+native ctx/restoration nodes and their unchanged unsupported/zero-open failure
+reasons. The remaining pytest failure is `test_the_lane_helper_suite_passes`:
+its shell footer reports **3,191 passed, 22 failed, 0 skipped, 0 pending**.
+Those nested assertions are not additional pytest nodes. Astra and Sol mapped
+all 22 to stale fixture setup: four malformed-row `/ctx` cases now refuse at
+an earlier projection read; four guard/live-attach cases use a nonhex UUID;
+one launcher stub leaves an intentionally pending lease unbound; seven
+malformed-bind cases never enter binding through direct `--no-launch`; and
+six projection cases encounter remote ownership first. Sol is correcting
+those fixtures while preserving early refusal, separate late-write refusal,
+positive lease binding and no-effect assertions. No production relaxation or
+native-ctx assertion change is authorized. Diagnosis alone is not a pass:
+this unexpected failure still blocks the staged install and canary pending
+the corrected frozen census.
+
+The fixture repair passed Astra's review, shell syntax and whitespace checks.
+A disposable bounded probe reached both corrected local projection branches:
+malformed projection refused with code 1 and the exact unreadable-projection
+message; valid durable ownership refused with code 2. That probe was ephemeral,
+so no retained raw artifact is claimed. The second full canonical census began
+at `2026-09-27T01:45:31Z`. Its private artifacts use the
+`full-census-v2` prefix; `frozen-census-v2-before.json` SHA-256 is
+`302dabd3ed20ae9b0e383b2cc08c8487ecd453f5256cdd3040e0743d2e061c9a`.
+Only `tests/test_lane_helpers.sh` differs from the first 153-file inventory;
+production installation bytes remain identical. No first-census artifact was
+overwritten. It was deliberately interrupted at `2026-09-27T01:54:22Z` after
+the continuation blocker below was identified: **73 passed before interrupt,
+not a full census or acceptance result**. The wrapper exited 2. Exact owned
+test processes were stopped; the private interruption record lists their
+identities. Sol now owns the sole test/probe slot for the next correction.
+
+Canary prompt review initially raised a possible repeated-Agent history
+cardinality mismatch. Retained September 25 real transcripts instead show
+one Agent creation followed by SendMessage to the same child (CLI 2.1.282),
+with the original child-history prefix retained. The assumed second-Agent
+shape is therefore not demonstrated by that evidence. Pinned 2.1.283's native
+instructions likewise name SendMessage for continuation. The current explicit
+builtin allowlist is Read/Glob/Grep/Agent; pinned `--tools` filters exact
+tool names and supplies no Agent-to-SendMessage expansion. This is a concrete
+required first-canary dependency blocker. Astra is investigating whether the
+supported continuation runs in the foreground with background tasks disabled
+and how the lifecycle evidence accounts for it before Sol changes the policy.
+The v1/v2 private install plans remain unexecuted and must not be used as
+installation authority. Retain them as historical candidate preparation.
+
+The subsequent pinned-code review found that background-task disabling makes
+the native reply path await the child's run promise and return inline. Sol
+added SendMessage to the current shared runtime only, pinned
+`CLAUDE_CODE_HARBOR_KITE=0` and `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=0`, and
+kept background-task disabling, exact Stop validation and source exclusion
+unchanged. Canonical runtime validation checks the exact allowlist, argv and
+guard flags. Focused regressions passed **21 tests, 2,712 deselected, 17.19 s**,
+including altered policy plus recomputed digest rejection. Astra approved the
+runtime/test diff. `pinned-sendmessage-static-evidence.json` records 24 bounded
+code-location slice digests and retained native causal summaries; SHA-256 is
+`e83d101ef73c93148c19a406777aa0694c3c0a906c7421988cba037ef1f55b6d`.
+This is static support for the policy, not authenticated runtime evidence.
+The prepared target prompt now calls SendMessage once with the saved child ID
+and a plain string. The updated real startup/exit probe passed SessionStart,
+idle prompt, owned exit, normal code 0 and ECHILD drain. Its exact limits remain
+no model turn, actual Stop, native continuation or provider-attempt count.
+`sendmessage-managed-cli-seccomp.json` SHA-256 is
+`5bad38c1b46de7c2d7016039c4ebd620c73086192085241e1cc5deed9e4dcbab`.
+The focused `sendmessage-policy-focused.xml` SHA-256 is
+`9da9a6da2b5850fbc776f1f071b653bcacd2d90b3068c43a2efe2c6b90696d90`.
+Strict OpenSpec validation and both working/index whitespace checks passed.
+The third frozen full census started at `2026-09-27T02:01:06Z`; its artifacts
+use `full-census-v3`, and `frozen-census-v3-before.json` SHA-256 is
+`c117f6a610b036e8dd6799adbe07429988d79416667f53c1bdfedfc939238cff`.
+Only the shared runtime, source test and legacy shell fixture differ from the
+first 153-file census inventory. The v3 run was deliberately interrupted at
+`2026-09-27T02:13:37Z`, exit 2, after the startup blocker below was confirmed;
+it is not a full census result. Exact owned test processes were stopped; only
+already-dead zombies remained at cleanup. Sol now owns the bounded execution
+slot. Installed Stop/child continuation evidence remains pending.
+
+Read-only pinned-code and project-trust inspection confirmed neither canary
+profile trusts the disposable project or its ancestors; `--restricted` does
+not bypass the startup trust step. `_tty_write` currently marks every CR/LF
+as a model turn, so a trust confirmation waits forever for a nonexistent Stop.
+Initial review also suspected a permanent target operation fence; subsequent
+control-path inspection disproved that because B's intent omits retired A's
+operation ID. The actual target blocker is release orchestration: it waits
+only ten seconds for SessionStart and exposes the attach locator only after
+observation/adoption. A fresh trust dialog needs operator input before that
+event. Empty Enter/local slash input exposes the same classification concern. Astra
+and Sol are separating terminal UI input from authenticated parent model-turn
+admission, retaining target fencing and fail-closed missing/rejected hooks.
+No real profile trust state was altered. V1-v3 install plans are blocked,
+unexecuted artifacts; complete startup validation precedes the next freeze.
+
+The bounded untrusted-profile seccomp diagnostic reproduced this on the real
+pinned CLI: trust UI at 19.108 seconds initially selected No; Down selected
+Yes, then one Enter was forwarded. SessionStart arrived at 19.828 seconds and
+the main prompt rendered, but the custodian remained `turn_busy=true`, sequence
+1, `prompt_ready=false`. No model prompt or real authentication was used.
+`untrusted-startup-seccomp-2.json` SHA-256 is
+`1a48276d541343ac14972720db281391d7615e59ad708ab33363a3fee47ebcfd`.
+This is a retained reproduction of the blocker, not a passing startup gate.
+
+The approved correction uses authenticated UserPromptSubmit as model-start
+authority plus a conservative pending-input fence for lost callbacks. Positively
+recognized fresh trust navigation is UI-only; proven blank Enter is swallowed
+locally rather than sent to a possibly programmatically filled CLI buffer. Prompt
+repaint never proves completion. Native `/help` may be overridden by a skill,
+so attach intercepts only the exact clean-line command and prints clearly
+labelled managed-terminal help locally, without native dispatch.
+
+The target lifecycle is split: release performs its existing one-time durable
+launch and returns `target-starting` with the exact runtime/custodian/intent
+locator. New `observe-target` returns that same validated locator after a lost
+release ACK and performs observation/adoption only, never launch. Existing
+public status stays ledger-only and read-only.
+Absent SessionStart remains pending rather than turning normal trust wait into
+an indeterminate failure. Existing identity/profile/history/owner checks and
+adoption run against the original intent; a separate persisted model-input gate
+opens only after adoption. Re-observation is idempotent only for that same
+active runtime/generation; old operations refuse after later generations.
+Implementation, slow/untrusted A/B and lost-ACK/no-replay checks are pending.
+
+The exact frozen candidate's subsequent real CLI probe also passed initial
+SessionStart, idle prompt, owned exit, normal code-0 termination and ECHILD
+drain. `frozen-managed-cli-seccomp.json` SHA-256 is
+`5dbb0edefc1f893c83065fe08badce44b27c4c7817b128f182a315609bdfbb76`;
+runtime manifest SHA-256 is
+`b90dc553e7ec32d09413cc157437d02b5a37454b548faebfaf4b1aa0c88a4a5b`.
+The same limits apply: no model turn, actual Stop callback, native-child
+continuation, authentication or provider-attempt count was established.
+
+The authoritative handoff resume stamp was committed locally in the WIP
+repository as `ee881edf`; its push was rejected as non-fast-forward. That
+checkout has an unrelated dirty xFactory handoff, so its canonical registry
+helper cannot safely rebase it for publication. No stash, reset, unrelated
+commit, registry rewrite or workspace-pointer change was used to bypass this.
+
+## September 26 resumed implementation checkpoint
+
+The user resumed the paused handoff in Codex session
+`01a0dfba-6436-76b3-9b6c-518c54a4abcb`. Astra resolved the state/project
+identity distinction using existing claim fields; Sol owns implementation.
+The WIP repository remains the state namespace. Project Git identity is
+verified separately at admission and reconciliation. No schema migration,
+account change or deployment follows from this correction.
+
+Two focused canonical `tests/run.sh --parallel-safe` runs passed:
+
+| Selector | Result | Private JUnit SHA-256 |
+| --- | --- | --- |
+| `test_lane_managed_cli_control or test_lane_managed_cli_history` | 19 passed, 2,698 deselected; 2.15 s | `f27428e16e819f3235a0ec8f7fd3262f1cf01a39f24aedab8ed997f9c6d37c38` |
+| `test_lane_managed_cli_source or test_lane_managed_cli_custody_adversarial or test_lane_managed_local_jobs or test_lane_managed_job_runner or test_lane_managed_supervised_jobs` | 44 passed, 2,674 deselected; 14.77 s | `7fa46bb781f96cb595cadc8a101aa4fff60b6b7afd10bcb5d0fc86802b04f07c` |
+
+These are intermediate results before the subsequent history-store anchoring
+and reconciliation-retry corrections, not frozen-candidate acceptance.
+The installed CLI read-only version/digest check still reports Claude
+`2.1.283`, SHA-256
+`1859583ce32920595c61ef868bee52e1b1594f7486db209935e01f1e5e804ae2`.
+Strict OpenSpec validation and tracked whitespace checks passed at this
+checkpoint. Integrated cross-repository, actual managed CLI, frozen regression,
+installation/rollback and authenticated-canary gates remain outstanding.
+
+## September 26 staged named-lane deployment gate — not yet passed
+
+The latest account-swap deployment instruction authorizes the staged scope in
+the [current decision](../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md):
+a versioned opt-in install for one named lane, source `team05d`, target
+`team05j`. It requires frozen shared-route/dependency regressions, actual
+CLI/fault evidence, isolated install/rollback and an installed authenticated
+canary. The operator moves the seat only after source exit and reconciliation
+establish readiness. No default/global activation, T057 closure or complete
+feature acceptance follows. This section defines a gate, not a deployment result.
+
+The full canonical suite must retain an honest census. Native `ctx` adoption
+and child-restoration positive tests express incomplete requirements, not
+permission to remove assertions or mark failures passed. The current public
+`ManagedController._reject_native_legacy_lifecycle` guard refuses native `ctx`
+before effects; the shared CLI route must remain separate from it. Only
+individually mapped failures in that unreachable guarded route may be outside
+the staged gate. Shared-path/dependency regressions, unexplained failures or
+an altered refusal boundary block deployment. General rollout/CI retains the
+full-suite gate.
+
+The canonical targeted census completed **4 passed, 13 failed, 2,687 deselected
+in 64.57 seconds**. Command:
+`tests/run.sh --parallel-safe -k 'test_lane_managed_native_ctx_integration or test_lane_managed_native_restoration or test_lane_managed_native_unenroll or test_executable_cli_drives_persistent_native_lifecycle' --tb=short --junitxml=<private-evidence>/regression-native-ctx-census.xml`.
+JUnit SHA-256 is
+`06f8c10a8911b92a35629bede385c70b6a70649850131738f3c6b742636fd1f6`
+(15,758 bytes, private mode 0600). No pre/post source manifest was captured;
+this is a measured node census, **not frozen-source acceptance or a full-suite
+result**. The unchanged public guard yields `unsupported` in the positive
+ctx/restoration arms; the two crash arms subsequently expect a target open
+but observe zero. The four passing nodes cover executable CLI lifecycle,
+native unenrollment proof/crash behavior and the marker normalization/refusal
+case. `git diff --check` passed after that run.
+
+The exact 13 failing nodes are mapped below. Preserve their assertions and
+rerun the applicable gates on the frozen installation candidate:
+
+| Test module | Pending nodes | Required capability |
+| --- | --- | --- |
+| `test_lane_managed_native_ctx_integration.py` | `test_native_ctx_hold_cas_precedes_open_and_retains_joined_child_record` | Atomic workspace claim transfer, fresh held coordinator and old-child retention |
+| Same | `test_native_ctx_restart_gates_checkpoint_and_accepted_send_is_not_restart` | Release-gated checkpoint and observed child state |
+| Same | `test_native_ctx_claim_or_open_crash_never_reopens_target[before-open]`, `[after-open]` | Durable native-ctx crash reconciliation and at-most-once target open |
+| `test_lane_managed_native_restoration.py` | `test_ctx_hold_retains_native_child_without_restart_instruction` | Held native-child retention |
+| Same | `test_ctx_restart_is_release_gated_and_accepted_ack_is_not_restarted` | Release-gated restart disposition |
+| Same | `test_unique_restart_slot_requires_joined_fresh_child_before_restarted` | Exact fresh-child join |
+| Same | `test_restart_mismatches_remain_unresolved_without_new_child[wrong-definition]`, `[wrong-parent]`, `[wrong-source]`, `[missing-join]` | Negative restart identity joins |
+| Same | `test_duplicate_target_admissions_do_not_consume_one_restart_slot_twice` | One-time restart slot consumption |
+| Same | `test_completed_child_remains_completed_and_is_never_restarted` | Completed-child immutability through native ctx |
+
+The separately observed marker-normalization test
+`test_native_ctx_fresh_spec_strips_inherited_native_swap_target` exercised an
+unsupported public path to reach a supported internal normalization helper.
+Its correction tests that helper directly and retains public no-effect refusal;
+it is not evidence that native ctx now works. The archived contract's
+[internal claim-CAS prerequisite](contracts/managed-control.md#internal-workspace-claim-compare-and-swap-prerequisite)
+explicitly leaves controller adoption, recovery and child transfers incomplete.
+
+## September 26 shared-container plan correction — no runtime run
+
+The user requires the shared container hosting independent Claude sessions to
+remain running. Current governance/contracts/tasks now select graceful
+per-session CLI exit with exact launch identity, complete supported foreground
+child/helper/tool accounting and a durable restart/owner fence. Independent C
+and admitted supervisor jobs stay alive; the supervisor may stay in-container.
+Unknown exit or descendants block B. Forced recovery is separately gated.
+
+No runtime code, T053 result, recorded probe hash or historical Bite outcome
+is changed by this correction. T054–T057 stay open; private Docker/host-broker
+code is dormant and its below-recorded prerequisites apply only to that
+superseded candidate. Neither its 44-test offline gate nor the T053 seven-test
+ledger gate certifies shared-container behavior. Current fixed settings/MCP
+paths require per-runtime isolation before activation.
+
+The next planned fixture uses independent Claude A and C in the SAME
+container, A's foreground child and natural CLI exit, a continuing admitted
+job with unchanged identity/output, then one exact-parent B release after
+verified exit/reconciliation. Negative cases cover unknown exit/descendants,
+duplicate targets, stale A and launcher restart. This is an evidence plan,
+not an observed PASS; no live test, seat change or deployment occurred.
+
+## Historical September 26 T054/T055 dedicated-container checkpoint — incomplete
+
+Source base `faebff5fe47a9cf1c10b4f5e41186dd782e8e90e` with dirty,
+untracked implementation files preserved in the feature worktree. The
+affected source SHA-256 values are: Docker source
+`96af6bbda67c603ed3c9f6ae12ef9ab868367ea4443c70f2a3aba7a9cf844fdd`,
+host Docker adapter
+`a1c789fb45c5b34ffa26d79e5c3f07b91e1d8621455980b906cd1601acac87d0`,
+host broker candidate
+`7055ccbf6b964aa5ba7469e01db2202355e18ee17f84a34038e041d306c363aa`,
+host preflight
+`c8238d7fd3417769a6e61849cba78366aac11b47bb6d6c1dd21427d0f6bdc295`,
+and private job runner
+`353e94aa60d79cdc12788ab1f28436cd7741b737ab23e60b0c0e5272638f1395`.
+Relevant test SHA-256 values: source
+`ad99a7142dbd15f0b8cf69c15a34221c88db4ff356834cac801eaf4b1f2ad534`,
+host Docker
+`2c4c372ab2600cd6ebe11a8b28d705226dd01b4bd04f9efc0a9da446ecafa2da`,
+and job runner
+`d222aabee1ff8c2844256b9e64974b09895e4a339dbf12e27f8b2f6bafd9c654`.
+
+The canonical offline command was
+`tests/run.sh -k 'test_lane_managed_job_runner or test_lane_managed_docker_source or test_lane_managed_host_docker or test_lane_managed_supervised_jobs'`.
+It finished **44 passed, 2,595 deselected in 6.54 seconds**. The fake job
+domain never starts an OS process; its passing one-shot, result-custody,
+subtree-drain, fence-before-spawn, stale-status CAS and Docker-provider
+witness-composition tests do not certify a
+production persistent job. The host Docker fake socket tests prove peer
+checks before a mutation, absolute response deadline, supported response
+framing and fail-closed configuration checks. No production Docker mutation
+was made through the new adapter. The real Linux process probe regression
+now exercises the corrected start-token method. Positive source exclusion
+remains disabled without trusted host membership completeness.
+
+Read-only `python3 -m lane_managed_host_preflight` returned exit 1 with
+`host_broker_candidate=false`, `cgroup_v2_mount_writable=false`,
+`peer_pid_visible=false`, and Engine `29.6.2`/`cgroupfs`/v2. A disposable
+helper with host PID/cgroup namespaces could see earlier source membership,
+but its Docker socket peer appeared as PID 0 and it could not read the
+required host namespace identity. That helper did not run the new broker,
+release a waiting entrypoint or launch a T053-admitted OS job. The current
+environment therefore cannot establish this broker's Engine-host trust
+tuple. Candidate-specific unresolved fact at that checkpoint: where this Docker
+Engine runs and the available host service boundary. This is not a current
+shared-container prerequisite. An authenticated host IPC service, concrete
+job-cgroup process backend, entrypoint release, admitted Engine exec,
+complete restart fence, and supervisor/MCP/CLI route remain unimplemented.
+T054–T057 stay open. The last recorded full-suite census remains 2,560 pass,
+28 fail before later fixture corrections; no new full-suite acceptance run
+occurred at this checkpoint.
+
+### Isolated pinned CLI slash-interception diagnostic
+
+Fixture: `tests/probes/managed_cli_swap_hook.py` SHA-256
+`5c1e35a2cf1a0ec579ab9f1fe343b3006b3e179076e78667d2b9267e54347acb`.
+It used Claude CLI `2.1.283`, executable SHA-256
+`1859583ce32920595c61ef868bee52e1b1594f7486db209935e01f1e5e804ae2`,
+an isolated home/config/project, a fake API key, an HTTP loopback returning
+503, an empty strict MCP config and an explicit `--settings` hook. The final
+restricted arm also supplied the production file/Agent tool allowlist,
+Bash/PowerShell denials and background-disable variables. It did not
+use a real account or model endpoint. Each TUI leg allowed at most 15 seconds
+for setup and 15 seconds for the hook, then terminated the CLI/process group.
+Private artifact directories under `.scratch-l1-handoff` retain bounded
+screen, debug and summary files. The observation classes are distinct:
+
+| Arm | Command discovery / hook dispatch | Fake API requests | Result |
+| --- | --- | ---: | --- |
+| Required `--restricted`, user/project custom command | `/swap` unknown; no `UserPromptExpansion` event | 0 | INCONCLUSIVE for a route; command absent. |
+| Diagnostic without `--restricted` | `command_name=swap`, slash event, block message and clean CLI exit | 0 | PASS only for the nonproduction hook mechanism. Summary `cli-swap-hook-cds7mf96/summary.json`, SHA-256 `de339da80818098f9f5db69913f2d88a785de4190265eef189a264484eb8322a`. |
+| Required `--restricted` plus explicit plugin, matcher `swap` | CLI loaded one plugin command and normalized the entered `/swap` to `/swap:swap`; matcher missed | 8 | FAIL for zero-request interception. Summary `cli-swap-hook-86w1721h/summary.json`, SHA-256 `cfa336b12fcb3389a69e7c62262c23888f2a6dfb3dc51b60d4662def52b6ef0f`. |
+| Same restricted plugin, matcher `swap:swap` | `command_name=swap:swap`, `prompt=/swap:swap`, slash event, block message and clean CLI exit with zero process-group members | 0 | PASS for this bounded hook interception only. Final production-tool-policy diagnostic summary `cli-swap-hook-utw30gaj/summary.json`, SHA-256 `22a404a402d4ce0c87ab8b927bb4edc4ef3eb4e7bfc1f6dc625ab95d88271730`. |
+
+The event reports the normalized slash command; it does not independently
+attest the originally typed bytes. No production control dispatch, hook
+timeout/crash refusal, exhausted real quota or installed configuration was
+tested. An unmatched hook can reach the model API as the negative arm shows;
+the external local control entry remains required. This is not T055 closure.
+
+## Historical Claude CLI supervised-jobs candidate track — September 25
+
+September 26 foreground-policy slice: the private Docker admission now
+requires a pinned Claude CLI 2.1.283 exact-parent launch manifest with
+`--restricted`, an explicit built-in tool roster excluding Bash/PowerShell,
+`--strict-mcp-config`, and both background-disable variables set to `1`.
+Tampering with the container environment, CLI arguments or parent is refused
+in offline tests. The installed local `claude --version` reported 2.1.283;
+this is not an authenticated source-container run. The focused canonical
+`tests/run.sh -k 'test_lane_managed_docker_source or test_lane_managed_supervised_jobs'`
+passed 21 tests (2,595 deselected). The MCP job broker, effective-runtime
+attestation, production Docker OS exclusion witness and exact-parent CLI
+integration are still missing. T054–T057 remain unchecked and the public
+managed capability remains disabled.
+
+Later T054 read-only host-witness slice: the retained cgroup directory FD is
+now mapped through its `fdinfo` mount ID and cgroup-v2 `mountinfo` record, and
+the supplied parent path must match that mapping. A separate retained job
+domain is required; candidate observations reject PID reuse, job movement
+into the source domain, shifted mounts and ambiguous/deleted paths. The
+focused `tests/run.sh` gate passed 25 tests (2,595 deselected). A read-only
+host preflight observed Docker Engine 29.6.2, cgroup v2 with the `cgroupfs`
+driver, and a read-only cgroup mount for this process. A separate disposable,
+model-free Docker topology probe created one network-isolated BusyBox
+container, observed Engine host PID 58272, and found that PID absent from
+this supervisor process's `/proc`; this shell is itself in a container with
+the Docker socket. The probe container was stopped and removed. The private
+scratch JSON has SHA-256
+`6bb3f61d6d92e89acf2c3f1fad95316ff3071c5a6862efff8a6ad176dde72fd2`.
+This environment cannot produce a positive Engine-host PID/cgroup witness
+from the current process. Docker source admission now refuses a missing host
+attestation before any Engine mutation; this refusal is tested offline. The
+provider still lacks a trusted host broker,
+production source/job cgroup provision, all-path restart control and an
+integrated live containment test. Positive source exclusion remains
+fake-test-only; T054 is open.
+
+A subsequent model-free host-namespace helper probe established the narrow
+Docker topology needed for a future broker. The helper used host PID and
+cgroup namespaces without a Docker socket. A disposable source container
+had two host processes under one unique custom cgroup parent: init and a
+detached `setsid` descendant. The retained parent FD reported `populated 0`
+before source start, `populated 1` during source execution and `populated 0`
+after stop with the same FD inode. Source log counts were stable in two
+post-stop samples (9, 9), while the independent outside job advanced from
+7 to 15 ticks. The source, helper and empty custom parent were removed; the
+private result JSON has SHA-256
+`1033fb7ab436936f75caca79240c2054cc865d29199e4a07710ee7282e70ea14`.
+Docker removed the source leaf cgroup after stop, so the retained custom
+parent is the usable live `cgroup.events` witness. A separate sidecar smoke
+successfully instantiated `RetainedCgroupV2Parent` on an empty custom parent
+and then removed that parent. These probes did not use Claude, account seats,
+the production Engine adapter, a persistent job admitted through T053, or
+the all-path restart fence. T054 remains open and production exclusion
+remains fake-test-only.
+
+September 26 update: Claude Code announced a bounded attempt to wrap up when
+a five-hour limit is hit mid-task. The contract now allows that cooperative
+source work before control entry. It does not change T053's offline result,
+establish T054 production OS exclusion or authorize B before the old runtime
+is fenced and absent. An internal Docker candidate and offline fake tests now
+exist; its production exclusion method remains fail-closed.
+
+The [architecture decision](../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md)
+and [capability contract](contracts/claude-cli-supervised-jobs.md) record a
+separate opt-in path for a persistent L1 supervisor and directly admitted
+jobs. Private scratch probes observed one exact-parent/native-child resume
+across a real seat move with the original supervised job still alive and no
+second worker spawn. The probe used a target model preflight before release;
+the late source response never reached tool dispatch and session persistence
+was disabled. Its hook clearance also accepted a wrong parent and competing
+contenders. Thus it does not establish a source OS witness, single-owner
+fencing, concurrent transcript-writer exclusion or production support.
+
+T052's decision, contract and Speckit amendments received Astra's architecture
+review; its two wording findings were corrected before marking that
+documentation task complete. T053–T057 remain the implementation sequence.
+At that checkpoint the operator selected a dedicated Linux Docker source
+container as T054's provider; that selection is now superseded and produced no
+container run or positive OS witness.
+T053's private ledger and seven focused offline tests passed through
+`tests/run.sh -k test_lane_managed_supervised_jobs` (7 passed, 2,595 deselected).
+The combined focused T053/T054 gate passed 13 tests through
+`tests/run.sh -k 'test_lane_managed_docker_source or test_lane_managed_supervised_jobs'`.
+The T054 candidate records private Docker create/start/stop intents under the
+lane lock and tests exact-container, cgroup-parent and job-domain refusal
+logic against fakes. Positive exclusion is explicitly fake-test-only. No
+trusted host broker binds Engine-host identity, retained cgroup FD to its host
+path or admitted job process membership, and no live container was run. T054
+remains unchecked.
+`openspec validate separate-swap-ctx-handoff --strict` also passed.
+Astra's focused rereview confirmed closure of three code findings: prior-
+generation live jobs stay in later rosters, release rejects stale witness
+watermarks, and worktree claims are rechecked around side effects. This gate
+establishes only internal state behavior. An integrated OS domain witness,
+all-path restart fence, direct CLI
+exact-parent path and fault matrix are still required before a separately
+authorized real-account canary
+or production activation. Historical Bite 4 outcomes and Bite 5 remain as
+recorded below.
+
 Status: **INCOMPLETE — LIVE UNVERIFIED**. A written implementation, reviewed
 slice, or passing fake test is not full acceptance. `tasks.md` remains the
 implementation task authority; this document identifies the evidence needed

@@ -1,5 +1,802 @@
 # Swap rebuild — implementation handoff
 
+## Current checkpoint — September 30, 2026
+
+The September 30 [decision record](../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md),
+[capability contract](contracts/claude-cli-supervised-jobs.md),
+[deployment plan](deployment-plan.md), and [tasks](tasks.md) supersede older
+canary and deployment instructions below. This checkpoint authorizes neither a
+canary run, an account seat move, a merge nor deployment. T054–T057 remain open;
+T058 is a separate, non-gating derived-index task. The operative canary pair is
+selected and recorded only when a future canary is authorized; `team05d` and
+`team05j` are an expectation, not a binding.
+
+The selected runtime is one CLI per lane in a shared container. Only the parent
+conversation resumes. Safely unfinished children must be recreated with new
+IDs; persistent execution-group jobs keep their IDs. Native Edit, Write and
+NotebookEdit are allowed. Long-running and external commands use the lane MCP
+bridge, lanes service and execution-group supervisor. The local JSON ledger is
+the sole swap authority. QA Postgres, or SQLite when no database URL is set,
+is a derived index that never gates a swap. First-delivery roster sealing waits
+for the verified idle boundary after any Stop-hook wrap-up continuation; the
+mid-turn Agent fence belongs to a future gate.
+
+Commits `37bc05d` (custody checkpoint), `57973a2` (decision packet),
+`3cf67b5` (dormant Docker preservation), and `5536710` (native editing policy)
+are on branch `001-separate-swap-ctx-handoff`. The remaining T054/T055 code
+and tests in this worktree are still in progress. Do not treat historical
+private installs or attempted canaries below as evidence for this selected
+provider or as authorization to repeat them.
+
+## Current checkpoint — September 28, 13:23 UTC
+
+The user requested a new-session handoff. Read this file, `AGENTS.md`,
+`verification.md`, and the fresh attempt's `canary-plan.json` and `RUNBOOK.md`
+before acting. This checkpoint does **not** authorize launch: the fresh attempt
+is prepared but neither registered nor started, and its plan explicitly has
+`live_execution_allowed: false`. Preserve the older failed attempt and all
+evidence; do not replay its blocked prompt or change classifier safeguards.
+
+Use Codex Luna Max to drive the run and Claude Sonnet for the canary, as the
+user requested. The Speckit team roles in `AGENTS.md` still apply. A new source
+candidate now accepts `lane-managed-cli start --model sonnet` and carries the
+requested alias through strict v2 manifests, source intent, target creation or
+reuse, and release. This is source-only work: the effective provider model is
+unobserved, the candidate is unqualified and uninstalled, and the earlier
+privately installed v8 remains unactivated. Focused canonical tests passed
+9/9 for model binding and 40/40 for consuming control/source/vertical/route;
+`verification.md` records the exact selectors. No new full census or live
+canary ran. The old v7 full census remains red (2,746 passed, 14 failed);
+Native13 and T054–T057 remain open.
+
+The new distinct preparation lives under
+`${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools/deployment-evidence/shared-session-resume-20260926T235017Z/attempt-fresh-20260927T215957Z/`.
+Its lane is `swap-canary-20260927t215957z`, parent
+`b7413633-87b6-4779-ae8b-e4d43734c316`, with separate nonce, workspace,
+job IDs and barrier. The `candidate_id` in that plan points to historical
+installed v8; it is **not** the new Sonnet-binding source candidate. The
+previous failed evidence remains in sibling `attempt-v7/`, including the
+classifier interruption, partial child with zero tool calls, empty job ledger,
+and A/C exits. Sonnet's prior assessment was text-only; no authenticated
+Sonnet canary or persistent job has been demonstrated. The provider report
+draft is unsubmitted. The published old canary row remains PAUSED.
+
+Next session: inspect current source and host state; qualify and freeze the
+Sonnet-binding candidate with the canonical test wrapper and exact expected
+Native13 accounting; perform a separate private install only after that gate;
+then recheck real profiles/history/holders and publish/read back the new lane
+canonically. Before dispatching any task, establish the **effective** Sonnet
+model through supported provider evidence. If it differs, is unknown, or a
+classifier interrupts again, retain evidence and stop. A distinct live canary
+may proceed only once its own preparation gates are satisfied. Do not infer an
+admitted job from `ownership-conflict`: the prior parent made that error.
+Keep team05d as the last confirmed seat; no seat change is needed now. A move
+to team05j is only for the operator after verified source exit/full ECHILD
+and durable readiness, before target release. The full same-child job and
+unrelated authenticated session continuity proof are still outstanding.
+
+## Installed v8; live canary interrupted; cleanup complete — September 27, 19:28 UTC
+
+Candidate `swap-001-20260927-45f3f22dff08` is privately installed and verified,
+NOT activated. 153-file freeze SHA-256:
+45f3f22dff08c90ce7ed8b9ecc324629f13e9b338fef01595577a85e6a4821fa.
+Only tests/test_lane_managed_daemon_rollover.py changed after red full v7:
+the fixture now uses the verified on_ready callback, preserving every behavior
+assertion. Complete rollover12 and hygiene183 passed; JUnit SHA-256
+205aa2739255af60fc40cd23831270000505afb022e88fa8015a6c62e6c59fa2.
+Astra approved fixture-only composite qualification and root independently
+verified the sole delta. Full v7 remains 2,746 passed /14 failed; do not call
+it green. Native13 are unchanged and open. Installation verified43 files,
+two hooks, all48 checked ambient paths unchanged and private imports.
+
+Distinct lane `swap-canary-20260927-v7` was canonically published and started
+once with parent67229fc9-a472-411c-b283-ee39739fc55e, runtime
+8d3e0a72-bb83-4aac-bcaf-451411112a19, source team05d/targetteam05j.
+One source prompt was sent. Native Agent toolu_01THaqf7uuat35CuEH1hecST was
+interrupted by Claude's safety classifier; the CLI automatically fell back
+from Opus5.5 to4.8. Root did not select fallback, resend, replay or bypass.
+Partial child a4830bdb39663cb31 has8 transcript records and zero tool calls.
+The parent tried one read-only job_status, received ownership-conflict, then
+completed an authenticated Stop summary with1 hook/no errors. Its inference
+that a job existed was incorrect: ledger jobs/operations, runner files and
+job-domain records are all empty; no job-launch marker or release barrier.
+This attempt is FAIL before admitted-job continuity and swap preparation.
+
+A exited by the exact owned idle /exit, code0, full ECHILD/drained, no new
+assistant model message during cleanup. Independent C run
+e5b73dad-45e4-4a0f-b751-b5dfeaa1fefa survived A exit with its exact identity,
+then exited code0 through its run-bound sentinel. Shared container identity,
+start time and restart count are unchanged. No active test/probe/Claude A/B/C
+remains for this attempt. Preserve its supervisor/state/evidence; no new
+attempt or task replay around the classifier. Canonical row is published
+PAUSED with this result. Seat remains last confirmed team05d; no seat move
+was requested or performed. Team05j has not launched.
+
+Evidence is under the current host-local root's attempt-v7 directory:
+canary-final-disposition.json, failed-native-child/, canary-A-cleanup-result.json,
+canary-C-final.json; installation/composite evidence are at the parent root.
+The earlier failed v6 job remains terminal at its original domain deadline;
+its reservation and supervisor are retained, never manually cleared. The live
+authenticated same-child/admitted-job swap proof, Native13, T054–T057 and
+all general rollout gates remain open. Latest user seat question was answered:
+keep team05d; no move is needed while the live proof is blocked.
+
+## V7 census complete; one fixture race under correction — September 27
+
+Full canonical v7 census finished: 2,746 passed / 14 failed / 0 skipped /
+0 errors, 2,760 cases in 3,725.84 seconds. Exact expected coverage is complete;
+all 153 frozen hashes/modes are unchanged. JUnit SHA-256:
+60ebd6e4db3f241171224e96989e5b4d15a8ec0b6a30f6b54bb6d78aa278ea83.
+Native13 names/reasons match exactly. The additional failure is
+`test_public_socket_real_state_retains_busy_a_then_delivers_b_c_once` at its
+initial public-start: the client correctly refused a socket not yet owner-only.
+The fixture waited for pathname existence, which can precede bind→chmod0600→
+listen→verification completion. Production exposes an on_ready callback after
+all those steps. Astra confirmed this race; Sol owns fixture correction and
+exclusive focused test slot. No v7 private install or live canary occurred.
+
+Retain the red full census and its unqualified analysis. Astra confirmed the
+existing staged policy permits a reviewed fixture-only correction plus complete
+consuming/hygiene confirmation with unchanged production/dependency bytes; this
+must be separately recorded, never called a green full suite or a waived extra
+failure. Production changes or unexplained failures require reassessment.
+Root will freeze the corrected inventory and verify its evidence before any
+private installation. The distinct next canary stays unregistered/unstarted.
+Native13, T054–T057 and global rollout remain open. Seat stays team05d, target
+team05j; no move is needed for automated tests. Actual source exclusion and
+durable readiness must precede the operator seat-move request.
+
+## V7 full census active; v6 job terminal — September 27, 18:51 UTC
+
+Canonical v7 full census remains running: exec63753, wrapper2924270,
+pytest2971479. Source/tests are frozen; observe this existing run. It is in
+its long shell integration case, not queued now. No v7 installation or live
+canary has been dispatched. The distinct attempt-v7 runbook and read-only
+snapshot helper are prepared. Exact full coverage/failure mapping/no drift
+still gate installation. Native13 and T054–T057 remain open.
+
+The failed v6 original job reached the execution domain's existing one-hour
+limit. The integrity-validated terminal witness records exit -9 and
+subtree_empty=true, untruncated output, and before/after local-worktree
+inventories. The command PID2667795 is absent; worker2667779 is an exited
+zombie awaiting supervisor reap. This was the existing domain deadline, not
+an operator cancellation or signal. Last heartbeat718; no script timeout or
+success marker, no result file, and no release barrier. Preserve supervisor,
+ledger/reservation and evidence; do not clear reservations manually or replay.
+No successful swap, B observation or result consumption is claimed.
+Evidence: canary-job-terminal-v6.json, canary-v6-job-terminal/; terminal record
+SHA-256 7c072ebef78d73d113e60c3158035e2848a33f828e6adf3ef8ce4682944f5898.
+A and C remain normally exited; shared container identity unchanged. Seat is
+still team05d. The shared WIP checkout had no tracked changes before this
+checkpoint; preserved untracked data remain intact.
+
+## Frozen v7 census queued — September 27, 18:13 UTC
+
+Sol's role-aware profile discovery correction passed 50 focused and 53
+consuming tests. Read-only discovery against the deployed 418-config layout
+and completed A transcript passed: no current holders, unknown holders or
+ambiguity. Live-holder preservation is covered synthetically, not by that
+zero-holder observation. Astra approved final static review. Strict OpenSpec
+and both diff checks passed. Source/tests are frozen.
+
+Candidate `swap-001-20260927-09217183d6c2`, 153-file manifest SHA-256
+`09217183d6c21ffe1525c0d0b9b219806a3346586cdda0c1a161145e26e10bec`.
+Only `lane_managed_profiles.py` and `tests/test_lane_managed_profiles.py`
+changed from v6. Private v7 plan/inventory are prepared, NOT installed.
+Root owns the sole feature test/probe slot. Canonical full wrapper PID2924270,
+exec63753, launched at18:12:54 UTC and is queued behind external pytest
+PID2896180 in another lane's openxFactory scratch checkout. Observe this
+existing handle; never start a second census because the log is quiet.
+`full-census-v7-run.json`, log, eventual JUnit and before/after manifests are
+under the current host-local evidence root. Exact failure mapping/no drift
+must qualify before copy; native13 remain open.
+
+Failed v6 A/C remain gracefully exited. Preserve supervisor2634526 and its
+original job worker2667779, actual command2667795 (start token ending26503128)
+to its predeclared timeout; no barrier, replay or manual reservation clearing.
+The current canary row was canonically published PAUSED with the refusal.
+A future distinct canary is prepared but unregistered/unstarted under
+`attempt-v7/`: lane `swap-canary-20260927-v7`, parent
+`67229fc9-a472-411c-b283-ee39739fc55e`, nonce`04bb5dd7ab2fdf72ebe2dd80`,
+new workspace/barrier and same bounded scripts. Bind terminal30x100, wait for
+exact trust selection before separate Enter. No model/config/profile mutation
+or runtime launch has occurred for v7. Seat remains team05d, targetteam05j;
+operator move still requires actual source exclusion and durable readiness.
+
+## V6 cleanup complete — September 27, 18:03 UTC
+
+A exited through its owned idle `/exit`: code0, exact source reaped and
+custodian `drained=true` (full ECHILD). This is failed-canary cleanup evidence,
+not swap readiness. Original job PID2667779 with start token ending26503115
+survived outside A's subtree, heartbeat102; C and container unchanged at that
+checkpoint. C then exited normally through its run-bound sentinel, code0;
+its manager and CLI are no longer live. No A/B/C CLI or live probe remains.
+
+Preserve original supervisor PID2634526, job, ledger/reservation, both private
+installed versions and all evidence. The job must reach its existing
+3,600-second bound; do not create the barrier, relaunch it or manually clear
+its reservation. Revalidate exact identity before any process action. No
+swap operation, durable ready, target launch, seat move or activation occurred.
+Astra approved this disposition. Root returned the sole focused test slot to
+Sol for the discovery correction after Astra's traversal contract; read-only
+actual deployed-layout discovery must qualify before another full census.
+A subsequent canary must use distinct session/job/workspace scope; this failed
+attempt cannot be replayed. Evidence: `canary-cleanup-v6.json`,
+`canary-v6-cleanup-source-exited/`, `canary-C-final-v6.json`.
+
+## V6 installed canary checkpoint — September 27, 18:01 UTC
+
+The full canonical v6 census completed: **2,735 passed / 13 failed / 0 skipped**,
+2,748 test cases. All thirteen failure names/reasons match the retained native
+ctx/restoration requirements. All 153 frozen files remained unchanged. Coverage
+normalizes only the single live-holder test's `os.getpid()` parameter; raw ID
+differences are retained. JUnit SHA-256:
+`f97d79d7c691805c037f77aa28e2c5b54ee358fb178453d4f3e4c898b75cc45a`.
+
+Private `swap-001-20260927-75da487cfaa3` is installed and verified: 43 file
+copies, two hooks, all 48 checked ambient paths unchanged, private import
+resolution. It is NOT activated. Installed v5/v6 remain immutable.
+
+Real A started once through the installed command, runtime
+`e7ab1361-ade4-4eac-a7fe-fbd03d7dfd77`, parent
+`38ce6d48-9543-4080-9660-c7e9c311aa0b`. One native Agent child
+`a6e5eb77ea8c06edf` admitted original job
+`canary-job-a81bd43dcf5516394f7e737c` once (PID2667779), read status/output and
+returned. Actual authenticated Stop completed: one successful native Stop hook
+summary plus integrity-valid custodian turn1 begin/event digests. Raw Stop
+payload/ticket are not retained, so field predicates are validator-backed,
+not independently replayable. Astra qualified this derived evidence.
+
+**The one `/swap` refused before preparing an operation:**
+`profile storage tree contains a symlinked config path`. The first encountered
+path is the existing legacy `profiles/opensoft-max-brett-heap` alias; normal
+shared commands/rules/skills/agents and state directories are also symlinks.
+The discovery walk rejects every directory link except `projects`. No profile
+links were changed. Ledger operations remain empty; no source exit, target
+launch or seat move occurred. V6 canary is FAIL before swap preparation.
+
+At this checkpoint A PID2635049, custodian PID2635007, original job PID2667779
+and independent C PID2623355 (manager2623266) remain live. Attached terminal
+exec44345 belongs to A. Never signal these numeric PIDs without checking their
+recorded start identities. Root owns cleanup/evidence; Astra designs the
+profile-discovery correction, Sol implements after direction. Do not restart
+or hotpatch the existing v6 supervisor, replay the job, create its release
+barrier, or start B. The job has its original 3,600-second bound. Seat team05d,
+target team05j. Request movement only after a future valid source exit plus
+durable readiness; this failed attempt has neither.
+
+Retain two scoped limitations: default80-column trust selector redraw omitted
+label text and failed closed; reattaching the SAME source at30x100 produced
+full Yes selection, then separate Enter passed. Claude automatically fell back
+from Opus5.5 to4.8 after the child returned. No task replay or manual fallback
+was sent; no one-provider-request claim is made. Exact child tool correlation,
+job launch intent/started records, heartbeat41→74 and unchanged C/container
+witnesses are in the host-local `canary-v6-before-swap` and
+`canary-v6-swap-refused` evidence. Native13, T054–T057 and general rollout remain
+open. Earlier queued/running census text below is historical.
+
+## Frozen v6 census — launched September 27 at 16:36 UTC
+
+Astra approved the one-line production correction and installed-first-use
+regression. Repository first-use tests passed 2; private installed executable
+first-use passed 1; the combined control/vertical/installed scope passed 15.
+Strict OpenSpec and both diff checks passed. The distinct C-v2 observer check
+also passed without starting a CLI. Source and tests are frozen.
+
+Frozen inventory: 153 files, SHA-256
+`75da487cfaa3f9ca82cfdb28391fbfd343d5acf62221b0481c7cc44a72932470`.
+Only `lane_managed_cli_control.py`, `tests/test_lane_managed_cli_vertical.py`
+and `tests/test_lane_managed_cli_installed_route.py` differ from v5. Candidate
+`swap-001-20260927-75da487cfaa3` has prepared private plan/inventory v6 and is
+NOT installed. The new full canonical census must qualify it first.
+
+Root owns the sole feature test/probe slot. The existing full wrapper PID is
+992769, exec session 94463; its basetemp is recorded in the host-local run
+JSON. The canonical wrapper acquired the slot at 16:53:55 UTC and its
+pytest PID1193066 is live in this feature worktree. The previous external run
+finished. Observe the existing handle and exact process identity; do not restart
+on silence, a status file or an observation timeout. Private artifacts are
+`full-census-v6-run.json`, `full-census-v6.log`, eventual `full-census-v6.xml`,
+and frozen before/after manifests. Previous real C is terminal; no canary A/B
+CLI or job has started. Seat remains team05d.
+
+
+## Current checkpoint — WIP recovered; first-start defect under correction
+
+The user approved the one-time shared-WIP reconciliation. Recovery
+`cc320dc6b2bb7720d977a985e02f8b4c9a40900f` was pushed normally and verified
+as an ancestor of fetched remote `ecf29f5955334241b7950acd9a4473ec8421b813`.
+Both histories, all 53 published lane rows and all 610 untracked files were
+preserved. The exact canary row is published and canonical readback passed.
+The older dirty-file/rebase blockers below are resolved historical evidence.
+
+Private v5 remains immutable and unactivated. Its first real public `start`
+attempt failed before enrollment: start_supervisor's recursive mkdir created
+new host/lane ancestors with mode 0755; the child correctly refused unsafe
+state before creating an owner, credential, session intent or Claude runtime.
+Read-only validation reproduced the exact refusal. No source/target Claude,
+model turn, admitted job or seat move occurred; no blind retry was performed.
+The proven-empty newly created scaffold was preserved by atomic rename into
+owner-private `.git/openrepotools-recovery/swap-canary-v5-empty-eagle`, with
+UID/device/inode/mode evidence. Existing state was neither chmodded nor deleted.
+
+Independent C ran once, was observed idle with its exact identity throughout
+the failed start, and exited normally on the run-bound /exit sentinel (code 0).
+Its manager and CLI are no longer live. The shared py-bench identity, start
+time and restart count remained unchanged. The startup observer's null-CLI
+race is separately recorded; a distinct future witness script is prepared.
+This closes the v5 live attempt as FAIL before source admission, not a swap PASS.
+
+Sol is correcting canonical private-layout initialization and adding public
+first-use/unsafe-preexisting regressions; Astra reviews. Sol owns focused
+validation; root owns the next freeze, full canonical v6 census and scoped
+installation. Changed production bytes require that new census; the earlier
+fixture-only composite allowance cannot be reused. Native13 and T054–T057
+remain open. Seat remains team05d, target team05j. Request the move only after
+exact A exit and durable readiness on a subsequently gated candidate.
+
+Artifacts under the current host-local evidence root: `wip-recovery-approved.json`,
+`canary-registration-plan.json`, `canary-A-first-start-failure-v5.json`,
+`canary-v5-scaffold-preservation.json` and `canary-C-final-v5.json`.
+
+
+## September 27 resumed retry — shared history conflict
+
+The tracked xFactory handoff is now committed and the original dirty-file
+blocker is cleared. The installed 43-file copy and pinned CLI hash were
+rechecked unchanged. Canonical `set-row-state` refreshed the existing canary
+row in local commit `602af6b8fcb28bd222028fb58b9981ca716b21c8`, but publication
+exited 3: rebase conflicts at older `openXfactory-2` commit `3f6e79fcd`.
+The helper aborted; the shared checkout is clean and not mid-rebase.
+
+Fetched origin/main `7382d82e6a362676915a9453656a5e23be7d023f` has no canary
+row. The content comparison found 37 local plus patches across multiple lanes.
+An isolated, unpublished merge assessment preserves both histories and exposes
+four conflicted files: `lanes/LANES.md`, the openxfactory-4 handoff
+`handoffs/xFactory/session-handoff-2026-09-04-lane-opendox.md`, the opsXfactory-1
+handoff, and `lanes/log/opsXfactory-1.md`. Its merge remains unresolved only in
+the private assessment copy, not the shared checkout. No reset, shared manual
+rebase, shared conflict resolution or remote recovery push was performed.
+
+The user was asked to identify the shared WIP reconciliation coordinator.
+Reconciliation must preserve unpublished work and current published bindings;
+then retry canonical publication of the existing canary row. Evidence is in
+`canary-publication-retry-v5.log` and `wip-recovery-assessment-v5.json` under
+the current host-local evidence root. No source, target, persistent job or C
+has started. No seat move requested; source remains team05d, target team05j.
+
+
+RESUMED by 01a0dfba-6436-76b3-9b6c-518c54a4abcb@Eagle (lane swap-rebuild-codex) at 2026-09-26T23:48:00Z — user explicitly resumed the September 26 checkpoint.
+
+## Active resumed checkpoint — private v5 installed; publication blocked
+
+The user resumed this goal; older PAUSED instructions below are historical.
+The goal is active and waiting for a required external checkpoint, not complete.
+Astra leads architecture; Sol implements. **No tests, probes, installer or
+registration helper is currently running.** Old exec/PID records below are
+historical; never signal them without fresh identity verification.
+
+The tested private candidate `swap-001-20260927-7e4e6694a135` is installed and
+verified, but not activated. Its version directory is under the current
+host-local evidence root's `private-install/versions/`. All 43 copied files
+and 2 hook entries match; no missing/extra files; all 48 checked ambient paths
+are unchanged. Installed CLI help exposes `observe-target`, and all five
+loaded managed modules resolve inside that private version.
+
+Validation remains honestly split: complete v4 census **2,731 passed / 14
+failed / 0 skipped**; thirteen exact native ctx/restoration failures remain
+open. The other failure contained two T019 legacy fixture assertions. Sol's
+reviewed one-line correction supplies actual TABs to fake tmux, preserving
+positive attach/read/no-effect assertions. Complete legacy-wrapper + all
+repository hygiene then passed **184 tests / 0 failures / 0 skips**, 2,561
+deselected. V5 differs from v4 only in that shell fixture; all production,
+installed, dependency and test-framework bytes are identical. Both 153-file
+frozen after-checks show no drift. This is not a green full regression or T057
+completion. Astra approved this joined evidence only for the staged scope.
+
+The current inventory is `frozen-legacy-v5-before.json`, SHA-256
+`7e4e6694a1350569a1f0db0e52296f1473cdf75ba7094af06b274c00b6e7f830`.
+Final focused source/control/custody/installed-route validation passed 47 tests;
+trusted and fresh-untrusted actual pinned CLI offline startup/owned-exit probes
+passed normal exit0/ECHILD. They used fake auth and no model prompt; provider
+attempts were not measured. Actual authenticated Stop/child continuation still
+needs the installed canary. Read [verification.md](verification.md) for hashes
+and scopes. Source/test/installer bytes remain frozen; preserve all other
+preexisting dirty/untracked feature work and dormant Docker/scaffolding files.
+
+**Blocking action:** canonical canary registration created local WIP commit
+`05a8b084641833cd938c506cf1b16d3bedb0822f`, but all six push attempts were
+non-fast-forward and the helper exited 3. Its rebase is blocked by another
+lane's dirty `handoffs/xFactory/session-handoff-2026-09-05-lane-opsXfactory-1.md`.
+The helper left that file unchanged. The user has been asked to have the owning
+xFactory lane commit its handoff and report when done. Do not commit that file,
+stash/reset, hand-rebase, or rewrite the workspace pointer to bypass this.
+
+The exact local canary row is verified; it was not published by this attempt.
+**Do not rerun add-row:** it already exists locally. After the owner checkpoints,
+re-read state and use the canonical helper publication workflow, then verify
+published identity before enrollment. A legitimate current `set-row-state`
+update can publish the prepared state; a no-change `commit` may return without
+pushing, so inspect the helper's actual result. Refusals are relayed, not bypassed.
+The last local-ref observation was ahead 37 / behind 2,574 before this final
+handoff checkpoint; do not repeat that count as a new network observation.
+
+Private evidence root:
+`${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools/deployment-evidence/shared-session-resume-20260926T235017Z`.
+Use `private-install-plan-v5.json`, `private-install-inventory-v5.json`,
+`private-install-verification-v5.json`, `installed-cli-resolution-v5.json`,
+`canary-registration-plan.json`, the refusal log and `deployment-checkpoint-v5.json`.
+V1-v4 plans are historical blocked preparation; do not install them.
+
+Canary lane `swap-canary-20260926`, exact parent
+`38ce6d48-9543-4080-9660-c7e9c311aa0b`; immutable job, second edit, prompts and
+independent C helper remain prepared and unexecuted. No authenticated A/B,
+admitted job or C has started. **Seat remains team05d; target team05j. Ask for
+seat movement only after exact A exit and durable readiness, then wait for
+explicit confirmation.** The shared container and unrelated sessions stay live.
+After publication, follow the private canary runbook with the installed bin
+and real runtime profile root/private two-profile manifest, not the empty
+installer profile destination. Recheck retained hashes before live use.
+
+Source uses the exact per-session subreaper; jobs survive outside A's subtree.
+Optional Claude wrap-up occurs before control entry. Parent UserPromptSubmit
+begins a model turn; pending fences cover lost callbacks; exact Stop settles.
+Trust input is bounded to the measured chooser; local help/blank Enter are
+intercepted. Release launches once and returns a pending locator;
+`observe-target` observes/adopts that same launch, never respawns. No forced
+source fallback or broad process kill. General rollout and T054–T057 remain open.
+
+## PAUSED by user — 2026-09-26 21:36 UTC
+
+The user requested: “we are out of tokens. so shut down gracefully and and make
+handoff”. **Do not continue implementation or tests until the user resumes.**
+This checkpoint supersedes the older next-step blocks below.
+
+### State and authority
+
+- Work in the existing feature worktree, branch
+  `001-separate-swap-ctx-handoff`, HEAD
+  `faebff5fe47a9cf1c10b4f5e41186dd782e8e90e` (verify actual HEAD on resume;
+  no implementation commit was made during this checkpoint).
+- Preserve every dirty/untracked file. No reset, stash, broad cleanup or
+  `git add .`. In particular preserve `.scratch-l1-handoff/`, scaffolding,
+  dormant Docker work, and all new shared-session modules/tests.
+- User requires **Astra for architecture/thinking and Sol for implementation**.
+  That later instruction governs this work over the older Luna writer role.
+- User explicitly permitted host tests: “no dev container, use host tests”.
+  Run the canonical `tests/run.sh`; select tests with `-k`, not positional
+  file arguments, since the wrapper already selects `tests`.
+  Coordinate one feature test run at a time. Its documented
+  `--parallel-safe` mode is available for isolated focused runs.
+- **Seat remains on team05d. Target will be team05j. Do not ask for the move
+  yet.** No authenticated A/B session, admitted canary job, source/target
+  account swap, live installation, implementation commit or feature push was
+  performed in this checkpoint.
+- The shared container and unrelated sessions must stay running. Source
+  exclusion uses one per-session Linux subreaper custodian. L1 supervisor/jobs
+  remain outside A's subtree. Never stop the shared container, use a broad
+  process-group/user kill, or reintroduce the superseded host Docker broker.
+- T054–T057 remain open. Governance permits a versioned opt-in deployment for
+  the named canary only after its applicable gates pass. General rollout,
+  feature completion and T057 still require their full gates. The thirteen
+  native `ctx`/restoration acceptance requirements remain intact.
+
+### Immediate blocker — resolve this first
+
+The real `lanes-edit.sh workspace-root` returns the WIP repository.
+`ManagedStateStore` therefore uses the WIP Git common directory.
+`claim_lineage_workspace` requires that state common directory in the claim;
+`ClaudeCliHistoryWitness._worktrees` compares the same field against the
+actual project worktree's Git common directory. A valid separate project
+(or the standalone canary fixture) consequently cannot become ready.
+
+**A lane-row change does not by itself solve this:** the current helper takes
+no lane argument and returns the global workspace root. Astra must settle
+the distinction between the state repository and the registered project
+repository/common directory; Sol then implements it consistently in
+claims/history/control with a real cross-repository regression. Do not use a
+fake `LANES_EDIT` helper, falsely label the WIP common directory as the
+project's, or weaken the identity check just to pass the canary.
+
+### Code on disk
+
+New shared route:
+
+- `lane-managed-cli`: start, attach, ready, release, status and private hook
+  observation/control surfaces.
+- `lane_managed_cli_control.py`: persistent supervisor composition,
+  enrollment, prepare/reconcile/release and target adoption; still under test.
+- `lane_managed_cli_source.py`: source/target custodians, parent registry,
+  exact source closure, fenced input, observational hooks and target witness.
+- `lane_managed_cli_runtime.py`: immutable per-runtime bundles, pinned Claude
+  2.1.283, exact UUID and lane name, foreground-only policy, native
+  Read/Glob/Grep/Agent only, admitted MCP execution/editing, scoped profiles,
+  disabled updates and managed instructions.
+- `lane_managed_cli_history.py`: bounded exact parent/linked-child transcript
+  reads and registered worktree/reservation observations.
+- `lane_managed_local_jobs.py`, `lane_managed_job_runner.py`,
+  `lane_managed_supervised_jobs.py`: independent persistent Linux jobs,
+  generation credentials, bounded output/results and local effect settlement.
+
+The source profiles intentionally have `projects` symlinks to the same shared
+history directory. The control draft's erroneous blanket symlink refusal was
+fixed: validate/canonicalize the trusted configured shared store. Start now
+requires explicit `--cwd`; never default it to the WIP state repository.
+
+Late edits that **must be rechecked**:
+
+1. Final target ownership check and fork under the same owner lock, graceful
+   already-exited A handling, client-disconnect handling and release deadlines.
+2. Exact B observation followed by adoption into the active generation,
+   next-target UUID rotation and repeated swaps.
+3. Source custodian continuously draining the PTY into a bounded 1 MiB buffer
+   to prevent B startup backpressure. This last patch was not compiled/tested
+   after application.
+4. Stop/StopFailure evidence is bound to the parent, source runtime and turn/
+   peer identity. Review the remaining cross-turn raw-event digest blacklist:
+   identical legitimate responses can otherwise be refused.
+5. The new control socket fixture's missing `listen(1)` was corrected after
+   the last run; correction not yet rerun.
+
+A model-free vertical integration test was assigned to Sol jobs writer:
+`tests/test_lane_managed_cli_vertical.py`. It was interrupted by this pause;
+inspect whether a partial file exists. It must exercise the real control,
+ledger, custodian and job endpoint, faking only Claude/provider behavior.
+
+Packaging in `openRepoTools`, README and installer/hygiene tests now lists
+**31 bin files / 45 artifacts**, including 15 managed Python modules. Dormant
+Docker authority modules are excluded. The private-root staging test is
+written but unrun on the final candidate. Do not install from a changing tree.
+
+### Exact evidence, without adding overlapping counts
+
+- Latest combined feature gate: **42 passed, 1 failed, 2,668 deselected**.
+  The sole failure was the new control test's missing socket `listen(1)`.
+  Source/history/job/adversarial cases passed; this precedes the late patches.
+- Controller/daemon canonical census: **310 passed, 0 failed**, 2,397
+  deselected, 98.63 seconds. JUnit SHA-256:
+  `7bd0928917af22a1df29f9d23604459b488d016d8368123e37d7760eb5368349`.
+- Native cleanup/ctx census: **4 passed, 13 failed**, 2,687 deselected,
+  64.57 seconds. All thirteen retained positive ctx/restoration tests stop at
+  the existing public unsupported boundary. Latest owner-fence/unenroll and
+  marker-normalization tests pass. JUnit SHA-256:
+  `06f8c10a8911b92a35629bede385c70b6a70649850131738f3c6b742636fd1f6`.
+- Offline pinned CLI PTY probe: one intercepted `/swap`, one forwarded
+  `/exit\\r`, exit status 0, no signal, 801 ms, **zero fake API requests**.
+  This is a normal-CLI offline baseline, not the installed managed path or an
+  authenticated account test. Probe:
+  `tests/probes/managed_cli_pty_swap_calibration.py`, SHA-256
+  `0de08c7e7ab8f0576f21726435ac31913280d71acf8495a714bdba1a6bd9776d`.
+- The two earlier custody fixture failures were diagnosed as PTY SIGHUP
+  before descendant detachment. A real kernel reproduction returned
+  descendant signal 1. Fixtures now use setsid/readiness handshakes with the
+  original custody assertions preserved; the subsequent feature gate passed.
+- The earlier installer 93-pass/2-failure run saw concurrent file edits.
+  Later inventory additions and the staging test have not had a frozen rerun.
+- Strict OpenSpec validation and diff checks passed before the final runtime
+  edits. No frozen full-suite or deployed-canary acceptance result exists.
+
+### Private evidence and prepared canary
+
+Host-local evidence root (do not commit its contents):
+`${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools/deployment-evidence/shared-session-20260926T210840Z`.
+
+It contains private JUnit reports, PTY calibration, before-install ambient
+hashes, `canary-preparation.json`, an initialized disposable
+`canary-workspace`, and `canary_job.py`/`canary-job-plan.json`.
+The job has not run. It writes a launch marker exclusively, waits on an
+operator barrier for at most 3,600 seconds, then writes a nonce-bound result
+exclusively, so duplicate launch is observable.
+
+The source/target profile manifest was read-only at its global location.
+A private immutable two-profile projection `claude-profiles.json` and
+`provenance.json` live in this evidence root. The two explicitly authorized
+profiles were configured as eligible there; this is **not paid-seat/auth
+proof** and does not relax the global inactive-profile gate. No credentials
+were copied and the global manifest was not changed. Pass this projection
+only through the scoped `CLAUDE_PROFILES_MANIFEST` environment.
+
+Proposed lane `swap-canary-20260926` has no row yet (confirmed absent).
+Canonical helper reads identify Eagle/seam and the actual WIP workspace.
+Do not manufacture workspace helper output for the live proof.
+`canary_c_offline.py` may be present as a prepared private helper for an
+independent real pinned CLI C using isolated fake auth/API; inspect its
+checkpoint. No C launch was authorized as part of the shutdown.
+
+### Resume order
+
+1. Stamp the authoritative lane handoff RESUMED with the new session ID;
+   inspect dirty files and live agents/processes before restarting writers.
+2. Resolve the WIP-versus-project claim identity blocker with Astra.
+3. Compile/review the late source/control changes; complete the model-free
+   vertical test and focused regression gates with Sol.
+4. Freeze source, rerun canonical installer/import/staging tests and the full
+   regression census. Map failures exactly; no skip/xfail or assertion waiver.
+5. Prepare a versioned private install with all three destinations scoped:
+   `OPENREPOTOOLS_BIN_DIR`, `CLAUDE_PROFILES_HOME`, `CLAUDE_USER_DIR`.
+   Leave HOME and global installs unchanged. Preserve claims/jobs on rollback.
+6. Only after these gates, register the concrete canary correctly and start
+   A under team05d. Draft API (compiled, not live-validated):
+   `lane-managed-cli start <lane> --source-profile team05d --target-profile team05j --parent-uuid <uuid> --mode fresh --cwd <fixture>`.
+   Attach its returned custodian, make a foreground child admit the test job,
+   then use the owned `/swap` route and `ready <lane> <operation_id>`.
+7. **Only when A is proven gone and ready-to-resume is durable**, tell Brett
+   to move the seat from team05d to team05j. After his confirmation, explicit
+   `release <lane> <operation_id>` must resume the exact parent once.
+   Have B continue the saved child and consume the original job's result.
+   Confirm C/shared container survive and no duplicate job/source request.
+8. Record the installed result and limitations. T057/general rollout remain
+   open until their own gates pass.
+
+At pause the implementation lead reported no live feature pytest, control
+service, source custodian or authenticated canary process. Preserve unrelated
+sessions and tools. All writers were instructed to stop; inspect actual
+agent/process state again on resume.
+
+
+## Resume here: shared-container graceful-session plan — September 26
+
+Brett clarified that many Claude CLI sessions share the running container and
+it must stay running. Follow the [current delivery plan](deployment-plan.md)
+and [contract](contracts/claude-cli-supervised-jobs.md). The dedicated Docker
+provider is a dormant superseded candidate; preserve its code and evidence.
+Do not require host Docker/cgroup access or move the supervisor to WSL. L1 and
+jobs may remain inside the container with lifetimes independent of A.
+
+T052 and T053 keep their recorded scope and evidence; T054–T057 remain open.
+Next implement/validate the per-session launcher journal and owner/restart
+fence, complete known foreground lifecycle observations, isolated immutable
+config/auth paths and independent supervisor job integration. Current private
+fixed MCP/settings paths must not be shared writable launch destinations.
+Optional model wrap-up precedes control entry; a returned prompt is not CLI
+exit. Unknown children, refused exit, lost journal or uncertain effects block B.
+Forced per-session recovery requires a separate gate; never stop/kill/restart
+the shared container or use broad user/shared-process-group kills.
+
+The next planned fixture runs A and independent C in the SAME container. A
+finishes foreground work with native-child history and exits naturally; a
+supervisor-admitted job retains identity/output and C/container stay running.
+After exact exit, fencing and history/job/effect reconciliation, explicit
+release starts B on A's exact parent once. Cover uncertain exit, duplicate
+targets, stale A actions and launcher restart. Context restoration is not
+model-task completion; completed children/jobs are not repeated.
+
+The later explicit user instruction authorizes completing implementation,
+validation and deployment, with Astra thinking and Sol implementing. Use the
+[Linux subreaper provider contract](contracts/linux-session-subreaper.md).
+Keep extensive dirty/untracked work intact. Record a concrete named canary;
+account seat changes remain user-operated. Historical document-only limits do
+not block the newly authorized work.
+Public support remains disabled and existing suite failures/Bite evidence
+remain as recorded. The historical checkpoints below are not current action
+instructions.
+
+## Historical September 25–26 dedicated-container candidate checkpoints
+
+All directions in this historical section describe the superseded dedicated
+Docker candidate. Its code and evidence are retained, but its host-service
+questions and forced-stop plan are not current prerequisites or instructions.
+The current plan is the shared-container section above.
+
+### September 26 Sol implementation checkpoint
+
+The private code now includes `lane_managed_host_docker.py` (bounded local
+Docker HTTP transport and fresh resolved-config checks),
+`lane_managed_host_broker.py` (append-once source/job cgroup allocation and
+retained-FD custody candidate), `lane_managed_host_preflight.py` (read-only
+host facts), and `lane_managed_job_runner.py` (T053 one-shot launch intent,
+private bounded output/result custody, subtree-drain refusal and witness
+adapter). The runner takes an injected trusted OS domain; it has no concrete
+host-cgroup process backend. The focused canonical selector for the runner,
+source provider, Engine adapter and T053 ledger passed **44 tests**, with
+2,595 deselected. This is offline foundation evidence, not a production
+T054 exclusion or persistent job.
+
+The read-only preflight reports cgroup-v2 mount writable=false, Docker socket
+peer PID visible=false, Engine 29.6.2/cgroupfs/v2, and
+host_broker_candidate=false. A disposable host-namespace helper still could
+not authenticate the Docker socket's daemon PID or read the required host
+namespace identity. The next required operator input is where Docker Engine
+actually runs and what host service boundary can retain cgroup FDs and
+authenticate the daemon. Do not weaken the attestor or recreate a named
+parent to manufacture continuity. Authenticated host IPC, concrete job-cgroup
+backend, waiting entrypoint release, admitted Engine exec and the MCP/CLI
+supervisor bridge remain unimplemented. T054–T057 remain unchecked.
+
+An isolated Claude 2.1.283 fixture with fake key and loopback API tested a
+candidate `/swap` interception. `--restricted` ignored the fixture's
+user/project custom commands. A local plugin supplied explicitly by
+`--plugin-dir` loaded a namespaced command: typing `/swap` selected
+`/swap:swap`. A `UserPromptExpansion` matcher for `swap` missed and the fake
+API counted eight requests; matching `swap:swap` blocked expansion with zero
+fake requests and no remaining CLI process. Its event reports the normalized
+prompt, not the original keystrokes. This proves one bounded CLI mechanism,
+not an installed authenticated route, crash/timeout behavior or exhausted
+quota support. Preserve the external local control fallback. The exact
+artifact hashes and limits are in `verification.md`.
+
+For the current execution order, use the reviewed
+[completion and deployment plan](deployment-plan.md#current-delivery-plan-claude-cli-supervised-jobs-v1-september-26).
+It schedules the T055 minimal job runner alongside T054 so containment is
+tested with a truly admitted job, separates offline/OS/Claude acceptance,
+and keeps the seat move at the installed T057 canary. T054–T057 remain open.
+
+September 26 continuation: the operator chose foreground-only native Claude
+work for the initial managed capability. The private
+`lane_managed_claude_launch.py` builds and validates a pinned Claude 2.1.283
+exact-parent `--restricted` launch: file tools plus foreground `Agent`, no
+Bash/PowerShell, explicit denies, one strict MCP config, pinned settings,
+and both documented background-disable environment variables set to `1`.
+`lane_managed_docker_source.py` now requires that launch policy in its
+container configuration and rejects a resume parent different from the
+source claim before an Engine mutation. The focused `tests/run.sh` gate
+passed 21 tests, 2,595 deselected; OpenSpec strict validation passed. This
+is policy admission against fakes, not effective-runtime attestation. The
+actual MCP job broker, all-path CLI launcher, production host cgroup witness,
+integrated supervisor route, canary and installation remain unimplemented.
+Do not mark T054–T057 complete or enable the public managed capability.
+
+The next T054 read-only witness slice now binds the retained cgroup FD through
+its mount ID and cgroup-v2 mount record to one source path. A separate retained
+job domain checks admitted root PID/start-token membership. Twenty-five
+focused tests pass; strict OpenSpec validation and syntax checks pass. Host
+preflight found Docker Engine 29.6.2 with cgroup v2/cgroupfs, while this
+process's cgroup mount is read-only. A disposable, model-free BusyBox
+container was started and removed; Docker's reported host PID was invisible
+to the current process. This session is in a container connected to the
+Docker socket, not the Engine host PID namespace. No account seat was moved.
+Source admission refuses a missing trusted Engine-host attestation before any
+Engine mutation; the candidate probe cannot self-attest. The remaining
+production gap is a trusted Engine-host
+broker/attestation, provisioned source and job cgroup domains, full restart
+fence coverage, and an integrated detached-writer runtime proof. Positive
+exclusion is still fake-test-only and public activation remains disabled.
+
+Later model-free probes found a workable OS topology: a temporary helper
+with host PID/cgroup namespaces could observe Docker's source PID; a unique
+custom cgroup parent survived source stop and the same retained FD changed
+from `populated 1` to `populated 0`. A `setsid` descendant stopped writing
+while an independent outside job kept advancing. The source, helper and
+empty custom parent were removed. The first simple container leaf cgroup was
+deleted by Docker on stop, so it cannot supply a post-stop `cgroup.events`
+read. A sidecar smoke instantiated the actual retained-parent class on a
+custom parent. The bounded result and limits are in `verification.md`.
+These experiments do not supply an authenticated durable broker, T053 job
+admission, all-path restart denial or a production source-exclusion result;
+T054–T057 remain unchecked and no account seat moved.
+
+The user requested implementation of the
+[Claude CLI supervised-jobs decision](../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md)
+under the separate [capability contract](contracts/claude-cli-supervised-jobs.md).
+T052–T057 in `tasks.md` govern the new work. Preserve the historical v1
+PGID contract and fourteen INCONCLUSIVE Bite 4 results below. The scratch
+seat-move probe is narrow recovery evidence, not an OS containment or
+single-owner proof. Keep public activation unsupported until integrated
+source exclusion, restart denial, exact CLI resume and fault tests pass;
+another real-account canary needs its own authorization.
+The selected source provider is a dedicated Linux Docker container with the
+supervisor and admitted jobs outside it; its design is in the new contract.
+T052 documentation and T053 private durable-state ledger are complete. The
+canonical focused T053 gate passed seven tests, with 2,595 deselected. An
+internal T054 Docker candidate now has a private mutation journal, bounded
+admission checks and offline fake-engine/cgroup tests. The combined focused
+`tests/run.sh -k 'test_lane_managed_docker_source or test_lane_managed_supervised_jobs'`
+gate passed 13 tests. Positive exclusion remains fake-test-only: a trusted
+host broker has not established Engine-host identity, retained-FD-to-host
+cgroup-path custody or admitted-job process membership. There is no public
+route, live Docker run or CLI invocation in this slice. T054–T057 remain open.
+Do not interpret `target-observed` ledger state as completed
+native-child continuation or production release.
+
+The September 26 Claude Code wrap-up allowance may let A finish a five-hour
+limit turn before swap control entry. It is a cooperative first path, not an
+exclusion witness or a promise that every native child/tool finishes. Keep A
+as controller until it stops; then durably fence, verify the Docker domain and
+reconcile histories, files and jobs before B resumes. The forced-stop path is
+still required when wrap-up is absent or incomplete. The internal T054 slice
+is the last verified code checkpoint; it does not supply a production OS
+exclusion witness.
+
 ## Latest checkpoint — fourteenth Bite 4 INCONCLUSIVE; T050 offline correction approved
 
 The one user-authorized fourteenth run used commit `a260975` and preflight seal
