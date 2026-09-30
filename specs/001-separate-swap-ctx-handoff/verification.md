@@ -19,6 +19,15 @@ The code still pins 2.1.283; no real CLI, canary, seat movement, private
 installation or merge was authorized by this checkpoint. T054–T057 remain
 open, and T058 is a separate non-gating index follow-up.
 
+After the implementation checkpoints were committed, the canonical wrapper's
+focused selector for `lane_managed_cli`, `lane_managed_supervised_jobs`,
+`lane_managed_job_runner`, `lane_managed_local_jobs`, `lane_managed_profiles`,
+`lane_managed_docker_source` and `lane_managed_host_docker` passed **364**
+tests (2,411 deselected; four multiprocessing fork deprecation warnings) in
+60.38 seconds. A full `tests/run.sh --parallel-safe` attempt was interrupted
+after 577.34 seconds in the long shell-helper case, with 73 tests completed
+and no failure reported before interruption. It is not a full-suite pass.
+
 ## T054 registry custody and fresh-challenge correction — September 30, 2026
 
 The shared-session source candidate now initializes the cross-lane parent
