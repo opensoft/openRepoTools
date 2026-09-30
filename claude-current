@@ -95,8 +95,8 @@
 #   is not an operator's pin, and resolves again.
 #
 # Bash 3.2 safe (macOS): no mapfile, no associative arrays, no readlink -f,
-# no GNU-only flags; `timeout`, else `gtimeout`, else a watchdog; `flock`, else
-# a symlink lock.
+# no GNU-only flags; `timeout`, else `gtimeout`, else a watchdog; ONE symlink
+# lock for every launch, never `flock`, so what PATH holds cannot split it.
 
 set -euo pipefail
 
@@ -164,7 +164,7 @@ for setting in TIMEOUT VERSION_TIMEOUT UPDATE_TIMEOUT LOCK_WAIT; do
 done
 NATIVE_DIR="${CLAUDE_CURRENT_NATIVE_DIR:-$HOME/.local/share/claude/versions}"
 CACHE_DIR="${CLAUDE_CURRENT_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/openrepotools}"
-LOCK_FILE="$CACHE_DIR/claude-current.lock"
+LOCK="$CACHE_DIR/claude-current.lock.l"
 
 # A version is x.y.z, optionally with a pre-release or build tail.
 version_re='^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$'
@@ -499,91 +499,126 @@ EOF
 }
 
 # ------------------------------------------------------------ the lock
+#
+# ONE LOCK FOR EVERY LAUNCH, WHATEVER ITS PATH HOLDS (Copilot on #134). The
+# lock was `flock` where PATH had one and a symlink where it did not, so two
+# launches with different PATHs held two independent locks and both updated
+# the same install at once. Every launch now takes the one symlink at $LOCK,
+# and `flock` is never consulted.
+#
+# THE SYMLINK'S TEXT NAMES ITS OWNER, `pid=<pid>@<place>`. `ln -s` makes the
+# lock and publishes the owner in one atomic act, so a launch killed at any
+# point leaves either no lock or a lock that names it, never an ownerless one
+# every later launch would wait on. <place> is where that pid means anything:
+# the host's name and, where /proc shows one, the inode of the pid namespace.
+# Containers that share one home share this lock, and a pid read in another
+# namespace says nothing about whether its owner still runs, which `flock`
+# never needed to know. So a lock made ELSEWHERE is waited on and never taken
+# over, and the refusal names it and its place; a lock made HERE whose owner
+# is no longer running is taken over.
+#
+# ONE LAUNCH REMOVES A DEAD OWNER'S LOCK, and it holds a second directory, the
+# reaper, while it looks again. Two launches that both read the same dead pid
+# would otherwise both remove "the stale lock", and the second removal would
+# take the lock the first had just made, so both would update at once. Under
+# the reaper the lock is removed only while it still names the owner that was
+# seen dead. A reaper left by a launch killed in those few lines blocks the
+# takeover, and the refusal names it.
 
-lock_fd_open=0
+OWNER=""
+PLACE=""
 link_lock=""
 lock_why=""
 
+# lock_place: this launch's <place>, `<host>` or `<host>:<pid namespace inode>`.
+# No `/`, because `ln -s` onto a directory names the link it puts inside after
+# the target's last component.
+lock_place() {
+	local host ns
+	host="$(uname -n 2>/dev/null || :)"
+	ns="$(readlink "/proc/$$/ns/pid" 2>/dev/null || :)"
+	# `pid:[4026531836]` on Linux, nothing without /proc: its digits or none.
+	ns="${ns//[!0-9]/}"
+	case "$host" in '' | *[/@:]*) host=unknown ;; esac
+	printf '%s' "$host${ns:+:$ns}"
+}
+
 # take_lock: 0 with the lock held, or 1 with lock_why saying why not.
 take_lock() {
-	local waited=0 d owner reaped
+	local waited=0 missing=0 record owner where reaped
 	if ! mkdir -p -- "$CACHE_DIR" 2>/dev/null; then
 		lock_why="the update lock's directory $CACHE_DIR could not be created"
 		return 1
 	fi
-	lock_why="the update lock $LOCK_FILE was not free within ${LOCK_WAIT}s"
-	if command -v flock >/dev/null 2>&1; then
-		if ! exec 9>>"$LOCK_FILE"; then
-			lock_why="the update lock $LOCK_FILE could not be opened"
-			return 1
-		fi
-		lock_fd_open=1
-		if flock -w "$LOCK_WAIT" 9; then
-			lock_why=""
-			return 0
-		fi
-		exec 9>&-
-		lock_fd_open=0
-		return 1
-	fi
-	# No flock on a stock macOS: the lock is a SYMLINK whose text names its
-	# owner, `pid=<pid>`. `ln -s` makes it and publishes the owner in one
-	# atomic act, so a launch killed at any point leaves either no lock or a
-	# lock that names it, never an ownerless one every later launch would wait
-	# on. A lock whose owner is no longer running is taken over, not waited out.
-	#
-	# ONE LAUNCH REMOVES A DEAD OWNER'S LOCK, and it holds a second directory,
-	# the reaper, while it looks again. Two launches that both read the same
-	# dead pid would otherwise both remove "the stale lock", and the second
-	# removal would take the lock the first had just made, so both would
-	# update at once. Under the reaper the lock is removed only while it still
-	# names the pid that was seen dead. A reaper left by a launch killed in
-	# those few lines blocks the takeover, and the refusal names it.
-	d="$LOCK_FILE.l"
+	PLACE="$(lock_place)"
+	OWNER="pid=$$@$PLACE"
 	while :; do
-		if ln -s "pid=$$" "$d" 2>/dev/null; then
-			[ "$(readlink -- "$d" 2>/dev/null || :)" = "pid=$$" ] && break
+		if ln -s "$OWNER" "$LOCK" 2>/dev/null; then
+			[ "$(readlink -- "$LOCK" 2>/dev/null || :)" = "$OWNER" ] && break
 			# A directory at that path: `ln` put the link inside it.
-			rm -f -- "$d/pid=$$" 2>/dev/null || :
-			lock_why="$d is a directory and not this command's lock: remove it"
+			rm -f -- "$LOCK/$OWNER" 2>/dev/null || :
+			lock_why="$LOCK is a directory and not this command's lock: remove it"
 			return 1
 		fi
-		owner="$(readlink -- "$d" 2>/dev/null || :)"
-		owner="${owner#pid=}"
+		if [ ! -L "$LOCK" ] && [ ! -e "$LOCK" ]; then
+			# Nothing there and still no lock: one that was released between
+			# the two acts is taken at the next try, and a directory this
+			# launch cannot write in is named now rather than waited out.
+			missing=$((missing + 1))
+			if [ "$missing" -ge 2 ]; then
+				lock_why="the update lock $LOCK could not be made in $CACHE_DIR"
+				return 1
+			fi
+			continue
+		fi
+		missing=0
+		record="$(readlink -- "$LOCK" 2>/dev/null || :)"
+		owner=""
+		where=""
+		case "$record" in
+			pid=*@*)
+				owner="${record#pid=}"
+				owner="${owner%%@*}"
+				where="${record#*@}" ;;
+		esac
 		case "$owner" in '' | *[!0-9]*) owner="" ;; esac
-		if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null &&
-			mkdir -- "$d.reap" 2>/dev/null; then
+		# A lock made here whose owner has gone, or that names this very pid
+		# (a dead launch's, which this one never took), is a lock nobody holds.
+		if [ -n "$owner" ] && [ "$where" = "$PLACE" ] &&
+			{ [ "$owner" = "$$" ] || ! running "$owner"; } &&
+			mkdir -- "$LOCK.reap" 2>/dev/null; then
 			reaped=0
-			if [ "$(readlink -- "$d" 2>/dev/null || :)" = "pid=$owner" ] &&
-				rm -f -- "$d" 2>/dev/null && [ ! -L "$d" ]; then
+			if [ "$(readlink -- "$LOCK" 2>/dev/null || :)" = "$record" ] &&
+				rm -f -- "$LOCK" 2>/dev/null && [ ! -L "$LOCK" ]; then
 				reaped=1
 			fi
-			rmdir -- "$d.reap" 2>/dev/null || :
+			rmdir -- "$LOCK.reap" 2>/dev/null || :
 			# Taken over: try for the lock at once. Not taken over (another
 			# launch got there first, or the lock would not go): wait as usual.
 			[ "$reaped" = 1 ] && continue
 		fi
 		if [ "$waited" -ge "$LOCK_WAIT" ]; then
-			[ -d "$d.reap" ] &&
-				lock_why="$lock_why, and $d.reap, the directory a launch holds while it removes a dead owner's lock, is still there: remove it if no launch is running"
+			lock_why="the update lock $LOCK was not free within ${LOCK_WAIT}s"
+			if [ -n "$owner" ] && [ "$where" != "$PLACE" ]; then
+				lock_why="$lock_why. It is held by pid $owner at $where, and this launch runs at $PLACE, where that pid says nothing about whether its owner still runs: remove $LOCK if no launch is running there"
+			elif [ -z "$owner" ]; then
+				lock_why="$lock_why. It is not a lock this command makes (it reads '${record:-not a symlink}'): remove $LOCK if no launch is running"
+			fi
+			[ -d "$LOCK.reap" ] &&
+				lock_why="$lock_why, and $LOCK.reap, the directory a launch holds while it removes a dead owner's lock, is still there: remove it if no launch is running"
 			return 1
 		fi
 		sleep 1
 		waited=$((waited + 1))
 	done
-	link_lock="$d"
+	link_lock="$LOCK"
 	lock_why=""
 	return 0
 }
 
 release_lock() {
-	if [ "$lock_fd_open" = 1 ]; then
-		flock -u 9 2>/dev/null || :
-		exec 9>&-
-		lock_fd_open=0
-	fi
 	if [ -n "$link_lock" ]; then
-		if [ "$(readlink -- "$link_lock" 2>/dev/null || :)" = "pid=$$" ]; then
+		if [ "$(readlink -- "$link_lock" 2>/dev/null || :)" = "$OWNER" ]; then
 			rm -f -- "$link_lock"
 		fi
 		link_lock=""

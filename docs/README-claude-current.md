@@ -71,11 +71,17 @@ one by one, numbers as numbers (`beta.9` before `beta.10`) and words in byte
 order. Build metadata after a `+` is ignored.
 
 **The update runs under a lock** at
-`${XDG_CACHE_HOME:-~/.cache}/openrepotools/claude-current.lock`: `flock` where
-it exists, else a symlink whose text names its owner (`pid=<pid>`). One
-`ln -s` makes that lock and names its owner, so no lock is ever left without
-one. A lock whose owner has died is taken over, by one launch only: the one
-that holds a second directory, the reaper, while it reads the owner again.
+`${XDG_CACHE_HOME:-~/.cache}/openrepotools/claude-current.lock.l`, the same one
+for every launch whatever its `PATH` holds (`flock` is never used, so two
+launches can never hold two different locks): a symlink whose text names its
+owner, `pid=<pid>@<place>`. One `ln -s` makes that lock and names its owner,
+so no lock is ever left without one. `<place>` is the host's name and, on
+Linux, the pid namespace's inode, because containers that share a home share
+the lock and a pid from another namespace says nothing about its owner. A lock
+made at another place is waited on and never taken over, and the refusal names
+its owner and place. A lock made here whose owner has died is taken over, by
+one launch only: the one that holds a second directory, the reaper, while it
+reads the owner again.
 After it takes the lock it reads the candidates again, because another launch
 may have updated while it waited. A lock it cannot take within
 `CLAUDE_CURRENT_LOCK_WAIT` seconds is a refusal, unless that other launch's

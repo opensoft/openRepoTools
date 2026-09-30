@@ -338,14 +338,24 @@ def test_nothing_installed_is_installed_into_the_user_prefix(box):
     assert (fields["path"], fields["status"]) == (str(box.prefix / "bin" / "claude"), "verified")
 
 
+def _place() -> str:
+    """The `<place>` a launch on this host writes into its lock: the host's
+    name and, where /proc shows one, the pid namespace's inode."""
+    host = os.uname().nodename
+    if not host or any(c in host for c in "/@:"):
+        host = "unknown"
+    try:
+        ns = "".join(c for c in os.readlink("/proc/self/ns/pid") if c.isdigit())
+    except OSError:
+        ns = ""
+    return f"{host}:{ns}" if ns else host
+
+
 def _hold_lock(box: Sandbox, seconds: float, then: str = ":") -> subprocess.Popen:
     """Hold the update lock the way a second launch would, then run `then`."""
-    lock = box.cache / "claude-current.lock"
-    if shutil.which("flock"):
-        script = f'exec 9>>"{lock}"; flock 9; touch "{box.root}/held"; sleep {seconds}; {then}'
-    else:
-        script = (f'ln -s "pid=$$" "{lock}.l"; touch "{box.root}/held"; '
-                  f'sleep {seconds}; {then}; rm -f "{lock}.l"')
+    lock = box.cache / "claude-current.lock.l"
+    script = (f'ln -s "pid=$$@{_place()}" "{lock}"; touch "{box.root}/held"; '
+              f'sleep {seconds}; {then}; rm -f "{lock}"')
     proc = subprocess.Popen(["bash", "-c", script], env=box.env())
     deadline = time.monotonic() + 10
     while not (box.root / "held").exists():
@@ -546,11 +556,11 @@ def _dead_pid() -> int:
     return proc.pid
 
 
-def _link_lock(box: Sandbox, pid: int) -> Path:
-    """The lock as a launch without `flock` makes it: a symlink whose text
-    names its owner."""
+def _link_lock(box: Sandbox, pid: int, place: str | None = None) -> Path:
+    """The lock as every launch makes it: a symlink whose text names its
+    owner, `pid=<pid>@<place>`, at this host's place unless told another."""
     lock = box.cache / "claude-current.lock.l"
-    lock.symlink_to(f"pid={pid}")
+    lock.symlink_to(f"pid={pid}@{_place() if place is None else place}")
     return lock
 
 
@@ -580,8 +590,10 @@ def test_the_link_lock_names_its_owner_while_it_is_held(box):
     result = box.run("--porcelain", PATH=path_without(box, "flock"),
                      FAKE_NPM_INSTALL_HOOK=f'readlink "{lock}" > "{seen}"')
     assert result.returncode == 0, result.stderr
-    assert seen.read_text().startswith("pid="), seen.read_text()
-    assert int(seen.read_text().strip()[4:]) > 0
+    owner = re.fullmatch(r"pid=([0-9]+)@(.+)", seen.read_text().strip())
+    assert owner, seen.read_text()
+    assert int(owner.group(1)) > 0
+    assert owner.group(2) == _place(), "the lock does not name where its pid runs"
     assert not lock.is_symlink(), "the lock was not released"
 
 
@@ -620,9 +632,105 @@ def test_a_live_link_lock_is_waited_on_and_never_removed(box):
     lock = _link_lock(box, os.getpid())
     result = box.run(CLAUDE_CURRENT_LOCK_WAIT="1", PATH=path_without(box, "flock"))
     assert result.returncode == 2, result.stderr
-    assert os.readlink(lock) == f"pid={os.getpid()}"
+    assert os.readlink(lock) == f"pid={os.getpid()}@{_place()}"
     assert "was not free within 1s" in result.stderr
     assert "the directory a launch holds" not in result.stderr
+    assert box.installs() == []
+
+
+def _flock_on_path(box: Sandbox) -> tuple[str, Path]:
+    """A PATH that HAS a `flock`, on any host: a shim first on it that logs
+    every call and hands it to the host's own `flock` where there is one."""
+    shim_dir = box.root / "flock-shim"
+    log = box.root / "flock.log"
+    log.write_text("")
+    real = shutil.which("flock") or ""
+    box._script(shim_dir / "flock",
+                f'#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "{log}"\n'
+                + (f'exec "{real}" "$@"\n' if real else "exit 0\n"))
+    return f"{box.bin}{os.pathsep}{shim_dir}{os.pathsep}{os.environ.get('PATH', '/usr/bin:/bin')}", log
+
+
+@pytest.mark.parametrize("holder_has_flock", [True, False],
+                         ids=["flock-holds-no-flock-waits", "no-flock-holds-flock-waits"])
+def test_launches_with_and_without_flock_on_path_exclude_each_other(box, holder_has_flock):
+    """Copilot on #134: the lock was `flock` when PATH had one and a symlink
+    when it did not, so a launch of each kind held its own lock and both
+    updated at once. Two real launches here, one with a `flock` on PATH and
+    one without, in both orders: the second waits for the first's update and
+    installs nothing, and `flock` is never called at all."""
+    box.user_copy("2.1.283")
+    with_flock, flock_log = _flock_on_path(box)
+    without_flock = path_without(box, "flock")
+    held = box.root / "held"
+    first, second = ((with_flock, without_flock) if holder_has_flock
+                     else (without_flock, with_flock))
+    holder = subprocess.Popen(
+        [str(CMD), "--porcelain"], cwd=str(box.root), text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env=box.env(PATH=first, FAKE_NPM_INSTALL_HOOK=f'touch "{held}"; sleep 3'))
+    try:
+        deadline = time.monotonic() + 30
+        while not held.exists():
+            assert holder.poll() is None, holder.communicate()
+            assert time.monotonic() < deadline, "the first launch never began its update"
+            time.sleep(0.05)
+        result = box.run("--porcelain", PATH=second, CLAUDE_CURRENT_LOCK_WAIT="30")
+    finally:
+        out, err = holder.communicate(timeout=60)
+    assert holder.returncode == 0, err
+    assert result.returncode == 0, result.stderr
+    assert porcelain(result)["status"] == "verified"
+    assert "updated by another launch" in result.stderr
+    assert len(box.installs()) == 1, "both launches updated: two locks, not one"
+    assert flock_log.read_text() == "", "flock was consulted, so PATH still picks the lock"
+
+
+def test_a_dead_owners_lock_made_at_another_place_is_waited_on_and_named(box):
+    """A container that shares this home shares this lock, and a pid read in
+    another pid namespace says nothing about its owner. So a lock whose place
+    is not this launch's is never taken over, dead as its pid looks here, and
+    the refusal says whose it is and where."""
+    box.user_copy("2.1.283")
+    dead = _dead_pid()
+    lock = _link_lock(box, dead, place="another-host:4026531999")
+    result = box.run(CLAUDE_CURRENT_LOCK_WAIT="1")
+    assert result.returncode == 2, result.stderr
+    assert lock.is_symlink(), "a lock made at another place was taken over"
+    assert f"held by pid {dead} at another-host:4026531999" in result.stderr
+    assert f"this launch runs at {_place()}" in result.stderr
+    assert box.installs() == []
+
+
+def test_a_file_at_the_lock_path_is_named_not_waited_on_silently(box):
+    """Nothing this command makes: the refusal says what it reads there."""
+    box.user_copy("2.1.283")
+    stray = box.cache / "claude-current.lock.l"
+    stray.write_text("", encoding="utf-8")
+    result = box.run(CLAUDE_CURRENT_LOCK_WAIT="1")
+    assert result.returncode == 2, result.stderr
+    assert "It is not a lock this command makes (it reads 'not a symlink')" in result.stderr
+    assert stray.is_file()
+    assert box.installs() == []
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                    reason="root writes in a read-only directory")
+def test_a_lock_directory_it_cannot_write_in_is_named_at_once(box):
+    """`flock` said "could not be opened" at once; the symlink lock must not
+    wait out its whole bound for a lock nobody holds."""
+    box.user_copy("2.1.283")
+    box.cache.chmod(0o555)
+    try:
+        started = time.monotonic()
+        result = box.run(CLAUDE_CURRENT_LOCK_WAIT="30")
+        elapsed = time.monotonic() - started
+    finally:
+        box.cache.chmod(0o755)
+    assert result.returncode == 2, result.stderr
+    assert f"the update lock {box.cache / 'claude-current.lock.l'} could not be made in {box.cache}" in result.stderr
+    assert "was not free" not in result.stderr
+    assert elapsed < 15, f"it waited for a lock nobody holds: {elapsed:.1f}s"
     assert box.installs() == []
 
 
