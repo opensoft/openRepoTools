@@ -21,6 +21,7 @@ A lane session must still satisfy the existing identity checks. Test absent and 
 - **FR-002**: Absent or unsupported values retain the existing checks.
 - **FR-003**: Exempt prompts cause no lane record or tmux mutation.
 - **FR-004**: Keep shared profile hooks installed.
+- **FR-005**: Marked guard invocations avoid workspace, git, workstation and command-path probes, including when global flags are present; invalid guard arguments still return status 2.
 
 ## Success Criteria
 

@@ -420,6 +420,26 @@
 
 set -u
 
+# Parse the global flags before probing paths, git or workstation identity.
+# A profile-only prompt must not depend on any of that lane infrastructure.
+SWEEP_MODE="no-sweep"
+while [ $# -gt 0 ]; do
+  case "${1-}" in
+    --no-sweep)  SWEEP_MODE="no-sweep"; shift ;;
+    --sweep)     SWEEP_MODE="sweep"; shift ;;
+    --no-github) LANES_NO_GITHUB=1; shift ;;
+    *) break ;;
+  esac
+done
+
+if [ "${1-}" = guard ] && [ "${CLAUDE_NO_LANE:-}" = 1 ]; then
+  if [ "$#" -ne 1 ]; then
+    printf '%s\n' "lanes-edit: usage: guard   (the UserPromptSubmit hook; the hook's JSON on stdin)" >&2
+    exit 2
+  fi
+  exit 0
+fi
+
 SELF="$0"
 if command -v readlink >/dev/null 2>&1; then
   RESOLVED="$(readlink -f "$SELF" 2>/dev/null || printf '%s' "$SELF")"
@@ -710,19 +730,6 @@ LANES_PATH="${LANES_PATH:-$(git -C "${LANES_DIR:-.}" rev-parse --show-prefix 2>/
 # lane's claim landed first.
 CP_PATHS=("$LANES_PATH")
 CP_AFTER_REBASE=""
-
-# --no-sweep (default) / --sweep — see USAGE above. Consumed here, ahead of
-# subcommand dispatch, so either flag may appear anywhere before the
-# subcommand name.
-SWEEP_MODE="no-sweep"
-while [ $# -gt 0 ]; do
-  case "${1-}" in
-    --no-sweep)  SWEEP_MODE="no-sweep"; shift ;;
-    --sweep)     SWEEP_MODE="sweep"; shift ;;
-    --no-github) LANES_NO_GITHUB=1; shift ;;
-    *) break ;;
-  esac
-done
 
 # die "<message>" [<exit code>] — the MESSAGE is $1 alone. It used to be "$*",
 # which joined the exit code on to the end of every refusal that passed one:
@@ -9803,9 +9810,6 @@ EOF
   # one is exactly the silence Amendment 12 exists to end.
   guard)
     [ "$#" -eq 0 ] || die "usage: guard   (the UserPromptSubmit hook; the hook's JSON on stdin)" 2
-    # Profile-only launches opt out per process; profile settings remain shared
-    # with lane launches, which clear this marker before handing off.
-    [ "${CLAUDE_NO_LANE:-}" = "1" ] && exit 0
     if [ -t 0 ]; then g_json=""; else g_json="$(cat 2>/dev/null || :)"; fi
     # IN A SUBSHELL, AND EVERY CODE BUT 0 IS A 2. This is clause (d) — *"fail
     # CLOSED"* — made true of the guard's OWN failures and not only of the

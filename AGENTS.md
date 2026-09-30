@@ -32,6 +32,13 @@ the protocol's and not this toolset's — 1 is *registry not found* there and
 *findings were printed* here — so never read a number without knowing which
 command produced it.
 
+The guard applies to lane sessions. Profile-only launches carrying exact
+`CLAUDE_NO_LANE=1` are exempt and return 0 before hook input or lane identity
+probes, even when workspace configuration is unreadable. Other marker values
+retain the blocking behavior above. This process-scoped exception is directed
+by Brett Heap's no-lane launch instruction and governed by
+`openspec/changes/skip-no-lane-guard/`; shared profile hooks stay installed.
+
 ## Driving `park <Name>`, `resume <Name>` and `status <Name>`
 
 `park <Name>` and `resume <Name>` are the estate verbs as commands on a PATH,

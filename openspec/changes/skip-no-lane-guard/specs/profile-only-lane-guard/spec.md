@@ -4,6 +4,21 @@ Allow Claude sessions launched without a lane to submit prompts while lane sessi
 
 ## ADDED Requirements
 
+### Requirement: Profile-only prompts avoid lane initialization
+
+The guard SHALL apply the exact launch exemption before probing workspace
+configuration, git, workstation identity or its own command path.
+
+#### Scenario: Infrastructure probes are unavailable
+
+- **WHEN** a marked guard invocation would encounter unavailable identity commands
+- **THEN** it exits silently with status 0 without invoking those commands
+
+#### Scenario: Invalid guard arguments accompany the marker
+
+- **WHEN** a marked guard invocation includes unexpected arguments
+- **THEN** it prints usage and returns status 2 without identity probes
+
 ### Requirement: Respect the session launch mode
 
 The prompt guard SHALL silently return status 0 when `CLAUDE_NO_LANE=1`, including when lane identity cannot be read. It SHALL keep existing enforcement for all other values and SHALL NOT alter profile hook settings or lane records for the exempt prompt.
