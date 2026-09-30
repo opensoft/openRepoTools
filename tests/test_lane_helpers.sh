@@ -100,7 +100,7 @@ export CLAUDE_CONFIG_DIR="$HOME/.claude"
 # them. `AGENT_PROTOCOL_ROOT` is then re-exported into the sandbox, two lines
 # down, so the default finds the sandbox's file and never the operator's.
 unset LANES_FILE LANES_EDIT LANES_REPO LANES_PATH LANES_LANE LANES_WORKSPACE_ROOT \
-      LANES_REPOS_TSV LANES_REPOS_TSV_SHIPPED PROJECTS_ROOT CLAUDE_PROJECTS_DIR CLAUDE_BIN 2>/dev/null
+      LANES_REPOS_TSV LANES_REPOS_TSV_SHIPPED PROJECTS_ROOT CLAUDE_PROJECTS_DIR CLAUDE_BIN CLAUDE_NO_LANE 2>/dev/null
 export AGENT_PROTOCOL_ROOT="$HOME/.agents"
 mkdir -p "$AGENT_PROTOCOL_ROOT"
 # THE ONE `LANES_*` SEAM THIS SUITE SETS RATHER THAN UNSETS, for the reason the
@@ -6121,7 +6121,7 @@ gd_run "$GD_LANE_ID"
 chmod 755 "$profiles_root"
 is    "session records that cannot be READ block the prompt — fail CLOSED (clause (d))" "$rc" 2
 has   "…naming the read that failed" "$err" "session records could not be read"
-has   "…and the one bypass, which is not an environment flag" "$err" "claude --safe-mode"
+has   "…and safe-mode recovery for a session subject to the guard" "$err" "claude --safe-mode"
 # AND THE `SessionStart` HOOK MEETS THE SAME UNREADABLE RECORDS AND STILL EXITS
 # 0. The two hooks read the same directories through the same function and are
 # held to OPPOSITE contracts — one refuses on a read it could not make (clause
@@ -6152,7 +6152,7 @@ out="$(printf "$gd_hook" "$GD_LANE_ID" "$HOME/projects/repoGD" "do the work" | L
 err="$(cat "$SANDBOX/stderr")"
 is    "a register this workstation cannot read blocks the prompt with 2, never the dispatcher's 1" "$rc" 2
 has   "…saying it is the ROW half of the triple that could not be read" "$err" "the ROW cannot be read"
-has   "…and the one bypass" "$err" "claude --safe-mode"
+has   "…and safe-mode recovery" "$err" "claude --safe-mode"
 out="$(printf '' | LANES_FILE="$SANDBOX/no-such-register.md" "$E" session-start 2>/dev/null)"; rc=$?
 is    "…while session-start on the same missing register still exits 0, as it always has" "$rc" 0
 gd_run "$GD_LANE_ID" "do the work" ""
@@ -6188,7 +6188,7 @@ out="$(printf "$gd_hook" "$GD_LANE_ID" "$HOME/projects/repoGD" "do the work" | P
 err="$(cat "$SANDBOX/stderr")"
 is    "…while a tmux that answers nothing is an indeterminate read and not 'no window'" "$rc" 2
 has   "…naming the read that did not happen" "$err" "tmux did not answer"
-has   "…and the one bypass" "$err" "claude --safe-mode"
+has   "…and safe-mode recovery" "$err" "claude --safe-mode"
 
 # ---- CLAUSE (h) RULE 2: THE OFFER, AND ITS THREE ANSWERS.
 gd_rec "$GD_LANE_ID" repoGD-2 user "$GD_NEW_MS"
