@@ -103,7 +103,7 @@ def test_installed_artifact_modes_use_the_explicit_inventory(name):
 
     Keep the mode contract derived from the same exact inventory used by the
     installer tests. In particular, do not turn every `.py` path into a
-    blanket exception: only the seven imported modules named there, together
+    blanket exception: only the fifteen imported modules named there, together
     with `repos.tsv`, are data artifacts.
     """
     path = REPO / name
@@ -244,7 +244,7 @@ def test_every_placed_file_carries_in_the_index_the_mode_it_is_placed_with():
     (Any finding that says `lane-handoff` is 100644 is reading this paragraph
     and not the index: `git ls-files -s lane-handoff` is the answer.)
 
-    `repos.tsv` and the seven named managed Python modules are the explicit data
+    `repos.tsv` and the fifteen named managed Python modules are the explicit data
     inventory; they are read, never run. The mode expectation below derives
     from that same exact inventory rather than a suffix or blanket waiver.
     """
@@ -1028,9 +1028,9 @@ def test_the_documents_say_what_status_is_and_is_not():
         text = (REPO / name).read_text(encoding="utf-8")
         assert "`status`" in text, f"{name} never names the fourth command"
     readme = (REPO / "README.md").read_text(encoding="utf-8")
-    assert "THIRTEEN files" in readme, (
-        "README.md does not count the thirteen files")
-    assert "13 of 13 placed" in readme, (
+    assert "THIRTY-ONE files" in readme, (
+        "README.md does not count the thirty-one files")
+    assert "31 of 31 placed" in readme, (
         "README.md does not show the count line `--install` actually prints")
     status = (REPO / "status").read_text(encoding="utf-8")
     assert "--no-optional-locks" in status, (

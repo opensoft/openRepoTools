@@ -8840,8 +8840,9 @@ hasnt "…nor is there a PAUSED line for that lane" "$(cat "$LOGD/repoHF-2.md")"
 # (Copilot rounds 1 and 2 on openRepoTools#47). The object-log line is the
 # first; the ROW is what every other lane and every launcher reads this lane's
 # state from, and the HANDOFF's top block is literally the new session's first
-# prompt. Each of the two below writes the PAUSED line and then fails at one of
-# the others, and neither may kill the only process that could put it right.
+# prompt. First, a malformed row must be refused by the ownership preflight
+# without any write. Then a valid row reaches the record writes, where a
+# test-only delegate refuses set-row-state after PAUSED has been written.
 hf_seed_handoff "$WIP/handoffs/repoHF/repoHF-11.md" repoHF-11
 git -C "$WIP" add -- handoffs/repoHF/repoHF-11.md >/dev/null 2>&1
 git -C "$WIP" commit -q -m "seed repoHF-11's handoff"
@@ -8855,14 +8856,55 @@ git -C "$WIP" push -q origin main
 # write over a row carrying a seventh ` | `, because which text is the state
 # cell is then not knowable from the row. SEEDED and not added, because the
 # writer refuses to create this state (the line it would need carries a `|`).
-add_seed_row "| \`repoHF-11\` | harness \`$HF_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoHF/repoHF-11.md | running · a | b |"
+HF11_ROW_MALFORMED="| \`repoHF-11\` | harness \`$HF_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoHF/repoHF-11.md | running · a | b |"
+HF11_ROW_VALID="| \`repoHF-11\` | harness \`$HF_ID\` | Eagle / test / brett | 2026-09-14T00:00Z | none | handoffs/repoHF/repoHF-11.md | running · a |"
+add_seed_row "$HF11_ROW_MALFORMED"
 git -C "$WIP" add -A -- lanes >/dev/null 2>&1
 git -C "$WIP" commit -q -m "seed a row whose state cell holds a literal ' | ', which no row write can take"
 git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
 git -C "$WIP" push -q origin main
 : > "$FAKE_TMUX_A17_LOG"
 export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-11.md"
+HF11_REGISTER_BEFORE="$(cksum < "$LANES")"
+HF11_HANDOFF_BEFORE="$(cksum < "$WIP/handoffs/repoHF/repoHF-11.md")"
 run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-11 --restart clear
+is    "a /ctx whose row shape is ambiguous refuses before writing" "$rc" 1
+has   "…naming the unreadable managed-owner projection" "$err" "managed-owner projection could not be read"
+is    "…without changing the register" "$(cksum < "$LANES")" "$HF11_REGISTER_BEFORE"
+is    "…without changing the handoff" "$(cksum < "$WIP/handoffs/repoHF/repoHF-11.md")" "$HF11_HANDOFF_BEFORE"
+is    "…without writing a PAUSED object log" "$( [ ! -e "$LOGD/repoHF-11.md" ] && echo yes || echo no )" yes
+is    "…and without respawning the pane" "$(grep -c 'respawn-pane' "$FAKE_TMUX_A17_LOG")" 0
+
+# Repair only this sandbox row and publish it so the real helper can complete
+# every admission read. Refuse only its final row state write to exercise the
+# partial-record recovery boundary, without bypassing any earlier read.
+if ! awk -v row="$HF11_ROW_VALID" '
+  $0 ~ /^\| `repoHF-11` \|/ { $0 = row; replaced++ }
+  { print }
+  END { if (replaced != 1) exit 1 }
+' "$LANES" > "$SANDBOX/hf11-valid-register"; then
+  printf 'repoHF-11 diagnostic fixture could not repair exactly one row\n' >&2
+  exit 1
+fi
+mv "$SANDBOX/hf11-valid-register" "$LANES"
+git -C "$WIP" add -- lanes/LANES.md >/dev/null 2>&1
+git -C "$WIP" commit -q -m "repair repoHF-11 row for late write refusal"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+cat > "$SANDBOX/a17bin/lanes-edit-row-fail" <<'FAKE'
+#!/usr/bin/env bash
+if [ "${1-}" = set-row-state ] && [ "${2-}" = repoHF-11 ]; then
+  printf 'deliberate repoHF-11 row state write refusal\n' >&2
+  exit 2
+fi
+exec "${A17_ROW_FAIL_REAL_EDIT:?}" "$@"
+FAKE
+chmod +x "$SANDBOX/a17bin/lanes-edit-row-fail"
+: > "$FAKE_TMUX_A17_LOG"
+run env PATH="$A17PATH" LANES_EDIT="$SANDBOX/a17bin/lanes-edit-row-fail" \
+    A17_ROW_FAIL_REAL_EDIT="$E" FAKE_TMUX_WINDOW="hfsess:@21" \
+    CLAUDE_CODE_SESSION_ID="$HF_ID" \
     CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-11 --restart clear
 is    "a /ctx whose ROW could not be flipped REFUSES" "$rc" 2
 has   "…saying the register would read RUNNING for a session that was just replaced" "$err" "the ROW WAS NOT FLIPPED"
@@ -8870,6 +8912,8 @@ has   "…and that the pane is exactly as it was" "$err" "this pane is left exac
 is    "…and the pane was never respawned" "$(grep -c 'respawn-pane' "$FAKE_TMUX_A17_LOG")" 0
 has   "…while the record itself IS written, because a swap is never left unwritten" \
       "$(cat "$LOGD/repoHF-11.md")" "lane:repoHF-11 → swap;"
+is    "…and the row still reports its original running state" \
+      "$(command grep -F -x -c -- "$HF11_ROW_VALID" "$LANES")" 1
 
 # A HANDOFF THE ROW NAMES AND NOTHING CAN FIND: the top block cannot be
 # refreshed, so a respawn would hand the new session the block of the handoff
@@ -10865,7 +10909,7 @@ T18_REG="$T18_WS/lanes/LANES.md"
 T18_LANE="repoT18-1"
 T18_MANAGED_LANE="repoT18-9"
 T18_PROJECTION_LANE="repoT18-6"
-T18_ID="t0180001-1111-4000-8000-t01800011111"
+T18_ID="a0180001-1111-4000-8000-a01800011111"
 T18_WORKER_ID="b0180002-2222-4000-8000-b01800022222"
 T18_WORKER_NAME="worker-t018"
 T18_HANDOFF="handoffs/repoT18/session-handoff-t018-lane-repoT18-1.md"
@@ -11728,7 +11772,9 @@ is   "T019 direct lane begin succeeds" "$rc" 0
 has  "T019 direct lane uses the legacy lease begin call" "$(cat "$T19_EVENTS")" "begin lane=$T18_LANE"
 has  "T019 direct lane passes the exact shell PID" "$(cat "$T19_EVENTS")" "pid_matches_parent=yes"
 has  "T019 direct lane reaches exec only after begin" "$(cat "$T19_EVENTS")" "exec-after-begin"
-is   "T019 direct lane persists a legacy lease" "$(t19_state_field mode)" legacy-lease
+is   "T019 direct lane retains its pending launcher capability" "$(t19_state_field mode)" pending-launch
+is   "T019 direct lane keeps the exact pending lease ID" "$(t19_state_field lease_id)" "$T19_LEASE"
+is   "T019 direct lane keeps the exact pending request ID" "$(t19_state_field request_id)" "$T19_REQUEST"
 t19_assert_begin_precedes_side_effect
 : > "$T19_STATE"
 rm -f "$T19_MARKER"
@@ -11830,7 +11876,14 @@ rm -f "$T19_MARKER"
 t19_mode t019-bind-malformed
 t19_reset
 t18_snapshot
-run t19_env FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
+run t19_env "$T18_HELPER" legacy-begin --lane "$T19_PENDING_LANE" \
+    --pid "$$" --pending-launch --request-id "$T19_REQUEST"
+is   "T023 malformed bind fixture holds a pending capability" "$(t19_state_field mode)" pending-launch
+run t19_env LANE_MANAGED_PENDING_LANE="$T19_PENDING_LANE" \
+    LANE_MANAGED_PENDING_LEASE_ID="$T19_LEASE" \
+    LANE_MANAGED_PENDING_REQUEST_ID="$T19_REQUEST" \
+    LANE_MANAGED_PENDING_CREATOR_PID="$$" \
+    FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME=claude \
     FAKE_TMUX_WINDOW_INDEX=0 CLAUDE_PROFILE_NAME=team-05a \
     LANE_START_SESSION_ID=0 "$START" repoT18 3 --no-launch
 is   "T023 malformed pending bind output refuses" "$rc" 1
@@ -12090,9 +12143,11 @@ for t19_projection_bad_cell in malformed no-delimiter empty-owner bound-lane-mis
   esac
   t18_reset_observers
   t18_snapshot
-  run t18_env LANES_WORKSTATION=Raven "$LANE" "$T19_PROJECTION_LANE"
+  run t18_env LANES_WORKSTATION=Eagle "$LANE" --dir "$T18_PROJECT" \
+      "$T19_PROJECTION_LANE" team-05a
   is   "T019 absent-helper $t19_projection_bad_cell marker is unknown" "$rc" 1
-  has  "T019 absent-helper $t19_projection_bad_cell names unknown ownership" "$err" "unknown"
+  has  "T019 absent-helper $t19_projection_bad_cell names unreadable ownership" \
+       "$err" "managed-owner projection could not be read"
   is   "T019 absent-helper $t19_projection_bad_cell performs no helper read" \
        "$(t18_read_count)" 0
   t18_assert_unchanged "absent-helper $t19_projection_bad_cell marker"
@@ -12128,7 +12183,8 @@ run t18_env LANES_EDIT="$E" "$E" managed-owner "$T19_PROJECTION_LANE" \
 is   "T019 valid projection capture succeeds without helper" "$rc" 0
 t18_reset_observers
 t18_snapshot
-run t18_env LANES_WORKSTATION=Raven "$LANE" "$T19_PROJECTION_LANE"
+run t18_env LANES_WORKSTATION=Eagle "$LANE" --dir "$T18_PROJECT" \
+    "$T19_PROJECTION_LANE" team-05a
 is   "T019 valid projection remains detected without local runtime" "$rc" 2
 has  "T019 valid projection refusal names durable ownership" "$err" "projection"
 t18_assert_unchanged "valid projection without helper"
@@ -12172,7 +12228,12 @@ for t19_remote_frontdoor in lane lane-start lane-handoff; do
       ;;
   esac
   is   "T019 remote $t19_remote_frontdoor refuses durable projection" "$rc" 2
-  has  "T019 remote $t19_remote_frontdoor refusal names projection" "$err" "projection"
+  case "$t19_remote_frontdoor" in
+    lane)
+      has "T019 remote lane names its bound workstation" "$err" "bound on Eagle" ;;
+    *)
+      has "T019 remote $t19_remote_frontdoor refusal names projection" "$err" "projection" ;;
+  esac
   is   "T019 remote $t19_remote_frontdoor performs no helper read" \
        "$(t18_read_count)" 0
   t18_assert_unchanged "remote $t19_remote_frontdoor projection"
@@ -12441,7 +12502,7 @@ T19_CHAIN_LIVE_STATE_BEFORE="$(cksum < "$T19_STATE")"
 run t19_env \
     FAKE_TMUX_WINDOW="t18sess:@181" FAKE_TMUX_WINDOW_NAME="$T18_LANE" \
     FAKE_TMUX_WINDOW_INDEX=0 \
-    FAKE_TMUX_WINDOWS="t18sess:0\t@181\t$T18_LANE\t%181\tclaude" \
+    FAKE_TMUX_WINDOWS="$(printf 't18sess:0\t@181\t%s\t%%181\tclaude' "$T18_LANE")" \
     T19_REAL_CHAIN_TMUX="$T19_CHAIN_BASE_TMUX" \
     PCLAUDE="$SANDBOX/fakebin/pclaude" "$LANE" "$T18_LANE"
 is   "T019 existing-live lane attach succeeds" "$rc" 0
