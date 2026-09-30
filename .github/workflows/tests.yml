@@ -38,7 +38,7 @@ jobs:
         with:
           python-version: '3.x'
       - name: install the test runner
-        run: python3 -m pip install --disable-pip-version-check pytest==8.3.4
+        run: python3 -m pip install --disable-pip-version-check --only-binary=:all: pytest==8.3.4
       - name: guard launch mode and repository hygiene
         env:
           GIT_AUTHOR_NAME: openRepoTools CI
