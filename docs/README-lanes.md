@@ -1881,6 +1881,13 @@ timeout is killed, and a killed hook does not exit 2.
 
 ### Scope
 
+Sessions launched with `CLAUDE_NO_LANE=1` skip the prompt guard, silently. The
+workBenches profile launcher supplies this marker for a launch without a lane
+and clears it for an explicit lane launch. Explicit `--no-lane` wins over lane
+options. Other marker values keep the normal checks. The hook stays installed
+in profile settings so a concurrent lane session using the same profile still
+receives enforcement. Existing sessions need a relaunch to change launch mode.
+
 The guard applies to every session whose `cwd` is under `$PROJECTS_ROOT`
 (default `~/projects`), which is every estate session, and is **silent
 elsewhere** (D1): a name there is a title and nothing more. A **subagent's**

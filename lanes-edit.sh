@@ -9803,6 +9803,9 @@ EOF
   # one is exactly the silence Amendment 12 exists to end.
   guard)
     [ "$#" -eq 0 ] || die "usage: guard   (the UserPromptSubmit hook; the hook's JSON on stdin)" 2
+    # Profile-only launches opt out per process; profile settings remain shared
+    # with lane launches, which clear this marker before handing off.
+    [ "${CLAUDE_NO_LANE:-}" = "1" ] && exit 0
     if [ -t 0 ]; then g_json=""; else g_json="$(cat 2>/dev/null || :)"; fi
     # IN A SUBSHELL, AND EVERY CODE BUT 0 IS A 2. This is clause (d) — *"fail
     # CLOSED"* — made true of the guard's OWN failures and not only of the
