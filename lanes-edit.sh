@@ -6307,10 +6307,10 @@ EOF
 # FAIL CLOSED (clause (d)). A mismatch refuses; so does an INDETERMINATE read —
 # session records unreadable, tmux not answering, the register unreadable —
 # naming the read, because a triple that cannot be verified is not a triple that
-# agrees. There is no environment flag that turns this off: `claude --safe-mode`
-# disables every hook and is the one bypass, deliberate and visible in the
-# prompt box, and a session started that way is not a lane session and may not
-# write the register or claim an object.
+# agrees. Profile-only launches carrying exactly `CLAUDE_NO_LANE=1` are exempt
+# from this guard. `claude --safe-mode` disables every hook, deliberate and
+# visible in the prompt box; a session started that way is not a lane session
+# and may not write the register or claim an object.
 #
 # WHAT IT COSTS, AND THE ONE WAY IT FAILS OPEN. Measured on Eagle 2026-09-14
 # against 329 session records and a 1.3 MB register: the register read is ~2 s
@@ -6734,9 +6734,9 @@ guard_triple() {   # [<heading>]
   return 0
 }
 
-# THE ONE BYPASS, NAMED WHERE A PERSON COULD OTHERWISE BE STUCK (clause (d)).
-# There is no environment flag that turns this guard off, deliberately; Claude's
-# own `--safe-mode` disables every hook and is visible in the prompt box, and a
+# SAFE-MODE RECOVERY, NAMED WHERE A PERSON COULD BE STUCK (clause (d)).
+# Profile-only launches are exempt through `CLAUDE_NO_LANE=1` at dispatch.
+# Claude's `--safe-mode` disables every hook and is visible in the prompt box; a
 # session started that way is not a lane session and may not write the register
 # or claim an object. It is printed by the INDETERMINATE refusals — the reads
 # that could not be made — and not by the mismatches, which have a cure of their
