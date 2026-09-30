@@ -1,5 +1,92 @@
 # Data Model: Native Lineage Lane Operations
 
+## CLI supervised-jobs capability extension
+
+The prospective `claude-cli-supervised-jobs-v1` capability is an explicit
+subtype of `stop-then-resume-v1`. An absent subtype retains the original
+SDK/PGID contract. Its private durable record binds canonical lane, host and
+process namespace, exact parent UUID, lineage/owner generation, source and
+supervisor incarnations, source/target profile references, operation ID and
+immutable CLI launch-manifest digest. It contains a monotonic observation
+watermark and one compare-and-set owner token. A second token, wrong parent,
+stale generation, or changed manifest refuses before runtime or job effects.
+
+Source admission claims the exact parent before spawn. The per-session runtime
+binding additionally carries an owned child handle or namespace/start token,
+launcher incarnation/journal reference, pending action intents and observed
+exit, plus the known foreground child/helper/tool lifecycle roster and any
+unresolved coverage. PID disappearance alone is not an exit witness. Lost
+journal/identity or unknown descendants retain indeterminate state. The shared
+container identity is environmental context, never the source stop target.
+Immutable per-runtime settings/MCP paths and profile/auth references bind A/B
+without overwriting another session; source job credentials are separate from
+supervisor control credentials and no secret enters the ledger.
+
+Workspace claims retain the existing schema and bind two independent
+repository identities for this CLI capability:
+
+| Existing field | CLI capability meaning |
+| --- | --- |
+| `common_dir` | WIP state repository Git common directory, selected through the canonical workspace helper; anchors owner, locking and global claims. |
+| `repository` | Actual project Git common directory, strictly observed before admission and rechecked during history/release reconciliation. |
+| `workspace` | Actual project Git worktree root covered by the workspace claim; the immutable launch `cwd` may be inside it. |
+
+The complete claim digest and resulting worktree resource ID already bind all
+three fields. The two common directories need not be equal. Do not reinterpret
+`common_dir`, relax WIP ownership checks, or migrate old records. Missing or
+unverifiable project identity blocks CLI admission/reconciliation; the native
+API's generic repository-path fallback is not sufficient evidence.
+
+A separate resolved assembly-root identity anchors the lane. For a project
+manifest, resolve its `assembly` leg; otherwise use the aggregation's
+`project-register.yaml`, or the repository root for a single-repo shape.
+This adds identity context without replacing `common_dir`, `repository`, or
+`workspace`. The ledger's exact-parent `transcript` sub-record points into
+Claude's own projects store and records profile family, resolved store,
+encoded launch-cwd project key, parent UUID, full transcript path, sealed
+size and SHA-256, and each child transcript and metadata sidecar path/digest.
+The transcript and sidecar bytes remain in the CLI's projects store; the
+ledger holds pointers and integrity evidence, not transcript bodies.
+
+The lanes service may publish a **derived lane index** after local ledger
+writes. The index has one logical schema with QA Postgres when a per-workstation
+database URL is configured and a SQLite file beside the JSON ledger otherwise.
+Rows project locally recorded lane-register entries, transcript pointers (workstation, estate,
+profile family, resolved store, project key, parent UUID, size, SHA-256 and
+seal time), swap state by lane/parent/generation, and job ID/result summaries.
+Each row is keyed by local ledger record ID and digest for idempotent upsert.
+A reconcile pass republishes missing digests after an index outage or reset.
+Neither backend owns a claim, fence, release, exit witness or transcript bytes;
+the swap path never reads it. Only the service holds a schema-scoped database
+credential, distinct from supervisor authority. The index is rebuildable from
+local records and its availability cannot gate T054–T057.
+
+The old CLI runtime and native children occupy a per-session source domain. Every
+directly admitted persistent job occupies the supervisor's distinct job
+domain and has a durable job ID, process-start identity, launch digest,
+result/output reference, status/effect watermark and reserved registered
+worktree/resources. Admission precedes spawn. These reservations survive the
+account generation change and prevent conflicting supervised-job admission or
+replay of an unknown job effect. Native Edit, Write and NotebookEdit run inside
+the foreground CLI tool call and do not consult job reservations. The source
+input fence and verified CLI exit prevent A's native edits during transfer;
+normal-operation native-edit versus job concurrency is outside this capability.
+Filesystem dirty/untracked status is an
+observation, not a job-completion record. An arbitrary detached descendant
+has no admission record and remains unsupported.
+
+The same durable record carries restart-deny, graceful session-exit witness,
+history manifest, `ready-to-resume` state, release authorization, at-most-once
+target launch intent and observed target identity. Source and target profile
+credentials, transcript bodies, raw tool output and semantic summaries never
+enter the record. Crash recovery reads the existing job/result and launch
+intent; an uncertain dispatch is not replayed. Supervisor and jobs may share
+the long-lived container while remaining independent of A. Readiness requires
+exact CLI exit plus complete supported lifecycle/history/effect reconciliation;
+a quota wrap-up response or return to prompt is not exit. The source fence
+survives launcher restart, and one explicit release permits B once. Forced
+per-session recovery has no active schema or capability under this amendment.
+
 ## V1 schema amendment
 
 The [stop-then-resume contract](contracts/stop-then-resume.md) specifies a

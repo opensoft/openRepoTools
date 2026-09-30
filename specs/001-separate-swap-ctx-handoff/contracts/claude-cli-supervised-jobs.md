@@ -1,6 +1,6 @@
 # Claude CLI with persistent supervised jobs
 
-Authority: [September 26 shared-container architecture decision](../../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md).
+Authority: [September 26 shared-container architecture decision and September 30 amendments](../../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md).
 
 ## Scope and compatibility
 
@@ -37,10 +37,11 @@ and the durable launcher fence must establish exclusion. The job domain has
 independent supervisor custody and lifetime. Neither domain is established
 merely by labelling a PID list. Unknown activity remains unsupported.
 
-Every managed external command or edit, including job start, status, output,
-wait and cancellation, travels from the lane's scoped MCP bridge to the lanes
-service, which authorizes and journals it, and then to the execution-group
-supervisor. The lane has no direct execution-group socket or authority. The
+Every managed long-running or external command, including job start, status,
+output, wait and cancellation, travels from the lane's scoped MCP bridge to the
+lanes service, which authorizes and journals it, and then to the
+execution-group supervisor. Native Edit, Write and NotebookEdit remain native
+tool calls. The lane has no direct execution-group socket or authority. The
 current candidate's MCP bridge directly calls the per-lane job supervisor;
 that route is an implementation gap, not an approved shortcut. Persistent jobs
 must be launched by the execution-group supervisor into their job domain
@@ -106,10 +107,12 @@ child, hook and helper behavior for the supported version. Native children
 operate through the parent's native foreground interface. Persistent commands
 are supervisor-admitted jobs; arbitrary detached tools are unsupported.
 Known CLI helpers and child/tool lifecycles must be observed and correlated
-from admission through exit. All source mutations use supervisor job admission and resource policy; native
-Edit/Write are absent from the effective tool roster. Hooks and effects already
-accepted remotely still require accounting. Read tools do not imply a stable
-snapshot of a live job's files.
+from admission through exit. Native Edit, Write and NotebookEdit are allowed
+because they finish within their tool calls and cannot outlive A. Deny exactly
+Bash and PowerShell. Long-running and external commands use the scoped MCP
+bridge, lanes service and execution-group supervisor. Hooks and effects
+already accepted remotely still require accounting. Read tools do not imply a
+stable snapshot of a live job's files.
 
 A completed model turn, quota wrap-up notice or return to a prompt is not a
 CLI exit. A positive readiness witness joins the exact admitted CLI exit,
@@ -139,6 +142,48 @@ Persistent jobs cannot write Claude history. Preserve exact valid saved bytes;
 context save/restore does not mean the source task successfully completed.
 External requests and buffered effects already accepted before exit require
 separate reconciliation; process exit does not cancel remote work.
+
+## Native transcript and lane identity
+
+The transcript stays in Claude Code's projects store; the assembly repository
+anchors lane identity and is not a transcript home. Add a `transcript`
+sub-record to the exact-parent ledger binding with profile family, resolved
+store path, encoded project key, parent UUID, full parent transcript path,
+size, SHA-256 at seal time, and the complete child transcript and metadata
+sidecar list. The project key is the encoded launch cwd, such as
+`-workspace` for a launch from `/workspace`, not the lane directory. Preserve
+the `history_manifest` resolver's `projects_store`, project and `source_cwd`
+values, plus parent and child digests. Seal after source exit and descendant
+drain; reverify at release. Transcript bodies remain in Claude Code's store.
+
+Compare the resolved source and target projects-store identities. If they are
+the same, no copy is needed. If they differ, copy the parent transcript and
+child sidecars into the target store while preserving relative layout, then
+verify the recorded digests before launch. The profile resolver currently
+rejects duplicate same-family copies across stores; permit only the
+ledger-bound retired source plus verified target without weakening live-holder
+uniqueness. The durable pointer is in the JSON ledger. When a database URL is
+configured, the derived index uses QA Postgres; otherwise it uses SQLite beside
+the JSON ledger. The local JSON ledger under its local flock on the workstation
+holding the exact PID is the sole authority. The swap path never reads or waits
+for writes or reconciliation of the index, and QA index availability is never
+a swap gate. Write index updates
+behind JSON persistence as idempotent upserts keyed by local record ID and
+digest. Rebuild/reconcile an unreachable or wiped index from the JSON ledger.
+Per-workstation connection settings and environment stay uncommitted; use a
+service-only, schema-scoped credential distinct from supervisor authority.
+Index derived `LANES.md` rows only after their projection is recorded in the
+local JSON ledger, so every indexed row has a local-ledger source. The index
+may also contain transcript pointers, swap state and job summaries; it does not
+replace Git `LANES.md`. T058 follows T057 with offline no-read and wiped-index
+reconciliation checks and adds no T054–T057 gate.
+
+Resolve the lane's assembly repository from the worktree's `project.yaml`
+entry whose `legs[].role` is `assembly`, falling back to the aggregation's
+`project-register.yaml`. If a single-repository project has no `project.yaml`,
+its root is the assembly root; `openRepoTools` has that shape. This is an
+additional identity and does not replace the WIP `common_dir` or `workspace`
+claim fields.
 
 ## Durable ownership and launch manifest
 
@@ -182,14 +227,17 @@ For the first managed Claude CLI capability, the trusted launcher pins
 `CLAUDE_CODE_DISABLE_AGENT_VIEW=1` in both A and B per-session launches. It
 also pins `CLAUDE_CODE_HARBOR_KITE=0` and
 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=0`, with no `--agent-teams`, so
-`SendMessage` cannot address an external session or teammate. Its exact native tool roster is
-Read/Glob/Grep/Agent/SendMessage; a SendMessage continuation is restricted to
-one of this parent's native children and remains an awaited foreground reply
-under the pinned background-task policy. It omits Edit/Write as well
-as Bash/PowerShell; explicit denials remain in the invocation as a second
-check. Workspace edits run as admitted supervisor MCP jobs under the same
-resource reservation as shell work. The deployed path must demonstrate a real
-workspace edit through that endpoint, not leave the lane unable to edit. The reviewed CLI launch also uses
+`SendMessage` cannot address an external session or teammate. Native
+Read/Glob/Grep/Agent/SendMessage remain available, and native Edit, Write and
+NotebookEdit are allowed. A SendMessage continuation is restricted to one of
+this parent's native children and remains an awaited foreground reply under
+the pinned background-task policy. Deny exactly Bash and PowerShell. Long-
+running or external commands run as admitted supervisor MCP jobs under the
+worktree reservation. Verify a native Edit and separately verify that an
+admitted job is refused when it conflicts with a worktree reservation. A
+native edit cannot consult a job reservation, so parent-edit versus job
+concurrency during normal operation is outside this feature; the swap window
+uses the input fence and verified exit witness. The reviewed CLI launch also uses
 `--restricted` and a pinned settings file. `--strict-mcp-config` admits only the
 reviewed L1 job-broker MCP server. The CLI's inherited settings, plugins,
 hooks and subagent definitions must not add an alternate command executor or
@@ -280,8 +328,9 @@ Job IDs and write reservations survive an account-generation change. A target
 can read a completed result repeatedly. It can monitor or control an existing
 job only with current owner authority and a matching job identity. It must
 not create a replacement or repeat release/cancel actions whose outcomes are
-unknown. A reserved resource cannot be assigned to a competing writer while
-the job may still write. Unspecified resource scope requires a conservative
+unknown. A reserved resource cannot be assigned to a competing admitted job
+writer while the job may still write. Native edits do not consult job
+reservations. Unspecified resource scope requires a conservative
 worktree reservation; shared Git metadata mutations also require coordination.
 
 Tracked dirty files and untracked files remain intact. Inventory observations
@@ -302,18 +351,37 @@ seat, grant B ownership or interpret a wrap-up message as source exclusion.
 [ClaudeDevs describes the allowance as an attempt](https://x.com/ClaudeDevs/status/2103561342057943314).
 
 A must subsequently exit the CLI through the supported graceful path; a
-wrap-up message or returning to the prompt is not exit. The launcher observes
-the exact admitted runtime, persists its exit and source-generation fence and
-reconciles the known foreground child/helper/tool activity and histories. If A
-cannot exit, quota is exhausted before a supported stopping point, or any
-source child/tool effect remains uncertain, keep B absent and preserve claims.
-Do not escalate to forced recovery under this initial capability. No
-agent-written handoff transcript or final model response is a release authority.
+wrap-up message or returning to the prompt is not exit. While a wrap-up request
+for this exact parent is pending, the already registered `Stop` hook returns
+`{"decision":"block","reason":"<wrap-up instruction>"}` at most once for
+the request ID, with durable deduplication across duplicate callbacks and
+service restarts. Honor `stop_hook_active`; if the hook errors, treat it as no
+wrap-up. The reason instructs A: do not start new
+agents or long work, record state in the handoff, then stop. With foreground-
+only children, no child is running at a `Stop` boundary, so shutting down
+subagents is vacuous. A blocked `Stop` continues the turn and cannot certify an
+idle exit boundary.
+
+After a later nonblocked terminal `Stop` or `StopFailure` with no subsequent
+`UserPromptSubmit`, the service fences the source and the custodian stops
+relaying keyboard input to A until exit. It sends SIGTERM only to the exact
+admitted CLI PID through the owned child handle under the subreaper custodian.
+The custodian observes the main process with wait and requires the `ECHILD`
+witness; `SessionEnd` is corroborating evidence only. Measure that SIGTERM at
+an idle prompt runs the CLI's own shutdown before depending on it. If measured
+unsupported, the sole fallback is one atomic `/exit` PTY write including
+carriage return and a bounded wait for an observed exit, `SessionEnd` or
+`Stop`. No observed change by the deadline is a refusal that retains claims,
+not a retry. If A cannot exit, quota is exhausted before a supported stopping
+point, or any source child/tool effect remains uncertain, keep B absent and
+preserve claims. Do not escalate to forced recovery under this initial
+capability. The handoff and final model response are context, never release
+authority.
 
 | State | Required condition | Target runtime |
 | --- | --- | --- |
 | preflight | Read-only manifest, profile, history, ownership and supported graceful-lifecycle checks | Absent |
-| source-stopping | Durable source fence; observe exact CLI exit or validated graceful exit request | Absent |
+| source-stopping | Durable source/input fence; at a verified idle boundary send SIGTERM to the exact admitted CLI via owned custody (validated graceful exit request). Use one atomic CR-terminated PTY `/exit` write only if SIGTERM is measured unsupported. | Absent |
 | reconciling | Complete source exclusion; job, history and file reconciliation | Absent |
 | ready-to-resume | Fresh exclusion witness; claims, history and exact target intent bound | Absent |
 | release-authorized | Durable explicit release and one startup intent | Startup permitted |
@@ -322,24 +390,24 @@ agent-written handoff transcript or final model response is a release authority.
 | indeterminate | Preserve claims, intents and uncertain effects; observe only | No replacement launch |
 
 Prepare first verifies that the graceful per-session path can account for A's
-exit without disturbing the container, C or admitted jobs. It durably fences
-new source admissions and every managed restart before any bounded graceful
-exit request, only once the supported graceful criteria are met. A busy source
-that would need another model turn after control entry is unsupported for this
-initial transition and blocks B; the controller does not request that turn.
-A refused exit or expired bounded deadline retains claims and blocks B.
-A may already have exited naturally; the same identity, journal
-and activity checks still apply. Unknown or refused exit holds the operation.
-No final model response, generated handoff or available source quota is required
-by the controller, and stopping a runtime is never task-completion evidence.
+exit without disturbing the container, C or admitted jobs. The one cooperative
+wrap-up request is delivered through the exact parent's `Stop` hook before
+durable control entry. After a verified idle boundary, it durably fences new
+source admissions and every managed restart and stops relaying keyboard input
+before signaling A. A busy source that would need another model turn after
+control entry is unsupported for this initial transition and blocks B; the
+controller does not request that turn. A refused exit or expired bounded
+deadline retains claims and blocks B. A may already have exited naturally; the
+same identity, journal and activity checks still apply. Unknown or refused
+exit holds the operation. Stopping a runtime is never task-completion evidence.
 
 Control entry is the durable acceptance of the operation by the supervisor.
 From that point the controller initiates no model request and admits no new
-source job/tool dispatch. Cooperative model wrap-up occurs before that entry.
-Any old in-flight source response or effect is still accounted for; the fence
-alone does not block the CLI's network calls or prove it has exited. B cannot
-start until exact-runtime exit and complete supported session activity,
-transcript writers and effects are reconciled.
+source job/tool dispatch. The `Stop`-hook wrap-up is the single model turn
+before that entry. Any old in-flight source response or effect is still
+accounted for; the fence alone does not block the CLI's network calls or prove
+it has exited. B cannot start until exact-runtime exit and complete supported
+session activity, transcript writers and effects are reconciled.
 
 The witness binds source incarnation, exact parent/generation, launcher
 journal/observation watermark, exact exit evidence, accounted foreground
@@ -384,12 +452,28 @@ The initial candidate's parent-only hooks do not establish a live native-child
 roster. Before this capability reports graceful child shutdown, its pinned
 runtime must emit authenticated `SubagentStart` and `SubagentStop` observations
 and correlate them with initiating Agent tool calls and saved child histories.
-Seal a complete roster behind a measured admission fence; a `SubagentStart`
-hook is observational and cannot itself prevent a racing spawn. The service
-distinguishes response ended, task completed, interrupted with valid history,
-and unknown. A quota `StopFailure` on the parent or child is a failure signal,
-not proof of child completion. If the runtime lacks a reliable admission and
-roster boundary, preparation refuses before planned source exit.
+Seal the first-delivery roster only at a verified nonblocked terminal `Stop`
+or `StopFailure` after the wrap-up continuation and with no later
+`UserPromptSubmit`. Foreground children have returned by that boundary. Defer a
+measured fail-closed **mid-turn Agent admission fence** to a future gate beside
+forced recovery; T054–T057 neither depend on nor test it. A busy request stays
+pending until the idle boundary or reaches its bounded refusal. The custodian
+fences relayed input and uses the headless exit path. A `SubagentStart` hook is
+observational and cannot itself prevent a racing spawn; first-delivery behavior
+does not rely on it doing so. The service distinguishes response ended, task
+completed, interrupted with valid history, and unknown. A quota `StopFailure`
+on the parent or child is a failure signal, not proof of child completion. If
+the runtime lacks the idle-boundary and roster evidence, preparation refuses
+before planned source exit.
+
+The npm-global Claude CLI currently reports `2.1.286`. Before T055 depends on
+the pinned CLI, record measurements for all of these behaviors on the exact
+binary/version tuple: parent `StopFailure` with `error: rate_limit`; `Stop`
+hook `decision: block` continuing the turn with its reason; SIGTERM at an idle
+prompt running CLI shutdown and firing `SessionEnd`; `SessionStart` on
+`--resume` carrying the injected transition-packet context; and the parent's
+`Stop` hook being absent while a foreground Agent call remains in flight. No
+T055 code path may assume a hook or signal behavior until it has been measured.
 
 The lanes service accepts the swap trigger from the external command or a
 fresh profile-keyed usage observation. Source-bound `StopFailure` with
@@ -477,19 +561,20 @@ are separate assertions.
 
 Offline protocol fixtures do not establish real CLI foreground-child behavior.
 Record the actual pinned CLI, launcher/supervisor, namespace and configuration
-tuple for bounded runtime evidence. The governing decision permits a staged,
-versioned opt-in installation for the named canary lane (source `team05d`,
-target `team05j`). Its gate requires a frozen inventory, passing shared-route
-and invoked-dependency tests, actual CLI/fault evidence, isolated installation
-and rollback, and authenticated canary evidence. Preserve the full-suite census
-and positive native `ctx`/restoration acceptance tests. Individually mapped
-failures in the unreachable, explicitly refused native-`ctx` route remain open;
-any shared-path or unexplained failure blocks this staged installation.
-No default/global activation or T057 completion follows from a scoped pass.
-General public activation remains unavailable until
-the supported graceful path and effective launch policy are measured, repository
-regression and install/rollback gates pass and a separately scoped authenticated
-canary uses the same production route. T054–T057 remain open until evidence
-closes them. The latest user instruction authorizes implementation, validation
-and deployment; the earlier plan-only restriction is historical. Record the
-concrete canary and any user-operated seat move before that action.
+tuple for bounded runtime evidence. The canary's source and target profiles are
+supplied by its operator when separately authorized; `team05d` and `team05j`
+are the current expectation only. Record the concrete pair in T056 evidence at
+run time and in the ledger before any seat movement. The September 30 ruling
+authorizes this documentation checkpoint only; it does not authorize a canary,
+seat movement, merge or deployment. A future canary gate requires a frozen
+inventory, passing shared-route and invoked-dependency tests, actual CLI/fault
+evidence, isolated installation and rollback, and separate authorization for
+the authenticated run. Preserve the full-suite census and positive native
+`ctx`/restoration acceptance tests. Individually mapped failures in the
+unreachable, explicitly refused native-`ctx` route remain open; any
+shared-path or unexplained failure blocks that stage. No default/global
+activation or T057 completion follows from a scoped pass. General public
+activation remains unavailable until the supported graceful path and effective
+launch policy are measured, repository regression and install/rollback gates
+pass, and the same production route passes a separately authorized canary.
+T054–T057 remain open until evidence closes them.

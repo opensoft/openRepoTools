@@ -31,8 +31,10 @@ and reservations. Context restoration does not prove model completion.
 T054–T057 retain their open status. Their next fixture must exercise A and an
 independent C in the same container, a foreground child and continuing admitted
 job, then one release of B after verified natural exit. Negative cases cover
-uncertain exit, duplicate B, stale A and launcher restart. The later user deployment instruction assigns Astra architecture and
-Sol implementation. The Linux provider uses a dedicated child-subreaper wrapper
+uncertain exit, duplicate B, stale A and launcher restart. The September 30
+ruling authorizes documentation amendments only, with no canary, account seat
+move, merge or deployment. Astra leads architecture, Sol High orchestration,
+and Luna Max implementation writing. The Linux provider uses a dedicated child-subreaper wrapper
 per session under the linked contract; no broad process or container action is
 introduced. Prior scratch seat-move and Docker results keep their narrow
 scope; the T053 ledger is not shared-container runtime certification.
@@ -92,8 +94,9 @@ after the target coordinator receives the service's task/filesystem packet.
 The exact-child continuation language below describes the older SDK/strict
 candidate and is not an acceptance route for `claude-cli-supervised-jobs-v1`.
 Persistent OS jobs are different: they keep their IDs and execution while
-the source CLI exits. Every lane external command/edit request goes through
-the persistent lanes service to the execution-group supervisor. The current
+the source CLI exits. Long-running and external command requests go through
+the persistent lanes service to the execution-group supervisor. Native Edit,
+Write and NotebookEdit remain in the CLI. The current
 prototype's direct MCP-to-supervisor job socket must be replaced before the
 selected capability is activated.
 

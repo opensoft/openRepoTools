@@ -3,7 +3,9 @@
 Provider: `linux-session-subreaper-v1`, within
 [claude-cli-supervised-jobs-v1](claude-cli-supervised-jobs.md).
 Authority: [current decision](../../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md).
-Astra owns architecture; Sol implements the latest deployment instruction.
+Astra leads architecture, Sol High orchestration, and Luna Max implementation
+writing. The September 30 ruling authorizes documentation amendments only;
+canary, account seat move, merge and deployment need separate authorization.
 
 ## Boundary and kernel basis
 
@@ -58,11 +60,17 @@ and helpers accordingly. A host process scan cannot substitute for custody.
    per-runtime MCP/settings/profile references and generation-scoped job
    credentials cannot overwrite another runtime's config or grant ownership
    transfer. Do not use a broad environment or profile switch.
-4. A does optional foreground wrap-up before control entry, then exits normally.
-   Record actual main terminal status independently of turn/task completion.
-   After control entry a bounded graceful exit action may run only under its
-   validated CLI control route; no extra model turn is requested. On timeout,
-   refused exit or remaining descendants, retain claims and B stays absent.
+4. A may receive one deduplicated wrap-up through the registered `Stop` hook
+   before control entry. A blocked `Stop` continues the turn and is not an exit
+   boundary. Seal the roster at a later nonblocked terminal `Stop` or
+   `StopFailure` with no later `UserPromptSubmit`; a busy request waits for that
+   boundary or refuses at its deadline. Fence relayed input before sending
+   SIGTERM only to the exact admitted CLI PID through owned custody. Measure
+   that the pinned CLI handles this idle signal before relying on it. A single
+   atomic CR-terminated PTY `/exit` write is a bounded, non-retried fallback
+   only if SIGTERM is measured unsupported. Record actual main terminal status
+   independently of turn/task completion. On timeout, refused exit or
+   remaining descendants, retain claims and keep B absent.
 5. Reap all child types to `ECHILD`. Permanently seal this wrapper against
    further spawn, including helper subprocesses. Persist the source exit status,
    final drain observation, fence and monotonic journal sequence durably. A
@@ -72,7 +80,8 @@ and helpers accordingly. A host process scan cannot substitute for custody.
    from the same live wrapper, verify its identity/subreaper state/sealed spawn
    policy and repeat the empty-child observation. Reconcile all pending launch
    intents under the same ownership/fence serialization. The challenge and
-   journal digest bind source, domain, parent, generation and observation.
+   challenge nonce and journal digest bind source, domain, parent, generation
+   and observation.
 7. Reconcile history, effects, live job records and resource reservations.
    Explicit release consumes one target intent before B is spawned under a
    NEW wrapper. Stale A commands, reused release or a duplicate source/target
@@ -91,31 +100,33 @@ caller-provided booleans are not a provider witness.
 
 ## Workspace edits and profile eligibility
 
-The initial native roster is Read/Glob/Grep/Agent/SendMessage, with
-same-parent native-child replies awaited in the foreground and external
-session routing disabled. Native Edit/Write and
-Bash/PowerShell are omitted and explicitly denied. All workspace mutation,
-including ordinary coding edits, is available through admitted supervisor MCP
-jobs; run/status/output/wait must make those edits usable and observable.
-Admission atomically reserves the registered worktree before dispatch, so a
-second writer cannot race a live or uncertain job. Validate an actual edit and
-conflicting-write refusal in the installed route. Optional edit/write MCP
-convenience tools must use that same admission/result boundary. This is a
-cooperative workload policy, not a filesystem sandbox for hostile commands.
+The initial native roster includes Read/Glob/Grep/Agent/SendMessage and
+Edit/Write/NotebookEdit. Same-parent native-child replies stay in the
+foreground and external-session routing is disabled. Native Bash and
+PowerShell are omitted and explicitly denied; external and long-running
+commands go through the lanes service to the independent job supervisor.
+Native edits complete inside their tool call. Verify an actual native edit;
+conflicting-write refusal applies to admitted supervisor jobs against the
+registered worktree reservation. Native edits do not consult that reservation,
+so normal-operation native-edit versus job concurrency is outside this
+capability. During swap, the source input fence and exact exit witness exclude
+further A native edits. Optional edit/write MCP convenience tools must use the
+same job admission/result boundary. This is a cooperative workload policy, not
+a filesystem sandbox for hostile commands.
 
-A native file-tool PreToolUse hook is not the initial enforcement mechanism:
+A native file-tool PreToolUse hook is not a job-reservation authority:
 command-hook errors, unavailable handlers and timeouts can continue through
-normal permissions. Any later native-write route needs default-deny runtime
-permission behavior plus durable tool-use reservation across execution and
-fault-tested hook behavior. [Claude hook failure semantics](https://code.claude.com/docs/en/hooks#timeouts).
+normal permissions. [Claude hook failure semantics](https://code.claude.com/docs/en/hooks#timeouts).
 
 Keep the existing profile resolver's inactive-profile gate unchanged. The
-operator explicitly selected source `team05d` and target `team05j`. If their
-existing, identity-matched host-local provisioning catalog still says planned
-and its directory is read-only, a private immutable deployment manifest may
-project exactly those two planned entries to active. Record the original
-catalog digest, unchanged canonical identity/path/auth/family, observed planned
-status and the operator's explicit selection. Pass the projection only through
+earlier `team05d`/`team05j` pair is an expectation, not a fixed canary binding.
+For a separately authorized canary, record the operator-selected source and
+target in the ledger before any seat move. If those profiles' existing,
+identity-matched host-local provisioning catalog still says planned and its
+directory is read-only, a private immutable deployment manifest may project
+exactly the selected planned entries to active. Record the original catalog
+digest, unchanged canonical identity/path/auth/family, observed planned status
+and the operator's explicit selection. Pass the projection only through
 the managed launch's supported `CLAUDE_PROFILES_MANIFEST` setting; never mutate
 global environment or profiles/credentials. Disabled/retired entries cannot be
 promoted. Active here means admitted existing configuration, not current paid
@@ -125,8 +136,9 @@ movement, explicit release and actual target account identity checks.
 ## Jobs, recovery and limits
 
 The job supervisor is not A's child. A's stdio MCP bridge can be a source
-child, but only forwards authenticated admission/control to the independent
-supervisor; its own exit is included in A's drain. Jobs are admitted before
+child, but forwards authenticated admission/control to the persistent lanes
+service, which journals admission and routes it to the independent
+execution-group supervisor; its own exit is included in A's drain. Jobs are admitted before
 spawn, with separate custody, IDs, output and reservations. A cannot acquire
 an arbitrary already-running process as a job. The same wrapper mechanism may
 be reused for a job's subtree, with a distinct lifetime and journal; never
@@ -163,5 +175,6 @@ keeps identity and advances output, C/container/config/auth unchanged, no B
 before reconciliation/release, and one B exact-parent continuation afterward.
 Fault arms cover stale A requests/restarts, duplicate B, lost ACK and unknown
 history/effects. Keep real CLI behavior distinct from process-only fixtures.
-Runtime validation and installation follow the user's deployment instruction;
-record concrete named canary profiles/lane before any user-operated seat move.
+Runtime validation and installation require separate authorization. Select and
+record the concrete canary profiles and lane when a future canary is authorized,
+before any account seat move.

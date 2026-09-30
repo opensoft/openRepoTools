@@ -6,8 +6,9 @@
 resumes only the parent conversation. Safely unfinished source subagents end
 with A and are reconstructed as new B subagents with new IDs, using the
 service's task/history/job/filesystem packet. Existing execution-group OS
-jobs keep their identities and continue. Every lane external command/edit
-goes through the persistent lanes service to the execution-group supervisor;
+jobs keep their identities and continue. Long-running and external commands
+go through the persistent lanes service to the execution-group supervisor;
+native Edit, Write and NotebookEdit stay in the CLI;
 the prototype's direct MCP-to-supervisor socket is not the selected route.
 Older exact-child continuation language below remains historical SDK/strict
 scope and is not a CLI-capability acceptance requirement.
@@ -27,10 +28,12 @@ are forbidden. The supervisor may remain in the container independently of A.
 This supersedes the dedicated Docker source-container choice, whose code and
 evidence remain a dormant historical candidate. T053's offline ledger evidence
 is unchanged; T054–T057 stay open. Existing strict/SDK/PGID records and all
-fourteen Bite 4 outcomes retain their meaning. Public activation remains gated;
-the later user instruction authorizes implementation, validation and deployment
-with Astra thinking and Sol implementing. Concrete canary identities and any
-user-operated account seat change remain explicit. The initial Linux witness
+fourteen Bite 4 outcomes retain their meaning. Public activation remains gated.
+The September 30 ruling authorizes this documentation amendment only; it does
+not authorize a canary, account seat move, merge or deployment. Astra leads
+architecture, Sol High leads orchestration, and Luna Max writes implementation.
+The operative canary profiles are selected and recorded when a future canary is
+authorized. The initial Linux witness
 is a dedicated per-session child subreaper under the current contract.
 
 **2026-09-22 scope amendment:** the approved
