@@ -7,6 +7,7 @@ Profile-only Claude launches currently encounter the lane name guard even though
 - Skip the prompt guard when the launcher supplies `CLAUDE_NO_LANE=1`.
 - Keep the hook installed and enforce existing checks for every other value.
 - Document the process environment contract with workBenches.
+- Run the expanded guard and repository hygiene checks in a focused CI job using the canonical serialized wrapper.
 
 ## Capabilities
 
