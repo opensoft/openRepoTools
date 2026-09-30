@@ -37,6 +37,10 @@ _TRANSCRIPT_IDENTITY_TIMEOUT = 1.0
 _MAX_TRANSCRIPT_METADATA_BYTES = 1024 * 1024
 _MAX_TRANSCRIPT_PROFILE_FILES = 4096
 _MAX_PROFILE_HOLDER_FILES = 4096
+_PROFILE_RUNTIME_SUBTREES = frozenset({
+    "projects", "commands", "rules", "agents", "skills", "file-history",
+    "plans", "tasks", "todos",
+})
 
 
 # A managed launch must not inherit an account, provider, or endpoint selected
@@ -344,26 +348,70 @@ def _metadata_files(root: Path) -> list[Path]:
     if not stat.S_ISDIR(root_info.st_mode):
         return []
     result: list[Path] = []
+    concrete_configs: set[Path] = set()
+    namespace_aliases: list[Path] = []
     try:
-        # os.walk does not follow directory symlinks by default.  Prune the
-        # canonical runtime projects store explicitly: deployed profiles may
-        # point that non-metadata subtree at a shared store outside ``profiles``.
-        # It must not affect discovery of the profile metadata beside it.
-        # Every other symlinked directory is a profile/config path and is
-        # rejected, including links that happen to remain inside this tree.
-        for current, dirs, files in os.walk(str(root), followlinks=False):
+        root_real = root.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise ProfileError("invalid", "profile storage tree is unreadable")
+
+    def unreadable(_error: OSError) -> None:
+        raise ProfileError("invalid", "profile storage tree is unreadable")
+
+    try:
+        # Only real namespace directories are traversed. A validated concrete
+        # profile config has direct runtime-content children which are not
+        # profile namespaces, including deployed shared symlinks. Their names
+        # have no meaning at a namespace level and are not pruned there.
+        for current, dirs, files in os.walk(str(root), followlinks=False,
+                                            onerror=unreadable):
+            directory = Path(current)
+            concrete = False
+            if ".profile.json" in dirs:
+                raise ProfileError("invalid", "profile metadata is not a regular file")
+            if ".profile.json" in files:
+                metadata_path = directory / ".profile.json"
+                metadata_info = _lstat(metadata_path, "profile metadata")
+                if not stat.S_ISREG(metadata_info.st_mode):
+                    raise ProfileError("invalid", "profile metadata is not a regular file")
+                _reject_metadata_symlink_components(root, metadata_path, "profile metadata")
+                _metadata(metadata_path)
+                config_real = directory.resolve(strict=True)
+                if config_real == root_real or not _under(root_real, config_real):
+                    raise ProfileError("invalid", "profile config path is outside its boundary")
+                result.append(metadata_path)
+                concrete_configs.add(config_real)
+                concrete = True
             for directory in list(dirs):
                 linked = Path(current) / directory
-                if not linked.is_symlink():
+                if concrete and directory in _PROFILE_RUNTIME_SUBTREES:
+                    dirs.remove(directory)
                     continue
-                dirs.remove(directory)
-                if directory == "projects":
-                    continue
-                raise ProfileError("invalid", "profile storage tree contains a symlinked config path")
-            if ".profile.json" in files:
-                result.append(Path(current) / ".profile.json")
+                info = _lstat(linked, "profile storage namespace")
+                if stat.S_ISLNK(info.st_mode):
+                    dirs.remove(directory)
+                    namespace_aliases.append(linked)
+                elif not stat.S_ISDIR(info.st_mode):
+                    raise ProfileError("invalid", "profile storage namespace is not a directory")
+            # os.walk puts dangling directory links in files. Runtime files at
+            # a concrete config are not profile namespaces; elsewhere every
+            # link must prove it is only a redundant config alias.
+            if not concrete:
+                for filename in files:
+                    linked = Path(current) / filename
+                    if filename != ".profile.json" and stat.S_ISLNK(
+                            _lstat(linked, "profile storage namespace").st_mode):
+                        namespace_aliases.append(linked)
     except OSError:
         raise ProfileError("invalid", "profile storage tree is unreadable")
+    for alias in namespace_aliases:
+        try:
+            target = alias.resolve(strict=True)
+        except (OSError, RuntimeError):
+            raise ProfileError("invalid", "profile storage tree contains an unsafe config alias")
+        if (target == root_real or not _under(root_real, target) or
+                target not in concrete_configs):
+            raise ProfileError("invalid", "profile storage tree contains an unsafe config alias")
     return sorted(result, key=lambda item: str(item))
 
 
@@ -625,20 +673,13 @@ def _family_profile_configs(
     seen = {selected_config}
     for metadata_path in metadata_files:
         try:
-            metadata_info = _lstat(metadata_path, "same-family profile metadata")
-            if stat.S_ISLNK(metadata_info.st_mode) or not stat.S_ISREG(metadata_info.st_mode):
-                raise ProfileError("invalid", "same-family profile metadata is not a regular file")
-            metadata = _metadata(metadata_path)
+            config, metadata = _candidate_metadata(metadata_path, profiles_root)
         except ProfileError as exc:
             # A malformed sibling cannot be classified as a different family;
             # refusing is the only safe answer for holder enumeration.
             raise ProfileError("unknown", "same-family profile metadata is unreadable") from exc
         if _fold(metadata["family"]) != _fold(profile.family):
             continue
-        try:
-            config = metadata_path.parent.resolve(strict=True)
-        except (OSError, RuntimeError) as exc:
-            raise ProfileError("unknown", "same-family profile config is unreadable") from exc
         if config in seen:
             continue
         seen.add(config)

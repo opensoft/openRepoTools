@@ -170,6 +170,18 @@ def _transcript_inputs(
     }
 
 
+def _shared_runtime_links(fixture, resolver):
+    """Materialize deployed config roles without making them profile namespaces."""
+    shared = fixture.profiles_home / "shared"
+    for role in ("commands", "rules", "agents", "skills", "file-history",
+                 "plans", "tasks", "todos"):
+        target = shared / role
+        target.mkdir(parents=True, mode=0o700, exist_ok=True)
+        for name in ("team-a", "team-b"):
+            (resolver.resolve(name).config_dir / role).symlink_to(
+                target, target_is_directory=True)
+
+
 def _write_native_holder(
     profile: ProfileReference,
     session_id: str,
@@ -738,6 +750,9 @@ def test_verify_transcript_refuses_ambiguous_same_family_stores(
     sibling_transcript = sibling_project / (session_id + ".jsonl")
     sibling_transcript.write_text('{"type":"user"}\n', encoding="utf-8")
     sibling_transcript.chmod(0o600)
+    _shared_runtime_links(managed_profiles, resolver)
+    (managed_profiles.profiles_home / "profiles" / "legacy-team-a").symlink_to(
+        profile.config_dir, target_is_directory=True)
     # The selected profile's projects store and a same-family sibling store
     # are both real canonical stores; neither public field can select one.
     selected_store = profile.config_dir / "projects"
@@ -753,6 +768,127 @@ def test_verify_transcript_refuses_ambiguous_same_family_stores(
         word in str(caught.value).casefold()
         for word in ("ambiguous", "multiple", "store", "canonical")
     )
+
+
+def test_deployed_runtime_links_and_redundant_alias_preserve_same_family_holder(
+    managed_profiles, tmp_path
+):
+    resolver, target, session_id, workspace, paths = _transcript_inputs(
+        managed_profiles, tmp_path, profile_name="team-b", shared_projects=True)
+    source = resolver.resolve("team-a")
+    _shared_runtime_links(managed_profiles, resolver)
+    (managed_profiles.profiles_home / "profiles" / "legacy-team-a").symlink_to(
+        source.config_dir, target_is_directory=True)
+    process_start = _current_process_start_token(os.getpid())
+    process_domain = _current_process_domain()
+    if process_start is None or process_domain is None:
+        pytest.skip("the host exposes no portable native process identity")
+    _write_native_holder(source, session_id, workspace, pid=os.getpid(),
+                         proc_start=process_start, pid_domain=process_domain)
+    before = _snapshot_tree(managed_profiles.profiles_home)
+
+    evidence = _verify_transcript(resolver, target, session_id, workspace)
+
+    assert evidence["transcript_store"] == str(paths["store"])
+    assert len(evidence["holders"]) == 1
+    assert evidence["holders"][0]["profile_name"] == "team-a"
+    assert evidence["holders"][0]["pid"] == os.getpid()
+    assert _snapshot_tree(managed_profiles.profiles_home) == before
+
+
+@pytest.mark.parametrize("shape", [
+    "external", "dangling", "cycle", "namespace", "hidden-config",
+    "unknown-linked-subtree", "shared-looking-namespace",
+])
+def test_profile_discovery_refuses_unproven_namespace_alias(
+    managed_profiles, tmp_path, shape
+):
+    resolver, target, session_id, workspace, _paths = _transcript_inputs(
+        managed_profiles, tmp_path, profile_name="team-b", shared_projects=True)
+    _shared_runtime_links(managed_profiles, resolver)
+    profiles_root = managed_profiles.profiles_home / "profiles"
+    source = resolver.resolve("team-a")
+    alias = profiles_root / "unproven-alias"
+    if shape == "external":
+        outside = tmp_path / "outside-config"
+        outside.mkdir()
+        (outside / ".profile.json").write_text(
+            (source.config_dir / ".profile.json").read_text())
+        alias.symlink_to(outside, target_is_directory=True)
+    elif shape == "dangling":
+        alias.symlink_to(tmp_path / "missing-config", target_is_directory=True)
+    elif shape == "cycle":
+        alias.symlink_to(alias, target_is_directory=True)
+    elif shape == "namespace":
+        alias.symlink_to(profiles_root / "family-a", target_is_directory=True)
+    elif shape == "hidden-config":
+        commands = source.config_dir / "commands"
+        commands.unlink()
+        commands.mkdir()
+        hidden = commands / "hidden"
+        hidden.mkdir()
+        (hidden / ".profile.json").write_text(
+            (source.config_dir / ".profile.json").read_text())
+        alias.symlink_to(hidden, target_is_directory=True)
+    elif shape == "unknown-linked-subtree":
+        alias = source.config_dir / "unknown-role"
+        alias.symlink_to(managed_profiles.profiles_home / "shared" / "commands",
+                         target_is_directory=True)
+    else:
+        alias = profiles_root / "commands"
+        alias.symlink_to(managed_profiles.profiles_home / "shared" / "commands",
+                         target_is_directory=True)
+    before = _snapshot_tree(managed_profiles.profiles_home)
+
+    with pytest.raises(ProfileError, match="alias|symlink|unreadable|metadata"):
+        _verify_transcript(resolver, target, session_id, workspace)
+    assert _snapshot_tree(managed_profiles.profiles_home) == before
+
+
+@pytest.mark.parametrize("mutation", ["linked-metadata", "linked-sessions",
+                                           "malformed-sibling"])
+def test_profile_discovery_keeps_metadata_and_holder_paths_strict(
+    managed_profiles, tmp_path, mutation
+):
+    resolver, target, session_id, workspace, _paths = _transcript_inputs(
+        managed_profiles, tmp_path, profile_name="team-b", shared_projects=True)
+    source = resolver.resolve("team-a")
+    _shared_runtime_links(managed_profiles, resolver)
+    if mutation == "linked-metadata":
+        metadata = source.config_dir / ".profile.json"
+        outside = tmp_path / "metadata.json"
+        outside.write_bytes(metadata.read_bytes())
+        metadata.unlink()
+        metadata.symlink_to(outside)
+    elif mutation == "linked-sessions":
+        sessions = source.config_dir / "sessions"
+        outside = tmp_path / "sessions"
+        outside.mkdir()
+        sessions.symlink_to(outside, target_is_directory=True)
+    else:
+        sibling = managed_profiles.profiles_home / "profiles" / "malformed-sibling"
+        sibling.mkdir()
+        (sibling / ".profile.json").write_text("{malformed")
+    before = _snapshot_tree(managed_profiles.profiles_home)
+
+    with pytest.raises(ProfileError):
+        _verify_transcript(resolver, target, session_id, workspace)
+    assert _snapshot_tree(managed_profiles.profiles_home) == before
+
+
+def test_redundant_alias_cannot_be_selected_by_manifest(managed_profiles):
+    resolver = ProfileResolver(env=dict(managed_profiles.env))
+    source = resolver.resolve("team-a")
+    alias = managed_profiles.profiles_home / "profiles" / "legacy-team-a"
+    alias.symlink_to(source.config_dir, target_is_directory=True)
+    entries = [dict(entry) for entry in managed_profiles.entries]
+    for entry in entries:
+        if entry["name"] == "team-a":
+            entry["profilePath"] = alias.name
+    _write_manifest(managed_profiles, entries)
+
+    with pytest.raises(ProfileError, match="symlink|link|path"):
+        resolver.resolve("team-a")
 
 
 def test_verify_transcript_accepts_exact_source_holder_during_target_preflight(
