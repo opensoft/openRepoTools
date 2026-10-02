@@ -92,7 +92,7 @@
 #   64 usage — an unknown option, or a flag with no value
 #
 #   $LANES_EDIT      the register's reader (default: lanes-edit.sh beside this)
-#   $PCLAUDE         the launcher         (default: pclaude, else claude-profile)
+#   $PCLAUDE         the launcher         (default: lclaude, else pclaude, else claude-profile)
 #   $LANE_DRY_RUN=1  print the acts instead of performing them
 #
 # It writes nothing to the register and it never runs `claude` itself: every
@@ -153,7 +153,7 @@ Exit: 0 reached, listed or declined · 8 nothing to pick · 2 refused ·
 1 a read failed · 64 usage.
 
   $LANES_EDIT   the register's reader   (default: lanes-edit.sh beside this file)
-  $PCLAUDE      the launcher            (default: pclaude, else claude-profile)
+  $PCLAUDE      the launcher            (default: lclaude, else pclaude, else claude-profile)
 
 `lanes` is the same rows as a READ — every column, closed lanes included, no
 question. `/restart` is the act from INSIDE a running session, which cannot
@@ -562,9 +562,9 @@ where_live() {   # <window field>
 launcher() {
 	local lp="${PCLAUDE:-}"
 	if [ -z "$lp" ]; then
-		lp="$(command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
+		lp="$(command -v lclaude 2>/dev/null || command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
 	fi
-	[ -n "$lp" ] || die "there is no launcher on PATH (neither \`pclaude\` nor \`claude-profile\`), and this
+	[ -n "$lp" ] || die "there is no launcher on PATH (neither \`lclaude\`, \`pclaude\`, nor \`claude-profile\`), and this
     command will not run \`claude\` itself: every launch goes through the
     launcher and therefore through \`lane-start\`, which is what renames the
     window, stamps the row, extends the session cell and passes \`--name\` so
@@ -996,6 +996,11 @@ if [ -n "$name" ]; then
 	# up. Anything else is a read that did not answer, and this command binds no
 	# lane under a name nothing established (Amendment 7(d), the same rule the row
 	# read, the grouping read and the position read each take in this file).
+	# AND 66 IS THE ONE THAT HAS A NAME (Amendment 16(e), Copilot round 4 on
+	# openRepoTools#81): the lane ALIAS table could not be read, so a former name
+	# resolves to nothing and this command would bind a lane under a spelling
+	# that may belong to a row under another one. It falls into the refusal below
+	# with every other unanswered read, which is where it belongs.
 	if [ "$cl_rc" != 0 ] && [ "$cl_rc" != 2 ]; then
 		die "the register's spelling of lane $name could not be read: \`lanes-edit.sh canon-lane\`
     exited $cl_rc. A lane name is ONE name under any case (Amendment 15) and the

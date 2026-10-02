@@ -99,7 +99,7 @@ def test_the_lane_helper_suite_passes():
     for name in ("LANES_FILE", "LANES_EDIT", "LANES_REPO", "LANES_PATH",
                  "LANES_LANE", "LANES_WORKSPACE_ROOT", "LANES_REPOS_TSV",
                  "LANES_REPOS_TSV_SHIPPED", "AGENT_PROTOCOL_ROOT",
-                 "OPENREPOTOOLS_BIN_DIR", "PROJECTS_ROOT"):
+                 "OPENREPOTOOLS_BIN_DIR", "PROJECTS_ROOT", "CLAUDE_NO_LANE"):
         env.pop(name, None)
 
     # `errors="replace"`, because the thing this wrapper exists to print is the

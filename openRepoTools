@@ -25,13 +25,15 @@
 # change (Amendment 9(b), and R-A9-1). The identity that survives is narrower
 # and truer.
 #
-# `--install` PLACES TWELVE FILES, not four: this file, `park`, `resume`,
+# `--install` PLACES THIRTEEN FILES, not four: this file, `park`, `resume`,
 # `status` (openRepoShape #82; the fourth under Brett Heap's RULING of
 # 2026-09-10 in this repository, "lets go with a fourth file"), `lane` and
 # `lanes` (lane-collision-protocol Amendment 18 Addendum 1 and Amendment 11's
 # ratified decision 6 — `lane` is where `restart` was, Addendum 2 having retired
 # that word from the PATH), `lane-handoff` (Amendment 17(a), ratified
-# 2026-09-14: the swap IS the handoff, and this is its shell form), and the four
+# 2026-09-14: the swap IS the handoff, and this is its shell form),
+# `lane-rename` (Amendment 16, ratified 2026-09-14: a lane is renamed by ONE
+# WORD, in ONE COMMIT, and its old name resolves for ever), and the four
 # lane helpers `lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates` with
 # the alias table `repos.tsv` they read — which came here from
 # `opensoft/brett-wip` with their history under Amendment 9(b), because a
@@ -42,7 +44,7 @@
 # merges TWO hook entries into
 # `~/.claude/settings.json` — the `SessionStart` one (Amendment 9(b), A8
 # Addendum 2 R-A8-5) and, since lane-collision-protocol Amendment 12 adoption
-# act 3, the `UserPromptSubmit` NAME GUARD beside it: TWENTY-SIX
+# act 3, the `UserPromptSubmit` NAME GUARD beside it: TWENTY-SEVEN
 # artifacts, and the count is the invariant.
 #
 # One install line for the whole toolset, so a second engineer gets the estate
@@ -70,7 +72,7 @@ die() { printf '\nREFUSED: %s\n' "$1" >&2; exit "${2:-2}"; }
 
 usage() {
 	cat <<'USAGE'
-openRepoTools --install            install (or update) the twelve estate and
+openRepoTools --install            install (or update) the thirteen estate and
                                    lane commands into ~/.local/bin, plus the
                                    /handoff, /lane-swap and /restart skills, the
                                    /handoff, /ctx and /swap command files, the
@@ -81,8 +83,8 @@ openRepoTools wip init             create your workspace repository, clone it,
 openRepoTools --help | --version
 
 `openRepoShape` is the standard's front door and scaffolds product
-repositories; this command scaffolds none. `--install` places twelve files
-beside each other — this command, the two verbs, the read-only view, the three
+repositories; this command scaffolds none. `--install` places thirteen files
+beside each other — this command, the two verbs, the read-only view, the four
 lane words, the four lane helpers and the alias table they read:
 
   park [<Name>]                    commit, push and RECORD an estate's open
@@ -113,6 +115,10 @@ lane words, the four lane helpers and the alias table they read:
                                    session a second place asked for the lane
   lane-end <lane>                  close it, and refuse while anything is in
                                    flight
+  lane-rename <old> <new>          rename it: the row, the object log, the
+                                   handoff and lanes/aliases.tsv in ONE commit,
+                                   one comment per object it holds, and the old
+                                   name resolving for ever (Amendment 16)
   lanes-edit.sh <verb> …           the register's and the object logs' only
                                    writer
   link-estates                     place the symlinks every lane path already
@@ -229,7 +235,7 @@ fetch_from_repo() {
 	return 1
 }
 
-# THE TWELVE FILES `--install` PLACES. One list, so the installer, the fetch
+# THE THIRTEEN FILES `--install` PLACES. One list, so the installer, the fetch
 # fallback and the tests cannot disagree about what a complete install is.
 # `openRepoTools` is first because it is the one a person types to get the
 # others.
@@ -265,7 +271,13 @@ fetch_from_repo() {
 # one word left as another arrived, which is why nothing below it is a number.
 # AND TWELVE SINCE AMENDMENT 17(a): `lane-handoff` is the swap's shell form,
 # placed beside the rest because it is a word a person has on PATH (#47).
-INSTALLABLES=(openRepoTools park resume status lane lanes lane-handoff lanes-edit.sh lane-start lane-end link-estates repos.tsv)
+# THIRTEEN SINCE AMENDMENT 16, ratified 2026-09-14T09:24:35Z verbatim "Ratify as
+# drafted (Recommended)": `lane-rename <old> <new>` is the word Brett Heap asked
+# for that day, and clause (h) is why it is a word rather than a `lanes` option —
+# `lanes` writes nothing, and a rename is four files in one commit. Its write is
+# `lanes-edit.sh rename-lane`; the word exists because the tmux window and the
+# session's own name are not a register writer's to touch (clause (f)).
+INSTALLABLES=(openRepoTools park resume status lane lanes lane-handoff lane-rename lanes-edit.sh lane-start lane-end link-estates repos.tsv)
 
 # ------------------------------------------ THE RECEIPT OF WHAT IT PLACED
 #
@@ -773,7 +785,7 @@ mode_is() {   # <octal> <path>
 install_commands() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
 	local name target source verb placed=0
-	# ALL TWENTY-SIX IN HAND BEFORE ANY IS PLACED. The twelve files, the
+	# ALL TWENTY-SEVEN IN HAND BEFORE ANY IS PLACED. The thirteen files, the
 	# three skills, the three command files, and the TWO artifacts that are not
 	# whole files — the two hook entries merged into one `settings.json` —
 	# are all computed here, so a fetch that failed replaces nothing and a merge
@@ -872,7 +884,7 @@ install_commands() {
 
 
 # =========================================================================
-# THE FOURTEEN ARTIFACTS THAT ARE NOT ONE OF THE TWELVE FILES
+# THE FOURTEEN ARTIFACTS THAT ARE NOT ONE OF THE THIRTEEN FILES
 # =========================================================================
 #
 # lane-collision-protocol Amendment 9(b), inheriting A8 Addendum 2's R-A8-5
@@ -890,7 +902,7 @@ install_commands() {
 #     run and preserves hook keys. This command never writes a profile's
 #     settings.json at all. One path, one writer, in both halves.
 #
-# TWENTY-SIX ARTIFACTS, AND THE COUNT IS THE INVARIANT: twelve files in the bin
+# TWENTY-SEVEN ARTIFACTS, AND THE COUNT IS THE INVARIANT: thirteen files in the bin
 # directory, three skills in the shared skills directory, their three bare-run
 # copies, THREE COMMAND FILES at those same two paths, and TWO merged entries in
 # `~/.claude/settings.json`. It was twelve before Amendment 11 added a SECOND
@@ -899,7 +911,8 @@ install_commands() {
 # `commands/swap.md`, eighteen before Amendment 12 adoption act 3 added the
 # `UserPromptSubmit` name guard beside the `SessionStart` entry, and nineteen
 # before Amendment 17 added `lane-handoff`, the `handoff` skill and the
-# `/handoff` and `/ctx` command files; the count moves
+# `/handoff` and `/ctx` command files, and twenty-six before Amendment 16 added
+# `lane-rename`; the count moves
 # with the lists rather than being restated from memory.
 #
 # WHY A COMMAND FILE IS HERE AT ALL, WHEN ADOPTION ACT 6 SAYS THE LAUNCHER
@@ -999,7 +1012,7 @@ BLOCK
 
 # EVERY SKILL'S BYTES, by `--install`'s own rule: from the checkout beside this
 # file when run from one, else fetched at this same ref. ALL OF THEM IN HAND
-# BEFORE ANY IS PLACED, which is the same all-or-nothing rule the twelve files
+# BEFORE ANY IS PLACED, which is the same all-or-nothing rule the thirteen files
 # already have — a new `/restart` beside a `handoff` that could not be fetched
 # is a half-install that reads like a whole one.
 collect_skills() {
@@ -1065,8 +1078,8 @@ HOOK_PLAN=""      # "absent" | "present" | "nofile"
 GUARD_PLAN=""     # the same three, for Amendment 12's UserPromptSubmit entry
 HOOK_MERGED=""    # a staged whole file, ready to move into place
 
-# THE DESTINATIONS, PROVED WRITABLE BEFORE ANY OF THE TWELVE IS PLACED — every
-# directory the artifacts that are not one of the twelve files go into, derived
+# THE DESTINATIONS, PROVED WRITABLE BEFORE ANY OF THE THIRTEEN IS PLACED — every
+# directory the artifacts that are not one of the thirteen files go into, derived
 # from the two lists and NOT counted in this sentence. It said "THE THREE
 # DESTINATIONS" while the loop below built seven of them, which is the same
 # defect `collect_commands` names above: a number restated beside a list that
@@ -1109,7 +1122,7 @@ plan_skill_targets() {
 	# `~/.claude/skills/restart/SKILL.md` was followed and WRITTEN THROUGH: the
 	# skill stays uninstalled, the target stays a link, and the bytes land
 	# wherever it points. That is the same failure R-A9-12 was ruled on for the
-	# twelve in the bin directory, one directory along, and the ruling says
+	# thirteen in the bin directory, one directory along, and the ruling says
 	# nothing about which path it applies to.
 	#
 	# `unplaceable_kind` is asked rather than re-tested, because two copies of
@@ -1149,7 +1162,7 @@ $bad
         rm -f -- $paths"
 }
 
-# THE TWELVE TARGETS, PROVED PLACEABLE BEFORE ANY OF THE TWENTY-SIX IS PLACED
+# THE THIRTEEN TARGETS, PROVED PLACEABLE BEFORE ANY OF THE TWENTY-SEVEN IS PLACED
 # (A9 Addendum 4, R-A9-12, ruled on F5 of the #24 review).
 #
 # `cp` FOLLOWS A SYMLINK. The loop below tests `[ -e "$target" ]`, compares
@@ -1174,7 +1187,7 @@ $bad
 # `rm` that clears them — rather than leaving a person to remember a step.
 # WHAT IS AT A PATH, WHERE IT IS NOT A REGULAR FILE.
 # ONE implementation of R-A9-12's test, for every path this command writes: the
-# twelve in the bin directory, the six `SKILL.md`s (F-X17), the six command
+# thirteen in the bin directory, the six `SKILL.md`s (F-X17), the six command
 # files, and `~/.claude/settings.json` (#44 round 1, `openRepoTools:878`).
 # Prints what is there and returns 0; returns 1 — saying nothing — where the
 # path is absent or is a regular file.
@@ -1209,9 +1222,9 @@ path_kind() {   # <path>
 # This answered "a regular file" with `return 1` and asked nothing else, so
 # every existing file counted as one `--install` may place over — and
 # `plan_skill_targets` let a READ-ONLY `SKILL.md` or command file through.
-# `install_commands` has already copied the twelve PATH files by the time
+# `install_commands` has already copied the thirteen PATH files by the time
 # `place_skill_and_hook` reaches the `cp`, so an ordinary permission failure
-# there left a host with twelve of the twenty-six artifacts placed, on the one
+# there left a host with thirteen of the twenty-seven artifacts placed, on the one
 # path in this file that promises all or none. A mode is not an exotic state
 # either: `chmod 444` on a file a person did not want overwritten is what a
 # person does.
@@ -1384,7 +1397,7 @@ $(guard_block_text)"
 
 	# WHAT IS AT THAT PATH, BEFORE A BYTE OF IT IS READ (#44 round 1,
 	# `openRepoTools:878`). This file carries the LAST TWO artifacts — the
-	# twenty-fifth and twenty-sixth — since Amendment 12 adoption act 3 put the
+	# twenty-sixth and twenty-seventh — since Amendment 12 adoption act 3 put the
 	# name guard beside the `SessionStart` entry, and it is the only path no
 	# walk asked about; the
 	# `present` arm now CHMODs it, and `chmod`
@@ -1583,7 +1596,7 @@ $(guard_block_text)"
 	fi
 }
 
-# The thirteen placements, AFTER the twelve files and the merge are all in hand.
+# The thirteen placements, AFTER the thirteen files and the merge are all in hand.
 place_skill_and_hook() {
 	local shared_dir bare_dir settings target verb hook_tmp name
 	settings="$(claude_home)/settings.json"
@@ -1594,7 +1607,7 @@ place_skill_and_hook() {
 	# EVERY FAILURE HERE IS A `die`, never the shell's own 1. `--install`'s
 	# codes are this toolset's — 0 done, 1 findings printed, 2 a refusal — and
 	# an unguarded `mkdir` or `cp` under `set -e` exits 1, which reads as a
-	# report of findings from a command that placed twelve of twenty-six artifacts.
+	# report of findings from a command that placed thirteen of twenty-seven artifacts.
 	for target in "$shared_dir/SKILL.md" "$bare_dir/SKILL.md"; do
 		mkdir -p -- "$(dirname -- "$target")" ||
 			die "could not create $(dirname -- "$target") for the $name skill.
@@ -1619,7 +1632,7 @@ place_skill_and_hook() {
     the skills and the hook are not."
 		fi
 		# 644: a SKILL.md is a document a session READS, not a command. The
-		# twelve in the bin directory are stamped 755 for the reason that loop
+		# thirteen in the bin directory are stamped 755 for the reason that loop
 		# gives — "a copy that is not executable is not a command" — and
 		# that reason does not reach this file. Amendment 9(b) describes
 		# `--install` as stamping 755 "on everything it places" while
@@ -1641,7 +1654,7 @@ place_skill_and_hook() {
 	# reason a skill has two.
 	#
 	# 644 for the same reason a `SKILL.md` is: a command file is a document a
-	# session READS. The 755 argument belongs to the twelve in the bin
+	# session READS. The 755 argument belongs to the thirteen in the bin
 	# directory, where a copy that is not executable is not a command.
 	for name in "${COMMANDS[@]}"; do
 		for target in "$(skills_home)/shared/commands/$name.md" "$(claude_home)/commands/$name.md"; do
@@ -1685,8 +1698,8 @@ place_skill_and_hook() {
 		# round 1, the suppressed comment at `openRepoTools:880`): a
 		# `settings.json` this euid can write but does not own takes `jq` and
 		# every check `plan_hook_merge` puts to it, then refuses the mode
-		# stamp, with the twelve commands, the skills and the command files —
-		# twenty-four of the twenty-six artifacts — already placed. The guard that
+		# stamp, with the thirteen commands, the skills and the command files —
+		# twenty-five of the twenty-seven artifacts — already placed. The guard that
 		# would catch it first is the same `[ -O ]` `unplaceable_kind`'s own
 		# comment declines, for the same reason: no test in this suite can
 		# make a second account to own this file, and the check would refuse a
@@ -1970,14 +1983,22 @@ wip_derive_team() {
 # it is printed UNDER the refusal — the shape `fetch_from_repo`'s refusal
 # already has, where it names both ways it tried.
 #
-# STDOUT IS STILL DROPPED: `gh repo clone` and `git commit` are chatty on
-# success and this command's own `say` lines are the report. It is the WORDS OF
-# A FAILURE that were being thrown away, not progress.
+# STDOUT IS STILL DROPPED FROM THE REPORT, and it is now dropped INTO A FILE
+# rather than into `/dev/null`: `gh repo clone` and `git commit` are chatty on
+# success and this command's own `say` lines are what a person reads, so nothing
+# here ever prints it. It is the WORDS OF A FAILURE that were being thrown away,
+# not progress. The file is what lets a command whose OUTPUT is the answer — step
+# 6a's `git status`, #49 — run through this one wrapper instead of carrying a
+# second copy of the stderr-capture below: `$WIP_LAST_OUT` names it, it lives in
+# the workdir the `EXIT` trap removes, and it is rewritten by every call, so a
+# caller reads it before making the next one.
 WIP_LAST_ERR=""
-wip_quietly() {   # <command> [args…] — 0 or 1, with stderr in $WIP_LAST_ERR
+WIP_LAST_OUT=""
+wip_quietly() {   # <command> [args…] — 0 or 1, stderr in $WIP_LAST_ERR, stdout AT $WIP_LAST_OUT
 	workdir
 	WIP_LAST_ERR=""
-	if "$@" >/dev/null 2>"$WORKDIR/cmd-err"; then
+	WIP_LAST_OUT="$WORKDIR/cmd-out"
+	if "$@" >"$WIP_LAST_OUT" 2>"$WORKDIR/cmd-err"; then
 		return 0
 	fi
 	WIP_LAST_ERR="$(tail -n 6 -- "$WORKDIR/cmd-err" 2>/dev/null | sed -e 's/^/    | /')"
@@ -2108,6 +2129,13 @@ wip_fetch_template_file() {
 wip_init() {
 	local config target checkout ref rel dest seeded=0 owed=0 kind
 	local existing_repo existing_path
+	local ancestor rest comp staged_mode staged_entry index_tag ancestor_mode
+	# THE TEMPLATE PATHS THIS CHECKOUT HAS IN HEAD AND NOT ON DISK, because the
+	# index marks them `skip-worktree` (#69). Counted as well as collected, for
+	# the reason `written` is: an empty array expanded as `"${sparse_paths[@]}"`
+	# is an UNBOUND VARIABLE under `set -u` in the bash 3.2 macOS ships.
+	local sparse=0 sparse_paths
+	sparse_paths=()
 	# THE PATHS THE SEED OWES THIS CHECKOUT, which is what step 8 stages and
 	# commits and the whole of what it commits: the ones step 7 wrote (`seeded`)
 	# and the ones an earlier run wrote and could not commit (`owed`). Two
@@ -2287,15 +2315,35 @@ $WIP_LAST_ERR"
 	# half-finished run is safe. `--untracked-files=all` because git collapses an
 	# untracked DIRECTORY to one line otherwise, and `handoffs/` is not a path
 	# any exclusion below spells.
-	local status_args unrelated
+	#
+	# AND A `git status` THIS COMMAND COULD NOT RUN IS A REFUSAL, NEVER A CLEAN
+	# ANSWER (#49). The question was asked as
+	# `… 2>/dev/null | sed … || :`, which discarded git's own diagnostic and then
+	# turned ANY failure of the pipeline — under this file's `set -o pipefail`,
+	# `git status`'s own: a corrupt index, an unreadable `.git`, a submodule
+	# error — into a plain empty string. An empty change list is exactly what
+	# "nothing unrelated, proceed" looks like, so a checkout this command could
+	# not even ASK about was read as clean and step 7 wrote template bytes into
+	# it, past the one gate that exists to refuse before a byte is written. The
+	# run is `wip_quietly`'s now: its stdout is the change list, read from
+	# `$WIP_LAST_OUT` and never from a capture a failure can empty, and its
+	# stderr is git's own words under the refusal — the shape every other
+	# failure in this function already has.
+	local status_args
 	status_args=(status --porcelain --untracked-files=all -- .)
 	for rel in "${WIP_TEMPLATE_FILES[@]}"; do
 		status_args+=(":(exclude)$rel")
 	done
-	unrelated="$(git -C "$checkout" "${status_args[@]}" 2>/dev/null | sed -e 's/^/    /' || :)"
-	if [ -n "$unrelated" ]; then
+	wip_quietly git -C "$checkout" "${status_args[@]}" ||
+		die "could not ask git what $checkout carries, so this run cannot tell whether that
+    checkout holds anything this command did not write — and it will not seed a checkout
+    it could not put that question to. NOTHING was written into that checkout on this run
+    and nothing was staged.
+    What it said:
+$WIP_LAST_ERR"
+	if [ -s "$WIP_LAST_OUT" ]; then
 		die "$checkout carries changes this command did not write:
-$unrelated
+$(sed -e 's/^/    /' -- "$WIP_LAST_OUT")
     A seed commit is $SHAPE_REPOSITORY's $WIP_TEMPLATE_DIR and nothing else, and the
     push that follows it goes straight to $target's main — so anything else
     staged beside it is somebody's unfinished work published. NOTHING was written
@@ -2313,6 +2361,104 @@ $unrelated
 	workdir
 	for rel in "${WIP_TEMPLATE_FILES[@]}"; do
 		dest="$WORKDIR/tpl-$(printf '%s' "$rel" | tr '/' '_')"
+		# ---- THE PATH'S OWN ANCESTORS ARE ASKED ABOUT FIRST, AND A SYMLINK AT
+		# ONE OF THEM IS REFUSED BEFORE ANY BRANCH BELOW OPENS, CREATES OR
+		# WRITES THROUGH IT (#62).
+		#
+		# `path_kind` below asks what is at `$rel` ITSELF; nothing asked what is
+		# at `handoffs`, `lanes`, `lanes/log` or `workspaces` — every directory
+		# component the ${#WIP_TEMPLATE_FILES[@]} template paths have. An
+		# adopted checkout can carry a TRACKED symlink at one of those: a person
+		# whose `handoffs` is a link into another tree of their own, committed,
+		# which step 6a sees as a clean worktree because it IS what HEAD says.
+		# Every test the branches below make then answers as though nothing were
+		# at `$rel` at all — `[ -e ]` and `[ -L ]` are false when the link's
+		# target holds no such file, and git has no notion of a path INSIDE a
+		# tracked symlink, so `:$rel`, `HEAD:$rel` and `ls-files -u` are false
+		# too — and the MISSING branch is reached: its `mkdir -p` succeeds
+		# without creating anything, because the link resolves to a directory
+		# that is already there, and its `cp` then writes this run's template
+		# bytes through the link, OUTSIDE this checkout if that is where the
+		# link leads. Only the `git add` two steps later notices, with
+		# `fatal: … is beyond a symbolic link` — after the bytes have landed
+		# somewhere this command was never pointed at.
+		#
+		# AND AN ANCESTOR THAT IS NOT A DIRECTORY AT ALL IS REFUSED IN THE SAME
+		# WALK, because the same MISSING branch meets it one line earlier: a
+		# regular file committed at `handoffs` fails that `mkdir -p`, and a
+		# failing `mkdir` under this file's `set -e` exits 1 — the code this
+		# toolset spends on "findings were printed" — from a run that meant to
+		# refuse with 2 and never printed a word about why.
+		#
+		# `unusable_dir_kind` IS NOT THIS QUESTION, which is why this walk is
+		# written rather than that one called: it climbs UP to the nearest
+		# ancestor that EXISTS and asks whether a file can be created there, so
+		# a symlink to a directory that is really there answers it `-d`, `-w`
+		# and `-x` — usable — and it never looks at the components below. This
+		# walk goes DOWN the exact relative path and asks what each component
+		# IS.
+		ancestor=""
+		rest=""
+		case "$rel" in */*) rest="${rel%/*}" ;; esac
+		while [ -n "$rest" ]; do
+			case "$rest" in
+			*/*) comp="${rest%%/*}"; rest="${rest#*/}" ;;
+			*) comp="$rest"; rest="" ;;
+			esac
+			ancestor="${ancestor:+$ancestor/}$comp"
+			if [ -L "$checkout/$ancestor" ]; then
+				die "$checkout/$ancestor is $(path_kind "$checkout/$ancestor"), and the template's
+    $rel sits under it — so a \`mkdir -p\` there creates nothing and the \`cp\` that follows
+    writes this run's template bytes through that link, outside this checkout if that is
+    where it leads. A seed commit is the template's own bytes at a REGULAR FILE inside this
+    checkout, and nothing else there could be. Nothing beyond this run's own template bytes was
+    written into that checkout, and nothing was staged.
+    Replace that component with a real directory, then re-run:
+        openRepoTools wip init"
+			fi
+			if [ -e "$checkout/$ancestor" ] && [ ! -d "$checkout/$ancestor" ]; then
+				die "$checkout/$ancestor is not a directory, and the template's $rel sits under it —
+    so this run can neither create that directory nor write the file inside it. Nothing beyond
+    this run's own template bytes was written into that checkout, and nothing was staged.
+    Replace that component with a real directory, then re-run:
+        openRepoTools wip init"
+			fi
+			# AND A DIRECTORY THAT IS ANOTHER REPOSITORY'S IS NOT THIS ONE'S TO
+			# WRITE IN (#101 round 2, on this walk's own diff). A tracked
+			# SUBMODULE at `handoffs` is a gitlink in this repository and a
+			# whole repository on disk: `-d` is true, `-L` is false, step 6a
+			# sees a CLEAN worktree because a clean submodule reports nothing,
+			# and every presence test below answers false because a gitlink
+			# carries no `handoffs/README.md` for `:$rel` or `HEAD:$rel` to
+			# find. So the MISSING branch wrote this run's template bytes
+			# INSIDE somebody's nested repository, and the `git add` two steps
+			# later answered `fatal: Pathspec … is in submodule …` — after the
+			# bytes had landed there, in a repository this command has no
+			# business in and does not clean up.
+			#
+			# ASKED OF THE INDEX, because that is what makes it a submodule and
+			# it is true whether or not the thing is checked out: a `deinit`ed
+			# submodule is an EMPTY directory with no `.git` in it at all, and
+			# the `git add` fails exactly the same way. `$4` is the path column
+			# of `ls-files -s` and every component here comes from
+			# `$WIP_TEMPLATE_FILES`, which is nine fixed ASCII paths, so it is
+			# never a quoted or split field. The `.git` test beside it catches
+			# the other shape — a nested repository nobody tracked, which an
+			# ignore rule can hide from step 6a as well.
+			ancestor_mode="$(git -C "$checkout" ls-files -s -- "$ancestor" 2>/dev/null |
+				awk -v p="$ancestor" '$4 == p { print $1; exit }' || :)"
+			if [ "$ancestor_mode" = "160000" ] || [ -e "$checkout/$ancestor/.git" ]; then
+				die "$checkout/$ancestor is another git repository's working tree — a submodule of this
+    one, or a clone somebody left there — and the template's $rel sits under it. A seed commit
+    is this repository's own files: bytes written in there belong to that repository, this one
+    cannot stage them (\`git add\` answers \`Pathspec … is in submodule …\`), and this command
+    does not write into a repository it was never pointed at. Nothing beyond this run's own
+    template bytes was written into that checkout, and nothing was staged.
+    Move that repository aside, or seed a workspace that does not carry one at $ancestor, then
+    re-run:
+        openRepoTools wip init"
+			fi
+		done
 		if [ -e "$checkout/$rel" ] || [ -L "$checkout/$rel" ] ||
 			git -C "$checkout" cat-file -e ":$rel" 2>/dev/null ||
 			git -C "$checkout" cat-file -e "HEAD:$rel" 2>/dev/null ||
@@ -2412,6 +2558,109 @@ $unrelated
     Commit, stash or unstage that path, then re-run:
         openRepoTools wip init"
 				fi
+				# AND THE WORKTREE CARRIES A MODE OF ITS OWN, which is the half
+				# the index question below cannot see (#101 round 1, on the #63
+				# fix's own diff). Step 8 stages from the WORKTREE, so an owed
+				# candidate whose file is EXECUTABLE goes into the seed commit
+				# as `100755` — and it reaches here two ways the stage-0
+				# question never asks about: an UNTRACKED template path whose
+				# bytes match and whose file somebody chmod'ed, and a path
+				# staged `100644` whose worktree file got the bit afterwards.
+				# This command copies the template's own bytes from a 0644 file
+				# and has never chmod'ed anything it wrote, so an executable
+				# file at a template path is not its leftover whatever its
+				# bytes say — it is somebody's own, and this branch's answer to
+				# that is a refusal.
+				#
+				# ASKED ONLY WHERE GIT WOULD RECORD IT. On a filesystem that
+				# reports every file executable, `git clone` sets
+				# `core.fileMode=false` and git stages `100644` regardless; a
+				# refusal there would refuse every re-run on that mount over a
+				# bit that means nothing, so the config that decides it is
+				# asked. Unset is TRUE — the read answers 1 and nothing, which
+				# is not `false`, so the refusal stands: an answer this command
+				# could not get is never permission to publish a mode. `--bool`
+				# because git's own spelling of false is `false`, `no`, `off` or
+				# `0` and this compares one string.
+				if [ -x "$checkout/$rel" ] &&
+					[ "$(git -C "$checkout" config --bool --get core.fileMode 2>/dev/null || :)" != "false" ]
+				then
+					die "$checkout/$rel is executable, and every file in $SHAPE_REPOSITORY's
+    $WIP_TEMPLATE_DIR is a plain 100644 — this command copies the template's own bytes from a
+    0644 file and has never chmod'ed anything it wrote, so an executable file at a template
+    path is somebody's own, whatever its bytes say. Staging it would record 100755 in the seed
+    commit and push that to $target's main. Nothing beyond this run's own template bytes was
+    written into that checkout, and nothing was staged.
+    \`chmod 644\` that path, or commit, stash or remove it, then re-run:
+        openRepoTools wip init"
+				fi
+				# AND WHAT IS STAGED IS A MODE AS WELL AS A BLOB (#63). The
+				# index comparison this branch makes below is
+				# `cat-file -p ":$rel"`, which prints a blob's BYTES and never
+				# its mode — so a template path a person staged with
+				# `git add --chmod=+x`, byte-identical to the template and
+				# executable, passed it as "the index carries the template", and
+				# step 8's `git add` then restaged that path from the worktree
+				# at the worktree's own mode: their `100755` silently replaced
+				# by `100644` and committed. Every file in $SHAPE_REPOSITORY's
+				# $WIP_TEMPLATE_DIR is a plain `100644`, and this command has
+				# never chmod'ed anything it wrote, so a stage-0 entry at any
+				# other mode is NOT an earlier run's leftover whatever its bytes
+				# say — it is somebody's own, which in this branch is the same
+				# refusal the bytes themselves get below and not a thing to
+				# stage over. Asked BEFORE the fetch, with the branch's other
+				# local questions: the answer does not depend on the template's
+				# bytes, and a machine that cannot reach the network deserves
+				# the refusal that names the real reason rather than one about
+				# a fetch.
+				# AND THE INDEX IS ASKED OF THE INDEX (#101 round 3, on this
+				# guard's own diff). `cat-file -e ":$rel"` answers false in TWO
+				# states — no stage-0 entry at all, and an entry whose BLOB the
+				# object store has lost — because it resolves the name through
+				# the index and then looks the OBJECT up. Gating on it spent the
+				# second state as though it were the first: the mode guard was
+				# skipped, the comparison below took its "no entry" arm, a
+				# worktree that reads back as the template was accepted, and
+				# step 8's `add` replaced what the person had staged with this
+				# run's copy — measured, the staged sha changes and the `add`
+				# reports nothing. `ls-files -s` reads the index and never the
+				# object store, so presence is ITS answer now; a read that FAILS
+				# is a refusal rather than an empty index, which is #49's own
+				# lesson one question over; and an entry whose blob cannot be
+				# read gets its own refusal, because an entry this command
+				# cannot READ is not one it may stage over. `$3` is the stage
+				# column and `$4` the path — every path here comes from
+				# `$WIP_TEMPLATE_FILES`, nine fixed ASCII paths.
+				if staged_entry="$(git -C "$checkout" ls-files -s -- "$rel" 2>/dev/null)"; then
+					staged_mode="$(printf '%s\n' "$staged_entry" |
+						awk -v p="$rel" '$3 == "0" && $4 == p { print $1; exit }')"
+				else
+					die "could not read what $checkout has staged at $rel, so this run cannot tell whether
+    anything is staged there at all — and an index this command could not read is never an
+    empty one. Nothing beyond this run's own template bytes was written into that checkout,
+    and nothing already staged was changed.
+    Check that checkout (\`git status\`), then re-run:
+        openRepoTools wip init"
+				fi
+				if [ -n "$staged_mode" ]; then
+					git -C "$checkout" cat-file -e ":$rel" 2>/dev/null ||
+						die "$checkout has $rel staged and this command cannot read what is staged there: the
+    index carries an entry and git's object store has no blob behind it. An entry this command
+    cannot READ is not one it may stage over — step 8's \`git add\` would replace it with this
+    run's copy, silently, and commit that. Nothing beyond this run's own template bytes was
+    written into that checkout, and nothing already staged was changed.
+    Repair that object (\`git fsck\`), or commit, stash or unstage that path, then re-run:
+        openRepoTools wip init"
+					[ "$staged_mode" = "100644" ] ||
+						die "$checkout has $rel staged with mode $staged_mode, and every file in
+    $SHAPE_REPOSITORY's $WIP_TEMPLATE_DIR is a plain 100644 — this command has never chmod'ed
+    anything it wrote, so a mode of its own at that path is somebody's own \`git add\`, not an
+    earlier run's leftover, whatever the staged bytes say. Staging this run's copy over it would
+    replace that mode with the worktree's and commit the change. Nothing beyond this run's own
+    template bytes was written into that checkout, and nothing already staged was changed.
+    Commit, stash or unstage that path, then re-run:
+        openRepoTools wip init"
+				fi
 				wip_fetch_template_file "$rel" "$dest" "$ref" ||
 					die "could not fetch $WIP_TEMPLATE_DIR/$rel from $SHAPE_REPOSITORY at $ref, so $rel
     itself was NOT seeded. Nothing beyond an earlier template path's own bytes in
@@ -2432,7 +2681,7 @@ $unrelated
 				# whose bytes are not the template fails it exactly as the
 				# worktree's would.
 				if cmp -s -- "$dest" "$checkout/$rel" &&
-					{ ! git -C "$checkout" cat-file -e ":$rel" 2>/dev/null ||
+					{ [ -z "$staged_mode" ] ||
 					git -C "$checkout" cat-file -p ":$rel" 2>/dev/null |
 						cmp -s -- "$dest" -; }
 				then
@@ -2447,6 +2696,44 @@ $unrelated
     this run's own template bytes was written into that checkout, and nothing was staged.
     Commit, stash or remove that path, then re-run:
         openRepoTools wip init"
+				fi
+			else
+				# ---- A PATH HEAD CARRIES THAT IS NOT ON DISK BECAUSE THE INDEX
+				# SAYS SO IS NAMED, NOT SEEDED AND NOT SILENTLY PASSED (#69).
+				#
+				# `skip-worktree` — which is also what `git sparse-checkout`
+				# sets — tells git not to compare the worktree at that path at
+				# all: HEAD carries it, the stage-0 entry carries it, `git
+				# status` is clean, and the file is nonetheless physically
+				# absent. That answers this branch's question exactly as a
+				# person's own deliberate `git rm` does, and the principle above
+				# still stands — a template path HEAD already carries is the
+				# person's, and this command has never modified a committed file
+				# — so it is still not seeded, not written into and not
+				# committed for. What it is not is INVISIBLE: the run would
+				# otherwise print "the workspace already carries every template
+				# file" and write the pointer file, while a file this command
+				# seeds and the lane tooling reads is not on disk. So it is
+				# counted and said, and the person decides.
+				#
+				# `ls-files -v`'s tag is `S` for skip-worktree and the LOWERCASE
+				# `s` where that entry is also assume-unchanged — `-v`'s
+				# lowercase means assume-unchanged, whatever the letter — and
+				# BOTH are this case. `h`, assume-unchanged ALONE, is not: that
+				# bit is a person telling git to stop stat-ing a path they own
+				# and keep on disk, not a checkout that never materialized one,
+				# and naming it "skip-worktree" would be false. An ordinary
+				# tracked path whose file a person simply deleted is `H`, which
+				# `git status` reports for itself.
+				if [ ! -e "$checkout/$rel" ] && [ ! -L "$checkout/$rel" ]; then
+					index_tag="$(git -C "$checkout" ls-files -v -- "$rel" 2>/dev/null |
+						awk 'NR == 1 { print $1 }' || :)"
+					case "$index_tag" in
+					S | s)
+						sparse=$((sparse + 1))
+						sparse_paths+=("$rel")
+						;;
+					esac
 				fi
 			fi
 			continue
@@ -2468,6 +2755,15 @@ $unrelated
 		say "  seeded $seeded of ${#WIP_TEMPLATE_FILES[@]} template files from $SHAPE_REPOSITORY @ $ref"
 	else
 		say "  the workspace already carries every template file; none was replaced"
+	fi
+	# THE ONE LINE #69 IS FOR, and the whole of what this command does about it.
+	if [ "$sparse" -gt 0 ]; then
+		for rel in "${sparse_paths[@]}"; do
+			say "  $rel: HEAD carries it, the index marks it skip-worktree, and it is not on disk"
+		done
+		say "      (a sparse checkout leaves a tracked path there and off the disk; nothing"
+		say "       was written or committed at it. \`git update-index --no-skip-worktree --\`"
+		say "       that path, or \`git sparse-checkout\`, is what brings it back.)"
 	fi
 
 	# ---- step 8: COMMIT AND PUSH — AND THAT PUSH IS THE RULESET PROBE.
@@ -2606,7 +2902,11 @@ $WIP_LAST_ERR"
 	# a function of the workspace repository.
 	say ""
 	say "Done. The next step is one line:"
-	say "    pclaude run <profile> --lane <repo>-<n>"
+	if command -v lclaude >/dev/null 2>&1; then
+		say "    lclaude --lane <repo>-<n> <profile>"
+	else
+		say "    pclaude --lane <repo>-<n> <profile>"
+	fi
 	say ""
 	say "  <profile>   \`pclaude list\` names them"
 	say "  <repo>-<n>  the lane naming rule: the repository the lane is homed on,"

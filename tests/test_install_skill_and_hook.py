@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""`--install`'s artifacts that are not one of the TWELVE files: the three
+"""`--install`'s artifacts that are not one of the THIRTEEN files: the three
 skills at two paths each, the three command files at two more each, and the
 TWO merged hook entries.
 
@@ -17,7 +17,7 @@ and two other programs also write, and its ONLY idempotence is an exact match
 on the command string. So the tests below are about the four answers that
 string can have — present, absent, differing, unreadable — asked of EACH entry,
 and about the one rule that makes a wrong answer survivable: both merges are
-computed with the twelve files in hand, BEFORE any of them is placed, so a
+computed with the thirteen files in hand, BEFORE any of them is placed, so a
 refusal costs a whole install rather than half of one — and, since the pair,
 a settings file never passes through a state carrying one entry of the two.
 
@@ -550,7 +550,7 @@ def test_a_differing_session_start_entry_refuses_and_places_nothing(tmp_path):
     twice.
 
     AND THE COST IS A WHOLE INSTALL, NOT HALF OF ONE: both merges are computed
-    with the twelve files in hand, before any of them is placed, so the bin
+    with the thirteen files in hand, before any of them is placed, so the bin
     directory is untouched. That is the same all-or-nothing rule `--install`
     already had, extended to the two artifacts that are not whole files.
     """
@@ -663,16 +663,16 @@ def test_a_destination_that_cannot_be_written_refuses_before_anything_is_placed(
 
     Amendment 9(b) computes the merge in hand "so a merge that cannot be
     computed refuses having placed nothing". A filesystem offers no transaction
-    across twenty-six artifacts, so nothing can make the last fourteen atomic
-    with the first twelve — but the failure that actually happens is not an
+    across twenty-seven artifacts, so nothing can make the last fourteen atomic
+    with the first thirteen — but the failure that actually happens is not an
     exotic one, it
     is a directory that is not this installer's to write, and that question can
     be asked in the planning phase where the refusal still costs nothing.
 
-    Without the check the run places twelve files and some of the remaining
+    Without the check the run places thirteen files and some of the remaining
     artifacts, then dies — leaving a host with commands installed,
     neither hook entry, and an installer that reports the same "already
-    installed (unchanged)" for the twelve on every re-run while never reaching
+    installed (unchanged)" for the thirteen on every re-run while never reaching
     the one that failed.
     """
     if which == "shared skills":
@@ -687,13 +687,13 @@ def test_a_destination_that_cannot_be_written_refuses_before_anything_is_placed(
         assert result.returncode == 2, result.stdout + result.stderr
         assert "NOTHING was installed" in result.stderr
         assert not bin_dir.exists() or not any(bin_dir.iterdir()), (
-            "the twelve files were placed against a destination that was never "
-            "going to take the other thirteen")
+            "the thirteen files were placed against a destination that was never "
+            "going to take the other fourteen")
     finally:
         blocked.chmod(0o700)
 
 
-# --- the twelve targets, and what they are (R-A9-12) -----------------------
+# --- the thirteen targets, and what they are (R-A9-12) ---------------------
 
 @NEEDS_JQ
 @NOT_ROOT
@@ -714,7 +714,7 @@ def test_a_leaf_destination_that_exists_unwritable_refuses_before_anything_is_pl
 
     The bin directory is the assertion that tells the two apart: the refusal
     here is a PLANNING one and nothing is placed, where the mutant places all
-    twelve files and dies on the `cp` into this same directory, which is the
+    thirteen files and dies on the `cp` into this same directory, which is the
     half-install the planning phase exists to prevent.
     """
     blocked = tmp_path / ".claude-profiles" / "shared" / "skills" / SKILL_DIR_NAME
@@ -727,7 +727,7 @@ def test_a_leaf_destination_that_exists_unwritable_refuses_before_anything_is_pl
         assert "is not writable" in result.stderr, result.stderr
         assert "NOTHING was installed" in result.stderr
         assert not bin_dir.exists() or not any(bin_dir.iterdir()), (
-            "the twelve files were placed against a leaf directory that was "
+            "the thirteen files were placed against a leaf directory that was "
             "never going to take the skill")
     finally:
         blocked.chmod(0o700)
@@ -796,7 +796,7 @@ def test_a_symlinked_target_is_refused_and_nothing_is_written_through_it(tmp_pat
 def test_a_directory_where_a_command_goes_is_refused_the_same_way(tmp_path):
     """THE RULE IS `A REGULAR FILE`, not `not a symlink`. A directory at
     `$BIN/park` is the same refusal for the same reason — `cp` cannot place a
-    file over it, and finding that out after eleven of the twelve are placed is
+    file over it, and finding that out after twelve of the thirteen are placed is
     the half-install the planning phase exists to prevent."""
     bin_dir = tmp_path / ".local" / "bin"
     (bin_dir / "park").mkdir(parents=True)
@@ -1057,7 +1057,7 @@ def test_a_symlinked_skill_target_is_refused_and_nothing_written_through_it(
         tmp_path, shared, name):
     """R-A9-12 IS ABOUT WHAT `cp` DOES, NOT ABOUT WHICH DIRECTORY (F-X17).
 
-    `plan_install_targets` refuses a symlink for every one of the twelve files
+    `plan_install_targets` refuses a symlink for every one of the thirteen files
     in the bin directory. `plan_skill_targets` proved only the DIRECTORIES
     writable, and `place_skill_and_hook` then reached each `SKILL.md` with
     `[ -e ]`, `cmp -s` and `cp` — none of which can tell a regular file from a
@@ -1091,7 +1091,7 @@ def test_a_symlinked_skill_target_is_refused_and_nothing_written_through_it(
         f"the refusal must print the exact `rm` that clears it:\n{result.stderr}")
     assert far.read_bytes() == before, f"--install wrote through the link into {far}"
     assert target.is_symlink(), f"{target} is no longer the link it was"
-    # AND IT REFUSED IN THE PLANNING PHASE: the twelve commands never arrived
+    # AND IT REFUSED IN THE PLANNING PHASE: the thirteen commands never arrived
     # either, which is what makes `NOTHING was installed` true rather than
     # nearly true.
     assert not bin_dir.exists() or not any(bin_dir.iterdir()), (
