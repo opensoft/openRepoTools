@@ -691,10 +691,14 @@ EOF
     printf '  reason   : none given — the writer names the amendment (--reason "<why>" says it better)\n'
   fi
 
+  # THE OFFERED LINE CARRIES THE REASON AS ONE SHELL-QUOTED `--reason=` WORD
+  # (#93, the review of `44b77c3`). Printed as `--reason "<why>"`, an accepted
+  # `--reason=--why` came back as a dash-led value the parser refuses, and a
+  # reason holding `"` or `$(` came back as shell syntax the person would run.
   if [ "$sweep_yes" != 1 ]; then
     printf '\n  DRY RUN — nothing was written. Make it the one act with:\n'
     printf '    LANES_LANE=<your lane> %s --retire-dormant %s%s --yes\n' \
-      "$prog" "$retire_dormant" "$( [ -n "$sweep_reason" ] && printf ' --reason "%s"' "$sweep_reason" || printf ' --reason "<why>"' )"
+      "$prog" "$retire_dormant" "$( [ -n "$sweep_reason" ] && printf ' --reason=%q' "$sweep_reason" || printf ' --reason "<why>"' )"
     exit 0
   fi
 
