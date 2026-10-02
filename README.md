@@ -313,24 +313,16 @@ Twenty-six until **Amendment 16** (ratified the same day) put `lane-rename` on
 the handoff and `lanes/aliases.tsv` — and its old name resolves for ever
 afterwards, in every reader that takes a lane name.
 
-**And it writes down what it placed.** A RECEIPT — one row of
-`<name> <destination> <sha256> <UTC>` per regular file, at
+**And it writes down what it placed.** A RECEIPT (#57) — one row of
+`<name> <destination> <sha256> <UTC>` per regular file placed, in
 `${OPENREPOTOOLS_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/openRepoTools}/installed.tsv`,
-0644, replaced whole through a temporary in the same directory — is what a
-later `--install` reads before it RETIRES a word (#57). A digest that still
-matches is a copy this installer wrote, and it is removed; one that has MOVED
-is your edit of it, named and left with the `rm` printed for you; a path with
-no row at all falls back to the `Installed on PATH by` header in the file's own
-text, exactly as it does today, so nothing that works now stops working. A
-row's subject is its DESTINATION: a run replaces the row of every destination
-it placed and keeps every other one, so moving `$OPENREPOTOOLS_BIN_DIR` does
-not throw away the evidence for the copies in the old directory. The receipt is
-not a twenty-seventh artifact and carries no row for itself, and the two hook
-entries get none either — an entry inside somebody else's JSON file is not a
-file this command placed — so twenty-six artifacts come to twenty-four rows.
-A receipt it cannot write — a directory it may not create, a symlink at that
-path, neither `sha256sum` nor `shasum` — is ONE LINE saying so and never a
-refused install.
+mode 0600, replaced whole through a temporary — is read by a later `--install`
+before it RETIRES a word. A digest that still matches is this installer's copy
+and is removed; one that has MOVED is your edit, named and left, with the `rm`
+printed; a path with no row falls back to the `Installed on PATH by` header, as
+before. Rows are keyed by DESTINATION, so moving `$OPENREPOTOOLS_BIN_DIR` keeps
+the old directory's evidence; the hook entries and the receipt itself get no
+row. A receipt it cannot write is ONE LINE saying so, never a refused install.
 
 Run from a checkout it copies the files beside it and needs no network and no
 `gh` at all; run from stdin, as above, it fetches all of them at the same ref.
