@@ -1130,6 +1130,58 @@ def test_a_digest_it_cannot_take_is_a_note_too(tmp_path):
     assert "REFUSED" not in result.stderr
 
 
+@pytest.mark.parametrize("character", ["\t", "\n"], ids=["tab", "newline"])
+@NEEDS_JQ
+def test_a_bin_dir_with_a_tab_or_newline_gets_no_receipt_and_a_whole_install(tmp_path, character):
+    """THE FAIL-CLOSED HALF OF THE TSV GUARD (Copilot on #103,
+    `openRepoTools:425`, which asked for the test this is).
+
+    A receipt is a tab-separated file with no escape, and
+    `$OPENREPOTOOLS_BIN_DIR` is a path a person chooses. A destination
+    carrying a TAB would be silently one column too many and one carrying a
+    NEWLINE silently two rows — and a receipt that quietly lacks exactly the
+    file a retirement will ask about is worse than none. So the whole receipt
+    is not written, out loud, in one line naming the reason; and since a
+    receipt that cannot be written is a note and never a refusal (#57), the
+    install itself is complete.
+
+    Both characters are accepted by the planner (nothing before the receipt
+    refuses a directory over what is in its name), so both are driven here.
+    The receipt that is already there is seeded with a row for a file that
+    does not exist, which any rewrite would DROP — so byte-for-byte equality
+    afterwards is the proof it was not replaced — and nothing but it may be
+    in the data directory, so no temporary was left behind either.
+    """
+    bin_dir = tmp_path / f"bin{character}dir"
+    receipt = receipt_path(tmp_path)
+    receipt.parent.mkdir(parents=True)
+    seeded = ("# a receipt that somebody else's run wrote\n"
+              f"a-word-that-left\t{tmp_path / 'nowhere'}"
+              f"\t{hashlib.sha256(b'the bytes it placed').hexdigest()}"
+              "\t2026-09-15T04:04:16Z\n")
+    receipt.write_text(seeded, encoding="utf-8")
+
+    result = run_cmd("--install", home=tmp_path,
+                     env={"OPENREPOTOOLS_BIN_DIR": str(bin_dir)})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "REFUSED" not in result.stderr
+    for name in INSTALLED:
+        assert (bin_dir / name).is_file(), f"{name} was not placed"
+    assert f"openRepoTools: {len(INSTALLED)} of {len(INSTALLED)} placed" \
+        in result.stdout
+    assert receipt.read_text(encoding="utf-8") == seeded, (
+        "the receipt was replaced by a run whose destinations cannot be "
+        "written as a tab-separated row")
+    assert [p.name for p in receipt.parent.iterdir()] == ["installed.tsv"], (
+        "a temporary was left in the data directory")
+    assert f"receipt: NOT written to {receipt}" in result.stdout, result.stdout
+    assert "has a tab or a newline in it and this file is tab-separated" \
+        in result.stdout, (
+        "the note says WHY, because a person who cannot see the reason "
+        f"cannot fix it:\n{result.stdout}")
+    assert "placed files recorded" not in result.stdout
+
+
 @NEEDS_JQ
 def test_installing_twice_leaves_no_duplicate_rows(tmp_path):
     """A ROW'S SUBJECT IS ITS DESTINATION, AND A RUN REPLACES THE ROW OF EVERY
