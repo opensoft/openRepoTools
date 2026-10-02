@@ -2493,8 +2493,9 @@ whole, never a row in neither file.
 Nothing reads a row differently for having moved: the listing reads the archive
 beside the register (so `lanes --closed` still shows those rows) and so does
 every reader of the next free position — and a published archive that cannot be
-*rendered* falls back to this checkout's copy and says so, because read as
-absent it would put a retired position back on offer. `add-row` refuses a lane
+*rendered* is a REFUSAL that says so, never a fallback to this checkout's copy,
+which may lack a retired position the published one holds: read as absent, or
+from that copy, it would put a retired position back on offer. `add-row` refuses a lane
 name the archive holds, so `lane-start <repo> <n>` cannot reissue one by hand
 either. **Rule 9 holds either way** — a row is
 one `git show` away — so the archive is for a register a person wants shorter,
