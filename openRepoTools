@@ -321,11 +321,21 @@ INSTALLABLES=(openRepoTools park resume status lane lanes lane-handoff lane-rena
 # `install_commands` and not a line inside each loop — the smallest hunk in the
 # two functions this estate's other branches are editing.
 #
-# IT IS NOT A TWENTY-SEVENTH ARTIFACT. The count is the invariant of what
-# `--install` PLACES; this is the record of that placement, it carries no row
-# for itself, and the two hook entries get no row either because an entry
-# inside somebody else's JSON file is not a file this command placed. Twenty-six
-# artifacts, twenty-four of them files, twenty-four rows.
+# IT IS NOT AN ARTIFACT OF THE COUNT. The count is the invariant of what
+# `--install` PLACES; this is the record of that placement. A ROW GOES TO EVERY
+# PLACED REGULAR FILE — the `INSTALLABLES` plus the skill files and the command
+# files at both of their destinations — and to nothing else: the two hook
+# entries get no row, because an entry inside somebody else's JSON file is not a
+# file this command placed, and the receipt carries no row for itself.
+#
+# THE NUMBER THAT COMES OUT IS DERIVED, NOT STATED, because every statement of
+# it went stale the next time a list moved (Copilot on #103, `openRepoTools:325`,
+# which found twenty-six where there were twenty-seven): `ARTIFACTS - HOOK_ENTRIES`
+# in `tests/test_openrepotools_command.py`, which is `len(INSTALLED) + 2 *
+# len(SKILL_NAMES) + 2 * len(COMMAND_NAMES)`. Today that is 27 artifacts, 25 of
+# them files, 25 rows — 13 + 6 + 6, since Amendment 16 put `lane-rename` in
+# `INSTALLABLES` — and it moves with `INSTALLABLES`, `SKILLS` and `COMMANDS`,
+# and with nothing else.
 #
 # A RECEIPT THAT CANNOT BE WRITTEN IS A NOTE AND NEVER A REFUSAL (#57's own
 # words, and the same rule the retirement follows one function down). The
@@ -343,7 +353,7 @@ INSTALLABLES=(openRepoTools park resume status lane lanes lane-handoff lane-rena
 
 #: WHERE THE RECEIPT LIVES. `$OPENREPOTOOLS_DATA_DIR`, else the XDG data
 #: directory — `$XDG_DATA_HOME`, else `~/.local/share`. It is DATA and does not
-#: belong beside the twelve in `$OPENREPOTOOLS_BIN_DIR`: a bin directory is a
+#: belong beside the commands in `$OPENREPOTOOLS_BIN_DIR`: a bin directory is a
 #: PATH entry, and a `.tsv` in one is a file every shell walks past for ever
 #: (`repos.tsv` is there under protest, and Amendment 9(b) says so). XDG is the
 #: one convention that answers "where does a tool keep its own record" on Linux
@@ -629,8 +639,9 @@ receipt_record() {
 	done
 	# THE SKILLS AND THE COMMAND FILES TOO, under the name each was PRINTED
 	# with: they are regular files this run placed, at paths it chose, and a
-	# record of what was placed that left twelve of the twenty-four out would
-	# answer half the question anybody asks it.
+	# record of what was placed that left them out — every one a path a
+	# retirement could one day meet — would answer only part of the question
+	# anybody asks it.
 	for name in "${SKILLS[@]}"; do
 		for target in "$(skills_home)/shared/skills/$name/SKILL.md" "$(claude_home)/skills/$name/SKILL.md"; do
 			receipt_add "$name" "$target" || { receipt_note "$file" "$RECEIPT_WHY"; return 0; }

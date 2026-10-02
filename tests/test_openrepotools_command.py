@@ -822,9 +822,14 @@ def test_install_writes_a_receipt_of_every_file_it_placed(tmp_path):
     substring is not: the digest of what this run actually placed, at the path
     it placed it.
 
-    Twenty-four rows, not twenty-six: the two hook entries are entries inside
-    `~/.claude/settings.json` and not files this command placed, and the
-    receipt carries no row for itself either.
+    ONE ROW PER PLACED REGULAR FILE, which is `ARTIFACTS - HOOK_ENTRIES` and
+    is derived rather than stated: the `INSTALLED` files plus the skill and
+    command files at both of their destinations. The two hook entries are
+    entries inside `~/.claude/settings.json` and not files this command
+    placed, and the receipt carries no row for itself either. Today that is
+    27 artifacts and 25 rows (13 + 6 + 6, since Amendment 16 put `lane-rename`
+    in the list); the number moves with those three lists and with nothing
+    else, which is why no assertion below spells it.
     """
     result = run_cmd("--install", home=tmp_path)
     assert result.returncode == 0, result.stderr
@@ -1187,8 +1192,8 @@ def test_installing_twice_leaves_no_duplicate_rows(tmp_path):
     """A ROW'S SUBJECT IS ITS DESTINATION, AND A RUN REPLACES THE ROW OF EVERY
     DESTINATION IT PLACED.
 
-    An installer that APPENDED would grow a file with twelve more rows every
-    run and would answer a retirement out of whichever one it read first.
+    An installer that APPENDED would grow a file by one row per placed file
+    every run and would answer a retirement out of whichever one it read first.
 
     WHAT DOES CHANGE ON THE SECOND RUN IS THE UTC, and that is deliberate: the
     stamp says when the run RECORDED the row, not when those bytes were first
@@ -1295,9 +1300,9 @@ def test_the_receipt_keeps_the_rows_of_a_directory_it_no_longer_writes(tmp_path)
         assert str(first_dir / name) in destinations, (
             f"the row for the copy still in {first_dir} was dropped")
         assert str(second_dir / name) in destinations, name
-    # The twelve skill and command files are at the same paths both times, so
-    # they are REPLACED rather than added: twenty-four plus one more bin
-    # directory.
+    # The skill and command files are at the same paths both times, so they are
+    # REPLACED rather than added; what the second directory adds is one more
+    # row per file in `INSTALLED`, on top of everything the first run recorded.
     assert len(receipt_rows(tmp_path)) == ARTIFACTS - HOOK_ENTRIES + len(INSTALLED)
 
 
