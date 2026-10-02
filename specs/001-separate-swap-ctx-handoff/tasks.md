@@ -669,13 +669,19 @@ authorized. T058 is a separate, non-gating derived-index follow-up.
   resolution without weakening live-holder uniqueness. Resolve assembly
   identity from worktree `project.yaml` or aggregation `project-register.yaml`;
   preserve WIP common-dir/worktree identity separately. Integrate model-free
-  external control. Deliver one pre-control-entry wrap-up via the exact
-  parent's Stop hook, durably deduplicated by request ID across duplicate
+  external control that requires neither source model headroom nor a final
+  source handoff. When requested before known exhaustion, deliver one
+  optional pre-control-entry wrap-up via the exact parent's Stop hook,
+  durably deduplicated by request ID across duplicate
   callbacks/restarts; honor `stop_hook_active`, and treat hook errors as no
-  wrap-up. Its instruction is no new agents/long work, record handoff state,
-  then stop. Foreground children have returned before first-delivery roster
-  sealing at a later nonblocked Stop/StopFailure with no subsequent
-  UserPromptSubmit. The mid-turn Agent admission fence is deferred beside
+  wrap-up. Skip the block at known exhaustion; if exhaustion interrupts it,
+  neither retry nor require a final handoff. Native allowance is never the
+  shutdown budget or a readiness condition. Its instruction is no new
+  agents/long work, record handoff state, then stop. Foreground children have
+  returned before first-delivery roster
+  sealing at a nonblocked Stop/StopFailure with no subsequent
+  UserPromptSubmit; if wrap-up was requested, seal only after its continuation
+  ends. The mid-turn Agent admission fence is deferred beside
   forced recovery; T054–T057 neither depend on nor test it. A busy request waits
   for the idle boundary or reaches bounded refusal. Add authenticated
   `SubagentStart`/`SubagentStop` observations tied to exact parent, source
@@ -689,8 +695,13 @@ authorized. T058 is a separate, non-gating derived-index follow-up.
   Stop block continuing the turn with its reason, idle-prompt SIGTERM shutdown
   and SessionEnd, resumed SessionStart carrying transition context, and parent
   Stop absence during an in-flight foreground Agent call. No T055 path assumes
-  unmeasured hook/signal behavior. Add source-bound usage triggers; pane text is
-  diagnostic only. Deliver a versioned service-authored job/child/Git packet
+  unmeasured hook/signal behavior. Consume fresh source-profile usage samples
+  directly, independently of UserPromptSubmit or a model reading a warning.
+  Deduplicate by request and profile/reset window without suppressing later
+  windows or profile changes for the same resumed parent. Persist native child
+  task definitions and lifecycle/output references as work proceeds; use these
+  and job/history/file reconciliation when no source summary exists. Pane text
+  is diagnostic only. Deliver a versioned service-authored job/child/Git packet
   to B before its first model turn, with provisional file observations while
   jobs continue. A manager AI summary is non-authoritative. After B resumes
   only the parent, provide task records for safely unfinished A children and
@@ -707,9 +718,14 @@ authorized. T058 is a separate, non-gating derived-index follow-up.
   changed manifest/profile, late effects, reservation conflicts, lost ACK and
   crash cutpoints. Verify counts, exact histories and retained uncertainty.
   Exercise an early trigger, exhaustion during cooperative wrap-up, and an
-  already exhausted source; distinguish parent StopFailure from child stop,
+  already exhausted source with no allowance and no final handoff. Include an
+  insufficient allowance and concurrent native-child quota consumption as
+  fault inputs, never as assumed runtime support. With verified idle/exit and
+  accounted effects, prove model-free readiness and packet reconstruction;
+  without that evidence, prove bounded refusal with retained claims and no B.
+  Distinguish parent StopFailure from child stop,
   missing/racing child hooks, hook errors, stale usage samples, pane-only limit
-  text, continuing jobs and
+  text, resumed parent across profile/reset windows, continuing jobs and
   file changes after initial inventory. Verify no second source model request
   after control entry, no other lane/container interruption, no automatic Git
   cleanup, and no B release on unknown child/effect. Verify all external

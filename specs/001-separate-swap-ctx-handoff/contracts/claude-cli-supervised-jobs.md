@@ -342,17 +342,24 @@ reset, commit, abandon, cleanup or replay is part of account recovery.
 
 ### Graceful wrap-up before control entry
 
-For a five-hour Claude Code limit, a supported runtime may spend a bounded
-allowance from the source account's weekly quota trying to finish at a
-reasonable stopping point. Treat this as a cooperative source activity that
-occurs **before** the supervisor accepts the swap operation. A remains the
-sole Claude controller while it wraps up. The supervisor does not move the
-seat, grant B ownership or interpret a wrap-up message as source exclusion.
-[ClaudeDevs describes the allowance as an attempt](https://x.com/ClaudeDevs/status/2103561342057943314).
+The October 2 ruling requires swap safety and state reconstruction with zero
+source model tokens and no final source handoff. The service's durable task,
+history, job and filesystem records provide B's packet. Cooperative wrap-up
+may improve context **before** the supervisor accepts the swap operation; it
+is not a readiness condition. A remains the sole Claude controller while it
+wraps up. The supervisor does not move the seat, grant B ownership or interpret
+a wrap-up message as source exclusion.
+
+[Anthropic documents native wrap-up allowance](https://support.claude.com/en/articles/17040437-claude-code-wrap-up-allowance)
+as capped, discretionary usage charged to the weekly quota, for a response
+already in progress when the five-hour limit is reached. It may be insufficient
+and does not permit a new message after exhaustion. Its presence, size or
+successful completion is never assumed by the service.
 
 A must subsequently exit the CLI through the supported graceful path; a
 wrap-up message or returning to the prompt is not exit. While a wrap-up request
-for this exact parent is pending, the already registered `Stop` hook returns
+for this exact parent is pending before known exhaustion, the already
+registered `Stop` hook may return
 `{"decision":"block","reason":"<wrap-up instruction>"}` at most once for
 the request ID, with durable deduplication across duplicate callbacks and
 service restarts. Honor `stop_hook_active`; if the hook errors, treat it as no
@@ -360,16 +367,20 @@ wrap-up. The reason instructs A: do not start new
 agents or long work, record state in the handoff, then stop. With foreground-
 only children, no child is running at a `Stop` boundary, so shutting down
 subagents is vacuous. A blocked `Stop` continues the turn and cannot certify an
-idle exit boundary.
+idle exit boundary. Skip the optional block at known exhaustion; never request
+a source continuation on the assumption that native allowance will pay for it.
+If exhaustion interrupts the wrap-up, do not retry or require a final handoff.
 
-After a later nonblocked terminal `Stop` or `StopFailure` with no subsequent
+After a nonblocked terminal `Stop` or `StopFailure` with no subsequent
 `UserPromptSubmit`, the service fences the source and the custodian stops
 relaying keyboard input to A until exit. It sends SIGTERM only to the exact
 admitted CLI PID through the owned child handle under the subreaper custodian.
 The custodian observes the main process with wait and requires the `ECHILD`
 witness; `SessionEnd` is corroborating evidence only. Measure that SIGTERM at
-an idle prompt runs the CLI's own shutdown before depending on it. If measured
-unsupported, the sole fallback is one atomic `/exit` PTY write including
+an idle prompt runs the CLI's own shutdown before depending on it. If optional
+wrap-up was requested, this boundary must occur after that continuation, not
+at the blocked `Stop` that started it. If SIGTERM is measured unsupported,
+the sole fallback is one atomic `/exit` PTY write including
 carriage return and a bounded wait for an observed exit, `SessionEnd` or
 `Stop`. No observed change by the deadline is a refusal that retains claims,
 not a retry. If A cannot exit, quota is exhausted before a supported stopping
@@ -390,10 +401,11 @@ authority.
 | indeterminate | Preserve claims, intents and uncertain effects; observe only | No replacement launch |
 
 Prepare first verifies that the graceful per-session path can account for A's
-exit without disturbing the container, C or admitted jobs. The one cooperative
-wrap-up request is delivered through the exact parent's `Stop` hook before
-durable control entry. After a verified idle boundary, it durably fences new
-source admissions and every managed restart and stops relaying keyboard input
+exit without disturbing the container, C or admitted jobs. If requested before
+known exhaustion, the one optional cooperative wrap-up is delivered through
+the exact parent's `Stop` hook before durable control entry. After a verified
+idle boundary, it durably fences new source admissions and every managed
+restart and stops relaying keyboard input
 before signaling A. A busy source that would need another model turn after
 control entry is unsupported for this initial transition and blocks B; the
 controller does not request that turn. A refused exit or expired bounded
@@ -403,9 +415,10 @@ exit holds the operation. Stopping a runtime is never task-completion evidence.
 
 Control entry is the durable acceptance of the operation by the supervisor.
 From that point the controller initiates no model request and admits no new
-source job/tool dispatch. The `Stop`-hook wrap-up is the single model turn
-before that entry. Any old in-flight source response or effect is still
-accounted for; the fence alone does not block the CLI's network calls or prove
+source job/tool dispatch. An optional `Stop`-hook wrap-up permits at most one
+continuation before that entry; preparation remains valid without it. Any old
+in-flight source response or effect is still accounted for; the fence alone
+does not block the CLI's network calls or prove
 it has exited. B cannot start until exact-runtime exit and complete supported
 session activity, transcript writers and effects are reconciled.
 
@@ -476,13 +489,20 @@ prompt running CLI shutdown and firing `SessionEnd`; `SessionStart` on
 T055 code path may assume a hook or signal behavior until it has been measured.
 
 The lanes service accepts the swap trigger from the external command or a
-fresh profile-keyed usage observation. Source-bound `StopFailure` with
+fresh profile-keyed usage observation, consumed directly without waiting for
+`UserPromptSubmit` or an AI warning response. Correlate samples and request
+deduplication with source profile and usage reset window; resuming the same
+parent must not suppress a request in a later window or on another profile.
+Persist native child/task/lifecycle references and admitted-job/effect records
+as work proceeds, so the packet does not depend on a final handoff. Source-bound
+`StopFailure` with
 `error: rate_limit` is its structured exhaustion event. Pane text may prompt
 an inspection but cannot certify account state, child completion or readiness.
 An early request can ask A for bounded cooperative wrap-up before durable
 control entry; quota exhaustion during that work causes no second request or
-automatic replay. The per-lane supervisor still requires exact CLI exit and
-complete activity/effect accounting; the shared container and other lanes
+automatic replay. No allowance is required; at known exhaustion skip the
+optional wrap-up block entirely. The per-lane supervisor still requires exact
+CLI exit and complete activity/effect accounting; the shared container and other lanes
 continue running.
 
 Before B's first model turn, the service supplies a bounded, versioned

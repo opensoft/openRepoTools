@@ -1,6 +1,6 @@
 # Completion and deployment plan
 
-## Current delivery plan: `claude-cli-supervised-jobs-v1` (September 26, amended September 30)
+## Current delivery plan: `claude-cli-supervised-jobs-v1` (September 26, amended October 2)
 
 [Tasks T052–T057](tasks.md) own delivery; T058 is a separate non-gating index
 follow-up. The
@@ -44,6 +44,21 @@ before further T054/T055 code. It authorizes no canary run, seat movement,
 merge or deployment. Use the [Linux subreaper implementation
 contract](contracts/linux-session-subreaper.md) for T054.
 
+### October 2: no source headroom requirement
+
+The native allowance cannot be the shutdown budget. Safety and B's transition
+packet must depend on durable service/runtime records with zero source model
+tokens and no final handoff. Consume fresh profile usage directly, independently
+of user prompts, and retain child/task/job evidence throughout normal work.
+Optional Stop-hook wrap-up is attempted only before known exhaustion and
+before control entry. Skip it at known exhaustion; do not retry if it runs out
+of quota. The first delivery still requires a verified idle boundary and exact
+exit/effect reconciliation. Otherwise the bounded outcome retains claims and
+keeps B absent. T055 implements this behavior; T056 covers absent or insufficient
+allowance and missing final handoff, with readiness and refusal arms separated.
+No allowance behavior is itself a qualification gate or an authorization to
+force recovery.
+
 ### September 30 decision amendments
 
 Keep Claude Code's parent transcript and child sidecars in its projects store;
@@ -66,8 +81,9 @@ The canary pair is supplied by the operator when a canary is separately
 authorized. `team05d` / `team05j` are the current expectation only; record the
 concrete pair in T056 evidence and in the ledger before any seat move.
 
-Deliver the one-time wrap-up through the exact parent's registered `Stop` hook
-before durable control entry. At a later verified idle boundary, fence input
+If requested before known exhaustion, deliver the optional one-time wrap-up
+through the exact parent's registered `Stop` hook before durable control entry.
+At a verified idle boundary after any wrap-up continuation, fence input
 and signal only A's exact PID through the custodian; use PTY `/exit` only if
 SIGTERM is measured unsupported. Measure the pinned CLI behaviors before any
 T055 path depends on them. Native Edit/Write/NotebookEdit are allowed; deny
@@ -104,8 +120,9 @@ Pin foreground-only native Claude work and verify its actual helper/child
 lifecycles. Native Edit, Write and NotebookEdit are allowed; deny exactly Bash
 and PowerShell. Long-running and external commands use the MCP bridge, lanes
 service and execution-group supervisor. Measure the pinned CLI before relying
-on Stop-hook or signal behavior. Deliver one pre-control-entry wrap-up request
-through the exact parent's Stop hook; honor `stop_hook_active`, durably
+on Stop-hook or signal behavior. Before known exhaustion, optionally deliver
+one pre-control-entry wrap-up request through the exact parent's Stop hook;
+honor `stop_hook_active`, durably
 deduplicate by request ID, and treat hook errors as no wrap-up. The instruction
 is to start no new agents or long work, record state in the handoff, then stop.
 At a later nonblocked Stop or StopFailure idle boundary with no later
@@ -167,9 +184,11 @@ before that authorization is requested.
    T056 matrix covers completed and unfinished children. Admit a continuing
    supervisor job with stable ID, runtime identity, launch counter, output
    custody and resource reservation. It has no dependency on A's terminal.
-3. Deliver the one-time wrap-up through the exact parent's Stop hook. After a
-   later nonblocked Stop or StopFailure with no later UserPromptSubmit, fence
-   relayed input and send SIGTERM to A's exact PID through owned custody; use
+3. Exercise both optional pre-exhaustion wrap-up through the exact parent's
+   Stop hook and no-allowance/no-final-handoff cases without that block. At a
+   nonblocked Stop or StopFailure with no later UserPromptSubmit, after any
+   wrap-up continuation, fence relayed input and send SIGTERM to A's exact PID
+   through owned custody; use
    the measured PTY fallback only if SIGTERM is unsupported: one atomic `/exit`
    write including carriage return, then a bounded wait for exit, SessionEnd
    or Stop. No observed change by the deadline is refusal with retained claims,

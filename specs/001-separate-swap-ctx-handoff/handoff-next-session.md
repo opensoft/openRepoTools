@@ -1,5 +1,26 @@
 # Swap rebuild — implementation handoff
 
+## Current checkpoint — October 2, 2026
+
+Brett's source token requirement is recorded in the
+[decision](../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md)
+and [contract](contracts/claude-cli-supervised-jobs.md). Native wrap-up cannot
+be the shutdown budget. The service must reconstruct state from durable
+records without source tokens or a final AI handoff. Optional Stop-hook wrap-up
+is attempted only before known exhaustion, never retried after exhaustion,
+and never a readiness condition. The verified idle boundary, exact CLI exit,
+descendant drain and effect reconciliation remain mandatory. Otherwise retain
+claims and keep B absent; forced recovery remains out of scope.
+
+Continue T054 custody/idle-exit measurement, then T055's direct usage watcher,
+continuous native child/task records and service-authored transition packet.
+T056 must cover no allowance and no final handoff, interrupted wrap-up, child
+usage failures and both proven readiness and bounded refusal. The
+[verification record](verification.md) preserves the read-only ordinary-lane
+observation separately from provider qualification. T054–T057 remain open;
+T058 remains non-gating. This checkpoint adds no canary, seat-move, merge or
+deployment authorization.
+
 ## Current checkpoint — September 30, 2026
 
 The September 30 [decision record](../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md),

@@ -64,17 +64,53 @@ superseded candidate. Its contract is preserved as
 It supplies neither the current topology nor certification for shared-session
 exit. Nothing in this amendment installs or activates it.
 
-## Normal path: foreground wrap-up, then actual CLI exit
+## October 2 ruling: no source model headroom dependency
 
-A stays the sole owner during optional bounded foreground wrap-up, including
-a supported five-hour-limit allowance. A final model response, quota notice,
-completed turn or return to the prompt does not mean the CLI exited. After
+Brett's October 2 inspection conclusion is adopted: the native wrap-up
+allowance cannot be the shutdown budget for this system. Swap safety and
+state reconstruction must work from durable service/runtime records when A
+has zero model tokens available and produces no final handoff. Optional
+cooperative wrap-up can improve context, but neither its availability nor a
+successful final response is a readiness condition.
+
+[Anthropic's allowance documentation](https://support.claude.com/en/articles/17040437-claude-code-wrap-up-allowance)
+describes capped, discretionary usage charged to the weekly quota. It applies
+to a response already in progress, not a new message after exhaustion, and
+may be insufficient to finish work. It provides no shutdown budget the lanes
+service can reserve. The October 2 ordinary-lane observation is recorded in
+the [verification record](../../../specs/001-separate-swap-ctx-handoff/verification.md);
+it does not qualify the managed provider or establish whether allowance was
+unavailable or consumed.
+
+Consume fresh profile-keyed usage observations directly in the service,
+independently of user prompts, so an early request does not depend on the AI
+reading a warning. Keep native child task definitions, lifecycle/output
+references and admitted-job/effect records durably as work proceeds. Refresh
+the filesystem inventory during reconciliation; no final source summary is
+required to assemble B's transition packet. At known exhaustion, skip the
+optional Stop-hook block and request no additional source model turn. If
+exhaustion occurs during optional wrap-up, use the already recorded evidence
+without a retry or a requirement to finish the handoff.
+
+Zero headroom does not authorize an unsafe takeover. This graceful-only
+delivery still needs a verified idle boundary, exact CLI exit, descendant
+drain and accounted effects. A busy source waits within its deadline; missing
+evidence or timeout retains claims and keeps B absent. Failed child responses
+are unfinished or unknown tasks, not successful shutdown checkpoints. Safely
+accounted unfinished work is reconstructed under B with new child IDs.
+
+## Normal path: optional foreground wrap-up, then actual CLI exit
+
+A stays the sole owner during optional bounded foreground wrap-up. Any native
+allowance is incidental; no source headroom is assumed. A final model response,
+quota notice, completed turn or return to the prompt does not mean the CLI exited. After
 foreground work reaches a supported stopping point, the launcher observes
 actual exit of the exact admitted CLI through its owned child handle or
 namespace/start-token identity and durable launch journal.
 
 This first delivery supports graceful exit only. When the service has a pending
-wrap-up request for this exact parent, its registered `Stop` hook may return
+wrap-up request for this exact parent before known exhaustion, its registered
+`Stop` hook may return
 `{"decision":"block","reason":"<wrap-up instruction>"}` once for that
 request ID. Persist deduplication across duplicate callbacks and service
 restarts; this wrap-up request precedes durable control entry. The instruction
@@ -84,7 +120,8 @@ stop. Foreground-only children do not run at a
 ID, honor `stop_hook_active`, and treat hook errors as no wrap-up. A blocked
 `Stop` continues A's turn and is not exit evidence.
 
-After wrap-up, fence relayed keyboard input to A until its CLI has exited. Send
+After optional wrap-up, or without it, fence relayed keyboard input to A until
+its CLI has exited. Send
 SIGTERM only to the exact admitted CLI PID through its owned child handle under
 the subreaper custodian, and only after a verified idle boundary: a nonblocked
 terminal `Stop` or `StopFailure` with no later `UserPromptSubmit`. Observe the

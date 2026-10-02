@@ -10,6 +10,43 @@ not a semantic handoff.
 
 ## ADDED Requirements
 
+### Requirement: CLI swap safety requires no source model headroom
+
+For `claude-cli-supervised-jobs-v1`, the service SHALL preserve swap safety and
+construct the transition packet from durable runtime, task, history, job and
+filesystem records with zero source model tokens and no final source handoff.
+Native wrap-up allowance SHALL NOT be a dependency or readiness condition.
+The service SHALL consume fresh profile-keyed usage observations independently
+of user prompts and SHALL persist task/lifecycle references as work proceeds.
+It MAY request one bounded cooperative wrap-up before known exhaustion and
+before control entry; it SHALL NOT request an additional source model turn at
+known exhaustion or retry after exhaustion during wrap-up.
+
+The initial delivery SHALL still require a measured idle boundary, exact
+source exit and accounted descendant/effect evidence. Missing evidence or a
+bounded timeout SHALL retain claims and keep B absent. A child response that
+ends with a usage failure SHALL NOT be recorded as task success.
+
+#### Scenario: No allowance and no final source handoff
+
+- **GIVEN** A is exhausted, receives no native allowance and writes no final
+  handoff, but its child/task/history/job records are durable
+- **WHEN** the service observes the verified idle boundary and exact source
+  exit, and reconciles all activity and effects
+- **THEN** preparation SHALL produce a service-authored transition packet and
+  ready state with B absent, without requesting another source model turn
+- **AND** safely unfinished child tasks SHALL be available for reconstruction
+  with new IDs only after explicit target release.
+
+#### Scenario: Allowance ends before a safe boundary is established
+
+- **GIVEN** optional wrap-up ends with usage failure and the service cannot
+  establish a supported idle boundary or account for a child effect
+- **WHEN** the bounded preparation deadline expires
+- **THEN** the service SHALL retain claims and keep B absent
+- **AND** it SHALL NOT retry source inference, infer task success or force
+  recovery under this capability.
+
 ### Requirement: Named-lane CLI deployment preserves wider acceptance gates
 
 A staged deployment of `claude-cli-supervised-jobs-v1` SHALL be versioned and

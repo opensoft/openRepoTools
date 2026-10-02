@@ -1,5 +1,45 @@
 # Implementation Verification Record
 
+## October 2: ordinary-lane exhaustion inspection and source token requirement
+
+Read-only inspection of `openxfactory-4` identified the exact parent session
+`faabad8b-8c31-4958-abd5-b35bdc9cd282` on profile `team05e`. This was an
+ordinary Claude CLI lane with native background agents, not the managed
+foreground-only provider being qualified by T054–T057. The installed binary
+reported `2.1.287`; the candidate's code still pins `2.1.283`. This observation
+does not measure or qualify the candidate's hooks, signals or custody witness.
+
+The parent transcript recorded exhaustion at `2026-10-02T21:20:32.740Z`.
+Eight distinct child attempts ended in HTTP 429/rate-limit failures by
+`21:26:48Z`; earlier useful output from a child does not make a later failed
+follow-up successful. The parent remained alive at the usage-limit wait.
+No final handoff was written after exhaustion: the handoff's last observed
+mtime was `20:26:45Z`, before the limit. The current-run parent and child
+transcripts contained no delivered native grace-window note. API response
+headers were unavailable, so this evidence cannot distinguish allowance not
+granted from allowance consumed. It establishes that this attempt did not
+produce a clean coordinated wrap-up, not a universal native-feature failure.
+
+The separate local UserPromptSubmit usage guard used an existing warning latch
+keyed by session UUID and threshold, without profile/reset-window identity.
+That can suppress later warnings when the same session resumes. It is an
+independent proactive-warning weakness, not evidence of native allowance
+behavior. T055's direct service usage observation must not depend on that guard.
+
+Brett ruled that the system cannot rely on native wrap-up headroom. The
+decision, proposal, design, specification, contract, deployment plan, tasks
+and handoff now require service reconciliation to handle zero source model
+headroom and an absent final source handoff. Optional pre-exhaustion wrap-up
+remains context only. T055–T056 include absent/insufficient allowance, failed
+child responses, same-parent profile/reset-window changes, model-free readiness
+when proven, and retained-claim refusal when evidence is missing. These are
+documentation requirements, not new passing runtime evidence. No lane input,
+process intervention, account movement, installation or canary occurred.
+
+Documentation validation: `openspec validate separate-swap-ctx-handoff --strict`
+passed inside the development container; `git diff --check` passed. Runtime
+tests were not rerun for this documentation-only amendment.
+
 ## September 30 rulings and checkpoint
 
 The decision, contract, deployment plan and tasks now record native Claude

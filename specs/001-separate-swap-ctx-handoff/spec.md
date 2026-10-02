@@ -7,6 +7,16 @@
 
 ## Authority and history
 
+**2026-10-02 source token requirement:** the selected CLI capability must preserve
+safety and reconstruct state without any source model allowance or final
+handoff. Optional pre-control wrap-up does not gate readiness. The lanes
+service watches fresh profile usage independently of user prompts and retains
+durable child/task/job records throughout work. At known exhaustion it requests
+no additional source turn. Verified idle/exit and effect reconciliation remain
+required; insufficient evidence retains claims and blocks B. The governing
+[decision](../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md)
+and contract define this amendment; T055–T056 own implementation and evidence.
+
 **2026-09-26 shared-container capability:** the
 [governing decision](../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md)
 and [contract](contracts/claude-cli-supervised-jobs.md) define explicit

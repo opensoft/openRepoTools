@@ -10,6 +10,14 @@ stay running. The supervisor can remain there, independent of A's lifetime.
 The dedicated Docker provider is a dormant historical candidate, not the
 selected runtime boundary; host broker/cgroup provisioning is not a dependency.
 
+The October 2 ruling removes native allowance from the shutdown budget. The
+service records child/task/job evidence as work proceeds and watches fresh
+profile usage independently of prompts. Optional pre-control wrap-up can add
+context; readiness and B's transition packet must not require it. With an
+exhausted A, skip the wrap-up request and use measured idle/exit custody plus
+history/job/filesystem reconciliation. Lack of a verified idle boundary or
+accounted effects still causes a bounded refusal with claims retained.
+
 The launcher admits one exact parent/lane/generation before spawn and journals
 its owned runtime identity. A performs optional foreground wrap-up before
 control entry and then exits the CLI through a validated graceful path. A turn

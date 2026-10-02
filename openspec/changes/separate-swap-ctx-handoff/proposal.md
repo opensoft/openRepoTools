@@ -2,6 +2,15 @@
 
 ## Status and governing intent
 
+**2026-10-02 source token requirement:** the selected CLI swap must preserve safety
+and reconstruct state with zero source model tokens and no final AI handoff.
+Native allowance and cooperative wrap-up are optional context improvements.
+The service consumes usage observations directly, records work continuously,
+and reconciles exact exit, children, jobs and files independently of a final
+response. Missing idle/exit/effect evidence still retains claims and blocks B;
+forced recovery remains a future gate. See the
+[amended decision](claude-cli-supervised-jobs-decision.md) and T055–T056.
+
 **2026-09-30 selected CLI correction:** `claude-cli-supervised-jobs-v1`
 resumes only the parent conversation. Safely unfinished source subagents end
 with A and are reconstructed as new B subagents with new IDs, using the
@@ -17,8 +26,8 @@ scope and is not a CLI-capability acceptance requirement.
 [Claude CLI supervised-jobs decision](claude-cli-supervised-jobs-decision.md)
 now targets a graceful per-session swap inside the existing long-lived
 container, which hosts many independent Claude sessions and must stay running.
-A completes foreground wrap-up and exits its CLI; the launcher verifies the
-exact runtime and known session activity, durably fences A's generation and
+A may complete optional foreground wrap-up and then exits its CLI; the launcher
+verifies the exact runtime and known session activity, durably fences A's generation and
 reconciles history/jobs before one explicit exact-parent B release. Persistent
 supervisor jobs and unrelated session C stay live. Uncertain exit or descendants
 block B; forced per-session recovery remains a separate gated mechanism.
