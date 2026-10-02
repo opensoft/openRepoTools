@@ -1,5 +1,19 @@
 # Working in openRepoTools
 
+## Speckit Team Roles
+
+For feature `001-separate-swap-ctx-handoff`, preserve these named team role
+assignments throughout the Speckit workflow:
+
+- Astra is the architecture lead.
+- Sol High is the orchestration lead.
+- Luna Max is the implementation writer for the defined Speckit tasks.
+
+The active agent platform supplies the models: use Codex models when operating
+in Codex and Claude models when operating in Claude. Do not substitute one
+platform for the other. Keep these assignments intact across planning,
+implementation, validation, handoff, and review.
+
 Three estate commands, `park`, `resume` and `status`; the lane tooling
 `lanes-edit.sh`, `lane-start`, `lane-end` and `link-estates`, which came here
 with their history under lane-collision-protocol Amendment 9; and the
