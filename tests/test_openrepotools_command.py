@@ -179,15 +179,20 @@ def command_env(home: Path | None = None, env: dict | None = None) -> dict:
 
 
 def run_cmd(*args: str, home: Path | None = None,
-            env: dict | None = None) -> subprocess.CompletedProcess:
+            env: dict | None = None,
+            cwd: Path | None = None) -> subprocess.CompletedProcess:
     """The command, run from its file, with that environment.
 
     `input=""` means stdin is a pipe rather than a terminal, which is what
     every run in this file wants: nothing here may ask a question.
+
+    `cwd` is for the tests that name a RELATIVE path — a `$OPENREPOTOOLS_BIN_DIR`
+    spelled `bin` means a different directory from every working directory it
+    is run in, and that is exactly what they are about (#57, Copilot on #103).
     """
     return subprocess.run(["bash", str(COMMAND), *args], capture_output=True,
                           text=True, check=False, input="",
-                          env=command_env(home, env))
+                          env=command_env(home, env), cwd=cwd)
 
 
 # --- what it says about itself ---------------------------------------------
@@ -934,6 +939,102 @@ def test_a_file_the_receipt_no_longer_recognises_is_named_and_left(tmp_path, nam
     assert [row for row in receipt_rows(tmp_path) if row[1] == str(mine)], (
         "the row of a file that is still there was dropped:\n"
         + receipt.read_text(encoding="utf-8"))
+
+
+def path_without(tmp_path: Path, *names: str) -> str:
+    """A `$PATH` on which none of `names` EXISTS, not one where they fail.
+
+    A directory of symlinks to every executable the real `$PATH` carries
+    except those names, in the real `$PATH`'s own order. A shim that exits 1
+    (see `test_a_digest_it_cannot_take_is_a_note_too`) is a tool that FAILS;
+    this is a machine that has none, which is the other thing a reviewer
+    means by "a missing digest tool", and the two reach `sha256_of` through
+    different arms. `bash`, `cp`, `jq` and the rest are all still found, so
+    the install itself runs exactly as it does everywhere else.
+    """
+    farm = tmp_path / "path-without"
+    farm.mkdir()
+    for directory in os.environ["PATH"].split(os.pathsep):
+        try:
+            entries = sorted(os.listdir(directory))
+        except OSError:
+            continue
+        for entry in entries:
+            source = os.path.join(directory, entry)
+            link = farm / entry
+            if (entry in names or link.is_symlink()
+                    or not (os.path.isfile(source)
+                            and os.access(source, os.X_OK))):
+                continue
+            link.symlink_to(source)
+    found = {name: shutil.which(name, path=str(farm)) for name in names}
+    assert not any(found.values()), f"the farm still answers for {found}"
+    return str(farm)
+
+
+@pytest.mark.parametrize("how", ["absent", "failing"])
+@pytest.mark.parametrize("name", RETIRED)
+@NEEDS_JQ
+def test_a_row_it_cannot_verify_is_named_and_left_never_removed(tmp_path, name, how):
+    """A ROW THAT CANNOT BE CHECKED IS NOT "NO ROW" (Copilot on #103,
+    `openRepoTools:711`).
+
+    `receipt_verdict` answered `unknown` when the digest could not be taken,
+    which is also what it answers when there is no row at all — so the header
+    fallback ran and REMOVED the file. On a host with a missing or failing
+    digest tool that is an edited, receipt-tracked command that still carries
+    the header being deleted, which is the ownership mistake the receipt
+    exists to prevent. The header is for "no matching row", and nothing else.
+
+    The file carries the header, and its row names bytes it does not have —
+    the exact case where the header would have been the only thing standing
+    between the file and `rm`. It is left byte for byte and named with the
+    `rm` printed, whether the tool is ABSENT from `$PATH` or merely FAILING,
+    and the receipt is not touched: the row is about a file that is still
+    there.
+    """
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    mine = bin_dir / name
+    mine.write_text(
+        "#!/usr/bin/env bash\n"
+        "# Installed on PATH by `openRepoTools --install`, and then edited.\n"
+        "echo my own edit\n", encoding="utf-8")
+    mine.chmod(0o755)
+    before = mine.read_bytes()
+    receipt = receipt_path(tmp_path)
+    receipt.parent.mkdir(parents=True)
+    seeded = (f"{name}\t{mine}\t{hashlib.sha256(b'the bytes it placed').hexdigest()}"
+              "\t2026-09-15T04:04:16Z\n")
+    receipt.write_text(seeded, encoding="utf-8")
+    if how == "absent":
+        path = path_without(tmp_path, "sha256sum", "shasum")
+    else:
+        shim = tmp_path / "shims"
+        shim.mkdir()
+        for tool in ("sha256sum", "shasum"):
+            (shim / tool).write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            (shim / tool).chmod(0o755)
+        path = f"{shim}{os.pathsep}{os.environ['PATH']}"
+
+    result = run_cmd("--install", home=tmp_path, env={"PATH": path})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert mine.is_file() and mine.read_bytes() == before, (
+        "a file with a receipt row that could not be checked was deleted on "
+        "the strength of the header the receipt exists to replace:\n"
+        + result.stdout)
+    retired = [line for line in result.stdout.splitlines()
+               if line.startswith(f"{name}: RETIRED")]
+    assert len(retired) == 1, result.stdout
+    assert str(mine) in retired[0], "the line names the destination"
+    assert "could not be checked" in retired[0], retired[0]
+    assert "no digest tool" in retired[0], retired[0]
+    assert f'rm -f -- "{mine}"' in retired[0], (
+        "the act is the person's, so the line is printed filled in:\n"
+        + retired[0])
+    assert "removed from" not in result.stdout
+    assert receipt.read_text(encoding="utf-8") == seeded, (
+        "the receipt was rewritten by a run that could digest nothing")
 
 
 @NEEDS_JQ

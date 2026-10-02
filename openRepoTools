@@ -587,13 +587,24 @@ receipt_record() {
 #   edited  — a row names it and the digest has MOVED. Somebody's edit of an
 #             installed command, or their own file at a path one used to be:
 #             either way not this installer's to remove.
-#   unknown — no row, no receipt, or no way to digest. The header marker is
-#             what answers then, exactly as it does today.
+#   unknown — no receipt, or no row for THIS path. The header marker is what
+#             answers then, exactly as it does today.
+#   unverified — a row names it and NOTHING COULD BE DIGESTED to compare with:
+#             no `sha256sum` and no `shasum` on this PATH, a tool that failed, or
+#             a file this user cannot read (Copilot on #103, `openRepoTools:711`).
+#             It is NOT `unknown`, and the difference is the whole of #57: the
+#             header marker is the answer for a path the receipt has NOTHING TO
+#             SAY about, and a path it HAS a row for and cannot check is a path
+#             it has something to say about and cannot say yet. The first shape
+#             of this folded the two into one word, so the marker removed an
+#             edited, receipt-tracked command on exactly the machine that could
+#             not tell it was edited — the ownership mistake the receipt exists
+#             to prevent, made by the code that carries it. Named and left.
 #
 # THE FIRST MATCHING ROW WINS. This command writes one row per destination, so
 # a second is a hand-edit, and picking the first is the only rule that does not
 # depend on which end of the file somebody appended to.
-receipt_verdict() {   # <target> — placed | edited | unknown, always 0
+receipt_verdict() {   # <target> — placed | edited | unverified | unknown, always 0
 	local file="" row="" rest="" dest="" digest="" disk=""
 	file="$(receipt_file)"
 	[ -f "$file" ] && [ ! -L "$file" ] || { printf 'unknown\n'; return 0; }
@@ -607,7 +618,7 @@ receipt_verdict() {   # <target> — placed | edited | unknown, always 0
 		[ "$dest" = "$1" ] || continue
 		digest="${rest#*"$RECEIPT_TAB"}"
 		digest="${digest%%"$RECEIPT_TAB"*}"
-		disk="$(sha256_of "$1")" || { printf 'unknown\n'; return 0; }
+		disk="$(sha256_of "$1")" || { printf 'unverified\n'; return 0; }
 		if [ "$disk" = "$digest" ]; then printf 'placed\n'; else printf 'edited\n'; fi
 		return 0
 	done <"$file"
@@ -708,6 +719,12 @@ retire_commands() {
 			say "$name: RETIRED, removed from $target — this installer's own receipt carries its digest (lane-collision-protocol Amendment 18 Addendum 2; \`lane <name>\` is that act now)"
 		elif [ "$verdict" = edited ]; then
 			say "$name: RETIRED by lane-collision-protocol Amendment 18 Addendum 2, and $target no longer holds the bytes this installer's receipt recorded — an edit of it, or your own file at that path. Left exactly as it is; remove it yourself if it is stale:  rm -f -- \"$target\""
+		elif [ "$verdict" = unverified ]; then
+			# A ROW IT CANNOT CHECK IS NEVER THE HEADER'S TO ANSWER (Copilot on #103,
+			# `openRepoTools:711`): the receipt names this path, so the marker is not
+			# the evidence — and the digest that would have settled it could not be
+			# taken. One line, the same shape as the two above: where, why, the `rm`.
+			say "$name: RETIRED by lane-collision-protocol Amendment 18 Addendum 2, and $target has a row in this installer's receipt that could not be checked, because no digest tool answered (\`sha256sum\`, \`shasum -a 256\`) — so it is NOT removed on the strength of its header either. Left exactly as it is; remove it yourself if it is stale:  rm -f -- \"$target\""
 		elif [ ! -L "$target" ] && [ -f "$target" ] && grep -qF -e 'Installed on PATH by `openRepoTools --install`' -- "$target" 2>/dev/null; then
 			rm -f -- "$target"
 			say "$name: RETIRED, removed from $target (lane-collision-protocol Amendment 18 Addendum 2; \`lane <name>\` is that act now)"
