@@ -144,12 +144,13 @@ a profile's own settings.json: the launcher owns that one.
 
 It then writes a RECEIPT of the files it placed — one row of
 `<name> <destination> <sha256> <UTC>` each — at
-`${OPENREPOTOOLS_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/openRepoTools}/installed.tsv`.
-That is how a later `--install` knows that a command it is about to RETIRE is a
-copy it wrote rather than a file of yours that happens to carry the same
-header: a digest that still matches is removed, one that has moved is named and
-left for you. A receipt it cannot write is one line on this terminal and never
-a refused install.
+`${OPENREPOTOOLS_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/openRepoTools}/installed.tsv`,
+mode 0600. That is how a later `--install` knows that a command it is about to
+RETIRE is a copy it wrote rather than a file of yours that happens to carry the
+same header: a digest that still matches is removed, one that has moved — or a
+row it cannot check, for want of a digest tool — is named and left for you. A
+receipt it cannot write is one line on this terminal and never a refused
+install.
 
 `/restart` is the INSIDE half and has to be a skill: a running session cannot
 `exec` a launcher over itself, so it binds the window, stamps the record

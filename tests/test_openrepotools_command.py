@@ -858,6 +858,31 @@ def test_install_writes_a_receipt_of_every_file_it_placed(tmp_path):
         + result.stdout)
 
 
+def test_the_help_and_the_readme_say_the_mode_the_receipt_is_born_at():
+    """THE CONTRACT IS ONE NUMBER IN FOUR PLACES, AND THE TEST ABOVE ONLY HOLDS
+    ONE OF THEM (Copilot on #103, `openRepoTools:503`).
+
+    The pull request's description said the receipt is 0644 while the code, the
+    test and the README said 0600 — deliberately: #48's "every `chmod` this
+    command performs fails through `die`" meets #57's "a receipt it cannot write
+    is a note", and a stamp that may neither die nor fall silent is a stamp that
+    must not exist, so `mktemp`'s 0600 stands. A description can be edited and a
+    usage line cannot be reviewed away, so the two documents a person reads
+    from the install say it and this reads them: each says 0600 in its receipt
+    paragraph and neither carries a 0644 there.
+    """
+    help_text = run_cmd("--help").stdout
+    readme = (REPO / "README.md").read_text(encoding="utf-8")
+    for where, text, start in (("--help", help_text, "It then writes a RECEIPT"),
+                               ("README.md", readme, "**And it writes down what it placed.**")):
+        assert start in text, f"{where} no longer has the receipt paragraph"
+        paragraph = text.split(start, 1)[1].split("\n\n", 1)[0]
+        assert "mode 0600" in paragraph, (
+            f"{where} does not say the mode the receipt is born at:\n{paragraph}")
+        assert "0644" not in paragraph and "644" not in paragraph, (
+            f"{where} says a mode the receipt is not:\n{paragraph}")
+
+
 @pytest.mark.parametrize("name", RETIRED)
 @NEEDS_JQ
 def test_a_retirement_reads_the_receipt_before_the_header(tmp_path, name):
