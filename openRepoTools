@@ -305,7 +305,10 @@ INSTALLABLES=(openRepoTools park resume status lane lanes lane-handoff lane-rena
 #
 # and the name is the word this command PRINTED beside that placement — `park`,
 # `handoff`, `/ctx` — because one name is a skill AND a command file at four
-# different paths, and a row's subject is therefore its DESTINATION. A run
+# different paths, and a row's subject is therefore its DESTINATION — spelled as
+# its CANONICAL ABSOLUTE PATH (`receipt_dest`), so that a relative
+# `$OPENREPOTOOLS_BIN_DIR` means the same file to the run that wrote the row and
+# to every later run from any other directory. A run
 # REPLACES the row of every destination it placed and KEEPS every other row, so
 # a person who moves `$OPENREPOTOOLS_BIN_DIR` keeps the evidence for the copies
 # in the old one, which are the copies a later retirement will meet there.
@@ -405,6 +408,57 @@ receipt_note() {   # <file> <why>
 	say "receipt: NOT written to $1 — $2. Everything above is installed; a later retirement falls back to the \`Installed on PATH by\` header, which is the evidence it has today."
 }
 
+# THE DESTINATION AS THE RECEIPT SPELLS IT: ABSOLUTE, AND WITH EVERY SYMLINK IN
+# ITS DIRECTORY RESOLVED (Copilot on #103, `openRepoTools:524`). A row is
+# evidence about ONE FILE, and `$OPENREPOTOOLS_BIN_DIR=bin` — which the planner
+# accepts — names a different file from every directory it is run in: the first
+# shape stored `$dir/$name` as supplied, so a row written from one working
+# directory was compared, as a string, against the `bin/restart` of another, and
+# that other file was hashed and could be removed. So the one spelling every
+# read and write goes through is the PHYSICAL path of the file's directory plus
+# its own name — `record`, `verdict` and `forget` all ask THIS, never the
+# `$dir/$name` they were handed, and the line a person reads still prints the
+# path as they spelled it.
+#
+# THE DIRECTORY IS RESOLVED, NEVER THE FILE: `receipt_add` has already refused a
+# symlink at the path itself, and a link is somebody's decision about their own
+# PATH, which is no business of a row's. `(cd -- "$dir" && pwd -P)` is the
+# portable spelling (macOS and bash 3.2 have no `realpath`, and `readlink -f`
+# is not in a stock macOS userland — `lanes-edit.sh` asks the same question the
+# same way). `CDPATH` is emptied first, because a `cd` through one PRINTS the
+# directory it went to and the substitution would hold two lines. And the
+# trailing `X` is the one `RECEIPT_NEWLINE` uses: `$( )` strips trailing
+# newlines, and a directory whose name ENDS in one would otherwise resolve to a
+# DIFFERENT, shorter path — one with no newline in it, past the TSV guard.
+#
+# IT NEVER FAILS: a directory that cannot be entered answers with the path as
+# given, which is not absolute, and the one caller that WRITES a row refuses a
+# destination that is not — the callers that only READ simply never match it.
+receipt_dest() {   # <path> — its canonical absolute spelling, else the path as given
+	local dir="" base="" real=""
+	case "$1" in
+	*/*) dir="${1%/*}"; base="${1##*/}" ;;
+	*) dir="."; base="$1" ;;
+	esac
+	[ -n "$dir" ] || dir="/"
+	real="$(CDPATH= cd -- "$dir" >/dev/null 2>&1 && pwd -P && printf X)" ||
+		{ printf '%s\n' "$1"; return 0; }
+	real="${real%X}"
+	real="${real%"$RECEIPT_NEWLINE"}"
+	case "$real" in
+	/) printf '/%s\n' "$base" ;;
+	*) printf '%s/%s\n' "$real" "$base" ;;
+	esac
+}
+
+# WHETHER A PATH CANNOT BE A COLUMN OF THE RECEIPT: it carries a tab or a newline.
+receipt_tsv_unsafe() {   # <path> — 0 if it cannot, 1 if it can
+	case "$1" in
+	*"$RECEIPT_TAB"*|*"$RECEIPT_NEWLINE"*) return 0 ;;
+	esac
+	return 1
+}
+
 # ONE ROW, STAGED. The digest is of the bytes at the destination, so a run that
 # placed nothing new still records what is there — which is the point: the
 # receipt answers "is the file at this path mine", not "did I write it today".
@@ -417,11 +471,24 @@ receipt_note() {   # <file> <why>
 # closed half: a receipt missing exactly the file a retirement will ask about,
 # with nothing on screen, is worse than no receipt at all.
 receipt_add() {   # <name> <destination> — 0, or 1 with $RECEIPT_WHY set
-	local name="$1" dest="$2" digest=""
-	[ -f "$dest" ] && [ ! -L "$dest" ] || return 0
-	case "$dest" in
-	*"$RECEIPT_TAB"*|*"$RECEIPT_NEWLINE"*)
+	local name="$1" given="$2" dest="" digest=""
+	[ -f "$given" ] && [ ! -L "$given" ] || return 0
+	# THE TAB AND NEWLINE QUESTION IS ASKED OF BOTH SPELLINGS — the one the person
+	# supplied, BEFORE anything resolves it, and the canonical one, which a symlink
+	# in the directory can make carry a tab the supplied one never had.
+	if receipt_tsv_unsafe "$given"; then
+		RECEIPT_WHY="$given has a tab or a newline in it and this file is tab-separated"
+		return 1
+	fi
+	dest="$(receipt_dest "$given")"
+	if receipt_tsv_unsafe "$dest"; then
 		RECEIPT_WHY="$dest has a tab or a newline in it and this file is tab-separated"
+		return 1
+	fi
+	case "$dest" in
+	/*) ;;
+	*)
+		RECEIPT_WHY="$given could not be resolved to an absolute path"
 		return 1
 		;;
 	esac
@@ -481,6 +548,15 @@ receipt_rows_except() {   # <receipt> <destinations file> <staged file>
 		esac
 		rest="${row#*"$RECEIPT_TAB"}"
 		dest="${rest%%"$RECEIPT_TAB"*}"
+		# A RELATIVE DESTINATION IS NEVER KEPT (Copilot on #103, `openRepoTools:524`).
+		# This command writes none any more, and a row that says `bin/park` is a
+		# row about whichever directory the next run is standing in: the `-f` just
+		# below would answer for THAT run's `bin/park`, which is the cwd-dependence
+		# `receipt_dest` removes from every other read.
+		case "$dest" in
+		/*) ;;
+		*) continue ;;
+		esac
 		if grep -qFx -e "$dest" -- "$2"; then continue; fi
 		[ -f "$dest" ] && [ ! -L "$dest" ] || continue
 		printf '%s\n' "$row" >>"$3" || return 1
@@ -605,9 +681,12 @@ receipt_record() {
 # a second is a hand-edit, and picking the first is the only rule that does not
 # depend on which end of the file somebody appended to.
 receipt_verdict() {   # <target> — placed | edited | unverified | unknown, always 0
-	local file="" row="" rest="" dest="" digest="" disk=""
+	local file="" row="" rest="" dest="" digest="" disk="" want=""
 	file="$(receipt_file)"
 	[ -f "$file" ] && [ ! -L "$file" ] || { printf 'unknown\n'; return 0; }
+	# THE ROW IS ABOUT A FILE, AND THE FILE IS ASKED ABOUT BY THE SAME SPELLING
+	# THE ROW WAS WRITTEN IN (`receipt_dest`, Copilot on #103, `openRepoTools:524`).
+	want="$(receipt_dest "$1")"
 	while IFS= read -r row || [ -n "$row" ]; do
 		case "$row" in
 		*"$RECEIPT_TAB"*"$RECEIPT_TAB"*"$RECEIPT_TAB"*) ;;
@@ -615,7 +694,7 @@ receipt_verdict() {   # <target> — placed | edited | unverified | unknown, alw
 		esac
 		rest="${row#*"$RECEIPT_TAB"}"
 		dest="${rest%%"$RECEIPT_TAB"*}"
-		[ "$dest" = "$1" ] || continue
+		[ "$dest" = "$want" ] || continue
 		digest="${rest#*"$RECEIPT_TAB"}"
 		digest="${digest%%"$RECEIPT_TAB"*}"
 		disk="$(sha256_of "$1")" || { printf 'unverified\n'; return 0; }
@@ -646,7 +725,9 @@ receipt_forget() {   # <destination>
 	workdir
 	kept="$WORKDIR/receipt-kept"
 	dests="$WORKDIR/receipt-forget"
-	if : >"$kept" 2>/dev/null && printf '%s\n' "$1" >"$dests" 2>/dev/null &&
+	# THE ROW IS DROPPED BY THE SPELLING IT WAS WRITTEN IN (`receipt_dest`); the
+	# note below still names the path as the person spelled it.
+	if : >"$kept" 2>/dev/null && printf '%s\n' "$(receipt_dest "$1")" >"$dests" 2>/dev/null &&
 		receipt_rows_except "$file" "$dests" "$kept" &&
 		receipt_replace "$kept"; then
 		dropped=0

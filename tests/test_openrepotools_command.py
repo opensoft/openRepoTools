@@ -1250,6 +1250,113 @@ def test_the_receipt_keeps_the_rows_of_a_directory_it_no_longer_writes(tmp_path)
 
 
 @NEEDS_JQ
+def test_a_relative_bin_dir_is_recorded_absolute_and_asked_about_from_anywhere(tmp_path):
+    """THE RECEIPT NAMES A FILE, NOT A SPELLING OF ONE (Copilot on #103,
+    `openRepoTools:524`).
+
+    `$OPENREPOTOOLS_BIN_DIR=bin` is a directory the planner accepts, and it is
+    a different directory from every working directory it is run in. The first
+    shape recorded `bin/park` exactly as supplied, so a later run from another
+    directory compared the same string against ITS `bin/` — hashing, and
+    removing, a file that was never the one the row was written for. Every
+    destination is now recorded as a CANONICAL ABSOLUTE path, and every read
+    resolves the target the same way before it compares.
+
+    Here: an install from `here` with the relative `bin` leaves only absolute
+    rows (and drops the old-shape relative row seeded in front of it, which is
+    a row no working directory can honestly answer). Then a run from `there`
+    that names the SAME directory a different way, `../here/bin`, retires the
+    `restart` in `here/bin` on the strength of its absolute row — and leaves
+    the user's own `restart` in `there/bin`, which has no row and no marker.
+    """
+    here = tmp_path / "here"
+    there = tmp_path / "there"
+    here.mkdir()
+    (there / "bin").mkdir(parents=True)
+    receipt = receipt_path(tmp_path)
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(
+        f"park\tbin/park\t{hashlib.sha256(b'an older park').hexdigest()}"
+        "\t2026-09-15T04:04:16Z\n", encoding="utf-8")
+
+    first = run_cmd("--install", home=tmp_path,
+                    env={"OPENREPOTOOLS_BIN_DIR": "bin"}, cwd=here)
+    assert first.returncode == 0, first.stdout + first.stderr
+    rows = receipt_rows(tmp_path)
+    assert all(row[1].startswith("/") for row in rows), (
+        "a destination was recorded as supplied:\n"
+        + receipt.read_text(encoding="utf-8"))
+    assert str(here / "bin" / "park") in {row[1] for row in rows}
+    assert len(rows) == ARTIFACTS - HOOK_ENTRIES, (
+        "the old-shape relative row was kept beside the absolute ones")
+
+    stale = here / "bin" / "restart"
+    stale.write_text("#!/usr/bin/env bash\n# restart, with no banner of any kind\n"
+                     "echo stale\n", encoding="utf-8")
+    stale.chmod(0o755)
+    decoy = there / "bin" / "restart"
+    decoy.write_text("#!/usr/bin/env bash\n# my own restart, nothing to do with "
+                     "that installer\necho mine\n", encoding="utf-8")
+    decoy.chmod(0o755)
+    before = decoy.read_bytes()
+    with receipt.open("a", encoding="utf-8") as handle:
+        handle.write(f"restart\t{stale}"
+                     f"\t{hashlib.sha256(stale.read_bytes()).hexdigest()}"
+                     "\t2026-09-15T04:04:16Z\n")
+
+    second = run_cmd("--install", home=tmp_path,
+                     env={"OPENREPOTOOLS_BIN_DIR": "../here/bin"}, cwd=there)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert not stale.exists(), (
+        "the row names this file by its absolute path and its digest matches, "
+        "and a run from another directory did not recognise it:\n"
+        + second.stdout)
+    assert "receipt carries its digest" in second.stdout, second.stdout
+    assert decoy.is_file() and decoy.read_bytes() == before, (
+        "the file in the OTHER directory's bin was removed")
+    assert not [row for row in receipt_rows(tmp_path) if row[1] == str(stale)]
+
+
+@NEEDS_JQ
+def test_a_relative_row_never_names_another_directorys_file(tmp_path):
+    """THE OTHER HALF OF THE SAME FINDING: A ROW WRITTEN AS `bin/restart` IS
+    NOT EVIDENCE ABOUT ANY `bin/restart`.
+
+    This is the deletion Copilot described, set up directly — the row's
+    digest is the digest of THIS directory's file, because that is what a
+    row recorded from the other directory's `bin/` would also say about a
+    same-named file here. The old comparison was string against string, so it
+    matched and removed a file the row was never about. A relative row is
+    never matched now, and `receipt_rows_except` does not keep one, so it
+    cannot linger and answer the next run either.
+    """
+    there = tmp_path / "there"
+    (there / "bin").mkdir(parents=True)
+    mine = there / "bin" / "restart"
+    mine.write_text("#!/usr/bin/env bash\n# my own restart, nothing to do with "
+                    "that installer\necho mine\n", encoding="utf-8")
+    mine.chmod(0o755)
+    before = mine.read_bytes()
+    receipt = receipt_path(tmp_path)
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(
+        f"restart\tbin/restart\t{hashlib.sha256(before).hexdigest()}"
+        "\t2026-09-15T04:04:16Z\n", encoding="utf-8")
+
+    result = run_cmd("--install", home=tmp_path,
+                     env={"OPENREPOTOOLS_BIN_DIR": "bin"}, cwd=there)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert mine.is_file() and mine.read_bytes() == before, (
+        "a file was removed on the strength of a row that named a RELATIVE "
+        "path, which is a row about whichever directory the run happened to "
+        "be in:\n" + result.stdout)
+    assert "is NOT this installer's copy" in result.stdout, result.stdout
+    assert all(row[1].startswith("/") for row in receipt_rows(tmp_path)), (
+        "a relative row outlived the run:\n"
+        + receipt.read_text(encoding="utf-8"))
+
+
+@NEEDS_JQ
 def test_bin_dir_overrides_where_it_lands(tmp_path):
     result = run_cmd("--install", home=tmp_path,
                      env={"OPENREPOTOOLS_BIN_DIR": str(tmp_path / "elsewhere")})
