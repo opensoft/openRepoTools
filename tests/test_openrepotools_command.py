@@ -788,6 +788,13 @@ def receipt_rows(home: Path) -> list:
                 encoding="utf-8").splitlines() if line]
 
 
+def receipt_rows_at(receipt: Path) -> list:
+    """`receipt_rows`, for a receipt that is not at the default path."""
+    return [tuple(line.split("\t"))
+            for line in receipt.read_text(encoding="utf-8").splitlines()
+            if line]
+
+
 def placed_files(home: Path) -> dict:
     """Every REGULAR FILE an `--install` into `home` places, by destination.
 
@@ -1436,6 +1443,67 @@ def test_a_relative_row_never_names_another_directorys_file(tmp_path):
     assert all(row[1].startswith("/") for row in receipt_rows(tmp_path)), (
         "a relative row outlived the run:\n"
         + receipt.read_text(encoding="utf-8"))
+
+
+@NEEDS_JQ
+def test_a_relative_data_dir_is_resolved_and_one_receipt_is_read_from_anywhere(tmp_path):
+    """THE RECEIPT'S OWN DIRECTORY IS CANONICAL TOO (Copilot round 4 on #103,
+    `openRepoTools:365`).
+
+    `$OPENREPOTOOLS_DATA_DIR=data` is accepted, and `receipt_file` handed that
+    string straight to every reader and writer, so the one printed path was
+    `data/installed.tsv` — a spelling that means a different file from every
+    working directory. The directory is now resolved (`mkdir -p` first, where
+    this run is the one making it) and every read, write and line goes through
+    the resolved path.
+
+    WHAT RESOLVING CANNOT DO is make `data` mean the same directory from two
+    working directories — a relative value names a different one from each, and
+    that is inherent in being relative. So the run SAYS so, beside the line
+    that names where the receipt went: the absolute path it resolved to and the
+    way out. Here: an install from `here` with `data` writes
+    `here/data/installed.tsv` and prints it absolute, with that note; a run from
+    `there` that names the same directory another way, `../here/data`, reads
+    the SAME receipt — the row for `restart` is found and the file removed —
+    and no second receipt appears anywhere.
+    """
+    here = tmp_path / "here"
+    there = tmp_path / "there"
+    here.mkdir()
+    there.mkdir()
+    first = run_cmd("--install", home=tmp_path,
+                    env={"OPENREPOTOOLS_DATA_DIR": "data"}, cwd=here)
+    assert first.returncode == 0, first.stdout + first.stderr
+    receipt = here / "data" / "installed.tsv"
+    assert receipt.is_file(), first.stdout
+    assert (f"receipt: {len(receipt_rows_at(receipt))} placed files recorded "
+            f"in {receipt}") in first.stdout, (
+        "the line names the receipt as a canonical absolute path:\n"
+        + first.stdout)
+    assert "a RELATIVE path" in first.stdout and f"resolved it to {receipt.parent}" \
+        in first.stdout, (
+        "a relative data directory is said out loud, with where it went:\n"
+        + first.stdout)
+
+    stale = tmp_path / ".local" / "bin" / "restart"
+    stale.write_text("#!/usr/bin/env bash\n# restart, with no banner of any kind\n"
+                     "echo stale\n", encoding="utf-8")
+    stale.chmod(0o755)
+    with receipt.open("a", encoding="utf-8") as handle:
+        handle.write(f"restart\t{stale}"
+                     f"\t{hashlib.sha256(stale.read_bytes()).hexdigest()}"
+                     "\t2026-09-15T04:04:16Z\n")
+    second = run_cmd("--install", home=tmp_path,
+                     env={"OPENREPOTOOLS_DATA_DIR": "../here/data"}, cwd=there)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert not stale.exists(), (
+        "the row is in the receipt the first run wrote and the second did not "
+        "read it:\n" + second.stdout)
+    assert "receipt carries its digest" in second.stdout, second.stdout
+    assert sorted(tmp_path.rglob("installed.tsv")) == [receipt], (
+        "a second receipt appeared:\n"
+        + "\n".join(str(p) for p in tmp_path.rglob("installed.tsv")))
+    assert not (there / "data").exists()
 
 
 @NEEDS_JQ

@@ -359,9 +359,29 @@ INSTALLABLES=(openRepoTools park resume status lane lanes lane-handoff lane-rena
 #: (`repos.tsv` is there under protest, and Amendment 9(b) says so). XDG is the
 #: one convention that answers "where does a tool keep its own record" on Linux
 #: and macOS alike, and the override is there because the bin directory has one.
+#:
+#: THE DIRECTORY AS CONFIGURED IS ONE THING AND THE PATH THIS FILE READS AND
+#: WRITES IS ANOTHER (Copilot round 4 on #103, `openRepoTools:365`). The first
+#: shape handed the configured string to every caller, so a relative
+#: `$OPENREPOTOOLS_DATA_DIR` was `data/installed.tsv` in every line and every
+#: `[ -f ]`: a spelling, not a file. `receipt_file` is the CANONICAL path — the
+#: directory resolved by `receipt_dest`, the same `pwd -P` the destinations in
+#: the rows go through — whenever the directory is THERE TO RESOLVE, and the
+#: configured spelling otherwise: a directory that does not exist has no
+#: receipt in it to read, and the one caller that MAKES it (`receipt_replace`)
+#: creates it first and asks again. A getter that created directories would
+#: make a retirement's read a write.
+#:
+#: WHAT RESOLVING DOES NOT DO is make a relative `data` mean the same directory
+#: from two working directories: that is what being relative IS. So
+#: `receipt_record` says so, on the line beside the one that names the
+#: receipt, rather than leaving a person to find out from a later run that
+#: could not see the first one's evidence.
+receipt_data_dir() {   # the directory as configured, which may be relative
+	printf '%s\n' "${OPENREPOTOOLS_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/openRepoTools}"
+}
 receipt_file() {
-	printf '%s/installed.tsv\n' \
-		"${OPENREPOTOOLS_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/openRepoTools}"
+	receipt_dest "$(receipt_data_dir)/installed.tsv"
 }
 
 #: A TAB AND A NEWLINE AS VALUES, because the receipt is a TSV and a
@@ -598,6 +618,11 @@ receipt_replace() {   # <staged file> — 0, or 1 having changed nothing
 	file="$(receipt_file)"
 	dir="$(dirname -- "$file")"
 	mkdir -p -- "$dir" 2>/dev/null || return 1
+	# THE DIRECTORY EXISTS NOW, so the canonical path can be had (round 4 on
+	# #103, `openRepoTools:365`): on a first install the answer above was still
+	# the configured spelling.
+	file="$(receipt_file)"
+	dir="$(dirname -- "$file")"
 	tmp="$(mktemp -- "$dir/installed.tsv.XXXXXX" 2>/dev/null)" || return 1
 	cp -- "$1" "$tmp" 2>/dev/null || { rm -f -- "$tmp"; return 1; }
 	mv -f -- "$tmp" "$file" 2>/dev/null || { rm -f -- "$tmp"; return 1; }
@@ -657,7 +682,14 @@ receipt_record() {
 	receipt_rows_except "$file" "$RECEIPT_DESTS" "$RECEIPT_ROWS" ||
 		{ receipt_note "$file" "the rows already there could not be read"; return 0; }
 	if receipt_replace "$RECEIPT_ROWS"; then
+		file="$(receipt_file)"
 		say "receipt: $RECEIPT_COUNT placed files recorded in $file"
+		case "$(receipt_data_dir)" in
+		/*) ;;
+		*)
+			say "  the data directory $(receipt_data_dir) is a RELATIVE path, which names a different directory from every working directory — this run resolved it to $(dirname -- "$file"). Name an absolute one with \$OPENREPOTOOLS_DATA_DIR so a later \`--install\` from anywhere reads this receipt."
+			;;
+		esac
 	else
 		why="$(unusable_dir_kind "$(dirname -- "$file")")" || why="the write failed"
 		receipt_note "$file" "$why — $RECEIPT_ELSEWHERE"
