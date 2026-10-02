@@ -11477,6 +11477,11 @@ run env -C "$BIND_DIR" PATH="$LANEBIN_PATH" "$LANE" repoBind-13 </dev/null
 is   "\`lane <name>\` on a lane bound in another container refuses rather than attaching blind" "$rc" 2
 has  "…naming the container it is bound in" "$err" "in container cloud-bench on host Eagle"
 has  "…and offering the WATCH, which starts nothing and takes nothing" "$err" "or WATCH it where it is"
+# THE WATCH TARGETS THE WINDOW'S ID AND NEVER ITS INDEX (Copilot round 11). The
+# binding's window is the log's `<session>:<index> <@id>`, and the index is the
+# half tmux reissues: `cloudsess:4` can be another lane by the time it is typed.
+has  "…at the window's id, session-qualified" "$err" "-t cloudsess:@62"
+hasnt "…and never at its index, which another window can be given" "$err" "-t cloudsess:4"
 export LANE_TMUX_WINDOWS="$bind_save_lanewins"
 
 # A DRY RUN PRINTS THE PLAN AND DOES NOTHING, INCLUDING THE RE-READ (Copilot

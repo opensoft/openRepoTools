@@ -892,6 +892,7 @@ go_live() {
 go_elsewhere() {
 	local ge_out="" ge_rc=0 ge_ask="" ge_answer="" ge_facts=""
 	local ge_host ge_cont ge_win ge_utc ge_sess ge_os ge_where ge_wstate
+	local ge_wsess="" ge_wid=""
 	local ge_rh ge_rh_rc
 	# AND THE CONTAINER NOTICE BELONGS HERE MOST OF ALL, not only under the
 	# listing. With no `$LANES_WORKSTATION` inside a container the workstation is
@@ -944,10 +945,21 @@ EOF
 	# mounts ONE socket into every container it starts, so the pane exists and
 	# putting a terminal in front of it STARTS NOTHING. Watching a lane and
 	# taking it are two different acts, and only the second is the collision.
+	#
+	# AND THE TARGET IS `<session>:<@id>`, READ FROM THE LOG'S OWN SHAPE (Copilot
+	# round 11 on openRepoTools#83, `lane:952`). `binding` prints the log's
+	# `window` sub-field, Amendment 11(c)'s `<session>:<index> <@id>`, and NOT the
+	# live record's `<session>:<@id>.<%pane>` that `split_window` reads — through
+	# it, `cloudsess:4 @62` became `cloudsess:4`, the INDEX, which tmux can give
+	# another window between this read and the act. The id is what
+	# `binding_window_state` matched to say `live` — it answers `unknown` for a
+	# field with no `@id` — so it is the id that is offered, split the way
+	# `lanes-edit.sh lanes` column 10 splits the same field.
 	ge_watch=""
-	if [ "$ge_wstate" = live ] && split_window "$ge_win"; then
-		if [ -n "$(this_session)" ]; then ge_watch="tmux switch-client -t $W_SESS:$W_ID"
-		else ge_watch="tmux attach -t $W_SESS:$W_ID"
+	case "$ge_win" in *:*' @'[0-9]*) ge_wsess="${ge_win%%:*}"; ge_wid="${ge_win##* }" ;; esac
+	if [ "$ge_wstate" = live ] && [ -n "$ge_wsess" ] && [ -n "$ge_wid" ]; then
+		if [ -n "$(this_session)" ]; then ge_watch="tmux switch-client -t $ge_wsess:$ge_wid"
+		else ge_watch="tmux attach -t $ge_wsess:$ge_wid"
 		fi
 	fi
 	# A BINDING THIS HOST PROVES DEAD IS NOT A BINDING TO ASK ABOUT. One host's
