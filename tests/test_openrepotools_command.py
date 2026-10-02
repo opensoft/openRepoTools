@@ -137,6 +137,15 @@ NEEDS_JQ = pytest.mark.skipif(
     reason="`--install` merges two hook entries with jq (Amendment 9(b), Amendment 12 act 3)")
 
 
+#: A MODE-000 FILE IS ONLY UNREADABLE TO SOMEBODY WHO IS NOT ROOT. The same
+#: idiom `tests/test_install_skill_and_hook.py` carries for the destinations it
+#: makes unwritable: a root `--install` opens whatever it likes, so the cases
+#: that need a receipt it CANNOT open are skipped there, not made to pass.
+NOT_ROOT = pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root can read a file whose mode says otherwise")
+
+
 def command_env(home: Path | None = None, env: dict | None = None) -> dict:
     """The environment this suite controls, for a run of the command.
 
@@ -1136,6 +1145,107 @@ def test_a_receipt_that_is_a_symlink_is_not_written_through(tmp_path):
     assert f"it is a symlink to {elsewhere}" in result.stdout, result.stdout
     for name in INSTALLED:
         assert (tmp_path / ".local" / "bin" / name).is_file(), name
+
+
+@NOT_ROOT
+@NEEDS_JQ
+def test_a_receipt_it_cannot_read_is_left_whole_and_its_rows_are_not_lost(tmp_path):
+    """A RECEIPT THAT EXISTS AND CANNOT BE OPENED IS NOT AN EMPTY ONE (Copilot
+    round 4 on #103, `openRepoTools:575`).
+
+    `receipt_rows_except` ended in an unconditional `return 0`, so a receipt
+    whose `done <"$1"` redirection failed reported a clean scan of no rows —
+    and `receipt_record` then REPLACED it with this run's rows alone, losing
+    every row about a copy this run did not place. The read failure now
+    propagates: the caller prints its "could not be read" note and the old
+    receipt is not touched.
+
+    The receipt is made mode 000 and seeded with a row about a file this run
+    does not place, so that row's survival is the proof. The install itself is
+    whole — a receipt that cannot be maintained is a note and never a refusal
+    (#57) — and the receipt is read back after the mode is restored.
+    """
+    receipt = receipt_path(tmp_path)
+    receipt.parent.mkdir(parents=True)
+    elsewhere = tmp_path / "bin-elsewhere" / "park"
+    elsewhere.parent.mkdir(parents=True)
+    elsewhere.write_text("#!/usr/bin/env bash\necho an older copy\n",
+                         encoding="utf-8")
+    seeded = (f"park\t{elsewhere}"
+              f"\t{hashlib.sha256(elsewhere.read_bytes()).hexdigest()}"
+              "\t2026-09-15T04:04:16Z\n")
+    receipt.write_text(seeded, encoding="utf-8")
+    receipt.chmod(0o000)
+    try:
+        result = run_cmd("--install", home=tmp_path)
+    finally:
+        receipt.chmod(0o600)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "REFUSED" not in result.stderr
+    for name in INSTALLED:
+        assert (tmp_path / ".local" / "bin" / name).is_file(), name
+    assert f"receipt: NOT written to {receipt}" in result.stdout, result.stdout
+    assert "the rows already there could not be read" in result.stdout, (
+        "the note says WHY:\n" + result.stdout)
+    assert receipt.read_text(encoding="utf-8") == seeded, (
+        "an unreadable receipt was replaced, and the rows in it are gone")
+    assert [p.name for p in receipt.parent.iterdir()] == ["installed.tsv"], (
+        "a temporary was left in the data directory")
+
+
+@pytest.mark.parametrize("name", RETIRED)
+@NOT_ROOT
+@NEEDS_JQ
+def test_a_receipt_it_cannot_read_never_lets_the_header_remove_a_file(tmp_path, name):
+    """UNREADABLE IS NOT "NO ROW" (Copilot round 4 on #103,
+    `openRepoTools:716`).
+
+    `receipt_verdict` scanned the receipt through a `done <"$file"` whose
+    failure nothing read, so a receipt that exists and cannot be opened looked
+    exactly like one that was scanned and has nothing to say about this path —
+    `unknown`, and the header fallback removed an edited file. `unknown` is now
+    for a scan that RAN and found no row; a receipt that cannot be opened
+    answers `unreadable`, and the retirement names the receipt, names and
+    leaves the file, and prints the `rm`, as it does for a row it cannot
+    digest.
+
+    The file carries the header and its row names other bytes, so the header
+    is the only thing between it and `rm`.
+    """
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    mine = bin_dir / name
+    mine.write_text(
+        "#!/usr/bin/env bash\n"
+        "# Installed on PATH by `openRepoTools --install`, and then edited.\n"
+        "echo my own edit\n", encoding="utf-8")
+    mine.chmod(0o755)
+    before = mine.read_bytes()
+    receipt = receipt_path(tmp_path)
+    receipt.parent.mkdir(parents=True)
+    seeded = (f"{name}\t{mine}\t{hashlib.sha256(b'the bytes it placed').hexdigest()}"
+              "\t2026-09-15T04:04:16Z\n")
+    receipt.write_text(seeded, encoding="utf-8")
+    receipt.chmod(0o000)
+    try:
+        result = run_cmd("--install", home=tmp_path)
+    finally:
+        receipt.chmod(0o600)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert mine.is_file() and mine.read_bytes() == before, (
+        "a receipt that could not be opened was read as having no row, and the "
+        "header removed an edited file:\n" + result.stdout)
+    retired = [line for line in result.stdout.splitlines()
+               if line.startswith(f"{name}: RETIRED")]
+    assert len(retired) == 1, result.stdout
+    assert str(receipt) in retired[0], "the line names the receipt"
+    assert "could not be read" in retired[0], retired[0]
+    assert str(mine) in retired[0], "and the destination"
+    assert f'rm -f -- "{mine}"' in retired[0], (
+        "the act is the person's, so the line is printed filled in:\n"
+        + retired[0])
+    assert "removed from" not in result.stdout
+    assert receipt.read_text(encoding="utf-8") == seeded
 
 
 @NEEDS_JQ

@@ -572,6 +572,15 @@ receipt_add() {   # <name> <destination> — 0, or 1 with $RECEIPT_WHY set
 receipt_rows_except() {   # <receipt> <destinations file> <staged file>
 	local row="" rest="" dest=""
 	[ -f "$1" ] && [ ! -L "$1" ] || return 0
+	# A RECEIPT THAT EXISTS AND CANNOT BE OPENED IS A FAILURE, NOT AN EMPTY ONE
+	# (Copilot round 4 on #103, `openRepoTools:575`). The `done <"$1"` below
+	# fails quietly when it cannot open the file, and the `return 0` this
+	# function ends in then reported a clean scan of no rows — so
+	# `receipt_record` replaced the receipt with this run's rows alone and every
+	# row about a copy this run did not place was gone. OPENED, not `-r`: the
+	# answer that matters is the one the loop is about to get, and for root those
+	# two agree anyway. Both callers already print their note on a non-zero.
+	: 2>/dev/null <"$1" || return 1
 	while IFS= read -r row || [ -n "$row" ]; do
 		case "$row" in
 		*"$RECEIPT_TAB"*"$RECEIPT_TAB"*"$RECEIPT_TAB"*) ;;
@@ -720,14 +729,22 @@ receipt_record() {
 #             edited, receipt-tracked command on exactly the machine that could
 #             not tell it was edited — the ownership mistake the receipt exists
 #             to prevent, made by the code that carries it. Named and left.
+#   unreadable — the receipt EXISTS and cannot be OPENED (Copilot round 4 on
+#             #103, `openRepoTools:716`). The scan never ran, so "no row" is not
+#             something it found: it is the same ignorance as `unverified`, one
+#             step earlier, and it gets the same answer — named and left —
+#             with its own sentence, because the person's remedy is the
+#             receipt's mode and not a digest tool. `unknown` is for a scan that
+#             RAN and found nothing.
 #
 # THE FIRST MATCHING ROW WINS. This command writes one row per destination, so
 # a second is a hand-edit, and picking the first is the only rule that does not
 # depend on which end of the file somebody appended to.
-receipt_verdict() {   # <target> — placed | edited | unverified | unknown, always 0
+receipt_verdict() {   # <target> — placed | edited | unverified | unreadable | unknown, always 0
 	local file="" row="" rest="" dest="" digest="" disk="" want=""
 	file="$(receipt_file)"
 	[ -f "$file" ] && [ ! -L "$file" ] || { printf 'unknown\n'; return 0; }
+	: 2>/dev/null <"$file" || { printf 'unreadable\n'; return 0; }
 	# THE ROW IS ABOUT A FILE, AND THE FILE IS ASKED ABOUT BY THE SAME SPELLING
 	# THE ROW WAS WRITTEN IN (`receipt_dest`, Copilot on #103, `openRepoTools:524`).
 	want="$(receipt_dest "$1")"
@@ -850,6 +867,12 @@ retire_commands() {
 			# the evidence — and the digest that would have settled it could not be
 			# taken. One line, the same shape as the two above: where, why, the `rm`.
 			say "$name: RETIRED by lane-collision-protocol Amendment 18 Addendum 2, and $target has a row in this installer's receipt that could not be checked, because no digest tool answered (\`sha256sum\`, \`shasum -a 256\`) — so it is NOT removed on the strength of its header either. Left exactly as it is; remove it yourself if it is stale:  rm -f -- \"$target\""
+		elif [ "$verdict" = unreadable ]; then
+			# A RECEIPT THAT CANNOT BE OPENED CANNOT SAY "NO ROW" (Copilot round 4 on
+			# #103, `openRepoTools:716`): it may carry exactly the row that says this
+			# file is an edit. Same shape as the arm above, and it names the receipt,
+			# because that is the file whose mode the person has to look at.
+			say "$name: RETIRED by lane-collision-protocol Amendment 18 Addendum 2, and this installer's receipt $(receipt_file) exists but could not be read, so whether $target is its copy is not known — it is NOT removed on the strength of its header either. Left exactly as it is; remove it yourself if it is stale:  rm -f -- \"$target\""
 		elif [ ! -L "$target" ] && [ -f "$target" ] && grep -qF -e 'Installed on PATH by `openRepoTools --install`' -- "$target" 2>/dev/null; then
 			rm -f -- "$target"
 			say "$name: RETIRED, removed from $target (lane-collision-protocol Amendment 18 Addendum 2; \`lane <name>\` is that act now)"
