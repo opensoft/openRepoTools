@@ -1877,7 +1877,7 @@ because a hook that fails is a hook that breaks the session it was meant to
 orient (R-A8-1). Where another live process carries this session id it **SAYS
 so** and names the retire act; the refusal is the guard's.
 
-### Fail closed, and the one bypass
+### Fail closed for lane sessions, and safe-mode recovery
 
 A mismatch refuses, and so does an **indeterminate read** — session records
 unreadable, tmux not answering, the register unreadable, a payload naming no
@@ -1887,14 +1887,22 @@ checkout last had it (R19) and **the guard never fetches**: this hook runs at
 every prompt, and putting the network there would be R-A8-1's objection several
 times over.
 
-**There is no environment flag that turns it off.** `claude --safe-mode` runs
-with every hook disabled and is the one bypass — deliberate, visible in the
+Profile-only launches with exact `CLAUDE_NO_LANE=1` are exempt, as described
+under Scope below. For a session subject to the guard, `claude --safe-mode` runs
+with every hook disabled — deliberate, visible in the
 prompt box, and **a session started that way is not a lane session**: it may not
 write the register or claim an object. The hook's `timeout 5` is the other way
 it can fail open, and it is the amendment's own number: a hook that exceeds its
 timeout is killed, and a killed hook does not exit 2.
 
 ### Scope
+
+Sessions launched with `CLAUDE_NO_LANE=1` skip the prompt guard, silently. The
+workBenches profile launcher supplies this marker for a launch without a lane
+and clears it for an explicit lane launch. Explicit `--no-lane` wins over lane
+options. Other marker values keep the normal checks. The hook stays installed
+in profile settings so a concurrent lane session using the same profile still
+receives enforcement. Existing sessions need a relaunch to change launch mode.
 
 The guard applies to every session whose `cwd` is under `$PROJECTS_ROOT`
 (default `~/projects`), which is every estate session, and is **silent

@@ -443,6 +443,26 @@
 
 set -u
 
+# Parse the global flags before probing paths, git or workstation identity.
+# A profile-only prompt must not depend on any of that lane infrastructure.
+SWEEP_MODE="no-sweep"
+while [ $# -gt 0 ]; do
+  case "${1-}" in
+    --no-sweep)  SWEEP_MODE="no-sweep"; shift ;;
+    --sweep)     SWEEP_MODE="sweep"; shift ;;
+    --no-github) LANES_NO_GITHUB=1; shift ;;
+    *) break ;;
+  esac
+done
+
+if [ "${1-}" = guard ] && [ "${CLAUDE_NO_LANE:-}" = 1 ]; then
+  if [ "$#" -ne 1 ]; then
+    printf '%s\n' "lanes-edit: usage: guard   (the UserPromptSubmit hook; the hook's JSON on stdin)" >&2
+    exit 2
+  fi
+  exit 0
+fi
+
 SELF="$0"
 if command -v readlink >/dev/null 2>&1; then
   RESOLVED="$(readlink -f "$SELF" 2>/dev/null || printf '%s' "$SELF")"
@@ -733,19 +753,6 @@ LANES_PATH="${LANES_PATH:-$(git -C "${LANES_DIR:-.}" rev-parse --show-prefix 2>/
 # lane's claim landed first.
 CP_PATHS=("$LANES_PATH")
 CP_AFTER_REBASE=""
-
-# --no-sweep (default) / --sweep — see USAGE above. Consumed here, ahead of
-# subcommand dispatch, so either flag may appear anywhere before the
-# subcommand name.
-SWEEP_MODE="no-sweep"
-while [ $# -gt 0 ]; do
-  case "${1-}" in
-    --no-sweep)  SWEEP_MODE="no-sweep"; shift ;;
-    --sweep)     SWEEP_MODE="sweep"; shift ;;
-    --no-github) LANES_NO_GITHUB=1; shift ;;
-    *) break ;;
-  esac
-done
 
 # die "<message>" [<exit code>] — the MESSAGE is $1 alone. It used to be "$*",
 # which joined the exit code on to the end of every refusal that passed one:
@@ -6799,10 +6806,10 @@ EOF
 # FAIL CLOSED (clause (d)). A mismatch refuses; so does an INDETERMINATE read —
 # session records unreadable, tmux not answering, the register unreadable —
 # naming the read, because a triple that cannot be verified is not a triple that
-# agrees. There is no environment flag that turns this off: `claude --safe-mode`
-# disables every hook and is the one bypass, deliberate and visible in the
-# prompt box, and a session started that way is not a lane session and may not
-# write the register or claim an object.
+# agrees. Profile-only launches carrying exactly `CLAUDE_NO_LANE=1` are exempt
+# from this guard. `claude --safe-mode` disables every hook, deliberate and
+# visible in the prompt box; a session started that way is not a lane session
+# and may not write the register or claim an object.
 #
 # WHAT IT COSTS, AND THE ONE WAY IT FAILS OPEN. Measured on Eagle 2026-09-14
 # against 329 session records and a 1.3 MB register: the register read is ~2 s
@@ -7226,9 +7233,9 @@ guard_triple() {   # [<heading>]
   return 0
 }
 
-# THE ONE BYPASS, NAMED WHERE A PERSON COULD OTHERWISE BE STUCK (clause (d)).
-# There is no environment flag that turns this guard off, deliberately; Claude's
-# own `--safe-mode` disables every hook and is visible in the prompt box, and a
+# SAFE-MODE RECOVERY, NAMED WHERE A PERSON COULD BE STUCK (clause (d)).
+# Profile-only launches are exempt through `CLAUDE_NO_LANE=1` at dispatch.
+# Claude's `--safe-mode` disables every hook and is visible in the prompt box; a
 # session started that way is not a lane session and may not write the register
 # or claim an object. It is printed by the INDETERMINATE refusals — the reads
 # that could not be made — and not by the mismatches, which have a cure of their
