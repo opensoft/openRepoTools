@@ -100,7 +100,7 @@ export CLAUDE_CONFIG_DIR="$HOME/.claude"
 # them. `AGENT_PROTOCOL_ROOT` is then re-exported into the sandbox, two lines
 # down, so the default finds the sandbox's file and never the operator's.
 unset LANES_FILE LANES_EDIT LANES_REPO LANES_PATH LANES_LANE LANES_WORKSPACE_ROOT \
-      LANES_REPOS_TSV LANES_REPOS_TSV_SHIPPED PROJECTS_ROOT CLAUDE_PROJECTS_DIR CLAUDE_BIN 2>/dev/null
+      LANES_REPOS_TSV LANES_REPOS_TSV_SHIPPED PROJECTS_ROOT CLAUDE_PROJECTS_DIR CLAUDE_BIN CLAUDE_NO_LANE 2>/dev/null
 export AGENT_PROTOCOL_ROOT="$HOME/.agents"
 mkdir -p "$AGENT_PROTOCOL_ROOT"
 # THE ONE `LANES_*` SEAM THIS SUITE SETS RATHER THAN UNSETS, for the reason the
@@ -4549,7 +4549,11 @@ run "$E" lanes --lane repoA11-1
 ONE_ROW="$out"
 run "$E" lanes --all
 ALL_ROW="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "repoA11-1" { print; exit }')"
-is "one lane read alone is the same row the estate listing gives it" "$ONE_ROW" "$ALL_ROW"
+# Column 9 is a relative time. Two consecutive reads can cross a minute
+# boundary; compare the parser's stable fields rather than the clock tick.
+stable_lane_row() { printf '%s\n' "$1" | awk -F'\t' -v OFS='\t' '{$9="<time>"; print}'; }
+is "one lane read alone is the same row the estate listing gives it" \
+   "$(stable_lane_row "$ONE_ROW")" "$(stable_lane_row "$ALL_ROW")"
 
 # ------------------- ruling 8: `lane-end --retire <pid|uuid>` IS THE ONE ACT
 #
@@ -6137,7 +6141,7 @@ gd_run "$GD_LANE_ID"
 chmod 755 "$profiles_root"
 is    "session records that cannot be READ block the prompt — fail CLOSED (clause (d))" "$rc" 2
 has   "…naming the read that failed" "$err" "session records could not be read"
-has   "…and the one bypass, which is not an environment flag" "$err" "claude --safe-mode"
+has   "…and safe-mode recovery for a session subject to the guard" "$err" "claude --safe-mode"
 # AND THE `SessionStart` HOOK MEETS THE SAME UNREADABLE RECORDS AND STILL EXITS
 # 0. The two hooks read the same directories through the same function and are
 # held to OPPOSITE contracts — one refuses on a read it could not make (clause
@@ -6168,7 +6172,7 @@ out="$(printf "$gd_hook" "$GD_LANE_ID" "$HOME/projects/repoGD" "do the work" | L
 err="$(cat "$SANDBOX/stderr")"
 is    "a register this workstation cannot read blocks the prompt with 2, never the dispatcher's 1" "$rc" 2
 has   "…saying it is the ROW half of the triple that could not be read" "$err" "the ROW cannot be read"
-has   "…and the one bypass" "$err" "claude --safe-mode"
+has   "…and safe-mode recovery" "$err" "claude --safe-mode"
 out="$(printf '' | LANES_FILE="$SANDBOX/no-such-register.md" "$E" session-start 2>/dev/null)"; rc=$?
 is    "…while session-start on the same missing register still exits 0, as it always has" "$rc" 0
 gd_run "$GD_LANE_ID" "do the work" ""
@@ -6204,7 +6208,7 @@ out="$(printf "$gd_hook" "$GD_LANE_ID" "$HOME/projects/repoGD" "do the work" | P
 err="$(cat "$SANDBOX/stderr")"
 is    "…while a tmux that answers nothing is an indeterminate read and not 'no window'" "$rc" 2
 has   "…naming the read that did not happen" "$err" "tmux did not answer"
-has   "…and the one bypass" "$err" "claude --safe-mode"
+has   "…and safe-mode recovery" "$err" "claude --safe-mode"
 
 # ---- CLAUSE (h) RULE 2: THE OFFER, AND ITS THREE ANSWERS.
 gd_rec "$GD_LANE_ID" repoGD-2 user "$GD_NEW_MS"
@@ -8617,12 +8621,18 @@ write_record_ns "$sessions_dir/live-a17.json" "$HF_ID" "$LIVE_PID" "$live_start"
 # ------------------------------------- 1. the record, and its two sub-fields
 
 export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-1.md"
+cat > "$SANDBOX/a17bin/lclaude" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FAKE_PCLAUDE_LOG:-/dev/null}"
+FAKE
+chmod +x "$SANDBOX/a17bin/lclaude"
 run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
     CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-1 clear
 is    "lane-handoff exits 0" "$rc" 0
 # ITS OWN STDOUT, KEPT: `$out` is whatever the LAST `run` left, and there is a
 # `swapped` read between this run and the assertions at the foot of this block.
 hf1_out="$out"
+rm "$SANDBOX/a17bin/lclaude"
 hf1_log="$(cat "$LOGD/repoHF-1.md")"
 has   "…writing the lane's PAUSED line" "$hf1_log" "PAUSED — lane repoHF-1, session $HF_ID@Eagle"
 has   "…whose payload opens 'swap;', which is what \`swapped\` matches on" "$hf1_log" "lane:repoHF-1 → swap;"
@@ -8632,7 +8642,7 @@ has   "…its profile" "$hf1_log" "profile team-05a"
 has   "…and Amendment 17(b)'s two: the agent" "$hf1_log" "agent claude"
 has   "…and the transcript" "$hf1_log" "transcript $HF_ID"
 has   "…with the why as the line's free text" "$hf1_log" " — clear"
-has   "the restart line is printed, and it is one command" "$hf1_out" "READY — restart with: pclaude team-05a"
+has   "the lane-aware restart line is printed when lclaude is installed" "$hf1_out" "READY — restart with: lclaude team-05a"
 has   "…naming the agent the next start will use" "$hf1_out" "lane-start --agent claude resumes it"
 
 run   "$E" swapped Eagle
@@ -8755,6 +8765,11 @@ A17PATH_NOLANE="$(a17_path_without_lane)"
 
 : > "$FAKE_TMUX_A17_LOG"
 export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-5.md"
+cat > "$SANDBOX/a17bin/lclaude" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FAKE_PCLAUDE_LOG:-/dev/null}"
+FAKE
+chmod +x "$SANDBOX/a17bin/lclaude"
 run env PATH="$A17PATH_NOLANE" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
     CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-5 --restart clear
 is    "lane-handoff --restart exits 0" "$rc" 0
@@ -8765,7 +8780,8 @@ has   "…respawning the lane's own pane" "$a17_tmux" "respawn-pane -k -t hfsess
 # the door Amendment 18 Addendum 2 (i-8) leaves open in the same sentence that
 # names `lane <name>`: *"or through the launcher directly"*. The case below
 # asks for the word itself, where it is there to be seen.
-has   "…with no \`lane\` on PATH, through the launcher, with --lane BEFORE the profile" "$a17_tmux" "pclaude --lane repoHF-5 team-05a"
+has   "…with no \`lane\` on PATH, through lclaude, with --lane BEFORE the profile" "$a17_tmux" "lclaude --lane repoHF-5 team-05a"
+rm "$SANDBOX/a17bin/lclaude"
 has   "…and the seam that makes the new session a FRESH one primed by the top block" "$a17_tmux" "LANE_START_FRESH=1"
 hasnt "…never \`restart <lane>\`, which Addendum 2 takes off the person's PATH" "$a17_tmux" "restart repoHF-5"
 is    "THE RECORD WAS WRITTEN BEFORE THE RESPAWN, which is what the fake could see" \

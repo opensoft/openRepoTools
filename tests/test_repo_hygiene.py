@@ -888,7 +888,7 @@ def test_the_readme_carries_the_two_line_onboarding_chain():
     assert "gh repo clone opensoft/workBenches && cd workBenches && ./setup.sh" \
         in readme, (
         "README.md does not carry Amendment 9(e)'s first line, byte for byte")
-    assert "pclaude run <profile> --lane <repo>-<n>" in readme, (
+    assert "lclaude --lane <repo>-<n> <profile>" in readme, (
         "README.md does not carry Amendment 9(e)'s second line")
     assert "gh auth login" in readme, (
         "README.md names neither of the chain's two preconditions: `wip init` "
@@ -1676,9 +1676,37 @@ def test_agents_md_is_short_enough_to_be_read():
     portable is worse than one that shows none, and the six lines are the
     correction plus the sentence naming the wrapper as the canonical
     implementation, which is what an assistant reading either should reach for.
+
+    265 -> 292 on 2026-09-16, for THE CYCLE'S THREE RULINGS (Brett Heap's
+    RULING of that day, "do all three", on the coordinator's three proposals
+    — measured: `tests-macos` running 49-54 minutes per push against Linux's
+    17-22, pull requests drawing 6-12 Copilot review rounds, and this suite
+    queuing up to 1h20 behind the workstation lock the paragraph below still
+    describes). The paragraph these lines replace told an assistant that
+    `tests/run.sh` IS how this suite is run and that `pytest` by hand is the
+    thing it exists to stop — true of the mechanism and now wrong about the
+    standard, which is what made it the one to remove rather than a
+    paragraph to add beside. Numbered so each stays citable on its own:
+    `tests-macos` leaves the per-push `pull_request` gate for the `ready`
+    label, with its own `parse-macos` split off so the bash-3.2 syntax parse
+    does not leave with it; Copilot review is capped at two rounds; and
+    CI's own `tests` job, not the local wrapper, is the suite of record —
+    the wrapper stays exactly the tool it always was, for a person who wants
+    the whole answer locally rather than one a push now waits on. 26 of the
+    27 lines came in that one commit; the last, the same day, is Copilot
+    round 2 on this PR taken rather than chased past its cap: `parse-macos`
+    runs on `pull_request` and on push to main, the same two triggers as the
+    three jobs beside it, and the sentence saying so now names both rather
+    than the "every push" a reader could take for every branch.
+
+    278 + 292 MEET AT 305 on 2026-10-03, where #83 merged `main` at `92bd21f`
+    (#119). Both raised the same 265: thirteen lines are Amendment 18's ONE
+    BINDING rule and twenty-seven are the cycle's three rulings, and neither is
+    over a line the other bought. The cap is the count of what merged, 265 + 13
+    + 27, rather than either side's number — the rule the 224 entry states.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 278, f"AGENTS.md is {len(lines)} lines; the cap is 278"
+    assert len(lines) <= 305, f"AGENTS.md is {len(lines)} lines; the cap is 305"
 
 
 def test_readme_is_short_enough_to_be_read():
