@@ -10306,6 +10306,12 @@ import os, pty, select, signal, subprocess, sys, time
 answer, argv = sys.argv[1], sys.argv[2:]
 
 
+# THE REAL `ps`, BY ITS PATH: this suite puts a FAKE `ps` first on PATH (it
+# answers `-p <pid>` out of `$FAKE_PS_RECORDS` and nothing else), and asked
+# through PATH this read came back empty and ended the grace at once.
+PS = next((p for p in ("/bin/ps", "/usr/bin/ps") if os.access(p, os.X_OK)), "ps")
+
+
 def group_running(pgid):
     """Is anything in the child's process group still RUNNING? A group whose
     every member is a zombie runs nothing -- and in a container whose pid 1
@@ -10318,7 +10324,7 @@ def group_running(pgid):
     except PermissionError:
         return True
     try:
-        listing = subprocess.run(["ps", "-A", "-o", "pgid=,stat="],
+        listing = subprocess.run([PS, "-A", "-o", "pgid=,stat="],
                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                  universal_newlines=True, timeout=5).stdout
     except Exception:
@@ -10442,9 +10448,13 @@ else
   # zombie, and a killed grandchild is reparented to pid 1 — which in a
   # container may be `sleep infinity` and reap nothing, ever (measured on this
   # workstation: state `Z`, parent 1). A zombie runs nothing, so it is gone.
+  # The REAL `ps`, by its path, for the driver's reason: the fake one first on
+  # PATH answers nothing for this pid, and an empty answer read as "gone" made
+  # this case pass without asking anything.
+  pty_ps=/bin/ps; [ -x "$pty_ps" ] || pty_ps=/usr/bin/ps
   pty_running() {   # <pid>
     [ -n "${1-}" ] && kill -0 "$1" 2>/dev/null || return 1
-    case "$(ps -o stat= -p "$1" 2>/dev/null)" in '' | *Z*) return 1 ;; esac
+    case "$("$pty_ps" -o stat= -p "$1" 2>/dev/null)" in '' | *Z*) return 1 ;; esac
     return 0
   }
   pty_gc="$(cat "$pty_orphan" 2>/dev/null || :)"
