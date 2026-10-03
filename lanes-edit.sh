@@ -2044,12 +2044,30 @@ GS="$(printf '\036')"
 #
 # IT ASSIGNS A GLOBAL AND RETURNS, rather than printing: a function whose answer
 # is taken with `$( … )` forks, which is the cost this exists to avoid.
+#
+# AND THE EXPANSION IS `%%key*`, NEVER `#*key` — THE SAME FIRST MATCH, IN
+# LINEAR TIME (opensoft/openRepoTools#107). Bash removes a shortest prefix by
+# trying the whole pattern against EVERY prefix of the string in turn, and a
+# pattern that opens with `*` costs a scan of that prefix each time: `#*key` is
+# QUADRATIC in the table. A longest suffix is found by trying the pattern only
+# where its FIRST character matches, and here that is `$GS`, which occurs once
+# per line — so `%%key*` touches each byte about once. Both name the FIRST
+# occurrence of `$GS<lane>$US`: `#*key` is everything up to and including it,
+# `%%key*` everything before it. Measured on the suite's own fixture register
+# (194 rows, 162 object logs): the per-lane loop of one `lanes --prefix` read
+# was 56.6 s of its 58.1 s, about 75 ms per lookup, three or more lookups per
+# lane — which is what put `lane`'s pick past the pty driver's 60-second bound.
+# The offset is in CHARACTERS on both sides of the `+` (`${#…}` and `${1:…}`
+# count the same way in any one locale), so a multibyte table cuts where the
+# old expansion cut.
 LOOKUP_OUT=""
 table_lookup() {   # <fenced table> <lower-cased lane>
-  local tl_rest
+  local tl_key tl_head tl_rest
   LOOKUP_OUT=""
-  tl_rest="${1#*"$GS$2$US"}"
-  [ "$tl_rest" = "$1" ] && return 1
+  tl_key="$GS$2$US"
+  tl_head="${1%%"$tl_key"*}"
+  [ "$tl_head" = "$1" ] && return 1
+  tl_rest="${1:$(( ${#tl_head} + ${#tl_key} ))}"
   LOOKUP_OUT="${tl_rest%%"$GS"*}"
   return 0
 }
