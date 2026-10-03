@@ -6,11 +6,25 @@ Deployment sequencing and release gates: [Fastest path to deployment](deployment
 
 ## Prospective broker tranche (2026-10-03)
 
+Consume the existing CPC omniWorker and codexFactory/openxFactory factory
+execution rail first. T059 maps lane requests to its job/run/worker/result
+identities; T060 adds account-aware selection within its admitted pools/policy;
+T061 qualifies the existing host/profile and runtime transport; T062 proves
+preserved admission, lifecycle and result enforcement. Existing factory
+governance/dispatch authority and LS local parent custody remain distinct. The
+[integration contract](contracts/lane-task-broker.md#existing-factory-worker-rail-is-the-first-adapter)
+records one-shot versus worktree-profile scope and pending `coding` admission.
+
 Retain existing lane swap and add explicit broker mode. Main agents perform
-primary orchestration; all worker delegation goes through LS, which selects
-authorized account, model/harness and local/remote host/container. Results and
-further delegation return through LS. Workers have their own actual runtime
-identities; qualified account replacement can leave the main agent running.
+primary orchestration; lane-facing delegation goes through LS into the factory
+rail. Omnigent's existing worker-management layer owns authorized placement,
+workload and qualified worker recovery. T060 extends allowance admission for
+small tasks with estimates, reserve and concurrent reservations. Current worker
+selection checks capacity, not subscription allowance. Worker-swap support is
+an owning extension, not inferred from session resume. LS owns parent swap and
+stable task attachments/result delivery: A can transfer to B while independent
+workers continue, and B reattaches without redispatch. Remote commands use the
+execution site's EGS and site/supervisor-qualified job references.
 
 T059–T062 own versioned requests/attempts/results, placement/policy enforcement,
 Omnigent/remote execution adapters and fault qualification. Reuse session/inbox/

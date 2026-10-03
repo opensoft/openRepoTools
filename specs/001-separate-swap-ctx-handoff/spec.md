@@ -674,17 +674,34 @@ checkpoint, worker, claim, and inference effects independently.
 
 - **FR-046**: LS MUST retain existing swap mode and expose broker mode only
   through an explicit qualified capability. In broker mode main agents MUST
-  perform primary orchestration and every worker delegation MUST pass through
-  LS admission, including further worker delegation. LS MUST select authorized
-  account, model/harness and local or remote host/container, persist attempt
-  and placement before launch, and correlate durable results to actual runtime
-  identity. Native/direct spawning MUST NOT bypass LS. Qualified worker account
-  transfers MAY use existing swap while the main session continues. Remote
+  perform primary orchestration and lane-facing delegated task requests MUST
+  pass through LS/factory admission, including new worker-requested tasks.
+  Omnigent's owning worker layer MUST manage admitted workload, authorized
+  account/model/harness/host placement, fresh allowance admission with estimated
+  task cost plus reserve/concurrent reservations, and qualified worker recovery.
+  It MUST persist placement/attempt intent before launch and preserve stable
+  logical factory task IDs across internal attempts. Insufficient/stale/unknown
+  allowance MUST queue/refuse; an estimate MUST NOT guarantee avoiding exhaustion.
+  Native/direct spawning MUST NOT bypass admission. Existing resume support
+  MUST NOT imply worker account-transfer qualification. Remote
   loss of contact MUST remain unknown until authenticated execution-site
   custody/effect evidence permits recovery; it MUST NOT authorize duplicate
-  execution. Files, verified work and EGS job identities MUST be preserved.
+  execution. Each worker's commands MUST use its execution site's EGS, with
+  site/supervisor/incarnation/job identity; files, verified work and jobs MUST
+  be preserved. LS MUST own parent swap and stable task-consumer/result
+  attachment: fence A's generation, buffer/deduplicate results and supply B
+  existing task references/delivery watermarks without redispatch. Independent
+  workers MUST survive parent handoff when their effects are safely accounted;
+  unknown overlapping effects MUST retain release gates. Ordinary swap-mode
+  native children MUST retain their existing lifecycle rules.
   Missing mode markers MUST retain existing contract meanings. Broker work
   MUST NOT silently replace or become a T054–T057 swap delivery gate.
+  Broker integration MUST consume the existing CPC omniWorker and
+  codexFactory/openxFactory job/worker rail, preserving factory scope,
+  admission and result-enforcement authority alongside LS local parent custody.
+  Runtime APIs MUST NOT bypass factory admission. Unsupported session/account
+  capabilities and unadmitted operations MUST require their owning extension;
+  a one-shot patch result MUST NOT imply resumable worker capability.
 
 ### Key Entities
 

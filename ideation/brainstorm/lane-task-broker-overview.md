@@ -9,7 +9,7 @@ Captured: 2026-10-03
 
 ## Possible feats
 
-- **Brokered factory work** — Keep orchestration alive while LS places bounded tasks across qualified accounts, models and execution hosts.
+- **Brokered factory work** — Preserve task continuity through parent swaps while Omnigent manages workers on qualified accounts and execution hosts.
 
 ## Motivation
 
@@ -21,7 +21,8 @@ must remain available as its own operating mode.
 ## Goals
 
 - Preserve swap mode and introduce explicit broker enrollment.
-- Make LS the admission and placement path for every broker delegation.
+- Use LS for lane-facing task requests and stable consumer/result attachments.
+- Reuse Omnigent/factory worker placement, workload and qualified recovery.
 - Collect task results and evidence durably without model-driven polling.
 - Support enrolled local and remote workers with exclusive workspace custody.
 
@@ -33,18 +34,21 @@ new broker. Existing swap safety and its graceful-only gate remain intact.
 
 ## What the system delivers
 
-The main agent submits task scope and reviews results. LS selects the account,
-model/harness and host/container and manages the worker's recorded attempt.
-An execution adapter runs the worker; EGS owns persistent commands. Fresh
-workers consume the preferred one-task default and use existing artifacts
-and job records when continuing safely unfinished work.
+The main agent submits task scope and reviews results. LS persists task
+references/results and swaps the main parent. Omnigent selects authorized
+placement and manages admitted workload/internal attempts; each site's EGS
+owns that site's persistent commands. Small tasks and estimated allowance plus
+reserve aim to avoid mid-task exhaustion; worker recovery still needs qualified
+extensions. Existing artifacts and job records survive safely accounted work.
 
 ## System model
 
-Main agent → LS → qualified local/remote worker → LS result → main agent.
-Further worker delegation returns through LS. A worker-account transfer uses
-its execution site's qualified swap/custody boundary; it does not require A's
-main session to change accounts.
+Main agent → LS → existing factory/Omnigent worker rail → local/remote worker
+→ durable task result → LS → current main parent. New delegated tasks use
+the same admission path. A→B changes the task consumer, leaving independent
+workers running; LS supplies B outstanding references and buffered results.
+Omnigent worker-account recovery keeps the outer task identity and changes
+internal attempts only through a qualified execution-site boundary.
 
 ## Cluster map
 
@@ -62,10 +66,12 @@ acceptance comes from the governed contract and qualified runtime evidence.
 
 ## Key decisions and open questions
 
-LS owns placement; agents own task reasoning; workers may be remote. Omnigent
-has reusable tools, but the exact installed adapter, policy enforcement and
-remote custody joins require measurement. Reduced main-agent usage does not
-guarantee avoiding quota resets or context limits.
+LS owns parent swap and stable task attachments; Omnigent owns worker workload,
+placement and qualified recovery; agents own task reasoning. Session lifecycle
+tools exist, but allowance-aware selection and safe worker account swaps were
+not found as complete features. Sharing swap/custody machinery is an option,
+not a component-layout ruling. Adapters, policy and remote custody need runtime
+evidence. Reduced parent usage cannot guarantee avoiding quota/context limits.
 
 ## Document map
 

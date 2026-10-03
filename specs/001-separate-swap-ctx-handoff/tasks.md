@@ -832,33 +832,74 @@ not gate or replace T054–T057 and do not authorize live worker launches,
 account movement, remote provisioning or activation. Preserve named team roles.
 
 - [ ] T059 Define and implement versioned broker enrollment/request/placement/
-  attempt/result records and the service delegation interface. Persist admission
+  attempt/result records and the service delegation interface as an adapter
+  to existing factory job/run/dispatch/worker/result identities. Reuse the
+  existing factory worker registry, queue and approval/operation gates; preserve
+  their authority alongside the local LS lane/parent-custody ledger. LS owns
+  request/consumer-generation/result-delivery records; Omnigent owns worker
+  placement/workload/attempt records. Preserve stable logical factory task IDs
+  across internal attempts. Transfer task consumer bindings A→B with durable
+  buffered results and delivery watermarks, without redispatching independent
+  workers. Qualify the actual
+  deployed endpoint and declared scope. Persist admission
   before launch, join qualified task scope to actual session/runtime/workspace
   identities and retain idempotency through retry/crash. Add offline tests for
   mode separation, old-record preservation, missing/stale task joins, duplicate
-  admission, accepted-send versus completion and late results by attempt.
-- [ ] T060 Implement service-owned placement from configured authorized account,
-  model/effort/harness and local/remote host/container pools, using task policy,
-  fresh usage and registered capacity. Queue/refuse when no eligible route
-  exists. Main agents perform primary orchestration; every worker's delegation
-  traverses LS. Measure tool/policy enforcement that prevents native or direct
-  adapter spawning from bypassing LS while preserving swap-mode native policy.
+  admission, accepted-send versus completion, late results by attempt and
+  parent-generation reattachment without duplicate dispatch.
+- [ ] T060 Extend the existing Omnigent worker-management/dispatcher interfaces
+  in their owning repositories for authorized account/model/effort/harness and
+  local/remote host/container placement, retaining factory admission and scope.
+  Reuse worker registry/pool/capability/readiness selection rather than create
+  an LS worker account pool. Prefer small tasks and admit with fresh allowance
+  observations covering estimated task cost plus reserve after concurrent
+  reservations and applicable reset windows. Existing capacity selection does
+  not provide this check. Queue/refuse insufficient, stale/unknown or ineligible
+  placement; estimates do not guarantee actual consumption. Main agents perform
+  primary orchestration and new delegated task requests traverse LS/factory
+  admission; Omnigent manages admitted internal execution within that scope.
+  Measure controls preventing native/direct spawn bypass while preserving
+  swap-mode native policy.
   Validate final routing choices rather than silently accept adapter fallback;
   never expose credentials in agent requests or results.
 - [ ] T061 Add a qualified Omnigent execution adapter and authenticated remote
-  execution-site custody/result bridge. Inspect/pin the actual build; the local
+  execution-site custody/result bridge through the existing CPC omniWorker and
+  codexFactory/openxFactory execution rail. Reuse host install, profiles, bundles
+  and result enforcement; qualify bounded patch versus worktree/session worker
+  capabilities explicitly. The existing one-shot patch profile has no session
+  persistence or tools; required account/EGS/resume lifecycle extensions belong
+  in their owners. Pending `coding` clearing admission is an upstream gate,
+  not permission for a new direct route or broader grandfathered dispatch.
+  Inspect/pin the actual build; the local
   CLI reports 0.1.1 and installed dispatch/inbox code is present, but current
   upstream docs do not certify every boundary. Reuse session/model/policy and
   worker-host mechanisms where measured. Bind host/container/namespace/runtime
   incarnation and workspace/revision; supply explicit remote checkout/artifacts.
-  Preserve local JSON/custody authority and EGS job IDs. Qualified worker swaps
-  may reuse the existing path while the main session stays live; network loss
-  never supplies exit proof or releases an uncertain attempt for replay.
+  Preserve local parent JSON/custody authority and execution-site worker custody.
+  Remote commands use that site's EGS with site/supervisor/incarnation/job IDs,
+  not A's local EGS or local PID evidence. Omnigent owns qualified worker
+  account recovery behind stable task IDs; existing create/interrupt/history/
+  resume/process management does not implement this controller. Measure native
+  transcript fidelity, old-runtime exclusion and interrupt effects: the inspected
+  SDK path can terminate its process group, and session tombstoning is not exit.
+  Preserve independently owned EGS jobs. Consider sharing qualified swap/custody
+  machinery rather than duplicating LS; component layout remains implementation
+  design. Until qualified, expose blocked/failed or held work without unsafe
+  replay. Network loss never supplies exit proof or releases an uncertain
+  attempt for replay.
 - [ ] T062 Exercise the broker matrix offline and record a pinned runtime
-  capability matrix before activation. Cover local/remote placement, further
-  delegation, main-agent continuity during worker-account replacement, eventual
-  main-agent swap, lost contact/ACK, duplicate or stale dispatch/result, changed
-  task/workspace revision, exhausted/ineligible accounts, routing fallback and
+  capability matrix before activation. Assert reuse of factory job/worker IDs
+  and admission/result enforcement, refusal of unadmitted operations, no parallel
+  dispatch route, and no session-resume claim for the one-shot patch profile.
+  Cover local/remote placement, further
+  delegation, main-agent continuity during worker-account replacement and stable
+  outer task IDs across internal attempts. Cover parent A→B handoff while workers
+  and site jobs continue, results arriving between generations, stale A control,
+  deduplicated B delivery and no redispatch. Distinguish site/supervisor-qualified
+  job IDs and refuse wrong-site control when bare IDs collide. Cover lost contact/
+  ACK, duplicate or stale dispatch/result, changed task/workspace revision,
+  insufficient/stale/unknown allowance, concurrent budget reservations, estimate
+  overruns and exhaustion without qualified recovery, routing fallback and
   policy bypass attempts. Assert correlated completion/effects, retained unknown
   ownership, no duplicate writer, preserved accepted work/EGS jobs, and agent/wait
   cancellation independent of explicit job cancellation. Verify existing swap

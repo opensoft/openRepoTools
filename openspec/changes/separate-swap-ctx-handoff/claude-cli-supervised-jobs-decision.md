@@ -23,18 +23,38 @@ meaning. Missing or unknown capability markers do not select this capability.
 
 ## October 3 direction: retain swap and add broker mode
 
+The follow-up directs reuse of the existing CPC omniWorker and
+codexFactory/openxFactory execution rail. LS supplies lane-facing delegation,
+stable task/result attachment and exact parent custody/swap correlation; existing factory
+governance, worker registration, dispatch and result enforcement keep their
+authority. The [integration contract](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md#existing-factory-worker-rail-is-the-first-adapter)
+records the observed one-shot patch worker, declared coder/worktree pools and
+the pending `coding` clearing admission. T059–T062 consume admitted surfaces
+and extend their owning components for measured gaps. A direct Omnigent API
+call cannot create a second route around factory admission.
+
 Brett selected two operating modes. Ordinary swap retains this qualified
 native-child/per-session contract. Broker mode keeps the main agent doing
-primary orchestration while every worker delegation passes through LS, which
-chooses authorized account, model/harness, execution host and container. Workers
-may be local or remote and return results through LS. They are separately
-identified runtimes; this does not add cross-account native Agent spawning.
+primary orchestration while lane-facing delegation passes through LS into the
+factory rail. Omnigent's worker-management layer owns worker workload,
+authorized account/model/harness/host placement, estimated allowance admission
+and qualified worker recovery. Workers return results through LS and have
+independent runtimes; this does not add cross-account native Agent spawning.
 
-Existing swap can serve a qualified worker or the main lane when needed.
-Remote custodian evidence must establish source ownership/exit; loss of
-contact cannot justify duplicate work. Persistent external jobs remain LS/EGS
-owned across inference changes. Reuse Omnigent mechanisms after adapter/build
-qualification, preserving local JSON/custody authority. See the prospective
+LS transfers A to B while independent workers continue; it moves their task
+consumer binding and buffers/deduplicates results, without moving worker
+accounts or redispatching work. Omnigent may replace worker attempts behind
+the same logical factory task ID only after its execution-site safety boundary
+is qualified. Prefer small tasks and an account with enough estimated allowance
+plus reserve; actual consumption can exceed the estimate. Source inspection
+found lifecycle/resume primitives, but not a complete safe worker account-swap
+controller or subscription-allowance selector. These remain owning extensions.
+
+Remote custodian evidence must establish worker ownership/exit; loss of contact
+cannot justify duplicate work. Persistent commands belong to the worker site's
+EGS, not automatically A's local EGS; bind site/supervisor/incarnation/job IDs.
+Reuse Omnigent mechanisms after adapter/build qualification, preserving local
+parent JSON/custody authority and existing factory governance. See the prospective
 [broker contract](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md)
 and T059–T062. Broker work does not change T054–T057's scope or status.
 

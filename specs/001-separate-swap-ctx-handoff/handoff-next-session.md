@@ -1,10 +1,44 @@
 # Swap rebuild — implementation handoff
 
+## Current checkpoint — October 3, 2026: parent and worker lifecycle split
+
+LS owns main-parent A→B swap and stable factory-task attachments/results.
+Omnigent's existing worker-management layer owns worker workload, authorized
+placement, allowance admission and qualified worker recovery. Independent
+workers continue during parent handoff; fence stale A requests, buffer results
+and hand B task references/delivery watermarks without redispatch. Worker
+replacement remains internal under the same logical factory task ID. Remote
+commands belong to the worker execution site's EGS and require qualified site/
+supervisor/incarnation/job references; A's local PID/EGS proves no remote exit.
+
+Inspection found session creation, interrupt/history/resume and subprocess
+lifecycle primitives, but no complete safe worker account-transfer controller
+or subscription-allowance selector. Existing capacity checks and one-shot patch
+results do not supply those guarantees. Extend the owning worker components;
+sharing qualified swap/custody machinery is an option, not a new component
+ruling. Follow the [findings](contracts/lane-task-broker.md#observed-lifecycle-support-and-missing-worker-swap)
+and T059–T062. Prefer small tasks with estimated allowance plus reserve, while
+retaining an exhaustion/refusal path. All runtime qualification is pending.
+
+## Current checkpoint — October 3, 2026: reuse existing CPC factory workers
+
+Brett directed LS broker integration to consume the existing CPC omniWorker
+and codexFactory/openxFactory process. Follow the
+[integration contract](contracts/lane-task-broker.md#existing-factory-worker-rail-is-the-first-adapter)
+and amended T059–T062. Reuse factory job/run IDs, worker registry/profiles,
+readiness, admitted dispatch and result enforcement. LS retains lane/task/
+generation/parent-custody correlation; factory governance retains scope/workflow
+authority. The current CPC patch worker is one-shot with no session persistence;
+coder/worktree profiles are declared, not a measured resumable-worker proof.
+Current clearing has not admitted `coding`; do not create a direct bypass.
+Latest inspected execution-lane run failed in prepare before dispatch. No CPC
+health, auth, interruption, EGS persistence or account transfer was exercised.
+
 ## Current checkpoint — October 3, 2026: swap and broker modes
 
 Brett selected retaining ordinary lane swap plus explicit broker mode. Main
-agents perform primary orchestration and delegate through LS; LS chooses
-authorized account/model/harness/host/container and collects results. Workers
+agents perform primary orchestration and delegate through LS; Omnigent chooses
+authorized account/model/harness/host/container and LS collects results. Workers
 may be remote and have separate actual session identities. Worker-account
 replacement can leave the main agent live; main-agent swap remains available.
 

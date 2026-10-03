@@ -14,18 +14,43 @@ not a semantic handoff.
 
 LS MUST retain the qualified existing swap mode and introduce broker mode only
 as an explicit capability. Broker main agents MUST perform primary orchestration
-and every delegated worker request, including further worker delegation, MUST
-pass through LS. LS MUST select authorized account, model/harness and local or
-remote host/container and persist placement/attempt intent before launch.
+and lane-facing delegated task requests, including new worker-requested tasks,
+MUST pass through LS and existing factory admission. Omnigent's owning worker
+layer MUST manage admitted workload, authorized account/model/harness/host
+placement and persist placement/attempt intent before launch. Allowance
+admission MUST use fresh observations, estimated task cost plus reserve and
+concurrent reservations; stale/unknown or insufficient allowance MUST queue
+or refuse. An estimate MUST NOT imply guaranteed completion before exhaustion.
 Workers MUST have actual independent runtime identities, with correlated
 durable results. Native/direct spawning MUST NOT bypass broker admission.
 
-Qualified worker-account transfer MAY use existing swap while the main agent
-continues. Remote ownership/exit/effect evidence MUST come from the execution
+Qualified worker-account transfer MAY occur internally in Omnigent while the
+main agent continues, retaining a stable logical factory task/job identity and
+separate runtime-attempt evidence. Existing resume support MUST NOT establish
+account-transfer qualification. Remote ownership/exit/effect evidence MUST come from the execution
 site; disconnection MUST remain unknown and MUST NOT authorize duplicate work.
-Persistent EGS jobs and verified work MUST be preserved. Missing mode markers
+Persistent jobs MUST use their execution site's EGS, with site, supervisor
+identity/incarnation and job ID recorded; a remote worker MUST NOT implicitly
+use A's local EGS. Jobs and verified work MUST be preserved. Missing mode markers
 MUST retain existing meanings, and broker work MUST NOT gate or silently
 replace T054–T057's graceful swap delivery.
+
+Broker integration MUST consume existing CPC omniWorker and
+codexFactory/openxFactory job/worker surfaces. Factory scope, admission,
+permitted operations and result enforcement MUST retain their authority,
+while LS retains lane generations, task-consumer bindings, durable result
+delivery and exact parent runtime custody. A direct runtime
+API MUST NOT bypass factory admission or broaden a grandfathered route.
+One-shot patch workers MUST NOT be represented as resumable sessions without
+a qualified extension in the owning components.
+
+During main-parent swap, independent admitted workers MUST be preserved. LS
+MUST fence A's task-control/consumer generation, buffer and deduplicate results,
+and deliver existing task references and delivery watermarks to released B.
+B MUST reattach without redispatch solely because A exited. Unknown overlapping
+effects against the lane workspace MUST retain the applicable release gate;
+isolated/accounted remote work MAY continue through parent handoff. Ordinary
+swap-mode native children MUST retain their existing lifecycle rules.
 
 #### Scenario: Ordinary swap retains native behavior
 
@@ -39,23 +64,80 @@ replace T054–T057's graceful swap delivery.
 - **GIVEN** a broker main agent and an LS-admitted task on a remote worker
 - **WHEN** that worker's account exhausts and its qualified source/effect
   boundary permits replacement
-- **THEN** LS records the replacement binding and returns correlated results
-  to the still-running main agent
+- **THEN** Omnigent records internal replacement-attempt evidence under the
+  same logical factory task ID and LS returns correlated results to the main agent
 - **AND** existing EGS job identities and accepted task work are preserved.
 
 #### Scenario: Remote contact is lost
 
 - **GIVEN** an admitted remote worker with uncertain runtime or effects
 - **WHEN** its heartbeat or control transport stops responding
-- **THEN** LS retains unknown state and exclusive ownership pending reconciliation
+- **THEN** the owning worker layer retains unknown ownership pending reconciliation
+- **AND** LS exposes that unresolved state through the existing task reference
 - **AND** it does not start a duplicate writer from elapsed time alone.
 
 #### Scenario: A worker requests more help
 
 - **GIVEN** a worker in broker mode that needs another task contribution
 - **WHEN** it delegates that contribution
-- **THEN** the request goes through LS admission and authorized placement
+- **THEN** the new task request goes through LS/factory admission and Omnigent placement
 - **AND** native or direct session-spawn routes cannot bypass that admission.
+
+#### Scenario: A factory coding operation is not admitted
+
+- **GIVEN** an existing CPC rider and a factory register that has not admitted
+  the requested coding operation
+- **WHEN** LS receives a broker request outside the existing admitted scope
+- **THEN** it queues or refuses that request pending the owning admission
+- **AND** it does not dispatch through a new direct runtime route or widen
+  the grandfathered worker's scope.
+
+#### Scenario: Main parent swaps while remote work continues
+
+- **GIVEN** A owns a lane with admitted independent workers in isolated or
+  reserved workspaces and accounted effects
+- **WHEN** LS verifies A's exit and releases B under the parent swap contract
+- **THEN** those workers and their site EGS jobs continue under their existing IDs
+- **AND** B receives the outstanding factory task references and reattaches
+  without starting replacement workers solely because A swapped.
+
+#### Scenario: A result arrives between parent generations
+
+- **GIVEN** LS has fenced A and B has not yet been released
+- **WHEN** an admitted worker returns its correlated result
+- **THEN** LS retains the result durably for B with its delivery watermark
+- **AND** stale A control requests refuse and B consumes the result without redispatch.
+
+#### Scenario: Worker allowance is insufficient
+
+- **GIVEN** a task estimate plus reserve exceeds fresh account allowance after
+  concurrent reservations, or the allowance is stale/unknown
+- **WHEN** Omnigent evaluates that worker placement
+- **THEN** it queues or refuses rather than dispatch into that binding
+- **AND** LS retains the same outer request identity and reports its status.
+
+#### Scenario: Estimated allowance is exceeded during a task
+
+- **GIVEN** an admitted task exhausts its worker account despite the estimate
+- **WHEN** no qualified replacement boundary is available
+- **THEN** Omnigent reports blocked/failed or held work through the stable task
+  interface and preserves artifacts, ownership facts and site job references
+- **AND** LS does not infer safe replay from a rate-limit error or a resume API.
+
+#### Scenario: Different supervisors issue the same job ID
+
+- **GIVEN** local and remote supervisors have jobs with the same bare ID
+- **WHEN** a worker's job is observed or controlled
+- **THEN** the reference selects its exact execution site and supervisor incarnation
+- **AND** local-parent control cannot act on or certify the remote job by bare ID.
+
+#### Scenario: A bounded patch worker returns a result
+
+- **GIVEN** a qualified existing factory task using the one-shot patch profile
+- **WHEN** it returns a patch and task-result artifacts
+- **THEN** LS correlates those existing job/run/result identities and preserves
+  domain containment and reviewed-check enforcement
+- **AND** it does not infer a resumable worker session from task completion.
 
 ### Requirement: Speckit task attribution supports focused recovery
 

@@ -1,5 +1,78 @@
 # Implementation Verification Record
 
+## October 3: parent/worker ownership and worker-swap capability inspection
+
+Brett clarified that LS owns parent A→B swap and stable delegated-task
+attachments/results, while Omnigent's existing worker layer owns workload,
+authorized placement, allowance admission and qualified worker recovery.
+Independent workers continue through parent handoff; B receives existing task
+references and buffered results without redispatch. Remote commands require
+the worker site's EGS and site/supervisor/incarnation/job references. These
+amendments supersede the earlier October 3 LS-owned worker-placement wording.
+
+Read-only inspection of Omnigent-Install's `hermes_service/dispatcher.py` found
+pool/role/capability/availability/concurrency selection, without remaining
+subscription-allowance admission. `launcher.py` observes process completion or
+failure, without an account-replacement controller. Installed Omnigent source
+contains session lifecycle and native cold-resume primitives. Its SDK interrupt
+path closes the live session and can terminate its process group;
+`sys_session_close` tombstones a conversation and refuses busy children, rather
+than witnessing exact process exit. Native cold resume can reconstruct a local
+transcript from Omnigent items; sealed native-history fidelity and EGS-job
+preservation have not been qualified for this swap contract.
+
+Current upstream source was inspected read-only through GitHub at `f37a484a`
+(October 3): harness process management, native rate-limit/budget failure
+classification, credential fallback and model fallback. The inspected fallback
+handles initial credential/model resolution, not our exhausted-account transfer.
+No complete subscription-pool allowance selector and safe worker account-swap
+controller was found in the inspected code/docs. This bounded finding does not
+assert absence from every deployment. Worker allowance admission and account
+recovery remain extensions in their existing owners; shared qualified swap/
+custody machinery is an implementation option, not a component-layout ruling.
+
+Proposal, decision, contract, FR-046, data model, plan, handoff, delta scenarios,
+T059–T062 and the broker rationale packet now record the split, stable task
+consumer transfer, estimate/reserve admission and explicit capability gaps.
+Strict OpenSpec validation and the four-document broker packet validator passed
+in `py-bench`; `git diff --check` passed. No runtime tests, worker/model requests,
+installations, live account transfers or remote EGS qualification were performed.
+T054–T057 and broker tasks remain open; these are documentation amendments.
+
+## October 3: existing CPC worker-rail reuse inspection
+
+Brett directed reuse of the existing CPC omniWorker and
+codexFactory/openxFactory process. Read-only inspection traced xFactory's
+execution-lane caller and coding-rider workflow, codexFactory's reusable
+prepare/enforce workflow and generated worker runner, Omnigent-Install's
+job/run/dispatch/inbox implementation, and the canonical OmniWorker-Install
+profiles/pools fetched through the GitHub API. The aggregation's omniWorker
+submodule is uninitialized locally; no initialization, pin bump or host change
+was performed. codexFactory `main` was observed at `84bfae38`; OmniWorker-Install
+`main` at `125d9636`. Current openxFactory `main` (`de2ab703`) still declares
+only readiness-diagnostic and deliberation in the closed clearing register;
+coding remains a later governed admission.
+
+The CPC coding profile/runner is a single no-tool Claude invocation returning
+patch and task-result artifacts, with no session persistence. Separate
+subscription-auth coder/tester/integrator pools and per-job-worktree coder
+profiles are declared. These facts do not qualify live account rotation,
+interruption, source custody, EGS persistence or resumable execution.
+codexFactory's MCP package advertises inspection and verification only.
+
+Read-only Actions history showed the two latest execution-lane runs failed
+on September 12, while an older July 23 run succeeded. Run `34726628651`
+failed at `Validate binding and resolve tenant`; enforce was skipped, so
+this does not establish a CPC host failure or current green readiness.
+No workflow was dispatched and no worker or model request was made.
+
+Proposal, decision, broker contract, plan, data model, task handoff and adapter
+rationale now require reuse-first integration with factory scope/dispatch
+authority preserved and local LS custody retained. T059–T062 remain open and
+separate from T054–T057. Strict OpenSpec validation and the four-document
+broker packet validator passed in `py-bench`; `git diff --check` passed.
+No runtime tests were run for these documentation amendments.
+
 ## October 3: explicit swap and broker mode documentation
 
 Brett selected retaining ordinary lane swap and adding LS broker mode for

@@ -2,12 +2,34 @@
 
 ## Two operating modes: swap and broker
 
+The follow-up selects the existing CPC omniWorker and
+codexFactory/openxFactory job/worker rail as the first adapter. LS maps lane
+requests and account/custody facts to existing factory job/run/worker/result
+identities. Factory governance, admitted dispatch and domain enforcement retain
+authority. Qualified transport and lifecycle extensions must respect the
+one-shot patch worker's present boundary and pending coding operation admission;
+a direct Omnigent API is not a new permission. Follow the
+[integration contract](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md#existing-factory-worker-rail-is-the-first-adapter).
+
 Retain ordinary swap's qualified native-child/per-session architecture. Add
-explicit broker mode: main agents perform primary orchestration, every worker
-delegation goes through LS, and LS selects account, model/harness, local/remote
-host and container. The adapter launches a separately identified worker and
-LS collects correlated results. Worker-account replacement can leave the main
-agent running; its own eventual swap remains available.
+explicit broker mode: main agents perform primary orchestration and lane-facing
+delegation goes through LS into the existing factory rail. Omnigent's worker
+layer owns workload, authorized account/model/harness/host placement and
+qualified worker recovery. Prefer small tasks and sufficient estimated account
+allowance plus reserve, accounting for concurrent work. The adapter launches
+an independent worker; LS retains stable task references and correlated results.
+Allowance admission and automatic worker account transfer require extensions
+and measurement; existing session resume alone does not implement them.
+
+When A swaps to B, admitted independent workers continue. LS fences A's control/
+consumer generation and buffers results; B's transition packet restores the
+outstanding task references and delivery watermarks without redispatch. An
+internal worker replacement keeps the same logical factory task identity while
+Omnigent records new runtime attempts. Each site's EGS owns its commands; remote
+job references include site, supervisor incarnation and job ID. Isolated or
+reserved remote work may continue through parent handoff; uncertain overlapping
+effects retain release gates. Swap-mode native children retain their existing
+shutdown/fresh-child rules.
 
 Broker mode must enforce the service delegation path and remote custody,
 workspace/artifact and attempt fences. EGS jobs remain independent. Omnigent

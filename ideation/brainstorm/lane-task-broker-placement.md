@@ -2,27 +2,34 @@
 
 Status: brainstorm
 Kind: architecture
-Summary: The lanes service selects account, model and local or remote execution placement for delegated tasks.
+Summary: Omnigent places delegated tasks on qualified accounts and hosts while LS preserves task attachments across parent swaps.
 Topics: lane-task-broker, task-assignment, lane-session-operations, worker-placement
 Repository context: openRepoTools broker mode with workBenches profiles and execution-site custodians
 Captured: 2026-10-03
 
 ## Possible feats
 
-- **Worker placement service** — Admit each delegated task once, choose a qualified account/model/host and collect correlated results.
+- **Worker allowance admission** — Place a small task on a qualified account with enough estimated allowance plus reserve, using the existing factory dispatcher.
 
 ## Focus
 
-Brett wants the main agent to perform primary orchestration while LS places
-implementation work, including workers on other computers.
+Brett wants the main agent to perform primary orchestration while Omnigent
+manages delegated workload, including workers on other computers. LS handles
+the main lane's account transfer and its stable task/result attachments.
 
 ## Selected direction
 
 Retain ordinary lane swap and add an explicit broker mode. In broker mode,
 the main agent supplies task scope, acceptance criteria, dependencies and
-capability needs. Every delegation, including workers requesting further
-help, goes through LS. LS selects the authorized account, model/harness,
-host and container and records dispatch before launch.
+capability needs. Lane-facing task requests, including new worker-requested
+tasks, go through LS and existing factory admission. Omnigent's worker layer
+selects authorized account/model/harness/host placement and records attempts
+before launch. Admitted internal execution remains within that factory scope.
+
+Prefer small tasks and fresh allowance observations covering estimated cost
+plus reserve after concurrent reservations. Stale/unknown or insufficient
+allowance queues/refuses; consumption can exceed an estimate. Account allowance
+selection and worker replacement are extensions, not current proven features.
 
 A worker using another account is a separate runtime/session. It is not a
 Claude native child whose credentials are changed. Keep the preferred
@@ -31,11 +38,17 @@ on a task with explicit roles and file boundaries.
 
 ## Interfaces and boundaries
 
-LS owns admission, assignment attempts, placement and result correlation;
-agents own task reasoning and semantic review. Execution-site custodians
-provide authenticated local runtime/exit evidence. EGS owns persistent jobs
-separately from worker inference. Neither a remote heartbeat timeout nor an
-accepted launch handle proves that a worker exited or finished.
+LS owns lane request/consumer generations, parent swap and durable result
+correlation; Omnigent owns admitted workload, placement and worker attempts;
+agents own task reasoning/review. Execution-site custodians provide runtime/
+exit/effect evidence. A remote worker uses its own site's EGS with site and
+supervisor-qualified job references, not implicitly A's local EGS. Neither a
+remote timeout nor an accepted launch proves worker exit/completion.
+
+A→B moves the consumer attachment to existing factory tasks while independent
+workers continue. LS buffers results and hands B task references/watermarks;
+B does not redispatch those tasks. Worker account replacement is internal to
+Omnigent under the same logical task ID, with separate attempt evidence.
 
 The main agent can remain on its account while worker bindings change from
 B to C to D. This reduces main-agent implementation usage but does not
@@ -57,5 +70,5 @@ The selected modes do not assert runtime acceptance.
 
 ## Relationships
 
-- [Omnigent reuse](lane-task-broker-omnigent-adapter.md) supplies candidate runtime mechanisms.
+- [Omnigent reuse](lane-task-broker-omnigent-adapter.md) identifies existing worker mechanisms and missing recovery capabilities.
 - [Two-mode synthesis](lane-task-broker-synthesis-two-modes.md) relates placement to existing swap safety.

@@ -2,14 +2,14 @@
 
 Status: brainstorm
 Kind: architecture
-Summary: Reuse Omnigent session and policy tools behind LS while retaining service authority over account placement and safe recovery.
+Summary: Extend the existing Omnigent worker layer for allowance admission and safe recovery, behind LS task requests and results.
 Topics: lane-task-broker, omnigent-adapter, lane-session-operations, worker-placement
 Repository context: openRepoTools LS adapter; Omnigent-Install and OmniWorker-Install retain their operational ownership
 Captured: 2026-10-03
 
 ## Possible feats
 
-- **Omnigent execution adapter** — Map LS-admitted requests to qualified Omnigent sessions and join their output and lifecycle evidence.
+- **Worker recovery controller** — Extend the existing worker rail with qualified account replacement behind a stable task/result interface.
 
 ## Focus
 
@@ -17,6 +17,25 @@ Which Omnigent mechanisms can implement broker execution without creating
 another independent account/ownership authority?
 
 ## Evidence and reuse
+
+Brett's follow-up identifies the existing CPC omniWorker and
+codexFactory/openxFactory process as the first integration surface. The
+existing execution-lane caller sends an approved bounded bundle through
+codexFactory prepare/enforce to a CPC rider and receives patch/task-result
+artifacts. Omnigent-Install implements registered worker selection, job/run/
+event/artifact records and a worker inbox. OmniWorker-Install declares
+subscription-auth control/coder/tester/integrator pools and isolated-worktree
+coder assignments. Consume those surfaces and their existing factory gates;
+LS adds parent-generation/task-consumer/result correlations; worker allowance
+admission and recovery extensions belong in the owning Omnigent components.
+
+The CPC patch worker is a single no-tool Claude invocation with no session
+persistence. Declared coder/worktree profiles are a separate capability and
+need runtime evidence. The observed clearing register has not admitted
+`coding`; its grandfathered rider is not a general broker permission. See the
+[integration contract](../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md#existing-factory-worker-rail-is-the-first-adapter)
+for source anchors and the authority split. Existing codexFactory MCP tools
+inspect/verify patches, not worker dispatch.
 
 Read-only inspection found the installed `sys_session_send` and
 `sys_read_inbox` tools, session inspection/closure code and model-override
@@ -34,24 +53,33 @@ reuse, not measured LS integration.
 
 ## Interfaces and boundaries
 
-LS admits and selects the worker. The adapter executes that recorded choice
-and returns actual session, result and custody references. Agents receive LS
-delegation tools; native or direct Omnigent spawn routes must not bypass LS.
-The documented smart router can fall back after errors, so LS must validate
-the final choice against its allowed placement rather than accept fallback
-as new authorization.
+LS authenticates lane requests and retains stable factory task references.
+Omnigent manages admitted workload, placement and internal worker recovery;
+the adapter returns actual runtime/result/custody references. Agents receive
+LS delegation tools; native/direct spawning cannot bypass factory admission.
+The documented smart router can fall back after errors, so the owning placement
+layer must validate the final route against the authorized pool and scope.
 
 Omnigent-Install has worker selectors by pool, role, capability, availability
 and capacity. OmniWorker-Install owns host/profile operational boundaries.
-Reuse those surfaces where qualified while keeping the authoritative local
-JSON swap/custody records and EGS persistent-job ownership.
+Reuse those surfaces where qualified while keeping local parent JSON swap/
+custody records and each execution site's EGS persistent-job ownership.
+
+Inspection found session interruption/history/resume and harness process
+management, but no complete safe subscription-account worker-swap controller.
+The existing dispatcher checks availability and concurrency, not remaining
+subscription allowance. SDK interruption can terminate its process group;
+`sys_session_close` marks a conversation closed rather than witnessing runtime
+exit. Native cold resume reconstructs history and needs fidelity qualification
+before serving this protocol. See the [bounded capability findings](../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md#observed-lifecycle-support-and-missing-worker-swap).
 
 ## Alternatives and tensions
 
 A direct headless-CLI adapter remains possible. Omnigent can reduce execution
-and monitoring work, but does not establish subscription-quota selection,
-native cancellation semantics or remote source exclusion for LS. Pin the
-actual build and measure these boundaries before depending on them.
+and monitoring work, but does not establish subscription-allowance selection,
+safe cancellation or remote source exclusion. Sharing qualified swap/custody
+machinery with execution-site worker controllers is an option that avoids
+duplicating the whole LS service. Pin and measure before depending on it.
 
 ## Open questions
 
@@ -61,5 +89,5 @@ cloud provisioning or live worker launch is performed by this documentation.
 
 ## Relationships
 
-- [Placement](lane-task-broker-placement.md) supplies the authoritative request/selection.
+- [Placement](lane-task-broker-placement.md) describes the LS request and Omnigent placement boundary.
 - [Two-mode synthesis](lane-task-broker-synthesis-two-modes.md) explains the adapter's place beside swap.

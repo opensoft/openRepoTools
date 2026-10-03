@@ -6,17 +6,37 @@ Explicit broker enrollment and versioned records distinguish separately
 launched worker sessions from swap-mode native children. Missing markers
 preserve existing validators; no historical record is silently migrated.
 
+Bind these records to existing factory-issued job/run IDs, worker/pool and
+dispatch IDs, result/artifact references and their provenance. Factory
+governance remains authoritative for factory scope and workflow state; the
+local LS ledger remains authoritative for lane generations and parent custody.
+Omnigent owns admitted worker placement/workload and attempt records; worker
+runtime custody/effects are witnessed at the execution site.
+An upstream terminal status does not establish a process exit. Reuse the
+existing worker registry and persist correlations without creating a competing
+factory queue, approval record or workflow lifecycle.
+
 - **Request:** authenticated caller/generation, idempotency key, qualified
   task-definition/assignment binding, purpose, scope, acceptance/evidence refs
   and allowed execution/resource constraints.
-- **Placement/attempt:** recorded selection of authorized profile reference,
+- **Consumer attachment:** LS request and stable factory task/job reference,
+  current lane/parent generation, pending durable results, delivery watermark
+  and deduplication keys. A→B transfers this binding without redispatching
+  independent workers; stale A control requests refuse.
+- **Placement/attempt (Omnigent-owned):** recorded selection of authorized profile reference,
   model/effort/harness and adapter/build, host/container/process namespace,
   actual session/runtime incarnation, workspace/revision claim, dispatch intent
-  and observation watermark.
+  and observation watermark, plus allowance observation freshness/reset window,
+  estimated task cost, reserve and concurrent reservations. LS stores correlated
+  references/status, not a competing worker account pool or scheduling authority.
 - **Result/custody:** exact request/attempt correlation, progress/artifact/
   acceptance refs, authenticated execution-site ownership/exit/effect receipts,
-  EGS job refs and unresolved facts. Accepted dispatch is not completion;
+  EGS job refs and unresolved facts, retaining stable outer task identity across
+  internal worker attempts. Accepted dispatch is not completion;
   network loss is unknown and does not release an attempt for replay.
+- **Execution-site job reference:** site/host/container/process namespace,
+  supervisor identity/incarnation, job ID and authenticated provenance. Bare
+  IDs can collide between supervisors; local PIDs do not certify remote jobs.
 
 Preserve local JSON-ledger and execution-site custodian authority; the derived
 SQL index never authorizes placement, retirement or release. Credentials and

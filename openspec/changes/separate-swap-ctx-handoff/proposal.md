@@ -2,16 +2,42 @@
 
 ## Status and governing intent
 
+**2026-10-03 parent/worker ownership clarification:** LS owns the main lane's
+account transfer and stable attachments/results for delegated factory tasks.
+Omnigent's existing worker-management layer owns worker workload, authorized
+placement, allowance admission and qualified worker recovery. Prefer small
+tasks on accounts with estimated allowance plus a reserve. Those checks and
+safe worker swaps are missing extensions, not existing runtime guarantees.
+Independent workers continue when A swaps to B; B receives the existing task
+references and buffered results without launching duplicate workers. Remote
+workers use their execution site's EGS, with site/supervisor-qualified job IDs.
+See the [capability findings](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md#observed-lifecycle-support-and-missing-worker-swap).
+
+**2026-10-03 existing worker-system reuse:** Brett directed the broker to use
+the CPC omniWorker and codexFactory/openxFactory process. LS is a lane-facing
+gateway into the existing factory job/dispatch rail, retaining its local
+custody and swap authority while factory governance retains approval and
+operation scope. Reuse worker registration, profiles, readiness, task/run
+records, bounded dispatch and result enforcement. See the
+[integration boundary](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md#existing-factory-worker-rail-is-the-first-adapter).
+The inspected CPC patch worker is one-shot and has no session persistence;
+registered coder/worktree profiles do not establish a live resumable worker.
+Current clearing has not admitted `coding`. T059–T062 must qualify existing
+routes and extend their owners for missing account/custody/EGS/resume features,
+preserving the existing gates rather than adding another dispatch authority.
+
 **2026-10-03 two operating modes:** retain ordinary lane swap and add an
 explicit broker mode. In swap mode the lane keeps its qualified workflow and
 native children; LS transfers the exact parent under the existing safety
 contract. In broker mode the main agent performs primary orchestration and
-all agents request delegated workers through LS. LS selects the authorized
-account, model/harness, host and container; workers may run locally or on
-enrolled remote computers. Results return through LS to the main agent.
+lane agents request delegated work through LS into the existing factory rail.
+Omnigent selects authorized account/model/harness/host placement and manages
+the admitted worker workload; workers may be local or remote. Results return
+through LS to whichever parent generation currently owns the lane.
 
 A can remain on its account while worker accounts change from B to C to D.
-Existing swap remains available for qualified worker runtimes and A itself.
+Existing swap remains available for A; worker recovery requires a qualified
+integration in Omnigent's owning worker components.
 Low orchestration usage may help A reach its reset without a swap, but is not
 a quota or context-lifetime guarantee. Broker workers are separately launched
 sessions, not native children whose account/container is switched. Preserve
@@ -20,8 +46,9 @@ direct session spawning. Remote loss of contact is unknown custody, not a
 death witness or permission to duplicate work.
 
 Reuse Omnigent session/inbox/policy/routing tools and registered worker-host
-surfaces where qualified, with LS retaining admission/placement authority and
-EGS retaining persistent-job custody. The installed CLI reports `omnigent
+surfaces where qualified. LS retains lane request/generation/parent custody;
+factory governance and Omnigent retain worker admission/placement, and each
+execution site's EGS retains its persistent jobs. The installed CLI reports `omnigent
 0.1.1`; actual dispatch/inbox code was inspected, but upstream documentation
 alone is not runtime qualification. The
 [broker contract](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md)
