@@ -2812,21 +2812,39 @@ claim_is_stale() {   # <lane> <object> <utc-of-the-claim> <its file> <its line>
 # RESUMED: `claim --force` would read it as ENDED and take over holds a
 # planned, expected stop was never meant to surrender — the very collision
 # Amendment 8 exists to prevent.
+#
+# A LOG THAT YIELDED NO LANE-KIND VERDICT AT ALL IS ITS OWN ANSWER TOO
+# (Copilot on 05d7889, PR #61). The read used to be one pipeline whose status
+# was `awk`'s, so a log `lane_log_events` could not read — two files differing
+# only by case on origin, a `git show` that failed, a log no longer there —
+# came back as an EMPTY verdict with status 0 and set neither marker below:
+# `claim_rescan_hook` then told the operator the log had "moved past the
+# terminal line", which nobody had read. `HOLDER_NO_VERDICT` is that case,
+# named: the read failed, or it produced no STARTED/PAUSED/RESUMED/ENDED/
+# RETIRED line to judge. It is still `return 1` — fail closed — and only the
+# words a caller prints change.
 HOLDER_DEAD_VERB=""
 HOLDER_LIVE_TERMINAL=""
 HOLDER_TERMINAL_UNKNOWN=""
+HOLDER_NO_VERDICT=""
 holder_is_dead() {   # <lane>
   hid_l="${1-}"; [ -n "$hid_l" ] || return 1
   HOLDER_DEAD_VERB=""
   HOLDER_LIVE_TERMINAL=""
   HOLDER_TERMINAL_UNKNOWN=""
+  HOLDER_NO_VERDICT=""
   hid_rc=0
-  hid_verb="$(lane_log_events "$hid_l" 2>/dev/null | awk -F"$US" '
+  hid_ev="$(lane_log_events "$hid_l" 2>/dev/null)" || hid_rc=$?
+  if [ "$hid_rc" != 0 ]; then
+    HOLDER_NO_VERDICT=1
+    return 1
+  fi
+  hid_verb="$(printf '%s\n' "$hid_ev" | awk -F"$US" '
     ($3=="STARTED"||$3=="PAUSED"||$3=="RESUMED"||$3=="ENDED"||$3=="RETIRED") && substr($8,1,5)!="fork " { v=$3 }
-    END { print v }')" || hid_rc=$?
-  [ "$hid_rc" = 0 ] || return 1
+    END { print v }')"
   case "$hid_verb" in
     ENDED|RETIRED) : ;;
+    "") HOLDER_NO_VERDICT=1; return 1 ;;
     *) return 1 ;;
   esac
   hid_ids="$( { session_ids_of_lane "$hid_l" 2>/dev/null || :
@@ -5589,6 +5607,55 @@ duplicate_holder_pids() {   # <lane>
     *) return 1 ;;
   esac
   [ -n "$dhp_cand" ] || return 8
+  # AMENDMENT 8 RULING (g)'s COMPANION IS NEVER A DUPLICATE, FROM THIS SURFACE
+  # EITHER (Copilot on 05d7889, PR #61). `live_holder` above answers the
+  # INTERACTIVE holder only — it passes over a `kind: bg` record by design —
+  # so `dhp_legit` fenced the session at the keyboard but not the harness's
+  # own companion beside it: a `kind: bg` record carrying the SAME id in the
+  # SAME profile as an interactive record of it, "one session, not a queue of
+  # rival holders". `lane-end`'s session-record path already refuses that pid
+  # by name; this process-table path runs FIRST, so a companion whose argv
+  # carried `--fork-session --resume <this lane's id>.jsonl` would have been
+  # handed to it as a duplicate and TERMed — one half of the live session that
+  # IS the lane. The companion set is built here with the very rule
+  # `lane-end` applies (`transcript_holders`' own `companion` verdict, or a
+  # `bg` row in a profile that also holds a non-`bg` row of the same id, which
+  # is how that verdict reads from outside the lane's own window), and a
+  # candidate that is one — or a wrapper whose child is one — is never a row.
+  # A records tree `transcript_holders` could not read is a read that FAILED,
+  # exactly as `live_holder`'s is above: 1, never "no companion".
+  dhp_comp=" "
+  dhp_th_f="$(mktemp "${TMPDIR:-/tmp}/lanes-edit-dht.XXXXXX" 2>/dev/null || printf '')"
+  if [ -z "$dhp_th_f" ]; then
+    SESSION_FILES_ERR="could not create a temporary file under ${TMPDIR:-/tmp}"
+    return 1
+  fi
+  for dhp_tid in $dhp_ids; do
+    transcript_holders "$dhp_tid" > "$dhp_th_f" 2>/dev/null; dhp_thrc=$?
+    case "$dhp_thrc" in
+      0) : ;;
+      8) continue ;;
+      *) rm -f -- "$dhp_th_f"; return 1 ;;
+    esac
+    dhp_int_profs=" "
+    while IFS="$US" read -r dt_pid dt_kind dt_tgt dt_prof dt_where dt_v dt_file; do
+      [ -n "${dt_pid:-}" ] || continue
+      [ "$dt_kind" = bg ] && continue
+      case "$dhp_int_profs" in *" $dt_prof "*) : ;; *) dhp_int_profs="${dhp_int_profs}${dt_prof} " ;; esac
+    done < "$dhp_th_f"
+    while IFS="$US" read -r dt_pid dt_kind dt_tgt dt_prof dt_where dt_v dt_file; do
+      [ -n "${dt_pid:-}" ] || continue
+      [ "$dt_kind" = bg ] || continue
+      dt_is_comp=0
+      if [ "$dt_v" = companion ]; then
+        dt_is_comp=1
+      else
+        case "$dhp_int_profs" in *" $dt_prof "*) dt_is_comp=1 ;; esac
+      fi
+      [ "$dt_is_comp" = 1 ] && dhp_comp="${dhp_comp}${dt_pid} "
+    done < "$dhp_th_f"
+  done
+  rm -f -- "$dhp_th_f"
   # A CANDIDATE'S OWN PARENT, WHEN IT IS ALSO A CANDIDATE, IS NEVER TREATED AS
   # A SECOND PARENT (Copilot round 2): `--fork-session`'s argv is inherited by
   # the child `claude` process as often as the bg-pty-host wrapper that
@@ -5602,6 +5669,7 @@ duplicate_holder_pids() {   # <lane>
   while IFS= read -r dhp_pid; do
     [ -n "$dhp_pid" ] || continue
     [ -n "$dhp_legit" ] && [ "$dhp_pid" = "$dhp_legit" ] && continue
+    case "$dhp_comp" in *" $dhp_pid "*) continue ;; esac
     dhp_psrc=0
     dhp_line="$(ps -o pid=,ppid=,args= -p "$dhp_pid" 2>/dev/null)" || dhp_psrc=$?
     # A `ps -p` MISS IS NOT A READ FAILURE, but a nonzero status alongside
@@ -5713,8 +5781,20 @@ DHPLINE
           elif [ "$dhp_fallback_n" = 1 ]; then
             dhp_child="$dhp_fallback"
           fi
-          dhp_out="${dhp_out}${dhp_pid}${US}${dhp_child}${US}${dhp_id}
+          # A WRAPPER WHOSE CHILD IS THE COMPANION IS THE COMPANION'S OWN HOST
+          # (Copilot on 05d7889, PR #61, with the companion set above): the
+          # harness's record may carry the `claude` leaf's pid rather than the
+          # `bg-pty-host` wrapper's, so EVERY child `pgrep -P` listed is asked
+          # — named or not — and a match drops the whole pair. Terming the
+          # wrapper ends the companion with it.
+          dhp_is_comp_host=0
+          for dhp_c in $dhp_kids; do
+            case "$dhp_comp" in *" $dhp_c "*) dhp_is_comp_host=1; break ;; esac
+          done
+          if [ "$dhp_is_comp_host" = 0 ]; then
+            dhp_out="${dhp_out}${dhp_pid}${US}${dhp_child}${US}${dhp_id}
 "
+          fi
           break
       fi
     done
@@ -8154,10 +8234,23 @@ claim_rescan_hook() {
     # log's own last lane-kind line has moved past ENDED/RETIRED entirely —
     # a resume in every sense but the word. Distinguished so the note says
     # which actually happened here.
+    #
+    # AND A FOURTH, `HOLDER_NO_VERDICT` (Copilot on 05d7889, PR #61): the
+    # log itself could not be read, or yielded no lane-kind line at all. That
+    # is not "moved past the terminal line" — nothing was read to move — so
+    # it takes the could-not-reconfirm words, and `CLAIM_ABANDON_REVIVED`
+    # carries which kind of abort this was to the note and the CLAIM-LOST
+    # line `claim` writes after this hook returns, so neither says "alive
+    # again" about a lane nobody saw come back.
+    CLAIM_ABANDON_REVIVED=1
     if [ -n "$HOLDER_LIVE_TERMINAL" ]; then
       note "lane $CLAIM_SKIP is no longer confirmed dead — its own log ends $HOLDER_LIVE_TERMINAL, but a live session on this workstation now backs it up"
     elif [ -n "$HOLDER_TERMINAL_UNKNOWN" ]; then
+      CLAIM_ABANDON_REVIVED=""
       note "lane $CLAIM_SKIP's dead-lane verdict could not be reconfirmed — this workstation could not read whether a live session backs it up before this takeover's push landed. That is NOT 'still dead', so the takeover is abandoned rather than assumed safe"
+    elif [ -n "$HOLDER_NO_VERDICT" ]; then
+      CLAIM_ABANDON_REVIVED=""
+      note "lane $CLAIM_SKIP's dead-lane verdict could not be reconfirmed — its own object log could not be read, or yielded no lane-kind line at all, before this takeover's push landed. That is NOT 'still dead' and NOT 'it resumed' either: nothing was read. The takeover is abandoned rather than assumed safe"
     else
       note "lane $CLAIM_SKIP is no longer confirmed dead — its own log has moved past the terminal line this takeover was granted on, a resume in every sense but the word"
     fi
@@ -10115,6 +10208,7 @@ EOF
     uuid="$(session_for "$lane")"
     utc="$(utc_now)"
     CLAIM_OBJ="$obj"; CLAIM_LANE="$lane"; CLAIM_SKIP="$takeover_from"; CLAIM_SKIP_DEAD="$takeover_dead"
+    CLAIM_ABANDON_REVIVED=""
     CP_AFTER_REBASE=claim_rescan_hook
     # A line written with --no-github is NOT a Rule 1 claim until its GitHub
     # comment exists, and it says so on its face rather than in a habit.
@@ -10139,9 +10233,18 @@ EOF
     #    exit must be able to tell them apart, so the exit is never coerced
     #    to 7 for the second.
     if [ "$wrc" = 7 ] || [ "$wrc" = 9 ]; then
-      if [ "$wrc" = 9 ]; then
+      # "ALIVE AGAIN" ONLY WHERE IT WAS SEEN (Copilot on 05d7889, PR #61):
+      # `claim_rescan_hook` sets `CLAIM_ABANDON_REVIVED` for a confirmed
+      # revival — a live session now backs the lane, or its log moved past
+      # the terminal line — and leaves it empty where the verdict simply
+      # could not be reconfirmed (an unreadable log, or an unreadable
+      # records tree). The exit is 9 either way; only the words differ.
+      if [ "$wrc" = 9 ] && [ -n "$CLAIM_ABANDON_REVIVED" ]; then
         note "TAKEOVER ABANDONED — lane $CLAIM_WINNER is alive again. Rule 1: stop and report; do not author a successor."
         write_event "$lane" CLAIM-LOST "$obj" "→" "lane:$CLAIM_WINNER" "abandoned: $CLAIM_WINNER is no longer dead, takeover withdrawn before landing" "$(utc_now)" "$uuid"
+      elif [ "$wrc" = 9 ]; then
+        note "TAKEOVER ABANDONED — lane $CLAIM_WINNER's dead-lane verdict could not be reconfirmed before this push landed (above). Rule 1: stop and report; do not author a successor."
+        write_event "$lane" CLAIM-LOST "$obj" "→" "lane:$CLAIM_WINNER" "abandoned: the dead verdict on $CLAIM_WINNER could not be reconfirmed; takeover withdrawn before landing" "$(utc_now)" "$uuid"
       else
         note "CLAIM LOST — lane $CLAIM_WINNER's claim on $obj landed on main first. Rule 1: stop and report; do not author a successor."
         write_event "$lane" CLAIM-LOST "$obj" "→" "lane:$CLAIM_WINNER" "abandoned: $CLAIM_WINNER landed its claim first" "$(utc_now)" "$uuid"

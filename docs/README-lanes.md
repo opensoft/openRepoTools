@@ -1665,7 +1665,12 @@ finds it in the PROCESS TABLE instead (`pgrep -f` for a live `--fork-session`,
 then `ps -o pid=,ppid=,args= -p` per candidate — portable across GNU and
 BSD/macOS), matched against every id this lane's row has ever carried, and
 excludes the lane's own live holder (`live_holder`, the same implementation
-`live-holder` already calls). `lane-end <lane> --retire <pid>` tries `forks`
+`live-holder` already calls) **and the harness's own companion of it** —
+Amendment 8 ruling (g)'s `kind: bg` record carrying the same id in the same
+profile as an interactive record of it, which is one session and not a rival
+holder, together with any wrapper whose child is that companion. A records
+tree that cannot be read for that test is a read that failed, never "no
+companion". `lane-end <lane> --retire <pid>` tries `forks`
 first and this second, and on a match here it TERMs the pair — the
 `bg-pty-host` parent and its child — and reports the pids it signalled; it
 refuses, naming the reason, when the pid given is the lane's own live session

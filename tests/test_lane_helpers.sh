@@ -591,6 +591,11 @@ add_seed_row "| \`repoN-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026
 # peer resumes repoT-1 between that grant and the takeover's own push landing.
 add_seed_row "| \`repoT-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoT/x.md | ACTIVE |"
 add_seed_row "| \`repoT-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoT/x.md | ACTIVE |"
+# repoTx-1 — Copilot on 05d7889, PR #61: dead exactly as repoT-1, and the same
+# stale-pre-fetch race, but what the takeover's own recheck meets is a log it
+# CANNOT READ at all, never a RESUMED line; repoTx-2 is the taker.
+add_seed_row "| \`repoTx-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoTx/x.md | ACTIVE |"
+add_seed_row "| \`repoTx-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoTx/x.md | ACTIVE |"
 add_seed_row "| \`repoH-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoH/x.md | ACTIVE |"
 add_seed_row "| \`repoH-2\` | harness \`$DEAD_ID\` | Raven / test / brett | 2026-09-11T00:00Z | none | handoffs/repoH/y.md | ACTIVE |"
 add_seed_row "| \`repoP-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoP/x.md | ACTIVE · LANDING #7 into repoP main |"
@@ -864,6 +869,11 @@ NOW_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'OPENED — lane repoT-1, session %s@Eagle, %s, opensoft/repoT#1 ← opensoft/repoT#0\n' "$DEAD_ID" "$OLD_UTC"
   printf 'RETIRED — lane repoT-1, session %s@Eagle, %s, lane:repoT-1\n' "$DEAD_ID" "$NOW_UTC"
 } > "$WIP/lanes/log/repoT-1.md"
+{ printf '# lane repoTx-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoTx-1, session %s@Eagle, %s, lane:repoTx-1 → home opensoft/repoTx; estate repoTx\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'OPENED — lane repoTx-1, session %s@Eagle, %s, opensoft/repoTx#1 ← opensoft/repoTx#0\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repoTx-1, session %s@Eagle, %s, lane:repoTx-1\n' "$DEAD_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoTx-1.md"
 git -C "$WIP" add -- lanes/log
 git -C "$WIP" commit -q -m "seed two object logs"
 git -C "$WIP" push -q origin main
@@ -1697,6 +1707,35 @@ has  "…the abandon note says WHY, never that a rival claim landed first" "$(ca
 run "$E" who "opensoft/repoT#1"
 is   "…and the object is still repoT-1's own — the taker never wrote a TAKEOVER" "$(printf '%s\n' "$out" | grep -c '^HOLDS')" 1
 has  "…held by the revived lane itself" "$out" "HOLDS    lane repoT-1"
+
+# AND A RECHECK THAT CANNOT READ THE SOURCE LANE'S LOG AT ALL (Copilot on
+# 05d7889, PR #61). `holder_is_dead` used to read the log in one pipeline whose
+# status was `awk`'s, so an unreadable log came back as an empty verdict with
+# no marker set, and the abort told the operator the log had "moved past the
+# terminal line" — which nothing had read. The peer removes repoTx-1's log
+# from origin on the same stale-pre-fetch trick, so the grant is made on the
+# old ref and the recheck after the rebase finds no log to read. It still
+# aborts with 9, in words that say only what was established. The log is put
+# back afterwards so no later section meets a row with no log.
+git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
+git -C "$CLONE2" rm -q -- lanes/log/repoTx-1.md
+git -C "$CLONE2" commit -q -m "fixture: repoTx-1's log is unreadable on the takeover's recheck"
+git -C "$CLONE2" push -q origin main
+TX_GONE_AT="$(git -C "$CLONE2" rev-parse HEAD)"
+
+run env LANES_LANE=repoTx-2 LANES_NO_FETCH=1 "$E" claim "opensoft/repoTx#1" --no-github --force
+is    "a dead-lane takeover whose source log CANNOT BE READ on the recheck aborts, exit 9" "$rc" 9
+has   "…saying the dead verdict could not be reconfirmed because the log was not read" "$err" "its own object log could not be read, or yielded no lane-kind line at all"
+hasnt "…never that the log moved past its terminal line, which nobody read" "$err" "has moved past the terminal line"
+hasnt "…nor that the lane is alive again, which nobody saw" "$err" "is alive again"
+has   "…and the CLAIM-LOST line says the same, never 'no longer dead'" "$(cat "$LOGD/repoTx-2.md" 2>/dev/null)" "abandoned: the dead verdict on repoTx-1 could not be reconfirmed"
+hasnt "…in either half of it" "$(cat "$LOGD/repoTx-2.md" 2>/dev/null)" "repoTx-1 is no longer dead"
+
+git -C "$CLONE2" pull -q --rebase origin main 2>/dev/null
+git -C "$CLONE2" checkout -q "$TX_GONE_AT^" -- lanes/log/repoTx-1.md
+git -C "$CLONE2" commit -q -m "fixture: repoTx-1's log restored"
+git -C "$CLONE2" push -q origin main
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null
 
 # ------------------------------------- the row's cells, by header position
 
@@ -4968,6 +5007,40 @@ hasnt "…but never repoM-1's OWN live pid, excluded over live_holder" "$out" "$
 # matches `--fork-session`, so without the ppid fence it would be read again
 # on its own turn as a second, headless "parent" of nothing.
 is   "…and exactly one row: the child is never read as a second parent" "$(printf '%s\n' "$out" | grep -c .)" 1
+
+# AMENDMENT 8 RULING (g)'s COMPANION IS NEVER A DUPLICATE (Copilot on 05d7889,
+# PR #61). The SAME process pair, but now the harness has written a `kind: bg`
+# record for $DUP_PARENT carrying repoM-1's own id in the SAME profile as the
+# lane's interactive record of it — the shape ruling (g) calls one session,
+# not a rival holder. `live_holder` passes over a `bg` record by design, so
+# before this fix the process-table read named the companion as a duplicate
+# and `lane-end --retire` TERMed one half of the live session that IS the lane.
+dup_parent_start="$(cut -d' ' -f22 "/proc/$DUP_PARENT/stat" 2>/dev/null || printf '')"
+printf '{"pid":%s,"sessionId":"%s","cwd":"/workspace","procStart":"%s","kind":"bg","status":"busy"}\n' \
+  "$DUP_PARENT" "$MLIVE_ID" "$dup_parent_start" > "$sessions_dir/$DUP_PARENT-repoM1-companion.json"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_M" FAKE_PS_RECORDS="$FAKE_PS_M" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_M" \
+  "$E" duplicate-holder repoM-1
+is    "a fork-session pid that is the lane's own same-profile bg COMPANION is no duplicate: 8" "$rc" 8
+hasnt "…never naming the companion" "$out" "$DUP_PARENT"
+hasnt "…nor the child it wraps" "$out" "$DUP_CHILD"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_M" FAKE_PS_RECORDS="$FAKE_PS_M" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_M" \
+  "$END" repoM-1 --retire "$DUP_PARENT"
+is    "…and lane-end --retire REFUSES the companion rather than terming it" "$rc" 2
+has   "…naming it as the harness's own companion of the lane's live session" "$err" "HARNESS'S OWN COMPANION"
+hasnt "…never reporting a retirement" "$err" "RETIRED lane repoM-1's duplicate holder"
+is    "…and the companion and its child are both still running" \
+      "$(kill -0 "$DUP_PARENT" 2>/dev/null && kill -0 "$DUP_CHILD" 2>/dev/null && echo both-alive)" "both-alive"
+# The COMPANION'S record on the CHILD instead — the harness may record the
+# `claude` leaf rather than its wrapper — drops the pair just the same.
+rm -f "$sessions_dir/$DUP_PARENT-repoM1-companion.json"
+dup_child_start="$(cut -d' ' -f22 "/proc/$DUP_CHILD/stat" 2>/dev/null || printf '')"
+printf '{"pid":%s,"sessionId":"%s","cwd":"/workspace","procStart":"%s","kind":"bg","status":"busy"}\n' \
+  "$DUP_CHILD" "$MLIVE_ID" "$dup_child_start" > "$sessions_dir/$DUP_CHILD-repoM1-companion.json"
+run env FAKE_PGREP_F_PIDS="$FAKE_PGREP_F_M" FAKE_PS_RECORDS="$FAKE_PS_M" FAKE_PGREP_CHILDREN="$FAKE_PGREP_CHILDREN_M" \
+  "$E" duplicate-holder repoM-1
+is    "a wrapper whose CHILD is the lane's bg companion is the companion's host, never a duplicate: 8" "$rc" 8
+hasnt "…never naming the wrapper" "$out" "$DUP_PARENT"
+rm -f "$sessions_dir/$DUP_CHILD-repoM1-companion.json"
 
 # Copilot round 8, PR #61: being IN the global fork-session fence only proves
 # a child is SOME `--fork-session` process, not THIS parent's transcript's —
