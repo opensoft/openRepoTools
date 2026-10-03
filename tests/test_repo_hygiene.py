@@ -1650,6 +1650,23 @@ def test_agents_md_is_short_enough_to_be_read():
     a line the other bought, and the cap is the count of what merged rather
     than either side's number — the rule the 224 entry states.
 
+    265 -> 278 on 2026-09-15, for ONE BINDING PER LANE — lane-collision-protocol
+    AMENDMENT 18, ratified 2026-09-14T13:15:18Z, opensoft/openRepoTools#38. The
+    thirteen lines are a RULE and not prose, and they are the rule an assistant
+    gets WRONG if it is inferred rather than read: this tooling has always said
+    a lane whose recorded session is not live is a lane to take, and the one
+    thing that sentence never said is WHERE it may be said from. A pid does not
+    cross a pid namespace, so from another bench container on the same machine
+    the liveness read is meaningless and the honest answer is UNKNOWN — measured
+    on 2026-09-14, when pyBench read cloudBench's record, called a running lane
+    dead and started writing it from a second place. The paragraph names the
+    read that answers (`binding`), the one exception that makes a binding
+    elsewhere provably dead (a window gone from a shared tmux server), the act a
+    second place takes instead of taking (`--request-handoff`, and the wait),
+    the one word that overrides it and the fact that it is never automatic, and
+    the three variables the launcher owns. Every one of those is a thing an
+    assistant would otherwise do the opposite of.
+
     259 -> 265 the same day, for SIX LINES that stop this file prescribing a
     guard its own wrapper refuses to use (Copilot rounds 7 and 8 on #47). The
     snippet counted with `pgrep -fc`, which `tests/run.sh` deliberately does
@@ -1702,9 +1719,21 @@ def test_agents_md_is_short_enough_to_be_read():
     twenty-seven are #119's three rulings; neither is over a line the other
     bought, and the cap is the count of what merged rather than either side's
     number — the rule the 224 entry states.
+
+    278 + 292 MEET AT 305 on 2026-10-03, where #83 merged `main` at `92bd21f`
+    (#119). Both raised the same 265: thirteen lines are Amendment 18's ONE
+    BINDING rule and twenty-seven are the cycle's three rulings, and neither is
+    over a line the other bought. The cap is the count of what merged, 265 + 13
+    + 27, rather than either side's number — the rule the 224 entry states.
+
+    303 + 305 MEET AT 316 on 2026-10-03, where #93 merged `main` at `6faed35`
+    (#83). Each side had already counted #119's twenty-seven over the shared
+    265, so the merged file is 265 + 27 + #93's eleven (the one-line `awk -v`
+    rule) + #83's thirteen (the ONE BINDING rule): the count of what merged,
+    rather than either side's number — the rule the 224 entry states.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 303, f"AGENTS.md is {len(lines)} lines; the cap is 303"
+    assert len(lines) <= 316, f"AGENTS.md is {len(lines)} lines; the cap is 316"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -2170,9 +2199,27 @@ def test_readme_is_short_enough_to_be_read():
     lines it buys in § "The lane tooling" and § "Install" fit inside 472. A cap
     is a budget and not a target: an entry that raised it by fifteen because
     fifteen lines were written would make the number mean nothing.
+
+    472 -> 484 on 2026-10-02, for #57 (the install receipt). Twelve lines: the
+    ten of the receipt paragraph in § "Install", the blank line after it, and
+    one row in the environment table for `$OPENREPOTOOLS_DATA_DIR`. They are
+    behaviour a person MEETS rather than prose about it. The receipt is the
+    only place a retirement's evidence is explained - what a row is, that a
+    digest which still matches is this installer's copy and is removed, that
+    one which has MOVED is the person's edit and is named and left with the
+    `rm` printed, and that rows are keyed by DESTINATION, so moving
+    `$OPENREPOTOOLS_BIN_DIR` keeps the old directory's evidence. 0600 and the
+    fallback are the two facts a person meeting a refused retirement needs:
+    the mode the file is born at, and that a path with no row is read by the
+    `Installed on PATH by` header as before. The paragraph was written at
+    eighteen lines and cut to ten before this entry; the cap is raised for the
+    facts above and for no arithmetic - the artifact count stays where
+    `tests/test_openrepotools_command.py` derives it, and not here. Every dated
+    entry above stays, and none of these twelve is over a line one of them
+    bought.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 472, f"README.md is {len(lines)} lines; the cap is 472"
+    assert len(lines) <= 484, f"README.md is {len(lines)} lines; the cap is 484"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

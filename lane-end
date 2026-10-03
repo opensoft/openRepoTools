@@ -556,7 +556,7 @@ done
 # what the sweep will close before it closes it; an agent's stdin is not a
 # terminal, so the word is `--yes` typed by a person"*. This half makes no
 # decision of its own about what is dormant: it asks the READ — `lanes --closed
-# --prefix <repo>`, whose thirteenth column is the row's class — so the listing
+# --prefix <repo>`, whose fourteenth column is the row's class — so the listing
 # and the sweep can never disagree about which rows they are talking about, and
 # `lanes-edit.sh retire-rows` re-proves every one of clause (c)'s refusals for
 # itself before it writes a byte.
@@ -643,7 +643,10 @@ if [ -n "$retire_dormant" ]; then
   rd_lanes=(); rd_n=0; rd_flagged=0
   rd_report=""
   TAB="$(printf '\t')"
-  while IFS="$TAB" read -r d_lane d_state d_ws d_pf d_win d_sid d_dir d_obj d_age d_cmd d_home d_fk d_class d_start d_was d_flags; do
+  # THE READ'S SEVENTEEN COLUMNS BY NAME: 13 is Amendment 18(b)'s locality and
+  # 14 to 17 are Amendment 19's class, start, head and flags — so the class this
+  # sweep selects on is the fourteenth, never the thirteenth.
+  while IFS="$TAB" read -r d_lane d_state d_ws d_pf d_win d_sid d_dir d_obj d_age d_cmd d_home d_fk d_loc d_class d_start d_was d_flags; do
     [ -n "${d_lane:-}" ] || continue
     [ "${d_class:-none}" = dormant ] || continue
     rd_lanes+=("$d_lane")

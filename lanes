@@ -99,7 +99,9 @@ Inside a lane checkout: THAT REPOSITORY's lanes, ending with the next free
 position and the exact `lane-start <repo> <n>` that takes it. Outside one: every
 lane the register and the lane logs know. Newest activity first: name, state,
 workstation, profile, tmux window, last transcript uuid, directory, held objects
-and age — and for a PAUSED lane, the exact command that restarts it.
+and age — and the ONE act for it: for a PAUSED lane the exact command that binds
+it, and for a LIVE one the exact `tmux` that attaches to it, because a lane that
+is running is never started a second time.
 
   --fetch          refresh from origin first. Without it the read is LOCAL and
                    the foot of the listing says how old this checkout's answer
@@ -473,13 +475,15 @@ printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
 	LANE STATE WHERE PROFILE WINDOW "LAST TRANSCRIPT" AGE DIRECTORY
 n=0
 defects=0
-# COLUMNS 13 TO 16 ARE AMENDMENT 19'S — the row's CLASS (`closed`, `dormant`
+# THE LAST NAME TAKES EVERY REMAINING FIELD, so `r_loc` — Amendment 18(b)'s
+# column 13 — is named here even though this listing does not render it: without
+# it column 13 arrives glued to the fork COUNT, and `0<TAB>here` is not a count.
+# COLUMNS 14 TO 17 ARE AMENDMENT 19'S — the row's CLASS (`closed`, `dormant`
 # or `none`), its `started` cell, its state cell's head and the flag words in
-# that cell — and they are read here for the reason every field of this row is
-# read by its own index: a reader that stopped at twelve would take all four of
-# them as the TWELFTH, and the twelfth is the fork count this listing prints a
-# DEFECT for.
-while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_restart r_home r_fk r_class r_start r_was r_flags; do
+# that cell — and they are named for the same reason: every field of this row
+# is read by its own index, and the read prints no column empty, because an
+# empty one between two tabs is no field at all to this `read`.
+while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_obj r_age r_restart r_home r_fk r_loc r_class r_start r_was r_flags; do
 	[ -n "${r_lane:-}" ] || continue
 	printf '%-26s %-8s %-10s %-12s %-22s %-38s %-9s %s\n' \
 		"$r_lane" "$r_state" "$r_ws" "$r_pf" "$r_win" "$r_sid" "$r_age" "$r_dir"
@@ -495,19 +499,17 @@ while IFS="$(printf '\t')" read -r r_lane r_state r_ws r_pf r_win r_sid r_dir r_
 	# `pclaude --lane <lane> <profile>` form where the record carries no profile
 	# yet — is stated once, in `lanes_rows`, and rendered here. The word it
 	# prints is `lane <name>` since Amendment 18 Addendum 2 retired `restart`.
-	# AND THE WORD IS THE SAME WORD FOR A **LIVE** LANE, under its own label:
-	# `lane <name>` ATTACHES to a lane live on this workstation and never starts
-	# a second process (Amendment 18 Addendum 1 (i-1)). The command is the read's
-	# (column 10); which of the two things it is doing is the STATE's, so the
-	# label is chosen here and the command is not.
 	case "${r_restart:-none}" in
 	none | '') : ;;
-	lane\ *)
-		if [ "${r_state:-}" = LIVE ]; then
-			printf '%-26s attach it: %s\n' "" "$r_restart"
-		else
-			printf '%-26s bind it: %s\n' "" "$r_restart"
-		fi ;;
+	lane\ *) printf '%-26s bind it: %s\n' "" "$r_restart" ;;
+	# A LIVE LANE'S ONE ACT IS THE ATTACH AND NEVER A SECOND PROCESS (Amendment
+	# 18 clause (i), on the question of 2026-09-14T13:47Z). The read chose
+	# between `switch-client` and `attach` — it knows whether this process is
+	# inside tmux — and filled the target in; this renderer says which kind of
+	# act it is, because "bind it" over a `tmux attach` would describe a binding
+	# that is not being made: the session is already running and this only puts
+	# a terminal in front of it.
+	tmux\ *) printf '%-26s attach: %s   (it is LIVE — never a second lane-start on a running lane)\n' "" "$r_restart" ;;
 	*) printf '%-26s bind it: %s   (no profile recorded yet; it is written at this lane next start or swap)\n' "" "$r_restart" ;;
 	esac
 	# THE SECOND LINE A CLOSED OR DORMANT ROW GETS (Amendment 19(b)), and one

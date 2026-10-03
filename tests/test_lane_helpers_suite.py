@@ -31,6 +31,7 @@ import os
 import re
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -111,15 +112,37 @@ TIMEOUT_SECONDS = 5400
 #: before, and it did not survive TIMEOUT_SECONDS being raised from 2400. This
 #: reads the bash line and REFUSES the pair, so raising one without the other
 #: is red in seconds on every platform rather than red in an hour on one.
+#:
+#: AND SINCE #83 THE FIXTURE MAY BE DERIVED RATHER THAN WRITTEN: `sleep
+#: "$LIVE_SLEEP"`, where `LIVE_SLEEP` is this file's own `TIMEOUT_SECONDS`
+#: read back out of it by `sed`, plus a margin. That form is accepted only where
+#: the same pattern, applied to THIS file, finds the number this module runs
+#: with — so the pair is still proved, now by the read the suite makes.
+_SED_READ = r"s/^TIMEOUT_SECONDS = \([0-9][0-9]*\).*/\1/p"
+
+
 def test_the_liveness_fixture_outlives_the_suite_timeout():
-    hit = [ln for ln in SUITE.read_text(encoding="utf-8").splitlines()
-           if "LIVE_PID=$!" in ln]
+    text = SUITE.read_text(encoding="utf-8")
+    hit = [ln for ln in text.splitlines() if "LIVE_PID=$!" in ln]
     assert len(hit) == 1, (
         "expected exactly one liveness fixture in tests/test_lane_helpers.sh, "
         f"found {len(hit)}: {hit}")
-    m = re.search(r"\bsleep\s+(\d+)\s*&\s*LIVE_PID=\$!", hit[0])
-    assert m, f"the liveness fixture is no longer a bounded sleep: {hit[0]!r}"
-    bound = int(m.group(1))
+    literal = re.search(r"\bsleep\s+(\d+)\s*&\s*LIVE_PID=\$!", hit[0])
+    if literal:
+        bound = int(literal.group(1))
+    else:
+        assert re.search(r'\bsleep\s+"\$LIVE_SLEEP"\s*&\s*LIVE_PID=\$!', hit[0]), (
+            f"the liveness fixture is neither a bounded sleep nor the derived one: {hit[0]!r}")
+        margin = re.search(r"^LIVE_SLEEP=\$\(\(\s*LIVE_BOUND\s*\+\s*(\d+)\s*\)\)", text, re.M)
+        assert margin, "LIVE_SLEEP is no longer LIVE_BOUND plus a fixed margin"
+        assert _SED_READ in text and "test_lane_helpers_suite.py" in text, (
+            "LIVE_BOUND is no longer read out of this file's TIMEOUT_SECONDS")
+        own = re.search(r"^TIMEOUT_SECONDS = ([0-9][0-9]*)",
+                        Path(__file__).read_text(encoding="utf-8"), re.M)
+        assert own and int(own.group(1)) == TIMEOUT_SECONDS, (
+            "the suite's sed read of TIMEOUT_SECONDS would not find the number "
+            "this module runs with, so its fixture would fall back to a default")
+        bound = TIMEOUT_SECONDS + int(margin.group(1))
     assert bound > TIMEOUT_SECONDS, (
         f"the liveness fixture is bounded at {bound}s while this wrapper lets "
         f"the suite run for TIMEOUT_SECONDS={TIMEOUT_SECONDS}s, so the suite is "
