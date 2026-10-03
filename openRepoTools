@@ -2124,8 +2124,8 @@ $WIP_LAST_ERR"
 $(printf '%s\n' "$ahead_log" | sed -e 's/^/    /')
     This command ends by pushing HEAD to $target's main, so it would publish every
     commit above to your workspace repository unreviewed — and what it came to push
-    is $SHAPE_REPOSITORY's $WIP_TEMPLATE_DIR and nothing else. NOTHING was
-    written into that checkout on this run and nothing was staged.
+    is $SHAPE_REPOSITORY's $WIP_TEMPLATE_DIR and nothing else.
+    NOTHING was written into that checkout on this run and nothing was staged.
     Push those commits yourself, or discard them, then re-run:
         openRepoTools wip init"
 		done
