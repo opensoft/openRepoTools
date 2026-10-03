@@ -602,6 +602,11 @@ add_seed_row "| \`repoT-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026
 # CANNOT READ at all, never a RESUMED line; repoTx-2 is the taker.
 add_seed_row "| \`repoTx-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoTx/x.md | ACTIVE |"
 add_seed_row "| \`repoTx-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoTx/x.md | ACTIVE |"
+# repoKr-1 — Copilot on 8ce6c9d, PR #61 (Amendment 18(b)): RETIRED, no live
+# session here, but its last STARTED carries a MODERN binding on another host,
+# so this workstation's empty read proves nothing; repoKr-2 is the taker.
+add_seed_row "| \`repoKr-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoKr/x.md | ACTIVE |"
+add_seed_row "| \`repoKr-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoKr/x.md | ACTIVE |"
 add_seed_row "| \`repoH-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoH/x.md | ACTIVE |"
 add_seed_row "| \`repoH-2\` | harness \`$DEAD_ID\` | Raven / test / brett | 2026-09-11T00:00Z | none | handoffs/repoH/y.md | ACTIVE |"
 add_seed_row "| \`repoP-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoP/x.md | ACTIVE · LANDING #7 into repoP main |"
@@ -903,6 +908,11 @@ NOW_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'OPENED — lane repoTx-1, session %s@Eagle, %s, opensoft/repoTx#1 ← opensoft/repoTx#0\n' "$DEAD_ID" "$OLD_UTC"
   printf 'RETIRED — lane repoTx-1, session %s@Eagle, %s, lane:repoTx-1\n' "$DEAD_ID" "$NOW_UTC"
 } > "$WIP/lanes/log/repoTx-1.md"
+{ printf '# lane repoKr-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoKr-1, session %s@Eagle, %s, lane:repoKr-1 → home opensoft/repoKr; estate repoKr; host elsewhere-host; container none; os linux\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'OPENED — lane repoKr-1, session %s@Eagle, %s, opensoft/repoKr#1 ← opensoft/repoKr#0\n' "$DEAD_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repoKr-1, session %s@Eagle, %s, lane:repoKr-1\n' "$DEAD_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoKr-1.md"
 git -C "$WIP" add -- lanes/log
 git -C "$WIP" commit -q -m "seed two object logs"
 git -C "$WIP" push -q origin main
@@ -1572,6 +1582,20 @@ run env LANES_LANE=repoN-2 "$E" claim "opensoft/repoN#7" --no-github --force
 is   "--force also takes over a lane whose log ends ENDED (a plain lane-end)" "$rc" 0
 has  "…writing a TAKEOVER line" "$(cat "$LOGD/repoN-2.md")" "opensoft/repoN#7 ← lane:repoN-1"
 has  "…naming ENDED, not RETIRED, as the verdict" "$(cat "$LOGD/repoN-2.md")" "log ends ENDED"
+
+# AMENDMENT 18(b): LIVENESS IS PRONOUNCED ONLY FROM INSIDE THE BINDING (Copilot
+# on 8ce6c9d, PR #61). repoKr-1's log ends RETIRED and no record here holds it,
+# exactly like repoL-1 — but its last STARTED was written on `elsewhere-host`,
+# and from here that binding is UNKNOWN, never dead. Refused, naming it.
+run env LANES_LANE=repoKr-2 "$E" claim "opensoft/repoKr#1" --no-github --force
+is    "--force REFUSES a terminal lane whose last binding is on another host" "$rc" 2
+has   "…naming the binding it cannot pronounce on" "$err" "its last binding is on elsewhere-host/none"
+has   "…in Amendment 18(b)'s own words" "$err" "UNKNOWN, never dead (Amendment 18(b))"
+hasnt "…and no takeover is written" "$(cat "$LOGD/repoKr-2.md" 2>/dev/null)" "opensoft/repoKr#1"
+# …while from INSIDE that host and container the same verdict is confirmed.
+run env LANES_LANE=repoKr-2 LANES_HOST=elsewhere-host LANES_CONTAINER=none "$E" claim "opensoft/repoKr#1" --no-github --force
+is    "…and the same takeover from inside that binding's host and container is granted" "$rc" 0
+has   "…writing a TAKEOVER over the dead lane" "$(cat "$LOGD/repoKr-2.md")" "opensoft/repoKr#1 ← lane:repoKr-1"
 
 # ------------------------------------------- LANDING, LANDED, who --landing
 

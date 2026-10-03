@@ -3203,16 +3203,41 @@ claim_is_stale() {   # <lane> <object> <utc-of-the-claim> <its file> <its line>
 # named: the read failed, or it produced no STARTED/PAUSED/RESUMED/ENDED/
 # RETIRED line to judge. It is still `return 1` — fail closed — and only the
 # words a caller prints change.
+#
+# AND THE CONFIRMATION IS PRONOUNCED ONLY FROM INSIDE THE LANE'S LAST BINDING
+# (Copilot on 8ce6c9d, PR #61, against Amendment 18(b) as #83 landed it):
+# *"Liveness is pronounced only from INSIDE the binding's own `host` and
+# `container`, where the pid namespace is the record's: from anywhere else a
+# binding is UNKNOWN, never dead."* `live_holder` answering 8 says no session
+# record on THIS workstation holds the lane — which proves nothing about a lane
+# whose last `STARTED`/`RESUMED` was written on another host or in another
+# container, so a terminal log there plus an empty read here would have handed
+# its open holds to `--force` on a fact nobody could establish. The binding is
+# read off the last such line before the terminal one, with clause (a)'s
+# cutover rule (no `host`/`container`/`os` at all is a line from before it,
+# matched on the line's own workstation), and judged by `binding_is_here` —
+# the one locality rule this file has. Not here, the one exception clause (b)
+# carves out still applies: a shared tmux server on which the binding's window
+# is GONE is a dead binding (`binding_window_state`). Anything else is
+# `HOLDER_BOUND_ELSEWHERE` (the binding's `host/container`), and refused like
+# every other verdict this workstation could not establish. A log with no
+# binding line at all keeps the local read, which is all there is to ask.
 HOLDER_DEAD_VERB=""
 HOLDER_LIVE_TERMINAL=""
 HOLDER_TERMINAL_UNKNOWN=""
 HOLDER_NO_VERDICT=""
+HOLDER_BOUND_ELSEWHERE=""
+HOLDER_DEAD_WHY=""
+HOLDER_TERMINAL_SEEN=""
 holder_is_dead() {   # <lane>
   hid_l="${1-}"; [ -n "$hid_l" ] || return 1
   HOLDER_DEAD_VERB=""
   HOLDER_LIVE_TERMINAL=""
   HOLDER_TERMINAL_UNKNOWN=""
   HOLDER_NO_VERDICT=""
+  HOLDER_BOUND_ELSEWHERE=""
+  HOLDER_DEAD_WHY="no live session on this workstation"
+  HOLDER_TERMINAL_SEEN=""
   hid_rc=0
   hid_ev="$(lane_log_events "$hid_l" 2>/dev/null)" || hid_rc=$?
   if [ "$hid_rc" != 0 ]; then
@@ -3227,6 +3252,32 @@ holder_is_dead() {   # <lane>
     "") HOLDER_NO_VERDICT=1; return 1 ;;
     *) return 1 ;;
   esac
+  HOLDER_TERMINAL_SEEN="$hid_verb"
+  # AMENDMENT 18(b) — the last binding, and whether this place may pronounce
+  # on it (the paragraph above `HOLDER_DEAD_VERB`).
+  hid_bind="$(printf '%s\n' "$hid_ev" | awk -F"$US" '
+    ($3=="STARTED"||$3=="RESUMED") && substr($8,1,5)!="fork " { ws=$5; pay=$8; seen=1 }
+    END { if (seen) printf "%s%c%s\n", ws, 31, pay }')"
+  if [ -n "$hid_bind" ]; then
+    hid_bws="${hid_bind%%"$US"*}"; hid_bpay="${hid_bind#*"$US"}"
+    hid_bhost="$(payload_subfield "$hid_bpay" host)"
+    hid_bcont="$(payload_subfield "$hid_bpay" container)"
+    hid_bos="$(payload_subfield "$hid_bpay" os)"
+    hid_bwin="$(payload_subfield "$hid_bpay" window all)"
+    hid_blegacy=""
+    [ -n "$hid_bhost$hid_bcont$hid_bos" ] || hid_blegacy=legacy
+    [ -n "$hid_bhost" ] || hid_bhost="$hid_bws"
+    [ -n "$hid_bcont" ] || hid_bcont=none
+    if ! binding_is_here "$hid_bhost" "$hid_bcont" "$hid_blegacy"; then
+      if [ "$(binding_window_state "$hid_bhost" "$hid_bwin" "$hid_blegacy")" = gone ]; then
+        HOLDER_DEAD_VERB="$hid_verb"
+        HOLDER_DEAD_WHY="its binding's window is gone from this host's tmux, Amendment 18(b)"
+        return 0
+      fi
+      HOLDER_BOUND_ELSEWHERE="${hid_bhost:-unknown}/${hid_bcont}"
+      return 1
+    fi
+  fi
   hid_ids="$( { session_ids_of_lane "$hid_l" 2>/dev/null || :
                 session_ids_local_of_lane "$hid_l" 2>/dev/null || :; } | awk 'NF && !seen[$0]++')"
   # THREE ANSWERS, NEVER TWO CONFLATED (Copilot round 1, opensoft/openRepoTools#61):
@@ -9722,6 +9773,12 @@ claim_rescan_hook() {
     elif [ -n "$HOLDER_TERMINAL_UNKNOWN" ]; then
       CLAIM_ABANDON_REVIVED=""
       note "lane $CLAIM_SKIP's dead-lane verdict could not be reconfirmed — this workstation could not read whether a live session backs it up before this takeover's push landed. That is NOT 'still dead', so the takeover is abandoned rather than assumed safe"
+    elif [ -n "$HOLDER_BOUND_ELSEWHERE" ]; then
+      # AMENDMENT 18(b) (Copilot on 8ce6c9d, PR #61): the log the takeover
+      # was granted on now names a last binding on another host or container,
+      # whose liveness this place cannot pronounce — not a revival seen.
+      CLAIM_ABANDON_REVIVED=""
+      note "lane $CLAIM_SKIP's dead-lane verdict could not be reconfirmed — its last binding is now on $HOLDER_BOUND_ELSEWHERE (host/container), and from here that binding is UNKNOWN, never dead (Amendment 18(b)). The takeover is abandoned rather than assumed safe"
     elif [ -n "$HOLDER_NO_VERDICT" ]; then
       CLAIM_ABANDON_REVIVED=""
       note "lane $CLAIM_SKIP's dead-lane verdict could not be reconfirmed — its own object log could not be read, or yielded no lane-kind line at all, before this takeover's push landed. That is NOT 'still dead' and NOT 'it resumed' either: nothing was read. The takeover is abandoned rather than assumed safe"
@@ -12183,7 +12240,7 @@ EOF
       if holder_is_dead "$h_lane"; then
         takeover_from="$h_lane"
         takeover_dead=1
-        takeover_note="lane $h_lane is dead (log ends $HOLDER_DEAD_VERB, no live session on this workstation, issue #30)"
+        takeover_note="lane $h_lane is dead (log ends $HOLDER_DEAD_VERB, $HOLDER_DEAD_WHY, issue #30)"
         # A DIFFERENT PHRASE FOR THE PUBLIC COMMENT (Copilot round 3, PR #61):
         # the formatter below used to say every takeover was "of the stale
         # claim" unconditionally, which is simply false for this branch — the
@@ -12193,6 +12250,15 @@ EOF
         # why.
         takeover_reason_phrase=" (takeover of a dead lane's hold: $takeover_note)"
       else
+        # AMENDMENT 18(b) — A TERMINAL LOG WHOSE LAST BINDING IS ANOTHER PLACE'S
+        # IS UNKNOWN, NEVER DEAD (Copilot on 8ce6c9d, PR #61), and it is
+        # refused here, ahead of the verb test and of Rule 1's age-only test,
+        # for the reason `HOLDER_TERMINAL_UNKNOWN` is below: this workstation
+        # could not establish that nothing still runs under that name, and the
+        # log is exactly the shape issue #30 distrusts enough to check.
+        if [ -n "$HOLDER_BOUND_ELSEWHERE" ]; then
+          die "--force refused: lane $h_lane's own log ends $HOLDER_TERMINAL_SEEN, but its last binding is on $HOLDER_BOUND_ELSEWHERE (host/container), and liveness is pronounced only from inside a binding's own host and container — from here it is UNKNOWN, never dead (Amendment 18(b)). Run this takeover from that host and container, or have the lane's holds released there. Rule 1: the lane stops and reports; it does not author a successor." 2
+        fi
         if [ "$h_verb" != CLAIMED ]; then
           # NAMES ITS OWN VERB, NOT ONLY THE THREE THAT USED TO BE POSSIBLE
           # HERE (Copilot round 8, PR #61): before issue #30, `$h_verb` could

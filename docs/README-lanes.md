@@ -902,7 +902,13 @@ deliberately not dead — **and** no live session for it is found on this
 workstation (`live_holder`, the one liveness implementation this file has,
 never a second one): a `RETIRED` register line is not proof by itself that
 nothing is still running under that name (opensoft/openRepoTools#39), so the
-register's verdict is checked before it is trusted. Before this the only path
+register's verdict is checked before it is trusted. **That check is made only
+from inside the lane's last binding** (Amendment 18(b)): the `host` and
+`container` of its last `STARTED`/`RESUMED` before the terminal line must be
+this place's — a line from before Amendment 18(a) is matched on its own
+workstation — or the binding's window must be gone from a tmux server this
+host shares with it. A lane last bound anywhere else is UNKNOWN, never dead,
+and `--force` refuses it, naming that binding. Before this the only path
 was a `release` of the dead lane's held objects by hand, one at a time, run
 under its own name on the taker's word.
 
