@@ -626,7 +626,7 @@ YAML
 sessions_dir="$HOME/.claude-profiles/profiles/opensoft/team/t1/sessions"
 mkdir -p "$sessions_dir" "$HOME/.claude/sessions"
 
-# 4200 SECONDS, AND THE NUMBER IS TIED TO THE RUNNER'S OWN BOUND (A9 Addendum
+# 6000 SECONDS, AND THE NUMBER IS TIED TO THE RUNNER'S OWN BOUND (A9 Addendum
 # 4, R-A9-11). This process IS the liveness fixture: every "a live holder …"
 # case from here to the foot of the file asks whether it is still running, and
 # `lane-start`'s own refusals name its pid. On macOS it is the ONLY thing they
@@ -657,8 +657,9 @@ mkdir -p "$sessions_dir" "$HOME/.claude/sessions"
 # the last assertion in this file checks it was still running when the run
 # ended. THE PAIR IS ASSERTED, not merely written down twice: the wrapper reads
 # this line and refuses a bound that does not exceed its own timeout, so the
-# next person to raise one is told to raise the other.
-sleep 4200 & LIVE_PID=$!
+# next person to raise one is told to raise the other. And it was: 3600 -> 5400
+# on 2026-10-03 (the wrapper says why), so 4200 -> 6000, the same ten minutes.
+sleep 6000 & LIVE_PID=$!
 live_start="$(cut -d' ' -f22 "/proc/$LIVE_PID/stat" 2>/dev/null || printf '')"
 sleep 0.05 & DEAD_PID=$!
 wait "$DEAD_PID" 2>/dev/null

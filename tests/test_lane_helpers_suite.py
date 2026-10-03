@@ -73,6 +73,21 @@ SUITE = REPO / "tests" / "test_lane_helpers.sh"
 #: reason about: a loaded WORKSTATION is slow too, and a legitimate run of this
 #: same tree took 2129 s here with six sibling suites building beside it.
 #:
+#: 3600 -> 5400 on 2026-10-03, AND FOR THE SAME REASON A THIRD TIME: #93
+#: (Amendment 19, ~3016 cases against main's ~2795) crossed it on darwin.
+#: Measured, both on that PR's head, both the same single failure —
+#: `subprocess.TimeoutExpired: … timed out after 3600 seconds` — so neither
+#: run says which assertion was in flight:
+#:
+#:     tests-macos   `08dad90`  `1 failed, 680 passed in 3961.39s`
+#:     tests-macos   `968ab5e`  `1 failed, 693 passed in 3927.56s`
+#:     tests         `968ab5e`  green, `694 passed in 2466.84s`
+#:
+#: and on main at `69bf48d`, where the suite still FINISHED, the job's pytest
+#: took 3741.66 s in all: it was already within minutes of this bound. Since
+#: #119 `tests-macos` is the landing gate on the `ready` label, so a bound the
+#: suite cannot finish inside is a gate nothing can pass and nobody can read.
+#:
 #: THE HONEST FIX IS THE SUITE'S DURATION AND NOT THIS NUMBER — one bash file
 #: that runs real `git` several thousand times, serially, for 45 minutes — and
 #: it is opensoft/openRepoTools#77. This is the cap moving out of that work's
@@ -80,7 +95,7 @@ SUITE = REPO / "tests" / "test_lane_helpers.sh"
 #:
 #: The job itself has no `timeout-minutes` in `.github/workflows/tests.yml`, so
 #: nothing under it bites before this does; GitHub's own default is 360 min.
-TIMEOUT_SECONDS = 3600
+TIMEOUT_SECONDS = 5400
 
 
 #: THE SUITE'S LIVENESS FIXTURE MUST OUTLIVE THE BOUND ABOVE, and at `758a536`
