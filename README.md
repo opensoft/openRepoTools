@@ -193,7 +193,9 @@ and runs `link-estates`.
 wrote, each by name, and never `git add -A`. A checkout it ADOPTS that carries
 modified, deleted or untracked files the template does not name is a refusal
 naming them, asked before a byte is written into it — the repository on the
-other end of that push is where your unfinished work lives.
+other end of that push is where your unfinished work lives. So is one ahead of
+that repository's `main` by any commit but an earlier run's unpushed seed: it
+names those commits, and pushing or discarding them is yours.
 
 **Idempotent**: a workstation that already has a workspace does nothing at all,
 decided by a file test and not a network call. Exit 0 is done or already done;

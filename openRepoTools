@@ -1717,6 +1717,88 @@ wip_fetch_template_file() {
 	return 1
 }
 
+# --- step 6a's history question: is this commit one `wip init` made? --------
+#
+# STEP 6a LETS THROUGH, AHEAD OF origin's `main`, THIS COMMAND'S OWN SEED AND
+# NOTHING ELSE (#64), so the answer here is ALL of what step 8's own commit is
+# and never one part of it a person's commit could happen to share. Four tests,
+# and a commit has to pass every one:
+#
+#   * ONE PARENT OR NONE. Step 8 commits on top of HEAD — on an empty `main`
+#     that is a root commit — and never merges. It is asked first because the
+#     path test below cannot ask it: `diff-tree` prints NOTHING for a merge
+#     unless it is asked for a combined diff, so a merge would answer "no path
+#     outside the template" by naming no path at all.
+#   * THE SUBJECT step 8 writes, `Seed this workspace repository from …` — a
+#     PREFIX, because what follows it names the template's repository and
+#     directory, which are this file's constants and not a part of the promise.
+#   * THE BODY'S `Written by \`openRepoTools wip init\`` line, which is the
+#     sentence in that message that says whose commit it is.
+#   * AND A TREE THAT DIFFERS FROM ITS PARENT'S — the empty tree, for a root
+#     commit, which is what `--root` compares it with — AT ONE OR MORE TEMPLATE
+#     PATHS AND AT NO OTHER. Step 8 commits `"${written[@]}"` by pathspec, which
+#     is template paths and nothing else, and commits only where `diff --cached`
+#     says there is something to commit, so it has never made an empty one.
+#
+# A MESSAGE IS SOMETHING ANYBODY CAN TYPE, which is why the tree is asked as
+# well as the words: a commit wearing the seed's subject and trailer and
+# touching a path the template does not name is somebody's own work in a
+# borrowed coat, and it is refused like any other. What this does NOT do is
+# compare the bytes at those paths with the template: the seed it is looking
+# at was written from the template at whatever commit THAT run pinned, which
+# need not be this run's, and Brett Heap's ruling on #64 asks for the subject,
+# the trailer and the tree — the parent count is the tree test made sound —
+# and not the bytes. A person who writes this command's own message over
+# their own edit of a template file has said, in so many words, that it is
+# the seed.
+#
+# `--no-show-signature` ON EVERY `log` HERE, because `log.showSignature` is a
+# person's own config and it prints the signature check's report ON STDOUT,
+# ahead of the format: a seed this command committed on a machine with
+# `commit.gpgSign` set would then read back with that report as its first
+# line — `No signature`, `Good "git" signature …` — instead of its subject,
+# and be refused as somebody else's.
+#
+# EVERY READ THAT FAILS IS A NO, so a commit this could not ask about is
+# refused and never passed (#49's lesson, asked of history). Paths are
+# compared as `diff-tree` prints them: one it had to C-quote is never one of
+# `$WIP_TEMPLATE_FILES`, which are nine plain ASCII paths, so it is refused
+# rather than misread.
+wip_is_own_seed() {   # <checkout> <commit> — 0 only for a commit `wip init` itself made
+	local checkout="$1" commit="$2" parents subject body paths path rel known
+	parents="$(git -C "$checkout" log -1 --no-show-signature --format=%P "$commit" 2>/dev/null)" ||
+		return 1
+	case "$parents" in *' '*) return 1 ;; esac
+	subject="$(git -C "$checkout" log -1 --no-show-signature --format=%s "$commit" 2>/dev/null)" ||
+		return 1
+	case "$subject" in
+	'Seed this workspace repository from '*) ;;
+	*) return 1 ;;
+	esac
+	body="$(git -C "$checkout" log -1 --no-show-signature --format=%b "$commit" 2>/dev/null)" ||
+		return 1
+	case "$body" in
+	*'Written by `openRepoTools wip init`'*) ;;
+	*) return 1 ;;
+	esac
+	paths="$(git -C "$checkout" diff-tree --root --no-commit-id --name-only -r "$commit" 2>/dev/null)" ||
+		return 1
+	[ -n "$paths" ] || return 1
+	while IFS= read -r path; do
+		known=0
+		for rel in "${WIP_TEMPLATE_FILES[@]}"; do
+			if [ "$path" = "$rel" ]; then
+				known=1
+				break
+			fi
+		done
+		[ "$known" -eq 1 ] || return 1
+	done <<EOF
+$paths
+EOF
+	return 0
+}
+
 # --- the command itself -----------------------------------------------------
 wip_init() {
 	local config target checkout ref rel dest seeded=0 owed=0 kind
@@ -1942,6 +2024,116 @@ $(sed -e 's/^/    /' -- "$WIP_LAST_OUT")
     into that checkout on this run and nothing was staged.
     Commit, stash or remove those paths, then re-run:
         openRepoTools wip init"
+	fi
+
+	# ---- AND A CHECKOUT AHEAD OF origin's `main` BY ANYTHING BUT THIS
+	# COMMAND'S OWN SEED IS REFUSED THE SAME WAY (#64, Brett Heap's RULING of
+	# 2026-10-02, verbatim "go with option 1 on #64").
+	#
+	# The question above is the WORKTREE and the INDEX, and it never looked at
+	# HISTORY. Step 8 pushes `HEAD:main` wherever HEAD is not what origin's
+	# `main` already carries, and HEAD carries every commit beneath it — so a
+	# clean adopted checkout holding commits of a person's own that never left
+	# this workstation (a register edit made here and not pushed, a note
+	# committed on the wrong clone) had every one of them published to the
+	# `main` of their workspace repository by a command that came to place a
+	# template. That is #40's finding 1 one layer down, and it is closed at the
+	# same gate for the same reason: before step 7 writes a byte, where a
+	# refusal costs nothing and the person's commits are exactly where they
+	# left them, with the list in front of them. Pushing those commits, or
+	# discarding them, is theirs to do; this command does neither.
+	#
+	# THE SEED IS EXEMPT, AND HAS TO BE, or step 8's own promise breaks. A
+	# first run whose push the organisation's PR-only ruleset refused leaves a
+	# clean worktree and EXACTLY ONE commit ahead of `main` — its seed — and
+	# step 8's refusal tells the person that "a re-run after that has only to
+	# push". So a commit this command made is let through, and it is known by
+	# everything that makes it this command's own, never by its message alone:
+	# `wip_is_own_seed` above. Every OTHER commit in `<origin main>..HEAD` is a
+	# refusal naming all of them, seed or not, because what step 8 would push
+	# is the whole range and the person should see the whole range.
+	#
+	# THE REMOTE IS ASKED HERE, ONCE, AND STEP 8 READS THE SAME ANSWER. One
+	# `ls-remote`, one `remote_head`: the range this gate checked and the push
+	# step 8 decides on can never be two different readings of `main`. And the
+	# line read is `refs/heads/main` BY NAME, never the first line: a pattern
+	# of `main` matches every ref whose name ENDS in it, so a branch such as
+	# `refs/heads/backup/main` sorts before `refs/heads/main`, and the first
+	# line was then that branch's tip read as `main` — which would wave through
+	# every commit the branch carries, and tell step 8 that a `main` it never
+	# pushed to already had them.
+	#
+	# A REMOTE THAT COULD NOT BE ASKED IS STEP 8'S OWN ARM, KEPT, as the ruling
+	# keeps it: this check is skipped, said in one line, and the run goes on to
+	# the push, which is the probe. Not a refusal, because there is nothing
+	# true to refuse with — no `main` to name commits against — and because the
+	# remote that will not answer `ls-remote` is the remote step 8 pushes to,
+	# by the same URL, transport and credential, so the push almost always
+	# meets the same wall and step 8 stops the run before the pointer file is
+	# written. And NOT an empty `main` either: `remote_asked` is kept apart
+	# from `remote_head` because an unanswered question read as "no `main`
+	# yet" would put EVERY local commit ahead — refusing the very seed re-run
+	# the exemption above exists for. The window this leaves is a remote that
+	# refuses the question and takes the push a moment later, and that is the
+	# trade the ruling chose with this arm.
+	#
+	# A RANGE THAT CANNOT BE LISTED IS A REFUSAL, NEVER AN EMPTY ONE (#49's
+	# lesson, asked of history). Its usual cause is a `main` this checkout has
+	# never fetched — another workstation pushed to it since — and an empty
+	# list read from that failure is exactly what "nothing ahead, proceed"
+	# looks like.
+	local remote_head="" remote_asked=0 remote_refs history_range where ahead ahead_log commit
+	local seeds_ahead=0
+	if remote_refs="$(git -C "$checkout" ls-remote origin main 2>/dev/null)"; then
+		remote_asked=1
+		remote_head="$(printf '%s\n' "$remote_refs" |
+			awk '$2 == "refs/heads/main" && !seen { print $1; seen = 1 }')"
+	fi
+	if [ "$remote_asked" -eq 0 ]; then
+		say "  could not ask origin where $target's main is, so the commits this checkout"
+		say "  carries were not checked against it here; the push below is the probe."
+	elif git -C "$checkout" rev-parse -q --verify 'HEAD^{commit}' >/dev/null 2>&1; then
+		if [ -n "$remote_head" ]; then
+			history_range="$remote_head..HEAD"
+			where="$target's main ($(printf '%.7s' "$remote_head"))"
+		else
+			history_range="HEAD"
+			where="$target's main (it has none yet)"
+		fi
+		wip_quietly git -C "$checkout" rev-list "$history_range" ||
+			die "could not list the commits $checkout carries that are not on $where,
+    so this run cannot tell whether any of them is somebody's unreviewed work — and a
+    history this command could not read is never one it may push. Most often that \`main\`
+    is a commit this checkout has never fetched, because another workstation pushed to it
+    since. NOTHING was written into that checkout on this run and nothing was staged.
+    Fetch it, merge or rebase this checkout's own commits onto origin/main, then re-run:
+        git -C $checkout fetch origin
+        openRepoTools wip init
+    What it said:
+$WIP_LAST_ERR"
+		ahead="$(cat -- "$WIP_LAST_OUT")"
+		for commit in $ahead; do
+			if wip_is_own_seed "$checkout" "$commit"; then
+				seeds_ahead=$((seeds_ahead + 1))
+				continue
+			fi
+			ahead_log="$(git -C "$checkout" log --oneline --no-decorate --no-color \
+				--no-show-signature "$history_range" 2>/dev/null)" || ahead_log="$ahead"
+			die "$checkout carries commits that are not on $where,
+    and not every one of them is this command's own seed:
+$(printf '%s\n' "$ahead_log" | sed -e 's/^/    /')
+    This command ends by pushing HEAD to $target's main, so it would publish every
+    commit above to your workspace repository unreviewed — and what it came to push
+    is $SHAPE_REPOSITORY's $WIP_TEMPLATE_DIR and nothing else. NOTHING was
+    written into that checkout on this run and nothing was staged.
+    Push those commits yourself, or discard them, then re-run:
+        openRepoTools wip init"
+		done
+		case "$seeds_ahead" in
+		0) ;;
+		1) say "  one seed an earlier run committed is not on $target main yet; the push below carries it" ;;
+		*) say "  $seeds_ahead seeds earlier runs committed are not on $target main yet; the push below carries them" ;;
+		esac
 	fi
 
 	# ---- step 7: SEED IT FROM THE TEMPLATE, additively. A repository that
@@ -2411,15 +2603,15 @@ $WIP_LAST_ERR"
 	# carries the seed", write the pointer file and exit 0 over an empty
 	# `main`, and step 1's file test would then return on every later run.
 	# That is the failure step 8 exists to prevent, met one step further on.
-	local local_head remote_head remote_refs
+	#
+	# AND THE REMOTE IS THE ONE STEP 6a ASKED (#64). `remote_head` is that one
+	# `ls-remote`'s answer, so the commits 6a checked against `main` and the
+	# push decided here are a single reading of it, never two. Where 6a could
+	# not ask, `remote_head` is empty and the push below runs: the push IS the
+	# probe, and a question we could not put to the remote is not an answer
+	# from it.
+	local local_head
 	local_head="$(git -C "$checkout" rev-parse HEAD 2>/dev/null || :)"
-	if remote_refs="$(git -C "$checkout" ls-remote origin main 2>/dev/null)"; then
-		remote_head="$(printf '%s\n' "$remote_refs" | awk 'NR==1 {print $1}')"
-	else
-		# Could not ask. Fall through to the push: the push IS the probe, and a
-		# question we could not put to the remote is not an answer from it.
-		remote_head=""
-	fi
 	if [ -z "$local_head" ]; then
 		say "  $checkout has no commit to push"
 	elif [ -n "$remote_head" ] && [ "$local_head" = "$remote_head" ]; then
