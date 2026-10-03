@@ -142,6 +142,16 @@ refuses a prompt whose window, session name and register row are not one lane
 every `UserPromptSubmit` hook of your own exactly where it is). It never writes
 a profile's own settings.json: the launcher owns that one.
 
+It then writes a RECEIPT of the files it placed — one row of
+`<name> <destination> <sha256> <UTC>` each — at
+`${OPENREPOTOOLS_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/openRepoTools}/installed.tsv`,
+mode 0600. That is how a later `--install` knows that a command it is about to
+RETIRE is a copy it wrote rather than a file of yours that happens to carry the
+same header: a digest that still matches is removed, one that has moved — or a
+row it cannot check, for want of a digest tool — is named and left for you. A
+receipt it cannot write is one line on this terminal and never a refused
+install.
+
 `/restart` is the INSIDE half and has to be a skill: a running session cannot
 `exec` a launcher over itself, so it binds the window, stamps the record
 through `lane-start --no-launch` and prints — never a picker (Amendment 11
@@ -171,6 +181,9 @@ Speckit git extension's scripts. `status` only reads.
   $OPENREPOTOOLS_REPO       owner/name to fetch from (default opensoft/openRepoTools)
   $OPENREPOTOOLS_REF        the ref to fetch it at   (default main)
   $OPENREPOTOOLS_BIN_DIR    where --install puts them (default ~/.local/bin)
+  $OPENREPOTOOLS_DATA_DIR   where the receipt goes    (default
+                            $XDG_DATA_HOME/openRepoTools)
+  $XDG_DATA_HOME            the data root it falls back to (default ~/.local/share)
   $AGENT_PROTOCOL_ROOT      where workspace.yaml lives (default ~/.agents)
   $CLAUDE_PROFILES_HOME     the profiles root         (default ~/.claude-profiles)
   $PROJECTS_DIR             your projects directory   (default ~/projects)
@@ -267,6 +280,524 @@ fetch_from_repo() {
 # session's own name are not a register writer's to touch (clause (f)).
 INSTALLABLES=(openRepoTools park resume status lane lanes lane-handoff lane-rename lanes-edit.sh lane-start lane-end link-estates repos.tsv)
 
+# ------------------------------------------ THE RECEIPT OF WHAT IT PLACED
+#
+# opensoft/openRepoTools#57, and it descends from COPILOT'S ROUND-3 FINDING ON
+# #45 (`openRepoTools:263`) — which is a finding about the retirement directly
+# below this section:
+#
+#     "This ownership test is only a searchable content substring, not proof
+#     that this installer created the file. A user-owned `restart` script
+#     copied from an old installation or containing the same banner will
+#     satisfy `grep` and be deleted on the next install […] Use durable
+#     ownership metadata or another check that distinguishes installer output
+#     from a user file before removing it."
+#
+# IT WAS DECLINED FOR `restart`, AND THE REASON DOES NOT GENERALISE. No
+# installer that ever placed `restart` wrote a receipt, so no receipt can
+# identify the copies that are on people's PATHs today: for that population the
+# header marker is the only evidence that exists, and it stays exactly where it
+# is. What #57 asks is that EVERY RETIREMENT AFTER THIS ONE have better — which
+# costs nothing except that this run write down what it did.
+#
+# SO IT WRITES DOWN WHAT IT PLACED, one row per regular file:
+#
+#     <name><TAB><destination><TAB><sha256><TAB><UTC>
+#
+# and the name is the word this command PRINTED beside that placement — `park`,
+# `handoff`, `/ctx` — because one name is a skill AND a command file at four
+# different paths, and a row's subject is therefore its DESTINATION — spelled as
+# its CANONICAL ABSOLUTE PATH (`receipt_dest`), so that a relative
+# `$OPENREPOTOOLS_BIN_DIR` means the same file to the run that wrote the row and
+# to every later run from any other directory. A run
+# REPLACES the row of every destination it placed and KEEPS every other row, so
+# a person who moves `$OPENREPOTOOLS_BIN_DIR` keeps the evidence for the copies
+# in the old one, which are the copies a later retirement will meet there.
+#
+# THE ROWS ARE READ OFF DISK, FROM THE SAME LISTS THE PLACEMENTS ARE MADE FROM,
+# after the last of them. Nothing is remembered from inside the loops: the
+# planners have already refused every target that is not a regular file this
+# user can write, the loops have written them, and what a receipt must carry is
+# the digest of the bytes that ARE THERE. That is also why this is one call in
+# `install_commands` and not a line inside each loop — the smallest hunk in the
+# two functions this estate's other branches are editing.
+#
+# IT IS NOT AN ARTIFACT OF THE COUNT. The count is the invariant of what
+# `--install` PLACES; this is the record of that placement. A ROW GOES TO EVERY
+# PLACED REGULAR FILE — the `INSTALLABLES` plus the skill files and the command
+# files at both of their destinations — and to nothing else: the two hook
+# entries get no row, because an entry inside somebody else's JSON file is not a
+# file this command placed, and the receipt carries no row for itself.
+#
+# THE NUMBER THAT COMES OUT IS DERIVED, NOT STATED, because every statement of
+# it went stale the next time a list moved (Copilot on #103, `openRepoTools:325`,
+# which found twenty-six where there were twenty-seven): `ARTIFACTS - HOOK_ENTRIES`
+# in `tests/test_openrepotools_command.py`, which is `len(INSTALLED) + 2 *
+# len(SKILL_NAMES) + 2 * len(COMMAND_NAMES)`. Today that is 27 artifacts, 25 of
+# them files, 25 rows — 13 + 6 + 6, since Amendment 16 put `lane-rename` in
+# `INSTALLABLES` — and it moves with `INSTALLABLES`, `SKILLS` and `COMMANDS`,
+# and with nothing else.
+#
+# A RECEIPT THAT CANNOT BE WRITTEN IS A NOTE AND NEVER A REFUSAL (#57's own
+# words, and the same rule the retirement follows one function down). The
+# commands, the skills and the hook entries are what a person asked for; a
+# record of them this installer could not write is its problem and not theirs,
+# and the marker is still there for a retirement to fall back to. Fail closed,
+# out loud, in one line, and carry on.
+#
+# AND THE RECEIPT IS ONLY EVER ASKED ABOUT A PATH THIS COMMAND COMPUTED. It is
+# never read as a list of paths to remove: `retire_commands` walks `RETIRED`
+# against its own `$dir` and asks the receipt one question about the target it
+# already has in hand — is the file at THIS path the one I wrote. So a receipt
+# somebody else authored can change an answer and can never name a file for
+# removal, which is the difference between a record and an instruction.
+
+#: WHERE THE RECEIPT LIVES. `$OPENREPOTOOLS_DATA_DIR`, else the XDG data
+#: directory — `$XDG_DATA_HOME`, else `~/.local/share`. It is DATA and does not
+#: belong beside the commands in `$OPENREPOTOOLS_BIN_DIR`: a bin directory is a
+#: PATH entry, and a `.tsv` in one is a file every shell walks past for ever
+#: (`repos.tsv` is there under protest, and Amendment 9(b) says so). XDG is the
+#: one convention that answers "where does a tool keep its own record" on Linux
+#: and macOS alike, and the override is there because the bin directory has one.
+#:
+#: THE DIRECTORY AS CONFIGURED IS ONE THING AND THE PATH THIS FILE READS AND
+#: WRITES IS ANOTHER (Copilot round 4 on #103, `openRepoTools:365`). The first
+#: shape handed the configured string to every caller, so a relative
+#: `$OPENREPOTOOLS_DATA_DIR` was `data/installed.tsv` in every line and every
+#: `[ -f ]`: a spelling, not a file. `receipt_file` is the CANONICAL path — the
+#: directory resolved by `receipt_dest`, the same `pwd -P` the destinations in
+#: the rows go through — whenever the directory is THERE TO RESOLVE, and the
+#: configured spelling otherwise: a directory that does not exist has no
+#: receipt in it to read, and the one caller that MAKES it (`receipt_replace`)
+#: creates it first and asks again. A getter that created directories would
+#: make a retirement's read a write.
+#:
+#: WHAT RESOLVING DOES NOT DO is make a relative `data` mean the same directory
+#: from two working directories: that is what being relative IS. So
+#: `receipt_record` says so, on the line beside the one that names the
+#: receipt, rather than leaving a person to find out from a later run that
+#: could not see the first one's evidence.
+receipt_data_dir() {   # the directory as configured, which may be relative
+	printf '%s\n' "${OPENREPOTOOLS_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/openRepoTools}"
+}
+receipt_file() {
+	receipt_dest "$(receipt_data_dir)/installed.tsv"
+}
+
+#: A TAB AND A NEWLINE AS VALUES, because the receipt is a TSV and a
+#: destination carrying either would split one row into two columns or into two
+#: rows. `$'\t'` is the shorter spelling and no file in this repository uses
+#: one; `printf` is the spelling every one of them does use. The `X` is there
+#: because `$( )` strips TRAILING newlines and there would otherwise be nothing
+#: left to assign.
+RECEIPT_TAB="$(printf '\t')"
+RECEIPT_NEWLINE="$(printf '\nX')"
+RECEIPT_NEWLINE="${RECEIPT_NEWLINE%X}"
+
+RECEIPT_ROWS=""   # this run's rows, staged in $WORKDIR
+RECEIPT_DESTS=""  # their destinations, one per line, for the merge
+RECEIPT_STAMP=""  # the UTC of this run
+RECEIPT_COUNT=0   # how many rows it wrote
+RECEIPT_WHY=""    # why it could not, where it could not
+
+# THE DIGEST, IN WHICHEVER SPELLING THIS MACHINE HAS. `sha256sum` is GNU and a
+# stock macOS ships none; `shasum -a 256` is in the Perl toolchain macOS does
+# ship, and is on every Linux this estate runs. Neither is a hard dependency —
+# a machine with neither gets the note and the marker — so this is the one
+# place either name is spelled.
+#
+# THE FILE IS FED ON STDIN AND NEVER NAMED AS AN OPERAND, and that is not a
+# style choice: GNU `sha256sum` ESCAPES a filename containing a backslash or a
+# newline and prefixes the whole line with `\`, so `${out%% *}` off a named
+# operand hands back `\<digest>` for a bin directory somebody spelled with a
+# backslash in it. Read from stdin, both spellings print `<digest>  -`.
+sha256_of() {   # <path> — its digest, or 1 and nothing at all
+	local out=""
+	[ -f "$1" ] && [ -r "$1" ] || return 1
+	if command -v sha256sum >/dev/null 2>&1; then
+		out="$(sha256sum <"$1" 2>/dev/null)" || return 1
+	elif command -v shasum >/dev/null 2>&1; then
+		out="$(shasum -a 256 <"$1" 2>/dev/null)" || return 1
+	else
+		return 1
+	fi
+	out="${out%% *}"
+	[ -n "$out" ] || return 1
+	printf '%s\n' "$out"
+}
+
+# THE ONE LINE A RECEIPT THAT COULD NOT BE WRITTEN GETS. It says where, why,
+# that the install is not affected, and what a retirement falls back to — and
+# it is `say` and not `die`, which is the whole of #57's ruling on this.
+#
+# THE EXIT BELONGS TO THE REASON AND NOT TO THE LINE, which is why it is a
+# sentence a caller puts in its `why` rather than a tail on every note: a
+# machine with no `sha256sum` and no `shasum` is not a machine that wants to be
+# told to name a different directory.
+RECEIPT_ELSEWHERE='name a directory this installer may write with $OPENREPOTOOLS_DATA_DIR'
+receipt_note() {   # <file> <why>
+	say "receipt: NOT written to $1 — $2. Everything above is installed; a later retirement falls back to the \`Installed on PATH by\` header, which is the evidence it has today."
+}
+
+# THE DESTINATION AS THE RECEIPT SPELLS IT: ABSOLUTE, AND WITH EVERY SYMLINK IN
+# ITS DIRECTORY RESOLVED (Copilot on #103, `openRepoTools:524`). A row is
+# evidence about ONE FILE, and `$OPENREPOTOOLS_BIN_DIR=bin` — which the planner
+# accepts — names a different file from every directory it is run in: the first
+# shape stored `$dir/$name` as supplied, so a row written from one working
+# directory was compared, as a string, against the `bin/restart` of another, and
+# that other file was hashed and could be removed. So the one spelling every
+# read and write goes through is the PHYSICAL path of the file's directory plus
+# its own name — `record`, `verdict` and `forget` all ask THIS, never the
+# `$dir/$name` they were handed, and the line a person reads still prints the
+# path as they spelled it.
+#
+# THE DIRECTORY IS RESOLVED, NEVER THE FILE: `receipt_add` has already refused a
+# symlink at the path itself, and a link is somebody's decision about their own
+# PATH, which is no business of a row's. `(cd -- "$dir" && pwd -P)` is the
+# portable spelling (macOS and bash 3.2 have no `realpath`, and `readlink -f`
+# is not in a stock macOS userland — `lanes-edit.sh` asks the same question the
+# same way). `CDPATH` is emptied first, because a `cd` through one PRINTS the
+# directory it went to and the substitution would hold two lines. And the
+# trailing `X` is the one `RECEIPT_NEWLINE` uses: `$( )` strips trailing
+# newlines, and a directory whose name ENDS in one would otherwise resolve to a
+# DIFFERENT, shorter path — one with no newline in it, past the TSV guard.
+#
+# IT NEVER FAILS: a directory that cannot be entered answers with the path as
+# given, which is not absolute, and the one caller that WRITES a row refuses a
+# destination that is not — the callers that only READ simply never match it.
+receipt_dest() {   # <path> — its canonical absolute spelling, else the path as given
+	local dir="" base="" real=""
+	case "$1" in
+	*/*) dir="${1%/*}"; base="${1##*/}" ;;
+	*) dir="."; base="$1" ;;
+	esac
+	[ -n "$dir" ] || dir="/"
+	real="$(CDPATH= cd -- "$dir" >/dev/null 2>&1 && pwd -P && printf X)" ||
+		{ printf '%s\n' "$1"; return 0; }
+	real="${real%X}"
+	real="${real%"$RECEIPT_NEWLINE"}"
+	case "$real" in
+	/) printf '/%s\n' "$base" ;;
+	*) printf '%s/%s\n' "$real" "$base" ;;
+	esac
+}
+
+# WHETHER A PATH CANNOT BE A COLUMN OF THE RECEIPT: it carries a tab or a newline.
+receipt_tsv_unsafe() {   # <path> — 0 if it cannot, 1 if it can
+	case "$1" in
+	*"$RECEIPT_TAB"*|*"$RECEIPT_NEWLINE"*) return 0 ;;
+	esac
+	return 1
+}
+
+# ONE ROW, STAGED. The digest is of the bytes at the destination, so a run that
+# placed nothing new still records what is there — which is the point: the
+# receipt answers "is the file at this path mine", not "did I write it today".
+#
+# A DESTINATION CARRYING A TAB OR A NEWLINE GETS NO RECEIPT AT ALL, rather than
+# a row that is silently two columns or two rows. `$OPENREPOTOOLS_BIN_DIR` is a
+# path a person chooses — the retirement one function down already prints its
+# `rm` quoted because of the spaces people put in them — and a TSV has no
+# escape. Failing the whole receipt rather than dropping the row is the fail-
+# closed half: a receipt missing exactly the file a retirement will ask about,
+# with nothing on screen, is worse than no receipt at all.
+receipt_add() {   # <name> <destination> — 0, or 1 with $RECEIPT_WHY set
+	local name="$1" given="$2" dest="" digest=""
+	[ -f "$given" ] && [ ! -L "$given" ] || return 0
+	# THE TAB AND NEWLINE QUESTION IS ASKED OF BOTH SPELLINGS — the one the person
+	# supplied, BEFORE anything resolves it, and the canonical one, which a symlink
+	# in the directory can make carry a tab the supplied one never had.
+	if receipt_tsv_unsafe "$given"; then
+		RECEIPT_WHY="$given has a tab or a newline in it and this file is tab-separated"
+		return 1
+	fi
+	dest="$(receipt_dest "$given")"
+	if receipt_tsv_unsafe "$dest"; then
+		RECEIPT_WHY="$dest has a tab or a newline in it and this file is tab-separated"
+		return 1
+	fi
+	case "$dest" in
+	/*) ;;
+	*)
+		RECEIPT_WHY="$given could not be resolved to an absolute path"
+		return 1
+		;;
+	esac
+	digest="$(sha256_of "$dest")" || {
+		RECEIPT_WHY="$dest could not be digested"
+		return 1
+	}
+	printf '%s\t%s\t%s\t%s\n' "$name" "$dest" "$digest" "$RECEIPT_STAMP" \
+		>>"$RECEIPT_ROWS" || {
+		RECEIPT_WHY="the rows could not be staged in $WORKDIR"
+		return 1
+	}
+	printf '%s\n' "$dest" >>"$RECEIPT_DESTS" || {
+		RECEIPT_WHY="the rows could not be staged in $WORKDIR"
+		return 1
+	}
+	RECEIPT_COUNT=$((RECEIPT_COUNT + 1))
+	return 0
+}
+
+# EVERY ROW OF THE RECEIPT WHOSE DESTINATION IS NOT ONE OF THESE, appended to a
+# staged file. ONE implementation for the two callers that need it — the merge,
+# which keeps what this run did not replace, and the retirement, which drops
+# the row of the file it removed — because two copies of one parse is how the
+# two come to disagree about what a row is.
+#
+# A ROW IS FOUR FIELDS OR MORE, and anything else in that file is ignored
+# rather than repaired: a comment somebody added, a truncated line, a column a
+# later version appends. Reading "at least four" rather than "exactly four" is
+# what lets a fifth column arrive without this half having to be taught about
+# it first.
+#
+# AND A ROW WHOSE FILE IS NO LONGER AT THAT PATH IS NOT KEPT (Copilot round 1
+# on #103). `receipt_forget` runs AFTER the `rm` it accompanies, so a write
+# that fails in the instant between them leaves the receipt naming a path this
+# installer's copy has left — and nothing would ever clear it. This makes that
+# window CLOSE BY ITSELF: the next `--install` reads the same file, finds that
+# file gone, and drops the row. It is also what stops the receipt growing for
+# ever with the bin directories and profile roots people delete.
+#
+# WHAT IS KEPT IS WHAT COULD HAVE BEEN WRITTEN: a REGULAR FILE THAT IS NOT A
+# LINK, which is `receipt_add`'s own test one function up, spelled the same way
+# (Copilot round 2 on #103, `openRepoTools:468`). The first shape of this asked
+# `[ -e ] || [ -L ]` — "is there anything at all at that path" — which kept the
+# row of a destination that had become a directory, a socket, a FIFO or a
+# symlink. A row is evidence about a REGULAR FILE this installer placed, and
+# where one of those sits at that path the file it is evidence about is not
+# there; the two halves now say that in one sentence each rather than two
+# different ones.
+receipt_rows_except() {   # <receipt> <destinations file> <staged file>
+	local row="" rest="" dest=""
+	[ -f "$1" ] && [ ! -L "$1" ] || return 0
+	# A RECEIPT THAT EXISTS AND CANNOT BE OPENED IS A FAILURE, NOT AN EMPTY ONE
+	# (Copilot round 4 on #103, `openRepoTools:575`). The `done <"$1"` below
+	# fails quietly when it cannot open the file, and the `return 0` this
+	# function ends in then reported a clean scan of no rows — so
+	# `receipt_record` replaced the receipt with this run's rows alone and every
+	# row about a copy this run did not place was gone. OPENED, not `-r`: the
+	# answer that matters is the one the loop is about to get, and for root those
+	# two agree anyway. Both callers already print their note on a non-zero.
+	: 2>/dev/null <"$1" || return 1
+	while IFS= read -r row || [ -n "$row" ]; do
+		case "$row" in
+		*"$RECEIPT_TAB"*"$RECEIPT_TAB"*"$RECEIPT_TAB"*) ;;
+		*) continue ;;
+		esac
+		rest="${row#*"$RECEIPT_TAB"}"
+		dest="${rest%%"$RECEIPT_TAB"*}"
+		# A RELATIVE DESTINATION IS NEVER KEPT (Copilot on #103, `openRepoTools:524`).
+		# This command writes none any more, and a row that says `bin/park` is a
+		# row about whichever directory the next run is standing in: the `-f` just
+		# below would answer for THAT run's `bin/park`, which is the cwd-dependence
+		# `receipt_dest` removes from every other read.
+		case "$dest" in
+		/*) ;;
+		*) continue ;;
+		esac
+		if grep -qFx -e "$dest" -- "$2"; then continue; fi
+		[ -f "$dest" ] && [ ! -L "$dest" ] || continue
+		printf '%s\n' "$row" >>"$3" || return 1
+	done <"$1"
+	return 0
+}
+
+# THE WRITE ITSELF: `mktemp` in the same directory, `mv -f`. It is the shape
+# `place_skill_and_hook` writes `settings.json` with and for the same reason —
+# a half-written receipt is a receipt that says a file is not this installer's.
+# AND NO `chmod`: the receipt's mode is the 0600 `mktemp` gives the temporary,
+# whatever the umask, which is `settings.json`'s mode too. Two rules meet here
+# and this is how both are kept. #48 (PR #102) rules that EVERY `chmod` this
+# command performs fails through `die` — a mode-stamp failure is a refusal —
+# and `tests/test_openrepotools_command.py` reads the script's text to hold
+# every site to it; #57 rules that a receipt this command cannot write is a
+# NOTE and never a refused install. A stamp that may not `die` and may not
+# fall silent is a stamp that must not exist, and 0600 wants none: this is one
+# account's evidence, read by that account's own retirements, and nothing else
+# reads it.
+#
+# `mv -f` DOES NOT FOLLOW A SYMLINK — it replaces the link itself — which is
+# why `receipt_record` refuses one BEFORE reaching this: silently swapping a
+# person's link for a regular file is the same act `cp` through one is, in the
+# other direction.
+receipt_replace() {   # <staged file> — 0, or 1 having changed nothing
+	local file="" dir="" tmp=""
+	file="$(receipt_file)"
+	dir="$(dirname -- "$file")"
+	mkdir -p -- "$dir" 2>/dev/null || return 1
+	# THE DIRECTORY EXISTS NOW, so the canonical path can be had (round 4 on
+	# #103, `openRepoTools:365`): on a first install the answer above was still
+	# the configured spelling.
+	file="$(receipt_file)"
+	dir="$(dirname -- "$file")"
+	tmp="$(mktemp -- "$dir/installed.tsv.XXXXXX" 2>/dev/null)" || return 1
+	cp -- "$1" "$tmp" 2>/dev/null || { rm -f -- "$tmp"; return 1; }
+	mv -f -- "$tmp" "$file" 2>/dev/null || { rm -f -- "$tmp"; return 1; }
+	return 0
+}
+
+# THE RECEIPT FOR THIS RUN, from the same three lists the placements are made
+# from. Called once, after the last placement and before the one removal.
+receipt_record() {
+	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
+	local file="" kind="" name="" target="" why=""
+	file="$(receipt_file)"
+	# WHAT IS AT THAT PATH, BEFORE A BYTE OF IT IS READ OR WRITTEN — the same
+	# question `plan_install_targets` and `plan_skill_targets` put to every
+	# path this command writes, asked through the same `path_kind`. A symlink,
+	# a directory or anything else there is not this installer's receipt: it is
+	# neither read nor replaced, and the note says which it found.
+	if kind="$(path_kind "$file")"; then
+		receipt_note "$file" "it is $kind, and this installer's receipt is a regular file it makes itself — $RECEIPT_ELSEWHERE"
+		return 0
+	fi
+	# AND WHETHER THERE IS ANYTHING HERE TO DIGEST WITH, asked once and named as
+	# the cause it is. Without this the first file would fail `sha256_of` and
+	# the note would say that FILE could not be digested — true, and not the
+	# sentence a person needs to read on a machine that has neither tool.
+	if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+		receipt_note "$file" "there is no \`sha256sum\` and no \`shasum -a 256\` on this PATH, and a row without a digest is a row that proves nothing"
+		return 0
+	fi
+	workdir
+	RECEIPT_ROWS="$WORKDIR/receipt-rows"
+	RECEIPT_DESTS="$WORKDIR/receipt-dests"
+	RECEIPT_COUNT=0
+	RECEIPT_WHY=""
+	RECEIPT_STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	: >"$RECEIPT_ROWS" 2>/dev/null || { receipt_note "$file" "its rows could not be staged in $WORKDIR"; return 0; }
+	: >"$RECEIPT_DESTS" 2>/dev/null || { receipt_note "$file" "its rows could not be staged in $WORKDIR"; return 0; }
+	for name in "${INSTALLABLES[@]}"; do
+		receipt_add "$name" "$dir/$name" || { receipt_note "$file" "$RECEIPT_WHY"; return 0; }
+	done
+	# THE SKILLS AND THE COMMAND FILES TOO, under the name each was PRINTED
+	# with: they are regular files this run placed, at paths it chose, and a
+	# record of what was placed that left them out — every one a path a
+	# retirement could one day meet — would answer only part of the question
+	# anybody asks it.
+	for name in "${SKILLS[@]}"; do
+		for target in "$(skills_home)/shared/skills/$name/SKILL.md" "$(claude_home)/skills/$name/SKILL.md"; do
+			receipt_add "$name" "$target" || { receipt_note "$file" "$RECEIPT_WHY"; return 0; }
+		done
+	done
+	for name in "${COMMANDS[@]}"; do
+		for target in "$(skills_home)/shared/commands/$name.md" "$(claude_home)/commands/$name.md"; do
+			receipt_add "/$name" "$target" || { receipt_note "$file" "$RECEIPT_WHY"; return 0; }
+		done
+	done
+	# THIS RUN'S ROWS FIRST, THEN EVERY EARLIER ROW IT DID NOT REPLACE.
+	receipt_rows_except "$file" "$RECEIPT_DESTS" "$RECEIPT_ROWS" ||
+		{ receipt_note "$file" "the rows already there could not be read"; return 0; }
+	if receipt_replace "$RECEIPT_ROWS"; then
+		file="$(receipt_file)"
+		say "receipt: $RECEIPT_COUNT placed files recorded in $file"
+		case "$(receipt_data_dir)" in
+		/*) ;;
+		*)
+			say "  the data directory $(receipt_data_dir) is a RELATIVE path, which names a different directory from every working directory — this run resolved it to $(dirname -- "$file"). Name an absolute one with \$OPENREPOTOOLS_DATA_DIR so a later \`--install\` from anywhere reads this receipt."
+			;;
+		esac
+	else
+		why="$(unusable_dir_kind "$(dirname -- "$file")")" || why="the write failed"
+		receipt_note "$file" "$why — $RECEIPT_ELSEWHERE"
+	fi
+	return 0
+}
+
+# WHAT THE RECEIPT SAYS ABOUT ONE PATH, in one word, and never an exit code: a
+# `$( )` that returned non-zero under `set -e` would take the install with it,
+# and "I have nothing to say about this file" is an ANSWER here rather than a
+# failure.
+#
+#   placed  — a row names this path and the bytes there still have its digest.
+#             This installer's copy beyond argument.
+#   edited  — a row names it and the digest has MOVED. Somebody's edit of an
+#             installed command, or their own file at a path one used to be:
+#             either way not this installer's to remove.
+#   unknown — no receipt, or no row for THIS path. The header marker is what
+#             answers then, exactly as it does today.
+#   unverified — a row names it and NOTHING COULD BE DIGESTED to compare with:
+#             no `sha256sum` and no `shasum` on this PATH, a tool that failed, or
+#             a file this user cannot read (Copilot on #103, `openRepoTools:711`).
+#             It is NOT `unknown`, and the difference is the whole of #57: the
+#             header marker is the answer for a path the receipt has NOTHING TO
+#             SAY about, and a path it HAS a row for and cannot check is a path
+#             it has something to say about and cannot say yet. The first shape
+#             of this folded the two into one word, so the marker removed an
+#             edited, receipt-tracked command on exactly the machine that could
+#             not tell it was edited — the ownership mistake the receipt exists
+#             to prevent, made by the code that carries it. Named and left.
+#   unreadable — the receipt EXISTS and cannot be OPENED (Copilot round 4 on
+#             #103, `openRepoTools:716`). The scan never ran, so "no row" is not
+#             something it found: it is the same ignorance as `unverified`, one
+#             step earlier, and it gets the same answer — named and left —
+#             with its own sentence, because the person's remedy is the
+#             receipt's mode and not a digest tool. `unknown` is for a scan that
+#             RAN and found nothing.
+#
+# THE FIRST MATCHING ROW WINS. This command writes one row per destination, so
+# a second is a hand-edit, and picking the first is the only rule that does not
+# depend on which end of the file somebody appended to.
+receipt_verdict() {   # <target> — placed | edited | unverified | unreadable | unknown, always 0
+	local file="" row="" rest="" dest="" digest="" disk="" want=""
+	file="$(receipt_file)"
+	[ -f "$file" ] && [ ! -L "$file" ] || { printf 'unknown\n'; return 0; }
+	: 2>/dev/null <"$file" || { printf 'unreadable\n'; return 0; }
+	# THE ROW IS ABOUT A FILE, AND THE FILE IS ASKED ABOUT BY THE SAME SPELLING
+	# THE ROW WAS WRITTEN IN (`receipt_dest`, Copilot on #103, `openRepoTools:524`).
+	want="$(receipt_dest "$1")"
+	while IFS= read -r row || [ -n "$row" ]; do
+		case "$row" in
+		*"$RECEIPT_TAB"*"$RECEIPT_TAB"*"$RECEIPT_TAB"*) ;;
+		*) continue ;;
+		esac
+		rest="${row#*"$RECEIPT_TAB"}"
+		dest="${rest%%"$RECEIPT_TAB"*}"
+		[ "$dest" = "$want" ] || continue
+		digest="${rest#*"$RECEIPT_TAB"}"
+		digest="${digest%%"$RECEIPT_TAB"*}"
+		disk="$(sha256_of "$1")" || { printf 'unverified\n'; return 0; }
+		if [ "$disk" = "$digest" ]; then printf 'placed\n'; else printf 'edited\n'; fi
+		return 0
+	done <"$file"
+	printf 'unknown\n'
+	return 0
+}
+
+# AND THE ROW OF A FILE THAT IS NO LONGER THERE IS DROPPED, because a receipt
+# that still names a removed path would answer `edited` about whatever somebody
+# puts there next — which is the safe direction, and still a sentence about
+# their file that is not true.
+#
+# NOT ONE OF ITS FAILURES IS SILENT (Copilot round 1 on #103, `openRepoTools:660`).
+# Three of the four steps here used to `return 0` on a write that failed — a
+# full disk while staging, a data directory that went away between the read and
+# the write — so the receipt could keep a live row for a path the `rm` above had
+# just emptied and NOTHING on screen would say so. Every one of them now reaches
+# the same note, and the note names the repair: `receipt_rows_except` drops a
+# row whose file is gone, so the next `--install` clears it whatever happened
+# here. Still never a `die`: the retirement has already done its work.
+receipt_forget() {   # <destination>
+	local file="" kept="" dests="" dropped=1
+	file="$(receipt_file)"
+	[ -f "$file" ] && [ ! -L "$file" ] || return 0
+	workdir
+	kept="$WORKDIR/receipt-kept"
+	dests="$WORKDIR/receipt-forget"
+	# THE ROW IS DROPPED BY THE SPELLING IT WAS WRITTEN IN (`receipt_dest`); the
+	# note below still names the path as the person spelled it.
+	if : >"$kept" 2>/dev/null && printf '%s\n' "$(receipt_dest "$1")" >"$dests" 2>/dev/null &&
+		receipt_rows_except "$file" "$dests" "$kept" &&
+		receipt_replace "$kept"; then
+		dropped=0
+	fi
+	[ "$dropped" = 0 ] ||
+		receipt_note "$file" "its row for $1 could not be dropped, so it still names a path this installer's copy has left — the next \`--install\` drops it, because a row whose file is gone is not kept"
+	return 0
+}
+
 # ---------------------------------------------- THE WORDS THAT WERE RETIRED
 #
 # A WORD THAT LEAVES THE LIST HAS TO LEAVE THE DIRECTORY (Copilot round 1 on
@@ -289,7 +820,7 @@ INSTALLABLES=(openRepoTools park resume status lane lanes lane-handoff lane-rena
 RETIRED=(restart)
 retire_commands() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
-	local name target
+	local name target verdict=""
 	for name in "${RETIRED[@]}"; do
 		target="$dir/$name"
 		# `-e` FOLLOWS THE LINK AND IS FALSE FOR A DANGLING ONE (Copilot round 4 on
@@ -308,7 +839,41 @@ retire_commands() {
 		# (`unplaceable_kind`, which names the link rather than writing through
 		# it). A link is somebody's decision about their own PATH; it is named
 		# here and left, like every other file this installer did not write.
-		if [ ! -L "$target" ] && [ -f "$target" ] && grep -qF -e 'Installed on PATH by `openRepoTools --install`' -- "$target" 2>/dev/null; then
+		#
+		# THE RECEIPT IS ASKED FIRST, AND THE MARKER IS WHAT ANSWERS WHEN IT HAS
+		# NOTHING TO SAY (#57, on Copilot's round-3 finding on #45). A row whose
+		# digest still matches is this installer's copy beyond argument; a row
+		# whose digest has MOVED is a file this installer may not remove even
+		# though the header is still in it, because what the header proves is
+		# where those lines came from and not who owns the bytes now. It is
+		# asked only of a REGULAR FILE THAT IS NOT A LINK, for the reason the
+		# `! -L` below gives: a link is somebody's decision about their own
+		# PATH, whatever the receipt remembers about the path it sits at.
+		verdict=unknown
+		if [ ! -L "$target" ] && [ -f "$target" ]; then
+			verdict="$(receipt_verdict "$target")"
+		fi
+		if [ "$verdict" = placed ]; then
+			rm -f -- "$target"
+			# AND THE ROW GOES WITH THE FILE, so the receipt never names a path
+			# nothing of this installer's is at any more.
+			receipt_forget "$target"
+			say "$name: RETIRED, removed from $target — this installer's own receipt carries its digest (lane-collision-protocol Amendment 18 Addendum 2; \`lane <name>\` is that act now)"
+		elif [ "$verdict" = edited ]; then
+			say "$name: RETIRED by lane-collision-protocol Amendment 18 Addendum 2, and $target no longer holds the bytes this installer's receipt recorded — an edit of it, or your own file at that path. Left exactly as it is; remove it yourself if it is stale:  rm -f -- \"$target\""
+		elif [ "$verdict" = unverified ]; then
+			# A ROW IT CANNOT CHECK IS NEVER THE HEADER'S TO ANSWER (Copilot on #103,
+			# `openRepoTools:711`): the receipt names this path, so the marker is not
+			# the evidence — and the digest that would have settled it could not be
+			# taken. One line, the same shape as the two above: where, why, the `rm`.
+			say "$name: RETIRED by lane-collision-protocol Amendment 18 Addendum 2, and $target has a row in this installer's receipt that could not be checked, because no digest tool answered (\`sha256sum\`, \`shasum -a 256\`) — so it is NOT removed on the strength of its header either. Left exactly as it is; remove it yourself if it is stale:  rm -f -- \"$target\""
+		elif [ "$verdict" = unreadable ]; then
+			# A RECEIPT THAT CANNOT BE OPENED CANNOT SAY "NO ROW" (Copilot round 4 on
+			# #103, `openRepoTools:716`): it may carry exactly the row that says this
+			# file is an edit. Same shape as the arm above, and it names the receipt,
+			# because that is the file whose mode the person has to look at.
+			say "$name: RETIRED by lane-collision-protocol Amendment 18 Addendum 2, and this installer's receipt $(receipt_file) exists but could not be read, so whether $target is its copy is not known — it is NOT removed on the strength of its header either. Left exactly as it is; remove it yourself if it is stale:  rm -f -- \"$target\""
+		elif [ ! -L "$target" ] && [ -f "$target" ] && grep -qF -e 'Installed on PATH by `openRepoTools --install`' -- "$target" 2>/dev/null; then
 			rm -f -- "$target"
 			say "$name: RETIRED, removed from $target (lane-collision-protocol Amendment 18 Addendum 2; \`lane <name>\` is that act now)"
 		else
@@ -463,6 +1028,14 @@ install_commands() {
 	# Every other refusal in this file places NOTHING rather than half of it; this
 	# one removes nothing until the rest of the install has actually happened.
 	place_skill_and_hook
+	# THE RECEIPT IS WRITTEN BETWEEN THE LAST PLACEMENT AND THE ONE REMOVAL
+	# (#57). After the placements, because a row carries the digest of the bytes
+	# that are actually at a destination and every destination has to have been
+	# written first; before the retirement, because that reads it and then drops
+	# the row of anything it removes. A run that REFUSED part way through the
+	# placements writes none of it and leaves the header marker as the evidence,
+	# which is the population the marker exists for anyway.
+	receipt_record
 	retire_commands
 	# ONE PATH NOTE for the four of them: the directory is the same one.
 	case ":${PATH:-}:" in
@@ -1717,6 +2290,88 @@ wip_fetch_template_file() {
 	return 1
 }
 
+# --- step 6a's history question: is this commit one `wip init` made? --------
+#
+# STEP 6a LETS THROUGH, AHEAD OF origin's `main`, THIS COMMAND'S OWN SEED AND
+# NOTHING ELSE (#64), so the answer here is ALL of what step 8's own commit is
+# and never one part of it a person's commit could happen to share. Four tests,
+# and a commit has to pass every one:
+#
+#   * ONE PARENT OR NONE. Step 8 commits on top of HEAD — on an empty `main`
+#     that is a root commit — and never merges. It is asked first because the
+#     path test below cannot ask it: `diff-tree` prints NOTHING for a merge
+#     unless it is asked for a combined diff, so a merge would answer "no path
+#     outside the template" by naming no path at all.
+#   * THE SUBJECT step 8 writes, `Seed this workspace repository from …` — a
+#     PREFIX, because what follows it names the template's repository and
+#     directory, which are this file's constants and not a part of the promise.
+#   * THE BODY'S `Written by \`openRepoTools wip init\`` line, which is the
+#     sentence in that message that says whose commit it is.
+#   * AND A TREE THAT DIFFERS FROM ITS PARENT'S — the empty tree, for a root
+#     commit, which is what `--root` compares it with — AT ONE OR MORE TEMPLATE
+#     PATHS AND AT NO OTHER. Step 8 commits `"${written[@]}"` by pathspec, which
+#     is template paths and nothing else, and commits only where `diff --cached`
+#     says there is something to commit, so it has never made an empty one.
+#
+# A MESSAGE IS SOMETHING ANYBODY CAN TYPE, which is why the tree is asked as
+# well as the words: a commit wearing the seed's subject and trailer and
+# touching a path the template does not name is somebody's own work in a
+# borrowed coat, and it is refused like any other. What this does NOT do is
+# compare the bytes at those paths with the template: the seed it is looking
+# at was written from the template at whatever commit THAT run pinned, which
+# need not be this run's, and Brett Heap's ruling on #64 asks for the subject,
+# the trailer and the tree — the parent count is the tree test made sound —
+# and not the bytes. A person who writes this command's own message over
+# their own edit of a template file has said, in so many words, that it is
+# the seed.
+#
+# `--no-show-signature` ON EVERY `log` HERE, because `log.showSignature` is a
+# person's own config and it prints the signature check's report ON STDOUT,
+# ahead of the format: a seed this command committed on a machine with
+# `commit.gpgSign` set would then read back with that report as its first
+# line — `No signature`, `Good "git" signature …` — instead of its subject,
+# and be refused as somebody else's.
+#
+# EVERY READ THAT FAILS IS A NO, so a commit this could not ask about is
+# refused and never passed (#49's lesson, asked of history). Paths are
+# compared as `diff-tree` prints them: one it had to C-quote is never one of
+# `$WIP_TEMPLATE_FILES`, which are nine plain ASCII paths, so it is refused
+# rather than misread.
+wip_is_own_seed() {   # <checkout> <commit> — 0 only for a commit `wip init` itself made
+	local checkout="$1" commit="$2" parents subject body paths path rel known
+	parents="$(git -C "$checkout" log -1 --no-show-signature --format=%P "$commit" 2>/dev/null)" ||
+		return 1
+	case "$parents" in *' '*) return 1 ;; esac
+	subject="$(git -C "$checkout" log -1 --no-show-signature --format=%s "$commit" 2>/dev/null)" ||
+		return 1
+	case "$subject" in
+	'Seed this workspace repository from '*) ;;
+	*) return 1 ;;
+	esac
+	body="$(git -C "$checkout" log -1 --no-show-signature --format=%b "$commit" 2>/dev/null)" ||
+		return 1
+	case "$body" in
+	*'Written by `openRepoTools wip init`'*) ;;
+	*) return 1 ;;
+	esac
+	paths="$(git -C "$checkout" diff-tree --root --no-commit-id --name-only -r "$commit" 2>/dev/null)" ||
+		return 1
+	[ -n "$paths" ] || return 1
+	while IFS= read -r path; do
+		known=0
+		for rel in "${WIP_TEMPLATE_FILES[@]}"; do
+			if [ "$path" = "$rel" ]; then
+				known=1
+				break
+			fi
+		done
+		[ "$known" -eq 1 ] || return 1
+	done <<EOF
+$paths
+EOF
+	return 0
+}
+
 # --- the command itself -----------------------------------------------------
 wip_init() {
 	local config target checkout ref rel dest seeded=0 owed=0 kind
@@ -1942,6 +2597,116 @@ $(sed -e 's/^/    /' -- "$WIP_LAST_OUT")
     into that checkout on this run and nothing was staged.
     Commit, stash or remove those paths, then re-run:
         openRepoTools wip init"
+	fi
+
+	# ---- AND A CHECKOUT AHEAD OF origin's `main` BY ANYTHING BUT THIS
+	# COMMAND'S OWN SEED IS REFUSED THE SAME WAY (#64, Brett Heap's RULING of
+	# 2026-10-02, verbatim "go with option 1 on #64").
+	#
+	# The question above is the WORKTREE and the INDEX, and it never looked at
+	# HISTORY. Step 8 pushes `HEAD:main` wherever HEAD is not what origin's
+	# `main` already carries, and HEAD carries every commit beneath it — so a
+	# clean adopted checkout holding commits of a person's own that never left
+	# this workstation (a register edit made here and not pushed, a note
+	# committed on the wrong clone) had every one of them published to the
+	# `main` of their workspace repository by a command that came to place a
+	# template. That is #40's finding 1 one layer down, and it is closed at the
+	# same gate for the same reason: before step 7 writes a byte, where a
+	# refusal costs nothing and the person's commits are exactly where they
+	# left them, with the list in front of them. Pushing those commits, or
+	# discarding them, is theirs to do; this command does neither.
+	#
+	# THE SEED IS EXEMPT, AND HAS TO BE, or step 8's own promise breaks. A
+	# first run whose push the organisation's PR-only ruleset refused leaves a
+	# clean worktree and EXACTLY ONE commit ahead of `main` — its seed — and
+	# step 8's refusal tells the person that "a re-run after that has only to
+	# push". So a commit this command made is let through, and it is known by
+	# everything that makes it this command's own, never by its message alone:
+	# `wip_is_own_seed` above. Every OTHER commit in `<origin main>..HEAD` is a
+	# refusal naming all of them, seed or not, because what step 8 would push
+	# is the whole range and the person should see the whole range.
+	#
+	# THE REMOTE IS ASKED HERE, ONCE, AND STEP 8 READS THE SAME ANSWER. One
+	# `ls-remote`, one `remote_head`: the range this gate checked and the push
+	# step 8 decides on can never be two different readings of `main`. And the
+	# line read is `refs/heads/main` BY NAME, never the first line: a pattern
+	# of `main` matches every ref whose name ENDS in it, so a branch such as
+	# `refs/heads/backup/main` sorts before `refs/heads/main`, and the first
+	# line was then that branch's tip read as `main` — which would wave through
+	# every commit the branch carries, and tell step 8 that a `main` it never
+	# pushed to already had them.
+	#
+	# A REMOTE THAT COULD NOT BE ASKED IS STEP 8'S OWN ARM, KEPT, as the ruling
+	# keeps it: this check is skipped, said in one line, and the run goes on to
+	# the push, which is the probe. Not a refusal, because there is nothing
+	# true to refuse with — no `main` to name commits against — and because the
+	# remote that will not answer `ls-remote` is the remote step 8 pushes to,
+	# by the same URL, transport and credential, so the push almost always
+	# meets the same wall and step 8 stops the run before the pointer file is
+	# written. And NOT an empty `main` either: `remote_asked` is kept apart
+	# from `remote_head` because an unanswered question read as "no `main`
+	# yet" would put EVERY local commit ahead — refusing the very seed re-run
+	# the exemption above exists for. The window this leaves is a remote that
+	# refuses the question and takes the push a moment later, and that is the
+	# trade the ruling chose with this arm.
+	#
+	# A RANGE THAT CANNOT BE LISTED IS A REFUSAL, NEVER AN EMPTY ONE (#49's
+	# lesson, asked of history). Its usual cause is a `main` this checkout has
+	# never fetched — another workstation pushed to it since — and an empty
+	# list read from that failure is exactly what "nothing ahead, proceed"
+	# looks like.
+	local remote_head="" remote_asked=0 remote_refs history_range where ahead ahead_log commit
+	local seeds_ahead=0
+	if remote_refs="$(git -C "$checkout" ls-remote origin main 2>/dev/null)"; then
+		remote_asked=1
+		remote_head="$(printf '%s\n' "$remote_refs" |
+			awk '$2 == "refs/heads/main" && !seen { print $1; seen = 1 }')"
+	fi
+	if [ "$remote_asked" -eq 0 ]; then
+		say "  could not ask origin where $target's main is, so the commits this checkout"
+		say "  carries were not checked against it here; the push below is the probe."
+	elif git -C "$checkout" rev-parse -q --verify 'HEAD^{commit}' >/dev/null 2>&1; then
+		if [ -n "$remote_head" ]; then
+			history_range="$remote_head..HEAD"
+			where="$target's main ($(printf '%.7s' "$remote_head"))"
+		else
+			history_range="HEAD"
+			where="$target's main (it has none yet)"
+		fi
+		wip_quietly git -C "$checkout" rev-list "$history_range" ||
+			die "could not list the commits $checkout carries that are not on $where,
+    so this run cannot tell whether any of them is somebody's unreviewed work — and a
+    history this command could not read is never one it may push. Most often that \`main\`
+    is a commit this checkout has never fetched, because another workstation pushed to it
+    since. NOTHING was written into that checkout on this run and nothing was staged.
+    Fetch it, merge or rebase this checkout's own commits onto origin/main, then re-run:
+        git -C $checkout fetch origin
+        openRepoTools wip init
+    What it said:
+$WIP_LAST_ERR"
+		ahead="$(cat -- "$WIP_LAST_OUT")"
+		for commit in $ahead; do
+			if wip_is_own_seed "$checkout" "$commit"; then
+				seeds_ahead=$((seeds_ahead + 1))
+				continue
+			fi
+			ahead_log="$(git -C "$checkout" log --oneline --no-decorate --no-color \
+				--no-show-signature "$history_range" 2>/dev/null)" || ahead_log="$ahead"
+			die "$checkout carries commits that are not on $where,
+    and not every one of them is this command's own seed:
+$(printf '%s\n' "$ahead_log" | sed -e 's/^/    /')
+    This command ends by pushing HEAD to $target's main, so it would publish every
+    commit above to your workspace repository unreviewed — and what it came to push
+    is $SHAPE_REPOSITORY's $WIP_TEMPLATE_DIR and nothing else.
+    NOTHING was written into that checkout on this run and nothing was staged.
+    Push those commits yourself, or discard them, then re-run:
+        openRepoTools wip init"
+		done
+		case "$seeds_ahead" in
+		0) ;;
+		1) say "  one seed an earlier run committed is not on $target main yet; the push below carries it" ;;
+		*) say "  $seeds_ahead seeds earlier runs committed are not on $target main yet; the push below carries them" ;;
+		esac
 	fi
 
 	# ---- step 7: SEED IT FROM THE TEMPLATE, additively. A repository that
@@ -2411,15 +3176,15 @@ $WIP_LAST_ERR"
 	# carries the seed", write the pointer file and exit 0 over an empty
 	# `main`, and step 1's file test would then return on every later run.
 	# That is the failure step 8 exists to prevent, met one step further on.
-	local local_head remote_head remote_refs
+	#
+	# AND THE REMOTE IS THE ONE STEP 6a ASKED (#64). `remote_head` is that one
+	# `ls-remote`'s answer, so the commits 6a checked against `main` and the
+	# push decided here are a single reading of it, never two. Where 6a could
+	# not ask, `remote_head` is empty and the push below runs: the push IS the
+	# probe, and a question we could not put to the remote is not an answer
+	# from it.
+	local local_head
 	local_head="$(git -C "$checkout" rev-parse HEAD 2>/dev/null || :)"
-	if remote_refs="$(git -C "$checkout" ls-remote origin main 2>/dev/null)"; then
-		remote_head="$(printf '%s\n' "$remote_refs" | awk 'NR==1 {print $1}')"
-	else
-		# Could not ask. Fall through to the push: the push IS the probe, and a
-		# question we could not put to the remote is not an answer from it.
-		remote_head=""
-	fi
 	if [ -z "$local_head" ]; then
 		say "  $checkout has no commit to push"
 	elif [ -n "$remote_head" ] && [ "$local_head" = "$remote_head" ]; then
