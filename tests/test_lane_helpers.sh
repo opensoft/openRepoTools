@@ -11521,6 +11521,22 @@ is    "…without carrying the retired row into the published register" \
 is    "…while publishing the unrelated row" \
       "$(git -C "$A19_WIP" show origin/main:lanes/LANES.md | grep -c '^| `repo19race-2`' || :)" 1
 
+# A NO-LOG ROW WHOSE 13(a) CELL ALREADY SAYS `RETIRED` IS DORMANT TO THE
+# LISTING — the exception keeps only states other than ENDED, RETIRED and
+# MIGRATED — so it is the sweep's to retire (Copilot round 20 on #93). The
+# writer refused it as "already retired": the preview named a row the act could
+# not take, and one refusal stops the whole all-or-nothing sweep. A migrated
+# legacy row is the one that reaches it: the phrase in the cell, no lane-kind
+# line in the log.
+run a19 env LANES_LANE=repo19-2 "$E" add-row "| \`repo19ret-1\` | harness \`$A19_OLD\` | Eagle / test / brett | 2026-08-21 | none | none | RETIRED · 2026-08-22T00:00:00Z · superseded by repo19-2 |"
+is    "a no-log row whose cell already says RETIRED takes its row" "$rc" 0
+run a19 "$E" lanes --closed --prefix repo19ret
+is    "…and the listing classes it DORMANT" "$(a19_field "$out" repo19ret-1 14)" "dormant"
+run a19 env LANES_LANE=repo19-2 "$E" retire-rows repo19ret-1
+is    "…so the writer retires it rather than refusing the row the listing offered" "$rc" 0
+is    "…writing the first and only RETIRED line of its log" \
+      "$(grep -c '^RETIRED — lane repo19ret-1' "$A19_WIP/lanes/log/repo19ret-1.md" 2>/dev/null || :)" 1
+
 echo "== Amendment 18: ONE BINDING PER LANE — host/os/container, the ask, the wait, the force =="
 
 # **A LANE HAS ONE BINDING. THE RECORD SAYS WHERE IT IS — HOST, OS, CONTAINER,

@@ -10037,10 +10037,16 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     # either, and the writer and the read must not disagree about which rows are
     # dormant — that is the defect clause (h) and A11 Addendum 4 ruling 7 both
     # exist to prevent.
+    #
+    # A CELL THAT ALREADY SAYS `RETIRED` IS NOT A SECOND RETIREMENT (Copilot
+    # round 20 on #93). Refused here, it was a row the listing classes DORMANT
+    # and the preview names — and one refusal stops the whole sweep. The row a
+    # migration leaves is exactly that: the phrase in the cell, NOTED lines in
+    # the log. A second retirement is a second RETIRED LINE in an append-only
+    # log, and refusal 2 just above refuses that, from the log.
     if mig_cell_is_phrase "$rr_cell"; then
       case "${rr_cell%% · *}" in
-        ENDED | MIGRATED) : ;;
-        RETIRED) die "lane $rr_l's row already says RETIRED, so this sweep cannot append a second retirement. Nothing was written." 2 ;;
+        ENDED | RETIRED | MIGRATED) : ;;
         *) die "lane $rr_l's row says ${rr_cell%% · *}: its state cell is Amendment 13(a)'s phrase — '$rr_cell' — and that cell is the lane's CURRENT STATE, so this is not a dormant row and \`lanes\` does not hide it either. A lane the register says is somewhere is ended as itself (lane-end $rr_l) or its cell is corrected first (set-row-state). Nothing was written." 2 ;;
       esac
     fi
