@@ -10252,11 +10252,91 @@ LANEBIN_PATH="$SANDBOX/lanebin:$PATH"
 # than the terminal would prove nothing about the branch a person meets. This
 # runs the word under a pty, writes ONE line into it and collects everything the
 # terminal saw — stdout and stderr together, which is what a terminal is.
+#
+# THE DRIVER HAS A BOUND OF ITS OWN, AND IT IS NOBODY ELSE'S NUMBER
+# (opensoft/openRepoTools#107). It was 60 — the same 60 as `lanes-edit.sh`'s
+# `acquire_lock` and its `LANES_GIT_TIMEOUT` — and it was SIGKILLing the child
+# and handing back `128 + 9`, so a pick case reported `expected [2], got [137]`:
+# a wrong exit code that was really this driver's clock, and a helper that had
+# waited its own 60 s out and was about to say so could not be told from it.
+# Six CI runs are named in #107 alone — five on darwin, then both Linux jobs of
+# #61's `ready` run with fourteen pick cases at once — the killed case moving
+# between runs, and not one of them was a defect in `lane`.
+#
+# WHY IT WAS CROSSED: `lane` prints nothing until its listing is rendered,
+# because every read in front of the listing is a command substitution. Measured
+# on 2026-10-03, that silence was 32.6–33.4 s per call against main's fixture
+# register (75 rows) and 42.8–45.5 s against #61's (98) — and the slow Linux
+# runner that turned #61's `ready` run red took 62 minutes for a job that takes
+# 33–36, while darwin runs ~2.2x Linux (58 min against 26 on run 35043370287).
+# A 45 s silence is a ~100 s silence exactly where nobody is watching. The
+# silence itself was a QUADRATIC lookup in `lanes-edit.sh`'s `lanes_rows`, and
+# #107 fixed that too (one scoped read on this fixture, measured: 48.4 s → 2.9 s)
+# — but a bound has to stay true when the next register outgrows a fix, which
+# is why the number below is not tightened to match.
+#
+# WHY 240: more than twice that worst observed silence, and NONE of the numbers
+# this driver drives — not 60 (`acquire_lock`, `LANES_GIT_TIMEOUT`), not 300
+# (`lane --wait`'s handoff default) — so a helper's own refusal always arrives
+# first. It is a SILENCE bound: the clock restarts with every byte, so a long
+# case that keeps talking is never cut off. `LANE_PTY_SILENCE` overrides it for
+# the one case below that proves the timeout itself, which would otherwise wait
+# four minutes to do it.
+#
+# A TIMEOUT REPORTS AS A TIMEOUT. The child is a session leader (`pty.fork`
+# runs `setsid`), so its PROCESS GROUP is everything it started — `lane` and the
+# `lanes-edit.sh` reads under it, which a kill of the one pid left running. The
+# group gets SIGTERM, up to five seconds — until nothing in it is running — to
+# run its traps (a writer releases its lock in one), and then SIGKILL. A process
+# that does not also trap HUP loses that grace when the leader exits first: the
+# leader is the terminal's controlling process, and its exit hangs the terminal
+# up on the group, which is the kernel's act and not the driver's (a dead
+# holder's lock is `acquire_lock`'s to take over). The driver then says, on its
+# own stderr, that the child wrote nothing for that long and was killed, prints
+# the partial transcript after it, and exits 124 — `timeout(1)`'s code, never a
+# `128 + n` that reads as the child's. `lane_pick` below turns that report into
+# a FAIL of its own and sets `$rc` to the word `TIMEOUT`, so no case can read a
+# kill as the command's exit code again.
 LANE_PTY="$SANDBOX/pty-run.py"
+LANE_PTY_SILENCE=240
+LANE_PTY_TIMEOUT_MARK="pty-run: TIMEOUT"
 cat > "$LANE_PTY" <<'PY'
-import os, pty, select, sys
+import os, pty, select, signal, subprocess, sys, time
 
 answer, argv = sys.argv[1], sys.argv[2:]
+
+
+# THE REAL `ps`, BY ITS PATH: this suite puts a FAKE `ps` first on PATH (it
+# answers `-p <pid>` out of `$FAKE_PS_RECORDS` and nothing else), and asked
+# through PATH this read came back empty and ended the grace at once.
+PS = next((p for p in ("/bin/ps", "/usr/bin/ps") if os.access(p, os.X_OK)), "ps")
+
+
+def group_running(pgid):
+    """Is anything in the child's process group still RUNNING? A group whose
+    every member is a zombie runs nothing -- and in a container whose pid 1
+    never reaps (this workstation's is `sleep infinity`) its zombies are never
+    collected, so `killpg(0)` alone would keep answering for them."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    try:
+        listing = subprocess.run([PS, "-A", "-o", "pgid=,stat="],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                 universal_newlines=True, timeout=5).stdout
+    except Exception:
+        return True
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[0] == str(pgid) and "Z" not in fields[1]:
+            return True
+    return False
+
+
+silence = int(os.environ.get("LANE_PTY_SILENCE") or "240")
 pid, fd = pty.fork()
 if pid == 0:
     try:
@@ -10265,13 +10345,14 @@ if pid == 0:
         os._exit(127)
 os.write(fd, (answer + "\n").encode())
 seen = b""
+timed_out = False
 while True:
     try:
-        ready, _, _ = select.select([fd], [], [], 60)
+        ready, _, _ = select.select([fd], [], [], silence)
     except OSError:
         break
     if not ready:
-        os.kill(pid, 9)
+        timed_out = True
         break
     try:
         chunk = os.read(fd, 65536)
@@ -10280,16 +10361,134 @@ while True:
     if not chunk:
         break
     seen += chunk
-_, status = os.waitpid(pid, 0)
-sys.stdout.write(seen.decode("utf-8", "replace"))
+status = None
+if timed_out:
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except OSError:
+        pass
+    # THE GRACE IS THE GROUP'S, NOT THE LEADER'S (Copilot and Codex, round 1
+    # on #146). `lane` can die on the SIGTERM at once while a writer under it is
+    # still in its trap releasing a lock; ending the grace when the LEADER is
+    # reaped would SIGKILL that writer a tenth of a second later. So the leader
+    # is reaped as it goes, and the five seconds run until nothing in the group
+    # is running.
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if status is None:
+            done, st = os.waitpid(pid, os.WNOHANG)
+            if done:
+                status = st
+        if status is not None and not group_running(pid):
+            break
+        time.sleep(0.1)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except OSError:
+        pass
+    # Whatever the group said on its way out — a trap's last line — is part of
+    # the transcript, so it is drained rather than dropped.
+    while True:
+        try:
+            ready, _, _ = select.select([fd], [], [], 0)
+            chunk = os.read(fd, 65536) if ready else b""
+        except OSError:
+            break
+        if not chunk:
+            break
+        seen += chunk
+if status is None:
+    _, status = os.waitpid(pid, 0)
+text = seen.decode("utf-8", "replace")
+sys.stdout.write(text)
+if timed_out:
+    sys.stdout.flush()
+    sys.stderr.write(
+        "pty-run: TIMEOUT: the child wrote nothing for %ds and was killed "
+        "(its whole process group: SIGTERM, then SIGKILL). That is this "
+        "driver's bound, not the command's exit code. Partial transcript "
+        "follows:\n%s\n" % (silence, text))
+    sys.exit(124)
 sys.exit(os.WEXITSTATUS(status) if os.WIFEXITED(status) else 128 + os.WTERMSIG(status))
 PY
 HAVE_PTY=0
 python3 -c 'import pty' >/dev/null 2>&1 && HAVE_PTY=1
 NO_PTY_WHY="no python3 with pty on this host, so no terminal can be faked and the one question cannot be asked"
+# Did the last `run` of the driver end in its TIMEOUT? Its own stderr says so,
+# and nothing else writes there: the child's two streams are the terminal.
+pty_timed_out() { case "$err" in *"$LANE_PTY_TIMEOUT_MARK"*) return 0 ;; esac; return 1; }
 lane_pick() {   # <answer> <args to lane…>
-  run env PATH="$LANEBIN_PATH" python3 "$LANE_PTY" "$@"
+  run env PATH="$LANEBIN_PATH" LANE_PTY_SILENCE="$LANE_PTY_SILENCE" python3 "$LANE_PTY" "$@"
+  if pty_timed_out; then
+    bad "lane_pick $1: the pty driver's TIMEOUT, not the command's exit code" \
+        "the child wrote nothing for ${LANE_PTY_SILENCE}s and was killed; the driver's report and the partial transcript follow"
+    while IFS= read -r lp_line; do printf '       | %s\n' "$lp_line"; done <<EOF
+$err
+EOF
+    rc=TIMEOUT
+  fi
 }
+
+# AND THE DRIVER'S TIMEOUT IS ITSELF UNDER TEST, because the property is the
+# point: a silent child must come back as the driver's report and never as a
+# `137`. One second of silence instead of 240, and a grandchild in the group, so
+# the case also proves that nothing the child started runs on after its case.
+if [ "$HAVE_PTY" = 0 ]; then
+  skip "the pty driver reports a silent child as its own TIMEOUT, never as a 137" "$NO_PTY_WHY"
+else
+  pty_orphan="$SANDBOX/pty-orphan.pid"; rm -f -- "$pty_orphan"
+  run env LANE_PTY_SILENCE=1 python3 "$LANE_PTY" x \
+      sh -c 'printf "partial\n"; sleep 30 & printf "%s\n" "$!" > "$0"; wait' "$pty_orphan"
+  is    "a child silent past the driver's bound exits the driver's 124, never a SIGKILL read as its own code (137)" "$rc" 124
+  has   "…saying in terms that it timed out, with the bound it waited" "$err" "the child wrote nothing for 1s and was killed"
+  has   "…printing the partial transcript after its report" "$err" "partial"
+  has   "…and the same transcript on stdout, where every case reads it" "$out" "partial"
+  pty_timed_out; is "…which is the report lane_pick turns into a FAIL of its own" "$?" 0
+  # RUNNING, AS OPPOSED TO GONE OR DEAD AND UNREAPED. `kill -0` answers for a
+  # zombie, and a killed grandchild is reparented to pid 1 — which in a
+  # container may be `sleep infinity` and reap nothing, ever (measured on this
+  # workstation: state `Z`, parent 1). A zombie runs nothing, so it is gone.
+  # The REAL `ps`, by its path, for the driver's reason: the fake one first on
+  # PATH answers nothing for this pid, and an empty answer read as "gone" made
+  # this case pass without asking anything.
+  pty_ps=/bin/ps; [ -x "$pty_ps" ] || pty_ps=/usr/bin/ps
+  pty_running() {   # <pid>
+    [ -n "${1-}" ] && kill -0 "$1" 2>/dev/null || return 1
+    case "$("$pty_ps" -o stat= -p "$1" 2>/dev/null)" in '' | *Z*) return 1 ;; esac
+    return 0
+  }
+  pty_gc="$(cat "$pty_orphan" 2>/dev/null || :)"
+  pty_n=0
+  while pty_running "$pty_gc" && [ "$pty_n" -lt 50 ]; do
+    sleep 0.1; pty_n=$((pty_n + 1))
+  done
+  is    "…and the child's whole process group went with it, so no helper runs on after its case" \
+        "$([ -n "$pty_gc" ] && ! pty_running "$pty_gc" && printf gone || printf 'still running: %s' "${pty_gc:-no pid recorded}")" "gone"
+  # AND THE SIGTERM'S GRACE IS THE GROUP'S, NOT THE LEADER'S (Copilot and Codex,
+  # round 1 on #146): the leader here dies on the SIGTERM at once, and the
+  # grandchild under it takes a second in its trap — a writer releasing its
+  # lock, in miniature. Its cleanup must finish before the SIGKILL comes.
+  # IT TRAPS HUP AS WELL, AND THAT IS THE KERNEL'S PART, NOT THE DRIVER'S. The
+  # leader is the terminal's controlling process, so when it exits the kernel
+  # hangs the terminal up on the whole foreground group — measured: without the
+  # HUP in this trap the grandchild dies mid-cleanup under either driver loop.
+  # No driver can stop that; what this proves is that the DRIVER no longer cuts
+  # the grace short, which the old loop did a tenth of a second after the
+  # leader was reaped.
+  pty_clean="$SANDBOX/pty-cleaned"; rm -f -- "$pty_clean"
+  cat > "$SANDBOX/pty-trap-child.sh" <<'SH'
+trap 'sleep 1; printf "cleaned\n" > "$1"; exit 0' TERM HUP
+while :; do sleep 0.1; done
+SH
+  run env LANE_PTY_SILENCE=1 python3 "$LANE_PTY" x \
+      sh -c 'printf "partial\n"; sh "$0" "$1" & wait' "$SANDBOX/pty-trap-child.sh" "$pty_clean"
+  is    "…and a descendant still in its SIGTERM trap when the leader has gone is given its grace" \
+        "$(cat "$pty_clean" 2>/dev/null || printf 'killed before its trap finished')" "cleaned"
+  is    "…which is still the driver's timeout" "$rc" 124
+  run env LANE_PTY_SILENCE=5 python3 "$LANE_PTY" x sh -c 'printf "answered\n"; exit 7'
+  is    "…while a child that answers keeps its OWN exit code" "$rc" 7
+  pty_timed_out; is "…and is not reported as a timeout" "$?" 1
+fi
 
 # ------------------------------------------------------------- the fixtures
 PICK_DIR="$HOME/projects/repoPick"
@@ -10380,6 +10579,26 @@ chmod +x "$SANDBOX/nfbroke"
 run env LANES_NO_FETCH=1 "$E" lanes --closed --prefix repoPick
 is   "the rows of the seeded repository read" "$rc" 0
 PICK_ROWS="$out"
+# THE TWO NARROWING FILTERS ARE CASE-BLIND ON BOTH SIDES, and since #107 the
+# lane's side is lower-cased without a process (`lower_into`) and the asked-for
+# side once, with `lc` (Copilot round 1 on #146). Asked in a spelling no row
+# carries, so a lowering that stopped happening on EITHER side drops every row
+# and the comparison says so; the row's own spelling has `P` in it, so the
+# lane's side is never already lower-case.
+# Each mixed-case read is also asked for a seeded lane BY NAME, because two
+# empty lists are equal: measured, with `lower_into` broken to return its input,
+# both `--prefix` reads came back empty and the comparison alone still passed.
+pick_names() { printf '%s\n' "$1" | awk -F'\t' 'NF >= 2 { print $1 }' | LC_ALL=C sort; }
+run env LANES_NO_FETCH=1 "$E" lanes --closed --prefix REPOPICK
+has  "--prefix in another case still finds the seeded lanes" "$out" "repoPick-1"
+is   "…exactly the lanes of the row's own spelling" \
+     "$(pick_names "$out")" "$(pick_names "$PICK_ROWS")"
+run env LANES_NO_FETCH=1 "$E" lanes --closed --repo opensoft/repoPick
+pick_repo_rows="$out"
+run env LANES_NO_FETCH=1 "$E" lanes --closed --repo OpenSoft/REPOPICK
+has  "--repo in another case finds them too" "$out" "repoPick-1"
+is   "…exactly the lanes --repo in the home's own spelling lists" \
+     "$(pick_names "$out")" "$(pick_names "$pick_repo_rows")"
 pick_group_of() { printf '%s\n' "$PICK_GROUPS" | awk -F'\t' -v l="$1" '$2 == l { print $1; exit }'; }
 PICK_GROUPS="$(printf '%s\n' "$PICK_ROWS" | "$E" lane-groups Eagle)"
 is   "a PAUSED lane is AVAILABLE" "$(pick_group_of repoPick-1)" "available"
