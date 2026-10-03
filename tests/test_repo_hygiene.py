@@ -1674,9 +1674,37 @@ def test_agents_md_is_short_enough_to_be_read():
     and the eleven lines are that rule, the two rounds as evidence, the two
     spellings that are correct (`ENVIRON`, or a second file with `NR == FNR`),
     and the suite case that now makes a third round red on every platform.
+
+    265 -> 292 on 2026-09-16, for THE CYCLE'S THREE RULINGS (Brett Heap's
+    RULING of that day, "do all three", on the coordinator's three proposals
+    — measured: `tests-macos` running 49-54 minutes per push against Linux's
+    17-22, pull requests drawing 6-12 Copilot review rounds, and this suite
+    queuing up to 1h20 behind the workstation lock the paragraph below still
+    describes). The paragraph these lines replace told an assistant that
+    `tests/run.sh` IS how this suite is run and that `pytest` by hand is the
+    thing it exists to stop — true of the mechanism and now wrong about the
+    standard, which is what made it the one to remove rather than a
+    paragraph to add beside. Numbered so each stays citable on its own:
+    `tests-macos` leaves the per-push `pull_request` gate for the `ready`
+    label, with its own `parse-macos` split off so the bash-3.2 syntax parse
+    does not leave with it; Copilot review is capped at two rounds; and
+    CI's own `tests` job, not the local wrapper, is the suite of record —
+    the wrapper stays exactly the tool it always was, for a person who wants
+    the whole answer locally rather than one a push now waits on. 26 of the
+    27 lines came in that one commit; the last, the same day, is Copilot
+    round 2 on this PR taken rather than chased past its cap: `parse-macos`
+    runs on `pull_request` and on push to main, the same two triggers as the
+    three jobs beside it, and the sentence saying so now names both rather
+    than the "every push" a reader could take for every branch.
+
+    276 + 292 MEET AT 303 on 2026-10-03, where #93 merged `main` at `92bd21f`.
+    Eleven of the merged file's lines are #93's one-line `awk -v` rule and
+    twenty-seven are #119's three rulings; neither is over a line the other
+    bought, and the cap is the count of what merged rather than either side's
+    number — the rule the 224 entry states.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 276, f"AGENTS.md is {len(lines)} lines; the cap is 276"
+    assert len(lines) <= 303, f"AGENTS.md is {len(lines)} lines; the cap is 303"
 
 
 def test_readme_is_short_enough_to_be_read():
