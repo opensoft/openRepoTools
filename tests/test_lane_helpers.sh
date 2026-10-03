@@ -10286,20 +10286,50 @@ LANEBIN_PATH="$SANDBOX/lanebin:$PATH"
 # A TIMEOUT REPORTS AS A TIMEOUT. The child is a session leader (`pty.fork`
 # runs `setsid`), so its PROCESS GROUP is everything it started — `lane` and the
 # `lanes-edit.sh` reads under it, which a kill of the one pid left running. The
-# group gets SIGTERM, five seconds to run its traps (a writer releases its lock
-# in one), and then SIGKILL. The driver then says, on its own stderr, that the
-# child wrote nothing for that long and was killed, prints the partial
-# transcript after it, and exits 124 — `timeout(1)`'s code, never a `128 + n`
-# that reads as the child's. `lane_pick` below turns that report into a FAIL of
-# its own and sets `$rc` to the word `TIMEOUT`, so no case can read a kill as
-# the command's exit code again.
+# group gets SIGTERM, up to five seconds — until nothing in it is running — to
+# run its traps (a writer releases its lock in one), and then SIGKILL. A process
+# that does not also trap HUP loses that grace when the leader exits first: the
+# leader is the terminal's controlling process, and its exit hangs the terminal
+# up on the group, which is the kernel's act and not the driver's (a dead
+# holder's lock is `acquire_lock`'s to take over). The driver then says, on its
+# own stderr, that the child wrote nothing for that long and was killed, prints
+# the partial transcript after it, and exits 124 — `timeout(1)`'s code, never a
+# `128 + n` that reads as the child's. `lane_pick` below turns that report into
+# a FAIL of its own and sets `$rc` to the word `TIMEOUT`, so no case can read a
+# kill as the command's exit code again.
 LANE_PTY="$SANDBOX/pty-run.py"
 LANE_PTY_SILENCE=240
 LANE_PTY_TIMEOUT_MARK="pty-run: TIMEOUT"
 cat > "$LANE_PTY" <<'PY'
-import os, pty, select, signal, sys, time
+import os, pty, select, signal, subprocess, sys, time
 
 answer, argv = sys.argv[1], sys.argv[2:]
+
+
+def group_running(pgid):
+    """Is anything in the child's process group still RUNNING? A group whose
+    every member is a zombie runs nothing -- and in a container whose pid 1
+    never reaps (this workstation's is `sleep infinity`) its zombies are never
+    collected, so `killpg(0)` alone would keep answering for them."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    try:
+        listing = subprocess.run(["ps", "-A", "-o", "pgid=,stat="],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                 universal_newlines=True, timeout=5).stdout
+    except Exception:
+        return True
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[0] == str(pgid) and "Z" not in fields[1]:
+            return True
+    return False
+
+
 silence = int(os.environ.get("LANE_PTY_SILENCE") or "240")
 pid, fd = pty.fork()
 if pid == 0:
@@ -10331,13 +10361,21 @@ if timed_out:
         os.killpg(pid, signal.SIGTERM)
     except OSError:
         pass
+    # THE GRACE IS THE GROUP'S, NOT THE LEADER'S (Copilot and Codex, round 1
+    # on #146). `lane` can die on the SIGTERM at once while a writer under it is
+    # still in its trap releasing a lock; ending the grace when the LEADER is
+    # reaped would SIGKILL that writer a tenth of a second later. So the leader
+    # is reaped as it goes, and the five seconds run until nothing in the group
+    # is running.
     deadline = time.time() + 5
-    while status is None and time.time() < deadline:
-        done, st = os.waitpid(pid, os.WNOHANG)
-        if done:
-            status = st
-        else:
-            time.sleep(0.1)
+    while time.time() < deadline:
+        if status is None:
+            done, st = os.waitpid(pid, os.WNOHANG)
+            if done:
+                status = st
+        if status is not None and not group_running(pid):
+            break
+        time.sleep(0.1)
     try:
         os.killpg(pid, signal.SIGKILL)
     except OSError:
@@ -10416,6 +10454,27 @@ else
   done
   is    "…and the child's whole process group went with it, so no helper runs on after its case" \
         "$([ -n "$pty_gc" ] && ! pty_running "$pty_gc" && printf gone || printf 'still running: %s' "${pty_gc:-no pid recorded}")" "gone"
+  # AND THE SIGTERM'S GRACE IS THE GROUP'S, NOT THE LEADER'S (Copilot and Codex,
+  # round 1 on #146): the leader here dies on the SIGTERM at once, and the
+  # grandchild under it takes a second in its trap — a writer releasing its
+  # lock, in miniature. Its cleanup must finish before the SIGKILL comes.
+  # IT TRAPS HUP AS WELL, AND THAT IS THE KERNEL'S PART, NOT THE DRIVER'S. The
+  # leader is the terminal's controlling process, so when it exits the kernel
+  # hangs the terminal up on the whole foreground group — measured: without the
+  # HUP in this trap the grandchild dies mid-cleanup under either driver loop.
+  # No driver can stop that; what this proves is that the DRIVER no longer cuts
+  # the grace short, which the old loop did a tenth of a second after the
+  # leader was reaped.
+  pty_clean="$SANDBOX/pty-cleaned"; rm -f -- "$pty_clean"
+  cat > "$SANDBOX/pty-trap-child.sh" <<'SH'
+trap 'sleep 1; printf "cleaned\n" > "$1"; exit 0' TERM HUP
+while :; do sleep 0.1; done
+SH
+  run env LANE_PTY_SILENCE=1 python3 "$LANE_PTY" x \
+      sh -c 'printf "partial\n"; sh "$0" "$1" & wait' "$SANDBOX/pty-trap-child.sh" "$pty_clean"
+  is    "…and a descendant still in its SIGTERM trap when the leader has gone is given its grace" \
+        "$(cat "$pty_clean" 2>/dev/null || printf 'killed before its trap finished')" "cleaned"
+  is    "…which is still the driver's timeout" "$rc" 124
   run env LANE_PTY_SILENCE=5 python3 "$LANE_PTY" x sh -c 'printf "answered\n"; exit 7'
   is    "…while a child that answers keeps its OWN exit code" "$rc" 7
   pty_timed_out; is "…and is not reported as a timeout" "$?" 1
