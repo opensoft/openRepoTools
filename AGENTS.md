@@ -211,15 +211,42 @@ git submodule update --init upstream/openRepoShape
 tests/run.sh                      # the suite, serialized — pass any pytest argument
 ```
 
-**`tests/run.sh` IS HOW THIS SUITE IS RUN, and `python3 -m pytest tests -q` by
-hand is the thing it exists to stop.** The run is minutes of bash and hundreds
-of `git` processes, and several lanes build in sibling worktrees of one
-checkout: the wrapper waits for any live run, takes
-`${TMPDIR:-/tmp}/openrepotools-pytest.lock` (`flock` where there is one, a
-`mkdir` lock on macOS, which has none), waits again inside it, then runs
-`python3 -m pytest tests -q "$@"`. Every lane on one workstation must name the
-SAME lock file or there is no lock, which is the whole reason the path is
-written here as well as in the file.
+Brett Heap's RULING of 2026-09-16 ("do all three", on the coordinator's three
+proposals — measured: `tests-macos` running 49-54 minutes per push against
+Linux's 17-22, pull requests drawing 6-12 Copilot review rounds, and this
+suite queuing up to 1h20 behind the workstation lock described below):
+
+1. **`TESTS-MACOS` LEAVES THE PER-PUSH GATE.** On `pull_request`
+   (`.github/workflows/tests.yml`) this workflow runs `tests`,
+   `tests-no-submodule` and `tests-windows` only; `tests-macos` itself runs
+   there only once the coordinator has put the `ready` label on the PR — the
+   landing gate, applied once, right before the squash — and otherwise on
+   push to main, nightly at 04:17Z, and on `workflow_dispatch`. A red nightly
+   or main `tests-macos` is a follow-up issue, never a revert. `parse-macos`
+   is the one piece of the old per-push job that never left: it runs the
+   bash-3.2 parse below on every `pull_request` push and every push to main
+   — the same two triggers as the three jobs above it, never gated on the
+   label — because that parse is worthless on Linux's bash 5.
+2. **COPILOT REVIEW IS CAPPED AT TWO ROUNDS PER PULL REQUEST.** Rounds one
+   and two are taken; a finding after that is filed as an issue and the PR
+   lands regardless.
+3. **CI IS THE SUITE OF RECORD.** A writer runs the shell-suite section they
+   touched locally — `bash tests/test_lane_helpers.sh` in full is fine when
+   the box is quiet — and the full local `tests/run.sh` behind the
+   workstation lock is no longer required before a push: CI's `tests` job is
+   the footer of record. `tests/run.sh` stays exactly as it is above: how to
+   run the whole suite locally, serialized, whenever a person wants that
+   answer anyway, and `python3 -m pytest tests -q` by hand — unserialized
+   against every other lane on the same workstation — is still the thing it
+   exists to stop.
+
+The run itself is minutes of bash and hundreds of `git` processes, and
+several lanes build in sibling worktrees of one checkout: the wrapper waits
+for any live run, takes `${TMPDIR:-/tmp}/openrepotools-pytest.lock` (`flock`
+where there is one, a `mkdir` lock on macOS, which has none), waits again
+inside it, then runs `python3 -m pytest tests -q "$@"`. Every lane on one
+workstation must name the SAME lock file or there is no lock, which is the
+whole reason the path is written here as well as in the file.
 
 Two measured defects on 2026-09-14 (opensoft/openRepoTools#51), both of them
 inside a guard that had been copied into four briefs:
