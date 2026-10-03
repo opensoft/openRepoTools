@@ -2,11 +2,15 @@
 
 ## Context
 
-The preliminary source is main `c1bac0dfc99a62583cb62eafc93a192911b2ff22`:
-58 tracked paths, 77 commits, one nested standard submodule. The inspected
-standard is `39d5c986fcfac1a160474bfe91c5f1c37fccc72c`. There are 12 registered
-worktrees including this planning checkout, and four open PRs. Feature 001 has
-dirty/untracked work; an extraction of main alone would omit it. The
+The refreshed preliminary source is main `82ecebee13edaa915b68550170faffdf761754d5`:
+58 tracked paths, 79 commits, one nested standard submodule. The inspected
+standard is `39d5c986fcfac1a160474bfe91c5f1c37fccc72c`. Cleanup initially left
+five registered worktrees; reopening the preserved planning checkout made
+six, then concurrent cleanup removed the merged #146 checkout. There are now
+five worktrees including planning. The three open PRs are #134, #121 and #97;
+#61 and #146 are included in main and need no separate replay.
+Feature 001 at `c0b571c` has dirty/untracked work, so main extraction alone
+would omit it. Removed worktrees are not an active replay queue. The
 [inventory](../../../specs/004-migrate-to-triad/inventory.json) is a snapshot.
 
 ## Goals / Non-Goals

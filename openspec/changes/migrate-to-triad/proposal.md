@@ -63,6 +63,12 @@ existing changes; this migration does not activate experimental capabilities.
 Requested on October 3, 2026. Planning is authorized; migration execution,
 repository creation, software installation, PR merge and lane relocation are
 not authorized by this request. The attached adoption plan is a preliminary
-mapping of source main `c1bac0dfc99a62583cb62eafc93a192911b2ff22`, not a promise
+mapping regenerated from source main `82ecebee13edaa915b68550170faffdf761754d5`, not a promise
 that this will be the final split commit. Refresh after planning lands and the
 cutover baseline is frozen. No runtime or migration success is claimed.
+
+The cleanup refresh records five worktrees before editing, six after reopening
+the planning checkout, then five after concurrent cleanup removed the merged
+#146 checkout. It removes retired worktrees from active migration and accounts
+for both #61 and #146 through main. Feature 001 and remote-only drafts/preservation refs retain
+their explicit preservation/review requirements.

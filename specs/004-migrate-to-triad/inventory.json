@@ -1,96 +1,99 @@
 {
-  "observed_at": "2026-10-03T17:50:46.499925+00:00",
+  "observed_at": "2026-10-03T22:12:05.918851+00:00",
   "source_repository": "opensoft/openRepoTools",
-  "source_main": "c1bac0dfc99a62583cb62eafc93a192911b2ff22",
+  "source_main": "82ecebee13edaa915b68550170faffdf761754d5",
+  "github_main": "82ecebee13edaa915b68550170faffdf761754d5",
+  "github_main_matches_local": true,
   "standard_commit": "39d5c986fcfac1a160474bfe91c5f1c37fccc72c",
+  "cleanup_summary": {
+    "previous_snapshot_worktrees": 12,
+    "worktrees_before_refresh": 5,
+    "local_branches_before_refresh": 6,
+    "worktrees_after_reopening_before_concurrent_cleanup": 6,
+    "registered_worktrees_including_reopened_planning_checkout": 5,
+    "local_branches_after_concurrent_cleanup": 5,
+    "planning_checkout_reopened": "004-migrate-to-triad",
+    "removed_before_refresh": [
+      {
+        "identity": "lclaude-finalize",
+        "previous_head": "7e4dc31c4571cf8d7b11e24941568edf66f82a94",
+        "local_branch_present": false
+      },
+      {
+        "identity": "detached-08dad90a67bc",
+        "previous_head": "08dad90a67bc6699283589c2222c53833a6603cd",
+        "local_branch_present": false
+      },
+      {
+        "identity": "002-skip-no-lane-guard",
+        "previous_head": "a2861bbdf0bf4793108bf3b2da2fc65f38d642bd",
+        "local_branch_present": false
+      },
+      {
+        "identity": "003-binary-only-guard-runner",
+        "previous_head": "42860a93be192f025a725708d7a016083ff82923",
+        "local_branch_present": false
+      },
+      {
+        "identity": "004-migrate-to-triad",
+        "previous_head": "c1bac0dfc99a62583cb62eafc93a192911b2ff22",
+        "local_branch_present": true
+      },
+      {
+        "identity": "chore/preserve-local-planning-20261003",
+        "previous_head": "135c18b258d02136ed834e5a446e552db385d50c",
+        "local_branch_present": false
+      },
+      {
+        "identity": "detached-92eab6c4fa2e",
+        "previous_head": "92eab6c4fa2e68f7e2202d529ee0f2e4bebce874",
+        "local_branch_present": false
+      },
+      {
+        "identity": "fix/claim-takeover-and-retire-fork",
+        "previous_head": "3de40b1865d31d3bb96a52e3822c1386c9e52634",
+        "local_branch_present": false
+      }
+    ],
+    "new_worktrees_since_previous_snapshot": [],
+    "worktrees_after_concurrent_cleanup_excluding_planning_checkout": 4,
+    "removed_during_refresh": [
+      {
+        "identity": "fix/107-pty-driver-bound-and-lane-per-call-cost",
+        "previous_head": "da0e5bb257b3b2b60a57ca544b7c75528c97f2a5",
+        "local_branch_present": false,
+        "reason": "PR #146 merged into main; concurrent cleanup removed checkout and local branch."
+      }
+    ]
+  },
   "worktrees": [
     {
       "identity": "main",
-      "head": "c1bac0dfc99a62583cb62eafc93a192911b2ff22",
+      "head": "82ecebee13edaa915b68550170faffdf761754d5",
       "layout": "root",
       "readable_here": true,
       "dirty_entries": 0,
-      "locked": false,
-      "prunable": false
-    },
-    {
-      "identity": "lclaude-finalize",
-      "head": "7e4dc31c4571cf8d7b11e24941568edf66f82a94",
-      "layout": "legacy-sibling",
-      "readable_here": true,
-      "dirty_entries": 0,
-      "locked": false,
-      "prunable": false
-    },
-    {
-      "identity": "detached-08dad90a67bc",
-      "head": "08dad90a67bc6699283589c2222c53833a6603cd",
-      "layout": "legacy-sibling",
-      "readable_here": true,
-      "dirty_entries": 0,
+      "untracked_entries": 0,
       "locked": false,
       "prunable": false
     },
     {
       "identity": "001-separate-swap-ctx-handoff",
-      "head": "fc5105b5371082c966c151f4bc08bfdabf64539b",
+      "head": "c0b571c5fa1c1446f143ce4f00f39db7cb7a166b",
       "layout": "legacy-sibling",
       "readable_here": true,
-      "dirty_entries": 22,
-      "locked": false,
-      "prunable": false
-    },
-    {
-      "identity": "002-skip-no-lane-guard",
-      "head": "a2861bbdf0bf4793108bf3b2da2fc65f38d642bd",
-      "layout": "legacy-sibling",
-      "readable_here": true,
-      "dirty_entries": 0,
-      "locked": false,
-      "prunable": false
-    },
-    {
-      "identity": "003-binary-only-guard-runner",
-      "head": "42860a93be192f025a725708d7a016083ff82923",
-      "layout": "legacy-sibling",
-      "readable_here": true,
-      "dirty_entries": 0,
+      "dirty_entries": 18,
+      "untracked_entries": 1,
       "locked": false,
       "prunable": false
     },
     {
       "identity": "004-migrate-to-triad",
-      "head": "c1bac0dfc99a62583cb62eafc93a192911b2ff22",
+      "head": "52ce64ee7787b62bf015e13cbf663f305513093e",
       "layout": "legacy-sibling",
       "readable_here": true,
-      "dirty_entries": 2,
-      "locked": false,
-      "prunable": false
-    },
-    {
-      "identity": "chore/preserve-local-planning-20261003",
-      "head": "135c18b258d02136ed834e5a446e552db385d50c",
-      "layout": "legacy-sibling",
-      "readable_here": true,
-      "dirty_entries": 0,
-      "locked": false,
-      "prunable": false
-    },
-    {
-      "identity": "detached-92eab6c4fa2e",
-      "head": "92eab6c4fa2e68f7e2202d529ee0f2e4bebce874",
-      "layout": "legacy-nested",
-      "readable_here": true,
-      "dirty_entries": 0,
-      "locked": false,
-      "prunable": false
-    },
-    {
-      "identity": "fix/claim-takeover-and-retire-fork",
-      "head": "3de40b1865d31d3bb96a52e3822c1386c9e52634",
-      "layout": "legacy-nested",
-      "readable_here": true,
-      "dirty_entries": 0,
+      "dirty_entries": 8,
+      "untracked_entries": 0,
       "locked": false,
       "prunable": false
     },
@@ -100,6 +103,7 @@
       "layout": "legacy-nested",
       "readable_here": true,
       "dirty_entries": 0,
+      "untracked_entries": 0,
       "locked": false,
       "prunable": false
     },
@@ -109,48 +113,107 @@
       "layout": "legacy-nested",
       "readable_here": true,
       "dirty_entries": 0,
+      "untracked_entries": 0,
       "locked": false,
       "prunable": false
     }
   ],
+  "local_branches": [
+    {
+      "identity": "001-separate-swap-ctx-handoff",
+      "head": "c0b571c5fa1c1446f143ce4f00f39db7cb7a166b"
+    },
+    {
+      "identity": "004-migrate-to-triad",
+      "head": "52ce64ee7787b62bf015e13cbf663f305513093e"
+    },
+    {
+      "identity": "feat/crash-consistent-lane-worktree-recovery",
+      "head": "64dfd9736b1079c16beda0b1ac53a61e68b21d9e"
+    },
+    {
+      "identity": "feat/supervised-context-restart",
+      "head": "5164ce1535b0f4f21d6b9e5b48318865a3c74295"
+    },
+    {
+      "identity": "main",
+      "head": "82ecebee13edaa915b68550170faffdf761754d5"
+    }
+  ],
+  "remote_only_branches": [
+    {
+      "identity": "chore/preserve-local-planning-20261003",
+      "head": "135c18b258d02136ed834e5a446e552db385d50c",
+      "currency": "local remote-tracking observation; not fetched during refresh"
+    },
+    {
+      "identity": "feat/claude-current",
+      "head": "715b7ace2f6eeddcf75014e705535fd5c1965ff7",
+      "currency": "local remote-tracking observation; not fetched during refresh"
+    },
+    {
+      "identity": "takeover/ort-a9-dirty-snapshot-20260913",
+      "head": "607aee7551a5a7db7e57e294aba193fbc8a8a266",
+      "currency": "local remote-tracking observation; not fetched during refresh"
+    }
+  ],
   "open_prs": [
     {
+      "number": 134,
+      "title": "claude-current and claude-restart-check: every launch starts the newest published Claude Code by absolute path, and a running session is told when its binary moved (opensoft/workBenches#119)",
       "headRefName": "feat/claude-current",
       "headRefOid": "715b7ace2f6eeddcf75014e705535fd5c1965ff7",
       "isDraft": true,
-      "number": 134,
-      "title": "claude-current and claude-restart-check: every launch starts the newest published Claude Code by absolute path, and a running session is told when its binary moved (opensoft/workBenches#119)",
-      "url": "https://github.com/opensoft/openRepoTools/pull/134"
+      "url": "https://github.com/opensoft/openRepoTools/pull/134",
+      "state": "open"
     },
     {
+      "number": 121,
+      "title": "`/ctx` writes its restart to disk before it kills anything, and what tmux starts is a supervisor that stays in the pane \u2014 the fresh session was an environment variable the launcher dropped (#94)",
       "headRefName": "feat/supervised-context-restart",
       "headRefOid": "5164ce1535b0f4f21d6b9e5b48318865a3c74295",
       "isDraft": false,
-      "number": 121,
-      "title": "`/ctx` writes its restart to disk before it kills anything, and what tmux starts is a supervisor that stays in the pane \u2014 the fresh session was an environment variable the launcher dropped (#94)",
-      "url": "https://github.com/opensoft/openRepoTools/pull/121"
+      "url": "https://github.com/opensoft/openRepoTools/pull/121",
+      "state": "open"
     },
     {
+      "number": 97,
+      "title": "Crash-consistent lane worktree recovery: a lane now says WHERE its session stopped \u2014 RUNNING \u2192 SWAPPING \u2192 SWAPPED with a generation/operation fence, a machine-readable worktree inventory taken at every handoff, and a resume reconciliation that reports and resets nothing",
       "headRefName": "feat/crash-consistent-lane-worktree-recovery",
       "headRefOid": "64dfd9736b1079c16beda0b1ac53a61e68b21d9e",
       "isDraft": false,
-      "number": 97,
-      "title": "Crash-consistent lane worktree recovery: a lane now says WHERE its session stopped \u2014 RUNNING \u2192 SWAPPING \u2192 SWAPPED with a generation/operation fence, a machine-readable worktree inventory taken at every handoff, and a resume reconciliation that reports and resets nothing",
-      "url": "https://github.com/opensoft/openRepoTools/pull/97"
-    },
-    {
-      "headRefName": "fix/claim-takeover-and-retire-fork",
-      "headRefOid": "3de40b1865d31d3bb96a52e3822c1386c9e52634",
-      "isDraft": false,
-      "number": 61,
-      "title": "claim --force takes over a dead lane's hold; lane-end --retire ends a duplicate holder",
-      "url": "https://github.com/opensoft/openRepoTools/pull/61"
+      "url": "https://github.com/opensoft/openRepoTools/pull/97",
+      "state": "open"
     }
   ],
+  "merged_since_previous_snapshot": [
+    {
+      "number": 61,
+      "state": "MERGED",
+      "merged_at": "2026-10-03T17:55:42Z",
+      "merge_commit": "14641fd67cee2985c215fc820219c9906935bdf3",
+      "disposition": "Included in current source main; no separate feature replay."
+    },
+    {
+      "number": 146,
+      "state": "MERGED",
+      "merged_at": "2026-10-03T22:07:15Z",
+      "merge_commit": "82ecebee13edaa915b68550170faffdf761754d5",
+      "disposition": "Included in current source main; no separate feature replay."
+    }
+  ],
+  "estate_status": {
+    "command": "status --fetch openRepoTools",
+    "result": "refused-not-an-estate",
+    "note": "No project.yaml/family.yaml estate root yet; no fetch performed by this refusal. Local refs and read-only GitHub main/PR APIs were checked instead. Do not run resume to silence it."
+  },
   "limitations": [
     "Snapshot only; refresh before baseline freeze and cutover.",
     "Physical paths, credentials, transcript bodies and WIP data are omitted.",
-    "Dirty/untracked work in feature 001 includes edits from this conversation and concurrent planning; preserve the complete current contents.",
-    "Raw preservation backups must be host-local or in the designated private WIP repository; public planning records hold identity/digest receipts only."
+    "Feature 001 retains dirty/untracked work including current broker/task-recovery planning; preserve its complete current contents.",
+    "Removed worktrees are cleanup history, not instructions to recreate them; verify retained backup/branch receipts before final cutover.",
+    "Remote-only preservation refs are local observations, not active worktrees or proof of fresh remote currency.",
+    "Raw preservation backups belong host-locally or in the designated private WIP repository; public records hold identities/digests only.",
+    "Inventory captures this planning branch before the refresh commit; its final HEAD is recorded by git."
   ]
 }

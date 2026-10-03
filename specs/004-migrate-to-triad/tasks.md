@@ -4,12 +4,18 @@ The sole executable task list for the governing OpenSpec change. Planning
 artifacts and preliminary mapping validation do not complete these tasks.
 Every task remains open. Run implementation from the selected feature
 worktrees; actual repository creation/cutover require the approval gates.
+The cleanup refresh updates the snapshot/mapping portion of T001/T003 only;
+owner decisions, private preservation/restore receipts and execution gates
+remain pending. Retired checkouts are not instructions to recreate worktrees.
 
 ## Phase 1 — Preservation and baseline (Gate A)
 
-- [ ] T001 [US1] Refresh `inventory.json`, current `status --fetch` output and
-  PR/branch/worktree metadata; resolve continuation/archive decisions for every
-  object in a host-local/private migration receipt. Verify no branch, detached
+- [ ] T001 [US1] Refresh `inventory.json`, PR/main/branch/worktree metadata and
+  applicable estate-status output; distinguish retained work from retired
+  cleanup records and remote-only drafts. Until an estate manifest exists,
+  relay `status --fetch openRepoTools`'s no-estate refusal without invoking
+  `resume`. Resolve continuation/archive decisions for every retained object
+  in a host-local/private migration receipt. Verify no branch, detached
   worktree or dirty/untracked/local-workflow content is omitted.
 - [ ] T002 [US1] Coordinate owner breakpoints and preserve source refs/content,
   ignored workflow configuration and installed receipts/config using the
@@ -90,6 +96,9 @@ worktrees; actual repository creation/cutover require the approval gates.
   worktree, including this migration feature, with explicit spec/code/root
   mappings and conflict review. Verify each object has a complete receipt or
   approved archived-original disposition; preserve original PR review history.
+  Current candidates are #97/#121/#134 and feature 004. Account for merged
+  #61/#146 through the baseline and retired checkout history through its receipts;
+  do not recreate cleaned worktrees or replay integrated changes.
 - [ ] T018 [US3] Exercise OpenSpec/Speckit feature selection and estate
   park/resume in disposable triad fixtures, then perform reviewed binding/WIP
   transitions through supported tools at owner breakpoints. Verify correct

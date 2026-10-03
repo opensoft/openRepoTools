@@ -8,10 +8,10 @@ source:
   repository: opensoft/openRepoTools
   local_path: .
   default_branch: main
-  commit: c1bac0dfc99a62583cb62eafc93a192911b2ff22
+  commit: "82ecebee13edaa915b68550170faffdf761754d5"
   files: 58
-  bytes: 4202017
-  commits: 77
+  bytes: 4339687
+  commits: 79
 mode: in-place
 project: openRepoTools
 org: opensoft
@@ -126,7 +126,7 @@ paths:
     rule: spec-governance
     reason: "Requirements, decisions, contracts and governance prose — what the project has DECIDED, as opposed to what it currently runs. `contracts/` is here by the 2026-09-02 ruling even where the code reads it: the code reads across the assembly-root mount (`spec/contracts` from the root, `../spec/contracts` from `code/`), which is what the legs are mounted for."
     files: 1
-    bytes: 182097
+    bytes: 187100
     review_required: false
   - path: lane
     leg: code
@@ -144,7 +144,7 @@ paths:
     rule: default
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
-    bytes: 93296
+    bytes: 119587
     review_required: false
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
@@ -194,7 +194,7 @@ paths:
     rule: extension-majority
     reason: "no rule names this path; the `.sh` extension is classified as code by the policy's extension table"
     files: 1
-    bytes: 759480
+    bytes: 807509
     review_required: false
   - path: link-estates
     leg: code
@@ -287,7 +287,7 @@ paths:
     rule: code-source-and-tests
     reason: "The implementation, the tests that hold it, and the scripts and images that build and run it. `scripts/` moves whole: a harness that reads `contracts/` from beside it reads them across the root mount afterwards, which is a code change the plan records as a follow-up rather than a reason to split the directory."
     files: 12
-    bytes: 1880040
+    bytes: 1938387
     review_required: false
   - path: upstream/
     leg: code
@@ -324,19 +324,19 @@ follow_ups:
 summary:
   spec:
     files: 17
-    bytes: 202997
+    bytes: 208000
     file_share: 0.2931
-    byte_share: 0.0483
+    byte_share: 0.0479
   code:
     files: 35
-    bytes: 3934978
+    bytes: 4067645
     file_share: 0.6034
-    byte_share: 0.9364
+    byte_share: 0.9373
   root:
     files: 6
     bytes: 64042
     file_share: 0.1034
-    byte_share: 0.0152
+    byte_share: 0.0148
   unresolved:
     files: 0
     bytes: 0
