@@ -30,6 +30,7 @@ tell which ones matter:
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import textwrap
 from pathlib import Path
@@ -478,6 +479,11 @@ def test_the_rerun_after_the_administrator_acts_has_only_to_push(tmp_path):
 
     second = run_wip(home, extra=env)
     assert second.returncode == 0, second.stdout + second.stderr
+    # A ROOT commit, so step 6a's history gate (#64) has to know the seed by
+    # comparing it with the EMPTY tree — `diff-tree` names no path at all for a
+    # root commit unless it is asked to.
+    assert ("one seed an earlier run committed is not on "
+            "opensoft/brettheap-wip main yet") in second.stdout, second.stdout
     assert "pushed the seed" in second.stdout
     assert remote_main(tmp_path) == seed, (
         "the re-run did not push the commit the first run left behind")
@@ -1531,6 +1537,400 @@ def test_a_skip_worktree_template_path_is_named_and_never_seeded(tmp_path):
     # AND THE RUN STILL FINISHES: this is a line to read, not a refusal.
     assert (home / ".agents" / "workspace.yaml").exists(), (
         "the run stopped over a path it only had to name")
+
+
+# --- step 6a's history half: nothing but the seed goes out ahead of main (#64)
+
+def git_in(where: Path, *args: str, stdin: str | None = None) -> str:
+    """`git -C <where> …`, checked, its stdout stripped."""
+    return subprocess.run(["git", "-C", str(where), *args], input=stdin,
+                          capture_output=True, text=True,
+                          check=True).stdout.strip()
+
+
+def commit_of_their_own(checkout: Path, subject: str,
+                        rel: str = "lanes/log/openRepoTools-3.md") -> str:
+    """A commit a person made in the workspace checkout and never pushed —
+    the thing #64 is about — and its sha. It touches a path the template does
+    not name, so nothing about it could be read as the seed."""
+    path = checkout / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{subject}\n", encoding="utf-8")
+    git_in(checkout, "add", "--", rel)
+    git_in(checkout, "commit", "-q", "-m", subject)
+    return head_of(checkout)
+
+
+def ruleset_on(tmp_path: Path, slug: str = "opensoft/brettheap-wip") -> Path:
+    """The organisation's PR-only ruleset, switched on for a repository that
+    ALREADY EXISTS — `fake_gh`'s own `install_ruleset`, line for line, for the
+    repository `refuse_push=True` cannot reach because an earlier run created
+    it. Returns the marker: unlinking it is the administrator's exclusion."""
+    bare = tmp_path / "github" / f"{slug}.git"
+    hook = bare / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\n"
+                    '[ -e "$(dirname "$0")/../ruleset-on" ] || exit 0\n'
+                    'echo "remote: refused by the PR-only ruleset" >&2\n'
+                    "exit 1\n", encoding="utf-8")
+    hook.chmod(0o755)
+    marker = bare / "ruleset-on"
+    marker.touch()
+    return marker
+
+
+def assert_refused_before_a_byte(result, checkout: Path, home: Path,
+                                 tmp_path: Path, head: str, main: str) -> None:
+    """What every history refusal owes: exit 2, step 6a's "nothing written,
+    nothing staged" in its own words and TRUE — the template path the run was
+    about to seed still absent, the index empty, HEAD where the person left it
+    — nothing pushed, and no pointer file."""
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "NOTHING was written" in result.stderr and \
+        "nothing was staged" in result.stderr, result.stderr
+    assert not (checkout / "handoffs" / "README.md").exists(), (
+        "a template byte was written past the gate that refused")
+    assert staged_in(checkout) == "", (
+        f"the refusal staged {staged_in(checkout)!r}")
+    assert head_of(checkout) == head, "a commit was made over the refusal"
+    assert remote_main(tmp_path) == main, "something was pushed to main"
+    assert not (home / ".agents" / "workspace.yaml").exists(), (
+        "the pointer file was written by a run that refused")
+
+
+def test_an_adopted_checkout_ahead_of_main_by_a_persons_commit_is_refused(
+        tmp_path):
+    """STEP 6a ASKED ABOUT THE WORKTREE AND THE INDEX, AND NEVER ABOUT
+    HISTORY (#64, Brett Heap's RULING of 2026-10-02, "go with option 1 on
+    #64").
+
+    Step 8 pushes `HEAD:main` wherever HEAD is not what origin's `main`
+    already carries, and HEAD carries every commit beneath it. So a CLEAN
+    adopted checkout holding a commit of the person's own that never left this
+    workstation passed step 6a, had the template seeded on top of it, and had
+    both pushed to the `main` of the repository that holds their unfinished
+    work — by a command that came to place a template. Measured before the
+    fix: exit 0, and the person's commit on the remote's `main`.
+
+    The refusal names the commit — sha and subject, the way `git log
+    --oneline` prints it — and it comes before step 7 writes a byte: the one
+    template file this checkout is missing is still missing afterwards.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout, _, main = adopted_checkout_without(tmp_path, home, env)
+    ahead = commit_of_their_own(checkout, "Record a diary entry nobody pushed")
+    assert git_in(checkout, "status", "--porcelain") == "", (
+        "the checkout is supposed to be clean by the worktree-and-index gate")
+
+    result = run_wip(home, extra=env)
+
+    assert_refused_before_a_byte(result, checkout, home, tmp_path, ahead, main)
+    assert "not every one of them is this command's own seed" in result.stderr, (
+        result.stderr)
+    assert f"{ahead[:7]} Record a diary entry nobody pushed" in result.stderr, (
+        result.stderr)
+    assert f"opensoft/brettheap-wip's main ({main[:7]})" in result.stderr
+    assert "workspace repository unreviewed" in result.stderr
+    assert "Push those commits yourself, or discard them" in result.stderr
+
+
+def test_a_seed_a_refused_push_left_on_an_adopted_main_is_pushed_by_the_rerun(
+        tmp_path):
+    """THE EXEMPTION, AND THE PROMISE IT KEEPS: "a re-run after that has only
+    to push" (step 8's own refusal).
+
+    A run whose push the PR-only ruleset refused leaves a clean worktree and
+    exactly one commit ahead of `main`: its seed. That commit is recognised —
+    its subject, its `Written by` line, and a tree that differs from its
+    parent's at a template path and nowhere else — so step 6a lets it through
+    and the re-run, once an administrator has acted, pushes it. This is the
+    ADOPTED shape, whose seed has a parent; the root-commit seed of a fresh
+    repository is `test_the_rerun_after_the_administrator_acts_has_only_to_push`.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout, _, main = adopted_checkout_without(tmp_path, home, env)
+    marker = ruleset_on(tmp_path)
+
+    first = run_wip(home, extra=env)
+    assert first.returncode == 2, first.stdout + first.stderr
+    assert "THAT IS THE RULESET" in first.stderr, first.stderr
+    seed = head_of(checkout)
+    assert seed != main and git_in(checkout, "rev-parse", f"{seed}^") == main, (
+        "the first run did not leave exactly one seed commit on top of main")
+    assert remote_main(tmp_path) == main
+
+    marker.unlink()
+    second = run_wip(home, extra=env)
+
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert ("one seed an earlier run committed is not on "
+            "opensoft/brettheap-wip main yet") in second.stdout, second.stdout
+    assert "pushed the seed" in second.stdout
+    assert remote_main(tmp_path) == seed, (
+        "the re-run did not push the seed the first run left behind")
+    assert (home / ".agents" / "workspace.yaml").is_file()
+
+
+def test_a_remote_that_cannot_be_asked_skips_the_history_check_for_the_probe(
+        tmp_path):
+    """STEP 8'S OWN "COULD NOT ASK" ARM, KEPT AT STEP 6a, as the ruling keeps
+    it.
+
+    A remote that does not answer `ls-remote` has no `main` to name commits
+    against, so the history check is SKIPPED — said in one line — and the
+    run goes on to the push, which is the probe: here it meets the same wall
+    and step 8 refuses, as it always did. It is not refused at step 6a, and it
+    is not read as an EMPTY `main` either, which would put every local commit
+    ahead and refuse a seed re-run. A person's own commit is ahead here so the
+    two readings come apart: the run reaching step 8's refusal, and not step
+    6a's, is the skip.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout = adopted_checkout(tmp_path, home, env)
+    main = head_of(checkout)
+    commit_of_their_own(checkout, "Record a diary entry nobody pushed")
+    # Still `…/opensoft/brettheap-wip`, so step 6 adopts it as before, and
+    # nothing at all at that path to answer.
+    nowhere = tmp_path / "unreachable" / "opensoft" / "brettheap-wip.git"
+    git_in(checkout, "remote", "set-url", "origin", str(nowhere))
+
+    result = run_wip(home, extra=env)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert ("could not ask origin where opensoft/brettheap-wip's main is"
+            in result.stdout), result.stdout
+    assert "this command's own seed" not in result.stderr, (
+        f"an unanswered question was refused as history:\n{result.stderr}")
+    assert "THAT IS THE RULESET" in result.stderr, (
+        f"the run did not reach step 8's push:\n{result.stderr}")
+    assert remote_main(tmp_path) == main
+    assert not (home / ".agents" / "workspace.yaml").exists()
+
+
+@pytest.mark.parametrize("disguise", ["non-template-path", "no-trailer",
+                                      "merge", "empty"])
+def test_a_commit_wearing_the_seeds_message_is_not_taken_for_the_seed(
+        tmp_path, disguise):
+    """A MESSAGE IS SOMETHING ANYBODY CAN TYPE, so the seed is known by all of
+    what makes it step 8's own commit, and each of these lacks one part:
+
+    * `non-template-path` — the seed's own message, byte for byte, on a commit
+      that touches a path the template does not name. This is the one the
+      ruling names: the TREE test is what gives the exemption its teeth.
+    * `no-trailer` — the seed's subject and the template's own bytes at a
+      template path, without the `Written by` line.
+    * `merge` — the seed's message on a merge whose tree adds a path the
+      template does not name. `diff-tree` names NO path for a merge unless asked
+      for a combined diff, so without the parent count a merge would pass the
+      tree test by naming nothing.
+    * `empty` — the seed's message on a commit that changes nothing. Step 8
+      commits only where `diff --cached` has something, so it never makes one.
+
+    Every one of them would have been pushed to `main` before the fix.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout, template_bytes, main = adopted_checkout_without(tmp_path, home, env)
+    # THE SEED'S OWN MESSAGE, read from the seed the first run made — the
+    # root commit — rather than retyped here, so it is step 8's to the byte.
+    root = git_in(checkout, "rev-list", "--max-parents=0", "HEAD")
+    seed_message = git_in(checkout, "log", "-1", "--format=%B", root) + "\n"
+    assert seed_message.startswith("Seed this workspace repository from ")
+    assert "Written by `openRepoTools wip init`" in seed_message
+
+    notes = checkout / "notes.md"
+    if disguise == "non-template-path":
+        notes.write_text("somebody's own notes\n", encoding="utf-8")
+        git_in(checkout, "add", "--", "notes.md")
+        git_in(checkout, "commit", "-q", "-F", "-", stdin=seed_message)
+    elif disguise == "no-trailer":
+        readme = checkout / "handoffs" / "README.md"
+        readme.parent.mkdir(parents=True, exist_ok=True)
+        readme.write_text(template_bytes, encoding="utf-8")
+        git_in(checkout, "add", "--", "handoffs/README.md")
+        git_in(checkout, "commit", "-q", "-m", seed_message.splitlines()[0])
+    elif disguise == "merge":
+        notes.write_text("somebody's own notes\n", encoding="utf-8")
+        git_in(checkout, "add", "--", "notes.md")
+        tree = git_in(checkout, "write-tree")
+        # Both parents are already on `main`, so the merge is the ONE commit
+        # ahead of it and nothing else in the range could be what refuses.
+        merge = git_in(checkout, "commit-tree", tree, "-p", "HEAD",
+                       "-p", "HEAD~1", "-F", "-", stdin=seed_message)
+        git_in(checkout, "update-ref", "HEAD", merge)
+        assert git_in(checkout, "diff-tree", "--no-commit-id", "--name-only",
+                      "-r", merge) == "", (
+            "diff-tree was supposed to name no path for a merge")
+    else:
+        git_in(checkout, "commit", "-q", "--allow-empty", "-F", "-",
+               stdin=seed_message)
+    ahead = head_of(checkout)
+    assert git_in(checkout, "rev-list", f"{main}..HEAD") == ahead
+    assert git_in(checkout, "status", "--porcelain") == ""
+
+    result = run_wip(home, extra=env)
+
+    if disguise == "no-trailer":
+        # It put `handoffs/README.md` back into HEAD, so the "nothing written"
+        # check below has a different path to look at.
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "NOTHING was written" in result.stderr and \
+            "nothing was staged" in result.stderr, result.stderr
+        assert head_of(checkout) == ahead and remote_main(tmp_path) == main
+        assert staged_in(checkout) == ""
+        assert not (home / ".agents" / "workspace.yaml").exists()
+    else:
+        assert_refused_before_a_byte(result, checkout, home, tmp_path,
+                                     ahead, main)
+    assert "not every one of them is this command's own seed" in result.stderr, (
+        result.stderr)
+    assert f"{ahead[:7]} Seed this workspace repository from" in result.stderr, (
+        result.stderr)
+
+
+def git_at_least(major: int, minor: int) -> bool:
+    words = subprocess.run(["git", "--version"], capture_output=True,
+                           text=True, check=False).stdout.split()
+    try:
+        have = tuple(int(n) for n in words[2].split(".")[:2])
+    except (IndexError, ValueError):
+        return False
+    return have >= (major, minor)
+
+
+@pytest.mark.skipif(shutil.which("ssh-keygen") is None or not git_at_least(2, 34),
+                    reason="ssh commit signing needs ssh-keygen and git 2.34")
+def test_a_signed_seed_is_still_known_where_log_shows_signatures(tmp_path):
+    """`log.showSignature` IS A PERSON'S OWN CONFIG, AND IT WRITES ON STDOUT.
+
+    With it set, `git log --format=%s` prints the signature check's report
+    ahead of the subject, so a seed this command committed on a machine that
+    signs every commit read back as a commit whose first line is that report
+    — and step 6a would refuse the very seed its exemption is for. The
+    recognizer passes `--no-show-signature` on every `log` it runs. SSH
+    signing stands in for gpg because it needs no keyring: the report lands
+    on stdout either way.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout, _, main = adopted_checkout_without(tmp_path, home, env)
+    key = tmp_path / "signing-key"
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f",
+                    str(key)], check=True, capture_output=True)
+    for name, value in (("gpg.format", "ssh"),
+                        ("user.signingkey", f"{key}.pub"),
+                        ("commit.gpgSign", "true"),
+                        ("log.showSignature", "true")):
+        git_in(checkout, "config", name, value)
+    marker = ruleset_on(tmp_path)
+
+    first = run_wip(home, extra=env)
+    assert first.returncode == 2, first.stdout + first.stderr
+    assert "THAT IS THE RULESET" in first.stderr, first.stderr
+    seed = head_of(checkout)
+    assert "BEGIN SSH SIGNATURE" in git_in(checkout, "cat-file", "commit", seed), (
+        "the seed was supposed to be signed")
+
+    marker.unlink()
+    second = run_wip(home, extra=env)
+
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert ("one seed an earlier run committed is not on "
+            "opensoft/brettheap-wip main yet") in second.stdout, second.stdout
+    assert remote_main(tmp_path) == seed
+
+
+def test_an_empty_main_with_a_persons_local_commit_is_refused(tmp_path):
+    """WITH NO `main` ON THE REMOTE, EVERY LOCAL COMMIT IS AHEAD OF IT.
+
+    A repository an administrator created and nobody seeded, cloned here, and
+    a commit of the person's own made in it first: step 8's push would make
+    that commit the first thing on the workspace repository's `main`. The
+    range is all of HEAD, the refusal says the remote has no `main` yet, and
+    not one of the nine template files is written.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path, exists=True)
+    checkout = home / "projects" / "brettheap-wip"
+    checkout.parent.mkdir(parents=True)
+    bare = tmp_path / "github" / "opensoft" / "brettheap-wip.git"
+    subprocess.run(["git", "clone", "-q", str(bare), str(checkout)], check=True,
+                   capture_output=True)
+    git_in(checkout, "config", "user.email", "wip@example.invalid")
+    git_in(checkout, "config", "user.name", "wip init tests")
+    ahead = commit_of_their_own(checkout, "Start my own notes first",
+                                rel="notes.md")
+
+    result = run_wip(home, extra=env)
+
+    assert_refused_before_a_byte(result, checkout, home, tmp_path, ahead, "")
+    assert f"{ahead[:7]} Start my own notes first" in result.stderr, (
+        result.stderr)
+    assert "opensoft/brettheap-wip's main (it has none yet)" in result.stderr, (
+        result.stderr)
+    for rel in TEMPLATE_FILES:
+        assert not (checkout / rel).exists(), f"{rel} was written"
+
+
+def test_a_main_this_checkout_never_fetched_is_refused_not_read_as_nothing_ahead(
+        tmp_path):
+    """A RANGE THAT CANNOT BE LISTED IS NEVER AN EMPTY ONE (#49's lesson,
+    asked of history).
+
+    Another workstation pushed to `main` since this checkout last fetched, so
+    the commit `ls-remote` names is one this checkout does not have and
+    `rev-list <it>..HEAD` fails. An empty list read from that failure is
+    exactly what "nothing ahead" looks like; it is a refusal instead, with
+    git's own words and the fetch that settles it, before a byte is written.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout, _, main = adopted_checkout_without(tmp_path, home, env)
+    elsewhere = tmp_path / "another-workstation"
+    bare = tmp_path / "github" / "opensoft" / "brettheap-wip.git"
+    subprocess.run(["git", "clone", "-q", str(bare), str(elsewhere)], check=True)
+    git_in(elsewhere, "config", "user.email", "wip@example.invalid")
+    git_in(elsewhere, "config", "user.name", "wip init tests")
+    commit_of_their_own(elsewhere, "A register write from another workstation")
+    git_in(elsewhere, "push", "-q", "origin", "HEAD:main")
+    moved = remote_main(tmp_path)
+    assert moved != main
+
+    result = run_wip(home, extra=env)
+
+    assert_refused_before_a_byte(result, checkout, home, tmp_path, main, moved)
+    assert "could not list the commits" in result.stderr, result.stderr
+    assert f"opensoft/brettheap-wip's main ({moved[:7]})" in result.stderr
+    assert "What it said:" in result.stderr and "    | " in result.stderr, (
+        result.stderr)
+    assert f"git -C {checkout} fetch origin" in result.stderr, result.stderr
+
+
+def test_a_branch_whose_name_ends_in_main_is_not_read_as_main(tmp_path):
+    """`ls-remote origin main` MATCHES EVERY REF WHOSE NAME ENDS IN `main`.
+
+    Step 8 read the FIRST line, and `refs/heads/backup/main` sorts before
+    `refs/heads/main` — so a person who had pushed their commit to a backup
+    branch, and not to `main`, had that branch's tip read as `main`: step 6a's
+    range came out empty, and step 8 said `main` "already carries this
+    commit" and never pushed, writing the pointer file over a `main` that did
+    not. The one read both steps share is `refs/heads/main` by name.
+    """
+    home = tmp_path / "home"
+    env = fake_gh(tmp_path)
+    checkout, _, main = adopted_checkout_without(tmp_path, home, env)
+    ahead = commit_of_their_own(checkout, "Record a diary entry kept on a backup")
+    git_in(checkout, "push", "-q", "origin", "HEAD:refs/heads/backup/main")
+    listed = git_in(checkout, "ls-remote", "origin", "main").splitlines()
+    assert listed[0].endswith("refs/heads/backup/main"), listed
+
+    result = run_wip(home, extra=env)
+
+    assert_refused_before_a_byte(result, checkout, home, tmp_path, ahead, main)
+    assert f"{ahead[:7]} Record a diary entry kept on a backup" in result.stderr
+    assert f"opensoft/brettheap-wip's main ({main[:7]})" in result.stderr
 
 
 # --- one answer to one question, across the seam between two toolsets -------
