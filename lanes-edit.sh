@@ -7807,6 +7807,43 @@ lane_restart_read() {   # <lane>
     *) printf 'state\tUNKNOWN-SCHEMA\n'; printf 'schema\t%s\n' "${lrr_schema:-<none>}"
        printf 'file\t%s\n' "$lrr_f"; return 0 ;;
   esac
+  # AN ACTIVE INTENT MISSING A FACT A LAUNCH IS FENCED ON IS NOT A READABLE ONE
+  # (Copilot round 2 on openRepoTools#121). The schema check above is the whole
+  # of what this read used to verify, so a `pending` record carrying an
+  # operation and a mode and nothing else came back with empty values — and
+  # empty is exactly what every comparison downstream treats as *cannot
+  # compare*: `pane_agrees` returns agreement on an empty side, the digest check
+  # skips, and the launch goes ahead with none of the three checks those fields
+  # exist for. That is a silent launch from a record nobody wrote.
+  #
+  # PRESENT AND NOT EMPTY, WHICH IS NOT THE SAME AS *NOT `none`*. `none` IS an
+  # answer here — a workstation with neither `sha256sum` nor `shasum` records
+  # `digest: none`, and the writer writes `none` for every empty field on every
+  # transition — so what is checked is that the KEY IS THERE AT ALL, which is
+  # true of everything this tooling has ever written and false of a record that
+  # was truncated or edited by hand.
+  #
+  # ONLY FOR `pending` AND `starting`. A `ready` intent is history and a
+  # `failed` one is a diagnostic; neither authorises a launch, so neither needs
+  # the facts a launch is fenced on, and refusing to READ them would take the
+  # `--restart-status` surface away from the person trying to work out what
+  # happened.
+  lrr_state="$(lane_sidecar_field "$lrr_f" state)"
+  case "$lrr_state" in
+    pending | starting)
+      lrr_missing=""
+      for lrr_need in operation mode dir pane handoff digest; do
+        [ -n "$(lane_sidecar_field "$lrr_f" "$lrr_need")" ] ||
+          lrr_missing="${lrr_missing:+$lrr_missing }$lrr_need"
+      done
+      if [ -n "$lrr_missing" ]; then
+        printf 'state\tINCOMPLETE\n'
+        printf 'intended_state\t%s\n' "$lrr_state"
+        printf 'missing\t%s\n' "$lrr_missing"
+        printf 'file\t%s\n' "$lrr_f"
+        return 0
+      fi ;;
+  esac
   for lrr_k in state generation operation mode lane agent profile dir pane window \
                handoff digest old_transcript new_transcript attempt workstation \
                created updated reason; do

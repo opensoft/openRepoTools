@@ -2408,20 +2408,37 @@ case "$ri_rc" in
     ri_hf="$(printf '%s\n'    "$ri_out" | awk -F'\t' '$1 == "handoff" { print $2; exit }')"
     ri_dig="$(printf '%s\n'   "$ri_out" | awk -F'\t' '$1 == "digest" { print $2; exit }')" ;;
   # 8 IS AN ANSWER — this lane has no restart in flight, which is every
-  # ordinary launch — 1 is a lane with no control root, which is the
-  # pre-cutover lane and not a failure either, and 2 IS A HELPER THAT PREDATES
-  # THIS READ: the estate's fence is one sentence and `lane-handoff` spells it
-  # out at its own register reads — *"`0` an answer, `8` NO ANSWER and `2` a
-  # helper predating the read — both of those fall to the next rung"*. An
-  # installed `lanes-edit.sh` from before openRepoTools#94 answers 2 from its
-  # unknown-subcommand arm, and a note printed on EVERY launch of EVERY lane on
-  # such a workstation is noise about a state that is simply the old one.
-  # Anything else is a read that FAILED, and a read that failed is never an
-  # answer (Amendment 7(d)): it is said, and the other two sources still
-  # decide, because refusing every launch on a helper that could not answer is
-  # not a safety property.
-  8|1|2) : ;;
-  *) note "$LANES_EDIT restart-intent $LANE failed (exit $ri_rc) — this launch reads no restart intent, so a /ctx in flight for this lane is NOT visible here. If a context clear was just taken, run it again once the read works." ;;
+  # ordinary launch — and 2 IS A HELPER THAT PREDATES THIS READ: an installed
+  # `lanes-edit.sh` from before openRepoTools#94 answers 2 from its
+  # unknown-subcommand arm, and on that workstation no `/ctx` could have
+  # written an intent at all. The estate's fence is one sentence and
+  # `lane-handoff` spells it out at its own register reads — *"`0` an answer,
+  # `8` NO ANSWER and `2` a helper predating the read — both of those fall to
+  # the next rung"*. Both fall to the next rung here too, and neither is worth
+  # a note printed on every launch of every lane.
+  8|2) : ;;
+  # AND 1 IS NOT ONE OF THEM (Copilot round 2 on openRepoTools#121). `1` is
+  # *the control root could not be derived*, which is a READ THAT COULD NOT BE
+  # MADE and never *there is no restart in flight* — and the two are opposite
+  # facts at this one gate. The sidecar `/ctx` wrote sits under a root resolved
+  # from the lane's recorded directory or `$PROJECTS_ROOT`, and the pane this
+  # launch runs in is a NEW one whose environment is not the one that wrote it;
+  # a root that resolved then and does not now leaves this command reading
+  # nothing and calling it nothing-in-flight. What it would then do is resolve
+  # an ordinary resume source — and for a lane whose `/ctx` has just killed its
+  # pane, that is the transcript the `/ctx` PAUSED. That is openRepoTools#94,
+  # recreated by the very command written to prevent it.
+  #
+  # SO IT REFUSES, and so does any code this fence does not classify. The old
+  # line said *refusing every launch on a helper that could not answer is not a
+  # safety property* — which is true of a lane with no restart in flight and
+  # false of the one gate whose wrong answer resumes a paused transcript. The
+  # refusal names what to run to see the failure and both ways out of it,
+  # because a refusal a person cannot act on is not better than the defect.
+  1)
+    die "lane $LANE's restart intent could not be read: it has no lifecycle control root here (\`$LANES_EDIT restart-intent $LANE\` exits 1 — its record names no directory and \$PROJECTS_ROOT is not a directory in this environment). That is NOT 'no restart is in flight': the sidecar a /ctx writes lives under that root, and launching without reading it would resolve an ordinary resume source — which for a lane whose pane a /ctx has just replaced is the transcript that /ctx PAUSED (openRepoTools#94). Nothing was renamed, written or started. Give this run a root it can resolve: set \$LANES_LANE_STATE_ROOT, or make \$PROJECTS_ROOT (default \$HOME/projects) a directory — the lane's own record names its checkout once it has been started with one, and resolves on that." 2 ;;
+  *)
+    die "lane $LANE's restart intent read FAILED (\`$LANES_EDIT restart-intent $LANE\` exited $ri_rc), and a read that failed is never an answer (Amendment 7(d)). Nothing was renamed, written or started: this is the one launch gate whose wrong answer resumes the transcript a /ctx just paused (openRepoTools#94), so it refuses rather than falling through to an ordinary resume source. Run that command yourself to see what it says, then launch again." 1 ;;
 esac
 # AN `--operation` NAMES THE INTENT IT BELONGS TO, AND ONLY THAT ONE.
 if [ -n "$op_flag" ]; then
@@ -2446,6 +2463,8 @@ case "$ri_state" in
   # workstation's `lanes-edit.sh` is new enough to read the file — and the
   # message says both ways out, which is what makes that recoverable rather than
   # a wall.
+  INCOMPLETE)
+    die "lane $LANE has a restart intent that is missing facts a launch is fenced on (\`lanes-edit.sh restart-intent $LANE\` answers INCOMPLETE and names them). Its writer records every field on every transition, so a record missing one was not written by this tooling — and launching from it would skip the very checks those fields exist for: the pane comparison and the handoff digest both treat an absent value as *cannot compare*. Nothing was renamed, written or started. Read it, and remove it once you know no restart is in flight:  lanes-edit.sh restart-intent $LANE" 2 ;;
   UNKNOWN-SCHEMA)
     die "lane $LANE has a restart intent this \`lanes-edit.sh\` cannot read: its schema is one this version does not know (\`lanes-edit.sh restart-intent $LANE\` answers UNKNOWN-SCHEMA). That is NOT 'no restart is in flight' — a read that could not be made is never an answer (Amendment 7(d)) — and starting anyway would resolve an ordinary resume source, which for a lane whose /ctx just killed its pane is the transcript that /ctx PAUSED. Nothing was renamed, written or started. Update this workstation's openRepoTools so it can read that record, or remove the intent once you know no restart is in flight:  lanes-edit.sh restart-intent $LANE" 2 ;;
   pending|starting)
@@ -3551,8 +3570,18 @@ if (( fresh )) && [ -n "$ri_op" ] && (( ! no_launch )) && (( ! dry_run )); then
   ri_new="$lane_sid"
   [ -n "$ri_new" ] && [ "$ri_new" != unknown ] || ri_new="${new_sid:-}"
   ri_wrc=0
+  # FENCED ON THE GENERATION AS WELL AS THE OPERATION (Copilot round 2 on
+  # openRepoTools#121), which is what every write the supervisor makes of this
+  # same intent carries. `$ri_gen` is the generation this run READ at the top,
+  # before anything was renamed or written, and the supervisor's claim keeps it
+  # — so a lane whose lifecycle advanced between the two has a launch here that
+  # writes nothing and says so, rather than stamping its expected transcript
+  # onto a newer generation's record.
+  ri_fence=()
+  case "${ri_gen:-}" in '' | *[!0-9]*) : ;; *) ri_fence=(--expect-generation "$ri_gen") ;; esac
   LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$LANE" starting \
     --expect 'pending|starting' --expect-operation "$ri_op" \
+    ${ri_fence[@]+"${ri_fence[@]}"} \
     ${ri_new:+--new-transcript "$ri_new"} \
     --reason "lane-start prepared the launch" >/dev/null 2>&1 || ri_wrc=$?
   case "$ri_wrc" in

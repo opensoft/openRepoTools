@@ -10050,6 +10050,32 @@ sed -i.bak 's/^schema: .*/schema: 1/' "$SV_STATE/repoSV-1/restart-intent.yaml" 2
   sed -i '' 's/^schema: .*/schema: 1/' "$SV_STATE/repoSV-1/restart-intent.yaml" 2>/dev/null || :
 rm -f "$SV_STATE/repoSV-1/restart-intent.yaml.bak"
 
+# AN ACTIVE INTENT MISSING A FACT A LAUNCH IS FENCED ON IS NOT READABLE EITHER
+# (Copilot round 2 on openRepoTools#121). The schema check was the whole of what
+# the read verified, so a `pending` record carrying an operation and a mode and
+# nothing else came back with EMPTY values — and empty is what every comparison
+# downstream treats as *cannot compare*: the pane agrees, the digest check
+# skips, and the launch goes ahead with none of the three checks those fields
+# exist for. `none` is still an answer; what is required is that the KEY IS
+# THERE, which is true of everything this tooling writes.
+sed -i.bak '/^digest: /d' "$SV_STATE/repoSV-1/restart-intent.yaml" 2>/dev/null || \
+  sed -i '' '/^digest: /d' "$SV_STATE/repoSV-1/restart-intent.yaml" 2>/dev/null || :
+rm -f "$SV_STATE/repoSV-1/restart-intent.yaml.bak"
+run "$E" restart-intent repoSV-1
+is   "an active intent missing a fenced field still reads" "$rc" 0
+has  "…and says INCOMPLETE rather than handing back an empty one" "$out" "$(printf 'state\tINCOMPLETE')"
+has  "…naming the field that is gone" "$out" "$(printf 'missing\tdigest')"
+has  "…and the state it was trying to be" "$out" "$(printf 'intended_state\tstarting')"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="svsess:@31" CLAUDE_PROFILE_NAME=team-05a \
+    "$START" --dir "$SV_DIR" repoSV-1 --no-launch
+is   "…and a launch of that lane refuses" "$rc" 2
+has  "…saying which checks an absent value would have skipped" "$err" "cannot compare"
+hasnt "…resolving no resume source" "$out" "--resume"
+# PUT IT BACK for the supervisor cases below, which need this lane `starting`.
+"$E" set-restart-intent repoSV-1 starting --expect starting --digest none >/dev/null 2>&1 || :
+run "$E" restart-intent repoSV-1
+has  "…and the record is whole again" "$out" "$(printf 'state\tstarting')"
+
 # A LANE WITH NO CONTROL ROOT IS A READ THAT COULD NOT BE MADE, and never
 # 'this lane has no restart in flight' (Amendment 7(d)).
 run env LANES_LANE_STATE_ROOT= PROJECTS_ROOT=/nonexistent-projects-root "$E" restart-intent repoSV-4
@@ -10059,6 +10085,26 @@ run env LANES_LANE_STATE_ROOT= PROJECTS_ROOT=/nonexistent-projects-root \
     "$E" set-restart-intent repoSV-4 pending --expect none
 is   "…and there is nowhere to write one either" "$rc" 1
 has  "…naming the seam that gives it one" "$err" "LANES_LANE_STATE_ROOT"
+# AND A LAUNCH THAT CANNOT DERIVE THE ROOT REFUSES RATHER THAN FALLING THROUGH
+# (Copilot round 2 on openRepoTools#121). Exit 1 used to sit in the same arm as
+# 8 and 2 and be SILENT — but 8 is *this lane has no restart in flight* and 2 is
+# *this helper predates the feature*, both answers, while 1 is *the read could
+# not be made*. The pane a supervised launch runs in is a NEW one whose
+# environment is not the one that wrote the sidecar, so a root that resolved for
+# the `/ctx` and does not resolve here leaves this command reading nothing and
+# calling it nothing-in-flight — and what it does next is resolve an ordinary
+# resume source, which for a lane whose pane a `/ctx` has just replaced is the
+# transcript that `/ctx` PAUSED. openRepoTools#94, recreated by the command
+# written to prevent it.
+: > "$FAKE_CLAUDE_LOG"
+run env PATH="$A17PATH" FAKE_TMUX_WINDOW="svsess:@31" CLAUDE_PROFILE_NAME=team-05a \
+    LANES_LANE_STATE_ROOT= PROJECTS_ROOT=/nonexistent-projects-root \
+    "$START" --dir "$SV_DIR" repoSV-4 --no-launch
+is   "a launch whose restart intent could not be read at all refuses" "$rc" 2
+has  "…saying that is NOT 'no restart is in flight'" "$err" "NOT 'no restart is in flight'"
+has  "…naming what an ordinary resume would have opened" "$err" "the transcript that /ctx PAUSED"
+has  "…and how to give this run the root" "$err" "LANES_LANE_STATE_ROOT"
+hasnt "…resolving no resume source" "$out" "--resume"
 
 # A NEW OPERATION INHERITS NOTHING OF THE LAST ONE'S.
 #
@@ -10315,6 +10361,23 @@ run env PATH="$SVPATH" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" "$SV_LAN
 is   "a supervisor with no operation refuses" "$rc" 2
 has  "…because one that took whatever it found would launch into somebody else's act" "$err" "--operation <id>"
 
+# AND AN AGENT THE LANE'S OWN RECORD DOES NOT NAME IS A REFUSAL BEFORE ANY
+# LAUNCH (Copilot round 2 on openRepoTools#121). Design decision 15 says agent,
+# profile and directory are fenced EARLIER — *"where a conflict refuses the
+# launch before it is made, rather than re-checked after"* — and for the agent
+# that was true of no line: the intent recorded it and nothing read it back.
+# It is the CANONICAL agent that is compared and not the child's, because what a
+# live process IS cannot be read from this estate's records: `live-holder`
+# answers a transcript, a pane, a name, a pid and a verdict, and no agent word.
+"$E" set-restart-intent repoSV-3 pending --expect pending --agent codex >/dev/null 2>&1
+run env PATH="$SVPATH" LANE_SUPERVISOR_NO_PROMPT=1 TMUX_PANE="$SV_PANE" "$SV_LANE_HANDOFF" \
+    --supervise --lane repoSV-3 --operation "$SV_OP"
+is   "a supervisor whose intent names an agent the lane's record does not refuses" "$rc" 2
+has  "…naming the one the restart was written for" "$err" "written for agent 'codex'"
+has  "…and the one the lane's record now names" "$err" "now names 'claude'"
+hasnt "…and launches nothing" "$err" "restarting (operation"
+"$E" set-restart-intent repoSV-3 pending --expect pending --agent claude >/dev/null 2>&1
+
 # ------------------------------- 5. the supervisor: a launch that FAILS
 
 cat > "$SV_BIN/pclaude-fail" <<'FAKE'
@@ -10367,6 +10430,12 @@ is   "every fenced intent write in lane-handoff fences on the generation as well
      "$(grep -c -- '--expect-operation "' "$SRC_DIR/lane-handoff" || :)"
 is   "…and that is not vacuously none of them" \
      "$( [ "$(grep -c -- '--expect-generation "' "$SRC_DIR/lane-handoff" || :)" -ge 4 ] && echo yes || echo no )" yes
+
+# AND SO DOES `lane-start`'S OWN WRITE OF THE PREPARED TRANSCRIPT (Copilot
+# round 2). It is a transition of the same intent the supervisor claims and
+# finalizes, made by a different process, and it fenced only on the operation.
+is   "lane-start's write-back of the prepared transcript is fenced on the generation too" \
+     "$( [ "$(grep -c -- '--expect-generation' "$SRC_DIR/lane-start" || :)" -ge 1 ] && echo yes || echo no )" yes
 
 # ------------------------- 6. the supervisor: a launch that BECOMES READY
 

@@ -506,7 +506,23 @@ ready_check() {   # <lane> <pid file> <expected new transcript|""> <old transcri
 	fi
 	rc_sid="$(printf '%s\n' "$rc_out" | awk -F'\037' '{print $1; exit}')"
 	rc_tgt="$(printf '%s\n' "$rc_out" | awk -F'\037' '{print $2; exit}')"
+	rc_nm="$(printf '%s\n' "$rc_out" | awk -F'\037' '{print $3; exit}')"
 	READY_SID="$rc_sid"
+	# THE HOLDER'S NAME IS THE LANE'S ADDRESS, and it is evidence this predicate
+	# already had in its hand and did not read (Copilot round 2 on
+	# openRepoTools#121). Amendment 2 makes the session NAME the lane's messaging
+	# address — `ListAgents`, `SendMessage`, `@<lane>` and the statusline all read
+	# it — so a replacement answering for this lane under some other name is not
+	# the replacement this restart was for, whatever its transcript says.
+	# Compared case-insensitively, because Amendment 15 makes one lane's two
+	# spellings one lane; `none` on either side is a comparison that cannot be
+	# made and is said rather than failed shut, as `pane_agrees` does.
+	if [ -n "$rc_nm" ] && [ "$rc_nm" != none ]; then
+		if [ "$(printf '%s' "$rc_nm" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$rc_lane" | tr '[:upper:]' '[:lower:]')" ]; then
+			READY_WHY="the live holder is named '$rc_nm' and this lane is $rc_lane — a session answering for the lane under another name is not this restart's replacement (Amendment 2)"
+			return 1
+		fi
+	fi
 	if [ -n "$rc_new" ] && [ "$rc_new" != none ]; then
 		if [ "$rc_sid" != "$rc_new" ]; then
 			READY_WHY="the live holder's transcript is $rc_sid and this launch was preparing $rc_new"
@@ -802,6 +818,9 @@ supervise_run() {   # <lane> <operation>
 		: > "$sr_pidf"
 		supervise_watch "$sr_lane" "$sr_op" "$SV_CLAIMED_GEN" "$sr_pidf" "$RI_NEW" "$RI_OLD" "$RI_PANE" &
 		sr_watch=$!
+		# PUBLISHED, so the signal handler can stop it: it is a background job of
+		# this shell and a signal to this shell is not a signal to it.
+		SV_WATCH_PID="$sr_watch"
 		sr_status=0
 		# THE CHILD RUNS IN THE BACKGROUND AND THIS PROCESS `wait`s ON IT, and
 		# that is not a preference either: **bash defers a trap until the
@@ -847,6 +866,7 @@ supervise_run() {   # <lane> <operation>
 		wait "$sr_child" || sr_status=$?
 		kill "$sr_watch" 2>/dev/null
 		wait "$sr_watch" 2>/dev/null
+		SV_WATCH_PID=""
 		# WHAT THE RECORD SAYS NOW IS WHAT DECIDES, and never this process's
 		# memory of what it started: the observer is the only thing that ever
 		# had positive evidence, and it wrote that evidence down.
@@ -1040,6 +1060,7 @@ fi
 # the status is simply returned.
 SV_PIDFILE=""
 SV_SIGNALLED=0
+SV_WATCH_PID=""
 # EMPTY UNTIL A CLAIM HAS BEEN MADE, and then the generation that claim held.
 # A signal arriving before the claim must not fence a write on `0` — on a
 # workstation with openRepoTools#91 the lane's generation is whatever it is,
@@ -1088,11 +1109,25 @@ sv_on_exit() {
 # to end.
 sv_signal() {   # <signal name> <exit status>
 	SV_SIGNALLED=1
+	# THE OBSERVER GOES FIRST, AND IS REAPED (Copilot round 2 on
+	# openRepoTools#121). It is a background job of this shell and a signal to
+	# this process is not a signal to it: left running it keeps polling after its
+	# supervisor is gone, and the two verdicts then race. Neither can overwrite
+	# the other — both writes are fenced and the loser is refused — but the
+	# LOSER STILL SPEAKS, and a supervisor printing *the restart intent is
+	# `failed`* about an operation the observer had just confirmed `ready` is a
+	# line nobody can act on. So it is stopped, reaped, and the record is read
+	# back AFTER the write below rather than assumed.
 	# A SIGNAL BEFORE THIS PROCESS KNOWS WHICH OPERATION IT IS SUPERVISING has no
 	# record to write and says so: the traps are installed at the top of the mode,
 	# ahead of the arguments being checked, because a supervisor that could be
 	# signalled between those two lines and leave nothing behind is the same gap
 	# one instruction wide.
+	if [ -n "${SV_WATCH_PID:-}" ]; then
+		kill "$SV_WATCH_PID" 2>/dev/null
+		wait "$SV_WATCH_PID" 2>/dev/null || :
+		SV_WATCH_PID=""
+	fi
 	if [ -z "$lane" ] || [ -z "$operation" ]; then
 		say ""
 		say "$prog: SIG$1 before this supervisor had a lane and an operation to supervise — nothing was claimed, nothing was started and nothing is left behind."
@@ -1116,12 +1151,23 @@ sv_signal() {   # <signal name> <exit status>
 		${sv_sg_fence[@]+"${sv_sg_fence[@]}"} \
 		--reason "the supervisor was sent SIG$1 before readiness was confirmed; $sv_sg_alive" \
 		>/dev/null 2>&1 || :
+	ri_load "$lane" >/dev/null 2>&1 || :
 	say ""
 	say "$prog: SIG$1 — this supervisor is leaving operation $operation on lane $lane."
 	say "  $sv_sg_alive."
-	say "  The restart intent is \`failed\` and retryable, and nothing was killed:"
-	say "    read it: $(quoted "$SELF_ABS") --restart-status --lane $lane"
-	say "    retry:   $(quoted "$SELF_ABS") --supervise --lane $lane --operation $operation"
+	if [ "${RI_STATE:-}" = ready ]; then
+		# THE OBSERVER GOT THERE FIRST, and its evidence is better than this
+		# handler's: the replacement was confirmed before the signal arrived, and
+		# the `failed` write above was refused by the fence for exactly that
+		# reason. Saying `failed` here would be this process reporting its own
+		# intention over the record's fact.
+		say "  The replacement was CONFIRMED before this signal arrived (transcript ${RI_NEW:-unrecorded}), so the intent is \`ready\` and this restart is DONE."
+		say "    read it: $(quoted "$SELF_ABS") --restart-status --lane $lane"
+	else
+		say "  The restart intent is \`${RI_STATE:-failed}\` and retryable, and nothing was killed:"
+		say "    read it: $(quoted "$SELF_ABS") --restart-status --lane $lane"
+		say "    retry:   $(quoted "$SELF_ABS") --supervise --lane $lane --operation $operation"
+	fi
 	exit "$2"
 }
 
@@ -1167,6 +1213,36 @@ if [ "$do_supervise" = 1 ]; then
 	sv_pane_here="${TMUX_PANE:-}"
 	pane_agrees "$RI_PANE" "$sv_pane_here" ||
 		die "lane $lane's restart intent was written for pane $RI_PANE and this supervisor is in $sv_pane_here. Nothing was started: a launch here would put this lane's session in a pane the lane's own record does not name, and that record is what every other reader goes by." 2
+
+	# ---- the agent: the intent's, and the lane's own record, must still agree
+	#
+	# DESIGN DECISION 15 SAYS AGENT, PROFILE AND DIRECTORY ARE FENCED *EARLIER* —
+	# *"where a conflict refuses the launch before it is made, rather than
+	# re-checked after"* — and for the agent that was not true of any line
+	# (Copilot round 2 on openRepoTools#121). The intent records it and nothing
+	# read it back. So it is read back here, which is the place the decision
+	# names: before anything is claimed or started.
+	#
+	# IT IS THE CANONICAL AGENT AND NOT THE CHILD'S. What a live process IS
+	# cannot be read from this estate's records — `live-holder` answers a
+	# transcript, a pane, a name, a pid and a verdict, and no agent word — so
+	# what is compared is the lane's own recorded agent against the one this
+	# restart was written for. A lane whose agent changed under a restart is a
+	# restart whose contract changed under it, and launching the intent's agent
+	# into it would make the record and the process disagree.
+	sv_ag=""; sv_agrc=0
+	sv_ag="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-agent "$lane" 2>/dev/null)" || sv_agrc=$?
+	case "$sv_agrc" in
+	0)
+		if [ -n "$RI_AGENT" ] && [ "$RI_AGENT" != none ] && [ -n "$sv_ag" ] && [ "$sv_ag" != "$RI_AGENT" ]; then
+			die "lane $lane's restart intent was written for agent '$RI_AGENT' and the lane's own record now names '$sv_ag'. Nothing was started: the agent decides which launcher this lane is resumed by and what its first prompt even means, so a restart made for one agent into a lane recorded as another is a session neither record describes. Read it:  $prog --restart-status --lane $lane" 2
+		fi ;;
+	# 8 IS A LANE WHOSE RECORD NAMES NO AGENT and 2 A HELPER WITH NO WORD FOR
+	# ONE; both are answers, and a comparison that cannot be made is not a
+	# disagreement.
+	8 | 2) : ;;
+	*) note "lane $lane's recorded agent could not be read (\`$LANES_EDIT lane-agent $lane\` exited $sv_agrc), so the intent's agent '${RI_AGENT:-none}' is not compared with it here. That is NOT 'they agree'." ;;
+	esac
 
 	# ---- the handoff's digest: the first prompt is that file, and only that file
 	if [ -n "$RI_HANDOFF" ] && [ "$RI_HANDOFF" != none ] && [ -n "$RI_DIGEST" ] && [ "$RI_DIGEST" != none ]; then
