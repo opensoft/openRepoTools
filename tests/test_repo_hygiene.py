@@ -2190,9 +2190,20 @@ def test_readme_is_short_enough_to_be_read():
     `tests/test_openrepotools_command.py` derives it, and not here. Every dated
     entry above stays, and none of these twelve is over a line one of them
     bought.
+
+    484 -> 486 on 2026-10-02, for #64 (Brett Heap's RULING of that day,
+    verbatim "go with option 1 on #64"). Two lines in `wip init`'s seed
+    paragraph, and both are a refusal a person MEETS rather than prose about
+    one: a checkout ADOPTED clean but ahead of its workspace repository's
+    `main` by any commit other than an earlier run's own unpushed seed is
+    refused before a byte is written into it, naming those commits, because
+    step 8's push would publish every one of them — and pushing or discarding
+    them is the person's. The paragraph already says why the worktree half of
+    the same rule exists; this is its history half, and a reader of one should
+    not meet the other as a surprise. Every dated entry above stays.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 484, f"README.md is {len(lines)} lines; the cap is 484"
+    assert len(lines) <= 486, f"README.md is {len(lines)} lines; the cap is 486"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
