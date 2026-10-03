@@ -10569,6 +10569,26 @@ chmod +x "$SANDBOX/nfbroke"
 run env LANES_NO_FETCH=1 "$E" lanes --closed --prefix repoPick
 is   "the rows of the seeded repository read" "$rc" 0
 PICK_ROWS="$out"
+# THE TWO NARROWING FILTERS ARE CASE-BLIND ON BOTH SIDES, and since #107 the
+# lane's side is lower-cased without a process (`lower_into`) and the asked-for
+# side once, with `lc` (Copilot round 1 on #146). Asked in a spelling no row
+# carries, so a lowering that stopped happening on EITHER side drops every row
+# and the comparison says so; the row's own spelling has `P` in it, so the
+# lane's side is never already lower-case.
+# Each mixed-case read is also asked for a seeded lane BY NAME, because two
+# empty lists are equal: measured, with `lower_into` broken to return its input,
+# both `--prefix` reads came back empty and the comparison alone still passed.
+pick_names() { printf '%s\n' "$1" | awk -F'\t' 'NF >= 2 { print $1 }' | LC_ALL=C sort; }
+run env LANES_NO_FETCH=1 "$E" lanes --closed --prefix REPOPICK
+has  "--prefix in another case still finds the seeded lanes" "$out" "repoPick-1"
+is   "…exactly the lanes of the row's own spelling" \
+     "$(pick_names "$out")" "$(pick_names "$PICK_ROWS")"
+run env LANES_NO_FETCH=1 "$E" lanes --closed --repo opensoft/repoPick
+pick_repo_rows="$out"
+run env LANES_NO_FETCH=1 "$E" lanes --closed --repo OpenSoft/REPOPICK
+has  "--repo in another case finds them too" "$out" "repoPick-1"
+is   "…exactly the lanes --repo in the home's own spelling lists" \
+     "$(pick_names "$out")" "$(pick_names "$pick_repo_rows")"
 pick_group_of() { printf '%s\n' "$PICK_GROUPS" | awk -F'\t' -v l="$1" '$2 == l { print $1; exit }'; }
 PICK_GROUPS="$(printf '%s\n' "$PICK_ROWS" | "$E" lane-groups Eagle)"
 is   "a PAUSED lane is AVAILABLE" "$(pick_group_of repoPick-1)" "available"
