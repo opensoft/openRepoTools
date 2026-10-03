@@ -10252,11 +10252,55 @@ LANEBIN_PATH="$SANDBOX/lanebin:$PATH"
 # than the terminal would prove nothing about the branch a person meets. This
 # runs the word under a pty, writes ONE line into it and collects everything the
 # terminal saw — stdout and stderr together, which is what a terminal is.
+#
+# THE DRIVER HAS A BOUND OF ITS OWN, AND IT IS NOBODY ELSE'S NUMBER
+# (opensoft/openRepoTools#107). It was 60 — the same 60 as `lanes-edit.sh`'s
+# `acquire_lock` and its `LANES_GIT_TIMEOUT` — and it was SIGKILLing the child
+# and handing back `128 + 9`, so a pick case reported `expected [2], got [137]`:
+# a wrong exit code that was really this driver's clock, and a helper that had
+# waited its own 60 s out and was about to say so could not be told from it.
+# Six CI runs are named in #107 alone — five on darwin, then both Linux jobs of
+# #61's `ready` run with fourteen pick cases at once — the killed case moving
+# between runs, and not one of them was a defect in `lane`.
+#
+# WHY IT WAS CROSSED: `lane` prints nothing until its listing is rendered,
+# because every read in front of the listing is a command substitution. Measured
+# on 2026-10-03, that silence was 32.6–33.4 s per call against main's fixture
+# register (75 rows) and 42.8–45.5 s against #61's (98) — and the slow Linux
+# runner that turned #61's `ready` run red took 62 minutes for a job that takes
+# 33–36, while darwin runs ~2.2x Linux (58 min against 26 on run 35043370287).
+# A 45 s silence is a ~100 s silence exactly where nobody is watching. The
+# silence itself was a QUADRATIC lookup in `lanes-edit.sh`'s `lanes_rows`, and
+# #107 fixed that too (one scoped read on this fixture, measured: 48.4 s → 2.9 s)
+# — but a bound has to stay true when the next register outgrows a fix, which
+# is why the number below is not tightened to match.
+#
+# WHY 240: more than twice that worst observed silence, and NONE of the numbers
+# this driver drives — not 60 (`acquire_lock`, `LANES_GIT_TIMEOUT`), not 300
+# (`lane --wait`'s handoff default) — so a helper's own refusal always arrives
+# first. It is a SILENCE bound: the clock restarts with every byte, so a long
+# case that keeps talking is never cut off. `LANE_PTY_SILENCE` overrides it for
+# the one case below that proves the timeout itself, which would otherwise wait
+# four minutes to do it.
+#
+# A TIMEOUT REPORTS AS A TIMEOUT. The child is a session leader (`pty.fork`
+# runs `setsid`), so its PROCESS GROUP is everything it started — `lane` and the
+# `lanes-edit.sh` reads under it, which a kill of the one pid left running. The
+# group gets SIGTERM, five seconds to run its traps (a writer releases its lock
+# in one), and then SIGKILL. The driver then says, on its own stderr, that the
+# child wrote nothing for that long and was killed, prints the partial
+# transcript after it, and exits 124 — `timeout(1)`'s code, never a `128 + n`
+# that reads as the child's. `lane_pick` below turns that report into a FAIL of
+# its own and sets `$rc` to the word `TIMEOUT`, so no case can read a kill as
+# the command's exit code again.
 LANE_PTY="$SANDBOX/pty-run.py"
+LANE_PTY_SILENCE=240
+LANE_PTY_TIMEOUT_MARK="pty-run: TIMEOUT"
 cat > "$LANE_PTY" <<'PY'
-import os, pty, select, sys
+import os, pty, select, signal, sys, time
 
 answer, argv = sys.argv[1], sys.argv[2:]
+silence = int(os.environ.get("LANE_PTY_SILENCE") or "240")
 pid, fd = pty.fork()
 if pid == 0:
     try:
@@ -10265,13 +10309,14 @@ if pid == 0:
         os._exit(127)
 os.write(fd, (answer + "\n").encode())
 seen = b""
+timed_out = False
 while True:
     try:
-        ready, _, _ = select.select([fd], [], [], 60)
+        ready, _, _ = select.select([fd], [], [], silence)
     except OSError:
         break
     if not ready:
-        os.kill(pid, 9)
+        timed_out = True
         break
     try:
         chunk = os.read(fd, 65536)
@@ -10280,16 +10325,101 @@ while True:
     if not chunk:
         break
     seen += chunk
-_, status = os.waitpid(pid, 0)
-sys.stdout.write(seen.decode("utf-8", "replace"))
+status = None
+if timed_out:
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except OSError:
+        pass
+    deadline = time.time() + 5
+    while status is None and time.time() < deadline:
+        done, st = os.waitpid(pid, os.WNOHANG)
+        if done:
+            status = st
+        else:
+            time.sleep(0.1)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except OSError:
+        pass
+    # Whatever the group said on its way out — a trap's last line — is part of
+    # the transcript, so it is drained rather than dropped.
+    while True:
+        try:
+            ready, _, _ = select.select([fd], [], [], 0)
+            chunk = os.read(fd, 65536) if ready else b""
+        except OSError:
+            break
+        if not chunk:
+            break
+        seen += chunk
+if status is None:
+    _, status = os.waitpid(pid, 0)
+text = seen.decode("utf-8", "replace")
+sys.stdout.write(text)
+if timed_out:
+    sys.stdout.flush()
+    sys.stderr.write(
+        "pty-run: TIMEOUT: the child wrote nothing for %ds and was killed "
+        "(its whole process group: SIGTERM, then SIGKILL). That is this "
+        "driver's bound, not the command's exit code. Partial transcript "
+        "follows:\n%s\n" % (silence, text))
+    sys.exit(124)
 sys.exit(os.WEXITSTATUS(status) if os.WIFEXITED(status) else 128 + os.WTERMSIG(status))
 PY
 HAVE_PTY=0
 python3 -c 'import pty' >/dev/null 2>&1 && HAVE_PTY=1
 NO_PTY_WHY="no python3 with pty on this host, so no terminal can be faked and the one question cannot be asked"
+# Did the last `run` of the driver end in its TIMEOUT? Its own stderr says so,
+# and nothing else writes there: the child's two streams are the terminal.
+pty_timed_out() { case "$err" in *"$LANE_PTY_TIMEOUT_MARK"*) return 0 ;; esac; return 1; }
 lane_pick() {   # <answer> <args to lane…>
-  run env PATH="$LANEBIN_PATH" python3 "$LANE_PTY" "$@"
+  run env PATH="$LANEBIN_PATH" LANE_PTY_SILENCE="$LANE_PTY_SILENCE" python3 "$LANE_PTY" "$@"
+  if pty_timed_out; then
+    bad "lane_pick $1: the pty driver's TIMEOUT, not the command's exit code" \
+        "the child wrote nothing for ${LANE_PTY_SILENCE}s and was killed; the driver's report and the partial transcript follow"
+    while IFS= read -r lp_line; do printf '       | %s\n' "$lp_line"; done <<EOF
+$err
+EOF
+    rc=TIMEOUT
+  fi
 }
+
+# AND THE DRIVER'S TIMEOUT IS ITSELF UNDER TEST, because the property is the
+# point: a silent child must come back as the driver's report and never as a
+# `137`. One second of silence instead of 240, and a grandchild in the group, so
+# the case also proves that nothing the child started runs on after its case.
+if [ "$HAVE_PTY" = 0 ]; then
+  skip "the pty driver reports a silent child as its own TIMEOUT, never as a 137" "$NO_PTY_WHY"
+else
+  pty_orphan="$SANDBOX/pty-orphan.pid"; rm -f -- "$pty_orphan"
+  run env LANE_PTY_SILENCE=1 python3 "$LANE_PTY" x \
+      sh -c 'printf "partial\n"; sleep 30 & printf "%s\n" "$!" > "$0"; wait' "$pty_orphan"
+  is    "a child silent past the driver's bound exits the driver's 124, never a SIGKILL read as its own code (137)" "$rc" 124
+  has   "…saying in terms that it timed out, with the bound it waited" "$err" "the child wrote nothing for 1s and was killed"
+  has   "…printing the partial transcript after its report" "$err" "partial"
+  has   "…and the same transcript on stdout, where every case reads it" "$out" "partial"
+  pty_timed_out; is "…which is the report lane_pick turns into a FAIL of its own" "$?" 0
+  # RUNNING, AS OPPOSED TO GONE OR DEAD AND UNREAPED. `kill -0` answers for a
+  # zombie, and a killed grandchild is reparented to pid 1 — which in a
+  # container may be `sleep infinity` and reap nothing, ever (measured on this
+  # workstation: state `Z`, parent 1). A zombie runs nothing, so it is gone.
+  pty_running() {   # <pid>
+    [ -n "${1-}" ] && kill -0 "$1" 2>/dev/null || return 1
+    case "$(ps -o stat= -p "$1" 2>/dev/null)" in '' | *Z*) return 1 ;; esac
+    return 0
+  }
+  pty_gc="$(cat "$pty_orphan" 2>/dev/null || :)"
+  pty_n=0
+  while pty_running "$pty_gc" && [ "$pty_n" -lt 50 ]; do
+    sleep 0.1; pty_n=$((pty_n + 1))
+  done
+  is    "…and the child's whole process group went with it, so no helper runs on after its case" \
+        "$([ -n "$pty_gc" ] && ! pty_running "$pty_gc" && printf gone || printf 'still running: %s' "${pty_gc:-no pid recorded}")" "gone"
+  run env LANE_PTY_SILENCE=5 python3 "$LANE_PTY" x sh -c 'printf "answered\n"; exit 7'
+  is    "…while a child that answers keeps its OWN exit code" "$rc" 7
+  pty_timed_out; is "…and is not reported as a timeout" "$?" 1
+fi
 
 # ------------------------------------------------------------- the fixtures
 PICK_DIR="$HOME/projects/repoPick"
