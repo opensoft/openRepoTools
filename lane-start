@@ -83,6 +83,17 @@
 #                    the window name or a flag (Amendment 8)
 #   --yes            answer that question yes without asking, for a caller that
 #                    has already asked
+#   --request-handoff  a lane bound in ANOTHER place is never taken (Amendment
+#                    18(b)). This is the `y` to the question this command asks
+#                    on a terminal, for a caller that has none: the request is
+#                    written to the lane's log and pushed, typed into the bound
+#                    pane where it is on this tmux server, and waited on
+#   --force <why>    clause (e)'s override: release that binding ON ITS BEHALF
+#                    and bind here. A SECOND invocation, never automatic, and
+#                    the <why> is written into an append-only log and is what
+#                    the bound session reads when it refuses every prompt from
+#                    then on
+#   --wait <s>       how long to wait for the handoff (default 300, clause (c))
 #   --agent <name>   WHICH AGENT resumes this lane (Amendment 17(c)). Default:
 #                    the agent of the lane's last `PAUSED` record, else
 #                    `claude`. `claude` with its transcript here resumes it by
@@ -255,6 +266,13 @@
 #   CLAUDE_BIN           default `claude` from PATH
 #   LANE_START_SESSION_ID  0 turns off minting a uuid for a new session (and
 #                        therefore turns off writing it into the row)
+#   LANE_START_HANDOFF_ANSWER  answers Amendment 18(c)'s question — *"ask it to
+#                        hand off, then bind here?"* — without a terminal. The
+#                        seam the tests drive it through, and its own variable
+#                        rather than `LANE_START_ANSWER`'s because one run can
+#                        ask both questions and a single seam would answer the
+#                        wrong one. Set at all, it is the answer; anything but
+#                        y/yes is No
 #   LANE_START_ANSWER    answers `--confirm`'s question without a terminal —
 #                        the seam the tests drive it through. Set at all, it is
 #                        the answer; anything but y/yes is No
@@ -613,6 +631,8 @@ quoted() {
 
 dry_run=0; no_launch=0; estate=""; dir_override=""; confirm=0; take_yes=0
 agent_flag=""
+# AMENDMENT 18(c)/(e) — the three words a second place has for a bound lane.
+request_handoff=0; force_why=""; handoff_wait=300
 positional=(); pass=()
 
 while [ $# -gt 0 ]; do
@@ -629,6 +649,18 @@ while [ $# -gt 0 ]; do
     # empty value, for the reason `--dir` states above.
     --agent)     agent_flag="${2-}"; [ -n "$agent_flag" ] || die "--agent needs a name" 2; shift 2 ;;
     --agent=*)   agent_flag="${1#--agent=}"; [ -n "$agent_flag" ] || die "--agent needs a name" 2; shift ;;
+    # AMENDMENT 18(c) AND (e) — THE SECOND PLACE'S THREE WORDS, and each of
+    # them is an ANSWER to a question this command would otherwise ask. A
+    # caller with no terminal on stdin cannot be asked (an agent's is not one),
+    # so `--request-handoff` is that `y` written down; `--force` is clause
+    # (e)'s override, which is a SECOND invocation and never automatic and
+    # which takes the WHY it writes into an append-only log; `--wait` is the
+    # clause's own default of 300 seconds, named.
+    --request-handoff) request_handoff=1; shift ;;
+    --force)     force_why="${2-}"; [ -n "$force_why" ] || die "--force takes the WHY you are taking a lane another place is bound to: it is written into that lane's append-only log and it is the sentence the bound session reads when it refuses every prompt from then on (Amendment 18(e))" 2; shift 2 ;;
+    --force=*)   force_why="${1#--force=}"; [ -n "$force_why" ] || die "--force takes the WHY you are taking a lane another place is bound to (Amendment 18(e))" 2; shift ;;
+    --wait)      handoff_wait="${2-}"; [ -n "$handoff_wait" ] || die "--wait needs a number of seconds" 2; shift 2 ;;
+    --wait=*)    handoff_wait="${1#--wait=}"; [ -n "$handoff_wait" ] || die "--wait needs a number of seconds" 2; shift ;;
     # THE TWO SPELLINGS OF ONE FLAG GIVE ONE ANSWER, and these two did not
     # (#26, the review of `c3ebcfe`, `lane-start:707`). `--dir ""` refuses;
     # `--dir=` set the variable to nothing and fell through as if the operator
@@ -652,6 +684,13 @@ while [ $# -gt 0 ]; do
 done
 
 repo=""; n=""; verbatim=""
+case "$handoff_wait" in ''|*[!0-9]*) die "--wait takes a whole number of seconds; '$handoff_wait' is not one" 2 ;; esac
+# TWO ANSWERS TO ONE QUESTION ARE NOT AN ANSWER. `--request-handoff` asks the
+# bound place to release the lane and waits for it; `--force` releases it on
+# that place's behalf without asking. Passing both says both, and which one a
+# run took would be decided by the order of two arms rather than by the person.
+[ "$request_handoff" = 1 ] && [ -n "$force_why" ] &&
+  die "--request-handoff ASKS the place that holds this lane to hand it off and waits for it; --force takes it without asking and makes that place stop loudly (Amendment 18(e)). They are two different acts on somebody else's session — pick one." 2
 case "${#positional[@]}" in
   2) repo="${positional[0]}"; n="${positional[1]}" ;;
   1)
@@ -744,6 +783,13 @@ case "${#positional[@]}" in
       lane_argv=("$lane_word")
       [ "$dry_run" = 0 ] || lane_argv+=(--dry-run)
       [ -z "$dir_override" ] || lane_argv+=(--dir "$dir_override")
+      # AMENDMENT 18(c)/(e)'s THREE GO WITH IT, for the reason `--dry-run` and
+      # `--dir` do: they mean the same thing in `lane`, whose BOUND ELSEWHERE
+      # branch is the other door to the same request, and a flag silently
+      # dropped is a promise that was not kept.
+      [ "$request_handoff" = 0 ] || lane_argv+=(--request-handoff)
+      [ -z "$force_why" ] || lane_argv+=(--force "$force_why")
+      [ "$handoff_wait" = 300 ] || lane_argv+=(--wait "$handoff_wait")
       ls_drop=""
       [ "$no_launch" = 0 ] || ls_drop="$ls_drop --no-launch"
       [ "$confirm" = 0 ]   || ls_drop="$ls_drop --confirm"
@@ -771,6 +817,9 @@ case "${#positional[@]}" in
       ls_keep=""
       [ "$dry_run" = 0 ]     || ls_keep="$ls_keep --dry-run"
       [ -z "$dir_override" ] || ls_keep="$ls_keep --dir $(quoted "$dir_override")"
+      [ "$request_handoff" = 0 ] || ls_keep="$ls_keep --request-handoff"
+      [ -z "$force_why" ]    || ls_keep="$ls_keep --force $(quoted "$force_why")"
+      [ "$handoff_wait" = 300 ] || ls_keep="$ls_keep --wait $handoff_wait"
       if [ -n "$ls_drop" ]; then
         die "bare \`$prog\` is \`lane\` (Amendment 18 Addendum 1 clause (i-4)), which lists the
     lanes and binds the one you pick — and$ls_drop belongs to a lane that has
@@ -1833,6 +1882,114 @@ elif [ -n "$win_sid" ]; then
   step "  it is the session step 3 already found holding $LANE in this window — the cell is current"
 fi
 
+# ------------- 3b(ii). AMENDMENT 18(b): ONE BINDING PER LANE, AND THIS PLACE
+#
+# *"A bound lane is started nowhere else — not a second window on the same host,
+# not another container, not another host — until its binding is released by a
+# `PAUSED` (its own, or one written under (e)) or ended. Liveness is pronounced
+# only from INSIDE the binding's own `host` and `container`, where the pid
+# namespace is the record's: from anywhere else a binding is UNKNOWN, never
+# dead, whatever `kill -0` says."* Ratified 2026-09-14T13:15:18Z as revision 4;
+# opensoft/openRepoTools#38.
+#
+# THIS IS A SECOND FENCE AND NOT A REPLACEMENT FOR STEP 3. Step 3 asks whether a
+# session the ROW names is alive and answers out of THIS workstation's session
+# records — which is exactly the read that cannot cross a container seam, and
+# exactly why it said NOT LIVE about a lane cloudBench was writing. So where the
+# binding IS this host's and this container's, step 3 has already pronounced and
+# nothing changes; where it is NOT, this fence refuses whatever `kill -0` said,
+# because the record it read is from another pid namespace.
+#
+# THE ONE EXCEPTION IS THE WINDOW, and the helper has already applied it: on one
+# host the launcher mounts ONE tmux socket into every container it starts, so a
+# binding whose `@id` no longer resolves there — matched by Amendment 11(h)'s
+# agreement rule, the id TOGETHER with its session — is DEAD, and Amendment
+# 6(d)'s retire act and opensoft/openRepoTools#30's takeover path apply as they
+# stand. That is the `gone` the read answers with, and it is answered only where
+# the HOST matches, because a window id from another machine resolving here
+# would be a coincidence.
+#
+# A HELPER PREDATING THIS READ FALLS THROUGH WITH A NOTE, exactly as clause
+# (h)'s other reads do: refusing every lane start on every workstation that has
+# not taken the install yet is not a safety property. Every OTHER code is a read
+# that did not happen, and this one fails CLOSED — a binding that could not be
+# read is not a lane that is free, and the cost of guessing here is two sessions
+# writing one append-only log.
+bind_out=""; bind_rc=0; bind_recheck=0
+: > "$LS_TMP"
+bind_out="$("$LANES_EDIT" binding "$LANE" 2>"$LS_TMP")" || bind_rc=$?
+case "$bind_rc" in
+  0) [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2 ;;
+  8) [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
+     step "no binding: lane $LANE's last lane-kind line released it, or it has none (Amendment 18(b)) — nothing to ask" ;;
+  2) [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
+     note "this \`lanes-edit.sh\` has no \`binding\` (exit 2), so whether lane $LANE is bound somewhere else is NOT known here. Install the one beside this script (\`openRepoTools --install\`); carrying on with step 3's liveness read alone, which cannot see another container." ;;
+  *) [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
+     die "$LANES_EDIT binding $LANE exited $bind_rc, so where this lane is bound could NOT be read — and that is not 'it is bound nowhere'. A lane has ONE binding (Amendment 18(b)); nothing has been renamed, written or launched." 1 ;;
+esac
+if [ "$bind_rc" = 0 ]; then
+  IFS=$'\t' read -r b_host b_cont b_win b_utc b_sess b_os b_where b_wstate <<<"$bind_out"
+  if [ "$b_where" = here ]; then
+    step "binding: this host ($b_host) and container ($b_cont), window $b_win since $b_utc — liveness here is this place's to pronounce, and step 3 has (Amendment 18(b))"
+  elif [ "$b_wstate" = gone ]; then
+    note "lane $LANE's binding is window $b_win in container $b_cont on host $b_host (since $b_utc), and that window is GONE from this tmux server — the pane a session must live in does not exist. That is the ONE case in which a binding elsewhere reads DEAD (Amendment 18(b)), because one host's launcher mounts one tmux socket into every container it starts. Carrying on: this is Amendment 6(d)'s retire act and openRepoTools#30's takeover path, unchanged."
+  else
+    # ---- CLAUSE (c): THE SECOND PLACE ASKS, AND NEVER TAKES.
+    ls_bind_facts="lane $LANE is bound to window ${b_win:-none} in container ${b_cont:-none} on host ${b_host:-unknown} (session ${b_sess:-unknown}, last line ${b_utc:-unknown}); this tmux server says that window is ${b_wstate:-unknown}"
+    ls_ask=0
+    if [ -n "$force_why" ]; then
+      ls_ask=force
+    elif (( request_handoff )); then
+      ls_ask=yes
+    elif [ -n "${LANE_START_HANDOFF_ANSWER+set}" ]; then
+      step "$ls_bind_facts"
+      step "ask it to hand off, then bind here? [y/N] ${LANE_START_HANDOFF_ANSWER:-<empty>}   (LANE_START_HANDOFF_ANSWER)"
+      case "$LANE_START_HANDOFF_ANSWER" in y|Y|yes|YES|Yes) ls_ask=yes ;; *) ls_ask=no ;; esac
+    elif [ -t 0 ]; then
+      note "$ls_bind_facts"
+      printf '%s: ask it to hand off, then bind here? [y/N] ' "$prog" >&2
+      IFS= read -r ls_answer || ls_answer=""
+      case "$ls_answer" in y|Y|yes|YES|Yes) ls_ask=yes ;; *) ls_ask=no ;; esac
+    else
+      ls_ask=no-terminal
+    fi
+    if [ "$ls_ask" = no ] || [ "$ls_ask" = no-terminal ]; then
+      ls_flag="Ask it to hand off — the request is written to the lane's log, pushed, and typed into that pane where it is on this tmux server:
+      $prog --request-handoff $self_args"
+      [ "$ls_ask" = no-terminal ] || ls_flag="Ask it to hand off:
+      $prog --request-handoff $self_args"
+      ls_why="a lane has ONE binding, and this is not it (Amendment 18(b))"
+      [ "$ls_ask" = no-terminal ] && ls_why="$ls_why. There is no terminal on stdin to ask on — an agent's stdin is not one — so the flag is the answer"
+      die "$ls_bind_facts.
+    $ls_why. Nothing has been renamed, written or launched. Liveness is
+    pronounced only from inside that binding's own host and container, so from
+    here it is UNKNOWN and never dead, whatever a \`kill -0\` of a pid in
+    another namespace would say.
+      $ls_flag
+      or take it anyway, which is a SECOND invocation and never automatic, and
+      which makes that place STOP loudly rather than silently:
+      $prog --force \"<why you are taking it>\" $self_args" 2
+    fi
+    ls_rh=("$LANES_EDIT" request-handoff "$LANE")
+    [ -z "$win_sid" ] || ls_rh+=(--session "$win_sid")
+    if [ "$ls_ask" = force ]; then
+      ls_rh+=(--force "$force_why")
+    else
+      ls_rh+=(--wait "$handoff_wait")
+    fi
+    (( dry_run )) && ls_rh+=(--dry-run)
+    step "$(quoted "${ls_rh[@]}")"
+    ls_rh_rc=0
+    "${ls_rh[@]}" || ls_rh_rc=$?
+    case "$ls_rh_rc" in
+      0) bind_recheck=1; step "lane $LANE is free — binding it here (Amendment 18(c))" ;;
+      8) bind_recheck=1; step "lane $LANE was already free by the time the request was made — binding it here" ;;
+      2) die "the handoff was not obtained (the helper's own facts and its \`--force\` line are above), so lane $LANE is still bound elsewhere and NOTHING here has been renamed, written or launched." 2 ;;
+      *) die "$LANES_EDIT request-handoff $LANE exited $ls_rh_rc, which is neither 'the lane is free' nor the refusal that says it is not — nothing here has been renamed, written or launched." 1 ;;
+    esac
+  fi
+fi
+
 # ------------------------------------------------------------- 3c. --confirm
 #
 # A window whose name is not the lane is a window whose lane came from somewhere
@@ -1925,6 +2082,63 @@ if (( confirm )); then
         ;;
     esac
   fi
+fi
+
+# ---------------- 3d. AND THE BINDING IS READ AGAIN BEFORE THE FIRST ACT
+#
+# A HANDOFF THAT LANDED IS AN OBSERVATION AND NOT A RESERVATION (Copilot round 1
+# on opensoft/openRepoTools#83). `request-handoff` returns 0 when it SEES the
+# release; between that and the rename, the row status, the log line and the
+# launch, another place waiting on the same release can bind the lane — and
+# `commit_push` rebases both append-only writes rather than refusing the second,
+# so the log would carry two bindings and no reader could say which is the
+# lane's.
+#
+# NOTHING IN THE RATIFIED TEXT GIVES A LANE A RESERVATION, and inventing one
+# here would be an unratified act on an in-force protocol — it is filed rather
+# than smuggled in (opensoft/openRepoTools#84). What IS available is to make the
+# read the LAST thing before the first act instead of the first thing in the
+# run: the window between them is then one read wide rather than a question, a
+# rename, two register writes and a launch wide, and a lane that moved in it is
+# a refusal naming where it went rather than a second binding written over it.
+#
+# ONLY ON THE PATH THAT WAITED. Every other run has just read the binding a few
+# lines above and has asked nobody anything since; a second fetch on every lane
+# start would be a network round-trip bought for a window that is already this
+# narrow.
+# AND A DRY RUN HAS NOTHING TO RE-READ, BECAUSE IT DID NOTHING (Copilot round 3
+# on opensoft/openRepoTools#83). `request-handoff --dry-run` prints its plan and
+# answers 0 WITHOUT releasing anything, so an unconditional re-read here sees the
+# binding still standing and refuses — and `lane-start --dry-run
+# --request-handoff`, whose whole job is to print the plan, could never print
+# one. A plan is a statement about what WOULD happen; the fence that protects
+# the first act belongs to the run that takes it.
+if [ "$bind_recheck" = 1 ] && (( dry_run )); then
+  plan "read the binding again before the rename, and refuse if the lane moved while this run was taking it"
+  bind_recheck=0
+fi
+if [ "$bind_recheck" = 1 ]; then
+  : > "$LS_TMP"
+  bind_again=""; bind_again_rc=0
+  bind_again="$("$LANES_EDIT" binding "$LANE" 2>"$LS_TMP")" || bind_again_rc=$?
+  [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
+  case "$bind_again_rc" in
+    8) step "binding: still free after the handoff — taking it" ;;
+    0)
+      IFS=$'\t' read -r ba_host ba_cont ba_win ba_utc ba_sess ba_os ba_where ba_wstate <<<"$bind_again"
+      # ANY BINDING SEEN HERE IS THE RACE, INCLUDING ONE AT THIS VERY WINDOW
+      # (Copilot round 6 on opensoft/openRepoTools#83). This run has written no
+      # `STARTED`/`RESUMED` of its own yet — that is three steps further on —
+      # and it reached this read only by asking a binding ELSEWHERE to release,
+      # so a binding standing at this window now cannot be this invocation's.
+      # It can only be a CONCURRENT one that bound while this one waited, which
+      # is the two-processes-one-lane this re-read exists to catch; accepting it
+      # by window equality let both carry on and launch.
+      die "lane $LANE was released and BOUND AGAIN while this run was taking it: it is now window ${ba_win:-none} in container ${ba_cont:-none} on host ${ba_host:-unknown} (session ${ba_sess:-unknown}, ${ba_utc:-unknown}). The handoff this run asked for LANDED — that place did hand off — and somebody else bound the lane before this run reached its first act. This run has written no binding of its own yet, so that one is not this invocation's: a binding at THIS window is a second invocation IN it, which is the same race one pane closer. Nothing has been renamed, written or launched. Ask again, or take it up with that place:
+      $prog --request-handoff $self_args" 2 ;;
+    2) note "this \`lanes-edit.sh\` has no \`binding\`, so whether the lane moved again while this run waited is not known here; carrying on." ;;
+    *) die "$LANES_EDIT binding $LANE exited $bind_again_rc on the re-read before the rename, so whether this lane is still free could NOT be established — and that is not 'it is'. Nothing has been renamed, written or launched." 1 ;;
+  esac
 fi
 
 # ------------------------------------------------------- 4. name the window
@@ -2736,8 +2950,20 @@ if [ "$row_count" = 0 ]; then
     plan "lanes-edit.sh add-row"
     plan "  $new_row"
   else
-    LANES_LANE="$LANE" "$LANES_EDIT" add-row "$new_row"
-    step "row added"
+    # THE SAME RULE AS THE STAMP ONE SCREEN DOWN, and the opposite ANSWER. A
+    # bare command under `set -e` dies with the helper's own code and no
+    # sentence of its own; this one is read. But a lane with no ROW is not a
+    # lane with an unwritten stamp — every other lane's liveness read, every
+    # crossing check and the next `lane-start` all key on that row — so this is
+    # a refusal that says so, before the window is anything but renamed.
+    ar_rc=0
+    LANES_LANE="$LANE" "$LANES_EDIT" add-row "$new_row" || ar_rc=$?
+    if [ "$ar_rc" = 0 ]; then
+      step "row added"
+    else
+      die "the register row for $LANE was NOT added ($LANES_EDIT add-row exited $ar_rc; its own words are above). This window has been renamed and NOTHING else has been written — no session cell, no object log, no launch: a lane with no row is a lane no other lane's liveness read, crossing check or \`lane-start\` can see. Settle that refusal and re-run, or add it by hand:
+    LANES_LANE=$LANE $LANES_EDIT add-row '$new_row'" "$ar_rc"
+    fi
   fi
 else
   # AMENDMENT 8 — THE CELL FIRST, THEN THE STAMP. The harness minted a
@@ -2878,11 +3104,28 @@ else
   # what will not fit is in the object log, one line along.
   state_line="$lane_verb by $stamp_who (lane $LANE) — lane-start on $ws: $did"
   state_line="$(cut_to_line "$state_line")"
+  # AND ITS STATUS IS READ, BECAUSE THIS FILE RUNS UNDER `set -e`. A bare
+  # command here is a launch that DIES on the helper's refusal — exit 5, "an
+  # edit moved more than one line", straight out of the shell with no sentence
+  # of its own and the pane gone before anybody can read the helper's. Measured
+  # in this suite: `without --confirm nothing is asked` came back 5, from a row
+  # write nobody had asked to be fatal.
+  #
+  # AND IT IS A NOTE, NEVER A REFUSAL. The row's stamp is the RECORD of a resume
+  # and not its licence — the same rule Amendment 6(c) and the handoff's Rule 3
+  # stamp already take here — so a stamp that could not be written prints the
+  # act that writes it and the lane still starts.
   if (( dry_run )); then
     plan "lanes-edit.sh set-row-state $LANE \"LIVE · $state_line\""
   else
-    LANES_LANE="$LANE" "$LANES_EDIT" set-row-state "$LANE" "LIVE · $state_line"
-    step "row state set: LIVE · $lane_verb by ${lane_sid:-unknown}"
+    srs_rc=0
+    LANES_LANE="$LANE" "$LANES_EDIT" set-row-state "$LANE" "LIVE · $state_line" || srs_rc=$?
+    if [ "$srs_rc" = 0 ]; then
+      step "row state set: LIVE · $lane_verb by ${lane_sid:-unknown}"
+    else
+      note "the row's state cell was NOT set (exit $srs_rc — the helper's own words are above), and the launch is not refused for it: the stamp is the record of this act, not its licence. Set it by hand:"
+      note "  LANES_LANE=$LANE $LANES_EDIT set-row-state $LANE \"LIVE · $state_line\""
+    fi
   fi
 
   # AMENDMENT 17(c) — THE CELL, IN THE AGENT'S OWN SPELLING. A launch of an
