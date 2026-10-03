@@ -41,9 +41,10 @@
 #     tmux, `tmux attach -t <its session>:<@id>` — the window named in the
 #     attach itself, so no act between the fence and the terminal can land on
 #     another lane — with that window selected first.
-#     Nothing is launched, nothing is resumed and nothing is written: the
-#     session is already running and this word only puts a terminal in front of
-#     it. Measured 2026-09-14: the acts are `tmux move-window -a -s
+#     Nothing is launched or resumed and no register/log write is made: the
+#     session is already running. If its window has a generic name, the picker
+#     verifies the live transcript against the row and repairs that tmux name
+#     before attaching. Measured 2026-09-14: the attach acts are `tmux move-window -a -s
 #     <session>:<@id>` and then `tmux select-window -t <session>:<@id>` — the
 #     `@id` on both, because an index is a name another window can be given
 #     between the read and the act — and where the window is already in this
@@ -113,6 +114,7 @@ prog="${0##*/}"
 SELF="${BASH_SOURCE[0]:-$0}"
 selfdir="$(cd -- "$(dirname -- "$SELF")" && pwd)"
 TAB="$(printf '\t')"
+US="$(printf '\037')"
 
 say()  { printf '%s\n' "$*"; }
 note() { printf '%s: %s\n' "$prog" "$*" >&2; }
@@ -464,17 +466,26 @@ fi
 #   1 lane · 2 state · 3 workstation · 4 profile · 5 window · 6 last uuid ·
 #   7 directory · 8 objects · 9 age · 10 the one act for it · 11 home ·
 #   12 live forks of its transcript · 13 whether this place may pronounce on
-#   that binding (Amendment 18(b): `here`, `elsewhere`, or empty for a row with
-#   no binding line at all)
+#   that binding (Amendment 18(b): `here`, `elsewhere`, or `none` for a row
+#   with no binding line at all)
+# AND AMENDMENT 19's FOUR: 14 the row's class (`closed`, `dormant` or `none`) ·
+# 15 its `started` cell · 16 its state cell's head · 17 the flag words in that
+# cell. A closed or dormant row never reaches this word — `lanes_rows` leaves
+# them out of the listing and `lane_groups` drops them by class as well — but
+# the four fields are READ here all the same, for the rule below.
 #
 # THE LAST NAME MUST BE THE LAST COLUMN, and that is not a style point: `read`
 # puts every remaining field into its final variable, so a column added to the
 # read and not to this list arrives glued to the one before it. Column 12 is a
-# COUNT and column 13 a word, and `0<TAB>here` is neither.
+# COUNT and column 13 a word, and `0<TAB>here` is neither. AND NO COLUMN MAY
+# BE EMPTY: a tab is IFS whitespace, so an empty one is no field at all and
+# every name after it takes its neighbour's value — which is why the read
+# prints `none` in 13 rather than leaving it empty.
 R_LANE=""; R_STATE=""; R_WS=""; R_PF=""; R_WIN=""; R_SID=""; R_DIR=""
 R_OBJ=""; R_AGE=""; R_CMD=""; R_HOME=""; R_FK=""; R_LOC=""
+R_CLASS=""; R_START=""; R_WAS=""; R_FLAGS=""
 split_row() {   # <row>
-	IFS="$TAB" read -r R_LANE R_STATE R_WS R_PF R_WIN R_SID R_DIR R_OBJ R_AGE R_CMD R_HOME R_FK R_LOC <<EOF
+	IFS="$TAB" read -r R_LANE R_STATE R_WS R_PF R_WIN R_SID R_DIR R_OBJ R_AGE R_CMD R_HOME R_FK R_LOC R_CLASS R_START R_WAS R_FLAGS <<EOF
 ${1-}
 EOF
 	case "${R_DIR:-none}" in none) R_DIR="" ;; esac
@@ -483,6 +494,7 @@ EOF
 	case "${R_HOME:-none}" in none) R_HOME="" ;; esac
 	case "${R_WS:-unknown}" in unknown) R_WS="" ;; esac
 	case "${R_FK:-}" in '' | *[!0-9]*) R_FK=0 ;; esac
+	case "${R_LOC:-none}" in none) R_LOC="" ;; esac
 }
 
 # The repository a row is filed under, for the grouping: the home the log
@@ -735,10 +747,12 @@ go_available() {
 }
 
 # LIVE HERE — THE ATTACH, AND NEVER A SECOND PROCESS (clause (h), clause (i-2)).
-# Nothing is launched and nothing is written: the session is running, and what a
-# person asked for is a terminal in front of it.
+# No register or log is written. A verified generic tmux window name may be
+# repaired; the session is already running and the attach starts nothing.
 go_live() {
-	local gl_this gl_now gl_says
+	local gl_this gl_now gl_says gl_row gl_cell gl_last gl_record gl_rc
+	local gl_local_row gl_local_cell gl_local_last gl_pub_ids gl_local_ids gl_row_ok gl_local_rc
+	local gl_sid gl_target gl_name gl_pid gl_profile gl_windows gl_id gl_other_name
 	if [ -n "$profile" ]; then
 		die "lane $R_LANE is LIVE HERE under profile ${R_PF:-<none recorded>}, and \`$prog <name>
     <profile>\` names the profile to LAUNCH under — an attach starts nothing, so
@@ -767,6 +781,88 @@ go_live() {
     this command will not guess which window is the lane's.
       its session, if it is still there:  tmux attach -t $W_SESS
       what the register says now:         lanes --all" 2
+	fi
+	# A window ID is not enough to make this the lane. A /clear or profile
+	# switch can leave a live transcript newer than the row, and a renamed
+	# session can belong to another lane. The prompt guard would refuse both;
+	# do not conceal either mismatch by renaming the window on the way in.
+	gl_row="$(LANES_NO_FETCH=1 "$LANES_EDIT" register-row "$R_LANE" 2>/dev/null)" ||
+		die "lane $R_LANE has no readable register row, so its live window cannot be bound safely. Read it with: lanes --all" 2
+	gl_cell="$(printf '%s\n' "$gl_row" | awk -F'|' 'NR == 1 { print $3 }')"
+	gl_last="$(printf '%s\n' "$gl_cell" | grep -Eoi '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tail -n1 || :)"
+	gl_pub_ids="$(printf '%s\n' "$gl_cell" | grep -Eoi '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tr 'A-F' 'a-f' | tr '\n' ' ' || :)"
+	gl_local_rc=0
+	gl_local_row="$("$LANES_EDIT" register-row-local "$R_LANE" 2>/dev/null)" || gl_local_rc=$?
+	case "$gl_local_rc" in
+	0)
+		gl_local_cell="$(printf '%s\n' "$gl_local_row" | awk -F'|' 'NR == 1 { print $3 }')"
+		gl_local_last="$(printf '%s\n' "$gl_local_cell" | grep -Eoi '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tail -n1 || :)"
+		gl_local_ids="$(printf '%s\n' "$gl_local_cell" | grep -Eoi '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tr 'A-F' 'a-f' | tr '\n' ' ' || :)" ;;
+	8) gl_local_last=""; gl_local_ids="" ;;
+	*) die "lane $R_LANE's local register row could not be read (exit $gl_local_rc). Nothing was renamed or attached." 2 ;;
+	esac
+	gl_rc=0
+	gl_record="$("$LANES_EDIT" window-session "$W_SESS:$W_ID" 2>/dev/null)" || gl_rc=$?
+	[ "$gl_rc" = 0 ] && [ -n "$gl_record" ] ||
+		die "lane $R_LANE's window $W_SESS:$W_ID has no provable live session (record read exit $gl_rc). Nothing was renamed or attached. In that window, repair the binding with: lane-start --no-launch $R_LANE" 2
+	IFS="$US" read -r gl_sid gl_target gl_name gl_pid gl_profile <<EOF
+$gl_record
+EOF
+	# A local stamp can be newer than the published row. Accept only a copy
+	# whose UUID history extends the other; divergent histories are not proof.
+	gl_row_ok=0
+	if [ "$(lc "$gl_sid")" = "$(lc "$gl_last")" ]; then
+		if [ "$gl_local_rc" = 8 ]; then
+			gl_row_ok=1
+		else
+			case " $gl_pub_ids" in " $gl_local_ids"*) gl_row_ok=1 ;; esac
+		fi
+	fi
+	if [ "$(lc "$gl_sid")" = "$(lc "$gl_local_last")" ]; then
+		case " $gl_local_ids" in " $gl_pub_ids"*) gl_row_ok=1 ;; esac
+	fi
+	if [ "$gl_row_ok" != 1 ] || [ "$(lc "$gl_name")" != "$(lc "$R_LANE")" ]; then
+		die "lane $R_LANE's window $W_SESS:$W_ID holds transcript ${gl_sid:-unknown} named '${gl_name:-none}', but the published/local row ends in ${gl_last:-none}/${gl_local_last:-none}, or their UUID histories diverge. Nothing was renamed or attached. In that window, record the live transcript with: lane-start --no-launch $R_LANE" 2
+	fi
+	# tmux permits duplicate names. Distinct @window IDs are the units here:
+	# one linked window may be visible in more than one session.
+	gl_windows="$(tmux list-windows -a -F "#{window_id}${TAB}#{window_name}" 2>/dev/null)" ||
+		die "tmux could not list window names, so uniqueness of $R_LANE is unknown. Nothing was renamed or attached." 2
+	while IFS="$TAB" read -r gl_id gl_other_name; do
+		[ -n "$gl_id" ] || continue
+		if [ "$gl_id" != "$W_ID" ] && [ "$(lc "$gl_other_name")" = "$(lc "$R_LANE")" ]; then
+			die "another tmux window ($gl_id) is already named $gl_other_name. Lane window names must be unique in this tmux server; nothing was renamed or attached." 2
+		fi
+	done <<EOF
+$gl_windows
+EOF
+	gl_name="$(tmux_field "$W_SESS:$W_ID" '#{window_name}' 2>/dev/null || :)"
+	[ -n "$gl_name" ] || die "tmux could not read the name of $W_SESS:$W_ID; nothing was renamed or attached." 2
+	if [ "$gl_name" != "$R_LANE" ]; then
+		if [ "$(lc "$gl_name")" != "$(lc "$R_LANE")" ]; then
+			# A tmux name may contain spaces or punctuation that a lane name
+			# cannot. Such a name cannot have a register row; only ask the
+			# register when the name is lane-shaped.
+			case "$gl_name" in
+			"" | *[!A-Za-z0-9._-]* | .* | -*) : ;;
+			*)
+				gl_rc=0
+				LANES_NO_FETCH=1 "$LANES_EDIT" register-row "$gl_name" >/dev/null 2>&1 || gl_rc=$?
+				case "$gl_rc" in
+				0) die "window $W_SESS:$W_ID is named $gl_name, which has its own lane row. Renaming it to $R_LANE would take another lane's tmux address; nothing was renamed or attached." 2 ;;
+				8) : ;;
+				*) die "whether window name $gl_name belongs to another lane could not be read (exit $gl_rc). Nothing was renamed or attached." 2 ;;
+				esac ;;
+			esac
+		fi
+		if [ "$dry_run" = 1 ]; then
+			say "tmux rename-window -t $W_SESS:$W_ID $R_LANE (currently '$gl_name')"
+		else
+			tmux rename-window -t "$W_SESS:$W_ID" "$R_LANE" ||
+				die "tmux could not rename $W_SESS:$W_ID to $R_LANE; nothing was attached." 2
+			[ "$(tmux_field "$W_SESS:$W_ID" '#{window_name}' 2>/dev/null || :)" = "$R_LANE" ] ||
+				die "the rename of $W_SESS:$W_ID did not read back as $R_LANE; nothing was attached." 2
+		fi
 	fi
 	gl_this="$(this_session)"
 	if [ -z "$gl_this" ]; then

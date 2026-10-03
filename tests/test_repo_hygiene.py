@@ -1677,6 +1677,21 @@ def test_agents_md_is_short_enough_to_be_read():
     correction plus the sentence naming the wrapper as the canonical
     implementation, which is what an assistant reading either should reach for.
 
+    265 -> 276 on 2026-09-16, for ELEVEN LINES that name the one portability
+    rule this repository keeps paying for twice (opensoft/openRepoTools#93).
+    `awk -v name=value` carries ONE LINE: the value is processed as a string
+    literal, and macOS's one-true-awk refuses a newline in one outright — exit
+    2, no output — while `gawk` and `mawk` take it silently. `who_landing` paid
+    for it once (R-A9-11) and left the finding in a code comment where only a
+    reader of that function meets it; `delete_lines` re-made it in #93 and
+    tests-macos answered with six red lines whose message was about a line
+    count. The bash-3.2 paragraph above it is the same kind of rule and is
+    already here for the same reason — a constraint only one job can see
+    belongs where it is read BEFORE the code is written, not after CI is red —
+    and the eleven lines are that rule, the two rounds as evidence, the two
+    spellings that are correct (`ENVIRON`, or a second file with `NR == FNR`),
+    and the suite case that now makes a third round red on every platform.
+
     265 -> 292 on 2026-09-16, for THE CYCLE'S THREE RULINGS (Brett Heap's
     RULING of that day, "do all three", on the coordinator's three proposals
     — measured: `tests-macos` running 49-54 minutes per push against Linux's
@@ -1699,14 +1714,26 @@ def test_agents_md_is_short_enough_to_be_read():
     three jobs beside it, and the sentence saying so now names both rather
     than the "every push" a reader could take for every branch.
 
+    276 + 292 MEET AT 303 on 2026-10-03, where #93 merged `main` at `92bd21f`.
+    Eleven of the merged file's lines are #93's one-line `awk -v` rule and
+    twenty-seven are #119's three rulings; neither is over a line the other
+    bought, and the cap is the count of what merged rather than either side's
+    number — the rule the 224 entry states.
+
     278 + 292 MEET AT 305 on 2026-10-03, where #83 merged `main` at `92bd21f`
     (#119). Both raised the same 265: thirteen lines are Amendment 18's ONE
     BINDING rule and twenty-seven are the cycle's three rulings, and neither is
     over a line the other bought. The cap is the count of what merged, 265 + 13
     + 27, rather than either side's number — the rule the 224 entry states.
+
+    303 + 305 MEET AT 316 on 2026-10-03, where #93 merged `main` at `6faed35`
+    (#83). Each side had already counted #119's twenty-seven over the shared
+    265, so the merged file is 265 + 27 + #93's eleven (the one-line `awk -v`
+    rule) + #83's thirteen (the ONE BINDING rule): the count of what merged,
+    rather than either side's number — the rule the 224 entry states.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 305, f"AGENTS.md is {len(lines)} lines; the cap is 305"
+    assert len(lines) <= 316, f"AGENTS.md is {len(lines)} lines; the cap is 316"
 
 
 def test_readme_is_short_enough_to_be_read():

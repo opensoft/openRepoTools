@@ -2143,6 +2143,43 @@ fi
 
 # ------------------------------------------------------- 4. name the window
 
+# Step 3 fetched the published register. Before changing a tmux name, prove
+# this identity was not retired (including an unpushed local archive row).
+retired_rc=0
+retired_hits="$(LANES_NO_FETCH=1 "$LANES_EDIT" retired-identity "$LANE" 2>/dev/null)" || retired_rc=$?
+case "$retired_rc" in
+  8) : ;;
+  0) die "lane $LANE is RETIRED (archive: $retired_hits). Nothing was renamed or written; choose a free position." 2 ;;
+  *) die "the lane archive could not be checked for $LANE (exit $retired_rc). Nothing was renamed or written." 1 ;;
+esac
+
+# A lane name is a tmux-window address. tmux itself allows two distinct
+# windows to carry one name, so check the whole server before taking it. A
+# linked window may appear in several sessions with the same @id; that is one
+# window, not a collision.
+#
+# ASKED OF A NEW LANE ONLY — one with no row — because only there is every
+# other window carrying the name certainly FOREIGN: nothing has bound that lane
+# yet. An EXISTING lane's own binding is different since Amendment 18 (#83):
+# a bench in another container shares this tmux server, its window keeps the
+# lane's name until that session hands off, and a second place binding the
+# lane after a release, or through `--request-handoff`, is the ratified flow.
+# Asked of every lane, this fence refused exactly that takeover.
+if [ "$row_count" = 0 ]; then
+  name_tab="$(printf '\t')"
+  name_rows="$(tmux list-windows -a -F "#{window_id}${name_tab}#{window_name}" 2>/dev/null)" ||
+    die "tmux could not list window names, so whether $LANE is already in use is unknown. Nothing was renamed or written." 2
+  while IFS="$name_tab" read -r name_id name_value; do
+    [ -n "$name_id" ] || continue
+    if [ "$name_id" != "$this_window_id" ] &&
+       [ "$(printf '%s' "$name_value" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$LANE" | tr 'A-Z' 'a-z')" ]; then
+      die "another tmux window ($name_id) is already named $name_value, and $LANE is a NEW lane, so that window is not its own. Lane window names must be unique in this tmux server; nothing was renamed or written." 2
+    fi
+  done <<EOF
+$name_rows
+EOF
+fi
+
 if (( dry_run )); then
   plan "tmux rename-window $LANE   (also turns automatic-rename off for this window)"
 else
