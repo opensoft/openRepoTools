@@ -11,6 +11,11 @@ response. Missing idle/exit/effect evidence still retains claims and blocks B;
 forced recovery remains a future gate. See the
 [amended decision](claude-cli-supervised-jobs-decision.md) and T055–T056.
 
+The follow-up records a service-verified `clean` or `repair-required` handoff
+outcome in the JSON ledger and B's first transition packet. Both require source
+exclusion before release. B completes required startup repair before normal
+work; repair completion is separate from the immutable original outcome.
+
 **2026-09-30 selected CLI correction:** `claude-cli-supervised-jobs-v1`
 resumes only the parent conversation. Safely unfinished source subagents end
 with A and are reconstructed as new B subagents with new IDs, using the

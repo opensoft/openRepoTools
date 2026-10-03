@@ -99,6 +99,37 @@ evidence or timeout retains claims and keeps B absent. Failed child responses
 are unfinished or unknown tasks, not successful shutdown checkpoints. Safely
 accounted unfinished work is reconstructed under B with new child IDs.
 
+### Record whether startup repair is required
+
+Brett's October 2 follow-up keeps two transfer outcomes. The service seals a
+`handoff` sub-record in the authoritative JSON ledger, bound to this operation,
+exact parent and source/target generations. `outcome: clean` means the
+cooperative checkpoint completed before exhaustion and the service verified
+the checkpoint, child task dispositions, job references and source exit/history
+reconciliation. `outcome: repair-required` covers exhaustion before or during
+that checkpoint, a missing checkpoint, unreconciled child failure or an
+incomplete cooperative handoff. Failed child work already reconciled into an
+explicit continuation plan does not by itself require extra repair. No positive
+evidence means repair is required; A saying "done" cannot set the marker.
+
+Both outcomes require the same source exclusion and ownership proof before B
+starts. Unaccounted processes or effects still block B; startup repair cannot
+substitute for that proof. A clean outcome does not mean every task finished,
+Git is clean or admitted jobs stopped. Safely unfinished work must have an
+explicit continuation plan, and continuing jobs retain their identities.
+
+Include the outcome, reasons, checkpoint/evidence references and a bounded
+repair list in B's transition packet before its first turn. For `clean`, B
+checks the current service packet and follows the accounted continuation plan.
+For `repair-required`, the service performs deterministic reconciliation and
+permitted service-artifact cleanup first; B uses its new account for any
+remaining semantic repair of assignments and progress before normal work.
+Observe existing jobs, preserve user files, and start new child IDs only for
+safely accounted unfinished tasks. Record repair completion separately; never
+rewrite the original transfer as clean. A missing marker in an otherwise valid
+packet requires repair. A stale or contradictory operation/generation binding
+is invalid and cannot authorize startup.
+
 ## Normal path: optional foreground wrap-up, then actual CLI exit
 
 A stays the sole owner during optional bounded foreground wrap-up. Any native

@@ -17,6 +17,13 @@ required; insufficient evidence retains claims and blocks B. The governing
 [decision](../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md)
 and contract define this amendment; T055–T056 own implementation and evidence.
 
+The follow-up requires a service-verified `clean` or `repair-required` marker
+bound to the operation, parent and generations, delivered before B's first
+turn. Exhaustion before a completed checkpoint requires startup repair once
+source safety is verified; a missing marker also requires repair. Clean
+transfers follow their accounted continuation plan. Repair completion is a
+separate durable record and never replaces the original outcome.
+
 **2026-09-26 shared-container capability:** the
 [governing decision](../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md)
 and [contract](contracts/claude-cli-supervised-jobs.md) define explicit

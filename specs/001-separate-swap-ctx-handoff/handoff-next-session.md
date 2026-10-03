@@ -12,6 +12,14 @@ and never a readiness condition. The verified idle boundary, exact CLI exit,
 descendant drain and effect reconciliation remain mandatory. Otherwise retain
 claims and keep B absent; forced recovery remains out of scope.
 
+The follow-up adds a sealed JSON-ledger `handoff.outcome` of `clean` or
+`repair-required`, with exact transfer binding, reasons, evidence and repair
+items. Deliver it before B's first turn. Clean needs a verified pre-exhaustion
+checkpoint; incomplete/exhausted transfers require startup repair after source
+safety is proven. B completes required repair before normal work. Persist its
+completion separately without changing the original outcome. Both paths retain
+the same exit/ownership proof, and user files or continuing jobs are preserved.
+
 Continue T054 custody/idle-exit measurement, then T055's direct usage watcher,
 continuous native child/task records and service-authored transition packet.
 T056 must cover no allowance and no final handoff, interrupted wrap-up, child

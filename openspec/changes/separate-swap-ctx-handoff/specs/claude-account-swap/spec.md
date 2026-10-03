@@ -47,6 +47,42 @@ ends with a usage failure SHALL NOT be recorded as task success.
 - **AND** it SHALL NOT retry source inference, infer task success or force
   recovery under this capability.
 
+### Requirement: Resumed parent receives the verified handoff outcome
+
+For the CLI capability, the service SHALL persist an operation/parent/generation-
+bound handoff outcome in the local JSON ledger and deliver it before B's first
+turn. `clean` SHALL require a verified cooperative checkpoint completed before
+exhaustion and reconciled child tasks, job references and source history/exit.
+Exhaustion before checkpoint completion, missing checkpoint or unreconciled
+child failure SHALL produce `repair-required`, with reasons and a bounded repair list.
+An AI completion statement alone SHALL NOT establish `clean`.
+
+Both outcomes SHALL require the same source exclusion and accounted effects
+before startup. Repair SHALL NOT authorize takeover with unknown source effects.
+A missing outcome in an otherwise valid packet SHALL require repair; an invalid
+operation/generation binding SHALL refuse. B SHALL perform required startup
+repair before normal work; the service SHALL record its completion separately
+without rewriting the sealed outcome or replaying uncertain external effects.
+
+#### Scenario: Verified clean transfer avoids unnecessary repair
+
+- **GIVEN** A completed its cooperative checkpoint before exhaustion and the
+  service verified all transfer evidence, including plans for unfinished tasks
+- **WHEN** B starts after source exclusion and explicit release
+- **THEN** its first packet SHALL identify `clean` and the continuation plan
+- **AND** dirty files, continuing jobs and accounted unfinished tasks SHALL NOT
+  be mistaken for failed handoff merely because they still exist.
+
+#### Scenario: Exhausted transfer requires startup repair
+
+- **GIVEN** A exhausted before its checkpoint completed, but source exit and
+  all process/effect safety requirements have been verified
+- **WHEN** B starts after explicit release
+- **THEN** its first packet SHALL identify `repair-required` with the reasons,
+  recovered state and pending repair items
+- **AND** B SHALL reconcile assignments and progress before normal work,
+  preserve user files and observe continuing jobs without duplicate dispatch.
+
 ### Requirement: Named-lane CLI deployment preserves wider acceptance gates
 
 A staged deployment of `claude-cli-supervised-jobs-v1` SHALL be versioned and

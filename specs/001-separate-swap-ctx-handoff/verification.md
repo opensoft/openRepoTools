@@ -1,5 +1,22 @@
 # Implementation Verification Record
 
+## October 3: handoff outcome and startup repair documentation
+
+Brett's follow-up preserves two transfer outcomes: the service records `clean`
+when a cooperative pre-exhaustion checkpoint and transfer evidence are verified,
+or `repair-required` with reasons and identified items when the checkpoint is
+interrupted, missing or leaves unreconciled child work. Both still require
+source exclusion and accounted effects before release. B receives the marker
+before its first turn and completes required repair before normal work;
+completion is recorded separately from the immutable original outcome.
+The data model, decision, specification, contract, deployment plan and
+T055–T056 now define this requirement. No implementation or runtime evidence
+is claimed by this documentation amendment.
+
+`openspec validate separate-swap-ctx-handoff --strict` passed in the development
+container and `git diff --check` passed. No runtime tests were rerun for these
+documentation-only changes.
+
 ## October 2: ordinary-lane exhaustion inspection and source token requirement
 
 Read-only inspection of `openxfactory-4` identified the exact parent session

@@ -18,6 +18,13 @@ exhausted A, skip the wrap-up request and use measured idle/exit custody plus
 history/job/filesystem reconciliation. Lack of a verified idle boundary or
 accounted effects still causes a bounded refusal with claims retained.
 
+The service seals a `clean` or `repair-required` handoff outcome after source
+reconciliation. A clean pre-exhaustion checkpoint carries verified task/job
+state and continuation plans. An interrupted or missing checkpoint carries
+explicit startup repair items. B receives the outcome before its first turn,
+completes required repair before normal work, and records completion without
+changing the original outcome. Unknown source effects still block startup.
+
 The launcher admits one exact parent/lane/generation before spawn and journals
 its owned runtime identity. A performs optional foreground wrap-up before
 control entry and then exits the CLI through a validated graceful path. A turn

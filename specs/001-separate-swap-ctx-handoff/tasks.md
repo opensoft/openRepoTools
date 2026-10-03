@@ -703,7 +703,21 @@ authorized. T058 is a separate, non-gating derived-index follow-up.
   and job/history/file reconciliation when no source summary exists. Pane text
   is diagnostic only. Deliver a versioned service-authored job/child/Git packet
   to B before its first model turn, with provisional file observations while
-  jobs continue. A manager AI summary is non-authoritative. After B resumes
+  jobs continue. Seal a JSON-ledger handoff sub-record bound to exact operation,
+  parent and source/target generations, with `clean` or `repair-required`,
+  reasons, checkpoint/evidence references and identified repair items. Clean
+  requires a completed pre-exhaustion cooperative checkpoint and verified
+  task/job/history/exit evidence; a missing checkpoint, exhaustion before its
+  completion or unreconciled child failure requires repair. Both outcomes need
+  identical source exclusion before release. Include the marker in B's first
+  packet; absence in an otherwise valid packet defaults to repair, while a
+  stale binding refuses. Complete required startup repair before normal work;
+  hold normal external job admission, allow bounded inspection/repair through
+  the service, instruct B's native work to follow the startup repair plan
+  without adding a mid-turn Agent fence, and persist per-item
+  completion against the handoff digest and target generation. Never rewrite
+  the original outcome or replay uncertain effects. A manager AI summary is
+  non-authoritative. After B resumes
   only the parent, provide task records for safely unfinished A children and
   have B start NEW native children with new IDs, linked to old IDs without
   claiming exact child resume. Do not make the derived lane index a T055 gate.
@@ -723,6 +737,14 @@ authorized. T058 is a separate, non-gating derived-index follow-up.
   fault inputs, never as assumed runtime support. With verified idle/exit and
   accounted effects, prove model-free readiness and packet reconstruction;
   without that evidence, prove bounded refusal with retained claims and no B.
+  Verify a clean marker for a completed pre-exhaustion checkpoint and a repair
+  marker plus startup repair for exhaustion before/during it. Cover absent
+  markers, stale operation/generation markers, AI-only completion claims,
+  dirty files/continuing jobs/accounted unfinished tasks in a clean transfer,
+  and lost repair acknowledgments. Verify normal external job admission waits
+  for required repair completion, the startup packet gives repair-first
+  instructions, and repair does not rewrite the original outcome or replay
+  jobs/completed children.
   Distinguish parent StopFailure from child stop,
   missing/racing child hooks, hook errors, stale usage samples, pane-only limit
   text, resumed parent across profile/reset windows, continuing jobs and

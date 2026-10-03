@@ -517,6 +517,43 @@ optional AI API summary is non-authoritative and cannot mark any unknown
 fact settled. No workspace cleanup may mutate user work; only verified
 service-owned temporary artifacts and stale references can be removed.
 
+### Handoff outcome and startup repair
+
+Before release, seal a `handoff` sub-record in the JSON ledger with the exact
+operation, parent and source/target generations, outcome, reasons, checkpoint
+and evidence references, observation watermark and identified repair items.
+The service records `clean` only when the cooperative checkpoint completed
+before exhaustion and it verified the checkpoint, child task dispositions,
+job references and source history/exit reconciliation. Exhaustion before or
+during checkpoint completion, missing checkpoint or unreconciled child failure
+requires `repair-required`. A final AI response alone is not that evidence.
+
+Both outcomes require identical source exclusion and accounted-effect checks.
+Repair after resume cannot resolve an unknown old writer or authorize unsafe
+release. Clean may include dirty/untracked files, continuing admitted jobs and
+safely unfinished tasks with explicit continuation plans. It describes the
+transfer checkpoint, not completion of the lane's work.
+
+The first packet supplied to B names the outcome and pending repair items.
+An absent marker in an otherwise valid packet requires repair; stale or
+contradictory operation/generation binding refuses. For clean transfers, B
+checks refreshed service state and follows the continuation plan. For transfers
+requiring repair, the service first performs deterministic reconciliation and
+permitted cleanup of its own artifacts. B may use target-account inference
+to reconcile task meaning, assignments and proven progress. Required repair
+precedes normal work. The service holds normal external job admission until
+repair completes, while allowing inspection and bounded repair actions. The
+startup packet instructs B to reconcile before ordinary native work; this
+introduces no mid-turn native Agent fence. No repair automatically resets, commits or deletes user
+files, relaunches a completed child, or repeats an uncertain job dispatch.
+Persistent jobs are observed under their existing IDs.
+
+Persist per-item repair evidence and completion against the sealed handoff
+digest and target generation. Keep the original outcome immutable, even after
+repair succeeds. A manager AI may assist reconstruction but cannot clear an
+unknown ownership or effect assertion. New child assignments follow the
+reconciled task plan and use new IDs.
+
 After target startup is accounted for, each safely stopped unfinished child
 is `restart-pending`. B receives a task-specific record with the old child ID
 for correlation, the original assignment and definition, proven progress,

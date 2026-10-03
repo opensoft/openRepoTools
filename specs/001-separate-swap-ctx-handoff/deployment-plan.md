@@ -59,6 +59,15 @@ allowance and missing final handoff, with readiness and refusal arms separated.
 No allowance behavior is itself a qualification gate or an authorization to
 force recovery.
 
+Seal and deliver the service-verified handoff outcome before B's first turn:
+`clean` for a completed pre-exhaustion checkpoint with verified transfer
+evidence, otherwise `repair-required` with reasons and identified repair items.
+Both paths require source safety before release. B completes required startup
+repair before normal work; record its completion separately and preserve the
+original outcome. Dirty files, running jobs and unfinished tasks with accounted
+continuation plans can be part of a clean transfer. T055 implements the marker
+and repair record; T056 verifies both paths and rejects stale bindings.
+
 ### September 30 decision amendments
 
 Keep Claude Code's parent transcript and child sidecars in its projects store;

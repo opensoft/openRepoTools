@@ -87,6 +87,35 @@ a quota wrap-up response or return to prompt is not exit. The source fence
 survives launcher restart, and one explicit release permits B once. Forced
 per-session recovery has no active schema or capability under this amendment.
 
+### CLI handoff outcome and startup repair
+
+The prospective ledger adds a service-authored `handoff` sub-record. Its
+outcome is sealed after source exclusion and reconciliation, before target
+release; its evidence must match the same operation's final observed state.
+
+| Field | Meaning |
+| --- | --- |
+| `schema_version`, `operation_id`, `parent_uuid`, `source_generation`, `target_generation` | Version and exact transfer binding; a marker from another operation or generation cannot be reused. |
+| `outcome` | `clean` or `repair-required`. Clean requires a cooperative checkpoint completed before exhaustion and verified task/job/history/exit evidence. |
+| `reason_codes` | Reasons for repair, such as exhaustion before checkpoint completion, missing checkpoint or unreconciled child failure. |
+| `checkpoint_ref`, `evidence_refs`, `observation_watermark`, `sealed_at` | Optional checkpoint pointer/digest plus service evidence for source exit, child dispositions, transcript seal and job/filesystem observations; no transcript or semantic-summary bodies enter the ledger. |
+| `repair_items` | Bounded, identified items with task/child/job/file references, observed progress and the required reconciliation action. Source safety uncertainty still blocks release. |
+
+An absent outcome in an otherwise valid transition packet defaults to
+`repair-required`; invalid record binding or integrity does not become repair
+permission. Clean does not require a clean Git tree, every task completed or
+every job stopped: accounted unfinished work has an explicit continuation plan. Both
+outcomes require the same ownership/exclusion proof before B starts.
+
+Startup repair has a separate durable record keyed by operation and target
+generation, with the sealed handoff digest, per-item status/evidence and state
+`not-required`, `pending`, `in-progress` or `complete`. The service holds normal
+external job admission while required repair is pending, allowing bounded
+inspection and repair actions. B's startup packet instructs native work to
+follow the repair plan first; this adds no mid-turn native Agent fence.
+Lost acknowledgment is observed, not replayed.
+Completion never changes the original `repair-required` outcome to `clean`.
+
 ## V1 schema amendment
 
 The [stop-then-resume contract](contracts/stop-then-resume.md) specifies a
