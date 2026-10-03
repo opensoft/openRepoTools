@@ -1,0 +1,156 @@
+{
+  "observed_at": "2026-10-03T17:50:46.499925+00:00",
+  "source_repository": "opensoft/openRepoTools",
+  "source_main": "c1bac0dfc99a62583cb62eafc93a192911b2ff22",
+  "standard_commit": "39d5c986fcfac1a160474bfe91c5f1c37fccc72c",
+  "worktrees": [
+    {
+      "identity": "main",
+      "head": "c1bac0dfc99a62583cb62eafc93a192911b2ff22",
+      "layout": "root",
+      "readable_here": true,
+      "dirty_entries": 0,
+      "locked": false,
+      "prunable": false
+    },
+    {
+      "identity": "lclaude-finalize",
+      "head": "7e4dc31c4571cf8d7b11e24941568edf66f82a94",
+      "layout": "legacy-sibling",
+      "readable_here": true,
+      "dirty_entries": 0,
+      "locked": false,
+      "prunable": false
+    },
+    {
+      "identity": "detached-08dad90a67bc",
+      "head": "08dad90a67bc6699283589c2222c53833a6603cd",
+      "layout": "legacy-sibling",
+      "readable_here": true,
+      "dirty_entries": 0,
+      "locked": false,
+      "prunable": false
+    },
+    {
+      "identity": "001-separate-swap-ctx-handoff",
+      "head": "fc5105b5371082c966c151f4bc08bfdabf64539b",
+      "layout": "legacy-sibling",
+      "readable_here": true,
+      "dirty_entries": 22,
+      "locked": false,
+      "prunable": false
+    },
+    {
+      "identity": "002-skip-no-lane-guard",
+      "head": "a2861bbdf0bf4793108bf3b2da2fc65f38d642bd",
+      "layout": "legacy-sibling",
+      "readable_here": true,
+      "dirty_entries": 0,
+      "locked": false,
+      "prunable": false
+    },
+    {
+      "identity": "003-binary-only-guard-runner",
+      "head": "42860a93be192f025a725708d7a016083ff82923",
+      "layout": "legacy-sibling",
+      "readable_here": true,
+      "dirty_entries": 0,
+      "locked": false,
+      "prunable": false
+    },
+    {
+      "identity": "004-migrate-to-triad",
+      "head": "c1bac0dfc99a62583cb62eafc93a192911b2ff22",
+      "layout": "legacy-sibling",
+      "readable_here": true,
+      "dirty_entries": 2,
+      "locked": false,
+      "prunable": false
+    },
+    {
+      "identity": "chore/preserve-local-planning-20261003",
+      "head": "135c18b258d02136ed834e5a446e552db385d50c",
+      "layout": "legacy-sibling",
+      "readable_here": true,
+      "dirty_entries": 0,
+      "locked": false,
+      "prunable": false
+    },
+    {
+      "identity": "detached-92eab6c4fa2e",
+      "head": "92eab6c4fa2e68f7e2202d529ee0f2e4bebce874",
+      "layout": "legacy-nested",
+      "readable_here": true,
+      "dirty_entries": 0,
+      "locked": false,
+      "prunable": false
+    },
+    {
+      "identity": "fix/claim-takeover-and-retire-fork",
+      "head": "3de40b1865d31d3bb96a52e3822c1386c9e52634",
+      "layout": "legacy-nested",
+      "readable_here": true,
+      "dirty_entries": 0,
+      "locked": false,
+      "prunable": false
+    },
+    {
+      "identity": "feat/supervised-context-restart",
+      "head": "5164ce1535b0f4f21d6b9e5b48318865a3c74295",
+      "layout": "legacy-nested",
+      "readable_here": true,
+      "dirty_entries": 0,
+      "locked": false,
+      "prunable": false
+    },
+    {
+      "identity": "feat/crash-consistent-lane-worktree-recovery",
+      "head": "64dfd9736b1079c16beda0b1ac53a61e68b21d9e",
+      "layout": "legacy-nested",
+      "readable_here": true,
+      "dirty_entries": 0,
+      "locked": false,
+      "prunable": false
+    }
+  ],
+  "open_prs": [
+    {
+      "headRefName": "feat/claude-current",
+      "headRefOid": "715b7ace2f6eeddcf75014e705535fd5c1965ff7",
+      "isDraft": true,
+      "number": 134,
+      "title": "claude-current and claude-restart-check: every launch starts the newest published Claude Code by absolute path, and a running session is told when its binary moved (opensoft/workBenches#119)",
+      "url": "https://github.com/opensoft/openRepoTools/pull/134"
+    },
+    {
+      "headRefName": "feat/supervised-context-restart",
+      "headRefOid": "5164ce1535b0f4f21d6b9e5b48318865a3c74295",
+      "isDraft": false,
+      "number": 121,
+      "title": "`/ctx` writes its restart to disk before it kills anything, and what tmux starts is a supervisor that stays in the pane \u2014 the fresh session was an environment variable the launcher dropped (#94)",
+      "url": "https://github.com/opensoft/openRepoTools/pull/121"
+    },
+    {
+      "headRefName": "feat/crash-consistent-lane-worktree-recovery",
+      "headRefOid": "64dfd9736b1079c16beda0b1ac53a61e68b21d9e",
+      "isDraft": false,
+      "number": 97,
+      "title": "Crash-consistent lane worktree recovery: a lane now says WHERE its session stopped \u2014 RUNNING \u2192 SWAPPING \u2192 SWAPPED with a generation/operation fence, a machine-readable worktree inventory taken at every handoff, and a resume reconciliation that reports and resets nothing",
+      "url": "https://github.com/opensoft/openRepoTools/pull/97"
+    },
+    {
+      "headRefName": "fix/claim-takeover-and-retire-fork",
+      "headRefOid": "3de40b1865d31d3bb96a52e3822c1386c9e52634",
+      "isDraft": false,
+      "number": 61,
+      "title": "claim --force takes over a dead lane's hold; lane-end --retire ends a duplicate holder",
+      "url": "https://github.com/opensoft/openRepoTools/pull/61"
+    }
+  ],
+  "limitations": [
+    "Snapshot only; refresh before baseline freeze and cutover.",
+    "Physical paths, credentials, transcript bodies and WIP data are omitted.",
+    "Dirty/untracked work in feature 001 includes edits from this conversation and concurrent planning; preserve the complete current contents.",
+    "Raw preservation backups must be host-local or in the designated private WIP repository; public planning records hold identity/digest receipts only."
+  ]
+}
