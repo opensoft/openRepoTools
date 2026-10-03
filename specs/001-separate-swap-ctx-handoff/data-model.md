@@ -1,5 +1,28 @@
 # Data Model: Native Lineage Lane Operations
 
+## Prospective broker mode records
+
+Explicit broker enrollment and versioned records distinguish separately
+launched worker sessions from swap-mode native children. Missing markers
+preserve existing validators; no historical record is silently migrated.
+
+- **Request:** authenticated caller/generation, idempotency key, qualified
+  task-definition/assignment binding, purpose, scope, acceptance/evidence refs
+  and allowed execution/resource constraints.
+- **Placement/attempt:** recorded selection of authorized profile reference,
+  model/effort/harness and adapter/build, host/container/process namespace,
+  actual session/runtime incarnation, workspace/revision claim, dispatch intent
+  and observation watermark.
+- **Result/custody:** exact request/attempt correlation, progress/artifact/
+  acceptance refs, authenticated execution-site ownership/exit/effect receipts,
+  EGS job refs and unresolved facts. Accepted dispatch is not completion;
+  network loss is unknown and does not release an attempt for replay.
+
+Preserve local JSON-ledger and execution-site custodian authority; the derived
+SQL index never authorizes placement, retirement or release. Credentials and
+transcript bodies stay outside task/result records. See the
+[broker contract](contracts/lane-task-broker.md); T059–T062 remain prospective.
+
 ## CLI supervised-jobs capability extension
 
 The prospective `claude-cli-supervised-jobs-v1` capability is an explicit
@@ -86,6 +109,50 @@ exact CLI exit plus complete supported lifecycle/history/effect reconciliation;
 a quota wrap-up response or return to prompt is not exit. The source fence
 survives launcher restart, and one explicit release permits B once. Forced
 per-session recovery has no active schema or capability under this amendment.
+
+### CLI Speckit assignment and task review
+
+The prospective ledger records assignment scope and joins observed child/job
+evidence continuously. The preferred default is one Speckit task per native
+implementation child run; it is not an admission or swap prerequisite.
+
+| Field | Meaning |
+| --- | --- |
+| `assignment_id`, `attempt`, `role` | One child-run assignment and its contribution role; several assignments may contribute to one task. |
+| `repository_identity`, `feature`, `task_list_ref`, `task_definition_digest`, `speckit_task_ids` | Qualified task scope/revision; one ID by default, a bounded list for a recorded exception or support assignment. |
+| `exception_reason`, `file_scope`, `worktree_identity` | Explicit exception rationale and expected contribution boundaries. |
+| `parent_uuid`, `source_generation`, `agent_tool_use_id`, `native_agent_id`, `native_task_id` | Exact runtime joins as observed; runtime task IDs are distinct from Speckit IDs and absent IDs remain unknown. |
+| `job_ids`, `progress_refs`, `acceptance_evidence_refs`, `observation_watermark` | Continuously recorded admitted jobs and evidence references, without raw output or transcript bodies. |
+
+A task review group references its assignments/contributions, observed changes,
+job state and verified acceptance evidence. Derive candidates from unverified
+changes or outstanding jobs, not solely live children; recently returned
+children remain eligible. Parent edits and unmatched changes/effects are
+separate review items. Child termination does not mark a task complete. Preserve
+verified completion and existing jobs, and record review/repair evidence
+separately from the immutable handoff outcome. Scope uncertainty never supplies
+exit, effect or ownership proof. See the
+[assignment contract](contracts/claude-cli-supervised-jobs.md#speckit-task-assignment-and-recovery).
+
+### CLI worktree observation
+
+The prospective ledger adds bounded service-authored worktree observations;
+PR #97 diagnostic sidecars are optional historical inputs, never authority.
+
+| Field | Meaning |
+| --- | --- |
+| `schema_version`, `lane`, `operation_id`, `owner_generation`, `observation_watermark` | Exact managed binding, version and collection boundary. |
+| `resource_id`, `repository_identity`, `worktree_identity`, `observed_path` | Collision-resistant physical identity plus diagnostic spelling; aliases share resource identity and different repositories do not collide. |
+| `registration`, `presence`, `branch`, `head`, `upstream` | Observed Git/disk facts; unborn, detached, absent and failed reads remain distinct. |
+| `dirty_paths`, `untracked_paths`, `publication`, `publication_evidence`, `remote_refs_observed_at` | Bounded file inventory and supported publication evidence; no upstream, failed reads or stale refs cannot prove publication. |
+| `collection_status`, `reason_codes`, `limits`, `omissions`, `provenance`, `observed_at`, `provisional` | Explicit complete/absent/unreadable/malformed/unsupported/stale/incomplete/contradictory facts, collection bounds and continuing-job caveats. |
+
+Persist observations under the existing private service state root, refresh
+after source exit and before release, and reference them from B's packet and
+repair items. No file contents, credentials or raw transcripts enter this
+inventory. Unknown identity/writers/effects block readiness; independently safe
+diagnostic gaps remain repair items. Legacy lifecycle/counters are not imported.
+See [the inventory contract](contracts/claude-cli-supervised-jobs.md#worktree-inventory-integration).
 
 ### CLI handoff outcome and startup repair
 

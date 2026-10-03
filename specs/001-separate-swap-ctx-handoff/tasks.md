@@ -700,6 +700,15 @@ authorized. T058 is a separate, non-gating derived-index follow-up.
   Deduplicate by request and profile/reset window without suppressing later
   windows or profile changes for the same resumed parent. Persist native child
   task definitions and lifecycle/output references as work proceeds; use these
+  with the preferred one-Speckit-task-per-implementation-child default and
+  explicit bounded exceptions/support assignments. Join repository/feature/
+  task-list/definition revision, assignment/attempt/role, actual runtime IDs,
+  files/worktree, EGS jobs and progress/acceptance evidence continuously.
+  Derive review groups from unverified changes or outstanding jobs, including
+  recently returned children; include parent edits and unmatched items without
+  invented attribution. Keep task acceptance distinct from child termination
+  and preserve verified completion and existing jobs. The default is not a
+  swap admission gate. Use these records
   and job/history/file reconciliation when no source summary exists. Pane text
   is diagnostic only. Deliver a versioned service-authored job/child/Git packet
   to B before its first model turn, with provisional file observations while
@@ -720,7 +729,24 @@ authorized. T058 is a separate, non-gating derived-index follow-up.
   non-authoritative. After B resumes
   only the parent, provide task records for safely unfinished A children and
   have B start NEW native children with new IDs, linked to old IDs without
-  claiming exact child resume. Do not make the derived lane index a T055 gate.
+  claiming exact child resume. Incorporate PR #97's diagnostic worktree logic
+  through the service-owned adapter in the inventory contract: exact
+  lane/operation/generation/watermark binding, canonical collision-safe physical
+  repository/worktree identity, bounded branch/HEAD/upstream/dirty/untracked/
+  publication observations, freshness, collection limits and provenance.
+  Persist under the existing private ledger and refresh after exit and before
+  release; continuing-job observations remain provisional. Preserve absent,
+  unreadable, malformed, unsupported-schema, stale, incomplete and contradictory
+  evidence; failed reads/no upstream cannot become clean/published defaults.
+  Preserve unreadable historical metadata; read explicitly bound legacy
+  sidecars as diagnostics without importing lifecycle or operation counters.
+  The service is the sole readiness authority: legacy SWAPPED/resumable cannot
+  authorize takeover, inventory persistence failure blocks readiness, and
+  unknown identity/writers/effects retain claims and block B. Independently
+  safe diagnostic gaps become repair items without waiving safety gates.
+  Preserve files/tasks/jobs and relay estate remedies without automatic Git
+  repair. Do not make PR #97's unchanged lifecycle machinery or the derived
+  lane index a T055 gate.
 - [ ] T056 Exercise the shared-container integrated matrix: independent Claude
   A and C in the SAME container; A's foreground child and verified idle exit;
   original supervisor job identity/output persists; C/container/config/auth
@@ -745,6 +771,12 @@ authorized. T058 is a separate, non-gating derived-index follow-up.
   for required repair completion, the startup packet gives repair-first
   instructions, and repair does not rewrite the original outcome or replay
   jobs/completed children.
+  Cover multiple children on one Speckit task, a recently returned child with
+  unverified work, outstanding jobs, explicit multi-task/support exceptions,
+  changed task definitions and unmatched parent/file changes. Assert distinct
+  Speckit/runtime task IDs, separate contributions, evidence-based acceptance,
+  preservation of accepted work/job IDs and no default-policy-only refusal.
+  These are offline review-inventory cases, not forced-stop qualification.
   Distinguish parent StopFailure from child stop,
   missing/racing child hooks, hook errors, stale usage samples, pane-only limit
   text, resumed parent across profile/reset windows, continuing jobs and
@@ -756,7 +788,17 @@ authorized. T058 is a separate, non-gating derived-index follow-up.
   external effects. Record the concrete operator-supplied canary pair in
   runtime evidence if a canary is separately authorized; `team05d` / `team05j`
   are the current expectation only. Report offline fakes separately from
-  actual pinned CLI lifecycle evidence. No canary run is authorized here.
+  actual pinned CLI lifecycle evidence. Exercise inventory path-encoding and
+  repository-basename collisions, symlink aliases, missing versus unreadable
+  sidecars, malformed/unsupported schema, stale operation/generation,
+  failed Git reads, unborn/detached/no-upstream branches and stale remote refs.
+  Cover partial/truncated collection, observation/persistence failures,
+  historical SWAPPED/resumable with live or unknown source, missing registered
+  and misplaced worktrees, and continuing-job writes between refreshes.
+  Assert one authoritative lifecycle, retained claims/no B for safety gaps,
+  repair-required only for independently safe diagnostics, no source inference,
+  no overwriting unreadable metadata, and dirty/untracked/task/job preservation.
+  No canary run is authorized here.
 - [ ] T057 Review measured shared-container platform/runtime capability, full
   canonical regression/CI, installation and rollback. Rehearse per-runtime
   configuration isolation and preservation of C, jobs, claims and history
@@ -781,3 +823,44 @@ authorized. T058 is a separate, non-gating derived-index follow-up.
   transcript pointers, swap state and job summaries. Preserve Git `LANES.md`
   as its own source; do not replace it. Add offline no-read and wiped-index
   reconciliation tests. This follow-up is not a gate for T054–T057.
+
+## Prospective broker mode — October 3 separate tranche
+
+Retain ordinary swap and add explicit broker mode under
+[contracts/lane-task-broker.md](contracts/lane-task-broker.md). These tasks do
+not gate or replace T054–T057 and do not authorize live worker launches,
+account movement, remote provisioning or activation. Preserve named team roles.
+
+- [ ] T059 Define and implement versioned broker enrollment/request/placement/
+  attempt/result records and the service delegation interface. Persist admission
+  before launch, join qualified task scope to actual session/runtime/workspace
+  identities and retain idempotency through retry/crash. Add offline tests for
+  mode separation, old-record preservation, missing/stale task joins, duplicate
+  admission, accepted-send versus completion and late results by attempt.
+- [ ] T060 Implement service-owned placement from configured authorized account,
+  model/effort/harness and local/remote host/container pools, using task policy,
+  fresh usage and registered capacity. Queue/refuse when no eligible route
+  exists. Main agents perform primary orchestration; every worker's delegation
+  traverses LS. Measure tool/policy enforcement that prevents native or direct
+  adapter spawning from bypassing LS while preserving swap-mode native policy.
+  Validate final routing choices rather than silently accept adapter fallback;
+  never expose credentials in agent requests or results.
+- [ ] T061 Add a qualified Omnigent execution adapter and authenticated remote
+  execution-site custody/result bridge. Inspect/pin the actual build; the local
+  CLI reports 0.1.1 and installed dispatch/inbox code is present, but current
+  upstream docs do not certify every boundary. Reuse session/model/policy and
+  worker-host mechanisms where measured. Bind host/container/namespace/runtime
+  incarnation and workspace/revision; supply explicit remote checkout/artifacts.
+  Preserve local JSON/custody authority and EGS job IDs. Qualified worker swaps
+  may reuse the existing path while the main session stays live; network loss
+  never supplies exit proof or releases an uncertain attempt for replay.
+- [ ] T062 Exercise the broker matrix offline and record a pinned runtime
+  capability matrix before activation. Cover local/remote placement, further
+  delegation, main-agent continuity during worker-account replacement, eventual
+  main-agent swap, lost contact/ACK, duplicate or stale dispatch/result, changed
+  task/workspace revision, exhausted/ineligible accounts, routing fallback and
+  policy bypass attempts. Assert correlated completion/effects, retained unknown
+  ownership, no duplicate writer, preserved accepted work/EGS jobs, and agent/wait
+  cancellation independent of explicit job cancellation. Verify existing swap
+  mode regressions separately. Live model/auth/remote qualification requires
+  its own authorization; no installed success is inferred from offline fakes.

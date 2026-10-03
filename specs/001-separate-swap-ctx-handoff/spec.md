@@ -7,6 +7,13 @@
 
 ## Authority and history
 
+**2026-10-03 inventory integration:** PR #97's diagnostic worktree observations
+are incorporated into service reconciliation and B's packet under the
+[inventory contract](contracts/claude-cli-supervised-jobs.md#worktree-inventory-integration).
+The managed ledger remains the sole lifecycle/readiness authority; historical
+sidecars require explicit binding and cannot authorize takeover. T055–T056
+own implementation and evidence; this amendment supplies no runtime proof.
+
 **2026-10-02 source token requirement:** the selected CLI capability must preserve
 safety and reconstruct state without any source model allowance or final
 handoff. Optional pre-control wrap-up does not gate readiness. The lanes
@@ -635,6 +642,49 @@ checkpoint, worker, claim, and inference effects independently.
   profile/auth references MUST be immutable per runtime, with scoped job
   credentials separate from supervisor authority. Shared-path overwrite or
   broad credential/environment mutation MUST NOT affect another session.
+
+- **FR-044**: The CLI lanes service MUST collect bounded, versioned worktree
+  observations bound to exact lane/operation/generation, verified repository
+  and worktree identity, provenance and watermark; refresh after source exit
+  and before release, labeling continuing-job observations provisional. Its
+  managed ledger MUST remain the sole lifecycle/readiness authority. Legacy
+  recovery states/verdicts MUST NOT authorize readiness or import counters.
+  Missing, unreadable, malformed, unsupported, stale, incomplete and
+  contradictory evidence MUST stay distinct; failed reads and missing upstream
+  MUST NOT become clean or published defaults. Collision-safe physical identity
+  MUST distinguish repositories and unify aliases. Unknown writers, effects or
+  required identity MUST retain claims and block B; independently safe gaps
+  MAY become explicit startup repair items. Inventory persistence failure MUST
+  prevent successful readiness. Collection and repair MUST preserve user files,
+  tasks and jobs and MUST NOT automatically alter or recreate worktrees.
+
+- **FR-045**: For Speckit-driven implementation, an orchestrator SHOULD assign
+  one Speckit task per native implementation child run. Multiple children MAY
+  contribute to the same task with explicit roles/file boundaries; bounded
+  multi-task exceptions and support assignments MUST record covered IDs and
+  reasons. This preferred default MUST NOT become a swap admission gate.
+  The service MUST persist qualified assignment/task-definition/runtime/
+  file/job/evidence joins continuously. Candidate startup review MUST include
+  tasks with unverified changes or outstanding jobs, including recently
+  returned children, plus parent edits and unmatched work. Child termination
+  MUST NOT imply task acceptance. B or its reviewer MUST verify acceptance,
+  preserve verified completion/files/existing jobs, and continue only safely
+  accounted unfinished work. Task scope MUST NOT substitute for source
+  exclusion, ownership or effect evidence or authorize forced recovery.
+
+- **FR-046**: LS MUST retain existing swap mode and expose broker mode only
+  through an explicit qualified capability. In broker mode main agents MUST
+  perform primary orchestration and every worker delegation MUST pass through
+  LS admission, including further worker delegation. LS MUST select authorized
+  account, model/harness and local or remote host/container, persist attempt
+  and placement before launch, and correlate durable results to actual runtime
+  identity. Native/direct spawning MUST NOT bypass LS. Qualified worker account
+  transfers MAY use existing swap while the main session continues. Remote
+  loss of contact MUST remain unknown until authenticated execution-site
+  custody/effect evidence permits recovery; it MUST NOT authorize duplicate
+  execution. Files, verified work and EGS job identities MUST be preserved.
+  Missing mode markers MUST retain existing contract meanings. Broker work
+  MUST NOT silently replace or become a T054–T057 swap delivery gate.
 
 ### Key Entities
 

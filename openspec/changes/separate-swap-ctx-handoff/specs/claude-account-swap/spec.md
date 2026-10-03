@@ -10,6 +10,149 @@ not a semantic handoff.
 
 ## ADDED Requirements
 
+### Requirement: Swap and broker are explicit operating modes
+
+LS MUST retain the qualified existing swap mode and introduce broker mode only
+as an explicit capability. Broker main agents MUST perform primary orchestration
+and every delegated worker request, including further worker delegation, MUST
+pass through LS. LS MUST select authorized account, model/harness and local or
+remote host/container and persist placement/attempt intent before launch.
+Workers MUST have actual independent runtime identities, with correlated
+durable results. Native/direct spawning MUST NOT bypass broker admission.
+
+Qualified worker-account transfer MAY use existing swap while the main agent
+continues. Remote ownership/exit/effect evidence MUST come from the execution
+site; disconnection MUST remain unknown and MUST NOT authorize duplicate work.
+Persistent EGS jobs and verified work MUST be preserved. Missing mode markers
+MUST retain existing meanings, and broker work MUST NOT gate or silently
+replace T054–T057's graceful swap delivery.
+
+#### Scenario: Ordinary swap retains native behavior
+
+- **GIVEN** a lane enrolled in the qualified existing swap capability
+- **WHEN** a broker capability is introduced elsewhere
+- **THEN** the lane retains its native-child tool policy and exact-parent swap
+- **AND** no record is silently converted to a broker worker session.
+
+#### Scenario: Remote worker account changes while the main agent continues
+
+- **GIVEN** a broker main agent and an LS-admitted task on a remote worker
+- **WHEN** that worker's account exhausts and its qualified source/effect
+  boundary permits replacement
+- **THEN** LS records the replacement binding and returns correlated results
+  to the still-running main agent
+- **AND** existing EGS job identities and accepted task work are preserved.
+
+#### Scenario: Remote contact is lost
+
+- **GIVEN** an admitted remote worker with uncertain runtime or effects
+- **WHEN** its heartbeat or control transport stops responding
+- **THEN** LS retains unknown state and exclusive ownership pending reconciliation
+- **AND** it does not start a duplicate writer from elapsed time alone.
+
+#### Scenario: A worker requests more help
+
+- **GIVEN** a worker in broker mode that needs another task contribution
+- **WHEN** it delegates that contribution
+- **THEN** the request goes through LS admission and authorized placement
+- **AND** native or direct session-spawn routes cannot bypass that admission.
+
+### Requirement: Speckit task attribution supports focused recovery
+
+For Speckit-driven implementation, the orchestrator SHOULD assign one Speckit
+task per native implementation child run. Multiple children MAY contribute to
+one task with explicit roles and file boundaries. A bounded multi-task
+exception or support assignment MUST record covered task IDs and a reason.
+This preferred default MUST NOT be a lane-swap admission prerequisite.
+
+The lanes service MUST persist qualified repository/feature/task-definition,
+assignment/attempt, observed native identity, file/worktree, job and evidence
+references continuously. Speckit task IDs MUST remain distinct from runtime
+task IDs. Startup review MUST include unverified contributions and outstanding
+jobs, including recently returned children, plus parent edits and unmatched
+work. A child ending MUST NOT imply whole-task acceptance. The resumed parent
+or reviewer MUST verify acceptance and preserve verified completion, files and
+admitted jobs. Task grouping MUST NOT substitute for source-exclusion, ownership
+or effect proof, or establish forced-recovery support.
+
+#### Scenario: Several children contribute to one task
+
+- **GIVEN** implementation and review children are assigned to the same Speckit
+  task with distinct roles and file boundaries
+- **WHEN** one child returns and another contribution remains unverified
+- **THEN** the service retains the separate assignments within one review group
+- **AND** that task is not accepted solely because one child returned.
+
+#### Scenario: Recently returned child still needs review
+
+- **GIVEN** a child returned just before exhaustion and its task has unverified
+  changes or an outstanding EGS job
+- **WHEN** a transfer has independently satisfied source and effect safety
+- **THEN** the transition packet includes that task for startup review
+- **AND** B inspects existing work and observes the original job without replay.
+
+#### Scenario: Task attribution does not cover all changes
+
+- **GIVEN** four task groups, a declared multi-task exception and unmatched
+  parent edits are recorded
+- **WHEN** the service assembles the recovery inventory
+- **THEN** it includes the exception tasks and unmatched items explicitly
+- **AND** it does not claim the review is bounded to only the four groups.
+
+#### Scenario: Recorded exception preserves swap eligibility
+
+- **GIVEN** a bounded multi-task assignment with recorded scope and reason,
+  and otherwise proven source, history, ownership and effect safety
+- **WHEN** the service checks the selected CLI swap capability
+- **THEN** the task-assignment preference alone does not refuse the swap
+- **AND** verified completed work remains complete through startup repair.
+
+### Requirement: Worktree diagnostics use the managed service authority
+
+For `claude-cli-supervised-jobs-v1`, the lanes service SHALL incorporate bounded,
+versioned worktree observations into its ledger reconciliation and B's packet.
+Observations SHALL bind exact lane, operation, generation, canonical physical
+repository/worktree identity, provenance and watermark, and SHALL refresh after
+source exit and before release. Continuing-job observations SHALL be provisional.
+The managed ledger SHALL remain the sole lifecycle/readiness authority. PR #97
+sidecars MAY supply explicitly bound historical diagnostics, but their lifecycle,
+counters and `resumable` verdict SHALL NOT authorize managed release.
+
+Failed, missing, unreadable, malformed, unsupported, stale, incomplete and
+contradictory evidence SHALL remain distinguishable; failed reads or missing
+upstream SHALL NOT imply clean or published work. Identity SHALL resist path
+encoding/repository-basename collisions and unify physical aliases. Required
+identity, writer or effect uncertainty SHALL retain claims and block B.
+Inventory persistence failure SHALL block successful readiness. Independently
+safe diagnostic gaps MAY enter startup repair, without waiving exclusion/effect
+checks. Collection and repair SHALL preserve user files, tasks and jobs and
+SHALL NOT automatically modify or recreate worktrees or require A inference.
+
+#### Scenario: Historical recovery verdict contradicts source evidence
+
+- **GIVEN** a legacy snapshot says `SWAPPED` or its report says `resumable`,
+  while exact source exclusion or a required worktree identity is unknown
+- **WHEN** the service reconciles the managed operation
+- **THEN** it SHALL retain claims and keep B absent
+- **AND** it SHALL preserve the historical evidence without importing its state.
+
+#### Scenario: Safe transfer has a diagnostic gap
+
+- **GIVEN** source exclusion, ownership and effects are independently verified,
+  but publication status is unknown for a branch without an upstream
+- **WHEN** the service seals the transition packet
+- **THEN** it SHALL report publication as unknown and identify startup repair
+- **AND** it SHALL preserve dirty/untracked files and continuing jobs without
+  requiring a final A response or automatically repairing the worktree.
+
+#### Scenario: Collection is incomplete or cannot be persisted
+
+- **GIVEN** a required Git read fails, collection omits a required worktree,
+  or the managed inventory cannot be persisted
+- **WHEN** the service attempts preparation
+- **THEN** it SHALL NOT manufacture clean defaults or successful readiness
+- **AND** it SHALL retain claims and reconcile under the same operation.
+
 ### Requirement: CLI swap safety requires no source model headroom
 
 For `claude-cli-supervised-jobs-v1`, the service SHALL preserve swap safety and

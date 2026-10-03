@@ -517,6 +517,106 @@ optional AI API summary is non-authoritative and cannot mark any unknown
 fact settled. No workspace cleanup may mutate user work; only verified
 service-owned temporary artifacts and stale references can be removed.
 
+### Speckit task assignment and recovery
+
+For Speckit-driven implementation, the preferred default is one task from the
+feature's `tasks.md` per native implementation child run. Multiple children may
+contribute to one task with distinct roles and file boundaries. Taking another
+independent task normally creates a new run/assignment. Supporting review work
+may have its own task or a bounded related-task set; record any multi-task
+exception and reason explicitly. This default is not a swap admission gate.
+
+Tasks should represent small independently checkable deliverables with explicit
+acceptance criteria, supporting the intended bounded Sonnet assignments. The
+orchestrator supplies semantic scope; the service persists assignments before
+work and joins actual runtime identities as they become observable. Keep
+repository/feature identity, task-list path and task-definition revision,
+Speckit task ID or explicit exception set, assignment/attempt, role, expected
+files/worktree, exact parent/source generation, initiating Agent call, actual
+native child ID and runtime task ID when emitted. Add admitted EGS job IDs and
+progress/acceptance-evidence references continuously. A Speckit task ID must
+never be substituted for a runtime task ID. Missing joins remain unknown.
+
+The service derives candidate review groups for tasks with unverified changes
+or outstanding jobs, including a child that returned immediately before the
+stop. Retain separate contributions when several children share a task. Include
+parent edits, declared exception tasks and unmatched changes/effects explicitly;
+do not invent attribution or infer whole-task completion from a child ending.
+The task list bounds review only to the extent attribution is complete.
+
+B or an assigned reviewer checks deliverables and acceptance evidence after
+source exclusion and effect/ownership reconciliation permit startup. Verified
+completed work stays complete. Inspect and continue existing partial work with
+fresh children; do not reset files, replay accepted tasks or relaunch admitted
+jobs. Observe each continuing EGS job by its existing ID and reservations.
+Unknown effects still block replay/release, and continuing writes make file
+observations provisional. Record acceptance and repair evidence independently
+of the immutable handoff outcome.
+
+One-task guidance does not establish cancellation or forced-recovery support.
+The initial capability retains its graceful idle/exit witness. A future hard
+stop may consume the review groups only after its separate safety gate passes.
+The [brainstorm packet](../../../ideation/brainstorm/speckit-task-recovery-overview.md)
+preserves the rationale and tradeoffs; T055–T056 own implementation and cases.
+
+### Worktree inventory integration
+
+The October 3 amendment incorporates PR #97's local worktree diagnostics
+through a service-owned observation adapter. The managed JSON ledger remains
+the sole authority for operation/generation, lifecycle, claims, reconciliation
+outcome and readiness. A recovery sidecar, `SWAPPED` state or `resumable` report
+cannot authorize managed readiness, release or takeover. Integration must not
+introduce a second lifecycle writer or depend on merging PR #97 unchanged.
+
+Record bounded, versioned observations bound to canonical lane, exact
+operation, owner generation, repository/worktree identity and observation
+watermark. Include Git registration and disk presence, branch, full HEAD or
+explicit unborn state, configured upstream, dirty/untracked paths, publication
+evidence, collection status and provenance. Record collection limits and
+omissions; a truncated or partial inventory is not complete evidence. Refresh
+after source exit and before release. Continuing admitted jobs keep their
+reservations and make filesystem observations provisional.
+
+Resolve identity in the bound host/container from verified physical Git common
+directory and worktree paths plus estate/shape configuration and canonical
+lane identity. Keep observed spelling and provenance for diagnostics. Control
+records remain outside product worktrees under the existing private state
+root. Identity keys must resist collisions between path encodings and
+repository basenames, while physical aliases share the same resource identity.
+A branch, profile, basename or historical absolute path alone cannot select
+the control root or identify a worktree. Ambiguous resolution stays unresolved.
+
+Absent, unreadable, malformed, unsupported-schema, stale, incomplete and
+contradictory observations remain distinguishable. Failed Git reads must not
+become clean files, zero unpublished commits, absent trees or completed tasks.
+A branch with no upstream or a detached HEAD is not proven published; record
+publication as unknown unless supporting evidence exists. Remote-tracking
+observations carry their freshness and cannot claim current remote currency
+without a corresponding fetch. Inventory collection itself performs no fetch.
+Absence of a historical sidecar proves neither loss nor safe clearance.
+
+Existing PR #97 sidecars may be read as historical diagnostics only after
+explicit schema, repository/worktree identity and provenance binding. Do not
+silently migrate their lifecycle or reuse their operation/generation counters.
+Stale records remain labeled; fresh service observations govern reconciliation.
+Unreadable historical metadata is preserved, never overwritten to clear a
+warning. Inventory persistence failure cannot produce successful managed
+readiness; retry collection under the same operation without replaying work.
+
+Unknown ownership, writers, effects or required worktree identity retain claims
+and block B. A non-safety diagnostic gap may enter B's bounded repair list only
+when independent source-exclusion and accounted-effect checks have passed;
+repair cannot waive those checks. The original `clean`/`repair-required` rules
+still apply, and an unresolved diagnostic repair item requires `repair-required`.
+Dirty files or known unfinished work alone do not imply failed transfer.
+
+Preserve dirty/untracked files, completed tasks and admitted jobs. Report
+missing, stale or misplaced worktrees and the established estate remedy.
+Inventory and repair must not automatically commit, push, stash, reset, clean,
+prune, move, delete or recreate user worktrees. An operator-directed estate
+action follows its own existing contract; inventory is not a replacement for
+`park`, `resume` or `status`. No final source summary is required.
+
 ### Handoff outcome and startup repair
 
 Before release, seal a `handoff` sub-record in the JSON ledger with the exact

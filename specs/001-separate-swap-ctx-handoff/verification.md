@@ -1,5 +1,61 @@
 # Implementation Verification Record
 
+## October 3: explicit swap and broker mode documentation
+
+Brett selected retaining ordinary lane swap and adding LS broker mode for
+local or remote workers. Main agents perform primary orchestration; every
+delegation passes through LS, which selects authorized account/model/harness/
+host/container and collects correlated results. The proposal, decision,
+design, FR-046, data model, plan, OpenSpec delta and handoff link the prospective
+broker contract. T059–T062 are a separate tranche and do not gate T054–T057.
+
+Read-only inspection of the installed `py-bench` runtime reported `omnigent
+0.1.1 (built 2026-06-16T09:38:33Z)`. Installed `tools/builtins/spawn.py`
+contains `sys_session_send`, session inspection/closure and model-override
+schema; `tools/builtins/async_inbox.py` contains `sys_read_inbox`. This is
+source/version observation, not invocation or runtime qualification of those
+tools. Current official session, routing, policy and remote-runner docs are
+linked from the broker contract. No adapter upgrade, remote provisioning,
+model request, account movement or live worker launch was performed.
+
+The `lane-task-broker` packet contains two atomic documents, one synthesis and
+one overview. Both new packets (eight documents total) passed packet validation;
+strict OpenSpec validation passed in `py-bench`, and `git diff --check` passed.
+Documentation is prospective and establishes no new installed capability.
+
+## October 3: preferred Speckit task assignment documentation
+
+Brett agreed to prefer one Speckit task per implementation child run, permitting
+multiple children on one task with roles/file boundaries and recorded bounded
+exceptions. Proposal, decision, design, OpenSpec delta, FR-045, plan, data model,
+contract and implementation handoff record the default. T055–T056 cover
+continuous attribution and review of unverified contributions/outstanding jobs,
+recently returned children, shared tasks, exceptions and unmatched changes.
+The preference is not a swap admission gate or forced-recovery qualification.
+
+The `speckit-task-recovery` rationale packet contains two atomic documents,
+one synthesis and one overview, linked from `ideation/README.md`. Packet
+validation passed for all four documents; strict OpenSpec validation passed
+in `py-bench`, and `git diff --check` passed. Existing worktree-inventory
+amendments were preserved. This is documentation-only evidence; T054–T057
+remain open and no runtime test or live lane operation was performed.
+
+## October 3: service-owned worktree inventory documentation
+
+Brett requested incorporating PR #97's useful diagnostic inventory into the
+existing swap proposal. Proposal, design, decision, OpenSpec delta, Speckit
+specification/FR-044, plan, data model, capability contract and implementation
+handoff now require a service-owned observation adapter. T055–T056 include the
+integration and fault matrix; their status and T054–T057 gates remain open.
+The managed ledger owns readiness; historical sidecars cannot authorize
+takeover. Required safety gaps block B, while independently safe diagnostic
+gaps enter startup repair. No user worktree is automatically altered.
+
+`openspec validate separate-swap-ctx-handoff --strict` passed in `py-bench` and
+`git diff --check` passed. This is documentation-only validation: no runtime
+tests, implementation, installation, canary, account movement, PR merge or
+closure, deployment or activation occurred.
+
 ## October 3: handoff outcome and startup repair documentation
 
 Brett's follow-up preserves two transfer outcomes: the service records `clean`

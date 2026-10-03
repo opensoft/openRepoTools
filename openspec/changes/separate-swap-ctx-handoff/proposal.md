@@ -2,6 +2,74 @@
 
 ## Status and governing intent
 
+**2026-10-03 two operating modes:** retain ordinary lane swap and add an
+explicit broker mode. In swap mode the lane keeps its qualified workflow and
+native children; LS transfers the exact parent under the existing safety
+contract. In broker mode the main agent performs primary orchestration and
+all agents request delegated workers through LS. LS selects the authorized
+account, model/harness, host and container; workers may run locally or on
+enrolled remote computers. Results return through LS to the main agent.
+
+A can remain on its account while worker accounts change from B to C to D.
+Existing swap remains available for qualified worker runtimes and A itself.
+Low orchestration usage may help A reach its reset without a swap, but is not
+a quota or context-lifetime guarantee. Broker workers are separately launched
+sessions, not native children whose account/container is switched. Preserve
+swap-mode policy; broker-mode delegation must not bypass LS through native or
+direct session spawning. Remote loss of contact is unknown custody, not a
+death witness or permission to duplicate work.
+
+Reuse Omnigent session/inbox/policy/routing tools and registered worker-host
+surfaces where qualified, with LS retaining admission/placement authority and
+EGS retaining persistent-job custody. The installed CLI reports `omnigent
+0.1.1`; actual dispatch/inbox code was inspected, but upstream documentation
+alone is not runtime qualification. The
+[broker contract](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md)
+and [rationale packet](../../../ideation/brainstorm/lane-task-broker-overview.md)
+define this prospective extension. T059–T062 are a separate broker tranche;
+they do not gate or silently replace T054–T057's graceful swap delivery.
+
+**2026-10-03 preferred Speckit assignment default:** for Speckit-driven
+implementation, prefer one task from the feature's `tasks.md` per native
+subagent run. Several children may contribute to one task with explicit roles
+and file boundaries. Keep tasks small and independently checkable, supporting
+bounded Sonnet assignments. An orchestrator may record a bounded multi-task
+exception and its reason; supporting reviews may have their own task or an
+explicit related-task set. This is a preferred workflow default, not a
+mandatory restriction on every agent or a lane-swap prerequisite.
+
+Persist task scope, assignment/attempt, actual child identity, files/worktree,
+job IDs and progress/acceptance-evidence references continuously. After an
+interruption, review every task with unverified changes or outstanding jobs,
+including contributions from children that returned just before the stop.
+Preserve verified completion and continuing jobs; continue existing work with
+fresh children only after reconciliation. Parent edits and unmatched changes
+remain explicit review items, so four assigned tasks bound the review only
+when attribution is complete. Task grouping supplies no source-exclusion proof.
+T055–T056 own the records and offline recovery cases; the first delivery remains
+graceful-only, with forced recovery separately gated. See the
+[assignment and recovery contract](../../../specs/001-separate-swap-ctx-handoff/contracts/claude-cli-supervised-jobs.md#speckit-task-assignment-and-recovery)
+and [rationale packet](../../../ideation/brainstorm/speckit-task-recovery-overview.md).
+
+**2026-10-03 worktree inventory integration:** incorporate PR #97's useful
+local worktree observations into the lanes service's existing reconciliation
+and B transition packet. Reuse diagnostic logic and preservation semantics;
+the managed JSON ledger remains the sole lifecycle, ownership and readiness
+authority. A legacy `SWAPPED` snapshot or `resumable` report cannot authorize
+managed takeover. Historical sidecars require explicit schema, identity and
+provenance binding and never supply managed operation/generation counters.
+
+The service records bounded, versioned repository/worktree observations,
+refreshes them after A exits and before release, and distinguishes dirty,
+unpublished, missing, unreadable and unknown facts without inventing clean
+defaults. Unknown writers, effects or required identity retain claims and
+block B; independently safe diagnostic gaps become explicit startup repair
+items. This adds no source model turn or automatic Git repair. See the
+[inventory contract](../../../specs/001-separate-swap-ctx-handoff/contracts/claude-cli-supervised-jobs.md#worktree-inventory-integration).
+T055 owns integration and T056 its fault matrix in the existing feature.
+This decision does not merge or close PR #97, activate the capability or
+authorize a canary; implementation and runtime evidence remain pending.
+
 **2026-10-02 source token requirement:** the selected CLI swap must preserve safety
 and reconstruct state with zero source model tokens and no final AI handoff.
 Native allowance and cooperative wrap-up are optional context improvements.

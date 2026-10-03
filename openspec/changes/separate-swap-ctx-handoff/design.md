@@ -1,6 +1,41 @@
 # Design: Native Claude Subagent Session Operations
 
+## Two operating modes: swap and broker
+
+Retain ordinary swap's qualified native-child/per-session architecture. Add
+explicit broker mode: main agents perform primary orchestration, every worker
+delegation goes through LS, and LS selects account, model/harness, local/remote
+host and container. The adapter launches a separately identified worker and
+LS collects correlated results. Worker-account replacement can leave the main
+agent running; its own eventual swap remains available.
+
+Broker mode must enforce the service delegation path and remote custody,
+workspace/artifact and attempt fences. EGS jobs remain independent. Omnigent
+session/inbox/policy/routing and remote-runner mechanisms are reuse candidates;
+they do not establish account-pool or exit-witness qualification. Follow the
+[broker contract](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md)
+and separate T059–T062 tranche without expanding the T054–T057 delivery gate.
+
 ## Current CLI capability: graceful sessions in a shared container
+
+The October 3 assignment default prefers one Speckit task per implementation
+child run, with multiple children allowed per task and bounded recorded
+exceptions. A provides semantic scope; the service persists assignment,
+runtime, file/job and acceptance-evidence joins continuously. Startup review
+includes unverified contributions and outstanding jobs even from recently
+returned children, plus parent edits and unmatched work. B verifies acceptance
+and continues existing work without replaying completed tasks or admitted jobs.
+This workflow default does not gate swap or certify a hard stop. Follow the
+[assignment contract](../../../specs/001-separate-swap-ctx-handoff/contracts/claude-cli-supervised-jobs.md#speckit-task-assignment-and-recovery)
+under T055–T056.
+
+The October 3 inventory integration reuses PR #97's worktree diagnostics
+through a service-owned observation adapter. The managed ledger owns lifecycle,
+generations, claims and readiness; legacy sidecars and reconciliation verdicts
+are evidence inputs only after explicit binding, never a second state writer.
+The [inventory contract](../../../specs/001-separate-swap-ctx-handoff/contracts/claude-cli-supervised-jobs.md#worktree-inventory-integration)
+defines identity, failure distinctions, bounded collection and preservation.
+T055–T056 implement and test this inside the existing swap transaction.
 
 The [September 26 decision](claude-cli-supervised-jobs-decision.md) and
 [current contract](../../../specs/001-separate-swap-ctx-handoff/contracts/claude-cli-supervised-jobs.md)

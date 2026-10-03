@@ -21,6 +21,57 @@ and T053 private-ledger evidence remain recorded; T054–T057 remain open.
 Existing strict and original SDK/PGID v1 records retain their validators and
 meaning. Missing or unknown capability markers do not select this capability.
 
+## October 3 direction: retain swap and add broker mode
+
+Brett selected two operating modes. Ordinary swap retains this qualified
+native-child/per-session contract. Broker mode keeps the main agent doing
+primary orchestration while every worker delegation passes through LS, which
+chooses authorized account, model/harness, execution host and container. Workers
+may be local or remote and return results through LS. They are separately
+identified runtimes; this does not add cross-account native Agent spawning.
+
+Existing swap can serve a qualified worker or the main lane when needed.
+Remote custodian evidence must establish source ownership/exit; loss of
+contact cannot justify duplicate work. Persistent external jobs remain LS/EGS
+owned across inference changes. Reuse Omnigent mechanisms after adapter/build
+qualification, preserving local JSON/custody authority. See the prospective
+[broker contract](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md)
+and T059–T062. Broker work does not change T054–T057's scope or status.
+
+## October 3 decision: service-owned worktree inventory
+
+The October 3 worktree-inventory amendment incorporates PR #97's diagnostic
+capability into this service's reconciliation. The managed JSON ledger remains
+the sole lifecycle/readiness authority; historical recovery state does not
+authorize release. The [inventory contract](../../../specs/001-separate-swap-ctx-handoff/contracts/claude-cli-supervised-jobs.md#worktree-inventory-integration)
+and T055–T056 govern the adapter and its evidence. This documentation decision
+does not decide PR #97's landing or grant new runtime/deployment authorization.
+
+## October 3 preferred default: one Speckit task per implementation child
+
+Brett agreed to prefer one Speckit task per implementation subagent run.
+Multiple children may contribute to the same task with explicit roles and
+file boundaries. Split tasks by small, independently verifiable deliverables
+and acceptance criteria, supporting the intended Sonnet assignments. Record
+bounded exceptions with task IDs and reasons; cross-task support work may have
+its own review task or an explicit related-task set. The default is workflow
+guidance, not a lane-swap prerequisite or a restriction on every agent role.
+
+A supplies the semantic assignment. The lanes service persists its scope,
+attempt, runtime identity joins, files/worktree, jobs and evidence references
+as work proceeds. Speckit task IDs and runtime task IDs remain distinct.
+Child termination is not task acceptance. The startup review set includes
+tasks with unverified changes or outstanding jobs, including recently returned
+children, plus parent edits and unmatched work. B checks acceptance evidence,
+preserves verified completion and existing EGS jobs, and creates fresh children
+only for safely accounted unfinished work. An assignment list alone cannot
+prove complete attribution or safe source exclusion.
+
+See the [contract](../../../specs/001-separate-swap-ctx-handoff/contracts/claude-cli-supervised-jobs.md#speckit-task-assignment-and-recovery)
+and [rationale](../../../ideation/brainstorm/speckit-task-recovery-overview.md).
+T055–T056 remain implementation and verification work. Hard-stop review informs
+the future forced-recovery gate; first delivery retains its idle/exit witness.
+
 ## Staged named-lane deployment
 
 The canary source and target profiles are selected by the operator when a

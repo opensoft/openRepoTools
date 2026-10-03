@@ -4,9 +4,45 @@
 
 Deployment sequencing and release gates: [Fastest path to deployment](deployment-plan.md).
 
+## Prospective broker tranche (2026-10-03)
+
+Retain existing lane swap and add explicit broker mode. Main agents perform
+primary orchestration; all worker delegation goes through LS, which selects
+authorized account, model/harness and local/remote host/container. Results and
+further delegation return through LS. Workers have their own actual runtime
+identities; qualified account replacement can leave the main agent running.
+
+T059–T062 own versioned requests/attempts/results, placement/policy enforcement,
+Omnigent/remote execution adapters and fault qualification. Reuse session/inbox/
+routing/policy and registered worker-host mechanisms after pinning/measuring
+the actual build. Preserve JSON/custody authority, EGS jobs and workspace
+ownership; remote disconnection does not authorize duplicate execution. Follow
+[contracts/lane-task-broker.md](contracts/lane-task-broker.md). This is a separate
+prospective tranche, not a prerequisite or replacement for T054–T057.
+
 ## Current v1 implementation tranche (2026-09-22)
 
 ### Current CLI capability: graceful swap in a shared container (2026-09-26)
+
+For Speckit-driven implementation, prefer one task per native implementation
+child run and permit several children per task with roles/file boundaries.
+Record bounded exceptions. T055 persists assignment/task-definition/runtime/
+worktree/job/evidence joins and derives candidate review groups; T056 covers
+shared tasks, recently returned children, outstanding jobs and unmatched work.
+B checks acceptance and continues existing partial work while preserving
+verified completion and EGS job identities. This default supports small,
+checkable assignments and is not a swap admission gate. See the
+[assignment contract](contracts/claude-cli-supervised-jobs.md#speckit-task-assignment-and-recovery).
+
+The October 3 amendment incorporates PR #97's worktree diagnostic logic via a
+service-owned observation adapter under T055, with T056 fault coverage. Bind
+bounded Git/disk observations to the managed operation and canonical physical
+identity, persist in the existing private ledger, then refresh after exit and
+before release. Legacy sidecars are explicitly bound historical evidence;
+their lifecycle/counters never become managed authority. Required safety gaps
+block B; independently safe diagnostics enter startup repair. Follow the
+[inventory contract](contracts/claude-cli-supervised-jobs.md#worktree-inventory-integration).
+This does not require merging PR #97's separate lifecycle implementation.
 
 The [governing amendment](../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md)
 and [contract](contracts/claude-cli-supervised-jobs.md) select a per-session

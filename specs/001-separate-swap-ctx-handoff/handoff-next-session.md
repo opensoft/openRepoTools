@@ -1,5 +1,56 @@
 # Swap rebuild — implementation handoff
 
+## Current checkpoint — October 3, 2026: swap and broker modes
+
+Brett selected retaining ordinary lane swap plus explicit broker mode. Main
+agents perform primary orchestration and delegate through LS; LS chooses
+authorized account/model/harness/host/container and collects results. Workers
+may be remote and have separate actual session identities. Worker-account
+replacement can leave the main agent live; main-agent swap remains available.
+
+Follow the [broker contract](contracts/lane-task-broker.md), FR-046 and separate
+T059–T062 tranche. Keep current native swap policy and T054–T057 gates intact.
+Enforce broker delegation through LS, preserve EGS jobs and require execution-
+site custody/effect proof; a network timeout cannot authorize duplicate work.
+Omnigent dispatch/inbox code was inspected and the CLI reports `0.1.1`; model
+routing, remote launch and policy behavior still need a pinned capability
+matrix. No adapter upgrade, remote provisioning or live launch was performed.
+
+## Current checkpoint — October 3, 2026: preferred task assignment default
+
+Brett agreed on one Speckit task per implementation child run as the preferred
+default. Several children may share a task with explicit roles/file boundaries;
+bounded exceptions retain their task IDs and reasons. It is not a swap gate.
+The [assignment contract](contracts/claude-cli-supervised-jobs.md#speckit-task-assignment-and-recovery),
+FR-045 and data model define continuous assignment/runtime/file/job/evidence
+joins. T055 owns the records/review groups and T056 their offline cases.
+
+Review tasks with unverified contributions or outstanding jobs, including
+recently returned children, plus parent edits and unmatched work. B verifies
+acceptance and continues existing work with fresh children while preserving
+verified completion and EGS jobs. Task grouping supplies no exit/effect proof;
+forced recovery remains separately gated. The [rationale packet](../../ideation/brainstorm/speckit-task-recovery-overview.md)
+captures tradeoffs. Documentation does not establish installed enforcement or
+change T054–T057's open status.
+
+## Current checkpoint — October 3, 2026: worktree inventory integration
+
+Brett requested incorporating PR #97's useful worktree inventory into this
+existing proposal. Follow the [inventory contract](contracts/claude-cli-supervised-jobs.md#worktree-inventory-integration)
+and FR-044. T055 owns the service observation adapter and T056 its fault matrix;
+no separate feature or executable OpenSpec checklist is introduced.
+
+The managed JSON ledger remains the sole lifecycle/readiness authority.
+Explicitly bound PR #97 sidecars may supply historical diagnostics, never
+managed state or operation/generation counters. Refresh bounded, versioned
+observations after source exit and before release; preserve read failures,
+publication uncertainty, collisions/aliases and continuing-job caveats.
+Required identity/writer/effect gaps block B with claims retained. Independently
+safe diagnostic gaps become repair items; never automatically repair user
+worktrees or request a final A response. T054–T057 remain open. This is a
+documentation amendment, not implementation evidence, a PR #97 merge/closure,
+or new canary/deployment authorization.
+
 ## Current checkpoint — October 2, 2026
 
 Brett's source token requirement is recorded in the

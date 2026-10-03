@@ -23,13 +23,29 @@ not proposal approval or evidence that Claude's compatibility gate has passed.
   record compatibility. Review the [proposed governance review](governance-review.md),
   which is explicitly **PROPOSED — NOT APPROVED** until that citation exists.
 - [ ] 1.3 Agree integration ownership with the recovery and supervised-context
-  changes, including PR #121; verify one lifecycle authority, shared operation
+  changes, including PR #97 and PR #121; the October 3 amendment incorporates
+  #97's diagnostics under the managed service authority, without importing its
+  lifecycle/counters or deciding its landing. Verify the inventory adapter and
+  sole readiness authority against the linked contract and T055–T056, shared operation
   locking, lineage-owned claims, optional isolated-worktree claims, and
   compatible intent modes. Use the [proposed governance review](governance-review.md)
   for the read-only PR comparison and unresolved ownership/landing decisions;
   it is **PROPOSED — NOT APPROVED**.
 
 ## 2. Speckit handoff and feasibility decision
+
+The October 3 two-mode direction preserves existing swap and adds an explicit
+prospective LS broker for local/remote task placement. The
+[broker contract](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md),
+FR-046 and separate T059–T062 tranche own implementation/qualification without
+changing T054–T057's graceful swap gate. Omnigent mechanisms are reuse candidates;
+documentation or a dispatch acknowledgment is not runtime acceptance.
+
+The October 3 preferred assignment default is recorded in the proposal and
+CLI contract: one Speckit task per implementation child, several children per
+task permitted, bounded exceptions recorded. FR-045 and T055–T056 in the
+existing Speckit feature own task attribution and startup-review verification;
+the preference is not a swap admission or forced-recovery gate.
 
 Speckit feature: [001-separate-swap-ctx-handoff](../../../specs/001-separate-swap-ctx-handoff/spec.md).
 Implementation branch: `001-separate-swap-ctx-handoff`, in its sibling feature
