@@ -261,8 +261,9 @@ links to the same window ID), then renames the selected window to the lane when
 needed. A window already named for a different registered lane is not renamed.
 If the transcript or row is behind, it refuses instead of disguising
 the mismatch; run `lane-start --no-launch <lane>` in that window to record the
-new transcript. `lane-start` applies the same name-uniqueness check before an
-AVAILABLE launch renames its window.
+new transcript. `lane-start` applies the same name-uniqueness check before a
+NEW lane's launch renames its window; an existing lane's own window in another
+container keeps its name until it hands off (Amendment 18), so it is not asked there.
 
 **With no terminal on stdin it lists, suggests and asks nothing** (clause
 (i-3)): an agent's stdin is not a terminal. **Bare `lane-start` is `lane`**
