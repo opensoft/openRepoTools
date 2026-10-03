@@ -607,6 +607,13 @@ add_seed_row "| \`repoTx-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 202
 # so this workstation's empty read proves nothing; repoKr-2 is the taker.
 add_seed_row "| \`repoKr-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoKr/x.md | ACTIVE |"
 add_seed_row "| \`repoKr-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoKr/x.md | ACTIVE |"
+# repoKg-1 — Copilot on a52abc6, PR #61: RETIRED, last bound in ANOTHER
+# container on a host this run shares a tmux server with, and its window gone
+# from it — Amendment 18(b)'s one exception — while a session record on THIS
+# workstation still carries its id for part of the case. repoKg-2 is the taker.
+KGLIVE_ID="aaaa0009-6b67-4000-8000-aaaa00096b67"
+add_seed_row "| \`repoKg-1\` | harness \`$KGLIVE_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoKg/x.md | ACTIVE |"
+add_seed_row "| \`repoKg-2\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoKg/x.md | ACTIVE |"
 add_seed_row "| \`repoH-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoH/x.md | ACTIVE |"
 add_seed_row "| \`repoH-2\` | harness \`$DEAD_ID\` | Raven / test / brett | 2026-09-11T00:00Z | none | handoffs/repoH/y.md | ACTIVE |"
 add_seed_row "| \`repoP-1\` | harness \`$DEAD_ID\` | Eagle / test / brett | 2026-09-11T00:00Z | none | handoffs/repoP/x.md | ACTIVE · LANDING #7 into repoP main |"
@@ -913,6 +920,11 @@ NOW_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'OPENED — lane repoKr-1, session %s@Eagle, %s, opensoft/repoKr#1 ← opensoft/repoKr#0\n' "$DEAD_ID" "$OLD_UTC"
   printf 'RETIRED — lane repoKr-1, session %s@Eagle, %s, lane:repoKr-1\n' "$DEAD_ID" "$NOW_UTC"
 } > "$WIP/lanes/log/repoKr-1.md"
+{ printf '# lane repoKg-1 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoKg-1, session %s@Eagle, %s, lane:repoKg-1 → home opensoft/repoKg; estate repoKg; host elsewhere-host; container other-bench; os linux; window kgsess:0 @77\n' "$KGLIVE_ID" "$OLD_UTC"
+  printf 'OPENED — lane repoKg-1, session %s@Eagle, %s, opensoft/repoKg#1 ← opensoft/repoKg#0\n' "$KGLIVE_ID" "$OLD_UTC"
+  printf 'RETIRED — lane repoKg-1, session %s@Eagle, %s, lane:repoKg-1\n' "$KGLIVE_ID" "$NOW_UTC"
+} > "$WIP/lanes/log/repoKg-1.md"
 git -C "$WIP" add -- lanes/log
 git -C "$WIP" commit -q -m "seed two object logs"
 git -C "$WIP" push -q origin main
@@ -1596,6 +1608,23 @@ hasnt "…and no takeover is written" "$(cat "$LOGD/repoKr-2.md" 2>/dev/null)" "
 run env LANES_LANE=repoKr-2 LANES_HOST=elsewhere-host LANES_CONTAINER=none "$E" claim "opensoft/repoKr#1" --no-github --force
 is    "…and the same takeover from inside that binding's host and container is granted" "$rc" 0
 has   "…writing a TAKEOVER over the dead lane" "$(cat "$LOGD/repoKr-2.md")" "opensoft/repoKr#1 ← lane:repoKr-1"
+
+# THE WINDOW-GONE EXCEPTION ADMITS THE BINDING TO THE LOCAL READ, IT DOES NOT
+# REPLACE IT (Copilot on a52abc6, PR #61). repoKg-1 was bound in container
+# `other-bench` on this run's host, and its window `@77` resolves nowhere on the
+# shared tmux server — a dead binding by Amendment 18(b)'s own exception. But a
+# session record on THIS workstation still carries its id: a dead pane is not
+# proof that nothing here holds the lane, so the takeover is refused.
+write_record "$sessions_dir/$LIVE_PID-repoKg1.json" "$KGLIVE_ID" "$LIVE_PID" "$live_start" "kgsess:@9.%9" "repoKg-1" "idle"
+run env LANES_LANE=repoKg-2 LANES_HOST=elsewhere-host LANES_CONTAINER=this-bench "$E" claim "opensoft/repoKg#1" --no-github --force
+is    "a window-gone binding with a LIVE local record for the lane is still refused" "$rc" 2
+hasnt "…never as a dead lane's hold" "$err" "takeover of a dead lane's hold"
+hasnt "…and no takeover is written" "$(cat "$LOGD/repoKg-2.md" 2>/dev/null)" "opensoft/repoKg#1"
+rm -f "$sessions_dir/$LIVE_PID-repoKg1.json"
+# …and with no such record, the exception confirms it and the takeover lands.
+run env LANES_LANE=repoKg-2 LANES_HOST=elsewhere-host LANES_CONTAINER=this-bench "$E" claim "opensoft/repoKg#1" --no-github --force
+is    "…while the same window-gone binding with nothing live here is taken over" "$rc" 0
+has   "…writing a TAKEOVER that says why" "$(cat "$LOGD/repoKg-2.md")" "its binding's window is gone from this host's tmux"
 
 # ------------------------------------------- LANDING, LANDED, who --landing
 

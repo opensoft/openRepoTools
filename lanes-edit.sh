@@ -3218,7 +3218,10 @@ claim_is_stale() {   # <lane> <object> <utc-of-the-claim> <its file> <its line>
 # matched on the line's own workstation), and judged by `binding_is_here` —
 # the one locality rule this file has. Not here, the one exception clause (b)
 # carves out still applies: a shared tmux server on which the binding's window
-# is GONE is a dead binding (`binding_window_state`). Anything else is
+# is GONE is a dead binding (`binding_window_state`) — and then the local
+# `live_holder` read below still has to come back empty, because a dead pane
+# is not proof that nothing on this workstation still carries the lane
+# (Copilot on a52abc6). Anything else is
 # `HOLDER_BOUND_ELSEWHERE` (the binding's `host/container`), and refused like
 # every other verdict this workstation could not establish. A log with no
 # binding line at all keeps the local read, which is all there is to ask.
@@ -3269,13 +3272,18 @@ holder_is_dead() {   # <lane>
     [ -n "$hid_bhost" ] || hid_bhost="$hid_bws"
     [ -n "$hid_bcont" ] || hid_bcont=none
     if ! binding_is_here "$hid_bhost" "$hid_bcont" "$hid_blegacy"; then
-      if [ "$(binding_window_state "$hid_bhost" "$hid_bwin" "$hid_blegacy")" = gone ]; then
-        HOLDER_DEAD_VERB="$hid_verb"
-        HOLDER_DEAD_WHY="its binding's window is gone from this host's tmux, Amendment 18(b)"
-        return 0
+      # THE WINDOW-GONE EXCEPTION ADMITS THE BINDING TO THE LOCAL READ BELOW,
+      # IT DOES NOT REPLACE IT (Copilot on a52abc6, PR #61): a pane gone from
+      # the shared tmux server says the BINDING is dead, not that nothing on
+      # this workstation still carries the lane — an orphaned background
+      # duplicate outlives its pane. So `live_holder` is still asked, and only
+      # its confirmed-empty 8 lets this answer dead; live or unreadable stays
+      # a refusal exactly as it is for a binding that is here.
+      if [ "$(binding_window_state "$hid_bhost" "$hid_bwin" "$hid_blegacy")" != gone ]; then
+        HOLDER_BOUND_ELSEWHERE="${hid_bhost:-unknown}/${hid_bcont}"
+        return 1
       fi
-      HOLDER_BOUND_ELSEWHERE="${hid_bhost:-unknown}/${hid_bcont}"
-      return 1
+      HOLDER_DEAD_WHY="its binding's window is gone from this host's tmux, Amendment 18(b), and no live session on this workstation"
     fi
   fi
   hid_ids="$( { session_ids_of_lane "$hid_l" 2>/dev/null || :
