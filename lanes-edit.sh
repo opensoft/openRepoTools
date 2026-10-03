@@ -3107,6 +3107,31 @@ age_of() {
 
 lc() { printf '%s' "${1-}" | tr 'A-Z' 'a-z'; }
 
+# `lc`'s ANSWER WITHOUT A PROCESS, for a loop that asks it of EVERY lane in the
+# estate (opensoft/openRepoTools#107). `$(lc …)` is a subshell and a `tr`, and
+# the listing's `--prefix` and `--repo` filters made two of them per lane per
+# filter: measured on the suite's fixture register (194 rows, 162 logs), 3.2 s
+# of one `lanes --prefix` read, for lanes it then filtered out. The mapping is
+# `tr 'A-Z' 'a-z'`'s — the twenty-six ASCII capitals and nothing else — spelled
+# as twenty-six literal substitutions, so no locale's idea of a range or of a
+# case can widen it. It ASSIGNS `LOWER_OUT` and returns, for `table_lookup`'s
+# reason: a function read through `$( … )` is the fork this exists to remove.
+LOWER_OUT=""
+lower_into() {   # <string>
+  LOWER_OUT="${1-}"
+  case "$LOWER_OUT" in *[ABCDEFGHIJKLMNOPQRSTUVWXYZ]*) : ;; *) return 0 ;; esac
+  LOWER_OUT="${LOWER_OUT//A/a}"; LOWER_OUT="${LOWER_OUT//B/b}"; LOWER_OUT="${LOWER_OUT//C/c}"
+  LOWER_OUT="${LOWER_OUT//D/d}"; LOWER_OUT="${LOWER_OUT//E/e}"; LOWER_OUT="${LOWER_OUT//F/f}"
+  LOWER_OUT="${LOWER_OUT//G/g}"; LOWER_OUT="${LOWER_OUT//H/h}"; LOWER_OUT="${LOWER_OUT//I/i}"
+  LOWER_OUT="${LOWER_OUT//J/j}"; LOWER_OUT="${LOWER_OUT//K/k}"; LOWER_OUT="${LOWER_OUT//L/l}"
+  LOWER_OUT="${LOWER_OUT//M/m}"; LOWER_OUT="${LOWER_OUT//N/n}"; LOWER_OUT="${LOWER_OUT//O/o}"
+  LOWER_OUT="${LOWER_OUT//P/p}"; LOWER_OUT="${LOWER_OUT//Q/q}"; LOWER_OUT="${LOWER_OUT//R/r}"
+  LOWER_OUT="${LOWER_OUT//S/s}"; LOWER_OUT="${LOWER_OUT//T/t}"; LOWER_OUT="${LOWER_OUT//U/u}"
+  LOWER_OUT="${LOWER_OUT//V/v}"; LOWER_OUT="${LOWER_OUT//W/w}"; LOWER_OUT="${LOWER_OUT//X/x}"
+  LOWER_OUT="${LOWER_OUT//Y/y}"; LOWER_OUT="${LOWER_OUT//Z/z}"
+  return 0
+}
+
 older_than_minutes() {   # <utc> <minutes>
   om_t="$(epoch_of "$1")"; [ -n "$om_t" ] || return 1
   [ "$(( $(date -u +%s) - om_t ))" -gt "$(( $2 * 60 ))" ]
@@ -6790,6 +6815,12 @@ lanes_rows() {
   LANES_HOST_LC="$(lc "$LANES_HOST_NAME")"
   LANES_WS_LC="$(lc "$WS")"
   LANES_CONTAINER_LC="$(lc "$LANES_CONTAINER_NAME")"
+  # AND THE TWO NARROWING FILTERS' OWN SIDES, for the same reason: `--repo` and
+  # `--prefix` do not change from one lane to the next, and the loop below asked
+  # `lc` for both of them again for every lane in the estate (#107). The lane's
+  # side is per lane and goes through `lower_into`, which is `lc` without a fork.
+  lr_repo_lc=""; [ -z "$lr_repo" ] || lr_repo_lc="$(lc "$lr_repo")"
+  lr_prefix_lc=""; [ -z "$lr_prefix" ] || lr_prefix_lc="$(lc "$lr_prefix")"
   # ONLY A LANE THE FORK MAP NAMES CAN HAVE A FORK (ruling 12). `lane_forks`
   # stays the ONE implementation of what a fork is and what disqualifies one;
   # this simply declines to ask it about the forty-five lanes of this estate
@@ -6866,7 +6897,10 @@ EOF2
     fi
     if [ -n "$lr_repo" ] || [ -n "$lr_dir" ] || [ -n "$lr_prefix" ]; then
       lr_keep=0
-      [ -n "$lr_repo" ] && [ -n "$lr_home" ] && [ "$(lc "$lr_home")" = "$(lc "$lr_repo")" ] && lr_keep=1
+      if [ -n "$lr_repo" ] && [ -n "$lr_home" ]; then
+        lower_into "$lr_home"
+        [ "$LOWER_OUT" = "$lr_repo_lc" ] && lr_keep=1
+      fi
       [ -n "$lr_dir" ]  && [ -n "$lr_d" ]    && [ "$lr_d" = "$lr_dir" ] && lr_keep=1
       # THE LABEL, AS A THIRD OR-TERM. Amendment 7 calls a lane name's
       # `<repo>-` prefix a LABEL rather than a fact, and the home is what FILES
@@ -6881,7 +6915,8 @@ EOF2
       # It never overrides a home: a lane matched only by its label is LISTED,
       # not re-homed.
       if [ "$lr_keep" = 0 ] && [ -n "$lr_prefix" ]; then
-        case "$(lc "$lr_l")" in "$(lc "$lr_prefix")"-*) lr_keep=1 ;; esac
+        lower_into "$lr_l"
+        case "$LOWER_OUT" in "$lr_prefix_lc"-*) lr_keep=1 ;; esac
       fi
       [ "$lr_keep" = 1 ] || continue
     fi
