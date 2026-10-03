@@ -315,6 +315,17 @@ Twenty-six until **Amendment 16** (ratified the same day) put `lane-rename` on
 the handoff and `lanes/aliases.tsv` — and its old name resolves for ever
 afterwards, in every reader that takes a lane name.
 
+**And it writes down what it placed.** A RECEIPT (#57) — one row of
+`<name> <destination> <sha256> <UTC>` per regular file placed, in
+`${OPENREPOTOOLS_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/openRepoTools}/installed.tsv`,
+mode 0600, replaced whole through a temporary — is read by a later `--install`
+before it RETIRES a word. A digest that still matches is this installer's copy
+and is removed; one that has MOVED, or a row it cannot check without a digest
+tool, is named and left; no row means the `Installed on PATH by` header. Rows
+are keyed by absolute DESTINATION, so moving `$OPENREPOTOOLS_BIN_DIR` keeps the
+old evidence; hook entries and the receipt get no row. A receipt it cannot write
+is ONE LINE saying so, never a refused install.
+
 Run from a checkout it copies the files beside it and needs no network and no
 `gh` at all; run from stdin, as above, it fetches all of them at the same ref.
 The API is tried before the raw URL, because `gh` is authenticated and works
@@ -325,6 +336,7 @@ where `raw.githubusercontent.com` is blocked.
 | `$OPENREPOTOOLS_REPO` | `opensoft/openRepoTools` | the `owner/name` to fetch from — a fork or a mirror, named once |
 | `$OPENREPOTOOLS_REF` | `main` | the ref to fetch it at |
 | `$OPENREPOTOOLS_BIN_DIR` | `~/.local/bin` | where `--install` puts the thirteen |
+| `$OPENREPOTOOLS_DATA_DIR` | `${XDG_DATA_HOME:-~/.local/share}/openRepoTools` | where `--install` writes the receipt of what it placed |
 | `$AGENT_PROTOCOL_ROOT` | `~/.agents` | where `workspace.yaml` lives — the one pointer to your data |
 | `$CLAUDE_PROFILES_HOME` | `~/.claude-profiles` | the profiles root `--install` places the shared skills under |
 | `$LANES_WORKSTATION` | — | this workstation's name, exported by the workBenches launcher. Outside a container it defaults to `hostname -s`; **inside one with no value every writer refuses**, because a container id is not a workstation and the log is never rewritten (Amendment 11, decision 8(d)) |

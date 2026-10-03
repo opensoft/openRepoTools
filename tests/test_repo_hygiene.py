@@ -2150,7 +2150,25 @@ def test_readme_is_short_enough_to_be_read():
     is a budget and not a target: an entry that raised it by fifteen because
     fifteen lines were written would make the number mean nothing.
 
-    472 -> 474 on 2026-10-02, for #64 (Brett Heap's RULING of that day,
+    472 -> 484 on 2026-10-02, for #57 (the install receipt). Twelve lines: the
+    ten of the receipt paragraph in § "Install", the blank line after it, and
+    one row in the environment table for `$OPENREPOTOOLS_DATA_DIR`. They are
+    behaviour a person MEETS rather than prose about it. The receipt is the
+    only place a retirement's evidence is explained - what a row is, that a
+    digest which still matches is this installer's copy and is removed, that
+    one which has MOVED is the person's edit and is named and left with the
+    `rm` printed, and that rows are keyed by DESTINATION, so moving
+    `$OPENREPOTOOLS_BIN_DIR` keeps the old directory's evidence. 0600 and the
+    fallback are the two facts a person meeting a refused retirement needs:
+    the mode the file is born at, and that a path with no row is read by the
+    `Installed on PATH by` header as before. The paragraph was written at
+    eighteen lines and cut to ten before this entry; the cap is raised for the
+    facts above and for no arithmetic - the artifact count stays where
+    `tests/test_openrepotools_command.py` derives it, and not here. Every dated
+    entry above stays, and none of these twelve is over a line one of them
+    bought.
+
+    484 -> 486 on 2026-10-02, for #64 (Brett Heap's RULING of that day,
     verbatim "go with option 1 on #64"). Two lines in `wip init`'s seed
     paragraph, and both are a refusal a person MEETS rather than prose about
     one: a checkout ADOPTED clean but ahead of its workspace repository's
@@ -2162,7 +2180,7 @@ def test_readme_is_short_enough_to_be_read():
     not meet the other as a surprise. Every dated entry above stays.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 474, f"README.md is {len(lines)} lines; the cap is 474"
+    assert len(lines) <= 486, f"README.md is {len(lines)} lines; the cap is 486"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):
