@@ -384,8 +384,11 @@ that cannot be read refuses with 1 (unknown); no vocabulary is a legacy lane and
 nothing changes. Every refusal comes before the act's first write: `write_event`
 for the four verbs that move a lifecycle, `set-lane-state`, `set-lane-tree`,
 `retire-rows` (any hit refuses the whole sweep), `set-row-state`,
-`replace-in-row`, `rename-lane`, and the entry of `lane-start` (before Amendment
-18's binding gate), `lane-handoff` (before every mode) and `lane-end`.
+`replace-in-row`, `rename-lane`, the entry of `lane-start` (before Amendment
+18's binding gate) and of `lane-handoff` (before every mode), and `lane-end`
+(at the head of its `--retire <pid>` door, and on the ending path right after
+its own row refusals, so that Amendment 15(d)'s pair refusal is still the one a
+person reads through a helper that predates both reads).
 `lane-reconcile` is read-only and answers `managed-owned`. `row_state_check`,
 `add-row` and `replace-in-row`'s new text refuse the marker's vocabulary, so no
 legacy writer forges a marker.

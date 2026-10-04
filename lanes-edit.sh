@@ -388,8 +388,9 @@
 #   first and refuses a managed lane with 2 and an unknown one with 1, before
 #   a byte is written: the lane-kind lines `log` writes (STARTED, RESUMED,
 #   ENDED, RETIRED), `set-lane-state`, `set-lane-tree`, `retire-rows`,
-#   `set-row-state`, `replace-in-row` and `rename-lane`, and the entry of
-#   `lane-start`, `lane-handoff` and `lane-end`. `lane-reconcile` pronounces
+#   `set-row-state`, `replace-in-row` and `rename-lane`, the entry of
+#   `lane-start` and `lane-handoff`, and `lane-end` before its first act on
+#   each of its paths. `lane-reconcile` pronounces
 #   nothing on a managed lane (`VERDICT managed-owned`), and no legacy writer
 #   may write the marker's vocabulary into a row at all.
 #
