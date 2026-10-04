@@ -790,7 +790,9 @@ supervise_run() {   # <lane> <operation>
 	# it back. Where fd 0 cannot be duplicated the child is started without it,
 	# which is what a foreground child would have had anyway on such a shell.
 	SV_STDIN_SAVED=0
-	if exec 9<&0 2>/dev/null; then SV_STDIN_SAVED=1; fi
+	# Scope stderr suppression to the descriptor save. A bare exec also
+	# redirects this shell's stderr permanently, hiding the retry prompt.
+	if { exec 9<&0; } 2>/dev/null; then SV_STDIN_SAVED=1; fi
 	sr_pidf="$(mktemp "${TMPDIR:-/tmp}/lane-supervisor.XXXXXX" 2>/dev/null || printf '')"
 	[ -n "$sr_pidf" ] || die "no temporary file could be made to record the launch's pid, and without it this supervisor cannot tell a child that died from one that is starting. Nothing was started." 2
 	SV_PIDFILE="$sr_pidf"
