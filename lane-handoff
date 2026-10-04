@@ -1218,7 +1218,6 @@ if [ "$do_supervise" = 1 ]; then
 	ready)    die "lane $lane's restart operation $operation is already \`ready\`: that restart was confirmed and this record authorises no further launch. Nothing was started. To open the lane:  lane $lane" 2 ;;
 	*)        die "lane $lane's restart intent is in state '${RI_STATE:-none}', which this supervisor does not know how to launch from. Nothing was started." 2 ;;
 	esac
-	[ "$RI_AGENT" = claude ] || die "this legacy supervisor supports only the recorded Claude agent. Nothing was started." 2
 	[ "$RI_MODE" = fresh-from-handoff ] ||
 		die "lane $lane's restart intent names launch mode '${RI_MODE:-none}' and this supervisor makes only 'fresh-from-handoff' launches. Nothing was started." 2
 
@@ -1264,6 +1263,7 @@ if [ "$do_supervise" = 1 ]; then
 	*) die "lane $lane's recorded agent could not be read (lane-agent exited $sv_agrc). Nothing was started: unknown agent identity cannot authorize a restart." 1 ;;
 	esac
 
+	[ "$RI_AGENT" = claude ] || die "this legacy supervisor supports only the recorded Claude agent. Nothing was started." 2
 	[ -n "$RI_HANDOFF" ] && [ "$RI_HANDOFF" != none ] && [ -s "$RI_HANDOFF" ] &&
 	  [ -n "$RI_DIGEST" ] && [ "$RI_DIGEST" != none ] ||
 	  die "the supervised restart has no complete handoff checksum. Nothing was started." 2

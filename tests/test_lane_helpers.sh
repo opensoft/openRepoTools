@@ -13714,7 +13714,7 @@ has  "…saying which authority decided it" "$err" "restart intent op-94"
 
 # AND THE INTENT OUTRANKS A CONFLICT RATHER THAN SUBSTITUTING FOR IT.
 run env PATH="$A17PATH" FAKE_TMUX_WINDOW="svsess:@31" CLAUDE_PROFILE_NAME=team-05a \
-    "$START" --dir "$SV_DIR" --operation op-not-this-one repoSV-2 --operation op-94 --no-launch
+    "$START" --dir "$SV_DIR" --operation op-not-this-one repoSV-2 --no-launch
 is   "a launch naming another operation is refused" "$rc" 2
 has  "…naming the one that really holds the lane" "$err" "op-94"
 

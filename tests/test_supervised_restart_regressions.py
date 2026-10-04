@@ -462,7 +462,11 @@ def test_restart_all_holders_retains_duplicate_processes_for_one_uuid(restart_bo
     box = restart_box
     prepare_restart(box)
     sid = "10101010-1111-4111-8111-111111111111"
-    assert helper(box, "append-session-id", LANE, sid).returncode == 0
+    row = next(line for line in (box.wip / "lanes" / "LANES.md").read_text().splitlines()
+               if line.startswith(f"| `{LANE}`"))
+    anchor = row.split("|")[2].strip()
+    result = helper(box, "append-session-id", LANE, anchor, f"`{sid}`")
+    assert result.returncode == 0, result.stderr
     procs = [subprocess.Popen(["sleep", "20"]) for _ in range(2)]
     try:
         for n, proc in enumerate(procs):
