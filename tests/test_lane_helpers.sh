@@ -13899,6 +13899,239 @@ is    "a lane whose STARTED predates Amendment 18(a) is bound HERE, on the line'
 is    "…so the same RUNNING snapshot with no holder IS an ungraceful stop" \
       "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "ungraceful-stop"
 
+echo "== the managed-owner seam: managed ledger owns enrolled lanes; this tooling owns legacy =="
+
+# Brett Heap's ruling of 2026-10-04, verbatim: "managed ledger owns enrolled
+# lanes; #97 owns legacy — rework both". A lane the managed ledger has enrolled
+# carries a managed-owner marker in its register row's state cell; every legacy
+# act refuses it before a byte is written — 2 for a valid marker, naming the
+# owner, and 1 where the vocabulary is there and does not parse.
+#
+# THE FIXTURES ARE WRITTEN STRAIGHT INTO THE REGISTER AND PUSHED, as the managed
+# ledger's own writer would land them: no legacy writer here may write that
+# vocabulary into a row at all, which is one of the things this section proves.
+#
+#   repoMG-1  VALID-LONG    LIVE · <UTC> · managed-owner mode=managed daemon=ledger-1 generation=3 bound-lane=repoMG-1
+#   repoMG-2  VALID-SHORT   MANAGED OWNER · ledger-2
+#   repoMG-3  LEGACY        PAUSED · <UTC> · swapped for the night
+#   repoMG-4  MALFORMED     generation=0
+#   repoMG-5  MALFORMED     an empty daemon
+#   repoMG-6  MALFORMED     bound-lane names another lane
+#   repoMG-7  MALFORMED     the shorthand with an empty token
+#   repoMG-8  MALFORMED     `managed: x` in the OBJECTS cell, a legacy state cell
+#   repoMG-9  LEGACY, dormant (no object log), for the sweep
+
+MG_ID="3a9e0001-1111-4000-8000-3a9e00011111"
+MG_DIR="$HOME/projects/repoMG"
+mkdir -p "$MG_DIR"
+git init -q -b main "$MG_DIR"
+git -C "$MG_DIR" config user.email "test@example.invalid"
+git -C "$MG_DIR" config user.name "lane helper tests"
+git -C "$MG_DIR" remote add origin "https://github.com/opensoft/repoMG.git"
+printf 'seed\n' > "$MG_DIR/a.txt"
+git -C "$MG_DIR" add -A >/dev/null 2>&1
+git -C "$MG_DIR" commit -q -m seed
+
+MG_UTC="2026-10-04T00:00:00Z"
+mg_row() {   # <lane> <objects cell> <state cell>
+  printf '| `%s` | harness `%s` | Eagle / test / brett | 2026-10-04T00:00Z | %s | handoffs/repoMG/%s.md | %s |\n' \
+    "$1" "$MG_ID" "$2" "$1" "$3"
+}
+{ mg_row repoMG-1 none "LIVE · $MG_UTC · managed-owner mode=managed daemon=ledger-1 generation=3 bound-lane=repoMG-1"
+  mg_row repoMG-2 none "MANAGED OWNER · ledger-2"
+  mg_row repoMG-3 none "PAUSED · $MG_UTC · swapped for the night"
+  mg_row repoMG-4 none "LIVE · $MG_UTC · managed-owner mode=managed daemon=ledger-1 generation=0 bound-lane=repoMG-4"
+  mg_row repoMG-5 none "LIVE · $MG_UTC · managed-owner mode=managed daemon= generation=3 bound-lane=repoMG-5"
+  mg_row repoMG-6 none "LIVE · $MG_UTC · managed-owner mode=managed daemon=ledger-1 generation=3 bound-lane=repoMG-99"
+  mg_row repoMG-7 none "MANAGED OWNER · "
+  mg_row repoMG-8 "managed: x" "PAUSED · $MG_UTC · swapped for the night"
+  mg_row repoMG-9 none "ENDED · $MG_UTC · a pre-Amendment-7 row with no log"
+} > "$SANDBOX/mg-rows"
+# AFTER THE REGISTER'S LAST ROW, through `cat >` and never `sed -i`, which would
+# replace a symlinked register with a file (THE ONE HAZARD in the manual).
+mg_last="$(awk 'substr($0,1,3) == "| `" { n = NR } END { print n + 0 }' "$WIP/lanes/LANES.md")"
+awk -v n="$mg_last" -v f="$SANDBOX/mg-rows" '
+  { print }
+  NR == n { while ((getline l < f) > 0) print l }' "$WIP/lanes/LANES.md" > "$SANDBOX/mg-register"
+cat "$SANDBOX/mg-register" > "$WIP/lanes/LANES.md"
+for mg_l in repoMG-1 repoMG-2 repoMG-3 repoMG-4 repoMG-5 repoMG-6 repoMG-7 repoMG-8; do
+  { printf '# lane %s — object log (lane-collision-protocol Amendment 7)\n' "$mg_l"
+    printf 'STARTED — lane %s, session %s@Eagle, %s, lane:%s → home opensoft/repoMG; dir %s; profile team-01a\n' \
+      "$mg_l" "$MG_ID" "$MG_UTC" "$mg_l" "$MG_DIR"
+  } > "$LOGD/$mg_l.md"
+done
+git -C "$WIP" add -- lanes/LANES.md lanes/log >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the managed-owner seam's fixtures, as the ledger's own writer would land them"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+
+# THE WHOLE STATE A REFUSED ACT MAY NOT CHANGE, in one string: the register's
+# commit here and on origin, this checkout's status, the register's bytes, every
+# fixture log's bytes, the lifecycle control roots (names and contents), and the
+# tmux, claude and pclaude logs the fakes keep.
+mg_fp() {
+  { git -C "$WIP" rev-parse HEAD
+    git --git-dir="$ORIGIN" rev-parse main
+    git -C "$WIP" status --porcelain
+    cksum < "$WIP/lanes/LANES.md"
+    cat "$LOGD"/repoMG-*.md 2>/dev/null | cksum
+    ls "$LOGD" | cksum
+    find "$HOME/projects/.lane-state" 2>/dev/null | LC_ALL=C sort
+    find "$HOME/projects/.lane-state" -type f -exec cksum {} + 2>/dev/null | LC_ALL=C sort
+    cksum < "$FAKE_TMUX_LOG"
+    cksum < "$FAKE_TMUX_A17_LOG"
+    cksum < "$FAKE_CLAUDE_LOG"
+    cksum < "$FAKE_PCLAUDE_LOG"
+  } | cksum
+}
+mg_refused() {   # <what> <expected exit> <owner, for a 2> <fingerprint before>
+  is   "$1 is refused with $2" "$rc" "$2"
+  if [ "$2" = 2 ]; then
+    has  "…naming the owner" "$err" "owner $3"
+  else
+    has  "…as ownership UNKNOWN" "$err" "UNKNOWN"
+  fi
+  is   "…and changed nothing: register, origin, logs, control roots, tmux and launch logs" "$(mg_fp)" "$4"
+}
+
+# ---------------------------------------------------------- 1. the read itself
+run "$E" managed-projection repoMG-1
+is    "managed-projection: a valid long marker is 0" "$rc" 0
+is    "…printing the owner, its daemon" "$out" "ledger-1"
+run "$E" managed-projection repoMG-2
+is    "managed-projection: the valid shorthand is 0" "$rc" 0
+is    "…printing its token" "$out" "ledger-2"
+run "$E" managed-projection repoMG-3
+is    "managed-projection: a legacy row is 8" "$rc" 8
+run "$E" managed-projection repoMG-9
+is    "managed-projection: a legacy row with no log is 8 too" "$rc" 8
+for mg_l in repoMG-4 repoMG-5 repoMG-6 repoMG-7 repoMG-8; do
+  run "$E" managed-projection "$mg_l"
+  is    "managed-projection: the malformed $mg_l is 1, never 8" "$rc" 1
+  has   "…saying ownership is UNKNOWN" "$err" "UNKNOWN"
+done
+run "$E" managed-projection
+is    "managed-projection with no lane is a usage error" "$rc" 64
+run "$E" managed-projection repoMG-1 repoMG-2
+is    "…and so is two lanes" "$rc" 64
+run "$E" managed-projection repomg-1
+is    "…and the lane is resolved under any case (Amendment 15)" "$out" "ledger-1"
+
+# ------------------------------- 2. every act on every managed or unknown row
+for mg_case in "repoMG-1 2 ledger-1" "repoMG-2 2 ledger-2" "repoMG-4 1 -" "repoMG-5 1 -" \
+               "repoMG-6 1 -" "repoMG-7 1 -" "repoMG-8 1 -"; do
+  read -r mg_l mg_x mg_o <<MG_CASE
+$mg_case
+MG_CASE
+  mg_n="${mg_l#repoMG-}"
+  for mg_v in STARTED RESUMED; do
+    mg_b="$(mg_fp)"
+    run env LANES_LANE="$mg_l" LANES_SESSION="$MG_ID" "$E" log "$mg_v" "lane:$mg_l" '→' "home opensoft/repoMG; dir $MG_DIR; profile team-01a"
+    mg_refused "$mg_l: log $mg_v" "$mg_x" "$mg_o" "$mg_b"
+  done
+  for mg_v in ENDED RETIRED; do
+    mg_b="$(mg_fp)"
+    run env LANES_LANE="$mg_l" LANES_SESSION="$MG_ID" "$E" log "$mg_v" "lane:$mg_l"
+    mg_refused "$mg_l: log $mg_v" "$mg_x" "$mg_o" "$mg_b"
+  done
+  mg_b="$(mg_fp)"
+  run "$E" set-lane-state "$mg_l" RUNNING --expect none --owner "$MG_ID"
+  mg_refused "$mg_l: set-lane-state" "$mg_x" "$mg_o" "$mg_b"
+  mg_b="$(mg_fp)"
+  run "$E" set-lane-tree "$mg_l" "$MG_DIR/.claude/worktrees/w1" --checkout "$MG_DIR" \
+      --branch feat/mg --head 0000000000000000000000000000000000000000 --upstream none --dirty 0 --unpushed 0
+  mg_refused "$mg_l: set-lane-tree" "$mg_x" "$mg_o" "$mg_b"
+  mg_b="$(mg_fp)"
+  run env LANES_LANE=repoMG-3 "$E" retire-rows "$mg_l"
+  mg_refused "$mg_l: retire-rows" "$mg_x" "$mg_o" "$mg_b"
+  mg_b="$(mg_fp)"
+  run "$E" set-row-state "$mg_l" "PAUSED · a legacy writer's phrase"
+  mg_refused "$mg_l: set-row-state" "$mg_x" "$mg_o" "$mg_b"
+  mg_b="$(mg_fp)"
+  run "$E" replace-in-row "$mg_l" "Eagle / test / brett" "Raven / test / brett"
+  mg_refused "$mg_l: replace-in-row" "$mg_x" "$mg_o" "$mg_b"
+  mg_b="$(mg_fp)"
+  run env LANES_SESSION="$MG_ID" "$E" rename-lane "$mg_l" "repoMGX-$mg_n" --no-github
+  mg_refused "$mg_l: rename-lane" "$mg_x" "$mg_o" "$mg_b"
+  mg_b="$(mg_fp)"
+  run env LANE_HANDOFF_NO_TMUX=1 LANES_EDIT="$E" CLAUDE_CODE_SESSION_ID="$MG_ID" \
+      CLAUDE_PROFILE_NAME=team-01a "$HANDOFF_CMD" --lane "$mg_l" clear
+  mg_refused "$mg_l: lane-handoff" "$mg_x" "$mg_o" "$mg_b"
+  mg_b="$(mg_fp)"
+  run env LANE_HANDOFF_NO_TMUX=1 LANES_EDIT="$E" CLAUDE_CODE_SESSION_ID="$MG_ID" \
+      CLAUDE_PROFILE_NAME=team-01a "$HANDOFF_CMD" --lane "$mg_l" --late --at "$MG_UTC"
+  mg_refused "$mg_l: lane-handoff --late" "$mg_x" "$mg_o" "$mg_b"
+  mg_b="$(mg_fp)"
+  run env PATH="$A17PATH" LANES_EDIT="$E" CLAUDE_CODE_SESSION_ID="$MG_ID" \
+      CLAUDE_PROFILE_NAME=team-01a "$HANDOFF_CMD" --lane "$mg_l" --restart clear
+  mg_refused "$mg_l: lane-handoff --restart" "$mg_x" "$mg_o" "$mg_b"
+  mg_b="$(mg_fp)"
+  run "$START" repoMG "$mg_n" --no-launch
+  mg_refused "$mg_l: lane-start --no-launch" "$mg_x" "$mg_o" "$mg_b"
+  mg_b="$(mg_fp)"
+  run "$START" repoMG "$mg_n"
+  mg_refused "$mg_l: lane-start (a launch)" "$mg_x" "$mg_o" "$mg_b"
+  mg_b="$(mg_fp)"
+  run "$END" "$mg_l"
+  mg_refused "$mg_l: lane-end" "$mg_x" "$mg_o" "$mg_b"
+  mg_b="$(mg_fp)"
+  run "$E" lane-reconcile "$mg_l"
+  is    "$mg_l: lane-reconcile still answers" "$rc" 0
+  if [ "$mg_x" = 2 ]; then
+    is    "…with the verdict managed-owned" \
+          "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "managed-owned"
+    is    "…naming the owner" \
+          "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "MANAGED" { print $2 }')" "$mg_o"
+  else
+    is    "…with the verdict indeterminate" \
+          "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "indeterminate"
+    is    "…and ownership unknown" \
+          "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "MANAGED" { print $2 }')" "unknown"
+  fi
+  hasnt "…and pronouncing no crash" "$out" "ungraceful-stop"
+  is    "…having read and written nothing" "$(mg_fp)" "$mg_b"
+done
+
+# ------------------- 3. ONE managed lane in a sweep refuses the whole sweep
+mg_b="$(mg_fp)"
+run env LANES_LANE=repoMG-3 "$E" retire-rows repoMG-9 repoMG-1
+mg_refused "a sweep of a dormant legacy row and a managed one" 2 ledger-1 "$mg_b"
+is    "…so the dormant legacy row was not retired either" \
+      "$(grep -c '^| `repoMG-9`.*| ENDED · ' "$WIP/lanes/LANES.md" || :)" 1
+
+# ---------------------------------- 4. no legacy writer forges a marker
+mg_b="$(mg_fp)"
+run "$E" set-row-state repoMG-3 "LIVE · managed-owner mode=managed daemon=forged generation=1 bound-lane=repoMG-3"
+is    "set-row-state refuses a phrase in the marker's vocabulary" "$rc" 2
+has   "…saying why" "$err" "managed-owner vocabulary"
+is    "…and changed nothing" "$(mg_fp)" "$mg_b"
+run "$E" set-row-state repoMG-3 "PAUSED · notes are in the managed: file"
+is    "…and any of its three patterns, not only the whole marker" "$rc" 2
+is    "…changing nothing" "$(mg_fp)" "$mg_b"
+run "$E" add-row "| \`repoMG-10\` | harness \`$MG_ID\` | Eagle / test / brett | 2026-10-04T00:00Z | none | handoffs/repoMG/repoMG-10.md | MANAGED OWNER · forged |"
+is    "add-row refuses a row in the marker's vocabulary" "$rc" 2
+has   "…saying why" "$err" "managed-owner vocabulary"
+is    "…and changed nothing" "$(mg_fp)" "$mg_b"
+run "$E" replace-in-row repoMG-3 "swapped for the night" "managed owner ledger-9"
+is    "replace-in-row refuses replacement text in the marker's vocabulary" "$rc" 2
+is    "…and changed nothing" "$(mg_fp)" "$mg_b"
+
+# ------------------------------- 5. a LEGACY lane is exactly what it was
+run "$E" set-lane-state repoMG-3 RUNNING --expect none --owner "$MG_ID"
+is    "a legacy lane still takes a lifecycle transition" "$rc" 0
+mg_gen="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "generation" { print $2 }')"
+run env LANES_LANE=repoMG-3 LANES_SESSION="$MG_ID" "$E" log RESUMED "lane:repoMG-3" '→' "home opensoft/repoMG; dir $MG_DIR; profile team-01a"
+is    "…and a RESUMED line" "$rc" 0
+run "$E" lane-state repoMG-3
+is    "…which moves its snapshot on the legacy verdict, under a new generation" \
+      "$( [ "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "generation" { print $2 }')" -gt "$mg_gen" ] && echo advanced || echo stuck )" advanced
+run "$E" lane-reconcile repoMG-3
+hasnt "…and its reconciliation is not managed-owned" "$out" "managed-owned"
+is    "…and carries no MANAGED line at all" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "MANAGED"' | grep -c . || :)" 0
+run env LANES_LANE=repoMG-3 "$E" retire-rows repoMG-9
+is    "…and the sweep of a dormant legacy row alone still lands" "$rc" 0
+
 echo "== the workstation seam: unset, every writer reads the host =="
 
 # THE OTHER HALF OF R-A9-13. Every case above this line runs with
