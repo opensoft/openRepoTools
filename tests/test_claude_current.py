@@ -547,6 +547,23 @@ sleep 30
     assert "npm view took longer than 1s" in result.stderr
 
 
+def test_the_watchdog_kills_children_spawned_by_a_term_handler(box):
+    box.user_copy("2.1.284")
+    (box.bin / "npm").write_text('''#!/usr/bin/env bash
+trap 'sleep 30 & exit 0' TERM
+printf '2.1.284\\n'
+sleep 30
+''')
+    started = time.monotonic()
+    result = box.run("--porcelain", CLAUDE_CURRENT_TIMEOUT="1",
+                     PATH=path_without(box, "timeout", "gtimeout"))
+    assert time.monotonic() - started < 15
+    assert result.returncode == 0, result.stderr
+    assert porcelain(result)["status"] == "unverified"
+    assert porcelain(result)["published"] == ""
+    assert "npm view took longer than 1s" in result.stderr
+
+
 @pytest.mark.parametrize("fallback", [False, True], ids=["host", "watchdog"])
 def test_a_command_that_ignores_term_is_killed_after_the_grace(box, fallback):
     """Copilot on #134: TERM was the only signal, so a command that ignored it

@@ -201,10 +201,8 @@ kill_tree() {
 	kill -CONT "$1" 2>/dev/null || :
 }
 
-# running <pid>: 0 while <pid> has not exited. A zombie has exited and waits
-# only to be reaped, which in a container whose first process reaps nothing
-# can be for ever, so it is not running. Without `ps`, a pid that answers
-# `kill -0` is taken as running.
+# running <pid>: zombies have exited, even before their parent reaps them.
+# The installation lock uses this to distinguish a live owner from a dead one.
 running() {
 	local st
 	kill -0 "$1" 2>/dev/null || return 1
@@ -217,14 +215,14 @@ running() {
 # when it ran out of time. GNU `timeout`, else Homebrew's `gtimeout`, else a
 # watchdog, because a stock macOS ships neither. Every branch sends TERM at
 # the bound and KILL $KILL_GRACE seconds later to what is still running:
-# `-k` for the two commands, and for the watchdog the whole tree it signalled.
+# `-k` for the two commands, and for the watchdog a dedicated process group.
 # The watchdog ends the WHOLE tree, as `timeout` ends its process group: a
 # command's own children (npm's lifecycle processes, a script's `sleep`)
 # would otherwise keep the caller's command substitution open after the
 # command itself was killed. The watchdog's own output goes to /dev/null for
 # the same reason.
 run_bounded() {
-	local secs="$1" pid dog rc=0 flag
+	local secs="$1" pid dog rc=0 flag monitor=0
 	shift
 	if command -v timeout >/dev/null 2>&1; then
 		timeout -k "$KILL_GRACE" "$secs" "$@" || rc=$?
@@ -237,21 +235,21 @@ run_bounded() {
 		# watchdog that wakes after the command ended signals nothing. Where no
 		# flag can be made at all, the watchdog acts and this function stops it.
 		flag="${TMPDIR:-/tmp}/claude-current.bound.$$.$RANDOM"
+		# Bash job control assigns this asynchronous command its own process
+		# group on both Linux and stock macOS. Keep the caller's setting, and
+		# signal the group even after its leader exits: a TERM handler may
+		# create another child that still owns the output pipe.
+		case "$-" in *m*) monitor=1 ;; esac
+		set -m
 		"$@" &
 		pid=$!
+		[ "$monitor" = 1 ] || set +m
 		(
 			sleep "$secs"
 			if ! mkdir -- "$flag" 2>/dev/null && [ -d "$flag" ]; then exit 0; fi
-			tree="$(kill_tree "$pid")"
-			n=0
-			while [ "$n" -lt "$KILL_GRACE" ]; do
-				alive=""
-				for p in $tree; do running "$p" && alive=1; done
-				[ -n "$alive" ] || exit 0
-				sleep 1
-				n=$((n + 1))
-			done
-			for p in $tree; do kill -KILL "$p" 2>/dev/null || :; done
+			kill -TERM -- "-$pid" 2>/dev/null || exit 0
+			sleep "$KILL_GRACE"
+			kill -KILL -- "-$pid" 2>/dev/null || :
 		) >/dev/null 2>&1 &
 		dog=$!
 		wait "$pid" || rc=$?

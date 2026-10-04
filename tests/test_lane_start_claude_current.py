@@ -372,6 +372,72 @@ def test_a_declined_handoff_resolves_and_updates_nothing(box):
     assert box.commits() == before
 
 
+@pytest.mark.parametrize("handoff", [False, True])
+def test_a_retired_lane_refuses_before_resolution_or_handoff(box, handoff):
+    box.resolver()
+    handoffs = _bound_elsewhere(box) if handoff else box.root / "handoffs.log"
+    real = box.bin / "lanes-edit-delegate.sh"
+    (box.bin / "lanes-edit.sh").rename(real)
+    _write(box.bin / "lanes-edit.sh", '''#!/usr/bin/env bash
+if [ "$1" = retired-identity ]; then echo 'archived repoZ-1'; exit 0; fi
+exec "$FAKE_RETIRED_DELEGATE" "$@"
+''')
+    before = box.commits()
+    result = box.start(*(["--request-handoff"] if handoff else []),
+                       FAKE_RETIRED_DELEGATE=str(real))
+    assert result.returncode == 2, result.stderr
+    assert "RETIRED" in result.stderr
+    assert box.resolver_calls() == ""
+    assert not handoffs.exists()
+    assert "rename-window" not in box.tmux_log.read_text()
+    assert box.commits() == before
+    assert box.claude_runs() == ""
+
+
+def test_a_new_lane_window_collision_refuses_before_resolution(box):
+    box.resolver()
+    tmux = box.fakebin / "tmux"
+    tmux.write_text(tmux.read_text().replace(
+        '  rename-window)',
+        "  list-windows) printf '@90\\trepoZ-1\\n' ;;\n  rename-window)"))
+    before = box.commits()
+    result = box.start()
+    assert result.returncode == 2, result.stderr
+    assert "another tmux window" in result.stderr
+    assert box.resolver_calls() == ""
+    assert "rename-window" not in box.tmux_log.read_text()
+    assert box.commits() == before
+    assert box.claude_runs() == ""
+
+
+@pytest.mark.parametrize("conflict", ["retired", "window"])
+def test_a_local_conflict_created_during_resolution_still_refuses(box, conflict):
+    box.resolver()
+    if conflict == "retired":
+        real = box.bin / "lanes-edit-delegate.sh"
+        (box.bin / "lanes-edit.sh").rename(real)
+        _write(box.bin / "lanes-edit.sh", '''#!/usr/bin/env bash
+if [ "$1" = retired-identity ] && [ -s "$FAKE_CC_LOG" ]; then
+  echo 'archived repoZ-1'; exit 0
+fi
+exec "$FAKE_LATE_DELEGATE" "$@"
+''')
+        box.env["FAKE_LATE_DELEGATE"] = str(real)
+    else:
+        tmux = box.fakebin / "tmux"
+        tmux.write_text(tmux.read_text().replace(
+            '  rename-window)',
+            "  list-windows) [ ! -s \"$FAKE_CC_LOG\" ] || "
+            "printf '@90\\trepoZ-1\\n' ;;\n  rename-window)"))
+    before = box.commits()
+    result = box.start()
+    assert result.returncode == 2, result.stderr
+    assert box.resolver_calls()
+    assert "rename-window" not in box.tmux_log.read_text()
+    assert box.commits() == before
+    assert box.claude_runs() == ""
+
+
 def test_the_agent_is_read_from_the_completed_handoff(box):
     box.resolver()
     _bound_elsewhere(box)

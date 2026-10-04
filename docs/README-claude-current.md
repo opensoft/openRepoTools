@@ -127,8 +127,9 @@ apart from 1 because a launcher reports 1 as "no Claude Code".
 | `CLAUDE_CURRENT_SYSTEM_CANDIDATES` | `/usr/local/bin/claude:/usr/bin/claude` | the image's copies |
 
 The timeouts use `timeout`, else Homebrew's `gtimeout`, else a watchdog of its
-own, because a stock macOS ships neither. The watchdog ends the command's whole
-process tree, as `timeout` ends its process group, so a child npm started
+own, because a stock macOS ships neither. The watchdog starts the command in its
+own process group and signals that group, including children created by a TERM
+handler after the timeout, so a child npm started
 cannot hold the answer open past the bound. On every branch a command that
 ignores TERM is sent KILL five seconds later.
 
