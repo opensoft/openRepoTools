@@ -9581,6 +9581,8 @@ hasnt "…nor is there a PAUSED line for that lane" "$(cat "$LOGD/repoHF-2.md")"
 # state from, and the HANDOFF's top block is literally the new session's first
 # prompt. Each of the two below writes the PAUSED line and then fails at one of
 # the others, and neither may kill the only process that could put it right.
+# Both supply the sandbox checkout so the earlier restart-directory preflight
+# passes and each case reaches the partial preservation failure it exercises.
 hf_seed_handoff "$WIP/handoffs/repoHF/repoHF-11.md" repoHF-11
 git -C "$WIP" add -- handoffs/repoHF/repoHF-11.md >/dev/null 2>&1
 git -C "$WIP" commit -q -m "seed repoHF-11's handoff"
@@ -9602,7 +9604,7 @@ git -C "$WIP" push -q origin main
 : > "$FAKE_TMUX_A17_LOG"
 export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-11.md"
 run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
-    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-11 --restart clear
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-11 --dir "$HF_DIR" --restart clear
 is    "a /ctx whose ROW could not be flipped REFUSES" "$rc" 2
 has   "…saying the register would read RUNNING for a session that was just replaced" "$err" "the ROW WAS NOT FLIPPED"
 has   "…and that the pane is exactly as it was" "$err" "this pane is left exactly as it is"
@@ -9617,7 +9619,7 @@ has   "…while the record itself IS written, because a swap is never left unwri
 : > "$FAKE_TMUX_A17_LOG"
 export FAKE_TMUX_A17_WATCH="$LOGD/repoHF-12.md"
 run env PATH="$A17PATH" FAKE_TMUX_WINDOW="hfsess:@21" CLAUDE_CODE_SESSION_ID="$HF_ID" \
-    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-12 --restart clear
+    CLAUDE_PROFILE_NAME=team-05a "$HANDOFF_CMD" --lane repoHF-12 --dir "$HF_DIR" --restart clear
 is    "a /ctx whose HANDOFF could not be refreshed REFUSES" "$rc" 2
 has   "…saying the top block is what the new session is started with" "$err" "the HANDOFF WAS NOT REFRESHED"
 is    "…and the pane was never respawned" "$(grep -c 'respawn-pane' "$FAKE_TMUX_A17_LOG")" 0
