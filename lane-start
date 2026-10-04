@@ -616,6 +616,7 @@ PROJECTS_STATE="${CLAUDE_PROJECTS_DIR:-$CLAUDE_HOME/projects}"
 # session: a launch from inside that session must resolve again.
 lane_claude_version=""
 lane_claude_resolve=0
+lane_claude_checked=0
 if [ -z "${CLAUDE_BIN:-}" ]; then
   lane_claude_resolve=1
 elif [ "$CLAUDE_BIN" = "${CLAUDE_RESOLVED_BIN:-}" ]; then
@@ -691,6 +692,7 @@ LCC
   CLAUDE_RESOLVED_BIN="$lcc_path"
   export CLAUDE_BIN CLAUDE_RESOLVED_BIN
   lane_claude_version="$lcc_version"
+  lane_claude_checked=1
   step "launching claude ${lcc_version:-of an unknown version} (${lcc_status:-no status}) at $lcc_path, as claude-current chose"
 }
 
@@ -2206,63 +2208,6 @@ if [ "$bind_rc" = 0 ]; then
   fi
 fi
 
-# ---------------- 3d. AND THE BINDING IS READ AGAIN BEFORE THE FIRST ACT
-#
-# A HANDOFF THAT LANDED IS AN OBSERVATION AND NOT A RESERVATION (Copilot round 1
-# on opensoft/openRepoTools#83). `request-handoff` returns 0 when it SEES the
-# release; between that and the rename, the row status, the log line and the
-# launch, another place waiting on the same release can bind the lane — and
-# `commit_push` rebases both append-only writes rather than refusing the second,
-# so the log would carry two bindings and no reader could say which is the
-# lane's.
-#
-# NOTHING IN THE RATIFIED TEXT GIVES A LANE A RESERVATION, and inventing one
-# here would be an unratified act on an in-force protocol — it is filed rather
-# than smuggled in (opensoft/openRepoTools#84). What IS available is to make the
-# read the LAST thing before the first act instead of the first thing in the
-# run: the window between them is then one read wide rather than a question, a
-# rename, two register writes and a launch wide, and a lane that moved in it is
-# a refusal naming where it went rather than a second binding written over it.
-#
-# ONLY ON THE PATH THAT WAITED. Every other run has just read the binding a few
-# lines above and has asked nobody anything since; a second fetch on every lane
-# start would be a network round-trip bought for a window that is already this
-# narrow.
-# AND A DRY RUN HAS NOTHING TO RE-READ, BECAUSE IT DID NOTHING (Copilot round 3
-# on opensoft/openRepoTools#83). `request-handoff --dry-run` prints its plan and
-# answers 0 WITHOUT releasing anything, so an unconditional re-read here sees the
-# binding still standing and refuses — and `lane-start --dry-run
-# --request-handoff`, whose whole job is to print the plan, could never print
-# one. A plan is a statement about what WOULD happen; the fence that protects
-# the first act belongs to the run that takes it.
-if [ "$bind_recheck" = 1 ] && (( dry_run )); then
-  plan "read the binding again before the rename, and refuse if the lane moved while this run was taking it"
-  bind_recheck=0
-fi
-if [ "$bind_recheck" = 1 ]; then
-  : > "$LS_TMP"
-  bind_again=""; bind_again_rc=0
-  bind_again="$("$LANES_EDIT" binding "$LANE" 2>"$LS_TMP")" || bind_again_rc=$?
-  [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
-  case "$bind_again_rc" in
-    8) step "binding: still free after the handoff — taking it" ;;
-    0)
-      IFS=$'\t' read -r ba_host ba_cont ba_win ba_utc ba_sess ba_os ba_where ba_wstate <<<"$bind_again"
-      # ANY BINDING SEEN HERE IS THE RACE, INCLUDING ONE AT THIS VERY WINDOW
-      # (Copilot round 6 on opensoft/openRepoTools#83). This run has written no
-      # `STARTED`/`RESUMED` of its own yet — that is three steps further on —
-      # and it reached this read only by asking a binding ELSEWHERE to release,
-      # so a binding standing at this window now cannot be this invocation's.
-      # It can only be a CONCURRENT one that bound while this one waited, which
-      # is the two-processes-one-lane this re-read exists to catch; accepting it
-      # by window equality let both carry on and launch.
-      die "lane $LANE was released and BOUND AGAIN while this run was taking it: it is now window ${ba_win:-none} in container ${ba_cont:-none} on host ${ba_host:-unknown} (session ${ba_sess:-unknown}, ${ba_utc:-unknown}). The handoff this run asked for LANDED — that place did hand off — and somebody else bound the lane before this run reached its first act. This run has written no binding of its own yet, so that one is not this invocation's: a binding at THIS window is a second invocation IN it, which is the same race one pane closer. Nothing has been renamed, written or launched. Ask again, or take it up with that place:
-      $prog --request-handoff $self_args" 2 ;;
-    2) note "this \`lanes-edit.sh\` has no \`binding\`, so whether the lane moved again while this run waited is not known here; carrying on." ;;
-    *) die "$LANES_EDIT binding $LANE exited $bind_again_rc on the re-read before the rename, so whether this lane is still free could NOT be established — and that is not 'it is'. Nothing has been renamed, written or launched." 1 ;;
-  esac
-fi
-
 # The successful handoff may have published a different agent in its PAUSED
 # record. Read that authoritative answer now, before rename or transcript movement.
 AGENT=""; AGENT_EXPLICIT=0; AGENT_ID=""; RECORDED_AGENT=""; RECORDED_AGENT_READ=0
@@ -2343,6 +2288,76 @@ if [ "$row_count" = 0 ]; then
   done <<EOF
 $name_rows
 EOF
+fi
+
+# ---------------- 3d. AND THE BINDING IS READ AGAIN BEFORE THE FIRST ACT
+#
+# A HANDOFF THAT LANDED IS AN OBSERVATION AND NOT A RESERVATION (Copilot round 1
+# on opensoft/openRepoTools#83). `request-handoff` returns 0 when it SEES the
+# release; between that and the rename, the row status, the log line and the
+# launch, another place waiting on the same release can bind the lane — and
+# `commit_push` rebases both append-only writes rather than refusing the second,
+# so the log would carry two bindings and no reader could say which is the
+# lane's.
+#
+# NOTHING IN THE RATIFIED TEXT GIVES A LANE A RESERVATION, and inventing one
+# here would be an unratified act on an in-force protocol — it is filed rather
+# than smuggled in (opensoft/openRepoTools#84). What IS available is to make the
+# read the LAST thing before the first act instead of the first thing in the
+# run: the window between them is then one read wide rather than a question, a
+# rename, two register writes and a launch wide, and a lane that moved in it is
+# a refusal naming where it went rather than a second binding written over it.
+#
+# A RESOLVER MAY WAIT TOO: another start can bind while this one waits for
+# the update lock or npm. Recheck after resolution, immediately before rename,
+# including an initially free binding. An unchanged existing binding remains
+# valid; an observed release or replacement is not this invocation's binding.
+# AND A DRY RUN HAS NOTHING TO RE-READ, BECAUSE IT DID NOTHING (Copilot round 3
+# on opensoft/openRepoTools#83). `request-handoff --dry-run` prints its plan and
+# answers 0 WITHOUT releasing anything, so an unconditional re-read here sees the
+# binding still standing and refuses — and `lane-start --dry-run
+# --request-handoff`, whose whole job is to print the plan, could never print
+# one. A plan is a statement about what WOULD happen; the fence that protects
+# the first act belongs to the run that takes it.
+bind_waited="$bind_recheck"
+bind_expected_rc="$bind_rc"; bind_expected_out="$bind_out"
+if [ "$bind_recheck" = 1 ]; then
+  bind_expected_rc=8; bind_expected_out=""
+fi
+[ "$lane_claude_checked" = 0 ] || bind_recheck=1
+if [ "$bind_recheck" = 1 ] && (( dry_run )); then
+  plan "read the binding again before the rename, and refuse if the lane moved while this run was taking it"
+  bind_recheck=0
+fi
+if [ "$bind_recheck" = 1 ]; then
+  : > "$LS_TMP"
+  bind_again=""; bind_again_rc=0
+  bind_again="$("$LANES_EDIT" binding "$LANE" 2>"$LS_TMP")" || bind_again_rc=$?
+  [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
+  case "$bind_again_rc" in
+    8) [ "$bind_expected_rc" = 8 ] ||
+         die "lane $LANE's binding changed while Claude was resolved: it is now released. Nothing here was renamed or bound; retry against the current record." 2
+       if [ "$bind_waited" = 1 ]; then
+         step "binding: still free after the handoff — taking it"
+       else
+         step "binding: still free after Claude resolution — taking it"
+       fi ;;
+    0)
+      if [ "$bind_expected_rc" = 0 ] && [ "$bind_again" = "$bind_expected_out" ]; then
+        step "binding: unchanged after Claude resolution"
+      else
+        IFS=$'\t' read -r ba_host ba_cont ba_win ba_utc ba_sess ba_os ba_where ba_wstate <<<"$bind_again"
+        # A NEW OR CHANGED BINDING IS THE RACE, INCLUDING ONE IN THIS WINDOW.
+        # This invocation wrote no STARTED/RESUMED yet. An unchanged prior
+        # binding was accepted above; this one appeared during the wait.
+        die "lane $LANE was BOUND AGAIN or changed while this run was taking it: it is now window ${ba_win:-none} in container ${ba_cont:-none} on host ${ba_host:-unknown} (session ${ba_sess:-unknown}, ${ba_utc:-unknown}). This run observed a free or earlier binding before its wait, and another binding now stands before its first act. This run has written no binding of its own yet, so that one is not this invocation's: a binding at THIS window is a second invocation IN it, which is the same race one pane closer. Nothing has been renamed, written or launched. Ask again, or take it up with that place:
+      $prog --request-handoff $self_args" 2
+      fi ;;
+    2) [ "$bind_expected_rc" = 2 ] ||
+         die "the binding could not be rechecked after Claude resolution (exit 2). Nothing here was renamed or bound." 1
+       note "this \`lanes-edit.sh\` has no \`binding\`, so whether the lane moved again while this run waited is not known here; carrying on." ;;
+    *) die "$LANES_EDIT binding $LANE exited $bind_again_rc on the re-read before the rename, so whether this lane is still free could NOT be established — and that is not 'it is'. Nothing has been renamed, written or launched." 1 ;;
+  esac
 fi
 
 if (( dry_run )); then

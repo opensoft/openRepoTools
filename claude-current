@@ -257,6 +257,9 @@ run_bounded() {
 		wait "$pid" || rc=$?
 		if mkdir -- "$flag" 2>/dev/null || [ ! -d "$flag" ]; then
 			kill_tree "$dog" >/dev/null
+		else
+			# The watchdog won even if TERM was handled as a successful exit.
+			rc=124
 		fi
 		wait "$dog" 2>/dev/null || :
 		rmdir -- "$flag" 2>/dev/null || :

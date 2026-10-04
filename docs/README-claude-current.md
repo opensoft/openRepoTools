@@ -164,6 +164,9 @@ call. Before releasing it, an implicit-agent handoff preflights a possible
 Claude launch because the holder's new `PAUSED` record may name Claude. After
 handoff, the agent is read afresh from that record. An explicit other agent
 skips the Claude preflight. A declined handoff performs no update.
+After resolution, the binding is read again immediately before the window
+rename. A lane taken or changed during the update wait is refused; an unchanged
+existing binding can continue.
 
 - It looks for `claude-current` beside itself, then in
   `$OPENREPOTOOLS_BIN_DIR` (default `~/.local/bin`), and never on `PATH`. A

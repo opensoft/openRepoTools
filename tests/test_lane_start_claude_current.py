@@ -382,6 +382,30 @@ def test_the_agent_is_read_from_the_completed_handoff(box):
     assert box.claude_runs().startswith(f"ran {box.fakebin / 'codex'}: ")
 
 
+@pytest.mark.parametrize("place", ["here", "elsewhere"])
+def test_a_lane_bound_during_resolution_is_not_taken(box, place):
+    box.resolver()
+    real = box.bin / "lanes-edit-real.sh"
+    (box.bin / "lanes-edit.sh").rename(real)
+    _write(box.bin / "lanes-edit.sh", '''#!/usr/bin/env bash
+if [ "$1" = binding ]; then
+  [ -s "$FAKE_CC_LOG" ] || exit 8
+  printf 'Eagle\\tpy-bench\\t@90\\t2026-10-04T00:00:00Z\\tother-session\\tlinux\\t%s\\tpresent\\n' "$FAKE_BINDING_PLACE"
+  exit 0
+fi
+exec "$FAKE_LANES_EDIT" "$@"
+''')
+    before = box.commits()
+    result = box.start(FAKE_LANES_EDIT=str(real), FAKE_BINDING_PLACE=place)
+    assert result.returncode == 2, result.stderr
+    assert "BOUND AGAIN or changed" in result.stderr
+    assert box.resolver_calls()
+    assert "rename-window" not in box.tmux_log.read_text()
+    assert box.commits() == before
+    assert box.lane_log() == ""
+    assert box.claude_runs() == ""
+
+
 def test_a_launchers_verified_version_is_trusted_recorded_and_removed(box):
     """claude-profile ran its own claude-current and hands on all three."""
     box.resolver()
