@@ -2,6 +2,13 @@
 
 Status: prospective; implementation and runtime qualification pending
 
+The October 4 [launcher amendment](claude-lane-launchers.md) requires local
+Omnigent for lane communication in both operating modes: direct `pclaude`
+profile launches remain outside lanes, `oclaude` is non-lane by default and
+`lclaude` supplies an admitted lane binding. This local runtime dependency does
+not require codeXfactory for ordinary local lanes or change factory admission
+for broker work. It supersedes October 3's optional local-Omnigent wording.
+
 ## Two explicit operating modes
 
 Brett's October 3 direction retains ordinary lane swap and adds broker mode.
@@ -148,8 +155,9 @@ account and budget/capacity policy. Installing the factory or presenting an
 Omnigent session token does not grant factory worker access. Donating CPU,
 authorizing a model account and consuming shared workers are separate grants.
 
-LS lifecycle-only swap needs the qualified native CLI/local custodian/ledger/
-EGS mechanisms and remains independent of Omnigent or shared factory/cloud
+LS lifecycle-only swap now requires the qualified local Omnigent lane adapter
+plus native CLI/local custodian/ledger/EGS mechanisms under the October 4
+launcher amendment. It remains independent of codeXfactory and shared cloud
 services. Provide a lightweight authenticated factory client without requiring
 a full local factory installation. This is client packaging around the same
 admission/dispatch authority; exact package and API design remain implementation

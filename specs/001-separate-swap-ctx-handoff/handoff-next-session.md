@@ -1,13 +1,33 @@
 # Swap rebuild — implementation handoff
 
+## Current checkpoint — October 4, 2026: selected local launch stack
+
+`pclaude <profile>` stays direct native Claude with no lane. `oclaude <profile>`
+uses local Omnigent and the same profile launch primitive, without a lane by
+default. `lclaude <profile>` admits the lane and calls `oclaude` with its explicit
+binding. Lane launch now requires local Omnigent, superseding October 3's
+optional dependency below. Local lanes need no codeXfactory/cloud endpoint;
+factory broker mode still requires codeXfactory admission.
+
+Current workBenches wrappers do not implement this route: `lclaude` calls
+`pclaude --with-lane`; `pclaude` retains explicit lane compatibility forms.
+Follow the [launcher contract](contracts/claude-lane-launchers.md), FR-047 and
+T063–T065 for the owning launcher/runtime work and qualification. Preserve the
+native custodian child/wait/ECHILD witness, per-launch profile/auth, hooks,
+native-history resume and EGS jobs. Seal every input route, including API/web
+and queued runner messages. Local Omnigent qualification is now a lane delivery
+gate; broker T059–T062 remains separate. No live deployment or canary is authorized.
+
 ## Current checkpoint — October 3, 2026: accepted factory access and packaging
 
 Shared CPC coding tasks from LS use codexFactory admission before existing
 Hermes/Omnigent dispatch. Installing/cloning the factory is not a project/pool
 grant. Brett agreed to a lightweight authenticated factory client that reuses
 the same service without requiring a full local factory installation. LS
-lifecycle-only swap remains independent of Omnigent and shared factory/cloud
-services. Private Omnigent delegation for owner local/VPS workers is deferred
+lifecycle-only swap was independent of Omnigent under the October 3 decision;
+the October 4 checkpoint above supersedes that local dependency. Shared
+factory/cloud services remain unnecessary for local lanes. Private Omnigent
+delegation for owner local/VPS workers is deferred
 outside the first delivery, with no CPC permission or automatic fallback.
 T059–T062 cover the factory client and admission integration; a future private
 adapter would require separate scope and capability qualification.

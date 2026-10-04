@@ -1,11 +1,24 @@
 # Completion and deployment plan
 
+## Local lane launch gate (October 4)
+
+Install and qualify local Omnigent for lane launches under the
+[launcher contract](contracts/claude-lane-launchers.md). The selected command
+stack is `lclaude → oclaude → Omnigent native-Claude adapter → pclaude → Claude`;
+plain `oclaude` runs outside a lane and `pclaude` stays direct/native outside a
+lane. The shared server/runner and container survive swaps. T063–T065 add local
+profile/custody/input/resume qualification before T055–T057 can claim end-to-end
+delivery on this stack. Existing direct-CLI evidence retains its scope and is
+not qualification of the new adapter. Local lanes require no factory/cloud
+endpoint; broker mode still requires codeXfactory admission. Worktree/role and
+runtime activation authorization rules remain in force.
+
 ## Prospective broker deployment: local CPC and cloud-connected engineer hosts
 
 The accepted first delivery offers LS lifecycle-only swap and a lightweight
-authenticated factory client. Ordinary swap has no Omnigent or shared
-factory/cloud dependency. Delegation uses the existing factory admission
-service without requiring a full local factory installation; installation
+authenticated factory client. The October 4 amendment requires local Omnigent
+for lanes, with no shared factory/cloud dependency. Delegation uses the existing
+factory admission service without requiring a full local factory installation; installation
 does not confer project/task/pool/model-account grants. Private owner-operated
 Omnigent delegation is deferred outside the first delivery. Package/API design
 and qualification belong to T059–T062 under the
@@ -29,9 +42,9 @@ selection and provisioning are pending and not authorized here. Follow the
 [deployment contract](contracts/lane-task-broker.md#deployment-direction-cloud-gateway-and-local-execution-control).
 This adds no dependency or scope change to T054–T057's graceful swap delivery.
 
-## Current delivery plan: `claude-cli-supervised-jobs-v1` (September 26, amended October 2)
+## Current delivery plan: `claude-cli-supervised-jobs-v1` (September 26, amended October 4)
 
-[Tasks T052–T057](tasks.md) own delivery; T058 is a separate non-gating index
+[Tasks T052–T057 and T063–T065](tasks.md) own delivery; T058 is a separate non-gating index
 follow-up. The
 [current contract](contracts/claude-cli-supervised-jobs.md) defines acceptance.
 Astra leads architecture, Sol High leads orchestration, and Luna Max writes the

@@ -2,7 +2,7 @@
 
 Status: brainstorm
 Kind: architecture
-Summary: Select independent LS swap and a lightweight authenticated factory client for the first delivery, deferring private Omnigent delegation.
+Summary: Use local Omnigent for lane sessions and a lightweight authenticated factory client for broker work, deferring private worker delegation.
 Topics: lane-task-broker, factory-access, service-packaging, delegation-backend
 Repository context: openRepoTools LS interfaces; codexFactory admission and Omnigent worker execution remain owned by their components
 Captured: 2026-10-03
@@ -18,7 +18,12 @@ Brett asks whether LS delegation enters codexFactory or Omnigent directly,
 and whether engineers without codexFactory need a lighter install for their
 own local or VPS workers. Shared CPC access must retain factory admission.
 Brett agreed on October 3 to independent LS swap and authenticated factory
-delegation with a lightweight client. Private delegation is deferred outside
+delegation with a lightweight client. On October 4 he selected local Omnigent
+for lane communication: `lclaude` enters `oclaude`, while `pclaude` stays direct
+and `oclaude` has no lane by default. The
+[local launch contract](../../specs/001-separate-swap-ctx-handoff/contracts/claude-lane-launchers.md)
+supersedes the earlier optional local runtime dependency. Private worker
+delegation is deferred outside
 the first delivery. Exact package layout and the admission API remain design
 work. This packet captures rationale; the
 [decision record](../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md#october-3-decision-first-delivery-access-and-packaging)
@@ -29,15 +34,16 @@ govern the selected scope.
 
 | Option | Delivery scope | Dependency and route | Worker access |
 | --- | --- | --- | --- |
-| LS lifecycle only | Selected | Native CLI, local custodian/ledger and EGS as required; no Omnigent or shared factory/cloud dependency | Lane swap and supervisor jobs; no independent broker workers. |
+| LS local lane mode | Selected, amended October 4 | Local Omnigent native-Claude adapter, existing profile launch primitive, custodian/ledger and EGS; no shared factory/cloud dependency | Lane swap and supervisor jobs; local session communication does not grant independent factory broker workers. |
 | LS factory client | Selected | LS → codexFactory admission adapter → existing Hermes/Omnigent dispatch → omniWorker | Only the authenticated principal's admitted projects, operations and worker pools, including CPC if granted. Full local factory installation is not a client prerequisite. |
 | LS private broker | Deferred | LS → owner-operated Omnigent → explicitly enrolled owner workers, with local custody/EGS | Own workstation or VPS hosts/accounts; no CPC/factory pool access without a separate factory grant. Requires a later separate qualified capability. |
 
 The selected factory client uses the same factory service and admission policy.
 Private Omnigent delegation remains a possible later adapter,
 not a fallback when factory admission fails. Existing ordinary swap can run
-without either delegation backend; current managed lane modules do not import
-Omnigent. This source observation does not close the pending swap release gate.
+without either worker delegation backend. Local Omnigent is now required for the
+selected lane launch path. Earlier inspected managed modules did not import
+Omnigent; that historical observation does not implement or qualify the new path.
 
 ## Interfaces and boundaries
 
@@ -83,4 +89,5 @@ remote compute, not automatically a shared factory worker.
 
 - [Worker placement](lane-task-broker-placement.md) separates Omnigent workload from LS task attachments.
 - [Omnigent adapter](lane-task-broker-omnigent-adapter.md) records existing mechanisms and missing worker swap.
+- [Local launchers](lane-task-broker-local-launchers.md) separates direct profiles, Omnigent sessions and admitted lanes.
 - [Two-mode synthesis](lane-task-broker-synthesis-two-modes.md) connects product packaging to lifecycle and execution authority.

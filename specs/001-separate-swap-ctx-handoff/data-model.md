@@ -1,5 +1,23 @@
 # Data Model: Native Lineage Lane Operations
 
+## Local Omnigent lane runtime binding (October 4)
+
+Correlate the local Omnigent server authority, conversation ID, runner/terminal
+incarnation and qualified adapter/build with the native parent UUID,
+profile/account reference, custodian-owned process identity, exact lane and
+owner generation. Omnigent and native session IDs remain distinct. Absent/old
+runtime bindings retain their validators; do not silently select the new path.
+Local JSON retains swap claims, source/input/restart fences and release authority.
+Plain `pclaude`/`oclaude` sessions have no lane claim; `lclaude` supplies an
+explicit admitted binding under the [launcher contract](contracts/claude-lane-launchers.md).
+
+Persist control/message request IDs, intended generation, acceptance/delivery
+observations and queued/deferred status; accepted transport is not completion.
+Record usage source/time, account/profile and native session scope, limit bucket/
+reset identity, token/context/cost observations and provenance. Missing/stale
+limits remain unknown. Preserve credentials outside these records and reconcile
+parent/child accounting without treating cost as subscription allowance.
+
 ## Prospective broker mode records
 
 Explicit broker enrollment and versioned records distinguish separately

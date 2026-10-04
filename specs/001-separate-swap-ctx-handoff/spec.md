@@ -702,8 +702,9 @@ checkpoint, worker, claim, and inference effects independently.
   Runtime APIs MUST NOT bypass factory admission. Unsupported session/account
   capabilities and unadmitted operations MUST require their owning extension;
   a one-shot patch result MUST NOT imply resumable worker capability.
-  Ordinary swap MUST remain independent of Omnigent and shared factory/cloud
-  services. The first broker delivery MUST provide authenticated factory
+  Local lane swap MUST use the qualified local Omnigent adapter under FR-047
+  and remain independent of codeXfactory/shared cloud services. The first broker
+  delivery MUST provide authenticated factory
   delegation through the same admission service for a lightweight client;
   a full local factory installation MUST NOT be a client prerequisite.
   Admission MUST bind caller identity, tenant/project, task/operation scope,
@@ -724,6 +725,31 @@ checkpoint, worker, claim, and inference effects independently.
   continue only within recorded authority. Reconnect MUST reconcile identities,
   generations and delivery watermarks without duplicate dispatch. Azure resource
   choice and distributed enrollment MUST NOT gate ordinary swap delivery.
+
+- **FR-047**: `pclaude` MUST directly launch native Claude in the selected
+  profile without a lane or Omnigent. `oclaude` MUST use local Omnigent's qualified
+  native-Claude adapter and the same profile launch primitive, without a lane
+  by default; it MAY accept an explicit admitted lane binding. `lclaude` MUST
+  admit the lane under the existing protocol/LS and call `oclaude` with that
+  binding. Lane launch MUST require local Omnigent; plain profile/Omnigent
+  launches MUST NOT infer a lane from cwd, tmux or inherited variables. Legacy
+  direct-profile lane forms MUST refuse with migration guidance. Profile/binary
+  selection MUST remain in workBenches and settings/auth MUST be bound per
+  actual child launch. The Omnigent adapter MUST launch the exact native CLI
+  through the admitted per-session custodian, preserving wait/ECHILD exit
+  evidence, native history/resume, hooks/tool policy and independent EGS jobs.
+  Shared server/runner/container processes MUST remain outside the per-CLI
+  custody lifetime. Input fences MUST cover keyboard, API/web and queued runner
+  prompts; stale generation input MUST refuse, and new input before sealing
+  MUST invalidate the idle observation. Unqualified automatic restart/resume
+  MUST NOT bypass LS claims/release. Missing/unqualified local Omnigent MUST
+  refuse a lane launch before native spawn. Omnigent conversation/runtime/native
+  parent/lane identities MUST remain distinct and durably correlated. LS MUST
+  consume fresh scoped usage observations outside model turns; missing/stale
+  quota values MUST remain unknown and cost estimates MUST NOT imply allowance.
+  Local lanes MUST NOT require factory/cloud admission; broker delegation MUST
+  retain codeXfactory admission. T063–T065 qualification MUST precede activation
+  of this new lane path; historical records/evidence MUST retain their scope.
 
 ### Key Entities
 

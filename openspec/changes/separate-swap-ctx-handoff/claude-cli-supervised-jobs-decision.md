@@ -21,10 +21,37 @@ and T053 private-ledger evidence remain recorded; T054–T057 remain open.
 Existing strict and original SDK/PGID v1 records retain their validators and
 meaning. Missing or unknown capability markers do not select this capability.
 
+## October 4 decision: local Omnigent lane launch stack
+
+Brett selects `pclaude` as direct profile-only native Claude, `oclaude` as the
+same profile launch through local Omnigent without a lane by default, and
+`lclaude` as lane admission followed by `oclaude` with an explicit validated
+binding. Lane launches require local Omnigent; factory broker mode retains
+codeXfactory admission. This supersedes the October 3 optional local-Omnigent
+dependency while preserving independence from factory/cloud services for local
+lanes. The shared container and Omnigent server/runner stay running during swap.
+
+workBenches owns launcher/profile implementation; LS owns lane admission and
+the JSON-ledger fence/release boundary. Integrate actual native CLI launch under
+the per-session custodian; Omnigent terminal/session closure is not an exit
+witness. Fence keyboard, API/web and queued runner prompts at the source seal.
+Preserve native history, profile/auth isolation and EGS jobs. Pin and measure
+the native adapter before depending on these controls. Native child mirrors do
+not establish direct child interruption or resume. Existing `lclaude` still
+calls `pclaude --with-lane`; the new route is pending implementation.
+
+The [launcher contract](../../../specs/001-separate-swap-ctx-handoff/contracts/claude-lane-launchers.md),
+FR-047 and T063–T065 govern this amendment. Its local qualification becomes
+part of lane launch/swap delivery; T059–T062 remains a separate broker tranche.
+No factory worker admission, live canary, account movement or deployment is
+authorized by the launcher decision.
+
 ## October 3 decision: first delivery access and packaging
 
 Brett agreed to LS lifecycle-only swap plus authenticated factory delegation.
-Ordinary swap remains independent of Omnigent and shared factory/cloud services.
+Ordinary swap was independent of Omnigent under this October 3 decision. The
+October 4 amendment above requires local Omnigent for lanes, with shared
+factory/cloud services still outside local lane startup requirements.
 Broker requests enter LS → codexFactory admission → existing Hermes/Omnigent
 dispatch → authorized omniWorker. A lightweight authenticated client uses that
 same service; a full local factory installation is not a delegation prerequisite.

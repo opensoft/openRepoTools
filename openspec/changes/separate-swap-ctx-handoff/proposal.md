@@ -2,9 +2,23 @@
 
 ## Status and governing intent
 
+**2026-10-04 launcher decision:** `pclaude` launches native Claude directly in
+the selected profile without a lane. `oclaude` uses local Omnigent and that same
+profile launch primitive, without a lane by default. `lclaude` admits the lane
+then enters `oclaude` with its explicit binding. Lane launches now require
+local Omnigent; factory broker mode still requires codeXfactory admission.
+This supersedes the October 3 no-Omnigent lane dependency below. Local lanes
+remain independent of codeXfactory and shared cloud services. workBenches owns
+launcher implementation; LS retains admission, native process custody, input
+fences and JSON swap authority. Qualification must cover API/queued input as
+well as keyboard fencing. See the [launcher contract](../../../specs/001-separate-swap-ctx-handoff/contracts/claude-lane-launchers.md)
+and T063–T065. Existing wrappers and runtime evidence do not establish the new
+route; no live activation is authorized here.
+
 **2026-10-03 accepted access/packaging scope:** Brett agreed to LS lifecycle-only
 swap plus authenticated factory delegation as the first delivery. Ordinary swap
-remains independent of Omnigent. Shared CPC engineering requests enter
+was independent of Omnigent under that decision; the October 4 launcher amendment
+above now requires local Omnigent for lanes. Shared CPC engineering requests enter
 codexFactory admission before existing Hermes/Omnigent dispatch. Provide a
 lightweight client of that same service, allowing authorized users to delegate
 without a full local factory installation. Installation is distinct from an

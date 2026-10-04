@@ -53,6 +53,14 @@ reuse, not measured LS integration.
 
 ## Interfaces and boundaries
 
+The October 4 [local launcher decision](lane-task-broker-local-launchers.md)
+requires the local native-Claude communication adapter for admitted lanes.
+`oclaude` uses the existing profile launch primitive; `lclaude` supplies lane
+admission while direct `pclaude` stays outside Omnigent and lanes. This is local
+parent session integration, distinct from the factory worker adapter and the
+deferred private worker broker. T063–T065 qualify native custody/profile/history
+and API/web/queued input fencing; session status alone proves none of these.
+
 LS authenticates lane requests and retains stable factory task references.
 Omnigent manages admitted workload, placement and internal worker recovery;
 the adapter returns actual runtime/result/custody references. Agents receive

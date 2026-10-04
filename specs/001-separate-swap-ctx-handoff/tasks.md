@@ -646,7 +646,10 @@ authorized. T058 is a separate, non-gating derived-index follow-up.
   broker or privileged cgroup prerequisite. Preserve the dormant Docker
   candidate; forced per-session recovery remains a separate future gate.
 - [ ] T055 Integrate the capability with the independent supervisor job
-  runner/MCP, transcript history and pinned per-session CLI launcher. Route
+  runner/MCP, transcript history and pinned per-session CLI launcher. The
+  October 4 lane launcher requires the qualified local Omnigent adapter under
+  FR-047/T063–T065; final integration must preserve the exact native child
+  custody and fence API/web/runner queues as well as keyboard input. Route
   every long-running/external command through lane → MCP bridge → lanes service
   → execution-group supervisor; remove the direct lane-to-job-supervisor
   socket and prove scoped credentials cannot bypass the service. Native
@@ -851,8 +854,9 @@ account movement, remote provisioning or activation. Preserve named team roles.
   operation/pool/account grants; installation and host contribution are not
   consumption grants. Define and implement lightweight client packaging around
   that same admission interface, without requiring a full local factory install.
-  Keep ordinary LS swap independent of Omnigent and shared factory/cloud startup
-  dependencies. Private owner-operated Omnigent delegation is deferred outside
+  Keep local lanes independent of codeXfactory/shared cloud startup dependencies;
+  required local Omnigent launch is covered by FR-047/T063–T065. Private
+  owner-operated Omnigent worker delegation is deferred outside
   this first delivery and T059–T062; add no private backend or fallback.
   Define correlations to existing host/worker enrollment, owner/tenant and
   connection incarnation, with task/workspace/resource scope and model-account
@@ -930,8 +934,8 @@ account movement, remote provisioning or activation. Preserve named team roles.
   pool/account, direct-runtime bypass and unknown factory work without backend
   fallback or realm/identity reinterpretation. Exercise authorized lightweight
   client admission without a full factory installation and install-without-grant
-  refusal with zero worker dispatch. Verify ordinary swap startup with no
-  Omnigent dependency and unavailable shared factory/cloud services, first
+  refusal with zero worker dispatch. Verify local lane startup with the qualified
+  local Omnigent adapter and unavailable shared factory/cloud services, first
   capability refusal of a private backend, and stable backend/task identity
   after parent recovery. These are offline interface/dependency cases; live
   authentication/admission still needs pinned endpoint qualification.
@@ -940,3 +944,48 @@ account movement, remote provisioning or activation. Preserve named team roles.
   cancellation independent of explicit job cancellation. Verify existing swap
   mode regressions separately. Live model/auth/remote qualification requires
   its own authorization; no installed success is inferred from offline fakes.
+
+## Local Claude launch stack — October 4 lane delivery amendment
+
+The [launcher contract](contracts/claude-lane-launchers.md) and FR-047 supersede
+the October 3 optional local-Omnigent dependency. These tasks are local lane
+delivery gates before activation, alongside T055–T057. Broker T059–T062 remains
+separate. These artifacts define the implementation handoff; they do not
+activate the runtime. Preserve existing native-runtime evidence and named roles.
+
+- [ ] T063 Pin and measure the local Omnigent native-Claude adapter before
+  depending on it. Inspect the runner/terminal launch and profile configuration
+  interfaces, then define the custodian-owned profile execution path and
+  conversation/native-parent/runtime/lane-generation joins. Measure hook and
+  status-line composition, all-channel input/queue fencing, idle/exit witness,
+  per-runtime auth isolation, native transcript/resume fidelity and automatic
+  restart behavior. Native child mirrors alone do not qualify interruption.
+  Use offline probes for deterministic interfaces; live native/model probes
+  require separate authorization. Record supported/refused behavior and owning
+  component changes before selecting a runtime path for T064/T055.
+- [ ] T064 Implement the selected `pclaude`/`oclaude`/`lclaude` stack in the
+  owning workBenches launcher/install feature and the measured LS/Omnigent
+  adapter, linked to this feature's contract. Reuse profile/binary/config/hook
+  resolution and a profile-only native execution primitive without nested tmux
+  recursion. `pclaude` stays direct without a lane; plain `oclaude` stays outside
+  a lane; `lclaude` supplies explicit existing-protocol/LS admission. Refuse old
+  direct-profile lane forms with migration guidance and refuse missing local
+  Omnigent before native spawn. Bind settings/auth per actual custodian-owned
+  child, preserving source/restart/release authority and shared daemon/container
+  lifetime. Compose keyboard/API/web/runner queue fences with T055. Persist
+  session/runtime/generation correlations and idempotent message/result delivery;
+  fence unqualified automatic restart/cold-history rebuild. Reuse native usage
+  snapshots plus Omnigent session/child observations with account scope,
+  observation freshness/reset windows and no parent/child double counting.
+- [ ] T065 Verify the local launcher matrix offline through each owner's
+  canonical test wrapper and record separate pinned runtime qualification.
+  Cover direct profile launch, non-lane Omnigent launch, explicitly admitted
+  lane launch, inherited lane variables/cwd/tmux not attaching plain commands,
+  old compatibility form refusal and missing/unqualified Omnigent refusal before
+  native spawn. Cover two profiles sharing one daemon without credential/config
+  bleed, duplicate admission, actual native PID versus wrappers, wait/ECHILD,
+  server/runner/container survival, queued input after sealing, stale generation
+  refusal, new input invalidating idle, resume without automatic claim bypass,
+  native children receiving fresh IDs and preserved EGS jobs. Cover missing/stale
+  usage buckets, shared-account consumption and deduplicated child estimates.
+  Cross-link T055–T057 evidence; offline fakes do not qualify real runtime behavior.

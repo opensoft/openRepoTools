@@ -2,9 +2,17 @@
 
 ## Two operating modes: swap and broker
 
-The accepted first delivery separates ordinary LS lifecycle control from
-authenticated factory delegation. Ordinary swap has no Omnigent or shared
-factory/cloud startup dependency. Shared CPC coding work enters codexFactory
+The October 4 amendment selects local Omnigent for lane session communication.
+`pclaude` stays a direct profile-only launch, `oclaude` runs that profile through
+Omnigent without a lane by default, and `lclaude` supplies explicit admitted lane
+context to `oclaude`. workBenches owns wrappers/profile resolution; the Omnigent
+adapter must preserve LS native CLI custody, hooks, tool policy and transcript.
+The source fence must cover API/web/queued prompts along with keyboard input.
+This integration needs local qualification under T063–T065 before lane delivery;
+see the [launcher contract](../../../specs/001-separate-swap-ctx-handoff/contracts/claude-lane-launchers.md).
+
+Local lanes require qualified local Omnigent but have no shared factory/cloud
+startup dependency. Shared CPC coding work enters codexFactory
 admission and then existing Hermes/Omnigent dispatch. A lightweight authenticated
 client uses the same service without requiring a full local factory installation.
 Private owner workstation/VPS Omnigent delegation is deferred to a separate

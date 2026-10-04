@@ -15,7 +15,8 @@ Captured: 2026-10-03
 
 Atomic members: [Worker placement](lane-task-broker-placement.md),
 [Omnigent adapter](lane-task-broker-omnigent-adapter.md) and
-[Factory access and packaging](lane-task-broker-access-and-packaging.md).
+[Factory access and packaging](lane-task-broker-access-and-packaging.md) and
+[Local launchers](lane-task-broker-local-launchers.md).
 
 ### Semantic orchestration meets deterministic placement
 
@@ -58,8 +59,12 @@ Local CPC qualification can precede this distributed shape.
 
 ### Packaging preserves factory authority
 
-The accepted first delivery keeps LS lifecycle control independent of Omnigent
-and shared factory/cloud services. Factory broker clients use
+The October 4 amendment selects local Omnigent for lane communication and
+retains independence from shared factory/cloud services. `pclaude` is direct
+profile-only, `oclaude` is Omnigent without a lane by default, and `lclaude`
+supplies explicit lane admission to `oclaude`. The actual native CLI still needs
+custodian-owned launch/exit; API/web/runner input joins keyboard fencing at seal.
+Factory broker clients use
 codexFactory admission before existing Omnigent dispatch, with shared pool
 grants independent of what is installed on the client. A selected lightweight
 client consumes that same service without a full local factory installation.

@@ -1,6 +1,21 @@
 # Claude CLI with persistent supervised jobs
 
-Authority: [September 26 shared-container architecture decision and September 30 amendments](../../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md).
+Authority: [Shared-container architecture decision and subsequent amendments](../../../openspec/changes/separate-swap-ctx-handoff/claude-cli-supervised-jobs-decision.md).
+
+## October 4 local launcher amendment
+
+The [launcher contract](claude-lane-launchers.md) selects direct non-lane
+`pclaude`, local Omnigent `oclaude` without a lane by default, and `lclaude`
+entering `oclaude` with an explicit admitted lane binding. Lane launch now
+requires qualified local Omnigent. Its native adapter must launch the actual
+CLI through the per-session custodian and preserve this contract's existing
+claims, wait/ECHILD witness, native history and release gates. The shared server,
+runner and container stay outside the per-CLI lifetime. Source input sealing
+covers API/web/queued runner prompts alongside keyboard input; transport/session
+status does not establish exit or child completion. T063–T065 qualification
+is required before claiming T055–T057 delivery on the new path. Local lanes
+remain independent of factory/cloud services, and historical evidence/records
+retain their original scope.
 
 ## Scope and compatibility
 

@@ -76,13 +76,17 @@ acceptance comes from the governed contract and qualified runtime evidence.
 ## Key decisions and open questions
 
 The [access and packaging rationale](lane-task-broker-access-and-packaging.md)
-captures Brett's accepted first delivery: independent LS lifecycle-only swap
-and authenticated factory delegation through a lightweight client of the same
-service. Full local factory installation is not a client prerequisite and does
+captures Brett's first delivery, amended October 4: local lane swap through
+qualified local Omnigent and authenticated factory delegation through a
+lightweight client of the same service. Full local factory installation is
+not a client prerequisite and does
 not grant worker access. Private owner-operated Omnigent delegation is deferred
 to a future separate capability. Exact package/API selection and identity-to-pool
-integration remain implementation choices; ordinary swap has no Omnigent or
-shared factory/cloud dependency.
+integration remain implementation choices. Local lanes require local Omnigent
+but no shared factory/cloud dependency. The [local launcher decision](lane-task-broker-local-launchers.md)
+keeps `pclaude` direct, `oclaude` non-lane by default, and `lclaude` lane-aware
+through `oclaude`. Native custody, history and all-channel input fences require
+adapter qualification before delivery.
 
 LS owns parent swap and stable task attachments; Omnigent owns worker workload,
 placement and qualified recovery; agents own task reasoning. Session lifecycle
@@ -99,3 +103,4 @@ implementation work; the distributed shape does not gate ordinary swap.
 - Atomic: [Worker Placement](lane-task-broker-placement.md)
 - Atomic: [Omnigent Adapter](lane-task-broker-omnigent-adapter.md)
 - Atomic: [Factory Access and Packaging](lane-task-broker-access-and-packaging.md)
+- Atomic: [Local Claude Launchers](lane-task-broker-local-launchers.md)

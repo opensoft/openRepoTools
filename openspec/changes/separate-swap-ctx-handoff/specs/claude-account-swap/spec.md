@@ -10,6 +10,61 @@ not a semantic handoff.
 
 ## ADDED Requirements
 
+### Requirement: Profile, local Omnigent and lane entry points are explicit
+
+`pclaude` MUST directly launch the selected native Claude profile outside a lane.
+`oclaude` MUST use local Omnigent and the same profile launch primitive, outside
+a lane by default, and MAY accept an explicit admitted lane binding. `lclaude`
+MUST admit the lane through existing protocol/LS and enter `oclaude` with that
+binding. Lane launch MUST require local Omnigent. Plain `pclaude`/`oclaude` MUST
+NOT infer lane attachment from cwd, tmux or inherited variables. Direct-profile
+lane compatibility forms MUST refuse with migration guidance.
+
+The local native adapter MUST preserve per-runtime profile/auth, tool policy,
+hooks and sealed native transcript/resume. The actual CLI MUST launch through
+the per-session custodian with the existing wait/ECHILD witness. Shared
+Omnigent server/runner/container processes MUST survive swaps. Source sealing
+MUST fence keyboard, API/web and queued runner prompts, and fresh input before
+sealing MUST invalidate the idle observation. Session/terminal status MUST NOT
+substitute for native exit, child addressability or completion evidence.
+Unqualified automatic restart/resume MUST NOT bypass LS claims/release.
+Local lanes MUST require no codeXfactory/cloud service; broker work MUST retain
+codeXfactory admission. Pin/measure the new adapter before lane activation.
+
+#### Scenario: Direct profile launch inside a lane worktree
+
+- **GIVEN** cwd, tmux or inherited variables identify an existing lane
+- **WHEN** the operator runs plain `pclaude <profile>`
+- **THEN** the selected native Claude starts outside Omnigent and outside a lane
+- **AND** no lane is looked up, claimed or attached implicitly.
+
+#### Scenario: Omnigent session without a lane
+
+- **WHEN** the operator runs plain `oclaude <profile>`
+- **THEN** the qualified local Omnigent adapter uses the same profile launch
+  primitive without acquiring a lane claim
+- **AND** session observations do not imply factory worker permission.
+
+#### Scenario: Lane launch through local Omnigent
+
+- **GIVEN** LS admits an explicit lane/profile/runtime binding
+- **WHEN** the operator uses `lclaude <profile>`
+- **THEN** it launches through `oclaude` and the qualified local Omnigent adapter
+- **AND** the actual native CLI has custodian-owned identity and exit evidence.
+
+#### Scenario: Local Omnigent cannot support the lane launch
+
+- **GIVEN** local Omnigent or the required native adapter is unavailable/unqualified
+- **WHEN** a lane launch is requested
+- **THEN** it refuses before native spawn without falling back to a direct lane.
+
+#### Scenario: A message arrives after source sealing
+
+- **GIVEN** A has a sealed idle boundary and input fence for its generation
+- **WHEN** keyboard, API/web or queued runner input targets A
+- **THEN** no new prompt reaches A and no stale generation controls B
+- **AND** permitted pending work is delivered only after B release/readiness.
+
 ### Requirement: Swap and broker are explicit operating modes
 
 LS MUST retain the qualified existing swap mode and introduce broker mode only
@@ -44,8 +99,9 @@ API MUST NOT bypass factory admission or broaden a grandfathered route.
 One-shot patch workers MUST NOT be represented as resumable sessions without
 a qualified extension in the owning components.
 
-Ordinary swap MUST remain independent of Omnigent and shared factory/cloud
-services. The first broker delivery MUST expose authenticated factory delegation
+Local lane swap MUST require the qualified local Omnigent adapter and remain
+independent of codeXfactory/shared cloud services. The first broker delivery
+MUST expose authenticated factory delegation
 to a lightweight client through the same admission service, without requiring
 a full local factory installation. Admission MUST bind caller identity,
 tenant/project, task/operation scope, permitted pool/model account and budget/

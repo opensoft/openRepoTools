@@ -1,5 +1,31 @@
 # Implementation Verification Record
 
+## October 4: local Claude launcher and Omnigent lane amendment
+
+Brett selects direct profile-only `pclaude`, local Omnigent `oclaude` without a
+lane by default, and lane-aware `lclaude` entering `oclaude` with an admitted
+binding. Lane launch now requires local Omnigent, superseding the October 3
+optional local dependency. Local lanes need no factory/cloud service; factory
+broker mode still requires codeXfactory admission. Governing artifacts and the
+rationale packet now capture this amendment; the launcher contract, FR-047 and
+T063–T065 define local adapter/install/custody qualification as a lane delivery
+gate. T055 names the extended input fence covering API/web/queued runner input.
+
+Read-only workBenches source inspection found `lclaude` executing
+`pclaude --with-lane`, with explicit compatibility lane flags in `pclaude`.
+There is no `oclaude` launcher in that inspected tree. Earlier installed
+Omnigent source inspection found native-Claude launch and status-line/child
+transcript usage forwarding, with no subscription-limit forwarding in its
+status bridge. workBenches' status publisher already reads native account-limit
+fields. These observations inform planned reuse; they are not integration or
+runtime qualification. No launcher/runtime code or workBenches checkout changed.
+
+Strict OpenSpec validation passed in `py-bench`. Packet validation passed for
+six documents: four atomic, one synthesis and one overview. `git diff --check`
+passed. This is a documentation amendment; no runtime tests, launch, account
+transfer or deployment occurred. These checks cover the documentation snapshot
+prepared for the requested commit.
+
 ## October 3: accepted packaging and factory delegation scope
 
 Brett agreed to the recommendations: independent LS lifecycle-only swap plus

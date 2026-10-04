@@ -4,11 +4,25 @@
 
 Deployment sequencing and release gates: [Fastest path to deployment](deployment-plan.md).
 
+## Local launch amendment (2026-10-04)
+
+`pclaude` is direct profile-only Claude; `oclaude` uses the local Omnigent
+server/runner and the same profile launch primitive, without a lane by default;
+`lclaude` supplies an explicit admitted lane binding to `oclaude`. Lane startup
+requires local Omnigent, superseding the October 3 optional dependency. Local
+lanes remain independent of codeXfactory/shared cloud services; factory broker
+mode retains codeXfactory admission. workBenches owns wrappers and installation.
+T063 pins/measures the runtime adapter, T064 integrates the profile launch,
+custody, communication/input fence and usage joins, and T065 verifies the matrix.
+Local qualification is required before completing activation evidence under
+T055–T057. See [contracts/claude-lane-launchers.md](contracts/claude-lane-launchers.md).
+
 ## Prospective broker tranche (2026-10-03)
 
-Accepted first delivery: ordinary LS swap independent of Omnigent/shared
-factory services, plus authenticated factory delegation through a lightweight
-client of the existing admission service. A full local factory installation
+Accepted first delivery, amended October 4: local lane swap with qualified
+local Omnigent and no shared factory dependency, plus authenticated factory
+delegation through a lightweight client of the existing admission service.
+A full local factory installation
 is not required; caller project/task/pool/model-account grants are required.
 Private owner-operated Omnigent delegation is deferred outside T059–T062.
 T059 defines the client/admission interface and package boundary; T062 verifies

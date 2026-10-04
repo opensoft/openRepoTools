@@ -34,8 +34,16 @@ not proposal approval or evidence that Claude's compatibility gate has passed.
 
 ## 2. Speckit handoff and feasibility decision
 
-The accepted October 3 packaging scope retains independent LS lifecycle-only
-swap and selects authenticated factory delegation through a lightweight client
+The October 4 launcher amendment requires local Omnigent for lane sessions:
+`pclaude` is direct profile-only, `oclaude` is Omnigent without a lane by default,
+and `lclaude` supplies admitted lane context to `oclaude`. FR-047 and T063–T065
+own local launcher/runtime qualification as a lane delivery gate. Local lanes
+remain independent of codeXfactory/cloud services; factory broker admission
+is unchanged. Follow the
+[launcher contract](../../../specs/001-separate-swap-ctx-handoff/contracts/claude-lane-launchers.md).
+
+The accepted October 3 packaging scope, amended above for local runtime,
+retains LS lifecycle-only swap and selects authenticated factory delegation through a lightweight client
 of the same admission service. Private owner-operated Omnigent delegation is
 deferred outside the first delivery. Follow the
 [accepted scope](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md#accepted-access-and-packaging-scope);
