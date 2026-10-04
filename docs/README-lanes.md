@@ -2679,6 +2679,16 @@ prompt.
 
 #### Legacy compatibility and preparation recovery
 
+Supervised manual `/ctx` is a legacy compatibility path for Claude. Readiness
+uses trusted Claude-native interactive session records for agent provenance.
+Before replacing the old pane, the backend verifies the complete pending launch,
+an existing absolute checkout and the canonical handoff checksum. Equivalent
+handoff symlink paths retain their filesystem identity. Intent records reject
+unknown keys, malformed lines and control characters in launch facts; those facts
+are never flattened into different paths. Lane rename refuses unfinished or
+failed restart ownership under the shared writer mutex. Observer cleanup uses
+private cancellation and owned-child waiting, never a saved numeric PID signal.
+
 Supervised manual `/ctx` is a legacy compatibility path. Run
 `lanes-edit.sh legacy-restart-check <lane>` before any preservation writes;
 managed lanes and unreadable managed ownership refuse. The check uses feature

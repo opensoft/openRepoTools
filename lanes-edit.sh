@@ -10566,19 +10566,17 @@ lane_sidecar_field() {   # <file> <key>
     BEGIN { k = k ": " }
     substr($0, 1, length(k)) == k {
       v = substr($0, length(k) + 1)
-      sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v)
       print v; exit }' "$1"
 }
 
-# A VALUE IS ONE LINE OF `key: value`, so a newline or a leading space in one
-# would make the file unreadable by the reader above. Both are flattened here
-# rather than refused, because a value this can spoil is a branch name or a
-# path and losing the WHOLE record over one is the worse trade.
-lane_sidecar_value() {   # <value>
-  lsv="${1-}"
-  lsv="${lsv//$'\r'/ }"
-  lsv="${lsv//$'\n'/ }"
-  printf '%s' "$lsv"
+# Diagnostic prose is bounded and flattened; launch identity is never normalized.
+lane_sidecar_value() {   # <diagnostic value>
+  printf '%s' "${1-}" | LC_ALL=C tr '[:cntrl:]' ' '
+}
+
+lane_restart_value_ok() {   # exact values must survive flat and tabular readers
+  case "${1-}" in *[$'\001'-$'\037'$'\177']*) return 1 ;; esac
+  return 0
 }
 
 # THE ATOMIC REPLACE. Written beside the target and renamed over it, so a
@@ -10587,8 +10585,12 @@ lane_sidecar_put() {   # <file> ; the whole body on stdin
   lsp_f="${1-}"; lsp_d="${lsp_f%/*}"
   [ -n "$lsp_f" ] || return 1
   mkdir -p -- "$lsp_d" 2>/dev/null || return 1
-  lsp_t="$lsp_f.tmp.$$"
+  [ ! -d "$lsp_f" ] || return 1
+  lsp_t="$(umask 077; mktemp "$lsp_d/.restart-intent.XXXXXX" 2>/dev/null)" || return 1
+  [ -n "$lsp_t" ] || return 1
   cat > "$lsp_t" 2>/dev/null || { rm -f -- "$lsp_t" 2>/dev/null; return 1; }
+  lsp_bad="$(lane_restart_missing "$lsp_t" "$2")" || { rm -f -- "$lsp_t"; return 1; }
+  [ -z "$lsp_bad" ] || { rm -f -- "$lsp_t"; return 1; }
   mv -- "$lsp_t" "$lsp_f" 2>/dev/null || { rm -f -- "$lsp_t" 2>/dev/null; return 1; }
   return 0
 }
@@ -10642,8 +10644,19 @@ lane_handoff_digest() {   # <file>
 # One read validates presence and duplicate keys without per-field subprocesses.
 lane_restart_missing() {   # <file> <canonical lane>
   awk -v lane="$2" '
-    BEGIN {n=split("schema lane state generation operation mode agent profile dir pane window handoff digest old_transcript new_transcript attempt workstation created updated reason", keys, " ")}
-    /^[A-Za-z_]+:/ {k=$0; sub(/:.*/, "", k); v=$0; sub(/^[^:]*:[[:space:]]*/, "", v); seen[k]++; values[k]=v; if (v!="") good[k]=1}
+    BEGIN {
+      n=split("schema lane state generation operation mode agent profile dir pane window handoff digest old_transcript new_transcript attempt workstation created updated reason", keys, " ")
+      for (i=1;i<=n;i++) allowed[keys[i]]=1
+      allowed["prepared_digest"]=1
+    }
+    /^$/ { next }
+    {
+      if ($0 ~ /[[:cntrl:]]/ || $0 !~ /^[A-Za-z_]+: /) {bad["record"]=1; next}
+      k=$0; sub(/:.*/, "", k)
+      if (!(k in allowed)) {bad["unknown-key"]=1; next}
+      v=substr($0,length(k)+3)
+      seen[k]++; values[k]=v; if (v!="") good[k]=1
+    }
     END {
       for (i=1;i<=n;i++) if (seen[keys[i]]!=1 || !good[keys[i]]) bad[keys[i]]=1
       if (values["lane"]!=lane) bad["lane"]=1
@@ -10758,6 +10771,11 @@ lane_restart_put() {   # <root> <lane> <state> <gen> <op> <mode> <agent> <profil
   lrw_mode="$6"; lrw_agent="$7"; lrw_prof="$8"; lrw_dir="$9"; shift 9
   lrw_pane="$1"; lrw_win="$2"; lrw_hf="$3"; lrw_dig="$4"; lrw_old="$5"
   lrw_new="$6"; lrw_att="$7"; lrw_reason="$8"; lrw_created="$9"; lrw_prepared="${10-}"
+  for lrw_value in "$lrw_lane" "$lrw_state" "$lrw_gen" "$lrw_op" "$lrw_mode" \
+      "$lrw_agent" "$lrw_prof" "$lrw_dir" "$lrw_pane" "$lrw_win" "$lrw_hf" \
+      "$lrw_dig" "$lrw_old" "$lrw_new" "$lrw_att" "$lrw_created" "$lrw_prepared" "${WS:-none}"; do
+    lane_restart_value_ok "$lrw_value" || return 1
+  done
   # BOUNDED DIAGNOSTICS (design decision 3). A launcher that died printing a
   # megabyte of stderr must not turn the lane's own control file into that
   # megabyte, and the field is one LINE by construction.
@@ -10766,17 +10784,17 @@ lane_restart_put() {   # <root> <lane> <state> <gen> <op> <mode> <agent> <profil
     lrw_reason="$(printf '%s' "$lrw_reason" | cut -c1-400)… (truncated)"
   fi
   { printf 'schema: %s\n'         "$LANE_RESTART_SCHEMA"
-    printf 'lane: %s\n'           "$(lane_sidecar_value "$lrw_lane")"
+    printf 'lane: %s\n'           "$lrw_lane"
     printf 'state: %s\n'          "$lrw_state"
     printf 'generation: %s\n'     "${lrw_gen:-0}"
     printf 'operation: %s\n'      "${lrw_op:-none}"
     printf 'mode: %s\n'           "${lrw_mode:-fresh-from-handoff}"
     printf 'agent: %s\n'          "${lrw_agent:-none}"
     printf 'profile: %s\n'        "${lrw_prof:-none}"
-    printf 'dir: %s\n'            "$(lane_sidecar_value "${lrw_dir:-none}")"
-    printf 'pane: %s\n'           "$(lane_sidecar_value "${lrw_pane:-none}")"
-    printf 'window: %s\n'         "$(lane_sidecar_value "${lrw_win:-none}")"
-    printf 'handoff: %s\n'        "$(lane_sidecar_value "${lrw_hf:-none}")"
+    printf 'dir: %s\n'            "${lrw_dir:-none}"
+    printf 'pane: %s\n'           "${lrw_pane:-none}"
+    printf 'window: %s\n'         "${lrw_win:-none}"
+    printf 'handoff: %s\n'        "${lrw_hf:-none}"
     printf 'digest: %s\n'         "${lrw_dig:-none}"
     printf 'prepared_digest: %s\n' "${lrw_prepared:-none}"
     printf 'old_transcript: %s\n' "${lrw_old:-none}"
@@ -10786,7 +10804,7 @@ lane_restart_put() {   # <root> <lane> <state> <gen> <op> <mode> <agent> <profil
     printf 'created: %s\n'        "${lrw_created:-$(utc_now)}"
     printf 'updated: %s\n'        "$(utc_now)"
     printf 'reason: %s\n'         "${lrw_reason:-none}"
-  } | lane_sidecar_put "$lrw_root/restart-intent.yaml"
+  } | lane_sidecar_put "$lrw_root/restart-intent.yaml" "$lrw_lane"
 }
 
 # ------------------- AMENDMENT 19(c): THE SWEEP, ONE COMMIT OR NONE ---------
@@ -11818,6 +11836,23 @@ Nothing was written." 2
     # other's row and log in, and the loser's next attempt meets its own
     # refusals — a row under `<new>`, a published log — with nothing written.
     acquire_lock
+
+    # Rename and restart publication share this mutex. An unfinished operation
+    # owns its name and canonical inputs, including recovery from failed.
+    for rl_check in "$rl_old" "$rl_new"; do
+      rl_root_rc=0
+      lane_control_root "$rl_check" >/dev/null || rl_root_rc=$?
+      [ "$rl_root_rc" != 8 ] || continue  # no root any writer could have used
+      [ "$rl_root_rc" = 0 ] || die "restart control root could not be read. Nothing was written." 1
+      rl_restart=""; rl_restart_rc=0
+      rl_restart="$(lane_restart_read "$rl_check")" || rl_restart_rc=$?
+      case "$rl_restart_rc" in
+        8) continue ;;
+        0) rl_restart_state="$(printf '%s\n' "$rl_restart" | awk -F'\t' '$1=="state" {print $2; exit}')"
+           [ "$rl_restart_state" = ready ] || die "lane $rl_check has restart intent $rl_restart_state; finish its supervised recovery before renaming. Nothing was written." 2 ;;
+        *) die "lane $rl_check restart intent could not be read. Nothing was written." 1 ;;
+      esac
+    done
 
     rl_oh="$(rows_named_ci "$rl_old" 2>/dev/null || :)"
     rl_on="$(printf '%s' "$rl_oh" | grep -c . || :)"
@@ -14278,6 +14313,9 @@ EOF
     # writing shell's and is never expanded here.
     case "$sri_dir" in ''|/*) : ;; *) die "--dir takes an ABSOLUTE path: this record is read by the supervisor in a pane whose working directory is not this one, and a relative path there names a different place. Got '$sri_dir'." 64 ;; esac
     case "$sri_hf" in ''|/*) : ;; *) die "--handoff takes an ABSOLUTE path, for the same reason --dir does: the launch that reads it back stands somewhere else. Got '$sri_hf'." 64 ;; esac
+    for sri_exact in "$sri_dir" "$sri_pane" "$sri_win" "$sri_hf" "$sri_old" "$sri_new" "$sri_dig" "$sri_prepared"; do
+      lane_restart_value_ok "$sri_exact" || die "restart launch facts cannot contain control characters. Nothing was written." 64
+    done
     check_lane_name "$lane"
     log_sync
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15

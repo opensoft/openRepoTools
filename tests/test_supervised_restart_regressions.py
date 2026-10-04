@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from test_lane_start_claude_current import Sandbox, LANE, _write, pytestmark
+from conftest import REPO
 
 
 @pytest.fixture
@@ -22,6 +23,13 @@ def restart_box(tmp_path: Path) -> Sandbox:
     box.env["LANES_LANE_STATE_ROOT"] = str(tmp_path / "state")
     box.env["LANES_NO_FETCH"] = "1"
     box.env["TMUX_PANE"] = "%1"
+    tmux = box.fakebin / "tmux"
+    tmux.write_text(tmux.read_text().replace("#!/usr/bin/env bash\n", '''#!/usr/bin/env bash
+if [ "${1-}" = respawn-pane ]; then
+  printf 'respawn-pane %s\\n' "$*" >> "$FAKE_TMUX_LOG"
+  exit 0
+fi
+''', 1))
     return box
 
 
@@ -927,3 +935,240 @@ def test_existing_invalid_state_root_is_not_absent_intent(restart_box, kind):
     result = box.start()
     assert result.returncode == 2, (result.stdout, result.stderr)
     assert not box.claude_runs()
+
+
+@pytest.mark.parametrize("extra", ["future_key: preserve-me\n", "garbage\n", "profile:test\n",
+                                   "schema: 1\n", "prepared_digest: none\n",
+                                   "pane: testsess:@1.%1\tignored\n"])
+def test_restart_strict_schema_preserves_unrecognized_or_malformed_records(restart_box, extra):
+    box = restart_box
+    prepare_restart(box)
+    path = intent_path(box)
+    path.write_text(path.read_text() + extra)
+    before = path.read_bytes()
+    read = helper(box, "restart-intent", LANE)
+    assert "state\tINCOMPLETE" in read.stdout, (read.stdout, read.stderr)
+    write = helper(box, "set-restart-intent", LANE, "starting", "--expect", "pending")
+    assert write.returncode == 2, write.stderr
+    assert path.read_bytes() == before
+    assert box.start("--operation", "op-test").returncode == 2
+    assert not box.claude_runs()
+
+
+@pytest.mark.parametrize("field", ["dir", "handoff", "pane", "window"])
+@pytest.mark.parametrize("control", ["\n", "\r", "\t"])
+def test_restart_writer_rejects_record_delimiters_without_changing_identity(restart_box, field, control):
+    box = restart_box
+    prepare_restart(box)
+    before = intent_path(box).read_bytes()
+    value = (str(box.lane_dir) if field in {"dir", "handoff"} else "testsess:@1.%1") + control + "tail"
+    result = helper(box, "set-restart-intent", LANE, "pending", f"--{field}", value)
+    assert result.returncode == 64, (result.stdout, result.stderr)
+    assert intent_path(box).read_bytes() == before
+
+
+def test_restart_writer_does_not_follow_predictable_temporary_symlink(restart_box):
+    box = restart_box
+    prepare_restart(box)
+    sentinel = box.root / "sentinel"
+    sentinel.write_text("unrelated bytes\n")
+    result = subprocess.run(["bash", "-c", 'ln -s "$1" "$2.tmp.$$"; exec "$3" set-restart-intent "$4" starting --expect pending',
+                             "_", str(sentinel), str(intent_path(box)), str(box.bin / "lanes-edit.sh"), LANE],
+                            env=box.env, cwd=box.lane_dir, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert sentinel.read_text() == "unrelated bytes\n"
+    assert list(intent_path(box).parent.glob("restart-intent.yaml.tmp.*"))[0].is_symlink()
+    assert intent_path(box).stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("alias", ["file", "parent"])
+def test_restart_accepts_equivalent_handoff_file_identity(restart_box, alias):
+    box = restart_box
+    source = prepare_restart(box)
+    physical = source
+    if alias == "file":
+        physical = source.with_name("backing.md")
+        source.rename(physical)
+        source.symlink_to(physical.name)
+        box.git("-C", str(box.wip), "add", "--", str(source), str(physical))
+        box.git("-C", str(box.wip), "commit", "-qm", "use leaf handoff alias")
+        box.git("-C", str(box.wip), "push", "-q", "origin", "main")
+    else:
+        link = source.parent.with_name("handoff-alias")
+        link.symlink_to(source.parent, target_is_directory=True)
+        source = link / source.name
+        registry = box.wip / "lanes" / "LANES.md"
+        registry.write_text(registry.read_text().replace(str(physical.relative_to(box.wip)), str(source.relative_to(box.wip))))
+        box.git("-C", str(box.wip), "add", "--", "lanes/LANES.md", str(link))
+        box.git("-C", str(box.wip), "commit", "-qm", "use handoff directory alias")
+        box.git("-C", str(box.wip), "push", "-q", "origin", "main")
+    result = helper(box, "set-restart-intent", LANE, "pending", "--handoff", str(source.resolve()))
+    assert result.returncode == 0, result.stderr
+    first = box.start("--operation", "op-test")
+    assert first.returncode == 0, (first.stdout, first.stderr)
+    assert "Preserved task." in box.claude_runs()
+    assert "RESUMED by" in physical.read_text()
+    if alias == "file":
+        assert source.is_symlink()
+    assert helper(box, "set-restart-intent", LANE, "failed", "--expect", "starting").returncode == 0
+    assert helper(box, "set-restart-intent", LANE, "starting", "--expect", "failed", "--bump-attempt", "--new-transcript", "none").returncode == 0
+    retry = box.start("--operation", "op-test")
+    assert retry.returncode == 0, (retry.stdout, retry.stderr)
+
+
+@pytest.mark.parametrize("state", ["preparing", "pending", "starting", "failed", "ready"])
+def test_restart_rename_preserves_unfinished_operation_inputs(restart_box, state):
+    box = restart_box
+    source = prepare_restart(box)
+    assert helper(box, "set-restart-intent", LANE, state, "--expect", "pending").returncode == 0
+    tracked = [p for p in box.wip.rglob("*") if p.is_file() and ".git" not in p.parts]
+    before = {p: p.read_bytes() for p in tracked}
+    record = intent_path(box).read_bytes()
+    box.env["LANES_SESSION"] = "10101010-1111-4111-8111-111111111111"
+    result = helper(box, "rename-lane", LANE, "repoZ-2", "--no-github")
+    if state == "ready":
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert "repoZ-2" in (box.wip / "lanes" / "LANES.md").read_text()
+    else:
+        assert result.returncode == 2, (result.stdout, result.stderr)
+        assert "supervised recovery" in result.stderr
+        assert {p: p.read_bytes() for p in tracked} == before
+        assert set(tracked) == {p for p in box.wip.rglob("*") if p.is_file() and ".git" not in p.parts}
+    assert intent_path(box).read_bytes() == record
+
+
+@pytest.mark.parametrize("kind", ["relative", "missing", "none", "agent"])
+def test_restart_refuses_unsupported_checkout_or_agent_before_preservation(restart_box, kind):
+    box = restart_box
+    source = prepare_restart(box)
+    assert helper(box, "set-restart-intent", LANE, "ready", "--expect", "pending").returncode == 0
+    before = source.read_bytes()
+    registry = (box.wip / "lanes" / "LANES.md").read_bytes()
+    box.tmux_log.write_text("")
+    args = ["--restart", "--lane", LANE]
+    if kind in {"relative", "missing"}:
+        args += ["--dir", "relative" if kind == "relative" else str(box.root / "absent")]
+    elif kind == "agent":
+        args += ["--agent", "codex"]
+    else:
+        real = box.bin / "lanes-edit-real.sh"
+        (box.bin / "lanes-edit.sh").rename(real)
+        _write(box.bin / "lanes-edit.sh", f"""#!/usr/bin/env bash
+[ "$1" != lane-dir ] || exit 8
+exec '{real}' "$@"
+""")
+        box.env.pop("WORKBENCHES_CLAUDE_LANE_DIR", None)
+        box.env.pop("CLAUDE_CODE_SESSION_ID", None)
+    result = supervisor(box, *args, "clear")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert source.read_bytes() == before
+    assert (box.wip / "lanes" / "LANES.md").read_bytes() == registry
+    assert "rename-window" not in box.tmux_log.read_text()
+    assert "respawn-pane" not in box.tmux_log.read_text()
+
+
+@pytest.mark.parametrize("fact", ["dir", "digest", "pane", "agent"])
+def test_restart_verifies_complete_pending_record_before_respawn(restart_box, fact):
+    box = restart_box
+    prepare_restart(box)
+    assert helper(box, "set-restart-intent", LANE, "ready", "--expect", "pending").returncode == 0
+    real = box.bin / "lanes-edit-real.sh"
+    (box.bin / "lanes-edit.sh").rename(real)
+    value = {"dir": "none", "digest": "none", "pane": "wrong-pane", "agent": "codex"}[fact]
+    _write(box.bin / "lanes-edit.sh", f"""#!/usr/bin/env bash
+if [ "$1" = set-restart-intent ] && [ "$3" = pending ]; then
+  '{real}' "$@" || exit $?
+  sed 's|^{fact}: .*|{fact}: {value}|' '{intent_path(box)}' > '{intent_path(box)}.fixture'
+  mv '{intent_path(box)}.fixture' '{intent_path(box)}'
+  exit 0
+fi
+exec '{real}' "$@"
+""")
+    result = supervisor(box, "--restart", "--lane", LANE, "--dir", str(box.lane_dir), "clear")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "before replacing the pane" in result.stderr
+    assert "respawn-pane" not in box.tmux_log.read_text()
+    assert not box.claude_runs()
+
+
+@pytest.mark.parametrize("finish", ["exit", "signal"])
+def test_completed_observer_cleanup_never_signals_saved_pid(restart_box, finish):
+    box = restart_box
+    prepare_restart(box)
+    shutil.copy2(REPO / "lane-handoff", box.bin / "lane-handoff")
+    signals = box.root / "positive-kill.log"
+    bash_env = _write(box.root / "bash-env", f"""kill() {{
+  case "$1" in -0) : ;; *) printf '%s\\n' "$*" >> '{signals}' ;; esac
+  builtin kill "$@"
+}}
+""", 0o600)
+    release = box.root / "release-child"
+    launcher = _write(box.fakebin / "pclaude", '''#!/usr/bin/env bash
+export CLAUDE_PROFILE_NAME=test-profile
+exec "$OPENREPOTOOLS_BIN_DIR/lane-start" repoZ 1
+''')
+    _write(box.resolved, r'''#!/usr/bin/env python3
+import json, os, pathlib, time
+sid=os.sys.argv[os.sys.argv.index('--session-id')+1]
+pid=os.getpid()
+stat=pathlib.Path(f'/proc/{pid}/stat')
+start=stat.read_text().split()[21] if stat.exists() else ''
+record=pathlib.Path(os.environ['HOME'])/'.claude'/'sessions'/'owned.json'
+record.write_text(json.dumps(dict(pid=pid,sessionId=sid,procStart=start,cwd=os.getcwd(),
+    tmux='testsess:@1.%1',name='repoZ-1',nameSource='user',status='busy'),separators=(',',':'))+'\n')
+release=pathlib.Path(os.environ['OBSERVER_TEST_RELEASE'])
+for _ in range(300):
+    if release.exists(): break
+    time.sleep(.1)
+record.unlink()
+''')
+    box.env.update(PCLAUDE=str(launcher), LANE_SUPERVISOR_NO_PROMPT="1",
+                   LANE_SUPERVISOR_READY_SECONDS="15", BASH_ENV=str(bash_env),
+                   OBSERVER_TEST_RELEASE=str(release), FAKE_CC_PATH=str(box.resolved))
+    unrelated = subprocess.Popen(["sleep", "60"])
+    proc = subprocess.Popen([str(box.bin / "lane-handoff"), "--supervise", "--lane", LANE,
+                             "--operation", "op-test"], env=box.env, cwd=box.lane_dir,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if "state: ready\n" in intent_path(box).read_text(): break
+            assert proc.poll() is None
+            time.sleep(.1)
+        else:
+            pytest.fail("observer never confirmed readiness")
+        # Let the observer return while the long-lived child remains alive.
+        time.sleep(.3)
+        if finish == "signal":
+            proc.send_signal(signal.SIGTERM)
+            proc.wait(timeout=10)
+            assert (box.home / ".claude" / "sessions" / "owned.json").exists()
+        release.touch()
+        out, err = proc.communicate(timeout=10)
+        assert proc.returncode == (143 if finish == "signal" else 0), (out, err)
+        assert not signals.exists(), signals.read_text() if signals.exists() else ""
+        assert unrelated.poll() is None
+        assert not list(Path(box.env["TMPDIR"]).glob("lane-observer.*"))
+    finally:
+        release.touch()
+        if proc.poll() is None:
+            proc.terminate()
+            proc.communicate(timeout=10)
+        unrelated.terminate()
+        unrelated.wait(timeout=5)
+
+
+def test_signal_between_observer_fork_and_pid_publication_reaps_owned_job(restart_box):
+    box = restart_box
+    prepare_restart(box)
+    path = box.bin / "lane-handoff"
+    shutil.copy2(REPO / "lane-handoff", path)
+    source = path.read_text()
+    assert '\t\tsr_watch=$!' in source
+    path.write_text(source.replace('\t\tsr_watch=$!', '\t\tkill -TERM "$$"\n\t\tsr_watch=$!', 1))
+    result = subprocess.run([str(path), "--supervise", "--lane", LANE, "--operation", "op-test"],
+                            env=box.env, cwd=box.lane_dir, capture_output=True, text=True, timeout=15)
+    assert result.returncode == 143, (result.stdout, result.stderr)
+    assert not box.claude_runs()
+    assert not list(Path(box.env["TMPDIR"]).glob("lane-observer.*"))
+    assert "state: ready\n" not in intent_path(box).read_text()

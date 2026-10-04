@@ -6,7 +6,7 @@ by openRepoTools-3; neither its branch nor its worktree is an input to this work
 
 ## Scope
 
-Provide a supervised manual `/ctx` restart for confirmed legacy lanes. The
+Provide a supervised manual `/ctx` restart for confirmed legacy Claude lanes. The
 managed JSON ledger remains the sole lifecycle, readiness, operation and
 generation authority for enrolled managed lanes. Legacy entrypoints refuse
 managed or unknown ownership before preservation writes or launch.
@@ -26,13 +26,19 @@ diagnostic lifecycle snapshots. Readiness never writes another lifecycle store.
   canonical preservation record and never respawns a pane.
 - FR-003: Validate complete intent schema, state, generation, operation,
   attempt and launch facts. Existing unreadable/malformed records cannot be
-  interpreted as absent or rewritten to a supported schema.
+  interpreted as absent or rewritten to a supported schema. Schema 1 rejects
+  unknown keys, duplicate keys, malformed lines and control delimiters; exact
+  launch identities are preserved byte for byte and stored through private
+  same-directory temporary files.
 - FR-004: Fence each attempt's claim, transcript preparation, readiness,
   timeout, signal and failure writes by operation, generation and attempt.
   A delayed child of an earlier attempt cannot consume a newer attempt.
 - FR-005: Bind the launch's canonical handoff, agent, profile, directory and
   pane to the recorded operation. An ordinary launcher cannot consume an
-  active restart without its supervisor token.
+  active restart without its supervisor token. Before respawn, require an
+  existing absolute checkout and verify every pending launch fact and checksum.
+  Equivalent handoff symlink spellings refer to the same file. Lane rename
+  refuses unfinished and failed restart ownership under the shared mutex.
 - FR-006: Preserve the handoff bytes used for the prompt across owned resume
   stamps. Prepare durable evidence before publishing a stamp; an interruption
   at either publication boundary remains diagnosable and retryable. Unrelated
@@ -40,10 +46,13 @@ diagnostic lifecycle snapshots. Readiness never writes another lifecycle store.
 - FR-007: Observe the UUID prepared by the current attempt after launch, and
   require one live process with the intended transcript and binding. Preserve
   the existing preferred `live-holder` interface; enumerate all holders for
-  readiness and refuse ambiguity.
+  readiness and refuse ambiguity. Claude-native interactive session record
+  provenance supplies agent evidence within this Claude-only contract.
 - FR-008: If a signal leaves a child alive or child absence unproven, preserve
   an indeterminate active operation. Do not advertise or permit a competing
-  retry. A known-ended child permits retry of the same operation.
+  retry. A known-ended child permits retry of the same operation. Observer
+  cleanup uses a private cancellation marker and waits for its owned child;
+  it never signals a saved PID that may have been recycled.
 - FR-009: Failure/status output describes the persisted state. Recovery uses
   the supervised operation; ordinary lane resume cannot bypass a failed
   restart. A completed intent remains history and permits ordinary resume.

@@ -3001,7 +3001,7 @@ case "$ri_state" in
       ri_cell="$(cell 7 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
       ri_row_hf="$(hs_resolve "$ri_cell")" || die "the restart handoff the row names is missing. Nothing was started." 2
       [ -n "$ri_hf" ] && [ "$ri_hf" != none ] && [ -s "$ri_hf" ] &&
-        [ "$(real_of "$ri_hf")" = "$(real_of "$ri_row_hf")" ] ||
+        [ "$ri_hf" -ef "$ri_row_hf" ] ||
         die "the restart intent and register name different handoffs. Nothing was started." 2
       ri_expected_digest="$(handoff_digest_of "$ri_hf")"
       fresh=1
@@ -4110,7 +4110,7 @@ if (( first_prompt )); then
   fp_file=""
   [ -n "$fp_cell" ] && fp_file="$(hs_resolve "$fp_cell" 2>/dev/null || :)"
   if [ "$ri_active" = 1 ] && (( fresh )); then
-    [ -n "$fp_file" ] && [ "$(real_of "$fp_file")" = "$(real_of "$ri_hf")" ] ||
+    [ -n "$fp_file" ] && [ "$fp_file" -ef "$ri_hf" ] ||
       die "the delivered restart prompt is not the intent-bound handoff. Nothing was launched." 2
     [ "$ri_expected_digest" = none ] || [ "$(handoff_digest_of "$fp_file")" = "$ri_expected_digest" ] ||
       die "the restart handoff changed after preparation. Nothing was launched." 2

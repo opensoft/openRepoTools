@@ -515,6 +515,8 @@ ready_check() {   # <lane> <pid file> <expected new transcript|""> <old transcri
 		rc_expected="$(printf '%s\n' "$rc_out" | awk -F'\037' -v sid="$rc_new" '$1==sid {print; exit}')"
 		[ -z "$rc_expected" ] || rc_out="$rc_expected"
 	fi
+	# lane-holders reads only trusted Claude-native interactive session records;
+	# that provenance plus the Claude-only launch gate supplies agent evidence.
 	rc_sid="$(printf '%s\n' "$rc_out" | awk -F'\037' '{print $1; exit}')"
 	rc_tgt="$(printf '%s\n' "$rc_out" | awk -F'\037' '{print $2; exit}')"
 	rc_nm="$(printf '%s\n' "$rc_out" | awk -F'\037' '{print $3; exit}')"
@@ -567,7 +569,7 @@ ready_check() {   # <lane> <pid file> <expected new transcript|""> <old transcri
 # those in a minute is sixty git processes behind a session that is trying to
 # start.
 supervise_watch() {   # <lane> <operation> <generation> <pid file> <new> <old> <pane>
-	sw_lane="$1"; sw_op="$2"; sw_gen="$3"; sw_pidf="$4"; sw_new="$5"; sw_old="$6"; sw_pane="$7"; sw_attempt="$8"
+	sw_lane="$1"; sw_op="$2"; sw_gen="$3"; sw_pidf="$4"; sw_new="$5"; sw_old="$6"; sw_pane="$7"; sw_attempt="$8"; sw_stop="$9"
 	# THE DEADLINE IS WALL CLOCK, NOT A COUNT OF SLEEPS. This loop used to add
 	# 2 per turn and call that the elapsed time, which counts only the `sleep`
 	# and never the work between two of them — and the work is a `live-holder`
@@ -586,7 +588,9 @@ supervise_watch() {   # <lane> <operation> <generation> <pid file> <new> <old> <
 	sw_slept=0
 	sw_waited=0
 	while [ "$sw_waited" -lt "$SUPERVISE_READY_SECONDS" ]; do
+		[ ! -e "$sw_stop" ] || return 0
 		sleep 2
+		[ ! -e "$sw_stop" ] || return 0
 		sw_slept=$((sw_slept + 2))
 		sw_waited="$sw_slept"
 		sw_now="$(date +%s 2>/dev/null | tr -dc '0-9')"
@@ -610,6 +614,7 @@ supervise_watch() {   # <lane> <operation> <generation> <pid file> <new> <old> <
 			# stale observer of a superseded operation writes nothing: exit 7
 			# is the intent refusing it, and that refusal is the whole point of
 			# the fence.
+			[ ! -e "$sw_stop" ] || return 0
 			sw_frc=0
 			LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$sw_lane" ready \
 				--expect starting --expect-operation "$sw_op" --expect-generation "$sw_gen" --expect-attempt "$sw_attempt" \
@@ -633,6 +638,7 @@ supervise_watch() {   # <lane> <operation> <generation> <pid file> <new> <old> <
 	# observer whose lane has moved on must not publish its verdict over a newer
 	# generation's record, and `$sw_gen` is the generation the supervisor
 	# CLAIMED rather than whatever is on disk by now.
+	[ ! -e "$sw_stop" ] || return 0
 	LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$sw_lane" starting \
 		--expect starting --expect-operation "$sw_op" --expect-generation "$sw_gen" --expect-attempt "$sw_attempt" \
 		--reason "INDETERMINATE: ${sw_waited}s elapsed (deadline ${SUPERVISE_READY_SECONDS}s) with the child alive and readiness unconfirmed; ${READY_WHY:-no evidence}" >/dev/null 2>&1 || :
@@ -852,7 +858,7 @@ supervise_run() {   # <lane> <operation>
 			continue
 		fi
 		sr_dir="$RI_DIR"
-		if [ -n "$sr_dir" ] && [ "$sr_dir" != none ] && [ ! -d "$sr_dir" ]; then
+		if [ ! -d "$sr_dir" ] || [ ! -r "$sr_dir" ] || [ ! -x "$sr_dir" ]; then
 			supervise_failed "$sr_lane" "$sr_op" "the intent's checkout $sr_dir does not exist here, so the launch was not made"
 			sr_fs=$?
 			[ "$sr_fs" = 10 ] || return "$sr_fs"
@@ -865,7 +871,9 @@ supervise_run() {   # <lane> <operation>
 		say "  this supervisor stays in the pane: whatever the launch does, it will say so here."
 		say ""
 		: > "$sr_pidf"
-		supervise_watch "$sr_lane" "$sr_op" "$SV_CLAIMED_GEN" "$sr_pidf" "$RI_NEW" "$RI_OLD" "$RI_PANE" "$RI_ATTEMPT" &
+		SV_WATCH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/lane-observer.XXXXXX" 2>/dev/null)" ||
+			die "no private observer directory could be created. Nothing was started." 2
+		supervise_watch "$sr_lane" "$sr_op" "$SV_CLAIMED_GEN" "$sr_pidf" "$RI_NEW" "$RI_OLD" "$RI_PANE" "$RI_ATTEMPT" "$SV_WATCH_DIR/stop" &
 		sr_watch=$!
 		# PUBLISHED, so the signal handler can stop it: it is a background job of
 		# this shell and a signal to this shell is not a signal to it.
@@ -913,9 +921,7 @@ supervise_run() {   # <lane> <operation>
 		fi
 		sr_child=$!
 		wait "$sr_child" || sr_status=$?
-		kill "$sr_watch" 2>/dev/null
-		wait "$sr_watch" 2>/dev/null
-		SV_WATCH_PID=""
+		sv_stop_watch
 		# WHAT THE RECORD SAYS NOW IS WHAT DECIDES, and never this process's
 		# memory of what it started: the observer is the only thing that ever
 		# had positive evidence, and it wrote that evidence down.
@@ -1098,11 +1104,30 @@ fi
 SV_PIDFILE=""
 SV_SIGNALLED=0
 SV_WATCH_PID=""
+SV_WATCH_DIR=""
+# Never signal a saved PID: an observer can finish hours before its child.
+# Cancellation uses a private marker; wait addresses our owned shell job.
+sv_stop_watch() {
+	if [ -n "$SV_WATCH_DIR" ]; then
+		: > "$SV_WATCH_DIR/stop"
+		# A signal can arrive after the fork but before PID publication. $!
+		# identifies that owned shell job; before the fork it is absent or a
+		# previously waited owned job. Waiting never signals a recycled PID.
+		sv_wait_pid="${SV_WATCH_PID:-${!:-}}"
+		[ -z "$sv_wait_pid" ] || wait "$sv_wait_pid" 2>/dev/null || :
+		SV_WATCH_PID=""
+		rm -f -- "$SV_WATCH_DIR/stop" 2>/dev/null
+		rmdir -- "$SV_WATCH_DIR" 2>/dev/null || :
+		SV_WATCH_DIR=""
+	fi
+}
+
 # Empty until this supervisor has successfully claimed a specific attempt.
 SV_CLAIMED_GEN=""
 SV_CLAIMED_ATTEMPT=""
 sv_on_exit() {
 	sv_hs=$?
+	sv_stop_watch
 	[ -z "$SV_PIDFILE" ] || rm -f -- "$SV_PIDFILE" 2>/dev/null
 	[ "$sv_hs" = 0 ] && return 0
 	# A SUPERVISOR SOMEBODY SIGNALLED AWAY IS NOT ONE ANYBODY IS WAITING TO
@@ -1134,11 +1159,7 @@ sv_signal() {   # <signal name> <exit status>
 	# ahead of the arguments being checked, because a supervisor that could be
 	# signalled between those two lines and leave nothing behind is the same gap
 	# one instruction wide.
-	if [ -n "${SV_WATCH_PID:-}" ]; then
-		kill "$SV_WATCH_PID" 2>/dev/null
-		wait "$SV_WATCH_PID" 2>/dev/null || :
-		SV_WATCH_PID=""
-	fi
+	sv_stop_watch
 	if [ -z "$lane" ] || [ -z "$operation" ]; then
 		say ""
 		say "$prog: SIG$1 before this supervisor had a lane and an operation to supervise — nothing was claimed, nothing was started and nothing is left behind."
@@ -1273,6 +1294,9 @@ if [ "$do_supervise" = 1 ]; then
 	esac
 
 	[ "$RI_AGENT" = claude ] || die "this legacy supervisor supports only the recorded Claude agent. Nothing was started." 2
+	case "$RI_DIR" in /*) : ;; *) die "the supervised restart needs an absolute checkout. Nothing was started." 2 ;; esac
+	[ -d "$RI_DIR" ] && [ -r "$RI_DIR" ] && [ -x "$RI_DIR" ] ||
+		die "the supervised restart checkout is missing or unusable. Nothing was started." 2
 	[ -n "$RI_HANDOFF" ] && [ "$RI_HANDOFF" != none ] && [ -s "$RI_HANDOFF" ] &&
 	  [ -n "$RI_DIGEST" ] && [ "$RI_DIGEST" != none ] ||
 	  die "the supervised restart has no complete handoff checksum. Nothing was started." 2
@@ -1509,16 +1533,6 @@ if [ "$do_restart" = 1 ]; then
 fi
 step "lane=$lane${window_ref:+ window=$window_ref} workstation=${ws:-<none>}"
 
-# THE OTHER TWO NAMES MADE TO MATCH IT, mechanically. The window is renamed
-# here; the SESSION's name is the lane's messaging address (Amendment 2) and
-# there is no API to rename a running session from outside it, so where the
-# live record's name is not the lane the act is PRINTED — it is the operator's
-# `/rename`, and it is not a question.
-if have_tmux && [ -n "$window_name" ] && [ "$window_name" != "$lane" ]; then
-	tmux rename-window "$lane" 2>/dev/null &&
-		step "window renamed '$window_name' → '$lane' (Amendment 8(b): the window IS the lane)"
-fi
-
 # THE LIVE RECORD OF THIS WINDOW — the session's uuid, the PANE `--exit` and
 # `--restart` type into, and the name `/rename` may be owed. `window-session`
 # is the one implementation of this read (Amendment 11 clause (h)).
@@ -1621,6 +1635,27 @@ profile_name="${CLAUDE_PROFILE_NAME:-$sess_profile}"
 case "$profile_name" in
 *[!A-Za-z0-9._-]* | '') profile_name="" ;;
 esac
+
+# A restart must have a supported, exact checkout before preservation or kill.
+# Ordinary handoffs may still record a missing directory as diagnostics.
+if [ "$do_restart" = 1 ]; then
+  [ "$agent" = claude ] || die "this legacy restart supports only Claude. Nothing was respawned." 2
+  [ -n "$dir" ] && [ -d "$dir" ] && [ -r "$dir" ] && [ -x "$dir" ] ||
+    die "a supervised restart requires an existing absolute checkout directory. Nothing was respawned." 2
+  for restart_fact in "$dir" "${pane:-${TMUX_PANE:-}}" "$window_ref"; do
+    case "$restart_fact" in *[$'\001'-$'\037'$'\177']*) die "restart launch facts cannot contain control characters. Nothing was respawned." 2 ;; esac
+  done
+fi
+
+# THE OTHER TWO NAMES MADE TO MATCH IT, mechanically. The window is renamed
+# here; the SESSION's name is the lane's messaging address (Amendment 2) and
+# there is no API to rename a running session from outside it, so where the
+# live record's name is not the lane the act is PRINTED — it is the operator's
+# `/rename`, and it is not a question.
+if have_tmux && [ -n "$window_name" ] && [ "$window_name" != "$lane" ]; then
+	tmux rename-window "$lane" 2>/dev/null &&
+		step "window renamed '$window_name' → '$lane' (Amendment 8(b): the window IS the lane)"
+fi
 
 # ---------------------------- the LATE record's preconditions, read FIRST
 #
@@ -2182,10 +2217,15 @@ if [ "$do_restart" = 1 ]; then
 	# READ BACK BEFORE THE KILL, because a write that reported success and a
 	# record a second process can read are not the same fact, and the process
 	# that could fix the difference is the one about to die.
-	ri_back="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$lane" 2>/dev/null \
-		| awk -F'\t' '$1 == "operation" { print $2; exit }')" || :
-	[ "$ri_back" = "$operation" ] ||
-		die "the restart intent was written and reads back as operation '${ri_back:-nothing}' rather than $operation, so this pane is left exactly as it is: the supervisor would launch for an operation this act does not own. The record above IS written. Restart by hand:  $restart_cmd" 2
+	ri_load "$lane" || die "the pending restart intent could not be read back. Nothing was respawned." 2
+	[ "$RI_STATE" = pending ] && [ "$RI_OP" = "$operation" ] && [ "$RI_GEN" = "$ri_gen" ] &&
+	  [ "$RI_ATTEMPT" = 0 ] && [ "$RI_MODE" = fresh-from-handoff ] && [ "$RI_AGENT" = claude ] &&
+	  [ "$RI_PROFILE" = "${profile_name:-none}" ] && [ "$RI_DIR" = "$dir" ] && [ -d "$RI_DIR" ] &&
+	  [ "$RI_PANE" = "$target" ] && [ "$RI_WINDOW" = "${window_ref:-none}" ] &&
+	  [ "$RI_OLD" = "${transcript:-none}" ] && [ "$RI_NEW" = none ] &&
+	  [ "$RI_HANDOFF" = "$handoff_file" ] && [ -s "$RI_HANDOFF" ] &&
+	  [ "$RI_DIGEST" != none ] && [ -n "$RI_DIGEST" ] && [ "$(handoff_digest "$RI_HANDOFF")" = "$RI_DIGEST" ] ||
+		die "the pending restart launch facts could not be verified before replacing the pane. Nothing was respawned; read the intent: $prog --restart-status --lane $lane" 2
 	say "  restart intent $operation written (generation $ri_gen, mode fresh-from-handoff)"
 
 	# ---- THE RESPAWN, INTO A SUPERVISOR AND NOT INTO THE LAUNCH ITSELF

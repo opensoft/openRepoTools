@@ -43,7 +43,7 @@ contract. Existing records with missing, duplicate or invalid fields refuse
 transitions rather than being silently repaired.
 
 Ordinary first launches use the resolved checkout as a control-root hint only
-only after all established root rungs fail. Explicit configuration, recorded
+after all established root rungs fail. Explicit configuration, recorded
 directories and PROJECTS_ROOT retain precedence. Each claimed attempt repeats the
 all-holder absence check before starting, including interactive retries.
 
@@ -51,3 +51,12 @@ Require a known current pane before the supervisor claim. Forward the complete
 launcher host/OS/container binding through respawn. Control-root reads inspect
 existing directory ancestors so an unusable root cannot answer absence. Child
 readiness rejects zombie process state and keeps unknown process state unready.
+
+Final review hardening validates the complete pending launch before pane respawn,
+uses filesystem identity for equivalent handoff aliases, and refuses control
+characters rather than normalizing launch paths. The shared schema parser rejects
+unknown and malformed content on reads, existing-record transitions and generated
+record publication. Intent writes use private same-directory temporary files.
+Rename takes the existing mutex and refuses unfinished/failed restart records.
+Observers stop through a private marker and are reaped before marker removal,
+without signaling a numeric PID that may already have been recycled.
