@@ -103,6 +103,10 @@ Before launching replacement writers, the system SHALL compare lane and tree sid
 - **WHEN** a lane's persisted state record exists at its control root and cannot be read
 - **THEN** the system reports the state as unreadable and the outcome as indeterminate, and never as a lane that has no persisted state
 
+#### Scenario: The lane is bound elsewhere
+- **WHEN** a lane's last binding names another host or container and its window is not known to be gone from this host
+- **THEN** the system reports the binding as elsewhere and the verdict as indeterminate, and pronounces no crash, clearance or closure from outside that binding
+
 #### Scenario: Swapping state has no holder
 - **WHEN** persisted state is `SWAPPING` and no verified owner remains live
 - **THEN** the system reports the interrupted operation ID and preserves all trees for recovery
@@ -144,6 +148,21 @@ The system SHALL distinguish a lane or tree that completed a temporary swap from
 #### Scenario: Closed tree is unexpectedly dirty
 - **WHEN** a tree marked `CLOSED` contains dirty files or unpushed commits
 - **THEN** the system reports a closure inconsistency and refuses automatic cleanup
+
+### Requirement: Legacy lifecycle refuses a managed-owned lane
+The system SHALL govern legacy lanes only (Brett Heap's ruling of 2026-10-04, verbatim: "managed ledger owns enrolled lanes; #97 owns legacy — rework both"). Before its first write, every lifecycle, inventory, log, register-row, sweep, start, handoff and end act SHALL read the lane's managed-owner marker, refuse a valid one, refuse an unreadable or malformed one as unknown, and run unchanged for a lane with none.
+
+#### Scenario: A lane carries a valid managed-owner marker
+- **WHEN** any legacy act is invoked for a lane whose register row carries a valid managed-owner marker
+- **THEN** the act exits 2 naming the owner, and the register, the lane's object log, its lifecycle control root and its tmux window are unchanged, and the reconciliation reports `managed-owned` without pronouncing anything else
+
+#### Scenario: A managed-owner marker cannot be read
+- **WHEN** a lane's register row carries managed-owner vocabulary that does not parse, or the register cannot be read
+- **THEN** the act exits 1 reporting ownership as unknown, and nothing is changed
+
+#### Scenario: A legacy lane is acted on
+- **WHEN** a lane's register row carries no managed-owner vocabulary
+- **THEN** every act behaves exactly as it did before the seam, and the lifecycle moves only on that legacy verdict and an unchanged pre-image
 
 ### Requirement: Legacy migration is explicit and non-destructive
 The system SHALL create structured state for a legacy lane only from an explicitly named start, swap, or migration using verified repository and Git evidence.

@@ -357,6 +357,80 @@ keeps `lane-reconcile` out of the lock entirely: `lane_tree_now` runs
 `git status` and `git rev-list` in somebody's checkout, and what must be
 serialized is the compare and the write, not the reading of a repository.
 
+## Decisions taken in the rework of 2026-10-04
+
+### 21. The managed ledger owns enrolled lanes; this change owns legacy lanes only
+
+Brett Heap's ruling of 2026-10-04, verbatim: "managed ledger owns enrolled lanes; #97 owns legacy — rework both".
+
+**The seam is the register row's state cell.** A lane the managed ledger has
+enrolled carries a managed-owner marker there, in the long form
+`<STATE> · <UTC> · managed-owner mode=managed daemon=<id> generation=<n> bound-lane=<lane>`
+or the historical shorthand `MANAGED OWNER · <token>`. The reader is
+`3c26041:lanes-edit.sh:776-898` — branch `001-separate-swap-ctx-handoff`'s
+projection reader (its T019) — **ported verbatim**, with an empty diff as the
+proof, so that branch's T024 merges as "keep either". Its four dependencies
+(`row_split_state_cell`, `rstrip_spaces`, `lc`, `row_of_lane`) are
+byte-identical on `main`. One wrapper, `lane_is_managed_owned`, answers 0 with
+the owner, 8 for a legacy lane and 1 for unknown, and closes the one gap the
+ported reader leaves: an unrendered published register reads as an empty one,
+which the wrapper answers as unknown. `managed-projection <lane>` is that
+answer as a read verb (64 for usage).
+
+**The rule is the reader's own — "no malformed marker may be downgraded to
+absence".** A valid marker refuses with 2, naming the owner; managed-owner
+vocabulary that does not parse, a row that is not seven columns or a register
+that cannot be read refuses with 1 (unknown); no vocabulary is a legacy lane and
+nothing changes. Every refusal comes before the act's first write: `write_event`
+for the four verbs that move a lifecycle, `set-lane-state`, `set-lane-tree`,
+`retire-rows` (any hit refuses the whole sweep), `set-row-state`,
+`replace-in-row`, `rename-lane`, and the entry of `lane-start` (before Amendment
+18's binding gate), `lane-handoff` (before every mode) and `lane-end`.
+`lane-reconcile` is read-only and answers `managed-owned`. `row_state_check`,
+`add-row` and `replace-in-row`'s new text refuse the marker's vocabulary, so no
+legacy writer forges a marker.
+
+**`RUNNING` is written only on a legacy verdict.** `lane_state_follow` moves a
+snapshot only when the verb is `STARTED`/`RESUMED` (to `RUNNING`) or
+`ENDED`/`RETIRED` (to `CLOSED`), the caller's seam read was 8, and a pre-image
+was taken and still matches; a missing verdict or pre-image writes nothing. A
+later change may own `RUNNING` for an operation it holds — the
+`SWAPPED → RUNNING` readiness write of a supervised restart, for one — and no
+stub of that ships here.
+
+**What is not asserted.** Branch 001's governance review is PROPOSED — NOT
+APPROVED; nothing here adopts it, and no supersession of Amendment 17 is
+asserted. When 001's T024 lands, the ported block resolves "keep either" and
+`lane_is_managed_owned` gives way to its `managed_legacy_check`.
+
+### 22. An unreadable snapshot is exit 10, because `main` spent 9
+
+Decision 19 gave an unreadable snapshot exit 9. `main`'s #61 landed first with 9
+as `claim --force`'s abandoned takeover; each change took 9 as unused, and the
+one that had not landed moved. 10 is spent nowhere else in the shipped scripts.
+
+### 23. A lane bound elsewhere is `indeterminate` (Amendment 18(b))
+
+Amendment 18(b): *"Liveness is pronounced only from inside the binding's own
+`host` and `container` … from anywhere else a binding is UNKNOWN, never dead."*
+`lane-reconcile` decided its verdict from this workstation's snapshot and this
+workstation's session records alone, so a lane bound on another host read as an
+ungraceful stop or as resumable. It now reads the binding through the same
+`lane_binding_scan` and `binding_is_here` rule as `binding` and
+`holder_is_dead`, prints a `BINDING` line, and turns every verdict into
+`indeterminate` where the binding is elsewhere or its log cannot be read —
+keeping clause (b)'s one exception, a window gone from this host's tmux.
+
+### 24. Every writer of a lane-kind line moves the lifecycle, and a rename carries it
+
+Amendment 19's sweep appends `RETIRED` lines without `write_event`, so the
+follow-up of decision 9 never ran for a lane it retired; the sweep now takes each
+lane's pre-image in its scan and follows each line after its lock, as
+`write_event` does. Amendment 16's `rename-lane` moved the row, the log, the
+handoff and the alias table but not the control root, which is keyed by the
+lane's name, so a renamed lane read `no-state`; it now moves that directory once
+its commit has landed, never over an existing one.
+
 ## Risks / Trade-offs
 
 - **[Risk] Lane-first discovery conflicts with feature-first Speckit paths** → Use a sidecar index over shape-governed paths; do not move governed trees.
@@ -367,6 +441,8 @@ serialized is the compare and the write, not the reading of a repository.
 - **[Risk] Sidecars claim work is clean when Git changed later** → Recalculate all Git observations on resume and before `SWAPPED`.
 - **[Risk] Coordinator-base enforcement disrupts legacy lanes** → Introduce explicit migration and warning stages before enforcing the invariant.
 - **[Risk] Concurrent tooling versions interpret new state differently** → Version the sidecar schema and retain conservative fail-closed behavior for unknown versions or states.
+- **[Risk] The managed-owner hint over-matches** → The reader matches its vocabulary anywhere in a row, so a legacy row carrying `managed:` reads as unknown and is refused. Measured on 2026-10-04 at 0 of the 57 rows of the published register (brett-wip `225b9f90a`, the hint's own three patterns); no legacy writer can now write the vocabulary, so the count cannot grow from this side.
+- **[Risk] A marker published since the last fetch is missed** → A caller running with `LANES_NO_FETCH=1` reads the register as last fetched, until branch 001's lease closes the window.
 
 ## Migration Plan
 

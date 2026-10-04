@@ -166,3 +166,19 @@ Nothing is left as a comment thread and nothing is left unnamed.
   the handoff would be the first time the lifecycle stopped the swap, and
   declining the transition silently would leave a `PAUSED` record beside a
   `CLOSED` snapshot.
+
+## 8. The rework of 2026-10-04 — managed ledger owns enrolled lanes; this change owns legacy
+
+Brett Heap's ruling of 2026-10-04, verbatim: "managed ledger owns enrolled lanes; #97 owns legacy — rework both".
+
+- [x] 8.1 Merge `origin/main` (`daed209`) into the branch with every intent of both sides kept, and no rebase.
+- [x] 8.2 Move the unreadable-snapshot exit from 9 (spent by `main`'s #61 on `claim --force`) to 10 (design decision 22).
+- [x] 8.3 Close the snapshot of a lane retired by Amendment 19's sweep, which appends its lines without `write_event` (decision 24).
+- [x] 8.4 Stop claiming the log keeps five lane-kind verbs; Amendment 18(g) added `HANDOFF-REQUESTED` (decision 12 reworded).
+- [x] 8.5 Report a lane bound elsewhere as `indeterminate`, never a crash or a clearance (Amendment 18(b), decision 23).
+- [x] 8.6 Carry a renamed lane's control root to its new name (Amendment 16, decision 24).
+- [x] 8.7 Port `3c26041:lanes-edit.sh:776-898` verbatim; add `lane_is_managed_owned` and `managed-projection` (decision 21).
+- [x] 8.8 Refuse a managed lane (2) and an unknown one (1) before the first write of every act decision 21 lists, and refuse the marker's vocabulary in every legacy row writer.
+- [x] 8.9 Move the lifecycle only on a legacy verdict and an unchanged pre-image.
+- [x] 8.10 Document the seam in the manual, the proposal, this design and the spec.
+- [ ] 8.11 Prove each act on a valid long marker, a valid shorthand, a legacy row and five malformed rows, with zero change on every refusal, and leave every existing assertion of this change's suite section unchanged.

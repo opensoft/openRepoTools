@@ -2890,6 +2890,8 @@ RUNNING --/handoff begins--> SWAPPING --record + row + handoff all landed--> SWA
 | `CLOSED` | — | the lane is finished; a dirty or unpushed tree under it is a closure inconsistency and no cleanup is made |
 | any | **unreadable** | `indeterminate`. A holder that could not be established is NOT "no holder" (`R22`, Amendment 7(d)), and no crash is pronounced on a read nobody got. |
 | **unreadable** | — | `indeterminate` again, and for the same rule read one file earlier: a snapshot that IS THERE and cannot be opened is not a lane that has none. `lane-state` exits **10** for it, never the **8** that means *this lane has no snapshot, go on*. |
+| any | — and the lane is **bound elsewhere** | `indeterminate`. Amendment 18(b): liveness is pronounced only from inside the binding's own host and container, and from anywhere else a binding is UNKNOWN, never dead — and this workstation's snapshot is this workstation's alone. The one exception is clause (b)'s own: a binding whose window is gone from this host's tmux is dead, and the local read decides. |
+| — | — and the lane is **managed-owned** | `managed-owned`, and nothing else is read or pronounced: see *Managed-owned lanes* below. |
 
 ### The fence
 
@@ -2993,9 +2995,19 @@ directories under both lane roots, and prints one `TREE` line per tree with a
 classification: `ok`, `dirty`, `unpushed`, `unpushed-unknown`,
 `dirty+unpushed`, `dirty+unpushed-unknown`, `missing`, `possible-loss`,
 `not-a-checkout`, `unreadable`, `unknown-schema`, `unmanaged`,
-`stale-registration`. The last line is the `VERDICT`. `lane-start` prints the
-report before it writes anything, for any verdict that is not `running`,
-`resumable` or `closed`.
+`stale-registration`. A `BINDING` line says where the lane is bound — `here`,
+`free`, `gone` (bound on this host's tmux and its window is gone), `elsewhere`
+(and where), or `unknown` (its log could not be read) — and `elsewhere` or
+`unknown` turns every verdict into `indeterminate` (Amendment 18(b)). The last
+line is the `VERDICT`. `lane-start` prints the report before it writes
+anything, for any verdict that is not `running`, `resumable` or `closed`.
+
+A **renamed** lane keeps its snapshot and inventory: `rename-lane` moves its
+control root to the new name once the rename's commit has landed, and never
+over something already there (Amendment 16). Its `.lane-worktrees/<old>` root
+holds real git worktrees and is not moved — that is a `git worktree move`, and a
+person's. A lane retired by Amendment 19's sweep is taken to `CLOSED` exactly as
+a lane that ended itself is.
 
 **It reports and it resets nothing.** `park` CREATES NOTHING and `resume` RESETS
 NOTHING (`AGENTS.md` rule 1), so this read runs `git status`, `git log @{u}..`,
@@ -3034,6 +3046,49 @@ one worktree, one writer). `ungraceful-stop` and `interrupted-swap` both mean
 **inspect every tree before relaunching anything**; the difference is that under
 `interrupted-swap` the record, the row and the handoff file may each be half
 written, so check all three rather than trusting the handoff's top block.
+
+## Managed-owned lanes
+
+**Brett Heap's ruling of 2026-10-04, verbatim: *"managed ledger owns enrolled lanes; #97 owns legacy — rework both"*.**
+A lane the managed ledger has enrolled carries a **managed-owner marker** in its
+register row's state cell, written by that ledger's own writer:
+
+```text
+LIVE · <UTC> · managed-owner mode=managed daemon=<id> generation=<n> bound-lane=<lane>
+MANAGED OWNER · <token>        (the historical shorthand)
+```
+
+Every lane without one is a **legacy** lane — every lane in the register today —
+and the lane tooling here answers for legacy lanes only. The marker is read by
+one reader, ported byte for byte from branch `001-separate-swap-ctx-handoff`
+(`3c26041:lanes-edit.sh:776-898`), and asked through one read:
+
+```sh
+lanes-edit.sh managed-projection <lane>
+```
+
+| exit | meaning | what every legacy act does |
+|---|---|---|
+| 0 | a valid marker; the owner is printed | **refuses with 2**, names the owner, writes nothing |
+| 8 | no marker and no managed-owner vocabulary | runs exactly as it always has |
+| 1 | managed-owner vocabulary that does not parse (a `generation=0`, an empty daemon, a `bound-lane` that is not this lane, an empty shorthand token, a `managed:` anywhere in the row), a row that is not seven columns, or a register that could not be read | **refuses with 1**: ownership is UNKNOWN, and an ownership nobody could establish is never read as legacy (Amendment 7(d)) |
+| 64 | usage | — |
+
+The acts that ask, each before its first write: `lane-start` (at the head of its
+section 3, before Amendment 18's binding gate and `--request-handoff`),
+`lane-handoff` (before the window is renamed — so `--late`, `--restart` and
+`--exit` never reach `SWAPPING` or `SWAPPED`), `lane-end` (the ending,
+`--retire` and `--retire <pid>`), the object log's `STARTED`, `RESUMED`, `ENDED`
+and `RETIRED`, `set-lane-state`, `set-lane-tree`, `retire-rows` (one managed or
+unknown lane refuses the whole sweep), `set-row-state`, `replace-in-row` and
+`rename-lane`. `lane-reconcile` reads nothing of a managed lane and prints
+`VERDICT managed-owned` (and `indeterminate` where ownership is unknown). And no
+legacy writer — `set-row-state`, `add-row`, `replace-in-row`, the sweep — may
+write the marker's vocabulary into a row at all, so a marker is never forged.
+
+What the managed ledger itself does with an enrolled lane is not this manual's:
+branch `001-separate-swap-ctx-handoff`'s governance review is **PROPOSED — NOT
+APPROVED**, and nothing here asserts that it supersedes Amendment 17.
 
 ## Hand edits
 

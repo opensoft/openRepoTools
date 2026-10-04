@@ -2,6 +2,8 @@
 
 A lane may coordinate several Git worktrees containing dirty or unpushed work, but its current launch record identifies only one directory and cannot distinguish a clean swap from token exhaustion before or during `/swap`. Resume therefore needs a structured, crash-consistent inventory that can find every lane-owned worktree and explain whether the previous session stopped cleanly before another process writes to it.
 
+**Scope, by ruling.** Brett Heap's ruling of 2026-10-04, verbatim: "managed ledger owns enrolled lanes; #97 owns legacy — rework both". This change governs **legacy lanes only**. A lane the managed ledger has enrolled — one whose register row carries a valid managed-owner marker — is that ledger's, and every act of this change refuses it before writing anything; a lane whose ownership cannot be read is refused the same way. See design decision 21.
+
 ## What Changes
 
 - Give each lane a structured worktree root derived from its stable repository/estate identity and canonical lane name, with one sidecar record per lane-owned tree.
@@ -29,6 +31,8 @@ None. This repository has no existing OpenSpec capability specifications; curren
 Tracked by [opensoft/openRepoTools#91](https://github.com/opensoft/openRepoTools/issues/91), with the existing `openRepoTools-3` Claude lane as the active implementation owner.
 
 **Delivered in the first implementation**: the lifecycle snapshot with its generation and operation fence (`lane-state`, `set-lane-state`), the machine-readable worktree inventory taken at every handoff (`set-lane-tree`, `lane-trees`), the resume reconciliation that reports and resets nothing (`lane-reconcile`, printed by `lane-start` before it writes anything), the two-phase `/swap`, and `RUNNING` written by the act that confirms the binding. Design decisions 9 to 15 record where each of these departs from the decisions above and why.
+
+**Delivered in the rework of 2026-10-04**: the seam that keeps every act of this change off a managed-owned lane (design decision 21), and four fixes the merge of `main` made necessary — the unreadable-snapshot exit moved from 9 to 10, a lane retired by Amendment 19's sweep closes its snapshot, a lane bound elsewhere is `indeterminate` under Amendment 18(b), and a renamed lane keeps its snapshot (decisions 22 to 24).
 
 **Not yet delivered**: the coordinator-base invariant and its staged enforcement, the inventory of shape-governed feature worktrees beyond the two roots a lane already owns, and any replication of this state to a second workstation. Each remains a task in `tasks.md`, and the lifecycle is local to one machine until they land.
 
