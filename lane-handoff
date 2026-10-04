@@ -825,6 +825,18 @@ supervise_run() {   # <lane> <operation>
 		SV_CLAIMED_ATTEMPT="$RI_ATTEMPT"
 		case "$SV_CLAIMED_GEN" in '' | *[!0-9]*) SV_CLAIMED_GEN=0 ;; esac
 
+		# Repeat this check for every claimed attempt, including an interactive
+		# retry: a holder may have appeared while the previous failure waited.
+		sr_hrc=0
+		LANES_NO_FETCH=1 "$LANES_EDIT" lane-holders "$sr_lane" >/dev/null 2>&1 || sr_hrc=$?
+		if [ "$sr_hrc" != 8 ]; then
+			LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$sr_lane" starting \
+				--expect starting --expect-operation "$sr_op" --expect-generation "$SV_CLAIMED_GEN" --expect-attempt "$SV_CLAIMED_ATTEMPT" \
+				--reason "INDETERMINATE: holder absence is unproven before attempt launch (read $sr_hrc)" >/dev/null 2>&1 || :
+			say "INDETERMINATE — holder absence is unproven; no child was launched and retry is blocked."
+			return 4
+		fi
+
 		if ! supervise_argv "$sr_lane" "$sr_op"; then
 			supervise_failed "$sr_lane" "$sr_op" "there is no launcher and no lane-start on PATH here, so nothing could be started"
 			sr_fs=$?
@@ -1139,7 +1151,9 @@ sv_signal() {   # <signal name> <exit status>
 			sv_sg_alive="the launch (pid $sv_sg_child) was STILL RUNNING and was not killed"
 		else
 			sv_sg_alive="the launch (pid $sv_sg_child) had already ended"
-			sv_sg_state=failed
+			sv_sg_hrc=0
+			LANES_NO_FETCH=1 "$LANES_EDIT" lane-holders "$lane" >/dev/null 2>&1 || sv_sg_hrc=$?
+			[ "$sv_sg_hrc" != 8 ] || sv_sg_state=failed
 		fi
 	fi
 	sv_sg_fence=()
@@ -1438,6 +1452,23 @@ case "$lane" in
 *[!A-Za-z0-9._-]* | .* | -* | '')
 	die "'$lane' is not a lane name (letters, digits, . _ -, not opening with . or -). Nothing was renamed and nothing was written: a name the register cannot hold is one every write below would refuse anyway, and the window would already have been renamed to it." 2 ;;
 esac
+# A plain preservation writer cannot modify an in-flight restart's input.
+# This read precedes window, row and log writes; publication checks it again
+# under the helper mutex, together with the prior handoff checksum.
+if [ "$do_restart" != 1 ]; then
+  lh_irrc=0
+  lh_intent="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$lane")" || lh_irrc=$?
+  case "$lh_irrc" in
+    0)
+      lh_istate="$(printf '%s\n' "$lh_intent" | awk -F'\t' '$1=="state" {print $2; exit}')"
+      case "$lh_istate" in
+        ready|failed) : ;;
+        *) die "a restart owns this lane, or its intent is malformed; preservation refused before window, handoff, row or log writes. Read it: $prog --restart-status --lane $lane" 2 ;;
+      esac ;;
+    8) : ;;
+    *) die "the legacy restart intent cannot be read; preservation refused before any writes." 2 ;;
+  esac
+fi
 if [ "$do_restart" = 1 ]; then
   LANES_NO_FETCH=1 "$LANES_EDIT" legacy-restart-check "$lane" ||
     die "legacy /ctx restart refused at the managed-lane boundary. Nothing was written or respawned." 2
@@ -1761,6 +1792,7 @@ else
 	if [ -z "$hs_tmpd" ]; then
 		note "could not create a temporary directory, so the handoff was not refreshed: $handoff_file"
 	else
+		hs_prior_digest="$(handoff_digest "$handoff_file")"
 		{ top_block
 		  printf -- '---\n\n'
 		  cat -- "$handoff_file"
@@ -1775,7 +1807,12 @@ else
 			# that is full, fails HERE — and `handoff_written=1` set regardless is
 			# what lets `--restart` pass its gate and respawn the pane over a STALE
 			# top block, which is the one document the new session is started with.
-			if cat -- "$hs_tmpd/out" > "$handoff_file"; then   # the redirect FOLLOWS the symlink
+			hs_publish_args=(publish-handoff "$lane" "$handoff_file" "$hs_tmpd/out" --expect-digest "$hs_prior_digest")
+			if [ "$do_restart" = 1 ]; then
+				hs_publish_args+=(--operation "$operation" --generation "$ri_gen" --attempt 0 --state preparing --transcript none)
+			fi
+			if hs_published="$(LANES_NO_FETCH=1 "$LANES_EDIT" "${hs_publish_args[@]}")"; then
+				handoff_file="$hs_published"
 				handoff_written=1
 				step "handoff refreshed: $handoff_file (+$hs_added lines at the head)"
 			else
@@ -2093,7 +2130,8 @@ if [ "$do_restart" = 1 ]; then
 	# THE FRESH SESSION IS WRITTEN DOWN BEFORE ANYTHING IS KILLED, and that is
 	# the whole of this change. `LANE_START_FRESH=1` in the respawn's command
 	# string was the seam and it was measured NOT ARRIVING: `claude-profile`
-	# re-creates the child through `tmux new-session`, and tmux hands a command
+	# re-created the child through `tmux new-session` in that incident. The current
+	# launcher keeps an existing TMUX pane; an out-of-pane tmux launch hands a command
 	# the SERVER's environment and not the client's — the launcher's own code
 	# says so, which is why it threads six values into the command string
 	# explicitly and why a seventh nobody thought to thread simply vanished.
@@ -2164,6 +2202,8 @@ if [ "$do_restart" = 1 ]; then
 	# and tmux would otherwise hand the pane whatever the SERVER has.
 	launch_line="$(quoted "$SELF_ABS" --supervise --lane "$lane" --operation "$operation")"
 	[ -n "$ws" ] && launch_line="LANES_WORKSTATION=$(quoted "$ws") $launch_line"
+	[ -z "${LANES_LANE_STATE_ROOT:-}" ] || launch_line="LANES_LANE_STATE_ROOT=$(quoted "$LANES_LANE_STATE_ROOT") $launch_line"
+	[ -z "${AGENT_PROTOCOL_ROOT:-}" ] || launch_line="AGENT_PROTOCOL_ROOT=$(quoted "$AGENT_PROTOCOL_ROOT") $launch_line"
 	say "  respawning $target: $launch_line"
 	if tmux respawn-pane -k -t "$target" "$launch_line" 2>/dev/null; then
 		say "  respawned into the supervisor — it launches the fresh session, confirms it came up, and stays in this pane if it did not"

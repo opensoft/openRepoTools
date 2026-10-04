@@ -36,4 +36,13 @@ preparing reservation, then request a new `/ctx`.
 Each starting attempt consumes `new_transcript: none` exactly once. Later writes
 expect the reserved UUID as well as operation, generation and attempt. Stamp
 publication resolves a final-component symlink and atomically replaces its target
-from a same-directory temporary file after proving the source is unchanged.
+from a same-directory temporary file. The helper holds the same writer mutex
+through ownership and prior-digest checks and replacement. All shipped handoff
+publishers use this path; manual edits must follow the staging/publication skill
+contract. Existing records with missing, duplicate or invalid fields refuse
+transitions rather than being silently repaired.
+
+Ordinary first launches use the resolved checkout as a control-root hint only
+only after all established root rungs fail. Explicit configuration, recorded
+directories and PROJECTS_ROOT retain precedence. Each claimed attempt repeats the
+all-holder absence check before starting, including interactive retries.

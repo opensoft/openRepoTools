@@ -2704,7 +2704,10 @@ no child launch from a partially prepared record.
 The first launch reserves `new_transcript` only while it is `none`. Every later
 write expects its exact operation, generation, attempt and transcript. The
 verified Rule 3 stamp is persisted with both `digest` and `prepared_digest`
-before an atomic replacement of the resolved handoff target. Interruption leaves
+before `lanes-edit.sh publish-handoff` checks the expected digest and exact
+attempt under the workspace writer mutex, then atomically replaces the resolved
+handoff target. Both backend refresh and resume stamps use this publisher; manual
+semantic edits are staged in temporary files and use the same command. Interruption leaves
 either complete version valid for retry; unrelated changed prose refuses.
 Historical `ready` intents do not control an ordinary resume.
 
@@ -3176,3 +3179,9 @@ git show <sha>:lanes/LANES.md                    # a lost row, since
 `pre-move/lanes` is an annotated tag on the last commit the orphan branch ever
 took. The same shape applies to `pre-move/handoffs` and
 `pre-move/workspaces`.
+
+The legacy supervisor uses the current profile launcher's existing-TMUX path,
+which keeps the exact operation as a child and forwards its operation/attempt
+tokens. The historical #94 incident above describes the earlier launcher. A
+respawn also forwards configured `LANES_LANE_STATE_ROOT` and
+`AGENT_PROTOCOL_ROOT` with shell quoting so its durable intent remains readable.

@@ -81,7 +81,8 @@ def test_restart_failed_record_needs_launch_facts_before_retry(restart_box):
     assert result.returncode == 0, result.stderr
     assert "state\tINCOMPLETE" in result.stdout
     assert "intended_state\tfailed" in result.stdout
-    assert "missing\tdir pane handoff digest" in result.stdout
+    missing = next(line.split("\t", 1)[1].split() for line in result.stdout.splitlines() if line.startswith("missing\t"))
+    assert {"dir", "pane", "handoff", "digest", "agent", "window", "new_transcript"} <= set(missing)
 
 
 @pytest.mark.parametrize("write_rc", [7, 1])
@@ -590,3 +591,277 @@ exit 127
     assert record["reason"] == "new owner"
     assert "no retry is authorized" in result.stdout
     assert "RESTART FAILED" not in result.stdout
+
+
+@pytest.mark.parametrize("field", ["agent", "window", "new_transcript", "created"])
+def test_restart_truncated_intent_is_never_repaired_by_transition(restart_box, field):
+    box = restart_box
+    prepare_restart(box)
+    path = intent_path(box)
+    path.write_text("\n".join(line for line in path.read_text().splitlines() if not line.startswith(field + ":")) + "\n")
+    before = path.read_bytes()
+    result = helper(box, "restart-intent", LANE)
+    assert "state\tINCOMPLETE" in result.stdout
+    assert field in result.stdout
+    result = helper(box, "set-restart-intent", LANE, "starting", "--expect", "pending")
+    assert result.returncode == 2, result.stderr
+    assert path.read_bytes() == before
+
+
+def test_restart_publication_fences_changed_bytes_and_current_attempt(restart_box):
+    box = restart_box
+    source = prepare_restart(box)
+    before = source.read_bytes()
+    digest = hashlib.sha256(before).hexdigest()
+    prepared = box.root / "prepared.md"
+    _write(prepared, "# owned stamp\n\nPreserved task.\n", 0o600)
+    args = ("publish-handoff", LANE, str(source), str(prepared), "--expect-digest", digest,
+            "--operation", "op-test", "--generation", "7", "--attempt", "0",
+            "--state", "pending", "--transcript", "none")
+    # Changed source and stale intent must independently refuse publication.
+    source.write_text(source.read_text() + "Other writer's instructions.\n")
+    changed = source.read_bytes()
+    result = helper(box, *args)
+    assert result.returncode == 7, result.stderr
+    assert source.read_bytes() == changed
+    source.write_bytes(before)
+    assert helper(box, "set-restart-intent", LANE, "starting", "--attempt", "1").returncode == 0
+    result = helper(box, *args)
+    assert result.returncode == 7, result.stderr
+    assert source.read_bytes() == before
+
+
+def test_plain_handoff_refuses_active_restart_before_preservation(restart_box):
+    box = restart_box
+    source = prepare_restart(box)
+    before = {p: p.read_bytes() for p in (source, box.wip / "lanes" / "LANES.md", intent_path(box))}
+    result = supervisor(box, "--lane", LANE, "--dir", str(box.lane_dir), "handoff")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "preservation refused before" in result.stderr
+    assert all(p.read_bytes() == contents for p, contents in before.items())
+
+
+@pytest.mark.parametrize("field,value", [("operation", "bad operation"), ("dir", "relative"),
+                                         ("digest", "bad-sha"), ("lane", "other-1"),
+                                         ("generation", "1:2"), ("attempt", "1:2")])
+def test_restart_writer_preserves_invalid_existing_values(restart_box, field, value):
+    box = restart_box
+    prepare_restart(box)
+    path = intent_path(box)
+    text = path.read_text()
+    contents = "\n".join(f"{field}: {value}" if line.startswith(f"{field}:") else line
+                         for line in text.splitlines()) + "\n"
+    path.write_text(contents)
+    result = helper(box, "set-restart-intent", LANE, "starting", "--expect", "pending")
+    assert result.returncode == 2, result.stderr
+    assert path.read_text() == contents
+    assert "state\tINCOMPLETE" in helper(box, "restart-intent", LANE).stdout
+
+
+def test_handoff_publishers_serialize_checksum_and_replacement(restart_box):
+    box = restart_box
+    source = prepare_restart(box)
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    ready, release = box.root / "publisher.locked", box.root / "publisher.release"
+    first, second = box.root / "first.md", box.root / "second.md"
+    first.write_text("First publisher.\n")
+    second.write_text("Second publisher.\n")
+    cp = shutil.which("cp")
+    _write(box.fakebin / "cp", f"""#!/usr/bin/env bash
+case "$*" in
+  *.resume.*)
+    : > '{ready}'
+    while [ ! -e '{release}' ]; do sleep .05; done ;;
+esac
+exec '{cp}' "$@"
+""")
+    def command(prepared):
+        return [str(box.bin / "lanes-edit.sh"), "publish-handoff", LANE, str(source),
+                str(prepared), "--expect-digest", digest, "--operation", "op-test",
+                "--generation", "7", "--attempt", "0", "--state", "pending",
+                "--transcript", "none"]
+    a = subprocess.Popen(command(first), cwd=box.lane_dir, env=box.env,
+                         text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    b = None
+    try:
+        deadline = time.monotonic() + 15
+        while not ready.exists() and a.poll() is None and time.monotonic() < deadline:
+            time.sleep(.05)
+        assert ready.exists(), a.communicate(timeout=5)
+        b = subprocess.Popen(command(second), cwd=box.lane_dir, env=box.env,
+                             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        release.touch()
+        out_a = a.communicate(timeout=20)
+        out_b = b.communicate(timeout=20)
+        assert a.returncode == 0, out_a
+        assert b.returncode == 7, out_b
+        assert source.read_text() == "First publisher.\n"
+    finally:
+        release.touch()
+        for process in (a, b):
+            if process is not None and process.poll() is None:
+                process.terminate()
+                process.communicate(timeout=10)
+
+
+def test_new_lane_checkout_without_projects_root_can_launch(restart_box):
+    box = restart_box
+    box.env.pop("LANES_LANE_STATE_ROOT")
+    box.env["PROJECTS_ROOT"] = str(box.root / "missing-projects")
+    box.resolver()
+    result = box.start("--dir", str(box.lane_dir))
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert box.claude_runs()
+
+
+def test_new_lane_checkout_hint_still_refuses_unreadable_intent(restart_box):
+    box = restart_box
+    box.env.pop("LANES_LANE_STATE_ROOT")
+    box.env["PROJECTS_ROOT"] = str(box.root / "missing-projects")
+    (box.lane_dir.parent / ".lane-state" / LANE / "restart-intent.yaml").mkdir(parents=True)
+    box.resolver()
+    result = box.start("--dir", str(box.lane_dir))
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert not box.claude_runs()
+
+
+def test_interactive_retry_rechecks_holder_absence_before_launch(restart_box):
+    import pty
+    from conftest import REPO
+    box = restart_box
+    prepare_restart(box)
+    shutil.copy2(REPO / "lane-handoff", box.bin / "lane-handoff")
+    real = box.bin / "lanes-edit-real.sh"
+    (box.bin / "lanes-edit.sh").rename(real)
+    _write(box.bin / "lanes-edit.sh", f"""#!/usr/bin/env bash
+if [ "$1" = lane-holders ] && command grep -q '^attempt: 2$' '{intent_path(box)}'; then
+  printf 'another holder\n'
+  exit 0
+fi
+exec "$(dirname -- "$0")/lanes-edit-real.sh" "$@"
+""")
+    launches = box.root / "launches"
+    child = _write(box.fakebin / "pclaude", f"""#!/usr/bin/env bash
+printf 'launch\n' >> '{launches}'
+exit 127
+""")
+    box.env.update(PCLAUDE=str(child))
+    box.env.pop("LANE_SUPERVISOR_NO_PROMPT", None)
+    master, slave = pty.openpty()
+    output_path = box.root / "interactive.out"
+    with output_path.open("w") as output:
+        proc = subprocess.Popen([str(box.bin / "lane-handoff"), "--supervise", "--lane", LANE,
+                                 "--operation", "op-test"], cwd=box.lane_dir, env=box.env,
+                                stdin=slave, stdout=output, stderr=output, start_new_session=True)
+        os.close(slave)
+        try:
+            deadline = time.monotonic() + 15
+            while "retry this restart?" not in output_path.read_text() and proc.poll() is None and time.monotonic() < deadline:
+                time.sleep(.05)
+            assert "retry this restart?" in output_path.read_text(), output_path.read_text()
+            os.write(master, b"r\n")
+            assert proc.wait(timeout=15) == 4, output_path.read_text()
+            assert launches.read_text().splitlines() == ["launch"]
+            record = dict(line.split("\t", 1) for line in helper(box, "restart-intent", LANE).stdout.splitlines())
+            assert record["state"] == "starting" and record["attempt"] == "2"
+            assert "before attempt launch" in record["reason"]
+        finally:
+            os.close(master)
+            try: os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError: pass
+            if proc.poll() is None: proc.wait(timeout=10)
+
+
+def test_checkout_hint_cannot_hide_existing_fallback_intent(restart_box):
+    box = restart_box
+    box.env.pop("LANES_LANE_STATE_ROOT")
+    fallback = box.root / "established-projects"
+    fallback.mkdir()
+    box.env["PROJECTS_ROOT"] = str(fallback)
+    source = box.wip / "handoffs" / "README.md"
+    result = helper(box, "set-restart-intent", LANE, "pending", "--expect", "none",
+                    "--operation", "established", "--agent", "claude", "--handoff", str(source))
+    assert result.returncode == 0, result.stderr
+    path = fallback / ".lane-state" / LANE / "restart-intent.yaml"
+    before = path.read_bytes()
+    box.resolver()
+    result = box.start("--dir", str(box.lane_dir))
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "supervisor operation token" in result.stderr
+    assert not box.claude_runs()
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("holder_rc", [0, 1])
+def test_signal_after_launcher_exit_keeps_live_or_unknown_holder_indeterminate(restart_box, holder_rc):
+    from conftest import REPO
+    box = restart_box
+    prepare_restart(box)
+    shutil.copy2(REPO / "lane-handoff", box.bin / "lane-handoff")
+    exited, probed, release = (box.root / name for name in ("child.exited", "holder.probed", "holder.release"))
+    real = box.bin / "lanes-edit-real.sh"
+    (box.bin / "lanes-edit.sh").rename(real)
+    _write(box.bin / "lanes-edit.sh", f"""#!/usr/bin/env bash
+if [ "$1" = lane-holders ] && [ -e '{exited}' ]; then
+  : > '{probed}'
+  while [ ! -e '{release}' ]; do sleep .05; done
+  exit {holder_rc}
+fi
+exec "$(dirname -- "$0")/lanes-edit-real.sh" "$@"
+""")
+    child = _write(box.fakebin / "pclaude", f"""#!/usr/bin/env bash
+: > '{exited}'
+exit 127
+""")
+    box.env.update(PCLAUDE=str(child), LANE_SUPERVISOR_NO_PROMPT="1")
+    output_path = box.root / "ended-child-signal.out"
+    with output_path.open("w") as output:
+        proc = subprocess.Popen([str(box.bin / "lane-handoff"), "--supervise", "--lane", LANE,
+                                 "--operation", "op-test"], cwd=box.lane_dir, env=box.env,
+                                stdout=output, stderr=output, start_new_session=True)
+        try:
+            deadline = time.monotonic() + 15
+            while not probed.exists() and proc.poll() is None and time.monotonic() < deadline:
+                time.sleep(.05)
+            assert probed.exists(), output_path.read_text()
+            proc.send_signal(signal.SIGTERM)
+            release.touch()
+            assert proc.wait(timeout=15) == 143, output_path.read_text()
+            record = dict(line.split("\t", 1) for line in helper(box, "restart-intent", LANE).stdout.splitlines())
+            assert record["state"] == "starting"
+            assert "INDETERMINATE" in record["reason"]
+        finally:
+            release.touch()
+            try: os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError: pass
+            if proc.poll() is None: proc.wait(timeout=10)
+
+
+def test_respawn_restores_configured_roots_in_new_pane(restart_box):
+    box = restart_box
+    protocol = box.root / "protocol with spaces"
+    (box.home / ".agents").rename(protocol)
+    box.env["AGENT_PROTOCOL_ROOT"] = str(protocol)
+    box.env["LANES_LANE_STATE_ROOT"] = str(box.root / "state with spaces")
+    prepare_restart(box)
+    assert helper(box, "set-restart-intent", LANE, "ready", "--expect", "pending").returncode == 0
+    real_tmux = box.fakebin / "tmux-real"
+    (box.fakebin / "tmux").rename(real_tmux)
+    pane_result = box.root / "pane-result"
+    _write(box.fakebin / "tmux", f"""#!/usr/bin/env bash
+if [ "$1" = respawn-pane ]; then
+  for arg in "$@"; do line="$arg"; done
+  env -u LANES_LANE_STATE_ROOT -u AGENT_PROTOCOL_ROOT sh -c "$line"
+  printf '%s\n' "$?" > '{pane_result}'
+  exit 0
+fi
+exec '{real_tmux}' "$@"
+""")
+    child = _write(box.fakebin / "pclaude", "#!/usr/bin/env bash\nexit 127\n")
+    box.env.update(PCLAUDE=str(child), LANE_SUPERVISOR_NO_PROMPT="1", TMUX_PANE="%1")
+    result = supervisor(box, "--restart", "--lane", LANE, "--dir", str(box.lane_dir), "clear")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert pane_result.read_text().strip() == "3", (result.stdout, result.stderr)
+    record = dict(line.split("\t", 1) for line in helper(box, "restart-intent", LANE).stdout.splitlines())
+    assert record["state"] == "failed" and record["attempt"] == "1"
+    assert "127" in record["reason"]

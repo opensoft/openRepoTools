@@ -201,6 +201,20 @@ Only the second branch leaves anything blank, and it leaves it blank because not
 
 ## 2. Refresh the handoff
 
+Canonical handoff publication is serialized by `lanes-edit.sh publish-handoff`.
+Read the current file's SHA-256, write semantic updates to a temporary file, then
+publish that complete prepared file with:
+
+```sh
+"$L" publish-handoff "$lane" "$handoff_file" "$prepared_file" --expect-digest "$prior_sha256"
+```
+
+The helper checks the expected bytes and atomically replaces the resolved target
+while holding the workspace writer mutex. It refuses an active restart owned by
+another operation. Do not edit or redirect into the canonical handoff directly;
+perform the existing explicit-pathspec commit/push after successful publication.
+
+
 The handoff path is the row's own handoff column. Derive it; do not guess it — and read the row FETCHED,
 because this decides state (Amendment 7's read-after-fetch rule governs it; step 1's window/record probe is
 the only no-fetch read this skill makes):

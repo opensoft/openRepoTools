@@ -1065,6 +1065,7 @@ rename_undo() {
 }
 
 cleanup() {
+  [ -z "${pbh_tmp:-}" ] || rm -f -- "$pbh_tmp"
   rename_undo
   if [ "$LOCK_HELD" = 1 ]; then release_lock; fi
   [ -n "${RL_SNAP:-}" ] && [ -d "${RL_SNAP:-}" ] && rm -rf -- "$RL_SNAP"
@@ -10544,6 +10545,15 @@ lane_control_root() {   # <lane> [<a payload that may carry `dir`>]
     printf '%s/.lane-state/%s\n' "${PROJECTS_ROOT%/}" "$lcr_lane"
     return 0
   fi
+  # A checkout hint is a last resort, so reads cannot hide an intent that
+  # writers/status already placed under the established root rungs.
+  case "${3-}" in
+    /*) lcr_par="${3%/*}"
+        if [ -n "$lcr_par" ] && [ -d "$lcr_par" ]; then
+          printf '%s/.lane-state/%s\n' "$lcr_par" "$lcr_lane"
+          return 0
+        fi ;;
+  esac
   return 8
 }
 
@@ -10628,9 +10638,32 @@ lane_handoff_digest() {   # <file>
 # parses with one `awk`. 0 with the fields, 8 where the lane has no intent at
 # all (the ordinary lane, and not a failure), 1 where the control root could
 # not be derived.
-lane_restart_read() {   # <lane>
+# All schema-1 keys are mandatory; prepared_digest is an optional extension.
+# One read validates presence and duplicate keys without per-field subprocesses.
+lane_restart_missing() {   # <file> <canonical lane>
+  awk -v lane="$2" '
+    BEGIN {n=split("schema lane state generation operation mode agent profile dir pane window handoff digest old_transcript new_transcript attempt workstation created updated reason", keys, " ")}
+    /^[A-Za-z_]+:/ {k=$0; sub(/:.*/, "", k); v=$0; sub(/^[^:]*:[[:space:]]*/, "", v); seen[k]++; values[k]=v; if (v!="") good[k]=1}
+    END {
+      for (i=1;i<=n;i++) if (seen[keys[i]]!=1 || !good[keys[i]]) bad[keys[i]]=1
+      if (values["lane"]!=lane) bad["lane"]=1
+      if (values["generation"] !~ /^[0-9]+$/) bad["generation"]=1
+      if (values["attempt"] !~ /^[0-9]+$/) bad["attempt"]=1
+      n=split("operation mode agent profile old_transcript new_transcript", keys, " ")
+      for (i=1;i<=n;i++) if (values[keys[i]] !~ /^[A-Za-z0-9._-]+$/) bad[keys[i]]=1
+      n=split("dir handoff", keys, " ")
+      for (i=1;i<=n;i++) if (values[keys[i]]!="none" && values[keys[i]] !~ /^\//) bad[keys[i]]=1
+      n=split("digest prepared_digest", keys, " ")
+      for (i=1;i<=n;i++) if ((seen[keys[i]] && seen[keys[i]]!=1) ||
+          (seen[keys[i]] && values[keys[i]]!="none" && (length(values[keys[i]])!=64 || values[keys[i]] !~ /^[0-9a-fA-F]+$/))) bad[keys[i]]=1
+      for (k in bad) {printf "%s%s", sep, k; sep=" "}
+    }
+  ' "$1"
+}
+
+lane_restart_read() {   # <lane> [<resolved checkout hint>]
   lrr_lane="${1-}"; lrr_root=""; lrr_rc=0
-  lrr_root="$(lane_control_root "$lrr_lane")" || lrr_rc=$?
+  lrr_root="$(lane_control_root "$lrr_lane" "" "${2-}")" || lrr_rc=$?
   [ "$lrr_rc" = 0 ] || return 1
   lrr_f="$lrr_root/restart-intent.yaml"
   [ -e "$lrr_f" ] || [ -L "$lrr_f" ] || return 8
@@ -10667,21 +10700,11 @@ lane_restart_read() {   # <lane>
     printf 'state\tUNKNOWN-STATE\nfile\t%s\n' "$lrr_f"
     return 0
   fi
-  case "$lrr_state" in
-    preparing | pending | starting | failed)
-      lrr_missing=""
-      for lrr_need in operation mode dir pane handoff digest; do
-        [ -n "$(lane_sidecar_field "$lrr_f" "$lrr_need")" ] ||
-          lrr_missing="${lrr_missing:+$lrr_missing }$lrr_need"
-      done
-      if [ -n "$lrr_missing" ]; then
-        printf 'state\tINCOMPLETE\n'
-        printf 'intended_state\t%s\n' "$lrr_state"
-        printf 'missing\t%s\n' "$lrr_missing"
-        printf 'file\t%s\n' "$lrr_f"
-        return 0
-      fi ;;
-  esac
+  lrr_missing="$(lane_restart_missing "$lrr_f" "$lrr_lane")" || return 1
+  if [ -n "$lrr_missing" ]; then
+    printf 'state\tINCOMPLETE\nintended_state\t%s\nmissing\t%s\nfile\t%s\n' "$lrr_state" "$lrr_missing" "$lrr_f"
+    return 0
+  fi
   for lrr_num in generation attempt; do
     lrr_value="$(lane_sidecar_field "$lrr_f" "$lrr_num")" || return 1
     case "$lrr_value" in ''|*[!0-9]*)
@@ -14039,19 +14062,76 @@ EOF
   #  64   a usage error of this subcommand's own
 
   restart-intent)
-    lane="${1-}"; [ -n "$lane" ] || die "usage: restart-intent <lane>" 64
-    [ "$#" -le 1 ] || die "restart-intent takes one lane: restart-intent <lane>" 64
+    lane="${1-}"; [ -n "$lane" ] || die "usage: restart-intent <lane> [--dir <absolute checkout>]" 64
+    shift; lri_dir=""
+    if [ "$#" -gt 0 ]; then
+      [ "$#" = 2 ] && [ "$1" = --dir ] || die "usage: restart-intent <lane> [--dir <absolute checkout>]" 64
+      case "$2" in /*) lri_dir="$2" ;; *) die "--dir takes an absolute checkout" 64 ;; esac
+    fi
     check_lane_name "$lane"
     log_sync
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
     lri_out=""; lri_rc=0
-    lri_out="$(lane_restart_read "$lane")" || lri_rc=$?
+    lri_out="$(lane_restart_read "$lane" "$lri_dir")" || lri_rc=$?
     case "$lri_rc" in
       0) : ;;
       8) exit 8 ;;
       *) die "lane $lane has no lifecycle control root, so it can carry no restart intent: its record names no directory (Amendment 11(c)) and \$PROJECTS_ROOT is not a directory here. That is NOT 'this lane has no restart in flight' — a read that could not be made is never an answer (Amendment 7(d))." 1 ;;
     esac
     printf '%s\n' "$lri_out"
+    ;;
+
+  publish-handoff)
+    lane="${1-}"; pbh_target="${2-}"; pbh_source="${3-}"
+    [ "$#" -ge 3 ] || die "usage: publish-handoff <lane> <target> <prepared-file> --expect-digest <sha> [--operation <id> --generation <n> --attempt <n> --state <state> --transcript <id>]" 64
+    shift 3; check_lane_name "$lane"; lane="$(canon_lane "$lane")" || exit 2
+    pbh_digest=""; pbh_op=""; pbh_gen=""; pbh_attempt=""; pbh_state=""; pbh_sid=""
+    while [ "$#" -gt 0 ]; do
+      [ "$#" -ge 2 ] && [ -n "${2-}" ] || die "$1 needs a value" 64
+      case "$1" in
+        --expect-digest) pbh_digest="$2" ;;
+        --operation) pbh_op="$2" ;;
+        --generation) pbh_gen="$2" ;;
+        --attempt) pbh_attempt="$2" ;;
+        --state) pbh_state="$2" ;;
+        --transcript) pbh_sid="$2" ;;
+        *) die "unknown publish-handoff flag $1" 64 ;;
+      esac
+      shift 2
+    done
+    [ "${#pbh_digest}" = 64 ] || die "publication requires the complete prior SHA-256" 64
+    case "$pbh_digest" in *[!0-9a-fA-F]*) die "publication requires SHA-256" 64 ;; esac
+    [ -f "$pbh_source" ] && [ -r "$pbh_source" ] && [ -s "$pbh_source" ] || die "the prepared handoff is unreadable or empty" 1
+    pbh_links=0
+    while [ -L "$pbh_target" ]; do
+      pbh_links=$((pbh_links+1)); [ "$pbh_links" -lt 40 ] || die "the handoff link chain cannot be resolved" 2
+      pbh_link="$(readlink "$pbh_target")" || die "the handoff link could not be read" 1
+      case "$pbh_link" in /*) pbh_target="$pbh_link" ;; *) pbh_target="$(dirname -- "$pbh_target")/$pbh_link" ;; esac
+    done
+    pbh_parent="$( CDPATH=''; cd -P -- "$(dirname -- "$pbh_target")" && pwd -P )" || die "the handoff parent is missing" 1
+    pbh_target="$pbh_parent/$(basename -- "$pbh_target")"
+    [ -f "$pbh_target" ] && [ -r "$pbh_target" ] || die "the handoff target is unreadable" 1
+    acquire_lock
+    pbh_irc=0; pbh_intent="$(lane_restart_read "$lane")" || pbh_irc=$?
+    case "$pbh_irc" in 0|8) : ;; *) release_lock; die "restart ownership could not be read; no handoff was published" 1 ;; esac
+    pbh_current="$(printf '%s\n' "$pbh_intent" | awk -F'\t' '$1=="state" {print $2; exit}')"
+    case "$pbh_current" in UNKNOWN-*|INCOMPLETE) release_lock; die "restart ownership is malformed; no handoff was published" 2 ;; esac
+    if [ -n "$pbh_op" ]; then
+      [ -n "$pbh_gen" ] && [ -n "$pbh_attempt" ] && [ -n "$pbh_state" ] && [ -n "$pbh_sid" ] || { release_lock; die "operation publication needs generation, attempt, state and transcript fences" 64; }
+      pbh_actual="$(printf '%s\n' "$pbh_intent" | awk -F'\t' '
+        $1=="operation" {o=$2} $1=="generation" {g=$2} $1=="attempt" {a=$2} $1=="state" {s=$2} $1=="new_transcript" {t=$2}
+        END {printf "%s|%s|%s|%s|%s",o,g,a,s,t}')"
+      [ "$pbh_actual" = "$pbh_op|$pbh_gen|$pbh_attempt|$pbh_state|$pbh_sid" ] || { release_lock; die "this handoff publisher lost restart ownership; nothing was published" 7; }
+    else
+      case "$pbh_current" in preparing|pending|starting) release_lock; die "an active restart owns this handoff; nothing was published" 7 ;; esac
+    fi
+    [ "$(lane_handoff_digest "$pbh_target")" = "$pbh_digest" ] || { release_lock; die "the handoff changed before publication; nothing was published" 7; }
+    pbh_tmp="$(mktemp "$pbh_target.resume.XXXXXX")" || { release_lock; die "the publication temporary file could not be made" 1; }
+    if ! cp -p -- "$pbh_target" "$pbh_tmp" || ! cat -- "$pbh_source" > "$pbh_tmp" || ! mv -f -- "$pbh_tmp" "$pbh_target"; then
+      rm -f -- "$pbh_tmp"; release_lock; die "the handoff could not be published atomically" 1
+    fi
+    release_lock
+    printf '%s\n' "$pbh_target"
     ;;
 
   legacy-restart-check)
@@ -14212,6 +14292,8 @@ EOF
         release_lock
         die "lane $lane has an existing unreadable restart intent. Nothing was written: a failed read is not an absent operation." 1
       fi
+      sri_missing="$(lane_restart_missing "$sri_f" "$lane")" || { release_lock; die "the restart record could not be read. Nothing was written." 1; }
+      [ -z "$sri_missing" ] || { release_lock; die "the existing restart record is malformed (missing, duplicate or invalid fields: $sri_missing). Nothing was written." 2; }
       sri_nows="$(lane_sidecar_field "$sri_f" schema)" || { release_lock; die "the restart schema could not be read. Nothing was written." 1; }
       if [ "$sri_nows" != "$LANE_RESTART_SCHEMA" ]; then
         release_lock
@@ -14360,6 +14442,6 @@ EOF
     ;;
 
   *)
-    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|lane-holders|legacy-restart-check|restart-intent|set-restart-intent)" 2
+    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|lane-holders|legacy-restart-check|publish-handoff|restart-intent|set-restart-intent)" 2
     ;;
 esac

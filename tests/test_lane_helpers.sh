@@ -13583,7 +13583,7 @@ is   "…and a launch of that lane refuses" "$rc" 2
 has  "…saying which checks an absent value would have skipped" "$err" "cannot compare"
 hasnt "…resolving no resume source" "$out" "--resume"
 # PUT IT BACK for the supervisor cases below, which need this lane `starting`.
-"$E" set-restart-intent repoSV-1 starting --expect starting --digest none >/dev/null 2>&1 || :
+printf 'digest: none\n' >> "$SV_STATE/repoSV-1/restart-intent.yaml"
 run "$E" restart-intent repoSV-1
 has  "…and the record is whole again" "$out" "$(printf 'state\tstarting')"
 
@@ -13608,6 +13608,10 @@ has  "…naming the seam that gives it one" "$err" "LANES_LANE_STATE_ROOT"
 # transcript that `/ctx` PAUSED. openRepoTools#94, recreated by the command
 # written to prevent it.
 : > "$FAKE_CLAUDE_LOG"
+# The resolved checkout now supplies a root for a new lane. An existing
+# nonregular intent at that root must still refuse as an unreadable record.
+SV_UNREADABLE="${SV_DIR%/*}/.lane-state/repoSV-4/restart-intent.yaml"
+mkdir -p "$SV_UNREADABLE"
 run env PATH="$A17PATH" FAKE_TMUX_WINDOW="svsess:@31" CLAUDE_PROFILE_NAME=team-05a \
     LANES_LANE_STATE_ROOT= PROJECTS_ROOT=/nonexistent-projects-root \
     "$START" --dir "$SV_DIR" repoSV-4 --no-launch
@@ -13616,6 +13620,7 @@ has  "…saying that is NOT 'no restart is in flight'" "$err" "NOT 'no restart i
 has  "…naming what an ordinary resume would have opened" "$err" "the transcript that /ctx PAUSED"
 has  "…and how to give this run the root" "$err" "LANES_LANE_STATE_ROOT"
 hasnt "…resolving no resume source" "$out" "--resume"
+rmdir "$SV_UNREADABLE"
 
 # A NEW OPERATION INHERITS NOTHING OF THE LAST ONE'S.
 #

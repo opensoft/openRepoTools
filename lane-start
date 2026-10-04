@@ -1445,7 +1445,7 @@ step "  its record refs are $record_window"
 # Active restarts refuse unowned callers before any binding repair or rename.
 # Detailed prompt and launch-fact validation follows before transcript writes.
 eri_rc=0
-eri_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$LANE" 2>/dev/null)" || eri_rc=$?
+eri_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$LANE" --dir "$DIR" 2>/dev/null)" || eri_rc=$?
 case "$eri_rc" in
   0)
     eri_state="$(printf '%s\n' "$eri_out" | awk -F'\t' '$1=="state" {print $2; exit}')"
@@ -2874,7 +2874,7 @@ hs_resolve() {
 
 first_prompt=0
 ri_state=""; ri_op=""; ri_gen=""; ri_mode=""; ri_dir=""; ri_hf=""; ri_dig=""; ri_rc=0; ri_expected_digest=""; ri_prompt=""; ri_active=0; ri_attempt=""; ri_prepared=""; ri_agent=""; ri_profile=""
-ri_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$LANE" 2>/dev/null)" || ri_rc=$?
+ri_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$LANE" --dir "$DIR" 2>/dev/null)" || ri_rc=$?
 case "$ri_rc" in
   0)
     ri_state="$(printf '%s\n' "$ri_out" | awk -F'\t' '$1 == "state" { print $2; exit }')"
@@ -4003,12 +4003,13 @@ if [ "$lane_verb" = RESUMED ] && [ "$row_count" = 1 ] && (( stamp_ok )); then
             fi
             ri_expected_digest="$ri_post_digest"
           fi
-          hs_publish="$(mktemp "$hs_real.resume.XXXXXX")" || die "the handoff publication could not be prepared. Nothing was launched." 2
-          if ! cp -p -- "$hs_real" "$hs_publish" || ! cat -- "$hs_out" > "$hs_publish" ||
-             ! cmp -s -- "$hs_real" "$hs_pre" || ! mv -f -- "$hs_publish" "$hs_real"; then
-            rm -f -- "$hs_publish"
+          hs_publish_args=(publish-handoff "$LANE" "$hs_real" "$hs_out" --expect-digest "$(handoff_digest_of "$hs_pre")")
+          if [ "$ri_active" = 1 ]; then
+            hs_publish_args+=(--operation "$ri_op" --generation "$ri_gen" --attempt "$ri_attempt" --state starting --transcript "$lane_sid")
+          fi
+          if ! LANES_NO_FETCH=1 "$LANES_EDIT" "${hs_publish_args[@]}" >/dev/null; then
             rm -rf -- "$hs_tmpd"
-            die "the handoff stamp could not be published atomically. Nothing was launched." 2
+            die "the handoff stamp could not be published atomically under its writer lock. Nothing was launched." 2
           fi
           step "handoff stamped at line $((hs_at + 1)) of $hs_rel: $hs_stamp"
           if [ "${LANES_NO_GIT:-0}" = 1 ]; then

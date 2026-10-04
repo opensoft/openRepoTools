@@ -14,6 +14,6 @@
 - [x] T012 Update command, skill, manual and capability contracts to the final scope.
 - [ ] T013 Run focused sandboxed restart fault cases and touched shell suite.
 - [x] T014 Complete expert follow-up review and address verified findings.
-- [ ] T015 Commit/push PR updates and request exact-head Codex review.
+- [x] T015 Commit/push PR updates and request exact-head Codex review (bot quota exhausted; follow-up updates retain the hold).
 - [ ] T016 Verify current-head per-push CI; record review quota limitations if present.
 - [ ] T017 After hold release/merge authorization, run macOS landing gate and merge.
