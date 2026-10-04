@@ -121,7 +121,7 @@ apart from 1 because a launcher reports 1 as "no Claude Code".
 | `CLAUDE_CURRENT_VERSION_TIMEOUT` | `10` | seconds for each `--version` |
 | `CLAUDE_CURRENT_UPDATE_TIMEOUT` | `300` | seconds for each update command |
 | `CLAUDE_CURRENT_LOCK_WAIT` | `330` | seconds to wait for another launch's update |
-| `CLAUDE_CURRENT_CACHE_DIR` | `${XDG_CACHE_HOME:-~/.cache}/openrepotools` | where the lock lives |
+| `CLAUDE_CURRENT_CACHE_DIR` | `${XDG_CACHE_HOME:-~/.cache}/openrepotools` | where the lock lives; relative overrides or `XDG_CACHE_HOME` paths are taken under `$HOME` |
 | `CLAUDE_CURRENT_NPM_PREFIX` | see candidate 2 | the user npm prefix, the one place an update writes |
 | `CLAUDE_CURRENT_NATIVE_DIR` | `~/.local/share/claude/versions` | the native versions directory |
 | `CLAUDE_CURRENT_SYSTEM_CANDIDATES` | `/usr/local/bin/claude:/usr/bin/claude` | the image's copies |

@@ -760,6 +760,49 @@ def test_no_npm_at_all_is_unverified_not_a_crash(box):
 
 # --- the user prefix ----------------------------------------------------------
 
+@pytest.mark.parametrize("setting", ["CLAUDE_CURRENT_CACHE_DIR", "XDG_CACHE_HOME"])
+def test_relative_cache_shares_the_update_lock_across_checkouts(box, setting):
+    """Two checkouts sharing one install must not get independent cwd locks."""
+    box.user_copy("2.1.283")
+    first_cwd = box.root / "repo-a"
+    second_cwd = box.root / "repo-b"
+    first_cwd.mkdir()
+    second_cwd.mkdir()
+    entered = box.root / "updating"
+    release = box.root / "release"
+    overrides = {"CLAUDE_CURRENT_CACHE_DIR": "", setting: "relative-cache"}
+    cache = box.home / "relative-cache"
+    if setting == "XDG_CACHE_HOME":
+        cache /= "openrepotools"
+    holder_env = box.env(**overrides, FAKE_NPM_INSTALL_HOOK=(
+        'touch "$HOME/../updating"; '
+        'while [ ! -e "$HOME/../release" ]; do sleep 0.05; done'))
+    holder = subprocess.Popen([str(CMD), "--porcelain"], cwd=first_cwd,
+                              env=holder_env, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.monotonic() + 15
+        while not entered.exists():
+            assert holder.poll() is None, "first launch exited before updating"
+            assert time.monotonic() < deadline, "first launch never began updating"
+            time.sleep(0.02)
+        result = subprocess.run([str(CMD), "--porcelain"], cwd=second_cwd,
+                                env=box.env(**overrides, CLAUDE_CURRENT_LOCK_WAIT="1"),
+                                capture_output=True, text=True, timeout=30)
+        assert result.returncode == 2, result.stderr
+        assert "was not free within 1s" in result.stderr
+        assert (cache / "claude-current.lock.l").is_symlink()
+        assert len(box.installs()) == 1, "second checkout started a competing install"
+        assert not (first_cwd / "relative-cache").exists()
+        assert not (second_cwd / "relative-cache").exists()
+    finally:
+        release.touch()
+        stdout, stderr = holder.communicate(timeout=30)
+    assert holder.returncode == 0, stderr
+    assert porcelain(subprocess.CompletedProcess([], 0, stdout, stderr))["status"] == "verified"
+    assert len(box.installs()) == 1
+
+
 def test_the_user_prefix_falls_back_to_npm_config_prefix_then_to_npm_global(box):
     elsewhere = box.root / "configured-prefix"
     env = {"CLAUDE_CURRENT_NPM_PREFIX": ""}

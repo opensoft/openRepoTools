@@ -80,6 +80,7 @@
 #                                    (default 330)
 #   CLAUDE_CURRENT_CACHE_DIR         where the lock lives (default
 #                                    ${XDG_CACHE_HOME:-~/.cache}/openrepotools)
+#                                    Relative paths are taken under $HOME.
 #   CLAUDE_CURRENT_NPM_PREFIX        the user npm prefix, see step 2
 #   CLAUDE_CURRENT_NATIVE_DIR        the native versions directory, see step 2
 #   CLAUDE_CURRENT_SYSTEM_CANDIDATES colon-separated image paths, see step 2.
@@ -164,6 +165,12 @@ for setting in TIMEOUT VERSION_TIMEOUT UPDATE_TIMEOUT LOCK_WAIT; do
 done
 NATIVE_DIR="${CLAUDE_CURRENT_NATIVE_DIR:-$HOME/.local/share/claude/versions}"
 CACHE_DIR="${CLAUDE_CURRENT_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/openrepotools}"
+# Every checkout updating this user's install must take the same lock, even
+# when the override (or XDG_CACHE_HOME) is relative and their cwd differs.
+case "$CACHE_DIR" in
+	/*) : ;;
+	*) CACHE_DIR="$HOME/$CACHE_DIR" ;;
+esac
 LOCK="$CACHE_DIR/claude-current.lock.l"
 
 # A version is x.y.z, optionally with a pre-release or build tail.
