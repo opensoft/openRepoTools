@@ -850,10 +850,16 @@ seam_refuse() {   # <lane> <the act>
   *) die "whether the managed ledger owns lane $1 is UNKNOWN (\`$LANES_EDIT managed-projection $1\` exited $sr_rc): its register row carries managed-owner vocabulary that does not parse, or the read failed. An ownership nobody could establish is never read as legacy (Amendment 7(d)), so $2 is refused here, once the lane is named and before a byte is written: no state cell, no ENDED or RETIRED line, no handoff fragment, and no process signalled. Read it: $LANES_EDIT managed-projection $1" 1 ;;
   esac
 }
-# ONCE THE NAME IS CANONICAL and before every act this command has — the
-# ending, `--retire`, and `--retire <pid>` — so none of them touches a managed
-# lane. (`--retire-dormant` is above and is refused by `retire-rows` itself.)
-seam_refuse "$LANE" "a lane end"
+# CALLED TWICE BELOW, each time before the first thing its path does: at the
+# head of the `--retire <pid>` door, which signals processes, and right after
+# "the row"'s own refusals on the ending path (the ending and `--retire`),
+# before the state cell and the ENDED/RETIRED line. NOT HERE, ONCE: "the row"
+# refuses a register that spells this lane two ways (Amendment 15(d)) out of its
+# OWN read, so that the words a person needs arrive even through a helper that
+# predates `canon-lane` — and such a helper predates `managed-projection` too,
+# which this function rightly calls UNKNOWN. Both are refusals that write
+# nothing; the pair's comes first so that it is still the one said.
+# (`--retire-dormant` is above and is refused by `retire-rows` itself.)
 
 # `--home` IS VALIDATED BEFORE ANYTHING IS WRITTEN. It is for a PRE-CUTOVER
 # lane, and `lanes-edit.sh` refuses it once the lane's own log records a home —
@@ -940,6 +946,8 @@ fi
 if [ -n "$retire_target" ]; then
   [ "$force" = 0 ] || die "--force is for ending a lane that still holds something; it has no meaning for retiring a fork. Run: $prog $LANE --retire $retire_target" 2
   [ -z "$state_was" ] || die "--state-was is for the state cell of a lane being ended; retiring a fork touches no cell. Run: $prog $LANE --retire $retire_target" 2
+  # THE SEAM, before any process is looked for or signalled (ruling 2026-10-04).
+  seam_refuse "$LANE" "retiring a fork or a duplicate holder"
 
   # THE FORK IS PROVED BEFORE ANYTHING IS PRINTED, and a read that FAILED is
   # never "it is not a fork": `forks` answers 0 with rows, 8 with none and 1
@@ -1554,6 +1562,10 @@ case "$row_count" in
      fi
      die "the register has $row_count rows for lane $LANE, $rfl_why" 2 ;;
 esac
+
+# THE SEAM, after the row's own refusals and before the state cell, the in-flight
+# guard and every write (ruling 2026-10-04; see `seam_refuse` above).
+seam_refuse "$LANE" "a lane end"
 
 # The state cell is the row's SEVENTH column — awk field 8, because $1 is the
 # empty string before the leading pipe — and it runs to the trailing pipe, so a

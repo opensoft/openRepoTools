@@ -14093,6 +14093,12 @@ MG_CASE
   run "$END" "$mg_l"
   mg_refused "$mg_l: lane-end" "$mg_x" "$mg_o" "$mg_b"
   mg_b="$(mg_fp)"
+  run "$END" "$mg_l" --retire
+  mg_refused "$mg_l: lane-end --retire" "$mg_x" "$mg_o" "$mg_b"
+  mg_b="$(mg_fp)"
+  run "$END" "$mg_l" --retire 999999
+  mg_refused "$mg_l: lane-end --retire <pid>" "$mg_x" "$mg_o" "$mg_b"
+  mg_b="$(mg_fp)"
   run "$E" lane-reconcile "$mg_l"
   is    "$mg_l: lane-reconcile still answers" "$rc" 0
   if [ "$mg_x" = 2 ]; then
