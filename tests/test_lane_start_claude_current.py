@@ -320,23 +320,34 @@ def test_a_resolver_that_names_nothing_runnable_ends_the_run_with_1(box, fake):
     assert box.commits() == before
 
 
-@pytest.mark.parametrize("rc", ["1", "2"])
-@pytest.mark.parametrize("take", [["--request-handoff"], ["--force", "test takeover"]])
-def test_a_resolver_refusal_precedes_a_binding_handoff(box, rc, take):
-    box.resolver()
+def _bound_elsewhere(box):
     real = box.bin / "lanes-edit-real.sh"
     (box.bin / "lanes-edit.sh").rename(real)
     handoffs = box.root / "handoffs.log"
     _write(box.bin / "lanes-edit.sh", '''#!/usr/bin/env bash
 case "$1" in
-  binding) printf 'OtherHost\\tother-container\\t@90\\t2026-10-04T00:00:00Z\\told-session\\tlinux\\telsewhere\\tpresent\\n'; exit 0 ;;
-  request-handoff) printf '%s\\n' "$*" >> "$FAKE_HANDOFF_LOG"; exit 2 ;;
-  *) exec "$FAKE_LANES_EDIT" "$@" ;;
+  binding)
+    [ ! -e "$FAKE_HANDOFF_LOG" ] || exit 8
+    printf 'OtherHost\\tother-container\\t@90\\t2026-10-04T00:00:00Z\\told-session\\tlinux\\telsewhere\\tpresent\\n'; exit 0 ;;
+  request-handoff) printf '%s\\n' "$*" >> "$FAKE_HANDOFF_LOG"; exit "${FAKE_HANDOFF_RC:-2}" ;;
+  lane-agent)
+    if [ -e "$FAKE_HANDOFF_LOG" ] && [ -n "${FAKE_HANDOFF_AGENT:-}" ]; then
+      printf '%s\\n' "$FAKE_HANDOFF_AGENT"; exit 0
+    fi ;;
 esac
+exec "$FAKE_LANES_EDIT" "$@"
 ''')
+    box.env.update(FAKE_LANES_EDIT=str(real), FAKE_HANDOFF_LOG=str(handoffs))
+    return handoffs
+
+
+@pytest.mark.parametrize("rc", ["1", "2"])
+@pytest.mark.parametrize("take", [["--request-handoff"], ["--force", "test takeover"]])
+def test_a_resolver_refusal_precedes_a_binding_handoff(box, rc, take):
+    box.resolver()
+    handoffs = _bound_elsewhere(box)
     before = box.commits()
-    result = box.start(*take, FAKE_CC_RC=rc, FAKE_LANES_EDIT=str(real),
-                       FAKE_HANDOFF_LOG=str(handoffs))
+    result = box.start(*take, FAKE_CC_RC=rc)
     assert result.returncode == int(rc), result.stderr
     assert "claude-current" in result.stderr
     assert box.resolver_calls()
@@ -345,6 +356,29 @@ esac
     assert box.commits() == before
     assert box.lane_log() == ""
     assert box.claude_runs() == ""
+
+
+def test_a_declined_handoff_resolves_and_updates_nothing(box):
+    box.resolver()
+    handoffs = _bound_elsewhere(box)
+    before = box.commits()
+    result = box.start(LANE_START_HANDOFF_ANSWER="n")
+    assert result.returncode == 2, result.stderr
+    assert "ONE binding" in result.stderr
+    assert box.resolver_calls() == ""
+    assert not handoffs.exists()
+    assert "rename-window" not in box.tmux_log.read_text()
+    assert box.commits() == before
+
+
+def test_the_agent_is_read_from_the_completed_handoff(box):
+    box.resolver()
+    _bound_elsewhere(box)
+    _write(box.fakebin / "codex", FAKE_CLAUDE)
+    result = box.start("--request-handoff", FAKE_HANDOFF_RC="0",
+                       FAKE_HANDOFF_AGENT="codex")
+    assert result.returncode == 0, result.stderr
+    assert box.claude_runs().startswith(f"ran {box.fakebin / 'codex'}: ")
 
 
 def test_a_launchers_verified_version_is_trusted_recorded_and_removed(box):

@@ -2091,49 +2091,6 @@ if (( confirm )); then
   fi
 fi
 
-# Choose the agent and resolve Claude before a handoff, rename or transcript move.
-# The last PAUSED agent is read once for this invocation; an explicit flag wins.
-AGENT=""; AGENT_EXPLICIT=0; AGENT_ID=""; RECORDED_AGENT=""; RECORDED_AGENT_READ=0
-read_recorded_agent() {
-  rra_out=""; rra_rc=0
-  rra_out="$("$LANES_EDIT" lane-agent "$LANE" 2>/dev/null)" || rra_rc=$?
-  RECORDED_AGENT_READ=1
-  case "$rra_rc" in
-    0) RECORDED_AGENT="$rra_out" ;;
-    8|2) RECORDED_AGENT="" ;;
-    # A READ THAT FAILED IS NOT "THIS LANE'S RECORD NAMES NO AGENT", and the
-    # helper says so in its own refusal: *"a caller that read it that way would
-    # launch the default agent over a lane another one paused"* (Amendment
-    # 7(d), `lanes-edit.sh`'s `lane-agent` arm). This used to `note` and launch
-    # `claude` anyway — the one act in this whole command that no later refusal
-    # can undo — so it refuses, and names the flag that goes past it, which is
-    # a person naming the agent rather than this command guessing at one.
-    *) die "\`$LANES_EDIT lane-agent $LANE\` failed (exit $rra_rc), so which agent paused this lane is UNKNOWN — and launching the default over a lane another agent paused is what Amendment 7(d) has this read refuse rather than answer. Run it by hand to see what it says, or name the agent: $prog --agent <name> …" 2 ;;
-  esac
-  return 0
-}
-if [ -n "$agent_flag" ]; then
-  AGENT="$agent_flag"; AGENT_EXPLICIT=1
-else
-  read_recorded_agent
-  if [ -n "$RECORDED_AGENT" ]; then AGENT="$RECORDED_AGENT"; fi
-  [ -n "$AGENT" ] || AGENT=claude
-  [ "$AGENT" = claude ] || AGENT_EXPLICIT=1
-fi
-case "$AGENT" in
-  *[!A-Za-z0-9._-]*|'') die "--agent takes a manifest key — letters, digits, '.', '_', '-' — and '$AGENT' is not one (Amendment 17(b))" 2 ;;
-esac
-# THE AGENT THIS LANE IS RUNNING, IN THE ENVIRONMENT OF THE SESSION IT STARTS
-# (Copilot round 2 on openRepoTools#47). `lane-handoff` derives the record's
-# `agent` sub-field from `$LANES_AGENT`, else `claude` — so a `codex` session
-# launched here would write `agent claude` at its own handoff and the next
-# `lane-start` would resume it with the wrong launcher, one record along. The
-# launch decides which agent this is; the launch is therefore what says so.
-export LANES_AGENT="$AGENT"
-if [ "$AGENT" = claude ]; then
-  lane_claude_resolve_launch
-fi
-
 # ------------- 3b(ii). AMENDMENT 18(b): ONE BINDING PER LANE, AND THIS PLACE
 #
 # *"A bound lane is started nowhere else — not a second window on the same host,
@@ -2222,6 +2179,13 @@ if [ "$bind_rc" = 0 ]; then
       which makes that place STOP loudly rather than silently:
       $prog --force \"<why you are taking it>\" $self_args" 2
     fi
+    # Approval precedes any possible update; resolution precedes release.
+    # With no explicit agent the holder's new PAUSED may name Claude, so
+    # preflight that possible launch before asking it to give up the binding.
+    # An explicit other agent never needs a Claude preflight.
+    if [ -z "$agent_flag" ] || [ "$agent_flag" = claude ]; then
+      lane_claude_resolve_launch
+    fi
     ls_rh=("$LANES_EDIT" request-handoff "$LANE")
     [ -z "$win_sid" ] || ls_rh+=(--session "$win_sid")
     if [ "$ls_ask" = force ]; then
@@ -2297,6 +2261,49 @@ if [ "$bind_recheck" = 1 ]; then
     2) note "this \`lanes-edit.sh\` has no \`binding\`, so whether the lane moved again while this run waited is not known here; carrying on." ;;
     *) die "$LANES_EDIT binding $LANE exited $bind_again_rc on the re-read before the rename, so whether this lane is still free could NOT be established — and that is not 'it is'. Nothing has been renamed, written or launched." 1 ;;
   esac
+fi
+
+# The successful handoff may have published a different agent in its PAUSED
+# record. Read that authoritative answer now, before rename or transcript movement.
+AGENT=""; AGENT_EXPLICIT=0; AGENT_ID=""; RECORDED_AGENT=""; RECORDED_AGENT_READ=0
+read_recorded_agent() {
+  rra_out=""; rra_rc=0
+  rra_out="$("$LANES_EDIT" lane-agent "$LANE" 2>/dev/null)" || rra_rc=$?
+  RECORDED_AGENT_READ=1
+  case "$rra_rc" in
+    0) RECORDED_AGENT="$rra_out" ;;
+    8|2) RECORDED_AGENT="" ;;
+    # A READ THAT FAILED IS NOT "THIS LANE'S RECORD NAMES NO AGENT", and the
+    # helper says so in its own refusal: *"a caller that read it that way would
+    # launch the default agent over a lane another one paused"* (Amendment
+    # 7(d), `lanes-edit.sh`'s `lane-agent` arm). This used to `note` and launch
+    # `claude` anyway — the one act in this whole command that no later refusal
+    # can undo — so it refuses, and names the flag that goes past it, which is
+    # a person naming the agent rather than this command guessing at one.
+    *) die "\`$LANES_EDIT lane-agent $LANE\` failed (exit $rra_rc), so which agent paused this lane is UNKNOWN — and launching the default over a lane another agent paused is what Amendment 7(d) has this read refuse rather than answer. Run it by hand to see what it says, or name the agent: $prog --agent <name> …" 2 ;;
+  esac
+  return 0
+}
+if [ -n "$agent_flag" ]; then
+  AGENT="$agent_flag"; AGENT_EXPLICIT=1
+else
+  read_recorded_agent
+  if [ -n "$RECORDED_AGENT" ]; then AGENT="$RECORDED_AGENT"; fi
+  [ -n "$AGENT" ] || AGENT=claude
+  [ "$AGENT" = claude ] || AGENT_EXPLICIT=1
+fi
+case "$AGENT" in
+  *[!A-Za-z0-9._-]*|'') die "--agent takes a manifest key — letters, digits, '.', '_', '-' — and '$AGENT' is not one (Amendment 17(b))" 2 ;;
+esac
+# THE AGENT THIS LANE IS RUNNING, IN THE ENVIRONMENT OF THE SESSION IT STARTS
+# (Copilot round 2 on openRepoTools#47). `lane-handoff` derives the record's
+# `agent` sub-field from `$LANES_AGENT`, else `claude` — so a `codex` session
+# launched here would write `agent claude` at its own handoff and the next
+# `lane-start` would resume it with the wrong launcher, one record along. The
+# launch decides which agent this is; the launch is therefore what says so.
+export LANES_AGENT="$AGENT"
+if [ "$AGENT" = claude ]; then
+  lane_claude_resolve_launch
 fi
 
 # ------------------------------------------------------- 4. name the window

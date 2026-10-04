@@ -155,9 +155,15 @@ an inherited answer from an operator's pin:
 
 ## `lane-start`
 
-`lane-start` applies that table after confirmation and agent selection, before
-requesting a binding handoff, renaming a window or moving a transcript (and in
-the bare launch described below):
+`lane-start` applies that table after confirmation and any handoff approval.
+Resolution precedes a binding release, window rename or transcript move (and
+also runs in the bare launch described below):
+
+A binding held elsewhere must be approved for handoff before any resolver
+call. Before releasing it, an implicit-agent handoff preflights a possible
+Claude launch because the holder's new `PAUSED` record may name Claude. After
+handoff, the agent is read afresh from that record. An explicit other agent
+skips the Claude preflight. A declined handoff performs no update.
 
 - It looks for `claude-current` beside itself, then in
   `$OPENREPOTOOLS_BIN_DIR` (default `~/.local/bin`), and never on `PATH`. A
@@ -176,7 +182,8 @@ the bare launch described below):
 - `--dry-run` prints a `PLAN` line naming the call and runs nothing, because
   the resolver may update. `--no-launch` resolves nothing: it is the first act
   inside a running session and launches nothing.
-- Only the `claude` agent asks. `--agent codex` launches `codex` as before.
+- An explicit other agent skips it. With a free binding, only the selected
+  `claude` agent asks. `--agent codex` launches `codex` as before.
 
 The lane's `STARTED` or `RESUMED` log line records the version as one more
 sub-field, `claude <version>`, when a version is in hand: read by
