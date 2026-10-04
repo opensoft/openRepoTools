@@ -10363,6 +10363,29 @@ EOF
         *) msc_plain=$((msc_plain + 1)); continue ;;
       esac
       if mig_cell_is_phrase "$msc_cell"; then msc_phrase=$((msc_phrase + 1)); continue; fi
+      # THE SEAM (Brett Heap's ruling of 2026-10-04; Copilot round 2 on
+      # openRepoTools#97). This act rewrites a row's state cell and appends to
+      # its lane's log, so a lane the managed ledger has enrolled is not a row it
+      # may take — and the historical shorthand `MANAGED OWNER · <token>` holds
+      # ONE ` · `, so `mig_cell_is_phrase` does not recognise it and, unasked,
+      # the row was planned as a diary and rewritten to `MIGRATED · …`.
+      # ONE SUCH ROW REFUSES THE WHOLE MIGRATION, exactly as one refuses the
+      # whole of Amendment 19's sweep: clause (e) makes this act ONE commit, and
+      # a register migrated but for its managed rows is not that commit. Asked
+      # HERE and not at the top of the loop: a row skipped above (15(d)'s
+      # duplicate pair, a row that is not seven columns, one word, the phrase) is
+      # never rewritten and has nothing to refuse, and asking first would turn
+      # today's skips into refusals. Both modes ask, because the dry run reports
+      # exactly what the act would do. `die` releases the lock the act holds.
+      managed_seam_refuse "$msc_lane" "migrate-state-cells (the WHOLE migration, which Amendment 13(e) makes one commit)"
+      # AND THE ROW IT WOULD REWRITE IS THIS CHECKOUT'S, while the seam reads the
+      # PUBLISHED register (R19). A checkout ahead of origin, or holding an edit
+      # `handle_preexisting` has just captured, can carry vocabulary the published
+      # row does not — an ownership the two copies disagree on, which is UNKNOWN
+      # and never legacy (Amendment 7(d)).
+      msc_hrc=0; managed_projection_hint "$msc_row" || msc_hrc=$?
+      [ "$msc_hrc" = 8 ] ||
+        die "whether the managed ledger owns lane $msc_lane is UNKNOWN: this checkout's row for it carries managed-owner vocabulary (or could not be read for it) where the published register's does not, and migrate-state-cells rewrites THIS checkout's row — an ownership the two copies disagree on is never read as 'legacy' (Amendment 7(d)). The WHOLE migration was refused and it wrote nothing. Publish or undo this checkout's change to that row first (git -C $LANES_REPO log origin/$LANES_BRANCH..HEAD -- $LANES_PATH), and re-run." 1
     fi
     if [ -z "$msc_why" ]; then
       # The row's own columns, walked from the LEFT out of the head this split

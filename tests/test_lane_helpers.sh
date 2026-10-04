@@ -14277,6 +14277,103 @@ is    "…and carries no MANAGED line at all" \
 run env LANES_LANE=repoMG-3 "$E" retire-rows repoMG-9
 is    "…and the sweep of a dormant legacy row alone still lands" "$rc" 0
 
+# ------ 6. ONE managed row refuses Amendment 13(e)'s WHOLE migration
+#
+# Copilot round 2 on #97: `migrate-state-cells` rewrites state cells and appends
+# to logs, and the shorthand `MANAGED OWNER · <token>` holds ONE ` · `, so it is
+# not the phrase the migration leaves alone, and `--yes` rewrote it to
+# `MIGRATED · …`. ITS OWN WORKSPACE, for the reason Amendment 13's own section
+# gives: this act takes a whole register, and pointed at the suite's it would
+# rewrite every fixture above and below this line the day the refusal stopped
+# refusing. A LEGACY diary row comes FIRST, so a refusal that skipped only the
+# managed row would still have migrated it: that row is the proof the abort is
+# whole.
+MGM_ORIGIN="$SANDBOX/mg-mig-origin.git"; MGM_WIP="$SANDBOX/mg-migwip"
+git init -q --bare -b main "$MGM_ORIGIN"
+git clone -q "$MGM_ORIGIN" "$MGM_WIP" 2>/dev/null
+git -C "$MGM_WIP" config user.email "test@example.invalid"
+git -C "$MGM_WIP" config user.name  "lane helper tests"
+mkdir -p "$MGM_WIP/lanes/log"
+MGM_DIARY="ACTIVE · 2026-10-04T01:00:00Z opened the PR and it went green"
+mgm_register() {   # <repoMG-2's state cell> — the whole register, rewritten as the ledger's writer would land it
+  { printf '# LANES.md — the managed seam, migration sandbox\n\n'
+    printf '| lane | session id | workstation / env / user | started (UTC) | objects owned | handoff path | state |\n'
+    printf '|---|---|---|---|---|---|---|\n'
+    mg_row repoMG-3 none "$MGM_DIARY"
+    mg_row repoMG-2 none "$1"
+  } > "$MGM_WIP/lanes/LANES.md"
+}
+mgm_fp() {   # what a refused migration may not change: commits, status, register, logs, archive
+  { git -C "$MGM_WIP" rev-parse HEAD
+    git --git-dir="$MGM_ORIGIN" rev-parse main
+    git -C "$MGM_WIP" status --porcelain
+    cksum < "$MGM_WIP/lanes/LANES.md"
+    cat "$MGM_WIP"/lanes/log/*.md | cksum
+    ls "$MGM_WIP/lanes/log" | cksum
+    ls "$MGM_WIP/lanes" | cksum
+  } | cksum
+}
+mgm_refused() {   # <what> <expected exit> <owner, for a 2> <fingerprint before>
+  is   "$1 is refused with $2" "$rc" "$2"
+  if [ "$2" = 2 ]; then
+    has  "…naming the owner" "$err" "owner $3"
+  else
+    has  "…as ownership UNKNOWN" "$err" "UNKNOWN"
+  fi
+  has  "…refusing the WHOLE migration" "$err" "WHOLE migration"
+  is   "…and changed nothing: register HEAD here and on origin, status, the register's bytes, every log's bytes, no archive" "$(mgm_fp)" "$4"
+  is   "…so the legacy row read BEFORE the refused one still holds its diary" \
+       "$(grep -c "^| \`repoMG-3\` .*| $MGM_DIARY |\$" "$MGM_WIP/lanes/LANES.md" || :)" 1
+}
+mgm_register "MANAGED OWNER · ledger-2"
+for mg_l in repoMG-3 repoMG-2; do
+  printf '# lane %s — object log (lane-collision-protocol Amendment 7)\n' "$mg_l" > "$MGM_WIP/lanes/log/$mg_l.md"
+done
+git -C "$MGM_WIP" add -A >/dev/null 2>&1
+git -C "$MGM_WIP" commit -q -m "seed the seam's migration sandbox: a legacy diary row, then the valid shorthand"
+git -C "$MGM_WIP" push -q -u origin main
+
+# (a) THE VALID SHORTHAND: 2, naming the owner, in both modes.
+mg_b="$(mgm_fp)"
+run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" migrate-state-cells
+mgm_refused "the migration's dry run over the valid shorthand" 2 ledger-2 "$mg_b"
+run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" migrate-state-cells --yes
+mgm_refused "migrate-state-cells --yes over the valid shorthand" 2 ledger-2 "$mg_b"
+hasnt "…and never rewrites the marker to the migration's own word" "$(cat "$MGM_WIP/lanes/LANES.md")" "MIGRATED"
+
+# (b) A MALFORMED SHORTHAND — a token with a space in it — is UNKNOWN: 1.
+mgm_register "MANAGED OWNER · ledger 2"
+git -C "$MGM_WIP" commit -q -am "the ledger lands a shorthand whose token does not parse"
+git -C "$MGM_WIP" push -q origin main
+mg_b="$(mgm_fp)"
+run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" managed-projection repoMG-2
+is    "the malformed shorthand reads as unknown (1) before the migration asks" "$rc" 1
+run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" migrate-state-cells --yes
+mgm_refused "migrate-state-cells --yes over a malformed shorthand" 1 - "$mg_b"
+
+# (c) THE ROW REWRITTEN IS THIS CHECKOUT'S. Published as a legacy one-word row,
+# and this checkout one unpushed commit ahead with the shorthand in it: the
+# published read alone says legacy, and the row the act would rewrite is not.
+mgm_register "PAUSED"
+git -C "$MGM_WIP" commit -q -am "the row goes back to a legacy one-word state"
+git -C "$MGM_WIP" push -q origin main
+mgm_register "MANAGED OWNER · ledger-3"
+git -C "$MGM_WIP" commit -q -am "an unpushed marker, in this checkout only"
+mg_b="$(mgm_fp)"
+run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" managed-projection repoMG-2
+is    "the published register reads the row as legacy (8)" "$rc" 8
+run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" migrate-state-cells --yes
+mgm_refused "migrate-state-cells --yes over a marker only this checkout carries" 1 - "$mg_b"
+has   "…saying the two copies disagree" "$err" "the two copies disagree on"
+
+# (d) AND THE SAME REGISTER WITH NO MARKER IN EITHER COPY MIGRATES, so each
+# refusal above was the seam's and not the fixture's.
+git -C "$MGM_WIP" reset -q --hard origin/main
+run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" migrate-state-cells --yes
+is    "the legacy register itself migrates" "$rc" 0
+has   "…taking the diary row" "$out" "1 to migrate"
+has   "…into its log" "$(cat "$MGM_WIP/lanes/log/repoMG-3.md")" "NOTED — lane repoMG-3"
+
 echo "== the workstation seam: unset, every writer reads the host =="
 
 # THE OTHER HALF OF R-A9-13. Every case above this line runs with
