@@ -3203,3 +3203,10 @@ which keeps the exact operation as a child and forwards its operation/attempt
 tokens. The historical #94 incident above describes the earlier launcher. A
 respawn also forwards configured `LANES_LANE_STATE_ROOT` and
 `AGENT_PROTOCOL_ROOT` with shell quoting so its durable intent remains readable.
+
+Legacy lane rename is an explicit publication exception: it already holds the
+writer mutex and now refuses unfinished/failed restart ownership before moving
+inputs. Its existing four-file transaction uses EXIT rollback, including stamp
+write failures; it is not crash atomic across those files. This change does not
+claim stronger crash durability for ordinary rename. Restart preservation and
+resume-stamp publishers use the atomic checksum-fenced publication helper.

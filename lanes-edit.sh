@@ -10649,7 +10649,6 @@ lane_restart_missing() {   # <file> <canonical lane>
       for (i=1;i<=n;i++) allowed[keys[i]]=1
       allowed["prepared_digest"]=1
     }
-    /^$/ { next }
     {
       if ($0 ~ /[[:cntrl:]]/ || $0 !~ /^[A-Za-z_]+: /) {bad["record"]=1; next}
       k=$0; sub(/:.*/, "", k)
@@ -14151,6 +14150,7 @@ EOF
     [ "${#pbh_digest}" = 64 ] || die "publication requires the complete prior SHA-256" 64
     case "$pbh_digest" in *[!0-9a-fA-F]*) die "publication requires SHA-256" 64 ;; esac
     [ -f "$pbh_source" ] && [ -r "$pbh_source" ] && [ -s "$pbh_source" ] || die "the prepared handoff is unreadable or empty" 1
+    acquire_lock
     pbh_links=0
     while [ -L "$pbh_target" ]; do
       pbh_links=$((pbh_links+1)); [ "$pbh_links" -lt 40 ] || die "the handoff link chain cannot be resolved" 2
@@ -14160,7 +14160,6 @@ EOF
     pbh_parent="$( CDPATH=''; cd -P -- "$(dirname -- "$pbh_target")" && pwd -P )" || die "the handoff parent is missing" 1
     pbh_target="$pbh_parent/$(basename -- "$pbh_target")"
     [ -f "$pbh_target" ] && [ -r "$pbh_target" ] || die "the handoff target is unreadable" 1
-    acquire_lock
     pbh_irc=0; pbh_intent="$(lane_restart_read "$lane")" || pbh_irc=$?
     case "$pbh_irc" in 0|8) : ;; *) release_lock; die "restart ownership could not be read; no handoff was published" 1 ;; esac
     pbh_current="$(printf '%s\n' "$pbh_intent" | awk -F'\t' '$1=="state" {print $2; exit}')"

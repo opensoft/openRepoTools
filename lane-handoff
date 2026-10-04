@@ -817,10 +817,20 @@ supervise_run() {   # <lane> <operation>
 		LANES_NO_FETCH=1 "$LANES_EDIT" legacy-restart-check "$sr_lane" ||
 			die "managed ownership blocks this legacy retry. Nothing was started." 2
 		sr_claim_gen="$RI_GEN"
+		SV_CLAIMED_GEN=""; SV_CLAIMED_ATTEMPT=""; SV_CHILD_LAUNCH_STARTED=0
+		SV_DEFERRED_SIGNAL=""; SV_DEFERRED_STATUS=""
+		SV_CLAIMING=1
 		sr_crc=0
 		LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$sr_lane" starting \
 			--expect "$RI_STATE" --expect-operation "$sr_op" --expect-generation "${RI_GEN:-0}" --expect-attempt "$RI_ATTEMPT" \
 			"${sr_att[@]}" --new-transcript none --reason "supervisor claimed the operation" >/dev/null 2>&1 || sr_crc=$?
+		# The writer is the authority for a successful CAS; publish its exact
+		# requested identity before replaying a signal deferred during the claim.
+		if [ "$sr_crc" = 0 ]; then
+			SV_CLAIMED_GEN="$sr_claim_gen"; SV_CLAIMED_ATTEMPT="$sr_claim_attempt"
+		fi
+		SV_CLAIMING=0
+		[ -z "$SV_DEFERRED_SIGNAL" ] || sv_signal "$SV_DEFERRED_SIGNAL" "$SV_DEFERRED_STATUS"
 		case "$sr_crc" in
 		0) : ;;
 		7) die "lane $sr_lane's restart intent moved between reading it and claiming it: another act owns operation $sr_op now. Nothing was started. Read it:  $prog --restart-status --lane $sr_lane" 2 ;;
@@ -914,6 +924,7 @@ supervise_run() {   # <lane> <operation>
 		# `9<&-` CLOSES THE SAVED COPY IN THE CHILD once it has become its
 		# stdin: the pane's descriptor is this process's bookkeeping and is no
 		# part of the environment an interactive Claude should be handed.
+		SV_CHILD_LAUNCH_STARTED=1  # conservative before the fork/pid-file boundary
 		if [ "$SV_STDIN_SAVED" = 1 ]; then
 			supervise_child <&9 9<&- &
 		else
@@ -1105,6 +1116,9 @@ SV_PIDFILE=""
 SV_SIGNALLED=0
 SV_WATCH_PID=""
 SV_WATCH_DIR=""
+SV_CLAIMING=0
+SV_DEFERRED_SIGNAL=""; SV_DEFERRED_STATUS=""
+SV_CHILD_LAUNCH_STARTED=0
 # Never signal a saved PID: an observer can finish hours before its child.
 # Cancellation uses a private marker; wait addresses our owned shell job.
 sv_stop_watch() {
@@ -1144,6 +1158,12 @@ sv_on_exit() {
 # Cancellation writes only an owned attempt. A live or unknown child keeps
 # starting and blocks retry; an unclaimed pending intent remains unchanged.
 sv_signal() {   # <signal name> <exit status>
+	# Bash may deliver a deferred signal as the CAS returns, before the caller
+	# records its successful claim. Finish publication before reconciliation.
+	if [ "$SV_CLAIMING" = 1 ]; then
+		SV_DEFERRED_SIGNAL="$1"; SV_DEFERRED_STATUS="$2"
+		return 0
+	fi
 	SV_SIGNALLED=1
 	# THE OBSERVER GOES FIRST, AND IS REAPED (Copilot round 2 on
 	# openRepoTools#121). It is a background job of this shell and a signal to
@@ -1184,12 +1204,20 @@ sv_signal() {   # <signal name> <exit status>
 			[ "$sv_sg_hrc" != 8 ] || sv_sg_state=failed
 		fi
 	fi
+	if [ "$SV_CHILD_LAUNCH_STARTED" = 0 ]; then
+		sv_sg_alive="no child was launched"
+		sv_sg_hrc=0
+		LANES_NO_FETCH=1 "$LANES_EDIT" lane-holders "$lane" >/dev/null 2>&1 || sv_sg_hrc=$?
+		[ "$sv_sg_hrc" != 8 ] || sv_sg_state=failed
+	fi
 	sv_sg_fence=()
 	[ -n "$SV_CLAIMED_GEN" ] && sv_sg_fence=(--expect-generation "$SV_CLAIMED_GEN" --expect-attempt "$SV_CLAIMED_ATTEMPT")
+	sv_sg_reason="supervisor received SIG$1 before readiness; $sv_sg_alive"
+	[ "$sv_sg_state" != starting ] || sv_sg_reason="INDETERMINATE: $sv_sg_reason"
 	LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$lane" "$sv_sg_state" \
 		--expect 'pending|starting' --expect-operation "$operation" \
 		${sv_sg_fence[@]+"${sv_sg_fence[@]}"} \
-		--reason "INDETERMINATE: supervisor received SIG$1 before readiness; $sv_sg_alive" \
+		--reason "$sv_sg_reason" \
 		>/dev/null 2>&1 || :
 	ri_load "$lane" >/dev/null 2>&1 || :
 	say ""

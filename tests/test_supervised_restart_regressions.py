@@ -938,7 +938,7 @@ def test_existing_invalid_state_root_is_not_absent_intent(restart_box, kind):
     assert not box.claude_runs()
 
 
-@pytest.mark.parametrize("extra", ["future_key: preserve-me\n", "garbage\n", "profile:test\n",
+@pytest.mark.parametrize("extra", ["future_key: preserve-me\n", "garbage\n", "profile:test\n", "\n",
                                    "schema: 1\n", "prepared_digest: none\n",
                                    "pane: testsess:@1.%1\tignored\n"])
 def test_restart_strict_schema_preserves_unrecognized_or_malformed_records(restart_box, extra):
@@ -1189,3 +1189,81 @@ def test_new_restart_explicitly_clears_previous_operations_profile(restart_box):
     assert record["profile"] == "none"
     assert record["operation"] != "op-test"
     assert "respawn-pane" in box.tmux_log.read_text()
+
+
+@pytest.mark.parametrize("claim", ["success", "lost"])
+def test_signal_during_claim_publication_reconciles_only_owned_attempt(restart_box, claim):
+    box = restart_box
+    prepare_restart(box)
+    before = intent_path(box).read_bytes()
+    real = box.bin / "lanes-edit-real.sh"
+    (box.bin / "lanes-edit.sh").rename(real)
+    action = f"'{real}' \"$@\"; result=$?" if claim == "success" else "result=7"
+    _write(box.bin / "lanes-edit.sh", f"""#!/usr/bin/env bash
+case "$*" in
+  *"supervisor claimed the operation"*)
+    {action}
+    kill -TERM "$PPID"
+    exit "$result" ;;
+esac
+exec '{real}' "$@"
+""")
+    result = supervisor(box, "--supervise", "--lane", LANE, "--operation", "op-test")
+    assert result.returncode == 143, (result.stdout, result.stderr)
+    assert not box.claude_runs()
+    if claim == "lost":
+        assert intent_path(box).read_bytes() == before
+        assert "before the restart claim" in result.stdout
+    else:
+        record = dict(line.split("\t", 1) for line in helper(box, "restart-intent", LANE).stdout.splitlines())
+        assert record["state"] == "failed" and record["attempt"] == "1"
+        assert record["generation"] == "7" and record["operation"] == "op-test"
+        assert "no child was launched" in record["reason"]
+        assert "retry:" in result.stdout
+
+
+def test_handoff_target_is_resolved_after_waiting_for_writer_mutex(restart_box):
+    box = restart_box
+    original = prepare_restart(box)
+    assert helper(box, "set-restart-intent", LANE, "ready", "--expect", "pending").returncode == 0
+    other = _write(box.wip / "handoffs" / "other.md", "other preserved work\n", 0o600)
+    alias = box.wip / "handoffs" / "alias.md"
+    alias.symlink_to(original.name)
+    prepared = _write(box.root / "prepared.md", "replacement bytes\n", 0o600)
+    digest = hashlib.sha256(original.read_bytes()).hexdigest()
+    before = (original.read_bytes(), other.read_bytes())
+    lock = box.wip / "lanes" / ".lanes-edit.lock"
+    lock.mkdir()
+    (lock / "pid").write_text(str(os.getpid()) + "\n")
+    marker = box.root / "waiting-for-writer"
+    real_mkdir = shutil.which("mkdir")
+    _write(box.fakebin / "mkdir", f"""#!/usr/bin/env bash
+case "$*" in *.lanes-edit.lock*) touch '{marker}' ;; esac
+exec '{real_mkdir}' "$@"
+""")
+    proc = subprocess.Popen([str(box.bin / "lanes-edit.sh"), "publish-handoff", LANE,
+                             str(alias), str(prepared), "--expect-digest", digest],
+                            env=box.env, cwd=box.lane_dir, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.monotonic() + 10
+        while not marker.exists() and time.monotonic() < deadline:
+            assert proc.poll() is None
+            time.sleep(.02)
+        assert marker.exists()
+        alias.unlink()
+        alias.symlink_to(other.name)
+        (lock / "pid").unlink()
+        lock.rmdir()
+        out, err = proc.communicate(timeout=15)
+        assert proc.returncode == 7, (out, err)
+        assert "changed before publication" in err
+        assert (original.read_bytes(), other.read_bytes()) == before
+        assert alias.is_symlink() and alias.resolve() == other
+    finally:
+        if lock.exists():
+            (lock / "pid").unlink(missing_ok=True)
+            lock.rmdir()
+        if proc.poll() is None:
+            proc.terminate()
+            proc.communicate(timeout=5)

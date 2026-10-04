@@ -37,7 +37,7 @@ Each starting attempt consumes `new_transcript: none` exactly once. Later writes
 expect the reserved UUID as well as operation, generation and attempt. Stamp
 publication resolves a final-component symlink and atomically replaces its target
 from a same-directory temporary file. The helper holds the same writer mutex
-through ownership and prior-digest checks and replacement. All shipped handoff
+through ownership and prior-digest checks and replacement. All restart preservation and resume-stamp
 publishers use this path; manual edits must follow the staging/publication skill
 contract. Existing records with missing, duplicate or invalid fields refuse
 transitions rather than being silently repaired.
@@ -60,3 +60,10 @@ record publication. Intent writes use private same-directory temporary files.
 Rename takes the existing mutex and refuses unfinished/failed restart records.
 Observers stop through a private marker and are reaped before marker removal,
 without signaling a numeric PID that may already have been recycled.
+
+Legacy lane rename is an explicit publication exception: it already holds the
+writer mutex and now refuses unfinished/failed restart ownership before moving
+inputs. Its existing four-file transaction uses EXIT rollback, including stamp
+write failures; it is not crash atomic across those files. This change does not
+claim stronger crash durability for ordinary rename. Restart preservation and
+resume-stamp publishers use the atomic checksum-fenced publication helper.
