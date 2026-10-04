@@ -382,9 +382,13 @@ absence".** A valid marker refuses with 2, naming the owner; managed-owner
 vocabulary that does not parse, a row that is not seven columns or a register
 that cannot be read refuses with 1 (unknown); no vocabulary is a legacy lane and
 nothing changes. Every refusal comes before the act's first write: `write_event`
-for the four verbs that move a lifecycle, `set-lane-state`, `set-lane-tree`,
+for every lane-kind verb (the four that move a lifecycle, `PAUSED`, and
+`HANDOFF-REQUESTED`, which `request-handoff` writes and which refuses at its
+head, `--dry-run` included), `set-lane-state`, `set-lane-tree`,
 `retire-rows` (any hit refuses the whole sweep), `migrate-state-cells` (any
 row it would rewrite refuses the whole migration, which is one commit),
+`archive-rows` (any RETIRED row it would move refuses the whole move),
+`append-session-id`, `add-row` for a lane that already has a row,
 `set-row-state`,
 `replace-in-row`, `rename-lane`, the entry of `lane-start` (before Amendment
 18's binding gate) and of `lane-handoff` (before every mode), and `lane-end`
@@ -392,8 +396,13 @@ row it would rewrite refuses the whole migration, which is one commit),
 its own row refusals, so that Amendment 15(d)'s pair refusal is still the one a
 person reads through a helper that predates both reads).
 `lane-reconcile` is read-only and answers `managed-owned`. `row_state_check`,
-`add-row` and `replace-in-row`'s new text refuse the marker's vocabulary, so no
-legacy writer forges a marker.
+`add-row`, `append-line`, and the new text of `replace-in-row`,
+`append-session-id` and `rename-lane`'s new name refuse the marker's
+vocabulary, so no legacy writer forges a marker. The refusal reads this
+checkout's row as well as the published one, because every legacy row writer
+rewrites this checkout's row: vocabulary in one copy and not the other is
+unknown (1). Object-kind lines (a claim, a release) concern the object a lane
+holds and are not refused (Copilot rounds 2 and 3 on #97).
 
 **`RUNNING` is written only on a legacy verdict.** `lane_state_follow` moves a
 snapshot only when the verb is `STARTED`/`RESUMED` (to `RUNNING`) or

@@ -167,14 +167,14 @@ The system SHALL distinguish a lane or tree that completed a temporary swap from
 - **THEN** the system reports a closure inconsistency and refuses automatic cleanup
 
 ### Requirement: Legacy lifecycle refuses a managed-owned lane
-The system SHALL govern legacy lanes only (Brett Heap's ruling of 2026-10-04, verbatim: "managed ledger owns enrolled lanes; #97 owns legacy — rework both"). Before its first write, every lifecycle, inventory, log, register-row, sweep, start, handoff and end act SHALL read the lane's managed-owner marker, refuse a valid one, refuse an unreadable or malformed one as unknown, and run unchanged for a lane with none.
+The system SHALL govern legacy lanes only (Brett Heap's ruling of 2026-10-04, verbatim: "managed ledger owns enrolled lanes; #97 owns legacy — rework both"). Before its first write, every lifecycle, inventory, lane-kind log line, register-row, sweep, archive, migration, start, handoff and end act SHALL read the lane's managed-owner marker, in the published register and in the checkout whose row it rewrites. It SHALL refuse a valid marker, refuse an unreadable or malformed one (or two copies that disagree) as unknown, and run unchanged for a lane with none. No legacy writer SHALL write the marker's vocabulary into the register. Object-kind lines (a claim or a release of an issue or pull request) concern the object a lane holds, not the lane's ownership, and are unchanged.
 
 #### Scenario: A lane carries a valid managed-owner marker
 - **WHEN** any legacy act is invoked for a lane whose register row carries a valid managed-owner marker
 - **THEN** the act exits 2 naming the owner, and the register, the lane's object log, its lifecycle control root and its tmux window are unchanged, and the reconciliation reports `managed-owned` without pronouncing anything else
 
 #### Scenario: A managed-owner marker cannot be read
-- **WHEN** a lane's register row carries managed-owner vocabulary that does not parse, or the register cannot be read
+- **WHEN** a lane's register row carries managed-owner vocabulary that does not parse, this checkout's row carries vocabulary the published row does not, or the register cannot be read
 - **THEN** the act exits 1 reporting ownership as unknown, and nothing is changed
 
 #### Scenario: A legacy lane is acted on

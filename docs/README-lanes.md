@@ -3108,13 +3108,20 @@ section 3, before Amendment 18's binding gate and `--request-handoff`),
 `lane-handoff` (before the window is renamed — so `--late`, `--restart` and
 `--exit` never reach `SWAPPING` or `SWAPPED`), `lane-end` (the ending,
 `--retire` and `--retire <pid>`), the object log's `STARTED`, `RESUMED`, `ENDED`
-and `RETIRED`, `set-lane-state`, `set-lane-tree`, `retire-rows` (one managed or
-unknown lane refuses the whole sweep), `migrate-state-cells` (one managed or
-unknown row it would rewrite refuses the whole migration), `set-row-state`,
-`replace-in-row` and `rename-lane`. `lane-reconcile` reads nothing of a managed lane and prints
+and `RETIRED`, a swap's `PAUSED`, `request-handoff` (its `--dry-run` too),
+`set-lane-state`, `set-lane-tree`, `retire-rows` (one managed or unknown lane
+refuses the whole sweep), `migrate-state-cells` (one managed or unknown row it
+would rewrite refuses the whole migration), `archive-rows` (one such RETIRED
+row refuses the whole move), `append-session-id`, `add-row` for a lane that
+already has a row, `set-row-state`, `replace-in-row` and `rename-lane`. Each
+reads this checkout's row as well as the published one, because this
+checkout's row is the one a legacy writer rewrites: vocabulary in one copy and
+not the other is UNKNOWN (1). A claim or a release is about the object, not the
+lane, and is not refused. `lane-reconcile` reads nothing of a managed lane and prints
 `VERDICT managed-owned` (and `indeterminate` where ownership is unknown). And no
-legacy writer — `set-row-state`, `add-row`, `replace-in-row`, the sweep — may
-write the marker's vocabulary into a row at all, so a marker is never forged.
+legacy writer — `set-row-state`, `add-row`, `replace-in-row`, `append-line`,
+`append-session-id`, `rename-lane`'s new name, the sweep — may write the
+marker's vocabulary into the register at all, so a marker is never forged.
 
 What the managed ledger itself does with an enrolled lane is not this manual's:
 branch `001-separate-swap-ctx-handoff`'s governance review is **PROPOSED — NOT
