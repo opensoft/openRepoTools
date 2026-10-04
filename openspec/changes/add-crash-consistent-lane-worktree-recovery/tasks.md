@@ -171,6 +171,14 @@ Nothing is left as a comment thread and nothing is left unnamed.
   the handoff would be the first time the lifecycle stopped the swap, and
   declining the transition silently would leave a `PAUSED` record beside a
   `CLOSED` snapshot.
+- **`opensoft/openRepoTools#157` — the lifecycle reads fetch first.**
+  `lane-reconcile`, `lane-state`, `lane-trees` and `managed-projection` run
+  `log_sync` before they read, as every read in `lanes-edit.sh` does, so a
+  direct call offline waits up to `LANES_GIT_TIMEOUT` before reading the ref as
+  it stands. Kept here because the binding, the alias table and the marker they
+  read are published state a stale ref misreports; `LANES_NO_FETCH=1` is the
+  opt-out `lane-start` already uses. What decides it is which default an
+  operator's recovery read during an outage should have.
 
 ## 8. The rework of 2026-10-04 — managed ledger owns enrolled lanes; this change owns legacy
 

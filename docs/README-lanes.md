@@ -3022,6 +3022,16 @@ holds real git worktrees and is not moved — that is a `git worktree move`, and
 person's. A lane retired by Amendment 19's sweep is taken to `CLOSED` exactly as
 a lane that ended itself is.
 
+**It reads the published register first**, as every read in `lanes-edit.sh`
+does: the lane's name resolves through the register and Amendment 16's alias
+table, and its binding and any managed-owner marker are read from them, so a
+stale ref would pronounce from a binding that has since moved. The fetch goes
+into the register checkout and touches no lane tree; it is bounded by
+`LANES_GIT_TIMEOUT` and, when it fails, the ref is read as it stands.
+`LANES_NO_FETCH=1` skips it — which is how `lane-start` calls it, having fetched
+in its step 3 — at the cost of reading what was last fetched. Whether a recovery
+read should be local by default is opensoft/openRepoTools#157.
+
 **It reports and it resets nothing.** `park` CREATES NOTHING and `resume` RESETS
 NOTHING (`AGENTS.md` rule 1), so this read runs `git status`, `git log @{u}..`,
 `git rev-parse` and `git worktree list --porcelain` and nothing else:
