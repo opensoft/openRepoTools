@@ -28,8 +28,10 @@ that file.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -72,6 +74,21 @@ SUITE = REPO / "tests" / "test_lane_helpers.sh"
 #: reason about: a loaded WORKSTATION is slow too, and a legitimate run of this
 #: same tree took 2129 s here with six sibling suites building beside it.
 #:
+#: 3600 -> 5400 on 2026-10-03, AND FOR THE SAME REASON A THIRD TIME: #93
+#: (Amendment 19, ~3016 cases against main's ~2795) crossed it on darwin.
+#: Measured, both on that PR's head, both the same single failure —
+#: `subprocess.TimeoutExpired: … timed out after 3600 seconds` — so neither
+#: run says which assertion was in flight:
+#:
+#:     tests-macos   `08dad90`  `1 failed, 680 passed in 3961.39s`
+#:     tests-macos   `968ab5e`  `1 failed, 693 passed in 3927.56s`
+#:     tests         `968ab5e`  green, `694 passed in 2466.84s`
+#:
+#: and on main at `69bf48d`, where the suite still FINISHED, the job's pytest
+#: took 3741.66 s in all: it was already within minutes of this bound. Since
+#: #119 `tests-macos` is the landing gate on the `ready` label, so a bound the
+#: suite cannot finish inside is a gate nothing can pass and nobody can read.
+#:
 #: THE HONEST FIX IS THE SUITE'S DURATION AND NOT THIS NUMBER — one bash file
 #: that runs real `git` several thousand times, serially, for 45 minutes — and
 #: it is opensoft/openRepoTools#77. This is the cap moving out of that work's
@@ -79,7 +96,59 @@ SUITE = REPO / "tests" / "test_lane_helpers.sh"
 #:
 #: The job itself has no `timeout-minutes` in `.github/workflows/tests.yml`, so
 #: nothing under it bites before this does; GitHub's own default is 360 min.
-TIMEOUT_SECONDS = 3600
+TIMEOUT_SECONDS = 5400
+
+
+#: THE SUITE'S LIVENESS FIXTURE MUST OUTLIVE THE BOUND ABOVE, and at `758a536`
+#: it did not. `tests/test_lane_helpers.sh` starts one `sleep <n> & LIVE_PID=$!`
+#: and every "a live holder …" case in that file — on macOS, where there is no
+#: `/proc`, ALL of them — is `kill -0` on that pid. At `sleep 3000` against a
+#: 3600 s timeout the wrapper was still waiting on a run whose evidence had
+#: already expired 600 s earlier, and the suite answered "no live holder" for
+#: cases that had a live holder: four of tests-macos' ten red lines at that
+#: commit, in the last 5% of the file, with nothing in the output saying why.
+#:
+#: A comment in each file saying "keep these two in step" is what was there
+#: before, and it did not survive TIMEOUT_SECONDS being raised from 2400. This
+#: reads the bash line and REFUSES the pair, so raising one without the other
+#: is red in seconds on every platform rather than red in an hour on one.
+#:
+#: AND SINCE #83 THE FIXTURE MAY BE DERIVED RATHER THAN WRITTEN: `sleep
+#: "$LIVE_SLEEP"`, where `LIVE_SLEEP` is this file's own `TIMEOUT_SECONDS`
+#: read back out of it by `sed`, plus a margin. That form is accepted only where
+#: the same pattern, applied to THIS file, finds the number this module runs
+#: with — so the pair is still proved, now by the read the suite makes.
+_SED_READ = r"s/^TIMEOUT_SECONDS = \([0-9][0-9]*\).*/\1/p"
+
+
+def test_the_liveness_fixture_outlives_the_suite_timeout():
+    text = SUITE.read_text(encoding="utf-8")
+    hit = [ln for ln in text.splitlines() if "LIVE_PID=$!" in ln]
+    assert len(hit) == 1, (
+        "expected exactly one liveness fixture in tests/test_lane_helpers.sh, "
+        f"found {len(hit)}: {hit}")
+    literal = re.search(r"\bsleep\s+(\d+)\s*&\s*LIVE_PID=\$!", hit[0])
+    if literal:
+        bound = int(literal.group(1))
+    else:
+        assert re.search(r'\bsleep\s+"\$LIVE_SLEEP"\s*&\s*LIVE_PID=\$!', hit[0]), (
+            f"the liveness fixture is neither a bounded sleep nor the derived one: {hit[0]!r}")
+        margin = re.search(r"^LIVE_SLEEP=\$\(\(\s*LIVE_BOUND\s*\+\s*(\d+)\s*\)\)", text, re.M)
+        assert margin, "LIVE_SLEEP is no longer LIVE_BOUND plus a fixed margin"
+        assert _SED_READ in text and "test_lane_helpers_suite.py" in text, (
+            "LIVE_BOUND is no longer read out of this file's TIMEOUT_SECONDS")
+        own = re.search(r"^TIMEOUT_SECONDS = ([0-9][0-9]*)",
+                        Path(__file__).read_text(encoding="utf-8"), re.M)
+        assert own and int(own.group(1)) == TIMEOUT_SECONDS, (
+            "the suite's sed read of TIMEOUT_SECONDS would not find the number "
+            "this module runs with, so its fixture would fall back to a default")
+        bound = TIMEOUT_SECONDS + int(margin.group(1))
+    assert bound > TIMEOUT_SECONDS, (
+        f"the liveness fixture is bounded at {bound}s while this wrapper lets "
+        f"the suite run for TIMEOUT_SECONDS={TIMEOUT_SECONDS}s, so the suite is "
+        "licensed to outlive its own evidence: every liveness case after "
+        f"{bound}s would read 'no live holder' and say nothing about why. "
+        "Raise the sleep in tests/test_lane_helpers.sh above this bound.")
 
 
 @WINDOWS_SKIP
@@ -99,7 +168,7 @@ def test_the_lane_helper_suite_passes():
     for name in ("LANES_FILE", "LANES_EDIT", "LANES_REPO", "LANES_PATH",
                  "LANES_LANE", "LANES_WORKSPACE_ROOT", "LANES_REPOS_TSV",
                  "LANES_REPOS_TSV_SHIPPED", "AGENT_PROTOCOL_ROOT",
-                 "OPENREPOTOOLS_BIN_DIR", "PROJECTS_ROOT"):
+                 "OPENREPOTOOLS_BIN_DIR", "PROJECTS_ROOT", "CLAUDE_NO_LANE"):
         env.pop(name, None)
 
     # `errors="replace"`, because the thing this wrapper exists to print is the
