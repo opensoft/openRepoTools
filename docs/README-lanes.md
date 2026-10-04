@@ -3109,8 +3109,9 @@ section 3, before Amendment 18's binding gate and `--request-handoff`),
 `--exit` never reach `SWAPPING` or `SWAPPED`), `lane-end` (the ending,
 `--retire` and `--retire <pid>`), the object log's `STARTED`, `RESUMED`, `ENDED`
 and `RETIRED`, `set-lane-state`, `set-lane-tree`, `retire-rows` (one managed or
-unknown lane refuses the whole sweep), `set-row-state`, `replace-in-row` and
-`rename-lane`. `lane-reconcile` reads nothing of a managed lane and prints
+unknown lane refuses the whole sweep), `migrate-state-cells` (one managed or
+unknown row it would rewrite refuses the whole migration), `set-row-state`,
+`replace-in-row` and `rename-lane`. `lane-reconcile` reads nothing of a managed lane and prints
 `VERDICT managed-owned` (and `indeterminate` where ownership is unknown). And no
 legacy writer — `set-row-state`, `add-row`, `replace-in-row`, the sweep — may
 write the marker's vocabulary into a row at all, so a marker is never forged.

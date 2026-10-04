@@ -383,7 +383,9 @@ vocabulary that does not parse, a row that is not seven columns or a register
 that cannot be read refuses with 1 (unknown); no vocabulary is a legacy lane and
 nothing changes. Every refusal comes before the act's first write: `write_event`
 for the four verbs that move a lifecycle, `set-lane-state`, `set-lane-tree`,
-`retire-rows` (any hit refuses the whole sweep), `set-row-state`,
+`retire-rows` (any hit refuses the whole sweep), `migrate-state-cells` (any
+row it would rewrite refuses the whole migration, which is one commit),
+`set-row-state`,
 `replace-in-row`, `rename-lane`, the entry of `lane-start` (before Amendment
 18's binding gate) and of `lane-handoff` (before every mode), and `lane-end`
 (at the head of its `--retire <pid>` door, and on the ending path right after
@@ -498,6 +500,13 @@ Rollback disables new writes but preserves sidecars and append-only events for d
   takes it over with a NEW generation and names the operation that never
   finished; that new generation is precisely what refuses the old finalizer if
   it ever wakes. Nothing of the interrupted operation is undone.
+  **What it cannot yet tell** is an interrupted operation from one that is
+  still running (Copilot round 2 on #97). That takes the handoff process's
+  liveness, which the snapshot does not record, and a PID alone does not
+  establish it (Risks). So a second handoff begun during a live one supersedes
+  it too. The fence bounds the harm: every later finalizer and inventory write
+  of the superseded operation is refused with 7 and changes nothing. Refusing a
+  live competitor is deferred to opensoft/openRepoTools#157.
 - Which tree-level discrepancies block the entire coordinator versus only that writer's relaunch?
 - What subset of sidecar data is replicated through the workspace repository for another workstation?
 - How should lane-specific scratch worktrees be named without colliding with Speckit feature identifiers?

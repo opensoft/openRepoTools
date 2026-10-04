@@ -179,6 +179,17 @@ Nothing is left as a comment thread and nothing is left unnamed.
   read are published state a stale ref misreports; `LANES_NO_FETCH=1` is the
   opt-out `lane-start` already uses. What decides it is which default an
   operator's recovery read during an outage should have.
+- **`opensoft/openRepoTools#157`, its second finding — a second swap supersedes
+  a live one.** `lifecycle_begin` (`lane-handoff:426-435`) takes over any lane
+  still recorded `SWAPPING`, which is design.md's settled answer for an
+  interrupted swap. It cannot tell a live operation from an interrupted one:
+  that takes the handoff process's liveness, which the snapshot does not
+  record, and design.md's risks rule out a PID alone. The fence bounds the
+  harm: the superseded operation's finalizer and inventory writes are refused
+  with 7 (repoRC-2, repoRC-3, repoRC-5). The spec's "Competing swap begins"
+  scenario now says that, rather than promising no new owner is minted. What
+  decides it is a liveness record for the handoff process that a second
+  handoff can read and trust; 6.2 stays open for it.
 
 ## 8. The rework of 2026-10-04 — managed ledger owns enrolled lanes; this change owns legacy
 
@@ -196,3 +207,4 @@ Brett Heap's ruling of 2026-10-04, verbatim: "managed ledger owns enrolled lanes
 - [x] 8.10 Document the seam in the manual, the proposal, this design and the spec.
 - [x] 8.11 Prove each act on a valid long marker, a valid shorthand, a legacy row and five malformed rows, with zero change on every refusal, and leave every existing assertion of this change's suite section unchanged.
 - [x] 8.12 Take Codex's four inventory findings on `ec9847e` (decision 25): `lane-start` reports a `resumable` lane whose trees need reading; `set-lane-tree` refuses a partial observation with 64 (#114's second half); every tree id carries a `cksum` of its whole path (#116's first half); and an unreadable tree sidecar is a row of `lane-trees` and an `unreadable-sidecar` class of the reconciliation (#113's second read).
+- [x] 8.13 Refuse a managed or unknown row in Amendment 13(e)'s `migrate-state-cells` before its plan is built, aborting the whole migration (Copilot round 2 on #97), with zero change proved in the seam section's case 6.

@@ -70,7 +70,7 @@ The system SHALL transition a running lane to `SWAPPING` before `/swap` performs
 - **THEN** the same operation atomically records `SWAPPED` before printing that the lane is ready to resume
 
 ### Requirement: Transitions are generation-fenced
-Every ownership transition SHALL carry a monotonically advancing generation and unique operation ID, and a transition finalizer SHALL succeed only when its expected state, generation, and operation ID still match. Every write that follows a recorded act SHALL be serialized under the one transition lock and refused when the lane has moved past the state that write observed.
+Every ownership transition SHALL carry a monotonically advancing generation and unique operation ID, and a transition finalizer SHALL succeed only when its expected state, generation, and operation ID still match. Every write that follows a recorded act SHALL be serialized under the one transition lock and refused when the lane has moved past the state that write observed. A swap that begins while the lane is recorded `SWAPPING` SHALL supersede the recorded operation, as it does an interrupted swap (design.md, Open Questions). The snapshot records no liveness for the handoff process, so a live operation cannot yet be told from an interrupted one. Refusing a live competitor instead is deferred to opensoft/openRepoTools#157.
 
 #### Scenario: A lifecycle write is overtaken while it lands
 - **WHEN** the lane's state, generation, or operation changes between the moment a lifecycle-moving event is recorded and the moment its current-state snapshot is updated
@@ -89,8 +89,9 @@ Every ownership transition SHALL carry a monotonically advancing generation and 
 - **THEN** the system refuses the stale finalizer without changing current state
 
 #### Scenario: Competing swap begins
-- **WHEN** a second `/swap` attempts to start while the matching generation is already `SWAPPING`
-- **THEN** the system refuses the competing operation or reports the existing operation without minting another owner
+- **WHEN** a second `/swap` starts while the lane is already recorded `SWAPPING`
+- **THEN** the system names the recorded operation and supersedes it with a new generation and operation
+- **AND** every later finalizer or inventory write of the superseded operation is refused without changing current state
 
 ### Requirement: Resume reconciles records with live evidence
 Before launching replacement writers, the system SHALL compare lane and tree sidecars with the latest handoff, verified live holders, Git worktree registrations, filesystem paths, branches, commits, dirty files, and unpushed commits.
