@@ -13846,6 +13846,43 @@ else
   skip  "…which is the inventory this lane then holds" "$NO_TIMEOUT_WHY"
 fi
 
+# ---------------- A LANE BOUND ELSEWHERE IS NEVER PRONOUNCED ON FROM HERE
+#
+# Amendment 18(b): liveness is pronounced only from inside the binding's own
+# host and container, and from anywhere else a binding is UNKNOWN, never dead.
+# This workstation's holder read finds nobody for a lane whose last STARTED was
+# written on another host, and its snapshot is this workstation's alone, so a
+# RUNNING snapshot here plus an empty holder read is not an ungraceful stop.
+rc_row repoRC-10 "harness \`$RC_ID\`"
+{ printf '# lane repoRC-10 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'STARTED — lane repoRC-10, session %s@Eagle, 2026-09-15T00:00:00Z, lane:repoRC-10 → home opensoft/repoRC; dir %s; profile team-01a; host elsewhere-host; container none; os linux\n' \
+    "$RC_ID" "$RC_DIR"
+} > "$LOGD/repoRC-10.md"
+git -C "$WIP" add -- lanes/log/repoRC-10.md
+git -C "$WIP" commit -q -m "LOG(repoRC-10@Eagle): seed a binding on another host"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+run env LANES_NO_FETCH=1 "$E" set-lane-state repoRC-10 RUNNING --expect none --owner "$RC_ID"
+is    "a lane bound on another host can still be recorded RUNNING here" "$rc" 0
+run "$E" lane-reconcile repoRC-10
+is    "lane-reconcile answers for it" "$rc" 0
+is    "…naming the binding as ELSEWHERE" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "BINDING" { print $2 }')" "elsewhere"
+is    "…and where it is" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "BINDING" { print $3 }')" "elsewhere-host/none"
+is    "…and the verdict is INDETERMINATE, never a crash pronounced from outside the binding" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "indeterminate"
+has   "…citing the rule" "$out" "Amendment 18(b)"
+hasnt "…and never ungraceful-stop" "$out" "ungraceful-stop"
+rc_row repoRC-11 "harness \`$RC_ID\`"
+rc_seed_log repoRC-11
+run env LANES_NO_FETCH=1 "$E" set-lane-state repoRC-11 RUNNING --expect none --owner "$RC_ID"
+run "$E" lane-reconcile repoRC-11
+is    "a lane whose STARTED predates Amendment 18(a) is bound HERE, on the line's own workstation" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "BINDING" { print $2 }')" "here"
+is    "…so the same RUNNING snapshot with no holder IS an ungraceful stop" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "ungraceful-stop"
+
 echo "== the workstation seam: unset, every writer reads the host =="
 
 # THE OTHER HALF OF R-A9-13. Every case above this line runs with

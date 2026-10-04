@@ -11706,6 +11706,46 @@ lane_reconcile() {   # <lane>
     *) printf 'HOLDER%sunknown%s%s\n' "$US" "$US" "${SESSION_FILES_ERR:-the session records of this workstation could not be read}" ;;
   esac
 
+  # 2b. THE BINDING (Amendment 18(b)): *"Liveness is pronounced only from
+  # INSIDE the binding's own `host` and `container`, where the pid namespace is
+  # the record's: from anywhere else a binding is UNKNOWN, never dead."* The
+  # holder read above is THIS workstation's session records, so it says nothing
+  # about a lane whose last STARTED/RESUMED was written on another host or in
+  # another container — and this workstation's snapshot is this workstation's
+  # alone (design decision 10). Read through the same scan and the same
+  # locality rule `binding` and `holder_is_dead` use, with clause (b)'s one
+  # exception: a binding whose window is GONE from a shared tmux server is a
+  # dead binding, and then the local read above decides, as it does there.
+  #   here       the binding is this place's, or the lane's lines predate it
+  #   free       no binding is open (released, or never started)
+  #   gone       bound elsewhere on this host's tmux, and its window is gone
+  #   elsewhere  bound in a place this one cannot pronounce on
+  #   unknown    the object log could not be read for it (Amendment 7(d))
+  lrc_bwhere=free; lrc_bat=""
+  lrc_bout=""; lrc_brc=0
+  lrc_bout="$(lane_binding_scan "$lrc_lane")" || lrc_brc=$?
+  if [ "$lrc_brc" != 0 ]; then
+    lrc_bwhere=unknown
+  else
+    IFS="$US" read -r lrc_bst lrc_bhost lrc_bcont lrc_bwin lrc_butc lrc_bsess lrc_bos \
+      lrc_brutc lrc_brsess lrc_brpay lrc_bxverb lrc_bxutc lrc_bxsess lrc_bxpay lrc_blegacy \
+      lrc_bfverb lrc_bfutc lrc_bfsess lrc_bfpay <<LRC_BIND
+$lrc_bout
+LRC_BIND
+    case "$lrc_bst" in
+      bound|requested)
+        lrc_bat="${lrc_bhost:-unknown}/${lrc_bcont:-none}"
+        if binding_is_here "$lrc_bhost" "$lrc_bcont" "$lrc_blegacy"; then
+          lrc_bwhere=here
+        elif [ "$(binding_window_state "$lrc_bhost" "$lrc_bwin" "$lrc_blegacy")" = gone ]; then
+          lrc_bwhere=gone
+        else
+          lrc_bwhere=elsewhere
+        fi ;;
+    esac
+  fi
+  printf 'BINDING%s%s%s%s\n' "$US" "$lrc_bwhere" "$US" "${lrc_bat:-none}"
+
   # 3. THE TREES — the inventory, recomputed. A stored value is a COMPARISON
   # POINT and never current truth.
   lrc_dir="$(lane_payload_field "$lrc_lane" dir 2>/dev/null || :)"
@@ -11880,6 +11920,19 @@ EOF
       lrc_why="the lane is recorded CLOSED and $lrc_dirty tree(s) below are dirty or unpushed: no cleanup is made here"
     fi
   fi
+  # AND A LANE BOUND ELSEWHERE IS NEVER PRONOUNCED ON FROM HERE (Amendment
+  # 18(b), step 2b above). Every verdict this function can reach out of a local
+  # snapshot and a local holder read — a crash, a clearance, a closure, or
+  # "nothing to recover" — is a pronouncement on liveness, and from outside the
+  # binding that is UNKNOWN, never dead. So all of them become `indeterminate`.
+  case "$lrc_bwhere" in
+    elsewhere)
+      lrc_v=indeterminate
+      lrc_why="lane $lrc_lane is bound on $lrc_bat, and liveness is pronounced only from inside that binding (Amendment 18(b)): from here it is UNKNOWN, never dead, so no crash, no clearance and no closure is pronounced — and this workstation's snapshot is this workstation's alone (design decision 10). Read the lane from that place, or ask it to hand off: lane-start --request-handoff" ;;
+    unknown)
+      lrc_v=indeterminate
+      lrc_why="lane $lrc_lane's object log could not be read, so where it is bound is NOT established — and liveness may be pronounced only from inside the binding (Amendment 18(b)). A read that failed is never an answer (Amendment 7(d))" ;;
+  esac
   printf 'TREES%s%s inventoried%s%s dirty or unpushed%s%s require recovery%s%s unmanaged or stale\n' \
     "$US" "$lrc_n" "$US" "$lrc_dirty" "$US" "$lrc_recover" "$US" "$lrc_unmanaged"
   printf 'VERDICT%s%s%s%s\n' "$US" "$lrc_v" "$US" "$lrc_why"
