@@ -897,7 +897,8 @@ exec '{real_tmux}' "$@"
 [ "$LANES_HOST" = fixture-host ] && [ "$LANES_OS" = linux ] && [ "$LANES_CONTAINER" = fixture-container ] || exit 66
 exit 127
 """)
-    box.env.update(PCLAUDE=str(child), LANE_SUPERVISOR_NO_PROMPT="1", TMUX_PANE="%1")
+    box.env.update(PCLAUDE=str(child), CLAUDE_PROFILE_NAME="test-profile",
+                   LANE_SUPERVISOR_NO_PROMPT="1", TMUX_PANE="%1")
     result = supervisor(box, "--restart", "--lane", LANE, "--dir", str(box.lane_dir), "clear")
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert pane_result.read_text().strip() == "3", (result.stdout, result.stderr)
@@ -1172,3 +1173,19 @@ def test_signal_between_observer_fork_and_pid_publication_reaps_owned_job(restar
     assert not box.claude_runs()
     assert not list(Path(box.env["TMPDIR"]).glob("lane-observer.*"))
     assert "state: ready\n" not in intent_path(box).read_text()
+
+
+def test_new_restart_explicitly_clears_previous_operations_profile(restart_box):
+    box = restart_box
+    prepare_restart(box)
+    assert helper(box, "set-restart-intent", LANE, "ready", "--expect", "pending").returncode == 0
+    # This pane has no current account profile; a historical account is not
+    # permission to select it silently for this operation.
+    box.env.pop("CLAUDE_PROFILE_NAME", None)
+    result = supervisor(box, "--restart", "--lane", LANE, "--dir", str(box.lane_dir), "clear")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    record = dict(line.split("\t", 1) for line in helper(box, "restart-intent", LANE).stdout.splitlines())
+    assert record["state"] == "pending"
+    assert record["profile"] == "none"
+    assert record["operation"] != "op-test"
+    assert "respawn-pane" in box.tmux_log.read_text()

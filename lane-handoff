@@ -2202,11 +2202,9 @@ if [ "$do_restart" = 1 ]; then
 		--operation "$operation" --generation "$ri_gen"
 		--mode fresh-from-handoff
 		--agent "$agent" --pane "$target"
-		--old-transcript "${transcript:-none}")
-	[ -n "$profile_name" ] && ri_args+=(--profile "$profile_name")
-	case "$dir" in /*) ri_args+=(--dir "$dir") ;; esac
-	case "$handoff_file" in /*) ri_args+=(--handoff "$handoff_file") ;; esac
-	[ -n "$window_ref" ] && ri_args+=(--window "$window_ref")
+		--old-transcript "${transcript:-none}"
+		--profile "${profile_name:-none}" --window "${window_ref:-none}"
+		--dir "$dir" --handoff "$handoff_file")
 	ri_wrc=0
 	LANES_NO_FETCH=1 "$LANES_EDIT" "${ri_args[@]}" >/dev/null 2>&1 || ri_wrc=$?
 	case "$ri_wrc" in
