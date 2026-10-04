@@ -13899,6 +13899,24 @@ is    "a lane whose STARTED predates Amendment 18(a) is bound HERE, on the line'
 is    "…so the same RUNNING snapshot with no holder IS an ungraceful stop" \
       "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "ungraceful-stop"
 
+# AND THE SNAPSHOT NEVER LEAKS INTO THE LISTING'S BINDING COLUMN (Amendment
+# 18's column 13): a lane with a lifecycle snapshot and no binding line is
+# still `none` there, because the binding is the published log's and the
+# snapshot is this workstation's alone.
+rc_row repoRC-12 "harness \`$RC_ID\`"
+{ printf '# lane repoRC-12 — object log (lane-collision-protocol Amendment 7)\n'
+  printf 'NOTED — lane repoRC-12, session %s@Eagle, 2026-09-15T00:00:00Z, lane:repoRC-12 — a log with no binding line\n' "$RC_ID"
+} > "$LOGD/repoRC-12.md"
+git -C "$WIP" add -- lanes/log/repoRC-12.md
+git -C "$WIP" commit -q -m "LOG(repoRC-12@Eagle): a log with no binding line"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+run "$E" set-lane-state repoRC-12 RUNNING --expect none --owner "$RC_ID"
+is    "a lane with no binding line can still carry a lifecycle snapshot" "$rc" 0
+run env LANES_NO_FETCH=1 "$E" lanes --lane repoRC-12
+is    "…and the listing's binding column says none for it, whatever the snapshot says" \
+      "$(printf '%s' "$out" | cut -f13)" "none"
+
 echo "== the managed-owner seam: managed ledger owns enrolled lanes; this tooling owns legacy =="
 
 # Brett Heap's ruling of 2026-10-04, verbatim: "managed ledger owns enrolled
