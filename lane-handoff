@@ -492,6 +492,11 @@ ready_check() {   # <lane> <pid file> <expected new transcript|""> <old transcri
 		return 1
 	fi
 	kill -0 "$rc_pid" 2>/dev/null || { READY_WHY="the child (pid $rc_pid) is gone"; return 2; }
+	rc_ps="$(ps -p "$rc_pid" -o stat= 2>/dev/null)"; rc_ps="$(printf '%s' "$rc_ps" | tr -d '[:space:]')"
+	case "$rc_ps" in
+	  Z*) READY_WHY="the child (pid $rc_pid) exited and is awaiting reap"; return 2 ;;
+	  '') READY_WHY="the child process state could not be established"; return 1 ;;
+	esac
 	rc_out=""; rc_rc=0
 	rc_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-holders "$rc_lane" 2>/dev/null)" || rc_rc=$?
 	case "$rc_rc" in
@@ -1230,6 +1235,8 @@ if [ "$do_supervise" = 1 ]; then
 	# assumed — this runs under a fake tmux in the suite and under none at all
 	# where a person invoked it by hand.
 	sv_pane_here="${TMUX_PANE:-}"
+    [ -n "$RI_PANE" ] && [ "$RI_PANE" != none ] && [ -n "$sv_pane_here" ] ||
+      die "the restart pane binding cannot be verified: recorded ${RI_PANE:-none}, current ${sv_pane_here:-none}. Nothing was started." 2
 	pane_agrees "$RI_PANE" "$sv_pane_here" ||
 		die "lane $lane's restart intent was written for pane $RI_PANE and this supervisor is in $sv_pane_here. Nothing was started: a launch here would put this lane's session in a pane the lane's own record does not name, and that record is what every other reader goes by." 2
 
@@ -2204,6 +2211,9 @@ if [ "$do_restart" = 1 ]; then
 	[ -n "$ws" ] && launch_line="LANES_WORKSTATION=$(quoted "$ws") $launch_line"
 	[ -z "${LANES_LANE_STATE_ROOT:-}" ] || launch_line="LANES_LANE_STATE_ROOT=$(quoted "$LANES_LANE_STATE_ROOT") $launch_line"
 	[ -z "${AGENT_PROTOCOL_ROOT:-}" ] || launch_line="AGENT_PROTOCOL_ROOT=$(quoted "$AGENT_PROTOCOL_ROOT") $launch_line"
+	[ -z "${LANES_HOST:-}" ] || launch_line="LANES_HOST=$(quoted "$LANES_HOST") $launch_line"
+	[ -z "${LANES_OS:-}" ] || launch_line="LANES_OS=$(quoted "$LANES_OS") $launch_line"
+	[ -z "${LANES_CONTAINER:-}" ] || launch_line="LANES_CONTAINER=$(quoted "$LANES_CONTAINER") $launch_line"
 	say "  respawning $target: $launch_line"
 	if tmux respawn-pane -k -t "$target" "$launch_line" 2>/dev/null; then
 		say "  respawned into the supervisor — it launches the fresh session, confirms it came up, and stays in this pane if it did not"

@@ -46,3 +46,8 @@ Ordinary first launches use the resolved checkout as a control-root hint only
 only after all established root rungs fail. Explicit configuration, recorded
 directories and PROJECTS_ROOT retain precedence. Each claimed attempt repeats the
 all-holder absence check before starting, including interactive retries.
+
+Require a known current pane before the supervisor claim. Forward the complete
+launcher host/OS/container binding through respawn. Control-root reads inspect
+existing directory ancestors so an unusable root cannot answer absence. Child
+readiness rejects zombie process state and keeps unknown process state unready.

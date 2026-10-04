@@ -2720,6 +2720,14 @@ installed and not a thirteenth word: Amendment 18 Addendum 2 (i-8) is explicit
 that *"no word is kept on `PATH` for it alone"*, which is the ground on which
 `restart` was taken off `PATH` in the first place.
 
+The legacy supervisor requires both the recorded pane and current TMUX_PANE to
+be known and agree before claiming an attempt. A respawn forwards the configured
+control/protocol roots and the launcher's LANES_HOST, LANES_OS and
+LANES_CONTAINER identity alongside LANES_WORKSTATION. An existing unusable
+control-root directory or ancestor is a read failure; only genuinely absent
+storage permits an ordinary first launch. Readiness checks the child process
+state and refuses an exited child awaiting reap.
+
 What the supervisor does, in order:
 
 1. **claims** the intent — `pending`/`failed` → `starting`, compare-and-swap on

@@ -10661,10 +10661,24 @@ lane_restart_missing() {   # <file> <canonical lane>
   ' "$1"
 }
 
+lane_restart_root_ok() {   # missing directories are allowed; unusable existing ancestors are not
+  lrro_path="$1"
+  while [ -n "$lrro_path" ]; do
+    if [ -e "$lrro_path" ] || [ -L "$lrro_path" ]; then
+      [ -d "$lrro_path" ] && [ -r "$lrro_path" ] && [ -x "$lrro_path" ] || return 1
+    fi
+    lrro_parent="$(dirname -- "$lrro_path")" || return 1
+    [ "$lrro_parent" != "$lrro_path" ] || break
+    lrro_path="$lrro_parent"
+  done
+  return 0
+}
+
 lane_restart_read() {   # <lane> [<resolved checkout hint>]
   lrr_lane="${1-}"; lrr_root=""; lrr_rc=0
   lrr_root="$(lane_control_root "$lrr_lane" "" "${2-}")" || lrr_rc=$?
   [ "$lrr_rc" = 0 ] || return 1
+  lane_restart_root_ok "$lrr_root" || return 1
   lrr_f="$lrr_root/restart-intent.yaml"
   [ -e "$lrr_f" ] || [ -L "$lrr_f" ] || return 8
   [ -f "$lrr_f" ] && [ -r "$lrr_f" ] || return 1

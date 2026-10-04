@@ -391,6 +391,9 @@ FAKE
 
 cat > "$SANDBOX/fakebin/ps" <<'FAKE'
 #!/usr/bin/env bash
+# The supervised child is a real sandbox process. Its stat read must report
+# real zombie/active state; the older signature fixtures still use records.
+case "$*" in *"-o stat="*) exec /bin/ps "$@" ;; esac
 target=""
 while [ $# -gt 0 ]; do
   case "$1" in

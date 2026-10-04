@@ -21,6 +21,7 @@ def restart_box(tmp_path: Path) -> Sandbox:
     box = Sandbox(tmp_path)
     box.env["LANES_LANE_STATE_ROOT"] = str(tmp_path / "state")
     box.env["LANES_NO_FETCH"] = "1"
+    box.env["TMUX_PANE"] = "%1"
     return box
 
 
@@ -481,9 +482,17 @@ def test_restart_all_holders_retains_duplicate_processes_for_one_uuid(restart_bo
             proc.wait(timeout=5)
 
 
-def test_restart_observer_confirms_late_uuid_prepared_by_real_child(restart_box):
+@pytest.mark.parametrize("child_state", ["live", "zombie"])
+def test_restart_observer_confirms_late_uuid_prepared_by_real_child(restart_box, child_state):
     box = restart_box
     prepare_restart(box)
+    if child_state == "zombie":
+        ps = shutil.which("ps")
+        _write(box.fakebin / "ps", f"""#!/usr/bin/env bash
+case "$*" in *"-o stat="*) printf 'Z\n'; exit 0 ;; esac
+exec '{ps}' "$@"
+""")
+    box.env["FAKE_CHILD_STATE"] = child_state
     # A fake profile launcher forwards both supervisor tokens in the existing
     # pane. The child itself executes real lane-start, including the stamp.
     launcher = _write(box.fakebin / "pclaude", '''#!/usr/bin/env bash
@@ -511,6 +520,12 @@ if uuids:
 
 pathlib.Path(os.environ['FAKE_CLAUDE_LOG']).write_text(' '.join(args))
 intent=pathlib.Path(os.environ['LANES_LANE_STATE_ROOT'])/'repoZ-1'/'restart-intent.yaml'
+if os.environ.get('FAKE_CHILD_STATE') == 'zombie':
+    time.sleep(1)
+    record_path.unlink()
+    historical_path=record_path.parent/'historical.json'
+    if historical_path.exists(): historical_path.unlink()
+    sys.exit(127)
 for _ in range(150):
     if 'state: ready\n' in intent.read_text(): break
     time.sleep(.1)
@@ -520,9 +535,9 @@ record_path.unlink()
     box.env.update(PCLAUDE=str(launcher), LANE_SUPERVISOR_NO_PROMPT="1",
                    LANE_SUPERVISOR_READY_SECONDS="15", FAKE_CC_PATH=str(box.resolved), TMUX_PANE="%1")
     result = supervisor(box, "--supervise", "--lane", LANE, "--operation", "op-test")
-    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert result.returncode == (0 if child_state == "live" else 3), (result.stdout, result.stderr)
     record = dict(line.split("\t", 1) for line in helper(box, "restart-intent", LANE).stdout.splitlines())
-    assert record["state"] == "ready"
+    assert record["state"] == ("ready" if child_state == "live" else "failed")
     assert record["attempt"] == "1"
     assert record["new_transcript"] != "none"
     assert "Preserved task." in box.claude_runs()
@@ -847,6 +862,7 @@ def test_respawn_restores_configured_roots_in_new_pane(restart_box):
     (box.home / ".agents").rename(protocol)
     box.env["AGENT_PROTOCOL_ROOT"] = str(protocol)
     box.env["LANES_LANE_STATE_ROOT"] = str(box.root / "state with spaces")
+    box.env.update(LANES_HOST="fixture-host", LANES_OS="linux", LANES_CONTAINER="fixture-container")
     prepare_restart(box)
     assert helper(box, "set-restart-intent", LANE, "ready", "--expect", "pending").returncode == 0
     real_tmux = box.fakebin / "tmux-real"
@@ -855,13 +871,16 @@ def test_respawn_restores_configured_roots_in_new_pane(restart_box):
     _write(box.fakebin / "tmux", f"""#!/usr/bin/env bash
 if [ "$1" = respawn-pane ]; then
   for arg in "$@"; do line="$arg"; done
-  env -u LANES_LANE_STATE_ROOT -u AGENT_PROTOCOL_ROOT sh -c "$line"
+  env -u LANES_LANE_STATE_ROOT -u AGENT_PROTOCOL_ROOT -u LANES_HOST -u LANES_OS -u LANES_CONTAINER sh -c "$line"
   printf '%s\n' "$?" > '{pane_result}'
   exit 0
 fi
 exec '{real_tmux}' "$@"
 """)
-    child = _write(box.fakebin / "pclaude", "#!/usr/bin/env bash\nexit 127\n")
+    child = _write(box.fakebin / "pclaude", """#!/usr/bin/env bash
+[ "$LANES_HOST" = fixture-host ] && [ "$LANES_OS" = linux ] && [ "$LANES_CONTAINER" = fixture-container ] || exit 66
+exit 127
+""")
     box.env.update(PCLAUDE=str(child), LANE_SUPERVISOR_NO_PROMPT="1", TMUX_PANE="%1")
     result = supervisor(box, "--restart", "--lane", LANE, "--dir", str(box.lane_dir), "clear")
     assert result.returncode == 0, (result.stdout, result.stderr)
@@ -869,3 +888,34 @@ exec '{real_tmux}' "$@"
     record = dict(line.split("\t", 1) for line in helper(box, "restart-intent", LANE).stdout.splitlines())
     assert record["state"] == "failed" and record["attempt"] == "1"
     assert "127" in record["reason"]
+
+
+@pytest.mark.parametrize("pane", ["", "%2"])
+def test_supervisor_refuses_unknown_or_different_pane(restart_box, pane):
+    box = restart_box
+    prepare_restart(box)
+    before = intent_path(box).read_bytes()
+    box.env["TMUX_PANE"] = pane
+    result = supervisor(box, "--supervise", "--lane", LANE, "--operation", "op-test")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "pane" in result.stderr
+    assert intent_path(box).read_bytes() == before
+    assert not box.claude_runs()
+
+
+@pytest.mark.parametrize("kind", ["file", "ancestor-file", "broken-link"])
+def test_existing_invalid_state_root_is_not_absent_intent(restart_box, kind):
+    box = restart_box
+    root = Path(box.env["LANES_LANE_STATE_ROOT"])
+    if kind == "file":
+        root.write_text("not a directory\n")
+    elif kind == "ancestor-file":
+        root.write_text("not a directory\n")
+        box.env["LANES_LANE_STATE_ROOT"] = str(root / "child")
+    else:
+        root.symlink_to(box.root / "missing-target")
+    assert helper(box, "restart-intent", LANE).returncode == 1
+    box.resolver()
+    result = box.start()
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert not box.claude_runs()
