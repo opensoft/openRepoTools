@@ -779,6 +779,14 @@ exit 127
                 time.sleep(.05)
             assert "retry this restart?" in output_path.read_text(), output_path.read_text()
             os.write(master, b"r\n")
+            # The terminal stays open for an indeterminate result until its
+            # message is acknowledged, matching the real supervisor pane.
+            deadline = time.monotonic() + 15
+            while "Press Enter to close it" not in output_path.read_text() and proc.poll() is None and time.monotonic() < deadline:
+                time.sleep(.05)
+            assert "INDETERMINATE" in output_path.read_text(), output_path.read_text()
+            assert "Press Enter to close it" in output_path.read_text(), output_path.read_text()
+            os.write(master, b"\n")
             assert proc.wait(timeout=15) == 4, output_path.read_text()
             assert launches.read_text().splitlines() == ["launch"]
             record = dict(line.split("\t", 1) for line in helper(box, "restart-intent", LANE).stdout.splitlines())
