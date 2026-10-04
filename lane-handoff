@@ -107,7 +107,7 @@
 #
 #   $LANES_EDIT       the register's reader/writer (default: beside this file)
 #   $LANES_AGENT      this agent's name for the record (default: claude)
-#   $PCLAUDE          the launcher                 (default: pclaude, else claude-profile)
+#   $PCLAUDE          the launcher                 (default: lclaude, else pclaude, else claude-profile)
 #   $LANE_HANDOFF_NO_TMUX=1   never touch tmux (the identity fix, --exit, --restart)
 #
 # lane-collision-protocol Amendment 17 (in force 2026-09-14T09:45:33Z),
@@ -493,16 +493,22 @@ ready_check() {   # <lane> <pid file> <expected new transcript|""> <old transcri
 	fi
 	kill -0 "$rc_pid" 2>/dev/null || { READY_WHY="the child (pid $rc_pid) is gone"; return 2; }
 	rc_out=""; rc_rc=0
-	rc_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" live-holder "$rc_lane" 2>/dev/null)" || rc_rc=$?
+	rc_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-holders "$rc_lane" 2>/dev/null)" || rc_rc=$?
 	case "$rc_rc" in
 	0) : ;;
 	8) READY_WHY="no live session record names lane $rc_lane yet"; return 1 ;;
 	*) READY_WHY="this workstation's session records could not be read (live-holder exited $rc_rc), which is NOT 'nothing is live'"; return 1 ;;
 	esac
-	rc_n="$(printf '%s\n' "$rc_out" | grep -c . || :)"
+	rc_n="$(printf '%s\n' "$rc_out" | awk -F'\037' '!seen[$4]++ {n++} END {print n+0}')"
 	if [ "${rc_n:-0}" != 1 ]; then
 		READY_WHY="$rc_n live holders answer for lane $rc_lane and readiness needs exactly one (Amendment 18(h))"
 		return 1
+	fi
+	# Historical records for one live PID are one process. Prefer the
+	# current attempt's exact fresh UUID; another PID still blocks above.
+	if [ -n "$rc_new" ] && [ "$rc_new" != none ]; then
+		rc_expected="$(printf '%s\n' "$rc_out" | awk -F'\037' -v sid="$rc_new" '$1==sid {print; exit}')"
+		[ -z "$rc_expected" ] || rc_out="$rc_expected"
 	fi
 	rc_sid="$(printf '%s\n' "$rc_out" | awk -F'\037' '{print $1; exit}')"
 	rc_tgt="$(printf '%s\n' "$rc_out" | awk -F'\037' '{print $2; exit}')"
@@ -556,7 +562,7 @@ ready_check() {   # <lane> <pid file> <expected new transcript|""> <old transcri
 # those in a minute is sixty git processes behind a session that is trying to
 # start.
 supervise_watch() {   # <lane> <operation> <generation> <pid file> <new> <old> <pane>
-	sw_lane="$1"; sw_op="$2"; sw_gen="$3"; sw_pidf="$4"; sw_new="$5"; sw_old="$6"; sw_pane="$7"
+	sw_lane="$1"; sw_op="$2"; sw_gen="$3"; sw_pidf="$4"; sw_new="$5"; sw_old="$6"; sw_pane="$7"; sw_attempt="$8"
 	# THE DEADLINE IS WALL CLOCK, NOT A COUNT OF SLEEPS. This loop used to add
 	# 2 per turn and call that the elapsed time, which counts only the `sleep`
 	# and never the work between two of them — and the work is a `live-holder`
@@ -583,6 +589,13 @@ supervise_watch() {   # <lane> <operation> <generation> <pid file> <new> <old> <
 			sw_el=$((sw_now - sw_t0))
 			[ "$sw_el" -gt "$sw_waited" ] && sw_waited="$sw_el"
 		fi
+		# lane-start writes the prepared UUID after the observer has started.
+		# Read the current attempt, never the preceding attempt's UUID.
+		if ! ri_load "$sw_lane"; then return 5; fi
+		[ "$RI_OP" = "$sw_op" ] && [ "$RI_GEN" = "$sw_gen" ] &&
+		  [ "$RI_ATTEMPT" = "$sw_attempt" ] && [ "$RI_STATE" = starting ] || return 5
+		sw_new="$RI_NEW"
+		case "$sw_new" in ''|none) continue ;; esac
 		sw_rc=0
 		ready_check "$sw_lane" "$sw_pidf" "$sw_new" "$sw_old" "$sw_pane" || sw_rc=$?
 		case "$sw_rc" in
@@ -594,27 +607,15 @@ supervise_watch() {   # <lane> <operation> <generation> <pid file> <new> <old> <
 			# the fence.
 			sw_frc=0
 			LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$sw_lane" ready \
-				--expect starting --expect-operation "$sw_op" --expect-generation "$sw_gen" \
+				--expect starting --expect-operation "$sw_op" --expect-generation "$sw_gen" --expect-attempt "$sw_attempt" \
 				--new-transcript "${READY_SID:-$sw_new}" \
 				--reason "readiness confirmed after ${sw_waited}s" >/dev/null 2>&1 || sw_frc=$?
 			if [ "$sw_frc" != 0 ]; then
 				note "lane $sw_lane came up and the restart intent could NOT be marked ready (exit $sw_frc): the session is running and the record does not say so. Read it:  $prog --restart-status --lane $sw_lane"
 				return 5
 			fi
-			# AND THE LANE'S OWN LIFECYCLE WHERE THIS WORKSTATION HAS ONE
-			# (openRepoTools#91): `SWAPPED -> RUNNING`, on the same act. A
-			# `lanes-edit.sh` without `lane-state` answers 2 from its
-			# unknown-subcommand arm and this is SILENT — the lane simply has
-			# no lifecycle snapshot to move, which is the pre-cutover case and
-			# not a failure.
-			sw_lrc=0
-			LANES_NO_FETCH=1 "$LANES_EDIT" set-lane-state "$sw_lane" RUNNING \
-				--expect SWAPPED >/dev/null 2>&1 || sw_lrc=$?
-			case "$sw_lrc" in
-			0 | 1 | 2) : ;;
-			7) note "lane $sw_lane's lifecycle moved under this restart, so the SWAPPED -> RUNNING transition was refused: the restart intent is ready and the lifecycle is somebody else's now. Read it:  $LANES_EDIT lane-reconcile $sw_lane" ;;
-			*) note "lane $sw_lane came up and its lifecycle could not be moved to RUNNING (set-lane-state exited $sw_lrc). The restart intent IS ready; the lifecycle snapshot is behind it." ;;
-			esac
+			# Legacy readiness belongs only to this intent. Never advance #97's
+			# diagnostic snapshot or a managed JSON generation/operation here.
 			return 0 ;;
 		esac
 	done
@@ -628,7 +629,7 @@ supervise_watch() {   # <lane> <operation> <generation> <pid file> <new> <old> <
 	# generation's record, and `$sw_gen` is the generation the supervisor
 	# CLAIMED rather than whatever is on disk by now.
 	LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$sw_lane" starting \
-		--expect starting --expect-operation "$sw_op" --expect-generation "$sw_gen" \
+		--expect starting --expect-operation "$sw_op" --expect-generation "$sw_gen" --expect-attempt "$sw_attempt" \
 		--reason "INDETERMINATE: ${sw_waited}s elapsed (deadline ${SUPERVISE_READY_SECONDS}s) with the child alive and readiness unconfirmed; ${READY_WHY:-no evidence}" >/dev/null 2>&1 || :
 	return 4
 }
@@ -656,7 +657,7 @@ supervise_argv() {   # <lane> <operation>
 	SUPERVISE_CMD=(); SUPERVISE_VIA=""
 	sa_launcher="${PCLAUDE:-}"
 	if [ -z "$sa_launcher" ]; then
-		sa_launcher="$(command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
+		sa_launcher="$(command -v lclaude 2>/dev/null || command -v pclaude 2>/dev/null || command -v claude-profile 2>/dev/null || printf '')"
 	fi
 	if [ -n "$sa_launcher" ] && [ -n "$RI_PROFILE" ] && [ "$RI_PROFILE" != none ]; then
 		SUPERVISE_CMD=("$sa_launcher" --lane "$sa_lane" "$RI_PROFILE")
@@ -695,8 +696,21 @@ supervise_argv() {   # <lane> <operation>
 # match it, which is the stale write the fence exists to refuse.
 supervise_failed() {   # <lane> <operation> <reason>
 	sf_lane="$1"; sf_op="$2"; sf_why="$3"
+	# A dead launcher can leave a descendant holding the lane. Only an
+	# affirmative empty holder read allows a retryable failure.
+	sf_hrc=0
+	LANES_NO_FETCH=1 "$LANES_EDIT" lane-holders "$sf_lane" >/dev/null 2>&1 || sf_hrc=$?
+	if [ "$sf_hrc" != 8 ]; then
+		LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$sf_lane" starting \
+			--expect starting --expect-operation "$sf_op" \
+			--expect-generation "$SV_CLAIMED_GEN" --expect-attempt "$SV_CLAIMED_ATTEMPT" \
+			--reason "INDETERMINATE: launch ended but holder absence is unproven (read $sf_hrc); $sf_why" >/dev/null 2>&1 || :
+		say "INDETERMINATE — holder absence is unproven; retry is blocked."
+		say "  read it: $prog --restart-status --lane $sf_lane"
+		return 4
+	fi
 	sf_fence=()
-	[ -n "$SV_CLAIMED_GEN" ] && sf_fence=(--expect-generation "$SV_CLAIMED_GEN")
+	[ -n "$SV_CLAIMED_GEN" ] && sf_fence=(--expect-generation "$SV_CLAIMED_GEN" --expect-attempt "$SV_CLAIMED_ATTEMPT")
 	LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$sf_lane" failed \
 		--expect 'starting|pending' --expect-operation "$sf_op" \
 		${sf_fence[@]+"${sf_fence[@]}"} \
@@ -712,7 +726,7 @@ supervise_failed() {   # <lane> <operation> <reason>
 	say ""
 	say "  retry:   $(quoted "$SELF_ABS") --supervise --lane $sf_lane --operation $sf_op"
 	say "  read it: $(quoted "$SELF_ABS") --restart-status --lane $sf_lane"
-	say "  by hand: lane $sf_lane"
+	say "  retry uses this same supervised operation; ordinary lane resume is not recovery."
 	say ""
 	if [ "${LANE_SUPERVISOR_NO_PROMPT:-0}" = 1 ] || [ ! -t 0 ]; then
 		note "there is no terminal here to offer the retry on, so this supervisor exits 3 rather than blocking on a read nobody will answer. The intent is \`failed\` and carries the reason; the three lines above are the whole of what to do next."
@@ -751,7 +765,7 @@ supervise_child() {
 	  if [ -n "$sr_dir" ] && [ "$sr_dir" != none ]; then
 		cd -- "$sr_dir" || exit 127
 	  fi
-	  LANE_START_FRESH=1 LANE_RESTART_OPERATION="$sr_op" \
+	  LANE_START_FRESH=1 LANE_RESTART_OPERATION="$sr_op" LANE_RESTART_ATTEMPT="$SV_CLAIMED_ATTEMPT" \
 		exec sh -c 'printf "%s\n" "$$" > "$1"; shift; exec "$@"' _ "$sr_pidf" "${SUPERVISE_CMD[@]}" )
 }
 
@@ -771,28 +785,34 @@ supervise_run() {   # <lane> <operation>
 		# is a second claim of the same operation and must take the fence
 		# again: between the failure and the `r` a person may have started the
 		# lane by hand, and the retry must lose that race rather than win it.
-		ri_load "$sr_lane" >/dev/null 2>&1 || :
+		ri_load "$sr_lane" || die "the restart intent could not be read. Nothing was started." 2
 		case "$RI_STATE" in
-		pending) sr_att=(--attempt=1) ;;
-		failed)  sr_att=(--bump-attempt) ;;
+		pending) sr_att=(--attempt=1); sr_claim_attempt=1 ;;
+		failed)  sr_att=(--bump-attempt); sr_claim_attempt=$((RI_ATTEMPT + 1)) ;;
 		*) die "lane $sr_lane's restart intent is '${RI_STATE:-none}' and this supervisor can only launch from \`pending\` or \`failed\`. Nothing was started. Read it:  $prog --restart-status --lane $sr_lane" 2 ;;
 		esac
+		LANES_NO_FETCH=1 "$LANES_EDIT" legacy-restart-check "$sr_lane" ||
+			die "managed ownership blocks this legacy retry. Nothing was started." 2
+		sr_claim_gen="$RI_GEN"
 		sr_crc=0
 		LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$sr_lane" starting \
-			--expect "$RI_STATE" --expect-operation "$sr_op" --expect-generation "${RI_GEN:-0}" \
-			"${sr_att[@]}" --reason "supervisor claimed the operation" >/dev/null 2>&1 || sr_crc=$?
+			--expect "$RI_STATE" --expect-operation "$sr_op" --expect-generation "${RI_GEN:-0}" --expect-attempt "$RI_ATTEMPT" \
+			"${sr_att[@]}" --new-transcript none --reason "supervisor claimed the operation" >/dev/null 2>&1 || sr_crc=$?
 		case "$sr_crc" in
 		0) : ;;
 		7) die "lane $sr_lane's restart intent moved between reading it and claiming it: another act owns operation $sr_op now. Nothing was started. Read it:  $prog --restart-status --lane $sr_lane" 2 ;;
 		*) die "lane $sr_lane's restart intent could not be claimed (\`set-restart-intent\` exited $sr_crc), and this supervisor will not launch without a fenced hold on operation $sr_op. Nothing was started." 2 ;;
 		esac
-		ri_load "$sr_lane" >/dev/null 2>&1 || :
+		ri_load "$sr_lane" || die "the claimed intent could not be read back. Nothing was started." 2
+		[ "$RI_OP" = "$sr_op" ] && [ "$RI_GEN" = "$sr_claim_gen" ] && [ "$RI_ATTEMPT" = "$sr_claim_attempt" ] && [ "$RI_STATE" = starting ] ||
+			die "another operation replaced the supervisor claim. Nothing was started." 2
 		# THE GENERATION THIS SUPERVISOR HOLDS, taken once, here, where the claim
 		# has just succeeded and the record is this act's. Every later write of
 		# this operation is fenced on THIS number rather than on whatever the file
 		# says at the time, which is what makes a superseded supervisor's write
 		# refuse instead of landing.
 		SV_CLAIMED_GEN="${RI_GEN:-0}"
+		SV_CLAIMED_ATTEMPT="$RI_ATTEMPT"
 		case "$SV_CLAIMED_GEN" in '' | *[!0-9]*) SV_CLAIMED_GEN=0 ;; esac
 
 		if ! supervise_argv "$sr_lane" "$sr_op"; then
@@ -816,7 +836,7 @@ supervise_run() {   # <lane> <operation>
 		say "  this supervisor stays in the pane: whatever the launch does, it will say so here."
 		say ""
 		: > "$sr_pidf"
-		supervise_watch "$sr_lane" "$sr_op" "$SV_CLAIMED_GEN" "$sr_pidf" "$RI_NEW" "$RI_OLD" "$RI_PANE" &
+		supervise_watch "$sr_lane" "$sr_op" "$SV_CLAIMED_GEN" "$sr_pidf" "$RI_NEW" "$RI_OLD" "$RI_PANE" "$RI_ATTEMPT" &
 		sr_watch=$!
 		# PUBLISHED, so the signal handler can stop it: it is a background job of
 		# this shell and a signal to this shell is not a signal to it.
@@ -871,7 +891,7 @@ supervise_run() {   # <lane> <operation>
 		# memory of what it started: the observer is the only thing that ever
 		# had positive evidence, and it wrote that evidence down.
 		ri_load "$sr_lane" >/dev/null 2>&1 || :
-		if [ "$RI_STATE" = ready ]; then
+		if [ "$RI_STATE" = ready ] && [ "$RI_OP" = "$sr_op" ] && [ "$RI_GEN" = "$SV_CLAIMED_GEN" ] && [ "$RI_ATTEMPT" = "$SV_CLAIMED_ATTEMPT" ]; then
 			say ""
 			say "lane $sr_lane: the replacement session was CONFIRMED (operation $sr_op, transcript ${RI_NEW:-unrecorded}) and has now exited."
 			say "  A session that exited on purpose is not relaunched here — that is \`lane $sr_lane\`."
@@ -975,7 +995,7 @@ ri_field() {   # <lane> <key>
 # (Amendment 7(d)).
 ri_load() {   # <lane>
 	RI_STATE=""; RI_OP=""; RI_GEN=""; RI_MODE=""; RI_AGENT=""; RI_PROFILE=""
-	RI_DIR=""; RI_PANE=""; RI_WINDOW=""; RI_HANDOFF=""; RI_DIGEST=""
+	RI_DIR=""; RI_PANE=""; RI_WINDOW=""; RI_HANDOFF=""; RI_DIGEST=""; RI_PREPARED_DIGEST=""
 	RI_OLD=""; RI_NEW=""; RI_ATTEMPT=""; RI_REASON=""; RI_FILE=""
 	ril_out=""; ril_rc=0
 	ril_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$1" 2>/dev/null)" || ril_rc=$?
@@ -995,6 +1015,7 @@ ri_load() {   # <lane>
 	RI_WINDOW="$(printf '%s\n' "$ril_out"  | awk -F'\t' '$1 == "window" { print $2; exit }')"
 	RI_HANDOFF="$(printf '%s\n' "$ril_out" | awk -F'\t' '$1 == "handoff" { print $2; exit }')"
 	RI_DIGEST="$(printf '%s\n' "$ril_out"  | awk -F'\t' '$1 == "digest" { print $2; exit }')"
+	RI_PREPARED_DIGEST="$(printf '%s\n' "$ril_out" | awk -F'\t' '$1 == "prepared_digest" {print $2; exit}')"
 	RI_OLD="$(printf '%s\n' "$ril_out"     | awk -F'\t' '$1 == "old_transcript" { print $2; exit }')"
 	RI_NEW="$(printf '%s\n' "$ril_out"     | awk -F'\t' '$1 == "new_transcript" { print $2; exit }')"
 	RI_ATTEMPT="$(printf '%s\n' "$ril_out" | awk -F'\t' '$1 == "attempt" { print $2; exit }')"
@@ -1022,30 +1043,17 @@ if [ "$do_status" = 1 ]; then
 	say "dir         ${RI_DIR:-none}"
 	say "pane        ${RI_PANE:-none}   window ${RI_WINDOW:-none}"
 	say "handoff     ${RI_HANDOFF:-none}"
-	say "digest      ${RI_DIGEST:-none}"
+	say "digest      ${RI_DIGEST:-none}   prepared ${RI_PREPARED_DIGEST:-none}"
 	say "transcript  old ${RI_OLD:-none} → new ${RI_NEW:-none}"
 	say "reason      ${RI_REASON:-none}"
 	say "file        ${RI_FILE:-none}"
-	# THE LANE'S OWN LIFECYCLE BESIDE IT WHERE THE HELPER HAS ONE
-	# (openRepoTools#91). Where it does not, the line says so rather than
-	# leaving a reader to wonder which of the two they are looking at.
-	rst_ls=""; rst_lrc=0
-	rst_ls="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-state "$lane" 2>/dev/null \
-		| awk -F'\t' '$1 == "state" { print $2; exit }')" || rst_lrc=$?
-	case "$rst_lrc" in
-	0) say "lifecycle   ${rst_ls:-none} (lanes-edit.sh lane-state $lane)" ;;
-	# 8 IS THIS LANE HAVING NO SNAPSHOT and 2 IS THE HELPER HAVING NO WORD FOR
-	# ONE, and telling the two apart matters the day #91 lands: a reader shown
-	# "this lanes-edit.sh has no lane-state" about a helper that has one would
-	# go looking for an installation problem that is not there.
-	8) say "lifecycle   no snapshot for this lane yet (\`$LANES_EDIT lane-state $lane\` answers 8)" ;;
-	2) say "lifecycle   not recorded here — this lanes-edit.sh has no \`lane-state\` (opensoft/openRepoTools#91 has not landed on this workstation)" ;;
-	*) say "lifecycle   could not be read (\`$LANES_EDIT lane-state $lane\` exited $rst_lrc), which is NOT 'there is none' (Amendment 7(d))" ;;
-	esac
+	say "authority   legacy restart intent only"
+	say "lifecycle   separate diagnostic authority; not read or written by this command"
 	case "$RI_STATE" in
+	preparing) say "PREPARING: old pane was not respawned; inspect preservation and reconcile this exact reservation before a new /ctx." ;;
 	failed)   say ""; say "RETRY:   $(quoted "$SELF_ABS") --supervise --lane $lane --operation ${RI_OP:-<id>}" ;;
 	pending)  say ""; say "NOT YET CLAIMED: no supervisor has taken this operation. The pane it was written for may never have been respawned." ;;
-	starting) say ""; say "IN FLIGHT: a supervisor holds this operation. Do not start a second one — read the pane it is in (${RI_PANE:-pane not recorded})." ;;
+	starting) say ""; say "IN FLIGHT: this attempt is reserved; a child may still be alive. Do not start a second one — read the pane it is in (${RI_PANE:-pane not recorded})." ;;
 	ready)    say ""; say "DONE: this restart was confirmed. It authorises no further launch; an ordinary \`lane $lane\` resumes the lane." ;;
 	esac
 	exit 0
@@ -1061,12 +1069,9 @@ fi
 SV_PIDFILE=""
 SV_SIGNALLED=0
 SV_WATCH_PID=""
-# EMPTY UNTIL A CLAIM HAS BEEN MADE, and then the generation that claim held.
-# A signal arriving before the claim must not fence a write on `0` — on a
-# workstation with openRepoTools#91 the lane's generation is whatever it is,
-# and `--expect-generation 0` against it would refuse the very write that keeps
-# the lane out of the wedged `starting` state.
+# Empty until this supervisor has successfully claimed a specific attempt.
 SV_CLAIMED_GEN=""
+SV_CLAIMED_ATTEMPT=""
 sv_on_exit() {
 	sv_hs=$?
 	[ -z "$SV_PIDFILE" ] || rm -f -- "$SV_PIDFILE" 2>/dev/null
@@ -1082,31 +1087,8 @@ sv_on_exit() {
 	return 0
 }
 
-# A SUPERVISOR THAT IS SIGNALLED AWAY LEAVES A RECOVERABLE RECORD, AND KILLS
-# NOTHING (Copilot round 1 on openRepoTools#121). With only an `EXIT` trap, a
-# `TERM` to the pane root — `tmux kill-pane`, a logout, a person's `kill` —
-# ended this process with the intent still `starting`, which is the ONE state
-# nothing can recover from by itself: `--supervise` refuses to launch from it
-# (a second session of one lane is Amendment 18(h)'s collision), and the next
-# `/ctx` refuses too, because `--expect 'none|ready|failed'` is what stops an
-# ordinary context clear superseding an operation in flight. The lane was wedged
-# until somebody edited the file by hand, and `--restart-status` said
-# `IN FLIGHT: a supervisor holds this operation` about a supervisor that was
-# gone.
-#
-# SO THE SIGNAL WRITES `failed`, WHICH IS THE RETRYABLE END. It is honest —
-# this supervisor confirmed nothing — and it is safe even where the child is
-# still alive, because a retry is a NEW `--supervise` and that mode's own gate
-# reads `live-holder` before it launches anything and refuses on a live one,
-# naming `lane-end <lane> --retire <pid>`. The reason records which signal it
-# was and whether the child was still running, so the person reading
-# `--restart-status` from another window is told the thing that decides what to
-# do next.
-#
-# AND IT NEVER KILLS THE CHILD (Amendment 8(f): ending somebody's process is not
-# a boundary script's act). Where the signal was `tmux kill-pane` the child goes
-# with the pane anyway; where it was not, a running Claude is not this script's
-# to end.
+# Cancellation writes only an owned attempt. A live or unknown child keeps
+# starting and blocks retry; an unclaimed pending intent remains unchanged.
 sv_signal() {   # <signal name> <exit status>
 	SV_SIGNALLED=1
 	# THE OBSERVER GOES FIRST, AND IS REAPED (Copilot round 2 on
@@ -1133,7 +1115,12 @@ sv_signal() {   # <signal name> <exit status>
 		say "$prog: SIG$1 before this supervisor had a lane and an operation to supervise — nothing was claimed, nothing was started and nothing is left behind."
 		exit "$2"
 	fi
-	sv_sg_child=""; sv_sg_alive="no child had been started"
+	# A preflight signal has no claimed generation/attempt to reconcile.
+	if [ -z "$SV_CLAIMED_GEN" ]; then
+		say "$prog: SIG$1 before the restart claim; the intent was left unchanged."
+		exit "$2"
+	fi
+	sv_sg_child=""; sv_sg_alive="child termination could not be established"; sv_sg_state=starting
 	if [ -n "$SV_PIDFILE" ] && [ -r "$SV_PIDFILE" ]; then
 		sv_sg_child="$(head -n 1 -- "$SV_PIDFILE" 2>/dev/null | tr -dc '0-9')"
 	fi
@@ -1142,14 +1129,15 @@ sv_signal() {   # <signal name> <exit status>
 			sv_sg_alive="the launch (pid $sv_sg_child) was STILL RUNNING and was not killed"
 		else
 			sv_sg_alive="the launch (pid $sv_sg_child) had already ended"
+			sv_sg_state=failed
 		fi
 	fi
 	sv_sg_fence=()
-	[ -n "$SV_CLAIMED_GEN" ] && sv_sg_fence=(--expect-generation "$SV_CLAIMED_GEN")
-	LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$lane" failed \
+	[ -n "$SV_CLAIMED_GEN" ] && sv_sg_fence=(--expect-generation "$SV_CLAIMED_GEN" --expect-attempt "$SV_CLAIMED_ATTEMPT")
+	LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$lane" "$sv_sg_state" \
 		--expect 'pending|starting' --expect-operation "$operation" \
 		${sv_sg_fence[@]+"${sv_sg_fence[@]}"} \
-		--reason "the supervisor was sent SIG$1 before readiness was confirmed; $sv_sg_alive" \
+		--reason "INDETERMINATE: supervisor received SIG$1 before readiness; $sv_sg_alive" \
 		>/dev/null 2>&1 || :
 	ri_load "$lane" >/dev/null 2>&1 || :
 	say ""
@@ -1164,9 +1152,13 @@ sv_signal() {   # <signal name> <exit status>
 		say "  The replacement was CONFIRMED before this signal arrived (transcript ${RI_NEW:-unrecorded}), so the intent is \`ready\` and this restart is DONE."
 		say "    read it: $(quoted "$SELF_ABS") --restart-status --lane $lane"
 	else
-		say "  The restart intent is \`${RI_STATE:-failed}\` and retryable, and nothing was killed:"
+		say "  The restart intent is \`${RI_STATE:-starting}\`; no child was killed."
 		say "    read it: $(quoted "$SELF_ABS") --restart-status --lane $lane"
-		say "    retry:   $(quoted "$SELF_ABS") --supervise --lane $lane --operation $operation"
+		if [ "${RI_STATE:-}" = failed ]; then
+			say "    retry:   $(quoted "$SELF_ABS") --supervise --lane $lane --operation $operation"
+		else
+			say "  Retry remains blocked until the child is confirmed gone and the attempt is reconciled."
+		fi
 	fi
 	exit "$2"
 }
@@ -1184,6 +1176,9 @@ if [ "$do_supervise" = 1 ]; then
 	[ -n "$lane" ] || die "--supervise needs the lane: $prog --supervise --lane <lane> --operation <id>" 2
 	[ -n "$operation" ] || die "--supervise needs the operation it was started for: $prog --supervise --lane $lane --operation <id>. A supervisor that took whatever intent it found would be a supervisor that launches a lane for an act somebody else is in the middle of." 2
 
+	LANES_NO_FETCH=1 "$LANES_EDIT" legacy-restart-check "$lane" ||
+		die "legacy supervisor refuses managed or unknown ownership. Nothing was started." 2
+
 	# ---- the operation this supervisor was started for, and no other
 	sv_rc=0
 	ri_load "$lane" || sv_rc=$?
@@ -1199,6 +1194,7 @@ if [ "$do_supervise" = 1 ]; then
 	ready)    die "lane $lane's restart operation $operation is already \`ready\`: that restart was confirmed and this record authorises no further launch. Nothing was started. To open the lane:  lane $lane" 2 ;;
 	*)        die "lane $lane's restart intent is in state '${RI_STATE:-none}', which this supervisor does not know how to launch from. Nothing was started." 2 ;;
 	esac
+	[ "$RI_AGENT" = claude ] || die "this legacy supervisor supports only the recorded Claude agent. Nothing was started." 2
 	[ "$RI_MODE" = fresh-from-handoff ] ||
 		die "lane $lane's restart intent names launch mode '${RI_MODE:-none}' and this supervisor makes only 'fresh-from-handoff' launches. Nothing was started." 2
 
@@ -1241,13 +1237,16 @@ if [ "$do_supervise" = 1 ]; then
 	# ONE; both are answers, and a comparison that cannot be made is not a
 	# disagreement.
 	8 | 2) : ;;
-	*) note "lane $lane's recorded agent could not be read (\`$LANES_EDIT lane-agent $lane\` exited $sv_agrc), so the intent's agent '${RI_AGENT:-none}' is not compared with it here. That is NOT 'they agree'." ;;
+	*) die "lane $lane's recorded agent could not be read (lane-agent exited $sv_agrc). Nothing was started: unknown agent identity cannot authorize a restart." 1 ;;
 	esac
 
+	[ -n "$RI_HANDOFF" ] && [ "$RI_HANDOFF" != none ] && [ -s "$RI_HANDOFF" ] &&
+	  [ -n "$RI_DIGEST" ] && [ "$RI_DIGEST" != none ] ||
+	  die "the supervised restart has no complete handoff checksum. Nothing was started." 2
 	# ---- the handoff's digest: the first prompt is that file, and only that file
 	if [ -n "$RI_HANDOFF" ] && [ "$RI_HANDOFF" != none ] && [ -n "$RI_DIGEST" ] && [ "$RI_DIGEST" != none ]; then
 		sv_now="$(handoff_digest "$RI_HANDOFF")"
-		[ "$sv_now" = "$RI_DIGEST" ] ||
+		[ "$sv_now" = "$RI_DIGEST" ] || [ "$sv_now" = "${RI_PREPARED_DIGEST:-none}" ] ||
 			die "lane $lane's handoff has changed since operation $operation was written: the intent records $RI_DIGEST for $RI_HANDOFF and it now digests $sv_now. The top block of that file is the new session's FIRST PROMPT, so launching now would deliver a block this /ctx did not write. Nothing was started. Take the handoff again:  $prog --restart" 2
 	fi
 
@@ -1429,6 +1428,35 @@ case "$lane" in
 *[!A-Za-z0-9._-]* | .* | -* | '')
 	die "'$lane' is not a lane name (letters, digits, . _ -, not opening with . or -). Nothing was renamed and nothing was written: a name the register cannot hold is one every write below would refuse anyway, and the window would already have been renamed to it." 2 ;;
 esac
+if [ "$do_restart" = 1 ]; then
+  LANES_NO_FETCH=1 "$LANES_EDIT" legacy-restart-check "$lane" ||
+    die "legacy /ctx restart refused at the managed-lane boundary. Nothing was written or respawned." 2
+fi
+if [ "$do_restart" = 1 ]; then
+  ri_gen=0; ri_prc=0
+  ri_prior="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$lane")" || ri_prc=$?
+  case "$ri_prc" in
+    0) ri_gen="$(printf '%s\n' "$ri_prior" | awk -F'\t' '$1 == "generation" {print $2; exit}')" ;;
+    8) : ;;
+    *) die "the prior legacy intent cannot be read. Nothing was written or respawned." 2 ;;
+  esac
+  case "$ri_gen" in ''|*[!0-9]*) die "the legacy generation is malformed. Nothing was written." 2 ;; esac
+  ri_prev_gen="$ri_gen"; ri_gen=$((ri_gen + 1))
+  operation="ctx-$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM:-0}"
+  restart_prepare_cleanup() {
+    LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$lane" failed \
+      --expect preparing --expect-operation "$operation" --expect-generation "$ri_gen" \
+      --expect-attempt 0 --reason 'preservation stopped before pending; old pane was not respawned' >/dev/null 2>&1 || :
+  }
+  LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$lane" preparing \
+    --expect 'none|ready|failed' --expect-generation "$ri_prev_gen" \
+    --operation "$operation" --generation "$ri_gen" --mode preservation-only \
+    --reason 'reserved before preservation writes' >/dev/null ||
+      die "another restart owns this lane, or its reservation could not be written; an ordinary context clear never supersedes an operation in flight. No handoff, row, log or window was changed. Read it: $prog --restart-status --lane $lane" 2
+  trap restart_prepare_cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+fi
 step "lane=$lane${window_ref:+ window=$window_ref} workstation=${ws:-<none>}"
 
 # THE OTHER TWO NAMES MADE TO MATCH IT, mechanically. The window is renamed
@@ -1611,7 +1639,9 @@ writers_tmp="$(mktemp "${TMPDIR:-/tmp}/lane-handoff-writers.XXXXXX" 2>/dev/null 
 [ -n "$writers_tmp" ] ||
 	die "could not create a temporary file under ${TMPDIR:-/tmp} to snapshot this lane's writers into, and the WRITERS section is what the next session counts against \`ListAgents\` (Amendment 17 Addendum 1 (i)). Nothing was written, nothing was renamed and no pane was touched. Free some space, or set TMPDIR to somewhere writable, and re-run." 2
 cleanup() { [ -n "${writers_tmp:-}" ] && rm -f -- "$writers_tmp"; return 0; }
-trap cleanup EXIT INT TERM
+trap 'cleanup; if [ "$do_restart" = 1 ]; then restart_prepare_cleanup; fi' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 brief_for() {   # <worktree path>
 	[ -n "$writers_file" ] && [ -r "$writers_file" ] || return 1
@@ -1839,6 +1869,11 @@ payload="$payload; agent $agent; transcript $transcript"
 payload="$payload; kind $handoff_kind"
 [ -z "$refused" ] || note "DROPPED sub-field (not appended, and the line is still written):$refused"
 
+# A lane-aware launcher is required for restarts. An explicit lane keeps the
+# pclaude fallback safe across both old and new launcher installations.
+lane_profile_word="pclaude --lane $lane"
+command -v lclaude >/dev/null 2>&1 && lane_profile_word=lclaude
+
 # ------------------------------------------------------------ the LATE branch
 if [ "$do_late" = 1 ]; then
 	late_payload="$payload; late $late_at"
@@ -1851,7 +1886,7 @@ if [ "$do_late" = 1 ]; then
 	fi
 	say ""
 	say "LATE RECORD WRITTEN for lane $lane, dated $late_at. Now start the lane:"
-	say "  pclaude ${profile_name:-<profile>}"
+	say "  $lane_profile_word ${profile_name:-<profile>}"
 	exit 0
 fi
 
@@ -1946,10 +1981,14 @@ fi
 
 # ------------------------------------------- 5. the restart line — one command
 if [ -n "$row_write_refused" ]; then
-	restart_cmd="pclaude --lane $lane ${profile_name:-<profile>}"
+	if [ "$lane_profile_word" = lclaude ]; then
+		restart_cmd="lclaude --lane $lane ${profile_name:-<profile>}"
+	else
+		restart_cmd="$lane_profile_word ${profile_name:-<profile>}"
+	fi
 	restart_note=" (the row was not flipped, so the lane must be named explicitly)"
 else
-	restart_cmd="pclaude ${profile_name:-<profile>}"
+	restart_cmd="$lane_profile_word ${profile_name:-<profile>}"
 	restart_note=""
 fi
 say ""
@@ -2065,17 +2104,9 @@ if [ "$do_restart" = 1 ]; then
 	# therefore refuses here, with the old process still alive, rather than
 	# after it is dead.
 	#
-	# THE GENERATION COMES FROM THE LANE'S LIFECYCLE WHERE THIS WORKSTATION HAS
-	# ONE (openRepoTools#91's `lane-state`), so the two fences are one number;
-	# where it has none the intent carries 0 and fences on its own operation
-	# alone, which is what a workstation before that change can honestly say.
-	ri_gen=0
-	ri_g_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-state "$lane" 2>/dev/null \
-		| awk -F'\t' '$1 == "generation" { print $2; exit }')" || :
-	case "${ri_g_out:-}" in '' | *[!0-9]*) ri_gen=0 ;; *) ri_gen="$ri_g_out" ;; esac
-	operation="$(printf 'ctx-%s-%s-%s' "$(date -u +%Y%m%dT%H%M%SZ)" "$$" "${RANDOM:-0}")"
+	# Complete the reservation made before preservation writes.
 	ri_args=(set-restart-intent "$lane" pending
-		--expect 'none|ready|failed'
+		--expect preparing --expect-operation "$operation" --expect-generation "$ri_gen" --expect-attempt 0
 		--operation "$operation" --generation "$ri_gen"
 		--mode fresh-from-handoff
 		--agent "$agent" --pane "$target"

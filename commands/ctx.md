@@ -5,7 +5,18 @@ category: Lane
 tags: [lane, ctx, handoff, swap, lane-collision-protocol]
 ---
 
-**Invoke the `handoff` skill now with `--restart`, and follow every step of it, in order, to the end.**
+**Invoke the `handoff` skill's legacy supervised restart path with `--restart`.**
+
+Before any preservation write, resolve the lane read-only and run
+`lanes-edit.sh legacy-restart-check <lane>`. Managed ownership or an unreadable
+ownership store refuses this compatibility path. Collect writer briefs without
+changing the canonical handoff, then call `lane-handoff --restart` once with
+`--writers-file <temporary TSV>` when needed. The backend reserves `preparing`
+before changing any window, handoff, row or log. Do not execute the skill's
+ordinary steps 1–5 as a separate write sequence for `/ctx`.
+
+This intent owns only the legacy restart operation. It neither reads nor advances
+PR #97's lifecycle counters or feature 001's managed JSON ledger.
 
 `/ctx` is `/handoff --restart` and nothing else. Lane-collision-protocol **Amendment 17 clause (f)**, folded
 in on Brett Heap's word of 2026-09-14, verbatim: *"the /ctx should also run the first prompt and restart all.
@@ -13,11 +24,11 @@ so the user only does /ctx and it is all automatic from there"* — and ratified
 
 What that means in order, and the order is the rule:
 
-1. the identity triple is fixed, the handoff file is refreshed with a fresh Rule 3 top block that **lists
+1. the backend reserves the legacy restart operation as `preparing`, then the identity triple is fixed, the handoff file is refreshed with a fresh Rule 3 top block that **lists
    every writer this lane has running** (its worktree, its branch, its brief, what it had committed), the
    writers are polled, and `PAUSED` is written with Amendment 11(c)'s sub-fields, Amendment 17(b)'s `agent`
    and `transcript`, and `clear` as its why;
-2. **then** a **RESTART INTENT** is written under the lane's own control root — the lane, a generation, an
+2. **then** that **RESTART INTENT** becomes `pending` under the lane's own control root — the lane, a generation, an
    operation id, the transcript being paused, the agent, the profile, the checkout, the pane, the handoff's
    path and its **digest**, and the launch mode `fresh-from-handoff` — and read back;
 3. **then** the lane's own pane is respawned — `tmux respawn-pane -k`, so the act survives the death of the
@@ -57,11 +68,21 @@ refreshed, **or the restart intent could not be written and read back**, this pa
 the reason is printed. A pane respawned with no intent is a pane whose supervisor has nothing to launch from,
 which is the same unrecorded restart one step along.
 
-**A restart already in flight is not superseded.** A second `/ctx` on a lane whose intent is `pending` or
-`starting` refuses — before the kill — and names `lane-handoff --restart-status --lane <lane>`.
+**A restart already in flight is not superseded.** A second `/ctx` on a lane whose intent is `preparing`, `pending` or
+`starting` refuses before preservation writes or the kill — and names `lane-handoff --restart-status --lane <lane>`.
 
 **When the launch fails, the pane is still yours.** The supervisor marks the intent `failed`, prints the
 stage that failed and offers one line to retry the same operation. Nothing of the lane is lost: the handoff
 it wrote is intact and its top block is still the first prompt the next session gets.
 
 No picker, no title fallback, no second command: the one word is the whole act.
+
+Every launch, retry and finalizer is fenced by operation, legacy generation and
+attempt. The first child reserves its transcript once; repeated consumers refuse.
+The Rule 3 stamp is published atomically, after recording the checksums of its
+complete prior and stamped versions. A retry accepts those exact versions only.
+
+A signal before the supervisor claim leaves the intent unchanged. A signal with
+a live or unknown child leaves `starting` and reports `INDETERMINATE`; retry stays
+blocked. Only a confirmed ended launch with no live holder becomes `failed`.
+Ordinary `lane <name>` resume cannot recover a failed supervised restart.

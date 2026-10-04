@@ -1,3 +1,7 @@
+> Current authority: [2026-10-04 legacy decision](legacy-authority-decision.md).
+> Earlier shared #97 lifecycle/counter designs below are superseded. The
+> implementation contract is `specs/005-supervised-legacy-ctx/spec.md`.
+
 ## Context
 
 `/ctx` is a semantic context rollover: the current Claude coordinator captures its reasoning, polls writers, refreshes the lane handoff, records the lane as paused, and starts a new Claude transcript whose first prompt is the handoff's top block. The shipped tail calls `tmux respawn-pane -k` with `lane <name>` or `pclaude` and exits successfully when tmux accepts that command. Tmux acceptance says nothing about whether the child selected an attach-only path, resolved a profile, executed Claude, remained alive, or consumed the intended handoff.

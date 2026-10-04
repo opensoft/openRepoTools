@@ -68,7 +68,15 @@ LANE_BASH = ["lanes-edit.sh", "lane-start", "lane-end", "link-estates"]
 #: resolver: it resolves no workspace, and the one path it needs comes back
 #: from `lanes-edit.sh workspace-root`. That is the same "one implementation,
 #: several callers" rule `restart` and `lanes` are out of `LANE_BASH` for.
-HELPER_BASH = ["lane-handoff"]
+#:
+#: `lane-rename` joins it under Amendment 16, ratified 2026-09-14T09:24:35Z, for
+#: BOTH of those reasons unchanged. It does not `set -e`: clause (f)'s two acts
+#: — the tmux window and the typed `/rename` — follow a write that has already
+#: landed, and a command that exited where it stood would leave the register
+#: renamed and the window carrying a name the register no longer has, which is
+#: the one state Amendment 12's guard refuses every prompt over. And it carries
+#: no workspace resolver either: its whole write is `lanes-edit.sh rename-lane`.
+HELPER_BASH = ["lane-handoff", "lane-rename"]
 
 #: Every bash file this repository ships, for the claims that are about BASH
 #: and not about a command's failure discipline: the parse gate and the LF
@@ -880,7 +888,7 @@ def test_the_readme_carries_the_two_line_onboarding_chain():
     assert "gh repo clone opensoft/workBenches && cd workBenches && ./setup.sh" \
         in readme, (
         "README.md does not carry Amendment 9(e)'s first line, byte for byte")
-    assert "pclaude run <profile> --lane <repo>-<n>" in readme, (
+    assert "lclaude --lane <repo>-<n> <profile>" in readme, (
         "README.md does not carry Amendment 9(e)'s second line")
     assert "gh auth login" in readme, (
         "README.md names neither of the chain's two preconditions: `wip init` "
@@ -1002,8 +1010,9 @@ def test_the_documents_say_what_status_is_and_is_not():
         text = (REPO / name).read_text(encoding="utf-8")
         assert "`status`" in text, f"{name} never names the fourth command"
     readme = (REPO / "README.md").read_text(encoding="utf-8")
-    assert "TWELVE files" in readme, "README.md does not count the twelve files"
-    assert "12 of 12 placed" in readme, (
+    assert "THIRTEEN files" in readme, (
+        "README.md does not count the thirteen files")
+    assert "13 of 13 placed" in readme, (
         "README.md does not show the count line `--install` actually prints")
     status = (REPO / "status").read_text(encoding="utf-8")
     assert "--no-optional-locks" in status, (
@@ -1641,6 +1650,23 @@ def test_agents_md_is_short_enough_to_be_read():
     a line the other bought, and the cap is the count of what merged rather
     than either side's number — the rule the 224 entry states.
 
+    265 -> 278 on 2026-09-15, for ONE BINDING PER LANE — lane-collision-protocol
+    AMENDMENT 18, ratified 2026-09-14T13:15:18Z, opensoft/openRepoTools#38. The
+    thirteen lines are a RULE and not prose, and they are the rule an assistant
+    gets WRONG if it is inferred rather than read: this tooling has always said
+    a lane whose recorded session is not live is a lane to take, and the one
+    thing that sentence never said is WHERE it may be said from. A pid does not
+    cross a pid namespace, so from another bench container on the same machine
+    the liveness read is meaningless and the honest answer is UNKNOWN — measured
+    on 2026-09-14, when pyBench read cloudBench's record, called a running lane
+    dead and started writing it from a second place. The paragraph names the
+    read that answers (`binding`), the one exception that makes a binding
+    elsewhere provably dead (a window gone from a shared tmux server), the act a
+    second place takes instead of taking (`--request-handoff`, and the wait),
+    the one word that overrides it and the fact that it is never automatic, and
+    the three variables the launcher owns. Every one of those is a thing an
+    assistant would otherwise do the opposite of.
+
     259 -> 265 the same day, for SIX LINES that stop this file prescribing a
     guard its own wrapper refuses to use (Copilot rounds 7 and 8 on #47). The
     snippet counted with `pgrep -fc`, which `tests/run.sh` deliberately does
@@ -1650,9 +1676,64 @@ def test_agents_md_is_short_enough_to_be_read():
     portable is worse than one that shows none, and the six lines are the
     correction plus the sentence naming the wrapper as the canonical
     implementation, which is what an assistant reading either should reach for.
+
+    265 -> 276 on 2026-09-16, for ELEVEN LINES that name the one portability
+    rule this repository keeps paying for twice (opensoft/openRepoTools#93).
+    `awk -v name=value` carries ONE LINE: the value is processed as a string
+    literal, and macOS's one-true-awk refuses a newline in one outright — exit
+    2, no output — while `gawk` and `mawk` take it silently. `who_landing` paid
+    for it once (R-A9-11) and left the finding in a code comment where only a
+    reader of that function meets it; `delete_lines` re-made it in #93 and
+    tests-macos answered with six red lines whose message was about a line
+    count. The bash-3.2 paragraph above it is the same kind of rule and is
+    already here for the same reason — a constraint only one job can see
+    belongs where it is read BEFORE the code is written, not after CI is red —
+    and the eleven lines are that rule, the two rounds as evidence, the two
+    spellings that are correct (`ENVIRON`, or a second file with `NR == FNR`),
+    and the suite case that now makes a third round red on every platform.
+
+    265 -> 292 on 2026-09-16, for THE CYCLE'S THREE RULINGS (Brett Heap's
+    RULING of that day, "do all three", on the coordinator's three proposals
+    — measured: `tests-macos` running 49-54 minutes per push against Linux's
+    17-22, pull requests drawing 6-12 Copilot review rounds, and this suite
+    queuing up to 1h20 behind the workstation lock the paragraph below still
+    describes). The paragraph these lines replace told an assistant that
+    `tests/run.sh` IS how this suite is run and that `pytest` by hand is the
+    thing it exists to stop — true of the mechanism and now wrong about the
+    standard, which is what made it the one to remove rather than a
+    paragraph to add beside. Numbered so each stays citable on its own:
+    `tests-macos` leaves the per-push `pull_request` gate for the `ready`
+    label, with its own `parse-macos` split off so the bash-3.2 syntax parse
+    does not leave with it; Copilot review is capped at two rounds; and
+    CI's own `tests` job, not the local wrapper, is the suite of record —
+    the wrapper stays exactly the tool it always was, for a person who wants
+    the whole answer locally rather than one a push now waits on. 26 of the
+    27 lines came in that one commit; the last, the same day, is Copilot
+    round 2 on this PR taken rather than chased past its cap: `parse-macos`
+    runs on `pull_request` and on push to main, the same two triggers as the
+    three jobs beside it, and the sentence saying so now names both rather
+    than the "every push" a reader could take for every branch.
+
+    276 + 292 MEET AT 303 on 2026-10-03, where #93 merged `main` at `92bd21f`.
+    Eleven of the merged file's lines are #93's one-line `awk -v` rule and
+    twenty-seven are #119's three rulings; neither is over a line the other
+    bought, and the cap is the count of what merged rather than either side's
+    number — the rule the 224 entry states.
+
+    278 + 292 MEET AT 305 on 2026-10-03, where #83 merged `main` at `92bd21f`
+    (#119). Both raised the same 265: thirteen lines are Amendment 18's ONE
+    BINDING rule and twenty-seven are the cycle's three rulings, and neither is
+    over a line the other bought. The cap is the count of what merged, 265 + 13
+    + 27, rather than either side's number — the rule the 224 entry states.
+
+    303 + 305 MEET AT 316 on 2026-10-03, where #93 merged `main` at `6faed35`
+    (#83). Each side had already counted #119's twenty-seven over the shared
+    265, so the merged file is 265 + 27 + #93's eleven (the one-line `awk -v`
+    rule) + #83's thirteen (the ONE BINDING rule): the count of what merged,
+    rather than either side's number — the rule the 224 entry states.
     """
     lines = (REPO / "AGENTS.md").read_text().splitlines()
-    assert len(lines) <= 265, f"AGENTS.md is {len(lines)} lines; the cap is 265"
+    assert len(lines) <= 316, f"AGENTS.md is {len(lines)} lines; the cap is 316"
 
 
 def test_readme_is_short_enough_to_be_read():
@@ -2110,9 +2191,46 @@ def test_readme_is_short_enough_to_be_read():
     `tests/test_openrepotools_command.py` rather than believed here. The cap is
     the count of what merged, not either side's number, and every dated entry
     on both sides stays because each still names the lines it bought.
+
+    THE CAP DOES NOT MOVE FOR AMENDMENT 16 (2026-09-15), and that is worth one
+    sentence rather than none: `lane-rename` is a THIRTEENTH file on PATH and a
+    TWENTY-SEVENTH artifact — every count above moves with it, derived in
+    `tests/test_openrepotools_command.py` as this entry says — and the fifteen
+    lines it buys in § "The lane tooling" and § "Install" fit inside 472. A cap
+    is a budget and not a target: an entry that raised it by fifteen because
+    fifteen lines were written would make the number mean nothing.
+
+    472 -> 484 on 2026-10-02, for #57 (the install receipt). Twelve lines: the
+    ten of the receipt paragraph in § "Install", the blank line after it, and
+    one row in the environment table for `$OPENREPOTOOLS_DATA_DIR`. They are
+    behaviour a person MEETS rather than prose about it. The receipt is the
+    only place a retirement's evidence is explained - what a row is, that a
+    digest which still matches is this installer's copy and is removed, that
+    one which has MOVED is the person's edit and is named and left with the
+    `rm` printed, and that rows are keyed by DESTINATION, so moving
+    `$OPENREPOTOOLS_BIN_DIR` keeps the old directory's evidence. 0600 and the
+    fallback are the two facts a person meeting a refused retirement needs:
+    the mode the file is born at, and that a path with no row is read by the
+    `Installed on PATH by` header as before. The paragraph was written at
+    eighteen lines and cut to ten before this entry; the cap is raised for the
+    facts above and for no arithmetic - the artifact count stays where
+    `tests/test_openrepotools_command.py` derives it, and not here. Every dated
+    entry above stays, and none of these twelve is over a line one of them
+    bought.
+
+    484 -> 486 on 2026-10-02, for #64 (Brett Heap's RULING of that day,
+    verbatim "go with option 1 on #64"). Two lines in `wip init`'s seed
+    paragraph, and both are a refusal a person MEETS rather than prose about
+    one: a checkout ADOPTED clean but ahead of its workspace repository's
+    `main` by any commit other than an earlier run's own unpushed seed is
+    refused before a byte is written into it, naming those commits, because
+    step 8's push would publish every one of them — and pushing or discarding
+    them is the person's. The paragraph already says why the worktree half of
+    the same rule exists; this is its history half, and a reader of one should
+    not meet the other as a surprise. Every dated entry above stays.
     """
     lines = (REPO / "README.md").read_text().splitlines()
-    assert len(lines) <= 472, f"README.md is {len(lines)} lines; the cap is 472"
+    assert len(lines) <= 486, f"README.md is {len(lines)} lines; the cap is 486"
 
 
 #: A host-absolute path baked into a committed file (the estate's Rule 1):

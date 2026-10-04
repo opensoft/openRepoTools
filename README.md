@@ -114,7 +114,22 @@ lanes                            # this checkout's lanes, and the next free one
 lanes --all                      # every lane the register and the logs know
 lane-start openRepoShape 2       # name the window, register the row, launch
 lane-end openRepoShape-2         # close it, refusing while anything is in flight
+lane-rename openRepoShape-2 openRepoShape-7   # rename it: row, log, handoff and
+                                 # lanes/aliases.tsv in ONE commit
 ```
+
+**A lane is renamed by one word, in one commit, and its old name resolves for
+ever** — lane-collision-protocol Amendment 16, on Brett Heap's request of
+2026-09-14, verbatim *"we need the ability to rename a lane"*. `lane-rename`
+moves the register row's key cell, `lanes/log/<old>.md`, the handoff the row
+names and `lanes/aliases.tsv` in ONE commit, refused or whole; appends a
+`RENAMED` line to the log; posts one comment on every object the lane holds;
+renames the tmux window and types the `/rename` into the lane's own pane. Every
+reader that takes a lane name — `who`, `lanes`, `lane-start`, Rule 6
+attribution, the `SessionStart` block, the name guard, and the lane field of
+every old log line — resolves through that alias table, case-insensitively, so
+nothing written under the old name is ever lost. `lanes --rename` is refused and
+names the word: `lanes` writes nothing.
 
 **`lane` is the one word a person needs, and it is Brett Heap's own.**
 2026-09-14, verbatim: *"this is too hard for users. we need simple way to list
@@ -139,7 +154,7 @@ and 5 put it and where it stays. What moved here is the CODE. A `<user>-wip` is
 a private repository whose own rules file says "No secrets and no code", nobody
 would look inside somebody else's for a command, and until this move the four
 helpers existed in exactly one place in the world: one person's private
-repository. `docs/README-lanes.md` is the manual.
+repository. `docs/README-lanes.md` is the manual; `docs/README-claude-current.md` is the one for the Claude Code `lane-start` launches and the RESTART NEEDED line.
 
 Every one of them finds that data through `$AGENT_PROTOCOL_ROOT/workspace.yaml`
 — `repository:` and `path:`, the same pointer file `resume` and `status`
@@ -178,7 +193,9 @@ and runs `link-estates`.
 wrote, each by name, and never `git add -A`. A checkout it ADOPTS that carries
 modified, deleted or untracked files the template does not name is a refusal
 naming them, asked before a byte is written into it — the repository on the
-other end of that push is where your unfinished work lives.
+other end of that push is where your unfinished work lives. So is one ahead of
+that repository's `main` by any commit but an earlier run's unpushed seed: it
+names those commits, and pushing or discarding them is yours.
 
 **Idempotent**: a workstation that already has a workspace does nothing at all,
 decided by a file test and not a network call. Exit 0 is done or already done;
@@ -193,7 +210,7 @@ is one of this repository's (lane-collision-protocol Amendment 9(e)):
 
 ```sh
 gh repo clone opensoft/workBenches && cd workBenches && ./setup.sh
-pclaude run <profile> --lane <repo>-<n>
+lclaude --lane <repo>-<n> <profile>
 ```
 
 `./setup.sh` runs `openRepoTools --install` and then `openRepoTools wip init`
@@ -201,7 +218,7 @@ for you, each best-effort, so neither is a line you have to know to type. Its
 two preconditions are `gh auth login` — `wip init` derives your login from
 `gh api user` — and `~/.local/bin` on your `PATH`, which that script exports
 and which needs a restarted terminal. `pclaude list` names the profiles;
-`<repo>-<n>` is the lane naming rule.
+`<repo>-<n>` is the lane naming rule; without `lclaude`, `wip init` prints `pclaude --lane <repo>-<n> <profile>` instead.
 
 On a host that has this toolset without workBenches, the same two acts by
 hand, in this order, because the second refuses where no openRepoTools is
@@ -220,13 +237,14 @@ gh api repos/opensoft/openRepoTools/contents/openRepoTools \
     -H 'Accept: application/vnd.github.raw' | bash -s -- --install
 ```
 
-It places TWELVE files into `~/.local/bin` — `openRepoTools`, `park`, `resume`,
-`status`, `lane`, `lanes`, `lane-handoff`, `lanes-edit.sh`, `lane-start`,
-`lane-end`, `link-estates` and the alias table `repos.tsv` — 755, idempotently: a
+It places FIFTEEN files into `~/.local/bin` — `openRepoTools`, `park`, `resume`,
+`status`, `lane`, `lanes`, `lane-handoff`, `lane-rename`, `lanes-edit.sh`,
+`lane-start`, `lane-end`, `link-estates`, the alias table `repos.tsv`,
+`claude-current` and `claude-restart-check` — 755, idempotently: a
 second run prints `already installed … (unchanged)` per file, one whose bytes have
 drifted prints `updated at`, and one whose bytes were right and whose MODE was not
 prints `(mode restored to 755)`: the mode is stamped on every artifact on every
-run, whether or not the bytes moved. ALL TWELVE ARE IN HAND BEFORE ANY IS
+run, whether or not the bytes moved. ALL FIFTEEN ARE IN HAND BEFORE ANY IS
 PLACED, so a fetch that failed replaces nothing and names the file it could not
 get. A mode stamp that FAILS is a refusal naming the file it could not mode
 (exit 2), never the shell's own 1: every `chmod` this command performs goes
@@ -241,7 +259,7 @@ THAT EXISTS, so a bin directory that is not there yet is refused for the parent
 that would not take it, and a create needs a directory's search bit as well as
 its write bit. A refusal creates none of those directories either. `cp` follows
 a symlink, and an install through one leaves the command uninstalled and writes
-these bytes into whatever it points at. Then a `12 of 12 placed in <dir>` line,
+these bytes into whatever it points at. Then a `15 of 15 placed in <dir>` line,
 and the `export PATH=…` line if that directory is not on your `PATH`.
 
 It also places **fourteen things that are not files in that directory**: THREE
@@ -270,7 +288,7 @@ changes no byte of them. An entry that runs
 string — a second writer of one of these hooks — a
 file it cannot parse, or a `hooks` that is not an object → it **refuses, prints
 the exact block, and places nothing at all**, because both merges are computed
-with the twelve files in hand before either is placed. An installer that
+with the fifteen files in hand before either is placed. An installer that
 repairs a file it does not understand is how you lose a setting you meant.
 A SECOND WRITER REFUSES WHETHER OR NOT OUR OWN ENTRY IS BESIDE IT: the read asks
 for a rival BEFORE it asks whether ours is already there, so a file carrying
@@ -281,7 +299,7 @@ own `UserPromptSubmit` hooks are left exactly where they are, which is why that
 arm keys on the VERB and not on the word anywhere in a path. It
 never writes a profile's own `settings.json`: the launcher owns that one.
 
-Twenty-six artifacts, and the count is the invariant. It was sixteen until A11
+Twenty-nine artifacts, and the count is the invariant. It was sixteen until A11
 Addendum 4 ruling 9 gave `--install` a command-file list and `commands/swap.md`
 in it, at the same pair of paths a skill takes — because `opensoft/workBenches#74`
 deletes the launcher's copy and `/swap` would otherwise be installed by nobody;
@@ -292,6 +310,21 @@ on `PATH`, moved the skill's steps to `handoff` with `lane-swap` kept as an
 alias naming it, and added the `/handoff` and `/ctx` command files.
 `/ctx` is `/handoff --restart`: the record first, then this lane's own pane
 respawned with a new session whose first prompt is that handoff's top block.
+Twenty-six until **Amendment 16** (ratified the same day) put `lane-rename` on
+`PATH`: a lane is renamed by one word, in one commit — the row, the object log,
+the handoff and `lanes/aliases.tsv` — and its old name resolves for ever
+afterwards, in every reader that takes a lane name. Twenty-seven, with THIRTEEN files and a `13 of 13 placed` line, until opensoft/workBenches#119 put `claude-current` and `claude-restart-check` on `PATH` (Brett Heap, 2026-09-29, verbatim *"this work is really for openRepoTools repo"*): the Claude Code a launch starts, and the RESTART NEEDED line the status line prints.
+
+**And it writes down what it placed.** A RECEIPT (#57) — one row of
+`<name> <destination> <sha256> <UTC>` per regular file placed, in
+`${OPENREPOTOOLS_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/openRepoTools}/installed.tsv`,
+mode 0600, replaced whole through a temporary — is read by a later `--install`
+before it RETIRES a word. A digest that still matches is this installer's copy
+and is removed; one that has MOVED, or a row it cannot check without a digest
+tool, is named and left; no row means the `Installed on PATH by` header. Rows
+are keyed by absolute DESTINATION, so moving `$OPENREPOTOOLS_BIN_DIR` keeps the
+old evidence; hook entries and the receipt get no row. A receipt it cannot write
+is ONE LINE saying so, never a refused install.
 
 Run from a checkout it copies the files beside it and needs no network and no
 `gh` at all; run from stdin, as above, it fetches all of them at the same ref.
@@ -302,7 +335,8 @@ where `raw.githubusercontent.com` is blocked.
 |---|---|---|
 | `$OPENREPOTOOLS_REPO` | `opensoft/openRepoTools` | the `owner/name` to fetch from — a fork or a mirror, named once |
 | `$OPENREPOTOOLS_REF` | `main` | the ref to fetch it at |
-| `$OPENREPOTOOLS_BIN_DIR` | `~/.local/bin` | where `--install` puts the twelve |
+| `$OPENREPOTOOLS_BIN_DIR` | `~/.local/bin` | where `--install` puts the fifteen, and where `lane-start` looks for `claude-current` |
+| `$OPENREPOTOOLS_DATA_DIR` | `${XDG_DATA_HOME:-~/.local/share}/openRepoTools` | where `--install` writes the receipt of what it placed |
 | `$AGENT_PROTOCOL_ROOT` | `~/.agents` | where `workspace.yaml` lives — the one pointer to your data |
 | `$CLAUDE_PROFILES_HOME` | `~/.claude-profiles` | the profiles root `--install` places the shared skills under |
 | `$LANES_WORKSTATION` | — | this workstation's name, exported by the workBenches launcher. Outside a container it defaults to `hostname -s`; **inside one with no value every writer refuses**, because a container id is not a workstation and the log is never rewritten (Amendment 11, decision 8(d)) |

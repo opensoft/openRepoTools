@@ -17,7 +17,26 @@ swap is the HANDOFF"*. One act, three names — `/handoff` here, `/swap` and `/l
 reset, a profile switch and handing the lane to someone else is only WHY, and the record's free text has
 always carried that.
 
-**THE FLAGS ARE ENDS, NOT SECOND KINDS OF RECORD.** Every one of them runs steps 1–5 first:
+**For `/ctx` or `--restart`, use this bounded legacy path instead of the ordinary
+preservation sequence below.** Resolve the lane read-only, then run
+`lanes-edit.sh legacy-restart-check <lane>` before renaming anything, updating a
+handoff, messaging writers or writing lane state. Refuse managed ownership and
+unreadable ownership; feature 001 owns those lanes. Collect the running writers'
+worktree/branch/brief facts into a temporary TSV (`<worktree><TAB><brief>`) without
+editing the canonical handoff. After the ownership check, ask those writers to
+commit and push as this skill normally requires. Invoke `lane-handoff --restart
+--lane <lane> --writers-file <temporary TSV> clear` once. Follow its refusal or
+supervisor output; do not execute steps 1–5 as independent canonical writes, and
+do not run a second tmux respawn recipe. The backend reserves `preparing` before
+all preservation writes and completes that reservation as `pending` before respawn.
+
+This compatibility path owns `restart-intent.yaml` only. It does not use PR #97's
+lifecycle snapshot as a state or counter authority, and does not mutate the managed
+JSON ledger. A failed restart recovers through the same-operation supervisor;
+ordinary lane resume refuses it. A live or unknown child leaves `starting` and
+blocks retry even if the supervisor was terminated.
+
+**The other flags run the ordinary steps 1–5 below.** Their ends differ as follows:
 
 | | what it adds after the record | when |
 |---|---|---|
@@ -567,13 +586,17 @@ resolve this lane from a record that was never set to `PAUSED`.
 ## 5. Print the restart command — one command, no menu
 
 ```sh
-if [[ -n "${row_write_refused:-}" ]]; then
-  restart_cmd="pclaude --lane $lane ${CLAUDE_PROFILE_NAME:-<profile>}"
-  restart_note=' (row write was refused; the lane must be named explicitly)'
+if command -v lclaude >/dev/null 2>&1; then
+  if [[ -n "${row_write_refused:-}" ]]; then
+    restart_cmd="lclaude --lane $lane ${CLAUDE_PROFILE_NAME:-<profile>}"
+  else
+    restart_cmd="lclaude ${CLAUDE_PROFILE_NAME:-<profile>}"
+  fi
 else
-  restart_cmd="pclaude ${CLAUDE_PROFILE_NAME:-<profile>}"
-  restart_note=''
+  restart_cmd="pclaude --lane $lane ${CLAUDE_PROFILE_NAME:-<profile>}"
 fi
+restart_note=''
+[[ -z "${row_write_refused:-}" ]] || restart_note=' (row write was refused; the lane must be named explicitly)'
 printf 'READY TO SWAP — restart with: %s%s\n' "$restart_cmd" "$restart_note"
 lane-start --help 2>/dev/null | grep -q -- '--confirm' \
   && echo 'restart stamps: written by lane-start (Amendment 8(d))' \
@@ -607,7 +630,7 @@ lane-start --help 2>/dev/null | grep -q -- '--confirm' \
 echo 'then, in the session that comes up: if its name is not the lane, type /rename <lane> (lane-start names every session it launches, the resume branches included, since adoption act 0 landed as opensoft/brett-wip#5 @3719d97; a session that came up WITHOUT it — a missing or refusing lane-start, a bare claude, or a workstation whose lane-start predates that commit — carries the name the harness derived, and no API renames one from inside)'
 ```
 
-That one command is the whole restart: bare `pclaude <profile>` resolves this lane from the window name,
+That one command is the whole restart: `lclaude <profile>` resolves this lane from the window name,
 and from the swap record step 4 just wrote when the window is gone (Amendment 8(c)). **The SHORT form is
 the printed one, and that is an edit to in-force text rather than a preference**: Amendment 11 clause (a) —
 *"Every printed restart command becomes the short form … Amendment 8(a) step 5's prescribed
@@ -617,7 +640,9 @@ SAME argv (`claude-profile`'s `action="${1:-list}"` falls through to `run` on an
 `list|login|status|run`, without shifting), and the long form is not deprecated. What changes is what this
 file prints. The profile argument is the only part the operator changes, and only when switching accounts.
 
-**`--lane <lane>` is printed only where step 4's row write was refused** — the row was never set to
+The fallback for an older installation without `lclaude` is explicit `pclaude --lane <lane> <profile>`;
+bare `pclaude` is profile-only on updated installations. With `lclaude`, **`--lane <lane>` is printed only
+where step 4's row write was refused** — the row was never set to
 `PAUSED`, so a restart cannot resolve this lane from it and the operator must name it explicitly. `--lane`
 is a **leading** option to `claude-profile`, read before the action or the profile — measured in the
 launcher itself, *"the first token that is not one of them ends this loop"* — so it goes BEFORE the profile
@@ -626,7 +651,7 @@ launcher, and the lane would never be taken. The capability probe above decides 
 are `lane-start`'s act or the next session's — do not assert either from memory.
 
 **`/resume` and `claude --resume <title>` are not lane surfaces** (A8 Addendum 2, R-A8-6): a lane is entered
-through `pclaude` or `lane-start`, and by no other door. Do not offer either as a fallback.
+through `lclaude`, explicit `pclaude --lane`, or `lane-start`, and by no other door. Do not offer either as a fallback.
 
 ## 6. The end this handoff has — and the record comes first, always
 
@@ -709,5 +734,5 @@ honest record of the state that session holds is its own next `/handoff`.
 
 ```sh
 lane-handoff --late --at 2026-09-14T12:02:27Z "late; usage limit hit before the swap"
-pclaude <profile>      # and only then
+lclaude <profile>      # and only then; use pclaude --lane <lane> if lclaude is unavailable
 ```

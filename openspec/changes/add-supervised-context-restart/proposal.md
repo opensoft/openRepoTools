@@ -1,3 +1,7 @@
+> Current authority: [2026-10-04 legacy decision](legacy-authority-decision.md).
+> Earlier shared #97 lifecycle/counter designs below are superseded. The
+> implementation contract is `specs/005-supervised-legacy-ctx/spec.md`.
+
 ## Why
 
 `/ctx` currently kills its own pane after writing a handoff and treats `tmux respawn-pane` accepting a command as proof that a fresh Claude session started. A measured failure left the lane `PAUSED` with a valid handoff but no replacement process or visible error, and the planned automatic 65% rollover would reproduce that unsafe boundary without a stronger restart primitive.
