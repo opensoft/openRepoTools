@@ -711,11 +711,21 @@ supervise_failed() {   # <lane> <operation> <reason>
 	fi
 	sf_fence=()
 	[ -n "$SV_CLAIMED_GEN" ] && sf_fence=(--expect-generation "$SV_CLAIMED_GEN" --expect-attempt "$SV_CLAIMED_ATTEMPT")
+	sf_wrc=0
 	LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$sf_lane" failed \
 		--expect 'starting|pending' --expect-operation "$sf_op" \
 		${sf_fence[@]+"${sf_fence[@]}"} \
-		--reason "$sf_why" >/dev/null 2>&1 ||
-		note "the restart intent could not be marked failed — its state, operation or generation moved, so this supervisor's failure is not the current one to publish. Read it:  $prog --restart-status --lane $sf_lane"
+		--reason "$sf_why" >/dev/null 2>&1 || sf_wrc=$?
+	case "$sf_wrc" in
+	  0) : ;;
+	  7)
+		say "SUPERSEDED — this supervisor no longer owns operation $sf_op; no retry is authorized here."
+		say "  read it: $prog --restart-status --lane $sf_lane"
+		return 2 ;;
+	  *)
+		note "the restart failure could not be recorded (exit $sf_wrc); retry remains blocked. Read it: $prog --restart-status --lane $sf_lane"
+		return 1 ;;
+	esac
 	say ""
 	say "RESTART FAILED — lane $sf_lane, operation $sf_op"
 	say "  $sf_why"

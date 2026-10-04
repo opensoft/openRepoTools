@@ -13923,30 +13923,10 @@ run "$E" restart-intent repoSV-3
 has  "…under the same operation" "$out" "$SV_OP"
 has  "…with the attempt incremented" "$out" "$(printf 'attempt\t2')"
 
-# EVERY WRITE THIS SUPERVISOR MAKES OF ITS OWN OPERATION IS FENCED ON THE
-# GENERATION TOO (Copilot round 1 on openRepoTools#121). The readiness finalizer
-# always carried `--expect-generation`; the failure write, the signal write and
-# the INDETERMINATE note did not, so a supervisor whose lane had moved on could
-# publish an old verdict over a newer generation's record — the stale-finalizer
-# shape, reached from the failure side instead of the success side.
-#
-# AND THE NUMBER IS THE ONE CLAIMED, NOT THE ONE ON DISK. Re-reading it at write
-# time would read the NEWER generation and match it, which is exactly the write
-# the fence exists to refuse; `SV_CLAIMED_GEN` is taken once, where the claim
-# succeeded. This is asserted over the source because the property is *no write
-# is left unfenced* — a behaviour case can only ever show that the writes it
-# happens to name are fenced.
-is   "every fenced intent write in lane-handoff fences on the generation as well as the operation" \
-     "$(grep -c -- '--expect-generation "' "$SRC_DIR/lane-handoff" || :)" \
-     "$(grep -c -- '--expect-operation "' "$SRC_DIR/lane-handoff" || :)"
-is   "…and that is not vacuously none of them" \
-     "$( [ "$(grep -c -- '--expect-generation "' "$SRC_DIR/lane-handoff" || :)" -ge 4 ] && echo yes || echo no )" yes
-
-# AND SO DOES `lane-start`'S OWN WRITE OF THE PREPARED TRANSCRIPT (Copilot
-# round 2). It is a transition of the same intent the supervisor claims and
-# finalizes, made by a different process, and it fenced only on the operation.
-is   "lane-start's write-back of the prepared transcript is fenced on the generation too" \
-     "$( [ "$(grep -c -- '--expect-generation' "$SRC_DIR/lane-start" || :)" -ge 1 ] && echo yes || echo no )" yes
+# Stale-generation/attempt behavior is exercised through the actual supervisor
+# in test_supervised_restart_regressions.py. Counting flag spellings here cannot
+# prove fencing: a new-operation reservation needs a generation expectation
+# without expecting the prior operation, and array fences span separate lines.
 
 # ------------------------- 6. the supervisor: a launch that BECOMES READY
 

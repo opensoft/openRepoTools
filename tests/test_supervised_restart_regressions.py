@@ -485,7 +485,7 @@ def test_restart_observer_confirms_late_uuid_prepared_by_real_child(restart_box)
 export CLAUDE_PROFILE_NAME=test-profile
 exec "$OPENREPOTOOLS_BIN_DIR/lane-start" repoZ 1
 ''')
-    _write(box.resolved, '''#!/usr/bin/env python3
+    _write(box.resolved, r'''#!/usr/bin/env python3
 import json, os, pathlib, sys, time
 args=sys.argv[1:]
 sid=args[args.index('--session-id')+1]
@@ -569,3 +569,24 @@ def test_restart_missing_checksum_is_not_launch_authority(restart_box):
     assert result.returncode == 2, result.stderr
     assert source.read_bytes() == before
     assert box.claude_runs() == ""
+
+
+def test_restart_stale_supervisor_cannot_fail_or_retry_newer_operation(restart_box):
+    box = restart_box
+    prepare_restart(box)
+    child = _write(box.fakebin / "pclaude", '''#!/usr/bin/env bash
+"$OPENREPOTOOLS_BIN_DIR/lanes-edit.sh" set-restart-intent repoZ-1 pending \
+  --expect starting --expect-operation op-test --operation newer --generation 8 \
+  --reason 'new owner' >/dev/null || exit 9
+exit 127
+''')
+    box.env.update(PCLAUDE=str(child), LANE_SUPERVISOR_NO_PROMPT="1")
+    result = supervisor(box, "--supervise", "--lane", LANE, "--operation", "op-test")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    record = dict(line.split("\t", 1) for line in helper(box, "restart-intent", LANE).stdout.splitlines())
+    assert record["state"] == "pending"
+    assert record["generation"] == "8"
+    assert record["operation"] == "newer"
+    assert record["reason"] == "new owner"
+    assert "no retry is authorized" in result.stdout
+    assert "RESTART FAILED" not in result.stdout
