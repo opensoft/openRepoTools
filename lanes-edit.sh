@@ -375,6 +375,24 @@
 #   from an operation a recovery has superseded cannot be filed over the
 #   current one.
 #
+# THE SEAM — A MANAGED-OWNED LANE IS NOT THIS TOOLING'S (Brett Heap's ruling of
+# 2026-10-04, verbatim: "managed ledger owns enrolled lanes; #97 owns legacy —
+# rework both")
+#   lanes-edit.sh managed-projection <lane>
+#
+#   0 with the owner on stdout where the lane's register row carries a valid
+#   managed-owner marker, 8 where it carries none (a LEGACY lane, which is
+#   every lane today), 1 where it carries managed-owner vocabulary that does
+#   not parse as a marker or the register could not be read (ownership
+#   UNKNOWN), 64 usage. Every legacy act that would write for a lane asks this
+#   first and refuses a managed lane with 2 and an unknown one with 1, before
+#   a byte is written: the lane-kind lines `log` writes (STARTED, RESUMED,
+#   ENDED, RETIRED), `set-lane-state`, `set-lane-tree`, `retire-rows`,
+#   `set-row-state`, `replace-in-row` and `rename-lane`, and the entry of
+#   `lane-start`, `lane-handoff` and `lane-end`. `lane-reconcile` pronounces
+#   nothing on a managed lane (`VERDICT managed-owned`), and no legacy writer
+#   may write the marker's vocabulary into a row at all.
+#
 # EXIT CODES — every subcommand, one table, no two meanings on one number
 #   0  done
 #   1  environment (no register, no writer)
@@ -1419,6 +1437,12 @@ row_state_check() {   # "<STATE> · <one line>"
   esac
   if [ "${ROW_STATE_LINE//[$'\n\r']/}" != "$ROW_STATE_LINE" ]; then
     die "the line is ONE line: a newline in it would split the row in two and every row after it would be read as a lane" 2
+  fi
+  # THE MARKER'S VOCABULARY IS NOT A LEGACY WRITER'S TO WRITE (ruling
+  # 2026-10-04). The projection reader matches it anywhere in a row, so a
+  # phrase carrying it would make this lane read as managed, or as UNKNOWN.
+  if managed_projection_hint "$rst_in"; then
+    die "the phrase carries managed-owner vocabulary ('managed owner', 'managed binding', 'mode=managed' or 'managed:'), and only the managed ledger's own writer writes a managed-owner marker, and a legacy writer that wrote its vocabulary into a row would forge that lane's ownership (ruling 2026-10-04: \"managed ledger owns enrolled lanes; #97 owns legacy\"). Reword it: '$rst_in'" 2
   fi
   # ${#s} COUNTS CHARACTERS and the cap is O1's 240 of them — these lines are
   # full of `·`, `—` and `→`, so a byte count would refuse a line that is inside
@@ -4913,9 +4937,17 @@ write_event() {
   # landed an hour ago must not overwrite a `SWAPPING` that began since, and the
   # only evidence of which came first is what the snapshot said when this write
   # started. Only the four verbs that move the lifecycle pay for the read.
-  we_pre=""
+  we_pre=""; we_seam=""
   case "$we_verb" in
-    STARTED|RESUMED|ENDED|RETIRED) we_pre="$(lane_state_preimage "$we_lane" "$we_pay")" ;;
+    STARTED|RESUMED|ENDED|RETIRED)
+      # THE SEAM, BEFORE THE LOCK AND BEFORE A BYTE (ruling 2026-10-04): a
+      # lane-kind line that starts, resumes or ends a lane is a legacy act, and a
+      # managed-owned lane — or one whose ownership could not be read — refuses
+      # it here. Past this line the lane is legacy, and that verdict is what the
+      # lifecycle follow-up at this function's foot is handed.
+      managed_seam_refuse "$we_lane" "a $we_verb line in its object log"
+      we_seam=8
+      we_pre="$(lane_state_preimage "$we_lane" "$we_pay")" ;;
   esac
   acquire_lock
   capture_register_edit "${we_paths[@]}"
@@ -4963,7 +4995,7 @@ write_event() {
   # never fails the event and it is silent for a lane with no control root, which
   # is every lane that has not started under Amendment 11(c) — the cutover rule
   # of Amendment 7(i), not a failure.
-  lane_state_follow "$we_lane" "$we_verb" "$we_pay" "$we_uuid" "$we_pre"
+  lane_state_follow "$we_lane" "$we_verb" "$we_pay" "$we_uuid" "$we_pre" "$we_seam"
   return "$we_rc"
 }
 
@@ -10700,6 +10732,10 @@ retire_rows() {   # <lane>… [--reason "<why>"] [--writer <lane>]
   rr_seen=""
   for rr_lane in $rr_lanes; do
     rr_l="$(canon_lane "$rr_lane")" || exit 2          # Amendment 15
+    # THE SEAM (ruling 2026-10-04). The sweep is ONE commit, so one managed or
+    # unknown lane in it refuses all of it, here in the scan, before any line or
+    # cell is written; `die` releases the lock this sweep holds.
+    managed_seam_refuse "$rr_l" "retire-rows (Amendment 19's sweep)"
     # A LANE NAMED TWICE IS A REFUSAL AND NOT A SECOND LINE. The log is
     # append-only: a duplicate in the argument list would put the same `RETIRED`
     # line into it twice, in one commit, and no later line could take it back.
@@ -10868,7 +10904,7 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     # to `CLOSED` for every other `RETIRED` would never run for them, and a
     # swept lane would keep whatever its snapshot last said. The pre-image is
     # what the follow-up compares against, exactly as `write_event` takes it.
-    rr_follow="$rr_follow$rr_l$US$(lane_state_preimage "$rr_l" "")
+    rr_follow="$rr_follow$rr_l$US$(lane_state_preimage "$rr_l" "")${US}8
 "
     rr_n=$((rr_n + 1))
   done
@@ -10910,9 +10946,9 @@ EOF
   # AND EACH SWEPT LANE'S SNAPSHOT FOLLOWS ITS LINE, after the lock, for the
   # reason `write_event` gives at its own foot: the follow-up takes the mutex
   # for itself and never fails the act whose lines have already landed.
-  while IFS="$US" read -r rr_fl rr_fpre; do
+  while IFS="$US" read -r rr_fl rr_fpre rr_fseam; do
     [ -n "${rr_fl:-}" ] || continue
-    lane_state_follow "$rr_fl" RETIRED "" "$rr_uuid" "$rr_fpre"
+    lane_state_follow "$rr_fl" RETIRED "" "$rr_uuid" "$rr_fpre" "$rr_fseam"
   done <<RR_FOLLOW
 $rr_follow
 RR_FOLLOW
@@ -11079,6 +11115,208 @@ EOF
   ar_crc=$?
   release_lock
   return "$ar_crc"
+}
+
+# ============================================================================
+# THE SEAM: A MANAGED-OWNED LANE IS NOT THIS TOOLING'S
+# ============================================================================
+#
+# Brett Heap's ruling of 2026-10-04, verbatim: "managed ledger owns enrolled
+# lanes; #97 owns legacy — rework both". A lane the managed ledger has enrolled
+# carries a MANAGED-OWNER MARKER in its register row's state cell, written by
+# that ledger's own writer; every lane without one is a LEGACY lane, and the
+# legacy lane tooling in this file — the lifecycle below, the object log's
+# lane-kind lines, the sweep, the row writers — answers for legacy lanes only.
+#
+# THE RULE, which is the ported reader's own ("no malformed marker may be
+# downgraded to absence"):
+#   * a VALID marker is a managed lane: every legacy write refuses it with 2,
+#     names the owner, and writes nothing;
+#   * managed-owner vocabulary that does NOT parse — a malformed marker, a row
+#     that is not seven columns, an empty owner — or a register that could not
+#     be read is UNKNOWN: refused with 1, and nothing is written;
+#   * no vocabulary at all is a legacy lane, and everything here runs exactly
+#     as it did.
+#
+# PROVENANCE. The block between the two markers below is
+# `3c26041:lanes-edit.sh:776-898` — the projection reader of branch
+# `001-separate-swap-ctx-handoff` (its T019) — ported VERBATIM: not one byte of
+# it differs, so that when that branch's T024 lands, the merge of the two is
+# "keep either", and this file's `lane_is_managed_owned` becomes that branch's
+# `managed_legacy_check`. The proof is an empty diff:
+#   diff <(git show 3c26041:lanes-edit.sh | sed -n 776,898p) \
+#        <(sed -n '/^# --- BEGIN ported from 3c26041/,/^# --- END ported from 3c26041/p' lanes-edit.sh | sed '1d;$d')
+# Its four dependencies — `row_split_state_cell`, `rstrip_spaces`, `lc` and
+# `row_of_lane` — are byte-identical in this file and in that one.
+# --- BEGIN ported from 3c26041:lanes-edit.sh:776-898 ---
+MANAGED_PROJECTION_MODE=""
+MANAGED_PROJECTION_DAEMON=""
+MANAGED_PROJECTION_GENERATION=""
+MANAGED_PROJECTION_LANE=""
+
+managed_projection_component_valid() {   # <path-safe component>
+  local mpc_value="${1-}"
+  case "$mpc_value" in
+    '' | .* | -* | *[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  [ "${#mpc_value}" -le 128 ] || return 1
+  return 0
+}
+
+managed_projection_generation_valid() {   # <positive decimal integer>
+  local mpg_value="${1-}"
+  case "$mpg_value" in
+    '' | *[!0-9]* | 0) return 1 ;;
+  esac
+  while [ "${mpg_value#0}" != "$mpg_value" ]; do
+    mpg_value="${mpg_value#0}"
+  done
+  [ -n "$mpg_value" ] || return 1
+  MANAGED_PROJECTION_GENERATION="$mpg_value"
+  return 0
+}
+
+managed_projection_hint() {   # <row>; 0 means a managed marker is visible
+  printf '%s\n' "${1-}" | awk '
+    { s = tolower($0)
+      if (s ~ /managed[ _-](owner|binding)/ ||
+          s ~ /mode[ _-]*=[ _-]*managed/ ||
+          s ~ /managed[ _-]*:/) found = 1
+    }
+    END { exit(found ? 0 : 8) }'
+}
+
+managed_projection_parse_row() {   # <row>; 0 valid marker, 8 absent, other unknown
+  local mppr_row="${1-}" mppr_split mppr_cell mppr_text mppr_line mppr_fields mppr_hint mppr_row_lane
+  MANAGED_PROJECTION_MODE=""
+  MANAGED_PROJECTION_DAEMON=""
+  MANAGED_PROJECTION_GENERATION=""
+  MANAGED_PROJECTION_LANE=""
+  mppr_hint=8
+  if managed_projection_hint "$mppr_row"; then
+    mppr_hint=0
+  else
+    mppr_hint=$?
+  fi
+  mppr_split=0
+  row_split_state_cell "$mppr_row" || mppr_split=$?
+  case "$mppr_split" in
+    0) : ;;
+    2) [ "$mppr_hint" = 0 ] && return 1; return 8 ;;
+    *) [ "$mppr_hint" = 0 ] && return 1; return 8 ;;
+  esac
+  # A row without any managed-owner vocabulary is an ordinary legacy row and
+  # is the confirmed-absent projection result.  Once that vocabulary appears,
+  # however, every table/state delimiter and every owner field is evidence that
+  # must parse; no malformed marker may be downgraded to absence.  The split
+  # above intentionally runs first so projection writers retain RSS_HEAD and
+  # RSS_TAIL when replacing an ordinary row.
+  [ "$mppr_hint" = 0 ] || { [ "$mppr_hint" = 8 ] && return 8; return 1; }
+  mppr_cell="$(rstrip_spaces "$RSS_CELL")"
+  case "$mppr_cell" in
+    'MANAGED OWNER · '* | 'managed owner · '*)
+      # Keep the historical shorthand, but never treat an empty owner token
+      # as a valid durable binding.
+      mppr_text="${mppr_cell#* · }"
+      case "$mppr_text" in
+        '' | *[!A-Za-z0-9._-]*) return 1 ;;
+      esac
+      return 0
+      ;;
+    *' · '*) mppr_text="${mppr_cell#* · }" ;;
+    *) return 1 ;;
+  esac
+  case "$mppr_text" in
+    *' · '*) mppr_line="${mppr_text#* · }" ;;
+    *)
+      return 1 ;;
+  esac
+  case "$mppr_line" in
+    managed-owner\ *) : ;;
+    *) return 1 ;;
+  esac
+  mppr_fields="$(printf '%s\n' "$mppr_line" | sed -n \
+    's/^managed-owner mode=\([^[:space:]]*\) daemon=\([^[:space:]]*\) generation=\([^[:space:]]*\) bound-lane=\([^[:space:]]*\)$/\1|\2|\3|\4/p')"
+  [ -n "$mppr_fields" ] || return 1
+  IFS='|' read -r MANAGED_PROJECTION_MODE \
+    MANAGED_PROJECTION_DAEMON MANAGED_PROJECTION_GENERATION \
+    MANAGED_PROJECTION_LANE <<EOF
+$mppr_fields
+EOF
+  [ "$MANAGED_PROJECTION_MODE" = managed ] || return 1
+  managed_projection_component_valid "$MANAGED_PROJECTION_DAEMON" || return 1
+  managed_projection_generation_valid "$MANAGED_PROJECTION_GENERATION" || return 1
+  managed_projection_component_valid "$MANAGED_PROJECTION_LANE" || return 1
+  mppr_row_lane="$(printf '%s\n' "$RSS_HEAD" | awk -F'|' '{ cell=$2; sub(/^[[:space:]]+/, "", cell); sub(/[[:space:]]+$/, "", cell); sub(/^`/, "", cell); sub(/`$/, "", cell); print cell }')"
+  managed_projection_component_valid "$mppr_row_lane" || return 1
+  [ "$(lc "$mppr_row_lane")" = "$(lc "$MANAGED_PROJECTION_LANE")" ] || return 1
+  return 0
+}
+
+managed_projection_read() {   # <canonical lane>; 0 marker, 8 absent, other unknown
+  local mpr_lane="${1-}" mpr_row mpr_rc
+  if mpr_row="$(row_of_lane "$mpr_lane" 2>/dev/null)"; then
+    :
+  else
+    mpr_rc=$?
+    return "${mpr_rc:-1}"
+  fi
+  # `row_of_lane` is an awk pipeline and therefore exits 0 even when it
+  # printed no row.  An empty result is the published register's confirmed
+  # absence (8), not an unreadable projection; callers need this distinction
+  # so a new legacy lane remains compatible when the optional helper is absent.
+  [ -n "$mpr_row" ] || return 8
+  managed_projection_parse_row "$mpr_row"
+}
+
+managed_projection_check() {   # <canonical lane>; 0 conflict, 8 absent, other unknown
+  managed_projection_read "${1-}"
+}
+# --- END ported from 3c26041:lanes-edit.sh:776-898 ---
+
+# THE ONE READ EVERY CALLER ASKS: 0 with the owner on stdout, 8 a legacy lane,
+# 1 UNKNOWN. It wraps `managed_projection_read` and maps every other status of
+# it to 1, and it closes the one gap the ported reader leaves open on purpose:
+# `row_of_lane` is an awk pipeline over `register_text`, which answers an EMPTY
+# register — not a failure — where the published one could not be rendered, so
+# the reader would call every lane legacy. An empty register is not a register
+# with no managed lane in it, and it is 1 here (Amendment 7(d)).
+# THE OWNER is the marker's `daemon=` for the full form and its token for the
+# historical `MANAGED OWNER · <token>` shorthand, read from the same state cell
+# the reader has just validated.
+lane_is_managed_owned() {   # <canonical lane>
+  limo_lane="${1-}"; limo_rc=0
+  [ -n "$limo_lane" ] || return 1
+  limo_reg="$(register_text)"
+  [ -n "$limo_reg" ] || return 1
+  managed_projection_read "$limo_lane" || limo_rc=$?
+  case "$limo_rc" in
+    0)
+      if [ -n "$MANAGED_PROJECTION_DAEMON" ]; then
+        printf '%s\n' "$MANAGED_PROJECTION_DAEMON"
+      else
+        limo_cell="$(rstrip_spaces "$RSS_CELL")"
+        printf '%s\n' "${limo_cell#* · }"
+      fi
+      return 0 ;;
+    8) return 8 ;;
+    *) return 1 ;;
+  esac
+}
+
+# THE REFUSAL, in one place, so every legacy act says the same two sentences.
+# Returns 0 for a legacy lane; never returns otherwise. Called BEFORE the act
+# writes anything — before its lock where it takes one, and where the lock is
+# already held (the sweep), before its first write — so a refusal changes
+# nothing; `die` releases a held lock on the way out.
+managed_seam_refuse() {   # <canonical lane> <the act>
+  msr_lane="${1-}"; msr_act="${2-this act}"; msr_rc=0; msr_owner=""
+  msr_owner="$(lane_is_managed_owned "$msr_lane")" || msr_rc=$?
+  case "$msr_rc" in
+    0) die "lane $msr_lane is owned by the managed ledger (owner ${msr_owner:-unnamed}, from the managed-owner marker in its register row), and $msr_act is a legacy lane act: Brett Heap's ruling of 2026-10-04 — \"managed ledger owns enrolled lanes; #97 owns legacy\". Nothing was written. Act on this lane through the managed ledger." 2 ;;
+    8) return 0 ;;
+    *) die "whether the managed ledger owns lane $msr_lane is UNKNOWN: its register row carries managed-owner vocabulary that does not parse as a marker, or the register could not be read — and an ownership nobody could establish is never read as 'legacy' (Amendment 7(d)). $msr_act was refused and nothing was written. Read it: lanes-edit.sh managed-projection $msr_lane" 1 ;;
+  esac
 }
 
 # ============================================================================
@@ -11698,6 +11936,25 @@ lane_tree_now() {   # <path>
 
 lane_reconcile() {   # <lane>
   lrc_lane="${1-}"
+  # 0. THE SEAM (ruling 2026-10-04): a managed-owned lane's lifecycle is the
+  # managed ledger's, so this legacy reconciliation reads nothing of it and
+  # pronounces nothing on it — no crash, no clearance, no closure. A lane whose
+  # ownership could not be read gets the same silence, as `indeterminate`.
+  lrc_mrc=0; lrc_mown=""
+  lrc_mown="$(lane_is_managed_owned "$lrc_lane")" || lrc_mrc=$?
+  case "$lrc_mrc" in
+    0)
+      printf 'MANAGED%s%s\n' "$US" "${lrc_mown:-unnamed}"
+      printf 'VERDICT%smanaged-owned%slane %s is owned by the managed ledger (owner %s): its lifecycle and its worktrees are that ledger'"'"'s, and this legacy reconciliation pronounces nothing on them (ruling 2026-10-04: "managed ledger owns enrolled lanes; #97 owns legacy")\n' \
+        "$US" "$US" "$lrc_lane" "${lrc_mown:-unnamed}"
+      return 0 ;;
+    8) : ;;
+    *)
+      printf 'MANAGED%sunknown\n' "$US"
+      printf 'VERDICT%sindeterminate%swhether the managed ledger owns lane %s is UNKNOWN — its register row carries managed-owner vocabulary that does not parse, or the register could not be read — so nothing is pronounced on it (Amendment 7(d)). Read it: lanes-edit.sh managed-projection %s\n' \
+        "$US" "$US" "$lrc_lane" "$lrc_lane"
+      return 0 ;;
+  esac
   lrc_root=""; lrc_rc=0
   lrc_root="$(lane_control_root "$lrc_lane")" || lrc_rc=$?
   if [ "$lrc_rc" != 0 ]; then
@@ -12113,6 +12370,10 @@ Nothing was written." 2
     # AMENDMENT 15 — the row's own spelling, which is what the commit subject
     # and every message below then carry.
     lane="$(canon_lane "$lane")" || exit 2
+    # THE CELL THIS REPLACES MAY BE THE MANAGED LEDGER'S MARKER (ruling
+    # 2026-10-04), and replacing it would take the lane out of the ledger's
+    # hands without the ledger: refused before the lock, nothing written.
+    managed_seam_refuse "$lane" "set-row-state"
     acquire_lock; handle_preexisting
     n="$(row_line "$lane")" || exit 2
     row="$(sed -n -e "${n}p" "$LANES_FILE")"
@@ -12138,6 +12399,12 @@ Nothing was written." 2
     lane="${1-}"; old="${2-}"; new="${3-}"; why="${4-}"
     [ -n "$lane" ] && [ -n "$old" ] || die "usage: replace-in-row <lane> \"<old>\" \"<new>\" [\"<why>\"]" 2
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    # THE SEAM (ruling 2026-10-04): a managed lane's row is the ledger's, and
+    # no legacy edit may write the marker's vocabulary into any row.
+    managed_seam_refuse "$lane" "replace-in-row"
+    if managed_projection_hint "$new"; then
+      die "the replacement text carries managed-owner vocabulary ('managed owner', 'managed binding', 'mode=managed' or 'managed:'), and only the managed ledger's own writer writes a managed-owner marker, and a legacy writer that wrote its vocabulary into a row would forge that lane's ownership (ruling 2026-10-04: \"managed ledger owns enrolled lanes; #97 owns legacy\"). Nothing was written." 2
+    fi
     acquire_lock; handle_preexisting
     n="$(row_line "$lane")" || exit 2
     row="$(sed -n -e "${n}p" "$LANES_FILE")"
@@ -12267,6 +12534,9 @@ Nothing was written." 2
     esac
     pipes="$(count_occurrences "$row" "|")" || exit 2
     [ "$pipes" -ge 8 ] || die "a 7-column row needs at least 8 '|' characters, found $pipes" 2
+    if managed_projection_hint "$row"; then
+      die "the new row carries managed-owner vocabulary ('managed owner', 'managed binding', 'mode=managed' or 'managed:'), and only the managed ledger's own writer writes a managed-owner marker, and a legacy writer that wrote its vocabulary into a row would forge that lane's ownership (ruling 2026-10-04: \"managed ledger owns enrolled lanes; #97 owns legacy\"). Nothing was written." 2
+    fi
     lane_new="$(printf '%s' "$row" | cut -d'`' -f2)"
     # AMENDMENT 15(a) — A ROW UNDER ANY CASE IS A ROW, AND THE REFUSAL NAMES IT.
     # This is the act the 2026-09-13 incident got past: `lane-start openxfactory
@@ -12485,6 +12755,10 @@ Nothing was written." 2
     # THE OLD NAME'S LIFECYCLE CONTROL ROOT, read while the old name still has
     # its log (openRepoTools#91; `lane_state_rename` moves it after the commit).
     rl_lsr_old="$(lane_control_root "$rl_old" 2>/dev/null)" || rl_lsr_old=""
+    # THE SEAM (ruling 2026-10-04). A managed lane's marker names its lane as
+    # `bound-lane=`, so renaming the row under it would turn a valid marker into
+    # an unparseable one; the rename is the ledger's, and refused before the lock.
+    managed_seam_refuse "$rl_old" "rename-lane"
 
     # ---- THE MUTEX IS TAKEN BEFORE THE CHECKS, NOT BETWEEN THEM AND THE WRITE
     # (Copilot round 6 on openRepoTools#81). Every refusal below reads a row, a
@@ -14739,6 +15013,28 @@ EOF
     printf '%s\n' "$rh_out"
     ;;
 
+  # ---------- THE SEAM: is this lane the managed ledger's? (ruling 2026-10-04)
+  #
+  #   0  a valid managed-owner marker: the owner is printed
+  #   8  no marker and no managed-owner vocabulary: a legacy lane
+  #   1  vocabulary that does not parse, or a register that could not be read:
+  #      ownership UNKNOWN, which a caller refuses on exactly as it refuses 0
+  #  64  usage
+  managed-projection)
+    lane="${1-}"; [ -n "$lane" ] || die "usage: managed-projection <lane>" 64
+    [ "$#" -le 1 ] || die "managed-projection takes one lane: managed-projection <lane>" 64
+    check_lane_name "$lane"
+    log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    mpj_out=""; mpj_rc=0
+    mpj_out="$(lane_is_managed_owned "$lane")" || mpj_rc=$?
+    case "$mpj_rc" in
+      0) printf '%s\n' "$mpj_out" ;;
+      8) exit 8 ;;
+      *) die "lane $lane's register row carries managed-owner vocabulary that does not parse as a marker, or the register could not be read: whether the managed ledger owns it is UNKNOWN, and that is never read as 'legacy' (Amendment 7(d))." 1 ;;
+    esac
+    ;;
+
   # ---------- openRepoTools#91: the lifecycle, the inventory, the reconcile
   #
   # ALL FIVE ANSWER OUT OF THE LOCAL CONTROL ROOT and none of them touches the
@@ -14817,6 +15113,7 @@ EOF
     check_lane_name "$lane"
     log_sync
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    managed_seam_refuse "$lane" "set-lane-state"    # ruling 2026-10-04
     sls_root=""; sls_rrc=0
     sls_root="$(lane_control_root "$lane")" || sls_rrc=$?
     [ "$sls_rrc" = 0 ] ||
@@ -14931,6 +15228,7 @@ EOF
     check_lane_name "$lane"
     log_sync
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    managed_seam_refuse "$lane" "set-lane-tree"     # ruling 2026-10-04
     slt_root=""; slt_rrc=0
     slt_root="$(lane_control_root "$lane")" || slt_rrc=$?
     [ "$slt_rrc" = 0 ] ||
@@ -15067,6 +15365,6 @@ EOF
     ;;
 
   *)
-    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|lane-reconcile)" 2
+    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|managed-projection|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|lane-reconcile)" 2
     ;;
 esac

@@ -835,6 +835,26 @@ if [ "$cl_rc" = 0 ] && [ -n "$cl_out" ] && [ "$cl_out" != "$LANE" ]; then
   LANE="$cl_out"
 fi
 
+# THE SEAM (ruling 2026-10-04): A MANAGED-OWNED LANE IS NOT THIS COMMAND'S.
+# `lanes-edit.sh managed-projection` answers 0 with the owner where the lane's
+# register row carries the managed ledger's marker, 8 for a legacy lane, and 1
+# where ownership could not be established. ANY other status — a helper that
+# predates the verb included — is UNKNOWN as well, and refused the same way:
+# a fence that opens because its read failed is no fence (Amendment 7(d)).
+seam_refuse() {   # <lane> <the act>
+  sr_out=""; sr_rc=0
+  sr_out="$("$LANES_EDIT" managed-projection "$1" 2>/dev/null)" || sr_rc=$?
+  case "$sr_rc" in
+  0) die "lane $1 is owned by the managed ledger (owner ${sr_out:-unnamed}), and $2 is a legacy lane act, refused here, once the lane is named and before a byte is written: no state cell, no ENDED or RETIRED line, no handoff fragment, and no process signalled. Brett Heap's ruling of 2026-10-04: \"managed ledger owns enrolled lanes; #97 owns legacy\". Act on this lane through the managed ledger." 2 ;;
+  8) : ;;
+  *) die "whether the managed ledger owns lane $1 is UNKNOWN (\`$LANES_EDIT managed-projection $1\` exited $sr_rc): its register row carries managed-owner vocabulary that does not parse, or the read failed. An ownership nobody could establish is never read as legacy (Amendment 7(d)), so $2 is refused here, once the lane is named and before a byte is written: no state cell, no ENDED or RETIRED line, no handoff fragment, and no process signalled. Read it: $LANES_EDIT managed-projection $1" 1 ;;
+  esac
+}
+# ONCE THE NAME IS CANONICAL and before every act this command has — the
+# ending, `--retire`, and `--retire <pid>` — so none of them touches a managed
+# lane. (`--retire-dormant` is above and is refused by `retire-rows` itself.)
+seam_refuse "$LANE" "a lane end"
+
 # `--home` IS VALIDATED BEFORE ANYTHING IS WRITTEN. It is for a PRE-CUTOVER
 # lane, and `lanes-edit.sh` refuses it once the lane's own log records a home —
 # but the only place this script passes it is its LAST act, the ENDED/RETIRED
