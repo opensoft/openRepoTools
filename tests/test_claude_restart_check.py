@@ -105,6 +105,25 @@ def restart(old: str, new: str) -> str:
     return f"RESTART NEEDED: running {old}, installed {new}; /ctx at your next breakpoint"
 
 
+def newer_copy(old: str, new: str) -> str:
+    return (f"NEWER COPY INSTALLED: running {old}, installed {new}; "
+            "/ctx checks npm before selecting a version")
+
+
+@pytest.mark.parametrize("color", [True, False])
+def test_a_newer_copy_does_not_promise_the_resolver_will_choose_it(table, color):
+    # The resolver prefers the npm-equal 2.1.284 over native 2.1.285 when
+    # npm publishes 2.1.284. This disk-only check cannot read that publication.
+    exe = table.npm_package("2.1.284")
+    table.native("2.1.285")
+    status_line_tree(table, str(exe))
+    result = table.run("--running", "2.1.284", "--pid", "100",
+                       **({} if color else {"NO_COLOR": "1"}))
+    line = newer_copy("2.1.284", "2.1.285")
+    assert result.stdout == (f"{GREEN}{line}{RESET}\n" if color else line + "\n")
+    assert "RESTART NEEDED" not in result.stdout
+
+
 def test_a_binary_npm_replaced_under_the_session_asks_for_a_restart(table):
     table.npm_package("2.1.284")
     status_line_tree(table, table.replaced_npm_exe())
@@ -123,7 +142,7 @@ def test_a_minified_package_json_is_read_too(table):
         '"bin":{"claude":"bin/claude.exe"},"engines":{"node":">=18"}}')
     status_line_tree(table, str(exe))
     result = table.run("--running", "2.1.283", "--pid", "100", NO_COLOR="1")
-    assert result.stdout == restart("2.1.283", "2.1.284") + "\n"
+    assert result.stdout == newer_copy("2.1.283", "2.1.284") + "\n"
 
 
 def test_the_line_is_green_unless_no_color_is_set(table):
@@ -144,7 +163,7 @@ def test_an_installed_version_newer_than_the_running_one_asks_even_undeleted(tab
     exe = table.npm_package("2.1.284")
     status_line_tree(table, str(exe))
     result = table.run("--running", "2.1.283", "--pid", "100", NO_COLOR="1")
-    assert result.stdout == restart("2.1.283", "2.1.284") + "\n"
+    assert result.stdout == newer_copy("2.1.283", "2.1.284") + "\n"
 
 
 def test_a_native_session_behind_the_newest_native_version_asks(table):
@@ -153,7 +172,7 @@ def test_a_native_session_behind_the_newest_native_version_asks(table):
     table.native("2.1.283", "2.1.284")
     status_line_tree(table, str(table.versions / "2.1.283"))
     result = table.run("--pid", "100", NO_COLOR="1")
-    assert result.stdout == restart("2.1.283", "2.1.284") + "\n"
+    assert result.stdout == newer_copy("2.1.283", "2.1.284") + "\n"
 
 
 def test_a_native_session_on_the_newest_version_prints_nothing(table):
@@ -166,7 +185,7 @@ def test_a_running_version_that_is_not_a_version_falls_back_to_the_path(table):
     table.native("2.1.283", "2.1.284")
     status_line_tree(table, str(table.versions / "2.1.283"))
     result = table.run("--running", "unknown", "--pid", "100", NO_COLOR="1")
-    assert result.stdout == restart("2.1.283", "2.1.284") + "\n"
+    assert result.stdout == newer_copy("2.1.283", "2.1.284") + "\n"
 
 
 def test_a_replaced_binary_with_no_readable_versions_still_asks(table):
@@ -200,12 +219,12 @@ def test_the_walk_starts_at_the_parent_by_default(table):
 def test_an_npm_session_behind_a_newer_native_install_asks(table):
     """Copilot on #134: the installed version was read only from the running
     binary's own family, so an npm 2.1.283 session beside a native 2.1.284
-    said nothing, and the next launch starts the native one."""
+    said nothing. The notice leaves selection to the next registry check."""
     exe = table.npm_package("2.1.283")
     table.native("2.1.284")
     status_line_tree(table, str(exe))
     result = table.run("--running", "2.1.283", "--pid", "100", NO_COLOR="1")
-    assert result.stdout == restart("2.1.283", "2.1.284") + "\n"
+    assert result.stdout == newer_copy("2.1.283", "2.1.284") + "\n"
 
 
 def test_a_native_session_behind_the_user_npm_copy_asks(table):
@@ -213,7 +232,7 @@ def test_a_native_session_behind_the_user_npm_copy_asks(table):
     table.npm_package("2.1.284")
     status_line_tree(table, str(table.versions / "2.1.283"))
     result = table.run("--pid", "100", NO_COLOR="1")
-    assert result.stdout == restart("2.1.283", "2.1.284") + "\n"
+    assert result.stdout == newer_copy("2.1.283", "2.1.284") + "\n"
 
 
 def test_an_older_install_in_the_other_family_is_no_reason(table):
@@ -233,7 +252,7 @@ def test_the_native_directory_is_the_one_claude_current_reads(table):
     status_line_tree(table, str(exe))
     result = table.run("--running", "2.1.283", "--pid", "100", NO_COLOR="1",
                        CLAUDE_CURRENT_NATIVE_DIR=str(elsewhere))
-    assert result.stdout == restart("2.1.283", "2.1.290") + "\n"
+    assert result.stdout == newer_copy("2.1.283", "2.1.290") + "\n"
 
 
 def test_a_relative_user_prefix_is_read_under_home(table):
@@ -245,7 +264,7 @@ def test_a_relative_user_prefix_is_read_under_home(table):
     (pkg / "package.json").write_text('{\n  "version": "2.1.284"\n}\n')
     status_line_tree(table, str(table.versions / "2.1.283"))
     result = table.run("--pid", "100", NO_COLOR="1", NPM_CONFIG_PREFIX="rel-prefix")
-    assert result.stdout == restart("2.1.283", "2.1.284") + "\n"
+    assert result.stdout == newer_copy("2.1.283", "2.1.284") + "\n"
 
 
 def test_no_home_reads_only_the_running_install(table):

@@ -155,9 +155,9 @@ an inherited answer from an operator's pin:
 
 ## `lane-start`
 
-`lane-start` applies that table at the end of step 5a, once it knows the agent
-and the launch, and before step 5 writes anything (and in one earlier launch,
-below):
+`lane-start` applies that table after confirmation and agent selection, before
+requesting a binding handoff, renaming a window or moving a transcript (and in
+the bare launch described below):
 
 - It looks for `claude-current` beside itself, then in
   `$OPENREPOTOOLS_BIN_DIR` (default `~/.local/bin`), and never on `PATH`. A
@@ -169,9 +169,8 @@ below):
   `CLAUDE_BIN` and `CLAUDE_RESOLVED_BIN` are exported with that path, and one
   line says `launching claude <version> (<status>) at <path>`.
 - Exit 2 ends `lane-start` with 2, and any other failure with 1. Either way
-  the row, the object log and the handoff's Rule 3 stamp are not written. The
-  window has already been renamed for the lane by step 4, as it has for the
-  launcher table's own check on the agent's command.
+  no binding handoff is requested, the window is not renamed, no transcript is
+  moved, and the row, object log and handoff's Rule 3 stamp are not written.
 - With no `claude-current` installed, one note says so, and `CLAUDE_BIN`
   (`claude` from `PATH` when unset) is launched unchecked, as before.
 - `--dry-run` prints a `PLAN` line naming the call and runs nothing, because
@@ -223,15 +222,27 @@ It warns when either of these holds:
   versions directory (`$CLAUDE_CURRENT_NATIVE_DIR`, default
   `~/.local/share/claude/versions`), and the package in the user npm prefix,
   found the way `claude-current` finds it. So a session on the npm copy is
-  told about a newer native install, which the next launch starts. The
+  told about a newer native install. The
   running version is `--running` (the status line JSON's `version`), else the
   native file's own name.
 
-The warning is exactly one line, green unless `NO_COLOR` is set:
+The warning is exactly one line, green unless `NO_COLOR` is set. A replaced
+binary asks for a restart:
 
 ```text
 RESTART NEEDED: running 2.1.283, installed 2.1.284; /ctx at your next breakpoint
 ```
+
+When only another installed version is newer, the notice leaves the selection
+to the next launch's registry check:
+
+```text
+NEWER COPY INSTALLED: running 2.1.284, installed 2.1.285; /ctx checks npm before selecting a version
+```
+
+`claude-current` prefers a candidate equal to npm's published version over an
+ahead candidate. This disk-only check cannot predict that choice, so a newer
+installed copy alone is not labelled `RESTART NEEDED`.
 
 It never acts. There is no kill and no automatic `/ctx`, because a working
 session is never interrupted. It reads `/proc`, one directory listing and a

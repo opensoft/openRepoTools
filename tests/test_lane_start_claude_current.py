@@ -299,6 +299,7 @@ def test_a_refusal_ends_the_run_with_2_before_anything_is_written(box):
     assert box.claude_runs() == ""
     assert box.commits() == before
     assert box.lane_log() == ""
+    assert "rename-window" not in box.tmux_log.read_text()
     assert "repoZ-1" not in (box.wip / "lanes" / "LANES.md").read_text(encoding="utf-8")
 
 
@@ -317,6 +318,33 @@ def test_a_resolver_that_names_nothing_runnable_ends_the_run_with_1(box, fake):
     assert "Nothing was written" in result.stderr
     assert box.claude_runs() == ""
     assert box.commits() == before
+
+
+@pytest.mark.parametrize("rc", ["1", "2"])
+@pytest.mark.parametrize("take", [["--request-handoff"], ["--force", "test takeover"]])
+def test_a_resolver_refusal_precedes_a_binding_handoff(box, rc, take):
+    box.resolver()
+    real = box.bin / "lanes-edit-real.sh"
+    (box.bin / "lanes-edit.sh").rename(real)
+    handoffs = box.root / "handoffs.log"
+    _write(box.bin / "lanes-edit.sh", '''#!/usr/bin/env bash
+case "$1" in
+  binding) printf 'OtherHost\\tother-container\\t@90\\t2026-10-04T00:00:00Z\\told-session\\tlinux\\telsewhere\\tpresent\\n'; exit 0 ;;
+  request-handoff) printf '%s\\n' "$*" >> "$FAKE_HANDOFF_LOG"; exit 2 ;;
+  *) exec "$FAKE_LANES_EDIT" "$@" ;;
+esac
+''')
+    before = box.commits()
+    result = box.start(*take, FAKE_CC_RC=rc, FAKE_LANES_EDIT=str(real),
+                       FAKE_HANDOFF_LOG=str(handoffs))
+    assert result.returncode == int(rc), result.stderr
+    assert "claude-current" in result.stderr
+    assert box.resolver_calls()
+    assert not handoffs.exists(), "resolver refusal released or requested the holder"
+    assert "rename-window" not in box.tmux_log.read_text()
+    assert box.commits() == before
+    assert box.lane_log() == ""
+    assert box.claude_runs() == ""
 
 
 def test_a_launchers_verified_version_is_trusted_recorded_and_removed(box):

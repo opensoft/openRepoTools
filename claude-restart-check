@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# claude-restart-check: one green line when the Claude Code session this runs
-# under was started from a binary that has since been replaced on disk, or
-# runs an older version than the one installed. Nothing otherwise.
+# claude-restart-check: one green restart line for a replaced binary, or a
+# newer-copy notice when another installed version is newer. Nothing otherwise.
 #
 # Installed on PATH by `openRepoTools --install`, for workBenches' shared
 # status line to call.
@@ -39,7 +38,8 @@
 #     native versions directory ($CLAUDE_CURRENT_NATIVE_DIR, default
 #     ~/.local/share/claude/versions), and the package in the user npm prefix,
 #     found the way claude-current finds it. So a session on the npm copy is
-#     told about a newer native install, which the next launch starts.
+#     told about a newer native install. The next launch checks npm and may
+#     prefer a candidate equal to npm over that newer installed copy.
 #   - It warns when the binary was replaced, or when the installed version is
 #     newer than the running one (--running, else the native file's name).
 #   It reads /proc, a directory listing and a few small files. It reaches no
@@ -49,6 +49,8 @@
 # OUTPUT
 #   Nothing, or exactly one line:
 #     RESTART NEEDED: running <old>, installed <new>; /ctx at your next breakpoint
+#   or, when only the version differs and the binary was not replaced:
+#     NEWER COPY INSTALLED: running <old>, installed <new>; /ctx checks npm before selecting a version
 #   in green, or plain when NO_COLOR is set.
 #
 # EXIT
@@ -78,10 +80,10 @@ usage() {
 claude-restart-check [--running <version>] [--pid <pid>]
 claude-restart-check --help
 
-Print one green "RESTART NEEDED: running <old>, installed <new>; /ctx at your
-next breakpoint" line when the Claude Code session above this process runs a
-binary since replaced on disk, or one older than the version installed; print
-nothing otherwise. Always exits 0 (64 for an unknown argument). Reads /proc
+Print a green RESTART NEEDED line for a binary replaced on disk, or a
+NEWER COPY INSTALLED notice when only the installed version is newer. That
+notice does not promise /ctx will select the newer copy: the next launch
+checks npm first. Print nothing otherwise. Always exits 0 (64 for an unknown argument). Reads /proc
 (CLAUDE_RESTART_CHECK_PROC) and never acts on the session.
 USAGE
 }
@@ -293,7 +295,8 @@ replaced=0
 # install claude-current reads that has its version on disk: the running
 # binary's own, the native versions directory and the user npm prefix's
 # package. A session on the npm copy is behind a newer native install, which
-# the next launch starts (Copilot on opensoft/openRepoTools#134).
+# may be considered at the next launch. This read has no registry information,
+# so it cannot predict the resolver's preference for a copy equal to npm.
 installed=""
 from_path=""
 consider() { # <version>: kept when it is higher than the one in hand
@@ -327,7 +330,11 @@ if [ -n "$installed" ] && [ -n "$running" ] && [ "$(vercmp "$installed" "$runnin
 fi
 [ "$replaced" = 1 ] || [ "$newer" = 1 ] || exit 0
 
-line="RESTART NEEDED: running ${running:-an older build}, installed ${installed:-a newer build}; /ctx at your next breakpoint"
+if [ "$replaced" = 1 ]; then
+	line="RESTART NEEDED: running ${running:-an older build}, installed ${installed:-a newer build}; /ctx at your next breakpoint"
+else
+	line="NEWER COPY INSTALLED: running $running, installed $installed; /ctx checks npm before selecting a version"
+fi
 if [ -n "${NO_COLOR:-}" ]; then
 	printf '%s\n' "$line"
 else
