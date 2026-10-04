@@ -180,16 +180,29 @@ what makes it safe to act on — but resolving the root from `home owner/repo`
 and the estate, with no recorded path at all, is the coordinator-base work of
 tasks 1.2 and 5.3 and is not in this implementation.
 
-### 12. No sixth lane verb is added to the append-only log
+### 12. This change adds no lane-kind verb to the append-only log
 
 Decision 3's alternative (derive everything from events) was rejected there for
-the reasons it gives. The converse also holds and is stronger here: Amendment
-7's lane-kind verbs are `STARTED`, `PAUSED`, `RESUMED`, `ENDED` and `RETIRED`,
-and a sixth would change what `swapped_candidates`, `lane_row_facts`,
+the reasons it gives. As first written, this decision also argued that a sixth
+lane-kind verb would change what `swapped_candidates`, `lane_row_facts`,
 `lane_payload_field`, `lane-last`, `who` and `lane-end` each mean by *a lane's
-last lane-kind line* — in a file nothing rewrites, on every workstation until
-adoption reaches it. `SWAPPING` is therefore a snapshot state and never a log
-line, and every existing reader is untouched.
+last lane-kind line*. **Amendment 18(g) has since added a sixth lane-kind verb,
+`HANDOFF-REQUESTED`, without that effect**: it changes no state, and every
+reader that decides a lane's state enumerates the five state verbs by name and
+skips it. So that argument no longer holds as stated, and the decision now
+rests on two others:
+
+- **A transition is local and frequent, and a log line is neither.** The
+  lifecycle moves three times per handoff and must move with no network at all,
+  while every log line is a commit, a `pull --rebase` and a push (Amendment 5)
+  in a file every workstation shares.
+- **`SWAPPING` is a state, and `HANDOFF-REQUESTED` is not.** A state verb in
+  the log is exactly what the readers that enumerate the five state verbs would
+  have to learn, in a file nothing rewrites, on every workstation until adoption
+  reaches it.
+
+`SWAPPING` is therefore a snapshot state and never a log line, and every
+existing reader is untouched.
 
 ### 13. `SWAPPED` needs three landed writes, and the swap still completes without them
 

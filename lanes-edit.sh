@@ -344,8 +344,10 @@
 #   `operation`, and `--expect*` is the compare-and-swap that refuses a stale
 #   finalizer with exit 7 rather than letting it overwrite a newer owner.
 #
-#   NO SIXTH LANE VERB IS ADDED TO THE APPEND-ONLY LOG. Amendment 7's five
-#   stand and every reader of them is untouched; this is a SNAPSHOT beside that
+#   NO LANE-KIND VERB IS ADDED TO THE APPEND-ONLY LOG BY THIS CHANGE. Amendment
+#   7's five state verbs stand and every reader of them is untouched (Amendment
+#   18(g) has since added a sixth lane-kind verb, `HANDOFF-REQUESTED`, which
+#   changes no state; this adds none). This is a SNAPSHOT beside that
 #   history, local to the workstation, replaced atomically, and never committed
 #   — see the section above the dispatcher for where it lives and why it is
 #   neither in the register nor inside a git worktree.
@@ -11094,9 +11096,11 @@ EOF
 # what a clean swap looks like). The two crash kinds had no word.
 #
 # WHAT IS NEW AND WHAT IS NOT. Nothing about the append-only log changes: its
-# five lane verbs are Amendment 7's and no sixth is added here, so
-# `swapped_candidates`, `lane_row_facts`, `lane_payload_field`, `lane-last`,
-# `who` and `lane-end` read exactly what they read before. What is added is a
+# five STATE verbs are Amendment 7's and this section adds no lane-kind verb at
+# all (Amendment 18(g)'s `HANDOFF-REQUESTED` is the sixth lane-kind verb, and it
+# changes no state), so `swapped_candidates`, `lane_row_facts`,
+# `lane_payload_field`, `lane-last`, `who` and `lane-end` read exactly what they
+# read before. What is added is a
 # SNAPSHOT beside that history — one small file per lane, replaced atomically
 # under this file's own mutex — carrying the state word, a monotonic
 # GENERATION, the OPERATION ID of the transition in flight, and the owner. The

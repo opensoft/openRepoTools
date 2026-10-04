@@ -2864,10 +2864,12 @@ swap looks like). The two crash kinds had no word.
 
 Governed by `openspec/changes/add-crash-consistent-lane-worktree-recovery/` and
 tracked on [opensoft/openRepoTools#91](https://github.com/opensoft/openRepoTools/issues/91).
-It amends no protocol: **no sixth lane verb is added to the append-only log**.
-Amendment 7's `STARTED`, `PAUSED`, `RESUMED`, `ENDED` and `RETIRED` stand, and
-every reader of them — `swapped`, `lane-last`, `lane-dir`, `who`, `lane-end` —
-is untouched. What is new is a SNAPSHOT beside that history.
+It amends no protocol: **it adds no lane-kind verb to the append-only log**.
+Amendment 7's five state verbs, `STARTED`, `PAUSED`, `RESUMED`, `ENDED` and
+`RETIRED`, stand, and every reader of them — `swapped`, `lane-last`,
+`lane-dir`, `who`, `lane-end` — is untouched. (Amendment 18(g) has since added a
+sixth lane-kind verb, `HANDOFF-REQUESTED`, which changes no state; this change
+adds none.) What is new is a SNAPSHOT beside that history.
 
 ### The four words, and the two crashes
 
