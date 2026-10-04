@@ -7,14 +7,19 @@ No external writes, repositories, installation or migration occurred.
 
 | Finding | Decision / execution consequence |
 | --- | --- |
-| October 4 main still matches GitHub at `82ecebe` (79 commits), 58 tracked paths and one standard gitlink | Regenerate/check the current main mapping; #61 and #146 remain included without replay. |
+| Main advanced to `daed209` with merged #134: 80 commits, 64 tracked paths and one standard gitlink; GitHub matches | Regenerate/check the mapping: 18 spec / 40 code / six root, no drops; #61/#146/#134 are included without replay. |
 | Classifier treats shipped Markdown skills/commands as specification | Override to code with written reasons; these are installation payloads. |
 | Original contract is the implementation's upstream dependency lock | Keep code pin/gitlink/.gitmodules together; generated assembly pins are separate. |
 | `.specify` and agent directories are ignored local scaffolding | Preserve local config separately and regenerate root workflow after adoption. |
-| Six current worktrees/local branches; main and all feature checkouts clean before refresh edits; open PRs #134/#121/#97 | Keep retired `002`/`003`, lclaude, detached, claim-takeover and #146 checkouts out of replay. Clean status alone does not complete preservation Gate A. |
+| Six current worktrees/local branches; open PRs #121/#97; concurrent #121 staged/unstaged/untracked work and advanced #97 head | Preserve current active contents, not the earlier clean observation. Retain merged #134 checkout without replay; retired checkouts stay out of replay. |
+| PR #121 now owns feature 005 confirmed-legacy-only restart and a full authority decision; managed/unknown ownership refuses and merge hold remains | Preserve the entire index/working/untracked delta and continue paired `005`; full authority/runtime governance remains spec, independent of #97 and feature 001 managed authority. |
 | Feature 001 advanced to clean `3c26041`, committing broker/task-recovery work and restoring rollover/workspace packets | Preserve its complete branch delta and restored governance/ideation; remove the stale requirement to capture the previous dirty files as uncommitted work. |
 | Feature 001 now selects required local Omnigent for `lclaude → oclaude → profile launch`, with implementation/qualification pending | Carry launcher contract, FR-047/T063–T065, LS custody/input fences and separate factory-broker gates; keep wrapper ownership in workBenches and transport ownership in Omnigent. |
-| Non-draft #134 advanced to `11037f0` and has a clean sibling worktree | Carry code installer/resolver/preflight/timeout/test changes and spec manual if unmerged; regenerate baseline if it lands before freeze. |
+| #134 merged as `daed209`; clean sibling worktree remains at `11037f0` | Installer/resolver/preflight/timeout/test changes and manual are included in the regenerated main baseline; retain checkout as recovery history. |
+| Installed protocol now adopts manual Triad Feature Amendments; workBenches source docs are uncommitted drafts | Record source digests in protocol review; preserve full proposals/canonical files in spec and genuine bounded records in code. Do not claim distribution or automated qualification. |
+| Pinned upstream classifier has no qualified amendment exception; no amendment paths observed in current source/retained heads | Explicitly review future genuine paths as code with reasoned local resolutions or a later reviewed upstream rule; do not edit pinned consumers or manufacture historical amendments. |
+| Filtered commits may change approved spec identity | Preserve original repository/commit/path and verify extracted correspondence; repair links and selected roots without guessed hashes. |
+| Bounded amendments require immediate working files and one final docs reconciliation | Extend the existing 19 tasks; create one spec issue at first amendment, reconcile tested net effect, and block completed assembly advancement until matching reconciled spec/code land. |
 | Two remaining preservation refs have no local worktrees | Review their history as recovery evidence; do not treat them as active writers or require recreation. |
 | Estate status refuses this manifest-free single repository | Relay no-estate refusal; use local Git and read-only GitHub observations now, then estate status after adoption. |
 | Installer fetches bare paths from `openRepoTools` and local sibling payloads | Preserve public root entry point and bind every payload to one code pin. |

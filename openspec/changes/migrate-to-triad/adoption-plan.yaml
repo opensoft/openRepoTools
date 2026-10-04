@@ -8,10 +8,10 @@ source:
   repository: opensoft/openRepoTools
   local_path: .
   default_branch: main
-  commit: "82ecebee13edaa915b68550170faffdf761754d5"
-  files: 58
-  bytes: 4339687
-  commits: 79
+  commit: daed20957f2dd2f22cca24053bb5bc8636ff6b3f
+  files: 64
+  bytes: 4490556
+  commits: 80
 mode: in-place
 project: openRepoTools
 org: opensoft
@@ -50,7 +50,7 @@ paths:
     rule: code-ci-workflows
     reason: "CI runs the implementation's own gate — build, test, analysis. The assembly root gets its own `validate.yml` from the shape, so a workflow moved here is not a workflow lost."
     files: 1
-    bytes: 18419
+    bytes: 18501
     review_required: false
   - path: .gitignore
     leg: root
@@ -76,7 +76,7 @@ paths:
     rule: root-assistant-instructions
     reason: "The AI-assistant instruction files and their one-file directories are the same document ten times over, and it addresses the whole project. An assistant that read it from inside the code leg would be told about specifications it cannot see. Root, ruled 2026-09-02."
     files: 1
-    bytes: 20968
+    bytes: 20967
     review_required: false
   - path: CLAUDE.md
     leg: root
@@ -100,8 +100,28 @@ paths:
     rule: root-front-door
     reason: "What a person or a forge reads BEFORE deciding which leg to open. The licence and the code of conduct govern all three repositories; the README is the front door of the thing an engineer clones."
     files: 1
-    bytes: 29806
+    bytes: 30329
     review_required: false
+  - path: claude-current
+    leg: code
+    confidence: review
+    rule: default
+    reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
+    files: 1
+    bytes: 29335
+    review_required: false
+    question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
+    resolution: "Executable installer payload added by merged PR #134; keep resolver/checker with commands and their implementation tests in code."
+  - path: claude-restart-check
+    leg: code
+    confidence: review
+    rule: default
+    reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
+    files: 1
+    bytes: 11880
+    review_required: false
+    question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
+    resolution: "Executable installer payload added by merged PR #134; keep resolver/checker with commands and their implementation tests in code."
   - path: commands/
     leg: code
     confidence: medium
@@ -125,8 +145,8 @@ paths:
     confidence: high
     rule: spec-governance
     reason: "Requirements, decisions, contracts and governance prose — what the project has DECIDED, as opposed to what it currently runs. `contracts/` is here by the 2026-09-02 ruling even where the code reads it: the code reads across the assembly-root mount (`spec/contracts` from the root, `../spec/contracts` from `code/`), which is what the legs are mounted for."
-    files: 1
-    bytes: 187100
+    files: 2
+    bytes: 201648
     review_required: false
   - path: lane
     leg: code
@@ -174,7 +194,7 @@ paths:
     rule: default
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
-    bytes: 223900
+    bytes: 233030
     review_required: false
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
@@ -212,7 +232,7 @@ paths:
     rule: default
     reason: "No rule matched and the file extensions did not agree. This is the honest answer, not a failure: the tool has said what it does not know, at the exact path where it does not know it."
     files: 1
-    bytes: 178500
+    bytes: 180034
     review_required: false
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Executable product command; keep with its sibling helpers and installation payload in the code repository."
@@ -286,8 +306,8 @@ paths:
     confidence: high
     rule: code-source-and-tests
     reason: "The implementation, the tests that hold it, and the scripts and images that build and run it. `scripts/` moves whole: a harness that reads `contracts/` from beside it reads them across the root mount afterwards, which is a code change the plan records as a follow-up rather than a reason to split the directory."
-    files: 12
-    bytes: 1938387
+    files: 15
+    bytes: 2022225
     review_required: false
   - path: upstream/
     leg: code
@@ -300,12 +320,15 @@ paths:
     question: "Which leg owns this path — spec, code, or the assembly root? Answer by editing `leg:` and writing one line into `resolution:` beside it."
     resolution: "Mounted openRepoShape is the implementation/test dependency; preserve its exact gitlink with the original .gitmodules and dependency pin."
 follow_ups:
+  - "code/claude-current names `docs/`, which moves to the spec leg: it must read across the assembly root — `../spec/docs/` relative to `code/` — or take the path from the environment"
+  - "code/lane-start names `docs/`, which moves to the spec leg: it must read across the assembly root — `../spec/docs/` relative to `code/` — or take the path from the environment"
   - "code/lanes-edit.sh names `docs/`, which moves to the spec leg: it must read across the assembly root — `../spec/docs/` relative to `code/` — or take the path from the environment"
   - "code/openRepoTools names `docs/`, which moves to the spec leg: it must read across the assembly root — `../spec/docs/` relative to `code/` — or take the path from the environment"
   - "code/tests/run.sh names `docs/`, which moves to the spec leg: it must read across the assembly root — `../spec/docs/` relative to `code/` — or take the path from the environment"
   - "code/tests/test_install_skill_and_hook.py names `docs/`, which moves to the spec leg: it must read across the assembly root — `../spec/docs/` relative to `code/` — or take the path from the environment"
   - "code/tests/test_lane_helpers.sh names `docs/`, which moves to the spec leg: it must read across the assembly root — `../spec/docs/` relative to `code/` — or take the path from the environment"
-  - "code/tests/test_repo_hygiene.py names `docs/`, which moves to the spec leg: it must read across the assembly root — `../spec/docs/` relative to `code/` — or take the path from the environment"
+  - "code/tests/test_lane_start_claude_current.py names `docs/`, which moves to the spec leg: it must read across the assembly root — `../spec/docs/` relative to `code/` — or take the path from the environment"
+  - "… and 1 more file(s) under the code leg naming `docs/`"
   - "code/lanes-edit.sh names `openspec/`, which moves to the spec leg: it must read across the assembly root — `../spec/openspec/` relative to `code/` — or take the path from the environment"
   - "code/tests/test_lane_helpers.sh names `openspec/`, which moves to the spec leg: it must read across the assembly root — `../spec/openspec/` relative to `code/` — or take the path from the environment"
   - "code/tests/test_park_resume_commands.py names `specs/`, which moves to the spec leg: it must read across the assembly root — `../spec/specs/` relative to `code/` — or take the path from the environment"
@@ -318,25 +341,29 @@ follow_ups:
   - "Preserve original .gitmodules, upstream/openRepoShape gitlink and contracts/openreposhape-pin.yaml together in code; rehearse existing-submodule extraction/removal and recursive bootstrap before real execution. Never weaken blob verification or edit the standard in place."
   - "Add an assembly openRepoTools compatibility entry point after byte-preserving split verification; resolve one immutable code pin for all installer artifacts and preserve OPENREPOTOOLS_REPO/REF forks, raw/gh and offline checkout behavior."
   - "Separate code, assembly and spec roots in test fixtures and hygiene checks; code CI must supply the exact compatible spec/assembly context where a test reads product documentation."
-  - "Current .specify and agent links are ignored local bootstrap artifacts, not the 58-file source tree; capture local configuration and regenerate root workflow using setup-openspeckit after manifest/legs are present."
+  - "Current .specify and agent links are ignored local bootstrap artifacts, not the 64-file source tree; capture local configuration and regenerate root workflow using setup-openspeckit after manifest/legs are present."
   - "Preserve all branch/PR/worktree and dirty/untracked work; source main extraction does not transport unfinished feature branches. Migrate selected patches to paired feature branches with old-to-new receipts before rebinding lanes."
   - "Regenerate this preliminary plan after planning lands and baseline freeze; require current coverage check, local bare-remote rehearsal, prerequisite availability and explicit approval before execute."
+  - "Review genuine bounded features/<NNN-feature>/openspec/ amendment records explicitly as code; canonical/full proposals and archives remain spec even when created on a feature branch. No existing bounded amendment paths were observed; do not manufacture them for historical features."
+  - "Preserve approved original repository/commit/path provenance and verify correspondence to extracted spec identities, repairing relative links, selected OpenSpec roots/stores and paired feature paths without guessing filtered commit hashes."
+  - "Use the adopted manual amendment workflow with immediate working Speckit updates and one docs reconciliation issue at the first amendment. Schema, root routing, bootstrap distribution and upstream placement automation are pending in their owners; do not patch pinned shape copies or assume other workstations are updated."
+  - "Reconcile the tested migration net effect and all amendment dispositions in one final docs batch before completed assembly advancement; prepare docs/code PRs together, link landed code/evidence, close reconciliation after docs landing, and archive only after implementation and assembly pins land."
 summary:
   spec:
-    files: 17
-    bytes: 208000
-    file_share: 0.2931
-    byte_share: 0.0479
+    files: 18
+    bytes: 222548
+    file_share: 0.2812
+    byte_share: 0.0496
   code:
-    files: 35
-    bytes: 4067645
-    file_share: 0.6034
-    byte_share: 0.9373
+    files: 40
+    bytes: 4203444
+    file_share: 0.6250
+    byte_share: 0.9361
   root:
     files: 6
-    bytes: 64042
-    file_share: 0.1034
-    byte_share: 0.0148
+    bytes: 64564
+    file_share: 0.0938
+    byte_share: 0.0144
   unresolved:
     files: 0
     bytes: 0

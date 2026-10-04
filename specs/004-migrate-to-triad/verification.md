@@ -1,6 +1,48 @@
 # Migration planning verification — October 4, 2026
 
-## October 4 repository refresh
+## Updated migration protocol refresh
+
+Read the installed shared workflow's **Triad Feature Amendments**, including
+**Single repository to triad migration**, the revised bootstrap status and
+workBenches source workflow/templates/governance. [protocol-review.md](protocol-review.md)
+records their identities and snapshot digests, including the uncommitted draft
+state of the workBenches source. Manual adoption does not establish delivered
+schema/routing/distribution/placement automation.
+
+The revised proposal, design, capability requirements and Speckit plan/tasks
+now distinguish canonical spec content from genuine bounded code amendments,
+retain original approved provenance with verified filtered correspondence,
+require explicit root selection and working-spec updates, and require one
+final tested reconciliation before completed assembly advancement. No existing
+tracked bounded amendment paths were observed in main or retained feature heads;
+none were manufactured. All 19 implementation tasks remain open, covering 16
+migration requirements.
+
+Source main advanced to `daed20957f2dd2f22cca24053bb5bc8636ff6b3f` with #134
+merged at `2026-10-04T16:52:38Z`; read-only GitHub main matched. The two open
+PRs are #121 and #97. Six worktrees/local branches remain, including the clean
+merged #134 checkout and clean feature 001 at `3c26041`. Main extraction now
+includes the resolver/checker installer changes, tests and manual.
+The final snapshot check detected concurrent #121 staged/unstaged/untracked
+work, including feature 005 and its full legacy authority decision, plus an
+advanced #97 recovery head. Inventory/dispositions were refreshed to preserve
+those active changes, separate ownership and the existing #121 merge hold;
+the earlier all-clean observation is historical, not current readiness.
+
+The pinned standard regenerated the main-only plan: 64 source paths, 18 spec /
+40 code / six root, no unresolved path or drop, 80 commits and 28 follow-ups.
+Standard `check`, OpenSpec strict validation, supplemental path/link/inventory/
+requirement checks and `git diff --check` passed. Planning checks do not establish
+upstream exception qualification, local rehearsal or runtime acceptance.
+
+Estate `status --fetch` again refused the manifest-free repository and fetched
+nothing; local Git and read-only GitHub supplied current observations. This
+refresh created no external issue, moved no lane, rewrote no workspace pointer,
+changed no pinned standard, distributed no protocol and performed no adoption.
+
+The previous refresh sections below are historical evidence only.
+
+## Earlier October 4 repository refresh — historical
 
 Read-only GitHub main still matches local `82ecebee13edaa915b68550170faffdf761754d5`.
 The pinned standard remains `39d5c986fcfac1a160474bfe91c5f1c37fccc72c`.

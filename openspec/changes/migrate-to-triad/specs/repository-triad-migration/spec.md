@@ -62,7 +62,11 @@ without a developer assembly checkout.
 ### Requirement: Project workflow operates across the pinned legs
 
 The assembly SHALL own project workflow and its manifest/pins; product
-OpenSpec/Speckit artifacts SHALL live in spec, implementation in code.
+Full proposals, archives and canonical OpenSpec/Speckit artifacts SHALL live
+in spec, implementation in code. Genuine bounded feature amendment records
+SHALL remain in code as the narrow reviewed placement exception, not a second
+canonical baseline. A feature-branch origin SHALL NOT change a full proposal's
+role. Historical features SHALL NOT require manufactured local amendments.
 Continued features SHALL use paired leg worktrees with preserved feature IDs.
 Delivery SHALL land leg changes and select them through a root pin bump.
 CI SHALL test the exact composed state without silently skipping required
@@ -72,6 +76,68 @@ cross-leg tests. The standard dependency SHALL remain unedited in place.
 - **WHEN** new leg commits are ready for project delivery
 - **THEN** root gitlinks, pin records and workflow commit references SHALL move
   together through the established pin-bump procedure and integration checks.
+
+#### Scenario: Bounded amendment folder exists before extraction
+- **WHEN** source content contains genuine `features/<NNN-feature>/openspec/` records
+- **THEN** the reviewed plan SHALL explicitly assign them to code until upstream
+  placement is qualified
+- **AND** pinned standard copies/digests SHALL NOT be edited to make placement pass.
+
+### Requirement: Migration retains provenance and explicit planning roots
+
+The migration SHALL preserve approved original repository/commit/path identities
+and verify correspondence to extracted spec identities when filtering changes
+hashes. It SHALL repair cross-leg links, baseline references and feature/task
+paths without guessing approved commits. Full proposal operations SHALL select
+the intended spec feature checkout; local amendments SHALL select their code
+root. A store pointer SHALL NOT override explicit local-root verification or
+authorize accidental changes to pinned base mounts. Pending schema/routing,
+bootstrap distribution and upstream placement automation SHALL remain distinct
+from adopted manual use on a target workstation.
+
+#### Scenario: Extraction changes an approved proposal commit
+- **WHEN** the extracted spec history has a different commit identity
+- **THEN** original approved provenance SHALL remain recorded
+- **AND** migration evidence SHALL establish the corresponding spec repository,
+  commit and path rather than substituting a guessed hash.
+
+#### Scenario: Local amendment root and docs store coexist
+- **WHEN** an operation could resolve to either planning root
+- **THEN** the operator SHALL verify its intended checkout, branch and root
+- **AND** a local amendment archive SHALL NOT prove canonical reconciliation.
+
+### Requirement: Tested reconciliation precedes completed assembly advancement
+
+Accepted bounded migration adjustments SHALL record unique feature-local IDs,
+governing baseline, affected requirements/tasks, authority/source, verification
+impact and dispositions. Working Speckit files SHALL update before dependent
+implementation. Larger scope/runtime/authority/external changes SHALL use full
+spec governance; unnecessary larger ideas SHALL be linked to future-proposal
+issues and excluded from current requirements/tasks. Speckit SHALL remain the
+only executable task list.
+
+At the first amendment, the feature SHALL create one spec reconciliation issue.
+After implementation and verification, it SHALL reconcile net tested effects
+once into governing specs/contracts/design with dated departures/as-built
+evidence, every disposition and the landed code identity. Inactive deltas SHALL
+be excluded while approved, archived and amendment history remains traceable.
+Spec/code PRs SHALL be prepared together. Code MAY land first, but reconciliation
+and matching spec/code pins SHALL precede completed assembly advancement.
+The issue SHALL close after spec landing; the feature landing record SHALL track
+assembly. Full spec archival SHALL explicitly select its root and wait for
+implementation/assembly landing; subsequent archive commits SHALL advance by
+ordinary pinning. Later behavior changes SHALL reopen reconciliation;
+cancellation SHALL record abandonment rather than as-built completion.
+
+#### Scenario: Code lands before final spec reconciliation
+- **WHEN** the code PR lands while final reconciliation remains open
+- **THEN** completed assembly advancement SHALL wait for the matching spec landing
+- **AND** the reconciliation SHALL reference the actual landed code commit.
+
+#### Scenario: Amendment was reverted or deferred
+- **WHEN** final reconciliation computes the tested semantic effect
+- **THEN** the inactive delta SHALL be excluded from governing behavior
+- **AND** its disposition, history and any future-proposal issue SHALL remain linked.
 
 ### Requirement: Execution and cutover require reviewable evidence
 

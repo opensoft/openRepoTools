@@ -17,6 +17,9 @@ This checklist tracks governance, not duplicate implementation tasks.
 - [ ] 2.1 Accept exact assembled-head, preservation, feature-transition and
   rollback evidence from Speckit Gates C–E; verify required CI and ownership
   boundaries without enabling unrelated experimental runtime features.
-- [ ] 2.2 Archive only after the adopted assembly and selected leg pins land
+- [ ] 2.2 Accept final tested spec reconciliation, amendment dispositions and
+  approved-baseline correspondence; verify matched spec/code landings before
+  completed assembly advancement. Close reconciliation after spec landing.
+- [ ] 2.3 Archive only after the adopted assembly and selected leg pins land
   and continued work is accounted for; verify root delivery and recorded
   old-PR/worktree dispositions before closure.

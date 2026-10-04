@@ -17,6 +17,12 @@ pins their exact tested combination and preserves its identity and history.
   executable tooling, shipped skills/commands, tests, CI and the mounted
   standard dependency in `code/`. Root agent guidance and workflow bootstrap
   span both legs. No source path is proposed for deletion.
+- Apply the adopted October 4 manual amendment workflow: full proposals and
+  canonical specs stay in spec; genuine bounded feature records stay in code.
+  Preserve verified approved-baseline correspondence, update working Speckit
+  files immediately and reconcile net tested effects once before completed
+  assembly advancement. Schema/routing/distribution/placement automation remains
+  pending with workBenches/openRepoShape.
 - **BREAKING:** development paths and PR destinations change. Preserve command
   names, install artifacts, published one-line installation and installed
   behavior through a pinned assembly-to-code compatibility entry point.
@@ -63,15 +69,18 @@ existing changes; this migration does not activate experimental capabilities.
 Requested on October 3, 2026. Planning is authorized; migration execution,
 repository creation, software installation, PR merge and lane relocation are
 not authorized by this request. The attached adoption plan is a preliminary
-mapping regenerated from source main `82ecebee13edaa915b68550170faffdf761754d5`, not a promise
+mapping regenerated from source main `daed20957f2dd2f22cca24053bb5bc8636ff6b3f`, not a promise
 that this will be the final split commit. Refresh after planning lands and the
 cutover baseline is frozen. No runtime or migration success is claimed.
 
-The October 4 refresh retains the October 3 cleanup history and records six
-current worktrees, including the restored PR #134 checkout. #134 is now
-non-draft at `11037f0`; feature 001 is committed and clean at `3c26041` with
+The protocol refresh retains the October 3 cleanup history and records six
+current worktrees, including the retained merged PR #134 checkout. #134 is
+included in the new main baseline; feature 001 is committed and clean at `3c26041` with
 restored rollover/workspace packets and the selected local launcher contract.
-All checkouts were clean before planning edits. Both #61 and #146 remain
-included through unchanged main. Continued feature branches and the two
+Feature 001/main remain clean; concurrent #121 work now includes dirty/untracked
+feature 005 and its full legacy authority decision. Both #61 and #146 remain
+included through main. Open PRs are now #97 and #121. Continued feature branches and the two
 remote-only preservation refs still require preservation/review receipts;
 repository adoption does not implement or activate the feature 001 launch stack.
+The [protocol review](../../../specs/004-migrate-to-triad/protocol-review.md)
+records the adopted manual instructions and the working-draft source snapshots.

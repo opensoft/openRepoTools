@@ -4,7 +4,7 @@ The sole executable task list for the governing OpenSpec change. Planning
 artifacts and preliminary mapping validation do not complete these tasks.
 Every task remains open. Run implementation from the selected feature
 worktrees; actual repository creation/cutover require the approval gates.
-The October 4 refresh updates the snapshot/mapping portion of T001/T003 only;
+The protocol refresh updates snapshot/mapping and planned workflow follow-ups;
 owner decisions, private preservation/restore receipts and execution gates
 remain pending. Retired checkouts are not instructions to recreate worktrees.
 
@@ -25,7 +25,11 @@ remain pending. Retired checkouts are not instructions to recreate worktrees.
 - [ ] T003 [US1] Confirm proposed leg names/visibility and inspect prerequisite
   availability; regenerate `adoption-plan.yaml` for the reviewed preliminary
   rehearsal source, retaining reasoned overrides. Verify standard `check`
-  passes and records all source paths with no unapproved drops.
+  passes and records all source paths with no unapproved drops. Explicitly
+  classify genuine bounded feature amendment folders as code until upstream
+  qualification; preserve full proposals/archives/canonical Speckit as spec
+  regardless of branch origin. Record no amendment paths when none exist;
+  do not manufacture historical amendments or weaken shape pins.
 
 ## Phase 2 — Local adoption rehearsal (Gate B foundation)
 
@@ -42,6 +46,11 @@ remain pending. Retired checkouts are not instructions to recreate worktrees.
   reviewable patches; bootstrap selected root workflow after manifest/legs
   exist. Verify first-line shape guidance, relative paths, actual `.specify`
   configuration and paired feature selection without copying machine secrets.
+  Verify explicit full-spec/local-amendment roots and intended feature branches,
+  local-root precedence over store pointers and supported CLI store selection.
+  Keep manual records until schema/routing is qualified; check protocol/command
+  distribution per target workstation through owning workBenches delivery,
+  without treating a scaffold bootstrap as distribution of this manual decision.
 
 ## Phase 3 — Installation and checks (Gate B completion)
 
@@ -77,13 +86,23 @@ remain pending. Retired checkouts are not instructions to recreate worktrees.
 - [ ] T013 [US1] Execute the approved standard adoption from the isolated
   clone. Verify and relay the complete content-accounting table and root PR
   details; stop landing on any refusal/mismatch, retaining all source/evidence.
-- [ ] T014 [US3] Apply reviewed follow-ups through leg/root PRs, land required
-  leg commits, and advance root gitlinks/pins/workflow SHAs with standard tools.
-  Verify no in-place edits to copied pinned shape files or the mounted standard.
+- [ ] T014 [US3] Apply reviewed follow-ups and prepare code/spec PRs together.
+  For accepted bounded adjustments, retain authority/baseline/requirements/tasks
+  and dispositions in manual code-local records, update working Speckit files
+  before implementation and create one spec reconciliation issue at the first
+  amendment. Escalate larger current scope to full governance; defer unnecessary
+  capabilities to linked future issues. Prepare final reconciliation against
+  tested behavior; code may land first, but completed assembly advancement waits
+  for matching reconciled spec. Verify no in-place pinned-shape edits.
 - [ ] T015 [US2] Validate the real exact assembled head using canonical tests,
   required platform/CI, installed/local/raw compatibility, bootstrap and rollback
-  checks. Verify all Gate D results belong to the selected commits before root
-  adoption merge; keep original development/install available until then.
+  checks, including prepared continued-feature translations and disposable
+  workflow evidence from T016–T018. Complete one final spec reconciliation batch with net tested effects,
+  every amendment disposition, dated departures/as-built record, archived approval
+  provenance, deferred issues and actual landed code/evidence. Land spec, close
+  its reconciliation issue and advance matching root gitlinks/pins/workflow SHAs
+  with standard tools; verify final Gate D results at the actual selected commits
+  before root adoption merge. Keep original development/install available.
 
 ## Phase 5 — Continue features and controlled cutover (Gate E)
 
@@ -93,33 +112,49 @@ remain pending. Retired checkouts are not instructions to recreate worktrees.
   amendment and open runtime gates. Carry the clean `3c26041` checkpoint's
   restored rollover/workspace packets, launcher contract and FR-047/T063–T065;
   preserve workBenches/Omnigent ownership and required local adapter qualification
-  separately from factory-broker admission. Do not replay completed work or claim new
+  separately from factory-broker admission. Preserve approved original repository/
+  commit/path and verify extracted spec correspondence, repairing links/task roots
+  without guessed hashes. Full feature-branch proposals remain in spec; preserve
+  any actual bounded records in code and continued reconciliation obligations.
+  Do not replay completed work or claim new
   runtime acceptance from migration.
 - [ ] T017 [US1] Translate every other approved continued PR/branch/detached
   worktree, including this migration feature, with explicit spec/code/root
   mappings and conflict review. Verify each object has a complete receipt or
   approved archived-original disposition; preserve original PR review history.
-  Current candidates are #97/#121/#134 and feature 004. Account for merged
-  #61/#146 through the baseline and retired checkout history through its receipts;
-  do not recreate cleaned worktrees or replay integrated changes. PR #134 is
-  non-draft at `11037f0` with a clean worktree: account for its resolver/checker,
-  installer, lane preflight/fencing, timeout containment, manual and tests.
+  Current candidates are #97/#121 and feature 004. Account for merged
+  #61/#146/#134 through the baseline and retired/retained merged checkout history
+  through receipts; do not recreate cleaned worktrees or replay integrated changes.
+  Verify approved baseline correspondence and artifact roles for every continued
+  feature, including this migration's full proposal in spec.
+  Capture PR #121's complete active index/working files and untracked `005`
+  feature/full legacy authority decision; carry its confirmed-legacy-only scope,
+  managed/unknown refusal and merge hold into paired `005` continuation. Keep
+  PR #97's separately owned diagnostics and current branch head independent.
 - [ ] T018 [US3] Exercise OpenSpec/Speckit feature selection and estate
   park/resume in disposable triad fixtures, then perform reviewed binding/WIP
   transitions through supported tools at owner breakpoints. Verify correct
   feature roots/session bindings and relay refusals without force repairs.
 - [ ] T019 [US3] Publish Gate E/cutover evidence and actual PR dispositions;
   verify all continued features are usable and recoverable before requesting
-  separate old-worktree retirement. Do not auto-close old PRs or delete backups.
+  separate old-worktree retirement. Verify each continued feature retains its
+  outstanding reconciliation/runtime gates rather than declaring it implemented.
+  Archive the migration's full spec change only after implementation and assembly
+  pin landing; explicitly select its root and pin any later archive commit normally.
+  Reopen reconciliation for subsequent behavior changes; record cancellation as
+  abandonment. Do not auto-close old PRs or delete backups.
 
 ## Dependencies
 
 T001–T003 precede rehearsal. T004–T006 precede integration validation;
 T007–T010 may progress within the rehearsed topology after byte accounting.
 T011 closes Gate B. T012 requires Gate A/B and is the real-creation approval
-boundary. T013–T015 precede root adoption merge. T016–T018 can be prepared in
-the candidate after legs exist, but actual lane rebinding follows reviewed
-cutover and safe breakpoints. T019 requires validated retained feature receipts.
+boundary. T013–T015 precede root adoption merge. Prepare T016–T017 translations
+and T018 disposable workflow checks in the candidate after legs exist, before
+T015's final reconciliation. Actual T018 lane rebinding follows reviewed root
+adoption/cutover and safe breakpoints. T019 requires validated retained feature
+receipts; later behavior changes reopen reconciliation before another completed
+assembly advancement.
 
 ## Requirement coverage
 
@@ -136,3 +171,7 @@ cutover and safe breakpoints. T019 requires validated retained feature receipts.
 | FR-010 | T003–T005, T011–T013 |
 | FR-011 | T002, T011, T018–T019 |
 | FR-012 | T001, T012, T018–T019 |
+| FR-013 | T003, T006, T016–T017 |
+| FR-014 | T006, T016–T018 |
+| FR-015 | T014–T015 |
+| FR-016 | T014–T015, T019 |
