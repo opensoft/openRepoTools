@@ -73,6 +73,13 @@ subscription allowance. SDK interruption can terminate its process group;
 exit. Native cold resume reconstructs history and needs fidelity qualification
 before serving this protocol. See the [bounded capability findings](../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md#observed-lifecycle-support-and-missing-worker-swap).
 
+Local controller installation belongs to OmniWorker-Install; shared cloud
+gateway/orchestration integration belongs in the existing service owners.
+Reuse a qualified outbound Omnigent host/tunnel connection for engineer hosts
+where possible. The CPC manifest declares WSL Ubuntu/Docker CE; Linux custody
+must run in the actual worker namespace. No cloud endpoint or host deployment
+is implied by this direction.
+
 ## Alternatives and tensions
 
 A direct headless-CLI adapter remains possible. Omnigent can reduce execution

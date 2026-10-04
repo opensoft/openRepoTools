@@ -17,6 +17,8 @@ Brett wants main agents to spend their tokens on primary orchestration and
 delegate heavy work through LS. Worker accounts may change as they exhaust
 quota, and workers may run away from the main computer. Existing lane swap
 must remain available as its own operating mode.
+Engineers installing xFactory may explicitly contribute spare compute through
+a shared cloud/Azure LS endpoint; the managed CPC can start with local operation.
 
 ## Goals
 
@@ -50,6 +52,13 @@ workers running; LS supplies B outstanding references and buffered results.
 Omnigent worker-account recovery keeps the outer task identity and changes
 internal attempts only through a qualified execution-site boundary.
 
+In the proposed distributed deployment, a shared cloud LS gateway connects to
+existing Omnigent/factory coordination. Enrolled hosts initiate authenticated
+outbound contact and retain local controllers/custodians plus their own EGS.
+Cloud coordination does not replace local JSON swap authority. Lost contact
+cannot authorize duplicate work; reconnect reconciles existing tasks/results.
+Compute permission and model-account permission are separate enrollment inputs.
+
 ## Cluster map
 
 - [Swap and Broker Modes](lane-task-broker-synthesis-two-modes.md) connects placement, Omnigent reuse and existing account-transfer safety.
@@ -66,15 +75,27 @@ acceptance comes from the governed contract and qualified runtime evidence.
 
 ## Key decisions and open questions
 
+The [access and packaging rationale](lane-task-broker-access-and-packaging.md)
+captures Brett's accepted first delivery: independent LS lifecycle-only swap
+and authenticated factory delegation through a lightweight client of the same
+service. Full local factory installation is not a client prerequisite and does
+not grant worker access. Private owner-operated Omnigent delegation is deferred
+to a future separate capability. Exact package/API selection and identity-to-pool
+integration remain implementation choices; ordinary swap has no Omnigent or
+shared factory/cloud dependency.
+
 LS owns parent swap and stable task attachments; Omnigent owns worker workload,
 placement and qualified recovery; agents own task reasoning. Session lifecycle
 tools exist, but allowance-aware selection and safe worker account swaps were
 not found as complete features. Sharing swap/custody machinery is an option,
 not a component-layout ruling. Adapters, policy and remote custody need runtime
 evidence. Reduced parent usage cannot guarantee avoiding quota/context limits.
+Azure resource choice and remote enrollment/transport qualification remain
+implementation work; the distributed shape does not gate ordinary swap.
 
 ## Document map
 
 - Synthesis: [Swap and Broker Modes](lane-task-broker-synthesis-two-modes.md)
 - Atomic: [Worker Placement](lane-task-broker-placement.md)
 - Atomic: [Omnigent Adapter](lane-task-broker-omnigent-adapter.md)
+- Atomic: [Factory Access and Packaging](lane-task-broker-access-and-packaging.md)

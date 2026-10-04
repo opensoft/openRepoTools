@@ -2,6 +2,28 @@
 
 ## Two operating modes: swap and broker
 
+The accepted first delivery separates ordinary LS lifecycle control from
+authenticated factory delegation. Ordinary swap has no Omnigent or shared
+factory/cloud startup dependency. Shared CPC coding work enters codexFactory
+admission and then existing Hermes/Omnigent dispatch. A lightweight authenticated
+client uses the same service without requiring a full local factory installation.
+Private owner workstation/VPS Omnigent delegation is deferred to a separate
+future capability and authority realm, with no factory-pool grant or automatic
+fallback. Package layout and admission API still require implementation design.
+See the [accepted scope](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md#accepted-access-and-packaging-scope)
+and [rationale](../../../ideation/brainstorm/lane-task-broker-access-and-packaging.md).
+
+For distributed engineer compute, propose a shared cloud/Azure LS gateway plus
+local execution controllers on CPC and enrolled engineer hosts. Reuse the
+existing Omnigent host/worker registration and qualified outbound transport;
+Omnigent retains workload/account placement, and local controllers own process
+custody/swap effects through shared machinery. EGS stays at the execution site.
+Local JSON remains the swap authority; cloud contact loss cannot prove exit or
+authorize a duplicate. Locally admitted work can continue within recorded
+authority, while shared admission/placement waits if unavailable. Local CPC
+qualification precedes cloud enrollment; neither gates T054–T057. Follow the
+[deployment boundary](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md#deployment-direction-cloud-gateway-and-local-execution-control).
+
 The follow-up selects the existing CPC omniWorker and
 codexFactory/openxFactory job/worker rail as the first adapter. LS maps lane
 requests and account/custody facts to existing factory job/run/worker/result

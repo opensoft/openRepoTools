@@ -2,6 +2,32 @@
 
 ## Status and governing intent
 
+**2026-10-03 accepted access/packaging scope:** Brett agreed to LS lifecycle-only
+swap plus authenticated factory delegation as the first delivery. Ordinary swap
+remains independent of Omnigent. Shared CPC engineering requests enter
+codexFactory admission before existing Hermes/Omnigent dispatch. Provide a
+lightweight client of that same service, allowing authorized users to delegate
+without a full local factory installation. Installation is distinct from an
+authenticated project/task/pool/model-account grant. Private owner-operated
+Omnigent delegation on a workstation or VPS is deferred to a separate future
+capability, with no CPC grant or automatic fallback from refused/unknown factory
+work. API, packaging and runtime qualification remain implementation work;
+this scope decision does not admit operations or authorize deployment. See the
+[rationale packet](../../../ideation/brainstorm/lane-task-broker-access-and-packaging.md)
+and [accepted contract scope](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md#accepted-access-and-packaging-scope).
+
+**2026-10-03 deployment direction:** qualify local CPC execution control first;
+engineers contributing spare compute through xFactory should connect to a
+shared cloud/Azure LS gateway. Every worker site still requires local process
+custody and its own EGS. The cloud LS handles requests/task attachments/results
+through the existing Omnigent/factory rail, which retains worker workload,
+placement and account reservations. Reuse enrolled host identities and an
+authenticated outbound connection; spare CPU permission does not confer model
+account permission. Local JSON remains swap authority and cloud timeouts cannot
+authorize duplicate workers. See the [deployment boundary](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md#deployment-direction-cloud-gateway-and-local-execution-control).
+Azure resources and transport qualification are pending, with no deployment
+or enrollment authorized by this documentation direction.
+
 **2026-10-03 parent/worker ownership clarification:** LS owns the main lane's
 account transfer and stable attachments/results for delegated factory tasks.
 Omnigent's existing worker-management layer owns worker workload, authorized

@@ -13,8 +13,9 @@ Captured: 2026-10-03
 
 ## Members and their joints
 
-Atomic members: [Worker placement](lane-task-broker-placement.md) and
-[Omnigent adapter](lane-task-broker-omnigent-adapter.md).
+Atomic members: [Worker placement](lane-task-broker-placement.md),
+[Omnigent adapter](lane-task-broker-omnigent-adapter.md) and
+[Factory access and packaging](lane-task-broker-access-and-packaging.md).
 
 ### Semantic orchestration meets deterministic placement
 
@@ -44,6 +45,28 @@ effect proof. Remote jobs belong to their site's EGS and retain site/supervisor/
 job identities independently of the worker account or main-parent generation.
 Isolated/accounted work can continue through parent swap; uncertain overlapping
 workspace effects still retain the parent's release gate.
+
+### Shared cloud entry meets engineer-owned compute
+
+A shared cloud/Azure LS endpoint lets enrolled xFactory hosts initiate outbound
+contact without exposing a workstation listener. Existing Omnigent/factory
+registration and placement serve both CPC and engineer workers; local custody
+controllers/EGS retain execution authority. Spare CPU grants no model-account
+permission. Cloud loss preserves unknown remote state and can hold shared
+admission while locally admitted work remains within its recorded authority.
+Local CPC qualification can precede this distributed shape.
+
+### Packaging preserves factory authority
+
+The accepted first delivery keeps LS lifecycle control independent of Omnigent
+and shared factory/cloud services. Factory broker clients use
+codexFactory admission before existing Omnigent dispatch, with shared pool
+grants independent of what is installed on the client. A selected lightweight
+client consumes that same service without a full local factory installation.
+Private Omnigent delegation is deferred outside the first delivery. A future
+separate capability could serve owner workstation/VPS workers; it cannot acquire
+CPC access or become a fallback for refused/unknown factory work. Exact API and
+package layout remain implementation design work.
 
 ## Emergent behavior
 

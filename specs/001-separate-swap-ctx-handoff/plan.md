@@ -6,6 +6,24 @@ Deployment sequencing and release gates: [Fastest path to deployment](deployment
 
 ## Prospective broker tranche (2026-10-03)
 
+Accepted first delivery: ordinary LS swap independent of Omnigent/shared
+factory services, plus authenticated factory delegation through a lightweight
+client of the existing admission service. A full local factory installation
+is not required; caller project/task/pool/model-account grants are required.
+Private owner-operated Omnigent delegation is deferred outside T059–T062.
+T059 defines the client/admission interface and package boundary; T062 verifies
+dependency separation and access enforcement. See the
+[accepted scope](contracts/lane-task-broker.md#accepted-access-and-packaging-scope).
+
+Propose a shared cloud/Azure LS gateway for engineers contributing compute,
+with local CPC operation qualified first. Every execution site retains local
+custody/swap control and EGS; Omnigent owns shared workload/placement through
+the existing registry/dispatch rail. Qualify authenticated outbound enrollment
+and transport, with CPU sharing and model account permission separated. Local
+JSON remains swap authority; cloud loss cannot release an uncertain worker.
+T059–T062 own this prospective deployment shape, without gating ordinary swap.
+See the [deployment boundary](contracts/lane-task-broker.md#deployment-direction-cloud-gateway-and-local-execution-control).
+
 Consume the existing CPC omniWorker and codexFactory/openxFactory factory
 execution rail first. T059 maps lane requests to its job/run/worker/result
 identities; T060 adds account-aware selection within its admitted pools/policy;

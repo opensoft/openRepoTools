@@ -44,6 +44,17 @@ API MUST NOT bypass factory admission or broaden a grandfathered route.
 One-shot patch workers MUST NOT be represented as resumable sessions without
 a qualified extension in the owning components.
 
+Ordinary swap MUST remain independent of Omnigent and shared factory/cloud
+services. The first broker delivery MUST expose authenticated factory delegation
+to a lightweight client through the same admission service, without requiring
+a full local factory installation. Admission MUST bind caller identity,
+tenant/project, task/operation scope, permitted pool/model account and budget/
+capacity policy. Installation, compute contribution and Omnigent session access
+MUST NOT confer factory worker grants. Task bindings MUST retain factory backend/
+authority realm and stable job identity across parent recovery. Private
+owner-operated Omnigent delegation MUST remain outside the first capability;
+refused or unknown factory work MUST NOT fall back to it.
+
 During main-parent swap, independent admitted workers MUST be preserved. LS
 MUST fence A's task-control/consumer generation, buffer and deduplicate results,
 and deliver existing task references and delivery watermarks to released B.
@@ -51,6 +62,55 @@ B MUST reattach without redispatch solely because A exited. Unknown overlapping
 effects against the lane workspace MUST retain the applicable release gate;
 isolated/accounted remote work MAY continue through parent handoff. Ordinary
 swap-mode native children MUST retain their existing lifecycle rules.
+
+Distributed engineer-host execution MUST use explicit enrollment and an
+authenticated outbound connection to the shared LS/factory endpoint. The
+integration MUST reuse existing host/worker registration and admission, with
+task/workspace/resource scope bound to the enrolled owner/tenant. Compute
+sharing MUST NOT imply authorization to use an engineer's model subscription.
+Local execution-site controllers MUST retain exact runtime custody/swap and
+EGS authority; cloud coordination MUST NOT replace local JSON fence/exit/release
+authority. New placement/recovery requiring shared admission or reservations
+MUST wait/refuse during loss of that authority. Already admitted work MAY
+continue within recorded local authority; reconnect MUST reconcile identities,
+generations and delivery watermarks without duplicate dispatch. Local CPC
+operation MAY precede Azure deployment; distributed enrollment MUST NOT gate
+T054–T057.
+
+#### Scenario: An authorized engineer uses a lightweight factory client
+
+- **GIVEN** an authenticated caller has admitted project/task/pool/model-account
+  scope and uses the qualified client interface without a full factory install
+- **WHEN** the caller requests delegated work through LS
+- **THEN** the same factory admission and result-enforcement gates apply before
+  existing Hermes/Omnigent dispatch
+- **AND** LS preserves the factory backend/authority and task reference for B.
+
+#### Scenario: A factory installation has no worker grant
+
+- **GIVEN** an engineer has installed the factory but lacks the required
+  project/task/pool/model-account grant
+- **WHEN** the engineer requests shared CPC work
+- **THEN** admission refuses before worker dispatch
+- **AND** neither direct Omnigent access nor a private backend bypasses refusal.
+
+#### Scenario: An engineer enrolls spare compute
+
+- **GIVEN** an engineer explicitly enrolls a qualified xFactory host with
+  bounded task/workspace/resource scope
+- **WHEN** the host initiates authenticated outbound contact with the cloud gateway
+- **THEN** the integration uses its existing factory-issued host/worker identity
+  and Omnigent places only admitted work through the local controller
+- **AND** CPU enrollment does not authorize the engineer's model subscription.
+
+#### Scenario: An enrolled host loses cloud contact
+
+- **GIVEN** a host has admitted work and independently owned site EGS jobs
+- **WHEN** cloud contact is lost
+- **THEN** local execution may continue within recorded authority and new
+  placement requiring shared admission waits/refuses
+- **AND** the cloud neither certifies worker exit nor launches a duplicate
+  from the timeout, and reconnect reconciles task/attempt/delivery identities.
 
 #### Scenario: Ordinary swap retains native behavior
 

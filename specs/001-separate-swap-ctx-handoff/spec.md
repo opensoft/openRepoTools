@@ -702,6 +702,28 @@ checkpoint, worker, claim, and inference effects independently.
   Runtime APIs MUST NOT bypass factory admission. Unsupported session/account
   capabilities and unadmitted operations MUST require their owning extension;
   a one-shot patch result MUST NOT imply resumable worker capability.
+  Ordinary swap MUST remain independent of Omnigent and shared factory/cloud
+  services. The first broker delivery MUST provide authenticated factory
+  delegation through the same admission service for a lightweight client;
+  a full local factory installation MUST NOT be a client prerequisite.
+  Admission MUST bind caller identity, tenant/project, task/operation scope,
+  permitted worker pool/model account and budget/capacity policy. Installation,
+  compute contribution and Omnigent session access MUST NOT confer those grants.
+  Tasks MUST retain factory backend/authority realm with their stable job
+  identity through parent recovery. Private owner-operated Omnigent delegation
+  MUST remain outside the first broker capability and MUST NOT be a fallback
+  for refused/unknown factory work. Missing public admission surfaces MUST be
+  implemented and qualified in their owning components before activation.
+  Distributed engineer hosts MUST explicitly enroll and initiate authenticated
+  outbound contact with the shared LS/factory gateway, reusing existing host/
+  worker identities with owner/tenant/task/workspace/resource scope. CPU sharing
+  MUST NOT grant model account permission. Local controllers MUST retain
+  execution-site custody/swap/EGS authority; cloud coordination MUST NOT replace
+  local JSON fences, exit witness or release. Lost shared admission/reservation
+  authority MUST hold new placement/recovery; existing admitted work MAY
+  continue only within recorded authority. Reconnect MUST reconcile identities,
+  generations and delivery watermarks without duplicate dispatch. Azure resource
+  choice and distributed enrollment MUST NOT gate ordinary swap delivery.
 
 ### Key Entities
 

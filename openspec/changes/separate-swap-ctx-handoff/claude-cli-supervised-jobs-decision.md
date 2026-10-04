@@ -21,7 +21,36 @@ and T053 private-ledger evidence remain recorded; T054–T057 remain open.
 Existing strict and original SDK/PGID v1 records retain their validators and
 meaning. Missing or unknown capability markers do not select this capability.
 
+## October 3 decision: first delivery access and packaging
+
+Brett agreed to LS lifecycle-only swap plus authenticated factory delegation.
+Ordinary swap remains independent of Omnigent and shared factory/cloud services.
+Broker requests enter LS → codexFactory admission → existing Hermes/Omnigent
+dispatch → authorized omniWorker. A lightweight authenticated client uses that
+same service; a full local factory installation is not a delegation prerequisite.
+Installing the factory, contributing CPU, authorizing a model account and
+receiving project/task/pool access remain separate permissions.
+
+Private owner-operated Omnigent delegation on a workstation or VPS is deferred
+outside the first broker delivery. Any future adapter needs its own explicit
+qualified capability and backend/authority binding; it grants no CPC access and
+cannot be a fallback for refused or unknown factory work. T059–T062 implement
+only the factory delegation scope, independently of T054–T057's swap gates.
+The admission API and client packaging still need implementation/qualification.
+This decision does not authorize live dispatch, enrollment, deployment or account
+movement. See the [accepted contract scope](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md#accepted-access-and-packaging-scope).
+
 ## October 3 direction: retain swap and add broker mode
+
+The later deployment direction favors local CPC installation and a shared
+cloud/Azure LS endpoint for engineers who enroll spare compute through xFactory.
+Cloud coordination uses the existing Omnigent/factory registry and dispatch
+authority; local execution-site controllers/custodians and EGS own runtime and
+job effects. Each host initiates authenticated outbound contact. Spare CPU
+sharing does not grant model account access. Cloud coordination cannot replace
+local JSON swap authority or treat a disconnected host as dead. Resource and
+transport qualification remain pending; no deployment/enrollment is authorized.
+See the [deployment boundary](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md#deployment-direction-cloud-gateway-and-local-execution-control).
 
 The follow-up directs reuse of the existing CPC omniWorker and
 codexFactory/openxFactory execution rail. LS supplies lane-facing delegation,

@@ -50,6 +50,13 @@ workers continue. LS buffers results and hands B task references/watermarks;
 B does not redispatch those tasks. Worker account replacement is internal to
 Omnigent under the same logical task ID, with separate attempt evidence.
 
+For engineers contributing spare compute, propose a shared cloud/Azure LS
+gateway and authenticated outbound enrollment, reusing the existing factory
+host/worker registry. CPC can qualify local operation first. Each execution
+site retains a local controller/custodian and EGS; cloud selection cannot
+replace local swap authority. CPU permission and model account permission are
+separate. Exact Azure resources and transport qualification remain pending.
+
 The main agent can remain on its account while worker bindings change from
 B to C to D. This reduces main-agent implementation usage but does not
 guarantee that it avoids five-hour/weekly limits or context growth.

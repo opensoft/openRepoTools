@@ -34,8 +34,19 @@ not proposal approval or evidence that Claude's compatibility gate has passed.
 
 ## 2. Speckit handoff and feasibility decision
 
+The accepted October 3 packaging scope retains independent LS lifecycle-only
+swap and selects authenticated factory delegation through a lightweight client
+of the same admission service. Private owner-operated Omnigent delegation is
+deferred outside the first delivery. Follow the
+[accepted scope](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md#accepted-access-and-packaging-scope);
+the linked Speckit tasks remain the sole executable list.
+
 The October 3 two-mode direction preserves existing swap and adds an explicit
-prospective LS broker for local/remote task placement. The
+prospective LS delegation gateway into existing Omnigent local/remote worker
+placement. The distributed direction adds shared cloud/Azure coordination and
+enrolled hosts with local custody/EGS, using outbound authenticated transport.
+Local JSON retains swap authority and factory registration/dispatch remain
+single-owner. The
 [broker contract](../../../specs/001-separate-swap-ctx-handoff/contracts/lane-task-broker.md),
 FR-046 and separate T059–T062 tranche own implementation/qualification without
 changing T054–T057's graceful swap gate. Omnigent mechanisms are reuse candidates;

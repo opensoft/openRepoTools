@@ -80,6 +80,103 @@ The existing codexFactory MCP package exposes patch inspection and verification;
 its presence is not an implemented worker-dispatch tool. T059–T062 integrate
 the existing rail and add only demonstrated missing capabilities.
 
+## Deployment direction: cloud gateway and local execution control
+
+Brett's October 3 follow-up favors a local installation for the managed CPC,
+and a shared cloud/Azure LS endpoint for engineers who install xFactory and
+explicitly enroll spare compute for omniWorkers. The proposed distributed
+shape uses both cloud coordination and local execution control. Azure resource,
+subscription and deployment selection remain implementation choices; no cloud
+deployment or engineer-host enrollment is authorized by this document.
+
+| Component | Location and responsibility |
+| --- | --- |
+| LS gateway | Shared cloud endpoint for authenticated lane requests, factory-task correlation, result delivery and task-consumer reattachment. |
+| Existing Omnigent/Hermes factory layer | Shared workload, registered worker selection, allowance/capacity reservations and qualified recovery orchestration. Reuse its existing registry, queues and approval authority. |
+| LS runtime controller/custodian | On each execution site, with owned process handles in the worker's runtime namespace; validate local launch/stop/swap, witness exit and reconcile local workspace/effects. Reuse the shared swap machinery through the owning Omnigent integration. |
+| Execution-site EGS | On that site, independently owning admitted commands/jobs across worker account changes. |
+
+The same local execution control also serves parent lanes on their own machines.
+Omnigent requests worker lifecycle actions through the admitted local controller
+integration; it continues to own worker workload and account choice. The
+controller validates the exact binding and local safety boundary before acting.
+Cloud coordination does not gain PID custody by holding a session/job ID. Local
+JSON under its local lock remains authoritative for swap ownership, fences,
+exit witness and release; the QA derived index is not dispatch authority.
+
+An enrolled engineer host initiates an authenticated outbound connection to
+the shared endpoint, preferably reusing the qualified Omnigent host/tunnel
+transport. Do not require incoming workstation ports or another worker
+registry. Reuse factory-issued host/worker identities and record permitted
+work scope, workspace and resource/concurrency limits. Spare CPU enrollment
+does not authorize use of the engineer's model subscription; authorized model
+account references are a separate admission input. Exact authentication,
+transport and tenant/host isolation must be qualified under T061–T062.
+
+On network/cloud loss, already admitted work and independently owned EGS jobs
+may continue within their recorded authority, with durable local evidence for
+reconciliation. New placement or recovery that requires fresh shared admission
+or account reservations waits/refuses. An already authorized local swap may
+finish only when all its existing local gates and authority remain satisfied;
+offline recovery cannot acquire a new distributed permission. Cloud timeout
+does not certify host/worker death or permit a duplicate writer. Reconnect
+reconciles stable task/attempt IDs, current generations and delivery watermarks.
+
+CPC local operation can be qualified first without making Azure availability a
+T054–T057 gate; distributed enrollment is the prospective broker tranche. The
+inspected [CPC host manifest](https://github.com/opensoft/OmniWorker-Install/blob/125d9636d6fed5589d628b4f32d812c0968d7979/clients/opensoft/worker-hosts/cpc-omni01.worker-host-manifest.yaml)
+declares Ubuntu WSL, Docker CE and systemd. Put
+Linux custody in the actual Linux execution namespace rather than assume the
+Linux subreaper contract works against native Windows processes. This is a
+declared substrate, not evidence of a live installed LS or remote EGS.
+OmniWorker-Install owns host installation; Omnigent-Install owns its orchestration
+integration. The gateway location does not transfer those repository boundaries.
+
+## Accepted access and packaging scope
+
+Brett's October 3 agreement selects LS lifecycle-only swap plus authenticated
+factory delegation for the first delivery. The lightweight client consumes the
+existing factory service. Private Omnigent delegation is deferred outside
+T059–T062. This is accepted product scope with implementation/qualification
+pending, not evidence of an installed dispatch capability.
+
+For shared CPC engineering work, retain LS → codexFactory admission → existing
+Hermes/Omnigent dispatch → omniWorker. Direct calls to Omnigent are transport
+inside that admitted path, not an independent shared-pool entry. Authenticate
+caller identity and bind tenant/project, operation/task scope, permitted pool/
+account and budget/capacity policy. Installing the factory or presenting an
+Omnigent session token does not grant factory worker access. Donating CPU,
+authorizing a model account and consuming shared workers are separate grants.
+
+LS lifecycle-only swap needs the qualified native CLI/local custodian/ledger/
+EGS mechanisms and remains independent of Omnigent or shared factory/cloud
+services. Provide a lightweight authenticated factory client without requiring
+a full local factory installation. This is client packaging around the same
+admission/dispatch authority; exact package and API design remain implementation
+work. Authentication and project/task/pool/model-account grants are still required.
+
+In a future separately scoped capability, a private broker could connect LS
+to an owner-operated Omnigent on a workstation or VPS, using only explicitly
+enrolled owner hosts/accounts.
+It would require a separate qualified capability and backend/authority identity;
+the current factory-first broker marker must not silently select that path.
+It supplies no CPC grant and cannot be an automatic fallback for rejected or
+unknown factory work. Persist the selected backend/realm with task identity so
+B reattaches to the same work. Private session IDs are not factory job/approval
+records. This adapter is excluded from the first delivery; T059–T062 target
+the existing factory rail. No private backend is selected by the first broker
+capability marker.
+
+The current hosted codexFactory MCP authenticates inspect/verify tools, not
+worker dispatch. Omnigent's own user/session authentication does not establish
+factory admission. The inspected internal Hermes general job/dispatch handlers
+contain no caller authentication/tenant-pool authorization gate in those paths;
+this does not establish how a deployed proxy may protect them. A public LS
+factory adapter must qualify the complete authentication/admission path before
+depending on it. Reuse existing identity components and factory gates; a new
+task API or lighter client is not already implemented by the existing MCP.
+See the [packaging rationale](../../../ideation/brainstorm/lane-task-broker-access-and-packaging.md).
+
 ## Division of responsibility
 
 - **Main agent:** choose tasks, describe scope/acceptance/dependencies and

@@ -1,5 +1,34 @@
 # Completion and deployment plan
 
+## Prospective broker deployment: local CPC and cloud-connected engineer hosts
+
+The accepted first delivery offers LS lifecycle-only swap and a lightweight
+authenticated factory client. Ordinary swap has no Omnigent or shared
+factory/cloud dependency. Delegation uses the existing factory admission
+service without requiring a full local factory installation; installation
+does not confer project/task/pool/model-account grants. Private owner-operated
+Omnigent delegation is deferred outside the first delivery. Package/API design
+and qualification belong to T059–T062 under the
+[accepted scope](contracts/lane-task-broker.md#accepted-access-and-packaging-scope).
+
+Brett's October 3 direction favors a local CPC installation and a shared cloud/
+Azure LS gateway for engineers enrolling spare xFactory compute. Use both in
+the distributed shape: cloud LS request/task/result coordination through the
+existing Omnigent/Hermes factory layer, and local custody/swap controllers plus
+EGS on each execution site. Reuse one registry/dispatch authority and an
+authenticated outbound host connection. Model account admission is separate
+from CPU enrollment. Cloud outage cannot override local JSON fences/exit proof
+or authorize duplicate execution; new shared admission waits/refuses, while
+existing locally admitted work remains within its recorded authority.
+
+The inspected CPC manifest declares Ubuntu WSL, Docker CE and systemd; qualify
+the Linux custodian in the actual runtime namespace. Extend OmniWorker-Install
+for host setup and Omnigent-Install for orchestration integration. Qualify local
+operation first, then cloud enrollment/transport under T059–T062. Azure resource
+selection and provisioning are pending and not authorized here. Follow the
+[deployment contract](contracts/lane-task-broker.md#deployment-direction-cloud-gateway-and-local-execution-control).
+This adds no dependency or scope change to T054–T057's graceful swap delivery.
+
 ## Current delivery plan: `claude-cli-supervised-jobs-v1` (September 26, amended October 2)
 
 [Tasks T052–T057](tasks.md) own delivery; T058 is a separate non-gating index

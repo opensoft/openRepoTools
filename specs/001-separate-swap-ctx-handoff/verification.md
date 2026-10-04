@@ -1,5 +1,83 @@
 # Implementation Verification Record
 
+## October 3: accepted packaging and factory delegation scope
+
+Brett agreed to the recommendations: independent LS lifecycle-only swap plus
+authenticated factory delegation through a lightweight client of the same
+admission service. Private owner-operated Omnigent delegation is deferred
+outside the first delivery. Proposal, decision record, design, broker contract,
+FR-046, OpenSpec delta, data model, plans, handoff and T059–T062 now record the
+selected scope. The rationale packet retains brainstorm status; the governing
+decision/contract define accepted scope. Historical options findings below
+remain the evidence for the earlier discussion, superseded on scope by this
+agreement.
+
+T059 includes client packaging and independent swap dependencies; T062 includes
+authorized lightweight-client access, install-without-grant refusal, no private
+backend/fallback, and stable factory authority/task binding after parent recovery.
+Admission API, packaging and runtime qualification remain open implementation
+work. T054–T057 are still independent swap delivery gates.
+
+Strict OpenSpec validation passed in `py-bench`. The broker packet validator
+passed for five documents: three atomic, one synthesis and one overview.
+`git diff --check` passed. This update changes documentation only; no runtime
+tests or client/admission implementation occurred. The amendments are
+uncommitted at this checkpoint.
+
+## October 3: factory access and standalone packaging options
+
+Brett asked whether LS enters codexFactory admission or calls Omnigent directly,
+and how engineers without a full factory install could use their own workers.
+The options packet, proposal/design, broker contract and handoff now distinguish
+LS lifecycle-only use, a thin authenticated factory client and an optional
+private Omnigent adapter for owner-operated workstation/VPS workers. Shared CPC
+work retains factory admission before existing Omnigent dispatch. Installing
+the factory, donating compute and receiving a project/pool/model-account grant
+are distinct. Private delegation remains a product option, not newly authorized
+implementation or fallback for refused/unknown factory work. T059–T062 remain
+factory-first, with backend/authority correlation and client-admission checks.
+
+Read-only inspection found no Omnigent imports/references in current managed
+lane Python modules and confirmed native Claude launch policy; this supports
+separating swap from the proposed Omnigent delegation dependency, without
+asserting runtime release qualification. codexFactory's reusable execution
+workflow validates binding/tenant/readiness/compliance; its hosted MCP adapter
+authenticates only inspect/verify tools. Omnigent's official programmatic/auth
+docs describe local/shared servers and account/OIDC/machine authentication.
+The inspected internal Hermes job/dispatch handler paths contain no caller
+authentication or tenant/pool authorization check in those paths; deployed
+proxy protections were not inspected. Neither those handlers nor Omnigent
+session authentication prove a public factory worker-admission boundary.
+
+Strict OpenSpec validation passed in `py-bench`. The expanded broker packet
+passed validation: five documents, three atomic, one synthesis and one overview.
+`git diff --check` passed. No runtime tests, package/API implementation, account
+grant, worker dispatch or service deployment occurred. These are documentation
+options/findings, not a new standalone capability or operation admission.
+
+## October 3: local CPC and cloud-connected engineer deployment direction
+
+Brett favors local CPC installation and a shared cloud/Azure LS endpoint for
+engineers who explicitly enroll spare xFactory compute. Proposal, decision,
+design, broker contract, FR-046, enrollment references, deployment/implementation
+plans, handoff, delta scenarios and T059–T062 now capture shared coordination
+plus execution-site controllers/custody/EGS. Reuse existing Omnigent/factory
+host registration and dispatch with authenticated outbound contact. CPU sharing
+and model-account authorization are separate. Cloud loss retains unknown
+runtime state and holds new shared admission/reservations; existing locally
+admitted work remains within its recorded authority. Local JSON stays swap
+authority, the QA index stays derived, and T054–T057 have no new cloud gate.
+
+Read-only inspection of the canonical OmniWorker-Install CPC manifest at
+`125d9636` found declared Ubuntu WSL, Docker CE and systemd. Omnigent's official
+shared-server/programmatic docs describe remote servers and registered hosts/
+runners. These are topology and source observations, not live CPC/controller/
+EGS qualification. Azure resource choice and exact transport remain pending.
+
+Strict OpenSpec validation and the four-document broker packet validator passed
+in `py-bench`; `git diff --check` passed. No runtime tests, Azure provisioning,
+cloud deployment, worker enrollment, account movement or model request occurred.
+
 ## October 3: parent/worker ownership and worker-swap capability inspection
 
 Brett clarified that LS owns parent A→B swap and stable delegated-task

@@ -1,5 +1,37 @@
 # Swap rebuild — implementation handoff
 
+## Current checkpoint — October 3, 2026: accepted factory access and packaging
+
+Shared CPC coding tasks from LS use codexFactory admission before existing
+Hermes/Omnigent dispatch. Installing/cloning the factory is not a project/pool
+grant. Brett agreed to a lightweight authenticated factory client that reuses
+the same service without requiring a full local factory installation. LS
+lifecycle-only swap remains independent of Omnigent and shared factory/cloud
+services. Private Omnigent delegation for owner local/VPS workers is deferred
+outside the first delivery, with no CPC permission or automatic fallback.
+T059–T062 cover the factory client and admission integration; a future private
+adapter would require separate scope and capability qualification.
+
+Qualify the complete authenticated admission path: current hosted MCP tools are
+inspect/verify, and internal Hermes job handlers do not themselves prove public
+tenant/pool protection. Exact API and package layout remain implementation work.
+Follow the [accepted contract scope](contracts/lane-task-broker.md#accepted-access-and-packaging-scope)
+and [rationale](../../ideation/brainstorm/lane-task-broker-access-and-packaging.md).
+
+## Current checkpoint — October 3, 2026: distributed deployment direction
+
+Local CPC installation can be qualified first. Engineers enrolling spare
+xFactory compute should connect outbound to a shared cloud/Azure LS gateway;
+each site still runs local runtime custody/swap control and EGS. Omnigent owns
+workload/account placement through its existing worker registry/dispatch rail.
+Reuse host enrollment and transport; CPU permission and model account permission
+are separate. Cloud coordination never replaces local JSON swap authority or
+proves death from lost contact. Azure resource choice, local-controller packaging
+and remote transport remain qualification work, with no deployment authorized.
+Follow the [deployment boundary](contracts/lane-task-broker.md#deployment-direction-cloud-gateway-and-local-execution-control)
+and T059–T062; T054–T057 remain unchanged. The CPC's declared WSL/Docker substrate
+does not certify installed custody against native Windows workers.
+
 ## Current checkpoint — October 3, 2026: parent and worker lifecycle split
 
 LS owns main-parent A→B swap and stable factory-task attachments/results.

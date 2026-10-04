@@ -16,11 +16,27 @@ An upstream terminal status does not establish a process exit. Reuse the
 existing worker registry and persist correlations without creating a competing
 factory queue, approval record or workflow lifecycle.
 
+- **Factory admission binding:** selected factory backend/authority realm,
+  qualified admission endpoint/interface version, authenticated principal and
+  tenant/project, task/operation scope, permitted pool/model-account references,
+  budget/capacity policy and admission/grant evidence references. Store no
+  credential values. An installed package is not a grant. Retain the backend/
+  realm with the stable job ID during parent recovery; no first-delivery private
+  backend or fallback may reinterpret this binding. Factory admission remains
+  the authority; LS persists its correlation and evidence references.
+- **Host enrollment reference:** factory-issued host/worker identity and
+  tenant/owner binding, qualified runtime/transport version, permitted task/
+  workspace scope, donated resource/concurrency limits and current connection
+  incarnation. Model account references/permission are separate from compute
+  enrollment. Reuse the upstream registry; LS holds correlations, not a second
+  host registry. A cloud disconnection preserves unknown custody until local
+  authenticated evidence reconciles it.
 - **Request:** authenticated caller/generation, idempotency key, qualified
   task-definition/assignment binding, purpose, scope, acceptance/evidence refs
   and allowed execution/resource constraints.
-- **Consumer attachment:** LS request and stable factory task/job reference,
-  current lane/parent generation, pending durable results, delivery watermark
+- **Consumer attachment:** LS request and stable factory backend/authority realm
+  plus task/job reference, current lane/parent generation, pending durable
+  results, delivery watermark
   and deduplication keys. A→B transfers this binding without redispatching
   independent workers; stale A control requests refuse.
 - **Placement/attempt (Omnigent-owned):** recorded selection of authorized profile reference,

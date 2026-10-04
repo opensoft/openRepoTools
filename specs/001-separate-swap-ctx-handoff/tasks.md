@@ -847,6 +847,17 @@ account movement, remote provisioning or activation. Preserve named team roles.
   mode separation, old-record preservation, missing/stale task joins, duplicate
   admission, accepted-send versus completion, late results by attempt and
   parent-generation reattachment without duplicate dispatch.
+  Bind factory backend/authority realm and authenticated caller tenant/project/
+  operation/pool/account grants; installation and host contribution are not
+  consumption grants. Define and implement lightweight client packaging around
+  that same admission interface, without requiring a full local factory install.
+  Keep ordinary LS swap independent of Omnigent and shared factory/cloud startup
+  dependencies. Private owner-operated Omnigent delegation is deferred outside
+  this first delivery and T059–T062; add no private backend or fallback.
+  Define correlations to existing host/worker enrollment, owner/tenant and
+  connection incarnation, with task/workspace/resource scope and model-account
+  admission separate from donated CPU. Preserve local JSON swap authority
+  independently of the shared gateway and QA derived index.
 - [ ] T060 Extend the existing Omnigent worker-management/dispatcher interfaces
   in their owning repositories for authorized account/model/effort/harness and
   local/remote host/container placement, retaining factory admission and scope.
@@ -875,6 +886,16 @@ account movement, remote provisioning or activation. Preserve named team roles.
   upstream docs do not certify every boundary. Reuse session/model/policy and
   worker-host mechanisms where measured. Bind host/container/namespace/runtime
   incarnation and workspace/revision; supply explicit remote checkout/artifacts.
+  Qualify local CPC operation first and authenticated outbound engineer-host
+  connection to a shared cloud/Azure LS gateway. Reuse the qualified Omnigent
+  host/tunnel transport and registered identities. Add local controller packaging
+  in OmniWorker-Install and orchestration/gateway integration in their owning
+  components. Keep optional delegation client/backend dependencies separate from
+  the local swap controller's startup requirements. The declared CPC WSL/Docker
+  substrate does not prove native Windows custody; execute the Linux controller
+  in the owned runtime namespace. Azure resource selection/provisioning and
+  live enrollment require separate work
+  and authorization; this task introduces no T054–T057 cloud dependency.
   Preserve local parent JSON/custody authority and execution-site worker custody.
   Remote commands use that site's EGS with site/supervisor/incarnation/job IDs,
   not A's local EGS or local PID evidence. Omnigent owns qualified worker
@@ -900,7 +921,21 @@ account movement, remote provisioning or activation. Preserve named team roles.
   ACK, duplicate or stale dispatch/result, changed task/workspace revision,
   insufficient/stale/unknown allowance, concurrent budget reservations, estimate
   overruns and exhaustion without qualified recovery, routing fallback and
-  policy bypass attempts. Assert correlated completion/effects, retained unknown
+  policy bypass attempts. Cover cloud outage/reconnect, offline continuation only within
+  existing local authority, held new shared admission/reservations, cross-owner/
+  tenant scope refusal and CPU enrollment without model-account permission.
+  Qualify end-user/service authentication and project/pool admission as well as
+  host identity: current hosted MCP is inspect/verify and the internal job API
+  alone does not prove that public boundary. Cover install-without-grant, denied
+  pool/account, direct-runtime bypass and unknown factory work without backend
+  fallback or realm/identity reinterpretation. Exercise authorized lightweight
+  client admission without a full factory installation and install-without-grant
+  refusal with zero worker dispatch. Verify ordinary swap startup with no
+  Omnigent dependency and unavailable shared factory/cloud services, first
+  capability refusal of a private backend, and stable backend/task identity
+  after parent recovery. These are offline interface/dependency cases; live
+  authentication/admission still needs pinned endpoint qualification.
+  Assert correlated completion/effects and retained unknown
   ownership, no duplicate writer, preserved accepted work/EGS jobs, and agent/wait
   cancellation independent of explicit job cancellation. Verify existing swap
   mode regressions separately. Live model/auth/remote qualification requires
