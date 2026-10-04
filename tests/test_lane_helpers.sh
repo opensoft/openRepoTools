@@ -11984,6 +11984,16 @@ is    "…and the three rows are all of them" \
       "$(grep -c '| RETIRED · ' "$A19_WIP/lanes/LANES.md" || :)" 3
 is    "the parked lane's row is untouched" \
       "$(grep -c 'PAUSED · 2026-09-11T00:00:00Z · swapped for the night' "$A19_WIP/lanes/LANES.md" || :)" 1
+# THE SWEEP'S RETIRED LINES MOVE THE LIFECYCLE TOO (openRepoTools#91). They are
+# appended by `retire_rows` and not by `write_event`, so until this round the
+# follow-up that takes every other RETIRED lane to CLOSED never ran for them.
+run a19 "$E" lane-state repo19-4
+is    "a swept lane's lifecycle snapshot is CLOSED" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "state" { print $2 }')" "CLOSED"
+is    "…owned by the sweeping lane's transcript, the session the RETIRED line names" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "owner" { print $2 }')" "$A19_ID"
+run a19 "$E" lane-state repo19-2
+is    "…and the parked lane that did the sweeping has no snapshot made for it" "$rc" 8
 
 # A SECOND RUN IS A NO-OP THAT SAYS SO — nothing to do is said, not done.
 A19_HEAD1="$(git -C "$A19_WIP" rev-parse HEAD)"

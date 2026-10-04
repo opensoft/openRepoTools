@@ -10694,6 +10694,7 @@ retire_rows() {   # <lane>… [--reason "<why>"] [--writer <lane>]
   rr_tmp="$(mktemp -d)"
   : > "$rr_tmp/plan"; : > "$rr_tmp/report"
   rr_n=0; rr_names=""
+  rr_follow=""
   rr_seen=""
   for rr_lane in $rr_lanes; do
     rr_l="$(canon_lane "$rr_lane")" || exit 2          # Amendment 15
@@ -10859,6 +10860,14 @@ $(session_ids_local_of_lane "$rr_l" 2>/dev/null || :)"
     printf '%s%s%s%s%s%s%s%s%s\n' "$rr_ln" "$US" "$rr_l" "$US" "$rr_new" "$US" "$RSS_HEAD" "$US" "$RSS_TAIL" >> "$rr_tmp/plan"
     printf '  %-26s %s\n' "$rr_l" "$rr_new" >> "$rr_tmp/report"
     rr_names="$rr_names $rr_l"
+    # THE LIFECYCLE PRE-IMAGE, TAKEN UNDER THE LOCK THIS SWEEP ALREADY HOLDS
+    # (openRepoTools#91). These `RETIRED` lines are appended by this function
+    # and never by `write_event`, so the follow-up that moves a lane's snapshot
+    # to `CLOSED` for every other `RETIRED` would never run for them, and a
+    # swept lane would keep whatever its snapshot last said. The pre-image is
+    # what the follow-up compares against, exactly as `write_event` takes it.
+    rr_follow="$rr_follow$rr_l$US$(lane_state_preimage "$rr_l" "")
+"
     rr_n=$((rr_n + 1))
   done
 
@@ -10896,6 +10905,15 @@ EOF
   commit_push "$rr_msg" "${rr_paths[@]}"
   rr_crc=$?
   release_lock
+  # AND EACH SWEPT LANE'S SNAPSHOT FOLLOWS ITS LINE, after the lock, for the
+  # reason `write_event` gives at its own foot: the follow-up takes the mutex
+  # for itself and never fails the act whose lines have already landed.
+  while IFS="$US" read -r rr_fl rr_fpre; do
+    [ -n "${rr_fl:-}" ] || continue
+    lane_state_follow "$rr_fl" RETIRED "" "$rr_uuid" "$rr_fpre"
+  done <<RR_FOLLOW
+$rr_follow
+RR_FOLLOW
   return "$rr_crc"
 }
 
