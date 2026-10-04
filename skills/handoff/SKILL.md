@@ -201,7 +201,7 @@ Only the second branch leaves anything blank, and it leaves it blank because not
 
 ## 2. Refresh the handoff
 
-Canonical handoff publication is serialized by `lanes-edit.sh publish-handoff`.
+Manual preservation and restart/resume-stamp publication is serialized by `lanes-edit.sh publish-handoff`.
 Read the current file's SHA-256, write semantic updates to a temporary file, then
 publish that complete prepared file with:
 
@@ -213,6 +213,10 @@ The helper checks the expected bytes and atomically replaces the resolved target
 while holding the workspace writer mutex. It refuses an active restart owned by
 another operation. Do not edit or redirect into the canonical handoff directly;
 perform the existing explicit-pathspec commit/push after successful publication.
+Legacy `rename-lane` is a separate four-file transaction under the same mutex;
+it refuses unfinished/failed restart ownership and uses EXIT rollback. Its
+existing direct stamp writer is an explicit exception to this atomic publication
+contract, not a crash-atomic rename guarantee.
 
 
 The handoff path is the row's own handoff column. Derive it; do not guess it — and read the row FETCHED,

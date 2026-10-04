@@ -14170,6 +14170,9 @@ EOF
         $1=="operation" {o=$2} $1=="generation" {g=$2} $1=="attempt" {a=$2} $1=="state" {s=$2} $1=="new_transcript" {t=$2}
         END {printf "%s|%s|%s|%s|%s",o,g,a,s,t}')"
       [ "$pbh_actual" = "$pbh_op|$pbh_gen|$pbh_attempt|$pbh_state|$pbh_sid" ] || { release_lock; die "this handoff publisher lost restart ownership; nothing was published" 7; }
+      pbh_bound="$(printf '%s\n' "$pbh_intent" | awk -F'\t' '$1=="handoff" {print $2; exit}')"
+      [ -n "$pbh_bound" ] && [ "$pbh_bound" != none ] && [ "$pbh_bound" -ef "$pbh_target" ] ||
+        { release_lock; die "the publication target is not the operation-bound handoff; nothing was published" 2; }
     else
       case "$pbh_current" in preparing|pending|starting) release_lock; die "an active restart owns this handoff; nothing was published" 7 ;; esac
     fi
@@ -14188,7 +14191,9 @@ EOF
     # Use the managed service's affirmative read when that installation exists.
     # Exit 8 means confirmed absence; every unknown/error answer refuses.
     lrc_managed="${SELF%/*}/lane-managed"
-    if [ -x "$lrc_managed" ]; then
+    if [ -e "$lrc_managed" ] || [ -L "$lrc_managed" ]; then
+      [ -f "$lrc_managed" ] && [ -r "$lrc_managed" ] && [ -x "$lrc_managed" ] ||
+        die "the installed managed ownership reader is unusable. Legacy restart refuses without writing or launching." 1
       lrc_rc=0
       LANES_NO_FETCH=1 "$lrc_managed" legacy-check --lane "$lane" >/dev/null || lrc_rc=$?
       case "$lrc_rc" in

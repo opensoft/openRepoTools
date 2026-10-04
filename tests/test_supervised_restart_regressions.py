@@ -1267,3 +1267,37 @@ exec '{real_mkdir}' "$@"
         if proc.poll() is None:
             proc.terminate()
             proc.communicate(timeout=5)
+
+
+@pytest.mark.parametrize("kind", ["non-executable", "directory", "broken-link"])
+def test_existing_unusable_managed_reader_is_not_confirmed_absence(restart_box, kind):
+    box = restart_box
+    reader = box.bin / "lane-managed"
+    if kind == "non-executable": _write(reader, "#!/bin/sh\nexit 8\n", 0o600)
+    elif kind == "directory": reader.mkdir()
+    else: reader.symlink_to(box.root / "missing-reader")
+    result = helper(box, "legacy-restart-check", LANE)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert "reader is unusable" in result.stderr
+    assert not intent_path(box).exists()
+
+
+@pytest.mark.parametrize("target", ["bound", "different"])
+def test_operation_publication_requires_its_bound_handoff(restart_box, target):
+    box = restart_box
+    bound = prepare_restart(box)
+    other = _write(box.wip / "handoffs" / "different.md", bound.read_text(), 0o600)
+    prepared = _write(box.root / "prepared.md", "preserved replacement\n", 0o600)
+    before = (bound.read_bytes(), other.read_bytes())
+    chosen = bound if target == "bound" else other
+    digest = hashlib.sha256(chosen.read_bytes()).hexdigest()
+    result = helper(box, "publish-handoff", LANE, str(chosen), str(prepared),
+                    "--expect-digest", digest, "--operation", "op-test", "--generation", "7",
+                    "--attempt", "0", "--state", "pending", "--transcript", "none")
+    assert result.returncode == (0 if target == "bound" else 2), (result.stdout, result.stderr)
+    if target == "different":
+        assert "operation-bound handoff" in result.stderr
+        assert (bound.read_bytes(), other.read_bytes()) == before
+    else:
+        assert bound.read_bytes() == prepared.read_bytes()
+        assert other.read_bytes() == before[1]

@@ -1881,6 +1881,12 @@ else
 			# top block, which is the one document the new session is started with.
 			hs_publish_args=(publish-handoff "$lane" "$handoff_file" "$hs_tmpd/out" --expect-digest "$hs_prior_digest")
 			if [ "$do_restart" = 1 ]; then
+				# Bind preservation publication to this operation before replacing
+				# any canonical bytes; the helper verifies file identity under lock.
+				LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$lane" preparing \
+				  --expect preparing --expect-operation "$operation" --expect-generation "$ri_gen" --expect-attempt 0 \
+				  --handoff "$handoff_file" --digest "$hs_prior_digest" >/dev/null ||
+				  { rm -rf -- "$hs_tmpd"; die "the preservation handoff could not be bound to this restart. Nothing was published or respawned." 2; }
 				hs_publish_args+=(--operation "$operation" --generation "$ri_gen" --attempt 0 --state preparing --transcript none)
 			fi
 			if hs_published="$(LANES_NO_FETCH=1 "$LANES_EDIT" "${hs_publish_args[@]}")"; then
