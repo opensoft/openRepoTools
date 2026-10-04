@@ -11428,6 +11428,47 @@ lane_state_follow() {   # <lane> <verb> <payload> <uuid> [<pre-image>]
   return 0
 }
 
+# A RENAMED LANE KEEPS ITS LIFECYCLE (Amendment 16, openRepoTools#91). The
+# control root is keyed by the lane's NAME — `<parent>/.lane-state/<lane>` on
+# every rung — and `rename-lane` moves the row, the log, the handoff and the
+# alias table but knew nothing of this directory, so a renamed lane's snapshot
+# and inventory were left under a name every reader now resolves away from, and
+# its next reconciliation read `no-state`: the one answer a launcher goes past.
+# The directory is MOVED, never copied (two snapshots of one lane would be two
+# answers), only after the rename's commit returned 0, and never over anything
+# already at the new name, which is reported for a person rather than merged.
+# The `lane:` line inside the files keeps the old name until the next write
+# replaces it; no reader of these files keys on it.
+lane_state_rename() {   # <the old name's control root> <new lane>
+  lsn_old="${1-}"; lsn_new="${2-}"
+  [ -n "$lsn_old" ] && [ -n "$lsn_new" ] || return 0
+  [ -e "$lsn_old" ] || [ -L "$lsn_old" ] || return 0
+  lsn_to="${lsn_old%/*}/$lsn_new"
+  [ "$lsn_to" != "$lsn_old" ] || return 0
+  # A RENAME BY CASE ALONE is the same directory on a case-insensitive file
+  # system (macOS's default), where the target "exists" because it is the
+  # source; it goes through a temporary name so it lands on every file system.
+  if [ "$(lc "${lsn_old##*/}")" = "$(lc "$lsn_new")" ]; then
+    lsn_tmp="$lsn_old.rename.$$"
+    if mv -- "$lsn_old" "$lsn_tmp" 2>/dev/null && mv -- "$lsn_tmp" "$lsn_to" 2>/dev/null; then
+      note "the lane lifecycle snapshot and inventory moved with the rename: $lsn_old → $lsn_to"
+    else
+      note "the lane lifecycle snapshot and inventory could NOT be moved from $lsn_old to $lsn_to (the rename itself has landed). Move it by hand; until then \`lanes-edit.sh lane-reconcile $lsn_new\` reads no snapshot for this lane."
+    fi
+    return 0
+  fi
+  if [ -e "$lsn_to" ] || [ -L "$lsn_to" ]; then
+    note "the lane lifecycle snapshot and inventory were NOT moved: $lsn_old is the old name's and $lsn_to already exists for the new one, and two records of one lane are not merged here. Read both and keep one by hand; the rename itself has landed."
+    return 0
+  fi
+  if mv -- "$lsn_old" "$lsn_to" 2>/dev/null; then
+    note "the lane lifecycle snapshot and inventory moved with the rename: $lsn_old → $lsn_to"
+  else
+    note "the lane lifecycle snapshot and inventory could NOT be moved from $lsn_old to $lsn_to (the rename itself has landed). Move it by hand; until then \`lanes-edit.sh lane-reconcile $lsn_new\` reads no snapshot for this lane."
+  fi
+  return 0
+}
+
 # ------------------------------------------------- the worktree inventory
 #
 # A TREE ID IS DERIVED FROM ITS PATH AND FROM NOTHING ELSE, so that a branch
@@ -12441,6 +12482,9 @@ Nothing was written." 2
       66) die "${LANES_ALIASES_PATH:-lanes/aliases.tsv} could not be read ($(lane_alias_err)), and a rename whose alias table cannot be read is a rename whose old name may stop resolving — which is the one thing clause (e) promises for ever, so this fails closed. Nothing was written." 1 ;;
       *) exit 2 ;;
     esac
+    # THE OLD NAME'S LIFECYCLE CONTROL ROOT, read while the old name still has
+    # its log (openRepoTools#91; `lane_state_rename` moves it after the commit).
+    rl_lsr_old="$(lane_control_root "$rl_old" 2>/dev/null)" || rl_lsr_old=""
 
     # ---- THE MUTEX IS TAKEN BEFORE THE CHECKS, NOT BETWEEN THEM AND THE WRITE
     # (Copilot round 6 on openRepoTools#81). Every refusal below reads a row, a
@@ -13025,6 +13069,7 @@ EOF
     RL_ACTIVE=0
     state_events_flush
     lane_alias_flush
+    [ "$rl_rc" != 0 ] || lane_state_rename "$rl_lsr_old" "$rl_new"
     release_lock
     [ "$rl_rc" = 0 ] || exit "$rl_rc"
 

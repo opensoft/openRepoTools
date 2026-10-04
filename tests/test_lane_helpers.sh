@@ -8302,8 +8302,24 @@ is   "a Rule 6 line naming the OLD lane is appended" "$rc" 0
 has  "…and ATTRIBUTED to the lane it is now" "$(git -C "$WIP" log --oneline -1)" "LANES(repoRen-4@$WS_S): append line"
 
 # ---------------------------------------------- a chain resolves to its end
+# AND THE LANE'S LIFECYCLE SNAPSHOT GOES WITH IT (openRepoTools#91): the control
+# root is keyed by the lane's name, so a rename that left it behind would leave
+# the renamed lane reading `no-state` — the answer a launcher goes past.
+run env LANES_NO_FETCH=1 "$E" set-lane-state repoRen-4 RUNNING --expect none --owner "$REN_ID"
+is   "a lane about to be renamed records a lifecycle snapshot" "$rc" 0
+ren_snap_old="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "operation" { print $2 }')"
+run "$E" lane-state repoRen-4
+ren_snap_file="$(printf '%s\n' "$out" | awk -F'\t' '$1 == "file" { print $2 }')"
 run env LANES_SESSION="$REN_ID" "$E" rename-lane repoRen-4 repoRen-7 "again" --no-github
 is   "a second rename of the same lane exits 0" "$rc" 0
+has  "…saying the lifecycle snapshot moved with it" "$err" "moved with the rename"
+run "$E" lane-state repoRen-7
+is   "…and the NEW name reads the same snapshot" \
+     "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "operation" { print $2 }')" "$ren_snap_old"
+has  "…from a control root under the new name" \
+     "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "file" { print $2 }')" "/repoRen-7/lane-state.yaml"
+is   "…and nothing is left under the old one" \
+     "$( [ -e "$ren_snap_file" ] && echo left || echo moved )" "moved"
 run "$E" canon-lane repoRen-1
 is   "…and the FIRST name resolves through the chain to its end" "$out" "repoRen-7"
 run "$E" canon-lane repoRen-4
