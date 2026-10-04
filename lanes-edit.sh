@@ -4939,14 +4939,18 @@ write_event() {
   # only evidence of which came first is what the snapshot said when this write
   # started. Only the four verbs that move the lifecycle pay for the read.
   we_pre=""; we_seam=""
+  # THE SEAM, BEFORE THE LOCK AND BEFORE A BYTE (ruling 2026-10-04): EVERY
+  # lane-kind line — the four that move a lifecycle, a swap's `PAUSED`, and
+  # Amendment 18(g)'s `HANDOFF-REQUESTED` (Copilot round 3 on #97) — is a legacy
+  # act on the lane itself, and a managed-owned lane, or one whose ownership
+  # could not be read, refuses it here. Object-kind lines (a claim, a release)
+  # are about the object a lane holds and are not the lane's ownership.
+  is_lane_verb "$we_verb" && managed_seam_refuse "$we_lane" "a $we_verb line in its object log"
   case "$we_verb" in
     STARTED|RESUMED|ENDED|RETIRED)
-      # THE SEAM, BEFORE THE LOCK AND BEFORE A BYTE (ruling 2026-10-04): a
-      # lane-kind line that starts, resumes or ends a lane is a legacy act, and a
-      # managed-owned lane — or one whose ownership could not be read — refuses
-      # it here. Past this line the lane is legacy, and that verdict is what the
-      # lifecycle follow-up at this function's foot is handed.
-      managed_seam_refuse "$we_lane" "a $we_verb line in its object log"
+      # Past the seam the lane is legacy, and that verdict is what the lifecycle
+      # follow-up at this function's foot is handed. `PAUSED` and
+      # `HANDOFF-REQUESTED` move no lifecycle and are handed nothing.
       we_seam=8
       we_pre="$(lane_state_preimage "$we_lane" "$we_pay")" ;;
   esac
@@ -10377,15 +10381,9 @@ EOF
       # never rewritten and has nothing to refuse, and asking first would turn
       # today's skips into refusals. Both modes ask, because the dry run reports
       # exactly what the act would do. `die` releases the lock the act holds.
+      # The seam reads this checkout's row as well as the published one, and
+      # this checkout's row is the one the migration rewrites.
       managed_seam_refuse "$msc_lane" "migrate-state-cells (the WHOLE migration, which Amendment 13(e) makes one commit)"
-      # AND THE ROW IT WOULD REWRITE IS THIS CHECKOUT'S, while the seam reads the
-      # PUBLISHED register (R19). A checkout ahead of origin, or holding an edit
-      # `handle_preexisting` has just captured, can carry vocabulary the published
-      # row does not — an ownership the two copies disagree on, which is UNKNOWN
-      # and never legacy (Amendment 7(d)).
-      msc_hrc=0; managed_projection_hint "$msc_row" || msc_hrc=$?
-      [ "$msc_hrc" = 8 ] ||
-        die "whether the managed ledger owns lane $msc_lane is UNKNOWN: this checkout's row for it carries managed-owner vocabulary (or could not be read for it) where the published register's does not, and migrate-state-cells rewrites THIS checkout's row — an ownership the two copies disagree on is never read as 'legacy' (Amendment 7(d)). The WHOLE migration was refused and it wrote nothing. Publish or undo this checkout's change to that row first (git -C $LANES_REPO log origin/$LANES_BRANCH..HEAD -- $LANES_PATH), and re-run." 1
     fi
     if [ -z "$msc_why" ]; then
       # The row's own columns, walked from the LEFT out of the head this split
@@ -11072,6 +11070,18 @@ archive_rows() {   # <repo> <1 = the act, 0 = the dry run>
     fi
     mig_trim "$RSS_CELL"
     [ "$(mig_lead_state "$MIG_TRIM")" = RETIRED ] || continue
+    # THE SEAM (Copilot round 3 on #97). This act takes a row out of the
+    # register, and a RETIRED row may carry the managed ledger's marker. One
+    # managed or unknown row refuses the WHOLE move, as one refuses the whole
+    # of the sweep, because the move is one commit. Asked in a subshell so this
+    # function removes its own staging directory before it exits, as each
+    # refusal above does; `die` there has already said why.
+    ar_mrc=0
+    ( managed_seam_refuse "$ar_lane" "archive-rows $ar_repo (the WHOLE move, which Amendment 19(d) makes one commit)" ) || ar_mrc=$?
+    if [ "$ar_mrc" != 0 ]; then
+      rm -rf -- "$ar_tmp"
+      exit "$ar_mrc"
+    fi
     printf '%s\n' "$ar_row" >> "$ar_tmp/rows"
     printf '%s\n' "$ar_num" >> "$ar_tmp/nums"
     printf '%s\n' "$ar_lane" >> "$ar_tmp/names"
@@ -11331,16 +11341,33 @@ lane_is_managed_owned() {   # <canonical lane>
 # THE REFUSAL, in one place, so every legacy act says the same two sentences.
 # Returns 0 for a legacy lane; never returns otherwise. Called BEFORE the act
 # writes anything — before its lock where it takes one, and where the lock is
-# already held (the sweep), before its first write — so a refusal changes
+# already held (the sweeps), before its first write — so a refusal changes
 # nothing; `die` releases a held lock on the way out.
+#
+# AND THIS CHECKOUT'S ROW, NOT ONLY THE PUBLISHED ONE (Copilot round 2 and 3 on
+# openRepoTools#97). The read above is the published register's (R19), and every
+# legacy row writer rewrites the row in THIS checkout: one ahead of origin, or
+# holding an edit `handle_preexisting` is about to capture, can carry managed-owner
+# vocabulary the published row does not. Two copies that disagree on ownership
+# are UNKNOWN, never legacy (Amendment 7(d)). A checkout with no register file
+# has no row here to rewrite, and the published read has already answered.
 managed_seam_refuse() {   # <canonical lane> <the act>
   msr_lane="${1-}"; msr_act="${2-this act}"; msr_rc=0; msr_owner=""
   msr_owner="$(lane_is_managed_owned "$msr_lane")" || msr_rc=$?
   case "$msr_rc" in
     0) die "lane $msr_lane is owned by the managed ledger (owner ${msr_owner:-unnamed}, from the managed-owner marker in its register row), and $msr_act is a legacy lane act: Brett Heap's ruling of 2026-10-04 — \"managed ledger owns enrolled lanes; #97 owns legacy\". Nothing was written. Act on this lane through the managed ledger." 2 ;;
-    8) return 0 ;;
+    8) : ;;
     *) die "whether the managed ledger owns lane $msr_lane is UNKNOWN: its register row carries managed-owner vocabulary that does not parse as a marker, or the register could not be read — and an ownership nobody could establish is never read as 'legacy' (Amendment 7(d)). $msr_act was refused and nothing was written. Read it: lanes-edit.sh managed-projection $msr_lane" 1 ;;
   esac
+  [ -f "$LANES_FILE" ] || return 0
+  msr_hint=8; msr_loc=""
+  msr_loc="$(row_of_lane_local "$msr_lane" 2>/dev/null)" || msr_hint=1
+  if [ "$msr_hint" = 8 ] && [ -n "$msr_loc" ]; then
+    msr_hint=0; managed_projection_hint "$msr_loc" || msr_hint=$?
+  fi
+  [ "$msr_hint" = 8 ] ||
+    die "whether the managed ledger owns lane $msr_lane is UNKNOWN: this checkout's row for it carries managed-owner vocabulary (or could not be read) where the published register's does not, and a legacy act rewrites THIS checkout's row — an ownership the two copies disagree on is never read as 'legacy' (Amendment 7(d)). $msr_act was refused and nothing was written. Publish or undo this checkout's change to that row first: git -C $LANES_REPO log origin/$LANES_BRANCH..HEAD -- $LANES_PATH" 1
+  return 0
 }
 
 # ============================================================================
@@ -12542,7 +12569,11 @@ Nothing was written." 2
     case "$add" in
       *"|"*) die "append-session-id's appended text may not contain '|': it would forge a cell boundary in the row. Got '$add'." 2 ;;
     esac
+    if managed_projection_hint "$add"; then
+      die "append-session-id's appended text carries managed-owner vocabulary ('managed owner', 'managed binding', 'mode=managed' or 'managed:'), and only the managed ledger's own writer writes it into a row. Nothing was written." 2
+    fi
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    managed_seam_refuse "$lane" "append-session-id"   # Copilot round 3 on #97
     acquire_lock; handle_preexisting
     n="$(row_line "$lane")" || exit 2
     row="$(sed -n -e "${n}p" "$LANES_FILE")"
@@ -12560,6 +12591,12 @@ Nothing was written." 2
 
   append-line)
     text="${1-}"; [ -n "$text" ] || die "usage: append-line \"<text>\"" 2
+    # NO MARKER BY THE BACK DOOR (Copilot round 3 on #97): `add-row` refuses a
+    # row in the marker's vocabulary, and this appends any line at all to the
+    # register — a row-shaped one included.
+    if managed_projection_hint "$text"; then
+      die "the line carries managed-owner vocabulary ('managed owner', 'managed binding', 'mode=managed' or 'managed:'), and only the managed ledger's own writer writes it into the register. Nothing was written." 2
+    fi
     lane_tag="${LANES_LANE:-}"
     [ -z "$lane_tag" ] || lane_tag="$(canon_lane "$lane_tag")" || exit 2
     if [ -z "$lane_tag" ]; then
@@ -12663,6 +12700,10 @@ Nothing was written." 2
       ar_n="$(printf '%s' "$ar_all" | grep -c . || :)"
       ar_ln="$(printf '%s' "$ar_hits" | grep -c . || :)"
       if [ "$ar_n" -gt 0 ]; then
+        # A LANE THE MANAGED LEDGER OWNS IS SAID TO BE ONE (Copilot round 3 on
+        # #97) before the duplicate refusal below, which would refuse it anyway
+        # without naming the owner. A new lane has no row and is never asked.
+        managed_seam_refuse "$lane_new" "add-row"
         ar_more=""
         [ "$ar_n" -gt 1 ] && ar_more=" Those $ar_n rows differ only by case and are themselves the refusal: merge them into one row first (Amendment 15(d))."
         ar_where="Use set-row-state / replace-in-row on the row that is there."
@@ -12793,6 +12834,9 @@ Nothing was written." 2
       || die "usage: rename-lane <old> <new> [\"<why>\"] [--verbatim] [--no-github]" 2
     check_lane_name "$rl_old"
     check_lane_name "$rl_new"
+    if managed_projection_hint "$rl_new"; then
+      die "the new name '$rl_new' carries managed-owner vocabulary ('managed-owner' or 'managed-binding'), so the row it is written into would read as a malformed managed-owner marker — ownership UNKNOWN for every act. Choose another name. Nothing was written." 2
+    fi
     # THE REASON IS FREE TEXT ON AN APPEND-ONLY LINE, so it takes the writer's
     # own two rules before anything else is read (`write_event` states both): a
     # third ` — ` leaves the line ambiguous to its own parser, and a newline
@@ -14252,6 +14296,11 @@ EOF
     check_lane_name "$lane"
     log_sync
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    # THE SEAM (Copilot round 3 on #97): asking a lane's session to hand off is
+    # a handoff act on that lane, refused for a managed one before the binding
+    # is read — so `--dry-run` refuses too, rather than planning an act that
+    # could not be taken.
+    managed_seam_refuse "$lane" "request-handoff (Amendment 18(c))"
     rh_out=""; rh_rc=0
     rh_out="$(lane_binding_scan "$lane")" || rh_rc=$?
     [ "$rh_rc" = 0 ] || die "request-handoff could not read lane $lane's object log (exit $rh_rc). That is NOT 'this lane is free' (Amendment 7(d)), and nothing was written." 1

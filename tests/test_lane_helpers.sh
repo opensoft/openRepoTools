@@ -14173,6 +14173,29 @@ MG_CASE
     run env LANES_LANE="$mg_l" LANES_SESSION="$MG_ID" "$E" log "$mg_v" "lane:$mg_l"
     mg_refused "$mg_l: log $mg_v" "$mg_x" "$mg_o" "$mg_b"
   done
+  # EVERY LANE-KIND LINE, and not only the four that move a lifecycle (Copilot
+  # round 3 on #97): a swap's PAUSED, and Amendment 18(g)'s HANDOFF-REQUESTED,
+  # which only `request-handoff` writes — refused before the binding is read,
+  # so its --dry-run plans nothing either.
+  mg_b="$(mg_fp)"
+  run env LANES_LANE="$mg_l" LANES_SESSION="$MG_ID" "$E" log PAUSED "lane:$mg_l"
+  mg_refused "$mg_l: log PAUSED" "$mg_x" "$mg_o" "$mg_b"
+  mg_b="$(mg_fp)"
+  run env LANES_SESSION="$MG_ID" "$E" request-handoff "$mg_l" --no-wait
+  mg_refused "$mg_l: request-handoff" "$mg_x" "$mg_o" "$mg_b"
+  mg_b="$(mg_fp)"
+  run env LANES_SESSION="$MG_ID" "$E" request-handoff "$mg_l" --dry-run
+  mg_refused "$mg_l: request-handoff --dry-run" "$mg_x" "$mg_o" "$mg_b"
+  hasnt "…which plans nothing" "$err" "PLAN:"
+  # AND THE TWO ROW WRITERS THE FIRST PASS LEFT: the session cell, and a
+  # second row for a lane that has one, refused naming the owner rather than
+  # only as a duplicate.
+  mg_b="$(mg_fp)"
+  run env LANES_SESSION="$MG_ID" "$E" append-session-id "$mg_l" "$MG_ID" "→ 3a9e0002-2222-4000-8000-3a9e00022222"
+  mg_refused "$mg_l: append-session-id" "$mg_x" "$mg_o" "$mg_b"
+  mg_b="$(mg_fp)"
+  run "$E" add-row "| \`$mg_l\` | harness \`$MG_ID\` | Eagle / test / brett | 2026-10-04T00:00Z | none | handoffs/repoMG/$mg_l.md | PAUSED · a second row for one lane |"
+  mg_refused "$mg_l: add-row for a lane that has a row" "$mg_x" "$mg_o" "$mg_b"
   mg_b="$(mg_fp)"
   run "$E" set-lane-state "$mg_l" RUNNING --expect none --owner "$MG_ID"
   mg_refused "$mg_l: set-lane-state" "$mg_x" "$mg_o" "$mg_b"
@@ -14260,6 +14283,20 @@ is    "…and changed nothing" "$(mg_fp)" "$mg_b"
 run "$E" replace-in-row repoMG-3 "swapped for the night" "managed owner ledger-9"
 is    "replace-in-row refuses replacement text in the marker's vocabulary" "$rc" 2
 is    "…and changed nothing" "$(mg_fp)" "$mg_b"
+# AND THE BACK DOORS (Copilot round 3 on #97): any line appended to the register,
+# a session cell's new text, and a lane's new name.
+run "$E" append-line "| \`repoMG-10\` | harness \`$MG_ID\` | Eagle / test / brett | 2026-10-04T00:00Z | none | handoffs/repoMG/repoMG-10.md | MANAGED OWNER · forged |"
+is    "append-line refuses a line in the marker's vocabulary, the row-shaped one included" "$rc" 2
+has   "…saying why" "$err" "managed-owner vocabulary"
+is    "…and changed nothing" "$(mg_fp)" "$mg_b"
+run env LANES_SESSION="$MG_ID" "$E" append-session-id repoMG-3 "$MG_ID" "managed owner ledger-9"
+is    "append-session-id refuses appended text in the marker's vocabulary" "$rc" 2
+has   "…saying why" "$err" "managed-owner vocabulary"
+is    "…and changed nothing" "$(mg_fp)" "$mg_b"
+run env LANES_SESSION="$MG_ID" "$E" rename-lane repoMG-3 managed-owner-3 --no-github
+is    "rename-lane refuses a new name in the marker's vocabulary" "$rc" 2
+has   "…saying why" "$err" "managed-owner vocabulary"
+is    "…and changed nothing" "$(mg_fp)" "$mg_b"
 
 # ------------------------------- 5. a LEGACY lane is exactly what it was
 run "$E" set-lane-state repoMG-3 RUNNING --expect none --owner "$MG_ID"
@@ -14276,6 +14313,10 @@ is    "…and carries no MANAGED line at all" \
       "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "MANAGED"' | grep -c . || :)" 0
 run env LANES_LANE=repoMG-3 "$E" retire-rows repoMG-9
 is    "…and the sweep of a dormant legacy row alone still lands" "$rc" 0
+run env LANES_LANE=repoMG-3 LANES_SESSION="$MG_ID" "$E" log PAUSED "lane:repoMG-3"
+is    "…and so does a legacy lane's PAUSED line" "$rc" 0
+run env LANES_SESSION="$MG_ID" "$E" append-session-id repoMG-3 "$MG_ID" "→ 3a9e0002-2222-4000-8000-3a9e00022222"
+is    "…and a legacy row's session cell still takes an id" "$rc" 0
 
 # ------ 6. ONE managed row refuses Amendment 13(e)'s WHOLE migration
 #
@@ -14373,6 +14414,66 @@ run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" migrate-state-cells --yes
 is    "the legacy register itself migrates" "$rc" 0
 has   "…taking the diary row" "$out" "1 to migrate"
 has   "…into its log" "$(cat "$MGM_WIP/lanes/log/repoMG-3.md")" "NOTED — lane repoMG-3"
+
+# ------ 7. ONE managed RETIRED row refuses Amendment 19(d)'s WHOLE move
+#
+# Copilot round 3 on #97: `archive-rows <repo> --yes` takes every RETIRED row of
+# a repository out of the register, and a RETIRED row may carry the managed
+# ledger's marker. In the same workspace as case 6, for the same reason: this
+# act takes a whole repository's rows. A LEGACY retired row comes FIRST, so a
+# refusal that skipped only the managed row would still have moved it.
+mga_row() {   # <lane> <state cell> — appended through `cat >>`, as the ledger's writer would land it
+  mg_row "$1" none "$2" >> "$MGM_WIP/lanes/LANES.md"
+}
+mga_fp() {
+  { mgm_fp
+    cat "$MGM_WIP"/lanes/archive/LANES-retired.md 2>/dev/null | cksum
+  } | cksum
+}
+mga_refused() {   # <what> <expected exit> <owner, for a 2> <fingerprint before>
+  is   "$1 is refused with $2" "$rc" "$2"
+  if [ "$2" = 2 ]; then
+    has  "…naming the owner" "$err" "owner $3"
+  else
+    has  "…as ownership UNKNOWN" "$err" "UNKNOWN"
+  fi
+  has  "…refusing the WHOLE move" "$err" "WHOLE move"
+  is   "…and changed nothing: register HEAD here and on origin, status, the register's and the archive's bytes, every log" "$(mga_fp)" "$4"
+  is   "…so the legacy RETIRED row read BEFORE the refused one is still in the register" \
+       "$(grep -c '^| `repoMG-12` ' "$MGM_WIP/lanes/LANES.md" || :)" 1
+}
+mga_row repoMG-12 "RETIRED · $MG_UTC · retired by hand"
+mga_row repoMG-11 "RETIRED · $MG_UTC · managed-owner mode=managed daemon=ledger-1 generation=4 bound-lane=repoMG-11"
+git -C "$MGM_WIP" commit -q -am "a legacy retired row, then a retired row the managed ledger owns"
+git -C "$MGM_WIP" push -q origin main
+
+# (a) THE VALID MARKER: 2, naming the owner, in both modes.
+mg_b="$(mga_fp)"
+run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" archive-rows repoMG
+mga_refused "archive-rows' dry run over a retired managed row" 2 ledger-1 "$mg_b"
+run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" archive-rows repoMG --yes
+mga_refused "archive-rows --yes over a retired managed row" 2 ledger-1 "$mg_b"
+
+# (b) A MALFORMED ONE — generation=0 — is UNKNOWN: 1.
+awk '{ if (index($0, "| `repoMG-11` ") == 1) sub(/generation=4/, "generation=0"); print }' \
+  "$MGM_WIP/lanes/LANES.md" > "$SANDBOX/mga-register"
+cat "$SANDBOX/mga-register" > "$MGM_WIP/lanes/LANES.md"
+git -C "$MGM_WIP" commit -q -am "the ledger lands a retired marker whose generation does not parse"
+git -C "$MGM_WIP" push -q origin main
+mg_b="$(mga_fp)"
+run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" archive-rows repoMG --yes
+mga_refused "archive-rows --yes over a malformed retired marker" 1 - "$mg_b"
+
+# (c) AND WITH THAT ROW GONE THE SAME MOVE LANDS, so each refusal above was the
+# seam's and not the fixture's.
+grep -v '^| `repoMG-11` ' "$MGM_WIP/lanes/LANES.md" > "$SANDBOX/mga-register"
+cat "$SANDBOX/mga-register" > "$MGM_WIP/lanes/LANES.md"
+git -C "$MGM_WIP" commit -q -am "the managed ledger takes its row back"
+git -C "$MGM_WIP" push -q origin main
+run env LANES_WORKSPACE_ROOT="$MGM_WIP" "$E" archive-rows repoMG --yes
+is    "the legacy retired row alone is archived" "$rc" 0
+is    "…out of the register" "$(grep -c '^| `repoMG-12` ' "$MGM_WIP/lanes/LANES.md" || :)" 0
+is    "…and into the archive" "$(grep -c '^| `repoMG-12` ' "$MGM_WIP/lanes/archive/LANES-retired.md" || :)" 1
 
 echo "== the workstation seam: unset, every writer reads the host =="
 
