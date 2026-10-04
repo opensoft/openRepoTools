@@ -89,8 +89,8 @@ Nothing is left as a comment thread and nothing is left unnamed.
 **Taken on this branch.**
 
 - **An unreadable lifecycle snapshot is no longer read as a lane that has none.**
-  `lane_state_read` answers **9** for a record that IS there and cannot be
-  opened, `lane-state` exits 9 rather than the 8 a launcher goes past, and
+  `lane_state_read` answers **10** for a record that IS there and cannot be
+  opened, `lane-state` exits 10 rather than the 8 a launcher goes past, and
   `lane-reconcile` reports `UNREADABLE` / `indeterminate`. Fail-OPEN on a crash
   pronouncement is the one class this change exists to close (`R22`,
   Amendment 7(d)).

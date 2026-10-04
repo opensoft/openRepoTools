@@ -320,8 +320,8 @@ ran under this capability and there is nothing to recover. A permission or an
 I/O error therefore came out of the report as a clearance, which is fail-OPEN on
 a crash pronouncement — the one class this change exists to close.
 
-So the two cases are told apart at the read: **9** where the record is there and
-could not be opened, 8 where there is none. `lane-state` spends the same 9 at
+So the two cases are told apart at the read: **10** where the record is there and
+could not be opened, 8 where there is none. `lane-state` spends the same 10 at
 the CLI (8 stays *there is none*, which every launcher answers by going on), and
 `lane-reconcile` reports the state word `UNREADABLE` with the verdict
 `indeterminate`. `[ -L ]` sits beside `[ -e ]` in that test because a dangling

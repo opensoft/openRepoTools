@@ -13780,7 +13780,7 @@ rc_seed_log repoRC-9
 mkdir -p "$RC_STATE_ROOT/repoRC-9"
 ln -s "$SANDBOX/no-such-snapshot-91" "$RC_STATE_ROOT/repoRC-9/lane-state.yaml"
 run "$E" lane-state repoRC-9
-is    "a lifecycle snapshot that exists and cannot be read is 9, never the 8 that means there is none" "$rc" 9
+is    "a lifecycle snapshot that exists and cannot be read is 10, never the 8 that means there is none" "$rc" 10
 has   "…saying which of the two it is" "$err" "it could not be read"
 has   "…and citing the rule a failed read answers to" "$err" "R22"
 run "$E" lane-reconcile repoRC-9

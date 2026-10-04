@@ -452,25 +452,23 @@
 #      not be performed is never 8 (R22). `session-start` never exits 8, or
 #      anything but 0: it is a hook. `guard` never exits 8 either — it is a hook
 #      too, and a BLOCKING one, so its two codes are 0 and 2 (see 2 above).
-#   9  TWO MEANINGS, ONE PER VERB, and the verb that exited tells them apart:
-#      issue #61 and openRepoTools#97 each took 9 as unused, and neither verb
-#      can return the other's.
-#      `claim`: CLAIM-LOST — issue #30's own dead-lane verdict could not be
+#   9  CLAIM-LOST — issue #30's own dead-lane verdict could not be
 #      reconfirmed before this takeover's push landed: the source lane's own
 #      log moved past its terminal line, a live session on this workstation
 #      now backs it up, or that could not be read at all (`claim` only,
 #      `--force` over a dead lane's hold). NEVER coerced to 7: that code
 #      means a RIVAL's claim landed first, and this is the same lane the
 #      takeover was granted over, alive again rather than beaten to main.
-#      `lane-state`: THE RECORD IS THERE AND COULD NOT BE READ, which is the
-#      other half of 8 and never 8 itself (Copilot round 6 on
-#      openRepoTools#97). `lane-state` spends it for a lifecycle snapshot
-#      that EXISTS at the control root and
+#  10  THE RECORD IS THERE AND COULD NOT BE READ, which is the other half of 8
+#      and never 8 itself (Copilot round 6 on openRepoTools#97). `lane-state`
+#      spends it for a lifecycle snapshot that EXISTS at the control root and
 #      cannot be opened — a permission, an I/O error, a name whose bytes are
 #      gone. 8 says *this lane has no snapshot*, which a launcher answers by
-#      going on; 9 says *this lane may be mid-crash and nobody could look*,
+#      going on; 10 says *this lane may be mid-crash and nobody could look*,
 #      which it answers by reading the lane by hand. One number could not carry
 #      both, and the one that was carrying both was 8 (R22, Amendment 7(d)).
+#      IT WAS 9 until main's #61 landed with 9 as `claim --force`'s abandoned
+#      takeover; each PR had taken 9 as unused, and the later one moved.
 #
 # --no-sweep (DEFAULT, added 2026-09-09 after 0d84d34/a1f2438 swept another
 #   lane's uncommitted hand edit into an unrelated commit): every mutating
@@ -11251,10 +11249,11 @@ lane_op_id() {
 
 # THE SNAPSHOT, READ. `<key><TAB><value>` lines, which is what every caller
 # here parses with one `awk`. 0 with the fields, 8 where the lane has no
-# snapshot at all (the pre-cutover lane, and not a failure), 9 where a snapshot
+# snapshot at all (the pre-cutover lane, and not a failure), 10 where a snapshot
 # IS there and could not be read, 1 where the control root could not be derived.
 #
-# THE 9 IS THE POINT OF THIS ROUND (Copilot round 6 on openRepoTools#97). A bare
+# THE 10 IS THE POINT OF THIS ROUND (Copilot round 6 on openRepoTools#97, where
+# it was 9 — main's #61 has since spent 9 on `claim`, so this one moved). A bare
 # `[ -r ] || return 8` answered *this lane has no snapshot* for a file that
 # exists and cannot be opened, and `lane_reconcile` maps every non-zero read to
 # `NONE` — so a permission or an I/O error came out of the report as `no-state`,
@@ -11273,7 +11272,7 @@ lane_state_read() {   # <lane>
   [ "$lsr_rc" = 0 ] || return 1
   lsr_f="$lsr_root/lane-state.yaml"
   if [ ! -r "$lsr_f" ]; then
-    if [ -e "$lsr_f" ] || [ -L "$lsr_f" ]; then return 9; fi
+    if [ -e "$lsr_f" ] || [ -L "$lsr_f" ]; then return 10; fi
     return 8
   fi
   # AN UNKNOWN SCHEMA FAILS CLOSED (design decision: "conservative fail-closed
@@ -14637,9 +14636,10 @@ EOF
   #       this file already spends 7 on (`claim`'s CLAIM-LOST). Nothing was
   #       written and the current state is printed.
   #   8   there is no such record (no snapshot, no tree)
-  #   9   THE RECORD IS THERE AND COULD NOT BE READ, which is never 8 (Copilot
+  #  10   THE RECORD IS THERE AND COULD NOT BE READ, which is never 8 (Copilot
   #       round 6 on #97). 8 tells a launcher *this lane was never migrated, go
-  #       on*; 9 tells it *this lane may be mid-crash and nobody could look*.
+  #       on*; 10 tells it *this lane may be mid-crash and nobody could look*.
+  #       (It was 9 until main's #61 spent 9 on `claim`'s abandoned takeover.)
   #  64   a usage error of this subcommand's own
 
   lane-state)
@@ -14653,7 +14653,7 @@ EOF
     case "$lst_rc" in
       0) : ;;
       8) exit 8 ;;
-      9) die "lane $lane HAS a lifecycle snapshot at its control root and it could not be read. That is NOT 'this lane has no snapshot' — 8 says that, and a launcher answers an 8 by going on, which over an unreadable record would be a launch made in ignorance of a crash nobody could look at (R22, Amendment 7(d)). Read it by hand: $(lane_control_root "$lane" 2>/dev/null || printf '<no control root>')/lane-state.yaml" 9 ;;
+      10) die "lane $lane HAS a lifecycle snapshot at its control root and it could not be read. That is NOT 'this lane has no snapshot' — 8 says that, and a launcher answers an 8 by going on, which over an unreadable record would be a launch made in ignorance of a crash nobody could look at (R22, Amendment 7(d)). Read it by hand: $(lane_control_root "$lane" 2>/dev/null || printf '<no control root>')/lane-state.yaml" 10 ;;
       *) die "lane $lane has no lifecycle control root: its record names no directory (Amendment 11(c)) and \$PROJECTS_ROOT is not a directory here. That is NOT 'this lane is in no state' — a read that could not be made is never an answer (Amendment 7(d))." 1 ;;
     esac
     printf '%s\n' "$lst_out"
