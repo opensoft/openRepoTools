@@ -1,6 +1,34 @@
-# Migration planning verification — October 3, 2026
+# Migration planning verification — October 4, 2026
 
-## Cleanup refresh
+## October 4 repository refresh
+
+Read-only GitHub main still matches local `82ecebee13edaa915b68550170faffdf761754d5`.
+The pinned standard remains `39d5c986fcfac1a160474bfe91c5f1c37fccc72c`.
+The current open PRs are #134, #121 and #97; #134 is now non-draft at
+`11037f01a45a72fa3fc9a8a2b0e24a64cbf1ed12` with a clean sibling worktree.
+There are six registered worktrees and six local branches. Main and every
+feature checkout were clean before this refresh's planning edits; the inventory
+records its actual observation time and planning edits present when sampled.
+
+Feature 001 is committed and clean at `3c26041a4444a10bc240cb64a168ece4d9edf6c5`.
+The previous dirty broker/task-recovery edits, restored automatic-rollover and
+lane-set workspace packets, and October 4 local launcher contract are retained
+in its branch. The migration plan now carries those documents and their owning
+implementation/runtime gates. It makes no launcher deployment or swap-readiness
+claim. The old dirty-content snapshot and cleanup counts below are historical.
+
+The main-only mapping was regenerated and checked: 58 paths, 17 spec / 35 code /
+six root, no unresolved path or drop, 79 commits and 21 follow-ups. OpenSpec
+strict validation, document/inventory checks and `git diff --check` passed.
+All 19 execution tasks remain open; no adoption rehearsal or runtime suite
+was run for this documentation refresh.
+
+`status --fetch openRepoTools` again refused with no estate named openRepoTools;
+the manifest is still absent and no fetch occurred. Git and read-only GitHub
+REST supplied the snapshot instead. No `resume`, manual fetch, workspace-pointer
+rewrite, PR merge/closure, lane move or migration was performed.
+
+## October 3 cleanup refresh — historical
 
 The refreshed source main is `82ecebee13edaa915b68550170faffdf761754d5`,
 including merged PRs #61 and #146. Read-only GitHub REST main matched local

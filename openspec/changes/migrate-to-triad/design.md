@@ -4,13 +4,15 @@
 
 The refreshed preliminary source is main `82ecebee13edaa915b68550170faffdf761754d5`:
 58 tracked paths, 79 commits, one nested standard submodule. The inspected
-standard is `39d5c986fcfac1a160474bfe91c5f1c37fccc72c`. Cleanup initially left
-five registered worktrees; reopening the preserved planning checkout made
-six, then concurrent cleanup removed the merged #146 checkout. There are now
-five worktrees including planning. The three open PRs are #134, #121 and #97;
-#61 and #146 are included in main and need no separate replay.
-Feature 001 at `c0b571c` has dirty/untracked work, so main extraction alone
-would omit it. Removed worktrees are not an active replay queue. The
+standard is `39d5c986fcfac1a160474bfe91c5f1c37fccc72c`. The October 4 refresh
+found unchanged main, six worktrees including planning and the restored
+`feat/claude-current` checkout, and six local branches. The three open PRs
+are #134, #121 and #97; #134 is non-draft at `11037f0`. #61 and #146 are
+included in main and need no separate replay. Feature 001 is now committed
+and clean at `3c26041`, including restored rollover/workspace packets and the
+selected local Omnigent launcher contract. Main extraction alone still omits
+that branch work. Preserve its contracts, external launcher ownership and
+unmet runtime gates during replay. Removed worktrees are not an active replay queue. The
 [inventory](../../../specs/004-migrate-to-triad/inventory.json) is a snapshot.
 
 ## Goals / Non-Goals

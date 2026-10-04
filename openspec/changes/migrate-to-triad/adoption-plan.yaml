@@ -2,7 +2,7 @@
 # Paths are relative to the source checkout. Generated metadata does not authorize repository creation.
 schema_version: 1
 kind: adoption-plan
-generated_on: "2026-10-03"
+generated_on: "2026-10-04"
 tool: "opensoft/openRepoShape adopt-project.py"
 source:
   repository: opensoft/openRepoTools
@@ -20,7 +20,7 @@ visibility: public
 tracking_branch: main
 adopt_branch: adopt/three-repo-shape
 elected_by: "Brett Heap"
-elected_on: "2026-10-03"
+elected_on: "2026-10-04"
 reference: "openxFactory docs/project-repo-schema.md"
 legs:
   assembly: openRepoTools

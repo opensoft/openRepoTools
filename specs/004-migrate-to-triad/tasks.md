@@ -4,7 +4,7 @@ The sole executable task list for the governing OpenSpec change. Planning
 artifacts and preliminary mapping validation do not complete these tasks.
 Every task remains open. Run implementation from the selected feature
 worktrees; actual repository creation/cutover require the approval gates.
-The cleanup refresh updates the snapshot/mapping portion of T001/T003 only;
+The October 4 refresh updates the snapshot/mapping portion of T001/T003 only;
 owner decisions, private preservation/restore receipts and execution gates
 remain pending. Retired checkouts are not instructions to recreate worktrees.
 
@@ -12,7 +12,7 @@ remain pending. Retired checkouts are not instructions to recreate worktrees.
 
 - [ ] T001 [US1] Refresh `inventory.json`, PR/main/branch/worktree metadata and
   applicable estate-status output; distinguish retained work from retired
-  cleanup records and remote-only drafts. Until an estate manifest exists,
+  cleanup records and remote-only refs. Until an estate manifest exists,
   relay `status --fetch openRepoTools`'s no-estate refusal without invoking
   `resume`. Resolve continuation/archive decisions for every retained object
   in a host-local/private migration receipt. Verify no branch, detached
@@ -87,10 +87,13 @@ remain pending. Retired checkouts are not instructions to recreate worktrees.
 
 ## Phase 5 — Continue features and controlled cutover (Gate E)
 
-- [ ] T016 [US1] Translate the complete approved feature 001 delta and preserved
-  dirty/untracked work into paired `001` spec/code branches/worktrees with
+- [ ] T016 [US1] Translate the complete approved feature 001 delta and any
+  dirty/untracked work captured at cutover into paired `001` spec/code branches/worktrees with
   reviewed root changes. Verify content/old-to-new receipts, roles, inventory
-  amendment and open runtime gates; do not replay completed work or claim new
+  amendment and open runtime gates. Carry the clean `3c26041` checkpoint's
+  restored rollover/workspace packets, launcher contract and FR-047/T063–T065;
+  preserve workBenches/Omnigent ownership and required local adapter qualification
+  separately from factory-broker admission. Do not replay completed work or claim new
   runtime acceptance from migration.
 - [ ] T017 [US1] Translate every other approved continued PR/branch/detached
   worktree, including this migration feature, with explicit spec/code/root
@@ -98,7 +101,9 @@ remain pending. Retired checkouts are not instructions to recreate worktrees.
   approved archived-original disposition; preserve original PR review history.
   Current candidates are #97/#121/#134 and feature 004. Account for merged
   #61/#146 through the baseline and retired checkout history through its receipts;
-  do not recreate cleaned worktrees or replay integrated changes.
+  do not recreate cleaned worktrees or replay integrated changes. PR #134 is
+  non-draft at `11037f0` with a clean worktree: account for its resolver/checker,
+  installer, lane preflight/fencing, timeout containment, manual and tests.
 - [ ] T018 [US3] Exercise OpenSpec/Speckit feature selection and estate
   park/resume in disposable triad fixtures, then perform reviewed binding/WIP
   transitions through supported tools at owner breakpoints. Verify correct

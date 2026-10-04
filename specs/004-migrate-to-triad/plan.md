@@ -2,29 +2,32 @@
 
 **Feature**: `004-migrate-to-triad` | **Date**: 2026-10-03
 **State**: Proposed plan; no migration, install or repository creation performed
-**Refresh**: October 3 cleanup; current source main and active-work queue rechecked
+**Refresh**: 2026-10-04; main, feature heads, worktree state and open PRs rechecked
 **Spec**: [spec.md](spec.md)
 **Governance**: [proposal](../../openspec/changes/migrate-to-triad/proposal.md)
 
 ## Baseline and deliverables
 
 The [adoption mapping](../../openspec/changes/migrate-to-triad/adoption-plan.yaml)
-is regenerated from main `82ecebee13edaa915b68550170faffdf761754d5` using pinned
+was regenerated on October 4 from main `82ecebee13edaa915b68550170faffdf761754d5` using pinned
 openRepoShape `39d5c986fcfac1a160474bfe91c5f1c37fccc72c`. All 58 tracked
 paths are resolved: 17 spec, 35 code, six root, zero dropped. There are
 21 named follow-ups. This is an inspected preliminary baseline; regenerate
 after planning lands and the actual cutover source is frozen.
 
-Cleanup initially reduced the original 12-worktree snapshot to five registered
-worktrees. Reopening the preserved `004` branch made six; concurrent cleanup
-then removed the merged PR #146 checkout. There are now five worktrees,
-including this planning checkout, and five local branches. The
-[inventory](inventory.json) records those transitions, three open PRs (#134,
-#121, #97), remote-only refs and retired-worktree history. Main includes merged
-PRs #61 and #146 and matches the read-only GitHub main observation. Feature 001 at
-`c0b571c5fa1c1446f143ce4f00f39db7cb7a166b` still has dirty/untracked broker
-and task-recovery planning work. Machine paths, secrets/transcripts and backup
-contents are omitted; private receipts must capture them at the execution gate.
+Main remains at the previous refresh baseline and matches the read-only GitHub
+observation; merged PRs #61 and #146 are already included. There are now six
+worktrees and six local branches, including this planning checkout and the
+newly restored `feat/claude-current` checkout. The three open PRs are #134,
+#121 and #97; #134 is now non-draft at `11037f0`. Feature 001 advanced to
+`3c26041a4444a10bc240cb64a168ece4d9edf6c5`, committing its broker/task-recovery
+changes, restored rollover/workspace packets and October 4 launcher contracts.
+Main and all five feature checkouts were clean before this refresh's edits.
+The [inventory](inventory.json) keeps the October 3 cleanup as history and
+records current heads, dirty counts and the two remote-only preservation refs.
+Machine paths, secrets/transcripts and backup contents are omitted; private
+receipts must capture them at the execution gate. Clean commits do not replace
+verified preservation/restore receipts.
 
 Cleanup does not require recreating removed worktrees. Continue only the
 retained work below, and verify existing preservation receipts for retired
@@ -35,7 +38,7 @@ objects. Snapshot refresh alone does not complete preservation Gate A.
 | Owner | Existing paths / generated responsibilities | Reason |
 | --- | --- | --- |
 | Assembly `openRepoTools` | `AGENTS.md`, `CLAUDE.md`, `README.md`, `LICENSE`, `.gitattributes`, `.gitignore`; generated manifest/Makefile/validators and assembly pins | Front door and project coordination across legs. |
-| Spec `openRepoTools-spec` | `openspec/`, `specs/`, `docs/`; later feature ideation/governance artifacts | Product requirements, decisions and manual. |
+| Spec `openRepoTools-spec` | `openspec/`, `specs/`, `docs/`; feature 001's retained `ideation/` and restored planning packets | Product requirements, decisions and manual; feature-only paths need separate replay accounting. |
 | Code `openRepoTools-code` | All executable tools, `repos.tsv`, `commands/`, `skills/`, `tests/`, implementation CI | Shipped implementation and its installer payload. |
 | Code dependency unit | Original `.gitmodules`, `upstream/openRepoShape`, `contracts/openreposhape-pin.yaml` | Keep module registration, exact gitlink and dependency lock together. |
 | Root workflow bootstrap | `.specify/`, project agent links and selected feature pointer | Currently local/ignored; capture config and regenerate shape-aware root scaffolding. |
@@ -64,15 +67,15 @@ Recommended active-work dispositions are proposals, not merge/closure actions:
 
 | Work | Proposed treatment |
 | --- | --- |
-| `001-separate-swap-ctx-handoff` | Continue from current head `c0b571c`, preserving its full delta and dirty/untracked broker/task-recovery additions; migrate to paired `001` worktrees. Keep tasks, evidence, roles and activation gates. |
+| `001-separate-swap-ctx-handoff` | Continue from committed, clean head `3c26041`; preserve the complete branch delta, restored rollover/workspace packets and launcher/broker contracts. Migrate to paired `001` worktrees; keep tasks, evidence, roles and activation gates. |
 | PR #97 | Preserve branch/review; carry useful diagnostics into feature 001 under its service authority. Do not merge unchanged or auto-close as part of adoption. |
 | PR #121 | Preserve/review independently; translate selected context-runtime work to code/spec as needed, with its readiness integration still explicit. |
 | PR #146 / `fix/107-pty-driver-bound-and-lane-per-call-cost` | Merged as `82ecebe`; checkout and local branch removed during concurrent cleanup. Included by baseline extraction; do not replay separately. |
-| PR #134 (draft) | Open at `715b7ac`, with a remote branch but no local worktree. Review retained changes from its branch; no checkout recreation is required just to inventory it. |
+| PR #134 / `feat/claude-current` | Non-draft, with a clean sibling worktree at `11037f0`. Preserve/review the resolver and restart checker, installer additions, lane preflight/fencing, timeout containment and tests. Carry implementation/install payloads to code and their manual to spec; if landed before freeze, regenerate the baseline instead of replaying them. |
 | PR #61 | Merged as `14641fd`, an ancestor of current main; included by baseline extraction. Do not replay the retired claim-takeover branch separately. |
 | Retired `002`, `003`, lclaude and detached worktrees | Removed from current registrations/local branches by cleanup. Verify cleanup/preservation receipts; remove from the active replay queue and do not recreate them from the old snapshot. |
 | Remote-only preservation refs | `chore/preserve-local-planning-20261003` and `takeover/ort-a9-dirty-snapshot-20260913` remain locally observed remote-tracking refs with no checkout; review as preservation history, not active writers. |
-| Migration feature `004` | Drafts were preserved at `52ce64e`; its checkout was reopened only for this refresh. Carry current plan/spec/tasks into spec; review assembly/code follow-ups separately. |
+| Migration feature `004` | Previous refresh committed at `8aa119f`; existing checkout reused for this update. Carry current plan/spec/tasks into spec; review assembly/code follow-ups separately. |
 
 **Gate A:** every preserved object is attributable and restorable; no active
 writer can silently invalidate capture. Baseline, visibility and work
@@ -143,8 +146,15 @@ and worktrees under `worktrees/<feature>/{spec,code}`; preserve feature IDs and
 map old commits to new leg commits. Review conflicts semantically. Account
 for completed/landed work before replaying it. Retain original worktrees.
 
-Prove feature 001's amended service-owned inventory requirements and new
-planning work are present without claiming runtime acceptance. Test feature
+Prove feature 001's service-owned inventory requirements, restored
+`add-automatic-context-rollover` governance and lane-set workspace/rollover
+brainstorm packets survive the replay. Carry its accepted October 4 launcher
+contract and FR-047/T063–T065 without claiming runtime acceptance: workBenches
+owns `pclaude`/`oclaude`/`lclaude`, openRepoTools owns LS admission/custody, and
+Omnigent owns its local adapter/transport. Required local Omnigent qualification
+for the selected lane stack and separate factory-broker admission gates remain
+feature 001's delivery conditions. Repository adoption neither implements
+those wrappers nor moves their ownership into this repository. Test feature
 selection, OpenSpec/Speckit prerequisites and estate park/resume in disposable
 fixtures. Apply supported WIP record updates only through their established
 contracts; relay refusals. Rebind each lane at its reviewed safe breakpoint,

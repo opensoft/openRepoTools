@@ -67,8 +67,11 @@ mapping regenerated from source main `82ecebee13edaa915b68550170faffdf761754d5`,
 that this will be the final split commit. Refresh after planning lands and the
 cutover baseline is frozen. No runtime or migration success is claimed.
 
-The cleanup refresh records five worktrees before editing, six after reopening
-the planning checkout, then five after concurrent cleanup removed the merged
-#146 checkout. It removes retired worktrees from active migration and accounts
-for both #61 and #146 through main. Feature 001 and remote-only drafts/preservation refs retain
-their explicit preservation/review requirements.
+The October 4 refresh retains the October 3 cleanup history and records six
+current worktrees, including the restored PR #134 checkout. #134 is now
+non-draft at `11037f0`; feature 001 is committed and clean at `3c26041` with
+restored rollover/workspace packets and the selected local launcher contract.
+All checkouts were clean before planning edits. Both #61 and #146 remain
+included through unchanged main. Continued feature branches and the two
+remote-only preservation refs still require preservation/review receipts;
+repository adoption does not implement or activate the feature 001 launch stack.
