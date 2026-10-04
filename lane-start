@@ -683,7 +683,7 @@ lane_claude_resolve_launch() {
 $lcc_out
 LCC
   case "$lcc_path" in
-    /*) [ -x "$lcc_path" ] ||
+    /*) [ -f "$lcc_path" ] && [ -x "$lcc_path" ] ||
           die "claude-current answered '$lcc_path', which is not an executable file. Nothing was written." 1 ;;
     *) die "claude-current exited 0 without an absolute path= line (it printed '$lcc_out'). Nothing was written." 1 ;;
   esac

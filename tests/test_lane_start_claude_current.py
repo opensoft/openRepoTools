@@ -309,6 +309,7 @@ def test_a_refusal_ends_the_run_with_2_before_anything_is_written(box):
     {"FAKE_CC_RAW": "not porcelain"},
     {"FAKE_CC_PATH": "relative/claude"},
     {"FAKE_CC_PATH": "/nonexistent/claude-current-test/claude"},
+    {"FAKE_CC_PATH": "/"},
 ])
 def test_a_resolver_that_names_nothing_runnable_ends_the_run_with_1(box, fake):
     box.resolver()
