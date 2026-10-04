@@ -8,6 +8,11 @@ The protocol refresh updates snapshot/mapping and planned workflow follow-ups;
 owner decisions, private preservation/restore receipts and execution gates
 remain pending. Retired checkouts are not instructions to recreate worktrees.
 
+Preparation progress is recorded in [preparation.md](preparation.md): partial
+T001–T005 evidence, an [upstream blocker reproduction](adopter-blocker.md),
+and [T007–T010 installer/test design](installer-design.md). No execution task
+is complete. Real conversion waits for the user's #97/#121 landing update.
+
 ## Phase 1 — Preservation and baseline (Gate A)
 
 - [ ] T001 [US1] Refresh `inventory.json`, PR/main/branch/worktree metadata and
@@ -78,7 +83,9 @@ remain pending. Retired checkouts are not instructions to recreate worktrees.
 
 ## Phase 4 — Reviewed real adoption (Gates C and D)
 
-- [ ] T012 [US1] Freeze the coordinated source baseline and regenerate/check
+- [ ] T012 [US1] After #97 and #121 land, account for their final merged work
+  in main and disposition any remaining local deltas. Freeze the coordinated
+  source baseline and regenerate/check
   the full plan after any prerequisite/planning landings. Obtain explicit
   approval naming revisions, leg repositories/visibility, mapping, follow-ups
   and work dispositions. Verify current name availability, preservation and
@@ -146,7 +153,10 @@ remain pending. Retired checkouts are not instructions to recreate worktrees.
 
 ## Dependencies
 
-T001–T003 precede rehearsal. T004–T006 precede integration validation;
+Reviewed preliminary inventory, mapping and prerequisite availability from
+T001–T003 permit disposable provisional rehearsal while writers remain active;
+complete Gate A preservation is required before real source freeze.
+T004–T006 precede integration validation;
 T007–T010 may progress within the rehearsed topology after byte accounting.
 T011 closes Gate B. T012 requires Gate A/B and is the real-creation approval
 boundary. T013–T015 precede root adoption merge. Prepare T016–T017 translations

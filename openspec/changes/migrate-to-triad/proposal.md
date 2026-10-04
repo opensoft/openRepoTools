@@ -2,6 +2,12 @@
 
 ## Why
 
+Preparation is authorized while PRs #97/#121 are active; real conversion waits
+for both to land. The [preparation receipt](../../../specs/004-migrate-to-triad/preparation.md)
+records provisional preservation and a local adopter refusal. Resolve that
+upstream blocker and refresh the merged baseline, preservation and rehearsal
+before the existing real-execution approval gate.
+
 openRepoTools currently keeps product decisions, implementation and project
 workflow in one repository. Elect the openRepoShape triad so specifications
 and implementation can evolve independently while the existing repository

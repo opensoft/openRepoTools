@@ -1,12 +1,19 @@
 # Migration plan: openRepoTools assembly/spec/code triad
 
 **Feature**: `004-migrate-to-triad` | **Date**: 2026-10-03
-**State**: Proposed plan; no migration, install or repository creation performed
+**State**: Preparation and disposable rehearsal performed; real adoption remains on hold
 **Refresh**: 2026-10-04; adopted amendment protocol and merged PR #134 incorporated
 **Spec**: [spec.md](spec.md)
 **Governance**: [proposal](../../openspec/changes/migrate-to-triad/proposal.md)
 
 ## Baseline and deliverables
+
+The user authorized preparation while #97/#121 are active and will notify us
+when they land. **Wait for both landings before real triad conversion.** The
+[preparation receipt](preparation.md) records verified private preservation,
+partial local extraction and a measured pinned-adopter refusal. Gates A/B are
+still open. The [installer design](installer-design.md) is ready for follow-up
+implementation after successful standard split verification.
 
 The [adoption mapping](../../openspec/changes/migrate-to-triad/adoption-plan.yaml)
 was regenerated from main `daed20957f2dd2f22cca24053bb5bc8636ff6b3f` using pinned
@@ -23,10 +30,10 @@ retained `feat/claude-current` checkout, whose merged changes need no replay.
 The two open PRs are #121 and #97. Feature 001 remains at
 `3c26041a4444a10bc240cb64a168ece4d9edf6c5`, committing its broker/task-recovery
 changes, restored rollover/workspace packets and October 4 launcher contracts.
-Main and feature 001 remain clean. Concurrent work in PR #121's checkout now
-includes staged/unstaged/untracked content and `005-supervised-legacy-ctx`;
-the recovery branch also advanced. The inventory is an observation, not a
-freeze of active writers.
+Main and feature 001 remain clean. PR #121's earlier dirty work, including
+`005-supervised-legacy-ctx`, has advanced into newer commits; the recovery
+branch also advanced. Local and remote PR heads can differ while owners work.
+The inventory is an observation, not a freeze of active writers.
 The [inventory](inventory.json) keeps the October 3 cleanup as history and
 records current heads, dirty counts and the two remote-only preservation refs.
 Machine paths, secrets/transcripts and backup contents are omitted; private
@@ -134,9 +141,18 @@ decision. Pending automation remains with workBenches/openRepoShape.
 follow-up patches, resolved mapping and a passing compatibility test matrix.
 Mapping `check` alone does not satisfy this gate.
 
+The provisional rehearsal passed mapping check and preserved extracted bytes,
+then returned 2 mounting the legs because `.gitmodules` was staged for deletion.
+See [adopter-blocker.md](adopter-blocker.md). Stop adoption on this refusal;
+resolve upstream and repeat into fresh local remotes before treating Gate B
+as passed. Installer/topology design can proceed while that resolution is pending.
+
 ## Phase 3 — Freeze and approve real adoption
 
-Coordinate a bounded main landing hold using applicable lane protocol. Re-read
+After #97 and #121 land, account for their final merged content through the
+new main baseline instead of replaying it as unfinished work. Review any
+remaining local deltas separately. Coordinate a bounded main landing hold
+using applicable lane protocol. Re-read
 current main and owner state, finalize source commit, mapping, standard pin,
 visibility, follow-ups and preservation receipts. Any source drift requires
 plan regeneration and check, not editing the commit field by hand. Present

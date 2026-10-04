@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-04T17:40:54.465251+00:00",
+  "observed_at": "2026-10-04T21:24:50.021151+00:00",
   "source_repository": "opensoft/openRepoTools",
   "source_main": "daed20957f2dd2f22cca24053bb5bc8636ff6b3f",
   "github_main": "daed20957f2dd2f22cca24053bb5bc8636ff6b3f",
@@ -90,11 +90,21 @@
     },
     {
       "identity": "004-migrate-to-triad",
-      "head": "dda91f11c68818ebeca4264d88908c85818ff630",
+      "head": "48934f8d4c662be6ed07ad1b7df96dec22028ab2",
       "layout": "legacy-sibling",
       "readable_here": true,
-      "dirty_entries": 14,
-      "untracked_entries": 1,
+      "dirty_entries": 0,
+      "untracked_entries": 3,
+      "locked": false,
+      "prunable": false
+    },
+    {
+      "identity": "feat/supervised-context-restart",
+      "head": "0e4b311dfa33abca55282a4974cb96c7d1c584ed",
+      "layout": "legacy-sibling",
+      "readable_here": true,
+      "dirty_entries": 0,
+      "untracked_entries": 0,
       "locked": false,
       "prunable": false
     },
@@ -109,18 +119,8 @@
       "prunable": false
     },
     {
-      "identity": "feat/supervised-context-restart",
-      "head": "5164ce1535b0f4f21d6b9e5b48318865a3c74295",
-      "layout": "legacy-nested",
-      "readable_here": true,
-      "dirty_entries": 43,
-      "untracked_entries": 3,
-      "locked": false,
-      "prunable": false
-    },
-    {
       "identity": "feat/crash-consistent-lane-worktree-recovery",
-      "head": "8f69e96fbd33d84950b1acdaa2f2f3836c081341",
+      "head": "07fb3adb8b4ac1476c641685096f00f0d20593c6",
       "layout": "legacy-nested",
       "readable_here": true,
       "dirty_entries": 0,
@@ -136,7 +136,7 @@
     },
     {
       "identity": "004-migrate-to-triad",
-      "head": "dda91f11c68818ebeca4264d88908c85818ff630"
+      "head": "48934f8d4c662be6ed07ad1b7df96dec22028ab2"
     },
     {
       "identity": "feat/claude-current",
@@ -144,11 +144,11 @@
     },
     {
       "identity": "feat/crash-consistent-lane-worktree-recovery",
-      "head": "8f69e96fbd33d84950b1acdaa2f2f3836c081341"
+      "head": "07fb3adb8b4ac1476c641685096f00f0d20593c6"
     },
     {
       "identity": "feat/supervised-context-restart",
-      "head": "5164ce1535b0f4f21d6b9e5b48318865a3c74295"
+      "head": "0e4b311dfa33abca55282a4974cb96c7d1c584ed"
     },
     {
       "identity": "main",
@@ -170,21 +170,25 @@
   "open_prs": [
     {
       "number": 121,
-      "title": "`/ctx` writes its restart to disk before it kills anything, and what tmux starts is a supervisor that stays in the pane \u2014 the fresh session was an environment variable the launcher dropped (#94)",
+      "title": "Keep supervised manual ctx as legacy compatibility and refuse managed lanes",
       "headRefName": "feat/supervised-context-restart",
-      "headRefOid": "5164ce1535b0f4f21d6b9e5b48318865a3c74295",
+      "headRefOid": "6c5b74176e9dbf7f9aad5a4ff8ec18ef0cbbb136",
       "isDraft": false,
       "url": "https://github.com/opensoft/openRepoTools/pull/121",
-      "state": "open"
+      "state": "open",
+      "merged": false,
+      "updated_at": "2026-10-04T21:24:31Z"
     },
     {
       "number": 97,
       "title": "Crash-consistent lane worktree recovery: a lane now says WHERE its session stopped \u2014 RUNNING \u2192 SWAPPING \u2192 SWAPPED with a generation/operation fence, a machine-readable worktree inventory taken at every handoff, and a resume reconciliation that reports and resets nothing",
       "headRefName": "feat/crash-consistent-lane-worktree-recovery",
-      "headRefOid": "64dfd9736b1079c16beda0b1ac53a61e68b21d9e",
+      "headRefOid": "eada5fff495452cf5da47e52d9550fa4b40a4c96",
       "isDraft": false,
       "url": "https://github.com/opensoft/openRepoTools/pull/97",
-      "state": "open"
+      "state": "open",
+      "merged": false,
+      "updated_at": "2026-10-04T21:05:20Z"
     }
   ],
   "merged_since_previous_snapshot": [
@@ -223,7 +227,8 @@
     "Remote-only preservation refs are local observations, not active worktrees or proof of fresh remote currency.",
     "Raw preservation backups belong host-locally or in the designated private WIP repository; public records hold identities/digests only.",
     "Inventory captures this planning branch before the refresh commit; its final HEAD is recorded by git.",
-    "PR #121 now contains active staged/unstaged/untracked work including feature 005 legacy-only supervised restart and its full authority decision; preserve current contents and merge hold. Snapshot counts can change while owners continue."
+    "#97/#121 have active writers; capture local and remote heads independently and recapture at cutover. Prior dirty snapshots remain historical evidence.",
+    "Real conversion waits for both PR landings, upstream adopter resolution, refreshed Gates A/B and explicit Gate C approval."
   ],
   "previous_refresh_snapshot": {
     "observed_at": "2026-10-04T16:37:26.292668+00:00",
@@ -314,15 +319,19 @@
     ]
   },
   "latest_refresh": {
-    "previous_observed_at": "2026-10-04T16:37:26.292668+00:00",
+    "previous_observed_at": "2026-10-04T17:40:54.465251+00:00",
     "previous_worktrees": 6,
     "current_worktrees": 6,
     "current_local_branches": 6,
     "added_worktrees": [],
     "removed_worktrees": [],
-    "source_main_changed": true,
-    "protocol": "Shared OpenSpec/Speckit workflow: Triad Feature Amendments, adopted 2026-10-04; manual delivery only.",
-    "concurrent_work": "PR #121 retains staged/unstaged/untracked work including full legacy authority decision and feature 005; recovery branch advanced during refresh. Snapshot only, not a writer freeze."
+    "source_main_changed": false,
+    "protocol": "Triad Feature Amendments adopted manually October 4; automated delivery remains unqualified.",
+    "concurrent_work": "Owners continue #97/#121; local heads and remote PR heads can differ. Capture is provisional, not a writer freeze.",
+    "real_conversion_waits_for_prs": [
+      97,
+      121
+    ]
   },
   "protocol_review": {
     "adopted_on": "2026-10-04",
@@ -345,7 +354,13 @@
       },
       {
         "identity": "004-migrate-to-triad",
-        "head": "dda91f11c68818ebeca4264d88908c85818ff630",
+        "head": "48934f8d4c662be6ed07ad1b7df96dec22028ab2",
+        "bounded_amendment_paths": [],
+        "working_bounded_amendment_paths": []
+      },
+      {
+        "identity": "feat/supervised-context-restart",
+        "head": "0e4b311dfa33abca55282a4974cb96c7d1c584ed",
         "bounded_amendment_paths": [],
         "working_bounded_amendment_paths": []
       },
@@ -356,17 +371,147 @@
         "working_bounded_amendment_paths": []
       },
       {
-        "identity": "feat/supervised-context-restart",
-        "head": "5164ce1535b0f4f21d6b9e5b48318865a3c74295",
-        "bounded_amendment_paths": [],
-        "working_bounded_amendment_paths": []
-      },
-      {
         "identity": "feat/crash-consistent-lane-worktree-recovery",
-        "head": "8f69e96fbd33d84950b1acdaa2f2f3836c081341",
+        "head": "07fb3adb8b4ac1476c641685096f00f0d20593c6",
         "bounded_amendment_paths": [],
         "working_bounded_amendment_paths": []
       }
     ]
+  },
+  "preparation_previous_snapshot": {
+    "observed_at": "2026-10-04T17:40:54.465251+00:00",
+    "worktrees": [
+      {
+        "identity": "main",
+        "head": "daed20957f2dd2f22cca24053bb5bc8636ff6b3f",
+        "layout": "root",
+        "readable_here": true,
+        "dirty_entries": 0,
+        "untracked_entries": 0,
+        "locked": false,
+        "prunable": false
+      },
+      {
+        "identity": "001-separate-swap-ctx-handoff",
+        "head": "3c26041a4444a10bc240cb64a168ece4d9edf6c5",
+        "layout": "legacy-sibling",
+        "readable_here": true,
+        "dirty_entries": 0,
+        "untracked_entries": 0,
+        "locked": false,
+        "prunable": false
+      },
+      {
+        "identity": "004-migrate-to-triad",
+        "head": "dda91f11c68818ebeca4264d88908c85818ff630",
+        "layout": "legacy-sibling",
+        "readable_here": true,
+        "dirty_entries": 14,
+        "untracked_entries": 1,
+        "locked": false,
+        "prunable": false
+      },
+      {
+        "identity": "feat/claude-current",
+        "head": "11037f01a45a72fa3fc9a8a2b0e24a64cbf1ed12",
+        "layout": "legacy-sibling",
+        "readable_here": true,
+        "dirty_entries": 0,
+        "untracked_entries": 0,
+        "locked": false,
+        "prunable": false
+      },
+      {
+        "identity": "feat/supervised-context-restart",
+        "head": "5164ce1535b0f4f21d6b9e5b48318865a3c74295",
+        "layout": "legacy-nested",
+        "readable_here": true,
+        "dirty_entries": 43,
+        "untracked_entries": 3,
+        "locked": false,
+        "prunable": false
+      },
+      {
+        "identity": "feat/crash-consistent-lane-worktree-recovery",
+        "head": "8f69e96fbd33d84950b1acdaa2f2f3836c081341",
+        "layout": "legacy-nested",
+        "readable_here": true,
+        "dirty_entries": 0,
+        "untracked_entries": 0,
+        "locked": false,
+        "prunable": false
+      }
+    ],
+    "local_branches": [
+      {
+        "identity": "001-separate-swap-ctx-handoff",
+        "head": "3c26041a4444a10bc240cb64a168ece4d9edf6c5"
+      },
+      {
+        "identity": "004-migrate-to-triad",
+        "head": "dda91f11c68818ebeca4264d88908c85818ff630"
+      },
+      {
+        "identity": "feat/claude-current",
+        "head": "11037f01a45a72fa3fc9a8a2b0e24a64cbf1ed12"
+      },
+      {
+        "identity": "feat/crash-consistent-lane-worktree-recovery",
+        "head": "8f69e96fbd33d84950b1acdaa2f2f3836c081341"
+      },
+      {
+        "identity": "feat/supervised-context-restart",
+        "head": "5164ce1535b0f4f21d6b9e5b48318865a3c74295"
+      },
+      {
+        "identity": "main",
+        "head": "daed20957f2dd2f22cca24053bb5bc8636ff6b3f"
+      }
+    ],
+    "open_prs": [
+      {
+        "number": 121,
+        "title": "`/ctx` writes its restart to disk before it kills anything, and what tmux starts is a supervisor that stays in the pane \u2014 the fresh session was an environment variable the launcher dropped (#94)",
+        "headRefName": "feat/supervised-context-restart",
+        "headRefOid": "5164ce1535b0f4f21d6b9e5b48318865a3c74295",
+        "isDraft": false,
+        "url": "https://github.com/opensoft/openRepoTools/pull/121",
+        "state": "open"
+      },
+      {
+        "number": 97,
+        "title": "Crash-consistent lane worktree recovery: a lane now says WHERE its session stopped \u2014 RUNNING \u2192 SWAPPING \u2192 SWAPPED with a generation/operation fence, a machine-readable worktree inventory taken at every handoff, and a resume reconciliation that reports and resets nothing",
+        "headRefName": "feat/crash-consistent-lane-worktree-recovery",
+        "headRefOid": "64dfd9736b1079c16beda0b1ac53a61e68b21d9e",
+        "isDraft": false,
+        "url": "https://github.com/opensoft/openRepoTools/pull/97",
+        "state": "open"
+      }
+    ],
+    "latest_refresh": {
+      "previous_observed_at": "2026-10-04T16:37:26.292668+00:00",
+      "previous_worktrees": 6,
+      "current_worktrees": 6,
+      "current_local_branches": 6,
+      "added_worktrees": [],
+      "removed_worktrees": [],
+      "source_main_changed": true,
+      "protocol": "Shared OpenSpec/Speckit workflow: Triad Feature Amendments, adopted 2026-10-04; manual delivery only.",
+      "concurrent_work": "PR #121 retains staged/unstaged/untracked work including full legacy authority decision and feature 005; recovery branch advanced during refresh. Snapshot only, not a writer freeze."
+    }
+  },
+  "preparation_evidence": {
+    "record": "specs/004-migrate-to-triad/preparation.md",
+    "backup_id": "prep-20261004T211123Z",
+    "all_ref_restore_verified": true,
+    "refs": 18,
+    "dependency_commit_restore_verified": true,
+    "captured_worktrees": 6,
+    "snapshot_git_restores_verified": 6,
+    "git_restore_summary_sha256": "550d1ce96c8a162c3371f95b53be188217f85fac6491e98e628ae307ea35b31e",
+    "gate_a_complete": false,
+    "gate_b_complete": false,
+    "local_adoption_exit": 2,
+    "reproduction": "specs/004-migrate-to-triad/adopter-blocker.md"
   }
 }

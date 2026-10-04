@@ -63,7 +63,10 @@ belong in spec; regenerate the path plan if the source adds such contracts.
 Keeping the standard in root would move its gitlink away from its dependency
 pin and implementation consumers, and mutate the original `.gitmodules` during
 the byte-accounted split. Keeping that dependency unit in code preserves its
-existing paths. Existing-submodule handling still requires local rehearsal;
+existing paths. The provisional local rehearsal measured a mounting refusal
+after staging deletion of the original `.gitmodules`; see the
+[reproduction](../../../specs/004-migrate-to-triad/adopter-blocker.md).
+Resolve upstream and repeat before composed acceptance;
 plan coverage validation alone is not execution certification.
 
 ### Public installation compatibility

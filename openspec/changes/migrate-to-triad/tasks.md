@@ -10,7 +10,8 @@ This checklist tracks governance, not duplicate implementation tasks.
   artifacts exist and planning validation is recorded.
 - [ ] 1.2 Approve the frozen source/standard revisions, repository visibility,
   final path mapping, follow-ups and active-work dispositions after Gates A/B;
-  verify approval explicitly names the actual execution plan.
+  verify #97/#121 have landed, their content is accounted for through the
+  refreshed baseline, and approval explicitly names the actual execution plan.
 
 ## 2. Migration evidence and closure
 

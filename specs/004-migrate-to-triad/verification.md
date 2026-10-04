@@ -1,5 +1,37 @@
 # Migration planning verification — October 4, 2026
 
+## Preparation authorized while #97/#121 are active
+
+[preparation.md](preparation.md) records a verified 18-ref bundle restore,
+pinned dependency restore, six worktree file/config captures and verified
+installed-file/settings/receipt copies in host and bench contexts. All six
+snapshots were also restored into independent Git clones with matching index
+entries, captured file bytes and worktree status. Active writers remain
+unfrozen; installer/live rollback, retired receipts and final preservation
+are pending. Gate A is not complete.
+
+The unchanged pinned standard passed `check` against an isolated source clone,
+then local-only execution returned 2 while adding the spec submodule because
+the original `.gitmodules` had been staged for deletion. No assembly adoption
+commit or final verification was reached. Independent mode/object accounting
+passed for 18 spec, 40 code and six unchanged root index entries. Local nested
+dependency initialization and the standard's recomputed dependency digest
+check passed. Canonical pin tests stayed in serialization
+wait and were stopped before pytest ran; no runtime test pass is claimed.
+The [upstream reproduction](adopter-blocker.md) is reviewable, and the
+[installer compatibility design](installer-design.md) identifies the required
+consumers and pending acceptance scenarios. No pinned-standard changes,
+external writes, user-tool installs, real repository creation or lane moves occurred.
+Gate B remains open. Both PR landings explicitly precede refreshed real
+conversion, which still needs Gates A/B and Gate C approval.
+
+Final pinned mapping check, OpenSpec strict validation and supplemental
+document-link/portable-path/inventory/single-task-list checks passed.
+All 19 execution tasks remain open; provisional evidence does not replace
+their complete acceptance criteria.
+
+The following refresh sections are historical observations.
+
 ## Updated migration protocol refresh
 
 Read the installed shared workflow's **Triad Feature Amendments**, including

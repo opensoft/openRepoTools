@@ -1,4 +1,6 @@
 # Preliminary adoption mapping; planning only. Execution needs a refreshed baseline and explicit approval.
+# Real conversion waits for PRs #97/#121 to land and the pinned-adopter mounting refusal to be resolved upstream.
+# Disposable rehearsal evidence: ../../../specs/004-migrate-to-triad/preparation.md; Gates A/B remain open.
 # Paths are relative to the source checkout. Generated metadata does not authorize repository creation.
 schema_version: 1
 kind: adoption-plan

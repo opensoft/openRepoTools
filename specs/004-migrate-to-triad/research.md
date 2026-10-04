@@ -1,5 +1,12 @@
 # Planning evidence and decisions
 
+Latest measured preparation is in [preparation.md](preparation.md). Private
+git-filter-repo availability now exists for local rehearsal. Existing-submodule
+mounting is a measured refusal, documented in [adopter-blocker.md](adopter-blocker.md),
+and installer source-routing design is in [installer-design.md](installer-design.md).
+The earlier observations below predate that attempt. Both #97/#121 landings
+precede real conversion and a new baseline/rehearsal.
+
 October 3 inspection and October 4 refresh used the pinned standard's `AGENTS.md`, adoption
 implementation, generated CLI reference and placement policy; root installer,
 CI and fixture code; local branch/worktree state; read-only GitHub PR metadata.

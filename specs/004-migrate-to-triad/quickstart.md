@@ -4,7 +4,10 @@ Read [plan.md](plan.md), then the [resolved adoption mapping](../../openspec/cha
 and [work inventory](inventory.json). Read the [protocol review](protocol-review.md)
 for canonical spec placement, bounded code amendments and final reconciliation.
 The mapping is for the recorded source
-main only; implementation and live feature transfer have not been attempted.
+main only. A disposable rehearsal extracted both legs and then refused assembly
+mounting; [preparation.md](preparation.md) records the measured limits. Live
+feature transfer and real conversion remain pending #97/#121 landings and the
+execution gates.
 
 From the original source checkout, the planning validation is:
 
