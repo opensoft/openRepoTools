@@ -409,7 +409,7 @@ $sr_why" 2 ;;
 # a fence another act moved, a snapshot that cannot be written — each of them
 # costs the LIFECYCLE and never the record. The handoff carries on and says
 # what it could not keep, exactly as it does for a dropped sub-field.
-lc_on=""; lc_gen=""; lc_op=""; lc_state=""
+lc_on=""; lc_gen=""; lc_op=""; lc_state=""; lc_inventory_missed=""
 
 lifecycle_begin() {
 	lc_on=""; lc_gen=""; lc_op=""; lc_state=""
@@ -894,8 +894,14 @@ poll_writer() {   # <path>
 			--checkout "${dir:-unknown}" --branch "$pw_branch" --head "$pw_head" \
 			--upstream "$pw_up" --dirty "$pw_dirty" --unpushed "$pw_ahead" \
 			--writer "${uuid:-none}" --generation "$lc_gen" --operation "$lc_op" \
-			>/dev/null 2>&1 ||
-			note "the worktree inventory entry for $pw_d could not be written — the helper refused it, and a refusal of 7 there is this handoff's own fence: the lane's generation or operation moved while this poll was being taken, so a superseded reading was not filed over the current one. This handoff's WRITERS section still names the tree, and \`$LANES_EDIT lane-reconcile $lane\` says what the inventory holds."
+			>/dev/null 2>&1 || {
+			# AND THE SWAP IS NOT COMPLETE WITHOUT IT (Copilot on 64dfd97, PR
+			# #97): an inventory missing a polled writer is not the record a
+			# recovery reads as a finished swap, so the tree is named here and
+			# `lifecycle_finish` leaves the lane SWAPPING for it.
+			lc_inventory_missed="${lc_inventory_missed:+$lc_inventory_missed }$pw_d"
+			note "the worktree inventory entry for $pw_d could not be written — the helper refused it, and a refusal of 7 there is this handoff's own fence: the lane's generation or operation moved while this poll was being taken, so a superseded reading was not filed over the current one. This handoff's WRITERS section still names the tree, the lane stays SWAPPING for it, and \`$LANES_EDIT lane-reconcile $lane\` says what the inventory holds."
+		}
 	fi
 	return 0
 }
@@ -1113,6 +1119,7 @@ if [ "$do_late" = 1 ]; then
 		# leave every late record reading as an interrupted swap for ever.
 		lc_unfinished=""
 		[ "$handoff_written" = 1 ] || lc_unfinished="the handoff file was not refreshed"
+		[ -z "$lc_inventory_missed" ] || lc_unfinished="${lc_unfinished:+$lc_unfinished; }the worktree inventory was not recorded for $lc_inventory_missed"
 		lifecycle_finish "$lc_unfinished"
 	else
 		lifecycle_finish "the late PAUSED record was refused by the helper"
@@ -1234,6 +1241,7 @@ lc_unfinished=""
 [ "$record_written" = 1 ] || lc_unfinished="the lane's PAUSED record did not land"
 [ -z "$row_write_refused" ] || lc_unfinished="${lc_unfinished:+$lc_unfinished; }the row's state cell was not flipped"
 [ "$handoff_written" = 1 ] || lc_unfinished="${lc_unfinished:+$lc_unfinished; }the handoff file was not refreshed"
+[ -z "$lc_inventory_missed" ] || lc_unfinished="${lc_unfinished:+$lc_unfinished; }the worktree inventory was not recorded for $lc_inventory_missed"
 lifecycle_finish "$lc_unfinished"
 
 # ------------------------------------------- 5. the restart line — one command

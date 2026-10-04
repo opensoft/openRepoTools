@@ -13818,6 +13818,21 @@ is    "…and the verdict is INDETERMINATE: no crash is pronounced on a read nob
 hasnt "…and never 'no-state', which is the answer a launcher goes straight past" "$out" "no-state"
 is    "…and the file nobody could read was not replaced, moved or deleted by a read" \
       "$( [ -L "$RC_STATE_ROOT/repoRC-9/lane-state.yaml" ] && echo kept || echo gone )" kept
+# AND NOT BY A WRITE EITHER (Copilot on 64dfd97): the writers' schema guard took
+# a dangling link for an absent file and renamed a fresh snapshot over it.
+run "$E" set-lane-state repoRC-9 RUNNING --owner "$RC_ID"
+is    "a WRITER meeting that dangling snapshot refuses rather than replacing it" "$rc" 1
+is    "…and the link is exactly where it was" \
+      "$( [ -L "$RC_STATE_ROOT/repoRC-9/lane-state.yaml" ] && echo kept || echo gone )" kept
+rc9_tp="$RC_DIR/.claude/worktrees/dangling-91"
+rc9_tid="$(printf '%s' "$rc9_tp" | tr -c 'A-Za-z0-9._-' '-' | tr -s '-' | sed -e 's/^-*//' -e 's/-*$//')"
+mkdir -p "$RC_STATE_ROOT/repoRC-9/trees"
+ln -s "$SANDBOX/no-such-sidecar-91" "$RC_STATE_ROOT/repoRC-9/trees/$rc9_tid.yaml"
+run "$E" set-lane-tree repoRC-9 "$rc9_tp" --checkout "$RC_DIR" --branch b --head h --upstream none --dirty 0 --unpushed 0
+is    "…and a tree sidecar that is a dangling link is refused the same way" "$rc" 1
+is    "…and left where it was" \
+      "$( [ -L "$RC_STATE_ROOT/repoRC-9/trees/$rc9_tid.yaml" ] && echo kept || echo gone )" kept
+rm -f "$RC_STATE_ROOT/repoRC-9/trees/$rc9_tid.yaml"
 
 # AND THE OTHER HALF OF THE PAIR, on the same lane and the same control root, so
 # that the two answers differ in nothing but whether the file is there: a lane
@@ -13916,6 +13931,54 @@ is    "a lane with no binding line can still carry a lifecycle snapshot" "$rc" 0
 run env LANES_NO_FETCH=1 "$E" lanes --lane repoRC-12
 is    "…and the listing's binding column says none for it, whatever the snapshot says" \
       "$(printf '%s' "$out" | cut -f13)" "none"
+
+# ---------- AN UNREADABLE LOG IS NEVER A CLEARANCE (Copilot on 64dfd97)
+#
+# A log published twice under names that differ only by case cannot be read as
+# ONE log (Amendment 15), so the lane's coordinator directory is not established
+# and neither of the reconciliation's sweeps can run. A SWAPPED lane with no
+# holder must not read as resumable over paths nobody inspected. Published
+# through Amendment 15's own plumbing, which never touches a working tree, so
+# the case runs on a case-insensitive file system too.
+rc_row repoRC-13 "harness \`$RC_ID\`"
+rc_seed_log repoRC-13
+run "$E" set-lane-state repoRC-13 SWAPPED --owner "$RC_ID"
+is    "a lane can be recorded SWAPPED" "$rc" 0
+run "$E" lane-reconcile repoRC-13
+is    "…and with its log readable and no holder it is resumable" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "resumable"
+a15_publish lanes/log/reporc-13.md "# lane reporc-13 — a second spelling of the same log"
+run "$E" lane-reconcile repoRC-13
+is    "…but with its log published twice it is indeterminate" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "indeterminate"
+hasnt "…and never resumable over paths nobody read" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT"')" "resumable"
+a15_unpublish lanes/log/reporc-13.md
+
+# ------- A REFUSED INVENTORY WRITE KEEPS THE LANE SWAPPING (Copilot on 64dfd97)
+#
+# `SWAPPED` is the operation's commit point, and an inventory missing a polled
+# writer is not what a recovery may read as a finished swap. The refusal is the
+# writer's own schema guard, met through a sidecar a newer tooling wrote.
+rc_row repoRC-14 "harness \`$RC_ID\`"
+rc_seed_log repoRC-14
+rc_seed_handoff repoRC-14
+git -C "$WIP" add -- handoffs/repoRC >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the repoRC-14 handoff"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+git -C "$RC_DIR" worktree add -q -b feat/rc14 "$RC_DIR/.claude/worktrees/w14" >/dev/null 2>&1
+rc14_tid="$(printf '%s' "$RC_DIR/.claude/worktrees/w14" | tr -c 'A-Za-z0-9._-' '-' | tr -s '-' | sed -e 's/^-*//' -e 's/-*$//')"
+mkdir -p "$RC_STATE_ROOT/repoRC-14/trees"
+printf 'schema: 999\nlane: repoRC-14\n' > "$RC_STATE_ROOT/repoRC-14/trees/$rc14_tid.yaml"
+run "$E" set-lane-state repoRC-14 RUNNING --owner "$RC_ID" --agent claude --profile team-01a
+run env LANE_HANDOFF_NO_TMUX=1 LANES_EDIT="$E" CLAUDE_CODE_SESSION_ID="$RC_ID" \
+    CLAUDE_PROFILE_NAME=team-01a "$HANDOFF_CMD" --lane repoRC-14 clear
+is    "a handoff whose inventory write is refused still completes the swap's records" "$rc" 0
+has   "…naming the tree whose entry was not recorded" "$err" "the worktree inventory was not recorded for $RC_DIR/.claude/worktrees/w14"
+run "$E" lane-state repoRC-14
+is    "…and the lane stays SWAPPING, never SWAPPED over an incomplete inventory" \
+      "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "state" { print $2 }')" SWAPPING
 
 echo "== the managed-owner seam: managed ledger owns enrolled lanes; this tooling owns legacy =="
 

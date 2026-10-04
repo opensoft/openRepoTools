@@ -11457,8 +11457,12 @@ lane_sidecar_field() {   # <file> <key>
 # CURRENT version is fine. Everything else, INCLUDING A FILE THAT EXISTS AND
 # CANNOT BE READ, is refused: a schema nobody could read is not a schema this
 # helper knows (R22, Amendment 7(d)).
+# AND A DANGLING SYMLINK IS NOT ABSENT (Copilot on 64dfd97, PR #97): `-e` is
+# false for one, so this guard used to wave every writer through to rename its
+# own file over a record `lane_state_read` itself calls present-and-unreadable.
+# `[ -L ]` beside `[ -e ]`, exactly as the reader asks it.
 lane_sidecar_schema_ok() {   # <file>
-  [ -e "${1-}" ] || return 0
+  [ -e "${1-}" ] || [ -L "${1-}" ] || return 0
   lss_v="$(lane_sidecar_field "$1" schema 2>/dev/null || :)"
   [ "$lss_v" = "$LANE_STATE_SCHEMA" ]
 }
@@ -12063,7 +12067,16 @@ LRC_BIND
 
   # 3. THE TREES — the inventory, recomputed. A stored value is a COMPARISON
   # POINT and never current truth.
-  lrc_dir="$(lane_payload_field "$lrc_lane" dir 2>/dev/null || :)"
+  # THE COORDINATOR DIRECTORY, AND A LOG NOBODY COULD READ IS NOT A LANE WITH
+  # NONE (Copilot on 64dfd97, PR #97). `lane_payload_field` answers 8 for a log
+  # that carries no `dir` and 1 for a log that could not be read; collapsed into
+  # one empty string, the second skipped both sweeps below — the registrations
+  # `git worktree list` holds and the trees on disk — and a SWAPPED lane with no
+  # holder then read as resumable over paths nobody inspected. The 1 is kept,
+  # and the verdict below is `indeterminate` for it.
+  lrc_dir=""; lrc_drc=0
+  lrc_dir="$(lane_payload_field "$lrc_lane" dir 2>/dev/null)" || lrc_drc=$?
+  [ "$lrc_drc" = 0 ] || lrc_dir=""
   lrc_seen=""; lrc_n=0; lrc_recover=0; lrc_dirty=0
   while IFS="$US" read -r lrc_id lrc_p lrc_b lrc_h lrc_u lrc_d lrc_np lrc_w lrc_ob lrc_co lrc_tg lrc_to lrc_sch; do
     [ -n "${lrc_id:-}" ] || continue
@@ -12248,6 +12261,10 @@ EOF
       lrc_v=indeterminate
       lrc_why="lane $lrc_lane's object log could not be read, so where it is bound is NOT established — and liveness may be pronounced only from inside the binding (Amendment 18(b)). A read that failed is never an answer (Amendment 7(d))" ;;
   esac
+  if [ "$lrc_drc" != 0 ] && [ "$lrc_drc" != 8 ] && [ "$lrc_v" != indeterminate ]; then
+    lrc_v=indeterminate
+    lrc_why="lane $lrc_lane's object log could not be read, so its coordinator directory is NOT established and neither the worktrees git registers there nor the trees on disk under its roots were inspected — no clearance is pronounced over paths nobody read (Amendment 7(d))"
+  fi
   printf 'TREES%s%s inventoried%s%s dirty or unpushed%s%s require recovery%s%s unmanaged or stale\n' \
     "$US" "$lrc_n" "$US" "$lrc_dirty" "$US" "$lrc_recover" "$US" "$lrc_unmanaged"
   printf 'VERDICT%s%s%s%s\n' "$US" "$lrc_v" "$US" "$lrc_why"
