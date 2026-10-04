@@ -11618,14 +11618,30 @@ lane_state_preimage() {   # <lane> <payload>
 # and its line is already committed: a `die` here would abort a caller whose
 # work is on disk, so a mutex nobody could take within 20s costs the snapshot
 # and says so, never the event.
-lane_state_follow() {   # <lane> <verb> <payload> <uuid> [<pre-image>]
+#
+# AND IT WRITES ONLY FOR A LEGACY LANE, ON EVIDENCE IT WAS HANDED (ruling
+# 2026-10-04, design decision 21). Three things must all hold before the
+# snapshot moves — `RUNNING` for a `STARTED`/`RESUMED`, `CLOSED` for an
+# `ENDED`/`RETIRED`:
+#   * the verb is one of those four;
+#   * the caller's seam read said 8 — this lane carries no managed-owner
+#     marker and no vocabulary of one — because a managed lane's lifecycle is
+#     the managed ledger's and an unknown one is nobody's to write;
+#   * a pre-image was taken before the line was written and the snapshot still
+#     matches it under the mutex.
+# A missing verdict or a missing pre-image is NOT a pass: it writes nothing,
+# because a caller that did not ask is not a caller that was told "legacy".
+lane_state_follow() {   # <lane> <verb> <payload> <uuid> <pre-image> <seam verdict>
   lsf_lane="${1-}"; lsf_verb="${2-}"; lsf_pay="${3-}"; lsf_uuid="${4-}"; lsf_pre="${5-}"
+  lsf_seam="${6-}"
   lsf_new=""
   case "$lsf_verb" in
     STARTED|RESUMED) lsf_new=RUNNING ;;
     ENDED|RETIRED)   lsf_new=CLOSED ;;
     *) return 0 ;;
   esac
+  [ "$lsf_seam" = 8 ] || return 0
+  [ -n "$lsf_pre" ] || return 0
   lsf_root=""; lsf_rc=0
   lsf_root="$(lane_control_root "$lsf_lane" "$lsf_pay")" || lsf_rc=$?
   [ "$lsf_rc" = 0 ] || return 0
@@ -11646,7 +11662,7 @@ lane_state_follow() {   # <lane> <verb> <payload> <uuid> [<pre-image>]
     return 0
   fi
   lsf_seen="$(lane_state_fingerprint "$lsf_f")"
-  if [ -n "$lsf_pre" ] && [ "$lsf_seen" != "$lsf_pre" ]; then
+  if [ "$lsf_seen" != "$lsf_pre" ]; then
     if [ "$lsf_own" = 1 ]; then release_lock; fi
     note "the lane lifecycle moved under this $lsf_verb: lane $lsf_lane read '$lsf_pre' (state/generation/operation) when this write began and reads '$lsf_seen' now, so the snapshot is LEFT AS IT IS and no $lsf_new was written over it. Another act got there first — a recovery, or a second handoff — and a delayed write is precisely what the generation exists to refuse. The $lsf_verb line itself landed: read the lane with \`lanes-edit.sh lane-reconcile $lsf_lane\` before relaunching anything."
     return 0
