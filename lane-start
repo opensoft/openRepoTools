@@ -263,7 +263,25 @@
 #                        ~/.local/bin) — searched for lanes-edit.sh
 #   CLAUDE_CONFIG_DIR    the profile whose sessions/ and projects/ are read
 #   CLAUDE_PROJECTS_DIR  default $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects
-#   CLAUDE_BIN           default `claude` from PATH
+#   CLAUDE_BIN           the Claude Code to launch. Unset, it is the absolute
+#                        path `claude-current --porcelain` answers, the one
+#                        beside this command or in $OPENREPOTOOLS_BIN_DIR and
+#                        never one on PATH: npm's published version, updated
+#                        first when every copy is behind, and a stale one
+#                        REFUSED with exit 2 before anything is written
+#                        (opensoft/workBenches#119). `claude` from PATH only
+#                        where no claude-current is installed. Set, it is a pin
+#                        and launched as it is, unless it equals
+#                        CLAUDE_RESOLVED_BIN with no CLAUDE_VERIFIED_VERSION:
+#                        that is an earlier launch's answer inherited through a
+#                        session's environment, and it is resolved again
+#   CLAUDE_RESOLVED_BIN  the path a resolution chose, exported beside CLAUDE_BIN
+#   CLAUDE_VERIFIED_VERSION  the version a launcher's own claude-current read
+#                        for CLAUDE_BIN (equal to CLAUDE_RESOLVED_BIN): recorded
+#                        as `claude <version>` on the log line, and removed
+#                        before the launch so no session inherits it
+#   CLAUDE_ALLOW_STALE=1 claude-current answers with a stale copy instead of
+#                        refusing it; docs/README-claude-current.md has the rest
 #   LANE_START_SESSION_ID  0 turns off minting a uuid for a new session (and
 #                        therefore turns off writing it into the row)
 #   LANE_START_HANDOFF_ANSWER  answers Amendment 18(c)'s question — *"ask it to
@@ -578,7 +596,105 @@ LANES_EDIT="${LANES_EDIT:-$(lanes_edit_default)}"
 PROJECTS_ROOT="${PROJECTS_ROOT:-$HOME/projects}"
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 PROJECTS_STATE="${CLAUDE_PROJECTS_DIR:-$CLAUDE_HOME/projects}"
+
+# WHICH CLAUDE CODE A LAUNCH STARTS (opensoft/workBenches#119, Brett Heap
+# 2026-09-29, verbatim "for 2, we can run update on every start, this ensures
+# we have the latest models"). Decided here, from the environment as it
+# arrived, and acted on by `lane_claude_resolve_launch` below, once a launch
+# is certain: before the binding handoff, and in the bare launch a `--confirm`
+# answered No takes. Three shapes, and docs/README-claude-current.md has the
+# contract:
+#   * CLAUDE_BIN unset: resolve through `claude-current`, the one `--install`
+#     places beside this command;
+#   * CLAUDE_BIN equal to CLAUDE_RESOLVED_BIN with no CLAUDE_VERIFIED_VERSION:
+#     an earlier launch's answer, inherited through a session's environment.
+#     It is not an operator's pin, so it is resolved again;
+#   * anything else is a pin and is launched as it is. A pin that a launcher's
+#     own `claude-current` produced carries CLAUDE_VERIFIED_VERSION, which is
+#     recorded on the log line as `claude <version>`.
+# CLAUDE_VERIFIED_VERSION is read once and removed, so it never reaches the
+# session: a launch from inside that session must resolve again.
+lane_claude_version=""
+lane_claude_resolve=0
+lane_claude_checked=0
+if [ -z "${CLAUDE_BIN:-}" ]; then
+  lane_claude_resolve=1
+elif [ "$CLAUDE_BIN" = "${CLAUDE_RESOLVED_BIN:-}" ]; then
+  if [ -n "${CLAUDE_VERIFIED_VERSION:-}" ]; then
+    lane_claude_version="$CLAUDE_VERIFIED_VERSION"
+  else
+    lane_claude_resolve=1
+  fi
+fi
+unset CLAUDE_VERIFIED_VERSION
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+
+# `claude-current` is looked for where `--install` puts it and NEVER on PATH:
+# beside this command, else in $OPENREPOTOOLS_BIN_DIR. A sandbox that copies
+# this command somewhere without it, as the lane suite does, then launches the
+# `claude` its own PATH names, and no test reaches a real npm.
+lane_claude_current() {
+  local d
+  [ -x "$SCRIPT_DIR/claude-current" ] && { printf '%s\n' "$SCRIPT_DIR/claude-current"; return 0; }
+  d="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
+  [ -x "$d/claude-current" ] && { printf '%s\n' "$d/claude-current"; return 0; }
+  return 1
+}
+
+# lane_claude_resolve_launch: for a run that is to resolve (above) and is about
+# to launch, `claude-current --porcelain` names the Claude Code to start. It
+# reads npm's published version, updates the user-writable install first when
+# every copy is behind, and answers with an absolute path it has run
+# `--version` on; CLAUDE_BIN becomes that path, exported with
+# CLAUDE_RESOLVED_BIN. Its exit 2 is a refusal (every copy still behind npm)
+# and ends this run with 2; any other failure (1, nothing runnable; 64, a
+# malformed setting) ends it with 1, the environment status. Both callers come
+# before a binding handoff, window rename or transcript move, and the bare
+# launch a `--confirm` answered No
+# takes. Its stderr is the operator's and goes straight through. Never under
+# `--no-launch`, which launches nothing and is the first act INSIDE a running
+# session, and never under `--dry-run`, which must not update anything. It
+# resolves once: a second call does nothing.
+lane_claude_resolve_launch() {
+  local lcc_cmd lcc_out lcc_rc=0 lcc_line lcc_path="" lcc_version="" lcc_status=""
+  (( lane_claude_resolve )) || return 0
+  (( ! no_launch )) || return 0
+  lane_claude_resolve=0
+  if ! lcc_cmd="$(lane_claude_current)"; then
+    note "no claude-current beside this command or in ${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}, so $CLAUDE_BIN is launched as it is (through PATH, where it is a bare name), unchecked against npm; openRepoTools --install places claude-current"
+    return 0
+  fi
+  if (( dry_run )); then
+    plan "$lcc_cmd --porcelain   (chooses the Claude Code to launch; not run under --dry-run, because it may update one)"
+    return 0
+  fi
+  lcc_out="$("$lcc_cmd" --porcelain </dev/null)" || lcc_rc=$?
+  case "$lcc_rc" in
+    0) : ;;
+    2) die "claude-current refused the launch (exit 2, its reason above): the newest Claude Code installed is behind the one npm publishes. Nothing was written. CLAUDE_ALLOW_STALE=1 $prog … launches it anyway, or CLAUDE_BIN=<path> pins one." 2 ;;
+    *) die "claude-current named no Claude Code to launch (exit $lcc_rc, its reason above). Nothing was written." 1 ;;
+  esac
+  while IFS= read -r lcc_line; do
+    case "$lcc_line" in
+      path=*)    [ -n "$lcc_path" ]    || lcc_path="${lcc_line#path=}" ;;
+      version=*) [ -n "$lcc_version" ] || lcc_version="${lcc_line#version=}" ;;
+      status=*)  [ -n "$lcc_status" ]  || lcc_status="${lcc_line#status=}" ;;
+    esac
+  done <<LCC
+$lcc_out
+LCC
+  case "$lcc_path" in
+    /*) [ -f "$lcc_path" ] && [ -x "$lcc_path" ] ||
+          die "claude-current answered '$lcc_path', which is not an executable file. Nothing was written." 1 ;;
+    *) die "claude-current exited 0 without an absolute path= line (it printed '$lcc_out'). Nothing was written." 1 ;;
+  esac
+  CLAUDE_BIN="$lcc_path"
+  CLAUDE_RESOLVED_BIN="$lcc_path"
+  export CLAUDE_BIN CLAUDE_RESOLVED_BIN
+  lane_claude_version="$lcc_version"
+  lane_claude_checked=1
+  step "launching claude ${lcc_version:-of an unknown version} (${lcc_status:-no status}) at $lcc_path, as claude-current chose"
+}
 
 LS_TMP=""
 cleanup() { [ -n "${LS_TMP:-}" ] && rm -f -- "$LS_TMP"; return 0; }
@@ -1882,6 +1998,143 @@ elif [ -n "$win_sid" ]; then
   step "  it is the session step 3 already found holding $LANE in this window — the cell is current"
 fi
 
+# ------------------------------------------------------------- 3c. --confirm
+#
+# A window whose name is not the lane is a window whose lane came from somewhere
+# else — the swap RECORD, or a flag — and taking it renames the window and
+# writes the register. `--confirm` puts the three facts that disagree in front
+# of a person first: the WINDOW, the SESSION live in it, and the ROW.
+#
+# NO TERMINAL AND NO `--yes` IS A REFUSAL, exit 2, before the rename and before
+# any write. A question nobody can answer is not a Yes, and a launcher that read
+# it as one would rename a window somebody else's lane is working in.
+if (( confirm )); then
+  if [ "$this_window_name" = "$LANE" ]; then
+    step "--confirm: this window is already named $LANE — nothing to confirm"
+  else
+    # AMENDMENT 15 — A WINDOW NAMED FOR THIS LANE IN ANOTHER CASE IS NOT "not
+    # the lane". The rename still happens below, because the row's spelling is
+    # what the window is named; what changes is the sentence the operator is
+    # asked to answer. Told their own lane's window is not the lane, the
+    # reasonable answer is N — and N abandons a resume that was legitimate.
+    if [ "$(printf '%s' "$this_window_name" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$LANE" | tr 'A-Z' 'a-z')" ]; then
+      why="named '$this_window_name', which is THIS LANE under another case — a lane name is ONE name under any case (Amendment 15), and the rename below is to the register row's own spelling, $LANE"
+    else
+      case "$this_window_name" in
+        ""|claude|bash|zsh|sh|node) why="auto-named '${this_window_name:-none}'" ;;
+        *)                          why="named '$this_window_name', which is not the lane" ;;
+      esac
+    fi
+    note "--confirm: this window is $why. The three facts, before anything is renamed or written:"
+    note "  window   $this_window '${this_window_name:-none}'"
+    if [ -n "$win_sid" ]; then
+      note "  session  $win_sid '${win_name:-none}' (pid $win_pid, profile ${win_profile:-unknown})"
+    else
+      note "  session  none — no live session record names this window"
+    fi
+    if [ "$row_count" = 1 ]; then
+      note "  row      ${row:0:200}"
+    elif [ -n "$pub_row" ]; then
+      pub_row_first="${pub_row%%$'\n'*}"
+      note "  row      ${pub_row_first:0:200}"
+    else
+      note "  row      none — the register has no row for $LANE"
+    fi
+    answer=""; no_tty=0
+    if (( take_yes )); then
+      step "Take lane $LANE in this window? [y/N] y   (--yes)"
+      answer=y
+    elif [ -n "${LANE_START_ANSWER+set}" ]; then
+      step "Take lane $LANE in this window? [y/N] ${LANE_START_ANSWER:-<empty>}   (LANE_START_ANSWER)"
+      answer="$LANE_START_ANSWER"
+    elif [ -t 0 ]; then
+      printf '%s: Take lane %s in this window? [y/N] ' "$prog" "$LANE" >&2
+      IFS= read -r answer || answer=""
+    else
+      answer=""
+      no_tty=1
+    fi
+    case "$answer" in
+      y|Y|yes|YES|Yes) step "taking lane $LANE in this window" ;;
+      *)
+        # AMENDMENT 8(c)/(d), R-A8-3 — EVERY ANSWER LEADS SOMEWHERE AND NO
+        # ANSWER EXITS. `claude-profile` EXECS this script, so this script's
+        # exit status IS the launcher's: a refusal here is an exited pane with
+        # no Claude in it, which is the one failure the whole change exists to
+        # prevent. `N` means NOT THIS LANE, not NOT AT ALL — and no tty with no
+        # `--yes` is the same answer with nobody there to give it, which must
+        # still not take a lane on an inference nobody confirmed. Both fall
+        # through to Claude, bare: nothing renamed, nothing written, no lane,
+        # ONE notice, exit 0. Exit 2 is left to argument errors alone.
+        if (( no_tty )); then
+          bare_why="--confirm was passed, there is no terminal to ask on, and --yes was not, so lane $LANE is NOT taken in a window $why"
+        else
+          bare_why="lane $LANE is NOT taken: the answer was '${answer:-<empty, which is N>}'"
+        fi
+        note "$bare_why. Nothing has been renamed and nothing has been written. Starting Claude with no lane — to take it later, run: $prog $self_args"
+        lane_claude_resolve_launch
+        bare=("$CLAUDE_BIN" ${pass[@]+"${pass[@]}"})
+        if (( no_launch )); then
+          # The launcher asked for a command to exec; it gets the bare one, on
+          # stdout, exactly as it would have got the lane's.
+          quoted "${bare[@]}"; printf '\n'
+          step "--no-launch: the command above was printed, not run"
+          exit 0
+        fi
+        if (( dry_run )); then
+          plan "exec $(quoted "${bare[@]}")"
+          step "--dry-run: nothing was renamed, written or launched"
+          exit 0
+        fi
+        step "exec: $(quoted "${bare[@]}")"
+        exec "${bare[@]}"
+        ;;
+    esac
+  fi
+fi
+
+# Refuse known local conflicts before resolving or updating Claude, and
+# before asking a holder to release its binding.
+lane_check_local_fences() {
+# Step 3 fetched the published register. Before changing a tmux name, prove
+# this identity was not retired (including an unpushed local archive row).
+retired_rc=0
+retired_hits="$(LANES_NO_FETCH=1 "$LANES_EDIT" retired-identity "$LANE" 2>/dev/null)" || retired_rc=$?
+case "$retired_rc" in
+  8) : ;;
+  0) die "lane $LANE is RETIRED (archive: $retired_hits). Nothing was renamed or written; choose a free position." 2 ;;
+  *) die "the lane archive could not be checked for $LANE (exit $retired_rc). Nothing was renamed or written." 1 ;;
+esac
+
+# A lane name is a tmux-window address. tmux itself allows two distinct
+# windows to carry one name, so check the whole server before taking it. A
+# linked window may appear in several sessions with the same @id; that is one
+# window, not a collision.
+#
+# ASKED OF A NEW LANE ONLY — one with no row — because only there is every
+# other window carrying the name certainly FOREIGN: nothing has bound that lane
+# yet. An EXISTING lane's own binding is different since Amendment 18 (#83):
+# a bench in another container shares this tmux server, its window keeps the
+# lane's name until that session hands off, and a second place binding the
+# lane after a release, or through `--request-handoff`, is the ratified flow.
+# Asked of every lane, this fence refused exactly that takeover.
+if [ "$row_count" = 0 ]; then
+  name_tab="$(printf '\t')"
+  name_rows="$(tmux list-windows -a -F "#{window_id}${name_tab}#{window_name}" 2>/dev/null)" ||
+    die "tmux could not list window names, so whether $LANE is already in use is unknown. Nothing was renamed or written." 2
+  while IFS="$name_tab" read -r name_id name_value; do
+    [ -n "$name_id" ] || continue
+    if [ "$name_id" != "$this_window_id" ] &&
+       [ "$(printf '%s' "$name_value" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$LANE" | tr 'A-Z' 'a-z')" ]; then
+      die "another tmux window ($name_id) is already named $name_value, and $LANE is a NEW lane, so that window is not its own. Lane window names must be unique in this tmux server; nothing was renamed or written." 2
+    fi
+  done <<EOF
+$name_rows
+EOF
+fi
+}
+lane_check_local_fences
+
 # ------------- 3b(ii). AMENDMENT 18(b): ONE BINDING PER LANE, AND THIS PLACE
 #
 # *"A bound lane is started nowhere else — not a second window on the same host,
@@ -1970,6 +2223,13 @@ if [ "$bind_rc" = 0 ]; then
       which makes that place STOP loudly rather than silently:
       $prog --force \"<why you are taking it>\" $self_args" 2
     fi
+    # Approval precedes any possible update; resolution precedes release.
+    # With no explicit agent the holder's new PAUSED may name Claude, so
+    # preflight that possible launch before asking it to give up the binding.
+    # An explicit other agent never needs a Claude preflight.
+    if [ -z "$agent_flag" ] || [ "$agent_flag" = claude ]; then
+      lane_claude_resolve_launch
+    fi
     ls_rh=("$LANES_EDIT" request-handoff "$LANE")
     [ -z "$win_sid" ] || ls_rh+=(--session "$win_sid")
     if [ "$ls_ask" = force ]; then
@@ -1990,99 +2250,54 @@ if [ "$bind_rc" = 0 ]; then
   fi
 fi
 
-# ------------------------------------------------------------- 3c. --confirm
-#
-# A window whose name is not the lane is a window whose lane came from somewhere
-# else — the swap RECORD, or a flag — and taking it renames the window and
-# writes the register. `--confirm` puts the three facts that disagree in front
-# of a person first: the WINDOW, the SESSION live in it, and the ROW.
-#
-# NO TERMINAL AND NO `--yes` IS A REFUSAL, exit 2, before the rename and before
-# any write. A question nobody can answer is not a Yes, and a launcher that read
-# it as one would rename a window somebody else's lane is working in.
-if (( confirm )); then
-  if [ "$this_window_name" = "$LANE" ]; then
-    step "--confirm: this window is already named $LANE — nothing to confirm"
-  else
-    # AMENDMENT 15 — A WINDOW NAMED FOR THIS LANE IN ANOTHER CASE IS NOT "not
-    # the lane". The rename still happens below, because the row's spelling is
-    # what the window is named; what changes is the sentence the operator is
-    # asked to answer. Told their own lane's window is not the lane, the
-    # reasonable answer is N — and N abandons a resume that was legitimate.
-    if [ "$(printf '%s' "$this_window_name" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$LANE" | tr 'A-Z' 'a-z')" ]; then
-      why="named '$this_window_name', which is THIS LANE under another case — a lane name is ONE name under any case (Amendment 15), and the rename below is to the register row's own spelling, $LANE"
-    else
-      case "$this_window_name" in
-        ""|claude|bash|zsh|sh|node) why="auto-named '${this_window_name:-none}'" ;;
-        *)                          why="named '$this_window_name', which is not the lane" ;;
-      esac
-    fi
-    note "--confirm: this window is $why. The three facts, before anything is renamed or written:"
-    note "  window   $this_window '${this_window_name:-none}'"
-    if [ -n "$win_sid" ]; then
-      note "  session  $win_sid '${win_name:-none}' (pid $win_pid, profile ${win_profile:-unknown})"
-    else
-      note "  session  none — no live session record names this window"
-    fi
-    if [ "$row_count" = 1 ]; then
-      note "  row      ${row:0:200}"
-    elif [ -n "$pub_row" ]; then
-      pub_row_first="${pub_row%%$'\n'*}"
-      note "  row      ${pub_row_first:0:200}"
-    else
-      note "  row      none — the register has no row for $LANE"
-    fi
-    answer=""; no_tty=0
-    if (( take_yes )); then
-      step "Take lane $LANE in this window? [y/N] y   (--yes)"
-      answer=y
-    elif [ -n "${LANE_START_ANSWER+set}" ]; then
-      step "Take lane $LANE in this window? [y/N] ${LANE_START_ANSWER:-<empty>}   (LANE_START_ANSWER)"
-      answer="$LANE_START_ANSWER"
-    elif [ -t 0 ]; then
-      printf '%s: Take lane %s in this window? [y/N] ' "$prog" "$LANE" >&2
-      IFS= read -r answer || answer=""
-    else
-      answer=""
-      no_tty=1
-    fi
-    case "$answer" in
-      y|Y|yes|YES|Yes) step "taking lane $LANE in this window" ;;
-      *)
-        # AMENDMENT 8(c)/(d), R-A8-3 — EVERY ANSWER LEADS SOMEWHERE AND NO
-        # ANSWER EXITS. `claude-profile` EXECS this script, so this script's
-        # exit status IS the launcher's: a refusal here is an exited pane with
-        # no Claude in it, which is the one failure the whole change exists to
-        # prevent. `N` means NOT THIS LANE, not NOT AT ALL — and no tty with no
-        # `--yes` is the same answer with nobody there to give it, which must
-        # still not take a lane on an inference nobody confirmed. Both fall
-        # through to Claude, bare: nothing renamed, nothing written, no lane,
-        # ONE notice, exit 0. Exit 2 is left to argument errors alone.
-        if (( no_tty )); then
-          bare_why="--confirm was passed, there is no terminal to ask on, and --yes was not, so lane $LANE is NOT taken in a window $why"
-        else
-          bare_why="lane $LANE is NOT taken: the answer was '${answer:-<empty, which is N>}'"
-        fi
-        note "$bare_why. Nothing has been renamed and nothing has been written. Starting Claude with no lane — to take it later, run: $prog $self_args"
-        bare=("$CLAUDE_BIN" ${pass[@]+"${pass[@]}"})
-        if (( no_launch )); then
-          # The launcher asked for a command to exec; it gets the bare one, on
-          # stdout, exactly as it would have got the lane's.
-          quoted "${bare[@]}"; printf '\n'
-          step "--no-launch: the command above was printed, not run"
-          exit 0
-        fi
-        if (( dry_run )); then
-          plan "exec $(quoted "${bare[@]}")"
-          step "--dry-run: nothing was renamed, written or launched"
-          exit 0
-        fi
-        step "exec: $(quoted "${bare[@]}")"
-        exec "${bare[@]}"
-        ;;
-    esac
-  fi
+# The successful handoff may have published a different agent in its PAUSED
+# record. Read that authoritative answer now, before rename or transcript movement.
+AGENT=""; AGENT_EXPLICIT=0; AGENT_ID=""; RECORDED_AGENT=""; RECORDED_AGENT_READ=0
+read_recorded_agent() {
+  rra_out=""; rra_rc=0
+  rra_out="$("$LANES_EDIT" lane-agent "$LANE" 2>/dev/null)" || rra_rc=$?
+  RECORDED_AGENT_READ=1
+  case "$rra_rc" in
+    0) RECORDED_AGENT="$rra_out" ;;
+    8|2) RECORDED_AGENT="" ;;
+    # A READ THAT FAILED IS NOT "THIS LANE'S RECORD NAMES NO AGENT", and the
+    # helper says so in its own refusal: *"a caller that read it that way would
+    # launch the default agent over a lane another one paused"* (Amendment
+    # 7(d), `lanes-edit.sh`'s `lane-agent` arm). This used to `note` and launch
+    # `claude` anyway — the one act in this whole command that no later refusal
+    # can undo — so it refuses, and names the flag that goes past it, which is
+    # a person naming the agent rather than this command guessing at one.
+    *) die "\`$LANES_EDIT lane-agent $LANE\` failed (exit $rra_rc), so which agent paused this lane is UNKNOWN — and launching the default over a lane another agent paused is what Amendment 7(d) has this read refuse rather than answer. Run it by hand to see what it says, or name the agent: $prog --agent <name> …" 2 ;;
+  esac
+  return 0
+}
+if [ -n "$agent_flag" ]; then
+  AGENT="$agent_flag"; AGENT_EXPLICIT=1
+else
+  read_recorded_agent
+  if [ -n "$RECORDED_AGENT" ]; then AGENT="$RECORDED_AGENT"; fi
+  [ -n "$AGENT" ] || AGENT=claude
+  [ "$AGENT" = claude ] || AGENT_EXPLICIT=1
 fi
+case "$AGENT" in
+  *[!A-Za-z0-9._-]*|'') die "--agent takes a manifest key — letters, digits, '.', '_', '-' — and '$AGENT' is not one (Amendment 17(b))" 2 ;;
+esac
+# THE AGENT THIS LANE IS RUNNING, IN THE ENVIRONMENT OF THE SESSION IT STARTS
+# (Copilot round 2 on openRepoTools#47). `lane-handoff` derives the record's
+# `agent` sub-field from `$LANES_AGENT`, else `claude` — so a `codex` session
+# launched here would write `agent claude` at its own handoff and the next
+# `lane-start` would resume it with the wrong launcher, one record along. The
+# launch decides which agent this is; the launch is therefore what says so.
+export LANES_AGENT="$AGENT"
+if [ "$AGENT" = claude ]; then
+  lane_claude_resolve_launch
+fi
+
+# ------------------------------------------------------- 4. name the window
+
+# Resolver work can take time. Preserve the final read too, so a retirement
+# or new window collision during that wait still refuses before rename.
+lane_check_local_fences
 
 # ---------------- 3d. AND THE BINDING IS READ AGAIN BEFORE THE FIRST ACT
 #
@@ -2102,10 +2317,10 @@ fi
 # rename, two register writes and a launch wide, and a lane that moved in it is
 # a refusal naming where it went rather than a second binding written over it.
 #
-# ONLY ON THE PATH THAT WAITED. Every other run has just read the binding a few
-# lines above and has asked nobody anything since; a second fetch on every lane
-# start would be a network round-trip bought for a window that is already this
-# narrow.
+# A RESOLVER MAY WAIT TOO: another start can bind while this one waits for
+# the update lock or npm. Recheck after resolution, immediately before rename,
+# including an initially free binding. An unchanged existing binding remains
+# valid; an observed release or replacement is not this invocation's binding.
 # AND A DRY RUN HAS NOTHING TO RE-READ, BECAUSE IT DID NOTHING (Copilot round 3
 # on opensoft/openRepoTools#83). `request-handoff --dry-run` prints its plan and
 # answers 0 WITHOUT releasing anything, so an unconditional re-read here sees the
@@ -2113,6 +2328,12 @@ fi
 # --request-handoff`, whose whole job is to print the plan, could never print
 # one. A plan is a statement about what WOULD happen; the fence that protects
 # the first act belongs to the run that takes it.
+bind_waited="$bind_recheck"
+bind_expected_rc="$bind_rc"; bind_expected_out="$bind_out"
+if [ "$bind_recheck" = 1 ]; then
+  bind_expected_rc=8; bind_expected_out=""
+fi
+[ "$lane_claude_checked" = 0 ] || bind_recheck=1
 if [ "$bind_recheck" = 1 ] && (( dry_run )); then
   plan "read the binding again before the rename, and refuse if the lane moved while this run was taking it"
   bind_recheck=0
@@ -2123,61 +2344,29 @@ if [ "$bind_recheck" = 1 ]; then
   bind_again="$("$LANES_EDIT" binding "$LANE" 2>"$LS_TMP")" || bind_again_rc=$?
   [ -s "$LS_TMP" ] && cat -- "$LS_TMP" >&2
   case "$bind_again_rc" in
-    8) step "binding: still free after the handoff — taking it" ;;
+    8) [ "$bind_expected_rc" = 8 ] ||
+         die "lane $LANE's binding changed while Claude was resolved: it is now released. Nothing here was renamed or bound; retry against the current record." 2
+       if [ "$bind_waited" = 1 ]; then
+         step "binding: still free after the handoff — taking it"
+       else
+         step "binding: still free after Claude resolution — taking it"
+       fi ;;
     0)
-      IFS=$'\t' read -r ba_host ba_cont ba_win ba_utc ba_sess ba_os ba_where ba_wstate <<<"$bind_again"
-      # ANY BINDING SEEN HERE IS THE RACE, INCLUDING ONE AT THIS VERY WINDOW
-      # (Copilot round 6 on opensoft/openRepoTools#83). This run has written no
-      # `STARTED`/`RESUMED` of its own yet — that is three steps further on —
-      # and it reached this read only by asking a binding ELSEWHERE to release,
-      # so a binding standing at this window now cannot be this invocation's.
-      # It can only be a CONCURRENT one that bound while this one waited, which
-      # is the two-processes-one-lane this re-read exists to catch; accepting it
-      # by window equality let both carry on and launch.
-      die "lane $LANE was released and BOUND AGAIN while this run was taking it: it is now window ${ba_win:-none} in container ${ba_cont:-none} on host ${ba_host:-unknown} (session ${ba_sess:-unknown}, ${ba_utc:-unknown}). The handoff this run asked for LANDED — that place did hand off — and somebody else bound the lane before this run reached its first act. This run has written no binding of its own yet, so that one is not this invocation's: a binding at THIS window is a second invocation IN it, which is the same race one pane closer. Nothing has been renamed, written or launched. Ask again, or take it up with that place:
-      $prog --request-handoff $self_args" 2 ;;
-    2) note "this \`lanes-edit.sh\` has no \`binding\`, so whether the lane moved again while this run waited is not known here; carrying on." ;;
+      if [ "$bind_expected_rc" = 0 ] && [ "$bind_again" = "$bind_expected_out" ]; then
+        step "binding: unchanged after Claude resolution"
+      else
+        IFS=$'\t' read -r ba_host ba_cont ba_win ba_utc ba_sess ba_os ba_where ba_wstate <<<"$bind_again"
+        # A NEW OR CHANGED BINDING IS THE RACE, INCLUDING ONE IN THIS WINDOW.
+        # This invocation wrote no STARTED/RESUMED yet. An unchanged prior
+        # binding was accepted above; this one appeared during the wait.
+        die "lane $LANE was BOUND AGAIN or changed while this run was taking it: it is now window ${ba_win:-none} in container ${ba_cont:-none} on host ${ba_host:-unknown} (session ${ba_sess:-unknown}, ${ba_utc:-unknown}). This run observed a free or earlier binding before its wait, and another binding now stands before its first act. This run has written no binding of its own yet, so that one is not this invocation's: a binding at THIS window is a second invocation IN it, which is the same race one pane closer. Nothing has been renamed, written or launched. Ask again, or take it up with that place:
+      $prog --request-handoff $self_args" 2
+      fi ;;
+    2) [ "$bind_expected_rc" = 2 ] ||
+         die "the binding could not be rechecked after Claude resolution (exit 2). Nothing here was renamed or bound." 1
+       note "this \`lanes-edit.sh\` has no \`binding\`, so whether the lane moved again while this run waited is not known here; carrying on." ;;
     *) die "$LANES_EDIT binding $LANE exited $bind_again_rc on the re-read before the rename, so whether this lane is still free could NOT be established — and that is not 'it is'. Nothing has been renamed, written or launched." 1 ;;
   esac
-fi
-
-# ------------------------------------------------------- 4. name the window
-
-# Step 3 fetched the published register. Before changing a tmux name, prove
-# this identity was not retired (including an unpushed local archive row).
-retired_rc=0
-retired_hits="$(LANES_NO_FETCH=1 "$LANES_EDIT" retired-identity "$LANE" 2>/dev/null)" || retired_rc=$?
-case "$retired_rc" in
-  8) : ;;
-  0) die "lane $LANE is RETIRED (archive: $retired_hits). Nothing was renamed or written; choose a free position." 2 ;;
-  *) die "the lane archive could not be checked for $LANE (exit $retired_rc). Nothing was renamed or written." 1 ;;
-esac
-
-# A lane name is a tmux-window address. tmux itself allows two distinct
-# windows to carry one name, so check the whole server before taking it. A
-# linked window may appear in several sessions with the same @id; that is one
-# window, not a collision.
-#
-# ASKED OF A NEW LANE ONLY — one with no row — because only there is every
-# other window carrying the name certainly FOREIGN: nothing has bound that lane
-# yet. An EXISTING lane's own binding is different since Amendment 18 (#83):
-# a bench in another container shares this tmux server, its window keeps the
-# lane's name until that session hands off, and a second place binding the
-# lane after a release, or through `--request-handoff`, is the ratified flow.
-# Asked of every lane, this fence refused exactly that takeover.
-if [ "$row_count" = 0 ]; then
-  name_tab="$(printf '\t')"
-  name_rows="$(tmux list-windows -a -F "#{window_id}${name_tab}#{window_name}" 2>/dev/null)" ||
-    die "tmux could not list window names, so whether $LANE is already in use is unknown. Nothing was renamed or written." 2
-  while IFS="$name_tab" read -r name_id name_value; do
-    [ -n "$name_id" ] || continue
-    if [ "$name_id" != "$this_window_id" ] &&
-       [ "$(printf '%s' "$name_value" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$LANE" | tr 'A-Z' 'a-z')" ]; then
-      die "another tmux window ($name_id) is already named $name_value, and $LANE is a NEW lane, so that window is not its own. Lane window names must be unique in this tmux server; nothing was renamed or written." 2
-    fi
-  done <<EOF
-$name_rows
-EOF
 fi
 
 if (( dry_run )); then
@@ -2504,43 +2693,6 @@ lane_sid=""
 # (`lane-agent`, this amendment's sibling of `lane-dir`). 8 is "no record of
 # this amendment yet" — every lane until its own next handoff — and it is not a
 # failure: `claude` is what this command has always launched.
-AGENT=""; AGENT_EXPLICIT=0; AGENT_ID=""; RECORDED_AGENT=""; RECORDED_AGENT_READ=0
-read_recorded_agent() {
-  rra_out=""; rra_rc=0
-  rra_out="$("$LANES_EDIT" lane-agent "$LANE" 2>/dev/null)" || rra_rc=$?
-  RECORDED_AGENT_READ=1
-  case "$rra_rc" in
-    0) RECORDED_AGENT="$rra_out" ;;
-    8|2) RECORDED_AGENT="" ;;
-    # A READ THAT FAILED IS NOT "THIS LANE'S RECORD NAMES NO AGENT", and the
-    # helper says so in its own refusal: *"a caller that read it that way would
-    # launch the default agent over a lane another one paused"* (Amendment
-    # 7(d), `lanes-edit.sh`'s `lane-agent` arm). This used to `note` and launch
-    # `claude` anyway — the one act in this whole command that no later refusal
-    # can undo — so it refuses, and names the flag that goes past it, which is
-    # a person naming the agent rather than this command guessing at one.
-    *) die "\`$LANES_EDIT lane-agent $LANE\` failed (exit $rra_rc), so which agent paused this lane is UNKNOWN — and launching the default over a lane another agent paused is what Amendment 7(d) has this read refuse rather than answer. Run it by hand to see what it says, or name the agent: $prog --agent <name> …" 2 ;;
-  esac
-  return 0
-}
-if [ -n "$agent_flag" ]; then
-  AGENT="$agent_flag"; AGENT_EXPLICIT=1
-else
-  read_recorded_agent
-  if [ -n "$RECORDED_AGENT" ]; then AGENT="$RECORDED_AGENT"; fi
-  [ -n "$AGENT" ] || AGENT=claude
-  [ "$AGENT" = claude ] || AGENT_EXPLICIT=1
-fi
-case "$AGENT" in
-  *[!A-Za-z0-9._-]*|'') die "--agent takes a manifest key — letters, digits, '.', '_', '-' — and '$AGENT' is not one (Amendment 17(b))" 2 ;;
-esac
-# THE AGENT THIS LANE IS RUNNING, IN THE ENVIRONMENT OF THE SESSION IT STARTS
-# (Copilot round 2 on openRepoTools#47). `lane-handoff` derives the record's
-# `agent` sub-field from `$LANES_AGENT`, else `claude` — so a `codex` session
-# launched here would write `agent claude` at its own handoff and the next
-# `lane-start` would resume it with the wrong launcher, one record along. The
-# launch decides which agent this is; the launch is therefore what says so.
-export LANES_AGENT="$AGENT"
 # THE AGENT'S OWN RESUMABLE ID, where the record carries one. For `claude` that
 # is the transcript uuid the session cell already records and this script
 # already resumes; for another agent it is the one id a launch has in hand, and
@@ -2845,6 +2997,13 @@ else
   fi
 fi
 cmd+=(${pass[@]+"${pass[@]}"})
+
+# THE CLAUDE CODE TO START (opensoft/workBenches#119), once the agent and the
+# launch are known. Resolution already ran before the binding handoff and
+# first stateful act; use that selected path when building the final command.
+if [ "$AGENT" = claude ]; then
+  cmd[0]="$CLAUDE_BIN"
+fi
 
 # A LANE WITH NO ROW IS A `STARTED`, WHATEVER BRANCH LAUNCHED IT (Copilot round
 # 1 on openRepoTools#47). Two branches above set the verb to RESUMED because
@@ -3292,6 +3451,19 @@ esac
 lane_payload="home $home_nwo; estate $estate; dir $(quote_subfield "$DIR")"
 [ -n "$lane_profile" ] && lane_payload="$lane_payload; profile $(quote_subfield "$lane_profile")"
 [ -n "$record_window" ] && lane_payload="$lane_payload; window $record_window"
+# `claude <version>`: the Claude Code this launch starts, as claude-current read
+# it here or as a launcher's own claude-current handed it on
+# (opensoft/workBenches#119). In hand only then, so appended only then, for
+# the reason given above; and a version is digits, dots and a tag, so a value
+# that is not one is left out rather than written into a line nothing rewrites.
+lane_claude_version_re='^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$'
+if [ "$AGENT" = claude ] && [ -n "$lane_claude_version" ]; then
+  if [[ "$lane_claude_version" =~ $lane_claude_version_re ]]; then
+    lane_payload="$lane_payload; claude $lane_claude_version"
+  else
+    note "the Claude Code version '$lane_claude_version' is not x.y.z, so the lane's log line carries no \`claude\` sub-field"
+  fi
+fi
 
 # AMENDMENT 8(d), R-A8-2 — `unknown` NEVER REACHES THE OBJECT LOG, AND THE RULE
 # IS THE CONDITION RATHER THAN THE PATH. Amendment 7(b): the `session` field is

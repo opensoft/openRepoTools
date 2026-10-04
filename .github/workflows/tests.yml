@@ -266,6 +266,8 @@ jobs:
           /bin/bash -n lane-start
           /bin/bash -n lane-end
           /bin/bash -n link-estates
+          /bin/bash -n claude-current
+          /bin/bash -n claude-restart-check
           /bin/bash -n tests/test_lane_helpers.sh
           /bin/bash -n tests/run.sh
 
