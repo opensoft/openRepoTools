@@ -181,4 +181,4 @@ Brett Heap's ruling of 2026-10-04, verbatim: "managed ledger owns enrolled lanes
 - [x] 8.8 Refuse a managed lane (2) and an unknown one (1) before the first write of every act decision 21 lists, and refuse the marker's vocabulary in every legacy row writer.
 - [x] 8.9 Move the lifecycle only on a legacy verdict and an unchanged pre-image.
 - [x] 8.10 Document the seam in the manual, the proposal, this design and the spec.
-- [ ] 8.11 Prove each act on a valid long marker, a valid shorthand, a legacy row and five malformed rows, with zero change on every refusal, and leave every existing assertion of this change's suite section unchanged.
+- [x] 8.11 Prove each act on a valid long marker, a valid shorthand, a legacy row and five malformed rows, with zero change on every refusal, and leave every existing assertion of this change's suite section unchanged.
