@@ -6,6 +6,8 @@ they do not amend the lane collision protocol or the shipped command contracts.
 
 ## Brainstorm packets
 
+- [Lane Set Workspace](brainstorm/lane-set-workspace-overview.md) — a proposed `lset` command that assembles one tmux window per Claude lane plus a separate Codex chat window, with lane membership and profile choices left for a later proposal.
+
 - [Lane Task Broker](brainstorm/lane-task-broker-overview.md) — LS preserves parent swaps and delegated-task attachments; the existing Omnigent/factory layer owns local or remote worker placement and qualified recovery.
 - [Speckit Task Recovery](brainstorm/speckit-task-recovery-overview.md) — one task per implementation child as a preferred default, continuous task attribution and focused review after interruption.
 - [Crash-Consistent Lane Worktree Recovery](brainstorm/lane-worktree-recovery-state-overview.md) — a proposed canonical lane worktree layout, two-phase swap state, and resume-time reconciliation model.
