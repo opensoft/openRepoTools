@@ -114,6 +114,8 @@ Nothing is left as a comment thread and nothing is left unnamed.
   running on; what decides them is whether `indeterminate` is the answer at
   every one of these reads, as it already is at the holder's — a decision for
   the round that also settles how `lane-trees` carries a row it could not read.
+  *The unreadable sidecar is taken in 8.12* — a row of its own, and the
+  `unreadable-sidecar` class; the other three reads remain.
 - **`opensoft/openRepoTools#114` — the inventory fence, and the partial
   observation.** `SWAPPING -> SWAPPED` keeps the generation AND the operation by
   design (decision 13), so `set-lane-tree --generation G --operation O` still
@@ -125,7 +127,8 @@ Nothing is left as a comment thread and nothing is left unnamed.
   current one; what decides the first is whether the lifecycle STATE joins the
   compare-and-swap (at minimum `SWAPPING`) or the operation id is invalidated at
   finalization, and the second is whether a partial observation is a usage
-  refusal or is completed from one `lane_tree_now`.
+  refusal or is completed from one `lane_tree_now`. *The second is taken in
+  8.12*, as a usage refusal (64); the fence remains.
 - **`opensoft/openRepoTools#115` — validation beyond the `schema:` line.**
   `lane_sidecar_schema_ok` asks one question, so a truncated `schema: 1` file
   with no state and no generation passes it: readers emit empty fields and
@@ -144,7 +147,9 @@ Nothing is left as a comment thread and nothing is left unnamed.
   silently the wrong tree; what decides them is an injective id — or the `cksum`
   prefix on every path rather than on long ones only — WITH a migration for the
   sidecars already on disk, and a repository identity that is stable across a
-  clone and answerable for a worktree.
+  clone and answerable for a worktree. *The `cksum` prefix on every path is
+  taken in 8.12*, with no migration, because no released tooling has written a
+  sidecar; the `checkout` comparison remains.
 - **`opensoft/openRepoTools#117` — what the READY line and the report claim.**
   `writer_count` rises before the observation and the sidecar write are known to
   have worked, so the READY line says *N worktree(s) recorded* for trees
@@ -182,3 +187,4 @@ Brett Heap's ruling of 2026-10-04, verbatim: "managed ledger owns enrolled lanes
 - [x] 8.9 Move the lifecycle only on a legacy verdict and an unchanged pre-image.
 - [x] 8.10 Document the seam in the manual, the proposal, this design and the spec.
 - [x] 8.11 Prove each act on a valid long marker, a valid shorthand, a legacy row and five malformed rows, with zero change on every refusal, and leave every existing assertion of this change's suite section unchanged.
+- [x] 8.12 Take Codex's four inventory findings on `ec9847e` (decision 25): `lane-start` reports a `resumable` lane whose trees need reading; `set-lane-tree` refuses a partial observation with 64 (#114's second half); every tree id carries a `cksum` of its whole path (#116's first half); and an unreadable tree sidecar is a row of `lane-trees` and an `unreadable-sidecar` class of the reconciliation (#113's second read).

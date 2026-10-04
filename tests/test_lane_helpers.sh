@@ -13824,8 +13824,15 @@ run "$E" set-lane-state repoRC-9 RUNNING --owner "$RC_ID"
 is    "a WRITER meeting that dangling snapshot refuses rather than replacing it" "$rc" 1
 is    "…and the link is exactly where it was" \
       "$( [ -L "$RC_STATE_ROOT/repoRC-9/lane-state.yaml" ] && echo kept || echo gone )" kept
+# THE HELPER'S TREE-ID RULE, RESTATED for the cases that must name a sidecar
+# before any write has made one: a `cksum` of the whole path, then the path
+# folded to the manifest-key set (Codex on ec9847e: the fold alone collides).
+rc_tree_id() {   # <absolute path>
+  rti_f="$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '-' | tr -s '-' | sed -e 's/^-*//' -e 's/-*$//')"
+  printf 'c%s-%s\n' "$(printf '%s' "$1" | cksum | awk '{print $1}')" "$rti_f"
+}
 rc9_tp="$RC_DIR/.claude/worktrees/dangling-91"
-rc9_tid="$(printf '%s' "$rc9_tp" | tr -c 'A-Za-z0-9._-' '-' | tr -s '-' | sed -e 's/^-*//' -e 's/-*$//')"
+rc9_tid="$(rc_tree_id "$rc9_tp")"
 mkdir -p "$RC_STATE_ROOT/repoRC-9/trees"
 ln -s "$SANDBOX/no-such-sidecar-91" "$RC_STATE_ROOT/repoRC-9/trees/$rc9_tid.yaml"
 run "$E" set-lane-tree repoRC-9 "$rc9_tp" --checkout "$RC_DIR" --branch b --head h --upstream none --dirty 0 --unpushed 0
@@ -13968,7 +13975,7 @@ git -C "$WIP" commit -q -m "seed the repoRC-14 handoff"
 git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
 git -C "$WIP" push -q origin main
 git -C "$RC_DIR" worktree add -q -b feat/rc14 "$RC_DIR/.claude/worktrees/w14" >/dev/null 2>&1
-rc14_tid="$(printf '%s' "$RC_DIR/.claude/worktrees/w14" | tr -c 'A-Za-z0-9._-' '-' | tr -s '-' | sed -e 's/^-*//' -e 's/-*$//')"
+rc14_tid="$(rc_tree_id "$RC_DIR/.claude/worktrees/w14")"
 mkdir -p "$RC_STATE_ROOT/repoRC-14/trees"
 printf 'schema: 999\nlane: repoRC-14\n' > "$RC_STATE_ROOT/repoRC-14/trees/$rc14_tid.yaml"
 run "$E" set-lane-state repoRC-14 RUNNING --owner "$RC_ID" --agent claude --profile team-01a
@@ -13979,6 +13986,57 @@ has   "…naming the tree whose entry was not recorded" "$err" "the worktree inv
 run "$E" lane-state repoRC-14
 is    "…and the lane stays SWAPPING, never SWAPPED over an incomplete inventory" \
       "$(printf '%s\n' "$out" | awk -F'\t' '$1 == "state" { print $2 }')" SWAPPING
+
+# ------------------------------------- the inventory's own reads (Codex on ec9847e)
+rc_row repoRC-15 "harness \`$RC_ID\`"
+rc_seed_log repoRC-15
+run "$E" set-lane-state repoRC-15 SWAPPED --owner "$RC_ID"
+is    "a lane is recorded SWAPPED for the inventory cases" "$rc" 0
+
+# (a) A CALLER'S OBSERVATION IS WHOLE OR ABSENT: one flag alone used to file the
+# other four as `unknown`, `none`, `dirty 0` and `unpushed 0`, nobody's reading.
+run "$E" set-lane-tree repoRC-15 "$RC_DIR/.claude/worktrees/half-15" --checkout "$RC_DIR" --branch feat/half
+is    "set-lane-tree refuses a partial observation as a usage error" "$rc" 64
+has   "…saying it takes the observation whole" "$err" "WHOLE"
+run "$E" lane-trees repoRC-15
+is    "…and nothing was filed" "$rc" 8
+
+# (b) TWO PATHS ARE TWO RECORDS, even where folding to the file-name alphabet
+# makes them one: `a+b` and `a-b` fold to the same name.
+run "$E" set-lane-tree repoRC-15 "$RC_DIR/.claude/worktrees/a+b" --checkout "$RC_DIR" \
+    --branch feat/aplusb --head 1111111111111111111111111111111111111111 --upstream none --dirty 0 --unpushed 0
+is    "a tree whose name folds onto a sibling's is recorded" "$rc" 0
+run "$E" set-lane-tree repoRC-15 "$RC_DIR/.claude/worktrees/a-b" --checkout "$RC_DIR" \
+    --branch feat/aminusb --head 2222222222222222222222222222222222222222 --upstream none --dirty 3 --unpushed 1
+is    "…and so is the sibling" "$rc" 0
+run "$E" lane-trees repoRC-15
+is    "…as two records, neither replacing the other" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$2 ~ /worktrees\/a[-+]b$/' | grep -c .)" 2
+is    "…each keeping its own observation" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$2 ~ /worktrees\/a\+b$/ { print $3 }')" "feat/aplusb"
+
+# (c) A SIDECAR THAT IS THERE AND CANNOT BE READ IS SAID, NEVER SKIPPED.
+ln -s "$SANDBOX/no-such-sidecar-15" "$RC_STATE_ROOT/repoRC-15/trees/c0-orphan-15.yaml"
+run "$E" lane-trees repoRC-15
+is    "lane-trees names an unreadable sidecar as a row of its own" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "c0-orphan-15" { print $13 }')" "<unreadable>"
+run "$E" lane-reconcile repoRC-15
+is    "…which the reconciliation reports as unreadable-sidecar" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "TREE" && $2 == "c0-orphan-15" { print $3 }')" "unreadable-sidecar"
+is    "…while the lane itself is still resumable" \
+      "$(printf '%s\n' "$out" | awk -F'\037' '$1 == "VERDICT" { print $2 }')" "resumable"
+
+# (d) AND A RESUMABLE LANE WHOSE TREES NEED READING IS NOT LAUNCHED IN SILENCE.
+rc_seed_handoff repoRC-15
+git -C "$WIP" add -- handoffs/repoRC >/dev/null 2>&1
+git -C "$WIP" commit -q -m "seed the repoRC-15 handoff"
+git -C "$WIP" pull -q --rebase origin main 2>/dev/null || :
+git -C "$WIP" push -q origin main
+run "$START" repoRC 15 --no-launch
+is    "lane-start still starts a resumable lane" "$rc" 0
+has   "…but says so first when its trees need reading" "$err" "LANE RECOVERY: resumable"
+has   "…saying why" "$err" "need reading before a writer is relaunched"
+has   "…and naming the trees" "$err" "unreadable-sidecar"
 
 echo "== the managed-owner seam: managed ledger owns enrolled lanes; this tooling owns legacy =="
 

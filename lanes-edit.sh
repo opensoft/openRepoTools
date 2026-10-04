@@ -11731,24 +11731,27 @@ lane_state_rename() {   # <the old name's control root> <new lane>
 # ------------------------------------------------- the worktree inventory
 #
 # A TREE ID IS DERIVED FROM ITS PATH AND FROM NOTHING ELSE, so that a branch
-# renamed under a writer does not rename the record of the tree it is on. It is
-# the absolute path with every character outside the manifest-key set folded to
-# `-`, which is one file name per path and the same file name on every run.
+# renamed under a writer does not rename the record of the tree it is on: a
+# `cksum` of the WHOLE absolute path, then the path with every character outside
+# the manifest-key set folded to `-`, which a reader recognises. The fold alone
+# is NOT one name per path (Codex on ec9847e, PR #97): `…/a+b` and `…/a-b` fold
+# to the same name, and recording the second would replace the first tree's
+# sidecar and lose its last observation without a word. The checksum in front
+# of EVERY id is what keeps two paths two records; the fold is for a person.
 tree_id_for() {   # <absolute worktree path>
   tif_p="$(printf '%s' "${1-}" | tr -c 'A-Za-z0-9._-' '-' | tr -s '-')"
   while [ "${tif_p#-}" != "$tif_p" ]; do tif_p="${tif_p#-}"; done
   while [ "${tif_p%-}" != "$tif_p" ]; do tif_p="${tif_p%-}"; done
+  tif_c="$(printf '%s' "${1-}" | cksum | awk '{print $1}')"
   # AND IT CAN NEVER OUTGROW A FILE NAME. A path deep enough to make this
   # longer than the 255 bytes most filesystems take is a tree whose sidecar
   # could not be created at all — silently, since the failure would be the
   # shell's `>` and not this function's. The tail is what a reader recognises,
-  # so the head is what is dropped, and a `cksum` of the WHOLE path goes in
-  # front of it so that two trees sharing a tail keep two ids.
+  # so the head is what is dropped.
   if [ "${#tif_p}" -gt 180 ]; then
-    tif_c="$(printf '%s' "${1-}" | cksum | awk '{print $1}')"
-    tif_p="c$tif_c-$(printf '%s' "$tif_p" | tail -c 180)"
+    tif_p="$(printf '%s' "$tif_p" | tail -c 180)"
   fi
-  printf '%s\n' "$tif_p"
+  printf 'c%s-%s\n' "$tif_c" "$tif_p"
 }
 
 # ONE TREE'S SIDECAR. Every field is an OBSERVATION and none of them is truth
@@ -11803,8 +11806,19 @@ lane_trees_list() {   # <lane>
   [ "$ltl_rc" = 0 ] || return 1
   [ -d "$ltl_root/trees" ] || return 8
   for ltl_f in "$ltl_root"/trees/*.yaml; do
-    [ -r "$ltl_f" ] || continue
+    [ -e "$ltl_f" ] || [ -L "$ltl_f" ] || continue
     ltl_n=$((ltl_n + 1))
+    # A SIDECAR THAT IS THERE AND CANNOT BE READ IS NOT AN ABSENT ONE (Codex on
+    # ec9847e, PR #97). It was skipped, so a permission or an I/O error — or a
+    # dangling link — made the only record of a tree's location and its dirty
+    # state vanish, and a lane whose one sidecar it was read as having no
+    # inventory at all. It is a row of its own, named by its file and carrying
+    # no field, which `lane_reconcile` reports as `unreadable-sidecar`.
+    if [ ! -r "$ltl_f" ]; then
+      ltl_id="${ltl_f##*/}"; ltl_id="${ltl_id%.yaml}"
+      printf '%s\n' "$ltl_id$US$US$US$US$US$US$US$US$US$US$US$US<unreadable>"
+      continue
+    fi
     ltl_s="$(lane_sidecar_field "$ltl_f" schema 2>/dev/null || :)"
     ltl_id="$(lane_sidecar_field "$ltl_f" tree 2>/dev/null || :)"
     ltl_p="$(lane_sidecar_field "$ltl_f" path 2>/dev/null || :)"
@@ -12092,6 +12106,12 @@ LRC_BIND
     # no value: comparing git's answer to it would print a difference that means
     # nothing. It counts as wanting recovery, because a person has to say what
     # wrote it.
+    if [ "${lrc_sch:-}" = "<unreadable>" ]; then
+      printf 'TREE%s%s%sunreadable-sidecar%s%s%sits sidecar is there and could not be read, so the tree it records — where it is, and whether it held uncommitted or unpublished work — is NOT known, and nothing is assumed about it; read %s/trees/%s.yaml by hand before relaunching a writer\n' \
+        "$US" "$lrc_id" "$US" "$US" "<no path read>" "$US" "$lrc_root" "$lrc_id"
+      lrc_recover=$((lrc_recover + 1))
+      continue
+    fi
     if [ "${lrc_sch:-}" != "$LANE_STATE_SCHEMA" ]; then
       printf 'TREE%s%s%sunknown-schema%s%s%sits sidecar records schema %s and this reader writes %s, so none of its fields is read and nothing is compared against them; the tree itself is untouched\n' \
         "$US" "$lrc_id" "$US" "$US" "${lrc_p:-<no path recorded>}" "$US" "${lrc_sch:-<none>}" "$LANE_STATE_SCHEMA"
@@ -15293,6 +15313,13 @@ EOF
         2) die "no worktree was recorded for lane $lane: $slt_path exists and git does not answer in it, so there is no observation to file and this command invents none. The path itself was not touched." 1 ;;
         *) die "no worktree was recorded for lane $lane: git answers in $slt_path and one of the reads an observation is made of FAILED, so nothing was written — a branch, a head, a status or an upstream that could not be read is never recorded as a clean tree (Amendment 7(d)). Read it by hand: git -C $slt_path status" 1 ;;
       esac
+    # AND A CALLER'S OBSERVATION IS TAKEN WHOLE OR NOT AT ALL (Codex on ec9847e,
+    # PR #97). One flag alone used to skip the reading above and let the rest
+    # reach the record as `unknown`, `none` and — the dangerous two — `dirty 0`
+    # and `unpushed 0`, which a later reconciliation of a vanished tree reads as
+    # clean and published although nobody observed either.
+    elif [ -z "$slt_b" ] || [ -z "$slt_h" ] || [ -z "$slt_u" ] || [ -z "$slt_d" ] || [ -z "$slt_n" ]; then
+      die "set-lane-tree takes the caller's observation WHOLE — --branch, --head, --upstream, --dirty and --unpushed together — or none of them, when the tree is read here. A partial one would be filed with values nobody observed, and 'dirty 0, unpushed 0' is the record a later reconciliation reads as clean and published. Nothing was written." 64
     fi
     # THE FENCE, AND IT IS THE LANE'S OWN (Copilot round 5 on #97). A caller
     # that names the generation and the operation it is recording under is

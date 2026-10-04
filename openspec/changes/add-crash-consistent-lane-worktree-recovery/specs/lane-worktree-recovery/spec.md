@@ -13,6 +13,14 @@ The system SHALL maintain a structured inventory for every worktree owned by a l
 - **WHEN** a Speckit or openRepoShape contract prescribes a feature-first worktree path
 - **THEN** the lane inventory references that path without moving it into a conflicting lane-first layout
 
+#### Scenario: Two paths fold to the same record name
+- **WHEN** two worktree paths differ only in characters outside the record-name alphabet
+- **THEN** the lane inventory keeps two records, each with its own observation, and neither replaces the other
+
+#### Scenario: A caller supplies part of an observation
+- **WHEN** a caller records a tree with some but not all of branch, HEAD, upstream, dirty state and unpushed count
+- **THEN** the system refuses the write as a usage error and records nothing, rather than completing the observation with values nobody read
+
 ### Requirement: Coordinator base checkout
 The system SHALL resolve the lane coordinator's checkout from canonical lane, home repository, estate, and workstation shape. After migration, the coordinator SHALL launch from the canonical base checkout while mutable feature work occurs in inventoried writer worktrees.
 
@@ -122,6 +130,14 @@ Before launching replacement writers, the system SHALL compare lane and tree sid
 #### Scenario: A tree cannot be read
 - **WHEN** Git answers in a tree's path and one of the reads an observation is made of fails
 - **THEN** the system reports the tree as unreadable, records no observation of it, and assumes neither clean nor dirty state for it
+
+#### Scenario: A tree record cannot be read
+- **WHEN** a tree's inventory record exists at the lane's control root and cannot be read
+- **THEN** the system reports the record as unreadable, counts it toward recovery, and never reads the lane as owning one tree fewer
+
+#### Scenario: A resumable lane's trees need reading
+- **WHEN** a swap completed and the reconciliation counts a tree that is dirty, unpushed, requires recovery, or is unmanaged or stale
+- **THEN** the launcher reports the reconciliation before it writes anything, rather than starting the lane in silence
 
 ### Requirement: Missing worktrees are rebuilt only from durable records
 The lane system SHALL delegate worktree reconstruction to the existing estate resume mechanism and SHALL not hand-roll worktree creation, WIP commits, resets, or force operations.

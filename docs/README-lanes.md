@@ -2983,6 +2983,16 @@ with the lane's own snapshot under the mutex before the record is filed, so a
 poll taken under an operation a recovery has since superseded is refused with
 **7** instead of being filed over the current inventory.
 
+**One path, one record.** A tree's record is named from its path and from
+nothing else: `c<cksum>-<folded path>`, a `cksum` of the WHOLE absolute path
+and then the path with every character outside the file-name alphabet folded to
+`-`. The fold is for a person reading the directory; the checksum is what keeps
+`…/a+b` and `…/a-b`, which fold alike, two records rather than one replacing the
+other. And `set-lane-tree` takes a caller's observation **whole** — `--branch`,
+`--head`, `--upstream`, `--dirty` and `--unpushed` together — or reads the tree
+itself; a partial one is refused with **64** and nothing is written, because the
+fields it lacks would be filed as a `dirty 0, unpushed 0` nobody observed.
+
 ### The reconciliation, which resets nothing
 
 ```sh
@@ -2994,13 +3004,16 @@ tree, reads `git worktree list --porcelain` in the lane's checkout and the
 directories under both lane roots, and prints one `TREE` line per tree with a
 classification: `ok`, `dirty`, `unpushed`, `unpushed-unknown`,
 `dirty+unpushed`, `dirty+unpushed-unknown`, `missing`, `possible-loss`,
-`not-a-checkout`, `unreadable`, `unknown-schema`, `unmanaged`,
-`stale-registration`. A `BINDING` line says where the lane is bound — `here`,
+`not-a-checkout`, `unreadable`, `unreadable-sidecar`, `unknown-schema`,
+`unmanaged`, `stale-registration`. A `BINDING` line says where the lane is bound — `here`,
 `free`, `gone` (bound on this host's tmux and its window is gone), `elsewhere`
 (and where), or `unknown` (its log could not be read) — and `elsewhere` or
 `unknown` turns every verdict into `indeterminate` (Amendment 18(b)). The last
 line is the `VERDICT`. `lane-start` prints the report before it writes
-anything, for any verdict that is not `running`, `resumable` or `closed`.
+anything, for any verdict that is not `running` or `closed` — and for
+`resumable` as well whenever its `TREES` line counts a tree that is dirty or
+unpushed, requires recovery, or is unmanaged or stale: `resumable` says the swap
+completed, not that every tree it left is clean, published and where it was.
 
 A **renamed** lane keeps its snapshot and inventory: `rename-lane` moves its
 control root to the new name once the rename's commit has landed, and never
@@ -3034,6 +3047,12 @@ NOTHING (`AGENTS.md` rule 1), so this read runs `git status`, `git log @{u}..`,
 * an **unreadable** tree is one git answers in and cannot be read through —
   nothing is assumed about it, in either direction, and the line names the
   `git -C <path> status` a person runs;
+* an **unreadable-sidecar** is a tree record that IS there and could not be
+  read — a permission, an I/O error, a dangling link. The tree it recorded is
+  NOT known, in any field; it counts toward recovery, the line names the file a
+  person reads by hand, and it is never skipped as though the lane owned one
+  tree fewer (`lane-trees` carries it as a row of its own whose schema is
+  `<unreadable>`);
 * an **unknown-schema** tree is a sidecar written by a newer tooling: it is
   named, and not one field of it is read, because a value taken out of a record
   whose shape this reader is guessing at is worse than no value.

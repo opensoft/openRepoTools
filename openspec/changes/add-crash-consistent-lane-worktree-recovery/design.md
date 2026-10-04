@@ -434,6 +434,33 @@ handoff and the alias table but not the control root, which is keyed by the
 lane's name, so a renamed lane read `no-state`; it now moves that directory once
 its commit has landed, never over an existing one.
 
+## Decisions taken on Codex's review of `ec9847e`
+
+### 25. The inventory says what it could not read, keeps one record per path, and takes an observation whole
+
+Four findings, each a tree a recovery would misread, and each a part of a
+follow-up this change had filed and deferred:
+
+- **An unreadable sidecar was skipped** (`[ -r ] || continue`), so a record
+  nobody could read and no record at all were one silence. It is now a row of
+  `lane-trees` named by its file, with no field and the schema `<unreadable>`,
+  and `lane-reconcile` reports it as `unreadable-sidecar` and counts it toward
+  recovery (#113's second read).
+- **The tree id was not injective.** The fold to the file-name alphabet makes
+  `…/a+b` and `…/a-b` one name, so the second tree's record replaced the
+  first's. The `cksum` of the whole path, which only an over-long id carried,
+  now prefixes EVERY id. No migration: no released tooling has written a
+  sidecar (#116's first half).
+- **A partial observation was completed with clean-looking defaults.** One flag
+  skipped the reading and the rest were filed as `unknown`, `none`, `dirty 0`
+  and `unpushed 0`. It is now a usage refusal, 64, and nothing is written — the
+  answer decision 18 gives the other path (#114's second half).
+- **`lane-start` stayed silent over a `resumable` lane** whatever its trees
+  held. `resumable` says the swap completed; it is now quiet only when the
+  `TREES` line counts nothing dirty or unpushed, nothing requiring recovery and
+  nothing unmanaged or stale, and the report it prints names the binding when
+  it is neither here nor free.
+
 ## Risks / Trade-offs
 
 - **[Risk] Lane-first discovery conflicts with feature-first Speckit paths** → Use a sidecar index over shape-governed paths; do not move governed trees.
