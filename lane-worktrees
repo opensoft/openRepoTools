@@ -44,7 +44,9 @@ The sweeps directory: ${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools/
 sweeps/<lane>/<UTC>/ with MANIFEST.sha256, DISPOSITION.md and rescues.tsv.
 `sweep --expire` lists (and with `--yes` removes) archives older than the
 retention (90 days; `sweep.conf`) whose every rescue branch is still on
-origin; an archive whose rescue branch is gone from origin is never expired.
+origin at the rescued SHA; an archive whose rescue branch is gone or moved,
+or that is not whole (its MANIFEST.sha256 missing or not matching, its
+rescues.tsv unreadable), is never expired.
 
 Exit codes:
   0  dry run: nothing to retire  ·  --yes: every act completed
@@ -387,6 +389,24 @@ class Helper:
             self._fetched = True
         return proc
 
+    def canon_lane(self, lane: str):
+        """(canonical spelling, refusal) - Amendment 15's resolver, as
+        `lane-end` reads it: 0 with the row's spelling; 66 the alias table
+        unreadable and 2 with 15(d)'s words a published case pair, both
+        refusals; any other answer (a helper predating the subcommand) keeps
+        the typed spelling."""
+        proc = self.call("canon-lane", lane, fetch=True)
+        out = proc.stdout.strip()
+        if proc.returncode == 0 and out:
+            return out, ""
+        if proc.returncode == 66:
+            return lane, ("the lane alias table could not be read (exit 66), so a renamed "
+                          f"lane's old name cannot be resolved: {_first_line(proc.stderr)}")
+        if proc.returncode == 2 and "Amendment 15(d)" in (proc.stderr or ""):
+            return lane, ("the published register spells this lane two ways (Amendment "
+                          f"15(d)): {_first_line(proc.stderr)}")
+        return lane, ""
+
     def lane_facts(self, lane: str) -> LaneFacts:
         facts = LaneFacts(lane)
         proc = self.call("lane-reconcile", lane, fetch=True)
@@ -486,11 +506,12 @@ class Helper:
         proc = self.call("workspace-root")
         return proc.stdout.strip() if proc.returncode == 0 else ""
 
-    def transcript_live(self, uuid: str) -> str:
+    def transcript_live(self, uuid: str, fresh: bool = False) -> str:
         """live | none | unknown - one live process carrying that transcript,
-        asked once per session however many trees it recorded."""
+        asked once per session however many trees it recorded (`fresh` asks
+        again: at the moment of an act the cached answer is minutes old)."""
         cache = self.__dict__.setdefault("_live", {})
-        if uuid not in cache:
+        if fresh or uuid not in cache:
             proc = self.call("transcript-holders", uuid)
             cache[uuid] = {0: "live", 8: "none"}.get(proc.returncode, "unknown")
         return cache[uuid]
@@ -700,7 +721,8 @@ class MergeEvidence:
             return self._prs[slug]
         env = dict(os.environ, GH_PROMPT_DISABLED="1", GH_NO_UPDATE_NOTIFIER="1")
         proc = run(["gh", "pr", "list", "--repo", slug, "--state", "all", "--limit", "1000",
-                    "--json", "number,state,mergedAt,headRefName,headRefOid,isCrossRepository"],
+                    "--json", "number,state,mergedAt,headRefName,headRefOid,baseRefName,"
+                    "isCrossRepository"],
                    env=env, timeout=120)
         rows = None
         if proc.returncode == 0:
@@ -713,9 +735,18 @@ class MergeEvidence:
         self._prs[slug] = rows
         return rows
 
+    @staticmethod
+    def default_branches(repo: str) -> set:
+        """The branch a landing goes into: origin's HEAD where this clone
+        knows it, else `main` or `master`."""
+        head = git_out(repo, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD") or ""
+        if head.startswith("origin/") and len(head) > len("origin/"):
+            return {head[len("origin/"):]}
+        return set(PROTECTED_BRANCHES)
+
     def judge(self, repo: str, slug: str, branch: str, tip: str) -> dict:
-        """{'state': merged|open|closed|none|unknown, 'pr': n, 'source': ...,
-        'why': ...} for `branch` at `tip`."""
+        """{'state': merged|moved|elsewhere|open|closed|none|unknown, 'pr': n,
+        'source': ..., 'why': ...} for `branch` at `tip`."""
         rows = self.prs(slug)
         if rows is None:
             return {"state": "unknown", "pr": 0, "source": "",
@@ -726,11 +757,29 @@ class MergeEvidence:
         if not mine:
             return {"state": "none", "pr": 0, "source": "gh", "why": "no pull request names it"}
         landed = self.landed()
+        # AN OPEN PULL REQUEST PROTECTS ITS BRANCH BEFORE ANYTHING ELSE: an
+        # older merged PR on the same branch says nothing about the work the
+        # open one still carries - unless the register has LANDED that very PR.
+        for row in sorted(mine, key=lambda r: -int(r.get("number", 0))):
+            if row.get("state") == "OPEN" and (slug.lower(), int(row.get("number", 0))) not in landed:
+                return {"state": "open", "pr": int(row["number"]), "source": "gh",
+                        "why": f"PR #{row['number']} is open"}
+        defaults = self.default_branches(repo)
+        elsewhere = None
         for row in sorted(mine, key=lambda r: -int(r.get("number", 0))):
             number = int(row.get("number", 0))
             by_register = (slug.lower(), number) in landed
             by_gh = row.get("state") == "MERGED"
             if by_register or by_gh:
+                # A MERGE INTO A RELEASE OR FEATURE BRANCH IS NOT A LANDING: only
+                # a PR whose base is the default branch makes its branch merged.
+                base = row.get("baseRefName") or ""
+                if base not in defaults:
+                    elsewhere = elsewhere or {
+                        "state": "elsewhere", "pr": number, "source": "gh",
+                        "why": f"PR #{number} was merged into {base or 'a base gh did not name'}, "
+                               f"not {'/'.join(sorted(defaults))}: not a landing"}
+                    continue
                 head = row.get("headRefOid") or ""
                 contained = bool(tip) and (tip == head or (bool(head) and git(
                     repo, "merge-base", "--is-ancestor", tip, head).returncode == 0))
@@ -741,10 +790,8 @@ class MergeEvidence:
                 return {"state": "moved", "pr": number, "source": source, "head": head,
                         "why": f"PR #{number} is merged ({source}) but this branch has moved "
                                f"past its head {short(head)}"}
-        for row in mine:
-            if row.get("state") == "OPEN":
-                return {"state": "open", "pr": int(row["number"]), "source": "gh",
-                        "why": f"PR #{row['number']} is open"}
+        if elsewhere:
+            return elsewhere
         return {"state": "closed", "pr": int(mine[0].get("number", 0)), "source": "gh",
                 "why": f"PR #{mine[0].get('number')} was closed unmerged"}
 
@@ -933,6 +980,7 @@ class Tree:
         self.bundle = ""
         self.ignored_archive = ""
         self.register = ""
+        self.contested = False             # another lane's inventory names it too
 
     @property
     def slice(self) -> str:
@@ -1032,8 +1080,14 @@ def read_tree(tree: Tree) -> None:
         if tree.remote_tip:
             counts = git_out(tree.path, "rev-list", "--left-right", "--count",
                              f"{tree.remote_tip}...{tree.head}")
-            if counts and len(counts.split()) == 2:
-                tree.behind, tree.ahead = (int(x) for x in counts.split())
+            parts = (counts or "").split()
+            if len(parts) != 2 or not all(x.isdigit() for x in parts):
+                # NEVER ZERO FOR UNKNOWN: "0 ahead" is what lets a tree go
+                # without a rescue.
+                tree.read_error = (f"its distance from origin/{tree.remote_branch} could not "
+                                   "be read (git rev-list failed)")
+                return
+            tree.behind, tree.ahead = int(parts[0]), int(parts[1])
         contains = git(tree.path, "for-each-ref", "--count=1", "--contains", tree.head,
                        "--format=%(refname)", "refs/remotes/origin/")
         if contains.returncode == 0:
@@ -1080,6 +1134,18 @@ def tree_guards(tree: Tree) -> str:
         return ("its worktree registration is LOCKED - someone pinned it on purpose; "
                 f"`git -C {tree.checkout or tree.path} worktree unlock {tree.path}` is theirs to run")
     if tree.kind == "clone":
+        # A CLONE TAKES ITS LINKED WORKTREES' REPOSITORY WITH IT: a worktree
+        # elsewhere - perhaps a live writer's - keeps its files and loses its
+        # git directory.
+        wl = git(tree.path, "worktree", "list", "--porcelain")
+        if wl.returncode != 0:
+            return "its worktree registrations could not be read"
+        linked = [line[len("worktree "):] for line in wl.stdout.splitlines()
+                  if line.startswith("worktree ")][1:]
+        if linked:
+            return (f"it is a CLONE whose git directory {len(linked)} linked worktree(s) share "
+                    f"(e.g. {linked[0]}); its removal would take their repository with it - "
+                    "remove or move them first")
         # A CLONE TAKES ITS BRANCHES AND ITS STASH WITH IT, which a worktree
         # never does: every one of them must be on origin first.
         heads = git(tree.path, "for-each-ref", "--format=%(refname:short) %(objectname)",
@@ -1132,13 +1198,14 @@ def tree_guards(tree: Tree) -> str:
     return ""
 
 
-def ignored_work(tree: Tree) -> list:
+def ignored_work(tree: Tree):
     """Ignored paths that are NOT caches: a commit cannot carry them, so they
-    are archived beside the bundle before the tree goes."""
+    are archived beside the bundle before the tree goes. None where git could
+    not list them - which is never read as "there are none"."""
     proc = git(tree.path, "ls-files", "--others", "--ignored", "--exclude-standard",
                "--directory", "-z")
     if proc.returncode != 0:
-        return []
+        return None
     out = []
     for rel in proc.stdout.split("\0"):
         rel = rel.rstrip("/")
@@ -1225,6 +1292,17 @@ class Sweep:
             self.refusal = ("no lanes-edit.sh beside this command or on PATH: which trees "
                             "are this lane's is #97's inventory, and nothing else answers it")
             return
+        # THE CANONICAL SPELLING BEFORE ANY PATH IS DERIVED FROM IT: scratch,
+        # caches, rescue names and the Lane: trailer comparison all use it.
+        canon, why = self.helper.canon_lane(self.lane)
+        if why:
+            self.refusal = f"lane {self.lane}'s name could not be resolved: {why}"
+            return
+        if canon != self.lane:
+            self.notes.append(f"lane {self.lane} -> {canon} (Amendment 15: the register row's "
+                              "spelling is canonical)")
+            self.lane = canon
+            self.facts = LaneFacts(canon)
         self.facts = self.helper.lane_facts(self.lane)
         f = self.facts
         if f.why:
@@ -1278,10 +1356,13 @@ class Sweep:
         for rec in self.facts.inventory:
             path = rec.get("path") or ""
             if not path or rec.get("schema") not in ("1",):
-                if rec.get("id"):
-                    self.notes.append(f"inventory record {rec.get('id')} is unreadable or of "
-                                      f"schema {rec.get('schema') or '?'}; nothing of it is read "
-                                      "and it is never swept")
+                # A RECORD THAT CANNOT BE READ IS A TREE WHOSE OWNER IS UNKNOWN:
+                # skipping it would let the table say "nothing to retire", and
+                # --include-foreign find the same path as nobody's.
+                self.refusal = self.refusal or (
+                    f"inventory record {rec.get('id') or '?'} is unreadable or of schema "
+                    f"{rec.get('schema') or '?'}, so which trees are this lane's is not known "
+                    "(Amendment 7(d)); read it: lanes-edit.sh lane-trees " + self.lane)
                 continue
             if lane_dir and real(path) == lane_dir:
                 continue
@@ -1360,14 +1441,33 @@ class Sweep:
                     except OSError:
                         continue
         for tree in self.trees:
-            if tree.owner == "foreign" and tree.real in claimed:
+            if tree.real not in claimed:
+                continue
+            tree.other_lane = claimed[tree.real]
+            if tree.owner == "foreign":
                 tree.foreign_kind = "other-lane"
-                tree.other_lane = claimed[tree.real]
+            else:
+                # BOTH INVENTORIES NAME IT: records are history and a path can
+                # be reused, so which lane owns it now is not this sweep's to
+                # decide.
+                tree.contested = True
+
+    def _branch_checkouts(self) -> list:
+        checkouts = []
+        if self.facts.dir and os.path.isdir(self.facts.dir):
+            checkouts.append(self.facts.dir)
+        for t in self.trees:
+            if t.owner == "inventory" and t.checkout and os.path.isdir(t.checkout) \
+                    and real(t.checkout) not in [real(c) for c in checkouts]:
+                checkouts.append(t.checkout)
+        return checkouts
 
     def _fetch_all(self) -> None:
         commons: dict = {}
-        for tree in self.trees:
-            probe = tree.path if tree.exists else tree.checkout
+        probes = [t.path if t.exists else t.checkout for t in self.trees]
+        if self.opts.branches:
+            probes += self._branch_checkouts()
+        for probe in probes:
             if not probe or not os.path.isdir(probe):
                 continue
             common = git_out(probe, "rev-parse", "--git-common-dir")
@@ -1494,6 +1594,10 @@ class Sweep:
             if t.lean:
                 t.reason += "; LOAD-BEARING: " + _lean_text(t.lean)
             return
+        if t.contested:
+            put("keep", f"lane {t.other_lane}'s inventory names it too; which lane owns it "
+                        "now is a person's to say")
+            return
         if not t.exists:
             if t.registered:
                 if t.locked:
@@ -1528,7 +1632,7 @@ class Sweep:
             return
         if self.opts.fetch:
             state = self.fetched.get(real(t.common), "")
-            if state and state != "ok":
+            if state and state not in ("ok", "no origin remote"):
                 put("keep", f"origin could not be read ({state}), so what is published is unknown")
                 return
         if not t.origin_url:
@@ -1562,7 +1666,8 @@ class Sweep:
             return
         if t.remote_tip and t.ahead == 0:
             put("remove", "clean, and every commit is on origin/" + t.remote_branch
-                + (f" ({m.get('why')})" if m.get("state") in ("open", "closed", "moved") else ""))
+                + (f" ({m.get('why')})" if m.get("state") in ("open", "closed", "moved",
+                                                                "elsewhere") else ""))
             return
         if not t.remote_tip and t.on_origin:
             put("remove", "clean, and its head is on origin")
@@ -1578,15 +1683,22 @@ class Sweep:
             + ": pushed as is, then removed")
 
     def _branches(self) -> None:
-        checkouts = []
-        if self.facts.dir and os.path.isdir(self.facts.dir):
-            checkouts.append(self.facts.dir)
-        for t in self.trees:
-            if t.owner == "inventory" and t.checkout and os.path.isdir(t.checkout) \
-                    and real(t.checkout) not in [real(c) for c in checkouts]:
-                checkouts.append(t.checkout)
-        for co in checkouts:
-            self.items.extend(branch_items(co, self.lane, self.evidence))
+        for co in self._branch_checkouts():
+            items = branch_items(co, self.lane, self.evidence)
+            if self.opts.fetch:
+                common = git_out(co, "rev-parse", "--git-common-dir") or ""
+                if common and not os.path.isabs(common):
+                    common = os.path.normpath(os.path.join(co, common))
+                state = self.fetched.get(real(common), "") if common else ""
+                if state != "ok":
+                    # A DELETE DECIDED ON STALE REFS IS NO DELETE: what origin
+                    # holds now was not read.
+                    for it in items:
+                        if it.disposition in ("delete", "delete+remote"):
+                            it.disposition = "keep"
+                            it.reason = (f"origin could not be fetched in {co} "
+                                         f"({state or 'not fetched'}); " + it.reason)
+            self.items.extend(items)
 
     def _scratch(self) -> None:
         if not self.facts.dir:
@@ -1633,23 +1745,52 @@ class Sweep:
             if t.owner == "inventory" and t.exists and t.is_git \
                     and not any(under(t.path, r) for r in roots):
                 roots.append(t.path)
-        live_paths = [t.path for t in self.trees if t.disposition == "live"]
+        # NEVER FROM A TREE THAT IS NOT THIS LANE'S OR NOT PROVABLY FREE: a
+        # FOREIGN tree (whoever's it is, live or not), a live one, one whose
+        # liveness could not be read, one another lane also claims, one
+        # something leans on. A tree kept for its git state (a locked
+        # registration, a submodule's work) still gives up its caches: they
+        # hold no work, and its liveness is asked below.
+        protected = [t.path for t in self.trees if self._cache_protected(t)]
         # A CACHE INSIDE SCRATCH THAT IS BEING ARCHIVED GOES WITH THE SCRATCH
         # (and the archive leaves caches out): two acts on one path is one too many.
         archived = [i.path for i in self.items if i.kind == "scratch"
                     and i.disposition == "archive+remove"]
+        trees = sorted((t.path for t in self.trees if t.exists), key=len, reverse=True)
         for root in roots:
             for path, size in find_caches(root):
-                if any(under(path, lp) for lp in live_paths + archived):
+                if any(under(path, lp) for lp in protected + archived):
                     continue
-                if self.procs and self.procs.available and self.procs.holders(path):
+                owner = self._cache_owner(path, roots, trees)
+                # LIVENESS IS THE OWNER'S, not the cache's: a writer stands in
+                # the tree, not in its __pycache__.
+                if self.procs is None or not self.procs.available or self.procs.holders(owner):
                     continue
                 if tracked(path):
                     continue
                 it = Item("cache", path, "remove", "a dependency cache or bytecode: it holds no "
                           "work and is rebuilt", False)
                 it.size = size
+                it.extra["owner"] = owner
                 self.items.append(it)
+
+    @staticmethod
+    def _cache_protected(t: Tree) -> bool:
+        return (t.disposition in ("foreign", "live", "load-bearing") or t.live is not None
+                or t.contested or t.result.startswith(("FAILED", "left")))
+
+    @staticmethod
+    def _cache_owner(path: str, roots: list, trees: list) -> str:
+        """The tree a cache is in, else the top directory under the lane's
+        root it is in, else the root."""
+        for t in trees:
+            if under(path, t):
+                return t
+        for r in roots:
+            if under(path, r):
+                rel = os.path.relpath(path, r).split(os.sep)
+                return os.path.join(r, rel[0]) if rel and rel[0] not in ("", ".") else r
+        return path
 
     # ------------------------------------------------------------ output
     def retire_count(self) -> int:
@@ -1751,9 +1892,19 @@ class Sweep:
             self._write_disposition()
 
     def _archive_dir(self) -> str:
+        """This invocation's archive, created EXCLUSIVELY: two sweeps started
+        in one second never share - and overwrite - one ledger."""
         if not self.archive:
-            path = os.path.join(sweeps_dir(), safe_ref_part(self.lane), self.stamp)
-            os.makedirs(path, mode=0o700, exist_ok=True)
+            parent = os.path.join(sweeps_dir(), safe_ref_part(self.lane))
+            os.makedirs(parent, mode=0o700, exist_ok=True)
+            path, n = os.path.join(parent, self.stamp), 1
+            while True:
+                try:
+                    os.mkdir(path, 0o700)
+                    break
+                except FileExistsError:
+                    n += 1
+                    path = os.path.join(parent, f"{self.stamp}-{n}")
             self.archive = path
         return self.archive
 
@@ -1765,22 +1916,42 @@ class Sweep:
             name = f"{base}-{n}"
         return name
 
+    def _occupied(self, path: str, writer: str = "") -> str:
+        """Why `path` may NOT be touched now, or '' - asked afresh: processes,
+        open files and tmux panes, and the session that recorded it. A scan
+        that could not be made is a reason, never a pass."""
+        fresh = ProcScan()
+        if not fresh.available:
+            return "liveness could not be read: " + (fresh.why or "no process scan")
+        held = fresh.holders(path)
+        if held:
+            pid, comm, kind, _w = held[0]
+            return f"process {pid} ({comm or '?'}) has its {kind} there"
+        if writer and UUID_RE.match(writer) and writer != self.caller:
+            answer = self.helper.transcript_live(writer, fresh=True)
+            if answer != "none":
+                return (f"the session that recorded it ({writer[:8]}) is "
+                        + ("live" if answer == "live" else "of unknown liveness"))
+        return ""
+
     def _act_tree(self, t: Tree) -> None:
         # LIVENESS IS ASKED AGAIN AT THE MOMENT OF THE ACT, not trusted from the
         # read: a writer may have started in the tree since the table was made.
-        if t.exists and self.procs is not None:
-            fresh = ProcScan()
-            if fresh.available and fresh.holders(t.path):
-                pid, comm, kind, _w = fresh.holders(t.path)[0]
-                t.disposition = "live"
-                t.result = f"left: process {pid} ({comm}) arrived in it"
+        writer = (t.sidecar or {}).get("writer", "")
+        if t.exists:
+            why = self._occupied(t.path, writer)
+            if why:
+                t.disposition = "live" if not why.startswith("liveness") else "keep"
+                t.result = f"left: {why}"
                 return
         if t.disposition == "prune":
+            # THAT ONE REGISTRATION: `git worktree prune` would unregister every
+            # missing tree of the repository - another lane's, a FOREIGN one,
+            # one on a disk that is not mounted - and say nothing of it.
             proc = git(t.checkout, "worktree", "remove", t.path)
             if proc.returncode != 0:
-                proc = git(t.checkout, "worktree", "prune")
-            if proc.returncode != 0:
-                raise _ActFailed("git worktree prune: " + _first_line(proc.stderr))
+                raise _ActFailed("git worktree remove " + t.path + ": " + _first_line(proc.stderr)
+                                 + " - a repository-wide prune is never run in its place")
             regs = [r["path"] for r in worktree_registrations(t.checkout)]
             if t.path in regs:
                 raise _ActFailed("the registration is still there after the prune")
@@ -1836,6 +2007,10 @@ class Sweep:
             t.bundle = self._bundle(t, ref_to_bundle)
         # 3. IGNORED WORK no commit could carry.
         extra = ignored_work(t)
+        if extra is None:
+            raise _ActFailed("its ignored files could not be listed, so whether it holds an "
+                             ".env or local configuration no commit carries is unknown; left "
+                             "in place" + (f"; its rescue is at {t.rescue}" if t.rescue else ""))
         if extra:
             size = sum(dir_size(os.path.join(t.path, r)) if os.path.isdir(os.path.join(t.path, r))
                        else os.lstat(os.path.join(t.path, r)).st_size for r in extra
@@ -1848,9 +2023,14 @@ class Sweep:
                                  + (f"; its rescue is at {t.rescue}" if t.rescue else ""))
             t.ignored_archive = self._tar(t.path, extra,
                                           f"{t.slice}-ignored.tar.gz")
-        # 4. NOTHING MOVED, PROVED AGAIN AT THE MOMENT OF REMOVAL: the head is the
-        # one classified, and the content is clean - or, for a WIP rescue, is
+        # 4. NOTHING MOVED, PROVED AGAIN AT THE MOMENT OF REMOVAL: no writer
+        # arrived while the pushes, bundles and archives ran; the head is the
+        # one classified; and the content is clean - or, for a WIP rescue, is
         # byte for byte the tree the rescue commit carries.
+        why = self._occupied(t.path, writer)
+        if why:
+            raise _ActFailed(f"{why} - it arrived while the rescue was made; left in place"
+                             + (f"; its rescue is at {t.rescue}" if t.rescue else ""))
         head_now = git_out(t.path, "rev-parse", "-q", "--verify", "HEAD") or ""
         if head_now != t.head:
             raise _ActFailed(f"HEAD moved from {short(t.head) or 'none'} to "
@@ -1879,20 +2059,22 @@ class Sweep:
             raise _ActFailed("the directory is still there after the removal")
         t.result = "removed" + ((f"; pushed to {t.rescue}" if disp == "push+remove" else
                                  f"; rescue {t.rescue}") if t.rescue else "")
-        # 5. THE BRANCHES OF A MERGED TREE.
+        # 5. THE BRANCHES OF A MERGED TREE - each deleted only AT THE SHA THAT
+        # WAS JUDGED merged, so a branch that moved under the sweep is kept.
         if disp == "remove+delete-branch" and t.branch:
             co = t.checkout if t.checkout and os.path.isdir(t.checkout) else checkout
-            proc = git(co, "branch", "-D", t.branch)
-            t.result += "; local branch deleted" if proc.returncode == 0 else (
-                "; local branch NOT deleted: " + _first_line(proc.stderr))
+            done, why = delete_local_branch(co, t.branch, t.head)
+            t.result += "; local branch deleted" if done else "; local branch NOT deleted: " + why
+            if not done:
+                self.failed += 1
             head = (t.merge or {}).get("head", "")
             ours = t.lane_trailer.lower() == self.lane.lower()
             if t.remote_tip and ours and head and (t.remote_tip == head or git(
                     co, "merge-base", "--is-ancestor", t.remote_tip, head).returncode == 0):
-                proc = git(co, "push", "--no-verify", "origin", "--delete", t.remote_branch,
-                           timeout=GIT_NET_TIMEOUT)
-                t.result += "; remote branch deleted" if proc.returncode == 0 else (
-                    "; remote branch NOT deleted: " + _first_line(proc.stderr))
+                done, why = delete_remote_branch(co, t.remote_branch, t.remote_tip)
+                t.result += "; remote branch deleted" if done else "; remote branch NOT deleted: " + why
+                if not done:
+                    self.failed += 1
             elif t.remote_tip:
                 t.result += ("; remote branch kept (" + ("its Lane: trailer is "
                              + (t.lane_trailer or "absent") if not ours else
@@ -1986,15 +2168,36 @@ class Sweep:
 
     def _act_item(self, i: Item) -> None:
         if i.kind == "scratch" and i.disposition == "archive+remove":
-            fresh = ProcScan()
-            if fresh.available and fresh.holders(i.path):
-                i.disposition, i.result = "live", "left: a process arrived in it"
+            why = self._occupied(i.path)
+            if why:
+                i.disposition = "live" if not why.startswith("liveness") else "keep"
+                i.result = "left: " + why
                 return
+            before = content_print(i.path)
             parent, name = os.path.dirname(i.path), os.path.basename(i.path)
             i.extra["archive"] = self._tar(parent, [name], f"scratch-{safe_ref_part(name)}.tar.gz")
+            # WHAT IS REMOVED IS WHAT WAS ARCHIVED: no writer arrived while the
+            # tar ran, and nothing outside the caches changed.
+            why = self._occupied(i.path)
+            if why:
+                raise _ActFailed(f"{why} - it arrived while the archive was made; left in place; "
+                                 f"the archive is {tilde(i.extra['archive'])}")
+            if content_print(i.path) != before:
+                raise _ActFailed("it changed while it was archived; left in place; the archive "
+                                 f"{tilde(i.extra['archive'])} is of what it was")
             rmtree(i.path)
             i.result = "archived and removed"
         elif i.kind == "cache" and i.disposition == "remove":
+            # (14) THE OWNING TREE IS ASKED AGAIN: a writer may have started
+            # there while the rescues ran, or the tree's own act left it live.
+            owner = i.extra.get("owner") or i.path
+            left = [t for t in self.trees if under(i.path, t.path) and self._cache_protected(t)]
+            why = ("its tree was left: " + (left[0].result or left[0].reason)) if left \
+                else self._occupied(owner)
+            if why:
+                i.disposition = "keep"
+                i.result = "left: " + why
+                return
             rmtree(i.path)
             i.result = "removed"
         elif i.kind == "sandbox" and i.disposition == "remove":
@@ -2006,15 +2209,20 @@ class Sweep:
             rmtree(i.path)
             i.result = "removed"
         elif i.kind == "branch" and i.disposition in ("delete", "delete+remote"):
-            proc = git(i.extra["checkout"], "branch", "-D", i.extra["branch"])
-            if proc.returncode != 0:
-                raise _ActFailed("git branch -D: " + _first_line(proc.stderr))
+            done, why = delete_local_branch(i.extra["checkout"], i.extra["branch"],
+                                            i.extra.get("tip", ""))
+            if not done:
+                raise _ActFailed("the local branch was not deleted: " + why)
             i.result = "local branch deleted"
             if i.disposition == "delete+remote":
-                proc = git(i.extra["checkout"], "push", "--no-verify", "origin", "--delete",
-                           i.extra["branch"], timeout=GIT_NET_TIMEOUT)
-                i.result += "; remote branch deleted" if proc.returncode == 0 else (
-                    "; remote branch NOT deleted: " + _first_line(proc.stderr))
+                done, why = delete_remote_branch(i.extra["checkout"], i.extra["branch"],
+                                                 i.extra.get("remote_tip", ""))
+                i.extra["remote_deleted"] = done
+                if done:
+                    i.result += "; remote branch deleted"
+                else:
+                    i.result += "; remote branch NOT deleted: " + why
+                    self.failed += 1
 
     def _register_items(self) -> None:
         done = [i for i in self.items if i.result and not i.result.startswith(("FAILED", "left"))]
@@ -2027,7 +2235,8 @@ class Sweep:
                 for i in scratch))
         if branches:
             self._note(None, "swept branches merged by PR: " + "; ".join(
-                f"{i.extra['branch']} (PR #{i.extra.get('pr')}{' + remote' if 'remote' in i.result else ''})"
+                f"{i.extra['branch']} (PR #{i.extra.get('pr')}"
+                f"{' + remote' if i.extra.get('remote_deleted') else ''})"
                 for i in branches))
         if cleaned:
             total = sum(i.size for i in cleaned)
@@ -2099,6 +2308,34 @@ class _ActFailed(Exception):
     pass
 
 
+def delete_local_branch(checkout: str, branch: str, expect: str):
+    """(done, why): `refs/heads/<branch>` deleted only while it is still at
+    `expect` and no worktree has it checked out - `update-ref -d` with the
+    old value, so a branch that moved under the sweep is never lost."""
+    if not expect:
+        return False, "the SHA it was judged at is not known"
+    for reg in worktree_registrations(checkout):
+        if reg.get("branch") == f"refs/heads/{branch}":
+            return False, f"it is checked out in {reg.get('path')} now"
+    proc = git(checkout, "update-ref", "-d", f"refs/heads/{branch}", expect)
+    if proc.returncode != 0:
+        return False, (f"it is no longer at {short(expect)} (" + _first_line(proc.stderr) + ")")
+    return True, ""
+
+
+def delete_remote_branch(checkout: str, branch: str, expect: str):
+    """(done, why): origin's branch deleted only while origin still has it at
+    `expect` - a lease, so commits pushed there since are never discarded."""
+    if not expect:
+        return False, "the SHA it was judged at is not known"
+    proc = git(checkout, "push", "--no-verify", "--porcelain",
+               f"--force-with-lease=refs/heads/{branch}:{expect}", "origin",
+               f":refs/heads/{branch}", timeout=GIT_NET_TIMEOUT)
+    if proc.returncode != 0:
+        return False, _first_line(proc.stderr or proc.stdout)
+    return True, ""
+
+
 def _lean_text(lean: list) -> str:
     return "; ".join(f"{dep} leans on it ({how})" for dep, how in lean[:5]) + (
         f"; and {len(lean) - 5} more" if len(lean) > 5 else "")
@@ -2115,6 +2352,25 @@ def _gitdir_activity(path: str) -> float:
         except OSError:
             pass
     return newest
+
+
+def content_print(root: str) -> list:
+    """Every non-cache file under `root` with its size and mtime - what an
+    archive of it carries, so a change made while it was archived shows."""
+    out = []
+    for base, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d not in CACHE_NAMES and d not in VENV_NAMES)
+        for name in sorted(files):
+            if name.endswith((".pyc", ".pyo")):
+                continue
+            full = os.path.join(base, name)
+            try:
+                st = os.lstat(full)
+            except OSError:
+                out.append((os.path.relpath(full, root), -1, -1))
+                continue
+            out.append((os.path.relpath(full, root), st.st_size, st.st_mtime_ns))
+    return out
 
 
 def _no_caches(info):
@@ -2215,7 +2471,7 @@ def branch_items(checkout: str, lane: str, evidence: MergeEvidence) -> list:
             it = Item("branch", name, "delete+remote" if remote_ok else "delete",
                       judged["why"] + ("; the remote branch too (this lane's, nothing beyond the PR)"
                                        if remote_ok else ""), ours, detail)
-            it.extra["pr"] = judged.get("pr")
+            it.extra.update(pr=judged.get("pr"), tip=tip, remote_tip=remote_tip if remote_ok else "")
         else:
             up_state = "missing"
             if upstream:
@@ -2223,10 +2479,15 @@ def branch_items(checkout: str, lane: str, evidence: MergeEvidence) -> list:
                     if not upstream.startswith("refs/") else None
                 if up_tip:
                     c = (git_out(checkout, "rev-list", "--left-right", "--count",
-                                 f"{up_tip}...{tip}") or "0 0").split()
-                    b, a = int(c[0]), int(c[1])
-                    up_state = ("diverged" if a and b else "ahead" if a else
-                                "behind" if b else "published")
+                                 f"{up_tip}...{tip}") or "").split()
+                    if len(c) == 2 and all(x.isdigit() for x in c):
+                        b, a = int(c[0]), int(c[1])
+                        up_state = ("diverged" if a and b else "ahead" if a else
+                                    "behind" if b else "published")
+                    else:
+                        # NEVER "0 0" FOR UNKNOWN: that would read as published
+                        # and drop the branch from the list.
+                        up_state = "unreadable (git rev-list failed)"
                 else:
                     up_state = "missing"
             if up_state in ("published", "behind"):
@@ -2416,8 +2677,13 @@ def expire(opts) -> int:
             if age < keep_days:
                 rows.append((adir, age, "keep", f"{age} d old; retention {keep_days} d"))
                 continue
+            ledger, why = archive_ledger(adir)
+            if ledger is None:
+                rows.append((adir, age, "keep", why + " - its rescues cannot be checked, so it "
+                             "is kept"))
+                continue
             missing = []
-            for origin, branch, sha in _rescues_of(adir):
+            for origin, branch, sha in ledger:
                 proc = run(["git", "ls-remote", origin, f"refs/heads/{branch}"], env=git_env(),
                            timeout=GIT_NET_TIMEOUT)
                 got = proc.stdout.split()[0] if proc.returncode == 0 and proc.stdout.split() else ""
@@ -2425,6 +2691,11 @@ def expire(opts) -> int:
                     missing.append(f"{branch} (origin could not be read)")
                 elif not got:
                     missing.append(f"{branch} (gone from origin)")
+                elif got != sha:
+                    # THE RESCUED COMMIT, NOT THE NAME: a branch reset or remade
+                    # at another commit no longer holds the work.
+                    missing.append(f"{branch} (on origin at {short(got)}, not the rescued "
+                                   f"{short(sha)})")
             if missing:
                 rows.append((adir, age, "keep", "a rescue branch is not on origin: "
                              + "; ".join(missing) + " - this archive is the only copy"))
@@ -2459,7 +2730,45 @@ def expire(opts) -> int:
     return 0
 
 
-def _rescues_of(adir: str) -> list:
+SHA_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
+
+
+def archive_ledger(adir: str):
+    """(rescues, why): the archive's rescue ledger, or None with why it cannot
+    be trusted. An archive is trusted only when it is WHOLE: `MANIFEST.sha256`
+    is there and every file in the archive is in it at its digest (an
+    interrupted sweep leaves a bundle the ledger never recorded), and
+    `rescues.tsv` is there and every row of it is origin, branch and a full
+    SHA. A header-only ledger in a whole archive is a verified "no rescues"."""
+    manifest = os.path.join(adir, "MANIFEST.sha256")
+    listed: dict = {}
+    try:
+        with open(manifest, encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                digest, sep, rel = line.rstrip("\n").partition("  ")
+                if not sep or not re.match(r"^[0-9a-f]{64}$", digest):
+                    return None, "its MANIFEST.sha256 is malformed"
+                listed[rel] = digest
+    except OSError:
+        return None, "it has no readable MANIFEST.sha256 (the sweep that made it did not finish)"
+    for base, _dirs, files in os.walk(adir):
+        for name in files:
+            full = os.path.join(base, name)
+            rel = os.path.relpath(full, adir)
+            if rel == "MANIFEST.sha256":
+                continue
+            if rel not in listed:
+                return None, f"{rel} is in it and not in its MANIFEST.sha256"
+            try:
+                with open(full, "rb") as fh:
+                    if hashlib.sha256(fh.read()).hexdigest() != listed[rel]:
+                        return None, f"{rel} does not match its MANIFEST.sha256"
+            except OSError:
+                return None, f"{rel} could not be read"
+    if "rescues.tsv" not in listed:
+        return None, "it has no rescues.tsv"
     out = []
     try:
         with open(os.path.join(adir, "rescues.tsv"), encoding="utf-8") as fh:
@@ -2467,11 +2776,12 @@ def _rescues_of(adir: str) -> list:
                 if line.startswith("#") or not line.strip():
                     continue
                 cols = line.rstrip("\n").split("\t")
-                if len(cols) >= 3 and cols[0] and cols[1]:
-                    out.append((cols[0], cols[1], cols[2]))
+                if len(cols) < 3 or not cols[0] or not cols[1] or not SHA_RE.match(cols[2]):
+                    return None, "its rescues.tsv has a row that is not origin, branch, sha"
+                out.append((cols[0], cols[1], cols[2]))
     except OSError:
-        pass
-    return out
+        return None, "its rescues.tsv could not be read"
+    return out, ""
 
 
 # ==================================================================== main
