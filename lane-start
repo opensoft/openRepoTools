@@ -3901,6 +3901,44 @@ if (( first_prompt )); then
   fi
 fi
 
+# ------------- 5e. the estate's daily report (opensoft/openRepoTools#162)
+#
+# ONCE A DAY PER WORKSTATION, DETACHED, AND NEVER A REASON A START WAITS OR
+# FAILS. `lane-worktrees sweep --all --dry-run --report` is the net under every
+# actor that never runs `lane-end`: what is FOREIGN, orphaned, unpublished,
+# aging or past retention across the estate, as one table, written to the state
+# directory. It changes nothing. The first start of the day takes the stamp -
+# `set -C` makes taking it one atomic create, so two starts at once run one
+# report - and starts it with stdin, stdout and stderr closed, in a subshell
+# that exits at once, so the report is no child of the session this command is
+# about to exec. Every step of this either works or is skipped in silence:
+# a report that could not start is tomorrow's start's to run.
+# `LANE_WORKTREES_REPORT=off` is the switch, and both suites set it.
+lane_daily_report() {
+  [ "${LANE_WORKTREES_REPORT:-on}" = off ] && return 0
+  ldr_bin=""
+  if [ -x "$SCRIPT_DIR/lane-worktrees" ]; then
+    ldr_bin="$SCRIPT_DIR/lane-worktrees"
+  else
+    ldr_bin="$(command -v lane-worktrees 2>/dev/null || :)"
+  fi
+  [ -n "$ldr_bin" ] || return 0
+  ldr_state="${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools"
+  ldr_day="$(date -u +%Y%m%d 2>/dev/null || :)"
+  [ -n "$ldr_day" ] || return 0
+  mkdir -p -- "$ldr_state/reports" 2>/dev/null || return 0
+  ( set -C; : > "$ldr_state/report-$ldr_day.stamp" ) 2>/dev/null || return 0
+  for ldr_old in "$ldr_state"/report-*.stamp; do
+    [ "$ldr_old" = "$ldr_state/report-$ldr_day.stamp" ] || rm -f -- "$ldr_old" 2>/dev/null || :
+  done
+  ldr_out="$ldr_state/reports/$(date -u +%Y%m%dT%H%M%SZ).md"
+  ( "$ldr_bin" sweep --all --dry-run --report --post "$ldr_out" \
+      </dev/null >/dev/null 2>&1 & ) 2>/dev/null || :
+  step "the estate's daily report is running, detached: $ldr_out"
+  return 0
+}
+(( dry_run )) || lane_daily_report || :
+
 # ---------------------------------------------------------------- 6. launch
 #
 # `cmd` was decided in 5a, before the row was written.

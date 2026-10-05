@@ -36,6 +36,11 @@ REPO = Path(__file__).resolve().parents[1]
 #: builds every environment it runs from scratch and decides for itself.
 os.environ["LANES_INDEX"] = "off"
 
+#: opensoft/openRepoTools#162 — and no `lane-start` a test runs starts the
+#: estate's daily report: it is detached, it reads the whole estate, and the
+#: state directory it stamps may be the workstation's own.
+os.environ["LANE_WORKTREES_REPORT"] = "off"
+
 #: The pinned openRepoShape checkout. Every path this suite reads out of the
 #: standard hangs off this one name, so a bump of the pin moves one line in
 #: `contracts/openreposhape-pin.yaml` and the gitlink beside it, and nothing
