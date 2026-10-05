@@ -260,12 +260,7 @@ that would not take it, and a create needs a directory's search bit as well as
 its write bit. A refusal creates none of those directories either. `cp` follows
 a symlink, and an install through one leaves the command uninstalled and writes
 these bytes into whatever it points at. Then a `17 of 17 placed in <dir>` line,
-and the `export PATH=…` line if that directory is not on your `PATH`. Last, it
-NAMES this repository's virtual environment — one per repository, outside the
-estate, at `${XDG_CACHE_HOME:-~/.cache}/openRepoTools/venvs/openRepoTools/`
-(opensoft/openRepoTools#162) — and says whether it is there; it never creates
-one, since that needs `pip` and the network, and prints the two commands that
-do. `tests/run.sh` runs the suite from it once it is there and has `pytest`.
+and the `export PATH=…` line if that directory is not on your `PATH`. Last, it names this repository's virtual environment, `${XDG_CACHE_HOME:-~/.cache}/openRepoTools/venvs/openRepoTools/` (one per repository, outside the estate; #162), says whether it is there, and prints the two commands that make it: it never makes one, and `tests/run.sh` runs from it once it has `pytest`.
 
 It also places **fourteen things that are not files in that directory**: THREE
 SKILLS, `/handoff`, `/lane-swap` and `/restart`, each at

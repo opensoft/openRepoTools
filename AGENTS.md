@@ -257,23 +257,9 @@ The run itself is minutes of bash and hundreds of `git` processes, and
 several lanes build in sibling worktrees of one checkout: the wrapper waits
 for any live run, takes `${TMPDIR:-/tmp}/openrepotools-pytest.lock` (`flock`
 where there is one, a `mkdir` lock on macOS, which has none), waits again
-inside it, then runs `python3 -m pytest tests -q -p no:cacheprovider
---basetemp=<run root>/basetemp "$@"`. Every lane on one workstation must name
-the SAME lock file or there is no lock, which is the whole reason the path is
-written here as well as in the file.
-
-**A run leaves nothing beside the code** (opensoft/openRepoTools#162): bytecode
-goes to `${XDG_CACHE_HOME:-~/.cache}/openRepoTools/pycache`
-(`PYTHONPYCACHEPREFIX`), pytest's cache is off, and every temporary directory —
-`--basetemp` and the `TMPDIR` the suite's own `mktemp`s use — is under one run
-root, `${XDG_STATE_HOME:-~/.local/state}/openRepoTools/tmp/<UTC>-<pid>/`, which
-the wrapper's EXIT trap removes however the run ends (a TERM or an INT stops the
-suite's whole process group first, so no `git` or shell suite it was waiting on
-outlives the run root or the lock). The lock is computed BEFORE `TMPDIR` moves, so it is still the
-workstation's. Where the repository's venv
-(`${XDG_CACHE_HOME:-~/.cache}/openRepoTools/venvs/openRepoTools`) has `pytest`,
-the suite runs from it, first on `PATH`, so the command line still reads
-`python3 -m pytest`.
+inside it, then runs `python3 -m pytest tests -q "$@"` (no cache or temp left in
+the checkout: #162). Every lane on one workstation must name the SAME lock file
+or there is no lock, which is the whole reason the path is written here too.
 
 Two measured defects on 2026-09-14 (opensoft/openRepoTools#51), both of them
 inside a guard that had been copied into four briefs:
