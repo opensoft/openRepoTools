@@ -978,16 +978,31 @@ def ddl(dialect: str, schema: str) -> list[str]:
         defs += ["digest TEXT NOT NULL", "provenance TEXT", "indexed_utc TEXT NOT NULL",
                  "schema_version INTEGER NOT NULL", "PRIMARY KEY (source, record_id)"]
         stmts.append(f"CREATE TABLE IF NOT EXISTS {q(table)} ({', '.join(defs)})")
-    # HOLDS ARE COMPUTED, NEVER STORED (14(e)): a lane holds an object while
-    # its own LAST line on it, in FILE ORDER - never by UTC - carries an open
-    # verb (Amendment 7(b)).
+    # HOLDS ARE COMPUTED, NEVER STORED (14(e)), and computed AS `holders_of`
+    # COMPUTES THEM (Copilot round 2 on #164), which is `who`'s answer:
+    #   * a lane's state on an object is its own LAST line on it - the lane
+    #     compared case-insensitively (Amendment 15), so two logs one case
+    #     apart are one lane - and "last" is the FILE-ORDERED position
+    #     (file, then line; PER_LANE_AWK's `file "\034" %09d line`), never
+    #     the UTC (R14);
+    #   * it holds while that verb is open, UNLESS another lane's own last line
+    #     on the object is a TAKEOVER (`superseded_by`, R18, #30).
+    # The file comparison is BYTE order, as awk's string comparison is: SQLite's
+    # default BINARY collation, and Postgres's "C".
+    coll = ' COLLATE "C"' if dialect == "postgres" else ""
+    ll = q("log_lines")
     view = (
-        f"SELECT l.source, l.lane, l.object, l.verb, l.utc, l.session, l.file, l.ordinal "
-        f"FROM {q('log_lines')} l WHERE l.unreadable = 0 AND l.object NOT LIKE 'lane:%' "
-        f"AND l.verb IN ({', '.join(repr(v) for v in OPEN_VERBS)}) "
-        f"AND l.ordinal = (SELECT MAX(m.ordinal) FROM {q('log_lines')} m "
-        f"WHERE m.source = l.source AND m.file = l.file AND m.object = l.object "
-        f"AND m.unreadable = 0)")
+        f"WITH ev AS (SELECT source, lane, lower(lane) AS lk, object, verb, utc, session, "
+        f"file, ordinal FROM {ll} WHERE unreadable = 0 AND object IS NOT NULL "
+        f"AND object NOT LIKE 'lane:%'), "
+        f"last AS (SELECT e.* FROM ev e WHERE NOT EXISTS (SELECT 1 FROM ev m "
+        f"WHERE m.source = e.source AND m.object = e.object AND m.lk = e.lk "
+        f"AND (m.file{coll} > e.file{coll} OR (m.file = e.file AND m.ordinal > e.ordinal)))) "
+        f"SELECT h.source, h.lane, h.object, h.verb, h.utc, h.session, h.file, h.ordinal "
+        f"FROM last h WHERE h.verb IN ({', '.join(repr(v) for v in OPEN_VERBS)}) "
+        f"AND NOT EXISTS (SELECT 1 FROM last t WHERE t.source = h.source "
+        f"AND t.object = h.object AND t.lk <> h.lk AND t.verb = 'TAKEOVER')")
+    stmts.append(f"CREATE INDEX IF NOT EXISTS log_lines_by_object ON {ll} (source, object)")
     if dialect == "postgres":
         stmts.append(f"CREATE OR REPLACE VIEW {q('holds')} AS {view}")
     else:
@@ -1021,11 +1036,16 @@ class SqliteStore:
     def open_write(self):
         import sqlite3
         os.makedirs(os.path.dirname(self.path), mode=0o700, exist_ok=True)
-        fresh = not os.path.exists(self.path)
         try:
             self.conn = sqlite3.connect(self.path, timeout=30, isolation_level=None)
-            if fresh:
+            # EVERY WRITE-OPEN, NOT ONLY THE FIRST (Copilot round 2 on #164): a
+            # store whose mode drifted to 0644 is made private again before
+            # another row goes into it, or nothing more is written.
+            try:
                 os.chmod(self.path, 0o600)
+            except OSError as exc:
+                raise StoreUnusable("unreachable", f"{self.path} cannot be made 0600 "
+                                    f"({exc.strerror or exc}); nothing written")
             have = {r[0] for r in self.conn.execute(
                 "SELECT name FROM sqlite_master WHERE type IN ('table','view')")}
             if "schema_version" in have:
@@ -1270,6 +1290,16 @@ class PostgresStore:
                                 f"this {PROG} knows {SCHEMA_VERSION}")
 
     def open_write(self):
+        # THE VERSION FIRST (Copilot round 2 on #164): the DDL includes a
+        # `CREATE OR REPLACE VIEW`, so running it against another schema's
+        # store would rewrite that store before `open_read` called it
+        # `unknown-schema`. Only an ABSENT schema (`wiped`) is bootstrapped.
+        try:
+            self.open_read()
+            return
+        except StoreUnusable as exc:
+            if exc.kind != "wiped":
+                raise
         script = ["SET standard_conforming_strings = on;", "BEGIN;"]
         script += [s + ";" for s in ddl("postgres", self.schema)]
         script.append("COMMIT;")
@@ -1882,7 +1912,7 @@ def main(argv: list[str]) -> int:
             source = value
             i += 1 if "=" in arg else 2
             continue
-        if arg == "--out" or arg.startswith("--out="):
+        if (arg == "--out" or arg.startswith("--out=")) and verb == "export":
             value = arg.split("=", 1)[1] if "=" in arg else (args[i + 1] if i + 1 < len(args) else "")
             if not value:
                 note("--out needs a directory")

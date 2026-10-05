@@ -3276,7 +3276,7 @@ One versioned schema (`schema_version`); every row carries its `provenance`
 | `lane_aliases` | alias-table line | `old_name`, `new_name`, UTC |
 | `transcript_pointers` | pointer | a row's session-cell ids and each `transcript` a `PAUSED` names, with its `agent` — pointers only |
 | `source_files` | file of the source | kind, blob, line counts — what the read flags need to answer as `origin` would |
-| `holds` (a VIEW) | open hold | per lane, the last line on each object **in file order**, never by UTC, where its verb is open — computed, never stored |
+| `holds` (a VIEW) | open hold | `holders_of`'s answer, which is `who`'s: per lane (case-insensitively), its last line on each object **in file order**, never by UTC, where its verb is open — and not while another lane's own last line there is a `TAKEOVER`. Computed, never stored |
 | `provenance` | source | the indexed commit (or generation), UTC, schema version |
 
 **Created empty and written by nothing here**: `swap_states` and

@@ -952,16 +952,25 @@ FAKE_PSQL = r"""#!/usr/bin/env python3
 # A FAKE psql: it records what it was asked and answers the few queries
 # lanes-index makes as an EMPTY schema-1 store would. No database exists.
 import json, os, sys
+# The schema version it answers is "1" unless FAKE_PSQL_VERSION_FILE names a
+# file holding another (empty: no row, a wiped store); the bootstrap DDL
+# writes "1" into that file, as a real one would create the row.
 log = os.environ["FAKE_PSQL_LOG"]
+vfile = os.environ.get("FAKE_PSQL_VERSION_FILE", "")
+version = open(vfile).read().strip() if vfile else "1"
 args = sys.argv[1:]
 url = args[args.index("-d") + 1] if "-d" in args else ""
 stdin = sys.stdin.read()
 with open(log, "a") as handle:
     handle.write(json.dumps({"url": url, "passfile": os.environ.get("PGPASSFILE", ""),
                              "pgpassword": "PGPASSWORD" in os.environ, "stdin": stdin}) + "\n")
+if vfile and "CREATE TABLE IF NOT EXISTS" in stdin:
+    with open(vfile, "w") as handle:
+        handle.write("1\n")
 for line in stdin.splitlines():
     if line.startswith("COPY (SELECT version"):
-        print("1")
+        if version:
+            print(version)
     elif line.startswith("\\echo"):
         print("\x1eLANES-INDEX-NEXT")
 sys.exit(0)
@@ -1209,6 +1218,104 @@ def test_an_unknown_owner_is_asked_again_at_the_same_commit(estate):
     third = estate.index("sync")
     assert third.returncode == 0 and "nothing to write" in third.stdout, third.stdout
     assert dump(estate.sqlite, with_utc=True) == before
+
+
+def test_the_holds_view_answers_as_who_does(estate):
+    """THE VIEW IS `holders_of` (14(e); Copilot round 2 on #164): a lane's own
+    last line on an object — the lane compared case-insensitively, "last" in
+    file order — holds while its verb is open, and NOT while another lane's own
+    last line there is a TAKEOVER. Checked object by object against `who`."""
+    lines = {
+        "repoA-1.md": [
+            f"CLAIMED — lane repoA-1, session {UUID_A1B}@Eagle, 2026-10-02T00:00:00Z, opensoft/repoA#20 — mine",
+            f"CLAIMED — lane repoA-1, session {UUID_A1B}@Eagle, 2026-10-02T00:30:00Z, opensoft/repoA#21 — mine again, after it came back"],
+        "repoA-2.md": [
+            f"TAKEOVER — lane repoA-2, session {UUID_A2}@Eagle, 2026-10-02T00:05:00Z, opensoft/repoA#20 — a stale claim",
+            f"TAKEOVER — lane repoA-2, session {UUID_A2}@Eagle, 2026-10-02T00:10:00Z, opensoft/repoA#21 — taken",
+            f"RELEASED — lane repoA-2, session {UUID_A2}@Eagle, 2026-10-02T00:20:00Z, opensoft/repoA#21 — handed back",
+            f"RELEASED — lane repoA-2, session {UUID_A2}@Eagle, 2026-10-02T00:40:00Z, opensoft/repoA#22 — done with it"],
+        # the same lane under another spelling: byte order puts this file
+        # FIRST, so its CLAIMED is not the lane's last line on #22
+        "REPOA-2.md": [
+            "# lane repoA-2 — object log, the other spelling",
+            f"CLAIMED — lane repoA-2, session {UUID_A2}@Eagle, 2026-10-02T00:35:00Z, opensoft/repoA#22 — under the other spelling"],
+    }
+    for name, add in lines.items():
+        path = estate.wip / "lanes" / "log" / name
+        old = path.read_text(encoding="utf-8") if path.exists() else ""
+        path.write_text(old + "\n".join(add) + "\n", encoding="utf-8")
+    estate._git("add", "-A")
+    estate._git("commit", "-q", "-m", "a takeover, a hand-back and two spellings")
+    estate._git("push", "-q", "origin", "main")
+    assert estate.index("sync").returncode == 0
+    conn = sqlite3.connect(str(estate.sqlite))
+    view: dict = {}
+    for lane, obj in conn.execute("SELECT lane, object FROM holds"):
+        view.setdefault(obj, set()).add(lane.lower())
+    objects = [r[0] for r in conn.execute(
+        "SELECT DISTINCT object FROM log_lines WHERE unreadable = 0 "
+        "AND object NOT LIKE 'lane:%' ORDER BY object")]
+    conn.close()
+    assert {"opensoft/repoA#20", "opensoft/repoA#21", "opensoft/repoA#22"} <= set(objects)
+    for obj in objects:
+        res = estate.edit("who", obj)
+        assert res.returncode == 0, (obj, res.stderr)
+        who = {m.lower() for m in re.findall(r"^HOLDS +lane (\S+)", res.stdout, re.M)}
+        assert view.get(obj, set()) == who, (obj, view.get(obj), res.stdout)
+    assert view["opensoft/repoA#20"] == {"repoa-2"}
+    assert view["opensoft/repoA#21"] == {"repoa-1"}
+    assert "opensoft/repoA#22" not in view
+
+
+def test_the_store_is_made_private_on_every_write(estate):
+    """0600 EVERY TIME (14(c); Copilot round 2 on #164): a SQLite store whose
+    mode drifted is made private again by the next sync, not only at birth."""
+    assert estate.index("sync").returncode == 0
+    estate.sqlite.chmod(0o644)
+    assert estate.index("sync").returncode == 0
+    assert stat.S_IMODE(estate.sqlite.stat().st_mode) == 0o600
+
+
+def test_a_postgres_store_of_another_schema_is_not_touched(estate):
+    """NEVER WRITTEN, NOT EVEN BY THE BOOTSTRAP (14(d); Copilot round 2 on
+    #164): the version is read before any DDL, so a schema-2 store is refused
+    with no CREATE sent at all; and an absent schema is still bootstrapped."""
+    fake = estate.root / "pgfake"
+    fake.mkdir()
+    (fake / "psql").write_text(FAKE_PSQL)
+    (fake / "psql").chmod(0o755)
+    log = estate.root / "psql.jsonl"
+    wpw = estate.config / "writer.pgpass"
+    wpw.write_text("*:*:*:*:x\n")
+    wpw.chmod(0o600)
+    estate.write_config(f"url=postgresql://lanes_writer@db.invalid/qa\npassfile={wpw}\n"
+                        f"reader_url=postgresql://lanes_reader@db.invalid/qa\n")
+    vfile = estate.root / "pg-version"
+    env = {"PATH": estate.path_with(fake), "FAKE_PSQL_LOG": str(log),
+           "FAKE_PSQL_VERSION_FILE": str(vfile)}
+    vfile.write_text("2\n")
+    res = estate.index("sync", env=env)
+    assert res.returncode == 1 and "unknown-schema" in res.stderr, res.stderr
+    calls = [json.loads(l)["stdin"] for l in log.read_text().splitlines()]
+    assert calls and not any("CREATE" in c or "INSERT" in c for c in calls), calls
+    log.unlink()
+    vfile.write_text("")
+    res = estate.index("sync", env=env)
+    assert res.returncode == 0, res.stderr
+    calls = [json.loads(l)["stdin"] for l in log.read_text().splitlines()]
+    assert sum("CREATE TABLE IF NOT EXISTS" in c for c in calls) == 1
+    assert sum("INSERT INTO lanes" in c for c in calls) == 1
+
+
+def test_out_belongs_to_export_alone(estate):
+    """`--out` is `export`'s, as `--dry-run` is `reconcile`'s (Copilot round 2
+    on #164): `sync --out <dir>` is a usage error, not a silent write."""
+    out = estate.root / "exp"
+    out.mkdir()
+    for verb in ("sync", "reconcile", "status"):
+        res = estate.index(verb, "--out", out)
+        assert res.returncode == 64 and "unknown argument" in res.stderr, (verb, res.stderr)
+    assert not estate.sqlite.exists()
 
 
 def test_an_unreachable_store_writes_nothing_waits_on_nothing_and_says_so(estate):
