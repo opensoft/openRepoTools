@@ -1128,12 +1128,16 @@ def test_trees_under_the_lanes_root_or_carrying_its_trailer_are_its_own(estate):
     estate.commit(trailed, "mine", {"m.txt": "m\n"})
     other = estate.worktree("other", "feat/other", where="claude", record=False)
     estate.commit(other, "theirs", {"o.txt": "o\n"}, lane="repoB-2")
+    # A CLONE under the lane's root is never adopted: a lane makes worktrees.
+    clone = estate.lane_root / "cloned"
+    estate.git("clone", "-q", GH_URL, clone, cwd=estate.root)
     proc = estate.sweep(LANE, "--dry-run", "--porcelain")
     assert proc.returncode == 3, proc.stdout + proc.stderr
     rows = rows_of(proc.stdout)
     assert rows[str(rooted)][:2] == ("remove", "retire") and "the lane's by its root" in rows[str(rooted)][2]
     assert rows[str(trailed)][1] == "retire" and "Lane: trailer" in rows[str(trailed)][2]
     assert rows[str(other)][0] == "foreign"
+    assert rows[str(clone)][:2] == ("foreign", "-"), rows[str(clone)]
     # NO SNAPSHOT AT ALL, and trees of its own: the gate does not pass.
     estate.extra_spec = {"lane-reconcile": {"rc": 8},
                          "binding": {"rc": 0, "out": "x\tx\tx\tx\tx\tx\there\tnone\n"},

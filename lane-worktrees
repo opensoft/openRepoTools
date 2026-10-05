@@ -1406,7 +1406,10 @@ class Sweep:
         lane_root = roots[-1] if roots else ""
         claude_root = roots[0] if self.facts.dir and roots else ""
         for t in self.trees:
-            if t.owner != "foreign" or t.foreign_kind == "other-lane":
+            # A CLONE IS NEVER ADOPTED: a lane creates worktrees, never clones,
+            # so a standalone clone under its root stays FOREIGN - a finding for
+            # a person's word, as #162's first protocol line has it.
+            if t.owner != "foreign" or t.foreign_kind in ("other-lane", "clone"):
                 continue
             if lane_root and under(t.path, lane_root) and t.real != real(lane_root):
                 t.owner = "lane-root"
