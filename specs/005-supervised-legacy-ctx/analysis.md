@@ -14,7 +14,7 @@ entrypoint fault cases in `tests/test_supervised_restart_regressions.py`. The
 existing shell suite retains integration coverage and CI is the full suite of
 record. T013 and T016 passed on the pre-reconciliation head; T018 records the
 fresh integration checks. Expert follow-up review T014 is complete; T017 remains
-subject to the user's existing merge hold.
+pending landing; the user released the merge hold on 2026-10-05.
 
 The final nine-role expert panel verified strict schema preservation, private
 intent temporary files, file-alias identity, complete pre-respawn launch checks,
@@ -53,3 +53,15 @@ remaining verified blockers; case-only rename is already refused before any
 mutation and has explicit regression coverage. The broader serialized local
 suite and fresh-head CI results are recorded in the PR review record when they
 complete, rather than treated as passed before the reconciliation is pushed.
+
+
+## Reconciliation with landed PR #164
+
+Main fea9a29 arrived after fd09e2d passed all landing checks. Its derived index
+remains read-only behind explicitly typed flags, and its detached post-push
+nudge does not decide restart ownership or launch readiness. The production
+changes merge automatically. The sole conflict appends the index act tests and
+supervised restart tests at the same location; retain both sections with the
+index section first. T019–T021 passed at fd09e2d (1047 Linux and macOS tests;
+839 no-submodule passes with 208 expected skips). T022 records the fresh combined
+head's review and CI gate; predecessor results do not substitute for it.

@@ -9,6 +9,7 @@
 #   lanes --all      every lane, whatever the cwd — it clears the narrowing
 #   lanes --here     only this workstation's lanes
 #   lanes --fetch    any of the above, after refreshing from origin
+#   lanes --index    any of the above, out of the DERIVED INDEX (Amendment 14)
 #
 # THE DEFAULT IS EVERY LANE, AND THE NARROWING IS BY CHECKOUT (A11 Addendum 4
 # ruling 6, ratified "a11 addendum 4 yes" with ruling 6 answered NO, over the
@@ -36,6 +37,16 @@
 # never the working tree, and it writes nothing, commits nothing and launches
 # nothing. It asks nothing either — a listing is output, not a picker
 # (ratified decision 3; decision 7 point 5 says why the two are different).
+#
+# `--index` READS THE DERIVED INDEX, AND ONLY WHEN TYPED (lane-collision-protocol
+# Amendment 14(b), ratified "ratify 48"). It is passed to the helper, whose
+# published reads of the register and the logs then answer out of
+# `lanes-index`'s copy; the rows, the footer and the exit are the source
+# read's, and stderr says which was read — `read: index (<store>) at
+# register@<sha12>; <k> commits behind`, or `read: sources (index <why>)` where
+# the index could not answer and the sources did. Never from the environment
+# or a configuration: a listing a person did not ask to read from a copy is
+# read from the record.
 #
 # LOCAL BY DEFAULT, `--fetch` TO REFRESH. Every read in this family sits in
 # front of a launch and a person typing one word wants an answer now, so the
@@ -91,7 +102,7 @@ die() { printf '\n%s: REFUSED: %s\n' "$prog" "$1" >&2; exit "${2:-64}"; }
 
 usage() {
 	cat <<'USAGE'
-lanes [--fetch] [--all] [--here] [--closed] [--repo <owner/repo>]
+lanes [--fetch] [--index] [--all] [--here] [--closed] [--repo <owner/repo>]
       [--dir <path>] [--prefix <repo>] [--ws <workstation>]
       [--rename <old> <new>]
 
@@ -106,6 +117,13 @@ is running is never started a second time.
   --fetch          refresh from origin first. Without it the read is LOCAL and
                    the foot of the listing says how old this checkout's answer
                    is: a person typing one word wants an answer now.
+  --index          read the DERIVED INDEX instead of the published register
+                   and logs (Amendment 14): the same rows, the same exit, and
+                   one line on stderr saying which was read — `read: index
+                   (<store>) at register@<sha12>; <k> commits behind`, or
+                   `read: sources (index <why>)` where the index cannot
+                   answer and the sources do. Only when typed: never from the
+                   environment or a configuration.
   --all            every lane, whatever the cwd: it clears the checkout
                    narrowing as well as any --repo/--dir/--ws given with it.
   --prefix <repo>  the lanes NAMED for that repository, and the next free
@@ -159,6 +177,9 @@ fi
     command by \`openRepoTools --install\`. Run that, or set \$LANES_EDIT." 1
 
 do_fetch=0
+# `--index` IS PASSED THROUGH AND NEVER MIMICKED HERE: the helper owns the
+# store and the fallback, exactly as it owns the network for `--fetch`.
+idx_args=()
 closed=0            # 1 once `--closed` has been seen
 narrowed=0          # 1 once anything has narrowed the listing
 all_given=0         # 1 once `--all` has been seen, wherever in the line it was
@@ -174,6 +195,7 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 	-h | --help) usage; exit 0 ;;
 	--fetch) do_fetch=1; shift ;;
+	--index) idx_args=(--index); shift ;;
 	# `--all` CLEARS THE LABEL AS WELL AS THE FILTERS. The helper's `--all` drops
 	# `--repo`, `--dir` and `--prefix`, so the ROWS were right — but `here_repo`
 	# is this wrapper's own, and `lanes --all --prefix repoA11` (either order)
@@ -345,11 +367,19 @@ fetch_unchecked=0
 if [ "$do_fetch" = 1 ]; then
 	fetch_err_file="$(mktemp "${TMPDIR:-/tmp}/lanes-fetch.XXXXXX" 2>/dev/null || printf '')"
 	if [ -n "$fetch_err_file" ]; then
-		out="$("$LANES_EDIT" lanes --fetch ${args[@]+"${args[@]}"} 2>"$fetch_err_file")" || rc=$?
+		out="$("$LANES_EDIT" lanes --fetch ${idx_args[@]+"${idx_args[@]}"} ${args[@]+"${args[@]}"} 2>"$fetch_err_file")" || rc=$?
 		fetch_err="$(cat "$fetch_err_file" 2>/dev/null || printf '')"
 		rm -f -- "$fetch_err_file"
+		# THE ONE LINE THAT SAYS WHICH WAS READ reaches the person on this path
+		# too: the rest of this stream is rendered below only where the fetch
+		# fell back, and `read: …` is not about the fetch.
+		printf '%s\n' "$fetch_err" | command grep '^read: ' >&2 || :
+		# …AND ONLY THERE (Copilot round 3 on #164): the notes are rendered
+		# again, on STDOUT, under a fetch that fell back, where a `read:` line
+		# would be said twice and would make `--index` change the listing.
+		fetch_err="$(printf '%s\n' "$fetch_err" | command grep -v '^read: ' || :)"
 	else
-		out="$("$LANES_EDIT" lanes --fetch ${args[@]+"${args[@]}"})" || rc=$?
+		out="$("$LANES_EDIT" lanes --fetch ${idx_args[@]+"${idx_args[@]}"} ${args[@]+"${args[@]}"})" || rc=$?
 		fetch_unchecked=1
 	fi
 else
@@ -364,13 +394,13 @@ else
 	# stream being dropped for the sake of that sentence.
 	local_err_file="$(mktemp "${TMPDIR:-/tmp}/lanes-local.XXXXXX" 2>/dev/null || printf '')"
 	if [ -n "$local_err_file" ]; then
-		out="$("$LANES_EDIT" lanes ${args[@]+"${args[@]}"} 2>"$local_err_file")" || rc=$?
+		out="$("$LANES_EDIT" lanes ${idx_args[@]+"${idx_args[@]}"} ${args[@]+"${args[@]}"} 2>"$local_err_file")" || rc=$?
 		grep -v 'not fetching; reading origin/' -- "$local_err_file" >&2 || :
 		rm -f -- "$local_err_file"
 	else
 		# No capture file, so nothing is filtered and everything reaches the
 		# person — the same answer the fetch path gives one branch up.
-		out="$("$LANES_EDIT" lanes ${args[@]+"${args[@]}"})" || rc=$?
+		out="$("$LANES_EDIT" lanes ${idx_args[@]+"${idx_args[@]}"} ${args[@]+"${args[@]}"})" || rc=$?
 	fi
 fi
 
@@ -411,7 +441,7 @@ case "$rc" in
 		# measured defect of openRepoTools#51: under the harness `grep` is a
 		# shell function whose status is 1 when its stdout is `/dev/null`, which
 		# is exactly what `-q` makes it).
-		if "$LANES_EDIT" lanes --closed ${args[@]+"${args[@]}"} 2>/dev/null | command grep -q .; then e_hidden=1; fi
+		if "$LANES_EDIT" lanes --closed ${idx_args[@]+"${idx_args[@]}"} ${args[@]+"${args[@]}"} 2>/dev/null | command grep -q .; then e_hidden=1; fi
 		if [ "$e_hidden" = 1 ]; then
 			say "no lane of $here_repo is LISTED — and that is not the same as none being recorded: closed and dormant lanes are left out (Amendment 19(b))."
 			say ""

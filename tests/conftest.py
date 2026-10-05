@@ -28,6 +28,14 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 
+#: AMENDMENT 14 — NO TEST NUDGES AN INSTALLED INDEXER BY ACCIDENT. Every
+#: `lanes-edit.sh` write that pushes starts a detached `lanes-index sync`
+#: wherever one is on PATH, and several suites here run with the workstation's
+#: own PATH behind their fakes: the day a person installs `lanes-index`, those
+#: writes would start one each. Off for the whole run; `tests/test_lanes_index.py`
+#: builds every environment it runs from scratch and decides for itself.
+os.environ["LANES_INDEX"] = "off"
+
 #: The pinned openRepoShape checkout. Every path this suite reads out of the
 #: standard hangs off this one name, so a bump of the pin moves one line in
 #: `contracts/openreposhape-pin.yaml` and the gitlink beside it, and nothing

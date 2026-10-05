@@ -20,8 +20,10 @@
 
 - [x] T018 Reconcile landed PR #97, preserving separate helper namespaces, managed ownership fences and completed restart history; verify helper identity and focused integration cases. New-head full-suite results are recorded in the PR review record.
 
-- [ ] T019 Repair macOS landing regressions: Bash 3.2 control rejection, case-insensitive spelling-only rename preflight, and a controlling terminal with consumed PTY output and guaranteed cleanup for the interactive retry fixture. Run the terminal case first in macOS CI before the full landing suite. Verify locally and rerun exact-head landing CI.
+- [x] T019 Repair macOS landing regressions: Bash 3.2 control rejection, case-insensitive spelling-only rename preflight, and a controlling terminal with consumed PTY output and guaranteed cleanup for the interactive retry fixture. Run the terminal case first in macOS CI before the full landing suite. Verify locally and rerun exact-head landing CI.
 
-- [ ] T020 Distinguish never-launched preparation failure in ordinary resume and status, with repeated identity/holder checks and negative recovery cases; validate and review the final head.
+- [x] T020 Distinguish never-launched preparation failure in ordinary resume and status, with repeated identity/holder checks and negative recovery cases; validate and review the final head.
 
-- [ ] T021 Keep restart reservation, completion, cleanup and later readers at the sole existing control root; refuse competing/unreadable roots, select under the CAS mutex, and validate nested checkout, failure cleanup, aliases and writer waiting cases.
+- [x] T021 Keep restart reservation, completion, cleanup and later readers at the sole existing control root; refuse competing/unreadable roots, select under the CAS mutex, and validate nested checkout, failure cleanup, aliases and writer waiting cases.
+
+- [ ] T022 Reconcile landed PR #164, retaining both appended shell-suite sections and the derived index's non-gating boundary; review the combined head and rerun exact-head landing CI.

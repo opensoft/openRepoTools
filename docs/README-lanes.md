@@ -2324,6 +2324,8 @@ RULED — lane <lane>, session <uuid>@<ws>, <UTC>, lane:<lane>[ → <object>] �
 LANES_LANE=my-lane lanes-edit.sh log NOTED lane:my-lane "rebased on main; the flake is the fixture's clock"
 LANES_LANE=my-lane lanes-edit.sh log RULED lane:my-lane → opensoft/openRepoTools#29 "Ratify as drafted (Recommended)"
 lanes-edit.sh history my-lane [--since <UTC>]
+lanes-edit.sh history --all [--since <UTC>]          # every lane, on one timeline (Amendment 14)
+lanes-edit.sh history --repo <owner/repo>           # the lanes whose home it is
 ```
 
 `NOTED` takes no payload; `RULED` takes one, the object it bears on, and that
@@ -3317,6 +3319,178 @@ marker's vocabulary into the register at all, so a marker is never forged.
 What the managed ledger itself does with an enrolled lane is not this manual's:
 branch `001-separate-swap-ctx-handoff`'s governance review is **PROPOSED — NOT
 APPROVED**, and nothing here asserts that it supersedes Amendment 17.
+
+## The derived index (Amendment 14)
+
+**In force — ratified by Brett Heap 2026-10-05, verbatim *"ratify 48"***
+(brettheap/new-workstation#48; the tooling is opensoft/openRepoTools#160).
+**The register's truth stays where it is.** `lanes/LANES.md`, `lanes/log/`,
+`lanes/aliases.tsv` and `lanes/archive/` are the record, written only by
+`lanes-edit.sh`. `lanes-index` keeps a **derived index** of them — SQLite on
+local disk, or QA Postgres where this workstation is configured for it —
+written behind the sources, read only by tooling that decides nothing, and
+never a gate. Where the index and the source disagree, the source is right and
+the index is behind.
+
+### What it is for, and what it never does
+
+It is for the questions no act asks: every repository's rows at once, every
+lane's history on one timeline, a dashboard, Eagle and Raven asking one store.
+It is **never read by an act**: no `claim`, `release`, `log` verb or LANES
+line; not the name guard or the `SessionStart` block; not `lane`, `lane-start`,
+`lane-end`, `lane-handoff`, `lane-rename`, `/restart`, `/handoff`, `/ctx`; no
+row writer, sweep, archive or migration; and none of the reads an act makes for
+itself (`who`, `binding`, `live-holder`, `next-free`, `managed-projection`,
+`lane-reconcile`). An index that is missing, stale, unreachable, wiped or wrong
+changes no exit code and no output of any of them. It never writes back:
+nothing in any source is ever written from it.
+
+### The three words, and the one step `lanes-edit.sh` gained
+
+```sh
+lanes-index sync      [--source <s>]              # write behind what LANDED
+lanes-index reconcile [--source <s>] [--dry-run]  # read the source whole; put the index right
+lanes-index status                                 # per source: store, provenance, lag, last error
+```
+
+- **`sync`** reads the register as `origin/<branch>` of the workspace checkout
+  stands — what the push left, never the working tree — and upserts every
+  record whose content differs, keyed by **(source, record id)** and versioned
+  by a **digest of its content**: an upsert bearing the stored digest changes
+  nothing, so a replay or a crash is harmless. The source's indexed commit is
+  compared and swapped **in the same transaction** as the rows it covers, and
+  a sync from a commit that does not descend from it **writes nothing** — so
+  two workstations syncing into one Postgres, even at once, cannot roll it
+  back. A record its source no longer holds leaves in the same sync. One sync
+  at a time per workstation: a second finds the lock held, leaves the holder a
+  mark to sync again, and returns at once.
+- **`reconcile`** reads the source whole, compares every stored row by what it
+  **says** (not by the digest it carries, so a row changed by hand is found),
+  upserts what differs and removes what is gone: on a wiped index, the
+  rebuild. `--dry-run` prints the counts and writes nothing.
+- **`status`** prints the store, each source's provenance against its tip, the
+  lag in commits, and this workstation's last sync and last error.
+
+**The nudge.** After every write whose push **landed**, and after its mutex is
+released, `lanes-edit.sh` starts **one detached `lanes-index sync`**: stdin
+closed, stdout and stderr on `/dev/null`, never waited, its status never read.
+It carries no data. It is skipped where `lanes-index` is not on `PATH` (one
+`command -v`, nothing printed) and wherever `LANES_INDEX=off`. A slow, failing
+or absent indexer delays and fails no commit, push or swap.
+
+### Reading it — `--index`, only when typed
+
+```sh
+lanes --index                       # any listing, out of the index
+lanes-edit.sh history <lane> --index
+lanes-edit.sh history --all  [--since <UTC>] [--index]      # every lane, one timeline
+lanes-edit.sh history --repo <owner/repo> [--index]         # the lanes whose HOME it is
+```
+
+The flag is typed per invocation — **never** taken from the environment or a
+configuration. It replaces the **published** reads (the register, the archive,
+the alias table, the logs) and nothing else, so the live session records, tmux
+and this checkout's own files are read as they are without it. Where the index
+is current the answer is **byte for byte the source read's**, the clock's
+columns aside (the listing's AGE and its "last heard from origin" age, computed
+the same way at the moment of the read). One line on stderr says which was
+read:
+
+```text
+read: index (sqlite) at register@1a2b3c4d5e6f; 0 commits behind
+read: sources (index unreachable: psql: error: connection to server … failed)
+```
+
+Lag is said, never refused. Where the index cannot answer — `lanes-index` not
+installed, the store `missing`, `unreachable`, `wiped` (no provenance for this
+register), of an `unknown-schema`, a configuration it `refused`, or
+`LANES_INDEX=off` — the line says so and the **sources** answer, with the
+source read's own exit. `history --all` and `--repo` read the sources without
+the flag; `history` over two lanes used to be refused.
+
+### The store and its configuration
+
+`${XDG_CONFIG_HOME:-~/.config}/openRepoTools/lanes-index.conf`, or the file
+`$LANES_INDEX_CONFIG` names — per workstation, **never committed**, never under
+`~/.agents/` (which on a workstation built from the workspace repository *is*
+that repository):
+
+```text
+store=sqlite|postgres     default: postgres where url= is set, else sqlite
+sqlite=<path>             default ${XDG_STATE_HOME:-~/.local/state}/openRepoTools/lanes-index.sqlite
+url=<libpq URL>           the WRITER role — sync and reconcile
+passfile=<path>           the 0600 libpq password file for it
+reader_url=<libpq URL>    the SELECT-only READER role — status and the --index reads;
+                          REQUIRED beside url=, or those reads are refused
+reader_passfile=<path>    its password file, where it is not the same one
+schema=<name>             the Postgres schema (default lanes_index)
+```
+
+Refused (exit 2, nothing read or written): a configuration that is group- or
+world-readable, inside a git work tree or under `~/.agents/`; a URL that
+carries a password in any spelling; a password file that is not 0600; a SQLite
+path inside a git work tree. A Postgres configuration with no `reader_url=` is
+refused for `status` and the read flags (`read: sources (index refused …)`):
+**a read never connects with the writer's credential**, and there is no
+fallback to it. Postgres is reached through `psql` and only where
+`url=` is set — nothing imports a driver — with `PGPASSFILE` naming the
+password file and an inherited `PGPASSWORD` or `PGPASSFILE` removed; with
+no `passfile=` (a passwordless role), `PGPASSFILE` names an empty 0600 file of
+the indexer's own, so libpq never falls back to `~/.pgpass`. No configuration at all
+is SQLite at its default path, created 0600.
+
+**The two roles are Postgres's to hold** (act 3, Brett Heap's on Eagle and
+Raven — or nothing, and SQLite):
+
+```sql
+CREATE ROLE lanes_index_writer LOGIN;   -- the password lives in the 0600 passfile only
+CREATE ROLE lanes_index_reader LOGIN;
+CREATE SCHEMA lanes_index AUTHORIZATION lanes_index_writer;
+GRANT USAGE ON SCHEMA lanes_index TO lanes_index_reader;
+ALTER DEFAULT PRIVILEGES FOR ROLE lanes_index_writer IN SCHEMA lanes_index
+  GRANT SELECT ON TABLES TO lanes_index_reader;
+```
+
+The writer is confined to the index's schema and held by the indexer alone —
+by no session, supervisor, launcher or ledger authority; a leaked writer can
+damage only what a `reconcile` rebuilds. The reader may only `SELECT`.
+
+### What is indexed (schema 1)
+
+One versioned schema (`schema_version`); every row carries its `provenance`
+(the register commit it was last written at), `indexed_utc` and
+`schema_version`, and its `digest`.
+
+| table | one row per | what it holds |
+|---|---|---|
+| `lanes` | lane | canonical name, `aliases` (Amendment 16(e)), `home`, the `workstation / env / user` cell, `started_utc`, `handoff_path` (a pointer), `state_phrase`, `objects_cell`, `session_ids` in order, `last_session` (the resume target), `archived`, the row's own text — and **`owner`**: `legacy`, `managed <owner>` or `unknown`, from `lanes-edit.sh managed-projection` (0, 8, 1) and never from a parser of the indexer's, so a malformed marker is never downgraded to `legacy` |
+| `log_lines` | log line, by lane and file ordinal | verb, session, workstation, UTC as written, object, payload, its sub-fields as JSON, free text; a line the grammar cannot read is kept as `unreadable` with its file, line and reason, never dropped |
+| `register_lines` | register line, by ordinal | Rule 6's `LANDING`/`LANDED` and Amendment 10's `HOLD`/`HOLD RELEASED`: lane, repository, PR, tip, UTC, the line itself |
+| `lane_aliases` | alias-table line | `old_name`, `new_name`, UTC |
+| `transcript_pointers` | pointer | a row's session-cell ids and each `transcript` a `PAUSED` names, with its `agent` — pointers only |
+| `source_files` | file of the source | kind, blob, line counts — what the read flags need to answer as `origin` would |
+| `holds` (a VIEW) | open hold | `holders_of`'s answer, which is `who`'s: per lane (case-insensitively), its last line on each object **in file order**, never by UTC, where its verb is open — and not while another lane's own last line there is a `TAKEOVER`. The object is keyed AS WRITTEN: a line naming a repository by a spelling `lanes/repos.tsv` has since renamed (R20) is its own key here, where `who` folds its argument into the canonical one. Computed, never stored |
+| `provenance` | source | the indexed commit (or generation), UTC, schema version |
+
+**Created empty and written by nothing here**: `swap_states` and
+`job_summaries` — the managed ledger's half, `ledger:<Workstation>`, which the
+001 feature's T058 writes (act 4) — and `worktrees`, **reserved for
+opensoft/openRepoTools#161** (each lane's #97 inventory under
+`inventory:<Workstation>`). Not indexed at all: transcript and handoff bodies,
+credentials, the ledger's claims, fences, releases and exit witnesses.
+
+### The tests' promise
+
+`tests/test_lanes_index.py`, and a section of `tests/test_lane_helpers.sh` for
+the acts only that suite drives, hold the index to Amendment 14's eight:
+**offline no-read** (every act byte-identical against an unreachable store),
+**poisoned index** (wrong rows change no act's answer), **wiped-index
+reconcile** (the rebuild equals a synced index row for row), **replay**,
+**monotonic provenance**, **a hung indexer** delaying no writer beyond the fork,
+**the managed seam** (valid, malformed and plain rows as `managed`, `unknown`,
+`legacy`, all through `managed-projection`), and **fallback** (each failure
+says `read: sources` and gives the source read's answer). The parser is held
+to `LOG_AWK`'s output line for line. No test creates a real database.
 
 ## Hand edits
 

@@ -237,3 +237,15 @@ cleanup and later readers without an environment-only pin or a new pointer/schem
 PR #97 diagnostic roots remain unchanged: restart storage can retain its original
 fallback while diagnostics follow the recorded checkout. Broader root discovery
 and explicit checkout hint creation remain deferred in #159.
+
+
+### 2026-10-05 reconciliation with landed derived index (#164)
+
+Main fea9a29 adds Amendment 14's derived lane index. Retain its landed
+implementation and published read flags, while restart ownership, CAS, holder
+checks and launch decisions continue to read their existing sources. No restart
+act enables the index. Its detached post-push nudge remains non-gating. Both
+appended shell-suite sections are retained, with the incoming index section
+before the supervised restart section so the former's snapshot/restore cases
+finish before the latter creates its intent fixtures. This is integration of
+landed main within the approved scope, not a new restart authority.

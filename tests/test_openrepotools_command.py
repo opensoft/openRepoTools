@@ -61,11 +61,15 @@ COMMAND = REPO / "openRepoTools"
 #: rename is four files in one commit — which made the list THIRTEEN.
 #: `claude-current` and `claude-restart-check` joined it for
 #: opensoft/workBenches#119 (Brett Heap's home ruling of 2026-09-29), at the END
-#: so every index taken below still names the file it did: the list is FIFTEEN.
+#: so every index taken below still names the file it did, which made the list
+#: FIFTEEN. `lanes-index` joined it for opensoft/openRepoTools#160
+#: (lane-collision-protocol Amendment 14, ratified 2026-10-05), at the END for
+#: the same reason, and it is the one command in the list that is Python rather
+#: than bash: the list is SIXTEEN.
 INSTALLED = ("openRepoTools", "park", "resume", "status", "lane", "lanes",
              "lane-handoff", "lane-rename", "lanes-edit.sh", "lane-start",
              "lane-end", "link-estates", "repos.tsv", "claude-current",
-             "claude-restart-check")
+             "claude-restart-check", "lanes-index")
 
 #: The skills `--install` also places, at two paths each, and the paths they are
 #: fetched from when there is no checkout to copy them out of (Amendment 9(b),
@@ -87,11 +91,11 @@ SKILL_PATH = SKILL_PATHS[0]
 COMMAND_NAMES = ("handoff", "ctx", "swap")
 COMMAND_PATHS = tuple(f"commands/{n}.md" for n in COMMAND_NAMES)
 
-#: Everything a stdin install has to fetch: the fifteen files, the three skills
+#: Everything a stdin install has to fetch: the sixteen files, the three skills
 #: and the three command files.
 FETCHED = INSTALLED + SKILL_PATHS + COMMAND_PATHS
 
-#: TWENTY-NINE ARTIFACTS, AND THE COUNT IS THE INVARIANT: fifteen files in the
+#: THIRTY ARTIFACTS, AND THE COUNT IS THE INVARIANT: sixteen files in the
 #: bin directory, three skills in the shared skills directory, their three
 #: bare-run copies, three command files at that same pair of destinations, and
 #: TWO merged entries in `~/.claude/settings.json`. Derived from the three
@@ -110,7 +114,7 @@ ARTIFACTS = (len(INSTALLED) + 2 * len(SKILL_NAMES) + 2 * len(COMMAND_NAMES)
              + HOOK_ENTRIES)
 
 USAGE_LINES = (
-    "openRepoTools --install            install (or update) the fifteen estate and",
+    "openRepoTools --install            install (or update) the sixteen estate and",
     "openRepoTools wip init             create your workspace repository, clone it,",
     "openRepoTools --help | --version",
 )
@@ -123,7 +127,7 @@ pytestmark = [pytest.mark.skipif(shutil.which("bash") is None,
               WINDOWS_SKIP]
 
 #: `--install` HARD-REQUIRES `jq` SINCE lane-collision-protocol AMENDMENT 9(b):
-#: two of its twenty-nine artifacts are merged entries inside a JSON file somebody
+#: two of its thirty artifacts are merged entries inside a JSON file somebody
 #: else owns, and the clause has it refuse naming `jq` rather than rewriting
 #: that file by hand. So a run of `--install` on a host without `jq` is a
 #: REFUSAL BY DESIGN, and a test that asserts a successful placement there is
@@ -221,7 +225,7 @@ def test_help_prints_every_usage_line():
 
 
 def test_help_names_every_command_it_places_and_the_standards_front_door():
-    """`--install` places fifteen files, and fourteen of them are commands this one
+    """`--install` places sixteen files, and fifteen of them are commands this one
     knows nothing about — so `--help` has to say what they are and where the
     rest is written down. A command a person has on PATH and cannot find
     written down is a command they will not use.
@@ -238,7 +242,8 @@ def test_help_names_every_command_it_places_and_the_standards_front_door():
     for line in ("park [<Name>]", "resume [<Name>]", "status [<Name>]",
                  "lane-start <repo> <n>", "lane-end <lane>",
                  "lanes-edit.sh <verb>", "link-estates", "repos.tsv",
-                 "claude-current [--porcelain]", "claude-restart-check"):
+                 "claude-current [--porcelain]", "claude-restart-check",
+                 "lanes-index sync|reconcile|status"):
         assert line in result.stdout, line
     assert "`openRepoShape` is the standard's front door" in result.stdout
     assert "this command scaffolds none" in result.stdout
@@ -411,7 +416,7 @@ def test_installing_twice_changes_nothing(tmp_path):
     assert second.returncode == 0, second.stderr
     for name in INSTALLED:
         assert f"{name}: already installed at" in second.stdout, name
-    # TWENTY-NINE, not fifteen: the six skill copies, the six command-file copies
+    # THIRTY, not sixteen: the six skill copies, the six command-file copies
     # and BOTH hook entries each report `unchanged` too, and the count is the
     # invariant Amendment 9(b) names — derived from the three lists, never
     # restated, so a new skill or command moves it. It was eighteen until
@@ -424,7 +429,7 @@ def test_installing_twice_changes_nothing(tmp_path):
 @NEEDS_JQ
 def test_install_replaces_a_copy_that_has_drifted(tmp_path, name):
     """Per file, and only the one that drifted: an install that rewrote all
-    fifteen every time would have nothing to say about which one was stale."""
+    sixteen every time would have nothing to say about which one was stale."""
     assert run_cmd("--install", home=tmp_path).returncode == 0
     target = tmp_path / ".local" / "bin" / name
     target.write_text(target.read_text(encoding="utf-8") + "# drift\n",
@@ -848,9 +853,9 @@ def test_install_writes_a_receipt_of_every_file_it_placed(tmp_path):
     command files at both of their destinations. The two hook entries are
     entries inside `~/.claude/settings.json` and not files this command
     placed, and the receipt carries no row for itself either. Today that is
-    27 artifacts and 25 rows (13 + 6 + 6, since Amendment 16 put `lane-rename`
-    in the list); the number moves with those three lists and with nothing
-    else, which is why no assertion below spells it.
+    30 artifacts and 28 rows (16 + 6 + 6, since opensoft/openRepoTools#160 put
+    `lanes-index` in the list); the number moves with those three lists and
+    with nothing else, which is why no assertion below spells it.
     """
     result = run_cmd("--install", home=tmp_path)
     assert result.returncode == 0, result.stderr
