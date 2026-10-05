@@ -152,8 +152,14 @@ def test_a_run_relocates_bytecode_caches_and_temp_and_leaves_none_of_it(tmp_path
     assert rec["arg"][-2:] == ["-k", "lane_worktrees"]
     assert not run_root.exists(), "the run root outlived the run"
     assert box.runs() == []
-    assert (box.lockdir / "openrepotools-pytest.lock").exists(), (
-        "the lock is the workstation's, under the caller's TMPDIR, not the run's")
+    # THE LOCK IS THE WORKSTATION'S, under the caller's TMPDIR and not the
+    # run's: the `flock` file where there is `flock`, and on macOS, which has
+    # none, the `mkdir` lock beside it - released by the exit.
+    if shutil.which("flock"):
+        assert (box.lockdir / "openrepotools-pytest.lock").exists(), (
+            "the lock is the workstation's, under the caller's TMPDIR, not the run's")
+    else:
+        assert not (box.lockdir / "openrepotools-pytest.lock.d").exists(), "the lock was kept"
 
 
 @pytest.mark.parametrize("sig,rc", [(signal.SIGTERM, 143), (signal.SIGINT, 130)])
