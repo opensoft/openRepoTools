@@ -136,7 +136,9 @@
 #
 #   THE INVENTORY HAS A TABLE TOO (opensoft/openRepoTools#161): `worktrees`,
 #   under the source `inventory:<Workstation>`, copied from `worktrees --all`
-#   by `lanes-index sync --source inventory`.
+#   by `lanes-index sync --source inventory` — which every inventory write
+#   (`set-lane-state`, `set-lane-tree`, the lifecycle follow, a rename's move
+#   of the control root) nudges exactly as a landed push nudges the register's.
 #   No act reads it: `lane-reconcile`, `lane-start` and `lane-end` read the
 #   sidecars and the disk. With `--index` the stderr line is `read: index
 #   (<store>) at inventory:<ws> synced <UTC>`.
@@ -1077,9 +1079,12 @@ LOCK="$LANES_DIR/.lanes-edit.lock"
 # so an exported variable of either name changes nothing.
 LANES_IDX_DIR=""
 LANES_INDEX_NUDGE=0
-# AND THE INVENTORY'S (opensoft/openRepoTools#161), for the same reason: the
-# `worktrees` table's export directory, set only by `index_open worktrees`.
+# AND THE INVENTORY'S OWN TWO (opensoft/openRepoTools#161), for the same reason:
+# the `worktrees` table's export directory, set only by `index_open worktrees`,
+# and the nudge an inventory write leaves for `cleanup` - set only by a write
+# of a lifecycle snapshot or a tree record that this process made.
 LANES_WT_IDX_DIR=""
+LANES_INDEX_NUDGE_INV=0
 LOCK_HELD=0
 LANES_PATH="${LANES_PATH:-$(git -C "${LANES_DIR:-.}" rev-parse --show-prefix 2>/dev/null || :)${LANES_FILE##*/}}"
 
@@ -1203,9 +1208,11 @@ cleanup() {
   [ -n "${LANES_WT_IDX_DIR:-}" ] && [ -d "${LANES_WT_IDX_DIR:-}" ] && rm -rf -- "$LANES_WT_IDX_DIR"
   # AMENDMENT 14(d) — THE NUDGE IS THE LAST THING THIS PROCESS DOES: after the
   # lock is released at the top of this function, and only where `commit_push` recorded a push
-  # that landed. Tested here rather than inside the function, because `cleanup`
-  # also runs for a process that died before `index_nudge` was ever defined.
-  [ "${LANES_INDEX_NUDGE:-0}" = 1 ] && index_nudge
+  # that landed - or, opensoft/openRepoTools#161, where an inventory writer
+  # recorded a snapshot or a tree record it had just replaced. Tested here rather
+  # than inside the function, because `cleanup` also runs for a process that died
+  # before `index_nudge` was ever defined.
+  if [ "${LANES_INDEX_NUDGE:-0}" = 1 ] || [ "${LANES_INDEX_NUDGE_INV:-0}" = 1 ]; then index_nudge; fi
   return 0
 }
 # AND A SIGNAL ACTUALLY STOPS IT (Amendment 8, ruling (h)). `trap cleanup EXIT
@@ -2069,12 +2076,29 @@ EOF
 # `managed-projection`, `lane-reconcile`) has a path to `LANES_IDX_DIR`: it is
 # assigned empty at start-up whatever the environment says, and set only by
 # `index_open`, which only the two read arms call.
+#
+# THE INVENTORY'S NUDGE IS THE SAME ONE (opensoft/openRepoTools#161). The #97
+# inventory writers — `set-lane-state`, `set-lane-tree`, the lifecycle follow
+# `write_event` makes after a `STARTED`/`RESUMED`/`ENDED`/`RETIRED`, and the
+# rename that moves a lane's control root — write no commit and push nothing,
+# so they leave `LANES_INDEX_NUDGE_INV` instead, and the same detached fork is
+# made with `--source inventory`: the indexer reads this workstation's
+# sidecars as they now stand, through this file's own `worktrees` read. A write
+# that did both (a `STARTED` that landed and moved the snapshot) makes both
+# forks; `lanes-index` runs one sync at a time per workstation, and a second
+# that finds the lock held leaves the holder a mark naming its source.
 index_nudge() {
-  LANES_INDEX_NUDGE=0
+  in_reg="${LANES_INDEX_NUDGE:-0}"; in_inv="${LANES_INDEX_NUDGE_INV:-0}"
+  LANES_INDEX_NUDGE=0; LANES_INDEX_NUDGE_INV=0
   [ "${LANES_INDEX:-}" = off ] && return 0
   in_bin="$(command -v lanes-index 2>/dev/null || :)"
   [ -n "$in_bin" ] || return 0
-  ( "$in_bin" sync </dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- & ) >/dev/null 2>&1
+  if [ "$in_reg" = 1 ]; then
+    ( "$in_bin" sync </dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- & ) >/dev/null 2>&1
+  fi
+  if [ "$in_inv" = 1 ]; then
+    ( "$in_bin" sync --source inventory </dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- & ) >/dev/null 2>&1
+  fi
   return 0
 }
 
@@ -11955,6 +11979,7 @@ lane_state_follow() {   # <lane> <verb> <payload> <uuid> <pre-image> <seam verdi
   if lane_state_put "$lsf_root" "$lsf_lane" "$lsf_new" "$lsf_gen" "$(lane_op_id)" \
        "$lsf_uuid" "${lsf_agent:-}" "${lsf_prof:-}" "$WS" ""; then
     if [ "$lsf_own" = 1 ]; then release_lock; fi
+    LANES_INDEX_NUDGE_INV=1     # opensoft/openRepoTools#161: the table follows it
     return 0
   fi
   if [ "$lsf_own" = 1 ]; then release_lock; fi
@@ -11985,6 +12010,7 @@ lane_state_rename() {   # <the old name's control root> <new lane>
   if [ "$(lc "${lsn_old##*/}")" = "$(lc "$lsn_new")" ]; then
     lsn_tmp="$lsn_old.rename.$$"
     if mv -- "$lsn_old" "$lsn_tmp" 2>/dev/null && mv -- "$lsn_tmp" "$lsn_to" 2>/dev/null; then
+      LANES_INDEX_NUDGE_INV=1
       note "the lane lifecycle snapshot and inventory moved with the rename: $lsn_old → $lsn_to"
     else
       note "the lane lifecycle snapshot and inventory could NOT be moved from $lsn_old to $lsn_to (the rename itself has landed). Move it by hand; until then \`lanes-edit.sh lane-reconcile $lsn_new\` reads no snapshot for this lane."
@@ -11996,6 +12022,7 @@ lane_state_rename() {   # <the old name's control root> <new lane>
     return 0
   fi
   if mv -- "$lsn_old" "$lsn_to" 2>/dev/null; then
+    LANES_INDEX_NUDGE_INV=1
     note "the lane lifecycle snapshot and inventory moved with the rename: $lsn_old → $lsn_to"
   else
     note "the lane lifecycle snapshot and inventory could NOT be moved from $lsn_old to $lsn_to (the rename itself has landed). Move it by hand; until then \`lanes-edit.sh lane-reconcile $lsn_new\` reads no snapshot for this lane."
@@ -15761,6 +15788,7 @@ EOF
     if lane_state_put "$sls_root" "$lane" "$sls_state" "$sls_gen" "$sls_op" \
          "$sls_owner" "$sls_agent" "$sls_prof" "$WS" "$sls_kind"; then
       release_lock
+      LANES_INDEX_NUDGE_INV=1   # opensoft/openRepoTools#161: `cleanup` nudges the indexer
       printf 'state\t%s\ngeneration\t%s\noperation\t%s\n' "$sls_state" "$sls_gen" "$sls_op"
     else
       release_lock
@@ -15914,6 +15942,7 @@ EOF
     if lane_tree_put "$slt_root" "$lane" "$slt_path" "$slt_co" "$slt_b" "$slt_h" \
          "$slt_u" "$slt_d" "$slt_n" "$slt_w" "$slt_g" "$slt_op"; then
       release_lock
+      LANES_INDEX_NUDGE_INV=1   # opensoft/openRepoTools#161: `cleanup` nudges the indexer
       printf '%s\n' "$(tree_id_for "$slt_path")"
     else
       release_lock
