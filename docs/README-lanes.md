@@ -3301,6 +3301,173 @@ reconcile** (the rebuild equals a synced index row for row), **replay**,
 says `read: sources` and gives the source read's answer). The parser is held
 to `LOG_AWK`'s output line for line. No test creates a real database.
 
+## Retiring a lane's worktrees — `lane-worktrees sweep` (#162)
+
+**On Brett Heap's word of 2026-10-05 ("build 162")**, tracked on
+[opensoft/openRepoTools#162](https://github.com/opensoft/openRepoTools/issues/162).
+A swap that does not finish gracefully — a usage limit, a killed pane, a crashed
+harness — leaves its writers' trees where they stood, and the protocol's
+worktree-safety rule (a swap never commits, pushes, stashes, resets or cleans)
+is right to leave them. This is the act that retires them afterwards, in one
+place, under one rule: **nothing is deleted that is not first on origin or in a
+bundle under the sweeps directory, and a tree a live writer owns is never
+touched.**
+
+```sh
+lane-worktrees sweep <lane>                     # the DRY RUN: the table, nothing changed
+lane-worktrees sweep <lane> --yes [--live <path>|--live none]
+lane-worktrees sweep <lane> --dry-run --porcelain   # lane-end's gate (#163): 0 / 3 / 2
+lane-worktrees sweep --expire [--yes]           # archives past retention
+```
+
+**Which trees are the lane's** is #97's inventory (`lanes-edit.sh lane-trees`)
+and the disk — **never the derived index** (Amendment 14 clause (b)). The sweep
+also reads every registration of the lane's checkout and every checkout under
+its two roots (`<checkout>/.claude/worktrees/*`, `.lane-worktrees/<lane>/*`).
+A tree the inventory does not name is **FOREIGN**: reported and left, unless
+`--include-foreign` and a `--word "<verbatim>"` (recorded in every register line
+it causes). A tree ANOTHER lane's inventory names is that lane's and is never
+taken from here, word or no word. The lane's own checkout is never a candidate.
+
+**Who may act** is #97's reconciliation (`lanes-edit.sh lane-reconcile`), read
+before anything is written — the fetch included:
+
+| the lane | dry run | `--yes` |
+|---|---|---|
+| bound on another host or container (Amendment 18(b): UNKNOWN, never dead) | the table, exit **2** | refused, exit **2** |
+| its binding, holder or reconciliation could not be read | the table, exit **2** | refused, exit **2** |
+| held by ANOTHER live session | the table, exit **2** | refused, exit **2** |
+| managed-owned (ruling 2026-10-04) | refused, exit **2** | refused, exit **2** |
+| held by THIS session | the table | only with the coordinator's writer count: `--live <worktree>` per live writer (its ListAgents count, Amendment 17 Addendum 1 (i)), or `--live none` |
+| `SWAPPING` in a live session | the table | refused: a handoff is in flight |
+| no live holder, bound here, free or gone | the table | performed |
+
+### The table, as implemented
+
+Each tree is classified in this order; the first row that matches decides.
+
+| tree | disposition | what `--yes` does |
+|---|---|---|
+| not in the lane's inventory | `foreign` | nothing (`--include-foreign --word …` applies the rows below) |
+| a process stands in it or holds a file open there (`/proc`, else `lsof`), a tmux pane's current path is in it, it is named by `--live`, the sweep was started inside it, or the session that recorded it is live | `live` | nothing, ever — asked again at the moment of the act |
+| liveness could not be read | `keep` | nothing |
+| its directory is gone and git still registers it | `prune` | `git worktree remove <path>` (the one registration; `git worktree prune` only if that is refused) |
+| its directory is gone and nothing registers it | `gone` | nothing; the inventory record is history |
+| a registration someone LOCKED; a submodule with uncommitted work or a commit no remote holds; a repository nested inside it; a CLONE with a branch or a stash origin lacks | `keep` | nothing, and the line says which |
+| something leans on it — another repository's `objects/info/alternates`, or a remote whose URL is its path | `load-bearing` | nothing; the line names every dependent and the remedy (`git repack -a -d`, then drop the alternates or re-point the remote) |
+| no `origin` | `keep` (`bundle+remove` with `--bundle`) | a bundle is its only rescue |
+| dirty or untracked work | `wip-rescue+remove` | `git add -A` into a COPY of its index, `commit-tree` on its head, `rescue/<lane>/<slice>-<UTC>` pushed and seen on origin, a bundle, then removed |
+| an unborn branch, clean | `remove` | removed |
+| detached at a commit origin holds | `remove` | removed |
+| detached with commits of its own | `rescue+remove` | `rescue/<lane>/<slice>-<UTC>` pushed, a bundle, then removed |
+| MERGED — its PR LANDED in the register, or `gh` says MERGED, and that PR's head holds this tip | `remove+delete-branch` | removed; local branch deleted; the remote branch too where its `Lane:` trailer is this lane's and it holds nothing the PR did not |
+| clean, every commit on its own remote branch (an open PR is untouched) | `remove` | removed; the branch stays |
+| clean, its head on some origin branch | `remove` | removed; the branch stays |
+| unpublished commits on `main`/`master`, or on a branch origin has DIVERGED from | `rescue+remove` | the tip to `rescue/<lane>/<slice>-<UTC>`, then removed; the branch itself is never force-pushed |
+| unpublished commits otherwise | `push+remove` | pushed AS IS under its OWN name — never its upstream's, which for a branch made from `origin/main` is `main` — then removed |
+
+**"Merged" is never `git branch --merged` alone**: a squash merge leaves no
+ancestry, and a branch whose tip IS on `main` with no pull request naming it is
+listed as unmerged and its branch kept. The branch's pull request comes from one
+`gh pr list --state all` per repository; with `LANES_NO_GITHUB=1` or no `gh`
+nothing is called merged. The register's `LANDED` lines are read from
+`origin/<branch>` of the workspace repository.
+
+**At the moment of removal** the head is re-read, and the tree must still be
+clean — or, after a WIP rescue, must still be byte for byte the tree the rescue
+commit carries. A push that origin refuses leaves the tree exactly as it was:
+the WIP commit is made BESIDE the tree, never into it, so its branch, index and
+files never move.
+
+**Ignored files that are not caches or build output** (an `.env`, a local
+config) are archived to `<slice>-ignored.tar.gz` before a tree goes: a commit
+cannot carry them, and the rule is that nothing goes that is not first saved.
+Build output (`target`, `build`, `dist`, `.tox`, `.next`, `*.egg-info`, …) is
+generated and is not archived; more than `ignored_archive_mb` of the rest leaves
+the tree in place for a person.
+
+### The other rows
+
+| flag | what | disposition |
+|---|---|---|
+| `--branches` | local branches no worktree holds, in the lane's checkout | merged by PR evidence: `delete` (`delete+remote` where the `Lane:` trailer is this lane's and origin's tip is inside the PR); an open PR's branch: `keep`; unmerged with a missing, diverged or unpushed upstream: `list` with its tip, distance from `origin/main`, last commit date and owner — never deleted; `main`, `master` and `rescue/*`: never touched |
+| `--include-scratch` | `.lane-worktrees/<lane>/*-scratch`, `briefs/`, `bin/` that are no checkout | `archive+remove`: tar (caches left out) and sha256, then removed |
+| `--include-caches` | `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `node_modules`, any directory with `pyvenv.cfg` (and `venv/`, `.venv/` with an activate script), under `.lane-worktrees/<lane>/**` and the lane's inventory trees | `remove`, without archiving — never one git tracks, one in a live tree, or one inside scratch being archived |
+| `--include-sandboxes` | `tmp.*` and `pytest-of-$USER/pytest-*` in `/tmp` and `$TMPDIR` (or `LANE_WORKTREES_SANDBOX_ROOTS`), owned by this account | `remove` where the owning process is gone: a pytest `.lock` naming a dead pid, and no live process standing in it, holding it open or naming it in its environment; a `tmp.*` younger than `sandbox_min_age_minutes` is left |
+| `--links` | every symlink under the estate and every worktree `.git` gitdir pointer | `broken`, listed with target and age; nothing changes |
+| `--bundle` | every tree acted on | a `git bundle` beside the archive (always, for a rescue) |
+
+### The sweeps directory, the register line, retention
+
+`${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools/sweeps/<lane>/<UTC>/`,
+mode 0700, created by the first act of a `--yes` and never by a dry run:
+
+* `DISPOSITION.md` — every tree and item acted on: what it was, why, what was
+  done, where its rescue is, and the register line that records it;
+* `rescues.tsv` — `origin`, rescue branch and sha for each rescue, which
+  `--expire` reads;
+* the bundles, `<slice>-ignored.tar.gz` and `scratch-<name>.tar.gz`;
+* `MANIFEST.sha256` — `sha256sum` format, every file above.
+
+**One register `NOTED` line per tree acted on** (`lanes-edit.sh log NOTED
+lane:<lane>`), written after the act so it says what happened, naming the
+disposition, the rescue and the archive; one more each for scratch, branches,
+and caches with sandboxes. A line the register refuses is printed whole for a
+person to write by hand, and the exit is 1. The line is the pointer that
+outlives the archive.
+
+**Retention: 90 days** (`sweep.conf`). `sweep --expire` lists archives older than
+that, and with `--yes` removes those whose every rescue branch is still on
+origin (`git ls-remote`); an archive whose rescue branch is gone from origin is
+the only copy and is NEVER expired. What expired is appended to
+`sweeps/EXPIRED.log`.
+
+`${XDG_CONFIG_HOME:-$HOME/.config}/openRepoTools/sweep.conf` (or
+`$LANE_WORKTREES_CONF`), `key=value` lines:
+
+| key | default | what |
+|---|---|---|
+| `retention_days` | 90 | archive age before `--expire` may remove it |
+| `aging_days` | 14 | a rescue branch or dirty inventory tree older than this is "awaiting disposition" in the report |
+| `sandbox_min_age_minutes` | 60 | a `tmp.*` younger than this is never a killed suite's |
+| `foreign_quiet_hours` | 24 | a FOREIGN tree active within this is treated as live, even with `--include-foreign` |
+| `ignored_report_mb` | 50 | the report's threshold for an ignored directory |
+| `ignored_archive_mb` | 200 | ignored files (not caches, not build output) a tree may carry into its archive; more, and the tree is left for a person |
+
+### The exit contract (`lane-end`'s gate, #163)
+
+`lane-worktrees sweep <lane> --dry-run --porcelain` prints one tab-separated
+row per tree and item, between a `lane` row and a `summary` row:
+
+```text
+lane    <lane> <state> <holder> <holder uuid> <binding> <verdict>
+refused <why>                                   (only when refused)
+tree    <disposition> <retire|-> <path> <branch> <head> <why>
+<kind>  <disposition> <retire|-> <path> <detail> <bytes> <why>     (branch, scratch, cache, sandbox, link)
+summary <to retire> <trees> <live> <foreign>
+```
+
+and exits **0** (nothing to retire), **3** (something to retire — a tree of the
+lane's on disk, live or not, a stale registration, an unpublished or merged
+branch of the lane's, included scratch), or **2** (refused: bound elsewhere,
+held by another session, managed, or a read failed). FOREIGN trees, links,
+caches and sandboxes are never the lane's to retire. `--yes` exits 0 when every
+act completed and 1 when one failed part-way (the rest go on; each failure is in
+the table and in `DISPOSITION.md`); usage is 64.
+
+### Two protocol lines this act assumes (proposed for the amendment that ratifies it)
+
+1. **A lane creates worktrees, never clones.** Every tree a lane works in is a
+   `git worktree` of the estate's checkout, recorded in its inventory (#97). A
+   standalone clone under a lane root is FOREIGN to every sweep, and one that is
+   a shared store or a local remote is LOAD-BEARING. A lane adds no local remote
+   and no alternates.
+2. **Scratch lives in the session scratchpad or the lane's state directory,
+   never beside repositories.** `.lane-worktrees/<lane>/*-scratch`, `briefs/`
+   and `bin/` are grandfathered into the archive-then-remove row; new scratch
+   goes to `${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools/lanes/<lane>/scratch/`
+   or the harness scratchpad.
+
 ## Hand edits
 
 After **any** hand edit made with an allowed tool (python read/write, `sed -i
