@@ -1492,3 +1492,568 @@ def test_export_never_creates_a_store_and_the_store_is_private(estate):
     assert estate.index("sync", "--source", "ledger:Eagle").returncode == 2
     assert estate.index("sync", "--source", "register:someone/else").returncode == 2
     assert estate.index("bogus").returncode == 64
+
+
+# =================================== the inventory source (opensoft/openRepoTools#161)
+#
+# THIS WORKSTATION'S #97 WORKTREE INVENTORY, AS THE INDEX'S SECOND SOURCE. Each
+# lane's sidecars are written here by the REAL writers (`set-lane-state`,
+# `set-lane-tree`) over REAL worktrees of a repository whose origin is a bare
+# repository in `tmp_path`; the two managed lanes' sidecars are written by hand,
+# because every legacy writer refuses a managed lane — which is exactly how a
+# managed lane comes to have leftovers from before its enrolment.
+
+WT_COLS = ["workstation", "lane", "owner", "path", "branch", "base", "lifecycle", "generation",
+           "operation", "writer_live", "last_seen_utc", "last_commit", "dirty_count",
+           "unpushed_count", "pr_number", "pr_state"]
+
+
+#: `tree_id_for`'s shape: a `cksum` of the path, then the path folded.
+TREE_ID = re.compile(r"\bc[0-9]+-[A-Za-z0-9._-]+")
+
+
+class Inventory:
+    """An Estate with an inventory: repoA-1 RUNNING with one clean tree and one
+    dirty, unpushed one; repoA-2 SWAPPING with one tree and a LIVE session;
+    repoM-1 (a valid marker) and repoM-2 (a malformed one) each with a sidecar
+    left over from before enrolment."""
+
+    def __init__(self, root: Path):
+        self.e = Estate(root)
+        self.root = root
+        self.lsr = root / "lane-state"
+        self.e.env["LANES_LANE_STATE_ROOT"] = str(self.lsr)
+        self.repo = root / "repos" / "repoA"
+        self.origin = root / "repos" / "repoA.git"
+        self.trees = self.repo / ".claude" / "worktrees"
+        g = self._g
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)],
+                       check=True, env=self.e.env)
+        subprocess.run(["git", "clone", "-q", str(self.origin), str(self.repo)],
+                       check=True, env=self.e.env, capture_output=True)
+        (self.repo / "a.txt").write_text("seed\n")
+        g(self.repo, "add", "-A")
+        g(self.repo, "commit", "-q", "-m", "the lane's first commit")
+        g(self.repo, "push", "-q", "origin", "main")
+        self.trees.mkdir(parents=True)
+        self.run_tree = self.trees / "w-run"
+        g(self.repo, "worktree", "add", "-q", "-b", "feat/run", str(self.run_tree))
+        g(self.run_tree, "push", "-q", "-u", "origin", "feat/run")
+        self.dirty_tree = self.trees / "w-dirty"
+        g(self.repo, "worktree", "add", "-q", "-b", "feat/dirty", str(self.dirty_tree))
+        g(self.dirty_tree, "push", "-q", "-u", "origin", "feat/dirty")
+        (self.dirty_tree / "b.txt").write_text("committed, not pushed\n")
+        g(self.dirty_tree, "add", "b.txt")
+        g(self.dirty_tree, "commit", "-q", "-m", "work not yet pushed")
+        (self.dirty_tree / "c.txt").write_text("not even committed\n")
+        self.a2_tree = self.trees / "w-a2"
+        g(self.repo, "worktree", "add", "-q", "-b", "feat/a2", str(self.a2_tree))
+        self.ok("set-lane-state", "repoA-1", "RUNNING", "--operation", "op-test-a1")
+        self.ok("set-lane-tree", "repoA-1", str(self.run_tree), "--checkout", str(self.repo))
+        self.ok("set-lane-tree", "repoA-1", str(self.dirty_tree), "--checkout", str(self.repo))
+        self.ok("set-lane-state", "repoA-2", "RUNNING", "--operation", "op-test-a2")
+        self.ok("set-lane-state", "repoA-2", "SWAPPING", "--operation", "op-test-a2s")
+        self.ok("set-lane-tree", "repoA-2", str(self.a2_tree), "--checkout", str(self.repo),
+                "--generation", "2", "--operation", "op-test-a2s")
+        for lane, head in (("repoM-1", "1" * 40), ("repoM-2", "2" * 40)):
+            trees = self.lsr / lane / "trees"
+            trees.mkdir(parents=True)
+            (trees / f"c0-{lane}.yaml").write_text("\n".join([
+                "schema: 1", f"lane: {lane}", f"tree: c0-{lane}",
+                f"path: /nowhere/{lane}/w", "checkout: unknown", f"branch: feat/{lane}",
+                f"head: {head}", "upstream: none", "dirty: 0", "unpushed: 0",
+                "writer: none", "generation: 0", "operation: none",
+                "observed: 2026-10-04T00:00:00Z", ""]))
+        # repoA-2's session is LIVE on this workstation: the listing's own read.
+        self.sleeper = subprocess.Popen(["sleep", "600"])
+        sessions = self.e.home / ".claude" / "sessions"
+        sessions.mkdir(parents=True, exist_ok=True)
+        (sessions / "live.json").write_text(
+            '{"pid":%d,"sessionId":"%s","kind":"interactive","status":"busy"}\n'
+            % (self.sleeper.pid, UUID_A2))
+
+    def _g(self, cwd: Path, *args: str) -> str:
+        proc = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True,
+                              env=self.e.env, check=False)
+        assert proc.returncode == 0, f"git {' '.join(args)}: {proc.stderr}"
+        return proc.stdout.strip()
+
+    def ok(self, *args: str) -> subprocess.CompletedProcess:
+        res = self.e.edit(*args)
+        assert res.returncode == 0, (args, res.stdout, res.stderr)
+        return res
+
+    def sync(self, *extra: str, env: dict | None = None) -> subprocess.CompletedProcess:
+        return self.e.index("sync", "--source", "inventory", *extra, env=env)
+
+    def rows(self) -> dict:
+        conn = sqlite3.connect(str(self.e.sqlite))
+        conn.row_factory = sqlite3.Row
+        out = {r["record_id"]: dict(r) for r in conn.execute(
+            "SELECT * FROM worktrees WHERE source = 'inventory:Eagle'")}
+        conn.close()
+        return out
+
+    def norm(self, text: str) -> str:
+        """An answer with what is the SANDBOX's taken out: its paths (as given
+        and resolved), a tree id - `c<cksum>-<the folded path>`, whose tail
+        alone survives a path longer than 180 bytes - and the live session's
+        pid."""
+        text = TREE_ID.sub("<TREE>", text)
+        text = text.replace(os.path.realpath(self.root), str(self.root))
+        text = re.sub(rf"\b{self.sleeper.pid}\b", "<PID>", text)
+        return normal(text, self.root)
+
+    def close(self) -> None:
+        self.sleeper.kill()
+        self.sleeper.wait()
+
+
+@pytest.fixture
+def inv(tmp_path):
+    made = Inventory(tmp_path / "i")
+    yield made
+    made.close()
+
+
+def test_the_inventory_source_mirrors_every_lanes_sidecars(inv):
+    """THE TABLE IS THE INVENTORY (#161): one row per tree each lane's sidecars
+    name, every column from the helper that wrote it - the owner from
+    `managed-projection`'s read, the lifecycle from the snapshot, the liveness
+    from the listing's own session read, the counts and the stamp from the
+    observation, the base and the last commit read of the RECORDED head - and
+    nothing of the register's touched."""
+    res = inv.sync()
+    assert res.returncode == 0, res.stderr
+    assert "inventory:Eagle (sqlite) - 5 upserted, 0 removed" in res.stdout, res.stdout
+    rows = inv.rows()
+    run = rows[f"repoA-1:{inv.run_tree}"]
+    dirty = rows[f"repoA-1:{inv.dirty_tree}"]
+    a2 = rows[f"repoA-2:{inv.a2_tree}"]
+    main = inv._g(inv.repo, "rev-parse", "origin/main")
+    assert (run["workstation"], run["owner"], run["branch"], run["lifecycle"]) == \
+        ("Eagle", "legacy", "feat/run", "RUNNING")
+    assert (run["dirty_count"], run["unpushed_count"], run["writer_live"]) == (0, 0, 0)
+    assert run["base"] == main
+    assert run["last_commit"] == f"{main} the lane's first commit"
+    assert (run["generation"], run["operation"], run["provenance"]) == (1, "op-test-a1", "0")
+    assert UTC.fullmatch(run["last_seen_utc"]), run["last_seen_utc"]
+    head = inv._g(inv.dirty_tree, "rev-parse", "HEAD")
+    assert (dirty["dirty_count"], dirty["unpushed_count"]) == (1, 1)
+    assert dirty["last_commit"] == f"{head} work not yet pushed"
+    assert dirty["base"] == main
+    assert (a2["lifecycle"], a2["generation"], a2["writer_live"], a2["provenance"]) == \
+        ("SWAPPING", 2, 1, "2")
+    assert (a2["pr_number"], a2["pr_state"]) == (None, None)
+    m1 = rows["repoM-1:/nowhere/repoM-1/w"]
+    m2 = rows["repoM-2:/nowhere/repoM-2/w"]
+    assert (m1["owner"], m1["lifecycle"]) == ("managed ledger-1", "INDETERMINATE")
+    assert (m2["owner"], m2["lifecycle"]) == ("unknown", "INDETERMINATE")
+    assert m1["last_commit"] == "1" * 40 and m1["base"] is None
+    conn = sqlite3.connect(str(inv.e.sqlite))
+    sources = [r[0] for r in conn.execute("SELECT source FROM provenance")]
+    assert sources == ["inventory:Eagle"], sources
+    for table in REGISTER_TABLES_FOR_TESTS:
+        assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
+    prov = conn.execute("SELECT commit_sha, generation FROM provenance").fetchone()
+    assert re.fullmatch(r"[0-9a-f]{64}", prov[0]) and prov[1] == 1
+
+
+REGISTER_TABLES_FOR_TESTS = ("source_files", "lanes", "log_lines", "register_lines",
+                             "lane_aliases", "transcript_pointers")
+
+
+def test_an_inventory_replay_changes_nothing_and_one_write_moves_one_row(inv):
+    """REPLAY (14(d)): a second sync of an unchanged inventory writes not one
+    byte - `indexed_utc` included - and one `set-lane-tree` afterwards upserts
+    the one row it moved."""
+    assert inv.sync().returncode == 0
+    before = dump(inv.e.sqlite, with_utc=True)
+    time.sleep(1.1)
+    again = inv.sync()
+    assert again.returncode == 0, again.stderr
+    assert "nothing to write" in again.stdout, again.stdout
+    assert dump(inv.e.sqlite, with_utc=True) == before
+    (inv.run_tree / "new.txt").write_text("a fresh change\n")
+    inv.ok("set-lane-tree", "repoA-1", str(inv.run_tree), "--checkout", str(inv.repo))
+    third = inv.sync()
+    assert "1 upserted, 0 removed" in third.stdout, third.stdout
+    assert inv.rows()[f"repoA-1:{inv.run_tree}"]["dirty_count"] == 1
+
+
+def test_a_tree_the_inventory_no_longer_names_leaves_the_table(inv):
+    """ROWS LEAVE WITH THEIR RECORD (#161): a tree removed from the inventory -
+    at landing, or by a sweep's disposition - leaves the table in the next
+    sync, and nothing else moves."""
+    assert inv.sync().returncode == 0
+    sidecar = [f for f in (inv.lsr / "repoA-1" / "trees").iterdir()
+               if "w-dirty" in f.name]
+    assert len(sidecar) == 1
+    sidecar[0].unlink()
+    res = inv.sync()
+    assert res.returncode == 0, res.stderr
+    assert "0 upserted, 1 removed" in res.stdout, res.stdout
+    assert f"repoA-1:{inv.dirty_tree}" not in inv.rows()
+    assert f"repoA-1:{inv.run_tree}" in inv.rows()
+
+
+def test_a_wiped_inventory_reconciles_row_for_row(inv):
+    """WIPED-INDEX RECONCILE (14(d)): the rebuild equals a synced table, row for
+    row; and a row changed by hand in the store is found by what it SAYS and
+    put right."""
+    assert inv.sync().returncode == 0
+    synced = dump(inv.e.sqlite)
+    inv.e.sqlite.unlink()
+    dry = inv.e.index("reconcile", "--source", "inventory", "--dry-run")
+    assert dry.returncode == 0, dry.stderr
+    assert not inv.e.sqlite.exists(), "a dry run created the store"
+    res = inv.e.index("reconcile", "--source", "inventory")
+    assert res.returncode == 0, res.stderr
+    assert re.search(r"worktrees\s+0 kept\s+5 upserted", res.stdout), res.stdout
+    assert dump(inv.e.sqlite) == synced
+    conn = sqlite3.connect(str(inv.e.sqlite))
+    conn.execute("UPDATE worktrees SET dirty_count = 0, lifecycle = 'SWAPPED' "
+                 "WHERE path = ?", (str(inv.dirty_tree),))
+    conn.commit()
+    conn.close()
+    assert "nothing to write" in inv.sync().stdout
+    fixed = inv.e.index("reconcile", "--source", "inventory")
+    assert re.search(r"worktrees\s+4 kept\s+1 upserted", fixed.stdout), fixed.stdout
+    righted = dump(inv.e.sqlite)
+    assert righted["worktrees"] == synced["worktrees"]
+    # the same table, so the same fingerprint - and a sync count that went UP
+    assert [r[:2] for r in righted["provenance"]] == [r[:2] for r in synced["provenance"]]
+    assert righted["provenance"][0][2] == synced["provenance"][0][2] + 1
+
+
+def test_an_inventorys_provenance_only_moves_forward_per_lane(inv):
+    """MONOTONIC PROVENANCE (14(d)), PER LANE: a lane whose lifecycle snapshot
+    reads BELOW the generation its rows were written at - one moved aside and
+    begun again - is written nothing by `sync`, which says why; the other
+    lanes sync; and `reconcile` takes the lane as it now stands."""
+    assert inv.sync().returncode == 0
+    snap = inv.lsr / "repoA-2" / "lane-state.yaml"
+    snap.rename(snap.with_suffix(".aside"))
+    inv.ok("set-lane-state", "repoA-2", "RUNNING", "--operation", "op-test-again")
+    (inv.run_tree / "moved.txt").write_text("repoA-1 moves on\n")
+    inv.ok("set-lane-tree", "repoA-1", str(inv.run_tree), "--checkout", str(inv.repo))
+    res = inv.sync()
+    assert res.returncode == 0, res.stderr
+    assert "lane repoA-2: its rows are kept as they are" in res.stdout, res.stdout
+    assert "only moves forward" in res.stdout
+    assert "1 upserted, 0 removed" in res.stdout, res.stdout
+    rows = inv.rows()
+    assert rows[f"repoA-2:{inv.a2_tree}"]["generation"] == 2
+    assert rows[f"repoA-2:{inv.a2_tree}"]["lifecycle"] == "SWAPPING"
+    assert rows[f"repoA-1:{inv.run_tree}"]["dirty_count"] == 1
+    rec = inv.e.index("reconcile", "--source", "inventory")
+    assert rec.returncode == 0, rec.stderr
+    assert "generation went back from 2 to 1" in rec.stdout, rec.stdout
+    rows = inv.rows()
+    assert (rows[f"repoA-2:{inv.a2_tree}"]["generation"],
+            rows[f"repoA-2:{inv.a2_tree}"]["lifecycle"]) == (1, "RUNNING")
+
+
+def test_the_inventory_owner_column_is_the_seams_answer(inv):
+    """THE SEAM (14(e), ruling 2026-10-04): a valid marker's leftovers index as
+    `managed <owner>`, a malformed one's as `unknown` - never `legacy` - and a
+    plain row's as `legacy`; and only a legacy lane's lifecycle is pronounced,
+    the others' being `INDETERMINATE`, as `lane-reconcile` pronounces nothing
+    on them either. The indexer carries no parser of the marker."""
+    assert inv.sync().returncode == 0
+    owners = {(r["lane"], r["owner"], r["lifecycle"]) for r in inv.rows().values()}
+    assert ("repoM-1", "managed ledger-1", "INDETERMINATE") in owners
+    assert ("repoM-2", "unknown", "INDETERMINATE") in owners
+    assert ("repoA-1", "legacy", "RUNNING") in owners
+    assert ("repoA-2", "legacy", "SWAPPING") in owners
+    rec = inv.e.edit("lane-reconcile", "repoM-1")
+    assert "managed-owned" in rec.stdout
+    source = INDEXER.read_text(encoding="utf-8")
+    for vocabulary in ("mode=managed", "managed-owner", "bound-lane"):
+        assert vocabulary not in source
+
+
+def _wt(inv: Inventory, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+    return inv.e.run("bash", LANES, "--worktrees", *args, env=env)
+
+
+def test_lanes_worktrees_shows_one_running_tree_and_one_dirty_one(inv):
+    """`lanes --worktrees <lane>` (#161): every open worktree of the lane with
+    its owner, branch, lifecycle, dirty and unpushed counts, when it was last
+    seen and whether the writer is live - and a footer that sends a person to
+    the act that reads the disk."""
+    res = _wt(inv, "repoA-1")
+    assert res.returncode == 0, res.stderr
+    lines = res.stdout.splitlines()
+    assert lines[0].split()[:6] == ["WORKSTATION", "LANE", "OWNER", "LIFECYCLE", "WRITER", "BRANCH"]
+    run = next(l for l in lines if l.endswith(str(inv.run_tree)))
+    dirty = next(l for l in lines if l.endswith(str(inv.dirty_tree)))
+    assert run.split()[:8] == ["Eagle", "repoA-1", "legacy", "RUNNING", "none", "feat/run", "0", "0"]
+    assert dirty.split()[:8] == ["Eagle", "repoA-1", "legacy", "RUNNING", "none", "feat/dirty", "1", "1"]
+    assert UTC.search(run)
+    assert "2 worktree(s) in 1 lane(s) on 1 workstation(s)" in res.stdout
+    assert "lanes-edit.sh lane-reconcile <lane>" in res.stdout
+    every = _wt(inv)
+    assert every.returncode == 0
+    assert "5 worktree(s) in 4 lane(s)" in every.stdout
+    live = next(l for l in every.stdout.splitlines() if l.endswith(str(inv.a2_tree)))
+    assert live.split()[3:5] == ["SWAPPING", "live"], live
+    none = _wt(inv, "repoB-1")
+    assert none.returncode == 8 and "no worktree is inventoried for lane repoB-1" in none.stdout
+    for bad in (("repoA-1", "--all"), ("repoA-1", "repoA-2"), ("--here",), ("--closed",)):
+        refused = _wt(inv, *bad)
+        assert refused.returncode == 64, (bad, refused.stderr)
+
+
+def test_the_index_read_of_the_worktrees_is_the_source_read(inv):
+    """`lanes --index --worktrees` ANSWERS WHAT THE SIDECARS ANSWER where the
+    table is current, byte for byte, and says so on stderr; a write the index
+    has not followed is the index's lag, said by the time it was synced."""
+    assert inv.sync().returncode == 0
+    for args in ((), ("repoA-1",), ("--all",)):
+        src = _wt(inv, *args)
+        idx = _wt(inv, *args, "--index")
+        assert (idx.returncode, idx.stdout) == (src.returncode, src.stdout), args
+        assert re.search(r"read: index \(sqlite\) at inventory:Eagle synced " + UTC.pattern,
+                         idx.stderr), idx.stderr
+        assert "read: " not in src.stderr
+    (inv.run_tree / "unseen.txt").write_text("the index has not followed this\n")
+    inv.ok("set-lane-tree", "repoA-1", str(inv.run_tree), "--checkout", str(inv.repo))
+    src = _wt(inv, "repoA-1")
+    idx = _wt(inv, "repoA-1", "--index")
+    assert src.stdout != idx.stdout
+
+
+@pytest.mark.parametrize("kind,setup", _fallback_setups(), ids=[k for k, _ in _fallback_setups()])
+def test_each_worktrees_index_failure_falls_back_to_the_sidecars(inv, kind, setup):
+    """FALLBACK (14(b)) for the table too: missing, unreachable, wiped (no
+    inventory source), of an unknown schema, refused, or switched off - each
+    says `read: sources (index <why>)` and returns the sidecars' own answer."""
+    env = setup(inv.e)
+    if kind == "wiped":
+        assert inv.sync().returncode == 0
+        conn = sqlite3.connect(str(inv.e.sqlite))
+        conn.execute("DELETE FROM provenance")
+        conn.commit()
+        conn.close()
+    for args in ((), ("repoA-1",)):
+        src = _wt(inv, *args, env=env)
+        idx = _wt(inv, *args, "--index", env=env)
+        assert (idx.returncode, idx.stdout) == (src.returncode, src.stdout), (kind, args)
+        assert f"read: sources (index {kind}" in idx.stderr, (kind, idx.stderr)
+
+
+#: THE INVENTORY'S ACTS AND THE READS THEY MAKE (#161): its two writers, which
+#: nudge the indexer, and the reads an act makes of the inventory for itself.
+INVENTORY_ACTS = [
+    ("set-lane-tree", "repoA-1", "<RUN>", "--checkout", "<REPO>"),
+    ("set-lane-state", "repoA-1", "SWAPPING", "--expect", "RUNNING", "--operation", "op-acts"),
+    ("lane-trees", "repoA-1"),
+    ("lane-state", "repoA-2"),
+    ("lane-reconcile", "repoA-1"),
+    ("lane-reconcile", "repoA-2"),
+    ("lane-reconcile", "repoM-1"),
+    ("lane-tree-now", "<DIRTY>"),
+]
+
+
+def _inv_act(inv: Inventory, act: tuple, extra: dict) -> tuple:
+    argv = [a.replace("<RUN>", str(inv.run_tree)).replace("<REPO>", str(inv.repo))
+             .replace("<DIRTY>", str(inv.dirty_tree)) for a in act]
+    res = inv.e.edit(*argv, env=extra)
+    # A LANE'S TREES ARE LISTED IN THE ORDER THEIR RECORDS' NAMES SORT, and a
+    # record's name begins with a `cksum` of its path - which differs between
+    # two sandboxes by construction. So the lines are compared as a set of
+    # lines, each of them whole.
+    out = "\n".join(sorted(inv.norm(res.stdout).split("\n")))
+    return (res.returncode, out, inv.norm(res.stderr))
+
+
+def test_offline_no_read_the_inventory_acts_are_byte_identical_against_an_unreachable_index(tmp_path):
+    """OFFLINE NO-READ (14(b), #161): with an indexer installed and configured
+    at a Postgres nobody can reach, the inventory writers and `lane-reconcile`
+    answer byte for byte as with no index at all - and the writers' nudges DID
+    reach for that store, `sync --source inventory`, after they had answered."""
+    control = Inventory(tmp_path / "control")
+    indexed = Inventory(tmp_path / "indexed")
+    try:
+        indexed.e.install_indexer()
+        fake = indexed.root / "pgfake"
+        fake.mkdir()
+        psql_log = indexed.root / "psql.log"
+        (fake / "psql").write_text(
+            f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {psql_log}\n"
+            "echo 'psql: error: connection to server at \"lanes-index.invalid\" failed' >&2\nexit 2\n")
+        (fake / "psql").chmod(0o755)
+        pw = indexed.e.config / "pgpass"
+        pw.write_text("*:*:*:*:never-read\n")
+        pw.chmod(0o600)
+        indexed.e.write_config(f"url=postgresql://lanes_writer@lanes-index.invalid/qa\npassfile={pw}\n")
+        extra = {"PATH": indexed.e.path_with(indexed.e.indexbin, fake), "LANES_INDEX": None}
+        for act in INVENTORY_ACTS:
+            a = _inv_act(control, act, {})
+            b = _inv_act(indexed, act, extra)
+            assert a == b, (act, a, b)
+        assert _wait_for(psql_log, 15.0), "no inventory nudge ever reached for the configured store"
+        assert "lanes_writer" in psql_log.read_text()
+    finally:
+        control.close()
+        indexed.close()
+
+
+def test_a_poisoned_worktrees_table_changes_no_inventory_acts_answer(tmp_path):
+    """POISONED INDEX (14(b), #161): wrong `worktrees` rows - a forged tree, a
+    forged lifecycle, forged counts and a forged owner - change no inventory
+    act's answer, `lane-reconcile` included; and the poison is REAL: `lanes
+    --index --worktrees` reads it."""
+    control = Inventory(tmp_path / "control")
+    poisoned = Inventory(tmp_path / "poisoned")
+    try:
+        assert poisoned.sync().returncode == 0
+        conn = sqlite3.connect(str(poisoned.e.sqlite))
+        conn.execute("UPDATE worktrees SET lifecycle = 'SWAPPED', dirty_count = 99, "
+                     "unpushed_count = 99, owner = 'managed evil', writer_live = 1")
+        conn.execute("INSERT INTO worktrees (source, record_id, workstation, lane, owner, path, "
+                     "branch, lifecycle, digest, provenance, indexed_utc, schema_version) VALUES "
+                     "('inventory:Eagle', 'repoA-1:/forged', 'Eagle', 'repoA-1', 'legacy', "
+                     "'/forged', 'feat/forged', 'RUNNING', 'x', '0', 'now', 1)")
+        conn.commit()
+        conn.close()
+        for act in INVENTORY_ACTS:
+            a = _inv_act(control, act, {})
+            b = _inv_act(poisoned, act, {"LANES_INDEX": None})
+            assert a == b, (act, a, b)
+        seen = _wt(poisoned, "--index", env={"LANES_INDEX": None})
+        assert "read: index (sqlite)" in seen.stderr
+        assert "/forged" in seen.stdout and "managed evil" in seen.stdout, \
+            "the poison never reached the index read: vacuous"
+    finally:
+        control.close()
+        poisoned.close()
+
+
+def test_an_inventory_write_nudges_and_a_read_never_does(inv):
+    """THE NUDGE (#161): `set-lane-tree` and `set-lane-state` start the same
+    detached `lanes-index sync` a landed push does, asked for the inventory -
+    stdin closed, never waited, the writer not delayed - while the reads an act
+    makes of the inventory start none, and `LANES_INDEX=off` stops it."""
+    stubdir = inv.root / "stub"
+    stubdir.mkdir()
+    (stubdir / "lanes-index").write_text(STUB)
+    (stubdir / "lanes-index").chmod(0o755)
+    mark = inv.root / "stubmark"
+    path = inv.e.path_with(stubdir)
+    pid_file = Path(str(mark) + ".pid")
+    for read in (("lane-trees", "repoA-1"), ("lane-reconcile", "repoA-1"), ("lane-state", "repoA-1"),
+                 ("worktrees", "--all")):
+        res = inv.e.edit(*read, env={"PATH": path, "LANES_INDEX": None,
+                                     "LANES_INDEX_STUB_MARK": str(mark)})
+        assert res.returncode == 0, (read, res.stderr)
+    assert not _wait_for(pid_file, 1.0), "a read nudged the indexer"
+    off = inv.e.edit("set-lane-tree", "repoA-1", str(inv.run_tree), "--checkout", str(inv.repo),
+                     env={"PATH": path, "LANES_INDEX": "off", "LANES_INDEX_STUB_MARK": str(mark)})
+    assert off.returncode == 0, off.stderr
+    assert not _wait_for(pid_file, 1.0), "LANES_INDEX=off still nudged"
+    for write in (("set-lane-tree", "repoA-1", str(inv.run_tree), "--checkout", str(inv.repo)),
+                  ("set-lane-state", "repoA-1", "SWAPPING", "--operation", "op-nudge")):
+        for leftover in stubdir.parent.glob("stubmark.*"):
+            leftover.unlink()
+        t0 = time.monotonic()
+        res = inv.e.edit(*write, env={"PATH": path, "LANES_INDEX": None,
+                                      "LANES_INDEX_STUB_MARK": str(mark)}, timeout=25)
+        took = time.monotonic() - t0
+        assert res.returncode == 0, (write, res.stderr)
+        assert _wait_for(pid_file, 10.0), f"{write[0]} never nudged the indexer"
+        pid = int(pid_file.read_text().strip())
+        try:
+            os.kill(pid, 0)
+            assert took < 20, f"{write[0]} waited on its nudge ({took:.1f}s)"
+            assert _wait_for(Path(str(mark) + ".argv"), 5.0)
+            assert Path(str(mark) + ".argv").read_text().strip() == "sync --source inventory"
+            assert _wait_for(Path(str(mark) + ".stdin"), 5.0)
+            assert Path(str(mark) + ".stdin").read_text().strip() == "eof"
+        finally:
+            try:
+                os.kill(pid, 15)
+            except OSError:
+                pass
+
+
+def test_a_pull_request_is_asked_of_gh_best_effort(inv):
+    """`pr` (#161): the newest pull request whose head is the tree's branch,
+    asked of `gh` at sync where GitHub may be asked - a fake `gh` here - and
+    NULL wherever it is not, or does not answer."""
+    inv._g(inv.repo, "remote", "set-url", "origin", "https://github.com/opensoft/repoA.git")
+    fake = inv.root / "ghfake"
+    fake.mkdir()
+    calls = inv.root / "gh.calls"
+    (fake / "gh").write_text(
+        f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {calls}\n"
+        "case \"$*\" in *feat/dirty*) echo '[{\"number\":42,\"state\":\"OPEN\"}]' ;; "
+        "*feat/run*) echo '[{\"number\":7,\"state\":\"MERGED\"}]' ;; *) echo '[]' ;; esac\n")
+    (fake / "gh").chmod(0o755)
+    env = {"PATH": inv.e.path_with(fake), "LANES_NO_GITHUB": None}
+    res = inv.sync(env=env)
+    assert res.returncode == 0, res.stderr
+    rows = inv.rows()
+    assert (rows[f"repoA-1:{inv.dirty_tree}"]["pr_number"],
+            rows[f"repoA-1:{inv.dirty_tree}"]["pr_state"]) == (42, "OPEN")
+    assert (rows[f"repoA-1:{inv.run_tree}"]["pr_number"],
+            rows[f"repoA-1:{inv.run_tree}"]["pr_state"]) == (7, "MERGED")
+    assert rows[f"repoA-2:{inv.a2_tree}"]["pr_number"] is None
+    assert "--repo opensoft/repoA --head feat/dirty" in calls.read_text()
+    # A MERGED answer is final and is not asked again; an OPEN one is.
+    calls.unlink()
+    assert inv.sync(env=env).returncode == 0
+    asked = calls.read_text()
+    assert "feat/dirty" in asked and "feat/run" not in asked, asked
+
+
+def test_status_names_the_inventory_and_a_mark_names_its_source(inv, monkeypatch):
+    """`status` prints this workstation's inventory beside the register; and a
+    register sync holding the lock when an inventory nudge arrives syncs the
+    INVENTORY before it lets go - the mark names its source."""
+    st = inv.e.index("status")
+    assert "source inventory:Eagle" in st.stdout
+    assert "--source inventory` builds it" in st.stdout
+    assert inv.sync().returncode == 0
+    st = inv.e.index("status")
+    assert re.search(r"provenance:  inventory@[0-9a-f]{12} \(sync 1,", st.stdout), st.stdout
+    assert "rows:        5 worktree(s)" in st.stdout
+    _as_estate(monkeypatch, inv.e)
+    mod = load_indexer()
+    runs = []
+    monkeypatch.setattr(mod, "run_index", lambda *a: runs.append(("register",) + a) or 0)
+    monkeypatch.setattr(mod, "run_inventory", lambda *a: runs.append(("inventory",) + a) or 0)
+    real_release = mod.SyncLock.release
+    released = []
+
+    def release_after_an_inventory_mark(self):
+        if not released and self.handle is not None:
+            self.mark_rerun("inventory")
+        released.append(1)
+        real_release(self)
+
+    monkeypatch.setattr(mod.SyncLock, "release", release_after_an_inventory_mark)
+    assert mod.cmd_sync(None) == 0
+    assert [r[0] for r in runs] == ["register", "inventory"], runs
+    lock = mod.SyncLock()
+    assert not lock.has_rerun()
+
+
+def test_the_inventory_source_is_this_workstations_alone(inv):
+    """Another workstation's inventory is on its own disk and is refused; and a
+    container with no LANES_WORKSTATION files nothing under its own id
+    (Amendment 11, R-A11-14)."""
+    other = inv.e.index("sync", "--source", "inventory:Raven")
+    assert other.returncode == 2 and "this workstation's inventory is inventory:Eagle" in other.stderr
+    assert not inv.e.sqlite.exists()
+    nameless = inv.e.index("sync", "--source", "inventory",
+                           env={"LANES_WORKSTATION": None, "LANES_IN_CONTAINER": "1"})
+    assert nameless.returncode == 2, (nameless.stdout, nameless.stderr)
+    assert "LANES_WORKSTATION" in nameless.stderr
+    assert not inv.e.sqlite.exists()
+    reg = inv.e.index("export", "--out", inv.root, "--source", "inventory")
+    assert reg.returncode == 2
+    both = inv.e.index("export", "--out", inv.root, "--worktrees", "--source", "inventory")
+    assert both.returncode == 64
