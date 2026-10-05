@@ -205,3 +205,17 @@ Rollback disables supervised respawn and returns `/ctx` to warning plus non-rest
 - Should successful readiness archive old restart intents immediately or retain a bounded per-lane history outside the append-only event log?
 - What explicit operator command names best distinguish retry, finalize an indeterminate-but-valid child, cancel, and generation-advancing recovery?
 - When workBenches adds a first-class operation option, should the compatibility environment seam be removed immediately or after one release overlap?
+
+
+### 2026-10-05 preparation recovery correction
+
+Exact-head Codex review on PR #121 identified that failed preparation was being
+routed to a supervisor which correctly refuses preservation-only mode. Within
+the approved legacy scope, distinguish a never-launched failed preparation from
+a failed fresh launch. Normal resume may recover the former only with strict
+all-holder absence, no operation/attempt tokens, attempt 0 and no new transcript.
+Recheck the same operation/generation and qualifying fields before binding acts
+and before exec. Preserve the failed intent as diagnostics; never label it ready
+or import its counters into ordinary resume. These checks retain normal launch
+safeguards and do not create an atomic ordinary-launch reservation. Failed
+supervised launches and preparing reservations remain refused by ordinary resume.

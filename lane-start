@@ -1444,6 +1444,30 @@ step "  its record refs are $record_window"
 
 # Active restarts refuse unowned callers before any binding repair or rename.
 # Detailed prompt and launch-fact validation follows before transcript writes.
+preparation_failure_identity=""
+preparation_failure_snapshot() {   # validated restart-intent output
+  printf '%s\n' "$1" | awk -F'\t' '
+    {v[$1]=$2} END {printf "%s|%s|%s|%s|%s|%s", v["state"],v["mode"],v["attempt"],v["new_transcript"],v["operation"],v["generation"]}'
+}
+preparation_failure_resume_check() {   # validated restart-intent output
+  pfr_identity="$(preparation_failure_snapshot "$1")"
+  case "$pfr_identity" in failed\|preservation-only\|0\|none\|*) : ;;
+    *) die "a failed supervised launch requires its same-operation supervisor; ordinary resume refuses. Nothing was launched." 2 ;;
+  esac
+  [ -z "$preparation_failure_identity" ] || [ "$pfr_identity" = "$preparation_failure_identity" ] ||
+    die "the failed preparation changed during ordinary recovery. Nothing was launched." 2
+  [ -z "${op_flag:-}${LANE_RESTART_OPERATION:-}${LANE_RESTART_ATTEMPT:-}" ] ||
+    die "failed preparation permits only ordinary resume without restart operation or attempt tokens. Nothing was launched." 2
+  [ "${fresh_flag:-0}" != 1 ] && [ "${LANE_START_FRESH:-0}" != 1 ] ||
+    die "failed preparation permits only ordinary resume, not a fresh session. Nothing was launched." 2
+  LANES_NO_FETCH=1 "$LANES_EDIT" legacy-restart-check "$LANE" ||
+    die "managed or unknown ownership blocks failed-preparation recovery. Nothing was launched." 2
+  pfr_holder_rc=0
+  LANES_NO_FETCH=1 "$LANES_EDIT" lane-holders "$LANE" >/dev/null || pfr_holder_rc=$?
+  [ "$pfr_holder_rc" = 8 ] ||
+    die "ordinary recovery from failed preparation requires confirmed absence of every holder (lane-holders exited $pfr_holder_rc). Nothing was launched." 2
+  preparation_failure_identity="$pfr_identity"
+}
 eri_rc=0
 eri_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$LANE" --dir "$DIR" 2>/dev/null)" || eri_rc=$?
 case "$eri_rc" in
@@ -1452,7 +1476,7 @@ case "$eri_rc" in
     eri_op="$(printf '%s\n' "$eri_out" | awk -F'\t' '$1=="operation" {print $2; exit}')"
     case "$eri_state" in
       preparing) die "this restart is still preparing its preservation records. Nothing was changed." 2 ;;
-      failed) die "a failed supervised restart requires the same-operation supervisor; ordinary lane resume refuses. Nothing was changed." 2 ;;
+      failed) preparation_failure_resume_check "$eri_out" ;;
       pending|starting)
         eri_token="${op_flag:-${LANE_RESTART_OPERATION:-}}"
         [ -n "$eri_token" ] || die "an active restart requires its supervisor operation token. Nothing was changed." 2
@@ -2840,8 +2864,9 @@ fi
 #      rather than in an environment. Only `pending` and `starting` authorise a
 #      launch: a `ready` intent is HISTORY (which is what makes an ordinary
 #      `lane <name>` after a successful `/ctx` an ordinary resume), and a
-#      `failed` one is the supervisor's to retry, which moves it back to
-#      `starting` first.
+#      failed launch is the supervisor's to retry, moving it back to `starting`.
+#      Failed preparation authorizes only guarded ordinary resume with unchanged
+#      intent history; it has no supervised launch authority.
 #   2. `--fresh`, for the caller that reaches this command directly and has no
 #      launcher between it and here.
 #   3. `LANE_START_FRESH=1`, kept exactly as it was so that nothing written
@@ -2942,6 +2967,11 @@ case "$ri_rc" in
   *)
     die "lane $LANE's restart intent read FAILED (\`$LANES_EDIT restart-intent $LANE\` exited $ri_rc), and a read that failed is never an answer (Amendment 7(d)). Nothing was renamed, written or started: this is the one launch gate whose wrong answer resumes the transcript a /ctx just paused (openRepoTools#94), so it refuses rather than falling through to an ordinary resume source. Run that command yourself to see what it says, then launch again." 1 ;;
 esac
+if [ -n "$preparation_failure_identity" ]; then
+  pfr_current="$(preparation_failure_snapshot "$ri_out")"
+  [ "$pfr_current" = "$preparation_failure_identity" ] ||
+    die "the failed preparation changed during ordinary recovery. Nothing was launched." 2
+fi
 if [ -n "${LANE_RESTART_OPERATION:-}" ]; then
   [ -z "$op_flag" ] || [ "$op_flag" = "$LANE_RESTART_OPERATION" ] ||
     die "the explicit restart operation disagrees with the supervisor token. Nothing was started." 2
@@ -2977,7 +3007,10 @@ case "$ri_state" in
   UNKNOWN-SCHEMA)
     die "lane $LANE has a restart intent this \`lanes-edit.sh\` cannot read: its schema is one this version does not know (\`lanes-edit.sh restart-intent $LANE\` answers UNKNOWN-SCHEMA). That is NOT 'no restart is in flight' — a read that could not be made is never an answer (Amendment 7(d)) — and starting anyway would resolve an ordinary resume source, which for a lane whose /ctx just killed its pane is the transcript that /ctx PAUSED. Nothing was renamed, written or started. Update this workstation's openRepoTools so it can read that record, or remove the intent once you know no restart is in flight:  lanes-edit.sh restart-intent $LANE" 2 ;;
   failed)
-    die "lane $LANE has a failed supervised restart. Ordinary lane resume is not its recovery; retry the same operation with lane-handoff --supervise --lane $LANE --operation $ri_op. Nothing was started." 2 ;;
+    [ -n "$preparation_failure_identity" ] ||
+      die "a failed restart appeared during ordinary launch. Recheck it before recovery. Nothing was launched." 2
+    preparation_failure_resume_check "$ri_out" ;;
+
   preparing)
     die "this restart is still preparing its preservation records. No launch is authorized. Read it: lanes-edit.sh restart-intent $LANE" 2 ;;
   pending|starting)
@@ -4270,6 +4303,12 @@ if (( dry_run )); then
   plan "exec $(quoted "${cmd[@]}")"
   step "--dry-run: nothing was renamed, written or launched"
   exit 0
+fi
+
+if [ -n "$preparation_failure_identity" ]; then
+  pfr_final="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$LANE" --dir "$DIR")" ||
+    die "the failed preparation could not be rechecked before ordinary launch. Nothing was launched." 2
+  preparation_failure_resume_check "$pfr_final"
 fi
 
 cd -- "$DIR"

@@ -455,6 +455,148 @@ exec '{real_mktemp}' "$@"
     assert "only 'fresh-from-handoff'" in retry.stderr
     assert box.claude_runs() == ""
     assert "respawn-pane" not in box.tmux_log.read_text()
+    (box.fakebin / "mktemp").unlink()
+    prior = helper(box, "last-session", LANE)
+    assert prior.returncode == 0, prior.stderr
+    transcript = prior.stdout.strip()
+    dirname = "".join(ch if ch.isascii() and ch.isalnum() else "-" for ch in str(box.lane_dir))
+    _write(box.home / ".claude" / "projects" / dirname / (transcript + ".jsonl"),
+           '{"type":"user","message":{"role":"user","content":"preserved work"}}\n', 0o600)
+    unchanged = intent_path(box).read_bytes()
+    status = supervisor(box, "--restart-status", "--lane", LANE)
+    assert "PREPARATION FAILED" in status.stdout
+    assert "RETRY:" not in status.stdout
+    resumed = box.start()
+    assert resumed.returncode == 0, (resumed.stdout, resumed.stderr)
+    assert "--resume " + transcript in box.claude_runs()
+    assert "--session-id" not in box.claude_runs()
+    assert intent_path(box).read_bytes() == unchanged
+
+
+def failed_preparation(box):
+    prepare_restart(box)
+    result = helper(box, "set-restart-intent", LANE, "failed", "--expect", "pending",
+                    "--mode", "preservation-only", "--attempt", "0", "--new-transcript", "none")
+    assert result.returncode == 0, result.stderr
+    records = {p for root in (box.wip / "lanes", box.wip / "handoffs")
+               for p in root.rglob("*") if p.is_file()}
+    records.add(intent_path(box))
+    return {p: p.read_bytes() for p in records}
+
+
+@pytest.mark.parametrize("holder_rc", [0, 1, 2])
+def test_preparation_recovery_requires_confirmed_holder_absence(restart_box, holder_rc):
+    box = restart_box
+    before = failed_preparation(box)
+    real = box.bin / "lanes-edit-real.sh"
+    (box.bin / "lanes-edit.sh").rename(real)
+    _write(box.bin / "lanes-edit.sh", f"""#!/usr/bin/env bash
+[ "$1" != lane-holders ] || exit {holder_rc}
+exec '{real}' "$@"
+""")
+    box.tmux_log.write_text("")
+    result = box.start()
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "confirmed absence" in result.stderr
+    assert all(p.read_bytes() == data for p, data in before.items())
+    assert "rename-window" not in box.tmux_log.read_text()
+    assert box.claude_runs() == ""
+
+
+@pytest.mark.parametrize("kind", ["attempt", "transcript", "launch", "preparing", "operation-token", "environment-operation", "environment-attempt", "fresh", "environment-fresh"])
+def test_preparation_recovery_rejects_launch_ownership_or_tokens(restart_box, kind):
+    box = restart_box
+    failed_preparation(box)
+    changes = {"attempt": ("--attempt", "1"),
+               "transcript": ("--new-transcript", "11111111-2222-4333-8444-555555555555"),
+               "launch": ("--mode", "fresh-from-handoff")}
+    if kind in changes or kind == "preparing":
+        result = helper(box, "set-restart-intent", LANE, "preparing" if kind == "preparing" else "failed",
+                        *changes.get(kind, ()))
+        assert result.returncode == 0, result.stderr
+    before = intent_path(box).read_bytes()
+    args, env = (), {}
+    if kind == "operation-token": args = ("--operation", "op-test")
+    if kind == "environment-operation": env["LANE_RESTART_OPERATION"] = "op-test"
+    if kind == "environment-attempt": env["LANE_RESTART_ATTEMPT"] = "0"
+    if kind == "fresh": args = ("--fresh",)
+    if kind == "environment-fresh": env["LANE_START_FRESH"] = "1"
+    box.tmux_log.write_text("")
+    result = box.start(*args, **env)
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert intent_path(box).read_bytes() == before
+    assert "rename-window" not in box.tmux_log.read_text()
+    assert box.claude_runs() == ""
+
+
+@pytest.mark.parametrize("stage", [2, 3])
+def test_preparation_recovery_rechecks_operation_before_launch(restart_box, stage):
+    box = restart_box
+    failed_preparation(box)
+    count = box.root / "intent-reads"
+    real = box.bin / "lanes-edit-real.sh"
+    (box.bin / "lanes-edit.sh").rename(real)
+    _write(box.bin / "lanes-edit.sh", f"""#!/usr/bin/env bash
+if [ "$1" = restart-intent ]; then
+  n=$(cat '{count}' 2>/dev/null || printf 0)
+  n=$((n + 1)); printf '%s\n' "$n" > '{count}'
+  if [ "$n" = {stage} ]; then
+    '{real}' set-restart-intent "$2" failed --operation newer-preparation --generation 8 --mode preservation-only --attempt 0 --new-transcript none >/dev/null || exit 1
+  fi
+fi
+exec '{real}' "$@"
+""")
+    result = box.start()
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "changed during ordinary recovery" in result.stderr
+    assert box.claude_runs() == ""
+    final = helper(box, "restart-intent", LANE)
+    assert "operation\tnewer-preparation" in final.stdout
+    assert "generation\t8" in final.stdout
+    assert "state\tfailed" in final.stdout
+
+
+@pytest.mark.parametrize("stage,holder_rc", [(2, 0), (3, 1)])
+def test_preparation_recovery_rechecks_holders_before_launch(restart_box, stage, holder_rc):
+    box = restart_box
+    failed_preparation(box)
+    before = intent_path(box).read_bytes()
+    count = box.root / "holder-reads"
+    real = box.bin / "lanes-edit-real.sh"
+    (box.bin / "lanes-edit.sh").rename(real)
+    _write(box.bin / "lanes-edit.sh", f"""#!/usr/bin/env bash
+if [ "$1" = lane-holders ]; then
+  n=$(cat '{count}' 2>/dev/null || printf 0)
+  n=$((n + 1)); printf '%s\n' "$n" > '{count}'
+  if [ "$n" = {stage} ]; then exit {holder_rc}; fi
+  exit 8
+fi
+exec '{real}' "$@"
+""")
+    result = box.start()
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "confirmed absence" in result.stderr
+    assert box.claude_runs() == ""
+    assert intent_path(box).read_bytes() == before
+
+
+@pytest.mark.parametrize("damage", ["attempt", "transcript"])
+def test_preparation_recovery_rejects_malformed_identity(restart_box, damage):
+    box = restart_box
+    failed_preparation(box)
+    path = intent_path(box)
+    text = path.read_text()
+    text = text.replace("attempt: 0\n", "attempt: -1\n") if damage == "attempt" else text.replace("new_transcript: none\n", "")
+    path.write_text(text)
+    before = {p: p.read_bytes() for root in (box.wip / "lanes", box.wip / "handoffs", path.parent)
+              for p in root.rglob("*") if p.is_file()}
+    box.tmux_log.write_text("")
+    result = box.start()
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "INCOMPLETE" in result.stderr
+    assert all(p.read_bytes() == data for p, data in before.items())
+    assert "rename-window" not in box.tmux_log.read_text()
+    assert box.claude_runs() == ""
 
 
 def live_record(box, pid, transcript, suffix):

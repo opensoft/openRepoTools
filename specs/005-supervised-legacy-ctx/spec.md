@@ -53,9 +53,14 @@ diagnostic lifecycle snapshots. Readiness never writes another lifecycle store.
   retry. A known-ended child permits retry of the same operation. Observer
   cleanup uses a private cancellation marker and waits for its owned child;
   it never signals a saved PID that may have been recycled.
-- FR-009: Failure/status output describes the persisted state. Recovery uses
-  the supervised operation; ordinary lane resume cannot bypass a failed
-  restart. A completed intent remains history and permits ordinary resume.
+- FR-009: Failure/status output describes the persisted state. A failed
+  fresh launch requires its supervised operation; ordinary resume cannot bypass
+  it. A failed preparation (`preservation-only`, attempt 0, no new transcript)
+  authorizes no supervised launch. With no explicit/inherited restart tokens or fresh-session selectors
+  and every holder confirmed absent, ordinary resume is permitted. Recheck the
+  same operation/generation and qualifying fields before binding changes and
+  before launch, retaining the failed intent unchanged. `preparing` still refuses.
+  A completed intent remains history and permits ordinary resume.
 - FR-010: Preserve main's binding, holder, performance and Claude resolver
   behavior. Use Bash 3.2-compatible implementation and the repository test
   wrapper in the dev container. CI remains the suite of record.

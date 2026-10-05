@@ -1103,7 +1103,16 @@ if [ "$do_status" = 1 ]; then
 	say "lifecycle   separate diagnostics; never used to decide restart readiness"
 	case "$RI_STATE" in
 	preparing) say "PREPARING: old pane was not respawned; inspect preservation and reconcile this exact reservation before a new /ctx." ;;
-	failed)   say ""; say "RETRY:   $(quoted "$SELF_ABS") --supervise --lane $lane --operation ${RI_OP:-<id>}" ;;
+	failed)
+          say ""
+          if [ "$RI_MODE" = preservation-only ] && [ "$RI_ATTEMPT" = 0 ] && [ "$RI_NEW" = none ]; then
+            say "PREPARATION FAILED: the old pane was not respawned; no supervised launch was attempted."
+            say "When every holder is confirmed absent, ordinary resume is available: lane $lane"
+            say "From the original live session, a new /ctx may retry preservation."
+          else
+            say "RETRY:   $(quoted "$SELF_ABS") --supervise --lane $lane --operation ${RI_OP:-<id>}"
+          fi ;;
+
 	pending)  say ""; say "NOT YET CLAIMED: no supervisor has taken this operation. The pane it was written for may never have been respawned." ;;
 	starting) say ""; say "IN FLIGHT: this attempt is reserved; a child may still be alive. Do not start a second one — read the pane it is in (${RI_PANE:-pane not recorded})." ;;
 	ready)    say ""; say "DONE: this restart was confirmed. It authorises no further launch; an ordinary \`lane $lane\` resumes the lane." ;;

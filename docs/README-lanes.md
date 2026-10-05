@@ -2712,6 +2712,15 @@ lanes-edit.sh set-restart-intent <lane> failed --expect preparing \
 A new `/ctx` can then refresh the preservation record. This command authorizes
 no child launch from a partially prepared record.
 
+If preparation failed before `pending`, the failed intent keeps mode
+`preservation-only`, attempt 0 and no new transcript. It is not a failed launch
+and cannot be given to `--supervise`. Once every holder is confirmed absent,
+`lane <name>` may use ordinary resume without restart operation/attempt tokens or fresh-session selectors.
+It rechecks the same failed preparation before binding changes and before
+launch, leaves the intent unchanged, and retains the normal binding safeguards.
+A live or unknown holder still refuses. Failed `fresh-from-handoff` launches
+remain restricted to their same-operation supervisor.
+
 The first launch reserves `new_transcript` only while it is `none`. Every later
 write expects its exact operation, generation, attempt and transcript. The
 verified Rule 3 stamp is persisted with both `digest` and `prepared_digest`

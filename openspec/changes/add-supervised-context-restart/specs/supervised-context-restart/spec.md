@@ -60,11 +60,23 @@ transcript and matching pane. Only the legacy intent becomes `ready`.
 Cancellation before claim SHALL preserve the unclaimed intent. A live or unknown
 child or unknown holder absence SHALL retain `starting` with an indeterminate
 reason, blocking retry. Only a proven ended launch with no live holder SHALL
-become `failed`. Retry SHALL preserve operation and increment attempt. Ordinary
-lane resume SHALL refuse a failed supervised restart; historical ready intents
-SHALL NOT override ordinary resume. No automatic rollover or real session canary
+become a failed launch. Retry SHALL preserve operation and increment attempt.
+Ordinary lane resume SHALL refuse a failed supervised launch. Caught preparation
+failure SHALL retain a failed preservation-only intent with attempt 0 and no new
+transcript. That class SHALL permit ordinary resume only without restart tokens or fresh-session selectors,
+after confirmed absence of every holder, and with unchanged operation/generation
+and qualifying fields checked before binding changes and before launch. The
+intent SHALL remain unchanged; no readiness or supervised claim is manufactured.
+`preparing` SHALL remain blocked. Historical ready intents SHALL NOT override
+ordinary resume. No automatic rollover or real session canary
 is authorized by this change.
 
 #### Scenario: Supervisor ends while its child lives
 - **WHEN** TERM or HUP reaches the claimed supervisor
 - **THEN** the child is left alive and retry remains blocked
+
+
+#### Scenario: Preparation fails and the original session later exits
+- **WHEN** preservation fails before pending, then every original holder is confirmed absent
+- **THEN** ordinary lane resume uses its normal source and retains the failed preparation intent
+- **AND** a live/unknown holder, restart token, changed operation or nonzero attempt refuses recovery
