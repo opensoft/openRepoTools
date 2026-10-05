@@ -2664,8 +2664,9 @@ def _gitdir_pointer(path: str, base: str, now: float, out: list) -> None:
 def expiry_rows(conf: dict) -> list:
     """(archive, age in days, keep|expire, why) for every archive under the
     sweeps directory - `sweep --expire`'s table, and the report's. An archive
-    past retention is `expire` only while every rescue branch it records is on
-    origin; one whose rescue left origin is the only copy and is kept."""
+    past retention is `expire` only while it is whole (`archive_ledger`) and
+    every rescue branch it records is on origin at the rescued SHA; one whose
+    rescue left or moved is the only copy and is kept."""
     root = sweeps_dir()
     keep_days = conf["retention_days"]
     now = _dt.datetime.now(_dt.timezone.utc)
