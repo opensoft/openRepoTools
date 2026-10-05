@@ -451,6 +451,12 @@ export LANES_NO_GITHUB=1
 # index turns it back on for its own cases.
 export LANES_INDEX=off
 
+# opensoft/openRepoTools#162 — AND NO CASE STARTS THE ESTATE REPORT EITHER.
+# `lane-start` runs `lane-worktrees sweep --all --report` detached, once a day,
+# and the state directory it stamps may be the workstation's own. Off for the
+# file; the section about the report turns it on for its own cases.
+export LANE_WORKTREES_REPORT=off
+
 # Amendment 8, ruling (g): the harness exports `CLAUDE_CODE_SESSION_ID` into
 # every shell a session runs, INCLUDING the one running this suite. It is a
 # holder test now, so a case that does not set it deliberately must not inherit
@@ -14739,6 +14745,44 @@ a14_three "the name guard" 0 bash -c '"$1" guard < "$2"' a14-guard "$E" "$SANDBO
 a14_three "who (a read an act makes for itself)" 0 "$E" who opensoft/repoA#1414
 a14_three "managed-projection (#97's seam)" 0 "$E" managed-projection repoMG-1
 a14_three "history without the flag" 0 "$E" history repoA-1
+
+# =========================================================================
+echo "== opensoft/openRepoTools#162: bytecode never rides a workspace commit =="
+#
+# A handoff's attachments were committed with a whole virtualenv's
+# `__pycache__` inside them (cause 19). `pathspec-check` is the question a
+# hand commit asks first, and `commit_push` asks it of every write this file
+# makes: what `git add` WOULD stage that is bytecode, a cache or an
+# environment. The `.gitignore` lines are OFFERED where the workspace lacks
+# them, and once they are there the same pathspec stages nothing of the kind.
+B162_REL="handoffs/sandbox/attachments/b162"
+B162="$WIP/$B162_REL"
+mkdir -p "$B162/r1/__pycache__" "$B162/r1/venv/lib/python3.12/site-packages"
+printf 'findings\n' > "$B162/r1/notes.md"
+printf 'bytecode\n' > "$B162/r1/__pycache__/m.cpython-312.pyc"
+printf 'pkg\n' > "$B162/r1/venv/lib/python3.12/site-packages/pkg.py"
+B162_IGN=""
+[ -f "$WIP/.gitignore" ] && B162_IGN="$(cat "$WIP/.gitignore")"
+run "$E" pathspec-check "$B162_REL"
+is   "pathspec-check refuses an attachment that carries bytecode" "$rc" 2
+has  "…naming the bytecode" "$out" "$B162_REL/r1/__pycache__/m.cpython-312.pyc"
+has  "…and the virtual environment" "$out" "$B162_REL/r1/venv/lib/python3.12/site-packages/pkg.py"
+hasnt "…and not the attachment's own notes" "$out" "notes.md"
+has  "…and offers the ignore lines the workspace lacks" "$err" "'__pycache__/'"
+run "$E" pathspec-check "$B162_REL/r1/notes.md"
+is   "a pathspec with nothing of the kind passes" "$rc" 0
+b162_head="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_LANE=repoA-1 LANES_PATH="$B162_REL" "$E" commit "attach r1"
+is   "the commit path refuses the same pathspec" "$rc" 2
+has  "…saying what it is" "$err" "none of them is ever a workspace repository's"
+is   "…and commits nothing" "$(git -C "$WIP" rev-parse HEAD)" "$b162_head"
+is   "…and stages nothing" "$(git -C "$WIP" diff --cached --name-only | grep -c . || :)" 0
+printf '%s\n' '__pycache__/' '*.pyc' 'venv/' >> "$WIP/.gitignore"
+run "$E" pathspec-check "$B162_REL"
+is   "with the ignore lines in place it stages nothing of the kind" "$rc" 0
+rm -rf "$WIP/handoffs/sandbox"
+if [ -n "$B162_IGN" ]; then printf '%s\n' "$B162_IGN" > "$WIP/.gitignore"; else rm -f "$WIP/.gitignore"; fi
+git -C "$WIP" checkout -q -- .gitignore 2>/dev/null || :
 
 # ------------------------------------------------------- nothing real touched
 #
