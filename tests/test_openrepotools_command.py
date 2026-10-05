@@ -28,8 +28,10 @@ import hashlib
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
+import time
 
 from datetime import datetime
 from pathlib import Path
@@ -443,6 +445,308 @@ def test_install_replaces_a_copy_that_has_drifted(tmp_path, name):
             assert f"{other}: already installed at" in result.stdout, other
 
 
+# --- every placement is a RENAME, never a rewrite in place (#167) ----------
+#
+# `cp` onto an installed file keeps its inode and rewrites its bytes, and bash
+# reads a script from its file WHILE it runs it: after every command that forks
+# it seeks back to where it had got to and reads on from there. So a lane tool
+# that was running when an install replaced it went on reading the NEW text
+# from the OLD offset — measured on 2026-09-30 as `A.sh: line 4: ript,: command
+# not found`, then the new text's commands run from its middle. A rename puts a
+# new inode at the path and leaves the old one to whoever has it open.
+
+#: THE TEXT A LANE TOOL IS RUNNING WHEN THE INSTALL REPLACES IT. It announces
+#: itself, then waits — `sleep` forks, which is what makes bash seek back and
+#: read on from its file — until `$GO` exists, then finishes. Bounded, so a
+#: test that fails before it says go leaves no process behind for long.
+OLD_RUNNING = ("#!/usr/bin/env bash\n"
+               "printf 'old: started\\n'\n"
+               'i=0; until [ -e "$GO" ] || [ "$i" -ge 1200 ]; do '
+               'sleep 0.05; i=$((i + 1)); done\n')
+OLD_TAIL = "printf 'old: finished\\n'\nexit 0\n"
+
+
+def new_text_read_from(offset: int) -> str:
+    """NEW bytes with a line of their own starting at exactly `offset`.
+
+    That is the byte the running OLD text resumes reading at once its wait is
+    over. In place, the process reads THIS line instead of its own next one,
+    says so and exits 7. By rename it never sees these bytes at all. Built to
+    the offset rather than left to chance, so the failure a regression prints
+    is one line that says what happened.
+    """
+    head = "#!/usr/bin/env bash\n# "
+    assert offset > len(head), "the old text is shorter than the new header"
+    return (head + "x" * (offset - len(head) - 1) + "\n"
+            + "printf 'new: read from the old offset\\n'; exit 7\n")
+
+
+def source_tree(root: Path) -> Path:
+    """A copy of everything `--install` reads beside itself, for a test that
+    needs the NEW bytes to be its own. Run from a file, the command copies
+    what is beside it and fetches nothing, so the copy is complete or the run
+    would try the network, which this suite never reaches."""
+    src = root / "src"
+    for rel in ("openRepoTools",) + FETCHED:
+        (src / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO / rel, src / rel)
+    return src
+
+
+def install_from(src: Path, home: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(["bash", str(src / "openRepoTools"), "--install"],
+                          capture_output=True, text=True, check=False,
+                          input="", env=command_env(home))
+
+
+def placement_temporaries(home: Path) -> list[str]:
+    """Every `.<name>.openrepotools.*` left in a directory `--install` writes:
+    a temporary a placement made and never renamed or removed."""
+    dirs = [home / ".local" / "bin", home / ".claude",
+            home / ".claude" / "commands",
+            home / ".claude-profiles" / "shared" / "commands"]
+    for name in SKILL_NAMES:
+        dirs += [home / ".claude" / "skills" / name,
+                 home / ".claude-profiles" / "shared" / "skills" / name]
+    return sorted(str(p) for d in dirs if d.is_dir() for p in d.iterdir()
+                  if ".openrepotools." in p.name)
+
+
+def one_of_each_kind(home: Path) -> list[tuple[Path, Path, int]]:
+    """`(target, source, mode)` for a command, a skill and a command file, at
+    every destination each one has."""
+    skill, command = SKILL_NAMES[0], COMMAND_NAMES[0]
+    return [
+        (home / ".local" / "bin" / "lanes-edit.sh", REPO / "lanes-edit.sh",
+         0o755),
+        (home / ".claude-profiles" / "shared" / "skills" / skill / "SKILL.md",
+         REPO / SKILL_PATHS[0], 0o644),
+        (home / ".claude" / "skills" / skill / "SKILL.md",
+         REPO / SKILL_PATHS[0], 0o644),
+        (home / ".claude-profiles" / "shared" / "commands" / f"{command}.md",
+         REPO / COMMAND_PATHS[0], 0o644),
+        (home / ".claude" / "commands" / f"{command}.md",
+         REPO / COMMAND_PATHS[0], 0o644),
+    ]
+
+
+@NEEDS_JQ
+def test_a_running_lane_tool_finishes_on_its_own_text_when_an_install_replaces_it(
+        tmp_path):
+    """THE DEFECT ITSELF, END TO END (#167).
+
+    A lane tool is running from its installed path — `lanes-edit.sh` here,
+    the one whose register writes run longest — when `--install` replaces
+    it with newer bytes. The process must finish on the text it started with,
+    and the path must hold the new text afterwards. Written in place, the
+    process reads the new text from the old offset instead: it prints
+    `new: read from the old offset` and exits 7.
+    """
+    src = source_tree(tmp_path)
+    home = tmp_path / "home"
+    first = install_from(src, home)
+    assert first.returncode == 0, first.stdout + first.stderr
+    name = "lanes-edit.sh"
+    target = home / ".local" / "bin" / name
+    target.write_text(OLD_RUNNING + OLD_TAIL, encoding="utf-8")
+    new = new_text_read_from(len(OLD_RUNNING))
+    (src / name).write_text(new, encoding="utf-8")
+
+    go = tmp_path / "go"
+    running = subprocess.Popen(["bash", str(target)], stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True,
+                               env={**os.environ, "GO": str(go)})
+    try:
+        assert running.stdout.readline() == "old: started\n"
+        second = install_from(src, home)
+        assert second.returncode == 0, second.stdout + second.stderr
+        assert f"{name}: updated at {target}" in second.stdout, second.stdout
+        go.touch()
+        out, err = running.communicate(timeout=120)
+    finally:
+        if running.poll() is None:
+            running.kill()
+            running.communicate()
+    assert (out, err, running.returncode) == ("old: finished\n", "", 0), (
+        "the running copy did not finish on its own text — the install "
+        f"rewrote the file under it:\nstdout {out!r}\nstderr {err!r}\n"
+        f"exit {running.returncode}")
+    assert target.read_text(encoding="utf-8") == new
+    assert stat.S_IMODE(target.stat().st_mode) == 0o755
+    assert placement_temporaries(home) == []
+
+
+@NEEDS_JQ
+def test_every_placement_replaces_its_target_rather_than_rewriting_it(tmp_path):
+    """A NEW INODE AT EVERY PATH THAT CHANGED, AND THE OLD ONE LEFT WHOLE.
+
+    One of each kind `--install` writes — a command, a skill and a command
+    file — at every destination each one has. Each is drifted, and held OPEN
+    the way a running process holds its script, before the install that
+    repairs it. Afterwards the path holds the right bytes at the right mode
+    under a different inode, and the handle still reads the drifted bytes
+    whole. In place, the inode is the same one and the handle reads the new
+    bytes. A `SKILL.md` executes nothing, but one way to place a file is one
+    rule to read, and a session that opens it mid-install sees the old text or
+    the new, never a truncated one.
+    """
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    held = []
+    try:
+        for target, source, mode in one_of_each_kind(tmp_path):
+            drifted = target.read_bytes() + b"# drift\n"
+            target.write_bytes(drifted)
+            handle = target.open("rb")
+            held.append((target, source, mode, drifted,
+                         os.fstat(handle.fileno()).st_ino, handle))
+        result = run_cmd("--install", home=tmp_path)
+        assert result.returncode == 0, result.stdout + result.stderr
+        for target, source, mode, drifted, inode, handle in held:
+            assert f"updated at {target}" in result.stdout, target
+            assert target.stat().st_ino != inode, (
+                f"{target} was rewritten in place: same inode {inode}")
+            assert handle.read() == drifted, (
+                f"a reader holding the old {target} saw the new bytes")
+            assert target.read_bytes() == source.read_bytes(), target
+            assert stat.S_IMODE(target.stat().st_mode) == mode, target
+    finally:
+        for *_, handle in held:
+            handle.close()
+    assert placement_temporaries(tmp_path) == []
+
+
+@NEEDS_JQ
+def test_an_install_that_changes_no_byte_renames_nothing(tmp_path):
+    """THE `cmp -s` SKIP STAYS (#167). A path whose bytes are already right
+    keeps its inode on a second run: renaming every file on every run would
+    turn an install that changed nothing into thirty-odd new inodes."""
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    targets = [tmp_path / ".local" / "bin" / n for n in INSTALLED]
+    targets += [t for t, _, _ in one_of_each_kind(tmp_path)]
+    before = {t: t.stat().st_ino for t in targets}
+    result = run_cmd("--install", home=tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert {t: t.stat().st_ino for t in targets} == before
+
+
+@pytest.mark.parametrize("tool, says", [
+    ("cp", "could not write"),
+    ("chmod", "could not set mode 755 on"),
+    ("mv", "could not move the new"),
+])
+@NEEDS_JQ
+def test_a_placement_that_fails_leaves_the_old_copy_and_no_temporary(
+        tmp_path, tool, says):
+    """EACH STEP OF THE RENAME CAN FAIL, AND NONE OF THEM COSTS THE OLD COPY.
+
+    A `cp` into the temporary, the mode stamp on it, or the `mv` over the
+    target is refused for ONE command by a fake first on `$PATH` that defers to
+    the real tool for everything else. The run refuses (2) naming the target,
+    the command already installed there keeps its bytes and its inode, no
+    temporary is left beside it, and the loop goes no further.
+    """
+    real = shutil.which(tool)
+    if real is None:
+        pytest.skip(f"no real `{tool}` on PATH for the fake to defer to")
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    bin_dir = tmp_path / ".local" / "bin"
+    name = INSTALLED[1]
+    target = bin_dir / name
+    old = target.read_bytes() + b"# an older copy\n"
+    target.write_bytes(old)
+    inode = target.stat().st_ino
+    shim = tmp_path / f"fake-{tool}"
+    shim.mkdir()
+    (shim / tool).write_text(
+        "#!/bin/sh\n"
+        'for arg in "$@"; do\n'
+        '\tcase "$arg" in\n'
+        f'\t"{bin_dir}/.{name}.openrepotools."*)\n'
+        f"\t\tprintf 'fake {tool}: refused\\n' >&2\n"
+        "\t\texit 1 ;;\n"
+        "\tesac\n"
+        "done\n"
+        f'exec {real} "$@"\n', encoding="utf-8")
+    (shim / tool).chmod(0o755)
+
+    result = run_cmd("--install", home=tmp_path,
+                     env={"PATH": f"{shim}{os.pathsep}{os.environ['PATH']}"})
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "REFUSED:" in result.stderr, result.stderr
+    assert f"{says} {target}" in result.stderr, result.stderr
+    assert target.read_bytes() == old, "the old copy was not left as it was"
+    assert target.stat().st_ino == inode, "the old copy was replaced"
+    assert placement_temporaries(tmp_path) == []
+    assert f"{INSTALLED[2]}: " not in result.stdout, (
+        "the loop carried on past a placement it could not make")
+
+
+@pytest.mark.parametrize("signame, to_group", [
+    ("SIGTERM", False),   # a `kill` from another shell
+    ("SIGINT", True),     # Ctrl-C: the whole foreground process group
+])
+@NEEDS_JQ
+def test_a_run_killed_mid_placement_leaves_no_temporary(tmp_path, signame,
+                                                         to_group):
+    """THE `EXIT` TRAP REMOVES WHAT A PLACEMENT HAS NOT YET RENAMED (#167).
+
+    `place_by_rename` removes its temporary on every failure it sees; a signal
+    is one it cannot see, which is what `$PLACING` and the trap `workdir`
+    sets are for. A `cp` first on `$PATH` that is SLOW into a temporary holds
+    the run between its `mktemp` and its `mv`; the signal lands there. The run
+    dies of it, and nothing named `.<name>.openrepotools.*` is left beside a
+    target. Without the trap's clause every one of these leaves it behind.
+
+    THE CHILD STARTS WITH BOTH SIGNALS AT THEIR DEFAULT, as a foreground job at
+    a terminal has them. A runner started in the background by a
+    non-interactive shell (`nohup pytest … &`) has SIGINT IGNORED, an ignored
+    signal survives `exec`, and a shell may not un-ignore one it was started
+    with — so without this the case would measure the runner, not the trap.
+    """
+    real = shutil.which("cp")
+    if real is None:
+        pytest.skip("no real `cp` on PATH for the slow one to defer to")
+    shim = tmp_path / "slow-cp"
+    shim.mkdir()
+    (shim / "cp").write_text(
+        "#!/bin/sh\n"
+        'for arg in "$@"; do\n'
+        '\tcase "$arg" in *.openrepotools.*) sleep 3 ;; esac\n'
+        "done\n"
+        f'exec {real} "$@"\n', encoding="utf-8")
+    (shim / "cp").chmod(0o755)
+    sig = getattr(signal, signame)
+
+    def default_signals() -> None:
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+    run = subprocess.Popen(
+        ["bash", str(COMMAND), "--install"], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=command_env(tmp_path, {
+            "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}"}),
+        start_new_session=True, preexec_fn=default_signals)
+    try:
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and not placement_temporaries(tmp_path):
+            time.sleep(0.05)
+        assert placement_temporaries(tmp_path), (
+            "no placement ever made a temporary for the signal to land beside")
+        if to_group:
+            os.killpg(run.pid, sig)
+        else:
+            run.send_signal(sig)
+        out, err = run.communicate(timeout=60)
+    finally:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.communicate()
+    assert run.returncode in (-sig, 128 + sig), (
+        f"the run did not die of {signame}: exit {run.returncode}\n{out}{err}")
+    assert placement_temporaries(tmp_path) == []
+
+
 #: THE WORDS THIS INSTALLER USED TO PLACE AND DOES NOT ANY MORE. `restart` left
 #: under lane-collision-protocol Amendment 18 Addendum 2 (ratified
 #: 2026-09-14T16:50:32Z, verbatim "ratify"): `lane <name>` is that act, and the
@@ -665,6 +969,11 @@ def test_a_mode_stamp_the_bin_loop_cannot_make_reads_as_a_refusal(tmp_path):
     this suite answers a `gh` it cannot call and a `jq` it must do without.
     Ownership is what this stands in for; a fixture cannot make the ownership,
     and the stamp's own failure is the same failure either way.
+
+    THE FAKE REFUSES THE ONE FILE BY EITHER NAME (#167): a copy that is being
+    WRITTEN is stamped on its temporary beside the target, before the rename,
+    so the target is never at the wrong mode — and a stamp that fails there
+    leaves no temporary behind.
     """
     real = shutil.which("chmod")
     if real is None:
@@ -676,10 +985,11 @@ def test_a_mode_stamp_the_bin_loop_cannot_make_reads_as_a_refusal(tmp_path):
     (shim / "chmod").write_text(
         "#!/bin/sh\n"
         'for arg in "$@"; do\n'
-        f'\tif [ "$arg" = "{refused}" ]; then\n'
+        '\tcase "$arg" in\n'
+        f'\t"{refused}"|"{bin_dir}/.{refused.name}.openrepotools."*)\n'
         "\t\tprintf 'fake chmod: this one is not ours to mode\\n' >&2\n"
-        "\t\texit 1\n"
-        "\tfi\n"
+        "\t\texit 1 ;;\n"
+        "\tesac\n"
         "done\n"
         f'exec {real} "$@"\n', encoding="utf-8")
     (shim / "chmod").chmod(0o755)
@@ -693,6 +1003,8 @@ def test_a_mode_stamp_the_bin_loop_cannot_make_reads_as_a_refusal(tmp_path):
         "the run refused before it reached the file whose stamp fails")
     assert not (bin_dir / INSTALLED[2]).exists(), (
         "the loop carried on past a mode stamp it could not make")
+    assert not refused.exists(), "a copy whose mode failed was placed anyway"
+    assert placement_temporaries(tmp_path) == []
     assert not (tmp_path / ".claude").exists(), (
         "the skills, the command files or the hook entries were placed by a "
         "run that refused")
