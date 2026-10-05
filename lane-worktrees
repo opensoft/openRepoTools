@@ -2960,13 +2960,16 @@ class Report:
                 continue
             name = key.rsplit("/", 1)[-1].replace(".git", "")
             named = [g for g in group if os.path.basename(g).lower() == name]
-            if len(named) == 1:
-                out.append(named[0])
-                for g in group:
-                    if g != named[0]:
-                        self.duplicates[g] = named[0]
-            else:
-                out.extend(group)
+            # ONE CHECKOUT PER ORIGIN, CHOSEN DETERMINISTICALLY: the one named
+            # for the repository, the shallowest of several so named, and the
+            # shallowest of all where none is. The rest are duplicates - never
+            # all of them canonical, which would hide the finding.
+            pool = named or group
+            keep = sorted(pool, key=lambda g: (g.count(os.sep), g))[0]
+            out.append(keep)
+            for g in group:
+                if g != keep:
+                    self.duplicates[g] = (keep, len(named) != 1)
         return sorted(out)
 
     def _foreign(self, clones: list, canonical: list) -> None:
@@ -2977,7 +2980,10 @@ class Report:
             if container:
                 why = f"a CLONE inside {container}, where a lane makes worktrees"
             elif c in self.duplicates:
-                why = f"a second clone of {self.duplicates[c]}'s origin"
+                first, ambiguous = self.duplicates[c]
+                why = f"a second clone of {first}'s origin" + (
+                    " (no single clone is named for the repository; the shallowest is "
+                    "taken as its checkout)" if ambiguous else "")
             if not why:
                 continue
             last = git_out(c, "log", "-1", "--format=%cs") or "?"
@@ -3233,7 +3239,7 @@ class Report:
             except OSError:
                 have = set()
             want = ["__pycache__/", "*.pyc", "*.pyo", ".pytest_cache/", ".mypy_cache/",
-                    ".ruff_cache/", "node_modules/", ".venv/", "venv/"]
+                    ".ruff_cache/", "node_modules/", ".venv/", "venv/", "site-packages/"]
             missing = [w for w in want if w not in have]
             if missing:
                 rows.append([os.path.join(wroot, ".gitignore"), "lacks " + " ".join(missing),
@@ -3261,8 +3267,10 @@ class Report:
             why = "no `status` beside this command or on PATH"
         else:
             env = dict(os.environ)
-            if self.opts.estate:
-                env["PROJECTS_DIR"] = self.opts.estate
+            if self.root:
+                # THE ESTATE THIS REPORT READ, however it was resolved: from
+                # `--estate`, `$PROJECTS_ROOT` or the home default.
+                env["PROJECTS_DIR"] = self.root
             proc = run([exe, "--all"], env=env, timeout=600)
             if proc.returncode not in (0, 1):
                 why = f"`status --all` exited {proc.returncode}: " + _first_line(proc.stderr)

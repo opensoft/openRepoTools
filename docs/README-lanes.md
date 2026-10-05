@@ -3521,8 +3521,8 @@ and before the launch: the first start of a UTC day takes the stamp
 `${XDG_STATE_HOME:-~/.local/state}/openRepoTools/report-<YYYYMMDD>.stamp`
 (an atomic `set -C` create, so two starts at once run one report), removes
 older stamps, and starts the report DETACHED — stdin, stdout and stderr closed,
-in a subshell that exits at once — writing
-`…/openRepoTools/reports/<UTC>.md`. Every step either works or is skipped in
+in a subshell that exits at once — over the start's own `$PROJECTS_ROOT`,
+writing `…/openRepoTools/reports/<UTC>.md`. Every step either works or is skipped in
 silence: the report never delays a start and never fails one. `--dry-run`
 starts none; `LANE_WORKTREES_REPORT=off` is the switch (both suites set it).
 
@@ -3534,7 +3534,8 @@ The sweep retires what is already there; these keep more from arriving.
   `${XDG_CACHE_HOME:-~/.cache}/openRepoTools/pycache`, turns pytest's cache off,
   and roots every temporary directory of a run under
   `${XDG_STATE_HOME:-~/.local/state}/openRepoTools/tmp/<UTC>-<pid>/`, which its
-  EXIT trap removes however the run ends. A SIGKILL is the one end no trap sees;
+  EXIT trap removes however the run ends — after stopping the suite's whole
+  process group, so nothing it started outlives the run root or the lock. A SIGKILL is the one end no trap sees;
   the pid in the name is what lets `--include-sandboxes` tell its owner is gone.
 * **One virtual environment per repository, outside the estate:**
   `${XDG_CACHE_HOME:-~/.cache}/openRepoTools/venvs/<repo>/`. `openRepoTools
@@ -3548,7 +3549,8 @@ The sweep retires what is already there; these keep more from arriving.
   still found inside the estate.
 * **The workspace repository never carries bytecode.** `openRepoTools wip init`
   seeds `__pycache__/`, `*.pyc`, `*.pyo`, `.pytest_cache/`, `.mypy_cache/`,
-  `.ruff_cache/`, `node_modules/`, `.venv/` and `venv/` into the new
+  `.ruff_cache/`, `node_modules/`, `.venv/`, `venv/` and `site-packages/` (a
+  virtual environment under any other name) into the new
   workspace's `.gitignore` (a line the template already carries is not
   repeated). Every commit `lanes-edit.sh` makes asks git what its pathspec would
   stage (`git add --dry-run`) and REFUSES, exit **2**, nothing staged, when any

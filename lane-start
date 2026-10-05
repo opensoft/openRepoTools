@@ -3932,8 +3932,12 @@ lane_daily_report() {
     [ "$ldr_old" = "$ldr_state/report-$ldr_day.stamp" ] || rm -f -- "$ldr_old" 2>/dev/null || :
   done
   ldr_out="$ldr_state/reports/$(date -u +%Y%m%dT%H%M%SZ).md"
+  # THE ESTATE THIS START READS: `$PROJECTS_ROOT` as resolved above, named to
+  # the report rather than left for it to find again.
+  ldr_estate=""
+  [ -d "$PROJECTS_ROOT" ] && ldr_estate="$PROJECTS_ROOT"
   ( "$ldr_bin" sweep --all --dry-run --report --post "$ldr_out" \
-      </dev/null >/dev/null 2>&1 & ) 2>/dev/null || :
+      ${ldr_estate:+--estate "$ldr_estate"} </dev/null >/dev/null 2>&1 & ) 2>/dev/null || :
   step "the estate's daily report is running, detached: $ldr_out"
   return 0
 }

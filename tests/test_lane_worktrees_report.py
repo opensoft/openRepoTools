@@ -50,6 +50,7 @@ status --all: reading every estate:
   root   main   /x/repoA
     - shape pin 71cf5de is 1 commit(s) behind opensoft/openRepoShape main
 OUT
+printf '    - estate read at %s\n' "${PROJECTS_DIR:-unset}"
 exit 1
 """
 
@@ -75,6 +76,13 @@ def build_estate(e) -> dict:
     e.git("clone", "-q", LW.GH_URL, f["clone"], cwd=e.root)
     f["dup"] = e.projects / "repoA-copy"
     e.git("clone", "-q", LW.GH_URL, f["dup"], cwd=e.root)
+    # ... and two clones of one origin NEITHER of which is named for it: one
+    # is still the checkout, the other still a finding.
+    c_origin = e.root / "remotes" / "repoC.git"
+    e.git("init", "-q", "--bare", "-b", "main", c_origin, cwd=e.root)
+    for name in ("c-one", "c-two"):
+        e.git("clone", "-q", c_origin, e.projects / name, cwd=e.root)
+    f["c-two"] = e.projects / "c-two"
     # ORPHANED: a tree in the inventory of a lane whose snapshot is CLOSED.
     f["orphan"] = e.projects / ".lane-worktrees" / "repoA-9" / "left"
     e.git("worktree", "add", "-q", "-b", "feat/left", f["orphan"], "origin/main")
@@ -168,12 +176,13 @@ def build_estate(e) -> dict:
     return f
 
 
-def report(e, *args, env=None):
+def report(e, *args, env=None, estate=True):
     e.write_spec()
     child = dict(e.env)
     child.update(env or {})
+    where = ["--estate", str(e.projects)] if estate else []
     return subprocess.run([sys.executable, str(LW.LW), "sweep", "--all", "--dry-run", "--report",
-                           "--estate", str(e.projects), *args],
+                           *where, *args],
                           capture_output=True, text=True, env=child, timeout=300,
                           cwd=str(e.root), stdin=subprocess.DEVNULL)
 
@@ -197,6 +206,9 @@ def test_the_report_finds_every_kind_of_leftover_and_changes_nothing(tmp_path):
     assert str(f["clone"]) in foreign and "a CLONE inside" in foreign
     assert str(f["dup"]) in foreign and "a second clone of" in foreign
     assert f"{e.checkout} ·" not in foreign, "the estate's own checkout is not foreign"
+    assert f"{f['c-two']} · a second clone of {e.projects / 'c-one'}'s origin (no single" \
+        in foreign
+    assert f"{e.projects / 'c-one'} ·" not in foreign
     orphans = section(out, "Orphaned worktrees of ENDED lanes")
     assert str(f["orphan"]) in orphans and "repoA-9" in orphans
     assert f"{f['nested-orphan']} \u00b7 repoB-2 \u00b7 its snapshot is CLOSED" in orphans
@@ -223,8 +235,21 @@ def test_the_report_finds_every_kind_of_leftover_and_changes_nothing(tmp_path):
     assert "lacks __pycache__/" in hygiene and "bytecode path(s) in history" in hygiene
     status = section(out, "`status --all` findings")
     assert "shape pin 71cf5de is 1 commit(s) behind" in status
+    assert f"estate read at {e.projects}" in status
     assert "| rescue branches (all ages) | 1 |" in out
     assert before == after, sorted(set(before.items()) ^ set(after.items()))[:10]
+
+
+def test_status_reads_the_estate_the_report_resolved(tmp_path):
+    """Copilot on #169: with no `--estate` - lane-start's daily run - the
+    report resolves `$PROJECTS_ROOT`, and `status --all` is pointed at that
+    same estate, never at its own default."""
+    e = LW.Estate(tmp_path)
+    build_estate(e)
+    proc = report(e, estate=False)
+    assert proc.returncode == 0, proc.stderr
+    assert f"over `{e.projects}`" in proc.stdout
+    assert f"estate read at {e.projects}" in section(proc.stdout, "`status --all` findings")
 
 
 def test_post_writes_a_file_or_comments_on_an_issue(tmp_path):
@@ -314,6 +339,7 @@ def test_lane_start_runs_the_report_detached_once_a_day(tmp_path):
                 pass
     assert calls.startswith("sweep --all --dry-run --report --post "), calls
     assert f"{state}/openRepoTools/reports/" in calls
+    assert calls.rstrip().endswith(f"--estate {box.home / 'projects'}"), calls
     day = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d")
     assert (state / "openRepoTools" / f"report-{day}.stamp").exists()
     assert "the estate's daily report is running, detached" in result.stderr
