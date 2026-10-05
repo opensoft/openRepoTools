@@ -1985,7 +1985,13 @@ def is_inventory(requested: str | None) -> bool:
 
 def _sync_once(kind: str, requested: str | None) -> int:
     if kind == "inventory":
-        return _guarded(lambda: run_inventory("sync", requested, False), requested, kind)
+        # A REFUSAL HERE IS ANSWERED HERE: a register sync that took the
+        # inventory's mark must not lose the marks behind it to an exception.
+        try:
+            return _guarded(lambda: run_inventory("sync", requested, False), requested, kind)
+        except Refusal as exc:
+            note(f"REFUSED: {exc}")
+            return 2
     return _guarded(lambda: run_index("sync", requested, False), requested, kind)
 
 
