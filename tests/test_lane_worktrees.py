@@ -238,9 +238,9 @@ class Estate:
         self.spec_file.write_text(json.dumps(spec))
         self.prs_file.write_text(json.dumps(self.prs))
 
-    def pr(self, number: int, branch: str, state: str, head: str) -> None:
+    def pr(self, number: int, branch: str, state: str, head: str, base: str = "main") -> None:
         self.prs.append({"number": number, "headRefName": branch, "state": state,
-                         "headRefOid": head, "isCrossRepository": False,
+                         "headRefOid": head, "baseRefName": base, "isCrossRepository": False,
                          "mergedAt": "2026-10-01T00:00:00Z" if state == "MERGED" else None})
 
     # ------------------------------------------------------------ running
@@ -625,6 +625,30 @@ def test_merged_is_the_register_or_gh_never_ancestry(estate, tmp_path):
     assert estate.git("branch", "--list", "feat/reg") == ""
 
 
+def test_a_merge_into_another_base_is_no_landing_and_an_open_pr_comes_first(estate):
+    """Copilot on #168: a PR merged into a release branch is no landing on
+    main, and an OPEN PR protects its branch however an older PR of the same
+    branch was merged."""
+    elsewhere = estate.worktree("elsewhere", "feat/rel")
+    tip = estate.commit(elsewhere, "e", {"e.txt": "e\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/rel", cwd=elsewhere)
+    estate.pr(41, "feat/rel", "MERGED", tip, base="release/1")
+    reopened = estate.worktree("reopened", "feat/again")
+    old = estate.commit(reopened, "o", {"o.txt": "o\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/again", cwd=reopened)
+    estate.pr(42, "feat/again", "MERGED", old)
+    estate.pr(43, "feat/again", "OPEN", old)
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(elsewhere)][0] == "remove", rows[str(elsewhere)]
+    assert "merged into release/1" in rows[str(elsewhere)][2]
+    assert rows[str(reopened)][0] == "remove" and "PR #43 is open" in rows[str(reopened)][2]
+    yes = estate.sweep(LANE, "--yes")
+    assert yes.returncode == 0, yes.stdout + yes.stderr
+    local = estate.git("branch", "--format=%(refname:short)").splitlines()
+    assert "feat/rel" in local and "feat/again" in local, "neither branch is merged"
+    assert {"feat/rel", "feat/again"} <= set(estate.remote_heads())
+
+
 def test_without_gh_nothing_is_called_merged(estate):
     tree = estate.worktree("m", "feat/m")
     tip = estate.commit(tree, "m", {"m.txt": "m\n"})
@@ -633,6 +657,64 @@ def test_without_gh_nothing_is_called_merged(estate):
     proc = estate.sweep(LANE, "--porcelain", env={"LANES_NO_GITHUB": "1"})
     assert rows_of(proc.stdout)[str(tree)][0] == "remove"
     assert "LANES_NO_GITHUB=1" in estate.sweep(LANE, env={"LANES_NO_GITHUB": "1"}).stdout
+
+
+def test_a_tree_another_lanes_inventory_also_names_is_kept(estate):
+    """Copilot on #168: inventory records are history and a path can be
+    reused, so a tree BOTH lanes' inventories name is neither's to sweep."""
+    tree = estate.worktree("shared", "feat/shared")
+    estate.git("push", "-q", "-u", "origin", "feat/shared", cwd=tree)
+    other = estate.root / "lane-state" / "repoA-7" / "trees"
+    other.mkdir(parents=True)
+    (other / "c1.yaml").write_text(f"schema: 1\npath: {tree}\n")
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "keep" and "repoA-7's inventory names it too" in rows[str(tree)][2]
+    assert estate.sweep(LANE, "--yes").returncode == 0
+    assert tree.is_dir()
+
+
+def test_a_clone_its_linked_worktrees_share_is_kept(estate):
+    """Copilot on #168: removing a clone takes the git directory every
+    worktree linked to it shares, a live writer's included."""
+    clone = estate.lane_root / "cl"
+    estate.git("clone", "-q", GH_URL, clone, cwd=estate.root)
+    linked = estate.root / "elsewhere-wt"
+    estate.git("worktree", "add", "-q", "-b", "feat/linked", linked, "origin/main", cwd=clone)
+    estate.record(clone)
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(clone)][0] == "keep", rows[str(clone)]
+    assert "linked worktree(s) share" in rows[str(clone)][2]
+
+
+def test_an_unreadable_inventory_record_refuses_the_sweep(estate):
+    """Copilot on #168: a record that cannot be read is a tree whose owner is
+    unknown, so the sweep refuses rather than report nothing to retire."""
+    estate.worktree("fine", "feat/fine")
+    estate.inventory.append(US.join(["c9-odd", str(estate.lane_root / "odd"), "x", "y", "none",
+                                     "0", "0", ME, "2026-10-05T00:00:00Z", str(estate.checkout),
+                                     "1", "op-1", "9"]))
+    before = snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json"))
+    for args in (("--dry-run", "--porcelain"), ("--yes",)):
+        proc = estate.sweep(LANE, *args)
+        assert proc.returncode == 2, (args, proc.stdout, proc.stderr)
+        assert "c9-odd is unreadable or of schema 9" in proc.stdout
+    assert snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json")) == before
+
+
+def test_the_lane_name_is_resolved_before_anything_is_derived_from_it(estate):
+    """Copilot on #168: Amendment 15's resolver first, as lane-start and
+    lane-end read it; an alias table that cannot be read refuses."""
+    estate.worktree("w", "feat/w")
+    estate.extra_spec = {"canon-lane": {"rc": 0, "out": f"{LANE}\n"}}
+    proc = estate.sweep(LANE.upper(), "--porcelain")
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    assert proc.stdout.splitlines()[0].split("\t")[:2] == ["lane", LANE]
+    reconcile = [r for r in (json.loads(x) for x in estate.helper_log.read_text().splitlines())
+                 if r["argv"][:1] == ["lane-reconcile"]]
+    assert reconcile[-1]["argv"] == ["lane-reconcile", LANE]
+    estate.extra_spec = {"canon-lane": {"rc": 66, "err": "the alias table could not be read\n"}}
+    refused = estate.sweep(LANE, "--porcelain")
+    assert refused.returncode == 2 and "alias table could not be read" in refused.stdout
 
 
 def test_include_foreign_takes_a_word_and_another_lanes_tree_is_never_taken(estate):
@@ -745,6 +827,77 @@ def test_scratch_is_archived_then_removed_and_caches_are_removed(estate):
     assert str(scratch / "__pycache__") not in caches, "it went with its scratch"
 
 
+def test_caches_are_never_taken_from_a_foreign_tree(estate):
+    """Copilot on #168: a FOREIGN tree under the lane's root is somebody's,
+    live or not, and so are its caches."""
+    foreign = estate.worktree("theirs", "feat/theirs", record=False)
+    (foreign / "__pycache__").mkdir()
+    (foreign / "__pycache__" / "t.pyc").write_bytes(b"\0")
+    proc = estate.sweep(LANE, "--include-caches", "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert str(foreign / "__pycache__") not in items_of(proc.stdout, "cache")
+    assert (foreign / "__pycache__" / "t.pyc").exists()
+
+
+def test_branch_deletes_wait_for_a_fetch_that_worked(estate):
+    """Copilot on #168: --yes deletes a merged branch only once origin was
+    read NOW - the lane's own checkout is fetched too, and a fetch that
+    failed deletes nothing."""
+    estate.git("checkout", "-q", "-b", "feat/gone-merged", "origin/main")
+    tip = estate.commit(estate.checkout, "g", {"g.txt": "g\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/gone-merged")
+    estate.git("checkout", "-q", "main")
+    estate.pr(51, "feat/gone-merged", "MERGED", tip)
+    estate.origin.rename(estate.origin.with_name("moved.git"))
+    try:
+        proc = estate.sweep(LANE, "--branches", "--yes", "--porcelain")
+    finally:
+        estate.origin.with_name("moved.git").rename(estate.origin)
+    items = items_of(proc.stdout, "branch")
+    assert items["feat/gone-merged"][0] == "keep", items
+    assert "origin could not be fetched" in items["feat/gone-merged"][3]
+    assert "feat/gone-merged" in estate.git("branch", "--format=%(refname:short)").splitlines()
+
+
+def test_a_clean_tree_without_origin_is_bundled_and_removed_under_bundle_yes(estate):
+    """Copilot on #168: `--yes` fetches, and a repository with no origin is
+    no failed fetch - the dry run's `bundle+remove` is what `--yes` does."""
+    solo = estate.projects / "solo"
+    estate.git("init", "-q", "-b", "main", solo, cwd=estate.root)
+    estate.commit(solo, "solo", {"s.txt": "s\n"})
+    lone = estate.lane_root / "lone"
+    estate.lane_root.mkdir(parents=True, exist_ok=True)
+    estate.git("worktree", "add", "-q", "-b", "feat/lone", lone, "main", cwd=solo)
+    estate.commit(lone, "lone", {"l.txt": "l\n"})
+    estate.record(lone)
+    dry = rows_of(estate.sweep(LANE, "--bundle", "--porcelain").stdout)
+    assert dry[str(lone)][0] == "bundle+remove", dry
+    yes = estate.sweep(LANE, "--bundle", "--yes", "--porcelain")
+    assert yes.returncode == 0, yes.stdout + yes.stderr
+    assert not lone.exists()
+    (archive,) = estate.archives()
+    assert (archive / "lone.bundle").is_file()
+
+
+def test_a_distance_to_origin_that_cannot_be_read_keeps_the_tree(estate):
+    """Copilot on #168: a failed `rev-list` is a read error, never "0 ahead"
+    - which is what lets a tree go without a rescue."""
+    tree = estate.worktree("broken", "feat/broken", record=False)
+    pushed = estate.commit(tree, "c", {"c.txt": "c\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/broken", cwd=tree)
+    estate.commit(tree, "d", {"d.txt": "d\n"})
+    estate.record(tree)
+    # origin's tip goes missing from the clone's object store: the distance
+    # from it to HEAD can no longer be walked
+    obj = estate.checkout / ".git" / "objects" / pushed[:2] / pushed[2:]
+    assert obj.is_file()
+    obj.unlink()
+    proc = estate.sweep(LANE, "--porcelain")
+    rows = rows_of(proc.stdout)
+    assert rows[str(tree)][0] == "keep", rows[str(tree)]
+    assert "could not be read" in rows[str(tree)][2]
+
+
 def test_killed_suite_sandboxes_whose_owner_is_gone_are_removed(estate):
     user = os.environ.get("USER") or __import__("getpass").getuser()
     base = estate.sandboxes
@@ -814,33 +967,53 @@ def test_a_clone_something_leans_on_is_load_bearing_and_never_removed(estate):
 
 # =================================================================== --expire
 
-def _archive(estate, days: int, branch: str | None) -> Path:
+def _archive(estate, days: int, branch: str | None, sha: str = "0" * 40,
+             manifest: bool = True) -> Path:
+    """A sweep archive `days` old, as `--yes` leaves one: DISPOSITION.md,
+    rescues.tsv naming `branch` at `sha`, and a MANIFEST.sha256 of both."""
     when = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days, hours=1)
     d = estate.state / "openRepoTools" / "sweeps" / LANE / when.strftime("%Y%m%dT%H%M%SZ")
     d.mkdir(parents=True)
     (d / "DISPOSITION.md").write_text("# x\n")
     rows = "# origin\tbranch\tsha\tcheckout\ttree\n"
     if branch:
-        rows += f"{GH_URL}\t{branch}\t{'0' * 40}\t-\t-\n"
+        rows += f"{GH_URL}\t{branch}\t{sha}\t-\t-\n"
     (d / "rescues.tsv").write_text(rows)
+    if manifest:
+        (d / "MANIFEST.sha256").write_text("".join(
+            f"{hashlib.sha256((d / n).read_bytes()).hexdigest()}  {n}\n"
+            for n in ("DISPOSITION.md", "rescues.tsv")))
     return d
 
 
 def test_expire_keeps_young_archives_and_any_whose_rescue_left_origin(estate):
     estate.git("push", "-q", "origin", "main:refs/heads/rescue/repoA-1/kept-1")
-    young = _archive(estate, 89, "rescue/repoA-1/kept-1")
-    due = _archive(estate, 90, "rescue/repoA-1/kept-1")
-    orphan = _archive(estate, 120, "rescue/repoA-1/gone-1")
+    sha = estate.git("rev-parse", "main")
+    young = _archive(estate, 89, "rescue/repoA-1/kept-1", sha)
+    due = _archive(estate, 90, "rescue/repoA-1/kept-1", sha)
+    orphan = _archive(estate, 120, "rescue/repoA-1/gone-1", sha)
     plain = _archive(estate, 91, None)
+    # THE RESCUED COMMIT, NOT THE NAME: the branch is on origin at another sha.
+    moved = _archive(estate, 92, "rescue/repoA-1/kept-1", "1" * 40)
+    # AN ARCHIVE A SWEEP NEVER FINISHED (no manifest), and one holding a file
+    # its manifest does not list (a bundle the ledger never recorded).
+    unfinished = _archive(estate, 93, None, manifest=False)
+    stray = _archive(estate, 94, None)
+    (stray / "x.bundle").write_bytes(b"bundle")
     dry = estate.sweep("--expire", "--porcelain")
     assert dry.returncode == 3, dry.stdout + dry.stderr
     rows = {line.split("\t")[2]: line.split("\t")[1] for line in dry.stdout.splitlines()}
+    why = {line.split("\t")[2]: line.split("\t")[4] for line in dry.stdout.splitlines()}
     assert rows[str(young)] == "keep" and rows[str(due)] == "expire"
     assert rows[str(orphan)] == "keep" and rows[str(plain)] == "expire"
+    assert rows[str(moved)] == "keep" and "not the rescued 1111111" in why[str(moved)]
+    assert rows[str(unfinished)] == "keep" and "MANIFEST" in why[str(unfinished)]
+    assert rows[str(stray)] == "keep" and "x.bundle" in why[str(stray)]
     assert young.is_dir() and due.is_dir()
     yes = estate.sweep("--expire", "--yes")
     assert yes.returncode == 0, yes.stdout + yes.stderr
     assert young.is_dir() and orphan.is_dir()
+    assert moved.is_dir() and unfinished.is_dir() and stray.is_dir()
     assert not due.exists() and not plain.exists()
     log = (estate.state / "openRepoTools" / "sweeps" / "EXPIRED.log").read_text()
     assert str(due) in log and str(orphan) not in log

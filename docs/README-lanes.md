@@ -3327,7 +3327,12 @@ its two roots (`<checkout>/.claude/worktrees/*`, `.lane-worktrees/<lane>/*`).
 A tree the inventory does not name is **FOREIGN**: reported and left, unless
 `--include-foreign` and a `--word "<verbatim>"` (recorded in every register line
 it causes). A tree ANOTHER lane's inventory names is that lane's and is never
-taken from here, word or no word. The lane's own checkout is never a candidate.
+taken from here, word or no word — and one BOTH inventories name is kept, since
+records are history and a path can be reused. An inventory record that cannot be
+read (no path, an unknown schema) refuses the sweep, exit **2**: its tree's owner
+is unknown. The lane's own checkout is never a candidate. The lane name is
+resolved first (`lanes-edit.sh canon-lane`, Amendment 15), as `lane-start` and
+`lane-end` resolve it; an alias table that cannot be read refuses.
 
 **Who may act** is #97's reconciliation (`lanes-edit.sh lane-reconcile`), read
 before anything is written — the fetch included:
@@ -3351,16 +3356,17 @@ Each tree is classified in this order; the first row that matches decides.
 | not in the lane's inventory | `foreign` | nothing (`--include-foreign --word …` applies the rows below) |
 | a process stands in it or holds a file open there (`/proc`, else `lsof`), a tmux pane's current path is in it, it is named by `--live`, the sweep was started inside it, or the session that recorded it is live | `live` | nothing, ever — asked again at the moment of the act |
 | liveness could not be read | `keep` | nothing |
-| its directory is gone and git still registers it | `prune` | `git worktree remove <path>` (the one registration; `git worktree prune` only if that is refused) |
+| its directory is gone and git still registers it | `prune` | `git worktree remove <path>` — that one registration; a repository-wide `git worktree prune` is never run (it would unregister other lanes' and FOREIGN trees too) |
 | its directory is gone and nothing registers it | `gone` | nothing; the inventory record is history |
-| a registration someone LOCKED; a submodule with uncommitted work or a commit no remote holds; a repository nested inside it; a CLONE with a branch or a stash origin lacks | `keep` | nothing, and the line says which |
+| another lane's inventory names it too | `keep` | nothing: which lane owns it now is a person's to say |
+| a registration someone LOCKED; a submodule with uncommitted work or a commit no remote holds; a repository nested inside it; a CLONE with a branch or a stash origin lacks, or whose git directory linked worktrees share | `keep` | nothing, and the line says which |
 | something leans on it — another repository's `objects/info/alternates`, or a remote whose URL is its path | `load-bearing` | nothing; the line names every dependent and the remedy (`git repack -a -d`, then drop the alternates or re-point the remote) |
 | no `origin` | `keep` (`bundle+remove` with `--bundle`) | a bundle is its only rescue |
 | dirty or untracked work | `wip-rescue+remove` | `git add -A` into a COPY of its index, `commit-tree` on its head, `rescue/<lane>/<slice>-<UTC>` pushed and seen on origin, a bundle, then removed |
 | an unborn branch, clean | `remove` | removed |
 | detached at a commit origin holds | `remove` | removed |
 | detached with commits of its own | `rescue+remove` | `rescue/<lane>/<slice>-<UTC>` pushed, a bundle, then removed |
-| MERGED — its PR LANDED in the register, or `gh` says MERGED, and that PR's head holds this tip | `remove+delete-branch` | removed; local branch deleted; the remote branch too where its `Lane:` trailer is this lane's and it holds nothing the PR did not |
+| MERGED — its PR LANDED in the register, or `gh` says MERGED, into the default branch, and that PR's head holds this tip | `remove+delete-branch` | removed; local branch deleted at the SHA judged merged (`update-ref -d <old>`), and the remote branch too — under a lease on the judged SHA — where its `Lane:` trailer is this lane's and it holds nothing the PR did not |
 | clean, every commit on its own remote branch (an open PR is untouched) | `remove` | removed; the branch stays |
 | clean, its head on some origin branch | `remove` | removed; the branch stays |
 | unpublished commits on `main`/`master`, or on a branch origin has DIVERGED from | `rescue+remove` | the tip to `rescue/<lane>/<slice>-<UTC>`, then removed; the branch itself is never force-pushed |
@@ -3368,13 +3374,17 @@ Each tree is classified in this order; the first row that matches decides.
 
 **"Merged" is never `git branch --merged` alone**: a squash merge leaves no
 ancestry, and a branch whose tip IS on `main` with no pull request naming it is
-listed as unmerged and its branch kept. The branch's pull request comes from one
-`gh pr list --state all` per repository; with `LANES_NO_GITHUB=1` or no `gh`
-nothing is called merged. The register's `LANDED` lines are read from
+listed as unmerged and its branch kept. A PR merged into another base (a release
+or feature branch) is no landing, and an OPEN PR protects its branch however an
+older PR of the same branch was merged — unless the register has LANDED that
+very PR. The branch's pull request comes from one `gh pr list --state all` per
+repository; with `LANES_NO_GITHUB=1` or no `gh` nothing is called merged. The register's `LANDED` lines are read from
 `origin/<branch>` of the workspace repository.
 
-**At the moment of removal** the head is re-read, and the tree must still be
-clean — or, after a WIP rescue, must still be byte for byte the tree the rescue
+**Liveness is asked again before the rescue and again at the moment of
+removal** — processes, open files, tmux panes and the recording session, afresh;
+a scan that cannot be made leaves the tree. **At the moment of removal** the
+head is re-read, and the tree must still be clean — or, after a WIP rescue, must still be byte for byte the tree the rescue
 commit carries. A push that origin refuses leaves the tree exactly as it was:
 the WIP commit is made BESIDE the tree, never into it, so its branch, index and
 files never move.
@@ -3390,9 +3400,9 @@ the tree in place for a person.
 
 | flag | what | disposition |
 |---|---|---|
-| `--branches` | local branches no worktree holds, in the lane's checkout | merged by PR evidence: `delete` (`delete+remote` where the `Lane:` trailer is this lane's and origin's tip is inside the PR); an open PR's branch: `keep`; unmerged with a missing, diverged or unpushed upstream: `list` with its tip, distance from `origin/main`, last commit date and owner — never deleted; `main`, `master` and `rescue/*`: never touched |
-| `--include-scratch` | `.lane-worktrees/<lane>/*-scratch`, `briefs/`, `bin/` that are no checkout | `archive+remove`: tar (caches left out) and sha256, then removed |
-| `--include-caches` | `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `node_modules`, any directory with `pyvenv.cfg` (and `venv/`, `.venv/` with an activate script), under `.lane-worktrees/<lane>/**` and the lane's inventory trees | `remove`, without archiving — never one git tracks, one in a live tree, or one inside scratch being archived |
+| `--branches` | local branches no worktree holds, in the lane's checkout | merged by PR evidence: `delete` (`delete+remote` where the `Lane:` trailer is this lane's and origin's tip is inside the PR), each at the SHA judged and only after a fetch of that checkout that worked under `--yes`; an open PR's branch: `keep`; unmerged with a missing, diverged, unpushed or unreadable upstream: `list` with its tip, distance from `origin/main`, last commit date and owner — never deleted; `main`, `master` and `rescue/*`: never touched |
+| `--include-scratch` | `.lane-worktrees/<lane>/*-scratch`, `briefs/`, `bin/` that are no checkout | `archive+remove`: tar (caches left out) and sha256, then removed — only if no writer arrived and nothing outside the caches changed while the tar ran |
+| `--include-caches` | `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `node_modules`, any directory with `pyvenv.cfg` (and `venv/`, `.venv/` with an activate script), under `.lane-worktrees/<lane>/**` and the lane's inventory trees | `remove`, without archiving — never one git tracks, one inside scratch being archived, or one in a FOREIGN tree, a live one, one whose liveness is unknown or one left by its own act; the owning tree's liveness is asked again just before |
 | `--include-sandboxes` | `tmp.*` and `pytest-of-$USER/pytest-*` in `/tmp` and `$TMPDIR` (or `LANE_WORKTREES_SANDBOX_ROOTS`), owned by this account | `remove` where the owning process is gone: a pytest `.lock` naming a dead pid, and no live process standing in it, holding it open or naming it in its environment; a `tmp.*` younger than `sandbox_min_age_minutes` is left |
 | `--links` | every symlink under the estate and every worktree `.git` gitdir pointer | `broken`, listed with target and age; nothing changes |
 | `--bundle` | every tree acted on | a `git bundle` beside the archive (always, for a rescue) |
@@ -3400,7 +3410,8 @@ the tree in place for a person.
 ### The sweeps directory, the register line, retention
 
 `${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools/sweeps/<lane>/<UTC>/`,
-mode 0700, created by the first act of a `--yes` and never by a dry run:
+mode 0700, created EXCLUSIVELY by the first act of a `--yes` (a second sweep
+started in the same second gets `<UTC>-2`) and never by a dry run:
 
 * `DISPOSITION.md` — every tree and item acted on: what it was, why, what was
   done, where its rescue is, and the register line that records it;
@@ -3418,8 +3429,11 @@ outlives the archive.
 
 **Retention: 90 days** (`sweep.conf`). `sweep --expire` lists archives older than
 that, and with `--yes` removes those whose every rescue branch is still on
-origin (`git ls-remote`); an archive whose rescue branch is gone from origin is
-the only copy and is NEVER expired. What expired is appended to
+origin AT THE RESCUED SHA (`git ls-remote`); an archive whose rescue branch is
+gone from origin, or was remade at another commit, is the only copy and is NEVER
+expired. Nor is an archive that is not WHOLE — no `MANIFEST.sha256`, a file it
+does not list or whose digest differs (a sweep interrupted after a bundle), or a
+`rescues.tsv` that is missing or has a row that is not origin, branch and SHA. What expired is appended to
 `sweeps/EXPIRED.log`.
 
 `${XDG_CONFIG_HOME:-$HOME/.config}/openRepoTools/sweep.conf` (or
