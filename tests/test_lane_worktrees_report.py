@@ -252,6 +252,30 @@ def test_status_reads_the_estate_the_report_resolved(tmp_path):
     assert f"estate read at {e.projects}" in section(proc.stdout, "`status --all` findings")
 
 
+def test_a_record_the_report_cannot_read_is_a_finding_never_absence(tmp_path):
+    """Copilot round 2 on #169: an inventory or snapshot the report could not
+    read would otherwise make it clean."""
+    e = LW.Estate(tmp_path)
+    build_estate(e)
+    trees = e.projects / ".lane-state" / "repoA-5" / "trees"
+    trees.mkdir(parents=True)
+    (trees / "c1.yaml").write_text("schema: 1\n")
+    locked = e.projects / ".lane-state" / "repoA-6"
+    locked.mkdir()
+    (locked / "lane-state.yaml").write_text("schema: 1\nstate: CLOSED\n")
+    (locked / "lane-state.yaml").chmod(0)
+    try:
+        proc = report(e)
+    finally:
+        (locked / "lane-state.yaml").chmod(0o644)
+    assert proc.returncode == 0, proc.stderr
+    found = section(proc.stdout, "Records the report could not read")
+    assert f"{trees / 'c1.yaml'} \u00b7 an inventory record that names no path" in found
+    if os.geteuid() != 0:
+        assert f"{locked / 'lane-state.yaml'} \u00b7 could not be read" in found
+    assert "| Records the report could not read | " in proc.stdout
+
+
 def test_post_writes_a_file_or_comments_on_an_issue(tmp_path):
     e = LW.Estate(tmp_path)
     build_estate(e)

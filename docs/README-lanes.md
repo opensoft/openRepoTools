@@ -3512,6 +3512,7 @@ lane-worktrees sweep --all --dry-run --report [--estate <dir>] [--post <file> | 
 | Evidence-shaped paths | untracked or ignored `junit*.xml`, `MANIFEST*`, `*-report.md`, `*REPORT*.md`, `canary-*`, `*-evidence`, `deployment-evidence` inside a repository, and a directory of reports beside the repositories — each a finding to move to the evidence root below |
 | Sweep archives past retention | `sweep --expire`'s own dry run: what WOULD expire, and what is past retention but kept because its rescue left origin. Expiring stays an act (`sweep --expire --yes`) |
 | Workspace repository hygiene | the workspace's `.gitignore` lines it lacks (with the one command that adds them), and bytecode already in its history (for a person's word: history is rewritten only on one) |
+| Records the report could not read | a lane snapshot, inventory directory or record, or an inventory tree's `git status`, that could not be read — unknown is never absent, and the sections above may be missing what it holds |
 | `status --all` findings | the estate command's ahead/behind, fork, shape-pin and parked-record lines, reported as what they are and never counted as dirt (`LANE_WORKTREES_STATUS` names the command when it is not beside this one) |
 
 The summary table at its head also carries **the count of rescue branches** and
@@ -3557,8 +3558,8 @@ The sweep retires what is already there; these keep more from arriving.
   virtual environment under any other name) into the new
   workspace's `.gitignore` (a line the template already carries is not
   repeated). Every commit `lanes-edit.sh` makes asks git what its pathspec would
-  stage (`git add --dry-run`) and REFUSES, exit **2**, nothing staged, when any
-  of it is bytecode, a cache, a dependency tree or a virtual environment — and
+  stage (`git add --dry-run`) or holds staged already, and REFUSES, exit **2**,
+  nothing staged, when any of it is bytecode, a cache, a dependency tree or a virtual environment — and
   offers the `.gitignore` lines a workspace without them lacks. Attachments are
   committed by hand, so the same question is a subcommand:
 

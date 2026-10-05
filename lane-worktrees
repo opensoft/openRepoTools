@@ -2978,19 +2978,6 @@ def _lane_tree_roots(parents: list) -> list:
     return out
 
 
-def _sidecar(path: str) -> dict:
-    out = {}
-    try:
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                key, sep, value = line.partition(": ")
-                if sep:
-                    out[key.strip()] = value.strip()
-    except OSError:
-        pass
-    return out
-
-
 class Report:
     """`sweep --all --dry-run --report`: the estate's leftovers as one
     document. It reads every lane's #97 inventory, the workspace register and
@@ -3004,6 +2991,7 @@ class Report:
         self.sections: list = []
         self.counts: dict = {}
         self.now = time.time()
+        self.unreadable: dict = {}
 
     def add(self, title: str, rows: list, empty: str, note_text: str = "") -> None:
         self.sections.append((title, rows, empty, note_text))
@@ -3030,6 +3018,44 @@ class Report:
         self._archives()
         self._workspace_hygiene()
         self._status_all()
+        self.add("Records the report could not read", [[p, w] for p, w in
+                                                      sorted(self.unreadable.items())], "none",
+                 "UNKNOWN IS NEVER ABSENT: a lane snapshot, inventory or tree the report "
+                 "could not read is one whose findings above may be missing.")
+
+    # A READ THAT FAILED IS A FINDING, never an empty answer (Amendment 7(d)):
+    # an inventory the report could not read would otherwise make it clean.
+    def _ls(self, d: str) -> list:
+        try:
+            return sorted(os.listdir(d))
+        except (FileNotFoundError, NotADirectoryError):
+            return []
+        except OSError as exc:
+            self.unreadable.setdefault(d, f"could not be listed ({exc.strerror or exc})")
+            return []
+
+    def _record(self, path: str, need_path: bool = False) -> dict:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+        except FileNotFoundError:
+            return {}
+        except (OSError, UnicodeDecodeError) as exc:
+            self.unreadable.setdefault(path, "could not be read ("
+                                       + (getattr(exc, "strerror", "") or str(exc)) + ")")
+            return {}
+        out = {}
+        for line in text.splitlines():
+            key, sep, value = line.partition(": ")
+            if sep:
+                out[key.strip()] = value.strip()
+        if need_path and not out.get("path"):
+            self.unreadable.setdefault(path, "an inventory record that names no path")
+        return out
+
+    def _tree_records(self, tdir: str) -> list:
+        return [self._record(os.path.join(tdir, f), need_path=True) for f in self._ls(tdir)
+                if f.endswith(".yaml") and not f.startswith(".")]
 
     def _canonical(self, clones: list) -> list:
         """The estate's own checkouts: a clone outside every worktree
@@ -3090,8 +3116,8 @@ class Report:
         last lane-kind line is ENDED or RETIRED."""
         closed: dict = {}
         for d in self.state_dirs:
-            for lane in sorted(os.listdir(d)):
-                if _sidecar(os.path.join(d, lane, "lane-state.yaml")).get("state") == "CLOSED":
+            for lane in self._ls(d):
+                if self._record(os.path.join(d, lane, "lane-state.yaml")).get("state") == "CLOSED":
                     closed[lane] = "its snapshot is CLOSED"
         wroot = self.helper.workspace_root() if self.helper.path else ""
         if wroot:
@@ -3114,23 +3140,14 @@ class Report:
         seen = set()
         for d in self.state_dirs:
             for lane in sorted(closed):
-                tdir = os.path.join(d, lane, "trees")
-                try:
-                    files = sorted(os.listdir(tdir))
-                except OSError:
-                    continue
-                for f in files:
-                    path = _sidecar(os.path.join(tdir, f)).get("path", "")
+                for rec in self._tree_records(os.path.join(d, lane, "trees")):
+                    path = rec.get("path", "")
                     if path and os.path.isdir(path) and real(path) not in seen:
                         seen.add(real(path))
                         rows.append([path, lane, closed[lane], "lane-worktrees sweep " + lane])
         for lane, lroot in [(ln, r) for ln in sorted(closed) for r in self.tree_roots]:
             ldir = os.path.join(lroot, lane)
-            try:
-                names = sorted(os.listdir(ldir))
-            except OSError:
-                continue
-            for n in names:
+            for n in self._ls(ldir):
                 full = os.path.join(ldir, n)
                 if os.path.isdir(full) and real(full) not in seen:
                     seen.add(real(full))
@@ -3214,17 +3231,16 @@ class Report:
                     rows.append([f"{c} rescue/{name}", f"rescue branch, {age} d",
                                  owner, "awaiting disposition"])
         for d in self.state_dirs:
-            for lane in sorted(os.listdir(d)):
-                tdir = os.path.join(d, lane, "trees")
-                try:
-                    files = sorted(os.listdir(tdir))
-                except OSError:
-                    continue
-                for f in files:
-                    path = _sidecar(os.path.join(tdir, f)).get("path", "")
+            for lane in self._ls(d):
+                for rec in self._tree_records(os.path.join(d, lane, "trees")):
+                    path = rec.get("path", "")
                     if not path or not os.path.isdir(path):
                         continue
                     dirt = git_out(path, "status", "--porcelain")
+                    if dirt is None:
+                        self.unreadable.setdefault(path, f"lane {lane}'s inventory tree; git "
+                                                         "status could not be read in it")
+                        continue
                     if not dirt:
                         continue
                     newest = _gitdir_activity(path)
