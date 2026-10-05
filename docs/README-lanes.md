@@ -1130,8 +1130,9 @@ else.
 | 4 | the mutex could not be taken within 60s |
 | 5 | an edit moved more than one line and was refused |
 | 6 | `git add` / `commit` / `push` failed |
-| 7 | `CLAIM-LOST` — another lane's claim landed first (`claim` only) |
+| 7 | another act got there first and this one wrote nothing: `claim`'s `CLAIM-LOST` (another lane's claim landed first), and `set-lane-state` / `set-lane-tree`'s lifecycle fence (openRepoTools#91, below) |
 | 9 | `CLAIM-LOST` — issue #30's own dead-lane verdict could not be reconfirmed before a `--force` takeover's push landed: the source lane resumed, a live session now backs it up, or that could not be read at all (`claim` only). Never 7 — that code is a RIVAL's claim, and this is the same lane the takeover was granted over |
+| 10 | `lane-state`: the lane's lifecycle snapshot is there and could not be read (openRepoTools#91, below) — never the 8 that means it has none. It was 9 until #61 spent 9 on `claim` |
 | 8 | no record — and no other meaning |
 | 64 | `swapped`'s own usage error — never the dispatcher's 2 |
 
@@ -2755,7 +2756,7 @@ What the supervisor does, in order:
 4. **confirms readiness** from a read-only predicate — the child alive, exactly
    one live holder of this lane, its transcript the new one and not the paused
    one, in the pane the intent names — and only then marks the legacy intent `ready`.
-   It does not write PR #97 lifecycle state or managed JSON state. Tmux accepting a command is **not** a started session, and nothing
+   It never uses PR #97 diagnostic lifecycle state to decide restart readiness or writes managed JSON state. Ordinary STARTED/RESUMED events may update diagnostics independently. Tmux accepting a command is **not** a started session, and nothing
    here treats it as one;
 5. **stays in the pane**, whatever happens. Amendment 11's own invariant is *"No
    path the launcher opened exits the pane"*, and `/ctx` was the one path that
@@ -3025,6 +3026,281 @@ either. **Rule 9 holds either way** — a row is
 one `git show` away — so the archive is for a register a person wants shorter,
 and never a requirement.
 
+## Crash-consistent lane recovery (openRepoTools#91)
+
+**A lane is `RUNNING`, `SWAPPING`, `SWAPPED` or `CLOSED`, and which of those it
+is WITH NO LIVE HOLDER is what says where its session stopped.** A session can
+run out of tokens before the handoff, after the handoff began and before it
+finished, or after it finished — and until this capability all three left the
+same evidence: a last lane-kind line that is a `STARTED`/`RESUMED` (which is
+also what a running lane looks like) or a `PAUSED` (which is also what a clean
+swap looks like). The two crash kinds had no word.
+
+Governed by `openspec/changes/add-crash-consistent-lane-worktree-recovery/` and
+tracked on [opensoft/openRepoTools#91](https://github.com/opensoft/openRepoTools/issues/91).
+It amends no protocol: **it adds no lane-kind verb to the append-only log**.
+Amendment 7's five state verbs, `STARTED`, `PAUSED`, `RESUMED`, `ENDED` and
+`RETIRED`, stand, and every reader of them — `swapped`, `lane-last`,
+`lane-dir`, `who`, `lane-end` — is untouched. (Amendment 18(g) has since added a
+sixth lane-kind verb, `HANDOFF-REQUESTED`, which changes no state; this change
+adds none.) What is new is a SNAPSHOT beside that history.
+
+### The four words, and the two crashes
+
+```text
+RUNNING --/handoff begins--> SWAPPING --record + row + handoff all landed--> SWAPPED
+   ^                                                                          |
+   +---------------- the act that confirms the next binding --------------—---+
+```
+
+| the snapshot says | a live holder? | what it means |
+|---|---|---|
+| `RUNNING` | yes | the lane is running — do not launch a second coordinator or a second writer |
+| `RUNNING` | **no** | **ungraceful stop**: the session died before any handoff began, so nothing was polled, refreshed or recorded |
+| `SWAPPING` | yes | a handoff is in flight — do not compete with it |
+| `SWAPPING` | **no** | **interrupted swap**: the handoff began and did not finish, so the record, the row and the handoff file may each be half done |
+| `SWAPPED` | no | the swap completed; the lane is resumable once its trees are read |
+| `SWAPPED` | yes | inconsistent — a swapped lane has no holder, and neither side is overwritten |
+| `CLOSED` | — | the lane is finished; a dirty or unpushed tree under it is a closure inconsistency and no cleanup is made |
+| any | **unreadable** | `indeterminate`. A holder that could not be established is NOT "no holder" (`R22`, Amendment 7(d)), and no crash is pronounced on a read nobody got. |
+| **unreadable** | — | `indeterminate` again, and for the same rule read one file earlier: a snapshot that IS THERE and cannot be opened is not a lane that has none. `lane-state` exits **10** for it, never the **8** that means *this lane has no snapshot, go on*. |
+| any | — and the lane is **bound elsewhere** | `indeterminate`. Amendment 18(b): liveness is pronounced only from inside the binding's own host and container, and from anywhere else a binding is UNKNOWN, never dead — and this workstation's snapshot is this workstation's alone. The one exception is clause (b)'s own: a binding whose window is gone from this host's tmux is dead, and the local read decides. |
+| — | — and the lane is **managed-owned** | `managed-owned`, and nothing else is read or pronounced: see *Managed-owned lanes* below. |
+
+### The fence
+
+Every transition carries a monotonic **generation** and a unique **operation
+id**, and `set-lane-state --expect …` is the compare-and-swap:
+
+```sh
+lanes-edit.sh lane-state <lane>                     # state, generation, operation, owner, updated
+lanes-edit.sh set-lane-state <lane> SWAPPING --expect RUNNING
+lanes-edit.sh set-lane-state <lane> SWAPPED  --expect SWAPPING \
+              --expect-generation <n> --expect-operation <id>
+```
+
+A finalizer whose state, generation or operation no longer matches writes
+NOTHING and exits **7** — the number this file already spends on `claim`'s
+CLAIM-LOST, and one meaning on it: *you lost the race*. That is what stops a
+`/handoff` that stalled for an hour from marking a lane `SWAPPED` after somebody
+has recovered and resumed it. A handoff that finds the lane still `SWAPPING`
+**takes it over** with a new generation and names the operation that never
+finished; nothing of that operation is undone.
+
+`RUNNING` is written by the act that CONFIRMS the binding and never by the
+SessionStart hook: `session-start` never writes, never touches the network and
+always exits 0 (Amendment 8, `R-A8-1`), and a hook that writes is a hook that
+can break the session it was meant to orient. So the snapshot follows the
+`STARTED`/`RESUMED` line `lane-start` writes, in `lanes-edit.sh`'s own
+`write_event`; `ENDED`/`RETIRED` become `CLOSED` there too.
+
+### Where it lives
+
+A LOCAL control root beside the lane's own checkouts — not the register (every
+write of that is a commit, a pull and a push, and a transition happens three
+times per handoff with no network), and not inside a git worktree (metadata
+there dirties a checkout and disappears with the very directory whose loss it
+explains). Three rungs, and never the caller's current directory:
+
+1. `$LANES_LANE_STATE_ROOT/<lane>` — the explicit override and the suite's seam;
+2. `<parent of the lane's recorded `dir`>/.lane-state/<lane>` — the same parent
+   the lane's own `.lane-worktrees/<lane>` root sits in, and `dir` is Amendment
+   11(c)'s recorded field rather than a guess;
+3. `$PROJECTS_ROOT/.lane-state/<lane>`.
+
+No rung answering is **8**, *this lane has no control root* — the ordinary
+answer for a lane that has not started under Amendment 11(c), and not a failure.
+Nothing is backfilled (Amendment 7(i)).
+
+Because the snapshot is filed under NOTHING — never committed, never leaving the
+machine that wrote it — `R-A11-14` does not reach it: a container with no
+`$LANES_WORKSTATION` still keeps a lifecycle it can recover itself from, while
+the register and object-log writes stop there exactly as they did.
+
+### The worktree inventory
+
+Every handoff polls the lane's writers in the two places a lane keeps them —
+`<checkout>/.claude/worktrees/<name>` and
+`<projects>/.lane-worktrees/<lane>/<name>` — and now records each one MACHINE
+READABLY beside the lane as well as in the handoff's WRITERS section:
+
+```sh
+lanes-edit.sh lane-trees <lane>
+# <id> <path> <branch> <head> <upstream> <dirty> <unpushed> <writer> <observed> <checkout> <generation> <operation> <schema>
+lanes-edit.sh lane-tree-now <worktree path>
+# <branch> <head> <upstream> <dirty> <unpushed>   — what git says about one tree NOW
+```
+
+The full `head` and the `upstream` are why this is not the prose section one
+more time: `%h` is an abbreviation that lengthens as a repository grows, and
+`0 unpushed` cannot be told from *this branch tracks nothing at all* without the
+upstream. Every field is an OBSERVATION and none of them is truth about git.
+
+**`lane-tree-now` is the one implementation of that observation**, and the
+handoff, the sidecar and the reconciliation all go through it, so the WRITERS
+section a person reads and the record a recovery reads can never be two
+different readings. It does not convert a git read that FAILED into a
+clean-looking value: `unknown`/`none`/`0` are answers, and a read that could not
+be made exits **1** and prints nothing (`R22`, Amendment 7(d)). Two states are
+answers rather than failures and are spelled as such — a branch with no commit
+yet has `unborn` for its head, and a branch whose upstream is configured but
+whose remote-tracking ref is not in this checkout (the ordinary state after a
+merged branch is deleted) records that configured upstream with `unknown`
+unpushed, never the `0` that reads as *everything here is published*.
+
+**A sidecar this helper cannot read is one it will not replace.** A snapshot or
+a tree record carrying a schema this version does not write is reported as
+`UNKNOWN-SCHEMA` by every reader and REFUSED by every writer (exit 1), rather
+than overwritten by a record an older helper can understand — the one act no
+later reader can undo. And `set-lane-tree --generation/--operation` is COMPARED
+with the lane's own snapshot under the mutex before the record is filed, so a
+poll taken under an operation a recovery has since superseded is refused with
+**7** instead of being filed over the current inventory.
+
+**One path, one record.** A tree's record is named from its path and from
+nothing else: `c<cksum>-<folded path>`, a `cksum` of the WHOLE absolute path
+and then the path with every character outside the file-name alphabet folded to
+`-`. The fold is for a person reading the directory; the checksum is what keeps
+`…/a+b` and `…/a-b`, which fold alike, two records rather than one replacing the
+other. And `set-lane-tree` takes a caller's observation **whole** — `--branch`,
+`--head`, `--upstream`, `--dirty` and `--unpushed` together — or reads the tree
+itself; a partial one is refused with **64** and nothing is written, because the
+fields it lacks would be filed as a `dirty 0, unpushed 0` nobody observed.
+
+### The reconciliation, which resets nothing
+
+```sh
+lanes-edit.sh lane-reconcile <lane>
+```
+
+It recomputes branch, HEAD, upstream, dirty and unpushed for every inventoried
+tree, reads `git worktree list --porcelain` in the lane's checkout and the
+directories under both lane roots, and prints one `TREE` line per tree with a
+classification: `ok`, `dirty`, `unpushed`, `unpushed-unknown`,
+`dirty+unpushed`, `dirty+unpushed-unknown`, `missing`, `possible-loss`,
+`not-a-checkout`, `unreadable`, `unreadable-sidecar`, `unknown-schema`,
+`unmanaged`, `stale-registration`. A `BINDING` line says where the lane is bound — `here`,
+`free`, `gone` (bound on this host's tmux and its window is gone), `elsewhere`
+(and where), or `unknown` (its log could not be read) — and `elsewhere` or
+`unknown` turns every verdict into `indeterminate` (Amendment 18(b)). The last
+line is the `VERDICT`. `lane-start` prints the report before it writes
+anything, for any verdict that is not `running` or `closed` — and for
+`resumable` as well whenever its `TREES` line counts a tree that is dirty or
+unpushed, requires recovery, or is unmanaged or stale: `resumable` says the swap
+completed, not that every tree it left is clean, published and where it was.
+
+A **renamed** lane keeps its snapshot and inventory: `rename-lane` moves its
+control root to the new name once the rename's commit has landed, and never
+over something already there (Amendment 16). Its `.lane-worktrees/<old>` root
+holds real git worktrees and is not moved — that is a `git worktree move`, and a
+person's. A lane retired by Amendment 19's sweep is taken to `CLOSED` exactly as
+a lane that ended itself is.
+
+**It reads the published register first**, as every read in `lanes-edit.sh`
+does: the lane's name resolves through the register and Amendment 16's alias
+table, and its binding and any managed-owner marker are read from them, so a
+stale ref would pronounce from a binding that has since moved. The fetch goes
+into the register checkout and touches no lane tree; it is bounded by
+`LANES_GIT_TIMEOUT` and, when it fails, the ref is read as it stands.
+`LANES_NO_FETCH=1` skips it — which is how `lane-start` calls it, having fetched
+in its step 3 — at the cost of reading what was last fetched. Whether a recovery
+read should be local by default is opensoft/openRepoTools#157.
+
+**It reports and it resets nothing.** `park` CREATES NOTHING and `resume` RESETS
+NOTHING (`AGENTS.md` rule 1), so this read runs `git status`, `git log @{u}..`,
+`git rev-parse` and `git worktree list --porcelain` and nothing else:
+
+* a **missing** tree that was clean and published names the estate's own
+  `resume <Name>` as the only rebuild — and NAMES it rather than running it,
+  because that verb runs `make resume` across a whole estate and a report may
+  not do that as a side effect;
+* a missing tree whose last observation held dirty or unpushed work is
+  **possible-loss** and is never claimed to be reconstructable — no metadata
+  reconstructs a file's contents;
+* an **unmanaged** tree — one git registers, or one sitting under a lane root,
+  that no sidecar names — is reported and never deleted, adopted or overwritten:
+  which lane a tree belongs to is a person's to say. One tree is named ONCE
+  however many spellings of its path reach the report: a sidecar holds the path
+  its poll was given, `git worktree list --porcelain` answers with the physical
+  path, and the on-disk sweep walks the recorded `dir`, so every comparison
+  resolves both sides — without which every tree of an estate that reaches its
+  checkouts through a `projects` symlink is reported twice, the second time as a
+  tree nobody manages;
+* a **stale-registration** names the `git worktree prune` that clears it, and
+  prunes nothing itself;
+* an **unreadable** tree is one git answers in and cannot be read through —
+  nothing is assumed about it, in either direction, and the line names the
+  `git -C <path> status` a person runs;
+* an **unreadable-sidecar** is a tree record that IS there and could not be
+  read — a permission, an I/O error, a dangling link. The tree it recorded is
+  NOT known, in any field; it counts toward recovery, the line names the file a
+  person reads by hand, and it is never skipped as though the lane owned one
+  tree fewer (`lane-trees` carries it as a row of its own whose schema is
+  `<unreadable>`);
+* an **unknown-schema** tree is a sidecar written by a newer tooling: it is
+  named, and not one field of it is read, because a value taken out of a record
+  whose shape this reader is guessing at is worse than no value.
+
+### What a resumed session does with it
+
+Read the verdict first, then the trees, then `ListAgents` — the count is still
+what decides whether a writer is live (Amendment 17 Addendum 1 (i), and (k):
+one worktree, one writer). `ungraceful-stop` and `interrupted-swap` both mean
+**inspect every tree before relaunching anything**; the difference is that under
+`interrupted-swap` the record, the row and the handoff file may each be half
+written, so check all three rather than trusting the handoff's top block.
+
+## Managed-owned lanes
+
+**Brett Heap's ruling of 2026-10-04, verbatim: *"managed ledger owns enrolled lanes; #97 owns legacy — rework both"*.**
+A lane the managed ledger has enrolled carries a **managed-owner marker** in its
+register row's state cell, written by that ledger's own writer:
+
+```text
+LIVE · <UTC> · managed-owner mode=managed daemon=<id> generation=<n> bound-lane=<lane>
+MANAGED OWNER · <token>        (the historical shorthand)
+```
+
+Every lane without one is a **legacy** lane — every lane in the register today —
+and the lane tooling here answers for legacy lanes only. The marker is read by
+one reader, ported byte for byte from branch `001-separate-swap-ctx-handoff`
+(`3c26041:lanes-edit.sh:776-898`), and asked through one read:
+
+```sh
+lanes-edit.sh managed-projection <lane>
+```
+
+| exit | meaning | what every legacy act does |
+|---|---|---|
+| 0 | a valid marker; the owner is printed | **refuses with 2**, names the owner, writes nothing |
+| 8 | no marker and no managed-owner vocabulary | runs exactly as it always has |
+| 1 | managed-owner vocabulary that does not parse (a `generation=0`, an empty daemon, a `bound-lane` that is not this lane, an empty shorthand token, a `managed:` anywhere in the row), a row that is not seven columns, or a register that could not be read | **refuses with 1**: ownership is UNKNOWN, and an ownership nobody could establish is never read as legacy (Amendment 7(d)) |
+| 64 | usage | — |
+
+The acts that ask, each before its first write: `lane-start` (at the head of its
+section 3, before Amendment 18's binding gate and `--request-handoff`),
+`lane-handoff` (before the window is renamed — so `--late`, `--restart` and
+`--exit` never reach `SWAPPING` or `SWAPPED`), `lane-end` (the ending,
+`--retire` and `--retire <pid>`), the object log's `STARTED`, `RESUMED`, `ENDED`
+and `RETIRED`, a swap's `PAUSED`, `request-handoff` (its `--dry-run` too),
+`set-lane-state`, `set-lane-tree`, `retire-rows` (one managed or unknown lane
+refuses the whole sweep), `migrate-state-cells` (one managed or unknown row it
+would rewrite refuses the whole migration), `archive-rows` (one such RETIRED
+row refuses the whole move), `append-session-id`, `add-row` for a lane that
+already has a row, `set-row-state`, `replace-in-row` and `rename-lane`. Each
+reads this checkout's row as well as the published one, because this
+checkout's row is the one a legacy writer rewrites: vocabulary in one copy and
+not the other is UNKNOWN (1). A claim or a release is about the object, not the
+lane, and is not refused. `lane-reconcile` reads nothing of a managed lane and prints
+`VERDICT managed-owned` (and `indeterminate` where ownership is unknown). And no
+legacy writer — `set-row-state`, `add-row`, `replace-in-row`, `append-line`,
+`append-session-id`, `rename-lane`'s new name, the sweep — may write the
+marker's vocabulary into the register at all, so a marker is never forged.
+
+What the managed ledger itself does with an enrolled lane is not this manual's:
+branch `001-separate-swap-ctx-handoff`'s governance review is **PROPOSED — NOT
+APPROVED**, and nothing here asserts that it supersedes Amendment 17.
+
 ## Hand edits
 
 After **any** hand edit made with an allowed tool (python read/write, `sed -i
@@ -3210,3 +3486,8 @@ inputs. Its existing four-file transaction uses EXIT rollback, including stamp
 write failures; it is not crash atomic across those files. This change does not
 claim stronger crash durability for ordinary rename. Restart preservation and
 resume-stamp publishers use the atomic checksum-fenced publication helper.
+
+Reconciliation with PR #97 keeps completed restart history under its original
+lane name when a lane is renamed. Only the diagnostic lifecycle snapshot and
+worktree inventory move to the new control root. The new canonical lane has no
+inherited restart operation; unfinished or unreadable intents still refuse rename.

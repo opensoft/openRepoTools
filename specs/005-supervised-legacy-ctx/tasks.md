@@ -12,8 +12,10 @@
 - [x] T010 Confirm the asynchronously prepared UUID and all-holder uniqueness.
 - [x] T011 Preserve indeterminate active ownership when a signal leaves a child alive or unknown.
 - [x] T012 Update command, skill, manual and capability contracts to the final scope.
-- [ ] T013 Run focused sandboxed restart fault cases and touched shell suite.
+- [x] T013 Run focused sandboxed restart fault cases and touched shell suite.
 - [x] T014 Complete expert follow-up review and address verified findings, including final schema, rename, pre-kill and observer hardening.
 - [x] T015 Commit/push PR updates and request exact-head Codex review; retain the existing merge hold.
-- [ ] T016 Verify current-head per-push CI; record review quota limitations if present.
+- [x] T016 Verify pre-reconciliation head 69838c5 per-push CI; record review quota limitations if present.
 - [ ] T017 After hold release/merge authorization, run macOS landing gate and merge.
+
+- [x] T018 Reconcile landed PR #97, preserving separate helper namespaces, managed ownership fences and completed restart history; verify helper identity and focused integration cases. New-head full-suite results are recorded in the PR review record.

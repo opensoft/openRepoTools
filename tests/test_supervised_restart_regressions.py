@@ -1018,10 +1018,15 @@ def test_restart_accepts_equivalent_handoff_file_identity(restart_box, alias):
 
 
 @pytest.mark.parametrize("state", ["preparing", "pending", "starting", "failed", "ready"])
-def test_restart_rename_preserves_unfinished_operation_inputs(restart_box, state):
+def test_restart_reconcile_rename_preserves_unfinished_operation_inputs(restart_box, state):
     box = restart_box
     source = prepare_restart(box)
     assert helper(box, "set-restart-intent", LANE, state, "--expect", "pending").returncode == 0
+    if state == "ready":
+        inventory = helper(box, "set-lane-tree", LANE, str(box.lane_dir))
+        assert inventory.returncode == 0, inventory.stderr
+        trees = {p.name: p.read_bytes() for p in intent_path(box).parent.glob("trees/*.yaml")}
+        assert trees
     tracked = [p for p in box.wip.rglob("*") if p.is_file() and ".git" not in p.parts]
     before = {p: p.read_bytes() for p in tracked}
     record = intent_path(box).read_bytes()
@@ -1036,6 +1041,17 @@ def test_restart_rename_preserves_unfinished_operation_inputs(restart_box, state
         assert {p: p.read_bytes() for p in tracked} == before
         assert set(tracked) == {p for p in box.wip.rglob("*") if p.is_file() and ".git" not in p.parts}
     assert intent_path(box).read_bytes() == record
+    if state == "ready":
+        # Completed history remains at the old name; diagnostics follow the row.
+        new_root = intent_path(box).parent.with_name("repoZ-2")
+        assert (new_root / "lane-state.yaml").is_file()
+        assert {p.name: p.read_bytes() for p in new_root.glob("trees/*.yaml")} == trees
+        assert not (intent_path(box).parent / "trees").exists()
+        assert not (intent_path(box).parent / "lane-state.yaml").exists()
+        assert helper(box, "restart-intent", "repoZ-2").returncode == 8
+        resumed = box.start("--no-launch")
+        assert resumed.returncode == 0, (resumed.stdout, resumed.stderr)
+        assert intent_path(box).read_bytes() == record
 
 
 @pytest.mark.parametrize("kind", ["relative", "missing", "none", "agent"])
@@ -1301,3 +1317,117 @@ def test_operation_publication_requires_its_bound_handoff(restart_box, target):
     else:
         assert bound.read_bytes() == prepared.read_bytes()
         assert other.read_bytes() == before[1]
+
+
+@pytest.mark.parametrize("marker", ["published", "malformed", "local-only"])
+@pytest.mark.parametrize("entry", ["check", "supervise", "start", "restart", "intent", "publish"])
+def test_restart_reconcile_managed_projection_refuses_every_writer(restart_box, marker, entry):
+    box = restart_box
+    source = prepare_restart(box)
+    # A managed service claiming absence cannot overrule the register projection.
+    _write(box.bin / "lane-managed", "#!/usr/bin/env bash\nexit 8\n")
+    registry = box.wip / "lanes" / "LANES.md"
+    lines = registry.read_text().splitlines()
+    row = next(i for i, line in enumerate(lines) if line.startswith(f"| `{LANE}`"))
+    cells = lines[row].split("|")
+    generation = "0" if marker == "malformed" else "4"
+    cells[7] = (f" LIVE · 2026-10-05T00:00:00Z · managed-owner mode=managed "
+                f"daemon=ledger-test generation={generation} bound-lane={LANE} ")
+    lines[row] = "|".join(cells)
+    registry.write_text("\n".join(lines) + "\n")
+    if marker != "local-only":
+        box.git("-C", str(box.wip), "add", "--", "lanes/LANES.md")
+        box.git("-C", str(box.wip), "commit", "-qm", "publish managed projection")
+        box.git("-C", str(box.wip), "push", "-q", "origin", "main")
+    prepared = _write(box.root / "prepared.md", "# Changed handoff\n", 0o600)
+    roots = [box.wip, Path(box.env["LANES_LANE_STATE_ROOT"]), box.home / ".claude"]
+
+    def snapshot():
+        files = {str(path): path.read_bytes() for root in roots for path in root.rglob("*")
+                 if path.is_file() and ".git" not in path.parts}
+        return (files, box.git("-C", str(box.wip), "rev-parse", "HEAD"),
+                box.git("--git-dir", str(box.origin), "rev-parse", "main"),
+                box.git("-C", str(box.wip), "status", "--porcelain"),
+                box.tmux_log.read_bytes(), box.claude_log.read_bytes())
+
+    before = snapshot()
+    if entry == "check":
+        result = helper(box, "legacy-restart-check", LANE)
+    elif entry == "supervise":
+        result = supervisor(box, "--supervise", "--lane", LANE, "--operation", "op-test")
+    elif entry == "start":
+        result = box.start("--operation", "op-test")
+    elif entry == "restart":
+        result = supervisor(box, "--restart", "--lane", LANE, "--dir", str(box.lane_dir), "clear")
+    elif entry == "intent":
+        result = helper(box, "set-restart-intent", LANE, "starting", "--expect", "pending")
+    else:
+        result = helper(box, "publish-handoff", LANE, str(source), str(prepared),
+                        "--expect-digest", hashlib.sha256(source.read_bytes()).hexdigest(),
+                        "--operation", "op-test", "--generation", "7", "--attempt", "0",
+                        "--state", "pending", "--transcript", "none")
+    assert result.returncode != 0, (result.stdout, result.stderr)
+    assert "managed" in result.stderr.lower() or "UNKNOWN" in result.stderr
+    assert snapshot() == before
+
+
+def test_restart_reconcile_state_stores_and_counters_are_independent(restart_box):
+    box = restart_box
+    prepare_restart(box)
+    diagnostic = intent_path(box).with_name("lane-state.yaml")
+    before_diagnostic = diagnostic.read_bytes()
+    for state, previous in [("starting", "pending"), ("failed", "starting")]:
+        result = helper(box, "set-restart-intent", LANE, state, "--expect", previous,
+                        "--expect-operation", "op-test", "--expect-generation", "7")
+        assert result.returncode == 0, result.stderr
+        assert diagnostic.read_bytes() == before_diagnostic
+    before_restart = intent_path(box).read_bytes()
+    result = helper(box, "set-lane-state", LANE, "SWAPPING", "--expect", "RUNNING",
+                    "--operation", "diagnostic-only")
+    assert result.returncode == 0, result.stderr
+    assert intent_path(box).read_bytes() == before_restart
+    restart = helper(box, "restart-intent", LANE)
+    assert "operation\top-test" in restart.stdout
+    assert "generation\t7" in restart.stdout
+    lifecycle = helper(box, "lane-state", LANE)
+    assert "operation\tdiagnostic-only" in lifecycle.stdout
+    assert "generation\t7" not in lifecycle.stdout
+
+
+@pytest.mark.parametrize("unknown", ["diagnostic", "restart"])
+def test_restart_reconcile_unknown_schema_is_confined_to_its_store(restart_box, unknown):
+    box = restart_box
+    prepare_restart(box)
+    diagnostic = intent_path(box).with_name("lane-state.yaml")
+    affected = diagnostic if unknown == "diagnostic" else intent_path(box)
+    affected.write_text(affected.read_text().replace("schema: 1", "schema: 99", 1))
+    preserved = affected.read_bytes()
+    if unknown == "diagnostic":
+        result = helper(box, "set-restart-intent", LANE, "starting", "--expect", "pending")
+        assert result.returncode == 0, result.stderr
+        assert "state\tstarting" in helper(box, "restart-intent", LANE).stdout
+        assert helper(box, "set-lane-state", LANE, "SWAPPING").returncode == 1
+    else:
+        result = helper(box, "set-lane-state", LANE, "SWAPPING", "--expect", "RUNNING")
+        assert result.returncode == 0, result.stderr
+        assert "state\tSWAPPING" in helper(box, "lane-state", LANE).stdout
+        assert helper(box, "set-restart-intent", LANE, "starting").returncode == 2
+    assert affected.read_bytes() == preserved
+
+
+def test_restart_reconcile_case_only_rename_preserves_completed_history(restart_box):
+    box = restart_box
+    prepare_restart(box)
+    assert helper(box, "set-restart-intent", LANE, "ready", "--expect", "pending").returncode == 0
+    roots = [box.wip, intent_path(box).parent]
+    before = {str(p): p.read_bytes() for root in roots for p in root.rglob("*")
+              if p.is_file() and ".git" not in p.parts}
+    commit = box.git("-C", str(box.wip), "rev-parse", "HEAD")
+    box.env["LANES_SESSION"] = "10101010-1111-4111-8111-111111111111"
+    result = helper(box, "rename-lane", LANE, LANE.lower(), "--no-github")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "SPELLING" in result.stderr
+    assert {str(p): p.read_bytes() for root in roots for p in root.rglob("*")
+            if p.is_file() and ".git" not in p.parts} == before
+    assert box.git("-C", str(box.wip), "rev-parse", "HEAD") == commit
+    assert "state\tready" in helper(box, "restart-intent", LANE).stdout
