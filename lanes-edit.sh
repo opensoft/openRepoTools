@@ -119,8 +119,9 @@
 #   no-op that says so.
 #
 # AMENDMENT 14 — THE DERIVED INDEX (`lanes-index`), WHICH NOTHING HERE ACTS ON
-#   lanes-edit.sh lanes   … --index          # the listing, out of the index
-#   lanes-edit.sh history … --index          # the diary, out of the index
+#   lanes-edit.sh lanes     … --index        # the listing, out of the index
+#   lanes-edit.sh history   … --index        # the diary, out of the index
+#   lanes-edit.sh worktrees … --index        # the inventory, out of its table (#161)
 #
 #   The register's truth stays where it is. `lanes-index` (placed by
 #   `openRepoTools --install`) keeps a DERIVED copy — SQLite, or QA Postgres
@@ -132,6 +133,13 @@
 #   only way a read consults it, typed per invocation, and it says on stderr
 #   which it read: `read: index (<store>) at register@<sha12>; <k> commits
 #   behind`, or `read: sources (index <why>)` and the sources answer.
+#
+#   THE INVENTORY HAS A TABLE TOO (opensoft/openRepoTools#161): `worktrees`,
+#   under the source `inventory:<Workstation>`, copied from `worktrees --all`
+#   by `lanes-index sync --source inventory`.
+#   No act reads it: `lane-reconcile`, `lane-start` and `lane-end` read the
+#   sidecars and the disk. With `--index` the stderr line is `read: index
+#   (<store>) at inventory:<ws> synced <UTC>`.
 #
 # AMENDMENT 7 — the per-lane object log (`lanes/log/<lane>.md`)
 #   lanes-edit.sh log     <VERB> <object> [→|← <payload>] ["<text>"] [--text "<t>"]
@@ -351,6 +359,7 @@
 #                                 [--generation <n>] [--operation <id>]
 #   lanes-edit.sh lane-tree-now   <worktree path>
 #   lanes-edit.sh lane-reconcile  <lane>
+#   lanes-edit.sh worktrees       [<lane> | --all] [--index] [--fetch]
 #
 #   A lane is RUNNING, SWAPPING, SWAPPED or CLOSED, and WHICH OF THOSE IT IS
 #   WITH NO LIVE HOLDER is what says where its session stopped: `RUNNING` with
@@ -1068,6 +1077,9 @@ LOCK="$LANES_DIR/.lanes-edit.lock"
 # so an exported variable of either name changes nothing.
 LANES_IDX_DIR=""
 LANES_INDEX_NUDGE=0
+# AND THE INVENTORY'S (opensoft/openRepoTools#161), for the same reason: the
+# `worktrees` table's export directory, set only by `index_open worktrees`.
+LANES_WT_IDX_DIR=""
 LOCK_HELD=0
 LANES_PATH="${LANES_PATH:-$(git -C "${LANES_DIR:-.}" rev-parse --show-prefix 2>/dev/null || :)${LANES_FILE##*/}}"
 
@@ -1188,6 +1200,7 @@ cleanup() {
   [ -n "${TMPD:-}" ] && [ -d "${TMPD:-}" ] && rm -rf -- "$TMPD"
   [ -n "${SE_CACHE_FILE:-}" ] && rm -f -- "$SE_CACHE_FILE" "$SE_CACHE_FILE".* 2>/dev/null
   [ -n "${LANES_IDX_DIR:-}" ] && [ -d "${LANES_IDX_DIR:-}" ] && rm -rf -- "$LANES_IDX_DIR"
+  [ -n "${LANES_WT_IDX_DIR:-}" ] && [ -d "${LANES_WT_IDX_DIR:-}" ] && rm -rf -- "$LANES_WT_IDX_DIR"
   # AMENDMENT 14(d) — THE NUDGE IS THE LAST THING THIS PROCESS DOES: after the
   # lock is released at the top of this function, and only where `commit_push` recorded a push
   # that landed. Tested here rather than inside the function, because `cleanup`
@@ -2074,8 +2087,17 @@ index_nudge() {
 # THE LAG IS SAID, NEVER REFUSED (clause (b)): `<k>` is how many commits this
 # checkout's `origin/<branch>` carries past the indexed one, and `unknown` where
 # that commit is not here to count from.
-index_open() {
+#
+# `index_open worktrees` IS THE SAME DOOR FOR THE `worktrees` TABLE
+# (opensoft/openRepoTools#161): `export --worktrees` writes every
+# `inventory:<Workstation>` source the store holds, `LANES_WT_IDX_DIR` is set
+# and `LANES_IDX_DIR` is NOT — so not one published read of the register is
+# answered out of the index by it — and the line names each source with the
+# time it was synced, because an inventory has no commit to count a lag in.
+index_open() {   # [worktrees]
+  io_kind="${1-register}"
   LANES_IDX_DIR=""
+  LANES_WT_IDX_DIR=""
   if [ "${LANES_INDEX:-}" = off ]; then
     printf 'read: sources (index off: LANES_INDEX=off)\n' >&2
     return 1
@@ -2094,10 +2116,12 @@ index_open() {
     return 1
   fi
   io_rc=0
+  io_xa=""
+  [ "$io_kind" = worktrees ] && io_xa=--worktrees
   if command -v timeout >/dev/null 2>&1; then
-    timeout -k 2 30 "$io_bin" export --out "$io_dir" </dev/null >/dev/null 2>"$io_dir/.stderr" || io_rc=$?
+    timeout -k 2 30 "$io_bin" export --out "$io_dir" ${io_xa:+"$io_xa"} </dev/null >/dev/null 2>"$io_dir/.stderr" || io_rc=$?
   else
-    "$io_bin" export --out "$io_dir" </dev/null >/dev/null 2>"$io_dir/.stderr" || io_rc=$?
+    "$io_bin" export --out "$io_dir" ${io_xa:+"$io_xa"} </dev/null >/dev/null 2>"$io_dir/.stderr" || io_rc=$?
   fi
   if [ "$io_rc" != 0 ] || [ ! -f "$io_dir/meta" ]; then
     io_why=""
@@ -2113,6 +2137,12 @@ index_open() {
     return 1
   fi
   io_store="$(sed -n -e 's/^store=//p' "$io_dir/meta" | head -n 1)"
+  if [ "$io_kind" = worktrees ]; then
+    io_at="$(awk -F'\t' '$1 == "inventory" { printf "%s%s synced %s", (n++ ? "; " : ""), $2, $3 }' "$io_dir/meta")"
+    LANES_WT_IDX_DIR="$io_dir"
+    printf 'read: index (%s) at %s\n' "${io_store:-unknown}" "${io_at:-no inventory source}" >&2
+    return 0
+  fi
   io_sha="$(sed -n -e 's/^sha=//p' "$io_dir/meta" | head -n 1)"
   io_behind=unknown
   if [ -n "$io_sha" ] && have_remote_ref; then
@@ -12536,6 +12566,161 @@ EOF
   return 0
 }
 
+# ------------------------------------- every inventoried worktree, as rows
+#
+# opensoft/openRepoTools#161 — THE INVENTORY OF EVERY LANE ON THIS WORKSTATION,
+# ONE ROW PER TREE, and the one implementation of that sentence: `lanes
+# --worktrees` renders what this prints and `lanes-index sync --source
+# inventory` copies it into the derived index's `worktrees` table, so the
+# listing a person reads and the table another workstation queries cannot come
+# to disagree about what a lane left. US-separated, sixteen fields:
+#
+#   TREE <workstation> <lane> <owner> <path> <branch> <base> <lifecycle>
+#        <generation> <operation> <writer_live> <last_seen_utc> <last_commit>
+#        <dirty> <unpushed> <provenance>
+#   UNREAD <workstation> <lane> <why>
+#
+# IT READS WHAT #97 WROTE AND NOTHING THAT IT DID NOT. The lanes are the
+# listing's own (`lanes_rows --all --closed`, so a closed or dormant lane's
+# leftovers are not hidden), and so is `writer_live` — the listing's LIVE, out
+# of this workstation's session records, empty where those could not be read
+# (Amendment 7(d): never "no"). The trees are `lane_trees_list`'s sidecars and
+# NO DIRECTORY IS WALKED for a tree no sidecar names: that is
+# `lane-reconcile`'s act, and it is an act. `owner` is `lane_is_managed_owned`'s
+# answer — the read `managed-projection` makes — as `legacy`, `managed <owner>`
+# or `unknown`, and `lifecycle` is the snapshot's own word for a LEGACY lane
+# only: a managed or unknown lane's lifecycle is not this tooling's to
+# pronounce on (ruling 2026-10-04), and neither is one whose snapshot is
+# missing, unreadable or of another schema, so those are `INDETERMINATE`.
+# `generation` and `operation` are the snapshot's; `provenance` is the
+# generation the TREE'S OWN record was filed under, which is behind
+# `generation` exactly when the observation predates the lane's current
+# transition.
+#
+# EVERY FIELD IS THE LAST OBSERVATION, NEVER RECOMPUTED: `branch`, `dirty`,
+# `unpushed` and `last_seen_utc` are what the sidecar says the handoff saw.
+# Two git reads are made per tree the inventory names, both of the RECORDED
+# head and neither of the working tree: `last_commit` (`<sha> <subject>`) and
+# `base`, its merge-base with `origin/main`, else `main`, else `origin/HEAD`
+# — in the tree, or in its recorded checkout once the tree is gone. A detached
+# head is `detached <sha>`; a record that could not be read is `unreadable
+# sidecar` and one of another schema `unknown schema <n>`, with the record's
+# id where its path would be (a path always begins with `/`). A count that is
+# `unknown` is empty — an INTEGER column has no word for it.
+#
+# The rows are sorted bytewise, which is the order the index's copy is written
+# in too: the two reads of one inventory are the same bytes.
+#   0 rows · 8 none · 1 the lane listing could not be read
+worktree_rows() {   # [<canonical lane>]
+  wr_one="${1-}"; wr_out=""
+  wr_live_ok=1
+  live_session_ids >/dev/null 2>&1 || wr_live_ok=0
+  wr_lanes=""; wr_lrc=0
+  if [ -n "$wr_one" ]; then
+    wr_lanes="$(lanes_rows --lane "$wr_one" --closed)" || wr_lrc=$?
+  else
+    wr_lanes="$(lanes_rows --all --closed)" || wr_lrc=$?
+  fi
+  case "$wr_lrc" in 0) : ;; 8) return 8 ;; *) return 1 ;; esac
+  wr_tab="$(printf '\t')"
+  while IFS="$wr_tab" read -r wr_l wr_st wr_w wr_pf wr_win wr_sid wr_dir wr_rest; do
+    [ -n "${wr_l:-}" ] || continue
+    # ONE CONTROL-ROOT READ FOR A LANE WITH NO TREES, which is nearly every lane
+    # in the estate: the sidecars are listed only where a `trees` directory is.
+    # The listing's column 7 IS `lane_payload_field <lane> dir` — the same last
+    # lane-kind payload carrying `dir`, out of the same published logs, `none`
+    # where there is none — so it is handed to `lane_control_root` as the
+    # payload it takes, rather than having each of sixty lanes' logs read a
+    # second time to find what the listing has just said (measured on Eagle's
+    # 61 lanes: 7.9 s for the whole read with the second reading, 2.7 s
+    # without it). `none` is not absolute, so it falls to the same third rung
+    # an absent `dir` does.
+    wr_root=""; wr_rrc=0
+    wr_root="$(lane_control_root "$wr_l" "dir ${wr_dir:-none}" 2>/dev/null)" || wr_rrc=$?
+    [ "$wr_rrc" = 0 ] || continue
+    [ -d "$wr_root/trees" ] || continue
+    # A DIRECTORY THAT IS THERE AND CANNOT BE LISTED IS NOT AN EMPTY ONE, and
+    # the trees it holds are not trees this lane no longer has (R22).
+    if [ ! -r "$wr_root/trees" ] || [ ! -x "$wr_root/trees" ]; then
+      wr_out="${wr_out}UNREAD$US$WS$US$wr_l${US}its trees directory $wr_root/trees is there and could not be listed
+"
+      continue
+    fi
+    wr_trees=""; wr_trc=0
+    wr_trees="$(lane_trees_list "$wr_l" 2>/dev/null)" || wr_trc=$?
+    case "$wr_trc" in 0) : ;; *) continue ;; esac
+    wr_live=0
+    [ "$wr_st" = LIVE ] && wr_live=1
+    [ "$wr_live_ok" = 1 ] || wr_live=""
+    wr_own=""; wr_orc=0
+    wr_own="$(lane_is_managed_owned "$wr_l" 2>/dev/null)" || wr_orc=$?
+    wr_own="$(printf '%s\n' "$wr_own" | head -n 1)"
+    case "$wr_orc" in
+      0) if [ -n "$wr_own" ]; then wr_owner="managed $wr_own"; else wr_owner=unknown; fi ;;
+      8) wr_owner=legacy ;;
+      *) wr_owner=unknown ;;
+    esac
+    wr_life=INDETERMINATE; wr_gen=""; wr_op=""
+    wr_snap=""; wr_src=0
+    wr_snap="$(lane_state_read "$wr_l" 2>/dev/null)" || wr_src=$?
+    if [ "$wr_src" = 0 ]; then
+      wr_s="$(printf '%s\n' "$wr_snap" | awk -F'\t' '$1 == "state" { print $2; exit }')"
+      if [ "$wr_s" != UNKNOWN-SCHEMA ]; then
+        wr_gen="$(printf '%s\n' "$wr_snap" | awk -F'\t' '$1 == "generation" { print $2; exit }')"
+        wr_op="$(printf '%s\n' "$wr_snap" | awk -F'\t' '$1 == "operation" { print $2; exit }')"
+        case "$wr_gen" in ''|*[!0-9]*) wr_gen="" ;; esac
+        case "$wr_s" in RUNNING|SWAPPING|SWAPPED|CLOSED) wr_life="$wr_s" ;; esac
+      fi
+    fi
+    [ "$wr_owner" = legacy ] || wr_life=INDETERMINATE
+    while IFS="$US" read -r t_id t_p t_b t_h t_u t_d t_n t_w t_ob t_co t_g t_o t_s; do
+      [ -n "${t_id:-}" ] || continue
+      t_base=""; t_last=""
+      if [ "${t_s:-}" = "<unreadable>" ]; then
+        t_branch="unreadable sidecar"; [ -n "${t_p:-}" ] || t_p="$t_id"
+        t_d=""; t_n=""; t_g=""; t_ob=""
+      elif [ "${t_s:-}" != "$LANE_STATE_SCHEMA" ]; then
+        t_branch="unknown schema ${t_s:-<none>}"; [ -n "${t_p:-}" ] || t_p="$t_id"
+        t_d=""; t_n=""; t_g=""; t_ob=""
+      else
+        if [ "$t_b" = detached ]; then t_branch="detached $t_h"; else t_branch="$t_b"; fi
+        case "$t_h" in
+          ''|*[!0-9a-f]*) : ;;
+          *)
+            if [ "${#t_h}" -eq 40 ]; then
+              t_gd=""
+              if [ -d "$t_p" ]; then t_gd="$t_p"; elif [ -d "${t_co:-}" ]; then t_gd="$t_co"; fi
+              if [ -n "$t_gd" ]; then
+                t_last="$(git -C "$t_gd" show -s --format='%H %s' "$t_h^{commit}" 2>/dev/null | head -n 1 | tr -d '\037')"
+                [ -n "$t_last" ] || t_last="$t_h"
+                for t_ref in refs/remotes/origin/main refs/heads/main refs/remotes/origin/HEAD; do
+                  if git -C "$t_gd" rev-parse --verify -q "$t_ref^{commit}" >/dev/null 2>&1; then
+                    t_base="$(git -C "$t_gd" merge-base "$t_h" "$t_ref" 2>/dev/null || :)"
+                    break
+                  fi
+                done
+              else
+                t_last="$t_h"
+              fi
+            fi ;;
+        esac
+        case "$t_d" in ''|*[!0-9]*) t_d="" ;; esac
+        case "$t_n" in ''|*[!0-9]*) t_n="" ;; esac
+        case "$t_g" in ''|*[!0-9]*) t_g="" ;; esac
+      fi
+      wr_out="${wr_out}TREE$US$WS$US$wr_l$US$wr_owner$US$t_p$US$t_branch$US$t_base$US$wr_life$US$wr_gen$US$wr_op$US$wr_live$US$t_ob$US$t_last$US$t_d$US$t_n$US$t_g
+"
+    done <<WR_TREES
+$wr_trees
+WR_TREES
+  done <<WR_LANES
+$wr_lanes
+WR_LANES
+  [ -n "$wr_out" ] || return 8
+  printf '%s' "$wr_out" | LC_ALL=C sort
+  return 0
+}
+
 # ---------------------------------------------------------------- subcommands
 
 cmd="${1-}"
@@ -15776,7 +15961,58 @@ EOF
     esac
     ;;
 
+  # ---------- opensoft/openRepoTools#161: every inventoried worktree, as rows
+  #
+  # `worktree_rows` above, for one lane or every lane on this workstation, and
+  # the READ the `worktrees` table answers when `--index` is TYPED (Amendment
+  # 14(b)): `index_open worktrees` asks `lanes-index export --worktrees` for
+  # every `inventory:<Workstation>` source the store holds — this
+  # workstation's and any other that syncs into the same Postgres, which is the
+  # point of the table — and stderr says which was read: `read: index (<store>)
+  # at inventory:<ws> synced <UTC>`, or `read: sources (index <why>)` and the
+  # sidecars answer, exactly as without the flag. NO ACT READS THIS: not
+  # `lane-reconcile`, not `lane-start`, not `lane-end`, not a sweep — each of
+  # them reads the sidecars and the disk, and this is a listing.
+  #
+  # Local by default, as `lanes` is: `--fetch` refreshes the register first.
+  #   0 rows · 8 none · 2 a lane name refused (Amendment 15) · 64 usage · 1 a read failed
+  worktrees)
+    wt_lane=""; wt_all=0; wt_index=0; wt_fetch=0
+    wt_usage="worktrees [<lane> | --all] [--index] [--fetch]"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --all)   wt_all=1; shift ;;
+        --index) wt_index=1; shift ;;
+        --fetch) wt_fetch=1; shift ;;
+        --)      shift ;;
+        -*)      die "unknown option '$1' for worktrees ($wt_usage)" 64 ;;
+        *)       [ -z "$wt_lane" ] || die "worktrees takes ONE lane, or --all: $wt_usage" 64; wt_lane="$1"; shift ;;
+      esac
+    done
+    [ "$wt_all" = 0 ] || [ -z "$wt_lane" ] || die "worktrees takes ONE lane OR --all, not both: $wt_usage" 64
+    [ -z "$wt_lane" ] || check_lane_name "$wt_lane"
+    [ "$wt_fetch" = 1 ] || LANES_NO_FETCH=1
+    log_sync
+    if [ -n "$wt_lane" ]; then
+      wt_lane="$(canon_lane "$wt_lane")" || exit 2          # Amendment 15
+    fi
+    if [ "$wt_index" = 1 ] && index_open worktrees; then
+      wt_out="$(awk -F"$US" -v l="$(lc "$wt_lane")" 'l == "" || tolower($3) == l' "$LANES_WT_IDX_DIR/worktrees" 2>/dev/null)"
+      [ -n "$wt_out" ] || exit 8
+      printf '%s\n' "$wt_out"
+    else
+      wt_out=""; wt_rc=0
+      wt_out="$(worktree_rows "$wt_lane")" || wt_rc=$?
+      case "$wt_rc" in
+        0) : ;;
+        8) exit 8 ;;
+        *) die "the lane listing the inventory is read through could not be read (exit $wt_rc). That is NOT 'no worktree is inventoried' (Amendment 7(d))." 1 ;;
+      esac
+      printf '%s\n' "$wt_out"
+    fi
+    ;;
+
   *)
-    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|managed-projection|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|lane-reconcile)" 2
+    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|managed-projection|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|lane-reconcile|worktrees)" 2
     ;;
 esac
