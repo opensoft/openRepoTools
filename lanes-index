@@ -6,7 +6,8 @@ Amendment 14, ratified by Brett Heap 2026-10-05, verbatim "ratify 48").
     lanes-index sync      [--source <s>]              write behind what LANDED
     lanes-index reconcile [--source <s>] [--dry-run]  read the source whole
     lanes-index status                                 per source: store, lag, errors
-    lanes-index export    --out <dir> [--source <s>]   the read flags' reader
+    lanes-index export    --out <dir> [--source <s> | --worktrees]
+                                                       the read flags' reader
 
 THE REGISTER'S TRUTH STAYS WHERE IT IS (clause (a)). The workspace repository's
 `lanes/LANES.md`, `lanes/log/*.md`, `lanes/aliases.tsv` and `lanes/archive/`
@@ -31,6 +32,23 @@ indexed commit is compared and swapped IN THE SAME TRANSACTION as the rows it
 covers, and a sync from a commit that does not descend from it writes nothing.
 Nothing in any source is ever written from here.
 
+THE INVENTORY IS A SECOND SOURCE (opensoft/openRepoTools#161, the "later word"
+clause (e) left open): `inventory:<Workstation>`, THIS workstation's #97
+worktree inventory, copied into the `worktrees` table. It is read through
+`lanes-edit.sh worktrees --all` - the sidecars, the lifecycle snapshot,
+`managed-projection`'s owner and the listing's liveness, in the helper that
+wrote them - and never through a parser of this file's own or a walk of the
+disk. Its rows are keyed by (source, `<lane>:<path>`) and versioned by the same
+digest; a tree the inventory no longer names leaves in the same sync. Its
+provenance moves only forward PER LANE: a sync that reads a lane's lifecycle
+generation below the one its rows were written at writes nothing for that lane
+(`reconcile` takes the lane as it now stands, and says so), and the source's own
+row carries a fingerprint of the whole table as its compare-and-swap token and a
+sync generation that only counts up. `lanes-edit.sh` nudges `sync --source
+inventory` after every inventory write. Nothing that acts reads this table
+either: `lane-reconcile`, `lane-start`, `lane-end` and the sweep read the
+sidecars and the disk.
+
 THE STORE (clause (c)): QA Postgres where this workstation's configuration
 names a `url=`, reached through `psql` and only then; otherwise one SQLite file
 on local disk. The configuration is
@@ -44,7 +62,8 @@ connect to Postgres only as `reader_url=` and are refused without it - never
 with the writer's credential.
 
 Exit codes: 0 done · 1 a read or a write failed (nothing half-written) · 2 a
-refusal (the configuration, a `--source` that is not this workstation's) · 3
+refusal (the configuration, a `--source` that is not this workstation's, an
+inventory on a workstation with no name) · 3
 `export` only: the index cannot answer (missing, unreachable, wiped, unknown
 schema - the reason is in `<out>/why`) · 64 usage.
 """
@@ -85,6 +104,7 @@ UTC_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2})?Z"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SCHEMA_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 OPEN_VERBS = ("CLAIMED", "TAKEOVER", "OPENED", "LANDING", "WITHDRAWN")
+INVENTORY_PREFIX = "inventory:"
 
 
 class Refusal(Exception):
@@ -704,11 +724,12 @@ TABLE_COLUMNS = {
     # indexer writes nothing into them.
     "swap_states": ["lane", "parent_uuid", "generation", "state", "observed_utc"],
     "job_summaries": ["lane", "job_id", "result_summary", "observed_utc"],
-    # RESERVED FOR opensoft/openRepoTools#161, created EMPTY with that issue's
-    # columns: each lane's #97 worktree inventory under `inventory:<Workstation>`,
-    # keyed by (source, lane, path) - here the record id `<lane>:<path>`. Amendment
-    # 14(e) leaves inventories to "a later word's"; #161 is that word's issue, and
-    # this indexer writes nothing into the table.
+    # opensoft/openRepoTools#161: each lane's #97 worktree inventory under
+    # `inventory:<Workstation>`, keyed by (source, lane, path) - the record id
+    # `<lane>:<path>`. Amendment 14(e) left inventories to "a later word's"; #161
+    # is that word's issue. Created by schema 1 with these columns before a row
+    # was written into it, so no store needed a new version for it. Written by
+    # `run_inventory` and by nothing that reads the register.
     "worktrees": ["workstation", "lane", "owner", "path", "branch", "base", "lifecycle",
                   "generation", "operation", "writer_live", "last_seen_utc", "last_commit",
                   "dirty_count", "unpushed_count", "pr_number", "pr_state"],
@@ -718,8 +739,8 @@ INTEGER_COLUMNS = {"ls_order", "line_count", "unreadable_count", "archived", "ro
                    "ordinal", "unreadable", "position", "size_bytes", "generation",
                    "writer_live", "dirty_count", "unpushed_count", "pr_number"}
 
-#: The tables `sync` and `reconcile` write. The ledger's two and #161's
-#: `worktrees` are absent on purpose.
+#: The tables `sync` and `reconcile` write for the REGISTER. The ledger's two
+#: are T058's, and `worktrees` is the inventory source's alone.
 REGISTER_TABLES = ("source_files", "lanes", "log_lines", "register_lines", "lane_aliases",
                    "transcript_pointers")
 
@@ -1105,7 +1126,13 @@ class SqliteStore:
             f"SELECT {cols} FROM {table} WHERE source = ?", (source,))]
 
     def apply(self, source: str, old: dict | None, new_sha: str, upserts: dict,
-              deletes: dict) -> None:
+              deletes: dict, generation: int | None = None) -> None:
+        """The rows and the provenance, ONE transaction, the compare-and-swap
+        first. `new_sha` is the register's commit, or the inventory's
+        fingerprint of its whole table (#161), and `generation` the inventory's
+        sync count; a record carrying `_provenance` is stamped with that rather
+        than with `new_sha` - the generation its tree's own record was filed
+        under."""
         import sqlite3
         now = utc_now()
         try:
@@ -1121,12 +1148,13 @@ class SqliteStore:
             if cur is None:
                 self.conn.execute(
                     "INSERT INTO provenance (source, commit_sha, generation, indexed_utc, "
-                    "schema_version) VALUES (?, ?, NULL, ?, ?)",
-                    (source, new_sha, now, SCHEMA_VERSION))
+                    "schema_version) VALUES (?, ?, ?, ?, ?)",
+                    (source, new_sha, generation, now, SCHEMA_VERSION))
             else:
                 self.conn.execute(
-                    "UPDATE provenance SET commit_sha = ?, indexed_utc = ?, schema_version = ? "
-                    "WHERE source = ?", (new_sha, now, SCHEMA_VERSION, source))
+                    "UPDATE provenance SET commit_sha = ?, generation = ?, indexed_utc = ?, "
+                    "schema_version = ? WHERE source = ?",
+                    (new_sha, generation, now, SCHEMA_VERSION, source))
             for table, ids in deletes.items():
                 for rec_id in ids:
                     self.conn.execute(f"DELETE FROM {table} WHERE source = ? AND record_id = ?",
@@ -1141,7 +1169,7 @@ class SqliteStore:
                        f"DO UPDATE SET {sets}")
                 self.conn.executemany(sql, [
                     [source, rec_id] + [rec.get(c) for c in cols] +
-                    [rec["digest"], new_sha, now, SCHEMA_VERSION]
+                    [rec["digest"], rec.get("_provenance", new_sha), now, SCHEMA_VERSION]
                     for rec_id, rec in recs.items()])
             self.conn.execute("COMMIT")
         except sqlite3.Error as exc:
@@ -1340,7 +1368,7 @@ class PostgresStore:
         return out
 
     def apply(self, source: str, old: dict | None, new_sha: str, upserts: dict,
-              deletes: dict) -> None:
+              deletes: dict, generation: int | None = None) -> None:
         now = utc_now()
         want = old["commit_sha"] if old else None
         lines = ["SET standard_conforming_strings = on;", "BEGIN;",
@@ -1353,7 +1381,8 @@ class PostgresStore:
                  f"  INSERT INTO provenance (source, commit_sha, generation, indexed_utc, "
                  f"schema_version) VALUES ({_pg_quote(source)}, NULL, NULL, {_pg_quote(now)}, "
                  f"{SCHEMA_VERSION}) ON CONFLICT (source) DO NOTHING;",
-                 f"  UPDATE provenance SET commit_sha = {_pg_quote(new_sha)}, indexed_utc = "
+                 f"  UPDATE provenance SET commit_sha = {_pg_quote(new_sha)}, generation = "
+                 f"{_pg_quote(generation)}, indexed_utc = "
                  f"{_pg_quote(now)}, schema_version = {SCHEMA_VERSION} WHERE source = "
                  f"{_pg_quote(source)} AND commit_sha IS NOT DISTINCT FROM {_pg_quote(want)};",
                  "  GET DIAGNOSTICS n = ROW_COUNT;",
@@ -1371,7 +1400,7 @@ class PostgresStore:
             sets = ", ".join(f"{c} = EXCLUDED.{c}" for c in allc[2:])
             for rec_id, rec in recs.items():
                 values = [source, rec_id] + [rec.get(c) for c in cols] + \
-                    [rec["digest"], new_sha, now, SCHEMA_VERSION]
+                    [rec["digest"], rec.get("_provenance", new_sha), now, SCHEMA_VERSION]
                 lines.append(f"INSERT INTO {table} ({', '.join(allc)}) VALUES "
                              f"({', '.join(_pg_quote(v) for v in values)}) ON CONFLICT "
                              f"(source, record_id) DO UPDATE SET {sets};")
@@ -1465,19 +1494,35 @@ class SyncLock:
                     return False
                 time.sleep(0.2)
 
-    def mark_rerun(self) -> None:
+    # ONE MARK PER SOURCE (opensoft/openRepoTools#161). The holder syncs again
+    # for every mark it finds, and a mark says WHICH source asked: a register
+    # sync holding the lock when an inventory write's nudge arrives syncs the
+    # inventory before it lets go, rather than the register a second time. The
+    # register's mark keeps the name it has always had.
+    KINDS = ("register", "inventory")
+
+    def rerun_path(self, kind: str = "register") -> str:
+        return self.rerun if kind == "register" else f"{self.rerun}-{kind}"
+
+    def mark_rerun(self, kind: str = "register") -> None:
         try:
-            with open(self.rerun, "w", encoding="utf-8") as handle:
+            with open(self.rerun_path(kind), "w", encoding="utf-8") as handle:
                 handle.write(utc_now() + "\n")
         except OSError:
             pass
 
-    def take_rerun(self) -> bool:
+    def take_rerun(self, kind: str = "register") -> bool:
         try:
-            os.unlink(self.rerun)
+            os.unlink(self.rerun_path(kind))
             return True
         except OSError:
             return False
+
+    def take_reruns(self) -> list:
+        return [kind for kind in self.KINDS if self.take_rerun(kind)]
+
+    def has_rerun(self) -> bool:
+        return any(os.path.exists(self.rerun_path(kind)) for kind in self.KINDS)
 
     def release(self) -> None:
         if self.handle is not None:
@@ -1490,6 +1535,10 @@ class SyncLock:
 def resolve_source(requested: str | None, root: str) -> str:
     source = source_of(root)
     if requested and requested != source:
+        if is_inventory(requested):
+            raise Refusal(f"{requested} is this workstation's worktree inventory, which "
+                          f"`sync`/`reconcile --source inventory` write and `export "
+                          f"--worktrees` reads; this is the register's path")
         if requested.startswith("ledger:"):
             raise Refusal(f"{requested} is the managed ledger's half, which T058 of the 001 "
                           f"feature writes (Amendment 14(g) act 4); this indexer writes the "
@@ -1629,10 +1678,323 @@ def run_index(mode: str, requested: str | None, dry_run: bool) -> int:
     return 0
 
 
+# ======================================== the inventory (opensoft/openRepoTools#161)
+#
+# THIS WORKSTATION'S #97 WORKTREE INVENTORY, AS A SECOND SOURCE. Amendment 14(e)
+# left "#97's lifecycle snapshots and worktree inventories, local to one
+# workstation by design" to a later word; #161 is it. The source is
+# `inventory:<Workstation>` - one per workstation, because the sidecars are on
+# that workstation's disk and nowhere else - and its rows are what
+# `lanes-edit.sh worktrees --all` prints, which is the inventory read through
+# the helper that writes it. Nothing here parses a sidecar, a snapshot or an
+# ownership marker, and nothing here lists a directory.
+
+def _helper_run(args: list, timeout: float, what: str) -> subprocess.CompletedProcess:
+    helper = lanes_edit_path()
+    if not helper:
+        raise StoreUnusable("unread", f"no lanes-edit.sh beside this file or on PATH, so {what} "
+                            f"cannot be read")
+    try:
+        return subprocess.run([helper, *args], capture_output=True, encoding="utf-8",
+                              errors="replace", check=False, env=helper_env(),
+                              stdin=subprocess.DEVNULL, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise StoreUnusable("unread", f"`lanes-edit.sh {' '.join(args)}` did not answer within "
+                            f"{int(timeout)} s")
+    except OSError as exc:
+        raise StoreUnusable("unread", f"`lanes-edit.sh {' '.join(args)}` could not be run: {exc}")
+
+
+def this_workstation() -> tuple[str, str]:
+    """`lanes-edit.sh workstation`'s first two columns: the name every row of
+    this workstation is filed under, and where it came from."""
+    proc = _helper_run(["workstation"], 60, "this workstation's name")
+    first = (proc.stdout.splitlines() or [""])[0].split("\t")
+    if proc.returncode != 0 or not first[0]:
+        why = (proc.stderr.strip().splitlines() or ["no answer"])[-1]
+        raise StoreUnusable("unread", f"`lanes-edit.sh workstation` exited {proc.returncode}: {why}")
+    return first[0], (first[1] if len(first) > 1 else "")
+
+
+def inventory_source(requested: str | None) -> str:
+    """`inventory:<this workstation>`. `--source inventory` is the short name for
+    it; another workstation's is refused, as another register is - its sidecars
+    are on its own disk. AND A CONTAINER WITH NO NAME FILES NOTHING (Amendment
+    11, `R-A11-14`): a source named for a container's own id is a source no
+    restart of any workstation will ever find again."""
+    name, how = this_workstation()
+    if how == "container-unset":
+        raise Refusal("this container has no LANES_WORKSTATION, so its inventory would be "
+                      f"filed under the container's own id `{name}` - a source no restart of "
+                      "any workstation finds again (Amendment 11, R-A11-14). Export "
+                      "LANES_WORKSTATION, as the launcher does")
+    source = f"{INVENTORY_PREFIX}{name}"
+    if requested and requested not in ("inventory", source):
+        raise Refusal(f"this workstation's inventory is {source}, not {requested}: an "
+                      f"inventory is synced by the workstation whose disk holds it")
+    return source
+
+
+def _int_or_none(value: str):
+    return int(value) if value.isdigit() else None
+
+
+def tree_record(fields: list) -> dict:
+    """One `TREE` line of `lanes-edit.sh worktrees`, as the `worktrees` row it
+    is. An empty field is NULL: a count the inventory recorded as `unknown`, a
+    base or a last commit that could not be read, a lane with no snapshot."""
+    text = [f if f != "" else None for f in fields]
+    return {"workstation": text[1], "lane": fields[2], "owner": text[3], "path": fields[4],
+            "branch": text[5], "base": text[6], "lifecycle": text[7],
+            "generation": _int_or_none(fields[8]), "operation": text[9],
+            "writer_live": _int_or_none(fields[10]), "last_seen_utc": text[11],
+            "last_commit": text[12], "dirty_count": _int_or_none(fields[13]),
+            "unpushed_count": _int_or_none(fields[14]), "pr_number": None, "pr_state": None,
+            "_provenance": text[15]}
+
+
+def tree_line(row: dict, provenance) -> str:
+    """The `TREE` line a stored row came from - the inverse of `tree_record`, so
+    that `lanes --index --worktrees` and `lanes --worktrees` print the same
+    bytes wherever the index is current."""
+    def text(value) -> str:
+        return "" if value is None else str(value)
+    return US.join(["TREE"] + [text(row.get(c)) for c in (
+        "workstation", "lane", "owner", "path", "branch", "base", "lifecycle", "generation",
+        "operation", "writer_live", "last_seen_utc", "last_commit", "dirty_count",
+        "unpushed_count")] + [text(provenance)])
+
+
+def inventory_digest(record: dict) -> str:
+    """The register's digest, and the row's provenance with it: two
+    observations of one tree filed under two generations are two versions."""
+    content = ["worktrees"] + [record.get(col) for col in TABLE_COLUMNS["worktrees"]] + \
+        [record.get("_provenance")]
+    blob = json.dumps(content, ensure_ascii=False, separators=(",", ":"), sort_keys=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def collect_inventory() -> tuple[dict, dict]:
+    """Every tree the inventory names, keyed `<lane>:<path>`, and every lane
+    whose inventory is there and could not be read - whose rows are KEPT, never
+    taken for a lane with no trees (Amendment 7(d))."""
+    proc = _helper_run(["worktrees", "--all"], 600, "the worktree inventory")
+    if proc.returncode == 8:
+        return {}, {}
+    if proc.returncode != 0:
+        why = (proc.stderr.strip().splitlines() or ["no answer"])[-1]
+        raise StoreUnusable("unread", f"`lanes-edit.sh worktrees --all` exited "
+                            f"{proc.returncode}: {why}")
+    trees, unread = {}, {}
+    for line in proc.stdout.split("\n"):
+        if not line:
+            continue
+        fields = line.split(US)
+        if fields[0] == "UNREAD" and len(fields) >= 4:
+            unread[fields[2]] = fields[3]
+            continue
+        if fields[0] != "TREE" or len(fields) != 16:
+            raise StoreUnusable("unread", f"`lanes-edit.sh worktrees` printed a line this "
+                                f"indexer does not read ({len(fields)} fields): {line[:120]!r} - "
+                                f"is the helper on PATH another version?")
+        record = tree_record(fields)
+        trees[f"{record['lane']}:{record['path']}"] = record
+    return trees, unread
+
+
+def _github_repo(path: str) -> str:
+    if not os.path.isdir(path):
+        return ""
+    proc = subprocess.run(["git", "-C", path, "remote", "get-url", "origin"], capture_output=True,
+                          encoding="utf-8", errors="replace", check=False,
+                          stdin=subprocess.DEVNULL)
+    url = proc.stdout.strip()
+    if proc.returncode != 0 or "github.com" not in url:
+        return ""
+    repo = _norm_repo(url)
+    return repo if re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", repo) else ""
+
+
+def pr_of(path: str, branch_name: str):
+    """`(number, state)` of the newest pull request whose head is this branch,
+    asked of `gh` - BEST EFFORT, and `(None, None)` wherever it does not answer.
+    The one network read of this source, and only of it."""
+    repo = _github_repo(path)
+    if not repo:
+        return None, None
+    env = dict(os.environ)
+    env["GH_PROMPT_DISABLED"] = "1"
+    try:
+        proc = subprocess.run(["gh", "pr", "list", "--repo", repo, "--head", branch_name,
+                               "--state", "all", "--json", "number,state", "--limit", "1"],
+                              capture_output=True, encoding="utf-8", errors="replace",
+                              check=False, env=env, stdin=subprocess.DEVNULL, timeout=20)
+        found = json.loads(proc.stdout) if proc.returncode == 0 else []
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None, None
+    if not isinstance(found, list) or not found or not isinstance(found[0], dict):
+        return None, None
+    number = found[0].get("number")
+    state = found[0].get("state")
+    return (number if isinstance(number, int) else None,
+            state if isinstance(state, str) and state else None)
+
+
+def fill_prs(trees: dict, stored: dict, mode: str, held: dict | None = None) -> int:
+    """`pr_number`/`pr_state` for every tree on a branch. A `sync` carries a
+    stored answer over for a tree whose branch and last commit have not moved
+    where that answer is final (MERGED, CLOSED) or `gh` is not to be asked;
+    `reconcile` asks again. Returns how many were asked."""
+    use_gh = os.environ.get("LANES_NO_GITHUB", "") != "1" and bool(shutil.which("gh"))
+    ask = []
+    for rec_id, rec in trees.items():
+        name = rec.get("branch") or ""
+        if not name or " " in name or name in ("unknown", "HEAD") or rec["lane"] in (held or {}):
+            continue
+        old = stored.get(rec_id)
+        if mode == "sync" and old is not None and old.get("branch") == rec["branch"] \
+                and old.get("last_commit") == rec["last_commit"] \
+                and (old.get("pr_state") in ("MERGED", "CLOSED") or not use_gh):
+            rec["pr_number"], rec["pr_state"] = old.get("pr_number"), old.get("pr_state")
+            continue
+        if use_gh:
+            ask.append(rec_id)
+    if ask:
+        with ThreadPoolExecutor(max_workers=max(1, min(8, len(ask)))) as pool:
+            answers = list(pool.map(lambda rid: pr_of(trees[rid]["path"], trees[rid]["branch"]),
+                                    ask))
+        for rec_id, (number, state) in zip(ask, answers):
+            trees[rec_id]["pr_number"], trees[rec_id]["pr_state"] = number, state
+    return len(ask)
+
+
+def run_inventory(mode: str, requested: str | None, dry_run: bool) -> int:
+    cfg = load_config()
+    source = inventory_source(requested)
+    store = open_store(cfg, "writer")
+    if dry_run:
+        try:
+            store.open_read()
+        except StoreUnusable as exc:
+            if exc.kind not in ("missing", "wiped"):
+                raise
+            store = None
+    else:
+        store.open_write()
+    old = store.provenance(source) if store is not None else None
+    trees, unread = collect_inventory()
+    label = f"{source} ({cfg['store']})"
+    cols = TABLE_COLUMNS["worktrees"]
+    stored = {} if store is None else {
+        r["record_id"]: r for r in store.rows("worktrees", source, cols + ["digest", "provenance"])}
+
+    # THE PROVENANCE MOVES ONLY FORWARD, PER LANE (14(d)). A lane's lifecycle
+    # generation is monotonic by `set-lane-state`'s own fence, so a read BELOW
+    # the generation a lane's rows were written at is a snapshot that was moved
+    # aside or replaced - and a `sync` writes nothing for that lane rather than
+    # roll its rows back. `reconcile` is the act that takes the source as it now
+    # stands, and it says so. A lane whose inventory could not be read keeps its
+    # rows in either: a read that failed is never an answer.
+    held: dict = {}
+    for lane, why in unread.items():
+        held[lane] = f"its inventory is there and could not be read ({why})"
+    read_gen: dict = {}
+    for rec in trees.values():
+        read_gen[rec["lane"]] = max(read_gen.get(rec["lane"], 0), rec["generation"] or 0)
+    stored_gen: dict = {}
+    for row in stored.values():
+        stored_gen[row["lane"]] = max(stored_gen.get(row["lane"], 0), row["generation"] or 0)
+    taken: list = []
+    for lane, gen in sorted(read_gen.items()):
+        if lane in held or gen >= stored_gen.get(lane, 0):
+            continue
+        if mode == "sync":
+            held[lane] = (f"its lifecycle generation reads {gen} and its rows were written at "
+                          f"{stored_gen[lane]}; the provenance only moves forward, so nothing "
+                          f"is written for it - `{PROG} reconcile --source inventory` takes "
+                          f"the lane as it now stands")
+        else:
+            taken.append(f"  lane {lane}: its lifecycle generation went back from "
+                         f"{stored_gen[lane]} to {gen} (a snapshot moved aside or replaced); "
+                         f"reconcile takes it as it now stands")
+
+    fill_prs(trees, stored, mode, held)
+    upserts, deletes, kept = {}, [], 0
+    for rec_id, rec in trees.items():
+        rec["digest"] = inventory_digest(rec)
+        if rec["lane"] in held:
+            continue
+        row = stored.get(rec_id)
+        if row is not None:
+            if mode == "reconcile":
+                as_written = {c: row.get(c) for c in cols}
+                as_written["_provenance"] = row.get("provenance")
+                same = inventory_digest(as_written) == rec["digest"] == row.get("digest")
+            else:
+                same = row.get("digest") == rec["digest"]
+            if same:
+                kept += 1
+                continue
+        upserts[rec_id] = rec
+    for rec_id, row in stored.items():
+        if row["lane"] not in held and rec_id not in trees:
+            deletes.append(rec_id)
+    after = {rid: rec["digest"] for rid, rec in trees.items() if rec["lane"] not in held}
+    after.update({rid: row["digest"] for rid, row in stored.items() if row["lane"] in held})
+    fingerprint = hashlib.sha256("\n".join(
+        f"{rid}\t{digest}" for rid, digest in sorted(after.items())).encode("utf-8")).hexdigest()
+
+    n_up, n_del = len(upserts), len(deletes)
+    if mode == "reconcile":
+        say(f"{PROG} reconcile: {label}{' - DRY RUN' if dry_run else ''}")
+        say(f"  {'worktrees':<20} {kept:>6} kept  {n_up:>6} upserted  {n_del:>6} removed")
+        for line in taken:
+            say(line)
+    for lane, why in sorted(held.items()):
+        say(f"  lane {lane}: its rows are kept as they are - {why}")
+    if dry_run:
+        say(f"  total: {n_up} to upsert, {n_del} to remove - nothing written (--dry-run)")
+        return 0
+    if old is not None and not upserts and not deletes:
+        if mode == "sync":
+            say(f"{PROG} sync: {label} - the index is current; nothing to write")
+        else:
+            say("  total: nothing differs; nothing written")
+        write_status(source, last_attempt_utc=utc_now(), last_sync_utc=utc_now(),
+                     last_result="current", last_error="")
+        return 0
+    try:
+        generation = int((old or {}).get("generation") or 0) + 1
+    except (TypeError, ValueError):
+        generation = 1
+    store.apply(source, old, fingerprint, {"worktrees": upserts} if upserts else {},
+                {"worktrees": deletes} if deletes else {}, generation=generation)
+    write_status(source, last_attempt_utc=utc_now(), last_sync_utc=utc_now(),
+                 last_result=f"{n_up} upserted, {n_del} removed at sync {generation}",
+                 last_error="")
+    if mode == "sync":
+        say(f"{PROG} sync: {label} - {n_up} upserted, {n_del} removed")
+    else:
+        say(f"  total: {n_up} upserted, {n_del} removed")
+    return 0
+
+
+def is_inventory(requested: str | None) -> bool:
+    return bool(requested) and (requested == "inventory" or requested.startswith(INVENTORY_PREFIX))
+
+
+def _sync_once(kind: str, requested: str | None) -> int:
+    if kind == "inventory":
+        return _guarded(lambda: run_inventory("sync", requested, False), requested, kind)
+    return _guarded(lambda: run_index("sync", requested, False), requested, kind)
+
+
 def cmd_sync(requested: str | None) -> int:
     if os.environ.get("LANES_INDEX", "") == "off":
         say(f"{PROG} sync: LANES_INDEX=off - nothing indexed")
         return 0
+    kind = "inventory" if is_inventory(requested) else "register"
+    asked = {kind: requested}
     lock = SyncLock()
     # THE HANDSHAKE, BOTH HALVES (Codex on #164). A sync that finds the lock
     # held leaves its mark and then tries ONCE MORE: if that fails, somebody
@@ -1640,9 +2002,10 @@ def cmd_sync(requested: str | None) -> int:
     # marks after it lets go. The holder, for its part, looks again AFTER it
     # releases - a mark written between its last look and its release is
     # found there, and it takes the lock back for it. No mark is left with
-    # nobody due to read it.
+    # nobody due to read it. AND THE MARK NAMES ITS SOURCE (#161): the holder
+    # syncs every source a mark names, its own included, before it lets go.
     if not lock.acquire(0):
-        lock.mark_rerun()
+        lock.mark_rerun(kind)
         if not lock.acquire(0):
             say(f"{PROG} sync: another sync holds {lock.path}; it will sync again before "
                 f"it is done")
@@ -1650,22 +2013,29 @@ def cmd_sync(requested: str | None) -> int:
     rc = 0
     try:
         rounds = 0
+        due = [kind]
         while True:
-            rounds += 1
-            lock.take_rerun()
-            rc = _guarded(lambda: run_index("sync", requested, False), requested)
-            if rc == MOVED and rounds < 5:
+            for marked in lock.take_reruns():
+                if marked not in due:
+                    due.append(marked)
+            if not due:
+                lock.release()
+                if not lock.has_rerun() or not lock.acquire(0):
+                    return rc
                 continue
-            if rc == MOVED:
+            current = due[0]
+            rounds += 1
+            result = _sync_once(current, asked.get(current))
+            if result == MOVED and rounds < 5:
+                continue
+            due.pop(0)
+            if result == MOVED:
                 say(f"{PROG} sync: origin/{branch()} kept moving through {rounds} reads; "
                     f"nothing written - the next write's nudge syncs it")
-                return 0
-            if rc != 0 or rounds >= 5:
-                return rc
-            if os.path.exists(lock.rerun):
-                continue
-            lock.release()
-            if not os.path.exists(lock.rerun) or not lock.acquire(0):
+                result = 0
+            if result != 0:
+                return result
+            if rounds >= 8:
                 return rc
     finally:
         lock.release()
@@ -1675,11 +2045,15 @@ def cmd_reconcile(requested: str | None, dry_run: bool) -> int:
     if os.environ.get("LANES_INDEX", "") == "off" and not dry_run:
         say(f"{PROG} reconcile: LANES_INDEX=off - nothing indexed")
         return 0
+    kind = "inventory" if is_inventory(requested) else "register"
     lock = SyncLock()
     if not dry_run and not lock.acquire(60):
         note(f"another sync has held {lock.path} for 60 s; nothing written")
         return 1
     try:
+        if kind == "inventory":
+            return _guarded(lambda: run_inventory("reconcile", requested, dry_run), requested,
+                            kind)
         for _attempt in range(3):
             rc = _guarded(lambda: run_index("reconcile", requested, dry_run), requested)
             if rc != MOVED:
@@ -1695,7 +2069,7 @@ def cmd_reconcile(requested: str | None, dry_run: bool) -> int:
 MOVED = -1
 
 
-def _guarded(act, requested) -> int:
+def _guarded(act, requested, kind: str = "register") -> int:
     try:
         return act()
     except SourceMoved as exc:
@@ -1703,15 +2077,22 @@ def _guarded(act, requested) -> int:
         return MOVED
     except CasLost as exc:
         note(str(exc))
-        _record_error(requested, str(exc))
+        _record_error(requested, str(exc), kind)
         return 1
     except StoreUnusable as exc:
         note(f"{exc.kind}: {exc.detail} - nothing written")
-        _record_error(requested, f"{exc.kind}: {exc.detail}")
+        _record_error(requested, f"{exc.kind}: {exc.detail}", kind)
         return 1
 
 
-def _record_error(requested, message: str) -> None:
+def _record_error(requested, message: str, kind: str = "register") -> None:
+    if kind == "inventory":
+        try:
+            source = inventory_source(requested)
+        except (StoreUnusable, Refusal):
+            source = requested if requested and requested != "inventory" else "inventory:?"
+        write_status(source, last_attempt_utc=utc_now(), last_error=f"{utc_now()} {message}")
+        return
     try:
         source = requested or source_of(workspace_root())
     except StoreUnusable:
@@ -1747,10 +2128,33 @@ def cmd_status() -> int:
     sources = [p["source"] for p in provs]
     if source and source not in sources:
         sources.append(source)
+    # THIS WORKSTATION'S INVENTORY TOO (#161), indexed or not - its name is the
+    # helper's, and a helper that cannot say it costs the line, not the status.
+    inv_source = ""
+    try:
+        inv_source = inventory_source(None)
+    except (StoreUnusable, Refusal):
+        inv_source = ""
+    if inv_source and inv_source not in sources:
+        sources.append(inv_source)
     for name in sorted(set(sources) | set(local)):
         prov = next((p for p in provs if p["source"] == name), None)
         say(f"source {name}")
-        if prov is None:
+        if name.startswith(INVENTORY_PREFIX):
+            if prov is None:
+                say("  provenance:  none - this inventory is not indexed (a wiped or "
+                    "never-synced index; `lanes-index reconcile --source inventory` builds it)")
+            else:
+                fp = prov.get("commit_sha") or ""
+                say(f"  provenance:  inventory@{fp[:12]} (sync {prov.get('generation')}, indexed "
+                    f"{prov['indexed_utc']}, schema {prov['schema_version']})")
+                try:
+                    count = len(store.rows("worktrees", name, ["lane"]))
+                    say(f"  rows:        {count} worktree(s)")
+                except StoreUnusable as exc:
+                    say(f"  rows:        unread - {exc.kind}: {exc.detail}")
+                    rc = 1
+        elif prov is None:
             say("  provenance:  none - this source is not indexed (a wiped or never-synced "
                 "index; `lanes-index reconcile` builds it)")
         elif prov.get("commit_sha"):
@@ -1771,9 +2175,11 @@ def cmd_status() -> int:
     return rc
 
 
-def cmd_export(out_dir: str, requested: str | None) -> int:
+def cmd_export(out_dir: str, requested: str | None, worktrees: bool = False) -> int:
     """The read flags' reader, and nothing else's: the index's image of this
-    workstation's register in the shapes `lanes-edit.sh` reads from origin.
+    workstation's register in the shapes `lanes-edit.sh` reads from origin -
+    or, with `worktrees` (#161), every inventory source's rows as the `TREE`
+    lines `lanes-edit.sh worktrees` prints.
 
     It writes FILES into `out_dir` and prints nothing a caller parses. On
     success `meta`; on any reason the index cannot answer, `why` - one line,
@@ -1792,6 +2198,8 @@ def cmd_export(out_dir: str, requested: str | None) -> int:
     except Refusal as exc:
         unusable("refused", str(exc))
         return 2
+    if worktrees:
+        return _export_worktrees(out_dir, cfg, unusable)
     try:
         root = workspace_root()
         source = resolve_source(requested, root)
@@ -1855,11 +2263,49 @@ def cmd_export(out_dir: str, requested: str | None) -> int:
     return 0
 
 
+def _export_worktrees(out_dir: str, cfg: dict, unusable) -> int:
+    """EVERY `inventory:<Workstation>` THE STORE HOLDS - this workstation's and
+    any other syncing into the same Postgres, which is what the table is for:
+    the next account, on either workstation, sees every open worktree in one
+    read. `meta` names each source with the time it was synced."""
+    try:
+        store = open_store(cfg, "reader")
+        store.open_read()
+        provs = [p for p in store.all_provenance()
+                 if str(p["source"]).startswith(INVENTORY_PREFIX)]
+        if not provs:
+            return unusable("wiped", f"no {INVENTORY_PREFIX}<Workstation> source in the "
+                            f"{cfg['store']} store")
+        lines = []
+        for prov in provs:
+            for row in store.rows("worktrees", prov["source"],
+                                  TABLE_COLUMNS["worktrees"] + ["provenance"]):
+                lines.append(tree_line(row, row.get("provenance")))
+    except Refusal as exc:
+        unusable("refused", str(exc))
+        return 2
+    except StoreUnusable as exc:
+        return unusable(exc.kind, exc.detail)
+    # THE BYTE ORDER `LC_ALL=C sort` GIVES the source read, so the two are one
+    # stream wherever the index is current.
+    lines.sort(key=lambda line: line.encode("utf-8"))
+    with open(os.path.join(out_dir, "worktrees"), "w", encoding="utf-8", newline="") as handle:
+        for line in lines:
+            handle.write(line + "\n")
+    with open(os.path.join(out_dir, "meta"), "w", encoding="utf-8", newline="") as handle:
+        handle.write(f"store={cfg['store']}\n")
+        for prov in sorted(provs, key=lambda p: str(p["source"])):
+            handle.write(f"inventory\t{prov['source']}\t{prov['indexed_utc']}\t"
+                         f"{prov.get('generation')}\n")
+    return 0
+
+
 USAGE = f"""\
 {PROG} sync      [--source <s>]              index what LANDED, behind the source
 {PROG} reconcile [--source <s>] [--dry-run]  read the source whole; put the index right
 {PROG} status                                 per source: store, provenance, lag, errors
-{PROG} export    --out <dir> [--source <s>]   the `--index` read flags' reader
+{PROG} export    --out <dir> [--source <s> | --worktrees]
+                                             the `--index` read flags' reader
 
 The DERIVED INDEX of the lane register (lane-collision-protocol Amendment 14).
 It is written behind the sources by this command alone, read only by tooling
@@ -1878,10 +2324,17 @@ that decides nothing, and never a gate: no lane act reads it or waits on it.
   status      The store, each source's provenance against its tip, the lag in
               commits, and this workstation's last sync and last error.
   export      Writes the index's image of the register into <dir> for
-              `lanes --index` and `lanes-edit.sh history --index`. Not for people.
+              `lanes --index` and `lanes-edit.sh history --index` - or, with
+              `--worktrees`, every inventory source's rows for `lanes --index
+              --worktrees`. Not for people.
 
-  --source <s>  `register:<owner/repo>`, which must be this workstation's own;
-                the managed ledger's `ledger:<Workstation>` is T058's to write.
+  --source <s>  `register:<owner/repo>`, which must be this workstation's own
+                and is the default; `inventory` (or `inventory:<Workstation>`,
+                this one's) is THIS workstation's #97 worktree inventory, read
+                through `lanes-edit.sh worktrees --all` into the `worktrees`
+                table (opensoft/openRepoTools#161) - every inventory write
+                nudges `sync --source inventory`. The managed ledger's
+                `ledger:<Workstation>` is T058's to write.
 
 THE STORE: SQLite at ${{XDG_STATE_HOME:-~/.local/state}}/openRepoTools/lanes-index.sqlite,
 or QA Postgres through `psql` where the configuration names a `url=`.
@@ -1915,6 +2368,7 @@ def main(argv: list[str]) -> int:
     verb, args = argv[0], argv[1:]
     source = None
     dry_run = False
+    worktrees = False
     out_dir = None
     i = 0
     while i < len(args):
@@ -1942,6 +2396,10 @@ def main(argv: list[str]) -> int:
             dry_run = True
             i += 1
             continue
+        if arg == "--worktrees" and verb == "export":
+            worktrees = True
+            i += 1
+            continue
         note(f"unknown argument '{arg}' for {verb} - see {PROG} --help")
         return 64
     try:
@@ -1958,7 +2416,11 @@ def main(argv: list[str]) -> int:
             if not out_dir:
                 note("export needs --out <dir>")
                 return 64
-            return cmd_export(out_dir, source)
+            if worktrees and source:
+                note("export --worktrees reads every inventory source the store holds; it "
+                     "takes no --source")
+                return 64
+            return cmd_export(out_dir, source, worktrees)
     except Refusal as exc:
         note(f"REFUSED: {exc}")
         return 2
