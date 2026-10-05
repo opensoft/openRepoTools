@@ -3313,6 +3313,13 @@ place, under one rule: **nothing is deleted that is not first on origin or in a
 bundle under the sweeps directory, and a tree a live writer owns is never
 touched.**
 
+> **`--yes` is switched off until opensoft/openRepoTools#170 lands.** Reviews
+> of this act found data-loss paths under `--yes` and `--expire --yes` that are
+> listed there and not yet closed. Until they are, both are refused, exit **2**,
+> changing nothing, unless the environment carries `LANE_WORKTREES_ENABLE_YES=1`
+> — which the test suite sets, and which is **not for a real estate until #170**.
+> The dry run, `--porcelain` (#163's gate) and `--report` are unaffected.
+
 ```sh
 lane-worktrees sweep <lane>                     # the DRY RUN: the table, nothing changed
 lane-worktrees sweep <lane> --yes [--live <path>|--live none]
@@ -3324,7 +3331,13 @@ lane-worktrees sweep --expire [--yes]           # archives past retention
 and the disk — **never the derived index** (Amendment 14 clause (b)). The sweep
 also reads every registration of the lane's checkout and every checkout under
 its two roots (`<checkout>/.claude/worktrees/*`, `.lane-worktrees/<lane>/*`).
-A tree the inventory does not name is **FOREIGN**: reported and left, unless
+A tree the inventory does not name is still **the lane's** when it stands under
+the lane's own root, `.lane-worktrees/<lane>/` (only this lane's starts make it),
+or sits in `<checkout>/.claude/worktrees` on a branch whose OWN commits — those
+origin's default branch lacks — carry this lane's `Lane:` trailer; its rows say
+so. A lane with no #97 snapshot at all (state `NONE`) but trees of its own is
+**refused, exit 2**: which trees are its is recorded nowhere, so #163's gate does
+not pass it. Any other tree the inventory does not name is **FOREIGN**: reported and left, unless
 `--include-foreign` and a `--word "<verbatim>"` (recorded in every register line
 it causes). A tree ANOTHER lane's inventory names is that lane's and is never
 taken from here, word or no word — and one BOTH inventories name is kept, since
@@ -3465,13 +3478,19 @@ tree    <disposition> <retire|-> <path> <branch> <head> <why>
 summary <to retire> <trees> <live> <foreign>
 ```
 
-and exits **0** (nothing to retire), **3** (something to retire — a tree of the
+Every field is escaped — a backslash is written `\\`, a TAB `\t`, a newline `\n`
+and a carriage return `\r` — so a path holding any of them is still one field
+of one row; bytes that are not UTF-8 pass through as the bytes they are. The
+command exits **0** (nothing to retire), **3** (something to retire — a tree of the
 lane's on disk, live or not, a stale registration, an unpublished or merged
 branch of the lane's, included scratch), or **2** (refused: bound elsewhere,
-held by another session, managed, or a read failed). FOREIGN trees, links,
+held by another session, managed, a lane with trees and no #97 snapshot, a read
+failed, `--yes` switched off — or an error no read caught, which is never a
+traceback's exit 1 on a dry run). FOREIGN trees, links,
 caches and sandboxes are never the lane's to retire. `--yes` exits 0 when every
 act completed and 1 when one failed part-way (the rest go on; each failure is in
-the table and in `DISPOSITION.md`); usage is 64.
+the table and in `DISPOSITION.md`, which is written even when an error no read
+caught stops the run); usage is 64.
 
 ### Two protocol lines this act assumes (proposed for the amendment that ratifies it)
 
