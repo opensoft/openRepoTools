@@ -2332,6 +2332,7 @@ WIP_HYGIENE_LINES=(
 	"node_modules/"
 	".venv/"
 	"venv/"
+	"site-packages/"
 )
 
 # The hygiene block, less every line `$1` already carries; nothing at all when

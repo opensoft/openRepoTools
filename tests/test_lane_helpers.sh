@@ -14757,10 +14757,12 @@ echo "== opensoft/openRepoTools#162: bytecode never rides a workspace commit =="
 # them, and once they are there the same pathspec stages nothing of the kind.
 B162_REL="handoffs/sandbox/attachments/b162"
 B162="$WIP/$B162_REL"
-mkdir -p "$B162/r1/__pycache__" "$B162/r1/venv/lib/python3.12/site-packages"
+mkdir -p "$B162/r1/__pycache__" "$B162/r1/venv/lib/python3.12/site-packages" \
+  "$B162/r1/env-x/lib/python3.12/site-packages"
 printf 'findings\n' > "$B162/r1/notes.md"
 printf 'bytecode\n' > "$B162/r1/__pycache__/m.cpython-312.pyc"
 printf 'pkg\n' > "$B162/r1/venv/lib/python3.12/site-packages/pkg.py"
+printf 'pkg\n' > "$B162/r1/env-x/lib/python3.12/site-packages/other.py"
 B162_IGN=""
 [ -f "$WIP/.gitignore" ] && B162_IGN="$(cat "$WIP/.gitignore")"
 run "$E" pathspec-check "$B162_REL"
@@ -14769,6 +14771,8 @@ has  "…naming the bytecode" "$out" "$B162_REL/r1/__pycache__/m.cpython-312.pyc
 has  "…and the virtual environment" "$out" "$B162_REL/r1/venv/lib/python3.12/site-packages/pkg.py"
 hasnt "…and not the attachment's own notes" "$out" "notes.md"
 has  "…and offers the ignore lines the workspace lacks" "$err" "'__pycache__/'"
+has  "…a venv under any name included, by its site-packages" "$out" "$B162_REL/r1/env-x/lib/python3.12/site-packages/other.py"
+has  "…and the line that covers it is among those offered" "$err" "'site-packages/'"
 run "$E" pathspec-check "$B162_REL/r1/notes.md"
 is   "a pathspec with nothing of the kind passes" "$rc" 0
 b162_head="$(git -C "$WIP" rev-parse HEAD)"
@@ -14779,7 +14783,10 @@ is   "…and commits nothing" "$(git -C "$WIP" rev-parse HEAD)" "$b162_head"
 is   "…and stages nothing" "$(git -C "$WIP" diff --cached --name-only | grep -c . || :)" 0
 printf '%s\n' '__pycache__/' '*.pyc' 'venv/' >> "$WIP/.gitignore"
 run "$E" pathspec-check "$B162_REL"
-is   "with the ignore lines in place it stages nothing of the kind" "$rc" 0
+is   "without the site-packages line a venv under another name is still refused" "$rc" 2
+printf '%s\n' 'site-packages/' >> "$WIP/.gitignore"
+run "$E" pathspec-check "$B162_REL"
+is   "with the offered lines in place it stages nothing of the kind" "$rc" 0
 rm -rf "$WIP/handoffs/sandbox"
 if [ -n "$B162_IGN" ]; then printf '%s\n' "$B162_IGN" > "$WIP/.gitignore"; else rm -f "$WIP/.gitignore"; fi
 git -C "$WIP" checkout -q -- .gitignore 2>/dev/null || :

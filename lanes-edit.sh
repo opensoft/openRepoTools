@@ -1824,7 +1824,8 @@ BYTECODE_IGNORES='__pycache__/
 .ruff_cache/
 node_modules/
 .venv/
-venv/'
+venv/
+site-packages/'
 bytecode_in_pathspec() {   # <repo> <pathspec>...
   bip_repo="${1-}"; shift || :
   [ "$#" -gt 0 ] || return 0
