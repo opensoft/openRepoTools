@@ -1106,7 +1106,9 @@ venv_note() {
 		say "openRepoTools: this repository's virtual environment is $venv (present; tests/run.sh runs from it when it has pytest)"
 	else
 		say "openRepoTools: this repository's virtual environment is $venv (not created; one per repository, outside the estate):"
-		say "    python3 -m venv $venv && $venv/bin/python3 -m pip install pytest"
+		# QUOTED FOR THE SHELL IT IS PASTED INTO: `$XDG_CACHE_HOME` is the
+		# person's to choose, spaces and all.
+		say "    python3 -m venv $(printf '%q' "$venv") && $(printf '%q' "$venv/bin/python3") -m pip install pytest"
 	fi
 }
 

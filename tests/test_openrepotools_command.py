@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -1903,3 +1904,17 @@ def test_install_names_the_repository_venv_and_whether_it_is_there(tmp_path):
     second = run_cmd("--install", home=tmp_path, env={"XDG_CACHE_HOME": str(cache)})
     assert second.returncode == 0, second.stderr
     assert f"virtual environment is {venv} (present;" in second.stdout
+
+
+def test_the_printed_venv_command_survives_a_path_with_a_space(tmp_path):
+    """Copilot round 2 on #169: the command is pasted into a shell, and the
+    cache directory is the person's to choose."""
+    cache = tmp_path / "my cache"
+    venv = cache / "openRepoTools" / "venvs" / "openRepoTools"
+    result = run_cmd("--install", home=tmp_path, env={"XDG_CACHE_HOME": str(cache)})
+    assert result.returncode == 0, result.stderr
+    (line,) = [ln.strip() for ln in result.stdout.splitlines()
+               if ln.strip().startswith("python3 -m venv ")]
+    words = shlex.split(line)
+    assert words[:4] == ["python3", "-m", "venv", str(venv)], words
+    assert words[5] == str(venv / "bin" / "python3"), words
