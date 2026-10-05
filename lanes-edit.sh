@@ -10687,10 +10687,11 @@ EOF
 
 LANE_RESTART_SCHEMA=1
 
-# THE CONTROL ROOT — three rungs, in order. 0 with the path (which need not
-# exist yet), 8 where no rung answers.
-lane_restart_control_root() {   # <lane> [<a payload that may carry `dir`>]
+# THE CONTROL ROOT — explicit override, retained intent, then creation rungs.
+# 0 with a path, 8 with no rung, 1 for unknown or competing locations.
+lane_restart_control_root() {   # <lane> [<payload>] [<checkout hint>]
   lcr_lane="${1-}"; lcr_pay="${2-}"; lcr_dir=""; lcr_par=""
+  lcr_record_root=""; lcr_projects_root=""; lcr_existing=""
   [ -n "$lcr_lane" ] || return 8
   if [ -n "${LANES_LANE_STATE_ROOT:-}" ]; then
     printf '%s/%s\n' "${LANES_LANE_STATE_ROOT%/}" "$lcr_lane"
@@ -10704,12 +10705,43 @@ lane_restart_control_root() {   # <lane> [<a payload that may carry `dir`>]
     /*) lcr_par="${lcr_dir%/*}" ;;
     *)  lcr_par="" ;;
   esac
-  if [ -n "$lcr_par" ] && [ -d "$lcr_par" ]; then
-    printf '%s/.lane-state/%s\n' "$lcr_par" "$lcr_lane"
+  if [ -n "$lcr_par" ]; then
+    lcr_record_root="$lcr_par/.lane-state/$lcr_lane"
+    lane_restart_root_ok "$lcr_record_root" || return 1
+    [ -d "$lcr_par" ] || lcr_record_root=""
+  fi
+  if [ -n "${PROJECTS_ROOT:-}" ]; then
+    lcr_projects_root="${PROJECTS_ROOT%/}/.lane-state/$lcr_lane"
+    lane_restart_root_ok "$lcr_projects_root" || return 1
+    [ -d "$PROJECTS_ROOT" ] || lcr_projects_root=""
+  fi
+  # PAUSED may first record a nested checkout after reservation. Existing
+  # intent authority stays at its physical location; validity is the reader's
+  # gate, never a reason to bypass an occupied path. Unknown ancestry refuses.
+  # Only directory aliases share an atomic replacement entry; separate leaf
+  # symlinks/hardlinks would split into two records on the next replacement.
+  for lcr_candidate in "$lcr_record_root" "$lcr_projects_root"; do
+    [ -n "$lcr_candidate" ] || continue
+    lcr_file="$lcr_candidate/restart-intent.yaml"
+    if [ -e "$lcr_file" ] || [ -L "$lcr_file" ]; then
+      if [ -n "$lcr_existing" ] && [ "$lcr_candidate" != "$lcr_existing" ] &&
+         [ ! "$lcr_candidate" -ef "$lcr_existing" ]; then
+        note "lane $lcr_lane has distinct restart-intent locations in $lcr_existing and $lcr_candidate; reconcile these records before continuing. Nothing was written."
+        return 1
+      fi
+      [ -n "$lcr_existing" ] || lcr_existing="$lcr_candidate"
+    fi
+  done
+  if [ -n "$lcr_existing" ]; then
+    printf '%s\n' "$lcr_existing"
     return 0
   fi
-  if [ -n "${PROJECTS_ROOT:-}" ] && [ -d "$PROJECTS_ROOT" ]; then
-    printf '%s/.lane-state/%s\n' "${PROJECTS_ROOT%/}" "$lcr_lane"
+  if [ -n "$lcr_record_root" ]; then
+    printf '%s\n' "$lcr_record_root"
+    return 0
+  fi
+  if [ -n "$lcr_projects_root" ]; then
+    printf '%s\n' "$lcr_projects_root"
     return 0
   fi
   # A checkout hint is a last resort, so reads cannot hide an intent that
@@ -15788,15 +15820,17 @@ EOF
     check_lane_name "$lane"
     log_sync
     lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
-    sri_root=""; sri_rrc=0
-    sri_root="$(lane_restart_control_root "$lane")" || sri_rrc=$?
-    [ "$sri_rrc" = 0 ] ||
-      die "lane $lane has no lifecycle control root, so there is nowhere to record that its restart is $sri_state: its record names no directory (Amendment 11(c)) and \$PROJECTS_ROOT is not a directory here. Set \$LANES_LANE_STATE_ROOT, or start the lane through lane-start so that its record carries a dir." 1
-    sri_f="$sri_root/restart-intent.yaml"
-    # THE FENCE, read under the same mutex the write takes, so that two
-    # transitions cannot both read the intent before either writes it.
+    # Select the physical intent under the CAS mutex: a waiting writer must
+    # see a reservation another writer established before releasing the lock.
     acquire_lock
     managed_seam_refuse "$lane" "set-restart-intent"
+    sri_root=""; sri_rrc=0
+    sri_root="$(lane_restart_control_root "$lane")" || sri_rrc=$?
+    [ "$sri_rrc" = 0 ] || {
+      release_lock
+      die "lane $lane's restart control root is unavailable, unreadable or ambiguous. Nothing was written. Inspect its recorded directory and projects-root intents, or configure an explicit state root." 1
+    }
+    sri_f="$sri_root/restart-intent.yaml"
     # A SCHEMA THIS WRITER DOES NOT KNOW IS NOT ITS RECORD TO REPLACE (Copilot
     # round 1 on openRepoTools#121). The READ side already fails closed on one —
     # it answers `UNKNOWN-SCHEMA` rather than reporting a launch it cannot

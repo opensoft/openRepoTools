@@ -2642,8 +2642,16 @@ seventh was never written, so it was never there.
 An environment cannot cross a boundary another repository owns. **A file can.**
 Before anything is killed, `/ctx` writes a RESTART INTENT under the lane's own
 legacy control root, independently of lifecycle snapshots,
-resolved the same three ways (`$LANES_LANE_STATE_ROOT`, the checkout's parent
-`.lane-state/<lane>`, `$PROJECTS_ROOT/.lane-state/<lane>`):
+using an explicit `$LANES_LANE_STATE_ROOT` when configured. Otherwise, an existing
+intent under the recorded checkout's parent or `$PROJECTS_ROOT/.lane-state/<lane>`
+retains its location through reservation, preservation, cleanup and later reads.
+Distinct occupied intent locations or unreadable candidate ancestry refuse.
+Aliases of the same control-root directory count once; separate leaf symlink
+or hardlink entries refuse. With no existing intent, the recorded-parent rung precedes
+the projects-root fallback, with a checkout hint only when neither answers.
+Root selection shares the writer mutex with CAS. Recording a nested checkout
+cannot move this operation; PR #97 diagnostics retain their independent root
+selection and may reside elsewhere:
 
 ```
 $ lanes-edit.sh restart-intent openRepoTools-3

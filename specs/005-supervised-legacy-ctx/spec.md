@@ -24,6 +24,11 @@ diagnostic lifecycle snapshots. Readiness never writes another lifecycle store.
   pause log or register. A preparing/pending/starting operation cannot be
   superseded by ordinary `/ctx`. A refused competing restart changes no
   canonical preservation record and never respawns a pane.
+  Reservation, completion, cleanup and later reads retain the sole existing
+  intent among recorded-checkout and projects-root candidates, unless an
+  explicit state-root override is supplied. Distinct competing records or
+  unreadable candidate ownership refuse. Root selection and CAS share the
+  writer mutex; recording a nested checkout cannot strand the reservation.
 - FR-003: Validate complete intent schema, state, generation, operation,
   attempt and launch facts. Existing unreadable/malformed records cannot be
   interpreted as absent or rewritten to a supported schema. Schema 1 rejects

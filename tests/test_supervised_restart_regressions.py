@@ -1637,3 +1637,247 @@ def test_restart_reconcile_case_only_rename_preserves_completed_history(restart_
             if p.is_file() and ".git" not in p.parts} == before
     assert box.git("-C", str(box.wip), "rev-parse", "HEAD") == commit
     assert "state\tready" in helper(box, "restart-intent", LANE).stdout
+
+
+def restart_root_without_recorded_checkout(box):
+    source = prepare_restart(box)
+    box.restart_root_seed = intent_path(box).read_bytes()
+    intent_path(box).unlink()
+    old_dir = box.lane_dir
+    log = box.wip / "lanes" / "log" / f"{LANE}.md"
+    log.write_text(log.read_text().replace(f"; dir {old_dir}", ""))
+    box.git("-C", str(box.wip), "add", "--", str(log))
+    box.git("-C", str(box.wip), "commit", "-qm", "legacy record without checkout")
+    box.git("-C", str(box.wip), "push", "-q", "origin", "main")
+    box.env.pop("LANES_LANE_STATE_ROOT")
+    box.env["PROJECTS_ROOT"] = str(old_dir.parent)
+    nested = old_dir.parent / "nested" / "repoZ"
+    nested.mkdir(parents=True)
+    box.git("init", "-q", "-b", "main", str(nested))
+    box.git("-C", str(nested), "remote", "add", "origin", "https://github.com/opensoft/repoZ.git")
+    box.lane_dir = nested
+    assert helper(box, "lane-dir", LANE).returncode == 8
+    fallback = old_dir.parent / ".lane-state" / LANE / "restart-intent.yaml"
+    alternate = nested.parent / ".lane-state" / LANE / "restart-intent.yaml"
+    return source, fallback, alternate
+
+
+def record_nested_restart_checkout(box):
+    prior = box.env
+    session = helper(box, "last-session", LANE).stdout.strip()
+    box.env = dict(prior, LANES_LANE=LANE, LANES_SESSION=session)
+    try:
+        result = helper(box, "log", "PAUSED", f"lane:{LANE}", "→", f"swap; dir {box.lane_dir}", "fixture")
+    finally:
+        box.env = prior
+    assert result.returncode == 0, (result.stdout, result.stderr)
+
+
+def test_restart_root_retains_reservation_after_nested_checkout_preservation(restart_box):
+    box = restart_box
+    source, fallback, alternate = restart_root_without_recorded_checkout(box)
+    result = supervisor(box, "--restart", "--lane", LANE, "--dir", str(box.lane_dir), "clear")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "respawn-pane" in box.tmux_log.read_text()
+    assert not alternate.exists()
+    record = dict(line.split("\t", 1) for line in helper(box, "restart-intent", LANE).stdout.splitlines())
+    assert record["state"] == "pending" and record["file"] == str(fallback)
+    assert record["dir"] == str(box.lane_dir) and record["handoff"] == str(source)
+    status = supervisor(box, "--restart-status", "--lane", LANE)
+    assert status.returncode == 0 and "intent      pending" in status.stdout
+    before = fallback.read_bytes()
+    result = box.start("--dir", str(box.lane_dir))
+    assert result.returncode == 2 and "supervisor operation token" in result.stderr
+    assert fallback.read_bytes() == before and not box.claude_runs()
+
+
+def test_restart_root_cleanup_after_paused_fails_original_reservation(restart_box):
+    box = restart_box
+    _, fallback, alternate = restart_root_without_recorded_checkout(box)
+    real = box.bin / "lanes-edit-real.sh"
+    (box.bin / "lanes-edit.sh").rename(real)
+    _write(box.bin / "lanes-edit.sh", f"""#!/usr/bin/env bash
+if [ "$1" = set-restart-intent ] && [ "$3" = pending ]; then exit 1; fi
+exec '{real}' "$@"
+""")
+    result = supervisor(box, "--restart", "--lane", LANE, "--dir", str(box.lane_dir), "clear")
+    assert result.returncode == 2, (result.stdout, result.stderr)
+    assert "PAUSED" in box.lane_log() and "respawn-pane" not in box.tmux_log.read_text()
+    assert not alternate.exists()
+    record = dict(line.split("\t", 1) for line in helper(box, "restart-intent", LANE).stdout.splitlines())
+    assert record["file"] == str(fallback) and record["state"] == "failed"
+    assert record["mode"] == "preservation-only" and record["attempt"] == "0"
+
+
+@pytest.mark.parametrize("entry", ["read", "write", "start", "rename"])
+def test_restart_root_conflicts_refuse_without_changing_either_intent(restart_box, entry):
+    box = restart_box
+    _, fallback, alternate = restart_root_without_recorded_checkout(box)
+    assert helper(box, "set-restart-intent", LANE, "preparing", "--expect", "none", "--operation", "held").returncode == 0
+    record_nested_restart_checkout(box)
+    alternate.parent.mkdir(parents=True, exist_ok=True)
+    alternate.write_bytes(fallback.read_bytes())  # identical bytes are separate authority
+    before = {p: p.read_bytes() for p in [fallback, alternate, box.wip / "lanes" / "LANES.md"]}
+    box.resolver()
+    if entry == "read":
+        result = helper(box, "restart-intent", LANE)
+    elif entry == "write":
+        result = helper(box, "set-restart-intent", LANE, "failed", "--expect", "preparing")
+    elif entry == "rename":
+        result = helper(box, "rename-lane", LANE, "repoZ-2")
+    else:
+        result = box.start("--dir", str(box.lane_dir))
+    assert result.returncode != 0, (result.stdout, result.stderr)
+    assert all(p.read_bytes() == contents for p, contents in before.items())
+    assert not box.claude_runs() and "respawn-pane" not in box.tmux_log.read_text()
+
+
+@pytest.mark.parametrize("alias", ["lane-root", "state-root"])
+def test_restart_root_directory_aliases_preserve_one_authority_across_replacement(restart_box, alias):
+    box = restart_box
+    _, fallback, alternate = restart_root_without_recorded_checkout(box)
+    assert helper(box, "set-restart-intent", LANE, "preparing", "--expect", "none", "--operation", "held").returncode == 0
+    record_nested_restart_checkout(box)
+    target = alternate.parent if alias == "lane-root" else alternate.parent.parent
+    # Move any independent diagnostic snapshot aside in this fixture before
+    # making the alias. Restart selection must not mutate diagnostic files.
+    if target.exists():
+        target.rename(box.root / "pre-alias-diagnostics")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.symlink_to(fallback.parent if alias == "lane-root" else fallback.parent.parent, target_is_directory=True)
+    result = helper(box, "set-restart-intent", LANE, "failed", "--expect", "preparing", "--expect-operation", "held")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    record = helper(box, "restart-intent", LANE)
+    assert record.returncode == 0 and "operation\theld" in record.stdout
+    assert "state\tfailed" in record.stdout
+    assert alternate.resolve() == fallback.resolve()
+    assert alternate.read_bytes() == fallback.read_bytes()
+
+
+@pytest.mark.parametrize("alias", ["symlink", "hardlink"])
+def test_restart_root_distinct_file_aliases_refuse_before_atomic_replacement(restart_box, alias):
+    box = restart_box
+    _, fallback, alternate = restart_root_without_recorded_checkout(box)
+    assert helper(box, "set-restart-intent", LANE, "preparing", "--expect", "none", "--operation", "held").returncode == 0
+    record_nested_restart_checkout(box)
+    alternate.parent.mkdir(parents=True, exist_ok=True)
+    if alias == "symlink":
+        alternate.symlink_to(fallback)
+    else:
+        os.link(fallback, alternate)
+    before = fallback.read_bytes()
+    assert helper(box, "restart-intent", LANE).returncode == 1
+    result = helper(box, "set-restart-intent", LANE, "failed", "--expect", "preparing")
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert alternate.read_bytes() == fallback.read_bytes() == before
+
+
+@pytest.mark.parametrize("kind", ["malformed", "directory", "broken-link", "unusable-parent"])
+def test_restart_root_does_not_hide_unusable_fallback_after_checkout_is_recorded(restart_box, kind):
+    box = restart_box
+    _, fallback, alternate = restart_root_without_recorded_checkout(box)
+    fallback.parent.mkdir(parents=True, exist_ok=True)
+    if kind == "malformed":
+        fallback.write_text("schema: 1\nstate: pending\n")
+    elif kind == "directory":
+        fallback.mkdir()
+    elif kind == "broken-link":
+        fallback.symlink_to(box.root / "missing-intent")
+    else:
+        fallback.parent.rmdir()
+        fallback.parent.write_text("not a directory\n")
+    record_nested_restart_checkout(box)
+    read = helper(box, "restart-intent", LANE)
+    assert read.returncode != 8, (read.stdout, read.stderr)
+    if kind == "malformed":
+        assert read.returncode == 0 and "INCOMPLETE" in read.stdout
+    else:
+        assert read.returncode == 1, (read.stdout, read.stderr)
+    result = helper(box, "set-restart-intent", LANE, "preparing", "--expect", "none", "--operation", "other")
+    assert result.returncode != 0, (result.stdout, result.stderr)
+    assert not alternate.exists()
+
+
+def test_restart_root_waiting_writer_discovers_new_authority_under_mutex(restart_box):
+    box = restart_box
+    _, fallback, alternate = restart_root_without_recorded_checkout(box)
+    record_nested_restart_checkout(box)
+    lock = box.wip / "lanes" / ".lanes-edit.lock"
+    lock.mkdir()
+    (lock / "pid").write_text(str(os.getpid()))
+    waited = box.root / "writer.waited"
+    sleep = shutil.which("sleep")
+    _write(box.fakebin / "sleep", f"""#!/usr/bin/env bash
+: > '{waited}'
+exec '{sleep}' "$@"
+""")
+    process = subprocess.Popen([str(box.bin / "lanes-edit.sh"), "set-restart-intent", LANE,
+                                "preparing", "--expect", "none", "--operation", "waiting"],
+                               cwd=box.lane_dir, env=box.env, text=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        deadline = time.monotonic() + 15
+        while not waited.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(.05)
+        assert waited.exists()
+        # Another writer establishes a valid fallback before this waiter owns
+        # the mutex. It must discover that authority instead of creating nested.
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        fallback.write_bytes(box.restart_root_seed)
+        before = fallback.read_bytes()
+        lock.joinpath("pid").unlink()
+        lock.rmdir()
+        out = process.communicate(timeout=15)
+        assert process.returncode == 7, out
+        assert fallback.read_bytes() == before and not alternate.exists()
+    finally:
+        if lock.exists():
+            lock.joinpath("pid").unlink(missing_ok=True)
+            lock.rmdir()
+        if process.poll() is None:
+            process.terminate()
+            process.communicate(timeout=10)
+
+
+@pytest.mark.parametrize("kind", ["file", "broken-link"])
+def test_restart_root_unusable_configured_parent_cannot_disappear_from_selection(restart_box, kind):
+    box = restart_box
+    _, fallback, alternate = restart_root_without_recorded_checkout(box)
+    record_nested_restart_checkout(box)
+    bad = box.root / "unusable-projects"
+    if kind == "file":
+        bad.write_text("not a directory\n")
+    else:
+        bad.symlink_to(box.root / "missing-projects")
+    box.env["PROJECTS_ROOT"] = str(bad)
+    assert helper(box, "restart-intent", LANE).returncode == 1
+    result = helper(box, "set-restart-intent", LANE, "preparing", "--expect", "none", "--operation", "other")
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert not alternate.exists() and not fallback.exists()
+
+
+@pytest.mark.parametrize("candidate", ["recorded", "projects"])
+def test_restart_root_unsearchable_parent_ancestry_is_unknown_not_absent(restart_box, candidate):
+    if os.geteuid() == 0:
+        pytest.skip("permission regression requires an unprivileged runner")
+    box = restart_box
+    _, fallback, alternate = restart_root_without_recorded_checkout(box)
+    assert helper(box, "set-restart-intent", LANE, "preparing", "--expect", "none", "--operation", "held").returncode == 0
+    record_nested_restart_checkout(box)
+    before = fallback.read_bytes()
+    if candidate == "recorded":
+        blocked = box.lane_dir.parent
+        box.lane_dir = Path(box.env["PROJECTS_ROOT"]) / "repoZ"  # accessible caller cwd
+    else:
+        blocked = box.root / "blocked"
+        root = blocked / "projects"
+        root.mkdir(parents=True)
+        box.env["PROJECTS_ROOT"] = str(root)
+    blocked.chmod(0)
+    try:
+        assert helper(box, "restart-intent", LANE).returncode == 1
+        result = helper(box, "set-restart-intent", LANE, "failed", "--expect", "preparing")
+        assert result.returncode == 1, (result.stdout, result.stderr)
+    finally:
+        blocked.chmod(0o755)
+    assert fallback.read_bytes() == before and not alternate.exists()

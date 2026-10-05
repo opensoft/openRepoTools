@@ -22,6 +22,16 @@ register, log or window. It SHALL complete the same reservation as `pending`
 only after preservation succeeds, and SHALL refuse another active operation.
 Catchable failure SHALL fence cleanup to that exact reservation. An abandoned
 reservation SHALL have an explicit inspection and reconciliation path.
+Without an explicit state-root override, reservation, completion, cleanup and
+later reads SHALL retain the sole existing intent among recorded-checkout and
+projects-root candidates. Distinct occupied intent locations or unreadable
+candidate ownership SHALL refuse. Root selection and CAS SHALL share the writer
+mutex. Recording a nested checkout SHALL NOT strand the reserved operation.
+
+#### Scenario: Preservation records a previously unknown nested checkout
+- **WHEN** a reservation was created at the projects-root fallback and PAUSED records a nested checkout
+- **THEN** pending completion, failed cleanup and later readers retain that existing intent
+- **AND** a second distinct intent in the other candidate refuses without changing either record
 
 #### Scenario: Two context restarts overlap
 - **WHEN** a second ctx finds an active reservation

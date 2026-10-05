@@ -219,3 +219,21 @@ and before exec. Preserve the failed intent as diagnostics; never label it ready
 or import its counters into ordinary resume. These checks retain normal launch
 safeguards and do not create an atomic ordinary-launch reservation. Failed
 supervised launches and preparing reservations remain refused by ordinary resume.
+
+
+### 2026-10-05 durable restart control-root correction
+
+Exact-head Codex review at b20882a identified a reservation whose initial
+projects-root fallback changes after PAUSED first records a nested checkout.
+Keep restart intent discovery bounded to the recorded-checkout and projects-root
+candidates: a sole existing physical intent retains authority independently of
+state or validity; distinct occupied intent locations or unreadable ancestry
+refuse. Aliases of the same control-root directory count once; leaf symlinks and
+hardlinks in distinct directories refuse because atomic replacement would split
+their records. An explicit state-root override remains authoritative,
+and checkout hints remain a last resort when no established rung exists.
+Root selection and CAS run under the same writer mutex. This fixes completion,
+cleanup and later readers without an environment-only pin or a new pointer/schema.
+PR #97 diagnostic roots remain unchanged: restart storage can retain its original
+fallback while diagnostics follow the recorded checkout. Broader root discovery
+and explicit checkout hint creation remain deferred in #159.
