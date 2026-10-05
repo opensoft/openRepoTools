@@ -88,7 +88,8 @@
 #   lanes-edit.sh set-row-state <lane> "<STATE> · <one line>"
 #   lanes-edit.sh log NOTED lane:<lane> "<what the lane did, found, launched, left>"
 #   lanes-edit.sh log RULED lane:<lane> [→ <object>] "<Brett Heap's words, verbatim>"
-#   lanes-edit.sh history <lane> [--since <UTC>]
+#   lanes-edit.sh history <lane> [--since <UTC>] [--index]
+#   lanes-edit.sh history --all | --repo <owner/repo> [--since <UTC>] [--index]
 #   lanes-edit.sh migrate-state-cells [--yes]
 #
 #   The `state` column holds ONE PHRASE — `<STATE> · <UTC> · <one line>` — and
@@ -116,6 +117,21 @@
 #   `lanes/archive/LANES-pre-amendment-13-<UTC>.md`, every lane's log and the
 #   register. It REFUSES when no cell holds a ` · ` entry, so a second run is a
 #   no-op that says so.
+#
+# AMENDMENT 14 — THE DERIVED INDEX (`lanes-index`), WHICH NOTHING HERE ACTS ON
+#   lanes-edit.sh lanes   … --index          # the listing, out of the index
+#   lanes-edit.sh history … --index          # the diary, out of the index
+#
+#   The register's truth stays where it is. `lanes-index` (placed by
+#   `openRepoTools --install`) keeps a DERIVED copy — SQLite, or QA Postgres
+#   where this workstation is configured for it — written BEHIND the sources:
+#   after every write whose push LANDED, and after the mutex is released, this
+#   file starts one DETACHED `lanes-index sync` (stdin closed, never waited,
+#   its status never read; skipped where `lanes-index` is not on PATH or
+#   `LANES_INDEX=off`). No act reads the index or waits on it. `--index` is the
+#   only way a read consults it, typed per invocation, and it says on stderr
+#   which it read: `read: index (<store>) at register@<sha12>; <k> commits
+#   behind`, or `read: sources (index <why>)` and the sources answer.
 #
 # AMENDMENT 7 — the per-lane object log (`lanes/log/<lane>.md`)
 #   lanes-edit.sh log     <VERB> <object> [→|← <payload>] ["<text>"] [--text "<t>"]
@@ -570,6 +586,9 @@
 #                      ref as it already stands here.
 #   LANES_STALE_HOURS  Rule 1's stale threshold, reused (default: 4)
 #   LANES_DEBUG        non-empty: a refusal also prints its exit code
+#   LANES_INDEX=off    no `lanes-index sync` after a write, and `--index` reads
+#                      the sources (Amendment 14). It never turns a read ON:
+#                      only a typed `--index` does
 #
 # Dependencies: bash, git, coreutils. No sed/awk substitution on the payload —
 # every edit is computed with bash string operations, so `/`, `&`, `\` and `|`
@@ -1042,6 +1061,13 @@ lanes_binding_probe() {
 lanes_binding_probe
 NO_GIT="${LANES_NO_GIT:-0}"
 LOCK="$LANES_DIR/.lanes-edit.lock"
+# AMENDMENT 14 — TWO VALUES ONLY THIS PROCESS SETS, AND NEVER THE ENVIRONMENT.
+# The index is consulted behind a flag typed for the invocation, "never by
+# default, environment or configuration" (clause (b)), and the nudge follows a
+# push THIS process made (clause (d)). Both are assigned here unconditionally,
+# so an exported variable of either name changes nothing.
+LANES_IDX_DIR=""
+LANES_INDEX_NUDGE=0
 LOCK_HELD=0
 LANES_PATH="${LANES_PATH:-$(git -C "${LANES_DIR:-.}" rev-parse --show-prefix 2>/dev/null || :)${LANES_FILE##*/}}"
 
@@ -1161,6 +1187,12 @@ cleanup() {
   [ -n "${RL_SNAP:-}" ] && [ -d "${RL_SNAP:-}" ] && rm -rf -- "$RL_SNAP"
   [ -n "${TMPD:-}" ] && [ -d "${TMPD:-}" ] && rm -rf -- "$TMPD"
   [ -n "${SE_CACHE_FILE:-}" ] && rm -f -- "$SE_CACHE_FILE" "$SE_CACHE_FILE".* 2>/dev/null
+  [ -n "${LANES_IDX_DIR:-}" ] && [ -d "${LANES_IDX_DIR:-}" ] && rm -rf -- "$LANES_IDX_DIR"
+  # AMENDMENT 14(d) — THE NUDGE IS THE LAST THING THIS PROCESS DOES: after the
+  # lock is released at the top of this function, and only where `commit_push` recorded a push
+  # that landed. Tested here rather than inside the function, because `cleanup`
+  # also runs for a process that died before `index_nudge` was ever defined.
+  [ "${LANES_INDEX_NUDGE:-0}" = 1 ] && index_nudge
   return 0
 }
 # AND A SIGNAL ACTUALLY STOPS IT (Amendment 8, ruling (h)). `trap cleanup EXIT
@@ -1875,6 +1907,7 @@ EOF
       [ "$GIT_TIMED_OUT" = 1 ] && git_timeout_die "git push -u origin $LANES_BRANCH"
       die "initial push of '$LANES_BRANCH' failed" 6
     fi
+    LANES_INDEX_NUDGE=1
     note "pushed (created origin/$LANES_BRANCH)"
     return 0
   fi
@@ -1898,6 +1931,7 @@ EOF
       printf '  %s\n' $others >&2
       note "skipping 'pull --rebase' (it refuses on any unstaged tracked change) and pushing straight out"
       if git_net -C "$LANES_REPO" push -q origin "$LANES_BRANCH"; then
+        LANES_INDEX_NUDGE=1
         note "pushed origin/$LANES_BRANCH (attempt $attempt, no pull — see the warning above)"
         return 0
       fi
@@ -1917,6 +1951,7 @@ EOF
         "$CP_AFTER_REBASE" || return $?
       fi
       if git_net -C "$LANES_REPO" push -q origin "$LANES_BRANCH"; then
+        LANES_INDEX_NUDGE=1
         note "pushed origin/$LANES_BRANCH (attempt $attempt)"
         return 0
       fi
@@ -1979,6 +2014,120 @@ EOF
     sleep 3
   done
   die "could not push origin/$LANES_BRANCH after 6 attempts; your commit is local — retry later" 6
+}
+
+# ====================================================== AMENDMENT 14 =======
+#
+# THE DERIVED INDEX (lane-collision-protocol Amendment 14, ratified by Brett
+# Heap 2026-10-05, verbatim "ratify 48"). The register's truth stays where it
+# is; `lanes-index` keeps a DERIVED copy of it — SQLite on local disk, or QA
+# Postgres where a workstation is configured for it — written behind the
+# sources, read only by tooling that decides nothing, and never a gate.
+#
+# THIS FILE TOUCHES IT IN EXACTLY TWO PLACES, AND NEITHER IS ON AN ACT'S PATH.
+#
+#   THE NUDGE (clause (d)). After a push has LANDED and the mutex is released —
+#   `cleanup`, on the way out, once `commit_push` has recorded a push that went
+#   through — ONE DETACHED `lanes-index sync`: stdin closed, stdout and stderr
+#   on /dev/null, descriptors 3 to 9 closed, started from a subshell that
+#   exits at once so this process never has a child to wait for, and its
+#   status never read. It carries no data: the indexer reads `origin/<branch>`
+#   as the push left it, never takes this file's mutex, and a slow, failing or
+#   absent indexer delays and fails nothing here. `LANES_INDEX=off` skips it,
+#   and so does a workstation with no `lanes-index` ON PATH — PATH alone, not
+#   the file beside this one, because a sibling in a clone is not an
+#   installation and the suite runs this file thousands of times from one: the
+#   absent case is one `command -v` and prints nothing.
+#
+#   THE READ FLAG (clause (b)). `lanes ... --index` and `history ... --index`,
+#   and only when TYPED: `index_open` asks `lanes-index export` for the index's
+#   image of the register, and the eight PUBLISHED-READ primitives — the
+#   register, the archive, the alias table, the log list, a log's events, the
+#   events of them all — answer out of that image instead of `origin/<branch>`.
+#   Everything else the read does is unchanged, the LOCAL reads included (this
+#   checkout's own register and log files, this workstation's session records,
+#   tmux), which is what makes its answer byte-identical to the source read's
+#   where the index is current. Anything else — the indexer absent, the store
+#   missing, unreachable, wiped or of another schema, a configuration it
+#   refuses — is said in ONE line and the source read runs as it always did.
+#
+# NOTHING ELSE READS IT. No act, no hook, no guard, no writer and none of the
+# reads an act makes for itself (`who`, `binding`, `live-holder`, `next-free`,
+# `managed-projection`, `lane-reconcile`) has a path to `LANES_IDX_DIR`: it is
+# assigned empty at start-up whatever the environment says, and set only by
+# `index_open`, which only the two read arms call.
+index_nudge() {
+  LANES_INDEX_NUDGE=0
+  [ "${LANES_INDEX:-}" = off ] && return 0
+  in_bin="$(command -v lanes-index 2>/dev/null || :)"
+  [ -n "$in_bin" ] || return 0
+  ( "$in_bin" sync </dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- & ) >/dev/null 2>&1
+  return 0
+}
+
+# THE READ FLAG'S ONE DOOR. 0 with `LANES_IDX_DIR` set and `read: index (...)`
+# said; 1 with `read: sources (index <why>)` said and NOTHING set, so the caller
+# runs the source read exactly as it would have without the flag — and exits as
+# that read would. Both lines go to stderr: stdout is the read's own, and a
+# person diffing the two answers diffs the answer.
+#
+# THE LAG IS SAID, NEVER REFUSED (clause (b)): `<k>` is how many commits this
+# checkout's `origin/<branch>` carries past the indexed one, and `unknown` where
+# that commit is not here to count from.
+index_open() {
+  LANES_IDX_DIR=""
+  if [ "${LANES_INDEX:-}" = off ]; then
+    printf 'read: sources (index off: LANES_INDEX=off)\n' >&2
+    return 1
+  fi
+  io_bin=""
+  if [ -x "$SCRIPT_DIR/lanes-index" ]; then io_bin="$SCRIPT_DIR/lanes-index"
+  else io_bin="$(command -v lanes-index 2>/dev/null || :)"
+  fi
+  if [ -z "$io_bin" ]; then
+    printf 'read: sources (index missing: no lanes-index beside %s or on PATH)\n' "$SCRIPT_DIR/lanes-edit.sh" >&2
+    return 1
+  fi
+  io_dir="$(mktemp -d "${TMPDIR:-/tmp}/lanes-index-read.XXXXXX" 2>/dev/null || printf '')"
+  if [ -z "$io_dir" ]; then
+    printf 'read: sources (index unread: no temporary directory could be made)\n' >&2
+    return 1
+  fi
+  io_rc=0
+  if command -v timeout >/dev/null 2>&1; then
+    timeout -k 2 30 "$io_bin" export --out "$io_dir" </dev/null >/dev/null 2>"$io_dir/.stderr" || io_rc=$?
+  else
+    "$io_bin" export --out "$io_dir" </dev/null >/dev/null 2>"$io_dir/.stderr" || io_rc=$?
+  fi
+  if [ "$io_rc" != 0 ] || [ ! -f "$io_dir/meta" ]; then
+    io_why=""
+    [ -f "$io_dir/why" ] && io_why="$(head -n 1 -- "$io_dir/why" 2>/dev/null || :)"
+    case "$io_rc" in 124|137) io_why="unreachable: lanes-index export did not answer within 30 s" ;; esac
+    if [ -z "$io_why" ]; then
+      io_why="unread: lanes-index export exited $io_rc"
+      io_err="$(head -n 1 -- "$io_dir/.stderr" 2>/dev/null || :)"
+      [ -z "$io_err" ] || io_why="$io_why: $io_err"
+    fi
+    rm -rf -- "$io_dir"
+    printf 'read: sources (index %s)\n' "$io_why" >&2
+    return 1
+  fi
+  io_store="$(sed -n -e 's/^store=//p' "$io_dir/meta" | head -n 1)"
+  io_sha="$(sed -n -e 's/^sha=//p' "$io_dir/meta" | head -n 1)"
+  io_behind=unknown
+  if [ -n "$io_sha" ] && have_remote_ref; then
+    io_n="$(git -C "$LANES_REPO" rev-list --count "$io_sha..origin/$LANES_BRANCH" 2>/dev/null || :)"
+    case "$io_n" in ''|*[!0-9]*) : ;; *) io_behind="$io_n" ;; esac
+  fi
+  LANES_IDX_DIR="$io_dir"
+  # WHAT WAS READ BEFORE THE FLAG WAS HONOURED IS NOT WHAT IS READ AFTER IT:
+  # every published-read cache this process may already hold is dropped.
+  LANES_REGISTER_CACHE=""
+  [ -n "${SE_CACHE_FILE:-}" ] && rm -f -- "$SE_CACHE_FILE.register"
+  lane_alias_flush
+  state_events_flush
+  printf 'read: index (%s) at register@%s; %s commits behind\n' "${io_store:-unknown}" "${io_sha:0:12}" "$io_behind" >&2
+  return 0
 }
 
 # Prints, to stdout, a comma-joined, de-duplicated list of the lane(s) whose
@@ -2307,9 +2456,15 @@ log_files_named_ci() {   # <lane> — every existing log file for it, whatever i
 # that half (Copilot round 4).
 log_path_ci() {   # <lane> — 0 with the ONE path, 2 where two differ only by case
   lpc_exact="$(log_path_for "$1")"
-  if have_remote_ref; then
+  # AMENDMENT 14 — UNDER `--index` THE INDEX'S LOG LIST STANDS IN FOR
+  # `origin`'s tree, and nothing else in this function changes.
+  if [ -n "$LANES_IDX_DIR" ] || have_remote_ref; then
+    if [ -n "$LANES_IDX_DIR" ]; then
+      lpc_hits="$(awk -v want="$lpc_exact" 'BEGIN { w = tolower(want) } tolower($0) == w' "$LANES_IDX_DIR/logs" 2>/dev/null)"
+    else
     lpc_hits="$(git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" 2>/dev/null \
       | awk -v want="$lpc_exact" 'BEGIN { w = tolower(want) } tolower($0) == w')"
+    fi
     lpc_n="$(printf '%s' "$lpc_hits" | grep -c . || :)"
     if [ "$lpc_n" -gt 1 ]; then
       note "lane $1 has $lpc_n object logs on origin/$LANES_BRANCH whose names differ only by case: $(printf '%s\n' "$lpc_hits" | tr '\n' ' ')"
@@ -2717,6 +2872,14 @@ have_remote_ref() {
 # has LANDED is what other lanes can see, and a working tree can be anything —
 # behind by a peer's whole day, or carrying a line that never lands.
 remote_log_events() {
+  # AMENDMENT 14 — under `--index`, the index's events of every log, in the
+  # order and the grammar this function prints them in, and the warnings
+  # `LOG_AWK` would have printed for the lines it could not read.
+  if [ -n "$LANES_IDX_DIR" ]; then
+    cat -- "$LANES_IDX_DIR/warn" >&2 2>/dev/null || :
+    cat -- "$LANES_IDX_DIR/events"
+    return 0
+  fi
   [ "$NO_GIT" = 1 ] && { log_events; return 0; }
   git -C "$LANES_REPO" rev-parse --verify -q "origin/$LANES_BRANCH" >/dev/null 2>&1 || { log_events; return 0; }
   git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" 2>/dev/null \
@@ -2806,7 +2969,14 @@ state_events_flush() {
 # read as "there is no log".
 lane_log_events() {
   ll_rel="$(log_path_ci "$1")" || return 2
-  if have_remote_ref; then
+  if [ -n "$LANES_IDX_DIR" ]; then
+    # A LOG THE INDEX DOES NOT HOLD IS A LOG `origin` DID NOT HOLD at the
+    # indexed commit: no lines, exactly as a `git show` of a missing path.
+    command grep -Fqx -- "$ll_rel" "$LANES_IDX_DIR/logs" 2>/dev/null || return 0
+    awk -F"$US" -v p="$ll_rel" '$10 == p' "$LANES_IDX_DIR/events"
+    awk -v p="unreadable: $ll_rel:" 'index($0, p) == 1' "$LANES_IDX_DIR/warn" >&2 2>/dev/null || :
+    return 0
+  elif have_remote_ref; then
     git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$ll_rel" 2>/dev/null | parse_log_stream "$ll_rel"
   else
     ll_f="$LANES_LOG_DIR/${ll_rel##*/}"
@@ -2816,7 +2986,9 @@ lane_log_events() {
 }
 lane_log_exists() {
   lle_rel="$(log_path_ci "$1")" || return 2
-  if have_remote_ref; then
+  if [ -n "$LANES_IDX_DIR" ]; then
+    command grep -Fqx -- "$lle_rel" "$LANES_IDX_DIR/logs" 2>/dev/null
+  elif have_remote_ref; then
     git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$lle_rel" 2>/dev/null
   else
     [ -f "$LANES_LOG_DIR/${lle_rel##*/}" ]
@@ -2848,6 +3020,10 @@ lane_log_exists() {
 # subshell that wrote it, so the megabyte is rendered once per process.
 LANES_REGISTER_CACHE=""
 register_text() {
+  # AMENDMENT 14 — under `--index`, the register's rows and its Rule 6 and
+  # Amendment 10 lines as the index holds them, in register order. Not cached:
+  # it is one local file, and the cache below belongs to the published read.
+  if [ -n "$LANES_IDX_DIR" ]; then cat -- "$LANES_IDX_DIR/register"; return 0; fi
   if [ -n "$LANES_REGISTER_CACHE" ]; then printf '%s\n' "$LANES_REGISTER_CACHE"; return 0; fi
   rt_c="${SE_CACHE_FILE:+$SE_CACHE_FILE.register}"
   if [ -n "$rt_c" ] && [ -s "$rt_c" ]; then cat -- "$rt_c"; return 0; fi
@@ -2880,7 +3056,10 @@ LANES_ARCH_NAME="LANES-retired.md"
 LANES_ARCH_PATH="${LANES_ARCH_PATH:-${LANES_PREFIX}archive/$LANES_ARCH_NAME}"
 LANES_ARCH_FILE="${LANES_ARCH_FILE:-$LANES_DIR/archive/$LANES_ARCH_NAME}"
 archive_text() {
-  if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_ARCH_PATH" 2>/dev/null; then
+  # AMENDMENT 14 — under `--index`, the archive's rows where the indexed commit
+  # carried an archive; where it carried none, the same local fallback below.
+  if [ -n "$LANES_IDX_DIR" ] && [ -f "$LANES_IDX_DIR/archive" ]; then cat -- "$LANES_IDX_DIR/archive"; return 0; fi
+  if [ -z "$LANES_IDX_DIR" ] && have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_ARCH_PATH" 2>/dev/null; then
     # A published archive that cannot be rendered cannot be replaced with a
     # possibly stale local copy: that copy may omit a retired position.
     if git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_ARCH_PATH" 2>/dev/null; then return 0; fi
@@ -3166,6 +3345,15 @@ home_of_lane() {
 }
 
 known_lanes() {
+  if [ -n "$LANES_IDX_DIR" ]; then
+    while IFS= read -r kl_f; do
+      [ -n "$kl_f" ] || continue
+      kl_n="${kl_f##*/}"
+      case "$kl_n" in README.md) continue ;; esac
+      printf '%s\n' "${kl_n%.md}"
+    done < "$LANES_IDX_DIR/logs"
+    return 0
+  fi
   if have_remote_ref; then
     git -C "$LANES_REPO" ls-tree --name-only "origin/$LANES_BRANCH" -- "$LANES_LOG_PREFIX" 2>/dev/null \
     | while IFS= read -r kl_f; do
@@ -4306,7 +4494,14 @@ lane_alias_text() {
   lat_t=""; LANES_ALIAS_ERR=""
   lat_e="${SE_CACHE_FILE:+$SE_CACHE_FILE.aliaserr}"
   [ -n "$lat_e" ] && rm -f -- "$lat_e"
-  if have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_ALIASES_PATH" 2>/dev/null; then
+  # AMENDMENT 14 — under `--index`, the table as the indexed commit carried it;
+  # where it carried none, the same local fallbacks below.
+  if [ -n "$LANES_IDX_DIR" ] && [ -f "$LANES_IDX_DIR/aliases" ]; then
+    lat_t="$(cat -- "$LANES_IDX_DIR/aliases" 2>/dev/null)" || {
+      lane_alias_fail "the index's copy at $LANES_IDX_DIR/aliases could not be read"
+      return 5
+    }
+  elif [ -z "$LANES_IDX_DIR" ] && have_remote_ref && git -C "$LANES_REPO" cat-file -e "origin/$LANES_BRANCH:$LANES_ALIASES_PATH" 2>/dev/null; then
     lat_t="$(git -C "$LANES_REPO" show "origin/$LANES_BRANCH:$LANES_ALIASES_PATH" 2>/dev/null)" || {
       lane_alias_fail "git show origin/$LANES_BRANCH:$LANES_ALIASES_PATH failed, and the object is there"
       return 5
@@ -14668,41 +14863,117 @@ EOF
   # 8 IS "THIS LANE HAS WRITTEN NO NARRATIVE", which a lane that has never taken
   # a note and a lane with no log at all both are; a read that could not be made
   # is never 8 (R22) and leaves through the die above it.
+  # AMENDMENT 13's DIARY, and since AMENDMENT 14 ACROSS LANES TOO.
+  #
+  #   history <lane>                one lane's `NOTED` and `RULED` lines, in
+  #                                 FILE ORDER — the diary the state cell used
+  #                                 to be. Unchanged.
+  #   history --all                 every lane's, as ONE timeline: by UTC, and
+  #                                 by file and line where two share a minute.
+  #   history --repo <owner/repo>   the lanes whose HOME is that repository —
+  #                                 the `home` of their last `STARTED`/`RESUMED`,
+  #                                 through the alias table, exactly as `lanes
+  #                                 --repo` files them — on one timeline.
+  #   --since <UTC>                 with any of the three.
+  #   --index                       read the DERIVED INDEX instead of the
+  #                                 published logs (Amendment 14(b)), only when
+  #                                 typed: stderr says `read: index (<store>) at
+  #                                 register@<sha12>; <k> commits behind`, or
+  #                                 `read: sources (index <why>)` and the
+  #                                 sources answer. Where the index answers it
+  #                                 does not fetch: it reads no network at all,
+  #                                 and the lag is said against this checkout.
+  #
+  # `history` over two lanes was refused, exit 64, on 2026-10-05 (Amendment 14,
+  # "Why" 3); `--all` and `--repo` are that question, and they read the
+  # SOURCES — the same one pass over every published log `who` makes — with or
+  # without the flag.
   history)
-    lane=""; hi_since=""
+    lane=""; hi_since=""; hi_all=0; hi_repo=""; hi_index=0
+    hi_usage="history <lane> | --all | --repo <owner/repo>  [--since <UTC>] [--index]"
     while [ $# -gt 0 ]; do
       case "$1" in
         --since)   hi_since="${2-}"; [ -n "$hi_since" ] || die "--since needs a UTC instant" 64; shift 2 ;;
         --since=*) hi_since="${1#--since=}"; [ -n "$hi_since" ] || die "--since needs a UTC instant" 64; shift ;;
+        --all)     hi_all=1; shift ;;
+        --repo)    hi_repo="${2-}"; [ -n "$hi_repo" ] || die "--repo needs a repository ($hi_usage)" 64; shift 2 ;;
+        --repo=*)  hi_repo="${1#--repo=}"; [ -n "$hi_repo" ] || die "--repo needs a repository ($hi_usage)" 64; shift ;;
+        --index)   hi_index=1; shift ;;
         --)        shift ;;
-        -*)        die "unknown option '$1' for history (history <lane> [--since <UTC>])" 64 ;;
-        *)         [ -z "$lane" ] || die "history takes ONE lane: history <lane> [--since <UTC>]" 64; lane="$1"; shift ;;
+        -*)        die "unknown option '$1' for history ($hi_usage)" 64 ;;
+        *)         [ -z "$lane" ] || die "history takes ONE lane, or --all, or --repo <owner/repo>: $hi_usage" 64; lane="$1"; shift ;;
       esac
     done
-    [ -n "$lane" ] || die "usage: history <lane> [--since <UTC>]" 64
-    check_lane_name "$lane"
+    hi_sel=0
+    [ -n "$lane" ] && hi_sel=$((hi_sel + 1))
+    [ "$hi_all" = 1 ] && hi_sel=$((hi_sel + 1))
+    [ -n "$hi_repo" ] && hi_sel=$((hi_sel + 1))
+    [ "$hi_sel" = 1 ] || die "usage: $hi_usage — ONE of a lane, --all or --repo" 64
+    [ -z "$lane" ] || check_lane_name "$lane"
     case "$hi_since" in
       '') : ;;
       [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]Z | [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) : ;;
       *) die "--since takes a UTC instant spelled as this log spells it, YYYY-MM-DDTHH:MM[:SS]Z — '$hi_since' is not one" 64 ;;
     esac
+    # THE INDEX FIRST, and where it answers there is no fetch: the read is the
+    # index's, and a network round trip in front of it is the cost the flag is
+    # for avoiding. Where it does not answer, the source read below is exactly
+    # the one this arm always made, the fetch included.
+    if [ "$hi_index" = 1 ] && index_open; then LANES_NO_FETCH=1; fi
     log_sync
-    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
-    hi_lines=""; hi_rc=0
-    hi_lines="$(lane_log_events "$lane")" || hi_rc=$?
-    case "$hi_rc" in
-      0) : ;;
-      2) exit 2 ;;
-      *) die "history could not read lane $lane's log (exit $hi_rc). That is NOT 'this lane has written no narrative' — a read that failed is never an answer (Amendment 7(d))." 1 ;;
-    esac
-    hi_out="$(printf '%s\n' "$hi_lines" | awk -F"$US" -v since="$hi_since" '
-      function pad(u) { return (length(u) == 17) ? substr(u, 1, 16) ":00Z" : u }
-      $3 == "NOTED" || $3 == "RULED" {
-        if (since != "" && pad($1) < pad(since)) next
-        printf "%-20s  %-5s  %s%s\n", $1, $3, ($8 != "" ? $8 " — " : ""), $9
-      }')"
-    [ -n "$hi_out" ] || exit 8
-    printf '%s\n' "$hi_out"
+    if [ -n "$lane" ]; then
+      lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+      hi_lines=""; hi_rc=0
+      hi_lines="$(lane_log_events "$lane")" || hi_rc=$?
+      case "$hi_rc" in
+        0) : ;;
+        2) exit 2 ;;
+        *) die "history could not read lane $lane's log (exit $hi_rc). That is NOT 'this lane has written no narrative' — a read that failed is never an answer (Amendment 7(d))." 1 ;;
+      esac
+      hi_out="$(printf '%s\n' "$hi_lines" | awk -F"$US" -v since="$hi_since" '
+        function pad(u) { return (length(u) == 17) ? substr(u, 1, 16) ":00Z" : u }
+        $3 == "NOTED" || $3 == "RULED" {
+          if (since != "" && pad($1) < pad(since)) next
+          printf "%-20s  %-5s  %s%s\n", $1, $3, ($8 != "" ? $8 " — " : ""), $9
+        }')"
+      [ -n "$hi_out" ] || exit 8
+      printf '%s\n' "$hi_out"
+    else
+      hi_ev="$(state_events)"
+      # `--repo`: THE LANES WHOSE HOME IS IT, keyed as every other table in
+      # this file is — the log's own lane, lower-cased — and a home compared
+      # through the alias table on BOTH sides, so `openRepoTools` and
+      # `opensoft/openRepoTools` are one repository here as they are to
+      # `lanes --repo`. A lane with no recorded home is in no repository's.
+      hi_filter=0; hi_keep=""
+      if [ -n "$hi_repo" ]; then
+        hi_filter=1
+        hi_want="$(alias_lookup "$hi_repo" 2>/dev/null || :)"; [ -n "$hi_want" ] || hi_want="$hi_repo"
+        lower_into "$hi_want"; hi_want_lc="$LOWER_OUT"
+        while IFS="$US" read -r hi_l _hi_disp _hi_v _hi_u _hi_w _hi_d _hi_p _hi_win hi_h _hi_rest; do
+          [ -n "${hi_l:-}" ] && [ -n "${hi_h:-}" ] || continue
+          hi_hc="$(alias_lookup "$hi_h" 2>/dev/null || :)"; [ -n "$hi_hc" ] || hi_hc="$hi_h"
+          lower_into "$hi_hc"
+          [ "$LOWER_OUT" = "$hi_want_lc" ] && hi_keep="$hi_keep $hi_l"
+        done <<EOF
+$(printf '%s\n' "$hi_ev" | lane_row_facts)
+EOF
+      fi
+      # ONE TIMELINE: the UTC padded as the single-lane read pads it, then the
+      # file and the line — the log's own order where two lines share a stamp.
+      # The key is cut away after the sort; the lane is the LOG's (Amendment
+      # 16(e): a line's lane is the lane of the file it is in).
+      hi_out="$(printf '%s\n' "$hi_ev" | awk -F"$US" -v since="$hi_since" -v filter="$hi_filter" -v keep="$hi_keep" '
+        function pad(u) { return (length(u) == 17) ? substr(u, 1, 16) ":00Z" : u }
+        BEGIN { n = split(keep, kk, " "); for (i = 1; i <= n; i++) K[kk[i]] = 1 }
+        $3 == "NOTED" || $3 == "RULED" {
+          if (since != "" && pad($1) < pad(since)) next
+          if (filter == 1 && !(tolower($2) in K)) next
+          printf "%s\034%s\034%09d\037%-20s  %-26s  %-5s  %s%s\n", pad($1), $10, $11, $1, $2, $3, ($8 != "" ? $8 " — " : ""), $9
+        }' | LC_ALL=C sort | awk -v s="$US" '{ i = index($0, s); print substr($0, i + 1) }')"
+      [ -n "$hi_out" ] || exit 8
+      printf '%s\n' "$hi_out"
+    fi
     ;;
 
   # THE LANE'S LAST LANE-KIND LINE, in FILE ORDER — `<verb><TAB><utc><TAB><session><TAB><payload>`.
@@ -14871,15 +15142,20 @@ EOF
   # is why the filter is an argument rather than three implementations.
   # 0 with rows, 8 with none, 64 a usage error of its own.
   lanes)
-    lns_args=(); lns_fetch=0
+    lns_args=(); lns_fetch=0; lns_index=0
     while [ $# -gt 0 ]; do
       case "$1" in
-        --repo|--dir|--ws|--lane|--prefix) [ -n "${2-}" ] || die "$1 needs a value (usage: lanes [--repo <owner/repo>] [--dir <path>] [--prefix <repo>] [--ws <workstation>] [--lane <lane>] [--here] [--all] [--closed] [--fetch])" 64
+        --repo|--dir|--ws|--lane|--prefix) [ -n "${2-}" ] || die "$1 needs a value (usage: lanes [--repo <owner/repo>] [--dir <path>] [--prefix <repo>] [--ws <workstation>] [--lane <lane>] [--here] [--all] [--closed] [--fetch] [--index])" 64
                            lns_args+=("$1" "$2"); shift 2 ;;
         --all|--here|--closed) lns_args+=("$1"); shift ;;
         --fetch)           lns_fetch=1; shift ;;
+        # AMENDMENT 14(b) — THE DERIVED INDEX, ONLY WHEN TYPED. It replaces the
+        # PUBLISHED reads of the register and the logs and nothing else; the
+        # live session records, tmux and this checkout's own files are read
+        # exactly as they are without it, so the rows are the same rows.
+        --index)           lns_index=1; shift ;;
         --)                shift ;;
-        *)                 die "unknown argument '$1' for lanes (usage: lanes [--repo <owner/repo>] [--dir <path>] [--prefix <repo>] [--ws <workstation>] [--here] [--all] [--closed] [--fetch])" 64 ;;
+        *)                 die "unknown argument '$1' for lanes (usage: lanes [--repo <owner/repo>] [--dir <path>] [--prefix <repo>] [--ws <workstation>] [--here] [--all] [--closed] [--fetch] [--index])" 64 ;;
       esac
     done
     # THE ONE READ IN THIS FILE WHOSE DEFAULT IS LOCAL (SPEC rev 4 §15). Every
@@ -14905,6 +15181,9 @@ EOF
     if [ "$lns_fetch" = 1 ] && [ "$LOG_SYNC_FETCH" != yes ] && [ "$LOG_SYNC_FETCH" != fell-back ]; then
       note "--fetch was asked for and NO FETCH WAS MADE: $LOG_SYNC_FETCH — reading the logs as they stand locally"
     fi
+    # AFTER the fetch, so `<k> commits behind` is counted against the
+    # `origin/<branch>` this run has just brought up to date where it asked to.
+    if [ "$lns_index" = 1 ]; then index_open || :; fi
     # AMENDMENT 15 — `--lane <name>` IS A `<lane>` ARGUMENT AND GOES THROUGH THE
     # RESOLVER. The filter inside `lanes_rows` has always joined on the name
     # lower-cased, so the ROWS came back either way; what a typed spelling used
@@ -14946,7 +15225,7 @@ EOF
     case "$lns_rc" in
       0)  : ;;
       8)  exit 8 ;;
-      64) die "usage: lanes [--repo <owner/repo>] [--dir <path>] [--prefix <repo>] [--ws <workstation>] [--here] [--all] [--closed]" 64 ;;
+      64) die "usage: lanes [--repo <owner/repo>] [--dir <path>] [--prefix <repo>] [--ws <workstation>] [--here] [--all] [--closed] [--fetch] [--index]" 64 ;;
       *)  die "the lane listing could not be read (exit $lns_rc)" 1 ;;
     esac
     [ -n "$lns_out" ] || exit 8
