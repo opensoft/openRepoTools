@@ -3355,8 +3355,10 @@ every source a mark names before it lets go.
 `--index` it reads the table — every `inventory:*` source the store holds, so
 Raven sees Eagle's leftovers — and stderr says `read: index (<store>) at
 inventory:<ws> synced <UTC>`, or `read: sources (index <why>)` and the sidecars
-answer. Where the table is current the two print the same bytes. Every row is a
-last observation: the current truth of a lane is `lanes-edit.sh lane-reconcile
+answer. Where the table is current, this workstation's rows are the same bytes
+either way — and a store only this workstation syncs into (SQLite, or a
+Postgres nobody else writes) prints exactly the source read, while a shared one
+adds the other workstations' rows among them. Every row is a last observation: the current truth of a lane is `lanes-edit.sh lane-reconcile
 <lane>`, which reads the disk, and the footer says so.
 
 **What never reads it.** No act: not `lane-reconcile` — there is no

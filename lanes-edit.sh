@@ -12677,15 +12677,18 @@ worktree_rows() {   # [<canonical lane>]
     wr_trees=""; wr_trc=0
     wr_trees="$(lane_trees_list "$wr_l" 2>/dev/null)" || wr_trc=$?
     case "$wr_trc" in 0) : ;; *) continue ;; esac
-    # LIVE IS PRONOUNCED, NOT-LIVE ONLY WHERE IT MAY BE (Amendment 18(b)). A
-    # live record here naming one of the lane's ids is `1`; no such record is
-    # `0` only where this workstation could read its records AND the lane is not
-    # bound elsewhere (the listing's column 13) — from outside a binding,
-    # liveness is UNKNOWN, never dead, and that is the empty field.
+    # LIVENESS IS PRONOUNCED ONLY FROM INSIDE THE BINDING (Amendment 18(b)). A
+    # live record here naming one of the lane's ids is `1` and no such record is
+    # `0` - but only where this workstation could read its records AND the
+    # lane's latest binding is not on another host (the listing's column 13).
+    # Either of those says UNKNOWN, the empty field, and it wins over the
+    # listing's LIVE too (Copilot round 1 on #171): a still-running local
+    # session of an older binding says nothing about the writer the lane's
+    # binding elsewhere has now.
     wr_live=0
+    [ "$wr_st" = LIVE ] && wr_live=1
     [ "${wr_loc:-none}" = elsewhere ] && wr_live=""
     [ "$wr_live_ok" = 1 ] || wr_live=""
-    [ "$wr_st" = LIVE ] && wr_live=1
     wr_own=""; wr_orc=0
     wr_own="$(lane_is_managed_owned "$wr_l" 2>/dev/null)" || wr_orc=$?
     wr_own="$(printf '%s\n' "$wr_own" | head -n 1)"

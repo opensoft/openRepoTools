@@ -1721,6 +1721,17 @@ def test_a_wiped_inventory_reconciles_row_for_row(inv):
     assert re.search(r"worktrees\s+4 kept\s+1 upserted", fixed.stdout), fixed.stdout
     righted = dump(inv.e.sqlite)
     assert righted["worktrees"] == synced["worktrees"]
+    # A FINGERPRINT CHANGED BY HAND, every row right, is put right by the next
+    # sync rather than left naming a table that is not there (Copilot round 1
+    # on #171).
+    conn = sqlite3.connect(str(inv.e.sqlite))
+    conn.execute("UPDATE provenance SET commit_sha = ? WHERE source = 'inventory:Eagle'", ("f" * 64,))
+    conn.commit()
+    conn.close()
+    healed = inv.sync()
+    assert healed.returncode == 0 and "0 upserted, 0 removed" in healed.stdout, healed.stdout
+    assert [r[:2] for r in dump(inv.e.sqlite)["provenance"]] == \
+        [r[:2] for r in synced["provenance"]]
     # the same table, so the same fingerprint - and a sync count that went UP
     assert [r[:2] for r in righted["provenance"]] == [r[:2] for r in synced["provenance"]]
     assert righted["provenance"][0][2] == synced["provenance"][0][2] + 1
@@ -2039,6 +2050,17 @@ def test_status_names_the_inventory_and_a_mark_names_its_source(inv, monkeypatch
     assert [r[0] for r in runs] == ["register", "inventory"], runs
     lock = mod.SyncLock()
     assert not lock.has_rerun()
+    # A FAILED SOURCE DOES NOT DROP A MARK ALREADY TAKEN (Copilot round 1 on
+    # #171): the register's round fails, the inventory's mark - taken off the
+    # disk in the same look - is still synced, and the exit is the failure.
+    runs.clear()
+    released.clear()
+    lock.mark_rerun("inventory")
+    monkeypatch.setattr(mod, "run_index", lambda *a: runs.append(("register",) + a) or 1)
+    monkeypatch.setattr(mod.SyncLock, "release", real_release)
+    assert mod.cmd_sync(None) == 1
+    assert [r[0] for r in runs] == ["register", "inventory"], runs
+    assert not lock.has_rerun()
 
 
 def test_the_inventory_source_is_this_workstations_alone(inv):
@@ -2079,3 +2101,17 @@ def test_a_lane_bound_elsewhere_has_no_liveness_pronounced_here(inv):
     listed = _wt(inv, "repoA-1")
     run = next(l for l in listed.stdout.splitlines() if l.endswith(str(inv.run_tree)))
     assert run.split()[4] == "unknown", run
+    # AND LOCALITY WINS OVER A LOCAL LIVE RECORD (Copilot round 1 on #171):
+    # repoA-2's session is still running HERE, under an id its row carries,
+    # and its latest binding is now on Raven - which is where its writer is
+    # pronounced on, not here.
+    log = inv.e.wip / "lanes" / "log" / "repoA-2.md"
+    log.write_text(log.read_text(encoding="utf-8") +
+                   f"RESUMED — lane repoA-2, session {UUID_A2}@Raven, 2026-10-05T00:00:00Z, "
+                   f"lane:repoA-2 → host raven; container none; window rsess:2 @9; os macos\n",
+                   encoding="utf-8")
+    inv.e._git("add", "-A")
+    inv.e._git("commit", "-q", "-m", "repoA-2 is bound on Raven too")
+    inv.e._git("push", "-q", "origin", "main")
+    assert inv.sync().returncode == 0
+    assert inv.rows()[f"repoA-2:{inv.a2_tree}"]["writer_live"] is None

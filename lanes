@@ -289,9 +289,10 @@ done
 # EVERY OPEN WORKTREE, rendered from `lanes-edit.sh worktrees`' rows — the #97
 # inventory as each lane's handoff last recorded it, read from this
 # workstation's sidecars, or with `--index` from the derived index's
-# `worktrees` table, which holds every workstation that syncs into it. The two
-# reads print the same bytes on stdout wherever the index is current; stderr
-# says which was read. It recomputes nothing and it decides nothing: the act
+# `worktrees` table, which holds every workstation that syncs into it. Where
+# the index is current, this workstation's rows are the same bytes either way,
+# and a store no other workstation syncs into prints exactly the source read;
+# stderr says which was read. It recomputes nothing and it decides nothing: the act
 # that reads the disk is `lanes-edit.sh lane-reconcile <lane>`, and the footer
 # says so.
 US="$(printf '\037')"

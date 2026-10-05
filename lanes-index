@@ -1955,7 +1955,10 @@ def run_inventory(mode: str, requested: str | None, dry_run: bool) -> int:
     if dry_run:
         say(f"  total: {n_up} to upsert, {n_del} to remove - nothing written (--dry-run)")
         return 0
-    if old is not None and not upserts and not deletes:
+    # NOTHING TO WRITE ONLY WHERE THE SOURCE'S OWN ROW AGREES TOO (Copilot
+    # round 1 on #171): a fingerprint changed by hand, with every row right, is
+    # put right here rather than left disagreeing with the table it names.
+    if old is not None and not upserts and not deletes and old.get("commit_sha") == fingerprint:
         if mode == "sync":
             say(f"{PROG} sync: {label} - the index is current; nothing to write")
         else:
@@ -2039,8 +2042,11 @@ def cmd_sync(requested: str | None) -> int:
                 say(f"{PROG} sync: origin/{branch()} kept moving through {rounds} reads; "
                     f"nothing written - the next write's nudge syncs it")
                 result = 0
-            if result != 0:
-                return result
+            # A FAILED SOURCE DOES NOT DROP THE OTHERS (Copilot round 1 on #171):
+            # their marks were taken off the disk with this one's, so the loop
+            # drains them all and the exit is the first failure.
+            if result != 0 and rc == 0:
+                rc = result
             if rounds >= 8:
                 return rc
     finally:
@@ -2292,8 +2298,9 @@ def _export_worktrees(out_dir: str, cfg: dict, unusable) -> int:
         return 2
     except StoreUnusable as exc:
         return unusable(exc.kind, exc.detail)
-    # THE BYTE ORDER `LC_ALL=C sort` GIVES the source read, so the two are one
-    # stream wherever the index is current.
+    # THE BYTE ORDER `LC_ALL=C sort` GIVES the source read, so this
+    # workstation's rows are the source read's own stream wherever the index is
+    # current; a shared store adds other workstations' rows among them.
     lines.sort(key=lambda line: line.encode("utf-8"))
     with open(os.path.join(out_dir, "worktrees"), "w", encoding="utf-8", newline="") as handle:
         for line in lines:
