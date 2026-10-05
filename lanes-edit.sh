@@ -10742,7 +10742,9 @@ lane_restart_sidecar_value() {   # <diagnostic value>
 }
 
 lane_restart_value_ok() {   # exact values must survive flat and tabular readers
-  case "${1-}" in *[$'\001'-$'\037'$'\177']*) return 1 ;; esac
+  # POSIX class matching also works in Bash 3.2; its ANSI-C range did not.
+  local LC_ALL=C
+  case "${1-}" in *[[:cntrl:]]*) return 1 ;; esac
   return 0
 }
 
@@ -13286,6 +13288,13 @@ Nothing was written." 2
     # refusals — a row under `<new>`, a published log — with nothing written.
     acquire_lock
 
+    # Refuse a spelling-only rename before probing both roots: on a
+    # case-insensitive filesystem they are the same intent, whose stored lane
+    # carries the canonical spelling rather than the requested new spelling.
+    if [ "$(lc "$rl_old")" = "$(lc "$rl_new")" ]; then
+      die "'$rl_old' and '$rl_new' are ONE name under any case (Amendment 15), so this is not a rename at all: it is a change to the row's own SPELLING, which every reader already resolves to and which Amendment 15(d) makes a hand act — the newer row's session id(s) appended to the older row's cell, in one commit. Nothing was written." 2
+    fi
+
     # Rename and restart publication share this mutex. An unfinished operation
     # owns its name and canonical inputs, including recovery from failed.
     for rl_check in "$rl_old" "$rl_new"; do
@@ -13323,9 +13332,6 @@ Nothing was written." 2
     # rebase the two together.
     rl_nh="$(printf '%s\n%s\n' "$(rows_named_ci "$rl_new" 2>/dev/null || :)" "$(rows_named_ci_local "$rl_new" 2>/dev/null || :)" | grep -v '^$' | LC_ALL=C sort -u || :)"
     if [ -n "$rl_nh" ]; then
-      if [ "$(lc "$rl_old")" = "$(lc "$rl_new")" ]; then
-        die "'$rl_old' and '$rl_new' are ONE name under any case (Amendment 15), so this is not a rename at all: it is a change to the row's own SPELLING, which every reader already resolves to and which Amendment 15(d) makes a hand act — the newer row's session id(s) appended to the older row's cell, in one commit. Nothing was written." 2
-      fi
       die "lane '$rl_new' already has a row, spelled $(printf '%s\n' "$rl_nh" | tr '\n' ' ')— a lane name is ONE name under any case (Amendment 15(a)), so renaming into it would make TWO rows for one name, which is the state every writer in this file refuses until 15(d)'s merge. Nothing was written." 2
     fi
 

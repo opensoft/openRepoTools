@@ -754,6 +754,8 @@ def test_new_lane_checkout_hint_still_refuses_unreadable_intent(restart_box):
 
 def test_interactive_retry_rechecks_holder_absence_before_launch(restart_box):
     import pty
+    import fcntl
+    import termios
     from conftest import REPO
     box = restart_box
     prepare_restart(box)
@@ -776,10 +778,16 @@ exit 127
     box.env.pop("LANE_SUPERVISOR_NO_PROMPT", None)
     master, slave = pty.openpty()
     output_path = box.root / "interactive.out"
+
+    def own_terminal():
+        # Match a pane: the supervisor owns a controlling tty in its session.
+        # An openpty fd alone is only a tty, which differs on macOS.
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
     with output_path.open("w") as output:
         proc = subprocess.Popen([str(box.bin / "lane-handoff"), "--supervise", "--lane", LANE,
                                  "--operation", "op-test"], cwd=box.lane_dir, env=box.env,
-                                stdin=slave, stdout=output, stderr=output, start_new_session=True)
+                                stdin=slave, stdout=output, stderr=output, start_new_session=True,
+                                preexec_fn=own_terminal)
         os.close(slave)
         try:
             deadline = time.monotonic() + 15
@@ -795,16 +803,25 @@ exit 127
             assert "INDETERMINATE" in output_path.read_text(), output_path.read_text()
             assert "Press Enter to close it" in output_path.read_text(), output_path.read_text()
             os.write(master, b"\n")
-            assert proc.wait(timeout=15) == 4, output_path.read_text()
+            try:
+                status = proc.wait(timeout=15)
+            except subprocess.TimeoutExpired as error:
+                raise AssertionError("supervisor did not exit after Enter:\n" + output_path.read_text()) from error
+            assert status == 4, output_path.read_text()
             assert launches.read_text().splitlines() == ["launch"]
             record = dict(line.split("\t", 1) for line in helper(box, "restart-intent", LANE).stdout.splitlines())
             assert record["state"] == "starting" and record["attempt"] == "2"
             assert "before attempt launch" in record["reason"]
         finally:
+            # Reap the owned supervisor before closing its controlling tty.
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=10)
             os.close(master)
-            try: os.killpg(proc.pid, signal.SIGTERM)
-            except ProcessLookupError: pass
-            if proc.poll() is None: proc.wait(timeout=10)
 
 
 def test_checkout_hint_cannot_hide_existing_fallback_intent(restart_box):
@@ -968,6 +985,17 @@ def test_restart_writer_rejects_record_delimiters_without_changing_identity(rest
     assert intent_path(box).read_bytes() == before
 
 
+def test_restart_writer_rejects_record_delimiters_all_ascii_controls(restart_box):
+    box = restart_box
+    prepare_restart(box)
+    before = intent_path(box).read_bytes()
+    for code in [*range(1, 32), 127]:
+        result = helper(box, "set-restart-intent", LANE, "pending", "--pane",
+                        "testsess:@1.%1" + chr(code) + "tail")
+        assert result.returncode == 64, (code, result.stdout, result.stderr)
+        assert intent_path(box).read_bytes() == before
+
+
 def test_restart_writer_does_not_follow_predictable_temporary_symlink(restart_box):
     box = restart_box
     prepare_restart(box)
@@ -1054,7 +1082,7 @@ def test_restart_reconcile_rename_preserves_unfinished_operation_inputs(restart_
         assert intent_path(box).read_bytes() == record
 
 
-@pytest.mark.parametrize("kind", ["relative", "missing", "none", "agent"])
+@pytest.mark.parametrize("kind", ["relative", "missing", "none", "agent", "tab", "newline"])
 def test_restart_refuses_unsupported_checkout_or_agent_before_preservation(restart_box, kind):
     box = restart_box
     source = prepare_restart(box)
@@ -1067,6 +1095,10 @@ def test_restart_refuses_unsupported_checkout_or_agent_before_preservation(resta
         args += ["--dir", "relative" if kind == "relative" else str(box.root / "absent")]
     elif kind == "agent":
         args += ["--agent", "codex"]
+    elif kind in {"tab", "newline"}:
+        unsafe = box.root / ("checkout" + ("\t" if kind == "tab" else "\n") + "tail")
+        unsafe.mkdir()
+        args += ["--dir", str(unsafe)]
     else:
         real = box.bin / "lanes-edit-real.sh"
         (box.bin / "lanes-edit.sh").rename(real)
@@ -1082,6 +1114,8 @@ exec '{real}' "$@"
     assert (box.wip / "lanes" / "LANES.md").read_bytes() == registry
     assert "rename-window" not in box.tmux_log.read_text()
     assert "respawn-pane" not in box.tmux_log.read_text()
+    if kind in {"tab", "newline"}:
+        assert "control characters" in result.stderr
 
 
 @pytest.mark.parametrize("fact", ["dir", "digest", "pane", "agent"])

@@ -19,3 +19,5 @@
 - [ ] T017 After hold release/merge authorization, run macOS landing gate and merge.
 
 - [x] T018 Reconcile landed PR #97, preserving separate helper namespaces, managed ownership fences and completed restart history; verify helper identity and focused integration cases. New-head full-suite results are recorded in the PR review record.
+
+- [ ] T019 Repair macOS landing regressions: Bash 3.2 control rejection, case-insensitive spelling-only rename preflight, and a controlling terminal for the interactive retry fixture. Verify locally and rerun exact-head landing CI.

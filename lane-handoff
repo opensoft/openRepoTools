@@ -123,6 +123,12 @@ say()  { printf '%s\n' "$*"; }
 note() { printf '%s: %s\n' "$prog" "$*" >&2; }
 step() { printf '%s: %s\n' "$prog" "$*" >&2; }
 die()  { printf '\n%s: REFUSED: %s\n' "$prog" "$1" >&2; exit "${2:-2}"; }
+# Exact launch facts must not carry record delimiters, on Bash 3.2 too.
+restart_fact_ok() {
+  local LC_ALL=C
+  case "${1-}" in *[[:cntrl:]]*) return 1 ;; esac
+  return 0
+}
 # EVERY ARGUMENT AS ONE SHELL WORD, WITHOUT `printf %q` AND WITHOUT A PIPE —
 # measured on the macOS job at `db206db` and `ac0c697`, where three cases of
 # this branch's own went red and no other platform could see it. One line, two
@@ -1795,7 +1801,7 @@ if [ "$do_restart" = 1 ]; then
   [ -n "$dir" ] && [ -d "$dir" ] && [ -r "$dir" ] && [ -x "$dir" ] ||
     die "a supervised restart requires an existing absolute checkout directory. Nothing was respawned." 2
   for restart_fact in "$dir" "${pane:-${TMUX_PANE:-}}" "$window_ref"; do
-    case "$restart_fact" in *[$'\001'-$'\037'$'\177']*) die "restart launch facts cannot contain control characters. Nothing was respawned." 2 ;; esac
+    restart_fact_ok "$restart_fact" || die "restart launch facts cannot contain control characters. Nothing was respawned." 2
   done
 fi
 
