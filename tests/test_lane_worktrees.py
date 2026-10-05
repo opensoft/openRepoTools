@@ -33,6 +33,7 @@ are the helper's own.
 from __future__ import annotations
 
 import datetime as _dt
+import getpass
 import hashlib
 import json
 import os
@@ -143,6 +144,9 @@ class Estate:
             FAKE_HELPER_SPEC=str(self.spec_file), FAKE_HELPER_LOG=str(self.helper_log),
             FAKE_GH_PRS=str(self.prs_file), CLAUDE_CODE_SESSION_ID=ME,
             LANE_WORKTREES_SANDBOX_ROOTS=str(self.sandboxes), LANES_WORKSTATION="Eagle",
+            # --yes is switched off for a real estate until #170; the suite's
+            # estates are not one.
+            LANE_WORKTREES_ENABLE_YES="1",
             GIT_CONFIG_NOSYSTEM="1",
             PATH=str(self.fakebin) + os.pathsep + _clean_path())
         self.env = env
@@ -879,7 +883,7 @@ def test_scratch_is_archived_then_removed_and_caches_are_removed(estate):
 def test_caches_are_never_taken_from_a_foreign_tree(estate):
     """Copilot on #168: a FOREIGN tree under the lane's root is somebody's,
     live or not, and so are its caches."""
-    foreign = estate.worktree("theirs", "feat/theirs", record=False)
+    foreign = estate.worktree("theirs", "feat/theirs", where="claude", record=False)
     (foreign / "__pycache__").mkdir()
     (foreign / "__pycache__" / "t.pyc").write_bytes(b"\0")
     proc = estate.sweep(LANE, "--include-caches", "--yes", "--porcelain")
@@ -1010,8 +1014,8 @@ def test_a_clone_something_leans_on_is_load_bearing_and_never_removed(estate):
     assert rows[str(store)][0] == "load-bearing", rows
     assert str(dependent) in rows[str(store)][2] and "repack" in rows[str(store)][2]
     assert store.is_dir()
-    foreign = estate.sweep(LANE, "--porcelain")
-    assert "LOAD-BEARING" in rows_of(foreign.stdout)[str(store)][2]
+    again = estate.sweep(LANE, "--porcelain", env={"LANE_WORKTREES_CONF": str(conf)})
+    assert "LOAD-BEARING" in rows_of(again.stdout)[str(store)][2]
 
 
 # =================================================================== --expire
@@ -1093,6 +1097,103 @@ def test_the_porcelain_exit_codes_lane_end_reads(estate):
     estate.extra_spec = {"lane-reconcile": {"rc": 1, "err": "the log could not be read\n"}}
     refused = estate.sweep(LANE, "--dry-run", "--porcelain")
     assert refused.returncode == 2 and "refused\t" in refused.stdout
+
+
+def test_yes_is_switched_off_without_the_enabling_variable(estate):
+    """Until #170 lands `--yes` and `--expire --yes` are refused, exit 2,
+    changing nothing; the dry run and its porcelain are untouched."""
+    estate.worktree("w", "feat/w")
+    _archive(estate, 120, None)
+    before = snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json"))
+    off = {"LANE_WORKTREES_ENABLE_YES": None}
+    for args in ((LANE, "--yes"), (LANE, "--yes", "--porcelain"), ("--expire", "--yes")):
+        proc = estate.sweep(*args, env=off)
+        assert proc.returncode == 2, (args, proc.stdout, proc.stderr)
+        assert "--yes is disabled until opensoft/openRepoTools#170 lands" in proc.stderr
+    assert snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json")) == before
+    assert estate.sweep(LANE, "--porcelain", env=off).returncode == 3
+    assert estate.sweep("--expire", "--porcelain", env=off).returncode == 3
+
+
+def test_trees_under_the_lanes_root_or_carrying_its_trailer_are_its_own(estate):
+    """B1: a tree #97's inventory does not name is the lane's when it stands
+    under `.lane-worktrees/<lane>/`, or sits in `.claude/worktrees` on a branch
+    whose own commits carry this lane's trailer - so the gate does not pass a
+    lane whose trees were never recorded."""
+    conf = estate.root / "sweep.conf"
+    conf.write_text("foreign_quiet_hours=0\n")
+    estate.env["LANE_WORKTREES_CONF"] = str(conf)
+    rooted = estate.worktree("rooted", "feat/rooted", record=False)
+    trailed = estate.worktree("trailed", "feat/trailed", where="claude", record=False)
+    estate.commit(trailed, "mine", {"m.txt": "m\n"})
+    other = estate.worktree("other", "feat/other", where="claude", record=False)
+    estate.commit(other, "theirs", {"o.txt": "o\n"}, lane="repoB-2")
+    proc = estate.sweep(LANE, "--dry-run", "--porcelain")
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    rows = rows_of(proc.stdout)
+    assert rows[str(rooted)][:2] == ("remove", "retire") and "the lane's by its root" in rows[str(rooted)][2]
+    assert rows[str(trailed)][1] == "retire" and "Lane: trailer" in rows[str(trailed)][2]
+    assert rows[str(other)][0] == "foreign"
+    # NO SNAPSHOT AT ALL, and trees of its own: the gate does not pass.
+    estate.extra_spec = {"lane-reconcile": {"rc": 8},
+                         "binding": {"rc": 0, "out": "x\tx\tx\tx\tx\tx\there\tnone\n"},
+                         "live-holder": {"rc": 8}}
+    none = estate.sweep(LANE, "--dry-run", "--porcelain")
+    assert none.returncode == 2, none.stdout + none.stderr
+    assert "has no #97 snapshot (state NONE)" in none.stdout
+    assert str(rooted) in rows_of(none.stdout), "the table is still printed"
+
+
+def test_porcelain_escapes_a_tab_and_a_newline_in_a_path(estate):
+    """B3: a TAB or a newline in a tree's name is still one field of one row."""
+    estate.lane_root.mkdir(parents=True, exist_ok=True)
+    tab = estate.lane_root / "tab\tname"
+    nl = estate.lane_root / "nl\nname"
+    for i, path in enumerate((tab, nl)):
+        estate.git("worktree", "add", "-q", "-b", f"feat/odd{i}", path, "origin/main")
+    proc = estate.sweep(LANE, "--dry-run", "--porcelain")
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    lines = proc.stdout.splitlines()
+    assert all(ln.split("\t")[0] in ("lane", "tree", "summary") for ln in lines), lines
+    trees = [ln for ln in lines if ln.startswith("tree\t")]
+    assert all(len(ln.split("\t")) == 7 for ln in trees), lines
+    paths = [ln.split("\t")[3] for ln in trees]
+    assert str(tab).replace("\t", "\\t") in paths and str(nl).replace("\n", "\\n") in paths
+    if subprocess.run(["git", "worktree", "list", "--porcelain", "-z"], cwd=str(estate.checkout),
+                      capture_output=True).returncode == 0:
+        assert len(trees) == 2, "a newline in a registered path is one registration, not two"
+
+
+def test_a_path_that_is_not_utf8_is_a_row_not_a_traceback(estate):
+    """B2: a worktree named in Latin-1 is reported - exit inside 0/3/2."""
+    estate.lane_root.mkdir(parents=True, exist_ok=True)
+    bad = os.fsencode(str(estate.lane_root)) + b"/caf\xe9"
+    subprocess.run(["git", "-C", str(estate.checkout), "worktree", "add", "-q", "-b", "feat/latin1",
+                    bad, "origin/main"], env=estate.env, check=True, capture_output=True)
+    estate.write_spec()
+    for args in (("--dry-run", "--porcelain"), ("--dry-run",)):
+        proc = subprocess.run([sys.executable, str(LW), "sweep", LANE, *args], capture_output=True,
+                              env=estate.env, timeout=180, cwd=str(estate.root),
+                              stdin=subprocess.DEVNULL)
+        assert proc.returncode in (0, 3), (args, proc.stdout[-500:], proc.stderr[-800:])
+        assert b"Traceback" not in proc.stderr
+        assert bad in proc.stdout, "the path is reported as the bytes it is"
+
+
+def test_an_unreadable_pytest_sandbox_root_is_a_row_not_a_traceback(estate):
+    """B2: an unreadable `pytest-of-$USER` is listed as kept, exit 0."""
+    root = estate.sandboxes / f"pytest-of-{getpass.getuser()}"
+    root.mkdir()
+    root.chmod(0)
+    try:
+        proc = estate.sweep(LANE, "--include-sandboxes", "--dry-run", "--porcelain")
+    finally:
+        root.chmod(0o755)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "Traceback" not in proc.stderr
+    if os.geteuid() != 0:
+        rows = items_of(proc.stdout, "sandbox")
+        assert rows[str(root)][0] == "keep" and "could not be listed" in rows[str(root)][3]
 
 
 def test_usage_errors_are_64(estate):

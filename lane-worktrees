@@ -48,11 +48,22 @@ origin at the rescued SHA; an archive whose rescue branch is gone or moved,
 or that is not whole (its MANIFEST.sha256 missing or not matching, its
 rescues.tsv unreadable), is never expired.
 
+`--yes` (and `--expire --yes`) is SWITCHED OFF until opensoft/openRepoTools
+#170 lands: it is refused, exit 2, unless the environment carries
+LANE_WORKTREES_ENABLE_YES=1 - which the test suite sets, and which is not for a
+real estate until #170. The dry run, `--porcelain` and `--report` are whole.
+
+PORCELAIN: one row per line, fields separated by one TAB. In every field a
+backslash is written `\\`, a TAB `\t`, a newline `\n` and a carriage
+return `\r`, so a path holding any of them is still one field of one row.
+Undecodable bytes in a path pass through as the bytes they are.
+
 Exit codes:
   0  dry run: nothing to retire  ·  --yes: every act completed
   3  dry run: something to retire (the `lane-end` gate's answer, #163)
   2  refused: the lane is bound elsewhere, held by another live session,
-     managed-owned, or a read failed - nothing was changed
+     managed-owned, has trees but no #97 snapshot, or a read failed - or
+     `--yes` is switched off, or an error no read caught - nothing was changed
   1  --yes: an act failed part-way; what was done is recorded and the
      rest is left exactly as it was
  64  usage
@@ -145,6 +156,18 @@ def say(text: str = "") -> None:
     sys.stdout.write(text + "\n")
 
 
+def pesc(value) -> str:
+    """One porcelain field: a backslash, TAB, newline or carriage return in
+    it is written `\\`, `\\t`, `\\n`, `\\r`, so a row is always one line of
+    exactly its columns - a path with a TAB in it is still one field (B3)."""
+    return (str(value).replace("\\", "\\\\").replace("\t", "\\t")
+            .replace("\n", "\\n").replace("\r", "\\r"))
+
+
+def prow(*fields) -> None:
+    say("\t".join(pesc(f) for f in fields))
+
+
 def note(text: str) -> None:
     sys.stderr.write(f"{PROG}: {text}\n")
 
@@ -156,9 +179,11 @@ def run(argv, cwd=None, env=None, timeout=GIT_TIMEOUT, input_text=None):
     stderr, and a timeout is 124 - the two shapes every caller here already
     reads as "the read failed", which is never an answer (Amendment 7(d))."""
     try:
+        # SURROGATEESCAPE, NOT STRICT UTF-8: a path is bytes, and a worktree
+        # named in Latin-1 is a tree to report, never a traceback (B2).
         return subprocess.run(
             [str(a) for a in argv], cwd=cwd, env=env, capture_output=True,
-            text=True, timeout=timeout, input=input_text,
+            encoding="utf-8", errors="surrogateescape", timeout=timeout, input=input_text,
             stdin=None if input_text is not None else subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(argv, 124, "", f"timed out after {timeout}s")
@@ -311,7 +336,7 @@ def load_conf() -> dict:
     conf = dict(DEFAULT_CONF)
     path = conf_path()
     try:
-        with open(path, encoding="utf-8") as fh:
+        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
             lines = fh.read().splitlines()
     except OSError:
         return conf
@@ -840,7 +865,7 @@ def git_common_dir(repo: str) -> str:
     if os.path.isdir(dotgit):
         return dotgit
     try:
-        with open(dotgit, encoding="utf-8") as fh:
+        with open(dotgit, encoding="utf-8", errors="surrogateescape") as fh:
             first = fh.readline().strip()
     except OSError:
         return ""
@@ -850,7 +875,7 @@ def git_common_dir(repo: str) -> str:
     if not os.path.isabs(gitdir):
         gitdir = os.path.normpath(os.path.join(repo, gitdir))
     try:
-        with open(os.path.join(gitdir, "commondir"), encoding="utf-8") as fh:
+        with open(os.path.join(gitdir, "commondir"), encoding="utf-8", errors="surrogateescape") as fh:
             common = fh.readline().strip()
         if not os.path.isabs(common):
             common = os.path.normpath(os.path.join(gitdir, common))
@@ -895,7 +920,7 @@ def dependents_map(repos: list) -> dict:
             continue
         try:
             with open(os.path.join(common, "objects", "info", "alternates"),
-                      encoding="utf-8") as fh:
+                      encoding="utf-8", errors="surrogateescape") as fh:
                 for raw in fh.read().splitlines():
                     alt = raw.strip()
                     if not alt or alt.startswith("#"):
@@ -999,11 +1024,18 @@ class Tree:
 
 
 def worktree_registrations(checkout: str) -> list:
-    proc = git(checkout, "worktree", "list", "--porcelain")
-    if proc.returncode != 0:
-        return []
+    # `-z` WHERE GIT HAS IT (2.36+): a path with a newline in it is one field,
+    # not a registration of half its name and a line of noise (B3).
+    proc = git(checkout, "worktree", "list", "--porcelain", "-z")
+    if proc.returncode == 0:
+        fields = proc.stdout.split("\0")
+    else:
+        proc = git(checkout, "worktree", "list", "--porcelain")
+        if proc.returncode != 0:
+            return []
+        fields = proc.stdout.splitlines()
     out, cur = [], {}
-    for line in proc.stdout.splitlines() + [""]:
+    for line in fields + [""]:
         if not line:
             if cur:
                 out.append(cur)
@@ -1298,6 +1330,7 @@ class Sweep:
         self.fetched: dict = {}
         self.rescues: list = []
         self.dispositions: list = []
+        self.acting = False
 
     # ------------------------------------------------------------- reading
     def gather(self) -> None:
@@ -1341,6 +1374,7 @@ class Sweep:
         # WHO ELSE CLAIMS THESE TREES is read before anything is written: a
         # claim that cannot be read refuses, and a refusal never fetches.
         self._other_lanes()
+        self._lane_claims()
         if self.opts.fetch and not self.refusal:
             self._fetch_all()
         self.deps = dependents_map(estate_repos(self.estate_root)) if self.estate_root else {}
@@ -1354,6 +1388,38 @@ class Sweep:
                 if tree.branch and not tree.unborn and tree.branch not in PROTECTED_BRANCHES:
                     tree.merge = self.evidence.judge(tree.path, slug_of(tree.origin_url),
                                                      tree.branch, tree.head)
+
+    def _lane_claims(self) -> None:
+        """A tree #97's inventory does not name is still THIS LANE'S when it
+        stands under the lane's own worktree root (`.lane-worktrees/<lane>/`,
+        which only this lane's starts make), or sits in the checkout's
+        `.claude/worktrees` on a branch whose OWN commits - those its origin's
+        default branch lacks - carry this lane's `Lane:` trailer. Another
+        lane's claim still wins. Without this a lane whose trees were never
+        recorded read as "nothing to retire", and #163's gate passed it (B1).
+
+        AND A LANE WITH NO SNAPSHOT AT ALL (#97's state NONE) BUT TREES OF ITS
+        OWN IS REFUSED: which of them are its is recorded nowhere, so the gate
+        does not pass it until a handoff records them or a person retires
+        them."""
+        roots = self._roots()
+        lane_root = roots[-1] if roots else ""
+        claude_root = roots[0] if self.facts.dir and roots else ""
+        for t in self.trees:
+            if t.owner != "foreign" or t.foreign_kind == "other-lane":
+                continue
+            if lane_root and under(t.path, lane_root) and t.real != real(lane_root):
+                t.owner = "lane-root"
+            elif claude_root and t.exists and under(t.path, claude_root) \
+                    and self.lane.lower() in own_trailers(t.path):
+                t.owner = "trailer"
+        claimed = [t for t in self.trees if t.owner in ("lane-root", "trailer")]
+        if self.facts.state == "NONE" and claimed:
+            self.refusal = self.refusal or (
+                f"lane {self.lane} has no #97 snapshot (state NONE), yet {len(claimed)} tree(s) "
+                f"are its by where they stand or what they carry (e.g. {claimed[0].path}); which "
+                "are its is recorded nowhere, so the gate does not pass - record them with a "
+                "handoff (lane-handoff takes the inventory), or retire them by hand")
 
     def _roots(self) -> list:
         roots = []
@@ -1464,7 +1530,7 @@ class Sweep:
                         continue
                     path = ""
                     try:
-                        with open(os.path.join(tdir, fname), encoding="utf-8") as fh:
+                        with open(os.path.join(tdir, fname), encoding="utf-8", errors="surrogateescape") as fh:
                             for line in fh:
                                 if line.startswith("path: "):
                                     path = line[6:].strip()
@@ -1552,11 +1618,13 @@ class Sweep:
             if answer == "unknown":
                 tree.live = (None, f"whether session {writer[:8]} is live could not be read")
                 return
-        if tree.owner == "foreign" and tree.is_git:
+        if tree.owner != "inventory" and tree.is_git:
             quiet = self.conf["foreign_quiet_hours"] * 3600
             newest = _gitdir_activity(tree.path)
             if newest and time.time() - newest < quiet:
-                tree.live = (True, f"FOREIGN and active {int((time.time() - newest) // 60)} min ago "
+                tree.live = (True, ("FOREIGN" if tree.owner == "foreign" else
+                                    "not in the inventory")
+                             + f" and active {int((time.time() - newest) // 60)} min ago "
                                    f"(foreign trees quiet for {self.conf['foreign_quiet_hours']} h only)")
 
     def _lane_gate(self) -> None:
@@ -1603,6 +1671,10 @@ class Sweep:
     def decide(self) -> None:
         for tree in self.trees:
             self._decide(tree)
+            if tree.owner in ("lane-root", "trailer") and tree.disposition != "foreign":
+                tree.reason += ("; not in #97's inventory - the lane's by "
+                                + ("its root" if tree.owner == "lane-root" else
+                                   "its branch's Lane: trailer"))
         if self.opts.branches:
             self._branches()
         if self.opts.scratch:
@@ -1615,7 +1687,7 @@ class Sweep:
             self.items.extend(link_items(self.estate_root))
 
     def _decide(self, t: Tree) -> None:
-        mine = t.owner == "inventory" or (self.opts.foreign and t.foreign_kind != "other-lane")
+        mine = t.owner != "foreign" or (self.opts.foreign and t.foreign_kind != "other-lane")
 
         def put(disp: str, why: str, retire: bool = True) -> None:
             t.disposition, t.reason, t.retire = disp, why, retire
@@ -1886,24 +1958,24 @@ class Sweep:
 
     def porcelain(self) -> None:
         f = self.facts
-        say("\t".join(["lane", self.lane, f.state or "-", f.holder or "-",
-                       f.holder_uuid or "-", f.binding or "-", f.verdict or "-"]))
+        prow("lane", self.lane, f.state or "-", f.holder or "-",
+             f.holder_uuid or "-", f.binding or "-", f.verdict or "-")
         if self.refusal:
-            say("refused\t" + self.refusal.replace("\t", " "))
+            prow("refused", self.refusal)
         for t in self.trees:
-            say("\t".join(["tree", t.disposition, "retire" if t.retire else "-", t.path,
-                           t.branch or ("(detached)" if t.detached else "-"), t.head or "-",
-                           t.reason.replace("\t", " ") + (f" -> {t.result}" if t.result else "")]))
+            prow("tree", t.disposition, "retire" if t.retire else "-", t.path,
+                 t.branch or ("(detached)" if t.detached else "-"), t.head or "-",
+                 t.reason + (f" -> {t.result}" if t.result else ""))
         for i in self.items:
-            say("\t".join([i.kind, i.disposition, "retire" if i.retire else "-", i.path,
-                           i.detail or "-", str(i.size),
-                           i.reason.replace("\t", " ") + (f" -> {i.result}" if i.result else "")]))
-        say(f"summary\t{self.retire_count()}\t{len(self.trees)}\t"
-            f"{sum(1 for t in self.trees if t.disposition == 'live')}\t"
-            f"{sum(1 for t in self.trees if t.disposition == 'foreign')}")
+            prow(i.kind, i.disposition, "retire" if i.retire else "-", i.path,
+                 i.detail or "-", str(i.size), i.reason + (f" -> {i.result}" if i.result else ""))
+        prow("summary", self.retire_count(), len(self.trees),
+             sum(1 for t in self.trees if t.disposition == "live"),
+             sum(1 for t in self.trees if t.disposition == "foreign"))
 
     # -------------------------------------------------------------- acting
     def act(self) -> None:
+        self.acting = True
         os.umask(0o077)
         for t in self.trees:
             if t.disposition in ("live", "foreign", "keep", "gone", "load-bearing", ""):
@@ -2356,9 +2428,9 @@ class Sweep:
         for path, text, line in self.dispositions:
             lines.append(f"- `{path}`: {line} - {text}")
         lines.append("")
-        with open(os.path.join(d, "DISPOSITION.md"), "w", encoding="utf-8") as fh:
+        with open(os.path.join(d, "DISPOSITION.md"), "w", encoding="utf-8", errors="surrogateescape") as fh:
             fh.write("\n".join(lines))
-        with open(os.path.join(d, "rescues.tsv"), "w", encoding="utf-8") as fh:
+        with open(os.path.join(d, "rescues.tsv"), "w", encoding="utf-8", errors="surrogateescape") as fh:
             fh.write("# origin\tbranch\tsha\tcheckout\ttree\n")
             for row in self.rescues:
                 fh.write("\t".join(row) + "\n")
@@ -2400,6 +2472,20 @@ def delete_remote_branch(checkout: str, branch: str, expect: str):
 def _lean_text(lean: list) -> str:
     return "; ".join(f"{dep} leans on it ({how})" for dep, how in lean[:5]) + (
         f"; and {len(lean) - 5} more" if len(lean) > 5 else "")
+
+
+def own_trailers(path: str) -> set:
+    """The `Lane:` trailers of the commits HEAD has that origin's default
+    branch lacks, lower-cased - empty where there is no such base to tell the
+    branch's own commits by."""
+    base = git_out(path, "symbolic-ref", "-q", "refs/remotes/origin/HEAD") or ""
+    if not base and git(path, "rev-parse", "-q", "--verify",
+                        "refs/remotes/origin/main").returncode == 0:
+        base = "refs/remotes/origin/main"
+    if not base:
+        return set()
+    text = git_out(path, "log", "--format=%B", f"{base}..HEAD") or ""
+    return {v.lower() for v in re.findall(r"^Lane:\s*(\S+)\s*$", text, re.MULTILINE)}
 
 
 def _gitdir_activity(path: str) -> float:
@@ -2471,7 +2557,7 @@ def write_manifest(d: str) -> None:
             if rel == "MANIFEST.sha256":
                 continue
             rows.append(f"{sha256_of(full)}  {rel}")
-    with open(os.path.join(d, "MANIFEST.sha256"), "w", encoding="utf-8") as fh:
+    with open(os.path.join(d, "MANIFEST.sha256"), "w", encoding="utf-8", errors="surrogateescape") as fh:
         fh.write("\n".join(sorted(rows, key=lambda r: r.split("  ", 1)[1])) + "\n")
 
 
@@ -2612,6 +2698,7 @@ def sandbox_items(procs: ProcScan, conf: dict) -> list:
     environment is never touched, and neither is one younger than the
     minimum age (`sandbox_min_age_minutes`)."""
     out = []
+    unreadable: list = []
     uid = os.getuid()
     procs.load_environ()
     min_age = conf["sandbox_min_age_minutes"] * 60
@@ -2627,7 +2714,16 @@ def sandbox_items(procs: ProcScan, conf: dict) -> list:
             if name.startswith("tmp.") and os.path.isdir(full) and not os.path.islink(full):
                 candidates.append((full, "mktemp", 0))
             if name == f"pytest-of-{user}" and os.path.isdir(full):
-                for sub in os.listdir(full):
+                try:
+                    subs = os.listdir(full)
+                except OSError as exc:
+                    # UNREADABLE IS A ROW, never a traceback and never "empty".
+                    it = Item("sandbox", full, "keep", "its pytest sandboxes could not be listed ("
+                              + (exc.strerror or str(exc)) + "), so none of them is touched",
+                              False)
+                    unreadable.append(it)
+                    continue
+                for sub in subs:
                     sp = os.path.join(full, sub)
                     if sub.startswith("pytest-") and os.path.isdir(sp) and not os.path.islink(sp):
                         candidates.append((sp, "pytest", _lock_pid(os.path.join(sp, ".lock"))))
@@ -2661,12 +2757,12 @@ def sandbox_items(procs: ProcScan, conf: dict) -> list:
         it.size = dir_size(path)
         it.extra["kind"] = kind
         out.append(it)
-    return out
+    return out + unreadable
 
 
 def _lock_pid(path: str) -> int:
     try:
-        with open(path, encoding="utf-8") as fh:
+        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
             text = fh.read().strip()
         return int(text) if text.isdigit() else 0
     except (OSError, ValueError):
@@ -2717,7 +2813,7 @@ def link_items(root: str) -> list:
 
 def _gitdir_pointer(path: str, base: str, now: float, out: list) -> None:
     try:
-        with open(path, encoding="utf-8") as fh:
+        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
             first = fh.readline().strip()
     except OSError:
         return
@@ -2795,14 +2891,14 @@ def expire(opts) -> int:
                 rmtree(adir)
                 rows[i] = (adir, age, "expired", why)
                 os.makedirs(root, exist_ok=True)
-                with open(os.path.join(root, "EXPIRED.log"), "a", encoding="utf-8") as fh:
+                with open(os.path.join(root, "EXPIRED.log"), "a", encoding="utf-8", errors="surrogateescape") as fh:
                     fh.write(f"{utc_now()}\t{adir}\t{why}\n")
             except OSError as exc:
                 rows[i] = (adir, age, "FAILED", str(exc))
                 failed += 1
     if opts.porcelain:
         for adir, age, disp, why in rows:
-            say("\t".join(["archive", disp, adir, str(age), why]))
+            prow("archive", disp, adir, age, why)
     else:
         say(f"{PROG} sweep --expire - " + ("YES" if opts.yes else "DRY RUN") +
             f" - retention {keep_days} d ({conf_path()})")
@@ -2830,7 +2926,7 @@ def archive_ledger(adir: str):
     manifest = os.path.join(adir, "MANIFEST.sha256")
     listed: dict = {}
     try:
-        with open(manifest, encoding="utf-8") as fh:
+        with open(manifest, encoding="utf-8", errors="surrogateescape") as fh:
             for line in fh:
                 if not line.strip():
                     continue
@@ -2861,7 +2957,7 @@ def archive_ledger(adir: str):
         return None, "it has no rescues.tsv"
     out = []
     try:
-        with open(os.path.join(adir, "rescues.tsv"), encoding="utf-8") as fh:
+        with open(os.path.join(adir, "rescues.tsv"), encoding="utf-8", errors="surrogateescape") as fh:
             for line in fh:
                 if line.startswith("#") or not line.strip():
                     continue
@@ -2906,7 +3002,43 @@ def parse(argv: list):
     return parser.parse_args(argv)
 
 
+YES_SWITCH = "LANE_WORKTREES_ENABLE_YES"
+_ACTIVE: dict = {}
+
+
 def main(argv: list) -> int:
+    """The exit contract, whatever happens inside: an error no read caught is
+    exit 2 on a dry run (nothing was changed), and under `--yes` the archive's
+    DISPOSITION.md is written first and the exit is 1 (B2)."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="surrogateescape")
+    try:
+        return _main(argv)
+    except Exception as exc:  # pylint: disable=broad-except
+        import traceback
+        frames = [f for f in traceback.extract_tb(exc.__traceback__)
+                  if os.path.basename(f.filename) == os.path.basename(__file__)]
+        where = f" at {PROG} line {frames[-1].lineno}" if frames else ""
+        detail = f"{type(exc).__name__}: {exc}{where}"
+        sweep = _ACTIVE.get("sweep")
+        acted = bool(sweep is not None and sweep.acting)
+        if sweep is not None and sweep.opts.porcelain:
+            prow("refused", "internal error, outside the table: " + detail)
+        if acted:
+            try:
+                if sweep.archive:
+                    sweep._write_disposition()
+            except Exception:  # pylint: disable=broad-except
+                pass
+            note(f"INTERNAL ERROR part-way through --yes: {detail}; what was done is in "
+                 f"{tilde(sweep.archive) if sweep.archive else 'the table above'}")
+            return 1
+        note(f"INTERNAL ERROR, nothing was changed: {detail}")
+        return 2
+
+
+def _main(argv: list) -> int:
     try:
         ns = parse(argv)
     except Usage as exc:
@@ -2921,6 +3053,17 @@ def main(argv: list) -> int:
     if ns.verb != "sweep":
         note("usage: lane-worktrees sweep <lane> [--dry-run | --yes] ... (see --help)")
         return 64
+    # `--yes` IS SWITCHED OFF until the data-loss paths the reviews found are
+    # closed (opensoft/openRepoTools#170). The dry run, the porcelain #163's
+    # gate reads and the report stay whole; acting takes the switch, which the
+    # suite sets and a real estate does not.
+    if ns.yes and os.environ.get(YES_SWITCH, "") != "1":
+        why = (f"--yes is disabled until opensoft/openRepoTools#170 lands; the dry run is "
+               f"unaffected ({YES_SWITCH}=1 enables it, and is not for a real estate until #170)")
+        if ns.porcelain:
+            prow("refused", why)
+        note("REFUSED: " + why)
+        return 2
     if ns.expire:
         if ns.lane:
             note("usage: sweep --expire takes no lane: it reads every lane's archives")
@@ -2937,6 +3080,7 @@ def main(argv: list) -> int:
         return 64
     opts = Options(ns)
     sweep = Sweep(ns.lane, opts)
+    _ACTIVE["sweep"] = sweep
     sweep.gather()
     if sweep.refusal and not sweep.trees:
         sweep.decide()
