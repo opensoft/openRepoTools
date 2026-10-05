@@ -708,7 +708,8 @@ def _fallback_setups():
         pw = e.config / "pgpass"
         pw.write_text("*:*:*:*:never-read\n")
         pw.chmod(0o600)
-        e.write_config(f"url=postgresql://lanes_writer@db.invalid/qa\npassfile={pw}\n")
+        e.write_config(f"url=postgresql://lanes_writer@db.invalid/qa\npassfile={pw}\n"
+                       f"reader_url=postgresql://lanes_reader@db.invalid/qa\n")
         return {"PATH": e.path_with(fake)}
 
     def wiped(e):
@@ -1011,6 +1012,205 @@ def test_postgres_takes_the_writer_to_write_and_the_reader_to_read(estate):
     assert "postgres" in st.stdout
 
 
+def test_a_read_never_connects_with_the_writers_credential(estate):
+    """THE READER OR NOTHING (14(c); Copilot round 1 on #164): a Postgres
+    configuration with a writer `url=` and no `reader_url=` REFUSES the reads
+    — `export` says `refused` and the read flags answer from the sources,
+    `status` exits 2 — and not one of them reaches `psql` at all, so the
+    writer's credential is never presented by a session typing `--index`."""
+    fake = estate.root / "pgfake"
+    fake.mkdir()
+    (fake / "psql").write_text(FAKE_PSQL)
+    (fake / "psql").chmod(0o755)
+    log = estate.root / "psql.jsonl"
+    wpw = estate.config / "writer.pgpass"
+    wpw.write_text("*:*:*:*:x\n")
+    wpw.chmod(0o600)
+    estate.write_config(f"url=postgresql://lanes_writer@db.invalid/qa\npassfile={wpw}\n")
+    env = {"PATH": estate.path_with(fake), "FAKE_PSQL_LOG": str(log)}
+    out = estate.root / "exp"
+    out.mkdir()
+    exp = estate.index("export", "--out", out, env=env)
+    assert exp.returncode == 2, exp.stderr
+    assert (out / "why").read_text().startswith("refused:")
+    assert "reader_url" in (out / "why").read_text()
+    for argv in (("bash", LANES_EDIT, "history", "repoA-1"), (LANES, "--all")):
+        src = estate.run(*argv, env=env)
+        idx = estate.run(*argv, "--index", env=env)
+        assert "read: sources (index refused" in idx.stderr, (argv, idx.stderr)
+        assert idx.returncode == src.returncode, (argv, idx.stderr)
+        assert AGE.sub("<AGE>", idx.stdout) == AGE.sub("<AGE>", src.stdout), argv
+    st = estate.index("status", env=env)
+    assert st.returncode == 2 and "reader_url" in st.stderr, st.stderr
+    assert not log.exists(), "a read reached psql: " + log.read_text()
+    # the WRITER is still the indexer's, untouched by the rule
+    assert estate.index("sync", env=env).returncode == 0
+    assert all(json.loads(l)["url"] == "postgresql://lanes_writer@db.invalid/qa"
+               for l in log.read_text().splitlines())
+
+
+def test_a_symlink_is_judged_where_it_points(estate):
+    """RESOLVED BEFORE IT IS JUDGED (14(c); Copilot round 1 on #164): a 0600
+    configuration reached through a symlink that lives outside every
+    repository but points INTO a work tree is a file in that work tree, and is
+    refused; so is a SQLite store whose directory is a link into one."""
+    inside = estate.wip / "lanes-index.conf"
+    inside.write_text("store=sqlite\n", encoding="utf-8")
+    inside.chmod(0o600)
+    link = estate.config / "openRepoTools" / "lanes-index.conf"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(inside)
+    res = estate.index("sync")
+    assert res.returncode == 2 and "inside the git work tree" in res.stderr, res.stderr
+    assert not estate.sqlite.exists()
+    link.unlink()
+    door = estate.root / "door"
+    door.symlink_to(estate.wip)
+    estate.write_config(f"sqlite={door / 'lanes-index.sqlite'}\n")
+    res = estate.index("sync")
+    assert res.returncode == 2 and "never inside a work tree" in res.stderr, res.stderr
+    assert not (estate.wip / "lanes-index.sqlite").exists()
+
+
+def test_two_logs_one_case_apart_keep_two_transcript_pointers(estate):
+    """KEYED AS THE LOG LINES ARE (Copilot round 1 on #164): two logs whose
+    names differ only by case, each with a PAUSED carrying a transcript at
+    the SAME line, are two pointers — the second keyed by its file — never one
+    overwritten by the other."""
+    tid = "ffffffff-0002-4000-8000-00000000f002"
+    paused = (f"PAUSED — lane repoA-2, session {UUID_A2}@Eagle, 2026-10-01T04:00:00Z, "
+              f"lane:repoA-2 → dir /work/repoA2; agent claude; transcript {{}}")
+    upper = estate.wip / "lanes" / "log" / "REPOA-2.md"
+    upper.write_text("\n".join([
+        "# lane repoA-2 — object log, the other spelling",
+        f"STARTED — lane repoA-2, session {UUID_A2}@Eagle, 2026-10-01T02:00:00Z, lane:repoA-2 → home opensoft/repoA",
+        f"NOTED — lane repoA-2, session {UUID_A2}@Eagle, 2026-10-01T02:10:00Z, lane:repoA-2 — padding",
+        paused.format(UUID_T1), ""]), encoding="utf-8")
+    lower = estate.wip / "lanes" / "log" / "repoA-2.md"
+    lower.write_text(lower.read_text(encoding="utf-8") + paused.format(tid) + "\n",
+                     encoding="utf-8")
+    estate._git("add", "-A")
+    estate._git("commit", "-q", "-m", "two spellings of one log")
+    estate._git("push", "-q", "origin", "main")
+    res = estate.index("sync")
+    assert res.returncode == 0, res.stderr
+    conn = sqlite3.connect(str(estate.sqlite))
+    rows = conn.execute("SELECT record_id, transcript_id FROM transcript_pointers "
+                        "WHERE kind = 'paused' AND transcript_id IN (?, ?)",
+                        (UUID_T1, tid)).fetchall()
+    assert {t for _, t in rows} == {UUID_T1, tid}, rows
+    assert len({r for r, _ in rows}) == 2, rows
+
+
+def _as_estate(monkeypatch, estate) -> None:
+    """This process's environment made the estate's, for the cases that drive
+    `lanes-index` as a module; `monkeypatch` puts it back."""
+    for key in list(os.environ):
+        if key.startswith(("LANES_", "CLAUDE_", "WORKBENCHES_", "TMUX", "XDG_", "PG",
+                           "AGENT_PROTOCOL_ROOT", "PROJECTS_")):
+            monkeypatch.delenv(key, raising=False)
+    for key, value in estate.env.items():
+        monkeypatch.setenv(key, value)
+
+
+def test_a_source_that_moves_while_the_owners_are_asked_writes_nothing(estate, monkeypatch,
+                                                                         capsys):
+    """ONE COMMIT'S ROWS, ONE COMMIT'S OWNERS (14(d); Copilot round 1 on
+    #164): `managed-projection` reads `origin/<branch>` as it stands, so the
+    indexer asks the ref again once the owners are in; a ref that moved
+    meanwhile writes NOTHING, and `sync` reads the new tip whole."""
+    _as_estate(monkeypatch, estate)
+    mod = load_indexer()
+    real_tip = mod.tip_of
+    asked = []
+
+    def moving(root):
+        asked.append(root)
+        return "f" * 40 if len(asked) == 2 else real_tip(root)
+
+    monkeypatch.setattr(mod, "tip_of", moving)
+    with pytest.raises(mod.SourceMoved):
+        mod.run_index("sync", None, False)
+    conn = sqlite3.connect(str(estate.sqlite))
+    assert conn.execute("SELECT COUNT(*) FROM provenance").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM lanes").fetchone()[0] == 0
+    conn.close()
+    asked.clear()
+    assert mod.cmd_sync(None) == 0
+    captured = capsys.readouterr()
+    assert "moved from" in captured.err, captured.err
+    assert len(asked) == 4, asked
+    conn = sqlite3.connect(str(estate.sqlite))
+    assert conn.execute("SELECT commit_sha FROM provenance").fetchone()[0] == estate.tip()
+    assert conn.execute("SELECT COUNT(*) FROM lanes").fetchone()[0] > 0
+
+
+def test_a_rerun_marked_as_the_holder_lets_go_is_never_lost(estate, monkeypatch):
+    """THE HANDSHAKE (14(d); Codex on #164): a mark written after the holder's
+    last look but before it released is found by the holder's look AFTER the
+    release, and synced; and a sync that finds the lock held, marks, and then
+    finds it free takes it itself — no mark is left with nobody to read it."""
+    _as_estate(monkeypatch, estate)
+    mod = load_indexer()
+    runs = []
+    monkeypatch.setattr(mod, "run_index", lambda *a: runs.append(a) or 0)
+    real_release = mod.SyncLock.release
+    released = []
+
+    def release_late_marked(self):
+        if not released and self.handle is not None:
+            self.mark_rerun()  # the contender's mark, after the holder last looked
+        released.append(1)
+        real_release(self)
+
+    monkeypatch.setattr(mod.SyncLock, "release", release_late_marked)
+    assert mod.cmd_sync(None) == 0
+    assert len(runs) == 2, runs
+    lock = mod.SyncLock()
+    assert not os.path.exists(lock.rerun)
+    monkeypatch.setattr(mod.SyncLock, "release", real_release)
+
+    runs.clear()
+    answers = iter([False, True])  # held at the first look, free at the second
+
+    def acquire_second_time(self, wait_seconds):
+        return next(answers, True)
+
+    monkeypatch.setattr(mod.SyncLock, "acquire", acquire_second_time)
+    assert mod.cmd_sync(None) == 0
+    assert len(runs) == 1, "the contender found the lock free on its second look and did not sync"
+    assert not os.path.exists(lock.rerun)
+
+
+def test_an_unknown_owner_is_asked_again_at_the_same_commit(estate):
+    """`unknown` IS NOT AN ANSWER TO KEEP (14(e); Codex on #164): an owner
+    that read as `unknown` because `managed-projection` failed is asked again
+    by the next sync even when the index is already at the tip, and only the
+    row it clears is written."""
+    wrapper = estate.root / "lanes-edit-failing"
+    wrapper.write_text("#!/bin/sh\n"
+                       "if [ \"$1\" = managed-projection ] && [ \"$2\" = repoA-1 ]; then\n"
+                       "  echo 'managed-projection: could not read origin' >&2; exit 1\nfi\n"
+                       f"exec bash {LANES_EDIT} \"$@\"\n")
+    wrapper.chmod(0o755)
+    assert estate.index("sync", env={"LANES_EDIT": str(wrapper)}).returncode == 0
+    conn = sqlite3.connect(str(estate.sqlite))
+    assert dict(conn.execute("SELECT lane, owner FROM lanes"))["repoA-1"] == "unknown"
+    conn.close()
+    again = estate.index("sync")
+    assert again.returncode == 0, again.stderr
+    assert "1 upserted, 0 removed" in again.stdout, again.stdout
+    conn = sqlite3.connect(str(estate.sqlite))
+    owners = dict(conn.execute("SELECT lane, owner FROM lanes"))
+    assert owners["repoA-1"] == "legacy"
+    assert owners["repoM-2"] == "unknown"  # a malformed marker stays what it is
+    conn.close()
+    before = dump(estate.sqlite, with_utc=True)
+    third = estate.index("sync")
+    assert third.returncode == 0 and "nothing to write" in third.stdout, third.stdout
+    assert dump(estate.sqlite, with_utc=True) == before
+
+
 def test_an_unreachable_store_writes_nothing_waits_on_nothing_and_says_so(estate):
     fake = estate.root / "pgfake"
     fake.mkdir()
@@ -1019,7 +1219,8 @@ def test_an_unreachable_store_writes_nothing_waits_on_nothing_and_says_so(estate
     pw = estate.config / "pgpass"
     pw.write_text("*:*:*:*:x\n")
     pw.chmod(0o600)
-    estate.write_config(f"url=postgresql://lanes_writer@db.invalid/qa\npassfile={pw}\n")
+    estate.write_config(f"url=postgresql://lanes_writer@db.invalid/qa\npassfile={pw}\n"
+                        f"reader_url=postgresql://lanes_reader@db.invalid/qa\n")
     env = {"PATH": estate.path_with(fake)}
     t0 = time.monotonic()
     res = estate.index("sync", env=env)

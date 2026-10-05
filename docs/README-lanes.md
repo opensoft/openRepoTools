@@ -3229,7 +3229,8 @@ store=sqlite|postgres     default: postgres where url= is set, else sqlite
 sqlite=<path>             default ${XDG_STATE_HOME:-~/.local/state}/openRepoTools/lanes-index.sqlite
 url=<libpq URL>           the WRITER role — sync and reconcile
 passfile=<path>           the 0600 libpq password file for it
-reader_url=<libpq URL>    the SELECT-only READER role — status and the --index reads
+reader_url=<libpq URL>    the SELECT-only READER role — status and the --index reads;
+                          REQUIRED beside url=, or those reads are refused
 reader_passfile=<path>    its password file, where it is not the same one
 schema=<name>             the Postgres schema (default lanes_index)
 ```
@@ -3237,7 +3238,10 @@ schema=<name>             the Postgres schema (default lanes_index)
 Refused (exit 2, nothing read or written): a configuration that is group- or
 world-readable, inside a git work tree or under `~/.agents/`; a URL that
 carries a password in any spelling; a password file that is not 0600; a SQLite
-path inside a git work tree. Postgres is reached through `psql` and only where
+path inside a git work tree. A Postgres configuration with no `reader_url=` is
+refused for `status` and the read flags (`read: sources (index refused …)`):
+**a read never connects with the writer's credential**, and there is no
+fallback to it. Postgres is reached through `psql` and only where
 `url=` is set — nothing imports a driver — with `PGPASSFILE` naming the
 password file and an inherited `PGPASSWORD` removed. No configuration at all
 is SQLite at its default path, created 0600.

@@ -39,7 +39,9 @@ on local disk. The configuration is
 the SELECT-only role `reader_url=`/`reader_passfile=`, and `schema=`. It is
 refused when it is group- or world-readable, inside a git work tree or under
 `~/.agents/`, and when a URL carries a password: the secret lives only in the
-0600 libpq password file `passfile=` names.
+0600 libpq password file `passfile=` names. The reads (`status`, `export`)
+connect to Postgres only as `reader_url=` and are refused without it - never
+with the writer's credential.
 
 Exit codes: 0 done · 1 a read or a write failed (nothing half-written) · 2 a
 refusal (the configuration, a `--source` that is not this workstation's) · 3
@@ -102,6 +104,11 @@ class StoreUnusable(Exception):
 
 class CasLost(Exception):
     """The source's provenance moved under this sync: nothing was written."""
+
+
+class SourceMoved(Exception):
+    """`origin/<branch>` moved while this sync read it: nothing was written,
+    and the caller reads the new tip whole."""
 
 
 def utc_now() -> str:
@@ -220,7 +227,10 @@ def load_config() -> dict:
     else:
         cfg["present"] = True
         _check_private_file(path, "the configuration")
-        tree = git_work_tree_of(os.path.dirname(os.path.abspath(path)))
+        # RESOLVED FIRST (Copilot round 1 on #164): a 0600 symlink outside every
+        # repository that points at a committed file inside one is that file,
+        # and its directory is the one the question is about.
+        tree = git_work_tree_of(os.path.dirname(os.path.realpath(path)))
         if tree:
             raise Refusal(
                 f"the configuration {path} is inside the git work tree {tree}: "
@@ -274,7 +284,7 @@ def load_config() -> dict:
     if store == "sqlite":
         sqlite_path = cfg["sqlite"] or os.path.join(state_dir(), "lanes-index.sqlite")
         sqlite_path = os.path.abspath(sqlite_path)
-        tree = git_work_tree_of(os.path.dirname(sqlite_path))
+        tree = git_work_tree_of(os.path.dirname(os.path.realpath(sqlite_path)))
         if tree:
             raise Refusal(
                 f"the SQLite store {sqlite_path} would be inside the git work tree {tree}; "
@@ -779,7 +789,8 @@ def build_records(snap: dict) -> dict:
             if rec["verb"] == "PAUSED":
                 pf = payload_fields(rec["payload"])
                 if "transcript" in pf:
-                    f["paused"].append((rec["ordinal"], pf.get("transcript"), pf.get("agent")))
+                    f["paused"].append((rec["file"], rec["ordinal"], pf.get("transcript"),
+                                        pf.get("agent")))
         put("source_files", path, {"kind": "log", "lane": lane, "ls_order": order,
                                    "blob_sha": obj, "line_count": len(text.split("\n")),
                                    "unreadable_count": unreadable})
@@ -880,8 +891,14 @@ def build_records(snap: dict) -> dict:
             "row_text": None})
     for key, f in facts.items():
         lane = first_log_of.get(key, key)
-        for ordinal, tid, agent in f["paused"]:
-            put("transcript_pointers", f"{lane}:log:{ordinal}", {
+        for path, ordinal, tid, agent in f["paused"]:
+            # KEYED AS `log_lines` IS (Copilot round 1 on #164): two logs whose
+            # names differ only by case are two files, and a PAUSED at the same
+            # line of each is two pointers, never one written over the other.
+            rec_id = f"{lane}:log:{ordinal}"
+            if rec_id in out["transcript_pointers"]:
+                rec_id = f"{path}:log:{ordinal}"
+            put("transcript_pointers", rec_id, {
                 "lane": lane, "kind": "paused", "transcript_id": tid, "agent": agent,
                 "position": ordinal})
     for table in ("transcript_pointers",):
@@ -1170,7 +1187,16 @@ class PostgresStore:
 
     def __init__(self, cfg: dict, role: str):
         self.schema = cfg["schema"]
-        if role == "reader" and cfg.get("reader_url"):
+        if role == "reader":
+            # NEVER THE WRITER'S CREDENTIAL FOR A READ (Copilot round 1 on #164).
+            # The writer is the indexer's and no session's (14(c)), and `export`
+            # is run by a session typing `--index`: with no `reader_url=` the
+            # read is refused, and the read flags answer from the sources.
+            if not cfg.get("reader_url"):
+                raise Refusal(
+                    "the configuration names a Postgres `url=` and no `reader_url=`: the "
+                    "reads (`status`, `--index`) connect only as the SELECT-only reader, "
+                    "never with the writer's credential (Amendment 14(c))")
             self.url, self.passfile = cfg["reader_url"], cfg.get("reader_passfile") or cfg["passfile"]
         else:
             self.url, self.passfile = cfg["url"], cfg["passfile"]
@@ -1386,6 +1412,8 @@ class SyncLock:
                 return True
             except OSError:
                 if time.monotonic() >= deadline:
+                    self.handle.close()
+                    self.handle = None
                     return False
                 time.sleep(0.2)
 
@@ -1450,6 +1478,10 @@ def diff_records(store, source: str, records: dict, verify_content: bool) -> tup
     return upserts, deletes, kept
 
 
+def has_unknown_owner(store, source: str) -> bool:
+    return any(r["owner"] == "unknown" for r in store.rows("lanes", source, ["owner"]))
+
+
 def stored_lanes_of(store, source: str) -> dict:
     return {r["record_id"]: r for r in store.rows("lanes", source,
                                                    ["lane", "owner", "row_text"])}
@@ -1479,7 +1511,11 @@ def run_index(mode: str, requested: str | None, dry_run: bool) -> int:
                 f"not fetched - another workstation is ahead of it; nothing written")
             write_status(source, last_attempt_utc=utc_now(), last_result="behind (unknown commit)")
             return 0
-        if prev == tip and mode == "sync":
+        # NOT WHILE AN OWNER IS `unknown` (Codex on #164): an `unknown` may be a
+        # read that failed, and asking again is how it clears - so a sync at
+        # the same commit goes the long way round, asks only those, and writes
+        # nothing where nothing has changed.
+        if prev == tip and mode == "sync" and not has_unknown_owner(store, source):
             say(f"{PROG} sync: {label} - the index is at the tip; nothing to write")
             write_status(source, last_attempt_utc=utc_now(), last_sync_utc=utc_now(),
                          last_result="current", last_error="")
@@ -1509,6 +1545,14 @@ def run_index(mode: str, requested: str | None, dry_run: bool) -> int:
         fill_owners(records, stored)
         upserts, deletes, kept = diff_records(store, source, records,
                                               verify_content=(mode == "reconcile"))
+    # THE OWNERS ARE ASKED OF `origin/<branch>` AS IT STANDS, and the rows were
+    # read at ONE commit (Copilot round 1 on #164): `managed-projection` reads
+    # the ref, not a sha. So the ref is asked again once every owner is in, and
+    # a ref that moved meanwhile writes NOTHING - not rows of one commit beside
+    # owners of another - and the caller starts over at the new tip.
+    if not dry_run and tip_of(root) != tip:
+        raise SourceMoved(f"origin/{branch()} moved from {tip[:12]} while the owners were "
+                          f"read; nothing was written from that read")
     n_up = sum(len(v) for v in upserts.values())
     n_del = sum(len(v) for v in deletes.values())
     if mode == "reconcile":
@@ -1520,7 +1564,10 @@ def run_index(mode: str, requested: str | None, dry_run: bool) -> int:
         say(f"  total: {n_up} to upsert, {n_del} to remove - nothing written (--dry-run)")
         return 0
     if old and old.get("commit_sha") == tip and not upserts and not deletes:
-        say(f"  total: nothing differs; nothing written")
+        if mode == "sync":
+            say(f"{PROG} sync: {label} - the index is at the tip; nothing to write")
+        else:
+            say("  total: nothing differs; nothing written")
         write_status(source, last_attempt_utc=utc_now(), last_sync_utc=utc_now(),
                      last_result="current", last_error="")
         return 0
@@ -1539,18 +1586,38 @@ def cmd_sync(requested: str | None) -> int:
         say(f"{PROG} sync: LANES_INDEX=off - nothing indexed")
         return 0
     lock = SyncLock()
+    # THE HANDSHAKE, BOTH HALVES (Codex on #164). A sync that finds the lock
+    # held leaves its mark and then tries ONCE MORE: if that fails, somebody
+    # holds the lock NOW, after the mark was written, and the holder looks for
+    # marks after it lets go. The holder, for its part, looks again AFTER it
+    # releases - a mark written between its last look and its release is
+    # found there, and it takes the lock back for it. No mark is left with
+    # nobody due to read it.
     if not lock.acquire(0):
         lock.mark_rerun()
-        say(f"{PROG} sync: another sync holds {lock.path}; it will sync again before it "
-            f"lets go")
-        return 0
+        if not lock.acquire(0):
+            say(f"{PROG} sync: another sync holds {lock.path}; it will sync again before "
+                f"it is done")
+            return 0
+    rc = 0
     try:
         rounds = 0
         while True:
             rounds += 1
             lock.take_rerun()
             rc = _guarded(lambda: run_index("sync", requested, False), requested)
-            if rc != 0 or rounds >= 5 or not os.path.exists(lock.rerun):
+            if rc == MOVED and rounds < 5:
+                continue
+            if rc == MOVED:
+                say(f"{PROG} sync: origin/{branch()} kept moving through {rounds} reads; "
+                    f"nothing written - the next write's nudge syncs it")
+                return 0
+            if rc != 0 or rounds >= 5:
+                return rc
+            if os.path.exists(lock.rerun):
+                continue
+            lock.release()
+            if not os.path.exists(lock.rerun) or not lock.acquire(0):
                 return rc
     finally:
         lock.release()
@@ -1565,14 +1632,27 @@ def cmd_reconcile(requested: str | None, dry_run: bool) -> int:
         note(f"another sync has held {lock.path} for 60 s; nothing written")
         return 1
     try:
-        return _guarded(lambda: run_index("reconcile", requested, dry_run), requested)
+        for _attempt in range(3):
+            rc = _guarded(lambda: run_index("reconcile", requested, dry_run), requested)
+            if rc != MOVED:
+                return rc
+        note(f"origin/{branch()} kept moving through three reads; nothing written")
+        return 1
     finally:
         lock.release()
+
+
+#: `_guarded`'s answer for a read the source moved under: not an exit code
+#: anybody sees, a signal to the two drivers above to read again.
+MOVED = -1
 
 
 def _guarded(act, requested) -> int:
     try:
         return act()
+    except SourceMoved as exc:
+        note(str(exc))
+        return MOVED
     except CasLost as exc:
         note(str(exc))
         _record_error(requested, str(exc))
@@ -1765,7 +1845,8 @@ outside ~/.agents/, with no password in any URL:
   sqlite=<path>             the SQLite file
   url=<libpq URL>           the WRITER role (sync, reconcile)
   passfile=<path>           the 0600 libpq password file for it
-  reader_url=<libpq URL>    the SELECT-only READER role (status, export)
+  reader_url=<libpq URL>    the SELECT-only READER role (status, export) -
+                            required beside url=; a read never uses the writer
   reader_passfile=<path>    its password file, where it is not the same one
   schema=<name>             the Postgres schema (default lanes_index)
 
