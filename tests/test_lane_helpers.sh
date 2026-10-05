@@ -14643,17 +14643,52 @@ a14_norm() {
     -e 's/[0-9a-f]{7,}/<HEX>/g'
 }
 A14_SNAP="$SANDBOX/a14snap"
+# NO GIT GC RUNS UNDER THE SNAPSHOT (CI on #164, `tests-no-submodule` at
+# 50594dc: "rm: cannot remove '…/origin.git': Directory not empty"). By this
+# point the suite has pushed thousands of commits, so a push or a commit can
+# start `git gc --auto`, which DETACHES and keeps writing into the repository
+# while `a14_restore` removes it. A removal that fails leaves the directory
+# behind, `cp -a` then copies the snapshot INSIDE it, and the next write finds
+# no repository at origin. So automatic gc is switched off in both repositories
+# BEFORE the first snapshot (the snapshot carries that setting forward), any gc
+# already running is waited out, and a tree that will not go away is reported
+# rather than copied into.
+git -C "$ORIGIN" config gc.auto 0
+git -C "$ORIGIN" config receive.autogc false
+git -C "$WIP" config gc.auto 0
+a14_gc_quiet() {
+  a14_q=0
+  while [ "$a14_q" -lt 300 ] && { [ -e "$ORIGIN/gc.pid" ] || [ -e "$WIP/.git/gc.pid" ]; }; do
+    sleep 0.1; a14_q=$((a14_q + 1))
+  done
+  return 0
+}
+a14_rmtree() {   # <dir> — removed, retrying while a straggler still writes
+  a14_r=0
+  rm -rf -- "$1" 2>/dev/null
+  while [ -e "$1" ] && [ "$a14_r" -lt 50 ]; do
+    sleep 0.1; rm -rf -- "$1" 2>/dev/null; a14_r=$((a14_r + 1))
+  done
+  if [ -e "$1" ]; then
+    printf 'a14_restore: %s would not go away; the snapshot is NOT restored over it\n' "$1" >&2
+    return 1
+  fi
+  return 0
+}
 a14_snap() {
+  a14_gc_quiet
   rm -rf "$A14_SNAP"; mkdir -p "$A14_SNAP"
   cp -a "$WIP" "$A14_SNAP/wip"
   cp -a "$ORIGIN" "$A14_SNAP/origin"
   if [ -d "$CLAUDE_CONFIG_DIR/lanes" ]; then cp -a "$CLAUDE_CONFIG_DIR/lanes" "$A14_SNAP/cclanes"; fi
 }
 a14_restore() {
-  rm -rf "$WIP" "$ORIGIN" "$CLAUDE_CONFIG_DIR/lanes"
-  cp -a "$A14_SNAP/wip" "$WIP"
-  cp -a "$A14_SNAP/origin" "$ORIGIN"
-  if [ -d "$A14_SNAP/cclanes" ]; then cp -a "$A14_SNAP/cclanes" "$CLAUDE_CONFIG_DIR/lanes"; fi
+  a14_gc_quiet
+  a14_rmtree "$WIP" && cp -a "$A14_SNAP/wip" "$WIP"
+  a14_rmtree "$ORIGIN" && cp -a "$A14_SNAP/origin" "$ORIGIN"
+  if a14_rmtree "$CLAUDE_CONFIG_DIR/lanes" && [ -d "$A14_SNAP/cclanes" ]; then
+    cp -a "$A14_SNAP/cclanes" "$CLAUDE_CONFIG_DIR/lanes"
+  fi
 }
 # A WRITE'S NUDGE RUNS DETACHED and may still be reading this checkout when the
 # snapshot goes back: wait for its one line in the fake `psql`'s log (bounded),
