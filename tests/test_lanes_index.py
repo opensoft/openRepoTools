@@ -1409,6 +1409,34 @@ def test_a_fetch_that_falls_back_keeps_the_read_line_off_stdout(estate):
     assert normal(idx.stdout, estate.root) == normal(src.stdout, estate.root)
 
 
+def test_no_inherited_password_file_reaches_psql(estate):
+    """THE CONFIGURED PASSWORD FILE OR NONE (14(c); Copilot on #164): an
+    inherited `PGPASSFILE` is never handed on. With `passfile=` set, libpq is
+    given that file; without one, an EMPTY 0600 file of the indexer's own -
+    never the inherited file, and never `~/.pgpass` by default."""
+    fake = estate.root / "pgfake"
+    fake.mkdir()
+    (fake / "psql").write_text(FAKE_PSQL)
+    (fake / "psql").chmod(0o755)
+    log = estate.root / "psql.jsonl"
+    ambient = estate.root / "ambient.pgpass"
+    ambient.write_text("*:*:*:*:the-wrong-secret\n")
+    ambient.chmod(0o600)
+    estate.write_config("url=postgresql://lanes_writer@db.invalid/qa\n"
+                        "reader_url=postgresql://lanes_reader@db.invalid/qa\n")
+    env = {"PATH": estate.path_with(fake), "FAKE_PSQL_LOG": str(log),
+           "PGPASSFILE": str(ambient), "PGPASSWORD": "inherited"}
+    assert estate.index("sync", env=env).returncode == 0
+    assert estate.index("status", env=env).returncode == 0
+    calls = [json.loads(l) for l in log.read_text().splitlines()]
+    assert calls and not any(c["pgpassword"] for c in calls)
+    used = {c["passfile"] for c in calls}
+    assert len(used) == 1 and str(ambient) not in used, used
+    empty = Path(used.pop())
+    assert empty.parent == estate.state / "openRepoTools", empty
+    assert empty.read_text() == "" and stat.S_IMODE(empty.stat().st_mode) == 0o600
+
+
 def test_an_unreachable_store_writes_nothing_waits_on_nothing_and_says_so(estate):
     fake = estate.root / "pgfake"
     fake.mkdir()

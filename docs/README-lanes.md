@@ -3243,7 +3243,9 @@ refused for `status` and the read flags (`read: sources (index refused …)`):
 **a read never connects with the writer's credential**, and there is no
 fallback to it. Postgres is reached through `psql` and only where
 `url=` is set — nothing imports a driver — with `PGPASSFILE` naming the
-password file and an inherited `PGPASSWORD` removed. No configuration at all
+password file and an inherited `PGPASSWORD` or `PGPASSFILE` removed; with
+no `passfile=` (a passwordless role), `PGPASSFILE` names an empty 0600 file of
+the indexer's own, so libpq never falls back to `~/.pgpass`. No configuration at all
 is SQLite at its default path, created 0600.
 
 **The two roles are Postgres's to hold** (act 3, Brett Heap's on Eagle and

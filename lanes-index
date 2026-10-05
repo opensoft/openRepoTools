@@ -1225,9 +1225,12 @@ class PostgresStore:
         self.psql = shutil.which("psql") or ""
 
     def _env(self) -> dict:
-        env = {k: v for k, v in os.environ.items() if k != "PGPASSWORD"}
-        if self.passfile:
-            env["PGPASSFILE"] = self.passfile
+        # THE CONFIGURED PASSWORD FILE OR NONE AT ALL (14(c); Copilot on #164):
+        # an inherited `PGPASSWORD` or `PGPASSFILE` is dropped, and with no
+        # `passfile=` libpq is handed an EMPTY 0600 file of this command's own -
+        # never left to find `~/.pgpass` or a file some other environment named.
+        env = {k: v for k, v in os.environ.items() if k not in ("PGPASSWORD", "PGPASSFILE")}
+        env["PGPASSFILE"] = self.passfile or _no_password_file()
         env.setdefault("PGCONNECT_TIMEOUT", "5")
         env["PGAPPNAME"] = PROG
         return env
@@ -1374,6 +1377,21 @@ class PostgresStore:
                              f"(source, record_id) DO UPDATE SET {sets};")
         lines.append("COMMIT;")
         self._run("\n".join(lines) + "\n")
+
+
+def _no_password_file() -> str:
+    """An empty 0600 file for libpq to read where no `passfile=` is configured
+    (a passwordless role: peer, trust or certificate authentication)."""
+    path = os.path.join(state_dir(), "lanes-index.nopass")
+    try:
+        os.makedirs(state_dir(), mode=0o700, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.close(fd)
+        os.chmod(path, 0o600)
+    except OSError as exc:
+        raise StoreUnusable("unreachable", f"{path} could not be made as the empty password "
+                            f"file ({exc.strerror or exc}); nothing was sent to Postgres")
+    return path
 
 
 def open_store(cfg: dict, role: str):
