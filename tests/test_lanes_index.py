@@ -1318,6 +1318,34 @@ def test_out_belongs_to_export_alone(estate):
     assert not estate.sqlite.exists()
 
 
+def test_a_fetch_that_falls_back_keeps_the_read_line_off_stdout(estate):
+    """`lanes --fetch --index` WHERE THE FETCH FALLS BACK (14(b); Copilot round
+    3 on #164): the wrapper prints the helper's notes on stdout under that
+    footer, and the `read:` line is not one of them - it is said once, on
+    stderr, and the listing is the source read's."""
+    assert estate.index("sync").returncode == 0
+    # THE HELPER IN THAT STATE, as the shell suite builds it: it says the fetch
+    # fell back, on stderr, and answers from the local refs, exit 0.
+    stub = estate.root / "fetchfallback"
+    stub.write_text("#!/usr/bin/env bash\n"
+                    "if [ \"${1-}\" = lanes ]; then\n"
+                    "  printf 'lanes-edit: fetch failed — reading the logs as they stand locally\\n' >&2\n"
+                    "  shift; ff=()\n"
+                    "  for a in \"$@\"; do [ \"$a\" = --fetch ] || ff+=(\"$a\"); done\n"
+                    f"  exec bash {LANES_EDIT} lanes ${{ff[@]+\"${{ff[@]}}\"}}\n"
+                    "fi\n"
+                    f"exec bash {LANES_EDIT} \"$@\"\n", encoding="utf-8")
+    stub.chmod(0o755)
+    env = {"LANES_EDIT": str(stub)}
+    src = estate.run("bash", LANES, "--all", "--fetch", env=env)
+    idx = estate.run("bash", LANES, "--all", "--fetch", "--index", env=env)
+    assert "reading the logs as they stand locally" in src.stdout, src.stdout
+    assert idx.stderr.count("read: index (sqlite)") == 1, idx.stderr
+    assert "read: " not in idx.stdout, idx.stdout
+    assert idx.returncode == src.returncode
+    assert normal(idx.stdout, estate.root) == normal(src.stdout, estate.root)
+
+
 def test_an_unreachable_store_writes_nothing_waits_on_nothing_and_says_so(estate):
     fake = estate.root / "pgfake"
     fake.mkdir()

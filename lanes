@@ -374,6 +374,10 @@ if [ "$do_fetch" = 1 ]; then
 		# too: the rest of this stream is rendered below only where the fetch
 		# fell back, and `read: …` is not about the fetch.
 		printf '%s\n' "$fetch_err" | command grep '^read: ' >&2 || :
+		# …AND ONLY THERE (Copilot round 3 on #164): the notes are rendered
+		# again, on STDOUT, under a fetch that fell back, where a `read:` line
+		# would be said twice and would make `--index` change the listing.
+		fetch_err="$(printf '%s\n' "$fetch_err" | command grep -v '^read: ' || :)"
 	else
 		out="$("$LANES_EDIT" lanes --fetch ${idx_args[@]+"${idx_args[@]}"} ${args[@]+"${args[@]}"})" || rc=$?
 		fetch_unchecked=1
