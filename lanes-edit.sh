@@ -15828,7 +15828,7 @@ EOF
     sri_root="$(lane_restart_control_root "$lane")" || sri_rrc=$?
     [ "$sri_rrc" = 0 ] || {
       release_lock
-      die "lane $lane's restart control root is unavailable, unreadable or ambiguous. Nothing was written. Inspect its recorded directory and projects-root intents, or configure an explicit state root." 1
+      die "lane $lane's restart control root is unavailable, unreadable or ambiguous. Nothing was written. Inspect its recorded directory and projects-root intents, or configure LANES_LANE_STATE_ROOT explicitly." 1
     }
     sri_f="$sri_root/restart-intent.yaml"
     # A SCHEMA THIS WRITER DOES NOT KNOW IS NOT ITS RECORD TO REPLACE (Copilot
