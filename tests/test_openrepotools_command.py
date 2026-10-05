@@ -777,21 +777,62 @@ def test_a_copy_another_account_owns_is_refused_and_left_as_it_was(tmp_path):
         "the loop carried on past a placement it refused")
 
 
+@NEEDS_JQ
+def test_a_group_that_cannot_be_kept_does_not_stop_the_placement(tmp_path):
+    """THE GROUP IS KEPT WHERE IT CAN BE, AND IS NO REASON TO REFUSE (Copilot
+    round 2 on #172). The owner is this account and the group is one it is not
+    in, so the real `chown` to that group is refused. At 755 and 644 the
+    group's bits are the other bits, so nobody gains or loses a permission by
+    it: the copy is placed, as `cp` placed it.
+    """
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    bin_dir = tmp_path / ".local" / "bin"
+    name = INSTALLED[1]
+    target = bin_dir / name
+    target.write_bytes(target.read_bytes() + b"# drift\n")
+    ls_shim = fake_owner_ls(tmp_path, target, os.getuid(), os.getgid() + 4243)
+
+    result = run_cmd("--install", home=tmp_path, env={
+        "PATH": f"{ls_shim}{os.pathsep}{os.environ['PATH']}"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"{name}: updated at {target}" in result.stdout, result.stdout
+    assert target.read_bytes() == (REPO / name).read_bytes()
+    assert placement_temporaries(tmp_path) == []
+
+
+#: THE TWO PLACES A SIGNAL CAN FIND A TEMPORARY. A slow `cp` holds the run
+#: between `mktemp` and `mv`. A slow `mktemp` holds it AFTER the file is made
+#: and BEFORE its name comes back — the window Copilot's round 2 on #172 named,
+#: which a name learnt from `mktemp`'s answer could not cover. Each defers to
+#: the real tool and is slow only for a temporary.
+SLOW_TOOLS = {
+    "cp": ('for arg in "$@"; do\n'
+           '\tcase "$arg" in *.openrepotools.*) sleep 3 ;; esac\n'
+           'done\n'
+           'exec {real} "$@"\n'),
+    "mktemp": ('made=$({real} "$@") || exit $?\n'
+               'case "$made" in *.openrepotools.*) sleep 3 ;; esac\n'
+               "printf '%s\\n' \"$made\"\n"),
+}
+
+
+@pytest.mark.parametrize("slow", sorted(SLOW_TOOLS))
 @pytest.mark.parametrize("signame, to_group", [
     ("SIGTERM", False),   # a `kill` from another shell
     ("SIGINT", True),     # Ctrl-C: the whole foreground process group
 ])
 @NEEDS_JQ
 def test_a_run_killed_mid_placement_leaves_no_temporary(tmp_path, signame,
-                                                         to_group):
+                                                         to_group, slow):
     """THE `EXIT` TRAP REMOVES WHAT A PLACEMENT HAS NOT YET RENAMED (#167).
 
     `place_by_rename` removes its temporary on every failure it sees; a signal
     is one it cannot see, which is what `$PLACING` and the trap `workdir`
-    sets are for. A `cp` first on `$PATH` that is SLOW into a temporary holds
-    the run between its `mktemp` and its `mv`; the signal lands there. The run
-    dies of it, and nothing named `.<name>.openrepotools.*` is left beside a
-    target. Without the trap's clause every one of these leaves it behind.
+    sets are for. A tool first on `$PATH` that is SLOW for a temporary holds
+    the run where one exists; the signal lands there. The run dies of it, and
+    nothing named `.<name>.openrepotools.*` is left beside a target. Without
+    the trap's clause every one of these leaves it behind, and with a trap that
+    knew only `mktemp`'s answer the Ctrl-C into a slow `mktemp` still did.
 
     THE CHILD STARTS WITH BOTH SIGNALS AT THEIR DEFAULT, as a foreground job at
     a terminal has them. A runner started in the background by a
@@ -799,18 +840,14 @@ def test_a_run_killed_mid_placement_leaves_no_temporary(tmp_path, signame,
     signal survives `exec`, and a shell may not un-ignore one it was started
     with — so without this the case would measure the runner, not the trap.
     """
-    real = shutil.which("cp")
+    real = shutil.which(slow)
     if real is None:
-        pytest.skip("no real `cp` on PATH for the slow one to defer to")
-    shim = tmp_path / "slow-cp"
+        pytest.skip(f"no real `{slow}` on PATH for the slow one to defer to")
+    shim = tmp_path / f"slow-{slow}"
     shim.mkdir()
-    (shim / "cp").write_text(
-        "#!/bin/sh\n"
-        'for arg in "$@"; do\n'
-        '\tcase "$arg" in *.openrepotools.*) sleep 3 ;; esac\n'
-        "done\n"
-        f'exec {real} "$@"\n', encoding="utf-8")
-    (shim / "cp").chmod(0o755)
+    (shim / slow).write_text(
+        "#!/bin/sh\n" + SLOW_TOOLS[slow].format(real=real), encoding="utf-8")
+    (shim / slow).chmod(0o755)
     sig = getattr(signal, signame)
 
     def default_signals() -> None:

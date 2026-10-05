@@ -71,10 +71,12 @@ SELF="${BASH_SOURCE[0]:-$0}"
 MODE=""
 WORKDIR=""
 STAGED=""
-# THE TEMPORARY A PLACEMENT HAS MADE AND NOT YET RENAMED (#167), named here for
-# the `EXIT` trap `workdir` sets: `place_by_rename` removes it on every failure
-# it sees, and this is what removes it on the ones it cannot see — a signal, or
-# an `errexit` between its `mktemp` and its `mv`.
+# THE PREFIX OF THE TEMPORARY A PLACEMENT IS MAKING (#167), named here for the
+# `EXIT` trap `workdir` sets, which removes `"$PLACING"*`: `place_by_rename`
+# removes its temporary on every failure it sees, and this is what removes it
+# on the ones it cannot see — a signal, or an `errexit`. A PREFIX, set before
+# `mktemp` runs, so no instant exists in which the file is there and the trap
+# does not know its name (Copilot round 2 on #172).
 PLACING=""
 
 say() { printf '%s\n' "$*"; }
@@ -222,7 +224,7 @@ USAGE
 workdir() {
 	if [ -z "$WORKDIR" ]; then
 		WORKDIR="$(mktemp -d)"
-		trap 'rm -rf -- "$WORKDIR"; [ -z "$PLACING" ] || rm -f -- "$PLACING"' EXIT
+		trap 'rm -rf -- "$WORKDIR"; [ -z "$PLACING" ] || rm -f -- "$PLACING"*' EXIT
 	fi
 }
 
@@ -1012,11 +1014,16 @@ owner_of() {   # <path>
 # for even an instant, and a stamp that fails (#48) leaves whatever was at the
 # target exactly as it was.
 #
-# EVERY FAILURE REMOVES THE TEMPORARY, then refuses naming the target, and
-# `$PLACING` names it in between for the `EXIT` trap, so a run killed between the
-# `mktemp` and the `mv` leaves nothing behind either. The leading dot keeps it
-# out of a listing, and the suffix after the name keeps it out of every glob a
-# reader of these directories takes (`*.md` in `commands/`).
+# EVERY FAILURE REMOVES THE TEMPORARY, then refuses naming the target, and a
+# run killed while one exists leaves nothing behind either: `$PLACING` holds
+# its PREFIX — `.<name>.openrepotools.<this pid>.` — from BEFORE `mktemp` runs
+# until after the `mv`, and the `EXIT` trap removes whatever starts with it. A
+# name the trap learnt only from `mktemp`'s answer had a window, between the
+# file being made and the answer being assigned, in which a signal left it
+# behind (Copilot round 2 on #172); the pid keeps the prefix this run's own.
+# The leading dot keeps it out of a listing, and the suffix after the name
+# keeps it out of every glob a reader of these directories takes (`*.md` in
+# `commands/`).
 #
 # THE OWNER STAYS WHO IT WAS (Copilot on #172). A rename puts the TEMPORARY's
 # inode at the path, and the temporary belongs to whoever runs this — so a root
@@ -1024,10 +1031,13 @@ owner_of() {   # <path>
 # allow (search "WHAT `-w` DOES NOT PROVE"), would hand that user root-owned
 # copies that their own next `--install` refuses as unwritable. `cp` kept the
 # owner by keeping the inode; this keeps it by giving the temporary the
-# target's uid and gid before the rename. Asked only where the OWNER differs:
-# a group that differs costs the owner nothing. Where that `chown` is refused —
-# an account placing over a file another account owns, which only root may
-# give away — the placement refuses rather than take the file over.
+# target's uid and gid before the rename. Where that `chown` is refused and the
+# OWNER differs — an account placing over a file another account owns, which
+# only root may give away — the placement refuses rather than take the file
+# over. Where only the GROUP differs and cannot be kept, it is placed anyway:
+# at 755 and 644 the group's bits are the other bits, so nobody gains or loses
+# a permission by it (Copilot round 2 on #172 asked that it not be silent, and
+# this is why it may be).
 #
 # A DIRECTORY AT THE TARGET IS REFUSED HERE as well as in planning, because `mv`
 # moves a file INTO a directory named as its destination rather than failing,
@@ -1035,10 +1045,10 @@ owner_of() {   # <path>
 # still place whole files; serializing them is #106's lock, not this.
 place_by_rename() {   # <staged source> <target> <mode> <what a refusal adds>
 	local source="$1" target="$2" mode="$3" rest="$4" tmp="" was="" now=""
-	tmp="$(mktemp -- "$(dirname -- "$target")/.${target##*/}.openrepotools.XXXXXX")" ||
-		die "could not create a temporary file beside $target, so it was not placed.
-    $rest"
-	PLACING="$tmp"
+	PLACING="$(dirname -- "$target")/.${target##*/}.openrepotools.$$."
+	tmp="$(mktemp -- "${PLACING}XXXXXX")" ||
+		{ rm -f -- "$PLACING"*; PLACING=""; die "could not create a temporary file beside $target, so it was not placed.
+    $rest"; }
 	cp -- "$source" "$tmp" ||
 		{ rm -f -- "$tmp"; PLACING=""; die "could not write $target, so it was not placed and what was there is untouched.
     $rest"; }
@@ -1047,10 +1057,13 @@ place_by_rename() {   # <staged source> <target> <mode> <what a refusal adds>
     $rest"; }
 	was="$(owner_of "$target")"
 	now="$(owner_of "$tmp")"
-	if [ -n "$was" ] && [ "${was%%:*}" != "${now%%:*}" ]; then
-		chown -- "$was" "$tmp" 2>/dev/null ||
-			{ rm -f -- "$tmp"; PLACING=""; die "$target belongs to uid ${was%%:*}, and this run cannot give the new copy that owner, so it was not placed and what was there is untouched.
-    $rest"; }
+	if [ -n "$was" ] && [ "$was" != "$now" ] &&
+		! chown -- "$was" "$tmp" 2>/dev/null &&
+		[ "${was%%:*}" != "${now%%:*}" ]; then
+		rm -f -- "$tmp"
+		PLACING=""
+		die "$target belongs to uid ${was%%:*}, and this run cannot give the new copy that owner, so it was not placed and what was there is untouched.
+    $rest"
 	fi
 	if [ -d "$target" ]; then
 		rm -f -- "$tmp"
