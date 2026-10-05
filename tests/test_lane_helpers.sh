@@ -14787,6 +14787,17 @@ is   "without the site-packages line a venv under another name is still refused"
 printf '%s\n' 'site-packages/' >> "$WIP/.gitignore"
 run "$E" pathspec-check "$B162_REL"
 is   "with the offered lines in place it stages nothing of the kind" "$rc" 0
+# ALREADY STAGED (Copilot round 2 on #169): `add --dry-run` is silent about a
+# path the index already holds, and the commit would carry it regardless.
+git -C "$WIP" add -f -- "$B162_REL/r1/__pycache__/m.cpython-312.pyc"
+run "$E" pathspec-check "$B162_REL"
+is   "bytecode already staged is refused too" "$rc" 2
+has  "…and named" "$out" "$B162_REL/r1/__pycache__/m.cpython-312.pyc"
+b162_head="$(git -C "$WIP" rev-parse HEAD)"
+run env LANES_LANE=repoA-1 LANES_PATH="$B162_REL" "$E" commit "attach r1"
+is   "…by the commit path as well" "$rc" 2
+is   "…which commits nothing" "$(git -C "$WIP" rev-parse HEAD)" "$b162_head"
+git -C "$WIP" reset -q -- "$B162_REL"
 rm -rf "$WIP/handoffs/sandbox"
 if [ -n "$B162_IGN" ]; then printf '%s\n' "$B162_IGN" > "$WIP/.gitignore"; else rm -f "$WIP/.gitignore"; fi
 git -C "$WIP" checkout -q -- .gitignore 2>/dev/null || :

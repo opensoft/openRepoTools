@@ -1829,9 +1829,16 @@ site-packages/'
 bytecode_in_pathspec() {   # <repo> <pathspec>...
   bip_repo="${1-}"; shift || :
   [ "$#" -gt 0 ] || return 0
-  git -C "$bip_repo" add --dry-run --ignore-missing -- "$@" 2>/dev/null |
-    sed -n "s/^add '\(.*\)'\$/\1/p" |
-    awk '{
+  # WHAT THE ADD WOULD STAGE, AND WHAT IS STAGED ALREADY: `add --dry-run` says
+  # nothing of a path the index already holds at these bytes, and the commit
+  # takes it all the same. A staged DELETION of bytecode is a cleanup and is
+  # let through (`--diff-filter=d`).
+  {
+    git -C "$bip_repo" add --dry-run --ignore-missing -- "$@" 2>/dev/null |
+      sed -n "s/^add '\(.*\)'\$/\1/p"
+    git -C "$bip_repo" diff --cached --name-only --diff-filter=d -- "$@" 2>/dev/null
+  } |
+    awk '!seen[$0]++ {
       n = split($0, part, "/"); hit = 0
       for (i = 1; i <= n; i++)
         if (part[i] == "__pycache__" || part[i] == ".pytest_cache" ||
