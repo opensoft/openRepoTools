@@ -12610,8 +12610,9 @@ EOF
 # IT READS WHAT #97 WROTE AND NOTHING THAT IT DID NOT. The lanes are the
 # listing's own (`lanes_rows --all --closed`, so a closed or dormant lane's
 # leftovers are not hidden), and so is `writer_live` — the listing's LIVE, out
-# of this workstation's session records, empty where those could not be read
-# (Amendment 7(d): never "no"). The trees are `lane_trees_list`'s sidecars and
+# of this workstation's session records, and EMPTY where those could not be
+# read or the lane is bound elsewhere (Amendment 7(d) and 18(b): never "no" on a
+# read nobody could make). The trees are `lane_trees_list`'s sidecars and
 # NO DIRECTORY IS WALKED for a tree no sidecar names: that is
 # `lane-reconcile`'s act, and it is an act. `owner` is `lane_is_managed_owned`'s
 # answer — the read `managed-projection` makes — as `legacy`, `managed <owner>`
@@ -12650,7 +12651,7 @@ worktree_rows() {   # [<canonical lane>]
   fi
   case "$wr_lrc" in 0) : ;; 8) return 8 ;; *) return 1 ;; esac
   wr_tab="$(printf '\t')"
-  while IFS="$wr_tab" read -r wr_l wr_st wr_w wr_pf wr_win wr_sid wr_dir wr_rest; do
+  while IFS="$wr_tab" read -r wr_l wr_st wr_w wr_pf wr_win wr_sid wr_dir wr_obj wr_age wr_restart wr_home wr_fk wr_loc wr_rest; do
     [ -n "${wr_l:-}" ] || continue
     # ONE CONTROL-ROOT READ FOR A LANE WITH NO TREES, which is nearly every lane
     # in the estate: the sidecars are listed only where a `trees` directory is.
@@ -12676,9 +12677,15 @@ worktree_rows() {   # [<canonical lane>]
     wr_trees=""; wr_trc=0
     wr_trees="$(lane_trees_list "$wr_l" 2>/dev/null)" || wr_trc=$?
     case "$wr_trc" in 0) : ;; *) continue ;; esac
+    # LIVE IS PRONOUNCED, NOT-LIVE ONLY WHERE IT MAY BE (Amendment 18(b)). A
+    # live record here naming one of the lane's ids is `1`; no such record is
+    # `0` only where this workstation could read its records AND the lane is not
+    # bound elsewhere (the listing's column 13) — from outside a binding,
+    # liveness is UNKNOWN, never dead, and that is the empty field.
     wr_live=0
-    [ "$wr_st" = LIVE ] && wr_live=1
+    [ "${wr_loc:-none}" = elsewhere ] && wr_live=""
     [ "$wr_live_ok" = 1 ] || wr_live=""
+    [ "$wr_st" = LIVE ] && wr_live=1
     wr_own=""; wr_orc=0
     wr_own="$(lane_is_managed_owned "$wr_l" 2>/dev/null)" || wr_orc=$?
     wr_own="$(printf '%s\n' "$wr_own" | head -n 1)"

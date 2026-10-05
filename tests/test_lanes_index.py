@@ -2057,3 +2057,25 @@ def test_the_inventory_source_is_this_workstations_alone(inv):
     assert reg.returncode == 2
     both = inv.e.index("export", "--out", inv.root, "--worktrees", "--source", "inventory")
     assert both.returncode == 64
+
+
+def test_a_lane_bound_elsewhere_has_no_liveness_pronounced_here(inv):
+    """AMENDMENT 18(b) FOR `writer_live`: a lane whose last STARTED/RESUMED bound
+    it on another host cannot be pronounced not-live from here - its session
+    records are that host's - so the field is NULL, `unknown` in the listing,
+    and never the `0` that reads as *nobody is writing there*."""
+    log = inv.e.wip / "lanes" / "log" / "repoA-1.md"
+    log.write_text(log.read_text(encoding="utf-8") +
+                   f"RESUMED — lane repoA-1, session {UUID_A1B}@Raven, 2026-10-05T00:00:00Z, "
+                   f"lane:repoA-1 → host raven; container none; window rsess:1 @9; os macos\n",
+                   encoding="utf-8")
+    inv.e._git("add", "-A")
+    inv.e._git("commit", "-q", "-m", "repoA-1 is bound on Raven now")
+    inv.e._git("push", "-q", "origin", "main")
+    assert inv.sync().returncode == 0
+    rows = inv.rows()
+    assert rows[f"repoA-1:{inv.run_tree}"]["writer_live"] is None
+    assert rows[f"repoA-2:{inv.a2_tree}"]["writer_live"] == 1
+    listed = _wt(inv, "repoA-1")
+    run = next(l for l in listed.stdout.splitlines() if l.endswith(str(inv.run_tree)))
+    assert run.split()[4] == "unknown", run
