@@ -51,8 +51,13 @@ FAKE_SUITE = """#!/bin/sh
 } > "$FAKE_SUITE_LOG"
 : > "$TMPDIR/the-suite-wrote-here"
 if [ -n "${FAKE_SUITE_SLEEP:-}" ]; then
+  # A CHILD OF ITS OWN, as pytest waits on a shell suite or a `git`: the
+  # wrapper must stop it too, not only the process it started.
+  sleep "$FAKE_SUITE_SLEEP" &
+  printf '%s\n' "$!" > "$FAKE_SUITE_LOG.child"
   : > "$FAKE_SUITE_LOG.started"
-  exec sleep "$FAKE_SUITE_SLEEP"
+  wait
+  exit 0
 fi
 exit "${FAKE_SUITE_RC:-0}"
 """
@@ -79,7 +84,7 @@ class Box:
             # NO `flock` ON THIS PATH: the wrapper takes its `mkdir` lock, the
             # one macOS uses. Every other tool it calls is linked in by name.
             for tool in ("dirname", "awk", "mkdir", "cat", "mv", "rm", "sleep", "date",
-                         "chmod"):
+                         "chmod", "ps"):
                 found = shutil.which(tool)
                 assert found, tool
                 (self.fakebin / tool).symlink_to(found)
@@ -179,18 +184,24 @@ def test_a_killed_run_removes_its_run_root_and_stops_the_suite(tmp_path, sig, rc
     assert proc.returncode == rc
     assert time.time() - started < 20, "the trap waited for the suite"
     assert not run_root.exists(), "the run root outlived a killed run"
-    suite_pid = int(rec["pid"])
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        try:
-            os.kill(suite_pid, 0)
-        except ProcessLookupError:
-            break
-        time.sleep(0.1)
-    else:
-        raise AssertionError("the suite outlived its wrapper")
+    child = Path(str(box.log) + ".child").read_text().strip()
+    for pid, what in ((int(rec["pid"]), "the suite"), (int(child), "the suite's own child")):
+        deadline = time.time() + 10
+        while time.time() < deadline and _running(pid):
+            time.sleep(0.1)
+        if _running(pid):
+            os.kill(pid, signal.SIGKILL)
+            raise AssertionError(f"{what} outlived its wrapper")
     if not flock:
         assert not (box.lockdir / "openrepotools-pytest.lock.d").exists(), "the lock was kept"
+
+
+def _running(pid: int) -> bool:
+    """Alive and not a zombie: an orphan's zombie answers `kill -0` until
+    whoever adopted it reaps it."""
+    proc = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
+    state = proc.stdout.strip()
+    return bool(state) and not state.startswith("Z")
 
 
 def test_the_repository_venv_is_used_when_it_has_pytest(tmp_path):

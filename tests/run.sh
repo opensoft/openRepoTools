@@ -102,23 +102,47 @@ wait_for_pytest() {   # <where> — block while any other suite is running
   return 0
 }
 
-# THE RUN ROOT AND ITS CLEANUP. `cleanup` is the EXIT trap and removes the run
-# root and, on the `mkdir` path, the lock it holds; the INT and TERM handlers
-# stop the suite and EXIT, so the EXIT trap runs - a handler that only cleaned
-# up and returned would release the lock while the suite carried on.
+# THE RUN ROOT AND ITS CLEANUP. `cleanup` is the EXIT trap: it stops whatever
+# is left of the suite's PROCESS GROUP, then removes the run root and, on the
+# `mkdir` path, the lock it holds. The INT and TERM handlers stop the suite and
+# EXIT, so the EXIT trap runs - a handler that only cleaned up and returned
+# would release the lock while the suite carried on.
+#
+# THE GROUP, NOT THE PID: pytest is waiting on a shell suite, a `git`, a
+# fixture's `sleep` when the signal comes, and a TERM to pytest alone leaves
+# them running with their temp root deleted under them and the lock released
+# around them. The suite is started in a process group of its own (below), and
+# the whole group is stopped and waited for, KILLed after ten seconds.
 RUN_ROOT=""
 LOCKDIR_HELD=""
 SUITE_PID=""
+SUITE_PGID=""
+# A member still RUNNING, read from `ps` and never from `kill -0`: a zombie
+# answers `kill -0` until whoever adopted it reaps it, which may be never.
+group_alive() {
+  ps -A -o pgid= -o stat= 2>/dev/null |
+    awk -v g="$SUITE_PGID" '$1 == g && $2 !~ /^Z/ { n++ } END { exit n ? 0 : 1 }'
+}
+stop_group() {
+  [ -n "$SUITE_PGID" ] || return 0
+  kill -TERM -- "-$SUITE_PGID" 2>/dev/null || return 0
+  if [ -n "$SUITE_PID" ]; then wait "$SUITE_PID" 2>/dev/null || :; fi
+  sg_n=0
+  while group_alive && [ "$sg_n" -lt 50 ]; do
+    sleep 0.2
+    sg_n=$((sg_n + 1))
+  done
+  kill -KILL -- "-$SUITE_PGID" 2>/dev/null || :
+  return 0
+}
 cleanup() {
+  stop_group
   [ -n "$RUN_ROOT" ] && rm -rf -- "$RUN_ROOT"
   [ -n "$LOCKDIR_HELD" ] && rm -rf -- "$LOCKDIR_HELD"
   return 0
 }
 on_signal() {   # <exit code>
-  if [ -n "$SUITE_PID" ]; then
-    kill -TERM "$SUITE_PID" 2>/dev/null || :
-    wait "$SUITE_PID" 2>/dev/null || :
-  fi
+  stop_group
   exit "$1"
 }
 
@@ -150,10 +174,18 @@ make_run_root() {
 # interrupted by a trapped signal; the handler then stops the suite itself.
 # `<&0` keeps the suite's stdin this shell's: a background command's default
 # stdin, with job control off, is /dev/null.
+#
+# `set -m` FOR THE ONE LINE THAT STARTS IT puts the suite in a process group of
+# its own, whose id is its pid, so `stop_group` reaches every process it
+# started (one that made a session or group of its own is beyond any wrapper).
+# Monitor mode is off again before the `wait`, so no job notice is printed.
 run_suite() {
   printf '%s: python3 -m pytest tests -q -p no:cacheprovider %s\n' "$prog" "${*:-}" >&2
+  set -m
   python3 -m pytest tests -q -p no:cacheprovider --basetemp="$RUN_ROOT/basetemp" ${1+"$@"} <&0 &
   SUITE_PID=$!
+  SUITE_PGID=$SUITE_PID
+  set +m
   wait "$SUITE_PID"
   rs_rc=$?
   SUITE_PID=""

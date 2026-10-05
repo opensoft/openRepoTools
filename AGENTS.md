@@ -268,7 +268,8 @@ goes to `${XDG_CACHE_HOME:-~/.cache}/openRepoTools/pycache`
 `--basetemp` and the `TMPDIR` the suite's own `mktemp`s use — is under one run
 root, `${XDG_STATE_HOME:-~/.local/state}/openRepoTools/tmp/<UTC>-<pid>/`, which
 the wrapper's EXIT trap removes however the run ends (a TERM or an INT stops the
-suite first). The lock is computed BEFORE `TMPDIR` moves, so it is still the
+suite's whole process group first, so no `git` or shell suite it was waiting on
+outlives the run root or the lock). The lock is computed BEFORE `TMPDIR` moves, so it is still the
 workstation's. Where the repository's venv
 (`${XDG_CACHE_HOME:-~/.cache}/openRepoTools/venvs/openRepoTools`) has `pytest`,
 the suite runs from it, first on `PATH`, so the command line still reads
