@@ -3559,7 +3559,10 @@ The sweep retires what is already there; these keep more from arriving.
   and roots every temporary directory of a run under
   `${XDG_STATE_HOME:-~/.local/state}/openRepoTools/tmp/<UTC>-<pid>/`, which its
   EXIT trap removes however the run ends — after stopping the suite's whole
-  process group, so nothing it started outlives the run root or the lock. A SIGKILL is the one end no trap sees;
+  process group, so nothing it started outlives the run root or the lock. With
+  a terminal on stdin the suite runs in the FOREGROUND instead, so `--pdb` or a
+  `breakpoint()` can read it (a background group would be stopped by SIGTTIN,
+  and the wrapper would wait on it holding the lock). A SIGKILL is the one end no trap sees;
   the pid in the name is what lets `--include-sandboxes` tell its owner is gone.
 * **One virtual environment per repository, outside the estate:**
   `${XDG_CACHE_HOME:-~/.cache}/openRepoTools/venvs/<repo>/`. `openRepoTools

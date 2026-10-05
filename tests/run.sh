@@ -179,8 +179,20 @@ make_run_root() {
 # its own, whose id is its pid, so `stop_group` reaches every process it
 # started (one that made a session or group of its own is beyond any wrapper).
 # Monitor mode is off again before the `wait`, so no job notice is printed.
+#
+# A TERMINAL ON STDIN RUNS THE SUITE IN THE FOREGROUND instead, in this
+# wrapper's own process group - the terminal's foreground group. A background
+# group reading the terminal (`--pdb`, `breakpoint()`, `input()`) is stopped by
+# SIGTTIN, and this wrapper would wait on it for ever holding the
+# workstation's lock. In the foreground a Ctrl-C reaches every process of the
+# suite from the terminal itself; the cost is that a TERM sent to this wrapper
+# from elsewhere is acted on once the suite returns.
 run_suite() {
   printf '%s: python3 -m pytest tests -q -p no:cacheprovider %s\n' "$prog" "${*:-}" >&2
+  if [ -t 0 ]; then
+    python3 -m pytest tests -q -p no:cacheprovider --basetemp="$RUN_ROOT/basetemp" ${1+"$@"}
+    return $?
+  fi
   set -m
   python3 -m pytest tests -q -p no:cacheprovider --basetemp="$RUN_ROOT/basetemp" ${1+"$@"} <&0 &
   SUITE_PID=$!

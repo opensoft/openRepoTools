@@ -27,6 +27,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -50,6 +51,13 @@ FAKE_SUITE = """#!/bin/sh
   printf 'pid %s\\n' "$$"
 } > "$FAKE_SUITE_LOG"
 : > "$TMPDIR/the-suite-wrote-here"
+if [ -n "${FAKE_SUITE_READ:-}" ]; then
+  # A DEBUGGER'S PROMPT: it reads the terminal, as `--pdb` would.
+  printf 'prompt>\n'
+  read -r line
+  printf 'got: %s\n' "$line"
+  exit 0
+fi
 if [ -n "${FAKE_SUITE_SLEEP:-}" ]; then
   # A CHILD OF ITS OWN, as pytest waits on a shell suite or a `git`: the
   # wrapper must stop it too, not only the process it started.
@@ -200,6 +208,56 @@ def test_a_killed_run_removes_its_run_root_and_stops_the_suite(tmp_path, sig, rc
             raise AssertionError(f"{what} outlived its wrapper")
     if not flock:
         assert not (box.lockdir / "openrepotools-pytest.lock.d").exists(), "the lock was kept"
+
+
+@pytest.mark.skipif(not hasattr(os, "openpty") or sys.platform.startswith("win"),
+                    reason="needs a pseudo-terminal")
+def test_a_suite_that_reads_the_terminal_is_not_stopped(tmp_path):
+    """Adversarial review B7: with a terminal on stdin the suite runs in the
+    foreground, in the terminal's process group - a debugger's prompt reads
+    it. A background group would be stopped by SIGTTIN and the wrapper would
+    wait on it for ever, holding the workstation's lock."""
+    import pty
+    import select
+    box = Box(tmp_path)
+    env = dict(box.env, FAKE_SUITE_READ="1")
+    pid, master = pty.fork()
+    if pid == 0:                                 # the child: a session on the pty
+        try:
+            os.execve(shutil.which("bash") or "/bin/bash", ["bash", str(WRAPPER)], env)
+        finally:
+            os._exit(127)
+    seen, sent, status, finished = b"", False, None, False
+    deadline = time.time() + 30
+    try:
+        while time.time() < deadline:
+            ready, _w, _x = select.select([master], [], [], 0.2)
+            if ready:
+                try:
+                    chunk = os.read(master, 4096)
+                except OSError:
+                    chunk = b""
+                seen += chunk
+                if b"prompt>" in seen and not sent:
+                    os.write(master, b"hello\n")
+                    sent = True
+            done, status = os.waitpid(pid, os.WNOHANG)
+            if done:
+                finished = True
+                break
+        else:
+            raise AssertionError(f"the wrapper hung on a suite reading the terminal: {seen!r}")
+    finally:
+        if not finished:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+            except OSError:
+                pass
+        os.close(master)
+    assert b"got: hello" in seen, seen
+    assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, (status, seen)
+    assert box.runs() == [], "the run root outlived the run"
 
 
 def _running(pid: int) -> bool:
