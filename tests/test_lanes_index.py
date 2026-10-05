@@ -241,6 +241,29 @@ class Estate:
     def tip(self) -> str:
         return self._git("rev-parse", "origin/main").strip()
 
+    def head_text(self, path: str) -> str:
+        """`path` as HEAD holds it, read out of git and not off the disk."""
+        return self._git("show", f"HEAD:{path}")
+
+    def commit_paths(self, files: dict, message: str) -> None:
+        """Commit and push `files` ({repository path: whole content}) THROUGH
+        GIT ALONE - `hash-object` and `update-index --cacheinfo` - and never
+        through the working tree. Two paths one case apart are two files to
+        git on every platform, and ONE file on a case-insensitive filesystem
+        (macOS's default): a fixture written to disk there merges the two logs
+        it was built to keep apart (#164's gate, darwin). The indexer and
+        `who` both read what was PUSHED, so the working tree does not enter."""
+        for path, text in files.items():
+            sha = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=str(self.wip),
+                                 input=text, capture_output=True, text=True, env=self.env,
+                                 check=True).stdout.strip()
+            # `core.ignorecase` is what a clone on a case-insensitive disk
+            # turns on; off here, the index keeps the path as it was spelled.
+            self._git("-c", "core.ignorecase=false", "update-index", "--add", "--cacheinfo",
+                      f"100644,{sha},{path}")
+        self._git("-c", "core.ignorecase=false", "commit", "-q", "-m", message)
+        self._git("push", "-q", "origin", "main")
+
     def write_config(self, text: str, name: str = "lanes-index.conf", mode: int = 0o600) -> Path:
         path = self.config / "openRepoTools" / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1089,18 +1112,17 @@ def test_two_logs_one_case_apart_keep_two_transcript_pointers(estate):
     tid = "ffffffff-0002-4000-8000-00000000f002"
     paused = (f"PAUSED — lane repoA-2, session {UUID_A2}@Eagle, 2026-10-01T04:00:00Z, "
               f"lane:repoA-2 → dir /work/repoA2; agent claude; transcript {{}}")
-    upper = estate.wip / "lanes" / "log" / "REPOA-2.md"
-    upper.write_text("\n".join([
-        "# lane repoA-2 — object log, the other spelling",
-        f"STARTED — lane repoA-2, session {UUID_A2}@Eagle, 2026-10-01T02:00:00Z, lane:repoA-2 → home opensoft/repoA",
-        f"NOTED — lane repoA-2, session {UUID_A2}@Eagle, 2026-10-01T02:10:00Z, lane:repoA-2 — padding",
-        paused.format(UUID_T1), ""]), encoding="utf-8")
-    lower = estate.wip / "lanes" / "log" / "repoA-2.md"
-    lower.write_text(lower.read_text(encoding="utf-8") + paused.format(tid) + "\n",
-                     encoding="utf-8")
-    estate._git("add", "-A")
-    estate._git("commit", "-q", "-m", "two spellings of one log")
-    estate._git("push", "-q", "origin", "main")
+    lower = "lanes/log/repoA-2.md"
+    estate.commit_paths({
+        "lanes/log/REPOA-2.md": "\n".join([
+            "# lane repoA-2 — object log, the other spelling",
+            f"STARTED — lane repoA-2, session {UUID_A2}@Eagle, 2026-10-01T02:00:00Z, lane:repoA-2 → home opensoft/repoA",
+            f"NOTED — lane repoA-2, session {UUID_A2}@Eagle, 2026-10-01T02:10:00Z, lane:repoA-2 — padding",
+            paused.format(UUID_T1), ""]),
+        lower: estate.head_text(lower) + paused.format(tid) + "\n",
+    }, "two spellings of one log")
+    tree = estate._git("ls-tree", "--name-only", "origin/main", "lanes/log/").split()
+    assert {"lanes/log/REPOA-2.md", lower} <= set(tree), tree
     res = estate.index("sync")
     assert res.returncode == 0, res.stderr
     conn = sqlite3.connect(str(estate.sqlite))
@@ -1109,6 +1131,11 @@ def test_two_logs_one_case_apart_keep_two_transcript_pointers(estate):
                         (UUID_T1, tid)).fetchall()
     assert {t for _, t in rows} == {UUID_T1, tid}, rows
     assert len({r for r, _ in rows}) == 2, rows
+    # NOT VACUOUS: the two PAUSED lines sit at the SAME line of their files,
+    # so the first-choice id collides and the second is keyed by its file.
+    where = conn.execute("SELECT lane, ordinal FROM log_lines WHERE verb = 'PAUSED' "
+                         "AND file IN ('lanes/log/REPOA-2.md', ?)", (lower,)).fetchall()
+    assert len(where) == 2 and where[0][1] == where[1][1], where
 
 
 def _as_estate(monkeypatch, estate) -> None:
@@ -1240,13 +1267,14 @@ def test_the_holds_view_answers_as_who_does(estate):
             "# lane repoA-2 — object log, the other spelling",
             f"CLAIMED — lane repoA-2, session {UUID_A2}@Eagle, 2026-10-02T00:35:00Z, opensoft/repoA#22 — under the other spelling"],
     }
+    files = {}
     for name, add in lines.items():
-        path = estate.wip / "lanes" / "log" / name
-        old = path.read_text(encoding="utf-8") if path.exists() else ""
-        path.write_text(old + "\n".join(add) + "\n", encoding="utf-8")
-    estate._git("add", "-A")
-    estate._git("commit", "-q", "-m", "a takeover, a hand-back and two spellings")
-    estate._git("push", "-q", "origin", "main")
+        path = f"lanes/log/{name}"
+        old = estate.head_text(path) if name != "REPOA-2.md" else ""
+        files[path] = old + "\n".join(add) + "\n"
+    estate.commit_paths(files, "a takeover, a hand-back and two spellings")
+    tree = estate._git("ls-tree", "--name-only", "origin/main", "lanes/log/").split()
+    assert {"lanes/log/REPOA-2.md", "lanes/log/repoA-2.md"} <= set(tree), tree
     assert estate.index("sync").returncode == 0
     conn = sqlite3.connect(str(estate.sqlite))
     view: dict = {}
@@ -1265,6 +1293,41 @@ def test_the_holds_view_answers_as_who_does(estate):
     assert view["opensoft/repoA#20"] == {"repoa-2"}
     assert view["opensoft/repoA#21"] == {"repoa-1"}
     assert "opensoft/repoA#22" not in view
+
+
+def test_the_holds_view_follows_file_order_not_the_clock(estate):
+    """"LAST" IS THE LAST LINE IN THE FILE (R14; the macOS gate on #164): two
+    lines of one lane on one object, written OUT OF UTC ORDER, are ordered by
+    their position in the log - and line 10 comes after line 9, compared as
+    numbers. A view that ordered by the UTC field, or by the line as text,
+    answers both objects the other way round; `who` is asked as well."""
+    path = "lanes/log/repoA-2.md"
+    head = estate.head_text(path)
+    assert len(head.split("\n")) == 4  # header, STARTED, NOTED, and the final newline
+    say = lambda verb, utc, obj, text: (
+        f"{verb} — lane repoA-2, session {UUID_A2}@Eagle, {utc}, {obj} — {text}")
+    add = [
+        say("CLAIMED", "2026-10-03T09:00:00Z", "opensoft/repoA#30", "line 4, the LATEST stamp"),
+        say("RELEASED", "2026-10-03T23:00:00Z", "opensoft/repoA#31", "line 5, the LATEST stamp"),
+    ] + [say("NOTED", f"2026-10-03T1{n}:00:00Z", "lane:repoA-2", f"padding {n}") for n in range(4)] + [
+        say("RELEASED", "2026-10-03T01:00:00Z", "opensoft/repoA#30", "line 10, an EARLIER stamp"),
+        say("CLAIMED", "2026-10-03T00:30:00Z", "opensoft/repoA#31", "line 11, an EARLIER stamp"),
+    ]
+    estate.commit_paths({path: head + "\n".join(add) + "\n"}, "two objects out of UTC order")
+    assert estate.index("sync").returncode == 0
+    conn = sqlite3.connect(str(estate.sqlite))
+    placed = dict(conn.execute(
+        "SELECT object || ' ' || verb, ordinal FROM log_lines WHERE file = ? "
+        "AND object IN ('opensoft/repoA#30', 'opensoft/repoA#31')", (path,)).fetchall())
+    assert placed == {"opensoft/repoA#30 CLAIMED": 4, "opensoft/repoA#31 RELEASED": 5,
+                      "opensoft/repoA#30 RELEASED": 10, "opensoft/repoA#31 CLAIMED": 11}, placed
+    held = dict(conn.execute("SELECT object, verb FROM holds "
+                             "WHERE object IN ('opensoft/repoA#30', 'opensoft/repoA#31')"))
+    assert held == {"opensoft/repoA#31": "CLAIMED"}, held
+    for obj, state in (("opensoft/repoA#30", "FREE"), ("opensoft/repoA#31", "HELD")):
+        res = estate.edit("who", obj)
+        assert res.returncode == 0, res.stderr
+        assert re.search(rf"^state +{state}\b", res.stdout, re.M), (obj, res.stdout)
 
 
 def test_the_store_is_made_private_on_every_write(estate):
