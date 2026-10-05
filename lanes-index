@@ -1774,6 +1774,22 @@ def inventory_digest(record: dict) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
+def lane_generation(lane: str) -> tuple:
+    """`(generation, None)` of a lane's lifecycle snapshot, asked of `lanes-edit.sh
+    lane-state` - 0 where the lane has no snapshot or no control root here - or
+    `(None, why)` where the snapshot is there and could not be read."""
+    proc = _helper_run(["lane-state", lane], 120, f"lane {lane}'s lifecycle snapshot")
+    if proc.returncode in (1, 8):
+        return 0, None
+    if proc.returncode != 0:
+        return None, f"its lifecycle snapshot could not be read (lane-state exited {proc.returncode})"
+    fields = dict(line.split("\t", 1) for line in proc.stdout.splitlines() if "\t" in line)
+    if fields.get("state") == "UNKNOWN-SCHEMA":
+        return None, f"its lifecycle snapshot records schema {fields.get('schema')}"
+    gen = fields.get("generation", "")
+    return (int(gen) if gen.isdigit() else 0), None
+
+
 def collect_inventory() -> tuple[dict, dict]:
     """Every tree the inventory names, keyed `<lane>:<path>`, and every lane
     whose inventory is there and could not be read - whose rows are KEPT, never
@@ -1904,6 +1920,19 @@ def run_inventory(mode: str, requested: str | None, dry_run: bool) -> int:
     stored_gen: dict = {}
     for row in stored.values():
         stored_gen[row["lane"]] = max(stored_gen.get(row["lane"], 0), row["generation"] or 0)
+    # A LANE WHOSE ROWS WOULD ALL LEAVE IS FENCED TOO (Copilot round 2 on #171).
+    # It names no tree now, so it carries no generation in the read; its
+    # snapshot is asked for - only for these lanes, which are few - so that one
+    # moved aside and begun again without trees is held for `reconcile` like
+    # any other lane that went back, rather than emptied by a `sync`.
+    for lane in sorted(set(stored_gen) - set(read_gen) - set(held)):
+        if not stored_gen[lane]:
+            continue
+        gen, why = lane_generation(lane)
+        if why:
+            held[lane] = why
+        else:
+            read_gen[lane] = gen
     taken: list = []
     for lane, gen in sorted(read_gen.items()):
         if lane in held or gen >= stored_gen.get(lane, 0):
@@ -2048,6 +2077,12 @@ def cmd_sync(requested: str | None) -> int:
             if result != 0 and rc == 0:
                 rc = result
             if rounds >= 8:
+                # THE CAP HANDS BACK WHAT IT DID NOT RUN (Copilot round 2 on
+                # #171): a source whose mark this loop took off the disk and
+                # never synced is marked again, for the next sync, exactly as a
+                # mark this loop never took is left for it.
+                for pending in due:
+                    lock.mark_rerun(pending)
                 return rc
     finally:
         lock.release()

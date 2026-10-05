@@ -2115,3 +2115,75 @@ def test_a_lane_bound_elsewhere_has_no_liveness_pronounced_here(inv):
     inv.e._git("push", "-q", "origin", "main")
     assert inv.sync().returncode == 0
     assert inv.rows()[f"repoA-2:{inv.a2_tree}"]["writer_live"] is None
+
+
+def test_an_inventory_that_cannot_be_read_keeps_its_rows(inv):
+    """A READ THAT DID NOT HAPPEN IS NOT AN EMPTY INVENTORY (Amendment 7(d);
+    Copilot round 2 on #171): a lane whose `trees` directory is there and
+    cannot be listed is `UNREAD` - named in the listing, and its rows KEPT by a
+    sync rather than removed as trees it no longer has."""
+    assert inv.sync().returncode == 0
+    trees = inv.lsr / "repoA-1" / "trees"
+    trees.chmod(0)
+    try:
+        if os.access(trees, os.R_OK):
+            pytest.skip("this account reads a mode-000 directory (root): nothing to prove here")
+        res = inv.sync()
+        assert res.returncode == 0, res.stderr
+        assert "lane repoA-1: its rows are kept as they are" in res.stdout, res.stdout
+        assert "0 removed" in res.stdout or "nothing to write" in res.stdout, res.stdout
+        assert f"repoA-1:{inv.dirty_tree}" in inv.rows()
+        listed = _wt(inv)
+        assert "inventory NOT READ" in listed.stdout, listed.stdout
+        assert "could not be read: that is NOT a lane with no worktrees" in listed.stdout
+    finally:
+        trees.chmod(0o755)
+
+
+def test_a_lane_that_went_back_with_no_trees_is_held_too(inv):
+    """THE FENCE FOR A LANE WHOSE ROWS WOULD ALL LEAVE (Copilot round 2 on
+    #171): its snapshot moved aside and begun again, and no tree recorded since
+    - a `sync` asks `lane-state` for its generation, finds it went back, and
+    keeps its rows; `reconcile` takes the lane as it now stands."""
+    assert inv.sync().returncode == 0
+    snap = inv.lsr / "repoA-2" / "lane-state.yaml"
+    snap.rename(snap.with_suffix(".aside"))
+    for sidecar in (inv.lsr / "repoA-2" / "trees").iterdir():
+        sidecar.unlink()
+    inv.ok("set-lane-state", "repoA-2", "RUNNING", "--operation", "op-test-empty")
+    res = inv.sync()
+    assert res.returncode == 0, res.stderr
+    assert "lane repoA-2: its rows are kept as they are" in res.stdout, res.stdout
+    assert f"repoA-2:{inv.a2_tree}" in inv.rows()
+    rec = inv.e.index("reconcile", "--source", "inventory")
+    assert rec.returncode == 0, rec.stderr
+    assert "generation went back from 2 to 1" in rec.stdout, rec.stdout
+    assert f"repoA-2:{inv.a2_tree}" not in inv.rows()
+
+
+def test_the_round_cap_hands_back_a_mark_it_took(estate, monkeypatch):
+    """THE CAP LOSES NO MARK (Copilot round 2 on #171): a holder that stops at
+    its eighth round with a source still due - its mark taken off the disk and
+    not yet synced - marks it again for the next sync."""
+    _as_estate(monkeypatch, estate)
+    mod = load_indexer()
+    lock = mod.SyncLock()
+    os.makedirs(mod.state_dir(), exist_ok=True)
+    runs = []
+
+    def busy(kind):
+        def run(*a):
+            runs.append(kind)
+            lock.mark_rerun(kind)  # every round, a write lands behind it
+            return 0
+        return run
+
+    monkeypatch.setattr(mod, "run_index", busy("register"))
+    monkeypatch.setattr(mod, "run_inventory", busy("inventory"))
+    lock.mark_rerun("inventory")
+    assert mod.cmd_sync(None) == 0
+    assert len(runs) == 8, runs
+    assert runs[-1] == "inventory", runs
+    assert os.path.exists(lock.rerun_path("register")), \
+        "the register's mark was taken at the cap and never handed back"
+    assert os.path.exists(lock.rerun_path("inventory"))

@@ -12676,7 +12676,17 @@ worktree_rows() {   # [<canonical lane>]
     fi
     wr_trees=""; wr_trc=0
     wr_trees="$(lane_trees_list "$wr_l" 2>/dev/null)" || wr_trc=$?
-    case "$wr_trc" in 0) : ;; *) continue ;; esac
+    # 8 IS A `trees` DIRECTORY WITH NO RECORD IN IT; ANYTHING ELSE, with the
+    # directory already found above, is a read that did not happen - and its
+    # rows are not rows this lane no longer has (Copilot round 2 on #171).
+    case "$wr_trc" in
+      0) : ;;
+      8) continue ;;
+      *)
+        wr_out="${wr_out}UNREAD$US$WS$US$wr_l${US}its trees directory $wr_root/trees is there and lane-trees could not read it (exit $wr_trc)
+"
+        continue ;;
+    esac
     # LIVENESS IS PRONOUNCED ONLY FROM INSIDE THE BINDING (Amendment 18(b)). A
     # live record here naming one of the lane's ids is `1` and no such record is
     # `0` - but only where this workstation could read its records AND the
