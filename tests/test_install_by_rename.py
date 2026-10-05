@@ -15,7 +15,8 @@ So this module runs the installer's OWN `place_by_rename` — its text, cut out
 of the script, never a copy written here — under each platform's bash: `bash`
 on PATH on Linux and macOS, and on Windows the Git Bash that ships with the
 `git` running this suite (skipped where there is none). The function needs
-only `die`, `$PLACING` and coreutils, which is why it can be run on its own.
+only `die`, `$PLACING`, the `owner_of` beside it and coreutils, which is why
+the two can be run on their own.
 """
 
 from __future__ import annotations
@@ -81,12 +82,12 @@ def posix(path: Path) -> str:
     return path.as_posix()
 
 
-def placement_function() -> str:
-    """`place_by_rename` as the installer carries it, cut out of the script."""
+def installer_function(name: str) -> str:
+    """One function as the installer carries it, cut out of the script."""
     text = COMMAND.read_text(encoding="utf-8")
-    match = re.search(r"^place_by_rename\(\) \{[^\n]*\n.*?^\}\n", text,
+    match = re.search(rf"^{re.escape(name)}\(\) \{{[^\n]*\n.*?^\}}\n", text,
                       re.MULTILINE | re.DOTALL)
-    assert match, "`place_by_rename() {` … `}` is no longer in openRepoTools"
+    assert match, f"`{name}() {{` … `}}` is no longer in openRepoTools"
     return match.group(0)
 
 
@@ -98,7 +99,8 @@ def place(tmp_path: Path, source: Path, target: Path,
         "set -euo pipefail\n"
         'PLACING=""\n'
         "die() { printf 'REFUSED: %s\\n' \"$1\" >&2; exit 2; }\n"
-        + placement_function()
+        + installer_function("owner_of")
+        + installer_function("place_by_rename")
         + 'place_by_rename "$1" "$2" "$3" "nothing else was placed."\n'
     ).encode("utf-8"))
     return subprocess.run([BASH, posix(harness), posix(source), posix(target),

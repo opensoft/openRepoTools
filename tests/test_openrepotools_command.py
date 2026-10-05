@@ -681,6 +681,102 @@ def test_a_placement_that_fails_leaves_the_old_copy_and_no_temporary(
         "the loop carried on past a placement it could not make")
 
 
+def fake_owner_ls(root: Path, target: Path, uid: int, gid: int) -> Path:
+    """A `ls` first on `$PATH` that says `target` belongs to `uid:gid`, and is
+    the real one for every other path. OWNERSHIP IS WHAT THIS STANDS IN FOR,
+    as the fake `chmod` above stands in for it: no fixture here can make a file
+    another account owns, and `owner_of` asks `ls -lnd` and nothing else."""
+    real = shutil.which("ls")
+    if real is None:
+        pytest.skip("no real `ls` on PATH for the fake to defer to")
+    shim = root / "fake-ls"
+    shim.mkdir()
+    (shim / "ls").write_text(
+        "#!/bin/sh\n"
+        'last=""\n'
+        'for arg in "$@"; do last="$arg"; done\n'
+        f'if [ "$last" = "{target}" ]; then\n'
+        f"\tprintf '%s\\n' '-rwxr-xr-x 1 {uid} {gid} 1 Jan  1 00:00 {target}'\n"
+        "\texit 0\n"
+        "fi\n"
+        f'exec {real} "$@"\n', encoding="utf-8")
+    (shim / "ls").chmod(0o755)
+    return shim
+
+
+@NEEDS_JQ
+def test_a_replaced_copy_is_handed_back_to_the_account_that_owned_it(tmp_path):
+    """THE OWNER STAYS WHO IT WAS (Copilot on #172).
+
+    A rename puts the temporary's inode at the path, and the temporary belongs
+    to whoever ran the install — so a root `--install` into another user's
+    home would leave that user root-owned copies their own next `--install`
+    refuses as unwritable. `cp` kept the owner by keeping the inode. So where
+    the owner differs, the temporary is given the target's uid AND gid before
+    the rename: the `chown` is asked for exactly once, on the temporary, with
+    the old owner. A fake records it, because only root could make it.
+    """
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    bin_dir = tmp_path / ".local" / "bin"
+    name = INSTALLED[1]
+    target = bin_dir / name
+    target.write_bytes(target.read_bytes() + b"# drift\n")
+    uid, gid = os.getuid() + 4242, os.getgid() + 4243
+    ls_shim = fake_owner_ls(tmp_path, target, uid, gid)
+    log = tmp_path / "chown.log"
+    chown_shim = tmp_path / "fake-chown"
+    chown_shim.mkdir()
+    (chown_shim / "chown").write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$*\" >> '{log}'\n"
+        "exit 0\n", encoding="utf-8")
+    (chown_shim / "chown").chmod(0o755)
+
+    result = run_cmd("--install", home=tmp_path, env={
+        "PATH": os.pathsep.join([str(ls_shim), str(chown_shim),
+                                 os.environ["PATH"]])})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"{name}: updated at {target}" in result.stdout, result.stdout
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert len(calls) == 1, calls
+    assert re.fullmatch(
+        rf"-- {uid}:{gid} {re.escape(str(bin_dir))}/\.{re.escape(name)}"
+        r"\.openrepotools\.\S+", calls[0]), calls
+    assert target.read_bytes() == (REPO / name).read_bytes()
+    assert placement_temporaries(tmp_path) == []
+
+
+@NOT_ROOT
+@NEEDS_JQ
+def test_a_copy_another_account_owns_is_refused_and_left_as_it_was(tmp_path):
+    """AND WHERE THE OWNER CANNOT BE KEPT, NOTHING IS TAKEN OVER (Copilot on
+    #172). An account that is not root may not give a file away, so the real
+    `chown` refuses, and a rename would leave the other account's file this
+    account's. The run refuses (2) naming the owner, the old copy keeps its
+    bytes and its inode, and no temporary is left beside it.
+    """
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    bin_dir = tmp_path / ".local" / "bin"
+    name = INSTALLED[1]
+    target = bin_dir / name
+    old = target.read_bytes() + b"# another account's copy\n"
+    target.write_bytes(old)
+    inode = target.stat().st_ino
+    uid = os.getuid() + 4242
+    ls_shim = fake_owner_ls(tmp_path, target, uid, os.getgid() + 4243)
+
+    result = run_cmd("--install", home=tmp_path, env={
+        "PATH": f"{ls_shim}{os.pathsep}{os.environ['PATH']}"})
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "REFUSED:" in result.stderr, result.stderr
+    assert f"{target} belongs to uid {uid}" in result.stderr, result.stderr
+    assert target.read_bytes() == old
+    assert target.stat().st_ino == inode
+    assert placement_temporaries(tmp_path) == []
+    assert f"{INSTALLED[2]}: " not in result.stdout, (
+        "the loop carried on past a placement it refused")
+
+
 @pytest.mark.parametrize("signame, to_group", [
     ("SIGTERM", False),   # a `kill` from another shell
     ("SIGINT", True),     # Ctrl-C: the whole foreground process group

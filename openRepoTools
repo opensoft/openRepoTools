@@ -984,6 +984,15 @@ mode_is() {   # <octal> <path>
 	[ -n "$(find "$2" -maxdepth 0 -perm "$1" -print 2>/dev/null)" ]
 }
 
+# WHO OWNS A PATH, as `<uid>:<gid>`, and nothing where it cannot be read —
+# asked without `stat` for the reason `mode_is` gives. `ls -n` prints both as
+# numbers, in its third and fourth fields, on GNU, BSD and busybox alike, and
+# `-d` keeps the answer about the path itself. The `|| :` keeps a path `ls`
+# cannot read an empty answer rather than a `pipefail` exit.
+owner_of() {   # <path>
+	{ ls -lnd -- "$1" 2>/dev/null || :; } | awk 'NR == 1 { print $3 ":" $4 }'
+}
+
 # EVERY FILE `--install` PLACES IS WRITTEN BESIDE ITS TARGET AND RENAMED OVER IT
 # (opensoft/openRepoTools#167): a temporary in the target's own directory, the
 # bytes, the mode, then `mv -f`. It was `cp` onto the target, which keeps the
@@ -1009,12 +1018,23 @@ mode_is() {   # <octal> <path>
 # out of a listing, and the suffix after the name keeps it out of every glob a
 # reader of these directories takes (`*.md` in `commands/`).
 #
+# THE OWNER STAYS WHO IT WAS (Copilot on #172). A rename puts the TEMPORARY's
+# inode at the path, and the temporary belongs to whoever runs this — so a root
+# `--install` into another user's home, which this file goes out of its way to
+# allow (search "WHAT `-w` DOES NOT PROVE"), would hand that user root-owned
+# copies that their own next `--install` refuses as unwritable. `cp` kept the
+# owner by keeping the inode; this keeps it by giving the temporary the
+# target's uid and gid before the rename. Asked only where the OWNER differs:
+# a group that differs costs the owner nothing. Where that `chown` is refused —
+# an account placing over a file another account owns, which only root may
+# give away — the placement refuses rather than take the file over.
+#
 # A DIRECTORY AT THE TARGET IS REFUSED HERE as well as in planning, because `mv`
 # moves a file INTO a directory named as its destination rather than failing,
 # and the planners are a phase earlier. Two installs that race (#106) each
 # still place whole files; serializing them is #106's lock, not this.
 place_by_rename() {   # <staged source> <target> <mode> <what a refusal adds>
-	local source="$1" target="$2" mode="$3" rest="$4" tmp=""
+	local source="$1" target="$2" mode="$3" rest="$4" tmp="" was="" now=""
 	tmp="$(mktemp -- "$(dirname -- "$target")/.${target##*/}.openrepotools.XXXXXX")" ||
 		die "could not create a temporary file beside $target, so it was not placed.
     $rest"
@@ -1025,6 +1045,13 @@ place_by_rename() {   # <staged source> <target> <mode> <what a refusal adds>
 	chmod "$mode" "$tmp" ||
 		{ rm -f -- "$tmp"; PLACING=""; die "could not set mode $mode on $target, so it was not placed and what was there is untouched.
     $rest"; }
+	was="$(owner_of "$target")"
+	now="$(owner_of "$tmp")"
+	if [ -n "$was" ] && [ "${was%%:*}" != "${now%%:*}" ]; then
+		chown -- "$was" "$tmp" 2>/dev/null ||
+			{ rm -f -- "$tmp"; PLACING=""; die "$target belongs to uid ${was%%:*}, and this run cannot give the new copy that owner, so it was not placed and what was there is untouched.
+    $rest"; }
+	fi
 	if [ -d "$target" ]; then
 		rm -f -- "$tmp"
 		PLACING=""
