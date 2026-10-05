@@ -2696,15 +2696,23 @@ def test_every_shipped_bash_file_is_tracked_with_lf():
 
 
 def test_the_python_files_compile():
-    """The suite is the only Python here, and a file that does not parse is a
-    file that fails as a collection ERROR rather than as a test — which reads
-    as the suite being broken instead of as one file being wrong.
+    """The suite is the Python here, bar one shipped command named below, and a
+    file that does not parse is a file that fails as a collection ERROR rather
+    than as a test — which reads as the suite being broken instead of as one
+    file being wrong.
 
     `compile()` rather than `py_compile`: nothing is written anywhere, so this
     runs in a read-only checkout and leaves no `__pycache__` behind.
+
+    opensoft/openRepoTools#160: `lanes-index` is the one shipped command that
+    is Python, and it has no `.py` suffix for the glob below to find, so its
+    text is compiled the same way — a syntax error there is a command that
+    fails on every workstation's first sync.
     """
     for path in sorted((REPO / "tests").glob("*.py")):
         compile(path.read_text(encoding="utf-8"), str(path), "exec")
+    command = REPO / "lanes-index"
+    compile(command.read_text(encoding="utf-8"), str(command), "exec")
 
 
 # --- the macOS job RUNS this bash, it does not only parse it (R-A9-11) ------

@@ -443,6 +443,14 @@ export TMUX="$SANDBOX/fake-tmux-socket,0,0"
 # it if a case switches the variable off on purpose — which exactly one does.
 export LANES_NO_GITHUB=1
 
+# AMENDMENT 14 — NO CASE HERE NUDGES AN INDEXER BY ACCIDENT. Every write in this
+# file that pushes would start a detached `lanes-index sync` wherever one is on
+# PATH, and the PATH above is the workstation's own with the sandbox's in front
+# of it: the day a person installs `lanes-index`, a thousand writes would start
+# a thousand of them. Off for the file, and the one section that is about the
+# index turns it back on for its own cases.
+export LANES_INDEX=off
+
 # Amendment 8, ruling (g): the harness exports `CLAUDE_CODE_SESSION_ID` into
 # every shell a session runs, INCLUDING the one running this suite. It is a
 # holder test now, so a case that does not set it deliberately must not inherit
@@ -14559,6 +14567,178 @@ is    "…and no pane was respawned for a lane no read of it is unambiguous abou
       "$(grep -c 'respawn-pane' "$FAKE_TMUX_A17_LOG")" 0
 is    "…and no log was written for either spelling" \
       "$(ls "$LOGD" | grep -ci '^repohf-13\.md$' || :)" 0
+
+echo "== Amendment 14: the derived index is never read by an act =="
+
+# lane-collision-protocol Amendment 14, ratified by Brett Heap 2026-10-05,
+# verbatim "ratify 48" (opensoft/openRepoTools#160). The register's truth stays
+# where it is and `lanes-index` keeps a DERIVED copy that NO ACT READS OR WAITS
+# ON (clause (b)). `tests/test_lanes_index.py` holds the indexer to that over
+# its own small estate; this section holds the ACTS that only this suite can
+# drive — `lane-start --dry-run` and the name guard, beside a write and the
+# reads every act makes — to it over THIS estate, three ways from one snapshot:
+#
+#   control      exactly as every case above ran: `LANES_INDEX=off` and no
+#                indexer on PATH;
+#   unreachable  OFFLINE NO-READ — an indexer installed on PATH and configured
+#                at a Postgres nobody can reach (a fake `psql` that logs and
+#                refuses), so every write's nudge DOES reach for it;
+#   poisoned     POISONED INDEX — a real sync of this register into SQLite,
+#                then WRONG rows: a forged hold, forged owners, forged states,
+#                forged narrative. Unreachability cannot prove an act does not
+#                read the index; wrong rows nothing repeats can.
+#
+# Each act's exit, stdout and stderr must be the same three ways, once the
+# CLOCK is taken out (a stamp, a commit id, an age): the snapshot is restored
+# between runs, so the register, the logs, origin and the guard's pending
+# offers are where they were.
+A14_BIN="$SANDBOX/a14bin"; A14_FAKE="$SANDBOX/a14fake"; A14_CONF="$SANDBOX/a14conf"
+mkdir -p "$A14_BIN" "$A14_FAKE" "$A14_CONF"
+cp -p "$SRC_DIR/lanes-index" "$A14_BIN/lanes-index"
+chmod 755 "$A14_BIN/lanes-index"
+A14_PSQL_LOG="$SANDBOX/a14-psql.log"
+: > "$A14_PSQL_LOG"
+cat > "$A14_FAKE/psql" <<FAKE
+#!/bin/sh
+printf '%s\n' "\$*" >> "$A14_PSQL_LOG"
+echo 'psql: error: connection to server at "lanes-index.invalid" failed' >&2
+exit 2
+FAKE
+chmod 755 "$A14_FAKE/psql"
+printf '*:*:*:*:never-read\n' > "$A14_CONF/pgpass"
+chmod 600 "$A14_CONF/pgpass"
+printf 'url=postgresql://lanes_writer@lanes-index.invalid/qa\npassfile=%s\n' "$A14_CONF/pgpass" > "$A14_CONF/unreachable.conf"
+chmod 600 "$A14_CONF/unreachable.conf"
+A14_DB="$SANDBOX/a14state/lanes-index.sqlite"
+printf 'sqlite=%s\n' "$A14_DB" > "$A14_CONF/poisoned.conf"
+chmod 600 "$A14_CONF/poisoned.conf"
+
+# THE POISONED STORE BEGINS AS A TRUE ONE: a note the index will carry, a sync
+# of this whole register, and then the rows are made wrong.
+run env LANES_LANE=repoA-1 "$E" log NOTED lane:repoA-1 "a14: the note the index carries"
+is   "a note for the derived index to carry is written" "$rc" 0
+run env -u LANES_INDEX LANES_INDEX_CONFIG="$A14_CONF/poisoned.conf" LANES_EDIT="$E" "$A14_BIN/lanes-index" sync
+is   "lanes-index syncs this suite's whole register into SQLite" "$rc" 0
+has  "…and says what it wrote" "$out" "upserted"
+python3 - "$A14_DB" <<'PY'
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+c.execute("UPDATE lanes SET owner = 'managed a14-poison', state_phrase = 'LIVE · A14 POISON', "
+          "session_ids = '[\"99999999-9999-4999-8999-999999999999\"]', "
+          "last_session = '99999999-9999-4999-8999-999999999999'")
+c.execute("UPDATE log_lines SET free_text = 'A14 POISON' WHERE verb IN ('NOTED', 'RULED')")
+c.execute("UPDATE log_lines SET verb = 'CLAIMED', object = 'opensoft/repoA#1414' "
+          "WHERE rowid IN (SELECT rowid FROM log_lines WHERE verb = 'STARTED' LIMIT 5)")
+c.execute("UPDATE register_lines SET kind = 'LANDING', raw = 'LANDING — A14 POISON'")
+c.commit()
+PY
+run env -u LANES_INDEX PATH="$A14_BIN:$PATH" LANES_INDEX_CONFIG="$A14_CONF/poisoned.conf" "$E" history repoA-1 --index
+has  "the poison is REAL: \`history --index\` reads it, so the sameness below is not vacuous" "$out" "A14 POISON"
+has  "…and says it read the index" "$err" "read: index (sqlite)"
+
+a14_norm() {
+  printf '%s' "$1" | sed -E \
+    -e 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2})?Z/<UTC>/g' \
+    -e 's/[0-9]+h [0-9]{2}m/<AGE>/g' -e 's/[0-9]+[smhd] ago/<AGO>/g' \
+    -e 's/[0-9a-f]{7,}/<HEX>/g'
+}
+A14_SNAP="$SANDBOX/a14snap"
+# NO GIT GC RUNS UNDER THE SNAPSHOT (CI on #164, `tests-no-submodule` at
+# 50594dc: "rm: cannot remove '…/origin.git': Directory not empty"). By this
+# point the suite has pushed thousands of commits, so a push or a commit can
+# start `git gc --auto`, which DETACHES and keeps writing into the repository
+# while `a14_restore` removes it. A removal that fails leaves the directory
+# behind, `cp -a` then copies the snapshot INSIDE it, and the next write finds
+# no repository at origin. So automatic gc is switched off in both repositories
+# BEFORE the first snapshot (the snapshot carries that setting forward), any gc
+# already running is waited out, and a tree that will not go away is reported
+# rather than copied into.
+git -C "$ORIGIN" config gc.auto 0
+git -C "$ORIGIN" config receive.autogc false
+git -C "$WIP" config gc.auto 0
+a14_gc_quiet() {
+  a14_q=0
+  while [ "$a14_q" -lt 300 ] && { [ -e "$ORIGIN/gc.pid" ] || [ -e "$WIP/.git/gc.pid" ]; }; do
+    sleep 0.1; a14_q=$((a14_q + 1))
+  done
+  return 0
+}
+a14_rmtree() {   # <dir> — removed, retrying while a straggler still writes
+  a14_r=0
+  rm -rf -- "$1" 2>/dev/null
+  while [ -e "$1" ] && [ "$a14_r" -lt 50 ]; do
+    sleep 0.1; rm -rf -- "$1" 2>/dev/null; a14_r=$((a14_r + 1))
+  done
+  if [ -e "$1" ]; then
+    printf 'a14_restore: %s would not go away; the snapshot is NOT restored over it\n' "$1" >&2
+    return 1
+  fi
+  return 0
+}
+a14_snap() {
+  a14_gc_quiet
+  rm -rf "$A14_SNAP"; mkdir -p "$A14_SNAP"
+  cp -a "$WIP" "$A14_SNAP/wip"
+  cp -a "$ORIGIN" "$A14_SNAP/origin"
+  if [ -d "$CLAUDE_CONFIG_DIR/lanes" ]; then cp -a "$CLAUDE_CONFIG_DIR/lanes" "$A14_SNAP/cclanes"; fi
+}
+a14_restore() {
+  a14_gc_quiet
+  a14_rmtree "$WIP" && cp -a "$A14_SNAP/wip" "$WIP"
+  a14_rmtree "$ORIGIN" && cp -a "$A14_SNAP/origin" "$ORIGIN"
+  if a14_rmtree "$CLAUDE_CONFIG_DIR/lanes" && [ -d "$A14_SNAP/cclanes" ]; then
+    cp -a "$A14_SNAP/cclanes" "$CLAUDE_CONFIG_DIR/lanes"
+  fi
+}
+# A WRITE'S NUDGE RUNS DETACHED and may still be reading this checkout when the
+# snapshot goes back: wait for its one line in the fake `psql`'s log (bounded),
+# which is also the proof that it reached for the store at all.
+a14_wait_psql() {   # <lines before>
+  a14_w=0
+  while [ "$a14_w" -lt 150 ]; do
+    [ "$(awk 'END { print NR + 0 }' "$A14_PSQL_LOG")" -gt "$1" ] && return 0
+    sleep 0.1; a14_w=$((a14_w + 1))
+  done
+  return 1
+}
+a14_three() {   # <label> <write: 0|1> <command…>
+  a14_label="$1"; a14_write="$2"; shift 2
+  a14_snap
+  run "$@"
+  a14_c_rc="$rc"; a14_c_out="$(a14_norm "$out")"; a14_c_err="$(a14_norm "$err")"
+  a14_restore
+  a14_before="$(awk 'END { print NR + 0 }' "$A14_PSQL_LOG")"
+  run env -u LANES_INDEX PATH="$A14_BIN:$A14_FAKE:$PATH" LANES_INDEX_CONFIG="$A14_CONF/unreachable.conf" "$@"
+  is   "$a14_label: the same exit with an indexer configured at a store nobody can reach" "$rc" "$a14_c_rc"
+  is   "…the same stdout" "$(a14_norm "$out")" "$a14_c_out"
+  is   "…the same stderr" "$(a14_norm "$err")" "$a14_c_err"
+  if [ "$a14_write" = 1 ]; then
+    a14_wait_psql "$a14_before"
+    is "…and its nudge DID reach for that store, after the write had answered" "$?" 0
+  else
+    is "…and, being no write, it reached for no store at all" \
+       "$(awk 'END { print NR + 0 }' "$A14_PSQL_LOG")" "$a14_before"
+  fi
+  a14_restore
+  run env -u LANES_INDEX LANES_INDEX_CONFIG="$A14_CONF/poisoned.conf" "$@"
+  is   "$a14_label: the same exit over a POISONED index" "$rc" "$a14_c_rc"
+  is   "…the same stdout" "$(a14_norm "$out")" "$a14_c_out"
+  is   "…the same stderr" "$(a14_norm "$err")" "$a14_c_err"
+  a14_restore
+}
+
+a14_three "a NOTED line (a write)" 1 env LANES_LANE=repoA-1 "$E" log NOTED lane:repoA-1 "a14: written three ways"
+is   "…and the control write itself landed, so the comparison is of a real write" "$a14_c_rc" 0
+a14_three "a claim on the object the poison forged a hold on" 1 env LANES_LANE=repoA-1 "$E" claim --no-github opensoft/repoA#1414
+is   "…which the control run TOOK, so a forged hold that was read would have shown" "$a14_c_rc" 0
+a14_three "set-row-state (a row writer)" 1 "$E" set-row-state repoA-2 "PAUSED · a14 three ways"
+a14_three "lane-start --dry-run on a resume-by-id lane" 0 "$START" --dry-run repoA 12
+has  "…which planned the exact resume" "$a14_c_err" "PLAN exec claude --name repoA-12 --resume"
+printf "$gd_hook" "$GD_LANE_ID" "$HOME/projects/repoGD" "do the work" > "$SANDBOX/a14-guard.json"
+a14_three "the name guard" 0 bash -c '"$1" guard < "$2"' a14-guard "$E" "$SANDBOX/a14-guard.json"
+a14_three "who (a read an act makes for itself)" 0 "$E" who opensoft/repoA#1414
+a14_three "managed-projection (#97's seam)" 0 "$E" managed-projection repoMG-1
+a14_three "history without the flag" 0 "$E" history repoA-1
 
 # ------------------------------------------------------- nothing real touched
 #
