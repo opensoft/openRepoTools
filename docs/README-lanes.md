@@ -3330,7 +3330,8 @@ it causes). A tree ANOTHER lane's inventory names is that lane's and is never
 taken from here, word or no word — and one BOTH inventories name is kept, since
 records are history and a path can be reused. An inventory record that cannot be
 read (no path, an unknown schema) refuses the sweep, exit **2**: its tree's owner
-is unknown. The lane's own checkout is never a candidate. The lane name is
+is unknown — and so does ANOTHER lane's record or inventory directory that cannot
+be read, before anything is fetched. The lane's own checkout is never a candidate. The lane name is
 resolved first (`lanes-edit.sh canon-lane`, Amendment 15), as `lane-start` and
 `lane-end` resolve it; an alias table that cannot be read refuses.
 
@@ -3356,10 +3357,10 @@ Each tree is classified in this order; the first row that matches decides.
 | not in the lane's inventory | `foreign` | nothing (`--include-foreign --word …` applies the rows below) |
 | a process stands in it or holds a file open there (`/proc`, else `lsof`), a tmux pane's current path is in it, it is named by `--live`, the sweep was started inside it, or the session that recorded it is live | `live` | nothing, ever — asked again at the moment of the act |
 | liveness could not be read | `keep` | nothing |
-| its directory is gone and git still registers it | `prune` | `git worktree remove <path>` — that one registration; a repository-wide `git worktree prune` is never run (it would unregister other lanes' and FOREIGN trees too) |
+| its directory is gone and git still registers it | `prune` | `git worktree remove <path>` — that one registration; a repository-wide `git worktree prune` is never run (it would unregister other lanes' and FOREIGN trees too); a directory that reappeared meanwhile is left for the next sweep to classify |
 | its directory is gone and nothing registers it | `gone` | nothing; the inventory record is history |
 | another lane's inventory names it too | `keep` | nothing: which lane owns it now is a person's to say |
-| a registration someone LOCKED; a submodule with uncommitted work or a commit no remote holds; a repository nested inside it; a CLONE with a branch or a stash origin lacks, or whose git directory linked worktrees share | `keep` | nothing, and the line says which |
+| a registration someone LOCKED; a submodule with uncommitted work, ignored files no commit carries (an `.env`), or a commit no remote holds; a repository nested inside it; a CLONE with a branch or a stash origin lacks, or whose git directory linked worktrees share | `keep` | nothing, and the line says which |
 | something leans on it — another repository's `objects/info/alternates`, or a remote whose URL is its path | `load-bearing` | nothing; the line names every dependent and the remedy (`git repack -a -d`, then drop the alternates or re-point the remote) |
 | no `origin` | `keep` (`bundle+remove` with `--bundle`) | a bundle is its only rescue |
 | dirty or untracked work | `wip-rescue+remove` | `git add -A` into a COPY of its index, `commit-tree` on its head, `rescue/<lane>/<slice>-<UTC>` pushed and seen on origin, a bundle, then removed |
@@ -3392,6 +3393,8 @@ files never move.
 **Ignored files that are not caches or build output** (an `.env`, a local
 config) are archived to `<slice>-ignored.tar.gz` before a tree goes: a commit
 cannot carry them, and the rule is that nothing goes that is not first saved.
+They are listed again at the moment of removal, and a tree whose ignored files
+changed, appeared or went since the archive was taken is left.
 Build output (`target`, `build`, `dist`, `.tox`, `.next`, `*.egg-info`, …) is
 generated and is not archived; more than `ignored_archive_mb` of the rest leaves
 the tree in place for a person.
@@ -3402,8 +3405,8 @@ the tree in place for a person.
 |---|---|---|
 | `--branches` | local branches no worktree holds, in the lane's checkout | merged by PR evidence: `delete` (`delete+remote` where the `Lane:` trailer is this lane's and origin's tip is inside the PR), each at the SHA judged and only after a fetch of that checkout that worked under `--yes`; an open PR's branch: `keep`; unmerged with a missing, diverged, unpushed or unreadable upstream: `list` with its tip, distance from `origin/main`, last commit date and owner — never deleted; `main`, `master` and `rescue/*`: never touched |
 | `--include-scratch` | `.lane-worktrees/<lane>/*-scratch`, `briefs/`, `bin/` that are no checkout | `archive+remove`: tar (caches left out) and sha256, then removed — only if no writer arrived and nothing outside the caches changed while the tar ran |
-| `--include-caches` | `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `node_modules`, any directory with `pyvenv.cfg` (and `venv/`, `.venv/` with an activate script), under `.lane-worktrees/<lane>/**` and the lane's inventory trees | `remove`, without archiving — never one git tracks, one inside scratch being archived, or one in a FOREIGN tree, a live one, one whose liveness is unknown or one left by its own act; the owning tree's liveness is asked again just before |
-| `--include-sandboxes` | `tmp.*` and `pytest-of-$USER/pytest-*` in `/tmp` and `$TMPDIR` (or `LANE_WORKTREES_SANDBOX_ROOTS`), owned by this account | `remove` where the owning process is gone: a pytest `.lock` naming a dead pid, and no live process standing in it, holding it open or naming it in its environment; a `tmp.*` younger than `sandbox_min_age_minutes` is left |
+| `--include-caches` | `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `node_modules`, any directory with `pyvenv.cfg` (and `venv/`, `.venv/` with an activate script), under `.lane-worktrees/<lane>/**` and the lane's inventory trees | `remove`, without archiving — never one git tracks or whose tracking cannot be read, one inside scratch being archived, or one in a FOREIGN tree, a live one, one whose liveness is unknown or one left by its own act; the owning tree's liveness is asked again just before |
+| `--include-sandboxes` | `tmp.*` and `pytest-of-$USER/pytest-*` in `/tmp` and `$TMPDIR` (or `LANE_WORKTREES_SANDBOX_ROOTS`), owned by this account | `remove` where the owning process is gone: a pytest `.lock` naming a dead pid (read again at the act), and no live process standing in it, holding it open or naming it in its environment; a `tmp.*` younger than `sandbox_min_age_minutes` is left |
 | `--links` | every symlink under the estate and every worktree `.git` gitdir pointer | `broken`, listed with target and age; nothing changes |
 | `--bundle` | every tree acted on | a `git bundle` beside the archive (always, for a rescue) |
 
@@ -3433,7 +3436,8 @@ origin AT THE RESCUED SHA (`git ls-remote`); an archive whose rescue branch is
 gone from origin, or was remade at another commit, is the only copy and is NEVER
 expired. Nor is an archive that is not WHOLE — no `MANIFEST.sha256`, a file it
 does not list or whose digest differs (a sweep interrupted after a bundle), or a
-`rescues.tsv` that is missing or has a row that is not origin, branch and SHA. What expired is appended to
+`rescues.tsv` that is missing or has a row that is not origin, branch and SHA,
+or a manifest entry whose file is gone. What expired is appended to
 `sweeps/EXPIRED.log`.
 
 `${XDG_CONFIG_HOME:-$HOME/.config}/openRepoTools/sweep.conf` (or
