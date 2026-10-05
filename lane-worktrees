@@ -10,6 +10,8 @@ abandoned worktrees, branches, scratch and killed-suite sandboxes
                    [--include-foreign --word "<verbatim>"]
                    [--live <path> ... | --live none] [--fetch] [--estate <dir>]
     lane-worktrees sweep --expire [--dry-run | --yes] [--porcelain]
+    lane-worktrees sweep --all --dry-run --report [--post <path|owner/repo#n>]
+                   [--estate <dir>]
     lane-worktrees --help | --version
 
 A SWAP THAT DOES NOT FINISH GRACEFULLY LEAVES ITS WRITERS' TREES WHERE THEY
@@ -45,6 +47,16 @@ sweeps/<lane>/<UTC>/ with MANIFEST.sha256, DISPOSITION.md and rescues.tsv.
 `sweep --expire` lists (and with `--yes` removes) archives older than the
 retention (90 days; `sweep.conf`) whose every rescue branch is still on
 origin; an archive whose rescue branch is gone from origin is never expired.
+
+THE ESTATE REPORT (`--all --dry-run --report`) is the net under every actor
+that never runs `lane-end`: FOREIGN clones, trees of ENDED lanes, unmerged
+branches, root-`main` divergence, rescue branches and dirty trees awaiting
+disposition, caches and sandboxes, large ignored directories, evidence-shaped
+paths, archives past retention, the workspace's bytecode hygiene and
+`status --all`'s findings - one markdown document, printed or `--post`ed to a
+file or an issue. It changes nothing. `lane-start` runs it once a day per
+workstation, detached (`LANE_WORKTREES_REPORT=off` is the switch). It exits 0,
+or 1 when `--post` could not deliver it (the report is then printed).
 
 Exit codes:
   0  dry run: nothing to retire  ·  --yes: every act completed
@@ -2388,8 +2400,11 @@ def _gitdir_pointer(path: str, base: str, now: float, out: list) -> None:
 
 # ================================================================== expire
 
-def expire(opts) -> int:
-    conf = load_conf()
+def expiry_rows(conf: dict) -> list:
+    """(archive, age in days, keep|expire, why) for every archive under the
+    sweeps directory - `sweep --expire`'s table, and the report's. An archive
+    past retention is `expire` only while every rescue branch it records is on
+    origin; one whose rescue left origin is the only copy and is kept."""
     root = sweeps_dir()
     keep_days = conf["retention_days"]
     now = _dt.datetime.now(_dt.timezone.utc)
@@ -2430,6 +2445,14 @@ def expire(opts) -> int:
                              + "; ".join(missing) + " - this archive is the only copy"))
             else:
                 rows.append((adir, age, "expire", f"{age} d old and every rescue branch is on origin"))
+    return rows
+
+
+def expire(opts) -> int:
+    conf = load_conf()
+    root = sweeps_dir()
+    keep_days = conf["retention_days"]
+    rows = expiry_rows(conf)
     failed = 0
     for i, (adir, age, disp, why) in enumerate(rows):
         if disp == "expire" and opts.yes:
@@ -2474,6 +2497,535 @@ def _rescues_of(adir: str) -> list:
     return out
 
 
+# ================================================================== report
+
+EVIDENCE_NAME_RE = re.compile(
+    r"(^canary-|^deployment-evidence$|-evidence$|^evidence$|-report\.md$|REPORT[^/]*\.md$|"
+    r"^junit[^/]*\.xml$|^MANIFEST)", re.IGNORECASE)
+HANDOFF_PATHS = ("handoffs/", "lanes/")
+#: `rescue/<lane>/<slice>-<UTC>` names its lane; a rescue branch of another
+#: convention (`rescue/<slug>`) names none.
+LANE_SHAPED_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*-[0-9]+$")
+
+
+def estate_root_default() -> str:
+    for cand in (os.environ.get("PROJECTS_ROOT", ""), os.path.join(_home(), "projects"),
+                 os.path.join(_home(), "Projects")):
+        if cand and os.path.isdir(cand):
+            return cand
+    return ""
+
+
+def _under_container(path: str, root: str) -> str:
+    """The worktree container a path sits in - `.lane-worktrees/<lane>`,
+    `.claude/worktrees`, `worktrees`, `<x>-worktrees` - or ''."""
+    rel = os.path.relpath(path, root)
+    parts = rel.split(os.sep)
+    for i, p in enumerate(parts[:-1]):
+        if p == ".lane-worktrees" and i + 1 < len(parts) - 1:
+            return os.sep.join(parts[:i + 2])
+        if p in ("worktrees", ".worktrees") or p.endswith("-worktrees"):
+            return os.sep.join(parts[:i + 1])
+    return ""
+
+
+def _du(paths: list) -> dict:
+    """{path: bytes} through `du -sk`, which walks in C: an estate's ignored
+    trees are millions of files, and a Python walk of them is minutes."""
+    out: dict = {}
+    for i in range(0, len(paths), 64):
+        chunk = paths[i:i + 64]
+        proc = run(["du", "-sk", "--", *chunk], timeout=600)
+        for line in proc.stdout.splitlines():
+            size, _, path = line.partition("\t")
+            if size.isdigit():
+                out[path] = int(size) * 1024
+    return out
+
+
+def _lane_parents(root: str, repos: list) -> list:
+    """Every directory a lane's control root and worktree root can sit in.
+    #97 puts `.lane-state/<lane>` - and lane-start `.lane-worktrees/<lane>` -
+    beside the lane's recorded `dir`, so a lane whose checkout is nested
+    (`<estate>/InkRouter/IRRS`) keeps them in `<estate>/InkRouter`, not at
+    the estate's top."""
+    out = [root] if root else []
+    for r in repos:
+        parent = os.path.dirname(r.rstrip(os.sep))
+        if parent and parent not in out:
+            out.append(parent)
+    return out
+
+
+def _lane_state_dirs(parents: list) -> list:
+    dirs = []
+    cands = [os.environ.get("LANES_LANE_STATE_ROOT", "")]
+    cands += [os.path.join(p, ".lane-state") for p in parents]
+    for cand in cands:
+        if cand and os.path.isdir(cand) and cand not in dirs:
+            dirs.append(cand)
+    return dirs
+
+
+def _lane_tree_roots(parents: list) -> list:
+    """`<parent>/.lane-worktrees`, each that exists."""
+    out = []
+    for p in parents:
+        cand = os.path.join(p, ".lane-worktrees")
+        if os.path.isdir(cand) and cand not in out:
+            out.append(cand)
+    return out
+
+
+def _sidecar(path: str) -> dict:
+    out = {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                key, sep, value = line.partition(": ")
+                if sep:
+                    out[key.strip()] = value.strip()
+    except OSError:
+        pass
+    return out
+
+
+class Report:
+    """`sweep --all --dry-run --report`: the estate's leftovers as one
+    document. It reads every lane's #97 inventory, the workspace register and
+    the disk; it changes nothing."""
+
+    def __init__(self, opts):
+        self.opts = opts
+        self.conf = load_conf()
+        self.root = opts.estate or estate_root_default()
+        self.helper = Helper()
+        self.sections: list = []
+        self.counts: dict = {}
+        self.now = time.time()
+
+    def add(self, title: str, rows: list, empty: str, note_text: str = "") -> None:
+        self.sections.append((title, rows, empty, note_text))
+        self.counts[title] = len(rows)
+
+    # ------------------------------------------------------------- reading
+    def build(self) -> None:
+        repos = estate_repos(self.root) if self.root else []
+        self.deps = dependents_map(repos)
+        clones = [r for r in repos if os.path.isdir(os.path.join(r, ".git"))]
+        canonical = self._canonical(clones)
+        self.canonical = canonical
+        parents = _lane_parents(self.root, canonical)
+        self.state_dirs = _lane_state_dirs(parents)
+        self.tree_roots = _lane_tree_roots(parents)
+        self._foreign(clones, canonical)
+        closed = self._closed_lanes()
+        self._orphans(closed)
+        self._branches(canonical)
+        self._root_main(canonical)
+        self._aging(canonical)
+        self._caches_and_sandboxes()
+        self._ignored_and_evidence(repos, canonical)
+        self._archives()
+        self._workspace_hygiene()
+        self._status_all()
+
+    def _canonical(self, clones: list) -> list:
+        """The estate's own checkouts: a clone outside every worktree
+        container. Of several clones of one origin, the one whose folder is
+        named for the repository is the checkout and the rest are duplicates."""
+        by_origin: dict = {}
+        for c in clones:
+            if _under_container(c, self.root):
+                continue
+            url = git_out(c, "config", "--get", "remote.origin.url") or ""
+            key = (slug_of(url) or url).lower().rstrip("/")
+            by_origin.setdefault(key, []).append(c)
+        self.duplicates: dict = {}
+        out = []
+        for key, group in by_origin.items():
+            if not key or len(group) == 1:
+                out.extend(group)
+                continue
+            name = key.rsplit("/", 1)[-1].replace(".git", "")
+            named = [g for g in group if os.path.basename(g).lower() == name]
+            if len(named) == 1:
+                out.append(named[0])
+                for g in group:
+                    if g != named[0]:
+                        self.duplicates[g] = named[0]
+            else:
+                out.extend(group)
+        return sorted(out)
+
+    def _foreign(self, clones: list, canonical: list) -> None:
+        rows = []
+        for c in clones:
+            container = _under_container(c, self.root)
+            why = ""
+            if container:
+                why = f"a CLONE inside {container}, where a lane makes worktrees"
+            elif c in self.duplicates:
+                why = f"a second clone of {self.duplicates[c]}'s origin"
+            if not why:
+                continue
+            last = git_out(c, "log", "-1", "--format=%cs") or "?"
+            msg = git_out(c, "log", "-1", "--format=%B") or ""
+            owner = (re.findall(r"^Lane:\s*(\S+)", msg, re.MULTILINE) or ["-"])[-1]
+            lean = leaned_on(c, git_common_dir(c), self.deps)
+            rows.append([c, why, human_size(dir_size(c)), last, owner,
+                         ("LOAD-BEARING: " + _lean_text(lean)) if lean else ""])
+        self.add("FOREIGN repositories", rows, "none: every clone is the estate's own checkout",
+                 "A lane creates worktrees, never clones. Each is a person's to dispose of.")
+
+    def _closed_lanes(self) -> dict:
+        """{lane: why} for every lane whose snapshot is CLOSED or whose log's
+        last lane-kind line is ENDED or RETIRED."""
+        closed: dict = {}
+        for d in self.state_dirs:
+            for lane in sorted(os.listdir(d)):
+                if _sidecar(os.path.join(d, lane, "lane-state.yaml")).get("state") == "CLOSED":
+                    closed[lane] = "its snapshot is CLOSED"
+        wroot = self.helper.workspace_root() if self.helper.path else ""
+        if wroot:
+            branch = os.environ.get("LANES_BRANCH", "main")
+            proc = git(wroot, "grep", "-E", "-e",
+                       "^(STARTED|RESUMED|PAUSED|ENDED|RETIRED) — lane ",
+                       f"origin/{branch}", "--", "lanes/log")
+            last: dict = {}
+            for line in proc.stdout.splitlines():
+                _ref, _, rest = line.partition(":")
+                fname, _, text = rest.partition(":")
+                last[os.path.basename(fname)[:-3]] = text.split(" ", 1)[0]
+            for lane, verb in last.items():
+                if verb in ("ENDED", "RETIRED"):
+                    closed.setdefault(lane, f"its log ends {verb}")
+        return closed
+
+    def _orphans(self, closed: dict) -> None:
+        rows = []
+        seen = set()
+        for d in self.state_dirs:
+            for lane in sorted(closed):
+                tdir = os.path.join(d, lane, "trees")
+                try:
+                    files = sorted(os.listdir(tdir))
+                except OSError:
+                    continue
+                for f in files:
+                    path = _sidecar(os.path.join(tdir, f)).get("path", "")
+                    if path and os.path.isdir(path) and real(path) not in seen:
+                        seen.add(real(path))
+                        rows.append([path, lane, closed[lane], "lane-worktrees sweep " + lane])
+        for lane, lroot in [(ln, r) for ln in sorted(closed) for r in self.tree_roots]:
+            ldir = os.path.join(lroot, lane)
+            try:
+                names = sorted(os.listdir(ldir))
+            except OSError:
+                continue
+            for n in names:
+                full = os.path.join(ldir, n)
+                if os.path.isdir(full) and real(full) not in seen:
+                    seen.add(real(full))
+                    rows.append([full, lane, closed[lane], f"lane-worktrees sweep {lane} "
+                                 "--include-scratch --include-foreign --word \"<yours>\""])
+        self.add("Orphaned worktrees of ENDED lanes", rows, "none")
+
+    def _branches(self, canonical: list) -> None:
+        rows = []
+        fmt = ("%(refname:short)%1f%(objectname:short=12)%1f%(upstream:short)%1f"
+               "%(upstream:track)%1f%(committerdate:iso-strict)%1f%(contents:trailers)%00")
+        for c in canonical:
+            proc = git(c, "for-each-ref", f"--format={fmt}", "refs/heads/")
+            if proc.returncode != 0:
+                continue
+            held = {r.get("branch", "")[len("refs/heads/"):]
+                    for r in worktree_registrations(c) if r.get("branch")}
+            for rec in proc.stdout.split("\0"):
+                cols = rec.strip("\n").split("\x1f")
+                if len(cols) < 6:
+                    continue
+                name, tip, up, track, date, trailers = cols[:6]
+                if name in PROTECTED_BRANCHES or name.startswith("rescue/"):
+                    continue
+                if not up:
+                    state = "no upstream"
+                elif "gone" in track:
+                    state = f"upstream {up} gone"
+                elif "ahead" in track and "behind" in track:
+                    state = f"diverged from {up} {track}"
+                elif "ahead" in track:
+                    state = f"unpushed {track}"
+                else:
+                    continue
+                owner = (re.findall(r"^Lane:\s*(\S+)", trailers, re.MULTILINE) or ["-"])[-1]
+                rows.append([f"{c} {name}", tip, state, f"{_age_days(date)} d",
+                             owner, "held by a worktree" if name in held else ""])
+        rows.sort(key=lambda r: -int(r[3].split()[0]))
+        self.add("Unmerged branches with a missing, diverged or unpushed upstream", rows,
+                 "none", "Listed, never deleted: a person pushes each to rescue/<lane>/... "
+                 "or gives a word.")
+
+    def _root_main(self, canonical: list) -> None:
+        rows = []
+        for c in canonical:
+            if git(c, "rev-parse", "-q", "--verify", "refs/heads/main").returncode != 0 or \
+                    git(c, "rev-parse", "-q", "--verify", "refs/remotes/origin/main").returncode != 0:
+                continue
+            n = git_out(c, "rev-list", "--count", "refs/remotes/origin/main..refs/heads/main") or "0"
+            if not n.isdigit() or int(n) == 0:
+                continue
+            paths = (git_out(c, "diff", "--name-only", "refs/remotes/origin/main...refs/heads/main")
+                     or "").splitlines()
+            only = bool(paths) and all(p.startswith(HANDOFF_PATHS) for p in paths)
+            rows.append([c, f"local main ahead of origin by {n}",
+                         "only handoff/register paths" if only else f"{len(paths)} path(s)",
+                         "Amendment 4: handoffs and the register live in the workspace "
+                         "repository and are pushed per write" if only else
+                         "push it through a pull request, or a person's word"])
+        self.add("Root main divergence", rows, "none")
+
+    def _aging(self, canonical: list) -> None:
+        aging = self.conf["aging_days"]
+        rows = []
+        rescue_count = 0
+        seen = set()
+        for c in canonical:
+            proc = git(c, "for-each-ref", "--format=%(refname)\t%(committerdate:iso-strict)",
+                       "refs/heads/rescue/", "refs/remotes/origin/rescue/")
+            for line in proc.stdout.splitlines():
+                ref, _, date = line.partition("\t")
+                name = ref.split("/rescue/", 1)[1]
+                if (c, name) in seen:
+                    continue
+                seen.add((c, name))
+                rescue_count += 1
+                age = _age_days(date)
+                if age >= aging:
+                    first = name.split("/", 1)[0] if "/" in name else ""
+                    owner = first if LANE_SHAPED_RE.match(first) else "-"
+                    rows.append([f"{c} rescue/{name}", f"rescue branch, {age} d",
+                                 owner, "awaiting disposition"])
+        for d in self.state_dirs:
+            for lane in sorted(os.listdir(d)):
+                tdir = os.path.join(d, lane, "trees")
+                try:
+                    files = sorted(os.listdir(tdir))
+                except OSError:
+                    continue
+                for f in files:
+                    path = _sidecar(os.path.join(tdir, f)).get("path", "")
+                    if not path or not os.path.isdir(path):
+                        continue
+                    dirt = git_out(path, "status", "--porcelain")
+                    if not dirt:
+                        continue
+                    newest = _gitdir_activity(path)
+                    age = int((self.now - newest) // 86400) if newest else 0
+                    if age >= aging:
+                        rows.append([path, f"dirty inventory tree, {age} d", lane,
+                                     "awaiting disposition"])
+        self.rescue_count = rescue_count
+        self.add(f"Awaiting disposition (older than {aging} days)", rows, "none")
+
+    def _caches_and_sandboxes(self) -> None:
+        rows = []
+        roots = []
+        for lroot in getattr(self, "tree_roots", []):
+            try:
+                roots += [os.path.join(lroot, n) for n in sorted(os.listdir(lroot))]
+            except OSError:
+                pass
+        for c in getattr(self, "canonical", []):
+            wt = os.path.join(c, ".claude", "worktrees")
+            if os.path.isdir(wt):
+                roots.append(wt)
+        for root in roots:
+            for path, size in find_caches(root):
+                rows.append([path, "cache", size])
+        for it in sandbox_items(ProcScan(), self.conf):
+            rows.append([it.path, "sandbox", it.size])
+        rows.sort(key=lambda r: -r[2])
+        total = sum(r[2] for r in rows)
+        self.add(f"Caches and sandboxes ({human_size(total)} in all)",
+                 [[p, k, human_size(s)] for p, k, s in rows], "none",
+                 "Removed without archiving by `--include-caches` / `--include-sandboxes`.")
+
+    def _ignored_and_evidence(self, repos: list, canonical: list) -> None:
+        threshold = self.conf["ignored_report_mb"] * 1024 * 1024
+        big, evidence = [], []
+        for r in repos:
+            proc = git(r, "ls-files", "--others", "--ignored", "--exclude-standard",
+                       "--directory", "-z")
+            ignored = [p.rstrip("/") for p in proc.stdout.split("\0") if p.endswith("/")]
+            sizes = _du([os.path.join(r, p) for p in ignored]) if ignored else {}
+            for path, size in sizes.items():
+                if size >= threshold:
+                    big.append([path, human_size(size)])
+            unt = git(r, "ls-files", "--others", "--exclude-standard", "--directory", "-z")
+            for p in (unt.stdout.split("\0") + [i + "/" for i in ignored]):
+                name = p.rstrip("/").rsplit("/", 1)[-1]
+                if p and EVIDENCE_NAME_RE.search(name):
+                    evidence.append([os.path.join(r, p.rstrip("/")), "untracked or ignored in "
+                                     + os.path.basename(r)])
+        if self.root:
+            repo_set = set(repos)
+            for n in sorted(os.listdir(self.root)):
+                full = os.path.join(self.root, n)
+                if full in repo_set or not os.path.isdir(full) or n.startswith(".lane-") \
+                        or n.endswith("-worktrees"):
+                    continue
+                if EVIDENCE_NAME_RE.search(n) or self._holds_reports(full):
+                    evidence.append([full, "a directory of reports beside the repositories"])
+        big.sort(key=lambda r: r[0])
+        self.add(f"Ignored directories over {self.conf['ignored_report_mb']} MB", big, "none")
+        self.add("Evidence-shaped paths inside the estate", evidence, "none",
+                 "One evidence root per repository: ${XDG_STATE_HOME:-$HOME/.local/state}/"
+                 "openRepoTools/evidence/<repo>/<UTC>-<slug>/. Each is a finding to move.")
+
+    @staticmethod
+    def _holds_reports(d: str) -> bool:
+        try:
+            for e in os.scandir(d):
+                if e.is_file() and EVIDENCE_NAME_RE.search(e.name):
+                    return True
+                if e.is_dir(follow_symlinks=False) and not e.name.startswith("."):
+                    for f in os.scandir(e.path):
+                        if f.is_file() and EVIDENCE_NAME_RE.search(f.name):
+                            return True
+        except OSError:
+            return False
+        return False
+
+    def _archives(self) -> None:
+        """`sweep --expire`'s dry run, folded in: what WOULD expire, and what
+        is past retention but kept because its rescue left origin. Expiring
+        stays an act (`sweep --expire --yes`); the report changes nothing."""
+        root = sweeps_dir()
+        keep = self.conf["retention_days"]
+        rows = []
+        for adir, age, disp, why in expiry_rows(self.conf):
+            if disp == "expire":
+                rows.append([adir, f"{age} d", "would expire: lane-worktrees sweep --expire --yes"])
+            elif age >= keep:
+                rows.append([adir, f"{age} d", "kept past retention: " + why])
+        self.sweeps_size = dir_size(root) if os.path.isdir(root) else 0
+        self.add(f"Sweep archives past retention ({keep} days)", rows, "none")
+
+    def _workspace_hygiene(self) -> None:
+        rows = []
+        wroot = self.helper.workspace_root() if self.helper.path else ""
+        if wroot:
+            try:
+                with open(os.path.join(wroot, ".gitignore"), encoding="utf-8") as fh:
+                    have = set(fh.read().splitlines())
+            except OSError:
+                have = set()
+            want = ["__pycache__/", "*.pyc", "*.pyo", ".pytest_cache/", ".mypy_cache/",
+                    ".ruff_cache/", "node_modules/", ".venv/", "venv/"]
+            missing = [w for w in want if w not in have]
+            if missing:
+                rows.append([os.path.join(wroot, ".gitignore"), "lacks " + " ".join(missing),
+                             "printf '%s\\n' " + " ".join(f"'{m}'" for m in missing)
+                             + f" >> {wroot}/.gitignore"])
+            hist = git(wroot, "log", "--all", "--format=", "--name-only", "--",
+                       "*.pyc", "*__pycache__*")
+            paths = sorted({p for p in hist.stdout.splitlines() if p})
+            if paths:
+                rows.append([wroot, f"{len(paths)} bytecode path(s) in history, e.g. {paths[0]}",
+                             "a person's word: history is rewritten only on one"])
+        self.add("Workspace repository hygiene", rows, "none")
+
+    def _status_all(self) -> None:
+        # `LANE_WORKTREES_STATUS` names the estate command when it is not
+        # beside this one (a test names a fake; a person, their own build).
+        exe = os.environ.get("LANE_WORKTREES_STATUS", "")
+        if not exe:
+            exe = os.path.join(os.path.dirname(os.path.realpath(__file__)), "status")
+            if not os.access(exe, os.X_OK):
+                exe = shutil.which("status") or ""
+        rows = []
+        why = ""
+        if not exe:
+            why = "no `status` beside this command or on PATH"
+        else:
+            env = dict(os.environ)
+            if self.opts.estate:
+                env["PROJECTS_DIR"] = self.opts.estate
+            proc = run([exe, "--all"], env=env, timeout=600)
+            if proc.returncode not in (0, 1):
+                why = f"`status --all` exited {proc.returncode}: " + _first_line(proc.stderr)
+            context = ""
+            for line in proc.stdout.splitlines():
+                s = line.strip()
+                if line.startswith("=== "):
+                    context = s.strip("= ").replace("status ", "")
+                elif s.startswith("- "):
+                    rows.append([context, s[2:]])
+        self.add("`status --all` findings (pin drift and tracking are reported as what they "
+                 "are, never counted as dirt)", rows, "none", why)
+
+    # ------------------------------------------------------------ writing
+    def markdown(self) -> str:
+        host = os.environ.get("LANES_WORKSTATION") or socket.gethostname()
+        out = [f"# Estate report - {host} - {utc_now()}", "",
+               f"`{PROG} sweep --all --dry-run --report` over `{self.root or '(no estate)'}`. "
+               "It changed nothing.", "",
+               "| finding | count |", "|---|---|"]
+        for title, rows, _e, _n in self.sections:
+            out.append(f"| {title} | {len(rows)} |")
+        out.append(f"| rescue branches (all ages) | {getattr(self, 'rescue_count', 0)} |")
+        out.append(f"| the sweeps directory | {human_size(getattr(self, 'sweeps_size', 0))} |")
+        for title, rows, empty, note_text in self.sections:
+            out += ["", f"## {title}", ""]
+            if note_text:
+                out += [note_text, ""]
+            if not rows:
+                out.append(f"_{empty}_")
+                continue
+            for r in rows[:500]:
+                out.append("- " + " · ".join(str(c).replace("\n", " ") for c in r if c != ""))
+            if len(rows) > 500:
+                out.append(f"- ... and {len(rows) - 500} more")
+        return "\n".join(out) + "\n"
+
+
+def report_all(opts) -> int:
+    rep = Report(opts)
+    rep.build()
+    text = rep.markdown()
+    post = opts.post or ""
+    if not post:
+        sys.stdout.write(text)
+        return 0
+    m = re.match(r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)$", post)
+    if m:
+        fd, tmp = tempfile.mkstemp(prefix="lane-worktrees-report.", suffix=".md")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        try:
+            proc = run(["gh", "issue", "comment", m.group(2), "--repo", m.group(1),
+                        "--body-file", tmp], timeout=120)
+        finally:
+            os.unlink(tmp)
+        if proc.returncode != 0:
+            note(f"the report could not be posted to {post}: " + _first_line(proc.stderr))
+            sys.stdout.write(text)
+            return 1
+        say(f"{PROG}: the report was posted to {post}: {proc.stdout.strip()}")
+        return 0
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(post)), exist_ok=True)
+        with open(post, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    except OSError as exc:
+        note(f"the report could not be written to {post}: {exc}")
+        sys.stdout.write(text)
+        return 1
+    say(f"{PROG}: the report is at {post}")
+    return 0
+
+
 # ==================================================================== main
 
 class _Parser(argparse.ArgumentParser):
@@ -2501,6 +3053,9 @@ def parse(argv: list):
     parser.add_argument("--fetch", action="store_true")
     parser.add_argument("--estate")
     parser.add_argument("--expire", action="store_true")
+    parser.add_argument("--all", action="store_true")
+    parser.add_argument("--report", action="store_true")
+    parser.add_argument("--post")
     parser.add_argument("-h", "--help", action="store_true")
     parser.add_argument("--version", action="store_true")
     return parser.parse_args(argv)
@@ -2521,6 +3076,12 @@ def main(argv: list) -> int:
     if ns.verb != "sweep":
         note("usage: lane-worktrees sweep <lane> [--dry-run | --yes] ... (see --help)")
         return 64
+    if ns.all or ns.report or ns.post is not None:
+        if not (ns.all and ns.report) or ns.lane or ns.yes or ns.expire:
+            note("usage: the estate-wide sweep only reports: lane-worktrees sweep --all "
+                 "--dry-run --report [--post <path|owner/repo#n>]")
+            return 64
+        return report_all(ns)
     if ns.expire:
         if ns.lane:
             note("usage: sweep --expire takes no lane: it reads every lane's archives")
