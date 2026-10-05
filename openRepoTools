@@ -1090,6 +1090,24 @@ install_commands() {
 		say "    export PATH=\"$dir:\$PATH\""
 		;;
 	esac
+	venv_note
+}
+
+# ONE VIRTUAL ENVIRONMENT PER REPOSITORY, OUTSIDE THE ESTATE
+# (opensoft/openRepoTools#162, cause 3: "968 of 1,000 removals were dependency
+# caches"). `${XDG_CACHE_HOME:-$HOME/.cache}/openRepoTools/venvs/<repo>/` is
+# the convention `docs/README-lanes.md` states, and this repository's own is
+# NAMED here with its state - and NOT CREATED: making one needs pip and the
+# network, and an install from a checkout needs neither. `tests/run.sh` runs
+# the suite from it once it is there and has pytest.
+venv_note() {
+	local venv="${XDG_CACHE_HOME:-$HOME/.cache}/openRepoTools/venvs/openRepoTools"
+	if [ -x "$venv/bin/python3" ]; then
+		say "openRepoTools: this repository's virtual environment is $venv (present; tests/run.sh runs from it when it has pytest)"
+	else
+		say "openRepoTools: this repository's virtual environment is $venv (not created; one per repository, outside the estate):"
+		say "    python3 -m venv $venv && $venv/bin/python3 -m pip install pytest"
+	fi
 }
 
 
