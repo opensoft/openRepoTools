@@ -898,6 +898,7 @@ def test_interactive_retry_rechecks_holder_absence_before_launch(restart_box):
     import pty
     import fcntl
     import termios
+    import errno
     from conftest import REPO
     box = restart_box
     prepare_restart(box)
@@ -919,7 +920,33 @@ exit 127
     box.env.update(PCLAUDE=str(child))
     box.env.pop("LANE_SUPERVISOR_NO_PROMPT", None)
     master, slave = pty.openpty()
+    fcntl.fcntl(master, fcntl.F_SETFL, fcntl.fcntl(master, fcntl.F_GETFL) | os.O_NONBLOCK)
     output_path = box.root / "interactive.out"
+
+    def drain_terminal():
+        # Consume terminal echo as a pane does. Darwin waits for queued tty
+        # output during session-leader exit, even when stdout is a file.
+        while True:
+            try:
+                if not os.read(master, 4096):
+                    return
+            except BlockingIOError:
+                return
+            except OSError as error:
+                if error.errno == errno.EIO:  # the slave has closed on Linux
+                    return
+                raise
+
+    def wait_with_terminal(timeout):
+        deadline = time.monotonic() + timeout
+        while True:
+            drain_terminal()
+            status = proc.poll()
+            if status is not None:
+                return status
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(proc.args, timeout)
+            time.sleep(.01)
 
     def own_terminal():
         # Match a pane: the supervisor owns a controlling tty in its session.
@@ -934,6 +961,7 @@ exit 127
         try:
             deadline = time.monotonic() + 15
             while "retry this restart?" not in output_path.read_text() and proc.poll() is None and time.monotonic() < deadline:
+                drain_terminal()
                 time.sleep(.05)
             assert "retry this restart?" in output_path.read_text(), output_path.read_text()
             os.write(master, b"r\n")
@@ -941,12 +969,13 @@ exit 127
             # message is acknowledged, matching the real supervisor pane.
             deadline = time.monotonic() + 15
             while "Press Enter to close it" not in output_path.read_text() and proc.poll() is None and time.monotonic() < deadline:
+                drain_terminal()
                 time.sleep(.05)
             assert "INDETERMINATE" in output_path.read_text(), output_path.read_text()
             assert "Press Enter to close it" in output_path.read_text(), output_path.read_text()
             os.write(master, b"\n")
             try:
-                status = proc.wait(timeout=15)
+                status = wait_with_terminal(15)
             except subprocess.TimeoutExpired as error:
                 raise AssertionError("supervisor did not exit after Enter:\n" + output_path.read_text()) from error
             assert status == 4, output_path.read_text()
@@ -955,7 +984,9 @@ exit 127
             assert record["state"] == "starting" and record["attempt"] == "2"
             assert "before attempt launch" in record["reason"]
         finally:
-            # Reap the owned supervisor before closing its controlling tty.
+            # Disconnect even on assertion/timeout: an unread master must
+            # not prevent Darwin from completing the owned process's exit.
+            os.close(master)
             if proc.poll() is None:
                 proc.terminate()
                 try:
@@ -963,7 +994,6 @@ exit 127
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     proc.wait(timeout=10)
-            os.close(master)
 
 
 def test_checkout_hint_cannot_hide_existing_fallback_intent(restart_box):
