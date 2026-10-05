@@ -10,6 +10,11 @@
 #   lanes --here     only this workstation's lanes
 #   lanes --fetch    any of the above, after refreshing from origin
 #   lanes --index    any of the above, out of the DERIVED INDEX (Amendment 14)
+#   lanes --worktrees [<lane>|--all]
+#                    every open worktree the #97 inventory records - owner,
+#                    branch, lifecycle, dirty/unpushed, last seen, writer
+#                    (opensoft/openRepoTools#161); with --index, out of the
+#                    index's `worktrees` table, every workstation it holds
 #
 # THE DEFAULT IS EVERY LANE, AND THE NARROWING IS BY CHECKOUT (A11 Addendum 4
 # ruling 6, ratified "a11 addendum 4 yes" with ruling 6 answered NO, over the
@@ -105,6 +110,7 @@ usage() {
 lanes [--fetch] [--index] [--all] [--here] [--closed] [--repo <owner/repo>]
       [--dir <path>] [--prefix <repo>] [--ws <workstation>]
       [--rename <old> <new>]
+lanes --worktrees [<lane> | --all] [--index] [--fetch]
 
 Inside a lane checkout: THAT REPOSITORY's lanes, ending with the next free
 position and the exact `lane-start <repo> <n>` that takes it. Outside one: every
@@ -147,6 +153,19 @@ is running is never started a second time.
                    home repository and the checkout it sits in are not the same
                    fact.
   --ws <name>      another workstation's lanes.
+  --worktrees [<lane> | --all]
+                   every open worktree of one lane, or of every lane: the #97
+                   inventory each lane's handoff recorded beside it — owner,
+                   branch, lifecycle, dirty and unpushed counts, when it was
+                   last seen and whether the lane's writer is live
+                   (opensoft/openRepoTools#161). Every field is that LAST
+                   OBSERVATION and nothing is recomputed: the current truth of a
+                   lane is `lanes-edit.sh lane-reconcile <lane>`, which reads the
+                   disk. Without --index it reads this workstation's sidecars;
+                   WITH it, the derived index's `worktrees` table — every
+                   workstation syncing into that store, so Raven sees Eagle's
+                   leftovers — and stderr says which, as for the listing. It
+                   takes none of the listing's narrowing flags.
   --rename <old> <new>
                    REFUSED, and it names the word that does it:
                    `lane-rename <old> <new>`. This command writes nothing
@@ -191,11 +210,22 @@ all_given=0         # 1 once `--all` has been seen, wherever in the line it was
 # NEXT FREE POSITION footer.
 here_repo=""
 args=()
+# `--worktrees` (opensoft/openRepoTools#161) TAKES ONE POSITIONAL, THE LANE, and
+# the listing takes none — so whether this line asks for worktrees is known
+# before the loop below meets a positional, wherever the flag stands in it.
+wt_mode=0
+wt_lane=""
+# `${1+"$@"}` AND NOT A BARE `"$@"`: bash 3.2 under `set -u` calls the empty
+# `"$@"` of a bare `lanes` an unbound variable and exits (tests/run.sh says why).
+for wt_a in ${1+"$@"}; do
+	case "$wt_a" in --worktrees) wt_mode=1 ;; esac
+done
 while [ $# -gt 0 ]; do
 	case "$1" in
 	-h | --help) usage; exit 0 ;;
 	--fetch) do_fetch=1; shift ;;
 	--index) idx_args=(--index); shift ;;
+	--worktrees) shift ;;
 	# `--all` CLEARS THE LABEL AS WELL AS THE FILTERS. The helper's `--all` drops
 	# `--repo`, `--dir` and `--prefix`, so the ROWS were right — but `here_repo`
 	# is this wrapper's own, and `lanes --all --prefix repoA11` (either order)
@@ -243,9 +273,100 @@ while [ $# -gt 0 ]; do
     (lane-collision-protocol Amendment 16)." 64 ;;
 	--) shift ;;
 	-*) die "unknown option '$1' — see $prog --help" 64 ;;
-	*) die "lanes takes no positional arguments; did you mean \`lane $1\`? — see $prog --help" 64 ;;
+	*)
+		if [ "$wt_mode" = 1 ] && [ -z "$wt_lane" ]; then
+			wt_lane="$1"; shift
+		elif [ "$wt_mode" = 1 ]; then
+			die "--worktrees takes ONE lane, or --all — see $prog --help" 64
+		else
+			die "lanes takes no positional arguments; did you mean \`lane $1\`? — see $prog --help" 64
+		fi ;;
 	esac
 done
+
+# ------------------------------------------------ `--worktrees` (#161)
+#
+# EVERY OPEN WORKTREE, rendered from `lanes-edit.sh worktrees`' rows — the #97
+# inventory as each lane's handoff last recorded it, read from this
+# workstation's sidecars, or with `--index` from the derived index's
+# `worktrees` table, which holds every workstation that syncs into it. The two
+# reads print the same bytes on stdout wherever the index is current; stderr
+# says which was read. It recomputes nothing and it decides nothing: the act
+# that reads the disk is `lanes-edit.sh lane-reconcile <lane>`, and the footer
+# says so.
+US="$(printf '\037')"
+if [ "$wt_mode" = 1 ]; then
+	for wt_a in ${args[@]+"${args[@]}"}; do
+		[ "$wt_a" = --all ] && continue
+		die "--worktrees takes ONE lane or --all, and none of the listing's narrowing flags ('$wt_a' was given) — see $prog --help" 64
+	done
+	[ "$closed" = 0 ] || die "--worktrees takes ONE lane or --all, not --closed: a closed lane's worktrees are listed with every other's — see $prog --help" 64
+	[ "$all_given" = 0 ] || [ -z "$wt_lane" ] || die "--worktrees takes ONE lane OR --all, not both — see $prog --help" 64
+	wt_args=()
+	if [ -n "$wt_lane" ]; then wt_args+=("$wt_lane"); else wt_args+=(--all); fi
+	[ "$do_fetch" = 1 ] && wt_args+=(--fetch)
+	rc=0
+	wt_err=""
+	wt_err_file="$(mktemp "${TMPDIR:-/tmp}/lanes-worktrees.XXXXXX" 2>/dev/null || printf '')"
+	if [ -n "$wt_err_file" ]; then
+		out="$("$LANES_EDIT" worktrees ${idx_args[@]+"${idx_args[@]}"} "${wt_args[@]}" 2>"$wt_err_file")" || rc=$?
+		wt_err="$(cat -- "$wt_err_file" 2>/dev/null || printf '')"
+		# `-e` AND NO `--` AFTER THE PATTERN: BSD's `grep` stops at its first
+		# operand, so a `--` there is a FILE it cannot open on macOS.
+		command grep -v -e 'not fetching; reading origin/' "$wt_err_file" >&2 || :
+		rm -f -- "$wt_err_file"
+	else
+		out="$("$LANES_EDIT" worktrees ${idx_args[@]+"${idx_args[@]}"} "${wt_args[@]}")" || rc=$?
+	fi
+	case "$rc" in
+	0) : ;;
+	8)
+		say "no worktree is inventoried${wt_lane:+ for lane $wt_lane}."
+		say "  each handoff records its lane's trees (lanes-edit.sh set-lane-tree); the disk itself is read by"
+		say "  lanes-edit.sh lane-reconcile <lane>"
+		exit 8 ;;
+	64) die "bad arguments for the worktrees read — see $prog --help" 64 ;;
+	2)
+		case "$wt_err" in
+		*"unknown subcommand 'worktrees'"*)
+			die "the \`lanes-edit.sh\` on this workstation has no \`worktrees\` read, so it
+    predates opensoft/openRepoTools#161. Nothing is wrong with the inventory —
+    take the install:  openRepoTools --install" 2 ;;
+		esac
+		exit 2 ;;
+	*) die "$LANES_EDIT worktrees failed (exit $rc). That is NOT 'no worktree is inventoried', and
+    this command will not print an empty listing on an answer it did not get
+    (Amendment 7(d)). Run it by hand to see what it says." 1 ;;
+	esac
+	printf '%-11s %-26s %-16s %-13s %-7s %-34s %5s %8s  %-20s  %s\n' \
+		WORKSTATION LANE OWNER LIFECYCLE WRITER BRANCH DIRTY UNPUSHED "LAST SEEN" PATH
+	n=0; nl=0; nw=0; wt_unread=0; wt_lanes=" "; wt_wss=" "
+	while IFS="$US" read -r w_kind w_ws w_lane w_owner w_path w_branch w_base w_life w_gen w_op w_live w_seen w_last w_dirty w_unp w_prov; do
+		case "${w_kind:-}" in
+		TREE)
+			case "${w_live:-}" in 1) w_wr=live ;; 0) w_wr=none ;; *) w_wr=unknown ;; esac
+			printf '%-11s %-26s %-16s %-13s %-7s %-34s %5s %8s  %-20s  %s\n' \
+				"$w_ws" "$w_lane" "${w_owner:-unknown}" "${w_life:-INDETERMINATE}" "$w_wr" \
+				"${w_branch:-unknown}" "${w_dirty:-?}" "${w_unp:-?}" "${w_seen:-never}" "$w_path"
+			n=$((n + 1))
+			case "$wt_lanes" in *" $w_ws/$w_lane "*) : ;; *) wt_lanes="$wt_lanes$w_ws/$w_lane "; nl=$((nl + 1)) ;; esac
+			case "$wt_wss" in *" $w_ws "*) : ;; *) wt_wss="$wt_wss$w_ws "; nw=$((nw + 1)) ;; esac ;;
+		UNREAD)
+			# `UNREAD <ws> <lane> <why>`: the third field is the reason.
+			printf '%-11s %-26s inventory NOT READ: %s\n' "$w_ws" "$w_lane" "$w_owner"
+			wt_unread=$((wt_unread + 1)) ;;
+		esac
+	done <<EOF
+$out
+EOF
+	say ""
+	say "$n worktree(s) in $nl lane(s) on $nw workstation(s), each as its lane's inventory last recorded it (LAST SEEN); nothing here is recomputed."
+	if [ "$wt_unread" != 0 ]; then
+		say "$wt_unread lane(s) above have an inventory that is there and could not be read: that is NOT a lane with no worktrees."
+	fi
+	say "  the current truth of one lane:  lanes-edit.sh lane-reconcile <lane>   (it reads the disk; this listing decides nothing)"
+	exit 0
+fi
 
 # `--all` WINS WHEREVER IT APPEARS IN THE LINE, so the label is cleared after the
 # loop and not inside the arm: `lanes --all --prefix repoA11` and
