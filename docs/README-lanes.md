@@ -3468,6 +3468,85 @@ the table and in `DISPOSITION.md`); usage is 64.
    goes to `${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools/lanes/<lane>/scratch/`
    or the harness scratchpad.
 
+### The estate report — `sweep --all --dry-run --report`
+
+The net under every actor that never runs `lane-end`: **creation outpacing
+closeout as a number that is read every day.** It reads every lane's #97
+inventory and snapshot under `<estate>/.lane-state` (or
+`$LANES_LANE_STATE_ROOT`), the workspace repository's register on
+`origin/<branch>`, and the disk — **never the derived index** (Amendment 14
+clause (b)) — and CHANGES NOTHING: no fetch, no index refresh
+(`GIT_OPTIONAL_LOCKS=0`), no expiry.
+
+```sh
+lane-worktrees sweep --all --dry-run --report [--estate <dir>] [--post <file> | --post <owner/repo>#<n>]
+```
+
+| section | what is listed |
+|---|---|
+| FOREIGN repositories | a CLONE inside a worktree container (`.lane-worktrees/<lane>`, `.claude/worktrees`, `worktrees`, `<x>-worktrees`), and a second clone of an origin the estate already has a checkout of: path, size, last commit, owner (the last `Lane:` trailer), and LOAD-BEARING with its dependents where something leans on it |
+| Orphaned worktrees of ENDED lanes | trees an inventory records, and directories under `.lane-worktrees/<lane>`, of a lane whose snapshot is `CLOSED` or whose log's last lane line is `ENDED` or `RETIRED` — with the sweep that retires them |
+| Unmerged branches | local branches of every checkout with no upstream, a gone upstream, a diverged one, or unpushed commits: tip, state, age, owner, and whether a worktree holds it. Never deleted; `main`, `master` and `rescue/*` are not listed |
+| Root main divergence | a checkout whose local `main` is ahead of `origin/main`; where every changed path is under `handoffs/` or `lanes/`, the remedy is Amendment 4's — those live in the workspace repository and are pushed per write |
+| Awaiting disposition | a `rescue/*` branch (local or on origin) and a DIRTY inventory tree whose git directory has been still for `aging_days` (14), with owner and age |
+| Caches and sandboxes | `--include-caches`' and `--include-sandboxes`' rows across every lane, by size |
+| Ignored directories over `ignored_report_mb` | every ignored directory of every repository at or over 50 MB (`du -sk`) |
+| Evidence-shaped paths | untracked or ignored `junit*.xml`, `MANIFEST*`, `*-report.md`, `*REPORT*.md`, `canary-*`, `*-evidence`, `deployment-evidence` inside a repository, and a directory of reports beside the repositories — each a finding to move to the evidence root below |
+| Sweep archives past retention | `sweep --expire`'s own dry run: what WOULD expire, and what is past retention but kept because its rescue left origin. Expiring stays an act (`sweep --expire --yes`) |
+| Workspace repository hygiene | the workspace's `.gitignore` lines it lacks (with the one command that adds them), and bytecode already in its history (for a person's word: history is rewritten only on one) |
+| `status --all` findings | the estate command's ahead/behind, fork, shape-pin and parked-record lines, reported as what they are and never counted as dirt (`LANE_WORKTREES_STATUS` names the command when it is not beside this one) |
+
+The summary table at its head also carries **the count of rescue branches** and
+**the sweeps directory's size**, so the cleanup's own footprint is watched.
+`--post <file>` writes the report there; `--post <owner>/<repo>#<n>` comments it
+on that issue through `gh`; with no `--post` it is printed. `--all` and
+`--report` come together, with no lane, no `--yes` and no `--expire` (usage, 64).
+
+**`lane-start` runs it once a day per workstation**, after the row is written
+and before the launch: the first start of a UTC day takes the stamp
+`${XDG_STATE_HOME:-~/.local/state}/openRepoTools/report-<YYYYMMDD>.stamp`
+(an atomic `set -C` create, so two starts at once run one report), removes
+older stamps, and starts the report DETACHED — stdin, stdout and stderr closed,
+in a subshell that exits at once — writing
+`…/openRepoTools/reports/<UTC>.md`. Every step either works or is skipped in
+silence: the report never delays a start and never fails one. `--dry-run`
+starts none; `LANE_WORKTREES_REPORT=off` is the switch (both suites set it).
+
+### Nothing new lands beside the code
+
+The sweep retires what is already there; these keep more from arriving.
+
+* **`tests/run.sh`** sends bytecode to
+  `${XDG_CACHE_HOME:-~/.cache}/openRepoTools/pycache`, turns pytest's cache off,
+  and roots every temporary directory of a run under
+  `${XDG_STATE_HOME:-~/.local/state}/openRepoTools/tmp/<UTC>-<pid>/`, which its
+  EXIT trap removes however the run ends. A SIGKILL is the one end no trap sees;
+  the pid in the name is what lets `--include-sandboxes` tell its owner is gone.
+* **One virtual environment per repository, outside the estate:**
+  `${XDG_CACHE_HOME:-~/.cache}/openRepoTools/venvs/<repo>/`. `openRepoTools
+  --install` names this repository's and says whether it is there; `tests/run.sh`
+  runs from it when it has `pytest`. A `venv/` or `.venv/` inside a worktree is
+  a legacy leftover for `--include-caches`.
+* **One evidence root per repository:**
+  `${XDG_STATE_HOME:-~/.local/state}/openRepoTools/evidence/<repo>/<UTC>-<slug>/`
+  for JUnit files, manifests, reports, canary and deployment evidence — never
+  inside a checkout and never beside the repositories. The report lists what is
+  still found inside the estate.
+* **The workspace repository never carries bytecode.** `openRepoTools wip init`
+  seeds `__pycache__/`, `*.pyc`, `*.pyo`, `.pytest_cache/`, `.mypy_cache/`,
+  `.ruff_cache/`, `node_modules/`, `.venv/` and `venv/` into the new
+  workspace's `.gitignore` (a line the template already carries is not
+  repeated). Every commit `lanes-edit.sh` makes asks git what its pathspec would
+  stage (`git add --dry-run`) and REFUSES, exit **2**, nothing staged, when any
+  of it is bytecode, a cache, a dependency tree or a virtual environment — and
+  offers the `.gitignore` lines a workspace without them lacks. Attachments are
+  committed by hand, so the same question is a subcommand:
+
+  ```sh
+  lanes-edit.sh pathspec-check handoffs/<repo>/attachments/<slug>
+  # 0 clean · 2 the offending paths on stdout, the offer on stderr · 64 usage
+  ```
+
 ## Hand edits
 
 After **any** hand edit made with an allowed tool (python read/write, `sed -i
