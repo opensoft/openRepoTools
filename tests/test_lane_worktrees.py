@@ -673,6 +673,55 @@ def test_a_tree_another_lanes_inventory_also_names_is_kept(estate):
     assert tree.is_dir()
 
 
+def test_an_unreadable_claim_of_another_lane_refuses_before_any_write(estate):
+    """Copilot round 2 on #168: a sibling inventory record that cannot be
+    read is an unknown claim, never "no claim" - refused, and refused before
+    the fetch."""
+    estate.worktree("w", "feat/w")
+    other = estate.root / "lane-state" / "repoA-7" / "trees"
+    other.mkdir(parents=True)
+    (other / "c1.yaml").write_text("schema: 1\n")
+    before = snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json"))
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "lane repoA-7's inventory record c1.yaml (it names no path)" in proc.stdout
+    assert snapshot(estate.root, skip=("helper.log", "helper-spec.json", "prs.json")) == before
+
+
+def test_a_submodules_ignored_files_keep_its_tree(estate):
+    """Copilot round 2 on #168: an `.env` in a submodule is in no archive -
+    the tree's ignored-file archive lists the superproject's only."""
+    sub_origin = estate.remotes / "sub.git"
+    estate.git("init", "-q", "--bare", "-b", "main", sub_origin, cwd=estate.root)
+    seed = estate.root / "sub-seed"
+    estate.git("clone", "-q", sub_origin, seed, cwd=estate.root)
+    estate.commit(seed, "sub", {".gitignore": ".env\n", "s.txt": "s\n"})
+    estate.git("push", "-q", "origin", "main", cwd=seed)
+    tree = estate.worktree("withsub", "feat/withsub", record=False)
+    estate.git("submodule", "add", "-q", str(sub_origin), "sub", cwd=tree)
+    estate.commit(tree, "add sub")
+    estate.git("push", "-q", "-u", "origin", "feat/withsub", cwd=tree)
+    (tree / "sub" / ".env").write_text("SECRET=1\n")
+    estate.record(tree)
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "keep", rows[str(tree)]
+    assert "submodule sub holds ignored files no commit carries (.env)" in rows[str(tree)][2]
+
+
+def test_a_cache_whose_tracking_cannot_be_read_is_left(estate):
+    """Copilot round 2 on #168: an index git cannot read is no proof a cache
+    is untracked."""
+    tree = estate.worktree("badindex", "feat/badindex")
+    estate.git("push", "-q", "-u", "origin", "feat/badindex", cwd=tree)
+    (tree / "__pycache__").mkdir()
+    (tree / "__pycache__" / "b.pyc").write_bytes(b"\0")
+    index = Path(estate.git("rev-parse", "--git-path", "index", cwd=tree))
+    index = index if index.is_absolute() else tree / index
+    index.write_bytes(b"not an index")
+    proc = estate.sweep(LANE, "--include-caches", "--porcelain")
+    assert str(tree / "__pycache__") not in items_of(proc.stdout, "cache"), proc.stdout
+
+
 def test_a_clone_its_linked_worktrees_share_is_kept(estate):
     """Copilot on #168: removing a clone takes the git directory every
     worktree linked to it shares, a live writer's included."""
@@ -1000,6 +1049,10 @@ def test_expire_keeps_young_archives_and_any_whose_rescue_left_origin(estate):
     unfinished = _archive(estate, 93, None, manifest=False)
     stray = _archive(estate, 94, None)
     (stray / "x.bundle").write_bytes(b"bundle")
+    # ... and one whose manifest lists a file that is gone (round 2)
+    lost = _archive(estate, 95, None)
+    with open(lost / "MANIFEST.sha256", "a") as fh:
+        fh.write(f"{'0' * 64}  lost.bundle\n")
     dry = estate.sweep("--expire", "--porcelain")
     assert dry.returncode == 3, dry.stdout + dry.stderr
     rows = {line.split("\t")[2]: line.split("\t")[1] for line in dry.stdout.splitlines()}
@@ -1009,11 +1062,12 @@ def test_expire_keeps_young_archives_and_any_whose_rescue_left_origin(estate):
     assert rows[str(moved)] == "keep" and "not the rescued 1111111" in why[str(moved)]
     assert rows[str(unfinished)] == "keep" and "MANIFEST" in why[str(unfinished)]
     assert rows[str(stray)] == "keep" and "x.bundle" in why[str(stray)]
+    assert rows[str(lost)] == "keep" and "lost.bundle" in why[str(lost)]
     assert young.is_dir() and due.is_dir()
     yes = estate.sweep("--expire", "--yes")
     assert yes.returncode == 0, yes.stdout + yes.stderr
     assert young.is_dir() and orphan.is_dir()
-    assert moved.is_dir() and unfinished.is_dir() and stray.is_dir()
+    assert moved.is_dir() and unfinished.is_dir() and stray.is_dir() and lost.is_dir()
     assert not due.exists() and not plain.exists()
     log = (estate.state / "openRepoTools" / "sweeps" / "EXPIRED.log").read_text()
     assert str(due) in log and str(orphan) not in log
