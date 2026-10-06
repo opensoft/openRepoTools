@@ -2285,3 +2285,29 @@ def test_untracked_git_lfs_content_keeps_the_tree(estate, when):
     row = rows_of(proc.stdout)[str(tree)]
     assert row[0] == "keep" and "git-lfs content" in row[2], row
     assert estate.remote_heads() == before, "nothing is pushed for a tree that is kept"
+
+
+@pytest.mark.parametrize("where", ["only-in-the-clone", "on-origin-too"])
+def test_a_clones_annotated_tag_neither_halts_the_sweep_nor_is_lost(estate, where):
+    """#174 Copilot round 1: a clone's annotated tag reached the loss plan
+    as its TAG OBJECT, which was reported lost however it was kept - so the
+    self-check refused, and halted the sweep on, every clone with one. A tag
+    object origin holds as it is is kept; one only the clone holds goes to
+    the bundle, its message with it; either way the clone is removed."""
+    clone, env = _foreign_clone(estate, "released")
+    estate.git("tag", "-a", "-m", "release notes nobody else has", "v1.0", cwd=clone)
+    tag = estate.git("rev-parse", "refs/tags/v1.0", cwd=clone)
+    if where == "on-origin-too":
+        estate.git("push", "-q", "origin", "v1.0", cwd=clone)
+    proc = estate.sweep(LANE, "--include-foreign", "--word", "go", "--yes", "--porcelain",
+                        env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not clone.exists(), rows_of(proc.stdout)[str(clone)]
+    (archive,) = estate.archives()
+    only = [r for r in _ledger(archive) if r[0] == "-" and r[1].startswith("bundle:")]
+    if where == "on-origin-too":
+        assert only == [], "origin holds that very tag object: no bundle is its only copy"
+    else:
+        assert [r[2] for r in only] == [tag], _ledger(archive)
+        heads = estate.git("bundle", "list-heads", archive / only[0][1][len("bundle:"):])
+        assert tag in heads.split(), heads

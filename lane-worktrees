@@ -1614,37 +1614,79 @@ def repository_within(path: str) -> str:
 
 
 def lost_tips(path: str, cands: list, keep: list):
-    """The candidate commits at least one commit of whose history no ref or
-    commit in `keep` (rev-list arguments: `--remotes=origin`, `--branches`, a
+    """The candidate objects at least one commit of whose history no ref or
+    object in `keep` (rev-list arguments: `--remotes=origin`, `--branches`, a
     SHA) reaches - what a removal would take that is in no such place. A
     candidate object that is gone (a reflog entry gc took) is already lost
     and is not reported; one that is no commit cannot be proved kept and is.
-    None where git could not answer."""
+
+    AN ANNOTATED TAG IS ITS OWN OBJECT (#174, Copilot round 1): a clone's tag
+    reached here as the tag object, was reported lost however it was kept,
+    and the self-check refused - and halted the sweep on - every clone with
+    one. A tag object is kept where `keep` names it by SHA (a verified
+    bundle's head, origin's own tag); its history is its peeled commit's,
+    asked like any other. None where git could not answer."""
     want = []
     for c in cands:
         if c and c not in want and not re.match(r"^0+$", c):
             want.append(c)
     if not want:
         return []
+    kept_objects = [k for k in keep if SHA_RE.match(k)]
+    keep_refs = [k for k in keep if not SHA_RE.match(k)]
+    query = want + [f"{k}^{{commit}}" for k in kept_objects]
     check = run(["git", "-C", path, "cat-file", "--batch-check=%(objectname) %(objecttype)"],
-                env=git_env(), input_text="\n".join(want) + "\n")
-    if check.returncode != 0:
+                env=git_env(), input_text="\n".join(query) + "\n")
+    lines = check.stdout.splitlines()
+    if check.returncode != 0 or len(lines) != len(query):
         return None
-    commits, odd = [], []
-    for line in check.stdout.splitlines():
+    commits, odd, tags = [], [], []
+    for sha, line in zip(want, lines[:len(want)]):
         parts = line.split()
-        if len(parts) == 2 and parts[1] == "commit":
-            commits.append(parts[0])
-        elif len(parts) == 2 and parts[1] != "missing":
-            odd.append(parts[0])
+        otype = parts[-1] if parts else ""
+        if otype == "commit":
+            commits.append(sha)
+        elif otype == "tag":
+            tags.append(sha)
+        elif otype != "missing":
+            odd.append(sha)
+    # A SHA in `keep` counts through the commit it peels to: a tag object a
+    # bundle carries keeps that commit's history too.
+    keep_commits = [line.split()[0] for line in lines[len(want):]
+                    if len(line.split()) == 2 and line.split()[1] == "commit"]
+    if tags:
+        peel = run(["git", "-C", path, "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+                   env=git_env(), input_text="".join(f"{t}^{{commit}}\n" for t in tags))
+        peeled = peel.stdout.splitlines()
+        if peel.returncode != 0 or len(peeled) != len(tags):
+            return None
+        for tag, line in zip(tags, peeled):
+            parts = line.split()
+            if tag not in kept_objects:
+                odd.append(tag)
+            if len(parts) == 2 and parts[1] == "commit" and parts[0] not in commits:
+                commits.append(parts[0])
     if not commits:
         return odd
-    proc = run(["git", "-C", path, "rev-list", *commits, "--not", *keep], env=git_env(),
-               timeout=GIT_TIMEOUT)
+    proc = run(["git", "-C", path, "rev-list", *commits, "--not", *keep_refs, *keep_commits],
+               env=git_env(), timeout=GIT_TIMEOUT)
     if proc.returncode != 0:
         return None
     out = set(proc.stdout.split())
     return [c for c in commits if c in out] + odd
+
+
+def origin_tag_objects(path: str, tags: list) -> list:
+    """The annotated tag objects among `tags` origin holds AS THEY ARE (its
+    `ls-remote --tags` names that very object) - kept by origin, so not the
+    only copy. Where origin cannot be asked, none: such a tag is bundled."""
+    if not tags:
+        return []
+    proc = git(path, "ls-remote", "--tags", "origin", timeout=GIT_NET_TIMEOUT)
+    if proc.returncode != 0:
+        return []
+    have = {line.split("\t", 1)[0] for line in proc.stdout.splitlines() if "\t" in line}
+    return [t for t in tags if t in have]
 
 
 def unpublished_ref(path: str, remotes: str, where: str) -> str:
@@ -2848,18 +2890,22 @@ class Sweep:
         if not gitdir:
             return None, "its git directory could not be read"
         if t.kind == "clone":
-            refs = git(t.path, "for-each-ref", "--format=%(refname) %(objectname)", "refs/")
+            refs = git(t.path, "for-each-ref", "--format=%(refname) %(objectname) %(objecttype)",
+                       "refs/")
             if refs.returncode != 0:
                 return None, "its refs could not be read"
-            tips = [line.split(" ", 1)[1] for line in refs.stdout.splitlines()
-                    if " " in line and not line.startswith("refs/remotes/")]
+            rows = [line.split(" ") for line in refs.stdout.splitlines()
+                    if len(line.split(" ")) == 3 and not line.startswith("refs/remotes/")]
+            tips = [sha for _ref, sha, _otype in rows]
+            tags = [sha for ref, sha, otype in rows if ref.startswith("refs/tags/") and otype == "tag"]
             files, why = reflog_files(gitdir)
             if files is None:
                 return None, why
             logs, why = reflog_shas(files)
             if logs is None:
                 return None, why
-            return (t.path, tips + [t.head] + logs, ["--remotes=origin"]), ""
+            return (t.path, tips + [t.head] + logs,
+                    ["--remotes=origin"] + origin_tag_objects(t.path, tags)), ""
         logs_files = [os.path.join(gitdir, "logs", "HEAD")]
         keep = ["--remotes=origin"]
         if t.disposition == "remove+delete-branch" and t.branch:
