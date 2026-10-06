@@ -872,6 +872,10 @@ class MergeEvidence:
             if row.get("state") == "OPEN" and (slug.lower(), int(row.get("number", 0))) not in landed:
                 return {"state": "open", "pr": int(row["number"]), "source": "gh",
                         "why": f"PR #{row['number']} is open"}
+        # ... AND WHILE GH STILL ANSWERS OPEN, THE REMOTE BRANCH STAYS (#170 A8):
+        # a LANDED line that names the wrong number (#21 for #20) must not
+        # delete the branch of a PR that is still open, which would close it.
+        gh_open = [int(r.get("number", 0)) for r in mine if r.get("state") == "OPEN"]
         defaults = self.default_branches(repo)
         elsewhere = None
         for row in sorted(mine, key=lambda r: -int(r.get("number", 0))):
@@ -894,7 +898,10 @@ class MergeEvidence:
                 source = "register LANDED" if by_register else "gh MERGED"
                 if contained:
                     return {"state": "merged", "pr": number, "source": source, "head": head,
-                            "why": f"PR #{number} is merged ({source}) and holds this tip"}
+                            "gh_open": gh_open,
+                            "why": f"PR #{number} is merged ({source}) and holds this tip"
+                                   + (f"; gh still answers PR #{gh_open[0]} OPEN, so its remote "
+                                      "branch is kept" if gh_open else "")}
                 return {"state": "moved", "pr": number, "source": source, "head": head,
                         "why": f"PR #{number} is merged ({source}) but this branch has moved "
                                f"past its head {short(head)}"}
@@ -1145,6 +1152,7 @@ class Tree:
         self.ahead = 0
         self.behind = 0
         self.lane_trailer = ""
+        self.remote_trailer = ""           # the Lane: trailer of origin/<branch>'s tip
         self.merge: dict = {}
         self.live = None                   # (True|None, why) | None = not live
         self.lean: list = []
@@ -1264,6 +1272,10 @@ def read_tree(tree: Tree) -> None:
         tree.remote_branch = target
         tip = git_out(tree.path, "rev-parse", "-q", "--verify", f"refs/remotes/origin/{target}")
         tree.remote_tip = tip or ""
+        if tree.remote_tip:
+            rmsg = git_out(tree.path, "log", "-1", "--format=%B", tree.remote_tip) or ""
+            rtrailers = re.findall(r"^Lane:\s*(\S+)\s*$", rmsg, re.MULTILINE)
+            tree.remote_trailer = rtrailers[-1] if rtrailers else ""
     if tree.head:
         if tree.remote_tip:
             counts = git_out(tree.path, "rev-list", "--left-right", "--count",
@@ -2180,6 +2192,25 @@ class Sweep:
             put("rescue+remove", f"{t.ahead or 'unpublished'} commit(s) not on origin and {why}: "
                                  "a rescue branch, pushed, then removed")
             return
+        # A LANE'S UNREVIEWED COMMITS NEVER GO ONTO SOMEBODY'S BRANCH AS IS
+        # (#170 A7): not onto one an open pull request names (a teammate's
+        # under review), not onto one whose tip carries another lane's
+        # `Lane:` trailer, and not where whether a PR names it could not be
+        # read. They go to a rescue branch of this lane's instead.
+        if t.remote_tip:
+            other = t.remote_trailer if (t.remote_trailer and
+                                         t.remote_trailer.lower() != self.lane.lower()) else ""
+            why = (m["why"] + ", and a lane's unreviewed commits never go onto an open pull "
+                   "request's branch" if m.get("state") == "open" else
+                   f"origin/{t.remote_branch} carries lane {other}'s work (its tip's Lane: "
+                   "trailer)" if other else
+                   f"whether an open pull request names origin/{t.remote_branch} is unknown "
+                   f"({m.get('why', 'not read')})" if m.get("state") == "unknown" else "")
+            if why:
+                put("rescue+remove", f"{t.ahead} commit(s) not on origin/{t.remote_branch}, and "
+                                     f"{why}: a rescue branch, pushed, then removed - "
+                                     f"origin/{t.remote_branch} is left as it is")
+                return
         put("push+remove", (f"{t.ahead} commit(s) not on origin/{t.remote_branch}"
                             if t.remote_tip else f"origin has no {t.remote_branch}")
             + ": pushed as is, then removed")
@@ -2605,7 +2636,10 @@ class Sweep:
                 self.failed += 1
             head = (t.merge or {}).get("head", "")
             ours = t.lane_trailer.lower() == self.lane.lower()
-            if t.remote_tip and ours and head and (t.remote_tip == head or git(
+            gh_open = (t.merge or {}).get("gh_open") or []
+            if t.remote_tip and gh_open:
+                t.result += f"; remote branch kept (gh still answers PR #{gh_open[0]} OPEN)"
+            elif t.remote_tip and ours and head and (t.remote_tip == head or git(
                     co, "merge-base", "--is-ancestor", t.remote_tip, head).returncode == 0):
                 done, why = delete_remote_branch(co, t.remote_branch, t.remote_tip)
                 t.result += "; remote branch deleted" if done else "; remote branch NOT deleted: " + why
@@ -3058,8 +3092,9 @@ def branch_items(checkout: str, lane: str, evidence: MergeEvidence) -> list:
             remote_tip = git_out(checkout, "rev-parse", "-q", "--verify",
                                  f"refs/remotes/origin/{name}") or ""
             head = judged.get("head", "")
-            remote_ok = bool(remote_tip) and ours and (remote_tip == head or git(
-                checkout, "merge-base", "--is-ancestor", remote_tip, head).returncode == 0)
+            remote_ok = bool(remote_tip) and ours and not judged.get("gh_open") and (
+                remote_tip == head or git(checkout, "merge-base", "--is-ancestor", remote_tip,
+                                          head).returncode == 0)
             it = Item("branch", name, "delete+remote" if remote_ok else "delete",
                       judged["why"] + ("; the remote branch too (this lane's, nothing beyond the PR)"
                                        if remote_ok else ""), ours, detail)

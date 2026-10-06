@@ -1620,3 +1620,50 @@ def test_an_ignored_file_beneath_a_build_named_directory_is_archived(estate):
         names = tf.getnames()
     assert "docker/build/prod.env" in names and "top.env" in names, names
     assert not any(n.startswith("build") for n in names), "build output is not archived"
+
+
+@pytest.mark.parametrize("why", ["open-pr", "another-lanes-trailer", "gh-unreadable"])
+def test_unreviewed_commits_never_go_onto_somebody_elses_branch(estate, why):
+    """#170 A7: push+remove pushed the lane's local commit onto a teammate's
+    OPEN pull request's branch. Where an open PR names the branch, its tip
+    carries another lane's trailer, or whether a PR names it cannot be read,
+    the commits go to a rescue branch and origin's branch is left alone."""
+    tree = estate.worktree("review", "feat/teammate")
+    tip = estate.commit(tree, "teammate's work", {"t.txt": "t\n"},
+                        lane="repoB-9" if why != "gh-unreadable" else LANE)
+    estate.git("push", "-q", "-u", "origin", "feat/teammate", cwd=tree)
+    if why == "open-pr":
+        estate.pr(77, "feat/teammate", "OPEN", tip)
+    mine = estate.commit(tree, "the lane's experiment while reviewing", {"t.txt": "x\n"})
+    env = {"LANES_NO_GITHUB": "1"} if why == "gh-unreadable" else {}
+    before = estate.remote_heads()["feat/teammate"]
+    dry = rows_of(estate.sweep(LANE, "--porcelain", env=env).stdout)
+    assert dry[str(tree)][0] == "rescue+remove", dry[str(tree)]
+    want = {"open-pr": "PR #77 is open", "another-lanes-trailer": "carries lane repoB-9's work",
+            "gh-unreadable": "whether an open pull request names"}[why]
+    assert want in dry[str(tree)][2]
+    proc = estate.sweep(LANE, "--yes", "--porcelain", env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    heads = estate.remote_heads()
+    assert heads["feat/teammate"] == before, "origin's branch moved"
+    assert [b for b, s in heads.items() if b.startswith(f"rescue/{LANE}/review-") and s == mine]
+    assert not tree.exists()
+
+
+def test_a_landed_line_never_deletes_a_branch_gh_answers_open(estate):
+    """#170 A8: a register LANDED line naming the wrong number (#21 for #20)
+    beat gh's live OPEN for #21, and --yes deleted the open PR's remote
+    branch - which closes the PR."""
+    estate.register_line(LANE, f"LANDED — lane {LANE}, session {ME}@Eagle, "
+                               f"2026-10-05T00:00:00Z, {SLUG}#21 → main abc1234")
+    tree = estate.worktree("openpr", "feat/open")
+    tip = estate.commit(tree, "work under review", {"r.txt": "r\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/open", cwd=tree)
+    estate.pr(21, "feat/open", "OPEN", tip)
+    dry = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert dry[str(tree)][0] == "remove+delete-branch", dry[str(tree)]
+    assert "gh still answers PR #21 OPEN" in dry[str(tree)][2]
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert estate.remote_heads().get("feat/open") == tip, "the open PR's branch was deleted"
+    assert "remote branch kept (gh still answers PR #21 OPEN)" in rows_of(proc.stdout)[str(tree)][2]
