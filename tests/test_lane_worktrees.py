@@ -1185,6 +1185,34 @@ def test_trees_under_the_lanes_root_or_carrying_its_trailer_are_its_own(estate):
     assert str(rooted) in rows_of(none.stdout), "the table is still printed"
 
 
+def test_a_tree_another_lane_stacked_on_this_lanes_commit_is_not_adopted(estate):
+    """#174 review R1: a tree in `.claude/worktrees` was adopted when ANY of
+    its own commits carried this lane's trailer, so one another lane STACKED
+    on this lane's commit - base by repoA-1, tip and an edit in progress by
+    repoB-2 - was repoA-1's: `--yes` removed it and pushed repoB-2's edit to
+    `rescue/repoA-1/...`. HEAD's own trailer decides: it is repoB-2's tree."""
+    conf = estate.root / "sweep.conf"
+    conf.write_text("foreign_quiet_hours=0\n")
+    env = {"LANE_WORKTREES_CONF": str(conf)}
+    stacked = estate.worktree("stacked", "feat/stacked", where="claude", record=False)
+    estate.commit(stacked, "the base", {"base.txt": "b\n"})
+    estate.commit(stacked, "stacked on it", {"s.txt": "s\n"}, lane="repoB-2")
+    (stacked / "s.txt").write_text("repoB-2's edit in progress\n")
+    before = estate.remote_heads()
+    dry = estate.sweep(LANE, "--dry-run", "--porcelain", env=env)
+    assert dry.returncode == 0, dry.stdout + dry.stderr
+    assert rows_of(dry.stdout)[str(stacked)][:2] == ("foreign", "-"), dry.stdout
+    yes = estate.sweep(LANE, "--yes", "--porcelain", env=env)
+    assert yes.returncode == 0, yes.stdout + yes.stderr
+    assert (stacked / "s.txt").read_text() == "repoB-2's edit in progress\n"
+    assert estate.remote_heads() == before, "repoB-2's work was pushed by repoA-1's sweep"
+    assert estate.notes() == []
+    # ... and it is still the lane's whose commit HEAD is.
+    theirs = estate.sweep("repoB-2", "--dry-run", "--porcelain", env=env)
+    row = rows_of(theirs.stdout)[str(stacked)]
+    assert row[1] == "retire" and "Lane: trailer" in row[2], theirs.stdout + theirs.stderr
+
+
 def test_porcelain_escapes_a_tab_and_a_newline_in_a_path(estate):
     """B3: a TAB or a newline in a tree's name is still one field of one row."""
     estate.lane_root.mkdir(parents=True, exist_ok=True)

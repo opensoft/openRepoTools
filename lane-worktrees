@@ -2061,15 +2061,22 @@ class Sweep:
         """A tree #97's inventory does not name is still THIS LANE'S when it
         stands under the lane's own worktree root (`.lane-worktrees/<lane>/`,
         which only this lane's starts make), or sits in the checkout's
-        `.claude/worktrees` on a branch whose OWN commits - those its origin's
-        default branch lacks - carry this lane's `Lane:` trailer. Another
-        lane's claim still wins. Without this a lane whose trees were never
-        recorded read as "nothing to retire", and #163's gate passed it (B1).
+        `.claude/worktrees` with its HEAD - a commit its origin's default
+        branch lacks - carrying this lane's `Lane:` trailer as its own.
+        Another lane's claim still wins. Without this a lane whose trees were
+        never recorded read as "nothing to retire", and #163's gate passed it
+        (B1).
 
         AND A LANE WITH NO SNAPSHOT AT ALL (#97's state NONE) BUT TREES OF ITS
         OWN IS REFUSED: which of them are its is recorded nowhere, so the gate
         does not pass it until a handoff records them or a person retires
-        them."""
+        them.
+
+        HEAD'S OWN TRAILER, NOT ANY OF THE BRANCH'S (#174 review R1): a tree
+        another lane STACKED on this lane's commit carries this lane's trailer
+        below its tip, and adopting it on that removed the other lane's tree
+        and pushed its in-progress edit to `rescue/<this lane>/...` - and two
+        lanes sharing one checkout both adopted it."""
         roots = self._roots()
         lane_root = roots[-1] if roots else ""
         claude_root = roots[0] if self.facts.dir and roots else ""
@@ -2082,7 +2089,8 @@ class Sweep:
             if lane_root and under(t.path, lane_root) and t.real != real(lane_root):
                 t.owner = "lane-root"
             elif claude_root and t.exists and under(t.path, claude_root) \
-                    and self.lane.lower() in own_trailers(t.path):
+                    and self.lane.lower() in own_trailers(t.path) \
+                    and head_lane_trailer(t.path).lower() == self.lane.lower():
                 t.owner = "trailer"
         claimed = [t for t in self.trees if t.owner in ("lane-root", "trailer")]
         if self.facts.state == "NONE" and claimed:
@@ -4004,6 +4012,16 @@ def own_trailers(path: str) -> set:
         return set()
     text = git_out(path, "log", "--format=%B", f"{base}..HEAD") or ""
     return {v.lower() for v in re.findall(r"^Lane:\s*(\S+)\s*$", text, re.MULTILINE)}
+
+
+def head_lane_trailer(path: str) -> str:
+    """HEAD's own `Lane:` trailer (its last one), read as `read_tree` reads
+    `lane_trailer` - '' where it has none or HEAD could not be read. Trailer
+    adoption is decided before `read_tree` runs, so it asks here (#174
+    review R1)."""
+    msg = git_out(path, "log", "-1", "--format=%B", "HEAD") or ""
+    trailers = re.findall(r"^Lane:\s*(\S+)\s*$", msg, re.MULTILINE)
+    return trailers[-1] if trailers else ""
 
 
 def _gitdir_activity(path: str) -> float:

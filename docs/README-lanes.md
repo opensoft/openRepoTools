@@ -3599,9 +3599,10 @@ also reads every registration of the lane's checkout and every checkout under
 its two roots (`<checkout>/.claude/worktrees/*`, `.lane-worktrees/<lane>/*`).
 A tree the inventory does not name is still **the lane's** when it stands under
 the lane's own root, `.lane-worktrees/<lane>/` (only this lane's starts make it),
-or sits in `<checkout>/.claude/worktrees` on a branch whose OWN commits — those
-origin's default branch lacks — carry this lane's `Lane:` trailer; its rows say
-so. A lane with no #97 snapshot at all (state `NONE`) but trees of its own is
+or sits in `<checkout>/.claude/worktrees` with its HEAD — a commit origin's
+default branch lacks — carrying this lane's `Lane:` trailer AS ITS OWN (a tree
+another lane stacked on this lane's commit is not this lane's, #174); its rows
+say so. A lane with no #97 snapshot at all (state `NONE`) but trees of its own is
 **refused, exit 2**: which trees are its is recorded nowhere, so #163's gate does
 not pass it. Any other tree the inventory does not name is **FOREIGN**: reported and left, unless
 `--include-foreign` and a `--word "<verbatim>"` (recorded in every register line
