@@ -2289,7 +2289,14 @@ class Sweep:
                 continue          # a checkout is a tree, and the table above has it
             holders = self.procs.holders(full) if self.procs and self.procs.available else []
             lean = leaned_on(full, "", self.deps)
-            if lean:
+            inner = self._trees_inside(full)
+            if inner:
+                # TREES UNDER IT ARE THE TABLE'S FIRST (#170 item 7): an archive
+                # and an rmtree of the scratch would take a worktree nested in it
+                # - FOREIGN, live or the lane's own - with its git directory.
+                it = Item("scratch", full, "keep", f"{inner}: the tree table retires what is "
+                          "under it first, and the scratch goes on a later sweep", True)
+            elif lean:
                 it = Item("scratch", full, "load-bearing", "LOAD-BEARING: " + _lean_text(lean)
                           + "; it is never removed until they are re-pointed", True)
             elif holders:
@@ -2352,6 +2359,19 @@ class Sweep:
     def _cache_protected(t: Tree) -> bool:
         return (t.disposition in ("foreign", "live", "load-bearing") or t.live is not None
                 or t.contested or t.result.startswith(("FAILED", "left")))
+
+    def _trees_inside(self, path: str) -> str:
+        """Why `path` holds trees, or '': a tree of the table under it, or
+        any `.git` beneath it (or a directory there that cannot be read)."""
+        for t in self.trees:
+            if t.real != real(path) and under(t.path, path):
+                return f"a tree of this table lies under it ({t.path})"
+        nested, unread = nested_repos(path)
+        if nested:
+            return f"a repository lies under it ({nested[0]})"
+        if unread:
+            return f"{unread[0]} under it could not be read, so whether a tree lies there is unknown"
+        return ""
 
     def _deps_partial(self, path: str) -> list:
         """Why the search for what leans on `path` is not complete: what the
@@ -3018,6 +3038,10 @@ class Sweep:
                 i.disposition = "live" if not why.startswith("liveness") else "keep"
                 i.result = "left: " + why
                 return
+            inner = self._trees_inside(i.path)
+            if inner:
+                i.disposition, i.result = "keep", "left: " + inner
+                return
             before = content_print(i.path)
             parent, name = os.path.dirname(i.path), os.path.basename(i.path)
             i.extra["archive"] = self._tar(parent, [name], f"scratch-{safe_ref_part(name)}.tar.gz")
@@ -3027,7 +3051,7 @@ class Sweep:
             if why:
                 raise _ActFailed(f"{why} - it arrived while the archive was made; left in place; "
                                  f"the archive is {tilde(i.extra['archive'])}")
-            if content_print(i.path) != before:
+            if content_print(i.path) != before or self._trees_inside(i.path):
                 raise _ActFailed("it changed while it was archived; left in place; the archive "
                                  f"{tilde(i.extra['archive'])} is of what it was")
             rmtree(i.path)

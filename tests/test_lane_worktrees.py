@@ -1833,3 +1833,22 @@ def test_an_archive_whose_bundle_is_the_only_copy_never_expires(estate):
     assert row and row[0][1] == "keep" and "only copy" in row[0][4], dry.stdout
     assert estate.sweep("--expire", "--yes", env=env).returncode == 0
     assert archive.is_dir()
+
+
+def test_scratch_holding_a_repository_is_kept(estate):
+    """#170 item 7: scratch was archived and removed when it had no `.git`
+    of its own, so a repository nested in it - a clone with an unpushed
+    commit, which no table row names - went with the rmtree."""
+    scratch = estate.lane_root / "x-scratch"
+    scratch.mkdir(parents=True)
+    (scratch / "notes.md").write_text("findings\n")
+    inner = scratch / "deps" / "lib"
+    estate.git("clone", "-q", GH_URL, inner, cwd=estate.root)
+    own = estate.commit(inner, "unpushed", {"i.txt": "i\n"})
+    proc = estate.sweep(LANE, "--include-scratch", "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    items = items_of(proc.stdout, "scratch")
+    assert items[str(scratch)][0] == "keep", items
+    assert f"a repository lies under it ({inner})" in items[str(scratch)][3]
+    assert estate.git("rev-parse", "HEAD", cwd=inner) == own
+    assert (scratch / "notes.md").is_file()
