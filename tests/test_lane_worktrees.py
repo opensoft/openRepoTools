@@ -1667,3 +1667,147 @@ def test_a_landed_line_never_deletes_a_branch_gh_answers_open(estate):
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert estate.remote_heads().get("feat/open") == tip, "the open PR's branch was deleted"
     assert "remote branch kept (gh still answers PR #21 OPEN)" in rows_of(proc.stdout)[str(tree)][2]
+
+
+def _bundle_holds(estate, bundle: Path, sha: str) -> bool:
+    """`sha` is reachable from a head of `bundle` (fetched into the lane's
+    checkout under refs/restored/, where the bundle's prerequisites are)."""
+    estate.git("fetch", "-q", str(bundle), "+refs/*:refs/restored/*")
+    heads = estate.git("for-each-ref", "--format=%(objectname)", "refs/restored/").split()
+    found = bool(heads) and sha in estate.git("rev-list", *heads).split()
+    for ref in estate.git("for-each-ref", "--format=%(refname)", "refs/restored/").split():
+        estate.git("update-ref", "-d", ref)
+    return found
+
+
+def _ledger(archive: Path) -> list:
+    return [ln.split("\t") for ln in (archive / "rescues.tsv").read_text().splitlines()
+            if ln and not ln.startswith("#")]
+
+
+def test_a_pruned_registrations_detached_commit_is_rescued_first(estate):
+    """#170 A4: `prune` dropped the only pointer to a detached commit - the
+    directory is gone and its registration's HEAD names a commit no branch
+    or origin has."""
+    tree = estate.worktree("ext", None)
+    own = estate.commit(tree, "work on a disk that is offline now", {"x.txt": "PRECIOUS\n"})
+    shutil.rmtree(tree)
+    dry = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert dry[str(tree)][0] == "rescue+prune", dry[str(tree)]
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert str(tree) not in estate.git("worktree", "list", "--porcelain")
+    rescued = [b for b, s in estate.remote_heads().items()
+               if b.startswith(f"rescue/{LANE}/ext-") and s == own]
+    assert rescued, estate.remote_heads()
+    (archive,) = estate.archives()
+    assert _bundle_holds(estate, next(archive.glob("ext*.bundle")), own)
+
+
+def test_a_commit_only_the_reflog_names_is_bundled_before_removal(estate):
+    """#170 A5: a commit made in a detached tree and then checked out away
+    from is in no ref - only the tree's HEAD reflog names it - so the
+    removal (which deletes that reflog) lost it. It is bundled first, and
+    the ledger records the bundle as its only copy (#170 item 8)."""
+    tree = estate.worktree("det", None)
+    own = estate.commit(tree, "an experiment", {"exp.txt": "PRECIOUS\n"})
+    estate.git("checkout", "-q", "--detach", "origin/main", cwd=tree)
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not tree.exists()
+    (archive,) = estate.archives()
+    bundles = sorted(archive.glob("det*.bundle"))
+    assert bundles and _bundle_holds(estate, bundles[0], own)
+    assert [r for r in _ledger(archive) if r[0] == "-" and r[1].startswith("bundle:")
+            and r[2] == own], _ledger(archive)
+
+
+def test_the_self_check_refuses_a_removal_that_would_lose_a_commit(estate):
+    """The invariant - nothing deleted that is not first on origin or in a
+    bundle - is asked of git once more right before each removal. With the
+    reflog bundle switched off (the suite's seam), the commit only the
+    reflog names would be lost: the removal is refused, exit 2, a
+    DISPOSITION.md line says so, and nothing after it is acted on."""
+    first = estate.worktree("a-det", None)
+    own = estate.commit(first, "an experiment", {"exp.txt": "PRECIOUS\n"})
+    estate.git("checkout", "-q", "--detach", "origin/main", cwd=first)
+    second = estate.worktree("b-clean", "feat/b")
+    estate.git("push", "-q", "-u", "origin", "feat/b", cwd=second)
+    proc = estate.sweep(LANE, "--yes", "--porcelain",
+                        env={"LANE_WORKTREES_SEAM_NO_LOSS_BUNDLE": "1"})
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    rows = rows_of(proc.stdout)
+    assert "REFUSED by the self-check" in rows[str(first)][2]
+    assert first.is_dir() and second.is_dir(), "nothing is acted on after the refusal"
+    assert own in estate.git("rev-list", "--reflog")
+    (archive,) = estate.archives()
+    assert "REFUSED by the self-check" in (archive / "DISPOSITION.md").read_text()
+
+
+@pytest.mark.parametrize("tracked", [True, False])
+def test_untracked_files_go_to_the_bundle_never_to_origin(estate, tracked):
+    """#170 A9: the WIP rescue committed and PUSHED every untracked,
+    un-ignored file - a `gcp-service-account.json` included. Untracked
+    files now go to the bundle only (the ledger says it is their only
+    copy); tracked changes are still pushed."""
+    tree = estate.worktree("svc", "feat/svc")
+    estate.commit(tree, "w", {"w.txt": "base\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/svc", cwd=tree)
+    (tree / "gcp-service-account.json").write_text('{"private_key": "PRECIOUS"}\n')
+    if tracked:
+        (tree / "w.txt").write_text("changed\n")
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not tree.exists()
+    for branch, sha in estate.remote_heads().items():
+        files = estate.git("ls-tree", "-r", "--name-only", sha, cwd=estate.origin)
+        assert "gcp-service-account.json" not in files.split(), branch
+    rescues = [b for b in estate.remote_heads() if b.startswith(f"rescue/{LANE}/svc-")]
+    if tracked:
+        assert len(rescues) == 1
+        assert estate.git("show", f"{rescues[0]}:w.txt", cwd=estate.origin) == "changed"
+    else:
+        assert rescues == [], "nothing tracked changed and the head is on origin"
+    (archive,) = estate.archives()
+    held = [r for r in _ledger(archive) if r[0] == "-" and r[1].startswith("bundle:")]
+    assert len(held) == 1, _ledger(archive)
+    assert _bundle_holds(estate, archive / held[0][1][len("bundle:"):], held[0][2])
+    assert estate.git("show", f"{held[0][2]}:gcp-service-account.json") == \
+        '{"private_key": "PRECIOUS"}'
+    assert "refs/lane-worktrees/" not in estate.git("for-each-ref", "--format=%(refname)")
+
+
+def test_push_untracked_pushes_them(estate):
+    tree = estate.worktree("svc", "feat/svc")
+    estate.git("push", "-q", "-u", "origin", "feat/svc", cwd=tree)
+    (tree / "notes.md").write_text("meant to be pushed\n")
+    proc = estate.sweep(LANE, "--yes", "--push-untracked", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    (rescue,) = [b for b in estate.remote_heads() if b.startswith(f"rescue/{LANE}/svc-")]
+    assert estate.git("show", f"{rescue}:notes.md", cwd=estate.origin) == "meant to be pushed"
+
+
+def test_an_archive_whose_bundle_is_the_only_copy_never_expires(estate):
+    """#170 item 8: an origin-less tree removed through `bundle+remove`
+    left no row in rescues.tsv, so `--expire --yes` read the archive as
+    holding no rescue and could delete the only copy."""
+    solo = estate.projects / "solo"
+    estate.git("init", "-q", "-b", "main", solo, cwd=estate.root)
+    estate.commit(solo, "solo", {"s.txt": "s\n"})
+    lone = estate.lane_root / "lone"
+    estate.lane_root.mkdir(parents=True, exist_ok=True)
+    estate.git("worktree", "add", "-q", "-b", "feat/lone", lone, "main", cwd=solo)
+    tip = estate.commit(lone, "lone", {"l.txt": "l\n"})
+    estate.record(lone)
+    yes = estate.sweep(LANE, "--bundle", "--yes", "--porcelain")
+    assert yes.returncode == 0, yes.stdout + yes.stderr
+    (archive,) = estate.archives()
+    assert [r for r in _ledger(archive) if r[:2] == ["-", "bundle:lone.bundle"] and r[2] == tip]
+    conf = estate.root / "sweep.conf"
+    conf.write_text("retention_days=0\n")
+    env = {"LANE_WORKTREES_CONF": str(conf)}
+    dry = estate.sweep("--expire", "--porcelain", env=env)
+    row = [ln.split("\t") for ln in dry.stdout.splitlines() if ln.startswith("archive\t")]
+    assert row and row[0][1] == "keep" and "only copy" in row[0][4], dry.stdout
+    assert estate.sweep("--expire", "--yes", env=env).returncode == 0
+    assert archive.is_dir()

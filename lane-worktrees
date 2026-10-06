@@ -1167,10 +1167,19 @@ class Tree:
         self.ignored_archive = ""
         self.register = ""
         self.contested = False             # another lane's inventory names it too
+        self.reg: dict = {}                # its registration, where git has one
+        self.held_back = ""                # the bundle-only commit of its untracked files
+        self.lost_bundle = ""              # the bundle of commits only its reflog named
 
     @property
     def slice(self) -> str:
         return safe_ref_part(os.path.basename(self.path.rstrip("/")))
+
+    @property
+    def gitpath(self) -> str:
+        """Where git is asked about it: the tree, or - its directory gone -
+        the checkout that registers it."""
+        return self.path if self.exists else (self.checkout or self.path)
 
     def label(self) -> str:
         if not self.exists:
@@ -1297,10 +1306,11 @@ def read_tree(tree: Tree) -> None:
         tree.lane_trailer = trailers[-1] if trailers else ""
 
 
-def snapshot_tree(path: str) -> str:
-    """The tree object `git add -A` would commit in `path` NOW, written
-    through a COPY of its index so the tree's own index is never touched.
-    Empty where it could not be made."""
+def snapshot_tree(path: str, tracked_only: bool = False) -> str:
+    """The tree object `git add -A` would commit in `path` NOW (`git add -u`
+    with `tracked_only`: no untracked file), written through a COPY of its
+    index so the tree's own index is never touched. Empty where it could
+    not be made."""
     index = git_out(path, "rev-parse", "--git-path", "index")
     if index is None:
         return ""
@@ -1315,7 +1325,8 @@ def snapshot_tree(path: str) -> str:
             os.unlink(tmp)
         env = git_env()
         env["GIT_INDEX_FILE"] = tmp
-        if run(["git", "-C", path, "add", "-A"], env=env).returncode != 0:
+        if run(["git", "-C", path, "add", "-u" if tracked_only else "-A"],
+               env=env).returncode != 0:
             return ""
         proc = run(["git", "-C", path, "write-tree"], env=env)
         return proc.stdout.strip() if proc.returncode == 0 else ""
@@ -1623,6 +1634,7 @@ class Options:
         self.live = list(ns.live or [])
         self.fetch = bool(ns.fetch) or self.yes
         self.estate = ns.estate or ""
+        self.push_untracked = bool(ns.push_untracked)
 
 
 class Item:
@@ -1668,6 +1680,10 @@ class Sweep:
         self.rescues: list = []
         self.dispositions: list = []
         self.acting = False
+        self.verified: dict = {}           # common dir -> SHAs a push of this run put on origin
+        self.bundled: dict = {}            # common dir -> heads of this run's verified bundles
+        self.halt = ""                     # why no further act is taken
+        self.refused_check = ""            # the self-check's refusal: exit 2
 
     # ------------------------------------------------------------- reading
     def gather(self) -> None:
@@ -1836,6 +1852,7 @@ class Sweep:
             t.registered = True
             t.checkout = t.checkout or co
             t.locked = bool(reg.get("locked"))
+            t.reg = reg
         for root in self._roots():
             try:
                 names = sorted(os.listdir(root))
@@ -2109,6 +2126,22 @@ class Sweep:
                 if t.locked:
                     put("keep", "its directory is gone and the registration is LOCKED; "
                                 f"git -C {t.checkout} worktree unlock {t.path} first")
+                    return
+                # THE REGISTRATION MAY BE THE ONLY POINTER TO ITS COMMITS (#170
+                # A4): a detached HEAD, or a reflog entry, that no branch, tag or
+                # origin holds is lost with the registration's git directory.
+                try:
+                    lost = self._lost(t)
+                except _ActFailed as exc:
+                    put("keep", "its directory is gone, and " + str(exc).replace(
+                        "; left in place", ""))
+                    return
+                if lost:
+                    put("rescue+prune", f"the directory is gone and git still registers it; its "
+                                        f"registration names {len(lost)} commit(s) no branch, tag "
+                                        "or origin holds (its HEAD or reflog): rescued - a rescue "
+                                        "branch pushed where there is an origin, and a bundle - "
+                                        "then that one registration pruned")
                 else:
                     put("prune", "the directory is gone and git still registers it")
             else:
@@ -2158,8 +2191,12 @@ class Sweep:
             return
         dirty = len(t.status_lines)
         if dirty:
+            untracked = sum(1 for ln in t.status_lines if ln.startswith("?? "))
             put("wip-rescue+remove", f"{dirty} dirty or untracked path(s): a WIP commit on "
-                                     "a rescue branch, pushed, then removed")
+                                     "a rescue branch, pushed, then removed"
+                + (f"; its {untracked} untracked path(s) go to the bundle only, never pushed "
+                   "(--push-untracked pushes them)" if untracked and not self.opts.push_untracked
+                   else ""))
             return
         if t.unborn:
             put("remove", "an unborn branch with nothing in it")
@@ -2419,8 +2456,20 @@ class Sweep:
         for t in self.trees:
             if t.disposition in ("live", "foreign", "keep", "gone", "load-bearing", ""):
                 continue
+            if self.halt:
+                # NOTHING MORE IS ACTED ON once a self-check refused or the
+                # register refused a line (#170 B6): what is left is exactly
+                # as the table found it.
+                t.result = "left: " + self.halt
+                continue
             try:
                 self._act_tree(t)
+            except _SelfCheck as exc:
+                t.result = "REFUSED by the self-check: " + str(exc)
+                self.refused_check = f"{t.path}: {exc}"
+                self.halt = (f"the self-check refused {t.path} ({exc}); no further act is taken "
+                             "until that is understood")
+                note(f"REFUSED by the self-check before removing {t.path}: {exc}")
             except _ActFailed as exc:
                 t.result = "FAILED: " + str(exc)
                 self.failed += 1
@@ -2429,6 +2478,11 @@ class Sweep:
                 self.failed += 1
             self._record(t)
         for i in self.items:
+            if self.halt:
+                if i.retire or i.disposition in ("remove", "archive+remove", "delete",
+                                                 "delete+remote"):
+                    i.result = "left: " + self.halt
+                continue
             try:
                 self._act_item(i)
             except (_ActFailed, OSError) as exc:
@@ -2455,10 +2509,10 @@ class Sweep:
             self.archive = path
         return self.archive
 
-    def _rescue_name(self, t: Tree) -> str:
-        base = f"rescue/{safe_ref_part(self.lane)}/{t.slice}-{self.stamp}"
+    def _rescue_name(self, t: Tree, suffix: str = "") -> str:
+        base = f"rescue/{safe_ref_part(self.lane)}/{t.slice}-{self.stamp}{suffix}"
         name, n = base, 1
-        while git(t.path, "rev-parse", "-q", "--verify", f"refs/heads/{name}").returncode == 0:
+        while git(t.gitpath, "rev-parse", "-q", "--verify", f"refs/heads/{name}").returncode == 0:
             n += 1
             name = f"{base}-{n}"
         return name
@@ -2481,6 +2535,123 @@ class Sweep:
                         + ("live" if answer == "live" else "of unknown liveness"))
         return ""
 
+    # ---------------------------------------------- what a removal would take
+    def _common(self, path: str) -> str:
+        common = git_out(path, "rev-parse", "--git-common-dir") or ""
+        if common and not os.path.isabs(common):
+            common = os.path.normpath(os.path.join(path, common))
+        return real(common) if common else ""
+
+    def _loss_plan(self, t: Tree):
+        """(where git is asked, candidate commits, what keeps them) for the
+        removal `t`'s disposition makes - or why it could not be read.
+
+        A WORKTREE'S removal takes its own git directory: its HEAD and that
+        HEAD's reflog (and, where its branch is deleted after it, the branch
+        and the branch's reflog). Every branch, tag and stash of the
+        repository stays. A PRUNED registration takes the same, read from its
+        git directory, the working tree being gone already. A CLONE's removal
+        takes everything in it: every ref but its remote-tracking ones, and
+        every reflog."""
+        if not t.exists:
+            co = t.checkout
+            admin = worktree_admin(co, t.path) if co else ""
+            if not admin:
+                return None, f"the git directory of its registration in {co or '?'} was not found"
+            logs, why = reflog_shas([os.path.join(admin, "logs", "HEAD")])
+            if logs is None:
+                return None, why
+            return (co, [(t.reg or {}).get("head", "")] + logs,
+                    ["--remotes=origin", "--branches", "--tags", "--glob=refs/stash"]), ""
+        gitdir = git_out(t.path, "rev-parse", "--absolute-git-dir")
+        if not gitdir:
+            return None, "its git directory could not be read"
+        if t.kind == "clone":
+            refs = git(t.path, "for-each-ref", "--format=%(refname) %(objectname)", "refs/")
+            if refs.returncode != 0:
+                return None, "its refs could not be read"
+            tips = [line.split(" ", 1)[1] for line in refs.stdout.splitlines()
+                    if " " in line and not line.startswith("refs/remotes/")]
+            files = []
+            for base, _dirs, names in os.walk(os.path.join(gitdir, "logs")):
+                files += [os.path.join(base, n) for n in names]
+            logs, why = reflog_shas(files)
+            if logs is None:
+                return None, why
+            return (t.path, tips + [t.head] + logs, ["--remotes=origin"]), ""
+        logs_files = [os.path.join(gitdir, "logs", "HEAD")]
+        keep = ["--remotes=origin"]
+        if t.disposition == "remove+delete-branch" and t.branch:
+            logs_files.append(os.path.join(t.common, "logs", "refs", "heads", *t.branch.split("/")))
+            keep.append(f"--exclude={t.branch}")
+        keep += ["--branches", "--tags", "--glob=refs/stash"]
+        logs, why = reflog_shas(logs_files)
+        if logs is None:
+            return None, why
+        return (t.path, [t.head] + logs, keep), ""
+
+    def _lost(self, t: Tree) -> list:
+        """The commits the removal would take that are on origin, in a
+        surviving ref, pushed and seen this run, or in a bundle of this run -
+        none of them. Raises when that cannot be read: unknown is never
+        'nothing'."""
+        plan, why = self._loss_plan(t)
+        if plan is None:
+            raise _ActFailed("which commits its removal would take could not be read (" + why
+                             + "); left in place" + (f"; its rescue is at {t.rescue}"
+                                                     if t.rescue else ""))
+        where, cands, keep = plan
+        common = self._common(where)
+        kept = sorted(self.verified.get(common, set()) | self.bundled.get(common, set()))
+        lost = lost_tips(where, cands, keep + kept)
+        if lost is None:
+            raise _ActFailed("whether its commits are kept elsewhere could not be read (git "
+                             "rev-list failed); left in place")
+        return lost
+
+    def _self_check(self, t: Tree) -> None:
+        """NOTHING IS DELETED THAT IS NOT FIRST ON ORIGIN OR IN A BUNDLE, asked
+        one last time of git itself, right before the removal: every commit
+        the removal would take must be reachable from origin, from a ref that
+        stays, from a push seen on origin this run, or from the heads of a
+        bundle this run wrote and verified. Anything else is a defect in the
+        table above, and the sweep stops (exit 2) rather than act on it."""
+        try:
+            lost = self._lost(t)
+        except _ActFailed as exc:
+            raise _SelfCheck(str(exc))
+        if lost:
+            raise _SelfCheck(f"{len(lost)} commit(s) it would take are neither on origin nor in a "
+                             f"bundle (e.g. {short(lost[0])})")
+
+    def _bundle_lost(self, t: Tree, lost: list, label: str) -> str:
+        """A bundle of commits no ref names: each is given a temporary ref
+        (`refs/lane-worktrees/<slice>-<UTC>/<label>-<n>`, the name it carries
+        in the bundle), the bundle is made and verified, and the refs are
+        deleted. The ledger records it as the only copy."""
+        where = t.gitpath
+        prefix = f"refs/lane-worktrees/{t.slice}-{self.stamp}"
+        made = []
+        try:
+            for n, sha in enumerate(lost, 1):
+                ref = f"{prefix}/{label}-{n}"
+                self._git_or_fail(where, "update-ref", ref, sha, "")
+                made.append(ref)
+            out = self._bundle(t, made)
+        finally:
+            for ref in made:
+                git(where, "update-ref", "-d", ref)
+        self._ledger_bundle(t, out, lost[0])
+        return out
+
+    def _ledger_bundle(self, t: Tree, bundle: str, sha: str) -> None:
+        """`rescues.tsv`'s row for a bundle that is the ONLY copy of what it
+        holds (#170 item 8): origin `-`, branch `bundle:<file>`. `--expire`
+        reads such a row as "no other copy" and never expires the archive."""
+        if sha:
+            self.rescues.append(("-", f"bundle:{os.path.basename(bundle)}", sha,
+                                 t.checkout or "", t.path))
+
     def _act_tree(self, t: Tree) -> None:
         # LIVENESS IS ASKED AGAIN AT THE MOMENT OF THE ACT, not trusted from the
         # read: a writer may have started in the tree since the table was made.
@@ -2491,28 +2662,8 @@ class Sweep:
                 t.disposition = "live" if not why.startswith("liveness") else "keep"
                 t.result = f"left: {why}"
                 return
-        if t.disposition == "prune" and os.path.lexists(t.path):
-            # IT CAME BACK while the sweep ran (a remount, a restore): it is a
-            # tree again, and it is classified afresh by the next sweep, never
-            # removed on a reading taken while it was gone.
-            t.disposition = "keep"
-            t.result = "left: the directory reappeared after it was read as gone; sweep again"
-            return
-        if t.disposition == "prune":
-            # THAT ONE REGISTRATION: `git worktree prune` would unregister every
-            # missing tree of the repository - another lane's, a FOREIGN one,
-            # one on a disk that is not mounted - and say nothing of it.
-            proc = git(t.checkout, "worktree", "remove", t.path)
-            if proc.returncode != 0:
-                raise _ActFailed("git worktree remove " + t.path + ": " + _first_line(proc.stderr)
-                                 + " - a repository-wide prune is never run in its place")
-            regs = worktree_registrations(t.checkout)
-            if regs is None:
-                raise _ActFailed("the registrations could not be read again after the prune")
-            if t.path in [r["path"] for r in regs]:
-                raise _ActFailed("the registration is still there after the prune")
-            t.result = "pruned"
-            self._note(t, f"swept {t.path}: stale registration pruned in {t.checkout}")
+        if t.disposition in ("prune", "rescue+prune"):
+            self._act_prune(t)
             return
         guard = tree_guards(t) if t.exists else ""
         if guard:
@@ -2522,45 +2673,43 @@ class Sweep:
         # 1. RESCUE OR PUBLISH FIRST - nothing below removes what is not on
         # origin or in a bundle.
         disp = t.disposition
-        ref_to_bundle = ""
+        refs_to_bundle: list = []
+        drop_after_bundle: list = []
+        only_copy = ""
         wip_tree = ""
         if disp == "wip-rescue+remove":
-            # THE WORK IS COMMITTED BESIDE THE TREE, NOT INTO IT: a temporary
-            # index takes `git add -A`, and `commit-tree` + `update-ref` make the
-            # rescue branch. The tree's own branch, index and files are never
-            # moved, so a push that fails leaves it exactly as it was.
-            name = self._rescue_name(t)
-            wip_tree = snapshot_tree(t.path)
-            if not wip_tree:
-                raise _ActFailed("the tree's content could not be snapshotted (git add -A into "
-                                 "a temporary index failed); left in place")
-            subject = f"WIP({self.lane}): {t.slice} swept {self.stamp}; swept, not reviewed"
-            body = (f"Rescued by {PROG} sweep from {t.path} (branch "
-                    f"{t.branch or 'detached'} at {short(t.head) if t.head else 'no commit'}). "
-                    "The tree held uncommitted or untracked work when its lane was swept; "
-                    "this commit is that work as it stood, unreviewed.")
-            commit = self._commit_tree(t.path, wip_tree, t.head, subject, body)
-            self._git_or_fail(t.path, "update-ref", f"refs/heads/{name}", commit, "")
-            self._push(t, name, name)
-            ref_to_bundle = name
-            t.rescue = f"origin/{name}"
+            wip_tree, refs_to_bundle, drop_after_bundle, only_copy = self._wip_rescue(t)
         elif disp == "rescue+remove":
             name = self._rescue_name(t)
             self._git_or_fail(t.path, "update-ref", f"refs/heads/{name}", t.head, "")
             self._push(t, name, name)
-            ref_to_bundle = name
+            refs_to_bundle = [name]
             t.rescue = f"origin/{name}"
         elif disp == "push+remove":
             self._push(t, t.branch, t.remote_branch or t.branch)
-            ref_to_bundle = t.branch if self.opts.bundle else ""
+            refs_to_bundle = [t.branch] if self.opts.bundle else []
             t.rescue = f"origin/{t.remote_branch or t.branch}"
         elif disp in ("remove", "remove+delete-branch"):
-            ref_to_bundle = (t.branch or "HEAD") if self.opts.bundle and t.head else ""
+            refs_to_bundle = [t.branch or "HEAD"] if self.opts.bundle and t.head else []
         elif disp == "bundle+remove":
-            ref_to_bundle = t.branch or "HEAD"
+            refs_to_bundle = [t.branch or "HEAD"]
+            only_copy = t.head
         # 2. THE BUNDLE - always for a rescue, and for everything under --bundle.
-        if ref_to_bundle:
-            t.bundle = self._bundle(t, ref_to_bundle)
+        if refs_to_bundle:
+            try:
+                t.bundle = self._bundle(t, refs_to_bundle)
+            finally:
+                for ref in drop_after_bundle:
+                    git(t.path, "update-ref", "-d", ref)
+            if only_copy:
+                self._ledger_bundle(t, t.bundle, only_copy)
+        # 2b. WHAT THE REMOVAL WOULD STILL TAKE (#170 A5): a commit only the
+        # tree's reflog names (an amend, a reset, a checkout away from a
+        # detached commit) is in no ref, so no push and no ref bundle above
+        # carried it. It goes to a bundle of its own.
+        lost = self._lost(t)
+        if lost and os.environ.get(SEAM_NO_LOSS_BUNDLE, "") != "1":
+            t.lost_bundle = self._bundle_lost(t, lost, "unreachable")
         # 3. IGNORED WORK no commit could carry.
         extra = ignored_work(t)
         if extra is None:
@@ -2606,7 +2755,7 @@ class Sweep:
         if wip_tree:
             if snapshot_tree(t.path) != wip_tree:
                 raise _ActFailed("the tree changed after its rescue was taken; left in place; "
-                                 f"the rescue is at {t.rescue}")
+                                 f"the rescue is at {t.rescue or tilde(t.bundle)}")
         else:
             again = git(t.path, "status", "--porcelain=v1", "--ignore-submodules=none",
                         "--untracked-files=normal")
@@ -2614,6 +2763,8 @@ class Sweep:
                 raise _ActFailed("the tree changed under the sweep (git status is not clean); "
                                  "left in place"
                                  + (f"; its rescue is at {t.rescue}" if t.rescue else ""))
+        # 5. THE INVARIANT, ASKED OF GIT ONE LAST TIME (see `_self_check`).
+        self._self_check(t)
         checkout = t.checkout or os.path.dirname(t.common.rstrip("/"))
         if t.kind == "worktree":
             co = t.checkout if t.checkout and os.path.isdir(t.checkout) else t.path
@@ -2626,7 +2777,11 @@ class Sweep:
             raise _ActFailed("the directory is still there after the removal")
         t.result = "removed" + ((f"; pushed to {t.rescue}" if disp == "push+remove" else
                                  f"; rescue {t.rescue}") if t.rescue else "")
-        # 5. THE BRANCHES OF A MERGED TREE - each deleted only AT THE SHA THAT
+        if t.held_back:
+            t.result += "; untracked files in the bundle only"
+        if t.lost_bundle:
+            t.result += f"; commits no other ref keeps {tilde(t.lost_bundle)}"
+        # 6. THE BRANCHES OF A MERGED TREE - each deleted only AT THE SHA THAT
         # WAS JUDGED merged, so a branch that moved under the sweep is kept.
         if disp == "remove+delete-branch" and t.branch:
             co = t.checkout if t.checkout and os.path.isdir(t.checkout) else checkout
@@ -2653,8 +2808,112 @@ class Sweep:
                    + ((f"; pushed to {t.rescue}" if disp == "push+remove" else
                        f"; rescue {t.rescue}") if t.rescue else "")
                    + (f"; bundle {tilde(t.bundle)}" if t.bundle else "")
+                   + ("; untracked files in the bundle only" if t.held_back else "")
+                   + (f"; commits no other ref keeps {tilde(t.lost_bundle)}" if t.lost_bundle
+                      else "")
                    + (f"; ignored files {tilde(t.ignored_archive)}" if t.ignored_archive else "")
                    + f"; archive {tilde(self._archive_dir())}")
+
+    def _act_prune(self, t: Tree) -> None:
+        """A registration whose directory is gone: that one registration is
+        removed - after the commits only its git directory names (its HEAD,
+        detached, and that HEAD's reflog) are rescued (#170 A4)."""
+        if os.path.lexists(t.path):
+            # IT CAME BACK while the sweep ran (a remount, a restore): it is a
+            # tree again, and it is classified afresh by the next sweep, never
+            # removed on a reading taken while it was gone.
+            t.disposition = "keep"
+            t.result = "left: the directory reappeared after it was read as gone; sweep again"
+            return
+        co = t.checkout
+        lost = self._lost(t)
+        head = (t.reg or {}).get("head", "")
+        if lost and head in lost and git_out(co, "config", "--get", "remote.origin.url"):
+            name = self._rescue_name(t)
+            self._git_or_fail(co, "update-ref", f"refs/heads/{name}", head, "")
+            self._push(t, name, name)
+            t.rescue = f"origin/{name}"
+            t.bundle = self._bundle(t, [name])
+            lost = self._lost(t)
+        if lost:
+            t.lost_bundle = self._bundle_lost(t, lost, "pruned")
+        self._self_check(t)
+        # THAT ONE REGISTRATION: `git worktree prune` would unregister every
+        # missing tree of the repository - another lane's, a FOREIGN one,
+        # one on a disk that is not mounted - and say nothing of it.
+        proc = git(co, "worktree", "remove", t.path)
+        if proc.returncode != 0:
+            raise _ActFailed("git worktree remove " + t.path + ": " + _first_line(proc.stderr)
+                             + " - a repository-wide prune is never run in its place")
+        regs = worktree_registrations(co)
+        if regs is None:
+            raise _ActFailed("the registrations could not be read again after the prune")
+        if t.path in [r["path"] for r in regs]:
+            raise _ActFailed("the registration is still there after the prune")
+        t.result = "pruned" + (f"; rescue {t.rescue}" if t.rescue else "") + (
+            f"; bundle {tilde(t.bundle)}" if t.bundle else "") + (
+            f"; commits no other ref keeps {tilde(t.lost_bundle)}" if t.lost_bundle else "")
+        self._note(t, f"swept {t.path}: stale registration pruned in {co}"
+                   + (f"; rescue {t.rescue}" if t.rescue else "")
+                   + (f"; bundle {tilde(t.bundle)}" if t.bundle else "")
+                   + (f"; commits no other ref keeps {tilde(t.lost_bundle)}" if t.lost_bundle
+                      else ""))
+
+    def _wip_rescue(self, t: Tree) -> tuple:
+        """The WIP rescue: (the tree `git add -A` makes, refs to bundle, refs
+        to delete once bundled, the commit only the bundle holds).
+
+        THE WORK IS COMMITTED BESIDE THE TREE, NOT INTO IT: a temporary index
+        takes the add, and `commit-tree` + `update-ref` make the rescue
+        branch. The tree's own branch, index and files are never moved, so a
+        push that fails leaves it exactly as it was.
+
+        UNTRACKED FILES ARE NEVER PUSHED unless `--push-untracked` (#170 A9):
+        an un-ignored `gcp-service-account.json` is a file nobody meant to
+        commit. The pushed WIP commit carries the tracked changes only, and a
+        second commit on it with every untracked file goes to the bundle
+        alone - through a temporary ref, so it is in no branch."""
+        full = snapshot_tree(t.path)
+        if not full:
+            raise _ActFailed("the tree's content could not be snapshotted (git add -A into "
+                             "a temporary index failed); left in place")
+        untracked = [ln[3:] for ln in t.status_lines if ln.startswith("?? ")]
+        hold = bool(untracked) and not self.opts.push_untracked
+        pushed = snapshot_tree(t.path, tracked_only=True) if hold else full
+        if not pushed:
+            raise _ActFailed("the tree's tracked changes could not be snapshotted; left in place")
+        head_tree = (git_out(t.path, "rev-parse", "HEAD^{tree}") if t.head else EMPTY_TREE) or ""
+        subject = f"WIP({self.lane}): {t.slice} swept {self.stamp}; swept, not reviewed"
+        body = (f"Rescued by {PROG} sweep from {t.path} (branch "
+                f"{t.branch or 'detached'} at {short(t.head) if t.head else 'no commit'}). "
+                "The tree held uncommitted or untracked work when its lane was swept; "
+                "this commit is that work as it stood, unreviewed.")
+        tip = t.head
+        if pushed != head_tree:
+            tip = self._commit_tree(t.path, pushed, t.head, subject, body)
+        refs, drop = [], []
+        if tip and (tip != t.head or t.on_origin is not True):
+            name = self._rescue_name(t)
+            self._git_or_fail(t.path, "update-ref", f"refs/heads/{name}", tip, "")
+            self._push(t, name, name)
+            refs.append(name)
+            t.rescue = f"origin/{name}"
+        only = ""
+        if hold:
+            held = self._commit_tree(
+                t.path, full, tip,
+                f"WIP({self.lane}): {t.slice} untracked files {self.stamp}; bundle only, never "
+                "pushed",
+                f"The {len(untracked)} untracked path(s) of {t.path} when its lane was swept "
+                f"(e.g. {untracked[0]}). They were never pushed: an untracked file may be a "
+                "credential nobody meant to commit. This commit is in this bundle only.")
+            tmp = f"refs/lane-worktrees/{t.slice}-{self.stamp}/untracked"
+            self._git_or_fail(t.path, "update-ref", tmp, held, "")
+            refs.append(tmp)
+            drop.append(tmp)
+            t.held_back = held
+            only = held
+        return full, refs, drop, only
 
     def _git_or_fail(self, path: str, *args: str) -> str:
         proc = git(path, *args)
@@ -2678,44 +2937,55 @@ class Sweep:
         return proc.stdout.strip()
 
     def _push(self, t: Tree, local: str, remote: str) -> None:
-        proc = git(t.path, "push", "--no-verify", "--quiet", "origin",
+        where = t.gitpath
+        verify = ["--no-verify"]
+        proc = git(where, "push", *verify, "--quiet", "origin",
                    f"refs/heads/{local}:refs/heads/{remote}", timeout=GIT_NET_TIMEOUT)
         if proc.returncode != 0:
             raise _ActFailed(f"git push origin {local}:{remote}: " + _first_line(proc.stderr))
-        local_sha = git_out(t.path, "rev-parse", f"refs/heads/{local}") or ""
-        seen = git(t.path, "ls-remote", "origin", f"refs/heads/{remote}", timeout=GIT_NET_TIMEOUT)
+        local_sha = git_out(where, "rev-parse", f"refs/heads/{local}") or ""
+        seen = git(where, "ls-remote", "origin", f"refs/heads/{remote}", timeout=GIT_NET_TIMEOUT)
         got = seen.stdout.split()[0] if seen.returncode == 0 and seen.stdout.split() else ""
         if not local_sha or got != local_sha:
             raise _ActFailed(f"origin does not show refs/heads/{remote} at {short(local_sha)} "
                              f"after the push (it shows {short(got) or 'nothing'}); the tree is left")
+        self.verified.setdefault(self._common(where), set()).add(local_sha)
         # ONLY A RESCUE BRANCH PINS ITS ARCHIVE (`--expire`): a branch pushed as
         # is is the lane's own, and its later merge and deletion is no loss.
         if remote.startswith("rescue/"):
-            self.rescues.append((t.origin_url, remote, local_sha, t.checkout or "", t.path))
+            origin = t.origin_url or git_out(where, "config", "--get", "remote.origin.url") or ""
+            self.rescues.append((origin, remote, local_sha, t.checkout or "", t.path))
 
-    def _bundle(self, t: Tree, ref: str) -> str:
-        """A bundle of `ref` holding what origin's default branch lacks (its
+    def _bundle(self, t: Tree, refs: list) -> str:
+        """A bundle of `refs` holding what origin's default branch lacks (its
         prerequisites are on origin), or the whole history where that would be
-        empty or origin has no default branch here."""
+        empty or origin has no default branch here. Its heads are recorded:
+        they are what the self-check counts as bundled."""
+        where = t.gitpath
         out = os.path.join(self._archive_dir(), f"{t.slice}.bundle")
         n = 1
         while os.path.exists(out):
             n += 1
             out = os.path.join(self._archive_dir(), f"{t.slice}-{n}.bundle")
-        base = git_out(t.path, "symbolic-ref", "-q", "refs/remotes/origin/HEAD") or ""
-        if not base and git(t.path, "rev-parse", "-q", "--verify",
+        base = git_out(where, "symbolic-ref", "-q", "refs/remotes/origin/HEAD") or ""
+        if not base and git(where, "rev-parse", "-q", "--verify",
                             "refs/remotes/origin/main").returncode == 0:
             base = "refs/remotes/origin/main"
-        proc = git(t.path, "bundle", "create", out, ref, "--not", base) if base else None
+        proc = git(where, "bundle", "create", out, *refs, "--not", base) if base else None
         if proc is None or proc.returncode != 0:
             if os.path.exists(out):
                 os.unlink(out)
-            proc = git(t.path, "bundle", "create", out, ref)
+            proc = git(where, "bundle", "create", out, *refs)
         if proc.returncode != 0:
             raise _ActFailed("git bundle create: " + _first_line(proc.stderr))
-        check = git(t.path, "bundle", "verify", out)
+        check = git(where, "bundle", "verify", out)
         if check.returncode != 0:
             raise _ActFailed("git bundle verify: " + _first_line(check.stderr))
+        heads = git(where, "bundle", "list-heads", out)
+        if heads.returncode != 0:
+            raise _ActFailed("git bundle list-heads: " + _first_line(heads.stderr))
+        self.bundled.setdefault(self._common(where), set()).update(
+            line.split()[0] for line in heads.stdout.splitlines() if line.split())
         return out
 
     def _tar(self, base: str, rels: list, name: str) -> str:
@@ -2830,6 +3100,11 @@ class Sweep:
             t.register = line
         if proc.returncode != 0:
             self.failed += 1
+            # THE FIRST LINE THE REGISTER REFUSES STOPS THE SWEEP (#170 B6): an
+            # act the register does not record is one nobody can find, and a
+            # register that refused one line will refuse the next.
+            self.halt = self.halt or ("the register refused a line (NOT WRITTEN); nothing more "
+                                      "is acted on until it is written by hand")
             note(f"the register line for {t.path if t else 'this sweep'} was NOT written "
                  f"(exit {proc.returncode}); write it by hand: LANES_LANE={self.lane} "
                  f"lanes-edit.sh log NOTED lane:{self.lane} \"{register_text(text)}\"")
@@ -2848,6 +3123,17 @@ class Sweep:
                  f"{os.environ.get('LANES_WORKSTATION') or socket.gethostname()} as "
                  f"{getpass.getuser()}. Nothing here was deleted that was not first on origin "
                  "or in this directory.", ""]
+        if self.refused_check:
+            lines += [f"**REFUSED by the self-check** (exit 2): {self.refused_check}. Nothing "
+                      "after it was acted on.", ""]
+        elif self.halt:
+            lines += [f"**Stopped:** {self.halt}.", ""]
+        if any(r[0] == "-" for r in self.rescues):
+            lines += ["A `bundle:` row in `rescues.tsv` is a bundle that is the ONLY copy of what "
+                      "it holds (untracked files, commits only a reflog named, a tree with no "
+                      "origin); `sweep --expire` never removes this archive. Its commits are "
+                      "under `refs/lane-worktrees/*` or `refs/heads/*` in the bundle: "
+                      "`git fetch <bundle> 'refs/*:refs/restored/*'`.", ""]
         if self.opts.word:
             lines += [f"Foreign trees were included on the word: \"{self.opts.word}\"", ""]
         lines += ["| tree | was | disposition | why | result | rescue | bundle | register |",
@@ -2859,9 +3145,10 @@ class Sweep:
         for t in self.trees:
             if not t.result:
                 continue
+            bundles = ", ".join(os.path.basename(b) for b in (t.bundle, t.lost_bundle) if b)
             lines.append("| " + " | ".join(cell(x) for x in (
                 t.path, t.label(), t.disposition, t.reason, t.result, t.rescue,
-                os.path.basename(t.bundle) if t.bundle else "", t.register)) + " |")
+                bundles, t.register)) + " |")
         rows = [i for i in self.items if i.result]
         if rows:
             lines += ["", "| item | kind | disposition | result | size |", "|---|---|---|---|---|"]
@@ -2883,6 +3170,63 @@ class Sweep:
 
 class _ActFailed(Exception):
     pass
+
+
+class _SelfCheck(Exception):
+    """The invariant's last check refused a removal: exit 2, and no further act."""
+
+
+#: The suite's seam: skips the reflog bundle (#170 A5) so the self-check is
+#: what stands between the removal and a commit only a reflog names.
+SEAM_NO_LOSS_BUNDLE = "LANE_WORKTREES_SEAM_NO_LOSS_BUNDLE"
+
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
+def worktree_admin(checkout: str, path: str) -> str:
+    """The git directory (`<common>/worktrees/<id>`) of `checkout`'s
+    registration of `path` - found by the `gitdir` file that points at
+    `<path>/.git` - or ''."""
+    common = git_out(checkout, "rev-parse", "--git-common-dir") or ""
+    if not common:
+        return ""
+    if not os.path.isabs(common):
+        common = os.path.normpath(os.path.join(checkout, common))
+    want = {os.path.normpath(os.path.join(path, ".git")), real(os.path.join(path, ".git"))}
+    base = os.path.join(common, "worktrees")
+    try:
+        ids = sorted(os.listdir(base))
+    except OSError:
+        return ""
+    for wid in ids:
+        try:
+            with open(os.path.join(base, wid, "gitdir"), encoding="utf-8",
+                      errors="surrogateescape") as fh:
+                target = fh.readline().strip()
+        except OSError:
+            continue
+        if target and (os.path.normpath(target) in want or real(target) in want):
+            return os.path.join(base, wid)
+    return ""
+
+
+def reflog_shas(files: list) -> tuple:
+    """([every commit the reflog files name, old and new], why-not): a
+    missing file is an empty reflog; one that cannot be read is unknown."""
+    out: list = []
+    for path in files:
+        try:
+            with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+                for line in fh:
+                    for sha in line.split(" ", 2)[:2]:
+                        if re.match(r"^[0-9a-f]{40}([0-9a-f]{24})?$", sha) and \
+                                not re.match(r"^0+$", sha) and sha not in out:
+                            out.append(sha)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            return None, f"the reflog {path} could not be read ({exc.strerror or exc})"
+    return out, ""
 
 
 def delete_local_branch(checkout: str, branch: str, expect: str):
@@ -3326,6 +3670,11 @@ def expiry_rows(conf: dict) -> list:
                 continue
             missing = []
             for origin, branch, sha in ledger:
+                if origin == "-" or branch.startswith("bundle:"):
+                    # A BUNDLE THAT IS THE ONLY COPY (#170 item 8): nothing on
+                    # any origin holds what it holds.
+                    missing.append(f"{branch} (that bundle is the only copy of {short(sha)})")
+                    continue
                 proc = run(["git", "ls-remote", origin, f"refs/heads/{branch}"], env=git_env(),
                            timeout=GIT_NET_TIMEOUT)
                 got = proc.stdout.split()[0] if proc.returncode == 0 and proc.stdout.split() else ""
@@ -3339,7 +3688,7 @@ def expiry_rows(conf: dict) -> list:
                     missing.append(f"{branch} (on origin at {short(got)}, not the rescued "
                                    f"{short(sha)})")
             if missing:
-                rows.append((adir, age, "keep", "a rescue branch is not on origin: "
+                rows.append((adir, age, "keep", "not every rescue is on origin: "
                              + "; ".join(missing) + " - this archive is the only copy"))
             else:
                 rows.append((adir, age, "expire", f"{age} d old and every rescue branch is on origin"))
@@ -4018,6 +4367,7 @@ def parse(argv: list):
     parser.add_argument("--word")
     parser.add_argument("--live", action="append")
     parser.add_argument("--fetch", action="store_true")
+    parser.add_argument("--push-untracked", action="store_true")
     parser.add_argument("--estate")
     parser.add_argument("--expire", action="store_true")
     parser.add_argument("--all", action="store_true")
@@ -4124,7 +4474,7 @@ def _main(argv: list) -> int:
     if opts.yes and not sweep.refusal:
         sweep.act()
     (sweep.porcelain if opts.porcelain else sweep.render)()
-    if sweep.refusal:
+    if sweep.refusal or sweep.refused_check:
         return 2
     if opts.yes:
         return 1 if sweep.failed else 0
