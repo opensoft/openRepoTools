@@ -14733,6 +14733,33 @@ run env -u LANES_INDEX PATH="$A14_BIN:$PATH" LANES_INDEX_CONFIG="$A14_CONF/poiso
 has  "the poison is REAL: \`history --index\` reads it, so the sameness below is not vacuous" "$out" "A14 POISON"
 has  "…and says it read the index" "$err" "read: index (sqlite)"
 
+# AND THE INVENTORY'S TABLE (opensoft/openRepoTools#161), true first and then
+# wrong: every lane's #97 sidecars on this workstation, synced into the same
+# store, then a forged tree, forged lifecycles, forged counts and a forged
+# owner. The acts below that write or read the inventory must not move.
+run env -u LANES_INDEX LANES_INDEX_CONFIG="$A14_CONF/poisoned.conf" LANES_EDIT="$E" "$A14_BIN/lanes-index" sync --source inventory
+is   "lanes-index syncs this workstation's worktree inventory into the same store" "$rc" 0
+has  "…and writes its rows" "$out" "inventory:Eagle (sqlite)"
+python3 - "$A14_DB" <<'PY'
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+n = c.execute("SELECT COUNT(*) FROM worktrees").fetchone()[0]
+assert n > 0, "the inventory sync wrote no worktrees row: the poison below would be vacuous"
+c.execute("UPDATE worktrees SET lifecycle = 'SWAPPED', dirty_count = 99, unpushed_count = 99, "
+          "owner = 'managed a14-poison', writer_live = 1")
+c.execute("INSERT INTO worktrees (source, record_id, workstation, lane, owner, path, branch, "
+          "lifecycle, digest, provenance, indexed_utc, schema_version) VALUES ('inventory:Eagle', "
+          "'repoRC-5:/a14/forged', 'Eagle', 'repoRC-5', 'legacy', '/a14/forged', 'feat/a14-poison', "
+          "'RUNNING', 'x', '0', 'now', 1)")
+c.commit()
+PY
+run env -u LANES_INDEX PATH="$A14_BIN:$PATH" LANES_INDEX_CONFIG="$A14_CONF/poisoned.conf" "$E" worktrees repoRC-5 --index
+has  "the inventory's poison is REAL: \`worktrees --index\` reads the forged tree" "$out" "/a14/forged"
+has  "…and the forged owner" "$out" "managed a14-poison"
+has  "…and says it read the index's table" "$err" "read: index (sqlite) at inventory:Eagle synced"
+run env -u LANES_INDEX PATH="$A14_BIN:$PATH" LANES_INDEX_CONFIG="$A14_CONF/poisoned.conf" "$E" worktrees repoRC-5
+is   "…while the same read WITHOUT the flag is the sidecars', and carries no poison" "$(printf '%s' "$out" | grep -c 'a14-poison' || :)" 0
+
 a14_norm() {
   printf '%s' "$1" | sed -E \
     -e 's/[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2})?Z/<UTC>/g' \
@@ -14740,6 +14767,10 @@ a14_norm() {
     -e 's/[0-9a-f]{7,}/<HEX>/g'
 }
 A14_SNAP="$SANDBOX/a14snap"
+# THE LANES' CONTROL ROOT TOO (#161): the inventory writers below change it,
+# and a snapshot that put the register back and left the lifecycle advanced
+# would compare a generation-3 run with a generation-4 one.
+A14_LSR="$HOME/projects/.lane-state"
 # NO GIT GC RUNS UNDER THE SNAPSHOT (CI on #164, `tests-no-submodule` at
 # 50594dc: "rm: cannot remove '…/origin.git': Directory not empty"). By this
 # point the suite has pushed thousands of commits, so a push or a commit can
@@ -14778,6 +14809,7 @@ a14_snap() {
   cp -a "$WIP" "$A14_SNAP/wip"
   cp -a "$ORIGIN" "$A14_SNAP/origin"
   if [ -d "$CLAUDE_CONFIG_DIR/lanes" ]; then cp -a "$CLAUDE_CONFIG_DIR/lanes" "$A14_SNAP/cclanes"; fi
+  if [ -d "$A14_LSR" ]; then cp -a "$A14_LSR" "$A14_SNAP/lsr"; fi
 }
 a14_restore() {
   a14_gc_quiet
@@ -14785,6 +14817,9 @@ a14_restore() {
   a14_rmtree "$ORIGIN" && cp -a "$A14_SNAP/origin" "$ORIGIN"
   if a14_rmtree "$CLAUDE_CONFIG_DIR/lanes" && [ -d "$A14_SNAP/cclanes" ]; then
     cp -a "$A14_SNAP/cclanes" "$CLAUDE_CONFIG_DIR/lanes"
+  fi
+  if a14_rmtree "$A14_LSR" && [ -d "$A14_SNAP/lsr" ]; then
+    cp -a "$A14_SNAP/lsr" "$A14_LSR"
   fi
 }
 # A WRITE'S NUDGE RUNS DETACHED and may still be reading this checkout when the
@@ -14836,6 +14871,20 @@ a14_three "the name guard" 0 bash -c '"$1" guard < "$2"' a14-guard "$E" "$SANDBO
 a14_three "who (a read an act makes for itself)" 0 "$E" who opensoft/repoA#1414
 a14_three "managed-projection (#97's seam)" 0 "$E" managed-projection repoMG-1
 a14_three "history without the flag" 0 "$E" history repoA-1
+# THE INVENTORY'S ACTS (opensoft/openRepoTools#161): its two writers, whose
+# nudge is `lanes-index sync --source inventory`, and the reads an act makes of
+# the inventory for itself — `lane-reconcile` above all, which reads the
+# sidecars and the disk and never the table.
+# repoRC-2, and not repoRC-5: (e) above left repoRC-5's record of w1 at a
+# schema this helper refuses to replace, which is a refusal and not a write.
+a14_three "set-lane-tree (an inventory writer)" 1 "$E" set-lane-tree repoRC-2 "$RC_DIR/.claude/worktrees/w1" --checkout "$RC_DIR"
+is   "…which the control run recorded, so the comparison is of a real write" "$a14_c_rc" 0
+a14_three "set-lane-state (the lifecycle writer)" 1 "$E" set-lane-state repoRC-2 SWAPPING --operation a14-inventory-op
+is   "…which the control run moved" "$a14_c_rc" 0
+a14_three "lane-reconcile (the act's own read of the inventory)" 0 "$E" lane-reconcile repoRC-5
+a14_three "lane-reconcile of a lane mid-swap" 0 "$E" lane-reconcile repoRC-2
+a14_three "lane-trees" 0 "$E" lane-trees repoRC-5
+a14_three "lane-state" 0 "$E" lane-state repoRC-2
 
 
 # =====================================================================
