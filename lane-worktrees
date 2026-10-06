@@ -1571,8 +1571,8 @@ def tree_guards(tree: Tree) -> str:
     if why:
         return why + "; the tree's removal takes that repository with it"
     # A REPOSITORY NESTED ANYWHERE IN IT - a venv's `src/` (`pip install -e
-    # git+...`) and node_modules included (#170 A3): only bytecode caches are
-    # passed over, and a directory that cannot be read keeps the tree.
+    # git+...`), node_modules and a cache directory included (#170 A3; #174,
+    # Copilot round 2) - and a directory that cannot be read keeps the tree.
     nested, unread = nested_repos(tree.path, subs)
     if nested:
         return (f"a repository is nested inside it at {nested[0]} - its work is "
@@ -1584,15 +1584,13 @@ def tree_guards(tree: Tree) -> str:
     return ""
 
 
-#: Inside a tree only bytecode caches are passed over when looking for a
-#: nested repository: a clone can sit in a venv's `src/` or in node_modules.
-NESTED_SKIP = ("__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache")
-
-
 def nested_repos(top: str, exclude: set = frozenset()) -> tuple:
     """([every directory under `top` that holds a `.git`], [what could not
     be read]) - `top` itself, `exclude`d paths (a tree's submodules) and
-    anything inside a nested repository are not entered."""
+    anything inside a nested repository are not entered. NOTHING ELSE IS
+    PASSED OVER (#174, Copilot round 2): this walk is the proof that a removal
+    takes no repository, and a checkout under a directory named
+    `__pycache__` or `.pytest_cache` is still a checkout."""
     found, unread = [], []
     stack = [top]
     while stack:
@@ -1609,7 +1607,7 @@ def nested_repos(top: str, exclude: set = frozenset()) -> tuple:
             found.append(d)
             continue
         for e in entries:
-            if e.name == ".git" or e.name in NESTED_SKIP:
+            if e.name == ".git":
                 continue
             try:
                 if e.is_symlink() or not e.is_dir(follow_symlinks=False):

@@ -2347,3 +2347,19 @@ def test_a_submodules_hidden_edit_keeps_the_tree(estate):
     assert "submodule sub: 1 file(s) flagged skip-worktree" in rows[str(tree)][2]
     assert estate.sweep(LANE, "--yes").returncode == 0
     assert (sub / "s.txt").read_text() == "PRECIOUS local edit\n"
+
+
+def test_a_repository_under_a_cache_named_directory_keeps_the_scratch(estate):
+    """#174 Copilot round 2: the nested-repository walk - the proof that a
+    removal takes no repository - passed over directories named like
+    caches, so a checkout under `__pycache__` was archived without its git
+    history (the archive leaves caches out) and removed."""
+    scratch = estate.lane_root / "y-scratch"
+    work = scratch / "__pycache__" / "work"
+    estate.git("init", "-q", "-b", "main", work, cwd=estate.root)
+    own = estate.commit(work, "unpushed", {"w.txt": "PRECIOUS\n"})
+    proc = estate.sweep(LANE, "--include-scratch", "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    row = items_of(proc.stdout, "scratch")[str(scratch)]
+    assert row[0] == "keep" and f"a repository lies under it ({work})" in row[3], row
+    assert estate.git("rev-parse", "HEAD", cwd=work) == own
