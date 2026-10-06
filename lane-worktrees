@@ -5,7 +5,7 @@ abandoned worktrees, branches, scratch and killed-suite sandboxes
 (opensoft/openRepoTools#162).
 
     lane-worktrees sweep <lane> [--dry-run | --yes] [--porcelain]
-                   [--bundle] [--branches] [--links]
+                   [--bundle] [--branches] [--links] [--push-untracked]
                    [--include-scratch] [--include-caches] [--include-sandboxes]
                    [--include-foreign --word "<verbatim>"]
                    [--live <path> ... | --live none] [--fetch] [--estate <dir>]
@@ -23,8 +23,22 @@ live writer owns is never touched.
 
 THE DRY RUN IS THE DEFAULT and changes nothing - no fetch, no ref, no file,
 no register line (`--fetch` asks origin first; `lanes-edit.sh`'s own reads
-fetch the register as they always do). `--yes` performs the table, fetching
-origin first in every repository it acts in.
+fetch the register as they always do). `--yes` performs the table: it fetches
+the register itself first and refuses if that fails (an inherited
+LANES_NO_FETCH does not skip it), then fetches origin in every repository it
+acts in, with a pinned refspec that never prunes a local branch or tag.
+
+BEFORE EACH REMOVAL git is asked which commits it would take - a worktree's
+HEAD and reflog, a clone's every ref and reflog, a pruned registration's -
+and any that no origin ref, surviving branch, tag or stash keeps go to a
+bundle first (ONLY-COPY bundles are rows of rescues.tsv, and `--expire`
+never removes their archive). The same question is the SELF-CHECK right
+before the removal: anything neither on origin nor in a verified bundle is
+refused, exit 2, and nothing after it is acted on; so is everything after a
+register line that could not be written. Untracked files are never pushed
+(the bundle only) unless `--push-untracked`; a branch an open pull request
+or another lane owns is never pushed onto (a rescue branch instead); where
+git-lfs is configured the push runs its hooks.
 
 WHICH TREES ARE THE LANE'S is #97's inventory (`lanes-edit.sh lane-trees`)
 and the disk - never the derived index (Amendment 14 clause (b)). A tree the
@@ -35,8 +49,10 @@ that lane's and is never acted on from here.
 WHO MAY ACT is #97's reconciliation (`lanes-edit.sh lane-reconcile`): a lane
 bound on another host or container is UNKNOWN, never dead (Amendment 18(b)),
 so every act is refused for it; a lane held by another live session is
-refused; a lane whose holder is THIS session acts only on the writer count
-the coordinator states with `--live` (Amendment 17 Addendum 1 (i)).
+refused; a lane whose holder is THIS session, or one with a tree THIS session
+recorded, acts only on the writer count the coordinator states with `--live`
+(Amendment 17 Addendum 1 (i)) - each path naming a tree of the table, or
+`--live none` alone (anything else is usage, 64).
 
 "MERGED" is the register's LANDED line for the branch's pull request, or
 `gh`'s MERGED state for it - never `git branch --merged` alone, because a
@@ -47,8 +63,9 @@ sweeps/<lane>/<UTC>/ with MANIFEST.sha256, DISPOSITION.md and rescues.tsv.
 `sweep --expire` lists (and with `--yes` removes) archives older than the
 retention (90 days; `sweep.conf`) whose every rescue branch is still on
 origin at the rescued SHA; an archive whose rescue branch is gone or moved,
-or that is not whole (its MANIFEST.sha256 missing or not matching, its
-rescues.tsv unreadable), is never expired.
+that holds an only-copy bundle (a `bundle:` row), or that is not whole (its
+MANIFEST.sha256 missing or not matching, its rescues.tsv unreadable), is
+never expired.
 
 THE ESTATE REPORT (`--all --dry-run --report`) is the net under every actor
 that never runs `lane-end`: FOREIGN clones, trees of ENDED lanes, unmerged
@@ -74,8 +91,11 @@ Exit codes:
   0  dry run: nothing to retire  ·  --yes: every act completed
   3  dry run: something to retire (the `lane-end` gate's answer, #163)
   2  refused: the lane is bound elsewhere, held by another live session,
-     managed-owned, has trees but no #97 snapshot, or a read failed - or
-     `--yes` is switched off, or an error no read caught - nothing was changed
+     managed-owned, has trees but no #97 snapshot, or a read failed (a lane
+     root, a registration list, another lane's claim, the register's fetch
+     under --yes) - or `--yes` is switched off, or an error no read caught -
+     nothing was changed; or, under --yes, the self-check refused a removal
+     (what was done before it is recorded, nothing after it was acted on)
   1  --yes: an act failed part-way; what was done is recorded and the
      rest is left exactly as it was
  64  usage
