@@ -461,6 +461,10 @@ def test_the_report_is_only_a_report(tmp_path):
 
 FAKE_REPORTER = """#!/bin/sh
 printf '%s\\n' "$*" >> "$FAKE_REPORT_LOG"
+# What it was started under (#170 item 11, E8): its umask, and whether the
+# hangup a killed pane sends would reach it.
+umask > "$FAKE_REPORT_LOG.umask"
+"${FAKE_REPORT_PY:-python3}" -c 'import signal; print("ignored" if signal.getsignal(signal.SIGHUP) == signal.SIG_IGN else "default")' > "$FAKE_REPORT_LOG.hup"
 if [ -n "${FAKE_REPORT_SLEEP:-}" ]; then
   sleep "$FAKE_REPORT_SLEEP" &
   echo "$!" > "$FAKE_REPORT_LOG.sleeper"
@@ -475,7 +479,7 @@ def _reporter(box, state: Path) -> Path:
     log = box.root / "report.log"
     LS._write(box.bin / "lane-worktrees", FAKE_REPORTER)
     box.env.update(LANE_WORKTREES_REPORT="on", XDG_STATE_HOME=str(state),
-                   FAKE_REPORT_LOG=str(log))
+                   FAKE_REPORT_LOG=str(log), FAKE_REPORT_PY=sys.executable)
     return log
 
 
@@ -530,7 +534,10 @@ def test_a_stamp_from_today_runs_no_second_report_and_yesterdays_is_replaced(tmp
     (state / "openRepoTools" / f"report-{day}.stamp").write_text("")
     result = box.start("--no-launch")
     assert result.returncode == 0, result.stderr
-    time.sleep(1)
+    # A POSITIVE SIGNAL, NOT A SLEEP (#170 C3): the start went past its report
+    # step - it printed its last line - and said nothing of starting one.
+    assert "--no-launch: the command above was printed" in result.stderr, result.stderr
+    assert "the estate's daily report is running" not in result.stderr, "a second report ran today"
     assert not log.exists() or log.read_text() == "", "a second report ran today"
     (state / "openRepoTools" / f"report-{day}.stamp").unlink()
     (state / "openRepoTools" / "report-20200101.stamp").write_text("")
@@ -552,7 +559,8 @@ def test_a_failing_or_switched_off_report_never_fails_a_start(tmp_path):
     off_log = _reporter(off, tmp_path / "off-state")
     result = off.start("--no-launch", LANE_WORKTREES_REPORT="off")
     assert result.returncode == 0, result.stderr
-    time.sleep(1)
+    assert "--no-launch: the command above was printed" in result.stderr, result.stderr
+    assert "the estate's daily report is running" not in result.stderr
     assert not off_log.exists()
     assert _no_report_state(tmp_path / "off-state")
 
@@ -563,6 +571,30 @@ def test_a_dry_run_start_runs_no_report(tmp_path):
     log = _reporter(box, state)
     result = box.start("--dry-run")
     assert result.returncode == 0, result.stderr
-    time.sleep(1)
+    assert "--dry-run: nothing was renamed, written or launched" in result.stderr, result.stderr
+    assert "the estate's daily report is running" not in result.stderr
     assert not log.exists()
     assert _no_report_state(state)
+
+
+def test_the_daily_report_is_private_and_survives_its_panes_hangup(tmp_path):
+    """#170 item 11: the report names every path, branch and lane of the
+    estate, and its directory inherited the start's umask - readable by every
+    local account. #170 E8: it was not detached from the pane's hangup, so a
+    pane killed after the stamp was taken killed the report, and today's
+    stamp named a report that never finished."""
+    box = LS.Sandbox(tmp_path)
+    state = tmp_path / "state"
+    log = _reporter(box, state)
+    old = os.umask(0o022)
+    try:
+        result = box.start("--no-launch")
+    finally:
+        os.umask(old)
+    assert result.returncode == 0, result.stderr
+    umask = _wait_for(Path(str(log) + ".umask")).strip()
+    hup = _wait_for(Path(str(log) + ".hup")).strip()
+    assert umask in ("0077", "077"), umask
+    assert hup == "ignored", hup
+    for d in (state / "openRepoTools", state / "openRepoTools" / "reports"):
+        assert d.stat().st_mode & 0o777 == 0o700, (d, oct(d.stat().st_mode))
