@@ -2100,3 +2100,27 @@ def test_a_submodule_commit_only_its_reflog_names_keeps_the_tree(estate):
     assert estate.sweep(LANE, "--yes").returncode == 0
     assert tree.is_dir()
     assert estate.git("cat-file", "-t", own, cwd=sub) == "commit"
+
+
+@pytest.mark.parametrize("ancestor", ["node_modules", ".venv"])
+def test_an_ignored_file_beneath_a_cache_or_venv_named_directory_is_archived(estate, ancestor):
+    """#174 Copilot round 1: #170 A6 selects an ignored entry by its own
+    name, so `docker/<ancestor>/prod.env` - an ignored file in a TRACKED
+    directory - was selected; but the archive's member filter dropped any
+    path with a cache- or venv-named part, `top.env` beside it kept the
+    archive non-empty, it verified, and the tree went without prod.env."""
+    tree = estate.worktree("deploy", "feat/deploy")
+    estate.commit(tree, "compose", {".gitignore": ".env\n*.env\n__pycache__/\n",
+                                    f"docker/{ancestor}/README": "vendored\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/deploy", cwd=tree)
+    (tree / "docker" / ancestor / "prod.env").write_text("DB_PASSWORD=PRECIOUS\n")
+    (tree / "top.env").write_text("TOKEN=kept\n")
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not tree.exists()
+    (archive,) = estate.archives()
+    with tarfile.open(archive / "deploy-ignored.tar.gz") as tf:
+        names = tf.getnames()
+        prod = tf.extractfile(f"docker/{ancestor}/prod.env")
+        assert prod is not None and prod.read() == b"DB_PASSWORD=PRECIOUS\n"
+    assert "top.env" in names, names
