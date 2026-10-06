@@ -1787,6 +1787,28 @@ def test_push_untracked_pushes_them(estate):
     assert estate.git("show", f"{rescue}:notes.md", cwd=estate.origin) == "meant to be pushed"
 
 
+@pytest.mark.parametrize("lfs", [True, False])
+def test_a_push_runs_the_hooks_where_git_lfs_is_configured(estate, lfs):
+    """#170 A10: `push --no-verify` skips git-lfs's pre-push upload, so a
+    rescued branch reached origin as pointers only - and then the tree, the
+    one copy of the objects, was removed. With git-lfs configured the
+    hooks run; without it `--no-verify` stays."""
+    marker = estate.root / "pre-push.ran"
+    hook = estate.checkout / ".git" / "hooks" / "pre-push"
+    hook.write_text(f"#!/bin/sh\necho ran >> '{marker}'\nexit 0\n")
+    hook.chmod(0o755)
+    if lfs:
+        for key, value in (("filter.lfs.clean", "cat"), ("filter.lfs.smudge", "cat"),
+                           ("filter.lfs.required", "true")):
+            estate.git("config", key, value)
+    tree = estate.worktree("big", "feat/big")
+    estate.commit(tree, "assets", {"a.bin": "binary\n"})
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "feat/big" in estate.remote_heads()
+    assert marker.exists() == lfs
+
+
 def test_an_archive_whose_bundle_is_the_only_copy_never_expires(estate):
     """#170 item 8: an origin-less tree removed through `bundle+remove`
     left no row in rescues.tsv, so `--expire --yes` read the archive as

@@ -2938,7 +2938,12 @@ class Sweep:
 
     def _push(self, t: Tree, local: str, remote: str) -> None:
         where = t.gitpath
-        verify = ["--no-verify"]
+        # GIT-LFS UPLOADS ITS OBJECTS FROM ITS PRE-PUSH HOOK (#170 A10): with
+        # `--no-verify` a rescued branch reached origin as pointers only, and
+        # the tree - the one copy of the objects - was then removed. Where the
+        # repository has git-lfs configured the hooks run; a hook that
+        # refuses leaves the tree.
+        verify = [] if lfs_configured(where) else ["--no-verify"]
         proc = git(where, "push", *verify, "--quiet", "origin",
                    f"refs/heads/{local}:refs/heads/{remote}", timeout=GIT_NET_TIMEOUT)
         if proc.returncode != 0:
@@ -3227,6 +3232,13 @@ def reflog_shas(files: list) -> tuple:
         except OSError as exc:
             return None, f"the reflog {path} could not be read ({exc.strerror or exc})"
     return out, ""
+
+
+def lfs_configured(path: str) -> bool:
+    """git-lfs is set up for the repository at `path` (any `filter.lfs.*`
+    in its configuration, the global one included)."""
+    proc = git(path, "config", "--get-regexp", r"^filter\.lfs\.")
+    return proc.returncode == 0 and bool(proc.stdout.strip())
 
 
 def delete_local_branch(checkout: str, branch: str, expect: str):
