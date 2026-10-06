@@ -543,6 +543,28 @@ class Helper:
         proc = self.call("workspace-root")
         return proc.stdout.strip() if proc.returncode == 0 else ""
 
+    def fetch_register(self) -> str:
+        """`--yes` ACTS ON A REGISTER READ NOW, or not at all (#170 A1): '' once
+        the workspace repository's `origin/<branch>` is fetched, else why not.
+
+        `lanes-edit.sh`'s own `log_sync` answers 0 on every way it can fail to
+        fetch, and an inherited `LANES_NO_FETCH=1` skips the fetch outright, so a
+        lane rebound on another host after this one's last fetch read as bound
+        HERE and its trees were removed (Amendment 18(b)). The fetch is made
+        directly, with an explicit refspec, and every later helper call reads
+        the ref it left (`LANES_NO_FETCH=1`, set by `call` once `_fetched`)."""
+        root = self.workspace_root()
+        if not root:
+            return ("the workspace repository could not be found (`lanes-edit.sh "
+                    "workspace-root` answered nothing)")
+        branch = os.environ.get("LANES_BRANCH", "") or "main"
+        proc = git(root, "fetch", "--quiet", "--no-tags", "origin",
+                   f"+refs/heads/{branch}:refs/remotes/origin/{branch}", timeout=GIT_NET_TIMEOUT)
+        if proc.returncode != 0:
+            return (f"`git -C {root} fetch origin {branch}` failed: " + _first_line(proc.stderr))
+        self._fetched = True
+        return ""
+
     def transcript_live(self, uuid: str, fresh: bool = False) -> str:
         """live | none | unknown - one live process carrying that transcript,
         asked once per session however many trees it recorded (`fresh` asks
@@ -1350,6 +1372,18 @@ class Sweep:
             self.refusal = ("no lanes-edit.sh beside this command or on PATH: which trees "
                             "are this lane's is #97's inventory, and nothing else answers it")
             return
+        # UNDER --yes THE REGISTER IS FETCHED FIRST, AND A FETCH THAT FAILED IS A
+        # REFUSAL (#170 A1): a binding read from a ref as it stood here is not
+        # where the lane is bound now, and from outside its binding a lane is
+        # UNKNOWN, never dead (Amendment 18(b)). An inherited LANES_NO_FETCH=1
+        # does not skip it.
+        if self.opts.yes:
+            why = self.helper.fetch_register()
+            if why:
+                self.refusal = ("--yes acts only on the register as origin holds it NOW, and it "
+                                f"could not be fetched: {why}. Where the lane is bound is then "
+                                "unknown, never 'here' (Amendment 18(b)); nothing was changed")
+                return
         # THE CANONICAL SPELLING BEFORE ANY PATH IS DERIVED FROM IT: scratch,
         # caches, rescue names and the Lane: trailer comparison all use it.
         canon, why = self.helper.canon_lane(self.lane)

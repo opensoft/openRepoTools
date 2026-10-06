@@ -58,6 +58,10 @@ LANES_EDIT = REPO / "lanes-edit.sh"
 LANE = "repoA-1"
 ME = "11111111-1111-4111-8111-111111111111"
 OTHER = "22222222-2222-4222-8222-222222222222"
+#: The session that recorded the inventory: an EARLIER one, which the fake
+#: `transcript-holders` answers is not live. A tree THIS session (ME) recorded
+#: wants the coordinator's writer count under `--yes` (#170 B5).
+WRITER = "44444444-4444-4444-8444-444444444444"
 SLUG = "opensoft/repoA"
 GH_URL = f"git@github.com:{SLUG}.git"
 US = "\x1f"
@@ -179,6 +183,28 @@ class Estate:
         self.git("add", "-A")
         self.commit(self.checkout, "seed")
         self.git("push", "-q", "origin", "main")
+        # THE WORKSPACE REPOSITORY, which `--yes` fetches before it reads a
+        # binding (#170 A1) and whose lane logs name every lane's directory
+        # (#170 G6). Outside `projects/`, so it is no repository of the estate.
+        ws_origin = self.root / "workspace.git"
+        ws = self.root / "workspace"
+        self.git("init", "-q", "--bare", "-b", "main", ws_origin, cwd=self.root)
+        self.git("clone", "-q", ws_origin, ws, cwd=self.root)
+        (ws / "lanes" / "log").mkdir(parents=True)
+        (ws / "lanes" / "LANES.md").write_text("# register\n")
+        self.git("add", "-A", cwd=ws)
+        self.git("commit", "-q", "-m", "seed", cwd=ws)
+        self.git("push", "-q", "origin", "main", cwd=ws)
+        self.workspace = str(ws)
+
+    def register_line(self, lane: str, line: str) -> None:
+        """One line appended to `lane`'s log in the workspace, pushed."""
+        ws = Path(self.workspace)
+        log = ws / "lanes" / "log" / f"{lane}.md"
+        log.write_text((log.read_text() if log.exists() else "") + line + "\n")
+        self.git("add", "-A", cwd=ws)
+        self.git("commit", "-q", "-m", f"log {lane}", cwd=ws)
+        self.git("push", "-q", "origin", "main", cwd=ws)
 
     def commit(self, cwd: Path, message: str, files: dict | None = None,
                lane: str | None = LANE) -> str:
@@ -204,13 +230,14 @@ class Estate:
             self.record(path)
         return path
 
-    def record(self, path: Path, branch: str = "", head: str = "") -> None:
+    def record(self, path: Path, branch: str = "", head: str = "",
+               writer: str = WRITER) -> None:
         """An inventory row, as `lanes-edit.sh lane-trees` prints one."""
         if path.is_dir():
             branch = self.git("symbolic-ref", "-q", "--short", "HEAD", cwd=path, check=False) or "detached"
             head = self.git("rev-parse", "HEAD", cwd=path)
         row = [f"c{len(self.inventory)}-{path.name}", str(path), branch or "unknown",
-               head or "unknown", "none", "0", "0", ME, "2026-10-05T00:00:00Z",
+               head or "unknown", "none", "0", "0", writer, "2026-10-05T00:00:00Z",
                str(self.checkout), "1", "op-1", "1"]
         self.inventory.append(US.join(row))
 
@@ -1283,3 +1310,44 @@ def test_the_real_helper_refuses_a_lane_bound_on_another_host(tmp_path):
     yes = e.sweep(LANE, "--yes", "--live", "none")
     assert yes.returncode == 2 and "raven" in yes.stdout
     assert mine.is_dir()
+
+
+# ============================================= #170: the --yes data-loss paths
+
+def _rebind_elsewhere(e: Estate, tmp_path: Path) -> None:
+    """ANOTHER PLACE binds the lane after this workstation last fetched the
+    register: its STARTED line is on origin and not in this clone's ref."""
+    other = tmp_path / "other-wip"
+    e.git("clone", "-q", tmp_path / "wip.git", other, cwd=tmp_path)
+    log = other / "lanes" / "log" / f"{LANE}.md"
+    log.write_text(log.read_text() +
+                   f"STARTED — lane {LANE}, session {UUID_R}@Raven, 2026-10-05T09:00:00Z, "
+                   f"lane:{LANE} → home {SLUG}; dir {e.checkout}; host raven; container none; "
+                   "os linux\n")
+    e.git("commit", "-q", "-am", "raven binds the lane", cwd=other)
+    e.git("push", "-q", "origin", "main", cwd=other)
+
+
+@pytest.mark.parametrize("case", ["origin-unreachable", "LANES_NO_FETCH-inherited"])
+def test_yes_reads_the_register_now_or_refuses(tmp_path, case):
+    """#170 A1: `log_sync` answers 0 when it cannot fetch, and an inherited
+    LANES_NO_FETCH skips the fetch, so a lane rebound on another host read as
+    bound HERE and its tree was removed. --yes fetches the register itself:
+    a fetch that fails refuses, and the inherited variable is not obeyed."""
+    e, _wip = _real_estate(tmp_path, host="eagle")
+    mine = _real_tree(e, "mine")
+    _rebind_elsewhere(e, tmp_path)
+    env = {}
+    if case == "origin-unreachable":
+        (tmp_path / "wip.git").rename(tmp_path / "wip-offline.git")
+    else:
+        env = {"LANES_NO_FETCH": "1"}
+    proc = e.sweep(LANE, "--yes", "--live", "none", "--porcelain", env=env)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert mine.is_dir() and (mine / "mine.txt").is_file()
+    refused = [ln for ln in proc.stdout.splitlines() if ln.startswith("refused\t")]
+    assert refused, proc.stdout
+    if case == "origin-unreachable":
+        assert "could not be fetched" in refused[0]
+    else:
+        assert "raven" in refused[0]
