@@ -629,3 +629,29 @@ def test_a_failure_that_is_no_record_leaves_an_empty_section_none(tmp_path):
     for title in ("Orphaned worktrees of ENDED lanes", "Awaiting disposition"):
         found = section(proc.stdout, title)
         assert "_none_" in found and "none found in what could be read" not in found, found
+
+
+def test_a_report_directory_that_cannot_be_made_private_runs_no_report(tmp_path):
+    """#179 Copilot round 1: the 0700 `chmod` of the report's directories
+    was allowed to fail - a state directory that already existed 0755 kept
+    that mode - and the report still started, written where every local
+    account could read it. It is not started, and no stamp is taken, so
+    tomorrow's start tries again."""
+    box = LS.Sandbox(tmp_path)
+    state = tmp_path / "state"
+    log = _reporter(box, state)
+    (state / "openRepoTools" / "reports").mkdir(parents=True)
+    for d in (state / "openRepoTools", state / "openRepoTools" / "reports"):
+        d.chmod(0o755)
+    real_chmod = shutil.which("chmod")
+    LS._write(box.fakebin / "chmod",
+              "#!/bin/sh\n"
+              '[ "$1" = 700 ] && { echo "chmod: refused" >&2; exit 1; }\n'
+              f'exec "{real_chmod}" "$@"\n')
+    result = box.start("--no-launch")
+    assert result.returncode == 0, result.stderr
+    # A POSITIVE SIGNAL (#170 C3): the start went past its report step.
+    assert "--no-launch: the command above was printed" in result.stderr, result.stderr
+    assert "the estate's daily report is running" not in result.stderr, result.stderr
+    assert not list((state / "openRepoTools").glob("report-*.stamp"))
+    assert not log.exists() or log.read_text() == ""

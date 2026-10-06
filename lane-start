@@ -4315,8 +4315,12 @@ lane_daily_report() {
   [ -n "$ldr_day" ] || return 0
   # THE REPORT IS PRIVATE (#170 item 11): it names every path, branch and lane
   # of the estate. Its directories are 0700, and it is written under umask 077.
+  # A directory that could not be made 0700 - one that already existed wider,
+  # on a file system or under an owner that refuses the chmod - runs NO report
+  # (#179, Copilot round 1): the stamp is not taken, so tomorrow's start tries
+  # again, and a report never lands where every local account could read it.
   ( umask 077; mkdir -p -- "$ldr_state/reports" ) 2>/dev/null || return 0
-  chmod 700 "$ldr_state" "$ldr_state/reports" 2>/dev/null || :
+  chmod 700 "$ldr_state" "$ldr_state/reports" 2>/dev/null || return 0
   ( set -C; : > "$ldr_state/report-$ldr_day.stamp" ) 2>/dev/null || return 0
   for ldr_old in "$ldr_state"/report-*.stamp; do
     [ "$ldr_old" = "$ldr_state/report-$ldr_day.stamp" ] || rm -f -- "$ldr_old" 2>/dev/null || :

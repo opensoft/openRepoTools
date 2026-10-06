@@ -3794,7 +3794,8 @@ does not take the report with it (#170 E8) — over the start's own
 `$PROJECTS_ROOT`, writing `…/openRepoTools/reports/<UTC>.md`. The report names
 every path, branch and lane of the estate, so it is private: the state and
 reports directories are 0700 and the report is written under `umask 077`
-(#170 item 11). Every step either works or is skipped in
+(#170 item 11); where they cannot be made 0700 no report starts and no stamp
+is taken, so the next start tries again (#179). Every step either works or is skipped in
 silence: the report never delays a start and never fails one. `--dry-run`
 starts none; `LANE_WORKTREES_REPORT=off` is the switch (both suites set it).
 
