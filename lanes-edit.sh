@@ -16721,7 +16721,8 @@ EOF
   # refuses such a pathspec for every write this file makes; attachments are
   # committed by hand, so this is the same question for a person to ask first.
   #   0  nothing in those paths would stage bytecode, a cache or an environment
-  #   2  something would: the paths on stdout, the offer on stderr
+  #   2  something would: the paths on stdout, the offer on stderr - or git
+  #      could not read what they would stage, which is never "clean" (#170 G13)
   #  64  usage
   pathspec-check)
     [ "$#" -gt 0 ] || die "usage: pathspec-check <path>...   (relative to the workspace repository $LANES_REPO)" 64

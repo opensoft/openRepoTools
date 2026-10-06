@@ -3537,7 +3537,7 @@ wherever #97 keeps them (#170 G6): beside this lane's control root, under
 `$LANES_LANE_STATE_ROOT` and `$PROJECTS_ROOT/.lane-state`, in every `.lane-state`
 the estate walk finds, and beside every lane's recorded `dir` in the register's
 lane logs. An inventory record that cannot be
-read (no path, an unknown schema) refuses the sweep, exit **2**: its tree's owner
+read (no id, no path, an unknown schema; #170 G9) refuses the sweep, exit **2**: its tree's owner
 is unknown — and so does ANOTHER lane's record or inventory directory, a lane
 worktree root, a checkout's `git worktree list`, or the register's lane logs that
 cannot be read, before anything is fetched (#170 G1, G5). The lane's own checkout is never a candidate. The lane name is
@@ -3813,12 +3813,14 @@ The sweep retires what is already there; these keep more from arriving.
   repeated). Every commit `lanes-edit.sh` makes asks git what its pathspec would
   stage (`git add --dry-run`) or holds staged already, and REFUSES, exit **2**,
   nothing staged, when any of it is bytecode, a cache, a dependency tree or a virtual environment — and
-  offers the `.gitignore` lines a workspace without them lacks. Attachments are
+  offers the `.gitignore` lines a workspace without them lacks. A pathspec git
+  cannot read (a malformed magic pathspec, an unreadable index) is refused the
+  same way, never read as clean (#170 G13). Attachments are
   committed by hand, so the same question is a subcommand:
 
   ```sh
   lanes-edit.sh pathspec-check handoffs/<repo>/attachments/<slug>
-  # 0 clean · 2 the offending paths on stdout, the offer on stderr · 64 usage
+  # 0 clean · 2 the offending paths on stdout, the offer on stderr, or the read failed · 64 usage
   ```
 
 ## Hand edits
