@@ -6,6 +6,12 @@
 `daed20957f2dd2f22cca24053bb5bc8636ff6b3f`.
 **Measured:** October 4, 2026; disposable local remotes only.
 
+**October 6 update:** a fix is published in draft
+[openRepoShape PR #162](https://github.com/opensoft/openRepoShape/pull/162).
+The [candidate rehearsal](adopter-rehearsal.md) passes against current consumer
+main. The unchanged pinned revision still has the refusal documented below;
+upstream landing and a tested consumer pin update remain pending.
+
 The reviewed mapping moves the existing `.gitmodules` together with
 `upstream/openRepoShape` and its dependency contract into code. Plan `check`
 passes. Both filtered legs are created, then assembly mounting returns 2:
@@ -58,11 +64,13 @@ recursive clone/bootstrap, exact mode/object accounting, and failure recovery.
 Also cover partial registration ownership and no-existing-module inputs so a
 fix cannot silently erase retained registrations or create duplicate owners.
 
-No upstream issue or PR was published. No patch was applied to the pinned
-checkout or failing candidate. Resolve through the owning repository's normal
+At the October 4 measurement no upstream issue or PR had been published and
+no patch was applied to the pinned checkout or failing candidate. The October 6
+candidate is maintained in its own upstream worktree. Resolve through normal
 review, then bump to a commit on its main and recompute the dependency digest.
-Repeat the consumer rehearsal with fresh remotes. Gate B remains blocked by
-this refusal even though extraction content was independently verified.
+Repeat the consumer rehearsal with fresh remotes after repinning. Gate B still
+requires the reviewed upstream fix and the remaining integration work, even
+though the separate candidate rehearsal now succeeds.
 
 Private execution log SHA256:
 `ca2a11775ca3b6d179fc038436a28090f65b05feb2a1611d4578b315733b5168`.

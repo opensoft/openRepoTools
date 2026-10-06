@@ -1,8 +1,11 @@
-# Preparation while PRs #97 and #121 are active
+# Migration preparation evidence
 
-**Observed:** October 4, 2026. **State:** provisional preservation and local
-rehearsal performed; Gates A/B remain open. Real conversion waits for both PRs
-to land and the refreshed execution approval. This evidence belongs to
+**Initial observation:** October 4, 2026. The preservation and failed rehearsal
+below are historical receipts. **October 6 update:** #97 and #121 have landed;
+a candidate upstream fix and successful disposable current-main rehearsal are
+recorded in [adopter-rehearsal.md](adopter-rehearsal.md). Gates A/B remain open.
+Real conversion waits for the remaining baseline landings, a tested upstream
+pin and refreshed execution approval. This evidence belongs to
 [T001–T011](tasks.md); it is not another executable task list.
 
 ## Preservation evidence
@@ -100,7 +103,8 @@ See the [upstream reproduction](adopter-blocker.md) and
 
 ## Resume after the PR landings
 
-The user's landing notification triggers a fresh read of #97/#121, actual main
+PRs #97/#121 are now merged; #168/#169/#174 and draft #172 remained open on
+October 6. Their landing notifications trigger a fresh read of actual main
 and owner state. Landed changes are accounted for through the new baseline;
 remaining branch deltas and local edits still need dispositions. Existing
 PR holds and review history are preserved until their owners settle them.

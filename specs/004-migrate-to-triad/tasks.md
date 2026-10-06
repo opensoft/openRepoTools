@@ -11,7 +11,10 @@ remain pending. Retired checkouts are not instructions to recreate worktrees.
 Preparation progress is recorded in [preparation.md](preparation.md): partial
 T001–T005 evidence, an [upstream blocker reproduction](adopter-blocker.md),
 and [T007–T010 installer/test design](installer-design.md). No execution task
-is complete. Real conversion waits for the user's #97/#121 landing update.
+is complete. The [October 6 candidate rehearsal](adopter-rehearsal.md) passes;
+T005 still needs upstream landing and a tested consumer pin update. PRs #97
+and #121 have landed. Real conversion waits for the remaining baseline PRs,
+integration/preservation evidence and refreshed execution approval.
 
 ## Phase 1 — Preservation and baseline (Gate A)
 
