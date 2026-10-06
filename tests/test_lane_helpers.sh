@@ -15638,7 +15638,7 @@ cg_lane() {   # <lane> [<dir>] — a row, and a log whose STARTED line records t
   git -C "$WIP" push -q origin main 2>/dev/null
   return 0
 }
-for cg_l in repoCG-1 repoCG-2 repoCG-3 repoCG-4 repoCG-5 repoCG-6 repoCG-7 repoCG-8; do cg_lane "$cg_l"; done
+for cg_l in repoCG-1 repoCG-2 repoCG-3 repoCG-4 repoCG-5 repoCG-6 repoCG-7 repoCG-8 repoCG-11 repoCG-12; do cg_lane "$cg_l"; done
 # repoCG-10 was started in a directory that is NO repository: it has no branches,
 # which is an absence and not a read that failed.
 mkdir -p "$CG_EST/plain"
@@ -15698,6 +15698,20 @@ else
   is    "…so no unrecorded tree is left" "$( [ -e "$CG_ROOT/repoCG-4/w9" ] && echo left || echo none )" none
   is    "…and no branch the act made" "$(git -C "$CG_DIR" rev-parse -q --verify refs/heads/w9 >/dev/null 2>&1 && echo left || echo none)" none
 fi
+
+# A `worktree add` THAT FAILS AFTER MAKING THE TREE (Copilot round 1 on #175): a
+# failing `post-checkout` hook runs after the checkout, and git returns its
+# status with the tree registered and the branch made. Both are taken back.
+printf '#!/bin/sh\nexit 1\n' > "$CG_DIR/.git/hooks/post-checkout"
+chmod +x "$CG_DIR/.git/hooks/post-checkout"
+run "$CG_LW" add repoCG-12 w8
+rm -f "$CG_DIR/.git/hooks/post-checkout"
+is    "a worktree add that fails after making the tree refuses" "$rc" 2
+has   "…saying what failed" "$err" "git worktree add failed"
+has   "…and that the fresh tree was taken back out" "$err" "removed again"
+is    "…so no unrecorded tree is left on disk" "$( [ -e "$CG_ROOT/repoCG-12/w8" ] && echo left || echo none )" none
+is    "…or registered" "$(git -C "$CG_DIR" worktree list --porcelain | grep -c '/repoCG-12/w8$' || :)" 0
+is    "…and no branch the act made" "$(git -C "$CG_DIR" rev-parse -q --verify refs/heads/w8 >/dev/null 2>&1 && echo left || echo none)" none
 
 # ---------------------------------------------- lane-end: the gate passes
 
@@ -15776,6 +15790,20 @@ printf 'x\n' > "$CG_ROOT/repoCG-8/node_modules/pkg/i.js"
 run "$END" repoCG-8
 is    "a cache under the lane's own root refuses too" "$rc" 2
 has   "…named as a cache" "$err" "cache    remove  $CG_ROOT/repoCG-8/node_modules"
+
+# A ROOT NOBODY MAY LIST IS NOT AN EMPTY ONE (Copilot round 1 on #175).
+if [ "$(id -u)" = 0 ]; then
+  skip "a lane root that cannot be listed is the gate unread" "root lists a directory whatever its mode"
+else
+  mkdir -p "$CG_ROOT/repoCG-11/kept"
+  chmod 000 "$CG_ROOT/repoCG-11"
+  cg11_row="$(cg_row repoCG-11)"
+  run "$END" repoCG-11
+  chmod 755 "$CG_ROOT/repoCG-11"
+  is    "a lane root that cannot be listed is the gate unread (1), never an empty root" "$rc" 1
+  has   "…saying so" "$err" "could not be listed"
+  is    "…and nothing is written" "$(cg_row repoCG-11)" "$cg11_row"
+fi
 
 # --------------------------------- a branch of the lane's own, with no tree
 

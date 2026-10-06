@@ -74,7 +74,9 @@ dir>/.lane-worktrees/<lane>/<slice>`, on branch `--branch` (default: the
 slice) - checked out where it exists, else made from `--from` (default HEAD)
 with `--no-track`, so a bare `git push` never aims a writer's commits at the
 branch it started from - then `lanes-edit.sh set-lane-tree`. A record that
-fails takes the fresh tree and its new branch back out. The path is printed on
+fails, or a `git worktree add` that fails after making the tree (a failing
+post-checkout hook), takes the fresh tree and its new branch back out. The
+path is printed on
 stdout; `--dry-run` makes nothing. A tree made any other way is FOREIGN until
 `lanes-edit.sh set-lane-tree <lane> <path>` records it. Exit 0 made and
 recorded, 2 refused (nothing made), 1 made and neither recorded nor taken back
@@ -3598,10 +3600,11 @@ def add_tree(ns) -> int:
     tracked it would push a writer's commits at main on a bare `git push`.
 
     Exit 0: made and recorded, the path on stdout. 2: refused, and nothing
-    was made - including a record that failed after the tree was made, when
-    the fresh tree and the branch this act made are taken back out. 1: made,
-    not recorded, and not taken back out either; the commands are printed.
-    64: usage."""
+    was made - including a record that failed after the tree was made, or a
+    `git worktree add` that failed after making it (a failing `post-checkout`
+    hook), when the fresh tree and the branch this act made are taken back
+    out. 1: something it made is left and not recorded; the commands are
+    printed. 64: usage."""
     lane, slice_name = ns.lane or "", ns.slice or ""
     usage = ("lane-worktrees add <lane> <slice> [--branch <name>] [--from <ref>] "
              "[--checkout <dir>] [--dry-run]")
@@ -3686,10 +3689,48 @@ def add_tree(ns) -> int:
         os.makedirs(root, exist_ok=True)
     except OSError as exc:
         return refuse(f"the lane's root {root} could not be made: {exc}")
+    _ACTIVE["add"] = (lane, path)
+
+    def take_back(what: str) -> int:
+        """Undo what this act made - the tree's registration and directory, and
+        the branch where this act made it - after `what` went wrong. 2 where
+        nothing is left, 1 where something is, with the commands printed."""
+        left = []
+        regs = git(checkout, "worktree", "list", "--porcelain")
+        registered = None
+        if regs.returncode == 0:
+            registered = any(real(line[len("worktree "):]) == real(path)
+                             for line in regs.stdout.splitlines() if line.startswith("worktree "))
+        if registered:
+            if git(checkout, "worktree", "remove", path).returncode != 0:
+                left.append(f"the tree {path} (git -C {checkout} worktree remove {path})")
+        elif registered is None:
+            left.append(f"whatever git registered at {path} (its registrations could not be read)")
+        elif os.path.lexists(path):
+            # MADE AND NOT REGISTERED: nothing here proves it is git's alone,
+            # so it is named and never deleted blind.
+            left.append(f"the directory {path}, which git does not register")
+        if not exists:
+            tip = git_out(checkout, "rev-parse", "-q", "--verify", f"refs/heads/{branch}")
+            if tip and (left or git(checkout, "update-ref", "-d", f"refs/heads/{branch}",
+                                    tip).returncode != 0):
+                left.append(f"branch {branch} at {short(tip)}, which this act made")
+        _ACTIVE.pop("add", None)
+        if not left:
+            note(f"REFUSED, nothing was made: {what}; the fresh tree {path} was removed "
+                 "again" + ("" if exists else f" and branch {branch} with it"))
+            return 2
+        note(f"{what}, and this is left of what this act made: {'; '.join(left)}. Record a "
+             f"tree that is wanted with: lanes-edit.sh set-lane-tree {lane} {path} "
+             f"--checkout {checkout}")
+        return 1
+
     made = git(checkout, *argv)
     if made.returncode != 0:
-        return refuse(f"git worktree add refused: {_first_line(made.stderr)}")
-    _ACTIVE["add"] = (lane, path)
+        # A FAILED `worktree add` MAY HAVE MADE THE TREE ALREADY: a
+        # `post-checkout` hook runs after the checkout, and git returns its
+        # status. Whatever it left is taken back like a record that failed.
+        return take_back(f"git worktree add failed: {_first_line(made.stderr)}")
     head = git_out(path, "rev-parse", "HEAD") or ""
     caller = os.environ.get("LANES_SESSION") or os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
     record = ["set-lane-tree", lane, path, "--checkout", checkout]
@@ -3706,24 +3747,9 @@ def add_tree(ns) -> int:
     # back out, so a tree nothing records is not left behind by the act whose
     # whole point is that there are none. `worktree remove` without --force:
     # nothing has been written in it yet, and git still refuses if it was.
-    note(f"the tree was made and could NOT be recorded (`lanes-edit.sh "
-         f"{' '.join(record)}` exited {rproc.returncode}: {_first_line(rproc.stderr)})")
-    back = git(checkout, "worktree", "remove", path)
-    branch_back = exists
-    if back.returncode == 0 and not exists and head:
-        branch_back = git(checkout, "update-ref", "-d", f"refs/heads/{branch}",
-                          head).returncode == 0
-    _ACTIVE.pop("add", None)
-    if back.returncode == 0 and branch_back:
-        note(f"REFUSED, nothing was made: the fresh tree {path} was removed again"
-             + ("" if exists else f" and branch {branch} deleted at {short(head)}"))
-        return 2
-    note(f"the tree is left UNRECORDED at {path}; record it with: lanes-edit.sh "
-         f"set-lane-tree {lane} {path} --checkout {checkout}"
-         + ("" if back.returncode == 0 else f" (or remove it: git -C {checkout} worktree "
-            f"remove {path})")
-         + ("" if branch_back else f"; branch {branch} was made by this act at {short(head)}"))
-    return 1
+    return take_back(f"the tree was made and could NOT be recorded (`lanes-edit.sh "
+                     f"{' '.join(record)}` exited {rproc.returncode}: "
+                     f"{_first_line(rproc.stderr)})")
 
 
 # ==================================================================== main

@@ -535,7 +535,8 @@ an `.env` or a `node_modules` is named as holding them and never as clean. And
 every entry directly under the lane's own root, `.lane-worktrees/<lane>/`, that
 no tree, scratch or cache row names is **residue** — the ignored leftovers no
 row of the sweep reaches — and it refuses even where the sweep answered 0, as
-a cache row does. Other lanes' trees in a shared checkout are FOREIGN, are
+a cache row does; a root that cannot be listed is the gate unread (exit 1),
+never an empty one. Other lanes' trees in a shared checkout are FOREIGN, are
 counted for nobody, and never hold this lane.
 
 `--inventory-only` is **the one door past the gate**: the lane ends although the
@@ -3765,10 +3766,13 @@ path is the one line on stdout. It refuses, exit **2** and nothing made, a
 managed lane or one whose ownership could not be read, a lane that records no
 directory, an inventory that cannot be read, a path that already exists, a
 branch name git does not take, and `--from` beside a branch that already exists.
-**A record that fails after the tree is made takes the fresh tree and the branch
-this act made back out** (`git worktree remove`, without `--force`, and
-`update-ref -d` at the commit it made) and exits 2; only where that undo fails
-too is the exit **1**, with the `set-lane-tree` that records it printed. Usage
+**A record that fails after the tree is made — or a `git worktree add` that
+fails after making it, as one does when a `post-checkout` hook fails — takes the
+fresh tree and the branch this act made back out** (`git worktree remove`,
+without `--force`, and `update-ref -d` at the commit it made) and exits 2; only
+where something is left — the undo failed, or a directory git does not register,
+which is named and never deleted blind — is the exit **1**, with the
+`set-lane-tree` that records it printed. Usage
 is 64, and every flag of the sweep's is usage here.
 
 A tree made any other way — a brief's own `git worktree add`, the harness's

@@ -1928,6 +1928,10 @@ gate_tree_state() {   # <path>
   if [ ! -d "$gts_p" ]; then printf 'its directory is gone'; return 0; fi
   gts_top="$(git -C "$gts_p" rev-parse --show-toplevel 2>/dev/null)" || gts_top=""
   if [ -z "$gts_top" ] || [ "$(gate_real "$gts_top")" != "$(gate_real "$gts_p")" ]; then
+    if ! ls -A -- "$gts_p" >/dev/null 2>&1; then
+      printf 'no checkout of its own, and what is in it could not be listed'
+      return 0
+    fi
     gts_n=0
     for gts_e in "$gts_p"/* "$gts_p"/.[!.]* "$gts_p"/..?*; do
       if [ -e "$gts_e" ] || [ -L "$gts_e" ]; then gts_n=$((gts_n + 1)); fi
@@ -2032,7 +2036,12 @@ $gate_named
 GIN
   return 1
 }
-if [ -n "$gate_root" ] && [ -d "$gate_root" ]; then
+# A ROOT THAT CANNOT BE LISTED IS NOT AN EMPTY ONE (Copilot round 1 on #175):
+# a glob over a directory nobody may read matches nothing, and every entry of
+# it would pass unseen. `ls -A`'s status is the probe, and it is asked first.
+if [ -n "$gate_root" ] && [ -d "$gate_root" ] && ! ls -A -- "$gate_root" >/dev/null 2>&1; then
+  gate_unread="${gate_unread:+$gate_unread; }the lane's own root $gate_root could not be listed, so what is in it is unknown"
+elif [ -n "$gate_root" ] && [ -d "$gate_root" ]; then
   for g_ent in "$gate_root"/* "$gate_root"/.[!.]* "$gate_root"/..?*; do
     if [ ! -e "$g_ent" ] && [ ! -L "$g_ent" ]; then continue; fi
     if gate_is_named "$(gate_real "$g_ent")"; then continue; fi
@@ -2084,7 +2093,12 @@ else
   fflag=""; (( force )) && fflag=" --force"
   if [ "$inventory_only" = 0 ]; then
     case "$gate_rc" in
-      0 | 3) note "lane $LANE is NOT ended: the close-out gate (opensoft/openRepoTools#163) found what is still the lane's: ${gate_left:-the rows below}" ;;
+      0 | 3)
+        if [ -z "$gate_left" ] && [ -n "$gate_unread" ]; then
+          note "lane $LANE is NOT ended: the close-out gate (opensoft/openRepoTools#163) could not read all it asks about, and a read that failed is never an answer (Amendment 7(d))."
+        else
+          note "lane $LANE is NOT ended: the close-out gate (opensoft/openRepoTools#163) found what is still the lane's: ${gate_left:-the rows below}"
+        fi ;;
       2)     note "lane $LANE is NOT ended: the close-out gate's sweep refused it (exit 2): ${gate_refused:-it printed no reason; run the table below}" ;;
       *)     note "lane $LANE is NOT ended: the close-out gate could not be read — \`$gate_shown --dry-run --porcelain\` exited $gate_rc, and a read that failed is never an answer (Amendment 7(d))." ;;
     esac
