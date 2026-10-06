@@ -3086,6 +3086,11 @@ class Sweep:
             t.disposition = "keep"
             t.result = "left: " + guard
             return
+        # A SUBMODULE'S ANNOTATED TAG IS AN OBJECT OF ITS OWN (#174, Copilot
+        # round 2) - asked here, at the act, because it asks each remote.
+        why = module_tags_why(git_out(t.path, "rev-parse", "--absolute-git-dir") or "")
+        if why:
+            raise _Keep(why + "; the tree's removal takes that repository with it")
         # 1. RESCUE OR PUBLISH FIRST - nothing below removes what is not on
         # origin or in a bundle.
         disp = t.disposition
@@ -3250,7 +3255,7 @@ class Sweep:
             return
         co = t.checkout
         admin = worktree_admin(co, t.path) if co else ""
-        mod_why = module_repos_why(admin) if admin else ""
+        mod_why = (module_repos_why(admin) or module_tags_why(admin)) if admin else ""
         if mod_why:
             raise _Keep("its git directory keeps a submodule repository that would be lost: "
                         + mod_why)
@@ -3888,6 +3893,55 @@ def _module_repo_why(m: str, rel: str) -> str:
     why = unpublished_reflog(m, "--remotes", "every remote of it")
     if why:
         return f"the submodule repository {rel}: {why}"
+    return ""
+
+
+def module_tags_why(gitdir: str) -> str:
+    """Why an ANNOTATED tag of a submodule repository kept under
+    `<gitdir>/modules` would be lost with it, or '' (#174, Copilot round 2).
+    A tag object - its message, its signature - is its own object, and
+    `module_repos_why` asks only whether the commit it names is published, so
+    a local tag on a published commit passed. A tag object no remote of that
+    repository answers to `ls-remote --tags` AS THAT VERY OBJECT keeps it, and
+    so does a remote that cannot be asked. It asks each remote, so it runs at
+    the act only (the dry run asks no remote)."""
+    if not gitdir:
+        return "its git directory could not be read, so the submodule repositories it keeps are unknown"
+    mods, unread = module_repos(gitdir)
+    if unread:
+        return (f"{unread[0]} could not be read, so whether a submodule repository kept there "
+                "holds work is unknown")
+    for m in mods:
+        why = module_reads(m, _module_tags_why, m, os.path.relpath(m, gitdir))
+        if why:
+            return why
+    return ""
+
+
+def _module_tags_why(m: str, rel: str) -> str:
+    proc = git(m, "for-each-ref", "--format=%(objecttype) %(objectname) %(refname)",
+               "refs/tags/")
+    if proc.returncode != 0:
+        return f"the tags of the submodule repository {rel} could not be read"
+    tags: dict = {}
+    for line in proc.stdout.splitlines():
+        cols = line.split(" ", 2)
+        if len(cols) == 3 and cols[0] == "tag":
+            tags.setdefault(cols[1], cols[2][len("refs/tags/"):])
+    if not tags:
+        return ""
+    remotes = git(m, "remote")
+    have: set = set()
+    for remote in (remotes.stdout.split() if remotes.returncode == 0 else []):
+        ls = git(m, "ls-remote", "--tags", remote, timeout=GIT_NET_TIMEOUT)
+        if ls.returncode == 0:
+            have.update(line.split("\t", 1)[0] for line in ls.stdout.splitlines()
+                        if "\t" in line)
+    missing = sorted(name for sha, name in tags.items() if sha not in have)
+    if missing:
+        return (f"the submodule repository {rel}: its annotated tag {missing[0]} is a tag "
+                "object no remote of it holds, or that none could be asked about - its "
+                f"message would be lost; push it (git push <remote> tag {missing[0]}) first")
     return ""
 
 

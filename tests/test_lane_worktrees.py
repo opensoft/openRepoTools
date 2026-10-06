@@ -2464,3 +2464,29 @@ def test_a_suite_mark_that_names_no_pid_is_no_proof(estate, marker):
     row = items_of(proc.stdout, "sandbox")[str(saved)]
     assert row[0] == "list" and "no mark of a test suite" in row[3], row
     assert estate.git("rev-parse", "HEAD", cwd=saved / "work") == own
+
+
+@pytest.mark.parametrize("where", ["only-in-the-submodule", "on-its-remote-too"])
+def test_a_submodules_annotated_tag_object_is_never_lost_with_its_tree(estate, where):
+    """#174 Copilot round 2: a submodule's guards ask whether an annotated
+    tag's COMMIT is published, never its tag object, so a local tag on a
+    published commit passed every one - and its message, which nothing else
+    held, went with the tree. At the act each remote of that repository is
+    asked for that very tag object: absent, the tree is kept; present, it
+    goes. The dry run asks no remote, so it reads `remove` either way."""
+    tree, sub = _with_submodule(estate, "subtag")
+    estate.git("tag", "-a", "-m", "release notes nobody else has", "v9", cwd=sub)
+    tag = estate.git("rev-parse", "refs/tags/v9", cwd=sub)
+    if where == "on-its-remote-too":
+        estate.git("push", "-q", "origin", "v9", cwd=sub)
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "remove", rows[str(tree)]
+    module = Path(estate.git("rev-parse", "--absolute-git-dir", cwd=sub))
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    row = rows_of(proc.stdout)[str(tree)]
+    if where == "on-its-remote-too":
+        assert not tree.exists(), row
+    else:
+        assert row[0] == "keep" and "its annotated tag v9 is a tag object no remote" in row[2], row
+        assert estate.git("cat-file", "-t", tag, cwd=module) == "tag"
