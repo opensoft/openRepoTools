@@ -1415,3 +1415,47 @@ def test_registrations_that_cannot_be_read_refuse_the_dry_run(estate):
     assert proc.returncode == 2, proc.stdout + proc.stderr
     assert f"the worktree registrations of {estate.checkout} could not be read" in proc.stdout
     assert tree.is_dir()
+
+
+def test_a_dependent_anywhere_in_the_estate_makes_a_clone_load_bearing(estate):
+    """#170 A11: the estate walk never entered a plain directory inside a
+    repository, so a clone there that borrows a lane clone's objects was
+    unseen and the clone was deleted from under it."""
+    store = estate.lane_root / "store"
+    estate.git("clone", "-q", GH_URL, store, cwd=estate.root)
+    host = estate.projects / "host"
+    estate.git("init", "-q", "-b", "main", host, cwd=estate.root)
+    dependent = host / "vendor" / "dep"
+    estate.git("clone", "-q", "--shared", store, dependent, cwd=estate.root)
+    conf = estate.root / "sweep.conf"
+    conf.write_text("foreign_quiet_hours=0\n")
+    proc = estate.sweep(LANE, "--include-foreign", "--word", "go", "--yes", "--porcelain",
+                        env={"LANE_WORKTREES_CONF": str(conf)})
+    rows = rows_of(proc.stdout)
+    assert rows[str(store)][0] == "load-bearing", rows
+    assert str(dependent) in rows[str(store)][2]
+    assert store.is_dir()
+    assert estate.git("log", "-1", "--format=%s", cwd=dependent) == "seed"
+
+
+def test_a_partial_dependents_scan_removes_no_clone(estate):
+    """#170 A11: a dependent in a directory the walk could not read is as
+    unseen as one it never looked for; a partial scan deletes no clone."""
+    if os.geteuid() == 0:
+        pytest.skip("root reads a mode-000 directory")
+    store = estate.lane_root / "store"
+    estate.git("clone", "-q", GH_URL, store, cwd=estate.root)
+    sealed = estate.projects / "sealed"
+    (sealed / "inner").mkdir(parents=True)
+    sealed.chmod(0)
+    conf = estate.root / "sweep.conf"
+    conf.write_text("foreign_quiet_hours=0\n")
+    try:
+        proc = estate.sweep(LANE, "--include-foreign", "--word", "go", "--yes", "--porcelain",
+                            env={"LANE_WORKTREES_CONF": str(conf)})
+    finally:
+        sealed.chmod(0o755)
+    rows = rows_of(proc.stdout)
+    assert rows[str(store)][0] == "keep", rows
+    assert "was partial" in rows[str(store)][2] and str(sealed) in rows[str(store)][2]
+    assert store.is_dir()

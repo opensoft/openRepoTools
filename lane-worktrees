@@ -894,6 +894,64 @@ def estate_repos(root: str, max_depth: int = 7) -> list:
     return found
 
 
+#: What the estate walk never enters: caches, tool environments and installed
+#: packages. None of them holds a clone anything leans on, and node_modules
+#: alone is most of an estate's directories.
+WALK_SKIP = frozenset(CACHE_NAMES) | {".tox", ".nox", "site-packages"}
+
+
+class EstateWalk:
+    """Every repository and every `.lane-state` directory under one root,
+    and every directory the walk could not read."""
+
+    def __init__(self, root: str):
+        self.root = root
+        self.repos: list = []
+        self.lane_states: list = []
+        self.unread: list = []
+
+
+def walk_estate(root: str) -> EstateWalk:
+    """A walk of EVERY directory under `root` but the caches (#170 A11):
+    `estate_repos` descends into a repository only through worktree
+    containers, so a clone in a plain directory inside a repository (all of
+    `xFactory/xFactories/*` on Eagle) was never seen, and nor was anything
+    that leaned on a lane's clone from there. A directory that cannot be read
+    is named in `unread`, so a caller can tell a complete answer from a
+    partial one. Symlinks are never followed; a `.git` is never entered."""
+    walk = EstateWalk(root)
+    if not root or not os.path.isdir(root):
+        walk.unread.append(f"the estate root {root or '(none)'} is not a directory")
+        return walk
+    stack = [root]
+    while stack:
+        d = stack.pop()
+        try:
+            with os.scandir(d) as it:
+                entries = list(it)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            walk.unread.append(f"{d} ({exc.strerror or exc})")
+            continue
+        for e in entries:
+            if e.name == ".git":
+                walk.repos.append(d)
+                continue
+            try:
+                if e.is_symlink() or not e.is_dir(follow_symlinks=False):
+                    continue
+            except OSError:
+                continue
+            if e.name == ".lane-state":
+                walk.lane_states.append(e.path)
+            elif e.name not in WALK_SKIP:
+                stack.append(e.path)
+    walk.repos.sort()
+    walk.lane_states.sort()
+    return walk
+
+
 def git_common_dir(repo: str) -> str:
     dotgit = os.path.join(repo, ".git")
     if os.path.isdir(dotgit):
@@ -918,13 +976,18 @@ def git_common_dir(repo: str) -> str:
         return gitdir
 
 
-def local_remote_urls(common: str) -> list:
-    """(name, url) for every remote in that config whose URL is a local path."""
+def local_remote_urls(common: str, unread: list | None = None) -> list:
+    """(name, url) for every remote in that config whose URL is a local path.
+    A config that exists and cannot be read is named in `unread`."""
     out = []
     try:
         with open(os.path.join(common, "config"), encoding="utf-8", errors="replace") as fh:
             text = fh.read()
-    except OSError:
+    except FileNotFoundError:
+        return out
+    except OSError as exc:
+        if unread is not None:
+            unread.append(f"{os.path.join(common, 'config')} ({exc.strerror or exc})")
         return out
     section = ""
     for raw in text.splitlines():
@@ -943,14 +1006,18 @@ def local_remote_urls(common: str) -> list:
     return out
 
 
-def dependents_map(repos: list) -> dict:
+def dependents_map(repos: list, unread: list | None = None) -> dict:
     """{physical path a repository LEANS ON: [(dependent, how)]} - read from
     `objects/info/alternates` and from remotes whose URL is a local path. A
-    clone something leans on is LOAD-BEARING and is never removed by a sweep."""
+    clone something leans on is LOAD-BEARING and is never removed by a sweep.
+    A repository whose git directory, alternates or config exists and cannot
+    be read is named in `unread`: its leaning is unknown, never none."""
     deps: dict = {}
     for repo in repos:
         common = git_common_dir(repo)
         if not common:
+            if unread is not None:
+                unread.append(f"{repo}/.git (its git directory could not be resolved)")
             continue
         try:
             with open(os.path.join(common, "objects", "info", "alternates"),
@@ -963,9 +1030,12 @@ def dependents_map(repos: list) -> dict:
                         alt = os.path.normpath(os.path.join(common, "objects", alt))
                     target = real(alt)
                     deps.setdefault(target, []).append((repo, "alternates " + alt))
-        except OSError:
+        except FileNotFoundError:
             pass
-        for name, url in local_remote_urls(common):
+        except OSError as exc:
+            if unread is not None:
+                unread.append(f"{common}/objects/info/alternates ({exc.strerror or exc})")
+        for name, url in local_remote_urls(common, unread):
             path = url[len("file://"):] if url.startswith("file://") else url
             path = os.path.expanduser(path)
             if not os.path.isabs(path):
@@ -1363,6 +1433,8 @@ class Sweep:
         self.archive = ""
         self.failed = 0
         self.deps: dict = {}
+        self.deps_partial: list = []
+        self.walk = EstateWalk("")
         self.estate_root = ""
         self.fetched: dict = {}
         self.rescues: list = []
@@ -1420,13 +1492,20 @@ class Sweep:
         self._lane_gate()
         self.procs = ProcScan()
         self._discover()
+        # THE WHOLE ESTATE, ONCE: every repository (for what leans on a tree)
+        # and every `.lane-state` (for who else claims one). What it could not
+        # read makes the dependents scan PARTIAL, and a partial scan removes no
+        # directory by deleting it (#170 A11).
+        self.walk = walk_estate(self.estate_root)
+        unread = list(self.walk.unread)
+        self.deps = dependents_map(self.walk.repos, unread)
+        self.deps_partial = unread
         # WHO ELSE CLAIMS THESE TREES is read before anything is written: a
         # claim that cannot be read refuses, and a refusal never fetches.
         self._other_lanes()
         self._lane_claims()
         if self.opts.fetch and not self.refusal:
             self._fetch_all()
-        self.deps = dependents_map(estate_repos(self.estate_root)) if self.estate_root else {}
         for tree in self.trees:
             read_tree(tree)
         for tree in self.trees:
@@ -1812,6 +1891,14 @@ class Sweep:
                 + "; remedy: in each dependent `git repack -a -d` then drop its "
                   "objects/info/alternates, or re-point the local remote - then sweep again")
             return
+        if t.kind == "clone":
+            partial = self._deps_partial(t.path)
+            if partial:
+                put("keep", "it is a CLONE, removed by deleting its directory, and the search for "
+                            "repositories that lean on it (alternates, a local remote) was "
+                            "partial: " + _first_few(partial)
+                            + " - a dependent nobody saw would lose its objects")
+                return
         if self.opts.fetch:
             state = self.fetched.get(real(t.common), "")
             if state and state not in ("ok", "no origin remote"):
@@ -1911,6 +1998,10 @@ class Sweep:
             elif self.procs is not None and not self.procs.available:
                 it = Item("scratch", full, "keep", "liveness could not be read: " + self.procs.why,
                           True)
+            elif self._deps_partial(full):
+                it = Item("scratch", full, "keep", "it is removed by deleting its directory, and "
+                          "the search for repositories that lean on it was partial: "
+                          + _first_few(self._deps_partial(full)), True)
             else:
                 it = Item("scratch", full, "archive+remove",
                           "lane scratch: tar and sha256 under the sweeps directory, then removed",
@@ -1960,6 +2051,16 @@ class Sweep:
     def _cache_protected(t: Tree) -> bool:
         return (t.disposition in ("foreign", "live", "load-bearing") or t.live is not None
                 or t.contested or t.result.startswith(("FAILED", "left")))
+
+    def _deps_partial(self, path: str) -> list:
+        """Why the search for what leans on `path` is not complete: what the
+        estate walk could not read, and `path` lying outside the estate root
+        it searched."""
+        out = list(self.deps_partial)
+        if self.estate_root and not under(path, self.estate_root):
+            out.append(f"{path} lies outside the estate root {self.estate_root}, the only place "
+                       "dependents were looked for")
+        return out
 
     @staticmethod
     def _cache_owner(path: str, roots: list, trees: list) -> str:
@@ -2546,6 +2647,10 @@ def delete_remote_branch(checkout: str, branch: str, expect: str):
     if proc.returncode != 0:
         return False, _first_line(proc.stderr or proc.stdout)
     return True, ""
+
+
+def _first_few(reasons: list) -> str:
+    return "; ".join(reasons[:3]) + (f"; and {len(reasons) - 3} more" if len(reasons) > 3 else "")
 
 
 def _lean_text(lean: list) -> str:
