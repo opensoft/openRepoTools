@@ -1372,3 +1372,46 @@ def test_a_mirror_style_fetch_refspec_prunes_no_local_branch(estate):
     assert estate.git("rev-parse", "-q", "--verify", "refs/tags/local-tag",
                       check=False) == local_only
     assert not tree.exists()
+
+
+def test_a_lane_root_that_cannot_be_listed_refuses_the_dry_run(estate):
+    """#170 G1: a lane worktree root that cannot be listed was read as an
+    absent one, so with an empty inventory the dry run exited 0 and cleared
+    #163's gate over trees nobody could see."""
+    if os.geteuid() == 0:
+        pytest.skip("root lists a mode-000 directory")
+    estate.lane_root.mkdir(parents=True)
+    (estate.lane_root / "hidden").mkdir()
+    estate.lane_root.chmod(0)
+    try:
+        proc = estate.sweep(LANE, "--dry-run", "--porcelain")
+    finally:
+        estate.lane_root.chmod(0o755)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert f"the lane's worktree root {estate.lane_root} could not be listed" in proc.stdout
+
+
+def _git_shim(estate, refuse: str) -> dict:
+    """A PATH whose `git` fails `git ... worktree list`, as a repository git
+    cannot read would, and runs every other git as itself."""
+    shim = estate.root / "shim"
+    shim.mkdir(exist_ok=True)
+    real_git = shutil.which("git")
+    (shim / "git").write_text(
+        "#!/bin/sh\nw=0\nfor a in \"$@\"; do\n"
+        f"  case \"$a\" in worktree) w=1 ;; {refuse}) [ \"$w\" = 1 ] && "
+        "{ echo 'fatal: the shim refuses' >&2; exit 128; } ;; esac\n"
+        f"done\nexec \"{real_git}\" \"$@\"\n")
+    (shim / "git").chmod(0o755)
+    return {"PATH": f"{shim}{os.pathsep}{estate.env['PATH']}"}
+
+
+def test_registrations_that_cannot_be_read_refuse_the_dry_run(estate):
+    """#170 G5: when both `git worktree list` calls failed, the answer was an
+    empty list - the same as a repository with no worktrees - so discovery
+    could report nothing to retire."""
+    tree = estate.worktree("w", "feat/w")
+    proc = estate.sweep(LANE, "--dry-run", "--porcelain", env=_git_shim(estate, "list"))
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert f"the worktree registrations of {estate.checkout} could not be read" in proc.stdout
+    assert tree.is_dir()

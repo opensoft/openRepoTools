@@ -1057,7 +1057,10 @@ class Tree:
         return f"{self.branch} {short(self.head)}"
 
 
-def worktree_registrations(checkout: str) -> list:
+def worktree_registrations(checkout: str):
+    """Every registration of `checkout`'s repository, its main worktree first
+    - or None where git could not list them, which is never "none" (#170 G5):
+    an empty answer let discovery report nothing to retire and exit 0."""
     # `-z` WHERE GIT HAS IT (2.36+): a path with a newline in it is one field,
     # not a registration of half its name and a line of noise (B3).
     proc = git(checkout, "worktree", "list", "--porcelain", "-z")
@@ -1066,7 +1069,7 @@ def worktree_registrations(checkout: str) -> list:
     else:
         proc = git(checkout, "worktree", "list", "--porcelain")
         if proc.returncode != 0:
-            return []
+            return None
         fields = proc.stdout.splitlines()
     out, cur = [], {}
     for line in fields + [""]:
@@ -1509,6 +1512,11 @@ class Sweep:
         regs_by_real: dict = {}
         for co in checkouts:
             regs = worktree_registrations(co)
+            if regs is None:
+                self.refusal = self.refusal or (
+                    f"the worktree registrations of {co} could not be read (git worktree list "
+                    "failed), so which trees it holds is unknown (#170 G5, Amendment 7(d))")
+                continue
             for i, reg in enumerate(regs):
                 if i == 0 or reg.get("bare"):
                     continue          # the main worktree is the checkout itself
@@ -1524,7 +1532,15 @@ class Sweep:
         for root in self._roots():
             try:
                 names = sorted(os.listdir(root))
-            except OSError:
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            except OSError as exc:
+                # A ROOT THAT CANNOT BE LISTED IS NOT AN ABSENT ROOT (#170 G1): read
+                # as one, an empty inventory let the dry run exit 0 and clear #163's
+                # gate over trees nobody could see.
+                self.refusal = self.refusal or (
+                    f"the lane's worktree root {root} could not be listed "
+                    f"({exc.strerror or exc}), so which trees stand in it is unknown")
                 continue
             for name in names:
                 full = os.path.join(root, name)
@@ -2125,8 +2141,10 @@ class Sweep:
             if proc.returncode != 0:
                 raise _ActFailed("git worktree remove " + t.path + ": " + _first_line(proc.stderr)
                                  + " - a repository-wide prune is never run in its place")
-            regs = [r["path"] for r in worktree_registrations(t.checkout)]
-            if t.path in regs:
+            regs = worktree_registrations(t.checkout)
+            if regs is None:
+                raise _ActFailed("the registrations could not be read again after the prune")
+            if t.path in [r["path"] for r in regs]:
                 raise _ActFailed("the registration is still there after the prune")
             t.result = "pruned"
             self._note(t, f"swept {t.path}: stale registration pruned in {t.checkout}")
@@ -2505,7 +2523,10 @@ def delete_local_branch(checkout: str, branch: str, expect: str):
     old value, so a branch that moved under the sweep is never lost."""
     if not expect:
         return False, "the SHA it was judged at is not known"
-    for reg in worktree_registrations(checkout):
+    regs = worktree_registrations(checkout)
+    if regs is None:
+        return False, "the worktree registrations could not be read, so whether one holds it is unknown"
+    for reg in regs:
         if reg.get("branch") == f"refs/heads/{branch}":
             return False, f"it is checked out in {reg.get('path')} now"
     proc = git(checkout, "update-ref", "-d", f"refs/heads/{branch}", expect)
@@ -2660,6 +2681,9 @@ def branch_items(checkout: str, lane: str, evidence: MergeEvidence) -> list:
     open PR names is never touched; rescue branches are never touched."""
     out = []
     regs = worktree_registrations(checkout)
+    if regs is None:
+        return [Item("branch", checkout, "keep", "the worktree registrations could not be read, "
+                     "so which branches a worktree holds is unknown", True)]
     held = {r.get("branch", "")[len("refs/heads/"):] for r in regs if r.get("branch")}
     fmt = "%(refname:short)\t%(objectname)\t%(upstream:short)\t%(committerdate:iso-strict)"
     proc = git(checkout, "for-each-ref", f"--format={fmt}", "refs/heads/")
@@ -3305,8 +3329,11 @@ class Report:
             proc = git(c, "for-each-ref", f"--format={fmt}", "refs/heads/")
             if proc.returncode != 0:
                 continue
-            held = {r.get("branch", "")[len("refs/heads/"):]
-                    for r in worktree_registrations(c) if r.get("branch")}
+            regs = worktree_registrations(c)
+            if regs is None:
+                self.unreadable.setdefault(c, "its worktree registrations could not be listed")
+                regs = []
+            held = {r.get("branch", "")[len("refs/heads/"):] for r in regs if r.get("branch")}
             for rec in proc.stdout.split("\0"):
                 cols = rec.strip("\n").split("\x1f")
                 if len(cols) < 6:
