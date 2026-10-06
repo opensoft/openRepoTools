@@ -490,8 +490,15 @@ class Helper:
         facts.inventory_rc = tproc.returncode
         if tproc.returncode == 0:
             for line in tproc.stdout.splitlines():
+                if not line.strip():
+                    continue
                 fields = line.split(US)
                 if len(fields) < 2 or not fields[0]:
+                    # A ROW WITH NO ID IS AN UNREADABLE RECORD, never no record
+                    # (#170 G9): skipped, a tree it names outside the scanned
+                    # roots went unseen and the dry run could exit 0.
+                    facts.inventory.append({"id": "", "path": "", "schema": "",
+                                            "raw": line})
                     continue
                 keys = ("id", "path", "branch", "head", "upstream", "dirty", "unpushed",
                         "writer", "observed", "checkout", "generation", "operation",

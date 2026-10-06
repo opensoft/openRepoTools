@@ -2013,3 +2013,16 @@ def test_an_unreadable_process_of_this_account_keeps_the_tree_it_names(estate):
     assert tree.is_dir(), "the tree an unreadable process stands in was removed"
     row = rows_of(proc.stdout)[str(tree)]
     assert row[0] == "keep" and f"process {child.pid}" in row[2] and "could not be read" in row[2]
+
+
+def test_an_inventory_row_with_no_id_refuses_the_dry_run(estate):
+    """#170 G9: a `lane-trees` row with no id was skipped in silence, so a
+    tree it named outside the scanned roots went unseen and the dry run
+    exited 0, clearing #163's gate."""
+    elsewhere = estate.root / "elsewhere" / "tree"
+    estate.inventory.append(US.join(["", str(elsewhere), "feat/x", "0" * 40, "none", "0", "0",
+                                     WRITER, "2026-10-05T00:00:00Z", str(estate.checkout),
+                                     "1", "op-1", "1"]))
+    proc = estate.sweep(LANE, "--dry-run", "--porcelain")
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "inventory record ? is unreadable" in proc.stdout
