@@ -1784,7 +1784,7 @@ class Sweep:
         self.failed = 0
         self.deps: dict = {}
         self.deps_partial: list = []
-        self.walk = EstateWalk("")
+        self.shape_repos: list = []
         self.estate_root = ""
         self.fetched: dict = {}
         self.rescues: list = []
@@ -1857,14 +1857,9 @@ class Sweep:
         self.usage = self._live_usage()
         if self.usage:
             return
-        # THE WHOLE ESTATE, ONCE: every repository (for what leans on a tree)
-        # and every `.lane-state` (for who else claims one). What it could not
-        # read makes the dependents scan PARTIAL, and a partial scan removes no
-        # directory by deleting it (#170 A11).
-        self.walk = walk_estate(self.estate_root)
-        unread = list(self.walk.unread)
-        self.deps = dependents_map(self.walk.repos, unread)
-        self.deps_partial = unread
+        # THE ESTATE'S CHECKOUTS BY ITS SHAPE (a quick walk): beside each one
+        # another lane's control root may sit.
+        self.shape_repos = estate_repos(self.estate_root) if self.estate_root else []
         # WHO ELSE CLAIMS THESE TREES is read before anything is written: a
         # claim that cannot be read refuses, and a refusal never fetches.
         self._other_lanes()
@@ -1873,6 +1868,7 @@ class Sweep:
             self._fetch_all()
         for tree in self.trees:
             read_tree(tree)
+        self._dependents()
         for tree in self.trees:
             self._liveness(tree)
             if tree.is_git and tree.exists:
@@ -1881,6 +1877,29 @@ class Sweep:
                 if tree.branch and not tree.unborn and tree.branch not in PROTECTED_BRANCHES:
                     tree.merge = self.evidence.judge(tree.path, slug_of(tree.origin_url),
                                                      tree.branch, tree.head)
+
+    def _dependents(self) -> None:
+        """What leans on the trees. WHERE A REMOVAL WOULD DELETE A DIRECTORY -
+        a clone the table could take, or `--include-scratch` - the whole
+        estate is walked (#170 A11): every directory but caches, so a clone
+        in a plain directory inside a repository is seen, and what the walk
+        could not read makes the scan PARTIAL, which removes no such
+        directory. A worktree's removal deletes no objects (they are its
+        checkout's), so where only worktrees are candidates the estate's
+        shape is enough: on Eagle the whole walk is 683,000 directories."""
+        whole = self.opts.scratch or any(
+            t.exists and t.kind == "clone"
+            and (t.owner != "foreign" or (self.opts.foreign and t.foreign_kind != "other-lane"))
+            for t in self.trees)
+        unread: list = []
+        if whole:
+            walk = walk_estate(self.estate_root)
+            unread += walk.unread
+            self.deps = dependents_map(walk.repos, unread)
+            self.deps_partial = unread
+        else:
+            self.deps = dependents_map(self.shape_repos, unread)
+            self.deps_partial = []
 
     def _live_usage(self) -> str:
         """`--live` names writers' trees, so each path must name one of the
@@ -2018,10 +2037,11 @@ class Sweep:
         EVERY LANE'S CONTROL ROOT IS READ, wherever #97 keeps it (#170 G6): a
         lane whose checkout is nested (`<estate>/group/repo`) keeps its
         `.lane-state` beside that checkout, not beside this lane's, so the
-        parents read are this lane's own, the override, `$PROJECTS_ROOT`'s,
-        every `.lane-state` the estate walk found, and the parent of every
-        lane's recorded `dir` in the register. A register that cannot be read
-        refuses: whose claims were missed would be unknown."""
+        parents read are #97's own rungs for every lane - the override, the
+        parent of every lane's recorded `dir` in the register, `$PROJECTS_ROOT`
+        - beside this lane's own and beside every checkout of the estate. A
+        register that cannot be read refuses: whose claims were missed would
+        be unknown."""
         parents = set()
         if self.facts.root:
             parents.add(os.path.dirname(self.facts.root.rstrip("/")))
@@ -2031,7 +2051,8 @@ class Sweep:
             parents.add(os.environ["LANES_LANE_STATE_ROOT"])
         if os.environ.get("PROJECTS_ROOT"):
             parents.add(os.path.join(os.environ["PROJECTS_ROOT"], ".lane-state"))
-        parents.update(self.walk.lane_states)
+        parents.update(os.path.join(os.path.dirname(r.rstrip("/")), ".lane-state")
+                       for r in self.shape_repos)
         claimed: dict = {}
 
         def unreadable(what: str) -> None:

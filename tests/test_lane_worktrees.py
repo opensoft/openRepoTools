@@ -1492,7 +1492,8 @@ def test_another_lanes_claim_is_read_wherever_its_control_root_is(estate, where)
             f"STARTED — lane {other}, session {OTHER}@Eagle, 2026-10-05T00:00:00Z, "
             f"lane:{other} → home opensoft/repoC; dir {group / 'repoC'}; host eagle; "
             "container none; os linux"))
-    (group / "repoC").mkdir(parents=True)
+    # THE OTHER LANE'S CHECKOUT, nested one level down in a plain directory.
+    estate.git("init", "-q", "-b", "main", group / "repoC", cwd=estate.root)
     claims = group / ".lane-state" / other / "trees"
     claims.mkdir(parents=True)
     (claims / "c1.yaml").write_text(f"schema: 1\npath: {tree}\n")
