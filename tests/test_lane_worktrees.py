@@ -2039,3 +2039,45 @@ def test_a_dot_git_file_that_is_no_pointer_leaves_the_scan_whole(estate):
                         env={"LANE_WORKTREES_CONF": str(conf)})
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert not store.exists(), rows_of(proc.stdout)[str(store)]
+
+
+# ===================================================== #174, Copilot round 1
+
+def _foreign_clone(estate, name: str) -> tuple:
+    """A standalone clone under the lane's root, published, and the
+    environment that lets `--include-foreign --word go` act on it at once."""
+    clone = estate.lane_root / name
+    estate.lane_root.mkdir(parents=True, exist_ok=True)
+    estate.git("clone", "-q", GH_URL, clone, cwd=estate.root)
+    conf = estate.root / "sweep.conf"
+    conf.write_text("foreign_quiet_hours=0\n")
+    return clone, {"LANE_WORKTREES_CONF": str(conf)}
+
+
+def test_a_clones_reflogs_that_cannot_be_listed_remove_nothing(estate):
+    """#174 Copilot round 1: the clone's loss plan walked `.git/logs` with
+    `os.walk`, which passes over a directory it cannot list in silence - so
+    a commit only `logs/refs/heads/<b>` named was in no plan, no bundle took
+    it, the self-check asked the same blind question, and the clone was
+    deleted with it. A reflog directory that cannot be listed is unknown."""
+    if os.geteuid() == 0:
+        pytest.skip("root lists a mode-000 directory")
+    clone, env = _foreign_clone(estate, "blind")
+    main = estate.git("rev-parse", "HEAD", cwd=clone)
+    tree = estate.git("rev-parse", "HEAD^{tree}", cwd=clone)
+    own = estate.git("commit-tree", tree, "-p", main, "-m", "an experiment", cwd=clone)
+    estate.git("update-ref", "-m", "experiment", "refs/heads/exp", own, cwd=clone)
+    estate.git("update-ref", "-m", "back", "refs/heads/exp", main, cwd=clone)
+    assert own in estate.git("rev-list", "--reflog", cwd=clone).split()
+    sealed = clone / ".git" / "logs" / "refs" / "heads"
+    sealed.chmod(0)
+    try:
+        proc = estate.sweep(LANE, "--include-foreign", "--word", "go", "--yes", "--porcelain",
+                            env=env)
+    finally:
+        sealed.chmod(0o755)
+    assert clone.is_dir(), "a clone whose reflogs could not be read was removed"
+    assert estate.git("cat-file", "-t", own, cwd=clone) == "commit"
+    row = rows_of(proc.stdout)[str(clone)]
+    assert "could not be listed" in row[2] and "left in place" in row[2], row
+    assert proc.returncode == 1, proc.stdout + proc.stderr

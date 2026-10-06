@@ -2778,9 +2778,9 @@ class Sweep:
                 return None, "its refs could not be read"
             tips = [line.split(" ", 1)[1] for line in refs.stdout.splitlines()
                     if " " in line and not line.startswith("refs/remotes/")]
-            files = []
-            for base, _dirs, names in os.walk(os.path.join(gitdir, "logs")):
-                files += [os.path.join(base, n) for n in names]
+            files, why = reflog_files(gitdir)
+            if files is None:
+                return None, why
             logs, why = reflog_shas(files)
             if logs is None:
                 return None, why
@@ -3429,6 +3429,33 @@ def worktree_admin(checkout: str, path: str) -> str:
         if target and (os.path.normpath(target) in want or real(target) in want):
             return os.path.join(base, wid)
     return ""
+
+
+def reflog_files(gitdir: str) -> tuple:
+    """([every reflog file under `<gitdir>/logs`], why-not). `os.walk` passes
+    over a directory it cannot list IN SILENCE, and a reflog never read names
+    no commit - so a clone whose `logs/refs/heads` was unreadable had its
+    reflog-only commits left out of the loss plan, and the rescue and the
+    self-check both approved its deletion (#174, Copilot round 1). A `logs`
+    directory that is not there is an empty answer; anything else that
+    could not be listed is unknown, never empty."""
+    top = os.path.join(gitdir, "logs")
+    errors: list = []
+
+    def failed(exc: OSError) -> None:
+        if isinstance(exc, FileNotFoundError) and \
+                os.path.normpath(str(exc.filename or "")) == os.path.normpath(top):
+            return
+        errors.append(exc)
+
+    files: list = []
+    for base, _dirs, names in os.walk(top, onerror=failed):
+        files += [os.path.join(base, n) for n in names]
+    if errors:
+        exc = errors[0]
+        return None, (f"{exc.filename or top} could not be listed "
+                      f"({exc.strerror or exc}), so the commits its reflogs name are unknown")
+    return files, ""
 
 
 def reflog_shas(files: list) -> tuple:
