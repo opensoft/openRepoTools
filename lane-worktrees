@@ -1542,6 +1542,16 @@ def tree_guards(tree: Tree) -> str:
         if sstash.returncode != 0 or sstash.stdout.strip():
             return (f"submodule {parts[1]} has a stash (or its stash could not be read), which "
                     "the tree's removal would take with it")
+        # ITS HIDDEN EDITS TOO (#174, Copilot round 2): a file flagged
+        # skip-worktree or assume-unchanged in the submodule reads as clean
+        # there exactly as in the superproject (#170 A2).
+        shidden = hidden_edits(spath)
+        if shidden is None or shidden:
+            return (f"submodule {parts[1]}: " + (
+                "its skip-worktree and assume-unchanged flags could not be read" if shidden is None
+                else f"{len(shidden)} file(s) flagged skip-worktree or assume-unchanged differ from "
+                     f"its index (e.g. {shidden[0]})")
+                + " - git status hides them and no rescue would carry them")
         # ITS REFLOGS TOO (#174, Copilot round 1): a commit made in the
         # submodule and checked out away from is in no branch, tag or stash -
         # only a reflog under its git directory names it - and the tree's

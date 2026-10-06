@@ -2332,3 +2332,18 @@ def test_a_deinitialized_submodules_kept_repository_keeps_the_tree(estate):
     assert estate.sweep(LANE, "--yes").returncode == 0
     module = Path(estate.git("rev-parse", "--absolute-git-dir", cwd=tree)) / "modules" / "sub"
     assert estate.git("cat-file", "-t", own, cwd=module) == "commit"
+
+
+def test_a_submodules_hidden_edit_keeps_the_tree(estate):
+    """#174 Copilot round 2: #170 A2's hidden-edit guard read the
+    superproject only, so a file flagged skip-worktree in a submodule and
+    edited there read as clean and went with the tree."""
+    tree, sub = _with_submodule(estate, "subhidden")
+    estate.git("update-index", "--skip-worktree", "s.txt", cwd=sub)
+    (sub / "s.txt").write_text("PRECIOUS local edit\n")
+    assert estate.git("status", "--porcelain", cwd=sub) == ""
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "keep", rows[str(tree)]
+    assert "submodule sub: 1 file(s) flagged skip-worktree" in rows[str(tree)][2]
+    assert estate.sweep(LANE, "--yes").returncode == 0
+    assert (sub / "s.txt").read_text() == "PRECIOUS local edit\n"
