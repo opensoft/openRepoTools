@@ -778,6 +778,53 @@ def test_a_copy_another_account_owns_is_refused_and_left_as_it_was(tmp_path):
 
 
 @NEEDS_JQ
+def test_a_copy_whose_owner_cannot_be_read_is_refused_and_left_as_it_was(
+        tmp_path):
+    """AN OWNER NOBODY COULD READ IS NOT "NOTHING TO KEEP" (Copilot on #172 at
+    bef4b85). `owner_of` answers nothing where `ls` cannot say, and an empty
+    answer is what an ABSENT target gives — so a target that EXISTS and whose
+    owner could not be read was renamed over with this run's own temporary, and
+    a root `--install` took the file over after all. A `ls` first on `$PATH`
+    that fails for that one path stands in for the unreadable owner: the run
+    refuses (2) naming the target, the old copy keeps its bytes and its inode,
+    and no temporary is left beside it.
+    """
+    real = shutil.which("ls")
+    if real is None:
+        pytest.skip("no real `ls` on PATH for the fake to defer to")
+    assert run_cmd("--install", home=tmp_path).returncode == 0
+    bin_dir = tmp_path / ".local" / "bin"
+    name = INSTALLED[1]
+    target = bin_dir / name
+    old = target.read_bytes() + b"# a copy whose owner cannot be read\n"
+    target.write_bytes(old)
+    inode = target.stat().st_ino
+    shim = tmp_path / "failing-ls"
+    shim.mkdir()
+    (shim / "ls").write_text(
+        "#!/bin/sh\n"
+        'last=""\n'
+        'for arg in "$@"; do last="$arg"; done\n'
+        f'if [ "$last" = "{target}" ]; then\n'
+        "\tprintf 'ls: cannot read %s\\n' \"$last\" >&2\n"
+        "\texit 2\n"
+        "fi\n"
+        f'exec {real} "$@"\n', encoding="utf-8")
+    (shim / "ls").chmod(0o755)
+
+    result = run_cmd("--install", home=tmp_path, env={
+        "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}"})
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "REFUSED:" in result.stderr, result.stderr
+    assert f"could not read who owns {target}" in result.stderr, result.stderr
+    assert target.read_bytes() == old
+    assert target.stat().st_ino == inode
+    assert placement_temporaries(tmp_path) == []
+    assert f"{INSTALLED[2]}: " not in result.stdout, (
+        "the loop carried on past a placement it refused")
+
+
+@NEEDS_JQ
 def test_a_group_that_cannot_be_kept_does_not_stop_the_placement(tmp_path):
     """THE GROUP IS KEPT WHERE IT CAN BE, AND IS NO REASON TO REFUSE (Copilot
     round 2 on #172). The owner is this account and the group is one it is not

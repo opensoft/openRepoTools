@@ -1037,7 +1037,11 @@ owner_of() {   # <path>
 # over. Where only the GROUP differs and cannot be kept, it is placed anyway:
 # at 755 and 644 the group's bits are the other bits, so nobody gains or loses
 # a permission by it (Copilot round 2 on #172 asked that it not be silent, and
-# this is why it may be).
+# this is why it may be). And an owner NOBODY COULD READ is not "nothing to
+# keep": `owner_of` answers nothing where `ls` cannot say, which is also what an
+# absent target gives, so a target that EXISTS with no readable owner is
+# refused before the rename rather than handed this run's owner (Copilot on
+# #172 at bef4b85).
 #
 # A DIRECTORY AT THE TARGET IS REFUSED HERE as well as in planning, because `mv`
 # moves a file INTO a directory named as its destination rather than failing,
@@ -1057,6 +1061,12 @@ place_by_rename() {   # <staged source> <target> <mode> <what a refusal adds>
     $rest"; }
 	was="$(owner_of "$target")"
 	now="$(owner_of "$tmp")"
+	if [ -z "$was" ] && { [ -e "$target" ] || [ -L "$target" ]; }; then
+		rm -f -- "$tmp"
+		PLACING=""
+		die "could not read who owns $target, so it was not placed and what was there is untouched: a rename would give it this run's owner.
+    $rest"
+	fi
 	if [ -n "$was" ] && [ "$was" != "$now" ] &&
 		! chown -- "$was" "$tmp" 2>/dev/null &&
 		[ "${was%%:*}" != "${now%%:*}" ]; then
