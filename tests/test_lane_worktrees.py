@@ -1594,3 +1594,29 @@ def test_a_submodules_unpublished_branch_or_stash_keeps_its_tree(estate, what):
     assert f"submodule sub" in rows[str(tree)][2] and want in rows[str(tree)][2]
     assert estate.sweep(LANE, "--yes").returncode == 0
     assert tree.is_dir()
+
+
+def test_an_ignored_file_beneath_a_build_named_directory_is_archived(estate):
+    """#170 A6: an ignored file was dropped unarchived when ANY ancestor was
+    named like build output - `docker/build/prod.env` went, `top.env` beside
+    it was archived."""
+    tree = estate.worktree("deploy", "feat/deploy")
+    estate.commit(tree, "compose", {".gitignore": ".env\n*.env\n__pycache__/\n",
+                                    "docker/build/Dockerfile": "FROM x\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/deploy", cwd=tree)
+    (tree / "docker" / "build" / "prod.env").write_text("DB_PASSWORD=PRECIOUS\n")
+    (tree / "top.env").write_text("TOKEN=kept\n")
+    (tree / "build").mkdir()
+    (tree / "build" / "out.bin").write_bytes(b"\0" * 16)
+    (tree / ".gitignore").write_text(".env\n*.env\n__pycache__/\n/build/\n")
+    estate.git("add", ".gitignore", cwd=tree)
+    estate.commit(tree, "ignore build output")
+    estate.git("push", "-q", "origin", "feat/deploy", cwd=tree)
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not tree.exists()
+    (archive,) = estate.archives()
+    with tarfile.open(archive / "deploy-ignored.tar.gz") as tf:
+        names = tf.getnames()
+    assert "docker/build/prod.env" in names and "top.env" in names, names
+    assert not any(n.startswith("build") for n in names), "build output is not archived"

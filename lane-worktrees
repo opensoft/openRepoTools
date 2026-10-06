@@ -1574,14 +1574,19 @@ def ignored_paths(path: str):
         rel = rel.rstrip("/")
         if not rel:
             continue
-        parts = rel.split("/")
-        if any(p in CACHE_NAMES for p in parts):
+        # THE ENTRY'S OWN NAME DECIDES, never an ancestor's (#170 A6): with
+        # `--directory` an ignored cache or build directory is listed as
+        # itself, so a path BENEATH a directory named `build` is an ignored
+        # file in a tracked directory - `docker/build/prod.env` - and was
+        # dropped unarchived while `top.env` beside it was archived.
+        name = os.path.basename(rel)
+        if name in CACHE_NAMES:
             continue
         full = os.path.join(path, rel)
-        if os.path.isdir(full) and (os.path.basename(rel) in VENV_NAMES
+        if os.path.isdir(full) and (name in VENV_NAMES
                                     or os.path.exists(os.path.join(full, "pyvenv.cfg"))):
             continue
-        if any(p in BUILD_NAMES or p.endswith(".egg-info") for p in parts):
+        if name in BUILD_NAMES or name.endswith(".egg-info"):
             continue
         if rel.endswith((".pyc", ".pyo")):
             continue
