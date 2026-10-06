@@ -2382,3 +2382,26 @@ def test_another_lanes_claim_inside_a_repository_is_read_before_a_clone_goes(est
     row = rows_of(proc.stdout)[str(clone)]
     assert row[0] == "foreign" and "lane repoD-5's inventory names it" in row[2], row
     assert clone.is_dir()
+
+
+def test_a_landed_line_never_lets_commits_onto_a_branch_gh_answers_open(estate, tmp_path):
+    """#174 Copilot round 2: the register says #21 LANDED while gh still
+    answers #21 OPEN, and the local tip is AHEAD of the PR head - the
+    verdict was "moved", which dropped gh's OPEN, and push+remove put the
+    lane's unreviewed commit onto the open pull request's branch. It goes to
+    a rescue branch, and origin's branch is left as it is."""
+    tree = estate.worktree("reg", "feat/reg")
+    head = estate.commit(tree, "r", {"r.txt": "r\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/reg", cwd=tree)
+    estate.pr(21, "feat/reg", "OPEN", head)
+    estate.register_line(LANE, f"LANDED — lane {LANE}, session {ME}@Eagle, "
+                               f"2026-10-05T00:00:00Z, {SLUG}#21 → main abc1234")
+    ahead = estate.commit(tree, "unreviewed", {"u.txt": "u\n"})
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "rescue+remove", rows[str(tree)]
+    assert "gh still answers PR #21 OPEN" in rows[str(tree)][2]
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    heads = estate.remote_heads()
+    assert heads["feat/reg"] == head, "the open pull request's branch was pushed onto"
+    assert [b for b, s in heads.items() if b.startswith(f"rescue/{LANE}/reg-") and s == ahead]

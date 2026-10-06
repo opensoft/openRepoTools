@@ -1003,7 +1003,7 @@ class MergeEvidence:
                 base = row.get("baseRefName") or ""
                 if base not in defaults:
                     elsewhere = elsewhere or {
-                        "state": "elsewhere", "pr": number, "source": "gh",
+                        "state": "elsewhere", "pr": number, "source": "gh", "gh_open": gh_open,
                         "why": f"PR #{number} was merged into {base or 'a base gh did not name'}, "
                                f"not {'/'.join(sorted(defaults))}: not a landing"}
                     continue
@@ -1018,8 +1018,10 @@ class MergeEvidence:
                                    + (f"; gh still answers PR #{gh_open[0]} OPEN, so its remote "
                                       "branch is kept" if gh_open else "")}
                 return {"state": "moved", "pr": number, "source": source, "head": head,
+                        "gh_open": gh_open,
                         "why": f"PR #{number} is merged ({source}) but this branch has moved "
-                               f"past its head {short(head)}"}
+                               f"past its head {short(head)}"
+                               + (f"; gh still answers PR #{gh_open[0]} OPEN" if gh_open else "")}
         if elsewhere:
             return elsewhere
         return {"state": "closed", "pr": int(mine[0].get("number", 0)), "source": "gh",
@@ -2541,8 +2543,15 @@ class Sweep:
         if t.remote_tip:
             other = t.remote_trailer if (t.remote_trailer and
                                          t.remote_trailer.lower() != self.lane.lower()) else ""
+            # GH'S OPEN WINS HERE WHATEVER THE REGISTER SAYS (#174, Copilot round
+            # 2): a LANDED line naming a PR gh still answers OPEN made the verdict
+            # "moved", and the lane's commits were pushed onto that open branch.
+            gh_open = m.get("gh_open") or []
             why = (m["why"] + ", and a lane's unreviewed commits never go onto an open pull "
                    "request's branch" if m.get("state") == "open" else
+                   f"gh still answers PR #{gh_open[0]} OPEN for it, whatever the register's "
+                   "LANDED line says, and a lane's unreviewed commits never go onto an open pull "
+                   "request's branch" if gh_open else
                    f"origin/{t.remote_branch} carries lane {other}'s work (its tip's Lane: "
                    "trailer)" if other else
                    f"whether an open pull request names origin/{t.remote_branch} is unknown "
