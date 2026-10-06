@@ -1459,3 +1459,31 @@ def test_a_partial_dependents_scan_removes_no_clone(estate):
     assert rows[str(store)][0] == "keep", rows
     assert "was partial" in rows[str(store)][2] and str(sealed) in rows[str(store)][2]
     assert store.is_dir()
+
+
+@pytest.mark.parametrize("where", ["nested-in-the-estate", "recorded-in-the-register"])
+def test_another_lanes_claim_is_read_wherever_its_control_root_is(estate, where):
+    """#170 G6: other lanes' claims were read only beside THIS lane's control
+    root. A lane whose checkout is nested keeps its `.lane-state` beside that
+    checkout, so its claim was missed and the tree was not contested."""
+    tree = estate.worktree("shared", "feat/shared")
+    estate.git("push", "-q", "-u", "origin", "feat/shared", cwd=tree)
+    if where == "nested-in-the-estate":
+        group = estate.projects / "group"
+        other = "repoB-3"
+    else:
+        group = estate.root / "away" / "group"
+        other = "repoC-4"
+        estate.register_line(other, (
+            f"STARTED — lane {other}, session {OTHER}@Eagle, 2026-10-05T00:00:00Z, "
+            f"lane:{other} → home opensoft/repoC; dir {group / 'repoC'}; host eagle; "
+            "container none; os linux"))
+    (group / "repoC").mkdir(parents=True)
+    claims = group / ".lane-state" / other / "trees"
+    claims.mkdir(parents=True)
+    (claims / "c1.yaml").write_text(f"schema: 1\npath: {tree}\n")
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "keep", rows[str(tree)]
+    assert f"lane {other}'s inventory names it too" in rows[str(tree)][2]
+    assert estate.sweep(LANE, "--yes").returncode == 0
+    assert tree.is_dir()

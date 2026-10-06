@@ -580,6 +580,55 @@ class Helper:
                          env_extra={"LANES_LANE": lane}, fetch=False)
 
 
+LANE_LINE_RE = re.compile(r"^(?:STARTED|PAUSED|RESUMED|ENDED|RETIRED) — lane [^,]+, "
+                          r"session [^,]+, [^,]+, (.*)$")
+
+
+def payload_field(payload: str, name: str) -> str:
+    """One `<name> <value>` sub-field of a register payload, as
+    `lanes-edit.sh`'s `payload_subfield` reads it: the `; `-separated part
+    that starts with the name, its value up to the first space - or, quoted,
+    up to the closing quote."""
+    want = name + " "
+    for part in payload.split("; "):
+        if not part.startswith(want):
+            continue
+        value = part[len(want):].strip()
+        if value.startswith('"'):
+            end = value.find('"', 1)
+            if end > 0:
+                return value[1:end]
+        return value.split(" ", 1)[0]
+    return ""
+
+
+def register_lane_dirs(helper) -> tuple:
+    """({lane: its recorded dir}, why-not) - every lane log's last lane-kind
+    line that carries a `dir`, read from the workspace repository's
+    `origin/<branch>` in one `git grep`. Where #97 keeps that lane's control
+    root (`<parent of dir>/.lane-state/<lane>`) follows from it."""
+    root = helper.workspace_root() if helper.path else ""
+    if not root:
+        return {}, "the workspace repository could not be found"
+    branch = os.environ.get("LANES_BRANCH", "") or "main"
+    proc = git(root, "grep", "-E", "-e", r"^(STARTED|PAUSED|RESUMED|ENDED|RETIRED) — lane ",
+               f"origin/{branch}", "--", "lanes/log")
+    if proc.returncode not in (0, 1):
+        return {}, (f"the register's lane logs on origin/{branch} could not be read: "
+                    + _first_line(proc.stderr))
+    out: dict = {}
+    for line in proc.stdout.splitlines():
+        _ref, _, rest = line.partition(":")
+        fname, _, text = rest.partition(":")
+        if not fname.endswith(".md"):
+            continue
+        m = LANE_LINE_RE.match(text)
+        found = payload_field(m.group(1), "dir") if m else ""
+        if found.startswith("/"):
+            out[os.path.basename(fname)[:-3]] = found
+    return out, ""
+
+
 def _first_line(text: str) -> str:
     for line in (text or "").splitlines():
         if line.strip():
@@ -1634,7 +1683,15 @@ class Sweep:
         self.trees = sorted(seen.values(), key=lambda t: (t.owner != "inventory", t.path))
 
     def _other_lanes(self) -> None:
-        """A FOREIGN tree another lane's inventory names is THAT lane's."""
+        """A FOREIGN tree another lane's inventory names is THAT lane's.
+
+        EVERY LANE'S CONTROL ROOT IS READ, wherever #97 keeps it (#170 G6): a
+        lane whose checkout is nested (`<estate>/group/repo`) keeps its
+        `.lane-state` beside that checkout, not beside this lane's, so the
+        parents read are this lane's own, the override, `$PROJECTS_ROOT`'s,
+        every `.lane-state` the estate walk found, and the parent of every
+        lane's recorded `dir` in the register. A register that cannot be read
+        refuses: whose claims were missed would be unknown."""
         parents = set()
         if self.facts.root:
             parents.add(os.path.dirname(self.facts.root.rstrip("/")))
@@ -1642,6 +1699,9 @@ class Sweep:
             parents.add(os.path.join(os.path.dirname(self.facts.dir.rstrip("/")), ".lane-state"))
         if os.environ.get("LANES_LANE_STATE_ROOT"):
             parents.add(os.environ["LANES_LANE_STATE_ROOT"])
+        if os.environ.get("PROJECTS_ROOT"):
+            parents.add(os.path.join(os.environ["PROJECTS_ROOT"], ".lane-state"))
+        parents.update(self.walk.lane_states)
         claimed: dict = {}
 
         def unreadable(what: str) -> None:
@@ -1650,6 +1710,12 @@ class Sweep:
                 f"{what} could not be read, so whether another lane claims these trees is "
                 "unknown; read it, or move it aside if it is debris")
 
+        dirs, why = register_lane_dirs(self.helper)
+        if why:
+            unreadable(f"every lane's recorded directory ({why})")
+        for other, odir in dirs.items():
+            if other.lower() != self.lane.lower():
+                parents.add(os.path.join(os.path.dirname(odir.rstrip("/")), ".lane-state"))
         for parent in sorted(parents):
             try:
                 lanes = os.listdir(parent)
@@ -1659,7 +1725,7 @@ class Sweep:
                 unreadable(f"the lane-state directory {parent}")
                 continue
             for other in lanes:
-                if other == self.lane:
+                if other.lower() == self.lane.lower():
                     continue
                 tdir = os.path.join(parent, other, "trees")
                 try:
