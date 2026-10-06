@@ -74,6 +74,13 @@ SELF="${BASH_SOURCE[0]:-$0}"
 MODE=""
 WORKDIR=""
 STAGED=""
+# THE PREFIX OF THE TEMPORARY A PLACEMENT IS MAKING (#167), named here for the
+# `EXIT` trap `workdir` sets, which removes `"$PLACING"*`: `place_by_rename`
+# removes its temporary on every failure it sees, and this is what removes it
+# on the ones it cannot see — a signal, or an `errexit`. A PREFIX, set before
+# `mktemp` runs, so no instant exists in which the file is there and the trap
+# does not know its name (Copilot round 2 on #172).
+PLACING=""
 
 say() { printf '%s\n' "$*"; }
 die() { printf '\nREFUSED: %s\n' "$1" >&2; exit "${2:-2}"; }
@@ -225,7 +232,7 @@ USAGE
 workdir() {
 	if [ -z "$WORKDIR" ]; then
 		WORKDIR="$(mktemp -d)"
-		trap 'rm -rf -- "$WORKDIR"' EXIT
+		trap 'rm -rf -- "$WORKDIR"; [ -z "$PLACING" ] || rm -f -- "$PLACING"*' EXIT
 	fi
 }
 
@@ -992,6 +999,107 @@ mode_is() {   # <octal> <path>
 	[ -n "$(find "$2" -maxdepth 0 -perm "$1" -print 2>/dev/null)" ]
 }
 
+# WHO OWNS A PATH, as `<uid>:<gid>`, and nothing where it cannot be read —
+# asked without `stat` for the reason `mode_is` gives. `ls -n` prints both as
+# numbers, in its third and fourth fields, on GNU, BSD and busybox alike, and
+# `-d` keeps the answer about the path itself. The `|| :` keeps a path `ls`
+# cannot read an empty answer rather than a `pipefail` exit.
+owner_of() {   # <path>
+	{ ls -lnd -- "$1" 2>/dev/null || :; } | awk 'NR == 1 { print $3 ":" $4 }'
+}
+
+# EVERY FILE `--install` PLACES IS WRITTEN BESIDE ITS TARGET AND RENAMED OVER IT
+# (opensoft/openRepoTools#167): a temporary in the target's own directory, the
+# bytes, the mode, then `mv -f`. It was `cp` onto the target, which keeps the
+# target's INODE and rewrites its bytes — and bash reads a script from its file
+# while it runs it, at an offset, so a lane tool that was running when an
+# install replaced it went on reading the NEW text from the OLD offset. Measured
+# on 2026-09-30: `A.sh: line 4: ript,: command not found`, then the new text's
+# commands run from its middle. `lanes-edit.sh`, `lane-start` and the landers
+# run for minutes, so a repair install at a busy moment could corrupt a lane's
+# register write mid-flight. A rename puts a NEW inode at the path in one step:
+# a process that has the old one open reads the old text to its end, and the
+# next one to start reads the new. The SAME directory, because a rename is
+# atomic only within one filesystem, and the same shape the receipt and
+# `settings.json` were already written in.
+#
+# THE MODE GOES ON THE TEMPORARY, so the target never exists at the wrong mode
+# for even an instant, and a stamp that fails (#48) leaves whatever was at the
+# target exactly as it was.
+#
+# EVERY FAILURE REMOVES THE TEMPORARY, then refuses naming the target, and a
+# run killed while one exists leaves nothing behind either: `$PLACING` holds
+# its PREFIX — `.<name>.openrepotools.<this pid>.` — from BEFORE `mktemp` runs
+# until after the `mv`, and the `EXIT` trap removes whatever starts with it. A
+# name the trap learnt only from `mktemp`'s answer had a window, between the
+# file being made and the answer being assigned, in which a signal left it
+# behind (Copilot round 2 on #172); the pid keeps the prefix this run's own.
+# The leading dot keeps it out of a listing, and the suffix after the name
+# keeps it out of every glob a reader of these directories takes (`*.md` in
+# `commands/`).
+#
+# THE OWNER STAYS WHO IT WAS (Copilot on #172). A rename puts the TEMPORARY's
+# inode at the path, and the temporary belongs to whoever runs this — so a root
+# `--install` into another user's home, which this file goes out of its way to
+# allow (search "WHAT `-w` DOES NOT PROVE"), would hand that user root-owned
+# copies that their own next `--install` refuses as unwritable. `cp` kept the
+# owner by keeping the inode; this keeps it by giving the temporary the
+# target's uid and gid before the rename. Where that `chown` is refused and the
+# OWNER differs — an account placing over a file another account owns, which
+# only root may give away — the placement refuses rather than take the file
+# over. Where only the GROUP differs and cannot be kept, it is placed anyway:
+# at 755 and 644 the group's bits are the other bits, so nobody gains or loses
+# a permission by it (Copilot round 2 on #172 asked that it not be silent, and
+# this is why it may be). And an owner NOBODY COULD READ is not "nothing to
+# keep": `owner_of` answers nothing where `ls` cannot say, which is also what an
+# absent target gives, so a target that EXISTS with no readable owner is
+# refused before the rename rather than handed this run's owner (Copilot on
+# #172 at bef4b85).
+#
+# A DIRECTORY AT THE TARGET IS REFUSED HERE as well as in planning, because `mv`
+# moves a file INTO a directory named as its destination rather than failing,
+# and the planners are a phase earlier. Two installs that race (#106) each
+# still place whole files; serializing them is #106's lock, not this.
+place_by_rename() {   # <staged source> <target> <mode> <what a refusal adds>
+	local source="$1" target="$2" mode="$3" rest="$4" tmp="" was="" now=""
+	PLACING="$(dirname -- "$target")/.${target##*/}.openrepotools.$$."
+	tmp="$(mktemp -- "${PLACING}XXXXXX")" ||
+		{ rm -f -- "$PLACING"*; PLACING=""; die "could not create a temporary file beside $target, so it was not placed.
+    $rest"; }
+	cp -- "$source" "$tmp" ||
+		{ rm -f -- "$tmp"; PLACING=""; die "could not write $target, so it was not placed and what was there is untouched.
+    $rest"; }
+	chmod "$mode" "$tmp" ||
+		{ rm -f -- "$tmp"; PLACING=""; die "could not set mode $mode on $target, so it was not placed and what was there is untouched.
+    $rest"; }
+	was="$(owner_of "$target")"
+	now="$(owner_of "$tmp")"
+	if [ -z "$was" ] && { [ -e "$target" ] || [ -L "$target" ]; }; then
+		rm -f -- "$tmp"
+		PLACING=""
+		die "could not read who owns $target, so it was not placed and what was there is untouched: a rename would give it this run's owner.
+    $rest"
+	fi
+	if [ -n "$was" ] && [ "$was" != "$now" ] &&
+		! chown -- "$was" "$tmp" 2>/dev/null &&
+		[ "${was%%:*}" != "${now%%:*}" ]; then
+		rm -f -- "$tmp"
+		PLACING=""
+		die "$target belongs to uid ${was%%:*}, and this run cannot give the new copy that owner, so it was not placed and what was there is untouched.
+    $rest"
+	fi
+	if [ -d "$target" ]; then
+		rm -f -- "$tmp"
+		PLACING=""
+		die "$target is a directory, so nothing was placed there: \`mv\` would have put the file inside it.
+    $rest"
+	fi
+	mv -f -- "$tmp" "$target" ||
+		{ rm -f -- "$tmp"; PLACING=""; die "could not move the new $target into place, so what was there is untouched.
+    $rest"; }
+	PLACING=""
+}
+
 install_commands() {
 	local dir="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
 	local name target source verb placed=0
@@ -1035,30 +1143,36 @@ install_commands() {
 			else
 				verb="already installed at $target (mode restored to 755)"
 			fi
-		else
-			if [ -e "$target" ]; then verb="updated at $target"; else verb="installed at $target"; fi
-			cp -- "$source" "$target"
-		fi
-		# STAMPED EVERY TIME, AND ITS FAILURE IS A REFUSAL (#48). A copy that is
-		# not executable is not a command, and this was the ONE mode stamp in
-		# this file with no `die` beside it: under `set -e` a failure here left
-		# the shell's own 1, which this toolset spends on "findings were
-		# printed", as the answer from a run that was refusing with the commands
-		# before it already placed.
-		#
-		# AND NO OWNERSHIP PREFLIGHT IN FRONT OF IT, which is the decision
-		# `unplaceable_kind` already carries — search "WHAT `-w` DOES NOT PROVE"
-		# for the whole of it. `[ -O ]` is the question that would catch this
-		# first, and it is a guard no test in this suite can reach and one that
-		# would refuse a root `--install` into another user's home, where the
-		# stamp does in fact succeed. R-A9-15 is the ruling that a guard nobody
-		# can test is a guard nobody can rely on, so the stamp's own failure is
-		# the refusal, naming the file it could not mode.
-		chmod 755 "$target" ||
-			die "could not set mode 755 on $target, so that command is not executable.
+			# STAMPED EVERY TIME, AND ITS FAILURE IS A REFUSAL (#48). A copy that
+			# is not executable is not a command, and this was the ONE mode stamp
+			# in this file with no `die` beside it: under `set -e` a failure here
+			# left the shell's own 1, which this toolset spends on "findings were
+			# printed", as the answer from a run that was refusing with the
+			# commands before it already placed. On THIS arm it is stamped in
+			# place — a mode is metadata, and no running copy reads it — and on
+			# the other `place_by_rename` stamps the temporary (#167).
+			#
+			# AND NO OWNERSHIP PREFLIGHT IN FRONT OF IT, which is the decision
+			# `unplaceable_kind` already carries — search "WHAT `-w` DOES NOT PROVE"
+			# for the whole of it. `[ -O ]` is the question that would catch this
+			# first, and it is a guard no test in this suite can reach and one that
+			# would refuse a root `--install` into another user's home, where the
+			# stamp does in fact succeed. R-A9-15 is the ruling that a guard nobody
+			# can test is a guard nobody can rely on, so the stamp's own failure is
+			# the refusal, naming the file it could not mode.
+			chmod 755 "$target" ||
+				die "could not set mode 755 on $target, so that command is not executable.
     Whatever the lines above report is placed; this one has its bytes and not its
     mode, and the skills, the command files and the hook entries are not placed at
     all."
+		else
+			if [ -e "$target" ]; then verb="updated at $target"; else verb="installed at $target"; fi
+			# WRITTEN BESIDE ITSELF AND RENAMED OVER ITSELF, never rewritten in
+			# place (#167): a lane tool running from this path finishes on the
+			# text it started with. `place_by_rename` says why.
+			place_by_rename "$source" "$target" 755 "Whatever the lines above report is placed; the skills, the command files and the
+    hook entries are not placed at all."
+		fi
 		placed=$((placed + 1))
 		say "$name: $verb"
 	done
@@ -1365,6 +1479,14 @@ plan_skill_targets() {
 	# not this user's to write (#40, finding 4). The eleven were already placed
 	# by the time `cp` met it, on the one path that promises all or none, so the
 	# `-w` is asked here beside the `-L`.
+	#
+	# BOTH QUESTIONS OUTLIVE THE `cp` (#167). The write is a rename now, which
+	# follows no link and needs the DIRECTORY's write bit rather than the
+	# file's — so neither target would FAIL any more; each would be REPLACED,
+	# without a word. A link is somebody's link, and swapping it for a regular
+	# file unasked is the same act as writing through it, in the other
+	# direction (the receipt's own rule, `receipt_replace`); a read-only file
+	# is somebody saying "not this one". The refusal is the same refusal.
 	for name in "${SKILLS[@]}"; do
 		for target in "$(skills_home)/shared/skills/$name/SKILL.md" "$(claude_home)/skills/$name/SKILL.md"; do
 			kind="$(unplaceable_kind "$target")" || continue
@@ -1384,12 +1506,11 @@ plan_skill_targets() {
 	[ -z "$bad" ] || die "\`--install\` places a REGULAR FILE IT CAN WRITE at each of these skill and
     command targets, and these are not that:
 $bad
-    \`cp\` follows a symlink, so installing over one would leave the skill
-    UNINSTALLED — the target stays a link — and would write these bytes into
-    whatever is on the other end of it; and a target this user cannot write is
-    a \`cp\` that fails with the eleven commands already placed, which is the
-    half-install this phase exists to prevent. NOTHING was installed and
-    nothing already installed was replaced.
+    Each file is placed by renaming a new copy over its path, so installing
+    over a symlink would replace somebody's link with a regular file, over a
+    directory would put the file inside it, and over a file this user cannot
+    write would replace a file somebody made read-only — none of it asked for.
+    NOTHING was installed and nothing already installed was replaced.
     Clear them, then re-run — \`rm -f\` takes a read-only file, because what a
     removal needs is the DIRECTORY's write bit and not the file's:
         rm -f -- $paths"
@@ -1398,8 +1519,8 @@ $bad
 # THE SEVENTEEN TARGETS, PROVED PLACEABLE BEFORE ANY OF THE THIRTY-ONE IS PLACED
 # (A9 Addendum 4, R-A9-12, ruled on F5 of the #24 review).
 #
-# `cp` FOLLOWS A SYMLINK. The loop below tests `[ -e "$target" ]`, compares
-# with `cmp -s` and then copies, and not one of the three can tell a regular
+# `cp` FOLLOWS A SYMLINK. The loop below tested `[ -e "$target" ]`, compared
+# with `cmp -s` and then copied, and not one of the three can tell a regular
 # file from a link to one — so against the bin directory the pre-move
 # `link-estates` actually leaves on a workstation, `--install` printed
 # `lane-start: updated at …`, `9 of 9 placed`, exit 0, and BOTH claims were
@@ -1412,6 +1533,12 @@ $bad
 # target that "already exists as a symlink" too, so a host in this state also
 # fails the estate install that follows — the exact failure clause (f)(3) is
 # written about.
+#
+# THE REFUSAL OUTLIVES THE `cp` (#167). The loop places by RENAME now, which
+# follows no link: it would swap the link itself for a regular file, without a
+# word, which is the same act in the other direction — the person's link gone
+# and nothing on screen saying so. `plan_skill_targets` says the same of the
+# files it walks.
 #
 # A HOST STILL CARRYING THOSE SYMLINKS IS THE NORMAL PRE-ACT-5 CASE, not an
 # exotic one: adoption act 6 clears them on each workstation before the first
@@ -1426,14 +1553,17 @@ $bad
 # path is absent or is a regular file.
 #
 # `-L` AS WELL AS `-e`, because a DANGLING symlink is the sharper case: `[ -e ]`
-# is false on one, and `cp` through it creates the file at the far end — a write
-# into a repository this command was never told about.
+# is false on one, so it reads as ABSENT. `cp` through it created the file at the
+# far end — a write into a repository this command was never told about — and
+# the rename that replaced `cp` (#167) would swap the link for a file unasked.
 #
-# IT IS ASKED APART FROM THE WRITE, because the writes are not one write. `cp`
-# needs the target file's own `w`; the SessionStart merge REPLACES its file
-# through `mktemp` + `mv -f` and needs the DIRECTORY's, so a `settings.json`
-# this user cannot write is one `--install` may still merge into — and a single
-# walk that asked `-w` of all three would refuse an install that works.
+# IT IS ASKED APART FROM THE `-w`, because the `-w` is not asked of every path.
+# Every write here is a rename since #167, and a rename needs the DIRECTORY's
+# write bit and never the file's: `unplaceable_kind` asks the file's own `-w` of
+# the files this installer owns, as a person's "not this one", while the
+# SessionStart merge — which has always replaced `settings.json` through
+# `mktemp` + `mv -f` — merges into one this user cannot write. A single walk that
+# asked `-w` of all three would refuse an install that works.
 path_kind() {   # <path>
 	local t="$1"
 	if [ -L "$t" ]; then
@@ -1451,7 +1581,7 @@ path_kind() {   # <path>
 	return 1
 }
 
-# AND WHETHER `cp` MAY WRITE OVER IT: `-w` as well as `-f` (#40, finding 4).
+# AND WHETHER IT MAY BE WRITTEN OVER: `-w` as well as `-f` (#40, finding 4).
 # This answered "a regular file" with `return 1` and asked nothing else, so
 # every existing file counted as one `--install` may place over — and
 # `plan_skill_targets` let a READ-ONLY `SKILL.md` or command file through.
@@ -1462,10 +1592,17 @@ path_kind() {   # <path>
 # either: `chmod 444` on a file a person did not want overwritten is what a
 # person does.
 #
+# THAT LAST SENTENCE IS NOW THE WHOLE REASON (#167). The write is a rename, which
+# needs the directory's write bit and not the file's, so a read-only target would
+# no longer FAIL half way — it would be replaced without a word. The question
+# stays, so that a person's `chmod 444` is still the refusal it was.
+#
 # WHAT `-w` DOES NOT PROVE IS THAT THE MODE STAMP CAN SUCCEED, and that limit is
 # deliberate (#44 round 1, the suppressed comment at `openRepoTools:635`). A
-# GROUP-WRITABLE file owned by another account takes the `cp` and refuses the
-# `chmod`, and the question that would settle it — `[ -O ]`, this euid against
+# GROUP-WRITABLE file owned by another account passes `-w` and refuses the
+# `chmod` where the stamp is made IN PLACE — the arm whose bytes were already
+# right; the arm that writes stamps its own temporary (#167) — and the question
+# that would settle it — `[ -O ]`, this euid against
 # the file's owner — is one no test in this suite can put: `tmp_path` cannot
 # make a second account, and it would refuse a root `--install` into another
 # user's home, where the `chmod` does in fact succeed. A guard no test reaches
@@ -1577,12 +1714,11 @@ plan_install_targets() {
 	[ -z "$bad" ] || die "\`--install\` places a REGULAR FILE IT CAN WRITE at each of these, and these are
     not that:
 $bad
-    \`cp\` follows a symlink, so installing over one would leave the command
-    UNINSTALLED — the target stays a link — and would write these bytes into
-    whatever is on the other end of it; and a target this user cannot write is
-    a \`cp\` that fails with the artifacts before it already placed, which is the
-    half-install this phase exists to prevent. NOTHING was installed and
-    nothing already installed was replaced.
+    Each command is placed by renaming a new copy over its path, so installing
+    over a symlink would replace somebody's link with a regular file, over a
+    directory would put the file inside it, and over a file this user cannot
+    write would replace a file somebody made read-only — none of it asked for.
+    NOTHING was installed and nothing already installed was replaced.
     Clear them, then re-run — \`rm -f\` takes a read-only file, because what a
     removal needs is the DIRECTORY's write bit and not the file's:
         rm -f -- $paths
@@ -1860,11 +1996,15 @@ place_skill_and_hook() {
 			else
 				verb="already installed at $target (mode restored to 644)"
 			fi
+			chmod 644 "$target" || die "could not set the mode on $target."
 		else
 			if [ -e "$target" ]; then verb="updated at $target"; else verb="installed at $target"; fi
-			cp -- "$WORKDIR/skill-$name.md" "$target" ||
-				die "could not write $target. The $placed commands above are placed;
-    the skills and the hook are not."
+			# BY RENAME, as the bin directory's files are (#167). A session reads
+			# a `SKILL.md` whole rather than running it, so nothing here executes
+			# garbage — but one way to place a file is one rule to read, and a
+			# reader that opens it mid-install still sees the old text or the
+			# new, never a truncated one.
+			place_by_rename "$WORKDIR/skill-$name.md" "$target" 644 "The $placed commands above are placed; the skills and the hook are not."
 		fi
 		# 644: a SKILL.md is a document a session READS, not a command. The
 		# seventeen in the bin directory are stamped 755 for the reason that loop
@@ -1874,7 +2014,6 @@ place_skill_and_hook() {
 		# arguing why adoption act 4b must delete workBenches#63's 0644
 		# loop; the deletion is required either way, because two writers of
 		# one path is the defect and the mode was only its symptom.
-		chmod 644 "$target" || die "could not set the mode on $target."
 		say "$name: $verb"
 	done
 	done
@@ -1906,13 +2045,11 @@ place_skill_and_hook() {
 				else
 					verb="already installed at $target (mode restored to 644)"
 				fi
+				chmod 644 "$target" || die "could not set the mode on $target."
 			else
 				if [ -e "$target" ]; then verb="updated at $target"; else verb="installed at $target"; fi
-				cp -- "$WORKDIR/command-$name.md" "$target" ||
-					die "could not write $target. The $placed commands above are placed;
-    the skills, the command files and the hook are not."
+				place_by_rename "$WORKDIR/command-$name.md" "$target" 644 "The $placed commands above are placed; the skills, the command files and the hook are not."
 			fi
-			chmod 644 "$target" || die "could not set the mode on $target."
 			say "/$name: $verb"
 		done
 	done

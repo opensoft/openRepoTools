@@ -1023,7 +1023,8 @@ def test_killed_suite_sandboxes_whose_owner_is_gone_are_removed(estate):
     for d in (dead, young, held):
         d.mkdir()
         (d / "f").write_text("x")
-    # A SUITE'S MARK (#170 item 1): pytest's `.lock`, naming a pid that is gone.
+    # A SUITE'S MARK IN A `tmp.*` IS NO PROOF (#170 item 1, option (b)):
+    # pytest's `.lock`, naming a pid that is gone - listed, never removed.
     (dead / ".lock").write_text(f"{_dead_pid()}\n")
     for d in (dead, held):
         for p in (d / "f", d / ".lock", d):
@@ -1043,7 +1044,8 @@ def test_killed_suite_sandboxes_whose_owner_is_gone_are_removed(estate):
         sleeper.kill()
         sleeper.wait()
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert not dead.exists() and not gone_run.exists()
+    assert not gone_run.exists()
+    assert dead.is_dir() and items_of(proc.stdout, "sandbox")[str(dead)][0] == "list"
     assert young.is_dir(), "younger than the minimum age"
     assert held.is_dir(), "a live process stands in it"
     assert live_run.is_dir(), "its .lock names a live pid"
@@ -1213,6 +1215,34 @@ def test_trees_under_the_lanes_root_or_carrying_its_trailer_are_its_own(estate):
     assert str(rooted) in rows_of(none.stdout), "the table is still printed"
 
 
+def test_a_tree_another_lane_stacked_on_this_lanes_commit_is_not_adopted(estate):
+    """#174 review R1: a tree in `.claude/worktrees` was adopted when ANY of
+    its own commits carried this lane's trailer, so one another lane STACKED
+    on this lane's commit - base by repoA-1, tip and an edit in progress by
+    repoB-2 - was repoA-1's: `--yes` removed it and pushed repoB-2's edit to
+    `rescue/repoA-1/...`. HEAD's own trailer decides: it is repoB-2's tree."""
+    conf = estate.root / "sweep.conf"
+    conf.write_text("foreign_quiet_hours=0\n")
+    env = {"LANE_WORKTREES_CONF": str(conf)}
+    stacked = estate.worktree("stacked", "feat/stacked", where="claude", record=False)
+    estate.commit(stacked, "the base", {"base.txt": "b\n"})
+    estate.commit(stacked, "stacked on it", {"s.txt": "s\n"}, lane="repoB-2")
+    (stacked / "s.txt").write_text("repoB-2's edit in progress\n")
+    before = estate.remote_heads()
+    dry = estate.sweep(LANE, "--dry-run", "--porcelain", env=env)
+    assert dry.returncode == 0, dry.stdout + dry.stderr
+    assert rows_of(dry.stdout)[str(stacked)][:2] == ("foreign", "-"), dry.stdout
+    yes = estate.sweep(LANE, "--yes", "--porcelain", env=env)
+    assert yes.returncode == 0, yes.stdout + yes.stderr
+    assert (stacked / "s.txt").read_text() == "repoB-2's edit in progress\n"
+    assert estate.remote_heads() == before, "repoB-2's work was pushed by repoA-1's sweep"
+    assert estate.notes() == []
+    # ... and it is still the lane's whose commit HEAD is.
+    theirs = estate.sweep("repoB-2", "--dry-run", "--porcelain", env=env)
+    row = rows_of(theirs.stdout)[str(stacked)]
+    assert row[1] == "retire" and "Lane: trailer" in row[2], theirs.stdout + theirs.stderr
+
+
 def test_porcelain_escapes_a_tab_and_a_newline_in_a_path(estate):
     """B3: a TAB or a newline in a tree's name is still one field of one row."""
     estate.lane_root.mkdir(parents=True, exist_ok=True)
@@ -1237,8 +1267,20 @@ def test_a_path_that_is_not_utf8_is_a_row_not_a_traceback(estate):
     """B2: a worktree named in Latin-1 is reported - exit inside 0/3/2."""
     estate.lane_root.mkdir(parents=True, exist_ok=True)
     bad = os.fsencode(str(estate.lane_root)) + b"/caf\xe9"
-    subprocess.run(["git", "-C", str(estate.checkout), "worktree", "add", "-q", "-b", "feat/latin1",
-                    bad, "origin/main"], env=estate.env, check=True, capture_output=True)
+    # A FILESYSTEM THAT REFUSES THE NAME HAS NO SUCH WORKTREE TO REPORT (#177).
+    # APFS, the macOS runner's, answers a non-UTF-8 name with EILSEQ ("Illegal
+    # byte sequence"), and git's own `.git/worktrees/caf\xe9` meets the same
+    # refusal. The directory is made first so the refusal is the filesystem's
+    # and not a fixture traceback; where it is made, the case stays live.
+    try:
+        os.mkdir(bad)
+    except OSError as exc:
+        pytest.skip(f"filesystem refuses non-UTF-8 names: {exc}")
+    add = subprocess.run(["git", "-C", str(estate.checkout), "worktree", "add", "-q", "-b",
+                          "feat/latin1", bad, "origin/main"], env=estate.env, capture_output=True)
+    if add.returncode != 0:
+        pytest.skip("filesystem refuses non-UTF-8 names: git worktree add exited "
+                    f"{add.returncode}: {add.stderr.decode('utf-8', 'replace').strip()}")
     estate.write_spec()
     for args in (("--dry-run", "--porcelain"), ("--dry-run",)):
         proc = subprocess.run([sys.executable, str(LW), "sweep", LANE, *args], capture_output=True,
@@ -1510,7 +1552,12 @@ def test_another_lanes_claim_is_read_wherever_its_control_root_is(estate, where)
         group = estate.projects / "group"
         other = "repoB-3"
     else:
-        group = estate.root / "away" / "group"
+        # IN A PLAIN DIRECTORY OF A REPOSITORY, where the shape walk never
+        # goes, so only the register's recorded `dir` finds it - and in this
+        # sweep's estate, the only one whose claims are read (#174 review R3).
+        host = estate.projects / "host"
+        estate.git("init", "-q", "-b", "main", host, cwd=estate.root)
+        group = host / "vendor" / "group"
         other = "repoC-4"
         estate.register_line(other, (
             f"STARTED — lane {other}, session {OTHER}@Eagle, 2026-10-05T00:00:00Z, "
@@ -1526,6 +1573,39 @@ def test_another_lanes_claim_is_read_wherever_its_control_root_is(estate, where)
     assert f"lane {other}'s inventory names it too" in rows[str(tree)][2]
     assert estate.sweep(LANE, "--yes").returncode == 0
     assert tree.is_dir()
+
+
+@pytest.mark.parametrize("where", ["another-estate", "this-estate"])
+def test_an_unreadable_claim_never_refuses_a_lane_with_no_tree(estate, where):
+    """#174 review R3: every lane's control root the register names, in ANY
+    estate, was read, so one pathless sidecar anywhere on the workstation
+    made the sweep exit 2 for a lane with nothing on disk - and lane-end's
+    gate with it. Another estate's claims are not read; in this one, with no
+    tree for a claim to take, an unreadable one is a note. With a tree, this
+    estate's still refuses."""
+    group = (estate.root / "away" if where == "another-estate" else estate.projects) / "group"
+    other = "repoE-6"
+    estate.register_line(other, (
+        f"STARTED — lane {other}, session {OTHER}@Eagle, 2026-10-05T00:00:00Z, "
+        f"lane:{other} → home opensoft/repoE; dir {group / 'repoE'}; host eagle; "
+        "container none; os linux"))
+    claims = group / ".lane-state" / other / "trees"
+    claims.mkdir(parents=True)
+    (claims / "c1.yaml").write_text("schema: 1\n")
+    said = f"lane {other}'s inventory record c1.yaml (it names no path) could not be read"
+    gate = estate.sweep(LANE, "--dry-run", "--porcelain")
+    assert gate.returncode == 0, gate.stdout + gate.stderr
+    assert "refused\t" not in gate.stdout
+    shown = estate.sweep(LANE, "--dry-run")
+    assert shown.returncode == 0 and "REFUSED" not in shown.stdout, shown.stdout + shown.stderr
+    if where == "this-estate":
+        assert f"note: {said}" in shown.stdout, shown.stdout
+    else:
+        assert said not in shown.stdout, "a claim in another estate was read"
+    estate.worktree("w", "feat/w")
+    again = estate.sweep(LANE, "--dry-run", "--porcelain")
+    assert again.returncode == (2 if where == "this-estate" else 3), again.stdout + again.stderr
+    assert (said in again.stdout) == (where == "this-estate")
 
 
 @pytest.mark.parametrize("flag", ["--skip-worktree", "--assume-unchanged"])
@@ -1989,12 +2069,12 @@ def _age(path: Path, seconds: float) -> None:
         os.utime(p, (when, when), follow_symlinks=False)
 
 
-def test_a_tmp_dir_with_no_mark_of_a_suite_is_listed_until_it_is_old(estate):
-    """#170 item 1 (the coordinator's default): an hour-old `tmp.*` with
-    nobody in it was removed with no proof a suite made it - a person's
-    `mktemp -d` checkout or saved scratch included. It is removed now only
-    with a suite's mark whose pid is gone, or untouched for aging_days
-    (14); any other is listed and left."""
+def test_a_tmp_dir_is_listed_and_never_removed_marked_or_old(estate):
+    """#170 item 1, option (b): an hour-old `tmp.*` with nobody in it was
+    removed with no proof a suite made it - a person's `mktemp -d` checkout
+    or saved scratch included. `mktemp -d` records no owner, so neither a
+    suite's mark in it nor aging_days (14) untouched is proof (#174 review
+    R2): every one is listed and left, with its mark where it has one."""
     base = estate.sandboxes
     unmarked, ancient, marked, layout = (base / n for n in (
         "tmp.person01", "tmp.ancient02", "tmp.suite03", "tmp.layout04"))
@@ -2010,10 +2090,62 @@ def test_a_tmp_dir_with_no_mark_of_a_suite_is_listed_until_it_is_old(estate):
     proc = estate.sweep(LANE, "--include-sandboxes", "--yes", "--porcelain")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     rows = items_of(proc.stdout, "sandbox")
-    assert rows[str(unmarked)][0] == "list" and "no mark of a test suite" in rows[str(unmarked)][3]
-    assert unmarked.is_dir() and (unmarked / "f").is_file()
-    for gone in (ancient, marked, layout):
-        assert rows[str(gone)][0] == "remove" and not gone.exists(), rows[str(gone)]
+    for d in (unmarked, ancient, marked, layout):
+        assert rows[str(d)][0] == "list" and (d / "f").is_file(), rows[str(d)]
+        assert "never removed" in rows[str(d)][3], rows[str(d)]
+    for d in (unmarked, ancient):
+        assert "no mark of a test suite" in rows[str(d)][3], rows[str(d)]
+    assert "a pytest .lock (pid 999999, gone)" in rows[str(marked)][3]
+    assert "run-root layout" in rows[str(layout)][3]
+
+
+def _lane_worktrees_module():
+    """`lane-worktrees` as a module, its bytecode written nowhere."""
+    import importlib.util
+    from importlib.machinery import SourceFileLoader
+    loader = SourceFileLoader("lane_worktrees_module", str(LW))
+    spec = importlib.util.spec_from_loader("lane_worktrees_module", loader)
+    module = importlib.util.module_from_spec(spec)
+    was = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = was
+    return module
+
+
+def test_a_tmp_dir_holding_a_bare_repository_or_notes_is_never_removed(estate):
+    """#174 review R2: with `--include-sandboxes --yes` an unmarked `tmp.*`
+    untouched for aging_days (14) was removed with no archive - one holding
+    a BARE repository with the only copy of a commit (`repository_within`
+    looked for a `.git` alone, which a bare repository has not), and one
+    holding notes.txt. Both are listed and left, and a bare repository is a
+    repository wherever it lies."""
+    vault = estate.sandboxes / "tmp.vault07"
+    notes = estate.sandboxes / "tmp.notes08"
+    work = estate.root / "work-gone"
+    estate.git("init", "-q", "-b", "main", work, cwd=estate.root)
+    own = estate.commit(work, "the only copy", {"w.txt": "PRECIOUS\n"})
+    estate.git("init", "-q", "--bare", vault / "vault.git", cwd=estate.root)
+    estate.git("push", "-q", vault / "vault.git", "main", cwd=work)
+    shutil.rmtree(work)
+    notes.mkdir()
+    (notes / "notes.txt").write_text("PRECIOUS notes\n")
+    for d in (vault, notes):
+        _age(d, 20 * 86400)
+    proc = estate.sweep(LANE, "--include-sandboxes", "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    rows = items_of(proc.stdout, "sandbox")
+    for d in (vault, notes):
+        assert rows[str(d)][0] == "list" and "never removed" in rows[str(d)][3], rows[str(d)]
+    assert f"a repository lies inside it ({vault / 'vault.git'})" in rows[str(vault)][3]
+    assert (notes / "notes.txt").read_text() == "PRECIOUS notes\n"
+    assert estate.git("cat-file", "-t", own, cwd=vault / "vault.git") == "commit"
+    lw = _lane_worktrees_module()
+    assert lw.repository_within(str(vault)) == f"a repository lies inside it ({vault / 'vault.git'})"
+    assert lw.repository_within(str(vault / "vault.git")).startswith("it is a repository")
+    assert lw.repository_within(str(notes)) == ""
 
 
 def test_an_unreadable_process_of_this_account_keeps_the_tree_it_names(estate):

@@ -3150,6 +3150,10 @@ lanes-edit.sh lane-tree-now <worktree path>
 # <branch> <head> <upstream> <dirty> <unpushed>   — what git says about one tree NOW
 ```
 
+Every lane's records on this workstation, one row per tree, are `lanes
+--worktrees`; the derived index keeps them as its `worktrees` table, which no
+act reads (*The derived index*, below).
+
 The full `head` and the `upstream` are why this is not the prose section one
 more time: `%h` is an abbreviation that lengthens as a repository grows, and
 `0 unpushed` cannot be told from *this branch tracks nothing at all* without the
@@ -3474,15 +3478,93 @@ One versioned schema (`schema_version`); every row carries its `provenance`
 
 **Created empty and written by nothing here**: `swap_states` and
 `job_summaries` — the managed ledger's half, `ledger:<Workstation>`, which the
-001 feature's T058 writes (act 4) — and `worktrees`, **reserved for
-opensoft/openRepoTools#161** (each lane's #97 inventory under
-`inventory:<Workstation>`). Not indexed at all: transcript and handoff bodies,
+001 feature's T058 writes (act 4). `worktrees` is the inventory's, below — the
+same schema 1, whose table was created with #161's columns before a row was
+written into it. Not indexed at all: transcript and handoff bodies,
 credentials, the ledger's claims, fences, releases and exit witnesses.
+
+### The `worktrees` table — every lane's #97 inventory (opensoft/openRepoTools#161)
+
+**What it is for: the next account's first query.** A session that resumes a
+lane — or that sits down at Raven after a day on Eagle — wants every open
+worktree before it decides anything: whose it is, which branch, whether the
+lane stopped `RUNNING` or `SWAPPED`, what was dirty or unpushed, when it was
+last seen and whether a writer is still live. Each lane's handoff already
+records that beside the lane (*The worktree inventory*, above); this table is
+the same records in one place, under the source `inventory:<Workstation>` — one
+per workstation, because the sidecars live on that workstation's disk and
+nowhere else — so a store two workstations sync into answers for both.
+
+```sh
+lanes --worktrees [<lane> | --all]            # this workstation's sidecars
+lanes --index --worktrees [<lane> | --all]    # the table: every workstation it holds
+lanes-index sync      --source inventory      # what every inventory write nudges
+lanes-index reconcile --source inventory [--dry-run]
+```
+
+| column | from |
+|---|---|
+| `workstation`, `lane` | the workstation's name (`lanes-edit.sh workstation`) and the lane's canonical one |
+| `owner` | `legacy`, `managed <owner>` or `unknown` — the read `managed-projection` makes, never a parser of the indexer's |
+| `path`, `branch`, `dirty_count`, `unpushed_count`, `last_seen_utc` | the tree's sidecar: the last observation, `detached <sha>` for a detached head, an `unknown` count as NULL. A sidecar that could not be read is `unreadable sidecar`, one of another schema `unknown schema <n>`, each with the record's id where its path would be |
+| `base`, `last_commit` | two git reads of the RECORDED head, in the tree or, once it is gone, its recorded checkout: its merge-base with `origin/main` (else `main`, else `origin/HEAD`), and `<sha> <subject>` |
+| `lifecycle`, `generation`, `operation` | the lane's snapshot (`lane-state`): `RUNNING`, `SWAPPING`, `SWAPPED` or `CLOSED` for a **legacy** lane; `INDETERMINATE` for a managed or unknown one, whose lifecycle this tooling does not pronounce on, and for a snapshot that is missing, unreadable or of another schema |
+| `writer_live` | the listing's own LIVE — a session record on this workstation naming one of the row's ids — and NULL where those records could not be read or the lane is bound on another host, from where liveness is unknown and never dead (Amendment 18(b)) |
+| `pr_number`, `pr_state` | `gh` at sync, best effort, the newest pull request whose head is the branch; NULL wherever it was not asked (`LANES_NO_GITHUB=1`) or did not answer. A MERGED or CLOSED answer is not asked again while the branch and its last commit stand |
+| `provenance`, `indexed_utc` | the generation the TREE'S OWN record was filed under — behind `generation` exactly when the observation predates the lane's current transition — and the sync |
+
+**Read through the helper, never around it.** The indexer reads `lanes-edit.sh
+worktrees --all`, which lists each lane's sidecars through `lane-trees`' own
+reader, its snapshot through `lane-state`'s and its owner through
+`managed-projection`'s, and walks no directory for a tree no sidecar names —
+that is `lane-reconcile`'s act. Nothing is recomputed: `dirty` and `unpushed`
+are what the handoff saw, and `LAST SEEN` says when.
+
+**Rows follow the inventory.** Keyed by (source, `<lane>:<path>`) and versioned
+by a digest of the row and its provenance, so a replay writes nothing; a tree
+the inventory no longer names — removed at landing, or by a sweep's disposition
+— leaves in the same sync. The provenance moves only forward **per lane**: a
+`sync` that reads a lane's lifecycle generation below the one its rows were
+written at (a snapshot moved aside and begun again) writes nothing for that lane
+and says so, and `reconcile --source inventory` is the act that takes the lane
+as it now stands. A lane whose `trees` directory is there and cannot be listed
+keeps its rows — it is not a lane with no worktrees. The source's own row
+carries a fingerprint of the whole table as its compare-and-swap token and a
+sync count that only goes up. A container with no `LANES_WORKSTATION` syncs
+nothing (exit 2): a source named for a container's own id is one no restart
+finds again.
+
+**The nudge.** Every inventory write — `set-lane-state`, `set-lane-tree`, the
+lifecycle follow after a `STARTED`, `RESUMED`, `ENDED` or `RETIRED`, and a
+rename's move of the control root — starts the same detached `lanes-index sync`
+a landed push does, as `sync --source inventory`, skipped where `lanes-index` is
+not on `PATH` or `LANES_INDEX=off`. One sync at a time per workstation: a nudge
+that finds the lock held leaves a mark NAMING ITS SOURCE, and the holder syncs
+every source a mark names before it lets go.
+
+**The read.** `lanes --worktrees` reads this workstation's sidecars; with
+`--index` it reads the table — every `inventory:*` source the store holds, so
+Raven sees Eagle's leftovers — and stderr says `read: index (<store>) at
+inventory:<ws> synced <UTC>`, or `read: sources (index <why>)` and the sidecars
+answer. Where the table is current, this workstation's rows are the same bytes
+either way — and a store only this workstation syncs into (SQLite, or a
+Postgres nobody else writes) prints exactly the source read, while a shared one
+adds the other workstations' rows among them. Every row is a last observation: the current truth of a lane is `lanes-edit.sh lane-reconcile
+<lane>`, which reads the disk, and the footer says so.
+
+**What never reads it.** No act: not `lane-reconcile` — there is no
+`lane-reconcile --index`, by Amendment 14(b) — not `lane-start`, `lane-end`,
+`lane-handoff` or the worktree sweep (opensoft/openRepoTools#162). Each of them
+reads the sidecars and the disk, exactly as before this table existed; an
+inventory index that is missing, stale, unreachable, wiped or wrong changes no
+answer of theirs.
 
 ### The tests' promise
 
 `tests/test_lanes_index.py`, and a section of `tests/test_lane_helpers.sh` for
-the acts only that suite drives, hold the index to Amendment 14's eight:
+the acts only that suite drives, hold the index — the inventory's table
+included, whose writers and `lane-reconcile` are among the acts — to Amendment
+14's eight:
 **offline no-read** (every act byte-identical against an unreachable store),
 **poisoned index** (wrong rows change no act's answer), **wiped-index
 reconcile** (the rebuild equals a synced index row for row), **replay**,
@@ -3517,9 +3599,10 @@ also reads every registration of the lane's checkout and every checkout under
 its two roots (`<checkout>/.claude/worktrees/*`, `.lane-worktrees/<lane>/*`).
 A tree the inventory does not name is still **the lane's** when it stands under
 the lane's own root, `.lane-worktrees/<lane>/` (only this lane's starts make it),
-or sits in `<checkout>/.claude/worktrees` on a branch whose OWN commits — those
-origin's default branch lacks — carry this lane's `Lane:` trailer; its rows say
-so. A lane with no #97 snapshot at all (state `NONE`) but trees of its own is
+or sits in `<checkout>/.claude/worktrees` with its HEAD — a commit origin's
+default branch lacks — carrying this lane's `Lane:` trailer AS ITS OWN (a tree
+another lane stacked on this lane's commit is not this lane's, #174); its rows
+say so. A lane with no #97 snapshot at all (state `NONE`) but trees of its own is
 **refused, exit 2**: which trees are its is recorded nowhere, so #163's gate does
 not pass it. Any other tree the inventory does not name is **FOREIGN**: reported and left, unless
 `--include-foreign` and a `--word "<verbatim>"` (recorded in every register line
@@ -3529,13 +3612,15 @@ records are history and a path can be reused. Other lanes' claims are read
 wherever #97 keeps them (#170 G6): beside this lane's control root, under
 `$LANES_LANE_STATE_ROOT` and `$PROJECTS_ROOT/.lane-state`, beside every checkout
 the estate's shape walk finds, beside every lane's recorded `dir` in the
-register's lane logs, and - where the whole estate is walked (a clone the table
+register's lane logs that lies in this sweep's estate (#174), and - where the whole estate is walked (a clone the table
 could take, or `--include-scratch`) - in every `.lane-state` that walk finds, one
 in a plain directory inside a repository included (#174). An inventory record that cannot be
 read (no id, no path, an unknown schema; #170 G9) refuses the sweep, exit **2**: its tree's owner
 is unknown — and so does ANOTHER lane's record or inventory directory, a lane
 worktree root, a checkout's `git worktree list`, or the register's lane logs that
-cannot be read, before anything is fetched (#170 G1, G5). The lane's own checkout is never a candidate. The lane name is
+cannot be read, before anything is fetched (#170 G1, G5); another lane's claim
+that cannot be read is a NOTE instead where this lane has no tree, since a claim
+could only take one from it (#174). The lane's own checkout is never a candidate. The lane name is
 resolved first (`lanes-edit.sh canon-lane`, Amendment 15), as `lane-start` and
 `lane-end` resolve it; an alias table that cannot be read refuses.
 
@@ -3651,7 +3736,7 @@ selected, so one missing leaves the tree (#174). More than
 | `--branches` | local branches no worktree holds, in the lane's checkout | merged by PR evidence: `delete` (`delete+remote` where the `Lane:` trailer is this lane's, origin's tip is inside the PR and gh does not answer it OPEN), each at the SHA judged and only after a fetch of that checkout that worked under `--yes`, and only after what the delete would take — its tip and every commit its reflog names — is on origin, in a ref that stays or in a bundle (a `bundle:` ledger row), asked once more right before the delete: the self-check, exit **2** on a refusal (#174); an open PR's branch: `keep` — and still COUNTED where it is the lane's and `origin/<branch>` lacks its tip (#170 G2); a branch `origin/<branch>` holds, whatever its configured upstream, is published and not listed (#170 G7); unmerged with a missing, diverged, unpushed or unreadable upstream: `list` with its tip, distance from `origin/main`, last commit date and owner — never deleted; `main`, `master` and `rescue/*`: never touched |
 | `--include-scratch` | `.lane-worktrees/<lane>/*-scratch`, `briefs/`, `bin/` that are no checkout | `archive+remove`: tar (caches left out) and sha256, then removed — only if no writer arrived and nothing outside the caches changed while the tar ran; `keep` while a tree of the table or any `.git` lies under it (#170 item 7), or the search for what leans on it was partial (#170 A11) |
 | `--include-caches` | `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `node_modules`, any directory with `pyvenv.cfg` (and `venv/`, `.venv/` with an activate script), under `.lane-worktrees/<lane>/**` and the lane's inventory trees | `remove`, without archiving — never one git tracks or whose tracking cannot be read, one that is or holds a repository or a directory that cannot be read (`keep`: a venv's `src/` clone is work, #174; asked again just before), one inside scratch being archived, or one in a FOREIGN tree, a live one, one whose liveness is unknown or one left by its own act; the owning tree's liveness is asked again just before |
-| `--include-sandboxes` | `tmp.*` and `pytest-of-$USER/pytest-*` in `/tmp` and `$TMPDIR` (or `LANE_WORKTREES_SANDBOX_ROOTS`), and `tests/run.sh`'s run roots, owned by this account | `remove` where the owning process is gone: a pytest `.lock` naming a dead pid (read again at the act), and no live process standing in it, holding it open or naming it in its environment; a `tmp.*` younger than `sandbox_min_age_minutes` (by the newest file in it) is left. A `tmp.*` is removed only ON PROOF (#170 item 1): a suite's mark whose pid is gone — pytest's `.lock` or `tests/run.sh`'s `.openrepotools-run`, each naming a pid (an empty one is no mark, #174), or run.sh's run-root layout (`basetemp/` beside `tmp/`) — or nothing written in it for `aging_days` (14) and NO REPOSITORY in it (#174: no suite's mark says its repositories are fixtures; asked again just before); any other is `list`ed and left, since it may be a person's `mktemp -d` checkout |
+| `--include-sandboxes` | `tmp.*` and `pytest-of-$USER/pytest-*` in `/tmp` and `$TMPDIR` (or `LANE_WORKTREES_SANDBOX_ROOTS`), and `tests/run.sh`'s run roots, owned by this account | `remove` where the owning process is gone: a pytest `.lock` naming a dead pid (read again at the act), and no live process standing in it, holding it open or naming it in its environment. A `tmp.*` is NEVER removed (#170 item 1, option (b); #174): `mktemp -d` records no owner, so neither a suite's mark in it nor `aging_days` untouched proves a suite made it — one older than `sandbox_min_age_minutes` (by the newest file in it) is `list`ed and left, with its mark and any repository in it (a bare one included), since it may be a person's checkout or scratch |
 | `--links` | every symlink under the estate and every worktree `.git` gitdir pointer | `broken`, listed with target and age; nothing changes |
 | `--bundle` | every tree acted on | a `git bundle` beside the archive (always, for a rescue) |
 
@@ -3721,8 +3806,8 @@ command exits **0** (nothing to retire), **3** (something to retire — a tree o
 lane's on disk, live or not, a stale registration, an unpublished or merged
 branch of the lane's, included scratch), or **2** (refused: bound elsewhere,
 held by another session, managed, a lane with trees and no #97 snapshot, a read
-failed — a lane root, a registration list, another lane's claim, the register's
-lane logs, or under `--yes` the register's fetch — or an
+failed — a lane root, a registration list, another lane's claim on a lane with
+a tree, the register's lane logs, or under `--yes` the register's fetch — or an
 error no read caught, which is never a traceback's exit 1 on a dry run). FOREIGN trees, links,
 caches and sandboxes are never the lane's to retire. `--yes` exits 0 when every
 act completed, 1 when one failed part-way (the rest go on — unless a register

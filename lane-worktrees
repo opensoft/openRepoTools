@@ -42,10 +42,11 @@ which a bundle would carry as a pointer only, keeps its tree; a branch an open
 pull request or another lane owns is never pushed onto (a rescue branch
 instead, and gh's OPEN wins over a LANDED line); where git-lfs is configured
 the push runs its hooks, and a clone whose local git-lfs store a bundle alone
-would have to stand for is kept. A cache, or an unmarked `tmp.*` sandbox, that
-holds a repository is never removed, nor a tree or registration whose git
-directory keeps a submodule repository (a deinitialized one's included) with
-work no remote of it holds.
+would have to stand for is kept. A cache that holds a repository (a bare one
+included) is never removed, nor is any `tmp.*` sandbox (it is listed: nothing
+proves a suite made it), nor a tree or registration whose git directory keeps
+a submodule repository (a deinitialized one's included) with work no remote
+of it holds.
 
 WHICH TREES ARE THE LANE'S is #97's inventory (`lanes-edit.sh lane-trees`)
 and the disk - never the derived index (Amendment 14 clause (b)). A tree the
@@ -94,8 +95,8 @@ Exit codes:
   3  dry run: something to retire (the `lane-end` gate's answer, #163)
   2  refused: the lane is bound elsewhere, held by another live session,
      managed-owned, has trees but no #97 snapshot, or a read failed (a lane
-     root, a registration list, another lane's claim, the register's fetch
-     under --yes) - or an error no read caught -
+     root, a registration list, another lane's claim on a lane with a tree,
+     the register's fetch under --yes) - or an error no read caught -
      nothing was changed; or, under --yes, the self-check refused a removal
      (what was done before it is recorded, nothing after it was acted on)
   1  --yes: an act failed part-way; what was done is recorded and the
@@ -1626,13 +1627,14 @@ def tree_guards(tree: Tree) -> str:
     return ""
 
 
-def nested_repos(top: str, exclude: set = frozenset()) -> tuple:
+def nested_repos(top: str, exclude: set = frozenset(), bare: bool = False) -> tuple:
     """([every directory under `top` that holds a `.git`], [what could not
     be read]) - `top` itself, `exclude`d paths (a tree's submodules) and
     anything inside a nested repository are not entered. NOTHING ELSE IS
     PASSED OVER (#174, Copilot round 2): this walk is the proof that a removal
     takes no repository, and a checkout under a directory named
-    `__pycache__` or `.pytest_cache` is still a checkout."""
+    `__pycache__` or `.pytest_cache` is still a checkout. With `bare`, a
+    BARE repository (`is_bare_repository`) is found as one too."""
     found, unread = [], []
     stack = [top]
     while stack:
@@ -1645,7 +1647,8 @@ def nested_repos(top: str, exclude: set = frozenset()) -> tuple:
         except OSError as exc:
             unread.append(f"{d} ({exc.strerror or exc})")
             continue
-        if d != top and any(e.name == ".git" for e in entries):
+        if d != top and (any(e.name == ".git" for e in entries)
+                         or (bare and _bare_shaped(entries))):
             found.append(d)
             continue
         for e in entries:
@@ -1661,14 +1664,32 @@ def nested_repos(top: str, exclude: set = frozenset()) -> tuple:
     return sorted(found), unread
 
 
+def _bare_shaped(entries: list) -> bool:
+    """A directory listing that is a git directory's own: a `HEAD` beside an
+    `objects/` - as `module_repos` reads one."""
+    names = {e.name for e in entries}
+    return "HEAD" in names and "objects" in names
+
+
+def is_bare_repository(path: str) -> bool:
+    """`path` is a git directory with no working tree of its own - a BARE
+    repository (`git init --bare`, a mirror, `<x>.git`) - by its shape."""
+    try:
+        with os.scandir(path) as it:
+            return _bare_shaped(list(it))
+    except OSError:
+        return False
+
+
 def repository_within(path: str) -> str:
     """Why `path` holds a repository - it is one, or one lies anywhere inside
     it - or that what is inside could not be read; else ''. What a directory
     removal without a commit-level check (a cache, a sandbox) must never
-    take."""
-    if os.path.lexists(os.path.join(path, ".git")):
+    take. A BARE repository is one (#174 review R2): it has no `.git`, and a
+    sandbox holding the only copy of a commit in one was removed as empty."""
+    if os.path.lexists(os.path.join(path, ".git")) or is_bare_repository(path):
         return f"it is a repository ({path})"
-    nested, unread = nested_repos(path)
+    nested, unread = nested_repos(path, bare=True)
     if nested:
         return f"a repository lies inside it ({nested[0]})"
     if unread:
@@ -2085,15 +2106,22 @@ class Sweep:
         """A tree #97's inventory does not name is still THIS LANE'S when it
         stands under the lane's own worktree root (`.lane-worktrees/<lane>/`,
         which only this lane's starts make), or sits in the checkout's
-        `.claude/worktrees` on a branch whose OWN commits - those its origin's
-        default branch lacks - carry this lane's `Lane:` trailer. Another
-        lane's claim still wins. Without this a lane whose trees were never
-        recorded read as "nothing to retire", and #163's gate passed it (B1).
+        `.claude/worktrees` with its HEAD - a commit its origin's default
+        branch lacks - carrying this lane's `Lane:` trailer as its own.
+        Another lane's claim still wins. Without this a lane whose trees were
+        never recorded read as "nothing to retire", and #163's gate passed it
+        (B1).
 
         AND A LANE WITH NO SNAPSHOT AT ALL (#97's state NONE) BUT TREES OF ITS
         OWN IS REFUSED: which of them are its is recorded nowhere, so the gate
         does not pass it until a handoff records them or a person retires
-        them."""
+        them.
+
+        HEAD'S OWN TRAILER, NOT ANY OF THE BRANCH'S (#174 review R1): a tree
+        another lane STACKED on this lane's commit carries this lane's trailer
+        below its tip, and adopting it on that removed the other lane's tree
+        and pushed its in-progress edit to `rescue/<this lane>/...` - and two
+        lanes sharing one checkout both adopted it."""
         roots = self._roots()
         lane_root = roots[-1] if roots else ""
         claude_root = roots[0] if self.facts.dir and roots else ""
@@ -2106,7 +2134,8 @@ class Sweep:
             if lane_root and under(t.path, lane_root) and t.real != real(lane_root):
                 t.owner = "lane-root"
             elif claude_root and t.exists and under(t.path, claude_root) \
-                    and self.lane.lower() in own_trailers(t.path):
+                    and self.lane.lower() in own_trailers(t.path) \
+                    and head_lane_trailer(t.path).lower() == self.lane.lower():
                 t.owner = "trailer"
         claimed = [t for t in self.trees if t.owner in ("lane-root", "trailer")]
         if self.facts.state == "NONE" and claimed:
@@ -2208,7 +2237,14 @@ class Sweep:
         parent of every lane's recorded `dir` in the register, `$PROJECTS_ROOT`
         - beside this lane's own and beside every checkout of the estate. A
         register that cannot be read refuses: whose claims were missed would
-        be unknown."""
+        be unknown.
+
+        ONLY THIS SWEEP'S ESTATE, AND NEVER A REFUSAL WITH NO TREE (#174 review
+        R3): the register names every lane on the workstation, so one pathless
+        or unreadable sidecar in ANY estate made the sweep exit 2 for a lane
+        with nothing on disk - every lane-end blocked. A recorded `dir` outside
+        the estate root is not read, and with no tree a claim can take away
+        nothing, so one that cannot be read is a note."""
         parents = set()
         if self.facts.root:
             parents.add(os.path.dirname(self.facts.root.rstrip("/")))
@@ -2224,7 +2260,16 @@ class Sweep:
         claimed: dict = {}
 
         def unreadable(what: str) -> None:
-            # A CLAIM THAT CANNOT BE READ IS NOT "NO CLAIM" (Amendment 7(d)).
+            # A CLAIM THAT CANNOT BE READ IS NOT "NO CLAIM" (Amendment 7(d)) -
+            # but a claim only takes a tree from this lane, so with no tree it
+            # can lower nothing: a note then, never a refusal (#174 review R3).
+            if not self.trees:
+                text = (f"{what} could not be read; this lane has no tree for another lane's "
+                        "claim to take, so the sweep goes on - read it, or move it aside if it "
+                        "is debris")
+                if text not in self.notes:
+                    self.notes.append(text)
+                return
             self.refusal = self.refusal or (
                 f"{what} could not be read, so whether another lane claims these trees is "
                 "unknown; read it, or move it aside if it is debris")
@@ -2233,8 +2278,14 @@ class Sweep:
         if why:
             unreadable(f"every lane's recorded directory ({why})")
         for other, odir in dirs.items():
-            if other.lower() != self.lane.lower():
-                parents.add(os.path.join(os.path.dirname(odir.rstrip("/")), ".lane-state"))
+            if other.lower() == self.lane.lower():
+                continue
+            parent = os.path.join(os.path.dirname(odir.rstrip("/")), ".lane-state")
+            # THIS SWEEP'S ESTATE ONLY (#174 review R3): a lane recorded in
+            # another estate keeps its claims there.
+            if self.estate_root and not under(parent, self.estate_root):
+                continue
+            parents.add(parent)
         for parent in sorted(parents):
             try:
                 lanes = os.listdir(parent)
@@ -3547,14 +3598,10 @@ class Sweep:
                     i.disposition, i.result = "live", f"left: its .lock names live pid {owner}"
                     return
             if i.extra.get("kind") == "mktemp":
-                _prov, owner = sandbox_provenance(i.path)
-                if owner and pid_alive(owner):
-                    i.disposition, i.result = "live", f"left: its marker names live pid {owner}"
-                    return
-                inner = "" if _prov else repository_within(i.path)
-                if inner:
-                    i.disposition, i.result = "list", "left: " + inner
-                    return
+                # NEVER A `tmp.*` (#170 item 1, option (b)): the table lists one
+                # and never asks this, so reaching here is a defect - it is left.
+                i.disposition, i.result = "list", "left: a tmp.* is listed, never removed"
+                return
             fresh = ProcScan()
             fresh.load_environ()
             if not fresh.available or fresh.holders(i.path) or fresh.unknown_for(i.path):
@@ -4042,6 +4089,16 @@ def own_trailers(path: str) -> set:
     return {v.lower() for v in re.findall(r"^Lane:\s*(\S+)\s*$", text, re.MULTILINE)}
 
 
+def head_lane_trailer(path: str) -> str:
+    """HEAD's own `Lane:` trailer (its last one), read as `read_tree` reads
+    `lane_trailer` - '' where it has none or HEAD could not be read. Trailer
+    adoption is decided before `read_tree` runs, so it asks here (#174
+    review R1)."""
+    msg = git_out(path, "log", "-1", "--format=%B", "HEAD") or ""
+    trailers = re.findall(r"^Lane:\s*(\S+)\s*$", msg, re.MULTILINE)
+    return trailers[-1] if trailers else ""
+
+
 def _gitdir_activity(path: str) -> float:
     gitdir = git_out(path, "rev-parse", "--absolute-git-dir")
     newest = 0.0
@@ -4332,11 +4389,11 @@ def sandbox_items(procs: ProcScan, conf: dict) -> list:
     environment is never touched, and neither is one younger than the
     minimum age (`sandbox_min_age_minutes`).
 
-    A `tmp.*` IS REMOVED ONLY ON PROOF (#170 item 1, the coordinator's
-    default): a suite's mark (`sandbox_provenance`) whose pid is gone, or -
-    with no mark - nothing written in it for `aging_days` (14). Any other
-    `tmp.*` may be a person's `mktemp -d` checkout or saved scratch, and is
-    LISTED, never removed."""
+    A `tmp.*` IS LISTED AND NEVER REMOVED (#170 item 1, option (b); #174
+    review R2): `mktemp -d` records no owner, so nothing proves a suite made
+    one - any `tmp.*` may be a person's checkout or saved scratch. Only
+    `pytest-of-$USER/pytest-*` and run.sh's `<UTC>-<pid>` run roots are
+    removed."""
     out = []
     unreadable: list = []
     uid = os.getuid()
@@ -4377,7 +4434,6 @@ def sandbox_items(procs: ProcScan, conf: dict) -> list:
     except OSError:
         pass
     now = time.time()
-    aging = conf["aging_days"]
     for path, kind, pid in candidates:
         try:
             st = os.lstat(path)
@@ -4397,34 +4453,20 @@ def sandbox_items(procs: ProcScan, conf: dict) -> list:
             age = now - newest
             if age < min_age:
                 continue
-            if not prov and age < aging * 86400:
-                it = Item("sandbox", path, "list", "a tmp.* directory with no mark of a test "
-                          "suite (no pytest .lock, no tests/run.sh marker or run-root layout), "
-                          f"last written {int(age // 86400)} d ago: it may be a person's mktemp "
-                          f"checkout or scratch, so it is listed and never removed before "
-                          f"{aging} days untouched", False)
-                it.size = size
-                it.extra["kind"] = kind
-                out.append(it)
-                continue
-            # AN UNMARKED ONE HOLDING A REPOSITORY IS NEVER TAKEN ON AGE ALONE
-            # (#174): no suite's mark says its repositories are fixtures, and a
-            # person's `mktemp -d` checkout with unpushed commits is exactly
-            # what an untouched-for-14-days rule would otherwise delete.
-            inner = "" if prov else repository_within(path)
-            if inner:
-                it = Item("sandbox", path, "list", f"a tmp.* directory with no mark of a test "
-                          f"suite, and {inner}: it may be a person's checkout, so it is listed "
-                          "and never removed", False)
-                it.size = size
-                it.extra["kind"] = kind
-                out.append(it)
-                continue
-            why = (f"a mktemp sandbox marked by {prov}" + (f" (pid {pid}, gone)" if pid else "")
-                   if prov else f"a mktemp sandbox untouched for {int(age // 86400)} days "
-                                f"(over aging_days={aging})")
-            it = Item("sandbox", path, "remove", why + ", and no live process stands in, holds "
-                      "or names it", False)
+            # EVERY `tmp.*` IS LISTED, NEVER REMOVED (#170 item 1, option (b);
+            # #174 review R2). Untouched for aging_days was the one rule that
+            # removed a real one, and it removed a person's tmp.* holding notes
+            # and one holding a BARE repository with the only copy of a commit,
+            # with no archive; a mark is a file anybody may have left, and
+            # run.sh writes its own in its run roots, never in a tmp.*.
+            inner = repository_within(path)
+            mark = (f"{prov}" + (f" (pid {pid}, gone)" if pid else "")) if prov else (
+                "no mark of a test suite (no pytest .lock, no tests/run.sh marker or run-root "
+                "layout)")
+            it = Item("sandbox", path, "list", f"a tmp.* directory with {mark}, last written "
+                      f"{int(age // 86400)} d ago" + (f", and {inner}" if inner else "")
+                      + ": `mktemp -d` records no owner, so it may be a person's checkout or "
+                      "scratch - listed, never removed (#170 item 1)", False)
             it.size = size
         else:
             it = Item("sandbox", path, "remove", f"a {kind} sandbox whose owning process is gone"
