@@ -644,10 +644,22 @@ class ProcScan:
     (macOS), and every tmux pane's current path beside either.
 
     A scan that could not be made is `available = False`, and a tree whose
-    liveness rests on it is never acted on - not "nobody is there"."""
+    liveness rests on it is never acted on - not "nobody is there".
+
+    A PROCESS OF THIS ACCOUNT WHOSE `/proc` ENTRIES CANNOT BE READ (#170 item
+    2) - not dumpable, as `ssh-agent` makes itself - is in `unknown`, never
+    read as absent. Which tree it stands in cannot be read either, so it is
+    placed by what can be: an absolute path in its command line, and its
+    parent's working directory (a process starts where its parent stands).
+    A tree either places it in is of unknown liveness and is never acted
+    on. One that places it nowhere (an `ssh-agent` daemon, re-parented to
+    init) holds no tree; one whose status cannot be read at all could be in
+    any. A process of ANOTHER account is never a writer here and is passed
+    over."""
 
     def __init__(self):
         self.entries: list = []      # (pid, comm, kind, path)
+        self.unknown: list = []      # (pid, comm, [paths it is placed by], anywhere)
         self.available = False
         self.why = ""
         self._env_loaded = False
@@ -655,23 +667,44 @@ class ProcScan:
 
     def _scan(self) -> None:
         me = os.getpid()
+        uid = os.getuid()
         if os.path.isdir("/proc/self/fd"):
             self.available = True
+            pending = []             # (pid, comm, ppid, hints, anywhere)
             for name in os.listdir("/proc"):
                 if not name.isdigit() or int(name) == me:
                     continue
                 base = "/proc/" + name
-                try:
-                    with open(base + "/comm", encoding="utf-8", errors="replace") as fh:
-                        comm = fh.read().strip()
-                except OSError:
+                status = _proc_status(base)
+                if status == {}:
+                    continue          # it exited
+                if status is None:
+                    # NOT EVEN ITS STATUS: whose it is comes from the entry's own
+                    # owner, and where it stands cannot be placed at all.
+                    try:
+                        if os.stat(base).st_uid == uid:
+                            pending.append((int(name), "?", 0, [], True))
+                    except OSError:
+                        pass
                     continue
+                if status.get("State", "").startswith("Z"):
+                    continue          # a zombie stands nowhere
+                ids = (status.get("Uid", "").split() + ["-1", "-1"])[:2]
+                ours = str(uid) in ids
+                comm = status.get("Name", "?")
+                hidden = False
                 try:
                     self.entries.append((int(name), comm, "cwd", _proc_path(os.readlink(base + "/cwd"))))
+                except (FileNotFoundError, ProcessLookupError):
+                    continue
+                except PermissionError:
+                    hidden = True
                 except OSError:
                     pass
                 try:
                     fds = os.listdir(base + "/fd")
+                except PermissionError:
+                    hidden, fds = True, []
                 except OSError:
                     fds = []
                 for fd in fds:
@@ -681,6 +714,14 @@ class ProcScan:
                         continue
                     if target.startswith("/"):
                         self.entries.append((int(name), comm, "fd", _proc_path(target)))
+                if hidden and ours:
+                    ppid = int(status.get("PPid", "0") or 0) if status.get("PPid", "").isdigit() else 0
+                    pending.append((int(name), comm, ppid, _cmdline_paths(base), False))
+            cwd_of = {pid: where for pid, _c, kind, where in self.entries if kind == "cwd"}
+            for pid, comm, ppid, hints, anywhere in pending:
+                if ppid in cwd_of:
+                    hints = hints + [cwd_of[ppid]]
+                self.unknown.append((pid, comm, hints, anywhere))
         elif shutil.which("lsof"):
             proc = run(["lsof", "-nP", "-w", "-F", "pcfn", "-u", str(os.getuid())], timeout=120)
             if proc.stdout:
@@ -750,9 +791,58 @@ class ProcScan:
                 out.append((pid, comm, kind, where))
         return out
 
+    def unknown_for(self, path: str) -> str:
+        """Why a process of this account that `/proc` would not show could be
+        in `path`, or '' (see the class: item 2)."""
+        root = real(path)
+        for pid, comm, hints, anywhere in self.unknown:
+            if anywhere:
+                return (f"process {pid} of this account could not be read at all (not even its "
+                        "status), so it could be in any tree")
+            for h in hints:
+                if h == root or h.startswith(root.rstrip("/") + "/"):
+                    return (f"process {pid} ({comm}) of this account could not be read (it is "
+                            f"not dumpable), and {h} - its command line or its parent's "
+                            "directory - places it here")
+        return ""
+
 
 def _proc_path(target: str) -> str:
     return target[:-10] if target.endswith(" (deleted)") else target
+
+
+def _proc_status(base: str):
+    """`/proc/<pid>/status` as {field: value}; {} where the process is gone,
+    None where it is there and cannot be read."""
+    try:
+        with open(base + "/status", encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except (FileNotFoundError, ProcessLookupError):
+        return {}
+    except OSError:
+        return None
+    out = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition(":")
+        if sep:
+            out[key.strip()] = value.strip()
+    return out
+
+
+def _cmdline_paths(base: str) -> list:
+    """The absolute paths in a process's command line (`--x=/p` included)."""
+    try:
+        with open(base + "/cmdline", "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return []
+    out = []
+    for arg in raw.split(b"\0"):
+        text = arg.decode("utf-8", "surrogateescape")
+        for piece in [text] + text.split("=", 1)[1:]:
+            if piece.startswith("/"):
+                out.append(real(piece))
+    return out
 
 
 def pid_alive(pid: int) -> bool:
@@ -1736,6 +1826,13 @@ class Sweep:
         # right place would do; it is never fetched or touched from here.
         self._lane_gate()
         self.procs = ProcScan()
+        if self.procs.unknown:
+            self.notes.append(
+                f"{len(self.procs.unknown)} process(es) of this account could not be read in "
+                "/proc (" + ", ".join(f"{pid} {comm}" for pid, comm, _h, _a in
+                                      self.procs.unknown[:6])
+                + (" ..." if len(self.procs.unknown) > 6 else "") + "): a tree their command "
+                "line or parent's directory places them in is of unknown liveness and kept")
         self._discover()
         self.usage = self._live_usage()
         if self.usage:
@@ -2038,6 +2135,10 @@ class Sweep:
                 pid, comm, kind, where = holders[0]
                 tree.live = (True, f"process {pid} ({comm or '?'}) has its {kind} there")
                 return
+            hidden = self.procs.unknown_for(tree.path)
+            if hidden:
+                tree.live = (None, "liveness could not be read: " + hidden)
+                return
         elif self.procs is not None:
             tree.live = (None, "liveness could not be read: " + self.procs.why)
             return
@@ -2334,6 +2435,9 @@ class Sweep:
             elif self.procs is not None and not self.procs.available:
                 it = Item("scratch", full, "keep", "liveness could not be read: " + self.procs.why,
                           True)
+            elif self.procs is not None and self.procs.unknown_for(full):
+                it = Item("scratch", full, "keep", "liveness could not be read: "
+                          + self.procs.unknown_for(full), True)
             elif self._deps_partial(full):
                 it = Item("scratch", full, "keep", "it is removed by deleting its directory, and "
                           "the search for repositories that lean on it was partial: "
@@ -2373,7 +2477,8 @@ class Sweep:
                 owner = self._cache_owner(path, roots, trees)
                 # LIVENESS IS THE OWNER'S, not the cache's: a writer stands in
                 # the tree, not in its __pycache__.
-                if self.procs is None or not self.procs.available or self.procs.holders(owner):
+                if self.procs is None or not self.procs.available or self.procs.holders(owner) \
+                        or self.procs.unknown_for(owner):
                     continue
                 if tracked(path) is not False:
                     continue          # tracked, or its tracking is unknown
@@ -2576,6 +2681,9 @@ class Sweep:
         if held:
             pid, comm, kind, _w = held[0]
             return f"process {pid} ({comm or '?'}) has its {kind} there"
+        hidden = fresh.unknown_for(path)
+        if hidden:
+            return "liveness could not be read: " + hidden
         if writer and UUID_RE.match(writer) and writer != self.caller:
             answer = self.helper.transcript_live(writer, fresh=True)
             if answer != "none":
@@ -3105,10 +3213,16 @@ class Sweep:
                 if owner and pid_alive(owner):
                     i.disposition, i.result = "live", f"left: its .lock names live pid {owner}"
                     return
+            if i.extra.get("kind") == "mktemp":
+                _prov, owner = sandbox_provenance(i.path)
+                if owner and pid_alive(owner):
+                    i.disposition, i.result = "live", f"left: its marker names live pid {owner}"
+                    return
             fresh = ProcScan()
             fresh.load_environ()
-            if not fresh.available or fresh.holders(i.path):
-                i.disposition, i.result = "live", "left: a process arrived in it"
+            if not fresh.available or fresh.holders(i.path) or fresh.unknown_for(i.path):
+                i.disposition, i.result = "live", "left: a process arrived in it, or one of " \
+                                                  "this account that cannot be read is placed there"
                 return
             rmtree(i.path)
             i.result = "removed"
@@ -3582,12 +3696,54 @@ def sandbox_roots() -> list:
     return roots
 
 
+#: `tests/run.sh` writes its pid here in every run root it makes.
+RUN_MARKER = ".openrepotools-run"
+
+
+def sandbox_provenance(path: str) -> tuple:
+    """(which suite marked `path`, the pid the mark names) - pytest's `.lock`
+    in a numbered directory, `tests/run.sh`'s marker, or run.sh's run-root
+    layout (`basetemp/` beside `tmp/`) - or ('', 0): no proof a suite made
+    it."""
+    for name, what in ((".lock", "a pytest .lock"), (RUN_MARKER, "tests/run.sh's marker")):
+        if os.path.isfile(os.path.join(path, name)):
+            return what, _lock_pid(os.path.join(path, name))
+    if os.path.isdir(os.path.join(path, "basetemp")) and os.path.isdir(os.path.join(path, "tmp")):
+        return "tests/run.sh's run-root layout", 0
+    return "", 0
+
+
+def _size_and_newest(path: str) -> tuple:
+    """(bytes, newest mtime) of everything under `path`, itself included: a
+    sandbox written to last week in a subdirectory is not a month old."""
+    total, newest = 0, 0.0
+    try:
+        newest = os.lstat(path).st_mtime
+    except OSError:
+        pass
+    for base, dirs, files in os.walk(path, followlinks=False):
+        for name in files + dirs:
+            try:
+                st = os.lstat(os.path.join(base, name))
+            except OSError:
+                continue
+            total += st.st_size
+            newest = max(newest, st.st_mtime)
+    return total, newest
+
+
 def sandbox_items(procs: ProcScan, conf: dict) -> list:
     """Killed-suite sandboxes: `tmp.*` and `pytest-of-$USER/pytest-*` whose
     owning process is gone, and `tests/run.sh`'s own run roots. They hold no
     work; one a live process stands in, holds open or names in its
     environment is never touched, and neither is one younger than the
-    minimum age (`sandbox_min_age_minutes`)."""
+    minimum age (`sandbox_min_age_minutes`).
+
+    A `tmp.*` IS REMOVED ONLY ON PROOF (#170 item 1, the coordinator's
+    default): a suite's mark (`sandbox_provenance`) whose pid is gone, or -
+    with no mark - nothing written in it for `aging_days` (14). Any other
+    `tmp.*` may be a person's `mktemp -d` checkout or saved scratch, and is
+    LISTED, never removed."""
     out = []
     unreadable: list = []
     uid = os.getuid()
@@ -3628,6 +3784,7 @@ def sandbox_items(procs: ProcScan, conf: dict) -> list:
     except OSError:
         pass
     now = time.time()
+    aging = conf["aging_days"]
     for path, kind, pid in candidates:
         try:
             st = os.lstat(path)
@@ -3635,17 +3792,38 @@ def sandbox_items(procs: ProcScan, conf: dict) -> list:
             continue
         if st.st_uid != uid:
             continue
+        prov = ""
+        if kind == "mktemp":
+            prov, pid = sandbox_provenance(path)
         if pid and pid_alive(pid):
             continue
-        if procs.available and procs.holders(path):
+        if not procs.available or procs.holders(path) or procs.unknown_for(path):
             continue
-        if not procs.available:
-            continue
-        if kind == "mktemp" and now - st.st_mtime < min_age:
-            continue
-        it = Item("sandbox", path, "remove", f"a {kind} sandbox whose owning process is gone"
-                  + (f" (pid {pid})" if pid else ""), False)
-        it.size = dir_size(path)
+        if kind == "mktemp":
+            size, newest = _size_and_newest(path)
+            age = now - newest
+            if age < min_age:
+                continue
+            if not prov and age < aging * 86400:
+                it = Item("sandbox", path, "list", "a tmp.* directory with no mark of a test "
+                          "suite (no pytest .lock, no tests/run.sh marker or run-root layout), "
+                          f"last written {int(age // 86400)} d ago: it may be a person's mktemp "
+                          f"checkout or scratch, so it is listed and never removed before "
+                          f"{aging} days untouched", False)
+                it.size = size
+                it.extra["kind"] = kind
+                out.append(it)
+                continue
+            why = (f"a mktemp sandbox marked by {prov}" + (f" (pid {pid}, gone)" if pid else "")
+                   if prov else f"a mktemp sandbox untouched for {int(age // 86400)} days "
+                                f"(over aging_days={aging})")
+            it = Item("sandbox", path, "remove", why + ", and no live process stands in, holds "
+                      "or names it", False)
+            it.size = size
+        else:
+            it = Item("sandbox", path, "remove", f"a {kind} sandbox whose owning process is gone"
+                      + (f" (pid {pid})" if pid else ""), False)
+            it.size = dir_size(path)
         it.extra["kind"] = kind
         out.append(it)
     return out + unreadable

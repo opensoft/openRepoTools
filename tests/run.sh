@@ -154,6 +154,10 @@ make_run_root() {
     exit 1
   }
   chmod 700 "$RUN_ROOT" 2>/dev/null || :
+  # THE RUN'S MARK: `lane-worktrees sweep --include-sandboxes` removes a
+  # temporary directory only on proof a suite made it (#170 item 1), and this
+  # pid is that proof for a run root a SIGKILL left behind.
+  printf '%s\n' "$$" > "$RUN_ROOT/.openrepotools-run" 2>/dev/null || :
   export TMPDIR="$RUN_ROOT/tmp"
   export PYTHONPYCACHEPREFIX="${XDG_CACHE_HOME:-$HOME/.cache}/openRepoTools/pycache"
   venv="${XDG_CACHE_HOME:-$HOME/.cache}/openRepoTools/venvs/openRepoTools"

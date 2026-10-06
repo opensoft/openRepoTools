@@ -988,8 +988,12 @@ def test_killed_suite_sandboxes_whose_owner_is_gone_are_removed(estate):
     for d in (dead, young, held):
         d.mkdir()
         (d / "f").write_text("x")
+    # A SUITE'S MARK (#170 item 1): pytest's `.lock`, naming a pid that is gone.
+    (dead / ".lock").write_text("999999\n")
     for d in (dead, held):
-        os.utime(d, (old, old))
+        for p in (d / "f", d / ".lock", d):
+            if p.exists():
+                os.utime(p, (old, old))
     pyroot = base / f"pytest-of-{user}"
     gone_run = pyroot / "pytest-7"
     live_run = pyroot / "pytest-8"
@@ -1933,3 +1937,68 @@ def test_a_branch_published_under_its_own_name_is_not_unfinished(estate):
     proc = estate.sweep(LANE, "--branches", "--dry-run", "--porcelain")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "feat/g7" not in items_of(proc.stdout, "branch")
+
+
+def _age(path: Path, seconds: float) -> None:
+    when = time.time() - seconds
+    for p in sorted(path.rglob("*"), reverse=True) + [path]:
+        os.utime(p, (when, when), follow_symlinks=False)
+
+
+def test_a_tmp_dir_with_no_mark_of_a_suite_is_listed_until_it_is_old(estate):
+    """#170 item 1 (the coordinator's default): an hour-old `tmp.*` with
+    nobody in it was removed with no proof a suite made it - a person's
+    `mktemp -d` checkout or saved scratch included. It is removed now only
+    with a suite's mark whose pid is gone, or untouched for aging_days
+    (14); any other is listed and left."""
+    base = estate.sandboxes
+    unmarked, ancient, marked, layout = (base / n for n in (
+        "tmp.person01", "tmp.ancient02", "tmp.suite03", "tmp.layout04"))
+    for d in (unmarked, ancient, marked, layout):
+        d.mkdir()
+        (d / "f").write_text("x")
+    (marked / ".lock").write_text("999999\n")
+    (layout / "basetemp").mkdir()
+    (layout / "tmp").mkdir()
+    for d in (unmarked, marked, layout):
+        _age(d, 7200)
+    _age(ancient, 20 * 86400)
+    proc = estate.sweep(LANE, "--include-sandboxes", "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    rows = items_of(proc.stdout, "sandbox")
+    assert rows[str(unmarked)][0] == "list" and "no mark of a test suite" in rows[str(unmarked)][3]
+    assert unmarked.is_dir() and (unmarked / "f").is_file()
+    for gone in (ancient, marked, layout):
+        assert rows[str(gone)][0] == "remove" and not gone.exists(), rows[str(gone)]
+
+
+def test_an_unreadable_process_of_this_account_keeps_the_tree_it_names(estate):
+    """#170 item 2 (the coordinator's default): a same-account process whose
+    `/proc` entries cannot be read (not dumpable) was read as absent, and
+    its tree was removed under it. It is placed by its command line and its
+    parent's directory; a tree it is placed in is kept."""
+    if not os.path.isdir("/proc/self/fd") or os.geteuid() == 0:
+        pytest.skip("needs /proc, and an account that cannot read a non-dumpable process")
+    tree = estate.worktree("held", "feat/held")
+    estate.git("push", "-q", "-u", "origin", "feat/held", cwd=tree)
+    ready = estate.root / "ready"
+    code = ("import ctypes, sys, time; ctypes.CDLL(None).prctl(4, 0, 0, 0, 0); "
+            "open(sys.argv[1], 'w').close(); time.sleep(300)")
+    child = subprocess.Popen([sys.executable, "-c", code, str(ready), str(tree)], cwd=str(tree))
+    try:
+        deadline = time.time() + 20
+        while not ready.exists() and time.time() < deadline:
+            time.sleep(0.05)
+        try:
+            os.readlink(f"/proc/{child.pid}/cwd")
+            pytest.skip("this kernel lets the owner read a non-dumpable process")
+        except PermissionError:
+            pass
+        proc = estate.sweep(LANE, "--yes", "--porcelain")
+    finally:
+        child.kill()
+        child.wait()
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert tree.is_dir(), "the tree an unreadable process stands in was removed"
+    row = rows_of(proc.stdout)[str(tree)]
+    assert row[0] == "keep" and f"process {child.pid}" in row[2] and "could not be read" in row[2]
