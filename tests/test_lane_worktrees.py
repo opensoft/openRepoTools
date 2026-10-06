@@ -2199,3 +2199,89 @@ def test_the_self_check_refuses_a_branch_delete_that_would_lose_a_commit(estate)
     assert "feat/old" in estate.remote_heads()
     (archive,) = estate.archives()
     assert "REFUSED by the self-check" in (archive / "DISPOSITION.md").read_text()
+
+
+def _arrival_shim(estate, target: Path, text: str) -> dict:
+    """A PATH whose `git` writes `target` the SECOND time the sweep asks
+    `ls-files -v` (the hidden-edit guard): once when the table is built,
+    once more at the act - so the file arrives after the table was read and
+    before the rescue is taken, which is the window a writer has."""
+    shim = estate.root / "arrival-shim"
+    shim.mkdir(exist_ok=True)
+    count = estate.root / "arrival-count"
+    real_git = shutil.which("git")
+    (shim / "git").write_text(
+        "#!/bin/sh\n"
+        'case " $* " in\n'
+        '  *" ls-files -v -s -z "*)\n'
+        f"    n=$(cat '{count}' 2>/dev/null || echo 0); n=$((n + 1)); echo \"$n\" > '{count}'\n"
+        f"    if [ \"$n\" = 2 ]; then printf '%s\\n' '{text}' > '{target}'; fi ;;\n"
+        "esac\n"
+        f'exec "{real_git}" "$@"\n')
+    (shim / "git").chmod(0o755)
+    return {"PATH": f"{shim}{os.pathsep}{estate.env['PATH']}"}
+
+
+def test_an_untracked_file_that_arrives_after_the_table_is_never_pushed(estate):
+    """#174 Copilot round 1: whether untracked files were held back was read
+    from the table's status. A tree with only a tracked change when it was
+    read, and an untracked key file by the time of the rescue, had the full
+    snapshot - key included - pushed to origin. What is untracked is read
+    from the snapshots at the act now: the key goes to the bundle alone."""
+    tree = estate.worktree("late", "feat/late")
+    estate.commit(tree, "w", {"w.txt": "base\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/late", cwd=tree)
+    (tree / "w.txt").write_text("changed\n")
+    key = tree / "gcp-service-account.json"
+    env = _arrival_shim(estate, key, '{"private_key": "PRECIOUS"}')
+    proc = estate.sweep(LANE, "--yes", "--porcelain", env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not tree.exists()
+    for branch, sha in estate.remote_heads().items():
+        files = estate.git("ls-tree", "-r", "--name-only", sha, cwd=estate.origin)
+        assert "gcp-service-account.json" not in files.split(), branch
+    (rescue,) = [b for b in estate.remote_heads() if b.startswith(f"rescue/{LANE}/late-")]
+    assert estate.git("show", f"{rescue}:w.txt", cwd=estate.origin) == "changed"
+    (archive,) = estate.archives()
+    held = [r for r in _ledger(archive) if r[0] == "-" and r[1].startswith("bundle:")]
+    assert len(held) == 1, _ledger(archive)
+    assert _bundle_holds(estate, archive / held[0][1][len("bundle:"):], held[0][2])
+    assert estate.git("show", f"{held[0][2]}:gcp-service-account.json") == \
+        '{"private_key": "PRECIOUS"}'
+
+
+@pytest.mark.parametrize("when", ["seen-by-the-table", "arrived-after-it"])
+def test_untracked_git_lfs_content_keeps_the_tree(estate, when):
+    """#174 Copilot round 1: an untracked file git-lfs filters was
+    snapshotted as a POINTER for the bundle-only commit (#170 A9); a bundle
+    carries no LFS payload, and the tree went with the only copy of the
+    bytes. Such a tree is kept - in the table, and again at the act, before
+    anything is pushed."""
+    tree = estate.worktree("models", "feat/models")
+    estate.commit(tree, "weights go through git-lfs",
+                  {".gitattributes": "*.bin filter=lfs diff=lfs merge=lfs -text\n"})
+    estate.git("push", "-q", "-u", "origin", "feat/models", cwd=tree)
+    for k, v in (("filter.lfs.clean",
+                  "sh -c 'cat >/dev/null; echo version https://git-lfs.github.com/spec/v1'"),
+                 ("filter.lfs.smudge", "cat"), ("filter.lfs.required", "true")):
+        estate.git("config", k, v)
+    weights = tree / "weights.bin"
+    env = None
+    if when == "seen-by-the-table":
+        weights.write_text("PRECIOUS weights\n")
+        dry = rows_of(estate.sweep(LANE, "--porcelain").stdout)[str(tree)]
+        assert dry[0] == "keep" and "git-lfs content (e.g. weights.bin)" in dry[2], dry
+    else:
+        (tree / "notes.txt").write_text("tracked? no - but a tracked change is below\n")
+        estate.git("add", "notes.txt", cwd=tree)
+        estate.commit(tree, "notes")
+        estate.git("push", "-q", "origin", "feat/models", cwd=tree)
+        (tree / "notes.txt").write_text("changed\n")
+        env = _arrival_shim(estate, weights, "PRECIOUS weights")
+    before = estate.remote_heads()
+    proc = estate.sweep(LANE, "--yes", "--porcelain", env=env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert weights.read_text() == "PRECIOUS weights\n", "the only copy of the bytes went"
+    row = rows_of(proc.stdout)[str(tree)]
+    assert row[0] == "keep" and "git-lfs content" in row[2], row
+    assert estate.remote_heads() == before, "nothing is pushed for a tree that is kept"

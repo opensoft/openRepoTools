@@ -2416,6 +2416,14 @@ class Sweep:
         dirty = len(t.status_lines)
         if dirty:
             untracked = sum(1 for ln in t.status_lines if ln.startswith("?? "))
+            if untracked and not self.opts.push_untracked:
+                files = untracked_files(t.path)
+                why = (lfs_untracked_why(t.path, files) if files is not None else
+                       "its untracked files could not be listed, so whether git-lfs content "
+                       "is among them is unknown" if lfs_configured(t.path) else "")
+                if why:
+                    put("keep", why)
+                    return
             put("wip-rescue+remove", f"{dirty} dirty or untracked path(s): a WIP commit on "
                                      "a rescue branch, pushed, then removed"
                 + (f"; its {untracked} untracked path(s) go to the bundle only, never pushed "
@@ -2724,6 +2732,9 @@ class Sweep:
                 continue
             try:
                 self._act_tree(t)
+            except _Keep as exc:
+                t.disposition = "keep"
+                t.result = "left: " + str(exc)
             except _SelfCheck as exc:
                 t.result = "REFUSED by the self-check: " + str(exc)
                 self.refused_check = f"{t.path}: {exc}"
@@ -3172,11 +3183,28 @@ class Sweep:
         if not full:
             raise _ActFailed("the tree's content could not be snapshotted (git add -A into "
                              "a temporary index failed); left in place")
-        untracked = [ln[3:] for ln in t.status_lines if ln.startswith("?? ")]
-        hold = bool(untracked) and not self.opts.push_untracked
-        pushed = snapshot_tree(t.path, tracked_only=True) if hold else full
+        # WHAT IS UNTRACKED IS READ FROM THE SNAPSHOTS, NOW - never from the
+        # table's status (#174, Copilot round 1): a tree with only tracked
+        # changes when it was read, and an untracked key file by the time of
+        # the rescue, pushed the key with the full snapshot. The pushed one is
+        # tracked-only unless `--push-untracked`, and whatever the full one
+        # holds beyond it goes to the bundle alone.
+        pushed = full if self.opts.push_untracked else snapshot_tree(t.path, tracked_only=True)
         if not pushed:
             raise _ActFailed("the tree's tracked changes could not be snapshotted; left in place")
+        untracked: list = []
+        if pushed != full:
+            untracked = tree_paths_between(t.path, pushed, full)
+            if untracked is None:
+                raise _ActFailed("which files would go to the bundle only could not be read (git "
+                                 "diff-tree failed); left in place")
+        hold = pushed != full
+        if hold:
+            # A BUNDLE CARRIES A GIT-LFS POINTER, NEVER ITS BYTES (#174, Copilot
+            # round 1): checked BEFORE anything is pushed.
+            why = lfs_untracked_why(t.path, untracked)
+            if why:
+                raise _Keep(why)
         head_tree = (git_out(t.path, "rev-parse", "HEAD^{tree}") if t.head else EMPTY_TREE) or ""
         subject = f"WIP({self.lane}): {t.slice} swept {self.stamp}; swept, not reviewed"
         body = (f"Rescued by {PROG} sweep from {t.path} (branch "
@@ -3200,7 +3228,8 @@ class Sweep:
                 f"WIP({self.lane}): {t.slice} untracked files {self.stamp}; bundle only, never "
                 "pushed",
                 f"The {len(untracked)} untracked path(s) of {t.path} when its lane was swept "
-                f"(e.g. {untracked[0]}). They were never pushed: an untracked file may be a "
+                f"(e.g. {untracked[0] if untracked else '?'}). They were never pushed: an "
+                "untracked file may be a "
                 "credential nobody meant to commit. This commit is in this bundle only.")
             tmp = f"refs/lane-worktrees/{t.slice}-{self.stamp}/untracked"
             self._git_or_fail(t.path, "update-ref", tmp, held, "")
@@ -3520,6 +3549,11 @@ class _ActFailed(Exception):
     pass
 
 
+class _Keep(Exception):
+    """Found at the moment of the act, before anything was changed: the tree
+    is kept, as the table would have kept it had it been there to see."""
+
+
 class _SelfCheck(Exception):
     """The invariant's last check refused a removal: exit 2, and no further act."""
 
@@ -3602,6 +3636,46 @@ def reflog_shas(files: list) -> tuple:
         except OSError as exc:
             return None, f"the reflog {path} could not be read ({exc.strerror or exc})"
     return out, ""
+
+
+def untracked_files(path: str):
+    """Every untracked, un-ignored file in the checkout at `path`, one by
+    one (never a directory), or None where git could not list them."""
+    proc = git(path, "ls-files", "--others", "--exclude-standard", "-z")
+    if proc.returncode != 0:
+        return None
+    return [rel for rel in proc.stdout.split("\0") if rel]
+
+
+def tree_paths_between(path: str, a: str, b: str):
+    """The paths whose entries differ between trees `a` and `b`, or None."""
+    proc = git(path, "diff-tree", "-r", "-z", "--no-renames", "--name-only", a, b)
+    if proc.returncode != 0:
+        return None
+    return [rel for rel in proc.stdout.split("\0") if rel]
+
+
+def lfs_untracked_why(path: str, rels: list) -> str:
+    """Why untracked files `rels` cannot go to a bundle that is their only
+    copy, or '': where git-lfs is configured, one its attributes give
+    `filter=lfs` is snapshotted as a POINTER - its bytes go to the local
+    LFS store, which no bundle carries and the tree's (or the clone's)
+    removal may take, and it is never pushed (#170 A9). A person moves it
+    out, or commits and pushes it."""
+    if not rels or not lfs_configured(path):
+        return ""
+    proc = run(["git", "-C", path, "check-attr", "-z", "--stdin", "filter"], env=git_env(),
+               input_text="".join(rel + "\0" for rel in rels))
+    if proc.returncode != 0:
+        return ("whether its untracked files are git-lfs content could not be read (git "
+                "check-attr failed), and a bundle would carry a pointer, never the bytes")
+    fields = proc.stdout.split("\0")
+    hits = [fields[i] for i in range(0, len(fields) - 2, 3) if fields[i + 2] == "lfs"]
+    if not hits:
+        return ""
+    return (f"{len(hits)} untracked file(s) are git-lfs content (e.g. {hits[0]}): untracked files "
+            "go to a bundle only, a bundle carries an LFS pointer and never its bytes, and they "
+            "are never pushed - move them out, or commit and push them, then sweep again")
 
 
 def lfs_configured(path: str) -> bool:
