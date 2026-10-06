@@ -102,6 +102,16 @@
 #                    as its first prompt. The table is `claude` and `codex`; a
 #                    name it does not carry is a refusal naming the two, never a
 #                    guessed argv
+#   --fresh          A NEW SESSION of this lane's agent, primed by the handoff's
+#                    top block, whatever transcript the row names — the
+#                    fresh-session mode as an ARGUMENT rather than as an
+#                    environment variable (openRepoTools#94). The lane's own
+#                    pending restart intent outranks it; a conflicting one is a
+#                    refusal and never a substitution
+#   --operation <id> the restart operation this launch belongs to, passed by the
+#                    pane supervisor. The intent named by it is the one this run
+#                    reads; an id that is not the lane's current operation is a
+#                    refusal
 #   -h, --help
 #   --               everything after it is passed through to claude
 #
@@ -307,11 +317,13 @@
 #   LANES_NO_GIT=1       write the handoff's stamp but commit nothing
 #   LANE_START_FRESH=1   a NEW session of this lane's agent, started with the
 #                        top block of the handoff the row names as its first
-#                        prompt — which is what a context clear IS. It is the
-#                        one seam `/ctx` uses (`lane-handoff --restart` respawns
-#                        the lane's own pane with it set, Amendment 17(f)), and
-#                        with it unset this command behaves exactly as it did
-#                        before Amendment 17
+#                        prompt — which is what a context clear IS. It was
+#                        `/ctx`'s one seam under Amendment 17(f) and it still
+#                        works; it is NO LONGER THE AUTHORITY (openRepoTools#94):
+#                        the lane's own restart intent outranks it and `--fresh`
+#                        stands beside it, because an environment variable does
+#                        not survive the launcher's `tmux new-session` and this
+#                        command was measured being reached without it
 #
 # It spells no absolute path of its own. Since Amendment 9(a) the register is
 # found through `$AGENT_PROTOCOL_ROOT/workspace.yaml` rather than beside this
@@ -746,7 +758,7 @@ quoted() {
 # ------------------------------------------------------------------ arguments
 
 dry_run=0; no_launch=0; estate=""; dir_override=""; confirm=0; take_yes=0
-agent_flag=""
+agent_flag=""; fresh_flag=0; op_flag=""
 # AMENDMENT 18(c)/(e) — the three words a second place has for a bound lane.
 request_handoff=0; force_why=""; handoff_wait=300
 positional=(); pass=()
@@ -765,6 +777,24 @@ while [ $# -gt 0 ]; do
     # empty value, for the reason `--dir` states above.
     --agent)     agent_flag="${2-}"; [ -n "$agent_flag" ] || die "--agent needs a name" 2; shift 2 ;;
     --agent=*)   agent_flag="${1#--agent=}"; [ -n "$agent_flag" ] || die "--agent needs a name" 2; shift ;;
+    # `--fresh` — THE FRESH-SESSION MODE AS AN ARGUMENT, and it exists because
+    # the environment seam it stands beside cannot be relied on to arrive
+    # (openRepoTools#94, measured on Eagle 2026-09-15T20:59Z). `/ctx` set
+    # `LANE_START_FRESH=1` in the command it respawned the pane with, the
+    # launcher re-created the child through `tmux new-session`, and tmux hands
+    # a command the SERVER's environment and not the client's — so this
+    # command was reached with the variable gone and resumed the very
+    # transcript the context clear had just paused. An ARGUMENT survives an
+    # `exec`; it does not survive a re-creation either, which is why the
+    # DURABLE RESTART INTENT below outranks both. This flag is for the caller
+    # that reaches this command directly.
+    --fresh)     fresh_flag=1; shift ;;
+    # THE OPERATION THIS LAUNCH BELONGS TO (openRepoTools#94). The supervisor
+    # passes it so that this run reads the intent it was started for and no
+    # other, and so that a launch arriving with a STALE operation refuses
+    # rather than consuming a newer lane's intent.
+    --operation)   op_flag="${2-}"; [ -n "$op_flag" ] || die "--operation needs an operation id" 2; shift 2 ;;
+    --operation=*) op_flag="${1#--operation=}"; [ -n "$op_flag" ] || die "--operation needs an operation id" 2; shift ;;
     # AMENDMENT 18(c) AND (e) — THE SECOND PLACE'S THREE WORDS, and each of
     # them is an ANSWER to a question this command would otherwise ask. A
     # caller with no terminal on stdin cannot be asked (an agent's is not one),
@@ -1411,6 +1441,58 @@ case "$record_window" in
 esac
 step "this window is $this_window, named '${this_window_name:-?}'"
 step "  its record refs are $record_window"
+
+# Active restarts refuse unowned callers before any binding repair or rename.
+# Detailed prompt and launch-fact validation follows before transcript writes.
+preparation_failure_identity=""
+preparation_failure_snapshot() {   # validated restart-intent output
+  printf '%s\n' "$1" | awk -F'\t' '
+    {v[$1]=$2} END {printf "%s|%s|%s|%s|%s|%s", v["state"],v["mode"],v["attempt"],v["new_transcript"],v["operation"],v["generation"]}'
+}
+preparation_failure_resume_check() {   # validated restart-intent output
+  pfr_identity="$(preparation_failure_snapshot "$1")"
+  case "$pfr_identity" in failed\|preservation-only\|0\|none\|*) : ;;
+    *) die "a failed supervised launch requires its same-operation supervisor; ordinary resume refuses. Nothing was launched." 2 ;;
+  esac
+  [ -z "$preparation_failure_identity" ] || [ "$pfr_identity" = "$preparation_failure_identity" ] ||
+    die "the failed preparation changed during ordinary recovery. Nothing was launched." 2
+  [ -z "${op_flag:-}${LANE_RESTART_OPERATION:-}${LANE_RESTART_ATTEMPT:-}" ] ||
+    die "failed preparation permits only ordinary resume without restart operation or attempt tokens. Nothing was launched." 2
+  [ "${fresh_flag:-0}" != 1 ] && [ "${LANE_START_FRESH:-0}" != 1 ] ||
+    die "failed preparation permits only ordinary resume, not a fresh session. Nothing was launched." 2
+  LANES_NO_FETCH=1 "$LANES_EDIT" legacy-restart-check "$LANE" ||
+    die "managed or unknown ownership blocks failed-preparation recovery. Nothing was launched." 2
+  pfr_holder_rc=0
+  LANES_NO_FETCH=1 "$LANES_EDIT" lane-holders "$LANE" >/dev/null || pfr_holder_rc=$?
+  [ "$pfr_holder_rc" = 8 ] ||
+    die "ordinary recovery from failed preparation requires confirmed absence of every holder (lane-holders exited $pfr_holder_rc). Nothing was launched." 2
+  preparation_failure_identity="$pfr_identity"
+}
+eri_rc=0
+eri_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$LANE" --dir "$DIR" 2>/dev/null)" || eri_rc=$?
+case "$eri_rc" in
+  0)
+    eri_state="$(printf '%s\n' "$eri_out" | awk -F'\t' '$1=="state" {print $2; exit}')"
+    eri_op="$(printf '%s\n' "$eri_out" | awk -F'\t' '$1=="operation" {print $2; exit}')"
+    case "$eri_state" in
+      preparing) die "this restart is still preparing its preservation records. Nothing was changed." 2 ;;
+      failed) preparation_failure_resume_check "$eri_out" ;;
+      pending|starting)
+        eri_token="${op_flag:-${LANE_RESTART_OPERATION:-}}"
+        [ -n "$eri_token" ] || die "an active restart requires its supervisor operation token. Nothing was changed." 2
+        [ "$eri_token" = "$eri_op" ] || die "operation $eri_token is not lane $LANE's current restart operation $eri_op. Nothing was changed." 2
+        LANES_NO_FETCH=1 "$LANES_EDIT" legacy-restart-check "$LANE" || die "managed ownership blocks this legacy restart. Nothing was changed." 2
+        # --no-launch is a read-only command preview for an active restart.
+        (( ! no_launch )) || dry_run=1 ;;
+      ready) : ;;
+      INCOMPLETE) die "the restart intent is INCOMPLETE: its fenced fields cannot compare. Nothing was changed. Read it: lanes-edit.sh restart-intent $LANE" 2 ;;
+      UNKNOWN-SCHEMA) die "the restart schema is unreadable (Amendment 7(d)). Resuming could open the transcript that /ctx PAUSED. Update this workstation's openRepoTools or reconcile the intent once no restart is active. Nothing was changed." 2 ;;
+      *) die "the restart intent is malformed ($eri_state). Nothing was changed." 2 ;;
+    esac ;;
+  8|2) : ;;
+  1) die "the restart intent could not be read. That is NOT 'no restart is in flight': ordinary resume could open the transcript that /ctx PAUSED. Set LANES_LANE_STATE_ROOT to a readable control root. Nothing was changed." 2 ;;
+  *) die "the restart intent could not be read. Nothing was changed." 2 ;;
+esac
 
 # -------------------------------------------------------- 3. liveness check
 
@@ -2463,6 +2545,21 @@ profile_projects_dirs() {
 # parses this file. A path that is not a directory comes back as it was given,
 # which is what the `readlink -f` fallback did.
 real_of() { ( CDPATH=''; cd -P -- "$1" 2>/dev/null && pwd -P ) || printf '%s\n' "$1"; }
+# THE HANDOFF'S DIGEST, spelled exactly as `lanes-edit.sh` spells it, because
+# the two are compared: this file is what the intent recorded and what a launch
+# verifies, and two implementations of one digest is one implementation too
+# many. `none` where the workstation has neither tool — an ANSWER, meaning *not
+# checked here*, never *unchanged*.
+handoff_digest_of() {   # <file>
+  [ -r "${1-}" ] || { printf 'none\n'; return 0; }
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -- "$1" 2>/dev/null | awk '{print $1; exit}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 -- "$1" 2>/dev/null | awk '{print $1; exit}'
+  else
+    printf 'none\n'
+  fi
+}
 
 profile_of_projects_dir() {   # <…/<profile>/projects> -> the profile's name
   popd_d="${1%/projects}"; popd_n="${popd_d##*/}"
@@ -2740,16 +2837,240 @@ if [ "$AGENT" != claude ]; then
     esac
   fi
 fi
-# `LANE_START_FRESH=1` IS THE `/ctx` SEAM, and it is one sentence: *a NEW
-# session of this lane's agent, started with the top block of the handoff the
-# row names as its first prompt*. That is what a context clear IS, and it is why
-# `/ctx` does not simply resume the transcript it has just paused.
-# `lane-handoff --restart` respawns the lane's own pane with it set (Amendment
-# 17(f)); nothing else sets it, and with it unset this command behaves exactly
-# as it did before this amendment.
+# ------------- THE FRESH SESSION, AND WHICH OF ITS THREE SOURCES IS AUTHORITY
+#
+# A CONTEXT CLEAR IS ONE SENTENCE — *a NEW session of this lane's agent,
+# started with the top block of the handoff the row names as its first prompt* —
+# and it is why `/ctx` does not simply resume the transcript it has just paused.
+# What changed on 2026-09-15 is not the sentence but WHO SAYS IT.
+#
+# `LANE_START_FRESH=1` WAS THE SEAM AND IS NO LONGER THE AUTHORITY
+# (openRepoTools#94, measured on Eagle 2026-09-15T20:59Z). `/ctx` respawned the
+# lane's own pane with the variable set, and this command was reached WITHOUT
+# it: `claude-profile` re-creates the child through tmux, and its own code says
+# the rule — *"`tmux new-session` hands the command the SERVER's environment,
+# not this client's, so a variable the operator exported in their own shell
+# reaches the child only if it is written into the command string"*. It threads
+# six values explicitly and this was never one of them. The gates below were
+# correct and were simply never reached with `fresh` set; the lane resumed the
+# uuid it had just paused, and the record said an act had happened that had not.
+#
+# SO THE AUTHORITY IS A FILE, and the three sources are read in this order:
+#
+#   1. THE LANE'S OWN RESTART INTENT — `lanes-edit.sh restart-intent <lane>`,
+#      written under the lane's control root BEFORE the old process was killed
+#      and read back here whatever the environment did. It is the only channel
+#      that crosses a boundary another repository owns, because it is on disk
+#      rather than in an environment. Only `pending` and `starting` authorise a
+#      launch: a `ready` intent is HISTORY (which is what makes an ordinary
+#      `lane <name>` after a successful `/ctx` an ordinary resume), and a
+#      failed launch is the supervisor's to retry, moving it back to `starting`.
+#      Failed preparation authorizes only guarded ordinary resume with unchanged
+#      intent history; it has no supervised launch authority.
+#   2. `--fresh`, for the caller that reaches this command directly and has no
+#      launcher between it and here.
+#   3. `LANE_START_FRESH=1`, kept exactly as it was so that nothing written
+#      about it stops working, and no longer trusted to arrive.
+#
+# AND AN INTENT THAT DISAGREES WITH THIS RUN IS A REFUSAL, NEVER A SUBSTITUTION
+# (spec: *the operation launch refuses without substituting the conflicting
+# value*). An intent naming another directory is an intent for a lane in
+# another checkout, and launching this one in it is Evidence 3's silent loss of
+# the repository's CLAUDE.md and the lane's memory; an `--operation` that is not
+# the lane's current one is a supervisor acting for an operation that has been
+# superseded.
 fresh=0
-[ "${LANE_START_FRESH:-0}" = 1 ] && fresh=1
+fresh_why=""
+hs_workspace_root() { lanes_workspace_root; }
+
+# The file the row's handoff cell names. Three spellings, first hit wins, and
+# every one of them is a READ:
+#   (a) a path the cell already spells — absolute, or `~`-rooted, which is
+#       Amendment 4(e)'s estate spelling reaching the same file through the
+#       `~/projects/<estate>/handoffs` symlink;
+#   (b) `<the register's own checkout>/<cell>` — the repository-relative
+#       spelling every row this script writes carries, and the one the register
+#       and the handoffs share;
+#   (c) `<the workspace repository>/<cell>`, for a register reached from
+#       somewhere else.
+# A cell that spells a path of its own is answered by (a) alone: joining an
+# absolute path on to a root gives a path nothing has.
+hs_resolve() {
+  local cell="$1" cand root
+  [ -n "$cell" ] || return 1
+  case "$cell" in
+    '~/'*) cand="$HOME/${cell#'~/'}" ;;
+    /*)    cand="$cell" ;;
+    *)     cand="" ;;
+  esac
+  if [ -n "$cand" ]; then
+    [ -f "$cand" ] || return 1
+    printf '%s\n' "$cand"; return 0
+  fi
+  if [ -n "${LANES_REPO:-}" ] && [ -f "$LANES_REPO/$cell" ]; then
+    printf '%s\n' "$LANES_REPO/$cell"; return 0
+  fi
+  root="$(hs_workspace_root 2>/dev/null || :)"
+  if [ -n "$root" ] && [ -f "$root/$cell" ]; then
+    printf '%s\n' "$root/$cell"; return 0
+  fi
+  return 1
+}
+
 first_prompt=0
+ri_state=""; ri_op=""; ri_gen=""; ri_mode=""; ri_dir=""; ri_hf=""; ri_dig=""; ri_rc=0; ri_expected_digest=""; ri_prompt=""; ri_active=0; ri_attempt=""; ri_prepared=""; ri_agent=""; ri_profile=""
+ri_out="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$LANE" --dir "$DIR" 2>/dev/null)" || ri_rc=$?
+case "$ri_rc" in
+  0)
+    ri_state="$(printf '%s\n' "$ri_out" | awk -F'\t' '$1 == "state" { print $2; exit }')"
+    ri_op="$(printf '%s\n'    "$ri_out" | awk -F'\t' '$1 == "operation" { print $2; exit }')"
+    ri_gen="$(printf '%s\n'   "$ri_out" | awk -F'\t' '$1 == "generation" { print $2; exit }')"
+    ri_mode="$(printf '%s\n'  "$ri_out" | awk -F'\t' '$1 == "mode" { print $2; exit }')"
+    ri_dir="$(printf '%s\n'   "$ri_out" | awk -F'\t' '$1 == "dir" { print $2; exit }')"
+    ri_hf="$(printf '%s\n'    "$ri_out" | awk -F'\t' '$1 == "handoff" { print $2; exit }')"
+    ri_dig="$(printf '%s\n'   "$ri_out" | awk -F'\t' '$1 == "digest" { print $2; exit }')"
+    ri_pane="$(printf '%s\n' "$ri_out" | awk -F'\t' '$1 == "pane" {print $2; exit}')"
+    ri_attempt="$(printf '%s\n' "$ri_out" | awk -F'\t' '$1 == "attempt" {print $2; exit}')"
+    ri_prepared="$(printf '%s\n' "$ri_out" | awk -F'\t' '$1 == "prepared_digest" {print $2; exit}')"
+    ri_agent="$(printf '%s\n' "$ri_out" | awk -F'\t' '$1 == "agent" {print $2; exit}')"
+    ri_profile="$(printf '%s\n' "$ri_out" | awk -F'\t' '$1 == "profile" {print $2; exit}')" ;;
+  # 8 IS AN ANSWER — this lane has no restart in flight, which is every
+  # ordinary launch — and 2 IS A HELPER THAT PREDATES THIS READ: an installed
+  # `lanes-edit.sh` from before openRepoTools#94 answers 2 from its
+  # unknown-subcommand arm, and on that workstation no `/ctx` could have
+  # written an intent at all. The estate's fence is one sentence and
+  # `lane-handoff` spells it out at its own register reads — *"`0` an answer,
+  # `8` NO ANSWER and `2` a helper predating the read — both of those fall to
+  # the next rung"*. Both fall to the next rung here too, and neither is worth
+  # a note printed on every launch of every lane.
+  8|2) : ;;
+  # AND 1 IS NOT ONE OF THEM (Copilot round 2 on openRepoTools#121). `1` is
+  # *the control root could not be derived*, which is a READ THAT COULD NOT BE
+  # MADE and never *there is no restart in flight* — and the two are opposite
+  # facts at this one gate. The sidecar `/ctx` wrote sits under a root resolved
+  # from the lane's recorded directory or `$PROJECTS_ROOT`, and the pane this
+  # launch runs in is a NEW one whose environment is not the one that wrote it;
+  # a root that resolved then and does not now leaves this command reading
+  # nothing and calling it nothing-in-flight. What it would then do is resolve
+  # an ordinary resume source — and for a lane whose `/ctx` has just killed its
+  # pane, that is the transcript the `/ctx` PAUSED. That is openRepoTools#94,
+  # recreated by the very command written to prevent it.
+  #
+  # SO IT REFUSES, and so does any code this fence does not classify. The old
+  # line said *refusing every launch on a helper that could not answer is not a
+  # safety property* — which is true of a lane with no restart in flight and
+  # false of the one gate whose wrong answer resumes a paused transcript. The
+  # refusal names what to run to see the failure and both ways out of it,
+  # because a refusal a person cannot act on is not better than the defect.
+  1)
+    die "lane $LANE's restart intent could not be read: it has no lifecycle control root here (\`$LANES_EDIT restart-intent $LANE\` exits 1 — its record names no directory and \$PROJECTS_ROOT is not a directory in this environment). That is NOT 'no restart is in flight': the sidecar a /ctx writes lives under that root, and launching without reading it would resolve an ordinary resume source — which for a lane whose pane a /ctx has just replaced is the transcript that /ctx PAUSED (openRepoTools#94). Nothing was renamed, written or started. Give this run a root it can resolve: set \$LANES_LANE_STATE_ROOT, or make \$PROJECTS_ROOT (default \$HOME/projects) a directory — the lane's own record names its checkout once it has been started with one, and resolves on that." 2 ;;
+  *)
+    die "lane $LANE's restart intent read FAILED (\`$LANES_EDIT restart-intent $LANE\` exited $ri_rc), and a read that failed is never an answer (Amendment 7(d)). Nothing was renamed, written or started: this is the one launch gate whose wrong answer resumes the transcript a /ctx just paused (openRepoTools#94), so it refuses rather than falling through to an ordinary resume source. Run that command yourself to see what it says, then launch again." 1 ;;
+esac
+if [ -n "$preparation_failure_identity" ]; then
+  pfr_current="$(preparation_failure_snapshot "$ri_out")"
+  [ "$pfr_current" = "$preparation_failure_identity" ] ||
+    die "the failed preparation changed during ordinary recovery. Nothing was launched." 2
+fi
+if [ -n "${LANE_RESTART_OPERATION:-}" ]; then
+  [ -z "$op_flag" ] || [ "$op_flag" = "$LANE_RESTART_OPERATION" ] ||
+    die "the explicit restart operation disagrees with the supervisor token. Nothing was started." 2
+  op_flag="${op_flag:-$LANE_RESTART_OPERATION}"
+fi
+# AN `--operation` NAMES THE INTENT IT BELONGS TO, AND ONLY THAT ONE.
+if [ -n "$op_flag" ]; then
+  [ -n "$ri_state" ] ||
+    die "--operation $op_flag was given and lane $LANE has no restart intent to match it against (the read above says what answered). A supervised launch is made for ONE operation and this one cannot be found: nothing was renamed, nothing was written and no session was started. Read it with:  lanes-edit.sh restart-intent $LANE" 2
+  [ "$op_flag" = "$ri_op" ] ||
+    die "--operation $op_flag is not lane $LANE's current restart operation, which is ${ri_op:-none} (state ${ri_state:-none}, generation ${ri_gen:-0}). A stale supervisor must never launch against a newer operation — nothing was renamed, written or started. Read it with:  lanes-edit.sh restart-intent $LANE" 2
+fi
+case "$ri_state" in
+  # AN INTENT THIS READER CANNOT UNDERSTAND REFUSES THE LAUNCH, AND DOES NOT
+  # QUIETLY RESUME (Copilot round 1 on openRepoTools#121). `lanes-edit.sh`
+  # answers `UNKNOWN-SCHEMA` where a newer tooling wrote the record, and that
+  # answer used to fall through this `case` to the ordinary resume-source
+  # resolution below — which is the SAFE half of the decision (it authorises no
+  # fresh session) sitting on top of the UNSAFE one: the lane whose intent that
+  # is has just had its pane killed by a `/ctx`, and the resume source waiting
+  # there is the transcript that `/ctx` PAUSED. Falling through would resume it.
+  # That is openRepoTools#94 exactly, reached down a second road.
+  #
+  # So it is a refusal, in the one shape Amendment 7(d) gives: a read that could
+  # not be made is never an answer. It costs a person the lane until the
+  # workstation's `lanes-edit.sh` is new enough to read the file — and the
+  # message says both ways out, which is what makes that recoverable rather than
+  # a wall.
+  INCOMPLETE)
+    die "lane $LANE has a restart intent that is missing facts a launch is fenced on (\`lanes-edit.sh restart-intent $LANE\` answers INCOMPLETE and names them). Its writer records every field on every transition, so a record missing one was not written by this tooling — and launching from it would skip the very checks those fields exist for: the pane comparison and the handoff digest both treat an absent value as *cannot compare*. Nothing was renamed, written or started. Read it, and remove it once you know no restart is in flight:  lanes-edit.sh restart-intent $LANE" 2 ;;
+  UNKNOWN-STATE)
+    die "lane $LANE has a malformed restart state. Nothing was started. Read it: lanes-edit.sh restart-intent $LANE" 2 ;;
+  UNKNOWN-SCHEMA)
+    die "lane $LANE has a restart intent this \`lanes-edit.sh\` cannot read: its schema is one this version does not know (\`lanes-edit.sh restart-intent $LANE\` answers UNKNOWN-SCHEMA). That is NOT 'no restart is in flight' — a read that could not be made is never an answer (Amendment 7(d)) — and starting anyway would resolve an ordinary resume source, which for a lane whose /ctx just killed its pane is the transcript that /ctx PAUSED. Nothing was renamed, written or started. Update this workstation's openRepoTools so it can read that record, or remove the intent once you know no restart is in flight:  lanes-edit.sh restart-intent $LANE" 2 ;;
+  failed)
+    [ -n "$preparation_failure_identity" ] ||
+      die "a failed restart appeared during ordinary launch. Recheck it before recovery. Nothing was launched." 2
+    preparation_failure_resume_check "$ri_out" ;;
+
+  preparing)
+    die "this restart is still preparing its preservation records. No launch is authorized. Read it: lanes-edit.sh restart-intent $LANE" 2 ;;
+  pending|starting)
+    ri_active=1
+    [ "$AGENT" = claude ] && [ "$ri_agent" = claude ] || die "legacy supervised restart requires the recorded Claude agent. Nothing was started." 2
+    if [ -n "${CLAUDE_PROFILE_NAME:-}" ] && [ "$ri_profile" != none ]; then
+      [ "$CLAUDE_PROFILE_NAME" = "$ri_profile" ] || die "the launcher profile disagrees with the restart intent. Nothing was started." 2
+    fi
+    if [ -n "${LANE_RESTART_ATTEMPT:-}" ]; then
+      [ "$LANE_RESTART_ATTEMPT" = "$ri_attempt" ] || die "this child belongs to a superseded restart attempt. Nothing was started." 2
+    fi
+    [ -n "$op_flag" ] || die "an active restart requires its supervisor operation token. Ordinary lane launch cannot consume it. Retry with lane-handoff --supervise --lane $LANE --operation $ri_op." 2
+    LANES_NO_FETCH=1 "$LANES_EDIT" legacy-restart-check "$LANE" ||
+      die "managed or unknown ownership blocks this legacy restart. Nothing was started." 2
+    if [ -n "$ri_pane" ] && [ "$ri_pane" != none ] && [ -n "${TMUX_PANE:-}" ]; then
+      case "$ri_pane" in *.%*) ri_pane_id="${ri_pane##*.}" ;; %*) ri_pane_id="$ri_pane" ;; *) ri_pane_id="" ;; esac
+      [ -z "$ri_pane_id" ] || [ "$ri_pane_id" = "$TMUX_PANE" ] || die "the restart intent names another pane. Nothing was started." 2
+    fi
+    [ "$ri_mode" = fresh-from-handoff ] || die "this restart has not completed preservation; its mode is $ri_mode. Nothing was started." 2
+    [ -n "$ri_dig" ] && [ "$ri_dig" != none ] || die "the supervised restart has no complete handoff checksum. Nothing was started." 2
+    if [ "$ri_mode" = fresh-from-handoff ]; then
+      # THE DIRECTORY IS COMPARED BEFORE ANYTHING IS TAKEN. `real_of` is this
+      # file's own resolver, so a symlinked projects root does not read as a
+      # disagreement it is not.
+      if [ -n "$ri_dir" ] && [ "$ri_dir" != none ] && [ "$(real_of "$ri_dir")" != "$(real_of "$DIR")" ]; then
+        die "lane $LANE's restart intent (operation ${ri_op:-none}, state $ri_state) names checkout $ri_dir and this launch stands in $DIR. That is a conflict and not a preference: a launch that lands in the right transcript and the wrong directory loses the repository's CLAUDE.md and the lane's memory, silently (Evidence 3). Nothing was renamed, written or started. Launch it where the intent says, or read the intent:  lanes-edit.sh restart-intent $LANE" 2
+      fi
+      # THE HANDOFF'S DIGEST IS VERIFIED ON EVERY LAUNCH (spec: *a changed or
+      # missing handoff blocks launch and retry*), because the top block of
+      # that file is literally this launch's first prompt and a file that has
+      # moved under the intent is a different instruction. A `none` digest is
+      # *not checked here* — a workstation with neither `sha256sum` nor
+      # `shasum` — and says so rather than passing silently.
+      if [ -n "$ri_hf" ] && [ "$ri_hf" != none ] && [ -n "$ri_dig" ] && [ "$ri_dig" != none ]; then
+        ri_now="$(handoff_digest_of "$ri_hf")"
+        if [ "$ri_now" != "$ri_dig" ] && [ "$ri_now" != "${ri_prepared:-none}" ]; then
+          die "lane $LANE's handoff has changed since its restart intent was written: the intent records digest $ri_dig for $ri_hf and that file now digests $ri_now. The top block of that file is this launch's FIRST PROMPT, so launching now would hand the new session the block of a handoff the /ctx did not write. Nothing was renamed, written or started (operation ${ri_op:-none}). Take the handoff again:  lane-handoff --restart" 2
+        fi
+      fi
+      # The digest and the actual prompt must refer to the same row-bound file.
+      ri_cell="$(cell 7 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+      ri_row_hf="$(hs_resolve "$ri_cell")" || die "the restart handoff the row names is missing. Nothing was started." 2
+      [ -n "$ri_hf" ] && [ "$ri_hf" != none ] && [ -s "$ri_hf" ] &&
+        [ "$ri_hf" -ef "$ri_row_hf" ] ||
+        die "the restart intent and register name different handoffs. Nothing was started." 2
+      ri_expected_digest="$(handoff_digest_of "$ri_hf")"
+      fresh=1
+      fresh_why=" (restart intent ${ri_op:-none}, state $ri_state: the /ctx respawn)"
+    else
+      note "lane $LANE has a restart intent in state $ri_state whose mode is '${ri_mode:-none}' and not 'fresh-from-handoff', so it authorises no fresh session here; this launch resolves its own resume source."
+    fi ;;
+esac
+if (( ! fresh )) && [ "$fresh_flag" = 1 ]; then
+  fresh=1
+  fresh_why=" (--fresh)"
+fi
+if (( ! fresh )) && [ "${LANE_START_FRESH:-0}" = 1 ]; then
+  fresh=1
+  fresh_why=" (LANE_START_FRESH=1: the /ctx respawn)"
+fi
 
 # AMENDMENT 11, EVIDENCE 4 — `--name "$LANE"` IS ON EVERY LAUNCH BRANCH, NOT
 # ONLY THE NEW-SESSION ONE. The session NAME is the lane's messaging address
@@ -2939,8 +3260,6 @@ elif (( fresh )) || (( AGENT_EXPLICIT )); then
   # title fallback deliberately — a caller that named an agent, or a context
   # clear that has just written a fresh top block, is asking for a new session
   # of this lane and not for a picker filtered by a title.
-  fresh_why=""
-  (( fresh )) && fresh_why=" (LANE_START_FRESH=1: the /ctx respawn)"
   step "agent claude — a new session named for the lane, with this lane's handoff top block as its first prompt$fresh_why"
   cmd=("$CLAUDE_BIN" --name "$LANE")
   lane_verb=RESUMED; lane_sid=unknown; first_prompt=1
@@ -3042,6 +3361,16 @@ fi
 # sections read it: the row's stamp (5), the object-log line (5b) and the
 # handoff's Rule 3 stamp (5c). It used to be computed between the first two,
 # which left the first reading a variable the last two shared.
+# Reserve this attempt's transcript before row, log or handoff mutation.
+if [ "$ri_active" = 1 ] && (( ! no_launch )) && (( ! dry_run )); then
+  [ -n "$lane_sid" ] && [ "$lane_sid" != unknown ] || die "the restart has no prepared transcript. Nothing was written." 2
+  LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$LANE" starting \
+    --expect 'pending|starting' --expect-operation "$ri_op" \
+    --expect-generation "$ri_gen" --expect-attempt "$ri_attempt" \
+    --expect-new-transcript none --new-transcript "$lane_sid" --reason 'transcript reserved before preservation writes' >/dev/null ||
+      die "this restart attempt lost ownership before preservation writes. Nothing was launched." 2
+fi
+
 lane_sid_known=0
 [[ "$lane_sid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] && lane_sid_known=1
 
@@ -3662,41 +3991,6 @@ hs_carry_note() {
 # indentation and checked nothing — and Amendment 9(a) is explicit that a
 # second way to find one thing is a second answer. It now defers to the one
 # resolver above, which is the same in all four helpers.
-hs_workspace_root() { lanes_workspace_root; }
-
-# The file the row's handoff cell names. Three spellings, first hit wins, and
-# every one of them is a READ:
-#   (a) a path the cell already spells — absolute, or `~`-rooted, which is
-#       Amendment 4(e)'s estate spelling reaching the same file through the
-#       `~/projects/<estate>/handoffs` symlink;
-#   (b) `<the register's own checkout>/<cell>` — the repository-relative
-#       spelling every row this script writes carries, and the one the register
-#       and the handoffs share;
-#   (c) `<the workspace repository>/<cell>`, for a register reached from
-#       somewhere else.
-# A cell that spells a path of its own is answered by (a) alone: joining an
-# absolute path on to a root gives a path nothing has.
-hs_resolve() {
-  local cell="$1" cand root
-  [ -n "$cell" ] || return 1
-  case "$cell" in
-    '~/'*) cand="$HOME/${cell#'~/'}" ;;
-    /*)    cand="$cell" ;;
-    *)     cand="" ;;
-  esac
-  if [ -n "$cand" ]; then
-    [ -f "$cand" ] || return 1
-    printf '%s\n' "$cand"; return 0
-  fi
-  if [ -n "${LANES_REPO:-}" ] && [ -f "$LANES_REPO/$cell" ]; then
-    printf '%s\n' "$LANES_REPO/$cell"; return 0
-  fi
-  root="$(hs_workspace_root 2>/dev/null || :)"
-  if [ -n "$root" ] && [ -f "$root/$cell" ]; then
-    printf '%s\n' "$root/$cell"; return 0
-  fi
-  return 1
-}
 
 # The handoff path is field 7 of the PUBLISHED row: the register's header is
 # `| lane | session id | workstation / env / user | started (UTC) | objects
@@ -3739,6 +4033,17 @@ if [ "$lane_verb" = RESUMED ] && [ "$row_count" = 1 ] && (( stamp_ok )); then
     hs_dirreal="$( CDPATH=''; cd -P -- "$(dirname -- "$hs_file")" 2>/dev/null && pwd -P )" ||
       hs_dirreal="$(dirname -- "$hs_file")"
     hs_real="$hs_dirreal/$(basename -- "$hs_file")"
+    # Resolve a final-component symlink too; atomic publication replaces its
+    # real target and leaves the estate link intact.
+    hs_links=0
+    while [ -L "$hs_real" ]; do
+      hs_links=$((hs_links + 1))
+      [ "$hs_links" -lt 40 ] || die "the handoff symlink chain cannot be resolved. Nothing was launched." 2
+      hs_link="$(readlink "$hs_real")" || die "the handoff symlink could not be read." 2
+      case "$hs_link" in /*) hs_real="$hs_link" ;; *) hs_real="$(dirname -- "$hs_real")/$hs_link" ;; esac
+      hs_dirreal="$( CDPATH=''; cd -P -- "$(dirname -- "$hs_real")" && pwd -P )" || die "the handoff target directory is missing." 2
+      hs_real="$hs_dirreal/$(basename -- "$hs_real")"
+    done
     hs_repo="$(git -C "$(dirname -- "$hs_real")" rev-parse --show-toplevel 2>/dev/null || :)"
     hs_rel="$hs_real"
     [ -n "$hs_repo" ] && hs_rel="${hs_real#"$hs_repo"/}"
@@ -3779,6 +4084,11 @@ if [ "$lane_verb" = RESUMED ] && [ "$row_count" = 1 ] && (( stamp_ok )); then
         note "    $hs_stamp"
         note "  then: $hs_fix"
       else
+        if [ "$ri_active" = 1 ] && [ "$ri_expected_digest" != none ] &&
+           [ "$(handoff_digest_of "$hs_pre")" != "$ri_expected_digest" ]; then
+          rm -rf -- "$hs_tmpd"
+          die "the restart handoff changed before its owned resume stamp. Nothing was launched." 2
+        fi
         { head -n "$hs_at" -- "$hs_pre"
           printf '%s\n' "$hs_stamp"
           tail -n "+$((hs_at + 1))" -- "$hs_pre"
@@ -3786,7 +4096,28 @@ if [ "$lane_verb" = RESUMED ] && [ "$row_count" = 1 ] && (( stamp_ok )); then
         if [ "$(sed -n -e "$((hs_at + 1))p" "$hs_out")" = "$hs_stamp" ] &&
            { head -n "$hs_at" -- "$hs_out"; tail -n "+$((hs_at + 2))" -- "$hs_out"; } | cmp -s - "$hs_pre"
         then
-          cat -- "$hs_out" > "$hs_real"     # the redirect FOLLOWS the symlink
+          if [ "$ri_active" = 1 ]; then
+            ri_post_digest="$(handoff_digest_of "$hs_out")"
+            # Persist both sides of this exact, verified stamp splice before
+            # publishing bytes. Interruption on either side remains retryable.
+            if ! LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$LANE" starting \
+              --expect starting --expect-operation "$ri_op" \
+              --expect-generation "$ri_gen" --expect-attempt "$ri_attempt" \
+              --expect-new-transcript "$lane_sid" --digest "$ri_expected_digest" --prepared-digest "$ri_post_digest" \
+              --reason 'owned handoff stamp prepared' >/dev/null; then
+              rm -rf -- "$hs_tmpd"
+              die "this attempt could not reserve its handoff stamp. Nothing was launched." 2
+            fi
+            ri_expected_digest="$ri_post_digest"
+          fi
+          hs_publish_args=(publish-handoff "$LANE" "$hs_real" "$hs_out" --expect-digest "$(handoff_digest_of "$hs_pre")")
+          if [ "$ri_active" = 1 ]; then
+            hs_publish_args+=(--operation "$ri_op" --generation "$ri_gen" --attempt "$ri_attempt" --state starting --transcript "$lane_sid")
+          fi
+          if ! LANES_NO_FETCH=1 "$LANES_EDIT" "${hs_publish_args[@]}" >/dev/null; then
+            rm -rf -- "$hs_tmpd"
+            die "the handoff stamp could not be published atomically under its writer lock. Nothing was launched." 2
+          fi
           step "handoff stamped at line $((hs_at + 1)) of $hs_rel: $hs_stamp"
           if [ "${LANES_NO_GIT:-0}" = 1 ]; then
             note "LANES_NO_GIT=1 — the stamp is written and NOT committed:"
@@ -3885,8 +4216,19 @@ if (( first_prompt )); then
   fi
   fp_file=""
   [ -n "$fp_cell" ] && fp_file="$(hs_resolve "$fp_cell" 2>/dev/null || :)"
+  if [ "$ri_active" = 1 ] && (( fresh )); then
+    [ -n "$fp_file" ] && [ "$fp_file" -ef "$ri_hf" ] ||
+      die "the delivered restart prompt is not the intent-bound handoff. Nothing was launched." 2
+    [ "$ri_expected_digest" = none ] || [ "$(handoff_digest_of "$fp_file")" = "$ri_expected_digest" ] ||
+      die "the restart handoff changed after preparation. Nothing was launched." 2
+  fi
   if [ -n "$fp_file" ] && [ -s "$fp_file" ]; then
     fp_text="$(handoff_top_block "$fp_file")"
+    if [ "$ri_active" = 1 ] && (( fresh )); then
+      [ -n "$fp_text" ] || die "the supervised handoff has no first prompt. Nothing was launched." 2
+      [ "$ri_expected_digest" = none ] || [ "$(handoff_digest_of "$fp_file")" = "$ri_expected_digest" ] ||
+        die "the restart handoff changed while reading its prompt. Nothing was launched." 2
+    fi
     if [ -n "$fp_text" ]; then
       cmd+=("$fp_text")
       step "first prompt: the top block of $fp_cell ($(printf '%s\n' "$fp_text" | grep -c .) lines), delivered to $AGENT as its opening prompt"
@@ -3899,6 +4241,51 @@ if (( first_prompt )); then
     # from, and a session with no prompt can still read the file itself.
     note "the handoff the row names was not found${fp_cell:+ ('$fp_cell')}, so $AGENT is launched with no first prompt. Its first act is to read that file and stamp it (Rule 3)."
   fi
+fi
+
+# --------- 5c. the transcript this launch is about to make, INTO THE INTENT
+#
+# THE SUPERVISOR CANNOT CONFIRM WHAT IT WAS NEVER TOLD (openRepoTools#94). Its
+# readiness predicate asks whether the EXPECTED new transcript exists and is
+# bound to this lane; the only process that knows which uuid that is, is this
+# one, and only after 5a minted it. So it is written back into the intent
+# before the `exec` — the last act this command takes that the supervisor can
+# read — and the state goes with it: `starting` is *a launch was prepared for
+# this operation*, and the legacy intent stays starting
+# until readiness is CONFIRMED.
+#
+# THE WRITE IS FENCED ON THE OPERATION AND ON NOTHING ELSE. A launch that has
+# been superseded between 5a and here writes nothing, and says so: the exit 7
+# is the intent telling this run that a newer operation owns the lane.
+#
+# A FAILED FENCE OR WRITE REFUSES THE LAUNCH. An observer declining to mark
+# readiness cannot undo the effects of a stale process that was already execed.
+if (( fresh )) && [ "$ri_active" = 1 ] && (( ! no_launch )) && (( ! dry_run )); then
+  ri_new="$lane_sid"
+  [ -n "$ri_new" ] && [ "$ri_new" != unknown ] || ri_new="${new_sid:-}"
+  ri_wrc=0
+  # FENCED ON THE GENERATION AS WELL AS THE OPERATION (Copilot round 2 on
+  # openRepoTools#121), which is what every write the supervisor makes of this
+  # same intent carries. `$ri_gen` is the generation this run READ at the top,
+  # before anything was renamed or written, and the supervisor's claim keeps it
+  # — so a legacy operation advanced between the two has a launch here that
+  # writes nothing and says so, rather than stamping its expected transcript
+  # onto a newer generation's record.
+  ri_fence=()
+  case "${ri_gen:-}" in '' | *[!0-9]*) : ;; *) ri_fence=(--expect-generation "$ri_gen" --expect-attempt "$ri_attempt") ;; esac
+  LANES_NO_FETCH=1 "$LANES_EDIT" legacy-restart-check "$LANE" ||
+    die "managed ownership blocks the prepared legacy launch. Nothing was launched." 2
+  LANES_NO_FETCH=1 "$LANES_EDIT" set-restart-intent "$LANE" starting \
+    --expect 'pending|starting' --expect-operation "$ri_op" \
+    ${ri_fence[@]+"${ri_fence[@]}"} \
+    ${ri_new:+--new-transcript "$ri_new"} \
+    --expect-new-transcript "$ri_new" --digest "$ri_expected_digest" --prepared-digest none \
+    --reason "lane-start prepared the launch" >/dev/null 2>&1 || ri_wrc=$?
+  case "$ri_wrc" in
+    0) step "restart intent $ri_op: starting${ri_new:+, expected transcript $ri_new}" ;;
+    7) die "the restart intent moved under this launch: another operation owns lane $LANE now. This stale launch was refused before exec. Re-read it: lanes-edit.sh restart-intent $LANE" 2 ;;
+    *) die "the prepared transcript could not be recorded (set-restart-intent exited $ri_wrc). This supervised launch was refused before exec because readiness cannot verify its identity." 1 ;;
+  esac
 fi
 
 # ------------- 5e. the estate's daily report (opensoft/openRepoTools#162)
@@ -3958,6 +4345,12 @@ if (( dry_run )); then
   plan "exec $(quoted "${cmd[@]}")"
   step "--dry-run: nothing was renamed, written or launched"
   exit 0
+fi
+
+if [ -n "$preparation_failure_identity" ]; then
+  pfr_final="$(LANES_NO_FETCH=1 "$LANES_EDIT" restart-intent "$LANE" --dir "$DIR")" ||
+    die "the failed preparation could not be rechecked before ordinary launch. Nothing was launched." 2
+  preparation_failure_resume_check "$pfr_final"
 fi
 
 cd -- "$DIR"

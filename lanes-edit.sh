@@ -1185,6 +1185,7 @@ rename_undo() {
 }
 
 cleanup() {
+  [ -z "${pbh_tmp:-}" ] || rm -f -- "$pbh_tmp"
   rename_undo
   if [ "$LOCK_HELD" = 1 ]; then release_lock; fi
   [ -n "${RL_SNAP:-}" ] && [ -d "${RL_SNAP:-}" ] && rm -rf -- "$RL_SNAP"
@@ -1535,6 +1536,10 @@ lane_from_text() {
 # `git diff --no-index --numstat` (must be exactly 1 added / 1 deleted).
 replace_line() {
   n="$1"; newline="$2"
+  # 1 where the line was already exactly what was asked for and nothing was
+  # written. A caller that prints what it did reads this rather than announcing
+  # a replacement that did not happen.
+  REPLACE_LINE_NOOP=0
   TMPD="$(mktemp -d)"
   pre="$TMPD/pre"; out="$TMPD/out"
   cat -- "$LANES_FILE" > "$pre"
@@ -1546,6 +1551,33 @@ replace_line() {
   } > "$out"
   after="$(wc -l < "$out" | tr -d ' ')"
   [ "$before" = "$after" ] || die "line count changed ($before -> $after); refusing" 5
+  # A LINE THAT IS ALREADY EXACTLY WHAT WAS ASKED FOR IS A WRITE THAT IS DONE,
+  # AND NOT A PROOF THAT FAILED (measured 2026-09-16, `lanes-edit.sh`). The
+  # `numstat` below proves this edit touched ONE line by demanding `1 1` from
+  # `git diff --no-index` — and an edit that changes nothing produces NO OUTPUT
+  # AT ALL, so `$stat` came back empty, the equality was false, and the act
+  # died 5 with `numstat: none`. The guard read "nothing changed" as "more than
+  # one line changed", which are opposite facts.
+  #
+  # IT IS REACHED BY ORDINARY USE AND NOT BY A CONTRIVANCE. `set-row-state`
+  # writes `<STATE> · $(utc_now) · <line>` and `utc_now` is seconds, so two
+  # stamps of the SAME state phrase inside one second are byte-identical — two
+  # `lane-start --no-launch` runs of one lane in one window, which is exactly
+  # what `tests/test_lane_helpers.sh`'s Amendment 15 `--confirm` case does, and
+  # what made it fail about one run in two with `expected [0], got [5]`. On a
+  # workstation it is a lane stamped twice in a second being told its write was
+  # refused, when the register already says precisely what the caller asked for.
+  #
+  # THE CALLERS ARE SAFE WITH IT: nothing is written, so `commit_push` finds
+  # nothing staged and says so on its own line, and every one of the four
+  # callers (`set-row-state`, `append-session-id`, `replace-in-row` and
+  # `migrate-state-cells`) wanted the file to SAY something rather than to
+  # differ from what it said.
+  if cmp -s -- "$pre" "$out"; then
+    REPLACE_LINE_NOOP=1
+    note "line $n of $LANES_FILE is already exactly what this write asked for — nothing rewritten, and nothing to commit"
+    return 0
+  fi
   stat="$(git --no-pager diff --no-index --numstat -- "$pre" "$out" 2>/dev/null | head -n1 | cut -f1,2)"
   [ "$stat" = "$(printf '1\t1')" ] || die "edit touched more than one line (numstat: ${stat:-none}); refusing" 5
   # THE WRITE IS CHECKED (Copilot round 3 on openRepoTools#81). `cat > file`
@@ -4090,7 +4122,7 @@ record_is_here() {   # <the record's JSON blob>
 # both, which is the same fault one layer up; hardening the CALLER left this
 # source with no way to say "I could not read".
 live_holder() {
-  local lane="$1" ids="${2-}" pats=() f blob pid name status target sid base src
+  local lane="$1" ids="${2-}" all="${3-}" pats=() f blob pid name status target sid base src
   local lh_files lh_match lh_err kindv verdict c c_sid c_tgt c_name c_pid c_v
   local lh_bg="" lh_windowed="" lh_here="" lh_here_tgt="" lh_else="" lh_orph="" lh_bres=""
   local cands=()
@@ -4197,6 +4229,15 @@ live_holder() {
   done < "$lh_match"
   rm -f -- "$lh_match"
   [ -n "$lh_bg" ] && note "lane $lane: companion records, which are never holders: $lh_bg"
+
+  # The restart observer needs every process, while live-holder keeps its
+  # existing preferred-record contract. Multiple witnesses of one PID are
+  # one holder; two PIDs sharing a transcript are still two holders.
+  if [ "$all" = all ]; then
+    [ "${#cands[@]}" -gt 0 ] || return 8
+    printf '%s\n' "${cands[@]}" | awk -F'\037' '!seen[$1 FS $4]++'
+    return 0
+  fi
 
   # PASS 2 — the pick. `here` first, and among two records of one session the
   # WINDOWED one is the better witness of it; then a genuine rival in another
@@ -10880,6 +10921,357 @@ EOF
   return "$msc_rc"
 }
 
+# ------------------------------------- the restart intent (openRepoTools#94)
+#
+# WHY THIS IS A FILE AND NOT AN ENVIRONMENT VARIABLE, measured on Eagle
+# 2026-09-15T20:59Z and filed as `opensoft/openRepoTools#94`. `/ctx` respawned
+# its own pane with `LANE_START_FRESH=1 … lane openRepoTools-3` and what came
+# up was `claude --name openRepoTools-3 --resume <the uuid it had just paused>`.
+# `lane-start` was not at fault — its `(( ! fresh ))` gates were in the
+# installed copy and are in this tree — and neither was `lane`, which `exec`s.
+# The launcher is: `claude-profile` re-creates the child through tmux, and its
+# own comment states the rule this estate now has to build around —
+#
+#   "`tmux new-session` hands the command the SERVER's environment, not this
+#    client's, so a variable the operator exported in their own shell reaches
+#    the child only if it is written into the command string"
+#
+# — which is why it threads six values explicitly and why a seventh nobody
+# thought to thread is simply GONE. The defect capture's session name,
+# `claude-max-001-20260915205926-456327`, is that launcher's own
+# `claude-<profile>-<timestamp>-<pid>` pattern, so this is what happened and not
+# what might have. An ENVIRONMENT seam cannot cross a boundary another
+# repository owns. A FILE can: the intent is written under the lane's own
+# control root before the old process is killed, and every launch after it
+# reads the same bytes whatever the environment did.
+#
+# THE CONTROL ROOT follows the same layout as the diagnostic lifecycle from
+# openRepoTools#97. The restart helpers have their own namespace: their strict
+# validation and private atomic writer must not be replaced by the diagnostic
+# helpers. The intent sits beside lane-state.yaml without sharing its authority.
+
+LANE_RESTART_SCHEMA=1
+
+# THE CONTROL ROOT — explicit override, retained intent, then creation rungs.
+# 0 with a path, 8 with no rung, 1 for unknown or competing locations.
+lane_restart_control_root() {   # <lane> [<payload>] [<checkout hint>]
+  lcr_lane="${1-}"; lcr_pay="${2-}"; lcr_dir=""; lcr_par=""
+  lcr_record_root=""; lcr_projects_root=""; lcr_existing=""
+  [ -n "$lcr_lane" ] || return 8
+  if [ -n "${LANES_LANE_STATE_ROOT:-}" ]; then
+    printf '%s/%s\n' "${LANES_LANE_STATE_ROOT%/}" "$lcr_lane"
+    return 0
+  fi
+  [ -n "$lcr_pay" ] && lcr_dir="$(payload_subfield "$lcr_pay" dir)"
+  if [ -z "$lcr_dir" ]; then
+    lcr_dir="$(lane_payload_field "$lcr_lane" dir 2>/dev/null || :)"
+  fi
+  case "$lcr_dir" in
+    /*) lcr_par="${lcr_dir%/*}" ;;
+    *)  lcr_par="" ;;
+  esac
+  if [ -n "$lcr_par" ]; then
+    lcr_record_root="$lcr_par/.lane-state/$lcr_lane"
+    lane_restart_root_ok "$lcr_record_root" || return 1
+    [ -d "$lcr_par" ] || lcr_record_root=""
+  fi
+  if [ -n "${PROJECTS_ROOT:-}" ]; then
+    lcr_projects_root="${PROJECTS_ROOT%/}/.lane-state/$lcr_lane"
+    lane_restart_root_ok "$lcr_projects_root" || return 1
+    [ -d "$PROJECTS_ROOT" ] || lcr_projects_root=""
+  fi
+  # PAUSED may first record a nested checkout after reservation. Existing
+  # intent authority stays at its physical location; validity is the reader's
+  # gate, never a reason to bypass an occupied path. Unknown ancestry refuses.
+  # Only directory aliases share an atomic replacement entry; separate leaf
+  # symlinks/hardlinks would split into two records on the next replacement.
+  for lcr_candidate in "$lcr_record_root" "$lcr_projects_root"; do
+    [ -n "$lcr_candidate" ] || continue
+    lcr_file="$lcr_candidate/restart-intent.yaml"
+    if [ -e "$lcr_file" ] || [ -L "$lcr_file" ]; then
+      if [ -n "$lcr_existing" ] && [ "$lcr_candidate" != "$lcr_existing" ] &&
+         [ ! "$lcr_candidate" -ef "$lcr_existing" ]; then
+        note "lane $lcr_lane has distinct restart-intent locations in $lcr_existing and $lcr_candidate; reconcile these records before continuing. Nothing was written."
+        return 1
+      fi
+      [ -n "$lcr_existing" ] || lcr_existing="$lcr_candidate"
+    fi
+  done
+  if [ -n "$lcr_existing" ]; then
+    printf '%s\n' "$lcr_existing"
+    return 0
+  fi
+  if [ -n "$lcr_record_root" ]; then
+    printf '%s\n' "$lcr_record_root"
+    return 0
+  fi
+  if [ -n "$lcr_projects_root" ]; then
+    printf '%s\n' "$lcr_projects_root"
+    return 0
+  fi
+  # A checkout hint is a last resort, so reads cannot hide an intent that
+  # writers/status already placed under the established root rungs.
+  case "${3-}" in
+    /*) lcr_par="${3%/*}"
+        if [ -n "$lcr_par" ] && [ -d "$lcr_par" ]; then
+          printf '%s/.lane-state/%s\n' "$lcr_par" "$lcr_lane"
+          return 0
+        fi ;;
+  esac
+  return 8
+}
+
+# ONE FIELD OUT OF ONE OF THESE FILES. They are flat `key: value` lines and
+# nothing else — no nesting, no lists — so one `awk` reads every one of them
+# and a malformed file answers empty rather than half a value.
+lane_restart_sidecar_field() {   # <file> <key>
+  [ -r "${1-}" ] || return 1
+  awk -v k="${2-}" '
+    BEGIN { k = k ": " }
+    substr($0, 1, length(k)) == k {
+      v = substr($0, length(k) + 1)
+      print v; exit }' "$1"
+}
+
+# Diagnostic prose is bounded and flattened; launch identity is never normalized.
+lane_restart_sidecar_value() {   # <diagnostic value>
+  printf '%s' "${1-}" | LC_ALL=C tr '[:cntrl:]' ' '
+}
+
+lane_restart_value_ok() {   # exact values must survive flat and tabular readers
+  # POSIX class matching also works in Bash 3.2; its ANSI-C range did not.
+  local LC_ALL=C
+  case "${1-}" in *[[:cntrl:]]*) return 1 ;; esac
+  return 0
+}
+
+# THE ATOMIC REPLACE. Written beside the target and renamed over it, so a
+# reader never sees half a snapshot and a full disk leaves the old one intact.
+lane_restart_sidecar_put() {   # <file> ; the whole body on stdin
+  lsp_f="${1-}"; lsp_d="${lsp_f%/*}"
+  [ -n "$lsp_f" ] || return 1
+  mkdir -p -- "$lsp_d" 2>/dev/null || return 1
+  [ ! -d "$lsp_f" ] || return 1
+  lsp_t="$(umask 077; mktemp "$lsp_d/.restart-intent.XXXXXX" 2>/dev/null)" || return 1
+  [ -n "$lsp_t" ] || return 1
+  cat > "$lsp_t" 2>/dev/null || { rm -f -- "$lsp_t" 2>/dev/null; return 1; }
+  lsp_bad="$(lane_restart_missing "$lsp_t" "$2")" || { rm -f -- "$lsp_t"; return 1; }
+  [ -z "$lsp_bad" ] || { rm -f -- "$lsp_t"; return 1; }
+  mv -- "$lsp_t" "$lsp_f" 2>/dev/null || { rm -f -- "$lsp_t" 2>/dev/null; return 1; }
+  return 0
+}
+
+# AN OPERATION ID: unique to one transition, and shaped like the manifest key
+# every other sub-field of this estate is — letters, digits, `.`, `_`, `-` — so
+# that it can be carried in a payload, a filename and a commit subject without
+# a quoting rule of its own. There is no `uuidgen` on every workstation this
+# runs on, and a timestamp with the pid and two `$RANDOM`s behind it is unique
+# among the handfuls of transitions one lane takes in a day.
+lane_restart_op_id() {
+  printf 'op-%s-%s-%s%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" "$$" "$RANDOM" "$RANDOM"
+}
+
+# THE FOUR STATES OF A RESTART, AND NOTHING ELSE IS ONE.
+#   pending   the intent is written and the old process may still be alive; the
+#             pane has not been replaced, or has been and the supervisor has
+#             not claimed it yet.
+#   starting  a supervisor has claimed this exact operation and launched.
+#   failed    the launch did not reach readiness; the supervisor is still in
+#             the pane with the diagnostic and the retry.
+#   ready     readiness was positively confirmed. A `ready` intent is HISTORY
+#             and authorises no launch, which is what makes an ordinary
+#             `lane <name>` after a successful `/ctx` an ordinary resume.
+lane_restart_word_ok() {   # <word>
+  case "${1-}" in preparing|pending|starting|failed|ready) return 0 ;; esac
+  return 1
+}
+
+# THE HANDOFF'S DIGEST. `shasum -a 256` is on macOS, `sha256sum` on Linux, and
+# a workstation with neither answers `none` — which is an ANSWER and not a gap:
+# the digest then cannot be COMPARED, and every reader below treats a `none`
+# digest as *not checked here* rather than as *unchanged*. Never `cksum`: a
+# 32-bit checksum is not a change detector for a file a person edits.
+lane_handoff_digest() {   # <file>
+  [ -r "${1-}" ] || { printf 'none\n'; return 0; }
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -- "$1" 2>/dev/null | awk '{print $1; exit}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 -- "$1" 2>/dev/null | awk '{print $1; exit}'
+  else
+    printf 'none\n'
+  fi
+}
+
+# THE INTENT, READ. `<key><TAB><value>` lines, which is what every caller here
+# parses with one `awk`. 0 with the fields, 8 where the lane has no intent at
+# all (the ordinary lane, and not a failure), 1 where the control root could
+# not be derived.
+# All schema-1 keys are mandatory; prepared_digest is an optional extension.
+# One read validates presence and duplicate keys without per-field subprocesses.
+lane_restart_missing() {   # <file> <canonical lane>
+  awk -v lane="$2" '
+    BEGIN {
+      n=split("schema lane state generation operation mode agent profile dir pane window handoff digest old_transcript new_transcript attempt workstation created updated reason", keys, " ")
+      for (i=1;i<=n;i++) allowed[keys[i]]=1
+      allowed["prepared_digest"]=1
+    }
+    {
+      if ($0 ~ /[[:cntrl:]]/ || $0 !~ /^[A-Za-z_]+: /) {bad["record"]=1; next}
+      k=$0; sub(/:.*/, "", k)
+      if (!(k in allowed)) {bad["unknown-key"]=1; next}
+      v=substr($0,length(k)+3)
+      seen[k]++; values[k]=v; if (v!="") good[k]=1
+    }
+    END {
+      for (i=1;i<=n;i++) if (seen[keys[i]]!=1 || !good[keys[i]]) bad[keys[i]]=1
+      if (values["lane"]!=lane) bad["lane"]=1
+      if (values["generation"] !~ /^[0-9]+$/) bad["generation"]=1
+      if (values["attempt"] !~ /^[0-9]+$/) bad["attempt"]=1
+      n=split("operation mode agent profile old_transcript new_transcript", keys, " ")
+      for (i=1;i<=n;i++) if (values[keys[i]] !~ /^[A-Za-z0-9._-]+$/) bad[keys[i]]=1
+      n=split("dir handoff", keys, " ")
+      for (i=1;i<=n;i++) if (values[keys[i]]!="none" && values[keys[i]] !~ /^\//) bad[keys[i]]=1
+      n=split("digest prepared_digest", keys, " ")
+      for (i=1;i<=n;i++) if ((seen[keys[i]] && seen[keys[i]]!=1) ||
+          (seen[keys[i]] && values[keys[i]]!="none" && (length(values[keys[i]])!=64 || values[keys[i]] !~ /^[0-9a-fA-F]+$/))) bad[keys[i]]=1
+      for (k in bad) {printf "%s%s", sep, k; sep=" "}
+    }
+  ' "$1"
+}
+
+lane_restart_root_ok() {   # missing directories are allowed; unusable existing ancestors are not
+  lrro_path="$1"
+  while [ -n "$lrro_path" ]; do
+    if [ -e "$lrro_path" ] || [ -L "$lrro_path" ]; then
+      [ -d "$lrro_path" ] && [ -r "$lrro_path" ] && [ -x "$lrro_path" ] || return 1
+    fi
+    lrro_parent="$(dirname -- "$lrro_path")" || return 1
+    [ "$lrro_parent" != "$lrro_path" ] || break
+    lrro_path="$lrro_parent"
+  done
+  return 0
+}
+
+lane_restart_read() {   # <lane> [<resolved checkout hint>]
+  lrr_lane="${1-}"; lrr_root=""; lrr_rc=0
+  lrr_root="$(lane_restart_control_root "$lrr_lane" "" "${2-}")" || lrr_rc=$?
+  [ "$lrr_rc" = 0 ] || return 1
+  lane_restart_root_ok "$lrr_root" || return 1
+  lrr_f="$lrr_root/restart-intent.yaml"
+  [ -e "$lrr_f" ] || [ -L "$lrr_f" ] || return 8
+  [ -f "$lrr_f" ] && [ -r "$lrr_f" ] || return 1
+  lrr_schema="$(lane_restart_sidecar_field "$lrr_f" schema)" || return 1
+  # AN UNKNOWN SCHEMA FAILS CLOSED, exactly as `lane-state` does for the same
+  # reason: a newer tooling's intent read by an older reader must not be
+  # reported as a launch this reader knows how to make.
+  case "$lrr_schema" in
+    "$LANE_RESTART_SCHEMA") : ;;
+    *) printf 'state\tUNKNOWN-SCHEMA\n'; printf 'schema\t%s\n' "${lrr_schema:-<none>}"
+       printf 'file\t%s\n' "$lrr_f"; return 0 ;;
+  esac
+  # AN ACTIVE INTENT MISSING A FACT A LAUNCH IS FENCED ON IS NOT A READABLE ONE
+  # (Copilot round 2 on openRepoTools#121). The schema check above is the whole
+  # of what this read used to verify, so a `pending` record carrying an
+  # operation and a mode and nothing else came back with empty values — and
+  # empty is exactly what every comparison downstream treats as *cannot
+  # compare*: `pane_agrees` returns agreement on an empty side, the digest check
+  # skips, and the launch goes ahead with none of the three checks those fields
+  # exist for. That is a silent launch from a record nobody wrote.
+  #
+  # PRESENT AND NOT EMPTY, WHICH IS NOT THE SAME AS *NOT `none`*. `none` IS an
+  # answer here — a workstation with neither `sha256sum` nor `shasum` records
+  # `digest: none`, and the writer writes `none` for every empty field on every
+  # transition — so what is checked is that the KEY IS THERE AT ALL, which is
+  # true of everything this tooling has ever written and false of a record that
+  # was truncated or edited by hand.
+  #
+  # `failed` ALSO NEEDS THE LAUNCH FACTS: it authorizes a supervised retry.
+  # Incomplete records remain readable diagnostics, never launch authority.
+  lrr_state="$(lane_restart_sidecar_field "$lrr_f" state)" || return 1
+  if ! lane_restart_word_ok "$lrr_state"; then
+    printf 'state\tUNKNOWN-STATE\nfile\t%s\n' "$lrr_f"
+    return 0
+  fi
+  lrr_missing="$(lane_restart_missing "$lrr_f" "$lrr_lane")" || return 1
+  if [ -n "$lrr_missing" ]; then
+    printf 'state\tINCOMPLETE\nintended_state\t%s\nmissing\t%s\nfile\t%s\n' "$lrr_state" "$lrr_missing" "$lrr_f"
+    return 0
+  fi
+  for lrr_num in generation attempt; do
+    lrr_value="$(lane_restart_sidecar_field "$lrr_f" "$lrr_num")" || return 1
+    case "$lrr_value" in ''|*[!0-9]*)
+      printf 'state\tINCOMPLETE\nmissing\t%s\nfile\t%s\n' "$lrr_num" "$lrr_f"
+      return 0 ;;
+    esac
+  done
+  for lrr_k in state generation operation mode lane agent profile dir pane window \
+               handoff digest prepared_digest old_transcript new_transcript attempt workstation \
+               created updated reason; do
+    printf '%s\t%s\n' "$lrr_k" "$(lane_restart_sidecar_field "$lrr_f" "$lrr_k")"
+  done
+  printf 'file\t%s\n' "$lrr_f"
+  return 0
+}
+
+# One field of it, for the callers that want exactly one.
+lane_restart_of() {   # <lane> <key>
+  lro_out=""; lro_rc=0
+  lro_out="$(lane_restart_read "${1-}")" || lro_rc=$?
+  [ "$lro_rc" = 0 ] || return "$lro_rc"
+  printf '%s\n' "$lro_out" | awk -F'\t' -v k="${2-}" '$1 == k { print $2; exit }'
+}
+
+# THE INTENT, WRITTEN — the ONE writer, and every caller reaches it through
+# `set-restart-intent`. An empty field is written as `none`, which is an ANSWER
+# and not a gap, on the same argument Amendment 17(b) gives its `transcript`
+# sub-field.
+#
+# THERE IS NO CREDENTIAL FIELD AND THERE IS NO PLACE FOR ONE. The fields are a
+# lane, a generation, an operation, two transcript ids, an agent, a PROFILE
+# NAME (a manifest key, never a token), a directory, a pane, a handoff path,
+# its digest, an attempt count and a bounded reason. A caller that had a secret
+# in hand would have nowhere here to put it.
+lane_restart_put() {   # <root> <lane> <state> <gen> <op> <mode> <agent> <profile> <dir> <pane> <window> <handoff> <digest> <old> <new> <attempt> <reason> <created>
+  lrw_root="$1"; lrw_lane="$2"; lrw_state="$3"; lrw_gen="$4"; lrw_op="$5"
+  lrw_mode="$6"; lrw_agent="$7"; lrw_prof="$8"; lrw_dir="$9"; shift 9
+  lrw_pane="$1"; lrw_win="$2"; lrw_hf="$3"; lrw_dig="$4"; lrw_old="$5"
+  lrw_new="$6"; lrw_att="$7"; lrw_reason="$8"; lrw_created="$9"; lrw_prepared="${10-}"
+  for lrw_value in "$lrw_lane" "$lrw_state" "$lrw_gen" "$lrw_op" "$lrw_mode" \
+      "$lrw_agent" "$lrw_prof" "$lrw_dir" "$lrw_pane" "$lrw_win" "$lrw_hf" \
+      "$lrw_dig" "$lrw_old" "$lrw_new" "$lrw_att" "$lrw_created" "$lrw_prepared" "${WS:-none}"; do
+    lane_restart_value_ok "$lrw_value" || return 1
+  done
+  # BOUNDED DIAGNOSTICS (design decision 3). A launcher that died printing a
+  # megabyte of stderr must not turn the lane's own control file into that
+  # megabyte, and the field is one LINE by construction.
+  lrw_reason="$(lane_restart_sidecar_value "$lrw_reason")"
+  if [ "${#lrw_reason}" -gt 400 ]; then
+    lrw_reason="$(printf '%s' "$lrw_reason" | cut -c1-400)… (truncated)"
+  fi
+  { printf 'schema: %s\n'         "$LANE_RESTART_SCHEMA"
+    printf 'lane: %s\n'           "$lrw_lane"
+    printf 'state: %s\n'          "$lrw_state"
+    printf 'generation: %s\n'     "${lrw_gen:-0}"
+    printf 'operation: %s\n'      "${lrw_op:-none}"
+    printf 'mode: %s\n'           "${lrw_mode:-fresh-from-handoff}"
+    printf 'agent: %s\n'          "${lrw_agent:-none}"
+    printf 'profile: %s\n'        "${lrw_prof:-none}"
+    printf 'dir: %s\n'            "${lrw_dir:-none}"
+    printf 'pane: %s\n'           "${lrw_pane:-none}"
+    printf 'window: %s\n'         "${lrw_win:-none}"
+    printf 'handoff: %s\n'        "${lrw_hf:-none}"
+    printf 'digest: %s\n'         "${lrw_dig:-none}"
+    printf 'prepared_digest: %s\n' "${lrw_prepared:-none}"
+    printf 'old_transcript: %s\n' "${lrw_old:-none}"
+    printf 'new_transcript: %s\n' "${lrw_new:-none}"
+    printf 'attempt: %s\n'        "${lrw_att:-0}"
+    printf 'workstation: %s\n'    "${WS:-none}"
+    printf 'created: %s\n'        "${lrw_created:-$(utc_now)}"
+    printf 'updated: %s\n'        "$(utc_now)"
+    printf 'reason: %s\n'         "${lrw_reason:-none}"
+  } | lane_restart_sidecar_put "$lrw_root/restart-intent.yaml" "$lrw_lane"
+}
+
 # ------------------- AMENDMENT 19(c): THE SWEEP, ONE COMMIT OR NONE ---------
 #
 # `lane-end --retire-dormant <repo>` is the word a person types, the dry run
@@ -12011,8 +12403,11 @@ lane_state_follow() {   # <lane> <verb> <payload> <uuid> <pre-image> <seam verdi
 # The directory is MOVED, never copied (two snapshots of one lane would be two
 # answers), only after the rename's commit returned 0, and never over anything
 # already at the new name, which is reported for a person rather than merged.
-# The `lane:` line inside the files keeps the old name until the next write
-# replaces it; no reader of these files keys on it.
+# The diagnostic files' `lane:` line keeps the old name until the next write;
+# their readers do not key on it. Completed restart history is different: its
+# strict reader keys on the lane and its launch facts describe the old name.
+# Keep that history at the old root and move only the diagnostic files beside
+# it. The new canonical lane has no inherited restart operation.
 lane_state_rename() {   # <the old name's control root> <new lane>
   lsn_old="${1-}"; lsn_new="${2-}"
   [ -n "$lsn_old" ] && [ -n "$lsn_new" ] || return 0
@@ -12033,6 +12428,25 @@ lane_state_rename() {   # <the old name's control root> <new lane>
   fi
   if [ -e "$lsn_to" ] || [ -L "$lsn_to" ]; then
     note "the lane lifecycle snapshot and inventory were NOT moved: $lsn_old is the old name's and $lsn_to already exists for the new one, and two records of one lane are not merged here. Read both and keep one by hand; the rename itself has landed."
+    return 0
+  fi
+  if [ -e "$lsn_old/restart-intent.yaml" ] || [ -L "$lsn_old/restart-intent.yaml" ]; then
+    # rename-lane has already refused unfinished or unreadable restart records
+    # under the mutex. Preserve the completed record byte for byte, as before
+    # the diagnostic lifecycle was added; do not reinterpret it as a new lane.
+    if ! (umask 077; mkdir -- "$lsn_to") 2>/dev/null; then
+      note "the diagnostic control root could NOT be made at $lsn_to (the rename itself has landed). Completed restart history remains at $lsn_old."
+      return 0
+    fi
+    for lsn_part in lane-state.yaml trees; do
+      if [ -e "$lsn_old/$lsn_part" ] || [ -L "$lsn_old/$lsn_part" ]; then
+        if ! mv -- "$lsn_old/$lsn_part" "$lsn_to/$lsn_part" 2>/dev/null; then
+          note "the diagnostic $lsn_part could NOT be moved to $lsn_to (the rename itself has landed). Read both roots before reconciliation. Completed restart history remains at $lsn_old."
+          return 0
+        fi
+      fi
+    done
+    note "the lane lifecycle snapshot and inventory moved to $lsn_to; completed restart history remains at $lsn_old"
     return 0
   fi
   if mv -- "$lsn_old" "$lsn_to" 2>/dev/null; then
@@ -12755,7 +13169,16 @@ Nothing was written." 2
     srs_new="$ROW_STATE · $(utc_now) · $ROW_STATE_LINE"
     srs_was="$(rstrip_spaces "$RSS_CELL")"
     replace_line "$n" "$RSS_HEAD$srs_new $RSS_TAIL"
-    note "state cell REPLACED: ${#srs_was} chars → ${#srs_new} chars"
+    # WHAT IT SAYS IS WHAT HAPPENED, and the two are not the same act. A state
+    # phrase stamped twice inside one second is byte-identical — `utc_now` is
+    # seconds — so the row already reads exactly this, nothing is written, and
+    # "REPLACED" beside `replace_line`'s own "nothing rewritten" would be two
+    # lines of one output contradicting each other.
+    if [ "${REPLACE_LINE_NOOP:-0}" = 1 ]; then
+      note "state cell UNCHANGED: it already reads exactly this ${#srs_new} chars, to the second"
+    else
+      note "state cell REPLACED: ${#srs_was} chars → ${#srs_new} chars"
+    fi
     # THE WHOLE LINE IN THE SUBJECT, as `append-row-status` put its whole text
     # there: the line is capped at 240 characters by the act above, and a
     # subject cut at 72 loses exactly the tail that says what happened.
@@ -13162,6 +13585,30 @@ Nothing was written." 2
     # refusals — a row under `<new>`, a published log — with nothing written.
     acquire_lock
 
+    # Refuse a spelling-only rename before probing both roots: on a
+    # case-insensitive filesystem they are the same intent, whose stored lane
+    # carries the canonical spelling rather than the requested new spelling.
+    if [ "$(lc "$rl_old")" = "$(lc "$rl_new")" ]; then
+      die "'$rl_old' and '$rl_new' are ONE name under any case (Amendment 15), so this is not a rename at all: it is a change to the row's own SPELLING, which every reader already resolves to and which Amendment 15(d) makes a hand act — the newer row's session id(s) appended to the older row's cell, in one commit. Nothing was written." 2
+    fi
+
+    # Rename and restart publication share this mutex. An unfinished operation
+    # owns its name and canonical inputs, including recovery from failed.
+    for rl_check in "$rl_old" "$rl_new"; do
+      rl_root_rc=0
+      lane_restart_control_root "$rl_check" >/dev/null || rl_root_rc=$?
+      [ "$rl_root_rc" != 8 ] || continue  # no root any writer could have used
+      [ "$rl_root_rc" = 0 ] || die "restart control root could not be read. Nothing was written." 1
+      rl_restart=""; rl_restart_rc=0
+      rl_restart="$(lane_restart_read "$rl_check")" || rl_restart_rc=$?
+      case "$rl_restart_rc" in
+        8) continue ;;
+        0) rl_restart_state="$(printf '%s\n' "$rl_restart" | awk -F'\t' '$1=="state" {print $2; exit}')"
+           [ "$rl_restart_state" = ready ] || die "lane $rl_check has restart intent $rl_restart_state; finish its supervised recovery before renaming. Nothing was written." 2 ;;
+        *) die "lane $rl_check restart intent could not be read. Nothing was written." 1 ;;
+      esac
+    done
+
     rl_oh="$(rows_named_ci "$rl_old" 2>/dev/null || :)"
     rl_on="$(printf '%s' "$rl_oh" | grep -c . || :)"
     rl_lh="$(rows_named_ci_local "$rl_old" 2>/dev/null || :)"
@@ -13182,9 +13629,6 @@ Nothing was written." 2
     # rebase the two together.
     rl_nh="$(printf '%s\n%s\n' "$(rows_named_ci "$rl_new" 2>/dev/null || :)" "$(rows_named_ci_local "$rl_new" 2>/dev/null || :)" | grep -v '^$' | LC_ALL=C sort -u || :)"
     if [ -n "$rl_nh" ]; then
-      if [ "$(lc "$rl_old")" = "$(lc "$rl_new")" ]; then
-        die "'$rl_old' and '$rl_new' are ONE name under any case (Amendment 15), so this is not a rename at all: it is a change to the row's own SPELLING, which every reader already resolves to and which Amendment 15(d) makes a hand act — the newer row's session id(s) appended to the older row's cell, in one commit. Nothing was written." 2
-      fi
       die "lane '$rl_new' already has a row, spelled $(printf '%s\n' "$rl_nh" | tr '\n' ' ')— a lane name is ONE name under any case (Amendment 15(a)), so renaming into it would make TWO rows for one name, which is the state every writer in this file refuses until 15(d)'s merge. Nothing was written." 2
     fi
 
@@ -14363,7 +14807,7 @@ EOF
     esac
     ;;
 
-  live-holder)
+  live-holder|lane-holders)
     lane="${1-}"; [ -n "$lane" ] || die "usage: live-holder <lane>" 2
     # A READ FETCHES FIRST, like every other read here. This one did not, and
     # "the published row" then meant whatever `origin/<branch>` happened to say
@@ -14404,7 +14848,8 @@ EOF
 $lh_fk
 EOF
     fi
-    live_holder "$lane" "$lh_ids"; lh_rc=$?
+    lh_all=""; [ "$cmd" != lane-holders ] || lh_all=all
+    live_holder "$lane" "$lh_ids" "$lh_all"; lh_rc=$?
     case "$lh_rc" in
       0) : ;;
       8) exit 8 ;;
@@ -15488,6 +15933,419 @@ EOF
     printf '%s\n' "$rh_out"
     ;;
 
+  # ---------- openRepoTools#94: the restart intent the supervisor launches from
+  #
+  # BOTH ANSWER OUT OF THE LOCAL CONTROL ROOT. The writer reads the register's
+  # managed-ownership projection before mutation; neither writes the register,
+  # the object log or reaches the network. The WRITER is deliberately absent from the
+  # dispatcher's workstation guard above — `R-A11-14` is about a record FILED
+  # UNDER A WORKSTATION, and this one is filed under nothing and never leaves
+  # the machine that wrote it — and it takes the same 64-for-usage contract
+  # every read Amendment 11 added takes, because it sits in front of a launch
+  # exactly as those do.
+  #
+  #   0   done
+  #   1   no control root could be derived, or it could not be written
+  #   2   a refusal of the arguments
+  #   7   THE FENCE DID NOT MATCH — another act got there first, which is what
+  #       this file already spends 7 on (`claim`'s CLAIM-LOST, `set-lane-state`).
+  #       Nothing was written and the current intent is printed.
+  #   8   there is no intent for this lane
+  #  64   a usage error of this subcommand's own
+
+  restart-intent)
+    lane="${1-}"; [ -n "$lane" ] || die "usage: restart-intent <lane> [--dir <absolute checkout>]" 64
+    shift; lri_dir=""
+    if [ "$#" -gt 0 ]; then
+      [ "$#" = 2 ] && [ "$1" = --dir ] || die "usage: restart-intent <lane> [--dir <absolute checkout>]" 64
+      case "$2" in /*) lri_dir="$2" ;; *) die "--dir takes an absolute checkout" 64 ;; esac
+    fi
+    check_lane_name "$lane"
+    log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    lri_out=""; lri_rc=0
+    lri_out="$(lane_restart_read "$lane" "$lri_dir")" || lri_rc=$?
+    case "$lri_rc" in
+      0) : ;;
+      8) exit 8 ;;
+      *) die "lane $lane has no lifecycle control root, so it can carry no restart intent: its record names no directory (Amendment 11(c)) and \$PROJECTS_ROOT is not a directory here. That is NOT 'this lane has no restart in flight' — a read that could not be made is never an answer (Amendment 7(d))." 1 ;;
+    esac
+    printf '%s\n' "$lri_out"
+    ;;
+
+  publish-handoff)
+    lane="${1-}"; pbh_target="${2-}"; pbh_source="${3-}"
+    [ "$#" -ge 3 ] || die "usage: publish-handoff <lane> <target> <prepared-file> --expect-digest <sha> [--operation <id> --generation <n> --attempt <n> --state <state> --transcript <id>]" 64
+    shift 3; check_lane_name "$lane"; lane="$(canon_lane "$lane")" || exit 2
+    pbh_digest=""; pbh_op=""; pbh_gen=""; pbh_attempt=""; pbh_state=""; pbh_sid=""
+    while [ "$#" -gt 0 ]; do
+      [ "$#" -ge 2 ] && [ -n "${2-}" ] || die "$1 needs a value" 64
+      case "$1" in
+        --expect-digest) pbh_digest="$2" ;;
+        --operation) pbh_op="$2" ;;
+        --generation) pbh_gen="$2" ;;
+        --attempt) pbh_attempt="$2" ;;
+        --state) pbh_state="$2" ;;
+        --transcript) pbh_sid="$2" ;;
+        *) die "unknown publish-handoff flag $1" 64 ;;
+      esac
+      shift 2
+    done
+    [ "${#pbh_digest}" = 64 ] || die "publication requires the complete prior SHA-256" 64
+    case "$pbh_digest" in *[!0-9a-fA-F]*) die "publication requires SHA-256" 64 ;; esac
+    [ -f "$pbh_source" ] && [ -r "$pbh_source" ] && [ -s "$pbh_source" ] || die "the prepared handoff is unreadable or empty" 1
+    acquire_lock
+    managed_seam_refuse "$lane" "publish-handoff"
+    pbh_links=0
+    while [ -L "$pbh_target" ]; do
+      pbh_links=$((pbh_links+1)); [ "$pbh_links" -lt 40 ] || die "the handoff link chain cannot be resolved" 2
+      pbh_link="$(readlink "$pbh_target")" || die "the handoff link could not be read" 1
+      case "$pbh_link" in /*) pbh_target="$pbh_link" ;; *) pbh_target="$(dirname -- "$pbh_target")/$pbh_link" ;; esac
+    done
+    pbh_parent="$( CDPATH=''; cd -P -- "$(dirname -- "$pbh_target")" && pwd -P )" || die "the handoff parent is missing" 1
+    pbh_target="$pbh_parent/$(basename -- "$pbh_target")"
+    [ -f "$pbh_target" ] && [ -r "$pbh_target" ] || die "the handoff target is unreadable" 1
+    pbh_irc=0; pbh_intent="$(lane_restart_read "$lane")" || pbh_irc=$?
+    case "$pbh_irc" in 0|8) : ;; *) release_lock; die "restart ownership could not be read; no handoff was published" 1 ;; esac
+    pbh_current="$(printf '%s\n' "$pbh_intent" | awk -F'\t' '$1=="state" {print $2; exit}')"
+    case "$pbh_current" in UNKNOWN-*|INCOMPLETE) release_lock; die "restart ownership is malformed; no handoff was published" 2 ;; esac
+    if [ -n "$pbh_op" ]; then
+      [ -n "$pbh_gen" ] && [ -n "$pbh_attempt" ] && [ -n "$pbh_state" ] && [ -n "$pbh_sid" ] || { release_lock; die "operation publication needs generation, attempt, state and transcript fences" 64; }
+      pbh_actual="$(printf '%s\n' "$pbh_intent" | awk -F'\t' '
+        $1=="operation" {o=$2} $1=="generation" {g=$2} $1=="attempt" {a=$2} $1=="state" {s=$2} $1=="new_transcript" {t=$2}
+        END {printf "%s|%s|%s|%s|%s",o,g,a,s,t}')"
+      [ "$pbh_actual" = "$pbh_op|$pbh_gen|$pbh_attempt|$pbh_state|$pbh_sid" ] || { release_lock; die "this handoff publisher lost restart ownership; nothing was published" 7; }
+      pbh_bound="$(printf '%s\n' "$pbh_intent" | awk -F'\t' '$1=="handoff" {print $2; exit}')"
+      [ -n "$pbh_bound" ] && [ "$pbh_bound" != none ] && [ "$pbh_bound" -ef "$pbh_target" ] ||
+        { release_lock; die "the publication target is not the operation-bound handoff; nothing was published" 2; }
+    else
+      case "$pbh_current" in preparing|pending|starting) release_lock; die "an active restart owns this handoff; nothing was published" 7 ;; esac
+    fi
+    [ "$(lane_handoff_digest "$pbh_target")" = "$pbh_digest" ] || { release_lock; die "the handoff changed before publication; nothing was published" 7; }
+    pbh_tmp="$(mktemp "$pbh_target.resume.XXXXXX")" || { release_lock; die "the publication temporary file could not be made" 1; }
+    if ! cp -p -- "$pbh_target" "$pbh_tmp" || ! cat -- "$pbh_source" > "$pbh_tmp" || ! mv -f -- "$pbh_tmp" "$pbh_target"; then
+      rm -f -- "$pbh_tmp"; release_lock; die "the handoff could not be published atomically" 1
+    fi
+    release_lock
+    printf '%s\n' "$pbh_target"
+    ;;
+
+  legacy-restart-check)
+    lane="${1-}"; check_lane_name "$lane"
+    lane="$(canon_lane "$lane")" || exit 2
+    managed_seam_refuse "$lane" "legacy-restart-check"
+    # Use the managed service's affirmative read when that installation exists.
+    # Exit 8 means confirmed absence; every unknown/error answer refuses.
+    lrc_managed="${SELF%/*}/lane-managed"
+    if [ -e "$lrc_managed" ] || [ -L "$lrc_managed" ]; then
+      [ -f "$lrc_managed" ] && [ -r "$lrc_managed" ] && [ -x "$lrc_managed" ] ||
+        die "the installed managed ownership reader is unusable. Legacy restart refuses without writing or launching." 1
+      lrc_rc=0
+      LANES_NO_FETCH=1 "$lrc_managed" legacy-check --lane "$lane" >/dev/null || lrc_rc=$?
+      case "$lrc_rc" in
+        8) exit 0 ;;
+        0) die "lane $lane is managed. Legacy /ctx restart refuses; use the managed service. Its JSON ledger is the sole authority." 2 ;;
+        *) die "managed ownership for lane $lane could not be confirmed. Legacy restart refuses without writing or launching." 1 ;;
+      esac
+    fi
+    # A missing executable cannot mean missing enrollment. Probe only the
+    # private workspace's Git common directory, never this code checkout.
+    lrc_common="$(git -C "$LANES_REPO" rev-parse --git-common-dir)" ||
+      die "the workspace Git common directory could not be read. Legacy restart refuses." 1
+    case "$lrc_common" in /*) : ;; *) lrc_common="$LANES_REPO/$lrc_common" ;; esac
+    lrc_root="$lrc_common/openrepotools-managed"
+    if [ -e "$lrc_root" ] || [ -L "$lrc_root" ]; then
+      [ -d "$lrc_root" ] && [ -r "$lrc_root" ] && [ -x "$lrc_root" ] && [ ! -L "$lrc_root" ] ||
+        die "managed ownership storage is unreadable or unsafe. Legacy restart refuses." 1
+      lrc_key="$(lc "$lane")"
+      for lrc_host in "$lrc_root"/*; do
+        [ -e "$lrc_host" ] || [ -L "$lrc_host" ] || continue
+        [ -d "$lrc_host" ] && [ -r "$lrc_host" ] && [ -x "$lrc_host" ] && [ ! -L "$lrc_host" ] ||
+          die "managed host ownership storage is unreadable or unsafe. Legacy restart refuses." 1
+        if [ -e "$lrc_host/$lrc_key" ] || [ -L "$lrc_host/$lrc_key" ]; then
+          die "lane $lane has managed ownership storage. Legacy /ctx restart refuses; install/use its managed service to read the JSON authority." 2
+        fi
+      done
+    fi
+    ;;
+
+  set-restart-intent)
+    lane="${1-}"; [ -n "$lane" ] || die "usage: set-restart-intent <lane> <preparing|pending|starting|failed|ready> [--expect <STATE[|STATE…]|none>] [--expect-generation <n>] [--expect-operation <id>] [--operation <id>] [--generation <n>] [--mode <word>] [--agent <name>] [--profile <name>] [--dir <path>] [--pane <ref>] [--window <ref>] [--handoff <path>] [--digest <sha|none>] [--old-transcript <id>] [--new-transcript <id>] [--attempt <n>] [--bump-attempt] [--reason <text>]" 64
+    shift
+    sri_state="${1-}"; [ -n "$sri_state" ] || die "set-restart-intent needs the state to move to: preparing, pending, starting, failed or ready" 64
+    shift
+    sri_exp=""; sri_expg=""; sri_expo=""; sri_expa=""; sri_expn=""; sri_op=""; sri_gen=""; sri_mode=""
+    sri_agent=""; sri_prof=""; sri_dir=""; sri_pane=""; sri_win=""; sri_hf=""
+    sri_dig=""; sri_prepared=""; sri_old=""; sri_new=""; sri_att=""; sri_bump=0; sri_reason=""
+    # THE TWO SPELLINGS OF ONE FLAG GIVE ONE ANSWER (#26, the review of
+    # `c3ebcfe`, and `lane-start` carries the same paragraph at its own
+    # arguments). `--flag ""` refused an empty value here and `--flag=` took
+    # one, so the `=` spelling of an empty operation, generation, attempt or
+    # expectation read as ABSENT — and every rung below the flag then ran on a
+    # value the operator DID give: an `--expect=` would have fenced on nothing,
+    # an `--expect-operation=` would have claimed an operation it was not
+    # entitled to. The six that refuse an empty value refuse it in both
+    # spellings; the ones below that take `[ "$#" -ge 2 ]` deliberately ACCEPT
+    # an empty value in both, because `none` is an answer for those fields.
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --expect)              sri_exp="${2-}";  [ -n "$sri_exp" ]  || die "--expect needs a state word, 'none', or a '|'-separated set of them" 64; shift 2 ;;
+        --expect=*)            sri_exp="${1#--expect=}"; [ -n "$sri_exp" ] || die "--expect needs a state word, 'none', or a '|'-separated set of them" 64; shift ;;
+        --expect-generation)   sri_expg="${2-}"; [ -n "$sri_expg" ] || die "--expect-generation needs a number" 64; shift 2 ;;
+        --expect-generation=*) sri_expg="${1#--expect-generation=}"; [ -n "$sri_expg" ] || die "--expect-generation needs a number" 64; shift ;;
+        --expect-attempt)     sri_expa="${2-}"; [ -n "$sri_expa" ] || die "--expect-attempt needs a number" 64; shift 2 ;;
+        --expect-attempt=*)    sri_expa="${1#--expect-attempt=}"; [ -n "$sri_expa" ] || die "--expect-attempt needs a number" 64; shift ;;
+        --prepared-digest)    sri_prepared="${2-}"; [ -n "$sri_prepared" ] || die "--prepared-digest needs a checksum" 64; shift 2 ;;
+        --prepared-digest=*)  sri_prepared="${1#--prepared-digest=}"; [ -n "$sri_prepared" ] || die "--prepared-digest needs a checksum" 64; shift ;;
+        --expect-new-transcript) sri_expn="${2-}"; [ -n "$sri_expn" ] || die "--expect-new-transcript needs an id or none" 64; shift 2 ;;
+        --expect-new-transcript=*) sri_expn="${1#--expect-new-transcript=}"; [ -n "$sri_expn" ] || die "--expect-new-transcript needs an id or none" 64; shift ;;
+        --expect-operation)    sri_expo="${2-}"; [ -n "$sri_expo" ] || die "--expect-operation needs an operation id" 64; shift 2 ;;
+        --expect-operation=*)  sri_expo="${1#--expect-operation=}"; [ -n "$sri_expo" ] || die "--expect-operation needs an operation id" 64; shift ;;
+        --operation)           sri_op="${2-}";   [ -n "$sri_op" ]   || die "--operation needs an operation id" 64; shift 2 ;;
+        --operation=*)         sri_op="${1#--operation=}"; [ -n "$sri_op" ] || die "--operation needs an operation id" 64; shift ;;
+        --generation)          sri_gen="${2-}";  [ -n "$sri_gen" ]  || die "--generation needs a number" 64; shift 2 ;;
+        --generation=*)        sri_gen="${1#--generation=}"; [ -n "$sri_gen" ] || die "--generation needs a number" 64; shift ;;
+        --mode)                sri_mode="${2-}"; [ "$#" -ge 2 ] || die "--mode needs a value" 64; shift 2 ;;
+        --mode=*)              sri_mode="${1#--mode=}"; shift ;;
+        --agent)               sri_agent="${2-}"; [ "$#" -ge 2 ] || die "--agent needs a value" 64; shift 2 ;;
+        --agent=*)             sri_agent="${1#--agent=}"; shift ;;
+        --profile)             sri_prof="${2-}"; [ "$#" -ge 2 ] || die "--profile needs a value" 64; shift 2 ;;
+        --profile=*)           sri_prof="${1#--profile=}"; shift ;;
+        --dir)                 sri_dir="${2-}"; [ "$#" -ge 2 ] || die "--dir needs a value" 64; shift 2 ;;
+        --dir=*)               sri_dir="${1#--dir=}"; shift ;;
+        --pane)                sri_pane="${2-}"; [ "$#" -ge 2 ] || die "--pane needs a value" 64; shift 2 ;;
+        --pane=*)              sri_pane="${1#--pane=}"; shift ;;
+        --window)              sri_win="${2-}"; [ "$#" -ge 2 ] || die "--window needs a value" 64; shift 2 ;;
+        --window=*)            sri_win="${1#--window=}"; shift ;;
+        --handoff)             sri_hf="${2-}"; [ "$#" -ge 2 ] || die "--handoff needs a value" 64; shift 2 ;;
+        --handoff=*)           sri_hf="${1#--handoff=}"; shift ;;
+        --digest)              sri_dig="${2-}"; [ "$#" -ge 2 ] || die "--digest needs a value" 64; shift 2 ;;
+        --digest=*)            sri_dig="${1#--digest=}"; shift ;;
+        --old-transcript)      sri_old="${2-}"; [ "$#" -ge 2 ] || die "--old-transcript needs a value" 64; shift 2 ;;
+        --old-transcript=*)    sri_old="${1#--old-transcript=}"; shift ;;
+        --new-transcript)      sri_new="${2-}"; [ "$#" -ge 2 ] || die "--new-transcript needs a value" 64; shift 2 ;;
+        --new-transcript=*)    sri_new="${1#--new-transcript=}"; shift ;;
+        --attempt)             sri_att="${2-}"; [ -n "$sri_att" ] || die "--attempt needs a number" 64; shift 2 ;;
+        --attempt=*)           sri_att="${1#--attempt=}"; [ -n "$sri_att" ] || die "--attempt needs a number" 64; shift ;;
+        --bump-attempt)        sri_bump=1; shift ;;
+        --reason)              sri_reason="${2-}"; [ "$#" -ge 2 ] || die "--reason needs a value" 64; shift 2 ;;
+        --reason=*)            sri_reason="${1#--reason=}"; shift ;;
+        --)                    shift ;;
+        *)                     die "unknown option '$1' for set-restart-intent" 64 ;;
+      esac
+    done
+    lane_restart_word_ok "$sri_state" ||
+      die "'$sri_state' is not a restart-intent state: preparing, pending, starting, failed and ready are the supported states" 64
+    # THE FOUR VALUES THAT ARE KEYS AND NOT PROSE. An operation id, a launch
+    # mode, an agent and a profile are MANIFEST KEYS everywhere else in this
+    # estate — letters, digits, `.`, `_`, `-` — and each of them is compared
+    # for equality by a later reader (`--expect-operation`, the supervisor's
+    # own fence, `lane-start --agent`). A value carrying a space, a `;` or a
+    # newline is a value no such comparison can be trusted with, and this file
+    # is written one `key: value` line at a time.
+    for sri_k in "operation=$sri_op" "mode=$sri_mode" "agent=$sri_agent" "profile=$sri_prof" \
+                 "expect-operation=$sri_expo"; do
+      sri_kv="${sri_k#*=}"
+      [ -n "$sri_kv" ] || continue
+      case "$sri_kv" in
+        *[!A-Za-z0-9._-]*) die "--${sri_k%%=*} takes a manifest key — letters, digits, '.', '_' and '-' — because a later reader compares it for equality and this record is one line per field. Got '$sri_kv'." 64 ;;
+      esac
+    done
+    case "$sri_gen$sri_att$sri_expa" in *[!0-9]*) die "--generation and --attempt take numbers" 64 ;; esac
+    case "$sri_expg" in
+      '') : ;;
+      *[!0-9]*) die "--expect-generation takes a number; '$sri_expg' is not one" 64 ;;
+    esac
+    # A DIRECTORY IN THIS RECORD IS ABSOLUTE OR IT IS NOTHING, and the same for
+    # the handoff: the reader of this file is a DIFFERENT PROCESS IN A
+    # DIFFERENT DIRECTORY — the supervisor in a respawned pane — and a relative
+    # path resolved against its cwd is a path to somewhere else. `~` is the
+    # writing shell's and is never expanded here.
+    case "$sri_dir" in ''|/*) : ;; *) die "--dir takes an ABSOLUTE path: this record is read by the supervisor in a pane whose working directory is not this one, and a relative path there names a different place. Got '$sri_dir'." 64 ;; esac
+    case "$sri_hf" in ''|/*) : ;; *) die "--handoff takes an ABSOLUTE path, for the same reason --dir does: the launch that reads it back stands somewhere else. Got '$sri_hf'." 64 ;; esac
+    for sri_exact in "$sri_dir" "$sri_pane" "$sri_win" "$sri_hf" "$sri_old" "$sri_new" "$sri_dig" "$sri_prepared"; do
+      lane_restart_value_ok "$sri_exact" || die "restart launch facts cannot contain control characters. Nothing was written." 64
+    done
+    check_lane_name "$lane"
+    log_sync
+    lane="$(canon_lane "$lane")" || exit 2          # Amendment 15
+    # Select the physical intent under the CAS mutex: a waiting writer must
+    # see a reservation another writer established before releasing the lock.
+    acquire_lock
+    managed_seam_refuse "$lane" "set-restart-intent"
+    sri_root=""; sri_rrc=0
+    sri_root="$(lane_restart_control_root "$lane")" || sri_rrc=$?
+    [ "$sri_rrc" = 0 ] || {
+      release_lock
+      die "lane $lane's restart control root is unavailable, unreadable or ambiguous. Nothing was written. Inspect its recorded directory and projects-root intents, or configure LANES_LANE_STATE_ROOT explicitly." 1
+    }
+    sri_f="$sri_root/restart-intent.yaml"
+    # A SCHEMA THIS WRITER DOES NOT KNOW IS NOT ITS RECORD TO REPLACE (Copilot
+    # round 1 on openRepoTools#121). The READ side already fails closed on one —
+    # it answers `UNKNOWN-SCHEMA` rather than reporting a launch it cannot
+    # understand — and the WRITE side walked straight past it: the fields it
+    # knows were copied forward, the ones it does not were dropped, and the file
+    # came out stamped `schema: 1`. A newer tooling's intent would have been
+    # silently rewritten as an older one's, which is the read-side protection
+    # undone by the other half of the same command. This is checked INSIDE the
+    # lock, with the fence, because the file may be replaced between a read and
+    # a write, and it refuses with 2 — not 7 — because 7 is *another act got
+    # there first, re-read and decide* and this is *this copy of the tooling
+    # must not touch this file at all*.
+    if [ -e "$sri_f" ] || [ -L "$sri_f" ]; then
+      if [ ! -f "$sri_f" ] || [ ! -r "$sri_f" ]; then
+        release_lock
+        die "lane $lane has an existing unreadable restart intent. Nothing was written: a failed read is not an absent operation." 1
+      fi
+      sri_missing="$(lane_restart_missing "$sri_f" "$lane")" || { release_lock; die "the restart record could not be read. Nothing was written." 1; }
+      [ -z "$sri_missing" ] || { release_lock; die "the existing restart record is malformed (missing, duplicate or invalid fields: $sri_missing). Nothing was written." 2; }
+      sri_nows="$(lane_restart_sidecar_field "$sri_f" schema)" || { release_lock; die "the restart schema could not be read. Nothing was written." 1; }
+      if [ "$sri_nows" != "$LANE_RESTART_SCHEMA" ]; then
+        release_lock
+        die "lane $lane's restart intent is schema '$sri_nows' and this \`lanes-edit.sh\` writes schema $LANE_RESTART_SCHEMA. Nothing was written: taking a transition over it would copy forward the fields this version knows, drop the ones it does not, and stamp the file as an older schema — which is a newer tooling's record quietly replaced by an older one. Read it with a helper that knows that schema, or remove $sri_f once you know no restart is in flight." 2
+      fi
+    fi
+    sri_now=""; sri_nowg=""; sri_nowo=""; sri_nowa=""; sri_nown=""
+    if [ -r "$sri_f" ]; then
+      sri_now="$(lane_restart_sidecar_field "$sri_f" state)"
+      sri_nowg="$(lane_restart_sidecar_field "$sri_f" generation)"
+      sri_nowo="$(lane_restart_sidecar_field "$sri_f" operation)"
+      sri_nowa="$(lane_restart_sidecar_field "$sri_f" attempt)"
+      sri_nown="$(lane_restart_sidecar_field "$sri_f" new_transcript)"
+    fi
+    if [ -r "$sri_f" ]; then
+      lane_restart_word_ok "$sri_now" || { release_lock; die "the existing restart state is malformed. Nothing was written." 2; }
+      case "$sri_nowg:$sri_nowa" in *[!0-9:]*|:*|*:) release_lock; die "the existing restart generation or attempt is malformed. Nothing was written." 2 ;; esac
+    fi
+    sri_fence=""
+    # `--expect` TAKES A SET, because the states a caller is entitled to write
+    # over are usually more than one and asking for them in two calls is a
+    # second read-then-write with a window between. `pending` is created over
+    # `none|ready|failed` and never over `pending|starting`, which is the
+    # spec's *an ordinary `/ctx` does not supersede an operation in flight*
+    # expressed as one argument.
+    if [ -n "$sri_exp" ]; then
+      sri_match=0
+      sri_rest="$sri_exp"
+      while [ -n "$sri_rest" ]; do
+        case "$sri_rest" in
+          *'|'*) sri_one="${sri_rest%%|*}"; sri_rest="${sri_rest#*|}" ;;
+          *)     sri_one="$sri_rest"; sri_rest="" ;;
+        esac
+        [ "$sri_one" = none ] || lane_restart_word_ok "$sri_one" ||
+          { release_lock; die "--expect takes restart-intent states or 'none'; '$sri_one' is neither" 64; }
+        [ "$sri_one" = "${sri_now:-none}" ] && sri_match=1
+      done
+      [ "$sri_match" = 1 ] || sri_fence="the intent is ${sri_now:-none} and --expect named $sri_exp"
+    fi
+    [ -z "$sri_expg" ] || [ "$sri_expg" = "${sri_nowg:-0}" ]    || sri_fence="${sri_fence:+$sri_fence; }generation is ${sri_nowg:-0} and --expect-generation named $sri_expg"
+    [ -z "$sri_expo" ] || [ "$sri_expo" = "${sri_nowo:-none}" ] || sri_fence="${sri_fence:+$sri_fence; }operation is ${sri_nowo:-none} and --expect-operation named $sri_expo"
+    [ -z "$sri_expa" ] || [ "$sri_expa" = "${sri_nowa:-0}" ] || sri_fence="${sri_fence:+$sri_fence; }attempt is ${sri_nowa:-0} and --expect-attempt named $sri_expa"
+    [ -z "$sri_expn" ] || [ "$sri_expn" = "${sri_nown:-none}" ] || sri_fence="${sri_fence:+$sri_fence; }prepared transcript is ${sri_nown:-none} and --expect-new-transcript named $sri_expn"
+    if [ -n "$sri_fence" ]; then
+      release_lock
+      printf 'state\t%s\ngeneration\t%s\noperation\t%s\nattempt\t%s\n' \
+        "${sri_now:-none}" "${sri_nowg:-0}" "${sri_nowo:-none}" "${sri_nowa:-0}"
+      die "lane $lane's restart intent did not move to $sri_state: $sri_fence. Another act got there first — a second /ctx, a supervisor that claimed this operation, or a resume that finished it — and nothing was written. Re-read it (lanes-edit.sh restart-intent $lane) before deciding what this process should do; a stale supervisor must never overwrite a newer operation." 7
+    fi
+    case "$sri_nowg" in ''|*[!0-9]*) sri_nowg=0 ;; esac
+    case "$sri_nowa" in ''|*[!0-9]*) sri_nowa=0 ;; esac
+    # A TRANSITION THAT DOES NOT NAME A FIELD KEEPS IT, and does not blank it —
+    # the same rule `set-lane-state` takes, and for the same reason: a
+    # `starting` written by the supervisor is about the STATE, and blanking the
+    # handoff digest out of that call would lose the one fact every later
+    # launch and retry is fenced on.
+    sri_keep() {   # <key> <value the caller gave>
+      [ -n "${2-}" ] && { printf '%s' "$2"; return 0; }
+      lane_restart_sidecar_field "$sri_f" "$1" 2>/dev/null || :
+    }
+    sri_gen="$(sri_keep generation "$sri_gen")"; [ -n "$sri_gen" ] || sri_gen="$sri_nowg"
+    sri_op="$(sri_keep operation "$sri_op")";    [ -n "$sri_op" ]  || sri_op="$(lane_restart_op_id)"
+    sri_prepared="$(sri_keep prepared_digest "$sri_prepared")"
+    sri_mode="$(sri_keep mode "$sri_mode")"
+    sri_agent="$(sri_keep agent "$sri_agent")"
+    sri_prof="$(sri_keep profile "$sri_prof")"
+    sri_dir="$(sri_keep dir "$sri_dir")"
+    sri_pane="$(sri_keep pane "$sri_pane")"
+    sri_win="$(sri_keep window "$sri_win")"
+    sri_hf="$(sri_keep handoff "$sri_hf")"
+    # …EXCEPT WHERE THE OPERATION ITSELF HAS CHANGED, and then five of these
+    # fields are not this act's facts at all. `old_transcript`,
+    # `new_transcript`, `attempt`, `reason` and `created` are scoped to ONE
+    # operation: the transcript that restart paused, the transcript its launch
+    # was preparing, how many times THAT launch was tried, why THAT one failed,
+    # and when THAT intent was made. Carrying them into the next operation is
+    # how a brand-new `/ctx` comes out reading `attempt 3` and `reason "the
+    # launcher exited 127"` from a restart that is over — and two of them are
+    # worse than cosmetic, because the supervisor's readiness predicate is
+    # built on exactly this pair:
+    #
+    #   * an inherited `new_transcript` is a uuid THIS launch will never mint,
+    #     so readiness can only run to its deadline and report indeterminate;
+    #   * an inherited `old_transcript` is the wrong uuid to be distinct FROM,
+    #     and that check is the one that catches openRepoTools#94 itself — a
+    #     replacement that came up resuming the transcript this `/ctx` paused.
+    #     Comparing it against some earlier restart's transcript would let the
+    #     measured defect through the very predicate written to catch it.
+    #
+    # A caller that names one of the five still wins; this only decides what an
+    # UNNAMED field falls back to, and `none` is an answer where another
+    # operation's value is a lie.
+    sri_newop=0
+    [ "$sri_op" = "${sri_nowo:-none}" ] || sri_newop=1
+    if [ "$sri_newop" = 1 ]; then sri_prepared=none; fi
+    if [ "$sri_newop" != 1 ]; then
+      sri_old="$(sri_keep old_transcript "$sri_old")"
+      sri_new="$(sri_keep new_transcript "$sri_new")"
+      sri_reason="$(sri_keep reason "$sri_reason")"
+    fi
+    # THE DIGEST IS COMPUTED HERE WHERE THE CALLER NAMED A HANDOFF AND NO
+    # DIGEST, so that there is ONE implementation of *what this handoff was
+    # when the intent was made* and a caller cannot accidentally record a
+    # digest of something else.
+    if [ -z "$sri_dig" ]; then
+      case "$sri_hf" in
+        /*) if [ "$sri_state" = pending ] && [ -r "$sri_hf" ]; then
+              sri_dig="$(lane_handoff_digest "$sri_hf")"
+            else
+              sri_dig="$(lane_restart_sidecar_field "$sri_f" digest 2>/dev/null || :)"
+            fi ;;
+        *)  sri_dig="$(lane_restart_sidecar_field "$sri_f" digest 2>/dev/null || :)" ;;
+      esac
+    fi
+    # THE ATTEMPT COUNT. `--bump-attempt` is the retry's own act and is the one
+    # thing that may not be inferred: a supervisor claiming a NEW operation
+    # starts at 1, and a retry of the SAME one increments.
+    if [ -n "$sri_att" ]; then
+      :
+    elif [ "$sri_bump" = 1 ]; then
+      sri_att=$((sri_nowa + 1))
+    elif [ "$sri_newop" = 1 ]; then
+      sri_att=0
+    else
+      sri_att="$sri_nowa"
+    fi
+    # AND `created` IS THIS OPERATION'S OWN, for the same reason: it is read as
+    # *when this restart was taken*, and a new operation inheriting the last
+    # one's timestamp says a `/ctx` happened at a moment it did not.
+    if [ "$sri_newop" = 1 ]; then
+      sri_created=""
+    else
+      sri_created="$(lane_restart_sidecar_field "$sri_f" created 2>/dev/null || :)"
+    fi
+    if lane_restart_put "$sri_root" "$lane" "$sri_state" "$sri_gen" "$sri_op" \
+         "$sri_mode" "$sri_agent" "$sri_prof" "$sri_dir" "$sri_pane" "$sri_win" \
+         "$sri_hf" "$sri_dig" "$sri_old" "$sri_new" "$sri_att" "$sri_reason" \
+         "$sri_created" "$sri_prepared"; then
+      release_lock
+      printf 'state\t%s\ngeneration\t%s\noperation\t%s\nattempt\t%s\ndigest\t%s\nfile\t%s\n' \
+        "$sri_state" "$sri_gen" "$sri_op" "$sri_att" "${sri_dig:-none}" "$sri_f"
+    else
+      release_lock
+      die "lane $lane's restart intent could not be written under $sri_root (the shell's own error is above). Nothing was changed: the intent is replaced atomically, so the one that was there is the one that is there." 1
+    fi
+    ;;
+
   # ---------- THE SEAM: is this lane the managed ledger's? (ruling 2026-10-04)
   #
   #   0  a valid managed-owner marker: the owner is printed
@@ -15864,6 +16722,6 @@ EOF
     ;;
 
   *)
-    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|managed-projection|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|lane-reconcile|pathspec-check)" 2
+    die "unknown subcommand '$cmd' (verify-row|set-row-state|append-row-status|replace-in-row|append-session-id|append-line|add-row|retire-rows|archive-rows|migrate-state-cells|commit|rename-lane|log|claim|release|who|history|swapped|session-start|guard|idle-holders|live-holder|window-session|transcript-holders|binding|request-handoff|session-lane|window-lane|lane-dir|lane-profile|lane-agent|lane-transcript|lane-last|workspace-root|last-session|forks|duplicate-holder|workstation|fetch-age|lanes|lane-groups|next-free|sibling-filter|resolve-repo|lane-objects|register-row|register-row-local|retired-identity|canon-lane|resolve-home|managed-projection|lane-state|set-lane-state|lane-trees|set-lane-tree|lane-tree-now|lane-reconcile|lane-holders|legacy-restart-check|publish-handoff|restart-intent|set-restart-intent|pathspec-check)" 2
     ;;
 esac

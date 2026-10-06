@@ -358,5 +358,10 @@ jobs:
             'BEGIN { print "TAKEN" }' 2>&1 | head -n1
           git --version; python3 --version
 
+      # Exercise tty teardown before the long suite so a macOS-only fixture
+      # regression fails promptly; the full suite remains the landing gate.
+      - name: restart terminal and control-root checks
+        run: python3 -m pytest tests/test_supervised_restart_regressions.py -q -k "interactive_retry_rechecks_holder_absence_before_launch or restart_root"
+
       - name: tests
         run: python3 -m pytest tests -q

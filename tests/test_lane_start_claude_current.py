@@ -171,6 +171,7 @@ class Sandbox:
             "CLAUDE_CONFIG_DIR": str(self.home / ".claude"),
             "LANES_WORKSTATION": "Eagle",
             "LANES_NO_GITHUB": "1",
+            "LANES_INDEX": "off",  # test pushes never nudge an installed indexer
             "FAKE_TMUX_LOG": str(self.tmux_log),
             "FAKE_CLAUDE_LOG": str(self.claude_log),
             "FAKE_CC_LOG": str(self.cc_log),

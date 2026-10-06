@@ -2603,8 +2603,12 @@ how the register has spelled Codex sessions since 2026-09-05.
 ### `/ctx` — one word, and everything after it is automatic
 
 `/ctx` (`/handoff --restart`) performs the handoff and then **restarts in
-place**: `tmux respawn-pane -k` on the lane's own pane, with a NEW session of the
-same agent whose **first prompt is the handoff's top block**. That block's
+place**: `tmux respawn-pane -k` on the lane's own pane, and what comes up is a
+NEW session of the same agent whose **first prompt is the handoff's top block**.
+What tmux starts is not that session but a SUPERVISOR that launches it — the two
+subsections below are why, and they are `openRepoTools#94` — so the sentence
+holds end to end and no longer holds only as far as tmux accepting a command.
+That block's
 `WRITERS` section lists every worktree the lane had running: its branch, its last
 commit, what it was holding, and the brief it was given, so the new session finds
 them rather than discovering them — and its first line is Addendum 1 (i)'s, the
@@ -2614,28 +2618,215 @@ each one right. A `/ctx` that clears IN PLACE is the other kind and must say so
 (`--in-process`, `kind in-process`): the process survives, its writers survive
 with it, and the block says to EXPECT every writer below live.
 
-**The record comes first, always, and the record is THREE writes.** A `/ctx`
-**refuses before it kills anything** where the `PAUSED` line did not land, where
-the row was not flipped (the register would say RUNNING about a session that has
-just been replaced), or where the handoff could not be refreshed (its top block
-is literally the new session's first prompt, and a stale one hands over the
-instructions of another act). A pane is never respawned over an unrecorded lane.
+**The record comes first, always, and the record is FOUR writes** (it was three
+until `openRepoTools#94`). A `/ctx` **refuses before it kills anything** where the
+`PAUSED` line did not land, where the row was not flipped (the register would say
+RUNNING about a session that has just been replaced), where the handoff could not
+be refreshed (its top block is literally the new session's first prompt, and a
+stale one hands over the instructions of another act), **or where the restart
+intent could not be written and read back**. A pane is never respawned over an
+unrecorded lane, and a pane respawned with no intent is a pane whose supervisor
+has nothing to launch from — the same unrecorded restart one step along.
 
-**The respawn line is `lane <lane>`**, and never `restart <lane>` — Amendment 18
-Addendum 2 (i-8): the respawn *"relaunches the lane's own pane with `lane <name>`
-(its parked branch is exactly Amendment 11(i)'s act), or through the launcher
-directly"*, and `restart` leaves the person's `PATH` with `openRepoTools#43`.
-`lane <name>` needs no profile argument: its parked branch reads the record the
-handoff has just written — the lane's recorded directory and profile — and asks
-nothing. **Where `lane` is not on `PATH`** (it arrives with #43, and this act
-shipped first) the line is `pclaude --lane <lane> <profile>`, the same act one
-door along, and a `lane` on `PATH` that is not this estate's word is passed over
-for it with a line saying so: a respawn is the one act no later refusal can undo,
-so the word is used only where it can be SEEN. `LANE_START_FRESH=1` is the one
-seam that says *a new session, primed by the top block* — which is what a
-context clear is, and why `/ctx` does not resume the transcript it has just
-paused. It rides in the ENVIRONMENT, so it survives `lane` handing the launch on
-to `lane-start` exactly as it survives the launcher doing so.
+#### The restart intent — what makes the new session a FRESH one
+
+`opensoft/openRepoTools#94`, measured on Eagle at 2026-09-15T20:59Z: `/ctx` wrote
+its record, respawned its own pane with `LANE_START_FRESH=1 … lane <lane>`, and
+what came up was `claude --name <lane> --resume <the uuid it had just paused>` —
+the same conversation, not a fresh one. `lane-start` was right (both of its
+`(( ! fresh ))` gates were in the installed copy), `lane` was right (its available
+branch ends in a plain `exec`), and the variable simply never arrived. The
+launcher re-creates its child through tmux, and **a command tmux starts gets the
+tmux SERVER's environment, not the caller's** — `claude-profile`'s own code says
+so, which is why it writes six values into the command string explicitly. The
+seventh was never written, so it was never there.
+
+An environment cannot cross a boundary another repository owns. **A file can.**
+Before anything is killed, `/ctx` writes a RESTART INTENT under the lane's own
+legacy control root, independently of lifecycle snapshots,
+using an explicit `$LANES_LANE_STATE_ROOT` when configured. Otherwise, an existing
+intent under the recorded checkout's parent or `$PROJECTS_ROOT/.lane-state/<lane>`
+retains its location through reservation, preservation, cleanup and later reads.
+Distinct occupied intent locations or unreadable candidate ancestry refuse.
+Aliases of the same control-root directory count once; separate leaf symlink
+or hardlink entries refuse. With no existing intent, the recorded-parent rung precedes
+the projects-root fallback, with a checkout hint only when neither answers.
+Root selection shares the writer mutex with CAS. Recording a nested checkout
+cannot move this operation; PR #97 diagnostics retain their independent root
+selection and may reside elsewhere:
+
+```
+$ lanes-edit.sh restart-intent openRepoTools-3
+state            pending
+generation       7
+operation        ctx-20260915T210412Z-41233-1187
+mode             fresh-from-handoff
+agent            claude
+profile          max-001
+dir              /…/openRepoTools
+pane             claude-…:@6.%6
+handoff          /…/handoffs/openRepoTools/…md
+digest           9f2c…
+old_transcript   4135b2c9-…
+new_transcript   none
+attempt          0
+```
+
+It carries no credential and there is no field for one. `lane-start` reads it back
+and **the intent is the authority**: with a `pending` or `starting` intent whose
+mode is `fresh-from-handoff`, the launch is a new session named for the lane and
+primed by the handoff's top block, whatever the row's last uuid or the lane's last
+`PAUSED` record name and whether or not any environment variable survived. A
+`ready` intent is history and authorises nothing, which is what makes the next
+`lane <name>` an ordinary resume. `LANE_START_FRESH=1` still works and is no longer
+the authority; `lane-start --fresh` is the same thing as an argument, for a caller
+with no launcher between it and there.
+
+Two refusals rather than substitutions: an intent naming another checkout, or an
+`--operation` that is not the lane's current one, is a refusal that renames
+nothing and starts nothing — and a handoff whose **digest** has changed since the
+intent was written blocks the launch, because that file's top block IS the first
+prompt.
+
+#### Legacy compatibility and preparation recovery
+
+Supervised manual `/ctx` is a legacy compatibility path for Claude. Readiness
+uses trusted Claude-native interactive session records for agent provenance.
+Before replacing the old pane, the backend verifies the complete pending launch,
+an existing absolute checkout and the canonical handoff checksum. Equivalent
+handoff symlink paths retain their filesystem identity. Intent records reject
+unknown keys, malformed lines and control characters in launch facts; those facts
+are never flattened into different paths. Lane rename refuses unfinished or
+failed restart ownership under the shared writer mutex. Observer cleanup uses
+private cancellation and owned-child waiting, never a saved numeric PID signal.
+
+Supervised manual `/ctx` is a legacy compatibility path. Run
+`lanes-edit.sh legacy-restart-check <lane>` before any preservation writes;
+managed lanes and unreadable managed ownership refuse. The check uses feature
+001's installed read-only `legacy-check`, or conservatively refuses any matching
+managed storage when that reader is absent. It never edits JSON ownership.
+
+The backend reserves `preparing` before changing a handoff, register, log or
+window. A normal error or catchable signal changes only that exact reservation
+to `failed`; it never respawns the old pane. If an uncatchable termination leaves
+`preparing`, first verify the original pane/session is still alive and no
+replacement was launched. Read operation, generation and attempt with
+`lanes-edit.sh restart-intent <lane>`, then reconcile that exact reservation:
+
+```sh
+lanes-edit.sh set-restart-intent <lane> failed --expect preparing \
+  --expect-operation <operation> --expect-generation <generation> \
+  --expect-attempt <attempt> --reason 'preparation abandoned; old pane confirmed alive'
+```
+
+A new `/ctx` can then refresh the preservation record. This command authorizes
+no child launch from a partially prepared record.
+
+If preparation failed before `pending`, the failed intent keeps mode
+`preservation-only`, attempt 0 and no new transcript. It is not a failed launch
+and cannot be given to `--supervise`. Once every holder is confirmed absent,
+`lane <name>` may use ordinary resume without restart operation/attempt tokens or fresh-session selectors.
+It rechecks the same failed preparation before binding changes and before
+launch, leaves the intent unchanged, and retains the normal binding safeguards.
+A live or unknown holder still refuses. Failed `fresh-from-handoff` launches
+remain restricted to their same-operation supervisor.
+
+The first launch reserves `new_transcript` only while it is `none`. Every later
+write expects its exact operation, generation, attempt and transcript. The
+verified Rule 3 stamp is persisted with both `digest` and `prepared_digest`
+before `lanes-edit.sh publish-handoff` checks the expected digest and exact
+attempt under the workspace writer mutex, then atomically replaces the resolved
+handoff target. Both backend refresh and resume stamps use this publisher; manual
+semantic edits are staged in temporary files and use the same command. Interruption leaves
+either complete version valid for retry; unrelated changed prose refuses.
+Historical `ready` intents do not control an ordinary resume.
+
+#### The supervisor — what tmux actually starts
+
+The pane is respawned with `lane-handoff --supervise --lane <lane> --operation
+<id>`, **by absolute path**, because a respawned pane's `PATH` is whatever the
+person's shell profile makes of it. It is a MODE of a command that is already
+installed and not a thirteenth word: Amendment 18 Addendum 2 (i-8) is explicit
+that *"no word is kept on `PATH` for it alone"*, which is the ground on which
+`restart` was taken off `PATH` in the first place.
+
+The legacy supervisor requires both the recorded pane and current TMUX_PANE to
+be known and agree before claiming an attempt. A respawn forwards the configured
+control/protocol roots and the launcher's LANES_HOST, LANES_OS and
+LANES_CONTAINER identity alongside LANES_WORKSTATION. An existing unusable
+control-root directory or ancestor is a read failure; only genuinely absent
+storage permits an ordinary first launch. Readiness checks the child process
+state and refuses an exited child awaiting reap.
+
+What the supervisor does, in order:
+
+1. **claims** the intent — `pending`/`failed` → `starting`, compare-and-swap on
+   the operation, legacy generation and attempt, so a stale supervisor writes nothing;
+2. refuses before launching anything on a stale operation, a `starting` or
+   `ready` one, a pane the intent does not name, a changed handoff digest, or a
+   live holder of the lane (Amendment 18(h): a second session of one lane is the
+   collision the whole protocol is about — and the act it prints is
+   `lane-end <lane> --retire <pid>`, never a kill);
+3. **runs the launch as its CHILD** — `pclaude --lane <lane> <profile>`, which is
+   (i-8)'s second door, falling to `lane-start --fresh --operation <id>` where
+   there is no launcher or the record names no profile. Never `lane <name>`: that
+   is the human dispatcher, and attaching to a live session is one of its valid
+   outcomes;
+4. **confirms readiness** from a read-only predicate — the child alive, exactly
+   one live holder of this lane, its transcript the new one and not the paused
+   one, in the pane the intent names — and only then marks the legacy intent `ready`.
+   It never uses PR #97 diagnostic lifecycle state to decide restart readiness or writes managed JSON state. Ordinary STARTED/RESUMED events may update diagnostics independently. Tmux accepting a command is **not** a started session, and nothing
+   here treats it as one;
+5. **stays in the pane**, whatever happens. Amendment 11's own invariant is *"No
+   path the launcher opened exits the pane"*, and `/ctx` was the one path that
+   did: what tmux used to start was the launch itself, so a launch that failed
+   took the pane with it.
+
+#### The retry surface
+
+A launch that never reaches readiness leaves the intent `failed` with a bounded
+reason, and the supervisor prints the stage, the fact that the handoff is intact,
+and two lines — retry and read:
+
+```
+RESTART FAILED — lane openRepoTools-3, operation ctx-20260915T210412Z-41233-1187
+  the launch ended with status 127 before readiness was confirmed
+
+  retry:   lane-handoff --supervise --lane openRepoTools-3 --operation ctx-…
+  read it: lane-handoff --restart-status --lane openRepoTools-3
+```
+
+Where there is a terminal it then asks once — `[r = retry, q = leave it]` — and a
+retry is **the same operation**: the same generation, digest, directory, profile
+and launch mode, with the attempt count incremented. Where there is no terminal
+it exits 3 — or **4**, where the launch ran past the readiness deadline still
+alive and only then ended, which the record says as well.
+
+**A signal reconciles only a successfully claimed attempt.** Before claim,
+`SIGTERM`/`SIGHUP` leaves the intent unchanged. After claim, a live or unknown
+child leaves `starting` with `INDETERMINATE` and blocks retry; a proven ended
+child may leave `failed`. Neither handler kills the child. Failure after the
+launcher exits also requires an affirmative empty all-holder read before retry
+is offered, because a descendant may still own the lane.
+
+Ctrl-C in that pane belongs to the **session**, not to the supervisor: the
+supervisor ignores `SIGINT` so that interrupting Claude cannot tear the pane down
+under it, and the launch is started with `INT` and `QUIT` put back to their
+defaults so the keystroke reaches the session itself. A deadline that expires with the child still ALIVE is a
+third answer, `INDETERMINATE`: nothing is killed (Amendment 8(f) — ending
+somebody's process is not a boundary script's act), nothing is retried, the lane
+is not marked running, and the reason goes into the record, because an interactive
+child owns the pane's screen.
+
+`lane-handoff --restart-status --lane <lane>` reads all of it from any window —
+the lane, the intent and its attempt, the operation and generation, the mode, the
+agent and profile, the checkout, the pane, the handoff and its digest, both
+transcripts, the bounded failure reason, and what act is open on it.
+
+**A second `/ctx` never supersedes a restart in flight.** With the intent
+`preparing`, `pending` or `starting`, an ordinary `/ctx` refuses before preservation writes and the kill and names
+the status command. Taking over an abandoned operation is an explicit act and not
+an automatic one.
 
 `/handoff --exit requested by <uuid>@<host>/<container>` is the other end
 (Amendment 18(d)): after the record, `/exit` is typed into this lane's own pane
@@ -3762,3 +3953,21 @@ git show <sha>:lanes/LANES.md                    # a lost row, since
 `pre-move/lanes` is an annotated tag on the last commit the orphan branch ever
 took. The same shape applies to `pre-move/handoffs` and
 `pre-move/workspaces`.
+
+The legacy supervisor uses the current profile launcher's existing-TMUX path,
+which keeps the exact operation as a child and forwards its operation/attempt
+tokens. The historical #94 incident above describes the earlier launcher. A
+respawn also forwards configured `LANES_LANE_STATE_ROOT` and
+`AGENT_PROTOCOL_ROOT` with shell quoting so its durable intent remains readable.
+
+Legacy lane rename is an explicit publication exception: it already holds the
+writer mutex and now refuses unfinished/failed restart ownership before moving
+inputs. Its existing four-file transaction uses EXIT rollback, including stamp
+write failures; it is not crash atomic across those files. This change does not
+claim stronger crash durability for ordinary rename. Restart preservation and
+resume-stamp publishers use the atomic checksum-fenced publication helper.
+
+Reconciliation with PR #97 keeps completed restart history under its original
+lane name when a lane is renamed. Only the diagnostic lifecycle snapshot and
+worktree inventory move to the new control root. The new canonical lane has no
+inherited restart operation; unfinished or unreadable intents still refuse rename.
