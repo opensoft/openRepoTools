@@ -4721,9 +4721,39 @@ class Report:
         self.now = time.time()
         self.unreadable: dict = {}
 
-    def add(self, title: str, rows: list, empty: str, note_text: str = "") -> None:
-        self.sections.append((title, rows, empty, note_text))
+    def add(self, title: str, rows: list, empty: str, note_text: str = "",
+            partial: bool = False) -> None:
+        """`partial`: the section is read from the lanes' records, so an
+        empty one says "none found" only beside what could not be read."""
+        self.sections.append((title, rows, empty, note_text, partial))
         self.counts[title] = len(rows)
+
+    def _recorded_parents(self) -> list:
+        """Every directory a `.lane-state` stands in beyond the checkouts'
+        parents (#170 B8). Two sources, and what neither could read is a
+        finding:
+
+          * a WALK of the estate, every directory but the caches: a lane whose
+            checkout sits in a plain directory inside a repository
+            (`xFactory/xFactories/<x>` on Eagle) keeps `.lane-state` there,
+            and `estate_repos` never enters such a directory;
+          * the register: each lane's recorded `dir`, whose parent #97 puts
+            the lane's control root in, wherever it is."""
+        out: list = []
+        if self.root:
+            walk = walk_estate(self.root)
+            for d in walk.lane_states:
+                out.append(os.path.dirname(d))
+            for what in walk.unread:
+                self.unreadable.setdefault(what, "could not be listed: a lane's records under "
+                                                 "it are not read")
+        if self.helper.path:
+            dirs, why = register_lane_dirs(self.helper)
+            if why:
+                self.unreadable.setdefault("the register's lane logs", why)
+            for d in dirs.values():
+                out.append(os.path.dirname(d.rstrip(os.sep)))
+        return [p for i, p in enumerate(out) if p and p not in out[:i]]
 
     # ------------------------------------------------------------- reading
     def build(self) -> None:
@@ -4732,7 +4762,7 @@ class Report:
         clones = [r for r in repos if os.path.isdir(os.path.join(r, ".git"))]
         canonical = self._canonical(clones)
         self.canonical = canonical
-        parents = _lane_parents(self.root, canonical)
+        parents = _lane_parents(self.root, canonical) + self._recorded_parents()
         self.state_dirs = _lane_state_dirs(parents)
         self.tree_roots = _lane_tree_roots(parents)
         self._foreign(clones, canonical)
@@ -4883,7 +4913,7 @@ class Report:
                     seen.add(real(full))
                     rows.append([full, lane, closed[lane], f"lane-worktrees sweep {lane} "
                                  "--include-scratch --include-foreign --word \"<yours>\""])
-        self.add("Orphaned worktrees of ENDED lanes", rows, "none")
+        self.add("Orphaned worktrees of ENDED lanes", rows, "none", partial=True)
 
     def _branches(self, canonical: list) -> None:
         rows = []
@@ -4982,7 +5012,7 @@ class Report:
                         rows.append([path, f"dirty inventory tree, {age} d", lane,
                                      "awaiting disposition"])
         self.rescue_count = rescue_count
-        self.add(f"Awaiting disposition (older than {aging} days)", rows, "none")
+        self.add(f"Awaiting disposition (older than {aging} days)", rows, "none", partial=True)
 
     def _caches_and_sandboxes(self) -> None:
         rows = []
@@ -5130,14 +5160,21 @@ class Report:
                f"`{PROG} sweep --all --dry-run --report` over `{self.root or '(no estate)'}`. "
                "It changed nothing.", "",
                "| finding | count |", "|---|---|"]
-        for title, rows, _e, _n in self.sections:
+        for title, rows, _e, _n, _p in self.sections:
             out.append(f"| {title} | {len(rows)} |")
         out.append(f"| rescue branches (all ages) | {getattr(self, 'rescue_count', 0)} |")
         out.append(f"| the sweeps directory | {human_size(getattr(self, 'sweeps_size', 0))} |")
-        for title, rows, empty, note_text in self.sections:
+        for title, rows, empty, note_text, partial in self.sections:
             out += ["", f"## {title}", ""]
             if note_text:
                 out += [note_text, ""]
+            if not rows and partial and self.unreadable:
+                # UNKNOWN IS NEVER "NONE" (#170 B8): a lane whose records could
+                # not be read may hold exactly what this section looks for.
+                out.append(f"_none found in what could be read; {len(self.unreadable)} "
+                           "record(s) could not be read (see \"Records the report could not "
+                           "read\")_")
+                continue
             if not rows:
                 out.append(f"_{empty}_")
                 continue

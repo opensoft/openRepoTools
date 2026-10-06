@@ -93,14 +93,19 @@ def build_estate(e) -> dict:
     (closed / "trees" / "c1.yaml").write_text(f"schema: 1\npath: {f['orphan']}\n")
     # ... and one of a lane whose checkout is NESTED: #97 keeps its control
     # root, and lane-start its worktree root, beside the checkout's own
-    # parent, `projects/group/`, never at the estate's top.
+    # parent, never at the estate's top. THE SHAPE IS THE REAL ONE (#170 C2):
+    # the checkout sits in a PLAIN directory inside a REPOSITORY, as
+    # `xFactory/xFactories/<x>` does on Eagle - which the estate's shape walk
+    # never enters, so its `.lane-state` was never read (#170 B8).
+    e.git("init", "-q", "-b", "main", e.projects / "group", cwd=e.root)
     nested_origin = e.root / "remotes" / "repoB.git"
     e.git("init", "-q", "--bare", "-b", "main", nested_origin, cwd=e.root)
-    e.git("clone", "-q", nested_origin, e.projects / "group" / "repoB", cwd=e.root)
-    group_closed = e.projects / "group" / ".lane-state" / "repoB-2"
+    e.git("clone", "-q", nested_origin, e.projects / "group" / "plain" / "repoB", cwd=e.root)
+    group_closed = e.projects / "group" / "plain" / ".lane-state" / "repoB-2"
     group_closed.mkdir(parents=True)
     (group_closed / "lane-state.yaml").write_text("schema: 1\nstate: CLOSED\n")
-    f["nested-orphan"] = e.projects / "group" / ".lane-worktrees" / "repoB-2" / "leftover"
+    f["nested-orphan"] = (e.projects / "group" / "plain" / ".lane-worktrees" / "repoB-2"
+                          / "leftover")
     f["nested-orphan"].mkdir(parents=True)
     # UNMERGED: no upstream at all, and an upstream that diverged.
     e.git("branch", "--no-track", "feat/nowhere", "origin/main")
@@ -301,6 +306,31 @@ def test_a_record_the_report_cannot_read_is_a_finding_never_absence(tmp_path):
     if os.geteuid() != 0:
         assert f"{locked / 'lane-state.yaml'} \u00b7 could not be read" in found
     assert "| Records the report could not read | " in proc.stdout
+
+
+def test_an_empty_section_says_what_could_not_be_read_never_none(tmp_path):
+    """#170 B8: the orphan and aging sections are read from the lanes'
+    records, and where the estate walk could not list a directory a lane's
+    records may be in it - so an empty section says so, never "none"."""
+    if os.geteuid() == 0:
+        pytest.skip("root lists a mode-000 directory")
+    e = LW.Estate(tmp_path)
+    (e.fakebin / "status").write_text(FAKE_STATUS)
+    (e.fakebin / "status").chmod(0o755)
+    e.env["LANE_WORKTREES_STATUS"] = str(e.fakebin / "status")
+    sealed = e.projects / "sealed"
+    (sealed / ".lane-state" / "repoZ-1").mkdir(parents=True)
+    sealed.chmod(0)
+    try:
+        proc = report(e)
+    finally:
+        sealed.chmod(0o755)
+    assert proc.returncode == 0, proc.stderr
+    unread = section(proc.stdout, "Records the report could not read")
+    assert f"{sealed} (" in unread and "a lane's records under it are not read" in unread
+    for title in ("Orphaned worktrees of ENDED lanes", "Awaiting disposition"):
+        found = section(proc.stdout, title)
+        assert "_none found in what could be read;" in found and "_none_" not in found, found
 
 
 def test_post_writes_a_file_or_comments_on_an_issue(tmp_path):
