@@ -1209,8 +1209,20 @@ def test_a_path_that_is_not_utf8_is_a_row_not_a_traceback(estate):
     """B2: a worktree named in Latin-1 is reported - exit inside 0/3/2."""
     estate.lane_root.mkdir(parents=True, exist_ok=True)
     bad = os.fsencode(str(estate.lane_root)) + b"/caf\xe9"
-    subprocess.run(["git", "-C", str(estate.checkout), "worktree", "add", "-q", "-b", "feat/latin1",
-                    bad, "origin/main"], env=estate.env, check=True, capture_output=True)
+    # A FILESYSTEM THAT REFUSES THE NAME HAS NO SUCH WORKTREE TO REPORT (#177).
+    # APFS, the macOS runner's, answers a non-UTF-8 name with EILSEQ ("Illegal
+    # byte sequence"), and git's own `.git/worktrees/caf\xe9` meets the same
+    # refusal. The directory is made first so the refusal is the filesystem's
+    # and not a fixture traceback; where it is made, the case stays live.
+    try:
+        os.mkdir(bad)
+    except OSError as exc:
+        pytest.skip(f"filesystem refuses non-UTF-8 names: {exc}")
+    add = subprocess.run(["git", "-C", str(estate.checkout), "worktree", "add", "-q", "-b",
+                          "feat/latin1", bad, "origin/main"], env=estate.env, capture_output=True)
+    if add.returncode != 0:
+        pytest.skip("filesystem refuses non-UTF-8 names: git worktree add exited "
+                    f"{add.returncode}: {add.stderr.decode('utf-8', 'replace').strip()}")
     estate.write_spec()
     for args in (("--dry-run", "--porcelain"), ("--dry-run",)):
         proc = subprocess.run([sys.executable, str(LW), "sweep", LANE, *args], capture_output=True,
