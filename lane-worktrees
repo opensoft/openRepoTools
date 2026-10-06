@@ -225,8 +225,20 @@ def run(argv, cwd=None, env=None, timeout=GIT_TIMEOUT, input_text=None):
         return subprocess.CompletedProcess(argv, 127, "", str(exc))
 
 
-def git_env() -> dict:
+#: Repositories read as a git directory ALONE (#174, Copilot round 2): a
+#: submodule repository under `<gitdir>/modules/` names its working tree in
+#: `core.worktree`, and where that directory is gone - a gone worktree's
+#: registration, a submodule removed after its deinit - every git command
+#: run in it dies on "cannot chdir". Only reads that need no working tree are
+#: run there (refs, reflogs, rev-list, ls-remote), so each is handed the
+#: repository's own `objects/` as one. See `module_reads`.
+_GITDIR_READS: set = set()
+
+
+def git_env(path: str = "") -> dict:
     env = dict(os.environ)
+    if path and path in _GITDIR_READS:
+        env["GIT_WORK_TREE"] = os.path.join(path, "objects")
     env["GIT_TERMINAL_PROMPT"] = "0"
     env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
     env["LC_ALL"] = "C"
@@ -237,7 +249,7 @@ def git_env() -> dict:
 
 
 def git(path: str, *args: str, timeout: int = GIT_TIMEOUT):
-    return run(["git", "-C", path, *args], env=git_env(), timeout=timeout)
+    return run(["git", "-C", path, *args], env=git_env(path), timeout=timeout)
 
 
 def git_out(path: str, *args: str):
@@ -1663,7 +1675,7 @@ def lost_tips(path: str, cands: list, keep: list):
     keep_refs = [k for k in keep if not SHA_RE.match(k)]
     query = want + [f"{k}^{{commit}}" for k in kept_objects]
     check = run(["git", "-C", path, "cat-file", "--batch-check=%(objectname) %(objecttype)"],
-                env=git_env(), input_text="\n".join(query) + "\n")
+                env=git_env(path), input_text="\n".join(query) + "\n")
     lines = check.stdout.splitlines()
     if check.returncode != 0 or len(lines) != len(query):
         return None
@@ -1683,7 +1695,7 @@ def lost_tips(path: str, cands: list, keep: list):
                     if len(line.split()) == 2 and line.split()[1] == "commit"]
     if tags:
         peel = run(["git", "-C", path, "cat-file", "--batch-check=%(objectname) %(objecttype)"],
-                   env=git_env(), input_text="".join(f"{t}^{{commit}}\n" for t in tags))
+                   env=git_env(path), input_text="".join(f"{t}^{{commit}}\n" for t in tags))
         peeled = peel.stdout.splitlines()
         if peel.returncode != 0 or len(peeled) != len(tags):
             return None
@@ -1696,7 +1708,7 @@ def lost_tips(path: str, cands: list, keep: list):
     if not commits:
         return odd
     proc = run(["git", "-C", path, "rev-list", *commits, "--not", *keep_refs, *keep_commits],
-               env=git_env(), timeout=GIT_TIMEOUT)
+               env=git_env(path), timeout=GIT_TIMEOUT)
     if proc.returncode != 0:
         return None
     out = set(proc.stdout.split())
@@ -3850,16 +3862,32 @@ def module_repos_why(gitdir: str) -> str:
         return (f"{unread[0]} could not be read, so whether a submodule repository kept there "
                 "holds work is unknown")
     for m in mods:
-        rel = os.path.relpath(m, gitdir)
-        why = unpublished_ref(m, "--remotes", "every remote of it")
+        why = module_reads(m, _module_repo_why, m, os.path.relpath(m, gitdir))
         if why:
-            return f"the submodule repository {rel}: {why}"
-        stash = git(m, "for-each-ref", "--count=1", "--format=%(refname)", "refs/stash")
-        if stash.returncode != 0 or stash.stdout.strip():
-            return f"the submodule repository {rel} has a stash (or it could not be read)"
-        why = unpublished_reflog(m, "--remotes", "every remote of it")
-        if why:
-            return f"the submodule repository {rel}: {why}"
+            return why
+    return ""
+
+
+def module_reads(m: str, fn, *args):
+    """`fn(*args)` with every git command in the submodule repository `m`
+    run as a git directory alone (`_GITDIR_READS`)."""
+    _GITDIR_READS.add(m)
+    try:
+        return fn(*args)
+    finally:
+        _GITDIR_READS.discard(m)
+
+
+def _module_repo_why(m: str, rel: str) -> str:
+    why = unpublished_ref(m, "--remotes", "every remote of it")
+    if why:
+        return f"the submodule repository {rel}: {why}"
+    stash = git(m, "for-each-ref", "--count=1", "--format=%(refname)", "refs/stash")
+    if stash.returncode != 0 or stash.stdout.strip():
+        return f"the submodule repository {rel} has a stash (or it could not be read)"
+    why = unpublished_reflog(m, "--remotes", "every remote of it")
+    if why:
+        return f"the submodule repository {rel}: {why}"
     return ""
 
 
