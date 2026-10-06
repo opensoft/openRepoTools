@@ -326,6 +326,7 @@ lane-start 2                        # <repo> from the cwd's git root
 
 lane-end openRepoShape-2            # the window is closing
 lane-end openRepoShape-2 --retire   # …and the lane is not coming back
+lane-end openRepoShape-2 --inventory-only  # …past the close-out gate (#163), trees left recorded
 ```
 
 Both print every step to **stderr** and refuse with a message that names the
@@ -515,6 +516,39 @@ REPLACES, so there is no second act, no word to find inside the cell and no
 history in it to preserve. `--state-was "<text>"` named the exact text the old
 two-step had to replace; it is **accepted and ignored**, and a re-run that
 passes it does the same thing a re-run without it does.
+
+**It refuses (exit 2) while anything of the lane's is still on disk** — the
+close-out gate of opensoft/openRepoTools#163, asked after the in-flight guard
+and before any write, `--dry-run` included. The question is #162's sweep as a
+dry run, `lane-worktrees sweep <lane> --branches --include-scratch
+--include-caches --dry-run --porcelain` ([its exit
+contract](#the-exit-contract-lane-ends-gate-163)): **3** (something to retire)
+and **2** (the sweep refused the lane, or a read failed) are a refusal that
+names every tree, branch, scratch directory and cache the table gives the lane,
+relays the sweep's own reason where it refused, and prints the table's command
+and the `--yes` that would retire them — `--yes` is switched off until
+opensoft/openRepoTools#170 lands, and the refusal says so. **Any other exit, or
+no `lane-worktrees` beside the command, is a gate nobody read: exit 1, never a
+pass.** Beside the table the gate makes two reads of its own. Every tree of the
+lane's is read with `git status --porcelain --ignored`, so a tree holding only
+an `.env` or a `node_modules` is named as holding them and never as clean. And
+every entry directly under the lane's own root, `.lane-worktrees/<lane>/`, that
+no tree, scratch or cache row names is **residue** — the ignored leftovers no
+row of the sweep reaches — and it refuses even where the sweep answered 0, as
+a cache row does. Other lanes' trees in a shared checkout are FOREIGN, are
+counted for nobody, and never hold this lane.
+
+`--inventory-only` is **the one door past the gate**: the lane ends although the
+gate found something, refused, or could not be read, nothing on disk is touched,
+and the trees stay in the lane's #97 inventory, where the daily report lists them
+as an ended lane's. The reason it was let past is **written down**: the row's
+closing phrase gains `ENDED WITH --inventory-only: <what the gate found>; they stay
+in its #97 inventory`, and the lane's own `ENDED` (or `RETIRED`) line carries the
+same words in full. It does not pass the in-flight guard — that is `--force`'s,
+and a lane with both wants both. **`--sweep` is not built**: retiring the trees
+in the same run as the ending is `lane-worktrees sweep --yes`, switched off
+until #170 lands, so the word is refused by name rather than read as an unknown
+option.
 
 `lane-end --retire-dormant <repo>` is a **different act again** and ends no
 lane: it is Amendment 19(c)'s sweep of the rows that have no lane left to end.
@@ -3515,6 +3549,7 @@ touched.**
 lane-worktrees sweep <lane>                     # the DRY RUN: the table, nothing changed
 lane-worktrees sweep <lane> --yes [--live <path>|--live none]
 lane-worktrees sweep <lane> --dry-run --porcelain   # lane-end's gate (#163): 0 / 3 / 2
+lane-worktrees add <lane> <slice> [--branch <b>] [--from <ref>]   # make a tree AND record it (#163)
 lane-worktrees sweep --expire [--yes]           # archives past retention
 ```
 
@@ -3683,10 +3718,20 @@ act completed and 1 when one failed part-way (the rest go on; each failure is in
 the table and in `DISPOSITION.md`, which is written even when an error no read
 caught stops the run); usage is 64.
 
+**`lane-end` reads it with `--branches --include-scratch --include-caches`** and
+refuses on 3 and on 2 — and on 0 too where a `cache` row is printed, because a
+cache under the lane's root is still the lane's to clear though never its work to
+retire, or where its own read of the lane's root finds residue no row names
+(see [`lane-end <lane>`](#lane-end-lane)). It counts the rows whose second field
+is `retire`, plus every `cache` row; a FOREIGN tree, another lane's branch and a
+`gone` record count for nothing. It passes `LANES_EDIT` through and sets
+`LANES_NO_FETCH=1`, having fetched in its own reads.
+
 ### Two protocol lines this act assumes (proposed for the amendment that ratifies it)
 
 1. **A lane creates worktrees, never clones.** Every tree a lane works in is a
-   `git worktree` of the estate's checkout, recorded in its inventory (#97). A
+   `git worktree` of the estate's checkout, recorded in its inventory (#97) —
+   which `lane-worktrees add` does in one act (below). A
    standalone clone under a lane root is FOREIGN to every sweep, and one that is
    a shared store or a local remote is LOAD-BEARING. A lane adds no local remote
    and no alternates.
@@ -3695,6 +3740,40 @@ caught stops the run); usage is 64.
    and `bin/` are grandfathered into the archive-then-remove row; new scratch
    goes to `${XDG_STATE_HOME:-$HOME/.local/state}/openRepoTools/lanes/<lane>/scratch/`
    or the harness scratchpad.
+
+### Making a lane's worktree — `lane-worktrees add` (#163)
+
+**Creation records the tree, in the same act.** Nothing in this tooling made a
+worktree before this verb — `lane-start` makes none, and every writer's tree was
+a `git worktree add` typed into a brief — so the inventory was written only at a
+handoff, and a lane that never handed off had none: lane `openRepoTools-3`'s was
+empty while nine trees under its root were its own, and the sweep could not
+judge them.
+
+```sh
+lane-worktrees add <lane> <slice> [--branch <name>] [--from <ref>] [--checkout <dir>] [--dry-run]
+```
+
+It makes `<parent of the lane's dir>/.lane-worktrees/<lane>/<slice>` as a `git
+worktree` of the lane's recorded checkout (or `--checkout <dir>`, the root of a
+checkout), on `--branch` (default: the slice) — checked out where that branch
+exists, otherwise made from `--from` (default `HEAD`) **with `--no-track`**, so
+a bare `git push` never aims a writer's commits at the branch it started from —
+and then records it with `lanes-edit.sh set-lane-tree <lane> <path> --checkout
+<dir>` (with `--writer` where the caller's session is a transcript uuid). The
+path is the one line on stdout. It refuses, exit **2** and nothing made, a
+managed lane or one whose ownership could not be read, a lane that records no
+directory, an inventory that cannot be read, a path that already exists, a
+branch name git does not take, and `--from` beside a branch that already exists.
+**A record that fails after the tree is made takes the fresh tree and the branch
+this act made back out** (`git worktree remove`, without `--force`, and
+`update-ref -d` at the commit it made) and exits 2; only where that undo fails
+too is the exit **1**, with the `set-lane-tree` that records it printed. Usage
+is 64, and every flag of the sweep's is usage here.
+
+A tree made any other way — a brief's own `git worktree add`, the harness's
+`isolation: worktree` — is still legal git and is FOREIGN to every sweep until
+`lanes-edit.sh set-lane-tree <lane> <path>` records it.
 
 ### The estate report — `sweep --all --dry-run --report`
 

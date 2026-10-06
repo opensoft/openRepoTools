@@ -23,6 +23,10 @@
 #
 # USAGE
 #   lane-end [options] <lane>            # lane-end openRepoShape-2
+#   lane-end <lane> --inventory-only     # end it past the CLOSE-OUT GATE: its
+#                                        # trees, branches, scratch and caches
+#                                        # stay where they are, and the row and
+#                                        # the ENDED line say so (#163)
 #   lane-end <lane> --retire <pid|uuid>  # retire a live FORK (pid or uuid) or a
 #                                        # DUPLICATE (pid); ends nothing
 #   lane-end --retire-dormant <repo> [--reason "<why>"] [--yes]
@@ -109,7 +113,22 @@
 #                       one word it opened with. The cell is now one phrase and
 #                       the closing write carries RETIRED itself
 #   --force             end the lane even though its object log still shows
-#                       something open, and say so in the lines written
+#                       something open, and say so in the lines written. It
+#                       does not pass the close-out gate: that is the next word
+#   --inventory-only    THE DOOR PAST THE CLOSE-OUT GATE (below): end the lane
+#                       although the sweep still finds trees, branches, scratch
+#                       or caches of it on disk, refused the lane, or could not
+#                       be read. Nothing on disk is touched and the trees stay
+#                       in the lane's #97 inventory, where the daily report
+#                       lists them as an ended lane's; the row's closing phrase
+#                       and the lane's ENDED (or RETIRED) line say that this
+#                       door was taken and what the gate found. Where the gate
+#                       passes it changes nothing
+#   --sweep             NOT BUILT, and refused with that said. Retiring the
+#                       trees in the same run as the ending is `lane-worktrees
+#                       sweep --yes`, which is switched off until
+#                       opensoft/openRepoTools#170 lands; the word is held here
+#                       so that nothing else takes it meanwhile
 #   --home owner/repo   the lane's home repo, for a PRE-CUTOVER lane whose log
 #                       has no STARTED line. Accepted for parity with `claim`
 #                       and `who` and passed through to the helper; lane-end's
@@ -172,6 +191,25 @@
 #   peer's LANDING pushed on to this row was invisible to the one path that
 #   still decides a merge hold from prose.
 #
+# THE CLOSE-OUT GATE (opensoft/openRepoTools#163)
+#   After the in-flight guard and before any write, the lane's own leftovers
+#   are asked about: `lane-worktrees sweep <lane> --branches --include-scratch
+#   --include-caches --dry-run --porcelain`, which exits 0 (nothing of the
+#   lane's to retire), 3 (something to retire) or 2 (refused, or a read
+#   failed). 3 and 2 are a REFUSAL, exit 2, naming every tree, branch, scratch
+#   directory and cache the table gives the lane, the sweep's own reason where
+#   it refused, and the exact sweep command; any other exit, or no
+#   `lane-worktrees` at all, is a gate nobody read (exit 1), never a pass.
+#   Beside the sweep's table, this command makes two reads of its own:
+#     * every tree of the lane's is read with `git status --porcelain
+#       --ignored`, so a tree holding nothing but ignored files (an `.env`, a
+#       `node_modules`) is named as holding them, never as clean;
+#     * every entry directly under the lane's own root, `.lane-worktrees/
+#       <lane>/`, that the table does not name as a tree, scratch or a cache is
+#       RESIDUE - ignored leftovers the sweep's rows never reach - and refuses
+#       even where the sweep answered 0, as a cache row does.
+#   `--inventory-only` is the one way past it, and `--sweep` is not built.
+#
 # THE HANDOFF FRAGMENT
 #   On STDOUT, generated from the lane's log, and partitioned by the same two
 #   sets the refusal uses, so no object can fall out of both:
@@ -190,13 +228,19 @@
 #
 # EXIT
 #   0  done
-#   1  environment — no register, no writer, or `lanes-edit.sh lane-objects`
-#      failed (which is NOT the same as the lane having no object log)
-#   2  refusal — bad arguments, no row (or two), or something still in flight
+#   1  environment — no register, no writer, `lanes-edit.sh lane-objects`
+#      failed (which is NOT the same as the lane having no object log), or the
+#      close-out gate could not be read (no `lane-worktrees`, or an exit that
+#      is none of its three)
+#   2  refusal — bad arguments, no row (or two), something still in flight, or
+#      the close-out gate: the lane's trees, branches, scratch, caches or
+#      residue still on disk, or the sweep refusing the lane
 #
 # ENVIRONMENT
 #   LANES_FILE  default <the workspace repository>/lanes/LANES.md
 #   LANES_EDIT  default lanes-edit.sh beside this command
+#   LANE_WORKTREES  default lane-worktrees beside this command: the close-out
+#               gate's sweep
 #   LANES_WORKSPACE_ROOT  the workspace repository, overriding workspace.yaml's
 #               `path:` — the test seam
 #   AGENT_PROTOCOL_ROOT   dir holding workspace.yaml (default ~/.agents)
@@ -481,6 +525,18 @@ lanes_edit_default() {
 }
 LANES_EDIT="${LANES_EDIT:-$(lanes_edit_default)}"
 
+# THE CLOSE-OUT GATE'S SWEEP (opensoft/openRepoTools#163), found the way the
+# writer is: `--install` places `lane-worktrees` beside this command too.
+lane_worktrees_default() {
+  local d
+  [ -x "$SCRIPT_DIR/lane-worktrees" ] && { printf '%s\n' "$SCRIPT_DIR/lane-worktrees"; return 0; }
+  d="${OPENREPOTOOLS_BIN_DIR:-$HOME/.local/bin}"
+  [ -x "$d/lane-worktrees" ] && { printf '%s\n' "$d/lane-worktrees"; return 0; }
+  command -v lane-worktrees 2>/dev/null && return 0
+  printf '%s\n' "$SCRIPT_DIR/lane-worktrees"
+}
+LANE_WORKTREES="${LANE_WORKTREES:-$(lane_worktrees_default)}"
+
 
 LE_TMP=""
 cleanup() { [ -n "${LE_TMP:-}" ] && rm -f -- "$LE_TMP"; return 0; }
@@ -495,7 +551,7 @@ usage() { sed -n -e '1,2d' -e '/^#/!q' -e 's/^# \{0,1\}//' -e p "$RESOLVED"; }
 # ------------------------------------------------------------------ arguments
 
 retire=0; force=0; dry_run=0; state_was=""; home_override=""; retire_target=""
-retire_dormant=""; sweep_reason=""; sweep_yes=0
+retire_dormant=""; sweep_reason=""; sweep_yes=0; inventory_only=0
 positional=()
 
 # A TRANSCRIPT UUID AND A PID, TOLD APART FROM A LANE ARGUMENT BY SHAPE.
@@ -560,6 +616,13 @@ while [ $# -gt 0 ]; do
     --home)        home_override="${2-}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift 2 ;;
     --home=*)      home_override="${1#--home=}"; [ -n "$home_override" ] || die "--home needs owner/repo" 2; shift ;;
     --force)       force=1; shift ;;
+    # THE CLOSE-OUT GATE'S ONE DOOR, AND THE WORD HELD FOR ITS SECOND (#163).
+    # `--sweep` would retire the lane's trees in the same run as its ending,
+    # which is `lane-worktrees sweep --yes` — switched off until #170 lands, so
+    # the word is refused by name rather than read as an unknown option.
+    --inventory-only) inventory_only=1; shift ;;
+    --sweep | --sweep=*)
+                   die "--sweep is not built: retiring a lane's trees in the same run as its ending is \`lane-worktrees sweep --yes\`, which is switched off until opensoft/openRepoTools#170 lands. Until then $prog <lane> refuses and names the sweep, and $prog <lane> --inventory-only ends the lane with its trees left where they are, in its inventory. Nothing was written." 2 ;;
     --dry-run)     dry_run=1; shift ;;
     --state-was)   state_was="${2-}"; [ -n "$state_was" ] || die "--state-was needs the exact text to replace" 2; shift 2 ;;
     --state-was=*) state_was="${1#--state-was=}"; [ -n "$state_was" ] || die "--state-was needs the exact text to replace" 2; shift ;;
@@ -587,6 +650,7 @@ done
 if [ -n "$retire_dormant" ]; then
   [ "$retire" = 0 ] || die "--retire and --retire-dormant are two different acts: --retire is a lane's own ending (or a live fork's), and --retire-dormant sweeps a repository's rows that have no lane left to end. Run one of them." 2
   [ "$force" = 0 ] || die "--force ends a lane that still holds something; it has no meaning for a sweep of rows whose lanes ended before Amendment 7. Nothing was written." 2
+  [ "$inventory_only" = 0 ] || die "--inventory-only is the door past ONE lane's close-out gate; the sweep of dormant rows ends no lane and asks no gate. Nothing was written." 2
   [ -z "$state_was" ] || die "--state-was is for the state cell of a lane being ended; the sweep writes each row's cell itself, from the reason and the row's own last words. Nothing was written." 2
   [ -z "$home_override" ] || die "--home is for a pre-cutover lane's own log line; the sweep writes no home into anything. Nothing was written." 2
   [ "$dry_run" = 0 ] || sweep_yes=0
@@ -945,6 +1009,7 @@ fi
 # exactly as the fork case refuses to end a lane's row.
 if [ -n "$retire_target" ]; then
   [ "$force" = 0 ] || die "--force is for ending a lane that still holds something; it has no meaning for retiring a fork. Run: $prog $LANE --retire $retire_target" 2
+  [ "$inventory_only" = 0 ] || die "--inventory-only is the door past a lane's close-out gate; retiring a fork ends no lane and asks no gate. Run: $prog $LANE --retire $retire_target" 2
   [ -z "$state_was" ] || die "--state-was is for the state cell of a lane being ended; retiring a fork touches no cell. Run: $prog $LANE --retire $retire_target" 2
   # THE SEAM, before any process is looked for or signalled (ruling 2026-10-04).
   seam_refuse "$LANE" "retiring a fork or a duplicate holder"
@@ -1808,6 +1873,258 @@ elif [ "$in_flight" = 1 ]; then
   step "--force: ending with an open $cell_word in the state cell; the line written says so"
 fi
 
+# ---------------------------------------- the close-out gate (#163)
+#
+# WORKSPACE CREATION OUTPACES WORKSPACE CLOSEOUT, and this is where the second
+# catches up with the first (opensoft/openRepoTools#163, on Brett Heap's word
+# of 2026-10-05). A lane ended while its writers' trees, their branches, its
+# scratch and its caches are still on disk leaves them to nobody: the cleanup
+# records show landing and retirement as separate acts for months, and the
+# separate act not happening. So the end of a lane asks, exactly as it already
+# asks about open objects, and refuses while the answer is not "nothing".
+#
+# THE QUESTION IS THE SWEEP'S DRY RUN, never a second implementation of it:
+# `lane-worktrees sweep <lane> --dry-run --porcelain` is #162's exit contract
+# for this gate — 0 nothing of the lane's to retire, 3 something to retire, 2
+# refused or a read failed — and its rows are what the refusal names. Any other
+# exit, a missing command included, is a gate nobody read, and a read that
+# failed is never an answer (Amendment 7(d)): exit 1, and nothing is written.
+# `LANES_NO_FETCH=1` because this command has just fetched, in its own reads.
+#
+# TWO READS OF THIS COMMAND'S OWN SIT BESIDE IT, and both are about what the
+# sweep's rows do not say. `git status --porcelain --ignored` in every tree of
+# the lane's, because the sweep's own status read leaves ignored files out and
+# a tree holding an `.env` or a `node_modules` is not a clean tree to name. And
+# every entry directly under the lane's own root, `.lane-worktrees/<lane>/`,
+# that no tree, scratch or cache row names — a directory a removed tree left its
+# ignored files in, a brief, a log — which the sweep never lists and which is
+# still the lane's: RESIDUE, and it refuses even where the sweep answered 0.
+#
+# `--inventory-only` IS THE ONE DOOR, and it takes the lane past every answer
+# but leaves every tree where it is and in the lane's #97 inventory; the reason
+# it was let past is written into the row's closing phrase and the ENDED line.
+# `--sweep --yes`, which would retire them in the same run, waits for #170.
+TAB="$(printf '\t')"
+gate_argv=(sweep "$LANE" --branches --include-scratch --include-caches)
+gate_shown="lane-worktrees ${gate_argv[*]}"
+
+# A PATH'S PHYSICAL SPELLING, the way the sweep compares paths (`realpath`):
+# a symlink under the lane's root is an entry of its own and is not followed.
+gate_real() {   # <path>
+  gr_p="${1-}"; gr_r=""
+  if [ -d "$gr_p" ] && [ ! -L "$gr_p" ]; then
+    gr_r="$(CDPATH='' cd -P -- "$gr_p" 2>/dev/null && pwd -P)" || gr_r=""
+  else
+    gr_r="$(CDPATH='' cd -P -- "$(dirname -- "$gr_p")" 2>/dev/null && pwd -P)" || gr_r=""
+    if [ -n "$gr_r" ]; then gr_r="${gr_r%/}/$(basename -- "$gr_p")"; fi
+  fi
+  printf '%s\n' "${gr_r:-$gr_p}"
+}
+
+# WHAT IS IN ONE TREE, IGNORED FILES INCLUDED. `GIT_OPTIONAL_LOCKS=0`: a read
+# that refreshed the index would be a write, and this gate writes nothing.
+gate_tree_state() {   # <path>
+  gts_p="${1-}"
+  if [ ! -d "$gts_p" ]; then printf 'its directory is gone'; return 0; fi
+  gts_top="$(git -C "$gts_p" rev-parse --show-toplevel 2>/dev/null)" || gts_top=""
+  if [ -z "$gts_top" ] || [ "$(gate_real "$gts_top")" != "$(gate_real "$gts_p")" ]; then
+    gts_n=0
+    for gts_e in "$gts_p"/* "$gts_p"/.[!.]* "$gts_p"/..?*; do
+      if [ -e "$gts_e" ] || [ -L "$gts_e" ]; then gts_n=$((gts_n + 1)); fi
+    done
+    printf 'no checkout of its own; %s entr(ies) in it' "$gts_n"
+    return 0
+  fi
+  gts_st="$(GIT_OPTIONAL_LOCKS=0 git -C "$gts_p" status --porcelain=v1 --ignored --untracked-files=normal 2>/dev/null)" || {
+    printf 'git status --ignored could not be read in it'
+    return 0
+  }
+  gts_m=0; gts_u=0; gts_i=0
+  gts_c="$(printf '%s\n' "$gts_st" | awk 'NF { k = substr($0, 1, 2); if (k == "!!") i++; else if (k == "??") u++; else m++ } END { printf "%d %d %d\n", m + 0, u + 0, i + 0 }')"
+  read -r gts_m gts_u gts_i <<GTS || :
+$gts_c
+GTS
+  if [ "$gts_m" = 0 ] && [ "$gts_u" = 0 ] && [ "$gts_i" = 0 ]; then
+    printf 'git status --ignored: clean, nothing ignored in it either'
+    return 0
+  fi
+  gts_ign="$(printf '%s\n' "$gts_st" | awk 'substr($0, 1, 3) == "!! " { print substr($0, 4) }' | head -n 3 | tr '\n' ' ')"
+  printf 'git status --ignored: %s changed; %s untracked; %s ignored' "$gts_m" "$gts_u" "$gts_i"
+  if [ -n "$gts_ign" ]; then printf ' (%s)' "${gts_ign% }"; fi
+  return 0
+}
+
+gate_rc=0; gate_out=""; gate_err=""
+if [ -x "$LANE_WORKTREES" ]; then
+  : > "$LE_TMP"
+  gate_out="$(LANES_EDIT="$LANES_EDIT" LANES_NO_FETCH=1 "$LANE_WORKTREES" "${gate_argv[@]}" --dry-run --porcelain 2>"$LE_TMP")" || gate_rc=$?
+  gate_err="$(cat -- "$LE_TMP" 2>/dev/null || :)"
+else
+  gate_rc=127
+  gate_err="there is no executable lane-worktrees at $LANE_WORKTREES; \`openRepoTools --install\` places it beside this command (or set LANE_WORKTREES)"
+fi
+
+gate_holder=""; gate_refused=""; gate_lines=""; gate_named=""
+gate_trees=0; gate_branches=0; gate_scratch=0; gate_caches=0; gate_residue=0; gate_foreign=0
+gate_person=0     # counted rows `--yes` leaves too: a person's to settle
+gate_lf='
+'
+while IFS="$TAB" read -r g_kind g_a g_b g_c g_d g_e g_f; do
+  [ -n "${g_kind:-}" ] || continue
+  # THE FIELDS ARE ESCAPED (`\\`, `\t`, `\n`, `\r`) so a path is one field
+  # whatever it holds, and `%b` is exactly the inverse: every backslash of the
+  # original arrives doubled, so no other escape can appear.
+  case "$g_kind" in
+    lane)    gate_holder="${g_c:-}" ;;
+    refused) gate_refused="${g_a:-}" ;;
+    tree)
+      g_path="$(printf '%b' "${g_c:-}")"
+      gate_named="${gate_named}$(gate_real "$g_path")${gate_lf}"
+      case "${g_a:-}" in
+        foreign) gate_foreign=$((gate_foreign + 1)); continue ;;
+      esac
+      [ "${g_b:-}" = retire ] || continue
+      gate_trees=$((gate_trees + 1))
+      case "${g_a:-}" in keep | live | load-bearing) gate_person=$((gate_person + 1)) ;; esac
+      g_head="${g_e:-?}"
+      gate_lines="${gate_lines}  tree     ${g_a}  ${g_path}  [${g_d:-?} ${g_head:0:12}]${gate_lf}             $(gate_tree_state "$g_path")${gate_lf}             ${g_f:-}${gate_lf}" ;;
+    branch)
+      [ "${g_b:-}" = retire ] || continue
+      gate_branches=$((gate_branches + 1))
+      case "${g_a:-}" in keep | list) gate_person=$((gate_person + 1)) ;; esac
+      gate_lines="${gate_lines}  branch   ${g_a}  $(printf '%b' "${g_c:-}")  ${g_d:-}${gate_lf}             ${g_f:-}${gate_lf}" ;;
+    scratch)
+      g_path="$(printf '%b' "${g_c:-}")"
+      gate_named="${gate_named}$(gate_real "$g_path")${gate_lf}"
+      gate_scratch=$((gate_scratch + 1))
+      case "${g_a:-}" in keep | live | load-bearing) gate_person=$((gate_person + 1)) ;; esac
+      gate_lines="${gate_lines}  scratch  ${g_a}  ${g_path}  (${g_e:-0} bytes)${gate_lf}             ${g_f:-}${gate_lf}" ;;
+    cache)
+      g_path="$(printf '%b' "${g_c:-}")"
+      gate_named="${gate_named}$(gate_real "$g_path")${gate_lf}"
+      gate_caches=$((gate_caches + 1))
+      gate_lines="${gate_lines}  cache    ${g_a}  ${g_path}  (${g_e:-0} bytes)${gate_lf}" ;;
+  esac
+done <<GATE
+$gate_out
+GATE
+
+# RESIDUE: what is directly under the lane's own root and is named by no row.
+# The root is beside the lane's recorded directory, as the sweep derives it; a
+# lane that records none has none. A read of that directory that FAILED is the
+# gate unread, never an empty root.
+gate_unread=""
+gd_rc=0; gd_dir=""
+gd_dir="$(LANES_NO_FETCH=1 "$LANES_EDIT" lane-dir "$LANE" 2>/dev/null)" || gd_rc=$?
+gate_root=""
+case "$gd_rc" in
+  0) gd_dir="${gd_dir%/}"
+     if [ -n "$gd_dir" ]; then gate_root="${gd_dir%/*}/.lane-worktrees/$LANE"; fi ;;
+  8) : ;;
+  *) gate_unread="\`$LANES_EDIT lane-dir $LANE\` exited $gd_rc, so the lane's own root could not be read for residue" ;;
+esac
+gate_is_named() {   # <physical path>
+  gin_p="${1-}"
+  while IFS= read -r gin_l; do
+    if [ -n "$gin_l" ] && [ "$gin_l" = "$gin_p" ]; then return 0; fi
+  done <<GIN
+$gate_named
+GIN
+  return 1
+}
+if [ -n "$gate_root" ] && [ -d "$gate_root" ]; then
+  for g_ent in "$gate_root"/* "$gate_root"/.[!.]* "$gate_root"/..?*; do
+    if [ ! -e "$g_ent" ] && [ ! -L "$g_ent" ]; then continue; fi
+    if gate_is_named "$(gate_real "$g_ent")"; then continue; fi
+    gate_residue=$((gate_residue + 1))
+    if [ -L "$g_ent" ]; then
+      g_what="a symlink"
+    elif [ -d "$g_ent" ]; then
+      g_what="$(gate_tree_state "$g_ent")"
+    else
+      g_what="a file"
+    fi
+    gate_lines="${gate_lines}  residue  ${g_ent}${gate_lf}             ${g_what}; under the lane's own root and neither a tree nor scratch the sweep knows${gate_lf}"
+  done
+elif [ -n "$gate_root" ] && [ -e "$gate_root" ]; then
+  gate_unread="${gate_unread:+$gate_unread; }the lane's own root $gate_root is there and is no directory"
+fi
+
+gate_left=""
+gate_part() {   # <count> <noun>
+  if [ "${1:-0}" -gt 0 ]; then gate_left="${gate_left:+$gate_left and }$1 $2"; fi
+  return 0
+}
+gate_part "$gate_trees" "tree(s)"
+gate_part "$gate_branches" "branch(es)"
+gate_part "$gate_scratch" "scratch dir(s)"
+gate_part "$gate_caches" "cache(s)"
+gate_part "$gate_residue" "residue path(s)"
+
+# THE VERDICT. 0 passes only with nothing named and nothing unread beside it;
+# 3 and 2 never pass; anything else is the gate nobody read.
+gate_pass=0; gate_exit=2; gate_log=""
+case "$gate_rc" in
+  0) if [ -z "$gate_left" ] && [ -z "$gate_unread" ]; then gate_pass=1; fi
+     if [ -n "$gate_unread" ]; then gate_exit=1; fi
+     gate_log="the close-out gate (sweep exit 0) found ${gate_left:-nothing} left${gate_unread:+ and could not read its own root for residue}" ;;
+  3) gate_log="the close-out gate (sweep exit 3) found ${gate_left:-something} left" ;;
+  2) gate_log="the close-out gate's sweep refused this lane (exit 2)${gate_left:+ with $gate_left left}" ;;
+  *) gate_exit=1
+     gate_log="the close-out gate could not be read (lane-worktrees exit $gate_rc)" ;;
+esac
+
+if [ "$gate_pass" = 1 ]; then
+  step "close-out gate: nothing of lane $LANE's is left on disk ($gate_shown --dry-run answered 0)"
+  if [ "$inventory_only" = 1 ]; then
+    note "--inventory-only changed nothing: the close-out gate passed, so the lane ends as any other does"
+  fi
+  inventory_only=0
+else
+  fflag=""; (( force )) && fflag=" --force"
+  if [ "$inventory_only" = 0 ]; then
+    case "$gate_rc" in
+      0 | 3) note "lane $LANE is NOT ended: the close-out gate (opensoft/openRepoTools#163) found what is still the lane's: ${gate_left:-the rows below}" ;;
+      2)     note "lane $LANE is NOT ended: the close-out gate's sweep refused it (exit 2): ${gate_refused:-it printed no reason; run the table below}" ;;
+      *)     note "lane $LANE is NOT ended: the close-out gate could not be read — \`$gate_shown --dry-run --porcelain\` exited $gate_rc, and a read that failed is never an answer (Amendment 7(d))." ;;
+    esac
+    if [ -n "$gate_lines" ]; then printf '%s' "$gate_lines" >&2; fi
+    if [ "$gate_foreign" -gt 0 ]; then
+      note "($gate_foreign FOREIGN tree(s) beside these are not this lane's, and were not counted.)"
+    fi
+    if [ -n "$gate_unread" ]; then note "and: $gate_unread"; fi
+    if [ "$gate_exit" = 1 ] && [ -n "$gate_err" ]; then
+      note "what the gate said on stderr:"
+      printf '%s\n' "$gate_err" | sed -e 's/^/    /' >&2
+    fi
+    note "the table, which changes nothing:"
+    note "  $gate_shown"
+    # THE ACT IS OFFERED ONLY WHERE THE SWEEP WOULD TAKE IT: on 2 its `--yes`
+    # refuses for the same reason its dry run did.
+    gate_act=0
+    if [ "$gate_rc" = 3 ]; then gate_act=1; fi
+    if [ "$gate_rc" = 0 ] && [ "$gate_caches" -gt 0 ]; then gate_act=1; fi
+    if [ "$gate_act" = 1 ]; then
+      note "the one act that retires them, once opensoft/openRepoTools#170 lands (--yes is switched off until then):"
+      if [ "$gate_holder" = live ]; then
+        note "  $gate_shown --yes --live <each live writer's worktree> | --live none"
+      else
+        note "  $gate_shown --yes"
+      fi
+      if [ "$gate_person" -gt 0 ]; then
+        note "  ($gate_person row(s) above marked keep, live, load-bearing or list are left by --yes as well: each says why, and settling it is a person's)"
+      fi
+    fi
+    if [ "$gate_residue" -gt 0 ]; then
+      note "residue is no sweep's to retire: move it to \${XDG_STATE_HOME:-~/.local/state}/openRepoTools/lanes/$LANE/scratch/ or remove it by hand"
+    fi
+    note "or end the lane and leave them where they are, in its inventory, with the reason written down:"
+    note "  $prog $LANE$rflag$fflag --inventory-only"
+    exit "$gate_exit"
+  fi
+  step "--inventory-only: ending lane $LANE past the close-out gate; $gate_log. Nothing on disk is touched, and the lines written say so"
+fi
+
 # --- BEGIN shared one-line cut (lane-collision-protocol Amendment 13(a)) ---
 # BYTE-IDENTICAL IN `lane-start`, `lane-end` AND `lane-handoff`, the three
 # commands that write a row's state cell — the same trade the four lane helpers
@@ -1882,6 +2199,13 @@ if [ "$in_flight" = 1 ] && [ "$have_log" = 1 ]; then
 elif [ "$in_flight" = 1 ]; then
   state_line="lane-end on $ws: window closing; ENDED WITH --force while the state cell of $cell_source still showed an open $cell_word; read the archived cell before trusting it"
 fi
+# THE DOOR PAST THE CLOSE-OUT GATE IS WRITTEN DOWN (#163): the row says it was
+# taken and what the gate found, so an ended lane whose trees are still on disk
+# is never read as one that closed out clean. It goes AFTER whatever the line
+# already says, so a forced end keeps its own words first.
+if [ "$inventory_only" = 1 ]; then
+  state_line="$state_line; ENDED WITH --inventory-only: $gate_log; they stay in its #97 inventory"
+fi
 # The cell's own separator never appears INSIDE the line, and a line over
 # Amendment 13's cap is cut here rather than costing the row its whole closing
 # write — the object log one section along carries the full text either way.
@@ -1928,6 +2252,12 @@ if [ "$in_flight" = 1 ] && [ "$have_log" = 1 ]; then
   lane_text="forced; open: $open_objs"
 elif [ "$in_flight" = 1 ]; then
   lane_text="forced; open: $cell_word in the state cell (pre-cutover lane, no object log)"
+fi
+# AND THE LANE'S OWN LOG CARRIES THE REASON IN FULL, which the row's 240
+# characters may have cut (#163). No ` — ` and no `, ` in it: the line's own
+# separators.
+if [ "$inventory_only" = 1 ]; then
+  lane_text="$lane_text; inventory-only: $gate_log; $gate_shown names them"
 fi
 
 if (( dry_run )); then

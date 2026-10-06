@@ -124,7 +124,9 @@ sweep:
                                    printed. --restart is /ctx; --exit ends the
                                    session a second place asked for the lane
   lane-end <lane>                  close it, and refuse while anything is in
-                                   flight
+                                   flight or any tree, branch, scratch or cache
+                                   of it is still on disk (--inventory-only
+                                   ends it anyway, and says so)
   lane-rename <old> <new>          rename it: the row, the object log, the
                                    handoff and lanes/aliases.tsv in ONE commit,
                                    one comment per object it holds, and the old
@@ -151,6 +153,9 @@ sweep:
                                    run by default; --yes pushes or rescues
                                    first and removes only what is on origin
                                    or in a bundle, never a live writer's
+  lane-worktrees add <lane> <slice>
+                                   make a lane's worktree and record it in the
+                                   lane's inventory, in one act
 
 `--install` also places THREE SKILLS at two paths each —
 `~/.claude-profiles/shared/skills/<name>/SKILL.md` and

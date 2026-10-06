@@ -12,6 +12,8 @@ abandoned worktrees, branches, scratch and killed-suite sandboxes
     lane-worktrees sweep --expire [--dry-run | --yes] [--porcelain]
     lane-worktrees sweep --all --dry-run --report [--post <path|owner/repo#n>]
                    [--estate <dir>]
+    lane-worktrees add <lane> <slice> [--branch <name>] [--from <ref>]
+                   [--checkout <dir>] [--dry-run]
     lane-worktrees --help | --version
 
 A SWAP THAT DOES NOT FINISH GRACEFULLY LEAVES ITS WRITERS' TREES WHERE THEY
@@ -64,6 +66,19 @@ or 1 when `--post` could not deliver it (the report is then printed).
 #170 lands: it is refused, exit 2, unless the environment carries
 LANE_WORKTREES_ENABLE_YES=1 - which the test suite sets, and which is not for a
 real estate until #170. The dry run, `--porcelain` and `--report` are whole.
+
+ADD (`add <lane> <slice>`, #163) IS HOW A LANE MAKES A WORKTREE, AND IT
+RECORDS THE TREE IN THE LANE'S #97 INVENTORY IN THE SAME ACT: a `git worktree
+add` of the lane's checkout (or `--checkout <dir>`) at `<parent of the lane's
+dir>/.lane-worktrees/<lane>/<slice>`, on branch `--branch` (default: the
+slice) - checked out where it exists, else made from `--from` (default HEAD)
+with `--no-track`, so a bare `git push` never aims a writer's commits at the
+branch it started from - then `lanes-edit.sh set-lane-tree`. A record that
+fails takes the fresh tree and its new branch back out. The path is printed on
+stdout; `--dry-run` makes nothing. A tree made any other way is FOREIGN until
+`lanes-edit.sh set-lane-tree <lane> <path>` records it. Exit 0 made and
+recorded, 2 refused (nothing made), 1 made and neither recorded nor taken back
+out (the commands are printed), 64 usage.
 
 PORCELAIN: one row per line, fields separated by one TAB. In every field a
 backslash is written `\\`, a TAB `\t`, a newline `\n` and a carriage
@@ -1571,7 +1586,10 @@ class Sweep:
 
     def _branch_checkouts(self) -> list:
         checkouts = []
-        if self.facts.dir and os.path.isdir(self.facts.dir):
+        # A RECORDED DIRECTORY THAT IS NO REPOSITORY HAS NO BRANCHES (#163): it
+        # is an absence, not a read that failed - and as a `keep` row it held
+        # `lane-end`'s gate shut for every lane started outside a checkout.
+        if self.facts.dir and os.path.isdir(self.facts.dir) and not no_repository(self.facts.dir):
             checkouts.append(self.facts.dir)
         for t in self.trees:
             if t.owner == "inventory" and t.checkout and os.path.isdir(t.checkout) \
@@ -2609,6 +2627,13 @@ def find_caches(root: str) -> list:
     return out
 
 
+def no_repository(path: str) -> bool:
+    """True only where git answers that there is NO repository at `path` -
+    which has no branches - and never where one could not be read."""
+    proc = git(path, "rev-parse", "--git-dir")
+    return proc.returncode != 0 and "not a git repository" in (proc.stderr or "").lower()
+
+
 def branch_items(checkout: str, lane: str, evidence: MergeEvidence) -> list:
     """`--branches`: local branches NO worktree has checked out. Merged by
     PR evidence: deleted (and the remote where it is this lane's and holds
@@ -3552,6 +3577,157 @@ def report_all(opts) -> int:
 
 # ==================================================================== main
 
+# ======================================================= add: the creation
+
+#: A slice is one path component under the lane's own root, and the default
+#: branch name: what a ref and a directory both take.
+SLICE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def add_tree(ns) -> int:
+    """`add <lane> <slice>` - the one act that MAKES a lane's worktree, and it
+    records the tree in the lane's #97 inventory in the same act
+    (opensoft/openRepoTools#163). A tree made by hand is legal git and FOREIGN
+    to every sweep until something records it; lane openRepoTools-3's own
+    inventory was empty while it had nine trees, so the gate could not tell
+    which were its. Nothing in this tooling made a worktree before this verb,
+    so this is where creation and the record become one act.
+
+    The tree goes under the lane's own root, `<parent of its dir>/
+    .lane-worktrees/<lane>/<slice>`, which only this lane's acts make, as a
+    `git worktree` of the lane's checkout (or `--checkout <dir>`). A new
+    branch is made with `--no-track`: a branch made from `origin/main` that
+    tracked it would push a writer's commits at main on a bare `git push`.
+
+    Exit 0: made and recorded, the path on stdout. 2: refused, and nothing
+    was made - including a record that failed after the tree was made, when
+    the fresh tree and the branch this act made are taken back out. 1: made,
+    not recorded, and not taken back out either; the commands are printed.
+    64: usage."""
+    lane, slice_name = ns.lane or "", ns.slice or ""
+    usage = ("lane-worktrees add <lane> <slice> [--branch <name>] [--from <ref>] "
+             "[--checkout <dir>] [--dry-run]")
+    if not lane or not slice_name:
+        note(f"usage: {usage}")
+        return 64
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]*$", lane):
+        note(f"usage: '{lane}' is not a lane name")
+        return 64
+    if not SLICE_RE.match(slice_name) or ".." in slice_name or slice_name.endswith(".lock"):
+        note(f"usage: '{slice_name}' is not a slice name (letters, digits, . _ -; one path "
+             "component, which is also the default branch name)")
+        return 64
+    if ns.checkout is not None and not os.path.isabs(ns.checkout):
+        note("usage: --checkout takes an absolute path")
+        return 64
+
+    def refuse(why: str) -> int:
+        note(f"REFUSED, nothing was made: {why}")
+        return 2
+
+    helper = Helper()
+    if not helper.path:
+        return refuse("no lanes-edit.sh beside this command or on PATH, and the record is its")
+    canon, why = helper.canon_lane(lane)
+    if why:
+        return refuse(f"lane {lane}'s name could not be resolved: {why}")
+    lane = canon
+    mproc = helper.call("managed-projection", lane)
+    if mproc.returncode == 0:
+        return refuse(f"lane {lane} is owned by the managed ledger (owner "
+                      f"{mproc.stdout.strip() or 'unnamed'}), and its worktrees are that "
+                      "ledger's (ruling 2026-10-04)")
+    if mproc.returncode != 8:
+        return refuse(f"whether the managed ledger owns lane {lane} is UNKNOWN (`lanes-edit.sh "
+                      f"managed-projection {lane}` exited {mproc.returncode}); an ownership "
+                      "nobody could read is never read as legacy (Amendment 7(d))")
+    dproc = helper.call("lane-dir", lane)
+    if dproc.returncode == 8:
+        return refuse(f"lane {lane} records no directory (Amendment 11(c)), so it has no "
+                      "root to make a tree under; start it with lane-start first")
+    if dproc.returncode != 0 or not dproc.stdout.strip():
+        return refuse(f"`lanes-edit.sh lane-dir {lane}` exited {dproc.returncode}: "
+                      + _first_line(dproc.stderr))
+    lane_dir = dproc.stdout.strip().rstrip("/") or "/"
+    checkout = (ns.checkout or lane_dir).rstrip("/") or "/"
+    top = git_out(checkout, "rev-parse", "--show-toplevel")
+    if top is None or real(top) != real(checkout):
+        return refuse(f"{checkout} is not the root of a git checkout"
+                      + (f" ({top} is)" if top else ""))
+    # THE RECORD MUST HAVE SOMEWHERE TO GO BEFORE THE TREE IS MADE: a tree
+    # this act could not record is the very thing it exists to stop.
+    tproc = helper.call("lane-trees", lane)
+    if tproc.returncode not in (0, 8):
+        return refuse(f"lane {lane}'s inventory cannot be read or written (`lanes-edit.sh "
+                      f"lane-trees {lane}` exited {tproc.returncode}: "
+                      + _first_line(tproc.stderr) + ")")
+    root = os.path.join(os.path.dirname(lane_dir), ".lane-worktrees", lane)
+    path = os.path.join(root, slice_name)
+    if os.path.lexists(path):
+        return refuse(f"{path} already exists; a tree is made where nothing is, and one "
+                      f"already there is recorded with: lanes-edit.sh set-lane-tree {lane} {path}")
+    branch = ns.branch or slice_name
+    if git(checkout, "check-ref-format", "--branch", branch).returncode != 0:
+        return refuse(f"'{branch}' is not a branch name git takes")
+    exists = git(checkout, "rev-parse", "-q", "--verify", f"refs/heads/{branch}").returncode == 0
+    if exists and ns.from_ref:
+        return refuse(f"branch {branch} already exists, so --from {ns.from_ref} would be "
+                      "ignored; name a new branch, or drop --from to check this one out")
+    start = ns.from_ref or "HEAD"
+    if not exists and git(checkout, "rev-parse", "-q", "--verify",
+                          f"{start}^{{commit}}").returncode != 0:
+        return refuse(f"'{start}' names no commit in {checkout}")
+    argv = (["worktree", "add", path, branch] if exists else
+            ["worktree", "add", "--no-track", "-b", branch, path, start])
+    if ns.dry_run:
+        note(f"DRY RUN, nothing was made: git -C {checkout} {' '.join(argv)}; then "
+             f"lanes-edit.sh set-lane-tree {lane} {path} --checkout {checkout}")
+        say(path)
+        return 0
+    try:
+        os.makedirs(root, exist_ok=True)
+    except OSError as exc:
+        return refuse(f"the lane's root {root} could not be made: {exc}")
+    made = git(checkout, *argv)
+    if made.returncode != 0:
+        return refuse(f"git worktree add refused: {_first_line(made.stderr)}")
+    _ACTIVE["add"] = (lane, path)
+    head = git_out(path, "rev-parse", "HEAD") or ""
+    caller = os.environ.get("LANES_SESSION") or os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
+    record = ["set-lane-tree", lane, path, "--checkout", checkout]
+    if UUID_RE.match(caller):
+        record += ["--writer", caller]
+    rproc = helper.call(*record)
+    if rproc.returncode == 0:
+        note(f"made {path} on branch {branch} at {short(head)} in {checkout}; recorded in lane "
+             f"{lane}'s inventory as {rproc.stdout.strip() or '?'}")
+        _ACTIVE.pop("add", None)
+        say(path)
+        return 0
+    # THE RECORD FAILED: the fresh tree and the branch this act made are taken
+    # back out, so a tree nothing records is not left behind by the act whose
+    # whole point is that there are none. `worktree remove` without --force:
+    # nothing has been written in it yet, and git still refuses if it was.
+    note(f"the tree was made and could NOT be recorded (`lanes-edit.sh "
+         f"{' '.join(record)}` exited {rproc.returncode}: {_first_line(rproc.stderr)})")
+    back = git(checkout, "worktree", "remove", path)
+    branch_back = exists
+    if back.returncode == 0 and not exists and head:
+        branch_back = git(checkout, "update-ref", "-d", f"refs/heads/{branch}",
+                          head).returncode == 0
+    _ACTIVE.pop("add", None)
+    if back.returncode == 0 and branch_back:
+        note(f"REFUSED, nothing was made: the fresh tree {path} was removed again"
+             + ("" if exists else f" and branch {branch} deleted at {short(head)}"))
+        return 2
+    note(f"the tree is left UNRECORDED at {path}; record it with: lanes-edit.sh "
+         f"set-lane-tree {lane} {path} --checkout {checkout}"
+         + ("" if back.returncode == 0 else f" (or remove it: git -C {checkout} worktree "
+            f"remove {path})")
+         + ("" if branch_back else f"; branch {branch} was made by this act at {short(head)}"))
+    return 1
+
+
 class _Parser(argparse.ArgumentParser):
     def error(self, message):
         raise Usage(message)
@@ -3561,6 +3737,10 @@ def parse(argv: list):
     parser = _Parser(prog=PROG, add_help=False)
     parser.add_argument("verb", nargs="?")
     parser.add_argument("lane", nargs="?")
+    parser.add_argument("slice", nargs="?")          # add's
+    parser.add_argument("--branch")                  # add's
+    parser.add_argument("--from", dest="from_ref")   # add's
+    parser.add_argument("--checkout")                # add's
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--yes", action="store_true")
@@ -3604,6 +3784,13 @@ def main(argv: list) -> int:
                   if os.path.basename(f.filename) == os.path.basename(__file__)]
         where = f" at {PROG} line {frames[-1].lineno}" if frames else ""
         detail = f"{type(exc).__name__}: {exc}{where}"
+        added = _ACTIVE.get("add")
+        if added:
+            # `add` MADE A TREE BEFORE THE ERROR: "nothing was changed" would
+            # be false, and the tree may be one nothing records.
+            note(f"INTERNAL ERROR after the tree {added[1]} was made: {detail}; whether it is "
+                 f"recorded is in: lanes-edit.sh lane-trees {added[0]}")
+            return 1
         sweep = _ACTIVE.get("sweep")
         acted = bool(sweep is not None and sweep.acting)
         if sweep is not None and sweep.opts.porcelain:
@@ -3633,8 +3820,30 @@ def _main(argv: list) -> int:
     if ns.version:
         say(f"{PROG} {VERSION}")
         return 0
+    if ns.verb == "add":
+        # THE SWEEP'S WORDS ARE NOT ADD'S: a flag a verb does not read is a
+        # line that does not do what it says.
+        theirs = [flag for flag, given in (
+            ("--yes", ns.yes), ("--porcelain", ns.porcelain), ("--bundle", ns.bundle),
+            ("--branches", ns.branches), ("--links", ns.links),
+            ("--include-scratch", ns.include_scratch), ("--include-caches", ns.include_caches),
+            ("--include-sandboxes", ns.include_sandboxes),
+            ("--include-foreign", ns.include_foreign), ("--word", ns.word is not None),
+            ("--live", bool(ns.live)), ("--fetch", ns.fetch), ("--estate", ns.estate is not None),
+            ("--expire", ns.expire), ("--all", ns.all), ("--report", ns.report),
+            ("--post", ns.post is not None)) if given]
+        if theirs:
+            note(f"usage: {', '.join(theirs)} belong to sweep, not to add")
+            return 64
+        return add_tree(ns)
     if ns.verb != "sweep":
-        note("usage: lane-worktrees sweep <lane> [--dry-run | --yes] ... (see --help)")
+        note("usage: lane-worktrees sweep <lane> [--dry-run | --yes] ... | lane-worktrees "
+             "add <lane> <slice> ... (see --help)")
+        return 64
+    if ns.slice is not None or ns.branch is not None or ns.from_ref is not None \
+            or ns.checkout is not None:
+        note("usage: a slice, --branch, --from and --checkout are add's, and sweep takes "
+             "none of them")
         return 64
     if ns.all or ns.report or ns.post is not None:
         if not (ns.all and ns.report) or ns.lane or ns.yes or ns.expire:
