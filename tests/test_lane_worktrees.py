@@ -2423,7 +2423,10 @@ def test_a_gone_worktrees_kept_submodule_repository_is_never_pruned(estate):
     assert "its branch local holds commits every remote of it lacks" in rows[str(tree)][2]
     assert estate.sweep(LANE, "--yes").returncode == 0
     assert str(tree) in estate.git("worktree", "list", "--porcelain")
-    assert estate.git("cat-file", "-t", own, cwd=module) == "commit"
+    # Its `core.worktree` is gone, so it is read as a git directory alone -
+    # with a working tree of its own `objects/`, as the sweep reads it.
+    assert estate.git("--work-tree", str(module / "objects"), "cat-file", "-t", own,
+                      cwd=module) == "commit"
 
 
 def test_a_clones_local_lfs_store_keeps_it_when_a_bundle_would_be_the_only_copy(estate):
