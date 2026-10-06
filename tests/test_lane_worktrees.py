@@ -2311,3 +2311,24 @@ def test_a_clones_annotated_tag_neither_halts_the_sweep_nor_is_lost(estate, wher
         assert [r[2] for r in only] == [tag], _ledger(archive)
         heads = estate.git("bundle", "list-heads", archive / only[0][1][len("bundle:"):])
         assert tag in heads.split(), heads
+
+
+# ===================================================== #174, Copilot round 2
+
+def test_a_deinitialized_submodules_kept_repository_keeps_the_tree(estate):
+    """#174 Copilot round 2: `git submodule status` shows a deinitialized
+    submodule `-`, and the guards passed over it - while its repository,
+    with a branch no remote holds, stays under the tree's git directory and
+    went with the tree."""
+    tree, sub = _with_submodule(estate, "deinit")
+    estate.git("checkout", "-q", "-b", "local", cwd=sub)
+    own = estate.commit(sub, "local only", {"l.txt": "PRECIOUS\n"})
+    estate.git("checkout", "-q", "--detach", "origin/main", cwd=sub)
+    estate.git("submodule", "deinit", "-q", "-f", "sub", cwd=tree)
+    assert estate.git("submodule", "status", cwd=tree).startswith("-")
+    rows = rows_of(estate.sweep(LANE, "--porcelain").stdout)
+    assert rows[str(tree)][0] == "keep", rows[str(tree)]
+    assert "its branch local holds commits every remote of it lacks" in rows[str(tree)][2]
+    assert estate.sweep(LANE, "--yes").returncode == 0
+    module = Path(estate.git("rev-parse", "--absolute-git-dir", cwd=tree)) / "modules" / "sub"
+    assert estate.git("cat-file", "-t", own, cwd=module) == "commit"

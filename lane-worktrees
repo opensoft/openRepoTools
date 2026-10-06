@@ -1550,6 +1550,16 @@ def tree_guards(tree: Tree) -> str:
         if why:
             return (f"submodule {parts[1]}: {why} - push it there first; the tree's removal "
                     "takes the submodule's repository with it")
+    # EVERY SUBMODULE REPOSITORY ITS GIT DIRECTORY KEEPS (#174, Copilot round
+    # 2), a DEINITIALIZED one's included: `git submodule status` shows it `-`,
+    # its working tree is gone, and its repository - branches, stash, reflog -
+    # stays under `<gitdir>/modules/<name>`, which the removal takes.
+    gitdir = git_out(tree.path, "rev-parse", "--absolute-git-dir")
+    if not gitdir:
+        return "its git directory could not be read, so the submodule repositories it keeps are unknown"
+    why = module_repos_why(gitdir)
+    if why:
+        return why + "; the tree's removal takes that repository with it"
     # A REPOSITORY NESTED ANYWHERE IN IT - a venv's `src/` (`pip install -e
     # git+...`) and node_modules included (#170 A3): only bytecode caches are
     # passed over, and a directory that cannot be read keeps the tree.
@@ -3725,6 +3735,61 @@ def lfs_untracked_why(path: str, rels: list) -> str:
     return (f"{len(hits)} untracked file(s) are git-lfs content (e.g. {hits[0]}): untracked files "
             "go to a bundle only, a bundle carries an LFS pointer and never its bytes, and they "
             "are never pushed - move them out, or commit and push them, then sweep again")
+
+
+def module_repos(gitdir: str) -> tuple:
+    """([every submodule repository kept under `<gitdir>/modules`, nested
+    ones included], [what could not be read])."""
+    top = os.path.join(gitdir, "modules")
+    found, unread = [], []
+    stack = [top]
+    while stack:
+        d = stack.pop()
+        try:
+            with os.scandir(d) as it:
+                entries = list(it)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            unread.append(f"{d} ({exc.strerror or exc})")
+            continue
+        names = {e.name for e in entries}
+        if d != top and "HEAD" in names and "objects" in names:
+            found.append(d)
+            if "modules" in names:
+                stack.append(os.path.join(d, "modules"))
+            continue
+        for e in entries:
+            try:
+                if e.is_dir(follow_symlinks=False):
+                    stack.append(e.path)
+            except OSError:
+                unread.append(e.path)
+    return sorted(found), unread
+
+
+def module_repos_why(gitdir: str) -> str:
+    """Why a submodule repository `gitdir` keeps would lose work with it, or
+    '' (#174, Copilot round 2): any branch, tag or HEAD, stash or reflog entry
+    that no remote of that repository holds. A DEINITIALIZED submodule keeps
+    its repository there with no working tree, so no other guard reads it;
+    `git stash list` wants a working tree, so the stash is read as its ref."""
+    mods, unread = module_repos(gitdir)
+    if unread:
+        return (f"{unread[0]} could not be read, so whether a submodule repository kept there "
+                "holds work is unknown")
+    for m in mods:
+        rel = os.path.relpath(m, gitdir)
+        why = unpublished_ref(m, "--remotes", "every remote of it")
+        if why:
+            return f"the submodule repository {rel}: {why}"
+        stash = git(m, "for-each-ref", "--count=1", "--format=%(refname)", "refs/stash")
+        if stash.returncode != 0 or stash.stdout.strip():
+            return f"the submodule repository {rel} has a stash (or it could not be read)"
+        why = unpublished_reflog(m, "--remotes", "every remote of it")
+        if why:
+            return f"the submodule repository {rel}: {why}"
+    return ""
 
 
 def lfs_configured(path: str) -> bool:
