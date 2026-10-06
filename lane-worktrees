@@ -3634,12 +3634,17 @@ class Sweep:
             self.halt = self.halt or ("the register refused a line (NOT WRITTEN); nothing more "
                                       "is acted on until it is written by hand")
             # THE COMMAND IS QUOTED FOR THE SHELL (#170 E6): it is printed to be
-            # pasted, and a path with a quote or a `$` in it broke it.
+            # pasted, and a path with a quote or a `$` in it broke it. It names
+            # the session that swept, as the line it stands for does (#170 E7;
+            # #179, Copilot round 1) - each value quoted, never the assignment.
+            assign = [f"LANES_LANE={shlex.quote(self.lane)}"]
+            if self.caller:
+                assign.append(f"LANES_SESSION={shlex.quote(self.caller)}")
             note(f"the register line for {t.path if t else 'this sweep'} was NOT written "
                  f"(exit {proc.returncode}); write it by hand: "
-                 + " ".join(shlex.quote(a) for a in (
-                     f"LANES_LANE={self.lane}", "lanes-edit.sh", "log", "NOTED",
-                     f"lane:{self.lane}", register_text(text))))
+                 + " ".join(assign + [shlex.quote(a) for a in (
+                     "lanes-edit.sh", "log", "NOTED", f"lane:{self.lane}",
+                     register_text(text))]))
         self.dispositions.append((t.path if t else "-", text, line))
 
     def _record(self, t: Tree) -> None:

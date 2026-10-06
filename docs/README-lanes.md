@@ -3673,8 +3673,10 @@ started in the same second gets `<UTC>-2`) and never by a dry run:
 **One register `NOTED` line per tree acted on** (`lanes-edit.sh log NOTED
 lane:<lane>`), written after the act so it says what happened, naming the
 disposition, the rescue and the archive; one more each for scratch, branches,
-and caches with sandboxes. A line the register refuses is printed whole for a
-person to write by hand, and the exit is 1. The line is the pointer that
+and caches with sandboxes, each written as the session that swept
+(`LANES_SESSION`, #170 E7). A line the register refuses is printed whole for a
+person to write by hand - quoted for the shell (#170 E6) and naming that same
+session (#179) - and the exit is 1. The line is the pointer that
 outlives the archive.
 
 **Retention: 90 days** (`sweep.conf`). `sweep --expire` lists archives older than

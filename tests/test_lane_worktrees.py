@@ -2571,7 +2571,9 @@ def test_a_branchs_pull_request_is_found_however_many_the_repository_has(estate)
 def test_the_hand_written_register_line_is_quoted_for_the_shell(estate):
     """#170 E6: the NOT WRITTEN fallback printed the line to paste with the
     tree's path unescaped, so a path with a quote or a `$` in it broke the
-    command a person was told to run."""
+    command a person was told to run. #179 Copilot round 1: it also dropped
+    `LANES_SESSION`, which the line it stands for passes (#170 E7), so a
+    pasted line named whatever session the helper found on its own."""
     tree = estate.worktree('say "hi" $HOME', "feat/quoted")
     estate.git("push", "-q", "-u", "origin", "feat/quoted", cwd=tree)
     estate.log_rc = 1
@@ -2580,8 +2582,9 @@ def test_the_hand_written_register_line_is_quoted_for_the_shell(estate):
     line = [ln for ln in proc.stderr.splitlines() if "write it by hand: " in ln]
     assert line, proc.stderr
     words = shlex.split(line[0].split("write it by hand: ", 1)[1])
-    assert words[:5] == [f"LANES_LANE={LANE}", "lanes-edit.sh", "log", "NOTED", f"lane:{LANE}"]
-    assert len(words) == 6 and str(tree) in words[5], words
+    assert words[:6] == [f"LANES_LANE={LANE}", f"LANES_SESSION={ME}", "lanes-edit.sh", "log",
+                         "NOTED", f"lane:{LANE}"], words
+    assert len(words) == 7 and str(tree) in words[6], words
 
 
 def test_the_register_line_is_written_as_this_session(estate):
