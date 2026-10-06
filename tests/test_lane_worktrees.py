@@ -2133,3 +2133,19 @@ def test_an_ignored_file_beneath_a_cache_or_venv_named_directory_is_archived(est
         prod = tf.extractfile(f"docker/{ancestor}/prod.env")
         assert prod is not None and prod.read() == b"DB_PASSWORD=PRECIOUS\n"
     assert "top.env" in names, names
+
+
+def test_an_old_unmarked_tmp_dir_holding_a_repository_is_listed_never_removed(estate):
+    """#174: an unmarked `tmp.*` untouched for aging_days was removed on
+    age alone - a person's `mktemp -d` checkout with an unpushed commit
+    included. No suite's mark says its repositories are fixtures, so one
+    holding a repository is listed and left."""
+    checkout = estate.sandboxes / "tmp.person05"
+    estate.git("init", "-q", "-b", "main", checkout / "work", cwd=estate.root)
+    own = estate.commit(checkout / "work", "unpushed work", {"w.txt": "PRECIOUS\n"})
+    _age(checkout, 20 * 86400)
+    proc = estate.sweep(LANE, "--include-sandboxes", "--yes", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    row = items_of(proc.stdout, "sandbox")[str(checkout)]
+    assert row[0] == "list" and f"a repository lies inside it ({checkout / 'work'})" in row[3], row
+    assert estate.git("rev-parse", "HEAD", cwd=checkout / "work") == own

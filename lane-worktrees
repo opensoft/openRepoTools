@@ -3337,6 +3337,10 @@ class Sweep:
                 if owner and pid_alive(owner):
                     i.disposition, i.result = "live", f"left: its marker names live pid {owner}"
                     return
+                inner = "" if _prov else repository_within(i.path)
+                if inner:
+                    i.disposition, i.result = "list", "left: " + inner
+                    return
             fresh = ProcScan()
             fresh.load_environ()
             if not fresh.available or fresh.holders(i.path) or fresh.unknown_for(i.path):
@@ -3964,6 +3968,19 @@ def sandbox_items(procs: ProcScan, conf: dict) -> list:
                           f"last written {int(age // 86400)} d ago: it may be a person's mktemp "
                           f"checkout or scratch, so it is listed and never removed before "
                           f"{aging} days untouched", False)
+                it.size = size
+                it.extra["kind"] = kind
+                out.append(it)
+                continue
+            # AN UNMARKED ONE HOLDING A REPOSITORY IS NEVER TAKEN ON AGE ALONE
+            # (#174): no suite's mark says its repositories are fixtures, and a
+            # person's `mktemp -d` checkout with unpushed commits is exactly
+            # what an untouched-for-14-days rule would otherwise delete.
+            inner = "" if prov else repository_within(path)
+            if inner:
+                it = Item("sandbox", path, "list", f"a tmp.* directory with no mark of a test "
+                          f"suite, and {inner}: it may be a person's checkout, so it is listed "
+                          "and never removed", False)
                 it.size = size
                 it.extra["kind"] = kind
                 out.append(it)
