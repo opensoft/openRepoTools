@@ -1598,6 +1598,21 @@ def nested_repos(top: str, exclude: set = frozenset()) -> tuple:
     return sorted(found), unread
 
 
+def repository_within(path: str) -> str:
+    """Why `path` holds a repository - it is one, or one lies anywhere inside
+    it - or that what is inside could not be read; else ''. What a directory
+    removal without a commit-level check (a cache, a sandbox) must never
+    take."""
+    if os.path.lexists(os.path.join(path, ".git")):
+        return f"it is a repository ({path})"
+    nested, unread = nested_repos(path)
+    if nested:
+        return f"a repository lies inside it ({nested[0]})"
+    if unread:
+        return f"{unread[0]} inside it could not be read, so whether a repository lies there is unknown"
+    return ""
+
+
 def lost_tips(path: str, cands: list, keep: list):
     """The candidate commits at least one commit of whose history no ref or
     commit in `keep` (rev-list arguments: `--remotes=origin`, `--branches`, a
@@ -2562,6 +2577,18 @@ class Sweep:
                     continue
                 if tracked(path) is not False:
                     continue          # tracked, or its tracking is unknown
+                # A CACHE THAT HOLDS A REPOSITORY HOLDS WORK (#174, Copilot round
+                # 1): `pip install -e git+...` clones into `<venv>/src/<pkg>`, and
+                # the tree kept for that clone (#170 A3) still gave up its venv -
+                # the clone and its unpushed fix with it.
+                inner = repository_within(path)
+                if inner:
+                    it = Item("cache", path, "keep", f"{inner}: its work is no cache's, and the "
+                              "directory is never removed while it is there", False)
+                    it.size = size
+                    it.extra["owner"] = owner
+                    self.items.append(it)
+                    continue
                 it = Item("cache", path, "remove", "a dependency cache or bytecode: it holds no "
                           "work and is rebuilt", False)
                 it.size = size
@@ -3290,7 +3317,7 @@ class Sweep:
             owner = i.extra.get("owner") or i.path
             left = [t for t in self.trees if under(i.path, t.path) and self._cache_protected(t)]
             why = ("its tree was left: " + (left[0].result or left[0].reason)) if left \
-                else self._occupied(owner)
+                else self._occupied(owner) or repository_within(i.path)
             if why:
                 i.disposition = "keep"
                 i.result = "left: " + why

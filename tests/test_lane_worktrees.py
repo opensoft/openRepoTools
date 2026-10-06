@@ -1550,6 +1550,15 @@ def test_a_clone_inside_a_venv_keeps_its_tree(estate):
     assert f"nested inside it at {dep}" in rows[str(tree)][2]
     assert estate.sweep(LANE, "--yes").returncode == 0
     assert (dep / "fix.py").is_file()
+    # ... AND ITS VENV IS NO CACHE TO TAKE (#174, Copilot round 1): the tree
+    # kept for the clone still gave up its `.venv` to `--include-caches`, and
+    # the clone and its unpushed fix went with it.
+    caches = estate.sweep(LANE, "--include-caches", "--yes", "--porcelain")
+    assert caches.returncode == 0, caches.stdout + caches.stderr
+    row = items_of(caches.stdout, "cache")[str(venv)]
+    assert row[0] == "keep" and f"a repository lies inside it ({dep})" in row[3], row
+    assert (dep / "fix.py").is_file()
+    assert estate.git("log", "-1", "--format=%s", cwd=dep) == "my unpushed fix"
 
 
 def test_a_clones_tag_only_commits_keep_it(estate):
