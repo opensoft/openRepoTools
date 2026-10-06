@@ -3612,13 +3612,15 @@ records are history and a path can be reused. Other lanes' claims are read
 wherever #97 keeps them (#170 G6): beside this lane's control root, under
 `$LANES_LANE_STATE_ROOT` and `$PROJECTS_ROOT/.lane-state`, beside every checkout
 the estate's shape walk finds, beside every lane's recorded `dir` in the
-register's lane logs, and - where the whole estate is walked (a clone the table
+register's lane logs that lies in this sweep's estate (#174), and - where the whole estate is walked (a clone the table
 could take, or `--include-scratch`) - in every `.lane-state` that walk finds, one
 in a plain directory inside a repository included (#174). An inventory record that cannot be
 read (no id, no path, an unknown schema; #170 G9) refuses the sweep, exit **2**: its tree's owner
 is unknown — and so does ANOTHER lane's record or inventory directory, a lane
 worktree root, a checkout's `git worktree list`, or the register's lane logs that
-cannot be read, before anything is fetched (#170 G1, G5). The lane's own checkout is never a candidate. The lane name is
+cannot be read, before anything is fetched (#170 G1, G5); another lane's claim
+that cannot be read is a NOTE instead where this lane has no tree, since a claim
+could only take one from it (#174). The lane's own checkout is never a candidate. The lane name is
 resolved first (`lanes-edit.sh canon-lane`, Amendment 15), as `lane-start` and
 `lane-end` resolve it; an alias table that cannot be read refuses.
 
@@ -3802,8 +3804,8 @@ command exits **0** (nothing to retire), **3** (something to retire — a tree o
 lane's on disk, live or not, a stale registration, an unpublished or merged
 branch of the lane's, included scratch), or **2** (refused: bound elsewhere,
 held by another session, managed, a lane with trees and no #97 snapshot, a read
-failed — a lane root, a registration list, another lane's claim, the register's
-lane logs, or under `--yes` the register's fetch — or an
+failed — a lane root, a registration list, another lane's claim on a lane with
+a tree, the register's lane logs, or under `--yes` the register's fetch — or an
 error no read caught, which is never a traceback's exit 1 on a dry run). FOREIGN trees, links,
 caches and sandboxes are never the lane's to retire. `--yes` exits 0 when every
 act completed, 1 when one failed part-way (the rest go on — unless a register

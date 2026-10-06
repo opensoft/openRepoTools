@@ -95,8 +95,8 @@ Exit codes:
   3  dry run: something to retire (the `lane-end` gate's answer, #163)
   2  refused: the lane is bound elsewhere, held by another live session,
      managed-owned, has trees but no #97 snapshot, or a read failed (a lane
-     root, a registration list, another lane's claim, the register's fetch
-     under --yes) - or an error no read caught -
+     root, a registration list, another lane's claim on a lane with a tree,
+     the register's fetch under --yes) - or an error no read caught -
      nothing was changed; or, under --yes, the self-check refused a removal
      (what was done before it is recorded, nothing after it was acted on)
   1  --yes: an act failed part-way; what was done is recorded and the
@@ -2213,7 +2213,14 @@ class Sweep:
         parent of every lane's recorded `dir` in the register, `$PROJECTS_ROOT`
         - beside this lane's own and beside every checkout of the estate. A
         register that cannot be read refuses: whose claims were missed would
-        be unknown."""
+        be unknown.
+
+        ONLY THIS SWEEP'S ESTATE, AND NEVER A REFUSAL WITH NO TREE (#174 review
+        R3): the register names every lane on the workstation, so one pathless
+        or unreadable sidecar in ANY estate made the sweep exit 2 for a lane
+        with nothing on disk - every lane-end blocked. A recorded `dir` outside
+        the estate root is not read, and with no tree a claim can take away
+        nothing, so one that cannot be read is a note."""
         parents = set()
         if self.facts.root:
             parents.add(os.path.dirname(self.facts.root.rstrip("/")))
@@ -2229,7 +2236,16 @@ class Sweep:
         claimed: dict = {}
 
         def unreadable(what: str) -> None:
-            # A CLAIM THAT CANNOT BE READ IS NOT "NO CLAIM" (Amendment 7(d)).
+            # A CLAIM THAT CANNOT BE READ IS NOT "NO CLAIM" (Amendment 7(d)) -
+            # but a claim only takes a tree from this lane, so with no tree it
+            # can lower nothing: a note then, never a refusal (#174 review R3).
+            if not self.trees:
+                text = (f"{what} could not be read; this lane has no tree for another lane's "
+                        "claim to take, so the sweep goes on - read it, or move it aside if it "
+                        "is debris")
+                if text not in self.notes:
+                    self.notes.append(text)
+                return
             self.refusal = self.refusal or (
                 f"{what} could not be read, so whether another lane claims these trees is "
                 "unknown; read it, or move it aside if it is debris")
@@ -2238,8 +2254,14 @@ class Sweep:
         if why:
             unreadable(f"every lane's recorded directory ({why})")
         for other, odir in dirs.items():
-            if other.lower() != self.lane.lower():
-                parents.add(os.path.join(os.path.dirname(odir.rstrip("/")), ".lane-state"))
+            if other.lower() == self.lane.lower():
+                continue
+            parent = os.path.join(os.path.dirname(odir.rstrip("/")), ".lane-state")
+            # THIS SWEEP'S ESTATE ONLY (#174 review R3): a lane recorded in
+            # another estate keeps its claims there.
+            if self.estate_root and not under(parent, self.estate_root):
+                continue
+            parents.add(parent)
         for parent in sorted(parents):
             try:
                 lanes = os.listdir(parent)

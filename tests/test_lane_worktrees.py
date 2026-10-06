@@ -1524,7 +1524,12 @@ def test_another_lanes_claim_is_read_wherever_its_control_root_is(estate, where)
         group = estate.projects / "group"
         other = "repoB-3"
     else:
-        group = estate.root / "away" / "group"
+        # IN A PLAIN DIRECTORY OF A REPOSITORY, where the shape walk never
+        # goes, so only the register's recorded `dir` finds it - and in this
+        # sweep's estate, the only one whose claims are read (#174 review R3).
+        host = estate.projects / "host"
+        estate.git("init", "-q", "-b", "main", host, cwd=estate.root)
+        group = host / "vendor" / "group"
         other = "repoC-4"
         estate.register_line(other, (
             f"STARTED — lane {other}, session {OTHER}@Eagle, 2026-10-05T00:00:00Z, "
@@ -1540,6 +1545,39 @@ def test_another_lanes_claim_is_read_wherever_its_control_root_is(estate, where)
     assert f"lane {other}'s inventory names it too" in rows[str(tree)][2]
     assert estate.sweep(LANE, "--yes").returncode == 0
     assert tree.is_dir()
+
+
+@pytest.mark.parametrize("where", ["another-estate", "this-estate"])
+def test_an_unreadable_claim_never_refuses_a_lane_with_no_tree(estate, where):
+    """#174 review R3: every lane's control root the register names, in ANY
+    estate, was read, so one pathless sidecar anywhere on the workstation
+    made the sweep exit 2 for a lane with nothing on disk - and lane-end's
+    gate with it. Another estate's claims are not read; in this one, with no
+    tree for a claim to take, an unreadable one is a note. With a tree, this
+    estate's still refuses."""
+    group = (estate.root / "away" if where == "another-estate" else estate.projects) / "group"
+    other = "repoE-6"
+    estate.register_line(other, (
+        f"STARTED — lane {other}, session {OTHER}@Eagle, 2026-10-05T00:00:00Z, "
+        f"lane:{other} → home opensoft/repoE; dir {group / 'repoE'}; host eagle; "
+        "container none; os linux"))
+    claims = group / ".lane-state" / other / "trees"
+    claims.mkdir(parents=True)
+    (claims / "c1.yaml").write_text("schema: 1\n")
+    said = f"lane {other}'s inventory record c1.yaml (it names no path) could not be read"
+    gate = estate.sweep(LANE, "--dry-run", "--porcelain")
+    assert gate.returncode == 0, gate.stdout + gate.stderr
+    assert "refused\t" not in gate.stdout
+    shown = estate.sweep(LANE, "--dry-run")
+    assert shown.returncode == 0 and "REFUSED" not in shown.stdout, shown.stdout + shown.stderr
+    if where == "this-estate":
+        assert f"note: {said}" in shown.stdout, shown.stdout
+    else:
+        assert said not in shown.stdout, "a claim in another estate was read"
+    estate.worktree("w", "feat/w")
+    again = estate.sweep(LANE, "--dry-run", "--porcelain")
+    assert again.returncode == (2 if where == "this-estate" else 3), again.stdout + again.stderr
+    assert (said in again.stdout) == (where == "this-estate")
 
 
 @pytest.mark.parametrize("flag", ["--skip-worktree", "--assume-unchanged"])
