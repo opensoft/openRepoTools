@@ -79,6 +79,19 @@ cd -P -- "$(dirname -- "$0")/.." 2>/dev/null || {
   exit 1
 }
 
+# `--basetemp` IS THIS WRAPPER'S (#170 G8): every temporary directory of a run
+# is under the run root its EXIT trap removes, and pytest takes the LAST
+# `--basetemp` it is given - a caller's, forwarded after the wrapper's, won,
+# and its files landed where nothing removes them. Refused, before any lock.
+for rs_arg in ${1+"$@"}; do
+  case "$rs_arg" in
+    --basetemp|--basetemp=*)
+      printf '%s: --basetemp is the wrapper'"'"'s own (the run root, which it removes); run without it\n' \
+        "$prog" >&2
+      exit 64 ;;
+  esac
+done
+
 LOCK="${TMPDIR:-/tmp}/openrepotools-pytest.lock"
 
 # SPLIT SO IT CANNOT MATCH ITSELF, anchored so it counts only real runs.
@@ -117,22 +130,63 @@ RUN_ROOT=""
 LOCKDIR_HELD=""
 SUITE_PID=""
 SUITE_PGID=""
+TTY_PGID=""
+TTY_BEFORE=""
 # A member still RUNNING, read from `ps` and never from `kill -0`: a zombie
 # answers `kill -0` until whoever adopted it reaps it, which may be never.
 group_alive() {
   ps -A -o pgid= -o stat= 2>/dev/null |
     awk -v g="$SUITE_PGID" '$1 == g && $2 !~ /^Z/ { n++ } END { exit n ? 0 : 1 }'
 }
+# THE DEADLINE COMES BEFORE THE REAP (#170 item 3): an unbounded `wait` on the
+# leader ran first, so a leader that traps or ignores TERM held this wrapper -
+# and the workstation's lock - for ever, and the KILL below was never reached.
+# The group is polled (zombies are not members that run), KILLed at the
+# deadline, and only then is the leader reaped.
 stop_group() {
-  [ -n "$SUITE_PGID" ] || return 0
+  [ -n "$SUITE_PGID" ] || { stop_strays; return 0; }
   kill -TERM -- "-$SUITE_PGID" 2>/dev/null || return 0
-  if [ -n "$SUITE_PID" ]; then wait "$SUITE_PID" 2>/dev/null || :; fi
   sg_n=0
   while group_alive && [ "$sg_n" -lt 50 ]; do
     sleep 0.2
     sg_n=$((sg_n + 1))
   done
   kill -KILL -- "-$SUITE_PGID" 2>/dev/null || :
+  if [ -n "$SUITE_PID" ]; then wait "$SUITE_PID" 2>/dev/null || :; fi
+  return 0
+}
+# THE TERMINAL'S RUN KEEPS ITS GROUP ID TOO (#170 G14). Run in the foreground,
+# the suite is in THIS wrapper's process group, which no `kill -- -<pgid>` can
+# stop without stopping the wrapper and the caller's pipeline (`| tee`) with
+# it. So the group's members are read before the suite starts, and what is in
+# the group afterwards that was not - and is not the wrapper's own sibling, a
+# process its caller started beside it - is what the suite left running: it
+# is stopped, KILLed after ten seconds, before the run root goes and the lock
+# is released.
+group_members() {   # <pgid> - the pids of its running members, one per line
+  ps -A -o pid= -o pgid= -o stat= 2>/dev/null |
+    awk -v g="$1" '$2 == g && $3 !~ /^Z/ { print $1 }'
+}
+strays() {   # the members of TTY_PGID the suite left running
+  ps -A -o pid= -o pgid= -o ppid= -o stat= 2>/dev/null |
+    awk -v g="$TTY_PGID" -v me="$$" -v parent="$PPID" -v before=" $TTY_BEFORE " '
+      $2 == g && $1 != me && $3 != parent && $4 !~ /^Z/ && index(before, " " $1 " ") == 0 {
+        print $1 }'
+}
+stop_strays() {
+  [ -n "$TTY_PGID" ] || return 0
+  ss_pids="$(strays)"
+  [ -n "$ss_pids" ] || return 0
+  # shellcheck disable=SC2086
+  kill -TERM $ss_pids 2>/dev/null || :
+  ss_n=0
+  while [ -n "$(strays)" ] && [ "$ss_n" -lt 50 ]; do
+    sleep 0.2
+    ss_n=$((ss_n + 1))
+  done
+  ss_pids="$(strays)"
+  # shellcheck disable=SC2086
+  [ -z "$ss_pids" ] || kill -KILL $ss_pids 2>/dev/null || :
   return 0
 }
 cleanup() {
@@ -194,8 +248,12 @@ make_run_root() {
 run_suite() {
   printf '%s: python3 -m pytest tests -q -p no:cacheprovider %s\n' "$prog" "${*:-}" >&2
   if [ -t 0 ]; then
+    TTY_PGID="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ')"
+    TTY_BEFORE="$(group_members "$TTY_PGID" | tr '\n' ' ')"
     python3 -m pytest tests -q -p no:cacheprovider --basetemp="$RUN_ROOT/basetemp" ${1+"$@"}
-    return $?
+    rs_rc=$?
+    stop_strays
+    return "$rs_rc"
   fi
   set -m
   python3 -m pytest tests -q -p no:cacheprovider --basetemp="$RUN_ROOT/basetemp" ${1+"$@"} <&0 &
