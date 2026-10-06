@@ -3675,11 +3675,17 @@ def add_tree(ns) -> int:
         return refuse(f"branch {branch} already exists, so --from {ns.from_ref} would be "
                       "ignored; name a new branch, or drop --from to check this one out")
     start = ns.from_ref or "HEAD"
-    if not exists and git(checkout, "rev-parse", "-q", "--verify",
-                          f"{start}^{{commit}}").returncode != 0:
-        return refuse(f"'{start}' names no commit in {checkout}")
+    # THE COMMIT A NEW BRANCH STARTS AT, resolved ONCE and handed to git as an
+    # id: the take-back below deletes the branch only while it still points
+    # here, so a commit made on it meanwhile (a `post-checkout` hook can make
+    # one) is never made unreachable.
+    start_oid = ""
+    if not exists:
+        start_oid = git_out(checkout, "rev-parse", "-q", "--verify", f"{start}^{{commit}}") or ""
+        if not start_oid:
+            return refuse(f"'{start}' names no commit in {checkout}")
     argv = (["worktree", "add", path, branch] if exists else
-            ["worktree", "add", "--no-track", "-b", branch, path, start])
+            ["worktree", "add", "--no-track", "-b", branch, path, start_oid])
     if ns.dry_run:
         note(f"DRY RUN, nothing was made: git -C {checkout} {' '.join(argv)}; then "
              f"lanes-edit.sh set-lane-tree {lane} {path} --checkout {checkout}")
@@ -3712,8 +3718,13 @@ def add_tree(ns) -> int:
             left.append(f"the directory {path}, which git does not register")
         if not exists:
             tip = git_out(checkout, "rev-parse", "-q", "--verify", f"refs/heads/{branch}")
-            if tip and (left or git(checkout, "update-ref", "-d", f"refs/heads/{branch}",
-                                    tip).returncode != 0):
+            if tip and tip != start_oid:
+                # IT MOVED PAST WHERE THIS ACT STARTED IT: the commits on it are
+                # somebody's, and a branch is their only name.
+                left.append(f"branch {branch}, which this act made at {short(start_oid)} and "
+                            f"which now holds {short(tip)}: kept, so that commit stays reachable")
+            elif tip and (left or git(checkout, "update-ref", "-d", f"refs/heads/{branch}",
+                                      start_oid).returncode != 0):
                 left.append(f"branch {branch} at {short(tip)}, which this act made")
         _ACTIVE.pop("add", None)
         if not left:

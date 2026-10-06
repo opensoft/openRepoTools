@@ -2075,13 +2075,20 @@ gate_part "$gate_residue" "residue path(s)"
 gate_pass=0; gate_exit=2; gate_log=""
 case "$gate_rc" in
   0) if [ -z "$gate_left" ] && [ -z "$gate_unread" ]; then gate_pass=1; fi
-     if [ -n "$gate_unread" ]; then gate_exit=1; fi
      gate_log="the close-out gate (sweep exit 0) found ${gate_left:-nothing} left${gate_unread:+ and could not read its own root for residue}" ;;
   3) gate_log="the close-out gate (sweep exit 3) found ${gate_left:-something} left" ;;
   2) gate_log="the close-out gate's sweep refused this lane (exit 2)${gate_left:+ with $gate_left left}" ;;
   *) gate_exit=1
      gate_log="the close-out gate could not be read (lane-worktrees exit $gate_rc)" ;;
 esac
+# A ROOT THAT COULD NOT BE READ IS THE GATE UNREAD WHATEVER THE SWEEP ANSWERED
+# (Copilot round 2 on #175): exit 1, the environment, on 3 and 2 as on 0.
+if [ -n "$gate_unread" ]; then
+  gate_exit=1
+  case "$gate_rc" in
+    2 | 3) gate_log="$gate_log; and its own root could not be read for residue" ;;
+  esac
+fi
 
 if [ "$gate_pass" = 1 ]; then
   step "close-out gate: nothing of lane $LANE's is left on disk ($gate_shown --dry-run answered 0)"

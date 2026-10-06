@@ -15713,6 +15713,19 @@ is    "…so no unrecorded tree is left on disk" "$( [ -e "$CG_ROOT/repoCG-12/w8
 is    "…or registered" "$(git -C "$CG_DIR" worktree list --porcelain | grep -c '/repoCG-12/w8$' || :)" 0
 is    "…and no branch the act made" "$(git -C "$CG_DIR" rev-parse -q --verify refs/heads/w8 >/dev/null 2>&1 && echo left || echo none)" none
 
+# AND A COMMIT MADE ON THE NEW BRANCH MEANWHILE IS NEVER MADE UNREACHABLE
+# (Copilot round 2 on #175): the hook commits, then fails; the take-back removes
+# the clean tree and KEEPS the branch, which now holds that commit.
+printf '#!/bin/sh\ngit commit -q --allow-empty -m "made by the hook"\nexit 1\n' > "$CG_DIR/.git/hooks/post-checkout"
+chmod +x "$CG_DIR/.git/hooks/post-checkout"
+run "$CG_LW" add repoCG-12 w7
+rm -f "$CG_DIR/.git/hooks/post-checkout"
+is    "a worktree add whose hook committed and failed leaves something, so it is exit 1" "$rc" 1
+has   "…naming the branch it kept" "$err" "branch w7, which this act made at"
+is    "…which still holds the hook's commit" "$(git -C "$CG_DIR" log -1 --format=%s refs/heads/w7 2>/dev/null)" "made by the hook"
+is    "…while the clean tree itself was taken back out" "$( [ -e "$CG_ROOT/repoCG-12/w7" ] && echo left || echo none )" none
+git -C "$CG_DIR" branch -q -D w7 2>/dev/null || :
+
 # ---------------------------------------------- lane-end: the gate passes
 
 # OTHER LANES' TREES IN THE SAME CHECKOUT ARE NOT THIS LANE'S: repoCG-2's two
@@ -15799,10 +15812,22 @@ else
   chmod 000 "$CG_ROOT/repoCG-11"
   cg11_row="$(cg_row repoCG-11)"
   run "$END" repoCG-11
-  chmod 755 "$CG_ROOT/repoCG-11"
   is    "a lane root that cannot be listed is the gate unread (1), never an empty root" "$rc" 1
   has   "…saying so" "$err" "could not be listed"
   is    "…and nothing is written" "$(cg_row repoCG-11)" "$cg11_row"
+  # …AND IT IS 1 WHATEVER THE SWEEP ANSWERED (Copilot round 2 on #175): here the
+  # sweep answers 3, for an unpublished branch of the lane's own.
+  git -C "$CG_DIR" branch -q cg11-old main
+  git -C "$CG_DIR" worktree add -q "$SANDBOX/cg11-tmp" cg11-old >/dev/null 2>&1
+  git -C "$SANDBOX/cg11-tmp" commit -q --allow-empty -m "lane eleven's own work
+
+Lane: repoCG-11"
+  git -C "$CG_DIR" worktree remove "$SANDBOX/cg11-tmp" >/dev/null 2>&1
+  run "$END" repoCG-11
+  chmod 755 "$CG_ROOT/repoCG-11"
+  is    "…and still 1 where the sweep answered 3: an unread root is the environment on every answer" "$rc" 1
+  has   "…naming the branch the sweep did find as well" "$err" "cg11-old"
+  git -C "$CG_DIR" branch -q -D cg11-old 2>/dev/null || :
 fi
 
 # --------------------------------- a branch of the lane's own, with no tree
