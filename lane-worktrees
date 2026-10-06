@@ -42,10 +42,11 @@ which a bundle would carry as a pointer only, keeps its tree; a branch an open
 pull request or another lane owns is never pushed onto (a rescue branch
 instead, and gh's OPEN wins over a LANDED line); where git-lfs is configured
 the push runs its hooks, and a clone whose local git-lfs store a bundle alone
-would have to stand for is kept. A cache, or an unmarked `tmp.*` sandbox, that
-holds a repository is never removed, nor a tree or registration whose git
-directory keeps a submodule repository (a deinitialized one's included) with
-work no remote of it holds.
+would have to stand for is kept. A cache that holds a repository (a bare one
+included) is never removed, nor is any `tmp.*` sandbox (it is listed: nothing
+proves a suite made it), nor a tree or registration whose git directory keeps
+a submodule repository (a deinitialized one's included) with work no remote
+of it holds.
 
 WHICH TREES ARE THE LANE'S is #97's inventory (`lanes-edit.sh lane-trees`)
 and the disk - never the derived index (Amendment 14 clause (b)). A tree the
@@ -1602,13 +1603,14 @@ def tree_guards(tree: Tree) -> str:
     return ""
 
 
-def nested_repos(top: str, exclude: set = frozenset()) -> tuple:
+def nested_repos(top: str, exclude: set = frozenset(), bare: bool = False) -> tuple:
     """([every directory under `top` that holds a `.git`], [what could not
     be read]) - `top` itself, `exclude`d paths (a tree's submodules) and
     anything inside a nested repository are not entered. NOTHING ELSE IS
     PASSED OVER (#174, Copilot round 2): this walk is the proof that a removal
     takes no repository, and a checkout under a directory named
-    `__pycache__` or `.pytest_cache` is still a checkout."""
+    `__pycache__` or `.pytest_cache` is still a checkout. With `bare`, a
+    BARE repository (`is_bare_repository`) is found as one too."""
     found, unread = [], []
     stack = [top]
     while stack:
@@ -1621,7 +1623,8 @@ def nested_repos(top: str, exclude: set = frozenset()) -> tuple:
         except OSError as exc:
             unread.append(f"{d} ({exc.strerror or exc})")
             continue
-        if d != top and any(e.name == ".git" for e in entries):
+        if d != top and (any(e.name == ".git" for e in entries)
+                         or (bare and _bare_shaped(entries))):
             found.append(d)
             continue
         for e in entries:
@@ -1637,14 +1640,32 @@ def nested_repos(top: str, exclude: set = frozenset()) -> tuple:
     return sorted(found), unread
 
 
+def _bare_shaped(entries: list) -> bool:
+    """A directory listing that is a git directory's own: a `HEAD` beside an
+    `objects/` - as `module_repos` reads one."""
+    names = {e.name for e in entries}
+    return "HEAD" in names and "objects" in names
+
+
+def is_bare_repository(path: str) -> bool:
+    """`path` is a git directory with no working tree of its own - a BARE
+    repository (`git init --bare`, a mirror, `<x>.git`) - by its shape."""
+    try:
+        with os.scandir(path) as it:
+            return _bare_shaped(list(it))
+    except OSError:
+        return False
+
+
 def repository_within(path: str) -> str:
     """Why `path` holds a repository - it is one, or one lies anywhere inside
     it - or that what is inside could not be read; else ''. What a directory
     removal without a commit-level check (a cache, a sandbox) must never
-    take."""
-    if os.path.lexists(os.path.join(path, ".git")):
+    take. A BARE repository is one (#174 review R2): it has no `.git`, and a
+    sandbox holding the only copy of a commit in one was removed as empty."""
+    if os.path.lexists(os.path.join(path, ".git")) or is_bare_repository(path):
         return f"it is a repository ({path})"
-    nested, unread = nested_repos(path)
+    nested, unread = nested_repos(path, bare=True)
     if nested:
         return f"a repository lies inside it ({nested[0]})"
     if unread:
@@ -3531,14 +3552,10 @@ class Sweep:
                     i.disposition, i.result = "live", f"left: its .lock names live pid {owner}"
                     return
             if i.extra.get("kind") == "mktemp":
-                _prov, owner = sandbox_provenance(i.path)
-                if owner and pid_alive(owner):
-                    i.disposition, i.result = "live", f"left: its marker names live pid {owner}"
-                    return
-                inner = "" if _prov else repository_within(i.path)
-                if inner:
-                    i.disposition, i.result = "list", "left: " + inner
-                    return
+                # NEVER A `tmp.*` (#170 item 1, option (b)): the table lists one
+                # and never asks this, so reaching here is a defect - it is left.
+                i.disposition, i.result = "list", "left: a tmp.* is listed, never removed"
+                return
             fresh = ProcScan()
             fresh.load_environ()
             if not fresh.available or fresh.holders(i.path) or fresh.unknown_for(i.path):
@@ -4314,11 +4331,11 @@ def sandbox_items(procs: ProcScan, conf: dict) -> list:
     environment is never touched, and neither is one younger than the
     minimum age (`sandbox_min_age_minutes`).
 
-    A `tmp.*` IS REMOVED ONLY ON PROOF (#170 item 1, the coordinator's
-    default): a suite's mark (`sandbox_provenance`) whose pid is gone, or -
-    with no mark - nothing written in it for `aging_days` (14). Any other
-    `tmp.*` may be a person's `mktemp -d` checkout or saved scratch, and is
-    LISTED, never removed."""
+    A `tmp.*` IS LISTED AND NEVER REMOVED (#170 item 1, option (b); #174
+    review R2): `mktemp -d` records no owner, so nothing proves a suite made
+    one - any `tmp.*` may be a person's checkout or saved scratch. Only
+    `pytest-of-$USER/pytest-*` and run.sh's `<UTC>-<pid>` run roots are
+    removed."""
     out = []
     unreadable: list = []
     uid = os.getuid()
@@ -4359,7 +4376,6 @@ def sandbox_items(procs: ProcScan, conf: dict) -> list:
     except OSError:
         pass
     now = time.time()
-    aging = conf["aging_days"]
     for path, kind, pid in candidates:
         try:
             st = os.lstat(path)
@@ -4379,34 +4395,20 @@ def sandbox_items(procs: ProcScan, conf: dict) -> list:
             age = now - newest
             if age < min_age:
                 continue
-            if not prov and age < aging * 86400:
-                it = Item("sandbox", path, "list", "a tmp.* directory with no mark of a test "
-                          "suite (no pytest .lock, no tests/run.sh marker or run-root layout), "
-                          f"last written {int(age // 86400)} d ago: it may be a person's mktemp "
-                          f"checkout or scratch, so it is listed and never removed before "
-                          f"{aging} days untouched", False)
-                it.size = size
-                it.extra["kind"] = kind
-                out.append(it)
-                continue
-            # AN UNMARKED ONE HOLDING A REPOSITORY IS NEVER TAKEN ON AGE ALONE
-            # (#174): no suite's mark says its repositories are fixtures, and a
-            # person's `mktemp -d` checkout with unpushed commits is exactly
-            # what an untouched-for-14-days rule would otherwise delete.
-            inner = "" if prov else repository_within(path)
-            if inner:
-                it = Item("sandbox", path, "list", f"a tmp.* directory with no mark of a test "
-                          f"suite, and {inner}: it may be a person's checkout, so it is listed "
-                          "and never removed", False)
-                it.size = size
-                it.extra["kind"] = kind
-                out.append(it)
-                continue
-            why = (f"a mktemp sandbox marked by {prov}" + (f" (pid {pid}, gone)" if pid else "")
-                   if prov else f"a mktemp sandbox untouched for {int(age // 86400)} days "
-                                f"(over aging_days={aging})")
-            it = Item("sandbox", path, "remove", why + ", and no live process stands in, holds "
-                      "or names it", False)
+            # EVERY `tmp.*` IS LISTED, NEVER REMOVED (#170 item 1, option (b);
+            # #174 review R2). Untouched for aging_days was the one rule that
+            # removed a real one, and it removed a person's tmp.* holding notes
+            # and one holding a BARE repository with the only copy of a commit,
+            # with no archive; a mark is a file anybody may have left, and
+            # run.sh writes its own in its run roots, never in a tmp.*.
+            inner = repository_within(path)
+            mark = (f"{prov}" + (f" (pid {pid}, gone)" if pid else "")) if prov else (
+                "no mark of a test suite (no pytest .lock, no tests/run.sh marker or run-root "
+                "layout)")
+            it = Item("sandbox", path, "list", f"a tmp.* directory with {mark}, last written "
+                      f"{int(age // 86400)} d ago" + (f", and {inner}" if inner else "")
+                      + ": `mktemp -d` records no owner, so it may be a person's checkout or "
+                      "scratch - listed, never removed (#170 item 1)", False)
             it.size = size
         else:
             it = Item("sandbox", path, "remove", f"a {kind} sandbox whose owning process is gone"
