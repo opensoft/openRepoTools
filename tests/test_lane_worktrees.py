@@ -1901,3 +1901,35 @@ def test_the_first_register_line_refused_stops_the_sweep(estate):
     assert not first.exists() and second.is_dir()
     assert "the register refused a line" in rows[str(second)][2]
     assert len(estate.notes()) == 1
+
+
+def test_a_lane_owned_open_pr_branch_origin_lacks_is_still_counted(estate):
+    """#170 G2: every OPEN PR's branch was left out of the retire count, so
+    a lane-owned branch holding commits origin lacks let `--branches
+    --dry-run --porcelain` exit 0 and clear #163's gate. The delete
+    protection stays; the count does not hide it."""
+    estate.git("checkout", "-q", "-b", "feat/g2", "origin/main")
+    tip = estate.commit(estate.checkout, "unpushed", {"g2.txt": "g\n"})
+    estate.git("checkout", "-q", "main")
+    estate.pr(61, "feat/g2", "OPEN", tip)
+    proc = estate.sweep(LANE, "--branches", "--dry-run", "--porcelain")
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    items = items_of(proc.stdout, "branch")
+    assert items["feat/g2"][:2] == ("keep", "retire"), items
+    yes = estate.sweep(LANE, "--branches", "--yes")
+    assert yes.returncode == 0, yes.stdout + yes.stderr
+    assert estate.git("rev-parse", "feat/g2") == tip, "an open PR's branch is never touched"
+
+
+def test_a_branch_published_under_its_own_name_is_not_unfinished(estate):
+    """#170 G7: a branch made from origin/main tracks main, so its upstream
+    read 'ahead' and `--branches` exited 3 although origin held every
+    commit under the branch's own name."""
+    estate.git("checkout", "-q", "-b", "feat/g7", "origin/main")
+    estate.commit(estate.checkout, "published", {"g7.txt": "g\n"})
+    estate.git("push", "-q", "origin", "feat/g7")
+    assert estate.git("rev-parse", "--abbrev-ref", "feat/g7@{u}") == "origin/main"
+    estate.git("checkout", "-q", "main")
+    proc = estate.sweep(LANE, "--branches", "--dry-run", "--porcelain")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "feat/g7" not in items_of(proc.stdout, "branch")

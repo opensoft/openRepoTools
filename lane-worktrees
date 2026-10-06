@@ -3492,10 +3492,21 @@ def branch_items(checkout: str, lane: str, evidence: MergeEvidence) -> list:
                   f"commit {date[:10]} ({age} d) · owner {owner or 'unknown'}")
         judged = evidence.judge(checkout, slug, name, tip) if slug else {
             "state": "unknown", "why": "not a GitHub origin"}
+        # PUBLISHED MEANS ORIGIN'S OWN REF FOR IT HOLDS THE TIP (#170 G7): a
+        # branch made from origin/main TRACKS main, so its configured upstream
+        # says "ahead" even once it is pushed under its own name.
+        published = _on_origin_as(checkout, name, tip)
         it = None
         if judged["state"] == "open":
-            it = Item("branch", name, "keep", judged["why"] + ": an open PR's branch is never touched",
-                      False, detail)
+            # THE DELETE PROTECTION STAYS; THE COUNT DOES NOT HIDE IT (#170 G2):
+            # a lane-owned branch an open PR names, holding commits origin's
+            # ref for it lacks, is unfinished work, and a read that failed is
+            # never "finished".
+            it = Item("branch", name, "keep", judged["why"] + ": an open PR's branch is never touched"
+                      + ("" if published is True else
+                         "; origin's ref for it lacks its tip" if published is False else
+                         "; whether origin holds its tip could not be read"),
+                      ours and published is not True, detail)
         elif judged["state"] == "merged":
             remote_tip = git_out(checkout, "rev-parse", "-q", "--verify",
                                  f"refs/remotes/origin/{name}") or ""
@@ -3507,6 +3518,8 @@ def branch_items(checkout: str, lane: str, evidence: MergeEvidence) -> list:
                       judged["why"] + ("; the remote branch too (this lane's, nothing beyond the PR)"
                                        if remote_ok else ""), ours, detail)
             it.extra.update(pr=judged.get("pr"), tip=tip, remote_tip=remote_tip if remote_ok else "")
+        elif published is True:
+            continue
         else:
             up_state = "missing"
             if upstream:
@@ -3533,6 +3546,21 @@ def branch_items(checkout: str, lane: str, evidence: MergeEvidence) -> list:
         it.extra.update(checkout=checkout, branch=name)
         out.append(it)
     return out
+
+
+def _on_origin_as(checkout: str, name: str, tip: str):
+    """True when `refs/remotes/origin/<name>` holds `tip`, False when it is
+    absent or does not, None when that could not be read."""
+    ref = git(checkout, "rev-parse", "-q", "--verify", f"refs/remotes/origin/{name}")
+    if ref.returncode == 1 and not ref.stdout.strip():
+        return False
+    if ref.returncode != 0:
+        return None
+    remote = ref.stdout.strip()
+    if remote == tip:
+        return True
+    anc = git(checkout, "merge-base", "--is-ancestor", tip, remote)
+    return {0: True, 1: False}.get(anc.returncode)
 
 
 def _age_days(iso: str) -> int:
