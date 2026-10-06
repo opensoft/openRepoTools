@@ -3575,8 +3575,6 @@ def report_all(opts) -> int:
     return 0
 
 
-# ==================================================================== main
-
 # ======================================================= add: the creation
 
 #: A slice is one path component under the lane's own root, and the default
@@ -3727,6 +3725,8 @@ def add_tree(ns) -> int:
          + ("" if branch_back else f"; branch {branch} was made by this act at {short(head)}"))
     return 1
 
+
+# ==================================================================== main
 
 class _Parser(argparse.ArgumentParser):
     def error(self, message):
