@@ -1684,6 +1684,7 @@ class Sweep:
         self.bundled: dict = {}            # common dir -> heads of this run's verified bundles
         self.halt = ""                     # why no further act is taken
         self.refused_check = ""            # the self-check's refusal: exit 2
+        self.usage = ""                    # a usage error found once the trees are known: 64
 
     # ------------------------------------------------------------- reading
     def gather(self) -> None:
@@ -1736,6 +1737,9 @@ class Sweep:
         self._lane_gate()
         self.procs = ProcScan()
         self._discover()
+        self.usage = self._live_usage()
+        if self.usage:
+            return
         # THE WHOLE ESTATE, ONCE: every repository (for what leans on a tree)
         # and every `.lane-state` (for who else claims one). What it could not
         # read makes the dependents scan PARTIAL, and a partial scan removes no
@@ -1760,6 +1764,19 @@ class Sweep:
                 if tree.branch and not tree.unborn and tree.branch not in PROTECTED_BRANCHES:
                     tree.merge = self.evidence.judge(tree.path, slug_of(tree.origin_url),
                                                      tree.branch, tree.head)
+
+    def _live_usage(self) -> str:
+        """`--live` names writers' trees, so each path must name one of the
+        table's (#170 B4): a misspelt path was accepted in silence, and the
+        writer it meant to protect was not protected. `none` stands alone."""
+        named = [n for n in self.opts.live if n != "none"]
+        if named and len(named) != len(self.opts.live):
+            return "--live none says no writer is live; it takes no path beside it"
+        for n in named:
+            if not any(under(t.path, n) or under(n, t.path) for t in self.trees):
+                return (f"--live {n} names no tree of this sweep (misspelt?); the trees are "
+                        "the lane's inventory, its roots and its checkout's registrations")
+        return ""
 
     def _lane_claims(self) -> None:
         """A tree #97's inventory does not name is still THIS LANE'S when it
@@ -2072,6 +2089,17 @@ class Sweep:
                             "knows which writers are live (ListAgents; Amendment 17 Addendum 1 "
                             "(i)). State the count: --live <worktree> for each live writer, or "
                             "--live none")
+            return
+        # A TREE THIS SESSION RECORDED IS ONE ITS OWN WRITERS MAY STAND IN (#170
+        # B5): their liveness is never asked of the transcript - it is this
+        # one - so the coordinator's count is wanted whatever the holder reads.
+        mine = [r for r in f.inventory if self.caller and r.get("writer") == self.caller]
+        if self.opts.yes and mine and not self.opts.live:
+            self.refusal = (f"this session recorded {len(mine)} of lane {self.lane}'s trees (e.g. "
+                            f"{mine[0].get('path') or '?'}), so its own writers may be in them, "
+                            "and only its coordinator knows which are live (ListAgents; "
+                            "Amendment 17 Addendum 1 (i)). State the count: --live <worktree> "
+                            "for each live writer, or --live none")
             return
         if f.verdict == "indeterminate":
             self.refusal = (f"#97's reconciliation of lane {self.lane} is INDETERMINATE: "
@@ -4500,6 +4528,9 @@ def _main(argv: list) -> int:
     sweep = Sweep(ns.lane, opts)
     _ACTIVE["sweep"] = sweep
     sweep.gather()
+    if sweep.usage:
+        note(f"usage: {sweep.usage}")
+        return 64
     if sweep.refusal and not sweep.trees:
         sweep.decide()
         (sweep.porcelain if opts.porcelain else sweep.render)()

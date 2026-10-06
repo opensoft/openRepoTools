@@ -1852,3 +1852,52 @@ def test_scratch_holding_a_repository_is_kept(estate):
     assert f"a repository lies under it ({inner})" in items[str(scratch)][3]
     assert estate.git("rev-parse", "HEAD", cwd=inner) == own
     assert (scratch / "notes.md").is_file()
+
+
+def test_a_live_path_that_names_no_tree_is_a_usage_error(estate):
+    """#170 B4: a misspelt `--live` path was accepted in silence, so the
+    writer it was meant to protect was not protected."""
+    tree = estate.worktree("w1", "feat/w1")
+    estate.git("push", "-q", "-u", "origin", "feat/w1", cwd=tree)
+    for live in ((str(estate.lane_root / "w1-typo"),), ("none", str(tree))):
+        args = []
+        for value in live:
+            args += ["--live", value]
+        proc = estate.sweep(LANE, "--yes", *args)
+        assert proc.returncode == 64, (live, proc.stdout, proc.stderr)
+        assert tree.is_dir()
+    assert estate.sweep(LANE, "--yes", "--live", str(tree)).returncode == 0
+    assert tree.is_dir(), "the tree --live names is a live writer's"
+
+
+def test_trees_this_session_recorded_want_the_writer_count(estate):
+    """#170 B5: a tree this session recorded skips the transcript check (it
+    is this session's), and --live was demanded only when the holder read
+    as this session - so with the holder read as none, --yes removed the
+    trees this session's own writers could be standing in."""
+    tree = estate.worktree("mine", "feat/mine", record=False)
+    estate.git("push", "-q", "-u", "origin", "feat/mine", cwd=tree)
+    estate.record(tree, writer=ME)
+    assert estate.holder == "none"
+    refused = estate.sweep(LANE, "--yes", "--porcelain")
+    assert refused.returncode == 2, refused.stdout + refused.stderr
+    assert "this session recorded 1 of lane" in refused.stdout
+    assert tree.is_dir()
+    assert estate.sweep(LANE, "--yes", "--live", "none").returncode == 0
+    assert not tree.exists()
+
+
+def test_the_first_register_line_refused_stops_the_sweep(estate):
+    """#170 B6: removals went on after a NOTED line failed, so acts piled
+    up that the register never recorded."""
+    first = estate.worktree("a-one", "feat/one")
+    estate.git("push", "-q", "-u", "origin", "feat/one", cwd=first)
+    second = estate.worktree("b-two", "feat/two")
+    estate.git("push", "-q", "-u", "origin", "feat/two", cwd=second)
+    estate.log_rc = 1
+    proc = estate.sweep(LANE, "--yes", "--porcelain")
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    rows = rows_of(proc.stdout)
+    assert not first.exists() and second.is_dir()
+    assert "the register refused a line" in rows[str(second)][2]
+    assert len(estate.notes()) == 1
