@@ -167,26 +167,45 @@ group_members() {   # <pgid> - the pids of its running members, one per line
   ps -A -o pid= -o pgid= -o stat= 2>/dev/null |
     awk -v g="$1" '$2 == g && $3 !~ /^Z/ { print $1 }'
 }
-strays() {   # the members of TTY_PGID the suite left running
-  ps -A -o pid= -o pgid= -o ppid= -o stat= 2>/dev/null |
-    awk -v g="$TTY_PGID" -v me="$$" -v parent="$PPID" -v before=" $TTY_BEFORE " '
-      $2 == g && $1 != me && $3 != parent && $4 !~ /^Z/ && index(before, " " $1 " ") == 0 {
-        print $1 }'
+#
+# THE SCAN NEVER COUNTS ITSELF (#179, Copilot round 2): run in a command
+# substitution, its subshell, `ps` and `awk` were members of the group that
+# were not there before, so every scan found "strays", every terminal run
+# waited out the whole ten seconds, and the pids it killed were the scan's own,
+# already gone. It is run in THIS shell, writing to a file under the run root:
+# `ps` and `awk` are then this shell's own children (ppid `$$`), and those are
+# passed over - a stray never is one, since the suite, this shell's child, has
+# returned, and what it left was reparented away. bash 3.2 has no `$BASHPID`
+# to name a subshell by.
+strays() {   # <file> - the members of TTY_PGID the suite left running, one per line
+  : > "$1"
+  ps -A -o pid= -o pgid= -o ppid= -o stat= > "$1.ps" 2>/dev/null || return 0
+  awk -v g="$TTY_PGID" -v me="$$" -v parent="$PPID" -v before=" $TTY_BEFORE " '
+    $2 == g && $1 != me && $3 != me && $3 != parent && $4 !~ /^Z/ &&
+      index(before, " " $1 " ") == 0 { print $1 }' "$1.ps" > "$1"
+}
+read_strays() {   # <file> - its pids into SS_PIDS, with no fork
+  SS_PIDS=""
+  while read -r rs_pid; do
+    [ -n "$rs_pid" ] && SS_PIDS="$SS_PIDS $rs_pid"
+  done < "$1"
 }
 stop_strays() {
-  [ -n "$TTY_PGID" ] || return 0
-  ss_pids="$(strays)"
-  [ -n "$ss_pids" ] || return 0
+  [ -n "$TTY_PGID" ] && [ -n "$RUN_ROOT" ] && [ -d "$RUN_ROOT" ] || return 0
+  ss_file="$RUN_ROOT/.strays"
+  strays "$ss_file"; read_strays "$ss_file"
+  [ -n "$SS_PIDS" ] || return 0
   # shellcheck disable=SC2086
-  kill -TERM $ss_pids 2>/dev/null || :
+  kill -TERM $SS_PIDS 2>/dev/null || :
   ss_n=0
-  while [ -n "$(strays)" ] && [ "$ss_n" -lt 50 ]; do
+  while :; do
+    strays "$ss_file"; read_strays "$ss_file"
+    [ -n "$SS_PIDS" ] && [ "$ss_n" -lt 50 ] || break
     sleep 0.2
     ss_n=$((ss_n + 1))
   done
-  ss_pids="$(strays)"
   # shellcheck disable=SC2086
-  [ -z "$ss_pids" ] || kill -KILL $ss_pids 2>/dev/null || :
+  [ -z "$SS_PIDS" ] || kill -KILL $SS_PIDS 2>/dev/null || :
   return 0
 }
 cleanup() {

@@ -317,28 +317,20 @@ def test_a_callers_basetemp_is_refused(tmp_path, form):
     assert not Path(elsewhere).exists()
 
 
-@pytest.mark.skipif(not hasattr(os, "openpty") or sys.platform.startswith("win"),
-                    reason="needs a pseudo-terminal")
-def test_what_a_suite_on_the_terminal_leaves_running_is_stopped(tmp_path):
-    """#170 G14: with a terminal on stdin the suite runs in the foreground, in
-    the wrapper's own process group, and no group id was kept - a child it
-    left running was not stopped before the run root went and the lock was
-    released. The group's members are read before the suite starts; what is
-    there afterwards that was not is stopped."""
+def _on_a_terminal(box, env: dict, timeout: float = 30) -> tuple:
+    """Run the wrapper with a pseudo-terminal on its stdin; (wait status,
+    seconds it took)."""
     import pty
     import select
-    box = Box(tmp_path)
-    env = dict(box.env, FAKE_SUITE_LEAVE="1")
+    started = time.time()
     pid, master = pty.fork()
     if pid == 0:
         try:
             os.execve(shutil.which("bash") or "/bin/bash", ["bash", str(WRAPPER)], env)
         finally:
             os._exit(127)
-    child = 0
     try:
-        deadline = time.time() + 30
-        status = None
+        deadline = time.time() + timeout
         while time.time() < deadline:
             ready, _w, _x = select.select([master], [], [], 0.05)
             if ready:
@@ -348,9 +340,32 @@ def test_what_a_suite_on_the_terminal_leaves_running_is_stopped(tmp_path):
                     pass
             done, status = os.waitpid(pid, os.WNOHANG)
             if done:
-                break
-        else:
-            raise AssertionError("the wrapper did not finish")
+                return status, time.time() - started
+        try:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        except OSError:
+            pass
+        raise AssertionError("the wrapper did not finish")
+    finally:
+        os.close(master)
+
+
+NEEDS_A_PTY = pytest.mark.skipif(not hasattr(os, "openpty") or sys.platform.startswith("win"),
+                                 reason="needs a pseudo-terminal")
+
+
+@NEEDS_A_PTY
+def test_what_a_suite_on_the_terminal_leaves_running_is_stopped(tmp_path):
+    """#170 G14: with a terminal on stdin the suite runs in the foreground, in
+    the wrapper's own process group, and no group id was kept - a child it
+    left running was not stopped before the run root went and the lock was
+    released. The group's members are read before the suite starts; what is
+    there afterwards that was not is stopped."""
+    box = Box(tmp_path)
+    child = 0
+    try:
+        status, _took = _on_a_terminal(box, dict(box.env, FAKE_SUITE_LEAVE="1"))
         child = int(Path(str(box.log) + ".child").read_text().strip())
         assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, status
         assert not _running(child), "a process the suite left running outlived its wrapper"
@@ -358,7 +373,19 @@ def test_what_a_suite_on_the_terminal_leaves_running_is_stopped(tmp_path):
     finally:
         if child and _running(child):
             os.kill(child, signal.SIGKILL)
-        os.close(master)
+
+
+@NEEDS_A_PTY
+def test_a_terminal_run_that_leaves_nothing_waits_for_nothing(tmp_path):
+    """#179 Copilot round 2: the stray scan ran in a command substitution, so
+    its own subshell, `ps` and `awk` were members of the group that were not
+    there before - every scan found "strays", and every terminal run waited
+    out the whole ten-second deadline after a suite that left nothing."""
+    box = Box(tmp_path)
+    status, took = _on_a_terminal(box, dict(box.env))
+    assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, status
+    assert took < 8, f"the wrapper took {took:.1f} s after a suite that left nothing running"
+    assert box.runs() == [], "the run root outlived the run"
 
 
 def _running(pid: int) -> bool:
